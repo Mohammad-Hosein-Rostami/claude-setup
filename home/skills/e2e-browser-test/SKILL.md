@@ -14,5 +14,6 @@ Rules: T1, T4, T8, U3-U5. Critical journeys only (T1).
 7. Config: `trace: "retain-on-failure"`, `screenshot: "only-on-failure"`. On a failure, open the trace before editing anything.
 8. Flaky: fix the wait or the isolation, never add retries as the fix. Run the test 10x (`--repeat-each=10`) before trusting it.
 9. Use the project's configured `webServer`; start nothing else unless asked.
+10. Pixel match to Figma or layout at several widths is not an e2e journey: use `figma-pixel-perfect` and `ui-check` (`responsive-ui`).
 
 Done-gate (when asked to run): test passes 10x in a row (command and result quoted); no sleeps (grep); axe clean.
