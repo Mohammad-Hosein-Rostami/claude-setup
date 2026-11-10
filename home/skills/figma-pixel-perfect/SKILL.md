@@ -18,7 +18,10 @@ Tool: `node ~/.claude/tools/ui-check/cli.mjs <cmd>` (README beside it). Never pr
    Exit 0 pass, 1 fail, 2 setup error (fix the setup, do not retry blindly). Read `report.md` only; never open
    `diff.png` or `actual.png` unless the table is empty and the verdict is FAIL.
 5. **Fix** only the failing rows, one root cause per round (a wrong font moves everything: fix it first). At most
-   3 rounds, then report the remaining rows and why. Do not loosen `--max-diff` to pass.
+   No round limit: repeat compare and fix until it passes; the result matters more than speed. If a round fixes
+   nothing, change approach rather than repeat it (recheck the root cause, re-pull the spec, check the
+   false-positive list). Stop early only when blocked by something outside the code (missing font or asset,
+   unclear design); then ask. Do not loosen `--max-diff` to pass.
 6. **Responsive.** `responsive --url URL --widths <defaults>,<frame widths>`; fix findings per `responsive-ui`.
    Tables: `columns --url URL --table SEL`.
 

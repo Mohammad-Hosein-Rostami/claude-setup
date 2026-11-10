@@ -51,8 +51,10 @@ failing `element | prop | is | should | delta`), `report.json`, `actual.png`, `d
 Exit 0 pass, 1 fail, 2 setup error.
 
 ## 5. Fix loop
-Fix only the failing rows, one root cause per round (fonts first, then layout, then tokens). At most 3 rounds, then
-report what is left and why. Never raise `--max-diff` to pass. The false-positive list is in `standards/figma.md`.
+Fix only the failing rows, one root cause per round (fonts first, then layout, then tokens). There is no round
+limit: the loop runs until every check passes. A round that fixes nothing means a wrong diagnosis, so change approach
+rather than repeat it. The loop stops early only when something outside the code blocks it (a missing font or asset,
+an unclear design); the agent then asks. Never raise `--max-diff` to pass. The false-positive list is in `standards/figma.md`.
 
 ## 6. Responsive
     $UI responsive --url http://localhost:4200/page --widths 320,360,390,768,1024,1280,1440,1920,<frame widths>
