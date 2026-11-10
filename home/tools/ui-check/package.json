@@ -7,7 +7,7 @@
   "engines": { "node": ">=20" },
   "scripts": { "test": "node --test test/*.test.mjs" },
   "dependencies": {
-    "odiff-bin": "^3.0.0",
+    "odiff-bin": "^4.5.0",
     "pngjs": "^7.0.0"
   }
 }

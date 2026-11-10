@@ -48,7 +48,9 @@ export async function pixelCheck({ baselineFile, actualFile, outDir, maxDiffPerc
   const result = await compare(aligned.baseFile, aligned.actualFile, diffFile, {
     threshold: PIXEL.threshold, antialiasing: true, captureDiffLines: true, failOnLayoutDiff: false,
   });
-  const total = aligned.base.width * aligned.base.height;
+  // Any non-pixel failure (missing file, layout diff) must not read as "0 different pixels".
+  if (!result.match && result.reason !== 'pixel-diff') throw new UsageError(`odiff failed: ${result.reason} ${result.file ?? ''}`.trim());
+  const total =aligned.base.width * aligned.base.height;
   const diffCount = result.match ? 0 : (result.diffCount ?? 0);
   const diffPercent = (diffCount / total) * 100;
   const region = result.match ? null : diffRegion(aligned.base, aligned.actual, result.diffLines);
