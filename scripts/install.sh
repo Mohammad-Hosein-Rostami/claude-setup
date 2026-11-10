@@ -103,6 +103,8 @@ install_plugins() {
 install_tool_deps() {
   local dir="$CLAUDE_DIR/tools/ui-check"
   if [ "$DRY_RUN" != 1 ] && [ ! -d "$dir" ]; then echo "skip ui-check deps: $dir not found" >&2; return; fi
+  # npm ci --prefix through the ~/.claude/tools symlink reports a false lockfile mismatch: use the real path.
+  [ -d "$dir" ] && dir=$(cd "$dir" && pwd -P)
   if [ -f "$REPO/home/tools/ui-check/pnpm-lock.yaml" ] && command -v pnpm >/dev/null; then act pnpm --dir "$dir" install --frozen-lockfile
   elif [ -f "$REPO/home/tools/ui-check/package-lock.json" ]; then act npm ci --prefix "$dir"
   else act npm install --prefix "$dir" --no-audit --no-fund; fi

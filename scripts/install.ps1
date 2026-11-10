@@ -72,9 +72,12 @@ function Install-ToolDeps {
   $src = Join-Path $Repo 'home\tools\ui-check'
   if ($DryRun) { Write-Host "[dry-run] install ui-check dependencies in $dir"; return }
   if (-not (Test-Path $dir)) { Write-Warning "skip ui-check deps: $dir not found"; return }
-  if ((Test-Path (Join-Path $src 'pnpm-lock.yaml')) -and (Get-Command pnpm -ErrorAction SilentlyContinue)) { pnpm --dir $dir install --frozen-lockfile }
-  elseif (Test-Path (Join-Path $src 'package-lock.json')) { npm ci --prefix $dir }
-  else { npm install --prefix $dir --no-audit --no-fund }
+  # npm ci --prefix through a symlinked folder reports a false lockfile mismatch: run inside the folder instead.
+  Push-Location $dir
+  if ((Test-Path (Join-Path $src 'pnpm-lock.yaml')) -and (Get-Command pnpm -ErrorAction SilentlyContinue)) { pnpm install --frozen-lockfile }
+  elseif (Test-Path (Join-Path $src 'package-lock.json')) { npm ci }
+  else { npm install --no-audit --no-fund }
+  Pop-Location
   if ($LASTEXITCODE -ne 0) { throw 'ui-check dependency install failed' }
   Note 'ui-check dependencies'
 }
