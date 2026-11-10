@@ -1,0 +1,133 @@
+# Catalog
+
+Everything this setup ships, read from the files in `home/`, `settings/`, `plugins/` and `tools/`. Skill and agent
+descriptions are quoted from their frontmatter; those descriptions are what make them trigger.
+
+## Skills (`home/skills/<name>/SKILL.md`)
+
+| Skill | Description (trigger) | Model |
+| ----- | --------------------- | ----- |
+| `accessibility-build` | Use while writing UI code, so it is accessible from the start - semantic HTML, keyboard, focus, forms, contrast, motion (WCAG 2.2 AA). | session model |
+| `async-ui-states` | Use for any screen that loads or changes server data - loading, empty, error, offline, stale responses, pagination, search-as-you-type. | session model |
+| `clean-code` | Use when writing or changing code, and again before finishing a coding step - naming, size, complexity, errors, comments, duplication, dead code, scope. | session model |
+| `datetime-handling` | Use whenever code stores, parses, compares, shows or schedules dates and times, in the UI or the backend - time zones, DST, date-only values, formats. | session model |
+| `e2e-browser-test` | Use when writing or fixing end-to-end or browser tests, or when verifying a UI in a real browser. | session model |
+| `escalate` | Send a hard design, architecture or stubborn-bug question to Opus 5.5 in an isolated fork and get a short decision. Not for implementation. | claude-opus-5-5 |
+| `figma-pixel-perfect` | Use when implementing or fixing UI from a Figma frame and it must match exactly - pull baseline, build, compare, fix, then check responsive. | session model |
+| `forms-validation` | Use when building or changing a form or any user input flow - validation, errors, autofill, double submit, optimistic UI. | session model |
+| `frontend-performance` | Use when a page is slow, heavy or janky, or when adding images, fonts, libraries or routes - Core Web Vitals, bundles, rendering. | session model |
+| `frontend-security` | Use when rendering user content, handling tokens, loading third-party scripts, or touching cookies, CORS or CSP in a web app. | session model |
+| `handoff` | Write a compact handoff note so work can continue in a fresh session after /clear. Use at ~100k context, at a phase change, or when the user says handoff or continue later. (manual only: slash command) | sonnet |
+| `quick` | Run a simple lookup or mechanical task on Haiku 5.5 in an isolated fork - find, list, summarise, run-and-report. | haiku |
+| `responsive-ui` | Use when building or changing any page or component layout - mobile-first CSS, breakpoints, container queries, touch targets, viewport, reflow. | session model |
+| `root-cause-debug` | Use for a bug, failing or flaky test, red CI or unexpected behaviour, before proposing any fix. | session model |
+| `safe-refactor` | Use when restructuring code without changing behaviour, including renames, extractions and moves. | session model |
+| `tdd-loop` | Use when implementing a feature or bug fix with testable behaviour, including any new logic or branch. | session model |
+| `tech-research` | Use when a design decision depends on external facts you lack - service limits, versions, pricing, standards, known failure modes. Search the web and cite. For library API docs use context7. | session model |
+| `token-audit` | Audit where tokens go in this project's Claude setup - instruction files, rules, skills, agents, MCP servers - and propose concrete cuts. Use periodically or when sessions feel expensive. (manual only: slash command) | sonnet |
+| `tradeoff-analysis` | Use when a design choice has two or more credible options (datastore, queue, sync vs async, build vs buy) - compare them, pick one, record an ADR. | session model |
+| `ui-quality-pass` | Use when finishing any UI component or page, before calling it done. | session model |
+| `verify-done` | Use before claiming a task is done, fixed, passing or ready for review, and when the owner says done, ship or merge. | session model |
+
+## Agents (`home/agents/<name>.md`)
+
+| Agent | Description (trigger) | Model |
+| ----- | --------------------- | ----- |
+| `architect` | Use for architecture, system/API design, trade-off decisions, ADRs and planning of non-trivial or cross-package work. Produces a compact spec for Sonnet to implement; never implements. Skip for small or obvious designs. | claude-opus-5-5 |
+| `deep-debugger` | Use for hard bugs - when one honest fix attempt already failed, the failure is intermittent, spans packages, or the cause is unclear. Finds the root cause and proposes the minimal fix; does not rewrite code at length. | claude-opus-5-5 |
+| `implementer` | Use to execute a clear spec or well-defined task - multi-file implementation, refactor, tests - when the main session should stay clean. Takes a spec path or precise instructions and returns a short report. | sonnet |
+| `reviewer` | Use after a change (including a DB migration) to review it for correctness, regressions, security and rule violations. Read-only; returns a prioritised, rule-id keyed findings list. | sonnet |
+| `runner` | Use to run tests, lint, typecheck, build or any noisy command and get back only the verdict and failures. Keeps verbose output out of the main context. Does not edit files. | haiku |
+| `scout` | Use for read-only lookups - find where something is defined or used, list files, read several files and summarise, check how a pattern is done. Cheap and fast; returns a short answer, never raw dumps. | haiku |
+| `security-auditor` | Use to audit a diff or feature for security issues, especially auth, input handling, secrets, uploads and agent tools reading untrusted text. Read-only. | opus |
+| `test-writer` | Use to write tests from a spec or acceptance criteria before or without reading the implementation, so tests do not confirm the code's own mistakes. | sonnet |
+| `visual-qa` | Use to check a built UI against its Figma baseline and at several widths with ui-check (compare, responsive), optionally fixing failures. Returns a short verdict, never images. | sonnet |
+
+Routing policy (which tier does what) is in `home/CLAUDE.md`; `settings/base.json` also pins `general-purpose` to Sonnet 5.5 and `architect` to Opus 5.5.
+
+## Rules (`home/rules/`, ids and checks)
+
+| File | Applies to | Ids |
+| ---- | ---------- | --- |
+| `core.md` | always on | C1-C29 |
+| `ui.md` | `**/*.css`, `**/*.tsx`, `**/styles/**`, `**/tokens/**` | U1-U12 |
+| `frontend.md` | `**/*.tsx`, `**/components/**` | F1-F10 |
+| `backend.md` | `**/server/**`, `**/api/**`, `**/*.service.ts`, `**/routes/**` | S1-S11, B1-B10 |
+| `db.md` | `**/migrations/**`, `**/*.sql`, `**/schema.*`, `**/prisma/**` | D1-D7 |
+| `infra.md` | `Dockerfile*`, `**/.github/**`, `**/*.tf`, `**/*.yml` | I1-I6 |
+| `test.md` | `**/*.test.*`, `**/*.spec.*`, `**/e2e/**` | T1-T8 |
+
+Rules are one line each (`id | rule | check`) and load when a matching file is in play.
+
+## Standards (`home/standards/`, the longer reference the rules point to)
+
+| File | Title (first line) |
+| ---- | ------------------ |
+| `backend.md` | Backend / API (B1-B10) |
+| `db.md` | Database (D1-D7) |
+| `docs.md` | Docs (X1-X4) |
+| `figma.md` | Figma to code conversion (used by `figma-pixel-perfect`, checked by `ui-check`) |
+| `frontend.md` | Frontend (F1-F10) |
+| `infra.md` | Infra / DevOps (I1-I6) |
+| `refactor.md` | Refactor (R1-R4) |
+| `security.md` | Security (S1-S11) |
+| `testing.md` | Testing (T1-T8) plus C11, C13 |
+| `ui-a11y.md` | UI, UX, accessibility (U1-U12) |
+
+## Hooks (`home/hooks/`, wired in `settings/base.json`)
+
+| File | Event | What it does |
+| ---- | ----- | ------------ |
+| `pre-bash-guard.mjs` | PreToolUse(Bash) | Denies git `--no-verify`, force push, `rm -rf` outside the project (temp dirs allowed), reading `.env`, hand-editing lockfiles. Anything it cannot parse is allowed. |
+| `post-edit.mjs` | PostToolUse(Edit, Write, MultiEdit) | Runs the project's own format, lint and typecheck scripts (only those present in the nearest `package.json`). Silent on success; on failure prints at most 15 lines and exits 2. |
+| `token-audit.mjs` | not a hook; run by the `token-audit` skill | Prints the approximate recurring token cost (bytes / 4) of the config visible from the current directory. |
+
+`.githooks/pre-commit` (repo only): `gitleaks protect --staged --redact`; the installers set `core.hooksPath`.
+
+## Status line
+
+`home/statusline.mjs`: model tier, effort, context size in tokens, cost, and 5h / 7d usage windows with reset times.
+
+## Tools (`home/tools/`)
+
+| Tool | What it does |
+| ---- | ------------ |
+| `ui-check` | Node CLI: `figma-pull`, `compare`, `responsive`, `columns`. See `home/tools/ui-check/README.md` and `docs/figma-pixel-perfect.md`. Dependencies: `odiff-bin`, `pngjs`; Playwright comes from the target project. |
+
+System CLIs (`tools/Brewfile`, `tools/windows-tools.ps1`): jq, ripgrep, gitleaks, gh, volta.
+
+## Plugins (`plugins/plugins.json`)
+
+Enabled: `gitkraken-hooks@gitkraken`, `frontend-design@anthropic-plugin-directory`, `code-review-anthropics@anthropic-plugin-directory`, `context7@anthropic-plugin-directory`, `skill-creator@anthropic-plugin-directory`, `code-simplifier@anthropic-plugin-directory`, `playwright@anthropic-plugin-directory`, `github@anthropic-plugin-directory`, `claude-md-management@anthropic-plugin-directory`, `typescript-lsp@claude-plugins-official`, `claude-code-setup@anthropic-plugin-directory`, `figma@claude-plugins-official`, `chrome-devtools-mcp@claude-plugins-official`, `superdesign@anthropic-plugin-directory`, `miro@claude-plugins-official`.
+
+Installed but disabled: `superpowers@anthropic-plugin-directory`, `kotlin-lsp@claude-plugins-official`, `code-modernization@anthropic-plugin-directory`, `swift-lsp@claude-plugins-official`, `clangd-lsp@claude-plugins-official`.
+
+Marketplaces: `anthropic-plugin-directory`, `claude-plugins-official`, `gitkraken`.
+
+## Settings keys (`settings/base.json`)
+
+| Key | Value / purpose |
+| --- | --------------- |
+| `env.BASH_MAX_OUTPUT_LENGTH` | 12000; caps Bash output re-read on every call |
+| `env.MAX_MCP_OUTPUT_TOKENS` | 15000; caps MCP tool output |
+| `env.CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY` | 1; removes survey prompts |
+| `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` | 200000; compaction window |
+| `permissions.allow` | WebSearch, WebFetch |
+| `permissions.deny` | reading `.env*`, `pnpm-lock.yaml`, credentials files (Read and Bash patterns) |
+| `model` | `opus` |
+| `hooks` | PreToolUse(Bash) -> `pre-bash-guard.mjs`; PostToolUse(Edit, Write, MultiEdit) -> `post-edit.mjs` |
+| `statusLine` | command: `statusline.mjs` |
+| `enabledPlugins` | plugin id -> true/false (mirrors `plugins/plugins.json`) |
+| `modelSettings` | effort per model: Opus 5.5 high, Sonnet 5.5 medium, Haiku 5.5 low |
+| `subagents` | model pins for `general-purpose` (Sonnet 5.5) and `architect` (Opus 5.5) |
+| `autoCompactContext` | true |
+
+OS files: `settings/macos.json` (Notification hook plays a sound), `settings/windows.json` (Notification hook beeps), `settings/linux.json` (empty).
+`settings/local.json` (gitignored, per machine): see `local.json.example` (`skipDangerousModePermissionPrompt`).
+
+## Scripts (`scripts/`)
+
+| Script | Purpose |
+| ------ | ------- |
+| `install.sh` / `install.ps1` | Link `home/*` into `~/.claude`, build `settings.json`, install ui-check dependencies, set the git hook path, install plugins. Flags: `--dry-run`, `--no-plugins`, `--no-tools`. |
+| `doctor.sh` | Read-only report: links, settings drift, plugins, CLI tools, ui-check dependencies and Chromium. |
