@@ -1,0 +1,41 @@
+{
+  "marketplaces": [
+    {
+      "name": "anthropic-plugin-directory",
+      "source": "built-in (Anthropic Directory); no add needed"
+    },
+    {
+      "name": "claude-plugins-official",
+      "source": "github:anthropics/claude-plugins-official"
+    },
+    {
+      "name": "gitkraken",
+      "source": "installed by the GitKraken app; do not copy files",
+      "optional": true
+    }
+  ],
+  "enabled": [
+    "gitkraken-hooks@gitkraken",
+    "frontend-design@anthropic-plugin-directory",
+    "code-review-anthropics@anthropic-plugin-directory",
+    "context7@anthropic-plugin-directory",
+    "skill-creator@anthropic-plugin-directory",
+    "code-simplifier@anthropic-plugin-directory",
+    "playwright@anthropic-plugin-directory",
+    "github@anthropic-plugin-directory",
+    "claude-md-management@anthropic-plugin-directory",
+    "typescript-lsp@claude-plugins-official",
+    "claude-code-setup@anthropic-plugin-directory",
+    "figma@claude-plugins-official",
+    "chrome-devtools-mcp@claude-plugins-official",
+    "superdesign@anthropic-plugin-directory",
+    "miro@claude-plugins-official"
+  ],
+  "disabled": [
+    "superpowers@anthropic-plugin-directory",
+    "kotlin-lsp@claude-plugins-official",
+    "code-modernization@anthropic-plugin-directory",
+    "swift-lsp@claude-plugins-official",
+    "clangd-lsp@claude-plugins-official"
+  ]
+}

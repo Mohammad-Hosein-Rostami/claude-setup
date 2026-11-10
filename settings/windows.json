@@ -1,0 +1,7 @@
+{
+  "hooks": {
+    "Notification": [
+      { "hooks": [ { "type": "command", "command": "powershell -NoProfile -Command \"[console]::beep(880,200)\"" } ] }
+    ]
+  }
+}

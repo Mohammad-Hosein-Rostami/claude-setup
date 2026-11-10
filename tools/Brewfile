@@ -1,0 +1,6 @@
+# CLI tools the Claude Code setup uses. Install with: brew bundle --file tools/Brewfile
+brew "jq"
+brew "ripgrep"
+brew "gitleaks"
+brew "gh"
+brew "volta" # manages node; hooks and the statusline are .mjs scripts (run: volta install node@22)

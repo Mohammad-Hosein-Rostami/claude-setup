@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Purpose: block commits that contain secrets (gitleaks on staged changes).
+set -euo pipefail
+command -v gitleaks >/dev/null || { echo "gitleaks not installed; see tools/Brewfile" >&2; exit 1; }
+exec gitleaks protect --staged --redact
