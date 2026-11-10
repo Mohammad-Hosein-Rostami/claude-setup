@@ -14,6 +14,7 @@ skills and plan mode**, each of which pins its own model. Default session model 
 | Architecture, API/system design, trade-off decisions, ADRs, root-cause of a bug that survived one failed fix | **Opus 5.5** | `architect` / `deep-debugger` agent, or `/escalate`, or plan mode |
 | Implementation, refactors, tests, normal bug fixes, small designs, reviews | **Sonnet 5.5** | main session, or `implementer` / `reviewer` agent |
 | Searching, listing, reading many files, running tests/lint/build, log triage, summarising, formatting, trivial edits | **Haiku 5.5** | `scout` / `runner` agent, or `/quick` |
+| Figma match and responsive checks (compare, fix loop; returns text only, no images) | **Sonnet 5.5** | `visual-qa` agent, skill `figma-pixel-perfect` |
 
 Rules:
 
