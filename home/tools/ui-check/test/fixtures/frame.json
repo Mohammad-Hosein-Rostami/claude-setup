@@ -1,0 +1,91 @@
+{
+  "id": "1:1",
+  "name": "Card",
+  "type": "FRAME",
+  "layoutMode": "VERTICAL",
+  "itemSpacing": 99,
+  "paddingTop": 16,
+  "paddingRight": 16,
+  "paddingBottom": 16,
+  "paddingLeft": 16,
+  "cornerRadius": 8,
+  "absoluteBoundingBox": {
+    "x": 100,
+    "y": 200,
+    "width": 300,
+    "height": 120
+  },
+  "fills": [
+    {
+      "type": "SOLID",
+      "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+      }
+    }
+  ],
+  "children": [
+    {
+      "id": "1:2",
+      "name": "Title",
+      "type": "TEXT",
+      "characters": "Hello",
+      "absoluteBoundingBox": {
+        "x": 116,
+        "y": 216,
+        "width": 100,
+        "height": 24
+      },
+      "style": {
+        "fontFamily": "Inter",
+        "fontSize": 20,
+        "fontWeight": 600,
+        "lineHeightPx": 24,
+        "letterSpacing": -0.2
+      },
+      "fills": [
+        {
+          "type": "SOLID",
+          "color": {
+            "r": 0,
+            "g": 0,
+            "b": 0,
+            "a": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "1:3",
+      "name": "Hidden",
+      "type": "TEXT",
+      "visible": false,
+      "absoluteBoundingBox": {
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      }
+    },
+    {
+      "id": "1:4",
+      "name": "Body",
+      "type": "TEXT",
+      "characters": "Text",
+      "absoluteBoundingBox": {
+        "x": 116,
+        "y": 256,
+        "width": 268,
+        "height": 20
+      },
+      "style": {
+        "fontSize": 14,
+        "fontWeight": 400,
+        "lineHeightPx": 20,
+        "letterSpacing": 0
+      }
+    }
+  ]
+}
