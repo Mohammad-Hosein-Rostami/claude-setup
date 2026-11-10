@@ -1,4 +1,5 @@
-// Status line: model tier, effort, CONTEXT SIZE in tokens (what every tool call re-reads), cost, 5h usage.
+// Status line: model tier, effort, CONTEXT SIZE in tokens (what every tool call re-reads), cost,
+// and account usage windows (5h / 7d) with reset times from `rate_limits`.
 let raw = '';
 process.stdin.on('data', (c) => (raw += c));
 process.stdin.on('end', () => {
@@ -15,11 +16,60 @@ process.stdin.on('end', () => {
   // Cost per tool call scales with this number: green < 60k, yellow < 150k, red above.
   const color = tokens >= 150000 ? '31' : tokens >= 60000 ? '33' : '32';
   const cost = d.cost?.total_cost_usd;
-  const five = d.rate_limits?.five_hour?.used_percentage;
   const parts = [`${tier} ${name}${effort ? ` (${effort})` : ''}`, `\x1b[${color}mctx ${k}k\x1b[0m`];
   if (typeof cost === 'number') parts.push(`$${cost.toFixed(2)}`);
-  if (typeof five === 'number') parts.push(`5h ${Math.round(five)}%`);
+  const five = d.rate_limits?.five_hour;
+  // Claude Code omits five_hour when the server sends no data for it (claude-code#92081);
+  // then show ccusage's local 5h-block estimate (cost spent, reset time), never a fake percent.
+  parts.push(five ? usage('5h', five, false) : localBlock());
+  const week = d.rate_limits?.seven_day;
+  if (week) parts.push(usage('7d', week, true));
   if (tokens >= 150000) parts.push('\x1b[31m/clear before the next task\x1b[0m');
   else if (tokens >= 60000) parts.push('\x1b[33mlong ctx: batch calls\x1b[0m');
   console.log(parts.join(' │ '));
 });
+
+// ccusage takes ~10 s, too slow for every refresh: read a cached JSON, refresh it detached at most once a minute.
+const BLOCK_CACHE = `${process.env.HOME}/.claude/.ccusage-block.json`;
+const BLOCK_TTL_MS = 60_000;
+function localBlock() {
+  const fs = process.getBuiltinModule('node:fs');
+  let cached = null;
+  let age = Infinity;
+  try {
+    age = Date.now() - fs.statSync(BLOCK_CACHE).mtimeMs;
+    cached = JSON.parse(fs.readFileSync(BLOCK_CACHE, 'utf8')).blocks?.[0] ?? null;
+  } catch {
+    // no cache yet (or a half-written one): the refresh below creates it
+  }
+  if (age > BLOCK_TTL_MS) refreshBlock(fs);
+  if (!cached?.endTime) return '\x1b[2m5h …\x1b[0m';
+  const reset = fmtReset(Date.parse(cached.endTime) / 1000, false);
+  return `\x1b[36m5h blk $${(cached.costUSD ?? 0).toFixed(2)}\x1b[0m ↻${reset} \x1b[2m(est)\x1b[0m`;
+}
+
+function refreshBlock(fs) {
+  // Claim the refresh (bump mtime, or create an empty cache) so parallel renders don't stampede.
+  if (fs.existsSync(BLOCK_CACHE)) fs.utimesSync(BLOCK_CACHE, new Date(), new Date());
+  else fs.writeFileSync(BLOCK_CACHE, '{}');
+  const { spawn } = process.getBuiltinModule('node:child_process');
+  const cmd = `npx -y ccusage@latest blocks --active --json --offline > "${BLOCK_CACHE}.tmp" 2>/dev/null && mv "${BLOCK_CACHE}.tmp" "${BLOCK_CACHE}"`;
+  spawn('sh', ['-c', cmd], { detached: true, stdio: 'ignore' }).unref();
+}
+
+// "5h 62% left ↻14:40": percent LEFT (what you asked to see), colored by how little remains.
+// The window is absent until the first request in a fresh window reports it.
+function usage(label, win, withDay) {
+  const used = win?.used_percentage;
+  if (typeof used !== 'number') return `\x1b[2m${label} fresh\x1b[0m`;
+  const left = Math.max(0, 100 - Math.round(used));
+  const color = left <= 10 ? '31' : left <= 30 ? '33' : '32';
+  const reset = typeof win.resets_at === 'number' ? ` ↻${fmtReset(win.resets_at, withDay)}` : '';
+  return `\x1b[${color}m${label} ${left}% left\x1b[0m${reset}`;
+}
+
+function fmtReset(epochSeconds, withDay) {
+  const t = new Date(epochSeconds * 1000);
+  const hm = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  return withDay ? `${t.toLocaleDateString([], { weekday: 'short' })} ${hm}` : hm;
+}
