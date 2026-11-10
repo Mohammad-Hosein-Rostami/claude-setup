@@ -1,15 +1,15 @@
 # Purpose: install the portable Claude Code setup on Windows (PowerShell 5.1+ or 7).
-# Usage: powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-DryRun] [-NoPlugins]
+# Usage: powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-DryRun] [-NoPlugins] [-NoTools]
 # Invariants: never deletes; replaced items go to ~\.claude-backup-<stamp>\. Symlinks need Developer Mode;
 # otherwise items are copied and a warning is printed. Mirrors scripts/install.sh.
-param([switch]$DryRun, [switch]$NoPlugins)
+param([switch]$DryRun, [switch]$NoPlugins, [switch]$NoTools)
 $ErrorActionPreference = 'Stop'
 
 $Repo = Split-Path -Parent $PSScriptRoot
 $ClaudeDir = Join-Path $HOME '.claude'
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $BackupDir = Join-Path $HOME ".claude-backup-$Stamp"
-$Links = @('CLAUDE.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'statusline.mjs')
+$Links = @('CLAUDE.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'statusline.mjs')
 $Done = New-Object System.Collections.Generic.List[string]
 
 function Note($msg) { $Done.Add($msg); Write-Host "  $msg" }
@@ -66,6 +66,19 @@ function Build-Settings {
   Note 'wrote settings.json'
 }
 
+# Install ui-check's dependencies from its lockfile; plain install when there is none yet.
+function Install-ToolDeps {
+  $dir = Join-Path $ClaudeDir 'tools\ui-check'
+  $src = Join-Path $Repo 'home\tools\ui-check'
+  if ($DryRun) { Write-Host "[dry-run] install ui-check dependencies in $dir"; return }
+  if (-not (Test-Path $dir)) { Write-Warning "skip ui-check deps: $dir not found"; return }
+  if ((Test-Path (Join-Path $src 'pnpm-lock.yaml')) -and (Get-Command pnpm -ErrorAction SilentlyContinue)) { pnpm --dir $dir install --frozen-lockfile }
+  elseif (Test-Path (Join-Path $src 'package-lock.json')) { npm ci --prefix $dir }
+  else { npm install --prefix $dir --no-audit --no-fund }
+  if ($LASTEXITCODE -ne 0) { throw 'ui-check dependency install failed' }
+  Note 'ui-check dependencies'
+}
+
 function Install-Plugins {
   $claude = Get-Command claude -ErrorAction SilentlyContinue
   if (-not $claude) { Write-Host 'claude CLI not found. Manual: run /plugin and add the items in plugins\plugins.json.'; return }
@@ -91,6 +104,7 @@ try {
     if (-not $DryRun) { git -C $Repo config core.hooksPath .githooks }
     Note 'git hooksPath = .githooks'
   }
+  if (-not $NoTools) { Install-ToolDeps }
   if (-not $NoPlugins) { Install-Plugins }
 } catch {
   Write-Error "FAILED: $_`nAlready done:`n  $($Done -join "`n  ")"

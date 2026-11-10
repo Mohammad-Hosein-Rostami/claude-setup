@@ -11,7 +11,7 @@ bad() { echo "FAIL  $1"; BAD=1; }
 
 check_links() {
   local name
-  for name in CLAUDE.md rules skills agents standards hooks statusline.mjs; do
+  for name in CLAUDE.md rules skills agents standards hooks tools statusline.mjs; do
     if [ -L "$CLAUDE_DIR/$name" ] && [ "$(readlink "$CLAUDE_DIR/$name")" = "$REPO/home/$name" ]; then ok "link $name"
     else bad "link $name (re-run scripts/install.sh)"; fi
   done
@@ -45,5 +45,20 @@ check_tools() {
   done
 }
 
-check_links; check_settings; check_plugins; check_tools
+# ui-check: its dependencies resolve, and Playwright + Chromium are found from PROJECT (default: cwd).
+check_ui_check() {
+  local tool="$REPO/home/tools/ui-check" project="${DOCTOR_PROJECT:-$PWD}" dep
+  for dep in odiff-bin pngjs; do
+    if [ -d "$tool/node_modules/$dep" ]; then ok "ui-check dep $dep"; else bad "ui-check dep $dep (run scripts/install.sh)"; fi
+  done
+  if (cd "$project" && node --input-type=module -e "
+    import { loadChromium } from '$tool/lib/browser.mjs';
+    import fs from 'node:fs';
+    const path = loadChromium('.').executablePath();
+    if (!fs.existsSync(path)) { console.error('Chromium missing: ' + path); process.exit(1); }
+  " 2>/dev/null); then ok "playwright + chromium from $project"
+  else bad "playwright/chromium not found from $project (set DOCTOR_PROJECT; npx playwright install chromium)"; fi
+}
+
+check_links; check_settings; check_plugins; check_tools; check_ui_check
 exit "$BAD"

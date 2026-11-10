@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Purpose: install the portable Claude Code setup on macOS/Linux (also Git Bash on Windows).
-# Usage: scripts/install.sh [--dry-run] [--no-plugins]
+# Usage: scripts/install.sh [--dry-run] [--no-plugins] [--no-tools]
 # Invariants: never deletes; anything replaced in ~/.claude is moved to ~/.claude-backup-<stamp>/.
 set -euo pipefail
 
@@ -8,16 +8,18 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$HOME/.claude-backup-$STAMP"
-LINKS=(CLAUDE.md rules skills agents standards hooks statusline.mjs)
+LINKS=(CLAUDE.md rules skills agents standards hooks tools statusline.mjs)
 DRY_RUN=0
 WITH_PLUGINS=1
+WITH_TOOLS=1
 DONE=()
 
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     --no-plugins) WITH_PLUGINS=0 ;;
-    *) echo "unknown flag: $arg (use --dry-run, --no-plugins)" >&2; exit 2 ;;
+    --no-tools) WITH_TOOLS=0 ;;
+    *) echo "unknown flag: $arg (use --dry-run, --no-plugins, --no-tools)" >&2; exit 2 ;;
   esac
 done
 
@@ -97,6 +99,16 @@ install_plugins() {
   echo "Note: enabled/disabled state comes from settings.json enabledPlugins. gitkraken is installed by the GitKraken app."
 }
 
+# Install ui-check's dependencies (odiff-bin, pngjs) from its lockfile; falls back to a plain install without one.
+install_tool_deps() {
+  local dir="$CLAUDE_DIR/tools/ui-check"
+  if [ "$DRY_RUN" != 1 ] && [ ! -d "$dir" ]; then echo "skip ui-check deps: $dir not found" >&2; return; fi
+  if [ -f "$REPO/home/tools/ui-check/pnpm-lock.yaml" ] && command -v pnpm >/dev/null; then act pnpm --dir "$dir" install --frozen-lockfile
+  elif [ -f "$REPO/home/tools/ui-check/package-lock.json" ]; then act npm ci --prefix "$dir"
+  else act npm install --prefix "$dir" --no-audit --no-fund; fi
+  note "ui-check dependencies"
+}
+
 enable_hooks() {
   if [ -d "$REPO/.git" ]; then act git -C "$REPO" config core.hooksPath .githooks; note "git hooksPath = .githooks"; fi
 }
@@ -104,6 +116,7 @@ enable_hooks() {
 link_all
 build_settings
 enable_hooks
+if [ "$WITH_TOOLS" = 1 ]; then install_tool_deps; fi
 if [ "$WITH_PLUGINS" = 1 ]; then install_plugins; fi
 [ "$DRY_RUN" = 1 ] && echo "(dry-run: nothing changed)"
 summary
