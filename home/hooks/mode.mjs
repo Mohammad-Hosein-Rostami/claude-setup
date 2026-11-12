@@ -13,6 +13,7 @@
 // blocks (always exit 0); unreadable input produces no output; an unsafe session_id is never used in a path.
 // The lead model and effort of extra-high / ultra-high are set by `ccm` at launch; a hook cannot change them, so
 // the lead note only tells the user which `ccm` line to run.
+// The process key is computed lazily: `ps` runs only when the session file cannot answer or a mode is saved.
 // Windows has no `ps`, so there is no process key there and a /mode switch does not survive /clear.
 // Exports pure helpers for tests.
 import { execFileSync } from 'node:child_process';
@@ -135,11 +136,24 @@ function psLookup(pid) {
   }
 }
 
-/** State key for the owning claude process, or undefined (Windows has no `ps`: session id only). */
-function processKey() {
-  if (process.platform === 'win32') return undefined;
-  const pid = findOwnerPid(process.ppid, psLookup);
-  return pid === undefined ? undefined : `pid-${pid}`;
+/**
+ * Lazy state key for the owning claude process: `ps` runs only when the key is first asked for (so never when the
+ * session file answers) and the result is cached. Windows has no `ps`: the key is undefined (session id only).
+ * @returns {() => string | undefined} getter for `pid-<n>`, or undefined when there is no owner process.
+ */
+function lazyProcessKey() {
+  let computed = false;
+  let key;
+  return () => {
+    if (!computed) {
+      computed = true;
+      if (process.platform !== 'win32') {
+        const pid = findOwnerPid(process.ppid, psLookup);
+        key = pid === undefined ? undefined : `pid-${pid}`;
+      }
+    }
+    return key;
+  };
 }
 
 async function readPlaybook(mode) {
@@ -166,8 +180,8 @@ function launchMode() {
   return isMode(process.env.CLAUDE_MODE) ? process.env.CLAUDE_MODE : DEFAULT_MODE;
 }
 
-async function activeMode(sessionId, procKey) {
-  return (await readStateMode(sessionId)) || (await readStateMode(procKey)) || launchMode();
+async function activeMode(sessionId, getProcKey) {
+  return (await readStateMode(sessionId)) || (await readStateMode(getProcKey())) || launchMode();
 }
 
 async function pruneState() {
@@ -195,26 +209,26 @@ async function saveMode(mode, keys) {
   }
 }
 
-async function startMode(source, sessionId, procKey) {
-  if (!LAUNCH_ENV_SOURCES.includes(source)) return activeMode(sessionId, procKey);
+async function startMode(source, sessionId, getProcKey) {
+  if (!LAUNCH_ENV_SOURCES.includes(source)) return activeMode(sessionId, getProcKey);
   if (isMode(process.env.CLAUDE_MODE)) return process.env.CLAUDE_MODE;
   return (source === 'resume' && (await readStateMode(sessionId))) || DEFAULT_MODE;
 }
 
-async function onSessionStart(input, sessionId, procKey) {
-  const current = await startMode(input.source, sessionId, procKey);
-  await saveMode(current, [sessionId, procKey]);
+async function onSessionStart(input, sessionId, getProcKey) {
+  const current = await startMode(input.source, sessionId, getProcKey);
+  await saveMode(current, [sessionId, getProcKey()]);
   const launched = isMode(process.env.CLAUDE_MODE) ? process.env.CLAUDE_MODE : 'default';
   const note = leadNote({ mode: current, model: input.model, launchedAs: process.env.CLAUDE_MODE ?? '' });
   console.log(`Mode: ${current} (launched as ${launched})\n\n${await readPlaybook(current)}${note ? `\n\n${note}` : ''}`);
   await pruneState();
 }
 
-async function onExpansion(input, sessionId, procKey) {
+async function onExpansion(input, sessionId, getProcKey) {
   if (input.command_name !== 'mode') return;
   const target = parseModeArg(input.command_args);
   if (target === '') {
-    const current = await activeMode(sessionId, procKey);
+    const current = await activeMode(sessionId, getProcKey);
     console.log(`Active mode: ${current}. Switch with /mode ${MODES.join('|')}.`);
     return;
   }
@@ -222,8 +236,8 @@ async function onExpansion(input, sessionId, procKey) {
     console.log(USAGE);
     return;
   }
-  const previousMode = await activeMode(sessionId, procKey);
-  if (!sessionId || !(await saveMode(target, [sessionId, procKey]))) {
+  const previousMode = await activeMode(sessionId, getProcKey);
+  if (!sessionId || !(await saveMode(target, [sessionId, getProcKey()]))) {
     console.log(`Mode NOT switched: the state file could not be saved. Tell the user; the mode stays as it was.`);
     return;
   }
@@ -231,8 +245,8 @@ async function onExpansion(input, sessionId, procKey) {
   console.log(`Mode switched to ${target} (this session only).\n\n${await readPlaybook(target)}${note ? `\n\n${note}` : ''}`);
 }
 
-async function onPromptSubmit(sessionId, procKey) {
-  const current = await activeMode(sessionId, procKey);
+async function onPromptSubmit(sessionId, getProcKey) {
+  const current = await activeMode(sessionId, getProcKey);
   if (current !== DEFAULT_MODE) console.log(`Mode: ${current} - follow ~/.claude/modes/${current}.md`);
 }
 
@@ -249,14 +263,14 @@ async function main() {
   const sessionId = typeof id === 'string' && SESSION_ID_PATTERN.test(id) ? id : undefined;
   const event = input?.hook_event_name;
   if (!['SessionStart', 'UserPromptExpansion', 'UserPromptSubmit'].includes(event)) return;
-  const procKey = processKey();
+  const getProcKey = lazyProcessKey();
   switch (event) {
     case 'SessionStart':
-      return onSessionStart(input, sessionId, procKey);
+      return onSessionStart(input, sessionId, getProcKey);
     case 'UserPromptExpansion':
-      return onExpansion(input, sessionId, procKey);
+      return onExpansion(input, sessionId, getProcKey);
     case 'UserPromptSubmit':
-      return onPromptSubmit(sessionId, procKey);
+      return onPromptSubmit(sessionId, getProcKey);
     default:
       return;
   }

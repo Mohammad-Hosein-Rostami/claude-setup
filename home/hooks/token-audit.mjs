@@ -1,5 +1,5 @@
 // Prints approximate recurring token cost of the Claude config visible from cwd.
-// ~tokens = bytes / 4. Read-only.
+// ~tokens = bytes / 4. Read-only. A manual CLI (`node ~/.claude/hooks/token-audit.mjs`), not a hook event handler.
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -81,7 +81,12 @@ for (const [scope, root] of roots) {
 
 const mcp = tryRead(join(process.cwd(), '.mcp.json'));
 if (mcp) {
-  const servers = Object.keys(JSON.parse(mcp).mcpServers ?? {});
+  let servers = [];
+  try {
+    servers = Object.keys(JSON.parse(mcp).mcpServers ?? {});
+  } catch (error) {
+    console.warn(`warning: .mcp.json unreadable, MCP cost not counted: ${error.message}`);
+  }
   rows.push({ kind: 'mcp', path: servers.join(', '), bytes: servers.length * 400, lines: servers.length });
 }
 

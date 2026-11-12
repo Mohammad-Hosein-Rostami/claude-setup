@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { findOwnerPid, isMode, isStale, leadNote, parseModeArg } from '../home/hooks/mode.mjs';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -62,10 +63,10 @@ test('leadNote: normal, medium and high never produce a note', () => {
   assert.equal(leadNote({ mode: 'medium', previousMode: 'high' }), '');
 });
 
-const HOOK = new URL('../home/hooks/mode.mjs', import.meta.url).pathname;
+const HOOK = fileURLToPath(new URL('../home/hooks/mode.mjs', import.meta.url));
 
 function runHook(home, env, input) {
-  return spawnSync('node', [HOOK], { input: JSON.stringify(input), env: { ...process.env, HOME: home, USERPROFILE: home, ...env }, encoding: 'utf8' });
+  return spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), env: { ...process.env, HOME: home, USERPROFILE: home, ...env }, encoding: 'utf8' });
 }
 
 test('SessionStart and /mode leave settings.json untouched and record only the session state', async () => {
@@ -174,4 +175,14 @@ test('leadNote: a lead mode resumed without `ccm <mode>` asks for the launch lin
 test('leadNote: switching back into the mode this window was launched in needs no note', () => {
   assert.equal(leadNote({ mode: 'extra-high', previousMode: 'high', launchedAs: 'extra-high' }), '');
   assert.match(leadNote({ mode: 'extra-high', previousMode: 'high', launchedAs: 'high' }), /`ccm extra-high -c`/);
+});
+
+test('UserPromptSubmit does not spawn `ps` when the session file answers', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'mode-lazy-'));
+  const emptyBin = await mkdtemp(join(tmpdir(), 'mode-nobin-'));
+  await mkdir(join(home, '.claude', 'state', 'modes'), { recursive: true });
+  await writeFile(join(home, '.claude', 'state', 'modes', 's2'), 'high\n');
+  const result = runHook(home, { PATH: emptyBin }, { hook_event_name: 'UserPromptSubmit', session_id: 's2' });
+  assert.match(result.stdout, /Mode: high/);
+  assert.doesNotMatch(result.stderr, /ps failed/); // without lazy lookup, a missing `ps` would be reported here
 });

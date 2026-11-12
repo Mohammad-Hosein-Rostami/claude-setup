@@ -8,7 +8,7 @@ import { dirname, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const CODE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
-const SAFE_PATH = /^[\w@%+=:,./-]+$/;
+const SAFE_PATH = /^[\w@+=:,./-]+$/; // no `%`: cmd.exe expands %VAR%
 const MAX_LINES = 15;
 const BUDGET_MS = 18_000; // hook timeout is 20 s
 const FILE_SCRIPTS = ['format', 'lint']; // take the edited file after `--`
@@ -75,7 +75,9 @@ function toolFinder(dir) {
 }
 
 const TSC_LINE = /^(.+?)\((\d+),\d+\): (?:error|warning) (TS\d+): (.*)$/;
-const COLON_LINE = /^(.+?):(\d+)(?::\d+)?:? (?:(?:error|warning)\s+)?(.*)$/;
+// `path:line[:col]: message` (tsc --pretty false, eslint unix format); the lookahead keeps stylish rows out.
+const COLON_LINE = /^(?!\d+:)(.+?):(\d+)(?::\d+)?:? (?:(?:error|warning)\s+)?(.*)$/;
+const STYLISH_ROW = /^(\d+):\d+\s+(?:error|warning)\s+(.*)$/; // eslint default format row under a file header
 const RULE_SEPARATOR = /\s{2,}(?=\S+$)/; // eslint prints the rule id after two or more spaces
 
 /** "message  rule-id" -> "rule-id message"; messages without a rule id get the generic id LINT. */
@@ -84,32 +86,61 @@ function withRule(text) {
   return rule ? `${rule} ${message}` : `LINT ${text}`;
 }
 
-/** Failure output -> at most 15 `file:line RULE-ID message` lines about `file`; falls back to the raw tail. Pure. */
+const normPath = (p) => p.replace(/\\/g, '/').replace(/^\.\//, '');
+
+/** Whether a reported path is `target`: equal, or one is the other behind a `/` boundary (abs vs relative path). */
+export function isSamePath(reported, target) {
+  const p = normPath(reported);
+  const t = normPath(target);
+  return p === t || p.endsWith(`/${t}`) || t.endsWith(`/${p}`);
+}
+
+// An eslint stylish file header: a path-looking line without `:line`; pnpm's `> pkg@1 lint /dir` banner is not one.
+const isStylishHeader = (l) => !l.startsWith('>') && !/:\d+/.test(l) && (CODE_FILE.test(l) || /[\\/]/.test(l));
+
+/** One output line -> { path, text } for a `path:line message` diagnostic, or null; `header` is the stylish file in effect. */
+function parseDiagnostic(l, header) {
+  const t = TSC_LINE.exec(l);
+  if (t) return { path: t[1], text: `${t[2]} ${t[3]} ${t[4]}` };
+  const s = header ? STYLISH_ROW.exec(l) : null;
+  if (s) return { path: header, text: `${s[1]} ${withRule(s[2])}` };
+  const c = COLON_LINE.exec(l);
+  return c ? { path: c[1], text: `${c[2]} ${withRule(c[3])}` } : null;
+}
+
+/**
+ * Failure output (tsc, eslint stylish or unix format) -> at most 15 `file:line RULE-ID message` lines about `file`;
+ * falls back to the raw tail. Failures that only concern other files yield [] so they do not block. Pure.
+ */
 export function diagnostics(output, file) {
-  const norm = (p) => p.replace(/\\/g, '/').replace(/^\.\//, '');
-  const target = norm(file);
-  const aboutTarget = (p) => target.endsWith(norm(p)) || norm(p).endsWith(`/${target}`);
   const lines = output.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const found = [];
   let aboutOtherFiles = false;
+  let header = null;
   for (const l of lines) {
-    const t = TSC_LINE.exec(l);
-    const c = t ? null : COLON_LINE.exec(l);
-    const path = t?.[1] ?? c?.[1];
-    if (path === undefined) continue;
-    if (!aboutTarget(path)) aboutOtherFiles = true;
-    else if (t) found.push(`${norm(t[1])}:${t[2]} ${t[3]} ${t[4]}`);
-    else found.push(`${norm(c[1])}:${c[2]} ${withRule(c[3])}`);
+    const d = parseDiagnostic(l, header);
+    if (!d) {
+      if (isStylishHeader(l)) header = l;
+      continue;
+    }
+    if (isSamePath(d.path, file)) found.push(`${normPath(d.path)}:${d.text}`);
+    else aboutOtherFiles = true;
   }
-  // Failures only in other files are not this edit's problem: do not block on them.
   if (!found.length && aboutOtherFiles) return [];
   return (found.length ? found : lines.slice(-MAX_LINES)).slice(0, MAX_LINES);
 }
 
+// cmd.exe treats these specially even inside a path; one of them anywhere in the command needs quoting.
+const CMD_METACHARS = /[\s&|<>^()%!,;=]/;
+
+/** Command string for `spawnSync(..., { shell: true })`: quoted on Windows when it has cmd metacharacters. Pure. */
+export function shellCommand(cmd, platform = process.platform) {
+  return platform === 'win32' && CMD_METACHARS.test(cmd) ? `"${cmd}"` : cmd;
+}
+
 function runCheck(pm, check, cwd, timeout) {
   // Windows package managers are .cmd shims and need a shell; SAFE_PATH keeps `file` free of metacharacters.
-  const quote = process.platform === 'win32' && /\s/.test(check.cmd ?? '');
-  const cmd = quote ? `"${check.cmd}"` : (check.cmd ?? pm);
+  const cmd = shellCommand(check.cmd ?? pm);
   return spawnSync(cmd, check.args, { cwd, encoding: 'utf8', timeout, shell: process.platform === 'win32' });
 }
 
