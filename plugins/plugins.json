@@ -27,15 +27,22 @@
     "typescript-lsp@claude-plugins-official",
     "claude-code-setup@anthropic-plugin-directory",
     "figma@claude-plugins-official",
-    "chrome-devtools-mcp@claude-plugins-official",
-    "superdesign@anthropic-plugin-directory",
-    "miro@claude-plugins-official"
+    "chrome-devtools-mcp@claude-plugins-official"
   ],
   "disabled": [
     "superpowers@anthropic-plugin-directory",
     "kotlin-lsp@claude-plugins-official",
     "code-modernization@anthropic-plugin-directory",
     "swift-lsp@claude-plugins-official",
-    "clangd-lsp@claude-plugins-official"
-  ]
+    "clangd-lsp@claude-plugins-official",
+    "superdesign@anthropic-plugin-directory",
+    "miro@claude-plugins-official"
+  ],
+  "perProject": {
+    "note": "Off globally to keep the skill list short; enable in a project's .claude/settings.local.json under enabledPlugins.",
+    "miro@claude-plugins-official": [
+      "pejvak-frontend-nx-workspace (PC)"
+    ],
+    "superdesign@anthropic-plugin-directory": []
+  }
 }

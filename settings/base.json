@@ -85,8 +85,8 @@
     "chrome-devtools-mcp@claude-plugins-official": true,
     "kotlin-lsp@claude-plugins-official": false,
     "code-modernization@anthropic-plugin-directory": false,
-    "superdesign@anthropic-plugin-directory": true,
-    "miro@claude-plugins-official": true,
+    "superdesign@anthropic-plugin-directory": false,
+    "miro@claude-plugins-official": false,
     "swift-lsp@claude-plugins-official": false,
     "clangd-lsp@claude-plugins-official": false
   },
