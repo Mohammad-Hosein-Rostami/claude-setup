@@ -2,7 +2,8 @@
 // plugin skills, delegated subagents) the UI skills get skipped. This hook makes the choice deterministic.
 // UserPromptSubmit: prompt keywords -> names the skills to invoke (additionalContext, every matching prompt).
 // PostToolUse(Edit|Write|MultiEdit) on a UI file -> reminds once per session and agent (subagents included).
-// Never blocks: always exits 0; unparsable input produces no output.
+// Quiet (no output) when CLAUDE_SKILL_ROUTER=off or in a Gradle project without package.json (Android routing
+// lives in the personal per-project layer there). Never blocks: always exits 0; unparsable input produces no output.
 import { mkdirSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,6 +24,8 @@ const UI_FILE = /\.(tsx|jsx|vue|svelte|html|css|scss|sass|less)$/i;
 const NON_UI_FILE = /\.(test|spec|stories)\.\w+$/i;
 const SAFE_ID = /^[\w-]{1,128}$/;
 const STATE_DIR = join(tmpdir(), 'claude-skill-router');
+const OFF_ENV = 'CLAUDE_SKILL_ROUTER';
+const GRADLE_FILES = ['settings.gradle', 'settings.gradle.kts', 'build.gradle', 'build.gradle.kts'];
 
 /** Returns the skills a prompt calls for, in first-match order, without duplicates. */
 export function skillsForPrompt(prompt) {
@@ -38,7 +41,8 @@ function promptContext(prompt) {
   if (skills.length === 0) return null;
   return `Skill router: this request involves UI. Before writing UI code, invoke with the Skill tool: ${skills.join(', ')}` +
     ' (skip any already loaded in this context). A project skill with the same purpose whose paths match wins.' +
-    ' Delegate UI implementation to the `ui-implementer` agent (it preloads the UI skills), not `implementer`;' +
+    ' Delegate UI implementation to the `ui-implementer` agent, not `implementer`, and name these skills in the' +
+    ' delegation prompt (a project\'s own `ui-implementer` preloads only project skills);' +
     ' run `ui-quality-pass` before saying done.';
 }
 
@@ -61,7 +65,19 @@ function editContext(input) {
     ' `figma-pixel-perfect` when there is a Figma frame), and run `ui-quality-pass` before reporting done.';
 }
 
+/**
+ * True when the web UI routes do not apply: CLAUDE_SKILL_ROUTER=off, or a Gradle (Android/JVM) project without a
+ * package.json, where words like "screen" or "layout" mean Compose/XML and have their own skills.
+ */
+export function isQuiet(cwd, env = process.env) {
+  if (env[OFF_ENV] === 'off') return true;
+  if (!cwd) return false;
+  const has = (name) => existsSync(join(cwd, name));
+  return GRADLE_FILES.some(has) && !has('package.json');
+}
+
 function route(input) {
+  if (isQuiet(input.cwd)) return null;
   if (input.hook_event_name === 'UserPromptSubmit') return promptContext(String(input.prompt ?? ''));
   if (input.hook_event_name === 'PostToolUse') return editContext(input);
   return null;
