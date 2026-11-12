@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -185,4 +185,64 @@ test('UserPromptSubmit does not spawn `ps` when the session file answers', async
   const result = runHook(home, { PATH: emptyBin }, { hook_event_name: 'UserPromptSubmit', session_id: 's2' });
   assert.match(result.stdout, /Mode: high/);
   assert.doesNotMatch(result.stderr, /ps failed/); // without lazy lookup, a missing `ps` would be reported here
+});
+
+async function homeWithModes(files) {
+  const home = await mkdtemp(join(tmpdir(), 'mode-lead-'));
+  await mkdir(join(home, '.claude', 'modes'), { recursive: true });
+  for (const [name, text] of Object.entries(files)) await writeFile(join(home, '.claude', 'modes', name), text);
+  return home;
+}
+
+test('SessionStart prints _lead.md before the playbook, in every mode including medium', async () => {
+  const home = await homeWithModes({ '_lead.md': '# Lead rules\nLEAD-MARK\n', 'medium.md': 'MEDIUM-PLAYBOOK\n', 'high.md': 'HIGH-PLAYBOOK\n' });
+  for (const [mode, playbook] of [['medium', 'MEDIUM-PLAYBOOK'], ['high', 'HIGH-PLAYBOOK']]) {
+    const out = runHook(home, { CLAUDE_MODE: mode }, { hook_event_name: 'SessionStart', session_id: `l-${mode}`, source: 'startup' }).stdout;
+    assert.match(out, new RegExp(`^Mode: ${mode}`));
+    assert.ok(out.indexOf('LEAD-MARK') > -1 && out.indexOf('LEAD-MARK') < out.indexOf(playbook), `${mode}: lead rules must precede the playbook`);
+  }
+});
+
+test('SessionStart without _lead.md prints only the playbook and does not fail', async () => {
+  const home = await homeWithModes({ 'medium.md': 'MEDIUM-PLAYBOOK\n' });
+  const result = runHook(home, { CLAUDE_MODE: '' }, { hook_event_name: 'SessionStart', session_id: 'l-none', source: 'startup' });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /^Mode: medium \(launched as default\)\n\nMEDIUM-PLAYBOOK/);
+  assert.doesNotMatch(result.stderr, /_lead\.md/);
+});
+
+test('a /mode switch does not re-print _lead.md', async () => {
+  const home = await homeWithModes({ '_lead.md': 'LEAD-MARK\n', 'high.md': 'HIGH-PLAYBOOK\n' });
+  const out = runHook(home, {}, { hook_event_name: 'UserPromptExpansion', session_id: 'l-sw', command_name: 'mode', command_args: 'high' }).stdout;
+  assert.match(out, /HIGH-PLAYBOOK/);
+  assert.doesNotMatch(out, /LEAD-MARK/);
+});
+
+test('mode.mjs stays within the 300-line file limit', async () => {
+  assert.ok((await readFile(HOOK, 'utf8')).split('\n').length <= 300);
+});
+
+test('SessionStart prints _lead.md for resume, clear and compact too (it re-fires on each)', async () => {
+  const home = await homeWithModes({ '_lead.md': 'LEAD-MARK\n', 'medium.md': 'MEDIUM-PLAYBOOK\n' });
+  for (const source of ['startup', 'resume', 'clear', 'compact']) {
+    const out = runHook(home, { CLAUDE_MODE: 'medium' }, { hook_event_name: 'SessionStart', session_id: `src-${source}`, source }).stdout;
+    assert.match(out, /LEAD-MARK[\s\S]*MEDIUM-PLAYBOOK/, source);
+  }
+});
+
+// Hook output is injected into the lead's context; the CLI truncates large hook output, so the real files must fit.
+const MAX_HOOK_OUTPUT_CHARS = 9000;
+
+test('real _lead.md plus the longest playbook and a lead note stay under the hook output cap', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'mode-size-'));
+  await mkdir(join(home, '.claude'), { recursive: true });
+  await cp(fileURLToPath(new URL('../home/modes', import.meta.url)), join(home, '.claude', 'modes'), { recursive: true });
+  let longest = 0;
+  for (const mode of ['normal', 'medium', 'high', 'extra-high', 'ultra-high']) {
+    // A mismatched model forces the lead note into the output of the lead modes.
+    const out = runHook(home, { CLAUDE_MODE: mode }, { hook_event_name: 'SessionStart', session_id: `size-${mode}`, source: 'startup', model: 'claude-haiku-5-5' }).stdout;
+    longest = Math.max(longest, out.length);
+    assert.match(out, /Lead|lead/, `${mode}: lead rules present`);
+  }
+  assert.ok(longest > 0 && longest <= MAX_HOOK_OUTPUT_CHARS, `longest SessionStart output is ${longest} chars`);
 });

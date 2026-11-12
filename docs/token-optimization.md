@@ -4,7 +4,7 @@ Cost is tool calls x context size: every call re-reads the whole conversation. T
 
 | Lever | Where | Effect |
 | ----- | ----- | ------ |
-| Model routing | `home/CLAUDE.md`, `settings/base.json` (`model`) | The Opus session plans, decides and delegates; Sonnet agents implement and review; Haiku looks things up and runs commands; unpinned agents default to Sonnet (`CLAUDE_CODE_SUBAGENT_MODEL`) |
+| Model routing | `home/modes/_lead.md` (printed to the lead at SessionStart), `settings/base.json` (`model`) | The Opus session plans, decides and delegates; Sonnet agents implement and review; Haiku looks things up and runs commands. Unpinned `general-purpose` runs on Sonnet via `CLAUDE_CODE_SUBAGENT_MODEL`; the built-in `Explore` and `Plan` agents use the lead's model |
 | Effort per model | `settings/base.json` `modelSettings` | Opus high, Sonnet medium, Haiku low. Opus 5.5 at `medium` already beats Opus 5 at `high`; `xhigh`/`max` only for a measured gain |
 | Compaction | `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` (200000) | Compacts before context gets costly |
 | Short skill descriptions | `home/skills/*/SKILL.md` | Descriptions are loaded every session; bodies only when triggered |

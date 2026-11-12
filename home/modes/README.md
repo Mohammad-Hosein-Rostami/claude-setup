@@ -5,6 +5,7 @@ ultra-high (high plus lead Fable 5.2 at max). normal/medium/high change only par
 brevity; extra-high/ultra-high also change the lead and send important jobs to Opus at max. Each applies to one
 session only.
 
+- `_lead.md`: lead-only rules (modes, model routing, delegation), printed before the playbook at SessionStart.
 - `<mode>.md`: playbook injected into the session by `hooks/mode.mjs` (SessionStart and `/mode <m>`).
 - No settings layers: the mode is the per-session state file plus `CLAUDE_MODE`; nothing machine-wide
   is written. Subscription usage only.

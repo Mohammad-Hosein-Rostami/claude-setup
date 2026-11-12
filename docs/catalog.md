@@ -45,7 +45,7 @@ descriptions are quoted from their frontmatter; those descriptions are what make
 | `test-writer` | Use to write tests from a spec or acceptance criteria before or without reading the implementation, so tests do not confirm the code's own mistakes. | sonnet |
 | `visual-qa` | Use to check a built UI against its Figma baseline and at several widths with ui-check (compare, responsive), optionally fixing failures. Returns a short verdict, never images. | sonnet |
 
-Routing policy (which tier does what) is in `home/CLAUDE.md`: the Opus session leads and delegates. Agents without a `model` (general-purpose, Explore, Plan) run on Sonnet 5.5 via `env.CLAUDE_CODE_SUBAGENT_MODEL`; precedence is the Agent call's `model`, then frontmatter, then that env var.
+Routing policy (which tier does what) is in `home/modes/_lead.md` (injected into the lead session by `mode.mjs`): the Opus session leads and delegates. `general-purpose` (no `model`) runs on Sonnet 5.5 via `env.CLAUDE_CODE_SUBAGENT_MODEL`; the built-in Explore and Plan agents run on the lead's model (Opus); precedence is the Agent call's `model`, then frontmatter, then that env var.
 `architect`, `reviewer` and `security-auditor` have `memory: user` (notes in `~/.claude/agent-memory/<name>/`); `reviewer` and `security-auditor` stay read-only for project files through the `agent-memory-only.mjs` hook in their frontmatter.
 
 ## Rules (`home/rules/`, ids and checks)
@@ -85,7 +85,7 @@ Rules are one line each (`id | rule | check`) and load when a matching file is i
 | `post-edit.mjs` | PostToolUse(Edit, Write, MultiEdit) | Runs the project's own format, lint and typecheck scripts (only those present in the nearest `package.json`). A script that targets the whole repo (`prettier --write .`, `eslint .`, `nx run-many`) is replaced by the tool's binary on the edited file, or skipped for typecheck. Opt out per project with env `CLAUDE_POST_EDIT_SKIP` (`all` or `format,lint,typecheck`). Silent on success; on failure prints at most 15 lines and exits 2. |
 | `skill-router.mjs` | UserPromptSubmit; PostToolUse(Edit, Write, MultiEdit) | Names the UI skills to invoke from prompt keywords (EN/FA; accessibility needs a UI phrase such as "keyboard navigation", "focus ring" or "aria-label", not a bare "keyboard"); on the first UI-file edit per session and agent (subagents too) reminds to load `responsive-ui`, `accessibility-build` and run `ui-quality-pass`. Ignores prompts that are harness events (`<task-notification`, `<system-reminder`); bare words such as "step", "style", "field", "fetch", "submit" or "page" do not fire a route (the UI route needs a UI noun such as "component", "button", "css" or "page layout"; the async route needs "loading state", "skeleton", "pagination" and the like). Quiet with `CLAUDE_SKILL_ROUTER=off` or in a Gradle project without `package.json`. Never blocks. |
 | `agent-memory-only.mjs` | PreToolUse(Write, Edit, MultiEdit, NotebookEdit), wired in the `reviewer` and `security-auditor` frontmatter | Allows writes only under `~/.claude/agent-memory/`; denies everything else, including input it cannot read. |
-| `mode.mjs` | SessionStart; UserPromptExpansion (`/mode`); UserPromptSubmit | Setup modes (normal, medium, high, extra-high, ultra-high): injects the active mode's playbook at start (plus a lead note when an extra-high / ultra-high session was not launched with `ccm <mode>` or its model does not match), records `/mode <m>` per session in `~/.claude/state/modes/` (pruned after 14 days); never writes settings files; one reminder line per prompt when the mode is not medium. Never blocks. |
+| `mode.mjs` | SessionStart; UserPromptExpansion (`/mode`); UserPromptSubmit | Setup modes (normal, medium, high, extra-high, ultra-high): injects `modes/_lead.md` and the active mode's playbook at start (plus a lead note when an extra-high / ultra-high session was not launched with `ccm <mode>` or its model does not match), records `/mode <m>` per session in `~/.claude/state/modes/` (pruned after 14 days); never writes settings files; one reminder line per prompt when the mode is not medium. Never blocks. |
 | `token-audit.mjs` | not a hook; run by the `token-audit` skill | Prints the approximate recurring token cost (bytes / 4) of the config visible from the current directory (`paths:` and `description:` read only from the leading frontmatter; folded `>`/`|` descriptions supported). |
 
 `.githooks/pre-commit` (repo only): `gitleaks protect --staged --redact`; the installers set `core.hooksPath`.
@@ -94,6 +94,7 @@ Rules are one line each (`id | rule | check`) and load when a matching file is i
 
 | Item | Purpose |
 | ---- | ------- |
+| `modes/_lead.md` | Lead-only rules (modes, model routing, delegation); printed by `mode.mjs` at SessionStart before the playbook |
 | `modes/{normal,medium,high,extra-high,ultra-high}.md` | Playbooks injected by `mode.mjs` |
 | `bin/ccm` | Launcher `ccm [mode] [claude args]`: sets `CLAUDE_MODE`, plus the lead flags for extra-high (`--model opus --effort max`) and ultra-high (`--model fable --effort max`); no settings; linked to `~/.local/bin/ccm` by `install.sh`; `CCM_DRY_RUN=1` prints the command |
 
@@ -126,9 +127,9 @@ System CLIs (`tools/Brewfile`, `tools/windows-tools.ps1`): jq, ripgrep, gitleaks
 
 ## Plugins (`plugins/plugins.json`)
 
-Enabled: `gitkraken-hooks@gitkraken`, `frontend-design@anthropic-plugin-directory`, `code-review-anthropics@anthropic-plugin-directory`, `context7@anthropic-plugin-directory`, `skill-creator@anthropic-plugin-directory`, `code-simplifier@anthropic-plugin-directory`, `playwright@anthropic-plugin-directory`, `github@anthropic-plugin-directory`, `claude-md-management@anthropic-plugin-directory`, `typescript-lsp@claude-plugins-official`, `claude-code-setup@anthropic-plugin-directory`, `figma@claude-plugins-official`, `chrome-devtools-mcp@claude-plugins-official`. Off globally, enabled per project in `.claude/settings.local.json` (`enabledPlugins`): `superdesign@anthropic-plugin-directory`, `miro@claude-plugins-official`.
+Enabled: `gitkraken-hooks@gitkraken`, `frontend-design@anthropic-plugin-directory`, `code-review-anthropics@anthropic-plugin-directory`, `context7@anthropic-plugin-directory`, `skill-creator@anthropic-plugin-directory`, `code-simplifier@anthropic-plugin-directory`, `playwright@anthropic-plugin-directory`, `claude-md-management@anthropic-plugin-directory`, `typescript-lsp@claude-plugins-official`, `claude-code-setup@anthropic-plugin-directory`, `figma@claude-plugins-official`, `chrome-devtools-mcp@claude-plugins-official`. Off globally, enabled per project in `.claude/settings.local.json` (`enabledPlugins`): `superdesign@anthropic-plugin-directory`, `miro@claude-plugins-official`.
 
-Installed but disabled: `superpowers@anthropic-plugin-directory`, `kotlin-lsp@claude-plugins-official`, `code-modernization@anthropic-plugin-directory`, `swift-lsp@claude-plugins-official`, `clangd-lsp@claude-plugins-official`.
+Installed but disabled: `superpowers@anthropic-plugin-directory`, `github@anthropic-plugin-directory` (its MCP fails every start with 400; use the `gh` CLI), `kotlin-lsp@claude-plugins-official`, `code-modernization@anthropic-plugin-directory`, `swift-lsp@claude-plugins-official`, `clangd-lsp@claude-plugins-official`.
 
 Marketplaces: `anthropic-plugin-directory`, `claude-plugins-official`, `gitkraken`.
 
@@ -142,8 +143,8 @@ Marketplaces: `anthropic-plugin-directory`, `claude-plugins-official`, `gitkrake
 | `permissions.allow` | WebSearch, WebFetch |
 | `permissions.deny` | reading `.env*`, `pnpm-lock.yaml`, credentials files, `~/.ssh/**`, `~/.aws/**`, `*.pem`, `.npmrc` (Read and Bash patterns) |
 | `autoContinueAtUsageLimit` | true; a run continues past a usage limit |
-| `model` | `opus` (the session leads at effort high; see `home/CLAUDE.md`) |
-| `hooks` | PreToolUse(Bash) -> `pre-bash-guard.mjs`; UserPromptSubmit -> `skill-router.mjs`, `mode.mjs`; SessionStart, UserPromptExpansion -> `mode.mjs`; PostToolUse(Edit, Write, MultiEdit) -> `post-edit.mjs`, `skill-router.mjs` |
+| `model` | `opus` (the session leads at effort high; see `home/modes/_lead.md`) |
+| `hooks` | PreToolUse(Bash) -> `pre-bash-guard.mjs`; UserPromptSubmit -> `skill-router.mjs`, `mode.mjs`; SessionStart -> `mode.mjs` (+ `skill-router.mjs` on "compact"); UserPromptExpansion -> `mode.mjs`; PostToolUse(Edit, Write, MultiEdit) -> `post-edit.mjs`, `skill-router.mjs` |
 | `statusLine` | command: `statusline.mjs` |
 | `enabledPlugins` | plugin id -> true/false (mirrors `plugins/plugins.json`) |
 | `modelSettings` | effort per model: Opus 5.5 high, Sonnet 5.5 medium, Haiku 5.5 low |

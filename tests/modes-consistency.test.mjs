@@ -1,4 +1,4 @@
-// Consistency checks between the mode list in mode.mjs, the playbooks, ccm, docs/modes.md and home/CLAUDE.md
+// Consistency checks between the mode list in mode.mjs, the playbooks, ccm, docs/modes.md, home/CLAUDE.md and home/modes/_lead.md
 // (node:test, no dependencies). A mode added to MODES must show up everywhere or one of these tests fails.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,9 +16,9 @@ test('every mode has a playbook ending with the session-only line', () => {
   }
 });
 
-test('ccm, docs/modes.md and home/CLAUDE.md mention all five modes', () => {
+test('ccm, docs/modes.md, home/CLAUDE.md and home/modes/_lead.md mention all five modes', () => {
   assert.equal(MODES.length, 5);
-  for (const file of ['home/bin/ccm', 'docs/modes.md', 'home/CLAUDE.md']) {
+  for (const file of ['home/bin/ccm', 'docs/modes.md', 'home/CLAUDE.md', 'home/modes/_lead.md']) {
     const text = read(file);
     for (const mode of MODES) assert.ok(text.includes(mode), `${file} must mention ${mode}`);
   }

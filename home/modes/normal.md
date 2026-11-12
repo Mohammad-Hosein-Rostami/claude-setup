@@ -1,6 +1,6 @@
 # Mode: normal (thrift, so the week lasts)
 
-Same models per task, same lead effort, same quality gates as every mode (see CLAUDE.md). This mode only sets parallelism, workflows and report brevity.
+Same models per task, same lead effort, same quality gates as every mode (see the lead rules and CLAUDE.md). This mode only sets parallelism, workflows and report brevity.
 
 - Parallelism: up to 3 agents at once, based on need.
 - Workflows (a script that runs many agents in phases): only when the user asks for one in their message; up to 4 agents.

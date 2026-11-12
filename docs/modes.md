@@ -1,7 +1,7 @@
 # Modes
 
-Five setup modes trade parallelism, token thrift and lead strength against speed. Default is `medium` (the setup as `home/CLAUDE.md`
-describes it). Every session has its own mode; nothing a mode does touches machine-wide state or other sessions.
+Five setup modes trade parallelism, token thrift and lead strength against speed. Default is `medium` (the setup as `home/CLAUDE.md` and
+`home/modes/_lead.md` describe it). Every session has its own mode; nothing a mode does touches machine-wide state or other sessions.
 
 ## Launch
 
@@ -38,7 +38,7 @@ at max and to run `ccm <mode> -c` to return it to Opus 5.5 at high.
 
 ## Same in every mode
 
-Per-task model and effort (agent pins and the escalation rules in `home/CLAUDE.md`); the quality gates (tests,
+Per-task model and effort (agent pins and the escalation rules in `home/modes/_lead.md`); the quality gates (tests,
 `runner` checks, `reviewer`, `security-auditor`, `verify-done`). normal, medium and high keep the lead at Opus 5.5 at
 effort high and change only parallelism, workflows and report brevity; extra-high and ultra-high also change the lead
 and add the Opus-max escalations.
@@ -49,8 +49,8 @@ A workflow is a script that runs many agents in phases.
 
 | Mode | Lead (main session) | Important jobs | Parallel agents | Workflows | Reports |
 | ---- | ------------------- | -------------- | --------------- | --------- | ------- |
-| normal | Opus 5.5, effort high | pinned agents + CLAUDE.md escalations | up to 3 at once, based on need | only when you ask for one in your message; up to 4 agents | terse; `/compact` only when context is large; no speculative work |
-| medium | Opus 5.5, effort high | same | independent work in parallel | Claude may propose one and say roughly what it costs; starts only after you say yes; up to 9 agents | as `CLAUDE.md` |
+| normal | Opus 5.5, effort high | pinned agents + lead-rule escalations | up to 3 at once, based on need | only when you ask for one in your message; up to 4 agents | terse; `/compact` only when context is large; no speculative work |
+| medium | Opus 5.5, effort high | same | independent work in parallel | Claude may propose one and say roughly what it costs; starts only after you say yes; up to 9 agents | as the lead rules and `CLAUDE.md` |
 | high | Opus 5.5, effort high | same | wide fan-out: parallel research, one `deep-debugger` per hypothesis, test-writer + implementer, split parts, reviewer + security-auditor | Claude starts one itself for substantive multi-part tasks, no size limit | same short final answer as medium; detail goes to files |
 | extra-high | Opus 5.5, effort max | architecture/planning, hard or failed-once bugs, risky or final reviews, security audits, risky code, key decisions: agents with `model: "opus", effort: "max"` | as high | as high | as high |
 | ultra-high | Fable 5.2, effort max | as extra-high (Opus 5.5 at max) | as high | as high | as high |
@@ -72,5 +72,5 @@ the cap, or on Pro, it bills usage credits. Keep extra usage turned off in your 
 nothing can bill credits. When Fable's cap is reached the CLI reports the limit: exit and continue the same
 conversation with `ccm extra-high -c` (Opus still has the rest of your weekly limit).
 
-Files: `home/modes/` (playbooks), `home/bin/ccm`, `home/bin/ccm.ps1`, `home/hooks/mode.mjs`, `home/skills/mode`,
+Files: `home/modes/` (playbooks; `_lead.md` is the lead-only rules printed at SessionStart before the playbook), `home/bin/ccm`, `home/bin/ccm.ps1`, `home/hooks/mode.mjs`, `home/skills/mode`,
 `tests/mode.test.mjs`, `tests/ccm.test.mjs` (`node --test tests/*.test.mjs`).

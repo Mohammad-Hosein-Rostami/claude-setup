@@ -1,6 +1,7 @@
 // Setup-mode hook (normal | medium | high | extra-high | ultra-high). One script, dispatches on `hook_event_name`:
-//   SessionStart         -> prints the active mode and its playbook (plus a lead note when an extra-high / ultra-high
-//                           session was not launched with `ccm <mode>` or its model does not match); prunes stale state files.
+//   SessionStart         -> prints the active mode, the lead-only rules (modes/_lead.md; nothing when missing) and the
+//                           mode's playbook (plus a lead note when an extra-high / ultra-high session was not launched
+//                           with `ccm <mode>` or its model does not match); prunes stale state files.
 //   UserPromptExpansion  -> for `/mode <m>`: records the mode for this session, prints the playbook (plus a lead note
 //                           when the switch moves the lead to or from Opus max / Fable max).
 //   UserPromptSubmit     -> one reminder line when the active mode is not medium.
@@ -11,11 +12,10 @@
 // files are overwritten then, so a reused pid never inherits a mode. Otherwise active mode = session file ->
 // process file -> env CLAUDE_MODE -> medium. Stdout of these events is added to the model context. Invariants: never
 // blocks (always exit 0); unreadable input produces no output; an unsafe session_id is never used in a path.
-// The lead model and effort of extra-high / ultra-high are set by `ccm` at launch; a hook cannot change them, so
+// The lead model and effort of extra-high / ultra-high are set by `ccm` at launch (a hook cannot change them), so
 // the lead note only tells the user which `ccm` line to run.
-// The process key is computed lazily: `ps` runs only when the session file cannot answer or a mode is saved.
-// Windows has no `ps`, so there is no process key there and a /mode switch does not survive /clear.
-// Exports pure helpers for tests.
+// The process key is computed lazily (`ps` runs only when the session file cannot answer or a mode is saved); Windows
+// has no `ps`, so a /mode switch does not survive /clear there. Exports pure helpers for tests.
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -40,6 +40,7 @@ const PS_TIMEOUT_MS = 1000;
 const INIT_PID = 1;
 const CLAUDE_COMMAND = /^claude/;
 const LAUNCH_ENV_SOURCES = ['startup', 'resume']; // sources where the launch env picks the mode; clear/compact/fork continue the current one
+const LEAD_RULES_FILE = '_lead.md';
 
 const modesDir = () => join(homedir(), '.claude', 'modes');
 const stateDir = () => join(homedir(), '.claude', 'state', 'modes');
@@ -156,6 +157,19 @@ function lazyProcessKey() {
   };
 }
 
+/**
+ * The lead-only rules (`modes/_lead.md`). SessionStart output reaches only the lead session, so workers never see it.
+ * @returns {Promise<string>} the text, or '' when the file is missing or unreadable (never throws).
+ */
+async function readLeadRules() {
+  try {
+    return (await readFile(join(modesDir(), LEAD_RULES_FILE), 'utf8')).trim();
+  } catch (error) {
+    if (error.code !== 'ENOENT') process.stderr.write(`mode hook: cannot read ${LEAD_RULES_FILE}: ${error.message}\n`);
+    return '';
+  }
+}
+
 async function readPlaybook(mode) {
   try {
     return (await readFile(join(modesDir(), `${mode}.md`), 'utf8')).trimEnd();
@@ -220,7 +234,8 @@ async function onSessionStart(input, sessionId, getProcKey) {
   await saveMode(current, [sessionId, getProcKey()]);
   const launched = isMode(process.env.CLAUDE_MODE) ? process.env.CLAUDE_MODE : 'default';
   const note = leadNote({ mode: current, model: input.model, launchedAs: process.env.CLAUDE_MODE ?? '' });
-  console.log(`Mode: ${current} (launched as ${launched})\n\n${await readPlaybook(current)}${note ? `\n\n${note}` : ''}`);
+  const leadRules = await readLeadRules();
+  console.log(`Mode: ${current} (launched as ${launched})\n\n${leadRules ? `${leadRules}\n\n` : ''}${await readPlaybook(current)}${note ? `\n\n${note}` : ''}`);
   await pruneState();
 }
 
@@ -238,7 +253,7 @@ async function onExpansion(input, sessionId, getProcKey) {
   }
   const previousMode = await activeMode(sessionId, getProcKey);
   if (!sessionId || !(await saveMode(target, [sessionId, getProcKey()]))) {
-    console.log(`Mode NOT switched: the state file could not be saved. Tell the user; the mode stays as it was.`);
+    console.log('Mode NOT switched: the state file could not be saved. Tell the user; the mode stays as it was.');
     return;
   }
   const note = leadNote({ mode: target, previousMode, launchedAs: process.env.CLAUDE_MODE ?? '' });
@@ -271,8 +286,6 @@ async function main() {
       return onExpansion(input, sessionId, getProcKey);
     case 'UserPromptSubmit':
       return onPromptSubmit(sessionId, getProcKey);
-    default:
-      return;
   }
 }
 
