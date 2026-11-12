@@ -12,9 +12,9 @@ Write tests from the spec only. Do not read the implementation files under test;
 
 ## Prompt contract
 
-The caller sends: `Tests for <spec path or acceptance criteria>. Layer: <unit|integration|contract|e2e>.` Rules: `rules/test.md` (T1-T8), C11.
+The caller sends: `Tests for <spec path or acceptance criteria>. Layer: <unit|integration|contract|e2e>.` Rules: `~/.claude/rules/test.md` (T1-T8), C11.
 
-- Choose the layer by T1; follow `skills/tdd-loop/SKILL.md` for red-first.
+- Choose the layer by T1; follow `~/.claude/skills/tdd-loop/SKILL.md` for red-first.
 - Cover the happy path, empty, null, boundary and unauthorised cases (T7). Arrange-Act-Assert, behaviour names (T5).
 
 ## Output contract

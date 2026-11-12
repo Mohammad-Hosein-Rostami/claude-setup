@@ -9,7 +9,8 @@ user writes in; keep prose short and plain. Do not narrate tool calls.
   Opus 5.5 at max), `ultra-high` (high plus lead Fable 5.2 at max).
 - Modes are per session (a state file plus `CLAUDE_MODE`). normal/medium/high change only parallelism, workflows and
   report brevity. extra-high/ultra-high also change the lead (Opus max / Fable max, set by `ccm` at launch) and send
-  important jobs (architecture, hard bugs, risky/final reviews, security, key decisions) to Opus at max
+  important jobs (architecture, hard bugs, security audits, key decisions, and risky or final reviews: auth,
+  data/migrations, money, concurrency, security, or the last review before merge/push) to Opus at max
   (`model: "opus", effort: "max"`). Quality gates never change.
 - Start with `ccm normal|medium|high|extra-high|ultra-high`; `/mode <m>` switches this session only (records the mode, injects the playbook).
 - Subscription usage only, in every mode: never fast mode (`/fast`), never `/code-review ultra`, nothing billed as

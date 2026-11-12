@@ -4,6 +4,9 @@ Goal: exact at each Figma frame size, valid by invariants at every width in betw
 screenshots in the model's context. Skill: `figma-pixel-perfect`. Rules and tolerances: `home/standards/figma.md`.
 Tool: `home/tools/ui-check/` (README beside it). Agent for the loop: `visual-qa`.
 
+Commands assume bash (Git Bash on Windows, which Claude Code's Bash tool uses). In PowerShell use `$env:FIGMA_TOKEN='...'`,
+`node "$HOME\.claude\tools\ui-check\cli.mjs"` and `$HOME\.cache\figma\...` for `--cache`.
+
     UI="node ~/.claude/tools/ui-check/cli.mjs"
 
 ## 1. Pull the baseline (once per frame)

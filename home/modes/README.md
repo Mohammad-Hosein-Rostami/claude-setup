@@ -8,6 +8,6 @@ session only.
 - `<mode>.md`: playbook injected into the session by `hooks/mode.mjs` (SessionStart and `/mode <m>`).
 - No settings layers: the mode is the per-session state file plus `CLAUDE_MODE`; nothing machine-wide
   is written. Subscription usage only.
-- Read by `home/bin/ccm` (launcher, sets the lead flags) and `home/hooks/mode.mjs` (hook). Linked as `~/.claude/modes`.
+- Read by `home/bin/ccm` and `home/bin/ccm.ps1` (launchers, set the lead flags) and `home/hooks/mode.mjs` (hook). Linked as `~/.claude/modes`.
 
 How to use: [docs/modes.md](../../docs/modes.md).

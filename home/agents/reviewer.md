@@ -22,7 +22,7 @@ The caller sends: `Review <diff or files>. Rules: <subset>.` where the subset is
 (e.g. `core+backend`) or explicit ids (`C1 C9 B3`). Without a `Rules:` line, review `core` only.
 
 - Read `git diff <base>...HEAD` (or the files named).
-- Check only the rules in the subset: read `rules/<domain>.md` for those domains. Read
+- Check only the rules in the subset: read `~/.claude/rules/<domain>.md` for those domains. Read
   `~/.claude/standards/<file>.md` only for ids you need an example of.
 - Check rules whose check column says `rev`. Ignore what linters, tsc and the hooks already cover.
 - Migrations (`Rules: core+db`): also check lock risk (say "unknown" without table row counts), reversibility, and that code works with both old and new schema during deploy. Never run a migration against a real database. End with `verdict: block|approve-with-fixes|approve`.

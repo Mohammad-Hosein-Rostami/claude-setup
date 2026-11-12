@@ -18,8 +18,8 @@ descriptions are quoted from their frontmatter; those descriptions are what make
 | `frontend-performance` | Use when a page is slow, heavy or janky, or when adding images, fonts, libraries or routes - Core Web Vitals, bundles, rendering. | session model |
 | `frontend-security` | Use when rendering user content, handling tokens, loading third-party scripts, or touching cookies, CORS or CSP in a web app. | session model |
 | `mode` | Switch this session's setup mode: normal (thrift), medium (default, balanced), high (full speed), extra-high (lead Opus 5.5 at max) or ultra-high (lead Fable 5.2 at max). (manual only: slash command) | session model |
-| `handoff` | Write a compact handoff note so work can continue in a fresh session after /clear. Use at a phase change, before /clear, or when the user says handoff or continue later. (manual only: slash command) | sonnet |
-| `quick` | Run a simple lookup or mechanical task on Haiku 5.5 in an isolated fork - find, list, summarise, run-and-report. | haiku |
+| `handoff` | Write a compact handoff note so work can continue in a fresh session after /clear. Use at a phase change, before /clear, or when the user says handoff or continue later. (manual only: slash command) | inherit |
+| `quick` | Run a simple lookup or mechanical task on Haiku 5.5 in an isolated fork - find, list, read and summarise (read-only, no commands). | haiku |
 | `responsive-ui` | Use when building or changing any page, screen, step or component layout (.tsx/.jsx/.vue/.css/.scss, MUI sx/styled, Tailwind), even a small UI tweak - mobile-first, breakpoints, container queries, touch targets, overflow at 320px, reflow. | session model |
 | `root-cause-debug` | Use for a bug, failing or flaky test, red CI or unexpected behaviour, before proposing any fix. | session model |
 | `safe-refactor` | Use when restructuring code without changing behaviour, including renames, extractions and moves. | session model |
@@ -53,7 +53,7 @@ Routing policy (which tier does what) is in `home/CLAUDE.md`: the Opus session l
 | File | Applies to | Ids |
 | ---- | ---------- | --- |
 | `core.md` | always on | C1-C29 |
-| `ui.md` | `**/*.css`, `**/*.tsx`, `**/styles/**`, `**/tokens/**` | U1-U12 |
+| `ui.md` | `**/*.css`, `**/*.scss`, `**/*.tsx`, `**/*.jsx`, `**/*.vue`, `**/*.html`, `**/styles/**`, `**/tokens/**` | U1-U12 |
 | `frontend.md` | `**/*.tsx`, `**/components/**` | F1-F10 |
 | `backend.md` | `**/server/**`, `**/api/**`, `**/*.service.ts`, `**/routes/**` | S1-S11, B1-B10 |
 | `db.md` | `**/migrations/**`, `**/*.sql`, `**/schema.*`, `**/prisma/**` | D1-D7 |

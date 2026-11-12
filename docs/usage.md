@@ -14,7 +14,7 @@ Keep every file valid at each commit: the files are live in every Claude session
    `handoff`, `token-audit`), which describe the command instead. Optional: `model`, `disable-model-invocation: true`
    for slash-command-only skills.
 2. Body: numbered steps, a done-gate, rule ids it enforces; link a `standards/` file instead of inlining long reference.
-3. Add the row to `docs/catalog.md` (rerun the extraction or edit by hand).
+3. Add the row to `docs/catalog.md` (edit by hand, copying the description verbatim from the frontmatter).
 
 ## Add an agent
 `home/agents/<name>.md` with frontmatter `name`, `description` ("Use to ..."), `model` (alias `haiku`, `sonnet` or `opus`, or a full id such as `claude-opus-5-5`), `effort`,

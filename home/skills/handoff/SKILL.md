@@ -2,7 +2,6 @@
 name: handoff
 description: Write a compact handoff note so work can continue in a fresh session after /clear. Use at a phase change, before /clear, or when the user says handoff or continue later.
 disable-model-invocation: true
-model: sonnet
 effort: low
 ---
 

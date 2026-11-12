@@ -16,7 +16,11 @@ describes it). Every session has its own mode; nothing a mode does touches machi
 A first word that is neither a mode nor a flag is an error (typo guard); to pass a prompt, name the mode first:
 `ccm medium "fix the login bug"`. It passes no settings.
 `CCM_DRY_RUN=1 ccm high` prints the command instead of running it. `scripts/install.sh` links `ccm` to
-`~/.local/bin/ccm` (bash only; not linked on Windows).
+`~/.local/bin/ccm` (macOS, Linux and Git Bash, where it is copied; keep `~/.local/bin` on PATH).
+
+Windows: in Git Bash run `ccm <mode>` as above. In PowerShell or cmd run `ccm <mode>` (resolved to `ccm.cmd`, which needs no execution-policy change);
+`scripts\install.ps1` installs `ccm.cmd` in `~/.claude/bin` (on the user PATH) and `ccm.ps1` in `~/.claude/bin/ps/` (not on PATH, so PowerShell resolves `ccm` to the shim; new terminals see the PATH).
+It behaves the same, including `CCM_DRY_RUN=1`.
 
 ## Switch in a session
 
@@ -45,11 +49,14 @@ A workflow is a script that runs many agents in phases.
 
 | Mode | Lead (main session) | Important jobs | Parallel agents | Workflows | Reports |
 | ---- | ------------------- | -------------- | --------------- | --------- | ------- |
-| normal | Opus 5.5, effort high | pinned agents + CLAUDE.md escalations | up to 3 at once, based on need | only when you ask for one in your message; up to 4 agents | terse; `/compact` at every seam; no speculative work |
+| normal | Opus 5.5, effort high | pinned agents + CLAUDE.md escalations | up to 3 at once, based on need | only when you ask for one in your message; up to 4 agents | terse; `/compact` only when context is large; no speculative work |
 | medium | Opus 5.5, effort high | same | independent work in parallel | Claude may propose one and say roughly what it costs; starts only after you say yes; up to 9 agents | as `CLAUDE.md` |
-| high | Opus 5.5, effort high | same | wide fan-out: parallel research, one `deep-debugger` per hypothesis, test-writer + implementer, split parts, reviewer + security-auditor | Claude starts one itself for substantive multi-part tasks, no size limit | not capped |
+| high | Opus 5.5, effort high | same | wide fan-out: parallel research, one `deep-debugger` per hypothesis, test-writer + implementer, split parts, reviewer + security-auditor | Claude starts one itself for substantive multi-part tasks, no size limit | same short final answer as medium; detail goes to files |
 | extra-high | Opus 5.5, effort max | architecture/planning, hard or failed-once bugs, risky or final reviews, security audits, risky code, key decisions: agents with `model: "opus", effort: "max"` | as high | as high | as high |
 | ultra-high | Fable 5.2, effort max | as extra-high (Opus 5.5 at max) | as high | as high | as high |
+
+A risky or final review means auth, data or migrations, money, concurrency, security, and the last review before a
+merge or push. In extra-high and ultra-high these go to Opus at max.
 
 Choosing `ccm high|extra-high|ultra-high` or `/mode` with one of them is your standing request for workflows. If
 Claude still asks first, answer "use a workflow" once.
@@ -65,5 +72,5 @@ the cap, or on Pro, it bills usage credits. Keep extra usage turned off in your 
 nothing can bill credits. When Fable's cap is reached the CLI reports the limit: exit and continue the same
 conversation with `ccm extra-high -c` (Opus still has the rest of your weekly limit).
 
-Files: `home/modes/` (playbooks), `home/bin/ccm`, `home/hooks/mode.mjs`, `home/skills/mode`,
+Files: `home/modes/` (playbooks), `home/bin/ccm`, `home/bin/ccm.ps1`, `home/hooks/mode.mjs`, `home/skills/mode`,
 `tests/mode.test.mjs`, `tests/ccm.test.mjs` (`node --test tests/*.test.mjs`).

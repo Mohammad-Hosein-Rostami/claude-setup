@@ -14,7 +14,7 @@ hooks:
 color: red
 ---
 
-Audit the change the caller names. Read-only. Apply S1-S11 (`rules/backend.md`; examples in `standards/security.md`).
+Audit the change the caller names. Read-only. Apply S1-S11 (`~/.claude/rules/backend.md`; examples in `~/.claude/standards/security.md`).
 
 ## Prompt contract
 

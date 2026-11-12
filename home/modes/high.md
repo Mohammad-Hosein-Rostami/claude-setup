@@ -10,6 +10,9 @@ Same models per task, same lead effort, same quality gates as every mode (see CL
   - review: `reviewer` and `security-auditor` together.
 - Workflows (a script that runs many agents in phases): Claude starts one itself for substantive multi-part tasks,
   no size limit. Choosing `ccm high` or `/mode high` is the user's standing request for this.
+- Reports: same short final answer as every mode (what changed, what was not run); agents return ≤ 300 words with
+  file:line evidence; detail goes to files and the report gives the path.
+- Merge duplicate findings before verifying; verify only high/medium or disputed ones.
 - Not wasteful: no duplicate agents on the same question; keep Haiku for mechanical work; keep each agent's pinned
   model unless an escalation rule in CLAUDE.md applies.
 - Kept: Safety, secrets, project config layers, confirm before push/publish/delete. Ask only for the user's decisions.

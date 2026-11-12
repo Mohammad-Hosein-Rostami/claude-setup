@@ -13,6 +13,8 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
 | `home/hooks`, `home/statusline.mjs` | Bash guard, post-edit checks, token audit, status line |
 | `home/tools/ui-check` | Figma baseline pull, visual compare, responsive and column checks |
 | `settings/`, `plugins/` | Settings layers (base, OS, local) and the plugin list |
+| `home/modes`, `home/bin/ccm` | Mode playbooks and the `ccm` launcher (`ccm.cmd` / `ccm.ps1` on Windows) |
+| `tests/`, `tools/`, `.githooks` | Repo tests (`node:test`), Brewfile and Windows tool script, pre-commit (gitleaks, tests) |
 | `scripts/` | `install.sh`, `install.ps1`, `doctor.sh`, `merge-settings.jq` |
 
 ## Quick start
@@ -20,7 +22,15 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
     scripts/install.sh               # links, settings.json, ui-check deps, plugins
     scripts/doctor.sh                # read-only health report
 
-Windows: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1`. Existing targets are moved to
+Launch a mode: `ccm [normal|medium|high|extra-high|ultra-high]` (see [docs/modes.md](docs/modes.md)).
+
+Run tests (the second needs the ui-check deps that `install.sh` installs):
+
+    node --test tests/*.test.mjs
+    pnpm --dir home/tools/ui-check test
+
+Windows: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1`. It also puts `ccm.cmd` and `ccm.ps1` in `~/.claude/bin` and adds that folder to your user PATH. Needs git (Git for Windows).
+Existing targets are moved to
 `~/.claude-backup-<stamp>/`, never deleted. A gitleaks pre-commit hook guards commits.
 
 Pixel-exact Figma work: pull once, build, compare, fix, check responsive:

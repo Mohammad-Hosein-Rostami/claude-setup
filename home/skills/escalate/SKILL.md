@@ -11,5 +11,6 @@ argument-hint: <design question or hard bug>
 
 Decide: $ARGUMENTS
 
-Give a decision with rationale, the minimal change list, and acceptance checks - ≤ 40
-lines. Write it to `plans/<slug>.md` only if the caller asked for a file. Do not implement.
+Follow your output contract: a decision with rationale, the minimal change list and acceptance checks. Return it
+inline, ≤ 40 lines. Write `plans/<slug>.md` only when the caller gives a path or asks for a file; then return the
+path plus a ≤ 5 line summary. Do not implement.

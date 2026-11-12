@@ -25,7 +25,7 @@ Tool: `node ~/.claude/tools/ui-check/cli.mjs <cmd>` (README beside it). Never pr
 6. **Responsive.** `responsive --url URL --widths <defaults>,<frame widths>`; fix findings per `responsive-ui`.
    Tables: `columns --url URL --table SEL`.
 
-Delegate steps 4-6 to the `visual-qa` agent when the main context is large: it returns at most 20 lines.
+In the main session (a subagent cannot delegate), delegate steps 4-6 to the `visual-qa` agent when the main context is large: it returns at most 20 lines.
 
 Done-gate: `compare` PASS (or remaining rows listed with causes), `responsive` PASS or findings listed, commands
 and verdict lines quoted; then `verify-done`.
