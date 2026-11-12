@@ -3,7 +3,7 @@
 // `nx run-many`) is replaced by the tool's binary on the edited file, or skipped; CLAUDE_POST_EDIT_SKIP opts out.
 // Silent on success; on failure prints at most 15 `file:line RULE-ID message` lines to stderr and exits 2. Never evaluates hook input; on Windows (shell on) the relative path must look safe.
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -164,4 +164,5 @@ async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
+// ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) await main();

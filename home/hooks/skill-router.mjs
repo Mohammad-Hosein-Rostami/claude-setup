@@ -4,7 +4,7 @@
 // PostToolUse(Edit|Write|MultiEdit) on a UI file -> reminds once per session and agent (subagents included).
 // Quiet (no output) when CLAUDE_SKILL_ROUTER=off or in a Gradle project without package.json (Android routing
 // lives in the personal per-project layer there). Never blocks: always exits 0; unparsable input produces no output.
-import { mkdirSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdirSync, existsSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -98,4 +98,5 @@ async function main() {
   process.stdout.write(JSON.stringify({ hookSpecificOutput }));
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) await main();
+// ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) await main();

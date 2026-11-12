@@ -3,6 +3,7 @@
 // Anything else (and any input it cannot parse) is allowed. Deny = exit 2 + reason on stderr.
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const TOKEN = /"([^"]*)"|'([^']*)'|(&&|\|\||;|\||\n)|([^\s;|&]+|&)/g;
@@ -151,4 +152,5 @@ async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
+// ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) await main();
