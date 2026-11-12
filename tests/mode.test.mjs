@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { findOwnerPid, isMode, isStale, parseModeArg } from '../home/hooks/mode.mjs';
+import { findOwnerPid, isMode, isStale, leadNote, parseModeArg } from '../home/hooks/mode.mjs';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -15,8 +15,15 @@ test('parseModeArg takes the first word, lowercased', () => {
   assert.equal(parseModeArg(undefined), '');
 });
 
-test('isMode accepts only the three modes', () => {
-  assert.ok(isMode('normal') && isMode('medium') && isMode('high'));
+test('parseModeArg joins words into extra-high / ultra-high and ignores case', () => {
+  assert.equal(parseModeArg('extra high'), 'extra-high');
+  assert.equal(parseModeArg('  Extra   HIGH '), 'extra-high');
+  assert.equal(parseModeArg('ULTRA-HIGH'), 'ultra-high');
+  assert.equal(parseModeArg('high extra'), 'high');
+});
+
+test('isMode accepts only the five modes', () => {
+  assert.ok(['normal', 'medium', 'high', 'extra-high', 'ultra-high'].every(isMode));
   assert.ok(!isMode('bogus') && !isMode(undefined) && !isMode(''));
 });
 
@@ -24,6 +31,35 @@ test('isStale flips after 14 days', () => {
   const now = Date.now();
   assert.equal(isStale(now - 13 * MS_PER_DAY, now), false);
   assert.equal(isStale(now - 15 * MS_PER_DAY, now), true);
+});
+
+test('leadNote: model mismatch at session start asks for the ccm launch line', () => {
+  assert.match(leadNote({ mode: 'extra-high', model: 'claude-sonnet-5-5' }), /`ccm extra-high -c`.*Opus 5\.5 at max effort.*avoid `\/model`/);
+  assert.match(leadNote({ mode: 'ultra-high', model: 'claude-opus-5-5' }), /`ccm ultra-high -c`.*Fable 5\.2 at max effort/);
+});
+
+test('leadNote: a matching or unknown model at session start says nothing', () => {
+  assert.equal(leadNote({ mode: 'extra-high', model: 'claude-opus-5-5' }), '');
+  assert.equal(leadNote({ mode: 'ultra-high', model: 'claude-fable-5-2' }), '');
+  assert.equal(leadNote({ mode: 'ultra-high' }), '');
+  assert.equal(leadNote({ mode: 'extra-high', model: 'claude-opus-5-5', launchedAs: 'extra-high' }), '');
+});
+
+test('leadNote: a /mode switch into a lead mode always notes, even without a model', () => {
+  assert.match(leadNote({ mode: 'extra-high', previousMode: 'high' }), /`ccm extra-high -c`/);
+  assert.match(leadNote({ mode: 'ultra-high', previousMode: 'extra-high' }), /`ccm ultra-high -c`/);
+  assert.equal(leadNote({ mode: 'extra-high', previousMode: 'extra-high' }), '');
+});
+
+test('leadNote: switching down from a lead mode says the lead is still at max', () => {
+  assert.match(leadNote({ mode: 'high', previousMode: 'extra-high' }), /still Opus 5\.5 at max.*`ccm high -c`.*Opus 5\.5 at high/);
+  assert.match(leadNote({ mode: 'medium', previousMode: 'ultra-high' }), /still Fable 5\.2 at max.*`ccm medium -c`/);
+});
+
+test('leadNote: normal, medium and high never produce a note', () => {
+  assert.equal(leadNote({ mode: 'high', model: 'claude-sonnet-5-5' }), '');
+  assert.equal(leadNote({ mode: 'normal', previousMode: 'medium' }), '');
+  assert.equal(leadNote({ mode: 'medium', previousMode: 'high' }), '');
 });
 
 const HOOK = new URL('../home/hooks/mode.mjs', import.meta.url).pathname;
@@ -113,4 +149,29 @@ test('an unsafe session_id is never used as a file name', async () => {
   assert.match(out.stdout, /Mode NOT switched/);
   await assert.rejects(readFile(join(home, '.claude', 'state', 'evil'), 'utf8'));
   await assert.rejects(readFile(join(home, '.claude', 'state', 'modes', '..', 'evil'), 'utf8'));
+});
+
+test('/mode ultra-high writes the state and prints the playbook and the lead note', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
+  const out = runHook(home, { CLAUDE_MODE: 'medium' }, { hook_event_name: 'UserPromptExpansion', session_id: 'u1', command_name: 'mode', command_args: 'ultra high' });
+  assert.equal((await readFile(join(home, '.claude', 'state', 'modes', 'u1'), 'utf8')).trim(), 'ultra-high');
+  assert.match(out.stdout, /Mode switched to ultra-high \(this session only\)\./);
+  assert.match(out.stdout, /`ccm ultra-high -c`/);
+});
+
+test('SessionStart adds the lead note only when the session model mismatches', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
+  const start = (model) => runHook(home, { CLAUDE_MODE: 'extra-high' }, { hook_event_name: 'SessionStart', session_id: 'm1', source: 'startup', model }).stdout;
+  assert.match(start('claude-sonnet-5-5'), /^Mode: extra-high[\s\S]*`ccm extra-high -c`/);
+  assert.doesNotMatch(start('claude-opus-5-5'), /ccm extra-high -c/);
+});
+
+test('leadNote: a lead mode resumed without `ccm <mode>` asks for the launch line (effort is not visible)', () => {
+  assert.match(leadNote({ mode: 'extra-high', model: 'claude-opus-5-5', launchedAs: '' }), /`ccm extra-high -c`/);
+  assert.match(leadNote({ mode: 'ultra-high', model: 'claude-fable-5-2', launchedAs: 'high' }), /`ccm ultra-high -c`/);
+});
+
+test('leadNote: switching back into the mode this window was launched in needs no note', () => {
+  assert.equal(leadNote({ mode: 'extra-high', previousMode: 'high', launchedAs: 'extra-high' }), '');
+  assert.match(leadNote({ mode: 'extra-high', previousMode: 'high', launchedAs: 'high' }), /`ccm extra-high -c`/);
 });

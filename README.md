@@ -33,7 +33,7 @@ Pixel-exact Figma work: pull once, build, compare, fix, check responsive:
 - [Daily use](docs/usage.md): edit, commit, push, pull; add a skill, agent, rule or tool
 - [Catalog](docs/catalog.md): every skill, agent, rule, standard, hook, tool, plugin and settings key
 - [Figma pixel-perfect workflow](docs/figma-pixel-perfect.md): exact commands and an example `map.json`
-- [Modes](docs/modes.md): `ccm normal|medium|high` and `/mode <m>`
+- [Modes](docs/modes.md): `ccm normal|medium|high|extra-high|ultra-high` and `/mode <m>`
 - [Token optimisation](docs/token-optimization.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [ui-check README](home/tools/ui-check/README.md)

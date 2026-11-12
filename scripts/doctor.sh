@@ -54,13 +54,21 @@ check_ui_check() {
   for dep in odiff-bin pngjs; do
     if [ -d "$tool/node_modules/$dep" ]; then ok "ui-check dep $dep"; else bad "ui-check dep $dep (run scripts/install.sh)"; fi
   done
-  if (cd "$project" && node --input-type=module -e "
+  # Exit 2 = the project has no Playwright (ui-check uses the project's own, so there is nothing to check here).
+  local rc=0
+  (cd "$project" && node --input-type=module -e "
     import { loadChromium } from '$tool/lib/browser.mjs';
     import fs from 'node:fs';
-    const path = loadChromium('.').executablePath();
+    let chromium;
+    try { chromium = loadChromium('.'); } catch (error) { if (error.name === 'UsageError') process.exit(2); throw error; }
+    const path = chromium.executablePath();
     if (!fs.existsSync(path)) { console.error('Chromium missing: ' + path); process.exit(1); }
-  " 2>/dev/null); then ok "playwright + chromium from $project"
-  else bad "playwright/chromium not found from $project (set DOCTOR_PROJECT; npx playwright install chromium)"; fi
+  " 2>/dev/null) || rc=$?
+  case "$rc" in
+    0) ok "playwright + chromium from $project" ;;
+    2) ok "playwright: none in $project (ui-check uses each project's own; set DOCTOR_PROJECT to check one)" ;;
+    *) bad "chromium missing for the Playwright in $project (run there: npx playwright install chromium)" ;;
+  esac
 }
 
 check_links; check_settings; check_plugins; check_tools; check_ui_check

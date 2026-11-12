@@ -1,6 +1,8 @@
-// Setup-mode hook (normal | medium | high). One script, dispatches on `hook_event_name`:
-//   SessionStart         -> prints the active mode and its playbook; prunes stale state files.
-//   UserPromptExpansion  -> for `/mode <m>`: records the mode for this session, prints the playbook.
+// Setup-mode hook (normal | medium | high | extra-high | ultra-high). One script, dispatches on `hook_event_name`:
+//   SessionStart         -> prints the active mode and its playbook (plus a lead note when an extra-high / ultra-high
+//                           session was not launched with `ccm <mode>` or its model does not match); prunes stale state files.
+//   UserPromptExpansion  -> for `/mode <m>`: records the mode for this session, prints the playbook (plus a lead note
+//                           when the switch moves the lead to or from Opus max / Fable max).
 //   UserPromptSubmit     -> one reminder line when the active mode is not medium.
 // State is per session: files in ~/.claude/state/modes/ keyed by session id and by the owning `claude` process
 // (`pid-<n>`, so a mode survives /clear, which starts a new session id in the same process); the hook never writes
@@ -9,6 +11,8 @@
 // files are overwritten then, so a reused pid never inherits a mode. Otherwise active mode = session file ->
 // process file -> env CLAUDE_MODE -> medium. Stdout of these events is added to the model context. Invariants: never
 // blocks (always exit 0); unreadable input produces no output; an unsafe session_id is never used in a path.
+// The lead model and effort of extra-high / ultra-high are set by `ccm` at launch; a hook cannot change them, so
+// the lead note only tells the user which `ccm` line to run.
 // Windows has no `ps`, so there is no process key there and a /mode switch does not survive /clear.
 // Exports pure helpers for tests.
 import { execFileSync } from 'node:child_process';
@@ -18,12 +22,18 @@ import { realpathSync } from 'node:fs';
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
-export const MODES = ['normal', 'medium', 'high'];
+export const MODES = ['normal', 'medium', 'high', 'extra-high', 'ultra-high'];
 export const DEFAULT_MODE = 'medium';
 const SESSION_ID_PATTERN = /^[\w-]+$/;
 const STATE_MAX_AGE_DAYS = 14;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const USAGE = 'Usage: /mode normal|medium|high';
+const USAGE = `Usage: /mode ${MODES.join('|')}`;
+// Modes that set the lead at launch: the model alias to look for in the session model, and its display name.
+const LEAD_MODES = {
+  'extra-high': { alias: 'opus', label: 'Opus 5.5' },
+  'ultra-high': { alias: 'fable', label: 'Fable 5.2' },
+};
+const BASE_LEAD = 'Opus 5.5 at high';
 const MAX_ANCESTOR_DEPTH = 6; // hook -> shell -> claude is 2 levels; leave room for wrappers
 const PS_TIMEOUT_MS = 1000;
 const INIT_PID = 1;
@@ -34,22 +44,54 @@ const modesDir = () => join(homedir(), '.claude', 'modes');
 const stateDir = () => join(homedir(), '.claude', 'state', 'modes');
 
 /**
- * Whether a value is one of the three mode words.
+ * Whether a value is one of the mode words.
  * @param {unknown} word - candidate mode.
- * @returns {boolean} true for normal, medium or high.
+ * @returns {boolean} true for a word in MODES.
  */
 export function isMode(word) {
   return typeof word === 'string' && MODES.includes(word);
 }
 
 /**
- * First word of the `/mode` arguments, lowercased.
+ * The mode named by the `/mode` arguments, lowercased: the whole text with whitespace runs joined by `-` when that
+ * is a mode (`extra high` -> `extra-high`), else the first word.
  * @param {unknown} commandArgs - `command_args` from the hook input.
  * @returns {string} the word, or '' when there is none.
  */
 export function parseModeArg(commandArgs) {
   if (typeof commandArgs !== 'string') return '';
-  return commandArgs.trim().split(/\s+/)[0].toLowerCase();
+  const text = commandArgs.trim().toLowerCase();
+  const joined = text.split(/\s+/).join('-');
+  return isMode(joined) ? joined : text.split(/\s+/)[0];
+}
+
+function launchCommand(mode) {
+  return `ccm ${mode} -c`;
+}
+
+/**
+ * One line telling the user how to get the lead that a mode needs, or '' when nothing is to be said.
+ * A switch (previousMode given) into extra-high / ultra-high always gets the launch note, because the hook cannot
+ * see or change the lead; a switch out of them says the lead is still at max. At session start (no previousMode)
+ * the note appears when the process was not launched with `ccm <mode>` (launchedAs differs: its --model/--effort
+ * flags are missing, e.g. a plain `claude --resume`) or when the session model is known and does not match.
+ * @param {{mode: string, model?: string, previousMode?: string, launchedAs?: string}} state - active mode, session
+ *   model if known, the mode before a `/mode` switch, and env CLAUDE_MODE at session start.
+ * @returns {string} the note, or ''.
+ */
+export function leadNote({ mode, model, previousMode, launchedAs }) {
+  const lead = LEAD_MODES[mode];
+  const switched = previousMode !== undefined && previousMode !== mode;
+  if (lead) {
+    const wrongModel = typeof model === 'string' && model !== '' && !model.toLowerCase().includes(lead.alias);
+    const mismatch = wrongModel || (launchedAs !== undefined && launchedAs !== mode);
+    if (launchedAs === mode && !wrongModel) return ''; // `ccm <mode>` set the lead for this process
+    if (!switched && !mismatch) return '';
+    return `The lead model/effort for ${mode} is set at launch: tell the user to run \`${launchCommand(mode)}\` to continue this conversation with ${lead.label} at max effort (avoid \`/model\`: it saves machine-wide).`;
+  }
+  const left = switched ? LEAD_MODES[previousMode] : undefined;
+  if (!left) return '';
+  return `The lead is still ${left.label} at max: tell the user to run \`${launchCommand(mode)}\` to return it to ${BASE_LEAD}.`;
 }
 
 /**
@@ -163,7 +205,8 @@ async function onSessionStart(input, sessionId, procKey) {
   const current = await startMode(input.source, sessionId, procKey);
   await saveMode(current, [sessionId, procKey]);
   const launched = isMode(process.env.CLAUDE_MODE) ? process.env.CLAUDE_MODE : 'default';
-  console.log(`Mode: ${current} (launched as ${launched})\n\n${await readPlaybook(current)}`);
+  const note = leadNote({ mode: current, model: input.model, launchedAs: process.env.CLAUDE_MODE ?? '' });
+  console.log(`Mode: ${current} (launched as ${launched})\n\n${await readPlaybook(current)}${note ? `\n\n${note}` : ''}`);
   await pruneState();
 }
 
@@ -172,18 +215,20 @@ async function onExpansion(input, sessionId, procKey) {
   const target = parseModeArg(input.command_args);
   if (target === '') {
     const current = await activeMode(sessionId, procKey);
-    console.log(`Active mode: ${current}. Switch with /mode normal|medium|high.`);
+    console.log(`Active mode: ${current}. Switch with /mode ${MODES.join('|')}.`);
     return;
   }
   if (!isMode(target)) {
     console.log(USAGE);
     return;
   }
+  const previousMode = await activeMode(sessionId, procKey);
   if (!sessionId || !(await saveMode(target, [sessionId, procKey]))) {
     console.log(`Mode NOT switched: the state file could not be saved. Tell the user; the mode stays as it was.`);
     return;
   }
-  console.log(`Mode switched to ${target} (this session only).\n\n${await readPlaybook(target)}`);
+  const note = leadNote({ mode: target, previousMode, launchedAs: process.env.CLAUDE_MODE ?? '' });
+  console.log(`Mode switched to ${target} (this session only).\n\n${await readPlaybook(target)}${note ? `\n\n${note}` : ''}`);
 }
 
 async function onPromptSubmit(sessionId, procKey) {

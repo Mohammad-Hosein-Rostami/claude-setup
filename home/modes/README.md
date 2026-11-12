@@ -1,11 +1,13 @@
 # modes
 
-Setup modes: normal (thrift), medium (default), high (full speed). They change only parallelism, workflows and report
-brevity, and each applies to one session only.
+Setup modes: normal (thrift), medium (default), high (full speed), extra-high (high plus lead Opus 5.5 at max) and
+ultra-high (high plus lead Fable 5.2 at max). normal/medium/high change only parallelism, workflows and report
+brevity; extra-high/ultra-high also change the lead and send important jobs to Opus at max. Each applies to one
+session only.
 
 - `<mode>.md`: playbook injected into the session by `hooks/mode.mjs` (SessionStart and `/mode <m>`).
 - No settings layers: the mode is the per-session state file plus `CLAUDE_MODE`; nothing machine-wide
   is written. Subscription usage only.
-- Read by `home/bin/ccm` (launcher) and `home/hooks/mode.mjs` (hook). Linked as `~/.claude/modes`.
+- Read by `home/bin/ccm` (launcher, sets the lead flags) and `home/hooks/mode.mjs` (hook). Linked as `~/.claude/modes`.
 
 How to use: [docs/modes.md](../../docs/modes.md).

@@ -5,17 +5,20 @@ user writes in; keep prose short and plain. Do not narrate tool calls.
 
 ## Modes
 
-- `normal` (thrift), `medium` (default: this file as written), `high` (full speed).
-- Modes are per session (a state file plus `CLAUDE_MODE`). They change only parallelism, workflows and report
-  brevity; never the per-task model, the lead's effort or the quality gates.
-- Start with `ccm normal|medium|high`; `/mode <m>` switches this session only (records the mode, injects the playbook).
+- `normal` (thrift), `medium` (default: this file as written), `high` (full speed), `extra-high` (high plus lead
+  Opus 5.5 at max), `ultra-high` (high plus lead Fable 5.2 at max).
+- Modes are per session (a state file plus `CLAUDE_MODE`). normal/medium/high change only parallelism, workflows and
+  report brevity. extra-high/ultra-high also change the lead (Opus max / Fable max, set by `ccm` at launch) and send
+  important jobs (architecture, hard bugs, risky/final reviews, security, key decisions) to Opus at max
+  (`model: "opus", effort: "max"`). Quality gates never change.
+- Start with `ccm normal|medium|high|extra-high|ultra-high`; `/mode <m>` switches this session only (records the mode, injects the playbook).
 - Subscription usage only, in every mode: never fast mode (`/fast`), never `/code-review ultra`, nothing billed as
   usage credits; at a usage limit, wait for the reset.
 - The playbook injected by the mode hook (`~/.claude/modes/<m>.md`) overrides "Token discipline" where they conflict.
 
 ## Model routing (Opus leads, agents do the work)
 
-The session runs on **Opus 5.5 at effort `high`** and acts as the lead: it thinks, decides and
+The session runs on **Opus 5.5 at effort `high`** (normal/medium/high) and acts as the lead: it thinks, decides and
 delegates. Each agent pins the model/effort for its job; agents without a pin (general-purpose, Explore, Plan)
 run on Sonnet 5.5 through `CLAUDE_CODE_SUBAGENT_MODEL`. Escalate per call with the Agent `model`/`effort` params:
 `implementer`/`test-writer` `effort: "high"` for tricky or cross-module logic; `reviewer` `model: "opus"` for risky
@@ -41,7 +44,7 @@ Rules:
    list, a Haiku agent returns the answer; the main context never sees the raw output.
 4. Independent pieces of work go to agents in parallel, in one message.
 5. If unsure which worker tier, pick the cheaper one and escalate on failure — not the reverse.
-6. Effort: the lead stays at `high` in every mode; deeper thinking goes to the agent call via `effort`. Opus 5.5
+6. Effort: the lead stays at `high` in normal/medium/high; deeper thinking goes to the agent call via `effort`. Opus 5.5
    at `medium` already beats Opus 5 at `high`, so do not raise the lead's effort (a mid-session effort change costs
    a prompt-cache miss).
 

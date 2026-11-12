@@ -1,28 +1,43 @@
 #!/usr/bin/env bash
-# Purpose: launch Claude Code in a setup mode (normal | medium | high). Modes change only parallelism, workflows and
-# report brevity; the lead's effort is never set here (base modelSettings keep Opus 5.5 at high in every mode).
-# Usage: ccm [normal|medium|high] [claude args...]   (no mode word: CLAUDE_MODE is unset, so a new session
-# starts in medium and a resumed one keeps its saved mode)
-# Invariants: only sets CLAUDE_MODE for the mode hook and runs claude; it writes no files and passes no
-# --settings, so the mode belongs to the sessions of this run alone.
+# Purpose: launch Claude Code in a setup mode (normal | medium | high | extra-high | ultra-high). normal/medium/high
+# change only parallelism, workflows and report brevity. extra-high and ultra-high also set the lead at launch
+# (`--model opus --effort max` / `--model fable --effort max`), because a hook cannot change the lead.
+# Usage: ccm [normal|medium|high|extra-high|ultra-high] [claude args...]   (no mode word: CLAUDE_MODE is unset, so a
+# new session starts in medium and a resumed one keeps its saved mode)
+# Invariants: only sets CLAUDE_MODE for the mode hook and runs claude with the mode's lead flags; it writes no files
+# and passes no --settings, so the mode belongs to the sessions of this run alone.
 # Set CCM_DRY_RUN=1 to print the exec line instead of running it.
 set -euo pipefail
 
 EXIT_USAGE=2
 
-usage() { echo "usage: ccm [normal|medium|high] [claude args...]" >&2; exit "$EXIT_USAGE"; }
+usage() { echo "usage: ccm [normal|medium|high|extra-high|ultra-high] [claude args...]" >&2; exit "$EXIT_USAGE"; }
+
+# Extra claude args per mode (the lead model and effort); empty for the modes that keep the base lead.
+lead_args() {
+  case "$1" in
+    extra-high) echo "--model opus --effort max" ;;
+    ultra-high) echo "--model fable --effort max" ;;
+    *) echo "" ;;
+  esac
+}
 
 mode=""
 if [ $# -gt 0 ] && [ -n "$1" ]; then
-  case "$(printf %s "$1" | tr "[:upper:]" "[:lower:]")" in
-    normal|medium|high) mode="$(printf %s "$1" | tr "[:upper:]" "[:lower:]")"; shift ;;
+  word="$(printf %s "$1" | tr "[:upper:]" "[:lower:]")"
+  case "$word" in
+    normal|medium|high|extra-high|ultra-high) mode="$word"; shift ;;
     -*) ;;
     *) usage ;;
   esac
 fi
 
 cmd=(env -u CLAUDE_MODE claude)
-[ -n "$mode" ] && cmd=(env "CLAUDE_MODE=$mode" claude)
+if [ -n "$mode" ]; then
+  cmd=(env "CLAUDE_MODE=$mode" claude)
+  read -r -a lead <<< "$(lead_args "$mode")"
+  [ "${#lead[@]}" -gt 0 ] && cmd+=("${lead[@]}")
+fi
 cmd+=("$@")
 
 if [ "${CCM_DRY_RUN:-0}" = 1 ]; then echo "${cmd[*]}"; exit 0; fi
