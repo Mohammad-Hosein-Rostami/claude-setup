@@ -43,13 +43,16 @@ and add the Opus-max escalations.
 
 A workflow is a script that runs many agents in phases.
 
-| Mode | Parallel agents | Workflows | Reports |
-| ---- | --------------- | --------- | ------- |
-| normal | up to 3 at once, based on need | only when you ask for one in your message; up to 4 agents | terse; `/compact` at every seam; no speculative work |
-| medium | independent work in parallel | Claude may propose one when it clearly helps and says roughly what it costs; starts only after you say yes; up to 9 agents | as `CLAUDE.md` |
-| high | wide fan-out: parallel research, one `deep-debugger` per hypothesis, test-writer + implementer, split parts, reviewer + security-auditor | Claude starts one itself for substantive multi-part tasks, no size limit (choosing `ccm high` or `/mode high` is your standing request) | not capped |
-| extra-high | as high | as high | as high; lead Opus 5.5 at max; architecture/planning, hard or failed-once bugs, risky or final reviews, security audits, key decisions (and risky/cross-module code) go to agents with `model: "opus", effort: "max"` |
-| ultra-high | as high | as high | as extra-high, but the lead ("boss") is Fable 5.2 at max |
+| Mode | Lead (main session) | Important jobs | Parallel agents | Workflows | Reports |
+| ---- | ------------------- | -------------- | --------------- | --------- | ------- |
+| normal | Opus 5.5, effort high | pinned agents + CLAUDE.md escalations | up to 3 at once, based on need | only when you ask for one in your message; up to 4 agents | terse; `/compact` at every seam; no speculative work |
+| medium | Opus 5.5, effort high | same | independent work in parallel | Claude may propose one and say roughly what it costs; starts only after you say yes; up to 9 agents | as `CLAUDE.md` |
+| high | Opus 5.5, effort high | same | wide fan-out: parallel research, one `deep-debugger` per hypothesis, test-writer + implementer, split parts, reviewer + security-auditor | Claude starts one itself for substantive multi-part tasks, no size limit | not capped |
+| extra-high | Opus 5.5, effort max | architecture/planning, hard or failed-once bugs, risky or final reviews, security audits, risky code, key decisions: agents with `model: "opus", effort: "max"` | as high | as high | as high |
+| ultra-high | Fable 5.2, effort max | as extra-high (Opus 5.5 at max) | as high | as high | as high |
+
+Choosing `ccm high|extra-high|ultra-high` or `/mode` with one of them is your standing request for workflows. If
+Claude still asks first, answer "use a workflow" once.
 
 ## Subscription only
 
@@ -58,8 +61,9 @@ only from parallel agents and workflows. At a usage limit Claude waits for the s
 (`autoContinueAtUsageLimit`).
 
 Fable 5.2 (ultra-high) is included only on Max, Ultra and Team Premium plans, capped at 50% of the weekly limit; past
-the cap, or on Pro, it bills usage credits. The ultra-high playbook therefore forbids continuing on credits: when
-Fable's cap is reached, Claude stops and tells you to continue with `ccm extra-high -c`.
+the cap, or on Pro, it bills usage credits. Keep extra usage turned off in your claude.ai settings; then
+nothing can bill credits. When Fable's cap is reached the CLI reports the limit: exit and continue the same
+conversation with `ccm extra-high -c` (Opus still has the rest of your weekly limit).
 
 Files: `home/modes/` (playbooks), `home/bin/ccm`, `home/hooks/mode.mjs`, `home/skills/mode`,
 `tests/mode.test.mjs`, `tests/ccm.test.mjs` (`node --test tests/*.test.mjs`).

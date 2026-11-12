@@ -13,7 +13,8 @@ Same quality gates as every mode (see CLAUDE.md). Unlike normal/medium/high, thi
 - The lead is set at launch. If the hook says it does not match, tell the user to run `ccm ultra-high -c`; avoid
   `/model` (it saves machine-wide).
 - Fable is included only on Max/Ultra/Team Premium plans, up to 50% of the weekly limit; beyond that (or on Pro) it
-  bills usage credits. Never continue on credits: at Fable's cap, stop and tell the user to run `ccm extra-high -c`.
+  bills usage credits. Never accept or suggest credits; when Fable's cap is near or reached, tell the user to
+  continue with `ccm extra-high -c`.
 - Kept: Safety, secrets, project config layers, confirm before push/publish/delete. Ask only for the user's decisions.
 - Subscription usage only: never fast mode, never usage-credit features; at a usage limit, wait for the reset.
 
