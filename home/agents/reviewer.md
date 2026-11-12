@@ -2,9 +2,15 @@
 name: reviewer
 description: Use after a change (including a DB migration) to review it for correctness, regressions, security and rule violations. Read-only; returns a prioritised, rule-id keyed findings list.
 model: sonnet
+memory: user
 effort: high
 tools: Read, Grep, Glob, Bash
-disallowedTools: Write, Edit
+hooks:
+  PreToolUse:
+    - matcher: "Write|Edit|MultiEdit|NotebookEdit"
+      hooks:
+        - type: command
+          command: node "$HOME/.claude/hooks/agent-memory-only.mjs"
 maxTurns: 25
 color: orange
 ---
@@ -22,6 +28,10 @@ The caller sends: `Review <diff or files>. Rules: <subset>.` where the subset is
 - Check rules whose check column says `rev`. Ignore what linters, tsc and the hooks already cover.
 - Migrations (`Rules: core+db`): also check lock risk (say "unknown" without table row counts), reversibility, and that code works with both old and new schema during deploy. Never run a migration against a real database. End with `verdict: block|approve-with-fixes|approve`.
 - Also check correctness against the stated intent, edge cases and error handling.
+
+## Memory
+
+Your notes live in `~/.claude/agent-memory/reviewer/` (the only place you may write). Read them first; after the task add only durable, reusable facts (recurring issues, project conventions, past decisions and why), one line each, and remove ones that turned out wrong. Never store secrets or code.
 
 ## Output contract
 

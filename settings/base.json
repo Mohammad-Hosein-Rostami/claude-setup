@@ -3,7 +3,8 @@
     "BASH_MAX_OUTPUT_LENGTH": "12000",
     "MAX_MCP_OUTPUT_TOKENS": "15000",
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
-    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000"
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-5-5"
   },
   "permissions": {
     "allow": [
@@ -18,7 +19,11 @@
       "Bash(type *.env*)",
       "Bash(cat *credentials*)",
       "Bash(type *credentials*)",
-      "Read(**/.credentials.json)"
+      "Read(**/.credentials.json)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(**/*.pem)",
+      "Read(**/.npmrc)"
     ]
   },
   "model": "opus",
@@ -100,14 +105,5 @@
     "claude-haiku-5-5": {
       "effortLevel": "low"
     }
-  },
-  "subagents": {
-    "general-purpose": {
-      "model": "claude-sonnet-5-5"
-    },
-    "architect": {
-      "model": "claude-opus-5-5"
-    }
-  },
-  "autoCompactContext": true
+  }
 }

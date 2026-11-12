@@ -24,6 +24,6 @@ C22 | Fix the root cause; two failed attempts means escalate | rev
 C23 | Grep, then read line ranges; no cat of big files; show failing test lines only | rev
 C24 | Delegated work returns <=300 words with file:line evidence | rev
 C25 | One task per session; handoff note at ~100k context | usage
-C26 | Every source file opens with a header comment (purpose, exports, invariants); a folder of 3+ files has a README | rev
-C27 | Public functions and types have doc comments (what, why, args, returns, errors); TODO(ref): reason | rev
+C26 | Every source file you create or substantially edit opens with a header comment (purpose, exports, invariants); a folder of 3+ files has a README | rev
+C27 | Public functions and types you create or substantially edit have doc comments (what, why, args, returns, errors); TODO(ref): reason | rev
 C29 | Done means fresh evidence: verify commands ran; no test deleted, skipped or weakened | verify-done

@@ -3,31 +3,34 @@
 Owner: Pejvak. Primary OS Windows 10 (PowerShell + Git Bash), also macOS/Linux. Node 22, pnpm. Reply in the language the
 user writes in; keep prose short and plain. Do not narrate tool calls.
 
-## Model routing (cost policy)
+## Model routing (Opus leads, agents do the work)
 
-The session model cannot change itself mid-session; routing happens through **subagents,
-skills and plan mode**, each of which pins its own model. Default session model is
-`opusplan` (Opus in plan mode, Sonnet 5.5 everywhere else).
+The session runs on **Opus 5.5 at effort `high`** and acts as the lead: it thinks, decides and
+delegates. Subagents pin their own model; agents without a pin (general-purpose, Explore, Plan)
+run on Sonnet 5.5 through `CLAUDE_CODE_SUBAGENT_MODEL`.
 
-| Work | Model | How |
-| ---- | ----- | --- |
-| Architecture, API/system design, trade-off decisions, ADRs, root-cause of a bug that survived one failed fix | **Opus 5.5** | `architect` / `deep-debugger` agent, or `/escalate`, or plan mode |
-| Implementation, refactors, tests, normal bug fixes, small designs, reviews | **Sonnet 5.5** | main session, or `implementer` / `reviewer` agent |
-| Searching, listing, reading many files, running tests/lint/build, log triage, summarising, formatting, trivial edits | **Haiku 5.5** | `scout` / `runner` agent, or `/quick` |
-| UI implementation (pages, screens, steps, components, layout, styling, forms) | **Sonnet 5.5** | main session with UI skills, or `ui-implementer` agent (never plain `implementer`) |
+| Work | Who | How |
+| ---- | --- | --- |
+| Planning, analysis, architecture/API design, trade-off decisions, ADRs, root cause of hard bugs, judging agent results, the final call | **Opus 5.5 (the session)** | itself; `architect` / `deep-debugger` / `/escalate` when the question needs a clean context |
+| Implementation, refactors, tests, normal bug fixes, reviews | **Sonnet 5.5** | `implementer`, `test-writer`, `reviewer` agent |
+| UI implementation (pages, screens, steps, components, layout, styling, forms) | **Sonnet 5.5** | `ui-implementer` agent (never plain `implementer`) |
 | Figma match and responsive checks (compare, fix loop; returns text only, no images) | **Sonnet 5.5** | `visual-qa` agent, skill `figma-pixel-perfect` |
+| Searching, listing, reading many files, running tests/lint/build, log triage, summarising, formatting, trivial edits | **Haiku 5.5** | `scout` / `runner` agent, or `/quick` |
 
 Rules:
 
-1. Never stay on Opus for a long implementation. Opus produces a **spec** (decision, files,
-   steps, acceptance checks, ≤ 60 lines); Sonnet executes it. Do not paste the spec into
-   chat twice: hand it over by file path.
-2. Escalate to Opus only when: the design has ≥ 2 credible options with real trade-offs, it
-   crosses package/ownership boundaries, or a bug resisted one honest fix attempt. Otherwise
-   stay on Sonnet — most "design" is not hard.
+1. Opus does not write long implementations itself. It writes a **spec** (decision, files, steps,
+   acceptance checks, ≤ 60 lines) to a file, hands the path to a Sonnet agent, then checks the
+   report and the diff and decides whether it is done. Do not paste the spec into chat twice.
+2. Opus keeps only the work that needs the strong model: planning, analysis, decisions, review of
+   what agents return, and edits of a few lines where briefing an agent costs more than doing it.
 3. Downshift to Haiku for anything mechanical. If the result is a lookup, a log, or a file
    list, a Haiku agent returns the answer; the main context never sees the raw output.
-4. If unsure which tier, pick the cheaper one and escalate on failure — not the reverse.
+4. Independent pieces of work go to agents in parallel, in one message.
+5. If unsure which worker tier, pick the cheaper one and escalate on failure — not the reverse.
+6. Effort: stay at `high`. Opus 5.5 at `medium` already beats Opus 5 at `high`; `xhigh`/`max`
+   think longer and cost more per turn, so use `/effort xhigh` only for one problem that `high`
+   failed on, then go back (a mid-session effort change costs a prompt-cache miss).
 
 ## Skill routing (UI)
 
@@ -74,7 +77,8 @@ global setup combines with it.
   browser/Playwright MCP only when asked (each call also echoes its code back).
 - Pixel/visual bugs: read the code once, make the best single fix or report the finding and
   ask - do not iterate screenshots and measurements unprompted.
-- Never run tests, typecheck, lint, build or format checks unless the user asks or flags it.
+- Never run tests, typecheck, lint, build or format checks unless the user asks or flags it (the post-edit hook and a
+  requested TDD loop are the exception).
   Do not start servers/browsers or build throwaway pages unless asked.
 - Ask the user only when blocked on a decision that is theirs; otherwise pick the sensible
   default, say so in one line, and continue.
@@ -88,7 +92,8 @@ global setup combines with it.
 - Fix root causes, not symptoms; never silence a check to make it pass.
 - Say "verified" only for what you ran; never imply a check passed that was not run.
 - Smallest change that solves the request: no new modules, refactors, tests, docs, or memory/
-  history/session notes unless asked. Diagnose by reading code before experimenting.
+  history/session notes unless asked (the review agents' own `memory: user` notes are the exception).
+  Diagnose by reading code before experimenting.
 - A new unrelated task in a long session: suggest `/clear` instead of dragging the context.
 - Stop and ask only for decisions that are the user's; otherwise choose, state it in a line,
   and continue to done.
