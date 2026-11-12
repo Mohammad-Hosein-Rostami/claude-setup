@@ -1,0 +1,6 @@
+# Line endings that must survive a Windows checkout (core.autocrlf=true): Git Bash scripts need LF, cmd needs CRLF.
+*.sh            text eol=lf
+*.jq            text eol=lf
+.githooks/*     text eol=lf
+home/bin/ccm    text eol=lf
+*.cmd           text eol=crlf

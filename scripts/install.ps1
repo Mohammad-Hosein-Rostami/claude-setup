@@ -10,8 +10,11 @@ $ClaudeDir = Join-Path $HOME '.claude'
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $BackupDir = Join-Path $HOME ".claude-backup-$Stamp"
 $Links = @('CLAUDE.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'modes', 'statusline.mjs')
-# Note: home/bin/ccm is a bash launcher; it is not linked by this script (use Git Bash and scripts/install.sh).
+# home/bin/ccm.ps1 is the PowerShell launcher and ccm.cmd its shim; Install-Launcher puts ccm.cmd in ~\.claude\bin
+# (the PATH folder) and ccm.ps1 in ~\.claude\bin\ps so PowerShell cannot resolve it before the shim
+# (home/bin/ccm is the bash one).
 $Done = New-Object System.Collections.Generic.List[string]
+$Failures = New-Object System.Collections.Generic.List[string]
 
 function Note($msg) { $Done.Add($msg); Write-Host "  $msg" }
 
@@ -40,10 +43,11 @@ function Link-Item($name) {
   }
 }
 
-# PowerShell 5.1 has no ConvertFrom-Json -AsHashtable: turn parsed PSCustomObjects into hashtables / arrays.
+# PowerShell 5.1 has no ConvertFrom-Json -AsHashtable: turn parsed PSCustomObjects into ordered tables / arrays.
+# [ordered] keeps key order (and so the serialized JSON) stable on 5.1 and 7; OrderedDictionary has .Contains, not .ContainsKey.
 function ConvertTo-Hashtable($node) {
   if ($node -is [System.Management.Automation.PSCustomObject]) {
-    $table = @{}
+    $table = [ordered]@{}
     foreach ($prop in $node.PSObject.Properties) { $table[$prop.Name] = ConvertTo-Hashtable $prop.Value }
     return $table
   }
@@ -51,12 +55,20 @@ function ConvertTo-Hashtable($node) {
   return $node
 }
 
-# Same semantics as scripts/merge-settings.jq: objects deep-merge (b wins), `hooks` lists append per event.
+# Same semantics as scripts/merge-settings.jq: objects deep-merge (b wins), `hooks` lists append per event,
+# permissions allow/deny/ask are a de-duplicated union (base, os, local); other arrays replace.
+# A null or non-object top-level permissions is treated as {}.
+$UnionKeys = @('allow', 'deny', 'ask')
 function Merge-Json($a, $b, $key = '') {
   foreach ($k in @($b.Keys)) {
-    if (-not $a.ContainsKey($k)) { $a[$k] = $b[$k]; continue }
-    if ($a[$k] -is [hashtable] -and $b[$k] -is [hashtable]) { $a[$k] = Merge-Json $a[$k] $b[$k] $k }
-    elseif ($key -eq 'hooks') { $a[$k] = , @(@($a[$k]) + @($b[$k])) }
+    if ($key -eq '' -and $k -eq 'permissions') {
+      if ($a[$k] -isnot [System.Collections.IDictionary]) { $a[$k] = [ordered]@{} }
+      if ($b[$k] -isnot [System.Collections.IDictionary]) { $b[$k] = [ordered]@{} }
+    }
+    if (-not $a.Contains($k)) { $a[$k] = $b[$k]; continue }
+    if ($a[$k] -is [System.Collections.IDictionary] -and $b[$k] -is [System.Collections.IDictionary]) { $a[$k] = Merge-Json $a[$k] $b[$k] $k }
+    elseif ($key -eq 'hooks') { $a[$k] = @(@($a[$k]) + @($b[$k])) }
+    elseif ($key -eq 'permissions' -and $UnionKeys -contains $k) { $a[$k] = @(@($a[$k]) + @($b[$k]) | Select-Object -Unique) }
     else { $a[$k] = $b[$k] }
   }
   return $a
@@ -74,6 +86,8 @@ function Build-Settings {
   $json = $merged | ConvertTo-Json -Depth 20
   $json = $json.Replace('{{CLAUDE_HOME}}', ($ClaudeDir -replace '\\', '/'))
   if ($DryRun) { Write-Host "[dry-run] would write $out"; return }
+  $current = if (Test-Path $out) { [IO.File]::ReadAllText($out) } else { $null }
+  if ($current -ceq $json) { Note 'ok settings.json'; return }
   Backup $out
   [IO.File]::WriteAllText($out, $json, (New-Object Text.UTF8Encoding $false))
   Note 'wrote settings.json'
@@ -95,19 +109,79 @@ function Install-ToolDeps {
   Note 'ui-check dependencies'
 }
 
+# Copy (or link) one launcher file from home\bin into $dir. Idempotent.
+function Install-LauncherFile($dir, $file) {
+  $src = Join-Path $Repo "home\bin\$file"
+  $dst = Join-Path $dir $file
+  $existing = Get-Item $dst -Force -ErrorAction SilentlyContinue
+  if ($existing -and $existing.LinkType -eq 'SymbolicLink' -and $existing.Target -eq $src) { Note "ok $file"; return }
+  if ($existing -and -not $existing.LinkType -and ((Get-FileHash $src).Hash -eq (Get-FileHash $dst).Hash)) { Note "ok $file (copy)"; return }
+  Backup $dst
+  try { New-Item -ItemType SymbolicLink -Path $dst -Target $src | Out-Null; Note "linked $file" }
+  catch { Copy-Item $src $dst; Note "copied $file (not live-linked)" }
+}
+
+# An older install put ccm.ps1 straight into the PATH folder, where PowerShell resolves it before ccm.cmd.
+# Move it to the backup folder when it is ours (a link to the repo file, or a ccm.ps1 launcher).
+function Remove-StaleLauncher($binDir) {
+  $stale = Join-Path $binDir 'ccm.ps1'
+  $existing = Get-Item $stale -Force -ErrorAction SilentlyContinue
+  if (-not $existing) { return }
+  $isOurLink = $existing.LinkType -eq 'SymbolicLink' -and $existing.Target -eq (Join-Path $Repo 'home\bin\ccm.ps1')
+  $isOurCopy = -not $existing.LinkType -and (Select-String -Path $stale -Pattern 'Usage: ccm\.ps1' -Quiet)
+  if ($isOurLink -or $isOurCopy) { Backup $stale }
+}
+
+# Tell running programs the user environment changed (a dummy variable set and removed broadcasts
+# WM_SETTINGCHANGE), so new terminals see the PATH written to the registry.
+function Update-EnvBroadcast {
+  [Environment]::SetEnvironmentVariable('CLAUDE_SETUP_PATH_REFRESH', '1', 'User')
+  [Environment]::SetEnvironmentVariable('CLAUDE_SETUP_PATH_REFRESH', $null, 'User')
+}
+
+# Install ccm.cmd into ~\.claude\bin (the PATH folder) and ccm.ps1 into ~\.claude\bin\ps, which the shim calls.
+# The PATH value is read raw (no %VAR% expansion) and written back as ExpandString so existing %VAR% entries survive.
+function Install-Launcher {
+  $binDir = Join-Path $ClaudeDir 'bin'
+  $psDir = Join-Path $binDir 'ps'
+  if ($DryRun) { Write-Host "[dry-run] install ccm.cmd into $binDir, ccm.ps1 into $psDir, and add $binDir to the user PATH"; return }
+  New-Item -ItemType Directory -Force $psDir | Out-Null
+  Remove-StaleLauncher $binDir
+  Install-LauncherFile $psDir 'ccm.ps1'
+  Install-LauncherFile $binDir 'ccm.cmd'
+  $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+  try {
+    $userPath = $envKey.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+    $entries = @(($userPath -split ';') | Where-Object { $_ })
+    if ($entries -notcontains $binDir) {
+      $envKey.SetValue('Path', (($entries + $binDir) -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString)
+      Update-EnvBroadcast
+      Note "added $binDir to the user PATH"
+    }
+  } finally { $envKey.Close() }
+  if (@($env:Path -split ';') -notcontains $binDir) { $env:Path = "$env:Path;$binDir" }
+}
+
 function Install-Plugins {
   $claude = Get-Command claude -ErrorAction SilentlyContinue
   if (-not $claude) { Write-Host 'claude CLI not found. Manual: run /plugin and add the items in plugins\plugins.json.'; return }
   $m = Read-Json (Join-Path $Repo 'plugins\plugins.json')
+  # A failing plugin command must not abort the install (native commands do not throw): warn and go on.
   foreach ($mk in $m.marketplaces) {
     if ($mk.source -like 'github:*') {
-      if (-not $DryRun) { claude plugin marketplace add ($mk.source -replace '^github:', '') }
+      if (-not $DryRun) {
+        claude plugin marketplace add ($mk.source -replace '^github:', '')
+        if ($LASTEXITCODE -ne 0) { $Failures.Add("marketplace $($mk.name) (exit $LASTEXITCODE)"); Write-Warning "marketplace $($mk.name) failed (exit $LASTEXITCODE)"; continue }
+      }
       Note "marketplace $($mk.name)"
     }
   }
   foreach ($id in ($m.enabled + $m.disabled)) {
     if ($id -like '*@gitkraken') { continue }
-    if (-not $DryRun) { claude plugin install $id }
+    if (-not $DryRun) {
+      claude plugin install $id
+      if ($LASTEXITCODE -ne 0) { $Failures.Add("plugin $id (exit $LASTEXITCODE)"); Write-Warning "plugin $id failed (exit $LASTEXITCODE)"; continue }
+    }
     Note "plugin $id"
   }
 }
@@ -118,6 +192,7 @@ try {
   $commands = Join-Path $Repo 'home\commands'
   if ((Test-Path $commands) -and (Get-ChildItem $commands -Force | Select-Object -First 1)) { Link-Item 'commands' }
   Build-Settings
+  Install-Launcher
   if (Test-Path (Join-Path $Repo '.git')) {
     if (-not $DryRun) { git -C $Repo config core.hooksPath .githooks }
     Note 'git hooksPath = .githooks'
@@ -129,3 +204,7 @@ try {
   exit 1
 }
 Write-Host "Completed:`n  $($Done -join "`n  ")"
+if ($Failures.Count -gt 0) {
+  Write-Host "Plugin failures:`n  $($Failures -join "`n  ")"
+  exit 1
+}
