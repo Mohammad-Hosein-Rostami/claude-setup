@@ -6,6 +6,7 @@ Claude Code hooks installed to `~/.claude/hooks` (a symlink to this folder). All
 - `skill-router.mjs` - UserPromptSubmit, PostToolUse(Edit|Write|MultiEdit): names the skills to invoke for the prompt or UI file. Never blocks.
 - `pre-bash-guard.mjs` - PreToolUse(Bash): denies --no-verify, force push, rm -r outside the project, `.env` reads, lockfile edits.
 - `agent-memory-only.mjs` - PreToolUse(Write|Edit|MultiEdit): keeps `reviewer` and `security-auditor` read-only except their memory notes.
+- `test-files-only.mjs` - PreToolUse(Write|Edit|MultiEdit): limits `test-writer` to writing test files.
 - `post-edit.mjs` - PostToolUse(Edit|Write|MultiEdit): runs the project's own format/lint/typecheck scripts on the edited file.
 - `token-audit.mjs` - manual CLI (not a hook event): prints the approximate recurring token cost of the visible config.
 

@@ -3,6 +3,7 @@ name: implementer
 description: Use to execute a clear spec or well-defined non-UI task - multi-file implementation, refactor, tests - when the main session should stay clean. For pages, components, layout or styling use `ui-implementer`. Takes a spec path or precise instructions and returns a short report.
 model: sonnet
 effort: medium
+disallowedTools: mcp__plugin_figma_figma, mcp__plugin_playwright_playwright, mcp__plugin_chrome-devtools-mcp_chrome-devtools, mcp__plugin_miro_miro, mcp__easel
 color: green
 ---
 
