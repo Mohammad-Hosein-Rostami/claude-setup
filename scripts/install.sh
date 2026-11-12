@@ -87,10 +87,6 @@ build_settings() {
   local merged
   merged="$(jq -s -f "$REPO/scripts/merge-settings.jq" "${files[@]}" | sed "s|{{CLAUDE_HOME}}|$home_path|g")"
   echo "$merged" | jq -e . >/dev/null
-  # Keep the live fastMode (the mode hook and /fast own it) so a reinstall does not flip a running high session.
-  if [ -f "$out" ] && jq -e 'has("fastMode")' "$out" >/dev/null 2>&1; then
-    merged="$(echo "$merged" | jq --argjson fast "$(jq '.fastMode' "$out")" '.fastMode = $fast')"
-  fi
   if [ "$DRY_RUN" = 1 ]; then echo "[dry-run] would write $out (${#files[@]} source files)"; return; fi
   if [ -f "$out" ]; then backup "$out"; fi
   echo "$merged" > "$out"

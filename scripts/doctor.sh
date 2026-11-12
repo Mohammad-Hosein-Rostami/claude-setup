@@ -26,9 +26,8 @@ check_settings() {
   [ -f "$REPO/settings/$os.json" ] && files+=("$REPO/settings/$os.json")
   [ -f "$REPO/settings/local.json" ] && files+=("$REPO/settings/local.json")
   case "$os" in windows) home_path="$(cygpath -m "$CLAUDE_DIR" 2>/dev/null || echo "${CLAUDE_DIR//\\//}")" ;; esac
-  # fastMode is runtime state written by the mode hook and /fast, not repo config: ignore it on both sides.
-  expected="$(jq -S -s -f "$REPO/scripts/merge-settings.jq" "${files[@]}" | sed "s|{{CLAUDE_HOME}}|$home_path|g" | jq -S 'del(.fastMode)')"
-  if [ "$expected" = "$(jq -S 'del(.fastMode)' "$CLAUDE_DIR/settings.json" 2>/dev/null)" ]; then ok "settings.json matches repo"
+  expected="$(jq -S -s -f "$REPO/scripts/merge-settings.jq" "${files[@]}" | sed "s|{{CLAUDE_HOME}}|$home_path|g")"
+  if [ "$expected" = "$(jq -S . "$CLAUDE_DIR/settings.json" 2>/dev/null)" ]; then ok "settings.json matches repo"
   else bad "settings.json differs from repo (live edits? move them into settings/*.json)"; fi
 }
 

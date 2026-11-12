@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
-# Purpose: launch Claude Code in a setup mode (normal | medium | high). Modes change only speed and token thrift;
-# the lead's effort is never set here (base modelSettings keep Opus 5.5 at high in every mode).
-# Usage: ccm [normal|medium|high] [claude args...]   (no mode, or first arg starting with "-": medium)
-# Invariants: sets CLAUDE_MODE for the mode hook; passes --settings only when ~/.claude/modes/<mode>.json exists.
+# Purpose: launch Claude Code in a setup mode (normal | medium | high). Modes change only parallelism, workflows and
+# report brevity; the lead's effort is never set here (base modelSettings keep Opus 5.5 at high in every mode).
+# Usage: ccm [normal|medium|high] [claude args...]   (no mode word: CLAUDE_MODE is unset, so a new session
+# starts in medium and a resumed one keeps its saved mode)
+# Invariants: only sets CLAUDE_MODE for the mode hook and runs claude; it writes no files and passes no
+# --settings, so the mode belongs to the sessions of this run alone.
 # Set CCM_DRY_RUN=1 to print the exec line instead of running it.
 set -euo pipefail
 
-DEFAULT_MODE=medium
 EXIT_USAGE=2
 
 usage() { echo "usage: ccm [normal|medium|high] [claude args...]" >&2; exit "$EXIT_USAGE"; }
 
-mode="$DEFAULT_MODE"
+mode=""
 if [ $# -gt 0 ] && [ -n "$1" ]; then
-  case "$1" in
-    normal|medium|high) mode="$1"; shift ;;
+  case "$(printf %s "$1" | tr "[:upper:]" "[:lower:]")" in
+    normal|medium|high) mode="$(printf %s "$1" | tr "[:upper:]" "[:lower:]")"; shift ;;
     -*) ;;
     *) usage ;;
   esac
 fi
 
-cmd=(env "CLAUDE_MODE=$mode" claude)
-settings="$HOME/.claude/modes/$mode.json"
-[ -f "$settings" ] && cmd+=(--settings "$settings")
+cmd=(env -u CLAUDE_MODE claude)
+[ -n "$mode" ] && cmd=(env "CLAUDE_MODE=$mode" claude)
 cmd+=("$@")
 
 if [ "${CCM_DRY_RUN:-0}" = 1 ]; then echo "${cmd[*]}"; exit 0; fi

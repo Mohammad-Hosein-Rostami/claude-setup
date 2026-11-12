@@ -5,6 +5,6 @@ disable-model-invocation: true
 argument-hint: normal|medium|high
 ---
 
-The mode hook already applied `$ARGUMENTS` (fast mode written, playbook injected). Reply in 3 lines or fewer: the
-active mode and what changed. If the mode is high, this command is the user's opt-in to Workflow orchestration at
-unrestricted size for the rest of the session. Then continue any pending task.
+The mode hook recorded `$ARGUMENTS` for this session and injected the playbook. Reply in 2 lines or fewer: the
+active mode, and that it applies to this session only. If the mode is high, this command is the user's request for
+Workflow orchestration without a size limit for the rest of this session. Then continue any pending task.

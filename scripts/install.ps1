@@ -71,13 +71,6 @@ function Build-Settings {
     if (Test-Path $p) { $merged = Merge-Json $merged (Read-Json $p) }
   }
   $out = Join-Path $ClaudeDir 'settings.json'
-  # Keep the live fastMode (the mode hook and /fast own it) so a reinstall does not flip a running high session.
-  if (Test-Path $out) {
-    try {
-      $live = Read-Json $out
-      if ($live.ContainsKey('fastMode')) { $merged['fastMode'] = $live['fastMode'] }
-    } catch { Write-Host "note: could not read $out for fastMode carry-over" }
-  }
   $json = $merged | ConvertTo-Json -Depth 20
   $json = $json.Replace('{{CLAUDE_HOME}}', ($ClaudeDir -replace '\\', '/'))
   if ($DryRun) { Write-Host "[dry-run] would write $out"; return }

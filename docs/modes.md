@@ -1,47 +1,50 @@
 # Modes
 
-Three setup modes trade speed against token thrift. Default is `medium` (the setup as `home/CLAUDE.md` describes it).
+Three setup modes trade parallelism and token thrift against speed. Default is `medium` (the setup as `home/CLAUDE.md`
+describes it). Every session has its own mode; nothing a mode does touches machine-wide state or other sessions.
 
 ## Launch
 
-    ccm                 # medium
+    ccm                 # medium (new session), or a resumed session's saved mode
     ccm normal          # thrift
     ccm high -c         # full speed, extra args go to claude
 
-`ccm` runs `claude [--settings ~/.claude/modes/<mode>.json]` with `CLAUDE_MODE=<mode>`. It never sets effort.
+`ccm <mode>` runs `claude` with `CLAUDE_MODE=<mode>` and nothing else; `ccm` without a mode word runs plain `claude`.
+A first word that is neither a mode nor a flag is an error (typo guard); to pass a prompt, name the mode first:
+`ccm medium "fix the login bug"`. It never sets effort and passes no settings.
 `CCM_DRY_RUN=1 ccm high` prints the command instead of running it. `scripts/install.sh` links `ccm` to
 `~/.local/bin/ccm` (bash only; not linked on Windows).
 
 ## Switch in a session
 
-`/mode normal|medium|high` records the mode for the session, writes `fastMode` in `~/.claude/settings.json`
-(hot-reloaded) and injects the playbook. Nothing is left to type. `/mode` alone shows the active mode. The hook also
-syncs fast mode on session startup and resume.
+`/mode normal|medium|high` records the mode in this session's state file (`~/.claude/state/modes/<session>`, pruned
+after 14 days) and injects the playbook. Launch and switch behave identically. `/mode` alone shows the active mode.
+Other sessions are not affected. The mode survives `/compact` and (macOS/Linux) `/clear`; on Windows `/clear` falls
+back to the launch mode. A resumed session (`claude -c`, `--resume`, `ccm -c`) keeps its saved mode; `ccm <mode> -c`
+resumes it in that mode instead. In a window started with `ccm <mode>`, `/resume` also opens the session in that
+mode; use `/mode` to change it.
 
 ## Same in every mode
 
 Lead = Opus 5.5 at effort high; per-task model and effort (agent pins and the escalation rules in `home/CLAUDE.md`);
-the quality gates (tests, `runner` checks, `reviewer`, `security-auditor`, `verify-done`). Modes change only speed and
-token thrift.
+the quality gates (tests, `runner` checks, `reviewer`, `security-auditor`, `verify-done`). Modes change only
+parallelism, workflows and report brevity.
 
 ## What differs
 
-| Mode | Fast mode | Parallelism | Workflows | Reports |
-| ---- | --------- | ----------- | --------- | ------- |
-| normal | off | one agent at a time unless two are independent and needed now | only when asked; size small (<5) | terse; `/compact` at every seam; no speculative work |
-| medium | off | independent work in parallel | on opt-in; size medium (<10) | as `CLAUDE.md` |
-| high | on (auto) | wide fan-out: parallel research, one `deep-debugger` per hypothesis, test-writer + implementer, split parts, reviewer + security-auditor | authorized; unrestricted size | not capped |
+A workflow is a script that runs many agents in phases.
 
-## Cost and caveats
+| Mode | Parallel agents | Workflows | Reports |
+| ---- | --------------- | --------- | ------- |
+| normal | up to 3 at once, based on need | only when you ask for one in your message; up to 4 agents | terse; `/compact` at every seam; no speculative work |
+| medium | independent work in parallel | Claude may propose one when it clearly helps and says roughly what it costs; starts only after you say yes; up to 9 agents | as `CLAUDE.md` |
+| high | wide fan-out: parallel research, one `deep-debugger` per hypothesis, test-writer + implementer, split parts, reviewer + security-auditor | Claude starts one itself for substantive multi-part tasks, no size limit (choosing `ccm high` or `/mode high` is your standing request) | not capped |
 
-- Fast mode bills usage credits. `high` turns it on; other modes remove the key.
-- `fastMode` is machine-wide: the last writer wins, so two sessions in different modes overwrite each other. A plain
-  `claude` start (no `ccm`, no `/mode`) leaves it alone, so a manual `/fast` survives. A CLI write to settings.json in
-  the same few milliseconds as the hook's can be lost (accepted).
-- `ccm high` also launches with ultracode (`high.json`): standing workflow orchestration at the current effort, not
-  a higher effort. It cannot be turned off mid-session, so after `/mode medium`
-  or `normal` the hook tells the model not to start workflows unless asked; restart with `ccm <mode>` to drop it.
-- `scripts/doctor.sh` ignores `fastMode` when checking settings drift; `install.sh` carries it over on reinstall.
+## Subscription only
 
-Files: `home/modes/` (playbooks, settings layers), `home/bin/ccm`, `home/hooks/mode.mjs`, `home/skills/mode`,
+No mode spends usage credits: no fast mode (`/fast`), no `/code-review ultra` or ultrareview. Speed in `high` comes
+only from parallel agents and workflows. At a usage limit Claude waits for the subscription reset
+(`autoContinueAtUsageLimit`).
+
+Files: `home/modes/` (playbooks), `home/bin/ccm`, `home/hooks/mode.mjs`, `home/skills/mode`,
 `tests/mode.test.mjs` (`node --test tests/*.test.mjs`).

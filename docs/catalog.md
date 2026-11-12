@@ -85,7 +85,7 @@ Rules are one line each (`id | rule | check`) and load when a matching file is i
 | `post-edit.mjs` | PostToolUse(Edit, Write, MultiEdit) | Runs the project's own format, lint and typecheck scripts (only those present in the nearest `package.json`). A script that targets the whole repo (`prettier --write .`, `eslint .`, `nx run-many`) is replaced by the tool's binary on the edited file, or skipped for typecheck. Opt out per project with env `CLAUDE_POST_EDIT_SKIP` (`all` or `format,lint,typecheck`). Silent on success; on failure prints at most 15 lines and exits 2. |
 | `skill-router.mjs` | UserPromptSubmit; PostToolUse(Edit, Write, MultiEdit) | Names the UI skills to invoke from prompt keywords (EN/FA; accessibility needs a UI phrase such as "keyboard navigation", "focus ring" or "aria-label", not a bare "keyboard"); on the first UI-file edit per session and agent (subagents too) reminds to load `responsive-ui`, `accessibility-build` and run `ui-quality-pass`. Ignores prompts that are harness events (`<task-notification`, `<system-reminder`); bare words such as "step", "style", "field", "fetch", "submit" or "page" do not fire a route (the UI route needs a UI noun such as "component", "button", "css" or "page layout"; the async route needs "loading state", "skeleton", "pagination" and the like). Quiet with `CLAUDE_SKILL_ROUTER=off` or in a Gradle project without `package.json`. Never blocks. |
 | `agent-memory-only.mjs` | PreToolUse(Write, Edit, MultiEdit, NotebookEdit), wired in the `reviewer` and `security-auditor` frontmatter | Allows writes only under `~/.claude/agent-memory/`; denies everything else, including input it cannot read. |
-| `mode.mjs` | SessionStart; UserPromptExpansion (`/mode`); UserPromptSubmit | Setup modes: injects the active mode's playbook at start, records `/mode <m>` per session in `~/.claude/state/modes/` (pruned after 14 days) and toggles `fastMode` in `~/.claude/settings.json` (on for high; also on startup/resume); one reminder line per prompt when the mode is not medium. Never blocks. |
+| `mode.mjs` | SessionStart; UserPromptExpansion (`/mode`); UserPromptSubmit | Setup modes: injects the active mode's playbook at start, records `/mode <m>` per session in `~/.claude/state/modes/` (pruned after 14 days); never writes settings files; one reminder line per prompt when the mode is not medium. Never blocks. |
 | `token-audit.mjs` | not a hook; run by the `token-audit` skill | Prints the approximate recurring token cost (bytes / 4) of the config visible from the current directory (`paths:` and `description:` read only from the leading frontmatter; folded `>`/`|` descriptions supported). |
 
 `.githooks/pre-commit` (repo only): `gitleaks protect --staged --redact`; the installers set `core.hooksPath`.
@@ -95,8 +95,7 @@ Rules are one line each (`id | rule | check`) and load when a matching file is i
 | Item | Purpose |
 | ---- | ------- |
 | `modes/{normal,medium,high}.md` | Playbooks injected by `mode.mjs` |
-| `modes/{normal,high}.json` | Settings layered by `ccm` via `--settings` (workflow size; high adds ultracode; medium = base) |
-| `bin/ccm` | Launcher `ccm [mode] [claude args]` (never sets effort); linked to `~/.local/bin/ccm` by `install.sh`; `CCM_DRY_RUN=1` prints the command |
+| `bin/ccm` | Launcher `ccm [mode] [claude args]`: sets `CLAUDE_MODE` only (never effort, no settings); linked to `~/.local/bin/ccm` by `install.sh`; `CCM_DRY_RUN=1` prints the command |
 
 See [modes.md](modes.md).
 

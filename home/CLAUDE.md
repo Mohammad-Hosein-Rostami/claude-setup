@@ -6,9 +6,11 @@ user writes in; keep prose short and plain. Do not narrate tool calls.
 ## Modes
 
 - `normal` (thrift), `medium` (default: this file as written), `high` (full speed).
-- Modes change only speed and token thrift (parallelism, workflows, fast mode, report brevity); never the per-task
-  model, the lead's effort or the quality gates.
-- Start with `ccm normal|medium|high`; `/mode <m>` switches everything automatically (fast mode, playbook).
+- Modes are per session (a state file plus `CLAUDE_MODE`). They change only parallelism, workflows and report
+  brevity; never the per-task model, the lead's effort or the quality gates.
+- Start with `ccm normal|medium|high`; `/mode <m>` switches this session only (records the mode, injects the playbook).
+- Subscription usage only, in every mode: never fast mode (`/fast`), never `/code-review ultra`, nothing billed as
+  usage credits; at a usage limit, wait for the reset.
 - The playbook injected by the mode hook (`~/.claude/modes/<m>.md`) overrides "Token discipline" where they conflict.
 
 ## Model routing (Opus leads, agents do the work)
