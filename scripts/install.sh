@@ -13,6 +13,9 @@ DRY_RUN=0
 WITH_PLUGINS=1
 WITH_TOOLS=1
 DONE=()
+PLUGIN_FAILURES=0
+PLUGIN_FAILED_LIST=""
+SUMMARY_SHOWN=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -26,8 +29,12 @@ done
 # Run a mutating command, or only print it under --dry-run.
 act() { if [ "$DRY_RUN" = 1 ]; then echo "[dry-run] $*"; else "$@"; fi; }
 note() { DONE+=("$1"); echo "  $1"; }
-summary() { echo; echo "Completed so far:"; printf '  - %s\n' "${DONE[@]:-nothing}"; }
-trap 'rc=$?; [ $rc -ne 0 ] && { echo "FAILED (exit $rc). Already done:" >&2; summary >&2; }' EXIT
+summary() { SUMMARY_SHOWN=1; echo; echo "Completed so far:"; printf '  - %s\n' "${DONE[@]:-nothing}"; }
+on_exit() {
+  local rc=$?
+  if [ "$rc" -ne 0 ] && [ "$SUMMARY_SHOWN" = 0 ]; then echo "FAILED (exit $rc). Already done:" >&2; summary >&2; fi
+}
+trap on_exit EXIT
 
 need() { command -v "$1" >/dev/null || { echo "missing required tool: $1 (see tools/Brewfile)" >&2; exit 1; }; }
 
@@ -46,8 +53,17 @@ is_windows() { case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; *) return
 link_item() {
   local name="$1" src="$REPO/home/$1" dst="$CLAUDE_DIR/$1"
   if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then note "ok $name"; return; fi
+  # A Git Bash copy that already matches the repo needs no backup or re-copy.
+  if is_windows && [ -e "$dst" ] && [ ! -L "$dst" ] && diff -rq "$src" "$dst" >/dev/null 2>&1; then note "ok $name (copy, up to date)"; return; fi
   backup "$dst"
-  if act ln -s "$src" "$dst" 2>/dev/null; then note "linked $name"; return; fi
+  if act ln -s "$src" "$dst" 2>/dev/null; then
+    # Git Bash's `ln -s` silently makes a copy unless MSYS=winsymlinks:nativestrict is set; detect that.
+    if [ "$DRY_RUN" != 1 ] && is_windows && [ ! -L "$dst" ]; then
+      echo "WARNING: ln -s made a copy of $name, not a symlink (enable Developer Mode); edits in the repo need a re-run" >&2
+      note "copied $name (not live-linked)"
+    else note "linked $name"; fi
+    return
+  fi
   if is_windows; then
     echo "WARNING: symlink failed for $name (enable Developer Mode); copying instead" >&2
     act cp -R "$src" "$dst"; note "copied $name (not live-linked)"
@@ -62,14 +78,23 @@ link_all() {
   if [ -d "$REPO/home/commands" ] && [ -n "$(ls -A "$REPO/home/commands")" ]; then link_item commands; fi
 }
 
-# Link the ccm launcher onto PATH (not into ~/.claude). Bash-only: skipped on Windows.
+# Put the ccm launcher on PATH (not into ~/.claude): symlink on macOS/Linux, idempotent copy on Git Bash.
 link_ccm() {
   local src="$REPO/home/bin/ccm" dst="$HOME/.local/bin/ccm"
-  if is_windows; then echo "  skip ccm: bash launcher, not linked on Windows"; return; fi
-  if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then note "ok ccm"; return; fi
   act mkdir -p "$HOME/.local/bin"
-  backup "$dst"
-  act ln -s "$src" "$dst"; note "linked ccm -> $dst"
+  if is_windows; then
+    if [ -f "$dst" ] && cmp -s "$src" "$dst"; then note "ok ccm"
+    else
+      if [ -L "$dst" ]; then act rm "$dst"; fi
+      if [ -f "$dst" ]; then act cp "$dst" "$dst.bak"; fi
+      act cp "$src" "$dst"; act chmod +x "$dst"; note "copied ccm -> $dst (re-run after updating the repo)"
+    fi
+  elif [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then note "ok ccm"
+  else
+    backup "$dst"
+    act ln -s "$src" "$dst"; note "linked ccm -> $dst"
+  fi
+  case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "WARNING: $HOME/.local/bin is not on PATH; add it to run ccm" >&2 ;; esac
 }
 
 detect_os() {
@@ -88,6 +113,7 @@ build_settings() {
   merged="$(jq -s -f "$REPO/scripts/merge-settings.jq" "${files[@]}" | sed "s|{{CLAUDE_HOME}}|$home_path|g")"
   echo "$merged" | jq -e . >/dev/null
   if [ "$DRY_RUN" = 1 ]; then echo "[dry-run] would write $out (${#files[@]} source files)"; return; fi
+  if [ -f "$out" ] && [ "$(jq -S . "$out" 2>/dev/null)" = "$(jq -S . <<<"$merged")" ]; then note "ok settings.json"; return; fi
   if [ -f "$out" ]; then backup "$out"; fi
   echo "$merged" > "$out"
   note "wrote settings.json from: ${files[*]##*/}"
@@ -100,24 +126,36 @@ install_plugins() {
     echo "claude CLI plugin commands unavailable. Manual steps: run /plugin in Claude Code, add the marketplaces and plugins listed in plugins/plugins.json."
     return
   fi
-  local repo_src
-  while read -r repo_src; do act claude plugin marketplace add "$repo_src"; note "marketplace $repo_src"; done \
-    < <(jq -r '.marketplaces[] | select(.source|startswith("github:")) | .source|sub("github:";"")' "$manifest")
-  local id
-  while read -r id; do act claude plugin install "$id"; note "plugin $id"; done \
-    < <(jq -r '(.enabled + .disabled)[] | select(endswith("@gitkraken")|not)' "$manifest")
+  local repo_src id failed=()
+  while read -r repo_src; do
+    act claude plugin marketplace add "$repo_src" || { failed+=("marketplace $repo_src"); continue; }
+    note "marketplace $repo_src"
+  done < <(jq -r '.marketplaces[] | select(.source|startswith("github:")) | .source|sub("github:";"")' "$manifest")
+  while read -r id; do
+    act claude plugin install "$id" || { failed+=("$id"); continue; }
+    note "plugin $id"
+  done < <(jq -r '(.enabled + .disabled)[] | select(endswith("@gitkraken")|not)' "$manifest")
+  if [ "${#failed[@]}" -gt 0 ]; then
+    PLUGIN_FAILED_LIST="${failed[*]}"
+    PLUGIN_FAILURES=1
+  fi
   echo "Note: enabled/disabled state comes from settings.json enabledPlugins. gitkraken is installed by the GitKraken app."
 }
 
 # Install ui-check's dependencies (odiff-bin, pngjs) from its lockfile; falls back to a plain install without one.
 install_tool_deps() {
-  local dir="$CLAUDE_DIR/tools/ui-check"
+  local dir="$CLAUDE_DIR/tools/ui-check" tool="$REPO/home/tools/ui-check" lock="" stamp
   if [ "$DRY_RUN" != 1 ] && [ ! -d "$dir" ]; then echo "skip ui-check deps: $dir not found" >&2; return; fi
   # npm ci --prefix through the ~/.claude/tools symlink reports a false lockfile mismatch: use the real path.
   [ -d "$dir" ] && dir=$(cd "$dir" && pwd -P)
-  if [ -f "$REPO/home/tools/ui-check/pnpm-lock.yaml" ] && command -v pnpm >/dev/null; then act pnpm --dir "$dir" install --frozen-lockfile
-  elif [ -f "$REPO/home/tools/ui-check/package-lock.json" ]; then act npm ci --prefix "$dir"
+  if [ -f "$tool/pnpm-lock.yaml" ] && command -v pnpm >/dev/null; then lock="$tool/pnpm-lock.yaml"
+  elif [ -f "$tool/package-lock.json" ]; then lock="$tool/package-lock.json"; fi
+  stamp="$dir/node_modules/.lock-cksum"
+  if [ -n "$lock" ] && [ -f "$stamp" ] && [ "$(cksum <"$lock")" = "$(cat "$stamp")" ]; then note "ok ui-check dependencies (lockfile unchanged)"; return; fi
+  if [ "$lock" = "$tool/pnpm-lock.yaml" ]; then act pnpm --dir "$dir" install --frozen-lockfile
+  elif [ -n "$lock" ]; then act npm ci --prefix "$dir"
   else act npm install --prefix "$dir" --no-audit --no-fund; fi
+  if [ -n "$lock" ] && [ "$DRY_RUN" != 1 ] && [ -d "$dir/node_modules" ]; then cksum <"$lock" >"$stamp"; fi
   note "ui-check dependencies"
 }
 
@@ -125,6 +163,7 @@ enable_hooks() {
   if [ -d "$REPO/.git" ]; then act git -C "$REPO" config core.hooksPath .githooks; note "git hooksPath = .githooks"; fi
 }
 
+need jq
 link_all
 link_ccm
 build_settings
@@ -133,3 +172,4 @@ if [ "$WITH_TOOLS" = 1 ]; then install_tool_deps; fi
 if [ "$WITH_PLUGINS" = 1 ]; then install_plugins; fi
 [ "$DRY_RUN" = 1 ] && echo "(dry-run: nothing changed)"
 summary
+if [ "$PLUGIN_FAILURES" != 0 ]; then echo "FAILED plugin steps: $PLUGIN_FAILED_LIST" >&2; exit 1; fi

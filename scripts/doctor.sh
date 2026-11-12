@@ -8,15 +8,24 @@ CLAUDE_DIR="$HOME/.claude"
 BAD=0
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1"; BAD=1; }
+warn() { echo "WARN  $1"; }
 
+is_windows() { case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; *) return 1 ;; esac; }
+
+# On Git Bash install.sh may have copied instead of linking (no symlink permission): a present copy is a warning, not a FAIL.
 check_links() {
-  local name
+  local name target
   for name in CLAUDE.md rules skills agents standards hooks tools project-notes modes statusline.mjs; do
-    if [ -L "$CLAUDE_DIR/$name" ] && [ "$(readlink "$CLAUDE_DIR/$name")" = "$REPO/home/$name" ]; then ok "link $name"
+    target="$CLAUDE_DIR/$name"
+    if [ -L "$target" ] && [ "$(readlink "$target")" = "$REPO/home/$name" ]; then ok "link $name"
+    elif is_windows && [ -e "$target" ] && [ ! -L "$target" ]; then ok "copy $name (not live-linked; re-run install.sh after repo changes)"
     else bad "link $name (re-run scripts/install.sh)"; fi
   done
-  if [ -L "$HOME/.local/bin/ccm" ] && [ "$(readlink "$HOME/.local/bin/ccm")" = "$REPO/home/bin/ccm" ]; then ok "link ccm"
+  target="$HOME/.local/bin/ccm"
+  if [ -L "$target" ] && [ "$(readlink "$target")" = "$REPO/home/bin/ccm" ]; then ok "link ccm"
+  elif is_windows && [ -f "$target" ] && cmp -s "$REPO/home/bin/ccm" "$target"; then ok "copy ccm"
   else bad "link ccm (re-run scripts/install.sh)"; fi
+  if command -v ccm >/dev/null; then ok "ccm on PATH"; else bad "ccm not on PATH (add ~/.local/bin to PATH)"; fi
 }
 
 # Drift: rebuild the expected settings.json in memory and compare with the live one.
@@ -27,8 +36,21 @@ check_settings() {
   [ -f "$REPO/settings/local.json" ] && files+=("$REPO/settings/local.json")
   case "$os" in windows) home_path="$(cygpath -m "$CLAUDE_DIR" 2>/dev/null || echo "${CLAUDE_DIR//\\//}")" ;; esac
   expected="$(jq -S -s -f "$REPO/scripts/merge-settings.jq" "${files[@]}" | sed "s|{{CLAUDE_HOME}}|$home_path|g")"
-  if [ "$expected" = "$(jq -S . "$CLAUDE_DIR/settings.json" 2>/dev/null)" ]; then ok "settings.json matches repo"
+  local live
+  if ! live="$(jq -S . "$CLAUDE_DIR/settings.json" 2>/dev/null)"; then bad "settings.json missing or invalid JSON"; return
+  elif [ "$expected" = "$live" ]; then ok "settings.json matches repo"
   else bad "settings.json differs from repo (live edits? move them into settings/*.json)"; fi
+  check_deny_rules
+}
+
+# Safety floor: every deny rule in base.json must be present in the live settings.json; hooks must not be disabled.
+check_deny_rules() {
+  local live="$CLAUDE_DIR/settings.json" missing
+  missing="$(jq -rn --slurpfile b "$REPO/settings/base.json" --slurpfile l "$live" \
+    '($l[0].permissions.deny // []) as $d | ($b[0].permissions.deny // [])[] | select(. as $r | $d | index($r) | not)' 2>/dev/null)"
+  if [ -n "$missing" ]; then bad "base deny rules missing from settings.json: $(tr '\n' ' ' <<<"$missing")"
+  else ok "base deny rules present in settings.json"; fi
+  if [ "$(jq -r '.disableAllHooks // false' "$live" 2>/dev/null)" = "true" ]; then warn "disableAllHooks is true: no hooks run"; fi
 }
 
 check_plugins() {
@@ -39,6 +61,37 @@ check_plugins() {
     case "$id" in *@gitkraken) continue ;; esac
     if grep -qx "$id" <<<"$installed"; then ok "plugin $id"; else bad "plugin $id not installed"; fi
   done < <(jq -r '.enabled[]' "$REPO/plugins/plugins.json")
+}
+
+# settings/base.json enabledPlugins must agree with plugins/plugins.json (enabled -> true, disabled -> false).
+check_plugin_parity() {
+  local diff
+  diff="$(jq -rn --slurpfile b "$REPO/settings/base.json" --slurpfile p "$REPO/plugins/plugins.json" '
+    ($b[0].enabledPlugins // {}) as $e
+    | [ $p[0].enabled[] | select($e[.] != true) | "enabled in plugins.json but not true in base.json: " + . ],
+      [ $p[0].disabled[] | select($e[.] != false) | "disabled in plugins.json but not false in base.json: " + . ],
+      [ $e | keys[] as $k | select(($p[0].enabled + $p[0].disabled) | index($k) | not) | "in base.json only: " + $k ]
+    | .[]' 2>&1)"
+  if [ -z "$diff" ]; then ok "plugins.json matches base.json enabledPlugins"; else bad "plugin parity: $diff"; fi
+}
+
+check_node() {
+  local major
+  major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+  if [ "$major" -ge 22 ]; then ok "node $major"; else bad "node >= 22 required (found ${major})"; fi
+}
+
+check_hook_files() {
+  local file missing=0
+  while read -r file; do
+    [ -f "$REPO/home/hooks/$file" ] || { bad "hook file missing: home/hooks/$file"; missing=1; }
+  done < <(jq -r '[.. | .command? // empty] | .[] | scan("hooks/[A-Za-z0-9._-]+\\.mjs") | sub("hooks/";"")' "$REPO/settings/base.json" | sort -u)
+  [ "$missing" = 0 ] && ok "hook files referenced by base.json exist"
+  return 0
+}
+
+check_repo_tests() {
+  if (cd "$REPO" && node --test tests/*.test.mjs >/dev/null 2>&1); then ok "repo tests pass"; else bad "repo tests fail (node --test tests/*.test.mjs)"; fi
 }
 
 check_tools() {
@@ -71,5 +124,5 @@ check_ui_check() {
   esac
 }
 
-check_links; check_settings; check_plugins; check_tools; check_ui_check
+check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_tools; check_ui_check; check_repo_tests
 exit "$BAD"
