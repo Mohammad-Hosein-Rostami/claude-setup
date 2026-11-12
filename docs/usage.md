@@ -10,13 +10,14 @@ Keep every file valid at each commit: the files are live in every Claude session
 
 ## Add a skill
 1. `home/skills/<name>/SKILL.md` with frontmatter `name` and a one-line `description` that starts "Use when ..."
-   (the description is loaded in every session: keep it short). Optional: `model`, `disable-model-invocation: true`
+   (the description is loaded in every session: keep it short), except explicit-invoke skills (`escalate`, `quick`,
+   `handoff`, `token-audit`), which describe the command instead. Optional: `model`, `disable-model-invocation: true`
    for slash-command-only skills.
 2. Body: numbered steps, a done-gate, rule ids it enforces; link a `standards/` file instead of inlining long reference.
 3. Add the row to `docs/catalog.md` (rerun the extraction or edit by hand).
 
 ## Add an agent
-`home/agents/<name>.md` with frontmatter `name`, `description` ("Use to ..."), `model` (haiku, sonnet, opus), `effort`,
+`home/agents/<name>.md` with frontmatter `name`, `description` ("Use to ..."), `model` (alias `haiku`, `sonnet` or `opus`, or a full id such as `claude-opus-5-5`), `effort`,
 `maxTurns`, optional `tools`/`disallowedTools`. State what it returns and a size cap. Add a routing line to
 `home/CLAUDE.md` if it changes who does what. Add it to `docs/catalog.md`.
 

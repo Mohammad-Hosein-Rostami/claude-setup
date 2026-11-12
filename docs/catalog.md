@@ -44,7 +44,8 @@ descriptions are quoted from their frontmatter; those descriptions are what make
 | `test-writer` | Use to write tests from a spec or acceptance criteria before or without reading the implementation, so tests do not confirm the code's own mistakes. | sonnet |
 | `visual-qa` | Use to check a built UI against its Figma baseline and at several widths with ui-check (compare, responsive), optionally fixing failures. Returns a short verdict, never images. | sonnet |
 
-Routing policy (which tier does what) is in `home/CLAUDE.md`; `settings/base.json` also pins `general-purpose` to Sonnet 5.5 and `architect` to Opus 5.5.
+Routing policy (which tier does what) is in `home/CLAUDE.md`: the Opus session leads and delegates. Agents without a `model` (general-purpose, Explore, Plan) run on Sonnet 5.5 via `env.CLAUDE_CODE_SUBAGENT_MODEL`; precedence is the Agent call's `model`, then frontmatter, then that env var.
+`architect`, `reviewer` and `security-auditor` have `memory: user` (notes in `~/.claude/agent-memory/<name>/`); `reviewer` and `security-auditor` stay read-only for project files through the `agent-memory-only.mjs` hook in their frontmatter.
 
 ## Rules (`home/rules/`, ids and checks)
 
@@ -79,10 +80,11 @@ Rules are one line each (`id | rule | check`) and load when a matching file is i
 
 | File | Event | What it does |
 | ---- | ----- | ------------ |
-| `pre-bash-guard.mjs` | PreToolUse(Bash) | Denies git `--no-verify`, force push, `rm -rf` outside the project (temp dirs allowed), reading `.env`, hand-editing lockfiles. Anything it cannot parse is allowed. |
+| `pre-bash-guard.mjs` | PreToolUse(Bash) | Denies git `--no-verify`, force push (including a `+refspec` such as `git push origin +main`), `rm -rf` outside the project (temp dirs allowed), reading `.env` (also by `< .env` input redirection), hand-editing lockfiles. Anything it cannot parse is allowed. |
 | `post-edit.mjs` | PostToolUse(Edit, Write, MultiEdit) | Runs the project's own format, lint and typecheck scripts (only those present in the nearest `package.json`). A script that targets the whole repo (`prettier --write .`, `eslint .`, `nx run-many`) is replaced by the tool's binary on the edited file, or skipped for typecheck. Opt out per project with env `CLAUDE_POST_EDIT_SKIP` (`all` or `format,lint,typecheck`). Silent on success; on failure prints at most 15 lines and exits 2. |
-| `skill-router.mjs` | UserPromptSubmit; PostToolUse(Edit, Write, MultiEdit) | Names the UI skills to invoke from prompt keywords (EN/FA; accessibility needs a UI phrase such as "keyboard navigation", "focus ring" or "aria-label", not a bare "keyboard"); on the first UI-file edit per session and agent (subagents too) reminds to load `responsive-ui`, `accessibility-build` and run `ui-quality-pass`. Quiet with `CLAUDE_SKILL_ROUTER=off` or in a Gradle project without `package.json`. Never blocks. |
-| `token-audit.mjs` | not a hook; run by the `token-audit` skill | Prints the approximate recurring token cost (bytes / 4) of the config visible from the current directory. |
+| `skill-router.mjs` | UserPromptSubmit; PostToolUse(Edit, Write, MultiEdit) | Names the UI skills to invoke from prompt keywords (EN/FA; accessibility needs a UI phrase such as "keyboard navigation", "focus ring" or "aria-label", not a bare "keyboard"); on the first UI-file edit per session and agent (subagents too) reminds to load `responsive-ui`, `accessibility-build` and run `ui-quality-pass`. Ignores prompts that are harness events (`<task-notification`, `<system-reminder`); bare words such as "step", "style", "field", "fetch", "submit" or "page" do not fire a route (the UI route needs a UI noun such as "component", "button", "css" or "page layout"; the async route needs "loading state", "skeleton", "pagination" and the like). Quiet with `CLAUDE_SKILL_ROUTER=off` or in a Gradle project without `package.json`. Never blocks. |
+| `agent-memory-only.mjs` | PreToolUse(Write, Edit, MultiEdit, NotebookEdit), wired in the `reviewer` and `security-auditor` frontmatter | Allows writes only under `~/.claude/agent-memory/`; denies everything else, including input it cannot read. |
+| `token-audit.mjs` | not a hook; run by the `token-audit` skill | Prints the approximate recurring token cost (bytes / 4) of the config visible from the current directory (`paths:` and `description:` read only from the leading frontmatter; folded `>`/`|` descriptions supported). |
 
 `.githooks/pre-commit` (repo only): `gitleaks protect --staged --redact`; the installers set `core.hooksPath`.
 
@@ -101,13 +103,13 @@ layers" in `home/CLAUDE.md`.
 
 ## Status line
 
-`home/statusline.mjs`: model tier, effort, context size in tokens, cost, and 5h / 7d usage windows with reset times.
+`home/statusline.mjs`: model tier, effort, context size in tokens, cost, and 5h / 7d usage windows with reset times. The 5h estimate comes from `ccusage`, pinned to `ccusage@20.0.50` (`CCUSAGE_PACKAGE` in `statusline.mjs`) and refreshed in a detached process; a failed refresh never breaks the line.
 
 ## Tools (`home/tools/`)
 
 | Tool | What it does |
 | ---- | ------------ |
-| `ui-check` | Node CLI: `figma-pull`, `compare`, `responsive`, `columns`. See `home/tools/ui-check/README.md` and `docs/figma-pixel-perfect.md`. Dependencies: `odiff-bin`, `pngjs`; Playwright comes from the target project. |
+| `ui-check` | Node CLI: `figma-pull`, `compare`, `responsive`, `columns`. See `home/tools/ui-check/README.md` and `docs/figma-pixel-perfect.md`. Pages wait for network idle (max 5 s) and a 1.5 s settle before measuring. Dependencies: `odiff-bin`, `pngjs`; Playwright comes from the target project. |
 
 System CLIs (`tools/Brewfile`, `tools/windows-tools.ps1`): jq, ripgrep, gitleaks, gh, volta.
 
@@ -127,15 +129,14 @@ Marketplaces: `anthropic-plugin-directory`, `claude-plugins-official`, `gitkrake
 | `env.MAX_MCP_OUTPUT_TOKENS` | 15000; caps MCP tool output |
 | `env.CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY` | 1; removes survey prompts |
 | `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` | 200000; compaction window |
+| `env.CLAUDE_CODE_SUBAGENT_MODEL` | `claude-sonnet-5-5`; model for agents that pin none |
 | `permissions.allow` | WebSearch, WebFetch |
-| `permissions.deny` | reading `.env*`, `pnpm-lock.yaml`, credentials files (Read and Bash patterns) |
-| `model` | `opus` |
+| `permissions.deny` | reading `.env*`, `pnpm-lock.yaml`, credentials files, `~/.ssh/**`, `~/.aws/**`, `*.pem`, `.npmrc` (Read and Bash patterns) |
+| `model` | `opus` (the session leads at effort high; see `home/CLAUDE.md`) |
 | `hooks` | PreToolUse(Bash) -> `pre-bash-guard.mjs`; UserPromptSubmit -> `skill-router.mjs`; PostToolUse(Edit, Write, MultiEdit) -> `post-edit.mjs`, `skill-router.mjs` |
 | `statusLine` | command: `statusline.mjs` |
 | `enabledPlugins` | plugin id -> true/false (mirrors `plugins/plugins.json`) |
 | `modelSettings` | effort per model: Opus 5.5 high, Sonnet 5.5 medium, Haiku 5.5 low |
-| `subagents` | model pins for `general-purpose` (Sonnet 5.5) and `architect` (Opus 5.5) |
-| `autoCompactContext` | true |
 
 OS files: `settings/macos.json` (Notification hook plays a sound), `settings/windows.json` (Notification hook beeps), `settings/linux.json` (empty).
 `settings/local.json` (gitignored, per machine): see `local.json.example` (`skipDangerousModePermissionPrompt`); its `hooks`
@@ -146,4 +147,5 @@ are appended to the shared ones (e.g. the PC's Android incubator hook).
 | Script | Purpose |
 | ------ | ------- |
 | `install.sh` / `install.ps1` | Link `home/*` into `~/.claude`, build `settings.json`, install ui-check dependencies, set the git hook path, install plugins. Flags: `--dry-run`, `--no-plugins`, `--no-tools`. |
+| `merge-settings.jq` | The shared jq merge (deep merge, `hooks` appended per event) used by `install.sh` and `doctor.sh`; `install.ps1` mirrors it. |
 | `doctor.sh` | Read-only report: links, settings drift, plugins, CLI tools, ui-check dependencies and Chromium. |

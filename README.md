@@ -9,11 +9,11 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
 | ---- | ---- |
 | `home/CLAUDE.md` | Model routing and token discipline |
 | `home/rules`, `home/standards` | One-line rules (path-scoped) and the longer reference behind them |
-| `home/skills`, `home/agents` | Workflows and subagents (Opus plans, Sonnet implements, Haiku looks up) |
+| `home/skills`, `home/agents` | Workflows and subagents (the Opus session plans, decides and delegates; Sonnet implements and reviews; Haiku looks up and runs) |
 | `home/hooks`, `home/statusline.mjs` | Bash guard, post-edit checks, token audit, status line |
 | `home/tools/ui-check` | Figma baseline pull, visual compare, responsive and column checks |
 | `settings/`, `plugins/` | Settings layers (base, OS, local) and the plugin list |
-| `scripts/` | `install.sh`, `install.ps1`, `doctor.sh` |
+| `scripts/` | `install.sh`, `install.ps1`, `doctor.sh`, `merge-settings.jq` |
 
 ## Quick start
     scripts/install.sh --dry-run     # preview, changes nothing
