@@ -30,7 +30,8 @@ process.stdin.on('end', () => {
 });
 
 // ccusage takes ~10 s, too slow for every refresh: read a cached JSON, refresh it detached at most once a minute.
-const BLOCK_CACHE = `${process.env.HOME}/.claude/.ccusage-block.json`;
+const CCUSAGE_PACKAGE = 'ccusage@20.0.50'; // pinned: `@latest` would run whatever was published last, unreviewed, on every refresh
+const BLOCK_CACHE = `${process.getBuiltinModule('node:os').homedir()}/.claude/.ccusage-block.json`;
 const BLOCK_TTL_MS = 60_000;
 function localBlock() {
   const fs = process.getBuiltinModule('node:fs');
@@ -42,7 +43,13 @@ function localBlock() {
   } catch {
     // no cache yet (or a half-written one): the refresh below creates it
   }
-  if (age > BLOCK_TTL_MS) refreshBlock(fs);
+  if (age > BLOCK_TTL_MS) {
+    try {
+      refreshBlock(fs);
+    } catch {
+      // read-only home or spawn failure: keep printing the (stale) cached value, the line must still render
+    }
+  }
   if (!cached?.endTime) return '\x1b[2m5h …\x1b[0m';
   const reset = fmtReset(Date.parse(cached.endTime) / 1000, false);
   return `\x1b[36m5h blk $${(cached.costUSD ?? 0).toFixed(2)}\x1b[0m ↻${reset} \x1b[2m(est)\x1b[0m`;
@@ -53,8 +60,12 @@ function refreshBlock(fs) {
   if (fs.existsSync(BLOCK_CACHE)) fs.utimesSync(BLOCK_CACHE, new Date(), new Date());
   else fs.writeFileSync(BLOCK_CACHE, '{}');
   const { spawn } = process.getBuiltinModule('node:child_process');
-  const cmd = `npx -y ccusage@latest blocks --active --json --offline > "${BLOCK_CACHE}.tmp" 2>/dev/null && mv "${BLOCK_CACHE}.tmp" "${BLOCK_CACHE}"`;
-  spawn('sh', ['-c', cmd], { detached: true, stdio: 'ignore' }).unref();
+  const cmd = `npx -y ${CCUSAGE_PACKAGE} blocks --active --json --offline > "${BLOCK_CACHE}.tmp" 2>/dev/null && mv "${BLOCK_CACHE}.tmp" "${BLOCK_CACHE}"`;
+  const child = spawn('sh', ['-c', cmd], { detached: true, stdio: 'ignore' });
+  child.on('error', () => {
+    // sh missing or not spawnable: ignore, the status line must not crash on a failed background refresh
+  });
+  child.unref();
 }
 
 // "5h 62% left ↻14:40": percent LEFT (what you asked to see), colored by how little remains.

@@ -1,5 +1,5 @@
 // PreToolUse(Bash) guard. Reads the hook JSON from stdin, never evaluates the command.
-// Denies: git --no-verify, force push, rm -rf outside the project (temp dirs allowed), reading .env, hand-editing lockfiles.
+// Denies: git --no-verify, force push (incl. +refspec), rm -rf outside the project (temp dirs allowed), reading .env (also via `< .env`), hand-editing lockfiles.
 // Anything else (and any input it cannot parse) is allowed. Deny = exit 2 + reason on stderr.
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
@@ -51,6 +51,7 @@ function checkGit(args) {
   const shortNoVerify = sub === 'commit' && flags.some((f) => /^-[a-zA-Z]*n[a-zA-Z]*$/.test(f));
   if (flags.includes('--no-verify') || shortNoVerify) return deny('git --no-verify skips the hooks; fix the hook failure instead');
   if (sub === 'push' && flags.some((f) => f === '--force' || f === '-f')) return deny('force push is blocked; use --force-with-lease after confirming with the owner');
+  if (sub === 'push' && rest.some((a) => /^\+[^\s]/.test(a))) return deny('a +refspec push is a force push; use --force-with-lease after confirming with the owner');
   return allow();
 }
 
@@ -78,6 +79,12 @@ function checkRm(args, cwd, project) {
 function checkEnvRead(cmd, args) {
   if (!ENV_READERS.has(cmd.toLowerCase())) return allow();
   const hit = args.find((a) => !a.startsWith('-') && isEnvFile(a));
+  return hit === undefined ? allow() : deny(`reading ${basename(hit)} is blocked; ask the owner for the value`);
+}
+
+// `cat < .env` / `cat <.env`: input redirection reads the file without the reader command naming it.
+function checkEnvRedirect(tokens) {
+  const hit = tokens.map((t, i) => (/^<(?!<)/.test(t) ? t.slice(1) || tokens[i + 1] : undefined)).find((t) => t && isEnvFile(t));
   return hit === undefined ? allow() : deny(`reading ${basename(hit)} is blocked; ask the owner for the value`);
 }
 
@@ -110,6 +117,7 @@ function checkSegment(tokens, cwd, project) {
     () => (cmd === 'git' ? checkGit(args) : allow()),
     () => (cmd === 'rm' ? checkRm(args, cwd, project) : allow()),
     () => checkEnvRead(cmd, args),
+    () => checkEnvRedirect(args),
     () => checkLockfileEdit(cmd, args),
   ];
   for (const check of checks) {

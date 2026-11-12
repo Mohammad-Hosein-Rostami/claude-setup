@@ -17,6 +17,22 @@ const tryRead = (p) => {
   }
 };
 
+/** Frontmatter fields of a markdown file: only the leading `---` block is read; `>`/`|` values join indented lines. */
+const frontmatter = (text) => {
+  const block = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  const fields = {};
+  if (!block) return fields;
+  const lines = block[1].split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(paths|description):\s*(.*)$/);
+    if (!m) continue;
+    const parts = /^[>|][+-]?$/.test(m[2].trim()) ? [] : [m[2]];
+    while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1])) parts.push(lines[++i].trim());
+    fields[m[1]] = parts.join(' ').trim();
+  }
+  return fields;
+};
+
 const walk = (dir, filter) => {
   const out = [];
   if (!existsSync(dir)) return out;
@@ -42,12 +58,12 @@ if (ug) add('always-loaded', '~/.claude/CLAUDE.md', ug);
 for (const [scope, root] of roots) {
   for (const p of walk(join(root, 'rules'), (x) => x.endsWith('.md'))) {
     const t = readFileSync(p, 'utf8');
-    const scoped = /^---[\s\S]*?\npaths:/m.test(t);
+    const scoped = 'paths' in frontmatter(t);
     add(scoped ? 'rule(paths)' : 'rule(ALWAYS)', `${scope}:${p.slice(root.length + 1)}`, t);
   }
   for (const p of walk(join(root, 'skills'), (x) => x.endsWith('SKILL.md') && !x.includes('synced'))) {
     const t = readFileSync(p, 'utf8');
-    const d = (t.match(/^description:\s*(.*)$/m) ?? [, ''])[1];
+    const d = frontmatter(t).description ?? '';
     add('skill-listing', `${scope}:${p.slice(root.length + 1).replace(/\\/g, '/')}`, d);
     rows.push({
       kind: 'skill-body',
@@ -58,7 +74,7 @@ for (const [scope, root] of roots) {
   }
   for (const p of walk(join(root, 'agents'), (x) => x.endsWith('.md'))) {
     const t = readFileSync(p, 'utf8');
-    const d = (t.match(/^description:\s*(.*)$/m) ?? [, ''])[1];
+    const d = frontmatter(t).description ?? '';
     add('agent-listing', `${scope}:${p.slice(root.length + 1)}`, d);
   }
 }

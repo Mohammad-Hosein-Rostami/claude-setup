@@ -11,19 +11,22 @@ import { pathToFileURL } from 'node:url';
 
 const PROMPT_ROUTES = [
   { test: /figma\.com|figma|pixel[\s-]?perfect|match (the )?(design|frame)|فیگما/i, skills: ['figma-pixel-perfect', 'responsive-ui'] },
-  { test: /responsive|mobile|tablet|breakpoint|overflow|viewport|reflow|ریسپانسیو|موبایل/i, skills: ['responsive-ui'] },
-  { test: /\b(forms?|validation|validate|inputs?|fields?|submit)\b|فرم/i, skills: ['forms-validation'] },
-  { test: /\b(loading|empty state|error state|skeleton|pagination|fetch(es|ing)?)\b/i, skills: ['async-ui-states'] },
+  { test: /responsive|mobile[\s-]?(first|layout|view|screen|width|breakpoint)|tablet|breakpoint|overflow|viewport|reflow|ریسپانسیو|موبایل/i, skills: ['responsive-ui'] },
+  { test: /\b(forms?|validation|validate)\b|فرم/i, skills: ['forms-validation'] },
+  { test: /\b(loading|empty|error) states?\b|\bskeleton|\bpagination/i, skills: ['async-ui-states'] },
   // Bare "keyboard", "focus" and "aria" (in "variable") fired on non-UI prompts, so they need UI context words.
   {
     test: /a11y|accessib|keyboard[\s-]?(nav\w*|access\w*|trap|support|only)|focus[\s-]?(ring|trap|order|state|visible|management)|\baria\b|aria-|contrast|screen reader/i,
     skills: ['accessibility-build'],
   },
   {
-    test: /\b(ui|ux|pages?|screens?|components?|layouts?|steps?|modals?|dialogs?|drawers?|cards?|buttons?|styles?|styling|css|scss|sx|tailwind|mui|theme|spacing|align\w*)\b|صفحه|کامپوننت|استایل|طراحی/i,
+    // Bare "page", "step", "style", "card", "theme", "layout" fired on non-UI prompts: require a UI noun or phrase.
+    test: /\b(ui|ux|components?|screens?|modals?|dialogs?|drawers?|buttons?|navbar|css|scss|sx|tailwind|mui|styling|spacing|responsive|page[\s-]?layouts?|form[\s-]?fields?)\b|صفحه|کامپوننت|استایل|طراحی/i,
     skills: ['accessibility-build', 'responsive-ui', 'ui-quality-pass'],
   },
 ];
+// Harness events (background task results, injected reminders) arrive as prompts but are not user text.
+const HARNESS_EVENT = /^<(task-notification|system-reminder)/;
 const UI_FILE = /\.(tsx|jsx|vue|svelte|html|css|scss|sass|less)$/i;
 const NON_UI_FILE = /\.(test|spec|stories)\.\w+$/i;
 const SAFE_ID = /^[\w-]{1,128}$/;
@@ -33,6 +36,7 @@ const GRADLE_FILES = ['settings.gradle', 'settings.gradle.kts', 'build.gradle', 
 
 /** Returns the skills a prompt calls for, in first-match order, without duplicates. */
 export function skillsForPrompt(prompt) {
+  if (HARNESS_EVENT.test(prompt.trim())) return [];
   const picked = PROMPT_ROUTES.filter((route) => route.test.test(prompt)).flatMap((route) => route.skills);
   return [...new Set(picked)];
 }
@@ -53,11 +57,15 @@ function promptContext(prompt) {
 // First UI edit per session and agent only; a marker file in the temp dir records that the reminder was sent.
 function firstUiEdit(sessionId, agentId) {
   const ids = [sessionId, agentId ?? 'main'];
-  if (!ids.every((id) => SAFE_ID.test(id))) return false;
+  if (!ids.every((id) => typeof id === 'string' && SAFE_ID.test(id))) return false;
   const marker = join(STATE_DIR, ids.join('--'));
   if (existsSync(marker)) return false;
-  mkdirSync(STATE_DIR, { recursive: true });
-  writeFileSync(marker, '');
+  try {
+    mkdirSync(STATE_DIR, { recursive: true });
+    writeFileSync(marker, '');
+  } catch {
+    return false; // temp dir not writable: skip the reminder rather than fail a hook that must never block
+  }
   return true;
 }
 
