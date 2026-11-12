@@ -191,14 +191,16 @@ try {
   foreach ($n in $Links) { Link-Item $n }
   $commands = Join-Path $Repo 'home\commands'
   if ((Test-Path $commands) -and (Get-ChildItem $commands -Force | Select-Object -First 1)) { Link-Item 'commands' }
-  Build-Settings
   Install-Launcher
   if (Test-Path (Join-Path $Repo '.git')) {
     if (-not $DryRun) { git -C $Repo config core.hooksPath .githooks }
     Note 'git hooksPath = .githooks'
   }
-  if (-not $NoTools) { Install-ToolDeps }
   if (-not $NoPlugins) { Install-Plugins }
+  # Settings after plugins: `claude plugin install` re-enables plugins in settings.json; the merged repo settings must
+  # win. Tool deps after settings, so a failed ui-check dependency install cannot leave settings.json stale.
+  Build-Settings
+  if (-not $NoTools) { Install-ToolDeps }
 } catch {
   Write-Error "FAILED: $_`nAlready done:`n  $($Done -join "`n  ")"
   exit 1

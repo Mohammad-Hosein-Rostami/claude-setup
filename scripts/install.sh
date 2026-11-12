@@ -166,10 +166,12 @@ enable_hooks() {
 need jq
 link_all
 link_ccm
-build_settings
 enable_hooks
-if [ "$WITH_TOOLS" = 1 ]; then install_tool_deps; fi
 if [ "$WITH_PLUGINS" = 1 ]; then install_plugins; fi
+# Settings after plugins: `claude plugin install` re-enables plugins in settings.json; the merged repo settings must
+# win. Tool deps after settings, so a failed ui-check dependency install cannot leave settings.json stale.
+build_settings
+if [ "$WITH_TOOLS" = 1 ]; then install_tool_deps; fi
 [ "$DRY_RUN" = 1 ] && echo "(dry-run: nothing changed)"
 summary
 if [ "$PLUGIN_FAILURES" != 0 ]; then echo "FAILED plugin steps: $PLUGIN_FAILED_LIST" >&2; exit 1; fi
