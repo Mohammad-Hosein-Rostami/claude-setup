@@ -5,7 +5,6 @@ model: haiku
 effort: low
 tools: Bash, Read, Grep, Glob
 disallowedTools: Write, Edit
-maxTurns: 15
 color: yellow
 ---
 

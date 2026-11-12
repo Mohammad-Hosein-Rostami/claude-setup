@@ -32,6 +32,17 @@ Rules:
    think longer and cost more per turn, so use `/effort xhigh` only for one problem that `high`
    failed on, then go back (a mid-session effort change costs a prompt-cache miss).
 
+## Finish the run (no hard limits)
+
+- No turn, step or attempt caps: agents have no `maxTurns`, rules set no retry counts. A run ends when the task is
+  done or the next step is a decision that is the user's.
+- Stuck is a signal to change approach, not to stop: `root-cause-debug`, then `deep-debugger`, then `/escalate`. If a
+  subagent comes back unfinished, continue it (SendMessage) or re-delegate with what it learned; never drop the work.
+- Cost is steered, not capped: routing (rules above), delegation of noisy work, auto-compaction and `/compact` at
+  seams, and short reports.
+- Report sizes (`≤ N lines`) size the summary, not the work. When the detail matters, write it to a file and return
+  the path.
+
 ## Skill routing (UI)
 
 Invoke these with the Skill tool before writing code, in every project; a `skill-router` hook names them per prompt.
@@ -75,8 +86,8 @@ global setup combines with it.
   session) *before* starting it. Long task → `/compact` at a natural seam.
 - Parallelise independent tool calls in one turn. Prefer CLI (`gh`, `pnpm`) over MCP tools;
   browser/Playwright MCP only when asked (each call also echoes its code back).
-- Pixel/visual bugs: read the code once, make the best single fix or report the finding and
-  ask - do not iterate screenshots and measurements unprompted.
+- Pixel/visual bugs: read the code once and make the best fix; hand the compare-and-fix loop to `visual-qa` (it runs
+  until it passes) instead of iterating screenshots and measurements on the main thread.
 - Never run tests, typecheck, lint, build or format checks unless the user asks or flags it (the post-edit hook and a
   requested TDD loop are the exception).
   Do not start servers/browsers or build throwaway pages unless asked.

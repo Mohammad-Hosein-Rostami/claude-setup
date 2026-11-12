@@ -17,7 +17,7 @@ descriptions are quoted from their frontmatter; those descriptions are what make
 | `forms-validation` | Use when building or changing a form or any user input flow - validation, errors, autofill, double submit, optimistic UI. | session model |
 | `frontend-performance` | Use when a page is slow, heavy or janky, or when adding images, fonts, libraries or routes - Core Web Vitals, bundles, rendering. | session model |
 | `frontend-security` | Use when rendering user content, handling tokens, loading third-party scripts, or touching cookies, CORS or CSP in a web app. | session model |
-| `handoff` | Write a compact handoff note so work can continue in a fresh session after /clear. Use at ~100k context, at a phase change, or when the user says handoff or continue later. (manual only: slash command) | sonnet |
+| `handoff` | Write a compact handoff note so work can continue in a fresh session after /clear. Use at a phase change, before /clear, or when the user says handoff or continue later. (manual only: slash command) | sonnet |
 | `quick` | Run a simple lookup or mechanical task on Haiku 5.5 in an isolated fork - find, list, summarise, run-and-report. | haiku |
 | `responsive-ui` | Use when building or changing any page, screen, step or component layout (.tsx/.jsx/.vue/.css/.scss, MUI sx/styled, Tailwind), even a small UI tweak - mobile-first, breakpoints, container queries, touch targets, overflow at 320px, reflow. | session model |
 | `root-cause-debug` | Use for a bug, failing or flaky test, red CI or unexpected behaviour, before proposing any fix. | session model |
@@ -125,10 +125,8 @@ Marketplaces: `anthropic-plugin-directory`, `claude-plugins-official`, `gitkrake
 
 | Key | Value / purpose |
 | --- | --------------- |
-| `env.BASH_MAX_OUTPUT_LENGTH` | 12000; caps Bash output re-read on every call |
-| `env.MAX_MCP_OUTPUT_TOKENS` | 15000; caps MCP tool output |
 | `env.CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY` | 1; removes survey prompts |
-| `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` | 200000; compaction window |
+| `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` | 200000; auto-compacts there so long runs keep going without a costly context |
 | `env.CLAUDE_CODE_SUBAGENT_MODEL` | `claude-sonnet-5-5`; model for agents that pin none |
 | `permissions.allow` | WebSearch, WebFetch |
 | `permissions.deny` | reading `.env*`, `pnpm-lock.yaml`, credentials files, `~/.ssh/**`, `~/.aws/**`, `*.pem`, `.npmrc` (Read and Bash patterns) |

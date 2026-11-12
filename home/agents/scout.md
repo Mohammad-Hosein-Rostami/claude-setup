@@ -4,7 +4,6 @@ description: Use for read-only lookups - find where something is defined or used
 model: haiku
 effort: low
 tools: Read, Grep, Glob
-maxTurns: 20
 color: cyan
 ---
 

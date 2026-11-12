@@ -20,10 +20,10 @@ C18 | Touch only files the task needs | diff vs file list
 C19 | TS strict, no any, no unexplained !, exhaustive switch | tsc, eslint
 C20 | Immutable and pure by default; side effects at the edges | eslint, rev
 C21 | Leave formatting to the formatter | formatter hook
-C22 | Fix the root cause; two failed attempts means escalate | rev
+C22 | Fix the root cause; when an approach fails twice, change approach (root-cause-debug, deep-debugger, /escalate) and keep going until done | rev
 C23 | Grep, then read line ranges; no cat of big files; show failing test lines only | rev
 C24 | Delegated work returns <=300 words with file:line evidence | rev
-C25 | One task per session; handoff note at ~100k context | usage
+C25 | One task per session; compact at a natural seam, never stop a run for context size | usage
 C26 | Every source file you create or substantially edit opens with a header comment (purpose, exports, invariants); a folder of 3+ files has a README | rev
 C27 | Public functions and types you create or substantially edit have doc comments (what, why, args, returns, errors); TODO(ref): reason | rev
 C29 | Done means fresh evidence: verify commands ran; no test deleted, skipped or weakened | verify-done

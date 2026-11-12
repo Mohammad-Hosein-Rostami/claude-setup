@@ -5,7 +5,6 @@ model: sonnet
 effort: medium
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
-maxTurns: 25
 color: green
 ---
 

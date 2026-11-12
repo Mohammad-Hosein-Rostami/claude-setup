@@ -11,7 +11,6 @@ hooks:
       hooks:
         - type: command
           command: node "$HOME/.claude/hooks/agent-memory-only.mjs"
-maxTurns: 25
 color: orange
 ---
 

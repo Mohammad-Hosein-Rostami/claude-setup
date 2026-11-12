@@ -11,5 +11,5 @@ argument-hint: <simple task>
 
 $ARGUMENTS
 
-Answer in ≤ 15 lines with `path:line` references. If the task needs judgment or edits
-beyond a trivial mechanical change, say so in one line instead of attempting it.
+Answer in ≤ 15 lines with `path:line` references. Do the mechanical part fully. If part of the task needs
+judgment or non-trivial edits, finish what you can and end with one line naming what the session must still decide.

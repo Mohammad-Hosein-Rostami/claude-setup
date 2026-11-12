@@ -5,7 +5,6 @@ model: claude-opus-5-5
 memory: user
 effort: high
 tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, Write
-maxTurns: 30
 color: purple
 ---
 

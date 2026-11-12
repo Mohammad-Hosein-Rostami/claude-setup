@@ -3,7 +3,6 @@ name: visual-qa
 description: Use to check a built UI against its Figma baseline and at several widths with ui-check (compare, responsive), optionally fixing failures. Returns a short verdict, never images.
 model: sonnet
 effort: medium
-maxTurns: 40
 color: purple
 skills:
   - figma-pixel-perfect

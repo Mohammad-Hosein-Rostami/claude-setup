@@ -3,7 +3,6 @@ name: ui-implementer
 description: Use instead of `implementer` for any UI work - pages, screens, steps, components, layout, styling, forms, dialogs (.tsx/.jsx/.vue/.css/.scss, MUI, Tailwind). Preloads the UI skills, implements the spec and runs the UI done-gate. Returns a short report.
 model: sonnet
 effort: medium
-maxTurns: 60
 color: green
 skills:
   - accessibility-build

@@ -4,7 +4,6 @@ description: Use for hard bugs - when one honest fix attempt already failed, the
 model: claude-opus-5-5
 effort: high
 tools: Read, Grep, Glob, Bash
-maxTurns: 35
 color: red
 ---
 
