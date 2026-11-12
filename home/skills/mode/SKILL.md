@@ -1,10 +1,10 @@
 ---
 name: mode
-description: "Switch this session's setup mode: normal (economy), medium (default, balanced) or high (full force)."
+description: "Switch this session's setup mode: normal (thrift), medium (default, balanced) or high (full speed)."
 disable-model-invocation: true
 argument-hint: normal|medium|high
 ---
 
-The mode hook already recorded the switch and injected the playbook for `$ARGUMENTS`. Reply in 4 lines or fewer:
-the active mode, then the switches the user still has to type (copy them from the hook text), then continue any
-pending task under the new mode.
+The mode hook already applied `$ARGUMENTS` (fast mode written, playbook injected). Reply in 3 lines or fewer: the
+active mode and what changed. If the mode is high, this command is the user's opt-in to Workflow orchestration at
+unrestricted size for the rest of the session. Then continue any pending task.

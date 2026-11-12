@@ -5,17 +5,20 @@ user writes in; keep prose short and plain. Do not narrate tool calls.
 
 ## Modes
 
-- Three modes: `normal` (economy), `medium` (default: this file as written), `high` (full force).
-- Start with `ccm normal|medium|high`; switch in-session with `/mode <m>`.
-- The playbook injected by the mode hook (`~/.claude/modes/<m>.md`) overrides "Model routing" and "Token discipline"
-  where they conflict.
-- Safety, project config layers and quality rules always apply.
+- `normal` (thrift), `medium` (default: this file as written), `high` (full speed).
+- Modes change only speed and token thrift (parallelism, workflows, fast mode, report brevity); never the per-task
+  model, the lead's effort or the quality gates.
+- Start with `ccm normal|medium|high`; `/mode <m>` switches everything automatically (fast mode, playbook).
+- The playbook injected by the mode hook (`~/.claude/modes/<m>.md`) overrides "Token discipline" where they conflict.
 
 ## Model routing (Opus leads, agents do the work)
 
 The session runs on **Opus 5.5 at effort `high`** and acts as the lead: it thinks, decides and
-delegates. Subagents pin their own model; agents without a pin (general-purpose, Explore, Plan)
-run on Sonnet 5.5 through `CLAUDE_CODE_SUBAGENT_MODEL`.
+delegates. Each agent pins the model/effort for its job; agents without a pin (general-purpose, Explore, Plan)
+run on Sonnet 5.5 through `CLAUDE_CODE_SUBAGENT_MODEL`. Escalate per call with the Agent `model`/`effort` params:
+`implementer`/`test-writer` `effort: "high"` for tricky or cross-module logic; `reviewer` `model: "opus"` for risky
+changes (auth, data, migrations, money, concurrency, security); `architect`/`deep-debugger` `effort: "xhigh"` for the
+hardest problems or after a failed attempt. Never downgrade a pick to save tokens.
 
 | Work | Who | How |
 | ---- | --- | --- |
@@ -36,9 +39,9 @@ Rules:
    list, a Haiku agent returns the answer; the main context never sees the raw output.
 4. Independent pieces of work go to agents in parallel, in one message.
 5. If unsure which worker tier, pick the cheaper one and escalate on failure — not the reverse.
-6. Effort: stay at `high`. Opus 5.5 at `medium` already beats Opus 5 at `high`; `xhigh`/`max`
-   think longer and cost more per turn, so use `/effort xhigh` only for one problem that `high`
-   failed on, then go back (a mid-session effort change costs a prompt-cache miss).
+6. Effort: the lead stays at `high` in every mode; deeper thinking goes to the agent call via `effort`. Opus 5.5
+   at `medium` already beats Opus 5 at `high`, so do not raise the lead's effort (a mid-session effort change costs
+   a prompt-cache miss).
 
 ## Finish the run (no hard limits)
 
@@ -50,6 +53,12 @@ Rules:
   seams, and short reports.
 - Report sizes (`≤ N lines`) size the summary, not the work. When the detail matters, write it to a file and return
   the path.
+
+## Quality gates (every mode)
+
+- New logic ships with a test (C11).
+- After a change, run the checks that cover it through `runner` (targeted tests, typecheck, lint).
+- Non-trivial change: `reviewer`. Risky change: also `security-auditor`. UI: `ui-quality-pass`. Then `verify-done`.
 
 ## Skill routing (UI)
 
@@ -96,9 +105,8 @@ global setup combines with it.
   browser/Playwright MCP only when asked (each call also echoes its code back).
 - Pixel/visual bugs: read the code once and make the best fix; hand the compare-and-fix loop to `visual-qa` (it runs
   until it passes) instead of iterating screenshots and measurements on the main thread.
-- Never run tests, typecheck, lint, build or format checks unless the user asks or flags it (the post-edit hook and a
-  requested TDD loop are the exception).
-  Do not start servers/browsers or build throwaway pages unless asked.
+- Run checks through `runner` so logs stay out of context; start servers/browsers only when the task needs a
+  real-app check.
 - Ask the user only when blocked on a decision that is theirs; otherwise pick the sensible
   default, say so in one line, and continue.
 - Final answers: what changed and what was not run. No recap of the process.

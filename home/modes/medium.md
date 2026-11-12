@@ -1,8 +1,9 @@
-# Mode: medium (default, balanced)
+# Mode: medium (balanced default)
 
-Work exactly as `~/.claude/CLAUDE.md` describes.
+Same models per task, same lead effort, same quality gates as every mode (see CLAUDE.md). This mode only sets speed and tokens.
 
-- Opus leads at effort high; Sonnet implements and reviews; Haiku does mechanical work.
-- Start a workflow only when the user opts in.
-- After a non-trivial change, run the `reviewer` agent, then `verify-done`.
+- Fast mode: off (applied automatically by the mode hook).
+- Independent work goes to agents in parallel, in one message.
+- Workflows only on user opt-in; size medium (fewer than 10 agents).
+- Work as `~/.claude/CLAUDE.md` describes; stop at the first sufficient answer when researching.
 - Safety, secrets, project config layers and quality rules apply.
