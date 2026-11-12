@@ -1,4 +1,4 @@
-// Tests for home/hooks/skill-router.mjs: prompt routing, UI file detection, quiet mode, hook contract.
+// Tests for home/hooks/skill-router.mjs: prompt routing, full vs short text per session, compact reset, UI file detection, quiet mode, hook contract.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -80,4 +80,69 @@ test('hook contract: bad JSON is silent; a UI prompt emits additionalContext; a 
   const backend = run(JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'add a REST endpoint for orders' }));
   assert.equal(backend.status, 0);
   assert.equal(backend.stdout, '');
+});
+
+// Each call gets its own temp dir as TMPDIR/TEMP so session markers never leak between tests or into real state.
+async function routerSession() {
+  const tmp = await mkdtemp(join(tmpdir(), 'router-state-'));
+  const env = { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp };
+  const fire = (event) => {
+    const r = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(event), encoding: 'utf8', env });
+    assert.equal(r.status, 0);
+    assert.equal(r.stderr, '');
+    return r.stdout === '' ? '' : JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+  };
+  const prompt = (text, sessionId = 's1') => fire({ hook_event_name: 'UserPromptSubmit', prompt: text, session_id: sessionId });
+  const compact = (sessionId = 's1') => fire({ hook_event_name: 'SessionStart', source: 'compact', session_id: sessionId });
+  return { prompt, compact, fire };
+}
+
+const FULL = /this request involves UI/;
+const SHORT = /^Skill router: UI request - invoke .+ \(skip any already loaded\); delegate to ui-implementer; ui-quality-pass before done\.$/;
+
+test('first routed prompt gets the full text, a repeat gets the short form', async () => {
+  const { prompt } = await routerSession();
+  assert.match(prompt('make it responsive'), FULL);
+  const again = prompt('make it responsive on mobile');
+  assert.match(again, SHORT);
+  assert.match(again, /responsive-ui/);
+  assert.equal(prompt('add a REST endpoint for orders'), '');
+});
+
+test('a newly routed skill gets the full text again, then the short form', async () => {
+  const { prompt } = await routerSession();
+  assert.match(prompt('make it responsive'), FULL);
+  const added = prompt('fix the form validation');
+  assert.match(added, FULL);
+  assert.match(added, /forms-validation/);
+  assert.match(prompt('fix the form validation again'), SHORT);
+  assert.match(prompt('make it responsive'), SHORT);
+});
+
+test('sessions are independent', async () => {
+  const { prompt } = await routerSession();
+  assert.match(prompt('make it responsive', 'a'), FULL);
+  assert.match(prompt('make it responsive', 'b'), FULL);
+  assert.match(prompt('make it responsive', 'a'), SHORT);
+});
+
+test('SessionStart(compact) resets only that session; other sources and sessions are untouched', async () => {
+  const { prompt, compact, fire } = await routerSession();
+  prompt('make it responsive', 'a');
+  prompt('make it responsive', 'b');
+  assert.equal(compact('a'), '');
+  assert.equal(fire({ hook_event_name: 'SessionStart', source: 'startup', session_id: 'b' }), '');
+  assert.match(prompt('make it responsive', 'a'), FULL);
+  assert.match(prompt('make it responsive', 'b'), SHORT);
+  assert.equal(compact('no-such-session'), '');
+});
+
+test('bad or missing session id: full text every time, no throw, no state', async () => {
+  const { prompt, compact, fire } = await routerSession();
+  for (const sessionId of ['../evil', 'a b', '', 'x'.repeat(200), null, 42]) {
+    assert.match(prompt('make it responsive', sessionId), FULL);
+    assert.match(prompt('make it responsive', sessionId), FULL);
+    assert.equal(compact(sessionId), '');
+  }
+  assert.match(fire({ hook_event_name: 'UserPromptSubmit', prompt: 'make it responsive' }), FULL);
 });

@@ -1,10 +1,12 @@
 // Skill router hook. Skills are model-invoked from their descriptions only, so in busy projects (many project and
 // plugin skills, delegated subagents) the UI skills get skipped. This hook makes the choice deterministic.
-// UserPromptSubmit: prompt keywords -> names the skills to invoke (additionalContext, every matching prompt).
+// UserPromptSubmit: prompt keywords -> names the skills to invoke (additionalContext). The first routed prompt of a
+// session (and any prompt that routes a skill not named before) gets the full text; the rest get a one-line form.
+// SessionStart(compact): forgets this session's prompt marker, so the next routed prompt gets the full text again.
 // PostToolUse(Edit|Write|MultiEdit) on a UI file -> reminds once per session and agent (subagents included).
 // Quiet (no output) when CLAUDE_SKILL_ROUTER=off or in a Gradle project without package.json (Android routing
 // lives in the personal per-project layer there). Never blocks: always exits 0; unparsable input produces no output.
-import { mkdirSync, existsSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -32,6 +34,8 @@ const UI_FILE = /\.(tsx|jsx|vue|svelte|html|css|scss|sass|less)$/i;
 const NON_UI_FILE = /\.(test|spec|stories)\.\w+$/i;
 const SAFE_ID = /^[\w-]{1,128}$/;
 const STATE_DIR = join(tmpdir(), 'claude-skill-router');
+const PROMPT_STATE_DIR = join(STATE_DIR, 'prompt'); // one file per session: the skills already named in full text
+const COMPACT_SOURCE = 'compact';
 const OFF_ENV = 'CLAUDE_SKILL_ROUTER';
 const GRADLE_FILES = ['settings.gradle', 'settings.gradle.kts', 'build.gradle', 'build.gradle.kts'];
 
@@ -45,14 +49,55 @@ export function skillsForPrompt(prompt) {
 /** True when an edited path is UI source (not a test or story). */
 export const isUiFile = (file) => UI_FILE.test(file) && !NON_UI_FILE.test(file);
 
-function promptContext(prompt) {
+const fullPromptText = (skills) =>
+  `Skill router: this request involves UI. Before writing UI code, invoke with the Skill tool: ${skills.join(', ')}` +
+  ' (skip any already loaded in this context). A project skill with the same purpose whose paths match wins.' +
+  ' Delegate UI implementation to the `ui-implementer` agent, not `implementer`, and name these skills in the' +
+  ' delegation prompt (a project\'s own `ui-implementer` preloads only project skills);' +
+  ' run `ui-quality-pass` before saying done.';
+
+const shortPromptText = (skills) =>
+  `Skill router: UI request - invoke ${skills.join(', ')} (skip any already loaded); delegate to ui-implementer; ` +
+  'ui-quality-pass before done.';
+
+const promptMarkerPath = (sessionId) =>
+  typeof sessionId === 'string' && SAFE_ID.test(sessionId) ? join(PROMPT_STATE_DIR, sessionId) : null;
+
+/**
+ * Records `skills` as named for this session and returns true when every one was already named before (short text
+ * is enough). Unsafe session id or unwritable temp dir -> false (full text), never throws: the hook must not block.
+ */
+function alreadyNamed(sessionId, skills) {
+  const marker = promptMarkerPath(sessionId);
+  if (!marker) return false;
+  try {
+    const known = existsSync(marker) ? new Set(readFileSync(marker, 'utf8').split('\n').filter(Boolean)) : new Set();
+    const allKnown = skills.every((skill) => known.has(skill));
+    if (!allKnown) {
+      mkdirSync(PROMPT_STATE_DIR, { recursive: true });
+      writeFileSync(marker, [...new Set([...known, ...skills])].join('\n'));
+    }
+    return allKnown;
+  } catch {
+    return false;
+  }
+}
+
+function promptContext(prompt, sessionId) {
   const skills = skillsForPrompt(prompt);
   if (skills.length === 0) return null;
-  return `Skill router: this request involves UI. Before writing UI code, invoke with the Skill tool: ${skills.join(', ')}` +
-    ' (skip any already loaded in this context). A project skill with the same purpose whose paths match wins.' +
-    ' Delegate UI implementation to the `ui-implementer` agent, not `implementer`, and name these skills in the' +
-    ' delegation prompt (a project\'s own `ui-implementer` preloads only project skills);' +
-    ' run `ui-quality-pass` before saying done.';
+  return alreadyNamed(sessionId, skills) ? shortPromptText(skills) : fullPromptText(skills);
+}
+
+/** SessionStart(compact): the full routing text is gone from context, so forget what was named in this session. */
+function clearPromptMarker(sessionId) {
+  const marker = promptMarkerPath(sessionId);
+  if (!marker) return;
+  try {
+    rmSync(marker, { force: true });
+  } catch {
+    // temp dir not writable: the next prompt just gets the short form; never fail the hook
+  }
 }
 
 // First UI edit per session and agent only; a marker file in the temp dir records that the reminder was sent.
@@ -90,8 +135,12 @@ export function isQuiet(cwd, env = process.env) {
 }
 
 function route(input) {
+  if (input.hook_event_name === 'SessionStart') {
+    if (input.source === COMPACT_SOURCE) clearPromptMarker(input.session_id);
+    return null;
+  }
   if (isQuiet(input.cwd)) return null;
-  if (input.hook_event_name === 'UserPromptSubmit') return promptContext(String(input.prompt ?? ''));
+  if (input.hook_event_name === 'UserPromptSubmit') return promptContext(String(input.prompt ?? ''), input.session_id);
   if (input.hook_event_name === 'PostToolUse') return editContext(input);
   return null;
 }

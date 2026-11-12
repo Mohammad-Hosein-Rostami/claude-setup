@@ -61,6 +61,16 @@
     ],
     "SessionStart": [
       {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/skill-router.mjs\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "hooks": [
           {
             "type": "command",
@@ -113,7 +123,7 @@
     "skill-creator@anthropic-plugin-directory": true,
     "code-simplifier@anthropic-plugin-directory": true,
     "playwright@anthropic-plugin-directory": true,
-    "github@anthropic-plugin-directory": true,
+    "github@anthropic-plugin-directory": false,
     "claude-md-management@anthropic-plugin-directory": true,
     "typescript-lsp@claude-plugins-official": true,
     "claude-code-setup@anthropic-plugin-directory": true,

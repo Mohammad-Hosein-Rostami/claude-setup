@@ -1,8 +1,9 @@
 // PostToolUse(Edit|Write|MultiEdit): run the project's own format/lint/typecheck scripts after a code file changes.
 // Only scripts that exist in the nearest package.json run. A script that targets the whole repo (`prettier --write .`,
 // `nx run-many`) is replaced by the tool's binary on the edited file, or skipped; CLAUDE_POST_EDIT_SKIP opts out.
+// Format runs first and alone; lint and typecheck then run concurrently (sequentially when the lint script fixes files; a check that outlives the deadline is killed with its whole process tree).
 // Silent on success; on failure prints at most 15 `file:line RULE-ID message` lines to stderr and exits 2. Never evaluates hook input; on Windows (shell on) the relative path must look safe.
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,6 +16,7 @@ const FILE_SCRIPTS = ['format', 'lint']; // take the edited file after `--`
 const PROJECT_SCRIPTS = ['typecheck']; // whole project; output is filtered to the edited file
 const FILE_TOOLS = { format: ['prettier', '--write'], lint: ['eslint'] }; // per-file fallback for broad scripts
 const BROAD_SCRIPT = /(^|\s)\.\/?(\s|$)|\*|\brun-many\b|\bnx\b|\bturbo\b|\blerna\b/;
+const FIXING_SCRIPT = /\bfix\b|--write\b|--apply\b/; // a lint script that rewrites the file while tsc reads it: keep those checks sequential
 const SKIP_ENV = 'CLAUDE_POST_EDIT_SKIP'; // "all" or e.g. "typecheck,lint"; set in a project's .claude/settings.json env
 
 export const isCodeFile = (file) => CODE_FILE.test(file);
@@ -133,19 +135,95 @@ export function diagnostics(output, file) {
 // cmd.exe treats these specially even inside a path; one of them anywhere in the command needs quoting.
 const CMD_METACHARS = /[\s&|<>^()%!,;=]/;
 
-/** Command string for `spawnSync(..., { shell: true })`: quoted on Windows when it has cmd metacharacters. Pure. */
+/** Command string for a shell spawn: quoted on Windows when it has cmd metacharacters. Pure. */
 export function shellCommand(cmd, platform = process.platform) {
   return platform === 'win32' && CMD_METACHARS.test(cmd) ? `"${cmd}"` : cmd;
 }
 
-function runCheck(pm, check, cwd, timeout) {
-  // Windows package managers are .cmd shims and need a shell; SAFE_PATH keeps `file` free of metacharacters.
-  const cmd = shellCommand(check.cmd ?? pm);
-  return spawnSync(cmd, check.args, { cwd, encoding: 'utf8', timeout, shell: process.platform === 'win32' });
+/**
+ * Groups planned checks into stages that run one after another; checks inside a stage run concurrently.
+ * Format stays alone and first; lint and typecheck share a stage unless the lint script contains `fix`, `--write` or `--apply`. Pure.
+ */
+export function stagesFor(checks, scripts) {
+  const lint = checks.findIndex((c) => c.name === 'lint');
+  const typecheck = checks.findIndex((c) => c.name === 'typecheck');
+  const concurrent = lint >= 0 && typecheck === lint + 1 && !FIXING_SCRIPT.test(scripts?.lint ?? '');
+  const stages = [];
+  checks.forEach((check, i) => {
+    if (concurrent && i === typecheck) stages.at(-1).push(check);
+    else stages.push([check]);
+  });
+  return stages;
 }
 
-/** Run planned checks for `file`; returns the failure lines ([] = all passed or nothing to run). */
-export function checkFile(file) {
+/**
+ * Kills `child` and everything it spawned. POSIX: the child leads its own process group (`detached`), so the negative
+ * pid reaches grandchildren; Windows: `taskkill /T` walks the tree. Never throws (the process may already be gone).
+ */
+function killTree(child) {
+  try {
+    if (process.platform === 'win32') spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).on('error', () => {});
+    else process.kill(-child.pid, 'SIGKILL');
+  } catch {
+    try {
+      child.kill();
+    } catch {
+      // already exited: nothing left to kill
+    }
+  }
+}
+
+// Async spawn that resolves (never rejects) to { status, stdout, stderr, error, timedOut }. On the deadline it resolves
+// from the timer itself: a grandchild holding the pipes open must not delay `close`.
+function runCheck(pm, check, cwd, timeoutMs) {
+  // Windows package managers are .cmd shims and need a shell; SAFE_PATH keeps `file` free of metacharacters.
+  const cmd = shellCommand(check.cmd ?? pm);
+  return new Promise((resolve) => {
+    const child = spawn(cmd, check.args, { cwd, shell: process.platform === 'win32', detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      killTree(child);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      resolve({ status: null, stdout, stderr, error: null, timedOut: true });
+    }, timeoutMs);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      resolve({ status: null, stdout, stderr, error, timedOut: false });
+    });
+    child.on('close', (status) => {
+      clearTimeout(timer);
+      resolve({ status, stdout, stderr, error: null, timedOut: false });
+    });
+  });
+}
+
+/**
+ * Runs stages in order until the deadline (epoch ms); results are judged in plan order (lint before typecheck), so
+ * the first failing check decides. A timeout or an exhausted budget returns [] (never a false failure).
+ * Returns the failure lines ([] = all passed).
+ */
+export async function runStages(stages, { pm, cwd, rel, deadline }) {
+  for (const stage of stages) {
+    const left = deadline - Date.now();
+    if (left <= 0) return []; // out of time: do not block the edit on a slow project
+    const results = await Promise.all(stage.map((check) => runCheck(pm, check, cwd, left)));
+    for (const [i, r] of results.entries()) {
+      if (r.timedOut) return [];
+      if (r.error) return [`${rel}:1 HOOK could not run ${pm} ${stage[i].name}: ${r.error.message}`];
+      if (r.status !== 0) return diagnostics(`${r.stdout}\n${r.stderr}`, rel);
+    }
+  }
+  return [];
+}
+
+/** Run planned checks for `file`; resolves to the failure lines ([] = all passed or nothing to run). */
+export async function checkFile(file) {
   if (!isCodeFile(file) || !existsSync(file)) return [];
   const dir = findPackageDir(file);
   if (!dir) return [];
@@ -157,20 +235,9 @@ export function checkFile(file) {
   } catch (error) {
     return [`${rel}:1 HOOK unreadable package.json in ${dir}: ${error.message}`];
   }
-  const pm = packageManager(dir);
-  const deadline = Date.now() + BUDGET_MS;
   const notSkipped = skipFilter(process.env[SKIP_ENV]);
-  for (const check of plannedChecks(scripts, rel, toolFinder(dir)).filter((c) => notSkipped(c.name))) {
-    const left = deadline - Date.now();
-    if (left <= 0) return []; // out of time: do not block the edit on a slow project
-    const r = runCheck(pm, check, dir, left);
-    if (r.error) {
-      if (r.error.code === 'ETIMEDOUT') return [];
-      return [`${rel}:1 HOOK could not run ${pm} ${check.name}: ${r.error.message}`];
-    }
-    if (r.status !== 0) return diagnostics(`${r.stdout}\n${r.stderr}`, rel);
-  }
-  return [];
+  const checks = plannedChecks(scripts, rel, toolFinder(dir)).filter((c) => notSkipped(c.name));
+  return runStages(stagesFor(checks, scripts), { pm: packageManager(dir), cwd: dir, rel, deadline: Date.now() + BUDGET_MS });
 }
 
 async function readStdin() {
@@ -188,7 +255,7 @@ async function main() {
   }
   const file = input?.tool_input?.file_path;
   if (typeof file !== 'string') return;
-  const failures = checkFile(file);
+  const failures = await checkFile(file);
   if (failures.length) {
     process.stderr.write(failures.join('\n') + '\n');
     process.exitCode = 2;
