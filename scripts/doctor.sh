@@ -11,10 +11,12 @@ bad() { echo "FAIL  $1"; BAD=1; }
 
 check_links() {
   local name
-  for name in CLAUDE.md rules skills agents standards hooks tools project-notes statusline.mjs; do
+  for name in CLAUDE.md rules skills agents standards hooks tools project-notes modes statusline.mjs; do
     if [ -L "$CLAUDE_DIR/$name" ] && [ "$(readlink "$CLAUDE_DIR/$name")" = "$REPO/home/$name" ]; then ok "link $name"
     else bad "link $name (re-run scripts/install.sh)"; fi
   done
+  if [ -L "$HOME/.local/bin/ccm" ] && [ "$(readlink "$HOME/.local/bin/ccm")" = "$REPO/home/bin/ccm" ]; then ok "link ccm"
+  else bad "link ccm (re-run scripts/install.sh)"; fi
 }
 
 # Drift: rebuild the expected settings.json in memory and compare with the live one.

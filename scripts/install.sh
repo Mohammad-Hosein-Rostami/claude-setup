@@ -8,7 +8,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$HOME/.claude-backup-$STAMP"
-LINKS=(CLAUDE.md rules skills agents standards hooks tools project-notes statusline.mjs)
+LINKS=(CLAUDE.md rules skills agents standards hooks tools project-notes modes statusline.mjs)
 DRY_RUN=0
 WITH_PLUGINS=1
 WITH_TOOLS=1
@@ -60,6 +60,16 @@ link_all() {
   act mkdir -p "$CLAUDE_DIR"
   for name in "${LINKS[@]}"; do link_item "$name"; done
   if [ -d "$REPO/home/commands" ] && [ -n "$(ls -A "$REPO/home/commands")" ]; then link_item commands; fi
+}
+
+# Link the ccm launcher onto PATH (not into ~/.claude). Bash-only: skipped on Windows.
+link_ccm() {
+  local src="$REPO/home/bin/ccm" dst="$HOME/.local/bin/ccm"
+  if is_windows; then echo "  skip ccm: bash launcher, not linked on Windows"; return; fi
+  if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then note "ok ccm"; return; fi
+  act mkdir -p "$HOME/.local/bin"
+  backup "$dst"
+  act ln -s "$src" "$dst"; note "linked ccm -> $dst"
 }
 
 detect_os() {
@@ -116,6 +126,7 @@ enable_hooks() {
 }
 
 link_all
+link_ccm
 build_settings
 enable_hooks
 if [ "$WITH_TOOLS" = 1 ]; then install_tool_deps; fi

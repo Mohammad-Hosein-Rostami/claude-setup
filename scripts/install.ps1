@@ -9,7 +9,8 @@ $Repo = Split-Path -Parent $PSScriptRoot
 $ClaudeDir = Join-Path $HOME '.claude'
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $BackupDir = Join-Path $HOME ".claude-backup-$Stamp"
-$Links = @('CLAUDE.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'statusline.mjs')
+$Links = @('CLAUDE.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'modes', 'statusline.mjs')
+# Note: home/bin/ccm is a bash launcher; it is not linked by this script (use Git Bash and scripts/install.sh).
 $Done = New-Object System.Collections.Generic.List[string]
 
 function Note($msg) { $Done.Add($msg); Write-Host "  $msg" }

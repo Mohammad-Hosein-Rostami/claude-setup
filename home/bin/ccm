@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Purpose: launch Claude Code in a setup mode (normal | medium | high).
+# Usage: ccm [normal|medium|high] [claude args...]   (no mode, or first arg starting with "-": medium)
+# Invariants: sets CLAUDE_MODE for the mode hook; passes --settings only when ~/.claude/modes/<mode>.json exists.
+# Set CCM_DRY_RUN=1 to print the exec line instead of running it.
+set -euo pipefail
+
+DEFAULT_MODE=medium
+EXIT_USAGE=2
+
+# Effort per mode (a case, not an associative array: macOS ships bash 3.2).
+effort_for() {
+  case "$1" in normal) echo medium ;; medium) echo high ;; high) echo ultracode ;; esac
+}
+
+usage() { echo "usage: ccm [normal|medium|high] [claude args...]" >&2; exit "$EXIT_USAGE"; }
+
+mode="$DEFAULT_MODE"
+if [ $# -gt 0 ] && [ -n "$1" ]; then
+  case "$1" in
+    normal|medium|high) mode="$1"; shift ;;
+    -*) ;;
+    *) usage ;;
+  esac
+fi
+
+cmd=(env "CLAUDE_MODE=$mode" claude --effort "$(effort_for "$mode")")
+settings="$HOME/.claude/modes/$mode.json"
+[ -f "$settings" ] && cmd+=(--settings "$settings")
+cmd+=("$@")
+
+if [ "${CCM_DRY_RUN:-0}" = 1 ]; then echo "${cmd[*]}"; exit 0; fi
+exec "${cmd[@]}"

@@ -3,6 +3,14 @@
 Owner: Pejvak. Primary OS Windows 10 (PowerShell + Git Bash), also macOS/Linux. Node 22, pnpm. Reply in the language the
 user writes in; keep prose short and plain. Do not narrate tool calls.
 
+## Modes
+
+- Three modes: `normal` (economy), `medium` (default: this file as written), `high` (full force).
+- Start with `ccm normal|medium|high`; switch in-session with `/mode <m>`.
+- The playbook injected by the mode hook (`~/.claude/modes/<m>.md`) overrides "Model routing" and "Token discipline"
+  where they conflict.
+- Safety, project config layers and quality rules always apply.
+
 ## Model routing (Opus leads, agents do the work)
 
 The session runs on **Opus 5.5 at effort `high`** and acts as the lead: it thinks, decides and
