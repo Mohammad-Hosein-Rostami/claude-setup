@@ -6,6 +6,8 @@ import path from 'node:path';
 import { UsageError } from './errors.mjs';
 
 const PACKAGES = ['playwright', '@playwright/test', 'playwright-core'];
+const NETWORK_IDLE_TIMEOUT_MS = 5000; // long-polling / websocket apps never go idle, so the wait is bounded
+const SPA_SETTLE_MS = 1500; // SPAs often render after the load event
 const FREEZE_CSS = '*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important;scroll-behavior:auto!important}';
 
 /**
@@ -52,6 +54,12 @@ export async function openPage(browser, { url, width, height, scale = 1 }) {
   });
   const page = await context.newPage();
   await page.goto(url, { waitUntil: 'load' });
+  try {
+    await page.waitForLoadState('networkidle', { timeout: NETWORK_IDLE_TIMEOUT_MS });
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error; // never idle is expected for some apps; anything else is real
+  }
+  await page.waitForTimeout(SPA_SETTLE_MS);
   await page.addStyleTag({ content: FREEZE_CSS });
   await page.evaluate(() => document.fonts.ready);
   await page.waitForFunction(() => [...document.images].every((img) => img.complete));
