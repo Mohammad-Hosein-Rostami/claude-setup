@@ -80,11 +80,24 @@ Rules are one line each (`id | rule | check`) and load when a matching file is i
 | File | Event | What it does |
 | ---- | ----- | ------------ |
 | `pre-bash-guard.mjs` | PreToolUse(Bash) | Denies git `--no-verify`, force push, `rm -rf` outside the project (temp dirs allowed), reading `.env`, hand-editing lockfiles. Anything it cannot parse is allowed. |
-| `post-edit.mjs` | PostToolUse(Edit, Write, MultiEdit) | Runs the project's own format, lint and typecheck scripts (only those present in the nearest `package.json`). Silent on success; on failure prints at most 15 lines and exits 2. |
-| `skill-router.mjs` | UserPromptSubmit; PostToolUse(Edit, Write, MultiEdit) | Names the UI skills to invoke from prompt keywords (EN/FA); on the first UI-file edit per session and agent (subagents too) reminds to load `responsive-ui`, `accessibility-build` and run `ui-quality-pass`. Never blocks. |
+| `post-edit.mjs` | PostToolUse(Edit, Write, MultiEdit) | Runs the project's own format, lint and typecheck scripts (only those present in the nearest `package.json`). A script that targets the whole repo (`prettier --write .`, `eslint .`, `nx run-many`) is replaced by the tool's binary on the edited file, or skipped for typecheck. Opt out per project with env `CLAUDE_POST_EDIT_SKIP` (`all` or `format,lint,typecheck`). Silent on success; on failure prints at most 15 lines and exits 2. |
+| `skill-router.mjs` | UserPromptSubmit; PostToolUse(Edit, Write, MultiEdit) | Names the UI skills to invoke from prompt keywords (EN/FA); on the first UI-file edit per session and agent (subagents too) reminds to load `responsive-ui`, `accessibility-build` and run `ui-quality-pass`. Quiet with `CLAUDE_SKILL_ROUTER=off` or in a Gradle project without `package.json`. Never blocks. |
 | `token-audit.mjs` | not a hook; run by the `token-audit` skill | Prints the approximate recurring token cost (bytes / 4) of the config visible from the current directory. |
 
 `.githooks/pre-commit` (repo only): `gitleaks protect --staged --redact`; the installers set `core.hooksPath`.
+
+## Project notes (`home/project-notes/`)
+
+Personal per-project layer, linked to `~/.claude/project-notes`. A project's git-ignored `CLAUDE.local.md` imports
+`@~/.claude/project-notes/<project>.md`; the project's committed config never references it. Policy: "Project config
+layers" in `home/CLAUDE.md`.
+
+| Note | Project |
+| ---- | ------- |
+| `ice-web-app.md` | ice-web-app (Mac) |
+| `bill-and-ben-platform.md` | bill-and-ben-platform (Mac) |
+| `pejvak-frontend-nx-workspace.md` | pejvak-frontend-nx-workspace (PC) |
+| `pejvak-frontend.md` | Pejvak_Frontend, SVN (PC) |
 
 ## Status line
 
@@ -100,7 +113,7 @@ System CLIs (`tools/Brewfile`, `tools/windows-tools.ps1`): jq, ripgrep, gitleaks
 
 ## Plugins (`plugins/plugins.json`)
 
-Enabled: `gitkraken-hooks@gitkraken`, `frontend-design@anthropic-plugin-directory`, `code-review-anthropics@anthropic-plugin-directory`, `context7@anthropic-plugin-directory`, `skill-creator@anthropic-plugin-directory`, `code-simplifier@anthropic-plugin-directory`, `playwright@anthropic-plugin-directory`, `github@anthropic-plugin-directory`, `claude-md-management@anthropic-plugin-directory`, `typescript-lsp@claude-plugins-official`, `claude-code-setup@anthropic-plugin-directory`, `figma@claude-plugins-official`, `chrome-devtools-mcp@claude-plugins-official`, `superdesign@anthropic-plugin-directory`, `miro@claude-plugins-official`.
+Enabled: `gitkraken-hooks@gitkraken`, `frontend-design@anthropic-plugin-directory`, `code-review-anthropics@anthropic-plugin-directory`, `context7@anthropic-plugin-directory`, `skill-creator@anthropic-plugin-directory`, `code-simplifier@anthropic-plugin-directory`, `playwright@anthropic-plugin-directory`, `github@anthropic-plugin-directory`, `claude-md-management@anthropic-plugin-directory`, `typescript-lsp@claude-plugins-official`, `claude-code-setup@anthropic-plugin-directory`, `figma@claude-plugins-official`, `chrome-devtools-mcp@claude-plugins-official`. Off globally, enabled per project in `.claude/settings.local.json` (`enabledPlugins`): `superdesign@anthropic-plugin-directory`, `miro@claude-plugins-official`.
 
 Installed but disabled: `superpowers@anthropic-plugin-directory`, `kotlin-lsp@claude-plugins-official`, `code-modernization@anthropic-plugin-directory`, `swift-lsp@claude-plugins-official`, `clangd-lsp@claude-plugins-official`.
 
