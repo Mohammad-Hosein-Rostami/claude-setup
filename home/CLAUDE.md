@@ -38,7 +38,23 @@ Invoke these with the Skill tool before writing code, in every project; a `skill
 - Inputs/forms: `forms-validation`. Screens with server data: `async-ui-states`. Dates: `datetime-handling`.
 - A project skill with the same purpose whose `paths:` match the files wins (e.g. `design-parity`).
 - When delegating UI work, use `ui-implementer` (it preloads the UI skills); a subagent never inherits skills
-  you loaded.
+  you loaded. A project's own `ui-implementer` shadows it: name the UI skills in the delegation prompt.
+
+## Project config layers
+
+Projects are shared with a team; this personal setup is not. Keep three layers apart:
+
+1. **Personal (this repo, `~/.claude`)**: global skills, agents, hooks, rules. Never copied into a project.
+2. **Team (committed in the project)**: CLAUDE.md, AGENTS.md, `.claude/{settings.json,agents,skills,rules}`.
+   Complete on its own: it names only agents, skills, hooks and commands that exist in the repo, and never
+   mentions `~/.claude`, my global skills/agents or paths on my machines. If a team workflow needs an agent,
+   the project ships its own copy.
+3. **Personal per project (never committed)**: `CLAUDE.local.md` containing only
+   `@~/.claude/project-notes/<project>.md` (notes live in this repo), `.claude/settings.local.json` (plugins,
+   personal permissions), symlinks hidden via `.git/info/exclude`. Make sure the project ignores these first.
+
+When asked to set up or improve a project's AI config, edit layer 2 for what the team needs and layer 3 for how my
+global setup combines with it.
 
 ## Token discipline
 
