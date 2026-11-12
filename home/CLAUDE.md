@@ -14,6 +14,7 @@ skills and plan mode**, each of which pins its own model. Default session model 
 | Architecture, API/system design, trade-off decisions, ADRs, root-cause of a bug that survived one failed fix | **Opus 5.5** | `architect` / `deep-debugger` agent, or `/escalate`, or plan mode |
 | Implementation, refactors, tests, normal bug fixes, small designs, reviews | **Sonnet 5.5** | main session, or `implementer` / `reviewer` agent |
 | Searching, listing, reading many files, running tests/lint/build, log triage, summarising, formatting, trivial edits | **Haiku 5.5** | `scout` / `runner` agent, or `/quick` |
+| UI implementation (pages, screens, steps, components, layout, styling, forms) | **Sonnet 5.5** | main session with UI skills, or `ui-implementer` agent (never plain `implementer`) |
 | Figma match and responsive checks (compare, fix loop; returns text only, no images) | **Sonnet 5.5** | `visual-qa` agent, skill `figma-pixel-perfect` |
 
 Rules:
@@ -27,6 +28,17 @@ Rules:
 3. Downshift to Haiku for anything mechanical. If the result is a lookup, a log, or a file
    list, a Haiku agent returns the answer; the main context never sees the raw output.
 4. If unsure which tier, pick the cheaper one and escalate on failure — not the reverse.
+
+## Skill routing (UI)
+
+Invoke these with the Skill tool before writing code, in every project; a `skill-router` hook names them per prompt.
+
+- Any UI code: `accessibility-build` + `responsive-ui` while building; `ui-quality-pass` before saying done.
+- Figma link/frame/node: `figma-pixel-perfect` first, then `visual-qa` for compare + responsive.
+- Inputs/forms: `forms-validation`. Screens with server data: `async-ui-states`. Dates: `datetime-handling`.
+- A project skill with the same purpose whose `paths:` match the files wins (e.g. `design-parity`).
+- When delegating UI work, use `ui-implementer` (it preloads the UI skills); a subagent never inherits skills
+  you loaded.
 
 ## Token discipline
 

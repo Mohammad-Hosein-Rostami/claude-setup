@@ -1,6 +1,6 @@
 ---
 name: responsive-ui
-description: Use when building or changing any page or component layout - mobile-first CSS, breakpoints, container queries, touch targets, viewport, reflow.
+description: Use when building or changing any page, screen, step or component layout (.tsx/.jsx/.vue/.css/.scss, MUI sx/styled, Tailwind), even a small UI tweak - mobile-first, breakpoints, container queries, touch targets, overflow at 320px, reflow.
 ---
 
 Rules: U2, U6. WCAG 2.2: 1.4.10 Reflow, 2.5.8 Target Size.

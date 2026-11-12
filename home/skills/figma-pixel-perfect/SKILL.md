@@ -1,6 +1,6 @@
 ---
 name: figma-pixel-perfect
-description: Use when implementing or fixing UI from a Figma frame and it must match exactly - pull baseline, build, compare, fix, then check responsive.
+description: Use whenever a task has a Figma link, frame or node id, or says match the design / pixel perfect - pull the baseline, build, compare with ui-check, fix until it passes, then check responsive.
 ---
 
 Rules: U1, U2, F7. Conversion rules, tolerances and false positives: `standards/figma.md` (read it once per task).

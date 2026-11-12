@@ -1,6 +1,6 @@
 ---
 name: ui-quality-pass
-description: Use when finishing any UI component or page, before calling it done.
+description: Use before saying any UI component, page, screen, step or dialog is done or fixed, including small tweaks and work a subagent did - tokens, semantics, keyboard, contrast, responsive, async states, copy.
 ---
 
 Rules: F7-F9, U1-U12 (`rules/ui.md`; examples in `standards/ui-a11y.md`). Build-time detail lives in `accessibility-build`, `responsive-ui`, `async-ui-states`, `forms-validation`.

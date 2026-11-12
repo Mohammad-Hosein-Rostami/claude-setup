@@ -1,6 +1,6 @@
 ---
 name: accessibility-build
-description: Use while writing UI code, so it is accessible from the start - semantic HTML, keyboard, focus, forms, contrast, motion (WCAG 2.2 AA).
+description: Use while writing or changing UI code (.tsx/.jsx/.vue/.html; MUI components, dialogs, menus, icon buttons, forms) so it is accessible from the start - semantic HTML, keyboard, focus, labels, contrast, motion (WCAG 2.2 AA).
 ---
 
 Rules: U3-U9. Test with axe and, in a browser, the chrome-devtools `a11y-debugging` skill.

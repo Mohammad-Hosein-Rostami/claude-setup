@@ -7,26 +7,26 @@ descriptions are quoted from their frontmatter; those descriptions are what make
 
 | Skill | Description (trigger) | Model |
 | ----- | --------------------- | ----- |
-| `accessibility-build` | Use while writing UI code, so it is accessible from the start - semantic HTML, keyboard, focus, forms, contrast, motion (WCAG 2.2 AA). | session model |
+| `accessibility-build` | Use while writing or changing UI code (.tsx/.jsx/.vue/.html; MUI components, dialogs, menus, icon buttons, forms) so it is accessible from the start - semantic HTML, keyboard, focus, labels, contrast, motion (WCAG 2.2 AA). | session model |
 | `async-ui-states` | Use for any screen that loads or changes server data - loading, empty, error, offline, stale responses, pagination, search-as-you-type. | session model |
 | `clean-code` | Use when writing or changing code, and again before finishing a coding step - naming, size, complexity, errors, comments, duplication, dead code, scope. | session model |
 | `datetime-handling` | Use whenever code stores, parses, compares, shows or schedules dates and times, in the UI or the backend - time zones, DST, date-only values, formats. | session model |
 | `e2e-browser-test` | Use when writing or fixing end-to-end or browser tests, or when verifying a UI in a real browser. | session model |
 | `escalate` | Send a hard design, architecture or stubborn-bug question to Opus 5.5 in an isolated fork and get a short decision. Not for implementation. | claude-opus-5-5 |
-| `figma-pixel-perfect` | Use when implementing or fixing UI from a Figma frame and it must match exactly - pull baseline, build, compare, fix, then check responsive. | session model |
+| `figma-pixel-perfect` | Use whenever a task has a Figma link, frame or node id, or says match the design / pixel perfect - pull the baseline, build, compare with ui-check, fix until it passes, then check responsive. | session model |
 | `forms-validation` | Use when building or changing a form or any user input flow - validation, errors, autofill, double submit, optimistic UI. | session model |
 | `frontend-performance` | Use when a page is slow, heavy or janky, or when adding images, fonts, libraries or routes - Core Web Vitals, bundles, rendering. | session model |
 | `frontend-security` | Use when rendering user content, handling tokens, loading third-party scripts, or touching cookies, CORS or CSP in a web app. | session model |
 | `handoff` | Write a compact handoff note so work can continue in a fresh session after /clear. Use at ~100k context, at a phase change, or when the user says handoff or continue later. (manual only: slash command) | sonnet |
 | `quick` | Run a simple lookup or mechanical task on Haiku 5.5 in an isolated fork - find, list, summarise, run-and-report. | haiku |
-| `responsive-ui` | Use when building or changing any page or component layout - mobile-first CSS, breakpoints, container queries, touch targets, viewport, reflow. | session model |
+| `responsive-ui` | Use when building or changing any page, screen, step or component layout (.tsx/.jsx/.vue/.css/.scss, MUI sx/styled, Tailwind), even a small UI tweak - mobile-first, breakpoints, container queries, touch targets, overflow at 320px, reflow. | session model |
 | `root-cause-debug` | Use for a bug, failing or flaky test, red CI or unexpected behaviour, before proposing any fix. | session model |
 | `safe-refactor` | Use when restructuring code without changing behaviour, including renames, extractions and moves. | session model |
 | `tdd-loop` | Use when implementing a feature or bug fix with testable behaviour, including any new logic or branch. | session model |
 | `tech-research` | Use when a design decision depends on external facts you lack - service limits, versions, pricing, standards, known failure modes. Search the web and cite. For library API docs use context7. | session model |
 | `token-audit` | Audit where tokens go in this project's Claude setup - instruction files, rules, skills, agents, MCP servers - and propose concrete cuts. Use periodically or when sessions feel expensive. (manual only: slash command) | sonnet |
 | `tradeoff-analysis` | Use when a design choice has two or more credible options (datastore, queue, sync vs async, build vs buy) - compare them, pick one, record an ADR. | session model |
-| `ui-quality-pass` | Use when finishing any UI component or page, before calling it done. | session model |
+| `ui-quality-pass` | Use before saying any UI component, page, screen, step or dialog is done or fixed, including small tweaks and work a subagent did - tokens, semantics, keyboard, contrast, responsive, async states, copy. | session model |
 | `verify-done` | Use before claiming a task is done, fixed, passing or ready for review, and when the owner says done, ship or merge. | session model |
 
 ## Agents (`home/agents/<name>.md`)
@@ -35,7 +35,8 @@ descriptions are quoted from their frontmatter; those descriptions are what make
 | ----- | --------------------- | ----- |
 | `architect` | Use for architecture, system/API design, trade-off decisions, ADRs and planning of non-trivial or cross-package work. Produces a compact spec for Sonnet to implement; never implements. Skip for small or obvious designs. | claude-opus-5-5 |
 | `deep-debugger` | Use for hard bugs - when one honest fix attempt already failed, the failure is intermittent, spans packages, or the cause is unclear. Finds the root cause and proposes the minimal fix; does not rewrite code at length. | claude-opus-5-5 |
-| `implementer` | Use to execute a clear spec or well-defined task - multi-file implementation, refactor, tests - when the main session should stay clean. Takes a spec path or precise instructions and returns a short report. | sonnet |
+| `implementer` | Use to execute a clear spec or well-defined non-UI task - multi-file implementation, refactor, tests - when the main session should stay clean. For pages, components, layout or styling use `ui-implementer`. Takes a spec path or precise instructions and returns a short report. | sonnet |
+| `ui-implementer` | Use instead of `implementer` for any UI work - pages, screens, steps, components, layout, styling, forms, dialogs (.tsx/.jsx/.vue/.css/.scss, MUI, Tailwind). Preloads the UI skills, implements the spec and runs the UI done-gate. Returns a short report. | sonnet |
 | `reviewer` | Use after a change (including a DB migration) to review it for correctness, regressions, security and rule violations. Read-only; returns a prioritised, rule-id keyed findings list. | sonnet |
 | `runner` | Use to run tests, lint, typecheck, build or any noisy command and get back only the verdict and failures. Keeps verbose output out of the main context. Does not edit files. | haiku |
 | `scout` | Use for read-only lookups - find where something is defined or used, list files, read several files and summarise, check how a pattern is done. Cheap and fast; returns a short answer, never raw dumps. | haiku |
@@ -80,6 +81,7 @@ Rules are one line each (`id | rule | check`) and load when a matching file is i
 | ---- | ----- | ------------ |
 | `pre-bash-guard.mjs` | PreToolUse(Bash) | Denies git `--no-verify`, force push, `rm -rf` outside the project (temp dirs allowed), reading `.env`, hand-editing lockfiles. Anything it cannot parse is allowed. |
 | `post-edit.mjs` | PostToolUse(Edit, Write, MultiEdit) | Runs the project's own format, lint and typecheck scripts (only those present in the nearest `package.json`). Silent on success; on failure prints at most 15 lines and exits 2. |
+| `skill-router.mjs` | UserPromptSubmit; PostToolUse(Edit, Write, MultiEdit) | Names the UI skills to invoke from prompt keywords (EN/FA); on the first UI-file edit per session and agent (subagents too) reminds to load `responsive-ui`, `accessibility-build` and run `ui-quality-pass`. Never blocks. |
 | `token-audit.mjs` | not a hook; run by the `token-audit` skill | Prints the approximate recurring token cost (bytes / 4) of the config visible from the current directory. |
 
 `.githooks/pre-commit` (repo only): `gitleaks protect --staged --redact`; the installers set `core.hooksPath`.
@@ -115,7 +117,7 @@ Marketplaces: `anthropic-plugin-directory`, `claude-plugins-official`, `gitkrake
 | `permissions.allow` | WebSearch, WebFetch |
 | `permissions.deny` | reading `.env*`, `pnpm-lock.yaml`, credentials files (Read and Bash patterns) |
 | `model` | `opus` |
-| `hooks` | PreToolUse(Bash) -> `pre-bash-guard.mjs`; PostToolUse(Edit, Write, MultiEdit) -> `post-edit.mjs` |
+| `hooks` | PreToolUse(Bash) -> `pre-bash-guard.mjs`; UserPromptSubmit -> `skill-router.mjs`; PostToolUse(Edit, Write, MultiEdit) -> `post-edit.mjs`, `skill-router.mjs` |
 | `statusLine` | command: `statusline.mjs` |
 | `enabledPlugins` | plugin id -> true/false (mirrors `plugins/plugins.json`) |
 | `modelSettings` | effort per model: Opus 5.5 high, Sonnet 5.5 medium, Haiku 5.5 low |

@@ -5,6 +5,9 @@ model: sonnet
 effort: medium
 maxTurns: 40
 color: purple
+skills:
+  - figma-pixel-perfect
+  - responsive-ui
 ---
 
 Inputs from the caller: URL, root selector, cache dir (`~/.cache/figma/<KEY>/<ID>`), optional `map.json`, project dir,
