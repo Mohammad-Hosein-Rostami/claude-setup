@@ -4,6 +4,9 @@
 | ------- | ------------- |
 | `doctor.sh`: `link X` FAIL | `~/.claude/X` is not the repo symlink. Run `scripts/install.sh`; the old item is in `~/.claude-backup-<stamp>/`. |
 | `doctor.sh`: settings differ | Live edits (`/config`). Copy wanted keys into `settings/*.json`, re-run the installer. |
+| A change does not show in a session | The session started before it. Restart it (`/exit`, `claude -c`); after a `settings/` change re-run the installer first. |
+| A hook never fires | Test it as Claude runs it: `echo '{"hook_event_name":"UserPromptSubmit","cwd":"/tmp","prompt":"fix the button layout"}' \| node ~/.claude/hooks/skill-router.mjs`. No output means the script did not run `main()`: the entry check must compare `realpathSync(process.argv[1])`, because `~/.claude/hooks` is a symlink and `import.meta.url` is the resolved path. |
+| skill-router names skills for a non-UI prompt | A keyword is too broad. Narrow it in `PROMPT_ROUTES` and check with `skillsForPrompt()`. |
 | Windows: items copied, edits do not follow | Symlinks need Developer Mode. Enable it and re-run `install.ps1`. |
 | Plugin install skipped | `claude plugin` subcommands missing. Use `/plugin` and the list in `plugins/plugins.json`. |
 | Commit rejected, gitleaks | A staged change looks like a secret. Remove it; do not bypass the hook. |

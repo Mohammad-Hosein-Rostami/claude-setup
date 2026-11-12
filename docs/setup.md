@@ -25,8 +25,9 @@ to `~/.claude-backup-<stamp>/`, never deleted. Check the result with `scripts/do
 
 ## settings and local.json
 `settings.json` = deep merge of `settings/base.json` + `settings/<macos|linux|windows>.json` + `settings/local.json`,
-with `{{CLAUDE_HOME}}` replaced by the real path. `settings/local.json` is gitignored and per machine; copy
-`settings/local.json.example` to start. Edits made through `/config` land only in the generated file: copy what you
+with `{{CLAUDE_HOME}}` replaced by the real path. Objects merge deeply; `hooks` lists are appended per event, so
+`local.json` can add machine-only hooks without restating the shared ones. `settings/local.json` is gitignored and per
+machine; copy `settings/local.json.example` to start. Edits made through `/config` land only in the generated file: copy what you
 want shared into `settings/*.json` and re-run the installer. `doctor.sh` reports drift.
 
 ## FIGMA_TOKEN (for `figma-pull`)
@@ -43,5 +44,9 @@ add` and `claude plugin install`. If the CLI lacks those subcommands, use `/plug
 file lists. `gitkraken` is installed by the GitKraken app.
 
 ## Updating
-`git pull`. Linked content (skills, agents, rules, standards, hooks, tools) is live. Re-run `scripts/install.sh` when
-`settings/`, `plugins/` or a tool's `package.json` changed.
+`git pull`. Linked content (skills, agents, rules, standards, hooks, tools) is live on disk. Re-run `scripts/install.sh`
+when `settings/`, `plugins/` or a tool's `package.json` changed.
+
+A running Claude Code session reads settings, hooks config, CLAUDE.md, agents and plugins only at start: after any change,
+restart open sessions (`/exit`, then `claude -c` to continue). Hook scripts run fresh on every call, so edits to a hook's
+code apply at once.

@@ -81,7 +81,7 @@ Rules are one line each (`id | rule | check`) and load when a matching file is i
 | ---- | ----- | ------------ |
 | `pre-bash-guard.mjs` | PreToolUse(Bash) | Denies git `--no-verify`, force push, `rm -rf` outside the project (temp dirs allowed), reading `.env`, hand-editing lockfiles. Anything it cannot parse is allowed. |
 | `post-edit.mjs` | PostToolUse(Edit, Write, MultiEdit) | Runs the project's own format, lint and typecheck scripts (only those present in the nearest `package.json`). A script that targets the whole repo (`prettier --write .`, `eslint .`, `nx run-many`) is replaced by the tool's binary on the edited file, or skipped for typecheck. Opt out per project with env `CLAUDE_POST_EDIT_SKIP` (`all` or `format,lint,typecheck`). Silent on success; on failure prints at most 15 lines and exits 2. |
-| `skill-router.mjs` | UserPromptSubmit; PostToolUse(Edit, Write, MultiEdit) | Names the UI skills to invoke from prompt keywords (EN/FA); on the first UI-file edit per session and agent (subagents too) reminds to load `responsive-ui`, `accessibility-build` and run `ui-quality-pass`. Quiet with `CLAUDE_SKILL_ROUTER=off` or in a Gradle project without `package.json`. Never blocks. |
+| `skill-router.mjs` | UserPromptSubmit; PostToolUse(Edit, Write, MultiEdit) | Names the UI skills to invoke from prompt keywords (EN/FA; accessibility needs a UI phrase such as "keyboard navigation", "focus ring" or "aria-label", not a bare "keyboard"); on the first UI-file edit per session and agent (subagents too) reminds to load `responsive-ui`, `accessibility-build` and run `ui-quality-pass`. Quiet with `CLAUDE_SKILL_ROUTER=off` or in a Gradle project without `package.json`. Never blocks. |
 | `token-audit.mjs` | not a hook; run by the `token-audit` skill | Prints the approximate recurring token cost (bytes / 4) of the config visible from the current directory. |
 
 `.githooks/pre-commit` (repo only): `gitleaks protect --staged --redact`; the installers set `core.hooksPath`.
@@ -138,7 +138,8 @@ Marketplaces: `anthropic-plugin-directory`, `claude-plugins-official`, `gitkrake
 | `autoCompactContext` | true |
 
 OS files: `settings/macos.json` (Notification hook plays a sound), `settings/windows.json` (Notification hook beeps), `settings/linux.json` (empty).
-`settings/local.json` (gitignored, per machine): see `local.json.example` (`skipDangerousModePermissionPrompt`).
+`settings/local.json` (gitignored, per machine): see `local.json.example` (`skipDangerousModePermissionPrompt`); its `hooks`
+are appended to the shared ones (e.g. the PC's Android incubator hook).
 
 ## Scripts (`scripts/`)
 
