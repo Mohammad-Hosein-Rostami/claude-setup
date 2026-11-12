@@ -15,9 +15,9 @@
 
 Windows (PowerShell): `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-DryRun] [-NoPlugins] [-NoTools]`.
 Symlinks need Developer Mode on Windows; otherwise items are copied (a warning is printed) and do not follow later
-edits. `install.ps1` has not been run on Windows yet.
+edits. `install.ps1` runs on Windows PowerShell 5.1 and 7 (it has not been run on Windows yet).
 
-The installer links `home/*` (CLAUDE.md, rules, skills, agents, standards, hooks, tools, statusline.mjs) into
+The installer links `home/*` (CLAUDE.md, rules, skills, agents, standards, hooks, tools, project-notes, statusline.mjs, and `commands` when it has files) into
 `~/.claude`, builds `~/.claude/settings.json`, installs `home/tools/ui-check` dependencies (lockfile if present,
 otherwise a plain install), sets `core.hooksPath` to `.githooks`, then installs plugins. Anything replaced is moved
 to `~/.claude-backup-<stamp>/`, never deleted. Check the result with `scripts/doctor.sh`

@@ -11,7 +11,7 @@ bad() { echo "FAIL  $1"; BAD=1; }
 
 check_links() {
   local name
-  for name in CLAUDE.md rules skills agents standards hooks tools statusline.mjs; do
+  for name in CLAUDE.md rules skills agents standards hooks tools project-notes statusline.mjs; do
     if [ -L "$CLAUDE_DIR/$name" ] && [ "$(readlink "$CLAUDE_DIR/$name")" = "$REPO/home/$name" ]; then ok "link $name"
     else bad "link $name (re-run scripts/install.sh)"; fi
   done
@@ -19,11 +19,12 @@ check_links() {
 
 # Drift: rebuild the expected settings.json in memory and compare with the live one.
 check_settings() {
-  local os files=("$REPO/settings/base.json") expected
+  local os files=("$REPO/settings/base.json") expected home_path="$CLAUDE_DIR"
   case "$(uname -s)" in Darwin) os=macos ;; Linux) os=linux ;; *) os=windows ;; esac
   [ -f "$REPO/settings/$os.json" ] && files+=("$REPO/settings/$os.json")
   [ -f "$REPO/settings/local.json" ] && files+=("$REPO/settings/local.json")
-  expected="$(jq -S -s 'reduce .[] as $f ({}; . * $f)' "${files[@]}" | sed "s|{{CLAUDE_HOME}}|$CLAUDE_DIR|g")"
+  case "$os" in windows) home_path="$(cygpath -m "$CLAUDE_DIR" 2>/dev/null || echo "${CLAUDE_DIR//\\//}")" ;; esac
+  expected="$(jq -S -s -f "$REPO/scripts/merge-settings.jq" "${files[@]}" | sed "s|{{CLAUDE_HOME}}|$home_path|g")"
   if [ "$expected" = "$(jq -S . "$CLAUDE_DIR/settings.json" 2>/dev/null)" ]; then ok "settings.json matches repo"
   else bad "settings.json differs from repo (live edits? move them into settings/*.json)"; fi
 }

@@ -9,7 +9,7 @@ $Repo = Split-Path -Parent $PSScriptRoot
 $ClaudeDir = Join-Path $HOME '.claude'
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $BackupDir = Join-Path $HOME ".claude-backup-$Stamp"
-$Links = @('CLAUDE.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'statusline.mjs')
+$Links = @('CLAUDE.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'statusline.mjs')
 $Done = New-Object System.Collections.Generic.List[string]
 
 function Note($msg) { $Done.Add($msg); Write-Host "  $msg" }
@@ -39,17 +39,29 @@ function Link-Item($name) {
   }
 }
 
-# Deep merge b into a (b wins); hashtables recurse, everything else is replaced.
-function Merge-Json($a, $b) {
-  foreach ($key in $b.Keys) {
-    if ($a.ContainsKey($key) -and $a[$key] -is [hashtable] -and $b[$key] -is [hashtable]) {
-      $a[$key] = Merge-Json $a[$key] $b[$key]
-    } else { $a[$key] = $b[$key] }
+# PowerShell 5.1 has no ConvertFrom-Json -AsHashtable: turn parsed PSCustomObjects into hashtables / arrays.
+function ConvertTo-Hashtable($node) {
+  if ($node -is [System.Management.Automation.PSCustomObject]) {
+    $table = @{}
+    foreach ($prop in $node.PSObject.Properties) { $table[$prop.Name] = ConvertTo-Hashtable $prop.Value }
+    return $table
+  }
+  if ($node -is [System.Array]) { return , @($node | ForEach-Object { ConvertTo-Hashtable $_ }) }
+  return $node
+}
+
+# Same semantics as scripts/merge-settings.jq: objects deep-merge (b wins), `hooks` lists append per event.
+function Merge-Json($a, $b, $key = '') {
+  foreach ($k in @($b.Keys)) {
+    if (-not $a.ContainsKey($k)) { $a[$k] = $b[$k]; continue }
+    if ($a[$k] -is [hashtable] -and $b[$k] -is [hashtable]) { $a[$k] = Merge-Json $a[$k] $b[$k] $k }
+    elseif ($key -eq 'hooks') { $a[$k] = , @(@($a[$k]) + @($b[$k])) }
+    else { $a[$k] = $b[$k] }
   }
   return $a
 }
 
-function Read-Json($path) { Get-Content $path -Raw | ConvertFrom-Json -AsHashtable }
+function Read-Json($path) { ConvertTo-Hashtable (Get-Content $path -Raw | ConvertFrom-Json) }
 
 function Build-Settings {
   $merged = Read-Json (Join-Path $Repo 'settings\base.json')
@@ -62,7 +74,7 @@ function Build-Settings {
   $out = Join-Path $ClaudeDir 'settings.json'
   if ($DryRun) { Write-Host "[dry-run] would write $out"; return }
   Backup $out
-  Set-Content -Path $out -Value $json -Encoding UTF8
+  [IO.File]::WriteAllText($out, $json, (New-Object Text.UTF8Encoding $false))
   Note 'wrote settings.json'
 }
 
@@ -102,6 +114,8 @@ function Install-Plugins {
 try {
   if (-not $DryRun) { New-Item -ItemType Directory -Force $ClaudeDir | Out-Null }
   foreach ($n in $Links) { Link-Item $n }
+  $commands = Join-Path $Repo 'home\commands'
+  if ((Test-Path $commands) -and (Get-ChildItem $commands -Force | Select-Object -First 1)) { Link-Item 'commands' }
   Build-Settings
   if (Test-Path (Join-Path $Repo '.git')) {
     if (-not $DryRun) { git -C $Repo config core.hooksPath .githooks }
