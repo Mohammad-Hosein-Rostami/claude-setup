@@ -11,7 +11,7 @@ Iron law: no fix before a confirmed root cause (C22).
 4. Trace backwards from the symptom to the first wrong value; fix at that origin.
 5. Write a regression test that fails before the fix and passes after (C11, T2).
 6. Apply the smallest fix. Re-run the repro and the nearest suite.
-7. After two failed fixes stop. Write findings (repro, hypotheses tried, evidence) to a file and hand to the `deep-debugger` agent.
+7. After two failed fixes, change approach instead of retrying: write findings (repro, hypotheses tried, evidence) to a file, hand them to the `deep-debugger` agent, then apply its fix and continue until the test passes.
 
 Flaky tests (pass and fail with no code change):
 - Reproduce: run it 20-50 times alone, then with the suite, then in parallel. Record the failure rate.
