@@ -1,6 +1,7 @@
 // PostToolUse(Edit|Write|MultiEdit): run the project's own format/lint/typecheck scripts after a code file changes.
-// Only scripts that exist in the nearest package.json run. Silent on success; on failure prints at most 15
-// `file:line RULE-ID message` lines to stderr and exits 2. Never evaluates hook input; on Windows (shell on) the relative path must look safe.
+// Only scripts that exist in the nearest package.json run. A script that targets the whole repo (`prettier --write .`,
+// `nx run-many`) is replaced by the tool's binary on the edited file, or skipped; CLAUDE_POST_EDIT_SKIP opts out.
+// Silent on success; on failure prints at most 15 `file:line RULE-ID message` lines to stderr and exits 2. Never evaluates hook input; on Windows (shell on) the relative path must look safe.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -12,6 +13,9 @@ const MAX_LINES = 15;
 const BUDGET_MS = 18_000; // hook timeout is 20 s
 const FILE_SCRIPTS = ['format', 'lint']; // take the edited file after `--`
 const PROJECT_SCRIPTS = ['typecheck']; // whole project; output is filtered to the edited file
+const FILE_TOOLS = { format: ['prettier', '--write'], lint: ['eslint'] }; // per-file fallback for broad scripts
+const BROAD_SCRIPT = /(^|\s)\.\/?(\s|$)|\*|\brun-many\b|\bnx\b|\bturbo\b|\blerna\b/;
+const SKIP_ENV = 'CLAUDE_POST_EDIT_SKIP'; // "all" or e.g. "typecheck,lint"; set in a project's .claude/settings.json env
 
 export const isCodeFile = (file) => CODE_FILE.test(file);
 
@@ -30,13 +34,44 @@ function packageManager(dir) {
   }
 }
 
-/** Checks to run for `file` given a package.json `scripts` object: [{ name, args }] for `<pm> <args>`. Pure. */
-export function plannedChecks(scripts, file) {
-  const has = (n) => typeof scripts?.[n] === 'string';
-  return [
-    ...FILE_SCRIPTS.filter(has).map((name) => ({ name, args: ['run', name, '--', file] })),
-    ...PROJECT_SCRIPTS.filter(has).map((name) => ({ name, args: ['run', name] })),
-  ];
+/** True when a script already targets the whole repo (`prettier --write .`, `eslint src/**`, `nx run-many`, ...). */
+export const isBroadScript = (script) => BROAD_SCRIPT.test(script);
+
+/** `skip` env value ("all" or "lint,typecheck") -> predicate on check names. Pure. */
+export const skipFilter = (skip = '') => {
+  const names = new Set(skip.split(',').map((s) => s.trim()).filter(Boolean));
+  return (name) => !names.has('all') && !names.has(name);
+};
+
+/**
+ * Checks to run for `file`: [{ name, cmd?, args }]; without `cmd` the package manager runs `args`. Pure.
+ * A file script that is broad would check the whole repo, so the tool's own binary (found by `findTool`) runs on
+ * the file instead; a broad project script (e.g. `nx run-many -t typecheck`) is too slow for a hook and is skipped.
+ */
+export function plannedChecks(scripts, file, findTool = () => null) {
+  const script = (n) => (typeof scripts?.[n] === 'string' ? scripts[n] : null);
+  const fileChecks = FILE_SCRIPTS.flatMap((name) => {
+    const s = script(name);
+    if (s === null) return [];
+    if (!isBroadScript(s)) return [{ name, args: ['run', name, '--', file] }];
+    const [tool, ...flags] = FILE_TOOLS[name];
+    const cmd = findTool(tool);
+    return cmd ? [{ name, cmd, args: [...flags, file] }] : [];
+  });
+  const projectChecks = PROJECT_SCRIPTS.filter((n) => script(n) !== null && !isBroadScript(script(n)));
+  return [...fileChecks, ...projectChecks.map((name) => ({ name, args: ['run', name] }))];
+}
+
+// Nearest node_modules/.bin/<tool> walking up from `dir` (a monorepo hoists binaries to the root).
+function toolFinder(dir) {
+  const exe = process.platform === 'win32' ? '.cmd' : '';
+  return (tool) => {
+    for (let d = dir; ; d = dirname(d)) {
+      const bin = join(d, 'node_modules', '.bin', tool + exe);
+      if (existsSync(bin)) return bin;
+      if (dirname(d) === d) return null;
+    }
+  };
 }
 
 const TSC_LINE = /^(.+?)\((\d+),\d+\): (?:error|warning) (TS\d+): (.*)$/;
@@ -73,7 +108,9 @@ export function diagnostics(output, file) {
 
 function runCheck(pm, check, cwd, timeout) {
   // Windows package managers are .cmd shims and need a shell; SAFE_PATH keeps `file` free of metacharacters.
-  return spawnSync(pm, check.args, { cwd, encoding: 'utf8', timeout, shell: process.platform === 'win32' });
+  const quote = process.platform === 'win32' && /\s/.test(check.cmd ?? '');
+  const cmd = quote ? `"${check.cmd}"` : (check.cmd ?? pm);
+  return spawnSync(cmd, check.args, { cwd, encoding: 'utf8', timeout, shell: process.platform === 'win32' });
 }
 
 /** Run planned checks for `file`; returns the failure lines ([] = all passed or nothing to run). */
@@ -91,7 +128,8 @@ export function checkFile(file) {
   }
   const pm = packageManager(dir);
   const deadline = Date.now() + BUDGET_MS;
-  for (const check of plannedChecks(scripts, rel)) {
+  const notSkipped = skipFilter(process.env[SKIP_ENV]);
+  for (const check of plannedChecks(scripts, rel, toolFinder(dir)).filter((c) => notSkipped(c.name))) {
     const left = deadline - Date.now();
     if (left <= 0) return []; // out of time: do not block the edit on a slow project
     const r = runCheck(pm, check, dir, left);
