@@ -1,5 +1,5 @@
 ---
-paths: ["**/*.css","**/*.tsx","**/styles/**","**/tokens/**"]
+paths: ["**/*.css","**/*.scss","**/*.tsx","**/*.jsx","**/*.vue","**/*.html","**/styles/**","**/tokens/**"]
 ---
 # UI/UX/a11y rules: id | rule | check
 U1 | Design tokens only, no raw hex/px; light and dark | stylelint
