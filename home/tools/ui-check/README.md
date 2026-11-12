@@ -3,11 +3,11 @@
 Figma-to-browser checks for pixel-exact frames and responsive layouts. Node ESM, no build step.
 Playwright is not a dependency: it is resolved from the target project (`--project`, default cwd).
 
-Install: `pnpm install --frozen-lockfile` (or `npm ci`) in this folder; `scripts/install.sh` does it.
+Install: `npm ci` in this folder (only package-lock.json exists; Node >= 22); `scripts/install.sh` does it.
 Run: `node ~/.claude/tools/ui-check/cli.mjs <command> [flags]`.
 
 Exit codes: `0` pass, `1` check failed, `2` usage or setup error (bad flag, no Playwright/Chromium/odiff,
-no `FIGMA_TOKEN`, unreachable URL).
+no `FIGMA_TOKEN`, unreachable URL or HTTP status >= 400).
 
 ## Commands
 

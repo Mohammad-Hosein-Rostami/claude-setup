@@ -1,5 +1,6 @@
 // Purpose: `columns` - check that body cells line up with their header cells in a table.
-// Exports: options, run, alignColumns. Invariants: max left delta <= 1px, max width delta <= 2px; exit 0/1.
+// Exports: options, run, alignColumns, comparableRows. Invariants: max left delta <= 1px, max width delta <= 2px;
+// exit 0/1; a table with no comparable body row is FAIL (inconclusive), never PASS.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -33,14 +34,20 @@ function readRows(selector) {
   }));
 }
 
+/** Body rows (after the header) whose cell count matches the header; only these are compared. */
+export function comparableRows(rows) {
+  const [header, ...body] = rows;
+  return body.filter((r) => r.length === header.length);
+}
+
 /**
  * Compare each body row to the header row, column by column.
  * @param {{x: number, w: number}[][]} rows first row is the header; rows with another cell count are skipped
  * @returns {{column: number, maxLeft: number, maxWidth: number, pass: boolean}[]}
  */
 export function alignColumns(rows) {
-  const [header, ...body] = rows;
-  const comparable = body.filter((r) => r.length === header.length);
+  const [header] = rows;
+  const comparable = comparableRows(rows);
   return header.map((cell, column) => {
     const maxLeft = Math.max(0, ...comparable.map((r) => Math.abs(r[column].x - cell.x)));
     const maxWidth = Math.max(0, ...comparable.map((r) => Math.abs(r[column].w - cell.w)));
@@ -60,14 +67,17 @@ export async function run(argv) {
     const rows = await page.evaluate(readRows, values.table);
     if (!rows || rows.length < 2) throw new UsageError(`table "${values.table}" not found or has fewer than 2 rows`);
     const columns = alignColumns(rows);
+    const compared = comparableRows(rows).length;
     const failing = columns.filter((c) => !c.pass);
+    const pass = failing.length === 0 && compared > 0; // nothing compared is inconclusive, never green
     const md = writeReport(outDir, {
-      title: 'ui-check columns', verdict: failing.length === 0 ? 'PASS' : 'FAIL',
-      summary: [`columns: ${columns.length}, rows: ${rows.length - 1}`, `limits: left <= ${MAX_LEFT_DELTA}px, width <= ${MAX_WIDTH_DELTA}px`],
+      title: 'ui-check columns', verdict: pass ? 'PASS' : 'FAIL',
+      summary: [`columns: ${columns.length}, rows compared: ${compared} of ${rows.length - 1} (skipped ${rows.length - 1 - compared} with a different cell count)`,
+        ...(compared === 0 ? ['no comparable body rows'] : []), `limits: left <= ${MAX_LEFT_DELTA}px, width <= ${MAX_WIDTH_DELTA}px`],
       head: ['column', 'max left delta', 'max width delta'], rows: failing.map((c) => [c.column, c.maxLeft.toFixed(1), c.maxWidth.toFixed(1)]), data: { columns },
     });
-    console.log(`${failing.length === 0 ? 'PASS' : 'FAIL'} columns - report: ${md}`);
-    return failing.length === 0 ? 0 : 1;
+    console.log(`${pass ? 'PASS' : 'FAIL'} columns - report: ${md}`);
+    return pass ? 0 : 1;
   } finally {
     await browser.close();
   }

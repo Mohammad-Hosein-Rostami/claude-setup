@@ -22,7 +22,7 @@ async function ui(...args) {
     const { stdout } = await run(process.execPath, [cli, ...args, '--project', project]);
     return { code: 0, stdout };
   } catch (error) {
-    return { code: error.code, stdout: error.stdout };
+    return { code: error.code, stdout: error.stdout, stderr: error.stderr }; // stderr explains an exit-2 setup error
   }
 }
 

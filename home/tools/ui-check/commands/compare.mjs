@@ -65,6 +65,7 @@ export async function run(argv) {
   try {
     const { scale, width, height } = cache.meta;
     const page = await openPage(browser, { url: values.url, width: Math.ceil(width), height: Math.ceil(height), scale });
+    if (await page.locator(values.root).count() === 0) throw new UsageError(`root selector matched nothing: ${values.root}`);
     const elementRows = map ? await elementCheck(page, values.root, cache.spec, map) : [];
     const actualFile = await capture(page, values.root, outDir);
     const pixels = await pixelCheck({ baselineFile: cache.baseline, actualFile, outDir, maxDiffPercent: maxDiff });

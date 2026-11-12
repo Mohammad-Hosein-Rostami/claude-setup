@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Figma-to-browser visual and responsive checks (compare, responsive, columns, figma-pull).",
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=22" },
   "scripts": { "test": "node --test test/*.test.mjs" },
   "dependencies": {
     "odiff-bin": "^4.5.0",

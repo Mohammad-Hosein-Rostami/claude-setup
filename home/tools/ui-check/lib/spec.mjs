@@ -53,7 +53,8 @@ function layoutStyle(node, origin) {
   const spaceBetween = node.primaryAxisAlignItems === 'SPACE_BETWEEN';
   return {
     layoutMode: node.layoutMode,
-    gap: spaceBetween ? undefined : (uniform ? gaps[0] : node.itemSpacing),
+    // A single child has no gap (Figma keeps a stale itemSpacing), so only assert it with 2+ children.
+    gap: spaceBetween || gaps.length === 0 ? undefined : (uniform ? gaps[0] : node.itemSpacing),
     figmaItemSpacing: node.itemSpacing,
     derivedGaps: gaps,
     padding: [node.paddingTop, node.paddingRight, node.paddingBottom, node.paddingLeft].map((v) => v ?? 0),

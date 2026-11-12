@@ -1,15 +1,24 @@
 // Purpose: compare measured DOM boxes/styles to the flattened Figma spec (the element gate).
 // Exports: compareElements, parseColor. Invariants: pure; only props present in the spec are checked;
-// a missing element is one failing row.
+// a missing element is one failing row; a colour in an unknown format is skipped, not failed.
 import { TOLERANCE } from './tolerances.mjs';
 
 const fmt = (v) => (typeof v === 'number' ? String(Math.round(v * 100) / 100) : String(v));
 
-/** Parse "rgb(r, g, b)" / "rgba(r, g, b, a)" / "transparent" to [r, g, b, a]. */
+/**
+ * Parse "rgb(r, g, b)" / "rgba(r, g, b, a)" (comma or space syntax) / "transparent" to [r, g, b, a].
+ * @param {string} css a computed or spec colour
+ * @returns {number[] | null} null when the format is unknown (oklch, color(), lab...): never guess channels
+ */
 export function parseColor(css) {
   if (!css || css === 'transparent') return [0, 0, 0, 0];
-  const parts = css.match(/[\d.]+/g)?.map(Number) ?? [0, 0, 0, 0];
-  return [parts[0], parts[1], parts[2], parts[3] ?? 1];
+  const body = /^rgba?\(([^)]*)\)$/i.exec(css.trim())?.[1];
+  if (body === undefined) return null;
+  const parts = body.trim().split(/[\s,/]+/).filter(Boolean);
+  if (parts.length < 3 || parts.length > 4) return null;
+  const nums = parts.map((p) => (p.endsWith('%') ? Number(p.slice(0, -1)) / 100 : Number(p)));
+  if (nums.some((n) => !Number.isFinite(n))) return null;
+  return [nums[0], nums[1], nums[2], nums[3] ?? 1];
 }
 
 function numberRow(label, prop, is, should, tolerance) {
@@ -20,6 +29,7 @@ function numberRow(label, prop, is, should, tolerance) {
 function colorRow(label, prop, is, should) {
   const a = parseColor(is);
   const b = parseColor(should);
+  if (!a || !b) return null; // unknown colour format: not comparable, so never a false FAIL
   const off = a.slice(0, 3).some((v, i) => Math.abs(v - b[i]) > TOLERANCE.colorChannel) || Math.abs(a[3] - b[3]) > TOLERANCE.colorAlpha;
   return off ? { element: label, prop, is, should, delta: 'colour' } : null;
 }
