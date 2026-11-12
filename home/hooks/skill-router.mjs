@@ -14,7 +14,11 @@ const PROMPT_ROUTES = [
   { test: /responsive|mobile|tablet|breakpoint|overflow|viewport|reflow|ریسپانسیو|موبایل/i, skills: ['responsive-ui'] },
   { test: /\b(forms?|validation|validate|inputs?|fields?|submit)\b|فرم/i, skills: ['forms-validation'] },
   { test: /\b(loading|empty state|error state|skeleton|pagination|fetch(es|ing)?)\b/i, skills: ['async-ui-states'] },
-  { test: /a11y|accessib|keyboard|focus|contrast|aria|screen reader/i, skills: ['accessibility-build'] },
+  // Bare "keyboard", "focus" and "aria" (in "variable") fired on non-UI prompts, so they need UI context words.
+  {
+    test: /a11y|accessib|keyboard[\s-]?(nav\w*|access\w*|trap|support|only)|focus[\s-]?(ring|trap|order|state|visible|management)|\baria\b|aria-|contrast|screen reader/i,
+    skills: ['accessibility-build'],
+  },
   {
     test: /\b(ui|ux|pages?|screens?|components?|layouts?|steps?|modals?|dialogs?|drawers?|cards?|buttons?|styles?|styling|css|scss|sx|tailwind|mui|theme|spacing|align\w*)\b|صفحه|کامپوننت|استایل|طراحی/i,
     skills: ['accessibility-build', 'responsive-ui', 'ui-quality-pass'],
