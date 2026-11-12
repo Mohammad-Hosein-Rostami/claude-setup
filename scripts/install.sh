@@ -66,7 +66,11 @@ detect_os() {
   case "$(uname -s)" in Darwin) echo macos ;; Linux) echo linux ;; *) echo windows ;; esac
 }
 
-# Deep-merge base + <os> + optional local, then substitute {{CLAUDE_HOME}}.
+# Deep-merge base + <os> + optional local, then substitute {{CLAUDE_HOME}}. Hook lists are appended per event (a plain
+# jq `*` would let local.json's hooks replace base.json's), so a machine can add hooks without restating the shared ones.
+MERGE_SETTINGS='reduce .[] as $f ({}; (. * ($f | del(.hooks)))
+  | if $f.hooks then .hooks = reduce ($f.hooks | to_entries[]) as $e (.hooks // {}; .[$e.key] = ((.[$e.key] // []) + $e.value))
+    else . end)'
 build_settings() {
   need jq
   local os files=("$REPO/settings/base.json") out="$CLAUDE_DIR/settings.json" home_path="$CLAUDE_DIR"
@@ -75,7 +79,7 @@ build_settings() {
   [ -f "$REPO/settings/local.json" ] && files+=("$REPO/settings/local.json")
   if is_windows; then home_path="$(cygpath -m "$CLAUDE_DIR" 2>/dev/null || echo "${CLAUDE_DIR//\\//}")"; fi
   local merged
-  merged="$(jq -s 'reduce .[] as $f ({}; . * $f)' "${files[@]}" | sed "s|{{CLAUDE_HOME}}|$home_path|g")"
+  merged="$(jq -s "$MERGE_SETTINGS" "${files[@]}" | sed "s|{{CLAUDE_HOME}}|$home_path|g")"
   echo "$merged" | jq -e . >/dev/null
   if [ "$DRY_RUN" = 1 ]; then echo "[dry-run] would write $out (${#files[@]} source files)"; return; fi
   if [ -f "$out" ]; then backup "$out"; fi
