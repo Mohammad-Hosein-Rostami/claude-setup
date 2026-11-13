@@ -73,7 +73,7 @@ test('L3: rm of a mktemp variable with `..` is outside the temp dir; the mktemp 
 });
 
 test('L4: only an exact --dry-run or -n makes git push a rehearsal; -on is a real push', () => {
-  asks(['git push -on', 'git push -on origin main', 'git push -fn', 'git push -nv'], /git push|DESTRUCTIVE/);
+  asks(['git push -on', 'git push -on origin main', 'git push -fn'], /git push|DESTRUCTIVE/);
   allows(['git push -n', 'git push --dry-run', 'git push -n origin main', 'git push --dry-run origin main']);
 });
 

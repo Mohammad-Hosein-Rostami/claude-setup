@@ -24,12 +24,16 @@ Helpers: `diagnostics.mjs` (check output to `file:line RULE-ID message`) and `ed
 
 - `reply-cap.mjs` - parses a reply-size cap from a prompt and measures a reply (used by `agent-budget.mjs` and `final-reply-cap.mjs`).
 - `shell-words.mjs` - command text to segments of unquoted words; heredoc stripping, output-redirect stripping, option parsing.
-- `command-of.mjs` - segment to the real command, looking through keywords, `VAR=x` and wrappers.
+- `ansi-c.mjs` - decoder for `$'...'` quoting (`\xNN`, octal, `\uNNNN`).
+- `command-of.mjs` - segment to the real command (and its word index), looking through keywords, `VAR=x` and wrappers.
+- `command-checks.mjs` - git, disk-wipe, lockfile and hidden-`rm` rules for one command; `verdict.mjs` - the `DESTRUCTIVE:` prefix.
+- `dangerous-scan.mjs` - finds a dangerous command behind an unknown wrapper; `eval-check.mjs` - `eval` of a variable or substitution.
+- `rm-paths.mjs` - `rm -r` target rules and the ordered variable tracking.
 - `secrets.mjs` - literal secret detection (returns a kind, never the value) and `maskSecrets`.
 - `outward.mjs` - push, gh release, gh pr merge and publish asks.
 - `timed-ask.mjs` - the timed native dialog (osascript / PowerShell popup / zenity), `CLAUDE_ASK_TIMEOUT_S`, fallback to the native ask.
 - `guard-log.mjs` - masked JSON-line decision log (`~/.claude/logs/guard.jsonl`, `CLAUDE_GUARD_LOG`; file 0600, directory 0700).
-- `remote.mjs` - production-host list and the ssh/scp/rsync/psql/mysql write classifier.
+- `remote.mjs` - production-host list and the ssh/scp/rsync/psql/mysql write classifier; `sql.mjs` - statement-level read-only SQL check and host detection.
 - `code-writes.mjs` - code files a Bash command may rewrite.
 
 ## Tests
