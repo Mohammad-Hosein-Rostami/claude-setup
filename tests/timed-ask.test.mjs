@@ -3,13 +3,13 @@
 // on PATH, records what it was asked to show and answers allow / deny / timeout / fail. No test ever opens a real dialog.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { GUARD_LOG_FILE, guardLogPath, logDecision } from '../home/hooks/lib/guard-log.mjs';
-import { answerAsk, askTimeoutSeconds, decisionOutput, dialogExecutable, dialogInvocation, guiAvailable, parseDialogResult } from '../home/hooks/lib/timed-ask.mjs';
+import { answerAsk, askTimeoutSeconds, formatDuration, decisionOutput, dialogExecutable, dialogInvocation, guiAvailable, parseDialogResult } from '../home/hooks/lib/timed-ask.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { tempLogPath } from './hook-env.mjs';
 
@@ -28,6 +28,8 @@ const out = {
   win32: { allow: '6', deny: '7', timeout: '-1' },
   linux: { allow: '', deny: '', timeout: '' },
 }[process.platform];
+if (process.env.FAKE_DIALOG_DELAY_MS) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.FAKE_DIALOG_DELAY_MS));
+if (result === 'kill') process.kill(process.pid, 'SIGKILL');
 if (result === 'fail') { process.stderr.write('dialog tool exploded'); process.exit(3); }
 process.stdout.write(out[result]);
 process.exit(process.platform === 'linux' ? { allow: 0, deny: 1, timeout: 5 }[result] : 0);
@@ -58,10 +60,31 @@ const shownText = (dialog) => {
 
 const request = { hook: 'pre-bash-guard', tool: 'Bash', reason: 'git push goes to a remote', command: 'git push origin main', cwd: PROJECT, sessionId: 'session-12345678', agentId: 'agent-87654321' };
 
+/** A clock that moves `stepMs` forward on every reading: a dialog call reads it twice, so it "waits" exactly `stepMs`. */
+const steppingClock = (stepMs) => {
+  let now = 0;
+  return () => (now += stepMs);
+};
+const FULL_WAIT_MS = 181_000; // longer than the default 180 s timeout
+// A real (short) timeout for hook processes: 1 s timeout, the fake dialog answers "timeout" after 1.2 s.
+const REAL_TIMEOUT = { CLAUDE_ASK_TIMEOUT_S: '1', FAKE_DIALOG_DELAY_MS: '1200' };
+
 test('askTimeoutSeconds: 180 by default, CLAUDE_ASK_TIMEOUT_S when it is a positive number', () => {
   assert.equal(askTimeoutSeconds({}), 180);
   assert.equal(askTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: '7' }), 7);
   for (const bad of ['0', '-3', 'abc', '', 'NaN']) assert.equal(askTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: bad }), 180, bad);
+});
+
+test('L6: CLAUDE_ASK_TIMEOUT_S=9999 is clamped to 190, under the 200 s hook timeout', () => {
+  assert.equal(askTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: '9999' }), 190);
+  assert.equal(askTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: '191' }), 190);
+  assert.equal(askTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: '190' }), 190);
+  const dialog = fakeDialog('allow', { CLAUDE_ASK_TIMEOUT_S: '9999' });
+  answerAsk(request, dialog.env);
+  assert.ok(shownText(dialog).includes('190') && !shownText(dialog).includes('9999'));
+  const base = JSON.parse(readFileSync(new URL('../settings/base.json', import.meta.url), 'utf8'));
+  const guard = base.hooks.PreToolUse.flatMap((group) => group.hooks).find((hook) => hook.command.includes('pre-bash-guard'));
+  assert.ok(guard.timeout > 190, 'the hook timeout stays above the longest dialog');
 });
 
 test('guiAvailable: no GUI over ssh, in CI, in a node test run, or on Linux without a display', () => {
@@ -112,16 +135,33 @@ test('parseDialogResult: allow, deny, timeout, and anything unreadable is "unava
   assert.equal(parseDialogResult('darwin', { status: null, error: new Error('ENOENT') }), 'unavailable');
 });
 
-test('answerAsk: Allow allows, Deny denies, a timeout auto-allows and says so', () => {
+test('answerAsk: Allow allows, Deny denies, a full-length timeout goes ahead and says so', () => {
   const allow = answerAsk(request, fakeDialog('allow').env);
   assert.deepEqual([allow.decision, allow.outcome], ['allow', 'allow']);
   const deny = answerAsk(request, fakeDialog('deny').env);
   assert.deepEqual([deny.decision, deny.outcome], ['deny', 'deny']);
   assert.match(deny.reason, /denied by the owner/);
-  const late = answerAsk(request, fakeDialog('timeout').env);
+  const late = answerAsk(request, fakeDialog('timeout').env, process.platform, steppingClock(FULL_WAIT_MS));
   assert.deepEqual([late.decision, late.outcome], ['allow', 'timeout']);
-  assert.match(late.reason, /auto-allowed after 3 min/);
-  assert.match(answerAsk(request, fakeDialog('timeout', { CLAUDE_ASK_TIMEOUT_S: '45' }).env).reason, /auto-allowed after 45 s/);
+  assert.match(late.reason, /no answer in 3 min, went ahead/);
+  const short = answerAsk(request, fakeDialog('timeout', { CLAUDE_ASK_TIMEOUT_S: '45' }).env, process.platform, steppingClock(46_000));
+  assert.match(short.reason, /no answer in 45 s, went ahead/);
+  assert.equal(formatDuration(180), '3 min');
+});
+
+test('M1: a dialog that was killed, crashed or reported a timeout at once falls back to ask, never to allow', () => {
+  const killed = answerAsk(request, fakeDialog('kill').env);
+  assert.deepEqual([killed.decision, killed.outcome], ['ask', 'dialog-failed']);
+  const crashed = answerAsk(request, fakeDialog('fail').env);
+  assert.deepEqual([crashed.decision, crashed.outcome], ['ask', 'dialog-failed']);
+  // "gave up:true" within milliseconds while the timeout is 180 s: the full time did not pass, so it is not a timeout
+  const instant = answerAsk(request, fakeDialog('timeout').env);
+  assert.deepEqual([instant.decision, instant.outcome], ['ask', 'dialog-failed']);
+  const early = answerAsk(request, fakeDialog('timeout').env, process.platform, steppingClock(60_000));
+  assert.deepEqual([early.decision, early.outcome], ['ask', 'dialog-failed']);
+  // a click on Allow or Deny is believed at once, whatever the clock says
+  assert.equal(answerAsk(request, fakeDialog('allow').env, process.platform, steppingClock(1)).decision, 'allow');
+  assert.equal(answerAsk(request, fakeDialog('deny').env, process.platform, steppingClock(1)).decision, 'deny');
 });
 
 test('answerAsk: a failing or missing dialog tool and a missing GUI fall back to the native ask', () => {
@@ -142,8 +182,9 @@ test('the dialog shows tool, short command, directory and session; it never show
   assert.ok(!shown.includes('x'.repeat(250)), 'the command is cut');
 });
 
-test('decisionOutput: the PreToolUse JSON for allow, deny and ask', () => {
-  for (const decision of ['allow', 'deny', 'ask']) {
+test('M2: decisionOutput prints nothing for allow, and the PreToolUse JSON for deny and ask', () => {
+  assert.equal(decisionOutput({ decision: 'allow', reason: 'why' }), '');
+  for (const decision of ['deny', 'ask']) {
     const out = JSON.parse(decisionOutput({ decision, reason: 'why' })).hookSpecificOutput;
     assert.deepEqual(out, { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: 'why' });
   }
@@ -152,12 +193,13 @@ test('decisionOutput: the PreToolUse JSON for allow, deny and ask', () => {
 const runGuard = (command, env) => spawnSync(process.execPath, [GUARD], { input: JSON.stringify({ cwd: PROJECT, session_id: 'sess-1', tool_input: { command } }), encoding: 'utf8', env: { ...env, CLAUDE_PROJECT_DIR: PROJECT } });
 const decisionOf = (r) => JSON.parse(r.stdout).hookSpecificOutput;
 
-test('guard hook: Allow, Deny and timeout come back as allow / deny / allow and are logged without the secret', () => {
-  for (const [result, decision] of [['allow', 'allow'], ['deny', 'deny'], ['timeout', 'allow']]) {
-    const dialog = fakeDialog(result);
+test('M2: guard hook - Allow and a real timeout print no decision (exit 0, logged); Deny prints deny; the log never holds the secret', () => {
+  for (const [result, extra, decision] of [['allow', {}, 'allow'], ['deny', {}, 'deny'], ['timeout', REAL_TIMEOUT, 'allow']]) {
+    const dialog = fakeDialog(result, extra);
     const r = runGuard(`git push origin main # ${SECRET}`, dialog.env);
     assert.equal(r.status, 0, result);
-    assert.equal(decisionOf(r).permissionDecision, decision, result);
+    if (decision === 'allow') assert.equal(r.stdout, '', result);
+    else assert.equal(decisionOf(r).permissionDecision, 'deny', result);
     const [entry] = dialog.log();
     assert.equal(entry.outcome, result);
     assert.equal(entry.decision, decision);
@@ -165,7 +207,15 @@ test('guard hook: Allow, Deny and timeout come back as allow / deny / allow and 
     assert.ok(!readFileSync(dialog.env.CLAUDE_GUARD_LOG, 'utf8').includes(SECRET));
     assert.ok(!r.stdout.includes(SECRET) && !shownText(dialog).includes(SECRET));
   }
-  assert.match(decisionOf(runGuard('git push', fakeDialog('timeout').env)).permissionDecisionReason, /auto-allowed after 3 min/);
+});
+
+test('M1: guard hook - a dialog that reports a timeout at once, or is killed, becomes the native ask', () => {
+  for (const result of ['timeout', 'kill']) {
+    const dialog = fakeDialog(result);
+    const r = runGuard('git push origin main', dialog.env);
+    assert.equal(decisionOf(r).permissionDecision, 'ask', result);
+    assert.equal(dialog.log()[0].outcome, 'dialog-failed', result);
+  }
 });
 
 test('guard hook: a destructive hit says DESTRUCTIVE in the dialog; a failed dialog falls back to ask; a clean command never asks', () => {
@@ -183,7 +233,8 @@ test('Artifact hook: publish goes through the timed dialog; read never asks', ()
   const dialog = fakeDialog('deny');
   assert.equal(decisionOf(run({ session_id: 's', tool_input: { action: 'delete', url: 'https://x/a/1' } }, dialog.env)).permissionDecision, 'deny');
   assert.equal(dialog.log()[0].hook, 'artifact-ask');
-  assert.equal(decisionOf(run({ tool_input: { action: 'publish' } }, fakeDialog('timeout').env)).permissionDecision, 'allow');
+  assert.equal(run({ tool_input: { action: 'publish' } }, fakeDialog('timeout', REAL_TIMEOUT).env).stdout, '', 'a real timeout prints no decision');
+  assert.equal(run({ tool_input: { action: 'publish' } }, fakeDialog('allow').env).stdout, '', 'Allow prints no decision');
   assert.equal(run({ tool_input: { action: 'read' } }, fakeDialog('deny').env).stdout, '');
 });
 
@@ -199,6 +250,13 @@ test('guard-log: one masked, truncated JSON line per decision; the path is overr
   const blocker = join(mkdtempSync(join(tmpdir(), 'blocker-')), 'file');
   writeFileSync(blocker, 'x');
   assert.doesNotThrow(() => logDecision({ hook: 'h' }, { CLAUDE_GUARD_LOG: join(blocker, 'sub', 'g.jsonl') }));
+});
+
+test('M4: the log file is created 0600 and a new log directory 0700', { skip: process.platform === 'win32' }, () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'perm-')), 'new-dir', 'guard.jsonl');
+  logDecision({ hook: 'h', tool: 'Bash', decision: 'allow', outcome: 'allow', reason: 'r' }, { CLAUDE_GUARD_LOG: path });
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+  assert.equal(statSync(join(path, '..')).mode & 0o777, 0o700);
 });
 
 test('disk wipes ask as DESTRUCTIVE; ordinary dd, device reads and file formatting do not', () => {

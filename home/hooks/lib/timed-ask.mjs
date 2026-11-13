@@ -1,8 +1,11 @@
 // Timed ask for PreToolUse hooks. Exports: askTimeoutSeconds(env), guiAvailable(env, platform), dialogInvocation(platform, text,
 // title, timeoutS), parseDialogResult(platform, result) -> 'allow'|'deny'|'timeout'|'unavailable', answerAsk(request, env) ->
-// {decision, outcome, reason}, decisionOutput(answer) -> hook JSON, askOwner(request, env) -> hook JSON (asks, logs, formats).
+// {decision, outcome, reason}, decisionOutput(answer) -> hook stdout, askOwner(request, env) -> hook stdout (asks, logs, formats).
 // Why: the native "ask" waits forever. The owner's policy is "block nothing": show a native dialog with Allow (default) and Deny,
-// and go ahead as Allow when nobody answers within CLAUDE_ASK_TIMEOUT_S (default 180). Only a click on Deny denies.
+// and go ahead when nobody answers within CLAUDE_ASK_TIMEOUT_S (default 180, at most 190 so it stays under the 200 s hook
+// timeout). Only a click on Deny denies. Allow and timeout print NO decision (empty stdout, exit 0): the CLI's normal permission
+// flow then still applies, so base.json deny rules keep working and the rest of a compound command is not pre-approved.
+// A timeout only counts when the full time really passed; a dialog that was killed, crashed or gave up early is "dialog-failed".
 // No GUI (ssh session, CI, no display) or a failing dialog tool -> decision "ask": the CLI's own prompt, which also covers
 // bypassPermissions mode. Dialog tools: macOS osascript, Windows PowerShell WScript.Shell Popup (its buttons are fixed to
 // Yes = Allow / No = Deny), Linux zenity. The dialog text is built from masked, truncated text and is passed as an argument or
@@ -13,6 +16,9 @@ import { maskSecrets } from './secrets.mjs';
 
 export const ASK_TIMEOUT_ENV = 'CLAUDE_ASK_TIMEOUT_S';
 export const DEFAULT_ASK_TIMEOUT_S = 180;
+export const MAX_ASK_TIMEOUT_S = 190; // the hook timeout in settings/base.json is 200 s
+const TIMEOUT_SLACK_MS = 500; // a dialog tool may report its timeout marginally before the full time has elapsed
+const MS_PER_SECOND = 1000;
 const SPAWN_GRACE_S = 5; // the dialog tool gives up by itself at the timeout; this only stops one that hangs
 const MAX_COMMAND_CHARS = 200;
 const SECONDS_PER_MINUTE = 60;
@@ -36,13 +42,13 @@ const MAC_SCRIPT = [
   'end run',
 ];
 
-/** @returns {number} the dialog timeout in whole seconds: CLAUDE_ASK_TIMEOUT_S when it is a positive number, else 180 */
+/** @returns {number} the dialog timeout in whole seconds: CLAUDE_ASK_TIMEOUT_S when it is a positive number (at most 190), else 180 */
 export function askTimeoutSeconds(env = process.env) {
   const seconds = Math.floor(Number(env[ASK_TIMEOUT_ENV]));
-  return Number.isFinite(seconds) && seconds > 0 ? seconds : DEFAULT_ASK_TIMEOUT_S;
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, MAX_ASK_TIMEOUT_S) : DEFAULT_ASK_TIMEOUT_S;
 }
 
-const formatDuration = (seconds) => (seconds % SECONDS_PER_MINUTE === 0 ? `${seconds / SECONDS_PER_MINUTE} min` : `${seconds} s`);
+export const formatDuration = (seconds) => (seconds % SECONDS_PER_MINUTE === 0 ? `${seconds / SECONDS_PER_MINUTE} min` : `${seconds} s`);
 
 /**
  * @param {Record<string, string | undefined>} env process environment
@@ -118,7 +124,7 @@ function dialogText({ tool, reason, command, cwd, sessionId, agentId }, timeoutS
   if (short) lines.push(`Command: ${short}`);
   if (cwd) lines.push(`Directory: ${cwd}`);
   if (who) lines.push(`From: ${who}`);
-  lines.push('', `Allow is the default. With no answer in ${formatDuration(timeoutS)} it goes ahead as Allow.`);
+  lines.push('', `Allow is the default. With no answer in ${formatDuration(timeoutS)} it goes ahead.`);
   return lines.join('\n');
 }
 
@@ -127,10 +133,11 @@ function dialogText({ tool, reason, command, cwd, sessionId, agentId }, timeoutS
  * @param {{tool: string, reason: string, command?: string, cwd?: string, sessionId?: string, agentId?: string}} request what to show
  * @param {Record<string, string | undefined>} env process environment (timeout, ssh/CI detection, PATH)
  * @param {string} platform process.platform
+ * @param {() => number} now clock in milliseconds (injectable so a test can simulate the full wait)
  * @returns {{decision: 'allow' | 'deny' | 'ask', outcome: 'allow' | 'deny' | 'timeout' | 'no-gui' | 'dialog-failed', reason: string}}
  *   decision "ask" means the caller falls back to the CLI's own prompt
  */
-export function answerAsk(request, env = process.env, platform = process.platform) {
+export function answerAsk(request, env = process.env, platform = process.platform, now = () => performance.now()) {
   const reason = maskSecrets(String(request.reason));
   if (!guiAvailable(env, platform)) return { decision: 'ask', outcome: 'no-gui', reason };
   const timeoutS = askTimeoutSeconds(env);
@@ -138,28 +145,33 @@ export function answerAsk(request, env = process.env, platform = process.platfor
   try {
     const invocation = dialogInvocation(platform, dialogText(request, timeoutS), DIALOG_TITLE, timeoutS);
     if (invocation) {
+      const started = now();
       const result = spawnSync(invocation.command, invocation.args, {
         encoding: 'utf8',
         env: { ...env, ...invocation.env },
-        timeout: (timeoutS + SPAWN_GRACE_S) * 1000,
+        timeout: (timeoutS + SPAWN_GRACE_S) * MS_PER_SECOND,
         windowsHide: true,
       });
-      outcome = result.signal ? 'timeout' : parseDialogResult(platform, result);
+      // killed or crashed dialog -> unavailable; a "timeout" is only believed when the full time has passed
+      outcome = result.signal || result.status === null ? 'unavailable' : parseDialogResult(platform, result);
+      const waitedMs = now() - started;
+      if (outcome === 'timeout' && waitedMs < timeoutS * MS_PER_SECOND - TIMEOUT_SLACK_MS) outcome = 'unavailable';
     }
   } catch {
     outcome = 'unavailable';
   }
   if (outcome === 'unavailable') return { decision: 'ask', outcome: 'dialog-failed', reason };
   if (outcome === 'deny') return { decision: 'deny', outcome, reason: `denied by the owner in the dialog (${reason})` };
-  if (outcome === 'timeout') return { decision: 'allow', outcome, reason: `auto-allowed after ${formatDuration(timeoutS)} without an answer (${reason})` };
+  if (outcome === 'timeout') return { decision: 'allow', outcome, reason: `no answer in ${formatDuration(timeoutS)}, went ahead (${reason})` };
   return { decision: 'allow', outcome, reason: `allowed by the owner in the dialog (${reason})` };
 }
 
 /**
  * @param {{decision: 'allow' | 'deny' | 'ask', reason: string}} answer result of answerAsk
- * @returns {string} the PreToolUse hook JSON line for that decision
+ * @returns {string} the PreToolUse hook JSON line for deny and ask; '' for allow (no decision: the normal permission flow applies)
  */
 export function decisionOutput({ decision, reason }) {
+  if (decision === 'allow') return '';
   return `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: reason } })}\n`;
 }
 

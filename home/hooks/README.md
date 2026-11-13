@@ -4,7 +4,7 @@ Claude Code hooks installed to `~/.claude/hooks` (a symlink to this folder). All
 
 - `mode.mjs` - SessionStart, UserPromptExpansion, UserPromptSubmit: tracks the per-session mode and prints its playbook.
 - `skill-router.mjs` - UserPromptSubmit, PostToolUse(Edit|Write|MultiEdit): names the skills to invoke for the prompt or UI file; a bug/fix intent names `root-cause-debug`, a done/ship intent `verify-done` (each once per session; off with `CLAUDE_SKILL_ROUTER=off`). Never blocks.
-- `pre-bash-guard.mjs` - PreToolUse(Bash): never hard-blocks. Rules (--no-verify, force push, rm -r outside the project, disk wipes, lockfile edits, literal secrets, push, gh release/pr merge, publish, prod-host writes) open a timed dialog: Allow by default, auto-allow after 180 s, Deny on click, native ask when there is no GUI. Logs decisions and `sed -i`/heredoc code writes (for the typecheck gate).
+- `pre-bash-guard.mjs` - PreToolUse(Bash): never hard-blocks. Rules (--no-verify, force push, rm -r outside the project, disk wipes, lockfile edits, literal secrets, push, gh release/pr merge, publish, prod-host writes) open a timed dialog: Allow by default, no answer in 180 s (max 190) goes ahead, Deny on click, native ask when there is no GUI or the dialog failed. Allow and timeout print no decision, so the normal permission flow and deny rules still apply. Logs decisions and `sed -i`/heredoc code writes (for the typecheck gate).
 - `artifact-ask.mjs` - PreToolUse(Artifact): the same timed dialog before an Artifact publish or delete.
 - `agent-model-guard.mjs` - PreToolUse(Agent|Task): in every mode sets `model: sonnet` on a general-purpose / Explore / built-in call that has none (it would inherit the lead model); Plan gets `opus` in extra-high / ultra-high. Forks and the repo's own agents are untouched.
 - `agent-memory-only.mjs` - PreToolUse(Write|Edit|MultiEdit): keeps `reviewer` and `security-auditor` read-only except their memory notes and this session's scratchpad.
@@ -26,7 +26,7 @@ Helpers: `diagnostics.mjs` (check output to `file:line RULE-ID message`) and `ed
 - `secrets.mjs` - literal secret detection (returns a kind, never the value) and `maskSecrets`.
 - `outward.mjs` - push, gh release, gh pr merge and publish asks.
 - `timed-ask.mjs` - the timed native dialog (osascript / PowerShell popup / zenity), `CLAUDE_ASK_TIMEOUT_S`, fallback to the native ask.
-- `guard-log.mjs` - masked JSON-line decision log (`~/.claude/logs/guard.jsonl`, `CLAUDE_GUARD_LOG`).
+- `guard-log.mjs` - masked JSON-line decision log (`~/.claude/logs/guard.jsonl`, `CLAUDE_GUARD_LOG`; file 0600, directory 0700).
 - `remote.mjs` - production-host list and the ssh/scp/rsync/psql/mysql write classifier.
 - `code-writes.mjs` - code files a Bash command may rewrite.
 
