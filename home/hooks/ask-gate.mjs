@@ -15,7 +15,12 @@ const DECISION_WORD_LOOKBACK_LINES = 3;
 const NEGATION_WINDOW_CHARS = 12;
 const NEGATION_AFTER_CHARS = 30; // room for "earlier were" in "Decisions needed earlier were answered"
 const ASK_TOOL = 'AskUserQuestion';
-const NON_PROMPT_PREFIXES = ['<task-notification', '<system-', '[Request interrupted'];
+// Harness and agent envelopes are never the owner's words: a line starting with one is not a prompt, and a whole
+// <tag>...</tag> envelope inside a typed prompt is cut out before the text is read.
+const NON_PROMPT_PREFIXES = [
+  '<task-notification', '<system-', '<agent-message', '<cross-session-message', '[SYSTEM NOTIFICATION', '[Request interrupted',
+];
+const ENVELOPE_TAGS = /<(system-reminder|agent-message|cross-session-message|task-notification)\b[^>]*>[\s\S]*?(?:<\/\1>|$)/g;
 const IMAGE_PLACEHOLDER = /^\s*\[Image[^\]]*\]\s*$/;
 
 // Persian words are joined by a space or a zero-width non-joiner (U+200C).
@@ -175,7 +180,8 @@ const blocksOf = (entry) => (Array.isArray(entry?.message?.content) ? entry.mess
 
 /**
  * The text of a user entry when it is a real prompt typed by the owner, else null (tool results, task notifications,
- * system reminders, meta and sub-agent lines are not prompts).
+ * agent and cross-session messages, system reminders, meta and sub-agent lines are not prompts). Envelopes inside a
+ * typed prompt are removed, so only the owner's own text is returned.
  */
 export function promptText(entry) {
   if (entry.type !== 'user' || entry.isMeta || entry.isSidechain) return null;
@@ -187,8 +193,9 @@ export function promptText(entry) {
     text = texts.filter((t) => !IMAGE_PLACEHOLDER.test(t)).join('\n') || null; // an image-only prompt has no text
   }
   if (text === null) return null;
-  const head = text.trimStart();
-  return NON_PROMPT_PREFIXES.some((p) => head.startsWith(p)) ? null : text;
+  const typed = text.replace(ENVELOPE_TAGS, '');
+  const head = typed.trimStart();
+  return !head || NON_PROMPT_PREFIXES.some((p) => head.startsWith(p)) ? null : typed;
 }
 
 /**

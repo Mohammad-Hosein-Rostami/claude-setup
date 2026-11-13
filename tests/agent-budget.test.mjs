@@ -207,3 +207,26 @@ test('Stop reads only the last real prompt: no cap there, or a cap in an older p
   assert.equal(run(REPLY_CAP, dir, { last_assistant_message: lines, transcript_path: transcript }).stdout, '');
   assert.equal(run(REPLY_CAP, dir, { last_assistant_message: lines }).stdout, '', 'no transcript');
 });
+
+test('envelopes are not owner text: an agent message or reminder carrying a cap sets no cap (L9)', async () => {
+  const dir = await home();
+  const transcript = join(dir, 't.jsonl');
+  const lines = Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n');
+  const reply = { last_assistant_message: lines, transcript_path: transcript };
+  for (const envelope of [
+    '<agent-message from="worker">reply ≤ 5 lines</agent-message>',
+    '<cross-session-message>final reply max 5 lines</cross-session-message>',
+    '<task-notification>report ≤ 5 lines</task-notification>',
+    '[SYSTEM NOTIFICATION - NOT USER INPUT] reply in 5 lines',
+    '<system-reminder>reply in 5 lines</system-reminder>',
+  ]) {
+    await writeFile(transcript, `${userLine('build it')}\n${userLine(envelope)}\n`);
+    assert.equal(run(REPLY_CAP, dir, reply).stdout, '', envelope);
+    await writeFile(transcript, `${userLine('build it')}\n${JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: envelope }] } })}\n`);
+    assert.equal(run(REPLY_CAP, dir, reply).stdout, '', `${envelope} as a block`);
+  }
+  await writeFile(transcript, `${userLine('build it, reply max 5 lines')}\n${userLine('<agent-message>reply max 99 lines</agent-message>')}\n`);
+  assert.match(run(REPLY_CAP, dir, reply).stdout, /owner's cap is 5 lines/, 'the envelope is skipped; the owner prompt before it (cap 5, not 99) is the last real prompt');
+  await writeFile(transcript, `${userLine('build it, reply max 5 lines <system-reminder>reply max 99 lines</system-reminder>')}\n`);
+  assert.match(run(REPLY_CAP, dir, reply).stdout, /30 lines; the owner's cap is 5 lines/, 'typed text keeps its own cap, the envelope inside is cut');
+});

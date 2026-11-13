@@ -288,3 +288,17 @@ test('through the hook: descriptive "needs your call" text passes, a real unaske
   allowed(run({ last_assistant_message: 'Fixed. The old matcher fired on text like needs your call.', transcript_path: p }));
   blocked(run({ last_assistant_message: 'Built both.\nUse pnpm or npm? Needs your call.', transcript_path: p }));
 });
+
+test('envelopes (agent and cross-session messages, notifications, reminders) are not prompts, even inside typed text', async () => {
+  const { run, transcript } = await sandbox();
+  const envelopes = [
+    '<agent-message from="w">done</agent-message>', '<cross-session-message>hi</cross-session-message>',
+    '[SYSTEM NOTIFICATION - NOT USER INPUT] done', '<system-reminder>x</system-reminder>',
+  ];
+  for (const envelope of envelopes) {
+    const p = await transcript([user('build it'), ASK_CALL, RESULT, user(envelope)]);
+    allowed(run({ last_assistant_message: DECISIONS, transcript_path: p })); // the ask still counts: the envelope did not start a new prompt
+  }
+  const q = await transcript([user('build it'), ASK_CALL, RESULT, user('next task <agent-message>x</agent-message>')]);
+  blocked(run({ last_assistant_message: DECISIONS, transcript_path: q })); // typed text around an envelope is a prompt
+});
