@@ -16,24 +16,36 @@ const TOKEN_KINDS = [
   [/\bxox[bp]-[A-Za-z0-9-]{10,}/, 'a Slack token'],
 ];
 const SECRET_ENV = '(?:PGPASSWORD|MYSQL_PWD|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN)';
-const NOT_LITERAL_START = '(?!["\']?(?:\\$|`|<\\(|\\s|;|&|\\||$))';
+const NOT_LITERAL_START = '(?!["\']?(?:\\$|`|<|\\s|;|&|\\||$))';
 const VALUE = `["']?[^\\s"';&|]`;
 // What the masker hides after a prefix: a whole quoted string or one unquoted word.
 const VALUE_RUN = `"[^"]*"|'[^']*'|[^\\s"';&|]+`;
 // [prefix, extra lookahead, kind, options]: the prefix ends right before the value, so one table drives both detection and
 // masking. options.value replaces the detected/masked value pattern, options.flags are the regex flags (e.g. 'i').
 const BOUNDARY = `(?:^|[\\s;&|("'])`;
-const URL_PASSWORD = `[^\\s@/"']+(?=@)`;
+// URL userinfo: the password runs to the LAST `@` of the word, so one containing `@` or `/` is still covered. A `:port/@scope`
+// (`http://localhost:5173/@vite/client`) is not a password: digits followed by `/ ? #` or the end are a port.
+const URL_PASSWORD = '[^\\s"\']*(?=@)';
+const URL_NOT_A_PORT = '(?!\\d+(?:[/?#"\'\\s]|$))';
+// curl-family commands, quote-aware so `-H "X: a;b"` does not end the command early; `-u user:pass` is only a credential for these
+const HTTP_TOOL = `\\b(?:curl|wget|http|https|xh|hurl)\\b(?:"[^"]*"|'[^']*'|[^\\n|;&"'])*?`;
+// A header value is a literal unless it contains a variable, a substitution or a placeholder (`Bearer $TOKEN`, `Bearer <token>`).
+const HEADER_VALUE = `(?![^"'\\n]*[$\`<])[^"'\\n]+`;
+const HEADER_NAME = '(?:Authorization|X-[\\w-]*(?:key|token|secret)|Cookie)';
+const SECRET_FLAG = '--(?:token|api-key|apikey|password|passwd|client-secret|access-token|auth-token)(?:=|\\s+)';
 const VALUE_KINDS = [
   [`(?:^|[\\s;&|("'])${SECRET_ENV}=`, '', 'a password or key assigned in the command'],
-  ['--(?:password|passwd)(?:=|\\s+)', '(?!-)', 'a password flag with a literal value'],
+  [SECRET_FLAG, '(?!-)', 'a password, token or key flag with a literal value'],
   ['\\bsshpass\\s+(?:-\\w*\\s+)*-p\\s*', '', 'an sshpass password'],
   ['\\b(?:mysql|mysqladmin|mysqldump|mariadb)\\b[^\\n|;&]*?\\s-p', '', 'a mysql password flag with a literal value'],
   ['\\bdocker\\s+login\\b[^\\n|;&]*?\\s-p\\s+', '', 'a docker login password'],
   [`${BOUNDARY}[\\w.-]*(?:_KEY|_TOKEN|_SECRET|PASSWORD)=`, '', 'a key, token, secret or password assigned in the command', { flags: 'i' }],
   ['\\bBearer\\s+', '', 'a bearer token', { flags: 'i' }],
-  ['(?:^|\\s)(?:-u|--user)(?:=|\\s+)["\']?[\\w.@-]+:', '', 'a user:password pair', {}],
-  ['\\b[a-z][a-z0-9+.-]*://[^\\s/@:"\']+:', '', 'a password inside a URL', { value: URL_PASSWORD, flags: 'i' }],
+  [`${HTTP_TOOL}\\s(?:-u|--user)(?:=|\\s*)[^\\s:"']*:`, '', 'a user:password pair', { value: '[^\\s"\';&|]+' }],
+  [`${HTTP_TOOL}\\s(?:-u|--user)(?:=|\\s*)["'][^"':]*:`, '', 'a user:password pair', { value: '[^"\']+' }],
+  [`\\b${HEADER_NAME}\\s*:[ \\t]*`, '', 'a credential header with a literal value', { value: HEADER_VALUE, flags: 'i' }],
+  [`(?<!\\b(?:docker|podman|buildx|buildah)\\b[^\\n|;&]*)--secret(?:=|\\s+)`, '(?!-)', 'a secret flag with a literal value'],
+  ['\\b[a-z][a-z0-9+.-]*://[^\\s/@:"\']+:', URL_NOT_A_PORT, 'a password inside a URL', { value: URL_PASSWORD, flags: 'i' }],
 ].map(([prefix, lookahead, kind, { value, flags = '' } = {}]) => ({
   kind,
   detect: new RegExp(`${prefix}${NOT_LITERAL_START}${lookahead}${value ?? VALUE}`, flags),
