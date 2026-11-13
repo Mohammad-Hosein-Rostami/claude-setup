@@ -41,6 +41,7 @@ test('harmless everyday commands stay silent (false positives cost a dialog)', (
     'git commit -m "rm -rf / and git push"', 'echo done # rm -rf /etc', 'docker run -u 1000:1000 img', 'systemctl --user restart x',
     'curl http://localhost:5173/@vite/client', 'eval "$(ssh-agent -s)"', 'eval "$(fnm env --use-on-cd)"', 'eval $(minikube docker-env)',
     'D=./build; rm -rf $D', 'export D=$(mktemp -d); rm -rf "$D/x"', 'X=ls; $X -la', 'watch -n 5 git status',
+    'rm -rf $(pwd)/dist', 'D=$(mktemp -d) && cd "$D" && rm -rf x',
   ]);
 });
 
@@ -75,9 +76,9 @@ test('item 1: eval of a variable or substitution asks; a literal eval is checked
   allows(['eval "$(direnv hook bash)"', 'eval "$(starship init zsh)"', 'eval "$(pyenv init -)"', 'eval $(ssh-agent -s)', 'eval "echo hi"']);
 });
 
-test('item 1: a variable as command name asks only when it looks like a forced recursive delete', () => {
+test('item 1: a variable as command name asks (conventional names such as $EDITOR stay silent)', () => {
   asks(['$RM -rf /x', '"$RM" -fr /etc', '$CMD -r -f /x'], DESTRUCTIVE);
-  allows(['$COMPOSE up -d', '$EDITOR -r file', '"$HOME/bin/tool" --fast']);
+  allows(['$EDITOR -r file', '"$HOME/bin/tool" --fast']);
 });
 
 test('item 2: variables are tracked in order; the last assignment wins', () => {
