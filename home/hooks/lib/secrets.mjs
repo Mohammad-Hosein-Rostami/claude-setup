@@ -108,10 +108,15 @@ export function maskSecrets(command) {
   return command.length > MAX_SCAN_CHARS ? `${text}[...cut]` : text;
 }
 
-const QUOTE_EDGES = /^["']|["']$/g;
+const WORD_REST = /^[^\s;&|]*/;
+const QUOTES = /["']/g;
+
+/** The value plus whatever continues the same shell word (`'known'TAIL` is one word), quotes removed. */
+const wholeWord = (text, valueText, end) => `${valueText}${text.slice(end).match(WORD_REST)[0]}`.replace(QUOTES, '');
 
 /**
- * Every literal secret value the rules above find (same patterns and scan limit as findLiteralSecret/maskSecrets), quotes stripped.
+ * Every literal secret value the rules above find (same patterns and scan limit as findLiteralSecret/maskSecrets). A value
+ * is the whole shell word it sits in, quotes removed, so a value with text glued on (`'known'TAIL`) is the combined word.
  * The values are raw: the caller must hash them and never print or store them.
  * @param {string} command raw command text
  * @returns {string[]} distinct non-empty values, in the order the rules found them
@@ -119,7 +124,11 @@ const QUOTE_EDGES = /^["']|["']$/g;
 export function literalSecretValues(command) {
   const text = command.slice(0, MAX_SCAN_CHARS);
   const found = [];
-  for (const [pattern] of TOKEN_KINDS) found.push(...[...text.matchAll(new RegExp(pattern.source, 'g'))].map((match) => match[0]));
-  for (const { mask } of VALUE_KINDS) found.push(...[...text.matchAll(mask)].map((match) => match[0].slice(match[1].length).replace(QUOTE_EDGES, '')));
+  for (const [pattern] of TOKEN_KINDS) {
+    for (const match of text.matchAll(new RegExp(pattern.source, 'g'))) found.push(wholeWord(text, match[0], match.index + match[0].length));
+  }
+  for (const { mask } of VALUE_KINDS) {
+    for (const match of text.matchAll(mask)) found.push(wholeWord(text, match[0].slice(match[1].length), match.index + match[0].length));
+  }
   return [...new Set(found.filter((value) => value !== ''))];
 }

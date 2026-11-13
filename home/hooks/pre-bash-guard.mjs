@@ -16,8 +16,8 @@
 // publish (lib/outward.mjs), and ssh/scp/rsync/psql/mysql that write to a production host (lib/remote.mjs; list in
 // ~/.claude/private/prod-hosts).
 // A literal-secret ask that the owner allowed (or let time out) is remembered for the rest of the session as sha256 digests
-// (lib/allowed-literals.mjs): the same values again run without a dialog (log outcome "remembered"). An ask with any other reason
-// (push, rm, hidden command ...) always shows its dialog and remembers nothing.
+// (lib/allowed-literals.mjs, lib/remembered-ask.mjs): the same values again run without a dialog (log outcome "remembered") only when
+// the command is also clean with the values neutralised. An ask with any other reason always shows its dialog and remembers nothing.
 // ALLOW + LOG: `sed -i`, heredoc and inline-interpreter writes to code files are allowed; their paths go to the edit log
 // so the Stop typecheck gate covers them (lib/code-writes.mjs, lib/edit-log.mjs).
 // Everything else (and any input it cannot parse) is allowed. Reading files, `.env` included, is never blocked.
@@ -66,9 +66,8 @@ import { checkFind } from './lib/find-delete.mjs';
 import { outwardAsk } from './lib/outward.mjs';
 import { readProdHosts, remoteAsk } from './lib/remote.mjs';
 import { checkRm, expandHome, expandVars, isUnder, nativePath, newScope, sameFile, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
-import { isRemembered, remember } from './lib/allowed-literals.mjs';
-import { logDecision } from './lib/guard-log.mjs';
-import { findLiteralSecret, literalSecretValues } from './lib/secrets.mjs';
+import { askUnlessRemembered, secretReason } from './lib/remembered-ask.mjs';
+import { findLiteralSecret } from './lib/secrets.mjs';
 import { shellHazards } from './lib/shell-hazards.mjs';
 import { askOwner } from './lib/timed-ask.mjs';
 import { GIT_TOPLEVEL_WORD, lex, segments, tokenize } from './lib/shell-words.mjs';
@@ -80,17 +79,6 @@ export { segments };
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'ksh', 'dash']);
 const SHELL_OPTIONS_WITH_VALUE = new Set(['-o', '+o', '-O', '+O', '--rcfile', '--init-file']);
 const UNKNOWN_CD_TARGET = /^-|[~$`*?[\]{}]/;
-
-const SECRET_REASON_PREFIX = 'the command contains a literal password/token (';
-const SECRET_REASON_SUFFIX = '); prefer an env var or a file the tool reads';
-const BACKSTOP_MARK = ' (matched in raw text)';
-const secretReason = (kind) => `${SECRET_REASON_PREFIX}${kind}${SECRET_REASON_SUFFIX}`;
-const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const SECRET_REASON = `${escapeRegExp(SECRET_REASON_PREFIX)}[^)]*${escapeRegExp(SECRET_REASON_SUFFIX)}(?:${escapeRegExp(BACKSTOP_MARK)})?`;
-const SECRET_ONLY_REASONS = new RegExp(`^${SECRET_REASON}(?:; ${SECRET_REASON})*$`);
-
-/** @returns {boolean} true when every reason in an ask is a literal-secret reason (decide joins reasons with "; ") */
-export const isSecretOnlyReason = (reason) => SECRET_ONLY_REASONS.test(reason);
 
 const allow = () => ({ allow: true });
 // Nothing is hard-denied: every rule is an ask, and the hook turns it into a timed dialog (Allow by default, auto-allow
@@ -255,25 +243,6 @@ async function readStdin() {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-/**
- * The hook stdout for an ask. A secret-only ask whose values the owner already allowed in this session is silent (logged as
- * "remembered"); otherwise the timed dialog runs, and an allow or timeout on a secret-only ask is remembered.
- * @param {{reason: string, errorClass?: string}} r the ask from decideSafely
- * @param {{command: string, cwd: string, input: {session_id?: string, agent_id?: string}}} call the Bash call being guarded
- * @returns {string} hook stdout ('' for allow)
- */
-function askUnlessRemembered(r, { command, cwd, input }) {
-  // after a rules error the log gets the error class and no command text (the dialog still shows it)
-  const reason = r.errorClass ? `${r.reason}: ${r.errorClass}` : r.reason;
-  const values = !r.errorClass && isSecretOnlyReason(r.reason) ? literalSecretValues(command) : [];
-  if (isRemembered(input.session_id, values, process.env)) {
-    logDecision({ hook: 'pre-bash-guard', tool: 'Bash', decision: 'allow', outcome: 'remembered', reason, command, cwd, session: input.session_id });
-    return '';
-  }
-  const onAnswer = (answer) => answer.decision === 'allow' && remember(input.session_id, values, process.env);
-  return askOwner({ hook: 'pre-bash-guard', tool: 'Bash', reason, command, cwd, sessionId: input.session_id, agentId: input.agent_id, omitCommandFromLog: r.errorClass !== undefined, onAnswer });
-}
-
 async function main() {
   let input;
   try {
@@ -285,8 +254,9 @@ async function main() {
   if (typeof command !== 'string') return;
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   const project = process.env.CLAUDE_PROJECT_DIR || cwd;
-  const r = decideSafely(command, { cwd, project }, (text, ctx) => decide(text, { ...ctx, prodHosts: readProdHosts() })); // reading the host list is inside the guard too
-  if (r.ask) process.stdout.write(askUnlessRemembered(r, { command, cwd, input }));
+  const rules = (text, ctx) => decide(text, { ...ctx, prodHosts: readProdHosts() }); // reading the host list is inside the guard too
+  const r = decideSafely(command, { cwd, project }, rules);
+  if (r.ask) process.stdout.write(askUnlessRemembered(r, { command, cwd, input, recheck: (text) => decideSafely(text, { cwd, project }, rules) }));
   logCodeWrites(command, input, cwd); // harmless when the owner denied: the typecheck gate only reads files that exist
 }
 

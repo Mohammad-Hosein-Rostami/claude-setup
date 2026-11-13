@@ -25,7 +25,21 @@ test('literalSecretValues: variables, substitutions and program code are not val
   assert.deepEqual(literalSecretValues('ls -la'), []);
 });
 
-const homeEnv = () => ({ HOME: mkdtempSync(join(tmpdir(), 'allowed-home-')) });
+test('literalSecretValues: a value is the whole shell word, so text glued onto a quoted value is part of it', () => {
+  assert.deepEqual(literalSecretValues("KEY='known-value-1'TAIL98 ls"), ['known-value-1TAIL98']);
+  assert.deepEqual(literalSecretValues('KEY="known-value-1" ls'), ['known-value-1']);
+});
+
+test('store: values shorter than 8 characters are never stored and never count as remembered', () => {
+  const env = homeEnv();
+  remember('sess-1', ['short'], env);
+  assert.equal(existsSync(allowedLiteralsDir(env)), false);
+  remember('sess-1', ['long-enough-value'], env);
+  assert.equal(isRemembered('sess-1', ['long-enough-value', 'short'], env), false);
+  assert.equal(isRemembered('sess-1', ['long-enough-value'], env), true);
+});
+
+const homeEnv =() => ({ HOME: mkdtempSync(join(tmpdir(), 'allowed-home-')) });
 const fileOf = (env, session) => join(allowedLiteralsDir(env), `${session}.json`);
 
 test('store: remember then isRemembered; an unseen second value, another session or no values is not remembered', () => {

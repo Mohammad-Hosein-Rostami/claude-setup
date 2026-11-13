@@ -16,12 +16,18 @@ const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.m
 const PROJECT = resolve('/work/proj');
 const VALUE = 'i6IWfakefilekey0123';
 const SECRET_COMMAND = `KEY='${VALUE}' ./fetch-figma.sh`;
+const NEW_PART = 'NEWTAIL98765';
 const FAKE_SCRIPT = `
 const { appendFileSync } = require('node:fs');
 appendFileSync(process.env.FAKE_DIALOG_COUNT, 'x');
-const out = { darwin: { allow: 'button returned:Allow, gave up:false', deny: 'button returned:Deny, gave up:false' }, win32: { allow: '6', deny: '7' }, linux: { allow: '', deny: '' } }[process.platform];
+const out = {
+  darwin: { allow: 'button returned:Allow, gave up:false', deny: 'button returned:Deny, gave up:false', timeout: 'button returned:, gave up:true' },
+  win32: { allow: '6', deny: '7', timeout: '-1' },
+  linux: { allow: '', deny: '', timeout: '' },
+}[process.platform];
+if (process.env.FAKE_DIALOG_DELAY_MS) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.FAKE_DIALOG_DELAY_MS));
 process.stdout.write(out[process.env.FAKE_DIALOG_RESULT]);
-process.exit(process.platform === 'linux' ? { allow: 0, deny: 1 }[process.env.FAKE_DIALOG_RESULT] : 0);
+process.exit(process.platform === 'linux' ? { allow: 0, deny: 1, timeout: 5 }[process.env.FAKE_DIALOG_RESULT] : 0);
 `;
 
 /** One simulated owner session: a private HOME, decision log and fake dialog whose answer can change between calls. */
@@ -40,9 +46,9 @@ function session() {
     home: { HOME: home },
     dialogs: () => (existsSync(count) ? readFileSync(count, 'utf8').length : 0),
     log: () => readFileSync(base.CLAUDE_GUARD_LOG, 'utf8').trim().split('\n').map((line) => JSON.parse(line)),
-    run(command, answer, sessionId = 'sess-1') {
+    run(command, answer, sessionId = 'sess-1', extraEnv = {}) {
       const input = { cwd: PROJECT, session_id: sessionId, tool_input: { command } };
-      return spawnSync(process.execPath, [GUARD], { input: JSON.stringify(input), encoding: 'utf8', env: { ...base, FAKE_DIALOG_RESULT: answer } });
+      return spawnSync(process.execPath, [GUARD], { input: JSON.stringify(input), encoding: 'utf8', env: { ...base, FAKE_DIALOG_RESULT: answer, ...extraEnv } });
     },
   };
 }
@@ -105,4 +111,42 @@ test('the remembered store holds no raw value', () => {
   s.run(SECRET_COMMAND, 'allow');
   const file = join(allowedLiteralsDir(s.home), 'sess-1.json');
   assert.ok(!readFileSync(file, 'utf8').includes(VALUE));
+});
+
+test('a real timeout (auto-allow) is remembered; an allow-then-remembered value is silent next time', () => {
+  const s = session();
+  const waitedOut = { CLAUDE_ASK_TIMEOUT_S: '1', FAKE_DIALOG_DELAY_MS: '1200' };
+  assert.equal(s.run(SECRET_COMMAND, 'timeout', 'sess-1', waitedOut).stdout, '');
+  assert.equal(s.dialogs(), 1);
+  s.run(SECRET_COMMAND, 'deny');
+  assert.equal(s.dialogs(), 1, 'the timeout was remembered');
+});
+
+// Each of these hides a second command from the rules once a secret reason exists, so a remembered value must not silence them.
+const HIDDEN_RISK = [
+  `KEY='${VALUE}'; python3 -c "import os;os.system('git push -f')"`,
+  `KEY='${VALUE}'; node -e "require('child_process').execSync('rm -rf /x')"`,
+  `KEY='${VALUE}'; perl -e 'system("git push -f")'`,
+  `KEY='${VALUE}'; osascript -e 'do shell script "git push -f"'`,
+  `KEY='${VALUE}'; bash -c "PGPASS""WORD=${NEW_PART} psql"`,
+  `KEY='${VALUE}'${NEW_PART} ./fetch-figma.sh`,
+  `KEY='${VALUE}'; bash -c "PGPASSWORD=\\"${NEW_PART}\\" psql"`,
+];
+
+test('a remembered value never silences a command that hides another risk, a new secret or a partial value', () => {
+  for (const command of HIDDEN_RISK) {
+    const s = session();
+    s.run(SECRET_COMMAND, 'allow');
+    assert.equal(s.dialogs(), 1);
+    s.run(command, 'allow');
+    assert.equal(s.dialogs(), 2, `dialog for: ${command}`);
+  }
+});
+
+test('a short value is never remembered', () => {
+  const s = session();
+  s.run('PGPASSWORD=short psql -h db', 'allow');
+  s.run('PGPASSWORD=short psql -h db', 'allow');
+  assert.equal(s.dialogs(), 2);
+  assert.equal(existsSync(allowedLiteralsDir(s.home)), false);
 });
