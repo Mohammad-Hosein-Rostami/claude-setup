@@ -140,6 +140,14 @@ test('matcher: only the last 15 non-empty lines are scanned for request phrases'
   assert.equal(listsDeferredDecisions(`Decisions needed:\n- x\n${filler}`), true, 'headings keep the whole text');
 });
 
+test('matcher: an explicit choice between named alternatives counts as an open choice', () => {
+  for (const text of [
+    'I need you to decide A or B.', 'Done.\nI need you to choose pnpm vs npm.', 'You must decide X versus Y', 'I need you to pick Postgres or SQLite.',
+  ]) assert.equal(listsDeferredDecisions(text), true, text);
+  assert.equal(listsDeferredDecisions('I need you to decide.'), false, 'no choice named');
+  assert.equal(listsDeferredDecisions('This needs your decision.\nWe chose A or B earlier.'), false, 'alternatives in another sentence');
+});
+
 test('matcher tolerates non-string input', () => {
   for (const v of [undefined, null, 42, {}]) assert.equal(listsDeferredDecisions(v), false);
 });

@@ -25,14 +25,30 @@ const run = (script, dir, input, raw) =>
 const words = (n) => Array.from({ length: n }, (_, i) => `w${i}`).join(' ');
 const userLine = (text) => JSON.stringify({ type: 'user', message: { role: 'user', content: text } });
 
-test('parseCap reads caps about a reply and ignores caps about files', () => {
+test('parseCap reads caps tied to the reply', () => {
   assert.deepEqual(parseCap('Return ≤ 12 lines'), { limit: 12, unit: 'lines' });
   assert.deepEqual(parseCap('Report ≤ 250 words with file:line'), { limit: 250, unit: 'words' });
   assert.deepEqual(parseCap('Final reply max 25 lines, no tables'), { limit: 25, unit: 'lines' });
   assert.deepEqual(parseCap('The final answer has a 25-line cap'), { limit: 25, unit: 'lines' });
-  assert.equal(parseCap('Keep files under 300 lines.'), null);
-  assert.equal(parseCap('no more than 3 words in the label'), null);
-  assert.equal(parseCap(undefined), null);
+  assert.deepEqual(parseCap('Reply in 20 lines.'), { limit: 20, unit: 'lines' });
+  assert.deepEqual(parseCap('Send a 25-line report please'), { limit: 25, unit: 'lines' });
+  assert.deepEqual(parseCap('Return a report of at most 3 lines.'), { limit: 3, unit: 'lines' });
+});
+
+test('parseCap ignores rule quotes and per-file or per-function limits (regression)', () => {
+  for (const text of [
+    'C4 files <=300 lines', 'Files <=300 lines; C3 one job per function: <=40 lines', 'Keep files under 300 lines.',
+    'Return functions of at most 40 lines', 'Report files under 300 lines', 'Keep each report section to 5 lines',
+    'no more than 3 words in the label', 'C3 | One job per function: <=40 lines, <=4 params', 'هر فایل حداکثر ۳۰۰ خط باشد', undefined,
+  ]) assert.equal(parseCap(text), null, String(text));
+});
+
+test('parseCap reads Persian caps, with Persian and Arabic-Indic digits', () => {
+  assert.deepEqual(parseCap('حداکثر ۳۰۰ کلمه'), { limit: 300, unit: 'words' });
+  assert.deepEqual(parseCap('گزارش حداکثر ۳۰۰ کلمه باشد'), { limit: 300, unit: 'words' });
+  assert.deepEqual(parseCap('پاسخ در ۲۰ خط'), { limit: 20, unit: 'lines' });
+  assert.deepEqual(parseCap('حداکثر ٢٥ سطر'), { limit: 25, unit: 'lines' });
+  assert.deepEqual(parseCap('حداکثر 120 کلمه'), { limit: 120, unit: 'words' });
 });
 
 test('measure counts words and non-empty lines; overCap is strict', () => {
@@ -87,16 +103,23 @@ test('a big Read warns the lead only in ultra-high', async () => {
   assert.equal(run(BUDGET, dir, { ...big, agent_id: uid('a') }).stdout, '', 'a subagent is counted, not Read-warned');
 });
 
-test('SubagentStop blocks a report over 300 words by default, once', async () => {
+test('SubagentStop with no cap in the spawn prompt never blocks, however long the report', async () => {
   const dir = await home();
-  const base = { hook_event_name: 'SubagentStop', session_id: uid('s'), agent_id: uid('a'), agent_type: 'implementer' };
-  const long = run(BUDGET, dir, { ...base, last_assistant_message: words(301) });
-  assert.equal(long.status, 2);
-  assert.match(long.stderr, /301 words; the cap is 300 words/);
-  assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: words(300) }).status, 0);
-  assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: words(400), stop_hook_active: true }).status, 0, 'never twice');
-  assert.equal(run(BUDGET, dir, { ...base, agent_type: 'architect', last_assistant_message: words(400) }).status, 0, 'architect exempt');
-  assert.equal(run(BUDGET, dir, { ...base, agent_id: undefined, last_assistant_message: words(400) }).status, 0, 'no agent id');
+  const transcript = join(dir, 'agent.jsonl');
+  await writeFile(transcript, `${userLine('Extract the rows and return the data. Keep files under 300 lines.')}\n`);
+  const base = { hook_event_name: 'SubagentStop', session_id: uid('s'), agent_id: uid('a'), agent_type: 'general-purpose' };
+  assert.equal(run(BUDGET, dir, { ...base, agent_transcript_path: transcript, last_assistant_message: words(5000) }).status, 0);
+  assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: words(5000) }).status, 0, 'no transcript path');
+  assert.equal(run(BUDGET, dir, { ...base, agent_transcript_path: join(dir, 'missing.jsonl'), last_assistant_message: words(5000) }).status, 0, 'unreadable transcript');
+});
+
+test('SubagentStop blocks once, only for a subagent', async () => {
+  const dir = await home();
+  const transcript = join(dir, 'agent.jsonl');
+  await writeFile(transcript, `${userLine('Report <= 50 words.')}\n`);
+  const base = { hook_event_name: 'SubagentStop', session_id: uid('s'), agent_id: uid('a'), agent_type: 'implementer', agent_transcript_path: transcript };
+  assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: words(60), stop_hook_active: true }).status, 0, 'never twice');
+  assert.equal(run(BUDGET, dir, { ...base, agent_id: undefined, last_assistant_message: words(60) }).status, 0, 'no agent id');
 });
 
 test('SubagentStop uses the cap named in the spawn prompt (words or lines)', async () => {
@@ -111,7 +134,44 @@ test('SubagentStop uses the cap named in the spawn prompt (words or lines)', asy
   await writeFile(transcript, `${userLine('Return a report of at most 3 lines.')}\n`);
   assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: 'a\nb\nc\nd' }).status, 2);
   assert.equal(run(BUDGET, dir, { ...base, last_assistant_message: 'a\nb\nc' }).status, 0);
-  assert.equal(run(BUDGET, dir, { ...base, agent_transcript_path: join(dir, 'missing.jsonl'), last_assistant_message: words(301) }).status, 2, 'unreadable transcript: default cap');
+});
+
+const bash = (sid) => ({ hook_event_name: 'PostToolUse', session_id: sid, tool_name: 'Bash' });
+
+test('the lead gets one delegate nudge after 15 Bash calls, silent before and after', async () => {
+  const dir = await home();
+  const sid = uid('s');
+  const outputs = [];
+  for (let i = 1; i <= 20; i += 1) outputs.push(run(BUDGET, dir, bash(sid)).stdout);
+  assert.ok(outputs.slice(0, 14).every((o) => o === ''));
+  const out = JSON.parse(outputs[14]).hookSpecificOutput;
+  assert.equal(out.hookEventName, 'PostToolUse');
+  assert.equal(out.additionalContext, '15 Bash calls in a row: delegate the rest to runner/implementer');
+  assert.ok(outputs.slice(15).every((o) => o === ''), 'one line only');
+});
+
+test('an Agent or Task call resets the lead Bash count; other tools neither count nor reset', async () => {
+  const dir = await home();
+  for (const delegate of ['Agent', 'Task']) {
+    const sid = uid('s');
+    for (let i = 0; i < 14; i += 1) run(BUDGET, dir, bash(sid));
+    run(BUDGET, dir, { hook_event_name: 'PostToolUse', session_id: sid, tool_name: 'Edit' });
+    assert.equal(run(BUDGET, dir, { hook_event_name: 'PostToolUse', session_id: sid, tool_name: delegate }).stdout, '');
+    for (let i = 1; i < 15; i += 1) assert.equal(run(BUDGET, dir, bash(sid)).stdout, '', `${delegate} call ${i} after reset`);
+    assert.match(run(BUDGET, dir, bash(sid)).stdout, /15 Bash calls in a row/, `${delegate}: 15th after reset`);
+  }
+  const sid = uid('s');
+  for (let i = 0; i < 14; i += 1) run(BUDGET, dir, bash(sid));
+  run(BUDGET, dir, { hook_event_name: 'PostToolUse', session_id: sid, tool_name: 'Edit' });
+  assert.match(run(BUDGET, dir, bash(sid)).stdout, /15 Bash calls/, 'Edit does not reset');
+});
+
+test('subagent Bash calls never trigger the lead nudge and unsafe session ids are silent', async () => {
+  const dir = await home();
+  const sid = uid('s');
+  const agent = uid('a');
+  for (let i = 0; i < 20; i += 1) assert.equal(run(BUDGET, dir, { ...bash(sid), agent_id: agent }).stdout, '');
+  for (let i = 0; i < 20; i += 1) assert.equal(run(BUDGET, dir, bash('../x')).stdout, '');
 });
 
 test('both hooks fail open on bad input', async () => {

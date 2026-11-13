@@ -1,35 +1,52 @@
-// Reply-size caps named in a prompt ("report <= 250 words", "final reply max 25 lines") and the size of a reply.
-// Exports: DEFAULT_WORD_CAP, parseCap(prompt), measure(text, unit), overCap(text, cap).
-// Invariants: pure, no I/O; a cap counts only when its sentence is about a reply (so "keep files under 300 lines" is
-// not a cap); only English caps are read; lines count non-empty lines, words count whitespace-separated tokens.
-export const DEFAULT_WORD_CAP = 300; // core rule C24: delegated work returns at most 300 words
+// Reply-size caps named in a prompt ("report <= 250 words", "reply in 20 lines", "حداکثر ۳۰۰ کلمه") and the size of a reply.
+// Exports: parseCap(prompt), measure(text, unit), overCap(text, cap).
+// Invariants: pure, no I/O. A number is a cap only when it is tied to the reply itself: a reply noun (reply, report,
+// answer, summary, response, status, digest, return) followed by at most a few filler words and then the amount, or an
+// amount that qualifies such a noun ("25-line reply"). Rule quotes ("C4 files <=300 lines") and per-file or per-function
+// limits never match. Persian: "حداکثر N کلمه|خط" counts unless the sentence is about a file, function or code; Persian
+// and Arabic-Indic digits are read. Lines count non-empty lines, words count whitespace-separated tokens.
 
 const MAX_CAP_DIGITS = 4;
+const PERSIAN_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
+const ARABIC_INDIC_DIGITS = '٠١٢٣٤٥٦٧٨٩';
+const NOUN = '(?:repl(?:y|ies)|reports?|answers?|summary|summaries|responses?|status|digest|final message|return(?:s)?)';
+// Words that may sit between the noun and the amount; anything else ("files", "functions") breaks the tie.
+const FILLER = '(?:\\s+(?:in|of|at|to|is|are|has|have|with|a|an|the|must|be|should|stay|keep|within|under|max|maximum|limit|cap|capped))*';
+const PREFIX = '(?:≤|<=|=<|max(?:imum)?(?: of)?|at most|under|below|up to|no more than|not more than|within)?';
 const AMOUNT = `(\\d{1,${MAX_CAP_DIGITS}})\\s*(words?|lines?)\\b`;
-const CAP_FORMS = [
-  new RegExp(`(?:≤|<=|=<|max(?:imum)?(?: of)?|at most|under|below|within|up to|no more than|not more than|limit(?:ed)? to|cap(?:ped)?(?: of| at)?)\\s*:?\\s*${AMOUNT}`, 'i'),
-  new RegExp(`(\\d{1,${MAX_CAP_DIGITS}})[- ](words?|lines?)\\s+(?:cap|limit|max(?:imum)?)\\b`, 'i'),
-  new RegExp(`\\b(words?|lines?)\\s+(?:cap|limit|max(?:imum)?)\\s*[:=]?\\s*(\\d{1,${MAX_CAP_DIGITS}})\\b`, 'i'),
-];
-const ABOUT_A_REPLY = /\b(repl(y|ies)|answers?|responses?|reports?|summary|summaries|status|return|final|output|message)\b/i;
+const AFTER_NOUN = new RegExp(`\\b${NOUN}${FILLER}\\s*[:=]?\\s*${PREFIX}\\s*:?\\s*${AMOUNT}`, 'i');
+const QUALIFYING_AMOUNT = new RegExp(`(\\d{1,${MAX_CAP_DIGITS}})[- ](words?|lines?)\\s+${NOUN}\\b`, 'i');
+const CAP_THEN_NOUN = new RegExp(`${NOUN}${FILLER}\\s+(\\d{1,${MAX_CAP_DIGITS}})[- ](words?|lines?)\\s+(?:cap|limit|max(?:imum)?)\\b`, 'i');
+const PERSIAN_CAP = new RegExp(`(?:حداکثر|حد\\u200cاکثر|نهایتا|نهایتاً)\\s*(\\d{1,${MAX_CAP_DIGITS}})\\s*(کلمه|واژه|لغت|خط|سطر)`);
+const PERSIAN_NOUN_CAP = new RegExp(`(?:گزارش|پاسخ|جواب|خلاصه|وضعیت)[^.\\n\\d]{0,14}(\\d{1,${MAX_CAP_DIGITS}})\\s*(کلمه|واژه|لغت|خط|سطر)`);
+const PERSIAN_NOT_A_REPLY = /فایل|تابع|ماژول|کد\b|کلاس/;
 const SENTENCE_END = /[.!?\n]/;
+
+const toAsciiDigits = (text) =>
+  text.replace(/[۰-۹٠-٩]/g, (d) => String(PERSIAN_DIGITS.includes(d) ? PERSIAN_DIGITS.indexOf(d) : ARABIC_INDIC_DIGITS.indexOf(d)));
+const unitOf = (word) => (/^(w|ک|و|ل)/i.test(word) ? 'words' : 'lines');
+
+function capInSentence(sentence) {
+  for (const form of [AFTER_NOUN, CAP_THEN_NOUN, QUALIFYING_AMOUNT]) {
+    const m = form.exec(sentence);
+    if (m) return { amount: m[1], unit: m[2] };
+  }
+  if (PERSIAN_NOT_A_REPLY.test(sentence)) return null;
+  const fa = PERSIAN_CAP.exec(sentence) ?? PERSIAN_NOUN_CAP.exec(sentence);
+  return fa ? { amount: fa[1], unit: fa[2] } : null;
+}
 
 /**
  * The first reply-size cap a prompt names.
  * @param {unknown} prompt prompt text
- * @returns {{limit: number, unit: 'words' | 'lines'} | null} null when no cap sentence is found
+ * @returns {{limit: number, unit: 'words' | 'lines'} | null} null when no cap tied to the reply is found
  */
 export function parseCap(prompt) {
   if (typeof prompt !== 'string') return null;
-  for (const sentence of prompt.split(SENTENCE_END)) {
-    if (!ABOUT_A_REPLY.test(sentence)) continue;
-    for (const form of CAP_FORMS) {
-      const m = form.exec(sentence);
-      if (!m) continue;
-      const [amount, unit] = /^\d/.test(m[1]) ? [m[1], m[2]] : [m[2], m[1]];
-      const limit = Number(amount);
-      if (limit > 0) return { limit, unit: unit.toLowerCase().startsWith('w') ? 'words' : 'lines' };
-    }
+  for (const sentence of toAsciiDigits(prompt).split(SENTENCE_END)) {
+    const found = capInSentence(sentence);
+    const limit = found ? Number(found.amount) : 0;
+    if (limit > 0) return { limit, unit: unitOf(found.unit) };
   }
   return null;
 }

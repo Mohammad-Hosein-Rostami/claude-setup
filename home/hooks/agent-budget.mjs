@@ -1,12 +1,14 @@
 // PostToolUse (all tools) and SubagentStop: enforces the budgets the prompt only asked for.
 //   PostToolUse in a subagent -> counts its tool calls; at 100 (and every 10 after) injects "return a status now".
 //   PostToolUse Read in the lead, mode ultra-high -> warns when the result is over ~20k chars (use scout / a small range).
-//   SubagentStop -> blocks once when the final report is over its cap: the cap named in the spawn prompt (first user
-//                   message of the agent transcript), else 300 words (rule C24); architect and Plan are exempt by default.
+//   PostToolUse Bash in the lead -> after 15 Bash calls since the last Agent/Task call, one nudge to delegate; an
+//                   Agent/Task call resets the count.
+//   SubagentStop -> blocks once when the final report is over the cap the spawn prompt states (first user message of the
+//                   agent transcript); no stated cap means no check, so agents that return data are never sent back.
 // Verified against Claude Code 2.1.323: hook input has `agent_id` only inside a subagent (agent_type alongside it);
 // PostToolUse accepts hookSpecificOutput.additionalContext; SubagentStop gets agent_id, agent_type, agent_transcript_path,
 // last_assistant_message and stop_hook_active, and exit 2 sends stderr to the subagent and keeps it running.
-// Exports: CALL_CAP, REMIND_EVERY, READ_WARN_CHARS, countCall, readChars, postToolUseContext, spawnCap, subagentStopReason.
+// Exports: CALL_CAP, REMIND_EVERY, READ_WARN_CHARS, LEAD_BASH_NUDGE_AT, countCall, leadBashCalls, readChars, postToolUseContext, spawnCap, subagentStopReason.
 // Invariants: fast (one append + one stat per call, nothing else on the main thread except Read); fails open (any error
 // exits 0, silent); output is fixed text plus numbers, never tool input, tool output or paths; unsafe ids write nothing.
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync } from 'node:fs';
@@ -14,15 +16,16 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { tempRoot } from './lib/edit-log.mjs';
-import { DEFAULT_WORD_CAP, overCap, parseCap } from './lib/reply-cap.mjs';
+import { overCap, parseCap } from './lib/reply-cap.mjs';
 
 export const CALL_CAP = 100;
 export const REMIND_EVERY = 10;
 export const READ_WARN_CHARS = 20_000;
+export const LEAD_BASH_NUDGE_AT = 15;
 const SPAWN_PROMPT_BYTES = 512 * 1024;
 const SAFE_ID = /^[\w-]{1,128}$/;
 const ULTRA_HIGH = 'ultra-high';
-const NO_DEFAULT_CAP = new Set(['architect', 'Plan']); // their output is a spec, longer by design
+const DELEGATING_TOOLS = new Set(['Agent', 'Task']);
 
 const budgetPath = (sessionId, agentId) =>
   SAFE_ID.test(sessionId ?? '') && SAFE_ID.test(agentId ?? '') ? join(tempRoot(), 'budget', `${sessionId}--${agentId}`) : null;
@@ -37,6 +40,22 @@ export function countCall(path) {
   mkdirSync(dirname(path), { recursive: true });
   appendFileSync(path, '.');
   return statSync(path).size;
+}
+
+/**
+ * Counts one lead Bash call since the last Agent/Task call, or resets the count when `tool` delegates.
+ * @param {string} sessionId hook input session id
+ * @param {string} tool tool name: 'Bash' counts, Agent or Task resets, anything else is ignored
+ * @returns {number} Bash calls since the last delegation (0 for other tools or an unsafe id)
+ */
+export function leadBashCalls(sessionId, tool) {
+  if (!SAFE_ID.test(sessionId ?? '')) return 0;
+  const path = join(tempRoot(), 'lead-bash', sessionId);
+  if (DELEGATING_TOOLS.has(tool)) {
+    rmSync(path, { force: true });
+    return 0;
+  }
+  return tool === 'Bash' ? countCall(path) : 0;
 }
 
 /** Characters in a Read result (file content when present, else the serialized response). */
@@ -66,6 +85,11 @@ export function postToolUseContext(input) {
     const due = calls === CALL_CAP || (calls > CALL_CAP && calls % REMIND_EVERY === 0);
     return due
       ? `Budget: ${calls} tool calls used (limit ${CALL_CAP}). Stop now and return your status report in the format the caller asked for: done, not done, files changed, blockers. Start no new work.`
+      : null;
+  }
+  if (input.tool_name === 'Bash' || DELEGATING_TOOLS.has(input.tool_name)) {
+    return leadBashCalls(input.session_id, input.tool_name) === LEAD_BASH_NUDGE_AT
+      ? `${LEAD_BASH_NUDGE_AT} Bash calls in a row: delegate the rest to runner/implementer`
       : null;
   }
   if (input.tool_name !== 'Read' || sessionMode(input.session_id) !== ULTRA_HIGH) return null;
@@ -109,7 +133,7 @@ export function spawnCap(transcriptPath) {
 /**
  * Why a subagent may not stop yet, or null.
  * @param {object} input SubagentStop hook JSON
- * @returns {string | null} message for the subagent when its report is over the cap
+ * @returns {string | null} message for the subagent when its report is over the cap its spawn prompt states
  */
 export function subagentStopReason(input) {
   if (input.stop_hook_active === true || !input.agent_id || typeof input.last_assistant_message !== 'string') return null;
@@ -117,9 +141,8 @@ export function subagentStopReason(input) {
   try {
     cap = spawnCap(input.agent_transcript_path);
   } catch {
-    // transcript unreadable: fall back to the default cap
+    // transcript unreadable: no stated cap, so no check
   }
-  cap ??= NO_DEFAULT_CAP.has(input.agent_type) ? null : { limit: DEFAULT_WORD_CAP, unit: 'words' };
   if (!cap) return null;
   const { over, size } = overCap(input.last_assistant_message, cap);
   return over

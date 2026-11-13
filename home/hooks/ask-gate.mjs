@@ -29,6 +29,8 @@ const anchored = (pattern) => new RegExp(`${SENTENCE_START}(?:${pattern.source})
 const DESCRIBES_MATCHER = /\b(matcher|patterns?|regex|phrases?|wording|false positives?|ask-gate|fires? on|matches)\b/i;
 const OPTION_LINE = /^[ \t]*(?:[-*][ \t]+)?\(?(?:[1-9]|[A-Ea-e])[.):][ \t]/;
 const MIN_OPTION_LINES = 2;
+// An explicit choice between named alternatives in the request's own sentence: "decide A or B", "X vs Y", "هم یا".
+const NAMED_ALTERNATIVES = /\S+\s+(?:or|vs\.?|versus|یا)\s+\S+/i;
 
 /**
  * English request phrases (anchored at a sentence start by listsDeferredDecisions) and Persian ones (matched anywhere in
@@ -101,7 +103,8 @@ const hasOpenChoice = (tail) => /[?؟]/.test(tail) || tail.split('\n').filter((l
 function isOpenRequest(tail, m) {
   const sentence = tail.slice(0, m.index).split(/[.!?\n]/).pop() + m[0] + tail.slice(m.index + m[0].length).split(/[.!?\n]/)[0];
   if (DESCRIBES_MATCHER.test(sentence)) return false;
-  return hasOpenChoice(tail) || /^[\s*]*:/.test(tail.slice(m.index + m[0].length));
+  const rest = tail.slice(m.index + m[0].length);
+  return hasOpenChoice(tail) || /^[\s*]*:/.test(rest) || NAMED_ALTERNATIVES.test(rest.split(/[.!?\n]/)[0]);
 }
 
 // 3+ "D<n>:" items, or 2+ when a decision word stands in the 3 lines before the first one.
@@ -115,7 +118,7 @@ function hasDecisionItems(text) {
 
 /**
  * Does the text hand decisions to the owner? A request phrase counts only in the last TAIL_LINES lines, at a sentence
- * start, outside a sentence about the matcher, and with an open choice (?, options or a colon); a heading, label or D-list
+ * start, outside a sentence about the matcher, and with an open choice (?, options, a colon, or named alternatives "A or B"); a heading, label or D-list
  * counts anywhere.
  * @param {string} text the assistant's last message
  * @returns {boolean} false for non-strings, negated phrases ("no open questions") and quoted or code text
