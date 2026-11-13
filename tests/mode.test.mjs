@@ -244,17 +244,20 @@ test('SessionStart prints _lead.md for resume, clear and compact too (it re-fire
 
 // Hook output is injected into the lead's context; the CLI truncates large hook output, so the real files must fit.
 const MAX_HOOK_OUTPUT_CHARS = 9000;
+const MIN_HEADROOM_CHARS = 150; // room for a longer path or note without crossing the cap
 
-test('real _lead.md plus the longest playbook and a lead note stay under the hook output cap', async () => {
+test('real _lead.md plus the longest playbook and a lead note stay under the hook output cap, startup and compact', async () => {
   const home = await mkdtemp(join(tmpdir(), 'mode-size-'));
   await mkdir(join(home, '.claude'), { recursive: true });
   await cp(fileURLToPath(new URL('../home/modes', import.meta.url)), join(home, '.claude', 'modes'), { recursive: true });
-  let longest = 0;
-  for (const mode of ['normal', 'medium', 'high', 'extra-high', 'ultra-high']) {
-    // A mismatched model forces the lead note into the output of the lead modes.
-    const out = runHook(home, { CLAUDE_MODE: mode }, { hook_event_name: 'SessionStart', session_id: `size-${mode}`, source: 'startup', model: 'claude-haiku-5-5' }).stdout;
-    longest = Math.max(longest, out.length);
-    assert.match(out, /Lead|lead/, `${mode}: lead rules present`);
+  for (const source of ['startup', 'compact']) {
+    let longest = 0;
+    for (const mode of ['normal', 'medium', 'high', 'extra-high', 'ultra-high']) {
+      // A mismatched model forces the lead note into the output of the lead modes.
+      const out = runHook(home, { CLAUDE_MODE: mode }, { hook_event_name: 'SessionStart', session_id: `size-${mode}-${source}`, source, model: 'claude-haiku-5-5' }).stdout;
+      longest = Math.max(longest, out.length);
+      assert.match(out, /Lead|lead/, `${mode} ${source}: lead rules present`);
+    }
+    assert.ok(longest > 0 && longest <= MAX_HOOK_OUTPUT_CHARS - MIN_HEADROOM_CHARS, `longest ${source} output is ${longest} chars`);
   }
-  assert.ok(longest > 0 && longest <= MAX_HOOK_OUTPUT_CHARS, `longest SessionStart output is ${longest} chars`);
 });
