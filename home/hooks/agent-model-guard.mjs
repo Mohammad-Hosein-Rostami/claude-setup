@@ -1,7 +1,11 @@
-// PreToolUse(Agent|Task) guard: in extra-high and ultra-high, the built-in Explore and Plan agents (and any Agent
-// call without `model`) would inherit the lead model (Opus / Fable) and spend it silently. When an Explore call has
-// no `model`, this hook sets `sonnet`; a Plan call without one gets `opus`. Everything else (fork, other agent types,
-// an explicit model, other modes, unreadable input) passes through untouched: no output, exit 0.
+// PreToolUse(Agent|Task) guard: an Agent call with no `model` would inherit the lead model (Opus / Fable) and spend it
+// silently. In every mode, an unpinned call to a built-in type that pins no model itself (general-purpose, a call with
+// no subagent_type, Explore and the other built-ins) gets `sonnet`. In extra-high and ultra-high a Plan call without
+// one gets `opus`. Forks (subagent_type "fork", they inherit the lead on purpose), the repo's own agents (their files
+// pin a model; a per-call model would override it), plugin agents, an explicit model, and unreadable input pass
+// through untouched: no output, exit 0.
+// Env interaction: settings/base.json sets CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-5-5. See docs/catalog.md for how
+// Claude Code ranks that variable against the per-call `model` this hook sets.
 // Output when it rewrites: {hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",updatedInput}}.
 // `updatedInput` replaces the whole input object (per the hooks docs), so the full original input is returned.
 // Exports: guardedAgentInput (pure). Invariants: never blocks, never denies; the mode comes from mode.mjs's state lookup.
@@ -9,8 +13,11 @@ import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { SESSION_ID_PATTERN, activeMode, lazyProcessKey } from './mode.mjs';
 
-const GUARDED_MODES = ['extra-high', 'ultra-high'];
-const MODEL_FOR_TYPE = { Explore: 'sonnet', Plan: 'opus' };
+const PLAN_MODES = ['extra-high', 'ultra-high'];
+const FORK_TYPE = 'fork';
+const DEFAULT_MODEL = 'sonnet';
+// Built-in agent types that pin no model; an omitted subagent_type means general-purpose.
+const UNPINNED_BUILTIN_TYPES = ['general-purpose', 'Explore', 'claude', 'claude-code-guide', 'statusline-setup'];
 
 /**
  * The Agent input with a cheaper model set, when this mode and call need it.
@@ -19,10 +26,13 @@ const MODEL_FOR_TYPE = { Explore: 'sonnet', Plan: 'opus' };
  * @returns {object | null} a copy of the input with `model` added, or null when nothing is to change.
  */
 export function guardedAgentInput(mode, toolInput) {
-  if (!GUARDED_MODES.includes(mode) || toolInput === null || typeof toolInput !== 'object') return null;
-  const model = Object.hasOwn(MODEL_FOR_TYPE, toolInput.subagent_type) ? MODEL_FOR_TYPE[toolInput.subagent_type] : undefined;
-  if (!model || (toolInput.model !== undefined && toolInput.model !== '')) return null;
-  return { ...toolInput, model };
+  if (toolInput === null || typeof toolInput !== 'object') return null;
+  if (toolInput.model !== undefined && toolInput.model !== '') return null;
+  const type = toolInput.subagent_type;
+  if (type === FORK_TYPE) return null;
+  if (type === 'Plan') return PLAN_MODES.includes(mode) ? { ...toolInput, model: 'opus' } : null;
+  const unpinned = type === undefined || type === '' || UNPINNED_BUILTIN_TYPES.includes(type);
+  return unpinned ? { ...toolInput, model: DEFAULT_MODEL } : null;
 }
 
 async function main() {
