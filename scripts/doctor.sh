@@ -90,6 +90,17 @@ check_hook_files() {
   return 0
 }
 
+# Private list of production hosts for pre-bash-guard (ssh/scp/rsync/psql/mysql writes ask). Missing file: only names containing "prod" ask.
+check_prod_hosts() {
+  local file="${CLAUDE_PROD_HOSTS_FILE:-$CLAUDE_DIR/private/prod-hosts}" count
+  if [ -f "$file" ]; then
+    count="$(sed 's/#.*//' "$file" | grep -c '[^[:space:]]' || true)"
+    ok "prod-hosts list: $count entries ($file)"
+  else
+    warn "no prod-hosts list: ssh/scp/psql writes ask only for hosts named *prod* (copy settings/prod-hosts.example to $file)"
+  fi
+}
+
 check_repo_tests() {
   if (cd "$REPO" && node --test tests/*.test.mjs >/dev/null 2>&1); then ok "repo tests pass"; else bad "repo tests fail (node --test tests/*.test.mjs)"; fi
 }
@@ -124,5 +135,5 @@ check_ui_check() {
   esac
 }
 
-check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_tools; check_ui_check; check_repo_tests
+check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_tools; check_ui_check; check_repo_tests
 exit "$BAD"
