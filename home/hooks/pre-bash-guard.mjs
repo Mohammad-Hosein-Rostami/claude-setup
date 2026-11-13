@@ -57,6 +57,7 @@ import { commandOf } from './lib/command-of.mjs';
 import { scanWrapped } from './lib/dangerous-scan.mjs';
 import { editLogPath, recordEdit } from './lib/edit-log.mjs';
 import { checkEval } from './lib/eval-check.mjs';
+import { checkFind } from './lib/find-delete.mjs';
 import { outwardAsk } from './lib/outward.mjs';
 import { readProdHosts, remoteAsk } from './lib/remote.mjs';
 import { checkRm, expandHome, expandVars, isUnder, nativePath, newScope, sameFile, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
@@ -131,6 +132,7 @@ function checkSimple(cmd, args, assigns, env) {
   return [
     cmd === 'git' ? checkGit(args, assigns) : undefined,
     cmd === 'rm' ? checkRm(args, env) : undefined,
+    cmd === 'find' ? checkFind(args, env) : undefined,
     checkHiddenRm(cmd, args),
     checkDiskWipe(cmd, args),
     checkLockfileEdit(cmd, args),

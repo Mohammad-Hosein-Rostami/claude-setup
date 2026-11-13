@@ -38,7 +38,7 @@ const DENIED = {
   'P1 unknown cd targets keep the outside rule': [
     'cd $X && rm -rf y', 'cd $(pwd)/.. && rm -rf y', 'cd ~other && rm -rf y', 'cd ~/proj && rm -rf ../other', 'cd "$HOME" && rm -rf Documents',
     'cd ~ && rm -rf proj', 'cd $HOME/other && rm -rf y', 'cd ${HOME} && rm -rf Documents', 'cd $(git rev-parse --show-toplevel)/.. && rm -rf y',
-    'cd $(git rev-parse --show-toplevel)/../other && rm -rf y', 'rm -rf $(git rev-parse --show-toplevel)/dist',
+    'cd $(git rev-parse --show-toplevel)/../other && rm -rf y',
   ],
   'F1 git top-level only maps from inside the project': [
     'cd ../other && cd "$(git rev-parse --show-toplevel)" && rm -rf src', 'cd /etc && cd $(git rev-parse --show-toplevel) && rm -rf src',

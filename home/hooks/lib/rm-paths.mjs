@@ -6,12 +6,13 @@
 // suffix `$(mktemp -d)/..` and in backticks) stands for one directory inside the temp dir, `D+=x` appends, and any
 // other value is unknown. `..` is resolved lexically after substitution, so `$D/..` is outside the mktemp directory.
 // Brace expansion in targets (`{/,x}`) is expanded first; one that cannot be listed asks.
+// `$(git rev-parse --show-toplevel)` counts as the project root from a directory inside the project (`rm -rf "$(git rev-parse --show-toplevel)/dist"`).
 // Only a recursive rm asks about an unknown or outside target; `rm -f x` of one file is not judged here.
 // Invariants: pure apart from reading homedir()/tmpdir(); never touches the file system.
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, parse, relative, resolve } from 'node:path';
 import { expandBraces } from './braces.mjs';
-import { MKTEMP_WORD, QUOTED_MARK, flagsOf } from './shell-words.mjs';
+import { GIT_TOPLEVEL_WORD, MKTEMP_WORD, QUOTED_MARK, flagsOf } from './shell-words.mjs';
 import { destructive } from './verdict.mjs';
 
 const SAFE_TEMP_ROOTS = ['/tmp', '/private/tmp', tmpdir()];
@@ -103,9 +104,18 @@ export function substituteKnownWords(tokens, { vars, assigned }) {
   return tokens.map((word) => word.replace(ANY_VAR, replace));
 }
 
+/** `$(git rev-parse --show-toplevel)` is the project root, but only from a directory inside the project (elsewhere it is unknown). */
+function expandToplevel(target, cwd, project) {
+  if (target !== GIT_TOPLEVEL_WORD && !target.startsWith(`${GIT_TOPLEVEL_WORD}/`)) return target;
+  if (cwd === null) return target;
+  const root = resolve(nativePath(project));
+  const here = resolve(nativePath(cwd));
+  return sameFile(here, root) || isUnder(root, here) ? root + target.slice(GIT_TOPLEVEL_WORD.length) : target;
+}
+
 /** `cwd` is null when an earlier `cd` could not be resolved: then only absolute targets can be judged. */
 function insideProject(rawTarget, cwd, project, vars) {
-  const target = expandVars(expandHome(rawTarget), vars);
+  const target = expandVars(expandHome(expandToplevel(rawTarget, cwd, project)), vars);
   if (target.startsWith('~') || target.includes('$')) return false;
   const native = nativePath(target);
   if (cwd === null && !isAbsolute(native)) return false;

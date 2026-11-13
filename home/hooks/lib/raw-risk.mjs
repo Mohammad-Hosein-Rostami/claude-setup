@@ -8,6 +8,7 @@
 // A false positive costs a dialog, so it is accepted: `git commit -m "$(cat <<'EOF' ... git push ... EOF)"` asks. Commands with no such
 // construct never reach this rule and keep the precise per-command checks. Pure, no I/O; linear in the text length.
 import { ANSI_C_WORD, decodeAnsiC } from './ansi-c.mjs';
+import { GIT_TOPLEVEL, GIT_TOPLEVEL_WORD } from './shell-words.mjs';
 import { DESTRUCTIVE_PREFIX } from './verdict.mjs';
 
 export const RISKY_REASON = 'risky word inside shell expansion';
@@ -93,7 +94,8 @@ function ghMutation(after) {
  * @returns {string | undefined} the ask reason (DESTRUCTIVE: first for rm, dd and disk tools), or undefined when no hidden construct meets a dangerous word
  */
 export function riskyWordInExpansion(command, prodHosts = []) {
-  const text = joinContinuations(decodeAnsiCWords(command));
+  // `$(git rev-parse --show-toplevel)` is a known, harmless substitution (the per-command rm check judges where it points)
+  const text = joinContinuations(decodeAnsiCWords(command)).replace(GIT_TOPLEVEL, GIT_TOPLEVEL_WORD);
   const visible = withoutPlainHeredocs(text);
   if (!HIDDEN_CONSTRUCT.test(visible)) return undefined;
   const prodText = visible.toLowerCase();
