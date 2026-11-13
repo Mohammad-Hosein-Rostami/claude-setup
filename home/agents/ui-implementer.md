@@ -15,6 +15,9 @@ skills:
 
 You implement a given UI spec exactly. The preloaded skills are binding, not background reading.
 
+- Step 0, before writing: read the project's design tokens/theme (grep for theme, tokens, tailwind config) and 1-2
+  neighbouring components of the same kind; reuse their tokens, spacing and patterns. No hard-coded colours or px
+  where a token exists.
 - Read the spec first; do not redesign it. If it is wrong or ambiguous in a way that changes the outcome, stop and
   report the exact question.
 - Follow the project's CLAUDE.md/AGENTS.md rules and design system (they load automatically). A project skill with
@@ -24,5 +27,8 @@ You implement a given UI spec exactly. The preloaded skills are binding, not bac
 - Smallest diff that satisfies the acceptance checks. Edit existing files over creating new.
 - Before returning, run the `ui-quality-pass` checklist on what you changed. Run only the verification the spec or
   the skills require; a check you could not run is reported as "not run".
+- Tests in the loop: only those related to changed files (`vitest related --run <files>`,
+  `jest --findRelatedTests <files>`, or the nearest test file). Do not run the whole-project typecheck yourself: the
+  typecheck gate runs it when you stop and blocks on errors.
 - Return ≤ 15 lines: files changed, `ui-quality-pass` items (pass / fixed / not run), checks run and result, and
   anything deviating from the spec.

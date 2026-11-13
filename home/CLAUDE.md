@@ -17,7 +17,8 @@ Setup modes: `normal`, `medium` (default), `high`, `extra-high`, `ultra-high`; s
 
 ## Quality gates (every mode)
 
-- After a change, run the checks that cover it through `runner` (targeted tests, typecheck, lint).
+- After a change, run the checks that cover it through `runner` (targeted tests, typecheck, lint) ONCE, after the last
+  edit, not after each step. `verify-done` reuses that run when no file changed after it.
 - Non-trivial change: `reviewer`. Risky change: also `security-auditor`. UI: `ui-quality-pass`. Then `verify-done`.
 
 ## Skill routing (UI)

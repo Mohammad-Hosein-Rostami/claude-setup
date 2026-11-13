@@ -62,3 +62,7 @@ Rules:
 
 - Use `ui-implementer` (it preloads the UI skills); a subagent never inherits skills you loaded.
 - A project's own `ui-implementer` shadows it: name the UI skills in the delegation prompt.
+- Delegation template: spec path; Figma URL + node id; ui-check cache dir (if any); extra skills by topic; dev-server
+  URL or "none"; acceptance checks.
+- Review the `ui-implementer` diff against the `ui-quality-pass` checklist by reading it. Re-run browser/responsive
+  checks only for items it reported failed or not run, or for risky UI (auth, payments, forms with money/data).
