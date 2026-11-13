@@ -55,6 +55,9 @@ const ABSOLUTE_ROOTS = 'Users|home|tmp|private|var|etc|opt|usr|Volumes';
 const REGEX_VALUE = `"/[^"\\n]{0,500}\\|[^"\\n]{0,500}"|'/[^'\\n]{0,500}\\|[^'\\n]{0,500}'|/[^\\s"';&|]{0,500}\\|[^\\s"';&]{0,500}/[dgimsuvy]{0,8}(?![^\\s;&|),])`;
 const CODE_VALUE = `(?!${REGEX_VALUE}|["']?(?:(?:\\.{1,2}|~)/|/(?:${ABSOLUTE_ROOTS})/)|[=>({\\[]|[\\w$]{1,40}\\s*=>|lambda\\b|[\\w$]{1,40}(?:\\.[\\w$]{1,40}){0,6}\\s*[(\\[])`;
 const QUERY_SECRET = 'api[_-]?key|access[_-]?(?:token|key)|auth[_-]?token|token|client[_-]?secret|secret|password|passwd|pwd';
+// A query value that is code, not a literal: empty and closed by a quote then `+ } )` (`"/reset?token="+token`); a `${...}` or `$x` reference;
+// a kebab-case mock word of lowercase letters (`token=verify-ok`, 24 chars at most, one hyphen at least). Real tokens carry digits, capitals or are longer.
+const QUERY_NOT_LITERAL = `(?!["'\`][ \\t]*[+})]|\\$[{\\w]|(?=[a-z-]{1,24}(?![\\w-]))[a-z]+(?:-[a-z]+)+)`;
 const SECRET_FLAG = '--(?:token|api-key|apikey|password|passwd|client-secret|access-token|auth-token)(?:=|\\s+)';
 const VALUE_KINDS = [
   [`(?:^|[\\s;&|("'])${SECRET_ENV}=`, '', 'a password or key assigned in the command'],
@@ -73,7 +76,7 @@ const VALUE_KINDS = [
   // any variable whose name has KEY, TOKEN, SECRET, PASS, PASSWD, PWD or PASSWORD as a part (`DB_PASS`, `TOKEN_FILE_X`, `ADMINPASSWORD`)
   // CODE_VALUE: `key==x`, `key=>x`, `const key=s=>...`, `token=[]`, `key=(a)`, `token=fs.readFileSync(p)`, `key=lambda s:` are program code (heredocs, node -e), not literals
   [`${BOUNDARY}[\\w.-]{0,${NAME_MAX}}(?:${SECRET_NAME_PART}|PASSWORD)[\\w.-]{0,${NAME_MAX}}=`, CODE_VALUE, 'a key, token, secret or password assigned in the command', { flags: 'i' }],
-  [`[?&](?:${QUERY_SECRET})=`, '', 'a token or key in a URL query string', { flags: 'i' }],
+  [`[?&](?:${QUERY_SECRET})=`, QUERY_NOT_LITERAL, 'a token or key in a URL query string', { flags: 'i' }],
   [`\\bredis-cli\\b[^\\n|;&]{0,${GAP}}?\\s(?:-a|--pass)\\s+`, '', 'a redis password'],
   ['(?<![A-Za-z0-9])_(?:authToken|auth|password)=|(?<![A-Za-z0-9])_authToken\\s+', '', 'an npm registry credential', { flags: 'i' }],
   ['\\bBearer\\s+', '', 'a bearer token', { flags: 'i' }],

@@ -32,3 +32,22 @@ test('a quoted or plain literal is still a secret', () => {
     assert.ok(!maskSecrets(command).includes(LITERAL), command);
   }
 });
+
+// seen live (Playwright test): URL-query rule flagged code and mock placeholders
+const RANDOM_TOKEN = ['aB3xK9qZ7m', 'P2wL5nR8vT', '4yU6'].join('');
+
+test('a URL query value that is code or a kebab-case mock word is not a literal secret', () => {
+  for (const command of [
+    'page.goto(base+"/reset?token="+token)', 'x=`${base}/r?token=`}', 'f("/r?token=")', 'goto("/verify?token=verify-ok")', 'goto("/r?token=reset-ok")',
+    'curl "https://x.example/?token=${TOKEN}"', 'curl "https://x.example/?token=$TOKEN"',
+  ]) {
+    assert.equal(findLiteralSecret(command), undefined, command);
+  }
+});
+
+test('a URL query value that is a random token or key is still a secret', () => {
+  for (const command of [`curl "https://x.example/r?token=${RANDOM_TOKEN}"`, `curl "https://x.example/v1?api_key=sk-${RANDOM_TOKEN}"`,
+    'curl "https://x.example/r?token=this-is-a-much-too-long-kebab-word"']) {
+    assert.ok(findLiteralSecret(command), command);
+  }
+});
