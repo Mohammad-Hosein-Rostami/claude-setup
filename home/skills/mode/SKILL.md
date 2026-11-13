@@ -1,6 +1,6 @@
 ---
 name: mode
-description: "Switch this session's setup mode: normal (thrift), medium (default, balanced), high (full speed), extra-high (lead Opus 5.5 at max) or ultra-high (lead Fable 5.2 at max)."
+description: "Switch this session's setup mode: normal (thrift), medium (default, balanced), high (full speed), extra-high (lead Opus 5.5 at max) or ultra-high (lead Fable 5.2 at high)."
 disable-model-invocation: true
 argument-hint: normal|medium|high|extra-high|ultra-high
 ---

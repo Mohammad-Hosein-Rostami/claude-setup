@@ -9,10 +9,12 @@ Five setup modes trade parallelism, token thrift and lead strength against speed
     ccm normal          # thrift
     ccm high -c         # full speed, extra args go to claude
     ccm extra-high      # high + lead Opus 5.5 at max (claude --model opus --effort max)
-    ccm ultra-high -c   # high + lead Fable 5.2 at max (claude --model fable --effort max)
+    ccm ultra-high -c   # high + lead Fable 5.2 at high (claude --model fable --effort high)
+    CCM_LEAD_EFFORT=xhigh ccm ultra-high   # same, lead effort overridden (low|medium|high|xhigh|max)
 
 `ccm <mode>` runs `claude` with `CLAUDE_MODE=<mode>` and, for extra-high and ultra-high only, the lead flags above;
 `ccm` without a mode word runs plain `claude`. Mode words are case-insensitive.
+`CCM_LEAD_EFFORT` (low|medium|high|xhigh|max) replaces the lead effort of extra-high and ultra-high only; any other value is a usage error (exit 2); the other modes ignore it.
 A first word that is neither a mode nor a flag is an error (typo guard); to pass a prompt, name the mode first:
 `ccm medium "fix the login bug"`. It passes no settings.
 `CCM_DRY_RUN=1 ccm high` prints the command instead of running it. `scripts/install.sh` links `ccm` to
@@ -34,7 +36,7 @@ mode; use `/mode` to change it.
 The lead model and effort cannot be changed by a hook, and `/model <x>` inside a session saves machine-wide. So
 extra-high and ultra-high set the lead at launch with `ccm`. A `/mode` switch into them (unless this window was
 launched with `ccm <mode>`), or a start not launched with `ccm <mode>` or whose model does not match, makes the hook add a note telling you to run `ccm <mode> -c`; a switch out of them says the lead is still
-at max and to run `ccm <mode> -c` to return it to Opus 5.5 at high.
+at its launch effort and to run `ccm <mode> -c` to return it to Opus 5.5 at high.
 
 ## Same in every mode
 
@@ -53,10 +55,10 @@ A workflow is a script that runs many agents in phases.
 | medium | Opus 5.5, effort high | same | independent work in parallel | Claude may propose one and say roughly what it costs; starts only after you say yes; up to 9 agents | as the lead rules and `CLAUDE.md` |
 | high | Opus 5.5, effort high | same | wide fan-out: parallel research, one `deep-debugger` per hypothesis, test-writer + implementer, split parts, reviewer + security-auditor | Claude starts one itself for substantive multi-part tasks, no size limit | same short final answer as medium; detail goes to files |
 | extra-high | Opus 5.5, effort max | architecture/planning, hard or failed-once bugs, risky or final reviews, security audits, risky code, key decisions: agents with `model: "opus", effort: "max"` | as high | as high | as high |
-| ultra-high | Fable 5.2, effort max | as extra-high (Opus 5.5 at max) | as high | as high | as high |
+| ultra-high | Fable 5.2, effort high (`CCM_LEAD_EFFORT` overrides) | Fable decides and delegates; hard problems to `architect` / `deep-debugger` with `model: "fable", effort: "max"`; risky or final reviews, security audits and risky code to Opus 5.5 at max; the `agent-model-guard.mjs` hook moves Explore to Sonnet and Plan to Opus when no model is given | as high | as high | as high |
 
 A risky or final review means auth, data or migrations, money, concurrency, security, and the last review before a
-merge or push. In extra-high and ultra-high these go to Opus at max.
+merge or push. In extra-high and ultra-high these go to Opus at max (the independent second read in ultra-high).
 
 Choosing `ccm high|extra-high|ultra-high` or `/mode` with one of them is your standing request for workflows. If
 Claude still asks first, answer "use a workflow" once.
@@ -72,5 +74,5 @@ the cap, or on Pro, it bills usage credits. Keep extra usage turned off in your 
 nothing can bill credits. When Fable's cap is reached the CLI reports the limit: exit and continue the same
 conversation with `ccm extra-high -c` (Opus still has the rest of your weekly limit).
 
-Files: `home/modes/` (playbooks; `_lead.md` is the lead-only rules printed at SessionStart before the playbook), `home/bin/ccm`, `home/bin/ccm.ps1`, `home/hooks/mode.mjs`, `home/skills/mode`,
-`tests/mode.test.mjs`, `tests/ccm.test.mjs` (`node --test tests/*.test.mjs`).
+Files: `home/modes/` (playbooks; `_lead.md` is the lead-only rules printed at SessionStart before the playbook), `home/bin/ccm`, `home/bin/ccm.ps1`, `home/hooks/mode.mjs`, `home/hooks/agent-model-guard.mjs`, `home/skills/mode`,
+`tests/mode.test.mjs`, `tests/ccm.test.mjs`, `tests/agent-model-guard.test.mjs` (`node --test tests/*.test.mjs`).

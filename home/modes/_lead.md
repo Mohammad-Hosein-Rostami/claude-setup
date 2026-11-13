@@ -5,9 +5,9 @@ Workers do not read this file: they follow their agent file and the caller's pro
 ## Modes
 
 - `normal` (thrift), `medium` (default), `high` (full speed), `extra-high` (high plus lead Opus 5.5 at max),
-  `ultra-high` (high plus lead Fable 5.2 at max).
+  `ultra-high` (high plus lead Fable 5.2 at high; hard problems to Fable-max agents, risky reviews to Opus max).
 - Modes are per session (a state file plus `CLAUDE_MODE`). normal/medium/high change only parallelism, workflows and
-  report brevity. extra-high/ultra-high also change the lead (Opus max / Fable max, set by `ccm` at launch) and send
+  report brevity. extra-high/ultra-high also change the lead (Opus max / Fable high, set by `ccm` at launch) and send
   important jobs (architecture, hard bugs, security audits, key decisions, and risky or final reviews: auth,
   data/migrations, money, concurrency, security, or the last review before merge/push) to Opus at max
   (`model: "opus", effort: "max"`). Quality gates never change.

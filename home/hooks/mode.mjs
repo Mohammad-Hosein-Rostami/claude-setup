@@ -3,7 +3,7 @@
 //                           mode's playbook (plus a lead note when an extra-high / ultra-high session was not launched
 //                           with `ccm <mode>` or its model does not match); prunes stale state files.
 //   UserPromptExpansion  -> for `/mode <m>`: records the mode for this session, prints the playbook (plus a lead note
-//                           when the switch moves the lead to or from Opus max / Fable max).
+//                           when the switch moves the lead to or from Opus max / Fable high).
 //   UserPromptSubmit     -> one reminder line when the active mode is not medium.
 // State is per session: files in ~/.claude/state/modes/ keyed by session id and by the owning `claude` process
 // (`pid-<n>`, so a mode survives /clear, which starts a new session id in the same process); the hook never writes
@@ -25,14 +25,14 @@ import { pathToFileURL } from 'node:url';
 
 export const MODES = ['normal', 'medium', 'high', 'extra-high', 'ultra-high'];
 export const DEFAULT_MODE = 'medium';
-const SESSION_ID_PATTERN = /^[\w-]+$/;
+export const SESSION_ID_PATTERN = /^[\w-]+$/;
 const STATE_MAX_AGE_DAYS = 14;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const USAGE = `Usage: /mode ${MODES.join('|')}`;
-// Modes that set the lead at launch: the model alias to look for in the session model, and its display name.
+// Modes that set the lead at launch: model alias to look for, display name, default launch effort (CCM_LEAD_EFFORT may override).
 const LEAD_MODES = {
-  'extra-high': { alias: 'opus', label: 'Opus 5.5' },
-  'ultra-high': { alias: 'fable', label: 'Fable 5.2' },
+  'extra-high': { alias: 'opus', label: 'Opus 5.5', effort: 'max' },
+  'ultra-high': { alias: 'fable', label: 'Fable 5.2', effort: 'high' },
 };
 const BASE_LEAD = 'Opus 5.5 at high';
 const MAX_ANCESTOR_DEPTH = 6; // hook -> shell -> claude is 2 levels; leave room for wrappers
@@ -74,7 +74,7 @@ function launchCommand(mode) {
 /**
  * One line telling the user how to get the lead that a mode needs, or '' when nothing is to be said.
  * A switch (previousMode given) into extra-high / ultra-high always gets the launch note, because the hook cannot
- * see or change the lead; a switch out of them says the lead is still at max. At session start (no previousMode)
+ * see or change the lead; a switch out of them says the lead is still at its launch effort. At session start (no previousMode)
  * the note appears when the process was not launched with `ccm <mode>` (launchedAs differs: its --model/--effort
  * flags are missing, e.g. a plain `claude --resume`) or when the session model is known and does not match.
  * @param {{mode: string, model?: string, previousMode?: string, launchedAs?: string}} state - active mode, session
@@ -89,11 +89,11 @@ export function leadNote({ mode, model, previousMode, launchedAs }) {
     const mismatch = wrongModel || (launchedAs !== undefined && launchedAs !== mode);
     if (launchedAs === mode && !wrongModel) return ''; // `ccm <mode>` set the lead for this process
     if (!switched && !mismatch) return '';
-    return `The lead model/effort for ${mode} is set at launch: tell the user to run \`${launchCommand(mode)}\` to continue this conversation with ${lead.label} at max effort (avoid \`/model\`: it saves machine-wide).`;
+    return `The lead model/effort for ${mode} is set at launch: tell the user to run \`${launchCommand(mode)}\` to continue this conversation with ${lead.label} at ${lead.effort} effort (avoid \`/model\`: it saves machine-wide).`;
   }
   const left = switched ? LEAD_MODES[previousMode] : undefined;
   if (!left) return '';
-  return `The lead is still ${left.label} at max: tell the user to run \`${launchCommand(mode)}\` to return it to ${BASE_LEAD}.`;
+  return `The lead is still ${left.label} at ${left.effort}: tell the user to run \`${launchCommand(mode)}\` to return it to ${BASE_LEAD}.`;
 }
 
 /**
@@ -142,7 +142,7 @@ function psLookup(pid) {
  * session file answers) and the result is cached. Windows has no `ps`: the key is undefined (session id only).
  * @returns {() => string | undefined} getter for `pid-<n>`, or undefined when there is no owner process.
  */
-function lazyProcessKey() {
+export function lazyProcessKey() {
   let computed = false;
   let key;
   return () => {
@@ -194,7 +194,7 @@ function launchMode() {
   return isMode(process.env.CLAUDE_MODE) ? process.env.CLAUDE_MODE : DEFAULT_MODE;
 }
 
-async function activeMode(sessionId, getProcKey) {
+export async function activeMode(sessionId, getProcKey) {
   return (await readStateMode(sessionId)) || (await readStateMode(getProcKey())) || launchMode();
 }
 

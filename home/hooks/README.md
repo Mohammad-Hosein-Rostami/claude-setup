@@ -5,6 +5,7 @@ Claude Code hooks installed to `~/.claude/hooks` (a symlink to this folder). All
 - `mode.mjs` - SessionStart, UserPromptExpansion, UserPromptSubmit: tracks the per-session mode and prints its playbook.
 - `skill-router.mjs` - UserPromptSubmit, PostToolUse(Edit|Write|MultiEdit): names the skills to invoke for the prompt or UI file. Never blocks.
 - `pre-bash-guard.mjs` - PreToolUse(Bash): denies --no-verify, force push, rm -r outside the project, `.env` reads, lockfile edits.
+- `agent-model-guard.mjs` - PreToolUse(Agent|Task): in extra-high / ultra-high, sets `model: sonnet` on an Explore call and `opus` on a Plan call that has none (they would inherit the lead model).
 - `agent-memory-only.mjs` - PreToolUse(Write|Edit|MultiEdit): keeps `reviewer` and `security-auditor` read-only except their memory notes.
 - `test-files-only.mjs` - PreToolUse(Write|Edit|MultiEdit): limits `test-writer` to writing test files.
 - `post-edit.mjs` - PostToolUse(Edit|Write|MultiEdit): runs the project's own format/lint scripts on the edited file and logs the file for the typecheck gate. `CLAUDE_TYPECHECK_AT=edit` also typechecks after every edit and turns the gate off.

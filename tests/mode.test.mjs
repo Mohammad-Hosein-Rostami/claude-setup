@@ -36,7 +36,7 @@ test('isStale flips after 14 days', () => {
 
 test('leadNote: model mismatch at session start asks for the ccm launch line', () => {
   assert.match(leadNote({ mode: 'extra-high', model: 'claude-sonnet-5-5' }), /`ccm extra-high -c`.*Opus 5\.5 at max effort.*avoid `\/model`/);
-  assert.match(leadNote({ mode: 'ultra-high', model: 'claude-opus-5-5' }), /`ccm ultra-high -c`.*Fable 5\.2 at max effort/);
+  assert.match(leadNote({ mode: 'ultra-high', model: 'claude-opus-5-5' }), /`ccm ultra-high -c`.*Fable 5\.2 at high effort/);
 });
 
 test('leadNote: a matching or unknown model at session start says nothing', () => {
@@ -54,7 +54,7 @@ test('leadNote: a /mode switch into a lead mode always notes, even without a mod
 
 test('leadNote: switching down from a lead mode says the lead is still at max', () => {
   assert.match(leadNote({ mode: 'high', previousMode: 'extra-high' }), /still Opus 5\.5 at max.*`ccm high -c`.*Opus 5\.5 at high/);
-  assert.match(leadNote({ mode: 'medium', previousMode: 'ultra-high' }), /still Fable 5\.2 at max.*`ccm medium -c`/);
+  assert.match(leadNote({ mode: 'medium', previousMode: 'ultra-high' }), /still Fable 5\.2 at high.*`ccm medium -c`/);
 });
 
 test('leadNote: normal, medium and high never produce a note', () => {
