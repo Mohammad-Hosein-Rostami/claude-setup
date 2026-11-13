@@ -3,7 +3,10 @@
 // UserPromptSubmit: prompt keywords -> names the skills to invoke (additionalContext). The first routed prompt of a
 // session (and any prompt that routes a skill not named before) gets the full text; the rest get a one-line form.
 // SessionStart(compact): forgets this session's prompt marker, so the next routed prompt gets the full text again.
-// PostToolUse(Edit|Write|MultiEdit) on a UI file -> reminds once per session and agent (subagents included).
+// PostToolUse(Edit|Write|MultiEdit) on a UI file -> reminds once per session and agent (subagents included), except
+// in ui-implementer (it preloads the UI skills).
+// UI marker (per session, never cleared on compact): set when a prompt routes a skill or a UI file is edited. While
+// it exists, weak UI words ("now style the settings page header") get a UI follow-up line.
 // Quiet (no output) when CLAUDE_SKILL_ROUTER=off or in a Gradle project without package.json (Android routing
 // lives in the personal per-project layer there). Never blocks: always exits 0; unparsable input produces no output.
 import { mkdirSync, existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -35,6 +38,9 @@ const NON_UI_FILE = /\.(test|spec|stories)\.\w+$/i;
 const SAFE_ID = /^[\w-]{1,128}$/;
 const STATE_DIR = join(tmpdir(), 'claude-skill-router');
 const PROMPT_STATE_DIR = join(STATE_DIR, 'prompt'); // one file per session: the skills already named in full text
+const UI_STATE_DIR = join(STATE_DIR, 'ui'); // one empty file per session: this session is UI work
+const UI_IMPLEMENTER = 'ui-implementer';
+const FOLLOW_UP_SKILLS = ['accessibility-build', 'responsive-ui', 'ui-quality-pass'];
 const COMPACT_SOURCE = 'compact';
 const OFF_ENV = 'CLAUDE_SKILL_ROUTER';
 const GRADLE_FILES = ['settings.gradle', 'settings.gradle.kts', 'build.gradle', 'build.gradle.kts'];
@@ -44,6 +50,16 @@ export function skillsForPrompt(prompt) {
   if (HARNESS_EVENT.test(prompt.trim())) return [];
   const picked = PROMPT_ROUTES.filter((route) => route.test.test(prompt)).flatMap((route) => route.skills);
   return [...new Set(picked)];
+}
+
+// Too vague alone (hence "header" only in UI phrases, never HTTP; no "table", "tab", "menu", "grid"); they count only
+// in a session already marked as UI work.
+const WEAK_UI =
+  /\b(styles?|styled|layout|align\w*|margin|padding|colou?rs?|fonts?|icons?|sidebar|footer|hero|banner|tooltip|cards?|theme|dark mode|hover|animation|(page|site|nav|section) header|header (bar|section|area|nav)|pages?)\b|رنگ|فونت|هدر|منو|دکمه|آیکون|چیدمان|فاصله/i;
+
+/** True when a prompt has a weak UI word (follow-up styling talk); the caller checks the session is UI work. */
+export function weakUiPrompt(prompt) {
+  return !HARNESS_EVENT.test(prompt.trim()) && WEAK_UI.test(prompt);
 }
 
 /** True when an edited path is UI source (not a test or story). */
@@ -83,9 +99,39 @@ function alreadyNamed(sessionId, skills) {
   }
 }
 
+const uiMarkerPath = (sessionId) =>
+  typeof sessionId === 'string' && SAFE_ID.test(sessionId) ? join(UI_STATE_DIR, sessionId) : null;
+
+function markUiSession(sessionId) {
+  const marker = uiMarkerPath(sessionId);
+  if (!marker) return;
+  try {
+    mkdirSync(UI_STATE_DIR, { recursive: true });
+    writeFileSync(marker, '');
+  } catch {
+    // temp dir not writable: weak follow-ups just stay silent; never fail the hook
+  }
+}
+
+const isUiSession = (sessionId) => {
+  const marker = uiMarkerPath(sessionId);
+  return marker !== null && existsSync(marker);
+};
+
+function followUpContext(sessionId) {
+  const marker = promptMarkerPath(sessionId);
+  // Marker gone (compact) or never written: the skill text is not in context, so send the full text.
+  if (marker && existsSync(marker)) {
+    return 'Skill router: UI follow-up - invoke accessibility-build, responsive-ui (skip any already loaded); ' +
+      'delegate to ui-implementer; ui-quality-pass before done.';
+  }
+  return fullPromptText(FOLLOW_UP_SKILLS);
+}
+
 function promptContext(prompt, sessionId) {
   const skills = skillsForPrompt(prompt);
-  if (skills.length === 0) return null;
+  if (skills.length === 0) return weakUiPrompt(prompt) && isUiSession(sessionId) ? followUpContext(sessionId) : null;
+  markUiSession(sessionId);
   return alreadyNamed(sessionId, skills) ? shortPromptText(skills) : fullPromptText(skills);
 }
 
@@ -117,7 +163,9 @@ function firstUiEdit(sessionId, agentId) {
 
 function editContext(input) {
   const file = input.tool_input?.file_path ?? '';
-  if (!isUiFile(file) || !firstUiEdit(input.session_id, input.agent_id)) return null;
+  if (!isUiFile(file)) return null;
+  markUiSession(input.session_id);
+  if (input.agent_type === UI_IMPLEMENTER || !firstUiEdit(input.session_id, input.agent_id)) return null;
   return 'Skill router: you are editing UI code. If not yet loaded in this context, invoke `responsive-ui` and' +
     ' `accessibility-build` now (also `forms-validation` for forms, `async-ui-states` for server data,' +
     ' `figma-pixel-perfect` when there is a Figma frame), and run `ui-quality-pass` before reporting done.';

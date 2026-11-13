@@ -6,7 +6,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isQuiet, isUiFile, skillsForPrompt } from '../home/hooks/skill-router.mjs';
+import { isQuiet, isUiFile, skillsForPrompt, weakUiPrompt } from '../home/hooks/skill-router.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/skill-router.mjs', import.meta.url));
 
@@ -145,4 +145,35 @@ test('bad or missing session id: full text every time, no throw, no state', asyn
     assert.equal(compact(sessionId), '');
   }
   assert.match(fire({ hook_event_name: 'UserPromptSubmit', prompt: 'make it responsive' }), FULL);
+});
+
+const FOLLOW_UP = /^Skill router: UI follow-up - invoke accessibility-build, responsive-ui/;
+
+test('weakUiPrompt: UI follow-up words yes, HTTP header and DB table no', () => {
+  assert.ok(weakUiPrompt('now style the settings page header'));
+  assert.ok(!weakUiPrompt('add a header to the HTTP request'));
+  assert.ok(!weakUiPrompt('fix the DB table index'));
+  assert.ok(!weakUiPrompt('<system-reminder>style</system-reminder>'));
+});
+
+test('sticky UI: weak prompt follows up only in a UI session', async () => {
+  const { prompt, fire } = await routerSession();
+  assert.equal(prompt('now style the settings page header', 'cold'), '');
+  prompt('make it responsive');
+  assert.match(prompt('now style the settings page header'), FOLLOW_UP);
+  assert.equal(prompt('add a header to the HTTP request'), '');
+  assert.equal(prompt('fix the DB table index'), '');
+  fire({ hook_event_name: 'SessionStart', source: 'compact', session_id: 's1' });
+  assert.match(prompt('change the colors'), FULL);
+});
+
+test('UI file edit sets the marker even after the reminder was sent; ui-implementer gets no reminder', async () => {
+  const { prompt, fire } = await routerSession();
+  const edit = (extra, sessionId) =>
+    fire({ hook_event_name: 'PostToolUse', session_id: sessionId, tool_input: { file_path: 'a.tsx' }, ...extra });
+  assert.match(edit({}, 'e1'), /editing UI code/);
+  assert.equal(edit({}, 'e1'), '');
+  assert.match(prompt('tweak the padding', 'e1'), FULL);
+  assert.equal(edit({ agent_type: 'ui-implementer', agent_id: 'x1' }, 'e2'), '');
+  assert.match(prompt('tweak the padding', 'e2'), FULL);
 });
