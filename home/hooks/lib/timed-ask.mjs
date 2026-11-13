@@ -1,8 +1,8 @@
-// Timed ask for PreToolUse hooks. Exports: askTimeoutSeconds(env), guiAvailable(env, platform), dialogInvocation(platform, text,
+// Timed ask for PreToolUse hooks. Exports: askTimeoutSeconds(env), secretAskTimeoutSeconds(env), guiAvailable(env, platform), dialogInvocation(platform, text,
 // title, timeoutS), parseDialogResult(platform, result) -> 'allow'|'deny'|'timeout'|'unavailable', answerAsk(request, env) ->
 // {decision, outcome, reason}, decisionOutput(answer) -> hook stdout, askOwner(request, env) -> hook stdout (asks, logs, formats).
 // Why: the native "ask" waits forever. The owner's policy is "block nothing": show a native dialog with Allow (default) and Deny,
-// and go ahead when nobody answers within CLAUDE_ASK_TIMEOUT_S (default 180, at most 190 so it stays under the 200 s hook
+// and go ahead when nobody answers within CLAUDE_ASK_TIMEOUT_S (default 180; a secret-only ask uses CLAUDE_ASK_SECRET_TIMEOUT_S, default 30, see secretAskTimeoutSeconds; at most 190 so it stays under the 200 s hook
 // timeout). Only a click on Deny denies. Allow and timeout print NO decision (empty stdout, exit 0): the CLI's normal permission
 // flow then still applies, so base.json deny rules keep working and the rest of a compound command is not pre-approved.
 // A timeout only counts when the full time really passed; a dialog that was killed, crashed or gave up early is "dialog-failed".
@@ -16,6 +16,8 @@ import { maskSecrets } from './secrets.mjs';
 
 export const ASK_TIMEOUT_ENV = 'CLAUDE_ASK_TIMEOUT_S';
 export const DEFAULT_ASK_TIMEOUT_S = 180;
+export const SECRET_ASK_TIMEOUT_ENV = 'CLAUDE_ASK_SECRET_TIMEOUT_S';
+export const DEFAULT_SECRET_ASK_TIMEOUT_S = 30;
 export const MAX_ASK_TIMEOUT_S = 190; // the hook timeout in settings/base.json is 200 s
 const TIMEOUT_SLACK_MS = 500; // a dialog tool may report its timeout marginally before the full time has elapsed
 const MS_PER_SECOND = 1000;
@@ -43,10 +45,24 @@ const MAC_SCRIPT = [
   'end run',
 ];
 
+/** @returns {number} `raw` as whole seconds when it is a positive number (at most 190), else the fallback */
+function positiveSeconds(raw, fallback) {
+  const seconds = Math.floor(Number(raw));
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, MAX_ASK_TIMEOUT_S) : fallback;
+}
+
 /** @returns {number} the dialog timeout in whole seconds: CLAUDE_ASK_TIMEOUT_S when it is a positive number (at most 190), else 180 */
 export function askTimeoutSeconds(env = process.env) {
-  const seconds = Math.floor(Number(env[ASK_TIMEOUT_ENV]));
-  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, MAX_ASK_TIMEOUT_S) : DEFAULT_ASK_TIMEOUT_S;
+  return positiveSeconds(env[ASK_TIMEOUT_ENV], DEFAULT_ASK_TIMEOUT_S);
+}
+
+/**
+ * The shorter timeout for a secret-only ask (a repeated "confirm" about a value the owner typed themselves should not hold up a run).
+ * @param {Record<string, string | undefined>} env process environment
+ * @returns {number} CLAUDE_ASK_SECRET_TIMEOUT_S (default 30), but never more than the normal ask timeout
+ */
+export function secretAskTimeoutSeconds(env = process.env) {
+  return Math.min(positiveSeconds(env[SECRET_ASK_TIMEOUT_ENV], DEFAULT_SECRET_ASK_TIMEOUT_S), askTimeoutSeconds(env));
 }
 
 export const formatDuration = (seconds) => (seconds % SECONDS_PER_MINUTE === 0 ? `${seconds / SECONDS_PER_MINUTE} min` : `${seconds} s`);

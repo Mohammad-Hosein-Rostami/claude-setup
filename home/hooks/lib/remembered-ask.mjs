@@ -5,11 +5,12 @@
 // secret-only, every value is long enough and remembered, and the command still passes the full rules once each remembered value
 // is replaced by an environment reference (that re-check also runs the fail-to-ask backstop, which a secret reason switches off, and
 // still sees a secret the value extraction missed: nested, partial or re-quoted text). Anything uncertain shows the dialog.
+// A secret-only dialog waits CLAUDE_ASK_SECRET_TIMEOUT_S (default 30 s, never more than CLAUDE_ASK_TIMEOUT_S) before going ahead as Allow.
 // Invariants: never remembers on deny, no-gui or dialog-failed; no raw value is logged or stored.
 import { isRemembered, remember } from './allowed-literals.mjs';
 import { logDecision } from './guard-log.mjs';
 import { literalSecretValues } from './secrets.mjs';
-import { askOwner } from './timed-ask.mjs';
+import { ASK_TIMEOUT_ENV, askOwner, secretAskTimeoutSeconds } from './timed-ask.mjs';
 
 export const REMEMBERED_ENV_REF = '$GUARD_REMEMBERED';
 const SECRET_REASON_PREFIX = 'the command contains a literal password/token (';
@@ -53,11 +54,13 @@ export function neutralise(command, values) {
 export function askUnlessRemembered(ask, { command, cwd, input, recheck }, env = process.env) {
   // after a rules error the log gets the error class and no command text (the dialog still shows it)
   const reason = ask.errorClass ? `${ask.reason}: ${ask.errorClass}` : ask.reason;
-  const values = !ask.errorClass && isSecretOnlyReason(ask.reason) ? literalSecretValues(command) : [];
+  const secretOnly = !ask.errorClass && isSecretOnlyReason(ask.reason);
+  const values = secretOnly ? literalSecretValues(command) : [];
   if (isRemembered(input.session_id, values, env) && recheck(neutralise(command, values)).allow === true) {
     logDecision({ hook: 'pre-bash-guard', tool: 'Bash', decision: 'allow', outcome: 'remembered', reason, command, cwd, session: input.session_id }, env);
     return '';
   }
+  const askEnv = secretOnly ? { ...env, [ASK_TIMEOUT_ENV]: String(secretAskTimeoutSeconds(env)) } : env; // a secret-only dialog waits less
   const onAnswer = (answer) => answer.decision === 'allow' && remember(input.session_id, values, env);
-  return askOwner({ hook: 'pre-bash-guard', tool: 'Bash', reason, command, cwd, sessionId: input.session_id, agentId: input.agent_id, omitCommandFromLog: ask.errorClass !== undefined, onAnswer }, env);
+  return askOwner({ hook: 'pre-bash-guard', tool: 'Bash', reason, command, cwd, sessionId: input.session_id, agentId: input.agent_id, omitCommandFromLog: ask.errorClass !== undefined, onAnswer }, askEnv);
 }

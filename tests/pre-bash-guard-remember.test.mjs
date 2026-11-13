@@ -20,6 +20,7 @@ const NEW_PART = 'NEWTAIL98765';
 const FAKE_SCRIPT = `
 const { appendFileSync } = require('node:fs');
 appendFileSync(process.env.FAKE_DIALOG_COUNT, 'x');
+appendFileSync(process.env.FAKE_DIALOG_COUNT + '.shown', JSON.stringify([...process.argv.slice(2), process.env.CLAUDE_ASK_DIALOG_TEXT ?? '']) + '\\n');
 const out = {
   darwin: { allow: 'button returned:Allow, gave up:false', deny: 'button returned:Deny, gave up:false', timeout: 'button returned:, gave up:true' },
   win32: { allow: '6', deny: '7', timeout: '-1' },
@@ -44,7 +45,8 @@ function session() {
   for (const name of ['NODE_TEST_CONTEXT', 'SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY', 'CI']) delete base[name];
   return {
     home: { HOME: home },
-    dialogs: () => (existsSync(count) ? readFileSync(count, 'utf8').length : 0),
+    shownText: () => readFileSync(`${count}.shown`, 'utf8').trim().split('\n').map((line) => JSON.parse(line).join('\n')).at(-1),
+    dialogs: () =>(existsSync(count) ? readFileSync(count, 'utf8').length : 0),
     log: () => readFileSync(base.CLAUDE_GUARD_LOG, 'utf8').trim().split('\n').map((line) => JSON.parse(line)),
     run(command, answer, sessionId = 'sess-1', extraEnv = {}) {
       const input = { cwd: PROJECT, session_id: sessionId, tool_input: { command } };
@@ -149,4 +151,20 @@ test('a short value is never remembered', () => {
   s.run('PGPASSWORD=short psql -h db', 'allow');
   assert.equal(s.dialogs(), 2);
   assert.equal(existsSync(allowedLiteralsDir(s.home)), false);
+});
+
+test('a secret-only ask waits the short secret timeout, a push ask the normal one, and the lower setting wins', () => {
+  const small = { CLAUDE_ASK_SECRET_TIMEOUT_S: '7', CLAUDE_ASK_TIMEOUT_S: '40' };
+  const secret = session();
+  secret.run(SECRET_COMMAND, 'allow', 'sess-1', small);
+  assert.match(secret.shownText(), /With no answer in 7 s/);
+  const push = session();
+  push.run('git push origin main', 'allow', 'sess-1', small);
+  assert.match(push.shownText(), /With no answer in 40 s/);
+  const lower = session();
+  lower.run(SECRET_COMMAND, 'allow', 'sess-1', { CLAUDE_ASK_SECRET_TIMEOUT_S: '7', CLAUDE_ASK_TIMEOUT_S: '5' });
+  assert.match(lower.shownText(), /With no answer in 5 s/);
+  const byDefault = session();
+  byDefault.run(SECRET_COMMAND, 'allow');
+  assert.match(byDefault.shownText(), /With no answer in 30 s/);
 });
