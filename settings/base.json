@@ -1,7 +1,7 @@
 {
   "env": {
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
-    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000",
     "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-5-5"
   },
   "permissions": {

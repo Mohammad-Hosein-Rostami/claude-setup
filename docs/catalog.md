@@ -145,7 +145,7 @@ Marketplaces: `anthropic-plugin-directory`, `claude-plugins-official`, `gitkrake
 | Key | Value / purpose |
 | --- | --------------- |
 | `env.CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY` | 1; removes survey prompts |
-| `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` | 200000; auto-compacts there so long runs keep going without a costly context |
+| `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` | 400000 (models have 1M); fewer compactions, less forgetting; owner traded per-turn cost for it |
 | `env.CLAUDE_CODE_SUBAGENT_MODEL` | `claude-sonnet-5-5`; model for agents that pin none |
 | `permissions.allow` | WebSearch, WebFetch |
 | `permissions.deny` | credentials files, `~/.ssh/**`, `~/.aws/**`, `*.pem`, `.npmrc` (Read and Bash patterns) |
