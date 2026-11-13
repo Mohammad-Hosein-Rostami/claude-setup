@@ -1,7 +1,7 @@
 # Global instructions (all projects)
 
 Owner: Pejvak. Primary OS Windows 10 (PowerShell + Git Bash), also macOS/Linux. Node 22, pnpm. Reply in the language the
-user writes in; keep prose short and plain. Do not narrate tool calls.
+user writes in (Persian included, never default to English); keep prose short and plain. Do not narrate tool calls.
 
 Lead rules (routing, delegation, modes) are injected at session start from ~/.claude/modes/_lead.md. Workers: follow
 your agent file and the caller's prompt.
@@ -48,7 +48,7 @@ global setup combines with it.
 
 ## Token discipline
 
-- Search before reading (Grep/Glob), read ranges (`offset`/`limit`) not whole files, and
+- Search before reading (Grep tool or `rg`, Glob), read ranges (`offset`/`limit`) not whole files, and
   never re-read a file you just edited.
 - Delegate anything that would dump > ~150 lines (test logs, build output, big greps, docs
   crawling) to a `runner` / `scout` agent and ask for a summary of ≤ 20 lines.
@@ -83,9 +83,9 @@ global setup combines with it.
 
 ## Compact instructions
 
-When compacting, keep: the user's goal and constraints, decisions made and why, files
-changed (paths), failing checks with the exact error, and the next step. Drop exploration
-dead-ends, full file contents, and tool output already acted on.
+When compacting, keep: the user's goal and constraints, the user's language (reply in it, Persian included), decisions
+made and why, files changed (paths), failing checks with the exact error, the `STATUS.md` path for multi-day work (re-read
+it after compaction), and the next step. Drop exploration dead-ends, full file contents, and tool output already acted on.
 
 ## Safety
 
