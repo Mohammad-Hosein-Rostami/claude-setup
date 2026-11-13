@@ -9,7 +9,7 @@ const BASE64ISH = ['/aB3xK9', 'qZ7mP2', 'wL5nR8'].join('');
 
 test('a value that looks like a path or a regex, quoted or not, is not a literal secret', () => {
   for (const command of [
-    'STATE_KEY=/state|hover|focus/ ls', 'STATE_KEY="/state|hover" ls', 'KEY_PATH=/Users/x/k.pem ./run', "KEY_PATH='/home/x/k.pem' ./run", 'TOKEN_FILE=/tmp/t cat',
+    'STATE_KEY=/state|hover|focus/ ls', 'const STATE_KEY=/state|hover|focus/i;', 'STATE_KEY="/state|hover" ls', 'KEY_PATH=/Users/x/k.pem ./run', "KEY_PATH='/home/x/k.pem' ./run", 'TOKEN_FILE=/tmp/t cat',
     'KEY_PATH=~/x/key.pem ./run', 'TOKEN_FILE=./t cat', 'SECRET_DIR=../s ls', "TOKEN_FILE='./t' cat", 'SECRET_FILE=/etc/s ls', 'KEY_FILE=/Volumes/d/k ls',
   ]) {
     assert.equal(findLiteralSecret(command), undefined, command);
@@ -19,7 +19,8 @@ test('a value that looks like a path or a regex, quoted or not, is not a literal
 });
 
 test('a literal that merely starts with "/" is still a secret (base64 keys)', () => {
-  for (const command of [`API_KEY=${BASE64ISH} ./run`, `JWT_SECRET="${BASE64ISH}" ./run`, `DB_PASSWORD='${BASE64ISH}' ./run`, `export SESSION_SECRET=${BASE64ISH}`, `API_KEY=/${BASE64ISH} ./run`]) {
+  for (const command of [`API_KEY=${BASE64ISH} ./run`, `JWT_SECRET="${BASE64ISH}" ./run`, `DB_PASSWORD='${BASE64ISH}' ./run`, `export SESSION_SECRET=${BASE64ISH}`, `API_KEY=/${BASE64ISH} ./run`,
+    `echo API_KEY=${BASE64ISH}|tee -a .env`, `API_KEY=${BASE64ISH}|cat`]) {
     assert.ok(findLiteralSecret(command), command);
     assert.ok(!maskSecrets(command).includes(BASE64ISH), command);
   }
