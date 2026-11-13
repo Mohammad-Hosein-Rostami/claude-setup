@@ -26,7 +26,7 @@ test('every playbook states its lane budget', () => {
 
 test('_lead.md carries the lead-discipline rules and stays small', () => {
   const lead = read('home/modes/_lead.md');
-  for (const needle of ['Persian', 'No turn without a decision', 'runner', '~120 calls', 'usage-limit', 'STATUS.md', '3k chars', 'restart the session']) {
+  for (const needle of ['Persian', 'No turn without a decision', 'runner', '2nd compaction', 'usage-limit', 'STATUS.md', '3k chars', 'restart the session', '≤ 300 words', 'continue them with SendMessage']) {
     assert.ok(lead.includes(needle), `_lead.md must mention ${needle}`);
   }
   assert.ok(lead.split('\n').length <= 100, '_lead.md is injected into every session; keep it <= 100 lines');
@@ -35,6 +35,7 @@ test('_lead.md carries the lead-discipline rules and stays small', () => {
 test('ultra-high playbook keeps the assembly and compact-before-waiting rules', () => {
   const playbook = read('home/modes/ultra-high.md');
   assert.match(playbook, /Workflow assembly is not judgment/);
+  assert.match(playbook, /max 1 continuation/);
   assert.match(playbook, /`\/compact` first/);
 });
 
@@ -43,6 +44,7 @@ test('home/CLAUDE.md names Persian replies, the STATUS.md re-read and the Grep t
   assert.match(text, /Persian included/);
   assert.match(text, /`STATUS\.md` path/);
   assert.match(text, /Grep tool or `rg`/);
+  assert.match(text, /blanket allow[\s\S]*never covers git push[\s\S]*literal password or token/);
 });
 
 test('ccm, docs/modes.md, home/CLAUDE.md and home/modes/_lead.md mention all five modes', () => {
