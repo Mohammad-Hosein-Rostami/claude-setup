@@ -33,9 +33,8 @@ Bad -> good:
 
 ## If the box times out
 
-`askUserQuestionTimeout` (settings) auto-continues an unanswered question. If the box times out, continue with the
-recommended option only for reversible work, keep dependent irreversible work waiting, and re-ask at the next pause
-(never drop it).
+`askUserQuestionTimeout` (settings) auto-continues an unanswered question after 3 minutes. If the box times out, take
+the recommended option, keep going, and say which one you took in the next message.
 
 ## Queue loop (background agents and workflows)
 

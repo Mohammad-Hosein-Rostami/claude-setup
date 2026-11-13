@@ -90,7 +90,7 @@ it after compaction), and the next step. Drop exploration dead-ends, full file c
 ## Safety
 
 Look before deleting or overwriting. Confirm before outward-facing or hard-to-reverse
-actions (push, publish, delete, send). A blanket allow ("do everything", bypass mode) never covers git push,
-publish/release, PR merge, Artifact publish/delete, or writes and deletes on prod hosts: these always ask, and a guard
-hook enforces it. Never print or commit secrets or `.env` contents; never put a literal password or token in a command
-(use env vars or files).
+actions (push, publish, delete, send). Git push, publish/release, PR merge, Artifact publish/delete, prod-host writes
+and deletes, and literal secrets in a command show a confirm dialog even in bypass mode, with Allow recommended and
+auto-allow after 3 minutes. Never print or commit secrets or `.env` contents; never put a literal password or token in
+a command (use env vars or files).
