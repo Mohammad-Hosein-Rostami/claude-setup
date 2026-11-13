@@ -51,3 +51,21 @@ test('a URL query value that is a random token or key is still a secret', () => 
     assert.ok(findLiteralSecret(command), command);
   }
 });
+
+test('a header-looking format placeholder in program text is not a credential header value', () => {
+  for (const command of [
+    `cat > a_test.go <<'EOF'\n\tt.Errorf("explicit choice must replace the old cookie: %+v", c)\nEOF`,
+    'echo "cookie: %v"', 'echo "Cookie: %s"', "echo 'cookie: %#v'", 'echo "Cookie: %5.2f"', 'echo "Cookie: %q"', 'echo "cookie: %T"',
+    'echo "Cookie: %(name)s"', 'echo "Cookie: {}"', 'echo "Cookie: {0}"', 'echo "Cookie: {name}"', 'echo "X-Api-Key: %s"',
+  ]) {
+    assert.equal(findLiteralSecret(command), undefined, command);
+    assert.deepEqual(literalSecretValues(command), [], command);
+  }
+});
+
+test('a real header value, or a placeholder glued to more text, still asks', () => {
+  for (const command of [
+    `curl -H "Cookie: session=${LITERAL}" x`, `curl -H "Authorization: Bearer ${['eyJhbGci', 'OiJIUzI1'].join('')}.${LITERAL}" x`, `curl -H "X-Api-Key: ${BASE64ISH.slice(1)}" x`,
+    'echo "cookie: %s3cr3tvalue"', 'echo "cookie: %vtoken123"', 'echo "Cookie: {}abc123"',
+  ]) assert.ok(findLiteralSecret(command), command);
+});

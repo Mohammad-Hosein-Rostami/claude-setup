@@ -44,6 +44,9 @@ const HTTP_TOOL = `\\b(?:curl|wget|http|https|xh|hurl)\\b(?:"[^"\\n]{0,${GAP}}"|
 const HEADER_VALUE = `(?![^"'\\n]{0,500}[$\`<])[^"'\\n]{1,500}`;
 // `Authorization`, `Proxy-Authorization`, any hyphenated `...-Key/-Token/-Secret` name (`X-Api-Key`, `PRIVATE-TOKEN`), `Cookie`
 const HEADER_NAME = `(?:(?:Proxy-)?Authorization|[A-Za-z0-9]{1,${NAME_MAX}}-[\\w-]{0,${NAME_MAX}}(?:key|token|secret)|Cookie)`;
+// A header value that is only a printf/format placeholder (`%v %+v %s %q %5.2f`, `%(name)s`, `{}` `{0}` `{name}`) up to the closing quote or line end
+// is a format string in program text (`t.Errorf("bad cookie: %+v", c)`), not a credential. A verb glued to more text (`%s3cr3t`) is still a value.
+const FORMAT_PLACEHOLDER = `(?!(?:%[-+# 0]{0,5}(?:\\d{1,3}|\\*)?(?:\\.(?:\\d{1,3}|\\*))?[a-zA-Z]|%\\(\\w{1,40}\\)[-+# 0]{0,5}\\d{0,3}[a-zA-Z]|\\{\\w{0,40}(?::[^}"'\\n]{0,20})?\\})[ \\t]*(?:["'\\n]|$))`;
 const STDIN_FLAG = '--(?:with-token|password-stdin)\\b';
 // the value is echoed/printed (`echo -n T`, `printf '%s' T`) and piped into a command that has the stdin flag
 const ECHOED_INTO_STDIN_FLAG = `(?=(?:"[^"]*"|'[^']*'|[^\\s"';&|]+)[ \\t]*\\|[^\\n;&|]{0,${GAP}}${STDIN_FLAG})`;
@@ -82,7 +85,7 @@ const VALUE_KINDS = [
   ['\\bBearer\\s+', '', 'a bearer token', { flags: 'i' }],
   [`${HTTP_TOOL}\\s(?:-u|--user)(?:=|\\s*)[^\\s:"']*:`, '', 'a user:password pair', { value: '["\']?[^\\s"\';&|]+["\']?' }],
   [`${HTTP_TOOL}\\s(?:-u|--user)(?:=|\\s*)["'][^"':]*:`, '', 'a user:password pair', { value: '[^"\']+' }],
-  [`\\b${HEADER_NAME}\\s*:[ \\t]*`, '', 'a credential header with a literal value', { value: HEADER_VALUE, flags: 'i' }],
+  [`\\b${HEADER_NAME}\\s*:[ \\t]*`, FORMAT_PLACEHOLDER, 'a credential header with a literal value', { value: HEADER_VALUE, flags: 'i' }],
   [`(?<!\\b(?:docker|podman|buildx|buildah)\\b[^\\n|;&]{0,${GAP}})--secret(?:=|\\s+)`, '(?!-)', 'a secret flag with a literal value'],
   ['\\b[a-z][a-z0-9+.-]{0,30}://[^\\s/@:"\']{1,200}:', URL_NOT_A_PORT, 'a password inside a URL', { value: URL_PASSWORD, flags: 'i' }],
 ].map(([prefix, lookahead, kind, { value, flags = '' } = {}]) => ({
