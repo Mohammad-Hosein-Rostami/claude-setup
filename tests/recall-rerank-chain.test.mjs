@@ -3,12 +3,12 @@
 // Uses a fake `llama-server` on PATH; never loads a real model.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { rerankChain } from '../home/tools/recall/lib/pipeline.mjs';
 import { RERANK_FILES, RERANK_STATE_FILE, ensureServer, readServer, stopServer } from '../home/tools/recall/lib/rerank-server.mjs';
-import { ownsServer, watch } from '../home/tools/recall/lib/rerank-watch.mjs';
+import { ownsServer, signalQuietly, watch } from '../home/tools/recall/lib/rerank-watch.mjs';
 import { run, setup, withFake } from './recall-helpers.mjs';
 import { fakeStack } from './recall-fakes.mjs';
 
@@ -155,4 +155,32 @@ test('a state file whose pid was recycled by an unrelated process is dropped, ne
   assert.equal(alive(stranger.pid), true, 'the watchdog did not signal the stranger');
   assert.ok(!existsSync(statePath));
   for (const pid of [1, 0, -5, 1.5, '123', null]) assert.equal(ownsServer({ pid, port: 1, startedAt: 0 }), false, `pid ${pid}`);
+});
+
+test('ownsServer matches --port and its value as exact argv tokens, not as a substring', async (t) => {
+  const { env } = fakeStack();
+  t.after(stopAfter(env));
+  await ensureServer({ env });
+  const state = { ...readServer(env), startedAt: 0 };
+  assert.equal(ownsServer(state), true, 'the real recorded port matches');
+  assert.equal(ownsServer({ ...state, port: Math.floor(state.port / 10) }), false, 'a port that is only a prefix of the real one does not match');
+  assert.equal(ownsServer({ ...state, port: `${state.port}0` }), false);
+});
+
+test('where ps is missing (win32) a live pid with a fresh state counts as ours; a stale state or a dead pid does not', async (t) => {
+  const stranger = spawn('sleep', ['60'], { stdio: 'ignore' });
+  t.after(() => stranger.kill());
+  const win32 = { platform: 'win32', env: { RECALL_RERANK_IDLE_MS: '60000' } };
+  const fresh = { pid: stranger.pid, port: 1, startedAt: Date.now() - 3600000, lastUsed: Date.now() - 61000 };
+  assert.equal(ownsServer(fresh, win32), true, 'idle for just over the limit: the watchdog must still be able to stop it');
+  assert.equal(ownsServer({ ...fresh, lastUsed: Date.now() - 3 * 60000 }, win32), false, 'a state file far older than the idle limit is not trusted');
+  assert.equal(ownsServer(fresh, { ...win32, platform: 'linux' }), false, 'elsewhere the command line is checked');
+  const dead = spawnSync(process.execPath, ['-e', '']).pid;
+  assert.equal(ownsServer({ ...fresh, pid: dead }, win32), false);
+});
+
+test('signalQuietly ignores a pid that is already gone and rethrows anything else', () => {
+  const gone = spawnSync(process.execPath, ['-e', '']).pid;
+  assert.doesNotThrow(() => signalQuietly(gone, 'SIGKILL'));
+  assert.throws(() => signalQuietly(process.pid, 'SIGNOTREAL'), /signal/i);
 });

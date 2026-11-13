@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stateDir } from './paths.mjs';
 import { PRIVATE_FILE_MODE, ensurePrivateDir, writeFileAtomic } from './private-fs.mjs';
-import { idleLimitMs, ownsServer } from './rerank-watch.mjs';
+import { idleLimitMs, ownsServer, signalQuietly } from './rerank-watch.mjs';
 
 export const RERANK_FILES = { fast: 'qwen3-reranker-0.6b-q8_0.gguf', deep: 'qwen3-reranker-4b-q8_0.gguf' };
 export const RERANK_STATE_FILE = 'rerank-server.json';
@@ -61,9 +61,9 @@ async function healthy(port) {
 /** Stop the server in `state`: SIGTERM, then SIGKILL after STOP_WAIT_MS; the state file goes away. */
 export async function stopServer(state, env = process.env) {
   if (ownsServer(state)) { // a recycled pid is never signalled
-    try { process.kill(state.pid, 'SIGTERM'); } catch { /* already gone */ }
+    signalQuietly(state.pid, 'SIGTERM');
     for (let waited = 0; pidAlive(state.pid) && waited < STOP_WAIT_MS; waited += POLL_MS) await sleep(POLL_MS);
-    if (pidAlive(state.pid)) process.kill(state.pid, 'SIGKILL');
+    if (pidAlive(state.pid)) signalQuietly(state.pid, 'SIGKILL');
   }
   rmSync(statePath(env), { force: true });
 }

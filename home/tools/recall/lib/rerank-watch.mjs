@@ -1,6 +1,6 @@
 // Purpose: detached watchdog that stops the on-demand reranker server after it has been idle, so it holds no memory
 // between searches. Run as `node rerank-watch.mjs <state-file> <pid>`; exports `watch` for tests.
-// Exports: watch, idleLimitMs, ownsServer, DEFAULT_IDLE_MS.
+// Exports: watch, idleLimitMs, ownsServer, signalQuietly, DEFAULT_IDLE_MS.
 // Invariants: it only ever signals the pid recorded in the state file it was started for, and only after checking that
 // the pid still runs a llama-server on the recorded port (a state file that survived a reboot must never make it kill an
 // unrelated process that reused the pid); it exits
@@ -19,23 +19,38 @@ const STARTUP_GRACE_MS = 15000; // a freshly forked child shows its parent's com
 /** RECALL_RERANK_IDLE_MS (tests), else 20 minutes. */
 export const idleLimitMs = (env = process.env) => Number(env.RECALL_RERANK_IDLE_MS) || DEFAULT_IDLE_MS;
 
+/**
+ * `process.kill` that ignores a pid that is already gone (ESRCH) and rethrows everything else (EPERM, a bad signal).
+ * @param {number} pid process id.
+ * @param {string} signal e.g. 'SIGTERM'.
+ */
+export function signalQuietly(pid, signal) {
+  try { process.kill(pid, signal); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+}
+
 const alive = (pid) => {
   try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; }
 };
 
 /**
  * Whether the state file's pid is (still) the llama-server recall started: an integer pid > 1 whose command line names a
- * llama-server on the recorded port. A server younger than STARTUP_GRACE_MS is trusted (see above); where `ps` is
- * missing the answer is false, so nothing is ever signalled blind.
- * @param {{pid: unknown, port: unknown, startedAt?: number}} state parsed reranker state file.
+ * llama-server on the recorded port. A server younger than STARTUP_GRACE_MS is trusted (see above). Where `ps` is missing
+ * (Windows) the command line cannot be checked, so the pid counts as ours while it is alive and the state file is fresh
+ * (used within twice the idle limit, which covers the idle stop itself); otherwise the answer is false, so nothing is
+ * ever signalled blind.
+ * @param {{pid: unknown, port: unknown, startedAt?: number, lastUsed?: number}} state parsed reranker state file.
+ * @param {{platform?: string, env?: object}} [options] platform and env overrides (tests).
  */
-export function ownsServer(state) {
+export function ownsServer(state, { platform = process.platform, env = process.env } = {}) {
   const { pid, port } = state ?? {};
   if (!Number.isInteger(pid) || pid <= 1 || !alive(pid)) return false;
   if (Date.now() - (state.startedAt ?? 0) < STARTUP_GRACE_MS) return true;
+  if (platform === 'win32') return Date.now() - (state.lastUsed ?? state.startedAt ?? 0) < 2 * idleLimitMs(env);
   try {
     const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' });
-    return /(^|[/\s])llama-server(\s|$)/.test(command) && command.includes(`--port ${port}`);
+    const argv = command.trim().split(/\s+/); // exact argv tokens: `--port 8012` must not match `--port 80123` or a path
+    const flag = argv.indexOf('--port');
+    return argv.slice(0, 2).some((token) => /(^|\/)llama-server$/.test(token)) && flag !== -1 && argv[flag + 1] === String(port);
   } catch {
     return false;
   }
@@ -60,9 +75,9 @@ export async function watch(statePath, pid, { idleMs }) {
     if (!state || state.pid !== pid) return;
     if (!ownsServer(state)) { rmSync(statePath, { force: true }); return; }
     if (Date.now() - state.lastUsed < idleMs) continue;
-    process.kill(pid, 'SIGTERM');
+    signalQuietly(pid, 'SIGTERM');
     for (let waited = 0; alive(pid) && waited < KILL_GRACE_MS; waited += MIN_POLL_MS) await sleep(MIN_POLL_MS);
-    if (alive(pid)) process.kill(pid, 'SIGKILL');
+    if (alive(pid)) signalQuietly(pid, 'SIGKILL');
     rmSync(statePath, { force: true });
     return;
   }
