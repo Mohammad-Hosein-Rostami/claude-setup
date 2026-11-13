@@ -101,3 +101,59 @@ test('hook contract: a secret asks (no GUI), and stdout, stderr and the log neve
     assert.equal(JSON.parse(logged).outcome, 'no-gui');
   }
 });
+
+// Round 4 (L2 masking): credential forms that were missed, and linear-time matching.
+const R4_PW = ['Hunt', 'er', '2'].join('');
+const R4_FORMS = [
+  `SSHPASS=${R4_PW} ssh host uptime`,
+  `vault login s.${'Ab1Cd2Ef3G'.repeat(2)}`,
+  `vault login -method=userpass username=bob password=${R4_PW}`,
+  `kubectl create secret generic app --from-literal=db_password=${R4_PW}`,
+  `kubectl create secret generic app --from-literal api_token=${R4_PW}`,
+  `az login -u bob -p ${R4_PW}`,
+  `htpasswd -b .htpasswd bob ${R4_PW}`,
+  `htpasswd -bc .htpasswd bob ${R4_PW}`,
+  `aws configure set aws_secret_access_key ${R4_PW}`,
+  `aws configure set aws_secret_access_key ${R4_PW} --profile dev`,
+];
+const R4_NOT_SECRETS = [
+  'SSHPASS=$SSH_PW ssh host uptime',
+  'vault login -method=oidc',
+  'vault status',
+  'kubectl create secret generic app --from-literal=mode=fast',
+  'az group list -o table',
+  'htpasswd .htpasswd bob',
+  'aws configure set region eu-west-1',
+];
+
+test('R4/L2: SSHPASS, vault, --from-literal, az -p, htpasswd -b and aws configure set are detected and masked', () => {
+  for (const command of R4_FORMS) {
+    assert.ok(findLiteralSecret(command), `should detect: ${command}`);
+    const masked = maskSecrets(command);
+    assert.equal(masked.includes(R4_PW), false, `masked: ${command}`);
+    assert.equal(masked.includes('Ab1Cd2Ef3G'), false, `masked: ${command}`);
+    assert.equal(decide(command, ctx).ask, true, `asks: ${command}`);
+  }
+  for (const command of R4_NOT_SECRETS) assert.equal(findLiteralSecret(command), undefined, `not a secret: ${command}`);
+});
+
+test('R4/L1: every secret pattern is linear: hostile inputs at the size limit and at 500 KB take under 500 ms', () => {
+  const shapes = ['curl ', 'curl -H "a" ', 'aKEY', 'a-', 'a-b-key', 'x://a:', 'x://a:b', 'mysql ', 'docker ', 'redis-cli ', 'Authorization: ', 'X-a-', 'a+b.c-d',
+    'vault login ', 'az ', 'sshpass -', 'htpasswd -', 'aws configure set ', '--from-literal=a-', '--secret ', 'curl "', "curl '", 'wget -u '];
+  for (const size of [32 * 1024, 500 * 1000]) {
+    for (const shape of shapes) {
+      const text = shape.repeat(Math.ceil(size / shape.length)).slice(0, size);
+      for (const run of [findLiteralSecret, maskSecrets]) {
+        const started = performance.now();
+        run(text);
+        assert.ok(performance.now() - started < 500, `${run.name}(${JSON.stringify(shape)} x ${size}) took too long`);
+      }
+    }
+  }
+});
+
+test('R4/L1: maskSecrets cuts input beyond the scan limit and says so instead of leaving the tail unmasked', () => {
+  const masked = maskSecrets(`${'a '.repeat(20_000)} TOKEN=${R4_PW}`);
+  assert.equal(masked.includes(R4_PW), false);
+  assert.match(masked, /\[\.\.\.cut\]$/);
+});

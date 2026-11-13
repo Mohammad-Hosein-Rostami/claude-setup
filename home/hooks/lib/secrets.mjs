@@ -6,6 +6,11 @@
 // (so `Authorization: Bearer x` too), `-u user:pass` / `--user user:pass`, and URL credentials `scheme://user:pass@host`.
 // A value that starts with `$` (variable, `$(cat file)`), a backtick or `<(` is not literal. Scans the raw text, so quotes,
 // heredocs and `bash -c '...'` are all covered. A noisy false positive is accepted: the check is meant to be strict (the hook turns a hit into a timed ask).
+// Also: SSHPASS=, `vault login <token>`, `--from-literal=<k>=<v>` (k names a pass/secret/token/key), `az ... -p`, `htpasswd -b`,
+// `aws configure set *secret* <v>`.
+// Linear time (Round 4): every pattern is anchored at a rare literal and every gap between a prefix and its value is a BOUNDED repeat
+// of disjoint alternatives (no unbounded nested or overlapping quantifier), so the cost is input length x a small constant. Input beyond
+// MAX_SCAN_CHARS is not scanned (the hook asks about a command that long before it gets here); maskSecrets cuts it and says so.
 
 const TOKEN_KINDS = [
   [/\bsk-ant-[A-Za-z0-9_-]{10,}/, 'an Anthropic API key'],
@@ -15,7 +20,10 @@ const TOKEN_KINDS = [
   [/\bglpat-[A-Za-z0-9_-]{10,}/, 'a GitLab token'],
   [/\bxox[bp]-[A-Za-z0-9-]{10,}/, 'a Slack token'],
 ];
-const SECRET_ENV = '(?:PGPASSWORD|MYSQL_PWD|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN)';
+const MAX_SCAN_CHARS = 32 * 1024;
+const GAP = 300; // longest stretch between a command word and its flag that is still looked at
+const NAME_MAX = 80; // longest variable, header or scheme name that is still looked at
+const SECRET_ENV = '(?:PGPASSWORD|MYSQL_PWD|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|SSHPASS)';
 const NOT_LITERAL_START = '(?!["\']?(?:\\$|`|<|\\s|;|&|\\||$))';
 const VALUE = `["']?[^\\s"';&|]`;
 // What the masker hides after a prefix: a whole quoted string or one unquoted word.
@@ -25,34 +33,40 @@ const VALUE_RUN = `"[^"]*"|'[^']*'|[^\\s"';&|]+`;
 const BOUNDARY = `(?:^|[\\s;&|("'])`;
 // URL userinfo: the password runs to the LAST `@` of the word, so one containing `@` or `/` is still covered. A `:port/@scope`
 // (`http://localhost:5173/@vite/client`) is not a password: digits followed by `/ ? #` or the end are a port.
-const URL_PASSWORD = '[^\\s"\']*(?=@)';
+const URL_PASSWORD = '[^\\s"\']{0,500}(?=@)';
 const URL_NOT_A_PORT = '(?!\\d+(?:[/?#"\'\\s]|$))';
 // curl-family commands, quote-aware so `-H "X: a;b"` does not end the command early; `-u user:pass` is only a credential for these
-const HTTP_TOOL = `\\b(?:curl|wget|http|https|xh|hurl)\\b(?:"[^"]*"|'[^']*'|[^\\n|;&"'])*?`;
+const HTTP_TOOL = `\\b(?:curl|wget|http|https|xh|hurl)\\b(?:"[^"\\n]{0,${GAP}}"|'[^'\\n]{0,${GAP}}'|[^\\n|;&"']){0,${GAP}}?`;
 // A header value is a literal unless it contains a variable, a substitution or a placeholder (`Bearer $TOKEN`, `Bearer <token>`).
-const HEADER_VALUE = `(?![^"'\\n]*[$\`<])[^"'\\n]+`;
+const HEADER_VALUE = `(?![^"'\\n]{0,500}[$\`<])[^"'\\n]{1,500}`;
 // `Authorization`, `Proxy-Authorization`, any hyphenated `...-Key/-Token/-Secret` name (`X-Api-Key`, `PRIVATE-TOKEN`), `Cookie`
-const HEADER_NAME = '(?:(?:Proxy-)?Authorization|[A-Za-z0-9]+-[\\w-]*(?:key|token|secret)|Cookie)';
+const HEADER_NAME = `(?:(?:Proxy-)?Authorization|[A-Za-z0-9]{1,${NAME_MAX}}-[\\w-]{0,${NAME_MAX}}(?:key|token|secret)|Cookie)`;
 const SECRET_NAME_PART = '(?<![A-Za-z0-9])(?:KEY|TOKEN|SECRET|PASS|PASSWD|PWD)(?![A-Za-z0-9])';
 const QUERY_SECRET = 'api[_-]?key|access[_-]?(?:token|key)|auth[_-]?token|token|client[_-]?secret|secret|password|passwd|pwd';
 const SECRET_FLAG = '--(?:token|api-key|apikey|password|passwd|client-secret|access-token|auth-token)(?:=|\\s+)';
 const VALUE_KINDS = [
   [`(?:^|[\\s;&|("'])${SECRET_ENV}=`, '', 'a password or key assigned in the command'],
   [SECRET_FLAG, '(?!-)', 'a password, token or key flag with a literal value'],
-  ['\\bsshpass\\s+(?:-\\w*\\s+)*-p\\s*', '', 'an sshpass password'],
-  ['\\b(?:mysql|mysqladmin|mysqldump|mariadb)\\b[^\\n|;&]*?\\s-p', '', 'a mysql password flag with a literal value'],
-  ['\\bdocker\\s+login\\b[^\\n|;&]*?\\s-p\\s+', '', 'a docker login password'],
+  ['\\bsshpass\\s+(?:-\\w*\\s+){0,10}-p\\s*', '', 'an sshpass password'],
+  [`\\b(?:mysql|mysqladmin|mysqldump|mariadb)\\b[^\\n|;&]{0,${GAP}}?\\s-p`, '', 'a mysql password flag with a literal value'],
+  [`\\bdocker\\s+login\\b[^\\n|;&]{0,${GAP}}?\\s-p\\s+`, '', 'a docker login password'],
+  [`\\bvault\\s+login\\s+(?:-[\\w-]+(?:=\\S*)?\\s+){0,6}`, '(?![^\\s"\']*=)', 'a vault token'],
+  [`\\bvault\\s+login\\b[^\\n|;&]{0,${GAP}}?\\spassword=`, '', 'a vault password'],
+  [`--from-literal(?:=|\\s+)[\\w.-]{0,${NAME_MAX}}(?:pass|secret|token|key)[\\w.-]{0,${NAME_MAX}}=`, '', 'a secret given with --from-literal', { flags: 'i' }],
+  [`\\baz\\s[^\\n|;&]{0,${GAP}}?\\s-p(?:=|\\s+)`, '(?!-)', 'an Azure CLI password'],
+  ['\\bhtpasswd\\s+(?:-[a-zA-Z]+\\s+){0,2}-[a-zA-Z]*b[a-zA-Z]*\\s+(?:-[a-zA-Z]+\\s+){0,2}[^\\s"\']+\\s+[^\\s"\']+\\s+', '', 'an htpasswd password'],
+  [`\\baws\\s+configure\\s+set\\s+(?:--profile\\s+\\S+\\s+)?[\\w.-]{0,${NAME_MAX}}secret[\\w.-]{0,${NAME_MAX}}\\s+`, '', 'an AWS secret key set with aws configure', { flags: 'i' }],
   // any variable whose name has KEY, TOKEN, SECRET, PASS, PASSWD, PWD or PASSWORD as a part (`DB_PASS`, `TOKEN_FILE_X`, `ADMINPASSWORD`)
-  [`${BOUNDARY}[\\w.-]*(?:${SECRET_NAME_PART}|PASSWORD)[\\w.-]*=`, '', 'a key, token, secret or password assigned in the command', { flags: 'i' }],
+  [`${BOUNDARY}[\\w.-]{0,${NAME_MAX}}(?:${SECRET_NAME_PART}|PASSWORD)[\\w.-]{0,${NAME_MAX}}=`, '', 'a key, token, secret or password assigned in the command', { flags: 'i' }],
   [`[?&](?:${QUERY_SECRET})=`, '', 'a token or key in a URL query string', { flags: 'i' }],
-  ['\\bredis-cli\\b[^\\n|;&]*?\\s(?:-a|--pass)\\s+', '', 'a redis password'],
+  [`\\bredis-cli\\b[^\\n|;&]{0,${GAP}}?\\s(?:-a|--pass)\\s+`, '', 'a redis password'],
   ['(?<![A-Za-z0-9])_(?:authToken|auth|password)=|(?<![A-Za-z0-9])_authToken\\s+', '', 'an npm registry credential', { flags: 'i' }],
   ['\\bBearer\\s+', '', 'a bearer token', { flags: 'i' }],
   [`${HTTP_TOOL}\\s(?:-u|--user)(?:=|\\s*)[^\\s:"']*:`, '', 'a user:password pair', { value: '["\']?[^\\s"\';&|]+["\']?' }],
   [`${HTTP_TOOL}\\s(?:-u|--user)(?:=|\\s*)["'][^"':]*:`, '', 'a user:password pair', { value: '[^"\']+' }],
   [`\\b${HEADER_NAME}\\s*:[ \\t]*`, '', 'a credential header with a literal value', { value: HEADER_VALUE, flags: 'i' }],
-  [`(?<!\\b(?:docker|podman|buildx|buildah)\\b[^\\n|;&]*)--secret(?:=|\\s+)`, '(?!-)', 'a secret flag with a literal value'],
-  ['\\b[a-z][a-z0-9+.-]*://[^\\s/@:"\']+:', URL_NOT_A_PORT, 'a password inside a URL', { value: URL_PASSWORD, flags: 'i' }],
+  [`(?<!\\b(?:docker|podman|buildx|buildah)\\b[^\\n|;&]{0,${GAP}})--secret(?:=|\\s+)`, '(?!-)', 'a secret flag with a literal value'],
+  ['\\b[a-z][a-z0-9+.-]{0,30}://[^\\s/@:"\']{1,200}:', URL_NOT_A_PORT, 'a password inside a URL', { value: URL_PASSWORD, flags: 'i' }],
 ].map(([prefix, lookahead, kind, { value, flags = '' } = {}]) => ({
   kind,
   detect: new RegExp(`${prefix}${NOT_LITERAL_START}${lookahead}${value ?? VALUE}`, flags),
@@ -65,6 +79,7 @@ const MASK = '[masked]';
  * @returns {string | undefined} what kind of secret was found, or undefined; never the value
  */
 export function findLiteralSecret(command) {
+  command = command.slice(0, MAX_SCAN_CHARS);
   for (const [pattern, kind] of TOKEN_KINDS) {
     if (pattern.test(command)) return kind;
   }
@@ -77,8 +92,8 @@ export function findLiteralSecret(command) {
  * @returns {string} the command with each secret value replaced by "[masked]"
  */
 export function maskSecrets(command) {
-  let text = command;
+  let text = command.slice(0, MAX_SCAN_CHARS);
   for (const [pattern] of TOKEN_KINDS) text = text.replace(new RegExp(pattern.source, 'g'), MASK);
   for (const { mask } of VALUE_KINDS) text = text.replace(mask, `$1${MASK}`);
-  return text;
+  return command.length > MAX_SCAN_CHARS ? `${text}[...cut]` : text;
 }
