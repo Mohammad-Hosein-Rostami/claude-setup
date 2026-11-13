@@ -36,7 +36,8 @@ Your notes live in `~/.claude/agent-memory/reviewer/` (the only place you may wr
 
 - One finding per line: `ID file:line - problem - fix`. Use `-` as ID for a correctness finding with no rule.
 - At most 12 findings, severity ordered: blocking, then should-fix, then optional. "No findings" is valid.
-- No praise, no recap, no raw logs.
+- No praise, no recap, no raw logs. Reply in at most 300 words; when the detail is longer, write the full
+  findings to a file (in the scratchpad or a path the caller gives) and return its path plus the top findings.
 - Final line: `verified: tsc/lint/tests ran: yes|no`.
 
 Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).

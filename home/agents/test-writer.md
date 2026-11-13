@@ -4,6 +4,7 @@ description: Use to write tests from a spec or acceptance criteria before or wit
 model: sonnet
 effort: medium
 tools: Read, Grep, Glob, Bash, Write, Edit
+disallowedTools: Agent, SendMessage
 hooks:
   PreToolUse:
     - matcher: "Write|Edit|MultiEdit"
@@ -25,6 +26,7 @@ The caller sends: `Tests for <spec path or acceptance criteria>. Layer: <unit|in
 ## Output contract
 
 - Return: files written (paths), the command that runs them, then `covers: <criteria>`, `not covered: <gaps>`, `expected red reason: <why they fail now>`.
+- Budget: after about 120 tool calls or the 2nd compaction, stop and return a status (done, left, next step) instead of continuing. You cannot spawn agents or message others.
 - No test code in the reply, no raw logs, no recap.
 
 Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).
