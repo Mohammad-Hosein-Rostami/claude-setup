@@ -1,9 +1,9 @@
 // Stop: blocks once when the lead ends with a list of decisions for the owner instead of asking them.
-// Exports: DECISION_PATTERNS, HEADING_PATTERN, LABEL_PATTERN, REASON, listsDeferredDecisions(text), lastRealPromptIndex(entries),
-// askedSinceLastPrompt(entries), lastAssistantText(entries), parseTranscript(text), readTranscriptTail(path), decide(input, entries).
+// Exports: DECISION_PATTERNS (EN_REQUEST_PATTERNS + FA_REQUEST_PATTERNS), HEADING_PATTERN, LABEL_PATTERN, REASON, listsDeferredDecisions(text), lastRealPromptIndex(entries),
+// promptText(entry), askedSinceLastPrompt(entries), lastAssistantText(entries), parseTranscript(text), readTranscriptTail(path), decide(input, entries).
 // Invariants: stop_hook_active true always allows (never block twice in a row); block only when the matcher hits AND no
 // AskUserQuestion call happened since the last real user prompt (tool results, notifications, interrupts and image-only
-// turns are not prompts); quoted text (code, `>` lines, "..." and curly quotes) and negated phrases ("no open questions", "decisions needed are none") never match; any internal error is one stderr line and exit 0, so a
+// turns are not prompts); quoted text (code, `>` lines, "..." and curly quotes) and negated phrases ("no open questions", "decisions needed are none") never match; a request phrase counts only in the last 15 lines, at a sentence start, outside a sentence about the matcher and with an open choice (?, options, colon); any internal error is one stderr line and exit 0, so a
 // session is never trapped. Env ASK_GATE_LOG appends one JSON line per run (debug and E2E evidence).
 import { appendFileSync, closeSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -20,17 +20,30 @@ const IMAGE_PLACEHOLDER = /^\s*\[Image[^\]]*\]\s*$/;
 
 // Persian words are joined by a space or a zero-width non-joiner (U+200C).
 const FA_SEP = '[\\s\\u200c]';
+const TAIL_LINES = 15; // the request is the closing move: only the last non-empty lines can carry it
+// An English request phrase must open a sentence or line (optionally bulleted, bold or after "please"): "the hook fires
+// on text like needs your call" is a description, not a request.
+const SENTENCE_START = '(?<=^|[.!?:;]\\s+)[ \\t>*#_-]*(?:(?:please|kindly|so|and|but|now|also)[ ,]+)?';
+const anchored = (pattern) => new RegExp(`${SENTENCE_START}(?:${pattern.source})`, 'im');
+// A sentence about the matcher itself (quotes were already stripped) is not a request.
+const DESCRIBES_MATCHER = /\b(matcher|patterns?|regex|phrases?|wording|false positives?|ask-gate|fires? on|matches)\b/i;
+const OPTION_LINE = /^[ \t]*(?:[-*][ \t]+)?\(?(?:[1-9]|[A-Ea-e])[.):][ \t]/;
+const MIN_OPTION_LINES = 2;
+
 /**
- * Every pattern that marks a request for the owner's decision (English and Persian). One place to extend.
+ * English request phrases (anchored at a sentence start by listsDeferredDecisions) and Persian ones (matched anywhere in
+ * the tail). Every pattern that marks a request for the owner's decision lives in one of these two lists.
  * Deliberately narrow: a false positive costs a wasted turn, so plain "decision", "open questions", "your call" and
  * "decisions for you" only count as a line-start label (LABEL_PATTERN) or a whole-line heading (HEADING_PATTERN).
  */
-export const DECISION_PATTERNS = [
-  /(needs?|waiting on|awaiting) your (call|decision|input|approval|answer)/i,
+export const EN_REQUEST_PATTERNS = [
+  /(?:(?:this|it|that|these|one thing) )?(needs?|waiting on|awaiting) your (call|decision|input|approval|answer)/i,
   /you (must|need to|have to) decide/i,
   /decisions? (needed|pending|required|to make)\b/i,
   /\bI need you to (decide|choose|pick|confirm)\b/i,
   /let me know which (you prefer|option|one)\b/i,
+];
+export const FA_REQUEST_PATTERNS = [
   new RegExp(`(نیاز${FA_SEP}+به|منتظر)${FA_SEP}+(تصمیم|تایید|تأیید|نظر)`),
   new RegExp(`تصمیم(ات|ها)?${FA_SEP}*(باز|معلق|لازم|منتظر)`),
   new RegExp(`تصمیم${FA_SEP}*هایی${FA_SEP}+که${FA_SEP}+(باید|لازم)`),
@@ -39,6 +52,7 @@ export const DECISION_PATTERNS = [
   new RegExp(`تصمیم${FA_SEP}*(بگیر|بگیرید)`),
   new RegExp(`لطفا.{0,20}(انتخاب${FA_SEP}+کن|تصمیم)`),
 ];
+export const DECISION_PATTERNS = [...EN_REQUEST_PATTERNS, ...FA_REQUEST_PATTERNS];
 /** A heading line on its own, e.g. "## Open questions" or "**Your call:**". */
 export const HEADING_PATTERN = /^[#>*\-\s]*(open questions|decisions( needed| pending)?|your call)[\s*]*:?[\s*]*$/im;
 /** A label at the start of a line, optionally bulleted or bold, with text allowed after the colon: "**Your call:** A or B?". */
@@ -70,14 +84,24 @@ const stripQuoted = (text) =>
     .replace(/"[^"\n]*"/g, ' ')
     .replace(CURLY_QUOTED, ' ');
 
-// Does `pattern` match somewhere without a negation next to the match?
-function hasRequest(text, pattern) {
+// Does `pattern` match somewhere, without a negation next to the match, for a match that `accept(match)` also takes?
+function hasRequest(text, pattern, accept = () => true) {
   const global = new RegExp(pattern.source, pattern.flags.replace('g', '') + 'g');
   return [...text.matchAll(global)].some((m) => {
-    const before = text.slice(Math.max(0, m.index - NEGATION_WINDOW_CHARS), m.index).split('\n').pop(); // this line only
+    const before = text.slice(Math.max(0, m.index - NEGATION_WINDOW_CHARS), m.index).split(/[\n.!?]/).pop(); // this sentence only
     const after = text.slice(m.index + m[0].length);
-    return !NEGATION_BEFORE.test(before) && !NEGATION_AFTER.test(after);
+    return !NEGATION_BEFORE.test(before) && !NEGATION_AFTER.test(after) && accept(m);
   });
+}
+
+// A request needs an open choice in the tail: a question mark, an option list, or a colon right after the phrase.
+const hasOpenChoice = (tail) => /[?؟]/.test(tail) || tail.split('\n').filter((l) => OPTION_LINE.test(l)).length >= MIN_OPTION_LINES;
+
+// Accept a phrase match inside `tail` only when its sentence is not about the matcher and the tail offers a choice.
+function isOpenRequest(tail, m) {
+  const sentence = tail.slice(0, m.index).split(/[.!?\n]/).pop() + m[0] + tail.slice(m.index + m[0].length).split(/[.!?\n]/)[0];
+  if (DESCRIBES_MATCHER.test(sentence)) return false;
+  return hasOpenChoice(tail) || /^[\s*]*:/.test(tail.slice(m.index + m[0].length));
 }
 
 // 3+ "D<n>:" items, or 2+ when a decision word stands in the 3 lines before the first one.
@@ -90,14 +114,18 @@ function hasDecisionItems(text) {
 }
 
 /**
- * Does the text hand decisions to the owner (a request phrase, a heading or a D-list)?
+ * Does the text hand decisions to the owner? A request phrase counts only in the last TAIL_LINES lines, at a sentence
+ * start, outside a sentence about the matcher, and with an open choice (?, options or a colon); a heading, label or D-list
+ * counts anywhere.
  * @param {string} text the assistant's last message
  * @returns {boolean} false for non-strings, negated phrases ("no open questions") and quoted or code text
  */
 export function listsDeferredDecisions(text) {
   if (typeof text !== 'string' || !text) return false;
   const plain = stripQuoted(text);
-  if (DECISION_PATTERNS.some((p) => hasRequest(plain, p))) return true;
+  const tail = plain.split('\n').filter((line) => line.trim()).slice(-TAIL_LINES).join('\n');
+  const phrases = [...EN_REQUEST_PATTERNS.map(anchored), ...FA_REQUEST_PATTERNS];
+  if (phrases.some((p) => hasRequest(tail, p, (m) => isOpenRequest(tail, m)))) return true;
   return hasRequest(plain, HEADING_PATTERN) || hasRequest(plain, LABEL_PATTERN) || hasDecisionItems(plain);
 }
 
@@ -146,7 +174,7 @@ const blocksOf = (entry) => (Array.isArray(entry?.message?.content) ? entry.mess
  * The text of a user entry when it is a real prompt typed by the owner, else null (tool results, task notifications,
  * system reminders, meta and sub-agent lines are not prompts).
  */
-function promptText(entry) {
+export function promptText(entry) {
   if (entry.type !== 'user' || entry.isMeta || entry.isSidechain) return null;
   const content = entry.message?.content;
   let text = null;

@@ -12,12 +12,14 @@ import { listsDeferredDecisions } from '../home/hooks/ask-gate.mjs';
 const HOOK = fileURLToPath(new URL('../home/hooks/ask-gate.mjs', import.meta.url));
 const DECISIONS = 'Work is done.\nDecisions you must make:\nD1: what 12-05 means\nD2: which plan to buy';
 
+const CHOICE = '\nA or B?'; // the request phrases only count with an open choice in the closing lines
+
 test('matcher hits English deferred-decision phrasing', () => {
   for (const text of [
     'Decision needed: pick a plan', 'Decisions to make before release', 'decisions pending',
     'This needs your decision.', 'Waiting on your input.', 'Awaiting your approval', 'Needs your approval', 'need your call',
     'You must decide which one.', 'You need to decide soon', 'You have to decide', 'Decisions required before launch',
-  ]) assert.equal(listsDeferredDecisions(text), true, text);
+  ]) assert.equal(listsDeferredDecisions(text + CHOICE), true, text);
 });
 
 test('matcher hits a heading on its own line, not the same words inside a sentence', () => {
@@ -33,7 +35,7 @@ test('matcher hits Persian phrasing, with a space or a zero-width joiner', () =>
   for (const text of [
     'نیاز به تصمیم دارد', 'منتظر تأیید شما هستم', 'یک سوال باز مانده', 'سوال‌های باز', 'باید تصمیم بگیری که کدام',
     'تصمیمات لازم', 'تصمیم باز مانده', 'تصمیم هایی که باید بگیرید', 'نیاز‌به تصمیم',
-  ]) assert.equal(listsDeferredDecisions(text), true, text);
+  ]) assert.equal(listsDeferredDecisions(`${text}\nالف یا ب؟`), true, text);
 });
 
 test('matcher misses plain statements, including "I decided to use X"', () => {
@@ -49,7 +51,7 @@ test('matcher skips negated phrases (no, none, zero, resolved, answered, ندا�
     'No open questions remain.\nDecisions needed: none', 'There are no decisions pending.', 'Zero decisions needed', 'resolved decisions needed', 'answered decisions pending', 'سوال باز ندارم', 'تصمیم لازم نیست', 'نیاز به تصمیم ندارم',
   ]) assert.equal(listsDeferredDecisions(text), false, text);
   assert.equal(listsDeferredDecisions('Nothing else. Decisions needed: pick a plan'), true);
-  assert.equal(listsDeferredDecisions('I know. Decision needed: pick a plan'), true);
+  assert.equal(listsDeferredDecisions('I have no doubts. Decision needed: pick a plan'), true);
 });
 
 test('matcher ignores quoted lines, inline code and fenced code', () => {
@@ -70,14 +72,19 @@ test('matcher counts only D-items: 3 alone, 2 after a decision word, never Q-ite
   assert.equal(listsDeferredDecisions('Which decision?\nQ1: a\nQ2: b'), false);
 });
 
-test('matcher blocks line-start labels with text after the colon, and the new request phrases', () => {
+test('matcher blocks line-start labels with text after the colon (no open choice needed)', () => {
   for (const text of [
     '**Your call:** A or B?', 'Open question: should we use pnpm or npm?', '- Open questions: which one', 'Questions for you: a or b',
     '## Decisions for you:\n- a', 'Decisions required: x', 'Things I need from you: the API key',
+  ]) assert.equal(listsDeferredDecisions(text), true, text);
+});
+
+test('matcher blocks the new request phrases when an open choice follows', () => {
+  for (const text of [
     'I need you to decide which.', 'I need you to choose', 'I need you to pick one', 'I need you to confirm the date',
     'Please let me know which you prefer', 'let me know which option', 'Let me know which one',
     'تصمیم بگیر', 'تصمیم بگیرید', 'تصمیم‌بگیرید', 'لطفا انتخاب کن', 'لطفا یکی را تصمیم',
-  ]) assert.equal(listsDeferredDecisions(text), true, text);
+  ]) assert.equal(listsDeferredDecisions(`${text}\n1. A\n2. B`), true, text);
 });
 
 test('matcher ignores bare "decisions for you" in a sentence and a label that is not at the line start', () => {
@@ -98,6 +105,39 @@ test('matcher negation also looks after the match: are none, were answered, answ
     'Decisions needed earlier were answered: D1 = A.', 'decisions needed are none', 'Decisions pending: all resolved', 'Open questions: none',
     'Decisions needed: answered above', 'Decision needed is none',
   ]) assert.equal(listsDeferredDecisions(text), false, text);
+});
+
+test('matcher: descriptive "needs your call" text passes (regression)', () => {
+  for (const text of [
+    'The hook fires on text like needs your call, which is a false positive.',
+    'ask-gate fires on needs your call',
+    'Needs your call is one of the phrases the matcher looks for. Which phrases are those?',
+    'The reviewer says it needs your approval flag',
+    'Changelog: the report that needs your approval was merged, which one is next?',
+    'The report needs your approval to merge.\nIt already asked. A or B?\n' + 'Done line.\n'.repeat(15),
+    'Waiting on your input in the doc, now fixed.',
+    'The section needs your approval header text.',
+    'Needs your call.',
+    'This needs your decision.',
+  ]) assert.equal(listsDeferredDecisions(text), false, text);
+});
+
+test('matcher: a real unasked decision blocks (regression)', () => {
+  for (const text of [
+    'Done.\nUse pnpm or npm? Needs your call.',
+    'All built. Needs your call: A or B',
+    'Done.\n\nThis needs your decision:\n1. ship now\n2. wait a day',
+    'Work is finished.\n- Needs your approval: merge into main?',
+    'Done. Decisions needed:\n- D1 which plan',
+    'Done.\nPlease let me know which you prefer: A or B?',
+  ]) assert.equal(listsDeferredDecisions(text), true, text);
+});
+
+test('matcher: only the last 15 non-empty lines are scanned for request phrases', () => {
+  const filler = Array.from({ length: 15 }, (_, i) => `line ${i}`).join('\n');
+  assert.equal(listsDeferredDecisions(`Needs your call: A or B?\n${filler}`), false, 'phrase 15+ lines before the end');
+  assert.equal(listsDeferredDecisions(`Needs your call: A or B?\n${filler.split('\n').slice(1).join('\n')}`), true, 'phrase in the last 15 lines');
+  assert.equal(listsDeferredDecisions(`Decisions needed:\n- x\n${filler}`), true, 'headings keep the whole text');
 });
 
 test('matcher tolerates non-string input', () => {
@@ -232,4 +272,11 @@ test('odd transcript entries (null, arrays, numbers, missing message) neither th
 test('a matcher false positive case does not block through the hook: "No open questions remain; I decided to use X."', async () => {
   const { run } = await sandbox();
   allowed(run({ last_assistant_message: 'No open questions remain; I decided to use X.' }));
+});
+
+test('through the hook: descriptive "needs your call" text passes, a real unasked decision blocks', async () => {
+  const { run, transcript } = await sandbox();
+  const p = await transcript([user('go')]);
+  allowed(run({ last_assistant_message: 'Fixed. The old matcher fired on text like needs your call.', transcript_path: p }));
+  blocked(run({ last_assistant_message: 'Built both.\nUse pnpm or npm? Needs your call.', transcript_path: p }));
 });
