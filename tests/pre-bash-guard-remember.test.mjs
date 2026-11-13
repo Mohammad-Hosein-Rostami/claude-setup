@@ -4,6 +4,7 @@ import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { warmExec } from './warm-exec.mjs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -37,8 +38,9 @@ function session() {
   const script = join(dir, 'fake.cjs');
   writeFileSync(script, FAKE_SCRIPT);
   const bin = join(dir, dialogExecutable(process.platform) + (process.platform === 'win32' ? '.cmd' : ''));
-  writeFileSync(bin, process.platform === 'win32' ? `@node "${script}" %*\r\n` : `#!/bin/sh\nexec node "${script}" "$@"\n`);
+  writeFileSync(bin, process.platform === 'win32' ? `@node "${script}" %*\r\n` : `#!/bin/sh\n[ -n "$FAKE_WARM" ] && exit 0\nexec node "${script}" "$@"\n`);
   chmodSync(bin, 0o755);
+  if (process.platform !== 'win32') warmExec(bin);
   const count = join(dir, 'count');
   const home = join(dir, 'home');
   const base = hookEnv({ HOME: home, USERPROFILE: home, PATH: `${dir}${delimiter}${process.env.PATH}`, DISPLAY: ':0', FAKE_DIALOG_COUNT: count, CLAUDE_PROJECT_DIR: PROJECT });

@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { warmExec } from './warm-exec.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCheck, runStages, stagesFor } from '../home/hooks/post-edit.mjs';
@@ -32,6 +33,7 @@ test('stagesFor: lone or missing checks stay as single stages', () => {
 // Fake package manager (a node script with a shebang): `fake <run> <name>` logs start/end, sleeps, then fails or not
 // per FAKE_* env. Posix only: Windows would need a .cmd shim.
 const FAKE_PM = `#!${process.execPath}
+if (process.env.FAKE_WARM) process.exit(0);
 const { appendFileSync } = require('node:fs');
 const name = process.argv[3];
 const log = (what) => appendFileSync(process.env.FAKE_LOG, name + ' ' + what + ' ' + Date.now() + '\\n');
@@ -50,6 +52,7 @@ async function fakeProject(env) {
   const pm = join(dir, 'fake-pm');
   await writeFile(pm, FAKE_PM);
   await chmod(pm, 0o755);
+  warmExec(pm);
   const log = join(dir, 'log.txt');
   await writeFile(log, '');
   Object.assign(process.env, { FAKE_LOG: log }, env);
@@ -115,6 +118,7 @@ test('runStages returns within the deadline even when a grandchild outlives the 
   const pm = join(dir, 'fake-pm');
   const pidFile = join(dir, 'grandchild.pid');
   await writeFile(pm, `#!${process.execPath}
+if (process.env.FAKE_WARM) process.exit(0);
 const { spawn } = require('node:child_process');
 const { writeFileSync } = require('node:fs');
 const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'inherit' });
@@ -122,6 +126,7 @@ writeFileSync(${JSON.stringify(pidFile)}, String(grandchild.pid));
 setTimeout(() => {}, 60000);
 `);
   await chmod(pm, 0o755);
+  warmExec(pm);
   // 2.5 s headroom: the fake pm must start node and write the pid file before the deadline, even when the suite
   // runs test files in parallel; the return is still far below the 60 s grandchild.
   const deadlineMs = 2500;
@@ -136,6 +141,7 @@ setTimeout(() => {}, 60000);
 
 // Lint is quick and fails about the edited file; the typecheck sleeps 10 s unless told otherwise.
 const LINT_FIRST_PM = `#!${process.execPath}
+if (process.env.FAKE_WARM) process.exit(0);
 const name = process.argv[3];
 if (name === 'lint') {
   console.error(process.env.LINT_ABOUT + '(1,1): error TS1: lint failed');
@@ -150,6 +156,7 @@ async function lintFirstPm(env) {
   const pm = join(dir, 'fake-pm');
   await writeFile(pm, LINT_FIRST_PM);
   await chmod(pm, 0o755);
+  warmExec(pm);
   Object.assign(process.env, env);
   return { pm, dir };
 }
