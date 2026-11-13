@@ -31,5 +31,7 @@ export function checkEval(args, nextWords, reasonsOf) {
     return HIDES_COMMAND.test(word) && !isInitSubstitution(word);
   });
   if (hidden) return [HIDDEN_REASON];
-  return args.length === 0 ? [] : reasonsOf(args.join(' '));
+  // an init substitution is a nested body (or the next segment) and is checked there; only the literal words are re-checked here
+  const literal = args.filter((word) => word !== '$' && !isInitSubstitution(word));
+  return literal.length === 0 ? [] : reasonsOf(literal.join(' '));
 }

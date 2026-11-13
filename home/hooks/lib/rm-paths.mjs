@@ -2,13 +2,16 @@
 // Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; newScope(cwd, project) -> {vars, assigned};
 // trackAssignments(scope, tokens, nextTokens); substituteKnownWords(tokens, scope); nativePath, isUnder, sameFile, expandHome.
 // Variables are tracked in order within one command line and the LAST assignment wins (`D=$(mktemp -d); D=/etc` means /etc).
-// A literal value is used as is, `VAR=$(mktemp -d)` (default location) stands for one directory inside the temp dir, and any
+// A literal value is used as is, `VAR=$(mktemp -d)` (default location; the tokenizer turns it into MKTEMP_WORD, also with a path
+// suffix `$(mktemp -d)/..` and in backticks) stands for one directory inside the temp dir, `D+=x` appends, and any
 // other value is unknown. `..` is resolved lexically after substitution, so `$D/..` is outside the mktemp directory.
+// Brace expansion in targets (`{/,x}`) is expanded first; one that cannot be listed asks.
 // Only a recursive rm asks about an unknown or outside target; `rm -f x` of one file is not judged here.
 // Invariants: pure apart from reading homedir()/tmpdir(); never touches the file system.
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, parse, relative, resolve } from 'node:path';
-import { QUOTED_MARK, flagsOf } from './shell-words.mjs';
+import { expandBraces } from './braces.mjs';
+import { MKTEMP_WORD, QUOTED_MARK, flagsOf } from './shell-words.mjs';
 import { destructive } from './verdict.mjs';
 
 const SAFE_TEMP_ROOTS = ['/tmp', '/private/tmp', tmpdir()];
@@ -17,10 +20,9 @@ const GIT_BASH_DRIVE_ROOT = /^\/[a-zA-Z]$/;
 const REDIRECT_START = /^(\d*>>?|\d*<|&>>?)/;
 const REDIRECT_OPERATOR_ONLY = /^(\d*>>?|\d*<{1,2}|&>>?)$/;
 const VAR_PREFIX = /^\$\{?(\w+)\}?(?=\/|$)/;
+const MKTEMP_NAME = MKTEMP_WORD.slice(1);
 const ANY_VAR = /\$\{(\w+)\}|\$(\w+)/g;
-const ASSIGNMENT = /^([A-Za-z_]\w*)=([\s\S]*)$/;
-const MKTEMP_VALUE = /^(?:\$\(\s*mktemp\b([^)]*)\)|`\s*mktemp\b([^`]*)`)$/;
-const MKTEMP_LEAVES_TEMP = /[/~]|(?:^|\s)-p|--tmpdir=/; // an explicit directory or template can point anywhere
+const ASSIGNMENT = /^([A-Za-z_]\w*)(\+?)=([\s\S]*)$/;
 const MKTEMP_DIR = 'mktemp-variable';
 const DECLARERS = new Set(['export', 'declare', 'local', 'readonly', 'typeset']);
 const RECURSIVE_FLAG = /^--recursive$|^-[a-zA-Z]*[rR]/;
@@ -48,24 +50,18 @@ function isBroadRoot(project) {
  * directory is known, then every literal assignment seen so far); `assigned` holds the names assigned in the command itself.
  */
 export function newScope(cwd, project) {
-  const vars = new Map([['TMPDIR', tmpdir()], ['CLAUDE_PROJECT_DIR', project]]);
+  const vars = new Map([['TMPDIR', tmpdir()], ['CLAUDE_PROJECT_DIR', project], [MKTEMP_NAME, mktempDir()]]);
   if (cwd !== null) vars.set('PWD', cwd);
   return { vars, assigned: new Set() };
 }
 
-const expandVars = (target, vars) => target.replace(VAR_PREFIX, (whole, name) => (vars.has(name) ? vars.get(name) : whole));
+export const expandVars = (target, vars) => target.replace(VAR_PREFIX, (whole, name) => (vars.has(name) ? vars.get(name) : whole));
 const mktempDir = () => join(tmpdir(), MKTEMP_DIR);
 const isMktempValue = (value) => typeof value === 'string' && value.startsWith(mktempDir());
 
-/** The value a `NAME=value` word gives, or undefined when it cannot be known. `nextTokens` is the segment after a bare `$(`/backtick. */
-function valueOf(raw, vars, nextTokens) {
-  const mktemp = MKTEMP_VALUE.exec(raw);
-  const substitutionFollows = raw === '$' || raw === '`' || raw === '';
-  if (mktemp || (substitutionFollows && nextTokens[0] === 'mktemp')) {
-    const options = mktemp ? `${mktemp[1] ?? ''}${mktemp[2] ?? ''}` : nextTokens.slice(1).join(' ');
-    return MKTEMP_LEAVES_TEMP.test(options) ? undefined : mktempDir();
-  }
-  if (raw === '$' || raw === '`') return undefined;
+/** The value a `NAME=value` word gives, or undefined when it cannot be known (`$(...)` other than the mktemp stand-in). */
+function valueOf(raw, vars) {
+  if (raw === '$' || raw === '`') return undefined; // a bare `$(`/backtick: the value is another command's output
   const value = expandVars(expandHome(raw), vars);
   return /[$`]/.test(value) ? undefined : value;
 }
@@ -75,9 +71,8 @@ function valueOf(raw, vars, nextTokens) {
  * segment was checked. Names that become unknown are removed, so a later `$NAME` target is unknown.
  * @param {{vars: Map<string, string>, assigned: Set<string>}} scope tracked values (modified)
  * @param {string[]} tokens words of this segment
- * @param {string[]} nextTokens words of the following segment (the body of a bare `$(`)
  */
-export function trackAssignments({ vars, assigned }, tokens, nextTokens = []) {
+export function trackAssignments({ vars, assigned }, tokens) {
   const words = DECLARERS.has(tokens[0]) ? tokens.slice(1) : tokens;
   if (['unset', 'read'].includes(tokens[0])) {
     for (const name of tokens.slice(1).filter((w) => !w.startsWith('-'))) vars.delete(name);
@@ -85,9 +80,10 @@ export function trackAssignments({ vars, assigned }, tokens, nextTokens = []) {
   }
   const assignments = words.map((w) => ASSIGNMENT.exec(w));
   if (assignments.length === 0 || assignments.some((m) => m === null)) return; // a command with arguments, not assignments
-  for (const [, name, raw] of assignments) {
+  for (const [, name, append, raw] of assignments) {
     assigned.add(name);
-    const value = valueOf(raw, vars, nextTokens);
+    const added = valueOf(raw, vars);
+    const value = append && added !== undefined ? (vars.has(name) ? vars.get(name) + added : undefined) : added; // `D+=x` extends the old value
     if (value === undefined) vars.delete(name);
     else vars.set(name, value);
   }
@@ -135,6 +131,8 @@ function withoutRedirects(args) {
  */
 export function checkRm(args, { cwd, project, vars }) {
   if (!flagsOf(args).some((f) => RECURSIVE_FLAG.test(f))) return undefined;
-  const outside = withoutRedirects(args).filter((a) => !a.startsWith('-')).find((t) => !insideProject(t, cwd, project, vars));
+  const words = withoutRedirects(args).filter((a) => !a.startsWith('-'));
+  if (words.some((word) => expandBraces(word) === null)) return destructive('rm -r with a brace expansion that cannot be listed (check the targets by hand)');
+  const outside = words.flatMap(expandBraces).find((t) => !insideProject(t, cwd, project, vars));
   return outside === undefined ? undefined : destructive(`rm -r outside the project (${outside.replace(QUOTED_MARK, '')})`);
 }

@@ -24,16 +24,23 @@
 // Position independence: after the command word, every later word that is a dangerous verb (rm, git, dd, mkfs, gh, publish, ssh,
 // psql, shells ...) is checked as a command too, so unknown wrappers (`ionice -c3 rm -rf /x`) need no list (lib/dangerous-scan.mjs);
 // the scan is skipped after echo/grep/man/git/docker/ssh and similar. `$'\x72m'` ANSI-C words are decoded (lib/ansi-c.mjs); `eval` of a
-// variable or substitution asks (lib/eval-check.mjs; `eval "$(ssh-agent -s)"` style tool init is silent); `$RM -rf x` asks.
+// variable or substitution asks (lib/eval-check.mjs; `eval "$(ssh-agent -s)"` style tool init is silent); a variable command word asks.
 // Handled: `& && || ; |` and newlines as separators; `( ) {` groups, `$(...)` and backticks (also inside double
 // quotes) re-checked as commands; leading `! if then do else elif while until`; command matched by basename
 // (`/bin/rm`, `\rm`) through wrappers command/builtin/env/sudo/doas/nohup/xargs/exec/nice/timeout/stdbuf/time/sshpass;
 // `bash -c '...'` is decided recursively.
-// Known limits (not detected): aliases, a variable assigned from another command's output, interpreter code (`node -e`, `python -c`), brace
-// expansion, an unquoted backtick/`$()` used as an rm target, stdin to shells (`| bash`, `bash <<<`, heredoc to bash),
-// wrappers that take the command as ONE string (`script -c`, `env -S`, busybox, fish/pwsh -c), rimraf, `find -delete`, `xargs`
-// paths read from stdin, `$(...)` inside heredoc bodies, `cd` scoping in subshells (treated as global: extra denies
-// only), an ssh alias that hides a production host, and the PowerShell tool (the hook matcher covers Bash only).
+// Two parsers, one rule set: the regex tokenizer (lib/shell-words.mjs) and an independent character-level lexer (lib/shell-lexer.mjs: quotes,
+// comments, `$((..))`, `$(...)` inside double quotes, heredocs wherever they really start) both feed reasonsOf; `decide` merges them, and a
+// reason only the lexer found ends with "(matched in raw text)". So `out="$(git push origin)"` and `git commit -m "see <<EOF"` + `git push -f`
+// are caught whatever the quoting. Commands that hide what runs always ask (lib/shell-hazards.mjs): `| bash`, `bash <<EOF`, `sh -s`, a
+// variable/`$(...)`/backtick as command word (`$X`; `$EDITOR` and an earlier one-word assignment are fine), `env -S`, `su -c`;
+// `pnpm exec|dlx`, `yarn exec`, `npx` ... scan what they run (`npm run`/`pnpm run` do not). Brace expansion in rm paths is expanded
+// (lib/braces.mjs), or asks when it cannot be listed. `git -c alias.*`, `gh api -X PUT|POST|PATCH|DELETE` on repo/merge/release paths,
+// `gh repo delete`, `diskutil erase*`, `newfs_*`, `> /dev/disk*` ask. Nesting deeper than MAX_NESTING asks.
+// Known limits (not detected): shell aliases and functions defined elsewhere, a variable assigned from another command's output, interpreter
+// code (`node -e`, `python -c`), wrappers that take the command as ONE string (`script -c`, busybox, fish/pwsh -c), rimraf, `find -delete`,
+// `xargs` paths read from stdin, `cd` scoping in subshells (treated as global: extra asks only), an ssh alias that hides a production host,
+// and the PowerShell tool (the hook matcher covers Bash only).
 import { resolve } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -45,10 +52,11 @@ import { editLogPath, recordEdit } from './lib/edit-log.mjs';
 import { checkEval } from './lib/eval-check.mjs';
 import { outwardAsk } from './lib/outward.mjs';
 import { readProdHosts, remoteAsk } from './lib/remote.mjs';
-import { checkRm, expandHome, isUnder, nativePath, newScope, sameFile, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
+import { checkRm, expandHome, expandVars, isUnder, nativePath, newScope, sameFile, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
 import { findLiteralSecret } from './lib/secrets.mjs';
+import { shellHazards } from './lib/shell-hazards.mjs';
 import { askOwner } from './lib/timed-ask.mjs';
-import { GIT_TOPLEVEL_WORD, segments, tokenize } from './lib/shell-words.mjs';
+import { GIT_TOPLEVEL_WORD, lex, segments, tokenize } from './lib/shell-words.mjs';
 import { DESTRUCTIVE_PREFIX } from './lib/verdict.mjs';
 
 export { segments };
@@ -71,11 +79,11 @@ function expandCdTarget(target, cwd, project) {
 }
 
 /** Working directory after `cd`/`pushd`/`popd`: literal targets are resolved, anything else makes it unknown (null). */
-function nextCwd(cmd, args, cwd, project) {
+function nextCwd(cmd, args, cwd, project, vars) {
   if (cmd === 'popd') return null;
   if (cmd !== 'cd' && cmd !== 'pushd') return cwd;
   if (cwd === null || args.length !== 1) return null;
-  const target = expandCdTarget(args[0], cwd, project);
+  const target = expandVars(expandCdTarget(args[0], cwd, project), vars); // `cd "$D"` after `D=$(mktemp -d)` is the temp dir
   return UNKNOWN_CD_TARGET.test(target) ? null : resolve(cwd, nativePath(target));
 }
 
@@ -110,6 +118,8 @@ function checkSimple(cmd, args, assigns, env) {
   ].filter((reason) => reason !== undefined);
 }
 
+const MAX_NESTING = 24; // bash -c / eval / $(...) levels checked; deeper asks (keeps a hostile command from overflowing the stack)
+
 /** @returns {string[]} why this one command needs an owner answer (empty when it does not) */
 function checkCommand({ cmd, args, assigns }, env, nextWords) {
   const script = SHELLS.has(cmd) ? shellScript(args) : undefined;
@@ -123,25 +133,27 @@ function checkCommand({ cmd, args, assigns }, env, nextWords) {
  * scanned for a dangerous command behind an unknown wrapper), then nested bodies. Variables assigned earlier in the line are
  * tracked in order, the last assignment wins.
  */
-function reasonsOf(command, { cwd, project, prodHosts }) {
+function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth = 0 }) {
+  if (depth > MAX_NESTING) return ['commands are nested too deeply to check (bash -c / eval / $( ) inside each other); write them out flat'];
   const reasons = [];
   const secret = findLiteralSecret(command);
   if (secret !== undefined) reasons.push(`the command contains a literal password/token (${secret}); prefer an env var or a file the tool reads`);
   const scope = newScope(cwd, project);
-  const { segs, nested } = tokenize(command);
+  const { segs, nested } = parse(command);
   let dir = cwd;
   segs.forEach((seg, index) => {
     const words = substituteKnownWords(seg, scope);
     const parsed = commandOf(words);
-    const env = { cwd: dir, project, vars: scope.vars, prodHosts };
+    const env = { cwd: dir, project, vars: scope.vars, prodHosts, parse, depth: depth + 1 };
+    reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript }));
     if (parsed.cmd !== undefined) {
       reasons.push(...checkCommand(parsed, env, segs[index + 1] ?? []));
       reasons.push(...scanWrapped(words, parsed, (cmd, args) => checkCommand({ cmd, args, assigns: [] }, env, [])));
-      dir = nextCwd(parsed.cmd, parsed.args, dir, project);
+      dir = nextCwd(parsed.cmd, parsed.args, dir, project, scope.vars);
     }
-    trackAssignments(scope, seg, segs[index + 1] ?? []);
+    trackAssignments(scope, seg);
   });
-  for (const inner of nested) reasons.push(...reasonsOf(inner, { cwd, project, prodHosts }));
+  for (const inner of nested) reasons.push(...reasonsOf(inner, { cwd, project, prodHosts, parse, depth: depth + 1 }));
   return reasons;
 }
 
@@ -154,7 +166,12 @@ function reasonsOf(command, { cwd, project, prodHosts }) {
  * @returns {{allow: true} | {allow: false, ask: true, reason: string}} reason joins every rule hit, destructive first
  */
 export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts = [] } = {}) {
-  const reasons = [...new Set(reasonsOf(command, { cwd, project, prodHosts }))];
+  const ctx = { cwd, project, prodHosts };
+  const primary = reasonsOf(command, ctx);
+  // backstop: a second, independent parse (the character-level lexer) feeds the same rules; what only it finds is marked
+  const known = new Set(primary);
+  const backstop = reasonsOf(command, { ...ctx, parse: lex }).filter((reason) => !known.has(reason)).map((reason) => `${reason} (matched in raw text)`);
+  const reasons = [...new Set([...primary, ...backstop])];
   if (reasons.length === 0) return allow();
   reasons.sort((x, y) => Number(y.startsWith(DESTRUCTIVE_PREFIX)) - Number(x.startsWith(DESTRUCTIVE_PREFIX)));
   return ask(reasons.join('; '));

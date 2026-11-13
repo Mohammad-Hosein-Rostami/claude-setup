@@ -1,0 +1,54 @@
+// Rules for commands whose real command is hidden from the guard: it runs from a variable, from stdin, or from one string.
+// Exports: shellHazards({seg, raw, parsed, shellScript}) -> string[] ask reasons. Pure, no I/O.
+// - the command word is a variable or `$(...)` (`$X`, `X="git push"; $X`): the guard cannot see what runs. Names that conventionally hold
+//   an editor, pager or compiler (`$EDITOR file`) are fine, and so is a variable assigned earlier in the line to one plain word.
+// - a shell reads its commands from stdin: `curl x | bash`, `bash <<EOF`, `bash < file`, `sh -s`.
+// - `env -S "cmd"` and `su -c "cmd"` take the command as ONE string.
+// A false positive only costs a dialog, so each rule is as narrow as the bypass it closes.
+import { commandName } from './command-of.mjs';
+
+const SHELLS = new Set(['bash', 'sh', 'zsh', 'ksh', 'dash']);
+const VARIABLE_WORD = /^\$(?:\{(\w+)[^}]*\}|(\w+))?$/; // `$X`, `${X}`, `${X:-default}`, or a bare `$` (the start of `$(...)` in a command position)
+const CONVENTIONAL_COMMAND_VARS = new Set(['EDITOR', 'VISUAL', 'PAGER', 'BROWSER', 'SHELL', 'CC', 'CXX', 'MAKE', 'GIT_EDITOR']);
+const STDIN_REDIRECT = /^\d*<(?!\()/; // `<file`, `<<EOF`, `<<<text`
+const STDIN_FLAG = /^-[a-zA-Z]*s[a-zA-Z]*$/;
+const ENV_SPLIT_STRING = /^--split-string|^-[a-zA-Z]*S/;
+const SU_COMMAND_FLAG = /^--command|^-[a-zA-Z]*c/;
+
+function hiddenCommandWord(raw, parsed) {
+  const variable = VARIABLE_WORD.exec(raw.cmd ?? '');
+  const resolved = parsed.cmd !== raw.cmd && !/[\s$]/.test(parsed.cmd ?? '');
+  const conventional = CONVENTIONAL_COMMAND_VARS.has(variable?.[1] ?? variable?.[2]);
+  if (variable && !conventional && !resolved) return 'the command word is a variable or substitution, so what runs is hidden; write the command out';
+  if (/\s/.test(parsed.cmd ?? '')) return 'a variable holding several words is run as the command; write the command out';
+  return undefined;
+}
+
+/** A positional word that is not the target of a redirect (`bash < file` has no script; `bash run.sh <<EOF` does, and the heredoc is its input). */
+function hasScriptFile(args) {
+  return args.some((a, i) => !a.startsWith('-') && !STDIN_REDIRECT.test(a) && !(i > 0 && /^\d*<<?<?$/.test(args[i - 1])));
+}
+
+function shellFromStdin(seg, parsed, shellScript) {
+  if (!SHELLS.has(parsed.cmd) || shellScript(parsed.args) !== undefined) return undefined;
+  const scriptFile = hasScriptFile(parsed.args);
+  const stdin = parsed.args.some((a) => STDIN_FLAG.test(a)) || (!scriptFile && (parsed.args.some((a) => STDIN_REDIRECT.test(a)) || seg.piped === true));
+  return stdin ? `${parsed.cmd} reads its commands from stdin (pipe, heredoc, -s), so what runs is hidden; write the commands out or run a script file` : undefined;
+}
+
+function oneStringCommand(seg, raw, parsed) {
+  const wrappers = seg.slice(0, raw.at);
+  const envAt = wrappers.findIndex((w) => commandName(w) === 'env');
+  if (envAt !== -1 && wrappers.slice(envAt + 1).some((w) => ENV_SPLIT_STRING.test(w))) return 'env -S runs a command given as one string; write the command out';
+  if (parsed.cmd === 'su' && parsed.args.some((a) => SU_COMMAND_FLAG.test(a))) return 'su -c runs a command string as another user; confirm it';
+  return undefined;
+}
+
+/**
+ * @param {{seg: string[], raw: {cmd?: string, at: number}, parsed: {cmd?: string, args: string[]}, shellScript: (args: string[]) => string | undefined}} input
+ *   seg: the segment's words as written (`.piped` when a `|` fed it); raw: commandOf(seg); parsed: commandOf of the words after variable substitution
+ * @returns {string[]} ask reasons
+ */
+export function shellHazards({ seg, raw, parsed, shellScript }) {
+  return [hiddenCommandWord(raw, parsed), shellFromStdin(seg, parsed, shellScript), oneStringCommand(seg, raw, parsed)].filter((reason) => reason !== undefined);
+}
