@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { hookEnv } from './hook-env.mjs';
 import { mkdtempSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -54,20 +55,20 @@ const runHook = (command, env, input = {}) =>
   spawnSync(process.execPath, [HOOK], {
     input: JSON.stringify({ cwd: PROJECT, session_id: 'writes-test', tool_input: { command }, ...input }),
     encoding: 'utf8',
-    env: { ...process.env, CLAUDE_PROJECT_DIR: PROJECT, ...env },
+    env: hookEnv({ CLAUDE_PROJECT_DIR: PROJECT, ...env }),
   });
 
-test('hook contract: an allowed code write is recorded in the agent edit log; reads and blocked commands are not', () => {
+test('hook contract: an allowed code write is recorded in the agent edit log; reads are not, and a command the owner is asked about is still logged', () => {
   const temp = mkdtempSync(join(tmpdir(), 'bash-writes-'));
   const env = { TMPDIR: temp, TMP: temp, TEMP: temp };
   assert.equal(runHook('sed -i s/a/b/ src/a.ts', env).status, 0);
   assert.equal(runHook('cat src/read-only.ts', env).status, 0);
-  assert.equal(runHook('git push --force && sed -i s/a/b/ src/blocked.ts', env).status, 2);
+  assert.equal(runHook('sed -i s/a/b/ src/asked.ts && git push --force', env).status, 0);
   assert.equal(runHook('sed -i s/a/b/ src/sub.ts', env, { agent_id: 'agent-1' }).status, 0);
   const saved = process.env.TMPDIR;
   process.env.TMPDIR = temp;
   try {
-    assert.deepEqual(readEdits(editLogPath('writes-test', undefined)), [at('src/a.ts')]);
+    assert.deepEqual(readEdits(editLogPath('writes-test', undefined)), [at('src/a.ts'), at('src/asked.ts')]);
     assert.deepEqual(readEdits(editLogPath('writes-test', 'agent-1')), [at('src/sub.ts')]);
   } finally {
     if (saved === undefined) delete process.env.TMPDIR;
@@ -96,7 +97,7 @@ test('P2a: rm -r of a mktemp variable, $TMPDIR and project paths passes', () => 
   for (const command of ALLOWED_RM) assert.deepEqual(decide(command, ctx), { allow: true }, command);
 });
 
-test('P2a: other variables, escaping the temp dir and real outside deletes are still denied', () => {
+test('P2a: other variables, escaping the temp dir and real outside deletes still ask', () => {
   for (const command of DENIED_RM) assert.equal(decide(command, ctx).allow, false, command);
   assert.equal(decide('rm -rf "$PWD/dist"', { cwd: null, project: PROJECT }).allow, false, 'unknown cwd: $PWD is unknown');
   assert.equal(decide('rm -rf "$CLAUDE_PROJECT_DIR/dist"', { cwd: homedir(), project: homedir() }).allow, false, 'a home project is broad');
@@ -109,7 +110,7 @@ test('P2c: reading .env files, templates and lockfiles is never blocked', () => 
   }
 });
 
-test('lockfile hand-edits stay blocked (write guard, not a read rule)', () => {
-  assert.equal(decide('sed -i s/a/b/ pnpm-lock.yaml', ctx).allow, false);
-  assert.equal(decide('echo x > yarn.lock', ctx).allow, false);
+test('lockfile hand-edits still ask (write guard, not a read rule)', () => {
+  assert.equal(decide('sed -i s/a/b/ pnpm-lock.yaml', ctx).ask, true);
+  assert.equal(decide('echo x > yarn.lock', ctx).ask, true);
 });

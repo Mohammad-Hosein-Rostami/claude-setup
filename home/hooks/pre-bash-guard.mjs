@@ -1,21 +1,25 @@
 // PreToolUse(Bash) guard. Reads the hook JSON from stdin, never evaluates the command.
-// Exports: decide(command, {cwd, project, prodHosts}) -> {allow} | {allow:false, reason} | {allow:false, ask:true, reason};
+// Exports: decide(command, {cwd, project, prodHosts}) -> {allow: true} | {allow: false, ask: true, reason};
 // segments(command) -> string[][]. Parsing lives in lib/shell-words.mjs and lib/command-of.mjs.
-// Three outcomes. DENY (exit 2, reason on stderr): git --no-verify (and unique prefixes), `git -c core.hooksPath`,
-// `HUSKY=0 git`, force push (incl. -fu clusters and +refspec), `push --mirror`, remote branch delete; rm -r outside the
-// project (temp dirs allowed, `cd` tracked within one command line, `cd` to `~`, `$HOME` and `$(git rev-parse
-// --show-toplevel)` (from inside the project only) is resolved, as are leading `~`/`$HOME`/`$TMPDIR`/`$CLAUDE_PROJECT_DIR`
-// and `VAR=$(mktemp ...)` variables in rm targets; $HOME, `/` and a drive root never count as the project); hand-editing
-// lockfiles; a literal secret in the command (lib/secrets.mjs; the message never repeats it).
-// ASK (exit 0 + permissionDecision "ask": the user is prompted even in bypassPermissions mode, verified on CLI 2.1.323):
-// `git push` (not --dry-run), `gh release *`, `gh pr merge`, package publish (lib/outward.mjs), and ssh/scp/rsync/psql/mysql
-// that write to a production host (lib/remote.mjs; list in ~/.claude/private/prod-hosts). A deny anywhere wins over an ask.
+// Nothing is hard-denied. Every rule hit is an ASK, and the hook answers it with a timed native dialog (lib/timed-ask.mjs:
+// Allow is the default, no answer in 180 s (CLAUDE_ASK_TIMEOUT_S) goes ahead as Allow, only a click on Deny denies); with no
+// GUI (ssh, CI, no display) or a failing dialog it falls back to the CLI's own "ask" prompt, which also appears in
+// bypassPermissions mode (verified on CLI 2.1.323). Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
+// Rules. DESTRUCTIVE (the dialog says "DESTRUCTIVE: ..."): force push (incl. -fu clusters and +refspec), `push --mirror`,
+// remote branch delete, rm -r outside the project (temp dirs allowed, `cd` tracked within one command line, `cd` to `~`,
+// `$HOME` and `$(git rev-parse --show-toplevel)` (from inside the project only) is resolved, as are leading
+// `~`/`$HOME`/`$TMPDIR`/`$CLAUDE_PROJECT_DIR` and `VAR=$(mktemp ...)` variables in rm targets; $HOME, `/` and a drive root
+// never count as the project), disk wipes (dd of=/dev/x, mkfs, wipefs, shred/blkdiscard on a device). Plain ASK: git
+// --no-verify (and unique prefixes), `git -c core.hooksPath`, `HUSKY=0 git`, hand-editing lockfiles, a literal secret in the
+// command (lib/secrets.mjs; the text never repeats it), `git push` (not --dry-run), `gh release *`, `gh pr merge`, package
+// publish (lib/outward.mjs), and ssh/scp/rsync/psql/mysql that write to a production host (lib/remote.mjs; list in
+// ~/.claude/private/prod-hosts).
 // ALLOW + LOG: `sed -i`, heredoc and inline-interpreter writes to code files are allowed; their paths go to the edit log
 // so the Stop typecheck gate covers them (lib/code-writes.mjs, lib/edit-log.mjs).
 // Everything else (and any input it cannot parse) is allowed. Reading files, `.env` included, is never blocked.
 //
 // This is a safety net against model mistakes, not a sandbox. Invariants: it never executes the command, it fails open on
-// its own errors (except the secret deny), and it prefers a missed block over a false block of a normal dev command.
+// its own errors, and it prefers a missed block over a false block of a normal dev command.
 // Handled: `& && || ; |` and newlines as separators; `( ) {` groups, `$(...)` and backticks (also inside double
 // quotes) re-checked as commands; leading `! if then do else elif while until`; command matched by basename
 // (`/bin/rm`, `\rm`) through wrappers command/builtin/env/sudo/doas/nohup/xargs/exec/nice/timeout/stdbuf/time/sshpass;
@@ -35,6 +39,7 @@ import { editLogPath, recordEdit } from './lib/edit-log.mjs';
 import { outwardAsk, pushAsk } from './lib/outward.mjs';
 import { readProdHosts, remoteAsk } from './lib/remote.mjs';
 import { findLiteralSecret } from './lib/secrets.mjs';
+import { askOwner } from './lib/timed-ask.mjs';
 import { GIT_TOPLEVEL_WORD, QUOTED_MARK, basenameOf, flagsOf, segments, tokenize } from './lib/shell-words.mjs';
 
 export { segments };
@@ -52,14 +57,15 @@ const UNKNOWN_CD_TARGET = /^-|[~$`*?[\]{}]/;
 const HOME_PREFIX = /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/;
 
 const allow = () => ({ allow: true });
-const deny = (reason) => ({ allow: false, reason });
-// an ask is a non-allow that the hook turns into a prompt instead of a block
+// Nothing is hard-denied: every rule is an ask, and the hook turns it into a timed dialog (Allow by default, auto-allow
+// after 3 minutes). Only a click on Deny denies. A destructive rule says so, so its dialog stands out.
 const ask = (reason) => ({ allow: false, ask: true, reason });
+const destructive = (what) => ask(`${DESTRUCTIVE_PREFIX}${what}`);
 const askOrAllow = (reason) => (reason === undefined ? allow() : ask(reason));
 
 const isLockfile = (p) => LOCKFILES.has(basenameOf(p));
 
-const ASK_OWNER = 'ask the owner first';
+const DESTRUCTIVE_PREFIX = 'DESTRUCTIVE: ';
 const NO_VERIFY = '--no-verify';
 const MIN_NO_VERIFY_PREFIX = 8; // `--no-ver`: git accepts any unique prefix of a long option
 const isHooksPathConfig = (value = '') => /^core\.hookspath=/i.test(value);
@@ -76,16 +82,16 @@ function usesHooksPathOverride(words) {
 
 function checkGitPush(rest, flags) {
   // `-f`, `-fu`, `-uf`; `--force-with-lease` does not match the single-dash cluster and stays allowed
-  if (flags.some((f) => f === '--force' || /^-[a-zA-Z]*f[a-zA-Z]*$/.test(f))) return deny('force push is blocked; use --force-with-lease after confirming with the owner');
-  if (rest.some((a) => /^\+[^\s]/.test(a))) return deny('a +refspec push is a force push; use --force-with-lease after confirming with the owner');
-  if (flags.includes('--mirror')) return deny(`git push --mirror overwrites the remote; ${ASK_OWNER}`);
+  if (flags.some((f) => f === '--force' || /^-[a-zA-Z]*f[a-zA-Z]*$/.test(f))) return destructive('force push overwrites remote history (--force-with-lease is safer)');
+  if (rest.some((a) => /^\+[^\s]/.test(a))) return destructive('a +refspec push is a force push and overwrites remote history');
+  if (flags.includes('--mirror')) return destructive('git push --mirror overwrites the remote');
   const deletes = flags.includes('--delete') || flags.some((f) => /^-[a-zA-Z]*d[a-zA-Z]*$/.test(f)) || rest.some((a) => /^:[^\s]/.test(a));
-  return deletes ? deny(`deleting a remote branch or tag is blocked; ${ASK_OWNER}`) : askOrAllow(pushAsk(flags));
+  return deletes ? destructive('deleting a remote branch or tag') : askOrAllow(pushAsk(flags));
 }
 
 function checkGit(args, assigns = []) {
-  if (assigns.includes('HUSKY=0')) return deny(`HUSKY=0 skips the git hooks; ${ASK_OWNER}`);
-  if (usesHooksPathOverride(args)) return deny(`git -c core.hooksPath bypasses the hooks; ${ASK_OWNER}`);
+  if (assigns.includes('HUSKY=0')) return ask('HUSKY=0 skips the git hooks');
+  if (usesHooksPathOverride(args)) return ask('git -c core.hooksPath bypasses the git hooks');
   const words = [...args];
   while (words[0]?.startsWith('-')) words.splice(0, GIT_VALUE_OPTIONS.has(words[0]) ? 2 : 1); // `git -C dir commit -n`
   const [sub, ...rest] = words;
@@ -93,7 +99,7 @@ function checkGit(args, assigns = []) {
   // -n is the short form of --no-verify for commit (also inside clusters such as -nm)
   const shortNoVerify = sub === 'commit' && flags.some((f) => /^-[a-zA-Z]*n[a-zA-Z]*$/.test(f));
   const prefixNoVerify = flags.some((f) => f.length >= MIN_NO_VERIFY_PREFIX && NO_VERIFY.startsWith(f.split('=')[0]));
-  if (prefixNoVerify || shortNoVerify) return deny(`git ${NO_VERIFY} skips the hooks; fix the hook failure instead (${ASK_OWNER})`);
+  if (prefixNoVerify || shortNoVerify) return ask(`git ${NO_VERIFY} skips the git hooks`);
   return sub === 'push' ? checkGitPush(rest, flags) : allow();
 }
 
@@ -158,7 +164,7 @@ function checkRm(args, { cwd, project, vars }) {
   const recursive = flagsOf(args).some((f) => /^--recursive$|^-[a-zA-Z]*[rR]/.test(f));
   if (!recursive) return allow();
   const outside = withoutRedirects(args).filter((a) => !a.startsWith('-')).find((t) => !insideProject(t, cwd, project, vars));
-  return outside === undefined ? allow() : deny(`rm -r outside the project is blocked (${outside.replace(QUOTED_MARK, '')})`);
+  return outside === undefined ? allow() : destructive(`rm -r outside the project (${outside.replace(QUOTED_MARK, '')})`);
 }
 
 function redirectTargets(tokens) {
@@ -176,7 +182,7 @@ function checkLockfileEdit(cmd, args) {
   const writes = FILE_WRITERS.has(cmd) || inPlace;
   const written = cmd === 'cp' ? args.filter((a) => !a.startsWith('-')).slice(-1) : args;
   const touched = [...(writes ? written : []), ...redirectTargets(args)].find(isLockfile);
-  return touched === undefined ? allow() : deny(`${basenameOf(touched)} is generated; run the package manager instead of editing it`);
+  return touched === undefined ? allow() : ask(`${basenameOf(touched)} is generated; the package manager should write it, not a hand edit`);
 }
 
 /** `~`, `~/x`, `$HOME`, `${HOME}` -> the home directory. Other words are unchanged. */
@@ -199,53 +205,61 @@ function nextCwd(cmd, args, cwd, project) {
   return UNKNOWN_CD_TARGET.test(target) ? null : resolve(cwd, nativePath(target));
 }
 
-function checkCommand({ cmd, args, assigns }, env) {
-  if (SHELLS.has(cmd) && /^-[a-zA-Z]*c$/.test(args[0] ?? '') && args[1]) return decide(args[1], env);
-  const checks = [
-    () => (cmd === 'git' ? checkGit(args, assigns) : allow()),
-    () => (cmd === 'rm' ? checkRm(args, env) : allow()),
-    () => checkLockfileEdit(cmd, args),
-    () => askOrAllow(outwardAsk(cmd, args) ?? remoteAsk(cmd, args, assigns, env.prodHosts)),
-  ];
-  let asking;
-  for (const check of checks) {
-    const r = check();
-    if (r.ask) asking ??= r;
-    else if (!r.allow) return r;
-  }
-  return asking ?? allow();
+const DISK_DEVICE = /^\/dev\/(?!null$|zero$|tty|std|fd\/|pts\/)/;
+const MKFS_COMMAND = /^mkfs(\.\w+)?$/;
+
+/** Writing to a raw device or making a filesystem destroys its contents: dd of=/dev/x, mkfs, wipefs, shred or blkdiscard on a device. */
+function checkDiskWipe(cmd, args) {
+  const device = (word) => DISK_DEVICE.test(word);
+  const wipes = MKFS_COMMAND.test(cmd) || cmd === 'wipefs' || cmd === 'blkdiscard'
+    || (cmd === 'dd' && args.some((a) => a.startsWith('of=') && device(a.slice(3))))
+    || (cmd === 'shred' && args.some(device));
+  return wipes ? destructive(`${cmd} can wipe a disk or device`) : allow();
 }
 
-/**
- * Pure decision for one Bash command line. A deny anywhere in the line wins over an ask.
- * @param {string} command raw command text
- * @param {{cwd?: string|null, project?: string, prodHosts?: string[]}} ctx absolute paths (cwd null means "unknown
- *   directory") and the private production-host list (see lib/remote.mjs)
- * @returns {{allow: true} | {allow: false, reason: string} | {allow: false, ask: true, reason: string}}
- */
-export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts = [] } = {}) {
+/** @returns {string[]} why this one command needs an owner answer (empty when it does not) */
+function checkCommand({ cmd, args, assigns }, env) {
+  if (SHELLS.has(cmd) && /^-[a-zA-Z]*c$/.test(args[0] ?? '') && args[1]) return reasonsOf(args[1], env);
+  return [
+    cmd === 'git' ? checkGit(args, assigns) : allow(),
+    cmd === 'rm' ? checkRm(args, env) : allow(),
+    checkDiskWipe(cmd, args),
+    checkLockfileEdit(cmd, args),
+    askOrAllow(outwardAsk(cmd, args) ?? remoteAsk(cmd, args, assigns, env.prodHosts)),
+  ].filter((r) => r.ask).map((r) => r.reason);
+}
+
+/** Every reason a command line needs an owner answer: a literal secret, then each segment, then nested bodies. */
+function reasonsOf(command, { cwd, project, prodHosts }) {
+  const reasons = [];
   const secret = findLiteralSecret(command);
-  if (secret !== undefined) return deny(`the command contains ${secret}; keep secrets out of commands (use an env var or a file the tool reads) and ask the owner`);
+  if (secret !== undefined) reasons.push(`the command contains a literal password/token (${secret}); prefer an env var or a file the tool reads`);
   const vars = knownVars(command, cwd, project);
   const { segs, nested } = tokenize(command);
   let dir = cwd;
-  let asking;
-  const consider = (r) => {
-    if (r.ask) asking ??= r;
-    return r.ask || r.allow ? undefined : r;
-  };
   for (const seg of segs) {
     const parsed = commandOf(seg);
     if (parsed.cmd === undefined) continue;
-    const denied = consider(checkCommand(parsed, { cwd: dir, project, vars, prodHosts }));
-    if (denied) return denied;
+    reasons.push(...checkCommand(parsed, { cwd: dir, project, vars, prodHosts }));
     dir = nextCwd(parsed.cmd, parsed.args, dir, project);
   }
-  for (const inner of nested) {
-    const denied = consider(decide(inner, { cwd, project, prodHosts }));
-    if (denied) return denied;
-  }
-  return asking ?? allow();
+  for (const inner of nested) reasons.push(...reasonsOf(inner, { cwd, project, prodHosts }));
+  return reasons;
+}
+
+/**
+ * Pure decision for one Bash command line. Never a hard deny: a rule hit is an ask (the hook shows a timed dialog), and
+ * a destructive one (force push, rm outside the project, disk wipe) leads the reason.
+ * @param {string} command raw command text
+ * @param {{cwd?: string|null, project?: string, prodHosts?: string[]}} ctx absolute paths (cwd null means "unknown
+ *   directory") and the private production-host list (see lib/remote.mjs)
+ * @returns {{allow: true} | {allow: false, ask: true, reason: string}} reason joins every rule hit, destructive first
+ */
+export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts = [] } = {}) {
+  const reasons = [...new Set(reasonsOf(command, { cwd, project, prodHosts }))];
+  if (reasons.length === 0) return allow();
+  reasons.sort((x, y) => Number(y.startsWith(DESTRUCTIVE_PREFIX)) - Number(x.startsWith(DESTRUCTIVE_PREFIX)));
+  return ask(reasons.join('; '));
 }
 
 /** Code files this command may rewrite go to the edit log, so the Stop typecheck gate covers them. Never throws. */
@@ -279,16 +293,12 @@ async function main() {
   try {
     r = decide(command, { cwd, project, prodHosts: readProdHosts() });
   } catch {
-    r = allow(); // fail open: the secret scan is the first step of decide(), so an error here means it found none
+    return; // fail open: an error in the rules must not stop a command
   }
   if (r.ask) {
-    process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: r.reason } })}\n`);
-  } else if (!r.allow) {
-    process.stderr.write(`Blocked by pre-bash-guard: ${r.reason}\n`);
-    process.exitCode = 2;
-  } else {
-    logCodeWrites(command, input, cwd);
+    process.stdout.write(askOwner({ hook: 'pre-bash-guard', tool: 'Bash', reason: r.reason, command, cwd, sessionId: input.session_id, agentId: input.agent_id }));
   }
+  logCodeWrites(command, input, cwd); // harmless when the owner denied: the typecheck gate only reads files that exist
 }
 
 // ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.

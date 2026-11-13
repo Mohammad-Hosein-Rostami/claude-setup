@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { hookEnv } from './hook-env.mjs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -138,7 +139,7 @@ test('F1: segments mark quoted redirect lookalikes and split attached operators'
   assert.deepEqual(segments('cat<.env'), [['cat', '<.env']]);
   assert.deepEqual(segments('cat 2>err.log a>>b'), [['cat', '2>err.log', 'a', '>>b']]);
   assert.deepEqual(segments('echo "x">"y"'), [['echo', 'x', '>y']]);
-  assert.match(decide('rm -rf ">" /', ctx).reason, /^rm -r outside the project is blocked \(\/\)$/);
+  assert.match(decide('rm -rf ">" /', ctx).reason, /^DESTRUCTIVE: rm -r outside the project \(\/\)$/);
 });
 
 test('P1: segments keep >| together and the git top-level becomes one word', () => {
@@ -146,9 +147,11 @@ test('P1: segments keep >| together and the git top-level becomes one word', () 
   assert.deepEqual(segments('cd $(git rev-parse --show-toplevel) && ls'), [['cd', '$__GIT_TOPLEVEL__'], ['ls']]);
 });
 
-test('S4: the deny reason tells the model to ask the owner', () => {
-  for (const command of ['HUSKY=0 git commit', 'git -c core.hooksPath=x commit', 'git push --mirror', 'git push -d origin x']) {
-    assert.match(decide(command, ctx).reason, /ask the owner first/, command);
+test('S4: git bypasses ask with a plain reason, history rewrites ask with a DESTRUCTIVE one', () => {
+  for (const [command, reason] of [['HUSKY=0 git commit', /^HUSKY=0 skips/], ['git -c core.hooksPath=x commit', /^git -c core\.hooksPath/], ['git push --mirror', /^DESTRUCTIVE: git push --mirror/], ['git push -d origin x', /^DESTRUCTIVE: deleting a remote/], ['git push -f', /^DESTRUCTIVE: force push/]]) {
+    const r = decide(command, ctx);
+    assert.equal(r.ask, true, command);
+    assert.match(r.reason, reason, command);
   }
   assert.match(decide('git commit --no-veri', ctx).reason, /--no-verify/);
 });
@@ -205,7 +208,7 @@ test('segments keeps redirections together and drops heredoc bodies', () => {
 });
 
 const runHook = (input, env = {}) =>
-  spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: PROJECT, ...env } });
+  spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: hookEnv({ CLAUDE_PROJECT_DIR: PROJECT, ...env }) });
 
 test('hook contract: bad JSON, empty stdin and missing command exit 0 silently', () => {
   for (const input of ['not json', '', '{}', JSON.stringify({ tool_input: {} }), JSON.stringify({ tool_input: { command: 5 } })]) {
@@ -215,12 +218,15 @@ test('hook contract: bad JSON, empty stdin and missing command exit 0 silently',
   }
 });
 
-test('hook contract: allowed command exits 0, blocked command exits 2 with the reason on stderr', () => {
+test('hook contract: an allowed command is silent; a rule hit asks (no GUI: the native ask) and never exits 2', () => {
   const run = (command) => runHook(JSON.stringify({ cwd: PROJECT, tool_input: { command } }));
   const ok = run('pnpm test && pnpm lint');
   assert.equal(ok.status, 0);
   assert.equal(ok.stderr, '');
-  const blocked = run('git push -fu origin main');
-  assert.equal(blocked.status, 2);
-  assert.match(blocked.stderr, /^Blocked by pre-bash-guard: force push/);
+  const hit = run('git push -fu origin main');
+  assert.equal(hit.status, 0);
+  assert.equal(hit.stderr, '');
+  const out = JSON.parse(hit.stdout).hookSpecificOutput;
+  assert.equal(out.permissionDecision, 'ask');
+  assert.match(out.permissionDecisionReason, /^DESTRUCTIVE: force push/);
 });

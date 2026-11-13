@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { hookEnv } from './hook-env.mjs';
 import { fileURLToPath } from 'node:url';
 import { decideArtifact } from '../home/hooks/artifact-ask.mjs';
 
@@ -21,7 +22,7 @@ test('decideArtifact passes read, list, open, pin, unpin, quickstart and bad inp
   for (const input of [null, undefined, 'publish', 5]) assert.equal(decideArtifact(input), undefined, String(input));
 });
 
-const run = (input) => spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8' });
+const run = (input) => spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: hookEnv() });
 
 test('hook contract: publish prints an ask decision and exits 0; read is silent; bad JSON is silent', () => {
   const ask = run(JSON.stringify({ tool_name: 'Artifact', tool_input: { action: 'publish', file_path: 'a.html' } }));

@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { hookEnv } from './hook-env.mjs';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -83,12 +84,15 @@ test('decide allows reads, rehearsals and non-production hosts', () => {
   for (const command of ALLOWED) assert.deepEqual(decide(command, ctx), { allow: true }, command);
 });
 
-test('a deny anywhere in the line wins over an ask', () => {
-  for (const command of ['git push && git push --force', 'ssh prodhost "rm x" && rm -rf ~/x', 'git push; git commit --no-verify', 'npm publish && git push -f']) {
+test('nothing hard-denies: a destructive hit anywhere in the line leads one combined ask', () => {
+  for (const command of ['git push && git push --force', 'ssh prodhost "rm x" && rm -rf ~/x', 'npm publish && git push -f']) {
     const r = decide(command, ctx);
-    assert.equal(r.allow, false, command);
-    assert.notEqual(r.ask, true, command);
+    assert.equal(r.ask, true, command);
+    assert.match(r.reason, /^DESTRUCTIVE: /, command);
   }
+  const plain = decide('git push; git commit --no-verify', ctx);
+  assert.equal(plain.ask, true);
+  assert.match(plain.reason, /git push.*--no-verify/);
 });
 
 test('an ask reason says what is asked and never leaks more than the host', () => {
@@ -137,7 +141,7 @@ const runHook = (command, env = {}) =>
   spawnSync(process.execPath, [HOOK], {
     input: JSON.stringify({ cwd: PROJECT, session_id: 'outward-test', tool_input: { command } }),
     encoding: 'utf8',
-    env: { ...process.env, CLAUDE_PROJECT_DIR: PROJECT, ...env },
+    env: hookEnv({ CLAUDE_PROJECT_DIR: PROJECT, ...env }),
   });
 
 test('hook contract: an ask prints a PreToolUse permissionDecision "ask" JSON and exits 0', () => {
@@ -159,10 +163,10 @@ test('hook contract: the private list file is read from CLAUDE_PROD_HOSTS_FILE',
   assert.equal(runHook('ssh db1.example.com "cat x"', { CLAUDE_PROD_HOSTS_FILE: file }).stdout, '');
 });
 
-test('hook contract: a deny still exits 2 and an allow is silent', () => {
-  const denied = runHook('git push --force');
-  assert.equal(denied.status, 2);
-  assert.equal(denied.stdout, '');
+test('hook contract: a destructive hit asks, never exits 2, and an allow is silent', () => {
+  const hit = runHook('git push --force');
+  assert.equal(hit.status, 0);
+  assert.match(JSON.parse(hit.stdout).hookSpecificOutput.permissionDecisionReason, /^DESTRUCTIVE: force push/);
   const allowed = runHook('git push --dry-run');
   assert.equal(allowed.status, 0);
   assert.equal(allowed.stdout + allowed.stderr, '');
