@@ -15,7 +15,9 @@ const REDIRECT = /^(\d?>>?|&>>?)/;
 const NO_VERIFY = '--no-verify';
 const MIN_NO_VERIFY_PREFIX = 8; // `--no-ver`: git accepts any unique prefix of a long option
 const DISK_DEVICE = /^\/dev\/(?!null$|zero$|tty|std|fd\/|pts\/)/;
-const MKFS_COMMAND = /^mkfs(\.\w+)?$/;
+const MKFS_COMMAND = /^(?:mkfs(?:\.\w+)?|newfs(?:_\w+)?)$/; // mkfs.ext4, newfs_hfs
+const DISKUTIL_WIPE = /^(?:erase|partition|zero|secureerase|reformat|apfs(?:delete|erase))/i; // diskutil eraseDisk, partitionDisk, zeroDisk, secureErase, reformat
+const RAW_DEVICE_TARGET = /^\/dev\/(?:r?disk|sd|hd|nvme|vd|xvd|mmcblk)/; // `> /dev/disk2`, `>/dev/sda`
 const isHooksPathConfig = (value = '') => /^core\.hookspath=/i.test(value);
 const isLockfile = (p) => LOCKFILES.has(basenameOf(p));
 
@@ -25,6 +27,15 @@ function usesHooksPathOverride(words) {
     const opt = words[i];
     const config = opt === '-c' ? words[i + 1] : opt.startsWith('-c') ? opt.slice(2) : opt.replace(/^--config-env=/, '');
     if (isHooksPathConfig(config)) return true;
+  }
+  return false;
+}
+
+/** `git -c alias.p=push p`, `git -c 'alias.x=!git push' x`: the alias hides what runs. */
+function definesAlias(words) {
+  for (let i = 0; words[i]?.startsWith('-'); i += GIT_VALUE_OPTIONS.has(words[i]) ? 2 : 1) {
+    const config = words[i] === '-c' ? words[i + 1] : words[i].startsWith('-c') ? words[i].slice(2) : undefined;
+    if (/^alias\./i.test(config ?? '')) return true;
   }
   return false;
 }
@@ -44,6 +55,7 @@ function checkGitPush(rest) {
 export function checkGit(args, assigns = []) {
   if (assigns.includes('HUSKY=0')) return 'HUSKY=0 skips the git hooks';
   if (usesHooksPathOverride(args)) return 'git -c core.hooksPath bypasses the git hooks';
+  if (definesAlias(args)) return 'git -c alias.* defines a command for this call (an alias can run push or any shell command); write the command out';
   const words = [...args];
   while (words[0]?.startsWith('-')) words.splice(0, GIT_VALUE_OPTIONS.has(words[0]) ? 2 : 1); // `git -C dir commit -n`
   const [sub, ...rest] = words;
@@ -55,11 +67,13 @@ export function checkGit(args, assigns = []) {
   return sub === 'push' ? checkGitPush(rest) : undefined;
 }
 
-/** Writing to a raw device or making a filesystem destroys its contents: dd of=/dev/x, mkfs, wipefs, shred or blkdiscard on a device. */
+/** Writing to a raw device or making a filesystem destroys its contents: dd of=/dev/x, mkfs/newfs, wipefs, shred or blkdiscard on a device, diskutil erase*, a redirect into a raw disk. */
 export function checkDiskWipe(cmd, args) {
   const wipes = MKFS_COMMAND.test(cmd) || cmd === 'wipefs' || cmd === 'blkdiscard'
     || (cmd === 'dd' && args.some((a) => a.startsWith('of=') && DISK_DEVICE.test(a.slice(3))))
-    || (cmd === 'shred' && args.some((a) => DISK_DEVICE.test(a)));
+    || (cmd === 'shred' && args.some((a) => DISK_DEVICE.test(a)))
+    || (cmd === 'diskutil' && DISKUTIL_WIPE.test(args.find((a) => !a.startsWith('-')) ?? ''))
+    || redirectTargets(args).some((t) => RAW_DEVICE_TARGET.test(t));
   return wipes ? destructive(`${cmd} can wipe a disk or device`) : undefined;
 }
 

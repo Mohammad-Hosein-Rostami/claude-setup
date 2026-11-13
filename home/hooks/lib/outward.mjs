@@ -57,8 +57,31 @@ const isDryRun = (options) => options.some((o) => (o.startsWith('--') ? o.length
  */
 export const pushAsk = (options) => (isDryRun(options) ? undefined : 'git push publishes commits to a remote; confirm with the owner');
 
+const MUTATING_METHOD = /^(?:PUT|POST|PATCH|DELETE)$/i;
+// the repository itself, merges (`/merge`, `/merges`), releases, refs and branch protection: what `gh api` must not change unasked
+const GH_API_SENSITIVE_PATH = /^\/?repos\/[^/]+\/[^/]+(?:\/(?:merges?|releases(?:\/.*)?|git\/refs(?:\/.*)?|branches\/.+\/protection.*|pulls\/\d+\/merge|(?:transfer|archive|rename)))?\/?$/i;
+
+/** The HTTP method of a `gh api` call: -X/--method (also attached: `-XPOST`, `--method=POST`), or POST when -f/-F/--input send a body. */
+function ghApiMethod(args) {
+  for (let i = 0; i < args.length; i++) {
+    const word = args[i];
+    if (word === '-X' || word === '--method') return args[i + 1];
+    if (word.startsWith('--method=')) return word.slice('--method='.length);
+    if (/^-X./.test(word)) return word.slice(2);
+  }
+  return args.some((a) => /^(?:-f|-F|--field|--raw-field|--input)(?:=|$)/.test(a)) ? 'POST' : 'GET';
+}
+
+function ghApiAsk(args) {
+  const path = args.slice(1).find((a) => !a.startsWith('-') && /\//.test(a));
+  if (path === undefined || !MUTATING_METHOD.test(ghApiMethod(args)) || !GH_API_SENSITIVE_PATH.test(path)) return undefined;
+  return `gh api ${ghApiMethod(args).toUpperCase()} on ${path} changes a repository, merge or release; confirm with the owner`;
+}
+
 function ghAsk(args) {
   const [group, action] = positionals(args, GH_VALUE_OPTIONS);
+  if (group === 'api') return ghApiAsk(args.filter((a, i) => !GH_VALUE_OPTIONS.has(args[i - 1]) || i === 0).slice(args.indexOf('api')));
+  if (group === 'repo' && ['delete', 'archive', 'rename', 'transfer'].includes(action)) return `gh repo ${action} changes or removes a repository; confirm with the owner`;
   if (group === 'release' && !GH_RELEASE_READ.has(action)) return 'gh release changes a published release; confirm with the owner';
   if (group === 'pr' && action === 'merge') return 'gh pr merge changes the target branch; confirm with the owner';
   return undefined;
