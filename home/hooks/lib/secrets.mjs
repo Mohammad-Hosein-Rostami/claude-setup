@@ -5,7 +5,7 @@
 // `sshpass -p x`, `mysql -pX`, `docker login -p x`, PGPASSWORD / MYSQL_PWD / AWS_SECRET_ACCESS_KEY assigned a literal, any
 // `*_KEY=` / `*_TOKEN=` / `*_SECRET=` / `*PASSWORD=` assigned a literal, sk-proj- / glpat- / xoxb- / xoxp- tokens, `Bearer x`
 // (so `Authorization: Bearer x` too), `-u user:pass` / `--user user:pass`, and URL credentials `scheme://user:pass@host`.
-// A value that starts with `$` (variable, `$(cat file)`), a backtick or `<(` is not literal. Scans the raw text, so quotes,
+// A value that starts with `$` (variable, `$(cat file)`), a backtick or `<(` is not literal; nor, for a generic `*_KEY=` style name, one that starts like a path (`/`, `./`, `../`, `~/`). Scans the raw text, so quotes,
 // heredocs and `bash -c '...'` are all covered. A noisy false positive is accepted: the check is meant to be strict (the hook turns a hit into a timed ask).
 // Also: a literal given on stdin to a `--with-token` / `--password-stdin` command: `gh auth login --with-token <<< T`, `echo T | docker login
 // --password-stdin` (`echo`/`printf` input; `$VAR` and `$(...)` input is not literal).
@@ -48,7 +48,8 @@ const STDIN_FLAG = '--(?:with-token|password-stdin)\\b';
 // the value is echoed/printed (`echo -n T`, `printf '%s' T`) and piped into a command that has the stdin flag
 const ECHOED_INTO_STDIN_FLAG = `(?=(?:"[^"]*"|'[^']*'|[^\\s"';&|]+)[ \\t]*\\|[^\\n;&|]{0,${GAP}}${STDIN_FLAG})`;
 const SECRET_NAME_PART = '(?<![A-Za-z0-9])(?:KEY|TOKEN|SECRET|PASS|PASSWD|PWD)(?![A-Za-z0-9])';
-const CODE_VALUE = '(?![=>({\\[]|[\\w$]{1,40}\\s*=>|lambda\\b|[\\w$]{1,40}(?:\\.[\\w$]{1,40}){0,6}\\s*[(\\[])';
+// A value that starts like a path (`/x`, `./x`, `../x`, `~/x`) is a path or a regex held in a variable (`STATE_KEY=/state|hover/`), not a literal.
+const CODE_VALUE = '(?!["\']?(?:\\.{0,2}|~)/|[=>({\\[]|[\\w$]{1,40}\\s*=>|lambda\\b|[\\w$]{1,40}(?:\\.[\\w$]{1,40}){0,6}\\s*[(\\[])';
 const QUERY_SECRET = 'api[_-]?key|access[_-]?(?:token|key)|auth[_-]?token|token|client[_-]?secret|secret|password|passwd|pwd';
 const SECRET_FLAG = '--(?:token|api-key|apikey|password|passwd|client-secret|access-token|auth-token)(?:=|\\s+)';
 const VALUE_KINDS = [
