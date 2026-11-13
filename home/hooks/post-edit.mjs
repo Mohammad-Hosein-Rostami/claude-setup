@@ -22,6 +22,7 @@ const PROJECT_SCRIPTS = ['typecheck']; // whole project; output is filtered to t
 const FILE_TOOLS = { format: ['prettier', '--write'], lint: ['eslint'] }; // per-file fallback for broad scripts
 const BROAD_SCRIPT = /(^|\s)\.\/?(\s|$)|\*|\brun-many\b|\bnx\b|\bturbo\b|\blerna\b/;
 const FIXING_SCRIPT = /\bfix\b|--write\b|--apply\b/; // a lint script that rewrites the file while tsc reads it: keep those checks sequential
+/** Env var that opts checks out: "all" or a comma list such as "typecheck,lint". */
 export const SKIP_ENV = 'CLAUDE_POST_EDIT_SKIP'; // "all" or e.g. "typecheck,lint"; set in a project's .claude/settings.json env
 export const TYPECHECK_AT_ENV = 'CLAUDE_TYPECHECK_AT'; // "edit": typecheck after every edit instead of once at agent stop
 
@@ -32,6 +33,7 @@ export { diagnostics, isSamePath } from './lib/diagnostics.mjs';
 
 export const isCodeFile = (file) => CODE_FILE.test(file);
 
+/** Nearest directory at or above `file` that holds a package.json, or null. */
 export function findPackageDir(file) {
   for (let dir = dirname(file); ; dir = dirname(dir)) {
     if (existsSync(join(dir, 'package.json'))) return dir;
@@ -39,6 +41,7 @@ export function findPackageDir(file) {
   }
 }
 
+/** `pnpm`, `yarn` or `npm`, from the nearest lockfile at or above `dir`. */
 export function packageManager(dir) {
   for (let d = dir; ; d = dirname(d)) {
     if (existsSync(join(d, 'pnpm-lock.yaml'))) return 'pnpm';
@@ -76,7 +79,7 @@ export function plannedChecks(scripts, file, findTool = () => null, atEdit = typ
   return [...fileChecks, ...projectChecks.map((name) => ({ name, args: ['run', name] }))];
 }
 
-// Nearest node_modules/.bin/<tool> walking up from `dir` (a monorepo hoists binaries to the root).
+/** Finder for the nearest node_modules/.bin/<tool> walking up from `dir` (a monorepo hoists binaries to the root); returns null when absent. */
 export function toolFinder(dir) {
   const exe = process.platform === 'win32' ? '.cmd' : '';
   return (tool) => {
@@ -129,9 +132,16 @@ function killTree(child) {
   }
 }
 
-// Async spawn that resolves (never rejects) to { status, stdout, stderr, error, timedOut }; the promise also carries
-// `kill()` (tree kill, pipes released). On the deadline it resolves from the timer itself: a grandchild holding the
-// pipes open must not delay `close`.
+/**
+ * Spawns one check and resolves (never rejects) to { status, stdout, stderr, error, timedOut }. On the deadline it
+ * resolves from the timer itself: a grandchild holding the pipes open must not delay `close`.
+ * @param {string} pm package manager, used when `check.cmd` is absent
+ * @param {{cmd?: string, args: string[]}} check what to run
+ * @param {string} cwd working directory
+ * @param {number} timeoutMs kill the process tree after this long
+ * @returns {Promise<object> & {kill: () => void}} the promise also carries `kill()` (tree kill, pipes released); it
+ *   does nothing once the child has closed, so a recycled pid is never signalled
+ */
 export function runCheck(pm, check, cwd, timeoutMs) {
   // Windows package managers are .cmd shims and need a shell; SAFE_PATH keeps `file` free of metacharacters.
   const cmd = shellCommand(check.cmd ?? pm);
@@ -140,7 +150,10 @@ export function runCheck(pm, check, cwd, timeoutMs) {
     const child = spawn(cmd, check.args, { cwd, shell: process.platform === 'win32', detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
+    let closed = false;
     const release = () => {
+      if (closed) return;
+      closed = true;
       clearTimeout(timer);
       killTree(child);
       child.stdout.destroy();
@@ -156,10 +169,12 @@ export function runCheck(pm, check, cwd, timeoutMs) {
     child.stdout.on('data', (d) => (stdout += d));
     child.stderr.on('data', (d) => (stderr += d));
     child.on('error', (error) => {
+      closed = true;
       clearTimeout(timer);
       resolve({ status: null, stdout, stderr, error, timedOut: false });
     });
     child.on('close', (status) => {
+      closed = true;
       clearTimeout(timer);
       resolve({ status, stdout, stderr, error: null, timedOut: false });
     });
