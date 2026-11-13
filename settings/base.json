@@ -117,6 +117,15 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/agent-budget.mjs\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "Stop": [
@@ -131,6 +140,11 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/ask-gate.mjs\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/final-reply-cap.mjs\"",
+            "timeout": 10
           }
         ]
       }
@@ -142,6 +156,11 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/typecheck-gate.mjs\"",
             "timeout": 150
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/agent-budget.mjs\"",
+            "timeout": 5
           }
         ]
       }
