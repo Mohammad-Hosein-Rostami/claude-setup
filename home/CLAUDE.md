@@ -91,6 +91,7 @@ it after compaction), and the next step. Drop exploration dead-ends, full file c
 
 Look before deleting or overwriting. Confirm before outward-facing or hard-to-reverse
 actions (push, publish, delete, send). Git push, publish/release, PR merge, Artifact publish/delete, prod-host writes
-and deletes, and literal secrets in a command show a confirm dialog even in bypass mode, with Allow recommended and
-auto-allow after 3 minutes. Never print or commit secrets or `.env` contents; never put a literal password or token in
+and deletes, and literal secrets in a command show a timed confirm dialog even in bypass mode: Allow is the default
+and auto-allow after 3 minutes (CLAUDE_ASK_TIMEOUT_S, 180; terminal questions auto-continue after 5 min, CLI setting); a click on Deny is honoured. The guard never hard-denies, and reading files, `.env`
+included, is allowed. Never print or commit secrets or `.env` contents; never put a literal password or token in
 a command (use env vars or files).

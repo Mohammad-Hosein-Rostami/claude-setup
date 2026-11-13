@@ -7,6 +7,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 
 const FILTER = fileURLToPath(new URL('../scripts/merge-settings.jq', import.meta.url));
 const HAS_JQ = spawnSync('jq', ['--version']).status === 0;
@@ -62,4 +63,9 @@ test('null or non-object permissions in a later file keep the base rules', { ski
   );
   assert.deepEqual(merged.permissions, { allow: ['A'], deny: ['X'] });
   assert.equal(merged.other, 1);
+});
+
+test('base.json askUserQuestionTimeout is a value the CLI accepts (others are dropped silently)', () => {
+  const base = JSON.parse(readFileSync(fileURLToPath(new URL('../settings/base.json', import.meta.url)), 'utf8'));
+  assert.ok(['60s', '5m', '10m', 'never'].includes(base.askUserQuestionTimeout), String(base.askUserQuestionTimeout));
 });
