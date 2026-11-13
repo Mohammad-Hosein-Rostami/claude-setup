@@ -1,7 +1,7 @@
 // Setup-mode hook (normal | medium | high | extra-high | ultra-high). One script, dispatches on `hook_event_name`:
 //   SessionStart         -> prints the active mode, the lead-only rules (modes/_lead.md; nothing when missing) and the
 //                           mode's playbook (plus a lead note when an extra-high / ultra-high session was not launched
-//                           with `ccm <mode>` or its model does not match); prunes stale state files.
+//                           with `ccm <mode>` or its model does not match; on `compact`, lib/compact-notes.mjs lines); prunes state.
 //   UserPromptExpansion  -> for `/mode <m>`: records the mode for this session, prints the playbook (plus a lead note
 //                           when the switch moves the lead to or from Opus max / Fable high).
 //   UserPromptSubmit     -> one reminder line when the active mode is not medium.
@@ -12,8 +12,7 @@
 // files are overwritten then, so a reused pid never inherits a mode. Otherwise active mode = session file ->
 // process file -> env CLAUDE_MODE -> medium. Stdout of these events is added to the model context. Invariants: never
 // blocks (always exit 0); unreadable input produces no output; an unsafe session_id is never used in a path.
-// The lead model and effort of extra-high / ultra-high are set by `ccm` at launch (a hook cannot change them), so
-// the lead note only tells the user which `ccm` line to run.
+// The lead model and effort of extra-high / ultra-high are set by `ccm` at launch (a hook cannot change them), so the lead note only names the `ccm` line.
 // The process key is computed lazily (`ps` runs only when the session file cannot answer or a mode is saved); Windows
 // has no `ps`, so a /mode switch does not survive /clear there. Exports pure helpers for tests.
 import { execFileSync } from 'node:child_process';
@@ -22,6 +21,7 @@ import { basename, join } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
+import { compactNotes } from './lib/compact-notes.mjs';
 
 export const MODES = ['normal', 'medium', 'high', 'extra-high', 'ultra-high'];
 export const DEFAULT_MODE = 'medium';
@@ -235,7 +235,7 @@ async function onSessionStart(input, sessionId, getProcKey) {
   const launched = isMode(process.env.CLAUDE_MODE) ? process.env.CLAUDE_MODE : 'default';
   const note = leadNote({ mode: current, model: input.model, launchedAs: process.env.CLAUDE_MODE ?? '' });
   const leadRules = await readLeadRules();
-  console.log(`Mode: ${current} (launched as ${launched})\n\n${leadRules ? `${leadRules}\n\n` : ''}${await readPlaybook(current)}${note ? `\n\n${note}` : ''}`);
+  console.log(`Mode: ${current} (launched as ${launched})\n\n${leadRules ? `${leadRules}\n\n` : ''}${await readPlaybook(current)}${note ? `\n\n${note}` : ''}${input.source === 'compact' ? `\n\n${await compactNotes(stateDir(), sessionId)}` : ''}`);
   await pruneState();
 }
 

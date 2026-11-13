@@ -135,6 +135,18 @@ test('compact keeps the session mode over the launch env', async () => {
   assert.match(compacted.stdout, /^Mode: normal/);
 });
 
+test('compact adds the recall line, and the handoff line from the 3rd compaction on', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
+  const compact = (id) => runHook(home, { CLAUDE_MODE: 'high' }, { hook_event_name: 'SessionStart', session_id: id, source: 'compact' }).stdout;
+  assert.match(compact('k1'), /Context was compacted.*recall search.*select:Monitor,SendMessage,TaskStop/);
+  assert.doesNotMatch(compact('k1'), /has compacted/);
+  assert.match(compact('k1'), /This session has compacted 3 times.*`handoff` skill/);
+  assert.match(compact('k1'), /compacted 4 times/);
+  assert.doesNotMatch(compact('k2'), /has compacted/); // counted per session
+  const startup = runHook(home, { CLAUDE_MODE: 'high' }, { hook_event_name: 'SessionStart', session_id: 'k3', source: 'startup' }).stdout;
+  assert.doesNotMatch(startup, /Context was compacted/);
+});
+
 test('/mode reports a failed save instead of claiming the switch', async () => {
   const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
   await mkdir(join(home, '.claude'), { recursive: true });

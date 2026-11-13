@@ -1,0 +1,10 @@
+# Purpose: gitleaks config for the pre-commit hook; keeps the default rules.
+# Why the allowlist: the recall tests ship fake secrets (AWS key, JWT, api-key shapes) as redaction fixtures.
+title = "claude-setup"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "fake secret fixtures used to test redaction"
+paths = ['''tests/recall-[a-z0-9-]+\.test\.mjs''']

@@ -1,5 +1,13 @@
 // Status line: model tier, effort, CONTEXT SIZE in tokens (what every tool call re-reads), cost,
 // and account usage windows (5h / 7d) with reset times from `rate_limits`.
+// Tier label by model id/name; an unrecognised model shows "?" rather than guessing sonnet.
+function modelTier(text) {
+  if (/opus/i.test(text)) return '\x1b[35mOPUS\x1b[0m';
+  if (/fable/i.test(text)) return '\x1b[33mFABLE\x1b[0m';
+  if (/haiku/i.test(text)) return '\x1b[36mhaiku\x1b[0m';
+  if (/sonnet/i.test(text)) return '\x1b[32msonnet\x1b[0m';
+  return '\x1b[2m?\x1b[0m';
+}
 let raw = '';
 process.stdin.on('data', (c) => (raw += c));
 process.stdin.on('end', () => {
@@ -9,7 +17,7 @@ process.stdin.on('end', () => {
   } catch {}
   const name = d.model?.display_name ?? '?';
   const id = d.model?.id ?? '';
-  const tier = /opus/i.test(id + name) ? '\x1b[35mOPUS\x1b[0m' : /haiku/i.test(id + name) ? '\x1b[36mhaiku\x1b[0m' : '\x1b[32msonnet\x1b[0m';
+  const tier = modelTier(id + name);
   const effort = d.effort?.level;
   const tokens = d.context_window?.total_input_tokens ?? 0;
   const k = Math.round(tokens / 1000);

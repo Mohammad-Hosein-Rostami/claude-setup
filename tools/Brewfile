@@ -3,4 +3,6 @@ brew "jq"
 brew "ripgrep"
 brew "gitleaks"
 brew "gh"
+brew "ast-grep" # structural search and rewrite (sg)
+brew "typescript-language-server" # makes the typescript-lsp plugin's LSP tool work (definitions, references)
 brew "volta" # manages node; hooks and the statusline are .mjs scripts (run: volta install node@22)

@@ -135,5 +135,13 @@ check_ui_check() {
   esac
 }
 
-check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_tools; check_ui_check; check_repo_tests
+# The typescript-lsp plugin needs typescript-language-server on PATH, else its LSP tool does nothing.
+check_lsp() {
+  local live="$CLAUDE_DIR/settings.json"
+  [ "$(jq -r '.enabledPlugins["typescript-lsp@claude-plugins-official"] // false' "$live" 2>/dev/null)" = "true" ] || return 0
+  if command -v typescript-language-server >/dev/null; then ok "tool typescript-language-server"
+  else warn "LSP tool inactive: brew install typescript-language-server (Windows: npm i -g typescript-language-server typescript)"; fi
+}
+
+check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_tools; check_lsp; check_ui_check; check_repo_tests
 exit "$BAD"

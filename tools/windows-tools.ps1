@@ -5,4 +5,6 @@ $ids = @('jqlang.jq', 'BurntSushi.ripgrep.MSVC', 'Gitleaks.Gitleaks', 'GitHub.cl
 foreach ($id in $ids) {
   winget install --id $id -e --accept-source-agreements --accept-package-agreements
 }
+# ast-grep: no winget id verified, so install from npm (needs node on PATH).
+npm i -g @ast-grep/cli
 Write-Host 'Done. Then run: volta install node@22'

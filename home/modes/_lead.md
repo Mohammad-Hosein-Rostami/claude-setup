@@ -26,6 +26,8 @@ problems or after a failed attempt. Never downgrade a pick to save tokens.
 | Figma match and responsive checks (text only, no images) | **Sonnet 5.5** | `visual-qa` agent, skill `figma-pixel-perfect` |
 | Search, reading many files, tests/lint/build, log triage, summaries, trivial edits | **Haiku 5.5** | `scout` / `runner` agent, or `/quick` |
 
+Past decisions, names, prohibitions or history of the project: use the `recall` skill before asking the user.
+
 Rules:
 
 1. Opus does not write long implementations. It writes a **spec** (decision, files, steps, acceptance checks, ≤ 60
