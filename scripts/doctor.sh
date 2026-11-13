@@ -170,11 +170,42 @@ check_plugin_session_start() {
   return 0
 }
 
+# recall's final stack: embedding models in Ollama, the two reranker GGUFs, the checkpoint/digest hooks, and the last
+# checkpoint error (a broken `claude` would otherwise silently stop live notes). Missing models/files are warnings
+# (search falls back), a missing hook registration is a FAIL (long sessions would lose their notes at compaction).
+check_recall() {
+  local live="$CLAUDE_DIR/settings.json" url="${RECALL_OLLAMA_URL:-http://127.0.0.1:11434}" models="${RECALL_RERANK_MODEL_DIR:-$HOME/.cache/recall-models}"
+  local state="${RECALL_STATE_DIR:-$(dirname "${RECALL_DB:-$HOME/.claude/recall/index.db}")}" tags name file missing="" f errors
+  tags="$(curl -s --max-time 2 "$url/api/tags" 2>/dev/null)"
+  if [ -z "$tags" ]; then warn "recall: Ollama not reachable at $url (search is lexical only; start it with: ollama serve)"
+  else
+    for name in bge-m3 hf.co/Qwen/Qwen3-Embedding-4B-GGUF; do printf '%s' "$tags" | grep -qF "\"$name" || missing="$missing $name"; done
+    if [ -n "$missing" ]; then warn "recall: Ollama models not pulled:$missing"; else ok "recall: Ollama has bge-m3 and qwen3-embedding-4b"; fi
+  fi
+  missing=""
+  for file in qwen3-reranker-0.6b-q8_0.gguf qwen3-reranker-4b-q8_0.gguf; do [ -s "$models/$file" ] || missing="$missing $file"; done
+  if [ -n "$missing" ]; then warn "recall: reranker files missing in $models:$missing (search keeps the fused order)"; else ok "recall: reranker files present"; fi
+  command -v llama-server >/dev/null || warn "recall: llama-server not on PATH (brew install llama.cpp); reranking is skipped"
+  missing=""
+  for event in PostToolUse PreCompact; do
+    jq -e --arg e "$event" '[.hooks[$e][]?.hooks[]?.command // empty | select(test("hooks/checkpoint\\.mjs"))] | length > 0' "$live" >/dev/null 2>&1 || missing="$missing $event"
+  done
+  jq -e '[.hooks.SessionStart[]?.hooks[]?.command // empty | select(test("hooks/recall-digest\\.mjs"))] | length > 0' "$live" >/dev/null 2>&1 || missing="$missing SessionStart(recall-digest)"
+  if [ -n "$missing" ]; then bad "recall: checkpoint hooks not registered in settings.json for:$missing"; else ok "recall: checkpoint hook registered for PostToolUse and PreCompact, digest for SessionStart"; fi
+  errors=""
+  for f in "$state"/checkpoints/*.json; do
+    [ -f "$f" ] || continue
+    errors="$errors$(jq -r 'select(.error) | "\(.session[0:8]): \(.error.message) (\(.error.ts))"' "$f" 2>/dev/null | tr -d '\000-\037\177')"$'\n'
+  done
+  errors="$(printf '%s' "$errors" | sed '/^$/d' | tail -1)"
+  if [ -n "$errors" ]; then warn "recall: last checkpoint error: $errors"; else ok "recall: no checkpoint errors"; fi
+}
+
 # DOCTOR_ONLY="check_a check_b" runs just those checks (used by tests; the full run executes the repo tests).
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_tools; check_lsp; check_ui_check; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_tools; check_lsp; check_ui_check; check_repo_tests
 }
 run_checks
 exit "$BAD"
