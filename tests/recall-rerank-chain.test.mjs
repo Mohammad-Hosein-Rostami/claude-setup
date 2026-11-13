@@ -94,24 +94,59 @@ test('a llama-server that recall did not start blocks the start (never two big m
   await assert.rejects(ensureServer({ env: checked }), /another llama-server is running/);
 });
 
-test('the watchdog stops an idle server and removes its state', async () => {
-  const { env } = fakeStack();
-  const idleEnv = { ...env, RECALL_RERANK_IDLE_MS: '400' };
-  await rerankChain('reranker port', hits, { env: idleEnv });
-  const { pid } = readServer(idleEnv);
-  assert.equal(alive(pid), true);
-  assert.ok(await waitFor(() => !alive(pid), 8000), 'server was stopped after the idle limit');
-  assert.equal(readServer(idleEnv), null);
-});
+const healthUp = (port) => fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(500) }).then((r) => r.ok, () => false);
+const stateFile = (env) => join(env.RECALL_STATE_DIR, RERANK_STATE_FILE);
 
-test('a search keeps the server warm: the idle clock restarts on use', async (t) => {
-  const { env } = fakeStack();
-  const idleEnv = { ...env, RECALL_RERANK_IDLE_MS: '1500' };
+/** A fake clock for `watch`: each poll advances time by the requested wait, then runs `onTick(now)` (e.g. a search touching the state). */
+function fakeClock(start, onTick = () => {}) {
+  const clock = { time: start, ticks: 0, now: () => clock.time, pause: async (ms) => { clock.time += ms; clock.ticks += 1; await onTick(clock); } };
+  return clock;
+}
+
+test('the idle watchdog (detached, real clock) stops an idle server and removes its state', async (t) => {
+  const { env, llamaStarts } = fakeStack();
+  const idleEnv = { ...env, RECALL_RERANK_IDLE_MS: '400' };
   t.after(stopAfter(idleEnv));
   await rerankChain('reranker port', hits, { env: idleEnv });
-  const { pid } = readServer(idleEnv);
-  for (let i = 0; i < 4; i += 1) { await sleep(500); await rerankChain('reranker port', hits, { env: idleEnv }); }
-  assert.equal(alive(pid), true, 'still alive after 2 s of use with a 1.5 s limit');
+  assert.equal(llamaStarts().length, 1);
+  // Only the end state is asserted: a slow machine may stop the server before this line, never after the wait.
+  assert.ok(await waitFor(async () => !(await healthUp(env.RECALL_RERANK_PORT)) && readServer(idleEnv) === null, 15000), 'server stopped and state removed');
+});
+
+test('a search restarts the idle clock: it stamps lastUsed with the current time', async (t) => {
+  const { env } = fakeStack();
+  t.after(stopAfter(env));
+  await rerankChain('reranker port', hits, { env });
+  const stale = { ...readServer(env), lastUsed: 12345 };
+  writeFileSync(stateFile(env), JSON.stringify(stale));
+  const before = Date.now();
+  await rerankChain('reranker port', hits, { env });
+  const { lastUsed } = readServer(env);
+  assert.ok(lastUsed >= before && lastUsed <= Date.now(), `lastUsed ${lastUsed} is now, not the stale 12345`);
+});
+
+test('watch keeps a server that is touched within the idle limit and stops it once it is idle (injected clock)', async (t) => {
+  const { env } = fakeStack();
+  t.after(stopAfter(env));
+  await rerankChain('reranker port', hits, { env });
+  const { pid } = readServer(env);
+  const idleMs = 1000;
+  const touchedEvery = idleMs - 100;
+  let lastTouch = 5000000;
+  writeFileSync(stateFile(env), JSON.stringify({ ...readServer(env), lastUsed: lastTouch }));
+  const busy = fakeClock(lastTouch, (clock) => {
+    if (clock.time - lastTouch >= touchedEvery) { lastTouch = clock.time; writeFileSync(stateFile(env), JSON.stringify({ ...readServer(env), lastUsed: lastTouch })); } // a search
+    if (clock.ticks === 40) rmSync(stateFile(env), { force: true }); // end the watch without stopping the server
+  });
+  await watch(stateFile(env), pid, { idleMs, now: busy.now, pause: busy.pause });
+  assert.ok(busy.time - 5000000 >= 10 * idleMs, 'ten idle limits passed on the fake clock');
+  assert.equal(alive(pid), true, 'regular use kept it alive');
+  writeFileSync(stateFile(env), JSON.stringify({ ...readServer(env) ?? { pid, port: Number(env.RECALL_RERANK_PORT), tier: 'fast', startedAt: Date.now() }, lastUsed: 5000000 }));
+  const idle = fakeClock(5000000);
+  await watch(stateFile(env), pid, { idleMs, now: idle.now, pause: idle.pause });
+  assert.ok(idle.time - 5000000 >= idleMs, 'stopped only after the idle limit');
+  assert.ok(await waitFor(() => !alive(pid), 5000), 'idle: stopped');
+  assert.ok(!existsSync(stateFile(env)));
 });
 
 test('CLI: the default stack reranks; --deep with no 4B file prints one skipped-stage line and falls back to 0.6B', async (t) => {

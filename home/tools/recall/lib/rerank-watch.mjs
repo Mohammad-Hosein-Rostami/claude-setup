@@ -65,16 +65,18 @@ const readState = (path) => {
  * remove the state file.
  * @param {string} statePath reranker state file ({pid, lastUsed, ...}).
  * @param {number} pid the server pid this watcher belongs to.
- * @param {{idleMs: number}} options idle limit in ms.
+ * @param {{idleMs: number, now?: () => number, pause?: (ms: number) => Promise<void>}} options idle limit in ms; `now` (the
+ *   clock compared with `lastUsed`) and `pause` (the wait between polls) are injectable so tests drive time instead of
+ *   sleeping; the SIGTERM grace wait always uses real time.
  */
-export async function watch(statePath, pid, { idleMs }) {
+export async function watch(statePath, pid, { idleMs, now = Date.now, pause = sleep }) {
   const poll = Math.min(MAX_POLL_MS, Math.max(MIN_POLL_MS, Math.floor(idleMs / 4)));
   for (;;) {
-    await sleep(poll);
+    await pause(poll);
     const state = readState(statePath);
     if (!state || state.pid !== pid) return;
     if (!ownsServer(state)) { rmSync(statePath, { force: true }); return; }
-    if (Date.now() - state.lastUsed < idleMs) continue;
+    if (now() - state.lastUsed < idleMs) continue;
     signalQuietly(pid, 'SIGTERM');
     for (let waited = 0; alive(pid) && waited < KILL_GRACE_MS; waited += MIN_POLL_MS) await sleep(MIN_POLL_MS);
     if (alive(pid)) signalQuietly(pid, 'SIGKILL');
