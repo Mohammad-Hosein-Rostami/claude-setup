@@ -159,12 +159,12 @@ async function main() {
     if (additionalContext) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext } }));
   } else if (input?.hook_event_name === 'SubagentStop') {
     const path = budgetPath(input.session_id, input.agent_id);
-    if (path) rmSync(path, { force: true }); // the agent is ending: its counter is done
     const reason = subagentStopReason(input);
     if (reason) {
+      // blocked: the agent keeps running and its calls must keep counting
       process.stderr.write(`${reason}\n`);
       process.exitCode = 2;
-    }
+    } else if (path) rmSync(path, { force: true }); // the agent is ending: its counter is done
   }
 }
 

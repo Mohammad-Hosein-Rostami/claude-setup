@@ -3,11 +3,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CALL_CAP, READ_WARN_CHARS, readChars } from '../home/hooks/agent-budget.mjs';
+import { tempRoot } from '../home/hooks/lib/edit-log.mjs';
 import { measure, overCap, parseCap } from '../home/hooks/lib/reply-cap.mjs';
 
 const BUDGET = fileURLToPath(new URL('../home/hooks/agent-budget.mjs', import.meta.url));
@@ -229,4 +231,19 @@ test('envelopes are not owner text: an agent message or reminder carrying a cap 
   assert.match(run(REPLY_CAP, dir, reply).stdout, /owner's cap is 5 lines/, 'the envelope is skipped; the owner prompt before it (cap 5, not 99) is the last real prompt');
   await writeFile(transcript, `${userLine('build it, reply max 5 lines <system-reminder>reply max 99 lines</system-reminder>')}\n`);
   assert.match(run(REPLY_CAP, dir, reply).stdout, /30 lines; the owner's cap is 5 lines/, 'typed text keeps its own cap, the envelope inside is cut');
+});
+
+test('SubagentStop keeps the call counter when it blocks and deletes it when it does not', async () => {
+  const dir = await home();
+  const transcript = join(dir, 'agent.jsonl');
+  await writeFile(transcript, `${userLine('Report <= 50 words.')}\n`);
+  const ids = { session_id: uid('s'), agent_id: uid('a') };
+  const counter = join(tempRoot(), 'budget', `${ids.session_id}--${ids.agent_id}`);
+  const stop = { hook_event_name: 'SubagentStop', ...ids, agent_type: 'implementer', agent_transcript_path: transcript };
+  run(BUDGET, dir, { hook_event_name: 'PostToolUse', ...ids, tool_name: 'Bash' });
+  assert.ok(existsSync(counter), 'counter written');
+  assert.equal(run(BUDGET, dir, { ...stop, last_assistant_message: words(60) }).status, 2);
+  assert.ok(existsSync(counter), 'kept after agent-budget blocks');
+  assert.equal(run(BUDGET, dir, { ...stop, last_assistant_message: words(10) }).status, 0);
+  assert.ok(!existsSync(counter), 'deleted when it does not block');
 });
