@@ -2,10 +2,14 @@
 // more hidden-execution triggers, "guard error" on an exception, secrets piped into --with-token / --password-stdin.
 // Every repro of the final audit is a case here; the harmless commands must stay silent (a false positive costs an unattended run up to 3 minutes).
 import assert from 'node:assert/strict';
-import { resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { riskyWordInExpansion } from '../home/hooks/lib/raw-risk.mjs';
-import { decide } from '../home/hooks/pre-bash-guard.mjs';
+import { decide, decideSafely } from '../home/hooks/pre-bash-guard.mjs';
+import { hookEnv, tempLogPath } from './hook-env.mjs';
 import { AUDIT_HARMLESS, HEREDOC_READER_ASKS, NOT_COVERED_STILL_ASK, RUNS_TEXT_ASKS } from './pre-bash-guard-final-cases.mjs';
 
 const PROJECT = resolve('/work/proj');
@@ -133,4 +137,37 @@ test('gh is judged by position: the words of a title or body are not a subcomman
 
 test('the still-asking rm paths are reported, not silenced', () => {
   for (const command of NOT_COVERED_STILL_ASK) assert.match(decide(command, ctx).reason, DESTRUCTIVE, command);
+});
+
+// ---- L2: an exception inside the rules asks "guard error" instead of allowing silently ----
+const GUARD = resolve('home/hooks/pre-bash-guard.mjs');
+
+test('decideSafely: a throwing rule set asks with the reason "guard error" and the error class', () => {
+  const throwing = () => {
+    throw new RangeError('boom');
+  };
+  assert.deepEqual(decideSafely('pnpm test', ctx, throwing), { allow: false, ask: true, reason: 'guard error', errorClass: 'RangeError' });
+  assert.equal(decideSafely('pnpm test', ctx, () => {
+    throw 'not an error object';
+  }).errorClass, 'string');
+  assert.deepEqual(decideSafely('pnpm test', ctx), { allow: true });
+});
+
+test('the hook with a throwing lib asks "guard error", logs the error class and never the command text', () => {
+  const copy = mkdtempSync(join(tmpdir(), 'guard-copy-'));
+  cpSync(resolve('home/hooks'), join(copy, 'hooks'), { recursive: true });
+  writeFileSync(join(copy, 'hooks/lib/raw-risk.mjs'), "export const RISKY_REASON = 'x';\nexport function riskyWordInExpansion() { throw new TypeError('injected'); }\n");
+  const log = tempLogPath();
+  const command = 'echo sentinel-command-text';
+  const run = spawnSync(process.execPath, [join(copy, 'hooks/pre-bash-guard.mjs')], {
+    input: JSON.stringify({ cwd: PROJECT, session_id: 's1', tool_input: { command } }),
+    encoding: 'utf8',
+    env: hookEnv({ CLAUDE_GUARD_LOG: log, CLAUDE_PROJECT_DIR: PROJECT }),
+  });
+  const output = JSON.parse(run.stdout).hookSpecificOutput;
+  assert.equal(output.permissionDecision, 'ask');
+  assert.match(output.permissionDecisionReason, /^guard error: TypeError/);
+  const logged = readFileSync(log, 'utf8');
+  assert.match(logged, /guard error: TypeError/);
+  assert.equal(logged.includes('sentinel-command-text'), false);
 });

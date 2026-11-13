@@ -44,7 +44,7 @@
 // not, asks with "risky word inside shell expansion" when nothing else asked. Round 5: the quoted message of `git commit` and
 // `gh pr|issue create|edit|comment` is data (lib/message-text.mjs), also `"$(cat <<'EOF' ... EOF)"`; a top-level heredoc is data only when cat/tee
 // (or `git commit -F -`, `gh --body-file -`) reads it; gh words count by position; watch, parallel, PROMPT_COMMAND=, `script|expect -c`,
-// `perl|python|node|ruby -e|-c|-p`, osascript, tmux, fish/pwsh/npx -c are hidden constructs. A command over
+// `perl|python|node|ruby -e|-c|-p`, osascript, tmux, fish/pwsh/npx -c are hidden constructs. An exception inside the rules asks "guard error" (decideSafely; the log keeps the error class, not the command). A command over
 // MAX_COMMAND_CHARS (32 KB) is not parsed at all: it asks "command too long to check"; the log and dialog keep only its first 2 KB, masked.
 // Known limits (not detected): shell aliases and functions defined elsewhere, a variable assigned from another command's output, interpreter
 // code (`node -e`, `python -c`) unless it names a dangerous word, wrappers that take the command as ONE string (busybox), rimraf,
@@ -206,6 +206,23 @@ export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts 
   return ask(reasons.join('; '));
 }
 
+export const GUARD_ERROR_REASON = 'guard error';
+
+/**
+ * `decide` that never fails open: an exception inside the rules asks ("guard error") instead of letting the command through unchecked.
+ * @param {string} command raw command text
+ * @param {Parameters<typeof decide>[1]} ctx same as decide
+ * @param {typeof decide} rules the rules to run (injectable so a test can make them throw)
+ * @returns {ReturnType<typeof decide> & {errorClass?: string}} the decision; after an exception an ask carrying the error class
+ */
+export function decideSafely(command, ctx, rules = decide) {
+  try {
+    return rules(command, ctx);
+  } catch (error) {
+    return { allow: false, ask: true, reason: GUARD_ERROR_REASON, errorClass: error instanceof Error ? error.name : typeof error };
+  }
+}
+
 /** Code files this command may rewrite go to the edit log, so the Stop typecheck gate covers them. Never throws. */
 function logCodeWrites(command, input, cwd) {
   try {
@@ -233,14 +250,11 @@ async function main() {
   if (typeof command !== 'string') return;
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   const project = process.env.CLAUDE_PROJECT_DIR || cwd;
-  let r;
-  try {
-    r = decide(command, { cwd, project, prodHosts: readProdHosts() });
-  } catch {
-    return; // fail open: an error in the rules must not stop a command
-  }
+  const r = decideSafely(command, { cwd, project }, (text, ctx) => decide(text, { ...ctx, prodHosts: readProdHosts() })); // reading the host list is inside the guard too
   if (r.ask) {
-    process.stdout.write(askOwner({ hook: 'pre-bash-guard', tool: 'Bash', reason: r.reason, command, cwd, sessionId: input.session_id, agentId: input.agent_id }));
+    // after a rules error the log gets the error class and no command text (the dialog still shows it)
+    const reason = r.errorClass ? `${r.reason}: ${r.errorClass}` : r.reason;
+    process.stdout.write(askOwner({ hook: 'pre-bash-guard', tool: 'Bash', reason, command, cwd, sessionId: input.session_id, agentId: input.agent_id, omitCommandFromLog: r.errorClass !== undefined }));
   }
   logCodeWrites(command, input, cwd); // harmless when the owner denied: the typecheck gate only reads files that exist
 }
