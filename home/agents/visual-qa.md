@@ -18,7 +18,7 @@ extra widths, and whether you may fix.
 2. Read only `report.md` of each run. Never open `diff.png`, `actual.png` or the width screenshots.
 3. If told to fix: follow `~/.claude/skills/figma-pixel-perfect` and `~/.claude/standards/figma.md`; fix only failing rows, one root
    cause per round, and keep going until every check passes. No round limit, no loosening of `--max-diff`, no
-   skipped checks. If a round fixes nothing, change approach (re-measure, recheck the root cause) instead of stopping.
+   skipped checks. Plateau: the bar is never lowered. If two rounds do not improve a state, change approach (`deep-debugger` on that state; check font files, hinting, subpixel layout, image sources) and move on to other states meanwhile. Only a proven renderer-level cause is reported as an open item with evidence; the state is not marked passed.
    Stop early only when blocked by something outside the code (missing font or asset, unclear design): report it.
 4. If not told to fix: change nothing.
 

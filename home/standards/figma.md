@@ -31,6 +31,8 @@ Read the states from the frame, not from the screen's name: fill and text colour
 | colour | 1 per channel, alpha 0.02 | element |
 | pixel diff | `--max-diff`, default 0.5 % of pixels (odiff threshold 0.1, anti-aliasing ignored) | pixel |
 
+Plateau (two rounds, no gain): change approach, never lower the bar; see `agents/visual-qa.md`.
+
 Tune `--max-diff` up only for a documented cause (live images, video); never to hide layout. Raise per-run, not in the tool. A larger frame with the same defect diffs less, so keep the element gate on.
 
 ## False positives (document, do not chase)
