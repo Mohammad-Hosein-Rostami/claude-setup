@@ -115,7 +115,7 @@
     "command": "node \"{{CLAUDE_HOME}}/statusline.mjs\""
   },
   "enabledPlugins": {
-    "gitkraken-hooks@gitkraken": true,
+    "gitkraken-hooks@gitkraken": false,
     "frontend-design@anthropic-plugin-directory": true,
     "superpowers@anthropic-plugin-directory": false,
     "code-review-anthropics@anthropic-plugin-directory": true,

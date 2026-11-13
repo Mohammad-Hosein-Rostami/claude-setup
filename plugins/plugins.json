@@ -15,7 +15,6 @@
     }
   ],
   "enabled": [
-    "gitkraken-hooks@gitkraken",
     "frontend-design@anthropic-plugin-directory",
     "code-review-anthropics@anthropic-plugin-directory",
     "context7@anthropic-plugin-directory",
@@ -29,6 +28,7 @@
     "chrome-devtools-mcp@claude-plugins-official"
   ],
   "disabled": [
+    "gitkraken-hooks@gitkraken",
     "superpowers@anthropic-plugin-directory",
     "github@anthropic-plugin-directory",
     "kotlin-lsp@claude-plugins-official",
