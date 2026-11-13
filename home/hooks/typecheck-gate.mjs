@@ -1,51 +1,77 @@
 // Stop / SubagentStop: typecheck the files this agent edited, once, instead of after every edit (post-edit.mjs logs them).
-// Exports: incrementalTypecheck(script, tsMajor, tscPath, buildInfo), runGate(files, deadline), decideExit(result, logPath, stopHookActive).
-// Invariants: silent and exit 0 when nothing was logged, when CLAUDE_TYPECHECK_AT=edit or typecheck is skipped; a
-// timeout is never a failure (systemMessage only); a failure exits 2 so the agent keeps running and fixes it, except
-// when the agent already retried and the failure is unchanged (then the user is told and the agent may stop).
+// Exports: incrementalTypecheck(script, tsMajor, tscPath, buildInfo, platform), typescriptMajor(tscPath),
+// runGate(files, deadline), timeoutMessage(unchecked), decideExit(result, logPath, stopHookActive).
+// Invariants: silent and exit 0 when nothing was logged, when CLAUDE_TYPECHECK_AT=edit or typecheck is skipped; only
+// real diagnostics about logged files exit 2 (the agent keeps running and fixes them); a timeout, a typecheck that
+// cannot run (no diagnostic parses) and a failure the user was already shown are systemMessages, never blocks.
 // The shared tsbuildinfo makes later runs incremental; each run writes a private copy and renames it over the shared one.
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { MAX_LINES, diagnostics } from './lib/diagnostics.mjs';
+import { MAX_LINES, diagnosticsDetailed } from './lib/diagnostics.mjs';
 import { editLogPath, readEdits, tempRoot } from './lib/edit-log.mjs';
 import { SKIP_ENV, findPackageDir, isBroadScript, packageManager, runCheck, skipFilter, toolFinder, typecheckAtEdit } from './post-edit.mjs';
 
 const BUDGET_MS = 140_000; // hook timeout is 150 s
+const MAX_NAMED_FILES = 10;
 const SUPPORTED_TS_MAJORS = [4, 5, 6];
-const UNSAFE_SHELL = /[&|;<>$`]/;
+const UNSAFE_SHELL = /[&|;<>$`'"]/;
+const WIN_UNSAFE_SCRIPT = /[%^!]/; // cmd.exe expands these even inside a script's flags
+const WIN_SAFE_PATH = /^[\w@+=:,./\\-]+$/; // args are not quoted under the Windows shell: no spaces or metacharacters
 const NON_INCREMENTAL_FLAGS = ['-b', '--build', '-w', '--watch', '--incremental', '--tsBuildInfoFile'];
-const TIMED_OUT_MESSAGE = 'typecheck gate: timed out, not run';
 
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
+const unique = (items) => [...new Set(items)];
 
 /**
  * The `tsc` call that typechecks incrementally, or null when the script is not a plain `tsc` call this can extend.
+ * On Windows the shell is on and does not quote args, so unsafe paths or script characters also give null.
  * @param {string} script the package's `typecheck` script
  * @param {number} tsMajor major version of the installed typescript
  * @param {string} tscPath path of the `tsc` binary
  * @param {string} buildInfo private tsbuildinfo file for this run
+ * @param {string} [platform] defaults to the running platform
  * @returns {{cmd: string, args: string[]} | null}
  */
-export function incrementalTypecheck(script, tsMajor, tscPath, buildInfo) {
+export function incrementalTypecheck(script, tsMajor, tscPath, buildInfo, platform = process.platform) {
   const [tool, ...flags] = script.trim().split(/\s+/);
   if (tool !== 'tsc' || UNSAFE_SHELL.test(script) || !SUPPORTED_TS_MAJORS.includes(tsMajor)) return null;
+  if (platform === 'win32' && (WIN_UNSAFE_SCRIPT.test(script) || ![tscPath, buildInfo].every((p) => WIN_SAFE_PATH.test(p)))) return null;
   const conflicts = flags.some((f) => NON_INCREMENTAL_FLAGS.some((bad) => f === bad || f.startsWith(`${bad}=`)));
   return conflicts ? null : { cmd: tscPath, args: [...flags, '--incremental', '--tsBuildInfoFile', buildInfo] };
 }
 
-// Major version of the nearest installed typescript (a monorepo hoists it), or null.
-function typescriptMajor(dir) {
-  for (let d = dir; ; d = dirname(d)) {
-    const manifest = join(d, 'node_modules', 'typescript', 'package.json');
-    if (existsSync(manifest)) {
-      try {
-        return Number.parseInt(JSON.parse(readFileSync(manifest, 'utf8')).version, 10);
-      } catch {
-        return null; // unreadable manifest: fall back to the project's own script
-      }
-    }
+// Major of the typescript package at `manifest` (null when unreadable, another package, or without a version).
+function majorAt(manifest) {
+  try {
+    const { name, version } = JSON.parse(readFileSync(manifest, 'utf8'));
+    const major = Number.parseInt(version, 10);
+    return name === 'typescript' && !Number.isNaN(major) ? major : null;
+  } catch {
+    return null; // no such manifest here
+  }
+}
+
+/**
+ * Major version of the typescript that the given `tsc` binary belongs to: the package next to its `.bin` folder, else
+ * the package that contains the binary's real path. Not the nearest typescript from the project: a hoisted `tsc`
+ * must be judged by its own version.
+ * @param {string} tscPath path of a `tsc` binary
+ * @returns {number | null}
+ */
+export function typescriptMajor(tscPath) {
+  const sibling = majorAt(join(dirname(tscPath), '..', 'typescript', 'package.json'));
+  if (sibling !== null) return sibling;
+  let real;
+  try {
+    real = realpathSync(tscPath);
+  } catch {
+    return null; // tsc vanished
+  }
+  for (let d = dirname(real); ; d = dirname(d)) {
+    const major = majorAt(join(d, 'package.json'));
+    if (major !== null) return major;
     if (dirname(d) === d) return null;
   }
 }
@@ -55,7 +81,7 @@ function typecheckPlan(dir, script) {
   const shared = join(tempRoot(), 'tsbuildinfo', sha256(dir));
   const privateInfo = `${shared}.${process.pid}`;
   const tsc = toolFinder(dir)('tsc');
-  const major = tsc ? typescriptMajor(dir) : null;
+  const major = tsc ? typescriptMajor(tsc) : null;
   const incremental = tsc && major !== null ? incrementalTypecheck(script, major, tsc, privateInfo) : null;
   if (!incremental) return { check: { name: 'typecheck', args: ['run', 'typecheck'] } };
   return { check: { name: 'typecheck', ...incremental }, shared, privateInfo };
@@ -80,20 +106,27 @@ function publish({ shared, privateInfo }) {
   }
 }
 
-/** Failure lines of one package for all its logged files, `timedOut` when the budget ran out. */
+const NOTHING = { timedOut: false, lines: [], unparsed: [], unchecked: [] };
+
+// Real diagnostics about the logged files win; the raw output tail counts only when no file got a parsed line.
+function judgeOutput(output, rels) {
+  const details = rels.map((rel) => diagnosticsDetailed(output, rel));
+  const lines = unique(details.filter((d) => d.parsed).flatMap((d) => d.lines));
+  return { ...NOTHING, lines, unparsed: lines.length ? [] : unique(details.flatMap((d) => d.lines)) };
+}
+
+/** Result of one package for all its logged files: see {@link runGate}. */
 async function checkPackage(dir, files, scripts, deadline) {
   const left = deadline - Date.now();
-  if (left <= 0) return { timedOut: true, lines: [] };
+  if (left <= 0) return { ...NOTHING, timedOut: true };
   const plan = typecheckPlan(dir, scripts.typecheck);
   if (plan.shared) seed(plan);
   const r = await runCheck(packageManager(dir), plan.check, dir, left);
   if (plan.shared) r.timedOut ? rmSync(plan.privateInfo, { force: true }) : publish(plan);
-  if (r.timedOut) return { timedOut: true, lines: [] };
+  if (r.timedOut) return { ...NOTHING, timedOut: true };
   const rels = files.map((f) => relative(dir, f).replace(/\\/g, '/'));
-  if (r.error) return { timedOut: false, lines: [`${rels[0]}:1 HOOK could not run ${plan.check.name}: ${r.error.message}`] };
-  if (r.status === 0) return { timedOut: false, lines: [] };
-  const merged = rels.flatMap((rel) => diagnostics(`${r.stdout}\n${r.stderr}`, rel));
-  return { timedOut: false, lines: [...new Set(merged)] };
+  if (r.error) return { ...NOTHING, unparsed: [`${rels[0]}:1 HOOK could not run ${plan.check.name}: ${r.error.message}`] };
+  return r.status === 0 ? NOTHING : judgeOutput(`${r.stdout}\n${r.stderr}`, rels);
 }
 
 function packageScripts(dir) {
@@ -122,52 +155,74 @@ function groupByPackage(files) {
  * Typechecks every package that has logged files, one after another within the shared budget.
  * @param {string[]} files absolute paths of edited files
  * @param {number} deadline epoch ms
- * @returns {Promise<{timedOut: boolean, lines: string[]}>} merged failure lines (at most 15) about the logged files
+ * @returns {Promise<{timedOut: boolean, lines: string[], unparsed: string[], unchecked: string[]}>} `lines`: real
+ *   diagnostics about the logged files (at most 15); `unparsed`: output tail or run error when no diagnostic parsed
+ *   (typecheck could not run); `unchecked`: files not checked because the budget ran out
  */
 export async function runGate(files, deadline) {
+  const groups = groupByPackage(files);
   const lines = [];
-  for (const { dir, files: group, scripts } of groupByPackage(files)) {
+  const unparsed = [];
+  for (const [i, { dir, files: group, scripts }] of groups.entries()) {
     const result = await checkPackage(dir, group, scripts, deadline);
-    if (result.timedOut) return { timedOut: true, lines: [] };
+    if (result.timedOut) return { ...NOTHING, timedOut: true, unchecked: groups.slice(i).flatMap((g) => g.files) };
     lines.push(...result.lines);
+    unparsed.push(...result.unparsed);
   }
-  return { timedOut: false, lines: lines.slice(0, MAX_LINES) };
+  return { ...NOTHING, lines: lines.slice(0, MAX_LINES), unparsed: unparsed.slice(0, MAX_LINES) };
 }
 
-const lastPath = (logPath) => `${logPath}.last`;
+/**
+ * User message for a timed-out gate: names the files that were not checked (at most 10) and asks for a runner typecheck.
+ * @param {string[]} unchecked absolute paths
+ */
+export function timeoutMessage(unchecked) {
+  const more = unchecked.length > MAX_NAMED_FILES ? `, +${unchecked.length - MAX_NAMED_FILES} more` : '';
+  const named = unchecked.slice(0, MAX_NAMED_FILES).join(', ');
+  return `typecheck gate: timed out, not run for: ${named}${more}. Run a typecheck through the runner agent.`;
+}
 
-// Hash on the first line of `<log>.last`, the failure lines below it.
-function previousHash(logPath) {
+const lastPath = (logPath) => `${logPath}.last`; // hash + lines of the failure that last blocked a stop
+const shownPath = (logPath) => `${logPath}.shown`; // hash of a failure the user was already shown
+
+function readHash(path) {
   try {
-    return readFileSync(lastPath(logPath), 'utf8').split('\n', 1)[0];
+    return readFileSync(path, 'utf8').split('\n', 1)[0];
   } catch {
-    return null; // no earlier failure recorded
+    return null; // nothing recorded
   }
 }
 
 const say = (systemMessage) => process.stdout.write(`${JSON.stringify({ systemMessage })}\n`);
 
+// Blocks the stop with `lines` (exit 2) unless the user has seen this exact failure or the agent retried without progress.
+function blockOrReport(lines, logPath, stopHookActive) {
+  const text = lines.join('\n');
+  const hash = sha256(text);
+  const alreadyShown = hash === readHash(shownPath(logPath));
+  const noProgress = stopHookActive && hash === readHash(lastPath(logPath));
+  if (alreadyShown || noProgress) {
+    if (!alreadyShown) writeFileSync(shownPath(logPath), `${hash}\n`);
+    return say(`typecheck gate: unresolved errors\n${text}`);
+  }
+  writeFileSync(lastPath(logPath), `${hash}\n${text}\n`);
+  process.stderr.write(`${text}\n`);
+  process.exitCode = 2;
+}
+
 /**
- * Applies a gate result: pass or timeout clears the log, a failure blocks the stop (exit 2) unless the agent already
- * retried with no progress, in which case the user gets the remaining lines as a message.
- * @param {{timedOut: boolean, lines: string[]}} result
+ * Applies a gate result. Pass, timeout and "typecheck could not run" clear the log (a message goes to the user for the
+ * last two); real diagnostics block the stop (exit 2) unless this exact failure was already shown or the agent retried
+ * with no progress, in which case the user gets the lines as a message and the hash is remembered as shown.
+ * @param {{timedOut: boolean, lines: string[], unparsed: string[], unchecked: string[]}} result from {@link runGate}
  * @param {string} logPath edit log of this agent
  * @param {boolean} stopHookActive input `stop_hook_active`
  */
 export function decideExit(result, logPath, stopHookActive) {
-  const clear = () => [logPath, lastPath(logPath)].forEach((f) => rmSync(f, { force: true }));
-  if (result.timedOut) {
-    say(TIMED_OUT_MESSAGE);
-    return clear();
-  }
-  if (!result.lines.length) return clear();
-  const hash = sha256(result.lines.join('\n'));
-  if (stopHookActive && hash === previousHash(logPath)) {
-    return say(`typecheck gate: unresolved errors\n${result.lines.join('\n')}`);
-  }
-  writeFileSync(lastPath(logPath), `${hash}\n${result.lines.join('\n')}\n`);
-  process.stderr.write(`${result.lines.join('\n')}\n`);
-  process.exitCode = 2;
+  if (result.lines.length && !result.timedOut) return blockOrReport(result.lines, logPath, stopHookActive);
+  if (result.timedOut) say(timeoutMessage(result.unchecked));
+  else if (result.unparsed.length) say(`typecheck gate: no diagnostics for the edited files, typecheck may not run\n${result.unparsed.join('\n')}`);
+  for (const file of [logPath, lastPath(logPath), shownPath(logPath)]) rmSync(file, { force: true });
 }
 
 async function readStdin() {

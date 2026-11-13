@@ -1,5 +1,5 @@
 // Parses check output (tsc, eslint stylish and unix formats) into `file:line RULE-ID message` lines for post-edit.mjs and
-// typecheck-gate.mjs. Exports: CODE_FILE, MAX_LINES, isSamePath(reported, target), diagnostics(output, file).
+// typecheck-gate.mjs. Exports: CODE_FILE, MAX_LINES, isSamePath(reported, target), diagnostics(output, file), diagnosticsDetailed(output, file).
 // Invariants: pure; at most MAX_LINES lines; failures that only concern other files yield [] so they never block.
 export const CODE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 export const MAX_LINES = 15;
@@ -40,9 +40,10 @@ function parseDiagnostic(l, header) {
 
 /**
  * Failure output (tsc, eslint stylish or unix format) -> at most 15 `file:line RULE-ID message` lines about `file`;
- * falls back to the raw tail. Failures that only concern other files yield [] so they do not block. Pure.
+ * falls back to the raw tail. Failures that only concern other files yield no lines. Pure.
+ * @returns {{lines: string[], parsed: boolean}} `parsed` is false for the raw-tail fallback and for no lines at all
  */
-export function diagnostics(output, file) {
+export function diagnosticsDetailed(output, file) {
   const lines = output.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const found = [];
   let aboutOtherFiles = false;
@@ -56,6 +57,9 @@ export function diagnostics(output, file) {
     if (isSamePath(d.path, file)) found.push(`${normPath(d.path)}:${d.text}`);
     else aboutOtherFiles = true;
   }
-  if (!found.length && aboutOtherFiles) return [];
-  return (found.length ? found : lines.slice(-MAX_LINES)).slice(0, MAX_LINES);
+  if (!found.length && aboutOtherFiles) return { lines: [], parsed: false };
+  return { lines: (found.length ? found : lines.slice(-MAX_LINES)).slice(0, MAX_LINES), parsed: found.length > 0 };
 }
+
+/** The lines of {@link diagnosticsDetailed}: `file:line RULE-ID message`, or the raw tail when nothing parses. Pure. */
+export const diagnostics = (output, file) => diagnosticsDetailed(output, file).lines;
