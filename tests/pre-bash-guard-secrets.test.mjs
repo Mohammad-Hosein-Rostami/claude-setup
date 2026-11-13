@@ -140,7 +140,7 @@ test('R4/L2: SSHPASS, vault, --from-literal, az -p, htpasswd -b and aws configur
 
 test('R4/L1: every secret pattern is linear: hostile inputs at the size limit and at 500 KB take under 500 ms', () => {
   const shapes = ['curl ', 'curl -H "a" ', 'aKEY', 'a-', 'a-b-key', 'x://a:', 'x://a:b', 'mysql ', 'docker ', 'redis-cli ', 'Authorization: ', 'X-a-', 'a+b.c-d',
-    'vault login ', 'az ', 'sshpass -', 'htpasswd -', 'aws configure set ', '--from-literal=a-', '--secret ', 'curl "', "curl '", 'wget -u '];
+    'vault login ', 'echo ', 'printf %s a | ', 'echo a | docker login ', '--password-stdin <', 'az ', 'sshpass -', 'htpasswd -', 'aws configure set ', '--from-literal=a-', '--secret ', 'curl "', "curl '", 'wget -u '];
   for (const size of [32 * 1024, 500 * 1000]) {
     for (const shape of shapes) {
       const text = shape.repeat(Math.ceil(size / shape.length)).slice(0, size);
@@ -157,4 +157,38 @@ test('R4/L1: maskSecrets cuts input beyond the scan limit and says so instead of
   const masked = maskSecrets(`${'a '.repeat(20_000)} TOKEN=${R4_PW}`);
   assert.equal(masked.includes(R4_PW), false);
   assert.match(masked, /\[\.\.\.cut\]$/);
+});
+
+// Round 5 (L3): a literal fed to --with-token / --password-stdin by a here-string or an echo/printf pipe.
+const STDIN_PW = ['Fake', 'Stdin', 'Pw', '42'].join('-');
+const STDIN_LITERALS = [
+  `gh auth login --with-token <<< ${STDIN_PW}`,
+  `gh auth login --with-token <<< "${STDIN_PW}"`,
+  `docker login --password-stdin <<< '${STDIN_PW}'`,
+  `docker login -u me --password-stdin ghcr.io <<< ${STDIN_PW}`,
+  `echo ${STDIN_PW} | docker login --password-stdin`,
+  `echo -n "${STDIN_PW}" | docker login -u me --password-stdin ghcr.io`,
+  `printf %s ${STDIN_PW} | gh auth login --with-token`,
+  `printf '%s' '${STDIN_PW}' | gh auth login --with-token`,
+  `printf "%s\\n" ${STDIN_PW} | gh auth login --with-token`,
+];
+const STDIN_NOT_LITERAL = [
+  'echo "$GH_TOKEN" | gh auth login --with-token',
+  'echo $DOCKER_PASSWORD | docker login --password-stdin',
+  'gh auth login --with-token <<< "$GH_TOKEN"',
+  'gh auth login --with-token <<< "$(cat ~/.token)"',
+  'gh auth login --with-token < token.txt',
+  'cat token.txt | docker login --password-stdin',
+  'echo hello | grep hello',
+];
+
+test('R5/L3: a literal given on stdin to --with-token / --password-stdin is detected, masked, and never logged or shown', () => {
+  for (const command of STDIN_LITERALS) {
+    assert.ok(findLiteralSecret(command), `detected: ${command}`);
+    assert.equal(maskSecrets(command).includes(STDIN_PW), false, `masked: ${command}`);
+    const reason = decide(command, ctx);
+    assert.equal(reason.ask, true, command);
+    assert.equal(reason.reason.includes(STDIN_PW), false);
+  }
+  for (const command of STDIN_NOT_LITERAL) assert.equal(findLiteralSecret(command), undefined, `not a secret: ${command}`);
 });

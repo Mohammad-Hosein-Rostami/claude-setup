@@ -6,6 +6,8 @@
 // (so `Authorization: Bearer x` too), `-u user:pass` / `--user user:pass`, and URL credentials `scheme://user:pass@host`.
 // A value that starts with `$` (variable, `$(cat file)`), a backtick or `<(` is not literal. Scans the raw text, so quotes,
 // heredocs and `bash -c '...'` are all covered. A noisy false positive is accepted: the check is meant to be strict (the hook turns a hit into a timed ask).
+// Also: a literal given on stdin to a `--with-token` / `--password-stdin` command: `gh auth login --with-token <<< T`, `echo T | docker login
+// --password-stdin` (`echo`/`printf` input; `$VAR` and `$(...)` input is not literal).
 // Also: SSHPASS=, `vault login <token>`, `--from-literal=<k>=<v>` (k names a pass/secret/token/key), `az ... -p`, `htpasswd -b`,
 // `aws configure set *secret* <v>`.
 // Linear time (Round 4): every pattern is anchored at a rare literal and every gap between a prefix and its value is a BOUNDED repeat
@@ -41,12 +43,17 @@ const HTTP_TOOL = `\\b(?:curl|wget|http|https|xh|hurl)\\b(?:"[^"\\n]{0,${GAP}}"|
 const HEADER_VALUE = `(?![^"'\\n]{0,500}[$\`<])[^"'\\n]{1,500}`;
 // `Authorization`, `Proxy-Authorization`, any hyphenated `...-Key/-Token/-Secret` name (`X-Api-Key`, `PRIVATE-TOKEN`), `Cookie`
 const HEADER_NAME = `(?:(?:Proxy-)?Authorization|[A-Za-z0-9]{1,${NAME_MAX}}-[\\w-]{0,${NAME_MAX}}(?:key|token|secret)|Cookie)`;
+const STDIN_FLAG = '--(?:with-token|password-stdin)\\b';
+// the value is echoed/printed (`echo -n T`, `printf '%s' T`) and piped into a command that has the stdin flag
+const ECHOED_INTO_STDIN_FLAG = `(?=(?:"[^"]*"|'[^']*'|[^\\s"';&|]+)[ \\t]*\\|[^\\n;&|]{0,${GAP}}${STDIN_FLAG})`;
 const SECRET_NAME_PART = '(?<![A-Za-z0-9])(?:KEY|TOKEN|SECRET|PASS|PASSWD|PWD)(?![A-Za-z0-9])';
 const QUERY_SECRET = 'api[_-]?key|access[_-]?(?:token|key)|auth[_-]?token|token|client[_-]?secret|secret|password|passwd|pwd';
 const SECRET_FLAG = '--(?:token|api-key|apikey|password|passwd|client-secret|access-token|auth-token)(?:=|\\s+)';
 const VALUE_KINDS = [
   [`(?:^|[\\s;&|("'])${SECRET_ENV}=`, '', 'a password or key assigned in the command'],
   [SECRET_FLAG, '(?!-)', 'a password, token or key flag with a literal value'],
+  [`${STDIN_FLAG}[^\\n|;&<]{0,${GAP}}?<<<[ \\t]*`, '', 'a token or password given as a here-string'],
+  [`\\b(?:echo|printf)\\b[ \\t]+(?:-[a-zA-Z]+[ \\t]+){0,3}(?:(?:"%s(?:\\\\n)?"|'%s(?:\\\\n)?'|%s)[ \\t]+)?`, ECHOED_INTO_STDIN_FLAG, 'a token or password piped to a stdin flag'],
   ['\\bsshpass\\s+(?:-\\w*\\s+){0,10}-p\\s*', '', 'an sshpass password'],
   [`\\b(?:mysql|mysqladmin|mysqldump|mariadb)\\b[^\\n|;&]{0,${GAP}}?\\s-p`, '', 'a mysql password flag with a literal value'],
   [`\\bdocker\\s+login\\b[^\\n|;&]{0,${GAP}}?\\s-p\\s+`, '', 'a docker login password'],
