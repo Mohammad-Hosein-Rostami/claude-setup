@@ -51,7 +51,7 @@ A workflow is a script that runs many agents in phases.
 
 | Mode | Lead (main session) | Important jobs | Parallel agents | Workflows | Reports |
 | ---- | ------------------- | -------------- | --------------- | --------- | ------- |
-| normal | Opus 5.5, effort high | pinned agents + lead-rule escalations | 1 agent at a time (lane budget) | only when you ask for one in your message; up to 4 agents | terse; `/compact` only when context is large; no speculative work |
+| normal | Opus 5.5, effort high | pinned agents + lead-rule escalations | up to 2 at once (lane budget) | only when you ask for one in your message; up to 4 agents | terse; `/compact` only when context is large; no speculative work |
 | medium | Opus 5.5, effort high | same | up to 3 at once, independent work in parallel | Claude may propose one and say roughly what it costs; starts only after you say yes; up to 9 agents | as the lead rules and `CLAUDE.md` |
 | high | Opus 5.5, effort high | same | up to 6 at once; wide fan-out: parallel research, one `deep-debugger` per hypothesis, test-writer + implementer, split parts, reviewer + security-auditor | Claude starts one itself for substantive multi-part tasks, no size limit | same short final answer as medium; detail goes to files |
 | extra-high | Opus 5.5, effort max | architecture/planning, hard or failed-once bugs, risky or final reviews, security audits, risky code, key decisions: agents with `model: "opus", effort: "max"` | as high (up to 6) | as high | as high |

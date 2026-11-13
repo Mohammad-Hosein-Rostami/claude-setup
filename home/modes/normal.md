@@ -2,7 +2,7 @@
 
 Same models per task, same lead effort, same quality gates as every mode (see the lead rules and CLAUDE.md). This mode only sets parallelism, workflows and report brevity.
 
-- Lane budget: 1 agent at a time; a parallel request gets a one-line usage-limit forecast first.
+- Lane budget: up to 2 agents at once; a parallel request gets a one-line usage-limit forecast first.
 - Workflows (a script that runs many agents in phases): only when the user asks for one in their message; up to 4 agents.
 - Research: stop at the first sufficient authoritative source.
 - No speculative or nice-to-have work; do what the task needs.
