@@ -146,5 +146,7 @@
     "claude-haiku-5-5": {
       "effortLevel": "low"
     }
-  }
+  },
+  "promptSuggestionEnabled": false,
+  "awaySummaryEnabled": false
 }
