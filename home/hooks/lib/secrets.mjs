@@ -48,8 +48,10 @@ const STDIN_FLAG = '--(?:with-token|password-stdin)\\b';
 // the value is echoed/printed (`echo -n T`, `printf '%s' T`) and piped into a command that has the stdin flag
 const ECHOED_INTO_STDIN_FLAG = `(?=(?:"[^"]*"|'[^']*'|[^\\s"';&|]+)[ \\t]*\\|[^\\n;&|]{0,${GAP}}${STDIN_FLAG})`;
 const SECRET_NAME_PART = '(?<![A-Za-z0-9])(?:KEY|TOKEN|SECRET|PASS|PASSWD|PWD)(?![A-Za-z0-9])';
-// A value that starts like a path (`/x`, `./x`, `../x`, `~/x`) is a path or a regex held in a variable (`STATE_KEY=/state|hover/`), not a literal.
-const CODE_VALUE = '(?!["\']?(?:\\.{0,2}|~)/|[=>({\\[]|[\\w$]{1,40}\\s*=>|lambda\\b|[\\w$]{1,40}(?:\\.[\\w$]{1,40}){0,6}\\s*[(\\[])';
+// A value that looks like a path or a regex held in a variable is not a literal: `./x`, `../x`, `~/x`; `/x` with a `|` in it (`STATE_KEY=/state|hover/`);
+// `/x` under a common absolute root (`KEY_PATH=/Users/x/k.pem`). A bare leading `/` is not enough: about 1 in 64 base64 keys starts with one.
+const ABSOLUTE_ROOTS = 'Users|home|tmp|private|var|etc|opt|usr|Volumes';
+const CODE_VALUE = `(?!["']?(?:(?:\\.{1,2}|~)/|/[^\\s"';&]{0,500}\\||/(?:${ABSOLUTE_ROOTS})/)|[=>({\\[]|[\\w$]{1,40}\\s*=>|lambda\\b|[\\w$]{1,40}(?:\\.[\\w$]{1,40}){0,6}\\s*[(\\[])`;
 const QUERY_SECRET = 'api[_-]?key|access[_-]?(?:token|key)|auth[_-]?token|token|client[_-]?secret|secret|password|passwd|pwd';
 const SECRET_FLAG = '--(?:token|api-key|apikey|password|passwd|client-secret|access-token|auth-token)(?:=|\\s+)';
 const VALUE_KINDS = [
