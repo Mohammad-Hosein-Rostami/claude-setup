@@ -21,4 +21,4 @@
 | `compare` differs between runs | Page animates or loads late data. Mock the data; the tool already freezes animations and waits for fonts and images. |
 | `line-height: normal` row | Set an explicit line-height equal to the Figma value. |
 | `responsive` reports a tap target you cannot change | Inline links in text are exempt (the tool skips `display: inline`); otherwise grow the hit area with padding. |
-| Hook blocks a Bash command | `pre-bash-guard.mjs` denies `--no-verify`, force push, `rm -rf` outside the project, editing lockfiles and literal secrets in the command. Run the safe equivalent. A confirm prompt (push, publish, gh release, prod host writes) is not a block: answer it. |
+| Dialog or prompt from a Bash command | `pre-bash-guard.mjs` asks for `--no-verify`, force push, `rm -rf` outside the project, lockfile edits, literal secrets, push, publish and prod-host writes. Allow is the default and a timeout (180 s) allows; only Deny blocks. Over ssh or without a display the CLI prompt appears instead. Decisions are in `~/.claude/logs/guard.jsonl`. |
