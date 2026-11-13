@@ -15,23 +15,23 @@
 The session is the lead on **Opus 5.5, effort `high`** (normal/medium/high): it thinks, decides and delegates. Each agent pins its model/effort; unpinned general-purpose, Explore and Plan get Sonnet 5.5 (Plan: Opus in extra-high/ultra-high).
 Use `scout` (Haiku) for lookups, Explore only for broad sweeps. Escalate per call via Agent `model`/`effort`:
 `implementer`/`test-writer` `effort: "high"` for tricky or cross-module logic; `reviewer` `model: "opus"` for risky
-changes (auth, data, migrations, money, concurrency, security); `architect`/`deep-debugger` `effort: "xhigh"` for hard
+changes; `architect`/`deep-debugger` `effort: "xhigh"` for hard
 problems or after a failed attempt. Never downgrade a pick to save tokens.
 
 | Work | Who | How |
 | ---- | --- | --- |
-| Planning, analysis, architecture/API design, trade-offs, root cause of hard bugs, judging agent results, the final call | **Opus 5.5 (the session)** | itself; `architect` / `deep-debugger` / `/escalate` for a clean context |
+| Planning, architecture/API design, trade-offs, hard-bug root cause, judging agent results, final call | **Opus 5.5 (the session)** | itself; `architect` / `deep-debugger` / `/escalate` for a clean context |
 | Implementation, refactors, tests, normal bug fixes, reviews | **Sonnet 5.5** | `implementer`, `test-writer`, `reviewer` agent |
 | UI implementation (pages, components, layout, styling, forms) | **Sonnet 5.5** | `ui-implementer` agent (never plain `implementer`) |
 | Figma match and responsive checks (text only, no images) | **Sonnet 5.5** | `visual-qa` agent, skill `figma-pixel-perfect` |
-| Searching, listing, reading many files, tests/lint/build, log triage, summarising, trivial edits | **Haiku 5.5** | `scout` / `runner` agent, or `/quick` |
+| Search, reading many files, tests/lint/build, log triage, summaries, trivial edits | **Haiku 5.5** | `scout` / `runner` agent, or `/quick` |
 
 Rules:
 
 1. Opus does not write long implementations. It writes a **spec** (decision, files, steps, acceptance checks, ≤ 60
-   lines) to a file, hands the path to a Sonnet agent, then checks the report and the diff; never paste the spec twice.
-2. Opus keeps only strong-model work and edits of a few lines where briefing costs more; mechanical work goes to Haiku,
-   so the main context never sees raw output.
+   lines) to a file, hands the path to a Sonnet agent, then checks the report and the diff.
+2. Opus keeps only strong-model work and edits of a few lines where briefing costs more; mechanical work goes to Haiku
+   (no raw output in the main context).
 3. Independent work goes to agents in parallel, in one message, within the mode's lane budget; merge small same-module
    pieces into one agent.
 4. A new kind of task with no pinned agent: start with the cheaper tier, escalate on failure.
@@ -40,8 +40,8 @@ Rules:
 
 ## Finish the run
 
-- Stuck means change approach, not stop: `root-cause-debug`, then `deep-debugger`, then `/escalate`. Re-delegate an
-  unfinished subagent with what it learned if it cannot be continued.
+- Stuck means change approach, not stop: `root-cause-debug`, then `deep-debugger`, then `/escalate`. Unfinished
+  subagent: continue it or re-delegate with what it learned.
 
 ## Lead discipline (every mode)
 
