@@ -36,16 +36,18 @@ const REDACTIONS = [
   [new RegExp(`${PEM_BEGIN}[\\s\\S]*?(?:${PEM_END}|$)`, 'g'), R],
   [new RegExp(`^[A-Za-z0-9+/]{${MIN_BODY_LINE},}={0,2}$`, 'gm'), R],
   [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s:/@]*:\S*@/gi, `$1${R}@`], // the password may hold / or @: runs to the last @ of the token
-  [/(\bAuthorization["']?\s*[:=]\s*["']?)(?:(?:Basic|Token|Bearer|Digest|Negotiate)\s+)?[^\s"']+/gi, `$1${R}`],
+  [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s:/@]+@/gi, `$1${R}@`], // userinfo without a password is usually a token (https://TOKEN@host)
+  [/(\bAuthorization["']?\s*[:=]\s*["']?)(?!\s*\[REDACTED\])[^"'\n|;&]+/gi, `$1${R}`], // any scheme (Basic, ApiKey, AWS4-HMAC-SHA256 ...): the rest of the header value
+  [/(\bX-(?:[\w-]*-)?(?:Key|Token|Secret)["']?\s*:\s*)(?!\s*\[REDACTED\])[^"'\n]+/gi, `$1${R}`], // X-Auth-Key, X-Amz-Security-Token, X-Api-Key ...
   [/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${R}`],
   [/\beyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)*/g, R],
   [/(\b(?:Set-)?Cookie["']?\s*[:=]\s*)[^\n"']+/gi, `$1${R}`],
   [new RegExp(`(\\s(?:-b|--cookie)[\\s=]+)(${QUOTED_OR_WORD})`, 'g'), `$1${R}`],
-  [/(\s(?:-u|--user)[\s=]+)(?!\[REDACTED\])(["']?[^\s:"']+:[^\s"']*["']?)/g, `$1${R}`],
+  [/(\s(?:--user[\s=]+|-u[\s=]*))(?!\[REDACTED\])("[^"\n]*:[^"\n]*"|'[^'\n]*:[^'\n]*'|[^\s:"']+:[^\s"']*)/g, `$1${R}`], // -u U:PW, -uU:PW, --user "a b:PW
   [/(\bredis-cli\b[^\n]*?\s-a\s+)(?!\[REDACTED\])(\S+)/gi, `$1${R}`],
   [new RegExp(`(\\b(?:sshpass|(?:docker|podman|nerdctl)\\s+login)\\b[^\\n|;&]*?\\s-p\\s*)(${QUOTED_OR_WORD})`, 'gi'), `$1${R}`],
   [/(?<![\w-])(-p)(?!\[REDACTED\])('[^'\n]*'|"[^"\n]*"|[^\s'"-]\S*)/g, `$1${R}`],
-  [new RegExp(`(--(?:pass(?:word|wd|phrase)?|secret|token|api-?key)[\\s=]+)(${QUOTED_OR_WORD})`, 'gi'), `$1${R}`],
+  [new RegExp(`(--(?:[\\w-]*-)?(?:pass(?:word|wd|phrase)?|secret|token|api-?key)[\\s=]+)(${QUOTED_OR_WORD})`, 'gi'), `$1${R}`],
   [/(\bIDENTIFIED\s+(?:WITH\s+\w+\s+)?BY\s+)(?!\[REDACTED\])('[^'\n]*'|"[^"\n]*"|\S+)/gi, `$1${R}`],
   [/(\bPASSWORD\s*\(\s*)('[^'\n]*'|"[^"\n]*"|[^)\n]*)/gi, `$1${R}`],
   [/(\bpass(?:word|wd|code|phrase)?|\bpwd|\bsecret|\bapi[ _-]?key)(\s+(?:is|was|are|to|should\s+be|will\s+be)\s*:?\s*)(?!\[REDACTED\])('[^'\n]*'|"[^"\n]*"|\S+)/gi, `$1$2${R}`],
