@@ -10,11 +10,6 @@
       "WebFetch"
     ],
     "deny": [
-      "Read(**/.env)",
-      "Read(**/.env.*)",
-      "Read(**/pnpm-lock.yaml)",
-      "Bash(cat *.env*)",
-      "Bash(type *.env*)",
       "Bash(cat *credentials*)",
       "Bash(type *credentials*)",
       "Read(**/.credentials.json)",
@@ -44,6 +39,16 @@
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/agent-model-guard.mjs\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Artifact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/artifact-ask.mjs\"",
             "timeout": 5
           }
         ]
