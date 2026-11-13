@@ -1,6 +1,6 @@
 // Pure shell-text parsing for pre-bash-guard: no I/O, never evaluates anything.
 // Exports: tokenize(command) -> {segs, nested}; segments(command) -> string[][]; stripHeredocs(command);
-// parseArgs(args, spec) -> {files, target}; stripOutputRedirects(words); GIT_TOPLEVEL_WORD; unquote, basenameOf, flagsOf.
+// GIT_TOPLEVEL_WORD; QUOTED_MARK; unquote, basenameOf, flagsOf.
 // A quoted word that merely looks like a redirection (`">"`) gets QUOTED_MARK in front, so it stays a plain argument;
 // an unquoted operator glued to a word (`.env>out`, `cat<.env`) is split off into its own word.
 // Invariants: every pass is linear (or n log n) in the command length; a heredoc without a terminator line is left
@@ -15,12 +15,7 @@ const DQ_SUBSTITUTION = /\$\(([^)]*)\)|`([^`]*)`/g;
 const HEREDOC_OPERATOR = /(?<!<)<<(?!<)-?[ \t]*(['"]?)(\w+)\1/g;
 // `$(git rev-parse --show-toplevel)` and its backtick form: the project root, replaced by one word so `cd` can follow it
 const GIT_TOPLEVEL = /\$\(\s*git\s+rev-parse\s+--show-toplevel\s*\)|`\s*git\s+rev-parse\s+--show-toplevel\s*`/g;
-// output redirection: `>f`, `>>f`, `2>f`, `&>f`, `>|f`, `>&f`; `>&1` / `>&-` only duplicate or close a descriptor
-const OUTPUT_REDIRECT = /^(?:\d*>&|&>>?|\d*>>?\|?)(.*)$/;
-const DESCRIPTOR_TARGET = /^(\d+|-)$/;
 const BARE_WORD_LINE = /^[ \t]*(\w+)[ \t]*$/;
-// curl `-d @file`, `-F f=@file;type=x`, `-F f=<file`, `--data-urlencode name@file`
-const CURL_DATA_FILE = /(?:^|=)[@<]([^;]+)|^[^=]*@([^;]+)/;
 
 const REDIRECT_LIKE = /^(?:\d*[<>]|&>)/;
 /** Prefix for a quoted word that only looks like a redirection (`">"`, `"2>"`): bash passes it on as a plain argument. */
@@ -91,17 +86,6 @@ export function stripHeredocs(command) {
   return kept.join('\n');
 }
 
-/** Drops output redirections (operator and target) from a word list: they write files, they never read `.env`. Input `<` stays. */
-export function stripOutputRedirects(words) {
-  const out = [];
-  for (let i = 0; i < words.length; i++) {
-    const m = OUTPUT_REDIRECT.exec(words[i]);
-    if (!m) out.push(words[i]);
-    else if (m[1] === '' && i + 1 < words.length) i++; // the operator stands alone: its target is the next word
-  }
-  return out;
-}
-
 /** Command text -> `{ segs, nested }`: segs are lists of unquoted words; nested are `$(...)`/backtick bodies found inside double quotes. */
 export function tokenize(command) {
   const segs = [[]];
@@ -122,67 +106,4 @@ export function tokenize(command) {
 /** Command text -> list of segments, each a list of unquoted-word tokens (adjacent quoted parts joined, operators split). */
 export function segments(command) {
   return tokenize(command).segs;
-}
-
-/** Option name -> where one of its values goes. Short names are `-x`, long names `--xyz`. */
-export const optionKinds = (kind, ...names) => names.map((name) => [name, kind]);
-
-// kind: value (skip 1) | value2 (skip 2) | pattern (skip 1, replaces the leading pattern word) | file (value is a file)
-// | namedfile (name then file) | data (curl data value that may be `@file`) | target (cp -t DIR) | rest (ignore everything after)
-function splitOption(arg, options) {
-  if (arg.startsWith('--')) {
-    const eq = arg.indexOf('=');
-    const name = eq === -1 ? arg : arg.slice(0, eq);
-    return { kind: options.get(name), attached: eq === -1 ? undefined : arg.slice(eq + 1) };
-  }
-  for (let i = 1; i < arg.length; i++) {
-    const kind = options.get(`-${arg[i]}`);
-    if (kind) return { kind, attached: arg.slice(i + 1) || undefined };
-  }
-  return {};
-}
-
-/**
- * Splits command arguments into the files they name. With `firstIsPattern` the first positional word is a pattern
- * or script (grep, sed, awk, jq), not a file, unless a pattern option (-e) or a file option (-f) supplied it.
- * @param {string[]} args words after the command
- * @param {{options?: Map<string,string>, firstIsPattern?: boolean, optionFilesOnly?: boolean}} spec optionFilesOnly: bare words
- *   are not files (curl URLs), only option values are
- * @returns {{files: string[], target: boolean}} target: a `-t DIR` option was given (all positionals are sources)
- */
-export function parseArgs(args, { options = new Map(), firstIsPattern = false, optionFilesOnly = false } = {}) {
-  const files = [];
-  let target = false;
-  let needPattern = firstIsPattern;
-  const positional = (word) => {
-    if (needPattern) needPattern = false;
-    else if (!optionFilesOnly) files.push(word);
-  };
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--') {
-      args.slice(i + 1).forEach(positional);
-      break;
-    }
-    if (!arg.startsWith('-') || arg === '-') {
-      positional(arg);
-      continue;
-    }
-    const { kind, attached } = splitOption(arg, options);
-    if (kind === 'rest') break;
-    if (kind === 'target') target = true;
-    if (kind === 'pattern' || kind === 'file') needPattern = false;
-    if (kind === 'value2' || kind === 'namedfile') {
-      const second = attached === undefined ? args[(i += 2)] : args[(i += 1)];
-      if (kind === 'namedfile' && second !== undefined) files.push(second);
-    } else if (kind) {
-      const value = attached ?? args[++i];
-      if (kind === 'file' && value !== undefined) files.push(value);
-      if (kind === 'data' && value !== undefined) {
-        const m = CURL_DATA_FILE.exec(value);
-        if (m) files.push(m[1] ?? m[2]);
-      }
-    }
-  }
-  return { files, target };
 }
