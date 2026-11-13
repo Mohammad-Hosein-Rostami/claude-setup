@@ -201,7 +201,7 @@ test('R4: a heredoc delimiter has quotes and backslashes removed from the whole 
 test('R4: a quoted-delimiter heredoc at top level is data; an unquoted one with an expansion is not', () => {
   assert.deepEqual(decide("cat <<'EOF' > x.sh\nrm -rf /\ngit push -f\nEOF", ctx), { allow: true });
   assert.equal(decide('cat <<EOF\n$(git push --force)\nEOF', ctx).ask, true);
-  assert.equal(riskyWordInExpansion('git commit -m "$(cat <<\'EOF\'\nx\ngit push -f\nEOF\n)"'), 'risky word inside shell expansion');
+  assert.equal(riskyWordInExpansion("bash <<'EOF'\nx\ngit push -f\nEOF"), 'risky word inside shell expansion'); // R5: only cat/tee read a body as data
 });
 
 test('R4: the reason is DESTRUCTIVE for rm and disk words, plain for the rest', () => {

@@ -4,7 +4,9 @@
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
+import { riskyWordInExpansion } from '../home/hooks/lib/raw-risk.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
+import { AUDIT_HARMLESS, HEREDOC_READER_ASKS, NOT_COVERED_STILL_ASK, RUNS_TEXT_ASKS } from './pre-bash-guard-final-cases.mjs';
 
 const PROJECT = resolve('/work/proj');
 const ctx = { cwd: PROJECT, project: PROJECT, prodHosts: [] };
@@ -55,4 +57,80 @@ test('the git top-level is unknown from outside the project, and ../ leaves it',
   assert.equal(decide('rm -rf "$(git rev-parse --show-toplevel)/dist"', { ...ctx, cwd: resolve('/elsewhere') }).ask, true);
   assert.equal(decide('rm -rf "$(git rev-parse --show-toplevel)/../x"', ctx).ask, true);
   assert.equal(decide('rm -rf "$(git rev-parse --show-toplevel)"', ctx).ask, true);
+});
+
+const MESSAGE_STILL_SCANNED = [
+  'git commit -m "fix $(git push --force origin main)"',
+  'git commit -m "fix `git push --force origin main`"',
+  "git commit -m \"$(cat <<'EOF'\nok\nEOF\n)$(git push --force origin main)\"",
+  "git commit -m \"$(cat <<EOF\n$(git push --force origin main)\nEOF\n)\"",
+  "git commit -m \"$(cat <<'EOF'\nok\nEOF\n)\" && git push --force origin main",
+  "git commit -m \"$(cat <<'EOF'\nok\nEOF\n)\" && x=$(rm -rf /etc)",
+  'gh pr create --title "x" --body "$(git push --force origin main)"',
+  "gh pr create --title x --body \"$(cat <<'EOF'\nok\nEOF\n)\"; x=$(gh release create v1)",
+  "gh issue comment 1 --body \"$(cat <<'EOF'\nok\nEOF\n | bash)\"",
+  'git commit -m "unclosed $(git push --force origin main)',
+  'gh pr merge 5 --body "ok"; echo $(date)',
+  'echo "$(date)"; gh release create v1',
+  'echo "$(date)"; gh -R o/r pr merge 5',
+  'echo "$(date)"; gh repo delete o/r --yes',
+];
+
+const READER_DATA_SILENT = [
+  "cat <<'EOF'\nrm -rf /\ngit push --force\nEOF",
+  "sudo tee /etc/motd <<'EOF'\nrm -rf /\nEOF",
+  "NAME=x cat > notes.md <<'EOF'\ngit push --force\nEOF",
+  "git commit -F - <<'EOF'\nfix: rm -rf / and git push --force origin main\nEOF",
+  "gh pr create --title x --body-file - <<'EOF'\nSee gh release and git push --force origin main\nEOF",
+  "cat <<'EOF' | kubectl apply -f -\ngit push --force origin main\nEOF",
+];
+
+const READER_RUNS_ASKS = [
+  "cat <<'EOF' | bash\ngit push --force origin main\nEOF",
+  "cat <<'EOF' | sudo sh\nrm -rf /etc\nEOF",
+  "cat <<'EOF' | ssh host\nrm -rf /etc\nEOF",
+  "bash <<'EOF'\ngit push --force origin main\nEOF",
+  "source /dev/stdin <<'EOF'\ngit push --force origin main\nEOF",
+  "python3 - <<'EOF'\nimport os; os.system('git push --force origin main')\nEOF",
+  "xargs rm -rf <<'EOF'\n/etc\nEOF",
+  "crontab - <<'EOF'\n* * * * * rm -rf /etc\nEOF",
+];
+
+test('commit and PR message text is data (the auditor cases stay silent, 80+ harmless commands in all)', () => {
+  assert.ok(AUDIT_HARMLESS.length >= 80);
+  for (const command of AUDIT_HARMLESS) assert.deepEqual(decide(command, ctx), { allow: true }, `should allow: ${JSON.stringify(command)}`);
+});
+
+test('a message with another expansion, or a command after it, still asks', () => {
+  for (const command of MESSAGE_STILL_SCANNED) assert.equal(decide(command, ctx).ask, true, `should ask: ${JSON.stringify(command)}`);
+});
+
+test('a heredoc read by cat, tee, git commit -F - or gh --body-file - is data', () => {
+  for (const command of READER_DATA_SILENT) assert.deepEqual(decide(command, ctx), { allow: true }, `should allow: ${JSON.stringify(command)}`);
+});
+
+test('a heredoc read by anything else is scanned for dangerous words', () => {
+  for (const command of READER_RUNS_ASKS) assert.equal(decide(command, ctx).ask, true, `should ask: ${JSON.stringify(command)}`);
+  for (const command of HEREDOC_READER_ASKS) assert.equal(decide(command, ctx).ask, true, `should ask: ${JSON.stringify(command)}`);
+});
+
+test('commands that run a text argument count as hidden execution', () => {
+  assert.ok(RUNS_TEXT_ASKS.length >= 20);
+  for (const command of RUNS_TEXT_ASKS) assert.equal(decide(command, ctx).ask, true, `should ask: ${JSON.stringify(command)}`);
+  assert.equal(riskyWordInExpansion("watch -n1 'git push --force origin main'"), 'risky word inside shell expansion');
+  assert.equal(riskyWordInExpansion("PROMPT_COMMAND='git push --force origin main' bash -i"), 'risky word inside shell expansion');
+  assert.equal(riskyWordInExpansion('node -p "1+1"'), undefined);
+  assert.equal(riskyWordInExpansion('pnpm test --watch'), undefined);
+});
+
+test('gh is judged by position: the words of a title or body are not a subcommand', () => {
+  assert.equal(riskyWordInExpansion('x=$(date); gh pr create --title "fix: delete stale release" --body "merge archive"'), undefined);
+  assert.equal(riskyWordInExpansion('x=$(date); gh issue comment 3 --body "gh release soon"'), undefined);
+  assert.ok(riskyWordInExpansion('x=$(date); gh release create v1'));
+  assert.ok(riskyWordInExpansion('x=$(date); gh pr merge 3'));
+  assert.ok(riskyWordInExpansion('x=$(date); gh api -X DELETE repos/o/r'));
+});
+
+test('the still-asking rm paths are reported, not silenced', () => {
+  for (const command of NOT_COVERED_STILL_ASK) assert.match(decide(command, ctx).reason, DESTRUCTIVE, command);
 });

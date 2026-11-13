@@ -45,10 +45,9 @@ test('A: a real heredoc body is data, also inside "$(cat <<EOF ...)"', () => {
   asks(['cat <<EOF\nhi\nEOF\ngit push --force'], DESTRUCTIVE);
 });
 
-test('R4: KNOWN FALSE POSITIVE: a commit message heredoc inside "$(...)" that names a dangerous word asks (fail to ask)', () => {
-  const message = "git commit -m \"$(cat <<'EOF'\nfix: it's done\ngit push --force\nEOF\n)\"";
-  assert.match(decide(message, ctx).reason, /risky word inside shell expansion/);
-  allows(["git commit -m \"$(cat <<'EOF'\nfix: it's done\nEOF\n)\""]); // no dangerous word: silent
+test('R5: a commit message heredoc inside "$(...)" is data; another expansion in the message still asks', () => {
+  allows(["git commit -m \"$(cat <<'EOF'\nfix: it's done\ngit push --force\nEOF\n)\""]);
+  asks(["git commit -m \"$(cat <<'EOF'\nfix\nEOF\n)$(git push --force)\""]);
 });
 
 test('A: the lexer splits commands like the shell does', () => {

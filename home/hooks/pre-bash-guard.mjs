@@ -41,11 +41,13 @@
 // host of a later psql/mysql. Prod SQL with a `$tag$` quote, a backslash escape or `;` followed by more text is not read-only. Nesting deeper than MAX_NESTING asks.
 // Fail to ask (Round 4, lib/raw-risk.mjs): the two parsers are not a security boundary. A command that has ANY hidden-execution construct
 // (`$(`, backtick, `<<`, `<(`, eval, trap, case, `\r`, a pipe into a shell ...) and a dangerous word anywhere in its raw text, quoted or
-// not, asks with "risky word inside shell expansion" when nothing else asked. Accepted false positive: a commit message written as
-// `"$(cat <<'EOF' ... git push ... EOF)"`. A top-level heredoc with a quoted delimiter is data and stays silent. A command over
+// not, asks with "risky word inside shell expansion" when nothing else asked. Round 5: the quoted message of `git commit` and
+// `gh pr|issue create|edit|comment` is data (lib/message-text.mjs), also `"$(cat <<'EOF' ... EOF)"`; a top-level heredoc is data only when cat/tee
+// (or `git commit -F -`, `gh --body-file -`) reads it; gh words count by position; watch, parallel, PROMPT_COMMAND=, `script|expect -c`,
+// `perl|python|node|ruby -e|-c|-p`, osascript, tmux, fish/pwsh/npx -c are hidden constructs. A command over
 // MAX_COMMAND_CHARS (32 KB) is not parsed at all: it asks "command too long to check"; the log and dialog keep only its first 2 KB, masked.
 // Known limits (not detected): shell aliases and functions defined elsewhere, a variable assigned from another command's output, interpreter
-// code (`node -e`, `python -c`), wrappers that take the command as ONE string (`script -c`, busybox, fish/pwsh -c), rimraf, `find -delete`,
+// code (`node -e`, `python -c`) unless it names a dangerous word, wrappers that take the command as ONE string (busybox), rimraf,
 // `xargs` paths read from stdin, `cd` scoping in subshells (treated as global: extra asks only), an ssh alias that hides a production host,
 // and the PowerShell tool (the hook matcher covers Bash only).
 import { resolve } from 'node:path';

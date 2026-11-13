@@ -30,6 +30,7 @@ Helpers: `diagnostics.mjs` (check output to `file:line RULE-ID message`) and `ed
 - `dangerous-scan.mjs` - finds a dangerous command behind an unknown wrapper; `eval-check.mjs` - `eval` of a variable or substitution.
 - `rm-paths.mjs` - `rm -r` target rules and the ordered variable tracking.
 - `find-delete.mjs` - `find ... -exec rm -r` / `-delete`: the start folders are judged like `rm -r` targets.
+- `message-text.mjs` - blanks the quoted message of `git commit` / `gh pr|issue create|edit|comment` so `raw-risk.mjs` reads it as data.
 - `secrets.mjs` - literal secret detection (returns a kind, never the value) and `maskSecrets`.
 - `outward.mjs` - push, gh release, gh pr merge and publish asks.
 - `timed-ask.mjs` - the timed native dialog (osascript / PowerShell popup / zenity), `CLAUDE_ASK_TIMEOUT_S`, fallback to the native ask.
