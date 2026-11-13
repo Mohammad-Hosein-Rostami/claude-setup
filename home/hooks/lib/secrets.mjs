@@ -31,7 +31,10 @@ const URL_NOT_A_PORT = '(?!\\d+(?:[/?#"\'\\s]|$))';
 const HTTP_TOOL = `\\b(?:curl|wget|http|https|xh|hurl)\\b(?:"[^"]*"|'[^']*'|[^\\n|;&"'])*?`;
 // A header value is a literal unless it contains a variable, a substitution or a placeholder (`Bearer $TOKEN`, `Bearer <token>`).
 const HEADER_VALUE = `(?![^"'\\n]*[$\`<])[^"'\\n]+`;
-const HEADER_NAME = '(?:Authorization|X-[\\w-]*(?:key|token|secret)|Cookie)';
+// `Authorization`, `Proxy-Authorization`, any hyphenated `...-Key/-Token/-Secret` name (`X-Api-Key`, `PRIVATE-TOKEN`), `Cookie`
+const HEADER_NAME = '(?:(?:Proxy-)?Authorization|[A-Za-z0-9]+-[\\w-]*(?:key|token|secret)|Cookie)';
+const SECRET_NAME_PART = '(?<![A-Za-z0-9])(?:KEY|TOKEN|SECRET|PASS|PASSWD|PWD)(?![A-Za-z0-9])';
+const QUERY_SECRET = 'api[_-]?key|access[_-]?(?:token|key)|auth[_-]?token|token|client[_-]?secret|secret|password|passwd|pwd';
 const SECRET_FLAG = '--(?:token|api-key|apikey|password|passwd|client-secret|access-token|auth-token)(?:=|\\s+)';
 const VALUE_KINDS = [
   [`(?:^|[\\s;&|("'])${SECRET_ENV}=`, '', 'a password or key assigned in the command'],
@@ -39,9 +42,13 @@ const VALUE_KINDS = [
   ['\\bsshpass\\s+(?:-\\w*\\s+)*-p\\s*', '', 'an sshpass password'],
   ['\\b(?:mysql|mysqladmin|mysqldump|mariadb)\\b[^\\n|;&]*?\\s-p', '', 'a mysql password flag with a literal value'],
   ['\\bdocker\\s+login\\b[^\\n|;&]*?\\s-p\\s+', '', 'a docker login password'],
-  [`${BOUNDARY}[\\w.-]*(?:_KEY|_TOKEN|_SECRET|PASSWORD)=`, '', 'a key, token, secret or password assigned in the command', { flags: 'i' }],
+  // any variable whose name has KEY, TOKEN, SECRET, PASS, PASSWD, PWD or PASSWORD as a part (`DB_PASS`, `TOKEN_FILE_X`, `ADMINPASSWORD`)
+  [`${BOUNDARY}[\\w.-]*(?:${SECRET_NAME_PART}|PASSWORD)[\\w.-]*=`, '', 'a key, token, secret or password assigned in the command', { flags: 'i' }],
+  [`[?&](?:${QUERY_SECRET})=`, '', 'a token or key in a URL query string', { flags: 'i' }],
+  ['\\bredis-cli\\b[^\\n|;&]*?\\s(?:-a|--pass)\\s+', '', 'a redis password'],
+  ['(?<![A-Za-z0-9])_(?:authToken|auth|password)=|(?<![A-Za-z0-9])_authToken\\s+', '', 'an npm registry credential', { flags: 'i' }],
   ['\\bBearer\\s+', '', 'a bearer token', { flags: 'i' }],
-  [`${HTTP_TOOL}\\s(?:-u|--user)(?:=|\\s*)[^\\s:"']*:`, '', 'a user:password pair', { value: '[^\\s"\';&|]+' }],
+  [`${HTTP_TOOL}\\s(?:-u|--user)(?:=|\\s*)[^\\s:"']*:`, '', 'a user:password pair', { value: '["\']?[^\\s"\';&|]+["\']?' }],
   [`${HTTP_TOOL}\\s(?:-u|--user)(?:=|\\s*)["'][^"':]*:`, '', 'a user:password pair', { value: '[^"\']+' }],
   [`\\b${HEADER_NAME}\\s*:[ \\t]*`, '', 'a credential header with a literal value', { value: HEADER_VALUE, flags: 'i' }],
   [`(?<!\\b(?:docker|podman|buildx|buildah)\\b[^\\n|;&]*)--secret(?:=|\\s+)`, '(?!-)', 'a secret flag with a literal value'],
