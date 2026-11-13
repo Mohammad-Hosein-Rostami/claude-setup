@@ -21,6 +21,7 @@ const TIMEOUT_SLACK_MS = 500; // a dialog tool may report its timeout marginally
 const MS_PER_SECOND = 1000;
 const SPAWN_GRACE_S = 5; // the dialog tool gives up by itself at the timeout; this only stops one that hangs
 const MAX_COMMAND_CHARS = 200;
+const MAX_MASKED_INPUT = 2048;
 const SECONDS_PER_MINUTE = 60;
 const DIALOG_TITLE = 'Claude Code: confirm action';
 const TEXT_ENV = 'CLAUDE_ASK_DIALOG_TEXT';
@@ -117,7 +118,7 @@ export function parseDialogResult(platform, result) {
 
 /** @returns {string} the dialog body: tool, why, masked short command, directory, session/agent, and the 3-minute rule */
 function dialogText({ tool, reason, command, cwd, sessionId, agentId }, timeoutS) {
-  const masked = maskSecrets(String(command ?? ''));
+  const masked = maskSecrets(String(command ?? '').slice(0, MAX_MASKED_INPUT)); // a huge command is cut before masking (regex work stays bounded)
   const short = masked.length > MAX_COMMAND_CHARS ? `${masked.slice(0, MAX_COMMAND_CHARS)}...` : masked;
   const who = [sessionId && `session ${String(sessionId).slice(0, 8)}`, agentId && `agent ${String(agentId).slice(0, 8)}`].filter(Boolean).join(', ');
   const lines = [`Tool: ${tool}`, `Why: ${maskSecrets(String(reason))}`];

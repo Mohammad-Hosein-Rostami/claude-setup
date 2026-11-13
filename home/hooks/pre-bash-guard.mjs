@@ -37,6 +37,11 @@
 // `pnpm exec|dlx`, `yarn exec`, `npx` ... scan what they run (`npm run`/`pnpm run` do not). Brace expansion in rm paths is expanded
 // (lib/braces.mjs), or asks when it cannot be listed. `git -c alias.*`, `gh api -X PUT|POST|PATCH|DELETE` on repo/merge/release paths,
 // `gh repo delete`, `diskutil erase*`, `newfs_*`, `> /dev/disk*` ask. Nesting deeper than MAX_NESTING asks.
+// Fail to ask (Round 4, lib/raw-risk.mjs): the two parsers are not a security boundary. A command that has ANY hidden-execution construct
+// (`$(`, backtick, `<<`, `<(`, eval, trap, case, `\r`, a pipe into a shell ...) and a dangerous word anywhere in its raw text, quoted or
+// not, asks with "risky word inside shell expansion" when nothing else asked. Accepted false positive: a commit message written as
+// `"$(cat <<'EOF' ... git push ... EOF)"`. A top-level heredoc with a quoted delimiter is data and stays silent. A command over
+// MAX_COMMAND_CHARS (32 KB) is not parsed at all: it asks "command too long to check"; the log and dialog keep only its first 2 KB, masked.
 // Known limits (not detected): shell aliases and functions defined elsewhere, a variable assigned from another command's output, interpreter
 // code (`node -e`, `python -c`), wrappers that take the command as ONE string (`script -c`, busybox, fish/pwsh -c), rimraf, `find -delete`,
 // `xargs` paths read from stdin, `cd` scoping in subshells (treated as global: extra asks only), an ssh alias that hides a production host,
@@ -57,7 +62,8 @@ import { findLiteralSecret } from './lib/secrets.mjs';
 import { shellHazards } from './lib/shell-hazards.mjs';
 import { askOwner } from './lib/timed-ask.mjs';
 import { GIT_TOPLEVEL_WORD, lex, segments, tokenize } from './lib/shell-words.mjs';
-import { DESTRUCTIVE_PREFIX } from './lib/verdict.mjs';
+import { riskyWordInExpansion } from './lib/raw-risk.mjs';
+import { DESTRUCTIVE_PREFIX, MAX_COMMAND_CHARS } from './lib/verdict.mjs';
 
 export { segments };
 
@@ -166,12 +172,16 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
  * @returns {{allow: true} | {allow: false, ask: true, reason: string}} reason joins every rule hit, destructive first
  */
 export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts = [] } = {}) {
+  if (command.length > MAX_COMMAND_CHARS) return ask('command too long to check; read it before allowing');
   const ctx = { cwd, project, prodHosts };
   const primary = reasonsOf(command, ctx);
   // backstop: a second, independent parse (the character-level lexer) feeds the same rules; what only it finds is marked
   const known = new Set(primary);
   const backstop = reasonsOf(command, { ...ctx, parse: lex }).filter((reason) => !known.has(reason)).map((reason) => `${reason} (matched in raw text)`);
   const reasons = [...new Set([...primary, ...backstop])];
+  // fail to ask: a hidden-execution construct next to a dangerous word asks even when both parsers saw nothing
+  const risky = riskyWordInExpansion(command, prodHosts);
+  if (risky !== undefined && reasons.length === 0) reasons.push(risky);
   if (reasons.length === 0) return allow();
   reasons.sort((x, y) => Number(y.startsWith(DESTRUCTIVE_PREFIX)) - Number(x.startsWith(DESTRUCTIVE_PREFIX)));
   return ask(reasons.join('; '));

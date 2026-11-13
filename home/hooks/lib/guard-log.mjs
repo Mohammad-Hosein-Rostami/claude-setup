@@ -12,6 +12,7 @@ import { maskSecrets } from './secrets.mjs';
 
 export const GUARD_LOG_FILE = join(homedir(), '.claude', 'logs', 'guard.jsonl');
 const MAX_LOGGED_CHARS = 200;
+const MAX_MASKED_INPUT = 2048; // only this much of a (possibly huge) command is masked: a bound on the regex work
 const LOG_DIR_MODE = 0o700; // the log holds commands: only the owner reads it
 const LOG_FILE_MODE = 0o600;
 
@@ -24,7 +25,7 @@ function isSharedDir(dir) {
 /** @returns {string} where decisions are logged: CLAUDE_GUARD_LOG or ~/.claude/logs/guard.jsonl */
 export const guardLogPath = (env = process.env) => env.CLAUDE_GUARD_LOG || GUARD_LOG_FILE;
 
-const safe = (text) => maskSecrets(String(text ?? '')).slice(0, MAX_LOGGED_CHARS);
+const safe = (text) => maskSecrets(String(text ?? '').slice(0, MAX_MASKED_INPUT)).slice(0, MAX_LOGGED_CHARS);
 
 /**
  * @param {{hook: string, tool: string, decision: string, outcome: string, reason: string, command?: string, cwd?: string, session?: string}} record what was decided

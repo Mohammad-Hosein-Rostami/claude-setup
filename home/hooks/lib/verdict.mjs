@@ -1,4 +1,6 @@
 // Shared wording for guard reasons: a destructive rule's reason starts with DESTRUCTIVE_PREFIX so its dialog stands out.
-// Exports: DESTRUCTIVE_PREFIX, destructive(what) -> reason.
+// Exports: DESTRUCTIVE_PREFIX, destructive(what) -> reason, MAX_COMMAND_CHARS.
 export const DESTRUCTIVE_PREFIX = 'DESTRUCTIVE: ';
 export const destructive = (what) => `${DESTRUCTIVE_PREFIX}${what}`;
+/** A command longer than this skips the fine-grained parsing and asks ("command too long to check"). */
+export const MAX_COMMAND_CHARS = 32 * 1024;

@@ -12,12 +12,29 @@
 
 const MAX_NESTING = 64; // `"$("$("...` deeper than this is read as plain text, so a hostile command cannot overflow the stack
 const MAX_ARITHMETIC = 4096; // look-ahead for the `))` that closes `((`; a longer one is treated as nested parentheses
-// `<<EOF`, `<<-EOF`, `<< "EOF"`, `<<'EOF'`, `<<\EOF`: the delimiter is group 1, 2 or 3
-const HEREDOC_OPERATOR = /<<-?[ \t]*(?:'([^']*)'|"([^"]*)"|\\?([^\s;|&()<>'"\\]+))/y;
+const HEREDOC_START = /<<-?[ \t]*/y;
 const COMMENT_PREFIX = /[\s;&|(]/;
 
 /** Marks a segment as fed by `|`; non-enumerable, so segments still compare equal to plain word lists. */
 export const markPiped = (seg) => Object.defineProperty(seg, 'piped', { value: true, configurable: true });
+
+/** The delimiter word after the `<<` at `at`, with quotes and backslashes removed from the WHOLE word (`"E"OF`, `E\\OF`, `'E'OF` all mean EOF), or undefined. */
+function heredocDelimiter(text, at) {
+  HEREDOC_START.lastIndex = at;
+  if (!HEREDOC_START.test(text)) return undefined;
+  let delimiter = '';
+  for (let i = HEREDOC_START.lastIndex; i < text.length; i++) {
+    const c = text[i];
+    if (c === "'" || c === '"') {
+      const close = text.indexOf(c, i + 1);
+      delimiter += text.slice(i + 1, close === -1 ? text.length : close);
+      i = close === -1 ? text.length : close;
+    } else if (c === '\\') delimiter += text[++i] ?? '';
+    else if (/[\s;|&()<>]/.test(c)) break;
+    else delimiter += c;
+  }
+  return delimiter === '' ? undefined : delimiter;
+}
 
 /** Index after the `))` closing an arithmetic expression whose `((` ended before `from`, or -1 (it is `( (subshell) )` instead). */
 function arithmeticEnd(text, from) {
@@ -130,7 +147,7 @@ function walk(state, start, closer) {
   while (i < text.length) {
     const c = text[i];
     const next = text[i + 1];
-    if (c === ' ' || c === '\t' || c === '\r') {
+    if (c === ' ' || c === '\t') {
       endWord(i);
       i++;
     } else if (c === '\n') {
@@ -184,9 +201,8 @@ function walk(state, start, closer) {
       begin(i);
       if (text[i + 2] === '<') i += 3; // here-string
       else {
-        HEREDOC_OPERATOR.lastIndex = i;
-        const operator = HEREDOC_OPERATOR.exec(text);
-        if (operator) state.pending.push(operator[1] ?? operator[2] ?? operator[3]);
+        const delimiter = heredocDelimiter(text, i);
+        if (delimiter !== undefined) state.pending.push(delimiter);
         i += 2;
       }
     } else {

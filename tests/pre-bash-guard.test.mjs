@@ -159,13 +159,15 @@ test('S4: git bypasses ask with a plain reason, history rewrites ask with a DEST
 test('S6: heredoc stripping is linear: a 250 KB command with many <<A decides in under a second', () => {
   const unterminated = 'cat <<A\n'.repeat(31_250);
   const terminated = 'cat <<A\nrm -rf ~/x\nA\n'.repeat(11_000);
+  const terminatedUnderCap = 'cat <<A\nrm -rf ~/x\nA\n'.repeat(1_200);
   const sameLine = `cat ${'<<A '.repeat(62_500)}`;
   for (const command of [unterminated, terminated, sameLine]) {
     const started = performance.now();
     decide(command, ctx);
     assert.ok(performance.now() - started < 1000, `${command.length} bytes took too long`);
   }
-  assert.ok(decide(terminated, ctx).allow, 'terminated heredoc bodies are data');
+  assert.ok(decide(terminatedUnderCap, ctx).allow, 'terminated heredoc bodies are data');
+  assert.match(decide(terminated, ctx).reason, /too long/, 'over the cap asks instead of parsing');
 });
 
 test('S6: heredoc bodies are skipped, several operators per line are paired in order', () => {
