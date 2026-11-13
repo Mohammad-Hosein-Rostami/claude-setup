@@ -44,7 +44,8 @@ import { GIT_TOPLEVEL_WORD, QUOTED_MARK, basenameOf, flagsOf, segments, tokenize
 
 export { segments };
 
-const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash']);
+const SHELLS = new Set(['bash', 'sh', 'zsh', 'ksh', 'dash']);
+const SHELL_OPTIONS_WITH_VALUE = new Set(['-o', '+o', '-O', '+O', '--rcfile', '--init-file']);
 const LOCKFILES = new Set(['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lockb']);
 // rm is allowed on lockfiles (delete and reinstall is a normal fix); cp only writes its last argument.
 const FILE_WRITERS = new Set(['mv', 'cp', 'tee', 'truncate']);
@@ -147,6 +148,9 @@ function insideProject(rawTarget, cwd, project, vars) {
   const native = nativePath(target);
   if (cwd === null && !isAbsolute(native)) return false;
   const abs = resolve(cwd ?? project, native);
+  // `$D/..` and `$D/../x` leave the unique directory mktemp made, so they only count as safe while they stay inside it
+  const mktempDir = join(tmpdir(), MKTEMP_DIR);
+  if (target.startsWith(mktempDir)) return abs === mktempDir || isUnder(mktempDir, abs);
   return (!isBroadRoot(project) && isUnder(project, abs)) || SAFE_TEMP_ROOTS.some((root) => isUnder(root, abs));
 }
 
@@ -217,9 +221,29 @@ function checkDiskWipe(cmd, args) {
   return wipes ? destructive(`${cmd} can wipe a disk or device`) : allow();
 }
 
+/**
+ * The `-c` script of a shell invocation: `-c` may sit anywhere in the option cluster or list (`-ec`, `-e -c`, `-c --`, `-o pipefail -c`).
+ * @param {string[]} args words after the shell name
+ * @returns {string | undefined} the script text, or undefined when this is not a `-c` call
+ */
+function shellScript(args) {
+  let hasC = false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--') return hasC ? args[i + 1] : undefined;
+    if (SHELL_OPTIONS_WITH_VALUE.has(arg)) i++;
+    else if (/^-[a-zA-Z]+$/.test(arg)) {
+      hasC ||= arg.includes('c');
+      if (/[oO]$/.test(arg)) i++; // `-eo pipefail`: the last letter takes the next word
+    } else if (!arg.startsWith('-') && !arg.startsWith('+')) return hasC ? arg : undefined;
+  }
+  return undefined;
+}
+
 /** @returns {string[]} why this one command needs an owner answer (empty when it does not) */
 function checkCommand({ cmd, args, assigns }, env) {
-  if (SHELLS.has(cmd) && /^-[a-zA-Z]*c$/.test(args[0] ?? '') && args[1]) return reasonsOf(args[1], env);
+  const script = SHELLS.has(cmd) ? shellScript(args) : undefined;
+  if (script) return reasonsOf(script, env);
   return [
     cmd === 'git' ? checkGit(args, assigns) : allow(),
     cmd === 'rm' ? checkRm(args, env) : allow(),

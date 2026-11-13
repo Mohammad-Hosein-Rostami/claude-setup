@@ -1,7 +1,9 @@
 // Literal secrets typed into a Bash command. Exports: findLiteralSecret(command) -> string | undefined; maskSecrets(command) -> string.
 // Returns only a KIND label ("an Anthropic API key", ...), never the secret itself: the caller prints it in a deny message.
 // Detected: sk-ant-..., ghp_/gho_/ghu_/ghs_/ghr_/github_pat_ tokens, AWS access key ids, `--password=x` / `--password x`,
-// `sshpass -p x`, `mysql -pX`, `docker login -p x`, and PGPASSWORD / MYSQL_PWD / AWS_SECRET_ACCESS_KEY assigned a literal.
+// `sshpass -p x`, `mysql -pX`, `docker login -p x`, PGPASSWORD / MYSQL_PWD / AWS_SECRET_ACCESS_KEY assigned a literal, any
+// `*_KEY=` / `*_TOKEN=` / `*_SECRET=` / `*PASSWORD=` assigned a literal, sk-proj- / glpat- / xoxb- / xoxp- tokens, `Bearer x`
+// (so `Authorization: Bearer x` too), `-u user:pass` / `--user user:pass`, and URL credentials `scheme://user:pass@host`.
 // A value that starts with `$` (variable, `$(cat file)`), a backtick or `<(` is not literal. Scans the raw text, so quotes,
 // heredocs and `bash -c '...'` are all covered. A noisy false positive is accepted: the check is meant to be strict (the hook turns a hit into a timed ask).
 
@@ -9,23 +11,33 @@ const TOKEN_KINDS = [
   [/\bsk-ant-[A-Za-z0-9_-]{10,}/, 'an Anthropic API key'],
   [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}/, 'a GitHub token'],
   [/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/, 'an AWS access key id'],
+  [/\bsk-proj-[A-Za-z0-9_-]{10,}/, 'an OpenAI API key'],
+  [/\bglpat-[A-Za-z0-9_-]{10,}/, 'a GitLab token'],
+  [/\bxox[bp]-[A-Za-z0-9-]{10,}/, 'a Slack token'],
 ];
 const SECRET_ENV = '(?:PGPASSWORD|MYSQL_PWD|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN)';
 const NOT_LITERAL_START = '(?!["\']?(?:\\$|`|<\\(|\\s|;|&|\\||$))';
 const VALUE = `["']?[^\\s"';&|]`;
 // What the masker hides after a prefix: a whole quoted string or one unquoted word.
 const VALUE_RUN = `"[^"]*"|'[^']*'|[^\\s"';&|]+`;
-// [prefix, extra lookahead, kind]: the prefix ends right before the value, so one table drives both detection and masking.
+// [prefix, extra lookahead, kind, options]: the prefix ends right before the value, so one table drives both detection and
+// masking. options.value replaces the detected/masked value pattern, options.flags are the regex flags (e.g. 'i').
+const BOUNDARY = `(?:^|[\\s;&|("'])`;
+const URL_PASSWORD = `[^\\s@/"']+(?=@)`;
 const VALUE_KINDS = [
   [`(?:^|[\\s;&|("'])${SECRET_ENV}=`, '', 'a password or key assigned in the command'],
   ['--(?:password|passwd)(?:=|\\s+)', '(?!-)', 'a password flag with a literal value'],
   ['\\bsshpass\\s+(?:-\\w*\\s+)*-p\\s*', '', 'an sshpass password'],
   ['\\b(?:mysql|mysqladmin|mysqldump|mariadb)\\b[^\\n|;&]*?\\s-p', '', 'a mysql password flag with a literal value'],
   ['\\bdocker\\s+login\\b[^\\n|;&]*?\\s-p\\s+', '', 'a docker login password'],
-].map(([prefix, lookahead, kind]) => ({
+  [`${BOUNDARY}[\\w.-]*(?:_KEY|_TOKEN|_SECRET|PASSWORD)=`, '', 'a key, token, secret or password assigned in the command', { flags: 'i' }],
+  ['\\bBearer\\s+', '', 'a bearer token', { flags: 'i' }],
+  ['(?:^|\\s)(?:-u|--user)(?:=|\\s+)["\']?[\\w.@-]+:', '', 'a user:password pair', {}],
+  ['\\b[a-z][a-z0-9+.-]*://[^\\s/@:"\']+:', '', 'a password inside a URL', { value: URL_PASSWORD, flags: 'i' }],
+].map(([prefix, lookahead, kind, { value, flags = '' } = {}]) => ({
   kind,
-  detect: new RegExp(`${prefix}${NOT_LITERAL_START}${lookahead}${VALUE}`),
-  mask: new RegExp(`(${prefix})${NOT_LITERAL_START}${lookahead}(?:${VALUE_RUN})`, 'g'),
+  detect: new RegExp(`${prefix}${NOT_LITERAL_START}${lookahead}${value ?? VALUE}`, flags),
+  mask: new RegExp(`(${prefix})${NOT_LITERAL_START}${lookahead}(?:${value ?? VALUE_RUN})`, `g${flags}`),
 }));
 const MASK = '[masked]';
 

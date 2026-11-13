@@ -18,7 +18,9 @@ const SSH_VALUE_OPTIONS = new Set(['-B', '-b', '-c', '-D', '-E', '-e', '-F', '-I
 const SCP_VALUE_OPTIONS = new Set(['-P', '-i', '-o', '-F', '-J', '-l', '-S', '-c']);
 const RSYNC_VALUE_OPTIONS = new Set(['-e', '--rsh', '--exclude', '--include', '--filter', '-f', '--port', '--exclude-from', '--include-from',
   '--files-from', '--bwlimit', '--chmod', '--backup-dir', '--suffix', '-M', '-B', '--rsync-path', '--log-file', '--temp-dir', '-T']);
-const SQL_WRITE_WORDS = /\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|vacuum|reindex|merge|call|do|set|reset|lock|comment|refresh|cluster|import|replace|load|rename|execute|prepare|analyze)\b/i;
+const SQL_WRITE_WORDS = /\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|vacuum|reindex|merge|call|do|set|reset|lock|comment|refresh|cluster|import|replace|load|rename|execute|prepare|analyze|into|setval|nextval|program|system)\b/i;
+// psql meta commands that write or run something (`\!`, `\o`, `\i`, `\g`, `\w`, `\e`, large-object calls); `\copy` is a word above
+const PSQL_ACTIVE_META = /\\(?:!|ir?\b|o\b|g|w\b|ef?\b|ev\b|lo_)/i;
 const READ_ONLY_COMMANDS = new Set(['cat', 'ls', 'tail', 'head', 'grep', 'egrep', 'fgrep', 'rg', 'wc', 'df', 'du', 'ps', 'uptime', 'whoami',
   'hostname', 'date', 'stat', 'file', 'pwd', 'echo', 'printf', 'id', 'uname', 'free', 'nproc', 'which', 'pgrep', 'ss', 'netstat', 'lsof',
   'printenv', 'test', '[', 'true', 'uniq', 'cut', 'tr', 'less', 'more', 'readlink', 'realpath', 'basename', 'dirname', 'md5sum', 'sha256sum',
@@ -57,21 +59,28 @@ export function isProdHost(host, list = []) {
   return PROD_NAME.test(name) || list.some((entry) => globToRegExp(entry).test(name));
 }
 
-/** True when the SQL text has no write keyword; empty or unknown (null: `-f file`, stdin) SQL is not read-only. */
+/**
+ * True when the SQL has no write keyword and no write-like construct (`SELECT ... INTO`, `setval`, `nextval`, `\!`,
+ * `COPY ... PROGRAM`, `DO`). A list (several `-c`) is read-only only when every statement is. Empty or unknown (null: `-f file`, stdin) is not.
+ * @param {string | string[] | null | undefined} sql one statement text, or all the `-c` texts of one call
+ */
 export function isReadOnlySql(sql) {
-  return typeof sql === 'string' && sql.trim() !== '' && !SQL_WRITE_WORDS.test(sql);
+  if (Array.isArray(sql)) return sql.length > 0 && sql.every(isReadOnlySql);
+  return typeof sql === 'string' && sql.trim() !== '' && !SQL_WRITE_WORDS.test(sql) && !PSQL_ACTIVE_META.test(sql);
 }
 
-/** The SQL given on the command line (`-c`/`--command`, `-e`/`--execute`, attached or separate), or null. */
+/** Every SQL text given on the command line (each `-c`/`--command`, `-e`/`--execute`, attached or separate), or null when there is none or a script file is also run. */
 function sqlOf(cmd, args) {
   const [short, long] = cmd === 'psql' ? ['-c', '--command'] : ['-e', '--execute'];
+  const found = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === short || a === long) return args[i + 1] ?? null;
-    if (a.startsWith(`${long}=`)) return a.slice(long.length + 1);
-    if (a.startsWith(short) && !a.startsWith('--') && a.length > 2 && cmd === 'psql') return a.slice(2);
+    if (a === '-f' || a === '--file' || a.startsWith('--file=')) return null;
+    if (a === short || a === long) found.push(args[++i] ?? '');
+    else if (a.startsWith(`${long}=`)) found.push(a.slice(long.length + 1));
+    else if (a.startsWith(short) && !a.startsWith('--') && a.length > 2 && cmd === 'psql') found.push(a.slice(2));
   }
-  return null;
+  return found.length > 0 ? found : null;
 }
 
 /** Host a psql/mysql call connects to (`-h`, `--host`, URL, conninfo, PGHOST/MYSQL_HOST), or undefined for the local default. */

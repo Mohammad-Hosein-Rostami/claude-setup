@@ -4,13 +4,18 @@
 import { basenameOf } from './shell-words.mjs';
 
 export const KEYWORDS = new Set(['{', '}', '!', 'if', 'then', 'do', 'else', 'elif', 'while', 'until']);
-// wrapper -> options that consume the next token as their value
+// wrapper -> options that consume the next token as their value (`sudo --user root`, `exec -a name`, `sshpass -p X`); the
+// attached forms (`--user=root`, `-uroot`) need no entry because they are a single token.
 const WRAPPERS = new Map([
-  ['command', new Set()], ['builtin', new Set()], ['nohup', new Set()], ['exec', new Set()], ['time', new Set()],
-  ['sudo', new Set(['-u', '-g', '-C', '-h', '-p', '-r', '-t', '-U'])], ['doas', new Set(['-u', '-C'])],
-  ['env', new Set(['-u', '-C'])], ['nice', new Set(['-n'])], ['timeout', new Set(['-s', '-k'])],
-  ['xargs', new Set(['-I', '-n', '-P', '-L', '-s', '-d', '-E', '-a'])], ['stdbuf', new Set(['-i', '-o', '-e'])],
-  ['sshpass', new Set(['-f', '-d', '-P'])],
+  ['command', new Set()], ['builtin', new Set()], ['nohup', new Set()], ['exec', new Set(['-a'])], ['time', new Set(['-f', '-o', '--format', '--output'])],
+  ['sudo', new Set(['-u', '-g', '-C', '-h', '-p', '-r', '-t', '-U', '-D', '-R', '-T', '--user', '--group', '--close-from', '--host', '--prompt', '--role', '--type',
+    '--other-user', '--chdir', '--chroot', '--command-timeout'])],
+  ['doas', new Set(['-u', '-C'])],
+  ['env', new Set(['-u', '-C', '-S', '--unset', '--chdir', '--split-string'])], ['nice', new Set(['-n', '--adjustment'])],
+  ['timeout', new Set(['-s', '-k', '--signal', '--kill-after'])],
+  ['xargs', new Set(['-I', '-n', '-P', '-L', '-s', '-d', '-E', '-a', '--max-args', '--max-procs', '--max-lines', '--max-chars', '--delimiter', '--eof', '--arg-file'])],
+  ['stdbuf', new Set(['-i', '-o', '-e', '--input', '--output', '--error'])],
+  ['sshpass', new Set(['-f', '-d', '-P', '-p'])],
 ]);
 const DURATION = /^\d+(\.\d+)?[smhd]?$/;
 const ASSIGNMENT = /^\w+=/;
@@ -21,13 +26,16 @@ export function commandName(word) {
   return process.platform === 'win32' ? name.toLowerCase() : name;
 }
 
+/** True when the option word takes the next token as its value: listed itself, or a short cluster ending in such an option (`-Eu`). */
+const takesValue = (word, valueOptions) => valueOptions.has(word) || (/^-[A-Za-z]{2,}$/.test(word) && valueOptions.has(`-${word.slice(-1)}`));
+
 /** Index of the first word after a wrapper's own options (`sudo -u me`, `timeout -s KILL 5`, `--`). */
 function skipWrapperOptions(tokens, start, valueOptions, isTimeout) {
   let i = start;
   while (i < tokens.length) {
     const t = tokens[i];
     if (t === '--') return i + 1;
-    if (t.startsWith('-') && t.length > 1) i += valueOptions.has(t) ? 2 : 1;
+    if (t.startsWith('-') && t.length > 1) i += takesValue(t, valueOptions) ? 2 : 1;
     else if (isTimeout && DURATION.test(t)) i += 1;
     else break;
   }

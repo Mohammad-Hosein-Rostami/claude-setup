@@ -18,7 +18,8 @@ const positionals = (args, valueOptions) => {
   return out;
 };
 
-const isDryRun = (flags) => flags.includes('--dry-run') || flags.some((f) => /^-[a-zA-Z]*n[a-zA-Z]*$/.test(f));
+// exactly `--dry-run` or `-n`: a cluster such as `-on` is something else (`-o` takes a value), so it is not a rehearsal
+const isDryRun = (flags) => flags.some((f) => f === '--dry-run' || f === '-n');
 
 /**
  * @param {string[]} flags option words of a `git push` call
