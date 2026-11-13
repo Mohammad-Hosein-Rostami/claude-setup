@@ -1,10 +1,10 @@
 // Setup-mode hook (normal | medium | high | extra-high | ultra-high). One script, dispatches on `hook_event_name`:
 //   SessionStart         -> prints the active mode, the lead-only rules (modes/_lead.md; nothing when missing) and the
 //                           mode's playbook (plus a lead note when an extra-high / ultra-high session was not launched
-//                           with `ccm <mode>` or its model does not match; on `compact`, lib/compact-notes.mjs lines); prunes state.
+//                           with `ccm <mode>` or its model does not match; on `compact`, lib/compact-notes.mjs lines incl. the status file to re-read); prunes state.
 //   UserPromptExpansion  -> for `/mode <m>`: records the mode for this session, prints the playbook (plus a lead note
 //                           when the switch moves the lead to or from Opus max / Fable high).
-//   UserPromptSubmit     -> one reminder line when the active mode is not medium.
+//   UserPromptSubmit     -> one reminder line when the mode is not medium, plus a once-per-session "/clear or new session" line (lib/big-context.mjs).
 // State is per session: files in ~/.claude/state/modes/ keyed by session id and by the owning `claude` process
 // (`pid-<n>`, so a mode survives /clear, which starts a new session id in the same process); the hook never writes
 // settings files. Every SessionStart saves the session's mode, so a resumed session keeps it. Start mode on startup
@@ -21,7 +21,11 @@ import { basename, join } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
+import { bigContextNote } from './lib/big-context.mjs';
 import { compactNotes } from './lib/compact-notes.mjs';
+import { leadNote } from './lib/lead-note.mjs';
+
+export { leadNote };
 
 export const MODES = ['normal', 'medium', 'high', 'extra-high', 'ultra-high'];
 export const DEFAULT_MODE = 'medium';
@@ -29,12 +33,6 @@ export const SESSION_ID_PATTERN = /^[\w-]+$/;
 const STATE_MAX_AGE_DAYS = 14;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const USAGE = `Usage: /mode ${MODES.join('|')}`;
-// Modes that set the lead at launch: model alias to look for, display name, default launch effort (CCM_LEAD_EFFORT may override).
-const LEAD_MODES = {
-  'extra-high': { alias: 'opus', label: 'Opus 5.5', effort: 'max' },
-  'ultra-high': { alias: 'fable', label: 'Fable 5.2', effort: 'high' },
-};
-const BASE_LEAD = 'Opus 5.5 at high';
 const MAX_ANCESTOR_DEPTH = 6; // hook -> shell -> claude is 2 levels; leave room for wrappers
 const PS_TIMEOUT_MS = 1000;
 const INIT_PID = 1;
@@ -65,35 +63,6 @@ export function parseModeArg(commandArgs) {
   const text = commandArgs.trim().toLowerCase();
   const joined = text.split(/\s+/).join('-');
   return isMode(joined) ? joined : text.split(/\s+/)[0];
-}
-
-function launchCommand(mode) {
-  return `ccm ${mode} -c`;
-}
-
-/**
- * One line telling the user how to get the lead that a mode needs, or '' when nothing is to be said.
- * A switch (previousMode given) into extra-high / ultra-high always gets the launch note, because the hook cannot
- * see or change the lead; a switch out of them says the lead is still at its launch effort. At session start (no previousMode)
- * the note appears when the process was not launched with `ccm <mode>` (launchedAs differs: its --model/--effort
- * flags are missing, e.g. a plain `claude --resume`) or when the session model is known and does not match.
- * @param {{mode: string, model?: string, previousMode?: string, launchedAs?: string}} state - active mode, session
- *   model if known, the mode before a `/mode` switch, and env CLAUDE_MODE at session start.
- * @returns {string} the note, or ''.
- */
-export function leadNote({ mode, model, previousMode, launchedAs }) {
-  const lead = LEAD_MODES[mode];
-  const switched = previousMode !== undefined && previousMode !== mode;
-  if (lead) {
-    const wrongModel = typeof model === 'string' && model !== '' && !model.toLowerCase().includes(lead.alias);
-    const mismatch = wrongModel || (launchedAs !== undefined && launchedAs !== mode);
-    if (launchedAs === mode && !wrongModel) return ''; // `ccm <mode>` set the lead for this process
-    if (!switched && !mismatch) return '';
-    return `The lead model/effort for ${mode} is set at launch: tell the user to run \`${launchCommand(mode)}\` to continue this conversation with ${lead.label} at ${lead.effort} effort (avoid \`/model\`: it saves machine-wide).`;
-  }
-  const left = switched ? LEAD_MODES[previousMode] : undefined;
-  if (!left) return '';
-  return `The lead is still ${left.label} at ${left.effort}: tell the user to run \`${launchCommand(mode)}\` to return it to ${BASE_LEAD}.`;
 }
 
 /**
@@ -232,10 +201,10 @@ async function startMode(source, sessionId, getProcKey) {
 async function onSessionStart(input, sessionId, getProcKey) {
   const current = await startMode(input.source, sessionId, getProcKey);
   await saveMode(current, [sessionId, getProcKey()]);
-  const launched = isMode(process.env.CLAUDE_MODE) ? process.env.CLAUDE_MODE : 'default';
-  const note = leadNote({ mode: current, model: input.model, launchedAs: process.env.CLAUDE_MODE ?? '' });
+  const launchedAs = process.env.CLAUDE_MODE ?? '';
+  const note = leadNote({ mode: current, model: input.model, launchedAs });
   const leadRules = await readLeadRules();
-  console.log(`Mode: ${current} (launched as ${launched})\n\n${leadRules ? `${leadRules}\n\n` : ''}${await readPlaybook(current)}${note ? `\n\n${note}` : ''}${input.source === 'compact' ? `\n\n${await compactNotes(stateDir(), sessionId)}` : ''}`);
+  console.log(`Mode: ${current} (launched as ${isMode(launchedAs) ? launchedAs : 'default'})\n\n${leadRules ? `${leadRules}\n\n` : ''}${await readPlaybook(current)}${note ? `\n\n${note}` : ''}${input.source === 'compact' ? `\n\n${await compactNotes(stateDir(), sessionId, input.transcript_path)}` : ''}`);
   await pruneState();
 }
 
@@ -260,9 +229,11 @@ async function onExpansion(input, sessionId, getProcKey) {
   console.log(`Mode switched to ${target} (this session only).\n\n${await readPlaybook(target)}${note ? `\n\n${note}` : ''}`);
 }
 
-async function onPromptSubmit(sessionId, getProcKey) {
+async function onPromptSubmit(input, sessionId, getProcKey) {
   const current = await activeMode(sessionId, getProcKey);
   if (current !== DEFAULT_MODE) console.log(`Mode: ${current} - follow ~/.claude/modes/${current}.md`);
+  const big = await bigContextNote({ mode: current, prompt: input.prompt, transcriptPath: input.transcript_path, dir: stateDir(), sessionId });
+  if (big) console.log(big);
 }
 
 async function main() {
@@ -285,7 +256,7 @@ async function main() {
     case 'UserPromptExpansion':
       return onExpansion(input, sessionId, getProcKey);
     case 'UserPromptSubmit':
-      return onPromptSubmit(sessionId, getProcKey);
+      return onPromptSubmit(input, sessionId, getProcKey);
   }
 }
 
