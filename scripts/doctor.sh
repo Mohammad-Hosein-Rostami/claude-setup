@@ -143,5 +143,38 @@ check_lsp() {
   else warn "LSP tool inactive: brew install typescript-language-server (Windows: npm i -g typescript-language-server typescript)"; fi
 }
 
-check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_tools; check_lsp; check_ui_check; check_repo_tests
+# The mode hook feeds _lead.md and the playbook to the lead; if it is not registered live, sessions silently run without rules.
+check_mode_hook() {
+  local live="$CLAUDE_DIR/settings.json" event missing=""
+  for event in SessionStart UserPromptSubmit UserPromptExpansion; do
+    jq -e --arg e "$event" '[.hooks[$e][]?.hooks[]?.command // empty | select(test("hooks/mode\\.mjs"))] | length > 0' "$live" >/dev/null 2>&1 || missing="$missing $event"
+  done
+  if [ -n "$missing" ]; then bad "mode hook not registered in settings.json for:$missing (SessionStart context will not reach sessions)"
+  elif [ ! -f "$CLAUDE_DIR/hooks/mode.mjs" ]; then bad "mode hook file missing: $CLAUDE_DIR/hooks/mode.mjs"
+  elif [ ! -s "$CLAUDE_DIR/modes/_lead.md" ]; then bad "modes/_lead.md missing or empty (lead rules are not injected)"
+  else ok "mode hook registered for SessionStart, UserPromptSubmit, UserPromptExpansion"; fi
+}
+
+# A third-party plugin whose SessionStart hook injects EXTREMELY_IMPORTANT text can cost tens of thousands of tokens per session.
+check_plugin_session_start() {
+  local live="$CLAUDE_DIR/settings.json" installed="$CLAUDE_DIR/plugins/installed_plugins.json" id path flagged=0
+  [ -f "$installed" ] || { warn "no installed_plugins.json: SessionStart injections of plugins not checked"; return; }
+  while read -r id; do
+    path="$(jq -r --arg id "$id" '.plugins[$id][0].installPath // empty' "$installed" 2>/dev/null)"
+    [ -n "$path" ] && [ -f "$path/hooks/hooks.json" ] || continue
+    jq -e '.hooks.SessionStart | length > 0' "$path/hooks/hooks.json" >/dev/null 2>&1 || continue
+    if grep -rqs "EXTREMELY_IMPORTANT" "$path/hooks"; then warn "plugin $id injects EXTREMELY_IMPORTANT at SessionStart (large context cost; disable it if not wanted)"; flagged=1
+    else ok "plugin $id has a SessionStart hook without EXTREMELY_IMPORTANT"; fi
+  done < <(jq -r '.enabledPlugins // {} | to_entries[] | select(.value == true) | .key' "$live" 2>/dev/null)
+  [ "$flagged" = 0 ] && ok "no enabled plugin injects EXTREMELY_IMPORTANT at SessionStart"
+  return 0
+}
+
+# DOCTOR_ONLY="check_a check_b" runs just those checks (used by tests; the full run executes the repo tests).
+run_checks() {
+  local check
+  if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_tools; check_lsp; check_ui_check; check_repo_tests
+}
+run_checks
 exit "$BAD"
