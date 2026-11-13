@@ -1,34 +1,45 @@
-// PostToolUse(Edit|Write|MultiEdit): run the project's own format/lint/typecheck scripts after a code file changes.
-// Only scripts that exist in the nearest package.json run. A script that targets the whole repo (`prettier --write .`,
-// `nx run-many`) is replaced by the tool's binary on the edited file, or skipped; CLAUDE_POST_EDIT_SKIP opts out.
-// Format runs first and alone; lint and typecheck then run concurrently (sequentially when the lint script fixes files; a check that outlives the deadline is killed with its whole process tree).
-// Silent on success; on failure prints at most 15 `file:line RULE-ID message` lines to stderr and exits 2. Never evaluates hook input; on Windows (shell on) the relative path must look safe.
+// PostToolUse(Edit|Write|MultiEdit): run the project's own format/lint scripts after a code file changes, and log the
+// file for typecheck-gate.mjs, which typechecks once when the agent stops. CLAUDE_TYPECHECK_AT=edit restores the
+// typecheck after every edit (and turns the gate off). Only scripts that exist in the nearest package.json run.
+// A script that targets the whole repo (`prettier --write .`, `nx run-many`) is replaced by the tool's binary on the
+// edited file, or skipped; CLAUDE_POST_EDIT_SKIP opts out.
+// Format runs first and alone; lint and typecheck (at-edit mode) then run concurrently (sequentially when the lint
+// script fixes files); a lint failure about the edited file ends that stage at once and kills the typecheck; a check
+// that outlives the deadline is killed with its whole process tree.
+// Silent on success; on failure prints at most 15 `file:line RULE-ID message` lines to stderr and exits 2. Never
+// evaluates hook input; on Windows (shell on) the relative path must look safe.
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { CODE_FILE, diagnostics } from './lib/diagnostics.mjs';
+import { editLogPath, recordEdit } from './lib/edit-log.mjs';
 
-const CODE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 const SAFE_PATH = /^[\w@+=:,./-]+$/; // no `%`: cmd.exe expands %VAR%
-const MAX_LINES = 15;
 const BUDGET_MS = 18_000; // hook timeout is 20 s
 const FILE_SCRIPTS = ['format', 'lint']; // take the edited file after `--`
 const PROJECT_SCRIPTS = ['typecheck']; // whole project; output is filtered to the edited file
 const FILE_TOOLS = { format: ['prettier', '--write'], lint: ['eslint'] }; // per-file fallback for broad scripts
 const BROAD_SCRIPT = /(^|\s)\.\/?(\s|$)|\*|\brun-many\b|\bnx\b|\bturbo\b|\blerna\b/;
 const FIXING_SCRIPT = /\bfix\b|--write\b|--apply\b/; // a lint script that rewrites the file while tsc reads it: keep those checks sequential
-const SKIP_ENV = 'CLAUDE_POST_EDIT_SKIP'; // "all" or e.g. "typecheck,lint"; set in a project's .claude/settings.json env
+export const SKIP_ENV = 'CLAUDE_POST_EDIT_SKIP'; // "all" or e.g. "typecheck,lint"; set in a project's .claude/settings.json env
+export const TYPECHECK_AT_ENV = 'CLAUDE_TYPECHECK_AT'; // "edit": typecheck after every edit instead of once at agent stop
+
+/** True when the typecheck runs after every edit (env `CLAUDE_TYPECHECK_AT=edit`) rather than in the stop gate. */
+export const typecheckAtEdit = (env = process.env) => env[TYPECHECK_AT_ENV] === 'edit';
+
+export { diagnostics, isSamePath } from './lib/diagnostics.mjs';
 
 export const isCodeFile = (file) => CODE_FILE.test(file);
 
-function findPackageDir(file) {
+export function findPackageDir(file) {
   for (let dir = dirname(file); ; dir = dirname(dir)) {
     if (existsSync(join(dir, 'package.json'))) return dir;
     if (dirname(dir) === dir) return null;
   }
 }
 
-function packageManager(dir) {
+export function packageManager(dir) {
   for (let d = dir; ; d = dirname(d)) {
     if (existsSync(join(d, 'pnpm-lock.yaml'))) return 'pnpm';
     if (existsSync(join(d, 'yarn.lock'))) return 'yarn';
@@ -49,8 +60,9 @@ export const skipFilter = (skip = '') => {
  * Checks to run for `file`: [{ name, cmd?, args }]; without `cmd` the package manager runs `args`. Pure.
  * A file script that is broad would check the whole repo, so the tool's own binary (found by `findTool`) runs on
  * the file instead; a broad project script (e.g. `nx run-many -t typecheck`) is too slow for a hook and is skipped.
+ * The typecheck is planned only in at-edit mode (`atEdit`, default from the env); otherwise the stop gate runs it.
  */
-export function plannedChecks(scripts, file, findTool = () => null) {
+export function plannedChecks(scripts, file, findTool = () => null, atEdit = typecheckAtEdit()) {
   const script = (n) => (typeof scripts?.[n] === 'string' ? scripts[n] : null);
   const fileChecks = FILE_SCRIPTS.flatMap((name) => {
     const s = script(name);
@@ -60,12 +72,12 @@ export function plannedChecks(scripts, file, findTool = () => null) {
     const cmd = findTool(tool);
     return cmd ? [{ name, cmd, args: [...flags, file] }] : [];
   });
-  const projectChecks = PROJECT_SCRIPTS.filter((n) => script(n) !== null && !isBroadScript(script(n)));
+  const projectChecks = PROJECT_SCRIPTS.filter((n) => atEdit && script(n) !== null && !isBroadScript(script(n)));
   return [...fileChecks, ...projectChecks.map((name) => ({ name, args: ['run', name] }))];
 }
 
 // Nearest node_modules/.bin/<tool> walking up from `dir` (a monorepo hoists binaries to the root).
-function toolFinder(dir) {
+export function toolFinder(dir) {
   const exe = process.platform === 'win32' ? '.cmd' : '';
   return (tool) => {
     for (let d = dir; ; d = dirname(d)) {
@@ -74,62 +86,6 @@ function toolFinder(dir) {
       if (dirname(d) === d) return null;
     }
   };
-}
-
-const TSC_LINE = /^(.+?)\((\d+),\d+\): (?:error|warning) (TS\d+): (.*)$/;
-// `path:line[:col]: message` (tsc --pretty false, eslint unix format); the lookahead keeps stylish rows out.
-const COLON_LINE = /^(?!\d+:)(.+?):(\d+)(?::\d+)?:? (?:(?:error|warning)\s+)?(.*)$/;
-const STYLISH_ROW = /^(\d+):\d+\s+(?:error|warning)\s+(.*)$/; // eslint default format row under a file header
-const RULE_SEPARATOR = /\s{2,}(?=\S+$)/; // eslint prints the rule id after two or more spaces
-
-/** "message  rule-id" -> "rule-id message"; messages without a rule id get the generic id LINT. */
-function withRule(text) {
-  const [message, rule] = text.split(RULE_SEPARATOR);
-  return rule ? `${rule} ${message}` : `LINT ${text}`;
-}
-
-const normPath = (p) => p.replace(/\\/g, '/').replace(/^\.\//, '');
-
-/** Whether a reported path is `target`: equal, or one is the other behind a `/` boundary (abs vs relative path). */
-export function isSamePath(reported, target) {
-  const p = normPath(reported);
-  const t = normPath(target);
-  return p === t || p.endsWith(`/${t}`) || t.endsWith(`/${p}`);
-}
-
-// An eslint stylish file header: a path-looking line without `:line`; pnpm's `> pkg@1 lint /dir` banner is not one.
-const isStylishHeader = (l) => !l.startsWith('>') && !/:\d+/.test(l) && (CODE_FILE.test(l) || /[\\/]/.test(l));
-
-/** One output line -> { path, text } for a `path:line message` diagnostic, or null; `header` is the stylish file in effect. */
-function parseDiagnostic(l, header) {
-  const t = TSC_LINE.exec(l);
-  if (t) return { path: t[1], text: `${t[2]} ${t[3]} ${t[4]}` };
-  const s = header ? STYLISH_ROW.exec(l) : null;
-  if (s) return { path: header, text: `${s[1]} ${withRule(s[2])}` };
-  const c = COLON_LINE.exec(l);
-  return c ? { path: c[1], text: `${c[2]} ${withRule(c[3])}` } : null;
-}
-
-/**
- * Failure output (tsc, eslint stylish or unix format) -> at most 15 `file:line RULE-ID message` lines about `file`;
- * falls back to the raw tail. Failures that only concern other files yield [] so they do not block. Pure.
- */
-export function diagnostics(output, file) {
-  const lines = output.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const found = [];
-  let aboutOtherFiles = false;
-  let header = null;
-  for (const l of lines) {
-    const d = parseDiagnostic(l, header);
-    if (!d) {
-      if (isStylishHeader(l)) header = l;
-      continue;
-    }
-    if (isSamePath(d.path, file)) found.push(`${normPath(d.path)}:${d.text}`);
-    else aboutOtherFiles = true;
-  }
-  if (!found.length && aboutOtherFiles) return [];
-  return (found.length ? found : lines.slice(-MAX_LINES)).slice(0, MAX_LINES);
 }
 
 // cmd.exe treats these specially even inside a path; one of them anywhere in the command needs quoting.
@@ -173,19 +129,26 @@ function killTree(child) {
   }
 }
 
-// Async spawn that resolves (never rejects) to { status, stdout, stderr, error, timedOut }. On the deadline it resolves
-// from the timer itself: a grandchild holding the pipes open must not delay `close`.
-function runCheck(pm, check, cwd, timeoutMs) {
+// Async spawn that resolves (never rejects) to { status, stdout, stderr, error, timedOut }; the promise also carries
+// `kill()` (tree kill, pipes released). On the deadline it resolves from the timer itself: a grandchild holding the
+// pipes open must not delay `close`.
+export function runCheck(pm, check, cwd, timeoutMs) {
   // Windows package managers are .cmd shims and need a shell; SAFE_PATH keeps `file` free of metacharacters.
   const cmd = shellCommand(check.cmd ?? pm);
-  return new Promise((resolve) => {
+  let kill = () => {};
+  const run = new Promise((resolve) => {
     const child = spawn(cmd, check.args, { cwd, shell: process.platform === 'win32', detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    const timer = setTimeout(() => {
+    const release = () => {
+      clearTimeout(timer);
       killTree(child);
       child.stdout.destroy();
       child.stderr.destroy();
+    };
+    kill = release;
+    const timer = setTimeout(() => {
+      release();
       resolve({ status: null, stdout, stderr, error: null, timedOut: true });
     }, timeoutMs);
     child.stdout.setEncoding('utf8');
@@ -201,23 +164,60 @@ function runCheck(pm, check, cwd, timeoutMs) {
       resolve({ status, stdout, stderr, error: null, timedOut: false });
     });
   });
+  return Object.assign(run, { kill: () => kill() });
+}
+
+const outputOf = (r) => `${r.stdout}\n${r.stderr}`;
+
+/** Verdict on finished checks, in plan order (lint before typecheck): failure lines, or null when all passed. */
+function judge(results, stage, { pm, rel }) {
+  for (const [i, r] of results.entries()) {
+    if (r.timedOut) return [];
+    if (r.error) return [`${rel}:1 HOOK could not run ${pm} ${stage[i].name}: ${r.error.message}`];
+    if (r.status !== 0) return diagnostics(outputOf(r), rel);
+  }
+  return null;
+}
+
+// Resolves with the diagnostics of a lint that failed about the edited file; stays pending in every other case.
+function lintFailure(stage, runs, rel) {
+  return new Promise((resolve) => {
+    stage.forEach((check, i) =>
+      runs[i].then((r) => {
+        if (check.name !== 'lint' || r.error || r.timedOut || r.status === 0) return;
+        const lines = diagnostics(outputOf(r), rel);
+        if (lines.length) resolve(lines);
+      }),
+    );
+  });
+}
+
+// A concurrent stage returns as soon as lint reports failures about the edited file and kills the slower typecheck.
+async function runStage(stage, ctx, left) {
+  const runs = stage.map((check) => runCheck(ctx.pm, check, ctx.cwd, left));
+  const all = Promise.all(runs);
+  if (stage.length > 1) {
+    const early = await Promise.race([lintFailure(stage, runs, ctx.rel), all.then(() => null)]);
+    if (early) {
+      runs.forEach((run) => run.kill());
+      return early;
+    }
+  }
+  return judge(await all, stage, ctx);
 }
 
 /**
  * Runs stages in order until the deadline (epoch ms); results are judged in plan order (lint before typecheck), so
- * the first failing check decides. A timeout or an exhausted budget returns [] (never a false failure).
- * Returns the failure lines ([] = all passed).
+ * the first failing check decides. A lint failure about `rel` ends a concurrent stage at once; a lint failure that
+ * only concerns other files waits for the typecheck as before. A timeout or an exhausted budget returns [] (never a
+ * false failure). Returns the failure lines ([] = all passed).
  */
-export async function runStages(stages, { pm, cwd, rel, deadline }) {
+export async function runStages(stages, ctx) {
   for (const stage of stages) {
-    const left = deadline - Date.now();
+    const left = ctx.deadline - Date.now();
     if (left <= 0) return []; // out of time: do not block the edit on a slow project
-    const results = await Promise.all(stage.map((check) => runCheck(pm, check, cwd, left)));
-    for (const [i, r] of results.entries()) {
-      if (r.timedOut) return [];
-      if (r.error) return [`${rel}:1 HOOK could not run ${pm} ${stage[i].name}: ${r.error.message}`];
-      if (r.status !== 0) return diagnostics(`${r.stdout}\n${r.stderr}`, rel);
-    }
+    const verdict = await runStage(stage, ctx, left);
+    if (verdict) return verdict;
   }
   return [];
 }
@@ -240,6 +240,19 @@ export async function checkFile(file) {
   return runStages(stagesFor(checks, scripts), { pm: packageManager(dir), cwd: dir, rel, deadline: Date.now() + BUDGET_MS });
 }
 
+// Remember the file for the stop gate when its package has a typecheck script the gate can run.
+function recordTypecheckEdit(file, input) {
+  const logPath = editLogPath(input.session_id, input.agent_id);
+  const dir = logPath && isCodeFile(file) && existsSync(file) ? findPackageDir(file) : null;
+  if (!dir) return;
+  try {
+    const script = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).scripts?.typecheck;
+    if (typeof script === 'string' && !isBroadScript(script)) recordEdit(logPath, file);
+  } catch {
+    // unreadable package.json is reported by checkFile; nothing to gate here
+  }
+}
+
 async function readStdin() {
   const chunks = [];
   for await (const c of process.stdin) chunks.push(c);
@@ -255,6 +268,7 @@ async function main() {
   }
   const file = input?.tool_input?.file_path;
   if (typeof file !== 'string') return;
+  if (!typecheckAtEdit()) recordTypecheckEdit(file, input);
   const failures = await checkFile(file);
   if (failures.length) {
     process.stderr.write(failures.join('\n') + '\n');

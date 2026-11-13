@@ -1,12 +1,12 @@
-// Tests for home/hooks/post-edit.mjs: output parsing, path matching, check planning, Windows quoting, staging (concurrent lint + typecheck), hook contract.
+// Tests for home/hooks/post-edit.mjs: output parsing, path matching, check planning, Windows quoting, staging (concurrent lint + typecheck, lint-first early return), typecheck at edit vs at stop, edit log, hook contract.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { diagnostics, isBroadScript, isCodeFile, isSamePath, plannedChecks, runStages, shellCommand, skipFilter, stagesFor } from '../home/hooks/post-edit.mjs';
+import { diagnostics, isBroadScript, isCodeFile, isSamePath, plannedChecks, runStages, shellCommand, skipFilter, stagesFor, typecheckAtEdit } from '../home/hooks/post-edit.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/post-edit.mjs', import.meta.url));
 
@@ -91,9 +91,17 @@ test('skipFilter honours "all" and named checks', () => {
   assert.equal(skipFilter()('lint'), true);
 });
 
-test('plannedChecks runs file scripts with the file and project scripts whole', () => {
+test('plannedChecks plans no typecheck by default: the stop gate runs it', () => {
+  const scripts = { lint: 'eslint', typecheck: 'tsc --noEmit' };
+  assert.deepEqual(plannedChecks(scripts, 'src/a.ts'), [{ name: 'lint', args: ['run', 'lint', '--', 'src/a.ts'] }]);
+  assert.equal(typecheckAtEdit({}), false);
+  assert.equal(typecheckAtEdit({ CLAUDE_TYPECHECK_AT: 'edit' }), true);
+  assert.equal(typecheckAtEdit({ CLAUDE_TYPECHECK_AT: 'stop' }), false);
+});
+
+test('plannedChecks runs file scripts with the file and project scripts whole at edit time', () => {
   const scripts = { format: 'prettier --write', lint: 'eslint', typecheck: 'tsc --noEmit' };
-  assert.deepEqual(plannedChecks(scripts, 'src/a.ts'), [
+  assert.deepEqual(plannedChecks(scripts, 'src/a.ts', () => null, true), [
     { name: 'format', args: ['run', 'format', '--', 'src/a.ts'] },
     { name: 'lint', args: ['run', 'lint', '--', 'src/a.ts'] },
     { name: 'typecheck', args: ['run', 'typecheck'] },
@@ -102,8 +110,8 @@ test('plannedChecks runs file scripts with the file and project scripts whole', 
 
 test('plannedChecks swaps broad scripts for the tool binary, or skips them', () => {
   const scripts = { lint: 'eslint .', typecheck: 'nx run-many -t typecheck' };
-  assert.deepEqual(plannedChecks(scripts, 'src/a.ts', (tool) => `/bin/${tool}`), [{ name: 'lint', cmd: '/bin/eslint', args: ['src/a.ts'] }]);
-  assert.deepEqual(plannedChecks(scripts, 'src/a.ts'), []);
+  assert.deepEqual(plannedChecks(scripts, 'src/a.ts', (tool) => `/bin/${tool}`, true), [{ name: 'lint', cmd: '/bin/eslint', args: ['src/a.ts'] }]);
+  assert.deepEqual(plannedChecks(scripts, 'src/a.ts', () => null, true), []);
   assert.deepEqual(plannedChecks(undefined, 'src/a.ts'), []);
 });
 
@@ -240,4 +248,78 @@ setTimeout(() => {}, 60000);
   const grandchildPid = Number(await readFile(pidFile, 'utf8'));
   await new Promise((r) => setTimeout(r, 200));
   assert.throws(() => process.kill(grandchildPid, 0), { code: 'ESRCH' }, 'grandchild was killed with the tree');
+});
+
+// Lint is quick and fails about the edited file; the typecheck sleeps 10 s unless told otherwise.
+const LINT_FIRST_PM = `#!${process.execPath}
+const name = process.argv[3];
+if (name === 'lint') {
+  console.error(process.env.LINT_ABOUT + '(1,1): error TS1: lint failed');
+  process.exitCode = 1;
+} else {
+  setTimeout(() => {}, Number(process.env.TYPECHECK_MS));
+}
+`;
+
+async function lintFirstPm(env) {
+  const dir = await mkdtemp(join(tmpdir(), 'post-edit-lintfirst-'));
+  const pm = join(dir, 'fake-pm');
+  await writeFile(pm, LINT_FIRST_PM);
+  await chmod(pm, 0o755);
+  Object.assign(process.env, env);
+  return { pm, dir };
+}
+
+const LINT_AND_TYPECHECK = ALL_CHECKS.slice(1);
+
+test('runStages returns lint failures at once and kills the slow typecheck', posix, async () => {
+  const { pm, dir } = await lintFirstPm({ LINT_ABOUT: 'src/a.ts', TYPECHECK_MS: '10000' });
+  const started = Date.now();
+  const out = await runStages(stagesFor(LINT_AND_TYPECHECK, { lint: 'eslint' }), { pm, cwd: dir, rel: 'src/a.ts', deadline: started + 20_000 });
+  assert.deepEqual(out, ['src/a.ts:1 TS1 lint failed']);
+  assert.ok(Date.now() - started < 3000, 'did not wait for the 10 s typecheck');
+});
+
+test('runStages keeps waiting for the typecheck when lint only fails about other files', posix, async () => {
+  const { pm, dir } = await lintFirstPm({ LINT_ABOUT: 'src/other.ts', TYPECHECK_MS: '600' });
+  const started = Date.now();
+  const out = await runStages(stagesFor(LINT_AND_TYPECHECK, { lint: 'eslint' }), { pm, cwd: dir, rel: 'src/a.ts', deadline: started + 20_000 });
+  assert.deepEqual(out, []);
+  assert.ok(Date.now() - started >= 500, 'waited for the typecheck to finish');
+});
+
+// Hook contract for the edit log: run the real hook against a fake project, with the temp dir redirected.
+async function loggedEdit({ env = {}, input = {}, typecheck = 'tsc --noEmit' }) {
+  const root = await mkdtemp(join(tmpdir(), 'post-edit-log-'));
+  const proj = join(root, 'proj');
+  await mkdir(join(proj, 'src'), { recursive: true });
+  await writeFile(join(proj, 'package.json'), JSON.stringify({ scripts: { typecheck } }));
+  const file = join(proj, 'src', 'a.ts');
+  await writeFile(file, 'export {};\n');
+  const tmp = join(root, 'tmp');
+  await mkdir(tmp);
+  const stdin = JSON.stringify({ session_id: 's1', tool_input: { file_path: file }, ...input });
+  const cleanEnv = { ...process.env, CLAUDE_TYPECHECK_AT: '', TMPDIR: tmp, TEMP: tmp, TMP: tmp, ...env };
+  const r = spawnSync(process.execPath, [HOOK], { input: stdin, encoding: 'utf8', env: cleanEnv });
+  const logFile = (agent) => join(tmp, 'claude-post-edit', 'edits', `s1--${agent}`);
+  return { r, file, logFile, read: (agent) => readFile(logFile(agent), 'utf8').catch(() => null) };
+}
+
+test('post-edit logs the edited file for the stop gate and runs no typecheck', async () => {
+  const { r, file, read } = await loggedEdit({});
+  assert.equal(r.status, 0);
+  assert.equal(await read('main'), `${file}\n`);
+});
+
+test('post-edit logs per agent id', async () => {
+  const { read, file } = await loggedEdit({ input: { agent_id: 'agent-7' } });
+  assert.equal(await read('agent-7'), `${file}\n`);
+  assert.equal(await read('main'), null);
+});
+
+test('post-edit skips the log for unsafe ids, broad typecheck scripts and CLAUDE_TYPECHECK_AT=edit', async () => {
+  assert.equal(await (await loggedEdit({ input: { session_id: '../x' } })).read('main'), null);
+  assert.equal(await (await loggedEdit({ input: { agent_id: 'a/b' } })).read('a/b'), null);
+  assert.equal(await (await loggedEdit({ typecheck: 'nx run-many -t typecheck' })).read('main'), null);
+  assert.equal(await (await loggedEdit({ env: { CLAUDE_TYPECHECK_AT: 'edit' } })).read('main'), null);
 });
