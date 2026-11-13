@@ -1,22 +1,23 @@
 // Purpose: the checkpoint job: summarise the new slice of a session transcript with Haiku into structured notes, store
 // them in the recall DB as chunks of kind `note` (linked to the session id and the transcript line range), embed them
 // with every default embedder, and move the session's checkpoint offset forward.
-// Exports: runCheckpoint, MAX_SLICE_BYTES.
+// Exports: runCheckpoint, runJob, MAX_SLICE_BYTES.
 // Invariants: the model only ever sees redacted text; a reply that is not valid notes JSON is retried once, then a
 // `[note:pointer]` chunk records the unsummarised line range (the raw transcript chunks stay searchable; pointers are
-// stored only when the offset advances, so a retry never leaves stale ones behind); `instructions` items that do not cite a
-// real user message are dropped; notes are
+// stored only when the offset advances, so a retry never leaves stale ones behind); `instructions` items are kept only when they quote what the
+// owner typed (not a pasted or quoted block) in the cited user message; notes are
 // stored with source `note:<session>` so re-indexing a transcript never deletes them; when every window failed the
 // offset is NOT advanced and the error is saved (the hook backs off), otherwise it advances and failures are a `warn`;
 // embedding failures never lose notes (they stay lexically searchable and `recall embed` fills the vectors later);
-// the caller holds the session lock.
+// the caller holds the session lock; `runJob` owns it from there on: it runs again for a PreCompact that arrived while it
+// was busy and releases the lock only when no request is left.
 import { statSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { callHaiku } from './claude-call.mjs';
-import { readCheckpoint, writeCheckpoint } from './checkpoint-state.mjs';
+import { acquireLock, hasPending, readCheckpoint, releaseLock, takePending, writeCheckpoint } from './checkpoint-state.mjs';
 import { redact } from './extract.mjs';
 import { stackModels } from './models.mjs';
-import { SUMMARY_SYSTEM, parseNotes, windowsOf } from './notes.mjs';
+import { SUMMARY_SYSTEM, keepInstruction, parseNotes, windowsOf } from './notes.mjs';
 import { readSlice } from './slice.mjs';
 import { openStore, defaultDbPath } from './store.mjs';
 import { embedTexts, ollamaReason } from './vectors.mjs';
@@ -47,9 +48,12 @@ function noteChunks(window, outcome, base) {
   const range = `L${window.from}-${window.to}`;
   const make = (line, text) => ({ ...base, kind: 'note', line, ts: window.ts[line] ?? window.ts[window.from] ?? null, role: range, text: redact(text) });
   if (!outcome.items) return [make(window.from, `[note:pointer] transcript lines ${window.from}-${window.to} were not summarised (${outcome.reason}); search the session's raw messages.`)];
-  // `instructions` is the owner's voice: keep one only when it cites a real user message of this window.
-  const kept = outcome.items.filter((item) => item.section !== 'instructions' || window.roles[item.l] === 'U');
-  return kept.map((item) => make(lines.includes(item.l) ? item.l : nearestLine(lines, item.l, window.from), `[note:${item.section}] ${item.t}`));
+  // `instructions` is the owner's voice: keep one only when it is a quote of what the owner typed in a cited user message.
+  const kept = outcome.items.filter((item) => item.section !== 'instructions' || keepInstruction(window, item));
+  return kept.map((item) => {
+    const line = lines.includes(item.l) ? item.l : nearestLine(lines, item.l, window.from);
+    return make(line, `[note:${item.section}@${window.roles[line]}] ${item.t}`); // @U/@A/@S: who said it, shown by the digest
+  });
 }
 
 async function embedNotes(store, source, env) {
@@ -100,4 +104,31 @@ export async function runCheckpoint({ session, transcript, reason = 'growth', en
   const warn = [failed ? `${failed} of ${windows.length} windows not summarised` : '', embedError ? `notes not embedded (${embedError})` : ''].filter(Boolean).join('; ') || null;
   writeCheckpoint(session, { session, transcript, offset: endOffset, ts, notes: (previous.notes ?? 0) + stored, lines: [startLine, endLine], reason, error: null, warn }, env);
   return { notes: stored, windows: windows.length, failed, embedError, lines: [startLine, endLine] };
+}
+
+/**
+ * The whole detached job: run a checkpoint, run once more while a PreCompact left a pending flag (its tail would
+ * otherwise never be summarised), then release the lock. The flag is checked before the release and again after it, so a
+ * request written at any moment is either seen here or (the hook retries the lock itself) starts a new job.
+ * @param {{session: string, transcript: string, reason?: string, env?: object, run?: Function}} job `run` replaces `runCheckpoint` (tests).
+ * @throws the first checkpoint error (pending requests are dropped then: a broken `claude` would only fail again).
+ */
+export async function runJob({ session, transcript, reason = 'growth', env = process.env, run = runCheckpoint }) {
+  let why = reason;
+  try {
+    do {
+      await run({ session, transcript, reason: why, env });
+      why = 'PreCompact';
+    } while (takePending(session, env));
+  } catch (error) {
+    takePending(session, env);
+    throw error;
+  } finally {
+    releaseLock(session, env);
+  }
+  const setPid = hasPending(session, env) ? acquireLock(session, env) : null;
+  if (!setPid) return;
+  setPid(process.pid);
+  takePending(session, env);
+  await runJob({ session, transcript, reason: 'PreCompact', env, run });
 }

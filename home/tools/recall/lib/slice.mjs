@@ -5,7 +5,7 @@
 // before it can reach any model; harness text, shell captures and meta lines are dropped exactly as the indexer does;
 // the returned `endOffset` is the first byte not consumed.
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
-import { hasBashCapture, isHarnessText, normalize, redact } from './extract.mjs';
+import { hasBashCapture, isHarnessText, normalize, redact, stripBashBlocks } from './extract.mjs';
 
 const READ_BLOCK = 1 << 20;
 
@@ -30,14 +30,18 @@ function messageOf(entry, line, seen) {
   if (entry.type === 'user') {
     const text = blockTexts(entry.message?.content).join('\n\n');
     if (!text.trim()) return [];
-    if (entry.isCompactSummary === true) return [{ line, ts: entry.timestamp ?? null, role: 'S', text: redact(normalize(text)) }];
+    if (entry.isCompactSummary === true) {
+      const summary = stripBashBlocks(text);
+      return summary.trim() ? [{ line, ts: entry.timestamp ?? null, role: 'S', text: redact(normalize(summary)) }] : [];
+    }
     if (isHarnessText(text) || hasBashCapture(text) || entry.isMeta === true) return [];
     return [{ line, ts: entry.timestamp ?? null, role: 'U', text: redact(normalize(text)) }];
   }
   if (entry.type !== 'assistant') return [];
   const id = entry.message?.id ?? `line${line}`;
   const out = [];
-  blockTexts(entry.message?.content).forEach((text, index) => {
+  blockTexts(entry.message?.content).forEach((raw, index) => {
+    const text = stripBashBlocks(raw);
     const key = `${id}:${index}:${text.length}:${text.slice(0, 50)}`;
     if (!text.trim() || seen.has(key)) return;
     seen.add(key);

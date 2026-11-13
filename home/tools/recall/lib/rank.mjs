@@ -30,6 +30,10 @@ export function windowSnippet(text, terms, size) {
   return text.slice(best.start, best.start + size);
 }
 
-/** Defang any <recall-results> tag inside past text so it cannot close or fake the output wrapper. */
-/** Defang every `<recall-...>` tag (results block, digest block) so stored text cannot open or close ours. */
-export const neutralize = (text) => text.replace(/<(\/?)recall-/gi, '<$1recall_');
+const ZERO_WIDTH_SPACE = '\u200b';
+/**
+ * Defang every tag-like `<word` and `</word` (our own `<recall-results>` / `<recall-digest>` and any lookalike such as
+ * `</system>`) by putting a zero-width space after the `<`, so stored text can neither open nor close a block. Visible
+ * text stays the same; a `<` that is not followed by a letter (`a < b`, `<=`) is untouched.
+ */
+export const neutralize = (text) => text.replace(/<\/?(?=[A-Za-z])/g, (open) => open + ZERO_WIDTH_SPACE);

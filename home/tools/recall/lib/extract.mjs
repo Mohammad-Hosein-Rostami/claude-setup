@@ -1,5 +1,5 @@
 // Purpose: turn transcript JSONL lines and doc text into normalised, redacted, chunked records.
-// Exports: normalize, redact (from redact.mjs), chunkText, sha1, isHarnessText, createTranscriptParser, extractDoc, REDACTED.
+// Exports: normalize, redact (from redact.mjs), chunkText, sha1, isHarnessText, stripBashBlocks, createTranscriptParser, extractDoc, REDACTED.
 // Invariants: pure (no I/O); a malformed JSONL line is counted in parser.bad and skipped, never thrown;
 // redaction runs on the whole text before chunking so a split can never cut a secret in half.
 import { createHash } from 'node:crypto';
@@ -33,6 +33,8 @@ export function sha1(text) {
 // Commands typed with `!` are logged in these tags and often carry passwords, so such text is never indexed.
 const BASH_TAG = /<bash-(?:input|stdout|stderr)>/;
 const BASH_BLOCK = /<bash-(input|stdout|stderr)>[\s\S]*?(?:<\/bash-\1>|$)/g;
+/** Remove `<bash-input|stdout|stderr>` shell captures (an unclosed one runs to the end), as the indexer does. */
+export const stripBashBlocks = (text) => text.replace(BASH_BLOCK, '');
 
 /** True for user text that holds a `!` shell command or its output. */
 export const hasBashCapture = (text) => BASH_TAG.test(String(text));

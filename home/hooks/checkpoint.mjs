@@ -7,7 +7,7 @@
 import { spawn } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { acquireLock, decideCheckpoint, readCheckpoint } from '../tools/recall/lib/checkpoint-state.mjs';
+import { acquireLock, decideCheckpoint, readCheckpoint, requestPending, takePending } from '../tools/recall/lib/checkpoint-state.mjs';
 
 const EVENTS = new Set(['PostToolUse', 'PreCompact']);
 const JOB = fileURLToPath(new URL('../tools/recall/checkpoint-job.mjs', import.meta.url));
@@ -16,7 +16,8 @@ const JOB = fileURLToPath(new URL('../tools/recall/checkpoint-job.mjs', import.m
  * Decide and, when due, start the detached checkpoint job.
  * @param {object} input the hook JSON (hook_event_name, session_id, transcript_path, agent_id?).
  * @param {object} [env] process env (tests inject RECALL_* settings).
- * @returns {'started' | string} 'started', or the reason nothing was started (for tests).
+ * @returns {'started' | string} 'started', or the reason nothing was started (for tests); 'pending' when a PreCompact
+ *   found a job running and left it a flag to run once more for the tail.
  */
 export function handleCheckpointHook(input, env = process.env) {
   if (input.agent_id) return 'subagent';
@@ -25,7 +26,14 @@ export function handleCheckpointHook(input, env = process.env) {
   if (typeof session !== 'string' || typeof transcript !== 'string' || /[\\/]subagents[\\/]/.test(transcript)) return 'not a main session';
   const size = statSync(transcript).size;
   if (!decideCheckpoint({ event: input.hook_event_name, size, state: readCheckpoint(session, env) })) return 'not due';
-  const setPid = acquireLock(session, env);
+  let setPid = acquireLock(session, env);
+  if (!setPid && input.hook_event_name === 'PreCompact') {
+    // The running job re-checks this flag before and after it releases the lock; if it already released, take over here.
+    requestPending(session, env);
+    setPid = acquireLock(session, env);
+    if (!setPid) return 'pending';
+    takePending(session, env);
+  }
   if (!setPid) return 'locked';
   const child = spawn(process.execPath, [JOB, session, transcript, input.hook_event_name], { detached: true, stdio: 'ignore', env });
   child.on('error', () => {}); // a spawn failure must not crash the hook; the lock goes stale on its own

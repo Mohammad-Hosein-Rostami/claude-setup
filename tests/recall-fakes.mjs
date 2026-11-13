@@ -23,7 +23,7 @@ const lines = [...stdin.matchAll(/\\[L(\\d+) /g)].map((m) => Number(m[1]));
 const first = lines[0] ?? 1;
 const last = lines.at(-1) ?? 1;
 reply(JSON.stringify({
-  instructions: [{ t: 'Owner: never push to main, tests first.', l: first }],
+  instructions: [{ t: 'question', l: first }],
   decisions: [{ t: 'Chose qwen3-reranker-0.6b because it answers in 1.1 s.', l: last }],
   facts: [{ t: 'The reranker port is 8012 and the pool size is 30.', l: last }],
   files: [{ t: 'home/hooks/checkpoint.mjs created.', l: first }],
