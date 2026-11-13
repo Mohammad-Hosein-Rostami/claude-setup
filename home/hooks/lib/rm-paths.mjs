@@ -1,0 +1,140 @@
+// Path rules for `rm -r` and `cd`: is a target inside the project or a temp dir, and which variables hold what.
+// Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; newScope(cwd, project) -> {vars, assigned};
+// trackAssignments(scope, tokens, nextTokens); substituteKnownWords(tokens, scope); nativePath, isUnder, sameFile, expandHome.
+// Variables are tracked in order within one command line and the LAST assignment wins (`D=$(mktemp -d); D=/etc` means /etc).
+// A literal value is used as is, `VAR=$(mktemp -d)` (default location) stands for one directory inside the temp dir, and any
+// other value is unknown. `..` is resolved lexically after substitution, so `$D/..` is outside the mktemp directory.
+// Only a recursive rm asks about an unknown or outside target; `rm -f x` of one file is not judged here.
+// Invariants: pure apart from reading homedir()/tmpdir(); never touches the file system.
+import { homedir, tmpdir } from 'node:os';
+import { isAbsolute, join, parse, relative, resolve } from 'node:path';
+import { QUOTED_MARK, flagsOf } from './shell-words.mjs';
+import { destructive } from './verdict.mjs';
+
+const SAFE_TEMP_ROOTS = ['/tmp', '/private/tmp', tmpdir()];
+const HOME_PREFIX = /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/;
+const GIT_BASH_DRIVE_ROOT = /^\/[a-zA-Z]$/;
+const REDIRECT_START = /^(\d*>>?|\d*<|&>>?)/;
+const REDIRECT_OPERATOR_ONLY = /^(\d*>>?|\d*<{1,2}|&>>?)$/;
+const VAR_PREFIX = /^\$\{?(\w+)\}?(?=\/|$)/;
+const ANY_VAR = /\$\{(\w+)\}|\$(\w+)/g;
+const ASSIGNMENT = /^([A-Za-z_]\w*)=([\s\S]*)$/;
+const MKTEMP_VALUE = /^(?:\$\(\s*mktemp\b([^)]*)\)|`\s*mktemp\b([^`]*)`)$/;
+const MKTEMP_LEAVES_TEMP = /[/~]|(?:^|\s)-p|--tmpdir=/; // an explicit directory or template can point anywhere
+const MKTEMP_DIR = 'mktemp-variable';
+const DECLARERS = new Set(['export', 'declare', 'local', 'readonly', 'typeset']);
+const RECURSIVE_FLAG = /^--recursive$|^-[a-zA-Z]*[rR]/;
+
+/** Git Bash paths (`/c/Users/x`) -> `C:/Users/x` on Windows; unchanged elsewhere. */
+export const nativePath = (p) => (process.platform === 'win32' ? p.replace(/^\/([a-zA-Z])(?=\/|$)/, '$1:') : p);
+
+export const isUnder = (root, target) => {
+  const rel = relative(root, target);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+};
+export const sameFile = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+
+/** `~`, `~/x`, `$HOME`, `${HOME}` -> the home directory. Other words are unchanged. */
+export const expandHome = (target) => target.replace(HOME_PREFIX, homedir());
+
+/** $HOME, `/`, a drive root (`C:\`, `/c/`) are never "the project": a session started there would allow rm -r anywhere. */
+function isBroadRoot(project) {
+  const path = resolve(nativePath(project));
+  return sameFile(path, parse(path).root) || sameFile(path, resolve(homedir())) || GIT_BASH_DRIVE_ROOT.test(path);
+}
+
+/**
+ * Variable state for one command line: `vars` maps names to known values (`$TMPDIR`, `$CLAUDE_PROJECT_DIR`, `$PWD` when the
+ * directory is known, then every literal assignment seen so far); `assigned` holds the names assigned in the command itself.
+ */
+export function newScope(cwd, project) {
+  const vars = new Map([['TMPDIR', tmpdir()], ['CLAUDE_PROJECT_DIR', project]]);
+  if (cwd !== null) vars.set('PWD', cwd);
+  return { vars, assigned: new Set() };
+}
+
+const expandVars = (target, vars) => target.replace(VAR_PREFIX, (whole, name) => (vars.has(name) ? vars.get(name) : whole));
+const mktempDir = () => join(tmpdir(), MKTEMP_DIR);
+const isMktempValue = (value) => typeof value === 'string' && value.startsWith(mktempDir());
+
+/** The value a `NAME=value` word gives, or undefined when it cannot be known. `nextTokens` is the segment after a bare `$(`/backtick. */
+function valueOf(raw, vars, nextTokens) {
+  const mktemp = MKTEMP_VALUE.exec(raw);
+  const substitutionFollows = raw === '$' || raw === '`' || raw === '';
+  if (mktemp || (substitutionFollows && nextTokens[0] === 'mktemp')) {
+    const options = mktemp ? `${mktemp[1] ?? ''}${mktemp[2] ?? ''}` : nextTokens.slice(1).join(' ');
+    return MKTEMP_LEAVES_TEMP.test(options) ? undefined : mktempDir();
+  }
+  if (raw === '$' || raw === '`') return undefined;
+  const value = expandVars(expandHome(raw), vars);
+  return /[$`]/.test(value) ? undefined : value;
+}
+
+/**
+ * Updates `vars` for assignments in one segment (a bare `NAME=x` segment or `export NAME=x`), `unset`, `read`. Call after the
+ * segment was checked. Names that become unknown are removed, so a later `$NAME` target is unknown.
+ * @param {{vars: Map<string, string>, assigned: Set<string>}} scope tracked values (modified)
+ * @param {string[]} tokens words of this segment
+ * @param {string[]} nextTokens words of the following segment (the body of a bare `$(`)
+ */
+export function trackAssignments({ vars, assigned }, tokens, nextTokens = []) {
+  const words = DECLARERS.has(tokens[0]) ? tokens.slice(1) : tokens;
+  if (['unset', 'read'].includes(tokens[0])) {
+    for (const name of tokens.slice(1).filter((w) => !w.startsWith('-'))) vars.delete(name);
+    return;
+  }
+  const assignments = words.map((w) => ASSIGNMENT.exec(w));
+  if (assignments.length === 0 || assignments.some((m) => m === null)) return; // a command with arguments, not assignments
+  for (const [, name, raw] of assignments) {
+    assigned.add(name);
+    const value = valueOf(raw, vars, nextTokens);
+    if (value === undefined) vars.delete(name);
+    else vars.set(name, value);
+  }
+}
+
+/**
+ * Replaces `$NAME` / `${NAME}` inside words by the literal value assigned earlier in this command line, so `X=rm; $X -rf /x`
+ * reads `rm -rf /x` and `v=r; ${v}m -rf /x` too. Names never assigned here, and mktemp directories, stay as they are.
+ * @param {string[]} tokens words of one segment
+ * @param {{vars: Map<string, string>, assigned: Set<string>}} scope
+ */
+export function substituteKnownWords(tokens, { vars, assigned }) {
+  const replace = (whole, braced, plain) => {
+    const name = braced ?? plain;
+    return assigned.has(name) && vars.has(name) && !isMktempValue(vars.get(name)) ? vars.get(name) : whole;
+  };
+  return tokens.map((word) => word.replace(ANY_VAR, replace));
+}
+
+/** `cwd` is null when an earlier `cd` could not be resolved: then only absolute targets can be judged. */
+function insideProject(rawTarget, cwd, project, vars) {
+  const target = expandVars(expandHome(rawTarget), vars);
+  if (target.startsWith('~') || target.includes('$')) return false;
+  const native = nativePath(target);
+  if (cwd === null && !isAbsolute(native)) return false;
+  const abs = resolve(cwd ?? project, native);
+  // `$D/..` and `$D/../x` leave the unique directory mktemp made, so they only count as safe while they stay inside it
+  if (target.startsWith(mktempDir())) return abs === mktempDir() || isUnder(mktempDir(), abs);
+  return (!isBroadRoot(project) && isUnder(project, abs)) || SAFE_TEMP_ROOTS.some((root) => isUnder(root, abs));
+}
+
+/** Drops redirections (`2>&1`, `> file`) so they are not mistaken for rm targets. */
+function withoutRedirects(args) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    if (!REDIRECT_START.test(args[i])) out.push(args[i]);
+    else if (REDIRECT_OPERATOR_ONLY.test(args[i])) i++; // the operator stands alone: its target is the next word
+  }
+  return out;
+}
+
+/**
+ * @param {string[]} args words after `rm`
+ * @returns {string | undefined} ask reason when a recursive rm targets something outside the project and the temp dirs (or an unknown variable)
+ */
+export function checkRm(args, { cwd, project, vars }) {
+  if (!flagsOf(args).some((f) => RECURSIVE_FLAG.test(f))) return undefined;
+  const outside = withoutRedirects(args).filter((a) => !a.startsWith('-')).find((t) => !insideProject(t, cwd, project, vars));
+  return outside === undefined ? undefined : destructive(`rm -r outside the project (${outside.replace(QUOTED_MARK, '')})`);
+}

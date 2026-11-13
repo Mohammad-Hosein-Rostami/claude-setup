@@ -1,5 +1,5 @@
 // Segment tokens -> the real command: looks through keywords (`if`, `!`, `{`), `VAR=x` words and wrappers (sudo, env, ...).
-// Exports: commandOf(tokens) -> {cmd, args, assigns}; commandName(word); KEYWORDS.
+// Exports: commandOf(tokens) -> {cmd, args, assigns, at (index of the command word)}; commandName(word); KEYWORDS.
 // Pure, no I/O. Shared by pre-bash-guard and the remote-command classifier (lib/remote.mjs).
 import { basenameOf } from './shell-words.mjs';
 
@@ -45,7 +45,7 @@ function skipWrapperOptions(tokens, start, valueOptions, isTimeout) {
 /**
  * Segment tokens -> the real command, its arguments and the `VAR=x` words before it, looking through keywords and wrappers.
  * @param {string[]} tokens unquoted words of one segment
- * @returns {{cmd: string|undefined, args: string[], assigns: string[]}} cmd undefined for an assignment-only segment
+ * @returns {{cmd: string|undefined, args: string[], assigns: string[], at: number}} cmd undefined for an assignment-only segment
  */
 export function commandOf(tokens) {
   const assigns = [];
@@ -56,7 +56,7 @@ export function commandOf(tokens) {
     if (ASSIGNMENT.test(word)) assigns.push(word);
     if (KEYWORDS.has(word) || ASSIGNMENT.test(word)) i += 1;
     else if (WRAPPERS.has(name)) i = skipWrapperOptions(tokens, i + 1, WRAPPERS.get(name), name === 'timeout');
-    else return { cmd: name, args: tokens.slice(i + 1), assigns };
+    else return { cmd: name, args: tokens.slice(i + 1), assigns, at: i };
   }
-  return { cmd: undefined, args: [], assigns };
+  return { cmd: undefined, args: [], assigns, at: tokens.length };
 }

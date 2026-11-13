@@ -1,5 +1,5 @@
 // Outward actions that always need the owner's confirmation: `git push`, `gh release *`, `gh pr merge`, package publish.
-// Exports: pushAsk(flags), outwardAsk(cmd, args) -> reason | undefined.
+// Exports: parsePushArgs(rest), pushAsk(options), outwardAsk(cmd, args) -> reason | undefined.
 // The guard turns a reason into a PreToolUse permissionDecision "ask", which prompts even in bypassPermissions mode.
 // Read-only or rehearsal forms stay allowed: `git push --dry-run`, `npm publish --dry-run`, `gh release list|view|download`.
 // Pure, no I/O. Deny rules (force push, mirror, delete) are checked first by the caller and win over an ask.
@@ -18,14 +18,44 @@ const positionals = (args, valueOptions) => {
   return out;
 };
 
-// exactly `--dry-run` or `-n`: a cluster such as `-on` is something else (`-o` takes a value), so it is not a rehearsal
-const isDryRun = (flags) => flags.some((f) => f === '--dry-run' || f === '-n');
+const PUSH_VALUE_OPTIONS = new Set(['--push-option', '--repo', '--receive-pack', '--exec']);
+const PUSH_VALUE_SHORT = 'o'; // `-o option`; also last in a cluster (`-uo opt`) or attached (`-oopt`)
+const MIN_DRY_RUN_PREFIX = '--dry'.length; // git accepts any unique prefix of a long option; `--dry` is unique
 
 /**
- * @param {string[]} flags option words of a `git push` call
+ * Splits the words after `git push` into options and positionals, consuming option values (`-o x`, `--repo r`, `--exec e`)
+ * so a value is never mistaken for a flag (`-o -f` is not a force push, `-o -n` is not a dry run).
+ * A short cluster that contains `o` is cut after the `o` (`-fovalue` -> `-fo`); what follows is its value.
+ * @param {string[]} rest words after `push`
+ * @returns {{options: string[], positional: string[]}}
+ */
+export function parsePushArgs(rest) {
+  const options = [];
+  const positional = [];
+  for (let i = 0; i < rest.length; i++) {
+    const word = rest[i];
+    if (word === '--') positional.push(...rest.slice(i + 1));
+    if (word === '--') break;
+    if (word.startsWith('--')) {
+      options.push(word);
+      if (PUSH_VALUE_OPTIONS.has(word)) i += 1;
+    } else if (word.startsWith('-') && word.length > 1) {
+      const valueAt = word.indexOf(PUSH_VALUE_SHORT, 1);
+      options.push(valueAt === -1 ? word : word.slice(0, valueAt + 1));
+      if (valueAt === word.length - 1) i += 1;
+    } else positional.push(word);
+  }
+  return { options, positional };
+}
+
+/** `--dry-run` (or a unique prefix of it), or a short cluster with `n` (`-n`, `-nu`) among its flags. */
+const isDryRun = (options) => options.some((o) => (o.startsWith('--') ? o.length >= MIN_DRY_RUN_PREFIX && '--dry-run'.startsWith(o) : /^-[a-zA-Z]*n/.test(o)));
+
+/**
+ * @param {string[]} options option words of a `git push` call, from parsePushArgs
  * @returns {string | undefined} ask reason; undefined for a dry run
  */
-export const pushAsk = (flags) => (isDryRun(flags) ? undefined : 'git push publishes commits to a remote; confirm with the owner');
+export const pushAsk = (options) => (isDryRun(options) ? undefined : 'git push publishes commits to a remote; confirm with the owner');
 
 function ghAsk(args) {
   const [group, action] = positionals(args, GH_VALUE_OPTIONS);

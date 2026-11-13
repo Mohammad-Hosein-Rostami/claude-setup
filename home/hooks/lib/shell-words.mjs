@@ -8,8 +8,10 @@
 // Invariants: every pass is linear (or n log n) in the command length; a heredoc without a terminator line is left
 // in place (so its body is still checked) rather than guessed at.
 
+import { ANSI_C_WORD, decodeAnsiC } from './ansi-c.mjs';
+
 // Alternation order matters: `&&`/`||` first, then words (a word may be `&>` or follow `>`), then single separators.
-const WORD = '(?:"(?:\\\\[\\s\\S]|[^"\\\\])*"|\'[^\']*\'|\\\\[\\s\\S]|(?<=[<>])&|(?<=>)\\||&(?=>)|[^\\s;|&()`\\\\])+';
+const WORD = '(?:"(?:\\\\[\\s\\S]|[^"\\\\])*"|' + ANSI_C_WORD + '|\'[^\']*\'|\\\\[\\s\\S]|(?<=[<>])&|(?<=>)\\||&(?=>)|[^\\s;|&()`\\\\])+';
 const TOKEN = new RegExp(`(&&|\\|\\|)|(${WORD})|(;|\\||\\n|&|\\(|\\)|\`)`, 'g');
 const DOUBLE_QUOTED = /"((?:\\[\s\S]|[^"\\])*)"/g;
 const LINE_CONTINUATION_ONLY = /^(?:\\\r?\n)+$/;
@@ -36,6 +38,15 @@ function closingDoubleQuote(word, from) {
   return -1;
 }
 
+/** Index of the `'` that closes the `$'...'` text starting after `from` (a backslash escapes the next character), or -1. */
+function ansiCClose(word, from) {
+  for (let i = from; i < word.length; i++) {
+    if (word[i] === '\\') i++;
+    else if (word[i] === "'") return i;
+  }
+  return -1;
+}
+
 /** Double-quoted text without its quotes: a backslash is kept unless it escapes `\`, `"`, `$` or a backtick (or a newline). */
 function unescapeDoubleQuoted(text) {
   let out = '';
@@ -53,8 +64,14 @@ export function unquote(word) {
   let out = '';
   for (let i = 0; i < word.length; i++) {
     const c = word[i];
-    const close = c === "'" ? word.indexOf("'", i + 1) : c === '"' ? closingDoubleQuote(word, i + 1) : -1;
-    if (close !== -1) {
+    const ansi = c === '$' && word[i + 1] === "'";
+    const localized = c === '$' && word[i + 1] === '"'; // `$"text"` is a double-quoted word
+    if (localized) continue;
+    const close = ansi ? ansiCClose(word, i + 2) : c === "'" ? word.indexOf("'", i + 1) : c === '"' ? closingDoubleQuote(word, i + 1) : -1;
+    if (ansi && close !== -1) {
+      out += decodeAnsiC(word.slice(i + 2, close));
+      i = close;
+    } else if (close !== -1) {
       out += c === "'" ? word.slice(i + 1, close) : unescapeDoubleQuoted(word.slice(i + 1, close));
       i = close;
     } else if (c === '\\' && i + 1 < word.length) {
@@ -76,9 +93,12 @@ function splitAttachedRedirect(raw) {
   let quote = '';
   for (let i = 0; i < raw.length; i++) {
     const c = raw[i];
-    if (c === '\\' && quote !== "'") i++; // an escaped character is data (`\>`, `\"`)
-    else if (quote) quote = c === quote ? '' : quote;
-    else if (c === '"' || c === "'") quote = c;
+    if (c === '\\' && quote !== "'") i++; // an escaped character is data (`\>`, `\"`); inside `$'...'` (quote `$`) too
+    else if (quote) quote = c === (quote === '$' ? "'" : quote) ? '' : quote;
+    else if (c === '$' && raw[i + 1] === "'") {
+      quote = '$';
+      i++;
+    } else if (c === '"' || c === "'") quote = c;
     else if (c === '<' || c === '>') {
       const at = c === '>' && raw[i - 1] === '&' ? i - 1 : i; // `&>` is one operator
       return /^\d*$/.test(raw.slice(0, at)) ? [raw] : [raw.slice(0, at), raw.slice(at)];
