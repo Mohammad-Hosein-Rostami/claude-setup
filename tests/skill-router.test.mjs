@@ -190,14 +190,22 @@ test('skillsForPrompt and gateLinesForPrompt ignore every harness event form', (
   }
 });
 
-test('gateLinesForPrompt: bug words name root-cause-debug, done/ship words name verify-done, other prompts none', () => {
-  assert.match(gateLinesForPrompt('fix the failing login test').join(), /root-cause-debug/);
-  assert.match(gateLinesForPrompt('the parser crashes on empty input').join(), /root-cause-debug/);
-  assert.match(gateLinesForPrompt('باگ را رفع کن').join(), /root-cause-debug/);
-  assert.match(gateLinesForPrompt('looks good, ship it').join(), /verify-done/);
-  assert.match(gateLinesForPrompt('is it done? ready for review').join(), /verify-done/);
+test('gateLinesForPrompt: bug and done intents fire', () => {
+  for (const prompt of ['fix the failing login test', 'please fix this', 'the parser crashes on empty input', 'there is a bug in checkout', 'the build is failing',
+    'login does not work', 'باگ را رفع کن', 'debug the flaky test']) {
+    assert.match(gateLinesForPrompt(prompt).join(), /root-cause-debug/, prompt);
+  }
+  for (const prompt of ['looks good, ship it', 'is it done? ready for review', 'we are done here', 'can we merge', 'ready to merge', 'wrap it up', 'کار تمام شد']) {
+    assert.match(gateLinesForPrompt(prompt).join(), /verify-done/, prompt);
+  }
   assert.equal(gateLinesForPrompt('fix it and ship it').length, 2);
-  for (const prompt of ['add a REST endpoint for orders', 'write the README section', 'prefix the keys']) assert.deepEqual(gateLinesForPrompt(prompt), [], prompt);
+});
+
+test('gateLinesForPrompt: incidental words do not fire', () => {
+  for (const prompt of ['add a REST endpoint for orders', 'write the README section', 'prefix the keys', 'the fix version is 2.1', 'I fixed it already',
+    'when you are done, run the tests', 'resolve the merge conflicts in a.txt', 'a fixed width table', 'the done flag in the schema', 'rename the debugger config']) {
+    assert.deepEqual(gateLinesForPrompt(prompt), [], prompt);
+  }
 });
 
 test('hook: gate lines reach additionalContext, also in a Gradle project and next to a UI route', async () => {
@@ -214,4 +222,26 @@ test('hook: gate lines reach additionalContext, also in a Gradle project and nex
   assert.match(ctx, /root-cause-debug/);
   assert.doesNotMatch(ctx, /involves UI/);
   assert.equal(await prompt('<agent-message>fix the bug</agent-message>', 's5', KEEP), '');
+  assert.equal(await prompt('the fix version is 2.1', 's6', KEEP), '');
+});
+
+test('hook: each gate line shows once per session, again after a compact, and per session', async () => {
+  const KEEP = { keepGates: true };
+  const { prompt, compact } = await routerSession();
+  assert.match(await prompt('fix the crash', 'g1', KEEP), /root-cause-debug/);
+  assert.equal(await prompt('fix the other crash', 'g1', KEEP), '');
+  assert.match(await prompt('ship it', 'g1', KEEP), /verify-done/); // a different gate is still new
+  assert.equal(await prompt('ship it again', 'g1', KEEP), '');
+  assert.match(await prompt('fix the crash', 'g2', KEEP), /root-cause-debug/); // another session
+  compact('g1');
+  assert.match(await prompt('fix the crash', 'g1', KEEP), /root-cause-debug/);
+});
+
+test('hook: CLAUDE_SKILL_ROUTER=off silences the gate lines too', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'router-off-'));
+  const env = { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp, CLAUDE_SKILL_ROUTER: 'off' };
+  const input = JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'fix the crash, then ship it', session_id: 'off1' });
+  const r = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, '');
 });

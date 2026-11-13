@@ -34,14 +34,33 @@ const PROMPT_ROUTES = [
 ];
 // Harness events (background task results, injected reminders) arrive as prompts but are not user text.
 const HARNESS_EVENT = /^(<(task-notification|system-reminder|agent-message)|\[SYSTEM NOTIFICATION)/;
-// Gate routes: workflow skills that are not UI specific. One line each, no per-session marker.
+// Gate routes: workflow skills that are not UI specific, named once per session (and again after a compact). Triggers
+// are intents, not words: an imperative "fix ..." / a bug, crash or failing test; a "done?", "ship it", "ready to
+// merge" request. "fixed", "prefix", "when you are done" and "merge conflicts" do not fire.
+const SENTENCE_START = String.raw`(?:^|[.!?:]\s+|\b(?:please|pls|can you|could you|would you|need to|needs to|let'?s|and|then|go)\s+)`;
 const GATE_ROUTES = [
   {
-    test: /\b(fix(es|ed|ing)?|bugs?|crash(es|ed|ing)?|regressions?|broken|failing|flaky|not working|doesn'?t work)\b|باگ|رفع|خراب/i,
+    skill: 'root-cause-debug',
+    test: new RegExp(
+      `${SENTENCE_START}(?:fix|debug|diagnose|troubleshoot)\\b` +
+        String.raw`|\b(?:bugs?|crash(?:es|ed|ing)?|regressions?|flaky|stack ?traces?)\b` +
+        String.raw`|\b(?:is|are|was|were|keeps?|still|now|got)\s+(?:broken|failing|crashing)\b` +
+        String.raw`|\b(?:failing|broken)\s+(?:tests?|build|ci|pipeline)\b|\b(?:tests?|build|ci|pipeline)\s+(?:is |are )?(?:failing|red|broken)\b` +
+        String.raw`|\b(?:does(?:n'?t| not)|do(?:n'?t| not)|won'?t|isn'?t|not)\s+work(?:ing)?\b` +
+        String.raw`|باگ|رفع (?:باگ|خطا|مشکل)|کار نمی`,
+      'i',
+    ),
     line: 'Skill router: bug or failure - invoke root-cause-debug (skip if already loaded) before proposing a fix; tdd-loop for the fix itself.',
   },
   {
-    test: /\b(done|ship(ped|ping)?|merge|ready for (review|merge)|wrap(ping)? up|finali[sz]e)\b|تمام شد|آماده/i,
+    skill: 'verify-done',
+    test: new RegExp(
+      String.raw`\b(?:(?:is|was) (?:it|this|that) (?:done|finished|ready)|(?:are we|we'?re|we are|i'?m|i am|it'?s|it is|all) (?:all )?(?:done|finished)` +
+        String.raw`|ready (?:to|for) (?:ship|merge|release|review|deploy)|(?:ship|merge|release) (?:it|this|that|the (?:pr|branch|change|changes|work))` +
+        String.raw`|(?:can|should|could) (?:we|i) (?:ship|merge|release)|wrap(?:ping)? (?:it )?up|mark (?:it )?(?:as )?done)\b` +
+        String.raw`|تمام شد|merge کن|آماده merge`,
+      'i',
+    ),
     line: 'Skill router: done or ship - invoke verify-done (skip if already loaded) before claiming done, fixed or ready.',
   },
 ];
@@ -57,10 +76,14 @@ const COMPACT_SOURCE = 'compact';
 const OFF_ENV = 'CLAUDE_SKILL_ROUTER';
 const GRADLE_FILES = ['settings.gradle', 'settings.gradle.kts', 'build.gradle', 'build.gradle.kts'];
 
-/** Returns the gate-route lines (bug -> root-cause-debug, done/ship -> verify-done) a prompt calls for. */
+/** Returns the gate routes (bug -> root-cause-debug, done/ship -> verify-done) a prompt calls for. */
+function gatesForPrompt(prompt) {
+  return HARNESS_EVENT.test(prompt.trim()) ? [] : GATE_ROUTES.filter((gate) => gate.test.test(prompt));
+}
+
+/** Returns the gate-route lines a prompt calls for, without the once-per-session filter. */
 export function gateLinesForPrompt(prompt) {
-  if (HARNESS_EVENT.test(prompt.trim())) return [];
-  return GATE_ROUTES.filter((gate) => gate.test.test(prompt)).map((gate) => gate.line);
+  return gatesForPrompt(prompt).map((gate) => gate.line);
 }
 
 /** Returns the skills a prompt calls for, in first-match order, without duplicates. */
@@ -207,8 +230,11 @@ function route(input) {
   }
   if (input.hook_event_name === 'UserPromptSubmit') {
     const prompt = String(input.prompt ?? '');
+    if (process.env[OFF_ENV] === 'off') return null;
     const ui = isQuiet(input.cwd) ? null : promptContext(prompt, input.session_id);
-    return [ui, ...gateLinesForPrompt(prompt)].filter(Boolean).join('\n') || null;
+    // The gate lines share the UI "named skills" marker, so each shows once per session and again after a compact.
+    const gates = gatesForPrompt(prompt).filter((gate) => !alreadyNamed(input.session_id, [gate.skill])).map((gate) => gate.line);
+    return [ui, ...gates].filter(Boolean).join('\n') || null;
   }
   if (isQuiet(input.cwd)) return null;
   if (input.hook_event_name === 'PostToolUse') return editContext(input);
