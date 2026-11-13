@@ -36,7 +36,9 @@
 // variable/`$(...)`/backtick as command word (`$X`; `$EDITOR` and an earlier one-word assignment are fine), `env -S`, `su -c`;
 // `pnpm exec|dlx`, `yarn exec`, `npx` ... scan what they run (`npm run`/`pnpm run` do not). Brace expansion in rm paths is expanded
 // (lib/braces.mjs), or asks when it cannot be listed. `git -c alias.*`, `gh api -X PUT|POST|PATCH|DELETE` on repo/merge/release paths,
-// `gh repo delete`, `diskutil erase*`, `newfs_*`, `> /dev/disk*` ask. Nesting deeper than MAX_NESTING asks.
+// `gh repo delete`, `gh repo edit --visibility`, `gh secret set`, `gh workflow run`, a `gh api graphql` mutation, `diskutil erase*` and `apfs delete*`,
+// `newfs_*`, `> /dev/disk*`, `cp|mv|tee ... /dev/disk*|sd*|nvme*`, an `alias` whose body would ask ask. PGHOST/PGSERVICE/MYSQL_HOST set earlier in the line count as the
+// host of a later psql/mysql. Prod SQL with a `$tag$` quote, a backslash escape or `;` followed by more text is not read-only. Nesting deeper than MAX_NESTING asks.
 // Fail to ask (Round 4, lib/raw-risk.mjs): the two parsers are not a security boundary. A command that has ANY hidden-execution construct
 // (`$(`, backtick, `<<`, `<(`, eval, trap, case, `\r`, a pipe into a shell ...) and a dangerous word anywhere in its raw text, quoted or
 // not, asks with "risky word inside shell expansion" when nothing else asked. Accepted false positive: a commit message written as
@@ -112,6 +114,18 @@ function shellScript(args) {
   return undefined;
 }
 
+const HOST_VARIABLES = ['PGHOST', 'PGHOSTADDR', 'PGSERVICE', 'MYSQL_HOST'];
+
+/** Host variables set earlier in the same command line (`export PGHOST=prod-db` then `psql`), as `NAME=value` words like a prefix assignment. */
+const hostVariables = (vars = new Map()) => HOST_VARIABLES.filter((name) => vars.has(name)).map((name) => `${name}=${vars.get(name)}`);
+
+/** `alias p='git push -f'`: the alias body is a command line, so it is judged like one. */
+function checkAlias(args, env) {
+  const bodies = args.filter((word) => word.includes('=')).map((word) => word.slice(word.indexOf('=') + 1));
+  const reasons = bodies.flatMap((body) => reasonsOf(body, env));
+  return reasons.length > 0 ? `alias defines a command that asks: ${reasons[0]}` : undefined;
+}
+
 /** The rules that look at one command's own name and words (no shell recursion, no scan). */
 function checkSimple(cmd, args, assigns, env) {
   return [
@@ -120,7 +134,8 @@ function checkSimple(cmd, args, assigns, env) {
     checkHiddenRm(cmd, args),
     checkDiskWipe(cmd, args),
     checkLockfileEdit(cmd, args),
-    outwardAsk(cmd, args) ?? remoteAsk(cmd, args, assigns, env.prodHosts),
+    outwardAsk(cmd, args) ?? remoteAsk(cmd, args, [...assigns, ...hostVariables(env.vars)], env.prodHosts),
+    cmd === 'alias' ? checkAlias(args, env) : undefined,
   ].filter((reason) => reason !== undefined);
 }
 

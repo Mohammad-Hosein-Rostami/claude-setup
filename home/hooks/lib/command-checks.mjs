@@ -16,7 +16,9 @@ const NO_VERIFY = '--no-verify';
 const MIN_NO_VERIFY_PREFIX = 8; // `--no-ver`: git accepts any unique prefix of a long option
 const DISK_DEVICE = /^\/dev\/(?!null$|zero$|tty|std|fd\/|pts\/)/;
 const MKFS_COMMAND = /^(?:mkfs(?:\.\w+)?|newfs(?:_\w+)?)$/; // mkfs.ext4, newfs_hfs
-const DISKUTIL_WIPE = /^(?:erase|partition|zero|secureerase|reformat|apfs(?:delete|erase))/i; // diskutil eraseDisk, partitionDisk, zeroDisk, secureErase, reformat
+const DISKUTIL_WIPE = /^(?:erase|partition|zero|secureerase|reformat|apfs(?:delete|erase))/i;
+const DISKUTIL_APFS_WIPE = /^(?:delete|erase)/i; // `diskutil apfs deleteContainer`, `apfs eraseVolume`
+const DEVICE_WRITERS = new Set(['cp', 'mv', 'install', 'tee']); // diskutil eraseDisk, partitionDisk, zeroDisk, secureErase, reformat
 const RAW_DEVICE_TARGET = /^\/dev\/(?:r?disk|sd|hd|nvme|vd|xvd|mmcblk)/; // `> /dev/disk2`, `>/dev/sda`
 const isHooksPathConfig = (value = '') => /^core\.hookspath=/i.test(value);
 const isLockfile = (p) => LOCKFILES.has(basenameOf(p));
@@ -67,12 +69,25 @@ export function checkGit(args, assigns = []) {
   return sub === 'push' ? checkGitPush(rest) : undefined;
 }
 
+/** `diskutil erase*|partition*|zero*|secureErase|reformat` and `diskutil apfs delete*|erase*`. */
+function diskutilWipes(args) {
+  const [sub = '', second = ''] = args.filter((a) => !a.startsWith('-'));
+  return DISKUTIL_WIPE.test(sub) || (/^apfs$/i.test(sub) && DISKUTIL_APFS_WIPE.test(second));
+}
+
+/** `cp x /dev/disk2`, `mv x /dev/sda`: the destination (last word) is a raw device; `tee` writes every file word. */
+function deviceDestination(cmd, args) {
+  const files = args.filter((a) => !a.startsWith('-') && !REDIRECT.test(a));
+  return (cmd === 'tee' ? files : files.slice(-1)).some((f) => RAW_DEVICE_TARGET.test(f));
+}
+
 /** Writing to a raw device or making a filesystem destroys its contents: dd of=/dev/x, mkfs/newfs, wipefs, shred or blkdiscard on a device, diskutil erase*, a redirect into a raw disk. */
 export function checkDiskWipe(cmd, args) {
   const wipes = MKFS_COMMAND.test(cmd) || cmd === 'wipefs' || cmd === 'blkdiscard'
     || (cmd === 'dd' && args.some((a) => a.startsWith('of=') && DISK_DEVICE.test(a.slice(3))))
     || (cmd === 'shred' && args.some((a) => DISK_DEVICE.test(a)))
-    || (cmd === 'diskutil' && DISKUTIL_WIPE.test(args.find((a) => !a.startsWith('-')) ?? ''))
+    || (cmd === 'diskutil' && diskutilWipes(args))
+    || (DEVICE_WRITERS.has(cmd) && deviceDestination(cmd, args))
     || redirectTargets(args).some((t) => RAW_DEVICE_TARGET.test(t));
   return wipes ? destructive(`${cmd} can wipe a disk or device`) : undefined;
 }

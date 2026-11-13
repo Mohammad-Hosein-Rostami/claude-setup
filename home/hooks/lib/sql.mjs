@@ -7,6 +7,8 @@
 // now, version, current_*, ...; so `pg_promote()` and `query_to_xml('delete ...')` ask), and no active psql meta command (`\!`, `\g`, `\i`, `\copy`).
 // String literals, quoted identifiers and comments are removed first, so `select 'update'` is still a read. Anything else on a
 // production host asks. Hosts come from -h/--host/-hHOST, URLs, conninfo strings (also behind -d/--dbname), PGHOST/PGSERVICE/MYSQL_HOST (a service name such as `prod` counts as a host name).
+// Round 4: text whose string/comment stripping cannot be trusted is not read-only: a `$tag$` dollar quote, a backslash escape (anywhere but a
+// psql meta command at a line start), or a `;` followed by more text (two statements; a trailing `;` or comment is fine).
 // Pure, no I/O. Invariant: a statement that cannot be classified is not read-only (ask, never deny).
 
 const READ_START = /^(?:select|show|explain|describe|desc|values|table|with\b[\s\S]*\bselect|\\d[a-zA-Z+]*|\\l(?:ist)?\+?)(?=\s|$|\(|\\)/i;
@@ -31,6 +33,8 @@ const PLAIN_READ_FUNCTIONS = new RegExp(`^(?:${[
   'by', 'having', 'group', 'order', 'distinct', 'interval', 'recursive', 'materialized', 'explain', 'analyze', 'verbose', 'show', 'describe', 'desc',
 ].join('|')})$`, 'i');
 const STATEMENT_BREAK = /;|\n(?=\s*\\)/;
+const DOLLAR_QUOTE = /\$(?:[A-Za-z_]\w*)?\$/;
+const SECOND_STATEMENT = /;\s*\S/;
 
 const SQL_URL = /^(?:postgres(?:ql)?|mysql):\/\/(.*)$/i;
 const URL_AUTHORITY_HOST = /^(\[[^\]]+\]|[^:/?#\s]+)/;
@@ -39,6 +43,9 @@ const URL_QUERY_HOST = /[?&]host=([^&\s]+)/gi;
 const DBNAME_OPTION = /^(?:--dbname=|-d)/;
 
 const callsOnlyReadFunctions = (text) => [...text.matchAll(FUNCTION_CALL)].every((m) => PLAIN_READ_FUNCTIONS.test(m[1]));
+
+/** A backslash that is not the first non-blank character of a line (`\d`, `\l`); inside a string it is an escape that can hide the string's end. */
+const hasBackslashEscape = (sql) => sql.split('\n').some((line) => line.replace(/^[ \t]*\\/, '').includes('\\'));
 
 function isReadStatement(statement) {
   const text = statement.trim();
@@ -53,9 +60,9 @@ function isReadStatement(statement) {
 export function isReadOnlySql(sql) {
   if (Array.isArray(sql)) return sql.length > 0 && sql.every(isReadOnlySql);
   if (typeof sql !== 'string' || sql.trim() === '') return false;
-  if (QUOTED_NAME_CALL.test(sql)) return false;
+  if (QUOTED_NAME_CALL.test(sql) || DOLLAR_QUOTE.test(sql) || hasBackslashEscape(sql)) return false;
   const stripped = sql.replace(STRING_OR_COMMENT, ' ');
-  return stripped.split(STATEMENT_BREAK).every(isReadStatement);
+  return !SECOND_STATEMENT.test(stripped) && stripped.split(STATEMENT_BREAK).every(isReadStatement);
 }
 
 /** Every SQL text given on the command line (each `-c`/`--command`, `-e`/`--execute`, attached or separate), or null when there is none or a script file is also run. */

@@ -132,12 +132,13 @@ test('item 4: on a production host only a statement that starts as a read and ha
     'select 1 \\gexec', "select 1 \\g /tmp/x", 'explain analyze delete from t', 'delete from t', 'insert into t values (1)', 'update t set a = 1', 'truncate t',
     'grant all on t to u', 'revoke all on t from u', 'create table x (a int)', 'alter table t add b int', 'drop table t', 'begin', 'vacuum t', 'set role admin',
     "select set_config('a', 'b', false)", '\\copy t from x', '\\i script.sql', '\\o /tmp/x', '\\lo_import /x', "select 1 /* ok */; update t set a = 1", 'select 1 -- x\n; drop table t',
+    'select 1; select 2', // Round 4: two statements on a prod host are never read-only
   ];
   for (const sql of writes) assert.equal(isReadOnlySql(sql), false, `not read-only: ${sql}`);
   for (const sql of writes.filter((s) => !s.includes('"'))) asks([`psql -h prod-db -c "${sql.replaceAll('"', '\\"')}"`], /production host/);
   const reads = ['select 1', 'select 1;', 'SELECT count(*) FROM users', "select * from t where name = 'update'", "select 'drop table x'", 'select "delete" from t', 'show tables',
     'explain select 1', 'explain analyze select 1', 'describe users', 'with x as (select 1) select * from x', 'select 1 -- drop table t', '\\dt', '\\d users', '\\d+ users', '\\l',
-    'select 1; select 2', 'table users', 'values (1)', 'select * from t order by x desc'];
+    'table users', 'values (1)', 'select * from t order by x desc'];
   for (const sql of reads) assert.equal(isReadOnlySql(sql), true, `read-only: ${sql}`);
   for (const sql of PROD_CALLS('select count(*) from users')) allows([sql]);
   assert.equal(isReadOnlySql(null), false);

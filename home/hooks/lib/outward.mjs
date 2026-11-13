@@ -1,4 +1,5 @@
-// Outward actions that always need the owner's confirmation: `git push`, `gh release *`, `gh pr merge`, package publish.
+// Outward actions that always need the owner's confirmation: `git push`, `gh release *`, `gh pr merge`, `gh repo edit --visibility`,
+// `gh secret set`, `gh workflow run`, a `gh api graphql` mutation, package publish.
 // Exports: parsePushArgs(rest), pushAsk(options), outwardAsk(cmd, args) -> reason | undefined.
 // The guard turns a reason into a PreToolUse permissionDecision "ask", which prompts even in bypassPermissions mode.
 // Read-only or rehearsal forms stay allowed: `git push --dry-run`, `npm publish --dry-run`, `gh release list|view|download`.
@@ -72,7 +73,10 @@ function ghApiMethod(args) {
   return args.some((a) => /^(?:-f|-F|--field|--raw-field|--input)(?:=|$)/.test(a)) ? 'POST' : 'GET';
 }
 
+const GRAPHQL_MUTATION = /\bmutation\b/i;
+
 function ghApiAsk(args) {
+  if (args[1] === 'graphql' && args.some((a) => GRAPHQL_MUTATION.test(a))) return 'gh api graphql sends a mutation that changes data on GitHub; confirm with the owner';
   const path = args.slice(1).find((a) => !a.startsWith('-') && /\//.test(a));
   if (path === undefined || !MUTATING_METHOD.test(ghApiMethod(args)) || !GH_API_SENSITIVE_PATH.test(path)) return undefined;
   return `gh api ${ghApiMethod(args).toUpperCase()} on ${path} changes a repository, merge or release; confirm with the owner`;
@@ -81,6 +85,9 @@ function ghApiAsk(args) {
 function ghAsk(args) {
   const [group, action] = positionals(args, GH_VALUE_OPTIONS);
   if (group === 'api') return ghApiAsk(args.filter((a, i) => !GH_VALUE_OPTIONS.has(args[i - 1]) || i === 0).slice(args.indexOf('api')));
+  if (group === 'repo' && action === 'edit' && args.some((a) => /^--visibility(?:=|$)/.test(a))) return 'gh repo edit --visibility changes who can see the repository; confirm with the owner';
+  if (group === 'secret' && ['set', 'delete', 'remove'].includes(action)) return `gh secret ${action} changes a secret stored on GitHub; confirm with the owner`;
+  if (group === 'workflow' && action === 'run') return 'gh workflow run starts a workflow (it can deploy or publish); confirm with the owner';
   if (group === 'repo' && ['delete', 'archive', 'rename', 'transfer'].includes(action)) return `gh repo ${action} changes or removes a repository; confirm with the owner`;
   if (group === 'release' && !GH_RELEASE_READ.has(action)) return 'gh release changes a published release; confirm with the owner';
   if (group === 'pr' && action === 'merge') return 'gh pr merge changes the target branch; confirm with the owner';

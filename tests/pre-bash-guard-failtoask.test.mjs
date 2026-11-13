@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
+import { isReadOnlySql } from '../home/hooks/lib/sql.mjs';
 import { lexShell } from '../home/hooks/lib/shell-lexer.mjs';
 import { riskyWordInExpansion } from '../home/hooks/lib/raw-risk.mjs';
 import { logDecision } from '../home/hooks/lib/guard-log.mjs';
@@ -13,6 +14,7 @@ import { decide } from '../home/hooks/pre-bash-guard.mjs';
 
 const PROJECT = resolve('/work/proj');
 const ctx = { cwd: PROJECT, project: PROJECT, prodHosts: ['db.prod.example.com'] };
+const DESTRUCTIVE = /^DESTRUCTIVE: /;
 
 const ASKS = [
   "x=\"$(( $(git push --force origin main) ))\"",
@@ -232,4 +234,50 @@ test('R4: hostile 500 KB inputs of every shape decide in under 500 ms', () => {
     decide(command, ctx);
     assert.ok(performance.now() - started < 500, `${command.slice(0, 12)} took too long`);
   }
+});
+
+const asksWith = (commands, pattern) => {
+  for (const command of commands) {
+    const r = decide(command, ctx);
+    assert.equal(r.ask, true, `should ask: ${JSON.stringify(command)}`);
+    if (pattern) assert.match(r.reason, pattern, command);
+  }
+};
+const allowsAll = (commands) => {
+  for (const command of commands) assert.deepEqual(decide(command, ctx), { allow: true }, `should allow: ${JSON.stringify(command)}`);
+};
+
+test('R4/D: prod SQL with a dollar quote, a backslash escape or a second statement is not read-only', () => {
+  for (const sql of ['select 1 as x$a$; drop table t; -- $a$', 'select $$a$$', "select E'\\'' ; drop table t; --'", "select 'a\\'; drop table t; --'", 'select 1; select 2', 'select 1;drop table t'])
+    assert.equal(isReadOnlySql(sql), false, sql);
+  for (const sql of ['select 1', 'select 1;', 'select 1; -- done', '\\d users', "select 'a;b'"]) assert.equal(isReadOnlySql(sql), true, sql);
+  asksWith(['psql -h db.prod.example.com -c \'select 1 as x$a$; drop table t; -- $a$\'', 'psql -h prod-db -c "select 1; select 2"'], /production host/);
+  allowsAll(['psql -h prod-db -c "select count(*) from users"', 'psql -h db.prod.example.com -c "\\d users"']);
+});
+
+test('R4/E: PGHOST and friends set earlier in the same command line reach psql and mysql', () => {
+  asksWith(['export PGHOST=db.prod.example.com\npsql -c "drop table t"', 'PGHOST=prod-db; psql -c "delete from t"', 'export MYSQL_HOST=prod-db && mysql -e "drop table t"', 'export PGSERVICE=prod; psql -c "update t set a = 1"'], /production host/);
+  allowsAll(['export PGHOST=localhost\npsql -c "drop table t"', 'export PGHOST=db.prod.example.com\npsql -c "select 1"']);
+});
+
+test('R4/E: gh mutations, repo visibility, secrets and workflow runs ask; reads stay silent', () => {
+  asksWith([
+    "gh api graphql -f query='mutation { mergePullRequest(input:{pullRequestId:\"x\"}){clientMutationId} }'",
+    'gh repo edit o/r --visibility public --accept-visibility-change-consequences',
+    'gh secret set X -b v', 'gh secret delete X', 'gh workflow run deploy.yml',
+  ]);
+  allowsAll(["gh api graphql -f query='query { viewer { login } }'", 'gh repo edit o/r --description x', 'gh secret list', 'gh workflow list', 'gh workflow view ci.yml', 'gh run list']);
+});
+
+test('R4/E: diskutil apfs delete, and cp/mv/tee/dd/redirect onto a raw device ask as DESTRUCTIVE', () => {
+  asksWith([
+    'diskutil apfs deleteContainer disk2', 'diskutil apfs eraseVolume disk3s1', 'tee /dev/disk2 < /dev/zero', 'cp /dev/zero /dev/disk2', 'mv x /dev/sda',
+    'dd if=/dev/zero of=/dev/rdisk2', 'cat /dev/zero >/dev/rdisk2', 'cp img.bin /dev/nvme0n1', 'echo x | tee /dev/sdb',
+  ], DESTRUCTIVE);
+  allowsAll(['diskutil list', 'diskutil apfs list', 'diskutil info disk0', 'cp /dev/disk2 img.bin', 'cp a b', 'tee out.log < in.log', 'cat /dev/zero | head -c 10 > /dev/null', 'dd if=/dev/zero of=img.bin bs=1m count=1']);
+});
+
+test('R4/E: an alias whose body would ask is asked about when it is defined', () => {
+  asksWith(["alias p='git push -f'\np", "alias deploy='npm publish'"]);
+  allowsAll(["alias ll='ls -la'", 'alias gs="git status"']);
 });
