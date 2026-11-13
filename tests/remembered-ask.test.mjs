@@ -1,10 +1,13 @@
 // Unit tests for lib/remembered-ask.mjs: which ask reasons count as "secret only", and how remembered values are neutralised.
 import assert from 'node:assert/strict';
+import './pin-home.mjs';
 import { test } from 'node:test';
 import { secretAskTimeoutSeconds } from '../home/hooks/lib/timed-ask.mjs';
+import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { isSecretOnlyReason, neutralise, REMEMBERED_ENV_REF, secretReason } from '../home/hooks/lib/remembered-ask.mjs';
 
 const MARK = ' (matched in raw text)';
+const LONG_VALUE = 'abcdefghij1234';
 
 test('isSecretOnlyReason: plain, two-secret and backstop forms are secret-only', () => {
   assert.equal(isSecretOnlyReason(secretReason('a GitHub token')), true);
@@ -36,4 +39,13 @@ test('secretAskTimeoutSeconds: 30 by default, its own env, never above the norma
   assert.equal(secretAskTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: '10' }), 10);
   assert.equal(secretAskTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: '10', CLAUDE_ASK_SECRET_TIMEOUT_S: '99' }), 10);
   for (const bad of ['0', '-1', 'abc', '']) assert.equal(secretAskTimeoutSeconds({ CLAUDE_ASK_SECRET_TIMEOUT_S: bad }), 30, bad);
+});
+
+test('decide: a literal secret never hides the hidden-risk backstop, so the ask is not secret-only', () => {
+  const ctx = { cwd: '/work/proj', project: '/work/proj' };
+  const plain = decide(`KEY='${LONG_VALUE}' ./run`, ctx);
+  assert.equal(isSecretOnlyReason(plain.reason), true);
+  const hidden = decide(`KEY='${LONG_VALUE}'; python3 -c "import os;os.system('git push -f')"`, ctx);
+  assert.equal(hidden.ask, true);
+  assert.equal(isSecretOnlyReason(hidden.reason), false);
 });

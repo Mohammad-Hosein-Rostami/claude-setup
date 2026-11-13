@@ -66,7 +66,7 @@ import { checkFind } from './lib/find-delete.mjs';
 import { outwardAsk } from './lib/outward.mjs';
 import { readProdHosts, remoteAsk } from './lib/remote.mjs';
 import { checkRm, expandHome, expandVars, isUnder, nativePath, newScope, sameFile, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
-import { askUnlessRemembered, secretReason } from './lib/remembered-ask.mjs';
+import { askUnlessRemembered, isSecretOnlyReason, secretReason } from './lib/remembered-ask.mjs';
 import { findLiteralSecret } from './lib/secrets.mjs';
 import { shellHazards } from './lib/shell-hazards.mjs';
 import { askOwner } from './lib/timed-ask.mjs';
@@ -202,9 +202,10 @@ export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts 
   const known = new Set(primary);
   const backstop = reasonsOf(command, { ...ctx, parse: lex }).filter((reason) => !known.has(reason)).map((reason) => `${reason} (matched in raw text)`);
   const reasons = [...new Set([...primary, ...backstop])];
-  // fail to ask: a hidden-execution construct next to a dangerous word asks even when both parsers saw nothing
+  // fail to ask: a hidden-execution construct next to a dangerous word asks even when both parsers saw nothing; only a non-secret reason
+  // makes it redundant, so a literal secret never hides it (a secret-only ask is shortened and can be remembered, see lib/remembered-ask.mjs)
   const risky = riskyWordInExpansion(command, prodHosts);
-  if (risky !== undefined && reasons.length === 0) reasons.push(risky);
+  if (risky !== undefined && reasons.every(isSecretOnlyReason)) reasons.push(risky);
   if (reasons.length === 0) return allow();
   reasons.sort((x, y) => Number(y.startsWith(DESTRUCTIVE_PREFIX)) - Number(x.startsWith(DESTRUCTIVE_PREFIX)));
   return ask(reasons.join('; '));

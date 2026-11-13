@@ -168,3 +168,20 @@ test('a secret-only ask waits the short secret timeout, a push ask the normal on
   byDefault.run(SECRET_COMMAND, 'allow');
   assert.match(byDefault.shownText(), /With no answer in 30 s/);
 });
+
+const HIDDEN_PUSH = `import os;os.system('git push -f origin main')`;
+
+test('a secret next to a hidden push is not a secret-only ask: it gets the normal timeout, not the short one', () => {
+  const s = session();
+  s.run(`KEY='${VALUE}'; python3 -c "${HIDDEN_PUSH}"`, 'allow', 'sess-1', { CLAUDE_ASK_SECRET_TIMEOUT_S: '7', CLAUDE_ASK_TIMEOUT_S: '40' });
+  assert.match(s.shownText(), /With no answer in 40 s/);
+  assert.equal(existsSync(allowedLiteralsDir(s.home)), false, 'a mixed ask remembers nothing');
+});
+
+test('a remembered value that itself contains the dangerous words does not hide a later hidden push', () => {
+  const s = session();
+  s.run("KEY='git push -f' ./run", 'allow');
+  assert.equal(s.dialogs(), 1);
+  s.run("KEY='git push -f'; python3 -c \"import os;os.system('git push -f origin main')\"", 'allow');
+  assert.equal(s.dialogs(), 2);
+});
