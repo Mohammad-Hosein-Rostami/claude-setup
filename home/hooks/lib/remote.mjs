@@ -11,6 +11,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { commandOf } from './command-of.mjs';
 import { flagsOf, tokenize } from './shell-words.mjs';
+import { isReadOnlySql, sqlHosts, sqlOf } from './sql.mjs';
+
+export { isReadOnlySql };
 
 export const PROD_HOSTS_FILE = join(homedir(), '.claude', 'private', 'prod-hosts');
 const PROD_NAME = /prod/i;
@@ -18,9 +21,6 @@ const SSH_VALUE_OPTIONS = new Set(['-B', '-b', '-c', '-D', '-E', '-e', '-F', '-I
 const SCP_VALUE_OPTIONS = new Set(['-P', '-i', '-o', '-F', '-J', '-l', '-S', '-c']);
 const RSYNC_VALUE_OPTIONS = new Set(['-e', '--rsh', '--exclude', '--include', '--filter', '-f', '--port', '--exclude-from', '--include-from',
   '--files-from', '--bwlimit', '--chmod', '--backup-dir', '--suffix', '-M', '-B', '--rsync-path', '--log-file', '--temp-dir', '-T']);
-const SQL_WRITE_WORDS = /\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|vacuum|reindex|merge|call|do|set|reset|lock|comment|refresh|cluster|import|replace|load|rename|execute|prepare|analyze|into|setval|nextval|program|system)\b/i;
-// psql meta commands that write or run something (`\!`, `\o`, `\i`, `\g`, `\w`, `\e`, large-object calls); `\copy` is a word above
-const PSQL_ACTIVE_META = /\\(?:!|ir?\b|o\b|g|w\b|ef?\b|ev\b|lo_)/i;
 const READ_ONLY_COMMANDS = new Set(['cat', 'ls', 'tail', 'head', 'grep', 'egrep', 'fgrep', 'rg', 'wc', 'df', 'du', 'ps', 'uptime', 'whoami',
   'hostname', 'date', 'stat', 'file', 'pwd', 'echo', 'printf', 'id', 'uname', 'free', 'nproc', 'which', 'pgrep', 'ss', 'netstat', 'lsof',
   'printenv', 'test', '[', 'true', 'uniq', 'cut', 'tr', 'less', 'more', 'readlink', 'realpath', 'basename', 'dirname', 'md5sum', 'sha256sum',
@@ -33,8 +33,6 @@ const GIT_READ = new Set(['log', 'status', 'diff', 'show', 'rev-parse', 'branch'
 const FIND_WRITE_FLAGS = /^-(delete|exec|execdir|ok|okdir|fprint0?|fprintf|fls)$/;
 const OUTPUT_REDIRECT = /^(\d*>>?|&>>?|\d*>\|)(.*)$/;
 const DESCRIPTOR_OR_NULL = /^(&\d+|&-|\/dev\/null)$/;
-const SQL_URL_HOST = /^(?:postgres(?:ql)?|mysql):\/\/(?:[^@/]*@)?(\[[^\]]+\]|[^:/?#]+)/;
-const CONNINFO_HOST = /(?:^|\s)host=(\S+)/;
 const REMOTE_SPEC = /^(?:[^@/:\s]+@)?(\[[^\]]+\]|[^/:\s@]{2,}):(?!\/\/)/;
 const RSYNC_URL = /^rsync:\/\/(?:[^@/]*@)?([^/:]+)/;
 
@@ -57,43 +55,6 @@ const globToRegExp = (glob) => new RegExp(`^${glob.replace(/[.+^${}()|\\[\]]/g, 
 export function isProdHost(host, list = []) {
   const name = host.toLowerCase().replace(/^\[|\]$/g, '');
   return PROD_NAME.test(name) || list.some((entry) => globToRegExp(entry).test(name));
-}
-
-/**
- * True when the SQL has no write keyword and no write-like construct (`SELECT ... INTO`, `setval`, `nextval`, `\!`,
- * `COPY ... PROGRAM`, `DO`). A list (several `-c`) is read-only only when every statement is. Empty or unknown (null: `-f file`, stdin) is not.
- * @param {string | string[] | null | undefined} sql one statement text, or all the `-c` texts of one call
- */
-export function isReadOnlySql(sql) {
-  if (Array.isArray(sql)) return sql.length > 0 && sql.every(isReadOnlySql);
-  return typeof sql === 'string' && sql.trim() !== '' && !SQL_WRITE_WORDS.test(sql) && !PSQL_ACTIVE_META.test(sql);
-}
-
-/** Every SQL text given on the command line (each `-c`/`--command`, `-e`/`--execute`, attached or separate), or null when there is none or a script file is also run. */
-function sqlOf(cmd, args) {
-  const [short, long] = cmd === 'psql' ? ['-c', '--command'] : ['-e', '--execute'];
-  const found = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '-f' || a === '--file' || a.startsWith('--file=')) return null;
-    if (a === short || a === long) found.push(args[++i] ?? '');
-    else if (a.startsWith(`${long}=`)) found.push(a.slice(long.length + 1));
-    else if (a.startsWith(short) && !a.startsWith('--') && a.length > 2 && cmd === 'psql') found.push(a.slice(2));
-  }
-  return found.length > 0 ? found : null;
-}
-
-/** Host a psql/mysql call connects to (`-h`, `--host`, URL, conninfo, PGHOST/MYSQL_HOST), or undefined for the local default. */
-function sqlHost(args, assigns) {
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '-h' || a === '--host') return args[i + 1];
-    if (a.startsWith('--host=')) return a.slice('--host='.length);
-    if (/^-h[^-]/.test(a)) return a.slice(2);
-    const found = SQL_URL_HOST.exec(a)?.[1] ?? CONNINFO_HOST.exec(a)?.[1];
-    if (found) return found;
-  }
-  return assigns.map((w) => /^(?:PGHOST|MYSQL_HOST)=(.+)$/.exec(w)?.[1]).find(Boolean);
 }
 
 /** Words after the host in an `ssh` call, and the host: skips options and the values of the value options. */
@@ -182,8 +143,8 @@ export function remoteAsk(cmd, args, assigns, prodHosts) {
     return askFor('ssh may change', host);
   }
   if (cmd === 'psql' || cmd === 'mysql') {
-    const host = sqlHost(args, assigns);
-    if (host === undefined || !isProdHost(host, prodHosts) || isReadOnlySql(sqlOf(cmd, args))) return undefined;
+    const host = sqlHosts(args, assigns).find((h) => isProdHost(h, prodHosts));
+    if (host === undefined || isReadOnlySql(sqlOf(cmd, args))) return undefined;
     return askFor(`${cmd} may write to`, host);
   }
   return undefined;
