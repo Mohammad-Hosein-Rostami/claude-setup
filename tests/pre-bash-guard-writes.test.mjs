@@ -1,5 +1,6 @@
 // Tests for home/hooks/pre-bash-guard.mjs: Bash writes to code files are allowed and logged for the typecheck gate
 // (lib/code-writes.mjs), the rm false-block fix for mktemp variables (P2a) and reads staying allowed (P2c).
+import './pin-home.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';

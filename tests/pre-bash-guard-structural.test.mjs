@@ -2,6 +2,7 @@
 // command found at any position of a simple command, ANSI-C quoting and eval; (2) ordered variable tracking for rm; (3) git push
 // option values; (4) psql/mysql hosts and statement-level read-only; (5) masking of credentials; plus a set of harmless commands
 // that must stay silent (a false-positive dialog costs an unattended run minutes).
+import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

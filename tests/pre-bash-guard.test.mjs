@@ -1,5 +1,6 @@
 // Tests for home/hooks/pre-bash-guard.mjs: decide() and segments() tables plus the stdin/exit-code contract
 // (node:test, no dependencies). Project and cwd are a fake path outside any temp dir so "outside" is unambiguous.
+import './pin-home.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';

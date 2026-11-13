@@ -1,5 +1,6 @@
 // Tests for the ASK outcome of home/hooks/pre-bash-guard.mjs: outward actions (push, gh release, gh pr merge, publish)
 // and writes to production hosts (ssh/scp/rsync/psql/mysql). Every rule has an ask case and an allow case.
+import './pin-home.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';

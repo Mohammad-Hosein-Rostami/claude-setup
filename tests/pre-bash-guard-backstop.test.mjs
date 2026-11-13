@@ -2,6 +2,7 @@
 // always ask because they hide what runs (stdin shells, variable command words, env -S, su -c, package runners, brace expansion),
 // prod SQL functions, PGSERVICE, `git -c alias`, outward `gh api`/`gh repo delete`, raw-disk writes and credential masking.
 // Every repro of the audit is a case here; the harmless set keeps the backstop from asking about everyday commands.
+import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { test } from 'node:test';

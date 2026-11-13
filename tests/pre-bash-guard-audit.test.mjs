@@ -1,6 +1,7 @@
 // Regression tests for the security audit of the guard (findings M3, M4, L1-L5): shell escapes, wrapper options, shell -c option
 // clusters, rm of a mktemp variable with `..`, exact dry-run flags, every psql/mysql statement checked, and wider secret masking.
 // Each case is the exact example from the audit. M1, M2 and L6 (timed ask) are in timed-ask.test.mjs.
+import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

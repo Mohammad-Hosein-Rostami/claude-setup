@@ -1,6 +1,7 @@
 // Round 4 of the guard audit: the fail-to-ask rule. A command with a hidden-execution construct ($(, backtick, <<, <(, eval, trap, case,
 // carriage return, a pipe into a shell ...) that names a dangerous word anywhere in its raw text asks, whatever either parser made of the quoting.
 // Every silent bypass of the re-audit is a case in ASKS; HARMLESS must stay silent (a false positive costs an unattended run up to 3 minutes).
+import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

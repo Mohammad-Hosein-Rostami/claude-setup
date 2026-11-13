@@ -1,5 +1,6 @@
 // Tests for the literal-secret ask of home/hooks/pre-bash-guard.mjs (lib/secrets.mjs): a secret typed into a command is
 // asked about (a timed dialog in the hook), a variable or a prompt is not, and no reason, output, mask or log line repeats it.
+import './pin-home.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
