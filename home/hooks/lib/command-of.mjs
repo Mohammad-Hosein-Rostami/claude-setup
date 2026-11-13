@@ -17,6 +17,8 @@ const WRAPPERS = new Map([
   ['stdbuf', new Set(['-i', '-o', '-e', '--input', '--output', '--error'])],
   ['sshpass', new Set(['-f', '-d', '-P', '-p'])],
 ]);
+// `command -v x` / `command -V x` only looks a name up (prints its path); nothing runs, so it is not a wrapper there
+const LOOKUP_OPTION = /^-p?[vV][pvV]*$/;
 const DURATION = /^\d+(\.\d+)?[smhd]?$/;
 const ASSIGNMENT = /^\w+=/;
 
@@ -55,6 +57,7 @@ export function commandOf(tokens) {
     const name = commandName(word);
     if (ASSIGNMENT.test(word)) assigns.push(word);
     if (KEYWORDS.has(word) || ASSIGNMENT.test(word)) i += 1;
+    else if (name === 'command' && LOOKUP_OPTION.test(tokens[i + 1] ?? '')) return { cmd: name, args: tokens.slice(i + 1), assigns, at: i };
     else if (WRAPPERS.has(name)) i = skipWrapperOptions(tokens, i + 1, WRAPPERS.get(name), name === 'timeout');
     else return { cmd: name, args: tokens.slice(i + 1), assigns, at: i };
   }

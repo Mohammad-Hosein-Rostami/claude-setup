@@ -47,6 +47,7 @@ const STDIN_FLAG = '--(?:with-token|password-stdin)\\b';
 // the value is echoed/printed (`echo -n T`, `printf '%s' T`) and piped into a command that has the stdin flag
 const ECHOED_INTO_STDIN_FLAG = `(?=(?:"[^"]*"|'[^']*'|[^\\s"';&|]+)[ \\t]*\\|[^\\n;&|]{0,${GAP}}${STDIN_FLAG})`;
 const SECRET_NAME_PART = '(?<![A-Za-z0-9])(?:KEY|TOKEN|SECRET|PASS|PASSWD|PWD)(?![A-Za-z0-9])';
+const CODE_VALUE = '(?![=>({\\[]|[\\w$]{1,40}\\s*=>|lambda\\b|[\\w$]{1,40}(?:\\.[\\w$]{1,40}){0,6}\\s*[(\\[])';
 const QUERY_SECRET = 'api[_-]?key|access[_-]?(?:token|key)|auth[_-]?token|token|client[_-]?secret|secret|password|passwd|pwd';
 const SECRET_FLAG = '--(?:token|api-key|apikey|password|passwd|client-secret|access-token|auth-token)(?:=|\\s+)';
 const VALUE_KINDS = [
@@ -64,7 +65,8 @@ const VALUE_KINDS = [
   ['\\bhtpasswd\\s+(?:-[a-zA-Z]+\\s+){0,2}-[a-zA-Z]*b[a-zA-Z]*\\s+(?:-[a-zA-Z]+\\s+){0,2}[^\\s"\']+\\s+[^\\s"\']+\\s+', '', 'an htpasswd password'],
   [`\\baws\\s+configure\\s+set\\s+(?:--profile\\s+\\S+\\s+)?[\\w.-]{0,${NAME_MAX}}secret[\\w.-]{0,${NAME_MAX}}\\s+`, '', 'an AWS secret key set with aws configure', { flags: 'i' }],
   // any variable whose name has KEY, TOKEN, SECRET, PASS, PASSWD, PWD or PASSWORD as a part (`DB_PASS`, `TOKEN_FILE_X`, `ADMINPASSWORD`)
-  [`${BOUNDARY}[\\w.-]{0,${NAME_MAX}}(?:${SECRET_NAME_PART}|PASSWORD)[\\w.-]{0,${NAME_MAX}}=`, '', 'a key, token, secret or password assigned in the command', { flags: 'i' }],
+  // CODE_VALUE: `key==x`, `key=>x`, `const key=s=>...`, `token=[]`, `key=(a)`, `token=fs.readFileSync(p)`, `key=lambda s:` are program code (heredocs, node -e), not literals
+  [`${BOUNDARY}[\\w.-]{0,${NAME_MAX}}(?:${SECRET_NAME_PART}|PASSWORD)[\\w.-]{0,${NAME_MAX}}=`, CODE_VALUE, 'a key, token, secret or password assigned in the command', { flags: 'i' }],
   [`[?&](?:${QUERY_SECRET})=`, '', 'a token or key in a URL query string', { flags: 'i' }],
   [`\\bredis-cli\\b[^\\n|;&]{0,${GAP}}?\\s(?:-a|--pass)\\s+`, '', 'a redis password'],
   ['(?<![A-Za-z0-9])_(?:authToken|auth|password)=|(?<![A-Za-z0-9])_authToken\\s+', '', 'an npm registry credential', { flags: 'i' }],

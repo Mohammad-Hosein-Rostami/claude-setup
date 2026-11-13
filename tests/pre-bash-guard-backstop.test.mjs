@@ -156,7 +156,9 @@ test('C/D: credential masking in quoted, assigned, query, header, redis and npmr
     assert.ok(!r.reason.includes(secret), 'the reason never repeats the secret');
   }
   for (const command of ['PGPASSWORD=$DB_PASSWORD psql', 'MY_TOKEN=$(cat /run/secrets/t) ./run', 'API_KEY="$API_KEY" ./run', 'curl "https://x.example/?page=2&sort=asc"',
-    'curl "https://x.example/?token=$TOKEN"', 'redis-cli -a "$REDIS_PW" ping', 'curl -H "PRIVATE-TOKEN: $T" x', 'KEYBOARD=us ls', 'MONKEY=1 ls', 'TOKENS_FILE=a ls', 'curl -u admin:"$PW" https://x']) {
+    'curl "https://x.example/?token=$TOKEN"', 'redis-cli -a "$REDIS_PW" ping', 'curl -H "PRIVATE-TOKEN: $T" x', 'KEYBOARD=us ls', 'MONKEY=1 ls', 'TOKENS_FILE=a ls', 'curl -u admin:"$PW" https://x',
+    // program code in a heredoc or node -e is not a literal secret (seen live: an agent writing a JS file was stopped)
+    "cat > a.js <<'EOF'\nconst key=s=>{return s.id};\nEOF", 'node -e "if(key==x)1"', 'node -e "keys.map(key=>key.id)"', "node -e 'const token=[]'", "node -e 'key=(a)=>a'", "node -e 'const token=fs.readFileSync(os.homedir()+\"/t\")'", 'python3 -c "key=lambda s:s[1]"', "node -e 'token=JSON.parse(x)[0]'"]) {
     assert.equal(findLiteralSecret(command), undefined, `should not flag: ${command}`);
   }
 });
@@ -165,7 +167,8 @@ test('E: the backstop keeps everyday commands silent', () => {
   allows(['rm -rf $(pwd)/dist', 'D=$(mktemp -d) && cd "$D" && rm -rf x', 'git status', 'git commit -m "feat: add push button"', 'echo "git push" > notes.txt',
     'cat <<EOF > run.sh\ngit push\nrm -rf /\nEOF', 'git log --oneline | head -5', 'ls | wc -l', 'echo $((2<<3))', 'for f in a b; do echo "$f"; done', 'if [ -f x ]; then rm -f x; fi',
     'git commit -m "$(cat <<\'EOF\'\nfix: stop pushing\n\nCo-Authored-By: x\nEOF\n)"', 'echo "a # not a comment" && ls', 'ls # git push --force', 'pnpm test -- --run', 'node --test tests/*.test.mjs',
-    'curl -s https://api.example.com/x | jq .a', 'docker compose up -d', 'echo "$(date)"', 'echo `date`']);
+    'curl -s https://api.example.com/x | jq .a', 'docker compose up -d', 'echo "$(date)"', 'echo `date`',
+    'for t in go docker; do command -v $t || echo missing; done', 'command -V "$tool"']);
 });
 
 test('hostile nesting and long input neither crash the hook nor take long', () => {
