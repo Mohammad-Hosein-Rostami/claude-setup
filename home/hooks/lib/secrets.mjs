@@ -1,4 +1,5 @@
-// Literal secrets typed into a Bash command. Exports: findLiteralSecret(command) -> string | undefined; maskSecrets(command) -> string.
+// Literal secrets typed into a Bash command. Exports: findLiteralSecret(command) -> string | undefined; maskSecrets(command) -> string;
+// literalSecretValues(command) -> string[] (the raw values, for lib/allowed-literals.mjs, which only hashes them; never log or print them).
 // Returns only a KIND label ("an Anthropic API key", ...), never the secret itself: the caller prints it in a deny message.
 // Detected: sk-ant-..., ghp_/gho_/ghu_/ghs_/ghr_/github_pat_ tokens, AWS access key ids, `--password=x` / `--password x`,
 // `sshpass -p x`, `mysql -pX`, `docker login -p x`, PGPASSWORD / MYSQL_PWD / AWS_SECRET_ACCESS_KEY assigned a literal, any
@@ -105,4 +106,20 @@ export function maskSecrets(command) {
   for (const [pattern] of TOKEN_KINDS) text = text.replace(new RegExp(pattern.source, 'g'), MASK);
   for (const { mask } of VALUE_KINDS) text = text.replace(mask, `$1${MASK}`);
   return command.length > MAX_SCAN_CHARS ? `${text}[...cut]` : text;
+}
+
+const QUOTE_EDGES = /^["']|["']$/g;
+
+/**
+ * Every literal secret value the rules above find (same patterns and scan limit as findLiteralSecret/maskSecrets), quotes stripped.
+ * The values are raw: the caller must hash them and never print or store them.
+ * @param {string} command raw command text
+ * @returns {string[]} distinct non-empty values, in the order the rules found them
+ */
+export function literalSecretValues(command) {
+  const text = command.slice(0, MAX_SCAN_CHARS);
+  const found = [];
+  for (const [pattern] of TOKEN_KINDS) found.push(...[...text.matchAll(new RegExp(pattern.source, 'g'))].map((match) => match[0]));
+  for (const { mask } of VALUE_KINDS) found.push(...[...text.matchAll(mask)].map((match) => match[0].slice(match[1].length).replace(QUOTE_EDGES, '')));
+  return [...new Set(found.filter((value) => value !== ''))];
 }

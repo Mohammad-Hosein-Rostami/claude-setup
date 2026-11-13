@@ -34,6 +34,7 @@ Helpers: `diagnostics.mjs` (check output to `file:line RULE-ID message`) and `ed
 - `secrets.mjs` - literal secret detection (returns a kind, never the value) and `maskSecrets`.
 - `outward.mjs` - push, gh release, gh pr merge and publish asks.
 - `timed-ask.mjs` - the timed native dialog (osascript / PowerShell popup / zenity), `CLAUDE_ASK_TIMEOUT_S`, fallback to the native ask.
+- `allowed-literals.mjs` - per-session sha256 memory of literal secrets the owner allowed (`~/.claude/state/guard-allowed/<session>.json`, file 0600, directory 0700; never a raw value).
 - `guard-log.mjs` - masked JSON-line decision log (`~/.claude/logs/guard.jsonl`, `CLAUDE_GUARD_LOG`; file 0600, directory 0700).
 - `remote.mjs` - production-host list and the ssh/scp/rsync/psql/mysql write classifier; `sql.mjs` - statement-level read-only SQL check and host detection.
 - `code-writes.mjs` - code files a Bash command may rewrite.

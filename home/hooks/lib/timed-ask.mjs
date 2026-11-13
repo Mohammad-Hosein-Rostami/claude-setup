@@ -178,13 +178,14 @@ export function decisionOutput({ decision, reason }) {
 
 /**
  * The whole timed ask for one hook call: dialog, decision log, hook JSON.
- * @param {{hook: string, tool: string, reason: string, command?: string, cwd?: string, sessionId?: string, agentId?: string, omitCommandFromLog?: boolean}} request what to show and who asks
- *   (omitCommandFromLog: the dialog shows the command, the decision log does not)
+ * @param {{hook: string, tool: string, reason: string, command?: string, cwd?: string, sessionId?: string, agentId?: string, omitCommandFromLog?: boolean, onAnswer?: (answer: ReturnType<typeof answerAsk>) => void}} request what to show and who asks
+ *   (omitCommandFromLog: the dialog shows the command, the decision log does not; onAnswer runs after the log line, e.g. to remember an allow)
  * @param {Record<string, string | undefined>} env process environment
  * @returns {string} the hook stdout line for the decision (allow, deny, or the native ask as a fallback)
  */
 export function askOwner(request, env = process.env) {
   const answer = answerAsk(request, env);
   logDecision({ hook: request.hook, tool: request.tool, decision: answer.decision, outcome: answer.outcome, reason: request.reason, command: request.omitCommandFromLog ? '' : request.command, cwd: request.cwd, session: request.sessionId }, env);
+  request.onAnswer?.(answer);
   return decisionOutput(answer);
 }
