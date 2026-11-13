@@ -30,7 +30,7 @@ The caller sends: `Review <diff or files>. Rules: <subset>.` where the subset is
 
 ## Memory
 
-Your notes live in `~/.claude/agent-memory/reviewer/` (the only place you may write). Read them first; after the task add only durable, reusable facts (recurring issues, project conventions, past decisions and why), one line each, and remove ones that turned out wrong. Never store secrets or code.
+Your notes live in `~/.claude/agent-memory/reviewer/`. That directory and this session's scratchpad (for a report longer than the word cap) are the only places you may write. Read your notes first; after the task add only durable, reusable facts (recurring issues, project conventions, past decisions and why), one line each, and remove ones that turned out wrong. Never store secrets or code.
 
 ## Output contract
 
