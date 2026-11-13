@@ -1,0 +1,155 @@
+// PostToolUse (all tools) and SubagentStop: enforces the budgets the prompt only asked for.
+//   PostToolUse in a subagent -> counts its tool calls; at 100 (and every 10 after) injects "return a status now".
+//   PostToolUse Read in the lead, mode ultra-high -> warns when the result is over ~20k chars (use scout / a small range).
+//   SubagentStop -> blocks once when the final report is over its cap: the cap named in the spawn prompt (first user
+//                   message of the agent transcript), else 300 words (rule C24); architect and Plan are exempt by default.
+// Verified against Claude Code 2.1.323: hook input has `agent_id` only inside a subagent (agent_type alongside it);
+// PostToolUse accepts hookSpecificOutput.additionalContext; SubagentStop gets agent_id, agent_type, agent_transcript_path,
+// last_assistant_message and stop_hook_active, and exit 2 sends stderr to the subagent and keeps it running.
+// Exports: CALL_CAP, REMIND_EVERY, READ_WARN_CHARS, countCall, readChars, postToolUseContext, spawnCap, subagentStopReason.
+// Invariants: fast (one append + one stat per call, nothing else on the main thread except Read); fails open (any error
+// exits 0, silent); output is fixed text plus numbers, never tool input, tool output or paths; unsafe ids write nothing.
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { tempRoot } from './lib/edit-log.mjs';
+import { DEFAULT_WORD_CAP, overCap, parseCap } from './lib/reply-cap.mjs';
+
+export const CALL_CAP = 100;
+export const REMIND_EVERY = 10;
+export const READ_WARN_CHARS = 20_000;
+const SPAWN_PROMPT_BYTES = 512 * 1024;
+const SAFE_ID = /^[\w-]{1,128}$/;
+const ULTRA_HIGH = 'ultra-high';
+const NO_DEFAULT_CAP = new Set(['architect', 'Plan']); // their output is a spec, longer by design
+
+const budgetPath = (sessionId, agentId) =>
+  SAFE_ID.test(sessionId ?? '') && SAFE_ID.test(agentId ?? '') ? join(tempRoot(), 'budget', `${sessionId}--${agentId}`) : null;
+
+/**
+ * Counts one tool call of a subagent: appends one byte and reads the file size, so parallel calls never lose a count.
+ * @param {string | null} path counter file (null for unsafe ids)
+ * @returns {number} calls so far, 0 when it cannot be counted
+ */
+export function countCall(path) {
+  if (!path) return 0;
+  mkdirSync(dirname(path), { recursive: true });
+  appendFileSync(path, '.');
+  return statSync(path).size;
+}
+
+/** Characters in a Read result (file content when present, else the serialized response). */
+export function readChars(response) {
+  if (typeof response === 'string') return response.length;
+  const content = response?.file?.content ?? response?.content;
+  return typeof content === 'string' ? content.length : JSON.stringify(response ?? '').length;
+}
+
+const sessionMode = (sessionId) => {
+  if (!/^[\w-]+$/.test(sessionId ?? '')) return process.env.CLAUDE_MODE;
+  try {
+    return readFileSync(join(homedir(), '.claude', 'state', 'modes', sessionId), 'utf8').trim();
+  } catch {
+    return process.env.CLAUDE_MODE; // no saved state: the launch env is the next best source
+  }
+};
+
+/**
+ * Context to inject after a tool call, or null.
+ * @param {object} input PostToolUse hook JSON
+ * @returns {string | null}
+ */
+export function postToolUseContext(input) {
+  if (input.agent_id) {
+    const calls = countCall(budgetPath(input.session_id, input.agent_id));
+    const due = calls === CALL_CAP || (calls > CALL_CAP && calls % REMIND_EVERY === 0);
+    return due
+      ? `Budget: ${calls} tool calls used (limit ${CALL_CAP}). Stop now and return your status report in the format the caller asked for: done, not done, files changed, blockers. Start no new work.`
+      : null;
+  }
+  if (input.tool_name !== 'Read' || sessionMode(input.session_id) !== ULTRA_HIGH) return null;
+  const chars = readChars(input.tool_response);
+  return chars > READ_WARN_CHARS
+    ? `That Read returned about ${Math.round(chars / 1000)}k chars (warn at ${READ_WARN_CHARS / 1000}k). In ultra-high the lead does not read bulk files: have scout return a digest of at most 3k chars plus the file path, or read a small range with offset and limit.`
+    : null;
+}
+
+/**
+ * The cap the spawn prompt names: first user message of the agent transcript.
+ * @param {unknown} transcriptPath agent_transcript_path (empty when unavailable)
+ * @returns {{limit: number, unit: string} | null}
+ */
+export function spawnCap(transcriptPath) {
+  if (typeof transcriptPath !== 'string' || !transcriptPath) return null;
+  const fd = openSync(transcriptPath, 'r');
+  let head;
+  try {
+    const buf = Buffer.alloc(Math.min(statSync(transcriptPath).size, SPAWN_PROMPT_BYTES));
+    readSync(fd, buf, 0, buf.length, 0);
+    head = buf.toString('utf8');
+  } finally {
+    closeSync(fd);
+  }
+  for (const line of head.split('\n')) {
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue; // partial or corrupt line
+    }
+    if (entry?.message?.role !== 'user') continue;
+    const content = entry.message.content;
+    const text = typeof content === 'string' ? content : (Array.isArray(content) ? content : []).map((b) => b?.text ?? '').join('\n');
+    return parseCap(text);
+  }
+  return null;
+}
+
+/**
+ * Why a subagent may not stop yet, or null.
+ * @param {object} input SubagentStop hook JSON
+ * @returns {string | null} message for the subagent when its report is over the cap
+ */
+export function subagentStopReason(input) {
+  if (input.stop_hook_active === true || !input.agent_id || typeof input.last_assistant_message !== 'string') return null;
+  let cap = null;
+  try {
+    cap = spawnCap(input.agent_transcript_path);
+  } catch {
+    // transcript unreadable: fall back to the default cap
+  }
+  cap ??= NO_DEFAULT_CAP.has(input.agent_type) ? null : { limit: DEFAULT_WORD_CAP, unit: 'words' };
+  if (!cap) return null;
+  const { over, size } = overCap(input.last_assistant_message, cap);
+  return over
+    ? `Your final report is ${size} ${cap.unit}; the cap is ${cap.limit} ${cap.unit}. Rewrite it within the cap: verdict first, put detail in a file and give its path.`
+    : null;
+}
+
+async function main() {
+  let raw = '';
+  for await (const chunk of process.stdin) raw += chunk;
+  const input = JSON.parse(raw);
+  if (input?.hook_event_name === 'PostToolUse') {
+    const additionalContext = postToolUseContext(input);
+    if (additionalContext) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext } }));
+  } else if (input?.hook_event_name === 'SubagentStop') {
+    const path = budgetPath(input.session_id, input.agent_id);
+    if (path) rmSync(path, { force: true }); // the agent is ending: its counter is done
+    const reason = subagentStopReason(input);
+    if (reason) {
+      process.stderr.write(`${reason}\n`);
+      process.exitCode = 2;
+    }
+  }
+}
+
+// ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
+  try {
+    await main();
+  } catch {
+    // fail open: a budget hook must never block or trap an agent
+  }
+}
