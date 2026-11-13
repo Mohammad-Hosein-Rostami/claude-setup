@@ -87,6 +87,17 @@ check_hook_files() {
     [ -f "$REPO/home/hooks/$file" ] || { bad "hook file missing: home/hooks/$file"; missing=1; }
   done < <(jq -r '[.. | .command? // empty] | .[] | scan("hooks/[A-Za-z0-9._-]+\\.mjs") | sub("hooks/";"")' "$REPO/settings/base.json" | sort -u)
   [ "$missing" = 0 ] && ok "hook files referenced by base.json exist"
+  check_agent_hook_files
+  return 0
+}
+
+# Hook files named in the frontmatter of home/agents/*.md (agent-memory-only, test-files-only) must exist too.
+check_agent_hook_files() {
+  local file missing=0
+  while read -r file; do
+    [ -f "$REPO/home/hooks/$file" ] || { bad "agent frontmatter hook file missing: home/hooks/$file"; missing=1; }
+  done < <(grep -h 'command:.*hooks/[A-Za-z0-9._-]*\.mjs' "$REPO"/home/agents/*.md 2>/dev/null | grep -o 'hooks/[A-Za-z0-9._-]*\.mjs' | sed 's#hooks/##' | sort -u)
+  [ "$missing" = 0 ] && ok "hook files referenced by agent frontmatter exist"
   return 0
 }
 

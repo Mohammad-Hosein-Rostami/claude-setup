@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,4 +66,23 @@ test('check_plugin_session_start is quiet about disabled plugins and clean hooks
   const clean = doctor(await fakeHome({ plugin: { enabled: true, text: 'echo hi' } }), 'check_plugin_session_start');
   assert.doesNotMatch(clean.stdout, /WARN/);
   assert.match(clean.stdout, /SessionStart hook without EXTREMELY_IMPORTANT/);
+});
+
+test('check_hook_files also covers hook files named in agent frontmatter', { skip }, async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'doctor-repo-'));
+  await mkdir(join(repo, 'scripts'), { recursive: true });
+  await mkdir(join(repo, 'settings'), { recursive: true });
+  await mkdir(join(repo, 'home', 'hooks'), { recursive: true });
+  await mkdir(join(repo, 'home', 'agents'), { recursive: true });
+  await cp(DOCTOR, join(repo, 'scripts', 'doctor.sh'));
+  await writeFile(join(repo, 'settings', 'base.json'), '{}');
+  await writeFile(join(repo, 'home', 'agents', 'a.md'), '---\nhooks:\n  PreToolUse:\n    - hooks:\n        - command: node "$HOME/.claude/hooks/gone.mjs"\n---\n');
+  const run = () => spawnSync('bash', [join(repo, 'scripts', 'doctor.sh')], { env: { ...process.env, HOME: repo, DOCTOR_ONLY: 'check_hook_files' }, encoding: 'utf8' });
+  const missing = run();
+  assert.equal(missing.status, 1);
+  assert.match(missing.stdout, /FAIL\s+agent frontmatter hook file missing: home\/hooks\/gone\.mjs/);
+  await writeFile(join(repo, 'home', 'hooks', 'gone.mjs'), '// stub\n');
+  const present = run();
+  assert.equal(present.status, 0);
+  assert.match(present.stdout, /ok\s+hook files referenced by agent frontmatter exist/);
 });
