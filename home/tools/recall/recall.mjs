@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-// Purpose: CLI for recall, a local search over past Claude Code sessions and project notes: full-text, plus semantic
-// vectors (rrf merge) automatically when a local Ollama with the embedding model and stored vectors are present.
-// Commands: index, search, show, stats, embed, eval (see README.md). Exports: none.
-// Env: RECALL_DB (index file), RECALL_ROOT (transcripts dir), RECALL_HOME (project-notes/ and recall.json),
-// RECALL_OLLAMA_URL (loopback only), RECALL_EMBED_MODEL.
-// Exit codes: 0 ok, 2 usage or runtime error. Never prints stack traces for expected errors. Without semantic
-// support a search prints one stderr line `recall: semantic off (<reason>)` and answers lexically.
+// Purpose: CLI for recall, a local search over past Claude Code sessions, their live checkpoint notes and project
+// notes: lexical + bge-m3 + qwen3-embedding-4b fused, then reranked by qwen3-reranker (0.6b, or 4b with --deep).
+// Commands: `recall "<query>"` (= search), index, search, show, stats, embed, eval, status, backfill (see README.md).
+// Exports: none. Env: RECALL_DB (index file), RECALL_ROOT (transcripts dir), RECALL_HOME (project-notes/ and
+// recall.json), RECALL_OLLAMA_URL and RECALL_RERANK_URL (loopback only), RECALL_EMBED_MODEL (pins one model, no reranker).
+// Exit codes: 0 ok, 2 usage or runtime error. Never prints stack traces for expected errors. Every stage that is
+// unusable prints one stderr line (`recall: semantic off (<reason>)`, `recall: skipped <stage> (<reason>)`) and the
+// answer comes from the next cheaper stage.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -13,12 +14,14 @@ import { indexAll, resolveRoot } from './lib/indexer.mjs';
 import { isBusyError, openStore } from './lib/store.mjs';
 import { formatHits, formatJson, formatShow } from './lib/search.mjs';
 import { formatReport, parseQuestions, scoreEval, sessionFileOf } from './lib/eval.mjs';
-import { defaultModel, embedStore, ollamaBase, ollamaReason } from './lib/vectors.mjs';
+import { embedStore, ollamaBase, ollamaReason } from './lib/vectors.mjs';
+import { stackModels } from './lib/models.mjs';
+import { cmdBackfill, cmdStatus } from './lib/cli-admin.mjs';
 import { parseLists, runSearch } from './lib/pipeline.mjs';
 import { rerankBase } from './lib/rerank.mjs';
 import { MERGE_MODES } from './lib/merge.mjs';
 
-const USAGE = 'usage: recall <index [--full] [--model m] | search "<query>" [--project s] [--since YYYY-MM-DD] [--kind k] [--limit N] [--json] | show <id> [--around N] | stats | embed [--model m] | eval <questions.jsonl> [--session-file <path>] [--k 1,5,10]>; search/eval also take [--no-semantic] [--merge add|rrf] [--model m] [--lists lex,bge,qwen] [--rerank N] (semantic is automatic when Ollama and vectors exist)';
+const USAGE = 'usage: recall "<query>" [--session current|<id>] [--deep] [--k 8] | recall <index [--full] [--model m] | search "<query>" [--project s] [--since YYYY-MM-DD] [--kind k] [--limit N] [--json] | show <id> [--around N] | stats | status | backfill [--min-messages 20] [--yes] | embed [--model m] | eval <questions.jsonl> [--session-file <path>] [--k 1,5,10]>; search/eval also take [--no-semantic] [--merge add|rrf] [--model m] [--lists lex,bge,qwen] [--rerank N] (semantic and the reranker are automatic when Ollama, vectors and the reranker files exist)';
 const SEARCH_INDEX_BUDGET_MS = 3000;
 const DEFAULT_LIMIT = 8;
 const DEFAULT_AROUND = 2;
@@ -26,7 +29,9 @@ const DEFAULT_AROUND = 2;
 const DEFAULT_MERGE = 'rrf';
 const PROGRESS_EVERY = 640;
 const EVAL_QUERY_TIMEOUT_MS = 30000; // a cold model needs seconds to load; the 500 ms search cap would skip every query
-const KINDS = ['user', 'assistant', 'summary', 'agent', 'doc'];
+const KINDS = ['user', 'assistant', 'summary', 'agent', 'doc', 'note'];
+const DEFAULT_MIN_MESSAGES = 20;
+const DEFAULT_RERANK = 30; // measured: top-30 of the fused list is what the reranker reorders (study S1)
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const OPTIONS = {
@@ -34,6 +39,7 @@ const OPTIONS = {
   kind: { type: 'string' }, limit: { type: 'string' }, around: { type: 'string' }, k: { type: 'string' },
   'session-file': { type: 'string' }, semantic: { type: 'boolean' }, 'no-semantic': { type: 'boolean' },
   merge: { type: 'string' }, model: { type: 'string' }, lists: { type: 'string' }, rerank: { type: 'string' },
+  session: { type: 'string' }, deep: { type: 'boolean' }, 'min-messages': { type: 'string' }, yes: { type: 'boolean' },
 };
 
 class UsageError extends Error {}
@@ -48,10 +54,18 @@ function intOption(value, fallback, name, min) {
 const positiveInt = (value, fallback, name) => intOption(value, fallback, name, 1);
 const nonNegativeInt = (value, fallback, name) => intOption(value, fallback, name, 0);
 
+/** The session filter: `current` is this session (CLAUDE_CODE_SESSION_ID), else an id or its leading characters. */
+function sessionFilter(value, env = process.env) {
+  if (value === undefined) return undefined;
+  if (value !== 'current') return value;
+  if (!env.CLAUDE_CODE_SESSION_ID) throw new UsageError('--session current needs CLAUDE_CODE_SESSION_ID (set inside Claude Code); pass --session <id> instead');
+  return env.CLAUDE_CODE_SESSION_ID;
+}
+
 function readFilters(values) {
   if (values.kind && !KINDS.includes(values.kind)) throw new UsageError(`--kind must be one of ${KINDS.join('|')}`);
   if (values.since && !DATE_PATTERN.test(values.since)) throw new UsageError('--since must be YYYY-MM-DD');
-  return { kind: values.kind, project: values.project, since: values.since };
+  return { kind: values.kind, project: values.project, since: values.since, session: sessionFilter(values.session) };
 }
 
 function quickIndex(store) {
@@ -65,18 +79,20 @@ function quickIndex(store) {
 }
 
 /**
- * Search options from the flags. Semantic is on unless --no-semantic; `--lists lex,bge,qwen` picks the fused vector
- * models (default: the --model / RECALL_EMBED_MODEL one); `--rerank N` reorders the top N fused hits. A non-loopback
- * RECALL_OLLAMA_URL / RECALL_RERANK_URL is refused here, before any indexing.
+ * Search options from the flags. Semantic is on unless --no-semantic; the vector models are the default stack (bge-m3 +
+ * qwen3-embedding-4b), one --model / RECALL_EMBED_MODEL, or `--lists lex,bge,qwen`. The reranker reorders the top
+ * DEFAULT_RERANK fused hits by default on the default stack, always with --deep, or the top N of `--rerank N` (0 = off).
+ * A non-loopback RECALL_OLLAMA_URL / RECALL_RERANK_URL is refused here, before any indexing.
  */
 function searchOptions(values) {
   const mode = values.merge ?? DEFAULT_MERGE;
   if (!MERGE_MODES.includes(mode)) throw new UsageError(`--merge must be one of ${MERGE_MODES.join('|')}`);
-  const rerank = nonNegativeInt(values.rerank, 0, 'rerank');
-  if (rerank) rerankBase();
   const on = !values['no-semantic'];
+  const stackDefault = on && !values.model && !process.env.RECALL_EMBED_MODEL;
+  const rerank = nonNegativeInt(values.rerank, values.deep || stackDefault ? DEFAULT_RERANK : 0, 'rerank');
+  if (rerank) rerankBase();
   if (on) ollamaBase();
-  let models = [values.model ?? defaultModel()];
+  let models = values.model ? [values.model] : stackModels();
   if (values.lists) {
     try {
       models = parseLists(values.lists);
@@ -84,11 +100,11 @@ function searchOptions(values) {
       throw new UsageError(error.message);
     }
   }
-  return { models: on ? models : [], mode, rerank };
+  return { models: on ? models : [], mode, rerank, deep: Boolean(values.deep) };
 }
 
 const semanticOff = (reason) => console.error(`recall: semantic off (${reason})`);
-const rerankOff = (reason) => console.error(`recall: rerank off (${reason})`);
+const stageSkipped = (stage, reason, next) => console.error(`recall: skipped ${stage} (${reason}); ${next ? `using ${next}` : 'keeping the fused order'}`);
 
 /** After the lexical pass: embed the chunks that have no vector yet. Stops softly (stderr) when Ollama is unusable. */
 async function embedPending(store, model) {
@@ -110,23 +126,24 @@ async function embedPending(store, model) {
   }
 }
 
+const embedModels = (values) => (values.model ? [values.model] : stackModels());
+
 async function cmdIndex(store, { values }) {
-  const model = values.model ?? defaultModel();
   ollamaBase(); // refuse a non-loopback URL before doing any work
   const started = Date.now();
   const r = indexAll(store, { root: resolveRoot(), full: Boolean(values.full) });
   console.log(`indexed ${r.files} files, added ${r.added} chunks, skipped ${r.bad} unreadable lines in ${Date.now() - started}ms`);
-  await embedPending(store, model);
+  for (const model of embedModels(values)) await embedPending(store, model);
 }
 
 async function cmdSearch(store, { values, positionals }) {
   const query = positionals.slice(1).join(' ');
   if (!query.trim()) throw new UsageError('search needs a query');
-  const limit = positiveInt(values.limit, DEFAULT_LIMIT, 'limit');
+  const limit = positiveInt(values.limit ?? values.k, DEFAULT_LIMIT, 'limit');
   const filters = readFilters(values);
   const options = searchOptions(values);
   quickIndex(store);
-  const hits = await runSearch(store, query, { limit, filters, ...options, onOff: semanticOff, onRerankOff: rerankOff });
+  const hits = await runSearch(store, query, { limit, filters, ...options, onOff: semanticOff, onSkip: stageSkipped });
   console.log(values.json ? formatJson(hits) : formatHits(hits));
 }
 
@@ -139,14 +156,15 @@ function cmdShow(store, { values, positionals }) {
 }
 
 async function cmdEmbed(store, { values }) {
-  const model = values.model ?? defaultModel();
   ollamaBase(); // refuse a non-loopback URL even when there is nothing to embed
-  const started = Date.now();
   const total = store.stats().total;
-  const done = await embedStore(store, model, {
-    onProgress: (n) => { if (n % PROGRESS_EVERY === 0) console.error(`embedded ${n} of ${total} chunks`); },
-  });
-  console.log(`embedded ${done} new chunks with ${model} in ${Date.now() - started}ms`);
+  for (const model of embedModels(values)) {
+    const started = Date.now();
+    const done = await embedStore(store, model, {
+      onProgress: (n) => { if (n % PROGRESS_EVERY === 0) console.error(`embedded ${n} of ${total} chunks`); },
+    });
+    console.log(`embedded ${done} new chunks with ${model} in ${Date.now() - started}ms`);
+  }
 }
 
 function cmdStats(store) {
@@ -171,18 +189,25 @@ async function cmdEval(store, { values, positionals }) {
   const once = (say) => (reason) => { if (!reasons.has(reason)) { reasons.add(reason); say(reason); } };
   const hitsById = new Map();
   for (const q of questions) {
-    const run = { limit: Math.max(...ks), ...options, timeoutMs: EVAL_QUERY_TIMEOUT_MS, onOff: once(semanticOff), onRerankOff: once(rerankOff) };
+    const run = { limit: Math.max(...ks), ...options, timeoutMs: EVAL_QUERY_TIMEOUT_MS, onOff: once(semanticOff), onSkip: (stage, reason, next) => once(() => stageSkipped(stage, reason, next))(`${stage}:${reason}`) };
     hitsById.set(q.id, await runSearch(store, q.question, run));
   }
   console.log(formatReport(scoreEval(questions, (q) => hitsById.get(q.id), { sessionFile: resolve(sessionFile), ks })));
 }
 
-const COMMANDS = { index: cmdIndex, search: cmdSearch, show: cmdShow, stats: cmdStats, embed: cmdEmbed, eval: cmdEval };
+const COMMANDS = {
+  index: cmdIndex, search: cmdSearch, show: cmdShow, stats: cmdStats, embed: cmdEmbed, eval: cmdEval,
+  status: (store) => cmdStatus(store),
+  backfill: (store, { values }) => cmdBackfill(store, { minMessages: positiveInt(values['min-messages'], DEFAULT_MIN_MESSAGES, 'min-messages'), yes: Boolean(values.yes) }),
+};
 
 async function main(argv) {
   const parsed = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true });
-  const handler = COMMANDS[parsed.positionals[0]];
-  if (!handler) throw new UsageError(USAGE);
+  const first = parsed.positionals[0];
+  if (first === undefined) throw new UsageError(USAGE);
+  const named = Object.hasOwn(COMMANDS, first);
+  const handler = named ? COMMANDS[first] : cmdSearch;
+  if (!named) parsed.positionals.unshift('search'); // `recall "<query>"` is `recall search "<query>"`
   const store = openStore();
   try {
     await handler(store, parsed);

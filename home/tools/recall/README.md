@@ -1,16 +1,48 @@
 # recall
 
-Local full-text search over past Claude Code sessions and project notes, plus an automatic semantic layer when a local
-Ollama with `bge-m3` is available. No npm
-dependencies; needs Node >= 22.13 (`node:sqlite` with FTS5). Returns a small, cited answer (about 6k chars at most)
-on demand; nothing is auto-injected.
+Local search over past Claude Code sessions and project notes: lexical (FTS5 + trigram) fused with two local embedders
+(`bge-m3` and `qwen3-embedding-4b` through Ollama), the top 30 reranked by `qwen3-reranker-0.6b` (`--deep`:
+`qwen3-reranker-4b`) in an on-demand `llama-server`; live session checkpoints (Haiku notes) and a post-compaction digest.
+No npm dependencies; needs Node >= 22.13 (`node:sqlite` with FTS5). Returns a small, cited answer (about 6k chars at
+most) on demand; the only automatic injection is the post-compact digest (`hooks/recall-digest.mjs`).
+
+## Final stack and fallbacks
+
+`recall "<query>" [--session current|<id>] [--deep] [--k 8]` (= `search`). Each stage that cannot run is skipped with one
+stderr line and the next cheaper stage answers: `--deep` reranker (4B) -> default reranker (0.6B) -> fused order ->
+lexical only. Examples: `recall: skipped qwen3-reranker-4b (model file missing: ...); using qwen3-reranker-0.6b`,
+`recall: semantic off (...)`. Measured on the 180-question holdout (hit@1/5/10): lexical + bge-m3 + qwen3-embedding-4b
+fused, reranked by 0.6B 87/146/156 (about 1.1 s); with 4B `--deep` 106/151/157 (about 8 s).
+
+The reranker is `llama-server --reranking` (`brew install llama.cpp`) with GGUFs in `~/.cache/recall-models`
+(`RECALL_RERANK_MODEL_DIR`): `qwen3-reranker-0.6b-q8_0.gguf`, `qwen3-reranker-4b-q8_0.gguf`. It starts on demand on
+127.0.0.1:8012 (`RECALL_RERANK_PORT`), keeps a pid file in the state dir, is stopped by a detached watchdog after 20 idle
+minutes (`RECALL_RERANK_IDLE_MS`), and only one server runs at a time (`--deep` swaps models). It refuses to start while
+a llama-server that is not recall's or Ollama's is running, so two big models never load together; it never touches
+`iogpu.wired_limit_mb`. `RECALL_RERANK=off` disables reranking; `RECALL_RERANK_URL` points at a self-managed loopback server.
+
+## Live checkpoints and the digest
+
+`hooks/checkpoint.mjs` (PostToolUse, PreCompact) starts `checkpoint-job.mjs` detached when a main session's transcript
+grew by >= 40k tokens (bytes / 3.5) since the last checkpoint, and on every compaction (auto or manual). One job per
+session (lock file in `<state>/checkpoints`), subagents skipped. The job asks Haiku (`claude -p --model haiku
+--no-session-persistence --strict-mcp-config --disable-slash-commands --settings '{"disableAllHooks":true}'`, the
+Claude subscription, never an API key) for JSON notes (owner instructions, decisions with why, facts with numbers, files,
+errors with exact text, open items); invalid JSON is retried once, then a `[note:pointer]` chunk records the raw line
+range. Notes are `note` chunks (session id, transcript line range) embedded with both embedders; each Haiku call is
+logged to `<state>/usage.jsonl`. `hooks/recall-digest.mjs` (SessionStart, source compact) prints this session's notes
+(<= 6000 chars) after a compaction.
+
+`recall status` shows the reranker server, models, index size, the last checkpoint per session and Haiku tokens
+(today / 7 days). `recall backfill [--min-messages 20]` prints a token estimate for old sessions without notes and only
+runs with `--yes`.
 
 ## Commands
 
 ```
 node home/tools/recall/recall.mjs index [--full] [--model <ollama model>]
 node home/tools/recall/recall.mjs search "<query>" [--project <substr>] [--since YYYY-MM-DD]
-                                   [--kind user|assistant|summary|agent|doc] [--limit N=8] [--json]
+                                   [--kind user|assistant|summary|agent|doc|note] [--session current|<id>] [--deep] [--k N] [--limit N=8] [--json]
                                    [--no-semantic] [--merge add|rrf] [--model <ollama model>]
 node home/tools/recall/recall.mjs show <id> [--around N=2]
 node home/tools/recall/recall.mjs stats
@@ -60,7 +92,8 @@ installer, then `ollama pull bge-m3`).
 
 `RECALL_ROOT` (transcripts, default `~/.claude/projects`), `RECALL_DB` (default `~/.claude/recall/index.db`),
 `RECALL_HOME` (where `project-notes/` and `recall.json` live), `RECALL_OLLAMA_URL`, `RECALL_EMBED_MODEL`,
-`RECALL_BUSY_TIMEOUT_MS` (SQLite lock wait, default 5000).
+`RECALL_BUSY_TIMEOUT_MS` (SQLite lock wait, default 5000), `RECALL_STATE_DIR` (reranker pid file, checkpoint state and
+locks, usage log; default: the DB's folder), `RECALL_RERANK*` (see above), `RECALL_DIGEST_WAIT_MS` (default 8000).
 
 ## Privacy and safety
 
@@ -81,4 +114,7 @@ installer, then `ollama pull bge-m3`).
 
 `lib/extract.mjs` (parse, normalise, chunk), `lib/redact.mjs` (redaction), `lib/store.mjs` (schema, locking, writes),
 `lib/indexer.mjs` (discovery, incremental state), `lib/search.mjs` (query, rank, format), `lib/rank.mjs` (snippets),
-`lib/merge.mjs` (lexical/vector merge), `lib/vectors.mjs` (Ollama, cosine), `lib/eval.mjs` (hit@k scoring).
+`lib/merge.mjs` (lexical/vector merge), `lib/vectors.mjs` (Ollama, cosine), `lib/eval.mjs` (hit@k scoring),
+`lib/pipeline.mjs` (search + reranker chain), `lib/rerank*.mjs` (reranker client, server, watchdog),
+`lib/checkpoint*.mjs`, `lib/notes.mjs`, `lib/slice.mjs`, `lib/claude-call.mjs`, `lib/usage.mjs` (checkpoints),
+`lib/digest.mjs` (post-compact digest), `lib/cli-admin.mjs` (`status`, `backfill`), `lib/paths.mjs` (state locations).
