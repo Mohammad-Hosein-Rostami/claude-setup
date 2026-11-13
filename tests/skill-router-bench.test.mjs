@@ -119,7 +119,9 @@ test('sticky rows: weak prompt follows up with the marker, stays silent without 
   const ask = (prompt, session_id) => {
     const input = JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt, session_id });
     const r = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env });
-    return r.stdout === '' ? '' : JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+    const context = r.stdout === '' ? '' : JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+    // These rows test the UI follow-up; the gate lines (bug, done) are covered in skill-router.test.mjs.
+    return context.split('\n').filter((line) => !/^Skill router: (bug or failure|done or ship) /.test(line)).join('\n');
   };
   ask('make it responsive', 'marked');
   for (const prompt of WEAK_HITS) {

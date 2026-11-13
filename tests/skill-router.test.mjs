@@ -6,7 +6,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isQuiet, isUiFile, skillsForPrompt, weakUiPrompt } from '../home/hooks/skill-router.mjs';
+import { gateLinesForPrompt, isQuiet, isUiFile, skillsForPrompt, weakUiPrompt } from '../home/hooks/skill-router.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/skill-router.mjs', import.meta.url));
 
@@ -82,17 +82,21 @@ test('hook contract: bad JSON is silent; a UI prompt emits additionalContext; a 
   assert.equal(backend.stdout, '');
 });
 
+const GATE_LINE = /^Skill router: (bug or failure|done or ship) /;
+
 // Each call gets its own temp dir as TMPDIR/TEMP so session markers never leak between tests or into real state.
 async function routerSession() {
   const tmp = await mkdtemp(join(tmpdir(), 'router-state-'));
   const env = { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp };
-  const fire = (event) => {
+  const fire = (event, { keepGates = false } = {}) => {
     const r = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(event), encoding: 'utf8', env });
     assert.equal(r.status, 0);
     assert.equal(r.stderr, '');
-    return r.stdout === '' ? '' : JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+    const context = r.stdout === '' ? '' : JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+    // The UI tests use prompts with "fix"; their assertions are about the UI text, so drop the gate lines unless asked.
+    return keepGates ? context : context.split('\n').filter((line) => !GATE_LINE.test(line)).join('\n');
   };
-  const prompt = (text, sessionId = 's1') => fire({ hook_event_name: 'UserPromptSubmit', prompt: text, session_id: sessionId });
+  const prompt = (text, sessionId = 's1', options) => fire({ hook_event_name: 'UserPromptSubmit', prompt: text, session_id: sessionId }, options);
   const compact = (sessionId = 's1') => fire({ hook_event_name: 'SessionStart', source: 'compact', session_id: sessionId });
   return { prompt, compact, fire };
 }
@@ -176,4 +180,38 @@ test('UI file edit sets the marker even after the reminder was sent; ui-implemen
   assert.match(prompt('tweak the padding', 'e1'), FULL);
   assert.equal(edit({ agent_type: 'ui-implementer', agent_id: 'x1' }, 'e2'), '');
   assert.match(prompt('tweak the padding', 'e2'), FULL);
+});
+
+test('skillsForPrompt and gateLinesForPrompt ignore every harness event form', () => {
+  for (const event of ['<agent-message from="w1">make it responsive, fix the bug, done</agent-message>', '[SYSTEM NOTIFICATION - NOT USER INPUT] fix the responsive bug, we are done', '  <task-notification>fix bug</task-notification>']) {
+    assert.deepEqual(skillsForPrompt(event), [], event);
+    assert.deepEqual(gateLinesForPrompt(event), [], event);
+    assert.equal(weakUiPrompt(event), false, event);
+  }
+});
+
+test('gateLinesForPrompt: bug words name root-cause-debug, done/ship words name verify-done, other prompts none', () => {
+  assert.match(gateLinesForPrompt('fix the failing login test').join(), /root-cause-debug/);
+  assert.match(gateLinesForPrompt('the parser crashes on empty input').join(), /root-cause-debug/);
+  assert.match(gateLinesForPrompt('باگ را رفع کن').join(), /root-cause-debug/);
+  assert.match(gateLinesForPrompt('looks good, ship it').join(), /verify-done/);
+  assert.match(gateLinesForPrompt('is it done? ready for review').join(), /verify-done/);
+  assert.equal(gateLinesForPrompt('fix it and ship it').length, 2);
+  for (const prompt of ['add a REST endpoint for orders', 'write the README section', 'prefix the keys']) assert.deepEqual(gateLinesForPrompt(prompt), [], prompt);
+});
+
+test('hook: gate lines reach additionalContext, also in a Gradle project and next to a UI route', async () => {
+  const KEEP = { keepGates: true };
+  const { prompt, fire } = await routerSession();
+  assert.match(await prompt('fix the crash in the order service', 's1', KEEP), /^Skill router: bug or failure - invoke root-cause-debug/);
+  assert.match(await prompt('we are done, ship it', 's2', KEEP), /verify-done/);
+  const both = await prompt('fix the form validation bug', 's3', KEEP);
+  assert.match(both, /forms-validation/);
+  assert.match(both, /root-cause-debug/);
+  const gradle = await mkdtemp(join(tmpdir(), 'router-gradle-gate-'));
+  await writeFile(join(gradle, 'build.gradle.kts'), '');
+  const ctx = fire({ hook_event_name: 'UserPromptSubmit', prompt: 'fix the responsive layout bug', session_id: 's4', cwd: gradle }, KEEP);
+  assert.match(ctx, /root-cause-debug/);
+  assert.doesNotMatch(ctx, /involves UI/);
+  assert.equal(await prompt('<agent-message>fix the bug</agent-message>', 's5', KEEP), '');
 });

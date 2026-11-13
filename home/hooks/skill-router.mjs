@@ -1,6 +1,7 @@
 // Skill router hook. Skills are model-invoked from their descriptions only, so in busy projects (many project and
 // plugin skills, delegated subagents) the UI skills get skipped. This hook makes the choice deterministic.
-// UserPromptSubmit: prompt keywords -> names the skills to invoke (additionalContext). The first routed prompt of a
+// UserPromptSubmit: prompt keywords -> names the skills to invoke (additionalContext). Besides the UI routes, a bug/fix
+// prompt names root-cause-debug and a done/ship prompt names verify-done (one line each, every project, also Gradle). The first routed prompt of a
 // session (and any prompt that routes a skill not named before) gets the full text; the rest get a one-line form.
 // SessionStart(compact): forgets this session's prompt marker, so the next routed prompt gets the full text again.
 // PostToolUse(Edit|Write|MultiEdit) on a UI file -> reminds once per session and agent (subagents included), except
@@ -32,7 +33,18 @@ const PROMPT_ROUTES = [
   },
 ];
 // Harness events (background task results, injected reminders) arrive as prompts but are not user text.
-const HARNESS_EVENT = /^<(task-notification|system-reminder)/;
+const HARNESS_EVENT = /^(<(task-notification|system-reminder|agent-message)|\[SYSTEM NOTIFICATION)/;
+// Gate routes: workflow skills that are not UI specific. One line each, no per-session marker.
+const GATE_ROUTES = [
+  {
+    test: /\b(fix(es|ed|ing)?|bugs?|crash(es|ed|ing)?|regressions?|broken|failing|flaky|not working|doesn'?t work)\b|باگ|رفع|خراب/i,
+    line: 'Skill router: bug or failure - invoke root-cause-debug (skip if already loaded) before proposing a fix; tdd-loop for the fix itself.',
+  },
+  {
+    test: /\b(done|ship(ped|ping)?|merge|ready for (review|merge)|wrap(ping)? up|finali[sz]e)\b|تمام شد|آماده/i,
+    line: 'Skill router: done or ship - invoke verify-done (skip if already loaded) before claiming done, fixed or ready.',
+  },
+];
 const UI_FILE = /\.(tsx|jsx|vue|svelte|html|css|scss|sass|less)$/i;
 const NON_UI_FILE = /\.(test|spec|stories)\.\w+$/i;
 const SAFE_ID = /^[\w-]{1,128}$/;
@@ -44,6 +56,12 @@ const FOLLOW_UP_SKILLS = ['accessibility-build', 'responsive-ui', 'ui-quality-pa
 const COMPACT_SOURCE = 'compact';
 const OFF_ENV = 'CLAUDE_SKILL_ROUTER';
 const GRADLE_FILES = ['settings.gradle', 'settings.gradle.kts', 'build.gradle', 'build.gradle.kts'];
+
+/** Returns the gate-route lines (bug -> root-cause-debug, done/ship -> verify-done) a prompt calls for. */
+export function gateLinesForPrompt(prompt) {
+  if (HARNESS_EVENT.test(prompt.trim())) return [];
+  return GATE_ROUTES.filter((gate) => gate.test.test(prompt)).map((gate) => gate.line);
+}
 
 /** Returns the skills a prompt calls for, in first-match order, without duplicates. */
 export function skillsForPrompt(prompt) {
@@ -187,8 +205,12 @@ function route(input) {
     if (input.source === COMPACT_SOURCE) clearPromptMarker(input.session_id);
     return null;
   }
+  if (input.hook_event_name === 'UserPromptSubmit') {
+    const prompt = String(input.prompt ?? '');
+    const ui = isQuiet(input.cwd) ? null : promptContext(prompt, input.session_id);
+    return [ui, ...gateLinesForPrompt(prompt)].filter(Boolean).join('\n') || null;
+  }
   if (isQuiet(input.cwd)) return null;
-  if (input.hook_event_name === 'UserPromptSubmit') return promptContext(String(input.prompt ?? ''), input.session_id);
   if (input.hook_event_name === 'PostToolUse') return editContext(input);
   return null;
 }
