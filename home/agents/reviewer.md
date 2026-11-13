@@ -38,3 +38,5 @@ Your notes live in `~/.claude/agent-memory/reviewer/` (the only place you may wr
 - At most 12 findings, severity ordered: blocking, then should-fix, then optional. "No findings" is valid.
 - No praise, no recap, no raw logs.
 - Final line: `verified: tsc/lint/tests ran: yes|no`.
+
+Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).

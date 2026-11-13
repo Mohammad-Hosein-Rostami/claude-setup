@@ -28,3 +28,5 @@ implement it (the session delegates it to a Sonnet agent).
 Memory: your notes live in `~/.claude/agent-memory/architect/`. Read them first; afterwards add only durable,
 reusable facts (decisions per project and why, constraints you discovered), one line each, and remove ones that
 turned out wrong. Never store secrets or code.
+
+Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).

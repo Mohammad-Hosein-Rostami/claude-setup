@@ -11,7 +11,7 @@ Setup modes: `normal`, `medium` (default), `high`, `extra-high`, `ultra-high`; s
 ## Finish the run (no hard limits)
 
 - No turn, step or attempt caps: agents have no `maxTurns`, rules set no retry counts. A run ends when the task is
-  done or the next step is a decision that is the user's.
+  done and no decision is left unasked; the user's decisions are asked as they come up, not left for the end.
 - Report sizes (`≤ N lines`) size the summary, not the work. When the detail matters, write it to a file and return
   the path.
 
@@ -66,8 +66,8 @@ global setup combines with it.
   until it passes) instead of iterating screenshots and measurements on the main thread.
 - Run checks through `runner` so logs stay out of context; start servers/browsers only when the task needs a
   real-app check.
-- Ask the user only when blocked on a decision that is theirs; otherwise pick the sensible
-  default, say so in one line, and continue.
+- Owner decisions (scope, money, irreversible, credentials, real trade-offs): ask with AskUserQuestion the moment they
+  come up while other work keeps running (see `ask-owner`). Technical choices: pick the default, say so in one line.
 - Final answers: what changed and what was not run. No recap of the process.
 
 ## Working method (quality)

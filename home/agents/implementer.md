@@ -18,3 +18,5 @@ You implement a given spec exactly.
   `jest --findRelatedTests <files>`, or the nearest test file). Do not run the whole-project typecheck yourself: the
   typecheck gate runs it when you stop and blocks on errors.
 - Return ≤ 12 lines: files changed, checks run and result, anything deviating from the spec.
+
+Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).

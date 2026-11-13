@@ -10,6 +10,7 @@ Claude Code hooks installed to `~/.claude/hooks` (a symlink to this folder). All
 - `test-files-only.mjs` - PreToolUse(Write|Edit|MultiEdit): limits `test-writer` to writing test files.
 - `post-edit.mjs` - PostToolUse(Edit|Write|MultiEdit): runs the project's own format/lint scripts on the edited file and logs the file for the typecheck gate. `CLAUDE_TYPECHECK_AT=edit` also typechecks after every edit and turns the gate off.
 - `typecheck-gate.mjs` - Stop, SubagentStop: typechecks the files the agent edited once, when it stops (incremental `tsc` when the script is a plain `tsc` call). Real diagnostics in the edited files exit 2 so the agent fixes them; a failure the user was already shown, a typecheck that cannot run, and a timeout (which names the unchecked files) only send a message to the user. Skipped by `CLAUDE_POST_EDIT_SKIP=typecheck|all`.
+- `ask-gate.mjs` - Stop: blocks once when the lead ends with a request for the owner's decision (narrow phrases or a heading, a `D1:`/`D2:`/`D3:` list; negated, quoted and code text never match) and has not called AskUserQuestion since the last real prompt. Never blocks twice in a row (`stop_hook_active`); any error exits 0. `ASK_GATE_LOG=<file>` appends one JSON line per run.
 - `token-audit.mjs` - manual CLI (not a hook event): prints the approximate recurring token cost of the visible config.
 
 ## lib/

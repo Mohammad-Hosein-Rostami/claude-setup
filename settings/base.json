@@ -126,6 +126,11 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/typecheck-gate.mjs\"",
             "timeout": 150
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/ask-gate.mjs\"",
+            "timeout": 10
           }
         ]
       }
@@ -142,6 +147,7 @@
       }
     ]
   },
+  "askUserQuestionTimeout": "60s",
   "statusLine": {
     "type": "command",
     "command": "node \"{{CLAUDE_HOME}}/statusline.mjs\""

@@ -33,3 +33,5 @@ Your notes live in `~/.claude/agent-memory/security-auditor/` (the only place yo
 - One finding per line: `ID file:line - problem - exploit path - fix`. Max 12, severity ordered.
 - No praise, no recap, no raw logs.
 - Final line: `exploitable: yes|no|unknown`.
+
+Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).

@@ -26,3 +26,5 @@ The caller sends: `Tests for <spec path or acceptance criteria>. Layer: <unit|in
 
 - Return: files written (paths), the command that runs them, then `covers: <criteria>`, `not covered: <gaps>`, `expected red reason: <why they fail now>`.
 - No test code in the reply, no raw logs, no recap.
+
+Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).

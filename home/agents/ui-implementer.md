@@ -32,3 +32,5 @@ You implement a given UI spec exactly. The preloaded skills are binding, not bac
   typecheck gate runs it when you stop and blocks on errors.
 - Return ≤ 15 lines: files changed, `ui-quality-pass` items (pass / fixed / not run), checks run and result, and
   anything deviating from the spec.
+
+Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).
