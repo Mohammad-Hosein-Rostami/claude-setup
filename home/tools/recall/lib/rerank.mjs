@@ -1,9 +1,10 @@
 // Purpose: reorder the top fused candidates with a local cross-encoder reranker (llama.cpp `llama-server --reranking`).
-// Exports: rerankHits, rerankBase, RERANK_TIMEOUT_MS, MAX_DOC_CHARS, DEFAULT_RERANK_URL.
+// Exports: rerankScored, rerankHits, rerankBase, failureReason, RERANK_TIMEOUT_MS, MAX_DOC_CHARS, DEFAULT_RERANK_URL.
 // Invariants: the reranker URL (RECALL_RERANK_URL) must be loopback, checked before any byte is sent, redirects are
 // refused; only redacted text is sent (hit.text is already redacted, the query is redacted here) and each document is
 // cut to MAX_DOC_CHARS; any failure (server down, slow past RERANK_TIMEOUT_MS, bad answer) returns the hits in their
-// fused order and reports one reason through `onOff`, so search never fails because of the reranker.
+// fused order and reports one reason through `onOff`, so search never fails because of the reranker (`rerankScored`
+// is the strict form that throws, used by the pipeline's fallback chain).
 import { redact } from './redact.mjs';
 import { loopbackOrigin } from './vectors.mjs';
 
@@ -19,7 +20,7 @@ export const MAX_DOC_CHARS = 1500;
 export const rerankBase = (env = process.env) => loopbackOrigin(env.RECALL_RERANK_URL || DEFAULT_RERANK_URL, 'RECALL_RERANK_URL');
 
 /** A short human reason for a failed reranker call (used in `recall: rerank off (<reason>)`). */
-function failureReason(error) {
+export function failureReason(error) {
   if (error?.name === 'TimeoutError') return 'reranker timed out';
   if (error?.message === 'fetch failed') return `reranker is not reachable (${error.cause?.code ?? 'network error'})`;
   return String(error?.message ?? error).slice(0, REASON_CHARS);
@@ -41,20 +42,28 @@ async function scoreDocuments(base, query, documents, timeoutMs) {
 }
 
 /**
- * Reorder `hits` (best first, `text` already redacted) by reranker score, best first; each hit's `score` becomes the
- * reranker score. Ties keep the fused order.
+ * Reorder `hits` by reranker score at `base` (a loopback origin), best first; each hit's `score` becomes the reranker
+ * score and ties keep the fused order.
+ * @throws when the server is down, slow past `timeoutMs`, or answers badly.
+ */
+export async function rerankScored(base, query, hits, timeoutMs = RERANK_TIMEOUT_MS) {
+  if (hits.length < 2) return hits;
+  const scores = await scoreDocuments(base, query, hits.map((h) => h.text.slice(0, MAX_DOC_CHARS)), timeoutMs);
+  return hits.map((hit, i) => ({ ...hit, score: scores[i], fused: i })).sort((a, b) => b.score - a.score || a.fused - b.fused).map(({ fused: _fused, ...hit }) => hit);
+}
+
+/**
+ * Like `rerankScored` against the RECALL_RERANK_URL server (default http://127.0.0.1:8012), but soft: a failure
+ * returns `hits` unchanged and sends one reason to `onOff`.
  * @param {string} query the search query.
- * @param {object[]} hits fused candidates.
+ * @param {object[]} hits fused candidates (`text` already redacted).
  * @param {{timeoutMs?: number, onOff?: (reason: string) => void, env?: object}} [options]
- * @returns {Promise<object[]>} the reordered hits, or `hits` unchanged (reason sent to `onOff`) when the reranker fails.
  * @throws when RECALL_RERANK_URL is not loopback.
  */
 export async function rerankHits(query, hits, { timeoutMs = RERANK_TIMEOUT_MS, onOff = () => {}, env = process.env } = {}) {
   const base = rerankBase(env);
-  if (hits.length < 2) return hits;
   try {
-    const scores = await scoreDocuments(base, query, hits.map((h) => h.text.slice(0, MAX_DOC_CHARS)), timeoutMs);
-    return hits.map((hit, i) => ({ ...hit, score: scores[i], fused: i })).sort((a, b) => b.score - a.score || a.fused - b.fused).map(({ fused: _fused, ...hit }) => hit);
+    return await rerankScored(base, query, hits, timeoutMs);
   } catch (error) {
     onOff(failureReason(error));
     return hits;

@@ -8,9 +8,9 @@
 // already exists for the same session; FTS tables and vecs are kept in step with `chunks` by this module only.
 import { DatabaseSync } from 'node:sqlite';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { sha1 } from './extract.mjs';
+import { defaultDbPath } from './paths.mjs';
 
 const BUSY_TIMEOUT_MS = 5000;
 const SQLITE_BUSY = 5;
@@ -35,10 +35,7 @@ CREATE TABLE IF NOT EXISTS vecs(chunk_id INTEGER NOT NULL, model TEXT NOT NULL, 
   PRIMARY KEY(chunk_id, model));
 `;
 
-/** RECALL_DB, else ~/.claude/recall/index.db. */
-export function defaultDbPath(env = process.env) {
-  return env.RECALL_DB || join(homedir(), '.claude', 'recall', 'index.db');
-}
+export { defaultDbPath };
 
 /** True for a "database is locked / busy" error from node:sqlite. */
 export function isBusyError(error) {

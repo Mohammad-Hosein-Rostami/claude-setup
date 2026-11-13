@@ -38,7 +38,7 @@ function fixture() {
   writeFileSync(join(project, SESSION, 'subagents', 'agent-1.meta.json'), JSON.stringify({ agentType: 'scout' }));
   writeFileSync(join(project, 'memory', 'note.md'), '# Note\nThe deploy host uses sshpass -p topsecret1 always.');
   writeFileSync(join(dir, 'project-notes', 'demo.md'), 'Project demo notes: quarterly roadmap alpha');
-  return { dir, root, file, env: { ...process.env, RECALL_DB: join(dir, 'db', 'index.db'), RECALL_ROOT: root, RECALL_OLLAMA_URL: DEAD_OLLAMA } };
+  return { dir, root, file, env: { ...process.env, RECALL_DB: join(dir, 'db', 'index.db'), RECALL_ROOT: root, RECALL_OLLAMA_URL: DEAD_OLLAMA, RECALL_RERANK: 'off' } };
 }
 
 const DEAD_OLLAMA = 'http://127.0.0.1:9'; // keeps CLI tests off any real Ollama: semantic is automatic

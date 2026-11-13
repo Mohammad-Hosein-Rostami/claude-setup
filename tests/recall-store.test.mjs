@@ -21,7 +21,7 @@ function setup() {
   const root = join(dir, 'projects');
   mkdirSync(join(root, '-p'), { recursive: true });
   const file = join(root, '-p', `${SESSION}.jsonl`);
-  const env = { ...process.env, RECALL_DB: join(dir, 'db', 'index.db'), RECALL_ROOT: root, RECALL_BUSY_TIMEOUT_MS: '300', RECALL_OLLAMA_URL: 'http://127.0.0.1:9' };
+  const env = { ...process.env, RECALL_DB: join(dir, 'db', 'index.db'), RECALL_ROOT: root, RECALL_BUSY_TIMEOUT_MS: '300', RECALL_OLLAMA_URL: 'http://127.0.0.1:9', RECALL_RERANK: 'off' };
   return { dir, root, file, env };
 }
 const lines = (store, source) => store.db.prepare('SELECT line,text FROM chunks WHERE source=? ORDER BY line').all(source);

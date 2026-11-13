@@ -31,4 +31,5 @@ export function windowSnippet(text, terms, size) {
 }
 
 /** Defang any <recall-results> tag inside past text so it cannot close or fake the output wrapper. */
-export const neutralize = (text) => text.replace(/<(\/?)recall-results/gi, '<$1recall_results');
+/** Defang every `<recall-...>` tag (results block, digest block) so stored text cannot open or close ours. */
+export const neutralize = (text) => text.replace(/<(\/?)recall-/gi, '<$1recall_');

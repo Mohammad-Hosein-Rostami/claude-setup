@@ -21,7 +21,7 @@ export function setup(lines = [user('a kitten story'), user('a feline friend sle
   const file = join(root, '-p', `${SESSION}.jsonl`);
   writeFileSync(file, lines.join(''));
   const db = join(dir, 'db', 'index.db');
-  const env = { ...process.env, RECALL_DB: db, RECALL_ROOT: root, RECALL_HOME: dir, RECALL_OLLAMA_URL: DEAD_OLLAMA, RECALL_EMBED_MODEL: 'fake' };
+  const env = { ...process.env, RECALL_DB: db, RECALL_ROOT: root, RECALL_HOME: dir, RECALL_OLLAMA_URL: DEAD_OLLAMA, RECALL_EMBED_MODEL: 'fake', RECALL_RERANK: 'off' };
   return { dir, root, file, db, env };
 }
 

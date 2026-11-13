@@ -154,8 +154,9 @@ test('the embed command stores vectors through the CLI', async () => {
     `${JSON.stringify({ type: 'user', message: { content: 'a kitten story' } })}\n`);
   const db = join(dir, 'i.db');
   await withOllama(async (url) => {
-    const env = { ...process.env, RECALL_DB: db, RECALL_ROOT: root, RECALL_OLLAMA_URL: url };
-    spawnSync(process.execPath, [CLI, 'index'], { env });
+    const env = { ...process.env, RECALL_DB: db, RECALL_ROOT: root, RECALL_OLLAMA_URL: url, RECALL_RERANK: 'off' };
+    // index with Ollama unreachable (it embeds the default stack when it can); the embed command below must do the vectors
+    spawnSync(process.execPath, [CLI, 'index'], { env: { ...env, RECALL_OLLAMA_URL: 'http://127.0.0.1:9' } });
     const child = spawn(process.execPath, [CLI, 'embed', '--model', 'fake'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     child.stdout.on('data', (c) => { out += c; });
