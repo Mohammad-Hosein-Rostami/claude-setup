@@ -3,10 +3,10 @@
 Claude Code hooks installed to `~/.claude/hooks` (a symlink to this folder). All are Node 22 scripts with no dependencies.
 
 - `mode.mjs` - SessionStart, UserPromptExpansion, UserPromptSubmit: tracks the per-session mode and prints its playbook.
-- `skill-router.mjs` - UserPromptSubmit, PostToolUse(Edit|Write|MultiEdit): names the skills to invoke for the prompt or UI file; a bug/fix prompt names `root-cause-debug`, a done/ship prompt `verify-done`. Never blocks.
+- `skill-router.mjs` - UserPromptSubmit, PostToolUse(Edit|Write|MultiEdit): names the skills to invoke for the prompt or UI file; a bug/fix intent names `root-cause-debug`, a done/ship intent `verify-done` (each once per session; off with `CLAUDE_SKILL_ROUTER=off`). Never blocks.
 - `pre-bash-guard.mjs` - PreToolUse(Bash): denies --no-verify, force push, rm -r outside the project, `.env` reads, lockfile edits.
 - `agent-model-guard.mjs` - PreToolUse(Agent|Task): in every mode sets `model: sonnet` on a general-purpose / Explore / built-in call that has none (it would inherit the lead model); Plan gets `opus` in extra-high / ultra-high. Forks and the repo's own agents are untouched.
-- `agent-memory-only.mjs` - PreToolUse(Write|Edit|MultiEdit): keeps `reviewer` and `security-auditor` read-only except their memory notes and the session scratchpad.
+- `agent-memory-only.mjs` - PreToolUse(Write|Edit|MultiEdit): keeps `reviewer` and `security-auditor` read-only except their memory notes and this session's scratchpad.
 - `test-files-only.mjs` - PreToolUse(Write|Edit|MultiEdit): limits `test-writer` to writing test files.
 - `post-edit.mjs` - PostToolUse(Edit|Write|MultiEdit): runs the project's own format/lint scripts on the edited file and logs the file for the typecheck gate. `CLAUDE_TYPECHECK_AT=edit` also typechecks after every edit and turns the gate off.
 - `typecheck-gate.mjs` - Stop, SubagentStop: typechecks the files the agent edited once, when it stops (incremental `tsc` when the script is a plain `tsc` call). Real diagnostics in the edited files exit 2 so the agent fixes them; a failure the user was already shown, a typecheck that cannot run, and a timeout (which names the unchecked files) only send a message to the user. Skipped by `CLAUDE_POST_EDIT_SKIP=typecheck|all`.
