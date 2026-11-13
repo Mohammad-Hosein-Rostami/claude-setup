@@ -51,5 +51,10 @@ A running Claude Code session reads settings, hooks config, CLAUDE.md, agents an
 restart open sessions (`/exit`, then `claude -c` to continue). Hook scripts run fresh on every call, so edits to a hook's
 code apply at once.
 
-## Reading .env files
-The `Read` deny rule blocks every `.env.*` file, templates such as `.env.example` included (a deny rule takes no exceptions). The base Bash deny rule `Bash(cat *.env*)` also blocks `cat .env.example`; read a template with `head -n 200 .env.example` or `git show HEAD:.env.example` (`pre-bash-guard` allows both).
+## Reading .env files and lockfiles
+Nothing blocks reading them: there are no `.env` or lockfile read rules in `settings/base.json` and `pre-bash-guard` does not inspect readers. Printing or committing a secret is still against the rules in `CLAUDE.md`; a literal secret typed into a Bash command is denied.
+
+## Outward actions and production hosts
+`pre-bash-guard` asks for confirmation, even in bypass-permissions mode, before `git push` (not `--dry-run`), `gh release *` (except list, view, download), `gh pr merge`, `npm`/`pnpm`/`yarn` publish, and `ssh`/`scp`/`rsync`/`psql`/`mysql` that write to a production host; `artifact-ask` does the same for Artifact publish and delete. Read-only ssh (cat, ls, tail, grep, systemctl status, docker ps/logs, SELECT) is allowed.
+Production hosts: any name containing `prod`, plus the private list `~/.claude/private/prod-hosts` (one name or `*` glob per line; never committed). Copy `settings/prod-hosts.example` to start; `doctor.sh` reports whether the list exists.
+

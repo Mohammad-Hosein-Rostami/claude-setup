@@ -4,7 +4,8 @@ Claude Code hooks installed to `~/.claude/hooks` (a symlink to this folder). All
 
 - `mode.mjs` - SessionStart, UserPromptExpansion, UserPromptSubmit: tracks the per-session mode and prints its playbook.
 - `skill-router.mjs` - UserPromptSubmit, PostToolUse(Edit|Write|MultiEdit): names the skills to invoke for the prompt or UI file; a bug/fix intent names `root-cause-debug`, a done/ship intent `verify-done` (each once per session; off with `CLAUDE_SKILL_ROUTER=off`). Never blocks.
-- `pre-bash-guard.mjs` - PreToolUse(Bash): denies --no-verify, force push, rm -r outside the project, `.env` reads, lockfile edits.
+- `pre-bash-guard.mjs` - PreToolUse(Bash): denies --no-verify, force push, rm -r outside the project, lockfile edits and literal secrets; asks (also in bypass mode) before push, gh release, gh pr merge, publish and writes to production hosts; logs `sed -i`/heredoc code writes for the typecheck gate.
+- `artifact-ask.mjs` - PreToolUse(Artifact): asks before an Artifact publish or delete (also in bypass mode).
 - `agent-model-guard.mjs` - PreToolUse(Agent|Task): in every mode sets `model: sonnet` on a general-purpose / Explore / built-in call that has none (it would inherit the lead model); Plan gets `opus` in extra-high / ultra-high. Forks and the repo's own agents are untouched.
 - `agent-memory-only.mjs` - PreToolUse(Write|Edit|MultiEdit): keeps `reviewer` and `security-auditor` read-only except their memory notes and this session's scratchpad.
 - `test-files-only.mjs` - PreToolUse(Write|Edit|MultiEdit): limits `test-writer` to writing test files.
@@ -21,7 +22,11 @@ Helpers: `diagnostics.mjs` (check output to `file:line RULE-ID message`) and `ed
 
 - `reply-cap.mjs` - parses a reply-size cap from a prompt and measures a reply (used by `agent-budget.mjs` and `final-reply-cap.mjs`).
 - `shell-words.mjs` - command text to segments of unquoted words; heredoc stripping, output-redirect stripping, option parsing.
-- `env-files.mjs` - `.env` detection and the reader denylist (which commands read which arguments).
+- `command-of.mjs` - segment to the real command, looking through keywords, `VAR=x` and wrappers.
+- `secrets.mjs` - literal secret detection (returns a kind, never the value).
+- `outward.mjs` - push, gh release, gh pr merge and publish asks.
+- `remote.mjs` - production-host list and the ssh/scp/rsync/psql/mysql write classifier.
+- `code-writes.mjs` - code files a Bash command may rewrite.
 
 ## Tests
 
