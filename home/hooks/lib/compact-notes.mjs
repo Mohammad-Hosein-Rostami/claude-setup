@@ -8,7 +8,7 @@ import { findStatusPath } from './transcript.mjs';
 const REPEATED_COMPACTIONS = 3; // from this many compactions on, suggest a handoff and a fresh session
 const STATUS_REREAD_LINES = 60;
 const COMPACT_NOTE =
-  'Context was compacted: if a detail is missing, run `recall search "<terms>"` before asking; reload the deferred tools Monitor, SendMessage and TaskStop in ONE ToolSearch call (`select:Monitor,SendMessage,TaskStop`), plus any other you used.';
+  'Context was compacted: if a detail is missing, run `recall "<terms>" --session current` (add `--deep` if it misses) before asking; reload the deferred tools Monitor, SendMessage and TaskStop in ONE ToolSearch call (`select:Monitor,SendMessage,TaskStop`), plus any other you used.';
 
 /**
  * Count this compaction and build the lines for the model.

@@ -86,6 +86,16 @@
         ]
       },
       {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/recall-digest.mjs\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
         "hooks": [
           {
             "type": "command",
@@ -129,6 +139,11 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/agent-budget.mjs\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/checkpoint.mjs\"",
+            "timeout": 5
           }
         ]
       }
@@ -165,6 +180,17 @@
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/agent-budget.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/checkpoint.mjs\"",
             "timeout": 5
           }
         ]
