@@ -5,14 +5,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { parse, need, toNumber } from '../lib/args.mjs';
 import { auditInPage } from '../lib/audit.mjs';
-import { bidiFieldFindings, isHint } from '../lib/bidi.mjs';
+import { bidiFieldFindings, bidiPlaceholderFindings, isHint } from '../lib/bidi.mjs';
 import { loadChromium, launch, openPage } from '../lib/browser.mjs';
 import { collectFocusables } from '../lib/focus-audit.mjs';
 import { focusIndicatorFindings, rawI18nKeyFindings, rtlPhysicalAlignFindings, targetSizeHints } from '../lib/rendered-checks.mjs';
 import { CONTEXT_OPTIONS, readContextFlags, validateWidths } from '../lib/context.mjs';
 import { loadSteps } from '../lib/steps.mjs';
 import { writeReport } from '../lib/report.mjs';
+import { writeComparableTexts } from '../lib/same-as-default.mjs';
 import { RESPONSIVE } from '../lib/tolerances.mjs';
+import { ltrRunInRtlHints, parseAllowList, untranslatedHints } from '../lib/translation-hints.mjs';
 
 export const options = {
   url: { type: 'string' },
@@ -22,6 +24,7 @@ export const options = {
   'bypass-csp': { type: 'boolean', default: false },
   'no-autofocus': { type: 'boolean', default: false },
   ...CONTEXT_OPTIONS,
+  'same-in-all-locales': { type: 'string' }, // comma separated terms that are the same in every language (brand names): `untranslated?` ignores them
   out: { type: 'string' },
   project: { type: 'string' }, // default: current directory, then UI_CHECK_PROJECT, then the tool's own node_modules (lib/playwright.mjs)
 };
@@ -33,21 +36,25 @@ function parseWidths(text) {
 /**
  * Audit one width on a fresh page; exported for tests.
  * @param {object} browser Playwright browser
- * @param {{url: string, height: number} & Record<string, unknown>} target openPage options other than width (steps, bypassCSP, autofocus, context)
+ * @param {{url: string, height: number, sameInAllLocales?: string[], saveTexts?: boolean} & Record<string, unknown>} target openPage options other than width (steps, bypassCSP, autofocus, context);
+ *   sameInAllLocales = terms `untranslated?` ignores; saveTexts (batch) writes the page's comparable texts beside the screenshot for `same-as-default?`
  * @param {number} width viewport width in CSS px
  * @param {string} outDir where w<width>.png goes
- * @returns {Promise<{width: number, check: string, element: string, detail: string, hint?: true}[]>} layout and bidi-field findings, plus the heuristic
- *   hints (target-size?, raw-i18n-key, rtl-physical-align, focus-indicator) marked `hint: true`; hints never fail a run
+ * @returns {Promise<{width: number, check: string, element: string, detail: string, hint?: true}[]>} layout, bidi-field and bidi-placeholder findings, plus the heuristic
+ *   hints (target-size?, raw-i18n-key, rtl-physical-align, focus-indicator, bidi-placeholder?, ltr-run-in-rtl?, untranslated?) marked `hint: true`; hints never fail a run
  */
 export async function auditWidth(browser, target, width, outDir) {
   const page = await openPage(browser, { ...target, width });
   const audit = { minTarget: RESPONSIVE.minTarget, minText: RESPONSIVE.minText, smallViewport: RESPONSIVE.smallViewport, max: RESPONSIVE.maxFindingsPerCheck };
   const { findings: layout, docDirection, fields, texts, blocks, inlineTargets } = await page.evaluate(auditInPage, audit);
-  const findings = [...layout, ...bidiFieldFindings({ docDirection, fields }, audit.max)];
+  const placeholders = bidiPlaceholderFindings({ docDirection, fields }, audit.max);
+  const findings = [...layout, ...bidiFieldFindings({ docDirection, fields }, audit.max), ...placeholders.findings];
   const hints = [
+    ...placeholders.hints, ...ltrRunInRtlHints({ texts }, audit.max), ...untranslatedHints({ docDirection, texts }, target.sameInAllLocales, audit.max),
     ...targetSizeHints({ targets: inlineTargets }, audit.minTarget, audit.max),
     ...rawI18nKeyFindings({ texts }, audit.max), ...rtlPhysicalAlignFindings({ blocks }, audit.max),
   ];
+  if (target.saveTexts) writeComparableTexts(outDir, width, texts);
   await page.screenshot({ path: path.join(outDir, `w${width}.png`), fullPage: true, animations: 'disabled', caret: 'hide' });
   // Last, because pressing Tab can fire the page's focus handlers.
   hints.push(...focusIndicatorFindings({ focusables: await collectFocusables(page) }, audit.max));
@@ -86,7 +93,7 @@ export async function run(argv) {
   const height = toNumber(values.height, 'height', 200);
   const context = readContextFlags(values);
   const steps = values.steps !== undefined ? loadSteps(values.steps) : [];
-  const target = { url: values.url, height, steps, bypassCSP: values['bypass-csp'], autofocus: !values['no-autofocus'], ...context };
+  const target = { url: values.url, height, steps, sameInAllLocales: parseAllowList(values['same-in-all-locales']), bypassCSP: values['bypass-csp'], autofocus: !values['no-autofocus'], ...context };
   const outDir = values.out ?? path.join(os.tmpdir(), 'ui-check', 'responsive', new Date().toISOString().replace(/[:.]/g, '-'));
   const browser = await launch(loadChromium(values.project));
   try {

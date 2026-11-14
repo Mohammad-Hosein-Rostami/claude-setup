@@ -14,3 +14,5 @@
 - `playwright-resolve.test.mjs` - browser-free tests for the Playwright lookup order and its error message (fake packages in temp folders).
 - `batch-schedule.test.mjs` - browser-free tests for `--jobs`, the parallel/serial split, the pool, the progress line and `--resume`.
 - `rendered-browser.test.mjs`, `batch-parallel.test.mjs` - Chromium tests (need `UI_CHECK_PROJECT`) for the above on local fixtures.
+- `ltr-values.test.mjs` - browser-free tests for "only the typed value is left to right": `bidi-placeholder`, the three text hints, `same-as-default?` with its batch pass, the `sameInAllLocales` states key.
+- `ltr-values-browser.test.mjs` - Chromium tests (need `UI_CHECK_PROJECT`) for the same on the `ltr-value-*.html`, `ltr-run.html`, `untranslated.html` and `same-*.html` fixtures, and for the probe leaving the page untouched.

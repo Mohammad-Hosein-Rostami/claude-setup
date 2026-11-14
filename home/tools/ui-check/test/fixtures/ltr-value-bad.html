@@ -1,0 +1,10 @@
+<!doctype html><html dir="rtl" lang="fa"><meta charset="utf-8"><title>ltr value bad</title>
+<!-- The failures: dir=ltr turns the translated placeholder left to right; a filled or empty email still computes rtl; a physical left placeholder. -->
+<body style="margin:0;font:16px sans-serif">
+<input id="dirltr" type="tel" dir="ltr" placeholder="شماره موبایل" style="display:block;width:240px;height:40px">
+<input id="filledmail" type="email" value="user@example.com" style="display:block;width:240px;height:40px">
+<input id="emptymail" type="email" style="display:block;width:240px;height:40px">
+<input id="digitsltr" type="tel" dir="ltr" placeholder="0912 345 6789" style="display:block;width:240px;height:40px">
+<input id="leftph" type="text" placeholder="نام کاربری" style="display:block;width:240px;height:40px;text-align:left">
+<input id="telua" type="tel" placeholder="شماره موبایل" style="display:block;width:240px;height:40px">
+</body></html>

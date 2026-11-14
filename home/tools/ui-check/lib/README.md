@@ -4,7 +4,7 @@
 - `audit.mjs` - in-page responsive audit (serialised into the browser by Playwright).
 - `batch-records.mjs` - `batch` result records ({surface, state, locale, width, status, evidence, findings}), results.json, summary.md and checkpoint writers, prior-record reader for `--resume`.
 - `batch-schedule.mjs` - `batch` scheduling: `--jobs`, parallel/serial split, worker pool, progress line, `--resume` decision.
-- `bidi.mjs` - the pure `bidi-field` detection (rtl document, left-to-right field with rtl direction).
+- `bidi.mjs` - the pure `bidi-field` (filled state), `bidi-placeholder` and `bidi-placeholder?` decisions for fields in an rtl document.
 - `browser.mjs` - open deterministic pages (CPU raster and explicit autofocus by default; opt-in `bypassCSP`, `steps`, locale, colour scheme, storage, cookies, expected direction).
 - `cache.mjs` - locate and read the per-node Figma cache (baseline.png, spec.json, meta.json).
 - `click-cover.mjs` - explains a timed-out click: what covers the target, label hint for a hidden input.
@@ -20,6 +20,8 @@
 - `rendered-checks.mjs` - pure decisions for `raw-i18n-key`, `focus-indicator`, `rtl-physical-align`, `tap-target`.
 - `report.mjs` - write report.json and a report.md capped at 40 lines.
 - `spec.mjs` - flatten a Figma REST node tree into a list of boxes relative to the frame root.
+- `same-as-default.mjs` - the `same-as-default?` pass of `batch`: saves each page's comparable texts beside its report, compares later locales with the first, updates their report and record.
 - `states.mjs` - `batch --states` file schema validation (errors name `states[i].field`) and `--only` selection.
 - `steps.mjs` - opt-in `--steps` interaction steps: schema validation (fixed action table, step-numbered UsageErrors) and the runner; format in ../README.md.
 - `tolerances.mjs` - the single tolerance table used by the element check. Documented in standards/figma.md.
+- `translation-hints.mjs` - pure decisions for the hints `ltr-run-in-rtl?`, `untranslated?` and `same-as-default?`, and the allow-list parser.

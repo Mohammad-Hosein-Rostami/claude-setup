@@ -113,7 +113,7 @@ test('bidi-field: an rtl document with an rtl tel input is one finding that name
   assert.equal(rest.length, 0);
   assert.equal(one.check, 'bidi-field');
   assert.equal(one.element, 'input#phone');
-  assert.match(one.detail, /input#phone.*dir="ltr".*alignment may stay at the start edge/);
+  assert.match(one.detail, /input#phone.*:not\(:placeholder-shown\).*dir="ltr" on the field when it has no translated placeholder.*placeholder, label, hint and error keep the page direction/);
 });
 
 test('bidi-field: type, inputmode and autocomplete each trigger it', () => {

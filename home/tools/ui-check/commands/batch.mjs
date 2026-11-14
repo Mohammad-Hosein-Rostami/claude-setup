@@ -12,6 +12,7 @@ import { compareRecords, errorRecords, exitCodeFor, readPriorRecords, removePart
 import { parseJobs, partitionStates, progressLine, resumeFilter, runPool } from '../lib/batch-schedule.mjs';
 import { loadChromium, launch } from '../lib/browser.mjs';
 import { readCache } from '../lib/cache.mjs';
+import { addSameAsDefaultHints } from '../lib/same-as-default.mjs';
 import { loadStatesFile, selectSurfaces } from '../lib/states.mjs';
 import { PIXEL, RESPONSIVE } from '../lib/tolerances.mjs';
 import { compareOnce, loadMap, pageOptions } from './compare.mjs';
@@ -47,7 +48,7 @@ async function compareState(browser, state, dir) {
 }
 
 async function responsiveState(browser, state, dir) {
-  const target = { url: state.url, height: RESPONSIVE.height, steps: state.steps, bypassCSP: false, autofocus: true, ...state.context };
+  const target = { url: state.url, height: RESPONSIVE.height, steps: state.steps, bypassCSP: false, autofocus: true, sameInAllLocales: state.sameInAllLocales, saveTexts: true, ...state.context };
   const result = await auditAll(browser, { widths: state.widths, target, outDir: path.join(dir, 'responsive') });
   return responsiveRecords(state, state.widths, result);
 }
@@ -155,7 +156,7 @@ export async function run(argv) {
   if (values.resume) console.error(`resume: ${reused.size} of ${states.length} states already pass and are kept, ${todo.length} to run`);
   const browser = todo.length > 0 ? await launch(loadChromium(values.project)) : null;
   try {
-    const records = await runAll(browser, { states, todo, reused, jobs, outDir });
+    const records = addSameAsDefaultHints(await runAll(browser, { states, todo, reused, jobs, outDir }), states);
     const { summary } = writeBatchResults(outDir, records);
     removePartialResults(outDir);
     const code = exitCodeFor(records);

@@ -1,0 +1,9 @@
+<!doctype html><html dir="rtl" lang="fa"><meta charset="utf-8"><title>ltr edge fields</title>
+<body style="margin:0;font:16px sans-serif">
+<div id="ce" contenteditable="true" style="width:240px;height:40px;direction:rtl" data-placeholder="شماره"></div>
+<div id="host"></div>
+<script>
+  const root = document.getElementById('host').attachShadow({ mode: 'open' });
+  root.innerHTML = '<input id="shadowphone" type="tel" dir="ltr" placeholder="شماره موبایل" style="display:block;width:240px;height:40px">';
+</script>
+</body></html>

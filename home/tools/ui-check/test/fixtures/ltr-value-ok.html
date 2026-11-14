@@ -1,0 +1,19 @@
+<!doctype html><html dir="rtl" lang="fa"><meta charset="utf-8"><title>ltr value ok</title>
+<!-- The correct technique: empty fields (and their translated placeholder) follow the page; only a typed value is left to right. -->
+<style>
+  input, textarea { display: block; width: 240px; height: 40px; font: 16px sans-serif; margin-bottom: 8px; }
+  input:placeholder-shown, textarea:placeholder-shown { direction: inherit; } /* a type=tel input is ltr by the browser style: bring the page direction back while it is empty */
+  input:not(:placeholder-shown), textarea:not(:placeholder-shown) { direction: ltr; text-align: left; }
+</style>
+<body style="margin:0;font:16px sans-serif">
+<label for="phone">شماره موبایل</label>
+<input id="phone" type="tel" placeholder="شماره موبایل">
+<input id="mail" type="email" placeholder="ایمیل خود را وارد کنید">
+<input id="filled" type="email" placeholder="ایمیل" value="user@example.com">
+<input id="code" type="text" inputmode="numeric" placeholder="کد تایید">
+<input id="digits" type="tel" placeholder="0912 345 6789">
+<input id="locked" type="email" placeholder="ایمیل" readonly>
+<input id="off" type="email" placeholder="ایمیل" disabled>
+<textarea id="note" inputmode="url" placeholder="نشانی وب" style="height:60px"></textarea>
+<p dir="auto">+98 912 345 6789</p>
+</body></html>

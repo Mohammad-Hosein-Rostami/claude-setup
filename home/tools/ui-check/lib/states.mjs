@@ -9,8 +9,8 @@ import { COLOR_SCHEMES, DIRECTIONS, mergeEntries, validateChoice, validateEntrie
 import { UsageError } from './errors.mjs';
 import { loadSteps, validateSteps } from './steps.mjs';
 
-const DEFAULT_KEYS = ['baseUrl', 'locale', 'colorScheme', 'widths', 'storage', 'cookies'];
-const STATE_KEYS = ['surface', 'state', 'locale', 'url', 'steps', 'expectDir', 'storage', 'cookies', 'widths', 'figma'];
+const DEFAULT_KEYS = ['baseUrl', 'locale', 'colorScheme', 'widths', 'storage', 'cookies', 'sameInAllLocales'];
+const STATE_KEYS = ['surface', 'state', 'locale', 'url', 'steps', 'expectDir', 'storage', 'cookies', 'widths', 'figma', 'sameInAllLocales'];
 const FIGMA_KEYS = ['file', 'node', 'map', 'root'];
 const URL_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
 const DEFAULT_ROOT = 'body';
@@ -40,6 +40,13 @@ function resolveUrl(value, baseUrl, label) {
   return url.href;
 }
 
+/** Terms that are the same in every language: an array of non-empty strings. */
+function readTerms(value, label) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((term) => typeof term !== 'string' || term.trim() === '')) throw new UsageError(`${label}: must be an array of non-empty strings (example: ["ICE", "Google"])`);
+  return value.map((term) => term.trim());
+}
+
 function readDefaults(raw) {
   const defaults = raw ?? {};
   checkKeys(defaults, DEFAULT_KEYS, 'defaults');
@@ -52,6 +59,7 @@ function readDefaults(raw) {
     widths: has('widths') ? validateWidths(defaults.widths, 'defaults.widths') : undefined,
     storage: validateEntries(defaults.storage, 'defaults.storage', 'storage'),
     cookies: validateEntries(defaults.cookies, 'defaults.cookies', 'cookie'),
+    sameInAllLocales: readTerms(defaults.sameInAllLocales, 'defaults.sameInAllLocales') ?? [],
   };
 }
 
@@ -86,6 +94,7 @@ function readState(raw, index, defaults, baseDir) {
   const state = {
     index, surface: text(raw.surface, `${label}.surface`), state: text(raw.state, `${label}.state`), locale: locale ?? null,
     url: resolveUrl(raw.url, defaults.baseUrl, `${label}.url`), steps: readSteps(raw.steps, baseDir, `${label}.steps`),
+    sameInAllLocales: readTerms(raw.sameInAllLocales, `${label}.sameInAllLocales`) ?? defaults.sameInAllLocales,
     widths: widths ?? null, figma: readFigma(raw.figma, baseDir, `${label}.figma`),
     context: {
       locale, colorScheme: defaults.colorScheme, expectDir,
@@ -99,9 +108,9 @@ function readState(raw, index, defaults, baseDir) {
 
 /**
  * Validate a parsed states file and resolve it against its folder.
- * @param {unknown} raw parsed JSON: { defaults?: {baseUrl, locale, colorScheme, widths, storage, cookies}, states: [{ surface, state, url, locale?, steps?, expectDir?, storage?, cookies?, widths?, figma?: {file, node, map?, root?} }] }
+ * @param {unknown} raw parsed JSON: { defaults?: {baseUrl, locale, colorScheme, widths, storage, cookies, sameInAllLocales}, states: [{ surface, state, url, locale?, steps?, expectDir?, storage?, cookies?, widths?, sameInAllLocales?, figma?: {file, node, map?, root?} }] }
  * @param {string} baseDir folder that relative steps and map paths resolve against
- * @returns {object[]} one normalised state each: { index, surface, state, locale, url, steps, widths, figma, context }; url is absolute, context is the openPage context
+ * @returns {object[]} one normalised state each: { index, surface, state, locale, url, steps, sameInAllLocales, widths, figma, context }; url is absolute, context is the openPage context
  * @throws {UsageError} naming the state index and field of the first mistake
  */
 export function parseStates(raw, baseDir) {
