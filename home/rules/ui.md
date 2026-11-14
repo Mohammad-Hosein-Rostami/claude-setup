@@ -14,5 +14,5 @@ U9 | Honour reduced-motion; not color alone | rev
 U10 | Show status; confirm or undo destructive acts | rev
 U11 | Empty and error states give a next step | test
 U12 | Plain sentence-case copy; no placeholder text | grep
-U13 | Every supported locale and direction: logical CSS; in RTL only the typed value of phone/email/URL/code/number/card fields is left-to-right (placeholder, label, hint, error follow the page); open lists and menus translated; mirror directional icons | ui-coverage
+U13 | Every supported locale and direction: logical CSS; in RTL only the typed value of phone/email/URL/OTP/card fields is left-to-right (placeholder, label, hint, error follow the page; user name, password, plain numbers: decide with the owner); open lists and menus translated; mirror directional icons | ui-coverage
 U14 | Reuse the design-system or sibling component for a control; a look-alike is a fail | rev, ui-coverage

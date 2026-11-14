@@ -177,7 +177,7 @@ test('init rejects bad arguments with exit 2 and writes nothing', async () => {
   await assert.rejects(readFile(file, 'utf8'));
 });
 
-const SAME_FINDING = [{ check: 'bidi-field', element: 'input#email', detail: 'set dir="ltr" on the field' }];
+const SAME_FINDING = [{ check: 'bidi-field', element: 'input#email', detail: 'the value computes direction rtl' }];
 async function failingProject(count, { recordFindings = SAME_FINDING } = {}) {
   const widths = Array.from({ length: count }, (_, i) => 300 + i);
   const matrix = {
@@ -199,7 +199,7 @@ test('check groups 20 cells that fail for one reason: verdict first, one group w
   assert.equal(grouped.status, 1);
   const lines = grouped.stdout.split('\n');
   assert.equal(lines[0], 'result: FAIL, 20 cells, 1 cause');
-  assert.equal(lines.filter((l) => /^ {2}\[fail\] 20 cells: bidi-field input#email: set dir="ltr" on the field/.test(l)).length, 1);
+  assert.equal(lines.filter((l) => /^ {2}\[fail\] 20 cells: bidi-field input#email: the value computes direction rtl/.test(l)).length, 1);
   assert.equal(lines.filter((l) => /^ {4}\[fail\] fail: home rest en @30\d/.test(l)).length, 3);
   assert.match(grouped.stdout, /and 17 more \(--verbose lists every one\)/);
   const verbose = run('check', matrix, '--results', results, '--verbose');
