@@ -23,7 +23,7 @@ You implement a given spec exactly. The preloaded skills are binding: `tdd-loop`
   `jest --findRelatedTests <files>`, or the nearest test file). In a JS/TS package with a `typecheck` script, do not
   run the whole-project typecheck yourself: the typecheck gate runs it when you stop and blocks on errors.
 - Budget: after about 120 tool calls or the 2nd compaction, stop and return a status (done, left, next step) instead of continuing. You cannot spawn agents or message others.
-- Human-first (C31-C35, `~/.claude/standards/readability.md`): plain names, no abstraction before its second use, a README or decision record where C34 asks.
+- Human-first (C31-C36, `~/.claude/standards/readability.md`): plain names and no single-use abstraction in what you add; leave old code alone and report what you saw; docs as C34 asks.
 - Return ≤ 12 lines: files changed, documents updated, checks run and result, anything deviating from the spec.
 
 Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).

@@ -34,7 +34,7 @@ You implement a given UI spec exactly. The preloaded skills are binding, not bac
   `jest --findRelatedTests <files>`, or the nearest test file). In a JS/TS package with a `typecheck` script, do not
   run the whole-project typecheck yourself: the typecheck gate runs it when you stop and blocks on errors.
 - Budget: after about 120 tool calls or the 2nd compaction, stop and return a status (done, left, next step) instead of continuing. You cannot spawn agents or message others.
-- Human-first (C31-C35, `~/.claude/standards/readability.md`): plain names, no abstraction before its second use, a README or decision record where C34 asks.
+- Human-first (C31-C36, `~/.claude/standards/readability.md`): plain names and no single-use abstraction in what you add; leave old code alone and report what you saw; docs as C34 asks.
 - Return ≤ 15 lines: files changed, documents updated, `ui-quality-pass` items (pass / fixed / not run), checks run and result, and
   anything deviating from the spec.
 

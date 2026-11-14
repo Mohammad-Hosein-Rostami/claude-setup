@@ -10,11 +10,10 @@ Limits match C3/C4; enforce with the project's linter.
 3. Early returns over deep nesting. Named constants, not magic values. Prefer `const`/readonly, pure functions, side effects at the edges.
 4. Errors: never swallow (`catch {}`); validate at boundaries and trust internal types; throw typed errors that keep the cause; no floating promises (C9, C10).
 5. Comments say why, never what; delete commented-out code. Public functions get a doc comment (C27).
-6. Duplication: look for an existing helper first; extract on the third copy. Prefer duplication over the wrong abstraction. YAGNI: no option, interface or layer without a current caller.
-7. Composition over inheritance; small interfaces owned by the consumer; no long chains (`a.b.c.d()`).
+6. Duplication: look for an existing helper first; extract on the third copy (C2). Prefer duplication over the wrong abstraction. YAGNI: no option, interface or layer with a single use (C33).
+7. Composition over inheritance; an interface only at a real boundary (an external system, a second implementation or a test double), owned by the consumer; no long chains (`a.b.c.d()`).
 8. Match the neighbours: read two nearby files and copy naming, error style and imports first (C17).
-
-9. Read `~/.claude/standards/readability.md` (C31-C35). Last step, the no-AI test: could a developer with no AI find, run, read and change this from the repo alone?
+9. Read `~/.claude/standards/readability.md` (C31-C36). It governs new work and the lines you change, not old code. Last step, the no-AI test: could a developer with no AI find, run, read and change this from the repo alone?
 
 Before finishing, check the smells agents leave behind:
 

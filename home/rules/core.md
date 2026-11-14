@@ -5,7 +5,7 @@ C3 | One job per function: <=40 lines, <=4 params, depth <=3 | eslint
 C4 | Files <=300 lines; split by responsibility | eslint
 C5 | Intent-revealing names; no data/tmp/util/helper | eslint, rev
 C6 | No magic numbers or strings; use named constants | eslint
-C7 | Depend on interfaces at boundaries that have a real second use (C33); compose over inherit | rev
+C7 | Depend on interfaces at real boundaries (an external system, a second implementation or a test double); compose over inherit | rev
 C8 | Comments say why, not what; delete dead code | eslint, knip
 C9 | Never swallow errors; no empty catch; fail fast | eslint, grep
 C10 | Validate all external input at the boundary with a schema | grep, rev
@@ -29,7 +29,8 @@ C27 | Public functions and types you create or substantially edit have doc comme
 C29 | Done means fresh evidence: verify commands ran; no test deleted, skipped or weakened | verify-done
 C30 | Bash for the guard: write the command word out (no `$VAR` as the command), secrets via env or file, no rm -rf or push in the same call as a heredoc or `$(...)`; each ask stalls an unattended run up to 3 min | guard log
 C31 | Human-first: a developer with no AI can find, read, run and change it; of two designs with the same result take the easier to read; never trade away scope, accuracy or a performance target for it | rev
-C32 | Structure the ecosystem's standard way, by feature or domain; folder and file names say what is inside in the project's own words; no misc/common/shared/utils dumping grounds | readable, rev
-C33 | No abstraction before its second real use: no interface with one implementation, pass-through wrapper, factory, generic layer or option "for later"; inline it | rev
-C34 | Work leaves human documents in the repo's normal places: README of the touched area (what, how to run, test, change, undo), a decision record for a non-obvious choice (why, what was rejected), a changelog entry if the repo keeps one | readable, rev
-C35 | Configs explain themselves: a comment for why, units in names or comments, one place per setting, an example file for local values | rev
+C32 | New files and folders follow the language or framework's standard layout and are named for what they hold; no new misc/utils/common folders; in an existing repo follow its layout (C17) | readable, rev
+C33 | No abstraction with a single use: no interface with one implementation, pass-through wrapper, factory, generic layer or option "for later"; shared code is extracted per C2 | rev
+C34 | Docs in proportion, in the repo's existing places and format: a small fix needs only a clear commit message; a new module or changed behaviour updates the README of its area; a choice others would question gets a decision record where the repo keeps them (else a comment or the commit body); a changelog line only if the repo keeps one | readable, rev
+C35 | Config values you add or change explain themselves: a comment for any non-obvious value, units in the name or comment; do not split one setting across files; local values go in a git-ignored file with an example | rev
+C36 | C31-C35 govern new work and the lines a task changes. Existing code keeps its conventions (C17) and files the task does not need stay untouched (C18): no renames, moves, restructures, added headers or READMEs for old code unless the owner asks; report what you saw instead | rev

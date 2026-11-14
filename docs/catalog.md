@@ -54,7 +54,7 @@ Routing policy (which tier does what) is in `home/modes/_lead.md` (injected into
 
 | File | Applies to | Ids |
 | ---- | ---------- | --- |
-| `core.md` | always on | C1-C35 |
+| `core.md` | always on | C1-C36 |
 | `ui.md` | `**/*.css`, `**/*.scss`, `**/*.tsx`, `**/*.jsx`, `**/*.vue`, `**/*.html`, `**/styles/**`, `**/tokens/**` | U1-U12 |
 | `frontend.md` | `**/*.tsx`, `**/components/**` | F1-F10 |
 | `backend.md` | `**/server/**`, `**/api/**`, `**/*.service.ts`, `**/routes/**` | S1-S11, B1-B10 |
@@ -74,7 +74,7 @@ Rules are one line each (`id | rule | check`) and load when a matching file is i
 | `figma.md` | Figma to code conversion (used by `figma-pixel-perfect`, checked by `ui-check`) |
 | `frontend.md` | Frontend (F1-F10) |
 | `infra.md` | Infra / DevOps (I1-I6) |
-| `readability.md` | Readability for humans (C31-C35) |
+| `readability.md` | Readability for humans (C31-C36) |
 | `refactor.md` | Refactor (R1-R4) |
 | `security.md` | Security (S1-S11) |
 | `testing.md` | Testing (T1-T8) plus C11, C13 |
