@@ -17,7 +17,7 @@
 
 ## Direction (U13)
 - Use logical properties (`margin-inline-start`, `padding-inline`, `inset-inline-end`, `text-align: start`, `border-start-*`), never `left`/`right`; set `dir` on `<html>` from the locale.
-- Fields whose value is always left-to-right (phone, email, URL, code, number, card, OTP) keep `dir="ltr"` inside RTL pages, aligned to the start edge; their label and error text follow the page direction. Use `<bdi>` or `dir="auto"` for user-supplied names in mixed text.
+- A value that is always left-to-right (phone, email, URL, code, number, card, OTP) is typed and shown left-to-right in every language: put `dir="ltr"` on the input element itself, not on its wrapper. Only the value changes: the label, hint, error text and the field's place in the layout still follow the page direction. Take the value's alignment from the design; ask when the design has no RTL frame. Use `<bdi>` or `dir="auto"` for user-supplied names in mixed text.
 - Mirror icons that show direction (back, forward, chevron, progress, send); never mirror logos, media controls or clocks. Flip order of leading/trailing adornments (country prefix, clear button) with flex/grid, not per-locale CSS.
 - Strings grow (German, Persian run 30-40% longer than English): no fixed-width labels or buttons; wrap or truncate with a tooltip, never clip silently.
 - One font stack per script (Latin, Arabic/Persian, CJK) with a size/line-height that fits its glyph height; check digits (Latin, Arabic-Indic, Persian) in inputs and validators.
