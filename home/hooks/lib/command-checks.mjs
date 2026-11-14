@@ -1,9 +1,9 @@
 // Per-command rules of pre-bash-guard that need only one command's name and words: git, disk wipes, lockfile hand edits,
 // a variable used as the command name with rm-style flags, rm -r run by xargs or parallel (also inside the `sh -c` script they run), and
-// printing a stored keychain secret.
+// printing a stored secret (keychain, `gh auth token`), and `gh ssh-key add` of a file that is not `*.pub`.
 // Exports: checkGit(args, assigns), checkDiskWipe(cmd, args), checkLockfileEdit(cmd, args), checkHiddenRm(cmd, args),
-// checkStdinRm(cmd, args, before), checkStdinScriptRm(script, before), checkKeychainPrint(cmd, args) - each returns an ask reason, or
-// undefined when the command is fine.
+// checkStdinRm(cmd, args, before), checkStdinScriptRm(script, before), checkKeychainPrint(cmd, args), checkGhSecret(cmd, args) - each
+// returns an ask reason, or undefined when the command is fine.
 // Pure, no I/O. Every rule is an ask (the hook shows a timed dialog); a destructive one starts with "DESTRUCTIVE: ".
 import { commandName, commandOf } from './command-of.mjs';
 import { parsePushArgs, pushAsk } from './outward.mjs';
@@ -179,6 +179,7 @@ export function checkStdinScriptRm(script, before = []) {
   return removes ? stdinRmReason(runner) : undefined;
 }
 
+const SECRET_PRINT = 'prints a stored secret into the transcript; confirm it';
 const KEYCHAIN_PASSWORD_LOOKUP = /^find-(?:generic|internet)-password$/;
 const KEYCHAIN_DUMPS = new Set(['dump-keychain', 'export']);
 // options of find-generic-password / find-internet-password that take a value (the rest of the cluster, or the next word)
@@ -217,5 +218,35 @@ export function checkKeychainPrint(cmd, args) {
   while (args[i]?.startsWith('-')) i += args[i] === '-p' ? 2 : 1; // `security -q ...`, `security -p prompt ...`
   const [sub = '', ...rest] = args.slice(i);
   const prints = KEYCHAIN_DUMPS.has(sub) || (KEYCHAIN_PASSWORD_LOOKUP.test(sub) && printsPassword(rest));
-  return prints ? `security ${sub} prints a stored secret into the transcript; confirm it` : undefined;
+  return prints ? `security ${sub} ${SECRET_PRINT}` : undefined;
+}
+
+const GH_KEY_VALUE_OPTIONS = new Set(['-t', '--title', '--type']); // `gh ssh-key add` options that take the next word
+const STDIN_FROM = /^0?<$/; // `gh ssh-key add < key`: the key comes on stdin from the next word
+const BARE_OUTPUT = /^(?:\d*|&)>{1,2}$/; // `>`, `2>>`, `&>`: the target is the next word
+const OUTPUT_REDIRECTION = /^(?:\d*|&)>/; // `2>&1`, `>out`, `&>log`
+
+/** The key file of `gh ssh-key add [flags] <path>` (or `< path`): the first word after `add` that is no option, option value or output redirection. */
+function keyFileOf(args) {
+  for (let i = 2; i < args.length; i++) {
+    const word = args[i];
+    if (STDIN_FROM.test(word)) return args[i + 1];
+    if (GH_KEY_VALUE_OPTIONS.has(word) || BARE_OUTPUT.test(word)) i++;
+    else if (!word.startsWith('-') && !OUTPUT_REDIRECTION.test(word)) return word.replace(/^0?</, '');
+  }
+  return undefined;
+}
+
+/**
+ * `gh auth token` prints the stored GitHub token, like a keychain read; `gh ssh-key add <path>` uploads the file to the account, and a file
+ * that is not a public `*.pub` key may be the private key.
+ * @param {string} cmd the command name
+ * @param {string[]} args its words
+ * @returns {string | undefined} the ask reason, or undefined
+ */
+export function checkGhSecret(cmd, args) {
+  if (cmd !== 'gh') return undefined;
+  if (args[0] === 'auth' && args[1] === 'token') return `gh auth token ${SECRET_PRINT}`;
+  const keyFile = args[0] === 'ssh-key' && args[1] === 'add' ? keyFileOf(args) : undefined;
+  return keyFile === undefined || keyFile.endsWith('.pub') ? undefined : 'gh ssh-key add uploads a key file that is not a .pub public key; confirm it';
 }

@@ -16,8 +16,9 @@
 // --no-verify (and unique prefixes), `git -c core.hooksPath`, `HUSKY=0 git`, hand-editing lockfiles, a literal secret in the
 // command (lib/secrets.mjs; the text never repeats it), `git push` (not --dry-run), `gh release *`, `gh pr merge`, package
 // publish (lib/outward.mjs), ssh/scp/rsync/psql/mysql that write to a production host (lib/remote.mjs; list in
-// ~/.claude/private/prod-hosts), `security find-*-password -w|-g` / `dump-keychain` / `export` (prints a stored secret), and a private
-// credential file (`.ssh/id_*`, `.aws/credentials`, `.netrc`, gh `hosts.yml`) in one command line with a network sender or cloud upload
+// ~/.claude/private/prod-hosts), `security find-*-password -w|-g` / `dump-keychain` / `export` and `gh auth token` (print a stored secret),
+// `gh ssh-key add` of a file that is not `*.pub`, and a private credential file (`.ssh/id_*` or any non-public file directly under `.ssh`,
+// `.aws/credentials`, `.netrc`, gh `hosts.yml`, `.kube/config`, `.npmrc`, `.docker/config.json`, `.pypirc`) in one command line with a network sender or cloud upload
 // (`aws s3 cp`, `gsutil cp`, `rclone copy` ...), a whole `~/.ssh` / `.aws` / `.gnupg` folder given to a sender or archived before one, or a
 // credential fed to ssh's stdin, unless it is the value of an identity flag (`ssh|scp|sftp -i`, curl `--key`; lib/credential-send.mjs).
 // A literal-secret ask that the owner allowed (or let time out) is remembered for the rest of the session as sha256 digests
@@ -63,7 +64,9 @@ import { resolve } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { bashCodeWrites } from './lib/code-writes.mjs';
-import { checkDiskWipe, checkGit, checkHiddenRm, checkKeychainPrint, checkLockfileEdit, checkStdinRm, checkStdinScriptRm } from './lib/command-checks.mjs';
+import {
+  checkDiskWipe, checkGhSecret, checkGit, checkHiddenRm, checkKeychainPrint, checkLockfileEdit, checkStdinRm, checkStdinScriptRm,
+} from './lib/command-checks.mjs';
 import { commandOf } from './lib/command-of.mjs';
 import { checkCredentialSend } from './lib/credential-send.mjs';
 import { scanWrapped } from './lib/dangerous-scan.mjs';
@@ -149,6 +152,7 @@ function checkSimple({ cmd, args, assigns, before }, env) {
     checkHiddenRm(cmd, args),
     checkStdinRm(cmd, args, before),
     checkKeychainPrint(cmd, args),
+    checkGhSecret(cmd, args),
     checkDiskWipe(cmd, args),
     checkLockfileEdit(cmd, args),
     outwardAsk(cmd, args) ?? remoteAsk(cmd, args, [...assigns, ...hostVariables(env.vars)], env.prodHosts),
