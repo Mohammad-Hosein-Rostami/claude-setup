@@ -9,6 +9,7 @@ import { createGuardFollower, createSessionWatcher } from '../home/tools/watch/l
 import { isModelMismatch } from '../home/tools/watch/lib/subagents.mjs';
 
 const MIN = 60_000;
+const STEP = 30_000;
 const SESSION = 'cccccccc-1111-2222-3333-444444444444';
 const T0 = Date.parse('2026-11-14T10:00:00.000Z');
 const prompt = (text) => `${JSON.stringify({ type: 'user', timestamp: '2026-11-14T10:00:00.000Z', message: { content: text } })}\n`;
@@ -28,22 +29,25 @@ async function harness(t, extra = {}) {
   return { dir, path, emitted, records, clock, watcher };
 }
 
+// Polls every 30 s of fake time up to `target`, like the real loop, so no gap looks like a clock jump.
+async function advanceTo(clock, watcher, target) {
+  while (clock.now < target) {
+    clock.now = Math.min(target, clock.now + STEP);
+    await watcher.poll();
+  }
+}
+
 test('stall fires once after the limit, then RESUMED when the transcript is written again', async (t) => {
   const { path, emitted, clock, watcher } = await harness(t);
   await utimes(path, T0 / 1000, T0 / 1000);
   await watcher.poll();
-  clock.now = T0 + 19 * MIN;
-  await watcher.poll();
+  await advanceTo(clock, watcher, T0 + 19 * MIN);
   assert.deepEqual(emitted, []);
-  clock.now = T0 + 21 * MIN;
-  await watcher.poll();
-  clock.now = T0 + 30 * MIN;
-  await watcher.poll();
-  assert.deepEqual(emitted, ['cccccccc: STALL no transcript or subagent writes for 21 min']);
+  await advanceTo(clock, watcher, T0 + 30 * MIN);
+  assert.deepEqual(emitted, ['cccccccc: STALL no transcript or subagent writes for 20 min']);
   await appendFile(path, prompt('go on'));
   await utimes(path, (T0 + 31 * MIN) / 1000, (T0 + 31 * MIN) / 1000);
-  clock.now = T0 + 31 * MIN;
-  await watcher.poll();
+  await advanceTo(clock, watcher, T0 + 31 * MIN);
   assert.deepEqual(emitted.slice(1), ['cccccccc: OWNER go on', 'cccccccc: RESUMED writing again']);
 });
 
@@ -55,13 +59,25 @@ test('a subagent transcript write keeps the session from stalling', async (t) =>
   await watcher.poll();
   await writeFile(join(agentDir, 'agent-a1.jsonl'), '');
   await utimes(join(agentDir, 'agent-a1.jsonl'), (T0 + 15 * MIN) / 1000, (T0 + 15 * MIN) / 1000);
-  clock.now = T0 + 25 * MIN;
-  await watcher.poll();
+  await advanceTo(clock, watcher, T0 + 25 * MIN);
   assert.deepEqual(emitted, []);
-  clock.now = T0 + 40 * MIN;
-  await watcher.poll();
+  await advanceTo(clock, watcher, T0 + 40 * MIN);
   assert.equal(emitted.length, 1);
   assert.match(emitted[0], /STALL/);
+});
+
+test('a gap far larger than the poll interval (laptop sleep) restarts the stall timer instead of firing', async (t) => {
+  const { path, emitted, clock, watcher } = await harness(t);
+  await utimes(path, T0 / 1000, T0 / 1000);
+  await watcher.poll();
+  await advanceTo(clock, watcher, T0 + MIN);
+  clock.now = T0 + 3 * 60 * MIN; // three hours asleep
+  await watcher.poll();
+  await advanceTo(clock, watcher, T0 + 3 * 60 * MIN + 10 * MIN);
+  assert.deepEqual(emitted, [], 'no stall right after waking');
+  await advanceTo(clock, watcher, T0 + 3 * 60 * MIN + 25 * MIN);
+  assert.equal(emitted.length, 1, 'a real stall after waking still fires');
+  assert.match(emitted[0], /STALL no transcript or subagent writes for 20 min/);
 });
 
 test('a partial last line is not lost: it prints once its newline arrives', async (t) => {

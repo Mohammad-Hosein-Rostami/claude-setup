@@ -4,6 +4,8 @@
 // Invariants: pure apart from the INPUT_MODE memory (Claude Code repeats the mode every turn; only changes are events);
 // a line that is not valid JSON, or is not an object, yields nothing (a partial line is the tail's job, not ours).
 // A PROMPT event always carries a verbose line, but `owner` is false for meta, sidechain and compaction-summary entries.
+// A user entry whose content is an array is a prompt when it has text (or image) parts and no tool_result part: the text parts
+// that do not start with "<" are joined and `[+N images]` is appended (the old bash filter ignored these; deliberate improvement).
 
 const PROMPT_CHARS = 200;
 const ERROR_CHARS = 160;
@@ -18,10 +20,18 @@ const show = (value) => (value === null || value === undefined ? 'null' : String
 const head = (text, count) => Array.from(text).slice(0, count).join('');
 const flat = (text) => text.replaceAll('\n', ' ');
 
-function promptEvent(entry, stamp) {
-  const text = flat(head(entry.message.content, PROMPT_CHARS));
+function promptEvent(entry, stamp, text) {
   const owner = !(entry.isMeta || entry.isSidechain || entry.isCompactSummary);
   return { kind: 'PROMPT', line: `${stamp} PROMPT ${text}`, owner, promptText: text };
+}
+
+// Text of a content array: plain text parts joined by a space (parts that start with "<" are harness notices), then an image note.
+function arrayPromptText(blocks) {
+  const texts = blocks.filter((block) => block?.type === 'text' && typeof block.text === 'string' && !block.text.startsWith('<')).map((block) => block.text);
+  const images = blocks.filter((block) => block?.type === 'image').length;
+  const text = flat(head(texts.join(' '), PROMPT_CHARS));
+  if (images === 0) return text;
+  return text === '' ? `[+${images} images]` : `${text} [+${images} images]`;
 }
 
 function toolEvent(block, stamp) {
@@ -32,7 +42,7 @@ function toolEvent(block, stamp) {
     return { kind: 'AGENT', line: `${stamp} AGENT type=${agentType} model=${orElse(input.model, '-')} effort=${orElse(input.effort, '-')} bg=${orElse(input.run_in_background, false)} desc=${description}` };
   }
   if (block.name === 'Workflow') {
-    const script = orElse(input.script, '');
+    const script = typeof input.script === 'string' ? input.script : '';
     const agents = (script.match(AGENT_CALL) ?? []).length;
     return { kind: 'WORKFLOW', line: `${stamp} WORKFLOW agents=${agents} script_chars=${Array.from(script).length} path=${orElse(input.scriptPath, '-')}` };
   }
@@ -65,8 +75,11 @@ function errorEvents(entry, stamp) {
 
 function userEvents(entry, stamp) {
   const content = entry.message?.content;
-  if (typeof content === 'string') return content.startsWith('<') ? [] : [promptEvent(entry, stamp)];
-  return Array.isArray(content) ? errorEvents(entry, stamp) : [];
+  if (typeof content === 'string') return content.startsWith('<') ? [] : [promptEvent(entry, stamp, flat(head(content, PROMPT_CHARS)))];
+  if (!Array.isArray(content)) return [];
+  if (content.some((block) => block?.type === 'tool_result')) return errorEvents(entry, stamp);
+  const text = arrayPromptText(content);
+  return text === '' ? [] : [promptEvent(entry, stamp, text)];
 }
 
 /**

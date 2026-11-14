@@ -21,13 +21,20 @@ re-reads a file that shrinks and picks up a file that appears later. `--` ends t
 
 | Line | Meaning |
 | ---- | ------- |
-| `OWNER <first 200 chars>` | A real owner prompt (not meta, sidechain, compaction summary, task or cross-session notification). |
+| `OWNER <first 200 chars>` | A real owner prompt (not meta, sidechain, compaction summary, task or cross-session notification). A prompt whose content is an array (text plus images) counts: its text parts are joined and `[+N images]` is appended; an array with a `tool_result` part is not a prompt. Counting these is a deliberate improvement over the old bash filter, which ignored array content. An owner prompt that quotes "ERROR" is still an `OWNER` line; a meta, sidechain or compaction-summary entry is never an alert (only the harness's `Stop hook feedback` is). |
 | `<ts> COMPACT <trigger> <pre>-><post>` | A compaction. |
 | `<ts> ERR ...`, `... PROMPT Stop hook feedback...` | A tool error, API error, rate or usage limit (the alert words of the old `watch.sh`), and Stop hook feedback. |
 | `MODEL MISMATCH type=.. asked=.. ran=..` | A subagent ran on another model than asked, or on Fable or Opus with none asked. Covers the old `agent-watch.sh` alert. |
 | `GUARD <outcome> <hook>: <reason> \| <command>` | Guard outcome `deny`, `timeout`, `no-gui` or `dialog-failed` for a watched session only. Secret-ask timeouts are skipped (a secret-ask deny is shown). The command is masked with the guard's `maskSecrets` and cut to 60 characters. |
 | `STALL no transcript or subagent writes for N min` / `RESUMED writing again` | Once per stall, then when writing starts again. |
+| `WATCH_ERROR <label> <reason>` | The watcher's own problem: a line or poll that threw (same reason at most once a minute), `cannot read <file> (<code>)` (once per failure; `--once` then exits 1; a vanished file counts), or `WATCH_ERROR - fatal: ...` before a non-zero exit. The watch keeps going after anything but a fatal error. |
+| `WATCH_NOTE <label> ...` | A session id found in several project folders: the most recently written transcript is watched and the note names the folders. |
 | `SESSION_END pid=N` | The process registered for the session in `~/.claude/sessions/<pid>.json` is gone. Not reported when no registry file names the session. |
+
+Everything printed or logged is masked first (`lib/mask.mjs`: the guard's `maskSecrets`, plus token shapes, key=value secrets, long hex and base64-like runs; over-masking is accepted).
+A gap of more than 2 minutes between two polls (laptop sleep) restarts the stall timer instead of reporting a stall. A transcript replaced by another file
+(new inode or birth time, even a larger one) is re-read from its start. Subagent files are listed each poll but only stat-ed when new or recently changed
+(dormant ones every 20th poll) and read only until their model is decided; the decision is cached.
 
 `--log` adds every other event in the `live-watch.sh` format: `TOOL`, `AGENT`, `WORKFLOW`, `SKILL`, `USAGE`, `INPUT_MODE` (only
 changes), plus `AGENT_RAN type= asked= depth= ran=` per subagent (the old `agents.log`) and `STALL`/`RESUMED`/`SESSION_END`.
@@ -35,6 +42,6 @@ changes), plus `AGENT_RAN type= asked= depth= ran=` per subagent (the old `agent
 ## Layout
 
 `watch.mjs` wires arguments, files and stdout. `lib/`: `args` (CLI validation), `resolve` (id to path, session pid),
-`classify` (transcript line to verbose event), `actions` (which events are alerts), `guard` (guard-log filter), `stall`
+`classify` (transcript line to verbose event), `actions` (which events are alerts), `mask`, `errors` (WATCH_ERROR reporter), `guard` (guard-log filter), `stall`
 (detector, clock injected), `tail` (follow a file), `subagents` (model check, newest write), `watcher` (one session, guard follower).
 Tests: `tests/watch*.test.mjs`.

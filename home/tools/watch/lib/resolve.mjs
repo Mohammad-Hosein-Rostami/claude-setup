@@ -2,7 +2,8 @@
 // isProcessAlive(pid), SESSION_ID.
 // A target is either a transcript path (contains a separator or ends in .jsonl; its directory must exist, the file may appear
 // later) or a session id, looked up as ~/.claude/projects/*/<id>.jsonl. The id is validated before it touches a path (no globbing,
-// no `..`). The label is the first 8 characters of the id. The sessions registry (~/.claude/sessions/<pid>.json) is how a
+// no `..`). When the id is found in several project folders the most recently written transcript wins and `note` (a WATCH_NOTE
+// line) names the folders. The label is the first 8 characters of the id. The sessions registry (~/.claude/sessions/<pid>.json) is how a
 // session's end is detected: the process behind the id is no longer alive.
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -21,7 +22,7 @@ async function isDirectory(path) {
 /**
  * @param {string} arg session id or transcript path from the command line
  * @param {string} projectsDir ~/.claude/projects
- * @returns {Promise<{ path: string, sessionId: string, label: string }>}
+ * @returns {Promise<{ path: string, sessionId: string, label: string, note?: string }>}
  * @throws {UsageError} when the id is malformed or no transcript carries it, or a path's directory is missing
  */
 export async function resolveTarget(arg, projectsDir) {
@@ -32,15 +33,27 @@ export async function resolveTarget(arg, projectsDir) {
     return { path, sessionId, label: sessionId.slice(0, LABEL_CHARS) };
   }
   if (!SESSION_ID.test(arg)) throw new UsageError(`"${arg}" is neither a transcript path nor a session id`);
+  const found = await transcriptsNamed(arg, projectsDir);
+  if (found.length === 0) throw new UsageError(`session id ${arg} not found under ${projectsDir}/*/${arg}${TRANSCRIPT_EXT}`);
+  found.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const label = arg.slice(0, LABEL_CHARS);
+  const result = { path: found[0].path, sessionId: arg, label };
+  if (found.length > 1) result.note = `WATCH_NOTE ${label} session id is in ${found.length} project folders (${found.map((f) => f.project).join(', ')}); watching the most recently written: ${found[0].project}`;
+  return result;
+}
+
+async function transcriptsNamed(sessionId, projectsDir) {
   let projects = [];
-  try { projects = await readdir(projectsDir); } catch { /* no projects folder: reported as not found below */ }
+  try { projects = await readdir(projectsDir); } catch { /* no projects folder: reported as not found by the caller */ }
+  const found = [];
   for (const project of projects) {
-    const path = join(projectsDir, project, `${arg}${TRANSCRIPT_EXT}`);
+    const path = join(projectsDir, project, `${sessionId}${TRANSCRIPT_EXT}`);
     try {
-      if ((await stat(path)).isFile()) return { path, sessionId: arg, label: arg.slice(0, LABEL_CHARS) };
+      const info = await stat(path);
+      if (info.isFile()) found.push({ project, path, mtimeMs: info.mtimeMs });
     } catch { /* not in this project folder */ }
   }
-  throw new UsageError(`session id ${arg} not found under ${projectsDir}/*/${arg}${TRANSCRIPT_EXT}`);
+  return found;
 }
 
 /**

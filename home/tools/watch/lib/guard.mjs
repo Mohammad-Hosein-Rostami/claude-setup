@@ -2,9 +2,9 @@
 // Exports: guardAction(rawLine, watched) -> string | undefined, watched = Map<sessionId, label>.
 // Printed: outcome deny, timeout, no-gui or dialog-failed, for a watched session only. A secret-ask that timed out or had no
 // dialog is skipped (the guard goes ahead as Allow by design); a secret-ask deny is printed.
-// Invariants: never prints the command whole: it is masked with the guard's own maskSecrets, flattened and cut to 60 chars;
+// Invariants: never prints the command whole: it is masked (lib/mask.mjs, which starts from the guard's own maskSecrets), flattened and cut to 60 chars;
 // the reason is masked and cut too; control characters become spaces so one record is one notification line.
-import { maskSecrets } from '../../../hooks/lib/secrets.mjs';
+import { maskText } from './mask.mjs';
 
 const REPORTED_OUTCOMES = new Set(['deny', 'timeout', 'no-gui', 'dialog-failed']);
 const SECRET_ASK = 'literal password/token';
@@ -12,7 +12,7 @@ const COMMAND_CHARS = 60;
 const REASON_CHARS = 120;
 const CONTROL_CHARS = /[\p{Cc}\u2028\u2029]/gu;
 
-const clean = (text, limit) => Array.from(maskSecrets(String(text ?? '')).replace(CONTROL_CHARS, ' ')).slice(0, limit).join('');
+const clean = (text, limit) => Array.from(maskText(text).replace(CONTROL_CHARS, ' ')).slice(0, limit).join('');
 
 /**
  * @param {string} rawLine one line of the guard log
