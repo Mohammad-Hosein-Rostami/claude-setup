@@ -34,11 +34,26 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
 - Guard dialogs (`git push`, publish, `rm -rf` outside the project, prod-host writes, literal secrets) default to
   Allow and go ahead after 180 s (`CLAUDE_ASK_TIMEOUT_S`); a secret-only ask after 30 s. Only a click on Deny
   blocks. Every ask and its outcome is in `~/.claude/logs/guard.jsonl`.
+- Some asks are bounced once instead of waiting: when the agent can fix the command itself (a variable as the command
+  word, a risky word inside `$(...)`, a secret typed in the command), the guard refuses it at once and says what to
+  change, and the agent retries in seconds. The same command sent again unchanged asks you as above.
 - Watch a run from a second session: `node ~/.claude/tools/watch/watch.mjs <session-id>` under the Monitor tool; it
   prints one line per event that needs action and flags a stall. See its README (`home/tools/watch/README.md`).
+  With `--exit-on-event` in a background command it prints the first such event and exits, so a quiet hour costs the
+  lead no turns.
+- A run that must survive a dropped connection starts a watch on its own session id with
+  `--exit-on-event api-error,stall,limit`; when the watch exits, the run is woken and carries on.
 - Background agents hand decisions to the lead through the ask queue: `node ~/.claude/tools/ask/ask.mjs init` prints
   the queue path, and the lead runs Monitor on `node ~/.claude/tools/ask/ask.mjs watch --queue <path>`. See
   `home/tools/ask/README.md` and the `ask-owner` skill.
+
+## What to expect from agents
+- Agents get one full brief (checks, failure cases to test, defaults) and finish it instead of stopping to ask about
+  technical details; each default they took is listed in the report. Only your decisions (scope, money, irreversible,
+  credentials) reach you. Expect fewer status messages.
+- Before reporting, an agent tries to break its own work and says what it tried. The independent review still runs.
+- Review findings go back in one message. An agent that has been idle over 5 minutes is replaced by a fresh one that
+  gets the spec and the diff, because resuming bills its old context again.
 
 ## Keeping context
 - Auto-compaction runs at a 400000-token window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`); the status line shows the
