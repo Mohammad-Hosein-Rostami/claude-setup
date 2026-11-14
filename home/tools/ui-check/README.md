@@ -49,11 +49,13 @@ Every value is validated before the browser starts; an unknown value exits 2 nam
 
 - `--locale <bcp47>`: browser context locale (`navigator.language` and `Accept-Language`), e.g. `fa-IR`. A malformed tag exits 2; the tag is recorded in its canonical form (`fa-ir` becomes `fa-IR`).
 - `--color-scheme light|dark`: `prefers-color-scheme` (default `light`).
-- `--storage key=value` (repeatable): `localStorage` entries set before the page's scripts run, only on the `--url` origin (a redirect to another origin gets nothing). The value is everything after the first `=`.
-- `--cookie key=value` (repeatable): cookies for the `--url` origin; needs an `http(s)` URL. The name must be a valid cookie token and the value must not contain `;`.
+- `--storage key=value` (repeatable): `localStorage` entries set before the page's scripts run, only on the `--url` origin (a redirect to another origin gets nothing), and only once per tab: a reload does not overwrite what the app stored since, so a language switch by click and reload sticks. The value is everything after the first `=`.
+- `--cookie key=value` (repeatable): cookies for the `--url` host; needs an `http(s)` URL. Cookies are scoped by host, not port: a redirect to another port of the same host sends them too. The name must be a valid cookie token and the value must not contain `;`.
 - `--expect-dir ltr|rtl`: after load and steps, exit 2 with `--expect-dir rtl: the computed direction is ltr ...` when the computed `direction` of `document.documentElement` differs. It proves the language switch really happened, so a pass is not an LTR page measured by mistake. Put it together with `--storage`/`--cookie`/`--steps` that switch the language.
 
 Finding `bidi-field` (`responsive`): in a document whose computed direction is rtl, a visible `input`/`textarea` whose `type` is `tel`/`email`/`url`/`number`, or `inputmode` is `numeric`/`decimal`/`tel`/`email`/`url`, or `autocomplete` contains `tel`/`email`/`url`/`one-time-code`/`cc-number`/`postal-code`, and whose own computed `direction` is rtl. The value reads left to right, so set `dir="ltr"` on the field (alignment may stay at the start edge). Chromium's built-in style already makes a bare `type=tel` input ltr, so there it fires for `email`/`url`/`number`/`inputmode`/`autocomplete` fields, and for `tel` only when page CSS forces rtl (e.g. `direction: inherit`; fix that rule, an attribute does not beat it). One finding per field per width.
+
+Hint `bidi-field?` (`responsive`): the same document and field direction, but the field has no type/inputmode/autocomplete hint, is a plain text field (`type=text` or none, or a textarea), and its `name`, `id`, `autocomplete` or `aria-label` matches `/phone|mobile|tel|otp|code|email|url|iban|card/i`. It is listed in the report and in `findings`, but never fails the run (verdict and exit code ignore it).
 
 ## `batch`
 
@@ -74,11 +76,14 @@ Finding `bidi-field` (`responsive`): in a document whose computed direction is r
 
 - `defaults` (all optional): `baseUrl` (a state `url` is resolved against it), `locale`, `colorScheme`, `widths`, `storage`, `cookies` (objects of string values). A state's own `locale`, `widths` replace the default; its `storage`/`cookies` are merged by key over the default's.
 - State: `surface`, `state`, `url` required. `steps` is an array (same actions as `--steps`) or a path to a steps file, relative to the states file. `figma` is `{file, node}` (the cache `figma-pull` filled), plus optional `map` (path relative to the states file) and `root` (selector, default `body`; the compare screenshot and size gate use it). A state needs `figma` or widths. `surface` + `state` + `locale` must be unique.
-- `compare` runs for a state with `figma` (tolerances as the `compare` command, `--max-diff` default), `responsive` for a state with widths (default widths apply to every state, figma or not); both run when both are present. `--only` keeps the listed surfaces and rejects an unknown one.
+- `compare` runs for a state with `figma` (tolerances as the `compare` command, `--max-diff` default), `responsive` for a state with widths (default widths apply to every state, figma or not); both run when both are present. `--only` keeps the listed surfaces; a list that mixes known and unknown surfaces exits 2 naming the unknown one.
 - A state that throws (bad step, HTTP error, `expectDir` mismatch, missing Figma cache) becomes failing records with the error as the finding, and the run goes on.
-- Exit `1` when any record fails, `2` for a bad flag or states file, else `0`.
+- A hint finding (`bidi-field?`) keeps a record `pass`.
+- Zero states to run (empty `states` array, or `--only` matching no surface) prints why on stderr, writes `results.json` as `[]` and a FAIL `summary.md`, and exits `1`.
+- `results.json` and `summary.md` of an earlier run in the same `--out` are deleted at the start, so a failed or empty run never leaves stale passes.
+- Exit `1` when any record fails or none ran, `2` for a bad flag or states file, else `0`.
 
-Output in `--out` (default under the OS temp dir): `results.json`, `summary.md` (one table row per state x width), and per state a folder `<index>-<surface>--<state>--<locale>/{compare,responsive}/` with the usual `report.*` and screenshots. `results.json` is an array of records read by `ui-coverage check --results`; the field names are a contract:
+Output in `--out` (default under the OS temp dir): `results.json`, `summary.md` (one table row per state x width), and per state a folder `<index>-<surface>--<state>--<locale>/{compare,responsive}/` with the usual `report.*` and screenshots. The state folder always exists; when a part throws, its stack is in `<part>.error.txt` there (also a context that fails to close, which turns that part's records into failures). `results.json` is an array of records read by `ui-coverage check --results`; the field names are a contract:
 
 ```json
 { "surface": "login", "state": "rtl-dropdown-open", "locale": "fa-IR", "width": 320, "status": "fail",

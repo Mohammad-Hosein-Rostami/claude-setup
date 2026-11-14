@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parse, need, toNumber } from '../lib/args.mjs';
 import { auditInPage } from '../lib/audit.mjs';
-import { bidiFieldFindings } from '../lib/bidi.mjs';
+import { bidiFieldFindings, isHint } from '../lib/bidi.mjs';
 import { loadChromium, launch, openPage } from '../lib/browser.mjs';
 import { CONTEXT_OPTIONS, readContextFlags, validateWidths } from '../lib/context.mjs';
 import { loadSteps } from '../lib/steps.mjs';
@@ -56,10 +56,10 @@ export async function auditAll(browser, { widths, target, outDir }) {
   fs.mkdirSync(outDir, { recursive: true });
   const findings = [];
   for (const width of widths) findings.push(...await auditWidth(browser, target, width, outDir));
-  const pass = findings.length === 0;
+  const pass = findings.every(isHint); // hints are reported but never fail the run
   const md = writeReport(outDir, {
     title: 'ui-check responsive', verdict: pass ? 'PASS' : 'FAIL',
-    summary: [`widths: ${widths.join(', ')}`, `findings: ${findings.length}`, `screenshots: ${outDir}/w<width>.png`],
+    summary: [`widths: ${widths.join(', ')}`, `findings: ${findings.length}${findings.some(isHint) ? ` (${findings.filter(isHint).length} hints, not failures)` : ''}`, `screenshots: ${outDir}/w<width>.png`],
     head: ['width', 'check', 'element', 'detail'], rows: findings.map((f) => [f.width, f.check, f.element, f.detail]), data: { findings },
   });
   return { pass, md, findings };

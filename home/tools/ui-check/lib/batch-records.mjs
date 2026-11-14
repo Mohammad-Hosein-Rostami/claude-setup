@@ -1,16 +1,17 @@
 // Purpose: build the `batch` result records and write results.json and summary.md.
-// Exports: compareRecords, responsiveRecords, errorRecords, exitCodeFor, summaryMarkdown, writeBatchResults.
+// Exports: compareRecords, responsiveRecords, errorRecords, withCloseFailures, exitCodeFor, summaryMarkdown, writeBatchResults.
 // Invariant: a record is { surface, state, locale, width|null, status: "pass"|"fail", evidence, findings }; another tool
 // (`ui-coverage check --results`) reads these exact field names, so never rename them. evidence is the path of that state's report.
 import fs from 'node:fs';
 import path from 'node:path';
+import { isHint } from './bidi.mjs';
 import { tableRow } from './report.mjs';
 
 const SUMMARY_HEAD = ['surface', 'state', 'locale', 'width', 'status', 'findings', 'evidence'];
 const NONE = '-';
 
 function record(state, width, findings, evidence) {
-  return { surface: state.surface, state: state.state, locale: state.locale, width, status: findings.length === 0 ? 'pass' : 'fail', evidence, findings };
+  return { surface: state.surface, state: state.state, locale: state.locale, width, status: findings.every(isHint) ? 'pass' : 'fail', evidence, findings };
 }
 
 /**
@@ -54,11 +55,24 @@ export function errorRecords(state, widths, error, stateDir) {
   return widths.map((width) => record(state, width, findings, stateDir));
 }
 
-/** 1 when any record fails, else 0. */
-export const exitCodeFor = (records) => (records.some((r) => r.status === 'fail') ? 1 : 0);
+/**
+ * Add a failing finding per context that could not be closed (a crashed browser), so the failure is recorded and the run goes on.
+ * @param {object[]} records records of one part of a state
+ * @param {object} state normalised state
+ * @param {string[]} messages close error messages; none = records unchanged
+ */
+export function withCloseFailures(records, state, messages) {
+  if (messages.length === 0) return records;
+  const findings = messages.map((message) => ({ check: 'error', element: state.url, detail: `closing the browser context failed: ${message}` }));
+  return records.map((r) => ({ ...r, status: 'fail', findings: [...r.findings, ...findings] }));
+}
+
+/** 1 when any record fails, and also when there are no records at all (nothing ran, so nothing is proved). */
+export const exitCodeFor = (records) => (records.length === 0 || records.some((r) => r.status === 'fail') ? 1 : 0);
 
 /** summary.md content: verdict, counts, and one table row per state x width. */
 export function summaryMarkdown(records) {
+  if (records.length === 0) return '# ui-check batch: FAIL\n- no states ran\n';
   const failed = records.filter((r) => r.status === 'fail').length;
   const rows = records.map((r) => tableRow([r.surface, r.state, r.locale ?? NONE, r.width ?? NONE, r.status, r.findings.length, r.evidence]));
   return [`# ui-check batch: ${failed === 0 ? 'PASS' : 'FAIL'}`, `- records: ${records.length}, failed: ${failed}`, '', tableRow(SUMMARY_HEAD), tableRow(SUMMARY_HEAD.map(() => '---')), ...rows, ''].join('\n');

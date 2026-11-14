@@ -1,0 +1,10 @@
+<!doctype html><html><meta charset="utf-8"><title>switch</title>
+<script>
+  // Direction follows localStorage "lang"; the button switches the language and reloads, like an app's language menu.
+  var lang = localStorage.getItem('lang');
+  document.documentElement.dir = lang === 'fa' ? 'rtl' : 'ltr';
+  if (lang === 'fa') document.documentElement.dataset.switched = '1';
+</script>
+<body style="margin:0;font:16px sans-serif">
+<button id="switch" style="width:120px;height:40px" onclick="localStorage.setItem('lang', 'fa'); location.reload()">fa</button>
+</body></html>

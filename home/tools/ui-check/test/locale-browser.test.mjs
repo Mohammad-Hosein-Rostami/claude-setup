@@ -49,6 +49,8 @@ test('responsive reports bidi-field for a tel input in an rtl document, and not 
     const clean = await ui('responsive', '--url', fixture(name), '--widths', '320', '--out', path.join(dir, name));
     assert.equal(clean.code, 0, `${name}: ${clean.stdout}${clean.stderr}`);
   }
+  // A text field named "mobile" is only a hint: reported, run still passes.
+  assert.match(fs.readFileSync(path.join(dir, 'rtl-ok.html', 'report.md'), 'utf8'), /PASS[\s\S]*bidi-field\? \| input#mobile/);
 });
 
 test('--expect-dir rtl passes on an rtl page and fails with a clear error on an ltr page', { skip: !project }, async () => {
@@ -67,6 +69,15 @@ test('--storage is set before page scripts run: the language switch flips the di
   assert.equal(withStorage.code, 0, withStorage.stdout + withStorage.stderr);
   const without = await ui(...args, '--out', path.join(dir, 'b'));
   assert.equal(without.code, 2, 'no storage = ltr page, so --expect-dir rtl must fail');
+});
+
+test('--storage seeds once: a language switch by click and reload is not undone by the seed', { skip: !project }, async () => {
+  const dir = tmp();
+  const steps = path.join(dir, 'steps.json');
+  fs.writeFileSync(steps, JSON.stringify([{ action: 'click', selector: '#switch' }, { action: 'waitFor', selector: 'html[data-switched]' }]));
+  const args = ['responsive', '--url', fixture('switch.html'), '--widths', '320', '--steps', steps, '--expect-dir', 'rtl'];
+  const seeded = await ui(...args, '--storage', 'lang=en', '--out', path.join(dir, 'a'));
+  assert.equal(seeded.code, 0, seeded.stdout + seeded.stderr);
 });
 
 test('--locale reaches navigator.language, --color-scheme dark reaches the media query', { skip: !project }, async () => {

@@ -83,13 +83,20 @@ function pageOrigin(url) {
   return `${protocol}//${host}`;
 }
 
-/** Set localStorage entries before any page script runs, only on the --url origin (a redirect elsewhere is left alone). */
+const SEEDED_MARKER = '__ui-check-seeded';
+
+/**
+ * Set localStorage entries before any page script runs, once per tab and only on the --url origin (a redirect elsewhere is left alone).
+ * The init script runs again on every navigation, so a sessionStorage marker stops a reload from overwriting what the app stored since
+ * (a language switch by click and reload must stick).
+ */
 async function seedStorage(context, url, storage) {
   const entries = storage.map(({ name, value }) => [name, value]);
-  await context.addInitScript(({ origin, entries: pairs }) => {
-    if (`${location.protocol}//${location.host}` !== origin) return;
+  await context.addInitScript(({ origin, entries: pairs, marker }) => {
+    if (`${location.protocol}//${location.host}` !== origin || sessionStorage.getItem(marker)) return;
+    sessionStorage.setItem(marker, '1');
     for (const [key, value] of pairs) localStorage.setItem(key, value);
-  }, { origin: pageOrigin(url), entries });
+  }, { origin: pageOrigin(url), entries, marker: SEEDED_MARKER });
 }
 
 async function seedCookies(context, url, cookies) {

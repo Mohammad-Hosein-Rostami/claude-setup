@@ -6,7 +6,7 @@
  * Runs inside the page. Returns layout-invariant violations for the current viewport.
  * @param {{minTarget: number, minText: number, smallViewport: number, max: number}} cfg
  * @returns {{scrollWidth: number, clientWidth: number, findings: {check: string, element: string, detail: string}[],
- *   docDirection: string, fields: {element: string, type: string, inputmode: string, autocomplete: string, direction: string, visible: boolean}[]}}
+ *   docDirection: string, fields: {element: string, type: string, inputmode: string, autocomplete: string, name: string, id: string, ariaLabel: string, direction: string, visible: boolean}[]}}
  */
 export function auditInPage(cfg) {
   const findings = [];
@@ -37,7 +37,7 @@ export function auditInPage(cfg) {
     const s = getComputedStyle(el);
     if (!shown(el, r, s)) continue;
     if (el.matches('input,textarea')) {
-      fields.push({ element: label(el), type: el.getAttribute('type') ?? '', inputmode: el.getAttribute('inputmode') ?? '', autocomplete: el.getAttribute('autocomplete') ?? '', direction: s.direction, visible: true });
+      fields.push({ element: label(el), type: el.getAttribute('type') ?? '', inputmode: el.getAttribute('inputmode') ?? '', autocomplete: el.getAttribute('autocomplete') ?? '', name: el.getAttribute('name') ?? '', id: el.id, ariaLabel: el.getAttribute('aria-label') ?? '', direction: s.direction, visible: true });
     }
     if ((r.right > vw + 1 || r.left < -1) && s.position !== 'fixed' && !clippedByAncestor(el)) {
       add('offscreen', el, `x ${Math.round(r.left)}..${Math.round(r.right)} outside 0..${vw}`);

@@ -1,5 +1,5 @@
 // Purpose: read and validate the `batch --states` file and select surfaces for `--only`.
-// Exports: loadStatesFile, parseStates, selectSurfaces. Invariants: pure apart from reading the file and any steps file it names;
+// Exports: loadStatesFile, parseStates, selectSurfaces (an empty states list is valid here; `batch` turns it into exit 1). Invariants: pure apart from reading the file and any steps file it names;
 // every schema error is a UsageError that names the state index and field (`states[2].locale: ...`); unknown fields are rejected;
 // nothing is defaulted silently except what `defaults` states.
 import fs from 'node:fs';
@@ -106,7 +106,7 @@ function readState(raw, index, defaults, baseDir) {
  */
 export function parseStates(raw, baseDir) {
   checkKeys(raw, ['defaults', 'states'], 'states file');
-  if (!Array.isArray(raw.states) || raw.states.length === 0) throw new UsageError('states: must be a non-empty array');
+  if (!Array.isArray(raw.states)) throw new UsageError('states: must be an array');
   const defaults = readDefaults(raw.defaults);
   const seen = new Set();
   return raw.states.map((entry, index) => {
@@ -134,13 +134,15 @@ export function loadStatesFile(file) {
  * Keep the states whose surface is listed in --only.
  * @param {object[]} states output of parseStates
  * @param {string|undefined} only comma-separated surfaces; undefined keeps all
- * @throws {UsageError} when a listed surface has no state
+ * @returns {object[]} the selected states; empty when no listed surface exists (the caller reports "nothing to run")
+ * @throws {UsageError} when some listed surfaces exist and others do not (a typo that would silently skip a surface)
  */
 export function selectSurfaces(states, only) {
   if (only === undefined) return states;
   const wanted = only.split(',').map((name) => name.trim()).filter(Boolean);
   const known = new Set(states.map((s) => s.surface));
+  const selected = states.filter((s) => wanted.includes(s.surface));
   const missing = wanted.filter((name) => !known.has(name));
-  if (wanted.length === 0 || missing.length > 0) throw new UsageError(`--only: unknown surface ${JSON.stringify(missing.join(',') || only)} (known: ${[...known].join(', ')})`);
-  return states.filter((s) => wanted.includes(s.surface));
+  if (missing.length > 0 && selected.length > 0) throw new UsageError(`--only: unknown surface ${JSON.stringify(missing.join(','))} (known: ${[...known].join(', ')})`);
+  return selected;
 }

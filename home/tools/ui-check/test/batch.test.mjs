@@ -4,12 +4,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import { parse } from '../lib/args.mjs';
 import { compareRecords, errorRecords, exitCodeFor, responsiveRecords, summaryMarkdown, writeBatchResults } from '../lib/batch-records.mjs';
+import { isHint } from '../lib/bidi.mjs';
 import { UsageError } from '../lib/errors.mjs';
 import { loadStatesFile, parseStates, selectSurfaces } from '../lib/states.mjs';
-import { options as batchOptions } from '../commands/batch.mjs';
+import { guarded, options as batchOptions, run as runBatch, runState } from '../commands/batch.mjs';
 
 const usage = (pattern) => (error) => error instanceof UsageError && pattern.test(error.message);
 const BASE = '/tmp/states';
@@ -60,7 +61,8 @@ test('schema errors name the state index and the field', () => {
 
 test('top-level and defaults errors; a state with neither figma nor widths; a duplicate state', () => {
   assert.throws(() => parseStates([], BASE), usage(/object/));
-  assert.throws(() => parseStates({ states: [] }, BASE), usage(/states.*non-empty/));
+  assert.throws(() => parseStates({ states: 'x' }, BASE), usage(/states.*array/));
+  assert.deepEqual(parseStates({ states: [] }, BASE), []);
   assert.throws(() => parseStates({ states: [{}], extra: 1 }, BASE), usage(/unknown field "extra"/));
   bad((r) => { r.defaults.colorScheme = 'blue'; }, /defaults\.colorScheme/);
   bad((r) => { r.defaults.widths = []; }, /defaults\.widths/);
@@ -86,12 +88,13 @@ test('steps may be a path (relative to the states file) to a steps JSON file', (
   assert.deepEqual(parseStates(raw, dir)[0].steps, [{ action: 'blur' }]);
 });
 
-test('--only keeps the listed surfaces and rejects an unknown one', () => {
+test('--only keeps the listed surfaces; a partly unknown list is rejected, a fully unknown one selects nothing', () => {
   const states = parseStates(good(), BASE);
   assert.deepEqual(selectSurfaces(states, 'home').map((s) => s.surface), ['home']);
   assert.equal(selectSurfaces(states, 'home,login').length, 2);
   assert.equal(selectSurfaces(states, undefined).length, 2);
-  assert.throws(() => selectSurfaces(states, 'nope'), usage(/--only.*nope/));
+  assert.deepEqual(selectSurfaces(states, 'nope'), [], 'nothing matches: the run reports it, selection does not throw');
+  assert.throws(() => selectSurfaces(states, 'home,nope'), usage(/--only.*nope/));
 });
 
 test('batch flags: --states required elsewhere, --only and --out parse, unknown flags rejected', () => {
@@ -142,4 +145,68 @@ test('writeBatchResults writes results.json (record fields unchanged) and summar
   assert.equal(exitCodeFor(records), 1);
   assert.equal(exitCodeFor(records.filter((r) => r.status === 'pass')), 0);
   assert.match(summaryMarkdown(records), /^# ui-check batch: FAIL/);
+});
+
+const quiet = () => mock.method(console, 'error', () => {});
+const noBrowser = { contexts: () => [], close: async () => {} };
+
+test('an error record\'s evidence folder exists, holds the stack, and the throwing part does not stop the run', async () => {
+  const outRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'batch-out-'));
+  const missingCache = { ...parseStates(good(), BASE)[1], figma: { cache: path.join(outRoot, 'no-such-cache'), map: null, root: 'body' }, widths: null };
+  const records = await runState(noBrowser, missingCache, outRoot);
+  assert.equal(records[0].status, 'fail');
+  assert.ok(fs.existsSync(records[0].evidence), 'evidence path exists');
+  assert.match(fs.readFileSync(path.join(records[0].evidence, 'compare.error.txt'), 'utf8'), /UsageError[\s\S]*at /);
+});
+
+test('a context.close() that throws is recorded as a failure and does not abort the run', async () => {
+  const outRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'batch-out-'));
+  const browser = { contexts: () => [{ close: async () => { throw new Error('browser crashed'); } }] };
+  const passing = async () => responsiveRecords(state, [320], { findings: [], md: '/o/r.md' });
+  const records = await guarded(browser, { state, dir: path.join(outRoot, 's'), part: 'responsive', slots: [320], job: passing });
+  assert.equal(records[0].status, 'fail');
+  assert.match(records[0].findings.at(-1).detail, /browser crashed/);
+  assert.ok(fs.existsSync(path.join(outRoot, 's', 'responsive.error.txt')), 'the close failure is kept next to the reports');
+});
+
+test('hint findings do not fail a record but stay in its findings', () => {
+  const hint = { width: 320, check: 'bidi-field?', element: 'input#p', detail: 'maybe' };
+  const [record] = responsiveRecords(state, [320], { findings: [hint], md: '/o/r.md' });
+  assert.deepEqual([record.status, record.findings.length, isHint(record.findings[0])], ['pass', 1, true]);
+  assert.equal(exitCodeFor([record]), 0);
+});
+
+test('zero states: exit 1, a clear message, results.json is [] and a stale one is gone', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'batch-zero-'));
+  const out = path.join(dir, 'out');
+  fs.mkdirSync(out);
+  fs.writeFileSync(path.join(out, 'results.json'), '[{"status":"pass"}]');
+  fs.writeFileSync(path.join(out, 'summary.md'), '# ui-check batch: PASS');
+  const file = path.join(dir, 'states.json');
+  const errors = quiet();
+  try {
+    fs.writeFileSync(file, JSON.stringify({ states: [] }));
+    assert.equal(await runBatch(['--states', file, '--out', out]), 1);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'results.json'), 'utf8')), []);
+    assert.match(fs.readFileSync(path.join(out, 'summary.md'), 'utf8'), /FAIL[\s\S]*no states ran/);
+    assert.match(errors.mock.calls[0].arguments[0], /no states to run/);
+    fs.writeFileSync(file, JSON.stringify(good()));
+    fs.writeFileSync(path.join(out, 'results.json'), '[{"status":"pass"}]');
+    assert.equal(await runBatch(['--states', file, '--only', 'nope', '--out', out]), 1);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'results.json'), 'utf8')), []);
+    assert.match(errors.mock.calls.at(-1).arguments[0], /--only nope.*home.*login|--only nope.*login.*home/);
+  } finally {
+    errors.mock.restore();
+  }
+});
+
+test('a setup error also removes a stale results.json and summary.md from --out', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'batch-stale-'));
+  fs.writeFileSync(path.join(dir, 'results.json'), '[{"status":"pass"}]');
+  fs.writeFileSync(path.join(dir, 'summary.md'), 'old');
+  const file = path.join(dir, 'bad.json');
+  fs.writeFileSync(file, '{nope');
+  await assert.rejects(runBatch(['--states', file, '--out', dir]), usage(/--states/));
+  assert.equal(fs.existsSync(path.join(dir, 'results.json')), false);
+  assert.equal(fs.existsSync(path.join(dir, 'summary.md')), false);
 });

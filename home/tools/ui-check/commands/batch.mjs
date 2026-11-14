@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parse, need } from '../lib/args.mjs';
-import { compareRecords, errorRecords, exitCodeFor, responsiveRecords, writeBatchResults } from '../lib/batch-records.mjs';
+import { compareRecords, errorRecords, exitCodeFor, responsiveRecords, withCloseFailures, writeBatchResults } from '../lib/batch-records.mjs';
 import { loadChromium, launch } from '../lib/browser.mjs';
 import { readCache } from '../lib/cache.mjs';
 import { loadStatesFile, selectSurfaces } from '../lib/states.mjs';
@@ -38,32 +38,77 @@ async function responsiveState(browser, state, dir) {
   return responsiveRecords(state, state.widths, result);
 }
 
-/** Run one part of a state; any error becomes failing records so the run goes on, and the state's contexts are closed either way. */
-async function guarded(browser, { state, dir, slots, job }) {
-  try {
-    return await job(browser, state, dir);
-  } catch (error) {
-    return errorRecords(state, slots, error, dir);
-  } finally {
-    for (const context of browser.contexts()) await context.close();
-  }
+/** Append a stack to <dir>/<part>.error.txt so a one-line finding does not hide where a programming error came from. */
+function keepStack(dir, part, error) {
+  fs.appendFileSync(path.join(dir, `${part}.error.txt`), `${error.stack ?? error}\n`);
 }
 
-async function runState(browser, state, outRoot) {
+/** Close every context left open by a part; a close that throws (a crashed browser) is kept and returned, never thrown. */
+async function closeContexts(browser, dir, part) {
+  const messages = [];
+  for (const context of browser.contexts()) {
+    try {
+      await context.close();
+    } catch (error) {
+      keepStack(dir, part, error);
+      messages.push(error.message);
+    }
+  }
+  return messages;
+}
+
+/**
+ * Run one part (compare or responsive) of a state. An error becomes failing records (its stack goes to `<dir>/<part>.error.txt`) so the
+ * run goes on, and the part's contexts are closed either way; a failing close is added to the records as a finding.
+ * @param {object} browser Playwright browser
+ * @param {{state: object, dir: string, part: 'compare'|'responsive', slots: (number|null)[], job: Function}} work slots = widths the part would report (null = compare)
+ * @returns {Promise<object[]>} records of the part
+ */
+export async function guarded(browser, { state, dir, part, slots, job }) {
+  fs.mkdirSync(dir, { recursive: true });
+  let records;
+  try {
+    records = await job(browser, state, dir);
+  } catch (error) {
+    keepStack(dir, part, error);
+    records = errorRecords(state, slots, error, dir);
+  }
+  return withCloseFailures(records, state, await closeContexts(browser, dir, part));
+}
+
+/** Run every part of one state; the state's folder exists before anything runs, so each record's evidence path exists. */
+export async function runState(browser, state, outRoot) {
   const dir = path.join(outRoot, stateDirName(state));
+  fs.mkdirSync(dir, { recursive: true });
   const records = [];
-  if (state.figma) records.push(...await guarded(browser, { state, dir, slots: [null], job: compareState }));
-  if (state.widths) records.push(...await guarded(browser, { state, dir, slots: state.widths, job: responsiveState }));
+  if (state.figma) records.push(...await guarded(browser, { state, dir, part: 'compare', slots: [null], job: compareState }));
+  if (state.widths) records.push(...await guarded(browser, { state, dir, part: 'responsive', slots: state.widths, job: responsiveState }));
   return records;
+}
+
+/** Remove results from an earlier run in the same --out, so a failed or empty run never leaves stale passes for a consumer. */
+function clearStaleResults(outDir) {
+  for (const name of ['results.json', 'summary.md']) fs.rmSync(path.join(outDir, name), { force: true });
+}
+
+/** Nothing to run: write an empty results.json (and a FAIL summary), say why on stderr, and fail. */
+function nothingToRun(outDir, all, only) {
+  writeBatchResults(outDir, []);
+  const why = all.length === 0 ? 'the states file lists no states' : `--only ${only} matches no surface (known: ${[...new Set(all.map((s) => s.surface))].join(', ')})`;
+  console.error(`no states to run: ${why}`);
+  return 1;
 }
 
 /** Run batch. @param {string[]} argv @returns {Promise<number>} exit code */
 export async function run(argv) {
   const values = parse(argv, options);
   need(values, 'states');
-  const states = selectSurfaces(loadStatesFile(values.states), values.only);
   const outDir = path.resolve(values.out ?? path.join(os.tmpdir(), 'ui-check', 'batch', new Date().toISOString().replace(/[:.]/g, '-')));
   fs.mkdirSync(outDir, { recursive: true });
+  clearStaleResults(outDir);
+  const all = loadStatesFile(values.states);
+  const states = selectSurfaces(all, values.only);
+  if (states.length === 0) return nothingToRun(outDir, all, values.only);
   const browser = await launch(loadChromium(values.project));
   try {
     const records = [];
