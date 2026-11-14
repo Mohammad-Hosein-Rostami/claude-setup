@@ -207,3 +207,28 @@ test('S4: the minimum length counts the whole shell word across quote pairs and 
   for (const command of [`curl "https://x/r?token=ab"'${R}'`, `curl "https://x/r?token=ab""${R}"`, `curl 'https://x/r?token=a'"'"'${R}'`, `curl "https://x/r?token=abcd|${R}"`,
     `curl "https://x/r?secret=Ab1x"'${R}'`]) assert.ok(findLiteralSecret(command), command);
 });
+
+// Re-audit 1c57e60 R2-R5 (fail safe: when unsure, ask).
+test('R2/R3: glued text after a placeholder, or a closer taken for its opener, still asks', () => {
+  const R = RANDOM_TOKEN;
+  for (const command of [`curl -H "X-Api-Key:%s"${R}`, `curl -H "X-Api-Key:%s"${R} https://x`, `http "https://x/?a=" X-Api-Key:%s"${R}";`, `curl -H "a= " X-Api-Key:%s"${R}" https://x`,
+    `curl -H "X-Api-Key:%s")${R}`]) assert.ok(findLiteralSecret(command), command);
+  for (const command of ['curl -H "X-Api-Key: %s" https://x', 'f("cookie: %+v", c)', 'x := []string{"Cookie: %v"}', 'curl -H "X-Api-Key: %s"; ls', 'echo "Cookie: %s")']) {
+    assert.equal(findLiteralSecret(command), undefined, command);
+  }
+});
+
+test('R4: a comma plus a quoted path ends a query value only for a real list item', () => {
+  const R = RANDOM_TOKEN;
+  for (const command of [`curl "https://x/?token=ab-cd","/${R}"`, `curl "https://x/?token="},"/${R}"`, `curl "https://x/?token=verify-ok","https:${R}"`, `curl "https://x/?token=ab-cd",'/${R}' x`]) {
+    assert.ok(findLiteralSecret(command), command);
+  }
+  for (const command of ["['/a?token=verify-ok','/next']", "['/a?token=verify-ok','/next','/b']", 'x = ["/r?token=reset-ok","/s", "/t"]', '{"/r?token=reset-ok","/s"}']) {
+    assert.equal(findLiteralSecret(command), undefined, command);
+  }
+});
+
+test('R5: a backslash-newline inside a quoted query value does not end the length count', () => {
+  assert.ok(findLiteralSecret(`curl "https://x/?token=ab\\\n${RANDOM_TOKEN}"`));
+  assert.equal(findLiteralSecret('curl "https://x/?token=ab\\\ncd"'), undefined);
+});
