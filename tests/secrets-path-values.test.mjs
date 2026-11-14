@@ -149,3 +149,22 @@ test('a URL query value shorter than the minimum is not a literal secret, one of
   }
   for (const command of [url('token=aB3xK9qZ'), url('password=aB3xK9qZ')]) assert.ok(findLiteralSecret(command), command);
 });
+
+// Desap: a Go html/template attribute in a python heredoc fired the key=value rule (`data-title-password=\"{{t .L \"...\"}}\"`).
+test('a template expression that reads a value is not a literal secret', () => {
+  for (const command of [
+    'data-title-password=\\"{{t .L \\"register.password.heading\\"}}\\"', 'data-msg-short=\\"{{t .L \\"register.validation.password_short\\"}}\\"',
+    'password="{{ .Password }}"', 'password={{.Form.Password}}', 'api_token="{{ user.password }}"', 'secret={{ pw | e }}', 'token={%- .Token %}',
+    "password='{{ .Password }}' ./run", 'DB_PASS=<%= ENV.pass %>',
+  ]) {
+    assert.equal(findLiteralSecret(command), undefined, command);
+    assert.deepEqual(literalSecretValues(command), [], command);
+  }
+});
+
+test('a token inside template braces is still a secret', () => {
+  const R = RANDOM_TOKEN;
+  for (const command of [`password=\\"{{${R}}}\\"`, `token={{${R}}}`, `password="{{ \\"${R}\\" }}"`, `password={{ ${R} }}`, `token={{ .x }}${R}`, `API_KEY={{${R}.x`]) {
+    assert.ok(findLiteralSecret(command), command);
+  }
+});

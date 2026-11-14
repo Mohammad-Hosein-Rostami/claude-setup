@@ -65,7 +65,10 @@ const SECRET_NAME_PART = '(?<![A-Za-z0-9])(?:KEY|TOKEN|SECRET|PASS|PASSWD|PWD)(?
 const ABSOLUTE_ROOTS = 'Users|home|tmp|private|var|etc|opt|usr|Volumes';
 // a regex value has its `|` inside the value: in its own quotes, or unquoted and closed by a `/` plus JS flags (`/a|b/i;`; else `KEY=/<b64>|tee` would pass)
 const REGEX_VALUE = `"/[^"\\n]{0,500}\\|[^"\\n]{0,500}"|'/[^'\\n]{0,500}\\|[^'\\n]{0,500}'|/[^\\s"';&|]{0,500}\\|[^\\s"';&]{0,500}/[dgimsuvy]{0,8}(?![^\\s;&|),])`;
-const CODE_VALUE = `(?!${REGEX_VALUE}|["']?(?:(?:\\.{1,2}|~)/|/(?:${ABSOLUTE_ROOTS})/)|[=>({\\[]|[\\w$]{1,40}\\s*=>|lambda\\b|[\\w$]{1,40}(?:\\.[\\w$]{1,40}){0,6}\\s*[(\\[])`;
+// A template expression that reads something (`{{t .L "x"}}`, `{{ .Password }}`, `{{ user.password }}`, `{{ pw | e }}`, `{% .x %}`): it opens with `.` or an
+// identifier followed by `.`, `|` or an argument, and is closed. `{{R}}`, `{{ R }}` and `{{ "R" }}` hold a literal, so they are not exempt.
+const TEMPLATE_VALUE = `(?:\\\\?["'])?(?:\\{\\{-?|\\{%-?)[ \\t]{0,5}(?:\\.|[A-Za-z_]\\w{0,39}(?:\\.|[ \\t]{0,5}\\||[ \\t]{1,5}(?![ \\t}%-])))[^{}\\n]{0,200}(?:\\}\\}|%\\})(?![A-Za-z0-9])`;
+const CODE_VALUE = `(?!${REGEX_VALUE}|${TEMPLATE_VALUE}|["']?(?:(?:\\.{1,2}|~)/|/(?:${ABSOLUTE_ROOTS})/)|[=>(\\[]|\\{(?!\\{)|[\\w$]{1,40}\\s*=>|lambda\\b|[\\w$]{1,40}(?:\\.[\\w$]{1,40}){0,6}\\s*[(\\[])`;
 const QUERY_TOKEN_KEYS = caseless('api[_-]?key|access[_-]?(?:token|key)|auth[_-]?token|token');
 const QUERY_SECRET_KEYS = caseless('client[_-]?secret|secret|password|passwd|pwd');
 // What may follow the end of a quoted or bracketed query value: whitespace, a closing bracket, `;`, `,` plus whitespace, or the end. Glued text
@@ -99,7 +102,7 @@ const VALUE_KINDS = [
   ['\\bhtpasswd\\s+(?:-[a-zA-Z]+\\s+){0,2}-[a-zA-Z]*b[a-zA-Z]*\\s+(?:-[a-zA-Z]+\\s+){0,2}[^\\s"\']+\\s+[^\\s"\']+\\s+', '', 'an htpasswd password'],
   [`\\baws\\s+configure\\s+set\\s+(?:--profile\\s+\\S+\\s+)?[\\w.-]{0,${NAME_MAX}}secret[\\w.-]{0,${NAME_MAX}}\\s+`, '', 'an AWS secret key set with aws configure', { flags: 'i' }],
   // any variable whose name has KEY, TOKEN, SECRET, PASS, PASSWD, PWD or PASSWORD as a part (`DB_PASS`, `TOKEN_FILE_X`, `ADMINPASSWORD`)
-  // CODE_VALUE: `key==x`, `key=>x`, `const key=s=>...`, `token=[]`, `key=(a)`, `token=fs.readFileSync(p)`, `key=lambda s:` are program code (heredocs, node -e), not literals
+  // CODE_VALUE (a `{{` is a template, judged by TEMPLATE_VALUE): `key==x`, `key=>x`, `const key=s=>...`, `token=[]`, `key=(a)`, `token=fs.readFileSync(p)`, `key=lambda s:` are program code (heredocs, node -e), not literals
   [`${BOUNDARY}[\\w.-]{0,${NAME_MAX}}(?:${SECRET_NAME_PART}|PASSWORD)[\\w.-]{0,${NAME_MAX}}=`, CODE_VALUE, 'a key, token, secret or password assigned in the command', { flags: 'i' }],
   [`[?&](?:${QUERY_TOKEN_KEYS})=`, QUERY_TOKEN_NOT_LITERAL, 'a token or key in a URL query string', { start: QUERY_START }],
   [`[?&](?:${QUERY_SECRET_KEYS})=`, QUERY_NOT_LITERAL, 'a password or secret in a URL query string', { start: QUERY_START }],
