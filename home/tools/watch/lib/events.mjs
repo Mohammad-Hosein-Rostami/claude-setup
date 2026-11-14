@@ -1,25 +1,56 @@
-// The event classes `--exit-on-event` can wake on. Exports: EXIT_CLASS_NAMES, DEFAULT_EXIT_CLASSES, WATCH_ERROR_CLASS,
-// internalClasses(names) -> Set.
+// The event classes of the watcher and the names `--exit-on-event` accepts.
+// Exports: EVENT_CLASS (the tags every action line carries), WATCH_ERROR_CLASS, EXIT_CLASS_NAMES, DEFAULT_EXIT_CLASSES,
+// DELAYED_CLASSES, internalClasses(names) -> Set.
 // Each name the owner types maps to the internal classes the watcher tags its output lines with (actions.mjs gives OWNER, ERROR,
-// COMPACT, API_ERROR, LIMIT and LIMIT_RESET; the watcher adds GUARD, STALL and WATCH_ERROR). `limit` covers both a limit window
-// starting and ending. `compact` is the only class that is not on by default. SESSION_END, RESUMED, STOP_HOOK and MODEL MISMATCH
-// never wake: they are not in this table on purpose.
+// COMPACT, STOP_HOOK, API_ERROR, LIMIT and LIMIT_RESET; watcher.mjs adds MODEL_MISMATCH, STALL, SESSION_END and RESUMED; watch.mjs
+// adds GUARD and WATCH_ERROR). Default: owner, error, limit, api-error, guard, stall, watch-error, session-end. Opt-in: compact,
+// stop-hook, model-mismatch, limit-reset. RESUMED is not a class: it only follows a STALL, and a STALL already woke the lead.
+// ALERT_TEXT is an alert-word line that is not a failed tool result (plain mode prints it, no class wakes on it).
+// DELAYED_CLASSES are the wake events that `--delay-sec` holds back, because the session can recover on its own.
+// Code refers to the tags through EVENT_CLASS, so a misspelt tag is an `undefined` the tests catch, not a class that never wakes.
 
-export const WATCH_ERROR_CLASS = 'WATCH_ERROR';
+export const EVENT_CLASS = Object.freeze({
+  OWNER: 'OWNER',
+  ERROR: 'ERROR',
+  ALERT_TEXT: 'ALERT_TEXT',
+  COMPACT: 'COMPACT',
+  STOP_HOOK: 'STOP_HOOK',
+  API_ERROR: 'API_ERROR',
+  LIMIT: 'LIMIT',
+  LIMIT_RESET: 'LIMIT_RESET',
+  MODEL_MISMATCH: 'MODEL_MISMATCH',
+  GUARD: 'GUARD',
+  STALL: 'STALL',
+  RESUMED: 'RESUMED',
+  SESSION_END: 'SESSION_END',
+  WATCH_ERROR: 'WATCH_ERROR',
+});
 
-const CLASSES_BY_NAME = new Map([
-  ['owner', ['OWNER']],
-  ['error', ['ERROR']],
-  ['limit', ['LIMIT', 'LIMIT_RESET']],
-  ['api-error', ['API_ERROR']],
-  ['guard', ['GUARD']],
-  ['stall', ['STALL']],
-  ['watch-error', [WATCH_ERROR_CLASS]],
-  ['compact', ['COMPACT']],
-]);
+export const WATCH_ERROR_CLASS = EVENT_CLASS.WATCH_ERROR;
 
-export const EXIT_CLASS_NAMES = [...CLASSES_BY_NAME.keys()];
-export const DEFAULT_EXIT_CLASSES = EXIT_CLASS_NAMES.filter((name) => name !== 'compact');
+const DEFAULT_CLASSES = [
+  ['owner', EVENT_CLASS.OWNER],
+  ['error', EVENT_CLASS.ERROR],
+  ['limit', EVENT_CLASS.LIMIT],
+  ['api-error', EVENT_CLASS.API_ERROR],
+  ['guard', EVENT_CLASS.GUARD],
+  ['stall', EVENT_CLASS.STALL],
+  ['watch-error', EVENT_CLASS.WATCH_ERROR],
+  ['session-end', EVENT_CLASS.SESSION_END],
+];
+
+const OPT_IN_CLASSES = [
+  ['compact', EVENT_CLASS.COMPACT],
+  ['stop-hook', EVENT_CLASS.STOP_HOOK],
+  ['model-mismatch', EVENT_CLASS.MODEL_MISMATCH],
+  ['limit-reset', EVENT_CLASS.LIMIT_RESET],
+];
+
+const CLASS_BY_NAME = new Map([...DEFAULT_CLASSES, ...OPT_IN_CLASSES]);
+
+export const EXIT_CLASS_NAMES = [...CLASS_BY_NAME.keys()];
+export const DEFAULT_EXIT_CLASSES = DEFAULT_CLASSES.map(([name]) => name);
+export const DELAYED_CLASSES = new Set([EVENT_CLASS.API_ERROR, EVENT_CLASS.STALL]);
 
 /** @param {string[]} names validated names from EXIT_CLASS_NAMES @returns {Set<string>} the internal classes that wake */
-export const internalClasses = (names) => new Set(names.flatMap((name) => CLASSES_BY_NAME.get(name)));
+export const internalClasses = (names) => new Set(names.map((name) => CLASS_BY_NAME.get(name)));

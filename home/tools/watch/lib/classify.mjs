@@ -1,8 +1,11 @@
 // Turns one transcript JSONL line into verbose events, in the line format of the old live-watch.sh jq filter.
-// Exports: createClassifier() -> { feed(text) -> Event[] }, Event = { kind, line, owner?, promptText? }.
+// Exports: createClassifier() -> { feed(text) -> Event[], seed(text), assistantEntries }, Event = { kind, line, owner?, promptText? }.
 // Kinds: PROMPT, COMPACT, AGENT, WORKFLOW, SKILL, TOOL, USAGE, ERR, INPUT_MODE, API_ERROR, LIMIT, LIMIT_RESET.
 // API_ERROR / LIMIT: an entry with isApiErrorMessage true. Only its error class is printed (rate_limit is a LIMIT, anything else
 // an API_ERROR), never the message text. LIMIT_RESET: the first real assistant reply after a LIMIT, with the minutes it lasted.
+// Sidechain entries (a subagent's own turns) are not the session's: their API errors are no event and their replies do not end a limit window.
+// seed(text) reads an old line only to learn whether a limit window is open (no event): the watcher seeds the tail of a file it starts on.
+// assistantEntries counts the session's own replies (not API errors, not sidechain): `--delay-sec` reads it to see the session recover.
 // Invariants: pure apart from the INPUT_MODE and limit-window memory (Claude Code repeats the mode every turn; only changes are events);
 // a line that is not valid JSON, or is not an object, yields nothing (a partial line is the tail's job, not ours).
 // A PROMPT event always carries a verbose line, but `owner` is false for meta, sidechain and compaction-summary entries.
@@ -96,6 +99,7 @@ function userEvents(entry, stamp) {
 export function createClassifier() {
   let lastMode;
   let limitStartedAt; // timestamp of the first LIMIT of the current limit window
+  let assistantEntries = 0;
   const minutesSince = (stamp) => {
     const minutes = Math.floor((Date.parse(stamp) - Date.parse(limitStartedAt)) / MS_PER_MINUTE);
     return Number.isFinite(minutes) ? ` after ${minutes} min` : '';
@@ -113,8 +117,11 @@ export function createClassifier() {
   };
   const classify = (entry) => {
     const stamp = orElse(entry.timestamp, '');
-    if (entry.isApiErrorMessage === true) return [apiErrorEvent(entry, stamp)];
-    if (entry.type === 'assistant' && limitStartedAt !== undefined) return [...limitResetEvents(stamp), ...assistantEvents(entry, stamp)];
+    if (entry.isApiErrorMessage === true) return entry.isSidechain === true ? [] : [apiErrorEvent(entry, stamp)];
+    if (entry.type === 'assistant' && entry.isSidechain !== true) {
+      assistantEntries += 1;
+      if (limitStartedAt !== undefined) return [...limitResetEvents(stamp), ...assistantEvents(entry, stamp)];
+    }
     if (entry.type === 'user') return userEvents(entry, stamp);
     if (entry.type === 'assistant') return assistantEvents(entry, stamp);
     if (entry.type === 'system' && entry.subtype === 'compact_boundary') {
@@ -128,11 +135,20 @@ export function createClassifier() {
     }
     return [];
   };
+  const parse = (text) => {
+    try { const entry = JSON.parse(text); return entry !== null && typeof entry === 'object' ? entry : undefined; } catch { return undefined; }
+  };
   return {
+    get assistantEntries() { return assistantEntries; },
     feed(text) {
-      let entry;
-      try { entry = JSON.parse(text); } catch { return []; }
-      return entry !== null && typeof entry === 'object' ? classify(entry) : [];
+      const entry = parse(text);
+      return entry === undefined ? [] : classify(entry);
+    },
+    seed(text) {
+      const entry = parse(text);
+      if (entry === undefined || entry.isSidechain === true) return;
+      if (entry.isApiErrorMessage !== true && entry.type === 'assistant') limitStartedAt = undefined;
+      else if (entry.isApiErrorMessage === true && apiErrorClass(entry) === LIMIT_ERROR_CLASS) limitStartedAt ??= orElse(entry.timestamp, '');
     },
   };
 }

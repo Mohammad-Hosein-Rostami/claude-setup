@@ -31,7 +31,7 @@ async function sandbox(t, transcript) {
 }
 
 test('parseArgs: --exit-on-event with and without classes, and every unusable form', () => {
-  const defaults = ['owner', 'error', 'limit', 'api-error', 'guard', 'stall', 'watch-error'];
+  const defaults = ['owner', 'error', 'limit', 'api-error', 'guard', 'stall', 'watch-error', 'session-end'];
   assert.deepEqual(parseArgs(['abcdef']).exitOnEvent, undefined);
   assert.deepEqual(parseArgs(['abcdef', '--exit-on-event']).exitOnEvent, defaults);
   assert.deepEqual(parseArgs(['--exit-on-event', '--once', 'abcdef']).exitOnEvent, defaults);

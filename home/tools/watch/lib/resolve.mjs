@@ -1,4 +1,4 @@
-// Finds what to watch. Exports: resolveTarget(arg, projectsDir) -> { path, sessionId, label }, findSessionPid(sessionId, sessionsDir),
+// Finds what to watch. Exports: resolveTarget(arg, projectsDir) -> { path, sessionId, label }, findSessionPids(sessionId, sessionsDir),
 // isProcessAlive(pid), SESSION_ID.
 // A target is either a transcript path (contains a separator or ends in .jsonl; its directory must exist, the file may appear
 // later) or a session id, looked up as ~/.claude/projects/*/<id>.jsonl. The id is validated before it touches a path (no globbing,
@@ -59,18 +59,19 @@ async function transcriptsNamed(sessionId, projectsDir) {
 /**
  * @param {string} sessionId the session to look for
  * @param {string} sessionsDir ~/.claude/sessions (one <pid>.json per running Claude Code process)
- * @returns {Promise<number | undefined>} the pid registered for that session, if any
+ * @returns {Promise<number[]>} every pid registered for that session (a killed process leaves its file behind, a resumed session adds one)
  */
-export async function findSessionPid(sessionId, sessionsDir) {
+export async function findSessionPids(sessionId, sessionsDir) {
   let names = [];
-  try { names = await readdir(sessionsDir); } catch { return undefined; }
+  try { names = await readdir(sessionsDir); } catch { return []; }
+  const pids = [];
   for (const name of names.filter((entry) => entry.endsWith('.json'))) {
     try {
       const record = JSON.parse(await readFile(join(sessionsDir, name), 'utf8'));
-      if (record?.sessionId === sessionId && Number.isInteger(record.pid)) return record.pid;
+      if (record?.sessionId === sessionId && Number.isInteger(record.pid)) pids.push(record.pid);
     } catch { /* unreadable or half-written registry file: skip it */ }
   }
-  return undefined;
+  return pids;
 }
 
 /**
