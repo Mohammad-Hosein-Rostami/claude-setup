@@ -18,5 +18,6 @@ From the repo root:
 
 ## Watch out for
 
-- `compute.mjs` refuses to give a number when too few items are done (`MIN_DONE_ITEMS`). That is on purpose, not a bug.
+- `compute.mjs` refuses to give a number when too few items are done (`MIN_DONE_ITEMS`), a done row has no `started`, a time is later than now, or an item has no working time left. That is on purpose, not a bug: a refusal is `{ refused: true, ... }`.
+- `items.mjs` never skips a row it cannot read: it reports a problem with the line number, and the CLI turns any problem into exit 2.
 - Transcript times are epoch milliseconds; the report converts them.

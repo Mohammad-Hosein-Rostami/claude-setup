@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { parseWorkItems } from '../home/tools/estimate/lib/items.mjs';
 import { limitWindows, projectSlug, resolveTranscriptDir } from '../home/tools/estimate/lib/limits.mjs';
 import { computeEstimate } from '../home/tools/estimate/lib/compute.mjs';
-import { formatEstimate } from '../home/tools/estimate/lib/report.mjs';
+import { formatEstimate, formatRefusal } from '../home/tools/estimate/lib/report.mjs';
 import { BASE_MS, FIRST_ROW_LINE, HOUR_MS, LIMIT_TEXT, RESET_TEXT, assistant, fiveDoneRows, iso, jsonl, row, statusDoc, synthetic, userNote } from './estimate-fixtures.mjs';
 
 const NOW = BASE_MS + 100 * HOUR_MS;
@@ -35,7 +35,7 @@ test('parseWorkItems reports done without evidence, size XL, a time without offs
   assert.match(problems[0].reason, /done without evidence/);
   assert.match(problems[1].reason, /size "XL"/);
   assert.match(problems[2].reason, /started "10:45".*offset/);
-  assert.match(problems[3].reason, /done is before started/);
+  assert.match(problems[3].reason, /done is not after started/);
 });
 
 test('parseWorkItems accepts a numeric offset and rejects a date without time', () => {
@@ -105,12 +105,12 @@ test('computeEstimate refuses under 5 measured done items and names the done row
   assert.equal(result.agentHours, undefined);
 });
 
-test('computeEstimate: r = 1,1,2,2,3 h/point and 4 open points give 4-8 agent-hours, median 8 (nearest rank)', () => {
+test('computeEstimate: r = 1,1,2,2,3 h/point and 4 open points give 4-12 agent-hours (fastest to slowest of 5), median 8', () => {
   const open = [row({ id: 'O1', size: 'L' })];
   const result = computeEstimate(itemsOf(fiveDoneRows(open)), [], NOW);
   assert.deepEqual([result.openPoints, result.openItems, result.inFlight], [4, 1, 0]);
   assert.deepEqual([result.rate.p25, result.rate.p50, result.rate.p75], [1, 2, 2]);
-  assert.deepEqual([result.agentHours.low, result.agentHours.median, result.agentHours.high], [4, 8, 8]);
+  assert.deepEqual([result.agentHours.low, result.agentHours.median, result.agentHours.high], [4, 8, 12]);
 });
 
 test('computeEstimate: an item spanning a 2 h limit window loses 2 h and the idle share is above zero', () => {
@@ -141,7 +141,7 @@ test('computeEstimate: running time and calendar days follow Running / active sh
   const items = itemsOf(fiveDoneRows([row({ id: 'O1' }), row({ id: 'O2' })]));
   const result = computeEstimate(items, [], NOW);
   assert.equal(result.lanes, 1);
-  assert.deepEqual([result.agentHours.low, result.agentHours.median, result.agentHours.high], [2, 4, 4]);
+  assert.deepEqual([result.agentHours.low, result.agentHours.median, result.agentHours.high], [2, 4, 6]);
   assert.ok(Math.abs(result.activeShare - 9 / 13) < 1e-9);
   assert.ok(Math.abs(result.calendarDays.median - 4 / (9 / 13) / 24) < 1e-9);
 });
@@ -159,10 +159,10 @@ test('formatEstimate prints the pasted block; no transcripts says not measured; 
   const lines = formatEstimate(result, { path: 'STATUS.md', now: '2026-11-14T10:00:00Z', transcriptDir: '/t', transcriptCount: 3 }).split('\n');
   assert.equal(lines[0], 'Estimate (computed 2026-11-14T10:00:00Z by estimate.mjs from STATUS.md)');
   assert.equal(lines[1], 'Remaining: 1 item, 4 points (1 in flight, counted whole)');
-  assert.match(lines[2], /^Agent-hours: 4-8 \(median \d+\)$/);
+  assert.match(lines[2], /^Agent-hours: 4-8 \(median \d+; range from the slowest and fastest of 5 finished items\)$/);
   assert.match(lines[3], /^Running time: [\d.]+-[\d.]+ h at 1\.0 lanes \(measured/);
   assert.match(lines[4], /^Calendar: [\d.]+-[\d.]+ days \(active \d+% of elapsed; usage-limit idle \d+%\)$/);
-  assert.match(lines[5], /^From: 5 done items 2026-11-10\.\.2026-11-10, [\d.]+-[\d.]+ h\/point \(p25-p75\), 1 limit window \(2 h\) in 3 transcripts$/);
+  assert.match(lines[6], /^From: 5 done items 2026-11-10\.\.2026-11-10, [\d.]+-[\d.]+ h\/point \(fastest-slowest\), 1 limit window \(2 h\) in 3 transcripts$/);
   const unmeasured = formatEstimate(result, { path: 'S.md', now: 'n', transcriptDir: '/nowhere', transcriptCount: 0 });
   assert.match(unmeasured, /usage-limit idle: not measured \(no transcripts at \/nowhere\)/);
   const done = computeEstimate(itemsOf(fiveDoneRows()), [], NOW);
@@ -178,4 +178,180 @@ test('computeEstimate: nearest rank on 8 items r = 1..8 takes ranks 2, 4 and 6 (
   });
   const result = computeEstimate(itemsOf([...rows, row({ id: 'O1' })]), [], NOW);
   assert.deepEqual([result.rate.p25, result.rate.p50, result.rate.p75], [2, 4, 6]);
+});
+
+// ---- Review findings of round 3 (l7-review.md): every input below must be refused or labelled, never turned into a number ----
+
+const HEADER_ROWS = ['| id | item | size | started | done | evidence |', '| -- | ---- | ---- | ------- | ---- | -------- |'];
+const parseLines = (lines) => parseWorkItems(`${lines.join('\n')}\n`);
+const reasons = (parsed) => parsed.problems.map((p) => `${p.line}: ${p.reason}`);
+
+test('B1: a second ## Work items section is refused naming both heading lines', () => {
+  const doc = ['## Work items', '', ...HEADER_ROWS, row({ id: 'A' }), '', '## Work items', '', ...HEADER_ROWS, row({ id: 'B' })];
+  const parsed = parseLines(doc);
+  assert.deepEqual(parsed.items, []);
+  assert.match(parsed.problems[0].reason, /two Work items sections, lines 1 and 7/);
+});
+
+test('B1: a table row after a text line or a blank line is refused naming the break, never dropped', () => {
+  const afterText = parseLines(['## Work items', ...HEADER_ROWS, row({ id: 'A' }), 'Some note', row({ id: 'A6' })]);
+  assert.deepEqual(reasons(afterText), ['6: table row after a break at line 5; keep one table']);
+  const afterBlank = parseLines(['## Work items', ...HEADER_ROWS, row({ id: 'A' }), '', row({ id: 'A6' })]);
+  assert.deepEqual(reasons(afterBlank), ['6: table row after a break at line 5; keep one table']);
+  const noLeadingPipe = parseLines(['## Work items', ...HEADER_ROWS, row({ id: 'A' }), 'A6 | open | S | - | - | -']);
+  assert.match(reasons(noLeadingPipe)[0], /^5: this looks like a table row but does not start with `\|`/);
+  const fine = parseLines(['## Work items', ...HEADER_ROWS, row({ id: 'A' }), '', 'Prose after the table is fine.', '## Next']);
+  assert.deepEqual(fine.problems, []);
+});
+
+test('B1: the header must be the six names in order (case and spaces ignored); an extra column or a missing separator is refused', () => {
+  const ok = parseLines(['## Work items', '|  ID | Item | SIZE | Started | Done | Evidence |', HEADER_ROWS[1], row({ id: 'A' })]);
+  assert.deepEqual(ok.problems, []);
+  const extra = parseLines(['## Work items', '| id | item | size | started | done | evidence | notes |', '| - | - | - | - | - | - | - |']);
+  assert.match(reasons(extra)[0], /table header must be \| id \| item \| size \| started \| done \| evidence \|/);
+  const swapped = parseLines(['## Work items', '| id | item | size | done | started | evidence |', HEADER_ROWS[1]]);
+  assert.match(reasons(swapped)[0], /table header must be/);
+  const noSeparator = parseLines(['## Work items', HEADER_ROWS[0], row({ id: 'A' })]);
+  assert.match(reasons(noSeparator)[0], /must be the separator/);
+});
+
+test('B1: a row of 5 or 7 cells is refused with its line; an escaped pipe and backticks stay inside one cell; CRLF and a BOM change nothing', () => {
+  const short = parseLines(['## Work items', ...HEADER_ROWS, '| A | item | S | - | - |']);
+  assert.match(reasons(short)[0], /^4: row has 5 cells, expected 6/);
+  const unescaped = parseLines(['## Work items', ...HEADER_ROWS, '| A | `a | b` | S | - | - | - |']);
+  assert.match(reasons(unescaped)[0], /^4: row has 7 cells/);
+  const escaped = parseLines(['## Work items', ...HEADER_ROWS, '| A | `a \\| b` and `c` | S | - | - | - |']);
+  assert.deepEqual(escaped.problems, []);
+  assert.equal(escaped.items[0].item, '`a | b` and `c`');
+  const lf = statusDoc([row({ id: 'A', startedH: 0, doneH: 1 }), row({ id: 'B' })]);
+  const plain = parseWorkItems(lf);
+  assert.deepEqual(parseWorkItems(lf.replace(/\n/g, '\r\n')), plain);
+  assert.deepEqual(parseWorkItems(`﻿${lf}`), plain);
+  assert.equal(parseWorkItems(`﻿${lf.slice(lf.indexOf('## '))}`).problems.length, 0); // heading on line 1 after a BOM
+});
+
+test('B4: impossible or partial instants are refused naming the id and the cell, and state the accepted format', () => {
+  const bad = ['2026-02-30T08:00Z', '2026-02-29T08:00Z', '2026-11-14T24:00Z', '2026-13-01T08:00Z', '2026-11-14T10:60Z', '2026-11-14T10:45:60Z', '2026-11-14', '2026-11-14T10:45', '2026-11-14T10:45+25:00', '2026-11-14t10:45z', '0026-11-14T10:45Z'];
+  for (const text of bad) {
+    const parsed = parseLines(['## Work items', ...HEADER_ROWS, row({ id: 'A7', raw: { started: text } })]);
+    assert.equal(parsed.problems.length, 1, text);
+    assert.ok(parsed.problems[0].reason.startsWith(`A7: started "${text}" is not a real ISO 8601 instant; accepted: YYYY-MM-DDTHH:MM`), text);
+  }
+  const doneCell = parseLines(['## Work items', ...HEADER_ROWS, row({ id: 'A8', startedH: 0, raw: { done: '2026-02-30T08:00Z' } })]);
+  assert.match(reasons(doneCell)[0], /A8: done "2026-02-30T08:00Z"/);
+  for (const text of ['2028-02-29T08:00Z', '2026-11-14T23:59:59.250Z', '2026-11-14T10:45-05:30', '2026-11-14T10:45+14:00']) {
+    assert.equal(parseLines(['## Work items', ...HEADER_ROWS, row({ id: 'A', raw: { started: text } })]).problems.length, 0, text);
+  }
+});
+
+test('B2/S4: done equal to started, a repeated id (any case), an empty id and placeholder evidence are refused naming the row', () => {
+  const rows = [
+    row({ id: 'Z1', startedH: 1, doneH: 1 }),
+    row({ id: 'A4' }),
+    row({ id: 'a4' }),
+    '| | no id | S | - | - | - |',
+    row({ id: 'P1', startedH: 0, doneH: 1, evidence: 'n/a' }),
+    row({ id: 'P2', startedH: 0, doneH: 1, evidence: 'x' }),
+  ];
+  const parsed = parseWorkItems(statusDoc(rows));
+  assert.match(parsed.problems[0].reason, /^Z1: done is not after started/);
+  assert.match(parsed.problems[1].reason, /^a4: id repeated \(ignoring case\), first on line 8/);
+  assert.match(parsed.problems[2].reason, /^row: the id cell is empty/);
+  assert.match(parsed.problems[3].reason, /^P1: evidence "n\/a" is a placeholder/);
+  assert.match(parsed.problems[4].reason, /^P2: evidence "x" is a placeholder/);
+});
+
+test('S6: resolveTranscriptDir never tries the home folder or anything above it', () => {
+  const existing = new Set(['/root/-home-me']);
+  const tried = [];
+  const found = resolveTranscriptDir('/home/me/work/proj', '/root', (dir) => (tried.push(dir), existing.has(dir)), '/home/me');
+  assert.equal(found, null);
+  assert.ok(!tried.includes('/root/-home-me'));
+  assert.equal(resolveTranscriptDir('/home/me', '/root', (dir) => existing.has(dir), '/home/me'), null);
+});
+
+test('limitWindows reads a transcript given line by line the same as one string', () => {
+  const text = jsonl([assistant(1), synthetic(2, LIMIT_TEXT), userNote(3, 'waiting')]);
+  assert.deepEqual(limitWindows([text.split('\n')]), limitWindows([text]));
+  assert.deepEqual(hoursOf(limitWindows((function* lazy() { yield text.split('\n'); })())), [[2, 3]]);
+});
+
+test('B3: a started or done later than now is refused naming the row, the cell and the time', () => {
+  const rows = fiveDoneRows([row({ id: 'F1', startedH: 500 })]);
+  const result = computeEstimate(itemsOf(rows), [], NOW);
+  assert.equal(result.refused, true);
+  assert.deepEqual(result.future.map((f) => [f.row, f.cell]), [[`F1 (line ${FIRST_ROW_LINE + 5})`, 'started']]);
+  assert.equal(result.agentHours, undefined);
+  assert.match(formatRefusal(result), /^No estimate: Later than now \(2026-11-14T04:00Z\): F1 \(line 12\) started 2026-11-30T20:00Z\.$/);
+  const doneLater = computeEstimate(itemsOf(fiveDoneRows()), [], BASE_MS + 5 * HOUR_MS); // now is before D5 is done
+  assert.deepEqual(doneLater.future.map((f) => f.cell), ['done', 'started', 'done', 'started', 'done']); // D3 done at 6 h, D4 and D5 both
+});
+
+test('B2: when limit windows swallow an item the rate would be zero, so the estimate is refused naming the item', () => {
+  const items = itemsOf(fiveDoneRows([row({ id: 'O1' })]));
+  const everything = [{ start: BASE_MS, end: BASE_MS + 20 * HOUR_MS }];
+  const result = computeEstimate(items, everything, NOW);
+  assert.equal(result.refused, true);
+  assert.equal(result.noTime.length, 5);
+  assert.match(formatRefusal(result), /No working time left after removing usage-limit windows: D1 \(line 7\)/);
+  const one = computeEstimate(items, [{ start: BASE_MS, end: BASE_MS + 2 * HOUR_MS }], NOW); // D1 (0..1) and part of D2 gone
+  assert.deepEqual(one.noTime, [`D1 (line ${FIRST_ROW_LINE})`]);
+});
+
+test('S4: a done row without started is refused even when five other items are measured', () => {
+  const rows = [...fiveDoneRows([row({ id: 'O1' })]), row({ id: 'M1', doneH: 30 })];
+  const result = computeEstimate(itemsOf(rows), [], NOW);
+  assert.equal(result.refused, true);
+  assert.deepEqual(result.missing, [`M1 (line ${FIRST_ROW_LINE + 6})`]);
+  assert.equal(formatRefusal(result), `No estimate: Missing started on: M1 (line ${FIRST_ROW_LINE + 6}).`);
+});
+
+test('S3: below 10 done items the range is slowest..fastest, from 10 it is p25-p75; both say N', () => {
+  const durations = (count) => Array.from({ length: count }, (_, i) => i + 1);
+  const build = (count) => {
+    let cursor = 0;
+    const rows = durations(count).map((d) => {
+      const made = row({ id: `D${d}`, startedH: cursor, doneH: cursor + d });
+      cursor += d + 1;
+      return made;
+    });
+    return computeEstimate(itemsOf([...rows, row({ id: 'O1' })]), [], BASE_MS + 1000 * HOUR_MS);
+  };
+  const nine = build(9);
+  assert.deepEqual([nine.rate.low, nine.rate.high, nine.rate.band], [1, 9, 'fastest-slowest']);
+  const ten = build(10);
+  assert.deepEqual([ten.rate.low, ten.rate.high, ten.rate.band], [3, 8, 'p25-p75']); // ranks ceil(2.5)=3 and ceil(7.5)=8
+  const inputs = { path: 'S.md', now: 'n', transcriptDir: '/t', transcriptCount: 1 };
+  assert.match(formatEstimate(nine, inputs), /^Agent-hours: 1-9 \(median 5; range from the slowest and fastest of 9 finished items\)$/m);
+  assert.match(formatEstimate(ten, inputs), /^Agent-hours: 3-8 \(median 5; p25-p75 band of 10 finished items\)$/m);
+  assert.match(formatEstimate(ten, inputs), /h\/point \(p25-p75\)/);
+});
+
+test('S3: identical rates say that no spread was measured instead of printing a falsely exact range', () => {
+  const same = [0, 2, 4, 6, 8].map((h, i) => row({ id: `S${i}`, startedH: h, doneH: h + 1 }));
+  const result = computeEstimate(itemsOf([...same, row({ id: 'O1' })]), [], NOW);
+  const text = formatEstimate(result, { path: 'S.md', now: 'n', transcriptDir: '/t', transcriptCount: 1 });
+  assert.match(text, /^Agent-hours: 1-1 \(median 1; range from the slowest and fastest of 5 finished items; all rates equal, real spread unknown\)$/m);
+});
+
+test('S1: the newest entry more than 24 h before now with open items prints one Note line; not when fresh or all done', () => {
+  const inputs = { path: 'S.md', now: 'n', transcriptDir: '/t', transcriptCount: 1 };
+  const open = [row({ id: 'O1' })];
+  const stale = formatEstimate(computeEstimate(itemsOf(fiveDoneRows(open)), [], BASE_MS + 13 * HOUR_MS + 30 * HOUR_MS), inputs).split('\n');
+  assert.equal(stale.filter((l) => l.startsWith('Note:')).length, 1);
+  assert.match(stale.at(-1), /^Note: the newest started or done in the table is 30 hours old \(2026-11-10T13:00Z\); update STATUS\.md/);
+  const days = formatEstimate(computeEstimate(itemsOf(fiveDoneRows(open)), [], BASE_MS + 13 * HOUR_MS + 96 * HOUR_MS), inputs);
+  assert.match(days, /^Note: the newest started or done in the table is 4 days old/m);
+  const fresh = formatEstimate(computeEstimate(itemsOf(fiveDoneRows(open)), [], BASE_MS + 13 * HOUR_MS + 24 * HOUR_MS), inputs);
+  assert.doesNotMatch(fresh, /Note:/);
+  const allDone = formatEstimate(computeEstimate(itemsOf(fiveDoneRows()), [], BASE_MS + 400 * HOUR_MS), inputs);
+  assert.doesNotMatch(allDone, /Note:/);
+});
+
+test('S2: every estimate says in one line what the rate is made of, with and without transcripts', () => {
+  const result = computeEstimate(itemsOf(fiveDoneRows([row({ id: 'O1' })])), [], NOW);
+  const withTranscripts = formatEstimate(result, { path: 'S.md', now: 'n', transcriptDir: '/t', transcriptCount: 2 });
+  assert.match(withTranscripts, /^Rate: wall-clock time from started to done, so it includes waiting and nights; only usage-limit windows found in the transcripts are taken out\.$/m);
+  const without = formatEstimate(result, { path: 'S.md', now: 'n', transcriptDir: '/t', transcriptCount: 0 });
+  assert.match(without, /^Rate: wall-clock time from started to done, so it includes waiting and nights; usage-limit pauses are included \(no transcripts\)\.$/m);
 });
