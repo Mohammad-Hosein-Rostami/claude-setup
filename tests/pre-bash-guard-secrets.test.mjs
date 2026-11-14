@@ -197,7 +197,7 @@ test('printing a stored keychain secret asks: find-*-password -w/-g, dump-keycha
   for (const command of [
     'security find-generic-password -s svc -w', 'security find-generic-password -ga me', 'security find-internet-password -s github.com -w',
     'security -q find-generic-password -s svc -g', 'sudo /usr/bin/security find-internet-password -w -a me', 'security dump-keychain',
-    'security dump-keychain -d login.keychain', 'security export -k login.keychain -t identities -f pkcs12 -o out.p12', 'TOKEN=$(security find-generic-password -s gh -w)',
+    'security dump-keychain -d login.keychain', 'security export -k login.keychain -t identities -f pkcs12 -o out.p12',
   ]) {
     assert.match(decide(command, ctx).reason ?? '', /prints a stored secret into the transcript/, command);
   }

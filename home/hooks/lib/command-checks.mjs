@@ -3,7 +3,8 @@
 // printing a stored secret (keychain, `gh auth token`), and `gh ssh-key add` of a file that is not `*.pub`.
 // Exports: checkGit(args, assigns), checkDiskWipe(cmd, args), checkLockfileEdit(cmd, args), checkHiddenRm(cmd, args),
 // checkStdinRm(cmd, args, before), checkStdinScriptRm(script, before), checkKeychainPrint(cmd, args), checkGhSecret(cmd, args) - each
-// returns an ask reason, or undefined when the command is fine.
+// returns an ask reason, or undefined when the command is fine; secretPrintOf(cmd, args) and isSecretPrintReason(reason) serve
+// lib/captured-read.mjs.
 // Pure, no I/O. Every rule is an ask (the hook shows a timed dialog); a destructive one starts with "DESTRUCTIVE: ".
 import { commandName, commandOf } from './command-of.mjs';
 import { parsePushArgs, pushAsk } from './outward.mjs';
@@ -246,7 +247,14 @@ function keyFileOf(args) {
  */
 export function checkGhSecret(cmd, args) {
   if (cmd !== 'gh') return undefined;
-  if (args[0] === 'auth' && args[1] === 'token') return `gh auth token ${SECRET_PRINT}`;
   const keyFile = args[0] === 'ssh-key' && args[1] === 'add' ? keyFileOf(args) : undefined;
-  return keyFile === undefined || keyFile.endsWith('.pub') ? undefined : 'gh ssh-key add uploads a key file that is not a .pub public key; confirm it';
+  if (keyFile !== undefined && !keyFile.endsWith('.pub')) return 'gh ssh-key add uploads a key file that is not a .pub public key; confirm it';
+  return tokenPrint(cmd, args);
 }
+
+const tokenPrint = (cmd, args) => (cmd === 'gh' && args[0] === 'auth' && args[1] === 'token' ? `gh auth token ${SECRET_PRINT}` : undefined);
+
+/** The secret-print ask of one command (a keychain read or `gh auth token`), or undefined; lib/captured-read.mjs uses it. */
+export const secretPrintOf = (cmd, args) => checkKeychainPrint(cmd, args) ?? tokenPrint(cmd, args);
+/** True for the ask reason of a secret print, also with a suffix such as "(matched in raw text)". */
+export const isSecretPrintReason = (reason) => reason.includes(SECRET_PRINT);

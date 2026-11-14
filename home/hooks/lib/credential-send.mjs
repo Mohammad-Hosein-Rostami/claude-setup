@@ -11,8 +11,9 @@
 // ssh sends only its stdin: a credential file redirected into it (`ssh host < key`), or named or archived by a command earlier in its pipeline
 // (`cat key | ssh host 'cat > k'`, `tar c ~/.ssh | ssh host 'tar x'`); `ssh-add key && ssh host` and `ssh host 'ls ~/.ssh'` are silent.
 // Not a send: the value of an identity flag of that tool (`ssh|scp|sftp -i <path>`, `-o IdentityFile=<path>`, curl `--key|--cert|-E|--netrc-file
-// <path>`; inside a quoted `rsync -e "ssh -i <path>"` too) and a remote path (`host:~/.ssh/id_rsa`). rsync's own `-i` is --itemize-changes, so
-// `rsync -i <key> host:` still asks. `export K=<key>` is not a send either: the caller substitutes K where it is used.
+// <path>`; inside a quoted `rsync -e|--rsh= "ssh -i <path>"` too), the same path in a command that does not pipe into a sender when every
+// sender of the line only logs in with it (`chmod 600 key && scp -i key f host:`), and a remote path (`host:~/.ssh/id_rsa`). rsync's own `-i`
+// is --itemize-changes, so `rsync -i <key> host:` still asks. `export K=<key>` is not a send either: the caller substitutes K where it is used.
 // Pure, no I/O. A false positive costs a dialog, so only these files, folders and senders count.
 import { commandName } from './command-of.mjs';
 
@@ -54,6 +55,8 @@ const SSH_TOOLS = new Set(['ssh', 'scp', 'sftp']);
 const CURL_IDENTITY_OPTIONS = new Set(['--key', '--cert', '-E', '--netrc-file']);
 const CURL_IDENTITY_ATTACHED = /^(?:--key=|--cert=|--netrc-file=|-E.)/;
 const IDENTITY_FILE_OPTION = /^IdentityFile[=\s]/i;
+const IDENTITY_PREFIX = /^(?:-i|-oIdentityFile[=\s]|IdentityFile[=\s]|--key=|--cert=|--netrc-file=|-E)\s*/i; // the flag part of an identity word
+const OPTION_PREFIX = /^--?[A-Za-z][\w-]*=/; // `--rsh=ssh -i <key>`: the command in the value starts after `=`
 const REMOTE_PATH = /^(?:[^\s@/:]+@)?[^\s@/:]+:(?!\/\/)/; // `host:path`, `user@host:path` (not `https://`)
 const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
 // `export K=~/.ssh/id_rsa` only names the file; the guard substitutes K where it is used (`scp -i $K` is an identity, `curl -T $K` a send)
@@ -79,18 +82,44 @@ function identityValues(cmd, args) {
   return values;
 }
 
-/** The credential kinds one command names; a quoted multi-word value (`rsync -e "ssh -i <key>"`) is read as a command of its own. */
-function credentialsIn(cmd, args) {
+const describe = (path, identity) => kindsOf(path).map((kind) => ({ path, kind, identity }));
+
+/**
+ * The credential words of one command as `{ path, kind, identity }`; identity marks a key the tool logs in with (`scp -i <key>`), not a send.
+ * A quoted multi-word value (`rsync -e "ssh -i <key>"`, `--rsh="ssh -i <key>"`) is read as a command of its own.
+ */
+function credentialWords(cmd, args) {
   const identity = identityValues(cmd, args);
   return args.flatMap((word, i) => {
-    if (identity.has(i) || isRemote(word)) return [];
-    const [tool = '', ...rest] = word.split(/\s+/).filter(Boolean);
-    return rest.length > 0 ? [...kindsOf(tool), ...credentialsIn(commandName(tool), rest)] : kindsOf(word);
+    if (isRemote(word)) return [];
+    if (identity.has(i)) return describe(word.replace(IDENTITY_PREFIX, ''), true);
+    const [first = '', ...rest] = word.split(/\s+/).filter(Boolean);
+    if (rest.length === 0) return describe(word, false);
+    const tool = first.replace(OPTION_PREFIX, '');
+    return [...describe(tool, false), ...credentialWords(commandName(tool), rest)];
   });
 }
 
-/** The credential files one command of the line names (none for an empty command or an export-style declaration). */
-const filesOf = ({ cmd, args }) => (cmd === undefined || DECLARERS.has(cmd) ? [] : credentialsIn(cmd, args));
+/** The credential files one command of the line names, not to log in (none for an empty command or an export-style declaration). */
+const filesOf = ({ cmd, args }) => (cmd === undefined || DECLARERS.has(cmd) ? [] : credentialWords(cmd, args).filter(({ identity }) => !identity));
+const fileKindsOf = (command) => filesOf(command).map(({ kind }) => kind);
+
+/** For each command, the index of the first command of its pipeline (`a | b; c`: 0, 0, 2). */
+function pipelineIds(commands) {
+  const ids = [];
+  commands.forEach((command, at) => ids.push(command.piped && at > 0 ? ids[at - 1] : at));
+  return ids;
+}
+
+/** The credential files a line sends: named by a sender or by a command piped into one, or elsewhere unless every sender only logs in with it. */
+function sentFiles(commands, names) {
+  const pipeline = pipelineIds(commands);
+  const lastSender = new Map(); // pipeline -> index of its last sender
+  names.forEach((name, at) => name !== undefined && lastSender.set(pipeline[at], at));
+  const senderWords = names.flatMap((name, at) => (name === undefined ? [] : credentialWords(commands[at].cmd, commands[at].args)));
+  const loginKeys = new Set(senderWords.filter(({ identity }) => identity).map(({ path }) => path));
+  return commands.flatMap((command, at) => filesOf(command).filter(({ path }) => (lastSender.get(pipeline[at]) ?? -1) >= at || !loginKeys.has(path)));
+}
 
 /** Credential files redirected into a command's stdin: `< path`, `0<path`, `<<< "$(cat path)"`. */
 const stdinFiles = (args) =>
@@ -114,19 +143,20 @@ function senderOf({ cmd, args }) {
   return run === undefined ? undefined : [cmd, ...run].join(' ');
 }
 
-/** A sender with a credential file anywhere on the line, a credential folder among its own words, or one archived earlier on the line. */
+/** A sender with a credential file it sends (see sentFiles), a credential folder among its own words, or one archived earlier on the line. */
 function checkSenders(commands) {
-  const senders = commands.flatMap((command, at) => {
-    const name = command.cmd === undefined ? undefined : senderOf(command);
-    return name === undefined ? [] : [{ name, at }];
-  });
-  if (senders.length === 0) return undefined;
-  const [file] = commands.flatMap(filesOf);
-  if (file !== undefined) return sendReason(senders[0].name, file);
-  const folderHits = senders.flatMap(({ name, at }) =>
-    [...foldersSentBy(commands[at].args), ...archivedFolders(commands.slice(0, at))].map((kind) => sendReason(name, kind)),
-  );
-  return folderHits[0];
+  const names = commands.map((command) => (command.cmd === undefined ? undefined : senderOf(command)));
+  const first = names.findIndex((name) => name !== undefined);
+  if (first === -1) return undefined;
+  const [file] = sentFiles(commands, names);
+  if (file !== undefined) return sendReason(names[first], file.kind);
+  let archived; // the first credential folder an archiver named earlier on the line
+  for (const [at, command] of commands.entries()) {
+    const kind = names[at] === undefined ? undefined : (foldersSentBy(command.args)[0] ?? archived);
+    if (kind !== undefined) return sendReason(names[at], kind);
+    if (ARCHIVERS.has(command.cmd)) archived ??= foldersOf(command.args)[0];
+  }
+  return undefined;
 }
 
 /** Index of the first command of the pipeline that ends at `at` (`a | b | c`: every later command of it is `.piped`). */
@@ -140,7 +170,7 @@ function pipelineStart(commands, at) {
 function checkStdinSends(commands) {
   const fedTo = (at) => {
     const feeders = commands.slice(pipelineStart(commands, at), at);
-    return [...stdinFiles(commands[at].args), ...feeders.flatMap(filesOf), ...archivedFolders(feeders)];
+    return [...stdinFiles(commands[at].args), ...feeders.flatMap(fileKindsOf), ...archivedFolders(feeders)];
   };
   const [kind] = commands.flatMap((command, at) => (command.cmd === STDIN_SENDER ? fedTo(at) : []));
   return kind === undefined ? undefined : sendReason(STDIN_SENDER, kind);

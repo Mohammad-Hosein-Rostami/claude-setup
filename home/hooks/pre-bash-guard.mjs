@@ -67,6 +67,7 @@ import { bashCodeWrites } from './lib/code-writes.mjs';
 import {
   checkDiskWipe, checkGhSecret, checkGit, checkHiddenRm, checkKeychainPrint, checkLockfileEdit, checkStdinRm, checkStdinScriptRm,
 } from './lib/command-checks.mjs';
+import { withoutCapturedPrints } from './lib/captured-read.mjs';
 import { commandOf } from './lib/command-of.mjs';
 import { checkCredentialSend } from './lib/credential-send.mjs';
 import { scanWrapped } from './lib/dangerous-scan.mjs';
@@ -219,7 +220,8 @@ export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts 
   // backstop: a second, independent parse (the character-level lexer) feeds the same rules; what only it finds is marked
   const known = new Set(primary);
   const backstop = reasonsOf(command, { ...ctx, parse: lex }).filter((reason) => !known.has(reason)).map((reason) => `${reason} (matched in raw text)`);
-  const reasons = [...new Set([...primary, ...backstop])];
+  const recheck = (text) => [...reasonsOf(text, ctx), ...reasonsOf(text, { ...ctx, parse: lex })];
+  const reasons = withoutCapturedPrints([...new Set([...primary, ...backstop])], command, recheck); // `export T=$(gh auth token)` prints nothing
   // fail to ask: a hidden-execution construct next to a dangerous word asks even when both parsers saw nothing; only a non-secret reason
   // makes it redundant, so a literal secret never hides it (a secret-only ask is shortened and can be remembered, see lib/remembered-ask.mjs)
   const risky = riskyWordInExpansion(command, prodHosts);

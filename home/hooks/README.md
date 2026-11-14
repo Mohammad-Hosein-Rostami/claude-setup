@@ -27,6 +27,7 @@ Helpers: `diagnostics.mjs` (check output to `file:line RULE-ID message`) and `ed
 - `ansi-c.mjs` - decoder for `$'...'` quoting (`\xNN`, octal, `\uNNNN`).
 - `command-of.mjs` - segment to the real command (and its word index), looking through keywords, `VAR=x` and wrappers.
 - `command-checks.mjs` - git, disk-wipe, lockfile, hidden-`rm`, xargs/parallel `rm -r` (also inside a `sh -c` script), keychain and `gh auth token` print, and `gh ssh-key add` (not `*.pub`) rules for one command; `verdict.mjs` - the `DESTRUCTIVE:` prefix.
+- `captured-read.mjs` - drops the keychain / `gh auth token` print ask when each read only fills a variable (`export T=$(gh auth token)`).
 - `credential-send.mjs` - a private credential file (ssh key or any non-public file under `.ssh`, `.aws/credentials`, `.netrc`, gh `hosts.yml`, kube/npm/docker/pypi configs) and a network sender or cloud upload in one command line, a whole `.ssh`/`.aws`/`.gnupg` folder given to a sender or archived before one, or a credential fed to ssh's stdin; identity-flag values do not count.
 - `dangerous-scan.mjs` - finds a dangerous command behind an unknown wrapper; `eval-check.mjs` - `eval` of a variable or substitution.
 - `rm-paths.mjs` - `rm -r` target rules and the ordered variable tracking.
