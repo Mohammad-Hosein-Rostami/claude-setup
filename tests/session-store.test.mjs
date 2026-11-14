@@ -6,7 +6,7 @@ import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
-  chmodSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync,
+  chmodSync, linkSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync,
 } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -110,6 +110,31 @@ test('a session file that is a link, a dangling link or a folder is not used, an
       for (const send of [1, 2]) assert.equal(use(env), false, `${store}, ${name}, send ${send}`);
       assert.ok(unchanged(), `${store}, ${name}: left as it was`);
     }
+  }
+});
+
+/** Hard-links a root-owned file to target (macOS allows it; Linux with protected_hardlinks does not); true when target is another owner's. */
+function linkRootOwnedFile(target) {
+  for (const source of ['/private/etc/hosts', '/etc/hosts']) {
+    try {
+      linkSync(source, target);
+      return lstatSync(target).uid !== process.getuid();
+    } catch {
+      // not linkable here (another volume, or not allowed): try the next one
+    }
+  }
+  return false;
+}
+
+test('a session file of another owner (a hard link to a root-owned file) is not used and stays as it is', posix, (t) => {
+  for (const [store, dirOf, use] of STORES) {
+    const env = privateEnv();
+    mkdirSync(dirOf(env), { recursive: true, mode: 0o700 });
+    const file = join(dirOf(env), 'sess-1.json');
+    if (!linkRootOwnedFile(file)) return t.skip('no root-owned file can be hard-linked here (Linux protected_hardlinks, or root)');
+    const before = lstatSync(file);
+    for (const send of [1, 2]) assert.equal(use(env), false, `${store}, send ${send}`);
+    assert.deepEqual([lstatSync(file).ino, lstatSync(file).uid], [before.ino, before.uid], `${store}: the link is left in place`);
   }
 });
 
