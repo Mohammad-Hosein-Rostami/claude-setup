@@ -67,7 +67,8 @@ own rules) and `docs/usage.md`.
 
 Every question the Bash guard asked, and the answer, is one JSON line in `~/.claude/logs/guard.jsonl`
 (`CLAUDE_GUARD_LOG` changes the path). Show the last lines with `tail -n 20 ~/.claude/logs/guard.jsonl`. The outcomes are
-allow, deny, timeout, remembered, bounce (sent back once for a rewrite), no-gui and dialog-failed. The log never stores secrets. What the guard asks about is in
+allow, deny, timeout, remembered, bounce (sent back once for a rewrite; the line names the classes in `class` and holds no command
+text), no-gui and dialog-failed. The log never stores secrets. What the guard asks about is in
 `docs/troubleshooting.md`.
 
 ## Run the tests

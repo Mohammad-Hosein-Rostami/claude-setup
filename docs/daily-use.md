@@ -32,10 +32,12 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
   pauses while that terminal window is focused, after a keypress, and with Remote Control on. Click another app before
   you leave. The recommended option is chosen to be safe with nobody there, and each default taken is logged.
 - Guard dialogs (`git push`, publish, `rm -rf` outside the project, prod-host writes, literal secrets) default to
-  Allow and go ahead after 180 s (`CLAUDE_ASK_TIMEOUT_S`); a secret-only ask after 30 s. Only a click on Deny
-  blocks. A command Claude can simply rewrite (a `$VAR` command word, `rm`/`push` inside `$(...)` or a heredoc, a
-  literal secret) is first sent back to Claude once with the fix, so no dialog waits; sent again unchanged, it gets
-  the dialog. Every ask and its outcome is in `~/.claude/logs/guard.jsonl`.
+  Allow and go ahead after 180 s (`CLAUDE_ASK_TIMEOUT_S`); a secret-only ask after 30 s. A click on Deny blocks
+  for good. A command Claude can rewrite (a `$VAR` command word, `rm`/`push` inside `$(...)` or a heredoc, a literal
+  secret) is first sent back to Claude once with the fix, so no dialog waits; the message also names what will still
+  ask after the rewrite (a push, an `rm` outside the project ...), and sent again unchanged, it gets the dialog. A
+  secret sent back this way shows you no dialog, so Claude names its kind in the final report: rotate it if needed.
+  Every ask and its outcome is in `~/.claude/logs/guard.jsonl`.
 - Watch a run from a second session: `node ~/.claude/tools/watch/watch.mjs <session-id>` under the Monitor tool; it
   prints one line per event that needs action and flags a stall. See its README (`home/tools/watch/README.md`).
   With `--exit-on-event` in a background command it prints the first such event and exits, so a quiet hour costs the
