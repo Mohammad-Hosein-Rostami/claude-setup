@@ -8,6 +8,7 @@ descriptions are quoted from their frontmatter; those descriptions are what make
 | Skill | Description (trigger) | Model |
 | ----- | --------------------- | ----- |
 | `accessibility-build` | Use while writing or changing UI code (.tsx/.jsx/.vue/.html; MUI components, dialogs, menus, icon buttons, forms) so it is accessible from the start - semantic HTML, keyboard, focus, labels, contrast, motion (WCAG 2.2 AA). | session model |
+| `ask-owner` | Use when a decision is the owner's (scope, money, irreversible or outward-facing actions, credentials, real trade-offs), or when an ASK line arrives from the decision queue - how to word the question and run the queue loop. | session model |
 | `async-ui-states` | Use for any screen that loads or changes server data - loading, empty, error, offline, stale responses, pagination, search-as-you-type. | session model |
 | `clean-code` | Use when writing or changing code, and again before finishing a coding step - naming, size, complexity, errors, comments, duplication, dead code, scope. | session model |
 | `datetime-handling` | Use whenever code stores, parses, compares, shows or schedules dates and times, in the UI or the backend - time zones, DST, date-only values, formats. | session model |
@@ -28,6 +29,7 @@ descriptions are quoted from their frontmatter; those descriptions are what make
 | `token-audit` | Audit where tokens go in this project's Claude setup - instruction files, rules, skills, agents, MCP servers - and propose concrete cuts. Use periodically or when sessions feel expensive. (manual only: slash command) | sonnet |
 | `tradeoff-analysis` | Use when a design choice has two or more credible options (datastore, queue, sync vs async, build vs buy) - compare them, pick one, record an ADR. | session model |
 | `ui-quality-pass` | Use before saying any UI component, page, screen, step or dialog is done or fixed, including small tweaks and work a subagent did - tokens, semantics, keyboard, contrast, responsive, async states, copy. | session model |
+| `ui-coverage` | Use for any UI task with more than one component and for Figma or pixel-perfect work - build a coverage matrix (surfaces including backend-rendered UI, control reuse, states, locales and direction, reference behaviour, live review page) and gate done on `ui-coverage check`. | session model |
 | `verify-done` | Use before claiming a task is done, fixed, passing or ready for review, and when the owner says done, ship or merge. | session model |
 
 ## Agents (`home/agents/<name>.md`)
@@ -128,7 +130,9 @@ layers" in `home/CLAUDE.md`.
 
 | Tool | What it does |
 | ---- | ------------ |
-| `ui-check` | Node CLI: `figma-pull`, `compare`, `responsive`, `columns`. See `home/tools/ui-check/README.md` and `docs/figma-pixel-perfect.md`. Pages wait for network idle (max 5 s) and a 1.5 s settle before measuring. Dependencies: `odiff-bin`, `pngjs`; Playwright comes from the target project. |
+| `ui-check` | Node CLI: `figma-pull`, `compare`, `responsive`, `columns`, `batch` (many states in one run, writes `results.json`). Flags added: `--locale`, `--expect-dir`, `--color-scheme`, `--storage`, `--cookie`; `responsive` also reports the `bidi-field` finding. See `home/tools/ui-check/README.md` and `docs/figma-pixel-perfect.md`. Pages wait for network idle (max 5 s) and a 1.5 s settle before measuring. Dependencies: `odiff-bin`, `pngjs`; Playwright comes from the target project. |
+| `ui-coverage` | Node CLI for the `ui-coverage` skill: `expand` adds a `todo` cell for every missing surface x state x locale (and width) in a matrix file; `check` validates it, merges `ui-check batch` results and exits 1 naming each uncovered or failing cell. See `home/tools/ui-coverage/README.md`. |
+| `watch` | Node CLI: `node ~/.claude/tools/watch/watch.mjs <session-id>` follows a live session and prints action-only lines (owner prompts, compactions, errors, usage limits, guard denies and timeouts) plus a STALL alert when nothing is written for `--stall-min` minutes (default 20). Run it under Monitor from a second session. See `home/tools/watch/README.md`. |
 
 System CLIs (`tools/Brewfile`, `tools/windows-tools.ps1`): jq, ripgrep, gitleaks, gh, volta.
 

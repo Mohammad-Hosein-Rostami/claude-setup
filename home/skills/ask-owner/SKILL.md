@@ -36,6 +36,12 @@ Bad -> good:
 `askUserQuestionTimeout` (settings) auto-continues an unanswered terminal question after 60 s, the CLI minimum; the timer pauses while that terminal window is focused, after any keypress, and with Remote Control on, so an unattended lead asks only real owner calls and logs each default it takes (the Bash guard's timed dialog is separate: it auto-allows after 3 min, a secret-only ask after 30 s). If the box times out, take
 the recommended option, keep going, and say which one you took in the next message.
 
+Because a timeout takes the recommended option, that option must be safe with nobody there: reversible, the full scope
+and the owner's stated bar kept, reusing what exists. Never make an outward-facing or irreversible action (push,
+publish, delete, send, spend) or a scope cut the recommended option; if the best choice is one of those, list it second
+and recommend "wait" or the reversible path. Log every answer taken by timeout in STATUS.md under "taken by default
+(revisit)" and repeat it in the final report.
+
 ## Queue loop (background agents and workflows)
 
 1. Every background agent or workflow that runs more than a few minutes: `node ~/.claude/tools/ask/ask.mjs init` prints the

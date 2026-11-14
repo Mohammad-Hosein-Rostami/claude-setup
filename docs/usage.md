@@ -2,7 +2,7 @@
 
 ## Workflow
 Edit in `~/.claude/...` or in `home/...` (the same files, via symlinks) -> `git add` -> `git commit` (Conventional
-Commits; the pre-commit hook runs gitleaks on staged changes) -> `git push`. On another machine: `git pull`, then
+Commits; the pre-commit hook runs gitleaks on staged changes). Never `git push` unless the owner says so. On another machine: `git pull`, then
 `scripts/install.sh` only if `settings/`, `plugins/` or a tool's dependencies changed. Run `scripts/doctor.sh` when
 something looks off.
 

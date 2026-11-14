@@ -22,6 +22,8 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
     scripts/install.sh               # links, settings.json, ui-check deps, plugins
     scripts/doctor.sh                # read-only health report
 
+Day-to-day use (modes, long runs, limits, another machine): [docs/daily-use.md](docs/daily-use.md).
+
 Launch a mode: `ccm [normal|medium|high|extra-high|ultra-high]` (see [docs/modes.md](docs/modes.md)).
 
 Run tests (the second needs the ui-check deps that `install.sh` installs):
