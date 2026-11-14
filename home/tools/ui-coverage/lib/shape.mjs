@@ -1,10 +1,11 @@
 // Purpose: validate a matrix.json with hand-written schema rules (no dependency) and return problems, never throw.
-// Exports: problem(code, message), isText(v), isReason(v), isValidWidth(v), noneReason(v), validateStructure(matrix),
-//   validateRules(matrix), SURFACE_KINDS, STATUSES, REST_STATE, MIN_REASON_CHARS, controlsOf(surface).
+// Exports: problem(code, message, extra), isText(v), isReason(v), isPlaceholder(v), isValidWidth(v), noneReason(v),
+//   validateStructure(matrix), validateRules(matrix), SURFACE_KINDS, STATUSES, REST_STATE, MIN_REASON_CHARS, controlsOf(surface).
 // Invariants: validateStructure checks only what the cell logic needs to run (locales, widths, stateWidths, surface and
 //   control ids, control class, cell widths); when it returns problems the caller must stop. validateRules assumes a
 //   sound structure and reports the content rules (component, states, reference, default states, searched, deliverable,
-//   reasons). A width is a positive integer or null. A reason has at least MIN_REASON_CHARS non-space characters.
+//   reasons, `todo` placeholders). A width is a positive integer or null. A reason has at least MIN_REASON_CHARS non-space
+//   characters. A problem may carry `cell` (the cell label) and `cause` (the root-cause key `check` groups by).
 import { defaultStatesFor, isKnownClass, knownClassNames } from './states.mjs';
 
 export const SURFACE_KINDS = ['screen', 'email', 'server-page', 'pdf', 'notification', 'other'];
@@ -14,8 +15,11 @@ export const MIN_REASON_CHARS = 15;
 const NONE_PREFIX = 'none:';
 const DIRECTIONS = ['ltr', 'rtl'];
 
-/** Builds a problem record; `code` is stable (tests and callers match on it), `message` is for people. */
-export const problem = (code, message) => ({ code, message });
+/** Builds a problem record; `code` is stable (tests and callers match on it), `message` is for people; `extra` may hold `cell` and `cause`. */
+export const problem = (code, message, extra = {}) => ({ code, message, ...extra });
+
+/** True for a string that still starts with the TODO placeholder `init` writes. */
+export const isPlaceholder = (value) => typeof value === 'string' && /^\s*TODO\b/.test(value);
 
 /** True for a string with a non-blank character. */
 export const isText = (value) => typeof value === 'string' && value.trim() !== '';
@@ -104,10 +108,12 @@ const componentOk = (component) => isText(component) || (isObject(component) && 
 function referenceProblem(reference) {
   if (!isText(reference)) return 'needs a path or "none: <reason>"';
   const reason = noneReason(reference);
-  return reason === null || isReason(reason) ? null : `"none:" needs a reason of at least ${MIN_REASON_CHARS} characters`;
+  return reason === null || isReason(reason) ? null : `"none:" needs a reason of at least ${MIN_REASON_CHARS} characters after the "none:" prefix (the prefix does not count)`;
 }
 
-function controlRules(surface, control) {
+const UNPROVEN_REFERENCE_CAUSE = 'reference is "none:" but searched.reference is empty';
+
+function controlRules(surface, control, referenceSearched) {
   const where = `${surface.id} ${control.id}`;
   const states = Array.isArray(control.states) ? control.states : [];
   const dropped = isObject(control.dropped) ? control.dropped : {};
@@ -116,6 +122,9 @@ function controlRules(surface, control) {
   if (states.length === 0) found.push(problem('control-states', `${where}: states is empty`));
   const badReference = referenceProblem(control.reference);
   if (badReference) found.push(problem('control-reference', `${where}: reference ${badReference}`));
+  else if (noneReason(control.reference) !== null && !referenceSearched) {
+    found.push(problem('unproven-reference', `${where}: reference is "none:" but searched.reference is empty: list the commands you ran to look for a reference app or API, each with its hit count`, { cause: UNPROVEN_REFERENCE_CAUSE }));
+  }
   if (states.length > 0) {
     for (const state of defaultStatesFor(control.class)) {
       if (!states.includes(state) && !isReason(dropped[state])) found.push(problem('default-state', `${where}: default ${control.class} state "${state}" is neither covered nor dropped with a reason`));
@@ -124,20 +133,36 @@ function controlRules(surface, control) {
   return found;
 }
 
-function surfaceRules(surface) {
+function surfaceRules(surface, referenceSearched) {
   if (typeof surface.controls === 'string') {
-    return isReason(noneReason(surface.controls)) ? [] : [problem('surface-controls', `${surface.id}: controls must be "none: <reason of ${MIN_REASON_CHARS}+ characters>" when empty`)];
+    return isReason(noneReason(surface.controls)) ? [] : [problem('surface-controls', `${surface.id}: controls must be "none: <reason of ${MIN_REASON_CHARS}+ characters>" when empty (the "none:" prefix does not count)`)];
   }
-  return surface.controls.flatMap((control) => controlRules(surface, control));
+  if (surface.controls.length === 0) {
+    return [problem('todo', `${surface.id}: controls is empty: list its controls or write "none: <reason>"`, { cause: 'surface with an empty controls list' })];
+  }
+  return surface.controls.flatMap((control) => controlRules(surface, control, referenceSearched));
+}
+
+// Values `init` fills with a TODO placeholder; a matrix that still has one is not finished.
+function placeholderProblems(matrix) {
+  const fields = [
+    ...matrix.surfaces.map((surface) => [`surface ${surface.id}: source`, surface.source]),
+    ...['backend', 'siblings', 'reference'].flatMap((name) => (Array.isArray(matrix.searched?.[name]) ? matrix.searched[name] : []).map((value) => [`searched.${name}`, value])),
+    ['deliverable.reviewUrl', matrix.deliverable?.reviewUrl],
+    ['deliverable.mockExcluded', matrix.deliverable?.mockExcluded],
+  ];
+  return fields.filter(([, value]) => isPlaceholder(value)).map(([name]) => problem('todo', `${name} is still a TODO placeholder`, { cause: 'placeholder text still in the matrix' }));
 }
 
 /**
  * Checks the content rules of a structurally sound matrix.
  * @param {object} matrix a matrix that passed validateStructure
- * @returns {{code:string,message:string}[]} problems (control-*, default-state, surface-controls, state-widths, no-search, deliverable)
+ * @returns {{code:string,message:string}[]} problems (control-*, unproven-reference, default-state, surface-controls, state-widths, no-search, deliverable, todo)
  */
 export function validateRules(matrix) {
-  const found = matrix.surfaces.flatMap(surfaceRules);
+  const reference = matrix.searched?.reference;
+  const referenceSearched = Array.isArray(reference) && reference.some((value) => isText(value) && !isPlaceholder(value));
+  const found = [...matrix.surfaces.flatMap((surface) => surfaceRules(surface, referenceSearched)), ...placeholderProblems(matrix)];
   const backend = matrix.searched?.backend;
   if (!Array.isArray(backend) || !backend.some(isText)) found.push(problem('no-search', 'searched.backend is empty: record the backend search commands and hit counts'));
   const deliverable = matrix.deliverable ?? {};

@@ -15,14 +15,14 @@ function baseMatrix() {
   return {
     locales: [{ tag: 'en', dir: 'ltr' }, { tag: 'fa', dir: 'rtl' }],
     widths: [320, 1280],
-    searched: { backend: ['rg -il "mjml|hbs" api/ -> 1 hit'], siblings: ['rg -il tel ../web -> 2 hits'] },
+    searched: { backend: ['rg -il "mjml|hbs" api/ -> 1 hit'], siblings: ['rg -il tel ../web -> 2 hits'], reference: ['rg -il "validatePhone" ../ref-app -> 1 hit'] },
     deliverable: { reviewUrl: 'http://localhost:4099/review', mockExcluded: 'go build; grep -c authmock bin/app -> 0' },
     surfaces: [
       {
         id: 'login',
         kind: 'screen',
         source: 'src/login.tsx',
-        controls: [{ id: 'phone', class: 'text field', component: 'src/ds/TelephoneInput.tsx', states: TEXT_FIELD_STATES, reference: 'web/Tel.tsx' }],
+        controls: [{ id: 'phone', class: 'text field', component: 'src/ds/TelephoneInput.tsx', mountedAt: 'src/login.tsx:12', states: TEXT_FIELD_STATES, reference: 'web/Tel.tsx' }],
       },
       { id: 'welcome-email', kind: 'email', source: 'api/tpl/welcome.mjml', controls: 'none: static copy only, no controls' },
     ],
@@ -100,7 +100,7 @@ test('pass without evidence is a problem', () => {
 test('a control needs a component path or a new-reason of 15+ characters', () => {
   const failing = (component) => passingMatrix((m) => { m.surfaces[0].controls[0].component = component; });
   for (const bad of [undefined, '', {}, { new: '' }, { new: '  ' }, { new: 'none exists' }]) assert.ok(codes(checkMatrix(failing(bad))).has('control-component'), JSON.stringify(bad));
-  assert.deepEqual(checkMatrix(failing({ new: 'no phone field exists in the design system' })).problems, []);
+  assert.deepEqual(checkMatrix(failing({ new: 'no phone field exists in the design system' })).problems, []); // mountedAt of the base control stays
 });
 
 test('a control needs states and a reference (a path or none with a reason)', () => {
@@ -315,8 +315,8 @@ test('stateWidths narrows control states only, needs a reason, and the reason is
 test('formatReport prints counts per status first, then each problem', () => {
   const matrix = withCell(passingMatrix(), 'phone:focus', 'en', { status: 'fail', evidence: 'd.png' });
   const text = formatReport(checkMatrix(matrix));
-  assert.match(text, /^cells: 32 \| pass 31 \| fail 1 \| na 0 \| deferred 0 \| todo 0 \| missing 0/);
-  assert.match(text, /problems \(1\)/);
+  assert.match(text, /^result: FAIL, 1 cell, 1 cause\ncells: 32 \| pass 31 \| fail 1 \| na 0 \| deferred 0 \| todo 0 \| missing 0/);
+  assert.match(text, /problems \(1 in 1 group\)/);
   assert.match(text, /fail: login phone:focus en @320/);
-  assert.match(formatReport(checkMatrix(passingMatrix())), /result: PASS/);
+  assert.match(formatReport(checkMatrix(passingMatrix())), /^result: PASS\ncells: 32/);
 });

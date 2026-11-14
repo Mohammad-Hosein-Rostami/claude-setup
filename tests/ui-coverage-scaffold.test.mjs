@@ -19,7 +19,7 @@ const MATRIX = {
   deliverable: { reviewUrl: 'http://localhost:4099/review', mockExcluded: 'grep -c authmock dist -> 0' },
   surfaces: [{
     id: 'login', kind: 'screen', source: 'src/login.tsx',
-    controls: [{ id: 'save', class: 'dialog', component: 'src/Dialog.tsx', states: ['shown'], reference: 'none: no design reference exists' }],
+    controls: [{ id: 'save', class: 'dialog', component: 'src/Dialog.tsx', mountedAt: 'src/login.tsx:3', states: ['shown'], reference: 'none: no design reference exists' }],
   }],
 };
 

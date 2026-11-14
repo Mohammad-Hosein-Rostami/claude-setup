@@ -58,7 +58,7 @@ test('check exits 1 and names the todo cells; with passing results (two files) i
   await writeFile(join(dir, 'b.json'), JSON.stringify({ results: JSON.parse(fa) }));
   const ok = run('check', file, '--results', join(dir, 'a.json'), '--results', join(dir, 'b.json'));
   assert.equal(ok.status, 0, ok.stdout);
-  assert.match(ok.stdout, /^cells: 2 \| pass 2 \| fail 0/);
+  assert.match(ok.stdout, /^result: PASS\ncells: 2 \| pass 2 \| fail 0/);
   assert.match(ok.stdout, /result: PASS/);
 });
 

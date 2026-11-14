@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,11 +19,11 @@ const BUTTON_STATES = run('states').stdout.match(/^button -> (.+)$/m)[1].split('
 const MATRIX = {
   locales: LOCALES,
   widths: WIDTHS,
-  searched: { backend: ['rg -il mjml api/ -> 0 hits'], siblings: [] },
+  searched: { backend: ['rg -il mjml api/ -> 0 hits'], siblings: [], reference: ['rg -il validate ../ref -> 0 hits'] },
   deliverable: { reviewUrl: 'http://localhost:4099/review', mockExcluded: 'grep -c authmock dist -> 0' },
   surfaces: [{
     id: 'login', kind: 'screen', source: 'src/login.tsx',
-    controls: [{ id: 'submit', class: 'button', component: 'src/Button.tsx', states: BUTTON_STATES, reference: 'none: no design reference exists' }],
+    controls: [{ id: 'submit', class: 'button', component: 'src/Button.tsx', mountedAt: 'src/login.tsx:1', states: BUTTON_STATES, reference: 'none: no design reference exists' }],
   }],
 };
 
@@ -31,6 +31,8 @@ async function expandedMatrix() {
   const dir = await mkdtemp(join(tmpdir(), 'ui-batch-contract-'));
   const file = join(dir, 'matrix.json');
   await writeFile(file, JSON.stringify(MATRIX));
+  await mkdir(join(dir, 'src'));
+  await writeFile(join(dir, 'src', 'login.tsx'), "import { Button } from './Button.tsx';\n"); // the mount site check reads this file
   assert.equal(run('expand', file).status, 0);
   const cells = JSON.parse(await readFile(file, 'utf8')).cells;
   return { dir, file, cells };

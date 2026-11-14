@@ -83,7 +83,7 @@ function resolveCell(base, group) {
   const failRecord = group.find((record) => record.status === 'fail');
   if (failRecord || base.status === 'fail') {
     const declared = failRecord && (base.status === 'na' || base.status === 'deferred') ? { declared: base.status } : {};
-    return { ...base, ...declared, status: 'fail', evidence: failRecord?.evidence ?? base.evidence ?? '' };
+    return { ...base, ...declared, status: 'fail', evidence: failRecord?.evidence ?? base.evidence ?? '', findings: failRecord?.findings ?? base.findings };
   }
   const passRecord = group.find((record) => record.status === 'pass');
   return passRecord ? { ...base, status: 'pass', evidence: passRecord.evidence ?? '' } : base;
@@ -93,8 +93,9 @@ function resolveCell(base, group) {
  * Applies result records to the matrix cells.
  * @param {object} matrix a structurally sound matrix
  * @param {unknown[]} records ui-check result records
- * @returns {{cells: object[], problems: {code:string,message:string}[]}} merged cells (duplicates reported, first kept)
- *   plus `bad-result`, `unmatched-result` and `duplicate-cell` problems
+ * @returns {{cells: object[], recorded: Set<string>, problems: {code:string,message:string}[]}} merged cells (duplicates
+ *   reported, first kept; a failing cell carries the `findings` of its fail record), the keys that at least one record
+ *   filled, plus `bad-result`, `unmatched-result` and `duplicate-cell` problems
  */
 export function mergeResults(matrix, records) {
   const problems = [];
@@ -116,5 +117,5 @@ export function mergeResults(matrix, records) {
     }
   }
   for (const [key, group] of grouped) byKey.set(key, resolveCell(byKey.get(key) ?? { ...wanted.get(key), status: 'todo', evidence: '', reason: '' }, group));
-  return { cells: [...byKey.values()], problems };
+  return { cells: [...byKey.values()], recorded: new Set(grouped.keys()), problems };
 }

@@ -7,18 +7,20 @@ Run: `node ~/.claude/tools/ui-coverage/ui-coverage.mjs <command>`
 
 | Command | What it does |
 | ------- | ------------ |
+| `init <matrix> --locales en:ltr,fa:rtl --widths 320,768,1280 --surfaces login,signup` | Writes a valid skeleton: the surfaces (kind `screen`, `controls: []`, source `TODO`), `TODO` placeholders in `searched` and `deliverable`, and a `todo` cell per surface x locale x width. `check` rejects it with `todo` problems only. Refuses to overwrite an existing file (exit 2). |
 | `expand <matrix> [--out F]` | Adds a `todo` cell for every surface x state x locale that is missing (`rest` also per width). Idempotent; writes the matrix in place. Exit 1 (file untouched) when the matrix structure is broken. |
 | `scaffold <matrix> [--out states.json]` | Writes a `ui-check batch --states` skeleton: one entry `{surface, state, locale, widths, url:"", steps:[]}` per surface x state x locale that still has a cell that is not `pass`, `na` or `deferred` (its open widths grouped in `widths`), and `defaults: {}` for you to fill. The names come from the matrix, so batch records match the cells by construction. An existing `--out` keeps all its entries and `defaults` (matched on surface + state + locale) and only gets the missing entries. Default `--out`: `states.json` in the current directory. Exit 1 (nothing written) for a broken matrix, 2 for a bad flag or an unreadable states file. Flow: expand, scaffold, fill `url` and `steps`, `ui-check batch`, check. |
 | `states` | Prints the default states per control class (the single list, `lib/states.mjs`). |
-| `check <matrix> [--results F]...` | Validates, merges result records, prints the summary, exits 0 (complete) or 1 (problems). Never writes. Exit 2: bad flag, unreadable or invalid JSON. |
+| `check <matrix> [--results F]... [--verbose]` | Validates, merges result records, prints the summary, exits 0 (complete) or 1 (problems). Never writes. Exit 2: bad flag, unreadable or invalid JSON. `--verbose` lists every problem instead of the groups. |
 
 ## matrix.json
 ```
 { locales:[{tag,dir:"ltr|rtl"}],      // the first locale is the base locale
   widths:[n], stateWidths?:[n], stateWidthsReason?,   // stateWidths: subset of widths, narrows control states only
-  searched:{backend:[str], siblings:[str]}, deliverable:{reviewUrl, mockExcluded},
+  root?:"<dir relative to the matrix file>",     // where mountedAt paths resolve from (default: the matrix file's directory)
+  searched:{backend:[str], siblings:[str], reference:[str]}, deliverable:{reviewUrl, mockExcluded},
   surfaces:[{ id, kind:"screen|email|server-page|pdf|notification|other", source,
-    controls:[{ id, class, component:"<path>"|{new:"<reason>"}, states:[str], reference:"<path>|none: <reason>",
+    controls:[{ id, class, component:"<path>"|{new:"<reason>"}, mountedAt:"<file>:<line>", componentMarker?:str, states:[str], reference:"<path>|none: <reason>",
                 dropped?:{ "<state>":"<reason>" } }] | "none: <reason>" }],
   cells:[{ surface, state:"<control>:<state>"|"rest", locale, width, status:"pass|fail|na|deferred|todo", evidence, reason }] }
 ```
@@ -28,8 +30,15 @@ Run: `node ~/.claude/tools/ui-coverage/ui-coverage.mjs <command>`
 - `class` is required: a known class or `other` (then `states` must be listed). Run `ui-coverage.mjs states` for the
   classes and their default states; a default state must be in `states` or in `dropped` with a reason. A misspelled class is a
   schema error naming the control.
+- Reuse is proven, not declared: every control with a `component` path needs `mountedAt` (`<file>:<line>`, the place the
+  surface uses the control). `check` reads that file and fails with `unproven-reuse` when the file or line does not exist
+  or the file never mentions the component (the component file's name without extension, or `componentMarker`: a tag or
+  class it exports). A `{new}` control needs `mountedAt` too (`unproven-mount`) but skips the mention test. Paths resolve
+  from the matrix file's directory, or from `root`.
+- Reference is proven: `reference: "none: <reason>"` is accepted only when `searched.reference` lists at least one search
+  command with its hit count; otherwise `unproven-reference`.
 - Reasons (`na`, `deferred`, `{new:}`, `none:`, `dropped`, `stateWidthsReason`) and `deliverable.mockExcluded` need 15+
-  non-space characters. Widths are positive integers; anything else is a schema error (a bad record width is `bad-result`).
+  non-space characters (the `none:` prefix does not count). Widths are positive integers; anything else is a schema error (a bad record width is `bad-result`).
 - Evidence of a `pass` cell is a http(s) or file URL, or an existing file (a relative path resolves from the matrix file's
   directory). `deliverable.reviewUrl` is a URL or an existing path.
 - A `na` cell in a non-base locale is allowed only when the same surface, state and width is `na` in the base locale;
@@ -45,13 +54,16 @@ results file therefore keeps failing: delete or re-run it. A record that matches
 
 ## check problems (exit 1)
 `shape` (broken structure), `surface-controls`, `control-component`, `control-states`, `control-reference`,
-`default-state`, `no-search` (`searched.backend` empty), `deliverable` (reviewUrl or mockExcluded empty),
+`unproven-reuse`, `unproven-mount`, `unproven-reference`, `default-state`, `no-search` (`searched.backend` empty), `deliverable` (reviewUrl or mockExcluded empty),
 `missing-cell`, `todo`, `fail`, `no-reason` (na/deferred), `no-evidence` (pass), `cell-status`, `unknown-cell`,
-`duplicate-cell`, `bad-result`, `unmatched-result`, `evidence-missing`, `state-widths`, `na-locale`, `no-rtl-pass` (an rtl locale exists but a surface has no rtl `pass`).
+`duplicate-cell`, `bad-result`, `unmatched-result`, `evidence-missing`, `state-widths`, `todo` (also a `TODO` placeholder or an empty `controls: []`), `na-locale`, `no-rtl-pass` (an rtl locale exists but a surface has no rtl `pass`).
 
-Output: a counts line, every `na` / `deferred` cell with its reason (paste both into the owner report), the problems, then
-`result: PASS|FAIL`.
+Output: the verdict first (`result: PASS`, or `result: FAIL, 268 cells, 8 causes`), the counts line, every `na` /
+`deferred` cell with its reason (paste both into the owner report), the hand-set fails (cells with status `fail` in the
+matrix and no result record: faults found by eye), then the problems grouped by code and root cause (same check and same
+reason text or same finding): a group of one prints as a line, a larger group prints its count and its first three cells.
+`--verbose` lists every problem. A failing cell's cause is the findings of its result record, else its `reason`.
 
 ## Layout
 `ui-coverage.mjs` (CLI: arguments, files, printing), `lib/shape.mjs` (schema rules), `lib/states.mjs` (default states),
-`lib/cells.mjs` (cell set, expand, merge, unmatched-record advice), `lib/scaffold.mjs` (states skeleton), `lib/check.mjs` (the check), `lib/report.mjs` (text). Tests: `tests/ui-coverage*.test.mjs`.
+`lib/cells.mjs` (cell set, expand, merge, unmatched-record advice), `lib/scaffold.mjs` (states skeleton), `lib/init.mjs` (matrix skeleton), `lib/reuse.mjs` (mount-site proof), `lib/group.mjs` (root-cause grouping), `lib/check.mjs` (the check), `lib/report.mjs` (text). Tests: `tests/ui-coverage*.test.mjs`.
