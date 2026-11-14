@@ -76,3 +76,19 @@ test('T2: an escaped, comma- or brace-separated flag still asks; BEM modifiers s
   for (const command of [`cmd \\--token ${R}`, `cmd {,--token} ${R}`, `cmd {--token ${R}}`, `cmd x,--password ${PASSWORD}`]) expectAsk(command);
   for (const command of ['.card--password {', 'inv-new-staff--password (12 px)', 'a,b--token (x)']) expectSilent(command);
 });
+
+// Final audit F1, F2, N1h: an exemption must not cover shell glue, and a flag's all-punctuation value is only a code opener or an ellipsis.
+test('F1: a list comma ends a query value only inside a real bracketed list', () => {
+  for (const command of [`curl "https://x/?token=verify-ok","/${R}",x`, `curl "https://x/?password="},"/${R}",x`, `curl "https://x/?token=ab-cd","/${R}",x`]) expectAsk(command);
+  for (const command of ["const p=['/a?token=verify-ok','/b'];", `x = ["/r?token=reset-ok","/s", "/t"]`, `{"/r?token=reset-ok","/s"}`, "f(['/a?token=verify-ok',\n  '/b'])"]) expectSilent(command);
+});
+
+test('F2: only a code opener or an ellipsis is a non-value for a flag; other punctuation is a password', () => {
+  for (const command of ['cmd --password %+=:,.~@#', 'cmd --token @#$', 'cmd --api-key =', 'cmd --password ~~~']) expectAsk(command);
+  for (const command of ['cmd --password {', 'cmd --password (', 'cmd --token [', 'cmd --token …', '.card--password .card__body {', 'inv-new-staff--password (12 px)']) expectSilent(command);
+});
+
+test('N1h: shell glue "+R" after a mock word asks; JS concatenation after a mock word stays silent', () => {
+  for (const command of [`curl "https://x/r?token=abc-def"+${R}`, `curl 'https://x/r?token=abc-def'+${R}`, `x="https://x/r?token=abc-def"+${R}`]) expectAsk(command);
+  for (const command of ['goto("/r?token=reset-ok"+suffix)', 'page.goto(base+"/r?token=reset-ok"+tok)', 'const u = "/r?token=reset-ok" + tok;', 'page.goto(base+"/reset?token="+tok)']) expectSilent(command);
+});

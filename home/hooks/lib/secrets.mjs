@@ -80,8 +80,14 @@ const QUERY_SECRET_KEYS = caseless('client[_-]?secret|secret|password|passwd|pwd
 // What may follow the end of a quoted or bracketed query value: closing brackets, then whitespace, `;`, the end, or a `,` that is followed by whitespace or by the
 // next list item: a whole quoted path or URL that is itself followed by `,` `]` or `}` (`['/a?token=x-y','/b']`, never a lone `,"/R"`). Glued text (`"/R`, `".R`,
 // `)R`, `]R`, `,R`, `,'R'`) means the value goes on.
-const LIST_ITEM = '(?:"(?:/|https?://)[^"\\n]{0,200}"|\'(?:/|https?://)[^\'\\n]{0,200}\'|`(?:/|https?://)[^`\\n]{0,200}`)[ \\t]*[,\\]}]';
-const QUERY_END = `(?=[)}\\]]{0,4}(?:[\\s;]|,(?:\\s|${LIST_ITEM})|$))`;
+const LIST_ITEM = '[ \\t]*(?:"(?:/|https?://)[^"\\n]{0,200}"|\'(?:/|https?://)[^\'\\n]{0,200}\'|`(?:/|https?://)[^`\\n]{0,200}`)[ \\t]*[,\\]}]';
+// A list item only counts inside a real list: the quoted string that holds the value must itself open right after `[`, `(`, `{` or `,` (`['/a?token=x-y','/b']`),
+// never after a shell word (`curl "https://x/?token=a-b","/R",x` is one argument list for the shell).
+const QUOTED_BEFORE = '(?:"[^"\\n]{0,300}"|\'[^\'\\n]{0,300}\'|`[^`\\n]{0,300}`)';
+const IN_CODE_LIST = `(?<=[\\[({,]\\s*${QUOTED_BEFORE})`;
+// Likewise a `+` after the quote is JS concatenation only when the string opens after `[ ( { , + :` or `= ` with a space (`x = "u?token=a-b"+s`, not shell `x="..."+R`).
+const IN_CODE_CONCAT = `(?<=(?:[\\[({,+:][ \\t]*|=[ \\t]+)${QUOTED_BEFORE})`;
+const QUERY_END = `(?=[)}\\]]{0,4}(?:[\\s;]|,\\s|$)|${IN_CODE_LIST}[)}\\]]{0,4},${LIST_ITEM})`;
 // A value under MIN_VALUE_LENGTH characters is a test fixture (`token=t`), not a secret: the allow-list never remembers one either. It counts the whole shell
 // word, skipping quote characters and stopping only at `&`, `#` or whitespace, so `"?token=ab"'R'`, `abcd|R` and a backslash-newline continuation are long enough.
 const QUERY_MIN_LENGTH = `(?=(?:(?:["']|\\\\\\r?\\n)*[^\\s"'&#]){${MIN_VALUE_LENGTH}})`;
@@ -92,13 +98,13 @@ const QUERY_CODE = `["'\`][ \\t]*(?:\\+(?![ \\t]*["'\`])|[})]${QUERY_END})|["']?
 const QUERY_START = '(?!["\']?(?:`|<|\\s|;|&|\\||$))';
 // A kebab-case mock word (`token=verify-ok`): lowercase (these rules have no 'i' flag), 24 chars at most, one hyphen at least, and it ENDS the
 // value: a quote not followed by more value, whitespace, `&`, `#`, `)` or the end. Only for token-like keys, never password/secret keys.
-const QUERY_MOCK_WORD = `(?=[a-z-]{1,24}(?![\\w-]))[a-z]+(?:-[a-z]+)+(?:["'](?:${QUERY_END}|[ \\t]*\\+(?![ \\t]*["'\`]))|\\)${QUERY_END}|[\\s&#]|$)`;
+const QUERY_MOCK_WORD = `(?=[a-z-]{1,24}(?![\\w-]))[a-z]+(?:-[a-z]+)+(?:["'](?:${QUERY_END}|${IN_CODE_CONCAT}[ \\t]*\\+(?![ \\t]*["'\`]))|\\)${QUERY_END}|[\\s&#]|$)`;
 const QUERY_NOT_LITERAL = `${QUERY_MIN_LENGTH}(?!${QUERY_CODE})`;
 const QUERY_TOKEN_NOT_LITERAL = `${QUERY_MIN_LENGTH}(?!${QUERY_CODE}|${QUERY_MOCK_WORD})`;
 // The flag is its own shell word: it follows the start, whitespace, a command separator, `(`, a quote, a backslash, `,` or `{` (`{,--token} R` is brace expansion).  `.card--password` and `staff--password (12 px)`
-// (BEM modifiers, state ids) are not flags. A value made only of punctuation (`{`, `(`, `...`) is not a value either; a quoted one still is.
+// (BEM modifiers, state ids) are not flags. A value that is only a code opener or an ellipsis (`{`, `(`, `[`, `...`, `…`) is not a value either; other punctuation (`%+=:,.~@#`) or a quoted one still is.
 const SECRET_FLAG = '(?<=^|[\\s;&|(`"\'\\\\,{])--(?:token|api-key|apikey|password|passwd|client-secret|access-token|auth-token)(?:=|\\}?\\s+)';
-const PUNCTUATION_ONLY_WORD = '[^\\w\\s"\';&|$]+(?:[\\s;&|]|$)';
+const PUNCTUATION_ONLY_WORD = '(?:[{(\\[]|\\.{3}|…)(?:[\\s;&|]|$)';
 // Names with a KEY or TOKEN part but no password/secret part: for these a value holding a character outside a token charset (`…).slice(0,`) is code or text.
 // Password and secret names keep the broad rule, since a password may hold any character.
 const PASSWORD_NAME_PART = '(?<![A-Za-z0-9])(?:SECRET|PASS|PASSWD|PWD)(?![A-Za-z0-9])|PASSWORD';
