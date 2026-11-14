@@ -66,7 +66,7 @@ const isRemote = (word) => (REMOTE_PATH.test(word) && !DRIVE_PATH.test(word)) ||
 const kindsOf = (word) => CREDENTIAL_FILES.filter(([pattern]) => pattern.test(word)).map(([, kind]) => kind);
 const folderOf = (word) => CREDENTIAL_FOLDER.exec(word)?.[1];
 const foldersOf = (words) => words.map(folderOf).filter((name) => name !== undefined).map((name) => `the whole .${name} folder`);
-const archivedFolders = (commands) => commands.filter(({ cmd }) => ARCHIVERS.has(cmd)).flatMap(({ args }) => foldersOf(args));
+const archivedFolder = ({ cmd, args }) => (ARCHIVERS.has(cmd) ? foldersOf(args)[0] : undefined);
 const containsRun = (words, run) => words.some((_, at) => run.every((word, k) => words[at + k] === word));
 const sendReason = (sender, kind) => `${sender} in the same command line as a private credential file (${kind}): it can send the secret off this machine`;
 
@@ -102,7 +102,6 @@ function credentialWords(cmd, args) {
 
 /** The credential files one command of the line names, not to log in (none for an empty command or an export-style declaration). */
 const filesOf = ({ cmd, args }) => (cmd === undefined || DECLARERS.has(cmd) ? [] : credentialWords(cmd, args).filter(({ identity }) => !identity));
-const fileKindsOf = (command) => filesOf(command).map(({ kind }) => kind);
 
 /** For each command, the index of the first command of its pipeline (`a | b; c`: 0, 0, 2). */
 function pipelineIds(commands) {
@@ -154,26 +153,24 @@ function checkSenders(commands) {
   for (const [at, command] of commands.entries()) {
     const kind = names[at] === undefined ? undefined : (foldersSentBy(command.args)[0] ?? archived);
     if (kind !== undefined) return sendReason(names[at], kind);
-    if (ARCHIVERS.has(command.cmd)) archived ??= foldersOf(command.args)[0];
+    archived ??= archivedFolder(command);
   }
   return undefined;
 }
 
-/** Index of the first command of the pipeline that ends at `at` (`a | b | c`: every later command of it is `.piped`). */
-function pipelineStart(commands, at) {
-  let start = at;
-  while (start > 0 && commands[start].piped) start--;
-  return start;
-}
-
-/** ssh sends what it reads on stdin: a credential file redirected into it, or named or archived by a command earlier in its pipeline. */
+/**
+ * ssh sends what it reads on stdin: a credential file redirected into it, or named or archived by a command earlier in its pipeline.
+ * One forward pass that carries the first credential of the current pipeline, so a long `a | ssh h | ssh h ...` stays linear.
+ */
 function checkStdinSends(commands) {
-  const fedTo = (at) => {
-    const feeders = commands.slice(pipelineStart(commands, at), at);
-    return [...stdinFiles(commands[at].args), ...feeders.flatMap(fileKindsOf), ...archivedFolders(feeders)];
-  };
-  const [kind] = commands.flatMap((command, at) => (command.cmd === STDIN_SENDER ? fedTo(at) : []));
-  return kind === undefined ? undefined : sendReason(STDIN_SENDER, kind);
+  let fed; // the first credential read or archived earlier in the current pipeline
+  for (const command of commands) {
+    if (!command.piped) fed = undefined;
+    const kind = command.cmd === STDIN_SENDER ? (stdinFiles(command.args)[0] ?? fed) : undefined;
+    if (kind !== undefined) return sendReason(STDIN_SENDER, kind);
+    fed ??= filesOf(command)[0]?.kind ?? archivedFolder(command);
+  }
+  return undefined;
 }
 
 /**

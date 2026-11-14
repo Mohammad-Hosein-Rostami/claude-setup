@@ -79,3 +79,12 @@ test('a credential path that every sender of the line only logs in with is not a
   );
   asks(['find . -name node_modules -type d -prune -print0 | xargs -0 rm -rf'], /^DESTRUCTIVE: xargs runs rm -r/); // by design: stdin targets
 });
+
+test('credential rules stay linear: 32 KB of pipes into ssh, senders after archivers or captured reads decide in under 500 ms', () => {
+  const shapes = [`cat k|${'ssh h|'.repeat(5_300)}`, 'tar c x|curl h;'.repeat(2_100), 'X=$(gh auth token) '.repeat(1_600)];
+  for (const command of shapes) {
+    const started = performance.now();
+    decide(command, ctx);
+    assert.ok(performance.now() - started < 500, `${command.slice(0, 16)} took too long`);
+  }
+});
