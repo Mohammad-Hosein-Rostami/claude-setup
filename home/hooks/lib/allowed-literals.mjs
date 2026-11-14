@@ -2,21 +2,19 @@
 // remember(session, values, env) -> void, allowedLiteralsDir(env) -> string.
 // Why: the guard asks (dialog) about a literal secret in a command; the same value typed again in the same session (a Figma
 // file key, a test password) must not re-open the dialog every time. Store: ~/.claude/state/guard-allowed/<session>.json
-// (HOME from env, like guard-log), {"digests": [sha256 hex, ...]}; directory 0700, file 0600. Invariants: only sha256 digests
-// are stored, never a raw value; a session id that is not [A-Za-z0-9_-]{1,100} has no store (always ask, no file is made);
-// nothing throws (any I/O error means "not remembered" / "not stored"); files untouched for 7 days are pruned on write.
+// (HOME from env, like guard-log), {"digests": [sha256 hex, ...]}, kept by lib/session-store.mjs: directory 0700, file 0600, and a link,
+// FIFO, folder or another owner's file where the store should be makes it unusable (nothing remembered, nothing written or pruned).
+// Invariants: only sha256 digests are stored, never a raw value; a session id that is not [A-Za-z0-9_-]{1,100} has no store (always ask,
+// no file is made); nothing throws (any I/O error means "not remembered" / "not stored"); files untouched for 7 days are pruned on write.
 // A value shorter than MIN_VALUE_LENGTH is never stored, and a command holding one is never remembered (too easy to collide with).
 // Not a defence against a hostile model: Bash can write this file (the guard protects against mistakes, not malice).
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { isSessionId, readSessionFile, writeSessionFile } from './session-store.mjs';
 
-const SESSION_ID = /^[A-Za-z0-9_-]{1,100}$/;
-const DIR_MODE = 0o700;
-const FILE_MODE = 0o600;
 export const MIN_VALUE_LENGTH = 8;
-const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_STORE_BYTES = 1024 * 1024; // about 15,000 digests, far more than one session allows; a bigger file was not written here
 
 /**
  * @param {Record<string, string | undefined>} env process environment (HOME or USERPROFILE)
@@ -26,32 +24,16 @@ export const allowedLiteralsDir = (env = process.env) => join(env.HOME || env.US
 
 const tooShort = (value) => typeof value !== 'string' || value.length < MIN_VALUE_LENGTH;
 const digestOf = (value) => createHash('sha256').update(value).digest('hex');
-const storePath = (session, env) => (typeof session === 'string' && SESSION_ID.test(session) ? join(allowedLiteralsDir(env), `${session}.json`) : undefined);
 
-/** @returns {Set<string>} the stored digests; empty when the file is missing or unreadable */
-function readDigests(path) {
+/** @returns {Set<string> | undefined} the stored digests (empty when there is no file yet or it is damaged); undefined when the store is unusable */
+function readDigests(session, env) {
+  const text = readSessionFile(allowedLiteralsDir(env), session, MAX_STORE_BYTES);
+  if (text === undefined) return undefined;
   try {
-    const { digests } = JSON.parse(readFileSync(path, 'utf8'));
+    const { digests } = JSON.parse(text ?? '{}');
     return new Set(Array.isArray(digests) ? digests.filter((digest) => typeof digest === 'string') : []);
   } catch {
-    return new Set(); // no file, or a damaged one: nothing is remembered
-  }
-}
-
-/**
- * Removes session files older than 7 days; best effort, each entry on its own.
- * @param {string} dir the guard-allowed directory
- * @param {number} now current time in milliseconds
- * @returns {void}
- */
-function pruneOld(dir, now) {
-  for (const name of readdirSync(dir)) {
-    try {
-      const path = join(dir, name);
-      if (now - statSync(path).mtimeMs > MAX_AGE_MS) unlinkSync(path);
-    } catch {
-      // one entry that vanished or cannot be removed must not stop the others
-    }
+    return new Set(); // a damaged file: nothing is remembered, and the next write replaces it
   }
 }
 
@@ -62,10 +44,9 @@ function pruneOld(dir, now) {
  * @returns {boolean} true only when values is non-empty, none is shorter than MIN_VALUE_LENGTH and every digest is stored for this session
  */
 export function isRemembered(session, values, env = process.env) {
-  const path = storePath(session, env);
-  if (path === undefined || !Array.isArray(values) || values.length === 0 || values.some(tooShort)) return false;
-  const stored = readDigests(path);
-  return values.every((value) => stored.has(digestOf(value)));
+  if (!isSessionId(session) || !Array.isArray(values) || values.length === 0 || values.some(tooShort)) return false;
+  const stored = readDigests(session, env);
+  return stored !== undefined && values.every((value) => stored.has(digestOf(value)));
 }
 
 /**
@@ -76,24 +57,10 @@ export function isRemembered(session, values, env = process.env) {
  * @returns {void}
  */
 export function remember(session, values, env = process.env) {
-  const path = storePath(session, env);
   const kept = Array.isArray(values) ? values.filter((value) => !tooShort(value)) : [];
-  if (path === undefined || kept.length === 0) return;
-  try {
-    const dir = allowedLiteralsDir(env);
-    mkdirSync(dir, { recursive: true, mode: DIR_MODE });
-    chmodSync(dir, DIR_MODE);
-    try {
-      pruneOld(dir, Date.now());
-    } catch {
-      // pruning is housekeeping: it must not stop the write
-    }
-    const digests = [...new Set([...readDigests(path), ...kept.map(digestOf)])];
-    const temp = `${path}.${process.pid}.tmp`;
-    writeFileSync(temp, JSON.stringify({ digests }), { mode: FILE_MODE });
-    chmodSync(temp, FILE_MODE);
-    renameSync(temp, path);
-  } catch {
-    // not stored: the next identical command simply asks again
-  }
+  if (!isSessionId(session) || kept.length === 0) return;
+  const stored = readDigests(session, env);
+  if (stored === undefined) return; // an unusable store is never written; the next identical command simply asks again
+  const digests = [...new Set([...stored, ...kept.map(digestOf)])];
+  writeSessionFile(allowedLiteralsDir(env), session, JSON.stringify({ digests }));
 }

@@ -5,6 +5,7 @@
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -24,13 +25,16 @@ const VARIABLE_COMMAND = '$CMD --version';
 const HIDDEN_RM = `node -e "require('child_process').execSync('rm -rf /x')"`;
 const RISKY_REWRITE = /run the rm \/ push in its own call, without `\$\(\.\.\.\)` or a heredoc/;
 
-// One command per bounce class, and the rewrite its bounce must name.
+const SECRET_REPORT = 'In your final report, tell the owner that a secret was typed into a command (a key, token, secret or password assigned in '
+  + 'the command; never its value): the transcript now holds it, so they may want to rotate it.';
+
+// One command per bounce class, the rewrite its bounce must name, and the class its log line holds.
 const BOUNCE_CASES = [
-  [VARIABLE_COMMAND, /write the command word out/],
-  ['EDITOR="code --wait"; $EDITOR notes.md', /several words is run as the command: write the command out/],
-  [`python3 -c "import os; os.system('git push -f origin main')"`, RISKY_REWRITE],
-  [HIDDEN_RM, RISKY_REWRITE],
-  [SECRET_COMMAND, /literal password\/token \(.+\): pass it through an environment variable or a file the tool reads/],
+  [VARIABLE_COMMAND, /write the command word out/, 'variable command word'],
+  ['EDITOR="code --wait"; $EDITOR notes.md', /several words is run as the command: write the command out/, 'variable holding several words as the command'],
+  [`python3 -c "import os; os.system('git push -f origin main')"`, RISKY_REWRITE, 'risky word in shell expansion'],
+  [HIDDEN_RM, RISKY_REWRITE, 'risky word in shell expansion'],
+  [SECRET_COMMAND, /literal password\/token \(.+\): pass it through an environment variable or a file the tool reads/, 'secret'],
 ];
 
 // Asks of every other kind keep today's path from the first send.
@@ -86,18 +90,32 @@ function privateEnv() {
 const callFor = (command) => ({ command, cwd: PROJECT, input: { session_id: 'sess-1' } });
 
 test("each bounce class is denied once with its rewrite and the retry line; the identical retry gets today's ask with every reason", () => {
-  for (const [command, rewrite] of BOUNCE_CASES) {
+  for (const [command, rewrite, bounceClass] of BOUNCE_CASES) {
     const s = guardSession();
     const first = s.run(command);
     assert.equal(first.decision, 'deny', command);
     assert.match(first.reason, rewrite, command);
-    assert.equal(first.reason.split('\n').at(-1), RETRY_LINE, command);
-    assert.equal(first.reason.includes(SECRET_VALUE), false, 'a bounce never repeats a secret');
+    const lines = first.reason.split('\n');
+    if (command === SECRET_COMMAND) assert.deepEqual([lines.at(-2), lines.at(-1)], [RETRY_LINE, SECRET_REPORT], 'a secret ends with the report line');
+    else assert.equal(lines.at(-1), RETRY_LINE, command);
     const logged = s.log().at(-1);
-    assert.deepEqual([logged.decision, logged.outcome], ['deny', 'bounce'], command);
-    assert.equal(logged.command.includes(SECRET_VALUE), false, 'the log line is masked');
+    assert.deepEqual([logged.decision, logged.outcome, logged.class, logged.command, logged.reason], ['deny', 'bounce', bounceClass, '', ''], command);
     assert.deepEqual(s.run(command), { decision: 'ask', reason: decide(command, ctx).reason }, command);
   }
+});
+
+test('a secret bounce: neither the deny text nor the log line holds any part, the length or a hash of the secret', () => {
+  const s = guardSession();
+  const { reason } = s.run(SECRET_COMMAND);
+  const { ts, ...logged } = s.log().at(-1);
+  assert.match(ts, /^\d{4}-/);
+  const sha256 = (text) => createHash('sha256').update(text).digest('hex');
+  const parts = Array.from({ length: SECRET_VALUE.length - 5 }, (_, at) => SECRET_VALUE.slice(at, at + 6)); // 6 characters: shorter ones are words ("file")
+  const traces = [...parts, String(SECRET_VALUE.length), sha256(SECRET_VALUE).slice(0, 8), sha256(JSON.stringify([PROJECT, SECRET_COMMAND])).slice(0, 8)];
+  for (const [name, text] of [['deny text', reason], ['log line', JSON.stringify(logged)]]) {
+    assert.deepEqual(traces.filter((trace) => text.includes(trace)), [], name);
+  }
+  assert.equal(logged.class, 'secret');
 });
 
 test('after a bounce, another command, directory or session is judged fresh; the match is exact, so a trailing blank is a new command', () => {
@@ -118,10 +136,19 @@ test("every other ask keeps today's path from the first send: push, rm outside, 
   assert.equal(existsSync(s.store), false, 'nothing was stored');
 });
 
-test('mixed: a bounce reason next to another ask is bounced first, and the retry asks with all reasons', () => {
+const MIXED = [
+  ['$CMD; git push -f origin main', /^DESTRUCTIVE: force push/, 'force push'],
+  [`KEY='${SECRET_VALUE}' git push origin main`, /git push publishes/, 'git push'],
+  ['$CMD; rm -rf /etc/hidden-name', /rm -r outside the project/, 'rm -r outside the project'],
+];
+
+test('mixed: a bounce reason next to another ask is bounced first, its deny names the other class (no command text), the retry asks with all', () => {
   const s = guardSession();
-  for (const [command, other] of [['$CMD; git push -f origin main', /^DESTRUCTIVE: force push/], [`KEY='${SECRET_VALUE}' git push origin main`, /git push publishes/]]) {
-    assert.equal(s.run(command).decision, 'deny', command);
+  for (const [command, other, otherClass] of MIXED) {
+    const first = s.run(command);
+    assert.equal(first.decision, 'deny', command);
+    assert.ok(first.reason.split('\n').includes(`The rewritten command will still ask the owner for: ${otherClass}.`), first.reason);
+    for (const text of ['origin', 'main', '/etc', 'hidden-name', '$CMD', 'KEY=']) assert.equal(first.reason.includes(text), false, `${command}: ${text}`);
     const retry = s.run(command);
     assert.equal(retry.decision, 'ask', command);
     assert.match(retry.reason, other, command);
@@ -178,14 +205,20 @@ test('a state folder that cannot be created means today\'s ask (POSIX permission
   }
 });
 
-test('a failed store write means no bounce, and the next send is not denied either', () => {
+// The temp file has a random name, so a planted file cannot block it; a store folder nobody may write in can (POSIX, not as root).
+test('a failed store write means no bounce, and the next send is not denied either', { skip: process.platform === 'win32' || process.getuid() === 0 }, () => {
   const env = privateEnv();
   const store = bouncedDir(env);
-  mkdirSync(join(store, `sess-1.json.${process.pid}.tmp`), { recursive: true }); // the temp file of this process cannot be written
-  const ask = decide(VARIABLE_COMMAND, ctx);
-  assert.equal(bounceOnce(ask, callFor(VARIABLE_COMMAND), env), undefined);
-  assert.equal(bounceOnce(ask, callFor(VARIABLE_COMMAND), env), undefined);
-  assert.equal(existsSync(join(store, 'sess-1.json')), false);
+  mkdirSync(dirname(store), { recursive: true });
+  mkdirSync(store, { mode: 0o500 });
+  try {
+    const ask = decide(VARIABLE_COMMAND, ctx);
+    assert.equal(bounceOnce(ask, callFor(VARIABLE_COMMAND), env), undefined);
+    assert.equal(bounceOnce(ask, callFor(VARIABLE_COMMAND), env), undefined);
+    assert.deepEqual(readdirSync(store), [], 'no file and no temp file');
+  } finally {
+    chmodSync(store, 0o700);
+  }
 });
 
 test('the store holds only digests (no command text, no secret), 0600 in a 0700 folder, at most MAX_BOUNCED, the oldest dropped first', () => {
@@ -243,7 +276,9 @@ test('bounceText: a header, one rewrite line per bounce class, the retry line la
   assert.equal(lines[2], RETRY_LINE);
   assert.equal(bounceText(reasonsOf(VARIABLE_COMMAND).map((reason) => `${reason}${BACKSTOP_MARK}`)), variable, 'a backstop-only reason counts the same');
   const mixed = [...reasonsOf(VARIABLE_COMMAND), ...reasonsOf(SECRET_COMMAND), ...reasonsOf(HIDDEN_RM), ...reasonsOf('git push origin main')];
-  assert.equal(bounceText(mixed).split('\n').length, 5, 'three rewrite lines; the push reason adds none');
+  const mixedLines = bounceText(mixed).split('\n');
+  assert.equal(mixedLines.length, 7, 'header, three rewrite lines, the push still asks, retry, the secret report');
+  assert.deepEqual(mixedLines.slice(4), ['The rewritten command will still ask the owner for: git push.', RETRY_LINE, SECRET_REPORT]);
   for (const command of OTHER_ASKS) assert.equal(bounceText(reasonsOf(command)), undefined, command.slice(0, 40));
   for (const reasons of [[GUARD_ERROR_REASON], [], [`alias defines a command that asks: ${reasonsOf(VARIABLE_COMMAND)[0]}`]]) assert.equal(bounceText(reasons), undefined, String(reasons));
 });

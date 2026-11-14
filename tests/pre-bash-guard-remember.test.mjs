@@ -65,8 +65,8 @@ function session() {
   };
 }
 
-/** True when the guard bounced the command (deny whose text ends with the retry line), not when the owner denied it. */
-const isBounce = ({ stdout }) => stdout !== '' && JSON.parse(stdout).hookSpecificOutput.permissionDecisionReason.endsWith(RETRY_LINE);
+/** True when the guard bounced the command (a deny whose text holds the retry line; a secret's ends with the report line), not the owner. */
+const isBounce = ({ stdout }) => stdout !== '' && JSON.parse(stdout).hookSpecificOutput.permissionDecisionReason.split('\n').includes(RETRY_LINE);
 
 test('allowed once: the same value again shows no dialog, prints nothing and logs outcome "remembered"', () => {
   const s = session();

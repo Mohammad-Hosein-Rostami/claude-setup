@@ -6,7 +6,8 @@
 // GUI (ssh, CI, no display) or a failing dialog it falls back to the CLI's own "ask" prompt, which also appears in
 // bypassPermissions mode (verified on CLI 2.1.323). Bounce once (lib/bounce-once.mjs): when a reason can be fixed by rewriting the
 // command (a variable command word, a risky word inside shell expansion, a literal secret), the first send is denied with the rewrite
-// instead; the identical command sent again gets the ask above. Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
+// instead, naming by class (lib/reason-classes.mjs) any other reason that will still ask; the identical command sent again gets the ask
+// above. Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
 // Rules. DESTRUCTIVE (the dialog says "DESTRUCTIVE: ..."): force push (incl. -fu clusters and +refspec), `push --mirror`,
 // remote branch delete, rm -r outside the project (temp dirs allowed, `cd` tracked within one command line, `cd` to `~`,
 // `$HOME` and `$(git rev-parse --show-toplevel)` (from inside the project only) is resolved, as are leading
