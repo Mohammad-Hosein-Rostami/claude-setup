@@ -1,7 +1,7 @@
 # ui-check
 
 Figma-to-browser checks for pixel-exact frames and responsive layouts. Node ESM, no build step.
-Playwright is not a dependency: it is resolved from the target project (`--project`, default cwd).
+Playwright is not a dependency (see "Finding Playwright" below).
 
 Install: `npm ci` in this folder (only package-lock.json exists; Node >= 22); `scripts/install.sh` does it.
 Run: `node ~/.claude/tools/ui-check/cli.mjs <command> [flags]`.
@@ -9,20 +9,52 @@ Run: `node ~/.claude/tools/ui-check/cli.mjs <command> [flags]`.
 Exit codes: `0` pass, `1` check failed, `2` usage or setup error (bad flag, no Playwright/Chromium/odiff,
 no `FIGMA_TOKEN`, unreachable URL or HTTP status >= 400).
 
+## Finding Playwright
+
+Looked up in this order, the first that resolves `playwright`, `@playwright/test` or `playwright-core` wins; a place that has none is skipped:
+
+1. `--project DIR` (when the flag is absent: the current directory, as before),
+2. env `UI_CHECK_PROJECT`,
+3. the tool's own `node_modules` (this folder, and the `node_modules` folders above it).
+
+When none has it, exit 2 with a message that lists each place tried and two fixes: set `UI_CHECK_PROJECT=<folder whose node_modules has playwright>` (or pass `--project`), or give the tool its own copy with
+`npm install --no-save --prefix <this folder> playwright` then `<this folder>/node_modules/.bin/playwright install chromium`. The tool installs nothing itself and `package.json` has no Playwright entry, so a fresh `npm ci` here does NOT give the tool its own copy.
+The browser binary is found by Playwright itself in its cache (`~/Library/Caches/ms-playwright`, `~/.cache/ms-playwright`, `%LOCALAPPDATA%\ms-playwright`, or `PLAYWRIGHT_BROWSERS_PATH`) by the revision the Playwright version needs: any copy works as long as its Chromium revision is in that cache.
+
 ## Commands
 
 | Command | Flags | What it does |
 | ------- | ----- | ------------ |
 | `figma-pull` | `--file KEY --node ID [--scale 1] [--refresh]` | Needs env `FIGMA_TOKEN`. Writes `baseline.png`, `spec.json`, `meta.json` to `~/.cache/figma/<KEY>/<ID>/` (`:` in IDs becomes `-`). Skips the fetch if cached. |
 | `compare` | `--url U --root SEL --cache DIR [--map map.json] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--max-diff 0.5] [context flags] [--out DIR]` | Viewport = frame size, DSF = scale. Element gate (box +-1px, font, line-height, letter-spacing, colour, background, radius, padding, gap) then pixel gate (odiff, threshold 0.1, anti-aliasing ignored; size mismatch is reported first and both images are padded). |
-| `responsive` | `--url U [--widths 320,...,1920] [--height 900] [--steps steps.json] [--bypass-csp] [--no-autofocus] [context flags] [--out DIR]` | Per width: horizontal scroll, elements outside the viewport, clipped text, tap targets < 24x24, text < 12px under 768, `bidi-field` (below). Screenshots `w<width>.png` stay on disk. |
-| `batch` | `--states file.json [--only surface[,surface]] [--out DIR]` | Many states in one run (below). `compare` for a state with `figma`, `responsive` for a state with widths. |
+| `responsive` | `--url U [--widths 320,...,1920] [--height 900] [--steps steps.json] [--bypass-csp] [--no-autofocus] [context flags] [--out DIR]` | Per width, the findings in the table below. Screenshots `w<width>.png` stay on disk. |
+| `batch` | `--states file.json [--only surface[,surface]] [--jobs 4] [--resume] [--out DIR]` | Many states in one run (below). `compare` for a state with `figma`, `responsive` for a state with widths. |
 | `columns` | `--url U --table SEL [--width 1440] [--no-autofocus]` | Body cells vs header cells: left delta <= 1px, width delta <= 2px. |
 
 Output (`--out`, default `<cache>/runs/<timestamp>` for compare, the OS temp dir otherwise): `report.json`,
 `report.md` (<= 40 lines), `actual.png`, `diff.png` (absent on an exact match).
 
 `map.json` maps Figma node ids from `spec.json` to CSS selectors: `{"1:2": "[data-testid=title]"}`.
+
+## `responsive` findings
+
+Every finding fails the run (exit 1) except the hint `bidi-field?`. Each is decided by a pure function on plain element facts (`lib/rendered-checks.mjs`, `lib/bidi.mjs`) and capped at 50 per check and width.
+
+| Finding | Fires when |
+| ------- | ---------- |
+| `hscroll` | the page is wider than the viewport |
+| `offscreen` | a visible element lies outside `0..viewport` (not fixed, not clipped by an ancestor) |
+| `clipped-text` | an element's text is wider than its box and the box does not use `text-overflow: ellipsis` |
+| `small-text` | text under 12px at viewports narrower than 768 |
+| `tap-target` | a visible link, button, input, select, textarea or `role=button/link/tab/menuitem/checkbox/switch/radio` is under 24x24 CSS px (WCAG 2.5.8). See "Target size" |
+| `bidi-field` | an rtl document, a left-to-right field (tel, email, url, number ...) that computes `direction: rtl` (details below) |
+| `raw-i18n-key` | a visible text node whose whole trimmed text matches `/^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/` (a translation lookup that printed its key, e.g. `reset.hint`). A text that is only a lower-case dotted word, such as `example.com`, matches too and is a false positive; put other text around it |
+| `focus-indicator` | the page is walked with the real Tab key (so `:focus-visible` applies), up to 60 stops; a stop is reported when none of outline (style, width, colour), box-shadow, border colour/width or background colour differs from its unfocused computed style. A visually hidden control (opacity 0, clipped, 1px: a custom checkbox's real input) also passes when its label, wrapping label, siblings or parent change. Runs last, because focus handlers can change the page; text colour and underline changes are not counted |
+| `rtl-physical-align` | an rtl document and a visible text block (non-inline element with its own text) that computes `text-align: left` and direction rtl. In rtl the default computes `start`, so `left` only appears when it was written; use `start`. A block that is itself `dir=ltr` is left alone |
+
+### Target size
+
+The proof run did not report 21x18 px language links. Cause: the tap-target rule skipped every element whose computed `display` is `inline`, a stand-in for the WCAG 2.5.8 exemption for targets inside a sentence or text block. It was wider than the rule: a row of inline links in a `<nav>` is not text and is not exempt. Now the inline exemption applies only when the link's parent holds letters or digits of its own beside it (`Read the <a>terms</a> first`); a standalone inline link is checked. Separator characters such as `|` do not count as surrounding text. The WCAG spacing exception (undersized targets with enough clear space around them) is not implemented, so a spaced-out row of small links is still reported; judge those by hand.
 
 ## Opt-in flags (`compare`, `responsive`)
 
@@ -38,6 +70,8 @@ Output (`--out`, default `<cache>/runs/<timestamp>` for compare, the OS temp dir
   [{"action": "fill", "selector": "#email", "value": "a@b.c"}, {"action": "press", "selector": "#email", "key": "Tab"},
    {"action": "hover", "selector": "button[type=submit]"}, {"action": "wait", "ms": 200}]
   ```
+
+  `focus` fails the step when the element is not `document.activeElement` afterwards (a `div` without `tabindex`, a disabled control). A pointer step (`click`, `check`, `uncheck`, `hover`) that times out adds what is drawn at the target's centre (`elementFromPoint`: tag, id, class) and, for a visually hidden input, the hint to click its label instead.
 
   Actions: `fill`/`select` (`selector`, `value`), `press` (`selector`, `key`), `click`/`check`/`uncheck`/`focus`/`hover`/`waitFor`
   (`selector`), `blur` (no fields; blurs the active element), `wait` (`ms` >= 0). Each step times out after 5 s; `wait` is capped at 30000 ms; unknown fields are rejected. A step does not auto-wait for its element to exist (exactly one match is required at once), so put `waitFor` before it when the element renders late. `waitFor` needs a visible element (or an attribute on one, e.g. `html[data-ready]`): a zero-size marker times out.
@@ -59,7 +93,7 @@ Hint `bidi-field?` (`responsive`): the same document and field direction, but th
 
 ## `batch`
 
-`ui-check batch --states states.json [--out DIR] [--only surface[,surface]]` measures many states in ONE run: one browser, a fresh context per state, sequential, and a failing state never stops the run. The file is validated before anything launches; an error names the state index and field (`states[2].locale: ...`), and unknown fields are rejected.
+`ui-check batch --states states.json [--out DIR] [--only surface[,surface]] [--jobs N] [--resume]` measures many states in ONE run: one browser, a fresh context per state, `--jobs N` states at a time (default 4), and a failing state never stops the run. The file is validated before anything launches; an error names the state index and field (`states[2].locale: ...`), and unknown fields are rejected.
 
 ```json
 {
@@ -83,6 +117,9 @@ Names: `surface`, `state` and `locale` are copied into the records as written, a
 - A hint finding (`bidi-field?`) keeps a record `pass`.
 - Zero states to run (empty `states` array, or `--only` matching no surface) prints why on stderr, writes `results.json` as `[]` and a FAIL `summary.md`, and exits `1`.
 - `results.json` and `summary.md` of an earlier run in the same `--out` are deleted at the start, so a failed or empty run never leaves stale passes.
+- `--jobs N` (default 4, a whole number >= 1): states WITHOUT a `figma` part run N at a time in separate contexts of the one browser. States with a `figma` part always run one at a time after all the others (pixel captures are load-sensitive). `--jobs 1` is the old sequential order. `results.json` keeps the states-file order whatever finishes first.
+- Progress: one line per finished state on stderr, `[12/201] signup role:open fa 320 fail 1.4s` (finished count, surface, state, locale or `-`, widths of its records, `pass` or `fail`, seconds). stdout still holds only the final `PASS|FAIL batch ...` line.
+- `--resume`: keep the `results.json` already in `--out` and skip the states whose records ALL pass and cover every width of the state; failing, missing or changed-width states re-run. The new `results.json` holds the selected states only (a record of a state not in this run, e.g. with `--only`, is dropped). While a run is going `results.partial.json` holds the finished states (it is deleted when `results.json` is written), so a killed run can be resumed: `--resume` reads both. Without `--resume` the old `results.json`, `summary.md` and `results.partial.json` are deleted at the start, as before.
 - Exit `1` when any record fails or none ran, `2` for a bad flag or states file, else `0`.
 
 Output in `--out` (default under the OS temp dir): `results.json`, `summary.md` (one table row per state x width), and per state a folder `<index>-<surface>--<state>--<locale>/{compare,responsive}/` with the usual `report.*` and screenshots. The state folder always exists; when a part throws, its stack is in `<part>.error.txt` there (also a context that fails to close, which turns that part's records into failures). `results.json` is an array of records read by `ui-coverage check --results`; the field names are a contract:
@@ -94,6 +131,17 @@ Output in `--out` (default under the OS temp dir): `results.json`, `summary.md` 
 ```
 
 `width` is the viewport width the part ran at: the audited width for a `responsive` record, and for the compare record the Figma frame width (`ceil(meta.width)` of the cache, an integer), so the matrix `widths` must contain the frame width. It is `null` only on an error record whose Figma cache could not be read. `locale` is `null` when none was set. `evidence` is the state's report, or the state folder when the state threw before a report existed.
+
+## Changes in v2 (what differs from before, with the flags absent)
+
+- Playwright is looked up in `--project` (default: the current directory), then `UI_CHECK_PROJECT`, then the tool's own `node_modules`; a project without Playwright no longer exits 2 when a later place has it.
+- `batch` runs 4 states at a time by default (was one); pass `--jobs 1` for the old order of work. It prints a progress line per state on stderr and writes `results.partial.json` while running.
+- `focus` steps fail on an element that did not take focus (before: silent pass). Timed-out pointer steps say what covers the target.
+- `responsive` reports `raw-i18n-key`, `focus-indicator` and `rtl-physical-align`, and `tap-target` now also checks standalone inline links; pages that were clean may now fail.
+
+## Not covered (open)
+
+Mirroring of directional icons in rtl, a child drawn outside its parent's box, and axe-core are not part of this tool.
 
 ## Deterministic capture (default, all commands)
 
@@ -113,6 +161,7 @@ Tolerances live in `lib/tolerances.mjs` and are documented in `standards/figma.m
 
 `pnpm test` runs the unit tests. Set `UI_CHECK_PROJECT=/path/to/project-with-playwright` to also run the
 browser smoke test (fixture compare pass/fail and a 500px box at 320), the Chromium checks in `determinism.test.mjs`, and
+`rendered-browser.test.mjs` (raw-i18n-key, focus-indicator, rtl-physical-align, tap-target, focus and click step errors), `batch-parallel.test.mjs` (`--jobs 4` equals `--jobs 1`, `--resume`) and
 `locale-browser.test.mjs` (bidi-field, `--expect-dir`, storage, locale, cookie, `batch`; it briefly writes a fixture Figma cache under `~/.cache/figma/ui-check-batch-test-<pid>` and removes it).
 
 ## Layout
