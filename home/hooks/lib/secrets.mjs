@@ -64,7 +64,6 @@ const FORMAT_PLACEHOLDER = `(?!(?<=${OPENER}(?<q>["'])(?:(?!\\s--?[A-Za-z])[^"'\
 const STDIN_FLAG = '--(?:with-token|password-stdin)\\b';
 // the value is echoed/printed (`echo -n T`, `printf '%s' T`) and piped into a command that has the stdin flag
 const ECHOED_INTO_STDIN_FLAG = `(?=(?:"[^"]*"|'[^']*'|[^\\s"';&|]+)[ \\t]*\\|[^\\n;&|]{0,${GAP}}${STDIN_FLAG})`;
-const SECRET_NAME_PART = '(?<![A-Za-z0-9])(?:KEY|TOKEN|SECRET|PASS|PASSWD|PWD)(?![A-Za-z0-9])';
 // A value that looks like a path or a regex held in a variable is not a literal: `./x`, `../x`, `~/x`; a `/x|y/` regex (`STATE_KEY=/state|hover/`);
 // `/x` under a common absolute root (`KEY_PATH=/Users/x/k.pem`). A bare leading `/` is not enough: about 1 in 64 base64 keys starts with one.
 const ABSOLUTE_ROOTS = 'Users|home|tmp|private|var|etc|opt|usr|Volumes';
@@ -96,10 +95,20 @@ const QUERY_START = '(?!["\']?(?:`|<|\\s|;|&|\\||$))';
 const QUERY_MOCK_WORD = `(?=[a-z-]{1,24}(?![\\w-]))[a-z]+(?:-[a-z]+)+(?:["'](?:${QUERY_END}|[ \\t]*\\+(?![ \\t]*["'\`]))|\\)${QUERY_END}|[\\s&#]|$)`;
 const QUERY_NOT_LITERAL = `${QUERY_MIN_LENGTH}(?!${QUERY_CODE})`;
 const QUERY_TOKEN_NOT_LITERAL = `${QUERY_MIN_LENGTH}(?!${QUERY_CODE}|${QUERY_MOCK_WORD})`;
-const SECRET_FLAG = '--(?:token|api-key|apikey|password|passwd|client-secret|access-token|auth-token)(?:=|\\s+)';
+// The flag is its own shell word: it follows the start, whitespace, a command separator, `(` or a quote. `.card--password` and `staff--password (12 px)`
+// (BEM modifiers, state ids) are not flags. A value made only of punctuation (`{`, `(`, `...`) is not a value either; a quoted one still is.
+const SECRET_FLAG = '(?<=^|[\\s;&|(`"\'])--(?:token|api-key|apikey|password|passwd|client-secret|access-token|auth-token)(?:=|\\s+)';
+const PUNCTUATION_ONLY_WORD = '[^\\w\\s"\';&|$]+(?:[\\s;&|]|$)';
+// Names with a KEY or TOKEN part but no password/secret part: for these a value holding a character outside a token charset (`…).slice(0,`) is code or text.
+// Password and secret names keep the broad rule, since a password may hold any character.
+const PASSWORD_NAME_PART = '(?<![A-Za-z0-9])(?:SECRET|PASS|PASSWD|PWD)(?![A-Za-z0-9])|PASSWORD';
+const TOKEN_NAME_PART = '(?<![A-Za-z0-9])(?:KEY|TOKEN)(?![A-Za-z0-9])';
+const TOKEN_CHARS = 'A-Za-z0-9._~+/=:-';
+// Braces are not an offending character: a `{{...}}` template with glued text (`API_KEY="{{.x}}"R`) must still be judged as a value.
+const NOT_A_TOKEN_VALUE = `["']?[${TOKEN_CHARS}]*[^${TOKEN_CHARS}\\s"';&|{}]`;
 const VALUE_KINDS = [
   [`(?:^|[\\s;&|("'])${SECRET_ENV}=`, '', 'a password or key assigned in the command'],
-  [SECRET_FLAG, '(?!-)', 'a password, token or key flag with a literal value'],
+  [SECRET_FLAG, `(?!-|${PUNCTUATION_ONLY_WORD})`, 'a password, token or key flag with a literal value'],
   [`${STDIN_FLAG}[^\\n|;&<]{0,${GAP}}?<<<[ \\t]*`, '', 'a token or password given as a here-string'],
   [`\\b(?:echo|printf)\\b[ \\t]+(?:-[a-zA-Z]+[ \\t]+){0,3}(?:(?:"%s(?:\\\\n)?"|'%s(?:\\\\n)?'|%s)[ \\t]+)?`, ECHOED_INTO_STDIN_FLAG, 'a token or password piped to a stdin flag'],
   ['\\bsshpass\\s+(?:-\\w*\\s+){0,10}-p\\s*', '', 'an sshpass password'],
@@ -111,9 +120,11 @@ const VALUE_KINDS = [
   [`\\baz\\s[^\\n|;&]{0,${GAP}}?\\s-p(?:=|\\s+)`, '(?!-)', 'an Azure CLI password'],
   ['\\bhtpasswd\\s+(?:-[a-zA-Z]+\\s+){0,2}-[a-zA-Z]*b[a-zA-Z]*\\s+(?:-[a-zA-Z]+\\s+){0,2}[^\\s"\']+\\s+[^\\s"\']+\\s+', '', 'an htpasswd password'],
   [`\\baws\\s+configure\\s+set\\s+(?:--profile\\s+\\S+\\s+)?[\\w.-]{0,${NAME_MAX}}secret[\\w.-]{0,${NAME_MAX}}\\s+`, '', 'an AWS secret key set with aws configure', { flags: 'i' }],
-  // any variable whose name has KEY, TOKEN, SECRET, PASS, PASSWD, PWD or PASSWORD as a part (`DB_PASS`, `TOKEN_FILE_X`, `ADMINPASSWORD`)
+  // any variable whose name has KEY, TOKEN, SECRET, PASS, PASSWD, PWD or PASSWORD as a part (`DB_PASS`, `TOKEN_FILE_X`, `ADMINPASSWORD`), as two rules so that only the
+  // KEY/TOKEN names get NOT_A_TOKEN_VALUE; a name with both kinds (`API_KEY_PASSWORD`) is a password name.
   // CODE_VALUE (a `{{` is a template, judged by TEMPLATE_VALUE): `key==x`, `key=>x`, `const key=s=>...`, `token=[]`, `key=(a)`, `token=fs.readFileSync(p)`, `key=lambda s:` are program code (heredocs, node -e), not literals
-  [`${BOUNDARY}[\\w.-]{0,${NAME_MAX}}(?:${SECRET_NAME_PART}|PASSWORD)[\\w.-]{0,${NAME_MAX}}=`, CODE_VALUE, 'a key, token, secret or password assigned in the command', { flags: 'i' }],
+  [`${BOUNDARY}[\\w.-]{0,${NAME_MAX}}(?:${PASSWORD_NAME_PART})[\\w.-]{0,${NAME_MAX}}=`, CODE_VALUE, 'a key, token, secret or password assigned in the command', { flags: 'i' }],
+  [`${BOUNDARY}(?![\\w.-]{0,${NAME_MAX}}(?:${PASSWORD_NAME_PART}))[\\w.-]{0,${NAME_MAX}}(?:${TOKEN_NAME_PART})[\\w.-]{0,${NAME_MAX}}=`, `${CODE_VALUE}(?!${NOT_A_TOKEN_VALUE})`, 'a key, token, secret or password assigned in the command', { flags: 'i' }],
   [`[?&](?:${QUERY_TOKEN_KEYS})=`, QUERY_TOKEN_NOT_LITERAL, 'a token or key in a URL query string', { start: QUERY_START }],
   [`[?&](?:${QUERY_SECRET_KEYS})=`, QUERY_NOT_LITERAL, 'a password or secret in a URL query string', { start: QUERY_START }],
   [`\\bredis-cli\\b[^\\n|;&]{0,${GAP}}?\\s(?:-a|--pass)\\s+`, '', 'a redis password'],

@@ -1,0 +1,63 @@
+// Two live false positives from an unattended Desap session (each ask stalls 30 s), and the probes that must keep asking:
+// 1. a BEM modifier / state id glued to a word (`.card--password`, `inv-new-staff--password`) is not a `--password` flag;
+// 2. JS code that mentions a token name (`'csrf_token=…').slice(0, 80)`) is not a token value, but a password-kind value keeps the broad rule.
+// Every secret-looking value is built at runtime so the repo itself holds no token-shaped string (gitleaks).
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { findLiteralSecret, literalSecretValues, maskSecrets } from '../home/hooks/lib/secrets.mjs';
+
+const R = ['aB3xK9qZ7m', 'P2wL5nR8vT', '4yU6'].join('');
+const JWT = [['eyJhbGciOiJIUzI1', 'NiJ9'].join(''), ['eyJzdWIiOiIx', 'In0'].join(''), 'sig'].join('.');
+const PASSWORD = ['hunter2', 'xyz'].join('');
+
+const expectSilent = (command) => {
+  assert.equal(findLiteralSecret(command), undefined, command);
+  assert.deepEqual(literalSecretValues(command), [], command);
+  assert.equal(maskSecrets(command), command, command);
+};
+const expectAsk = (command, secret) => {
+  assert.ok(findLiteralSecret(command), command);
+  if (secret) assert.ok(!maskSecrets(command).includes(secret), command);
+};
+
+test('Desap shapes: a BEM modifier or state id ending in --password, and JS that mentions csrf_token=, are silent', () => {
+  for (const command of [
+    `python3 - <<'PY'\nimport re\ns = re.sub(".card--password .card__body {", ".card--password .card__body {\\n  gap: 8px;", s)\nPY`,
+    'the field inv-new-staff--password (12 px) wraps on a phone',
+    "posts.map((p) => (p || '').replace(/csrf_token=[^&]*/, 'csrf_token=…').slice(0, 80))",
+    `node -e "console.log(posts.map((p) => (p || '').replace(/csrf_token=[^&]*/, 'csrf_token=…').slice(0, 80)))"`,
+  ]) expectSilent(command);
+});
+
+test('a flag glued to a word is not a flag; a flag with a punctuation-only value is not a value', () => {
+  for (const command of ['grep -n ".card--password {" a.css', 'x.btn--token (a)', 'sel = ".form--api-key .row"', 'tool --password {', 'tool --token (', 'tool --api-key ...']) {
+    expectSilent(command);
+  }
+});
+
+test('real flags still ask, at the start, after whitespace, "(" or a quote', () => {
+  for (const command of [`mysql --password ${PASSWORD}`, `cli --token ${R}`, `--api-key=${R}`, `--password=${PASSWORD} x`, `mysql -p'${R}' db`, `tool "--password=${PASSWORD}"`,
+    `x $(cli --token ${R})`, `a;cli --token ${R}`, `tool --password '!${PASSWORD}'`, `tool --password {${R}}`]) expectAsk(command);
+  for (const command of [`mysql --password ${PASSWORD}`, `cli --token ${R}`, `--api-key=${R}`]) expectAsk(command, command.endsWith(R) ? R : PASSWORD);
+});
+
+test('a token or key name whose value is code or text (non-token characters) is not a token', () => {
+  for (const command of ["x = 'csrf_token=…'", 'API_KEY=a-b(c)', 'f("api_key=x,y")', "'access_token=…').slice(0, 80)", 'TOKEN=…', 'AUTH_TOKEN="a)b"', 'const key=…']) expectSilent(command);
+});
+
+test('a real token or key still asks, quoted or not, under any token-kind name', () => {
+  for (const command of [`API_KEY=${R}`, 'TOKEN="R"'.replace('R', R), `csrf_token=${R}`, `ID_TOKEN=${JWT} x`, `AUTH_TOKEN=${JWT}`, `export API_KEY='${R}'`, `API_KEY=${R}|tee x`, `echo csrf_token=${R};ls`,
+    `TOKEN=${R}&x=1`, `API_KEY=/${R}`, `SESSION_KEY=${R}+/=`]) expectAsk(command, R);
+  assert.ok(!maskSecrets(`TOKEN=${JWT}`).includes(JWT));
+});
+
+test('a password- or secret-kind name keeps the broad rule: punctuation, parentheses and spaces in the value still ask', () => {
+  for (const command of ["PASSWORD='p(a)ss w0rd!'", 'DB_PASS="p(a)ss"', 'PASSWD=a-b(c)1234', 'MY_SECRET=a-b(c)d…', 'JWT_SECRET=x,y+z', 'pwd=…abc', 'API_KEY_PASSWORD=a-b(c)', 'TOKEN_SECRET=a-b(c)', 'ADMINPASSWORD=a)b']) {
+    expectAsk(command);
+  }
+  expectAsk("PASSWORD='p(a)ss w0rd!'", 'p(a)ss');
+});
+
+test('a template brace is not a non-token character: a glued literal after a template still asks under a token name', () => {
+  for (const command of [`token={{${R}}}`, `API_KEY="{{.x}}"${R}`, `API_KEY={{.x}}${R}`]) expectAsk(command);
+});
