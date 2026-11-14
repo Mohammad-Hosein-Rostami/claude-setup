@@ -9,6 +9,10 @@
 // line. A file that cannot be read is reported once per failure (not per poll) and sets `failed` (the CLI exits 1 in --once).
 // SESSION_END and each STALL or IDLE are reported once. A gap between two polls longer than `jumpMs` (laptop sleep, suspended process)
 // restarts the stall timer instead of reporting a stall nobody could have acted on.
+// IDLE replaces STALL when the transcript shows a finished turn (classifier.turnEndedAt), no subagent transcript was written more than
+// AGENT_GRACE_MS after it, none that was written within one stall limit before it stopped unfinished, and a live process is known for the
+// session: it waits for its owner, nothing was in flight. In any doubt (SESSION_END, no registered process, an unreadable file) the silence
+// is a STALL, so an exit-mode watch whose classes lack `idle` or `session-end` still ends and IDLE never hides a running or dead session.
 // In follow mode the last LOOKBACK_BYTES of an existing transcript are read at start, only to learn whether a limit window is
 // already open (classify.seed): nothing older than the start is reported, a line stamped after it is (it was written before the first look).
 // `exitMode` (set by --exit-on-event) is for a caller that waits for one wake and must never be left waiting silently: the stall
@@ -108,20 +112,29 @@ class SessionWatcher {
   // The session has ended when it was registered and no process registered for it is alive any more. A session resumed in a new
   // process registers a new pid, so the registry is read again before the end is declared.
   async checkEnd() {
+    this.liveProcess = false; // true again only when a live registered process is seen in this check
     if (this.pids === undefined || this.pids.length === 0) this.pids = await findSessionPids(this.sessionId, this.sessionsDir);
-    if (this.pids.length === 0 || this.pids.some((pid) => this.isAlive(pid))) return false;
+    if (this.pids.length === 0) return false;
+    if (this.pids.some((pid) => this.isAlive(pid))) { this.liveProcess = true; return false; }
     const current = await findSessionPids(this.sessionId, this.sessionsDir);
-    if (current.some((pid) => this.isAlive(pid))) { this.pids = current; return false; }
+    if (current.some((pid) => this.isAlive(pid))) { this.pids = current; this.liveProcess = true; return false; }
     this.ended = true;
     this.record(this.label, `${this.stamp()} SESSION_END pid=${this.pids[0]}`);
     this.emit(`${this.label}: SESSION_END pid=${this.pids[0]}`, EVENT_CLASS.SESSION_END);
   }
 
-  // True when the silence is a finished turn waiting for its owner and not work that went quiet.
-  isIdle() {
+  // True when the silence is a finished turn waiting for its owner and not work that went quiet. The subagent files are read once per
+  // silence (the answer cannot change until something is written, which starts a new silence).
+  async isIdle() {
     const endedAt = this.classifier.turnEndedAt;
-    if (endedAt === undefined || this.ended) return false;
-    return this.agentWrite === undefined || this.agentWrite <= endedAt + AGENT_GRACE_MS;
+    if (endedAt === undefined || this.ended || !this.liveProcess) return false;
+    if (this.agentWrite !== undefined && this.agentWrite > endedAt + AGENT_GRACE_MS) return false;
+    const key = `${this.lastWrite}:${endedAt}`;
+    if (this.agentsCheckedFor !== key) {
+      this.agentsCheckedFor = key;
+      this.agentsFinished = !(await this.agents.anyUnfinished(endedAt - this.stallMs, endedAt + AGENT_GRACE_MS));
+    }
+    return this.agentsFinished;
   }
 
   announce(verdict) {
@@ -131,18 +144,20 @@ class SessionWatcher {
     this.record(this.label, `${this.stamp()} ${verdict.type} idle_min=${minutes(verdict.idleMs)}`);
   }
 
-  checkStall() {
+  async checkStall() {
     const at = this.now();
     if (this.exitMode) this.lastWrite ??= at;
     const jumped = this.lastPollAt !== undefined && at - this.lastPollAt > this.jumpMs;
     this.lastPollAt = at;
     if (jumped && !this.stall.stalled && (this.lastWrite === undefined || at > this.lastWrite)) this.lastWrite = at;
-    const verdict = this.stall.check(this.lastWrite, at, this.isIdle());
+    const quiet = this.lastWrite !== undefined && at - this.lastWrite > this.stallMs;
+    const verdict = this.stall.check(this.lastWrite, at, quiet && await this.isIdle());
     if (verdict) this.announce(verdict);
   }
 
   async readTranscript() {
-    const { lines, history, mtimeMs, error } = await this.tail.poll();
+    const { lines, history, mtimeMs, restarted, error } = await this.tail.poll();
+    if (restarted) this.classifier.resetTurn?.(); // what was read before is void: the old turn end proves nothing
     this.noteReadResult(error);
     this.noteWrite(mtimeMs);
     this.replayHistory(history);

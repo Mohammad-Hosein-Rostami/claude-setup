@@ -1,5 +1,5 @@
 // Watches a session's subagent transcripts (<session dir>/subagents/**/agent-*.jsonl with a sibling .meta.json).
-// Exports: createSubagentWatcher(dir, { judgeExisting, io }) -> { poll() -> { mtimeMs, agents } }, isModelMismatch(asked, ran), agentLine(agent).
+// Exports: createSubagentWatcher(dir, { judgeExisting, io }) -> { poll() -> { mtimeMs, agents }, anyUnfinished(fromMs, toMs) }, isModelMismatch(asked, ran), agentLine(agent).
 // Why: workflow agents never reach the main transcript, so their newest write is part of the stall check and the model they
 // actually ran on (first assistant message) is compared with the model that was asked for in the meta file.
 // Mismatch: a model was asked for and the one that ran does not contain it, or none was asked for and a Fable or Opus ran.
@@ -8,8 +8,12 @@
 // when it is new or grew, until its model is decided; the decision (a model, or "unknown" once the first HEAD_BYTES hold none)
 // is cached for good. Each agent is judged once, after its first answer; agents present at start are not judged unless
 // judgeExisting. An unreadable file is skipped, never fatal.
+// anyUnfinished(fromMs, toMs): true when a known transcript last written in that window does not end in a finished reply (its last
+// complete line, read from the last HEAD_BYTES of the file, is not an assistant end_turn or stop_sequence); a file that cannot be read
+// or whose last line is cut counts as unfinished. The watcher asks only when it is about to call a silence idle.
 import { open, readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { endsInFinishedReply } from './classify.mjs';
 
 const MAX_DEPTH = 4;
 const HEAD_BYTES = 256 * 1024;
@@ -93,6 +97,29 @@ class SubagentWatcher {
     const meta = await readMeta(path);
     const asked = meta.model ?? undefined;
     return { type: meta.agentType ?? '-', asked: asked ?? 'none', depth: meta.spawnDepth ?? 1, ran: file.decision, mismatch: isModelMismatch(asked, file.decision) };
+  }
+
+  // The last complete line of the file (undefined when there is none, or the file ends in a half-written line).
+  async lastLine(path) {
+    let handle;
+    try {
+      handle = await this.open(path, 'r');
+      const { size } = await handle.stat();
+      const start = Math.max(0, size - HEAD_BYTES);
+      const buffer = Buffer.alloc(size - start);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+      const text = buffer.toString('utf8', 0, bytesRead);
+      return text.endsWith('\n') ? text.trimEnd().split('\n').pop() : undefined;
+    } catch { return undefined; } finally { await handle?.close(); }
+  }
+
+  async anyUnfinished(fromMs, toMs) {
+    for (const [path, file] of this.files) {
+      if (file.mtimeMs < fromMs || file.mtimeMs > toMs) continue;
+      const last = await this.lastLine(path);
+      if (last === undefined || !endsInFinishedReply(last)) return true;
+    }
+    return false;
   }
 
   async poll() {

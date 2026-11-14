@@ -11,7 +11,7 @@ shell tools, so it runs on Windows, macOS and Linux. Input and output are passed
 - `actions.mjs`: keeps only the events that need attention.
 - `events.mjs`: the event classes and the names `--exit-on-event` accepts.
 - `wake.mjs`: decides which line wakes the caller (`--skip`, retries, `--delay-sec`).
-- `subagents.mjs`: watches the subagent transcripts of a session.
+- `subagents.mjs`: watches the subagent transcripts of a session (model check, newest write, whether one stopped unfinished).
 - `guard.mjs`: picks the lines of the guard log (`~/.claude/logs/guard.jsonl`) to report.
 - `stall.mjs`: reports "nothing written for N minutes" once (a stall, or idle when the turn had finished), then "resumed".
 - `watcher.mjs`: puts it together for one session and for the guard log.

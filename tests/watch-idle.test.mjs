@@ -1,10 +1,9 @@
 // Tests for IDLE: a session that finished its turn and waits for its owner is not a STALL. Session watcher with real temp files, a
-// fake clock that moves in poll steps and an injected liveness check; then the real CLI for the wake rules. Synthetic transcripts only
+// fake clock that moves in poll steps and an injected liveness check (the CLI side is in watch-idle-cli.test.mjs). Synthetic transcripts only
 // (made-up text; no prompt or command text of a real session).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, unlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createClassifier } from '../home/tools/watch/lib/classify.mjs';
@@ -12,7 +11,7 @@ import { DEFAULT_EXIT_CLASSES, DELAYED_CLASSES, EVENT_CLASS, EXIT_CLASS_NAMES, i
 import { parseArgs } from '../home/tools/watch/lib/args.mjs';
 import { createWakeGate } from '../home/tools/watch/lib/wake.mjs';
 import { createSessionWatcher } from '../home/tools/watch/lib/watcher.mjs';
-import { CLI, SESSION, entry, startWatcher } from './watch-follow-helpers.mjs';
+import { SESSION } from './watch-follow-helpers.mjs';
 
 const SECOND = 1000;
 const MIN = 60 * SECOND;
@@ -32,7 +31,7 @@ const toolResult = (at, extra = {}) => line(at, { type: 'user', message: { conte
 const prompt = (at, text = 'made-up question', extra = {}) => line(at, { type: 'user', message: { content: text }, ...extra });
 const finished = (at = T0) => reply(at - SECOND, 'end_turn') + turnDuration(at);
 
-async function setup(t, { transcript, mtimeMs = T0, clockStart = T0, registry, isAlive, label = 'cccccccc' } = {}) {
+async function setup(t, { transcript, mtimeMs = T0, clockStart = T0, registry = registered, isAlive = () => true, label = 'cccccccc' } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'watch-idle-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const path = join(dir, `${SESSION}.jsonl`);
@@ -40,7 +39,7 @@ async function setup(t, { transcript, mtimeMs = T0, clockStart = T0, registry, i
   await utimes(path, mtimeMs / SECOND, mtimeMs / SECOND);
   const sessionsDir = join(dir, 'sessions');
   await mkdir(sessionsDir);
-  if (registry !== undefined) await writeFile(join(sessionsDir, '4242.json'), registry);
+  if (registry !== null) await writeFile(join(sessionsDir, '4242.json'), registry);
   const clock = { now: clockStart };
   const emitted = [];
   const watcher = createSessionWatcher({
@@ -56,6 +55,16 @@ async function run({ watcher, clock, emitted }, ms = RUN_MS) {
   while (clock.now <= end) { await watcher.poll(); clock.now += POLL_MS; }
   return emitted.map((item) => item.cls);
 }
+
+// A subagent transcript with the given content, last written at `at`.
+async function writeAgent(ctx, name, content, at) {
+  const file = join(dirname(ctx.path), SESSION, 'subagents', `agent-${name}.jsonl`);
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, content);
+  await utimes(file, at / SECOND, at / SECOND);
+}
+const agentDone = (at) => reply(at, 'end_turn', { isSidechain: true });
+const agentBusy = (at) => toolCall(at, { isSidechain: true });
 
 async function verdictFor(t, transcript, options) {
   return run(await setup(t, { transcript, ...options }));
@@ -124,6 +133,17 @@ test('entries that count neither way after the turn end leave it IDLE', async (t
   for (const [name, extra] of Object.entries(noise)) assert.deepEqual(await verdictFor(t, finished() + extra), [EVENT_CLASS.IDLE], name);
 });
 
+test('a meta user entry with an origin kind (peer, auto-continuation, unknown) after the turn end means it runs again: STALL', async (t) => {
+  for (const kind of ['peer', 'auto-continuation', 'some-new-kind']) {
+    const meta = prompt(T0 + 2 * SECOND, 'made-up', { isMeta: true, origin: { kind } });
+    assert.deepEqual(await verdictFor(t, finished() + meta), [EVENT_CLASS.STALL], kind);
+  }
+});
+
+test('a meta user entry with no origin stays ignored: IDLE', async (t) => {
+  assert.deepEqual(await verdictFor(t, finished() + prompt(T0 + 2 * SECOND, 'made-up', { isMeta: true })), [EVENT_CLASS.IDLE]);
+});
+
 test('IDLE is reported once per idle period, then RESUMED when an owner prompt arrives, then STALL if the silence follows a prompt', async (t) => {
   const ctx = await setup(t, { transcript: finished() });
   assert.deepEqual(await run(ctx, 3 * STALL_MS), [EVENT_CLASS.IDLE]);
@@ -137,21 +157,38 @@ test('a subagent written after the turn end means work was in flight: STALL', as
   const ctx = await setup(t, { transcript: finished() });
   await ctx.watcher.poll();
   const agentFile = join(dirname(ctx.path), SESSION, 'subagents', 'agent-a1.jsonl');
-  await mkdir(dirname(agentFile), { recursive: true });
-  await writeFile(agentFile, '{}\n');
-  await utimes(agentFile, (T0 + 30 * SECOND) / SECOND, (T0 + 30 * SECOND) / SECOND);
+  await writeAgent(ctx, 'a1', agentDone(T0 + 30 * SECOND), T0 + 30 * SECOND);
   assert.deepEqual(await run(ctx, 30 * SECOND + RUN_MS), [EVENT_CLASS.STALL]);
 });
 
 test('a subagent written within 5 s of the turn end, or before it, does not stop the IDLE', async (t) => {
   for (const agentAt of [T0 + 4 * SECOND, T0 - MIN]) {
     const ctx = await setup(t, { transcript: finished() });
-    const agentFile = join(dirname(ctx.path), SESSION, 'subagents', 'agent-a1.jsonl');
-    await mkdir(dirname(agentFile), { recursive: true });
-    await writeFile(agentFile, '{}\n');
-    await utimes(agentFile, agentAt / SECOND, agentAt / SECOND);
+    await writeAgent(ctx, 'a1', agentDone(agentAt), agentAt);
     assert.deepEqual(await run(ctx), [EVENT_CLASS.IDLE], `agent write at ${agentAt - T0} ms`);
   }
+});
+
+test('a subagent that did not finish before the turn end (within one stall limit) means STALL; a finished one, or an old unfinished one, does not', async (t) => {
+  const cases = [
+    ['unfinished 2 min before the turn end', agentBusy, 2 * MIN, EVENT_CLASS.STALL],
+    ['finished 2 min before the turn end', agentDone, 2 * MIN, EVENT_CLASS.IDLE],
+    ['unfinished, older than the stall limit before the turn end', agentBusy, STALL_MS + MIN, EVENT_CLASS.IDLE],
+    ['last line cut in the middle', () => '{"type":"assistant","isSidechain":tru', 2 * MIN, EVENT_CLASS.STALL],
+  ];
+  for (const [name, content, before, expected] of cases) {
+    const ctx = await setup(t, { transcript: finished() });
+    await writeAgent(ctx, 'a1', content(T0 - before), T0 - before);
+    assert.deepEqual(await run(ctx), [expected], name);
+  }
+});
+
+test('a session with no known live process is never IDLE: no registry entry, or a process check that fails', async (t) => {
+  assert.deepEqual(await verdictFor(t, finished(), { registry: null }), [EVENT_CLASS.STALL], 'no registry entry (watched by path)');
+  const failing = () => { throw new Error('probe failed'); };
+  const classes = await verdictFor(t, finished(), { isAlive: failing });
+  assert.ok(!classes.includes(EVENT_CLASS.IDLE), 'a failing liveness check');
+  assert.ok(classes.includes(EVENT_CLASS.STALL));
 });
 
 test('after SESSION_END a silent session is STALL, never IDLE (the exit-mode guarantee)', async (t) => {
@@ -186,6 +223,18 @@ test('transcript replaced by a new file whose turn is running: STALL, not the ol
   await writeFile(ctx.path, toolCall(T0 + MIN));
   await utimes(ctx.path, T0 / SECOND, T0 / SECOND);
   assert.deepEqual(await run(ctx), [EVENT_CLASS.STALL]);
+});
+
+test('a transcript truncated to nothing, or replaced by one with only an attachment: STALL, not the old IDLE', async (t) => {
+  const replacements = { 'truncated to empty': { content: '', replace: false }, 'replaced, attachment only': { content: attachment(T0 + SECOND), replace: true } };
+  for (const [name, { content, replace }] of Object.entries(replacements)) {
+    const ctx = await setup(t, { transcript: finished() });
+    await ctx.watcher.poll();
+    if (replace) await unlink(ctx.path);
+    await writeFile(ctx.path, content);
+    await utimes(ctx.path, (T0 + SECOND) / SECOND, (T0 + SECOND) / SECOND);
+    assert.deepEqual(await run(ctx), [EVENT_CLASS.STALL], name);
+  }
 });
 
 test('two sessions: the idle one reports IDLE, the one with a call in flight reports STALL', async (t) => {
@@ -223,51 +272,4 @@ test('with a delay set, IDLE wakes at once and does not use up the stall retry w
   const gate = createWakeGate({ wanted: internalClasses(['idle', 'stall']), skip: 0, delayMs: 60 * SECOND, replies: () => 0, now: () => now, wake: (text, cls) => woke.push(cls) });
   gate('x: IDLE turn ended 5 min ago, waiting for the owner', EVENT_CLASS.IDLE);
   assert.deepEqual(woke, [EVENT_CLASS.IDLE]);
-});
-
-const WAKE_WAIT_MS = 20_000;
-const QUIET_MS = 5_000;
-const FAST_STALL = ['--stall-min', '0.03'];
-const idleTranscript = entry({ type: 'assistant', message: { content: [], stop_reason: 'end_turn' } }) + entry({ type: 'system', subtype: 'turn_duration' });
-
-test('CLI: --exit-on-event idle exits 0 with the IDLE line', async (t) => {
-  const watcher = await startWatcher(t, { transcript: idleTranscript, args: ['--exit-on-event', 'idle', ...FAST_STALL] });
-  assert.equal(await watcher.waitForExit(WAKE_WAIT_MS), 0);
-  assert.match(watcher.output(), /^eeeeeeee: IDLE turn ended \d+ min ago, waiting for the owner\n$/);
-});
-
-test('CLI: default --exit-on-event stays running while idle and exits with OWNER when a prompt arrives', async (t) => {
-  const watcher = await startWatcher(t, { transcript: idleTranscript, args: ['--exit-on-event', ...FAST_STALL] });
-  assert.equal(await watcher.waitForExit(QUIET_MS), undefined, 'idle does not wake the default class list');
-  assert.equal(watcher.output(), '');
-  assert.equal(await watcher.appendUntilExit(entry({ type: 'user', message: { content: 'made-up question' } }), WAKE_WAIT_MS), 0);
-  assert.match(watcher.output(), /^eeeeeeee: OWNER made-up question\n$/);
-});
-
-test('CLI: default --exit-on-event exits with STALL when a tool call was the last entry', async (t) => {
-  const call = entry({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: {} }], stop_reason: 'tool_use' } });
-  const watcher = await startWatcher(t, { transcript: call, args: ['--exit-on-event', ...FAST_STALL] });
-  assert.equal(await watcher.waitForExit(WAKE_WAIT_MS), 0);
-  assert.match(watcher.output(), /^eeeeeeee: STALL no transcript or subagent writes for \d+ min\n$/);
-});
-
-test('CLI: follow mode without --exit-on-event prints the IDLE line', async (t) => {
-  const watcher = await startWatcher(t, { transcript: idleTranscript, args: FAST_STALL });
-  const deadline = Date.now() + WAKE_WAIT_MS;
-  while (!watcher.output().includes('IDLE') && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.match(watcher.output(), /^eeeeeeee: IDLE turn ended \d+ min ago, waiting for the owner\n$/);
-});
-
-test('CLI: --help names the idle class and what it means', () => {
-  const help = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
-  assert.equal(help.status, 0);
-  assert.match(help.stdout, /classes: .*\bidle\b/);
-  assert.match(help.stdout, /idle \(opt-in\) = the session finished its turn and waits for its owner/);
-});
-
-test('docs name the idle class: README, daily use and the events header', async () => {
-  const root = join(dirname(CLI), '..', '..', '..');
-  for (const file of ['home/tools/watch/README.md', 'docs/daily-use.md', 'home/tools/watch/lib/events.mjs']) {
-    assert.match(await readFile(join(root, file), 'utf8'), /\bidle\b/, file);
-  }
 });

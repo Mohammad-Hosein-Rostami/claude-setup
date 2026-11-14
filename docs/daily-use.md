@@ -42,7 +42,8 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
   prints one line per event that needs action and flags a stall. See its README (`home/tools/watch/README.md`).
   With `--exit-on-event` in a background command it prints the first such event and exits, so a quiet hour costs the
   lead no turns. A session that only finished its turn and waits for its owner is not a stall: add `idle` to the
-  class list (`--exit-on-event owner,idle`) to be told, otherwise it stays quiet.
+  class list (`--exit-on-event owner,idle`) to be told, otherwise it stays quiet. Idle is only told for a session whose process is registered
+  (watch by session id, not by file path); in any doubt the silence is still a stall.
 - A run that must survive a dropped connection starts a watch on its own session id with
   `--exit-on-event api-error,stall,limit`; when the watch exits, the run is woken and carries on.
 - Background agents hand decisions to the lead through the ask queue: `node ~/.claude/tools/ask/ask.mjs init` prints

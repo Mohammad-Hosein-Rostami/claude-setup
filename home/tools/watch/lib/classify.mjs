@@ -1,5 +1,5 @@
 // Turns one transcript JSONL line into verbose events, in the line format of the old live-watch.sh jq filter.
-// Exports: createClassifier() -> { feed(text) -> Event[], seed(text, sinceMs) -> Event[], assistantEntries, turnEndedAt }, Event = { kind, line, owner?, promptText? }.
+// Exports: createClassifier() -> { feed(text) -> Event[], seed(text, sinceMs) -> Event[], assistantEntries, turnEndedAt, resetTurn() }, endsInFinishedReply(text), Event = { kind, line, owner?, promptText? }.
 // Kinds: PROMPT, COMPACT, AGENT, WORKFLOW, SKILL, TOOL, USAGE, ERR, INPUT_MODE, API_ERROR, LIMIT, LIMIT_RESET.
 // API_ERROR / LIMIT: an entry with isApiErrorMessage true. Only its error class is printed (rate_limit is a LIMIT, anything else
 // an API_ERROR), never the message text. LIMIT_RESET: the first real assistant reply after a LIMIT, with the minutes it lasted.
@@ -10,8 +10,10 @@
 // turnEndedAt: when the session's last turn finished (epoch ms), or undefined while a turn may be running. The newest main-chain entry that
 // counts decides: a `system` turn_duration, or an assistant message whose stop_reason is end_turn or stop_sequence, finishes the turn; any
 // other user or assistant entry (a prompt, a tool result, a task notification, a tool_use, an API error entry, an unknown stop_reason) means
-// it is running. Sidechain, meta and compaction-summary entries, other system subtypes, attachments and unparseable lines do not count. A
+// it is running, and so does a meta user entry that carries any origin kind (a peer message, an auto-continuation, a kind not known yet).
+// Sidechain and compaction-summary entries, other meta entries, other system subtypes, attachments and unparseable lines do not count. A
 // finishing entry without a valid timestamp is not trusted (undefined). seed() tracks it too, so a watch started on an idle file knows.
+// resetTurn() forgets it (the file was truncated or replaced). endsInFinishedReply(text) is the same test for the last line of a subagent transcript.
 // Invariants: pure apart from the INPUT_MODE and limit-window memory (Claude Code repeats the mode every turn; only changes are events);
 // a line that is not valid JSON, or is not an object, yields nothing (a partial line is the tail's job, not ours).
 // A PROMPT event always carries a verbose line, but `owner` is false for meta, sidechain and compaction-summary entries.
@@ -34,6 +36,17 @@ const show = (value) => (value === null || value === undefined ? 'null' : String
 // jq slices strings by code point, not by UTF-16 unit.
 const head = (text, count) => Array.from(text).slice(0, count).join('');
 const flat = (text) => text.replaceAll('\n', ' ');
+
+const parse = (text) => {
+  try { const entry = JSON.parse(text); return entry !== null && typeof entry === 'object' ? entry : undefined; } catch { return undefined; }
+};
+const finishesTurn = (entry) => entry.type === 'assistant' && entry.isApiErrorMessage !== true && TURN_END_STOP_REASONS.has(entry.message?.stop_reason);
+
+/** @param {string} text one JSONL line @returns {boolean} true for an assistant reply that ends its turn (end_turn or stop_sequence, not an API error) */
+export const endsInFinishedReply = (text) => {
+  const entry = parse(text);
+  return entry !== undefined && finishesTurn(entry);
+};
 
 function promptEvent(entry, stamp, text) {
   const owner = !(entry.isMeta || entry.isSidechain || entry.isCompactSummary);
@@ -108,9 +121,9 @@ export function createClassifier() {
   let limitStartedAt; // timestamp of the first LIMIT of the current limit window
   let assistantEntries = 0;
   let turnEndedAt;
-  const finishesTurn = (entry) => entry.isApiErrorMessage !== true && TURN_END_STOP_REASONS.has(entry.message?.stop_reason);
   const trackTurn = (entry) => {
-    if (entry.isSidechain === true || entry.isMeta === true || entry.isCompactSummary === true) return;
+    if (entry.isSidechain === true || entry.isCompactSummary === true) return;
+    if (entry.isMeta === true && !(entry.type === 'user' && entry.origin?.kind != null)) return;
     const endedAt = Date.parse(entry.timestamp);
     const stamped = Number.isFinite(endedAt) ? endedAt : undefined;
     if (entry.type === 'system' && entry.subtype === 'turn_duration') turnEndedAt = stamped;
@@ -152,12 +165,10 @@ export function createClassifier() {
     }
     return [];
   };
-  const parse = (text) => {
-    try { const entry = JSON.parse(text); return entry !== null && typeof entry === 'object' ? entry : undefined; } catch { return undefined; }
-  };
   return {
     get assistantEntries() { return assistantEntries; },
     get turnEndedAt() { return turnEndedAt; },
+    resetTurn() { turnEndedAt = undefined; },
     feed(text) {
       const entry = parse(text);
       if (entry === undefined) return [];
