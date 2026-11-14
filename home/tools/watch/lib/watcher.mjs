@@ -2,8 +2,8 @@
 // with temp files, a fake clock and a fake liveness check.
 // Exports: createSessionWatcher(options) -> { poll(), finish(), failed }, createGuardFollower(options) -> { poll() }.
 // A session watcher reads new transcript lines (classify -> verbose record + action emit), checks subagent transcripts (model
-// mismatch) and, unless `once`, the stall detector and the session-end check. `emit(text)` receives action lines that already
-// carry the label; `record(label, text)` receives every verbose line (for the --log file). Both are wrapped so that every
+// mismatch) and, unless `once`, the stall detector and the session-end check. `emit(text, cls)` receives action lines that already
+// carry the label, with their event class (OWNER, STALL, WATCH_ERROR, ...; see events.mjs); `record(label, text)` receives every verbose line (for the --log file). Both are wrapped so that every
 // line is masked (lib/mask.mjs) before it leaves.
 // Invariants: a bad line or a failing poll never stops the watcher: it becomes one rate-limited `WATCH_ERROR <label> <reason>`
 // line. A file that cannot be read is reported once per failure (not per poll) and sets `failed` (the CLI exits 1 in --once).
@@ -29,7 +29,7 @@ class SessionWatcher {
   constructor(options) {
     Object.assign(this, { isAlive: isProcessAlive, jumpMs: DEFAULT_JUMP_MS, classifier: createClassifier(), ...options });
     const { emit, record } = options;
-    this.emit = (text) => emit(maskText(text));
+    this.emit = (text, cls) => emit(maskText(text), cls);
     this.record = (label, text) => record(label, maskText(text));
     this.errors = createErrorReporter({ now: this.now, emit: this.emit, record: this.record });
     this.tail = createTail(this.path, { fromStart: this.once, missingIsError: this.once });
@@ -53,7 +53,7 @@ class SessionWatcher {
   handle(event) {
     this.record(this.label, event.line);
     const action = actionFor(event);
-    if (action) this.emit(`${this.label}: ${action.text}`);
+    if (action) this.emit(`${this.label}: ${action.text}`, action.cls);
   }
 
   noteWrite(mtimeMs) {
@@ -76,7 +76,7 @@ class SessionWatcher {
     this.noteWrite(found.mtimeMs);
     for (const agent of found.agents) {
       this.record(this.label, `${this.stamp()} ${agentLine(agent)}`);
-      if (agent.mismatch) this.emit(`${this.label}: MODEL MISMATCH type=${agent.type} asked=${agent.asked} ran=${agent.ran}`);
+      if (agent.mismatch) this.emit(`${this.label}: MODEL MISMATCH type=${agent.type} asked=${agent.asked} ran=${agent.ran}`, 'MODEL_MISMATCH');
     }
   }
 
@@ -85,7 +85,7 @@ class SessionWatcher {
     if (this.pid === undefined || this.isAlive(this.pid)) return false;
     this.ended = true;
     this.record(this.label, `${this.stamp()} SESSION_END pid=${this.pid}`);
-    this.emit(`${this.label}: SESSION_END pid=${this.pid}`);
+    this.emit(`${this.label}: SESSION_END pid=${this.pid}`, 'SESSION_END');
     return true;
   }
 
@@ -96,8 +96,8 @@ class SessionWatcher {
     if (jumped && !this.stall.stalled && (this.lastWrite === undefined || at > this.lastWrite)) this.lastWrite = at;
     const verdict = this.stall.check(this.lastWrite, at);
     if (!verdict) return;
-    if (verdict.type === 'STALL') this.emit(`${this.label}: STALL no transcript or subagent writes for ${minutes(verdict.idleMs)} min`);
-    else this.emit(`${this.label}: RESUMED writing again`);
+    if (verdict.type === 'STALL') this.emit(`${this.label}: STALL no transcript or subagent writes for ${minutes(verdict.idleMs)} min`, 'STALL');
+    else this.emit(`${this.label}: RESUMED writing again`, 'RESUMED');
     this.record(this.label, `${this.stamp()} ${verdict.type} idle_min=${minutes(verdict.idleMs)}`);
   }
 
@@ -132,7 +132,7 @@ class SessionWatcher {
  * @param {(pid: number) => boolean} [options.isAlive] liveness check (default: signal 0)
  * @param {number} [options.jumpMs] a gap between polls above this restarts the stall timer (default 2 min)
  * @param {{ feed: (text: string) => object[] }} [options.classifier] line classifier (default: the real one; tests inject a failing one)
- * @param {(text: string) => void} options.emit action line sink
+ * @param {(text: string, cls: string) => void} options.emit action line sink; cls is the event class (OWNER, STALL, WATCH_ERROR, ...)
  * @param {(label: string, text: string) => void} options.record verbose line sink
  * @returns {{ poll: () => Promise<void>, finish: () => void, readonly failed: boolean }}
  */

@@ -1,7 +1,9 @@
 // Reports the watcher's own problems on stdout instead of dying silently.
 // Exports: createErrorReporter({ now, emit, record }) -> { report(label, error) }, shortReason(error).
-// Output: `WATCH_ERROR <label> <short reason>`. The same label + reason is printed at most once per RATE_LIMIT_MS, so a bad
+// Output: `WATCH_ERROR <label> <short reason>`, passed to emit with the class WATCH_ERROR. The same label + reason is printed at most once per RATE_LIMIT_MS, so a bad
 // line repeated every poll cannot flood the notifications. The reason is one line, control characters removed, 100 chars.
+import { WATCH_ERROR_CLASS } from './events.mjs';
+
 const RATE_LIMIT_MS = 60_000;
 const REASON_CHARS = 100;
 
@@ -12,7 +14,7 @@ export function shortReason(error) {
 }
 
 /**
- * @param {{ now: () => number, emit: (text: string) => void, record: (label: string, text: string) => void }} sinks
+ * @param {{ now: () => number, emit: (text: string, cls: string) => void, record: (label: string, text: string) => void }} sinks
  */
 export function createErrorReporter({ now, emit, record }) {
   const lastShown = new Map();
@@ -23,7 +25,7 @@ export function createErrorReporter({ now, emit, record }) {
       const at = now();
       if (lastShown.has(key) && at - lastShown.get(key) < RATE_LIMIT_MS) return;
       lastShown.set(key, at);
-      emit(`WATCH_ERROR ${label} ${reason}`);
+      emit(`WATCH_ERROR ${label} ${reason}`, WATCH_ERROR_CLASS);
       record(label, `${new Date(at).toISOString()} WATCH_ERROR ${reason}`);
     },
   };
