@@ -15,7 +15,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.join(here, '..', 'cli.mjs');
 const fixture = (name) => pathToFileURL(path.join(here, 'fixtures', name)).href;
 const PAGES = ['ltr.html', 'rtl-ok.html', 'card.html', 'rawkey.html'];
-const FAILING_STATE = 's5'; // the only state on rawkey.html (a raw-i18n-key finding); every other page is clean
+const FAILING_STATE = 's5'; // the only state on rtl.html (a bidi-field finding); the hints of the other pages never fail a state
 
 async function ui(...args) {
   try {
@@ -27,7 +27,7 @@ async function ui(...args) {
 }
 
 function writeStates(dir) {
-  const states = Array.from({ length: 12 }, (_, i) => ({ surface: `page${i % 3}`, state: `s${i}`, locale: 'en', url: fixture(i === 5 ? 'rawkey.html' : PAGES[i % 3]), widths: i % 2 ? [320] : [320, 390] }));
+  const states = Array.from({ length: 12 }, (_, i) => ({ surface: `page${i % 3}`, state: `s${i}`, locale: 'en', url: fixture(i === 5 ? 'rtl.html' : PAGES[i % 3]), widths: i % 2 ? [320] : [320, 390] }));
   const file = path.join(dir, 'states.json');
   fs.writeFileSync(file, JSON.stringify({ states }));
   return file;
@@ -48,6 +48,7 @@ test('batch --jobs 4 gives the same records as --jobs 1, in states-file order, w
   assert.equal(parallel.code, 1, parallel.stdout + parallel.stderr);
   const a = records(path.join(dir, 'one'));
   assert.deepEqual(records(path.join(dir, 'four')), a);
+  assert.ok(a.every((r) => Number.isInteger(r.hints)), 'every record carries its hint count');
   assert.equal(a.length, 18, '6 states x 2 widths + 6 states x 1 width');
   assert.deepEqual(a.map((r) => r.state).filter((s, i, all) => all.indexOf(s) === i), Array.from({ length: 12 }, (_, i) => `s${i}`));
   assert.deepEqual(a.filter((r) => r.status === 'fail').map((r) => r.state), [FAILING_STATE]);
