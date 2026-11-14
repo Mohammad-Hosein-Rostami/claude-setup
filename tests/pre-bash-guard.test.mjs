@@ -67,7 +67,7 @@ const ALLOWED = [
   'cat .eslintrc*', 'cd sub && rm -rf dist', 'cd packages/app && rm -rf dist', 'cd ./a && cd .. && rm -rf dist',
   'echo hi &', 'cmd 2>&1 | tee out.log', 'npm test &> out.log', 'for f in a b; do echo $f; done', 'echo $(pwd)',
   'cp package-lock.json backup.json', 'pnpm install', 'sudo apt install x', 'timeout 5 pnpm test', '# rm -rf ~/x',
-  'xargs -I {} rm -rf {}', 'cat *', 'cat src/*', 'cat *.*', 'cat logs/*', 'ls *.env', 'rg "\\.env" src', 'grep -rn ".env" src',
+  'cat *', 'cat src/*', 'cat *.*', 'cat logs/*', 'ls *.env', 'rg "\\.env" src', 'grep -rn ".env" src',
   'grep -rn .env src', 'grep -A 3 .env src', 'rg -g .env FOO src', 'sed s/.env/x/ f.txt', "awk '/.env/' f.txt", 'jq .env package.json',
   "jq -r '.env' package.json", 'cp .env.example .env', 'cp .env.sample x', 'cp a b .env.d/', 'cp -t dir a b', 'scp a host:.env',
   'rsync -a src host:.env', 'rsync --exclude .env src dest', 'rsync --exclude=.env src dest', 'tar --exclude .env -czf o.tgz .',
@@ -188,6 +188,19 @@ test('decide: unknown cwd only denies relative rm -r targets', () => {
   const unknown = { cwd: null, project: PROJECT };
   assert.equal(decide('rm -rf dist', unknown).allow, false);
   assert.equal(decide(`rm -rf ${PROJECT}/dist`, unknown).allow, true);
+});
+
+test('xargs or parallel running rm -r asks as destructive: its targets come from stdin, which no rule sees', () => {
+  for (const command of [
+    'find . -name x | xargs rm -rf', 'ls | xargs -I{} rm -r {}', 'cat list | xargs sudo rm -rf', 'xargs -I {} rm -rf {}', 'git ls-files -z | xargs -0 rm -R',
+    'ls | xargs -n1 rm --recursive', 'ls | xargs /bin/rm -fr', 'ls | xargs -J % rm -rf %', 'sudo xargs rm -r', 'ls | ionice -c3 xargs rm -rf',
+    'ls | parallel rm -rf', "ls | parallel -j4 'rm -rf {}'",
+  ]) {
+    assert.match(decide(command, ctx).reason ?? '', /^DESTRUCTIVE: (?:xargs|parallel) runs rm -r on paths read from stdin/, command);
+  }
+  for (const command of ['find . -name "*.log" | xargs rm -f', 'git ls-files -z | xargs -0 rm -f', 'ls | xargs git rm -r --cached', 'ls | xargs echo rm -rf', 'ls | parallel gzip {}', 'parallel echo {} ::: rm -rf']) {
+    assert.deepEqual(decide(command, ctx), { allow: true }, command);
+  }
 });
 
 test('segments splits on & && || ; | and newline', () => {

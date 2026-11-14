@@ -1,9 +1,11 @@
 // Per-command rules of pre-bash-guard that need only one command's name and words: git, disk wipes, lockfile hand edits,
-// and a variable used as the command name with rm-style flags.
-// Exports: checkGit(args, assigns), checkDiskWipe(cmd, args), checkLockfileEdit(cmd, args), checkHiddenRm(cmd, args)
-// - each returns an ask reason, or undefined when the command is fine.
+// a variable used as the command name with rm-style flags, rm -r run by xargs or parallel, and printing a stored keychain secret.
+// Exports: checkGit(args, assigns), checkDiskWipe(cmd, args), checkLockfileEdit(cmd, args), checkHiddenRm(cmd, args),
+// checkStdinRm(cmd, args, before), checkKeychainPrint(cmd, args) - each returns an ask reason, or undefined when the command is fine.
 // Pure, no I/O. Every rule is an ask (the hook shows a timed dialog); a destructive one starts with "DESTRUCTIVE: ".
+import { commandName } from './command-of.mjs';
 import { parsePushArgs, pushAsk } from './outward.mjs';
+import { RECURSIVE_FLAG } from './rm-paths.mjs';
 import { basenameOf, flagsOf } from './shell-words.mjs';
 import { destructive } from './verdict.mjs';
 
@@ -119,4 +121,76 @@ export function checkHiddenRm(cmd, args) {
   const letters = flagsOf(args).filter((f) => !f.startsWith('--')).join('').replace(/-/g, '');
   const recursiveForce = /[rR]/.test(letters) && /f/.test(letters);
   return recursiveForce ? destructive(`${cmd} with -rf flags hides the command (rm?); write the command name out`) : undefined;
+}
+
+const STDIN_RUNNERS = new Set(['xargs', 'parallel']);
+const PARALLEL_INPUTS = /^:{3,4}\+?$/; // `parallel cmd ::: a b`: the words after it are inputs, not the command
+const isRecursiveRm = (args) => flagsOf(args).some((flag) => RECURSIVE_FLAG.test(flag));
+const stdinRmReason = (runner) => destructive(`${runner} runs rm -r on paths read from stdin; the guard cannot check those targets`);
+
+/** The command parallel runs: its words up to the first `:::` input list, split on blanks like the shell line parallel builds (`'rm -rf {}'`). */
+function parallelCommand(args) {
+  const end = args.findIndex((word) => PARALLEL_INPUTS.test(word));
+  return (end === -1 ? args : args.slice(0, end)).flatMap((word) => word.split(/\s+/)).filter(Boolean);
+}
+
+/**
+ * `find . | xargs rm -rf`, `ls | parallel 'rm -r {}'`: a recursive rm whose targets xargs or parallel read from stdin. The rm path rule only
+ * sees the words written in the command (none, or a `{}` placeholder), so without this rule such a delete passes silently.
+ * @param {string} cmd the command being checked
+ * @param {string[]} args its words
+ * @param {string[]} before the words before it in the same simple command: wrappers (sudo, xargs, parallel) and their options
+ * @returns {string | undefined} a destructive ask reason, or undefined (a non-recursive `xargs rm -f` stays silent)
+ */
+export function checkStdinRm(cmd, args, before = []) {
+  if (cmd === 'parallel') {
+    const words = parallelCommand(args);
+    const rmAt = words.findIndex((word) => commandName(word) === 'rm');
+    return rmAt !== -1 && isRecursiveRm(words.slice(rmAt + 1)) ? stdinRmReason('parallel') : undefined;
+  }
+  if (cmd !== 'rm' || !isRecursiveRm(args)) return undefined;
+  const runnerAt = before.findLastIndex((word) => STDIN_RUNNERS.has(commandName(word)));
+  if (runnerAt === -1 || before.slice(runnerAt + 1).some((word) => PARALLEL_INPUTS.test(word))) return undefined;
+  return stdinRmReason(commandName(before[runnerAt]));
+}
+
+const KEYCHAIN_PASSWORD_LOOKUP = /^find-(?:generic|internet)-password$/;
+const KEYCHAIN_DUMPS = new Set(['dump-keychain', 'export']);
+// options of find-generic-password / find-internet-password that take a value (the rest of the cluster, or the next word)
+const LOOKUP_VALUE_LETTERS = new Set(['a', 'c', 'C', 'd', 'D', 'G', 'j', 'l', 'p', 'P', 'r', 's', 't']);
+const PASSWORD_PRINT_LETTERS = new Set(['g', 'w']); // -g prints the password with the attributes, -w prints only the password
+
+/** One option cluster read like getopt: 'prints' (-g / -w), 'value' (the next word is an option value) or 'flags'. */
+function readLookupCluster(word) {
+  for (let at = 1; at < word.length; at++) {
+    if (PASSWORD_PRINT_LETTERS.has(word[at])) return 'prints';
+    if (LOOKUP_VALUE_LETTERS.has(word[at])) return at === word.length - 1 ? 'value' : 'flags'; // `-sgithub`: the rest is the value
+  }
+  return 'flags';
+}
+
+/** True when the options of a find-*-password call ask for the password itself (`-w`, `-g`, `-ga me`; not a `-s` value). */
+function printsPassword(args) {
+  for (let i = 0; i < args.length; i++) {
+    const kind = /^-[A-Za-z]/.test(args[i]) ? readLookupCluster(args[i]) : 'flags';
+    if (kind === 'prints') return true;
+    if (kind === 'value') i++;
+  }
+  return false;
+}
+
+/**
+ * `security find-generic-password|find-internet-password` with `-w` or `-g`, `security dump-keychain`, `security export`: the stored secret
+ * is printed into the transcript (also when a `$(...)` captures it: the guard cannot tell). An attribute-only lookup stays silent.
+ * @param {string} cmd the command name
+ * @param {string[]} args its words
+ * @returns {string | undefined} the ask reason, or undefined
+ */
+export function checkKeychainPrint(cmd, args) {
+  if (cmd !== 'security') return undefined;
+  let i = 0;
+  while (args[i]?.startsWith('-')) i += args[i] === '-p' ? 2 : 1; // `security -q ...`, `security -p prompt ...`
+  const [sub = '', ...rest] = args.slice(i);
+  const prints = KEYCHAIN_DUMPS.has(sub) || (KEYCHAIN_PASSWORD_LOOKUP.test(sub) && printsPassword(rest));
+  return prints ? `security ${sub} prints a stored secret into the transcript; confirm it` : undefined;
 }

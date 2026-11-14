@@ -10,11 +10,14 @@
 // `$HOME` and `$(git rev-parse --show-toplevel)` (from inside the project only) is resolved, as are leading
 // `~`/`$HOME`/`$TMPDIR`/`$CLAUDE_PROJECT_DIR` and variables assigned earlier in the line (the last assignment wins,
 // `VAR=$(mktemp -d)` is the temp dir, `..` is resolved after substitution; an unknown variable asks for `rm -r` only; lib/rm-paths.mjs;
-// $HOME, `/` and a drive root never count as the project), disk wipes (dd of=/dev/x, mkfs, wipefs, shred/blkdiscard on a device). Plain ASK: git
+// $HOME, `/` and a drive root never count as the project), disk wipes (dd of=/dev/x, mkfs, wipefs, shred/blkdiscard on a device), rm -r run
+// by xargs or parallel (its targets come from stdin; `xargs rm -f` is fine; lib/command-checks.mjs). Plain ASK: git
 // --no-verify (and unique prefixes), `git -c core.hooksPath`, `HUSKY=0 git`, hand-editing lockfiles, a literal secret in the
 // command (lib/secrets.mjs; the text never repeats it), `git push` (not --dry-run), `gh release *`, `gh pr merge`, package
-// publish (lib/outward.mjs), and ssh/scp/rsync/psql/mysql that write to a production host (lib/remote.mjs; list in
-// ~/.claude/private/prod-hosts).
+// publish (lib/outward.mjs), ssh/scp/rsync/psql/mysql that write to a production host (lib/remote.mjs; list in
+// ~/.claude/private/prod-hosts), `security find-*-password -w|-g` / `dump-keychain` / `export` (prints a stored secret), and a private
+// credential file (`.ssh/id_*`, `.aws/credentials`, `.netrc`, gh `hosts.yml`) in one command line with a network sender, unless it is
+// the value of an identity flag (`ssh|scp|sftp -i`, curl `--key`; lib/credential-send.mjs).
 // A literal-secret ask that the owner allowed (or let time out) is remembered for the rest of the session as sha256 digests
 // (lib/allowed-literals.mjs, lib/remembered-ask.mjs): the same values again run without a dialog (log outcome "remembered") only when
 // the command is also clean with the values neutralised. An ask with any other reason always shows its dialog and remembers nothing.
@@ -51,14 +54,16 @@
 // MAX_COMMAND_CHARS (32 KB) is not parsed at all: it asks "command too long to check"; the log and dialog keep only its first 2 KB, masked.
 // Known limits (not detected): shell aliases and functions defined elsewhere, a variable assigned from another command's output, interpreter
 // code (`node -e`, `python -c`) unless it names a dangerous word, wrappers that take the command as ONE string (busybox), rimraf,
-// `xargs` paths read from stdin, `cd` scoping in subshells (treated as global: extra asks only), an ssh alias that hides a production host,
-// and the PowerShell tool (the hook matcher covers Bash only).
+// stdin paths that xargs hands to anything but rm -r (`xargs -I{} sh -c 'rm -rf {}'`), a credential file sent by a tool off the sender list
+// (`ssh host < key`, `aws s3 cp`) or as a whole `~/.ssh` folder, `cd` scoping in subshells (treated as global: extra asks only), an ssh alias
+// that hides a production host, and the PowerShell tool (the hook matcher covers Bash only).
 import { resolve } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { bashCodeWrites } from './lib/code-writes.mjs';
-import { checkDiskWipe, checkGit, checkHiddenRm, checkLockfileEdit } from './lib/command-checks.mjs';
+import { checkDiskWipe, checkGit, checkHiddenRm, checkKeychainPrint, checkLockfileEdit, checkStdinRm } from './lib/command-checks.mjs';
 import { commandOf } from './lib/command-of.mjs';
+import { checkCredentialSend } from './lib/credential-send.mjs';
 import { scanWrapped } from './lib/dangerous-scan.mjs';
 import { editLogPath, recordEdit } from './lib/edit-log.mjs';
 import { checkEval } from './lib/eval-check.mjs';
@@ -133,13 +138,15 @@ function checkAlias(args, env) {
   return reasons.length > 0 ? `alias defines a command that asks: ${reasons[0]}` : undefined;
 }
 
-/** The rules that look at one command's own name and words (no shell recursion, no scan). */
-function checkSimple(cmd, args, assigns, env) {
+/** The rules that look at one command's own name and words, and the words before it (`before`: wrappers; no shell recursion, no scan). */
+function checkSimple({ cmd, args, assigns, before }, env) {
   return [
     cmd === 'git' ? checkGit(args, assigns) : undefined,
     cmd === 'rm' ? checkRm(args, env) : undefined,
     cmd === 'find' ? checkFind(args, env) : undefined,
     checkHiddenRm(cmd, args),
+    checkStdinRm(cmd, args, before),
+    checkKeychainPrint(cmd, args),
     checkDiskWipe(cmd, args),
     checkLockfileEdit(cmd, args),
     outwardAsk(cmd, args) ?? remoteAsk(cmd, args, [...assigns, ...hostVariables(env.vars)], env.prodHosts),
@@ -149,12 +156,13 @@ function checkSimple(cmd, args, assigns, env) {
 
 const MAX_NESTING = 24; // bash -c / eval / $(...) levels checked; deeper asks (keeps a hostile command from overflowing the stack)
 
-/** @returns {string[]} why this one command needs an owner answer (empty when it does not) */
-function checkCommand({ cmd, args, assigns }, env, nextWords) {
+/** @returns {string[]} why this one command ({cmd, args, assigns, before}) needs an owner answer (empty when it does not) */
+function checkCommand(command, env, nextWords) {
+  const { cmd, args } = command;
   const script = SHELLS.has(cmd) ? shellScript(args) : undefined;
   if (script) return reasonsOf(script, env);
   const evalReasons = cmd === 'eval' ? checkEval(args, nextWords, (text) => reasonsOf(text, env)) : [];
-  return [...checkSimple(cmd, args, assigns, env), ...evalReasons];
+  return [...checkSimple(command, env), ...evalReasons];
 }
 
 /**
@@ -169,19 +177,23 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
   if (secret !== undefined) reasons.push(secretReason(secret));
   const scope = newScope(cwd, project);
   const { segs, nested } = parse(command);
+  const commands = [];
   let dir = cwd;
   segs.forEach((seg, index) => {
     const words = substituteKnownWords(seg, scope);
     const parsed = commandOf(words);
+    commands.push(parsed);
     const env = { cwd: dir, project, vars: scope.vars, prodHosts, parse, depth: depth + 1 };
     reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript }));
     if (parsed.cmd !== undefined) {
-      reasons.push(...checkCommand(parsed, env, segs[index + 1] ?? []));
-      reasons.push(...scanWrapped(words, parsed, (cmd, args) => checkCommand({ cmd, args, assigns: [] }, env, [])));
+      reasons.push(...checkCommand({ ...parsed, before: words.slice(0, parsed.at) }, env, segs[index + 1] ?? []));
+      reasons.push(...scanWrapped(words, parsed, (cmd, args, at) => checkCommand({ cmd, args, assigns: [], before: words.slice(0, at) }, env, [])));
       dir = nextCwd(parsed.cmd, parsed.args, dir, project, scope.vars);
     }
     trackAssignments(scope, seg);
   });
+  const credentialSend = checkCredentialSend(commands); // one command line: the file may be read in one command and sent by another
+  if (credentialSend !== undefined) reasons.push(credentialSend);
   for (const inner of nested) reasons.push(...reasonsOf(inner, { cwd, project, prodHosts, parse, depth: depth + 1 }));
   return reasons;
 }

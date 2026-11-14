@@ -3,13 +3,12 @@
 // The start folders decide what can be removed, so they are judged like the targets of `rm -r` (outside the project, or
 // `~`, `$HOME`, an unknown variable, asks). `find . -name node_modules -prune -exec rm -rf {} +` inside the project stays silent.
 // A find that only lists, or runs a non-recursive rm, is not judged here. Invariants: pure; never touches the file system.
-import { checkRm } from './rm-paths.mjs';
+import { RECURSIVE_FLAG, checkRm } from './rm-paths.mjs';
 import { QUOTED_MARK, basenameOf } from './shell-words.mjs';
 import { destructive } from './verdict.mjs';
 
 const EXEC_PRIMARIES = new Set(['-exec', '-execdir', '-ok', '-okdir']);
 const LEADING_OPTION = /^-(?:[HLP]|O\d?)$/;
-const RECURSIVE_RM_FLAG = /^--recursive$|^-[a-zA-Z]*[rR]/;
 const PROBE_CHILD = '/x'; // the folder itself may be the project root; what find removes is below it
 const EXEC_END = new Set([';', '\;', '+']);
 
@@ -29,7 +28,7 @@ function deletes(args) {
     if (!EXEC_PRIMARIES.has(word) || basenameOf(args[i + 1] ?? '') !== 'rm') return false;
     const rmArgs = args.slice(i + 2);
     const end = rmArgs.findIndex((a) => EXEC_END.has(a));
-    return (end === -1 ? rmArgs : rmArgs.slice(0, end)).some((a) => RECURSIVE_RM_FLAG.test(a));
+    return (end === -1 ? rmArgs : rmArgs.slice(0, end)).some((a) => RECURSIVE_FLAG.test(a));
   });
 }
 

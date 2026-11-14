@@ -31,7 +31,7 @@ const isVerbWord = (word) => !word.startsWith('-') && !word.includes('=') && !wo
 /**
  * @param {string[]} words normalised words of one simple command (variables substituted, ANSI-C decoded)
  * @param {{cmd: string|undefined, at: number}} parsed the command commandOf found and the index of its word
- * @param {(cmd: string, args: string[]) => string[]} check the guard's rules for one command; returns ask reasons
+ * @param {(cmd: string, args: string[], at: number) => string[]} check the guard's rules for one command (`at`: index of its word in `words`); returns ask reasons
  * @returns {string[]} reasons for dangerous commands found after the real command word
  */
 export function scanWrapped(words, parsed, check) {
@@ -39,7 +39,7 @@ export function scanWrapped(words, parsed, check) {
   const reasons = [];
   for (let i = parsed.at + 1; i < Math.min(words.length, parsed.at + 1 + MAX_SCAN_WORDS); i++) {
     if (words[i].startsWith('#')) break; // a comment: the rest of the line is text
-    if (isVerbWord(words[i])) reasons.push(...check(commandName(words[i]), words.slice(i + 1)));
+    if (isVerbWord(words[i])) reasons.push(...check(commandName(words[i]), words.slice(i + 1), i));
   }
   return reasons;
 }
