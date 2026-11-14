@@ -32,7 +32,9 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 2. `skill-router.mjs` reads your prompt and names the skills that fit (for example `verify-done` for "done").
 3. Claude reads `home/CLAUDE.md` and the rules whose paths match the files it works on.
 4. The lead hands work to agents from `home/agents/`. Each agent file lists its model, tools and size limits.
-5. Before each Bash command, `pre-bash-guard.mjs` checks it. Risky commands (push, `rm -rf`, secrets) open a dialog.
+5. Before each Bash command, `pre-bash-guard.mjs` checks it. Risky commands (push, `rm -rf`, secrets) open a dialog. When a
+   rewrite would remove the question (a `$VAR` command word, `rm`/`push` inside `$(...)` or a heredoc, a literal secret), the
+   first send is sent back to Claude with the fix instead; the same command sent again opens the dialog.
 6. After each edit, `post-edit.mjs` runs the project's formatter and lint. When an agent stops, `typecheck-gate.mjs`
    typechecks what it edited.
 7. At the end the Stop hooks check the reply against any size cap you gave.
@@ -65,7 +67,7 @@ own rules) and `docs/usage.md`.
 
 Every question the Bash guard asked, and the answer, is one JSON line in `~/.claude/logs/guard.jsonl`
 (`CLAUDE_GUARD_LOG` changes the path). Show the last lines with `tail -n 20 ~/.claude/logs/guard.jsonl`. The outcomes are
-allow, deny, timeout, remembered, no-gui and dialog-failed. The log never stores secrets. What the guard asks about is in
+allow, deny, timeout, remembered, bounce (sent back once for a rewrite), no-gui and dialog-failed. The log never stores secrets. What the guard asks about is in
 `docs/troubleshooting.md`.
 
 ## Run the tests
