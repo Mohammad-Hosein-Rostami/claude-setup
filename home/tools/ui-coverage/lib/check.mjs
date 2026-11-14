@@ -2,7 +2,7 @@
 // Exports: checkMatrix(matrix, records, options).
 // Invariants: pure apart from the injected `fileExists` and `readText`; never throws on bad input (a malformed matrix
 //   yields `shape` problems and stops). Done means `problems` is empty. Problem codes: shape, surface-controls,
-//   control-component, control-states, control-reference, unproven-reference, unproven-reuse, unproven-mount,
+//   control-component, control-states, control-reference, unproven-reference, unproven-reuse, unproven-mount, duplicate-mount,
 //   default-state, state-widths, no-search, deliverable, duplicate-cell, bad-result, unmatched-result, missing-cell,
 //   unknown-cell, cell-status, todo, fail, no-reason, no-evidence, evidence-missing, na-locale, no-rtl-pass. A problem
 //   about a cell carries `cell` (its label) and `cause` (what `report` groups by). A cell with status fail in the

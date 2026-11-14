@@ -30,11 +30,12 @@ Run: `node ~/.claude/tools/ui-coverage/ui-coverage.mjs <command>`
 - `class` is required: a known class or `other` (then `states` must be listed). Run `ui-coverage.mjs states` for the
   classes and their default states; a default state must be in `states` or in `dropped` with a reason. A misspelled class is a
   schema error naming the control.
-- Reuse is proven, not declared: every control with a `component` path needs `mountedAt` (`<file>:<line>`, the place the
-  surface uses the control). `check` reads that file and fails with `unproven-reuse` when the file or line does not exist
-  or the file never mentions the component (the component file's name without extension, or `componentMarker`: a tag or
-  class it exports). A `{new}` control needs `mountedAt` too (`unproven-mount`) but skips the mention test. Paths resolve
-  from the matrix file's directory, or from `root`.
+- Reuse is proven, not declared: every control with a `component` path needs `mountedAt` (`<file>:<line>`: the line that
+  instantiates or places this control). `check` reads that file and fails with `unproven-reuse` when the file or line does
+  not exist or the component (the component file's name without extension, or `componentMarker`: a tag or class it
+  exports) is not mentioned within 5 lines of that line (line-5 .. line+5; a correct use elsewhere in the file proves
+  nothing). A `{new}` control needs `mountedAt` too (`unproven-mount`) but skips the mention test. Two controls may not
+  share one `file:line` (`duplicate-mount`). Paths resolve from the matrix file's directory, or from `root`.
 - Reference is proven: `reference: "none: <reason>"` is accepted only when `searched.reference` lists at least one search
   command with its hit count; otherwise `unproven-reference`.
 - Reasons (`na`, `deferred`, `{new:}`, `none:`, `dropped`, `stateWidthsReason`) and `deliverable.mockExcluded` need 15+
@@ -54,7 +55,7 @@ results file therefore keeps failing: delete or re-run it. A record that matches
 
 ## check problems (exit 1)
 `shape` (broken structure), `surface-controls`, `control-component`, `control-states`, `control-reference`,
-`unproven-reuse`, `unproven-mount`, `unproven-reference`, `default-state`, `no-search` (`searched.backend` empty), `deliverable` (reviewUrl or mockExcluded empty),
+`unproven-reuse`, `unproven-mount`, `duplicate-mount`, `unproven-reference`, `default-state`, `no-search` (`searched.backend` empty), `deliverable` (reviewUrl or mockExcluded empty),
 `missing-cell`, `todo`, `fail`, `no-reason` (na/deferred), `no-evidence` (pass), `cell-status`, `unknown-cell`,
 `duplicate-cell`, `bad-result`, `unmatched-result`, `evidence-missing`, `state-widths`, `todo` (also a `TODO` placeholder or an empty `controls: []`), `na-locale`, `no-rtl-pass` (an rtl locale exists but a surface has no rtl `pass`).
 

@@ -40,7 +40,7 @@ const DS_CHECKBOX = 'ds/Checkbox.js';
 test('reuse: a component path whose mount file never mentions it is unproven-reuse; a real mention passes', () => {
   const fake = problemsOf(matrixWith({ component: DS_CHECKBOX, mountedAt: 'web/page.html:1' }), 'unproven-reuse');
   assert.equal(fake.length, 1);
-  assert.match(fake[0].message, /web\/page\.html never mentions "Checkbox"/);
+  assert.match(fake[0].message, /no mention of "Checkbox" within 5 lines of web\/page\.html:1/);
   assert.deepEqual(problemsOf(matrixWith({ component: DS_CHECKBOX, mountedAt: 'web/app.js:2' }), 'unproven-reuse'), []);
   assert.deepEqual(checkMatrix(passing(matrixWith({ component: DS_CHECKBOX, mountedAt: 'web/app.js:2' })), [], { baseDir: '/p', readText }).problems, []);
 });
@@ -62,6 +62,35 @@ test('reuse: componentMarker replaces the file-name mention; a {new} control nee
   assert.equal(fresh(undefined).length, 1);
   assert.equal(fresh('web/gone.js:1').length, 1);
   assert.deepEqual(fresh('web/page.html:1'), []);
+});
+
+const lineFile = (mentions) => Array.from({ length: 100 }, (_, i) => (mentions.includes(i + 1) ? 'createCheckbox({ id: "x" });' : '<div></div>')).join('\n');
+
+test('reuse: the mention must be within 5 lines of mountedAt; the real component elsewhere in the file does not count', () => {
+  const reader = (mentions) => (path) => (path === '/p/web/big.js' ? lineFile(mentions) : null);
+  const check = (mountedAt, mentions) => problemsOf(matrixWith({ component: DS_CHECKBOX, mountedAt }), 'unproven-reuse', { baseDir: '/p', readText: reader(mentions) });
+  const handRolled = check('web/big.js:80', [10]);
+  assert.equal(handRolled.length, 1);
+  assert.match(handRolled[0].message, /no mention of "Checkbox" within 5 lines of web\/big\.js:80/);
+  assert.deepEqual(check('web/big.js:80', [83]), [], 'mention at line+3');
+  assert.deepEqual(check('web/big.js:80', [75]), [], 'mention at line-5');
+  assert.deepEqual(check('web/big.js:80', [85]), [], 'mention at line+5');
+  assert.equal(check('web/big.js:80', [74]).length, 1, 'line-6 is outside');
+  assert.equal(check('web/big.js:80', [86]).length, 1, 'line+6 is outside');
+  assert.deepEqual(check('web/big.js:1', [6]), [], 'window at the top of the file');
+});
+
+test('duplicate-mount: two controls may not share one mountedAt file:line', () => {
+  const two = (secondAt) => {
+    const matrix = matrixWith({ component: DS_CHECKBOX, mountedAt: 'web/app.js:2' });
+    matrix.surfaces[0].controls.push({ id: 'terms', class: 'checkbox', component: DS_CHECKBOX, mountedAt: secondAt, states: CHECKBOX_STATES, reference: 'none: a boolean field has no rule' });
+    return expandMatrix(matrix);
+  };
+  const dup = problemsOf(two('web/app.js:2'), 'duplicate-mount');
+  assert.equal(dup.length, 1);
+  assert.match(dup[0].message, /login terms: mountedAt web\/app\.js:2 is also the mount line of login remember/);
+  assert.deepEqual(problemsOf(two('web/app.js:1'), 'duplicate-mount'), []);
+  assert.equal(problemsOf(two('web/app.js:2'), 'duplicate-mount', {}).length, 1, 'also without a file reader');
 });
 
 test('reuse: paths resolve from the matrix directory, or from root relative to it', () => {
@@ -106,7 +135,7 @@ test('CLI: the proof-run mistake (component path, mount file never mentions it) 
   const bad = run('check', join(dir, 'matrix.json'));
   assert.equal(bad.status, 1);
   assert.match(bad.stdout, /^result: FAIL, 1 cause\n/);
-  assert.match(bad.stdout, /\[unproven-reuse\] login remember: web\/page\.html never mentions "Checkbox"/);
+  assert.match(bad.stdout, /\[unproven-reuse\] login remember: no mention of "Checkbox" within 5 lines of web\/page\.html:1/);
   await write('web/app.js:1');
   const good = run('check', join(dir, 'matrix.json'));
   assert.equal(good.status, 0, good.stdout);
