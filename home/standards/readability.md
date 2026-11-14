@@ -28,8 +28,8 @@ Before you finish, answer all five for the thing you touched. If one answer is "
 - Group by feature or domain (`billing/`, `accounts/`), not by technical kind (`controllers/`, `models/` for everything).
 - Keep trees shallow: five levels under the project root at most.
 - Tests sit beside the code (`invoice.ts`, `invoice.test.ts`) or in a folder that mirrors it. Say which in the README.
-- One entry point, named in the README (`npm start`, `python manage.py runserver`, `node src/main.mjs`).
-- A folder with three or more source files has a README that says what the folder is for.
+- One entry point, named in the README (`npm start`, `python manage.py runserver`, `node src/main.mjs`). A folder with
+  three or more source files has a README that says what the folder is for.
 
 ## Abstraction
 Wait for the second real use before you build a shared thing. The plain form first:
@@ -51,12 +51,12 @@ A test fake counts as a second use only when the boundary is real (network, disk
   `// increment i` is noise.
 - State invariants and units: `// timeoutMs`, `// always sorted by date, newest first`.
 - Link the decision when there is one: `// See docs/decisions/0004-use-sqlite.md`.
-- Never restate the code, and delete commented-out code (git remembers it).
-- Every source file opens with a short header: purpose, what it exports, what must stay true (C26).
+- Never restate the code; delete commented-out code (git remembers it). Every source file opens with a short header:
+  purpose, exports, what must stay true (C26).
 
 ## Documents
-Write for a human reading cold. Never mention AI tools or sessions in project documents. Follow the repo's existing
-format and folders first; create a new place only when there is none.
+Write for a human reading cold. Never mention AI tools or sessions in project documents. Follow the repo's existing format
+and folders first; create a new place only when there is none.
 
 | Document | What goes in it | When |
 | -------- | --------------- | ---- |
@@ -77,16 +77,15 @@ service needs a README, a decision record and a runbook.
 
 ## When complexity is required
 A hard algorithm, a concurrency fix, a performance trick or a legal rule can be complex. Do not simplify it away.
-1. Keep it, in one file or function with a clear name.
+1. Keep it in one file or function with a clear name.
 2. Explain it where it lives: what it does, why the simple version is not enough, what must stay true.
 3. Test it, including the edge that forced the complexity.
 4. Record the reason in a decision record if a later developer might "clean it up".
 
 ## Project layers
-These rules belong in the team's repo and must stand alone: they name no personal tools, paths on someone's machine or
-AI products. Anything a human needs to work on the project is in the project.
+These documents live in the team's repo and stand alone: no personal tools, no paths on someone's machine, no AI
+products. Whatever a human needs to work on the project is in the project.
 
 ## Checking
-`node ~/.claude/tools/readable/readable.mjs check <dir> --changed` finds the mechanical problems (missing README, a
-dumping-ground name, deep nesting, a missing file header, an uncommented config key). It cannot judge names,
-needless abstraction or whether a document is clear. A reviewer reads for those.
+`node ~/.claude/tools/readable/readable.mjs check <dir> --changed` finds the mechanical problems (no README, a
+dumping-ground name, deep nesting, no file header, an uncommented config key). A reviewer judges the rest.
