@@ -18,6 +18,17 @@ const ACTION_FIELDS = {
 };
 /** Element actions whose Playwright locator method has the same name and takes only options. */
 const PLAIN_LOCATOR_ACTIONS = new Set(['click', 'check', 'uncheck', 'focus', 'hover']);
+/**
+ * Runs inside the page: true when the element has focus, also when it sits in an open shadow root (the document's activeElement is then its host, so
+ * the deep active element is compared) or is a host whose focus was delegated to an inner control.
+ * @param {Element} node the step's target
+ */
+function hasFocus(node) {
+  let deep = document.activeElement;
+  while (deep?.shadowRoot?.activeElement) deep = deep.shadowRoot.activeElement;
+  return deep === node || document.activeElement === node;
+}
+
 /** Actions that need the pointer to reach the element; a timeout on one of them gets the "what covers it" explanation. */
 const POINTER_ACTIONS = new Set(['click', 'check', 'uncheck', 'hover']);
 
@@ -102,7 +113,7 @@ async function dispatchStep(el, step) {
   else if (step.action === 'press') await el.press(step.key, opt);
   else if (step.action === 'fill') await el.fill(step.value, opt);
   else if (PLAIN_LOCATOR_ACTIONS.has(step.action)) await el[step.action](opt);
-  if (step.action === 'focus' && !(await el.evaluate((node) => document.activeElement === node))) {
+  if (step.action === 'focus' && !(await el.evaluate(hasFocus))) {
     throw new Error('the element did not take focus (it is not focusable: use a button, link or input, or add tabindex)');
   }
 }

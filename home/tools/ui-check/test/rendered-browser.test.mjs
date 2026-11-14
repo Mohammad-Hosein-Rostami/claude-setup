@@ -8,6 +8,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { launch, loadChromium, openPage } from '../lib/browser.mjs';
+import { runSteps } from '../lib/steps.mjs';
 
 const run = promisify(execFile);
 const project = process.env.UI_CHECK_PROJECT;
@@ -108,6 +110,28 @@ test('focus on a div without tabindex fails the step, naming the step', { skip: 
   const result = await ui('responsive', '--url', fixture('covered.html'), '--widths', '320', '--steps', steps, '--out', path.join(dir, 'o'));
   assert.equal(result.code, 2, result.stdout);
   assert.match(result.stderr, /step 1 \(focus\).*did not take focus/);
+});
+
+test('focus step (reviewer stepfocus.html): an element inside an open shadow root, a delegating host, a contenteditable and tabindex -1 pass; a plain custom element, a closed dialog and a focus redirect fail', { skip: !project }, async () => {
+  const browser = await launch(loadChromium(project));
+  try {
+    const tryFocus = async (selector) => {
+      const page = await openPage(browser, { url: fixture('review-stepfocus.html'), width: 600, height: 400 });
+      try {
+        await runSteps(page, [{ action: 'focus', selector }]);
+        return 'focused';
+      } catch (error) {
+        return /did not take focus/.test(error.message) ? 'not focused' : `error: ${error.message}`;
+      } finally {
+        await page.context().close();
+      }
+    };
+    for (const selector of ['#inner', '#d1', '#del', '#ce', '#tw', '#plainin']) assert.equal(await tryFocus(selector), 'focused', selector);
+    for (const selector of ['#plain', '#redir']) assert.equal(await tryFocus(selector), 'not focused', selector);
+    assert.match(await tryFocus('#indlg'), /^(not focused|error: step 1 \(focus\))/, 'a button in a closed dialog never gets focus');
+  } finally {
+    await browser.close();
+  }
 });
 
 test('click on a covered input names the covering element and hints at the label', { skip: !project }, async () => {

@@ -83,3 +83,13 @@ test('readPriorRecords merges results.json with results.partial.json (the partia
   fs.writeFileSync(path.join(dir, 'results.json'), '{nope');
   assert.throws(() => readPriorRecords(dir), (e) => e instanceof UsageError && /results\.json/.test(e.message));
 });
+
+test('resume: a state that gained a figma part and has only responsive records is re-run; with a compare record it is kept', () => {
+  const plain = state(0, { widths: [320] });
+  const withFigma = { ...plain, figma: { cache: 'c' } };
+  const responsive = { ...rec(plain), evidence: '/out/0-signup--s0--fa/responsive/report.md' };
+  const compare = { ...rec(plain, 'pass', 300), evidence: '/out/0-signup--s0--fa/compare/report.md' };
+  assert.equal(resumeFilter([withFigma], [responsive]).todo.length, 1);
+  assert.equal(resumeFilter([withFigma], [responsive, compare]).todo.length, 0);
+  assert.equal(resumeFilter([plain], [responsive]).todo.length, 0, 'a state without figma needs no compare record');
+});

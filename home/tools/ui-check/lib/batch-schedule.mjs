@@ -1,7 +1,7 @@
 // Purpose: how `batch` schedules its states: --jobs parsing, the split into states that may run in parallel and states that must run alone
 // (a `figma` part: pixel captures are load-sensitive), a small worker pool, the one-line progress text, and which states --resume skips.
 // Exports: DEFAULT_JOBS, parseJobs, partitionStates, runPool, progressLine, resumeFilter, stateKey. Invariants: pure (no browser, no disk);
-// a skipped state is reused only when every one of its previous records passed and covers all of its widths.
+// a skipped state is reused only when every one of its previous records passed, covers all of its widths and (with a `figma` part) includes a compare record.
 import { UsageError } from './errors.mjs';
 
 export const DEFAULT_JOBS = 4;
@@ -58,7 +58,11 @@ export function progressLine({ done, total, state, records, ms }) {
   return `[${done}/${total}] ${state.surface} ${state.state} ${state.locale ?? NONE} ${widths.length > 0 ? widths.join(',') : NONE} ${status} ${(ms / MS_PER_SECOND).toFixed(1)}s`;
 }
 
-const passesAll = (state, records) => records.length > 0 && records.every((r) => r.status === 'pass') && (state.widths ?? []).every((w) => records.some((r) => r.width === w));
+/** A compare record's evidence is `<state folder>/compare/report.md`; a state that gained a `figma` part after the earlier run has none. */
+const hasCompareRecord = (records) => records.some((r) => /[\\/]compare[\\/][^\\/]+$/.test(String(r.evidence)));
+
+const passesAll = (state, records) => records.length > 0 && records.every((r) => r.status === 'pass') && (state.widths ?? []).every((w) => records.some((r) => r.width === w))
+  && (!state.figma || hasCompareRecord(records));
 
 /**
  * Decide which states --resume re-runs.
