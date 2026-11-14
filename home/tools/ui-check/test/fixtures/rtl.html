@@ -1,0 +1,8 @@
+<!doctype html><html dir="rtl" lang="fa"><meta charset="utf-8"><title>rtl</title>
+<!-- Chromium's UA sheet already makes a bare type=tel input ltr; an author reset like direction:inherit brings rtl back. type=email stays rtl. -->
+<body style="margin:0;font:16px sans-serif">
+<button id="menu" style="width:120px;height:40px" onclick="document.getElementById('list').hidden = false">menu</button>
+<ul id="list" hidden style="margin:0;padding:0;list-style:none"><li style="height:40px">one</li></ul>
+<input id="phone" type="tel" aria-label="phone" style="display:block;width:200px;height:40px;direction:inherit">
+<input id="mail" type="email" aria-label="email" style="display:block;width:200px;height:40px">
+</body></html>

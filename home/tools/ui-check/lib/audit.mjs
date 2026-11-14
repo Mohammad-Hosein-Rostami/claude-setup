@@ -1,14 +1,16 @@
 // Purpose: in-page responsive audit (serialised into the browser by Playwright).
-// Exports: auditInPage. Invariant: must stay self-contained - no imports or closure variables, which is why
+// Exports: auditInPage. It also gathers plain facts about visible inputs (for lib/bidi.mjs). Invariant: must stay self-contained - no imports or closure variables, which is why
 // it is one function (C3 exception: Playwright serialises it whole).
 
 /**
  * Runs inside the page. Returns layout-invariant violations for the current viewport.
  * @param {{minTarget: number, minText: number, smallViewport: number, max: number}} cfg
- * @returns {{scrollWidth: number, clientWidth: number, findings: {check: string, element: string, detail: string}[]}}
+ * @returns {{scrollWidth: number, clientWidth: number, findings: {check: string, element: string, detail: string}[],
+ *   docDirection: string, fields: {element: string, type: string, inputmode: string, autocomplete: string, direction: string, visible: boolean}[]}}
  */
 export function auditInPage(cfg) {
   const findings = [];
+  const fields = [];
   const counts = {};
   const add = (check, el, detail) => {
     counts[check] = (counts[check] ?? 0) + 1;
@@ -34,6 +36,9 @@ export function auditInPage(cfg) {
     const r = el.getBoundingClientRect();
     const s = getComputedStyle(el);
     if (!shown(el, r, s)) continue;
+    if (el.matches('input,textarea')) {
+      fields.push({ element: label(el), type: el.getAttribute('type') ?? '', inputmode: el.getAttribute('inputmode') ?? '', autocomplete: el.getAttribute('autocomplete') ?? '', direction: s.direction, visible: true });
+    }
     if ((r.right > vw + 1 || r.left < -1) && s.position !== 'fixed' && !clippedByAncestor(el)) {
       add('offscreen', el, `x ${Math.round(r.left)}..${Math.round(r.right)} outside 0..${vw}`);
     }
@@ -45,5 +50,5 @@ export function auditInPage(cfg) {
       add('tap-target', el, `${Math.round(r.width)}x${Math.round(r.height)} < ${cfg.minTarget}x${cfg.minTarget}`);
     }
   }
-  return { scrollWidth: root.scrollWidth, clientWidth: vw, findings };
+  return { scrollWidth: root.scrollWidth, clientWidth: vw, findings, docDirection: getComputedStyle(root).direction, fields };
 }

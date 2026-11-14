@@ -1,8 +1,10 @@
 // Purpose: resolve Playwright from the target project and open deterministic pages.
-// Exports: loadChromium, launch, openPage, applyAutofocus, RENDER_ARGS. HTTP >= 400 is a UsageError (exit 2). Invariants: no browser
+// Exports: loadChromium, launch, openPage, applyAutofocus, documentDirection, assertDirection, RENDER_ARGS. HTTP >= 400 is a UsageError (exit 2). Invariants: no browser
 // download here; pages are frozen (fonts ready, animations off, caret hidden, reduced motion) before any measurement; Chromium
 // rasterises on the CPU (SwiftShader) because GPU tile rasterisation gave 1-3 level edge noise between runs; an [autofocus] field is
 // focused explicitly because Chromium skips autofocus in about one load in seven, which flips the focus ring between runs.
+// Opt-in context (locale, colour scheme, localStorage and cookies for the --url origin, expected direction) is applied before the page
+// loads; defaults (no locale, light, nothing set, no direction check) leave a run exactly as it was.
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { UsageError } from './errors.mjs';
@@ -59,23 +61,67 @@ export function applyAutofocus(page) {
   });
 }
 
+/** Computed `direction` of the document element, so a language switch can be proven to have happened. */
+export function documentDirection(page) {
+  return page.evaluate(() => getComputedStyle(document.documentElement).direction);
+}
+
+/**
+ * Fail unless the document's computed direction is `expected` (after load and steps).
+ * @param {object} page Playwright page
+ * @param {'ltr'|'rtl'} expected value of --expect-dir
+ * @throws {UsageError} when the direction differs
+ */
+export async function assertDirection(page, expected) {
+  const actual = await documentDirection(page);
+  if (actual !== expected) throw new UsageError(`--expect-dir ${expected}: the computed direction is ${actual} (the language switch did not happen)`);
+}
+
+/** Origin string as the page sees it (`protocol//host`), also for file: URLs, where `location.origin` is not comparable. */
+function pageOrigin(url) {
+  const { protocol, host } = new URL(url);
+  return `${protocol}//${host}`;
+}
+
+/** Set localStorage entries before any page script runs, only on the --url origin (a redirect elsewhere is left alone). */
+async function seedStorage(context, url, storage) {
+  const entries = storage.map(({ name, value }) => [name, value]);
+  await context.addInitScript(({ origin, entries: pairs }) => {
+    if (`${location.protocol}//${location.host}` !== origin) return;
+    for (const [key, value] of pairs) localStorage.setItem(key, value);
+  }, { origin: pageOrigin(url), entries });
+}
+
+async function seedCookies(context, url, cookies) {
+  if (!/^https?:/.test(url)) throw new UsageError(`--cookie needs an http(s) --url, got ${url}`);
+  await context.addCookies(cookies.map(({ name, value }) => ({ name, value, url })));
+}
+
 /**
  * Open a page with deterministic rendering settings and wait until it is stable.
  * @param {object} browser Playwright browser
- * @param {{url: string, width: number, height: number, scale?: number, steps?: object[], bypassCSP?: boolean, autofocus?: boolean}} opts viewport equals the Figma frame;
- *   steps (validated, see steps.mjs) run after the page settles and the autofocus field is focused, before the freeze style; bypassCSP (default false, test-only)
- *   lets the injected freeze style through a page CSP; autofocus (default true) focuses the page's `[autofocus]` field, false keeps
- *   the unfocused state for a Figma frame that shows it
+ * @param {{url: string, width: number, height: number, scale?: number, steps?: object[], bypassCSP?: boolean, autofocus?: boolean,
+ *   locale?: string, colorScheme?: 'light'|'dark', storage?: {name: string, value: string}[], cookies?: {name: string, value: string}[], expectDir?: 'ltr'|'rtl'}} opts
+ *   viewport equals the Figma frame; steps (validated, see steps.mjs) run after the page settles and the autofocus field is focused, before the freeze style;
+ *   bypassCSP (default false, test-only) lets the injected freeze style through a page CSP; autofocus (default true) focuses the page's `[autofocus]` field,
+ *   false keeps the unfocused state for a Figma frame that shows it; locale sets navigator.language and Accept-Language; colorScheme defaults to light;
+ *   storage and cookies are set for the url's origin before the page's scripts run (cookies need an http(s) url); expectDir fails the run when the
+ *   computed direction of the document element differs after load and steps
  * @returns {Promise<object>} Playwright page (its context closes with the browser)
+ * @throws {UsageError} on HTTP >= 400, a failed step, cookies on a non-http url, or a direction mismatch
  */
-export async function openPage(browser, { url, width, height, scale = 1, steps = [], bypassCSP = false, autofocus = true }) {
+export async function openPage(browser, opts) {
+  const { url, width, height, scale = 1, steps = [], bypassCSP = false, autofocus = true, locale, colorScheme = 'light', storage = [], cookies = [], expectDir } = opts;
   const context = await browser.newContext({
     viewport: { width, height },
     deviceScaleFactor: scale,
     reducedMotion: 'reduce',
-    colorScheme: 'light',
+    colorScheme,
+    ...(locale === undefined ? {} : { locale }),
     ...(bypassCSP ? { bypassCSP: true } : {}),
   });
+  if (storage.length > 0) await seedStorage(context, url, storage);
+  if (cookies.length > 0) await seedCookies(context, url, cookies);
   const page = await context.newPage();
   const response = await page.goto(url, { waitUntil: 'load' });
   // file:// and about: navigations give a null response; HTTP error pages must not be audited as the app.
@@ -88,6 +134,12 @@ export async function openPage(browser, { url, width, height, scale = 1, steps =
   await page.waitForTimeout(SPA_SETTLE_MS);
   if (autofocus) await applyAutofocus(page);
   if (steps.length > 0) await runSteps(page, steps);
+  if (expectDir !== undefined) await assertDirection(page, expectDir);
+  await freezeAndSettle(page);
+  return page;
+}
+
+async function freezeAndSettle(page) {
   await page.addStyleTag({ content: FREEZE_CSS });
   await page.evaluate(() => document.fonts.ready);
   try {
@@ -96,5 +148,4 @@ export async function openPage(browser, { url, width, height, scale = 1, steps =
   } catch (error) {
     if (error.name !== 'TimeoutError') throw error;
   }
-  return page;
 }

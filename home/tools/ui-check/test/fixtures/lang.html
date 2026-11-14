@@ -1,0 +1,10 @@
+<!doctype html><html><meta charset="utf-8"><title>lang</title>
+<script>
+  // Direction follows localStorage "lang", the way an app's language switch does.
+  var lang = localStorage.getItem('lang');
+  document.documentElement.dir = lang === 'fa' ? 'rtl' : 'ltr';
+</script>
+<body style="margin:0;font:16px sans-serif">
+<p id="info" style="margin:0;height:40px"></p>
+<script>document.getElementById('info').textContent = navigator.language + '|' + document.cookie;</script>
+</body></html>

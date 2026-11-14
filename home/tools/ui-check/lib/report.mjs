@@ -1,5 +1,5 @@
 // Purpose: write report.json and a report.md capped at 40 lines.
-// Exports: writeReport, MAX_REPORT_LINES. Invariant: markdown never exceeds the cap; full rows stay in report.json.
+// Exports: writeReport, tableRow (one escaped markdown table row), MAX_REPORT_LINES. Invariant: markdown never exceeds the cap; full rows stay in report.json.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -7,6 +7,7 @@ export const MAX_REPORT_LINES = 40;
 
 const cell = (value) => String(value ?? '').replaceAll('|', '\\|').replaceAll('\n', ' ');
 const row = (cells) => `| ${cells.map(cell).join(' | ')} |`;
+export const tableRow = row;
 
 function buildMarkdown({ title, verdict, summary, head, rows }) {
   const lines = [`# ${title}: ${verdict}`, ...summary.map((s) => `- ${s}`)];

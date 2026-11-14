@@ -4,5 +4,8 @@
 - `spec.test.mjs` - unit checks for flattenSpec, compareElements, alignColumns and the report cap (no browser needed).
 - `units.test.mjs` - browser-free unit tests for colour parsing, measurement, pixel gate, cache/args validation and CLI exit-2 mapping.
 - `steps.test.mjs` - browser-free tests for steps validation/runner, the `--steps`/`--bypass-csp` flags and the openPage bypass wiring (default off).
-- `fixtures/` - static HTML and JSON inputs (card, wide, frame, map, autofocus) used by the smoke and determinism tests.
+- `context.test.mjs` - browser-free tests for the context flags, their validation, the openPage wiring (stub browser) and the `bidi-field` detection.
+- `batch.test.mjs` - browser-free tests for the states-file schema, `--only`, result records and the results.json/summary.md writer.
+- `locale-browser.test.mjs` - Chromium tests (need `UI_CHECK_PROJECT`): bidi-field, `--expect-dir`, storage, locale, colour scheme, cookie, `batch` over two or more states.
+- `fixtures/` - static HTML and JSON inputs (card, wide, frame, map, autofocus, rtl, rtl-ok, ltr, lang) used by the smoke and determinism tests.
 - `determinism.test.mjs` - launch args and autofocus step (browser-free), plus CPU-raster and autofocus checks in Chromium (need `UI_CHECK_PROJECT`).
