@@ -203,6 +203,21 @@ test('xargs or parallel running rm -r asks as destructive: its targets come from
   }
 });
 
+test('xargs running a shell whose -c script runs rm -r asks as destructive: the script deletes what stdin names', () => {
+  for (const command of [
+    `find . -name x | xargs sh -c 'rm -rf "$@"' _`, "ls | xargs -I{} bash -c 'rm -r {}'", `ls | xargs -0 -n1 sh -c 'cd "$0" && rm -rf build'`,
+    `cat list | xargs sudo sh -c 'rm -rf "$1"' _`, `ls | xargs -I{} zsh -ec 'for d; do rm -fR "$d"; done' _ {}`, "ls | parallel sh -c 'rm -rf {}'",
+  ]) {
+    assert.match(decide(command, ctx).reason ?? '', /^DESTRUCTIVE: (?:xargs|parallel) runs rm -r on paths read from stdin/, command);
+  }
+  for (const command of [
+    `ls | xargs sh -c 'echo "$@"' _`, "ls | xargs -I{} bash -c 'rm -f {}'", "ls | xargs -I{} sh -c 'echo rm -rf {}'", "bash -c 'rm -rf build'",
+    `ls | xargs sh -c 'grep -r x "$@"' _`,
+  ]) {
+    assert.deepEqual(decide(command, ctx), { allow: true }, command);
+  }
+});
+
 test('segments splits on & && || ; | and newline', () => {
   assert.deepEqual(segments('a && b | c; d & e\nf || g'), [['a'], ['b'], ['c'], ['d'], ['e'], ['f'], ['g']]);
 });

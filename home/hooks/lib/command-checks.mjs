@@ -1,12 +1,14 @@
 // Per-command rules of pre-bash-guard that need only one command's name and words: git, disk wipes, lockfile hand edits,
-// a variable used as the command name with rm-style flags, rm -r run by xargs or parallel, and printing a stored keychain secret.
+// a variable used as the command name with rm-style flags, rm -r run by xargs or parallel (also inside the `sh -c` script they run), and
+// printing a stored keychain secret.
 // Exports: checkGit(args, assigns), checkDiskWipe(cmd, args), checkLockfileEdit(cmd, args), checkHiddenRm(cmd, args),
-// checkStdinRm(cmd, args, before), checkKeychainPrint(cmd, args) - each returns an ask reason, or undefined when the command is fine.
+// checkStdinRm(cmd, args, before), checkStdinScriptRm(script, before), checkKeychainPrint(cmd, args) - each returns an ask reason, or
+// undefined when the command is fine.
 // Pure, no I/O. Every rule is an ask (the hook shows a timed dialog); a destructive one starts with "DESTRUCTIVE: ".
-import { commandName } from './command-of.mjs';
+import { commandName, commandOf } from './command-of.mjs';
 import { parsePushArgs, pushAsk } from './outward.mjs';
 import { RECURSIVE_FLAG } from './rm-paths.mjs';
-import { basenameOf, flagsOf } from './shell-words.mjs';
+import { basenameOf, flagsOf, segments } from './shell-words.mjs';
 import { destructive } from './verdict.mjs';
 
 const LOCKFILES = new Set(['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lockb']);
@@ -149,9 +151,32 @@ export function checkStdinRm(cmd, args, before = []) {
     return rmAt !== -1 && isRecursiveRm(words.slice(rmAt + 1)) ? stdinRmReason('parallel') : undefined;
   }
   if (cmd !== 'rm' || !isRecursiveRm(args)) return undefined;
+  const runner = stdinRunnerOf(before);
+  return runner === undefined ? undefined : stdinRmReason(runner);
+}
+
+/** The stdin runner (xargs, parallel) among the words before a command, unless a `:::` input list ends the runner's command first. */
+function stdinRunnerOf(before) {
   const runnerAt = before.findLastIndex((word) => STDIN_RUNNERS.has(commandName(word)));
   if (runnerAt === -1 || before.slice(runnerAt + 1).some((word) => PARALLEL_INPUTS.test(word))) return undefined;
-  return stdinRmReason(commandName(before[runnerAt]));
+  return commandName(before[runnerAt]);
+}
+
+/**
+ * `xargs sh -c 'rm -rf "$@"' _`, `xargs -I{} bash -c 'rm -r {}'`: the `-c` script of a shell that xargs or parallel runs deletes recursively,
+ * and its targets come from stdin too. The script is still checked as a command line of its own.
+ * @param {string} script the `-c` script of the shell
+ * @param {string[]} before the words before the shell in its simple command: wrappers, xargs and its options
+ * @returns {string | undefined} a destructive ask reason, or undefined
+ */
+export function checkStdinScriptRm(script, before = []) {
+  const runner = stdinRunnerOf(before);
+  if (runner === undefined) return undefined;
+  const removes = segments(script).some((words) => {
+    const { cmd, args } = commandOf(words);
+    return cmd === 'rm' && isRecursiveRm(args);
+  });
+  return removes ? stdinRmReason(runner) : undefined;
 }
 
 const KEYCHAIN_PASSWORD_LOOKUP = /^find-(?:generic|internet)-password$/;

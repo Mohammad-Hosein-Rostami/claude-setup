@@ -11,13 +11,15 @@
 // `~`/`$HOME`/`$TMPDIR`/`$CLAUDE_PROJECT_DIR` and variables assigned earlier in the line (the last assignment wins,
 // `VAR=$(mktemp -d)` is the temp dir, `..` is resolved after substitution; an unknown variable asks for `rm -r` only; lib/rm-paths.mjs;
 // $HOME, `/` and a drive root never count as the project), disk wipes (dd of=/dev/x, mkfs, wipefs, shred/blkdiscard on a device), rm -r run
-// by xargs or parallel (its targets come from stdin; `xargs rm -f` is fine; lib/command-checks.mjs). Plain ASK: git
+// by xargs or parallel, also inside the `sh -c` script they run (its targets come from stdin; `xargs rm -f` is fine; lib/command-checks.mjs).
+// Plain ASK: git
 // --no-verify (and unique prefixes), `git -c core.hooksPath`, `HUSKY=0 git`, hand-editing lockfiles, a literal secret in the
 // command (lib/secrets.mjs; the text never repeats it), `git push` (not --dry-run), `gh release *`, `gh pr merge`, package
 // publish (lib/outward.mjs), ssh/scp/rsync/psql/mysql that write to a production host (lib/remote.mjs; list in
 // ~/.claude/private/prod-hosts), `security find-*-password -w|-g` / `dump-keychain` / `export` (prints a stored secret), and a private
-// credential file (`.ssh/id_*`, `.aws/credentials`, `.netrc`, gh `hosts.yml`) in one command line with a network sender, unless it is
-// the value of an identity flag (`ssh|scp|sftp -i`, curl `--key`; lib/credential-send.mjs).
+// credential file (`.ssh/id_*`, `.aws/credentials`, `.netrc`, gh `hosts.yml`) in one command line with a network sender or cloud upload
+// (`aws s3 cp`, `gsutil cp`, `rclone copy` ...), a whole `~/.ssh` / `.aws` / `.gnupg` folder given to a sender or archived before one, or a
+// credential fed to ssh's stdin, unless it is the value of an identity flag (`ssh|scp|sftp -i`, curl `--key`; lib/credential-send.mjs).
 // A literal-secret ask that the owner allowed (or let time out) is remembered for the rest of the session as sha256 digests
 // (lib/allowed-literals.mjs, lib/remembered-ask.mjs): the same values again run without a dialog (log outcome "remembered") only when
 // the command is also clean with the values neutralised. An ask with any other reason always shows its dialog and remembers nothing.
@@ -54,14 +56,14 @@
 // MAX_COMMAND_CHARS (32 KB) is not parsed at all: it asks "command too long to check"; the log and dialog keep only its first 2 KB, masked.
 // Known limits (not detected): shell aliases and functions defined elsewhere, a variable assigned from another command's output, interpreter
 // code (`node -e`, `python -c`) unless it names a dangerous word, wrappers that take the command as ONE string (busybox), rimraf,
-// stdin paths that xargs hands to anything but rm -r (`xargs -I{} sh -c 'rm -rf {}'`), a credential file sent by a tool off the sender list
-// (`ssh host < key`, `aws s3 cp`) or as a whole `~/.ssh` folder, `cd` scoping in subshells (treated as global: extra asks only), an ssh alias
-// that hides a production host, and the PowerShell tool (the hook matcher covers Bash only).
+// stdin paths that xargs hands to anything but rm -r, a credential sent by a tool off the sender list, copied first (`cp -r ~/.ssh /tmp/x`),
+// piped into ssh from a `{ }` group or loop, or passed as an ssh argument (`ssh h "$(cat key)"`), `cd` scoping in subshells (treated as
+// global: extra asks only), an ssh alias that hides a production host, and the PowerShell tool (the hook matcher covers Bash only).
 import { resolve } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { bashCodeWrites } from './lib/code-writes.mjs';
-import { checkDiskWipe, checkGit, checkHiddenRm, checkKeychainPrint, checkLockfileEdit, checkStdinRm } from './lib/command-checks.mjs';
+import { checkDiskWipe, checkGit, checkHiddenRm, checkKeychainPrint, checkLockfileEdit, checkStdinRm, checkStdinScriptRm } from './lib/command-checks.mjs';
 import { commandOf } from './lib/command-of.mjs';
 import { checkCredentialSend } from './lib/credential-send.mjs';
 import { scanWrapped } from './lib/dangerous-scan.mjs';
@@ -160,7 +162,7 @@ const MAX_NESTING = 24; // bash -c / eval / $(...) levels checked; deeper asks (
 function checkCommand(command, env, nextWords) {
   const { cmd, args } = command;
   const script = SHELLS.has(cmd) ? shellScript(args) : undefined;
-  if (script) return reasonsOf(script, env);
+  if (script) return [checkStdinScriptRm(script, command.before), ...reasonsOf(script, env)].filter((reason) => reason !== undefined);
   const evalReasons = cmd === 'eval' ? checkEval(args, nextWords, (text) => reasonsOf(text, env)) : [];
   return [...checkSimple(command, env), ...evalReasons];
 }
@@ -182,7 +184,7 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
   segs.forEach((seg, index) => {
     const words = substituteKnownWords(seg, scope);
     const parsed = commandOf(words);
-    commands.push(parsed);
+    commands.push({ ...parsed, piped: seg.piped === true }); // credential-send follows a pipe into ssh
     const env = { cwd: dir, project, vars: scope.vars, prodHosts, parse, depth: depth + 1 };
     reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript }));
     if (parsed.cmd !== undefined) {
