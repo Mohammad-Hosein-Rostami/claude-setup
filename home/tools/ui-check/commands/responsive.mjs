@@ -7,6 +7,8 @@ import { parse, need, toNumber } from '../lib/args.mjs';
 import { auditInPage } from '../lib/audit.mjs';
 import { bidiFieldFindings, isHint } from '../lib/bidi.mjs';
 import { loadChromium, launch, openPage } from '../lib/browser.mjs';
+import { collectFocusables } from '../lib/focus-audit.mjs';
+import { focusIndicatorFindings, rawI18nKeyFindings, rtlPhysicalAlignFindings, tapTargetFindings } from '../lib/rendered-checks.mjs';
 import { CONTEXT_OPTIONS, readContextFlags, validateWidths } from '../lib/context.mjs';
 import { loadSteps } from '../lib/steps.mjs';
 import { writeReport } from '../lib/report.mjs';
@@ -21,7 +23,7 @@ export const options = {
   'no-autofocus': { type: 'boolean', default: false },
   ...CONTEXT_OPTIONS,
   out: { type: 'string' },
-  project: { type: 'string', default: process.cwd() },
+  project: { type: 'string' }, // default: current directory, then UI_CHECK_PROJECT, then the tool's own node_modules (lib/playwright.mjs)
 };
 
 function parseWidths(text) {
@@ -34,14 +36,20 @@ function parseWidths(text) {
  * @param {{url: string, height: number} & Record<string, unknown>} target openPage options other than width (steps, bypassCSP, autofocus, context)
  * @param {number} width viewport width in CSS px
  * @param {string} outDir where w<width>.png goes
- * @returns {Promise<{width: number, check: string, element: string, detail: string}[]>} layout findings plus bidi-field findings
+ * @returns {Promise<{width: number, check: string, element: string, detail: string}[]>} layout findings plus bidi-field, tap-target, raw-i18n-key,
+ *   rtl-physical-align and focus-indicator findings
  */
 export async function auditWidth(browser, target, width, outDir) {
   const page = await openPage(browser, { ...target, width });
   const audit = { minTarget: RESPONSIVE.minTarget, minText: RESPONSIVE.minText, smallViewport: RESPONSIVE.smallViewport, max: RESPONSIVE.maxFindingsPerCheck };
-  const { findings: layout, docDirection, fields } = await page.evaluate(auditInPage, audit);
-  const findings = [...layout, ...bidiFieldFindings({ docDirection, fields }, audit.max)];
+  const { findings: layout, docDirection, fields, texts, blocks, targets } = await page.evaluate(auditInPage, audit);
+  const findings = [
+    ...layout, ...bidiFieldFindings({ docDirection, fields }, audit.max), ...tapTargetFindings({ targets }, audit.minTarget, audit.max),
+    ...rawI18nKeyFindings({ texts }, audit.max), ...rtlPhysicalAlignFindings({ docDirection, blocks }, audit.max),
+  ];
   await page.screenshot({ path: path.join(outDir, `w${width}.png`), fullPage: true, animations: 'disabled', caret: 'hide' });
+  // Last, because pressing Tab can fire the page's focus handlers.
+  findings.push(...focusIndicatorFindings({ focusables: await collectFocusables(page) }, audit.max));
   await page.context().close();
   return findings.map((f) => ({ width, ...f }));
 }

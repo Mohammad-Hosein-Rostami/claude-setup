@@ -1,16 +1,14 @@
-// Purpose: resolve Playwright from the target project and open deterministic pages.
+// Purpose: open deterministic pages (Playwright itself is found by lib/playwright.mjs, re-exported here as loadChromium).
 // Exports: loadChromium, launch, openPage, applyAutofocus, documentDirection, assertDirection, RENDER_ARGS. HTTP >= 400 is a UsageError (exit 2). Invariants: no browser
 // download here; pages are frozen (fonts ready, animations off, caret hidden, reduced motion) before any measurement; Chromium
 // rasterises on the CPU (SwiftShader) because GPU tile rasterisation gave 1-3 level edge noise between runs; an [autofocus] field is
 // focused explicitly because Chromium skips autofocus in about one load in seven, which flips the focus ring between runs.
 // Opt-in context (locale, colour scheme, localStorage and cookies for the --url origin, expected direction) is applied before the page
 // loads; defaults (no locale, light, nothing set, no direction check) leave a run exactly as it was.
-import { createRequire } from 'node:module';
-import path from 'node:path';
 import { UsageError } from './errors.mjs';
+import { loadChromium } from './playwright.mjs';
 import { runSteps } from './steps.mjs';
 
-const PACKAGES = ['playwright', '@playwright/test', 'playwright-core'];
 const NETWORK_IDLE_TIMEOUT_MS = 5000; // long-polling / websocket apps never go idle, so the wait is bounded
 const HTTP_ERROR_MIN = 400;
 const IMAGE_WAIT_TIMEOUT_MS = 5000; // a slow or broken eager image must not abort the run
@@ -19,26 +17,6 @@ const SPA_SETTLE_MS = 1500; // SPAs often render after the load event
 // depending on how each tile was redrawn; CPU rasterisation makes captures repeatable (8 of 8 identical in the measured case).
 export const RENDER_ARGS = ['--use-angle=swiftshader', '--disable-gpu-rasterization'];
 const FREEZE_CSS = '*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important;scroll-behavior:auto!important}';
-
-/**
- * Find Playwright's chromium launcher using the target project's node_modules.
- * @param {string} project directory containing the project's package.json
- * @throws {UsageError} if no Playwright package resolves from there
- */
-export function loadChromium(project) {
-  const require = createRequire(path.join(path.resolve(project), 'package.json'));
-  for (const name of PACKAGES) {
-    let resolved;
-    try {
-      resolved = require.resolve(name);
-    } catch (error) {
-      if (error.code === 'MODULE_NOT_FOUND') continue;
-      throw error;
-    }
-    return require(resolved).chromium;
-  }
-  throw new UsageError(`Playwright not found from ${path.resolve(project)} (install @playwright/test there, or pass --project)`);
-}
 
 /** Launch headless Chromium with the deterministic rasteriser; a missing browser binary becomes a UsageError with the fix command. */
 export async function launch(chromium) {
@@ -76,6 +54,8 @@ export async function assertDirection(page, expected) {
   const actual = await documentDirection(page);
   if (actual !== expected) throw new UsageError(`--expect-dir ${expected}: the computed direction is ${actual} (the language switch did not happen)`);
 }
+
+export { loadChromium };
 
 /** Origin string as the page sees it (`protocol//host`), also for file: URLs, where `location.origin` is not comparable. */
 function pageOrigin(url) {

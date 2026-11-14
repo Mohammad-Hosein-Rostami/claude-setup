@@ -102,6 +102,7 @@ function stubPage(calls, { fail, count = 1 } = {}) {
   };
   const el = { count: async () => count };
   for (const name of ['click', 'check', 'uncheck', 'focus', 'hover', 'fill', 'press', 'selectOption', 'waitFor']) el[name] = rec(name);
+  el.evaluate = async () => true; // `focus` asks the page whether the element took focus
   return { locator: () => el, evaluate: rec('blur'), waitForTimeout: async (ms) => calls.push(['wait', ms]) };
 }
 
@@ -139,7 +140,7 @@ test('compare passes steps and the bypass flag to openPage options; default is o
 test('responsive opens a page per width with the same steps and bypass flag', async () => {
   const opened = [];
   const page = { goto: async () => null, waitForLoadState: async () => {}, waitForTimeout: async () => {}, addStyleTag: async () => {},
-    waitForFunction: async () => {}, evaluate: async () => ({ findings: [] }), screenshot: async () => {}, context: () => ({ close: async () => {} }),
+    waitForFunction: async () => {}, evaluate: async (_fn, arg) => (arg?.mode === 'read' ? 'end' : { findings: [], fields: [], texts: [], blocks: [], targets: [] }), keyboard: { press: async () => {} }, screenshot: async () => {}, context: () => ({ close: async () => {} }),
     locator: () => ({ count: async () => 1, click: async () => opened.push('step') }) };
   const browser = { newContext: async (opts) => { opened.push(opts.viewport.width); return { newPage: async () => page }; } };
   const target = { url: 'u', height: 900, steps: [{ action: 'click', selector: 'b' }], bypassCSP: true };

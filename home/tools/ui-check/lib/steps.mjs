@@ -5,6 +5,7 @@
 // match exactly one element, a Playwright failure (timeout, bad key ...) or an unknown field is a UsageError (exit 2)
 // naming the step number and action. Steps never change tolerances or gates.
 import fs from 'node:fs';
+import { clickFacts, describeBlockedClick } from './click-cover.mjs';
 import { UsageError } from './errors.mjs';
 
 const STEP_TIMEOUT_MS = 5000;
@@ -17,6 +18,8 @@ const ACTION_FIELDS = {
 };
 /** Element actions whose Playwright locator method has the same name and takes only options. */
 const PLAIN_LOCATOR_ACTIONS = new Set(['click', 'check', 'uncheck', 'focus', 'hover']);
+/** Actions that need the pointer to reach the element; a timeout on one of them gets the "what covers it" explanation. */
+const POINTER_ACTIONS = new Set(['click', 'check', 'uncheck', 'hover']);
 
 function validateStep(step, i) {
   const label = `step ${i + 1}`;
@@ -79,7 +82,17 @@ async function runElementStep(page, step, i) {
   try {
     await dispatchStep(el, step);
   } catch (error) {
-    throw new UsageError(`step ${i + 1} (${step.action}): ${error.message.split('\n')[0]}`);
+    const why = error.name === 'TimeoutError' && POINTER_ACTIONS.has(step.action) ? await explainBlocked(el) : '';
+    throw new UsageError(`step ${i + 1} (${step.action}): ${error.message.split('\n')[0]}${why}`);
+  }
+}
+
+/** " - <what covers the target>" for a timed-out pointer action; when the page cannot be asked, says so (the Playwright message is reported either way). */
+async function explainBlocked(el) {
+  try {
+    return ` - ${describeBlockedClick(await el.evaluate(clickFacts))}`;
+  } catch (error) {
+    return ` - (could not inspect what covers it: ${error.message.split('\n')[0]})`;
   }
 }
 
@@ -89,6 +102,9 @@ async function dispatchStep(el, step) {
   else if (step.action === 'press') await el.press(step.key, opt);
   else if (step.action === 'fill') await el.fill(step.value, opt);
   else if (PLAIN_LOCATOR_ACTIONS.has(step.action)) await el[step.action](opt);
+  if (step.action === 'focus' && !(await el.evaluate((node) => document.activeElement === node))) {
+    throw new Error('the element did not take focus (it is not focusable: use a button, link or input, or add tabindex)');
+  }
 }
 
 /**

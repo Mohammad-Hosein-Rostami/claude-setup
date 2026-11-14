@@ -25,7 +25,7 @@ export const options = {
   'max-diff': { type: 'string', default: String(PIXEL.maxDiffPercent) },
   ...CONTEXT_OPTIONS,
   out: { type: 'string' },
-  project: { type: 'string', default: process.cwd() },
+  project: { type: 'string' }, // default: current directory, then UI_CHECK_PROJECT, then the tool's own node_modules (lib/playwright.mjs)
 };
 
 /** Read a map.json and check that every id exists in the spec and every selector is a string. @throws {UsageError} otherwise */

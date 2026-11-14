@@ -1,12 +1,15 @@
 // Purpose: `batch` - many UI states (locale, direction, colour scheme, opened controls) in ONE run: compare for states with `figma`,
-// responsive for states with widths. Exports: options, run. Invariants: one browser for the whole run, a fresh context per state,
-// sequential, a failing state never stops the run; exit 0 all records pass / 1 any fails / 2 usage or setup error.
-// Writes <out>/results.json (records are read by `ui-coverage check --results`, see lib/batch-records.mjs) and <out>/summary.md.
+// responsive for states with widths. Exports: options, guarded, runState, run. Invariants: one browser for the whole run, a fresh context per state,
+// `--jobs N` states at a time (default 4; states with a `figma` part run alone afterwards), a failing state never stops the run, results.json
+// keeps the states-file order, one progress line per finished state on stderr; exit 0 all records pass / 1 any fails / 2 usage or setup error.
+// Writes <out>/results.json (records are read by `ui-coverage check --results`, see lib/batch-records.mjs) and <out>/summary.md; while it runs
+// <out>/results.partial.json holds the finished states, and `--resume` reuses them and the passing states of an earlier results.json.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parse, need } from '../lib/args.mjs';
-import { compareRecords, errorRecords, exitCodeFor, responsiveRecords, withCloseFailures, writeBatchResults } from '../lib/batch-records.mjs';
+import { compareRecords, errorRecords, exitCodeFor, readPriorRecords, removePartialResults, responsiveRecords, withCloseFailures, writeBatchResults, writePartialResults } from '../lib/batch-records.mjs';
+import { parseJobs, partitionStates, progressLine, resumeFilter, runPool } from '../lib/batch-schedule.mjs';
 import { loadChromium, launch } from '../lib/browser.mjs';
 import { readCache } from '../lib/cache.mjs';
 import { loadStatesFile, selectSurfaces } from '../lib/states.mjs';
@@ -18,7 +21,9 @@ export const options = {
   states: { type: 'string' },
   only: { type: 'string' },
   out: { type: 'string' },
-  project: { type: 'string', default: process.cwd() },
+  jobs: { type: 'string' },
+  resume: { type: 'boolean', default: false },
+  project: { type: 'string' }, // default: current directory, then UI_CHECK_PROJECT, then the tool's own node_modules (lib/playwright.mjs)
 };
 
 const stateDirName = (state) => `${state.index}-${[state.surface, state.state, state.locale ?? 'default'].join('--').replace(/[^A-Za-z0-9_.-]/g, '-')}`;
@@ -85,8 +90,15 @@ export async function guarded(browser, { state, dir, part, slots, job }) {
   return withCloseFailures(records, state, await closeContexts(browser, dir, part));
 }
 
+/** A view of the browser that remembers only its own contexts, so closing after a part never closes the contexts of states running in parallel. */
+function scopeBrowser(browser) {
+  const own = [];
+  return { newContext: async (options) => { const context = await browser.newContext(options); own.push(context); return context; }, contexts: () => own };
+}
+
 /** Run every part of one state; the state's folder exists before anything runs, so each record's evidence path exists. */
-export async function runState(browser, state, outRoot) {
+export async function runState(sharedBrowser, state, outRoot) {
+  const browser = scopeBrowser(sharedBrowser);
   const dir = path.join(outRoot, stateDirName(state));
   fs.mkdirSync(dir, { recursive: true });
   const records = [];
@@ -97,7 +109,7 @@ export async function runState(browser, state, outRoot) {
 
 /** Remove results from an earlier run in the same --out, so a failed or empty run never leaves stale passes for a consumer. */
 function clearStaleResults(outDir) {
-  for (const name of ['results.json', 'summary.md']) fs.rmSync(path.join(outDir, name), { force: true });
+  for (const name of ['results.json', 'summary.md', 'results.partial.json']) fs.rmSync(path.join(outDir, name), { force: true });
 }
 
 /** Nothing to run: write an empty results.json (and a FAIL summary), say why on stderr, and fail. */
@@ -108,25 +120,48 @@ function nothingToRun(outDir, all, only) {
   return 1;
 }
 
+/** Run the states (those without a `figma` part `jobs` at a time, then the others one by one); records come back in `states` order. */
+async function runAll(browser, { states, todo, reused, jobs, outDir }) {
+  const done = new Map(reused);
+  let finished = 0;
+  const ordered = () => states.filter((s) => done.has(s.index)).flatMap((s) => done.get(s.index));
+  const execute = async (state) => {
+    const started = Date.now();
+    const records = await runState(browser, state, outDir);
+    done.set(state.index, records);
+    finished += 1;
+    console.error(progressLine({ done: finished, total: todo.length, state, records, ms: Date.now() - started }));
+    writePartialResults(outDir, ordered());
+  };
+  const { parallel, serial } = partitionStates(todo);
+  await runPool(parallel, jobs, execute);
+  await runPool(serial, 1, execute);
+  return ordered();
+}
+
 /** Run batch. @param {string[]} argv @returns {Promise<number>} exit code */
 export async function run(argv) {
   const values = parse(argv, options);
   need(values, 'states');
+  const jobs = parseJobs(values.jobs);
   const outDir = path.resolve(values.out ?? path.join(os.tmpdir(), 'ui-check', 'batch', new Date().toISOString().replace(/[:.]/g, '-')));
   fs.mkdirSync(outDir, { recursive: true });
-  clearStaleResults(outDir);
+  const prior = values.resume ? readPriorRecords(outDir) : [];
+  if (!values.resume) clearStaleResults(outDir);
   const all = loadStatesFile(values.states);
   const states = selectSurfaces(all, values.only);
   if (states.length === 0) return nothingToRun(outDir, all, values.only);
-  const browser = await launch(loadChromium(values.project));
+  const { todo, reused } = values.resume ? resumeFilter(states, prior) : { todo: states, reused: new Map() };
+  if (values.resume) console.error(`resume: ${reused.size} of ${states.length} states already pass and are kept, ${todo.length} to run`);
+  const browser = todo.length > 0 ? await launch(loadChromium(values.project)) : null;
   try {
-    const records = [];
-    for (const state of states) records.push(...await runState(browser, state, outDir));
+    const records = await runAll(browser, { states, todo, reused, jobs, outDir });
     const { summary } = writeBatchResults(outDir, records);
+    removePartialResults(outDir);
     const code = exitCodeFor(records);
     console.log(`${code === 0 ? 'PASS' : 'FAIL'} batch - ${records.length} records - summary: ${summary}`);
     return code;
   } finally {
-    await browser.close();
+    await browser?.close();
   }
 }

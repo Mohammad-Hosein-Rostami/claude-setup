@@ -1,0 +1,15 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>focus</title>
+<style>
+  body{margin:0;font:16px sans-serif} button{display:block;margin:8px;width:120px;height:40px}
+  .box,.box2{display:inline-block;width:24px;height:24px;border:1px solid #888;vertical-align:middle}
+  .hid{position:absolute;opacity:0;outline:none}
+  .hid2:focus-visible + .box2{box-shadow:0 0 0 3px #06c}
+  .ring{outline:none}.ring:focus-visible{box-shadow:0 0 0 3px #06c}
+</style>
+<body>
+<button id="bare" style="outline:none">Bare</button>
+<button id="plain">Default</button>
+<button id="ring" class="ring">Custom ring</button>
+<label><input class="hid" type="checkbox" id="remember"><span class="box"></span> Remember me</label>
+<label><input class="hid hid2" type="checkbox" id="styled"><span class="box2"></span> Styled</label>
+</body>

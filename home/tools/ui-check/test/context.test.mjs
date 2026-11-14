@@ -198,7 +198,8 @@ test('bidi-field?: no hint for a plain name, an ltr field or document, a non-tex
 function auditStub(fields) {
   const page = {
     goto: async () => null, waitForLoadState: async () => {}, waitForTimeout: async () => {}, addStyleTag: async () => {}, waitForFunction: async () => {},
-    evaluate: async () => ({ findings: [], docDirection: 'rtl', fields }), screenshot: async () => {}, context: () => ({ close: async () => {} }),
+    evaluate: async (_fn, arg) => (arg?.mode === 'read' ? 'end' : { findings: [], docDirection: 'rtl', fields, texts: [], blocks: [], targets: [] }),
+    keyboard: { press: async () => {} }, screenshot: async () => {}, context: () => ({ close: async () => {} }),
   };
   return { newContext: async () => ({ newPage: async () => page }) };
 }

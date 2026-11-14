@@ -1,12 +1,14 @@
 // Purpose: build the `batch` result records and write results.json and summary.md.
-// Exports: compareRecords, responsiveRecords, errorRecords, withCloseFailures, exitCodeFor, summaryMarkdown, writeBatchResults.
+// Exports: compareRecords, responsiveRecords, errorRecords, withCloseFailures, exitCodeFor, summaryMarkdown, writeBatchResults, writePartialResults, readPriorRecords.
 // Invariant: a record is { surface, state, locale, width, status: "pass"|"fail", evidence, findings }; another tool
 // (`ui-coverage check --results`) reads these exact field names, so never rename them. evidence is the path of that state's report.
 // width is the viewport width the part ran at (an integer; a compare record carries the Figma frame width). It is null only on an
 // error record whose Figma cache could not be read, so the frame size is unknown.
 import fs from 'node:fs';
 import path from 'node:path';
+import { stateKey } from './batch-schedule.mjs';
 import { isHint } from './bidi.mjs';
+import { UsageError } from './errors.mjs';
 import { tableRow } from './report.mjs';
 
 const SUMMARY_HEAD = ['surface', 'state', 'locale', 'width', 'status', 'findings', 'evidence'];
@@ -94,4 +96,47 @@ export function writeBatchResults(outDir, records) {
   fs.writeFileSync(results, `${JSON.stringify(records, null, 2)}\n`);
   fs.writeFileSync(summary, summaryMarkdown(records));
   return { results, summary };
+}
+
+const PARTIAL = 'results.partial.json';
+
+/**
+ * Checkpoint of the states finished so far (`results.partial.json`, replaced atomically); removed when the run ends and results.json is written,
+ * so it only survives an interrupted run, and `--resume` reads it.
+ * @param {string} outDir existing directory
+ * @param {object[]} records records of the finished states
+ */
+export function writePartialResults(outDir, records) {
+  const file = path.join(outDir, PARTIAL);
+  fs.writeFileSync(`${file}.tmp`, `${JSON.stringify(records)}\n`);
+  fs.renameSync(`${file}.tmp`, file);
+}
+
+/** Remove the checkpoint after a complete run. */
+export function removePartialResults(outDir) {
+  fs.rmSync(path.join(outDir, PARTIAL), { force: true });
+}
+
+function readRecordsFile(file) {
+  if (!fs.existsSync(file)) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    throw new UsageError(`--resume: cannot read ${file}: ${error.message}`);
+  }
+  if (!Array.isArray(parsed)) throw new UsageError(`--resume: ${file} must be a JSON array of records`);
+  return parsed;
+}
+
+/**
+ * Records of an earlier run in `outDir` for `--resume`: results.json first, then the checkpoint of an interrupted run, which replaces the records of the states it holds (it is newer).
+ * @param {string} outDir
+ * @returns {object[]} records; empty when neither file exists
+ * @throws {UsageError} when a file is not a JSON array
+ */
+export function readPriorRecords(outDir) {
+  const partial = readRecordsFile(path.join(outDir, PARTIAL));
+  const newer = new Set(partial.map(stateKey));
+  return [...readRecordsFile(path.join(outDir, 'results.json')).filter((r) => !newer.has(stateKey(r))), ...partial];
 }

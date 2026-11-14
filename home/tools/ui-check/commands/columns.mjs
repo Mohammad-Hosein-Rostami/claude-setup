@@ -19,7 +19,7 @@ export const options = {
   height: { type: 'string', default: '900' },
   'no-autofocus': { type: 'boolean', default: false },
   out: { type: 'string' },
-  project: { type: 'string', default: process.cwd() },
+  project: { type: 'string' }, // default: current directory, then UI_CHECK_PROJECT, then the tool's own node_modules (lib/playwright.mjs)
 };
 
 /** Runs in the page: cell {x, w} per row, relative to the table. */
