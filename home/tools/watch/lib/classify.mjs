@@ -1,7 +1,9 @@
 // Turns one transcript JSONL line into verbose events, in the line format of the old live-watch.sh jq filter.
 // Exports: createClassifier() -> { feed(text) -> Event[] }, Event = { kind, line, owner?, promptText? }.
-// Kinds: PROMPT, COMPACT, AGENT, WORKFLOW, SKILL, TOOL, USAGE, ERR, INPUT_MODE.
-// Invariants: pure apart from the INPUT_MODE memory (Claude Code repeats the mode every turn; only changes are events);
+// Kinds: PROMPT, COMPACT, AGENT, WORKFLOW, SKILL, TOOL, USAGE, ERR, INPUT_MODE, API_ERROR, LIMIT, LIMIT_RESET.
+// API_ERROR / LIMIT: an entry with isApiErrorMessage true. Only its error class is printed (rate_limit is a LIMIT, anything else
+// an API_ERROR), never the message text. LIMIT_RESET: the first real assistant reply after a LIMIT, with the minutes it lasted.
+// Invariants: pure apart from the INPUT_MODE and limit-window memory (Claude Code repeats the mode every turn; only changes are events);
 // a line that is not valid JSON, or is not an object, yields nothing (a partial line is the tail's job, not ours).
 // A PROMPT event always carries a verbose line, but `owner` is false for meta, sidechain and compaction-summary entries.
 // A user entry whose content is an array is a prompt when it has text (or image) parts and no tool_result part: the text parts
@@ -11,6 +13,9 @@ const PROMPT_CHARS = 200;
 const ERROR_CHARS = 160;
 const AGENT_TOOLS = new Set(['Agent', 'Task']);
 const AGENT_CALL = /agent\(/g;
+const ERROR_CLASS = /^[A-Za-z0-9_.-]{1,40}$/;
+const LIMIT_ERROR_CLASS = 'rate_limit';
+const MS_PER_MINUTE = 60_000;
 
 // jq `//`: null, undefined and false fall back to the default.
 const orElse = (value, fallback) => (value === null || value === undefined || value === false ? fallback : value);
@@ -73,6 +78,9 @@ function errorEvents(entry, stamp) {
     });
 }
 
+// The class of an API error entry, or "unknown" when it is missing or not a short plain word (so no free text gets through).
+const apiErrorClass = (entry) => (typeof entry.error === 'string' && ERROR_CLASS.test(entry.error) ? entry.error : 'unknown');
+
 function userEvents(entry, stamp) {
   const content = entry.message?.content;
   if (typeof content === 'string') return content.startsWith('<') ? [] : [promptEvent(entry, stamp, flat(head(content, PROMPT_CHARS)))];
@@ -87,8 +95,26 @@ function userEvents(entry, stamp) {
  */
 export function createClassifier() {
   let lastMode;
+  let limitStartedAt; // timestamp of the first LIMIT of the current limit window
+  const minutesSince = (stamp) => {
+    const minutes = Math.floor((Date.parse(stamp) - Date.parse(limitStartedAt)) / MS_PER_MINUTE);
+    return Number.isFinite(minutes) ? ` after ${minutes} min` : '';
+  };
+  const apiErrorEvent = (entry, stamp) => {
+    const errorClass = apiErrorClass(entry);
+    if (errorClass !== LIMIT_ERROR_CLASS) return { kind: 'API_ERROR', line: `${stamp} API_ERROR ${errorClass}` };
+    limitStartedAt ??= stamp;
+    return { kind: 'LIMIT', line: `${stamp} LIMIT ${errorClass}` };
+  };
+  const limitResetEvents = (stamp) => {
+    const line = `${stamp} LIMIT_RESET resumed${minutesSince(stamp)}`;
+    limitStartedAt = undefined;
+    return [{ kind: 'LIMIT_RESET', line }];
+  };
   const classify = (entry) => {
     const stamp = orElse(entry.timestamp, '');
+    if (entry.isApiErrorMessage === true) return [apiErrorEvent(entry, stamp)];
+    if (entry.type === 'assistant' && limitStartedAt !== undefined) return [...limitResetEvents(stamp), ...assistantEvents(entry, stamp)];
     if (entry.type === 'user') return userEvents(entry, stamp);
     if (entry.type === 'assistant') return assistantEvents(entry, stamp);
     if (entry.type === 'system' && entry.subtype === 'compact_boundary') {

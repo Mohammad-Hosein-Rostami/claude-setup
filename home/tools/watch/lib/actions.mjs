@@ -1,12 +1,14 @@
 // The action-only filter of the old watch.sh, applied to verbose events: which events are worth waking someone for.
 // Exports: actionFor(event) -> { cls, text } | undefined; ACTION_CLASSES.
-// Classes: OWNER (a real owner prompt), COMPACT, STOP_HOOK (Stop hook feedback), ERROR (tool error, API error, rate or usage limit).
+// Classes: OWNER (a real owner prompt), COMPACT, STOP_HOOK (Stop hook feedback), ERROR (tool error, rate or usage limit words),
+// API_ERROR, LIMIT and LIMIT_RESET (the three events of classify.mjs that come from isApiErrorMessage entries).
 // The event kind decides first: a PROMPT is never an ERROR/COMPACT alert (an owner prompt that quotes "ERROR" is still just an
 // OWNER line), and a meta, sidechain or compaction-summary prompt is never anything, whatever words its text contains. The one
 // exception is harness "Stop hook feedback", which arrives as a meta prompt and is recognised by its text starting that way.
 // The alert words for the other kinds are watch.sh's regex, matched on the whole verbose line; cut lengths are 200 characters.
 
-export const ACTION_CLASSES = ['OWNER', 'COMPACT', 'STOP_HOOK', 'ERROR'];
+export const ACTION_CLASSES = ['OWNER', 'COMPACT', 'STOP_HOOK', 'ERROR', 'API_ERROR', 'LIMIT', 'LIMIT_RESET'];
+const ALWAYS_ACTION_KINDS = new Set(['API_ERROR', 'LIMIT', 'LIMIT_RESET']);
 
 const ALERT_WORDS = / COMPACT| ERROR| API_ERROR| LIMIT| RATE|Stop hook feedback|usage limit/;
 const STOP_HOOK_START = /^Stop hook feedback/;
@@ -27,6 +29,7 @@ function promptAction(event) {
  */
 export function actionFor(event) {
   if (event.kind === 'PROMPT') return promptAction(event);
+  if (ALWAYS_ACTION_KINDS.has(event.kind)) return { cls: event.kind, text: event.line };
   if (!ALERT_WORDS.test(event.line)) return undefined;
   const cls = event.kind === 'COMPACT' ? 'COMPACT' : /Stop hook feedback/.test(event.line) ? 'STOP_HOOK' : 'ERROR';
   return { cls, text: cut(event.line) };
