@@ -124,15 +124,20 @@ const GIT_VALUE_FLAGS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--name
 
 /**
  * Whether `push` near `git` can publish. Loose on purpose (a heredoc or xargs may feed the words), with one exception:
- * when the subcommand by position is `stash`, `push` is `git stash push`, which only stores local changes.
+ * the subcommand by position is `stash`, directly followed by the window's only `push` (`git stash push`, which only
+ * stores local changes). A `push` taken as an option value asks: quote stripping drops an empty `-C ''`, so `-C` would
+ * swallow the real subcommand (audit G1).
  * @param {string[]} after - the words after `git` in one statement.
  * @returns {boolean} true when a `push` word may be a git push.
  */
 function pushesIn(after) {
-  if (!after.includes('push')) return false;
+  const pushes = after.filter((w) => w === 'push').length;
+  if (pushes === 0) return false;
   for (let i = 0; i < after.length; i++) {
-    if (GIT_VALUE_FLAGS.has(after[i])) i++;
-    else if (!after[i].startsWith('-')) return after[i] !== 'stash';
+    if (GIT_VALUE_FLAGS.has(after[i])) {
+      if (after[i + 1] === 'push') return true;
+      i++;
+    } else if (!after[i].startsWith('-')) return !(after[i] === 'stash' && after[i + 1] === 'push' && pushes === 1);
   }
   return true;
 }
