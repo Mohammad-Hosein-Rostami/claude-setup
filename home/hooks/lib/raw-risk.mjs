@@ -34,6 +34,10 @@ const REMOTE_TOOLS = new Set(['psql', 'mysql', 'mariadb', 'mysqldump', 'pg_dump'
 const RM_FLAG = /^(?:-[a-zA-Z]*[rRf]|--recursive|--force)/;
 // a literal root-relative path, `~`, `..` or the home variable; other variable paths are the precise checks' job
 const RISKY_RM_PATH = /^(?:\/|~|\.\.(?:\/|$)|\$\{?HOME\b)/;
+// a named entry inside the system temp dir is scratch, not data: `/tmp/x`, `/private/tmp/a/b.log` (no `..`, no glob, never
+// the temp root itself); live stalls: heredoc or `perl -e` next to `rm -rf /tmp/tmpchk` asked for 3 min each
+const TEMP_RM_PATH = /^\/(?:private\/)?tmp\/(?!\.\.?(?:\/|$))[^\s*?[\]{}]+$/;
+const riskyRmPath = (w) => RISKY_RM_PATH.test(w) && !(TEMP_RM_PATH.test(w) && !w.split('/').includes('..'));
 const HEREDOC_OPEN = /<<(-?)[ \t]*(?:'([A-Za-z_]\w*)'|"([A-Za-z_]\w*)"|\\([A-Za-z_]\w*)|([A-Za-z_]\w*))(?![\w'"\\])/;
 const EXPANSION_IN_BODY = /\$\(|`/;
 
@@ -108,7 +112,7 @@ function dangerIn(words, prodText, prodNames) {
     const word = words[i];
     const after = words.slice(i + 1, i + 1 + WINDOW);
     if (word === 'git' && (pushesIn(after) || after.some((w) => w.startsWith('alias.')))) return 'git';
-    if (word === 'rm' && after.some((w) => RM_FLAG.test(w)) && after.some((w) => RISKY_RM_PATH.test(w))) return 'destructive';
+    if (word === 'rm' && after.some((w) => RM_FLAG.test(w)) && after.some(riskyRmPath)) return 'destructive';
     if (word === 'publish' && words.slice(Math.max(0, i - 3), i).some((w) => PUBLISHERS.has(w))) return 'publish';
     if (word === 'gh' && ghMutation(after)) return 'gh';
     if (word === 'dd' && after.some((w) => w.startsWith('of='))) return 'destructive';
