@@ -2,9 +2,9 @@
 // parent folders), the allow-list files, framework exemptions and a crash. The `--changed` behaviour is in readable-changed.test.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync } from 'node:fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { commitAll, HEADER, project, readable, write } from './readable-helpers.mjs';
+import { commitAll, git, HEADER, project, readable, write } from './readable-helpers.mjs';
 
 test('a clean project exits 0 and prints ok', () => {
   const root = project({ 'README.md': '# x\n', 'src/a.mjs': HEADER, 'src/README.md': '# src\n' });
@@ -116,4 +116,29 @@ test('a crash exits 3, not 1, so it is never mistaken for findings', () => {
   } finally {
     chmodSync(join(root, 'locked'), 0o755);
   }
+});
+
+test('inside a git repo the list comes from git: a path ignored only by .git/info/exclude is not reported', () => {
+  const root = project({ 'a.mjs': HEADER, 'agent-trees/misc/b.mjs': 'x();\n' });
+  git(root, 'init', '-q', '-b', 'main');
+  assert.equal(readable(['check', root]).status, 1, 'not ignored yet');
+  writeFileSync(join(root, '.git', 'info', 'exclude'), 'agent-trees/\n');
+  assert.equal(readable(['check', root]).stdout.trim(), 'readable: ok');
+});
+
+test('inside a git repo, new untracked files that are not ignored are still reported', () => {
+  const root = project({ 'a.mjs': HEADER, '.gitignore': 'secret/\n' });
+  commitAll(root);
+  write(root, { 'fresh.mjs': 'x();\n', 'secret/hidden.mjs': 'x();\n' });
+  const out = readable(['check', root]).stdout;
+  assert.match(out, /^fresh\.mjs:1 C26 no-header/m);
+  assert.doesNotMatch(out, /hidden/);
+});
+
+test('a nested folder with its own .git (a linked worktree or another repo) is never entered, in a repo or outside one', () => {
+  const files = { 'a.mjs': HEADER, 'nested/.git': 'gitdir: /elsewhere\n', 'nested/misc/b.mjs': 'x();\n' };
+  assert.equal(readable(['check', project(files)]).stdout.trim(), 'readable: ok');
+  const inRepo = project(files);
+  git(inRepo, 'init', '-q', '-b', 'main');
+  assert.equal(readable(['check', inRepo]).stdout.trim(), 'readable: ok');
 });

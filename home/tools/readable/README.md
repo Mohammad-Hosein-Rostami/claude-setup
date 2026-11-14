@@ -27,8 +27,9 @@ Source files are `js mjs cjs jsx ts tsx py go rs java kt rb php cs c cpp h swift
 
 ## Built-in exemptions
 
-- Skipped completely: everything `.gitignore` hides (also the `.gitignore` files above the folder, up to the repo root),
-  symlinks, the folders `.git node_modules vendor bower_components dist build out coverage target .next .nuxt .turbo
+- Skipped completely: everything git ignores (inside a repository the file list comes from `git ls-files`, so
+  `.gitignore` at any level, `.git/info/exclude` and the global excludes file all count; outside one, `.gitignore` files
+  are read), any folder that holds its own `.git` (nested repository, linked worktree), symlinks, the folders `.git node_modules vendor bower_components dist build out coverage target .next .nuxt .turbo
   .cache __pycache__ .venv venv .gradle .idea generated __generated__ .svelte-kit .output Pods .dart_tool .yarn`, lock
   files (`*-lock.*`, `*.lock`, `go.sum`) and generated files (`*.gen.*`, `*.generated.*`, `*.min.*`, `*.pb.go`,
   `*_pb2.py`, `*.d.ts`). `json` config is skipped because it cannot hold comments.

@@ -5,7 +5,7 @@ One file per job. The checks are pure functions of file paths or file text; only
 
 | File | Job |
 | ---- | --- |
-| `walk.mjs`, `ignore.mjs` | list the project files, skipping what `.gitignore` and vendored folders hide |
+| `walk.mjs`, `ignore.mjs` | list the project files (from `git ls-files` in a repo, else a walk that reads `.gitignore`), skipping vendored folders and nested repos |
 | `structure-checks.mjs` | folder with no README, dumping-ground names, nesting too deep |
 | `exemptions.mjs` | lock and generated files, locale files, and the framework paths and names the checks leave alone |
 | `added-only.mjs` | for `--changed`: drop findings about files and folders that already existed |

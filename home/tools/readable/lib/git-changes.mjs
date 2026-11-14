@@ -1,5 +1,5 @@
 // Purpose: ask git what a change added, so `--changed` can report only the findings the change caused.
-// Exports: parseDiff(diffText), resolveBase(root, explicitBase), changesSince(root, base).
+// Exports: git(root, args), parseDiff(diffText), resolveBase(root, explicitBase), changesSince(root, base).
 // Invariants: parseDiff is pure and reads `git diff --unified=0` output. The rest runs git read-only in `root`, with git's
 //   repo-local environment variables (GIT_DIR, GIT_INDEX_FILE ...) removed so a surrounding hook cannot redirect it, and throws
 //   GitError (never a guess) when root is not inside a git work tree or the base does not exist. Paths are relative to
@@ -25,7 +25,8 @@ function cleanEnvironment() {
   return Object.fromEntries(Object.entries(process.env).filter(([name]) => !names.includes(name) && !FALLBACK_LOCAL_VARS.includes(name)));
 }
 
-const git = (root, args) => run(args, { cwd: root, env: cleanEnvironment() });
+/** Runs git read-only in `root` with the repo-local environment variables removed. */
+export const git = (root, args) => run(args, { cwd: root, env: cleanEnvironment() });
 
 /**
  * @param {string} diffText output of `git diff --unified=0`

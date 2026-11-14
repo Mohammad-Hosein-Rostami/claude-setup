@@ -1,10 +1,14 @@
 // Purpose: list the files of a project folder the way a developer sees them: no .git, no vendored or generated
-//   folders, nothing .gitignore hides (the project's own and those of parent folders up to the repo root), symlinks not followed.
+//   folders, nothing git ignores, no nested repository or linked worktree, symlinks not followed.
 // Exports: SKIPPED_FOLDERS, listFiles(root).
-// Invariants: returns posix paths relative to root, sorted; a nested .gitignore applies to its own folder only; when root
-//   is a subfolder of a git repo, the .gitignore files above it apply too, as git would apply them.
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+// Invariants: returns posix paths relative to root, sorted. Inside a git repository the list comes from git itself
+//   (`git ls-files --cached --others --exclude-standard`), so every ignore source counts: .gitignore at any level,
+//   .git/info/exclude and the global excludes file. Outside a repository the folder is walked and only .gitignore files
+//   are read (the folder's own, and those above it up to a repo root). A folder that holds its own `.git` (a nested
+//   repository, a linked worktree, a submodule) is never entered.
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
+import { git } from './git-changes.mjs';
 import { matchRules, parseGitignore } from './ignore.mjs';
 
 export const SKIPPED_FOLDERS = new Set([
@@ -42,12 +46,35 @@ function parentLayers(root) {
   return layers;
 }
 
+/** Files git knows (tracked, or untracked and not ignored) under root, or null when root is not in a work tree. */
+function listWithGit(root) {
+  const inside = git(root, ['rev-parse', '--is-inside-work-tree']);
+  if (inside.status !== 0 || inside.stdout.trim() !== 'true') return null;
+  const listed = git(root, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']);
+  if (listed.status !== 0) return null;
+  const isRealFile = (path) => lstatSync(join(root, path), { throwIfNoEntry: false })?.isFile() === true; // drops deleted files, folders (nested repos end in /), submodules and symlinks
+  const inSkippedFolder = (path) => path.split('/').slice(0, -1).some((part) => SKIPPED_FOLDERS.has(part));
+  const nestedRepos = new Map(); // folder -> holds its own .git; git itself misses a `.git` file that is not a valid link
+  const isNestedRepo = (folder) => {
+    if (!nestedRepos.has(folder)) nestedRepos.set(folder, existsSync(join(root, folder, '.git')));
+    return nestedRepos.get(folder);
+  };
+  const inNestedRepo = (path) => {
+    const parts = path.split('/').slice(0, -1);
+    return parts.some((_, index) => isNestedRepo(parts.slice(0, index + 1).join('/')));
+  };
+  return [...new Set(listed.stdout.split('\0').filter(Boolean))]
+    .filter((path) => isRealFile(path) && !inSkippedFolder(path) && !inNestedRepo(path)).sort();
+}
+
 /**
  * Lists every file under root that git would not ignore.
  * @param {string} root absolute or relative folder
  * @returns {string[]} posix paths relative to root, sorted
  */
 export function listFiles(root) {
+  const fromGit = listWithGit(root);
+  if (fromGit !== null) return fromGit;
   const found = [];
   const visit = (relFolder, layers) => {
     const folder = join(root, relFolder);
@@ -57,7 +84,8 @@ export function listFiles(root) {
       const rel = relFolder === '' ? entry.name : `${relFolder}/${entry.name}`;
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
-        if (!SKIPPED_FOLDERS.has(entry.name) && !isIgnored(here, rel, true)) visit(rel, here);
+        const isNestedRepo = existsSync(join(root, rel, '.git'));
+        if (!SKIPPED_FOLDERS.has(entry.name) && !isNestedRepo && !isIgnored(here, rel, true)) visit(rel, here);
       } else if (entry.isFile() && !isIgnored(here, rel, false)) found.push(rel);
     }
   };
