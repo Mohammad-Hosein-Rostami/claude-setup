@@ -64,6 +64,21 @@ test('target size: a standalone inline link row is a target-size? hint only (the
   assert.deepEqual(of(hints, 'target-size?'), ['a', 'a'], 'EN and FA only, not the sentence link');
 });
 
+const noIndicator = async (name) => of((await audit(name)).hints, 'focus-indicator');
+
+test('focus-indicator precision (reviewer focus1.html): wrappers (focus-within, :has), pseudo-elements, sibling underline, transitions, child ring, gradient, transform, one colour step and a skip link count; only colour-only and a bare summary are reported', { skip: !project }, async () => {
+  assert.deepEqual((await noIndicator('review-focus1.html')).sort(), ['a#col.col', 'summary#sum']);
+});
+
+test('focus-indicator precision (reviewer focus2.html): a far sibling of a hidden toggle, a delayed transition, a shadow host, delegatesFocus and a scroll region count; the walk continues past an iframe and shadow hosts', { skip: !project }, async () => {
+  assert.deepEqual(await noIndicator('review-focus2.html'), ['a#afterbare']);
+});
+
+test('focus-indicator walk continues past an iframe (focus3.html) and past a shadow host with inner buttons (focus4.html)', { skip: !project }, async () => {
+  assert.deepEqual((await noIndicator('review-focus3.html')).sort(), ['button#afterframe', 'button#first']);
+  assert.deepEqual((await noIndicator('review-focus4.html')).sort(), ['button#aftershadow', 'button#first']);
+});
+
 test('target size (reviewer tap.html): nav, breadcrumb, pagination, footer and language links hint; links in a sentence, also inside strong/em or an inline wrapper, do not; an inline-block stays a failing tap-target', { skip: !project }, async () => {
   const { code, findings, hints } = await audit('review-tap.html');
   assert.equal(code, 1);

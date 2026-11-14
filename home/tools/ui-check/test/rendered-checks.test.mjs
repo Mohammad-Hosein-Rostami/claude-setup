@@ -40,30 +40,49 @@ test('rtl-physical-align: ltr page, hidden block, and a block that is itself ltr
   assert.deepEqual(rtlPhysicalAlignFindings({ docDirection: 'rtl', blocks: [block('left', { direction: 'ltr' })] }), []);
 });
 
-const NONE = { outlineStyle: 'none', outlineWidth: '0px', outlineColor: 'rgb(0, 0, 0)', boxShadow: 'none', borderColor: 'rgb(0, 0, 0)', borderWidth: '1px', backgroundColor: 'rgb(255, 255, 255)' };
-const focusable = (after, extra = {}) => ({ element: 'button.go', hidden: false, before: NONE, after: { ...NONE, ...after }, related: [], ...extra });
+const NONE = { outlineStyle: 'none', outlineWidth: '0px', outlineColor: 'rgb(0, 0, 0)', boxShadow: 'none', borderColor: 'rgb(0, 0, 0)', borderWidth: '0px', backgroundColor: 'rgb(255, 255, 255)',
+  backgroundImage: 'none', textDecorationLine: 'none', transform: 'none', content: 'normal', width: '100px', height: '20px' };
+const pair = (after = {}) => ({ before: NONE, after: { ...NONE, ...after } });
+const focusable = (own = {}, extra = {}) => ({ element: 'button.go', hidden: false, own: [pair(own)], related: [], ...extra });
 
 test('focus-indicator: nothing changed on keyboard focus is reported', () => {
   const found = focusIndicatorFindings({ focusables: [focusable({})] });
   assert.equal(found.length, 1);
   assert.equal(found[0].check, 'focus-indicator');
   assert.equal(found[0].element, 'button.go');
-  assert.match(found[0].detail, /outline, box-shadow, border and background/);
+  assert.match(found[0].detail, /no visible focus indicator/);
 });
 
-test('focus-indicator: any one of outline, box-shadow, border colour, border width or background changing counts as an indicator', () => {
-  const changes = [{ outlineStyle: 'auto' }, { outlineWidth: '2px' }, { outlineColor: 'rgb(0, 0, 255)' }, { boxShadow: 'rgb(0, 0, 255) 0px 0px 0px 2px' },
-    { borderColor: 'rgb(0, 0, 255)' }, { borderWidth: '2px' }, { backgroundColor: 'rgb(0, 0, 255)' }];
+test('focus-indicator: any of outline, box-shadow, border, background colour or image, underline, transform or generated content changing counts', () => {
+  const changes = [{ outlineStyle: 'auto' }, { outlineStyle: 'solid', outlineWidth: '2px' }, { outlineStyle: 'solid', outlineWidth: '2px', outlineColor: 'rgb(0, 0, 255)' }, { boxShadow: 'rgb(0, 0, 255) 0px 0px 0px 2px' },
+    { borderColor: 'rgb(0, 0, 255)', borderWidth: '1px' }, { borderWidth: '2px' }, { backgroundColor: 'rgb(0, 0, 255)' }, { backgroundImage: 'linear-gradient(red, blue)' },
+    { textDecorationLine: 'underline' }, { transform: 'matrix(1.1, 0, 0, 1.1, 0, 0)' }, { content: '""' }];
   for (const change of changes) assert.deepEqual(focusIndicatorFindings({ focusables: [focusable(change)] }), [], JSON.stringify(change));
 });
 
-test('focus-indicator: a visually hidden control (hidden input) is fine when its label or a neighbour changes, reported when nothing does', () => {
-  const styled = focusable({}, { element: 'input#remember', hidden: true, related: [{ before: NONE, after: { ...NONE, boxShadow: '0 0 0 2px blue' } }] });
+test('focus-indicator: a text colour change alone is not an indicator, even though the outline and border colours follow it; nor is the size of the element itself', () => {
+  const colourOnly = focusable({ color: 'rgb(200, 0, 0)', outlineColor: 'rgb(200, 0, 0)', borderColor: 'rgb(200, 0, 0)', width: '120px' });
+  assert.equal(focusIndicatorFindings({ focusables: [colourOnly] }).length, 1);
+  assert.deepEqual(focusIndicatorFindings({ focusables: [focusable({ outlineStyle: 'solid', outlineWidth: '2px', outlineColor: 'rgb(200, 0, 0)' })] }), [], 'a drawn outline counts');
+  assert.deepEqual(focusIndicatorFindings({ focusables: [focusable({ borderWidth: '2px', borderColor: 'rgb(200, 0, 0)' })] }), [], 'a drawn border counts');
+});
+
+test('focus-indicator: a change on a wrapper, label, sibling or pseudo-element (given as related) counts; a sibling that grows counts, the own size does not', () => {
+  const wrapperBorder = { before: { ...NONE, borderWidth: '1px' }, after: { ...NONE, borderWidth: '1px', borderColor: 'rgb(0, 102, 204)' } };
+  assert.deepEqual(focusIndicatorFindings({ focusables: [focusable({}, { related: [wrapperBorder] })] }), [], 'focus-within border colour on a bordered wrapper');
+  for (const change of [{ boxShadow: '0 0 0 3px blue' }, { content: '""' }, { width: '100px', height: '22px' }, { width: '200px' }]) {
+    assert.deepEqual(focusIndicatorFindings({ focusables: [focusable({}, { related: [pair(), pair(change)] })] }), [], JSON.stringify(change));
+  }
+  assert.equal(focusIndicatorFindings({ focusables: [focusable({}, { related: [pair(), pair()] })] }).length, 1);
+});
+
+test('focus-indicator: a visually hidden control is judged on its label and neighbours only; its own invisible outline does not count', () => {
+  const styled = focusable({}, { element: 'input#remember', hidden: true, related: [pair({ boxShadow: '0 0 0 2px blue' })] });
   assert.deepEqual(focusIndicatorFindings({ focusables: [styled] }), []);
-  const bare = focusable({}, { element: 'input#remember', hidden: true, related: [{ before: NONE, after: NONE }] });
-  const found = focusIndicatorFindings({ focusables: [bare] });
+  const ownRingOnly = focusable({ outlineStyle: 'auto' }, { element: 'input#remember', hidden: true, related: [pair()] });
+  const found = focusIndicatorFindings({ focusables: [ownRingOnly] });
   assert.equal(found.length, 1);
-  assert.match(found[0].detail, /label|neighbour/);
+  assert.match(found[0].detail, /visually hidden/);
 });
 
 test('focus-indicator: only the first 60 focusables count, the findings cap applies', () => {

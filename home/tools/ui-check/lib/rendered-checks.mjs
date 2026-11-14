@@ -1,6 +1,6 @@
 // Purpose: pure decision functions for the `responsive` findings that need element facts but no browser: `raw-i18n-key`,
 // `focus-indicator`, `rtl-physical-align`, and the `target-size?` hint.
-// Exports: rawI18nKeyFindings, focusIndicatorFindings, rtlPhysicalAlignFindings, targetSizeHints, MAX_FOCUS_STOPS, RAW_KEY_PATTERN, INDICATOR_FIELDS.
+// Exports: rawI18nKeyFindings, focusIndicatorFindings, rtlPhysicalAlignFindings, targetSizeHints, MAX_FOCUS_STOPS, RAW_KEY_PATTERN, INDICATOR_FIELDS, RELATED_SIZE_FIELDS.
 // Invariants: pure; each takes plain facts gathered in the page (lib/audit.mjs, lib/focus-audit.mjs), so a unit test needs no browser;
 // a hidden element never produces a finding; every function takes an optional cap on the number of findings.
 
@@ -8,8 +8,13 @@
 export const RAW_KEY_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/;
 /** Keyboard stops examined for `focus-indicator` (Tab presses). */
 export const MAX_FOCUS_STOPS = 60;
-/** Computed-style fields that can show keyboard focus: outline, box-shadow, border colour/width, background. */
-export const INDICATOR_FIELDS = ['outlineStyle', 'outlineWidth', 'outlineColor', 'boxShadow', 'borderColor', 'borderWidth', 'backgroundColor'];
+/**
+ * Computed-style fields that can show keyboard focus on the element itself: outline, box-shadow, border colour/width, background colour or image,
+ * text decoration, transform, and `content` (a ::before/::after that only exists on focus). Text colour alone is not counted.
+ */
+export const INDICATOR_FIELDS = ['outlineStyle', 'outlineWidth', 'outlineColor', 'boxShadow', 'borderColor', 'borderWidth', 'backgroundColor', 'backgroundImage', 'textDecorationLine', 'transform', 'content'];
+/** Extra fields compared on the related elements only (a sibling underline that grows from width 0 on focus). */
+export const RELATED_SIZE_FIELDS = ['width', 'height'];
 
 /**
  * Visible text nodes whose whole trimmed text is a raw translation key (a missing translation shown to the user).
@@ -38,24 +43,42 @@ export function rtlPhysicalAlignFindings({ docDirection, blocks }, max = Infinit
     .slice(0, max);
 }
 
-const changed = (pair) => INDICATOR_FIELDS.some((field) => pair.before[field] !== pair.after[field]);
+const drawn = (width) => String(width).split(' ').some((part) => Number.parseFloat(part) > 0);
+/** A colour that defaults to the text colour (outline, border) only shows when the line is drawn, so a text colour change alone must not count. */
+const COLOUR_NEEDS_LINE = {
+  outlineColor: (state) => state.outlineStyle !== 'none' && drawn(state.outlineWidth),
+  borderColor: (state) => drawn(state.borderWidth),
+};
+
+function fieldChanged({ before, after }, field) {
+  if (before[field] === after[field]) return false;
+  const drawnNow = COLOUR_NEEDS_LINE[field];
+  return drawnNow === undefined || drawnNow(before) || drawnNow(after);
+}
+
+const differs = (pair, fields) => fields.some((field) => fieldChanged(pair, field));
 
 /**
- * Keyboard-focusable elements that look the same focused and unfocused. A visually hidden control (opacity 0, clipped, 1px) is
- * judged on its label and neighbours too, because the visible box a custom checkbox draws is usually one of them.
- * @param {{focusables: {element: string, hidden: boolean, before: object, after: object, related: {before: object, after: object}[]}[]}} facts
- *   before/after = the INDICATOR_FIELDS of the computed style without and with keyboard focus (Tab, so :focus-visible applies)
+ * Keyboard-focusable elements that look the same focused and unfocused.
+ * An indicator is a change (see INDICATOR_FIELDS) on the element or its ::before/::after (`own`), or on `related`: up to 3 ancestors (focus-within,
+ * :has wrappers), the label, the following siblings, the previous sibling, the open shadow root's content, each with its pseudo-elements; on related
+ * elements a width or height change counts too. A visually hidden control (opacity 0, clipped, 1px: a custom checkbox's real input) is judged on `related`
+ * only, because its own outline is invisible too.
+ * @param {{focusables: {element: string, hidden: boolean, own: {before: object, after: object}[], related: {before: object, after: object}[]}[]}} facts
+ *   before/after = the style fields without and with keyboard focus (Tab, so :focus-visible applies)
  * @param {number} [max] cap on the number of findings
  * @returns {{check: 'focus-indicator', element: string, detail: string}[]} at most the first MAX_FOCUS_STOPS focusables are judged
  */
 export function focusIndicatorFindings({ focusables }, max = Infinity) {
+  const relatedFields = [...INDICATOR_FIELDS, ...RELATED_SIZE_FIELDS];
+  const shown = (f) => (f.hidden ? [] : f.own).some((pair) => differs(pair, INDICATOR_FIELDS)) || f.related.some((pair) => differs(pair, relatedFields));
   return focusables
     .slice(0, MAX_FOCUS_STOPS)
-    .filter((f) => !changed(f) && !f.related.some(changed))
+    .filter((f) => !shown(f))
     .map((f) => ({
       check: 'focus-indicator',
       element: f.element,
-      detail: `no visible focus indicator: outline, box-shadow, border and background are unchanged on keyboard focus${f.hidden ? ' (it is visually hidden and its label and neighbours do not change either)' : ''}`,
+      detail: `no visible focus indicator: outline, box-shadow, border, background, underline and transform are unchanged on keyboard focus, on it and on its wrappers, label and neighbours${f.hidden ? ' (it is visually hidden: only its label and neighbours can show focus)' : ''}`,
     }))
     .slice(0, max);
 }
