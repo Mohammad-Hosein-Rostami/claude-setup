@@ -7,7 +7,9 @@
 // It follows the real nesting: quotes, `$'..'`, comments, `$((..))` arithmetic, `$(...)` inside double quotes (where quotes nest
 // again) and heredocs wherever they start. So `<<EOF` inside quotes, a comment or `$((1<<X))` is not a heredoc, and a heredoc
 // inside `"$(cat <<'EOF' ... EOF)"` is. A heredoc without a terminator line is left in place (its body is still checked).
-// Outside double quotes `$(`, `(`, `)` and backticks only separate commands (flat), like the regex tokenizer in shell-words.mjs.
+// Outside double quotes `$(`, `(`, `)` and backticks only separate commands (flat), like the regex tokenizer in shell-words.mjs;
+// but the words after the `)` that closes a `$(` go back to the segment that held the `$` (`echo $(a) $(b)` is one echo with two
+// arguments, not a command named `$`), while the bodies stay their own segments so every command inside is still checked.
 // Invariants: linear in the text length apart from a bounded arithmetic look-ahead; an unclosed quote runs to the end of the text.
 
 const MAX_NESTING = 64; // `"$("$("...` deeper than this is read as plain text, so a hostile command cannot overflow the stack
@@ -128,20 +130,23 @@ function walk(state, start, closer) {
   const { text } = state;
   const segs = [[]];
   const nested = [];
+  const opened = []; // per open `(`: the segment holding its `$` when it starts a substitution, else null
+  let current = segs[0];
   let word = -1;
   let depth = 0;
   const begin = (at) => {
     if (word === -1) word = at;
   };
   const endWord = (to) => {
-    if (word !== -1) segs.at(-1).push(text.slice(word, to));
+    if (word !== -1) current.push(text.slice(word, to));
     word = -1;
   };
   const split = (at, piped = false) => {
     endWord(at);
-    const current = segs.at(-1);
-    if (current.length > 0) segs.push(piped ? markPiped([]) : []);
-    else if (piped) markPiped(current); // `a |<newline> b`: the empty segment keeps its flag
+    if (current.length > 0) {
+      current = piped ? markPiped([]) : [];
+      segs.push(current);
+    } else if (piped) markPiped(current); // `a |<newline> b`: the empty segment keeps its flag
   };
   let i = start;
   while (i < text.length) {
@@ -170,6 +175,8 @@ function walk(state, start, closer) {
       if (text[i - 1] !== '$') endWord(i); // `((expr))` is a command that runs nothing; `$((expr))` stays part of its word
       i = arithmeticEnd(text, i + 2);
     } else if (c === '(') {
+      endWord(i);
+      opened.push(text[i - 1] === '$' && text[i - 2] !== '\\' ? current : null);
       split(i);
       if (closer === ')') depth++;
       i++;
@@ -179,12 +186,13 @@ function walk(state, start, closer) {
     } else if (c === ')') {
       split(i);
       if (closer === ')') depth--;
+      current = opened.pop() ?? current;
       i++;
     } else if (c === '`' && closer === '`') {
       endWord(i);
       return { segs, nested, end: i + 1, closed: true };
     } else if (c === '`' || c === ';') {
-      if (c === '`' && word === -1 && segs.at(-1).length === 0) segs.at(-1).push('$'); // `` `cmd` `` as the command word, like `$(cmd)`
+      if (c === '`' && word === -1 && current.length === 0) current.push('$'); // `` `cmd` `` as the command word, like `$(cmd)`
       split(i);
       i++;
     } else if (c === '#' && word === -1 && (i === start || COMMENT_PREFIX.test(text[i - 1]))) {
