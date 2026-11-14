@@ -36,7 +36,7 @@ async function audit(name, extra = [], widths = '320') {
   return { code: result.code, findings: report.findings, hints: report.hints, md: fs.readFileSync(path.join(out, 'report.md'), 'utf8') };
 }
 const of = (list, check) => list.filter((f) => f.check === check).map((f) => f.element);
-const NEW_CHECKS = ['bidi-field', 'bidi-placeholder', 'bidi-placeholder?', 'ltr-run-in-rtl?', 'untranslated?'];
+const NEW_CHECKS = ['bidi-field', 'bidi-field?', 'bidi-placeholder', 'bidi-placeholder?', 'ltr-run-in-rtl?', 'untranslated?'];
 const fromNewChecks = (list) => list.filter((f) => NEW_CHECKS.includes(f.check));
 
 test('the correct technique (:not(:placeholder-shown) rule, translated placeholders, a filled field, readonly, disabled, a textarea) passes at 320 and 1280 with no new finding or hint', { skip: !project }, async () => {
@@ -46,12 +46,73 @@ test('the correct technique (:not(:placeholder-shown) rule, translated placehold
   assert.deepEqual(fromNewChecks(hints), []);
 });
 
-test('dir="ltr" with a Persian placeholder fails bidi-placeholder; a digits-only placeholder with dir="ltr" does not; an empty email with no placeholder fails bidi-field through the probe, and so does a filled one', { skip: !project }, async () => {
+test('dir="ltr" with a Persian placeholder fails bidi-placeholder; a digits-only placeholder with dir="ltr" does not; a filled email computing rtl fails bidi-field, an empty one is only the hint bidi-field?', { skip: !project }, async () => {
   const { code, findings, hints } = await audit('ltr-value-bad.html');
   assert.equal(code, 1);
   assert.deepEqual(of(findings, 'bidi-placeholder').sort(), ['input#dirltr', 'input#telua'], 'tel inputs are ltr by the browser style, so their Persian placeholder is too');
-  assert.deepEqual(of(findings, 'bidi-field').sort(), ['input#emptymail', 'input#filledmail']);
+  assert.deepEqual(of(findings, 'bidi-field'), ['input#filledmail']);
+  const empty = findings.find((f) => f.check === 'bidi-field?' && f.element === 'input#emptymail');
+  assert.match(empty.detail, /could not confirm from an empty field: run a state that types a value/);
   assert.deepEqual(of(hints, 'bidi-placeholder?'), ['input#leftph'], 'text-align: left on an rtl placeholder is a hint, not a failure');
+});
+
+test('a page that sets the direction from an input listener passes while its fields are empty (a hint at most); the same fields holding a value and computing rtl fail', { skip: !project }, async () => {
+  const { code, findings } = await audit('ltr-script-direction.html');
+  assert.equal(code, 0, JSON.stringify(findings));
+  assert.deepEqual(of(findings, 'bidi-field'), []);
+  assert.deepEqual(of(findings, 'bidi-field?').sort(), ['input#mail', 'input#phone'], 'the probe cannot confirm: the hint says to type a value');
+  const typed = await ui('responsive', '--url', fixture('ltr-value-bad.html'), '--widths', '320', '--out', tmp());
+  assert.equal(typed.code, 1, 'a value that really sits in the field and computes rtl still fails');
+});
+
+test('the probe touches text-like fields only: date, file, range, color, checkbox, radio, time and submit are never given a value; the audit returns and every value is as it was', { skip: !project }, async () => {
+  const browser = await launch(loadChromium(project));
+  try {
+    const page = await openPage(browser, { url: fixture('ltr-probe-types.html'), width: 320, height: 800 });
+    const values = () => page.evaluate(() => [...document.querySelectorAll('input,textarea')].map((el) => [el.id, el.value, el.checked ?? null]));
+    const before = await values();
+    const facts = await page.evaluate(auditInPage, { minTarget: 24, minText: 12, smallViewport: 768, max: 50 });
+    assert.deepEqual(await values(), before);
+    const probed = facts.fields.filter((f) => f.probed).map((f) => f.element).sort();
+    assert.deepEqual(probed, ['input#bogus', 'input#mail', 'textarea#note'], 'only the text-like fields were probed (an unknown type is a text field: el.type says so)');
+    assert.deepEqual(facts.fields.filter((f) => !f.probed && f.element !== 'textarea#filled').map((f) => f.direction), Array(9).fill(null), 'nothing to judge on a field that is not text-like');
+    assert.deepEqual(facts.texts.filter((t) => t.text.includes('hunter2')), [], "a textarea's own text is the user's data: not a page text, not saved for same-as-default?");
+    await page.context().close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('the direction context is the element that holds the field: an rtl section in an ltr document is judged (field, placeholder, English text), an ltr island inside it is not', { skip: !project }, async () => {
+  const { code, findings, hints } = await audit('ltr-context.html');
+  assert.equal(code, 1);
+  assert.deepEqual(of(findings, 'bidi-field'), ['input#sectionmail']);
+  assert.deepEqual(of(findings, 'bidi-placeholder'), ['input#sectionphone']);
+  const english = hints.find((h) => h.check === 'untranslated?').detail;
+  assert.match(english, /^1 text in English.*"Back to login"/);
+});
+
+test('untranslated? reads placeholders, aria-label, title, alt and a submit button value; a Persian twin, a hidden label, a lang="en" span and a Persian sentence with a brand are not reported', { skip: !project }, async () => {
+  const browser = await launch(loadChromium(project));
+  try {
+    const page = await openPage(browser, { url: fixture('untranslated-sources.html'), width: 320, height: 800 });
+    const facts = await page.evaluate(auditInPage, { minTarget: 24, minText: 12, smallViewport: 768, max: 50 });
+    const attributes = facts.attributeTexts.filter((t) => t.visible).map((t) => t.text).sort();
+    assert.deepEqual(attributes, ['Company logo', 'Close dialog', 'Enter your phone number', 'Learn more about us', 'Send message', 'بستن', 'شماره موبایل', 'ارسال'].sort());
+    await page.context().close();
+  } finally {
+    await browser.close();
+  }
+  const { hints } = await audit('untranslated-sources.html');
+  const row = hints.find((h) => h.check === 'untranslated?');
+  assert.match(row.detail, /^5 texts in English on a right-to-left page: "Enter your phone number", "Close dialog", "Learn more about us", "Company logo", "Send message"\./);
+});
+
+test('many English texts are one untranslated? row, so the raw i18n key and the other hints stay in report.md', { skip: !project }, async () => {
+  const { hints, md } = await audit('ltr-crowd.html');
+  assert.equal(of(hints, 'untranslated?').length, 1);
+  assert.match(md, /raw-i18n-key[^\n]*auth\.login\.title/);
+  assert.doesNotMatch(md, /more hints in report\.json/);
 });
 
 test('the probe: value, selection, focus and the page listeners are untouched; no input, change or selectionchange reaches the page', { skip: !project }, async () => {
@@ -77,7 +138,7 @@ test('the probe: value, selection, focus and the page listeners are untouched; n
     await page.waitForTimeout(250);
     assert.deepEqual(await state(), before, 'value, selection and the focused element are as they were');
     assert.deepEqual(await page.evaluate(() => window.seen), [], 'the page saw no event');
-    assert.equal(facts.fields.find((f) => f.element === 'input#emptymail').direction, 'rtl', 'the probe still read the filled direction');
+    assert.deepEqual(facts.fields.filter((f) => f.element === 'input#emptymail').map((f) => [f.probed, f.direction]), [[true, 'rtl']], 'the probe still read the filled direction');
     await page.context().close();
   } finally {
     await browser.close();
@@ -116,18 +177,20 @@ test('an ltr page gives no new finding and no new hint, whatever its text', { sk
   assert.deepEqual(fromNewChecks(hints), []);
 });
 
-test('ltr-run-in-rtl? lists a bare phone, email and URL; bdi, dir="ltr", unicode-bidi: isolate and a plus alone are not', { skip: !project }, async () => {
+test('ltr-run-in-rtl? lists a bare phone, an email ending in a digit and a URL ending in a slash; bdi, dir="ltr", unicode-bidi: isolate, a plus alone and an email or URL with letters at both ends are not', { skip: !project }, async () => {
   const { code, hints } = await audit('ltr-run.html');
   assert.equal(code, 0, 'a hint never fails the run');
-  assert.deepEqual(of(hints, 'ltr-run-in-rtl?').sort(), ['p#bare', 'p#mail', 'p#url']);
+  assert.deepEqual(of(hints, 'ltr-run-in-rtl?').sort(), ['p#bare', 'p#mailnum', 'p#urlslash']);
 });
 
-test('untranslated? lists English in a closed select, an open menu and plain text; Persian, translate="no", dir="ltr", code, hidden text and an allow-listed brand are not', { skip: !project }, async () => {
+test('untranslated? is one row naming English in a closed select, an open menu and a brand; Persian, translate="no", dir="ltr", code, hidden text and an allow-listed brand are not', { skip: !project }, async () => {
   const noList = await audit('untranslated.html');
   assert.equal(noList.code, 0);
-  assert.deepEqual(of(noList.hints, 'untranslated?').sort(), ['li#open', 'p#brand', 'select#country option', 'span#google']);
+  const [row, ...others] = noList.hints.filter((h) => h.check === 'untranslated?');
+  assert.deepEqual(others, [], 'one row per page');
+  assert.match(row.detail, /^3 texts in English on a right-to-left page: "Select your language", "Google Pay", "United Arab Emirates"\./);
   const allowed = await audit('untranslated.html', ['--same-in-all-locales', 'Google Pay, ICE']);
-  assert.deepEqual(of(allowed.hints, 'untranslated?').sort(), ['li#open', 'select#country option'], 'ICE Auth is left with one word, Google Pay is gone');
+  assert.match(allowed.hints.find((h) => h.check === 'untranslated?').detail, /^2 texts .*"Select your language", "United Arab Emirates"\./);
 });
 
 test('batch same-as-default?: the same text in en and de is a hint on the de record only, with the brand allow-listed; every record passes; results.json stays plain', { skip: !project }, async () => {
@@ -142,7 +205,7 @@ test('batch same-as-default?: the same text in en and de is a hint on the de rec
   assert.deepEqual(records.map((r) => [r.locale, r.status, r.hints]), [['en', 'pass', 0], ['de', 'pass', 1]]);
   assert.equal(JSON.stringify(records).includes('Create your account'), false, 'the texts are not in results.json');
   const summary = fs.readFileSync(path.join(out, 'summary.md'), 'utf8');
-  assert.match(summary, /same-as-default\? "Create your account": the text is identical in en and de/);
+  assert.match(summary, /same-as-default\? de page: 1 text identical in en and de: "Create your account"/);
   assert.equal(summary.includes('ICE Auth'), false, 'the allow-listed brand is not reported');
   const resumed = await ui('batch', '--states', statesFile, '--out', out, '--jobs', '1', '--resume');
   assert.equal(resumed.code, 0);

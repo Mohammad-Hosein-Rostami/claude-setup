@@ -1,0 +1,15 @@
+<!doctype html><html lang="fa"><meta charset="utf-8"><title>direction context</title>
+<!-- The document is ltr (no dir on html); an rtl section holds the fields and texts to judge; an ltr island inside it is not judged. -->
+<body style="margin:0;font:16px sans-serif">
+<section dir="rtl">
+  <input id="sectionmail" type="email" value="user@example.com" style="display:block;width:240px;height:40px">
+  <input id="sectionphone" type="tel" dir="ltr" placeholder="شماره موبایل" style="display:block;width:240px;height:40px">
+  <p id="sectiontext">Back to login</p>
+  <div dir="ltr">
+    <input id="islandmail" type="email" dir="rtl" value="user@example.com" style="display:block;width:240px;height:40px">
+    <input id="islandphone" type="tel" placeholder="شماره موبایل" style="display:block;width:240px;height:40px">
+    <p id="islandtext">Open island text</p>
+  </div>
+</section>
+<p id="outside">Outside the rtl section</p>
+</body></html>

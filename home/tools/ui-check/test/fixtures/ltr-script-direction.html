@@ -1,0 +1,9 @@
+<!doctype html><html dir="rtl" lang="fa"><meta charset="utf-8"><title>script sets the direction</title>
+<!-- A correct page: the direction of the field is set from an input listener, so an empty field computes rtl and only a typed value is left to right. The probe fires no events. -->
+<body style="margin:0;font:16px sans-serif">
+<input id="mail" type="email" placeholder="ایمیل" style="display:block;width:240px;height:40px">
+<input id="phone" type="tel" placeholder="شماره موبایل" style="display:block;width:240px;height:40px;direction:inherit">
+<script>
+  for (const el of document.querySelectorAll('input')) el.addEventListener('input', () => { el.dir = el.value ? 'ltr' : ''; });
+</script>
+</body></html>

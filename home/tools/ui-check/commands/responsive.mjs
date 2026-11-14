@@ -46,14 +46,14 @@ function parseWidths(text) {
 export async function auditWidth(browser, target, width, outDir) {
   const page = await openPage(browser, { ...target, width });
   const audit = { minTarget: RESPONSIVE.minTarget, minText: RESPONSIVE.minText, smallViewport: RESPONSIVE.smallViewport, max: RESPONSIVE.maxFindingsPerCheck };
-  const { findings: layout, docDirection, fields, texts, blocks, inlineTargets } = await page.evaluate(auditInPage, audit);
-  const placeholders = bidiPlaceholderFindings({ docDirection, fields }, audit.max);
-  const findings = [...layout, ...bidiFieldFindings({ docDirection, fields }, audit.max), ...placeholders.findings];
+  const { findings: layout, fields, texts, attributeTexts, blocks, inlineTargets } = await page.evaluate(auditInPage, audit);
+  const placeholders = bidiPlaceholderFindings({ fields }, audit.max);
+  const findings = [...layout, ...bidiFieldFindings({ fields }, audit.max), ...placeholders.findings];
   const hints = [
-    ...placeholders.hints, ...ltrRunInRtlHints({ texts }, audit.max), ...untranslatedHints({ docDirection, texts }, target.sameInAllLocales, audit.max),
     ...targetSizeHints({ targets: inlineTargets }, audit.minTarget, audit.max),
     ...rawI18nKeyFindings({ texts }, audit.max), ...rtlPhysicalAlignFindings({ blocks }, audit.max),
-  ];
+    ...placeholders.hints, ...ltrRunInRtlHints({ texts }, audit.max), ...untranslatedHints({ texts: [...texts, ...attributeTexts] }, target.sameInAllLocales),
+  ]; // the older, reliable hints first: report.md shows only the first rows of the hints section
   if (target.saveTexts) writeComparableTexts(outDir, width, texts);
   await page.screenshot({ path: path.join(outDir, `w${width}.png`), fullPage: true, animations: 'disabled', caret: 'hide' });
   // Last, because pressing Tab can fire the page's focus handlers.

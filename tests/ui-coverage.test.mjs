@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { checkMatrix } from '../home/tools/ui-coverage/lib/check.mjs';
 import { expandMatrix } from '../home/tools/ui-coverage/lib/cells.mjs';
 import { formatReport } from '../home/tools/ui-coverage/lib/report.mjs';
+import { defaultStatesFor } from '../home/tools/ui-coverage/lib/states.mjs';
 
 const TEXT_FIELD_STATES = ['empty', 'focus', 'filled', 'error', 'success', 'disabled'];
 const REASON = 'not part of this design file';
@@ -319,4 +320,13 @@ test('formatReport prints counts per status first, then each problem', () => {
   assert.match(text, /problems \(1 in 1 group\)/);
   assert.match(text, /fail: login phone:focus en @320/);
   assert.match(formatReport(checkMatrix(passingMatrix())), /^result: PASS\ncells: 32/);
+});
+
+// The filled state is what makes ui-check's empty-field probe strict: an empty field that computes rtl is only a hint (`bidi-field?`),
+// a field that really holds a value and computes rtl fails. Every text-like control must therefore list `filled` (or drop it with a reason).
+test('text-like control classes require the filled state, and a text field that leaves it out is a problem', () => {
+  for (const name of ['text field', 'textfield', 'input', 'text input']) assert.ok(defaultStatesFor(name).includes('filled'), name);
+  const result = checkMatrix(passingMatrix((m) => { m.surfaces[0].controls[0].states = TEXT_FIELD_STATES.filter((state) => state !== 'filled'); }));
+  assert.ok(result.problems.length > 0, 'a text field without a filled state is not done');
+  assert.match(result.problems.map((p) => p.message).join('\n'), /filled/);
 });

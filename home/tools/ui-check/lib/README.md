@@ -4,7 +4,7 @@
 - `audit.mjs` - in-page responsive audit (serialised into the browser by Playwright).
 - `batch-records.mjs` - `batch` result records ({surface, state, locale, width, status, evidence, findings}), results.json, summary.md and checkpoint writers, prior-record reader for `--resume`.
 - `batch-schedule.mjs` - `batch` scheduling: `--jobs`, parallel/serial split, worker pool, progress line, `--resume` decision.
-- `bidi.mjs` - the pure `bidi-field` (filled state), `bidi-placeholder` and `bidi-placeholder?` decisions for fields in an rtl document.
+- `bidi.mjs` - the pure `bidi-field` (filled state), `bidi-placeholder` and `bidi-placeholder?` decisions for fields in an rtl context (the containing element, not only `<html>`).
 - `browser.mjs` - open deterministic pages (CPU raster and explicit autofocus by default; opt-in `bypassCSP`, `steps`, locale, colour scheme, storage, cookies, expected direction).
 - `cache.mjs` - locate and read the per-node Figma cache (baseline.png, spec.json, meta.json).
 - `click-cover.mjs` - explains a timed-out click: what covers the target, label hint for a hidden input.

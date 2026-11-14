@@ -105,8 +105,8 @@ test('expectDir passes on a match and fails with a clear error on a mismatch', a
   await assert.rejects(openPage(stubBrowser([], 'ltr'), { ...view, expectDir: 'rtl' }), usage(/--expect-dir rtl.*computed direction is ltr/));
 });
 
-const tel = { element: 'input#phone', type: 'tel', inputmode: '', autocomplete: '', direction: 'rtl', visible: true };
-const finding = (facts, docDirection = 'rtl') => bidiFieldFindings({ docDirection, fields: facts });
+const tel = { element: 'input#phone', type: 'tel', inputmode: '', autocomplete: '', direction: 'rtl', contextDirection: 'rtl', probed: false, visible: true };
+const finding = (facts) => bidiFieldFindings({ fields: facts });
 
 test('bidi-field: an rtl document with an rtl tel input is one finding that names the selector and the fix', () => {
   const [one, ...rest] = finding([tel]);
@@ -123,9 +123,10 @@ test('bidi-field: type, inputmode and autocomplete each trigger it', () => {
   }
 });
 
-test('bidi-field: ltr field, ltr document, hidden or invisible input, and plain text give no finding', () => {
+test('bidi-field: ltr field, ltr context, a field with no value to judge, hidden or invisible input, and plain text give no finding', () => {
   assert.deepEqual(finding([{ ...tel, direction: 'ltr' }]), []);
-  assert.deepEqual(finding([tel], 'ltr'), []);
+  assert.deepEqual(finding([{ ...tel, contextDirection: 'ltr' }]), []);
+  assert.deepEqual(finding([{ ...tel, direction: null }]), []);
   assert.deepEqual(finding([{ ...tel, type: 'hidden' }]), []);
   assert.deepEqual(finding([{ ...tel, visible: false }]), []);
   assert.deepEqual(finding([{ ...tel, type: 'text' }]), []);
@@ -133,7 +134,7 @@ test('bidi-field: ltr field, ltr document, hidden or invisible input, and plain 
 
 test('bidi-field: the number of findings is capped', () => {
   const many = Array.from({ length: 5 }, (_, i) => ({ ...tel, element: `input#f${i}` }));
-  assert.equal(bidiFieldFindings({ docDirection: 'rtl', fields: many }, 2).length, 2);
+  assert.equal(bidiFieldFindings({ fields: many }, 2).length, 2);
 });
 
 /** Run a serialised init script against fake page globals; `env` persists across calls like a tab's storage does across a reload. */
@@ -175,7 +176,7 @@ test('the init script ignores another origin', async () => {
   assert.equal(env.localStorage.getItem('a'), null);
 });
 
-const textField = { element: 'input#f', type: 'text', inputmode: '', autocomplete: '', direction: 'rtl', visible: true, name: '', id: '', ariaLabel: '' };
+const textField = { element: 'input#f', type: 'text', inputmode: '', autocomplete: '', direction: 'rtl', contextDirection: 'rtl', probed: false, visible: true, name: '', id: '', ariaLabel: '' };
 
 test('bidi-field?: a text field named like a phone, code or email in an rtl document is a hint, not a failure', () => {
   for (const patch of [{ name: 'phone_number' }, { id: 'otp' }, { ariaLabel: 'Email address' }, { name: 'IBAN' }, { id: 'cardNo' }, { type: '' }]) {
@@ -189,7 +190,7 @@ test('bidi-field?: a text field named like a phone, code or email in an rtl docu
 test('bidi-field?: no hint for a plain name, an ltr field or document, a non-text type; a strong hit is one bidi-field, not also a hint', () => {
   assert.deepEqual(finding([{ ...textField, name: 'username' }]), []);
   assert.deepEqual(finding([{ ...textField, name: 'phone', direction: 'ltr' }]), []);
-  assert.deepEqual(finding([{ ...textField, name: 'phone' }], 'ltr'), []);
+  assert.deepEqual(finding([{ ...textField, name: 'phone', contextDirection: 'ltr' }]), []);
   assert.deepEqual(finding([{ ...textField, name: 'phone', type: 'password' }]), []);
   assert.deepEqual(finding([{ ...textField, name: 'phone', type: 'email' }]).map((f) => f.check), ['bidi-field']);
   assert.equal(isHint({ check: 'bidi-field' }), false);
@@ -198,7 +199,7 @@ test('bidi-field?: no hint for a plain name, an ltr field or document, a non-tex
 function auditStub(fields) {
   const page = {
     goto: async () => null, waitForLoadState: async () => {}, waitForTimeout: async () => {}, addStyleTag: async () => {}, waitForFunction: async () => {},
-    evaluate: async (_fn, arg) => (arg?.mode === 'read' ? 'end' : { findings: [], docDirection: 'rtl', fields, texts: [], blocks: [], inlineTargets: [] }),
+    evaluate: async (_fn, arg) => (arg?.mode === 'read' ? 'end' : { findings: [], fields, texts: [], attributeTexts: [], blocks: [], inlineTargets: [] }),
     keyboard: { press: async () => {} }, screenshot: async () => {}, context: () => ({ close: async () => {} }),
   };
   return { newContext: async () => ({ newPage: async () => page }) };

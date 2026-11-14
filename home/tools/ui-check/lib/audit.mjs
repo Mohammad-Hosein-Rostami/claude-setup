@@ -1,30 +1,36 @@
 // Purpose: in-page responsive audit (serialised into the browser by Playwright).
 // Exports: auditInPage. It also gathers plain facts (visible inputs, text nodes, text blocks, small inline interactive elements) that lib/bidi.mjs,
-// lib/rendered-checks.mjs and lib/translation-hints.mjs turn into findings. Empty fields are probed at the very end (a value is set, the computed
-// direction read, the field put back with the native setter: no input/change event, no framework setter, selection stays 0,0, and the `selectionchange`
-// the browser queues is swallowed for a moment). Invariant: must stay self-contained - no imports or closure variables, which is why
-// it is one function (C3 exception: Playwright serialises it whole).
+// lib/rendered-checks.mjs and lib/translation-hints.mjs turn into findings. Empty text-like fields (the PROBE_TYPES allow-list; every other type is
+// never touched) are probed at the very end: a value is set, the computed direction read, the field put back with the native setter (no input/change
+// event, no framework setter, selection stays 0,0, and the `selectionchange` the browser queues is swallowed for a moment). Invariant: must stay
+// self-contained - no imports or closure variables, which is why it is one function (C3 exception: Playwright serialises it whole).
 
 /**
  * Runs inside the page. Returns layout-invariant violations for the current viewport.
  * @param {{minTarget: number, minText: number, smallViewport: number, max: number}} cfg
  * @returns {{scrollWidth: number, clientWidth: number, findings: {check: string, element: string, detail: string}[],
- *   docDirection: string, fields: {element: string, type: string, inputmode: string, autocomplete: string, name: string, id: string, ariaLabel: string, direction: string|null, visible: boolean,
- *   placeholder: string, placeholderDirection: string, placeholderAlign: string}[] (direction = while the field holds a value; null when no value could be probed),
- *   texts: {element: string, text: string, visible: boolean, inCode: boolean, direction: string, isolated: boolean, keepLatin: boolean}[], blocks: {element: string, tag: string, text: string, textAlign: string, direction: string, visible: boolean, dirAuto: boolean}[],
+ *   fields: {element: string, type: string, inputmode: string, autocomplete: string, name: string, id: string, ariaLabel: string, direction: string|null, probed: boolean,
+ *   contextDirection: string, visible: boolean, placeholder: string, placeholderDirection: string, placeholderAlign: string}[] (direction = while the field holds a value:
+ *   its own value or the probe value; null when the field is not text-like or no value could be probed; contextDirection = computed direction of the element that contains the field),
+ *   texts: {element: string, text: string, visible: boolean, inCode: boolean, direction: string, isolated: boolean, keepLatin: boolean}[],
+ *   attributeTexts: {element: string, text: string, visible: boolean, direction: string, keepLatin: boolean}[] (placeholder shown, aria-label, title, alt, value of a submit/button input; direction = of the containing element), blocks: {element: string, tag: string, text: string, textAlign: string, direction: string, visible: boolean, dirAuto: boolean}[],
  *   inlineTargets: {element: string, width: number, height: number, siblingText: boolean}[]}}
  */
 export function auditInPage(cfg) {
   const MAX_TEXT_LENGTH = 200; // a raw key is short; longer text cannot match, so it is cut to keep the facts small
   const MAX_TEXTS_PER_ELEMENT = 20;
   const PROBE_VALUE = '1'; // any non-empty value: a field's filled state only depends on the value not being empty
-  const PROBE_TYPES = new Set(['', 'text', 'search', 'tel', 'url', 'email', 'password', 'number']); // types that keep a script-set value (a date field would drop '1')
+  const PROBE_TYPES = new Set(['text', 'search', 'tel', 'url', 'email', 'password', 'number', 'textarea']); // text-like `el.type` values only (allow-list): a date field drops '1', a file field throws
   const SELECTION_GUARD_MS = 100; // the browser queues one `selectionchange` per probed field; they arrive within a few ms, 20 ms caught all five in the measured case
   const ISOLATING_BIDI = /^(isolate|plaintext|embed)/;
+  const KEEP_LATIN = '[dir=ltr],code,pre,kbd,samp,bdi'; // text in these stays as written in every language
+  const BUTTON_INPUTS = new Set(['submit', 'button', 'reset']); // their `value` attribute is the button's label
+  const documentLanguage = (document.documentElement.getAttribute('lang') ?? '').trim().toLowerCase().split('-')[0];
   const findings = [];
   const fields = [];
   const probes = [];
   const texts = [];
+  const attributeTexts = [];
   const blocks = [];
   const inlineTargets = [];
   const counts = {};
@@ -71,20 +77,39 @@ export function auditInPage(cfg) {
     }
     return false;
   };
-  const keepsLatin = (el) => el.translate === false || Boolean(el.closest('[dir=ltr],code,pre,kbd,samp,textarea'));
+  // An element inside `lang="en"` on a page in another language is written in that language on purpose.
+  const otherLanguage = (el) => {
+    const own = (el.closest('[lang]:not([lang=""])')?.getAttribute('lang') ?? '').trim().toLowerCase().split('-')[0];
+    return own !== '' && own !== documentLanguage;
+  };
+  const keepsLatin = (el) => el.translate === false || otherLanguage(el) || Boolean(el.closest(KEEP_LATIN));
+  const containerOf = (el) => el.parentElement ?? el.getRootNode().host ?? document.documentElement;
+  // Words the user sees or hears that are not text nodes. The direction is the one of the containing element: a tel field is ltr by the browser style, its placeholder is not.
+  const gatherAttributeTexts = (el) => {
+    const type = (el.getAttribute('type') ?? '').toLowerCase();
+    const found = [el.getAttribute('aria-label'), el.getAttribute('title')];
+    if (el.matches('img,area,input[type=image]')) found.push(el.getAttribute('alt'));
+    if (el.matches('input') && BUTTON_INPUTS.has(type)) found.push(el.getAttribute('value'));
+    if (el.matches('input,textarea') && el.matches(':placeholder-shown')) found.push(el.getAttribute('placeholder'));
+    const wanted = found.filter((text) => text?.trim());
+    if (wanted.length === 0) return;
+    const keepLatin = el.translate === false || otherLanguage(el) || Boolean(el.parentElement?.closest(KEEP_LATIN));
+    const base = { element: label(el), visible: !collapsedByAncestor(el), direction: getComputedStyle(containerOf(el)).direction, keepLatin };
+    for (const text of wanted) attributeTexts.push({ ...base, text: text.trim().slice(0, MAX_TEXT_LENGTH) });
+  };
   const fieldFacts = (el, s) => {
     const placeholderStyle = getComputedStyle(el, '::placeholder');
     const emptyWithPlaceholder = el.matches(':placeholder-shown');
+    const textLike = PROBE_TYPES.has(el.type);
+    const probed = textLike && el.value === '';
     const fact = {
       element: label(el), type: el.getAttribute('type') ?? '', inputmode: el.getAttribute('inputmode') ?? '', autocomplete: el.getAttribute('autocomplete') ?? '', name: el.getAttribute('name') ?? '', id: el.id,
-      ariaLabel: el.getAttribute('aria-label') ?? '', direction: s.direction, visible: true,
+      ariaLabel: el.getAttribute('aria-label') ?? '', direction: textLike && !probed ? s.direction : null, probed, // null until the probe at the end of the audit has run, or for ever on a field that is not text-like
+      contextDirection: getComputedStyle(containerOf(el)).direction, visible: true,
       placeholder: emptyWithPlaceholder ? (el.getAttribute('placeholder') ?? '').slice(0, MAX_TEXT_LENGTH) : '',
       placeholderDirection: placeholderStyle.direction || s.direction, placeholderAlign: placeholderStyle.textAlign,
     };
-    if (el.value === '' && PROBE_TYPES.has((el.getAttribute('type') ?? '').toLowerCase())) {
-      fact.direction = null; // set by the probe at the end of the audit
-      probes.push({ el, fact });
-    }
+    if (probed) probes.push({ el, fact });
     fields.push(fact);
   };
   const interactive = 'a[href],button,input:not([type=hidden]),select,textarea,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=switch],[role=radio]';
@@ -96,6 +121,7 @@ export function auditInPage(cfg) {
     const s = getComputedStyle(el);
     if (!shown(el, r, s)) continue;
     if (el.matches('input,textarea')) fieldFacts(el, s);
+    gatherAttributeTexts(el);
     if ((r.right > vw + 1 || r.left < -1) && s.position !== 'fixed' && !clippedByAncestor(el)) {
       add('offscreen', el, `x ${Math.round(r.left)}..${Math.round(r.right)} outside 0..${vw}`);
     }
@@ -103,7 +129,7 @@ export function auditInPage(cfg) {
       const collapsed = collapsedByAncestor(el);
       const inCode = Boolean(el.closest('code,pre,kbd,samp,select,option'));
       const bidi = { direction: s.direction, isolated: s.direction === 'rtl' && isolatedByAncestor(el), keepLatin: keepsLatin(el) };
-      for (const text of ownTexts(el).slice(0, MAX_TEXTS_PER_ELEMENT)) texts.push({ element: label(el), text: text.slice(0, MAX_TEXT_LENGTH), visible: !collapsed, inCode, ...bidi });
+      if (el.tagName !== 'TEXTAREA') for (const text of ownTexts(el).slice(0, MAX_TEXTS_PER_ELEMENT)) texts.push({ element: label(el), text: text.slice(0, MAX_TEXT_LENGTH), visible: !collapsed, inCode, ...bidi });
       if (s.display !== 'inline') {
         const dirAuto = el.closest('[dir]')?.getAttribute('dir') === 'auto';
         blocks.push({ element: label(el), tag: el.tagName.toLowerCase(), text: ownTexts(el).join(' ').slice(0, MAX_TEXT_LENGTH), textAlign: s.textAlign, direction: s.direction, visible: !collapsed, dirAuto });
@@ -144,10 +170,15 @@ export function auditInPage(cfg) {
     setTimeout(() => window.removeEventListener('selectionchange', swallow, true), SELECTION_GUARD_MS);
     for (const { el, fact } of probes) {
       const setValue = Object.getOwnPropertyDescriptor(el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set; // not the instance setter a framework may wrap
-      setValue.call(el, PROBE_VALUE);
-      fact.direction = el.value === PROBE_VALUE ? getComputedStyle(el).direction : null;
-      setValue.call(el, '');
+      try {
+        setValue.call(el, PROBE_VALUE);
+        fact.direction = el.value === PROBE_VALUE ? getComputedStyle(el).direction : null;
+      } catch {
+        fact.direction = null; // this field cannot take a value: it is not judged, and the other fields still are
+      } finally {
+        setValue.call(el, '');
+      }
     }
   }
-  return { scrollWidth: root.scrollWidth, clientWidth: vw, findings, docDirection: getComputedStyle(root).direction, fields, texts, blocks, inlineTargets };
+  return { scrollWidth: root.scrollWidth, clientWidth: vw, findings, fields, texts, attributeTexts, blocks, inlineTargets };
 }
