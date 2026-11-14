@@ -5,7 +5,11 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parse } from '../lib/args.mjs';
 import { applyAutofocus, loadChromium, launch, openPage, RENDER_ARGS } from '../lib/browser.mjs';
+import { options as columnsOptions } from '../commands/columns.mjs';
+import { options as compareOptions, pageOptions } from '../commands/compare.mjs';
+import { options as responsiveOptions } from '../commands/responsive.mjs';
 
 const project = process.env.UI_CHECK_PROJECT;
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -32,8 +36,13 @@ function runInFakeDocument(fakeDocument) {
   return applyAutofocus(page);
 }
 
-function fakeField(log) {
-  return { focus: (options) => log.push(options) };
+/** Fake document whose activeElement follows focus() calls; `autofocusField` is what `[autofocus]` finds. */
+function fakeDocument({ active, autofocusField }) {
+  const doc = { body: {}, activeElement: undefined, focusOptions: [] };
+  doc.activeElement = active ?? doc.body;
+  doc.querySelector = (selector) => (selector === '[autofocus]' ? autofocusField : null);
+  if (autofocusField) autofocusField.focus = (options) => { doc.activeElement = autofocusField; doc.focusOptions.push(options); };
+  return doc;
 }
 
 test('launch passes the software-raster args, so anti-aliased edges are identical between runs', async () => {
@@ -45,18 +54,25 @@ test('launch passes the software-raster args, so anti-aliased edges are identica
 });
 
 test('applyAutofocus focuses the [autofocus] field when nothing holds focus', async () => {
-  const log = [];
-  const body = {};
-  await runInFakeDocument({ body, activeElement: body, querySelector: (selector) => (selector === '[autofocus]' ? fakeField(log) : null) });
-  assert.deepEqual(log, [{ preventScroll: true }]);
+  const field = {};
+  const doc = fakeDocument({ autofocusField: field });
+  await runInFakeDocument(doc);
+  assert.equal(doc.activeElement, field);
+  assert.deepEqual(doc.focusOptions, [{ preventScroll: true }]);
 });
 
-test('applyAutofocus keeps a field the page focused itself and tolerates a page without autofocus', async () => {
-  const log = [];
-  const body = {};
-  await runInFakeDocument({ body, activeElement: {}, querySelector: () => fakeField(log) });
-  assert.deepEqual(log, []);
-  await runInFakeDocument({ body, activeElement: body, querySelector: () => null });
+test('applyAutofocus keeps the element the page focused itself', async () => {
+  const other = {};
+  const doc = fakeDocument({ active: other, autofocusField: {} });
+  await runInFakeDocument(doc);
+  assert.equal(doc.activeElement, other);
+  assert.deepEqual(doc.focusOptions, []);
+});
+
+test('applyAutofocus leaves focus on the body when the page has no [autofocus] field', async () => {
+  const doc = fakeDocument({});
+  await runInFakeDocument(doc);
+  assert.equal(doc.activeElement, doc.body);
 });
 
 test('openPage focuses the autofocus field before the steps run', async () => {
@@ -69,6 +85,32 @@ test('openPage focuses the autofocus field before the steps run', async () => {
   const browser = { newContext: async () => ({ newPage: async () => page }) };
   await openPage(browser, { url: 'http://x', width: 10, height: 10, steps: [{ action: 'click', selector: 'b' }] });
   assert.ok(log.indexOf('evaluate') < log.indexOf('step'), log.join(','));
+});
+
+test('autofocus: false skips the focus step; the default runs it', async () => {
+  const sources = [];
+  const page = {
+    goto: async () => null, waitForLoadState: async () => {}, waitForTimeout: async () => {}, addStyleTag: async () => {},
+    waitForFunction: async () => {}, evaluate: async (fn) => { sources.push(String(fn)); },
+  };
+  const browser = { newContext: async () => ({ newPage: async () => page }) };
+  const view = { url: 'http://x', width: 10, height: 10 };
+  const focusCalls = () => sources.filter((source) => source.includes('[autofocus]')).length;
+  await openPage(browser, view);
+  assert.equal(focusCalls(), 1);
+  sources.length = 0;
+  await openPage(browser, { ...view, autofocus: false });
+  assert.equal(focusCalls(), 0);
+});
+
+test('--no-autofocus parses on compare, responsive and columns, defaults to off, and reaches openPage options', () => {
+  for (const table of [compareOptions, responsiveOptions, columnsOptions]) {
+    assert.equal(parse([], table)['no-autofocus'], false);
+    assert.equal(parse(['--no-autofocus'], table)['no-autofocus'], true);
+  }
+  const meta = { width: 10, height: 20, scale: 1 };
+  assert.equal(pageOptions({ url: 'u', 'no-autofocus': true }, meta, []).autofocus, false);
+  assert.equal(pageOptions({ url: 'u', 'no-autofocus': false }, meta, []).autofocus, true);
 });
 
 test('the launched Chromium rasterises on the CPU', { skip: !project }, async () => {

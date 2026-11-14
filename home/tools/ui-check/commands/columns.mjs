@@ -17,6 +17,7 @@ export const options = {
   table: { type: 'string' },
   width: { type: 'string', default: '1440' },
   height: { type: 'string', default: '900' },
+  'no-autofocus': { type: 'boolean', default: false },
   out: { type: 'string' },
   project: { type: 'string', default: process.cwd() },
 };
@@ -63,7 +64,8 @@ export async function run(argv) {
   fs.mkdirSync(outDir, { recursive: true });
   const browser = await launch(loadChromium(values.project));
   try {
-    const page = await openPage(browser, { url: values.url, width: toNumber(values.width, 'width', 200), height: toNumber(values.height, 'height', 200) });
+    const size = { width: toNumber(values.width, 'width', 200), height: toNumber(values.height, 'height', 200) };
+    const page = await openPage(browser, { url: values.url, ...size, autofocus: !values['no-autofocus'] });
     const rows = await page.evaluate(readRows, values.table);
     if (!rows || rows.length < 2) throw new UsageError(`table "${values.table}" not found or has fewer than 2 rows`);
     const columns = alignColumns(rows);

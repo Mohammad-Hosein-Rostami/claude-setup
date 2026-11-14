@@ -14,9 +14,9 @@ no `FIGMA_TOKEN`, unreachable URL or HTTP status >= 400).
 | Command | Flags | What it does |
 | ------- | ----- | ------------ |
 | `figma-pull` | `--file KEY --node ID [--scale 1] [--refresh]` | Needs env `FIGMA_TOKEN`. Writes `baseline.png`, `spec.json`, `meta.json` to `~/.cache/figma/<KEY>/<ID>/` (`:` in IDs becomes `-`). Skips the fetch if cached. |
-| `compare` | `--url U --root SEL --cache DIR [--map map.json] [--steps steps.json] [--bypass-csp] [--max-diff 0.5] [--out DIR]` | Viewport = frame size, DSF = scale. Element gate (box +-1px, font, line-height, letter-spacing, colour, background, radius, padding, gap) then pixel gate (odiff, threshold 0.1, anti-aliasing ignored; size mismatch is reported first and both images are padded). |
-| `responsive` | `--url U [--widths 320,...,1920] [--height 900] [--steps steps.json] [--bypass-csp] [--out DIR]` | Per width: horizontal scroll, elements outside the viewport, clipped text, tap targets < 24x24, text < 12px under 768. Screenshots `w<width>.png` stay on disk. |
-| `columns` | `--url U --table SEL [--width 1440]` | Body cells vs header cells: left delta <= 1px, width delta <= 2px. |
+| `compare` | `--url U --root SEL --cache DIR [--map map.json] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--max-diff 0.5] [--out DIR]` | Viewport = frame size, DSF = scale. Element gate (box +-1px, font, line-height, letter-spacing, colour, background, radius, padding, gap) then pixel gate (odiff, threshold 0.1, anti-aliasing ignored; size mismatch is reported first and both images are padded). |
+| `responsive` | `--url U [--widths 320,...,1920] [--height 900] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--out DIR]` | Per width: horizontal scroll, elements outside the viewport, clipped text, tap targets < 24x24, text < 12px under 768. Screenshots `w<width>.png` stay on disk. |
+| `columns` | `--url U --table SEL [--width 1440] [--no-autofocus]` | Body cells vs header cells: left delta <= 1px, width delta <= 2px. |
 
 Output (`--out`, default `<cache>/runs/<timestamp>` for compare, the OS temp dir otherwise): `report.json`,
 `report.md` (<= 40 lines), `actual.png`, `diff.png` (absent on an exact match).
@@ -48,6 +48,10 @@ gave 1-3 level edge noise between runs), and an `[autofocus]` element is focused
 (Chromium skips `autofocus` in about one load in seven, which flips the focus ring). Repeatability is part of the bar;
 tolerances and gates are unchanged. Screenshots taken before this change are not comparable with new ones: re-record
 baselines and references once.
+
+Scope: the fix targets the HTML `autofocus` attribute, which Chromium skips on some loads. React `autoFocus` focuses from
+JavaScript, emits no attribute and is unaffected (nothing to fix, nothing changes). Pass `--no-autofocus` (`compare`,
+`responsive`, `columns`) when the Figma frame shows the unfocused state: the field is then left as the page loaded it.
 
 Tolerances live in `lib/tolerances.mjs` and are documented in `standards/figma.md`.
 

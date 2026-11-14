@@ -20,6 +20,7 @@ export const options = {
   map: { type: 'string' },
   steps: { type: 'string' },
   'bypass-csp': { type: 'boolean', default: false },
+  'no-autofocus': { type: 'boolean', default: false },
   'max-diff': { type: 'string', default: String(PIXEL.maxDiffPercent) },
   out: { type: 'string' },
   project: { type: 'string', default: process.cwd() },
@@ -63,7 +64,7 @@ function summarise(pixels, elementRows, mapped) {
  * @returns {object} options for openPage
  */
 export function pageOptions(values, { width, height, scale }, steps) {
-  return { url: values.url, width: Math.ceil(width), height: Math.ceil(height), scale, steps, bypassCSP: values['bypass-csp'] };
+  return { url: values.url, width: Math.ceil(width), height: Math.ceil(height), scale, steps, bypassCSP: values['bypass-csp'], autofocus: !values['no-autofocus'] };
 }
 
 /** Run compare. @param {string[]} argv @returns {Promise<number>} exit code */

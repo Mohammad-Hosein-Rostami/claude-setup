@@ -62,12 +62,13 @@ export function applyAutofocus(page) {
 /**
  * Open a page with deterministic rendering settings and wait until it is stable.
  * @param {object} browser Playwright browser
- * @param {{url: string, width: number, height: number, scale?: number, steps?: object[], bypassCSP?: boolean}} opts viewport equals the Figma frame;
+ * @param {{url: string, width: number, height: number, scale?: number, steps?: object[], bypassCSP?: boolean, autofocus?: boolean}} opts viewport equals the Figma frame;
  *   steps (validated, see steps.mjs) run after the page settles and the autofocus field is focused, before the freeze style; bypassCSP (default false, test-only)
- *   lets the injected freeze style through a page CSP
+ *   lets the injected freeze style through a page CSP; autofocus (default true) focuses the page's `[autofocus]` field, false keeps
+ *   the unfocused state for a Figma frame that shows it
  * @returns {Promise<object>} Playwright page (its context closes with the browser)
  */
-export async function openPage(browser, { url, width, height, scale = 1, steps = [], bypassCSP = false }) {
+export async function openPage(browser, { url, width, height, scale = 1, steps = [], bypassCSP = false, autofocus = true }) {
   const context = await browser.newContext({
     viewport: { width, height },
     deviceScaleFactor: scale,
@@ -85,7 +86,7 @@ export async function openPage(browser, { url, width, height, scale = 1, steps =
     if (error.name !== 'TimeoutError') throw error; // never idle is expected for some apps; anything else is real
   }
   await page.waitForTimeout(SPA_SETTLE_MS);
-  await applyAutofocus(page);
+  if (autofocus) await applyAutofocus(page);
   if (steps.length > 0) await runSteps(page, steps);
   await page.addStyleTag({ content: FREEZE_CSS });
   await page.evaluate(() => document.fonts.ready);
