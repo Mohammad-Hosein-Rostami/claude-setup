@@ -1,5 +1,5 @@
 // Purpose: `responsive` - layout invariants at several widths; screenshots go to disk, never to the caller.
-// Exports: options, run. Invariants: exit 0 pass / 1 fail; one fresh page per width.
+// Exports: options, auditWidth, run. Invariants: exit 0 pass / 1 fail; one fresh page per width.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,7 +27,8 @@ function parseWidths(text) {
   return widths;
 }
 
-async function auditWidth(browser, target, width, outDir) {
+/** Audit one width on a fresh page; exported for tests. */
+export async function auditWidth(browser, target, width, outDir) {
   const { url, height, steps, bypassCSP } = target;
   const page = await openPage(browser, { url, width, height, steps, bypassCSP });
   const audit = { minTarget: RESPONSIVE.minTarget, minText: RESPONSIVE.minText, smallViewport: RESPONSIVE.smallViewport, max: RESPONSIVE.maxFindingsPerCheck };
@@ -43,7 +44,7 @@ export async function run(argv) {
   need(values, 'url');
   const widths = parseWidths(values.widths);
   const height = toNumber(values.height, 'height', 200);
-  const steps = values.steps ? loadSteps(values.steps) : [];
+  const steps = values.steps !== undefined ? loadSteps(values.steps) : [];
   const target = { url: values.url, height, steps, bypassCSP: values['bypass-csp'] };
   const outDir = values.out ?? path.join(os.tmpdir(), 'ui-check', 'responsive', new Date().toISOString().replace(/[:.]/g, '-'));
   fs.mkdirSync(outDir, { recursive: true });

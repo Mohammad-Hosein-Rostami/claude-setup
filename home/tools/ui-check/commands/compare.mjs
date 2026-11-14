@@ -1,5 +1,5 @@
 // Purpose: `compare` - element gate + pixel gate for one Figma frame vs the running page.
-// Exports: options, run. Invariants: viewport = frame size, DSF = scale; exit 0 pass / 1 fail; images stay on disk.
+// Exports: options, pageOptions, run. Invariants: viewport = frame size, DSF = scale; exit 0 pass / 1 fail; images stay on disk.
 import fs from 'node:fs';
 import path from 'node:path';
 import { parse, need, toNumber } from '../lib/args.mjs';
@@ -55,20 +55,30 @@ function summarise(pixels, elementRows, mapped) {
   return lines;
 }
 
+/**
+ * Build the openPage options for a compare run (kept separate so the steps/bypass wiring is testable).
+ * @param {Record<string, unknown>} values parsed flags
+ * @param {{width: number, height: number, scale: number}} meta cache meta.json
+ * @param {object[]} steps validated steps
+ * @returns {object} options for openPage
+ */
+export function pageOptions(values, { width, height, scale }, steps) {
+  return { url: values.url, width: Math.ceil(width), height: Math.ceil(height), scale, steps, bypassCSP: values['bypass-csp'] };
+}
+
 /** Run compare. @param {string[]} argv @returns {Promise<number>} exit code */
 export async function run(argv) {
   const values = parse(argv, options);
   need(values, 'url', 'root', 'cache');
   const maxDiff = toNumber(values['max-diff'], 'max-diff');
-  const steps = values.steps ? loadSteps(values.steps) : [];
+  const steps = values.steps !== undefined ? loadSteps(values.steps) : [];
   const cache = readCache(values.cache);
   const map = values.map ? loadMap(values.map, cache.spec) : null;
   const outDir = values.out ?? path.join(cache.dir, 'runs', new Date().toISOString().replace(/[:.]/g, '-'));
   fs.mkdirSync(outDir, { recursive: true });
   const browser = await launch(loadChromium(values.project));
   try {
-    const { scale, width, height } = cache.meta;
-    const page = await openPage(browser, { url: values.url, width: Math.ceil(width), height: Math.ceil(height), scale, steps, bypassCSP: values['bypass-csp'] });
+    const page = await openPage(browser, pageOptions(values, cache.meta, steps));
     if (await page.locator(values.root).count() === 0) throw new UsageError(`root selector matched nothing: ${values.root}`);
     const elementRows = map ? await elementCheck(page, values.root, cache.spec, map) : [];
     const actualFile = await capture(page, values.root, outDir);

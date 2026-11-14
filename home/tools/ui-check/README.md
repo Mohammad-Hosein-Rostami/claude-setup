@@ -22,6 +22,7 @@ Output (`--out`, default `<cache>/runs/<timestamp>` for compare, the OS temp dir
 `report.md` (<= 40 lines), `actual.png`, `diff.png` (absent on an exact match).
 
 `map.json` maps Figma node ids from `spec.json` to CSS selectors: `{"1:2": "[data-testid=title]"}`.
+
 ## Opt-in flags (`compare`, `responsive`)
 
 - `--bypass-csp`: Playwright `bypassCSP` for the run, so a page CSP does not block the injected freeze style (without it
@@ -38,7 +39,7 @@ Output (`--out`, default `<cache>/runs/<timestamp>` for compare, the OS temp dir
   ```
 
   Actions: `fill`/`select` (`selector`, `value`), `press` (`selector`, `key`), `click`/`check`/`uncheck`/`focus`/`hover`/`waitFor`
-  (`selector`), `blur` (no fields; blurs the active element), `wait` (`ms` >= 0). Each step times out after 5 s.
+  (`selector`), `blur` (no fields; blurs the active element), `wait` (`ms` >= 0). Each step times out after 5 s; `wait` is capped at 30000 ms; unknown fields are rejected. A step does not auto-wait for its element to exist (exactly one match is required at once), so put `waitFor` before it when the element renders late. `waitFor` needs a visible element (or an attribute on one, e.g. `html[data-ready]`): a zero-size marker times out.
 
 Tolerances live in `lib/tolerances.mjs` and are documented in `standards/figma.md`.
 

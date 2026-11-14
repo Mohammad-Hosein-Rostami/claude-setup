@@ -2,11 +2,13 @@
 // the freeze style and the capture, so a state (hover, error, filled form) can be measured.
 // Exports: validateSteps, loadSteps, runSteps. Invariants: the steps file is validated against a fixed
 // action table (no code or string is ever evaluated); an unknown action, bad field type, or a selector that does not
-// match exactly one element is a UsageError (exit 2) naming the step number. Steps never change tolerances or gates.
+// match exactly one element, a Playwright failure (timeout, bad key ...) or an unknown field is a UsageError (exit 2)
+// naming the step number and action. Steps never change tolerances or gates.
 import fs from 'node:fs';
 import { UsageError } from './errors.mjs';
 
 const STEP_TIMEOUT_MS = 5000;
+const MAX_WAIT_MS = 30000; // a typo like 1e9 must not hang the run
 /** action -> required fields (name -> type) besides "action". */
 const ACTION_FIELDS = {
   fill: { selector: 'string', value: 'string' }, select: { selector: 'string', value: 'string' }, press: { selector: 'string', key: 'string' },
@@ -20,11 +22,13 @@ function validateStep(step, i) {
   const label = `step ${i + 1}`;
   if (step === null || typeof step !== 'object' || Array.isArray(step)) throw new UsageError(`${label}: must be an object`);
   if (typeof step.action !== 'string' || !Object.hasOwn(ACTION_FIELDS, step.action)) throw new UsageError(`${label}: unknown action ${JSON.stringify(step.action)}`);
+  const unknown = Object.keys(step).filter((k) => k !== 'action' && !Object.hasOwn(ACTION_FIELDS[step.action], k));
+  if (unknown.length > 0) throw new UsageError(`${label} (${step.action}): unknown field(s) ${unknown.map((k) => `"${k}"`).join(', ')}`);
   for (const [field, type] of Object.entries(ACTION_FIELDS[step.action])) {
     if (step[field] === undefined) throw new UsageError(`${label} (${step.action}): missing field "${field}"`);
     if (typeof step[field] !== type) throw new UsageError(`${label} (${step.action}): "${field}" must be a ${type}`);
   }
-  if (step.action === 'wait' && !(Number.isFinite(step.ms) && step.ms >= 0)) throw new UsageError(`${label} (wait): "ms" must be a number >= 0`);
+  if (step.action === 'wait' && !(Number.isFinite(step.ms) && step.ms >= 0 && step.ms <= MAX_WAIT_MS)) throw new UsageError(`${label} (wait): "ms" must be a number from 0 to ${MAX_WAIT_MS}`);
 }
 
 /**
@@ -72,6 +76,14 @@ async function waitForTarget(page, step, i) {
 
 async function runElementStep(page, step, i) {
   const el = await targetOf(page, step, i);
+  try {
+    await dispatchStep(el, step);
+  } catch (error) {
+    throw new UsageError(`step ${i + 1} (${step.action}): ${error.message.split('\n')[0]}`);
+  }
+}
+
+async function dispatchStep(el, step) {
   const opt = { timeout: STEP_TIMEOUT_MS };
   if (step.action === 'select') await el.selectOption(step.value, opt);
   else if (step.action === 'press') await el.press(step.key, opt);
@@ -83,7 +95,7 @@ async function runElementStep(page, step, i) {
  * Run validated steps in order on a page.
  * @param {object} page Playwright page
  * @param {object[]} steps output of validateSteps
- * @throws {UsageError} when a selector count is not exactly 1 or a wait times out
+ * @throws {UsageError} when a selector count is not exactly 1, a wait times out, or Playwright fails the action (message names the step)
  */
 export async function runSteps(page, steps) {
   for (const [i, step] of steps.entries()) {
