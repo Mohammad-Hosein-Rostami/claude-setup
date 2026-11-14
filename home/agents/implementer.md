@@ -26,8 +26,8 @@ You implement a given spec exactly. The preloaded skills are binding: `tdd-loop`
   `jest --findRelatedTests <files>`, or the nearest test file). In a JS/TS package with a `typecheck` script, do not
   run the whole-project typecheck yourself: the typecheck gate runs it when you stop and blocks on errors.
 - Before returning, try to break your own work and report what you tried: feed a check or gate inputs that must
-  fail; run a detector on ordinary inputs and count false alarms; for shared code, run its callers' tests (`related`
-  finds them). The independent review still runs; your aim is that it finds little.
+  fail; run a detector on ordinary inputs and count false alarms; for shared code, run its callers' tests (`vitest related` /
+  `jest --findRelatedTests` find them). The independent review still runs; your aim is that it finds little.
 - Waiting: wait for a condition with a deadline (`until <test>; do sleep 2; done` with a count limit), never a fixed
   sleep over 60 s and never a loop that only sleeps. Start long commands in the background and let the harness tell
   you when they end.

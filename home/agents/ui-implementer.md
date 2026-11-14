@@ -34,8 +34,8 @@ You implement a given UI spec exactly. The preloaded skills are binding, not bac
 - Before returning, run the `ui-quality-pass` checklist on what you changed. Run the verification the spec or the
   skills require, plus the self-test below; a check you could not run is reported as "not run".
 - Then, before returning, try to break your own work and report what you tried: feed a check or gate inputs that must
-  fail; run a detector on ordinary inputs and count false alarms; for shared code, run its callers' tests (`related`
-  finds them). The independent review still runs; your aim is that it finds little.
+  fail; run a detector on ordinary inputs and count false alarms; for shared code, run its callers' tests (`vitest related` /
+  `jest --findRelatedTests` find them). The independent review still runs; your aim is that it finds little.
 - Tests in the loop: only those related to changed files (`vitest related --run <files>`,
   `jest --findRelatedTests <files>`, or the nearest test file). In a JS/TS package with a `typecheck` script, do not
   run the whole-project typecheck yourself: the typecheck gate runs it when you stop and blocks on errors.

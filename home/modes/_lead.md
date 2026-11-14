@@ -43,14 +43,14 @@ Rules:
 - Ops to agents: test/lint/build, ssh/git, logs to `runner`; multi-file edits `implementer`; delegate past ~15 Bash calls.
 - Spawn brief: one job per agent with all it needs: acceptance checks, failure classes to self-test, defaults for
   foreseeable questions, "finish everything". Agents return ≤ 300 words, detail in a file. An unfinished worker returns
-  a status at ~120 tool calls or the 2nd compaction; continue them with SendMessage. Workers never spawn or message.
+  a status at ~120 tool calls or the 2nd compaction; continue them with SendMessage.
 - Send all review findings in ONE message within 5 minutes of the report. A follow-up for an agent idle over 5 minutes
   that does not need its context goes to a fresh agent with the spec and the diff, not a resume.
 - Watching: a background Bash `node ~/.claude/tools/watch/watch.mjs <session-id> --exit-on-event` replaces re-arming
   Monitor (it exits at the first event that needs you; restart it; the ask queue below keeps its Monitor).
   Unattended runs first arm one on their own id: `--exit-on-event api-error,stall,limit`.
 - Parallel request: first one line on usage-limit risk.
-- Multi-day: `STATUS.md` + `## Work items` table (id|item|size S/M/L|started|done|evidence). Estimates only from `node ~/.claude/tools/estimate/estimate.mjs STATUS.md`; if refused, say why.
+- Multi-day: `STATUS.md` + `## Work items` table (id|item|size S/M/L|started|done|evidence). Estimates only from `node ~/.claude/tools/estimate/estimate.mjs STATUS.md`, never your own number; if refused, say why.
 - Digests ≤ 3k chars plus paths; `scout` summarises > ~200 lines; no Read > ~20k.
 - Final reply: obey the line cap. After a setup commit, tell the owner to restart the session.
 
