@@ -7,7 +7,7 @@
 // line is masked (lib/mask.mjs) before it leaves.
 // Invariants: a bad line or a failing poll never stops the watcher: it becomes one rate-limited `WATCH_ERROR <label> <reason>`
 // line. A file that cannot be read is reported once per failure (not per poll) and sets `failed` (the CLI exits 1 in --once).
-// SESSION_END and each STALL are reported once. A gap between two polls longer than `jumpMs` (laptop sleep, suspended process)
+// SESSION_END and each STALL or IDLE are reported once. A gap between two polls longer than `jumpMs` (laptop sleep, suspended process)
 // restarts the stall timer instead of reporting a stall nobody could have acted on.
 // In follow mode the last LOOKBACK_BYTES of an existing transcript are read at start, only to learn whether a limit window is
 // already open (classify.seed): nothing older than the start is reported, a line stamped after it is (it was written before the first look).
@@ -29,6 +29,7 @@ import { createTail } from './tail.mjs';
 const MS_PER_MINUTE = 60_000;
 const DEFAULT_JUMP_MS = 2 * MS_PER_MINUTE;
 const LOOKBACK_BYTES = 4 * 1024 * 1024; // a limit window is open only while the session is idle, so its LIMIT entry is near the end
+const AGENT_GRACE_MS = 5000; // a subagent write this much after the turn end means background work was still running
 const minutes = (ms) => Math.floor(ms / MS_PER_MINUTE);
 
 /** One watched session; use createSessionWatcher. */
@@ -97,6 +98,7 @@ class SessionWatcher {
   async checkAgents() {
     const found = await this.agents.poll();
     this.noteWrite(found.mtimeMs);
+    if (found.mtimeMs !== undefined && (this.agentWrite === undefined || found.mtimeMs > this.agentWrite)) this.agentWrite = found.mtimeMs;
     for (const agent of found.agents) {
       this.record(this.label, `${this.stamp()} ${agentLine(agent)}`);
       if (agent.mismatch) this.emit(`${this.label}: MODEL MISMATCH type=${agent.type} asked=${agent.asked} ran=${agent.ran}`, EVENT_CLASS.MODEL_MISMATCH);
@@ -115,17 +117,28 @@ class SessionWatcher {
     this.emit(`${this.label}: SESSION_END pid=${this.pids[0]}`, EVENT_CLASS.SESSION_END);
   }
 
+  // True when the silence is a finished turn waiting for its owner and not work that went quiet.
+  isIdle() {
+    const endedAt = this.classifier.turnEndedAt;
+    if (endedAt === undefined || this.ended) return false;
+    return this.agentWrite === undefined || this.agentWrite <= endedAt + AGENT_GRACE_MS;
+  }
+
+  announce(verdict) {
+    if (verdict.type === 'STALL') this.emit(`${this.label}: STALL no transcript or subagent writes for ${minutes(verdict.idleMs)} min`, EVENT_CLASS.STALL);
+    else if (verdict.type === 'IDLE') this.emit(`${this.label}: IDLE turn ended ${minutes(Math.max(0, this.now() - this.classifier.turnEndedAt))} min ago, waiting for the owner`, EVENT_CLASS.IDLE);
+    else this.emit(`${this.label}: RESUMED writing again`, EVENT_CLASS.RESUMED);
+    this.record(this.label, `${this.stamp()} ${verdict.type} idle_min=${minutes(verdict.idleMs)}`);
+  }
+
   checkStall() {
     const at = this.now();
     if (this.exitMode) this.lastWrite ??= at;
     const jumped = this.lastPollAt !== undefined && at - this.lastPollAt > this.jumpMs;
     this.lastPollAt = at;
     if (jumped && !this.stall.stalled && (this.lastWrite === undefined || at > this.lastWrite)) this.lastWrite = at;
-    const verdict = this.stall.check(this.lastWrite, at);
-    if (!verdict) return;
-    if (verdict.type === 'STALL') this.emit(`${this.label}: STALL no transcript or subagent writes for ${minutes(verdict.idleMs)} min`, EVENT_CLASS.STALL);
-    else this.emit(`${this.label}: RESUMED writing again`, EVENT_CLASS.RESUMED);
-    this.record(this.label, `${this.stamp()} ${verdict.type} idle_min=${minutes(verdict.idleMs)}`);
+    const verdict = this.stall.check(this.lastWrite, at, this.isIdle());
+    if (verdict) this.announce(verdict);
   }
 
   async readTranscript() {
@@ -165,7 +178,7 @@ class SessionWatcher {
  * @param {() => number} options.now clock in epoch milliseconds
  * @param {(pid: number) => boolean} [options.isAlive] liveness check (default: signal 0)
  * @param {number} [options.jumpMs] a gap between polls above this restarts the stall timer (default 2 min)
- * @param {{ feed: (text: string) => object[] }} [options.classifier] line classifier (default: the real one; tests inject a failing one)
+ * @param {{ feed: (text: string) => object[], turnEndedAt?: number }} [options.classifier] line classifier (default: the real one; tests inject a failing one)
  * @param {(text: string, cls: string) => void} options.emit action line sink; cls is the event class (OWNER, STALL, WATCH_ERROR, ...)
  * @param {(label: string, text: string) => void} options.record verbose line sink
  * @returns {{ poll: () => Promise<void>, finish: () => void, readonly failed: boolean, readonly replies: number }}

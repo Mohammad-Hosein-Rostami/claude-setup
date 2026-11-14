@@ -1,5 +1,5 @@
 // Turns one transcript JSONL line into verbose events, in the line format of the old live-watch.sh jq filter.
-// Exports: createClassifier() -> { feed(text) -> Event[], seed(text, sinceMs) -> Event[], assistantEntries }, Event = { kind, line, owner?, promptText? }.
+// Exports: createClassifier() -> { feed(text) -> Event[], seed(text, sinceMs) -> Event[], assistantEntries, turnEndedAt }, Event = { kind, line, owner?, promptText? }.
 // Kinds: PROMPT, COMPACT, AGENT, WORKFLOW, SKILL, TOOL, USAGE, ERR, INPUT_MODE, API_ERROR, LIMIT, LIMIT_RESET.
 // API_ERROR / LIMIT: an entry with isApiErrorMessage true. Only its error class is printed (rate_limit is a LIMIT, anything else
 // an API_ERROR), never the message text. LIMIT_RESET: the first real assistant reply after a LIMIT, with the minutes it lasted.
@@ -7,6 +7,11 @@
 // seed(text, sinceMs) reads a line of the tail of a file the watcher starts on: an older line only teaches whether a limit window is open
 // (no event), a line stamped after sinceMs (written between the watcher's start and its first look) is classified like a fed one.
 // assistantEntries counts the session's own replies (not API errors, not sidechain): `--delay-sec` reads it to see the session recover.
+// turnEndedAt: when the session's last turn finished (epoch ms), or undefined while a turn may be running. The newest main-chain entry that
+// counts decides: a `system` turn_duration, or an assistant message whose stop_reason is end_turn or stop_sequence, finishes the turn; any
+// other user or assistant entry (a prompt, a tool result, a task notification, a tool_use, an API error entry, an unknown stop_reason) means
+// it is running. Sidechain, meta and compaction-summary entries, other system subtypes, attachments and unparseable lines do not count. A
+// finishing entry without a valid timestamp is not trusted (undefined). seed() tracks it too, so a watch started on an idle file knows.
 // Invariants: pure apart from the INPUT_MODE and limit-window memory (Claude Code repeats the mode every turn; only changes are events);
 // a line that is not valid JSON, or is not an object, yields nothing (a partial line is the tail's job, not ours).
 // A PROMPT event always carries a verbose line, but `owner` is false for meta, sidechain and compaction-summary entries.
@@ -20,6 +25,7 @@ const AGENT_CALL = /agent\(/g;
 const ERROR_CLASS = /^[A-Za-z0-9_.-]{1,40}$/;
 const LIMIT_ERROR_CLASS = 'rate_limit';
 const MS_PER_MINUTE = 60_000;
+const TURN_END_STOP_REASONS = new Set(['end_turn', 'stop_sequence']);
 
 // jq `//`: null, undefined and false fall back to the default.
 const orElse = (value, fallback) => (value === null || value === undefined || value === false ? fallback : value);
@@ -101,6 +107,16 @@ export function createClassifier() {
   let lastMode;
   let limitStartedAt; // timestamp of the first LIMIT of the current limit window
   let assistantEntries = 0;
+  let turnEndedAt;
+  const finishesTurn = (entry) => entry.isApiErrorMessage !== true && TURN_END_STOP_REASONS.has(entry.message?.stop_reason);
+  const trackTurn = (entry) => {
+    if (entry.isSidechain === true || entry.isMeta === true || entry.isCompactSummary === true) return;
+    const endedAt = Date.parse(entry.timestamp);
+    const stamped = Number.isFinite(endedAt) ? endedAt : undefined;
+    if (entry.type === 'system' && entry.subtype === 'turn_duration') turnEndedAt = stamped;
+    else if (entry.type === 'user') turnEndedAt = undefined;
+    else if (entry.type === 'assistant') turnEndedAt = finishesTurn(entry) ? stamped : undefined;
+  };
   const minutesSince = (stamp) => {
     const minutes = Math.floor((Date.parse(stamp) - Date.parse(limitStartedAt)) / MS_PER_MINUTE);
     return Number.isFinite(minutes) ? ` after ${minutes} min` : '';
@@ -141,13 +157,17 @@ export function createClassifier() {
   };
   return {
     get assistantEntries() { return assistantEntries; },
+    get turnEndedAt() { return turnEndedAt; },
     feed(text) {
       const entry = parse(text);
-      return entry === undefined ? [] : classify(entry);
+      if (entry === undefined) return [];
+      trackTurn(entry);
+      return classify(entry);
     },
     seed(text, sinceMs) {
       const entry = parse(text);
       if (entry === undefined) return [];
+      trackTurn(entry);
       if (Date.parse(entry.timestamp) > sinceMs) return classify(entry);
       if (entry.isSidechain === true) return [];
       if (entry.isApiErrorMessage !== true && entry.type === 'assistant') limitStartedAt = undefined;

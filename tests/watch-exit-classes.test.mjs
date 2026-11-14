@@ -36,10 +36,10 @@ async function deadPid() {
 
 test('class table: names, defaults, opt-ins and the internal tags each name wakes on', () => {
   assert.deepEqual(DEFAULT_EXIT_CLASSES, ['owner', 'error', 'limit', 'api-error', 'guard', 'stall', 'watch-error', 'session-end']);
-  assert.deepEqual(EXIT_CLASS_NAMES.slice(DEFAULT_EXIT_CLASSES.length), ['compact', 'stop-hook', 'model-mismatch', 'limit-reset']);
+  assert.deepEqual(EXIT_CLASS_NAMES.slice(DEFAULT_EXIT_CLASSES.length), ['compact', 'stop-hook', 'model-mismatch', 'limit-reset', 'idle']);
   const expected = {
     owner: 'OWNER', error: 'ERROR', limit: 'LIMIT', 'api-error': 'API_ERROR', guard: 'GUARD', stall: 'STALL', 'watch-error': 'WATCH_ERROR',
-    'session-end': 'SESSION_END', compact: 'COMPACT', 'stop-hook': 'STOP_HOOK', 'model-mismatch': 'MODEL_MISMATCH', 'limit-reset': 'LIMIT_RESET',
+    'session-end': 'SESSION_END', compact: 'COMPACT', 'stop-hook': 'STOP_HOOK', 'model-mismatch': 'MODEL_MISMATCH', 'limit-reset': 'LIMIT_RESET', idle: 'IDLE',
   };
   for (const [name, tag] of Object.entries(expected)) assert.deepEqual([...internalClasses([name])], [tag], name);
   assert.equal(EVENT_CLASS.RESUMED, 'RESUMED');

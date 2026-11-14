@@ -13,7 +13,7 @@ shell tools, so it runs on Windows, macOS and Linux. Input and output are passed
 - `wake.mjs`: decides which line wakes the caller (`--skip`, retries, `--delay-sec`).
 - `subagents.mjs`: watches the subagent transcripts of a session.
 - `guard.mjs`: picks the lines of the guard log (`~/.claude/logs/guard.jsonl`) to report.
-- `stall.mjs`: reports "nothing written for N minutes" once, then "resumed".
+- `stall.mjs`: reports "nothing written for N minutes" once (a stall, or idle when the turn had finished), then "resumed".
 - `watcher.mjs`: puts it together for one session and for the guard log.
 - `mask.mjs`: hides secret-shaped text before anything is printed or logged.
 - `errors.mjs`: prints the watcher's own errors instead of dying silently.
@@ -28,3 +28,4 @@ From the repo root:
 
 - Always print through `mask.mjs`.
 - A stall is reported once, not on every poll.
+- A quiet session that finished its turn is IDLE, not a stall; only an end the transcript clearly shows counts (see `classify.mjs`).

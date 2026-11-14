@@ -4,7 +4,9 @@
 // Each name the owner types maps to the internal classes the watcher tags its output lines with (actions.mjs gives OWNER, ERROR,
 // COMPACT, STOP_HOOK, API_ERROR, LIMIT and LIMIT_RESET; watcher.mjs adds MODEL_MISMATCH, STALL, SESSION_END and RESUMED; watch.mjs
 // adds GUARD and WATCH_ERROR). Default: owner, error, limit, api-error, guard, stall, watch-error, session-end. Opt-in: compact,
-// stop-hook, model-mismatch, limit-reset. RESUMED is not a class: it only follows a STALL, and a STALL already woke the lead.
+// stop-hook, model-mismatch, limit-reset, idle. RESUMED is not a class: it only follows a STALL or an IDLE, and those already woke the lead.
+// IDLE (opt-in `idle`): the same silence as a STALL, but the session finished its turn and waits for its owner (nothing was in flight).
+// It is not delayed: there is no recovery to wait for, the owner's next prompt is what ends it.
 // ALERT_TEXT is an alert-word line that is not a failed tool result (plain mode prints it, no class wakes on it).
 // DELAYED_CLASSES are the wake events that `--delay-sec` holds back, because the session can recover on its own.
 // Code refers to the tags through EVENT_CLASS, so a misspelt tag is an `undefined` the tests catch, not a class that never wakes.
@@ -21,6 +23,7 @@ export const EVENT_CLASS = Object.freeze({
   MODEL_MISMATCH: 'MODEL_MISMATCH',
   GUARD: 'GUARD',
   STALL: 'STALL',
+  IDLE: 'IDLE',
   RESUMED: 'RESUMED',
   SESSION_END: 'SESSION_END',
   WATCH_ERROR: 'WATCH_ERROR',
@@ -44,6 +47,7 @@ const OPT_IN_CLASSES = [
   ['stop-hook', EVENT_CLASS.STOP_HOOK],
   ['model-mismatch', EVENT_CLASS.MODEL_MISMATCH],
   ['limit-reset', EVENT_CLASS.LIMIT_RESET],
+  ['idle', EVENT_CLASS.IDLE],
 ];
 
 const CLASS_BY_NAME = new Map([...DEFAULT_CLASSES, ...OPT_IN_CLASSES]);
