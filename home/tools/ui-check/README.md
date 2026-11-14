@@ -41,12 +41,20 @@ Output (`--out`, default `<cache>/runs/<timestamp>` for compare, the OS temp dir
   Actions: `fill`/`select` (`selector`, `value`), `press` (`selector`, `key`), `click`/`check`/`uncheck`/`focus`/`hover`/`waitFor`
   (`selector`), `blur` (no fields; blurs the active element), `wait` (`ms` >= 0). Each step times out after 5 s; `wait` is capped at 30000 ms; unknown fields are rejected. A step does not auto-wait for its element to exist (exactly one match is required at once), so put `waitFor` before it when the element renders late. `waitFor` needs a visible element (or an attribute on one, e.g. `html[data-ready]`): a zero-size marker times out.
 
+## Deterministic capture (default, all commands)
+
+Chromium is launched with `--use-angle=swiftshader --disable-gpu-rasterization` (CPU tile rasterisation: the GPU path
+gave 1-3 level edge noise between runs), and an `[autofocus]` element is focused explicitly before steps and capture
+(Chromium skips `autofocus` in about one load in seven, which flips the focus ring). Repeatability is part of the bar;
+tolerances and gates are unchanged. Screenshots taken before this change are not comparable with new ones: re-record
+baselines and references once.
+
 Tolerances live in `lib/tolerances.mjs` and are documented in `standards/figma.md`.
 
 ## Tests
 
 `pnpm test` runs the unit tests. Set `UI_CHECK_PROJECT=/path/to/project-with-playwright` to also run the
-browser smoke test (fixture compare pass/fail and a 500px box at 320).
+browser smoke test (fixture compare pass/fail and a 500px box at 320) and the Chromium checks in `determinism.test.mjs`.
 
 ## Layout
 
