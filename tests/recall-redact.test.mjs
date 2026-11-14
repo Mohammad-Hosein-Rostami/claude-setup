@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { redact } from '../home/tools/recall/lib/redact.mjs';
+import { fastestMs } from './timing.mjs';
 
 const V = 'Zq8xTopSecretV4lue';
 const JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
@@ -109,8 +110,9 @@ test('redact keeps prose that only looks like the weak space forms (low false po
 });
 
 test('redact stays fast on a long token-like run', () => {
-  const started = Date.now();
-  redact('a'.repeat(200000));
-  redact(`x-${'b'.repeat(100000)}`);
-  assert.ok(Date.now() - started < 2000);
+  const fastest = fastestMs(() => {
+    redact('a'.repeat(200000));
+    redact(`x-${'b'.repeat(100000)}`);
+  });
+  assert.ok(fastest < 2000, `redact took ${fastest.toFixed(1)} ms (fastest of 3)`);
 });

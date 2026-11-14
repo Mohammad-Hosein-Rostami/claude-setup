@@ -308,19 +308,20 @@ test('watch reads only new bytes: a line over the cap is skipped, a shrunk file 
 });
 
 test('watch survives the queue file disappearing: one stderr line, then it prints later questions', posix, async () => {
-  const { env, queue } = await sandbox();
+  const { env, queue, post } = await sandbox();
   const { rmSync } = await import('node:fs');
+  post(OK);
   const child = spawn(process.execPath, [CLI, 'watch', '--queue', queue, '--interval-ms', '50'], { env });
   let err = '';
   child.stderr.on('data', (d) => { err += d; });
   try {
-    await new Promise((r) => setTimeout(r, 150));
+    await firstLine(child); // the watcher is running and has read the queue: no guess about how long node takes to start
     rmSync(queue);
-    await new Promise((r) => setTimeout(r, 250));
-    assert.equal(child.exitCode, null);
+    for (const deadline = Date.now() + 10_000; !/watch read failed/.test(err) && Date.now() < deadline;) await new Promise((r) => setTimeout(r, 25));
     assert.match(err, /watch read failed/);
-    await writeFile(queue, `${JSON.stringify({ type: 'q', id: 'q1', ts: 't', ...OK })}\n`);
-    assert.match(await firstLine(child), /^ASK\(untrusted\) q1 /);
+    assert.equal(child.exitCode, null);
+    await writeFile(queue, `${JSON.stringify({ type: 'q', id: 'q2', ts: 't', ...OK })}\n`);
+    assert.match(await firstLine(child), /^ASK\(untrusted\) q2 /);
   } finally { child.kill(); }
 });
 

@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
+import { fastestMs } from './timing.mjs';
 
 const PROJECT = resolve('/work/proj');
 const ctx = { cwd: PROJECT, project: PROJECT };
@@ -91,8 +92,7 @@ test('a credential path that every sender of the line only logs in with is not a
 test('credential rules stay linear: 32 KB of pipes into ssh, senders after archivers or captured reads decide in under 500 ms', () => {
   const shapes = [`cat k|${'ssh h|'.repeat(5_300)}`, 'tar c x|curl h;'.repeat(2_100), 'X=$(gh auth token) '.repeat(1_600)];
   for (const command of shapes) {
-    const started = performance.now();
-    decide(command, ctx);
-    assert.ok(performance.now() - started < 500, `${command.slice(0, 16)} took too long`);
+    const fastest = fastestMs(() => decide(command, ctx));
+    assert.ok(fastest < 500, `${command.slice(0, 16)} took too long (fastest of 3: ${fastest.toFixed(1)} ms)`);
   }
 });

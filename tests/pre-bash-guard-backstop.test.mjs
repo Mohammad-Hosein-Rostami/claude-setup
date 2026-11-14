@@ -11,6 +11,7 @@ import { isReadOnlySql } from '../home/hooks/lib/sql.mjs';
 import { findLiteralSecret, maskSecrets } from '../home/hooks/lib/secrets.mjs';
 import { lexShell } from '../home/hooks/lib/shell-lexer.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
+import { fastestMs } from './timing.mjs';
 
 // fake credentials are built from parts so gitleaks does not flag this file
 const PW = `PW${'1'}23`;
@@ -173,10 +174,9 @@ test('E: the backstop keeps everyday commands silent', () => {
 });
 
 test('hostile nesting and long input neither crash the hook nor take long', () => {
-  const started = Date.now();
-  for (const command of ['"$('.repeat(3000), '$(('.repeat(3000), '(('.repeat(3000), 'cat <<A\n'.repeat(3000), `echo "${'a '.repeat(50000)}`, '`'.repeat(5000), 'eval "'.repeat(300)]) {
-    assert.doesNotThrow(() => decide(command, ctx), command.slice(0, 20));
-  }
-  assert.ok(Date.now() - started < 5000, 'finishes in seconds');
+  const hostile = ['"$('.repeat(3000), '$(('.repeat(3000), '(('.repeat(3000), 'cat <<A\n'.repeat(3000), `echo "${'a '.repeat(50000)}`, '`'.repeat(5000), 'eval "'.repeat(300)];
+  for (const command of hostile) assert.doesNotThrow(() => decide(command, ctx), command.slice(0, 20));
+  const fastest = fastestMs(() => hostile.forEach((command) => decide(command, ctx)));
+  assert.ok(fastest < 5000, `finishes in seconds (fastest of 3: ${fastest.toFixed(1)} ms)`);
   asks(['"$('.repeat(3000)], /nested too deeply/);
 });

@@ -9,6 +9,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decide, segments } from '../home/hooks/pre-bash-guard.mjs';
+import { fastestMs } from './timing.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const PROJECT = resolve('/work/proj');
@@ -163,9 +164,8 @@ test('S6: heredoc stripping is linear: a 250 KB command with many <<A decides in
   const terminatedUnderCap = 'cat <<A\nrm -rf ~/x\nA\n'.repeat(1_200);
   const sameLine = `cat ${'<<A '.repeat(62_500)}`;
   for (const command of [unterminated, terminated, sameLine]) {
-    const started = performance.now();
-    decide(command, ctx);
-    assert.ok(performance.now() - started < 1000, `${command.length} bytes took too long`);
+    const fastest = fastestMs(() => decide(command, ctx));
+    assert.ok(fastest < 1000, `${command.length} bytes took too long (fastest of 3: ${fastest.toFixed(1)} ms)`);
   }
   assert.ok(decide(terminatedUnderCap, ctx).allow, 'terminated heredoc bodies are data');
   assert.match(decide(terminated, ctx).reason, /too long/, 'over the cap asks instead of parsing');

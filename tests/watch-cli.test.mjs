@@ -102,7 +102,9 @@ test('follow mode prints only events written after start, as whole lines, and ke
   const child = spawn(process.execPath, [CLI, SESSION, '--guard-log', join(home, 'none.jsonl')], { env });
   t.after(() => child.kill());
   let output = '';
+  let errors = '';
   child.stdout.on('data', (chunk) => { output += chunk; });
+  child.stderr.on('data', (chunk) => { errors += chunk; });
   // No fixed sleeps: keep appending numbered prompts (each in two halves, so a partial line is always in flight) until one
   // shows up; those written before the watcher anchored at the end of the file are legitimately skipped.
   const deadline = Date.now() + 15_000;
@@ -113,7 +115,7 @@ test('follow mode prints only events written after start, as whole lines, and ke
     await appendFile(transcript, line.slice(20));
     await new Promise((resolve) => setTimeout(resolve, 400));
   }
-  assert.match(output, /^eeeeeeee: OWNER fresh \d+\n/);
+  assert.match(output, /^eeeeeeee: OWNER fresh \d+\n/, `no event in 15 s; watcher exit=${child.exitCode} signal=${child.signalCode} stderr=${JSON.stringify(errors)}`);
   assert.ok(!output.includes('please ship it'), 'old content is not replayed');
   assert.ok(output.split('\n').every((row) => row === '' || /^eeeeeeee: OWNER fresh \d+$/.test(row)), 'only whole lines');
   assert.equal(child.exitCode, null);

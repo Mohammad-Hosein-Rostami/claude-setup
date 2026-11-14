@@ -10,6 +10,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { findLiteralSecret, maskSecrets } from '../home/hooks/lib/secrets.mjs';
+import { fastestMs } from './timing.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const PROJECT = resolve('/work/proj');
@@ -145,9 +146,8 @@ test('R4/L1: every secret pattern is linear: hostile inputs at the size limit an
     for (const shape of shapes) {
       const text = shape.repeat(Math.ceil(size / shape.length)).slice(0, size);
       for (const run of [findLiteralSecret, maskSecrets]) {
-        const started = performance.now();
-        run(text);
-        assert.ok(performance.now() - started < 500, `${run.name}(${JSON.stringify(shape)} x ${size}) took too long`);
+        const fastest = fastestMs(() => run(text));
+        assert.ok(fastest < 500, `${run.name}(${JSON.stringify(shape)} x ${size}) took too long (fastest of 3: ${fastest.toFixed(1)} ms)`);
       }
     }
   }

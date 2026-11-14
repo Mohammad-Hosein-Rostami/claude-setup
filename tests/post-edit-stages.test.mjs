@@ -2,7 +2,7 @@
 // return, deadline and process-tree kills) and runCheck's kill handle. Posix only where a fake package manager runs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { warmExec } from './warm-exec.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,6 +29,19 @@ test('stagesFor: lone or missing checks stay as single stages', () => {
   assert.deepEqual(names(stagesFor([format, typecheck], {})), [['format'], ['typecheck']]);
   assert.deepEqual(stagesFor([], {}), []);
 });
+
+const TIMED_ATTEMPTS = 3;
+
+/** Runs `job` up to 3 times, stopping at the first run faster than `underMs`; returns the fastest run in ms. A slow machine can delay one run; the code cannot beat its own speed. */
+async function fastestOfAttempts(job, underMs) {
+  let fastest = Infinity;
+  for (let attempt = 0; attempt < TIMED_ATTEMPTS && fastest >= underMs; attempt += 1) {
+    const started = Date.now();
+    await job();
+    fastest = Math.min(fastest, Date.now() - started);
+  }
+  return fastest;
+}
 
 // Fake package manager (a node script with a shebang): `fake <run> <name>` logs start/end, sleeps, then fails or not
 // per FAKE_* env. Posix only: Windows would need a .cmd shim.
@@ -100,9 +113,10 @@ test('runStages stops at a failing format without running later stages', posix, 
 test('runStages: a timeout or exhausted budget is no failure, even with a failing sibling', posix, async () => {
   const { pm, dir } = await fakeProject({ FAKE_SLEEP_MS: '5000', FAKE_FAIL: 'typecheck' });
   const lintAndTypecheck = stagesFor(ALL_CHECKS.slice(1), { lint: 'eslint' });
-  const started = Date.now();
-  assert.deepEqual(await runStages(lintAndTypecheck, { pm, cwd: dir, rel: 'src/a.ts', deadline: Date.now() + 300 }), []);
-  assert.ok(Date.now() - started < 3000, 'killed at the deadline, not after the 5 s sleep');
+  const fastest = await fastestOfAttempts(async () => {
+    assert.deepEqual(await runStages(lintAndTypecheck, { pm, cwd: dir, rel: 'src/a.ts', deadline: Date.now() + 300 }), []);
+  }, 3000);
+  assert.ok(fastest < 3000, `killed at the deadline, not after the 5 s sleep (fastest of up to 3: ${fastest.toFixed(0)} ms)`);
   assert.deepEqual(await runStages(lintAndTypecheck, { pm, cwd: dir, rel: 'src/a.ts', deadline: Date.now() - 1 }), []);
 });
 
@@ -130,13 +144,19 @@ setTimeout(() => {}, 60000);
   // 2.5 s headroom: the fake pm must start node and write the pid file before the deadline, even when the suite
   // runs test files in parallel; the return is still far below the 60 s grandchild.
   const deadlineMs = 2500;
-  const started = Date.now();
-  const out = await runStages([[{ name: 'lint', args: ['run', 'lint'] }]], { pm, cwd: dir, rel: 'src/a.ts', deadline: started + deadlineMs });
-  assert.deepEqual(out, []);
-  assert.ok(Date.now() - started < deadlineMs + 2000, 'returned at the deadline, not after the 60 s grandchild');
-  const grandchildPid = Number(await readFile(pidFile, 'utf8'));
-  await new Promise((r) => setTimeout(r, 200));
-  assert.throws(() => process.kill(grandchildPid, 0), { code: 'ESRCH' }, 'grandchild was killed with the tree');
+  // Fastest of up to 3 attempts; every attempt must also have killed its own grandchild.
+  let fastest = Infinity;
+  for (let attempt = 0; attempt < TIMED_ATTEMPTS && fastest >= deadlineMs + 2000; attempt += 1) {
+    await rm(pidFile, { force: true });
+    const started = Date.now();
+    const out = await runStages([[{ name: 'lint', args: ['run', 'lint'] }]], { pm, cwd: dir, rel: 'src/a.ts', deadline: started + deadlineMs });
+    fastest = Math.min(fastest, Date.now() - started);
+    assert.deepEqual(out, []);
+    const grandchildPid = Number(await readFile(pidFile, 'utf8'));
+    await new Promise((r) => setTimeout(r, 200));
+    assert.throws(() => process.kill(grandchildPid, 0), { code: 'ESRCH' }, 'grandchild was killed with the tree');
+  }
+  assert.ok(fastest < deadlineMs + 2000, `returned at the deadline, not after the 60 s grandchild (fastest of up to ${TIMED_ATTEMPTS}: ${fastest} ms)`);
 });
 
 // Lint is quick and fails about the edited file; the typecheck sleeps 10 s unless told otherwise.
@@ -165,10 +185,11 @@ const LINT_AND_TYPECHECK = ALL_CHECKS.slice(1);
 
 test('runStages returns lint failures at once and kills the slow typecheck', posix, async () => {
   const { pm, dir } = await lintFirstPm({ LINT_ABOUT: 'src/a.ts', TYPECHECK_MS: '10000' });
-  const started = Date.now();
-  const out = await runStages(stagesFor(LINT_AND_TYPECHECK, { lint: 'eslint' }), { pm, cwd: dir, rel: 'src/a.ts', deadline: started + 20_000 });
-  assert.deepEqual(out, ['src/a.ts:1 TS1 lint failed']);
-  assert.ok(Date.now() - started < 3000, 'did not wait for the 10 s typecheck');
+  const fastest = await fastestOfAttempts(async () => {
+    const out = await runStages(stagesFor(LINT_AND_TYPECHECK, { lint: 'eslint' }), { pm, cwd: dir, rel: 'src/a.ts', deadline: Date.now() + 20_000 });
+    assert.deepEqual(out, ['src/a.ts:1 TS1 lint failed']);
+  }, 3000);
+  assert.ok(fastest < 3000, `did not wait for the 10 s typecheck (fastest of up to 3: ${fastest.toFixed(0)} ms)`);
 });
 
 test('runStages keeps waiting for the typecheck when lint only fails about other files', posix, async () => {

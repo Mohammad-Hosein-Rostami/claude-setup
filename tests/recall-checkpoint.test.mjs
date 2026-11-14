@@ -76,15 +76,36 @@ test('the hook skips subagents, other events, small transcripts and a held lock'
   assert.equal(readFileSync(env.FAKE_CLAUDE_LOG, 'utf8'), '', 'no Haiku call was made');
 });
 
-test('end to end: the hook returns fast, the detached job calls Haiku once, stores notes and releases the lock; recall --session finds a number', async () => {
-  const { dir, env, claudeCalls, dbPath } = fakeStack();
-  const { path, session } = bigTranscript(dir, { count: 40 });
+const HOOK_BUDGET_MS = 50; // the hook only decides, takes the lock and spawns; it never waits for the Haiku job
+const HOOK_ATTEMPTS = 3;
+const jobFinished = ({ session, env }) => readCheckpoint(session, env) && !lockHeld(session, env);
+
+/** One hook call on its own fresh fake stack and transcript: how long it took, and whether the detached job was still running when it returned. */
+function callHookOnFreshStack() {
+  const stack = fakeStack();
+  const { path, session } = bigTranscript(stack.dir, { count: 40 });
   const started = performance.now();
-  const outcome = handleCheckpointHook({ hook_event_name: 'PostToolUse', session_id: session, transcript_path: path }, env);
+  const outcome = handleCheckpointHook({ hook_event_name: 'PostToolUse', session_id: session, transcript_path: path }, stack.env);
   const elapsed = performance.now() - started;
-  assert.equal(outcome, 'started');
-  assert.ok(elapsed < 50, `hook took ${elapsed.toFixed(1)} ms`);
-  assert.ok(await waitFor(() => readCheckpoint(session, env) && !lockHeld(session, env)), 'job finished');
+  const jobStillRunning = lockHeld(session, stack.env) || !readCheckpoint(session, stack.env);
+  return { ...stack, path, session, outcome, elapsed, jobStillRunning };
+}
+
+test('end to end: the hook returns fast, the detached job calls Haiku once, stores notes and releases the lock; recall --session finds a number', async () => {
+  // The 50 ms target is measured as the fastest of up to 3 independent calls: one slow sample on a loaded machine is not the hook.
+  const attempts = [];
+  while (attempts.length < HOOK_ATTEMPTS) {
+    const attempt = callHookOnFreshStack();
+    attempts.push(attempt);
+    assert.equal(attempt.outcome, 'started');
+    assert.ok(attempt.jobStillRunning, 'the hook returned before the detached job finished, so it did not wait for it');
+    if (attempt.elapsed < HOOK_BUDGET_MS) break;
+    assert.ok(await waitFor(() => jobFinished(attempt)), 'job finished'); // so its CPU use does not slow the next call
+  }
+  const fastest = Math.min(...attempts.map((attempt) => attempt.elapsed));
+  assert.ok(fastest < HOOK_BUDGET_MS, `fastest of ${attempts.length} hook calls took ${fastest.toFixed(1)} ms (${attempts.map((a) => a.elapsed.toFixed(1)).join(', ')})`);
+  const [{ env, claudeCalls, dbPath, path, session }] = attempts;
+  assert.ok(await waitFor(() => jobFinished(attempts[0])), 'job finished');
   const state = readCheckpoint(session, env);
   assert.equal(state.error, null);
   assert.equal(state.offset, statSync(path).size);
