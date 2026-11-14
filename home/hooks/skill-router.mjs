@@ -28,7 +28,7 @@ const PROMPT_ROUTES = [
   },
   {
     // Coverage-matrix words. Bare "locale" fires on backend prompts, so it needs a UI-ish partner.
-    test: /\brtl\b|\bltr\b|right[\s-]to[\s-]left|\bi18n\b|\bl10n\b|\blocali[sz]\w*|\b(every|all|each|supported|per)[\s-]locales?\b|\blocale (switch|picker|selector)\b|\b(email|mail) templates?\b|\b(all|every) (the )?(screens|forms|pages)\b|\bevery (screen|form|page)\b|راست[\s‌-]*به[\s‌-]*چپ|راست‌چین|چندزبانه|قالب ایمیل/i,
+    test: /\brtl\b|\bltr\b|right[\s-]to[\s-]left|\bi18n\b|\bl10n\b|\blocali[sz](?:e[sd]?|ing|ations?)\b|\b(every|all|each|supported|per)[\s-]locales?\b|\blocale (switch|picker|selector)\b|\b(email|mail) templates?\b|\b(all|every) (the )?(screens|forms|pages)\b|\bevery (screen|form|page)\b|راست[\s‌-]*به[\s‌-]*چپ|راست‌چین|چندزبانه|قالب ایمیل/i,
     skills: ['ui-coverage'],
   },
   {

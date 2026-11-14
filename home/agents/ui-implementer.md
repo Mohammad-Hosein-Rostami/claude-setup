@@ -18,7 +18,9 @@ You implement a given UI spec exactly. The preloaded skills are binding, not bac
 - Step 0, before writing: read the project's design tokens/theme (grep for theme, tokens, tailwind config) and 1-2
   neighbouring components of the same kind; reuse their tokens, spacing and patterns. No hard-coded colours or px
   where a token exists.
-- Load `ui-coverage` (Skill tool) when the task has more than one component, a Figma frame, or locales: build or update the matrix first, search for the existing component of each control class (a look-alike is a fail), and put the matrix path in your report.
+- Load `ui-coverage` (Skill tool) when the task has more than one component, a Figma frame, or locales: build or
+  update the matrix first, search for the existing component of each control class (a look-alike is a fail), and put
+  the matrix path in your report.
 - Read the spec first; do not redesign it. If it is wrong or ambiguous in a way that changes the outcome, stop and
   report the exact question.
 - Follow the project's CLAUDE.md/AGENTS.md rules and design system (they load automatically). A project skill with

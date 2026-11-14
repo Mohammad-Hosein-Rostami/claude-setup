@@ -3,19 +3,22 @@
 // Usage: ui-coverage.mjs expand <matrix.json> [--out <file>]
 //        ui-coverage.mjs check <matrix.json> [--results <file>]...    (repeat --results; each file is an array of
 //        `{surface,state,locale,width,status,evidence}` records, or an object with a `results` array)
+//        ui-coverage.mjs states                                         (prints the default states per control class)
 // Exit codes: 0 ok / matrix complete, 1 problems found, 2 usage or setup error (bad flag, unreadable or invalid JSON file).
 // Invariants: logic lives in lib/ (pure); this file only parses arguments, reads and writes files and prints. `check`
-// never writes. `expand` refuses to write a structurally broken matrix (exit 1, problems on stderr).
-import { readFileSync, writeFileSync } from 'node:fs';
+// never writes; it resolves relative evidence paths from the matrix file's directory. `expand` refuses to write a structurally broken matrix (exit 1, problems on stderr).
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { checkMatrix } from './lib/check.mjs';
 import { expandMatrix } from './lib/cells.mjs';
 import { formatReport } from './lib/report.mjs';
 import { validateStructure } from './lib/shape.mjs';
+import { describeStates } from './lib/states.mjs';
 
 const EXIT_PROBLEMS = 1;
 const EXIT_USAGE = 2;
 const JSON_INDENT = 2;
-const USAGE = 'usage: ui-coverage.mjs expand <matrix.json> [--out <file>] | check <matrix.json> [--results <file>]...';
+const USAGE = 'usage: ui-coverage.mjs expand <matrix.json> [--out <file>] | check <matrix.json> [--results <file>]... | states';
 
 class UsageError extends Error {}
 
@@ -73,16 +76,31 @@ function expand(argv) {
   return 0;
 }
 
+const isFile = (path) => {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false; // a missing path is the answer "no such file", not an error
+  }
+};
+
 function check(argv) {
   const { flags, positional } = parseArgs(argv, ['--results']);
-  const matrix = readJson(matrixPath(positional));
+  const path = matrixPath(positional);
+  const matrix = readJson(path);
   const records = flags['--results'].flatMap(recordsFrom);
-  const result = checkMatrix(matrix, records);
+  const result = checkMatrix(matrix, records, { baseDir: dirname(path), fileExists: isFile });
   console.log(formatReport(result));
   return result.problems.length === 0 ? 0 : EXIT_PROBLEMS;
 }
 
-const COMMANDS = { expand, check };
+function states(argv) {
+  if (argv.length > 0) throw new UsageError(USAGE);
+  console.log(describeStates().join('\n'));
+  return 0;
+}
+
+const COMMANDS = { expand, check, states };
 
 const [command, ...rest] = process.argv.slice(2);
 if (!Object.hasOwn(COMMANDS, command ?? '')) fail(USAGE);

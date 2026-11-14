@@ -21,4 +21,4 @@
 - Mirror icons that show direction (back, forward, chevron, progress, send); never mirror logos, media controls or clocks. Flip order of leading/trailing adornments (country prefix, clear button) with flex/grid, not per-locale CSS.
 - Strings grow (German, Persian run 30-40% longer than English): no fixed-width labels or buttons; wrap or truncate with a tooltip, never clip silently.
 - One font stack per script (Latin, Arabic/Persian, CJK) with a size/line-height that fits its glyph height; check digits (Latin, Arabic-Indic, Persian) in inputs and validators.
-- Verify each surface in one LTR and one RTL locale at minimum, in every state of the matrix.
+- Verify each surface in every supported locale, LTR and RTL, at every width and in every state of the matrix.

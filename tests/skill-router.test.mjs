@@ -59,7 +59,7 @@ test('i18n, RTL, locale, email-template and all-screens words route to ui-covera
   ]) {
     assert.ok(skillsForPrompt(prompt).includes('ui-coverage'), prompt);
   }
-  for (const prompt of ['set the locale of the date formatter in the API', 'run the app on localhost', 'add a REST endpoint for orders', 'send the mail from the worker queue']) {
+  for (const prompt of ['set the locale of the date formatter in the API', 'run the app on localhost', 'add a REST endpoint for orders', 'send the mail from the worker queue', 'show the locality of the store']) {
     assert.ok(!skillsForPrompt(prompt).includes('ui-coverage'), prompt);
   }
 });

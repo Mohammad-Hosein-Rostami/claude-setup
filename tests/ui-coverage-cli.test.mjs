@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +16,7 @@ const MATRIX = {
   widths: [320],
   searched: { backend: ['rg -il mjml api/ -> 0 hits'], siblings: [] },
   deliverable: { reviewUrl: 'http://localhost:4099/review', mockExcluded: 'grep -c authmock dist -> 0' },
-  surfaces: [{ id: 'home', kind: 'screen', source: 'src/home.tsx', controls: 'none: text only' }],
+  surfaces: [{ id: 'home', kind: 'screen', source: 'src/home.tsx', controls: 'none: text only, no controls here' }],
 };
 
 async function workdir(matrix = MATRIX) {
@@ -27,6 +27,11 @@ async function workdir(matrix = MATRIX) {
 }
 
 const passRecords = ['en', 'fa'].map((locale) => ({ surface: 'home', state: 'rest', locale, width: 320, status: 'pass', evidence: `out/${locale}.png` }));
+// The evidence files of passRecords, relative to the matrix directory.
+async function writeEvidence(dir) {
+  await mkdir(join(dir, 'out'), { recursive: true });
+  for (const record of passRecords) await writeFile(join(dir, record.evidence), 'x');
+}
 
 test('expand writes todo cells into the file and a second run changes nothing', async () => {
   const { file } = await workdir();
@@ -48,6 +53,7 @@ test('check exits 1 and names the todo cells; with passing results (two files) i
   assert.match(failing.stdout, /\[todo\] todo: home rest en @320/);
   assert.match(failing.stdout, /result: FAIL/);
   const [en, fa] = passRecords.map((r) => JSON.stringify([r]));
+  await writeEvidence(dir);
   await writeFile(join(dir, 'a.json'), en);
   await writeFile(join(dir, 'b.json'), JSON.stringify({ results: JSON.parse(fa) }));
   const ok = run('check', file, '--results', join(dir, 'a.json'), '--results', join(dir, 'b.json'));
@@ -59,6 +65,7 @@ test('check exits 1 and names the todo cells; with passing results (two files) i
 test('check without expand reports missing cells; a failing record exits 1', async () => {
   const { dir, file } = await workdir();
   assert.match(run('check', file).stdout, /\[missing-cell\]/);
+  await writeEvidence(dir);
   const results = join(dir, 'r.json');
   await writeFile(results, JSON.stringify([...passRecords.slice(1), { ...passRecords[0], status: 'fail' }]));
   const out = run('check', file, '--results', results);
@@ -83,4 +90,26 @@ test('expand on a structurally broken matrix exits 1 with shape problems and lea
   assert.equal(r.status, 1);
   assert.match(r.stderr, /\[shape\]/);
   assert.equal(await readFile(file, 'utf8'), before);
+});
+
+test('check fails on evidence files that do not exist and accepts them once they do (paths resolve from the matrix directory)', async () => {
+  const { dir, file } = await workdir();
+  const results = join(dir, 'r.json');
+  await writeFile(results, JSON.stringify(passRecords));
+  const missing = run('check', file, '--results', results);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stdout, /\[evidence-missing\].*out\/en\.png/);
+  await writeEvidence(dir);
+  assert.equal(run('check', file, '--results', results).status, 0);
+  // the working directory does not matter: run from another directory
+  const elsewhere = spawnSync(process.execPath, [CLI, 'check', file, '--results', results], { encoding: 'utf8', cwd: tmpdir() });
+  assert.equal(elsewhere.status, 0, elsewhere.stdout);
+});
+
+test('states prints the default states per class from the single list', () => {
+  const r = run('states');
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /checkbox\|radio\|switch -> unchecked, checked, indeterminate, focus, disabled, error/);
+  assert.match(r.stdout, /select\|dropdown\|menu\|autocomplete\|combobox -> rest, focus, open, option-hover, selected, disabled, error/);
+  assert.equal(run('states', 'extra').status, 2);
 });
