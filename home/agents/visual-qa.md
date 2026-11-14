@@ -20,6 +20,7 @@ extra widths, and whether you may fix.
    cause per round, and keep going until every check passes. No round limit, no loosening of `--max-diff`, no
    skipped checks. Plateau: the bar is never lowered. If two rounds do not improve a state, change approach (`deep-debugger` on that state; check font files, hinting, subpixel layout, image sources) and move on to other states meanwhile. Only a proven renderer-level cause is reported as an open item with evidence; the state is not marked passed.
    Stop early only when blocked by something outside the code (missing font or asset, unclear design): report it.
+   Text sitting 1px off at some size/line-height pairs is a font metric issue, not a per-element nudge: see "Text baseline and smoothing" in the standard.
 4. If not told to fix: change nothing.
 
 Return at most 20 lines: verdict line per command (quote it), the failing rows (`element | prop | is | should`),

@@ -19,7 +19,7 @@ Tool: `node ~/.claude/tools/ui-check/cli.mjs <cmd>` (README beside it). Never pr
    `diff.png` or `actual.png` unless the table is empty and the verdict is FAIL.
 5. **Fix** only the failing rows, one root cause per round (a wrong font moves everything: fix it first).
    No round limit: repeat compare and fix until it passes. Plateau: the bar is never lowered. If two rounds do not improve a state, change approach (`deep-debugger` on that state; check font files, hinting, subpixel layout, image sources) and move on to other states meanwhile. Only a proven renderer-level cause is reported as an open item with evidence; the state is not marked passed. Stop early only when blocked by something outside the code (missing font or asset,
-   unclear design); then ask. Do not loosen `--max-diff` to pass.
+   unclear design); then ask. Do not loosen `--max-diff` to pass. Text 1px high at some size/line-height pairs: shared `descent-override` and font smoothing, never per-element nudges (standard: "Text baseline and smoothing").
 6. **Responsive.** `responsive --url URL --widths <defaults>,<frame widths>`; fix findings per `responsive-ui`.
    Tables: `columns --url URL --table SEL`.
 
