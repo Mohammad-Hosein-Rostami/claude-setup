@@ -27,3 +27,4 @@ C25 | One task per session; compact at a natural seam, never stop a run for cont
 C26 | Every source file you create or substantially edit opens with a header comment (purpose, exports, invariants); a folder of 3+ files has a README | rev
 C27 | Public functions and types you create or substantially edit have doc comments (what, why, args, returns, errors); TODO(ref): reason | rev
 C29 | Done means fresh evidence: verify commands ran; no test deleted, skipped or weakened | verify-done
+C30 | Bash for the guard: write the command word out (no `$VAR` as the command), secrets via env or file, no rm -rf or push in the same call as a heredoc or `$(...)`; each ask stalls an unattended run up to 3 min | guard log
