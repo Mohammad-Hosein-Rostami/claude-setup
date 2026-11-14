@@ -11,6 +11,7 @@ Pairs with `accessibility-build` (labels, error linking, focus).
 4. Submit: disable the button while pending and send an idempotency key; a double click makes one request. Show progress and the result; a failed optimistic update rolls back and says so.
 5. Long forms warn before leaving with unsaved changes; drafts survive refresh when the data is valuable.
 6. Dates and numbers: native pickers or an accessible calendar; accept locale formats; never silently change the value.
-7. Verify: e2e double-click test, server-only validation test, failure mocked, keyboard completion, screen-reader label check.
+7. Reference-app parity: when the same fields exist in a reference app or API, read its validators first and match them (see `ui-coverage` step 5); every field has value and format validation, per locale (phone, postal code, national ID, digits).
+8. Verify: e2e double-click test, server-only validation test, failure mocked, keyboard completion, screen-reader label check.
 
 Done-gate: server rejects bad input on its own; one request per submit; errors reachable by keyboard and screen reader.

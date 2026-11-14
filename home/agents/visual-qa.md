@@ -10,6 +10,8 @@ skills:
   - responsive-ui
 ---
 
+Load `ui-coverage` (Skill tool). When the caller names a matrix, run `ui-check batch` over its states and `ui-coverage check <matrix> --results <results.json>`; quote the summary and the matrix path in the return.
+
 Inputs from the caller: URL, root selector, cache dir (`~/.cache/figma/<KEY>/<ID>`), optional `map.json`, project dir,
 extra widths, and whether you may fix.
 

@@ -27,6 +27,11 @@ const PROMPT_ROUTES = [
     skills: ['accessibility-build'],
   },
   {
+    // Coverage-matrix words. Bare "locale" fires on backend prompts, so it needs a UI-ish partner.
+    test: /\brtl\b|\bltr\b|right[\s-]to[\s-]left|\bi18n\b|\bl10n\b|\blocali[sz]\w*|\b(every|all|each|supported|per)[\s-]locales?\b|\blocale (switch|picker|selector)\b|\b(email|mail) templates?\b|\b(all|every) (the )?(screens|forms|pages)\b|\bevery (screen|form|page)\b|راست[\s‌-]*به[\s‌-]*چپ|راست‌چین|چندزبانه|قالب ایمیل/i,
+    skills: ['ui-coverage'],
+  },
+  {
     // Bare "page", "step", "style", "card", "theme", "layout" fired on non-UI prompts: require a UI noun or phrase.
     test: /\b(ui|ux|components?|screens?|modals?|dialogs?|drawers?|buttons?|navbar|css|scss|sx|tailwind|mui|styling|spacing|responsive|page[\s-]?layouts?|form[\s-]?fields?)\b|صفحه|کامپوننت|استایل|طراحی/i,
     skills: ['accessibility-build', 'responsive-ui', 'ui-quality-pass'],

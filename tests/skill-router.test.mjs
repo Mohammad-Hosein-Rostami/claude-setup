@@ -45,6 +45,25 @@ test('UI prompts keep routing to their skills', () => {
   for (const [prompt, skill] of cases) assert.ok(skillsForPrompt(prompt).includes(skill), prompt);
 });
 
+test('i18n, RTL, locale, email-template and all-screens words route to ui-coverage; backend locale talk does not', () => {
+  for (const prompt of [
+    'the phone field is broken in RTL',
+    'add i18n to the signup flow',
+    'check every supported locale',
+    'the email templates never got looked at',
+    'apply this to all screens',
+    'fix every form in the app',
+    'ltr numbers inside right-to-left text',
+    'صفحه را راست به چپ کن',
+    'قالب ایمیل را بررسی کن',
+  ]) {
+    assert.ok(skillsForPrompt(prompt).includes('ui-coverage'), prompt);
+  }
+  for (const prompt of ['set the locale of the date formatter in the API', 'run the app on localhost', 'add a REST endpoint for orders', 'send the mail from the worker queue']) {
+    assert.ok(!skillsForPrompt(prompt).includes('ui-coverage'), prompt);
+  }
+});
+
 test('skillsForPrompt returns each skill once and ignores harness events', () => {
   const skills = skillsForPrompt('match the figma design and make it responsive');
   assert.equal(new Set(skills).size, skills.length);

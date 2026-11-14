@@ -68,7 +68,6 @@ Rules:
 
 ## Delegating UI work
 
-- Use `ui-implementer` (preloads the UI skills); a project's own copy shadows it: name the UI skills in the prompt.
-- Template: spec; Figma URL + node id; ui-check cache dir; skills; dev URL; acceptance checks.
-- Review its diff against `ui-quality-pass`; re-run browser/responsive checks only for items reported failed or
-  not run, or risky UI (auth, payments).
+- `ui-implementer` preloads the UI skills; a project copy shadows it: name them in the prompt.
+- Brief: spec; Figma URL + node; ui-check cache; dev URL; acceptance checks; `ui-coverage` matrix path; reference app path; owner gets a live page.
+- Review its diff against `ui-quality-pass`; re-run browser checks only for failed or not-run items, or risky UI (auth, payments).

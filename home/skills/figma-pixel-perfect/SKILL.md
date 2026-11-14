@@ -6,13 +6,14 @@ description: Use whenever a task has a Figma link, frame or node id, or says mat
 Rules: U1, U2, F7. Conversion rules, tolerances and false positives: `standards/figma.md` (read it once per task).
 Tool: `node ~/.claude/tools/ui-check/cli.mjs <cmd>` (README beside it). Never print `FIGMA_TOKEN`.
 
+0. **Matrix.** Invoke `ui-coverage` and build the matrix first (every frame, hidden UI, controls, states, locales); the compare step below runs per state.
 1. **Pull once.** With a token: `figma-pull --file KEY --node ID --scale 1` (cache: `~/.cache/figma/KEY/ID/`; `:` becomes `-`).
    No token: MCP `get_metadata` + `get_variable_defs` + `get_screenshot`, saved into the same layout
    (`baseline.png`, `spec.json` with x/y/w/h relative to the root, `meta.json` {scale,width,height}).
 2. **Structure.** `get_design_context` once per node, only if structure is unclear. Prefer Code Connect and MUI
    theme tokens over hard-coded values. Read interactive states from the frame (see the standard).
 3. **Implement** with tokens; give mapped elements stable selectors (`data-testid`).
-4. **Compare.** Write `map.json` (`{"<figmaId>": "<selector>"}`, ids from `spec.json`), start the dev server only if
+4. **Compare.** One state file for all states: `ui-check batch --states states.json`, then `ui-coverage check`. Single state: write `map.json` (`{"<figmaId>": "<selector>"}`, ids from `spec.json`), start the dev server only if
    it is not running, then:
    `compare --url URL --root SEL --cache DIR --map map.json --project .`
    Exit 0 pass, 1 fail, 2 setup error (fix the setup, do not retry blindly). Opt-in flags on `compare`/`responsive`: `--bypass-csp` (test-only; a page CSP blocking the freeze style gives exit 2) and `--steps steps.json` (hover/focus/click/type before capture; format in the ui-check README). Read `report.md` only; never open

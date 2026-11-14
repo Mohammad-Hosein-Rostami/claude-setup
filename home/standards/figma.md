@@ -19,7 +19,7 @@ Frames are anchors: pixel-exact at the Figma frame size, invariants only (see `r
 - Extend the theme when a value recurs 3 times; otherwise use the component variant.
 
 ## Interactive states
-Read the states from the frame, not from the screen's name: fill and text colour tokens, a floated label, an affordance (chevron). Check every variant in the file (default, hover, focus, disabled, error), not only the frame you were given. Missing backend is never a reason to set `disabled`.
+Read the states from the frame, not from the screen's name: fill and text colour tokens, a floated label, an affordance (chevron). Check every variant in the file, not only the frame you were given: select/dropdown/menu/autocomplete (rest, focus, open, option-hover, selected, disabled, error); checkbox/radio/switch (unchecked, checked, indeterminate, focus, disabled, error); text field (empty, focus, filled, error, success, disabled); button (rest, hover, focus, active, disabled, loading); overlays (dialog, toast, tooltip, popover: shown); async surfaces (loading, empty, error). Each state is a row in the `ui-coverage` matrix. Missing backend is never a reason to set `disabled`.
 
 ## Tolerances (`lib/tolerances.mjs`)
 | What | Tolerance | Gate |

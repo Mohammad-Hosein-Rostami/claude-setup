@@ -21,4 +21,6 @@ It checks: no horizontal scroll, nothing outside the viewport, no clipped text, 
 under 768. Screenshots go to disk (path in `report.md`); read the report, not the images.
 Tables: `columns --url URL --table SEL`.
 
+Check per state (open menu, dialog, error) and per locale (long strings, RTL) for the changed surfaces; the matrix is in `ui-coverage`.
+
 Done-gate: no horizontal overflow at 320 px; primary targets >= 44 px.

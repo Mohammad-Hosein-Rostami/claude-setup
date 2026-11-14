@@ -1,4 +1,4 @@
-# UI, UX, accessibility (U1-U12)
+# UI, UX, accessibility (U1-U14)
 
 - **U1** Colors, spacing, type, radius, shadow, motion come from tokens; both light and dark work.
 - **U2** Build mobile-first; verify at 360, 768 and 1280 px.
@@ -12,3 +12,13 @@
 - **U10** Nielsen: show status, speak the user's language, confirm or offer undo for destructive acts, helpful errors.
 - **U11** Empty state explains and offers the next action; errors say what happened and how to recover; skeletons over spinners past 400 ms.
 - **U12** Plain sentence-case copy, consistent terms, no lorem ipsum.
+- **U13** Direction and locale: every supported locale is built and checked, RTL ones included (matrix: `ui-coverage`).
+- **U14** Reuse the existing design-system or sibling-app component for each control class; a look-alike is a fail.
+
+## Direction (U13)
+- Use logical properties (`margin-inline-start`, `padding-inline`, `inset-inline-end`, `text-align: start`, `border-start-*`), never `left`/`right`; set `dir` on `<html>` from the locale.
+- Fields whose value is always left-to-right (phone, email, URL, code, number, card, OTP) keep `dir="ltr"` inside RTL pages, aligned to the start edge; their label and error text follow the page direction. Use `<bdi>` or `dir="auto"` for user-supplied names in mixed text.
+- Mirror icons that show direction (back, forward, chevron, progress, send); never mirror logos, media controls or clocks. Flip order of leading/trailing adornments (country prefix, clear button) with flex/grid, not per-locale CSS.
+- Strings grow (German, Persian run 30-40% longer than English): no fixed-width labels or buttons; wrap or truncate with a tooltip, never clip silently.
+- One font stack per script (Latin, Arabic/Persian, CJK) with a size/line-height that fits its glyph height; check digits (Latin, Arabic-Indic, Persian) in inputs and validators.
+- Verify each surface in one LTR and one RTL locale at minimum, in every state of the matrix.
