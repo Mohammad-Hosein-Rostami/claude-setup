@@ -5,13 +5,12 @@ solution, never its scope, accuracy or performance target. If a requirement need
 in one place, and explain it there (see "When complexity is required").
 
 ## The no-AI test
-A newcomer must answer these five questions from the repo alone, without asking anyone:
+A newcomer must answer these five questions from the repo alone. Before you finish, answer them for what you touched:
 1. What is this? (the root README: one paragraph)
 2. Where is X? (folder and file names tell you)
 3. How do I run it and test it? (exact commands in the README)
 4. Why is it built this way? (a decision record, or a comment next to the odd part)
 5. How do I change or undo Y? (the README of that area; migrations and scripts say how to roll back)
-Before you finish, answer all five for the thing you touched. If one answer is "ask the author", fix that first.
 
 ## Names
 - Use the words of the domain: `invoice`, `shipment`, not `item`, `entry`, `thing`.
