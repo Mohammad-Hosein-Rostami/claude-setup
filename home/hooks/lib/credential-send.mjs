@@ -54,8 +54,11 @@ const CLOUD_URL = /^(?:s3|gs|az|abfss?|wasbs?):\/\//;
 const SSH_TOOLS = new Set(['ssh', 'scp', 'sftp']);
 const CURL_IDENTITY_OPTIONS = new Set(['--key', '--cert', '-E', '--netrc-file']);
 const CURL_IDENTITY_ATTACHED = /^(?:--key=|--cert=|--netrc-file=|-E.)/;
-const IDENTITY_FILE_OPTION = /^IdentityFile[=\s]/i;
-const IDENTITY_PREFIX = /^(?:-i|-oIdentityFile[=\s]|IdentityFile[=\s]|--key=|--cert=|--netrc-file=|-E)\s*/i; // the flag part of an identity word
+// ssh -o options whose value is a local file ssh uses (a key, a certificate, a control socket, known hosts), not one it sends
+const SSH_FILE_OPTIONS = '(?:IdentityFile|CertificateFile|ControlPath|IdentityAgent|(?:User|Global)KnownHostsFile)[=\\s]';
+const SSH_FILE_OPTION = new RegExp(`^${SSH_FILE_OPTIONS}`, 'i');
+const SSH_FILE_OPTION_ATTACHED = new RegExp(`^-o${SSH_FILE_OPTIONS}`, 'i');
+const IDENTITY_PREFIX = new RegExp(`^(?:-i|(?:-o)?${SSH_FILE_OPTIONS}|--key=|--cert=|--netrc-file=|-E)\\s*`, 'i'); // the flag part of an identity word
 const OPTION_PREFIX = /^--?[A-Za-z][\w-]*=/; // `--rsh=ssh -i <key>`: the command in the value starts after `=`
 const REMOTE_PATH = /^(?:[^\s@/:]+@)?[^\s@/:]+:(?!\/\/)/; // `host:path`, `user@host:path` (not `https://`)
 const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
@@ -74,8 +77,8 @@ const sendReason = (sender, kind) => `${sender} in the same command line as a pr
 function identityValues(cmd, args) {
   const values = new Set();
   args.forEach((word, i) => {
-    if (SSH_TOOLS.has(cmd) && (word === '-i' || (word === '-o' && IDENTITY_FILE_OPTION.test(args[i + 1] ?? '')))) values.add(i + 1);
-    if (SSH_TOOLS.has(cmd) && (/^-i./.test(word) || /^-oIdentityFile[=\s]/i.test(word))) values.add(i);
+    if (SSH_TOOLS.has(cmd) && (word === '-i' || (word === '-o' && SSH_FILE_OPTION.test(args[i + 1] ?? '')))) values.add(i + 1);
+    if (SSH_TOOLS.has(cmd) && (/^-i./.test(word) || SSH_FILE_OPTION_ATTACHED.test(word))) values.add(i);
     if (cmd === 'curl' && CURL_IDENTITY_OPTIONS.has(word)) values.add(i + 1);
     if (cmd === 'curl' && CURL_IDENTITY_ATTACHED.test(word)) values.add(i);
   });
