@@ -210,6 +210,18 @@ test('Stop reads only the last real prompt: no cap there, or a cap in an older p
   assert.equal(run(REPLY_CAP, dir, { last_assistant_message: lines }).stdout, '', 'no transcript');
 });
 
+test('a compaction summary is not owner text: its quoted caps are skipped, the owner prompt before it rules', async () => {
+  const dir = await home();
+  const transcript = join(dir, 't.jsonl');
+  const lines = Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n');
+  const reply = { last_assistant_message: lines, transcript_path: transcript };
+  const summary = JSON.stringify({ type: 'user', isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { role: 'user', content: 'This session is being continued. A peer said: aim for reply max 5 lines.' } });
+  await writeFile(transcript, `${userLine('build it')}\n${summary}\n`);
+  assert.equal(run(REPLY_CAP, dir, reply).stdout, '', 'a cap quoted in the summary is not the owner\'s');
+  await writeFile(transcript, `${userLine('build it, reply max 20 lines')}\n${summary}\n`);
+  assert.match(run(REPLY_CAP, dir, reply).stdout, /owner's cap is 20 lines/, 'the owner prompt before the summary still sets the cap');
+});
+
 test('envelopes are not owner text: an agent message or reminder carrying a cap sets no cap (L9)', async () => {
   const dir = await home();
   const transcript = join(dir, 't.jsonl');

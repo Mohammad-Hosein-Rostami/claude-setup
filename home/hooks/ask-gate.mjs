@@ -180,11 +180,12 @@ const blocksOf = (entry) => (Array.isArray(entry?.message?.content) ? entry.mess
 
 /**
  * The text of a user entry when it is a real prompt typed by the owner, else null (tool results, task notifications,
- * agent and cross-session messages, system reminders, meta and sub-agent lines are not prompts). Envelopes inside a
+ * agent and cross-session messages, system reminders, compaction summaries, meta and sub-agent lines are not prompts). Envelopes inside a
  * typed prompt are removed, so only the owner's own text is returned.
  */
 export function promptText(entry) {
-  if (entry.type !== 'user' || entry.isMeta || entry.isSidechain) return null;
+  // a compaction summary is the model's retelling, not the owner's words: it can quote caps from agents or peers
+  if (entry.type !== 'user' || entry.isMeta || entry.isSidechain || entry.isCompactSummary) return null;
   const content = entry.message?.content;
   let text = null;
   if (typeof content === 'string') text = content;
