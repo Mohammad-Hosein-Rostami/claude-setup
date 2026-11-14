@@ -142,7 +142,8 @@ test('C/D: credential masking in quoted, assigned, query, header, redis and npmr
   const cases = [
     [`curl -u admin:"${PW}" https://x`, PW], [`curl -u admin:'${PW}' https://x`, PW], [`curl --user admin:${PW} https://x`, PW],
     [`MY_APP_TOKEN=${PW} ls`, PW], [`DB_PASS=${PW} ./run`, PW], [`API_KEY=${PW} ./run`, PW], [`export CLIENT_SECRET="${PW}"`, PW],
-    [`curl "https://x.example/v1?api_key=${PW}&x=1"`, PW], [`curl "https://x.example/v1?token=${PW}"`, PW],
+    // a URL-query value under the 8-char minimum is a fixture, so these two use a longer one
+    [`curl "https://x.example/v1?api_key=${PW}${PW}&x=1"`, PW], [`curl "https://x.example/v1?token=${PW}${PW}"`, PW],
     [`redis-cli -a ${PW} ping`, PW], [`redis-cli -h h --pass ${PW} ping`, PW],
     [`curl -H "PRIVATE-TOKEN: ${PW}" https://x`, PW], [`curl -H 'X-Api-Key: ${PW}' https://x`, PW],
     [`echo //registry.example/:_authToken=${PW} >> .npmrc`, PW], [`npm config set //registry.example/:_authToken ${PW}`, PW],

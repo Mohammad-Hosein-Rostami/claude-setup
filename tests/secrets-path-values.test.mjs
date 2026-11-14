@@ -122,3 +122,30 @@ test('short lowercase placeholders and format specs stay silent', () => {
     assert.equal(findLiteralSecret(command), undefined, command);
   }
 });
+
+// Re-audit a968721: an exemption ends only at a real word boundary, never where text is glued on.
+test('text glued after a mock word, its closing quote or a ")" is still a value (N1, N2, N3)', () => {
+  const R = RANDOM_TOKEN;
+  for (const command of [...['.', '-', '/', ','].map((glue) => `curl "https://x/r?token=abc-def"${glue}${R}`), `curl "https://x/r?token=abc-def)${R}"`,
+    `curl "https://x/r?token="}${R}`, `curl "https://x/r?token=")${R}`]) assert.ok(findLiteralSecret(command), command);
+});
+
+test('a placeholder glued to quotes after an unrelated quoted header still asks (N4)', () => {
+  assert.ok(findLiteralSecret(`curl -H 'A: b' -H X-Api-Key:%s'${RANDOM_TOKEN}'`));
+});
+
+test('mock words and code closed by a real boundary stay silent', () => {
+  for (const command of ['goto("/r?token=reset-ok", x)', 'f(g("/r?token=verify-ok"))', 'f("/r?token=verify-ok");', 'goto("/r?token=reset-ok" )', 'x=`${base}/r?token=`})',
+    'goto("/r?token=reset-ok"+suffix)', 'h(base+"/r?token=")', 'echo "X-Api-Key: %s"', "curl -H 'A: b' -H 'X-Api-Key: %s' x"]) {
+    assert.equal(findLiteralSecret(command), undefined, command);
+  }
+});
+
+// Desap Go test table: 1-2 char query values (`token=t`, `ticket=t1`) are fixtures, not secrets; the minimum is the allow-list's own.
+test('a URL query value shorter than the minimum is not a literal secret, one of that length still asks', () => {
+  for (const command of ['{path: "/verify-email?token=t", want: 200},', 'appLogoutQuery + "&ticket=t1"', url('token=abcdefg'), url('password=t1'), '{path: "/r?api_key=k1", x}']) {
+    assert.equal(findLiteralSecret(command), undefined, command);
+    assert.deepEqual(literalSecretValues(command), [], command);
+  }
+  for (const command of [url('token=aB3xK9qZ'), url('password=aB3xK9qZ')]) assert.ok(findLiteralSecret(command), command);
+});

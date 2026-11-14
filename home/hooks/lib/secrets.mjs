@@ -15,6 +15,8 @@
 // of disjoint alternatives (no unbounded nested or overlapping quantifier), so the cost is input length x a small constant. Input beyond
 // MAX_SCAN_CHARS is not scanned (the hook asks about a command that long before it gets here); maskSecrets cuts it and says so.
 
+import { MIN_VALUE_LENGTH } from './allowed-literals.mjs';
+
 const TOKEN_KINDS = [
   [/\bsk-ant-[A-Za-z0-9_-]{10,}/, 'an Anthropic API key'],
   [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}/, 'a GitHub token'],
@@ -53,7 +55,7 @@ const PLACEHOLDER_NAME = '[a-z_][a-z0-9_]{0,19}';
 const PLACEHOLDER_SPEC = '[<>^=+ #0-9.,_a-z%-]{0,10}';
 const PLACEHOLDER = `(?:%[-+# 0]{0,5}(?:\\d{1,3}|\\*)?(?:\\.(?:\\d{1,3}|\\*))?[a-zA-Z]|%\\(${PLACEHOLDER_NAME}\\)[-+# 0]{0,5}\\d{0,3}[a-zA-Z]|\\{(?:\\d{1,2}|${PLACEHOLDER_NAME})?(?::${PLACEHOLDER_SPEC})?\\})`;
 // It ends at the quote that opened the header string (`\k<q>`, found by looking back) or at the line end when unquoted: `"X: %s'R'"` is not a placeholder.
-const FORMAT_PLACEHOLDER = `(?!(?<=(?<q>["'])[^"'\\n]{0,500})${PLACEHOLDER}[ \\t]*\\k<q>|${PLACEHOLDER}[ \\t]*(?:\\n|$))`;
+const FORMAT_PLACEHOLDER = `(?!(?<=(?<![\\w])(?<q>["'])[^"'\\n]{0,500})${PLACEHOLDER}[ \\t]*\\k<q>|${PLACEHOLDER}[ \\t]*(?:\\n|$))`;
 const STDIN_FLAG = '--(?:with-token|password-stdin)\\b';
 // the value is echoed/printed (`echo -n T`, `printf '%s' T`) and piped into a command that has the stdin flag
 const ECHOED_INTO_STDIN_FLAG = `(?=(?:"[^"]*"|'[^']*'|[^\\s"';&|]+)[ \\t]*\\|[^\\n;&|]{0,${GAP}}${STDIN_FLAG})`;
@@ -66,16 +68,21 @@ const REGEX_VALUE = `"/[^"\\n]{0,500}\\|[^"\\n]{0,500}"|'/[^'\\n]{0,500}\\|[^'\\
 const CODE_VALUE = `(?!${REGEX_VALUE}|["']?(?:(?:\\.{1,2}|~)/|/(?:${ABSOLUTE_ROOTS})/)|[=>({\\[]|[\\w$]{1,40}\\s*=>|lambda\\b|[\\w$]{1,40}(?:\\.[\\w$]{1,40}){0,6}\\s*[(\\[])`;
 const QUERY_TOKEN_KEYS = caseless('api[_-]?key|access[_-]?(?:token|key)|auth[_-]?token|token');
 const QUERY_SECRET_KEYS = caseless('client[_-]?secret|secret|password|passwd|pwd');
+// What may follow the end of a quoted or bracketed query value: whitespace, a closing bracket, `;`, `,` plus whitespace, or the end. Glued text
+// (`"/R`, `".R`, `)R`, `}R`) means the value goes on, so it is not an end.
+const QUERY_END = '(?=[\\s)};\\]]|,(?:\\s|$)|$)';
+// A value under MIN_VALUE_LENGTH characters (quotes skipped, `&` `#` whitespace end it) is a test fixture (`token=t`), not a secret: the allow-list never remembers one either.
+const QUERY_MIN_LENGTH = `(?=(?:["']?[^\\s"';&|#]){${MIN_VALUE_LENGTH}})`;
 // A query value that is code, not a literal: empty and closed by a quote then `} )` or a `+` that is not followed by a quoted literal
 // (`"/reset?token="+token`, not `+"R"`); a `$(...)`, `$x` or `${name}` / `${name:-}` reference, but not `${name:-R}` (a literal default).
-const QUERY_CODE = `["'\`][ \\t]*(?:\\+(?![ \\t]*["'\`])|[})])|["']?\\$(?:\\(|\\w|\\{[\\w.]{1,80}(?::?[-=+?])?\\})`;
+const QUERY_CODE = `["'\`][ \\t]*(?:\\+(?![ \\t]*["'\`])|[})]${QUERY_END})|["']?\\$(?:\\(|\\w|\\{[\\w.]{1,80}(?::?[-=+?])?\\})`;
 // `$` is judged by QUERY_CODE here, so the query rules do not use NOT_LITERAL_START (which skips every `$` value).
 const QUERY_START = '(?!["\']?(?:`|<|\\s|;|&|\\||$))';
 // A kebab-case mock word (`token=verify-ok`): lowercase (these rules have no 'i' flag), 24 chars at most, one hyphen at least, and it ENDS the
 // value: a quote not followed by more value, whitespace, `&`, `#`, `)` or the end. Only for token-like keys, never password/secret keys.
-const QUERY_MOCK_WORD = `(?=[a-z-]{1,24}(?![\\w-]))[a-z]+(?:-[a-z]+)+(?:["'](?![\\w$"'\`]|[ \\t]*\\+[ \\t]*["'\`])|[\\s&#)]|$)`;
-const QUERY_NOT_LITERAL = `(?!${QUERY_CODE})`;
-const QUERY_TOKEN_NOT_LITERAL = `(?!${QUERY_CODE}|${QUERY_MOCK_WORD})`;
+const QUERY_MOCK_WORD = `(?=[a-z-]{1,24}(?![\\w-]))[a-z]+(?:-[a-z]+)+(?:["'](?:${QUERY_END}|[ \\t]*\\+(?![ \\t]*["'\`]))|\\)${QUERY_END}|[\\s&#]|$)`;
+const QUERY_NOT_LITERAL = `${QUERY_MIN_LENGTH}(?!${QUERY_CODE})`;
+const QUERY_TOKEN_NOT_LITERAL = `${QUERY_MIN_LENGTH}(?!${QUERY_CODE}|${QUERY_MOCK_WORD})`;
 const SECRET_FLAG = '--(?:token|api-key|apikey|password|passwd|client-secret|access-token|auth-token)(?:=|\\s+)';
 const VALUE_KINDS = [
   [`(?:^|[\\s;&|("'])${SECRET_ENV}=`, '', 'a password or key assigned in the command'],
