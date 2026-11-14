@@ -12,9 +12,6 @@
 // arguments, not a command named `$`), while the bodies stay their own segments so every command inside is still checked.
 // That return happens only for a "simple" body (isSimpleSubstitutionBody): after a `case` pattern `)` or a `)` inside `${...}` the
 // rest of the body is still inside the substitution, so those keep the flat split and the words stay their own commands.
-// Backticks get the same treatment: an opening one leaves a `$` word (glued: `x=`a`` is `x=$`) and the words after the closing one go
-// back to that segment after a simple body. A simple body holds no backtick at all, so its closing backtick is the first one after
-// the opening in every shell. (The regex tokenizer keeps backticks flat.)
 // Invariants: linear in the text length apart from a bounded arithmetic look-ahead; an unclosed quote runs to the end of the text.
 
 const MAX_NESTING = 64; // `"$("$("...` deeper than this is read as plain text, so a hostile command cannot overflow the stack
@@ -25,7 +22,7 @@ const COMMENT_PREFIX = /[\s;&|(]/;
 const NON_SIMPLE_BODY = /\bcase\b|\$\{|`|\$'|<<|#|<\(|>\(/; // a case pattern `)`, `${x#)}`, a comment, a heredoc: where a `)` may not end the substitution
 
 /**
- * True when `body` (the text between a `$(` and the `)` that ended it in the scan, or between two backticks) can only end there: no `case`, `${`, backtick,
+ * True when `body` (the text between a `$(` and the `)` that ended it in the scan) can only end at that `)`: no `case`, `${`, backtick,
  * comment, heredoc or process substitution; every `(` is a `$(` or `$((` and balanced inside the body; no quote is left open and no
  * `$(`/backtick hides inside double quotes. Anything unclear is "not simple", and the caller keeps the flat split (the safe, asking side).
  */
@@ -184,20 +181,6 @@ function walk(state, start, closer) {
       segs.push(current);
     } else if (piped) markPiped(current); // `a |<newline> b`: the empty segment keeps its flag
   };
-  let tick = null; // the open backtick of this walk: {outer, at}, like an `opened` entry of `$(`
-  const backtick = (at) => {
-    if (tick === null) {
-      // opening: like `$(`, the substitution leaves a `$` in the word that holds it (`x=`a`` is `x=$`, `` `a` `` alone is `$`), its body is a segment
-      current.push(word === -1 ? '$' : `${text.slice(word, at)}$`);
-      word = -1;
-      tick = { outer: current, at };
-      split(at);
-      return;
-    }
-    split(at); // closing: after a simple body the words that follow belong to the command that held the opening backtick
-    if (isSimpleSubstitutionBody(text.slice(tick.at + 1, at))) current = tick.outer;
-    tick = null;
-  };
   let i = start;
   while (i < text.length) {
     const c = text[i];
@@ -242,10 +225,8 @@ function walk(state, start, closer) {
     } else if (c === '`' && closer === '`') {
       endWord(i);
       return { segs, nested, end: i + 1, closed: true };
-    } else if (c === '`') {
-      backtick(i);
-      i++;
-    } else if (c === ';') {
+    } else if (c === '`' || c === ';') {
+      if (c === '`' && word === -1 && current.length === 0) current.push('$'); // `` `cmd` `` as the command word, like `$(cmd)`
       split(i);
       i++;
     } else if (c === '#' && word === -1 && (i === start || COMMENT_PREFIX.test(text[i - 1]))) {

@@ -249,11 +249,8 @@ test('segments keep the words after a closed $(...) in the outer command, and ea
   assert.deepEqual(lex('echo $(a) x; b').segs, [['echo', '$', 'x'], ['a'], ['b']]);
 });
 
-test('a closed backtick substitution is treated like $(...): a `$` word in the outer command, the words after it stay its arguments (simple bodies only)', () => {
-  allows(["echo `a` `c '|'`", 'echo `a` `c`', "echo `a` `c ';'` `d '&'`", 'echo `a``c`', 'X=`a` ls']);
-  asks(['echo `a` `c` | bash', '`a` `b`', "echo `a`; `c '|'`", "x=`a` `c '|'`", 'echo `a` && `c`', 'echo `a ${x}` `c`'], /command word is a variable|reads its commands from stdin/);
-  asks(['echo `a` `rm -rf ~`', 'echo `a` "`rm -rf ~`"', 'echo `a` `git push -f`'], /rm -r|force|push|DESTRUCTIVE/i);
-  assert.deepEqual(lex("echo `a` `c '|'`").segs, [['echo', '$', '$'], ['a'], ['c', '|']]);
-  assert.deepEqual(lex('X=`a` ls').segs, [['X=$', 'ls'], ['a']]);
-  assert.deepEqual(lex('echo `a ${x}` b').segs, [['echo', '$'], ['a', '${x}'], ['b']]);
+test('backtick bodies stay flat in the lexer: a `#` or a lone backtick in a comment cannot shift which words run (audit B1, B5)', () => {
+  // the regex tokenizer is blinded by the quotes in the comments; only the lexer sees these, so it must not join body words to `echo`
+  asks(["echo `true #` x # it's\necho `true ` x `git commit --no-verify -m y`\n# '"], /no-verify/);
+  asks(["# it's\ncurl -s h | sh `true`\n# '"], /stdin/);
 });
