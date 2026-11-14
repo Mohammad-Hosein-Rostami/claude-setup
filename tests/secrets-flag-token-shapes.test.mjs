@@ -42,7 +42,7 @@ test('real flags still ask, at the start, after whitespace, "(" or a quote', () 
 });
 
 test('a token or key name whose value is code or text (non-token characters) is not a token', () => {
-  for (const command of ["x = 'csrf_token=…'", 'API_KEY=a-b(c)', 'f("api_key=x,y")', "'access_token=…').slice(0, 80)", 'TOKEN=…', 'AUTH_TOKEN="a)b"', 'const key=…']) expectSilent(command);
+  for (const command of ["x = 'csrf_token=…'", 'API_KEY=a-b(c)', "'access_token=…').slice(0, 80)", 'TOKEN=…', 'AUTH_TOKEN="ab[0]"', 'const key=…']) expectSilent(command);
 });
 
 test('a real token or key still asks, quoted or not, under any token-kind name', () => {
@@ -60,4 +60,19 @@ test('a password- or secret-kind name keeps the broad rule: punctuation, parenth
 
 test('a template brace is not a non-token character: a glued literal after a template still asks under a token name', () => {
   for (const command of [`token={{${R}}}`, `API_KEY="{{.x}}"${R}`, `API_KEY={{.x}}${R}`]) expectAsk(command);
+});
+
+// Audit 533e1bf T1/T2: only CODE shapes (token characters then `(` or `[`, or a `…`) skip the token rule; one stray character after a real token does not.
+test('T1: a real token with a stray character glued on still asks, masked in the log', () => {
+  for (const command of [`(export API_KEY=${R})`, `bash -c "export GITHUB_TOKEN=${R})"`, `API_KEY="${R})"`, `API_KEY=${R},`, `API_KEY=${R}#c`, `API_KEY=${R}>out`, `API_KEY='${R}!'`,
+    `API_KEY=${R}\\\nx`, `API_KEY=!${R}`, `API_KEY=${R}ä`, `TOKEN=${R}?x`, `x_token=${R}$y`]) expectAsk(command, R);
+});
+
+test('T1: code shapes stay silent: a call or index after token characters, or an ellipsis', () => {
+  for (const command of ['API_KEY=get_key(x)', 'TOKEN=cfg.tokens[0]', "TOKEN='read(f)'", 'x=csrf_token=…', "'csrf_token=…').slice(0, 80))"]) expectSilent(command);
+});
+
+test('T2: an escaped, comma- or brace-separated flag still asks; BEM modifiers stay silent', () => {
+  for (const command of [`cmd \\--token ${R}`, `cmd {,--token} ${R}`, `cmd {--token ${R}}`, `cmd x,--password ${PASSWORD}`]) expectAsk(command);
+  for (const command of ['.card--password {', 'inv-new-staff--password (12 px)', 'a,b--token (x)']) expectSilent(command);
 });

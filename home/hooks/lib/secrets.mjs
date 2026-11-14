@@ -95,17 +95,17 @@ const QUERY_START = '(?!["\']?(?:`|<|\\s|;|&|\\||$))';
 const QUERY_MOCK_WORD = `(?=[a-z-]{1,24}(?![\\w-]))[a-z]+(?:-[a-z]+)+(?:["'](?:${QUERY_END}|[ \\t]*\\+(?![ \\t]*["'\`]))|\\)${QUERY_END}|[\\s&#]|$)`;
 const QUERY_NOT_LITERAL = `${QUERY_MIN_LENGTH}(?!${QUERY_CODE})`;
 const QUERY_TOKEN_NOT_LITERAL = `${QUERY_MIN_LENGTH}(?!${QUERY_CODE}|${QUERY_MOCK_WORD})`;
-// The flag is its own shell word: it follows the start, whitespace, a command separator, `(` or a quote. `.card--password` and `staff--password (12 px)`
+// The flag is its own shell word: it follows the start, whitespace, a command separator, `(`, a quote, a backslash, `,` or `{` (`{,--token} R` is brace expansion).  `.card--password` and `staff--password (12 px)`
 // (BEM modifiers, state ids) are not flags. A value made only of punctuation (`{`, `(`, `...`) is not a value either; a quoted one still is.
-const SECRET_FLAG = '(?<=^|[\\s;&|(`"\'])--(?:token|api-key|apikey|password|passwd|client-secret|access-token|auth-token)(?:=|\\s+)';
+const SECRET_FLAG = '(?<=^|[\\s;&|(`"\'\\\\,{])--(?:token|api-key|apikey|password|passwd|client-secret|access-token|auth-token)(?:=|\\}?\\s+)';
 const PUNCTUATION_ONLY_WORD = '[^\\w\\s"\';&|$]+(?:[\\s;&|]|$)';
 // Names with a KEY or TOKEN part but no password/secret part: for these a value holding a character outside a token charset (`…).slice(0,`) is code or text.
 // Password and secret names keep the broad rule, since a password may hold any character.
 const PASSWORD_NAME_PART = '(?<![A-Za-z0-9])(?:SECRET|PASS|PASSWD|PWD)(?![A-Za-z0-9])|PASSWORD';
 const TOKEN_NAME_PART = '(?<![A-Za-z0-9])(?:KEY|TOKEN)(?![A-Za-z0-9])';
 const TOKEN_CHARS = 'A-Za-z0-9._~+/=:-';
-// Braces are not an offending character: a `{{...}}` template with glued text (`API_KEY="{{.x}}"R`) must still be judged as a value.
-const NOT_A_TOKEN_VALUE = `["']?[${TOKEN_CHARS}]*[^${TOKEN_CHARS}\\s"';&|{}]`;
+// Only CODE shapes are exempt: token characters then `(` or `[` (a call, an index), or an ellipsis. One stray character after a real token (`R)`, `R,`, `R!`) is not.
+const NOT_A_TOKEN_VALUE = `["']?[${TOKEN_CHARS}]*(?:[(\\[]|…)`;
 const VALUE_KINDS = [
   [`(?:^|[\\s;&|("'])${SECRET_ENV}=`, '', 'a password or key assigned in the command'],
   [SECRET_FLAG, `(?!-|${PUNCTUATION_ONLY_WORD})`, 'a password, token or key flag with a literal value'],
