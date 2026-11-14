@@ -53,7 +53,7 @@ Rules:
 - Spawn brief: one step per agent; agents return ≤ 300 words, detail in a file. Workers return a status after ~100
   tool calls or the 2nd compaction; continue them with SendMessage. Workers never spawn or message.
 - Parallel request: first one line on usage-limit risk.
-- Multi-day work: keep `STATUS.md` (decisions, vocabulary, velocity, estimate); re-read its first 60 lines after compaction; estimate agent-hours and calendar days (parallel lanes, usage limit).
+- Multi-day: `STATUS.md` + `## Work items` table (id|item|size S/M/L|started|done|evidence). Estimates only from `node ~/.claude/tools/estimate/estimate.mjs STATUS.md`; if refused, say why.
 - Digests ≤ 3k chars plus paths; `scout` summarises > ~200 lines; no Read > ~20k.
 - Final reply: obey the line cap. After a setup commit, tell the owner to restart the session.
 

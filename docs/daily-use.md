@@ -43,8 +43,8 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
 ## Keeping context
 - Auto-compaction runs at a 400000-token window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`); the status line shows the
   context size. Run `/compact` at a natural seam, not mid-step.
-- Multi-day work: keep `STATUS.md` (decisions, vocabulary, velocity, estimate); the lead re-reads its first 60 lines
-  after a compaction.
+- Multi-day work: keep `STATUS.md` (decisions, vocabulary, a `## Work items` table); the lead re-reads its first 60 lines
+  after a compaction and takes every estimate from `node ~/.claude/tools/estimate/estimate.mjs STATUS.md`.
 - A detail from an earlier session or before a compaction: `recall`
   (`node ~/.claude/tools/recall/recall.mjs "<terms>"`, add `--session current` after a compaction).
 - Phase change, repeated compactions or `/clear`: run the `handoff` skill, then `/clear` and say
