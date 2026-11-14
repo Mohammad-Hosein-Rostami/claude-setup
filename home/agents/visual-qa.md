@@ -14,7 +14,7 @@ Inputs from the caller: URL, root selector, cache dir (`~/.cache/figma/<KEY>/<ID
 extra widths, and whether you may fix.
 
 1. Run `node ~/.claude/tools/ui-check/cli.mjs compare --url U --root SEL --cache DIR --map M --project P`, then
-   `responsive --url U --widths <defaults>,<frame widths> --project P`. Exit 2 means setup: report it, do not loop.
+   `responsive --url U --widths <defaults>,<frame widths> --project P`. Exit 2 means setup: report it, do not loop. Opt-in: `--bypass-csp` (test-only, when the page CSP blocks the freeze style) and `--steps steps.json` (hover/focus/click/type before capture; format in the ui-check README).
 2. Read only `report.md` of each run. Never open `diff.png`, `actual.png` or the width screenshots.
 3. If told to fix: follow `~/.claude/skills/figma-pixel-perfect` and `~/.claude/standards/figma.md`; fix only failing rows, one root
    cause per round, and keep going until every check passes. No round limit, no loosening of `--max-diff`, no

@@ -7,6 +7,7 @@ import { parse, need, toNumber } from '../lib/args.mjs';
 import { auditInPage } from '../lib/audit.mjs';
 import { loadChromium, launch, openPage } from '../lib/browser.mjs';
 import { UsageError } from '../lib/errors.mjs';
+import { loadSteps } from '../lib/steps.mjs';
 import { writeReport } from '../lib/report.mjs';
 import { RESPONSIVE } from '../lib/tolerances.mjs';
 
@@ -14,6 +15,8 @@ export const options = {
   url: { type: 'string' },
   widths: { type: 'string', default: RESPONSIVE.widths.join(',') },
   height: { type: 'string', default: String(RESPONSIVE.height) },
+  steps: { type: 'string' },
+  'bypass-csp': { type: 'boolean', default: false },
   out: { type: 'string' },
   project: { type: 'string', default: process.cwd() },
 };
@@ -24,8 +27,9 @@ function parseWidths(text) {
   return widths;
 }
 
-async function auditWidth(browser, url, width, height, outDir) {
-  const page = await openPage(browser, { url, width, height });
+async function auditWidth(browser, target, width, outDir) {
+  const { url, height, steps, bypassCSP } = target;
+  const page = await openPage(browser, { url, width, height, steps, bypassCSP });
   const audit = { minTarget: RESPONSIVE.minTarget, minText: RESPONSIVE.minText, smallViewport: RESPONSIVE.smallViewport, max: RESPONSIVE.maxFindingsPerCheck };
   const { findings } = await page.evaluate(auditInPage, audit);
   await page.screenshot({ path: path.join(outDir, `w${width}.png`), fullPage: true, animations: 'disabled', caret: 'hide' });
@@ -39,12 +43,14 @@ export async function run(argv) {
   need(values, 'url');
   const widths = parseWidths(values.widths);
   const height = toNumber(values.height, 'height', 200);
+  const steps = values.steps ? loadSteps(values.steps) : [];
+  const target = { url: values.url, height, steps, bypassCSP: values['bypass-csp'] };
   const outDir = values.out ?? path.join(os.tmpdir(), 'ui-check', 'responsive', new Date().toISOString().replace(/[:.]/g, '-'));
   fs.mkdirSync(outDir, { recursive: true });
   const browser = await launch(loadChromium(values.project));
   try {
     const findings = [];
-    for (const width of widths) findings.push(...await auditWidth(browser, values.url, width, height, outDir));
+    for (const width of widths) findings.push(...await auditWidth(browser, target, width, outDir));
     const pass = findings.length === 0;
     const md = writeReport(outDir, {
       title: 'ui-check responsive', verdict: pass ? 'PASS' : 'FAIL',

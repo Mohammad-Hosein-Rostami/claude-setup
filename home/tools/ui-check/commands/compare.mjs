@@ -7,6 +7,7 @@ import { loadChromium, launch, openPage } from '../lib/browser.mjs';
 import { readCache } from '../lib/cache.mjs';
 import { compareElements } from '../lib/elements.mjs';
 import { UsageError } from '../lib/errors.mjs';
+import { loadSteps } from '../lib/steps.mjs';
 import { measureInPage } from '../lib/measure.mjs';
 import { pixelCheck } from '../lib/pixels.mjs';
 import { writeReport } from '../lib/report.mjs';
@@ -17,6 +18,8 @@ export const options = {
   root: { type: 'string' },
   cache: { type: 'string' },
   map: { type: 'string' },
+  steps: { type: 'string' },
+  'bypass-csp': { type: 'boolean', default: false },
   'max-diff': { type: 'string', default: String(PIXEL.maxDiffPercent) },
   out: { type: 'string' },
   project: { type: 'string', default: process.cwd() },
@@ -57,6 +60,7 @@ export async function run(argv) {
   const values = parse(argv, options);
   need(values, 'url', 'root', 'cache');
   const maxDiff = toNumber(values['max-diff'], 'max-diff');
+  const steps = values.steps ? loadSteps(values.steps) : [];
   const cache = readCache(values.cache);
   const map = values.map ? loadMap(values.map, cache.spec) : null;
   const outDir = values.out ?? path.join(cache.dir, 'runs', new Date().toISOString().replace(/[:.]/g, '-'));
@@ -64,7 +68,7 @@ export async function run(argv) {
   const browser = await launch(loadChromium(values.project));
   try {
     const { scale, width, height } = cache.meta;
-    const page = await openPage(browser, { url: values.url, width: Math.ceil(width), height: Math.ceil(height), scale });
+    const page = await openPage(browser, { url: values.url, width: Math.ceil(width), height: Math.ceil(height), scale, steps, bypassCSP: values['bypass-csp'] });
     if (await page.locator(values.root).count() === 0) throw new UsageError(`root selector matched nothing: ${values.root}`);
     const elementRows = map ? await elementCheck(page, values.root, cache.spec, map) : [];
     const actualFile = await capture(page, values.root, outDir);

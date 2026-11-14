@@ -4,6 +4,7 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { UsageError } from './errors.mjs';
+import { runSteps } from './steps.mjs';
 
 const PACKAGES = ['playwright', '@playwright/test', 'playwright-core'];
 const NETWORK_IDLE_TIMEOUT_MS = 5000; // long-polling / websocket apps never go idle, so the wait is bounded
@@ -44,15 +45,18 @@ export async function launch(chromium) {
 /**
  * Open a page with deterministic rendering settings and wait until it is stable.
  * @param {object} browser Playwright browser
- * @param {{url: string, width: number, height: number, scale?: number}} opts viewport equals the Figma frame
+ * @param {{url: string, width: number, height: number, scale?: number, steps?: object[], bypassCSP?: boolean}} opts viewport equals the Figma frame;
+ *   steps (validated, see steps.mjs) run after the page settles and before the freeze style; bypassCSP (default false, test-only)
+ *   lets the injected freeze style through a page CSP
  * @returns {Promise<object>} Playwright page (its context closes with the browser)
  */
-export async function openPage(browser, { url, width, height, scale = 1 }) {
+export async function openPage(browser, { url, width, height, scale = 1, steps = [], bypassCSP = false }) {
   const context = await browser.newContext({
     viewport: { width, height },
     deviceScaleFactor: scale,
     reducedMotion: 'reduce',
     colorScheme: 'light',
+    ...(bypassCSP ? { bypassCSP: true } : {}),
   });
   const page = await context.newPage();
   const response = await page.goto(url, { waitUntil: 'load' });
@@ -64,6 +68,7 @@ export async function openPage(browser, { url, width, height, scale = 1 }) {
     if (error.name !== 'TimeoutError') throw error; // never idle is expected for some apps; anything else is real
   }
   await page.waitForTimeout(SPA_SETTLE_MS);
+  if (steps.length > 0) await runSteps(page, steps);
   await page.addStyleTag({ content: FREEZE_CSS });
   await page.evaluate(() => document.fonts.ready);
   try {
