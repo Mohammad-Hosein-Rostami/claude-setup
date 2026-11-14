@@ -168,3 +168,12 @@ test('a token inside template braces is still a secret', () => {
     assert.ok(findLiteralSecret(command), command);
   }
 });
+
+// Desap probe script: a JS/Python list writes `','` with no space between the quoted URLs.
+test('a comma that closes a quoted query value ends it when a quote, bracket or space follows (3-part mock words too)', () => {
+  for (const command of ["const paths = ['/verify-email?token=verify-ok','/register/link','/accept-invitation?token=inv-staff-new','/accept-nomination?token=nom-ok'];",
+    'x = ["/r?token=reset-ok","/s"]', "f('/r?token=inv-staff-new',)", "f('/r?token=inv-staff-new',\n 1)"]) {
+    assert.equal(findLiteralSecret(command), undefined, command);
+  }
+  assert.ok(findLiteralSecret(`curl "https://x/r?token=abc-def",${RANDOM_TOKEN}`));
+});

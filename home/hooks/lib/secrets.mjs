@@ -71,9 +71,9 @@ const TEMPLATE_VALUE = `(?:\\\\?["'])?(?:\\{\\{-?|\\{%-?)[ \\t]{0,5}(?:\\.|[A-Za
 const CODE_VALUE = `(?!${REGEX_VALUE}|${TEMPLATE_VALUE}|["']?(?:(?:\\.{1,2}|~)/|/(?:${ABSOLUTE_ROOTS})/)|[=>(\\[]|\\{(?!\\{)|[\\w$]{1,40}\\s*=>|lambda\\b|[\\w$]{1,40}(?:\\.[\\w$]{1,40}){0,6}\\s*[(\\[])`;
 const QUERY_TOKEN_KEYS = caseless('api[_-]?key|access[_-]?(?:token|key)|auth[_-]?token|token');
 const QUERY_SECRET_KEYS = caseless('client[_-]?secret|secret|password|passwd|pwd');
-// What may follow the end of a quoted or bracketed query value: whitespace, a closing bracket, `;`, `,` plus whitespace, or the end. Glued text
+// What may follow the end of a quoted or bracketed query value: whitespace, a closing bracket, `;`, `,` plus whitespace, a quote or a bracket (a list `['a','b']`), or the end. Glued text
 // (`"/R`, `".R`, `)R`, `}R`) means the value goes on, so it is not an end.
-const QUERY_END = '(?=[\\s)};\\]]|,(?:\\s|$)|$)';
+const QUERY_END = '(?=[\\s)};\\]]|,(?:[\\s"\'`)\\]]|$)|$)';
 // A value under MIN_VALUE_LENGTH characters (quotes skipped, `&` `#` whitespace end it) is a test fixture (`token=t`), not a secret: the allow-list never remembers one either.
 const QUERY_MIN_LENGTH = `(?=(?:["']?[^\\s"';&|#]){${MIN_VALUE_LENGTH}})`;
 // A query value that is code, not a literal: empty and closed by a quote then `} )` or a `+` that is not followed by a quoted literal
