@@ -3,8 +3,11 @@
 title = "claude-setup"
 
 [extend]
+# true: keep gitleaks' built-in rules and only add the allowlist below on top of them.
 useDefault = true
 
 [allowlist]
+# Label shown in gitleaks output; names why these paths are exempt (plain text, no unit).
 description = "fake secret fixtures used to test redaction"
+# Regex (not glob), matched against the path from the repo root: only the recall test files, so real secrets elsewhere still fail.
 paths = ['''tests/recall-[a-z0-9-]+\.test\.mjs''']

@@ -1,0 +1,46 @@
+# home/hooks/lib
+
+Helper modules for the hooks in `home/hooks/` (one folder up). A hook script reads the event, calls these helpers and
+prints the answer. They hold the rules, so a rule can be tested without starting a hook. Plain Node 22 ES modules, no
+dependencies. Each file starts with a comment that lists its exports.
+
+## What is here
+
+Reading a shell command (used by `pre-bash-guard.mjs`; pure functions, they never run anything):
+- `shell-words.mjs`, `shell-lexer.mjs`, `ansi-c.mjs`, `braces.mjs`, `message-text.mjs`: split a command into words and
+  decode quoting, brace lists and `$'...'`. `shell-words.mjs` is the entry point; `shell-lexer.mjs` is a second, separate parser.
+- `command-of.mjs`: finds the real command behind `sudo`, `env`, `VAR=x` and keywords.
+- `sql.mjs`: tells whether a `psql` or `mysql` statement only reads, and which host it talks to.
+
+Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
+- `command-checks.mjs`, `rm-paths.mjs`, `find-delete.mjs`, `eval-check.mjs`, `shell-hazards.mjs`, `dangerous-scan.mjs`,
+  `raw-risk.mjs`, `outward.mjs`, `remote.mjs`, `code-writes.mjs`: one file per kind of risky command (`rm -r`, `find -delete`,
+  `eval`, hidden execution, push or publish, production hosts, code rewritten from Bash).
+- `secrets.mjs`: finds literal secrets in a command and masks them.
+- `verdict.mjs`: shared wording of the reasons.
+
+Asking and remembering:
+- `timed-ask.mjs`: the timed dialog (osascript, PowerShell or zenity).
+- `remembered-ask.mjs`, `allowed-literals.mjs`: per-session memory of secrets the owner already allowed (hashes only).
+- `guard-log.mjs`: the decision log, one JSON line per decision.
+
+Other hooks:
+- `diagnostics.mjs`, `edit-log.mjs`: used by `post-edit.mjs` and `typecheck-gate.mjs` (check output parsing, list of edited files).
+- `reply-cap.mjs`: reads a reply-size cap from a prompt; used by `agent-budget.mjs` and `final-reply-cap.mjs`.
+- `transcript.mjs`: reads the session transcript (context size, STATUS file).
+- `big-context.mjs`, `compact-notes.mjs`, `lead-note.mjs`: the notes `mode.mjs` prints at session start.
+
+## Test
+
+Tests live in `tests/` (one folder up from `home/`, at the repo root). Run all of them:
+
+    node --test tests/*.test.mjs
+
+Never run a bare `node --test`. One file at a time works too, for example `node --test tests/pre-bash-guard.test.mjs`.
+
+## Watch out for
+
+- The guard never hard-blocks: a rule asks, and a missing answer lets the command go ahead. Keep that when you add a rule.
+- The two parsers (`shell-words.mjs` and `shell-lexer.mjs`) are meant to be independent. Do not make one call the other.
+- Guard tests pin `HOME` (`tests/pin-home.mjs`): `guard-log.mjs` and `remote.mjs` read it when they load.
+- `docs/how-it-works.md` explains how a prompt reaches these hooks.
