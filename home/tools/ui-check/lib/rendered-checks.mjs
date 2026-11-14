@@ -16,29 +16,52 @@ export const INDICATOR_FIELDS = ['outlineStyle', 'outlineWidth', 'outlineColor',
 /** Extra fields compared on the related elements only (a sibling underline that grows from width 0 on focus). */
 export const RELATED_SIZE_FIELDS = ['width', 'height'];
 
+/** Last segments that make a dotted token a file name, host name or version rather than a translation key. */
+const FILE_EXTENSIONS = new Set(['js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'json', 'css', 'scss', 'html', 'htm', 'md', 'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico',
+  'xml', 'yaml', 'yml', 'csv', 'zip', 'gz', 'tar', 'log', 'lock', 'map', 'woff', 'woff2', 'ttf', 'mp3', 'mp4', 'doc', 'docx', 'xls', 'xlsx', 'py', 'rb', 'go', 'rs', 'java', 'sh']);
+const TOP_LEVEL_DOMAINS = new Set(['com', 'net', 'org', 'io', 'dev', 'app', 'co', 'ai', 'info', 'biz', 'edu', 'gov', 'xyz', 'ir', 'ru', 'cn', 'uk', 'de', 'fr', 'jp']);
+const VERSION = /^v\d+(\.\d+)+$/;
+
+/** True for a dotted token that is a version, file name, host name or abbreviation (`v1.2.3`, `package.json`, `acme.io`, `fig.1`, `i.e`), not a translation key. */
+function isNotAKey(token) {
+  const segments = token.split('.');
+  const last = segments[segments.length - 1];
+  return VERSION.test(token) || FILE_EXTENSIONS.has(last) || TOP_LEVEL_DOMAINS.has(last) || segments.some((part) => /^\d+$/.test(part)) || segments.every((part) => part.length === 1);
+}
+
 /**
- * Visible text nodes whose whole trimmed text is a raw translation key (a missing translation shown to the user).
- * @param {{texts: {element: string, text: string, visible?: boolean}[]}} facts one entry per own text node of a visible element
- * @param {number} [max] cap on the number of findings
+ * Visible text nodes whose whole trimmed text is a raw translation key (a missing translation shown to the user). Not reported: text in code, pre, kbd,
+ * samp or a select, collapsed or hidden content, versions, file names, host names (public-suffix-like last segment), a digit-only segment, an uppercase letter
+ * (the pattern is lower case) and single-letter abbreviations.
+ * @param {{texts: {element: string, text: string, visible?: boolean, inCode?: boolean}[]}} facts one entry per own text node of an element
+ * @param {number} [max] cap on the number of hints
  * @returns {{check: 'raw-i18n-key', element: string, detail: string}[]}
  */
 export function rawI18nKeyFindings({ texts }, max = Infinity) {
   return texts
-    .filter((t) => t.visible !== false && RAW_KEY_PATTERN.test(t.text.trim()))
+    .filter((t) => t.visible !== false && !t.inCode && RAW_KEY_PATTERN.test(t.text.trim()) && !isNotAKey(t.text.trim()))
     .map((t) => ({ check: 'raw-i18n-key', element: t.element, detail: `shows the raw translation key "${t.text.trim()}" (missing translation, or the lookup fell back to the key)` }))
     .slice(0, max);
 }
 
+/** Elements whose text is code, user input or a control label, where an explicit `text-align: left` is normal. */
+const ALIGN_EXEMPT_TAGS = new Set(['pre', 'code', 'textarea', 'button', 'kbd', 'samp']);
+const CELL_TAGS = new Set(['td', 'th']);
+const NUMBERS_ONLY = /^[\d\s.,:;+\-\u2212/()%$\u20AC\u00A3\u0660-\u0669\u06F0-\u06F9\u066B\u066C]+$/u;
+const PHYSICAL_LEFT = new Set(['left', '-webkit-left']);
+
 /**
- * Visible text blocks in an rtl context whose computed text-align is `left` (it only computes to `left` when `left` was written).
- * @param {{docDirection: string, blocks: {element: string, textAlign: string, direction: string, visible?: boolean}[]}} facts blocks = non-inline elements with their own text
- * @param {number} [max] cap on the number of findings
+ * Visible text blocks whose own direction is rtl and whose computed text-align is `left` (in rtl it only computes to `left` when `left` was written).
+ * Not reported: pre, code, textarea, button, a table cell holding only numbers, `dir=auto` text, a block that is itself ltr (an ltr island).
+ * @param {{blocks: {element: string, tag?: string, text?: string, textAlign: string, direction: string, visible?: boolean, dirAuto?: boolean}[]}} facts
+ *   blocks = non-inline elements with their own text
+ * @param {number} [max] cap on the number of hints
  * @returns {{check: 'rtl-physical-align', element: string, detail: string}[]}
  */
-export function rtlPhysicalAlignFindings({ docDirection, blocks }, max = Infinity) {
-  if (docDirection !== 'rtl') return [];
+export function rtlPhysicalAlignFindings({ blocks }, max = Infinity) {
+  const numericCell = (b) => CELL_TAGS.has(b.tag) && NUMBERS_ONLY.test((b.text ?? '').trim());
   return blocks
-    .filter((b) => b.visible !== false && b.direction === 'rtl' && b.textAlign === 'left')
+    .filter((b) => b.visible !== false && b.direction === 'rtl' && PHYSICAL_LEFT.has(b.textAlign) && !b.dirAuto && !ALIGN_EXEMPT_TAGS.has(b.tag) && !numericCell(b))
     .map((b) => ({ check: 'rtl-physical-align', element: b.element, detail: 'text-align: left in an rtl context sits on the wrong edge; use start (or remove it) so the text follows the direction' }))
     .slice(0, max);
 }

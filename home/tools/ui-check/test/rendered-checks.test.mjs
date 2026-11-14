@@ -20,24 +20,39 @@ test('raw-i18n-key: normal copy, a key inside a sentence, a single word and uppe
 
 test('raw-i18n-key: a hidden text node is ignored, and the cap limits the list', () => {
   assert.deepEqual(rawI18nKeyFindings({ texts: [text('reset.hint', { visible: false })] }), []);
-  assert.equal(rawI18nKeyFindings({ texts: ['a.b', 'c.d', 'e.f'].map((t) => text(t)) }, 2).length, 2);
+  assert.equal(rawI18nKeyFindings({ texts: ['ab.cd', 'ef.gh', 'ij.kl'].map((t) => text(t)) }, 2).length, 2);
 });
 
-const block = (align, extra = {}) => ({ element: 'p.form-hint', textAlign: align, direction: 'rtl', visible: true, ...extra });
+test('raw-i18n-key: not a key: versions, file names, host names, digit segments, abbreviations, code and collapsed text (reviewer raw.html cases)', () => {
+  const notKeys = ['v1.2.3', 'v2.0', 'example.com', 'www.example.com', 'acme.io', 'package.json', 'node.js', 'report.final.pdf', 'fig.1', '3.14', '1.2.3', 'i.e', 'e.g', 'a.b.c', 'Auth.signIn.title'];
+  assert.deepEqual(rawI18nKeyFindings({ texts: notKeys.map((t) => text(t)) }), []);
+  assert.deepEqual(rawI18nKeyFindings({ texts: [text('user.name', { inCode: true }), text('hidden.key', { visible: false })] }), []);
+  const keys = ['auth.sign_in.title', 'reset.hint', 'signup.role_label', 'errors.required'];
+  assert.equal(rawI18nKeyFindings({ texts: keys.map((t) => text(t)) }).length, keys.length);
+});
 
-test('rtl-physical-align: text-align left in an rtl document is reported, right/start/center are not', () => {
-  const found = rtlPhysicalAlignFindings({ docDirection: 'rtl', blocks: [block('left')] });
-  assert.equal(found.length, 1);
+const block = (align, extra = {}) => ({ element: 'p.form-hint', tag: 'p', text: 'hint', textAlign: align, direction: 'rtl', visible: true, ...extra });
+
+test('rtl-physical-align: text-align left in an rtl block is reported, right/start/center are not', () => {
+  const found = rtlPhysicalAlignFindings({ blocks: [block('left'), block('-webkit-left')] });
+  assert.equal(found.length, 2);
   assert.equal(found[0].check, 'rtl-physical-align');
   assert.match(found[0].detail, /text-align: left/);
   assert.match(found[0].detail, /start/);
-  assert.deepEqual(rtlPhysicalAlignFindings({ docDirection: 'rtl', blocks: ['right', 'start', 'center', 'justify', 'end'].map((a) => block(a)) }), []);
+  assert.deepEqual(rtlPhysicalAlignFindings({ blocks: ['right', 'start', 'center', 'justify', 'end'].map((a) => block(a)) }), []);
 });
 
-test('rtl-physical-align: ltr page, hidden block, and a block that is itself ltr are not reported', () => {
-  assert.deepEqual(rtlPhysicalAlignFindings({ docDirection: 'ltr', blocks: [block('left', { direction: 'ltr' })] }), []);
-  assert.deepEqual(rtlPhysicalAlignFindings({ docDirection: 'rtl', blocks: [block('left', { visible: false })] }), []);
-  assert.deepEqual(rtlPhysicalAlignFindings({ docDirection: 'rtl', blocks: [block('left', { direction: 'ltr' })] }), []);
+test('rtl-physical-align: an ltr block (ltr page or island), a hidden block and dir=auto text are not reported', () => {
+  assert.deepEqual(rtlPhysicalAlignFindings({ blocks: [block('left', { direction: 'ltr' })] }), []);
+  assert.deepEqual(rtlPhysicalAlignFindings({ blocks: [block('left', { visible: false })] }), []);
+  assert.deepEqual(rtlPhysicalAlignFindings({ blocks: [block('left', { dirAuto: true })] }), []);
+});
+
+test('rtl-physical-align: pre, code, textarea, button and number-only table cells are skipped; a text cell is not', () => {
+  for (const tag of ['pre', 'code', 'textarea', 'button']) assert.deepEqual(rtlPhysicalAlignFindings({ blocks: [block('left', { tag })] }), [], tag);
+  for (const text of ['1,234', '12.5%', '+98 912 000', '\u06F1\u06F2\u06F3', '$ 1,000.00']) assert.deepEqual(rtlPhysicalAlignFindings({ blocks: [block('left', { tag: 'td', text })] }), [], text);
+  assert.equal(rtlPhysicalAlignFindings({ blocks: [block('left', { tag: 'td', text: 'Total 12' })] }).length, 1);
+  assert.equal(rtlPhysicalAlignFindings({ blocks: [block('left', { tag: 'p', text: '1,234' })] }).length, 1, 'only table cells get the number exemption');
 });
 
 const NONE = { outlineStyle: 'none', outlineWidth: '0px', outlineColor: 'rgb(0, 0, 0)', boxShadow: 'none', borderColor: 'rgb(0, 0, 0)', borderWidth: '0px', backgroundColor: 'rgb(255, 255, 255)',

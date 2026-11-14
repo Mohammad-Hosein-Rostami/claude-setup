@@ -8,7 +8,7 @@
  * @param {{minTarget: number, minText: number, smallViewport: number, max: number}} cfg
  * @returns {{scrollWidth: number, clientWidth: number, findings: {check: string, element: string, detail: string}[],
  *   docDirection: string, fields: {element: string, type: string, inputmode: string, autocomplete: string, name: string, id: string, ariaLabel: string, direction: string, visible: boolean}[],
- *   texts: {element: string, text: string, visible: boolean}[], blocks: {element: string, textAlign: string, direction: string, visible: boolean}[],
+ *   texts: {element: string, text: string, visible: boolean, inCode: boolean}[], blocks: {element: string, tag: string, text: string, textAlign: string, direction: string, visible: boolean, dirAuto: boolean}[],
  *   inlineTargets: {element: string, width: number, height: number, siblingText: boolean}[]}}
  */
 export function auditInPage(cfg) {
@@ -32,6 +32,16 @@ export function auditInPage(cfg) {
   const clippedByAncestor = (el) => {
     for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
       if (getComputedStyle(p).overflowX !== 'visible') return true;
+    }
+    return false;
+  };
+  // Content squeezed to nothing by a collapsed or transparent ancestor (closed details, an accordion at height 0, an opacity 0 wrapper) is not visible to the user.
+  const collapsedByAncestor = (el) => {
+    for (let p = el.parentElement; p && p !== document.documentElement; p = p.parentElement) {
+      const ps = getComputedStyle(p);
+      const pr = p.getBoundingClientRect();
+      const closedDetails = p.tagName === 'DETAILS' && !p.open && !el.closest('summary');
+      if (closedDetails || ps.contentVisibility === 'hidden' || ps.opacity === '0' || (ps.overflowY !== 'visible' && pr.height < 1) || (ps.overflowX !== 'visible' && pr.width < 1)) return true;
     }
     return false;
   };
@@ -60,8 +70,13 @@ export function auditInPage(cfg) {
       add('offscreen', el, `x ${Math.round(r.left)}..${Math.round(r.right)} outside 0..${vw}`);
     }
     if (hasOwnText(el)) {
-      for (const text of ownTexts(el).slice(0, MAX_TEXTS_PER_ELEMENT)) texts.push({ element: label(el), text: text.slice(0, MAX_TEXT_LENGTH), visible: true });
-      if (s.display !== 'inline') blocks.push({ element: label(el), textAlign: s.textAlign, direction: s.direction, visible: true });
+      const collapsed = collapsedByAncestor(el);
+      const inCode = Boolean(el.closest('code,pre,kbd,samp,select,option'));
+      for (const text of ownTexts(el).slice(0, MAX_TEXTS_PER_ELEMENT)) texts.push({ element: label(el), text: text.slice(0, MAX_TEXT_LENGTH), visible: !collapsed, inCode });
+      if (s.display !== 'inline') {
+        const dirAuto = el.closest('[dir]')?.getAttribute('dir') === 'auto';
+        blocks.push({ element: label(el), tag: el.tagName.toLowerCase(), text: ownTexts(el).join(' ').slice(0, MAX_TEXT_LENGTH), textAlign: s.textAlign, direction: s.direction, visible: !collapsed, dirAuto });
+      }
       if (el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 1 && s.textOverflow !== 'ellipsis') add('clipped-text', el, `scrollWidth ${el.scrollWidth} > clientWidth ${el.clientWidth}`);
       if (vw < cfg.smallViewport && Number.parseFloat(s.fontSize) < cfg.minText) add('small-text', el, `${s.fontSize} < ${cfg.minText}px`);
     }

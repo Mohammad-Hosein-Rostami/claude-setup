@@ -46,7 +46,7 @@ export async function auditWidth(browser, target, width, outDir) {
   const findings = [...layout, ...bidiFieldFindings({ docDirection, fields }, audit.max)];
   const hints = [
     ...targetSizeHints({ targets: inlineTargets }, audit.minTarget, audit.max),
-    ...rawI18nKeyFindings({ texts }, audit.max), ...rtlPhysicalAlignFindings({ docDirection, blocks }, audit.max),
+    ...rawI18nKeyFindings({ texts }, audit.max), ...rtlPhysicalAlignFindings({ blocks }, audit.max),
   ];
   await page.screenshot({ path: path.join(outDir, `w${width}.png`), fullPage: true, animations: 'disabled', caret: 'hide' });
   // Last, because pressing Tab can fire the page's focus handlers.

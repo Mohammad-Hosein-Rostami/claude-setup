@@ -79,6 +79,20 @@ test('focus-indicator walk continues past an iframe (focus3.html) and past a sha
   assert.deepEqual((await noIndicator('review-focus4.html')).sort(), ['button#aftershadow', 'button#first']);
 });
 
+test('raw-i18n-key precision (reviewer raw.html): versions, file and host names, abbreviations, code, pre, kbd, a select option and closed details are not hints', { skip: !project }, async () => {
+  const { hints } = await audit('review-raw.html');
+  assert.deepEqual(of(hints, 'raw-i18n-key'), []);
+});
+
+test('raw-i18n-key still finds real keys next to those skips (rawkey.html)', { skip: !project }, async () => {
+  assert.deepEqual(of((await audit('rawkey.html')).hints, 'raw-i18n-key'), ['p#missing']);
+});
+
+test('rtl-physical-align precision (reviewer rtl1.html, rtl2.html): pre, code, textarea, button, number cells, dir=auto and ltr islands are skipped; explicit left in rtl, also under body dir=rtl, is a hint', { skip: !project }, async () => {
+  assert.deepEqual(of((await audit('review-rtl1.html')).hints, 'rtl-physical-align').sort(), ['div#r11', 'p#r1', 'td#r9', 'th#r8']);
+  assert.deepEqual(of((await audit('review-rtl2.html')).hints, 'rtl-physical-align'), ['p#x']);
+});
+
 test('target size (reviewer tap.html): nav, breadcrumb, pagination, footer and language links hint; links in a sentence, also inside strong/em or an inline wrapper, do not; an inline-block stays a failing tap-target', { skip: !project }, async () => {
   const { code, findings, hints } = await audit('review-tap.html');
   assert.equal(code, 1);
