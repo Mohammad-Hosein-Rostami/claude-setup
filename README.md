@@ -41,6 +41,7 @@ Pixel-exact Figma work: pull once, build, compare, fix, check responsive:
     node ~/.claude/tools/ui-check/cli.mjs compare --url URL --root SEL --cache DIR --map map.json
 
 ## Docs
+- [How this setup works](docs/how-it-works.md): folders, prompt flow, switching a hook off, reading the guard log; no AI needed
 - [Setup on a new machine](docs/setup.md): install, `local.json`, `FIGMA_TOKEN`, plugins, updating
 - [Daily use](docs/usage.md): edit, commit, push, pull; add a skill, agent, rule or tool
 - [Catalog](docs/catalog.md): every skill, agent, rule, standard, hook, tool, plugin and settings key
