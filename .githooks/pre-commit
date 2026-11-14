@@ -3,4 +3,7 @@
 set -euo pipefail
 command -v gitleaks >/dev/null || { echo "gitleaks not installed; see tools/Brewfile" >&2; exit 1; }
 gitleaks protect --staged --redact
+# Git exports GIT_DIR, GIT_INDEX_FILE and friends to hooks. A test that runs `git init` or `git config` in a temp
+# folder would inherit them and write into THIS repository (it once set core.bare=true here). Clear them first.
+unset $(git rev-parse --local-env-vars)
 node --test tests/*.test.mjs
