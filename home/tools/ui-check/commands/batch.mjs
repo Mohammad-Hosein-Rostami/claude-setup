@@ -23,13 +23,22 @@ export const options = {
 
 const stateDirName = (state) => `${state.index}-${[state.surface, state.state, state.locale ?? 'default'].join('--').replace(/[^A-Za-z0-9_.-]/g, '-')}`;
 
+/** Viewport width compare uses for a state (the Figma frame width); null when the cache is unreadable, because compareState reports that same error right after. */
+function frameWidth(state) {
+  try {
+    return pageOptions({ url: state.url }, readCache(state.figma.cache).meta, [], {}).width;
+  } catch {
+    return null;
+  }
+}
+
 async function compareState(browser, state, dir) {
   const cache = readCache(state.figma.cache);
   const map = state.figma.map ? loadMap(state.figma.map, cache.spec) : null;
   const pageOpts = pageOptions({ url: state.url, 'bypass-csp': false, 'no-autofocus': false }, cache.meta, state.steps, state.context);
   const { root } = state.figma;
   const result = await compareOnce(browser, { pageOpts, root, cache, map, maxDiff: PIXEL.maxDiffPercent, outDir: path.join(dir, 'compare') });
-  return compareRecords(state, result, { root, maxDiff: PIXEL.maxDiffPercent });
+  return compareRecords(state, result, { root, maxDiff: PIXEL.maxDiffPercent, width: pageOpts.width });
 }
 
 async function responsiveState(browser, state, dir) {
@@ -61,7 +70,7 @@ async function closeContexts(browser, dir, part) {
  * Run one part (compare or responsive) of a state. An error becomes failing records (its stack goes to `<dir>/<part>.error.txt`) so the
  * run goes on, and the part's contexts are closed either way; a failing close is added to the records as a finding.
  * @param {object} browser Playwright browser
- * @param {{state: object, dir: string, part: 'compare'|'responsive', slots: (number|null)[], job: Function}} work slots = widths the part would report (null = compare)
+ * @param {{state: object, dir: string, part: 'compare'|'responsive', slots: (number|null)[], job: Function}} work slots = widths the part would report (compare: the frame width)
  * @returns {Promise<object[]>} records of the part
  */
 export async function guarded(browser, { state, dir, part, slots, job }) {
@@ -81,7 +90,7 @@ export async function runState(browser, state, outRoot) {
   const dir = path.join(outRoot, stateDirName(state));
   fs.mkdirSync(dir, { recursive: true });
   const records = [];
-  if (state.figma) records.push(...await guarded(browser, { state, dir, part: 'compare', slots: [null], job: compareState }));
+  if (state.figma) records.push(...await guarded(browser, { state, dir, part: 'compare', slots: [frameWidth(state)], job: compareState }));
   if (state.widths) records.push(...await guarded(browser, { state, dir, part: 'responsive', slots: state.widths, job: responsiveState }));
   return records;
 }

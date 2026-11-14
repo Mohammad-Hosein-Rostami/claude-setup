@@ -66,13 +66,15 @@ Hint `bidi-field?` (`responsive`): the same document and field direction, but th
   "defaults": { "baseUrl": "http://localhost:3000", "locale": "en", "colorScheme": "light", "widths": [320, 1024],
                 "storage": { "lang": "en" }, "cookies": {} },
   "states": [
-    { "surface": "login", "state": "rtl-dropdown-open", "locale": "fa-IR", "url": "/login", "expectDir": "rtl",
+    { "surface": "login", "state": "language:open", "locale": "fa", "url": "/login", "expectDir": "rtl",
       "storage": { "lang": "fa" }, "steps": [{ "action": "click", "selector": "#language-menu" }, { "action": "waitFor", "selector": "#language-list" }] },
-    { "surface": "home", "state": "default", "url": "/", "widths": [390],
+    { "surface": "home", "state": "rest", "locale": "en", "url": "/", "widths": [390],
       "figma": { "file": "FILEKEY", "node": "1:2", "map": "home-map.json", "root": "#home" } }
   ]
 }
 ```
+
+Names: `surface`, `state` and `locale` are copied into the records as written, and `ui-coverage check` matches them against its matrix, so use its names: `state` is `rest` or `<control>:<state>` (run `ui-coverage states` for the list), `surface` is the matrix surface id, `locale` is a matrix locale tag, letter case aside (tag `fa` needs `fa`, and `fa-IR` does not match it; this tool records the tag in canonical case, so `FA` and `fa` both arrive as `fa`). Do not write the file by hand: `ui-coverage scaffold matrix.json --out states.json` writes one entry per open matrix cell with those names, and you fill `url`, `steps` and `defaults`.
 
 - `defaults` (all optional): `baseUrl` (a state `url` is resolved against it), `locale`, `colorScheme`, `widths`, `storage`, `cookies` (objects of string values). A state's own `locale`, `widths` replace the default; its `storage`/`cookies` are merged by key over the default's.
 - State: `surface`, `state`, `url` required. `steps` is an array (same actions as `--steps`) or a path to a steps file, relative to the states file. `figma` is `{file, node}` (the cache `figma-pull` filled), plus optional `map` (path relative to the states file) and `root` (selector, default `body`; the compare screenshot and size gate use it). A state needs `figma` or widths. `surface` + `state` + `locale` must be unique.
@@ -86,12 +88,12 @@ Hint `bidi-field?` (`responsive`): the same document and field direction, but th
 Output in `--out` (default under the OS temp dir): `results.json`, `summary.md` (one table row per state x width), and per state a folder `<index>-<surface>--<state>--<locale>/{compare,responsive}/` with the usual `report.*` and screenshots. The state folder always exists; when a part throws, its stack is in `<part>.error.txt` there (also a context that fails to close, which turns that part's records into failures). `results.json` is an array of records read by `ui-coverage check --results`; the field names are a contract:
 
 ```json
-{ "surface": "login", "state": "rtl-dropdown-open", "locale": "fa-IR", "width": 320, "status": "fail",
-  "evidence": "/tmp/ui-check/batch/<run>/0-login--rtl-dropdown-open--fa-IR/responsive/report.md",
+{ "surface": "login", "state": "language:open", "locale": "fa", "width": 320, "status": "fail",
+  "evidence": "/tmp/ui-check/batch/<run>/0-login--language-open--fa/responsive/report.md",
   "findings": [{ "check": "bidi-field", "element": "input#otp", "detail": "..." }] }
 ```
 
-`width` is the audited width, or `null` for the compare record (its viewport is the Figma frame). `locale` is `null` when none was set. `evidence` is the state's report, or the state folder when the state threw before a report existed.
+`width` is the viewport width the part ran at: the audited width for a `responsive` record, and for the compare record the Figma frame width (`ceil(meta.width)` of the cache, an integer), so the matrix `widths` must contain the frame width. It is `null` only on an error record whose Figma cache could not be read. `locale` is `null` when none was set. `evidence` is the state's report, or the state folder when the state threw before a report existed.
 
 ## Deterministic capture (default, all commands)
 

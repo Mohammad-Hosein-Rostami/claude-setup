@@ -8,6 +8,7 @@ Run: `node ~/.claude/tools/ui-coverage/ui-coverage.mjs <command>`
 | Command | What it does |
 | ------- | ------------ |
 | `expand <matrix> [--out F]` | Adds a `todo` cell for every surface x state x locale that is missing (`rest` also per width). Idempotent; writes the matrix in place. Exit 1 (file untouched) when the matrix structure is broken. |
+| `scaffold <matrix> [--out states.json]` | Writes a `ui-check batch --states` skeleton: one entry `{surface, state, locale, widths, url:"", steps:[]}` per surface x state x locale that still has a cell that is not `pass`, `na` or `deferred` (its open widths grouped in `widths`), and `defaults: {}` for you to fill. The names come from the matrix, so batch records match the cells by construction. An existing `--out` keeps all its entries and `defaults` (matched on surface + state + locale) and only gets the missing entries. Default `--out`: `states.json` in the current directory. Exit 1 (nothing written) for a broken matrix, 2 for a bad flag or an unreadable states file. Flow: expand, scaffold, fill `url` and `steps`, `ui-check batch`, check. |
 | `states` | Prints the default states per control class (the single list, `lib/states.mjs`). |
 | `check <matrix> [--results F]...` | Validates, merges result records, prints the summary, exits 0 (complete) or 1 (problems). Never writes. Exit 2: bad flag, unreadable or invalid JSON. |
 
@@ -40,7 +41,7 @@ the format `ui-check batch` writes to results.json. A record fills exactly the c
 and width (no fallback: a width-less record fills nothing and is `unmatched-result`). Per cell, a `fail` from any source
 (the matrix cell or any record) wins; a declared `na` / `deferred` that meets a fail record is a `fail` and the message
 says so; a `pass` record turns `todo`, `na` and `deferred` into `pass` but never clears a `fail`. A stale fail in an old
-results file therefore keeps failing: delete or re-run it. A record that matches no cell is a problem (usually a misspelled id).
+results file therefore keeps failing: delete or re-run it. A record that matches no cell is an `unmatched-result` problem whose message says what to change: a width outside `widths` (`add the design frame width 1440 to widths`; a Figma compare record carries the frame width), an unknown state (`use rest or <control>:<state>; run ui-coverage states`), an unknown surface, or an unknown locale. Locale tags match exactly, ignoring letter case only: record `FA` fills matrix `fa`, record `fa-IR` does not (add `fa-IR` to `locales`, or record `fa`); two matrix tags that differ only in case are a duplicate.
 
 ## check problems (exit 1)
 `shape` (broken structure), `surface-controls`, `control-component`, `control-states`, `control-reference`,
@@ -53,4 +54,4 @@ Output: a counts line, every `na` / `deferred` cell with its reason (paste both 
 
 ## Layout
 `ui-coverage.mjs` (CLI: arguments, files, printing), `lib/shape.mjs` (schema rules), `lib/states.mjs` (default states),
-`lib/cells.mjs` (cell set, expand, merge), `lib/check.mjs` (the check), `lib/report.mjs` (text). Tests: `tests/ui-coverage*.test.mjs`.
+`lib/cells.mjs` (cell set, expand, merge, unmatched-record advice), `lib/scaffold.mjs` (states skeleton), `lib/check.mjs` (the check), `lib/report.mjs` (text). Tests: `tests/ui-coverage*.test.mjs`.

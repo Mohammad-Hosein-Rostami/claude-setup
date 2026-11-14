@@ -132,7 +132,7 @@ test('batch writes one record per state x width, keeps going after a failure, an
     assert.equal(result.code, 1, result.stdout + result.stderr);
     const records = JSON.parse(fs.readFileSync(path.join(dir, 'out', 'results.json'), 'utf8'));
     assert.deepEqual(records.map((r) => [r.surface, r.state, r.width, r.status]), [
-      ['login', 'ltr', 320, 'pass'], ['login', 'rtl-dropdown', 320, 'fail'], ['login', 'wrong-dir', 320, 'fail'], ['home', 'card', null, 'pass'], ['home', 'card', 390, 'pass'],
+      ['login', 'ltr', 320, 'pass'], ['login', 'rtl-dropdown', 320, 'fail'], ['login', 'wrong-dir', 320, 'fail'], ['home', 'card', 300, 'pass'], ['home', 'card', 390, 'pass'],
     ]);
     assert.equal(records[1].findings[0].check, 'bidi-field');
     assert.match(records[2].findings[0].detail, /--expect-dir rtl/);

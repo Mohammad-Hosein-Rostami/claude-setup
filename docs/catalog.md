@@ -131,7 +131,7 @@ layers" in `home/CLAUDE.md`.
 | Tool | What it does |
 | ---- | ------------ |
 | `ui-check` | Node CLI: `figma-pull`, `compare`, `responsive`, `columns`, `batch` (many states in one run, writes `results.json`). Flags added: `--locale`, `--expect-dir`, `--color-scheme`, `--storage`, `--cookie`; `responsive` also reports the `bidi-field` finding. See `home/tools/ui-check/README.md` and `docs/figma-pixel-perfect.md`. Pages wait for network idle (max 5 s) and a 1.5 s settle before measuring. Dependencies: `odiff-bin`, `pngjs`; Playwright comes from the target project. |
-| `ui-coverage` | Node CLI for the `ui-coverage` skill: `expand` adds a `todo` cell for every missing surface x state x locale (and width) in a matrix file; `check` validates it, merges `ui-check batch` results and exits 1 naming each uncovered or failing cell. See `home/tools/ui-coverage/README.md`. |
+| `ui-coverage` | Node CLI for the `ui-coverage` skill: `expand` adds a `todo` cell for every missing surface x state x locale (and width) in a matrix file; `scaffold` writes the `ui-check batch` states skeleton for the open cells (names agree with the matrix by construction); `check` validates it, merges `ui-check batch` results and exits 1 naming each uncovered or failing cell. See `home/tools/ui-coverage/README.md`. |
 | `watch` | Node CLI: `node ~/.claude/tools/watch/watch.mjs <session-id>` follows a live session and prints action-only lines (owner prompts, compactions, errors, usage limits, guard denies and timeouts) plus a STALL alert when nothing is written for `--stall-min` minutes (default 20). Run it under Monitor from a second session. See `home/tools/watch/README.md`. |
 
 System CLIs (`tools/Brewfile`, `tools/windows-tools.ps1`): jq, ripgrep, gitleaks, gh, volta.

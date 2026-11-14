@@ -1,24 +1,28 @@
 #!/usr/bin/env node
-// CLI of the UI coverage matrix: `expand` adds todo cells, `check` decides whether a UI task is done.
+// CLI of the UI coverage matrix: `expand` adds todo cells, `scaffold` writes the ui-check batch states skeleton,
+// `check` decides whether a UI task is done.
 // Usage: ui-coverage.mjs expand <matrix.json> [--out <file>]
 //        ui-coverage.mjs check <matrix.json> [--results <file>]...    (repeat --results; each file is an array of
 //        `{surface,state,locale,width,status,evidence}` records, or an object with a `results` array)
+//        ui-coverage.mjs scaffold <matrix.json> [--out states.json]     (states skeleton for every open cell; keeps an existing --out's entries)
 //        ui-coverage.mjs states                                         (prints the default states per control class)
 // Exit codes: 0 ok / matrix complete, 1 problems found, 2 usage or setup error (bad flag, unreadable or invalid JSON file).
 // Invariants: logic lives in lib/ (pure); this file only parses arguments, reads and writes files and prints. `check`
 // never writes; it resolves relative evidence paths from the matrix file's directory. `expand` refuses to write a structurally broken matrix (exit 1, problems on stderr).
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { checkMatrix } from './lib/check.mjs';
 import { expandMatrix } from './lib/cells.mjs';
 import { formatReport } from './lib/report.mjs';
 import { validateStructure } from './lib/shape.mjs';
+import { scaffoldStates } from './lib/scaffold.mjs';
 import { describeStates } from './lib/states.mjs';
 
 const EXIT_PROBLEMS = 1;
 const EXIT_USAGE = 2;
 const JSON_INDENT = 2;
-const USAGE = 'usage: ui-coverage.mjs expand <matrix.json> [--out <file>] | check <matrix.json> [--results <file>]... | states';
+const DEFAULT_STATES_FILE = 'states.json';
+const USAGE = 'usage: ui-coverage.mjs expand <matrix.json> [--out <file>] | scaffold <matrix.json> [--out <states.json>] | check <matrix.json> [--results <file>]... | states';
 
 class UsageError extends Error {}
 
@@ -76,6 +80,29 @@ function expand(argv) {
   return 0;
 }
 
+// An existing states file is extended, a missing one is created; an unreadable or invalid one is a usage error (never overwritten).
+function existingStates(target) {
+  if (!existsSync(target)) return null;
+  const data = readJson(target);
+  if (typeof data !== 'object' || data === null || !Array.isArray(data.states)) throw new UsageError(`${target} must be a states file: {"defaults": {...}, "states": [...]}`);
+  return data;
+}
+
+function scaffold(argv) {
+  const { flags, positional } = parseArgs(argv, ['--out']);
+  const matrix = readJson(matrixPath(positional));
+  const problems = validateStructure(matrix);
+  if (problems.length > 0) {
+    process.stderr.write(`${problems.map((p) => `[${p.code}] ${p.message}`).join('\n')}\n`);
+    return EXIT_PROBLEMS;
+  }
+  const target = flags['--out'][0] ?? DEFAULT_STATES_FILE;
+  const { added, ...file } = scaffoldStates(matrix, existingStates(target));
+  writeFileSync(target, `${JSON.stringify(file, null, JSON_INDENT)}\n`);
+  console.log(`${target}: ${added} entries added, ${file.states.length} in total; fill url, steps and defaults, then run ui-check batch --states ${target}`);
+  return 0;
+}
+
 const isFile = (path) => {
   try {
     return statSync(path).isFile();
@@ -100,7 +127,7 @@ function states(argv) {
   return 0;
 }
 
-const COMMANDS = { expand, check, states };
+const COMMANDS = { expand, scaffold, check, states };
 
 const [command, ...rest] = process.argv.slice(2);
 if (!Object.hasOwn(COMMANDS, command ?? '')) fail(USAGE);

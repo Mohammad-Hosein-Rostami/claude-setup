@@ -1,7 +1,9 @@
 // Purpose: build the `batch` result records and write results.json and summary.md.
 // Exports: compareRecords, responsiveRecords, errorRecords, withCloseFailures, exitCodeFor, summaryMarkdown, writeBatchResults.
-// Invariant: a record is { surface, state, locale, width|null, status: "pass"|"fail", evidence, findings }; another tool
+// Invariant: a record is { surface, state, locale, width, status: "pass"|"fail", evidence, findings }; another tool
 // (`ui-coverage check --results`) reads these exact field names, so never rename them. evidence is the path of that state's report.
+// width is the viewport width the part ran at (an integer; a compare record carries the Figma frame width). It is null only on an
+// error record whose Figma cache could not be read, so the frame size is unknown.
 import fs from 'node:fs';
 import path from 'node:path';
 import { isHint } from './bidi.mjs';
@@ -15,19 +17,21 @@ function record(state, width, findings, evidence) {
 }
 
 /**
- * Records for the compare part of a state (width is null: the viewport is the Figma frame).
+ * Records for the compare part of a state (its width is the viewport the compare ran at: the Figma frame width).
  * @param {object} state normalised state
  * @param {{md: string, pixels: object, elementRows: object[]}} result compareOnce result
- * @param {{root: string, maxDiff: number}} gate selector and pixel tolerance used
+ * @param {{root: string, maxDiff: number, width: number}} gate selector, pixel tolerance and viewport width used (a positive integer)
  * @returns {object[]} one record; findings are the failing element rows plus a pixel finding when the pixel gate failed
+ * @throws {TypeError} when width is not a positive integer (a record without a width can never fill a coverage cell)
  */
-export function compareRecords(state, { md, pixels, elementRows }, { root, maxDiff }) {
+export function compareRecords(state, { md, pixels, elementRows }, { root, maxDiff, width }) {
+  if (!Number.isInteger(width) || width <= 0) throw new TypeError(`compare record width must be a positive integer (the viewport width), got ${JSON.stringify(width)}`);
   const findings = elementRows.map((r) => ({ check: 'element', element: r.element, detail: `${r.prop}: is ${r.is}, should be ${r.should} (delta ${r.delta})` }));
   if (!pixels.pass) {
     const size = pixels.sizeMismatch ? `size mismatch baseline ${pixels.sizeMismatch.baseline.join('x')} vs page ${pixels.sizeMismatch.actual.join('x')}; ` : '';
     findings.push({ check: 'pixel', element: root, detail: `${size}${pixels.diffPercent.toFixed(3)}% of pixels differ (${pixels.diffCount} px), max ${maxDiff}%` });
   }
-  return [record(state, null, findings, md)];
+  return [record(state, width, findings, md)];
 }
 
 /**
@@ -46,7 +50,7 @@ export function responsiveRecords(state, widths, { md, findings }) {
 /**
  * Failing records for a part of a state that threw (bad step, HTTP error, direction mismatch, missing cache ...).
  * @param {object} state normalised state
- * @param {(number|null)[]} widths one slot per record the part would have produced (null = the compare slot)
+ * @param {(number|null)[]} widths one slot per record the part would have produced (the compare slot is the frame width, null when the Figma cache is unreadable)
  * @param {Error} error what was thrown; its message becomes the finding
  * @param {string} stateDir the state's output folder, used as evidence because no report exists
  */

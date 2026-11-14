@@ -105,14 +105,19 @@ test('batch flags: --states required elsewhere, --only and --out parse, unknown 
 
 const state = parseStates(good(), BASE)[0];
 
-test('compareRecords: a pass has no findings; element rows and a pixel miss become findings; width is null', () => {
+test('compareRecords: a pass has no findings; element rows and a pixel miss become findings; width is the frame viewport width', () => {
   const pixels = { pass: false, diffPercent: 1.5, diffCount: 30, sizeMismatch: null };
   const elementRows = [{ element: 'Title', prop: 'font-size', is: 16, should: 18, delta: 2 }];
-  const [fail] = compareRecords(state, { pass: false, md: '/o/report.md', pixels, elementRows }, { root: '#card', maxDiff: 0.5 });
-  assert.deepEqual([fail.surface, fail.state, fail.locale, fail.width, fail.status, fail.evidence], ['login', 'rtl-dropdown', 'fa-IR', null, 'fail', '/o/report.md']);
+  const [fail] = compareRecords(state, { pass: false, md: '/o/report.md', pixels, elementRows }, { root: '#card', maxDiff: 0.5, width: 1440 });
+  assert.deepEqual([fail.surface, fail.state, fail.locale, fail.width, fail.status, fail.evidence], ['login', 'rtl-dropdown', 'fa-IR', 1440, 'fail', '/o/report.md']);
   assert.deepEqual(fail.findings.map((f) => f.check), ['element', 'pixel']);
-  const [pass] = compareRecords(state, { pass: true, md: '/o/report.md', pixels: { ...pixels, pass: true }, elementRows: [] }, { root: '#card', maxDiff: 0.5 });
+  const [pass] = compareRecords(state, { pass: true, md: '/o/report.md', pixels: { ...pixels, pass: true }, elementRows: [] }, { root: '#card', maxDiff: 0.5, width: 1440 });
   assert.deepEqual([pass.status, pass.findings], ['pass', []]);
+});
+
+test('compareRecords: a width that is not a positive integer is refused, never written as null', () => {
+  const result = { pass: true, md: '/o/c.md', pixels: { pass: true }, elementRows: [] };
+  for (const width of [null, undefined, 0, 12.5, '1440']) assert.throws(() => compareRecords(state, result, { root: 'body', maxDiff: 0, width }), /width/);
 });
 
 test('responsiveRecords: one record per width, findings split by width, status per width', () => {
@@ -132,7 +137,7 @@ test('writeBatchResults writes results.json (record fields unchanged) and summar
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'batch-out-'));
   const records = [
     ...responsiveRecords(state, [320, 1024], { findings: [{ width: 320, check: 'hscroll', element: 'html', detail: 'd' }], md: '/o/report.md' }),
-    ...compareRecords(state, { pass: true, md: '/o/c.md', pixels: { pass: true }, elementRows: [] }, { root: 'body', maxDiff: 0 }),
+    ...compareRecords(state, { pass: true, md: '/o/c.md', pixels: { pass: true }, elementRows: [] }, { root: 'body', maxDiff: 0, width: 1440 }),
   ];
   writeBatchResults(dir, records);
   const written = JSON.parse(fs.readFileSync(path.join(dir, 'results.json'), 'utf8'));
@@ -141,7 +146,7 @@ test('writeBatchResults writes results.json (record fields unchanged) and summar
   const rows = fs.readFileSync(path.join(dir, 'summary.md'), 'utf8').split('\n').filter((line) => line.startsWith('| login'));
   assert.equal(rows.length, 3);
   assert.match(rows[0], /\| login \| rtl-dropdown \| fa-IR \| 320 \| fail \| 1 \|/);
-  assert.match(rows[2], /\| - \| pass \| 0 \|/);
+  assert.match(rows[2], /\| 1440 \| pass \| 0 \|/);
   assert.equal(exitCodeFor(records), 1);
   assert.equal(exitCodeFor(records.filter((r) => r.status === 'pass')), 0);
   assert.match(summaryMarkdown(records), /^# ui-check batch: FAIL/);

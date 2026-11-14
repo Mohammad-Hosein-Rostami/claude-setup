@@ -39,8 +39,9 @@ function localeProblems(locales) {
   const tags = new Set();
   return locales.flatMap((locale) => {
     if (!isObject(locale) || !isText(locale.tag) || !DIRECTIONS.includes(locale.dir)) return [problem('shape', `locale needs a tag and dir ltr|rtl: ${JSON.stringify(locale)}`)];
-    if (tags.has(locale.tag)) return [problem('shape', `duplicate locale tag: ${locale.tag}`)];
-    tags.add(locale.tag);
+    const tag = locale.tag.toLowerCase(); // tags are compared ignoring letter case, so `fa` and `FA` would be one cell
+    if (tags.has(tag)) return [problem('shape', `duplicate locale tag: ${locale.tag}`)];
+    tags.add(tag);
     return [];
   });
 }
