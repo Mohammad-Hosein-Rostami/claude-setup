@@ -7,13 +7,48 @@
 // It follows the real nesting: quotes, `$'..'`, comments, `$((..))` arithmetic, `$(...)` inside double quotes (where quotes nest
 // again) and heredocs wherever they start. So `<<EOF` inside quotes, a comment or `$((1<<X))` is not a heredoc, and a heredoc
 // inside `"$(cat <<'EOF' ... EOF)"` is. A heredoc without a terminator line is left in place (its body is still checked).
-// Outside double quotes `$(`, `(`, `)` and backticks only separate commands (flat), like the regex tokenizer in shell-words.mjs.
+// Outside double quotes `$(`, `(`, `)` and backticks only separate commands (flat), like the regex tokenizer in shell-words.mjs;
+// but the words after the `)` that closes a `$(` go back to the segment that held the `$` (`echo $(a) $(b)` is one echo with two
+// arguments, not a command named `$`), while the bodies stay their own segments so every command inside is still checked.
+// That return happens only for a "simple" body (isSimpleSubstitutionBody): after a `case` pattern `)` or a `)` inside `${...}` the
+// rest of the body is still inside the substitution, so those keep the flat split and the words stay their own commands.
 // Invariants: linear in the text length apart from a bounded arithmetic look-ahead; an unclosed quote runs to the end of the text.
 
 const MAX_NESTING = 64; // `"$("$("...` deeper than this is read as plain text, so a hostile command cannot overflow the stack
 const MAX_ARITHMETIC = 4096; // look-ahead for the `))` that closes `((`; a longer one is treated as nested parentheses
 const HEREDOC_START = /<<-?[ \t]*/y;
 const COMMENT_PREFIX = /[\s;&|(]/;
+
+const NON_SIMPLE_BODY = /\bcase\b|\$\{|`|\$'|<<|#|<\(|>\(/; // a case pattern `)`, `${x#)}`, a comment, a heredoc: where a `)` may not end the substitution
+
+/**
+ * True when `body` (the text between a `$(` and the `)` that ended it in the scan) can only end at that `)`: no `case`, `${`, backtick,
+ * comment, heredoc or process substitution; every `(` is a `$(` or `$((` and balanced inside the body; no quote is left open and no
+ * `$(`/backtick hides inside double quotes. Anything unclear is "not simple", and the caller keeps the flat split (the safe, asking side).
+ */
+export function isSimpleSubstitutionBody(body) {
+  if (NON_SIMPLE_BODY.test(body)) return false;
+  let depth = 0;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === '\\') i++;
+    else if (c === "'") {
+      i = body.indexOf("'", i + 1);
+      if (i === -1) return false;
+    } else if (c === '"') {
+      for (i++; i < body.length && body[i] !== '"'; i++) {
+        if (body[i] === '\\') i++;
+        else if (body[i] === '$' && body[i + 1] === '(') return false;
+      }
+      if (i >= body.length) return false;
+    } else if (c === '(') {
+      const dollar = body[i - 1] === '$' || (body[i - 1] === '(' && body[i - 2] === '$');
+      if (!dollar) return false;
+      depth++;
+    } else if (c === ')' && --depth < 0) return false;
+  }
+  return depth === 0;
+}
 
 /** Marks a segment as fed by `|`; non-enumerable, so segments still compare equal to plain word lists. */
 export const markPiped = (seg) => Object.defineProperty(seg, 'piped', { value: true, configurable: true });
@@ -128,20 +163,23 @@ function walk(state, start, closer) {
   const { text } = state;
   const segs = [[]];
   const nested = [];
+  const opened = []; // per open `(`: {outer, at} (the segment holding its `$`, and where it is) when it starts a substitution, else null
+  let current = segs[0];
   let word = -1;
   let depth = 0;
   const begin = (at) => {
     if (word === -1) word = at;
   };
   const endWord = (to) => {
-    if (word !== -1) segs.at(-1).push(text.slice(word, to));
+    if (word !== -1) current.push(text.slice(word, to));
     word = -1;
   };
   const split = (at, piped = false) => {
     endWord(at);
-    const current = segs.at(-1);
-    if (current.length > 0) segs.push(piped ? markPiped([]) : []);
-    else if (piped) markPiped(current); // `a |<newline> b`: the empty segment keeps its flag
+    if (current.length > 0) {
+      current = piped ? markPiped([]) : [];
+      segs.push(current);
+    } else if (piped) markPiped(current); // `a |<newline> b`: the empty segment keeps its flag
   };
   let i = start;
   while (i < text.length) {
@@ -170,6 +208,8 @@ function walk(state, start, closer) {
       if (text[i - 1] !== '$') endWord(i); // `((expr))` is a command that runs nothing; `$((expr))` stays part of its word
       i = arithmeticEnd(text, i + 2);
     } else if (c === '(') {
+      endWord(i);
+      opened.push(text[i - 1] === '$' && text[i - 2] !== '\\' ? { outer: current, at: i } : null);
       split(i);
       if (closer === ')') depth++;
       i++;
@@ -179,12 +219,14 @@ function walk(state, start, closer) {
     } else if (c === ')') {
       split(i);
       if (closer === ')') depth--;
+      const sub = opened.pop();
+      if (sub && isSimpleSubstitutionBody(text.slice(sub.at + 1, i))) current = sub.outer;
       i++;
     } else if (c === '`' && closer === '`') {
       endWord(i);
       return { segs, nested, end: i + 1, closed: true };
     } else if (c === '`' || c === ';') {
-      if (c === '`' && word === -1 && segs.at(-1).length === 0) segs.at(-1).push('$'); // `` `cmd` `` as the command word, like `$(cmd)`
+      if (c === '`' && word === -1 && current.length === 0) current.push('$'); // `` `cmd` `` as the command word, like `$(cmd)`
       split(i);
       i++;
     } else if (c === '#' && word === -1 && (i === start || COMMENT_PREFIX.test(text[i - 1]))) {
