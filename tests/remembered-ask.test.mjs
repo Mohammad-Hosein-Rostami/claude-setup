@@ -4,7 +4,8 @@ import './pin-home.mjs';
 import { test } from 'node:test';
 import { secretAskTimeoutSeconds } from '../home/hooks/lib/timed-ask.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
-import { isSecretOnlyReason, neutralise, REMEMBERED_ENV_REF, secretReason } from '../home/hooks/lib/remembered-ask.mjs';
+import { neutralise, REMEMBERED_ENV_REF } from '../home/hooks/lib/remembered-ask.mjs';
+import { isSecretOnlyReason, secretReason } from '../home/hooks/lib/verdict.mjs';
 
 const MARK = ' (matched in raw text)';
 const LONG_VALUE = 'abcdefghij1234';

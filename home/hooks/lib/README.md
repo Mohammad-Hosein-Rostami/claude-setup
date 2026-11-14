@@ -22,6 +22,9 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 Asking and remembering:
 - `timed-ask.mjs`: the timed dialog (osascript, PowerShell or zenity).
 - `remembered-ask.mjs`, `allowed-literals.mjs`: per-session memory of secrets the owner already allowed (hashes only).
+- `bounce-once.mjs`: the first time a command asks only because of how it is written (a variable command word, a risky word
+  inside `$(...)` or a heredoc, a literal secret), it is sent back to the agent with the fix instead of the dialog; the same
+  command again gets the dialog. Per-session store in `~/.claude/state/guard-bounced` (hashes only).
 - `guard-log.mjs`: the decision log, one JSON line per decision.
 
 Other hooks:
@@ -40,7 +43,9 @@ Never run a bare `node --test`. One file at a time works too, for example `node 
 
 ## Watch out for
 
-- The guard never hard-blocks: a rule asks, and a missing answer lets the command go ahead. Keep that when you add a rule.
+- The guard never blocks for good: a rule asks, and a missing answer lets the command go ahead. A bounce (`bounce-once.mjs`)
+  only sends a command back once; sent again, it asks. Keep that when you add a rule, and add a reason to the bounce classes
+  only when rewriting the command removes the ask.
 - The two parsers (`shell-words.mjs` and `shell-lexer.mjs`) are meant to be independent. Do not make one call the other.
 - Guard tests pin `HOME` (`tests/pin-home.mjs`): `guard-log.mjs` and `remote.mjs` read it when they load.
 - `docs/how-it-works.md` explains how a prompt reaches these hooks.

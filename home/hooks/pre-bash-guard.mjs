@@ -1,10 +1,12 @@
 // PreToolUse(Bash) guard. Reads the hook JSON from stdin, never evaluates the command.
-// Exports: decide(command, {cwd, project, prodHosts}) -> {allow: true} | {allow: false, ask: true, reason};
+// Exports: decide(command, {cwd, project, prodHosts}) -> {allow: true} | {allow: false, ask: true, reason, reasons};
 // segments(command) -> string[][]. Parsing lives in lib/shell-words.mjs and lib/command-of.mjs.
-// Nothing is hard-denied. Every rule hit is an ASK, and the hook answers it with a timed native dialog (lib/timed-ask.mjs:
+// Nothing is denied for good. Every rule hit is an ASK, and the hook answers it with a timed native dialog (lib/timed-ask.mjs:
 // Allow is the default, no answer in 180 s (CLAUDE_ASK_TIMEOUT_S) goes ahead as Allow, only a click on Deny denies); with no
 // GUI (ssh, CI, no display) or a failing dialog it falls back to the CLI's own "ask" prompt, which also appears in
-// bypassPermissions mode (verified on CLI 2.1.323). Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
+// bypassPermissions mode (verified on CLI 2.1.323). Bounce once (lib/bounce-once.mjs): when a reason can be fixed by rewriting the
+// command (a variable command word, a risky word inside shell expansion, a literal secret), the first send is denied with the rewrite
+// instead; the identical command sent again gets the ask above. Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
 // Rules. DESTRUCTIVE (the dialog says "DESTRUCTIVE: ..."): force push (incl. -fu clusters and +refspec), `push --mirror`,
 // remote branch delete, rm -r outside the project (temp dirs allowed, `cd` tracked within one command line, `cd` to `~`,
 // `$HOME` and `$(git rev-parse --show-toplevel)` (from inside the project only) is resolved, as are leading
@@ -77,13 +79,13 @@ import { checkFind } from './lib/find-delete.mjs';
 import { outwardAsk } from './lib/outward.mjs';
 import { readProdHosts, remoteAsk } from './lib/remote.mjs';
 import { checkRm, expandHome, expandVars, isUnder, nativePath, newScope, sameFile, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
-import { askUnlessRemembered, isSecretOnlyReason, secretReason } from './lib/remembered-ask.mjs';
+import { askUnlessRemembered } from './lib/remembered-ask.mjs';
 import { findLiteralSecret } from './lib/secrets.mjs';
 import { shellHazards } from './lib/shell-hazards.mjs';
 import { askOwner } from './lib/timed-ask.mjs';
 import { GIT_TOPLEVEL_WORD, lex, segments, tokenize } from './lib/shell-words.mjs';
 import { riskyWordInExpansion } from './lib/raw-risk.mjs';
-import { DESTRUCTIVE_PREFIX, MAX_COMMAND_CHARS } from './lib/verdict.mjs';
+import { DESTRUCTIVE_PREFIX, isSecretOnlyReason, MAX_COMMAND_CHARS, secretReason } from './lib/verdict.mjs';
 
 export { segments };
 
@@ -92,9 +94,10 @@ const SHELL_OPTIONS_WITH_VALUE = new Set(['-o', '+o', '-O', '+O', '--rcfile', '-
 const UNKNOWN_CD_TARGET = /^-|[~$`*?[\]{}]/;
 
 const allow = () => ({ allow: true });
-// Nothing is hard-denied: every rule is an ask, and the hook turns it into a timed dialog (Allow by default, auto-allow
-// after 3 minutes). Only a click on Deny denies. A destructive rule says so, so its dialog stands out.
-const ask = (reason) => ({ allow: false, ask: true, reason });
+// Every rule is an ask. The hook turns it into a timed dialog (Allow by default, auto-allow after 3 minutes), or, the first time a
+// reason can be fixed by rewriting the command, into a bounce (lib/bounce-once.mjs reads `reasons` one by one). Only a click on
+// Deny denies for good. A destructive rule says so, so its dialog stands out.
+const ask = (reasons) => ({ allow: false, ask: true, reason: reasons.join('; '), reasons });
 
 /** Like expandHome; the git top-level word -> the project, but only from inside it (elsewhere the top-level is unknown). */
 function expandCdTarget(target, cwd, project) {
@@ -206,15 +209,16 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
 }
 
 /**
- * Pure decision for one Bash command line. Never a hard deny: a rule hit is an ask (the hook shows a timed dialog), and
- * a destructive one (force push, rm outside the project, disk wipe) leads the reason.
+ * Pure decision for one Bash command line. Never a deny: a rule hit is an ask (the hook shows a timed dialog or bounces it once),
+ * and a destructive one (force push, rm outside the project, disk wipe) leads the reason.
  * @param {string} command raw command text
  * @param {{cwd?: string|null, project?: string, prodHosts?: string[]}} ctx absolute paths (cwd null means "unknown
  *   directory") and the private production-host list (see lib/remote.mjs)
- * @returns {{allow: true} | {allow: false, ask: true, reason: string}} reason joins every rule hit, destructive first
+ * @returns {{allow: true} | {allow: false, ask: true, reason: string, reasons: string[]}} reason joins every rule hit, destructive
+ *   first; reasons holds the same hits one by one, in the same order
  */
 export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts = [] } = {}) {
-  if (command.length > MAX_COMMAND_CHARS) return ask('command too long to check; read it before allowing');
+  if (command.length > MAX_COMMAND_CHARS) return ask(['command too long to check; read it before allowing']);
   const ctx = { cwd, project, prodHosts };
   const primary = reasonsOf(command, ctx);
   // backstop: a second, independent parse (the character-level lexer) feeds the same rules; what only it finds is marked
@@ -228,7 +232,7 @@ export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts 
   if (risky !== undefined && reasons.every(isSecretOnlyReason)) reasons.push(risky);
   if (reasons.length === 0) return allow();
   reasons.sort((x, y) => Number(y.startsWith(DESTRUCTIVE_PREFIX)) - Number(x.startsWith(DESTRUCTIVE_PREFIX)));
-  return ask(reasons.join('; '));
+  return ask(reasons);
 }
 
 export const GUARD_ERROR_REASON = 'guard error';

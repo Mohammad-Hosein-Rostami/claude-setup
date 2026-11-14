@@ -1,5 +1,6 @@
 // Rules for commands whose real command is hidden from the guard: it runs from a variable, from stdin, or from one string.
-// Exports: shellHazards({seg, raw, parsed, shellScript}) -> string[] ask reasons. Pure, no I/O.
+// Exports: shellHazards({seg, raw, parsed, shellScript}) -> string[] ask reasons; VARIABLE_COMMAND_REASON, SPLIT_VARIABLE_REASON (the two
+// variable-command reasons, which lib/bounce-once.mjs sends back once for a rewrite). Pure, no I/O.
 // - the command word is a variable or `$(...)` (`$X`, `X="git push"; $X`): the guard cannot see what runs. Names that conventionally hold
 //   an editor, pager or compiler (`$EDITOR file`) are fine, and so is a variable assigned earlier in the line to one plain word.
 // - a shell reads its commands from stdin: `curl x | bash`, `bash <<EOF`, `bash < file`, `sh -s`.
@@ -14,13 +15,15 @@ const STDIN_REDIRECT = /^\d*<(?!\()/; // `<file`, `<<EOF`, `<<<text`
 const STDIN_FLAG = /^-[a-zA-Z]*s[a-zA-Z]*$/;
 const ENV_SPLIT_STRING = /^--split-string|^-[a-zA-Z]*S/;
 const SU_COMMAND_FLAG = /^--command|^-[a-zA-Z]*c/;
+export const VARIABLE_COMMAND_REASON = 'the command word is a variable or substitution, so what runs is hidden; write the command out';
+export const SPLIT_VARIABLE_REASON = 'a variable holding several words is run as the command; write the command out';
 
 function hiddenCommandWord(raw, parsed) {
   const variable = VARIABLE_WORD.exec(raw.cmd ?? '');
   const resolved = parsed.cmd !== raw.cmd && !/[\s$]/.test(parsed.cmd ?? '');
   const conventional = CONVENTIONAL_COMMAND_VARS.has(variable?.[1] ?? variable?.[2]);
-  if (variable && !conventional && !resolved) return 'the command word is a variable or substitution, so what runs is hidden; write the command out';
-  if (/\s/.test(parsed.cmd ?? '')) return 'a variable holding several words is run as the command; write the command out';
+  if (variable && !conventional && !resolved) return VARIABLE_COMMAND_REASON;
+  if (/\s/.test(parsed.cmd ?? '')) return SPLIT_VARIABLE_REASON;
   return undefined;
 }
 

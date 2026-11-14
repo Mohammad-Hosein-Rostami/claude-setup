@@ -46,7 +46,8 @@ function fakeDialog(result, extra = {}) {
   chmodSync(bin, 0o755);
   if (process.platform !== 'win32') warmExec(bin);
   const out = join(dir, 'asked.json');
-  const env = { ...process.env, PATH: `${dir}${delimiter}${process.env.PATH}`, DISPLAY: ':0', FAKE_DIALOG_RESULT: result, FAKE_DIALOG_OUT: out, CLAUDE_GUARD_LOG: tempLogPath(), ...extra };
+  const home = join(dir, 'home'); // the guard keeps per-session state under HOME (bounce store): never the real one
+  const env = { ...process.env, HOME: home, USERPROFILE: home, PATH: `${dir}${delimiter}${process.env.PATH}`, DISPLAY: ':0', FAKE_DIALOG_RESULT: result, FAKE_DIALOG_OUT: out, CLAUDE_GUARD_LOG: tempLogPath(), ...extra };
   for (const name of ['NODE_TEST_CONTEXT', 'SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY', 'CI']) delete env[name];
   return {
     env,
@@ -198,11 +199,16 @@ const decisionOf = (r) => JSON.parse(r.stdout).hookSpecificOutput;
 test('M2: guard hook - Allow and a real timeout print no decision (exit 0, logged); Deny prints deny; the log never holds the secret', () => {
   for (const [result, extra, decision] of [['allow', {}, 'allow'], ['deny', {}, 'deny'], ['timeout', REAL_TIMEOUT, 'allow']]) {
     const dialog = fakeDialog(result, extra);
-    const r = runGuard(`git push origin main # ${SECRET}`, dialog.env);
+    const command = `git push origin main # ${SECRET}`;
+    const bounce = runGuard(command, dialog.env); // a literal secret is bounced on the first send (lib/bounce-once.mjs) ...
+    assert.equal(decisionOf(bounce).permissionDecision, 'deny', result);
+    assert.ok(!bounce.stdout.includes(SECRET), result);
+    const r = runGuard(command, dialog.env); // ... and the identical retry gets the dialog
     assert.equal(r.status, 0, result);
     if (decision === 'allow') assert.equal(r.stdout, '', result);
     else assert.equal(decisionOf(r).permissionDecision, 'deny', result);
-    const [entry] = dialog.log();
+    const [bounced, entry] = dialog.log();
+    assert.equal(bounced.outcome, 'bounce');
     assert.equal(entry.outcome, result);
     assert.equal(entry.decision, decision);
     assert.equal(entry.hook, 'pre-bash-guard');

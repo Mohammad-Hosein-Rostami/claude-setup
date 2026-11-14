@@ -1,5 +1,7 @@
 // End-to-end tests for the guard's per-session memory of an allowed literal secret (pre-bash-guard.mjs, lib/allowed-literals.mjs).
 // The dialog is faked: a script named like the platform's dialog tool sits first on PATH, counts how often it is shown and answers.
+// A literal secret is bounced on its first send (lib/bounce-once.mjs); run() then sends the identical command again, as the bounce tells
+// an agent to, and these tests start from that retry, which takes the dialog path. sendOnce() is a single send.
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -10,6 +12,7 @@ import { delimiter, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { allowedLiteralsDir } from '../home/hooks/lib/allowed-literals.mjs';
+import { RETRY_LINE } from '../home/hooks/lib/bounce-once.mjs';
 import { dialogExecutable } from '../home/hooks/lib/timed-ask.mjs';
 import { hookEnv } from './hook-env.mjs';
 
@@ -45,17 +48,25 @@ function session() {
   const home = join(dir, 'home');
   const base = hookEnv({ HOME: home, USERPROFILE: home, PATH: `${dir}${delimiter}${process.env.PATH}`, DISPLAY: ':0', FAKE_DIALOG_COUNT: count, CLAUDE_PROJECT_DIR: PROJECT });
   for (const name of ['NODE_TEST_CONTEXT', 'SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY', 'CI']) delete base[name];
+  const sendOnce = (command, answer, sessionId = 'sess-1', extraEnv = {}) => {
+    const input = { cwd: PROJECT, session_id: sessionId, tool_input: { command } };
+    return spawnSync(process.execPath, [GUARD], { input: JSON.stringify(input), encoding: 'utf8', env: { ...base, FAKE_DIALOG_RESULT: answer, ...extraEnv } });
+  };
   return {
     home: { HOME: home },
     shownText: () => readFileSync(`${count}.shown`, 'utf8').trim().split('\n').map((line) => JSON.parse(line).join('\n')).at(-1),
     dialogs: () =>(existsSync(count) ? readFileSync(count, 'utf8').length : 0),
     log: () => readFileSync(base.CLAUDE_GUARD_LOG, 'utf8').trim().split('\n').map((line) => JSON.parse(line)),
-    run(command, answer, sessionId = 'sess-1', extraEnv = {}) {
-      const input = { cwd: PROJECT, session_id: sessionId, tool_input: { command } };
-      return spawnSync(process.execPath, [GUARD], { input: JSON.stringify(input), encoding: 'utf8', env: { ...base, FAKE_DIALOG_RESULT: answer, ...extraEnv } });
+    sendOnce,
+    run(...args) {
+      const first = sendOnce(...args);
+      return isBounce(first) ? sendOnce(...args) : first;
     },
   };
 }
+
+/** True when the guard bounced the command (deny whose text ends with the retry line), not when the owner denied it. */
+const isBounce = ({ stdout }) => stdout !== '' && JSON.parse(stdout).hookSpecificOutput.permissionDecisionReason.endsWith(RETRY_LINE);
 
 test('allowed once: the same value again shows no dialog, prints nothing and logs outcome "remembered"', () => {
   const s = session();
@@ -93,9 +104,19 @@ test('a dialog that fails (no GUI) falls back to ask and remembers nothing', () 
   const s = session();
   const noGui = hookEnv({ HOME: s.home.HOME, CLAUDE_PROJECT_DIR: PROJECT });
   const input = { cwd: PROJECT, session_id: 'sess-1', tool_input: { command: SECRET_COMMAND } };
-  const r = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(input), encoding: 'utf8', env: noGui });
+  const send = () => spawnSync(process.execPath, [GUARD], { input: JSON.stringify(input), encoding: 'utf8', env: noGui });
+  assert.equal(isBounce(send()), true, 'the first send is bounced');
+  const r = send();
   assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision, 'ask');
   assert.equal(existsSync(allowedLiteralsDir(s.home)), false);
+});
+
+test('a value the owner already allowed is never bounced: a new command holding only that value runs silently on its first send', () => {
+  const s = session();
+  s.run(SECRET_COMMAND, 'allow');
+  const fresh = s.sendOnce(`KEY='${VALUE}' ./never-sent-before.sh`, 'deny');
+  assert.equal(fresh.stdout, '');
+  assert.deepEqual([s.log().at(-1).outcome, s.dialogs()], ['remembered', 1]);
 });
 
 test('a secret together with git push always shows the dialog and is never remembered', () => {
