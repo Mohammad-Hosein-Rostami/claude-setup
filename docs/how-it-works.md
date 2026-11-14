@@ -13,11 +13,15 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 | `home/standards/` | The longer reference behind the rules, with examples (for human readability: `readability.md`). |
 | `home/skills/` | Step-by-step workflows (`<name>/SKILL.md`) that Claude loads when the task matches. |
 | `home/agents/` | Helper roles (reviewer, implementer, architect, ...), one file each, with their model and limits. |
+| `home/bin/` | `ccm`, the launcher that starts Claude in a mode (`ccm.cmd` and `ccm.ps1` for Windows). |
+| `home/project-notes/` | One note file per project, read through that project's uncommitted `CLAUDE.local.md`. |
 | `home/hooks/` | Node scripts Claude Code runs on events (before a Bash command, when a session stops, ...). |
 | `home/modes/` | Playbooks for the five modes (`normal` to `ultra-high`) and `_lead.md`, the lead's routing rules. |
 | `home/tools/` | Command-line tools with their own README (`readable`, `ui-check`, `ui-coverage`, `recall`, ...). |
 | `settings/` | `base.json` plus one file per OS. They are merged into `~/.claude/settings.json`. |
 | `plugins/` | The list of plugins to install. |
+| `tools/` | System programs to install (`Brewfile`, `windows-tools.ps1`); not the same as `home/tools/`. |
+| `.githooks/` | The pre-commit hook (runs the tests and gitleaks). It only runs after `scripts/install.sh` sets `core.hooksPath`. |
 | `scripts/` | `install.sh`, `install.ps1` and `doctor.sh`. |
 | `tests/` | The test suite (`node:test`). |
 | `docs/` | The documents for people. Start with `catalog.md` for a list of everything. |
@@ -47,7 +51,7 @@ The hook list with exact triggers is in `docs/catalog.md` (section Hooks) and `h
 | A permission or hook wiring | `settings/base.json` (or the OS file) | run `scripts/install.sh` to rebuild `~/.claude/settings.json` |
 
 Edit in a git worktree, not the main checkout: the files are live in every session. Details: `CLAUDE.md` (this repo's
-own rules) and `docs/daily-use.md`.
+own rules) and `docs/usage.md`.
 
 ## Turn a hook off by hand
 
@@ -61,7 +65,7 @@ own rules) and `docs/daily-use.md`.
 
 Every question the Bash guard asked, and the answer, is one JSON line in `~/.claude/logs/guard.jsonl`
 (`CLAUDE_GUARD_LOG` changes the path). Show the last lines with `tail -n 20 ~/.claude/logs/guard.jsonl`. The outcomes are
-allow, deny, timeout, no-gui and dialog-failed. The log never stores secrets. What the guard asks about is in
+allow, deny, timeout, remembered, no-gui and dialog-failed. The log never stores secrets. What the guard asks about is in
 `docs/troubleshooting.md`.
 
 ## Run the tests
@@ -77,8 +81,9 @@ pre-commit hook runs the suite and gitleaks, so a commit with a failing test is 
 
     node ~/.claude/tools/readable/readable.mjs check <project-folder> --changed
 
-It lists folders with no README, names like `utils`, files with no header comment and uncommented config keys. Its README
-is `home/tools/readable/README.md`; the reasons are in `home/standards/readability.md`.
+With `--changed` it lists only what your change added: a new folder named `utils`, a new file with no header comment, a
+new folder that reached three source files with no README, a new uncommented config key. Without `--changed` it audits
+the whole tree. Its README is `home/tools/readable/README.md`; the reasons are in `home/standards/readability.md`.
 
 ## Install on another machine
 

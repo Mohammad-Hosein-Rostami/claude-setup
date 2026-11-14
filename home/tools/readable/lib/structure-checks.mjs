@@ -1,16 +1,20 @@
 // Purpose: the three checks that only need the list of file paths: a folder with no README, a dumping-ground name,
 //   and a tree nested too deep (rules C32, C34, C26).
 // Exports: SOURCE_EXTENSIONS, DUMPING_NAMES, MAX_DEPTH, MIN_FILES_FOR_README, isSourceFile, findMissingReadmes,
-//   findDumpingNames, findDeepNesting.
-// Invariants: pure; paths are posix, relative to the project root. Every finding is
+//   findDumpingNames, findDeepNesting, FILE_DUMPING_NAMES.
+// Invariants: pure; framework paths and names (see exemptions.mjs) are never reported; paths are posix, relative to the project root. Every finding is
 //   {path, line, rule, check, message, fix, files}; `files` are the files the finding is about, so `--changed` can keep
 //   or drop it.
+
+import { countedDepth, isFrameworkFolder } from './exemptions.mjs';
 
 export const SOURCE_EXTENSIONS = new Set([
   'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'py', 'go', 'rs', 'java', 'kt', 'rb', 'php', 'cs', 'c', 'cpp', 'h', 'swift', 'sh',
 ]);
 export const DUMPING_NAMES = new Set(['misc', 'common', 'shared', 'utils', 'util', 'helpers', 'helper', 'stuff', 'tmp', 'temp', 'new', 'old', 'data']);
-export const MAX_DEPTH = 5; // folders between the project root and a file
+export const MAX_DEPTH = 5; // counted folders between the project root and a file (see countedDepth)
+// A file called new, old, data, common or shared is normal (Rails new.html.erb, i18n common.json), so files get a shorter list.
+export const FILE_DUMPING_NAMES = new Set(['misc', 'utils', 'util', 'helpers', 'helper', 'stuff', 'tmp', 'temp']);
 export const MIN_FILES_FOR_README = 3;
 
 const README_NAME = /^readme(\.[a-z]+)?$/i;
@@ -51,7 +55,7 @@ export function findDumpingNames(files, allowed = new Set()) {
   const folders = new Map();
   const findings = [];
   const flag = (path, name, kind, filesInside) => findings.push({
-    path, line: 1, rule: 'C32', check: 'dumping-ground', files: filesInside,
+    path, line: 1, rule: 'C32', check: 'dumping-ground', kind: kind.toLowerCase(), files: filesInside,
     message: `${kind} name "${name}" says nothing about what is inside.`,
     fix: 'rename it for what it holds (a feature or domain word), or list it in .readable.json with a reason.',
   });
@@ -62,10 +66,10 @@ export function findDumpingNames(files, allowed = new Set()) {
       folders.set(folder, [...(folders.get(folder) ?? []), file]);
     }
     const stem = baseName(file).split('.')[0].toLowerCase();
-    if (DUMPING_NAMES.has(stem) && !allowed.has(file)) flag(file, baseName(file), 'File', [file]);
+    if (FILE_DUMPING_NAMES.has(stem) && !allowed.has(file) && !isFrameworkFolder(folderOf(file) || '.')) flag(file, baseName(file), 'File', [file]);
   }
   for (const [folder, inside] of folders) {
-    if (DUMPING_NAMES.has(baseName(folder).toLowerCase()) && !allowed.has(folder)) flag(`${folder}/`, baseName(folder), 'Folder', inside);
+    if (DUMPING_NAMES.has(baseName(folder).toLowerCase()) && !allowed.has(folder) && !isFrameworkFolder(folder)) flag(`${folder}/`, baseName(folder), 'Folder', inside);
   }
   return findings;
 }
@@ -74,14 +78,14 @@ export function findDumpingNames(files, allowed = new Set()) {
 export function findDeepNesting(files) {
   const tooDeep = new Map();
   for (const file of files) {
-    const parts = file.split('/');
-    if (parts.length - 1 <= MAX_DEPTH) continue;
-    const folder = parts.slice(0, MAX_DEPTH + 1).join('/');
+    const folders = file.split('/').slice(0, -1);
+    if (countedDepth(folders) <= MAX_DEPTH) continue;
+    const folder = folders.slice(0, MAX_DEPTH + 1).join('/');
     tooDeep.set(folder, [...(tooDeep.get(folder) ?? []), file]);
   }
   return [...tooDeep].map(([folder, inside]) => ({
     path: `${folder}/`, line: 1, rule: 'C32', check: 'deep-nesting', files: inside,
-    message: `nested more than ${MAX_DEPTH} folders deep.`,
+    message: `nested more than ${MAX_DEPTH} folders deep (framework paths do not count).`,
     fix: 'flatten: move it up, or merge folders that only hold one folder.',
   }));
 }

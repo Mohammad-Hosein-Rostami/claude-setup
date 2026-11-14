@@ -1,40 +1,53 @@
-// Purpose: ask git which files and lines changed against a base, so `--changed` can ignore legacy code.
-// Exports: parseDiffAddedLines(diffText), resolveBase(root, explicitBase), changedSince(root, base).
-// Invariants: parseDiffAddedLines is pure and reads `git diff --unified=0` output; the rest runs git in `root` and throws
-//   GitError (never returns a guess) when root is not inside a git work tree or the base does not exist. Paths are
-//   relative to `root`; untracked files count as fully changed; deleted files are left out.
+// Purpose: ask git what a change added, so `--changed` can report only the findings the change caused.
+// Exports: parseDiff(diffText), resolveBase(root, explicitBase), changesSince(root, base).
+// Invariants: parseDiff is pure and reads `git diff --unified=0` output. The rest runs git read-only in `root`, with git's
+//   repo-local environment variables (GIT_DIR, GIT_INDEX_FILE ...) removed so a surrounding hook cannot redirect it, and throws
+//   GitError (never a guess) when root is not inside a git work tree or the base does not exist. Paths are relative to
+//   `root`. Untracked files count as added; deleted files are left out.
 import { spawnSync } from 'node:child_process';
-
-export class GitError extends Error {}
+import { GitError } from './errors.mjs';
 
 const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
 const DEFAULT_BRANCH_CANDIDATES = ['main', 'master'];
+const FALLBACK_LOCAL_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_COMMON_DIR'];
+const GIT_BUFFER_BYTES = 64 * 1024 * 1024;
 
-function git(root, args) {
-  const result = spawnSync('git', ['-c', 'core.quotepath=false', ...args], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+function run(args, options) {
+  const result = spawnSync('git', ['-c', 'core.quotepath=false', ...args], { encoding: 'utf8', maxBuffer: GIT_BUFFER_BYTES, ...options });
   if (result.error) throw new GitError(`cannot run git: ${result.error.message}`);
   return result;
 }
 
+/** The environment without the variables that point git at one particular repository. */
+function cleanEnvironment() {
+  const listed = run(['rev-parse', '--local-env-vars'], { env: process.env });
+  const names = listed.status === 0 ? listed.stdout.split('\n').filter(Boolean) : FALLBACK_LOCAL_VARS;
+  return Object.fromEntries(Object.entries(process.env).filter(([name]) => !names.includes(name) && !FALLBACK_LOCAL_VARS.includes(name)));
+}
+
+const git = (root, args) => run(args, { cwd: root, env: cleanEnvironment() });
+
 /**
  * @param {string} diffText output of `git diff --unified=0`
- * @returns {Map<string, Set<number>>} added or changed line numbers per file
+ * @returns {Map<string, {lines: Set<number>, removed: string[]}>} added or changed line numbers and deleted line texts per file
  */
-export function parseDiffAddedLines(diffText) {
+export function parseDiff(diffText) {
   const byFile = new Map();
   let current = null;
   for (const line of diffText.split('\n')) {
     if (line.startsWith('+++ ')) {
       const target = line.slice(4).split('\t')[0];
       current = target === '/dev/null' ? null : target.replace(/^b\//, '');
-      if (current !== null && !byFile.has(current)) byFile.set(current, new Set());
+      if (current !== null && !byFile.has(current)) byFile.set(current, { lines: new Set(), removed: [] });
       continue;
     }
+    if (current === null) continue;
+    if (line.startsWith('-') && !line.startsWith('--- ')) byFile.get(current).removed.push(line.slice(1));
     const hunk = HUNK_HEADER.exec(line);
-    if (!hunk || current === null) continue;
+    if (!hunk) continue;
     const start = Number(hunk[1]);
     const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
-    for (let n = start; n < start + count; n++) byFile.get(current).add(n);
+    for (let n = start; n < start + count; n++) byFile.get(current).lines.add(n);
   }
   return byFile;
 }
@@ -55,14 +68,21 @@ export function resolveBase(root, explicitBase) {
   return 'HEAD';
 }
 
+const lines = (result) => result.stdout.split('\n').filter(Boolean);
+
 /**
- * @returns {Map<string, Set<number>|null>} every changed file mapped to its changed lines (null = the whole file)
+ * What the working tree changed against `base`.
+ * @returns {{changed: Map<string, {lines: Set<number>|null, removed: string[]}>, added: Set<string>, baseFiles: Set<string>}}
+ *   `changed`: every changed file (lines null = the whole file is new); `added`: files that did not exist at the base;
+ *   `baseFiles`: every file that existed at the base, under `root`
  */
-export function changedSince(root, base) {
+export function changesSince(root, base) {
   const diff = git(root, ['diff', '--relative', '--diff-filter=d', '--unified=0', base, '--', '.']);
   if (diff.status !== 0) throw new GitError(`git diff failed: ${diff.stderr.trim()}`);
-  const changed = new Map(parseDiffAddedLines(diff.stdout));
-  const untracked = git(root, ['ls-files', '--others', '--exclude-standard']);
-  for (const path of untracked.stdout.split('\n').filter(Boolean)) changed.set(path, null);
-  return changed;
+  const changed = parseDiff(diff.stdout);
+  const added = new Set(lines(git(root, ['diff', '--relative', '--diff-filter=A', '--name-only', base, '--', '.'])));
+  for (const path of lines(git(root, ['ls-files', '--others', '--exclude-standard']))) added.add(path);
+  for (const path of added) changed.set(path, { lines: null, removed: [] });
+  const baseFiles = new Set(lines(git(root, ['ls-tree', '-r', '--name-only', base])));
+  return { changed, added, baseFiles };
 }

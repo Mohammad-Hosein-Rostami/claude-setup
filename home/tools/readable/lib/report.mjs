@@ -3,7 +3,7 @@
 // Invariants: pure; findings are sorted by path, then line; the last line is `readable: ok` or
 //   `readable: <n> findings (<check> <count>, ...)` listing only checks that found something.
 
-export const CHECK_ORDER = ['no-readme', 'dumping-ground', 'deep-nesting', 'no-header', 'config-comment', 'allow-list'];
+export const CHECK_ORDER = ['no-readme', 'dumping-ground', 'deep-nesting', 'no-header', 'config-comment'];
 
 export const formatFinding = (f) => `${f.path}:${f.line} ${f.rule} ${f.check}: ${f.message} Fix: ${f.fix}`;
 

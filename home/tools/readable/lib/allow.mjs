@@ -1,27 +1,46 @@
-// Purpose: read the optional `.readable.json` allow-list that lets a project keep a dumping-ground name on purpose.
-// Exports: parseAllowList(text).
-// Invariants: pure; format is {"allow": [{"path": "src/utils", "reason": "why this name is fine"}]}; an entry without a
-//   reason is not applied and is reported as a problem, so the list can never hide a finding silently.
+// Purpose: read the allow-lists that let a project keep a dumping-ground name on purpose: the personal
+//   `.claude/readable.local.json` (never committed) and the team's `.readable.json` (only when the team adopted the tool).
+// Exports: parseAllowList(text, fileName), readAllowLists(root), LOCAL_ALLOW_FILE, TEAM_ALLOW_FILE.
+// Invariants: format is {"allow": [{"path": "src/data", "reason": "why this name is fine"}]}; a file that is not valid
+//   JSON, has a key other than "allow", or has an entry without a path or a reason throws UsageError (exit 2), so the list
+//   can never hide a finding by accident. A leading "./" and a trailing "/" on a path are ignored.
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { UsageError } from './errors.mjs';
+
+export const LOCAL_ALLOW_FILE = '.claude/readable.local.json';
+export const TEAM_ALLOW_FILE = '.readable.json';
+
+const cleanPath = (path) => path.replace(/^\.\//, '').replace(/\/+$/, '');
 
 /**
- * @param {string|null} text content of .readable.json, or null when the file does not exist
- * @returns {{allowed: Set<string>, problems: string[]}}
+ * @param {string} text content of one allow-list file
+ * @param {string} fileName shown in error messages
+ * @returns {string[]} the allowed paths
+ * @throws {UsageError} when the file is malformed or an entry has no reason
  */
-export function parseAllowList(text) {
-  const allowed = new Set();
-  const problems = [];
-  if (text === null) return { allowed, problems };
+export function parseAllowList(text, fileName) {
   let parsed;
-  try { parsed = JSON.parse(text); } catch (error) {
-    return { allowed, problems: [`.readable.json is not valid JSON (${error.message}).`] };
+  try { parsed = JSON.parse(text); } catch (error) { throw new UsageError(`${fileName} is not valid JSON (${error.message}).`); }
+  const unknownKeys = Object.keys(parsed ?? {}).filter((key) => key !== 'allow');
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed) || unknownKeys.length > 0 || !Array.isArray(parsed.allow)) {
+    throw new UsageError(`${fileName} must look like {"allow": [{"path": "src/data", "reason": "why"}]}${unknownKeys.length ? ` (unknown key "${unknownKeys[0]}")` : ''}.`);
   }
-  const entries = Array.isArray(parsed?.allow) ? parsed.allow : [];
-  for (const entry of entries) {
-    const path = typeof entry?.path === 'string' ? entry.path.replace(/\/+$/, '') : '';
+  return parsed.allow.map((entry) => {
+    const path = typeof entry?.path === 'string' ? cleanPath(entry.path.trim()) : '';
     const reason = typeof entry?.reason === 'string' ? entry.reason.trim() : '';
-    if (path === '') problems.push('.readable.json has an allow entry with no "path".');
-    else if (reason === '') problems.push(`.readable.json allows "${path}" without a "reason"; add one or remove the entry.`);
-    else allowed.add(path);
+    if (path === '') throw new UsageError(`${fileName} has an allow entry with no "path".`);
+    if (reason === '') throw new UsageError(`${fileName} allows "${path}" without a "reason"; add one or remove the entry.`);
+    return path;
+  });
+}
+
+/** Reads the local file first, then the team file, and returns every allowed path. */
+export function readAllowLists(root) {
+  const allowed = new Set();
+  for (const name of [LOCAL_ALLOW_FILE, TEAM_ALLOW_FILE]) {
+    const file = join(root, name);
+    if (existsSync(file)) for (const path of parseAllowList(readFileSync(file, 'utf8'), name)) allowed.add(path);
   }
-  return { allowed, problems };
+  return allowed;
 }
