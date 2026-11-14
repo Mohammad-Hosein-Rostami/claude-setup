@@ -9,7 +9,8 @@ shell tools, so it runs on Windows, macOS and Linux. Input and output are passed
 - `tail.mjs`: follows one file as it grows, like `tail -F`.
 - `classify.mjs`: turns one transcript line into events.
 - `actions.mjs`: keeps only the events that need attention.
-- `events.mjs`: the class names `--exit-on-event` accepts and what each wakes on.
+- `events.mjs`: the event classes and the names `--exit-on-event` accepts.
+- `wake.mjs`: decides which line wakes the caller (`--skip`, retries, `--delay-sec`).
 - `subagents.mjs`: watches the subagent transcripts of a session.
 - `guard.mjs`: picks the lines of the guard log (`~/.claude/logs/guard.jsonl`) to report.
 - `stall.mjs`: reports "nothing written for N minutes" once, then "resumed".

@@ -10,7 +10,7 @@
 // SESSION_END and each STALL are reported once. A gap between two polls longer than `jumpMs` (laptop sleep, suspended process)
 // restarts the stall timer instead of reporting a stall nobody could have acted on.
 // In follow mode the last LOOKBACK_BYTES of an existing transcript are read at start, only to learn whether a limit window is
-// already open (classify.seed): nothing in them is reported.
+// already open (classify.seed): nothing older than the start is reported, a line stamped after it is (it was written before the first look).
 // `exitMode` (set by --exit-on-event) is for a caller that waits for one wake and must never be left waiting silently: the stall
 // check goes on after SESSION_END (a class list without session-end still ends in a STALL) and a transcript that never appears
 // counts as idle from the first poll. Each step of a poll runs on its own, so a failing step cannot switch off the stall check.
@@ -42,6 +42,7 @@ class SessionWatcher {
     this.tail = createTail(this.path, { fromStart: this.once, missingIsError: this.once, lookbackBytes: this.once ? 0 : LOOKBACK_BYTES });
     this.agents = createSubagentWatcher(`${this.path.replace(/\.jsonl$/, '')}/subagents`, { judgeExisting: this.once });
     this.stall = createStallDetector(this.stallMs);
+    this.startedAt = this.now();
     this.ended = false;
     this.failed = false;
     this.unreadable = false;
@@ -49,6 +50,18 @@ class SessionWatcher {
 
   /** How many replies of the session itself the transcript has shown so far (`--delay-sec` watches it grow). */
   get replies() { return this.classifier.assistantEntries; }
+
+  // The tail of the file at start: old lines only teach the limit window; a line stamped after this watcher started was written
+  // before its first look and is a new event.
+  replayHistory(history) {
+    for (const text of history) {
+      try {
+        this.classifier.seed(text, this.startedAt).forEach((event) => this.handle(event));
+      } catch (error) {
+        this.errors.report(this.label, error);
+      }
+    }
+  }
 
   feed(lines) {
     for (const text of lines) {
@@ -119,7 +132,7 @@ class SessionWatcher {
     const { lines, history, mtimeMs, error } = await this.tail.poll();
     this.noteReadResult(error);
     this.noteWrite(mtimeMs);
-    history.forEach((text) => this.classifier.seed(text));
+    this.replayHistory(history);
     this.feed(lines);
   }
 

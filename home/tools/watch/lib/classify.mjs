@@ -1,10 +1,11 @@
 // Turns one transcript JSONL line into verbose events, in the line format of the old live-watch.sh jq filter.
-// Exports: createClassifier() -> { feed(text) -> Event[], seed(text), assistantEntries }, Event = { kind, line, owner?, promptText? }.
+// Exports: createClassifier() -> { feed(text) -> Event[], seed(text, sinceMs) -> Event[], assistantEntries }, Event = { kind, line, owner?, promptText? }.
 // Kinds: PROMPT, COMPACT, AGENT, WORKFLOW, SKILL, TOOL, USAGE, ERR, INPUT_MODE, API_ERROR, LIMIT, LIMIT_RESET.
 // API_ERROR / LIMIT: an entry with isApiErrorMessage true. Only its error class is printed (rate_limit is a LIMIT, anything else
 // an API_ERROR), never the message text. LIMIT_RESET: the first real assistant reply after a LIMIT, with the minutes it lasted.
 // Sidechain entries (a subagent's own turns) are not the session's: their API errors are no event and their replies do not end a limit window.
-// seed(text) reads an old line only to learn whether a limit window is open (no event): the watcher seeds the tail of a file it starts on.
+// seed(text, sinceMs) reads a line of the tail of a file the watcher starts on: an older line only teaches whether a limit window is open
+// (no event), a line stamped after sinceMs (written between the watcher's start and its first look) is classified like a fed one.
 // assistantEntries counts the session's own replies (not API errors, not sidechain): `--delay-sec` reads it to see the session recover.
 // Invariants: pure apart from the INPUT_MODE and limit-window memory (Claude Code repeats the mode every turn; only changes are events);
 // a line that is not valid JSON, or is not an object, yields nothing (a partial line is the tail's job, not ours).
@@ -144,11 +145,14 @@ export function createClassifier() {
       const entry = parse(text);
       return entry === undefined ? [] : classify(entry);
     },
-    seed(text) {
+    seed(text, sinceMs) {
       const entry = parse(text);
-      if (entry === undefined || entry.isSidechain === true) return;
+      if (entry === undefined) return [];
+      if (Date.parse(entry.timestamp) > sinceMs) return classify(entry);
+      if (entry.isSidechain === true) return [];
       if (entry.isApiErrorMessage !== true && entry.type === 'assistant') limitStartedAt = undefined;
       else if (entry.isApiErrorMessage === true && apiErrorClass(entry) === LIMIT_ERROR_CLASS) limitStartedAt ??= orElse(entry.timestamp, '');
+      return [];
     },
   };
 }

@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTail } from '../home/tools/watch/lib/tail.mjs';
 import { createClassifier } from '../home/tools/watch/lib/classify.mjs';
+import { createSessionWatcher } from '../home/tools/watch/lib/watcher.mjs';
 import { startWatcher } from './watch-follow-helpers.mjs';
 
 const at = (minutes) => new Date(Date.parse('2026-11-14T10:00:00.000Z') + minutes * 60_000).toISOString();
@@ -55,6 +56,14 @@ test('classifier seed: a LIMIT in old lines opens the window silently, a later r
   assert.deepEqual(closed.feed(reply(2).trim()).map((event) => event.kind), []);
 });
 
+test('classifier seed: a line stamped after the watcher started is an event, one stamped before or at the start is not', () => {
+  const since = Date.parse(at(10));
+  const classifier = createClassifier();
+  assert.deepEqual(classifier.seed(ownerPrompt(9).trim(), since), []);
+  assert.deepEqual(classifier.seed(ownerPrompt(10).trim(), since), []);
+  assert.deepEqual(classifier.seed(ownerPrompt(11).trim(), since).map((event) => event.kind), ['PROMPT']);
+});
+
 async function follow(t, classes, { initial, repeat, seconds }) {
   const watcher = await startWatcher(t, { transcript: initial, args: ['--exit-on-event', classes], settle: true });
   const code = await watcher.appendUntilExit(repeat, seconds * 1000);
@@ -84,4 +93,17 @@ test('limit alone wakes on the LIMIT line and never on the reset', async (t) => 
   assert.equal(woke.output, `eeeeeeee: ${at(5)} LIMIT rate_limit\n`);
   const reset = await follow(t, 'limit', { initial: limitEntry(0), repeat: reply(9), seconds: 4 });
   assert.equal(reset.exited, false);
+});
+
+test('watcher: an event written between its start and its first look is reported, older lines are not', async (t) => {
+  const dir = await scratch(t);
+  const file = join(dir, 'abababab-1111-2222-3333-444444444444.jsonl');
+  await writeFile(file, ownerPrompt(-5) + ownerPrompt(0) + line({ type: 'user', timestamp: at(1), message: { content: 'written after start' } }));
+  const emitted = [];
+  const watcher = createSessionWatcher({
+    path: file, label: 'abababab', sessionId: 'abababab-1111-2222-3333-444444444444', once: false, stallMs: 99 * 60_000, sessionsDir: join(dir, 's'),
+    now: () => Date.parse(at(0)), emit: (text) => emitted.push(text), record: () => {},
+  });
+  await watcher.poll();
+  assert.deepEqual(emitted, ['abababab: OWNER written after start']);
 });
