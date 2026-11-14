@@ -292,3 +292,13 @@ test('R4/E: an alias whose body would ask is asked about when it is defined', ()
   asksWith(["alias p='git push -f'\np", "alias deploy='npm publish'"]);
   allowsAll(["alias ll='ls -la'", 'alias gs="git status"']);
 });
+
+test('R4/F: find deleting under ~, / or .. asks as DESTRUCTIVE when a hidden construct is used, even where the parser misreads a case body', () => {
+  asksWith([
+    'echo "$(case x in *) find ~ -delete;; esac)"',
+    'echo "$(case x in *) find / -name x -exec rm {} +;; esac)"',
+    'out=$(find .. -type f -execdir rm -f {} \;)',
+    'echo `find $HOME -delete`',
+  ], DESTRUCTIVE);
+  allowsAll(['echo "$(find . -name \'*.log\' -delete)"', 'echo $(find ~ -name x -print)', 'out=$(find src -exec wc -l {} +)']);
+});

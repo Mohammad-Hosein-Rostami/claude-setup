@@ -5,7 +5,7 @@
 // body is data), `<(` / `>(`, `eval`, `trap`, `source` / `.`, `coproc`, `case`, a carriage return, a pipe into a shell, and the commands that
 // run a text argument: watch, parallel, `PROMPT_COMMAND=`, `script|expect -c`, `perl|python|node|ruby|deno|bun -e|-c|-p`, `osascript -e`,
 // `tmux new|send-keys`, `fish|pwsh -c`, `npx -c`, `npm exec -c`.
-// Dangerous words (looked up as words of the quote-stripped, ANSI-C-decoded text): git push (by position) / git alias, rm with a recursive or forced flag and
+// Dangerous words (looked up as words of the quote-stripped, ANSI-C-decoded text): git push (by position) / git alias, rm with a recursive or forced flag and (also find -delete / -exec rm with)
 // an absolute, `~`, `$` or `..` path, npm-style publish, gh mutations (judged by position: `gh <group> <verb>`), disk tools and raw device paths,
 // psql/mysql/ssh near a production name. Message text of `git commit` and `gh pr|issue create|edit|comment` is data (message-text.mjs), so
 // `git commit -m "$(cat <<'EOF' ... git push ... EOF)"` is silent; a message with another `$(` or a backtick is still scanned.
@@ -102,6 +102,11 @@ function withoutPlainHeredocs(text) {
 
 const count = (text, pattern) => (text.match(pattern) ?? []).length;
 
+const FIND_EXEC = /^-(?:exec|execdir|ok|okdir)$/;
+
+/** True when a `find` deletes what it matches: `-delete`, or `-exec`/`-execdir`/`-ok` running rm (its `{}` path hides the target from the rm check). */
+const findDeletes = (after) => after.includes('-delete') || after.some((w, i) => FIND_EXEC.test(w) && after[i + 1] === 'rm');
+
 /** @returns {string | undefined} the category of the first dangerous word in this statement's words, or undefined */
 function dangerIn(words, prodText, prodNames) {
   for (let i = 0; i < words.length; i++) {
@@ -109,6 +114,7 @@ function dangerIn(words, prodText, prodNames) {
     const after = words.slice(i + 1, i + 1 + WINDOW);
     if (word === 'git' && (pushesIn(after) || after.some((w) => w.startsWith('alias.')))) return 'git';
     if (word === 'rm' && after.some((w) => RM_FLAG.test(w)) && after.some((w) => RISKY_RM_PATH.test(w))) return 'destructive';
+    if (word === 'find' && findDeletes(after) && after.some((w) => RISKY_RM_PATH.test(w))) return 'destructive';
     if (word === 'publish' && words.slice(Math.max(0, i - 3), i).some((w) => PUBLISHERS.has(w))) return 'publish';
     if (word === 'gh' && ghMutation(after)) return 'gh';
     if (word === 'dd' && after.some((w) => w.startsWith('of='))) return 'destructive';
