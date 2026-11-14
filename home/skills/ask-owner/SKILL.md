@@ -33,7 +33,7 @@ Bad -> good:
 
 ## If the box times out
 
-`askUserQuestionTimeout` (settings) auto-continues an unanswered terminal question after 5 minutes (the Bash guard's timed dialog is separate and auto-allows after 3). If the box times out, take
+`askUserQuestionTimeout` (settings) auto-continues an unanswered terminal question after 60 s, the CLI minimum (the Bash guard's timed dialog is separate: it auto-allows after 3 min, a secret-only ask after 30 s). If the box times out, take
 the recommended option, keep going, and say which one you took in the next message.
 
 ## Queue loop (background agents and workflows)
