@@ -170,10 +170,40 @@ test('a token inside template braces is still a secret', () => {
 });
 
 // Desap probe script: a JS/Python list writes `','` with no space between the quoted URLs.
-test('a comma that closes a quoted query value ends it when a quote, bracket or space follows (3-part mock words too)', () => {
+test('a comma that closes a quoted query value ends it when whitespace or the next list item follows (3-part mock words too)', () => {
   for (const command of ["const paths = ['/verify-email?token=verify-ok','/register/link','/accept-invitation?token=inv-staff-new','/accept-nomination?token=nom-ok'];",
-    'x = ["/r?token=reset-ok","/s"]', "f('/r?token=inv-staff-new',)", "f('/r?token=inv-staff-new',\n 1)"]) {
+    'x = ["/r?token=reset-ok","/s"]', "f('/r?token=inv-staff-new',\n 1)"]) {
     assert.equal(findLiteralSecret(command), undefined, command);
   }
   assert.ok(findLiteralSecret(`curl "https://x/r?token=abc-def",${RANDOM_TOKEN}`));
+});
+
+// Consolidated audit S1-S4: glue after an exemption's end, an opener that was really a closer, and a minimum counted across quote pairs.
+test('S1: a placeholder after an unquoted header ends only at its own quote, not at a closer of an earlier string', () => {
+  const R = RANDOM_TOKEN;
+  for (const command of [`curl -H "Accept: */*" -H X-Api-Key:%s"${R}" https://x`, `curl -d '{}' -H X-Api-Key:%s'${R}' https://x`, `curl -H "A: b " -H X-Api-Key:%s"${R}" https://x`]) {
+    assert.ok(findLiteralSecret(command), command);
+  }
+  for (const command of ['curl -H "Accept: */*" -H "X-Api-Key: %s" https://x', 'f("explicit choice: %+v", c)', 'x := []string{"Cookie: %v"}']) assert.equal(findLiteralSecret(command), undefined, command);
+});
+
+test('S2: a closed template followed by glued text is a value', () => {
+  const R = RANDOM_TOKEN;
+  for (const command of [`API_KEY="{{.x}}"${R} ./run`, `API_KEY='{{ .x }}'"${R}"`, `API_KEY="{{.x}}.${R}"`, `API_KEY={{.x}}${R}`]) assert.ok(findLiteralSecret(command), command);
+  for (const command of ['API_KEY="{{.x}}" ./run', 'data-a-password=\\"{{.x}}\\">', 'API_KEY={{.x}};']) assert.equal(findLiteralSecret(command), undefined, command);
+});
+
+test('S3: a bracket or comma ends a query value only when what follows is itself an end', () => {
+  const R = RANDOM_TOKEN;
+  for (const tail of [`]${R}`, `}${R}`, `,'${R}'`, `,"${R}"`, `)}${R}`, `"}]${R}`]) assert.ok(findLiteralSecret(`curl "https://x/r?token=abc-def"${tail}`), tail);
+  assert.ok(findLiteralSecret(`curl "https://x/r?token="}]${R}`));
+  for (const command of ["['/a?token=verify-ok','/next','/b?token=nom-ok']", 'f(["/r?token=reset-ok"]);', 'f({u: "/r?token=reset-ok"}) ', 'g(h("/r?token=verify-ok")) && x']) {
+    assert.equal(findLiteralSecret(command), undefined, command);
+  }
+});
+
+test('S4: the minimum length counts the whole shell word across quote pairs and | ; characters', () => {
+  const R = RANDOM_TOKEN;
+  for (const command of [`curl "https://x/r?token=ab"'${R}'`, `curl "https://x/r?token=ab""${R}"`, `curl 'https://x/r?token=a'"'"'${R}'`, `curl "https://x/r?token=abcd|${R}"`,
+    `curl "https://x/r?secret=Ab1x"'${R}'`]) assert.ok(findLiteralSecret(command), command);
 });

@@ -55,7 +55,10 @@ const PLACEHOLDER_NAME = '[a-z_][a-z0-9_]{0,19}';
 const PLACEHOLDER_SPEC = '[<>^=+ #0-9.,_a-z%-]{0,10}';
 const PLACEHOLDER = `(?:%[-+# 0]{0,5}(?:\\d{1,3}|\\*)?(?:\\.(?:\\d{1,3}|\\*))?[a-zA-Z]|%\\(${PLACEHOLDER_NAME}\\)[-+# 0]{0,5}\\d{0,3}[a-zA-Z]|\\{(?:\\d{1,2}|${PLACEHOLDER_NAME})?(?::${PLACEHOLDER_SPEC})?\\})`;
 // It ends at the quote that opened the header string (`\k<q>`, found by looking back) or at the line end when unquoted: `"X: %s'R'"` is not a placeholder.
-const FORMAT_PLACEHOLDER = `(?!(?<=(?<![\\w])(?<q>["'])[^"'\\n]{0,500})${PLACEHOLDER}[ \\t]*\\k<q>|${PLACEHOLDER}[ \\t]*(?:\\n|$))`;
+// What looks back is a real opener: it follows whitespace or an opening bracket (not the `*`/`}` that ends `"Accept: */*"` or `'{}'`), and the text
+// between it and the name holds no shell flag (` -H `), so a quote that closed an earlier argument is never taken for this header's opener.
+const OPENER = '(?<=^|[\\s(=,\\[{:])';
+const FORMAT_PLACEHOLDER = `(?!(?<=${OPENER}(?<q>["'])(?:(?!\\s--?[A-Za-z])[^"'\\n]){0,500})${PLACEHOLDER}[ \\t]*\\k<q>|${PLACEHOLDER}[ \\t]*(?:\\n|$))`;
 const STDIN_FLAG = '--(?:with-token|password-stdin)\\b';
 // the value is echoed/printed (`echo -n T`, `printf '%s' T`) and piped into a command that has the stdin flag
 const ECHOED_INTO_STDIN_FLAG = `(?=(?:"[^"]*"|'[^']*'|[^\\s"';&|]+)[ \\t]*\\|[^\\n;&|]{0,${GAP}}${STDIN_FLAG})`;
@@ -67,15 +70,18 @@ const ABSOLUTE_ROOTS = 'Users|home|tmp|private|var|etc|opt|usr|Volumes';
 const REGEX_VALUE = `"/[^"\\n]{0,500}\\|[^"\\n]{0,500}"|'/[^'\\n]{0,500}\\|[^'\\n]{0,500}'|/[^\\s"';&|]{0,500}\\|[^\\s"';&]{0,500}/[dgimsuvy]{0,8}(?![^\\s;&|),])`;
 // A template expression that reads something (`{{t .L "x"}}`, `{{ .Password }}`, `{{ user.password }}`, `{{ pw | e }}`, `{% .x %}`): it opens with `.` or an
 // identifier followed by `.`, `|` or an argument, and is closed. `{{R}}`, `{{ R }}` and `{{ "R" }}` hold a literal, so they are not exempt.
-const TEMPLATE_VALUE = `(?:\\\\?["'])?(?:\\{\\{-?|\\{%-?)[ \\t]{0,5}(?:\\.|[A-Za-z_]\\w{0,39}(?:\\.|[ \\t]{0,5}\\||[ \\t]{1,5}(?![ \\t}%-])))[^{}\\n]{0,200}(?:\\}\\}|%\\})(?![A-Za-z0-9])`;
+const TEMPLATE_EXPRESSION = `(?:\\{\\{-?|\\{%-?)[ \\t]{0,5}(?:\\.|[A-Za-z_]\\w{0,39}(?:\\.|[ \\t]{0,5}\\||[ \\t]{1,5}(?![ \\t}%-])))[^{}\\n]{0,200}(?:\\}\\}|%\\})`;
+// It must end the value: its own closing quote (when one opened it) and then whitespace, `;&|)>` or the end (`"{{.x}}"R` is a value).
+const TEMPLATE_VALUE = `(?:\\\\?(?<tq>["'])${TEMPLATE_EXPRESSION}\\\\?\\k<tq>|${TEMPLATE_EXPRESSION})(?=[\\s;&|)>]|$)`;
 const CODE_VALUE = `(?!${REGEX_VALUE}|${TEMPLATE_VALUE}|["']?(?:(?:\\.{1,2}|~)/|/(?:${ABSOLUTE_ROOTS})/)|[=>(\\[]|\\{(?!\\{)|[\\w$]{1,40}\\s*=>|lambda\\b|[\\w$]{1,40}(?:\\.[\\w$]{1,40}){0,6}\\s*[(\\[])`;
 const QUERY_TOKEN_KEYS = caseless('api[_-]?key|access[_-]?(?:token|key)|auth[_-]?token|token');
 const QUERY_SECRET_KEYS = caseless('client[_-]?secret|secret|password|passwd|pwd');
-// What may follow the end of a quoted or bracketed query value: whitespace, a closing bracket, `;`, `,` plus whitespace, a quote or a bracket (a list `['a','b']`), or the end. Glued text
-// (`"/R`, `".R`, `)R`, `}R`) means the value goes on, so it is not an end.
-const QUERY_END = '(?=[\\s)};\\]]|,(?:[\\s"\'`)\\]]|$)|$)';
-// A value under MIN_VALUE_LENGTH characters (quotes skipped, `&` `#` whitespace end it) is a test fixture (`token=t`), not a secret: the allow-list never remembers one either.
-const QUERY_MIN_LENGTH = `(?=(?:["']?[^\\s"';&|#]){${MIN_VALUE_LENGTH}})`;
+// What may follow the end of a quoted or bracketed query value: closing brackets, then whitespace, `;`, the end, or a `,` that is followed by whitespace or by the
+// next list item (a quote and a `/` or `http`: `['/a?token=x-y','/b']`). Glued text (`"/R`, `".R`, `)R`, `]R`, `,R`, `,'R'`) means the value goes on.
+const QUERY_END = '(?=[)}\\]]{0,4}(?:[\\s;]|,(?:\\s|["\'`](?:/|https?:))|$))';
+// A value under MIN_VALUE_LENGTH characters is a test fixture (`token=t`), not a secret: the allow-list never remembers one either. It counts the whole shell
+// word, skipping quote characters and stopping only at `&`, `#` or whitespace, so `"?token=ab"'R'` and `abcd|R` are long enough.
+const QUERY_MIN_LENGTH = `(?=(?:["']*[^\\s"'&#]){${MIN_VALUE_LENGTH}})`;
 // A query value that is code, not a literal: empty and closed by a quote then `} )` or a `+` that is not followed by a quoted literal
 // (`"/reset?token="+token`, not `+"R"`); a `$(...)`, `$x` or `${name}` / `${name:-}` reference, but not `${name:-R}` (a literal default).
 const QUERY_CODE = `["'\`][ \\t]*(?:\\+(?![ \\t]*["'\`])|[})]${QUERY_END})|["']?\\$(?:\\(|\\w|\\{[\\w.]{1,80}(?::?[-=+?])?\\})`;
