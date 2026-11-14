@@ -5,7 +5,6 @@
 // `\;` is a literal `;` word, a backslash-newline vanishes); inside double quotes a backslash only escapes `\ " $ \``.
 // A quoted word that merely looks like a redirection (`">"`) gets QUOTED_MARK in front, so it stays a plain argument;
 // an unquoted operator glued to a word (`.env>out`, `cat<.env`) is split off into its own word.
-// A `$(...)` body is its own segment, but the words after its closing `)` continue the segment that held the `$`.
 // Invariants: every pass is linear (or n log n) in the command length; a heredoc without a terminator line is left
 // in place (so its body is still checked) rather than guessed at.
 
@@ -123,14 +122,11 @@ export const stripHeredocs = (command) => lexShell(command).stripped;
 /** Raw words -> unquoted words (continuation-only words vanish, attached redirects split off). */
 const wordsOfRaw = (raws) => raws.filter((raw) => !LINE_CONTINUATION_ONLY.test(raw)).flatMap((raw) => splitAttachedRedirect(raw).map(wordOf));
 
-/** Starts a new segment after `current`; `piped` marks one fed by `|` (an empty segment is reused, so `a |<newline> b` stays piped). Returns the segment to fill next. */
-function startSegment(segs, current, piped) {
-  if (current.length > 0) {
-    const next = piped ? markPiped([]) : [];
-    segs.push(next);
-    return next;
-  }
-  return piped ? markPiped(current) : current;
+/** Starts a new segment; `piped` marks one fed by `|` (an empty segment is reused, so `a |<newline> b` stays piped). */
+function startSegment(segs, piped) {
+  const current = segs.at(-1);
+  if (current.length > 0) segs.push(piped ? markPiped([]) : []);
+  else if (piped) markPiped(current);
 }
 
 /** Command text -> `{ segs, nested }`: segs are lists of unquoted words (`.piped` when a `|` fed it); nested are `$(...)`/backtick bodies found inside double quotes. */
@@ -138,17 +134,9 @@ export function tokenize(command) {
   const prepared = prepare(command);
   const { stripped, nested } = lexShell(prepared);
   const segs = [[]];
-  const opened = []; // per open `(`: the segment holding its `$` when it starts a substitution, else null
-  let current = segs[0];
   for (const m of stripped.matchAll(TOKEN)) {
-    if (m[2] !== undefined) {
-      current.push(...wordsOfRaw([m[2]]));
-      continue;
-    }
-    if (m[3] === '(') opened.push(stripped[m.index - 1] === '$' && stripped[m.index - 2] !== '\\' ? current : null);
-    current = startSegment(segs, current, m[3] === '|');
-    // the words after the `)` closing a `$(` belong to the segment that held the `$` (`echo $(a) $(b)`: one echo, not a command `$`)
-    if (m[3] === ')') current = opened.pop() ?? current;
+    if (m[2] === undefined) startSegment(segs, m[3] === '|');
+    else segs.at(-1).push(...wordsOfRaw([m[2]]));
   }
   return { segs: segs.filter((s) => s.length), nested };
 }
