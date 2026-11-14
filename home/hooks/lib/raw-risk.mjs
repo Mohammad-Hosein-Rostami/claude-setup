@@ -119,27 +119,19 @@ function dangerIn(words, prodText, prodNames) {
   return undefined;
 }
 
-// git's global options that take the next word as their value, skipped to find the subcommand: `git -C dir stash push`.
-const GIT_VALUE_FLAGS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--super-prefix', '--config-env', '--attr-source']);
-
 /**
- * Whether `push` near `git` can publish. Loose on purpose (a heredoc or xargs may feed the words), with one exception:
- * the subcommand by position is `stash`, directly followed by the window's only `push` (`git stash push`, which only
- * stores local changes). A `push` taken as an option value asks: quote stripping drops an empty `-C ''`, so `-C` would
- * swallow the real subcommand (audit G1).
+ * Whether `push` near `git` can publish. Loose on purpose (a heredoc or xargs may feed the words), with one narrow
+ * exception: the plain form `git stash push ...` (stash right after git, then push, and no other push in the window),
+ * which only stores local changes. Any global option before `stash` falls back to asking: option values can be shell
+ * expansions that swallow words (`-${F:--namespace} stash push`, `-C ''`), so position after options is not trusted
+ * (audit G1, R1).
  * @param {string[]} after - the words after `git` in one statement.
  * @returns {boolean} true when a `push` word may be a git push.
  */
 function pushesIn(after) {
   const pushes = after.filter((w) => w === 'push').length;
   if (pushes === 0) return false;
-  for (let i = 0; i < after.length; i++) {
-    if (GIT_VALUE_FLAGS.has(after[i])) {
-      if (after[i + 1] === 'push') return true;
-      i++;
-    } else if (!after[i].startsWith('-')) return !(after[i] === 'stash' && after[i + 1] === 'push' && pushes === 1);
-  }
-  return true;
+  return !(after[0] === 'stash' && after[1] === 'push' && pushes === 1);
 }
 
 /** `gh <group> <verb>` by position (flags skipped): `gh pr create --title "delete x"` is not a delete; `gh release create` and `gh pr merge` are. */

@@ -64,6 +64,8 @@ const ASKS = [
   "nohup bash -c 'git push --force origin main' &",
   "git push --force origin main",
   "git\tpush -f",
+  "python3 -c \"import os; os.system('git -${F:--namespace} stash push -f origin main')\"",
+  "python3 - <<'E'\nprint(1)\nE\ngit -C dir stash push -f origin main",
   "node -e \"require('child_process').execSync('git -c url.https://github.com/o/r.insteadOf=stash -C \\'\\' push -f stash main')\"",
   "python3 - <<'E'\nprint(1)\nE\ngit -C '' push -f origin main",
   "python3 - <<'E'\nprint(1)\nE\ngit stash list /usr/bin/git push -f",
