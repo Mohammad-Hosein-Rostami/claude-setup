@@ -77,8 +77,8 @@ global setup combines with it.
   is version-sensitive.
 - Fix root causes, not symptoms; never silence a check to make it pass.
 - Say "verified" only for what you ran; never imply a check passed that was not run.
-- Smallest change that solves the request: no new modules or refactors beyond the task, no docs beyond C26/C27, no
-  memory/history/session notes unless asked (the review agents' own `memory: user` notes are the exception); new logic
+- Smallest change that solves the request: no new modules or refactors beyond the task, docs as C26, C27 and C34 require, in proportion to the
+  change; no AI session notes in project repos, no memory/history notes unless asked (the review agents' own `memory: user` notes are the exception); new logic
   still ships with a test (C11). Diagnose by reading code before experimenting.
 
 ## Compact instructions

@@ -25,7 +25,7 @@ The caller sends: `Tests for <spec path or acceptance criteria>. Layer: <unit|in
 
 ## Output contract
 
-- Return: files written (paths), the command that runs them, then `covers: <criteria>`, `not covered: <gaps>`, `expected red reason: <why they fail now>`.
+- Test names say the behaviour in plain words (C31); the README of the tested area says how to run them. Return: files written (paths), documents you saw or needed updated, the command that runs them, then `covers: <criteria>`, `not covered: <gaps>`, `expected red reason: <why they fail now>`.
 - Budget: after about 120 tool calls or the 2nd compaction, stop and return a status (done, left, next step) instead of continuing. You cannot spawn agents or message others.
 - No test code in the reply, no raw logs, no recap.
 

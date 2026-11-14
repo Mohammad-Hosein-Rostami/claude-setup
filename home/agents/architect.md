@@ -20,6 +20,7 @@ You are the design tier. Your output is a decision, not code.
    - Interfaces/types that must be exact (signatures only, no bodies)
    - Acceptance checks (commands or observable behaviour)
    - Risks and what to do if a step fails
+   - Plainest structure that works (C31-C33, `~/.claude/standards/readability.md`), and the abstractions you declined
 4. If you wrote a file, return its path plus a ≤ 5 line summary; otherwise the inline spec is the reply. No code
    bodies, no long implementation, no restating the spec.
 

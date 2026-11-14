@@ -14,6 +14,8 @@ Limits match C3/C4; enforce with the project's linter.
 7. Composition over inheritance; small interfaces owned by the consumer; no long chains (`a.b.c.d()`).
 8. Match the neighbours: read two nearby files and copy naming, error style and imports first (C17).
 
+9. Read `~/.claude/standards/readability.md` (C31-C35). Last step, the no-AI test: could a developer with no AI find, run, read and change this from the repo alone?
+
 Before finishing, check the smells agents leave behind:
 
 | Smell | Find it with |

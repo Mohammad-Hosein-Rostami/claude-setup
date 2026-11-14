@@ -10,6 +10,7 @@ Iron law: no claim of done without fresh evidence from this turn (C12, C29).
 3. Re-run the original repro or acceptance check; show it now passes.
 4. Grep the diff for `ts-ignore`, `eslint-disable`, `.skip`, `.only`, `console.log`, debug code (C13). Remove or justify.
 5. New logic has a test that fails without it (C11).
+6. Human-first (C31-C35): `node ~/.claude/tools/readable/readable.mjs check . --changed` exits 0, and the no-AI test in `standards/readability.md` is answered for what you touched.
 
 Report (max 8 lines): `checks: <cmd> -> <exit>` per check; `repro: pass|fail`; `not run: <check> because <reason>`; `not verified: <x>`.
 
