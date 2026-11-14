@@ -69,3 +69,56 @@ test('a real header value, or a placeholder glued to more text, still asks', () 
     'echo "cookie: %s3cr3tvalue"', 'echo "cookie: %vtoken123"', 'echo "Cookie: {}abc123"',
   ]) assert.ok(findLiteralSecret(command), command);
 });
+
+// Audit 5ec0929 / 1f4125e: the query and header exemptions must not let a real token through (probes built at runtime).
+const url = (query) => `curl "https://x.example/r?${query}"`;
+
+test('a kebab mock word must end the query value: punctuation or glued quotes after it still ask (Q1)', () => {
+  const glue = ['.', '/', '+', '%2B', ':', '=', '~', '@', ',', '\\', '!', '*'];
+  for (const command of [...glue.map((sep) => url(`token=abc-def${sep}${RANDOM_TOKEN}`)), url(`token=live-key.${RANDOM_TOKEN}`),
+    `page.goto("/r?token=a-b'${RANDOM_TOKEN}'")`]) assert.ok(findLiteralSecret(command), command);
+});
+
+test('a capitalised kebab value is not a mock word (Q2)', () => {
+  for (const command of [url('token=Xk-Qp-Zr-Wm-Lt-Vn-Ha-Ub'), url('secret=Correct-Horse-Battery'), url('api_key=Verify-Ok')]) assert.ok(findLiteralSecret(command), command);
+});
+
+test('password and secret query keys get no mock-word exemption (Q3)', () => {
+  for (const command of [url('password=purple-monkey-dishwasher'), url('passwd=verify-ok'), url('secret=reset-ok'), url('client_secret=reset-ok'), url('pwd=verify-ok')]) {
+    assert.ok(findLiteralSecret(command), command);
+  }
+});
+
+test('a quoted literal after the "+" of a concatenation is a literal value (Q4)', () => {
+  for (const command of [`page.goto(base+"/reset?token="+"${RANDOM_TOKEN}")`, `fetch(base+"/r?token="+'${RANDOM_TOKEN}')`]) assert.ok(findLiteralSecret(command), command);
+});
+
+test('a literal default inside a ${...} expansion is a literal value (P1)', () => {
+  for (const command of [url(`token=\${T:-${RANDOM_TOKEN}}`), url(`token=\${T:=${RANDOM_TOKEN}}`), url(`token=\${T-${RANDOM_TOKEN}}`)]) assert.ok(findLiteralSecret(command), command);
+});
+
+test('lowercase mock words, code and references in a token query stay silent', () => {
+  for (const command of [url('token=verify-ok'), url('TOKEN=verify-ok'), url('access_token=reset-ok&x=1'), "goto('/r?token=reset-ok')", url('token=${T}'), url('token=${T:-}'),
+    url('token=$(cat f)'), 'page.goto(base+"/reset?token="+token)', 'page.goto(`${base}/reset?token=`+token)', 'x=`${base}/r?token=${token}`']) {
+    assert.equal(findLiteralSecret(command), undefined, command);
+  }
+});
+
+test('braces or %(...)s around a real token are not a placeholder (H1)', () => {
+  const spec = RANDOM_TOKEN.slice(0, 20);
+  for (const command of [`curl -H "Authorization: {${RANDOM_TOKEN}}" x`, `curl -H "X-Api-Key: {${RANDOM_TOKEN}}" x`, `curl -H 'Cookie: {${RANDOM_TOKEN}}' x`,
+    `curl -H "X-Api-Key: %(${RANDOM_TOKEN})s" x`, `curl x -H X-Api-Key:{${RANDOM_TOKEN}}`, `curl -H "X-Api-Key: {${RANDOM_TOKEN}:x}" x`,
+    `curl -H "X-Api-Key: {k:${spec}}" x`]) assert.ok(findLiteralSecret(command), command);
+});
+
+test('a placeholder ends only at the closing quote of the header string (H2)', () => {
+  for (const command of [`curl -H "X-Api-Key: %s'${RANDOM_TOKEN}'" x`, `curl -H "X-Api-Key: %s' ${RANDOM_TOKEN}'" x`, `curl -H 'X-Api-Key: {}"${RANDOM_TOKEN}"' x`]) {
+    assert.ok(findLiteralSecret(command), command);
+  }
+});
+
+test('short lowercase placeholders and format specs stay silent', () => {
+  for (const command of ['echo "Cookie: {user_id}"', 'echo "Cookie: {:08.3f}"', 'echo "Cookie: {n:>10}"', 'echo "X-Api-Key: %(key)s"', 'curl -H "X-Api-Key: %s" x', 'echo "Cookie: %5.2f"']) {
+    assert.equal(findLiteralSecret(command), undefined, command);
+  }
+});

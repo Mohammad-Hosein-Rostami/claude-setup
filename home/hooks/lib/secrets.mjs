@@ -32,7 +32,7 @@ const VALUE = `["']?[^\\s"';&|]`;
 // What the masker hides after a prefix: a whole quoted string or one unquoted word.
 const VALUE_RUN = `"[^"]*"|'[^']*'|[^\\s"';&|]+`;
 // [prefix, extra lookahead, kind, options]: the prefix ends right before the value, so one table drives both detection and
-// masking. options.value replaces the detected/masked value pattern, options.flags are the regex flags (e.g. 'i').
+// masking. options.value replaces the detected/masked value pattern, options.flags are the regex flags (e.g. 'i'), options.start replaces NOT_LITERAL_START.
 const BOUNDARY = `(?:^|[\\s;&|("'])`;
 // URL userinfo: the password runs to the LAST `@` of the word, so one containing `@` or `/` is still covered. A `:port/@scope`
 // (`http://localhost:5173/@vite/client`) is not a password: digits followed by `/ ? #` or the end are a port.
@@ -43,10 +43,17 @@ const HTTP_TOOL = `\\b(?:curl|wget|http|https|xh|hurl)\\b(?:"[^"\\n]{0,${GAP}}"|
 // A header value is a literal unless it contains a variable, a substitution or a placeholder (`Bearer $TOKEN`, `Bearer <token>`).
 const HEADER_VALUE = `(?![^"'\\n]{0,500}[$\`<])[^"'\\n]{1,500}`;
 // `Authorization`, `Proxy-Authorization`, any hyphenated `...-Key/-Token/-Secret` name (`X-Api-Key`, `PRIVATE-TOKEN`), `Cookie`
-const HEADER_NAME = `(?:(?:Proxy-)?Authorization|[A-Za-z0-9]{1,${NAME_MAX}}-[\\w-]{0,${NAME_MAX}}(?:key|token|secret)|Cookie)`;
+// Spelled with `caseless` (no 'i' flag) so FORMAT_PLACEHOLDER below can test for lowercase.
+const caseless = (letters) => letters.replace(/[a-z]/gi, (char) => `[${char.toLowerCase()}${char.toUpperCase()}]`);
+const HEADER_NAME = `(?:(?:${caseless('Proxy-')})?${caseless('Authorization')}|[A-Za-z0-9]{1,${NAME_MAX}}-[\\w-]{0,${NAME_MAX}}(?:${caseless('key|token|secret')})|${caseless('Cookie')})`;
 // A header value that is only a printf/format placeholder (`%v %+v %s %q %5.2f`, `%(name)s`, `{}` `{0}` `{name}`) up to the closing quote or line end
-// is a format string in program text (`t.Errorf("bad cookie: %+v", c)`), not a credential. A verb glued to more text (`%s3cr3t`) is still a value.
-const FORMAT_PLACEHOLDER = `(?!(?:%[-+# 0]{0,5}(?:\\d{1,3}|\\*)?(?:\\.(?:\\d{1,3}|\\*))?[a-zA-Z]|%\\(\\w{1,40}\\)[-+# 0]{0,5}\\d{0,3}[a-zA-Z]|\\{\\w{0,40}(?::[^}"'\\n]{0,20})?\\})[ \\t]*(?:["'\\n]|$))`;
+// is a format string in program text (`t.Errorf("bad cookie: %+v", c)`), not a credential. A verb glued to more text (`%s3cr3t`) is still a value,
+// and a brace or `%(...)s` name only counts when it is a short lowercase identifier (`{R}` / `%(R)s` with R a token is a value).
+const PLACEHOLDER_NAME = '[a-z_][a-z0-9_]{0,19}';
+const PLACEHOLDER_SPEC = '[<>^=+ #0-9.,_a-z%-]{0,10}';
+const PLACEHOLDER = `(?:%[-+# 0]{0,5}(?:\\d{1,3}|\\*)?(?:\\.(?:\\d{1,3}|\\*))?[a-zA-Z]|%\\(${PLACEHOLDER_NAME}\\)[-+# 0]{0,5}\\d{0,3}[a-zA-Z]|\\{(?:\\d{1,2}|${PLACEHOLDER_NAME})?(?::${PLACEHOLDER_SPEC})?\\})`;
+// It ends at the quote that opened the header string (`\k<q>`, found by looking back) or at the line end when unquoted: `"X: %s'R'"` is not a placeholder.
+const FORMAT_PLACEHOLDER = `(?!(?<=(?<q>["'])[^"'\\n]{0,500})${PLACEHOLDER}[ \\t]*\\k<q>|${PLACEHOLDER}[ \\t]*(?:\\n|$))`;
 const STDIN_FLAG = '--(?:with-token|password-stdin)\\b';
 // the value is echoed/printed (`echo -n T`, `printf '%s' T`) and piped into a command that has the stdin flag
 const ECHOED_INTO_STDIN_FLAG = `(?=(?:"[^"]*"|'[^']*'|[^\\s"';&|]+)[ \\t]*\\|[^\\n;&|]{0,${GAP}}${STDIN_FLAG})`;
@@ -57,10 +64,18 @@ const ABSOLUTE_ROOTS = 'Users|home|tmp|private|var|etc|opt|usr|Volumes';
 // a regex value has its `|` inside the value: in its own quotes, or unquoted and closed by a `/` plus JS flags (`/a|b/i;`; else `KEY=/<b64>|tee` would pass)
 const REGEX_VALUE = `"/[^"\\n]{0,500}\\|[^"\\n]{0,500}"|'/[^'\\n]{0,500}\\|[^'\\n]{0,500}'|/[^\\s"';&|]{0,500}\\|[^\\s"';&]{0,500}/[dgimsuvy]{0,8}(?![^\\s;&|),])`;
 const CODE_VALUE = `(?!${REGEX_VALUE}|["']?(?:(?:\\.{1,2}|~)/|/(?:${ABSOLUTE_ROOTS})/)|[=>({\\[]|[\\w$]{1,40}\\s*=>|lambda\\b|[\\w$]{1,40}(?:\\.[\\w$]{1,40}){0,6}\\s*[(\\[])`;
-const QUERY_SECRET = 'api[_-]?key|access[_-]?(?:token|key)|auth[_-]?token|token|client[_-]?secret|secret|password|passwd|pwd';
-// A query value that is code, not a literal: empty and closed by a quote then `+ } )` (`"/reset?token="+token`); a `${...}` or `$x` reference;
-// a kebab-case mock word of lowercase letters (`token=verify-ok`, 24 chars at most, one hyphen at least). Real tokens carry digits, capitals or are longer.
-const QUERY_NOT_LITERAL = `(?!["'\`][ \\t]*[+})]|\\$[{\\w]|(?=[a-z-]{1,24}(?![\\w-]))[a-z]+(?:-[a-z]+)+)`;
+const QUERY_TOKEN_KEYS = caseless('api[_-]?key|access[_-]?(?:token|key)|auth[_-]?token|token');
+const QUERY_SECRET_KEYS = caseless('client[_-]?secret|secret|password|passwd|pwd');
+// A query value that is code, not a literal: empty and closed by a quote then `} )` or a `+` that is not followed by a quoted literal
+// (`"/reset?token="+token`, not `+"R"`); a `$(...)`, `$x` or `${name}` / `${name:-}` reference, but not `${name:-R}` (a literal default).
+const QUERY_CODE = `["'\`][ \\t]*(?:\\+(?![ \\t]*["'\`])|[})])|["']?\\$(?:\\(|\\w|\\{[\\w.]{1,80}(?::?[-=+?])?\\})`;
+// `$` is judged by QUERY_CODE here, so the query rules do not use NOT_LITERAL_START (which skips every `$` value).
+const QUERY_START = '(?!["\']?(?:`|<|\\s|;|&|\\||$))';
+// A kebab-case mock word (`token=verify-ok`): lowercase (these rules have no 'i' flag), 24 chars at most, one hyphen at least, and it ENDS the
+// value: a quote not followed by more value, whitespace, `&`, `#`, `)` or the end. Only for token-like keys, never password/secret keys.
+const QUERY_MOCK_WORD = `(?=[a-z-]{1,24}(?![\\w-]))[a-z]+(?:-[a-z]+)+(?:["'](?![\\w$"'\`]|[ \\t]*\\+[ \\t]*["'\`])|[\\s&#)]|$)`;
+const QUERY_NOT_LITERAL = `(?!${QUERY_CODE})`;
+const QUERY_TOKEN_NOT_LITERAL = `(?!${QUERY_CODE}|${QUERY_MOCK_WORD})`;
 const SECRET_FLAG = '--(?:token|api-key|apikey|password|passwd|client-secret|access-token|auth-token)(?:=|\\s+)';
 const VALUE_KINDS = [
   [`(?:^|[\\s;&|("'])${SECRET_ENV}=`, '', 'a password or key assigned in the command'],
@@ -79,19 +94,20 @@ const VALUE_KINDS = [
   // any variable whose name has KEY, TOKEN, SECRET, PASS, PASSWD, PWD or PASSWORD as a part (`DB_PASS`, `TOKEN_FILE_X`, `ADMINPASSWORD`)
   // CODE_VALUE: `key==x`, `key=>x`, `const key=s=>...`, `token=[]`, `key=(a)`, `token=fs.readFileSync(p)`, `key=lambda s:` are program code (heredocs, node -e), not literals
   [`${BOUNDARY}[\\w.-]{0,${NAME_MAX}}(?:${SECRET_NAME_PART}|PASSWORD)[\\w.-]{0,${NAME_MAX}}=`, CODE_VALUE, 'a key, token, secret or password assigned in the command', { flags: 'i' }],
-  [`[?&](?:${QUERY_SECRET})=`, QUERY_NOT_LITERAL, 'a token or key in a URL query string', { flags: 'i' }],
+  [`[?&](?:${QUERY_TOKEN_KEYS})=`, QUERY_TOKEN_NOT_LITERAL, 'a token or key in a URL query string', { start: QUERY_START }],
+  [`[?&](?:${QUERY_SECRET_KEYS})=`, QUERY_NOT_LITERAL, 'a password or secret in a URL query string', { start: QUERY_START }],
   [`\\bredis-cli\\b[^\\n|;&]{0,${GAP}}?\\s(?:-a|--pass)\\s+`, '', 'a redis password'],
   ['(?<![A-Za-z0-9])_(?:authToken|auth|password)=|(?<![A-Za-z0-9])_authToken\\s+', '', 'an npm registry credential', { flags: 'i' }],
   ['\\bBearer\\s+', '', 'a bearer token', { flags: 'i' }],
   [`${HTTP_TOOL}\\s(?:-u|--user)(?:=|\\s*)[^\\s:"']*:`, '', 'a user:password pair', { value: '["\']?[^\\s"\';&|]+["\']?' }],
   [`${HTTP_TOOL}\\s(?:-u|--user)(?:=|\\s*)["'][^"':]*:`, '', 'a user:password pair', { value: '[^"\']+' }],
-  [`\\b${HEADER_NAME}\\s*:[ \\t]*`, FORMAT_PLACEHOLDER, 'a credential header with a literal value', { value: HEADER_VALUE, flags: 'i' }],
+  [`\\b${HEADER_NAME}\\s*:[ \\t]*`, FORMAT_PLACEHOLDER, 'a credential header with a literal value', { value: HEADER_VALUE }],
   [`(?<!\\b(?:docker|podman|buildx|buildah)\\b[^\\n|;&]{0,${GAP}})--secret(?:=|\\s+)`, '(?!-)', 'a secret flag with a literal value'],
   ['\\b[a-z][a-z0-9+.-]{0,30}://[^\\s/@:"\']{1,200}:', URL_NOT_A_PORT, 'a password inside a URL', { value: URL_PASSWORD, flags: 'i' }],
-].map(([prefix, lookahead, kind, { value, flags = '' } = {}]) => ({
+].map(([prefix, lookahead, kind, { value, flags = '', start = NOT_LITERAL_START } = {}]) => ({
   kind,
-  detect: new RegExp(`${prefix}${NOT_LITERAL_START}${lookahead}${value ?? VALUE}`, flags),
-  mask: new RegExp(`(${prefix})${NOT_LITERAL_START}${lookahead}(?:${value ?? VALUE_RUN})`, `g${flags}`),
+  detect: new RegExp(`${prefix}${start}${lookahead}${value ?? VALUE}`, flags),
+  mask: new RegExp(`(${prefix})${start}${lookahead}(?:${value ?? VALUE_RUN})`, `g${flags}`),
 }));
 const MASK = '[masked]';
 
