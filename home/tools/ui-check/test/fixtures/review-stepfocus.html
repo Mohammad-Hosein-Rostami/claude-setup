@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>s</title><body style="font:16px sans-serif">
+<my-sh id="sh"></my-sh><my-del id="del"></my-del><my-plain id="plain"></my-plain>
+<input id="plainin"><div id="ce" contenteditable="true">ed</div><button id="hid" style="display:none">h</button>
+<div id="tw" tabindex="-1">tabindex -1</div><dialog id="dlg"><button id="indlg">x</button></dialog><iframe id="fr" srcdoc="<button id=ib>b</button>"></iframe>
+<input id="redir" onfocus="document.getElementById('plainin').focus()">
+<script>
+customElements.define('my-sh',class extends HTMLElement{constructor(){super();this.attachShadow({mode:'open'}).innerHTML='<button id="inner">inner</button>'}});
+customElements.define('my-del',class extends HTMLElement{constructor(){super();this.attachShadow({mode:'open',delegatesFocus:true}).innerHTML='<button id="d1">d1</button>'}});
+customElements.define('my-plain',class extends HTMLElement{});
+</script></body>

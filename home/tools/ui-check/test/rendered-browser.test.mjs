@@ -25,37 +25,51 @@ async function ui(...args) {
   }
 }
 
-/** Run `responsive` at 320 on a fixture and return the exit code and the findings. */
+/** Run `responsive` at 320 on a fixture and return the exit code, the failing findings and the hints (report.json). */
 async function audit(name, extra = []) {
   const out = tmp();
   const result = await ui('responsive', '--url', fixture(name), '--widths', '320', '--out', out, ...extra);
-  return { code: result.code, findings: JSON.parse(fs.readFileSync(path.join(out, 'report.json'), 'utf8')).findings, stderr: result.stderr };
+  const report = JSON.parse(fs.readFileSync(path.join(out, 'report.json'), 'utf8'));
+  return { code: result.code, findings: report.findings, hints: report.hints, md: fs.readFileSync(path.join(out, 'report.md'), 'utf8'), stderr: result.stderr };
 }
-const of = (findings, check) => findings.filter((f) => f.check === check).map((f) => f.element);
+const of = (list, check) => list.filter((f) => f.check === check).map((f) => f.element);
 
-test('raw-i18n-key: a text that is a dictionary key is reported, normal copy, a key inside a sentence and a hidden key are not', { skip: !project }, async () => {
-  const { code, findings } = await audit('rawkey.html');
-  assert.equal(code, 1);
-  assert.deepEqual(of(findings, 'raw-i18n-key'), ['p#missing']);
+test('raw-i18n-key hint: a text that is a dictionary key is listed, normal copy, a key inside a sentence and a hidden key are not; the run still passes', { skip: !project }, async () => {
+  const { code, findings, hints, md } = await audit('rawkey.html');
+  assert.equal(code, 0, 'a hint never fails the run');
+  assert.deepEqual(findings, []);
+  assert.deepEqual(of(hints, 'raw-i18n-key'), ['p#missing']);
+  assert.match(md, /## Hints[\s\S]*raw-i18n-key/);
 });
 
-test('focus-indicator: outline:none with no other style is reported; default, custom-ring and styled hidden-checkbox controls are not', { skip: !project }, async () => {
-  const { code, findings } = await audit('focus.html');
-  assert.equal(code, 1);
-  assert.deepEqual(of(findings, 'focus-indicator').sort(), ['button#bare', 'input#remember.hid'].sort());
+test('focus-indicator hint: outline:none with no other style is listed; default, custom-ring and styled hidden-checkbox controls are not; exit stays 0', { skip: !project }, async () => {
+  const { code, findings, hints } = await audit('focus.html');
+  assert.equal(code, 0);
+  assert.deepEqual(findings, []);
+  assert.deepEqual(of(hints, 'focus-indicator').sort(), ['button#bare', 'input#remember.hid'].sort());
 });
 
-test('rtl-physical-align: text-align:left in an rtl page is reported; start, the default and an ltr island are not; an ltr page is clean', { skip: !project }, async () => {
-  const { code, findings } = await audit('rtl-align.html');
-  assert.equal(code, 1);
-  assert.deepEqual(of(findings, 'rtl-physical-align'), ['p#physical']);
-  assert.deepEqual(of((await audit('ltr.html')).findings, 'rtl-physical-align'), []);
+test('rtl-physical-align hint: text-align:left in an rtl page is listed; start, the default and an ltr island are not; an ltr page is clean', { skip: !project }, async () => {
+  const { code, findings, hints } = await audit('rtl-align.html');
+  assert.equal(code, 0);
+  assert.deepEqual(findings, []);
+  assert.deepEqual(of(hints, 'rtl-physical-align'), ['p#physical']);
+  assert.deepEqual(of((await audit('ltr.html')).hints, 'rtl-physical-align'), []);
 });
 
-test('tap-target: a standalone inline link row is reported, a link inside a sentence keeps the WCAG inline exemption', { skip: !project }, async () => {
-  const { findings } = await audit('links.html');
-  assert.deepEqual(of(findings, 'tap-target'), ['a', 'a']);
-  assert.equal(findings.filter((f) => f.check === 'tap-target').length, 2, 'EN and FA only, not the sentence link');
+test('target size: a standalone inline link row is a target-size? hint only (the failing tap-target check is unchanged), a link in a sentence is neither', { skip: !project }, async () => {
+  const { code, findings, hints } = await audit('links.html');
+  assert.equal(code, 0);
+  assert.deepEqual(of(findings, 'tap-target'), []);
+  assert.deepEqual(of(hints, 'target-size?'), ['a', 'a'], 'EN and FA only, not the sentence link');
+});
+
+test('target size (reviewer tap.html): nav, breadcrumb, pagination, footer and language links hint; links in a sentence, also inside strong/em or an inline wrapper, do not; an inline-block stays a failing tap-target', { skip: !project }, async () => {
+  const { code, findings, hints } = await audit('review-tap.html');
+  assert.equal(code, 1);
+  // Chromium computes `display: inline-block` for a <button> written display:inline, so main's rule reports it too.
+  assert.deepEqual(of(findings, 'tap-target'), ['a#i2', 'button#ib']);
+  assert.deepEqual(of(hints, 'target-size?').sort(), ['a#n1', 'a#n2', 'a#n3', 'a#n4', 'a#n5', 'a#b1', 'a#b2', 'a#p1', 'a#p2', 'a#p3', 'a#f1', 'a#f2', 'a#i1', 'a#l1', 'a#l2'].sort());
 });
 
 test('focus on a div without tabindex fails the step, naming the step', { skip: !project }, async () => {

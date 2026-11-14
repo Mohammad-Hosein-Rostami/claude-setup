@@ -4,30 +4,43 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const MAX_REPORT_LINES = 40;
+const MAX_SUMMARY_LINES = 12;
 
 const cell = (value) => String(value ?? '').replaceAll('|', '\\|').replaceAll('\n', ' ');
 const row = (cells) => `| ${cells.map(cell).join(' | ')} |`;
 export const tableRow = row;
 
-function buildMarkdown({ title, verdict, summary, head, rows }) {
-  const lines = [`# ${title}: ${verdict}`, ...summary.map((s) => `- ${s}`)];
-  if (rows.length === 0) return lines;
-  lines.push('', row(head), row(head.map(() => '---')));
-  const room = MAX_REPORT_LINES - lines.length;
-  if (rows.length <= room) return [...lines, ...rows.map(row)];
+const HINT_LINES = 12; // the hints section never takes more of the 40 lines than this
+
+function hintSection({ head, rows }) {
+  if (rows.length === 0) return [];
+  const header = ['', '## Hints (heuristics: reported, never fail the run)', row(head), row(head.map(() => '---'))];
+  const room = HINT_LINES - header.length;
+  if (rows.length <= room) return [...header, ...rows.map(row)];
+  return [...header, ...rows.slice(0, room - 1).map(row), `... ${rows.length - room + 1} more hints in report.json`];
+}
+
+function buildMarkdown({ title, verdict, summary, head, rows, hints }) {
+  const top = [`# ${title}: ${verdict}`, ...summary.map((s) => `- ${s}`)];
+  const hintLines = hintSection(hints ?? { head, rows: [] });
+  if (rows.length === 0) return [...top, ...hintLines];
+  const lines = [...top, '', row(head), row(head.map(() => '---'))];
+  const room = MAX_REPORT_LINES - lines.length - hintLines.length;
+  if (rows.length <= room) return [...lines, ...rows.map(row), ...hintLines];
   const shown = Math.max(room - 1, 0);
-  return [...lines, ...rows.slice(0, shown).map(row), `... ${rows.length - shown} more rows in report.json`];
+  return [...lines, ...rows.slice(0, shown).map(row), `... ${rows.length - shown} more rows in report.json`, ...hintLines];
 }
 
 /**
  * Write report.json and report.md into outDir.
  * @param {string} outDir existing directory
- * @param {{title: string, verdict: 'PASS'|'FAIL', summary: string[], head: string[], rows: string[][], data?: object}} report
+ * @param {{title: string, verdict: 'PASS'|'FAIL', summary: string[], head: string[], rows: string[][], hints?: {head: string[], rows: string[][]}, data?: object}} report
+ *   hints = an optional second table, written under "Hints" in report.md (at most 12 lines)
  * @returns {string} path of report.md
  */
 export function writeReport(outDir, report) {
   const mdPath = path.join(outDir, 'report.md');
-  const md = buildMarkdown({ ...report, summary: report.summary.slice(0, 12) });
+  const md = buildMarkdown({ ...report, summary: report.summary.slice(0, MAX_SUMMARY_LINES) });
   fs.writeFileSync(mdPath, `${md.join('\n')}\n`);
   const json = { title: report.title, verdict: report.verdict, summary: report.summary, head: report.head, rows: report.rows, ...report.data };
   fs.writeFileSync(path.join(outDir, 'report.json'), JSON.stringify(json, null, 2));

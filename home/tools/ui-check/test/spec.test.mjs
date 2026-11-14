@@ -64,3 +64,18 @@ test('report.md is capped at 40 lines', () => {
   assert.ok(fs.readFileSync(md, 'utf8').trimEnd().split('\n').length <= MAX_REPORT_LINES);
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'report.json'), 'utf8')).rows.length, 100);
 });
+
+test('report.md lists hints in their own section, capped at 12 lines, and the whole file stays within the cap', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'report-hints-'));
+  const head = ['width', 'check', 'element', 'detail'];
+  const many = (n, check) => Array.from({ length: n }, (_, i) => [320, check, `el${i}`, 'd']);
+  const md = fs.readFileSync(writeReport(dir, { title: 't', verdict: 'FAIL', summary: ['s'], head, rows: many(60, 'hscroll'), hints: { head, rows: many(30, 'focus-indicator') }, data: { hints: [] } }), 'utf8');
+  const lines = md.trimEnd().split('\n');
+  assert.ok(lines.length <= MAX_REPORT_LINES, `${lines.length} lines`);
+  const at = lines.indexOf('## Hints (heuristics: reported, never fail the run)');
+  assert.ok(at > 0 && lines.length - at <= 11, 'hint section is at most 12 lines with its blank line');
+  assert.match(md, /more hints in report\.json/);
+  const few = fs.readFileSync(writeReport(dir, { title: 't', verdict: 'PASS', summary: ['s'], head, rows: [], hints: { head, rows: many(2, 'raw-i18n-key') }, data: {} }), 'utf8');
+  assert.match(few, /PASS[\s\S]*## Hints[\s\S]*el1/);
+  assert.doesNotMatch(fs.readFileSync(writeReport(dir, { title: 't', verdict: 'PASS', summary: ['s'], head, rows: [], data: {} }), 'utf8'), /Hints/);
+});

@@ -1,0 +1,5 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>f4</title><style>body{font:16px sans-serif}</style>
+<body><button id="first" style="outline:none">first bare</button>
+<my-del id="del"></my-del>
+<button id="aftershadow" style="outline:none">after shadow bare (should be reported)</button>
+<script>customElements.define('my-del',class extends HTMLElement{constructor(){super();const r=this.attachShadow({mode:'open'});r.innerHTML='<button>del 1</button><button>del 2</button>'}});</script></body>

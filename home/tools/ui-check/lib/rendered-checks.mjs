@@ -1,6 +1,6 @@
 // Purpose: pure decision functions for the `responsive` findings that need element facts but no browser: `raw-i18n-key`,
-// `focus-indicator`, `rtl-physical-align`, and the `tap-target` size/exemption rule.
-// Exports: rawI18nKeyFindings, focusIndicatorFindings, rtlPhysicalAlignFindings, tapTargetFindings, MAX_FOCUS_STOPS, RAW_KEY_PATTERN, INDICATOR_FIELDS.
+// `focus-indicator`, `rtl-physical-align`, and the `target-size?` hint.
+// Exports: rawI18nKeyFindings, focusIndicatorFindings, rtlPhysicalAlignFindings, targetSizeHints, MAX_FOCUS_STOPS, RAW_KEY_PATTERN, INDICATOR_FIELDS.
 // Invariants: pure; each takes plain facts gathered in the page (lib/audit.mjs, lib/focus-audit.mjs), so a unit test needs no browser;
 // a hidden element never produces a finding; every function takes an optional cap on the number of findings.
 
@@ -60,20 +60,19 @@ export function focusIndicatorFindings({ focusables }, max = Infinity) {
     .slice(0, max);
 }
 
-/** WCAG 2.5.8 exempts an inline link inside running text; a standalone inline link (a row of language links) is not exempt. */
-const inlineTextExempt = ({ display, siblingText }) => display === 'inline' && siblingText;
-
 /**
- * Interactive elements smaller than the minimum target, minus the inline-text exemption.
- * @param {{targets: {element: string, width: number, height: number, display: string, siblingText: boolean}[]}} facts visible interactive elements;
- *   siblingText = the parent holds letters or digits of its own beside the element (the element sits in a sentence)
+ * Hint `target-size?`: an inline link or button under the minimum size that is NOT inside running text. WCAG 2.5.8 exempts only inline targets in a
+ * sentence or text block, so a row of inline links (nav, breadcrumb, pagination, footer, language links) may fail it. The failing `tap-target` check
+ * still skips every inline element; this only hints.
+ * @param {{targets: {element: string, width: number, height: number, siblingText: boolean}[]}} facts small inline interactive elements;
+ *   siblingText = letters or digits sit beside the element in its block (through inline wrappers such as strong or em)
  * @param {number} min minimum width and height in CSS px
- * @param {number} [max] cap on the number of findings
- * @returns {{check: 'tap-target', element: string, detail: string}[]}
+ * @param {number} [max] cap on the number of hints
+ * @returns {{check: 'target-size?', element: string, detail: string}[]}
  */
-export function tapTargetFindings({ targets }, min, max = Infinity) {
+export function targetSizeHints({ targets }, min, max = Infinity) {
   return targets
-    .filter((t) => (t.width < min || t.height < min) && !inlineTextExempt(t))
-    .map((t) => ({ check: 'tap-target', element: t.element, detail: `${Math.round(t.width)}x${Math.round(t.height)} < ${min}x${min}` }))
+    .filter((t) => (t.width < min || t.height < min) && !t.siblingText)
+    .map((t) => ({ check: 'target-size?', element: t.element, detail: `${Math.round(t.width)}x${Math.round(t.height)} < ${min}x${min}; an inline link outside running text is not exempt from WCAG 2.5.8 (confirm and enlarge, or dismiss)` }))
     .slice(0, max);
 }

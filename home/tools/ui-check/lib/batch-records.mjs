@@ -2,7 +2,7 @@
 // Exports: compareRecords, responsiveRecords, errorRecords, withCloseFailures, exitCodeFor, summaryMarkdown, writeBatchResults, writePartialResults, readPriorRecords.
 // Invariant: a record is { surface, state, locale, width, status: "pass"|"fail", evidence, findings }; another tool
 // (`ui-coverage check --results`) reads these exact field names, so never rename them. evidence is the path of that state's report.
-// width is the viewport width the part ran at (an integer; a compare record carries the Figma frame width). It is null only on an
+// hints is the number of heuristic hints (report.json `hints` at `evidence`): reported, never part of status. width is the viewport width the part ran at (an integer; a compare record carries the Figma frame width). It is null only on an
 // error record whose Figma cache could not be read, so the frame size is unknown.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -11,11 +11,11 @@ import { isHint } from './bidi.mjs';
 import { UsageError } from './errors.mjs';
 import { tableRow } from './report.mjs';
 
-const SUMMARY_HEAD = ['surface', 'state', 'locale', 'width', 'status', 'findings', 'evidence'];
+const SUMMARY_HEAD = ['surface', 'state', 'locale', 'width', 'status', 'findings', 'hints', 'evidence'];
 const NONE = '-';
 
-function record(state, width, findings, evidence) {
-  return { surface: state.surface, state: state.state, locale: state.locale, width, status: findings.every(isHint) ? 'pass' : 'fail', evidence, findings };
+function record(state, width, findings, evidence, hints = 0) {
+  return { surface: state.surface, state: state.state, locale: state.locale, width, status: findings.every(isHint) ? 'pass' : 'fail', evidence, findings, hints };
 }
 
 /**
@@ -40,12 +40,12 @@ export function compareRecords(state, { md, pixels, elementRows }, { root, maxDi
  * One record per audited width; a width without findings passes.
  * @param {object} state normalised state
  * @param {number[]} widths audited widths
- * @param {{md: string, findings: {width: number, check: string, element: string, detail: string}[]}} result auditAll result
+ * @param {{md: string, findings: {width: number, check: string, element: string, detail: string}[], hints?: {width: number}[]}} result auditAll result
  */
-export function responsiveRecords(state, widths, { md, findings }) {
+export function responsiveRecords(state, widths, { md, findings, hints = [] }) {
   return widths.map((width) => {
     const own = findings.filter((f) => f.width === width).map(({ check, element, detail }) => ({ check, element, detail }));
-    return record(state, width, own, md);
+    return record(state, width, own, md, hints.filter((h) => h.width === width).length);
   });
 }
 
@@ -76,12 +76,34 @@ export function withCloseFailures(records, state, messages) {
 /** 1 when any record fails, and also when there are no records at all (nothing ran, so nothing is proved). */
 export const exitCodeFor = (records) => (records.length === 0 || records.some((r) => r.status === 'fail') ? 1 : 0);
 
-/** summary.md content: verdict, counts, and one table row per state x width. */
+/**
+ * The hints of one record, read from the report.json beside its evidence report.md.
+ * @param {{evidence: string, width: number|null, hints?: number}} r record
+ * @returns {string[]} one `check element: detail` text per hint; an unreadable report gives one line saying so
+ */
+function hintTexts(r) {
+  if (!r.hints) return [];
+  try {
+    const { hints = [] } = JSON.parse(fs.readFileSync(path.join(path.dirname(r.evidence), 'report.json'), 'utf8'));
+    return hints.filter((h) => h.width === r.width).map((h) => `${h.check} ${h.element}: ${h.detail}`);
+  } catch (error) {
+    return [`${r.hints} hint(s), details unreadable: ${error.message}`];
+  }
+}
+
+/** The "Hints" section of summary.md: per state and width, every hint, so a reviewer can confirm or dismiss each (they never change a status). */
+function hintsSection(records) {
+  const lines = records.filter((r) => r.hints).flatMap((r) => [`- ${r.surface} / ${r.state} / ${r.locale ?? NONE} / ${r.width ?? NONE}px (${r.hints})`, ...hintTexts(r).map((t) => `  - ${t}`)]);
+  return lines.length === 0 ? [] : ['', '## Hints (heuristics: confirm or dismiss each, they never fail a record)', ...lines];
+}
+
+/** summary.md content: verdict, counts, one table row per state x width, then the hints per state. */
 export function summaryMarkdown(records) {
   if (records.length === 0) return '# ui-check batch: FAIL\n- no states ran\n';
   const failed = records.filter((r) => r.status === 'fail').length;
-  const rows = records.map((r) => tableRow([r.surface, r.state, r.locale ?? NONE, r.width ?? NONE, r.status, r.findings.length, r.evidence]));
-  return [`# ui-check batch: ${failed === 0 ? 'PASS' : 'FAIL'}`, `- records: ${records.length}, failed: ${failed}`, '', tableRow(SUMMARY_HEAD), tableRow(SUMMARY_HEAD.map(() => '---')), ...rows, ''].join('\n');
+  const hinted = records.reduce((sum, r) => sum + (r.hints ?? 0), 0);
+  const rows = records.map((r) => tableRow([r.surface, r.state, r.locale ?? NONE, r.width ?? NONE, r.status, r.findings.length, r.hints ?? 0, r.evidence]));
+  return [`# ui-check batch: ${failed === 0 ? 'PASS' : 'FAIL'}`, `- records: ${records.length}, failed: ${failed}, hints: ${hinted}`, '', tableRow(SUMMARY_HEAD), tableRow(SUMMARY_HEAD.map(() => '---')), ...rows, ...hintsSection(records), ''].join('\n');
 }
 
 /**

@@ -1,0 +1,50 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>f</title>
+<style>
+body{margin:20px;font:16px sans-serif} .row{margin:10px 0}
+/* A: default native controls */
+/* B: wrapper focus-within */
+.fw{display:inline-block;border:1px solid #888;padding:4px}.fw:focus-within{border-color:#06c}.fw input{border:0;outline:none}
+/* C: sibling underline */
+.sib input{border:0;outline:none}.sib input:focus~.ul{width:100%}.ul{display:block;height:2px;width:0;background:#06c}
+/* D: pseudo-element ring */
+a.pe{outline:none;position:relative;padding:4px}a.pe:focus-visible::after{content:"";position:absolute;inset:0;border:2px solid #06c}
+/* E: transitions */
+button.t1{outline:none;transition:box-shadow .3s}button.t1:focus-visible{box-shadow:0 0 0 3px #06c}
+button.t2{outline:none;transition:all .3s}button.t2:focus-visible{background:#06c}
+button.t3{outline:none;background:#eee;transition:background-color .2s}button.t3:focus-visible{background:#ddd}
+button.t4{outline:2px solid transparent;transition:outline-color .3s}button.t4:focus-visible{outline-color:#06c}
+/* F: outline offset */
+button.off{outline-offset:4px}
+/* G: text colour/underline only */
+a.col{outline:none;color:#333;text-decoration:none}a.col:focus-visible{color:#c00}
+a.und{outline:none;color:#333;text-decoration:none}a.und:focus-visible{text-decoration:underline}
+/* H: child ring */
+a.logo{outline:none;display:inline-block}a.logo:focus-visible img{outline:2px solid #06c}
+/* I: :has wrapper */
+.hs{display:inline-block;padding:4px;border:1px solid #888}.hs:has(input:focus-visible){box-shadow:0 0 0 3px #06c}.hs input{outline:none;border:0}
+/* J: bg gradient/image */
+button.gr{outline:none;background-image:linear-gradient(#eee,#ddd)}button.gr:focus-visible{background-image:linear-gradient(#06c,#04a)}
+/* K: transform / filter */
+button.tr{outline:none}button.tr:focus-visible{transform:scale(1.1)}
+/* L: 1 colour step bg */
+button.step{outline:none;background:rgb(238,238,238)}button.step:focus-visible{background:rgb(238,238,239)}
+/* M: skip link */
+a.skip{position:absolute;left:-9999px;outline:none}a.skip:focus{left:10px;top:10px;background:#fff}
+</style>
+<body>
+<a class="skip" href="#m" id="skip">Skip to content</a>
+<div class="row"><button id="defbtn">Default button</button> <a id="deflink" href="#x">Default link</a> <input id="defin" value="v"> <select id="defsel"><option>a</option></select> <textarea id="deftx"></textarea> <input type="checkbox" id="defcb"> <input type="radio" id="defrd"></div>
+<div class="row"><span class="fw" id="wr"><input id="inwrap" value="x"></span></div>
+<div class="row sib"><input id="insib" value="x"><span class="ul"></span></div>
+<div class="row"><a class="pe" id="pe" href="#x">Pseudo ring</a></div>
+<div class="row"><button class="t1" id="t1">t1 shadow trans</button> <button class="t2" id="t2">t2 all trans bg</button> <button class="t3" id="t3">t3 bg trans</button> <button class="t4" id="t4">t4 outline-color trans</button></div>
+<div class="row"><button class="off" id="off">offset</button></div>
+<div class="row"><a class="col" id="col" href="#x">colour only</a> <a class="und" id="und" href="#x">underline only</a></div>
+<div class="row"><a class="logo" id="logo" href="#x"><img alt="logo" width="40" height="20" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="></a></div>
+<div class="row"><span class="hs" id="has"><input id="inhas" value="x"></span></div>
+<div class="row"><button class="gr" id="gr">gradient</button> <button class="tr" id="tr">transform</button> <button class="step" id="step">1 step</button></div>
+<div class="row"><button tabindex="-1" id="tm1" style="outline:none">tabindex -1</button> <button disabled id="dis" style="outline:none">disabled</button></div>
+<dialog id="dlg"><button id="indlg" style="outline:none">in closed dialog</button></dialog>
+<details><summary id="sum" style="outline:none">closed details</summary><button id="indet" style="outline:none">in details</button></details>
+<div id="m"><button id="last">last default</button></div>
+</body>

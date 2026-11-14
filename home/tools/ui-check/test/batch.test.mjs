@@ -142,11 +142,11 @@ test('writeBatchResults writes results.json (record fields unchanged) and summar
   writeBatchResults(dir, records);
   const written = JSON.parse(fs.readFileSync(path.join(dir, 'results.json'), 'utf8'));
   assert.deepEqual(written, records);
-  assert.deepEqual(Object.keys(written[0]), ['surface', 'state', 'locale', 'width', 'status', 'evidence', 'findings']);
+  assert.deepEqual(Object.keys(written[0]), ['surface', 'state', 'locale', 'width', 'status', 'evidence', 'findings', 'hints']);
   const rows = fs.readFileSync(path.join(dir, 'summary.md'), 'utf8').split('\n').filter((line) => line.startsWith('| login'));
   assert.equal(rows.length, 3);
-  assert.match(rows[0], /\| login \| rtl-dropdown \| fa-IR \| 320 \| fail \| 1 \|/);
-  assert.match(rows[2], /\| 1440 \| pass \| 0 \|/);
+  assert.match(rows[0], /\| login \| rtl-dropdown \| fa-IR \| 320 \| fail \| 1 \| 0 \|/);
+  assert.match(rows[2], /\| 1440 \| pass \| 0 \| 0 \|/);
   assert.equal(exitCodeFor(records), 1);
   assert.equal(exitCodeFor(records.filter((r) => r.status === 'pass')), 0);
   assert.match(summaryMarkdown(records), /^# ui-check batch: FAIL/);
@@ -214,4 +214,17 @@ test('a setup error also removes a stale results.json and summary.md from --out'
   await assert.rejects(runBatch(['--states', file, '--out', dir]), usage(/--states/));
   assert.equal(fs.existsSync(path.join(dir, 'results.json')), false);
   assert.equal(fs.existsSync(path.join(dir, 'summary.md')), false);
+});
+
+test('hints: a record counts them per width, never fails because of them, and summary.md lists each hint under the state', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'batch-hints-'));
+  const hints = [{ width: 320, check: 'focus-indicator', element: 'input#remember', detail: 'no visible focus indicator' }, { width: 320, check: 'raw-i18n-key', element: 'p.hint', detail: 'shows the raw translation key "reset.hint"' }];
+  fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify({ findings: [], hints }));
+  const records = responsiveRecords(state, [320, 1024], { findings: [], hints, md: path.join(dir, 'report.md') });
+  assert.deepEqual(records.map((r) => [r.width, r.status, r.hints, r.findings.length]), [[320, 'pass', 2, 0], [1024, 'pass', 0, 0]]);
+  assert.equal(exitCodeFor(records), 0, 'hints never change the exit code');
+  const summary = summaryMarkdown(records);
+  assert.match(summary, /hints: 2/);
+  assert.match(summary, /## Hints[\s\S]*login \/ rtl-dropdown \/ fa-IR \/ 320px \(2\)\n  - focus-indicator input#remember: no visible focus indicator\n  - raw-i18n-key p\.hint: shows the raw translation key/);
+  assert.doesNotMatch(summary, /1024px/, 'a width without hints is not listed');
 });

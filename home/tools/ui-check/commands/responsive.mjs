@@ -8,7 +8,7 @@ import { auditInPage } from '../lib/audit.mjs';
 import { bidiFieldFindings, isHint } from '../lib/bidi.mjs';
 import { loadChromium, launch, openPage } from '../lib/browser.mjs';
 import { collectFocusables } from '../lib/focus-audit.mjs';
-import { focusIndicatorFindings, rawI18nKeyFindings, rtlPhysicalAlignFindings, tapTargetFindings } from '../lib/rendered-checks.mjs';
+import { focusIndicatorFindings, rawI18nKeyFindings, rtlPhysicalAlignFindings, targetSizeHints } from '../lib/rendered-checks.mjs';
 import { CONTEXT_OPTIONS, readContextFlags, validateWidths } from '../lib/context.mjs';
 import { loadSteps } from '../lib/steps.mjs';
 import { writeReport } from '../lib/report.mjs';
@@ -36,41 +36,46 @@ function parseWidths(text) {
  * @param {{url: string, height: number} & Record<string, unknown>} target openPage options other than width (steps, bypassCSP, autofocus, context)
  * @param {number} width viewport width in CSS px
  * @param {string} outDir where w<width>.png goes
- * @returns {Promise<{width: number, check: string, element: string, detail: string}[]>} layout findings plus bidi-field, tap-target, raw-i18n-key,
- *   rtl-physical-align and focus-indicator findings
+ * @returns {Promise<{width: number, check: string, element: string, detail: string, hint?: true}[]>} layout and bidi-field findings, plus the heuristic
+ *   hints (target-size?, raw-i18n-key, rtl-physical-align, focus-indicator) marked `hint: true`; hints never fail a run
  */
 export async function auditWidth(browser, target, width, outDir) {
   const page = await openPage(browser, { ...target, width });
   const audit = { minTarget: RESPONSIVE.minTarget, minText: RESPONSIVE.minText, smallViewport: RESPONSIVE.smallViewport, max: RESPONSIVE.maxFindingsPerCheck };
-  const { findings: layout, docDirection, fields, texts, blocks, targets } = await page.evaluate(auditInPage, audit);
-  const findings = [
-    ...layout, ...bidiFieldFindings({ docDirection, fields }, audit.max), ...tapTargetFindings({ targets }, audit.minTarget, audit.max),
+  const { findings: layout, docDirection, fields, texts, blocks, inlineTargets } = await page.evaluate(auditInPage, audit);
+  const findings = [...layout, ...bidiFieldFindings({ docDirection, fields }, audit.max)];
+  const hints = [
+    ...targetSizeHints({ targets: inlineTargets }, audit.minTarget, audit.max),
     ...rawI18nKeyFindings({ texts }, audit.max), ...rtlPhysicalAlignFindings({ docDirection, blocks }, audit.max),
   ];
   await page.screenshot({ path: path.join(outDir, `w${width}.png`), fullPage: true, animations: 'disabled', caret: 'hide' });
   // Last, because pressing Tab can fire the page's focus handlers.
-  findings.push(...focusIndicatorFindings({ focusables: await collectFocusables(page) }, audit.max));
+  hints.push(...focusIndicatorFindings({ focusables: await collectFocusables(page) }, audit.max));
   await page.context().close();
-  return findings.map((f) => ({ width, ...f }));
+  return [...findings, ...hints.map((h) => ({ ...h, hint: true }))].map((f) => ({ width, ...f }));
 }
 
 /**
  * Audit every width on an already launched browser and write report.md/json.
  * @param {object} browser Playwright browser
  * @param {{widths: number[], target: object, outDir: string}} job target as accepted by auditWidth
- * @returns {Promise<{pass: boolean, md: string, findings: object[]}>}
+ * @returns {Promise<{pass: boolean, md: string, findings: object[], hints: object[]}>} hints = the heuristic findings, listed in their own section and never failing
  */
 export async function auditAll(browser, { widths, target, outDir }) {
   fs.mkdirSync(outDir, { recursive: true });
-  const findings = [];
-  for (const width of widths) findings.push(...await auditWidth(browser, target, width, outDir));
-  const pass = findings.every(isHint); // hints are reported but never fail the run
+  const all = [];
+  for (const width of widths) all.push(...await auditWidth(browser, target, width, outDir));
+  const hints = all.filter((f) => f.hint).map(({ hint, ...rest }) => rest);
+  const findings = all.filter((f) => !f.hint);
+  const pass = findings.every(isHint); // `bidi-field?` is reported among the findings but never fails the run, and the hints are a section of their own
+  const head = ['width', 'check', 'element', 'detail'];
+  const row = (f) => [f.width, f.check, f.element, f.detail];
   const md = writeReport(outDir, {
     title: 'ui-check responsive', verdict: pass ? 'PASS' : 'FAIL',
-    summary: [`widths: ${widths.join(', ')}`, `findings: ${findings.length}${findings.some(isHint) ? ` (${findings.filter(isHint).length} hints, not failures)` : ''}`, `screenshots: ${outDir}/w<width>.png`],
-    head: ['width', 'check', 'element', 'detail'], rows: findings.map((f) => [f.width, f.check, f.element, f.detail]), data: { findings },
+    summary: [`widths: ${widths.join(', ')}`, `findings: ${findings.length}${findings.some(isHint) ? ` (${findings.filter(isHint).length} hints, not failures)` : ''}`, `hints: ${hints.length}`, `screenshots: ${outDir}/w<width>.png`],
+    head, rows: findings.map(row), hints: { head, rows: hints.map(row) }, data: { findings, hints },
   });
-  return { pass, md, findings };
+  return { pass, md, findings, hints };
 }
 
 /** Run responsive. @param {string[]} argv @returns {Promise<number>} exit code */

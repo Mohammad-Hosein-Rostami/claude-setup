@@ -1,5 +1,5 @@
 // Purpose: in-page responsive audit (serialised into the browser by Playwright).
-// Exports: auditInPage. It also gathers plain facts (visible inputs, text nodes, text blocks, small interactive elements) that lib/bidi.mjs and
+// Exports: auditInPage. It also gathers plain facts (visible inputs, text nodes, text blocks, small inline interactive elements) that lib/bidi.mjs and
 // lib/rendered-checks.mjs turn into findings. Invariant: must stay self-contained - no imports or closure variables, which is why
 // it is one function (C3 exception: Playwright serialises it whole).
 
@@ -9,7 +9,7 @@
  * @returns {{scrollWidth: number, clientWidth: number, findings: {check: string, element: string, detail: string}[],
  *   docDirection: string, fields: {element: string, type: string, inputmode: string, autocomplete: string, name: string, id: string, ariaLabel: string, direction: string, visible: boolean}[],
  *   texts: {element: string, text: string, visible: boolean}[], blocks: {element: string, textAlign: string, direction: string, visible: boolean}[],
- *   targets: {element: string, width: number, height: number, display: string, siblingText: boolean}[]}}
+ *   inlineTargets: {element: string, width: number, height: number, siblingText: boolean}[]}}
  */
 export function auditInPage(cfg) {
   const MAX_TEXT_LENGTH = 200; // a raw key is short; longer text cannot match, so it is cut to keep the facts small
@@ -18,7 +18,7 @@ export function auditInPage(cfg) {
   const fields = [];
   const texts = [];
   const blocks = [];
-  const targets = [];
+  const inlineTargets = [];
   const counts = {};
   const add = (check, el, detail) => {
     counts[check] = (counts[check] ?? 0) + 1;
@@ -37,7 +37,14 @@ export function auditInPage(cfg) {
   };
   const ownTexts = (el) => [...el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim()).map((n) => n.textContent.trim());
   const hasOwnText = (el) => ownTexts(el).length > 0;
-  const siblingText = (el) => [...(el.parentElement?.childNodes ?? [])].some((n) => n !== el && n.nodeType === Node.TEXT_NODE && /[\p{L}\p{N}]/u.test(n.textContent));
+  // Letters or digits written beside the link in its block: walk up through inline wrappers (strong, em, an inline li) to the first block.
+  const textBeside = (el) => {
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      if ([...p.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && /[\p{L}\p{N}]/u.test(n.textContent))) return true;
+      if (p === document.body || getComputedStyle(p).display !== 'inline') return false;
+    }
+    return false;
+  };
   const interactive = 'a[href],button,input:not([type=hidden]),select,textarea,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=switch],[role=radio]';
   const vw = document.documentElement.clientWidth;
   const root = document.documentElement;
@@ -59,8 +66,9 @@ export function auditInPage(cfg) {
       if (vw < cfg.smallViewport && Number.parseFloat(s.fontSize) < cfg.minText) add('small-text', el, `${s.fontSize} < ${cfg.minText}px`);
     }
     if (el.matches(interactive) && (r.width < cfg.minTarget || r.height < cfg.minTarget)) {
-      targets.push({ element: label(el), width: r.width, height: r.height, display: s.display, siblingText: siblingText(el) });
+      if (s.display !== 'inline') add('tap-target', el, `${Math.round(r.width)}x${Math.round(r.height)} < ${cfg.minTarget}x${cfg.minTarget}`);
+      else inlineTargets.push({ element: label(el), width: r.width, height: r.height, siblingText: textBeside(el) }); // exempt by WCAG only inside running text: a hint
     }
   }
-  return { scrollWidth: root.scrollWidth, clientWidth: vw, findings, docDirection: getComputedStyle(root).direction, fields, texts, blocks, targets };
+  return { scrollWidth: root.scrollWidth, clientWidth: vw, findings, docDirection: getComputedStyle(root).direction, fields, texts, blocks, inlineTargets };
 }

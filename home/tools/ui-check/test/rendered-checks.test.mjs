@@ -1,8 +1,8 @@
 // Purpose: browser-free tests for the pure decision functions behind the `raw-i18n-key`, `focus-indicator`, `rtl-physical-align` and
-// `tap-target` findings (positive, negative, hidden element, ltr page). Exports: none.
+// `target-size?` decisions (positive, negative, hidden element, ltr page). Exports: none.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { focusIndicatorFindings, rawI18nKeyFindings, rtlPhysicalAlignFindings, tapTargetFindings } from '../lib/rendered-checks.mjs';
+import { focusIndicatorFindings, rawI18nKeyFindings, rtlPhysicalAlignFindings, targetSizeHints } from '../lib/rendered-checks.mjs';
 
 const text = (value, extra = {}) => ({ element: 'p.hint', text: value, visible: true, ...extra });
 
@@ -72,23 +72,20 @@ test('focus-indicator: only the first 60 focusables count, the findings cap appl
   assert.equal(focusIndicatorFindings({ focusables: many }, 5).length, 5);
 });
 
-const small = (extra = {}) => ({ element: 'a', width: 21, height: 18, display: 'inline', siblingText: false, ...extra });
+const small = (extra = {}) => ({ element: 'a', width: 21, height: 18, siblingText: false, ...extra });
 
-test('tap-target: a small block or inline-block target is reported with its size', () => {
-  const found = tapTargetFindings({ targets: [small({ display: 'inline-block' }), small({ display: 'block', width: 100, height: 10 })] }, 24);
-  assert.deepEqual(found.map((f) => f.detail), ['21x18 < 24x24', '100x10 < 24x24']);
-  assert.equal(found[0].check, 'tap-target');
+test('target-size?: a small inline link outside running text (nav, breadcrumb, language links) is a hint with its size', () => {
+  const found = targetSizeHints({ targets: [small(), small({ width: 100, height: 10 })] }, 24);
+  assert.equal(found.length, 2);
+  assert.equal(found[0].check, 'target-size?');
+  assert.match(found[0].detail, /^21x18 < 24x24/);
 });
 
-test('tap-target: a big enough target is fine', () => {
-  assert.deepEqual(tapTargetFindings({ targets: [small({ display: 'block', width: 24, height: 24 })] }, 24), []);
+test('target-size?: a big enough link, and a link inside running text (WCAG inline exemption), give no hint', () => {
+  assert.deepEqual(targetSizeHints({ targets: [small({ width: 24, height: 24 })] }, 24), []);
+  assert.deepEqual(targetSizeHints({ targets: [small({ siblingText: true })] }, 24), []);
 });
 
-test('tap-target: an inline link inside running text keeps the WCAG inline exemption, a standalone inline link (nav of language links) does not', () => {
-  assert.deepEqual(tapTargetFindings({ targets: [small({ siblingText: true })] }, 24), []);
-  assert.equal(tapTargetFindings({ targets: [small({ siblingText: false })] }, 24).length, 1);
-});
-
-test('tap-target: the cap applies', () => {
-  assert.equal(tapTargetFindings({ targets: Array.from({ length: 9 }, () => small({ display: 'block' })) }, 24, 3).length, 3);
+test('target-size?: the cap applies', () => {
+  assert.equal(targetSizeHints({ targets: Array.from({ length: 9 }, () => small()) }, 24, 3).length, 3);
 });

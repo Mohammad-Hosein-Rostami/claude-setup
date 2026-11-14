@@ -1,0 +1,24 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>f2</title>
+<style>
+body{margin:20px;font:16px sans-serif}.row{margin:10px 0}
+.hid{position:absolute;opacity:0}
+.hid:focus-visible ~ .box{box-shadow:0 0 0 3px #06c}.box{display:inline-block;width:24px;height:24px;border:1px solid #888}
+.dly{outline:none;transition:box-shadow .2s .15s}.dly:focus-visible{box-shadow:0 0 0 3px #06c}
+.card{display:block;padding:8px;border:1px solid #ccc}
+.card:focus-visible{outline:2px solid #06c}
+.cust{outline:none}
+</style>
+<body>
+<div class="row"><button id="first">first</button></div>
+<div class="row"><label><input class="hid" type="checkbox" id="far"><span class="gap"></span><span class="box"></span> far sibling toggle</label></div>
+<div class="row"><button class="dly" id="dly">delayed transition</button></div>
+<div class="row"><my-btn id="host" tabindex="0"></my-btn></div>
+<div class="row"><my-del id="del"></my-del></div>
+<div class="row"><iframe id="fr" srcdoc="<button>in frame</button><button>in frame 2</button>" width="300" height="60"></iframe></div>
+<div class="row"><div class="card" tabindex="0" id="scroller" style="height:40px;overflow:auto"><div style="height:200px">scroll region</div></div></div>
+<div class="row"><button id="after">after widgets (never reached?)</button> <a id="afterbare" href="#x" style="outline:none">bare after</a></div>
+<script>
+customElements.define('my-btn',class extends HTMLElement{constructor(){super();const r=this.attachShadow({mode:'open'});r.innerHTML='<style>:host{display:inline-block;outline:none}button{outline:none;border:2px solid #888}:host(:focus-visible) button{border-color:#06c;box-shadow:0 0 0 3px #06c}</style><button tabindex="-1">custom host</button>'}});
+customElements.define('my-del',class extends HTMLElement{constructor(){super();const r=this.attachShadow({mode:'open',delegatesFocus:true});r.innerHTML='<button>del 1</button><button>del 2</button><input value="x">'}});
+</script>
+</body>
