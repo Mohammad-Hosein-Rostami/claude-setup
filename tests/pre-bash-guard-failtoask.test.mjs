@@ -124,6 +124,8 @@ const HARMLESS = [
   "git rebase -i main",
   "git rebase main",
   "git stash push -m wip",
+  "python3 - <<'E'\nprint(1)\nE\ngit stash push -q -- a.go; go vet ./a; git stash pop -q",
+  "x=$(git rev-parse HEAD); git stash push -m \"$x\"",
   "git pull --rebase",
   "git add -A && git commit -m \"chore: x\"",
   "pnpm install",

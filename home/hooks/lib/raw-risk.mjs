@@ -5,7 +5,7 @@
 // body is data), `<(` / `>(`, `eval`, `trap`, `source` / `.`, `coproc`, `case`, a carriage return, a pipe into a shell, and the commands that
 // run a text argument: watch, parallel, `PROMPT_COMMAND=`, `script|expect -c`, `perl|python|node|ruby|deno|bun -e|-c|-p`, `osascript -e`,
 // `tmux new|send-keys`, `fish|pwsh -c`, `npx -c`, `npm exec -c`.
-// Dangerous words (looked up as words of the quote-stripped, ANSI-C-decoded text): git push / git alias, rm with a recursive or forced flag and
+// Dangerous words (looked up as words of the quote-stripped, ANSI-C-decoded text): git push (by position) / git alias, rm with a recursive or forced flag and
 // an absolute, `~`, `$` or `..` path, npm-style publish, gh mutations (judged by position: `gh <group> <verb>`), disk tools and raw device paths,
 // psql/mysql/ssh near a production name. Message text of `git commit` and `gh pr|issue create|edit|comment` is data (message-text.mjs), so
 // `git commit -m "$(cat <<'EOF' ... git push ... EOF)"` is silent; a message with another `$(` or a backtick is still scanned.
@@ -107,7 +107,7 @@ function dangerIn(words, prodText, prodNames) {
   for (let i = 0; i < words.length; i++) {
     const word = words[i];
     const after = words.slice(i + 1, i + 1 + WINDOW);
-    if (word === 'git' && after.some((w) => w === 'push' || w.startsWith('alias.'))) return 'git';
+    if (word === 'git' && (pushesIn(after) || after.some((w) => w.startsWith('alias.')))) return 'git';
     if (word === 'rm' && after.some((w) => RM_FLAG.test(w)) && after.some((w) => RISKY_RM_PATH.test(w))) return 'destructive';
     if (word === 'publish' && words.slice(Math.max(0, i - 3), i).some((w) => PUBLISHERS.has(w))) return 'publish';
     if (word === 'gh' && ghMutation(after)) return 'gh';
@@ -117,6 +117,24 @@ function dangerIn(words, prodText, prodNames) {
     if (REMOTE_TOOLS.has(word) && (/prod/i.test(prodText) || prodNames.some((name) => prodText.includes(name)))) return 'remote';
   }
   return undefined;
+}
+
+// git's global options that take the next word as their value, skipped to find the subcommand: `git -C dir stash push`.
+const GIT_VALUE_FLAGS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--super-prefix', '--config-env', '--attr-source']);
+
+/**
+ * Whether `push` near `git` can publish. Loose on purpose (a heredoc or xargs may feed the words), with one exception:
+ * when the subcommand by position is `stash`, `push` is `git stash push`, which only stores local changes.
+ * @param {string[]} after - the words after `git` in one statement.
+ * @returns {boolean} true when a `push` word may be a git push.
+ */
+function pushesIn(after) {
+  if (!after.includes('push')) return false;
+  for (let i = 0; i < after.length; i++) {
+    if (GIT_VALUE_FLAGS.has(after[i])) i++;
+    else if (!after[i].startsWith('-')) return after[i] !== 'stash';
+  }
+  return true;
 }
 
 /** `gh <group> <verb>` by position (flags skipped): `gh pr create --title "delete x"` is not a delete; `gh release create` and `gh pr merge` are. */
