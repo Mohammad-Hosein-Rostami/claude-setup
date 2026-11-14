@@ -114,7 +114,7 @@ function looksUntranslated(text, allowList) {
  */
 export function untranslatedHints({ texts }, allowList = []) {
   const found = texts.filter((t) => t.visible !== false && !t.keepLatin && t.direction === 'rtl' && looksUntranslated(t.text, allowList));
-  return found.length === 0 ? [] : [groupedHint('untranslated?', found, 'in English on a right-to-left page', 'Translate them, or add a term to --same-in-all-locales / sameInAllLocales if it is the same in every language.')];
+  return found.length === 0 ? [] : [groupedHint('untranslated?', found, 'in English on a right-to-left page', 'Translate them; if a text is the same in every language, mark it lang="en" or translate="no", or add the term to --same-in-all-locales / sameInAllLocales.')];
 }
 
 const wordCount = (text) => text.split(/\s+/).filter((word) => LETTER.test(word)).length;
