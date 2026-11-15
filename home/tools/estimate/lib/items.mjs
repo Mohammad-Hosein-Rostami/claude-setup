@@ -1,5 +1,5 @@
 // Parses the `## Work items` table of a STATUS.md into work items plus per-row problems.
-// Exports: parseWorkItems(markdown) -> { items, problems }; parseInstant(text) -> epoch ms | null; INSTANT_FORMAT; SIZE_POINTS (S=1, M=2, L=4).
+// Exports: parseWorkItems(markdown) -> { items, problems } (a problem is {line, reason} plus `id` when it is about one row); parseInstant(text) -> epoch ms | null; INSTANT_FORMAT; SIZE_POINTS (S=1, M=2, L=4).
 // Each item has a kind: 'close' when the item cell starts `close:` (review, fixes from a review, recheck, gate, landing),
 // 'rework' when it starts `rework:` (an owner correction), 'deliver' when it starts `deliver:` (the job handed over to the
 // owner: its done time is a delivery), else 'build'; case-insensitive. A deliver row is an event: done alone is enough (its
@@ -62,7 +62,7 @@ function parseTime(text, label) {
 
 function parseRow(cells, line) {
   const [id, item, size, startedText, doneText, evidenceText] = cells;
-  const fail = (reason) => ({ problem: { line, reason: `${id || 'row'}: ${reason}` } });
+  const fail = (reason) => ({ problem: { line, id: id || undefined, reason: `${id || 'row'}: ${reason}` } });
   if (id === '') return fail('the id cell is empty');
   if (!Object.hasOwn(SIZE_POINTS, size)) return fail(`size "${size}" is not S, M or L`);
   const started = parseTime(startedText, 'started');
@@ -139,7 +139,7 @@ function readRows(rows) {
     const parsed = parseRow(cells, line);
     const idKey = cells[0].toLowerCase();
     if (parsed.problem) problems.push(parsed.problem);
-    else if (firstLineOfId.has(idKey)) problems.push({ line, reason: `${cells[0]}: id repeated (ignoring case), first on line ${firstLineOfId.get(idKey)}` });
+    else if (firstLineOfId.has(idKey)) problems.push({ line, id: cells[0], reason: `${cells[0]}: id repeated (ignoring case), first on line ${firstLineOfId.get(idKey)}` });
     else items.push(parsed.item);
     if (!firstLineOfId.has(idKey)) firstLineOfId.set(idKey, line);
   }

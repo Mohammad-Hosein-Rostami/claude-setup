@@ -13,8 +13,13 @@ import { limitWindows, projectSlug, resolveTranscriptDir } from './limits.mjs';
 const READ_CHUNK_BYTES = 1 << 20;
 const MISSING_CODES = ['ENOENT', 'ENOTDIR'];
 
-/** A wrong input (file, cell, flag or folder): the CLI prints its message and exits 2. */
-export class UsageError extends Error {}
+/** A wrong input (file, cell, flag or folder): the CLI prints its message and exits 2. `problems` = the table problems ({line, reason, id?}), empty for other inputs. */
+export class UsageError extends Error {
+  constructor(message, problems = []) {
+    super(message);
+    this.problems = problems;
+  }
+}
 
 /** True for a folder, false when it does not exist; any other failure (permissions) is an error, not "no transcripts". */
 const isDirectory = (path) => {
@@ -82,7 +87,7 @@ export function estimateFile(path, { transcripts, now, cwd }) {
   if (nowMs === null) throw new UsageError(`--now "${now}" is not a real ISO 8601 instant; accepted: ${INSTANT_FORMAT}`);
   const stamp = now ?? new Date(nowMs).toISOString().replace(/\.\d+Z$/, 'Z');
   const { items, problems } = parseWorkItems(readStatus(path));
-  if (problems.length > 0) throw new UsageError(problems.map((p) => `${path}:${p.line}: ${p.reason}`).join('\n'));
+  if (problems.length > 0) throw new UsageError(problems.map((p) => `${path}:${p.line}: ${p.reason}`).join('\n'), problems);
 
   const { dir, names } = transcriptFiles(transcripts, cwd);
   const windows = limitWindows(names.map((name) => fileLines(join(dir, name))));

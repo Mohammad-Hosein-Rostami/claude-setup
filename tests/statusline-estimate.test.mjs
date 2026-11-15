@@ -179,12 +179,13 @@ test('the refresh script writes "done >=<clock>" and expires it at the low end w
   assert.ok(entry.highMs >= before, 'the low end stands in for the high end the render hides a passed text by');
 });
 
-test('the refresh script caches "no text" when the tool refuses (exit 3 case) or the job is delivered', async () => {
-  for (const doc of [REFUSED_DOC, DELIVERED_DOC]) {
+test('the refresh script caches a marker when the tool refuses (exit 3 case) and the delivery when the job is delivered', async () => {
+  for (const [doc, kind, text] of [[REFUSED_DOC, 'refused', /^done \? few rows$/], [DELIVERED_DOC, 'delivered', /^delivered (\w{3} )?\d\d:\d\d\?$/]]) {
     const { root, projectDir, statusPath } = await setup(doc);
     const { run, entry } = refreshIn(root, projectDir, statusPath);
     assert.equal(run.status, 0, run.stderr);
-    assert.equal(entry.text, null);
+    assert.equal(entry.kind, kind);
+    assert.match(entry.text, text);
     assert.equal(entry.highMs, null);
     assert.equal(run.stdout + run.stderr, '');
   }

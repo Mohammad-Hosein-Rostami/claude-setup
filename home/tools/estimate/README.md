@@ -229,27 +229,43 @@ Long lists show the first five rows and `and N more`.
 
 ## Status line segment
 
-The status line shows `done ~14:50-16:15` (the Finish range on the local clock; `done ~Sun 00:50-02:25` when both ends are
-on another day, `done ~Sun 23:20 - Mon 01:10` when they are on different days; `done >=17:10` (ASCII, `>=Sun 17:10` on another day) when the
-round or closing phase has outrun its range and only a low end is supported, see Overrun) for the project whose `<project dir>/STATUS.md` the tool accepts. Nothing is shown when there is no STATUS.md,
-the tool refuses (exit 3) or fails (exit 2), or the job is delivered. The status line never computes it: it reads one cache file,
-`~/.claude/state/estimate-segment/<sha256 of the STATUS.md path>.json`
-(`{path, text, highMs, mtimeMs, size, computedAt, refreshStartedAt}`; `text` and `highMs` are null after a refusal), and shows
-the text while the file's mtime and size still match, or for 15 minutes (`STALE_SHOW_MS`) after a change while a refresh runs,
-never after the printed high end (`highMs`) has passed (a `done >=` text has no high end: `highMs` is its low end). On a daylight-saving fall-back night, when both ends fall on the
-same local date, the segment shows the two clock times as they are, so the high end can read earlier than the low end
-(`01:50-01:05`); line 1 of the CLI has the same limit. When the cache is missing, no longer matches or is 5 minutes old
-(`RECOMPUTE_AFTER_MS`: the finish moves with the clock even when the table does not), the render stamps `refreshStartedAt` and starts `statusline-cache.mjs <STATUS.md>` detached, at
-most once per 2 minutes (`REFRESH_INTERVAL_MS`) per file; that script runs the same lib as the CLI (transcripts included) and
-writes the cache atomically (0600, never through a link). The constants are in `lib/segment-cache.mjs`.
+The status line shows one segment for the project whose `<project dir>/STATUS.md` exists; it never goes blank without a word.
+Only a missing STATUS.md shows nothing. The forms, at most 28 characters each:
+
+| Segment | Means |
+| ------- | ----- |
+| `done ~14:50-16:15` | the Finish range on the local clock (`done ~Sun 00:50-02:25` when both ends are on another day, `done ~Sun 23:20 - Mon 01:10` across midnight) |
+| `done >=17:10` | not before 17:10 (`>=Sun 17:10` on another day): the round or closing phase has outrun its range and only a low end is supported (see Overrun) |
+| `delivered 17:54` | the job is delivered at that local time (`delivered Sun 17:54` when not today); `delivered 17:54?` when the delivery is provisional or guessed from a pause (add a `deliver:` row) |
+| `done ? overdue` | a range or `>=` text whose time has passed and the next refresh has not replaced it yet |
+| `done ? row A17` | the table has an error naming row A17 (only an id of letters, digits, `.`, `_`, `-`, 17 characters at most; any other table error is `done ? table`) |
+| `done ? overrun` | refused: the closing phase or round has run past its range with no open row left by size |
+| `done ? no deliver row` | refused: every row of the follow-up round is done and no `deliver:` row marks the hand-over |
+| `done ? no rows`, `done ? few rows`, `done ? no start time`, `done ? time ahead`, `done ? no work time` | refused for the table reasons of exit 3 above (no or fewer than 5 measured rows, a done row without started, a time later than now, no working time left after the usage-limit windows), the first that applies |
+| `done ? tool error` | the tool failed (an unreadable file or transcript folder, or an internal error); run `estimate.mjs` by hand to see why |
+
+A cause is a word from a fixed list or a row id; text from STATUS.md or from an error message never reaches the status line.
+
+The status line never computes it: it reads one cache file, `~/.claude/state/estimate-segment/<sha256 of the STATUS.md path>.json`
+(`{path, kind, text, highMs, mtimeMs, size, computedAt, refreshStartedAt}`; `kind` is `range`, `not-before`, `delivered`, `refused` or
+`error`; a file from before `kind` existed is read as it was and replaced at the next refresh), and shows the text while the
+file's mtime and size still match, or, except for a delivery, for 15 minutes (`STALE_SHOW_MS`) after a change while a refresh runs.
+A range or `>=` text is replaced by `done ? overdue` once its printed high end (`highMs`; for `>=` its low end) has passed. On a
+daylight-saving fall-back night, when both ends fall on the same local date, the segment shows the two clock times as they are, so
+the high end can read earlier than the low end (`01:50-01:05`); line 1 of the CLI has the same limit. When the cache is missing, no
+longer matches or is 5 minutes old (`RECOMPUTE_AFTER_MS`: the finish moves with the clock even when the table does not), the
+render stamps `refreshStartedAt` and starts `statusline-cache.mjs <STATUS.md>` detached, at most once per 2 minutes
+(`REFRESH_INTERVAL_MS`) per file; that script runs the same lib as the CLI (transcripts included), builds the text with
+`lib/segment-text.mjs` and writes the cache atomically (0600, never through a link). The render only reads the cache. The
+constants are in `lib/segment-cache.mjs`.
 
 ## Layout
 
 `estimate.mjs` (CLI: arguments, file reads, exit codes) over `lib/items.mjs` (table parser, row kinds), `lib/limits.mjs` (windows,
 slug), `lib/history.mjs` (deliveries, closing tails, reopened deliveries, `tableState`), `lib/compute.mjs` (formula), `lib/calibration.mjs` (scoring,
 factors, track record), `lib/estimate-log.mjs` (the log file), `lib/report.mjs` (text) and `lib/local-clock.mjs` (local clock, 5-minute grid); `lib/from-files.mjs` reads the files for the CLI and for `statusline-cache.mjs`
-(refreshes the status line cache), `lib/segment-cache.mjs` is the status line's read side. Tests: `tests/estimate.test.mjs`,
-`tests/estimate-finish.test.mjs`, `tests/estimate-calibration.test.mjs`, `tests/estimate-same-minute.test.mjs`, `tests/estimate-not-before.test.mjs`, `tests/estimate-replay.test.mjs` (with `tests/estimate-replay-cases.mjs`: two real tables of
+(refreshes the status line cache), `lib/segment-text.mjs` builds the segment text and `lib/segment-cache.mjs` is the status line's read side. Tests: `tests/estimate.test.mjs`,
+`tests/estimate-finish.test.mjs`, `tests/estimate-calibration.test.mjs`, `tests/estimate-same-minute.test.mjs`, `tests/estimate-not-before.test.mjs`, `tests/statusline-segment-forms.test.mjs`, `tests/estimate-replay.test.mjs` (with `tests/estimate-replay-cases.mjs`: two real tables of
 14-15 Nov as ids, sizes and times only, and the exact Finish line each request must print; replay V9 is in-sample, since
 its round is one of the three the round default comes from, so it shows consistency, not predictive accuracy), `tests/estimate-cli.test.mjs`,
 `tests/statusline-estimate.test.mjs`.

@@ -1,14 +1,17 @@
 // The status line's estimate segment: reads a small cache of the estimate's text and, when the cache is missing or out of date,
 // starts a detached refresh. Used by home/statusline.mjs on every render; written by ../statusline-cache.mjs.
 // Exports: estimateSegment(projectDir, deps) -> string | null; readEntry, writeEntry, cacheDir (the cache file store);
-// MAX_CACHE_BYTES, STALE_SHOW_MS, REFRESH_INTERVAL_MS, RECOMPUTE_AFTER_MS.
+// SEGMENT_KINDS, OVERDUE_TEXT, MAX_CACHE_BYTES, STALE_SHOW_MS, REFRESH_INTERVAL_MS, RECOMPUTE_AFTER_MS.
 // Invariants:
 // - Fast: a render does one stat of STATUS.md and one small cache read. It never imports the estimate formula, the table parser or
 //   the transcript reader, so it can never read a transcript. The number comes only from the refresh script (the estimate lib).
 // - Cache file: ~/.claude/state/estimate-segment/<sha256 of the STATUS.md path, 32 hex>.json, one JSON object
-//   {path, text, highMs, mtimeMs, size, computedAt, refreshStartedAt}; text and highMs (the printed high end, epoch ms) are null
-//   when the tool refused, errored or the job is delivered. No text is shown once highMs has passed. Opened and replaced
-//   through hooks/lib/session-store.mjs (no links, 0600, temp file + rename).
+//   {path, kind, text, highMs, mtimeMs, size, computedAt, refreshStartedAt}; kind is one of SEGMENT_KINDS and
+//   text is what to show (a finish, a delivery, or `done ? <cause>` after a refusal or an error); highMs (epoch ms) is the instant
+//   after which a range or not-before text is replaced by OVERDUE_TEXT, null for the other kinds. A file written before `kind`
+//   existed has text null or a range text without kind: it is read as it always was (no text, or the range hidden once highMs
+//   has passed) until the next refresh replaces it. A delivered text is shown only while STATUS.md is unchanged; any other text
+//   also for STALE_SHOW_MS after a change. Opened and replaced through hooks/lib/session-store.mjs (no links, 0600, temp file + rename).
 // - A render claims a refresh by writing refreshStartedAt before it spawns; if the claim cannot be written (a link planted at the cache
 //   path, a read-only home) it spawns nothing, so a broken cache can never cause a refresh storm.
 // - Never throws and never prints: any failure means "no segment".
@@ -20,6 +23,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readSessionFile, writeSessionFile } from '../../../hooks/lib/session-store.mjs';
 
+// What a cache entry holds (the refresh script, via lib/segment-text.mjs, writes them; the render only reads them). Here and not in
+// segment-text.mjs, which loads the whole formula: the render must stay light.
+export const SEGMENT_KINDS = ['range', 'not-before', 'delivered', 'refused', 'error'];
+export const OVERDUE_TEXT = 'done ? overdue'; // shown in place of a range or not-before whose high end has passed
 export const MAX_CACHE_BYTES = 4096; // an entry is ~200 bytes; a bigger file was not written by the refresh script
 export const STALE_SHOW_MS = 15 * 60 * 1000; // text of a changed STATUS.md is still shown this long while its refresh runs
 export const REFRESH_INTERVAL_MS = 2 * 60 * 1000; // at most one refresh start per STATUS.md in this time
@@ -46,7 +53,7 @@ export function readEntry(dir, statusPath) {
   if (typeof text !== 'string') return null;
   try {
     const entry = JSON.parse(text);
-    const valid = entry?.path === statusPath && (entry.text === null || typeof entry.text === 'string') && (entry.highMs === null || isNumber(entry.highMs))
+    const valid = entry?.path === statusPath && (entry.text === null || typeof entry.text === 'string') && (entry.highMs === null || isNumber(entry.highMs)) && (entry.kind === undefined || SEGMENT_KINDS.includes(entry.kind))
       && ['mtimeMs', 'size', 'computedAt', 'refreshStartedAt'].every((field) => isNumber(entry[field]));
     return valid ? entry : null;
   } catch {
@@ -59,10 +66,16 @@ export const writeEntry = (dir, statusPath, entry) => writeSessionFile(dir, cach
 
 const matchesFile = (entry, file) => entry.mtimeMs === file.mtimeMs && entry.size === file.size;
 
-/** The text to show: the cached text while it matches the file, or for STALE_SHOW_MS after it was computed, until its high end passes. */
+/**
+ * The text to show: the cached text while it matches the file (a delivered one only then), else for STALE_SHOW_MS after it was
+ * computed; once its high end has passed, OVERDUE_TEXT for a range or not-before (nothing for an entry without `kind`).
+ */
 function segmentText(entry, file, now) {
-  if (entry === null || entry.text === null || (entry.highMs !== null && now > entry.highMs)) return null;
-  return matchesFile(entry, file) || now - entry.computedAt < STALE_SHOW_MS ? entry.text : null;
+  if (entry === null || entry.text === null) return null;
+  const current = matchesFile(entry, file) || (entry.kind !== 'delivered' && now - entry.computedAt < STALE_SHOW_MS);
+  if (!current) return null;
+  if (entry.highMs === null || now <= entry.highMs) return entry.text;
+  return entry.kind === 'range' || entry.kind === 'not-before' ? OVERDUE_TEXT : null;
 }
 
 /**
@@ -92,7 +105,7 @@ function claimRefresh(dir, statusPath, entry, now) {
  * @param {string | undefined} projectDir the project folder from the status line's JSON; only `<projectDir>/STATUS.md` is looked at
  * @param {{cacheDir?: string, now?: number, spawnRefresh?: (statusPath: string, projectDir: string) => void}} [deps] the cache folder,
  *   the clock (epoch ms) and the refresh starter; tests replace them
- * @returns {string | null} e.g. "done ~14:50-16:15", or null for no segment (no STATUS.md, tool refused, no cache yet, any error)
+ * @returns {string | null} e.g. "done ~14:50-16:15", "delivered 17:54" or "done ? overrun", or null for no segment (no STATUS.md, no cache yet, any error)
  */
 export function estimateSegment(projectDir, deps = {}) {
   try {

@@ -3,33 +3,28 @@
 // segment text. Started detached by lib/segment-cache.mjs (never by the status line render itself, it reads transcripts and is slow).
 // Usage: statusline-cache.mjs <STATUS.md>   (run in the project folder: its transcripts are the project's)
 // Writes ~/.claude/state/estimate-segment/<id>.json (see lib/segment-cache.mjs); prints nothing. Exit 0 when the cache was written
-// (also when the tool refused or could not read the table: the cache then holds text null); exit 1 on a bad call or a failed write.
-// Invariants: the text is "done ~<finish clock>" (e.g. `done ~14:50-16:15`, `done ~Sun 00:50-02:25` when the low end is not
-// today; `done >=17:10` for a not-before result, a round or closing phase past its range) from the lib's own finishClock, scaled by the calibration log's factors (read only: this script never writes the log),
-// never computed here; no text after a refusal or a delivery. The file's
-// mtime and size are read BEFORE the estimate so a file edited meanwhile is seen as changed by the next render.
+// (also when the tool refused or could not read the table: the cache then holds a `done ? <cause>` marker); exit 1 on a bad call or a failed write.
+// Invariants: the text and its kind come from lib/segment-text.mjs (`done ~14:50-16:15`, `done >=17:10`, `delivered 17:54`, or
+// `done ? <cause>` after a refusal or an error), the finish scaled by the calibration log's factors (read only: this script never
+// writes the log), never computed here. The file's mtime and size are read BEFORE the estimate so a file edited meanwhile is seen as
+// changed by the next render.
 import { statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { UsageError, estimateFile } from './lib/from-files.mjs';
+import { estimateFile } from './lib/from-files.mjs';
 import { applyFactors, calibrationFactors, phaseOf } from './lib/calibration.mjs';
 import { readLog } from './lib/estimate-log.mjs';
-import { finishClock, printedBounds } from './lib/report.mjs';
 import { cacheDir, writeEntry } from './lib/segment-cache.mjs';
+import { errorSegment, refusalSegment, resultSegment } from './lib/segment-text.mjs';
 
-/** The segment text and the printed high end (epoch ms), both null when the tool refuses, the job is delivered or the table cannot be read. */
+/** The segment {kind, text, highMs} for a STATUS.md: its finish, its delivery, or why there is none; never throws. */
 function segment(statusPath) {
-  const none = { text: null, highMs: null };
   try {
     const { result } = estimateFile(statusPath, { cwd: dirname(statusPath) });
-    const phase = result.refused ? null : phaseOf(result); // null: delivered or no estimate
-    if (phase === null) return none;
-    const shown = applyFactors(result, calibrationFactors(readLog(statusPath), phase));
-    const { low, high } = printedBounds(shown);
-    // a not-before has no high end to expire on: its low end is the last instant the text says anything, so it expires there
-    return { text: `done ${shown.notBefore ? '' : '~'}${finishClock(shown)}`, highMs: high ?? low };
+    if (result.refused) return refusalSegment(result);
+    const phase = phaseOf(result); // null: delivered
+    return resultSegment(phase === null ? result : applyFactors(result, calibrationFactors(readLog(statusPath), phase)));
   } catch (err) {
-    if (err instanceof UsageError) return none; // a table or transcript folder the tool rejects: no segment, never an error text
-    throw err;
+    return errorSegment(err); // a table the tool rejects, or any failure: a marker with a fixed cause, never the error text
   }
 }
 
@@ -41,6 +36,6 @@ if (process.argv.length !== 3 || !argument) {
 const statusPath = resolve(argument);
 const startedAt = Date.now();
 const { mtimeMs, size } = statSync(statusPath);
-const { text, highMs } = segment(statusPath);
-const stored = writeEntry(cacheDir(), statusPath, { path: statusPath, text, highMs, mtimeMs, size, computedAt: Date.now(), refreshStartedAt: startedAt });
+const { kind, text, highMs } = segment(statusPath);
+const stored = writeEntry(cacheDir(), statusPath, { path: statusPath, kind, text, highMs, mtimeMs, size, computedAt: Date.now(), refreshStartedAt: startedAt });
 process.exitCode = stored ? 0 : 1;
