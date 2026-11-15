@@ -5,18 +5,21 @@
 //   unread. Kinds: dockerfile, compose, workflow, gitlab. Output rule: a name is kept when it is a plain name (see
 //   name-shape.mjs), or when it sits in a KEY position (`NAME:` of a YAML mapping, `${NAME`, `${{ secrets.NAME }}`) and has
 //   at most 64 characters; never one taken from the left of `=` in a Dockerfile or a `- NAME=value` item unless plain.
-//   Anything else is counted in `hidden`. Mentions are sorted by line, then name.
+//   Anything else is counted in `hidden`. Skipped as value text: Dockerfile heredoc bodies, YAML quoted values that continue over
+//   several lines and block scalars; after a YAML quote that never closes no later name of the file is kept (counted in `hidden`). Mentions are sorted by line, then name.
 import { MAX_NAME_LENGTH, isPlainName } from './name-shape.mjs';
 
 const NAME = '[A-Za-z_][A-Za-z0-9_]*';
 const NAME_AT_START = new RegExp(`^${NAME}`);
-const SUBSTITUTION = new RegExp(`\\$\\{(${NAME})`, 'g');
+// `$${NAME}` is compose's escape for a literal `${NAME}`: not a substitution.
+const SUBSTITUTION = new RegExp(`(?<!\\$)\\$\\{(${NAME})`, 'g');
 // Only inside a `${{ ... }}` expression: the words secrets.X in a plain string are text, not a reference.
 const CI_REFERENCE = new RegExp(`(?<=\\$\\{\\{[^}]*)\\b(?:secrets|vars)\\.(${NAME})`, 'g');
 const MAP_ENTRY = new RegExp(`^(${NAME})\\s*:(?:\\s|$)`);
 const LIST_ENTRY = new RegExp(`^-\\s+['"]?(${NAME})(?:=|['"]|\\s|$)`);
 const BLOCK_OPENER = /^(\s*)([A-Za-z_-]+):\s*(?:#.*)?$/;
 const INSTRUCTION = /^\s*(?:ARG|ENV)\s+(.*)$/i;
+const HEREDOC_TAG = /<<-?\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?/g;
 const BLOCK_KEYS = { compose: ['environment'], workflow: ['env'], gitlab: ['env', 'variables'] };
 
 /** The kind of deploy file a relative posix path is, or null. */
@@ -67,6 +70,11 @@ function scanDockerfile(lines) {
     while (joined.trimEnd().endsWith('\\') && i + 1 < lines.length) joined = joined.trimEnd().slice(0, -1) + lines[(i += 1)]; // Docker joins with no space
     const args = INSTRUCTION.exec(joined)?.[1];
     if (args !== undefined && !joined.trimStart().startsWith('#')) assignmentNames(args).forEach((name) => found.push({ name, line: startLine, keyed: false }));
+    for (const [, tag] of joined.matchAll(HEREDOC_TAG)) {
+      // A heredoc body is script or file text, not instructions: skip to the line that is the tag (tabs stripped for `<<-`).
+      while (i + 1 < lines.length && lines[i + 1].replace(/^\t+/, '').trimEnd() !== tag) i += 1;
+      i += 1;
+    }
   }
   return found;
 }
@@ -74,14 +82,41 @@ function scanDockerfile(lines) {
 const indentOf = (line) => line.length - line.trimStart().length;
 const isSkippable = (line) => line.trim() === '' || line.trimStart().startsWith('#');
 
-/** Entries of the block under `keys: ` lines: only lines at the block's own indent count, deeper lines (block scalars) do not. */
+/** True when a YAML `"` (backslash escapes) or `'` (`''` is a literal quote) closes in `line` at or after `from`. */
+function yamlQuoteCloses(line, quote, from) {
+  for (let i = from; i < line.length; i += 1) {
+    if (quote === '"' && line[i] === '\\') i += 1;
+    else if (line[i] === quote && quote === "'" && line[i + 1] === "'") i += 1;
+    else if (line[i] === quote) return true;
+  }
+  return false;
+}
+
+/** The quote a YAML value opens and does not close on its own line, or null. */
+function yamlOpenQuote(entryText) {
+  const value = entryText.replace(/^-\s+/, '').replace(new RegExp(`^${NAME}\\s*:\\s*`), '');
+  return (value[0] === '"' || value[0] === "'") && !yamlQuoteCloses(value, value[0], 1) ? value[0] : null;
+}
+
+/**
+ * Entries of the block under `keys: ` lines: only lines at the block's own indent count, deeper lines (block scalars with any
+ * `|` or `>` indicator) do not, and the lines of a quoted value that continues are skipped until the quote closes.
+ * `unclosedAt` is the line where a quote never closed (names after it are not trusted), or Infinity.
+ */
 function blockEntries(lines, keys) {
   const found = [];
+  let unclosedAt = Infinity;
   lines.forEach((line, index) => {
     const opener = BLOCK_OPENER.exec(line);
     if (opener === null || !keys.includes(opener[2])) return;
     let blockIndent = null;
+    let openQuote = null;
+    let quoteLine = 0;
     for (let i = index + 1; i < lines.length; i += 1) {
+      if (openQuote !== null) {
+        if (yamlQuoteCloses(lines[i], openQuote, 0)) openQuote = null;
+        continue;
+      }
       if (isSkippable(lines[i])) continue;
       const indent = indentOf(lines[i]);
       if (indent <= indentOf(line) || (blockIndent !== null && indent < blockIndent)) break;
@@ -91,9 +126,12 @@ function blockEntries(lines, keys) {
       const mapName = MAP_ENTRY.exec(text)?.[1];
       const name = mapName ?? LIST_ENTRY.exec(text)?.[1];
       if (name !== undefined) found.push({ name, line: i + 1, keyed: mapName !== undefined });
+      openQuote = yamlOpenQuote(text);
+      quoteLine = i + 1;
     }
+    if (openQuote !== null) unclosedAt = Math.min(unclosedAt, quoteLine);
   });
-  return found;
+  return { found, unclosedAt };
 }
 
 /** Every match of `pattern` (first capture group is the name) on lines that are not comments. */
@@ -114,10 +152,16 @@ function patternMentions(lines, pattern) {
 export function scanDeploy(kind, text) {
   const lines = text.split(/\r\n|\r|\n/);
   let found;
-  if (kind === 'dockerfile') found = scanDockerfile(lines);
-  else if (kind === 'compose') found = [...blockEntries(lines, BLOCK_KEYS.compose), ...patternMentions(lines, SUBSTITUTION)];
-  else found = [...blockEntries(lines, BLOCK_KEYS[kind]), ...patternMentions(lines, CI_REFERENCE)];
-  const kept = found.filter(({ name, keyed }) => isPlainName(name) || (keyed && name.length <= MAX_NAME_LENGTH));
+  let unclosedAt = Infinity;
+  if (kind === 'dockerfile') {
+    found = scanDockerfile(lines);
+  } else {
+    const blocks = blockEntries(lines, BLOCK_KEYS[kind]);
+    unclosedAt = blocks.unclosedAt;
+    found = [...blocks.found, ...patternMentions(lines, kind === 'compose' ? SUBSTITUTION : CI_REFERENCE)];
+  }
+  const trusted = found.filter(({ line }) => line <= unclosedAt); // a quote that never closes: the rest of the file is not trusted
+  const kept = trusted.filter(({ name, keyed }) => isPlainName(name) || (keyed && name.length <= MAX_NAME_LENGTH));
   const mentions = kept.map(({ name, line }) => ({ name, line })).sort((a, b) => a.line - b.line || a.name.localeCompare(b.name));
   return { mentions, hidden: found.length - kept.length };
 }

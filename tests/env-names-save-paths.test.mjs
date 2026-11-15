@@ -21,15 +21,15 @@ test('--save to an env file name is refused in every case and the real file is u
   assert.equal(await readFile(join(dir, '.env'), 'utf8'), 'KEEP=MARKER_VALUE\n');
 });
 
-test('--save never replaces an existing path; --overwrite replaces a regular file only', async () => {
-  const dir = await makeProject({ '.env': 'A=1\n', 'before.json': 'old snapshot\n' });
+test('--save never replaces an existing path; --overwrite replaces only a snapshot this tool saved', async () => {
+  const dir = await makeProject({ '.env': 'A=1\n', 'before.json': '{"version":1,"envFiles":[]}\n', 'notes.txt': 'my notes\n' });
   const target = join(dir, 'before.json');
   const refused = run(['list', dir, '--save', target]);
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /refusing to save over .* it exists/);
-  assert.equal(await readFile(target, 'utf8'), 'old snapshot\n');
+  assert.equal(await readFile(target, 'utf8'), '{"version":1,"envFiles":[]}\n');
   assert.equal(run(['list', dir, '--save', target, '--overwrite']).status, 0);
-  assert.equal(JSON.parse(await readFile(target, 'utf8')).version, 1);
+  assert.equal(JSON.parse(await readFile(target, 'utf8')).version, 2);
 });
 
 test('--save through a symlink (live or dangling) is refused, with and without --overwrite; the link target is untouched', async () => {

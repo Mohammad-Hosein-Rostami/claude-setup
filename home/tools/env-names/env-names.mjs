@@ -5,26 +5,30 @@
 //        dir          folder to scan (default: the current folder)
 //        --json       print the full structure instead of the text report
 //        --save       also write that structure (a snapshot: version, root, generatedAt, wrappers) to <file>; it never
-//                     replaces an existing path (add --overwrite to replace a regular file) and refuses a file name that
-//                     looks like an env file
+//                     replaces an existing path (--overwrite replaces a snapshot this tool saved, never a link) and
+//                     refuses a file name that looks like an env file, in any letter case
 //        --wrapper    name of a function whose first string argument is a variable name, e.g. getEnvVariable (repeatable)
 // Exit codes: list 0, or 2 (usage error, unreadable folder); diff 0 nothing changed, 1 something changed, 2 usage error or
 // a snapshot that is unreadable, of the wrong shape or the wrong version (refused, never guessed).
 // Invariants: no value of any env file reaches stdout, stderr or a snapshot (see lib/env-file-names.mjs); error messages
 // are written by this tool and never carry file content. This file only parses arguments, calls lib/ and prints.
-import { closeSync, lstatSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, constants as fsConstants, fstatSync, ftruncateSync, openSync, readFileSync, statSync, writeSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { WRAPPER_NAME } from './lib/code-reads.mjs';
 import { collectProject } from './lib/collect.mjs';
 import { diffSnapshots } from './lib/diff.mjs';
 import { formatDiff, formatList } from './lib/report.mjs';
-import { parseSnapshot } from './lib/snapshot.mjs';
+import { isToolSnapshot, parseSnapshot } from './lib/snapshot.mjs';
 import { isEnvFileName } from './lib/walk.mjs';
 import { UsageError } from './lib/usage-error.mjs';
 
 const EXIT_USAGE = 2;
 const USAGE = 'usage: env-names.mjs list [dir] [--json] [--save <file> [--overwrite]] [--wrapper <fn>]... | diff <old-snapshot.json> [dir] [--json] [--wrapper <fn>]...';
 const COMMANDS = ['list', 'diff'];
+// Symlinks are never followed and a FIFO never blocks the open; both are 0 where the platform has no such flag.
+const NO_FOLLOW = fsConstants.O_NOFOLLOW ?? 0;
+const NON_BLOCKING = fsConstants.O_NONBLOCK ?? 0;
+const SNAPSHOT_FILE_MODE = 0o644;
 
 function parseArgs(argv) {
   const options = { json: false, overwrite: false, save: undefined, wrappers: [], positional: [] };
@@ -56,17 +60,44 @@ function scanRoot(dirArg) {
   return root;
 }
 
-/** Writes the snapshot. A new file only (`wx` fails on any existing path, a symlink included); `--overwrite` replaces a regular file. */
-function saveSnapshot(path, data, overwrite) {
-  if (isEnvFileName(basename(path))) throw new UsageError(`refusing to save a snapshot under the env-file-like name ${basename(path)}`);
+/** Opens an existing snapshot for replacing: never through a symlink, only a regular file, only one saved by this tool. */
+function openExistingSnapshot(path) {
   let fd;
   try {
-    if (overwrite && !(lstatSync(path, { throwIfNoEntry: false })?.isFile() ?? true)) throw new UsageError(`refusing to overwrite ${path}: it is not a regular file`);
-    fd = openSync(path, overwrite ? 'w' : 'wx');
-    writeFileSync(fd, `${JSON.stringify(data, null, 2)}\n`);
+    fd = openSync(path, fsConstants.O_RDWR | NO_FOLLOW | NON_BLOCKING);
+  } catch (err) {
+    if (err.code === 'ENOENT') return undefined;
+    throw err;
+  }
+  try {
+    if (!fstatSync(fd).isFile()) throw new UsageError(`refusing to overwrite ${path}: it is not a regular file`);
+    if (!isToolSnapshot(readFileSync(fd, 'utf8'))) throw new UsageError(`refusing to overwrite ${path}: it is not a snapshot saved by this tool`);
+  } catch (err) {
+    closeSync(fd);
+    throw err;
+  }
+  return fd;
+}
+
+/**
+ * Writes the snapshot. A new file is created exclusively (fails on any existing path, a symlink included); `--overwrite` replaces
+ * only a regular file that already holds one of this tool's snapshots. The name is checked without regard to case, because a
+ * case-insensitive disk would make `.ENV` the real `.env`.
+ */
+function saveSnapshot(path, data, overwrite) {
+  if (isEnvFileName(basename(path).toLowerCase())) throw new UsageError(`refusing to save a snapshot under the env-file-like name ${basename(path)}`);
+  const text = `${JSON.stringify(data, null, 2)}\n`;
+  let fd;
+  try {
+    fd = overwrite ? openExistingSnapshot(path) : undefined;
+    if (fd !== undefined) ftruncateSync(fd, 0);
+    else fd = openSync(path, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | NO_FOLLOW, SNAPSHOT_FILE_MODE);
+    writeSync(fd, text, 0);
   } catch (err) {
     if (err instanceof UsageError) throw err;
-    throw new UsageError(err.code === 'EEXIST' ? `refusing to save over ${path}: it exists (--overwrite replaces a regular file)` : `cannot write ${path} (${err.code ?? 'error'})`);
+    if (err.code === 'EEXIST') throw new UsageError(`refusing to save over ${path}: it exists (--overwrite replaces a snapshot saved by this tool)`);
+    if (err.code === 'ELOOP') throw new UsageError(`refusing to save through the symlink ${path}`);
+    throw new UsageError(`cannot write ${path} (${err.code ?? 'error'})`);
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
@@ -80,15 +111,19 @@ function runList(options) {
   return 0;
 }
 
-/** Reads a snapshot. Only a regular file is opened (a FIFO would block, a symlink could lead anywhere). */
+/** Reads a snapshot. Only a regular file is read: opened without following a symlink and without blocking on a FIFO. */
 function readSnapshotFile(path) {
+  let fd;
   let text;
   try {
-    if (!lstatSync(path).isFile()) throw new UsageError(`snapshot ${path} is not a regular file`);
-    text = readFileSync(path, 'utf8');
+    fd = openSync(path, fsConstants.O_RDONLY | NO_FOLLOW | NON_BLOCKING);
+    if (!fstatSync(fd).isFile()) throw new UsageError(`snapshot ${path} is not a regular file`);
+    text = readFileSync(fd, 'utf8');
   } catch (err) {
     if (err instanceof UsageError) throw err;
-    throw new UsageError(`cannot read snapshot ${path} (${err.code ?? 'error'})`);
+    throw new UsageError(err.code === 'ELOOP' ? `snapshot ${path} is not a regular file (a symlink)` : `cannot read snapshot ${path} (${err.code ?? 'error'})`);
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
   return parseSnapshot(text);
 }
