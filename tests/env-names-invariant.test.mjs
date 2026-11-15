@@ -18,7 +18,7 @@ const FULL_OF_VALUES = {
   'apps/web/.env.production': 'URL=https://MARKER_VALUE.example/?a=b\n',
   'src/config.ts': "const a = process.env.PLAIN ?? 'MARKER_VALUE_eight';\nconst { DESTRUCTURED = 'MARKER_VALUE_nine' } = process.env;\nconst b = process.env['EXPORTED'] || \"MARKER_VALUE_ten\";\n",
   Dockerfile: 'ARG BUILD_ARG=MARKER_VALUE_eleven\nENV IMG_VAR="MARKER_VALUE_twelve FAKE_IMG=1" OTHER=MARKER_VALUE_thirteen\n',
-  'docker-compose.yml': 'services:\n  a:\n    environment:\n      - COMPOSE_ITEM=MARKER_COMPOSE_one\n      COMPOSE_MAP: MARKER_COMPOSE_two\n',
+  'docker-compose.yml': 'services:\n  a:\n    environment:\n      - COMPOSE_ITEM=MARKER_COMPOSE_one\n  b:\n    environment:\n      COMPOSE_MAP: MARKER_COMPOSE_two\n',
   '.github/workflows/ci.yml': 'env:\n  CI_VAR: MARKER_VALUE_fourteen # MARKER_COMMENT\njobs: {}\n',
 };
 
@@ -34,6 +34,7 @@ test('values in every place a value can sit never reach stdout, stderr or the sn
   assert.deepEqual(leaked(everything), []);
   assert.match(everything, /PLAIN/); // the names are there: the check is not passing on empty output
   assert.match(everything, /COMPOSE_ITEM/);
+  assert.match(everything, /COMPOSE_MAP/);
 });
 
 test('a name inside a quoted multi-line value or a quoted deploy value is not invented', async () => {

@@ -24,17 +24,17 @@ test('workflow and gitlab: the same continued quoted value in env and variables 
   assert.deepEqual(names('gitlab', 'variables:\n  CERT: "multi\n  zqxglkey: abc\n  "\n  AFTER: 1\n'), []);
 });
 
-test('a block scalar with any indicator makes the block irregular (no trusted name)', () => {
+test('a block scalar with any indicator is valid YAML: its key prints, the words inside its text never do', () => {
   for (const indicator of ['|', '>', '|-', '>-', '|+', '>+', '|2', '>2-', '|2+ # note']) {
-    assert.deepEqual(names('compose', compose(`SCRIPT: ${indicator}`, '  zqxinner: 1', '  ZqxMixed: 2', 'AFTER: 1')), [], indicator);
+    assert.deepEqual(names('compose', compose(`SCRIPT: ${indicator}`, '  zqxinner: 1', '  ZqxMixed: 2', 'AFTER: 1')), ['SCRIPT', 'AFTER'], indicator);
   }
 });
 
-test('a quote that never closes: the block and every line after it are unconfirmed, none is trusted', () => {
+test('a quote that never closes: the file is untrusted, every name the parser still sees is unconfirmed, none is trusted', () => {
   const text = `${compose('FIRST: 1', 'BROKEN: "never closes', 'zqxlater: 1')}    image: x:\${LATER_SUBSTITUTION}\n`;
   const result = scanDeploy('compose', text);
   assert.deepEqual(result.mentions, []);
-  assert.deepEqual(result.unconfirmed.map((mention) => mention.name), ['FIRST', 'BROKEN', 'zqxlater', 'LATER_SUBSTITUTION']);
+  assert.deepEqual(result.unconfirmed.map((mention) => mention.name), ['FIRST', 'BROKEN', 'LATER_SUBSTITUTION']);
 });
 
 test('dockerfile: heredoc bodies are skipped for RUN, COPY and ADD, tags quoted or with <<-', () => {

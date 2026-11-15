@@ -7,7 +7,8 @@ the rule that no env file value ever reaches an output.
 - `read-regular-file.mjs`: opens a file once (no symlink followed, no FIFO block), checks type and size on that descriptor and reads from it; used for env files and for the scanned code and deploy files.
 - `name-shape.mjs`: the shape a name must have to be printed without a second reason (the output rule, shared by `collect.mjs` and `deploy-names.mjs`).
 - `code-reads.mjs`: names a source file reads (`process.env.X`, `import.meta.env.X`, `Deno.env.get`, wrappers), and the count of dynamic accesses.
-- `deploy-names.mjs`: names in Dockerfile, compose, GitHub workflow and GitLab CI files, and which file is which kind. A YAML block that is not on its line whitelist gives only unconfirmed names.
+- `deploy-names.mjs`: names in Dockerfile, compose, GitHub workflow and GitLab CI files, and which file is which kind. Dockerfiles are read line by line here; YAML kinds go to `deploy-yaml-names.mjs`.
+- `deploy-yaml-names.mjs`: reads YAML deploy files with the `yaml` package and takes names from parsed map keys at the env positions only; a file with any parser error or warning is untrusted (names print only when code reads them too). Without the package the YAML files are skipped.
 - `walk.mjs`: lists the env, source and deploy files of a folder without reading them (hidden folders in, symlinks not followed), and tells example files and structured files (`.env.yaml`) apart.
 - `collect.mjs`: runs the walk, the reader and the scanners and builds the snapshot object (the same shape `list --json` prints).
 - `analyze.mjs`: from that object, the names read but undefined, read but defined only outside the reader's folder chain, defined but never read, and differing between env files of one folder. Example files define nothing.

@@ -33,6 +33,7 @@ function extraSections(data) {
   const lines = [];
   if (builtinNames.length > 0) lines.push(`Vite built-ins read (${builtinNames.length}): ${builtinNames.join(', ')}`, '');
   if (dynamicFiles.length > 0) lines.push(`Dynamic access (${plural(dynamicFiles.length, 'file')}):`, ...dynamicFiles.map(([path, count]) => `  ${path}  ${count}`), '');
+  if (data.notices?.length > 0) lines.push(...data.notices, '');
   if (data.notRead.length > 0) lines.push(...sectionOf('Not read', data.notRead.map(({ path, reason }) => `${path}  ${reason}`)));
   return lines;
 }

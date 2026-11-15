@@ -113,10 +113,10 @@ test('deploy workflow: env keys, secrets.NAME and vars.NAME', () => {
   const mentions = deployNames('workflow', text);
   assert.deepEqual(mentions, ['TOP_LEVEL@2', 'DEPLOY_TOKEN@8', 'TOKEN_FROM_SECRET@8', 'PLAIN@9', 'SITE_URL@9']);
   assert.deepEqual(leaked(JSON.stringify(scanDeploy('workflow', text))), []);
-  // A block scalar in the same env block makes it irregular: nothing from the block is trusted, whatever its layout.
+  // A block scalar in the same env block is valid YAML: its key prints, the text inside it is a value and never does.
   const withScalar = text.replace('      - run: echo done', '          MULTI: |\n            NOT_A_KEY: MARKER_VALUE\n      - run: echo done');
-  assert.deepEqual(deployNames('workflow', withScalar), ['TOP_LEVEL@2']);
-  assert.deepEqual(scanDeploy('workflow', withScalar).unconfirmed.map((mention) => mention.name), ['DEPLOY_TOKEN', 'TOKEN_FROM_SECRET', 'PLAIN', 'SITE_URL', 'MULTI', 'NOT_A_KEY']);
+  assert.deepEqual(deployNames('workflow', withScalar), ['TOP_LEVEL@2', 'DEPLOY_TOKEN@8', 'TOKEN_FROM_SECRET@8', 'PLAIN@9', 'SITE_URL@9', 'MULTI@10']);
+  assert.deepEqual(leaked(JSON.stringify(scanDeploy('workflow', withScalar))), []);
 });
 
 test('deploy gitlab: env and variables blocks plus secrets.NAME; absent case gives nothing', () => {
@@ -141,11 +141,11 @@ test('deploy dockerfile: a continued ENV value is joined with no space and never
 
 test('deploy output rule: odd-shaped names from the left of = are hidden and counted; YAML keys and ${NAME} may be mixed case', () => {
   const dockerfile = scanDeploy('dockerfile', `ENV MixedCase=1 UPPER_OK=2\nENV ${'X'.repeat(70)}=3\n`);
-  assert.deepEqual(dockerfile, { mentions: [{ name: 'UPPER_OK', line: 1 }], unconfirmed: [], hidden: 2 });
-  const compose = scanDeploy('compose', 'services:\n  a:\n    environment:\n      mixedKey: 1\n      - MixedItem=1\n      - PLAIN_ITEM=2\n    image: x:${MixedSub}\n');
-  assert.deepEqual(compose.mentions.map((mention) => mention.name), ['mixedKey', 'PLAIN_ITEM', 'MixedSub']);
+  assert.deepEqual(dockerfile, { mentions: [{ name: 'UPPER_OK', line: 1 }], unconfirmed: [], hidden: 2, untrusted: false, parserMissing: false });
+  const compose = scanDeploy('compose', 'services:\n  a:\n    environment:\n      mixedKey: 1\n    image: x:${MixedSub}\n  b:\n    environment:\n      - MixedItem=1\n      - PLAIN_ITEM=2\n');
+  assert.deepEqual(compose.mentions.map((mention) => mention.name), ['mixedKey', 'MixedSub', 'PLAIN_ITEM']);
   assert.equal(compose.hidden, 1);
-  assert.deepEqual(scanDeploy('compose', `services:\n  a:\n    environment:\n      ${'k'.repeat(65)}: 1\n`), { mentions: [], unconfirmed: [], hidden: 1 });
+  assert.deepEqual(scanDeploy('compose', `services:\n  a:\n    environment:\n      ${'k'.repeat(65)}: 1\n`), { mentions: [], unconfirmed: [], hidden: 1, untrusted: false, parserMissing: false });
 });
 
 test('deploy workflow: secrets.X and vars.X count only inside ${{ }}, not in a plain string', () => {

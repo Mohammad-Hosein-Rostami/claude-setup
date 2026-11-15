@@ -16,7 +16,8 @@ import { walkProject } from './walk.mjs';
 
 const MAX_SCANNED_FILE_BYTES = 4 * 1024 * 1024;
 const NOT_SHOWN_SHAPE = 'mixed case or too long';
-const NOT_SHOWN_UNUSUAL_LAYOUT = 'mixed case, too long, or in a block with an unusual layout: only names read by code are listed';
+const NOT_SHOWN_UNTRUSTED = 'mixed case, too long, or in a YAML file the parser reports a problem with: only names read by code are listed';
+const UNTRUSTED_NO_NAMES = 'the YAML parser reports a problem with this file; no names shown';
 
 /** The text of a source or deploy file, or null after recording why it was not read. */
 function readScanned(root, path, notRead) {
@@ -53,7 +54,7 @@ const toSortedObject = (map) => Object.fromEntries([...map].sort(([a], [b]) => (
  * @param {string} root absolute path of an existing folder
  * @param {string[]} wrappers functions whose first string argument is a variable name
  * @param {Date} now stamp for `generatedAt`
- * @returns the snapshot: { version, root, generatedAt, envFiles, readByCode, builtin, dynamic, deploy, notRead, ...analysis }
+ * @returns the snapshot: { version, root, generatedAt, envFiles, readByCode, builtin, dynamic, deploy, notices, notRead, ...analysis }
  */
 export function collectProject(root, wrappers, now) {
   const walked = walkProject(root);
@@ -69,21 +70,25 @@ export function collectProject(root, wrappers, now) {
     for (const read of scanned.reads) addRef(read.builtin ? builtin : readByCode, read.name, `${path}:${read.line}`);
     if (scanned.dynamic > 0) dynamic.set(path, scanned.dynamic);
   }
+  let yamlSkipped = 0;
   for (const { path, kind } of walked.deploys) {
     const text = readScanned(root, path, notRead);
     if (text === null) continue;
-    const { mentions, unconfirmed, hidden } = scanDeploy(kind, text);
+    const { mentions, unconfirmed, hidden, untrusted, parserMissing } = scanDeploy(kind, text);
+    if (parserMissing) yamlSkipped += 1;
     const confirmed = unconfirmed.filter(({ name }) => readByCode.has(name) || builtin.has(name));
     for (const { name, line } of [...mentions, ...confirmed]) addRef(deploy, name, `${path}:${line}`);
     const notShown = hidden + unconfirmed.length - confirmed.length;
-    if (notShown > 0) notRead.push({ path, reason: `${notShown} names not shown (${unconfirmed.length > 0 ? NOT_SHOWN_UNUSUAL_LAYOUT : NOT_SHOWN_SHAPE})` });
+    if (notShown > 0) notRead.push({ path, reason: `${notShown} names not shown (${untrusted ? NOT_SHOWN_UNTRUSTED : NOT_SHOWN_SHAPE})` });
+    else if (untrusted) notRead.push({ path, reason: UNTRUSTED_NO_NAMES });
   }
+  const notices = yamlSkipped > 0 ? [`yaml parser not installed: ${yamlSkipped} deploy files not read; run scripts/install.sh`] : [];
   const namedElsewhere = new Set([...readByCode.keys(), ...builtin.keys(), ...deploy.keys()]);
   const envFiles = walked.envFiles.map((file) => describeEnvFile(root, file, namedElsewhere));
   const data = {
     version: SNAPSHOT_VERSION, root, generatedAt: now.toISOString(), wrappers: [...new Set(wrappers)].sort(), envFiles,
     readByCode: toSortedObject(readByCode), builtin: toSortedObject(builtin), dynamic: toSortedObject(dynamic),
-    deploy: toSortedObject(deploy), notRead: notRead.sort((a, b) => (a.path < b.path ? -1 : 1)),
+    deploy: toSortedObject(deploy), notices, notRead: notRead.sort((a, b) => (a.path < b.path ? -1 : 1)),
   };
   return { ...data, ...analyze(data) };
 }
