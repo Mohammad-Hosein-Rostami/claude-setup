@@ -175,7 +175,7 @@ test('the table refusals keep their reasons under No finish time: and add one Wh
   assert.equal(formatRefusal(few, TZ), 'No finish time: 1 done items with started, done and evidence; need 5. Missing started on: M1 (line 7).\n'
     + 'What to do: finish and record more rows. Fill started of those rows with the real start, or delete the row.');
   const later = estimate(fiveDoneRows([row({ id: 'F1', startedH: 500 })]), 20);
-  assert.match(formatRefusal(later, TZ), /\nWhat to do: correct the time, or pass the right --now\.$/);
+  assert.match(formatRefusal(later, TZ), /\nWhat to do: correct the time from the clock \(`date -u \+%Y-%m-%dT%H:%MZ`\), never from memory, or pass the right --now\.$/);
   const swallowed = computeEstimate(itemsOf(fiveDoneRows([row({ id: 'O1' })])), [{ start: BASE_MS, end: at(20) }], at(20));
   assert.match(formatRefusal(swallowed, TZ), /\nWhat to do: correct started and done of those rows: they lie inside usage-limit windows\.$/);
   for (const refusal of [few, later, swallowed]) assert.doesNotMatch(formatRefusal(refusal, TZ), /Finish:/);

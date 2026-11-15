@@ -7,8 +7,10 @@ The parts of the `estimate` tool. `../estimate.mjs` is the command; it reads the
 - `limits.mjs`: finds usage-limit windows in the lead session transcripts and works out which transcript folder belongs to a project.
 - `history.mjs`: the table's job history: deliveries, the closing tail of each, the closing range, how long the open job's closing has run, and how often a delivery was reopened by a `rework:` row.
 - `compute.mjs`: the formula. Work items plus limit windows give the finish range: the build part, then the closing phase in series.
+- `calibration.mjs`: scores logged estimates against the delivery that ended their job, turns the recent scores into range factors, counts the track record, and builds a log line (ids and numbers only).
+- `estimate-log.mjs`: the calibration log file of a STATUS.md: where it lives, reading it, writing it back trimmed (through `hooks/lib/session-store.mjs`).
 - `report.mjs`: turns the result (or a refusal) into the text block the tool prints, on the local clock; `finishClock` is the short clock range the status line shows.
-- `from-files.mjs`: reads a STATUS.md and the project's transcripts and runs the formula; used by the CLI and by `../statusline-cache.mjs`.
+- `from-files.mjs`: reads a STATUS.md and the project's transcripts and runs the formula; used by the CLI and by `../statusline-cache.mjs`. Only the CLI writes the log; the status line cache reads its factors.
 - `segment-cache.mjs`: the status line's read side: the cache file, the `est` segment text and the detached refresh start. It imports none of the modules above, so a status line render never reads a transcript.
 
 ## Test

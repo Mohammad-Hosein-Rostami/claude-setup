@@ -5,7 +5,7 @@ whole job is finished: the open build rows, then the closing phase (review, fix 
 this table's earlier deliveries, always in series. The lead pastes that `Finish:` block and never quotes an estimate from
 intuition. Node 22, no dependencies.
 
-Run: `node ~/.claude/tools/estimate/estimate.mjs STATUS.md [--transcripts <dir>] [--now <iso>]` and paste the output as-is.
+Run: `node ~/.claude/tools/estimate/estimate.mjs STATUS.md [--transcripts <dir>] [--now <iso>] [--log-dir <dir>]` and paste the output as-is.
 If it refuses (exit 3), give its reason and its `What to do:`; never give a number of your own.
 
 ## Record (in STATUS.md)
@@ -22,8 +22,9 @@ Heading `## Work items`, then the table (the header row is checked):
 - size: S = 1, M = 2, L = 4 points. S: one agent step, fix or review. M: one spec step with tests. L: a whole lane or
   spec including review and merge. Anything bigger: split it. Sizes are relative and measured per project, so a
   consistent mis-sizing cancels out. Set the size when the row is added and never change it after `started`.
-- started / done: a real ISO 8601 instant: `YYYY-MM-DDTHH:MM[:SS[.fff]]` followed by `Z` or an offset `+HH:MM` / `-HH:MM`
-  (`date -u +%FT%RZ`), e.g. `2026-11-14T10:45Z`; `-` when empty. A bare date, `10:45` without a date, `2026-02-30`, month 13
+- started / done: a real ISO 8601 instant: `YYYY-MM-DDTHH:MM[:SS[.fff]]` followed by `Z` or an offset `+HH:MM` / `-HH:MM`,
+  e.g. `2026-11-14T10:45Z`; `-` when empty. Set them when they happen, from the clock (`date -u +%Y-%m-%dT%H:%MZ`),
+  never from memory: a time ahead of the clock is refused. A bare date, `10:45` without a date, `2026-02-30`, month 13
   and `T24:00` are errors (checked by a strict pattern plus a calendar round trip, never shifted to another day).
   `done` must be after `started`, and neither may be later than `--now` (default: the real clock).
 - Done = `done` set and evidence non-empty (commit sha, file path or `check: <cmd> PASS`). A dropped open item: delete the row.
@@ -82,6 +83,7 @@ Finish: Sun 15 Nov 14:50-16:15 (local +03:30, now 13:21)
 Includes: 2 open rows (1 running); build 0-0.4 h (H2, 1 lane), then the closing phase 1.5-2.4 h in series (review, fix rounds, recheck, landing; measured from 2 finished jobs here)
 Excludes: your review and any rework it starts (next line); usage-limit pauses from now on; steps only you do (push, deploy); requests that are not rows
 After your review: 1 of 2 earlier deliveries here were reopened by your corrections; that rework took 1.4 h so far (still open)
+Track record: no scored estimate yet; the range is adjusted once 5 are scored (target: 8 of 10 inside)
 Assumes: the table as it is now; 0.14-0.25 h/point (p25-p75 of 33 done + 1 running rows, 14..15 Nov); 1.0 lanes (measured 2.2, capped by 1 open build row); no limit windows in the transcripts
 Agent-hours: 0.6-1.0 for the open build rows, counted whole
 ```
@@ -91,8 +93,29 @@ Agent-hours: 0.6-1.0 for the open build rows, counted whole
   widened by the 1 finished job here`. With no build row open: `no open build row: the closing phase ... has run 1.5 h`.
 - No delivery in the table yet: `After your review: not measured here yet (no earlier delivery in this table)`.
 - Nothing open and the last done row is a delivery: `Finish: delivered Sun 15 Nov 14:25 (local +03:30)` and the After line.
+- Track record (see Calibration): `9 of 13 inside, 3 late (median x1.4 of the printed time), 1 early; adjusted high x1.3, low x0.9
+  (target 8 of 10)`, below 5 scored `...; adjusted once 5 are scored`. A `--now` run without `--log-dir` keeps no log and prints no
+  Track record line.
 - The `Note:` line (last) appears only when the newest `started` or `done` is more than 24 h before `--now` and rows remain open.
 - No transcripts: the Assumes line ends `usage-limit windows not measured (no transcripts at <dir>)`.
+
+## Calibration
+
+Each run that prints a finish range appends one line to its log,
+`~/.claude/state/estimate-log/<first 32 hex of sha256(absolute STATUS.md path)>.json` (outside every repo; `--log-dir` moves it):
+`{"v":1,"at":"2026-11-15T09:51:44Z","status":"/abs/STATUS.md","open":["H2","H3"],"points":6,"closing":"measured","raw":[1.49,2.84],"printed":["2026-11-15T11:20Z","2026-11-15T12:45Z"]}`.
+Ids and numbers only: never item text, prompts or transcript content. The file is 0600, never written through a link,
+replaced whole through a temp file (two racing runs may lose a line, never the file), trimmed to the last 200 entries and
+128 KiB; a log nobody wrote for 7 days is removed by the store. A refusal writes nothing; a `--now` run without
+`--log-dir` neither reads nor writes it; the status line cache only reads it.
+
+- Scoring (every run, written back): an entry is scored at the first delivery at or after it with all its open ids done by
+  then (an id gone from the table is dropped; all gone: `"actual": "void"`), adding `actual`, `inside` (printed low <=
+  delivery <= printed high) and `ratio` = [hours to the delivery / raw low, ... / raw high] (null where raw is 0).
+- Factors, from 5 scored entries on, over the last 10: high = max(1, p90 of ratio high), low = min(1, p10 of ratio low),
+  nearest rank. Printed range = now + [raw low x low, raw high x high], then rounded on the clock as above. The factors use
+  the raw ratios and the track record the printed ranges, so the adjustment never feeds on itself. Target: 8 of 10 inside.
+  The 5 and the 10 are judgment, not measured: 13 scored estimates over two projects cannot pick them.
 
 ## Exit codes
 
@@ -130,7 +153,7 @@ Exit 3 message: `No finish time: <sentences>` then `What to do: <sentences>`, ea
 | -------- | ---------- |
 | `N done items with started, done and evidence; need 5.` | finish and record more rows |
 | `Missing started on: M1 (line 41), ...` | fill started of those rows with the real start, or delete the row |
-| `Later than now (<now>): F1 (line 12) started <time>, ...` | correct the time, or pass the right `--now` |
+| `Later than now (<now>): F1 (line 12) started <time>, ...` | correct the time from the clock (`date -u +%Y-%m-%dT%H:%MZ`), never from memory, or pass the right `--now` |
 | `No working time left after removing usage-limit windows: D1 (line 7), ...` | correct started and done of those rows: they lie inside usage-limit windows |
 | `the closing phase has run 2.5 h since the last build row was done (H2, 14:13), longer than every closing measured here (1.5-2.4 h, 2 jobs).` | tell the owner the job is past its usual closing; this ends at delivery, whose length then joins the history. Work not in the table: add it as a row first |
 
@@ -151,9 +174,9 @@ writes the cache atomically (0600, never through a link). Both constants are in 
 ## Layout
 
 `estimate.mjs` (CLI: arguments, file reads, exit codes) over `lib/items.mjs` (table parser, row kinds), `lib/limits.mjs` (windows,
-slug), `lib/history.mjs` (deliveries, closing tails, reopened deliveries), `lib/compute.mjs` (formula) and `lib/report.mjs` (text, local
-clock); `lib/from-files.mjs` reads the files for the CLI and for `statusline-cache.mjs`
+slug), `lib/history.mjs` (deliveries, closing tails, reopened deliveries), `lib/compute.mjs` (formula), `lib/calibration.mjs` (scoring,
+factors, track record), `lib/estimate-log.mjs` (the log file) and `lib/report.mjs` (text, local clock); `lib/from-files.mjs` reads the files for the CLI and for `statusline-cache.mjs`
 (refreshes the status line cache), `lib/segment-cache.mjs` is the status line's read side. Tests: `tests/estimate.test.mjs`,
-`tests/estimate-finish.test.mjs`, `tests/estimate-replay.test.mjs` (with `tests/estimate-replay-cases.mjs`: two real tables of
+`tests/estimate-finish.test.mjs`, `tests/estimate-calibration.test.mjs`, `tests/estimate-replay.test.mjs` (with `tests/estimate-replay-cases.mjs`: two real tables of
 14-15 Nov as ids, sizes and times only, and the exact Finish line each request must print), `tests/estimate-cli.test.mjs`,
 `tests/statusline-estimate.test.mjs`.

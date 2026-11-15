@@ -283,7 +283,7 @@ test('B3: a started or done later than now is refused naming the row, the cell a
   assert.equal(result.refused, true);
   assert.deepEqual(result.future.map((f) => [f.row, f.cell]), [[`F1 (line ${FIRST_ROW_LINE + 5})`, 'started']]);
   assert.equal(result.agentHours, undefined);
-  assert.match(formatRefusal(result), /^No finish time: Later than now \(2026-11-14T04:00Z\): F1 \(line 12\) started 2026-11-30T20:00Z\.\nWhat to do: correct the time, or pass the right --now\.$/);
+  assert.match(formatRefusal(result), /^No finish time: Later than now \(2026-11-14T04:00Z\): F1 \(line 12\) started 2026-11-30T20:00Z\.\nWhat to do: correct the time from the clock \(`date -u \+%Y-%m-%dT%H:%MZ`\), never from memory, or pass the right --now\.$/);
   const doneLater = computeEstimate(itemsOf(fiveDoneRows()), [], BASE_MS + 5 * HOUR_MS); // now is before D5 is done
   assert.deepEqual(doneLater.future.map((f) => f.cell), ['done', 'started', 'done', 'started', 'done']); // D3 done at 6 h, D4 and D5 both
 });

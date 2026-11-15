@@ -1,10 +1,12 @@
 // Renders a finish result as the text block the lead pastes as-is (see README.md for the exact lines), and the short clock
 // text of the status line segment.
-// Exports: formatEstimate(result, inputs) -> string; formatRefusal(refusal, timeZone?) -> string; finishClock(result, timeZone?) -> string.
+// Exports: formatEstimate(result, inputs) -> string; formatRefusal(refusal, timeZone?) -> string; finishClock(result, timeZone?) -> string;
+// printedBounds(result, timeZone?) -> {low, high} (the printed ends, epoch ms, for the calibration log).
 // Invariants: pure apart from reading the system time zone (`Intl`, so `TZ` is honoured) when none is given. Line 1 is always
 // `Finish: <weekday> <day> <month> <low>-<high> (local <offset>, now <clock>)` with the low end floored and the high end ceiled
 // to CLOCK_STEP_MS on the local clock; a refusal text never contains `Finish:` or a clock range, only the reason and what to do.
 // Never prints item text or transcript content: rows are named by id.
+import { MIN_SCORED, TARGET_INSIDE } from './calibration.mjs';
 import { STALE_AFTER_MS } from './compute.mjs';
 
 const DECIMAL_LIMIT = 10;
@@ -77,8 +79,13 @@ function gridded(ms, timeZone, up) {
   return (up ? Math.ceil(steps) : Math.floor(steps)) * CLOCK_STEP_MS - offsetMs;
 }
 
-/** The finish range on the local grid: low floored, high ceiled, at least one step apart. */
-function finishBounds(result, timeZone) {
+/**
+ * The finish range as printed: on the local grid, low floored, high ceiled, at least one step apart.
+ * @param {object} result from computeEstimate with a `finish`.
+ * @param {string} [timeZone] IANA zone; default the system zone.
+ * @returns {{low: number, high: number}} epoch ms.
+ */
+export function printedBounds(result, timeZone = systemTimeZone()) {
   const low = gridded(result.finish.lowMs, timeZone, false);
   return { low, high: Math.max(gridded(result.finish.highMs, timeZone, true), low + CLOCK_STEP_MS) };
 }
@@ -90,13 +97,13 @@ function finishBounds(result, timeZone) {
  * @returns {string}
  */
 export function finishClock(result, timeZone = systemTimeZone()) {
-  const { low, high } = finishBounds(result, timeZone);
+  const { low, high } = printedBounds(result, timeZone);
   const today = localDate(low, timeZone) === localDate(result.computedAt, timeZone);
   return `${today ? '' : `${dayText(low, timeZone).split(' ')[0]} `}${clockText(low, timeZone)}-${clockText(high, timeZone)}`;
 }
 
 function finishLine(result, timeZone) {
-  const { low, high } = finishBounds(result, timeZone);
+  const { low, high } = printedBounds(result, timeZone);
   const where = `(local ${offsetText(result.computedAt, timeZone)}, now ${clockText(result.computedAt, timeZone)})`;
   if (dayText(low, timeZone) === dayText(high, timeZone)) return `Finish: ${dayText(low, timeZone)} ${clockText(low, timeZone)}-${clockText(high, timeZone)} ${where}`;
   return `Finish: ${dayText(low, timeZone)} ${clockText(low, timeZone)} - ${dayText(high, timeZone)} ${clockText(high, timeZone)} ${where}`;
@@ -123,6 +130,16 @@ function afterLine(reopen) {
   if (reopen.reopened === 0) return counted;
   if (reopen.reopened === 1) return `${counted}; that rework took ${num(reopen.highHours)} h${reopen.open ? ' so far (still open)' : ''}`;
   return `${counted}; those reworks took ${range(reopen.lowHours, reopen.highHours)} h${reopen.open ? ' (the latest still open, counted so far)' : ''}`;
+}
+
+/** How earlier printed ranges did and how the range is adjusted (see calibration.mjs). */
+function trackLine({ record, factors }) {
+  const target = `${TARGET_INSIDE.inside} of ${TARGET_INSIDE.of}`;
+  if (record.scored === 0) return `Track record: no scored estimate yet; the range is adjusted once ${MIN_SCORED} are scored (target: ${target} inside)`;
+  const late = record.late > 0 ? ` (median x${num(record.medianLate)} of the printed time)` : '';
+  const counts = `Track record: ${record.inside} of ${record.scored} inside, ${record.late} late${late}, ${record.early} early`;
+  if (factors.scored < MIN_SCORED) return `${counts}; adjusted once ${MIN_SCORED} are scored`;
+  return `${counts}; adjusted high x${num(factors.high)}, low x${num(factors.low)} (target ${target})`;
 }
 
 function dateSpan(first, last, timeZone) {
@@ -163,9 +180,10 @@ function staleNote(result) {
 
 /**
  * The finish block (or the two-line delivered block).
- * @param {object} result from computeEstimate (not a refusal).
- * @param {{transcriptDir: string, transcriptCount: number, timeZone?: string}} inputs where the windows came from; the zone
- *   for every clock time (default the system zone).
+ * @param {object} result from computeEstimate (not a refusal), its finish already scaled by the calibration factors.
+ * @param {{transcriptDir: string, transcriptCount: number, timeZone?: string, calibration?: {record: object, factors: object}}} inputs
+ *   where the windows came from; the zone for every clock time (default the system zone); the track record and factors
+ *   (no Track record line without them, e.g. a --now run that keeps no log).
  * @returns {string} the block, no trailing newline.
  */
 export function formatEstimate(result, inputs) {
@@ -176,7 +194,8 @@ export function formatEstimate(result, inputs) {
   }
   const agentHours = result.build.ids.length === 0 ? 'Agent-hours: 0 (no open build row)'
     : `Agent-hours: ${result.agentHours.low.toFixed(1)}-${result.agentHours.high.toFixed(1)} for the open build rows, counted whole`;
-  return [finishLine(result, timeZone), includesLine(result), EXCLUDES, afterLine(result.reopen), assumesLine(result, inputs, timeZone), agentHours, ...staleNote(result)].join('\n');
+  const track = inputs.calibration === undefined ? [] : [trackLine(inputs.calibration)];
+  return [finishLine(result, timeZone), includesLine(result), EXCLUDES, afterLine(result.reopen), ...track, assumesLine(result, inputs, timeZone), agentHours, ...staleNote(result)].join('\n');
 }
 
 function overrunText({ overrun }, timeZone) {
@@ -203,7 +222,7 @@ export function formatRefusal(refusal, timeZone = systemTimeZone()) {
   }
   if (refusal.future.length > 0) {
     reasons.push(`Later than now (${instant(refusal.now)}): ${listed(refusal.future.map((f) => `${f.row} ${f.cell} ${instant(f.at)}`))}.`);
-    advice.push('correct the time, or pass the right --now.');
+    advice.push('correct the time from the clock (`date -u +%Y-%m-%dT%H:%MZ`), never from memory, or pass the right --now.');
   }
   if (refusal.noTime.length > 0) {
     reasons.push(`No working time left after removing usage-limit windows: ${listed(refusal.noTime)}.`);

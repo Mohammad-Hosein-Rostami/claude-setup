@@ -1,5 +1,5 @@
 // Reads the files an estimate needs (a STATUS.md and the project's lead transcripts) and returns the computed result.
-// Exports: UsageError, estimateFile(path, options) -> { result, inputs }.
+// Exports: UsageError, estimateFile(path, options) -> { result, inputs, items }.
 // Invariants: reads only; never writes. Transcripts are read line by line and never printed. Any unreadable or unparsable input is a
 // UsageError whose message names the file (and row line). Shared by estimate.mjs (the CLI) and statusline-cache.mjs (the status line cache).
 import { closeSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
@@ -72,8 +72,9 @@ function transcriptFiles(explicitDir, cwd) {
  * @param {string} path the STATUS.md to read.
  * @param {{transcripts?: string, now?: string, cwd: string}} options transcripts: explicit transcript folder; now: ISO instant
  *   (default the real clock); cwd: the project folder whose transcripts are used when `transcripts` is not given.
- * @returns {{result: object, inputs: {path: string, now: string, transcriptDir: string, transcriptCount: number}}} the computeEstimate
- *   result (or its refusal) and what formatEstimate needs to say where the numbers came from.
+ * @returns {{result: object, inputs: {path: string, now: string, transcriptDir: string, transcriptCount: number}, items: object[]}} the
+ *   computeEstimate result (or its refusal), what formatEstimate needs to say where the numbers came from, and the parsed rows
+ *   (for scoring the calibration log).
  * @throws {UsageError} when a file, a table cell, `now` or the transcript folder cannot be used.
  */
 export function estimateFile(path, { transcripts, now, cwd }) {
@@ -85,5 +86,5 @@ export function estimateFile(path, { transcripts, now, cwd }) {
 
   const { dir, names } = transcriptFiles(transcripts, cwd);
   const windows = limitWindows(names.map((name) => fileLines(join(dir, name))));
-  return { result: computeEstimate(items, windows, nowMs), inputs: { path, now: stamp, transcriptDir: dir, transcriptCount: names.length } };
+  return { result: computeEstimate(items, windows, nowMs), inputs: { path, now: stamp, transcriptDir: dir, transcriptCount: names.length }, items };
 }
