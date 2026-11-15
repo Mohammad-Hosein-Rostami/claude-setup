@@ -1,6 +1,6 @@
 # Mode: ultra-high (lead Fable 5.2; the boss decides, others do the work)
 
-Same quality gates as every mode (see the lead rules and CLAUDE.md). This mode also sets the lead (Fable 5.2 at effort high, set by `ccm ultra-high`): Fable decides and delegates, and no job reaches Fable by accident.
+Same quality gates as every mode. This mode sets the lead (Fable 5.2 at effort high, by `ccm ultra-high`): Fable decides and delegates; no job reaches Fable by accident.
 
 - Fable keeps (it has the context): the plan, key decisions, specs (<= 60 lines, to a file), judging agent reports and diffs, the root cause when agents disagree or a fix failed, the final call; edits of a few lines only when briefing costs more.
 - Fable never does what an agent does as well: reading beyond small ranges (`scout`), checks or logs (`runner`), implementation (`implementer`/`ui-implementer`), screenshot loops (`visual-qa`), polling, a second review of one diff.

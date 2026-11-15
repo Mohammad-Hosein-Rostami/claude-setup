@@ -32,6 +32,7 @@ The caller sends: `Tests for <spec path or acceptance criteria>. Layer: <unit|in
 - Waiting: wait for a condition with a deadline (`until <test>; do sleep 2; done` with a count limit), never a fixed
   sleep over 60 s and never a loop that only sleeps. Start long commands in the background and let the harness tell
   you when they end.
+- Git: commit on your own branch; never merge another branch into it; if the base moved, `git rebase <base>`; leave landing to the lead.
 - Checkpoint: write each test file to disk as soon as it is done, so a dropped connection loses little.
 - Budget: if the brief is still unfinished after about 120 tool calls or the 2nd compaction, stop and return a status (done, left, next step). You cannot spawn agents or message others.
 - No test code in the reply, no raw logs, no recap.

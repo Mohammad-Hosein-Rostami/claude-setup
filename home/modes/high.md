@@ -7,7 +7,7 @@ Same models per task, same lead effort, same quality gates as every mode (see th
   - research: several sources at once;
   - debugging: one `deep-debugger` per hypothesis;
   - build: `test-writer` and `implementer` together; split independent parts across agents (worktree
-    isolation when they touch the same repo);
+    isolation when they touch the same repo; land by rebase + `--ff-only`, C37);
   - review: `reviewer` and `security-auditor` together.
 - Workflows (a script that runs many agents in phases): Claude starts one itself for substantive multi-part tasks,
   no size limit. Choosing `ccm high` or `/mode high` is the user's standing request for this.
