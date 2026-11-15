@@ -3,12 +3,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CALL_CAP, READ_WARN_CHARS, readChars } from '../home/hooks/agent-budget.mjs';
+import { CALL_CAP, EARLY_NOTICE_AT, READ_WARN_CHARS, readChars } from '../home/hooks/agent-budget.mjs';
 import { tempRoot } from '../home/hooks/lib/edit-log.mjs';
 import { measure, overCap, parseCap } from '../home/hooks/lib/reply-cap.mjs';
 
@@ -66,17 +66,45 @@ test('readChars uses file content, a string, or the serialized response', () => 
   assert.equal(readChars({ x: 1 }), '{"x":1}'.length);
 });
 
-test('a subagent gets "return a status now" at the 100th call and every 10th after, silent before', async () => {
+const NOTICE_80 = 'Budget: 80 tool calls used. Commit what is green now. If the brief will not be finished by about 120 calls, pick the stopping point and write down the exact next step.';
+const limitText = (calls) => `Budget: ${calls} tool calls used (limit 120). Commit what is green, then return your status report: done, not done with the exact next step, files changed, blockers. Do not end without the report; start no new work.`;
+
+// Runs one subagent for `calls` tool calls and returns what the hook printed for each call ('' when silent).
+async function budgetOutputs(calls) {
   const dir = await home();
   const input = { hook_event_name: 'PostToolUse', session_id: uid('s'), agent_id: uid('a'), tool_name: 'Bash' };
-  const outputs = [];
-  for (let i = 1; i <= CALL_CAP + 10; i += 1) outputs.push(run(BUDGET, dir, input).stdout);
-  assert.ok(outputs.slice(0, CALL_CAP - 1).every((o) => o === ''), 'silent before the cap');
-  const at100 = JSON.parse(outputs[CALL_CAP - 1]).hookSpecificOutput;
-  assert.equal(at100.hookEventName, 'PostToolUse');
-  assert.match(at100.additionalContext, /100 tool calls.*return your status report/);
+  return Array.from({ length: calls }, () => run(BUDGET, dir, input).stdout);
+}
+const contextOf = (output) => JSON.parse(output).hookSpecificOutput.additionalContext;
+
+test('the call limit is 120 and the early notice is at 80', () => {
+  assert.equal(CALL_CAP, 120);
+  assert.equal(EARLY_NOTICE_AT, 80);
+});
+
+test('a subagent is silent up to call 79, gets the commit notice at 80 exactly once, and is silent 81-119', async () => {
+  const outputs = await budgetOutputs(CALL_CAP - 1);
+  assert.ok(outputs.slice(0, EARLY_NOTICE_AT - 1).every((o) => o === ''), 'silent at 1-79');
+  const notice = JSON.parse(outputs[EARLY_NOTICE_AT - 1]).hookSpecificOutput;
+  assert.equal(notice.hookEventName, 'PostToolUse');
+  assert.equal(notice.additionalContext, NOTICE_80);
+  assert.ok(outputs.slice(EARLY_NOTICE_AT, CALL_CAP - 1).every((o) => o === ''), 'silent at 81-119');
+});
+
+test('a subagent gets the limit text at call 120, silence until 130, then a reminder every 10', async () => {
+  const outputs = await budgetOutputs(CALL_CAP + 20);
+  assert.equal(contextOf(outputs[CALL_CAP - 1]), limitText(120));
   assert.ok(outputs.slice(CALL_CAP, CALL_CAP + 9).every((o) => o === ''), 'silent between reminders');
-  assert.match(JSON.parse(outputs[CALL_CAP + 9]).hookSpecificOutput.additionalContext, /110 tool calls/);
+  assert.equal(contextOf(outputs[CALL_CAP + 9]), limitText(130));
+  assert.ok(outputs.slice(CALL_CAP + 10, CALL_CAP + 19).every((o) => o === ''));
+  assert.equal(contextOf(outputs[CALL_CAP + 19]), limitText(140));
+});
+
+test('the limit in the hook matches the budget the implementer agents and the lead rules state', () => {
+  for (const file of ['home/agents/implementer.md', 'home/agents/ui-implementer.md', 'home/agents/test-writer.md']) {
+    assert.match(readFileSync(fileURLToPath(new URL(`../${file}`, import.meta.url)), 'utf8'), new RegExp(`about ${CALL_CAP} tool calls`), file);
+  }
+  assert.match(readFileSync(fileURLToPath(new URL('../home/modes/_lead.md', import.meta.url)), 'utf8'), new RegExp(`~${CALL_CAP} tool calls`));
 });
 
 test('the main thread is never counted; unsafe ids write nothing and stay silent', async () => {

@@ -1,5 +1,6 @@
 // PostToolUse (all tools) and SubagentStop: enforces the budgets the prompt only asked for.
-//   PostToolUse in a subagent -> counts its tool calls; at 100 (and every 10 after) injects "return a status now".
+//   PostToolUse in a subagent -> counts its tool calls; at 80 injects "commit what is green" once, at 120 (and every 10
+//                   after) injects "commit, then return your status report". Advisory: it never blocks a call.
 //   PostToolUse Read in the lead, mode ultra-high -> warns when the result is over ~20k chars (use scout / a small range).
 //   PostToolUse Bash in the lead -> after 15 Bash calls since the last Agent/Task call, one nudge to delegate; an
 //                   Agent/Task call resets the count.
@@ -8,7 +9,7 @@
 // Verified against Claude Code 2.1.323: hook input has `agent_id` only inside a subagent (agent_type alongside it);
 // PostToolUse accepts hookSpecificOutput.additionalContext; SubagentStop gets agent_id, agent_type, agent_transcript_path,
 // last_assistant_message and stop_hook_active, and exit 2 sends stderr to the subagent and keeps it running.
-// Exports: CALL_CAP, REMIND_EVERY, READ_WARN_CHARS, LEAD_BASH_NUDGE_AT, countCall, leadBashCalls, readChars, postToolUseContext, spawnCap, subagentStopReason.
+// Exports: CALL_CAP, EARLY_NOTICE_AT, REMIND_EVERY, READ_WARN_CHARS, LEAD_BASH_NUDGE_AT, countCall, leadBashCalls, readChars, postToolUseContext, spawnCap, subagentStopReason.
 // Invariants: fast (one append + one stat per call, nothing else on the main thread except Read); fails open (any error
 // exits 0, silent); output is fixed text plus numbers, never tool input, tool output or paths; unsafe ids write nothing.
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync } from 'node:fs';
@@ -18,7 +19,9 @@ import { pathToFileURL } from 'node:url';
 import { tempRoot } from './lib/edit-log.mjs';
 import { overCap, parseCap } from './lib/reply-cap.mjs';
 
-export const CALL_CAP = 100;
+// The agent files (implementer, ui-implementer, test-writer) and the lead rules say "about 120 tool calls"; a test keeps them equal.
+export const CALL_CAP = 120;
+export const EARLY_NOTICE_AT = 80;
 export const REMIND_EVERY = 10;
 export const READ_WARN_CHARS = 20_000;
 export const LEAD_BASH_NUDGE_AT = 15;
@@ -82,9 +85,12 @@ const sessionMode = (sessionId) => {
 export function postToolUseContext(input) {
   if (input.agent_id) {
     const calls = countCall(budgetPath(input.session_id, input.agent_id));
+    if (calls === EARLY_NOTICE_AT) {
+      return `Budget: ${EARLY_NOTICE_AT} tool calls used. Commit what is green now. If the brief will not be finished by about ${CALL_CAP} calls, pick the stopping point and write down the exact next step.`;
+    }
     const due = calls === CALL_CAP || (calls > CALL_CAP && calls % REMIND_EVERY === 0);
     return due
-      ? `Budget: ${calls} tool calls used (limit ${CALL_CAP}). Stop now and return your status report in the format the caller asked for: done, not done, files changed, blockers. Start no new work.`
+      ? `Budget: ${calls} tool calls used (limit ${CALL_CAP}). Commit what is green, then return your status report: done, not done with the exact next step, files changed, blockers. Do not end without the report; start no new work.`
       : null;
   }
   if (input.tool_name === 'Bash' || DELEGATING_TOOLS.has(input.tool_name)) {
