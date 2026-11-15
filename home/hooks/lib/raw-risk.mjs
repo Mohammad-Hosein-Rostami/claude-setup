@@ -8,7 +8,8 @@
 // from a file (`GIT_CONFIG_GLOBAL|SYSTEM=` other than /dev/null, `include.path`, `includeIf.<condition>.path`), and in a line that runs
 // git, a variable or config key whose value git runs (git-runs COMMAND_ENV, configKind) next to a `$`, backtick, `+=`, `declare`, `read`
 // or `printf -v`. Git may run any variable's value, so with a git construct the words of assignment values count too; when only git
-// hides what runs, the reason is GIT_UNREADABLE_REASON (an ask: no rewrite helps).
+// hides what runs, the reason is GIT_UNREADABLE_REASON (an ask: no rewrite helps); so is a git-run variable set from an unquoted backtick,
+// whose value both parsers lose (lib/git-run-values.mjs reads the other forms). `git-<sub>` words read as `git <sub>` (lib/command-of.mjs).
 // Dangerous words (looked up as words of the quote-stripped, ANSI-C-decoded text): git push (by position) / git alias, rm with a recursive or forced flag and (also find -delete / -exec rm with)
 // an absolute, `~`, `$` or `..` path, npm-style publish, gh mutations (judged by position: `gh <group> <verb>`), disk tools and raw device paths,
 // psql/mysql/ssh near a production name. Message text of `git commit` and `gh pr|issue create|edit|comment` is data (message-text.mjs), so
@@ -16,6 +17,7 @@
 // A false positive costs a dialog. Commands with no hidden construct never reach this rule and keep the precise per-command checks.
 // Pure, no I/O; linear in the text length.
 import { ANSI_C_WORD, decodeAnsiC } from './ansi-c.mjs';
+import { asGitSubcommand, commandName } from './command-of.mjs';
 import { withoutMessageText } from './message-text.mjs';
 import { GIT_TOPLEVEL, GIT_TOPLEVEL_WORD } from './shell-words.mjs';
 import { COMMAND_ENV, configKind, GIT_UNREADABLE_REASON } from './git-runs.mjs';
@@ -25,9 +27,10 @@ export const RISKY_REASON = 'risky word inside shell expansion';
 const HIDDEN_CONSTRUCT = /\$\(|`|<<|<\(|>\(|\r|\b(?:eval|trap|source|coproc|case)\b|(?:^|[;&|(\n])[ \t]*\.[ \t]+\S|\|[ \t]*(?:sudo[ \t]+)?(?:ba|z|da|k)?sh\b/;
 // `git help config`: these make git read config, which may run commands, from a file; /dev/null is empty. Config names match in any case.
 const GIT_FILE_CONFIG = /\bGIT_CONFIG_(?:GLOBAL|SYSTEM)=(?!["']?\/dev\/null["']?(?:[\s;&|)]|$))|include(?:if\.[^\s=]*)?\.path\b/i;
-const GIT_COMMAND_WORD = /(?:^|[\s;&|(`/\\])git(?=[\s;&|)`]|$)/;
+const GIT_COMMAND_WORD = /(?:^|[\s;&|(`/\\])git(?:-[A-Za-z0-9][A-Za-z0-9-]*)?(?=[\s;&|)`]|$)/;
 // a variable git runs, not read as `$NAME` / `${NAME}`
 const GIT_RUN_VARIABLE = new RegExp(`(?<![\\w$]|\\$\\{)(?:${[...COMMAND_ENV, 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_(?:KEY|VALUE)_\\d+'].join('|')})\\b`);
+const BACKTICK_RUN_VALUE = new RegExp(`(?<![\\w$]|\\$\\{)(?:${COMMAND_ENV.join('|')})\\+?=[^\\s;&|<>()]*\``);
 const UNREAD_VALUE = /[$`]|\+=|\b(?:declare|typeset|local|readonly|read|mapfile|readarray)\b|\bprintf\s+-v\b/;
 const KEY_BREAK = /[\s="'`$;&|()<>]+/;
 const RUN_VALUE_ASSIGNMENT = /PROMPT_COMMAND=/g; // the shell runs this variable's value
@@ -51,7 +54,12 @@ const RISKY_RM_PATH = /^(?:\/|~|\.\.(?:\/|$)|\$\{?HOME\b)/;
 const HEREDOC_OPEN = /<<(-?)[ \t]*(?:'([A-Za-z_]\w*)'|"([A-Za-z_]\w*)"|\\([A-Za-z_]\w*)|([A-Za-z_]\w*))(?![\w'"\\])/;
 const EXPANSION_IN_BODY = /\$\(|`/;
 
-const wordsOf = (statement) => statement.split(WORD_BREAK).map((word) => word.replace(WORD_EDGE, '')).filter(Boolean);
+/** `git-<sub>` (any directory) -> `git`, `<sub>`: git's own program is the git command it runs; other words stay as they are. */
+function gitProgramWords(word) {
+  const command = asGitSubcommand({ cmd: commandName(word), args: [] });
+  return command.args.length > 0 ? [command.cmd, ...command.args] : [word];
+}
+const wordsOf = (statement) => statement.split(WORD_BREAK).map((word) => word.replace(WORD_EDGE, '')).filter(Boolean).flatMap(gitProgramWords);
 const decodeAnsiCWords = (text) => text.replace(ANSI_C, (word) => decodeAnsiC(word.slice(2, -1)));
 const joinContinuations = (text) => text.replace(/\\\r?\n/g, '');
 
@@ -205,7 +213,7 @@ export function riskyWordInExpansion(command, prodHosts = []) {
   const scanned = gitHidden ? statementsOf(visible, ANY_ASSIGNMENT) : statements;
   const destructive = scanned.map((words) => dangerIn(words, prodText, prodNames));
   const found = destructive.find((category) => category !== undefined);
-  if (found === undefined) return undefined;
+  if (found === undefined) return BACKTICK_RUN_VALUE.test(visible) ? GIT_UNREADABLE_REASON : undefined;
   if (!otherHidden) return GIT_UNREADABLE_REASON;
   return destructive.includes('destructive') ? `${DESTRUCTIVE_PREFIX}${RISKY_REASON}` : RISKY_REASON;
 }

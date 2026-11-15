@@ -1,7 +1,7 @@
 // Path rules for `rm -r` and `cd`: is a target inside the project or a temp dir, and which variables hold what.
 // Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; newScope(cwd, project) -> {vars, assigned};
 // trackAssignments(scope, tokens, nextTokens); substituteKnownWords(tokens, scope); nativePath, isUnder, sameFile, expandHome; RECURSIVE_FLAG;
-// withoutRedirects(args) (also read by lib/git-runs.mjs).
+// withoutRedirects(args) (also read by lib/git-runs.mjs); DECLARERS (also read by lib/git-run-values.mjs).
 // Variables are tracked in order within one command line and the LAST assignment wins (`D=$(mktemp -d); D=/etc` means /etc).
 // A literal value is used as is, `VAR=$(mktemp -d)` (default location; the tokenizer turns it into MKTEMP_WORD, also with a path
 // suffix `$(mktemp -d)/..` and in backticks) stands for one directory inside the temp dir, `D+=x` appends, and any
@@ -26,7 +26,7 @@ const MKTEMP_NAME = MKTEMP_WORD.slice(1);
 const ANY_VAR = /\$\{(\w+)\}|\$(\w+)/g;
 const ASSIGNMENT = /^([A-Za-z_]\w*)(\+?)=([\s\S]*)$/;
 const MKTEMP_DIR = 'mktemp-variable';
-const DECLARERS = new Set(['export', 'declare', 'local', 'readonly', 'typeset']);
+export const DECLARERS = new Set(['export', 'declare', 'local', 'readonly', 'typeset']);
 /** An rm option that deletes recursively: `-r`, `-R`, a cluster holding one (`-rf`, `-fR`), or `--recursive`. */
 export const RECURSIVE_FLAG = /^--recursive$|^-[a-zA-Z]*[rR]/;
 

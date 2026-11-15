@@ -7,7 +7,7 @@
 // - word lists: `bisect run <words>` (git quotes each word), `submodule foreach <cmd> [<words>]` (git runs the first as shell text with
 //   the rest as its arguments), `for-each-repo <words>` (`git <words>` in other repositories, so in a directory the guard does not know);
 // - config for this call (`-c`, `--config-env` with its variable assigned in the line, GIT_CONFIG_KEY_<n>/VALUE_<n>, GIT_CONFIG_PARAMETERS,
-//   clone's own `-c|--config`) and what `git config` writes: COMMAND_CONFIG keys run their value (section and key in any case, any
+//   clone's own `-c|--config`) and what `git config` writes (the word after the key, dashed or after `--`): COMMAND_CONFIG keys run their value (section and key in any case, any
 //   subsection), `alias.*` runs `!<shell text>` or else git with the value as its words, `remote.*.vcs` runs `git remote-<value>`, and
 //   core.hooksPath asks as `-c` does; COMMAND_ENV variables set in front of git (also by `env`) or earlier in the line; `ext::<command>`
 //   URLs among git's words and config values, and `git remote-ext <remote> <command>` (git-remote-ext splits it at unescaped spaces).
@@ -15,7 +15,7 @@
 // silent; lib/raw-risk.mjs still asks next to a dangerous word); an option value is a `bash -c` body in every way. GIT_UNREADABLE_REASON
 // asks for a `--config-env` variable the line does not set (EDITOR-style variables excepted), a GIT_CONFIG_KEY_<n> without its value,
 // `ext::` switched on (protocol.ext.allow, protocol.allow, GIT_ALLOW_PROTOCOL) and word lists that differ between readings of git's
-// options. Config files and values set in ways the guard cannot read (`declare -x`, `printf -v`, `"$A$B"`) are lib/raw-risk.mjs's job.
+// options. Config files and values set in ways the guard cannot read (`printf -v`, `read`, `"$A$B"`) are lib/raw-risk.mjs's job.
 // `-C <dir>` moves the commands; --git-dir, --work-tree, GIT_DIR and GIT_WORK_TREE make their directory unknown (null).
 // Pure, no I/O. Each subcommand's options are read once, each distinct command is checked once, and the caller's MAX_NESTING bounds depth.
 import { resolve } from 'node:path';
@@ -189,12 +189,17 @@ function configEntries(options, subcommands, valuesOf) {
 }
 
 /**
- * What `git config [set] [--add|--replace-all] [--global|--file <f>] <name> <value>` writes: {name, value} for each command-running key
- * and the plain word after it (option words skipped). A read has no value after the key, or a value pattern, checked the same way (rare).
+ * What `git config [set] [--add|--replace-all] [--global|--file <f>] [--] <name> <value>` writes: {name, value} for each command-running key
+ * and the word after it (git 2.54 writes a dashed value too; after a `--`, the word after that), and the next plain word (an option may sit
+ * between). A read has no value after the key, or a value pattern, checked the same way (rare).
  */
 function configWrites(rest = []) {
-  const words = rest.filter((word) => !word.startsWith('-'));
-  return words.flatMap((name, i) => (i + 1 < words.length && configKind(name) !== undefined ? [{ name, value: words[i + 1] }] : []));
+  return rest.flatMap((name, i) => {
+    if (name.startsWith('-') || configKind(name) === undefined) return [];
+    const next = rest[i + 1] === LONG_PREFIX ? rest[i + 2] : rest[i + 1];
+    const values = new Set([next, rest.slice(i + 1).find((word) => !word.startsWith('-'))]);
+    return [...values].filter((value) => value !== undefined).map((value) => ({ name, value }));
+  });
 }
 
 /** What git does with config `name`'s value: 'command', 'alias', 'vcs', 'protocol' (ext:: on), 'hooks' (core.hooksPath) or undefined. */

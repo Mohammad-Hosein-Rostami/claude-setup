@@ -8,8 +8,7 @@
 // command (a variable command word, a risky word inside shell expansion, a literal secret), the first send is denied with the rewrite
 // instead, naming by class (lib/reason-classes.mjs) any other reason that will still ask; the identical command sent again gets the ask
 // above. ADVICE (quality rules: a hand-edited lockfile, a merge that can create a merge commit, lib/merge-commit.mjs) never asks: alone,
-// the first send is denied with the fix and the identical retry runs; next to an ask or bounce it is appended (table: lib/bounce-once.mjs).
-// Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
+// the first send is denied with the fix and the identical retry runs; next to an ask or bounce it is appended (table: lib/bounce-once.mjs) Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
 // Rules. DESTRUCTIVE (the dialog says "DESTRUCTIVE: ..."): force push (incl. -fu clusters and +refspec), `push --mirror`,
 // remote branch delete, rm -r outside the project (temp dirs allowed, `cd` tracked within one command line, `cd` to `~`,
 // `$HOME` and `$(git rev-parse --show-toplevel)` (from inside the project only) is resolved, as are leading
@@ -17,8 +16,7 @@
 // `VAR=$(mktemp -d)` is the temp dir, `..` is resolved after substitution; an unknown variable asks for `rm -r` only; lib/rm-paths.mjs;
 // $HOME, `/` and a drive root never count as the project), disk wipes (dd of=/dev/x, mkfs, wipefs, shred/blkdiscard on a device), rm -r run
 // by xargs or parallel, also inside the `sh -c` script they run (its targets come from stdin; `xargs rm -f` is fine; lib/command-checks.mjs).
-// Plain ASK: git
-// --no-verify (and unique prefixes), `git -c core.hooksPath`, `HUSKY=0 git`, a literal secret in the
+// Plain ASK: git --no-verify (and unique prefixes), `git -c core.hooksPath`, `HUSKY=0 git`, a literal secret in the
 // command (lib/secrets.mjs; the text never repeats it), `git push` (not --dry-run), `gh release *`, `gh pr merge`, package
 // publish (lib/outward.mjs), ssh/scp/rsync/psql/mysql that write to a production host (lib/remote.mjs; list in
 // ~/.claude/private/prod-hosts), `security find-*-password -w|-g` / `dump-keychain` / `export` and `gh auth token` (print a stored secret),
@@ -39,10 +37,10 @@
 // psql, shells ...) is checked as a command too, so unknown wrappers (`ionice -c3 rm -rf /x`) need no list (lib/dangerous-scan.mjs);
 // the scan is skipped after echo/grep/man/git/docker/ssh and similar. `$'\x72m'` ANSI-C words are decoded (lib/ansi-c.mjs); `eval` of a
 // variable or substitution asks (lib/eval-check.mjs; `eval "$(ssh-agent -s)"` style tool init is silent); a variable command word asks.
-// Handled: `& && || ; |` and newlines as separators; `( ) {` groups, `$(...)` and backticks (also inside double
-// quotes) re-checked as commands; leading `! if then do else elif while until`; command matched by basename
-// (`/bin/rm`, `\rm`) through wrappers command/builtin/env/sudo/doas/nohup/xargs/exec/nice/timeout/stdbuf/time/sshpass;
-// `bash -c '...'` and every command git itself runs (lib/git-runs.mjs: `rebase -x`, `-c core.pager=`, GIT_SSH_COMMAND ...) are decided recursively.
+// Handled: `& && || ; |` and newlines as separators; `( ) {` groups, `$(...)` and backticks (also inside double quotes) re-checked as commands;
+// leading `! if then do else elif while until`; command matched by basename (`/bin/rm`, `\rm`) through wrappers command/builtin/env/sudo/doas/
+// nohup/xargs/exec/nice/timeout/stdbuf/time/sshpass; `bash -c '...'` and every command git itself runs (lib/git-runs.mjs: `rebase -x`, `-c
+// core.pager=`, GIT_SSH_COMMAND ...) are decided recursively; `git-<sub>` programs are git (lib/command-of.mjs); git-run variables are judged where assigned (lib/git-run-values.mjs).
 // Two parsers, one rule set: the regex tokenizer (lib/shell-words.mjs) and an independent character-level lexer (lib/shell-lexer.mjs: quotes,
 // comments, `$((..))`, `$(...)` inside double quotes, heredocs wherever they really start) both feed reasonsOf; `decide` merges them, and a
 // reason only the lexer found ends with "(matched in raw text)". So `out="$(git push origin)"` and `git commit -m "see <<EOF"` + `git push -f`
@@ -73,13 +71,14 @@ import {
   checkDiskWipe, checkGhSecret, checkGit, checkHiddenRm, checkKeychainPrint, checkLockfileEdit, checkStdinRm, checkStdinScriptRm,
 } from './lib/command-checks.mjs';
 import { withoutCapturedPrints } from './lib/captured-read.mjs';
-import { commandOf } from './lib/command-of.mjs';
+import { asGitSubcommand, commandOf } from './lib/command-of.mjs';
 import { checkCredentialSend } from './lib/credential-send.mjs';
 import { scanWrapped } from './lib/dangerous-scan.mjs';
 import { editLogPath, recordEdit } from './lib/edit-log.mjs';
 import { checkEval } from './lib/eval-check.mjs';
 import { checkFind } from './lib/find-delete.mjs';
-import { gitRunReasons } from './lib/git-runs.mjs';
+import { gitRunValueReasons, judgeOnce, namesWrittenIn } from './lib/git-run-values.mjs';
+import { GIT_UNREADABLE_REASON, gitRunReasons } from './lib/git-runs.mjs';
 import { mergeCommitAdvice } from './lib/merge-commit.mjs';
 import { outwardAsk } from './lib/outward.mjs';
 import { readProdHosts, remoteAsk } from './lib/remote.mjs';
@@ -180,7 +179,7 @@ function checkCommand(command, env, nextWords) {
   const script = SHELLS.has(cmd) ? shellScript(args) : undefined;
   if (script) return [checkStdinScriptRm(script, command.before), ...reasonsOf(script, env)].filter((reason) => reason !== undefined);
   const evalReasons = cmd === 'eval' ? checkEval(args, nextWords, (text) => reasonsOf(text, env)) : [];
-  return [...checkSimple(command, env), ...evalReasons, ...(cmd === 'git' ? gitRunReasons(command, env, reasonsOf) : [])];
+  return [...checkSimple(command, env), ...evalReasons, ...(cmd === 'git' ? gitRunReasons(command, env, (text, inner) => judgeOnce(text, inner, reasonsOf)) : [])];
 }
 
 /**
@@ -188,7 +187,7 @@ function checkCommand(command, env, nextWords) {
  * scanned for a dangerous command behind an unknown wrapper), then nested bodies. Variables assigned earlier in the line are
  * tracked in order, the last assignment wins.
  */
-function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth = 0 }) {
+function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth = 0, judged = new Map(), written = namesWrittenIn(command) }) {
   if (depth > MAX_NESTING) return ['commands are nested too deeply to check (bash -c / eval / $( ) inside each other); write them out flat'];
   const reasons = [];
   const secret = findLiteralSecret(command);
@@ -199,10 +198,10 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
   let dir = cwd;
   segs.forEach((seg, index) => {
     const words = substituteKnownWords(seg, scope);
-    const parsed = commandOf(words);
+    const parsed = asGitSubcommand(commandOf(words));
     commands.push({ ...parsed, piped: seg.piped === true }); // credential-send follows a pipe into ssh
-    const env = { cwd: dir, project, vars: scope.vars, prodHosts, parse, depth: depth + 1 };
-    reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript }));
+    const env = { cwd: dir, project, vars: scope.vars, prodHosts, parse, depth: depth + 1, judged, written };
+    reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript }), ...gitRunValueReasons(words, parsed, env, reasonsOf));
     if (parsed.cmd !== undefined) {
       reasons.push(...checkCommand({ ...parsed, before: words.slice(0, parsed.at) }, env, segs[index + 1] ?? []));
       reasons.push(...scanWrapped(words, parsed, (cmd, args, at) => checkCommand({ cmd, args, assigns: [], before: words.slice(0, at) }, env, [])));
@@ -212,8 +211,8 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
   });
   const credentialSend = checkCredentialSend(commands); // one command line: the file may be read in one command and sent by another
   if (credentialSend !== undefined) reasons.push(credentialSend);
-  for (const inner of nested) reasons.push(...reasonsOf(inner, { cwd, project, prodHosts, parse, depth: depth + 1 }));
-  return reasons;
+  for (const inner of nested) reasons.push(...reasonsOf(inner, { cwd, project, prodHosts, parse, depth: depth + 1, judged, written }));
+  return [...new Set(reasons)]; // a value many git commands run gives its reasons once, not once per command (the list stays short)
 }
 
 /**
@@ -236,10 +235,11 @@ export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts 
   const recheck = (text) => [...reasonsOf(text, ctx), ...reasonsOf(text, { ...ctx, parse: lex })];
   const found = withoutCapturedPrints([...new Set([...primary, ...backstop])], command, recheck); // `export T=$(gh auth token)` prints nothing
   const { asks: reasons, advice } = splitAdvice([...found, ...mergeCommitAdvice(command)]); // advice never makes the backstop redundant
-  // fail to ask: a hidden-execution construct next to a dangerous word asks even when both parsers saw nothing; only a non-secret reason
-  // makes it redundant, so a literal secret never hides it (a secret-only ask is shortened and can be remembered, see lib/remembered-ask.mjs)
+  // fail to ask: a hidden-execution construct next to a dangerous word asks even when both parsers saw nothing; a literal secret never hides
+  // it (a secret-only ask is shortened and can be remembered, lib/remembered-ask.mjs), nor does the git-unreadable ask (it names no fix)
   const risky = riskyWordInExpansion(command, prodHosts);
-  if (risky !== undefined && reasons.every(isSecretOnlyReason)) reasons.push(risky);
+  const hidesRisky = (reason) => !isSecretOnlyReason(reason) && !reason.startsWith(GIT_UNREADABLE_REASON);
+  if (risky !== undefined && !reasons.some((reason) => reason.startsWith(risky) || hidesRisky(reason))) reasons.push(risky);
   reasons.sort((x, y) => Number(y.startsWith(DESTRUCTIVE_PREFIX)) - Number(x.startsWith(DESTRUCTIVE_PREFIX)));
   const verdict = reasons.length === 0 ? allow() : ask(reasons);
   return advice.length === 0 ? verdict : { ...verdict, advice };

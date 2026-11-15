@@ -1,5 +1,6 @@
 // Segment tokens -> the real command: looks through keywords (`if`, `!`, `{`), `VAR=x` words and wrappers (sudo, env, ...).
-// Exports: commandOf(tokens) -> {cmd, args, assigns, at (index of the command word)}; commandName(word); KEYWORDS.
+// Exports: commandOf(tokens) -> {cmd, args, assigns, at (index of the command word)}; commandName(word); KEYWORDS;
+// asGitSubcommand(command): git's own programs (`git-push`, `<exec path>/git-rebase`) read as `git <sub>`.
 // Pure, no I/O. Shared by pre-bash-guard and the remote-command classifier (lib/remote.mjs).
 import { basenameOf } from './shell-words.mjs';
 
@@ -21,6 +22,8 @@ const WRAPPERS = new Map([
 const LOOKUP_OPTION = /^-p?[vV][pvV]*$/;
 const DURATION = /^\d+(\.\d+)?[smhd]?$/;
 const ASSIGNMENT = /^\w+=/;
+// git runs subcommand <sub> as the program `git-<sub>` from its exec path (also for external ones such as git-lfs); git matches it as written
+const GIT_PROGRAM = /^git-([A-Za-z0-9][A-Za-z0-9-]*)$/;
 
 /** Command word -> bare name: `/bin/rm`, `\rm` and `rm.exe` all become `rm` (lowercased on Windows). */
 export function commandName(word) {
@@ -62,4 +65,15 @@ export function commandOf(tokens) {
     else return { cmd: name, args: tokens.slice(i + 1), assigns, at: i };
   }
   return { cmd: undefined, args: [], assigns, at: tokens.length };
+}
+
+/**
+ * A command whose name is `git-<sub>` (after commandName: any directory, a leading `\`, `.exe`) as the git command it is: `git <sub> <args>`, so every
+ * git check reads it. git-lfs, git-tidy and other programs that only share the prefix become `git lfs ...`, which git runs the same way.
+ * @param {{cmd: string|undefined, args: string[]}} command a command as commandOf returns it (other fields are kept)
+ * @returns {typeof command} the same command, or a copy with cmd `git` and `<sub>` in front of args
+ */
+export function asGitSubcommand(command) {
+  const sub = GIT_PROGRAM.exec(command.cmd ?? '')?.[1];
+  return sub === undefined ? command : { ...command, cmd: 'git', args: [sub, ...command.args] };
 }

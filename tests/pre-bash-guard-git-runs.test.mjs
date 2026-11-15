@@ -159,13 +159,17 @@ test('git config: reads and ordinary writes stay quiet; a hooks path asks like -
 
 test('a git-run variable or config value set from what the guard cannot read asks, only next to a dangerous word', () => {
   const doubled = `A0='${RM}'; A1="$A0$A0"`;
-  const hidden = [`${doubled}; GIT_EDITOR="$A1" git commit`, `${doubled}; git -c core.editor="$A1" commit`, `declare -x GIT_EDITOR='${RM}'; git commit`,
+  const hidden = [`${doubled}; GIT_EDITOR="$A1" git commit`, `${doubled}; git -c core.editor="$A1" commit`,
     `printf -v GIT_EDITOR %s '${RM}'; export GIT_EDITOR; git commit`, `printf -v E %s '${RM}'; git config core.editor "$E"`,
-    `typeset -x GIT_SSH_COMMAND='${RM}'; git fetch`, `${doubled}; git clone -c core.sshCommand="$A1" ../src dst`];
+    `${doubled}; git clone -c core.sshCommand="$A1" ../src dst`];
   for (const command of hidden) assert.deepEqual(reasonsOf(command), [GIT_UNREADABLE_REASON], command);
+  // lib/git-run-values.mjs reads these values wherever they are assigned, git or not: the value's own reason
+  for (const command of [`declare -x GIT_EDITOR='${RM}'; git commit`, `typeset -x GIT_SSH_COMMAND='${RM}'; git fetch`, `A0='${RM}'; EDITOR="$A0" true`]) {
+    assert.match(reasonOf(command), RM_OUTSIDE, command);
+  }
   const quiet = ['GIT_EDITOR="$EDITOR" git commit', 'git -c core.editor="$EDITOR" commit', 'declare -x GIT_EDITOR=vim; git commit',
     'printf -v GIT_EDITOR %s vim; export GIT_EDITOR; git commit', 'GIT_EDITOR=vim git commit && rm -rf /tmp/build', `A0='${RM}'; echo "$A0"`,
-    `A0='${RM}'; EDITOR="$A0" true`, 'git commit -e; echo "$EDITOR" && rm -rf /tmp/build']; // no git run / only reads the variable
+    'git commit -e; echo "$EDITOR" && rm -rf /tmp/build']; // no git run / only reads the variable
   for (const command of quiet) assert.deepEqual(decide(command, ctx), { allow: true }, command);
 });
 
@@ -243,11 +247,11 @@ test('what the guard cannot read asks: a --config-env variable not set in the li
   for (const command of silent) assert.deepEqual(decide(command, ctx), { allow: true }, command);
 });
 
-test('a config or environment value that is a variable or substitution asks only where raw-risk would; an option value is a bash -c body', () => {
-  for (const command of ['GIT_PAGER="$P" git log', 'git -c core.pager="$MY_PAGER" log', 'GIT_SSH_COMMAND="$(cat ssh-cmd)" git fetch',
-    'git -c core.sshCommand="ssh -i $KEY" fetch']) {
+test('a config value that is a variable or substitution asks only where raw-risk would; an environment value that is a substitution asks', () => {
+  for (const command of ['GIT_PAGER="$P" git log', 'git -c core.pager="$MY_PAGER" log', 'git -c core.sshCommand="ssh -i $KEY" fetch']) {
     assert.deepEqual(decide(command, ctx), { allow: true }, command);
   }
+  assert.deepEqual(reasonsOf('GIT_SSH_COMMAND="$(cat ssh-cmd)" git fetch'), [GIT_UNREADABLE_REASON]); // lib/git-run-values.mjs
   assert.match(reasonOf(`P='${RM}'; git -c core.pager="$P" log`), RM_OUTSIDE); // a variable assigned in the line is read
   assert.deepEqual(reasonsOf('git --config-env core.pager=P log; P=less'), [GIT_UNREADABLE_REASON]); // assigned only after git ran
   assert.match(reasonOf(`GIT_PAGER="$(echo ${RM})" git log`), RISKY);

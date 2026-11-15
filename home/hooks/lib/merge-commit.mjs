@@ -7,7 +7,7 @@
 // merges gives the advice). A merge inside `$(...)`, backticks or a heredoc body is not this line's merge: heredoc bodies are
 // dropped and substitution bodies cut out before parsing. Flags match git's exact spelling, after the branch too, until `--`. Not looked
 // into: alias bodies, `bash -c` and eval scripts, git config (`-c pull.rebase=true`). Pure, no I/O.
-import { commandOf } from './command-of.mjs';
+import { asGitSubcommand, commandOf } from './command-of.mjs';
 import { parseGitArgs } from './git-options.mjs';
 import { segments, stripHeredocs } from './shell-words.mjs';
 
@@ -105,7 +105,7 @@ function makesMergeCommit({ sub, rest }) {
 export function mergeCommitAdvice(command) {
   if (!MAY_MERGE.test(command.replace(SPELLING_BREAKS, ''))) return [];
   const merges = segments(withoutSubstitutions(stripHeredocs(command))).some((words) => {
-    const { cmd, args } = commandOf(words);
+    const { cmd, args } = asGitSubcommand(commandOf(words)); // `git-merge` is git merge
     return cmd === 'git' && parseGitArgs(args).subcommands.some(makesMergeCommit);
   });
   return merges ? [MERGE_COMMIT_ADVICE] : [];
