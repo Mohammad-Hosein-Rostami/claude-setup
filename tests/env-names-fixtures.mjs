@@ -11,7 +11,10 @@ import { fileURLToPath } from 'node:url';
 import { yamlParserInstalled } from '../home/tools/env-names/lib/deploy-yaml-names.mjs';
 
 // A worktree without `npm ci` would fail dozens of tests one by one; stop at the first import with the one fix instead.
-if (!yamlParserInstalled) throw new Error('yaml is not installed for env-names: run npm ci --prefix home/tools/env-names');
+if (!yamlParserInstalled) {
+  console.error('yaml is not installed for env-names: run npm ci --prefix home/tools/env-names');
+  process.exit(1);
+}
 
 export const CLI = fileURLToPath(new URL('../home/tools/env-names/env-names.mjs', import.meta.url));
 export const MARKERS = ['MARKER_VALUE', 'MARKERVALUE', 'MARKER_PART', 'MARKER_COMMENT', 'MARKER_QUOTED', 'MARKER_COMPOSE', 'Zqx'];
