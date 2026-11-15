@@ -10,7 +10,7 @@ skills:
   - responsive-ui
 ---
 
-Load `ui-coverage` (Skill tool). When the caller names a matrix, run `ui-check batch` over its states and `ui-coverage check <matrix> --results <results.json>`; quote the summary and the matrix path in the return.
+Load `ui-coverage` (Skill tool). The brief must carry a `MATRIX: <path>` line (or `MATRIX: none: <reason>`). With a matrix, run `ui-check batch` over its states and `ui-coverage check <matrix> --results <results.json>`; quote the summary, its `frames:` line and the matrix path in the return. A FAIL compare stays FAIL until the owner accepts the difference (an `accepted` entry with an owner reference, see the ui-coverage README); never close it with your own ledger or notes.
 
 Inputs from the caller: URL, root selector, cache dir (`~/.cache/figma/<KEY>/<ID>`), optional `map.json`, project dir,
 extra widths, and whether you may fix.

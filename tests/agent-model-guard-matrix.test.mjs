@@ -121,6 +121,14 @@ test('a named file that is missing or not a matrix object with a surfaces array 
   }
 });
 
+test('a value that starts with two slashes or backslashes (a UNC or device path) is never looked up', () => {
+  const s = gateSession();
+  const doubled = `/${join(s.project, 'docs', 'matrix.json')}`; // on POSIX this names the real matrix, so only the rule keeps it out
+  for (const value of [doubled, '\\\\evil.example\\share\\matrix.json', '//evil.example/share/matrix.json', '\\\\.\\pipe\\matrix']) {
+    assert.deepEqual(s.send({ prompt: `MATRIX: ${value}`, subagent_type: 'ui-implementer' }), denied(notAMatrix(value)), value);
+  }
+});
+
 test('a FIFO named as the matrix is never opened: the advice comes at once', { skip: process.platform === 'win32' ? 'no FIFO or mkfifo on Windows' : false }, () => {
   const s = gateSession();
   const made = spawnSync('mkfifo', [join(s.project, 'docs', 'pipe.json')]);

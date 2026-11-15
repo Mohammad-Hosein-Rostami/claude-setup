@@ -14,7 +14,8 @@
 // the ui-coverage init advice and the identical call sent again runs: lib/bounce-once.mjs adviceOnce keeps the digest of cwd, type and
 // prompt in this session's store and logs "advice", "advice-retry" or "advice-unrecorded". A quality hint, not a safety rule: never the
 // owner, and any failure lets the call run. The path comes from the prompt, so it is untrusted: it is stat-ed and read only as a regular
-// file of at most MAX_MATRIX_BYTES, never run, its content never printed; the deny text quotes it without control characters, cut short.
+// file of at most MAX_MATRIX_BYTES, never run, its content never printed, and a UNC or device path (two leading slashes or backslashes)
+// is never looked up; the deny text quotes it without control characters, cut short.
 // Only these two types load the Bash guard's modules, so the routing never depends on them.
 // Exports: guardedAgentInput (pure), matrixLines (pure), uiBriefDeny (the gate), MAX_MATRIX_BYTES. Invariants: the routing never blocks
 // or denies; the gate denies an identical call at most once per session; the mode comes from mode.mjs's state lookup.
@@ -41,6 +42,9 @@ export const MAX_MATRIX_BYTES = 16 * 1024 * 1024; // far above a real matrix; ke
 const MAX_QUOTED_CHARS = 200; // how much of a named path the deny text quotes
 const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu; // control and format characters (bidi marks included) and line separators
 const HOME_PREFIX = /^~(?=$|[\\/])/; // `~` and `~/...`; `~user` is left as it is
+// A UNC or device path (\\host\share, //host/share, \\.\pipe\x): on Windows a lookup reaches the network (and may send the user's
+// NTLM credentials) or a pipe, so a value written like that is never looked up
+const NETWORK_PATH = /^[\\/]{2}/;
 const READ_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0); // a FIFO swapped in after the stat never blocks (POSIX only)
 const NOT_STARTED = 'Not started: the UI brief names no coverage matrix (the owner was not asked).';
 const INIT_ADVICE = 'Before the first UI lane run `node ~/.claude/tools/ui-coverage/ui-coverage.mjs init <matrix.json> --locales .. --widths .. '
@@ -114,7 +118,8 @@ function isMatrixFile(path) {
 function matrixProblem(value, cwd, env) {
   if (value.startsWith(NONE_PREFIX)) return value.slice(NONE_PREFIX.length).trim().length >= MIN_REASON_CHARS ? undefined : SHORT_REASON;
   const path = resolve(cwd, value.replace(HOME_PREFIX, () => env.HOME || env.USERPROFILE || homedir()));
-  return value.length <= MAX_PATH_CHARS && isMatrixFile(path) ? undefined : `\`${quoted(value)}\` does not exist or is not a matrix.`;
+  const usable = value.length <= MAX_PATH_CHARS && !NETWORK_PATH.test(value) && isMatrixFile(path);
+  return usable ? undefined : `\`${quoted(value)}\` does not exist or is not a matrix.`;
 }
 
 const denyOutput = (reason) => `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } })}\n`;

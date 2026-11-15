@@ -18,6 +18,8 @@ You implement a given UI spec exactly. The preloaded skills are binding, not bac
 - Step 0, before writing: read the project's design tokens/theme (grep for theme, tokens, tailwind config) and 1-2
   neighbouring components of the same kind; reuse their tokens, spacing and patterns. No hard-coded colours or px
   where a token exists.
+- The brief must carry a `MATRIX: <path>` line (or `MATRIX: none: <reason>` for a one-file tweak with no Figma); with
+  none, `init` a matrix before writing UI and say so in the report.
 - Load `ui-coverage` (Skill tool) when the task has more than one component, a Figma frame, or locales: build or
   update the matrix first, search for the existing component of each control class (a look-alike is a fail), and put
   the matrix path in your report.
