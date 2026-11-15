@@ -1,5 +1,5 @@
-// Tests for the advice bounce (lib/bounce-once.mjs adviceOnce, the advice classes in lib/reason-classes.mjs): a quality rule (a hand-edited
-// lockfile) is not a safety rule, so its command is denied once with the fix and the identical retry runs without the owner. Next to a reason
+// Tests for the advice bounce (lib/bounce-once.mjs adviceOnce, lib/merge-commit.mjs, lib/reason-classes.mjs): a quality rule (a hand-edited
+// lockfile, a merge that can create a merge commit) is not a safety rule, so its command is denied once with the fix and the identical retry runs without the owner. Next to a reason
 // that asks or bounces, today's path decides exactly as before and the advice text is only appended. The hook tests follow the decision table
 // in home/hooks/lib/bounce-once.mjs row by row. Spawned hooks get a private HOME (the bounce store) and no GUI, so today's ask shows up as the
 // CLI's own "ask". Command strings are only passed to decide() or the hook; nothing is executed.
@@ -16,6 +16,7 @@ import { remember } from '../home/hooks/lib/allowed-literals.mjs';
 import { adviceOnce, bouncedDir } from '../home/hooks/lib/bounce-once.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { hookEnv } from './hook-env.mjs';
+import { fastestMs } from './timing.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const PROJECT = resolve('/work/proj');
@@ -175,4 +176,53 @@ test('a stored digest only lets advice-only commands through: planted for a comm
   mkdirSync(s.store, { recursive: true, mode: 0o700 });
   writeFileSync(join(s.store, 'sess-1.json'), JSON.stringify({ digests: commands.map(digest) }), { mode: 0o600 });
   assert.deepEqual(commands.map((command) => s.run(command).decision), ['allow', 'ask', 'ask']);
+});
+
+// C37: a merge that can create a merge commit.
+const MERGE_ADVICE = 'Linear history (C37): rebase the branch onto the base, then git merge --ff-only (for pull: git pull --rebase). '
+  + "If this repository's own rules need a merge commit, send the same command again and it runs.";
+const MERGE_FIRES = [
+  'git merge feature', 'git merge --no-ff feature', 'git merge', 'git merge -m "msg" feature', 'git pull', 'git pull origin main', 'git pull --no-rebase',
+  'git pull --rebase=false', 'git pull --rebase=FALSE', 'git -C ../repo merge lane/x', 'git -c pull.ff=true pull', 'git --git-dir=.git merge x',
+  'git --no-pager merge x', 'git --work-tree . pull', 'cd ../repo && git merge lane/x', 'git fetch && git merge origin/main',
+  'git pull --rebase && git merge lane/x', 'git merge -- --ff-only', 'git merge --FF-ONLY x', 'sudo git merge x', 'env X=1 git merge x',
+  'command git merge x', 'git "merge" x', 'git\tmerge\tx', 'git  merge x', 'if true; then git merge x; fi', '(git pull)', 'git merge x 2>&1 | tee log',
+  'git merge -m --ff-only x', 'git merge feature --no-ff', 'git pull --rebase=', 'git "mer"ge x', "cat <<'EOF' > a.md\nnotes\nEOF\ngit merge x",
+  "# don't\ngit merge x", 'echo $((1+2)) && git merge x', 'x=$(git merge-base a b); git merge "$x"',
+];
+const MERGE_SILENT = [
+  'git merge --ff-only feature', 'git merge --abort', 'git merge --continue', 'git merge --quit', 'git merge --squash feature', 'git pull --rebase',
+  'git pull -r', 'git pull --rebase=merges', 'git pull --rebase=true', 'git pull --ff-only', 'git pull --rebase origin main', 'git merge-base a b',
+  'git merge-tree a b', 'git merge-file a b c', 'git mergetool', 'git rebase main', 'git fetch origin', 'x=$(git merge y)', 'echo "$(git merge x)"',
+  'echo `git pull`', "cat <<'EOF'\ngit merge x\nEOF", 'cat <<EOF > notes.md\ngit pull\nEOF', 'echo git merge x', 'echo "git merge x"',
+  'git commit -m "merge x"', 'git commit -m "git merge x"', 'grep -r "git merge" .', 'git log --grep=merge', 'git branch --merged',
+  'ssh build-box "git pull"', 'git config pull.rebase true', 'git merge feature --ff-only', 'git pull origin main --rebase', 'git merge --ff-only -- x',
+  "# it's done\nx=$(git merge y)", 'git status # git merge x', "echo '$(git merge x)'", 'x=$(git pull) && echo "$x"',
+];
+
+test('C37: a git merge or pull that can create a merge commit gets the advice (behind global options, wrappers, quoting); ff-only, '
+  + 'abort/continue/quit/squash, a rebasing pull, other subcommands and a merge inside $(...), backticks, a heredoc or text do not', () => {
+  for (const command of MERGE_FIRES) assert.deepEqual(decide(command, ctx), { allow: true, advice: [MERGE_ADVICE] }, JSON.stringify(command));
+  for (const command of MERGE_SILENT) assert.deepEqual(decide(command, ctx), { allow: true }, JSON.stringify(command));
+});
+
+test('C37: next to git push the merge asks like the push alone; 32 KB of merges decide fast; over 32 KB asks "too long" with no advice', () => {
+  assert.deepEqual(decide(`git merge lane/x && ${PUSH}`, ctx), { ...decide(PUSH, ctx), advice: [MERGE_ADVICE] });
+  const many = 'git merge x; '.repeat(2400);
+  assert.deepEqual(decide(many, ctx), { allow: true, advice: [MERGE_ADVICE] });
+  const fastest = fastestMs(() => decide(many, ctx));
+  assert.ok(fastest < 500, `32 KB of merges took too long (fastest of 3: ${fastest.toFixed(1)} ms)`);
+  const huge = decide('git merge x; '.repeat(8000), ctx);
+  assert.deepEqual([huge.ask, huge.advice], [true, undefined]);
+  assert.match(huge.reason, /command too long/);
+});
+
+test('C37 through the hook: git merge alone is denied once with the advice, then runs; with git push it asks every time, the advice appended', () => {
+  const s = guardSession();
+  assert.deepEqual(s.run('git merge lane/x').reason.split('\n').slice(1), [`- ${MERGE_ADVICE}`]);
+  assert.deepEqual(s.run('git merge lane/x'), { decision: 'allow' });
+  const mixed = { decision: 'ask', reason: `${decide(PUSH, ctx).reason}\n${MERGE_ADVICE}` };
+  assert.deepEqual([s.run(`git merge lane/x && ${PUSH}`), s.run(`git merge lane/x && ${PUSH}`)], [mixed, mixed]);
+  const merge = 'merge commit';
+  assert.deepEqual(logRows(s).map((row) => row.slice(0, 3)), [['deny', 'advice', merge], ['allow', 'advice-retry', merge], ['ask', 'no-gui', undefined], ['ask', 'no-gui', undefined]]);
 });

@@ -16,6 +16,7 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 - `command-checks.mjs`, `rm-paths.mjs`, `find-delete.mjs`, `eval-check.mjs`, `shell-hazards.mjs`, `dangerous-scan.mjs`,
   `raw-risk.mjs`, `outward.mjs`, `remote.mjs`, `code-writes.mjs`: one file per kind of risky command (`rm -r`, `find -delete`,
   `eval`, hidden execution, push or publish, production hosts, code rewritten from Bash).
+- `merge-commit.mjs`: advice, never an ask: a `git merge` or `git pull` that can create a merge commit (linear history, C37).
 - `secrets.mjs`: finds literal secrets in a command and masks them.
 - `verdict.mjs`: shared wording of the reasons.
 
@@ -26,6 +27,8 @@ Asking and remembering:
   inside `$(...)` or a heredoc, a literal secret), it is sent back to the agent with the fix instead of the dialog, and any
   other reason it asks for is named as one that will still ask; the same command again gets the dialog. Per-session store
   in `~/.claude/state/guard-bounced` (hashes only). `reason-classes.mjs` gives every guard reason a fixed class name.
+  Advice (a quality rule: a hand-edited lockfile, a merge commit) uses the same store: alone, the first send is sent back
+  with the fix and the same command again runs with no dialog; next to a reason that asks, the advice is only added to it.
 - `session-store.mjs`: the per-session files of `allowed-literals.mjs` and `bounce-once.mjs`. It checks the folder and file
   with lstat, never follows a link or waits on a FIFO, and cleans up only its own old files.
 - `guard-log.mjs`: the decision log, one JSON line per decision.

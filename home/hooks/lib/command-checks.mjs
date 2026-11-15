@@ -4,7 +4,7 @@
 // Exports: checkGit(args, assigns), checkDiskWipe(cmd, args), checkLockfileEdit(cmd, args), checkHiddenRm(cmd, args),
 // checkStdinRm(cmd, args, before), checkStdinScriptRm(script, before), checkKeychainPrint(cmd, args), checkGhSecret(cmd, args) - each
 // returns an ask reason, or undefined when the command is fine; secretPrintOf(cmd, args) and isSecretPrintReason(reason) serve
-// lib/captured-read.mjs; LOCKFILES and lockfileAdvice(name) serve lib/reason-classes.mjs.
+// lib/captured-read.mjs; LOCKFILES and lockfileAdvice(name) serve lib/reason-classes.mjs; gitSubcommand(args) serves lib/merge-commit.mjs.
 // Pure, no I/O. Every rule is an ask (the hook shows a timed dialog); a destructive one starts with "DESTRUCTIVE: ". The one exception is
 // checkLockfileEdit: a quality rule, its text is advice (lib/bounce-once.mjs: denied once with the fix, the identical retry runs).
 import { commandName, commandOf } from './command-of.mjs';
@@ -59,14 +59,23 @@ function checkGitPush(rest) {
   return deletes ? destructive('deleting a remote branch or tag') : pushAsk(options);
 }
 
+/**
+ * Words after `git` -> the subcommand and its words, past git's own options (`git -C dir -c k=v --no-pager commit -n`).
+ * @param {string[]} args words after `git`
+ * @returns {{sub: string|undefined, rest: string[]}} sub undefined when only options are given
+ */
+export function gitSubcommand(args) {
+  let i = 0;
+  while (args[i]?.startsWith('-')) i += GIT_VALUE_OPTIONS.has(args[i]) ? 2 : 1;
+  return { sub: args[i], rest: args.slice(i + 1) };
+}
+
 /** @param {string[]} args words after `git`; @param {string[]} assigns `VAR=x` words before the command */
 export function checkGit(args, assigns = []) {
   if (assigns.includes('HUSKY=0')) return 'HUSKY=0 skips the git hooks';
   if (usesHooksPathOverride(args)) return 'git -c core.hooksPath bypasses the git hooks';
   if (definesAlias(args)) return 'git -c alias.* defines a command for this call (an alias can run push or any shell command); write the command out';
-  const words = [...args];
-  while (words[0]?.startsWith('-')) words.splice(0, GIT_VALUE_OPTIONS.has(words[0]) ? 2 : 1); // `git -C dir commit -n`
-  const [sub, ...rest] = words;
+  const { sub, rest } = gitSubcommand(args);
   const flags = flagsOf(rest);
   // -n is the short form of --no-verify for commit (also inside clusters such as -nm)
   const shortNoVerify = sub === 'commit' && flags.some((f) => /^-[a-zA-Z]*n[a-zA-Z]*$/.test(f));

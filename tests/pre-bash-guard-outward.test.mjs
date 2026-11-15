@@ -59,7 +59,7 @@ for (const [group, commands] of Object.entries(ASK)) {
 
 const ALLOWED = [
   // git
-  'git push --dry-run', 'git push -n origin main', 'git push origin main --dry-run', 'git status', 'git pull', 'git fetch', 'git log --oneline',
+  'git push --dry-run', 'git push -n origin main', 'git push origin main --dry-run', 'git status', 'git pull --rebase', 'git fetch', 'git log --oneline',
   'git commit -m "git push later"', 'echo git push', 'grep "git push" notes.md', 'git remote -v',
   // gh
   'gh release list', 'gh release view v1', 'gh release download v1', 'gh pr view 12', 'gh pr list', 'gh pr create --fill', 'gh pr checks', 'gh issue list', 'gh -R a/b release list',
@@ -83,6 +83,7 @@ const ALLOWED = [
 
 test('decide allows reads, rehearsals and non-production hosts', () => {
   for (const command of ALLOWED) assert.deepEqual(decide(command, ctx), { allow: true }, command);
+  assert.deepEqual(Object.keys(decide('git pull', ctx)), ['allow', 'advice'], 'a plain pull never asks: it gets the C37 advice (lib/merge-commit.mjs)');
 });
 
 test('nothing hard-denies: a destructive hit anywhere in the line leads one combined ask', () => {

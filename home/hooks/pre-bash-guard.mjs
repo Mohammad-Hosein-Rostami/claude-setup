@@ -7,8 +7,8 @@
 // bypassPermissions mode (verified on CLI 2.1.323). Bounce once (lib/bounce-once.mjs): when a reason can be fixed by rewriting the
 // command (a variable command word, a risky word inside shell expansion, a literal secret), the first send is denied with the rewrite
 // instead, naming by class (lib/reason-classes.mjs) any other reason that will still ask; the identical command sent again gets the ask
-// above. ADVICE (a quality rule: a hand-edited lockfile) is kept apart from the asks: alone, the first send is denied with the fix and the
-// identical retry runs without the owner; next to an ask or bounce it is only appended (decision table: lib/bounce-once.mjs).
+// above. ADVICE (quality rules: a hand-edited lockfile, a merge that can create a merge commit, lib/merge-commit.mjs) never asks: alone,
+// the first send is denied with the fix and the identical retry runs; next to an ask or bounce it is appended (table: lib/bounce-once.mjs).
 // Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
 // Rules. DESTRUCTIVE (the dialog says "DESTRUCTIVE: ..."): force push (incl. -fu clusters and +refspec), `push --mirror`,
 // remote branch delete, rm -r outside the project (temp dirs allowed, `cd` tracked within one command line, `cd` to `~`,
@@ -79,6 +79,7 @@ import { scanWrapped } from './lib/dangerous-scan.mjs';
 import { editLogPath, recordEdit } from './lib/edit-log.mjs';
 import { checkEval } from './lib/eval-check.mjs';
 import { checkFind } from './lib/find-delete.mjs';
+import { mergeCommitAdvice } from './lib/merge-commit.mjs';
 import { outwardAsk } from './lib/outward.mjs';
 import { readProdHosts, remoteAsk } from './lib/remote.mjs';
 import { checkRm, expandHome, expandVars, isUnder, nativePath, newScope, sameFile, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
@@ -233,7 +234,7 @@ export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts 
   const backstop = reasonsOf(command, { ...ctx, parse: lex }).filter((reason) => !known.has(reason)).map((reason) => `${reason} (matched in raw text)`);
   const recheck = (text) => [...reasonsOf(text, ctx), ...reasonsOf(text, { ...ctx, parse: lex })];
   const found = withoutCapturedPrints([...new Set([...primary, ...backstop])], command, recheck); // `export T=$(gh auth token)` prints nothing
-  const { asks: reasons, advice } = splitAdvice(found); // advice must not make the backstop below redundant: it lets a command run
+  const { asks: reasons, advice } = splitAdvice([...found, ...mergeCommitAdvice(command)]); // advice never makes the backstop redundant
   // fail to ask: a hidden-execution construct next to a dangerous word asks even when both parsers saw nothing; only a non-secret reason
   // makes it redundant, so a literal secret never hides it (a secret-only ask is shortened and can be remembered, see lib/remembered-ask.mjs)
   const risky = riskyWordInExpansion(command, prodHosts);
