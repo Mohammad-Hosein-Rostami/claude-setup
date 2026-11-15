@@ -158,15 +158,16 @@ function afterLine(reopen) {
   return `${counted}; those reworks took ${range(reopen.lowHours, reopen.highHours)} h${state ? ` (the latest ${state}, counted so far)` : ''}`;
 }
 
-/** How earlier printed ranges did and how the range is adjusted (see calibration.mjs); a follow-up round has its own factors. */
+/** How earlier printed ranges of this phase did and how the range is adjusted (see calibration.mjs: one set per phase). */
 function trackLine({ record, factors }, round) {
   const target = `${TARGET_INSIDE.inside} of ${TARGET_INSIDE.of}`;
-  if (record.scored === 0) return `Track record: no scored estimate yet; the range is adjusted once ${MIN_SCORED} are scored (target: ${target} inside)`;
+  const label = `Track record (${round ? 'follow-up rounds' : 'first cycles'}):`;
+  const dropped = record.rewritten > 0 ? `; ${record.rewritten} dropped (table rewritten)` : '';
+  if (record.scored === 0) return `${label} no scored estimate yet${dropped}; the range is adjusted once ${MIN_SCORED} are scored (target: ${target} inside)`;
   const late = record.late > 0 ? ` (median x${num(record.medianLate)} of the printed time)` : '';
-  const counts = `Track record: ${record.inside} of ${record.scored} inside, ${record.late} late${late}, ${record.early} early`;
-  const adjusted = round ? 'follow-up rounds adjusted' : 'adjusted';
-  if (factors.scored < MIN_SCORED) return `${counts}; ${adjusted} once ${MIN_SCORED} are scored`;
-  return `${counts}; ${adjusted} high x${num(factors.high)}, low x${num(factors.low)} (target ${target})`;
+  const counts = `${label} ${record.inside} of ${record.scored} inside, ${record.late} late${late}, ${record.early} early${dropped}`;
+  if (factors.scored < MIN_SCORED) return `${counts}; adjusted once ${MIN_SCORED} are scored`;
+  return `${counts}; adjusted high x${num(factors.high)}, low x${num(factors.low)} (target ${target})`;
 }
 
 function dateSpan(first, last, timeZone) {

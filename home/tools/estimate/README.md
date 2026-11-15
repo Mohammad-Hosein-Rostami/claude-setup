@@ -115,31 +115,36 @@ Agent-hours: 0.6-1.0 for the open build rows, counted whole
   history (closing tails, scoring) until the 10 minutes have passed. No status line segment, no log line. No open row
   but the last done row a build row: in the first cycle the closing phase still applies (the review and fix rounds are
   not rows yet); after a delivery the follow-up round does.
-- Track record (see Calibration): `9 of 13 inside, 3 late (median x1.4 of the printed time), 1 early; adjusted high x1.3, low x0.9
-  (target 8 of 10)`, below 5 scored `...; adjusted once 5 are scored`. A `--now` run without `--log-dir` keeps no log and prints no
+- Track record (see Calibration), for the phase of this estimate: `Track record (first cycles): 9 of 13 inside, 3 late
+  (median x1.4 of the printed time), 1 early; adjusted high x1.3, low x0.9 (target 8 of 10)`, below 5 scored `...; adjusted
+  once 5 are scored`; inside a follow-up round `Track record (follow-up rounds): ...`; `; 2 dropped (table rewritten)` when
+  entries were dropped. A `--now` run without `--log-dir` keeps no log and prints no
   Track record line.
 - The `Note:` line (last) appears only when the newest `started` or `done` is more than 24 h before `--now` and rows remain open.
 - No transcripts: the Assumes line ends `usage-limit windows not measured (no transcripts at <dir>)`.
 
 ## Calibration
 
-Each run that prints a finish range appends one line to its log,
+Each run that prints a finish range appends one line to its log, unless it repeats the last line of its phase (the same
+printed ends on the 5-minute grid and the same open rows), so many runs within one prediction count once:
 `~/.claude/state/estimate-log/<first 32 hex of sha256(absolute STATUS.md path)>.json` (outside every repo; `--log-dir` moves it):
-`{"v":1,"at":"2026-11-15T09:51:44Z","status":"/abs/STATUS.md","open":["H2","H3"],"points":6,"closing":"measured","phase":"job","raw":[1.49,2.84],"printed":["2026-11-15T11:20Z","2026-11-15T12:45Z"]}`.
+`{"v":1,"at":"2026-11-15T09:51:44Z","status":"/abs/STATUS.md","open":["H2","H3"],"started":["2026-11-15T09:40Z",null],"points":6,"closing":"measured","phase":"job","raw":[1.49,2.84],"printed":["2026-11-15T11:20Z","2026-11-15T12:45Z"]}`.
 Ids and numbers only: never item text, prompts or transcript content. The file is 0600, never written through a link,
-replaced whole through a temp file (two racing runs may lose a line, never the file), trimmed to the last 200 entries and
-128 KiB; it never expires by age (a project paused for weeks keeps its track record). A refusal writes nothing; a `--now` run without
+replaced whole through a temp file (two racing runs may lose a line, never the file), trimmed to the newest 200 entries
+(`MAX_LOG_ENTRIES`) and 128 KiB; it never expires by age (a project paused for weeks keeps its track record). A refusal writes nothing; a `--now` run without
 `--log-dir` neither reads nor writes it; the status line cache only reads it.
 
-- Scoring (every run, written back): an entry is scored at the first delivery at or after it with all its open ids done by
-  then (an id gone from the table is dropped; all gone: `"actual": "void"`), adding `actual`, `inside` (printed low <=
-  delivery <= printed high) and `ratio` = [hours to the delivery / raw low, ... / raw high] (null where raw is 0).
+- Scoring (every run, written back): an entry is scored at the first delivery at or after it with all its open rows done by
+  then, adding `actual`, `inside` (printed low <=
+  delivery <= printed high) and `ratio` = [hours to the delivery / raw low, ... / raw high] (null where raw is 0). Ids are reused and the log never expires, so an entry counts only while each row it covered is
+  still in the table with the started it saw (a row unstarted then may have started since); else it is dropped as
+  `"actual": "rewritten"` and counted in the Track record line.
 - Factors, from 5 scored entries on, over the last 10: high = max(1, p90 of ratio high), low = min(1, p10 of ratio low),
   nearest rank. Printed range = now + [raw low x low, raw high x high], then rounded on the clock as above. The factors use
   the raw ratios and the track record the printed ranges, so the adjustment never feeds on itself. Target: 8 of 10 inside.
   The 5 and the 10 are judgment, not measured: 13 scored estimates over two projects cannot pick them.
-- Two factor sets, by `phase`: `job` (first cycle) and `round` (follow-up round; its Track record line says `follow-up
-  rounds adjusted ...`); an entry without `phase` is a job. One shared set would let each kind move the other's ends: in the
+- Two factor sets, by `phase`: `job` (first cycle) and `round` (follow-up round), each with its own Track record counts;
+  an entry without `phase` is a job. One shared set would let each kind move the other's ends: in the
   14-15 Nov replay the lowest raw low ratio was a round's (0.77; first cycles 1.68 and up) and the rounds' high ratios
   (0.11-0.66) sat far below the first cycles' (0.87-1.03).
 

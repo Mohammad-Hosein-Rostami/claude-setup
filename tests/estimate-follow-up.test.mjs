@@ -125,6 +125,6 @@ test('calibration keeps two factor sets: follow-up round estimates never adjust 
   assert.deepEqual(calibrationFactors(entries), { low: 1, high: 1, scored: 5 }); // old entries without phase are jobs
   assert.deepEqual(calibrationFactors(entries, 'round'), { low: 0.16, high: 1, scored: 5 });
   const lineOf = (factors) => formatEstimate(round, { transcriptDir: '/t', transcriptCount: 1, timeZone: TZ, calibration: { record: { scored: 10, inside: 7, late: 0, early: 3, medianLate: null }, factors } }).split('\n')[4];
-  assert.equal(lineOf(calibrationFactors(entries, 'round')), 'Track record: 7 of 10 inside, 0 late, 3 early; follow-up rounds adjusted high x1, low x0.2 (target 8 of 10)');
-  assert.equal(lineOf({ low: 1, high: 1, scored: 2 }), 'Track record: 7 of 10 inside, 0 late, 3 early; follow-up rounds adjusted once 5 are scored');
+  assert.equal(lineOf(calibrationFactors(entries, 'round')), 'Track record (follow-up rounds): 7 of 10 inside, 0 late, 3 early; adjusted high x1, low x0.2 (target 8 of 10)');
+  assert.equal(lineOf({ low: 1, high: 1, scored: 2 }), 'Track record (follow-up rounds): 7 of 10 inside, 0 late, 3 early; adjusted once 5 are scored');
 });

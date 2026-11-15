@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseWorkItems } from '../home/tools/estimate/lib/items.mjs';
 import { computeEstimate } from '../home/tools/estimate/lib/compute.mjs';
-import { applyFactors, calibrationFactors, scoreEntries, trackRecord } from '../home/tools/estimate/lib/calibration.mjs';
+import { applyFactors, calibrationFactors, isRepeat, scoreEntries, trackRecord } from '../home/tools/estimate/lib/calibration.mjs';
 import { readLog, writeLog } from '../home/tools/estimate/lib/estimate-log.mjs';
 import { estimateFile } from '../home/tools/estimate/lib/from-files.mjs';
 import { finishClock, formatEstimate } from '../home/tools/estimate/lib/report.mjs';
@@ -25,8 +25,8 @@ const isoAt = (hours) => new Date(at(hours)).toISOString().replace(/\.000Z$/, 'Z
 const itemsOf = (rows) => parseWorkItems(statusDoc(rows)).items;
 const SECRET = 'PRIVATE-ITEM-TEXT-7f3a';
 const STATUS = '/project/STATUS.md';
-/** A logged estimate made at 13.5 h with O1 open, raw 1-2 h, printed 14:45-16:00 (UTC). */
-const entry = (fields = {}) => ({ v: 1, at: isoAt(13.5), status: STATUS, open: ['O1'], points: 1, closing: 'default', raw: [1, 2], printed: [isoAt(14.75), isoAt(16)], ...fields });
+/** A logged estimate made at 13.5 h with O1 (started 13 h) open, raw 1-2 h, printed 14:45-16:00 (UTC). */
+const entry = (fields = {}) => ({ v: 1, at: isoAt(13.5), status: STATUS, open: ['O1'], started: ['2026-11-10T13:00Z'], points: 1, closing: 'default', raw: [1, 2], printed: [isoAt(14.75), isoAt(16)], ...fields });
 const scored = (ratio, fields = {}) => entry({ actual: isoAt(15.5), inside: true, ratio, ...fields });
 /** fiveDone, O1 done at 14 h, then a close row done at 15.5 h: a delivery at 15.5 h. */
 const DELIVERED_ROWS = fiveDoneRows([row({ id: 'O1', startedH: 13, doneH: 14 }), row({ id: 'C1', item: 'close: row', startedH: 14, doneH: 15.5 })]);
@@ -41,15 +41,45 @@ test('scoreEntries scores an entry at the first delivery after it with its open 
   assert.deepEqual(zero.ratio, [null, 0.5]);
 });
 
-test('scoreEntries leaves an entry unscored before its delivery, drops ids gone from the table, voids an entry whose ids are all gone', () => {
+test('scoreEntries leaves an entry unscored before its delivery and drops it as table rewritten when a covered row is gone', () => {
   const open = fiveDoneRows([row({ id: 'O1', startedH: 13, doneH: 14 }), row({ id: 'C1', item: 'close: row', startedH: 14 })]);
   assert.deepEqual(scoreEntries([entry()], itemsOf(open), at(15)), [entry()]);
-  const [dropped] = scoreEntries([entry({ open: ['O1', 'GONE'] })], itemsOf(DELIVERED_ROWS), at(20));
-  assert.equal(dropped.actual, isoAt(15.5));
-  const [gone] = scoreEntries([entry({ open: ['GONE'] })], itemsOf(DELIVERED_ROWS), at(20));
-  assert.equal(gone.actual, 'void');
+  const [partly] = scoreEntries([entry({ open: ['O1', 'GONE'], started: ['2026-11-10T13:00Z', null] })], itemsOf(DELIVERED_ROWS), at(20));
+  assert.equal(partly.actual, 'rewritten');
+  const [gone] = scoreEntries([entry({ open: ['GONE'], started: [null] })], itemsOf(DELIVERED_ROWS), at(20));
+  assert.equal(gone.actual, 'rewritten');
   const already = scored([1, 1], { actual: isoAt(14) });
   assert.equal(scoreEntries([already], itemsOf(DELIVERED_ROWS), at(20))[0], already);
+});
+
+test('scoreEntries scores an entry only when its rows still carry the started time it saw: a reused id is a rewritten table', () => {
+  const [reused] = scoreEntries([entry({ started: ['2026-11-01T09:00Z'] })], itemsOf(DELIVERED_ROWS), at(20)); // O1 of an older job
+  assert.equal(reused.actual, 'rewritten');
+  const [startedLater] = scoreEntries([entry({ at: isoAt(12.5), started: [null] })], itemsOf(DELIVERED_ROWS), at(20)); // O1 started 13 h
+  assert.equal(startedLater.actual, isoAt(15.5));
+  const [startedBefore] = scoreEntries([entry({ started: [null] })], itemsOf(DELIVERED_ROWS), at(20)); // unstarted at 13.5 h, yet 13 h now
+  assert.equal(startedBefore.actual, 'rewritten');
+  const [noStarted] = scoreEntries([entry({ started: undefined })], itemsOf(DELIVERED_ROWS), at(20)); // cannot be checked
+  assert.equal(noStarted.actual, 'rewritten');
+});
+
+test('trackRecord counts one phase and the entries dropped as table rewritten; the line names the phase', () => {
+  const entries = [scored([1, 1]), scored([1, 1], { phase: 'round', actual: isoAt(17), inside: false }), entry({ actual: 'rewritten' }), entry({ phase: 'round', actual: 'rewritten' }), entry({ phase: 'round', actual: 'rewritten' })];
+  assert.deepEqual(trackRecord(entries), { scored: 1, inside: 1, late: 0, early: 0, medianLate: null, rewritten: 1 });
+  assert.deepEqual(trackRecord(entries, 'round'), { scored: 1, inside: 0, late: 1, early: 0, medianLate: 1.4, rewritten: 2 });
+  const result = computeEstimate(itemsOf(fiveDoneRows([row({ id: 'O1' })])), [], at(20));
+  const line = formatEstimate(result, { ...UTC_INPUTS, calibration: { record: trackRecord(entries), factors: calibrationFactors(entries) } }).split('\n')[4];
+  assert.equal(line, 'Track record (first cycles): 1 of 1 inside, 0 late, 0 early; 1 dropped (table rewritten); adjusted once 5 are scored');
+});
+
+test('isRepeat: same phase, same printed ends and the same open rows as the last entry of that phase', () => {
+  const last = entry({ phase: 'job' });
+  assert.equal(isRepeat([last], entry({ phase: 'job', at: isoAt(13.6) })), true);
+  assert.equal(isRepeat([last, entry({ phase: 'round', open: ['X'] })], entry({ phase: 'job', open: ['O1'] })), true); // the last job entry counts
+  assert.equal(isRepeat([last], entry({ phase: 'job', printed: [isoAt(14.75), isoAt(16.25)] })), false);
+  assert.equal(isRepeat([last], entry({ phase: 'job', open: ['O1', 'O2'] })), false);
+  assert.equal(isRepeat([last], entry({ phase: 'round' })), false);
+  assert.equal(isRepeat([], entry()), false);
 });
 
 test('calibrationFactors: below 5 scored entries the range is not adjusted; from 5 it is', () => {
@@ -81,18 +111,18 @@ test('applyFactors scales the raw range from now; trackRecord counts inside, lat
     scored([1, 1], { actual: isoAt(14.5), inside: false }), // before the printed low end
     entry(), entry({ actual: 'void' }),
   ]);
-  assert.deepEqual(record, { scored: 4, inside: 1, late: 2, early: 1, medianLate: 1.4 });
+  assert.deepEqual(record, { scored: 4, inside: 1, late: 2, early: 1, medianLate: 1.4, rewritten: 1 }); // the void entry
 });
 
 test('the Track record line: none yet, below 5 scored, and adjusted from 5', () => {
   const result = computeEstimate(itemsOf(fiveDoneRows([row({ id: 'O1' })])), [], at(20));
   const lineOf = (record, factors) => formatEstimate(result, { ...UTC_INPUTS, calibration: { record, factors } }).split('\n')[4];
   assert.equal(lineOf({ scored: 0, inside: 0, late: 0, early: 0, medianLate: null }, { low: 1, high: 1, scored: 0 }),
-    'Track record: no scored estimate yet; the range is adjusted once 5 are scored (target: 8 of 10 inside)');
+    'Track record (first cycles): no scored estimate yet; the range is adjusted once 5 are scored (target: 8 of 10 inside)');
   assert.equal(lineOf({ scored: 3, inside: 2, late: 1, early: 0, medianLate: 1.24 }, { low: 1, high: 1, scored: 3 }),
-    'Track record: 2 of 3 inside, 1 late (median x1.2 of the printed time), 0 early; adjusted once 5 are scored');
+    'Track record (first cycles): 2 of 3 inside, 1 late (median x1.2 of the printed time), 0 early; adjusted once 5 are scored');
   assert.equal(lineOf({ scored: 13, inside: 9, late: 3, early: 1, medianLate: 1.4 }, { low: 0.9, high: 1.3, scored: 13 }),
-    'Track record: 9 of 13 inside, 3 late (median x1.4 of the printed time), 1 early; adjusted high x1.3, low x0.9 (target 8 of 10)');
+    'Track record (first cycles): 9 of 13 inside, 3 late (median x1.4 of the printed time), 1 early; adjusted high x1.3, low x0.9 (target 8 of 10)');
   assert.equal(formatEstimate(result, UTC_INPUTS).split('\n')[4].startsWith('Assumes:'), true); // no calibration given: no line
 });
 
@@ -136,9 +166,14 @@ test('CLI: a --now run without --log-dir writes no log; with --log-dir it append
   const logged = runCli([status, '--transcripts', root, '--now', isoAt(13.5), '--log-dir', logDir], home);
   assert.equal(logged.status, 0, logged.stderr);
   const [line] = await logLines(logDir);
-  assert.deepEqual(JSON.parse(line), { v: 1, at: isoAt(13.5), status, open: ['O1'], points: 1, closing: 'default', phase: 'job', raw: [1.9, 5], printed: ['2026-11-10T15:20Z', '2026-11-10T18:30Z'] }); // O1's 0.5 h/point so far is below every done rate: band 1-3
+  assert.deepEqual(JSON.parse(line), { v: 1, at: isoAt(13.5), status, open: ['O1'], started: ['2026-11-10T13:00Z'], points: 1, closing: 'default', phase: 'job', raw: [1.9, 5], printed: ['2026-11-10T15:20Z', '2026-11-10T18:30Z'] }); // O1's 0.5 h/point so far is below every done rate: band 1-3
   assert.ok(!line.includes(SECRET));
-  assert.match(logged.stdout, /^Track record: no scored estimate yet;/m);
+  assert.match(logged.stdout, /^Track record \(first cycles\): no scored estimate yet;/m);
+  assert.equal(runCli([status, '--transcripts', root, '--now', isoAt(13.55), '--log-dir', logDir], home).status, 0); // same range, same rows
+  assert.equal((await logLines(logDir)).length, 1);
+  await writeFile(status, statusDoc(secretRows(fiveDoneRows([row({ id: 'O1', startedH: 13 }), row({ id: 'O2' })]))));
+  assert.equal(runCli([status, '--transcripts', root, '--now', isoAt(13.55), '--log-dir', logDir], home).status, 0); // O2 added
+  assert.equal((await logLines(logDir)).length, 2);
 });
 
 test('CLI: a later run scores the logged estimate at the delivery and prints the track record; a refusal writes nothing', async () => {
@@ -147,7 +182,7 @@ test('CLI: a later run scores the logged estimate at the delivery and prints the
   await writeFile(status, statusDoc(secretRows([...DELIVERED_ROWS, row({ id: 'O2' })])));
   const later = runCli([status, '--transcripts', root, '--now', isoAt(20), '--log-dir', logDir], home);
   assert.equal(later.status, 0, later.stderr);
-  assert.match(later.stdout, /^Track record: 1 of 1 inside, 0 late, 0 early; follow-up rounds adjusted once 5 are scored$/m); // O2 opened after the delivery: a round
+  assert.match(later.stdout, /^Track record \(follow-up rounds\): no scored estimate yet;/m); // O2 opened after the delivery: a round, and the scored entry is a job
   const lines = await logLines(logDir);
   assert.equal(lines.length, 2);
   assert.deepEqual(JSON.parse(lines[0]).actual, isoAt(15.5));
@@ -158,12 +193,13 @@ test('CLI: a later run scores the logged estimate at the delivery and prints the
 });
 
 test('CLI: two runs racing on one log leave a whole file of valid lines', async () => {
-  const { root, status, home, logDir } = await project(fiveDoneRows([row({ id: 'O1', startedH: 13 })]));
-  const runAsync = () => new Promise((done) => {
-    const child = spawn(process.execPath, [CLI, status, '--transcripts', root, '--now', isoAt(13.5), '--log-dir', logDir], { env: { ...process.env, HOME: home, USERPROFILE: home }, stdio: 'ignore' });
+  const { root, status, home, logDir } = await project(fiveDoneRows([row({ id: 'O1' })]));
+  // each run 6 minutes later than the one before: a new printed range, so no run is a repeat of the last entry
+  const runAsync = (k) => new Promise((done) => {
+    const child = spawn(process.execPath, [CLI, status, '--transcripts', root, '--now', isoAt(13.5 + k / 10), '--log-dir', logDir], { env: { ...process.env, HOME: home, USERPROFILE: home }, stdio: 'ignore' });
     child.on('close', done);
   });
-  for (let round = 0; round < 5; round += 1) assert.deepEqual(await Promise.all([runAsync(), runAsync()]), [0, 0]);
+  for (let round = 0; round < 5; round += 1) assert.deepEqual(await Promise.all([runAsync(2 * round), runAsync(2 * round + 1)]), [0, 0]);
   const lines = await logLines(logDir);
   assert.ok(lines.length >= 5 && lines.length <= 10, `${lines.length} lines`); // a race may lose a line, never the file
   for (const line of lines) assert.equal(JSON.parse(line).status, status);

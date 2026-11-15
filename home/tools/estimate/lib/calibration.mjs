@@ -1,11 +1,12 @@
 // Calibration of the finish estimate: scores logged estimates against the delivery that ended their job, turns the recent
 // scores into range factors, and counts the track record.
 // Exports: scoreEntries(entries, items, now) -> entries; calibrationFactors(entries, phase?) -> {low, high, scored}; phaseOf(result);
-// trackRecord(entries) -> {scored, inside, late, early, medianLate}; applyFactors(result, factors) -> result;
-// logEntry(statusPath, result, items, printed) -> entry; MIN_SCORED; FACTOR_WINDOW; TARGET_INSIDE.
+// trackRecord(entries, phase?) -> {scored, inside, late, early, medianLate, rewritten}; applyFactors(result, factors) -> result;
+// logEntry(statusPath, result, items, printed) -> entry; isRepeat(entries, entry) -> boolean; MIN_SCORED; FACTOR_WINDOW; TARGET_INSIDE.
 // Invariants: pure. A log entry holds ids and numbers only (never item text, prompts or transcript content):
-// {v, at, status, open, points, closing, phase, raw: [low, high] hours, printed: [low, high] ISO}; scoring adds actual (ISO, or
-// "void" when every id left the table), inside (printed low <= actual <= printed high) and ratio ([hours to the delivery /
+// {v, at, status, open, started (each open row's started, ISO or null), points, closing, phase, raw: [low, high] hours,
+// printed: [low, high] ISO}; scoring adds actual (ISO, or "rewritten" when a covered row is gone or carries another started
+// than it had, unstarted rows excepted when they started after the entry: ids are reused, the log never expires), inside (printed low <= actual <= printed high) and ratio ([hours to the delivery /
 // raw low, ... / raw high], null where raw is 0). Factors use raw ratios and the track record uses printed ranges, so the
 // adjustment never feeds back into its own inputs. Two factor sets, by phase: 'job' (the first cycle: build, then closing) and
 // 'round' (a follow-up round after a delivery). One set would let each kind move the other's ends: in the 14-15 Nov
@@ -22,20 +23,33 @@ const LOW_PERCENTILE = 0.1;
 const MEDIAN = 0.5;
 const RATIO_DECIMALS = 3;
 const RAW_DECIMALS = 2;
-const VOID = 'void';
+// Entries that are never scored: "rewritten" (see the header) and "void" (all ids gone, written before "rewritten" existed).
+const DROPPED = new Set(['rewritten', 'void']);
+const REWRITTEN = 'rewritten';
 
 const nearestRank = (sorted, p) => sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)];
 const isoSeconds = (ms) => new Date(ms).toISOString().replace(/\.\d+Z$/, 'Z');
 const isoMinutes = (ms) => new Date(ms).toISOString().replace(/:\d\d\.\d+Z$/, 'Z');
 const round = (value, decimals) => Number(value.toFixed(decimals));
-const isScored = (entry) => typeof entry.actual === 'string' && entry.actual !== VOID;
+const isScored = (entry) => typeof entry.actual === 'string' && !DROPPED.has(entry.actual);
+const phaseOfEntry = (entry) => entry.phase ?? 'job';
 
-/** The entry scored at the first delivery at or after it with all its remaining ids done; unchanged when there is none yet. */
+/** True when every row the entry covered is still in the table with the started it saw (or, unstarted then, started later). */
+function sameRows(entry, byId) {
+  if (!Array.isArray(entry.started) || entry.started.length !== entry.open.length) return false;
+  return entry.open.every((id, k) => {
+    const started = byId.get(id)?.started;
+    if (started === undefined) return false;
+    if (entry.started[k] === null) return started === null || started >= Date.parse(entry.at);
+    return started === Date.parse(entry.started[k]);
+  });
+}
+
+/** The entry scored at the first delivery at or after it with all its rows done; rewritten when its rows changed (see the header). */
 function scoreOne(entry, deliveries, byId) {
   const at = Date.parse(entry.at);
-  const kept = entry.open.filter((id) => byId.has(id));
-  if (entry.open.length > 0 && kept.length === 0) return { ...entry, actual: VOID };
-  const delivery = deliveries.find((d) => d >= at && kept.every((id) => byId.get(id).done !== null && byId.get(id).done <= d));
+  if (!sameRows(entry, byId)) return { ...entry, actual: REWRITTEN };
+  const delivery = deliveries.find((d) => d >= at && entry.open.every((id) => byId.get(id).done !== null && byId.get(id).done <= d));
   if (delivery === undefined) return entry;
   const hours = (delivery - at) / HOUR_MS;
   const [low, high] = entry.printed.map(Date.parse);
@@ -66,7 +80,7 @@ export const phaseOf = (result) => (result.followUp === undefined ? 'job' : 'rou
  * @returns {{low: number, high: number, scored: number}} scored = how many entries of that phase are scored in all.
  */
 export function calibrationFactors(entries, phase = 'job') {
-  const scored = entries.filter((e) => isScored(e) && (e.phase ?? 'job') === phase);
+  const scored = entries.filter((e) => isScored(e) && phaseOfEntry(e) === phase);
   if (scored.length < MIN_SCORED) return { low: 1, high: 1, scored: scored.length };
   const recent = scored.slice(-FACTOR_WINDOW);
   const sortedRatios = (index) => recent.map((e) => e.ratio?.[index]).filter((r) => typeof r === 'number').sort((a, b) => a - b);
@@ -80,12 +94,16 @@ export function calibrationFactors(entries, phase = 'job') {
 }
 
 /**
- * How the printed ranges did: inside, late (delivered after the printed high end) and early; medianLate = the median of
- * (hours to the delivery / hours to the printed high end) over the late ones, null when none was late.
- * @returns {{scored: number, inside: number, late: number, early: number, medianLate: number | null}}
+ * How the printed ranges of one phase did: inside, late (delivered after the printed high end) and early; medianLate = the
+ * median of (hours to the delivery / hours to the printed high end) over the late ones, null when none was late; rewritten =
+ * entries dropped because their rows changed.
+ * @param {object[]} entries log entries.
+ * @param {'job' | 'round'} [phase] which phase; default 'job' (an entry without `phase` is a job).
+ * @returns {{scored: number, inside: number, late: number, early: number, medianLate: number | null, rewritten: number}}
  */
-export function trackRecord(entries) {
-  const scored = entries.filter(isScored);
+export function trackRecord(entries, phase = 'job') {
+  const ofPhase = entries.filter((e) => phaseOfEntry(e) === phase);
+  const scored = ofPhase.filter(isScored);
   const lateBy = [];
   let early = 0;
   for (const entry of scored) {
@@ -94,7 +112,8 @@ export function trackRecord(entries) {
     else if (actual < low) early += 1;
   }
   const sorted = lateBy.sort((a, b) => a - b);
-  return { scored: scored.length, inside: scored.length - sorted.length - early, late: sorted.length, early, medianLate: sorted.length > 0 ? nearestRank(sorted, MEDIAN) : null };
+  const rewritten = ofPhase.filter((e) => DROPPED.has(e.actual)).length;
+  return { scored: scored.length, inside: scored.length - sorted.length - early, late: sorted.length, early, medianLate: sorted.length > 0 ? nearestRank(sorted, MEDIAN) : null, rewritten };
 }
 
 /** The result with its finish range scaled: now + [raw low x factors.low, raw high x factors.high]; raw stays as computed. */
@@ -112,15 +131,30 @@ export function applyFactors(result, factors) {
  * @returns {object} the entry.
  */
 export function logEntry(statusPath, result, items, printed) {
+  const open = items.filter((i) => i.done === null);
   return {
     v: 1,
     at: isoSeconds(result.computedAt),
     status: statusPath,
-    open: items.filter((i) => i.done === null).map((i) => i.id),
+    open: open.map((i) => i.id),
+    started: open.map((i) => (i.started === null ? null : isoMinutes(i.started))),
     points: result.openPoints,
     closing: result.closing.measured >= MIN_MEASURED_RANGE ? 'measured' : 'default',
     phase: phaseOf(result),
     raw: [round(result.raw.low, RAW_DECIMALS), round(result.raw.high, RAW_DECIMALS)],
     printed: [isoMinutes(printed.low), isoMinutes(printed.high)],
   };
+}
+
+/**
+ * True when the entry repeats the last logged entry of its phase: the same printed ends (already on the 5-minute grid) and the
+ * same open rows. A repeat is not appended, so many runs within one prediction count once.
+ * @param {object[]} entries the log, oldest first.
+ * @param {object} entry the new entry from logEntry.
+ */
+export function isRepeat(entries, entry) {
+  const last = entries.filter((e) => phaseOfEntry(e) === entry.phase).at(-1);
+  if (last === undefined) return false;
+  const sameSet = (a, b) => a.length === b.length && a.every((id) => b.includes(id));
+  return last.printed[0] === entry.printed[0] && last.printed[1] === entry.printed[1] && sameSet(last.open, entry.open);
 }
