@@ -12,7 +12,7 @@ Iron law: no claim of done without fresh evidence from this turn (C12, C29).
 5. New logic has a test that fails without it (C11).
 6. Human-first (C31-C36): `node ~/.claude/tools/readable/readable.mjs check . --changed`: fix what your change added; list anything pre-existing as seen, not fixed. Answer the no-AI test in `standards/readability.md` for what you touched.
 
-Report (max 8 lines): `checks: <cmd> -> <exit>` per check; `repro: pass|fail`; `not run: <check> because <reason>`; `not verified: <x>`.
+Report (max 8 lines; list every `UNCONFIRMED` line of STATUS.md, found with `grep UNCONFIRMED STATUS.md`): `checks: <cmd> -> <exit>` per check; `repro: pass|fail`; `not run: <check> because <reason>`; `not verified: <x>`.
 
 Reject: "should work", "tests passed earlier", "trivial change", "CI will catch it". For a second opinion from a fresh context, use the `reviewer` agent.
 

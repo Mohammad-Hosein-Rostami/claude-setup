@@ -87,7 +87,8 @@ global setup combines with it.
 - AI work notes (STATUS.md, HANDOFF.md) may sit in a project but are never committed (hide them with
   `.git/info/exclude`). No memory or history notes unless asked (the review agents' own `memory: user` notes are the
   exception).
-- An owner instruction that holds for the rest of the work ("always", "keep", "from now on", "as we said") goes into STATUS.md under `## Standing rules` the moment it is given, in the owner's words; every brief names that file; re-read it after a compaction or a resume.
+- An owner correction, preference or constraint about how the work is done ("always", "keep", "from now on", "as we said", "is important", "remember", "don't", "why did you") goes into STATUS.md under `## Standing rules` the moment it is given, in the owner's words; every brief names that file; re-read it after a compaction or a resume. When STATUS.md is created, a session resumes or after a compaction, backfill it from the owner's own earlier messages (`node ~/.claude/tools/recall/recall.mjs --owner --session current`) before the next brief.
+- An owner-reported defect you could not reproduce is never closed twice: on the second report reproduce it under the owner's conditions (zoom, pixel ratio, OS, theme, data) or hand it to `deep-debugger`; never answer "no defect" to a second report.
 
 ## Compact instructions
 

@@ -11,6 +11,6 @@ Write `HANDOFF.md` in the scratchpad or project root (max 40 lines):
 3. **State**: what passes or fails now, exact error text.
 4. **Next steps**: ordered, each concrete enough to run without asking.
 5. **Don't redo**: dead ends already ruled out.
-6. **Standing rules**: the user's prohibitions and the vocabulary or names they use.
+6. **Standing rules**: the user's prohibitions and the vocabulary or names they use, and UNCONFIRMED decisions.
 
 Then tell the user: run `/clear`, then "continue from HANDOFF.md". Delete the file once the next session has absorbed it.

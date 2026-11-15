@@ -1,7 +1,7 @@
 // Setup-mode hook (normal | medium | high | extra-high | ultra-high). One script, dispatches on `hook_event_name`:
 //   SessionStart         -> prints the active mode, the lead-only rules (modes/_lead.md; nothing when missing) and the
 //                           mode's playbook (plus a lead note when an extra-high / ultra-high session was not launched
-//                           with `ccm <mode>` or its model does not match; on `compact`, lib/compact-notes.mjs lines incl. the status file to re-read); prunes state.
+//                           with `ccm <mode>` or its model does not match; on `compact`, lib/compact-notes.mjs lines incl. the status file to re-read, then the Standing rules backfill line); prunes state.
 //   UserPromptExpansion  -> for `/mode <m>`: records the mode for this session, prints the playbook (plus a lead note
 //                           when the switch moves the lead to or from Opus max / Fable high).
 //   UserPromptSubmit     -> one reminder line when the mode is not medium, plus a once-per-session "/clear or new session" line (lib/big-context.mjs).
@@ -37,6 +37,8 @@ const MAX_ANCESTOR_DEPTH = 6; // hook -> shell -> claude is 2 levels; leave room
 const PS_TIMEOUT_MS = 1000;
 const INIT_PID = 1;
 const CLAUDE_COMMAND = /^claude/;
+// After a compaction the owner's early points live only in summaries: re-read them and backfill from the owner's own words.
+const STANDING_RULES_NOTE = 'Backfill `## Standing rules` with `recall --owner --session current`.';
 const LAUNCH_ENV_SOURCES = ['startup', 'resume']; // sources where the launch env picks the mode; clear/compact/fork continue the current one
 const LEAD_RULES_FILE = '_lead.md';
 
@@ -204,7 +206,7 @@ async function onSessionStart(input, sessionId, getProcKey) {
   const launchedAs = process.env.CLAUDE_MODE ?? '';
   const note = leadNote({ mode: current, model: input.model, launchedAs });
   const leadRules = await readLeadRules();
-  console.log(`Mode: ${current} (launched as ${isMode(launchedAs) ? launchedAs : 'default'})\n\n${leadRules ? `${leadRules}\n\n` : ''}${await readPlaybook(current)}${note ? `\n\n${note}` : ''}${input.source === 'compact' ? `\n\n${await compactNotes(stateDir(), sessionId, input.transcript_path)}` : ''}`);
+  console.log(`Mode: ${current} (launched as ${isMode(launchedAs) ? launchedAs : 'default'})\n\n${leadRules ? `${leadRules}\n\n` : ''}${await readPlaybook(current)}${note ? `\n\n${note}` : ''}${input.source === 'compact' ? `\n\n${await compactNotes(stateDir(), sessionId, input.transcript_path)}\n${STANDING_RULES_NOTE}` : ''}`);
   await pruneState();
 }
 

@@ -64,7 +64,8 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
 - Agents commit what is green at 80 tool calls and must return a status report by 120. An agent that ends without one is
   continued once, not restarted.
 - An instruction that holds for the whole job ("always", "keep", "from now on") is written to `STATUS.md` under
-  `## Standing rules`, so it survives a compaction or a resume.
+  `## Standing rules`, so it survives a compaction or a resume. When `STATUS.md` is created or a session resumes, the
+  lead backfills it from your own earlier messages with `recall.mjs --owner --session current`.
 - Saying that a fix did not hold ("still wrong", "i told you before", "third time") makes the agent reproduce the exact
   symptom first and check it before it replies.
 
