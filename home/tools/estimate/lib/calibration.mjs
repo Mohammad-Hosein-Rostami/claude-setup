@@ -10,7 +10,7 @@
 // adjustment never feeds back into its own inputs. Two factor sets, by phase: 'job' (the first cycle: build, then closing) and
 // 'round' (a follow-up round after a delivery). One set would let each kind move the other's ends: in the 14-15 Nov
 // replay the lowest low ratio was a round's (0.77; first cycles 1.68 and up), the rounds' high ratios 0.11-0.66 against 0.87-1.03.
-import { findDeliveries } from './history.mjs';
+import { MIN_MEASURED_RANGE, findDeliveries } from './history.mjs';
 
 const HOUR_MS = 3_600_000;
 // From this many scored estimates on, the range is adjusted (spec open point: judgment; 13 estimates over 2 projects cannot pick it).
@@ -118,7 +118,7 @@ export function logEntry(statusPath, result, items, printed) {
     status: statusPath,
     open: items.filter((i) => i.done === null).map((i) => i.id),
     points: result.openPoints,
-    closing: result.closing.measured >= 2 ? 'measured' : 'default',
+    closing: result.closing.measured >= MIN_MEASURED_RANGE ? 'measured' : 'default',
     phase: phaseOf(result),
     raw: [round(result.raw.low, RAW_DECIMALS), round(result.raw.high, RAW_DECIMALS)],
     printed: [isoMinutes(printed.low), isoMinutes(printed.high)],

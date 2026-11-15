@@ -2,7 +2,7 @@
 // the open job's closing has already run, the follow-up rounds after deliveries, and how often the owner reopened a delivery.
 // Exports: findDeliveries(items, windows, now) -> {at, closingStart, tailHours}[]; closingRange(deliveries) -> {low, high, measured};
 // followUpRounds(items, deliveries, windows) -> {start, at, hours}[]; followUpRange(rounds) -> {low, high, measured};
-// openRound(items, deliveries, now) -> {deliveryAt, start, startRow} | null; DEFAULT_FOLLOW_UP_HOURS;
+// openRound(items, deliveries, now) -> {deliveryAt, start, startRow} | null; DEFAULT_FOLLOW_UP_HOURS; MIN_MEASURED_RANGE;
 // closingStart(items, deliveries, now) -> {at, item}; closingElapsedHours(items, deliveries, windows, now) -> hours;
 // reopenSummary(items, deliveries, now) -> summary | null; overlapMs(a, b); DELIVERY_GAP_MS; DEFAULT_CLOSING_HOURS; CLOSING_HISTORY.
 // Invariants: pure; times are epoch ms, results in hours. Rows are classed by `kind` (see items.mjs): `close` rows are the
@@ -21,7 +21,9 @@ export const DELIVERY_GAP_MS = 10 * MINUTE_MS;
 // (two projects, 14-15 Nov) rounded outward. Labelled "default, not yet measured here" in the output.
 export const DEFAULT_CLOSING_HOURS = { low: 1.4, high: 2.5 };
 export const CLOSING_HISTORY = 5; // the closing range is the min..max of this many most recent tails
-const MIN_MEASURED_TAILS = 2; // below this the default range is used, widened to include a single tail
+// A closing or round range is measured from this many finished jobs or rounds; below it the default is used, widened to
+// include a single one.
+export const MIN_MEASURED_RANGE = 2;
 // Follow-up round in hours when this table has fewer than 2 finished rounds: the spread of the only three rounds measured
 // (15 Nov), rounded outward like the closing default; wide because three is few. Restructure 11:25Z -> 11:54Z = 0.48 h (live
 // table); auth 06:20Z -> 08:10Z = 1.83 h and auth rework 08:29Z -> 11:03Z = 2.57 h, still open (14-15 Nov analysis).
@@ -87,7 +89,7 @@ export function closingRange(deliveries) {
 /** min..max of the last CLOSING_HISTORY values when at least 2 exist, else the default widened to include them. */
 function measuredRange(allValues, fallback) {
   const values = allValues.slice(-CLOSING_HISTORY);
-  if (values.length >= MIN_MEASURED_TAILS) return { low: Math.min(...values), high: Math.max(...values), measured: values.length };
+  if (values.length >= MIN_MEASURED_RANGE) return { low: Math.min(...values), high: Math.max(...values), measured: values.length };
   return { low: Math.min(fallback.low, ...values), high: Math.max(fallback.high, ...values), measured: values.length };
 }
 
@@ -119,14 +121,16 @@ export function followUpRange(rounds) {
 }
 
 /**
- * The open follow-up round: some row is open and the table has a delivery. It starts at the first row started after the
- * last delivery, or now when none has started yet.
- * @returns {{deliveryAt: number, start: number, startRow: string | null} | null} null in the first cycle or with no open row.
+ * The follow-up round in progress: the table has a delivery and a row started after the last one, or a row still open. It
+ * starts at the first row started after the last delivery, or now when none has started yet.
+ * @returns {{deliveryAt: number, start: number, startRow: string | null} | null} null in the first cycle, or when nothing
+ *   happened after the last delivery.
  */
 export function openRound(items, deliveries, now) {
   const last = deliveries.at(-1);
-  if (last === undefined || items.every((i) => i.done !== null)) return null;
+  if (last === undefined) return null;
   const first = items.filter((i) => i.started !== null && i.started > last.at).sort((a, b) => a.started - b.started)[0];
+  if (first === undefined && items.every((i) => i.done !== null)) return null;
   return { deliveryAt: last.at, start: first?.started ?? now, startRow: first?.id ?? null };
 }
 

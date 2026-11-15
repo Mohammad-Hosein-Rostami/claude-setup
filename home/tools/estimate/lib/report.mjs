@@ -8,13 +8,13 @@
 // Never prints item text or transcript content: rows are named by id.
 import { MIN_SCORED, TARGET_INSIDE } from './calibration.mjs';
 import { STALE_AFTER_MS } from './compute.mjs';
+import { MIN_MEASURED_RANGE } from './history.mjs';
 
 const DECIMAL_LIMIT = 10;
 const HOURS_PER_DAY = 24;
 const HOUR_MS = 3_600_000;
 const DAYS_ABOVE_HOURS = 48;
 const LISTED_ROWS = 5;
-const MIN_MEASURED_TAILS = 2;
 const CLOSING_WORK = 'review, fix rounds, recheck, landing';
 const EXCLUDES = 'Excludes: your review and any rework it starts (next line); usage-limit pauses from now on; steps only you do (push, deploy); requests that are not rows';
 const NO_DELIVERY = 'After your review: not measured here yet (no earlier delivery in this table)';
@@ -87,7 +87,7 @@ function gridded(ms, timeZone, up) {
  * @returns {{low: number, high: number}} epoch ms.
  */
 export function printedBounds(result, timeZone = systemTimeZone()) {
-  const low = gridded(Math.max(result.finish.lowMs, result.computedAt), timeZone, false);
+  const low = Math.max(gridded(result.finish.lowMs, timeZone, false), gridded(result.computedAt, timeZone, true));
   return { low, high: Math.max(gridded(result.finish.highMs, timeZone, true), low + CLOCK_STEP_MS) };
 }
 
@@ -114,13 +114,13 @@ function finishLine(result, timeZone) {
 }
 
 function closingSource(closing) {
-  if (closing.measured >= MIN_MEASURED_TAILS) return `measured from ${closing.measured} finished jobs here`;
+  if (closing.measured >= MIN_MEASURED_RANGE) return `measured from ${closing.measured} finished jobs here`;
   return closing.measured === 1 ? 'default, widened by the 1 finished job here' : 'default, not yet measured here';
 }
 
 /** Where a follow-up round's range comes from, for the Includes line and the round refusal. */
 function roundSource(range) {
-  if (range.measured >= MIN_MEASURED_TAILS) return `measured from ${range.measured} finished rounds here`;
+  if (range.measured >= MIN_MEASURED_RANGE) return `measured from ${range.measured} finished rounds here`;
   return range.measured === 1 ? 'default, widened by the 1 finished round here' : 'default, not yet measured here';
 }
 
@@ -130,7 +130,7 @@ function followUpIncludes(result, timeZone) {
   const { build, closing, followUp } = result;
   const started = followUp.startRow === null ? 'no row started yet' : `started ${clockText(followUp.start, timeZone)} (${followUp.startRow})`;
   const rows = `${plural(result.openItems, 'open row')} (${result.inFlight} running)`;
-  const sizes = `the open rows need at least ${range(build.low, build.high)} h by size (${listed(build.ids)}, ${laneCount(build)})`;
+  const sizes = build.ids.length === 0 ? 'no open row left' : `the open rows need at least ${range(build.low, build.high)} h by size (${listed(build.ids)}, ${laneCount(build)})`;
   return `Includes: follow-up round after the delivery at ${clockText(followUp.deliveryAt, timeZone)}, ${started}: ${rows}; such rounds took ${range(closing.low, closing.high)} h here (${roundSource(closing)}); ${sizes}`;
 }
 
@@ -238,16 +238,17 @@ export function formatEstimate(result, inputs) {
 function roundOverrunText({ overrun }, timeZone) {
   const { round, closing } = overrun;
   const since = round.startRow === null ? '' : ` since it started (${round.startRow}, ${clockText(round.start, timeZone)})`;
-  const than = closing.measured >= MIN_MEASURED_TAILS ? `every round measured here (${range(closing.low, closing.high)} h, ${closing.measured} rounds)`
+  const than = closing.measured >= MIN_MEASURED_RANGE ? `every round measured here (${range(closing.low, closing.high)} h, ${closing.measured} rounds)`
     : `the default round (${range(closing.low, closing.high)} h, ${closing.measured === 1 ? 'widened by 1 finished round here' : 'not yet measured here'})`;
-  return `No finish time: the follow-up round has run ${num(overrun.hours)} h${since}, longer than ${than}, and its open rows are past their measured rates.\n${ROUND_ADVICE}`;
+  const rows = overrun.openRows === 0 ? 'no open row is left' : 'its open rows are past their measured rates';
+  return `No finish time: the follow-up round has run ${num(overrun.hours)} h${since}, longer than ${than}, and ${rows}.\n${ROUND_ADVICE}`;
 }
 
 function overrunText({ overrun }, timeZone) {
   const { start, closing } = overrun;
   const since = start.how === 'done' ? 'the last build row was done' : 'the first closing row started';
   const closings = range(closing.low, closing.high);
-  const than = closing.measured >= MIN_MEASURED_TAILS ? `every closing measured here (${closings} h, ${closing.measured} jobs)`
+  const than = closing.measured >= MIN_MEASURED_RANGE ? `every closing measured here (${closings} h, ${closing.measured} jobs)`
     : `the default closing (${closings} h, ${closing.measured === 1 ? 'widened by 1 finished job here' : 'not yet measured here'})`;
   return `No finish time: the closing phase has run ${num(overrun.hours)} h since ${since} (${start.item.id}, ${clockText(start.at, timeZone)}), longer than ${than}.\n${OVERRUN_ADVICE}`;
 }

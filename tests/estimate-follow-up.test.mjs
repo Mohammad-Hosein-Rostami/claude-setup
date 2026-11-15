@@ -90,6 +90,22 @@ test('14 minutes into a round of S rows after S-row history, the low end is now 
   near(late.finish.lowMs, at(2.5), 'low at now');
 });
 
+test('a follow-up round whose rows are all done, the last a rework row, keeps the round range and the round factor set', () => {
+  const rows = [...FIRST_JOB, row({ id: 'R1', item: 'rework: row', startedH: 2, doneH: 2.5 })];
+  const result = estimate(rows, 2.6); // round from 2 h: 0.4-2.6 h, nothing left by size
+  assert.equal(phaseOf(result), 'round');
+  near(result.finish.lowMs, at(2.6), 'low at now');
+  near(result.finish.highMs, at(4.6), 'high');
+  assert.equal(block(result)[1], 'Includes: follow-up round after the delivery at 05:00, started 05:30 (R1): 0 open rows (0 running); such rounds took 0.4-2.6 h here (default, not yet measured here); no open row left');
+  const past = estimate(rows, 4.7);
+  assert.match(formatRefusal(past, TZ), /^No finish time: the follow-up round has run 2\.7 h since it started \(R1, 05:30\), longer than the default round \(0\.4-2\.6 h, not yet measured here\), and no open row is left\./);
+});
+
+test('line 1 never starts before now: a low end at now is rounded up to the clock step, not down', () => {
+  const result = estimate([...FIRST_JOB, close({ id: 'V1', startedH: 2 })], 4 + 3 / 60); // low end = now 07:33, high 4.6 h = 08:06
+  assert.equal(block(result)[0], 'Finish: Tue 10 Nov 07:35-08:10 (local +03:30, now 07:33)');
+});
+
 test('a follow-up round past its high end with nothing left by size is refused, never a finish of now', () => {
   const rows = [...FIRST_JOB, close({ id: 'V1', startedH: 2 })];
   const result = estimate(rows, 6); // V1 ran 4 h: past the band (0.1-4 h/point) and past the 2.6 h round

@@ -156,7 +156,7 @@ function followUpResult(context, deliveries, round) {
   const rows = measureRows(context, (i) => i.done === null);
   const roundEnd = (hours) => round.start + hours * HOUR_MS;
   if (roundEnd(range.high) <= now && rows.build.high <= 0) {
-    const overrun = { hours: workingMs(round.start, now, windows) / HOUR_MS, round, closing: range };
+    const overrun = { hours: workingMs(round.start, now, windows) / HOUR_MS, round, closing: range, openRows: rows.build.ids.length };
     return refusal(now, { reason: 'overrun', measured: context.measured.length, overrun });
   }
   const lowMs = Math.max(roundEnd(range.low), now + rows.build.low * HOUR_MS); // the size term (>= 0) keeps it at or after now

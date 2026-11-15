@@ -1,5 +1,7 @@
-// Per-session state files of the Bash guard, safe against planted links and special files. lib/allowed-literals.mjs (guard-allowed) and
-// lib/bounce-once.mjs (guard-bounced) each keep one small JSON file per session id in their own folder under ~/.claude/state.
+// Small state files keyed by an id, safe against planted links and special files. The Bash guard's lib/allowed-literals.mjs
+// (guard-allowed) and lib/bounce-once.mjs (guard-bounced) keep one JSON file per session id, the estimate tool its status line
+// cache and calibration log (keyed by a STATUS.md hash; the log is written with sweep off, so it never expires), each in its
+// own folder under ~/.claude/state.
 // Exports: isSessionId(session), readSessionFile(dir, session, maxBytes) -> text | null | undefined,
 // writeSessionFile(dir, session, text, options?) -> boolean.
 // Why: a Bash command can put a link, a FIFO or a folder where these files live. The hook must never follow a link, hang on a FIFO, or

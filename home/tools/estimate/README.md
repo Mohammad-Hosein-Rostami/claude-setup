@@ -60,11 +60,12 @@ All durations are wall-clock time minus the usage-limit windows found in the tra
   1.48, 2.40 and 2.43 h of two projects, 14-15 Nov, rounded outward), widened to include a single tail.
 - Elapsed E: 0 while a build or rework row is open; else the time since the latest non-close done after the last
   delivery (else the first start after it).
-- Finish = now + [B(low) + max(0, C low - E), B(high) + max(0, C high - E)], on the local clock: the low end (never
-  before now) floored and the high end ceiled to 5 minutes, at least 5 minutes apart.
+- Finish = now + [B(low) + max(0, C low - E), B(high) + max(0, C high - E)], on the local clock: the low end floored
+  and the high end ceiled to 5 minutes, at least 5 minutes apart; line 1 never starts before now (a low end that would
+  floor before now is rounded up instead). This holds for every kind of result.
 - Follow-up round: rows started after a delivery (fixes after a verification, owner corrections, new requests, of any
   kind) form a round, from the first row started after the delivery (now, if none has started) to the next delivery. It is
-  not a new closing phase. While one is open, every open row counts by size (close and rework rows too) and Finish =
+  not a new closing phase, also when all its rows are done and the last is not a `close:` row. While one is open, every open row counts by size (close and rework rows too) and Finish =
   [max(S + R low, now + B(low)), max(S + R high, now + B(high))] (so never before now), S = the round's start. R = min..max of the last 5
   finished rounds here once 2 exist; before that the default 0.4-2.6 h, widened to include a single round. The default
   is the spread of the only three rounds measured, rounded outward like the closing default: a restructure round of
@@ -112,7 +113,8 @@ Agent-hours: 0.6-1.0 for the open build rows, counted whole
   saying there is no open row, and the After line; within 10 minutes of that row it reads `(local +03:30; provisional
   until 15:34: no open row)`. With no open row the tool never predicts a future finish; it is not a delivery in the
   history (closing tails, scoring) until the 10 minutes have passed. No status line segment, no log line. No open row
-  but the last done row a build row: the closing phase still applies (the review and fix rounds are not rows yet).
+  but the last done row a build row: in the first cycle the closing phase still applies (the review and fix rounds are
+  not rows yet); after a delivery the follow-up round does.
 - Track record (see Calibration): `9 of 13 inside, 3 late (median x1.4 of the printed time), 1 early; adjusted high x1.3, low x0.9
   (target 8 of 10)`, below 5 scored `...; adjusted once 5 are scored`. A `--now` run without `--log-dir` keeps no log and prints no
   Track record line.
@@ -206,5 +208,6 @@ slug), `lib/history.mjs` (deliveries, closing tails, reopened deliveries), `lib/
 factors, track record), `lib/estimate-log.mjs` (the log file) and `lib/report.mjs` (text, local clock); `lib/from-files.mjs` reads the files for the CLI and for `statusline-cache.mjs`
 (refreshes the status line cache), `lib/segment-cache.mjs` is the status line's read side. Tests: `tests/estimate.test.mjs`,
 `tests/estimate-finish.test.mjs`, `tests/estimate-calibration.test.mjs`, `tests/estimate-replay.test.mjs` (with `tests/estimate-replay-cases.mjs`: two real tables of
-14-15 Nov as ids, sizes and times only, and the exact Finish line each request must print), `tests/estimate-cli.test.mjs`,
+14-15 Nov as ids, sizes and times only, and the exact Finish line each request must print; replay V9 is in-sample, since
+its round is one of the three the round default comes from, so it shows consistency, not predictive accuracy), `tests/estimate-cli.test.mjs`,
 `tests/statusline-estimate.test.mjs`.

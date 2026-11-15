@@ -41,16 +41,17 @@ test('fix rounds (a): only build rows open adds the 1.4-2.5 h default closing af
   assert.deepEqual(result.finish, { lowMs: at(22.4), highMs: at(25.5) });
 });
 
-test('fix rounds (a): two finished jobs give their measured tails 1.5 and 2 h as the closing phase', () => {
+test('fix rounds (a): two finished jobs give their measured tails 1.5 and 2 h; a first cycle with nothing open runs the closing phase', () => {
   const items = itemsOf([...TWO_JOBS, row({ id: 'B7', startedH: 20, doneH: 21 })]);
-  assert.deepEqual(findDeliveries(items, [], at(30)), [
+  const deliveries = findDeliveries(items, [], at(30));
+  assert.deepEqual(deliveries, [
     { at: at(14.5), closingStart: at(13), tailHours: 1.5 },
     { at: at(19), closingStart: at(17), tailHours: 2 },
   ]);
-  const result = computeEstimate(items, [], at(21.5)); // no open row, the last done row a build row: its closing lies ahead
-  assert.deepEqual(result.closing, { low: 1.5, high: 2, measured: 2 });
-  nearRange(result.raw, [1, 1.5], 'raw'); // 1.5-2 h minus the 0.5 h since B7 was done
-  assert.equal(block(result)[1], 'Includes: 0 open rows (0 running); no open build row: the closing phase 1.5-2 h (review, fix rounds, recheck, landing; measured from 2 finished jobs here) has run 0.5 h');
+  assert.deepEqual(closingRange(deliveries), { low: 1.5, high: 2, measured: 2 });
+  const result = estimate(fiveDoneRows(), 14); // first cycle, no open row, the last done row (D5, 13 h) a build row
+  nearRange(result.raw, [0.4, 1.5], 'raw'); // 1.4-2.5 h minus the 1 h since D5 was done
+  assert.equal(block(result)[1], 'Includes: 0 open rows (0 running); no open build row: the closing phase 1.4-2.5 h (review, fix rounds, recheck, landing; default, not yet measured here) has run 1 h');
 });
 
 test('fix rounds (a): one finished job widens the default to include its tail; the last 5 tails are used', () => {
@@ -122,12 +123,14 @@ test('rates (g): a row that ran 1.4 of its 1.5 h leaves at most 0.1 h, and its r
 });
 
 test('hidden hours (c): the block has no days; a 20-minute job prints a 5-minute clock range; a range on the grid is widened to 5 minutes', () => {
-  const jobs = [...fiveDoneRows(), close({ id: 'C1', startedH: 13, doneH: 13.5 }), row({ id: 'B6', startedH: 15, doneH: 16 }), close({ id: 'C2', startedH: 16, doneH: 16.5 })];
-  const twenty = computeEstimate(itemsOf([...jobs, row({ id: 'B7', startedH: 18, raw: { done: '2026-11-10T19:02Z' } })]), [], Date.parse('2026-11-10T19:12Z'));
-  assert.equal(block(twenty)[0], 'Finish: Tue 10 Nov 23:00-23:05 (local +03:30, now 22:42)'); // 19:32Z = 23:02 local
+  // a delivery at 13.5 h, then two finished 0.5 h follow-up rounds: the round range is 0.5-0.5 h
+  const jobs = [...fiveDoneRows(), close({ id: 'C1', startedH: 13, doneH: 13.5 }), row({ id: 'B6', startedH: 14, doneH: 14.25 }), close({ id: 'C2', startedH: 14.25, doneH: 14.5 }),
+    row({ id: 'B7', startedH: 15, doneH: 15.25 }), close({ id: 'C3', startedH: 15.25, doneH: 15.5 })];
+  const twenty = computeEstimate(itemsOf([...jobs, row({ id: 'B8', raw: { started: '2026-11-10T16:02Z', done: '2026-11-10T16:10Z' } })]), [], Date.parse('2026-11-10T16:12Z'));
+  assert.equal(block(twenty)[0], 'Finish: Tue 10 Nov 20:00-20:05 (local +03:30, now 19:42)'); // 16:32Z = 20:02 local
   assert.doesNotMatch(formatEstimate(twenty, INPUTS), /day/);
-  const onGrid = computeEstimate(itemsOf([...jobs, row({ id: 'B7', startedH: 18, doneH: 19 })]), [], Date.parse('2026-11-10T19:12Z'));
-  assert.equal(block(onGrid)[0], 'Finish: Tue 10 Nov 23:00-23:05 (local +03:30, now 22:42)'); // 19:30Z = 23:00 local
+  const onGrid = computeEstimate(itemsOf([...jobs, row({ id: 'B8', startedH: 16, raw: { done: '2026-11-10T16:10Z' } })]), [], Date.parse('2026-11-10T16:12Z'));
+  assert.equal(block(onGrid)[0], 'Finish: Tue 10 Nov 20:00-20:05 (local +03:30, now 19:42)'); // 16:30Z = 20:00 local
 });
 
 test('hidden hours (c): a range across local midnight names both days; finishClock adds the weekday only when the low end is not today', () => {
@@ -177,8 +180,8 @@ test('overrun: no build row open and the closing ran as long as its high end is 
   assert.equal(result.finish, undefined);
   assert.equal(formatRefusal(result, TZ), 'No finish time: the closing phase has run 2.5 h since the last build row was done (D5, 16:30), longer than the default closing (1.4-2.5 h, not yet measured here).\n'
     + 'What to do: tell the owner the job is past its usual closing; this ends at delivery, whose length then joins the history. Work not in the table: add it as a row first.');
-  const measured = estimate([...TWO_JOBS, row({ id: 'B7', startedH: 20, doneH: 21 })], 23);
-  assert.match(formatRefusal(measured, TZ), /^No finish time: the closing phase has run 2 h since the last build row was done \(B7, 00:30\), longer than every closing measured here \(1\.5-2 h, 2 jobs\)\.\n/);
+  const afterDelivery = estimate([...TWO_JOBS, row({ id: 'B7', startedH: 20, doneH: 21 })], 23); // B7 started after a delivery: a round
+  assert.match(formatRefusal(afterDelivery, TZ), /^No finish time: the follow-up round has run 3 h since it started \(B7, 23:30\), longer than the default round \(0\.4-3 h, widened by 1 finished round here\), and no open row is left\.\n/);
   const onlyClose = estimate([0, 1, 2, 3, 4].map((h, i) => close({ id: `K${i + 1}`, startedH: h, doneH: h + 1 })).concat(close({ id: 'K6', startedH: 5 })), 8);
   assert.match(formatRefusal(onlyClose, TZ), /run 8 h since the first closing row started \(K1, 03:30\)/);
   const round = estimate([...TWO_JOBS, close({ id: 'C3', startedH: 20 })], 23); // after a delivery: a follow-up round
@@ -210,7 +213,7 @@ test('review 4: a close row done 2 minutes ago is not yet a delivery; the closin
   assert.deepEqual(findDeliveries(itemsOf(rows), [], Date.parse('2026-11-10T15:02Z')), []);
   assert.deepEqual(findDeliveries(itemsOf(rows), [], Date.parse('2026-11-10T15:10Z')).map((d) => d.at), [at(15)]);
   const result = computeEstimate(itemsOf(rows), [], Date.parse('2026-11-10T15:02Z'));
-  assert.equal(block(result, { ...INPUTS, timeZone: 'UTC' })[0], 'Finish: Tue 10 Nov 15:00-15:30 (local +00:00, now 15:02)');
+  assert.equal(block(result, { ...INPUTS, timeZone: 'UTC' })[0], 'Finish: Tue 10 Nov 15:05-15:30 (local +00:00, now 15:02)'); // never before now
 });
 
 test('review 6a: a row running past every measured rate says its remaining time is not known', () => {
