@@ -1,0 +1,49 @@
+// Purpose: walk the directory, hand each file to the readers that know its kind, and collect findings and hints.
+// Exports: scanDirectory.
+// Invariants: `.env*` files are never opened. A file that cannot be read or parsed becomes a hint `unreadable?` with the
+//   reason (never an exception). A kind ending in `?` is a hint, every other kind is a finding. Results are sorted by
+//   file, then line, then kind.
+import { basename, join } from 'node:path';
+import { Disk } from './disk.mjs';
+import { readTsconfig } from './tsconfig.mjs';
+import { walkTree } from './walk.mjs';
+
+const UNREADABLE = 'unreadable?';
+const isEnvFile = (rel) => basename(rel).startsWith('.env');
+
+const READERS = [
+  { matches: (rel) => /^(tsconfig|jsconfig)[^/]*\.json$/.test(basename(rel)), read: readTsconfig },
+];
+
+const byFileThenLine = (a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line || (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0));
+
+function readOne(rel, readers, context) {
+  const abs = join(context.disk.root, rel);
+  try {
+    const file = { rel, abs, text: context.disk.readText(abs) };
+    return readers.flatMap((reader) => reader.read(file, context)).map((result) => ({ file: rel, ...result }));
+  } catch (error) {
+    return [{ file: rel, line: error.line ?? 1, kind: UNREADABLE, value: error.message }];
+  }
+}
+
+/**
+ * Scans a directory for references to paths that do not exist.
+ * @param {string} root directory to scan
+ * @returns {{findings: object[], hints: object[], scanned: number}} each item is {file, line, kind, value}
+ * @throws when the root cannot be read
+ */
+export function scanDirectory(root) {
+  const { files, folders, problems } = walkTree(root);
+  const context = { disk: new Disk(root), files, folders };
+  const results = problems.map((problem) => ({ file: problem.path, line: 1, kind: UNREADABLE, value: problem.reason }));
+  let scanned = 0;
+  for (const rel of files.filter((path) => !isEnvFile(path))) {
+    const readers = READERS.filter((reader) => reader.matches(rel));
+    if (readers.length === 0) continue;
+    scanned += 1;
+    results.push(...readOne(rel, readers, context));
+  }
+  results.sort(byFileThenLine);
+  return { findings: results.filter((r) => !r.kind.endsWith('?')), hints: results.filter((r) => r.kind.endsWith('?')), scanned };
+}
