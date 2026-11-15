@@ -323,5 +323,12 @@ test('Persian text in the brief reaches the agent byte for byte', () => {
 test('withBriefLines fails open: input that throws when read, odd input or an odd cwd gives null (the brief stays as it is)', () => {
   const exploding = new Proxy({}, { get: () => { throw new Error('exploded'); } });
   for (const odd of [exploding, undefined, null, 42, 'text', { prompt: 42, subagent_type: 'architect' }]) assert.equal(withBriefLines(odd, tmpdir()), null);
-  assert.equal(withBriefLines({ prompt: PROMPT, subagent_type: 'implementer' }, { not: 'a path' }), null, 'not a string: this folder, no STATUS.md');
+  // an odd cwd means "this folder": run from an empty one, so a STATUS.md where the suite was started cannot change the result
+  const startedIn = process.cwd();
+  process.chdir(mkdtempSync(join(tmpdir(), 'brief-empty-')));
+  try {
+    assert.equal(withBriefLines({ prompt: PROMPT, subagent_type: 'implementer' }, { not: 'a path' }), null, 'not a string: this folder, no STATUS.md');
+  } finally {
+    process.chdir(startedIn);
+  }
 });
