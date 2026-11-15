@@ -7,11 +7,12 @@
 // still sees a secret the value extraction missed: nested, partial or re-quoted text). Anything uncertain shows the dialog.
 // A remembered value is checked before the bounce, so an already allowed secret is never bounced.
 // A secret-only dialog waits CLAUDE_ASK_SECRET_TIMEOUT_S (default 30 s, never more than CLAUDE_ASK_TIMEOUT_S) before going ahead as Allow.
-// Advice (the ask's `advice`, quality rules) never changes this path: "secret-only" is judged without it, and its text is only appended to
-// the reason the dialog, the CLI's ask and the log show (and to a bounce's deny text, lib/bounce-once.mjs).
+// Advice (the ask's `advice`, quality rules) never changes a safety decision: "secret-only" is judged without it, and the reason the dialog,
+// the CLI's ask, the log and a bounce's deny text show only names its classes (withAdvice, lib/bounce-once.mjs). When a remembered secret
+// makes the command silent, its advice is still given once (adviceOnce), exactly as for a command with advice alone.
 // Invariants: never remembers on deny, no-gui, dialog-failed or bounce; no raw value is logged or stored.
 import { isRemembered, remember } from './allowed-literals.mjs';
-import { bounceOnce, withAdvice } from './bounce-once.mjs';
+import { adviceOnce, bounceOnce, withAdvice } from './bounce-once.mjs';
 import { logDecision } from './guard-log.mjs';
 import { literalSecretValues } from './secrets.mjs';
 import { ASK_TIMEOUT_ENV, askOwner, secretAskTimeoutSeconds } from './timed-ask.mjs';
@@ -30,13 +31,14 @@ export function neutralise(command, values) {
 
 /**
  * The hook stdout for an ask. A secret-only ask whose values the owner already allowed in this session is silent (logged as
- * "remembered") when the command is also clean with those values neutralised; otherwise a command the agent can rewrite is bounced the
- * first time (lib/bounce-once.mjs), and the rest get the timed dialog, where an allow or timeout on a secret-only ask is remembered.
+ * "remembered") when the command is also clean with those values neutralised, and then only its advice, if any, is given once; otherwise
+ * a command the agent can rewrite is bounced the first time (lib/bounce-once.mjs), and the rest get the timed dialog, where an allow or
+ * timeout on a secret-only ask is remembered.
  * @param {{reason: string, reasons?: string[], advice?: string[], errorClass?: string}} ask the ask from decideSafely
  * @param {{command: string, cwd: string, input: {session_id?: string, agent_id?: string}, recheck: (text: string) => {allow?: boolean}}} call
  *   the Bash call being guarded; recheck runs the same rules (same context, prod hosts included) on other text
  * @param {Record<string, string | undefined>} env process environment (HOME, dialog, log)
- * @returns {string} hook stdout ('' for allow)
+ * @returns {string} hook stdout ('' for allow; a deny line for a bounce, a Deny click, or advice given once)
  */
 export function askUnlessRemembered(ask, { command, cwd, input, recheck }, env = process.env) {
   // after a rules error the log gets the error class and no command text (the dialog still shows it)
@@ -45,7 +47,7 @@ export function askUnlessRemembered(ask, { command, cwd, input, recheck }, env =
   const values = secretOnly ? literalSecretValues(command) : [];
   if (isRemembered(input.session_id, values, env) && recheck(neutralise(command, values)).allow === true) {
     logDecision({ hook: 'pre-bash-guard', tool: 'Bash', decision: 'allow', outcome: 'remembered', reason, command, cwd, session: input.session_id }, env);
-    return '';
+    return ask.advice ? adviceOnce(ask.advice, { command, cwd, input }, env) : ''; // the secret needs no answer; its advice still counts
   }
   const bounced = bounceOnce(ask, { command, cwd, input }, env); // never throws; undefined means "ask as usual"
   if (bounced) return bounced; // only a deny line ends here: empty hook output would be an allow

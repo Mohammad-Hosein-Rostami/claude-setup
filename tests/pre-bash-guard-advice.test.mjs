@@ -46,7 +46,8 @@ function outcome({ status, stdout, stderr }) {
   return { decision: permissionDecision, reason: permissionDecisionReason };
 }
 
-const hookInput = (command, options = {}) => JSON.stringify({ cwd: options.cwd ?? PROJECT, session_id: options.session ?? 'sess-1', tool_input: { command } });
+// options.session: undefined sends no session id at all
+const hookInput = (command, options = {}) => JSON.stringify({ cwd: options.cwd ?? PROJECT, session_id: 'session' in options ? options.session : 'sess-1', tool_input: { command } });
 
 /** A private HOME and decision log; run() sends one Bash call to the guard hook and returns what it decided. */
 function guardSession() {
@@ -103,8 +104,24 @@ test('table row "advice only": the first send is denied with the advice, the ide
   assert.deepEqual(lines.slice(1), [`- ${lockfileAdvice('pnpm-lock.yaml')}`]);
   assert.deepEqual(s.run(LOCKFILE_EDIT), { decision: 'allow' }, 'the identical retry runs');
   assert.deepEqual(s.run(LOCKFILE_EDIT), { decision: 'allow' }, 'and every later identical send');
-  const lockfile = 'hand-edited lockfile';
-  assert.deepEqual(logRows(s), [['deny', 'advice', lockfile, '', ''], ['allow', 'advice-retry', lockfile, '', ''], ['allow', 'advice-retry', lockfile, '', '']]);
+  const [lockfile, advice] = ['hand-edited lockfile', lockfileAdvice('pnpm-lock.yaml')];
+  assert.deepEqual(logRows(s), [
+    ['deny', 'advice', lockfile, LOCKFILE_EDIT, advice], ['allow', 'advice-retry', lockfile, LOCKFILE_EDIT, advice],
+    ['allow', 'advice-retry', lockfile, LOCKFILE_EDIT, advice],
+  ]);
+});
+
+test('every advice decision is logged like an ask, the command masked and cut; advice that cannot be stored runs, logged advice-unrecorded', () => {
+  const s = guardSession();
+  const long = `sed -i ${'-e s/x/y/ '.repeat(30)}pnpm-lock.yaml`;
+  assert.equal(s.run(long).decision, 'deny');
+  assert.deepEqual(s.run(LOCKFILE_EDIT, { session: undefined }), { decision: 'allow' }, 'no session id: nothing can be stored, so it runs');
+  assert.deepEqual(s.run(LOCKFILE_EDIT, { session: undefined }), { decision: 'allow' }, 'and runs again: no deny that repeats');
+  const [lockfile, advice] = ['hand-edited lockfile', lockfileAdvice('pnpm-lock.yaml')];
+  assert.deepEqual(logRows(s), [
+    ['deny', 'advice', lockfile, long.slice(0, 200), advice], ['allow', 'advice-unrecorded', lockfile, LOCKFILE_EDIT, advice],
+    ['allow', 'advice-unrecorded', lockfile, LOCKFILE_EDIT, advice],
+  ]);
 });
 
 test('after advice, a different command, a trailing blank, another directory or another session is a first time (the bounce-once match)', () => {
@@ -119,35 +136,54 @@ test('after advice, a different command, a trailing blank, another directory or 
   assert.equal(s.run(command, { session: 'sess-2' }).decision, 'allow', 'and in sess-2');
 });
 
-test('table row "bounce class + advice": a lockfile edit with a literal secret is bounced, then asked, exactly like the secret alone, the advice appended', () => {
+test('table row "bounce class + advice": a lockfile edit with a literal secret is bounced, then asked, exactly like the secret alone, the advice class named', () => {
   const alone = guardSession();
   const mixed = guardSession();
   const aloneCommand = `KEY='${SECRET_VALUE}' sed -i s/a/b/ notes.txt`;
   const mixedCommand = `KEY='${SECRET_VALUE}' ${LOCKFILE_EDIT}`;
-  const advice = lockfileAdvice('pnpm-lock.yaml');
   for (const send of ['first', 'retry']) {
     const [expected, got] = [alone.run(aloneCommand), mixed.run(mixedCommand)];
     assert.equal(got.decision, send === 'first' ? 'deny' : 'ask', send);
-    assert.deepEqual(got, { ...expected, reason: `${expected.reason}\n${advice}` }, send);
+    assert.deepEqual(got, { ...expected, reason: `${expected.reason}\nalso: hand-edited lockfile` }, send);
   }
   assert.deepEqual(mixed.log().map((line) => [line.outcome, line.class]), [['bounce', 'secret'], ['no-gui', undefined]]);
 });
 
-test('table row "ask + advice": a lockfile edit with git push asks on every send like the push alone, the advice appended; nothing is stored', () => {
+test('table row "ask + advice": a lockfile edit with git push asks on every send like the push alone, the advice class named; nothing is stored', () => {
   const s = guardSession();
-  const expected = { decision: 'ask', reason: `${decide(PUSH, ctx).reason}\n${lockfileAdvice('pnpm-lock.yaml')}` };
+  const expected = { decision: 'ask', reason: `${decide(PUSH, ctx).reason}\nalso: hand-edited lockfile` };
   assert.deepEqual(s.run(`${LOCKFILE_EDIT} && ${PUSH}`), expected);
   assert.deepEqual(s.run(`${LOCKFILE_EDIT} && ${PUSH}`), expected);
   assert.deepEqual(s.log().map((line) => line.outcome), ['no-gui', 'no-gui']);
   assert.equal(existsSync(s.store), false);
 });
 
-test('table row "ask + advice" with a secret the owner allowed: the same value again runs silently, exactly like the secret alone', () => {
+test('a safety verdict names its advice by class only: the advice\'s "send the same command again and it runs" never reaches the owner or a bounce', () => {
+  const retrySentence = 'send the same command again and it runs';
+  const s = guardSession();
+  const ask = s.run(`git pull && ${PUSH}`);
+  assert.deepEqual(ask, { decision: 'ask', reason: `${decide(PUSH, ctx).reason}\nalso: merge commit` });
+  const [bounce, retry] = [s.run(`KEY='${SECRET_VALUE}' git merge x`), s.run(`KEY='${SECRET_VALUE}' git merge x`)];
+  assert.deepEqual([bounce.decision, retry.decision], ['deny', 'ask']);
+  for (const { reason } of [ask, bounce, retry]) {
+    assert.equal(reason.includes(retrySentence), false, reason);
+    assert.match(reason, /\nalso: merge commit$/);
+  }
+  assert.match(s.run(`echo x > yarn.lock && git merge y && ${PUSH}`).reason, /\nalso: hand-edited lockfile; merge commit$/);
+  assert.equal(s.log().some((line) => line.reason.includes(retrySentence)), false, 'nor the log');
+});
+
+test('table row "ask + advice" with a secret the owner allowed: the secret stays silent, and the advice is still given once, then the retry runs', () => {
   const s = guardSession();
   remember('sess-1', [SECRET_VALUE], { HOME: s.home, USERPROFILE: s.home });
   assert.deepEqual(s.run(`KEY='${SECRET_VALUE}' sed -i s/a/b/ notes.txt`), { decision: 'allow' }, 'the secret alone');
-  assert.deepEqual(s.run(`KEY='${SECRET_VALUE}' ${LOCKFILE_EDIT}`), { decision: 'allow' }, 'with a lockfile edit');
-  assert.deepEqual(s.log().map((line) => line.outcome), ['remembered', 'remembered']);
+  const command = `KEY='${SECRET_VALUE}' ${LOCKFILE_EDIT}`;
+  const first = s.run(command);
+  assert.equal(first.decision, 'deny', 'the advice the remembered secret would have hidden');
+  assert.deepEqual(first.reason.split('\n').slice(1), [`- ${lockfileAdvice('pnpm-lock.yaml')}`]);
+  assert.deepEqual(s.run(command), { decision: 'allow' }, 'the identical retry runs');
+  assert.deepEqual(s.log().map((line) => line.outcome), ['remembered', 'remembered', 'advice', 'remembered', 'advice-retry']);
+  assert.equal(JSON.stringify(s.log()).includes(SECRET_VALUE), false, 'the advice lines mask the secret like every other line');
 });
 
 test('table row "nothing": a command with no reason runs on every send and logs nothing', () => {
@@ -164,6 +200,8 @@ test('table row "store unusable": advice only runs on every send (no deny that r
   for (const send of [1, 2]) assert.equal(s.run(`${LOCKFILE_EDIT} && ${PUSH}`).decision, 'ask', `with a push, send ${send}`);
   for (const session of ['', '../escape', 'x'.repeat(101)]) assert.deepEqual(s.run(LOCKFILE_EDIT, { session }), { decision: 'allow' }, `session ${session}`);
   assert.equal(readFileSync(s.store, 'utf8'), 'not a folder');
+  const adviceLines = s.log().filter((line) => line.outcome.startsWith('advice'));
+  assert.deepEqual(adviceLines.map((line) => [line.outcome, line.command]), Array(5).fill(['advice-unrecorded', LOCKFILE_EDIT]));
   const call = { command: LOCKFILE_EDIT, cwd: PROJECT, input: { session_id: 'sess-1' } };
   const exploding = new Proxy({}, { get: () => { throw new Error('env exploded'); } });
   assert.equal(adviceOnce([lockfileAdvice('pnpm-lock.yaml')], call, exploding), '', 'an exception runs the command, never a deny');
@@ -221,7 +259,7 @@ test('C37 through the hook: git merge alone is denied once with the advice, then
   const s = guardSession();
   assert.deepEqual(s.run('git merge lane/x').reason.split('\n').slice(1), [`- ${MERGE_ADVICE}`]);
   assert.deepEqual(s.run('git merge lane/x'), { decision: 'allow' });
-  const mixed = { decision: 'ask', reason: `${decide(PUSH, ctx).reason}\n${MERGE_ADVICE}` };
+  const mixed = { decision: 'ask', reason: `${decide(PUSH, ctx).reason}\nalso: merge commit` };
   assert.deepEqual([s.run(`git merge lane/x && ${PUSH}`), s.run(`git merge lane/x && ${PUSH}`)], [mixed, mixed]);
   const merge = 'merge commit';
   assert.deepEqual(logRows(s).map((row) => row.slice(0, 3)), [['deny', 'advice', merge], ['allow', 'advice-retry', merge], ['ask', 'no-gui', undefined], ['ask', 'no-gui', undefined]]);

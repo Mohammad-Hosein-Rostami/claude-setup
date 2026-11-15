@@ -21,15 +21,18 @@
 // Advice (adviceOnce): a quality rule (lib/reason-classes.mjs ADVICE_CLASSES), not a safety rule. decide() returns it apart from the reasons
 // that ask, as `advice`, so it can never hide or replace one. A command whose only reasons are advice is denied once with the advice (log
 // outcome "advice") and its identical retry runs without the owner (outcome "advice-retry"); same store, same match as a bounce. Next to a
-// reason that asks or bounces, that path decides as before and the advice text is only appended to its message (withAdvice).
+// reason that asks or bounces, that path decides as before and its message only names the advice classes ("also: merge commit",
+// withAdvice): the advice text says its retry runs, which is false there. Every advice decision is logged like an ask (masked, cut command;
+// the advice as the reason). Advice that cannot be recorded (unusable store, no or odd session id, any failure) runs, logged
+// "advice-unrecorded": a deny with no record would come back on every retry and stall the agent, and advice never asks the owner.
 // Decision table: what the hook answers, by the kinds of reasons decide() found ("ask" = lib/remembered-ask.mjs: a secret the owner already
-// allowed runs silently, else the timed dialog, or the CLI's ask without a GUI):
+// allowed runs silently, its advice still given once as in the advice-only row; else the timed dialog, or the CLI's ask without a GUI):
 //   reasons found                    | first send                                  | identical retry (same text, cwd, session)
 //   none                             | runs                                        | runs
 //   advice only                      | deny: the advice (adviceOnce)               | runs, never the owner
-//   ask, no bounce class (+ advice)  | ask (+ the advice text)                     | ask (+ the advice text)
-//   bounce class (+ ask) (+ advice)  | deny: the rewrite (+ the advice text)       | ask (+ the advice text)
-//   store unusable or any failure    | advice only: runs (a deny could repeat forever); every other row: ask
+//   ask, no bounce class (+ advice)  | ask (+ the advice classes)                  | ask (+ the advice classes)
+//   bounce class (+ ask) (+ advice)  | deny: the rewrite (+ the advice classes)    | ask (+ the advice classes)
+//   store unusable or any failure    | advice only: runs, logged advice-unrecorded; every other row: ask
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -118,14 +121,23 @@ function recordSend(session, digest, env) {
   return writeSessionFile(bouncedDir(env), session, JSON.stringify({ digests: [...stored, digest].slice(-MAX_BOUNCED) })) ? 'first' : undefined;
 }
 
+const ADVICE_NOTE = 'also: ';
+
 /**
+ * A safety verdict's message plus one line naming the advice classes ("also: merge commit"). Never the advice text itself: its "send the
+ * same command again and it runs" is false for a command that asks or bounces, and would mislead the owner or the agent.
  * @param {string} text the message of today's path (a deny text, or an ask reason)
  * @param {string[]} [advice] decide's `advice`
- * @returns {string} text with each advice text appended on its own line (unchanged without advice)
+ * @returns {string} text, plus that line when there is advice
  */
-export const withAdvice = (text, advice = []) => [text, ...advice].join('\n');
+export function withAdvice(text, advice = []) {
+  if (advice.length === 0) return text;
+  return `${text}\n${ADVICE_NOTE}${unique(advice.map((line) => reasonClass(line) ?? OTHER_RULE)).join('; ')}`;
+}
 
 const ADVICE_HEADER = 'Not run: the guard sent this command back once with advice (the owner was not asked).';
+const ADVICE_OUTCOMES = new Map([['first', 'advice'], ['retry', 'advice-retry']]); // recordSend's answer -> log outcome
+const ADVICE_UNRECORDED = 'advice-unrecorded'; // the store could not record the send: the command runs
 
 /**
  * The hook stdout for a bounce, or undefined when this ask takes the normal path (dialog or the CLI's ask).
@@ -147,22 +159,23 @@ export function bounceOnce(ask, { command, cwd, input }, env = process.env) {
 }
 
 /**
- * The hook stdout for a command whose only reasons are advice (decide's `allow: true` with `advice`); see the decision table above.
+ * The hook stdout for a command whose only reasons are advice (decide's `allow: true` with `advice`, or an ask lib/remembered-ask.mjs
+ * found already answered); see the decision table above. Every call writes one log line: the masked command, the advice as the reason.
  * @param {string[]} advice decide's `advice` (fixed texts, see lib/reason-classes.mjs)
  * @param {{command: string, cwd: string, input: {session_id?: unknown}}} call the Bash call being guarded
  * @param {Record<string, string | undefined>} env process environment (HOME, CLAUDE_GUARD_LOG)
  * @returns {string} a PreToolUse deny JSON line on the first send; '' (no decision: the command runs) on the identical retry, and when
- *   the store is unusable or anything fails, so a deny never repeats and the owner is never asked
+ *   the send cannot be recorded (logged "advice-unrecorded"), so a deny never repeats and the owner is never asked
  */
 export function adviceOnce(advice, { command, cwd, input }, env = process.env) {
+  const log = (decision, outcome) => logDecision({ hook: 'pre-bash-guard', tool: 'Bash', decision, outcome, reason: advice.join('; '), command,
+    cwd, session: input.session_id, class: unique(advice.map(reasonClass)).join(', ') }, env);
   try {
     const send = recordSend(input.session_id, digestOf(cwd, command), env);
-    if (send === undefined) return '';
-    const first = send === 'first';
-    const classes = unique(advice.map(reasonClass)).join(', ');
-    logDecision({ hook: 'pre-bash-guard', tool: 'Bash', decision: first ? 'deny' : 'allow', outcome: first ? 'advice' : 'advice-retry', class: classes, cwd, session: input.session_id }, env);
-    return first ? decisionOutput({ decision: 'deny', reason: [ADVICE_HEADER, ...advice.map((line) => `- ${line}`)].join('\n') }) : '';
+    log(send === 'first' ? 'deny' : 'allow', ADVICE_OUTCOMES.get(send) ?? ADVICE_UNRECORDED);
+    return send === 'first' ? decisionOutput({ decision: 'deny', reason: [ADVICE_HEADER, ...advice.map((line) => `- ${line}`)].join('\n') }) : '';
   } catch {
+    log('allow', ADVICE_UNRECORDED); // logDecision never throws
     return ''; // advice is never a reason to ask: a failure here lets the command run, as decide() allowed it
   }
 }
