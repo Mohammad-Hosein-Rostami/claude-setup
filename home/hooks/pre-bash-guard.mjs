@@ -77,7 +77,7 @@ import { scanWrapped } from './lib/dangerous-scan.mjs';
 import { editLogPath, recordEdit } from './lib/edit-log.mjs';
 import { checkEval } from './lib/eval-check.mjs';
 import { checkFind } from './lib/find-delete.mjs';
-import { gitRunValueReasons, judgeOnce, namesWrittenIn } from './lib/git-run-values.mjs';
+import { gitRunValueReasons, judgeOnce, lineFacts, valueReasons } from './lib/git-run-values.mjs';
 import { GIT_UNREADABLE_REASON, gitRunReasons } from './lib/git-runs.mjs';
 import { mergeCommitAdvice } from './lib/merge-commit.mjs';
 import { outwardAsk } from './lib/outward.mjs';
@@ -179,7 +179,7 @@ function checkCommand(command, env, nextWords) {
   const script = SHELLS.has(cmd) ? shellScript(args) : undefined;
   if (script) return [checkStdinScriptRm(script, command.before), ...reasonsOf(script, env)].filter((reason) => reason !== undefined);
   const evalReasons = cmd === 'eval' ? checkEval(args, nextWords, (text) => reasonsOf(text, env)) : [];
-  return [...checkSimple(command, env), ...evalReasons, ...(cmd === 'git' ? gitRunReasons(command, env, (text, inner) => judgeOnce(text, inner, reasonsOf)) : [])];
+  return [...checkSimple(command, env), ...evalReasons, ...(cmd === 'git' ? gitRunReasons(command, env, (text, inner) => judgeOnce(text, inner, reasonsOf), (text, inner, target) => valueReasons(text, inner, reasonsOf, target)) : [])];
 }
 
 /**
@@ -187,7 +187,7 @@ function checkCommand(command, env, nextWords) {
  * scanned for a dangerous command behind an unknown wrapper), then nested bodies. Variables assigned earlier in the line are
  * tracked in order, the last assignment wins.
  */
-function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth = 0, judged = new Map(), written = namesWrittenIn(command) }) {
+function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth = 0, judged = new Map(), line = lineFacts(command) }) {
   if (depth > MAX_NESTING) return ['commands are nested too deeply to check (bash -c / eval / $( ) inside each other); write them out flat'];
   const reasons = [];
   const secret = findLiteralSecret(command);
@@ -200,7 +200,7 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
     const words = substituteKnownWords(seg, scope);
     const parsed = asGitSubcommand(commandOf(words));
     commands.push({ ...parsed, piped: seg.piped === true }); // credential-send follows a pipe into ssh
-    const env = { cwd: dir, project, vars: scope.vars, prodHosts, parse, depth: depth + 1, judged, written };
+    const env = { cwd: dir, project, vars: scope.vars, prodHosts, parse, depth: depth + 1, judged, line };
     reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript }), ...gitRunValueReasons(words, parsed, env, reasonsOf));
     if (parsed.cmd !== undefined) {
       reasons.push(...checkCommand({ ...parsed, before: words.slice(0, parsed.at) }, env, segs[index + 1] ?? []));
@@ -211,7 +211,7 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
   });
   const credentialSend = checkCredentialSend(commands); // one command line: the file may be read in one command and sent by another
   if (credentialSend !== undefined) reasons.push(credentialSend);
-  for (const inner of nested) reasons.push(...reasonsOf(inner, { cwd, project, prodHosts, parse, depth: depth + 1, judged, written }));
+  for (const inner of nested) reasons.push(...reasonsOf(inner, { cwd, project, prodHosts, parse, depth: depth + 1, judged, line }));
   return [...new Set(reasons)]; // a value many git commands run gives its reasons once, not once per command (the list stays short)
 }
 

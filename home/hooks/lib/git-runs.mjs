@@ -11,8 +11,8 @@
 //   subsection), `alias.*` runs `!<shell text>` or else git with the value as its words, `remote.*.vcs` runs `git remote-<value>`, and
 //   core.hooksPath asks as `-c` does; COMMAND_ENV variables set in front of git (also by `env`) or earlier in the line; `ext::<command>`
 //   URLs among git's words and config values, and `git remote-ext <remote> <command>` (git-remote-ext splits it at unescaped spaces).
-// A config or environment value that is a variable or substitution is not a "variable command word" ask (`GIT_PAGER="$P" git log` stays
-// silent; lib/raw-risk.mjs still asks next to a dangerous word); an option value is a `bash -c` body in every way. GIT_UNREADABLE_REASON
+// A config or environment value goes through the caller's value check (lib/git-run-values.mjs: one reference to an inherited variable
+// stays silent, what it cannot read asks); an option value is a `bash -c` body in every way. GIT_UNREADABLE_REASON
 // asks for a `--config-env` variable the line does not set (EDITOR-style variables excepted), a GIT_CONFIG_KEY_<n> without its value,
 // `ext::` switched on (protocol.ext.allow, protocol.allow, GIT_ALLOW_PROTOCOL) and word lists that differ between readings of git's
 // options. Config files and values set in ways the guard cannot read (`printf -v`, `read`, `"$A$B"`) are lib/raw-risk.mjs's job.
@@ -22,7 +22,7 @@ import { resolve } from 'node:path';
 import { configOf, HOOKS_PATH_REASON } from './command-checks.mjs';
 import { parseGitArgs } from './git-options.mjs';
 import { expandHome, nativePath, withoutRedirects } from './rm-paths.mjs';
-import { CONVENTIONAL_COMMAND_VARS, SPLIT_VARIABLE_REASON, VARIABLE_COMMAND_REASON } from './shell-hazards.mjs';
+import { CONVENTIONAL_COMMAND_VARS } from './shell-hazards.mjs';
 import { QUOTED_MARK, segments } from './shell-words.mjs';
 
 export const GIT_UNREADABLE_REASON = 'git runs a command this guard cannot read (a variable this command line does not set, or ext:: '
@@ -70,7 +70,6 @@ const LONG_PREFIX = '--'; // alone, the word that ends a list of options
 const FOR_EACH_REPO_CONFIG = '--config'; // for-each-repo's option that takes a value
 const FOR_EACH_REPO_FLAGS = ['--keep-going', '--no-keep-going'];
 const PROTOCOL_OFF = 'never';
-const VARIABLE_COMMAND_REASONS = new Set([VARIABLE_COMMAND_REASON, SPLIT_VARIABLE_REASON]);
 
 const plain = (word) => (word.startsWith(QUOTED_MARK) ? word.slice(QUOTED_MARK.length) : word);
 /** One word in single quotes, as git quotes the words of `bisect run`: the shell reads it back as exactly that word. */
@@ -253,7 +252,7 @@ function innerCwd(options, cwd, valuesOf) {
   return dir;
 }
 
-/** What this git command makes git run, as {runs: [{text, cwd, value?}], asks}; value marks a config or environment value. */
+/** What this git command makes git run, as {runs: [{text, cwd, value?, target?}], asks}; value marks a config or environment value, target its variable. */
 function commandsOf({ args, before }, env) {
   const valuesOf = assignmentsOf(before, env.vars ?? new Map());
   const { options, subcommands } = parseGitArgs(args);
@@ -268,7 +267,8 @@ function commandsOf({ args, before }, env) {
   const list = lists.length === 1 ? listCommand(lists[0]) : undefined;
   const runs = [
     ...[...optionValues(subcommands, COMMAND_OPTIONS), ...[...urls, ...helperCommands].map(extCommand)].map((text) => ({ text, cwd })),
-    ...[...fromConfig.map((run) => run.text), ...COMMAND_ENV.flatMap(valuesOf)].map((text) => ({ text, cwd, value: true })),
+    ...fromConfig.map((run) => ({ text: run.text, cwd, value: true })),
+    ...COMMAND_ENV.flatMap((target) => valuesOf(target).map((text) => ({ text, cwd, value: true, target }))),
     ...(list === undefined ? [] : [{ text: list.text, cwd: list.elsewhere ? null : cwd }]),
   ];
   return { runs, asks: asks.filter((ask) => ask !== undefined) };
@@ -281,18 +281,18 @@ function commandsOf({ args, before }, env) {
  * @param {{cwd: string|null, vars?: Map<string, string>}} env the guard's env for this command (its depth already one deeper); vars holds
  *   the literal values assigned earlier in the line
  * @param {(text: string, env: object) => string[]} reasonsOf the guard's check of a command line, called with `env` and the inner cwd
- * @returns {string[]} ask reasons, empty when every command git runs is fine; a config or environment value that is a variable is not
- *   itself a reason (see the header)
+ * @param {(text: string, env: object, target?: string) => string[]} valueReasonsOf the guard's check of a config or environment value
+ *   (lib/git-run-values.mjs valueReasons), with the variable it belongs to as target
+ * @returns {string[]} ask reasons, empty when every command git runs is fine
  */
-export function gitRunReasons({ args, before = [] }, env, reasonsOf) {
+export function gitRunReasons({ args, before = [] }, env, reasonsOf, valueReasonsOf) {
   const { runs, asks } = commandsOf({ args, before }, env);
   const checked = new Set();
-  const reasons = runs.flatMap(({ text, cwd, value = false }) => {
-    const key = JSON.stringify([text, cwd, value]);
+  const reasons = runs.flatMap(({ text, cwd, value = false, target }) => {
+    const key = JSON.stringify([text, cwd, value, target]);
     if (text === undefined || text.trim() === '' || checked.has(key)) return [];
     checked.add(key);
-    const found = reasonsOf(plain(text), { ...env, cwd });
-    return value ? found.filter((reason) => !VARIABLE_COMMAND_REASONS.has(reason)) : found;
+    return value ? valueReasonsOf(plain(text), { ...env, cwd }, target) : reasonsOf(plain(text), { ...env, cwd });
   });
   return [...new Set(asks), ...reasons];
 }

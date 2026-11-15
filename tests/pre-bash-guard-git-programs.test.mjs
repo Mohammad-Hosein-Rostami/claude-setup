@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { GIT_UNREADABLE_REASON } from '../home/hooks/lib/git-runs.mjs';
+import { riskyWordInExpansion } from '../home/hooks/lib/raw-risk.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 
 const PROJECT = resolve('/work/proj');
@@ -80,4 +81,7 @@ test('the raw-text backstop reads git-<sub> too: a dashed push in a heredoc a sh
   const printfV = (program) => `printf -v E %s '${RM}'; ${program} core.editor "$E"`;
   assert.deepEqual(decide(printfV('git config'), ctx).reasons, [GIT_UNREADABLE_REASON]);
   assert.deepEqual(decide(printfV('git-config'), ctx), decide(printfV('git config'), ctx));
+  // the backstop alone, whatever the parsers find: it must read the dashed program as git too
+  assert.equal(riskyWordInExpansion(printfV('git config')), GIT_UNREADABLE_REASON);
+  assert.equal(riskyWordInExpansion(printfV('git-config')), GIT_UNREADABLE_REASON);
 });

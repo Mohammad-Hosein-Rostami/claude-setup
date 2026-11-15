@@ -1,5 +1,5 @@
 // Segment tokens -> the real command: looks through keywords (`if`, `!`, `{`), `VAR=x` words and wrappers (sudo, env, ...).
-// Exports: commandOf(tokens) -> {cmd, args, assigns, at (index of the command word)}; commandName(word); KEYWORDS;
+// Exports: commandOf(tokens) -> {cmd, args, assigns, at (index of the command word)}; commandName(word); commandCase(name); KEYWORDS;
 // asGitSubcommand(command): git's own programs (`git-push`, `<exec path>/git-rebase`) read as `git <sub>`.
 // Pure, no I/O. Shared by pre-bash-guard and the remote-command classifier (lib/remote.mjs).
 import { basenameOf } from './shell-words.mjs';
@@ -25,10 +25,19 @@ const ASSIGNMENT = /^\w+=/;
 // git runs subcommand <sub> as the program `git-<sub>` from its exec path (also for external ones such as git-lfs); git matches it as written
 const GIT_PROGRAM = /^git-([A-Za-z0-9][A-Za-z0-9-]*)$/;
 
-/** Command word -> bare name: `/bin/rm`, `\rm` and `rm.exe` all become `rm` (lowercased on Windows). */
+// file systems that ignore case in names: Windows, and macOS (APFS and HFS+ as installed), where `GIT`, `RM` and `GIT-PUSH` run git, rm, git push
+const CASE_INSENSITIVE_PLATFORMS = new Set(['win32', 'darwin']);
+
+/** A command name as the file system matches it: lowercased where names ignore case (Windows, macOS), exact elsewhere (Linux). */
+export const commandCase = (name) => (CASE_INSENSITIVE_PLATFORMS.has(process.platform) ? name.toLowerCase() : name);
+
+/**
+ * Command word -> bare name: `/bin/rm`, `\rm` and `rm.exe` all become `rm`, and `RM` too where names ignore case (commandCase). A word
+ * with a `$` keeps its case: the shell reads a variable's name exactly (`$EDITOR` is not `$editor`).
+ */
 export function commandName(word) {
   const name = basenameOf(word).replace(/\.exe$/i, '');
-  return process.platform === 'win32' ? name.toLowerCase() : name;
+  return name.includes('$') ? name : commandCase(name);
 }
 
 /** True when the option word takes the next token as its value: listed itself, or a short cluster ending in such an option (`-Eu`). */

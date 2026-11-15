@@ -25,6 +25,7 @@ const reasonOf = (command) => decide(command, ctx).reason ?? '';
 const assertAll = (commands, check) => commands.forEach((command) => check(command));
 const asksRm = (command) => assert.match(reasonOf(command), RM_OUTSIDE, command);
 const asksUnreadable = (command) => assert.deepEqual(reasonsOf(command), [GIT_UNREADABLE_REASON], command);
+const asksUnreadableToo = (command) => assert.ok(reasonsOf(command).includes(GIT_UNREADABLE_REASON), command);
 const quiet = (command) => assert.deepEqual(decide(command, ctx), { allow: true }, command);
 
 test('the audit lines of form 2: a value set earlier in the line asks with its own reason, or as unreadable', () => {
@@ -47,9 +48,9 @@ test('every assignment form and every git-run name is read, in any quoting, with
   quiet(`export NOT_RUN_BY_GIT='${RM}'`); // only the names git runs
 });
 
-test('a value the guard cannot read asks: a substitution, a backtick, ${...} with an operator, a variable the line writes or does not resolve', () => {
+test('a value the guard cannot read asks: a substitution, a backtick, ${...} with an operator, a variable as command word or one the line writes', () => {
   assertAll(['export GIT_EDITOR="$(cat f)"', 'GIT_EDITOR=$(cat f) git commit', 'GIT_EDITOR="a `cat f`" git commit', 'GIT_EDITOR=`cat f` git commit',
-    'export GIT_PAGER=`cat f`', 'GIT_EDITOR="${X:-vim}" git commit', 'GIT_EDITOR="vim $X" git commit', 'GIT_SSH_COMMAND="$SSH -i k" git fetch',
+    'export GIT_PAGER=`cat f`', 'GIT_SSH_COMMAND="$SSH -i k" git fetch', 'GIT_EDITOR="$EDITOR --wait" git commit', 'export EDITOR=$(which vim)',
     'read -r B < f; GIT_EDITOR="$B" git commit', 'for B in a; do GIT_EDITOR="$B" git commit; done',
     'GIT_SSH_COMMAND="$(cat ssh-cmd)" git fetch', 'export GIT_EDITOR="${EDITOR:=vim}"'], asksUnreadable);
   // `+=` adds to a value the line did not set (the guard also reads `NAME+=x` as a command word, as before)
@@ -61,6 +62,22 @@ test('a value the guard cannot read asks: a substitution, a backtick, ${...} wit
   assert.ok(reasonsOf(pager).includes(GIT_UNREADABLE_REASON), pager);
 });
 
+test('audit follow-up: a reference glued to text, a config value from a substitution, a placeholder, a name written out of sight', () => {
+  const glued = 'A=r; V="${A}m -rf ~/";'; // `"$V"x` is the value of V and an x
+  assertAll([`${glued} GIT_EDITOR="$V"x git commit`, `${glued} export GIT_EDITOR="$V"x; git commit`, `${glued} git -c core.editor="$V"x commit`,
+    `X="$(printf '%sm -rf ~/x' r)"; git -c core.editor="$X" commit`, 'X="$(cat f)"; git config core.editor "$X"',
+    'X="$(cat f)"; git clone -c core.sshCommand="$X" ../src dst', 'X=$((1 + 2)); GIT_PAGER="$X" git log',
+    "printf '%sm -rf ~/x' r | xargs -I{} env GIT_EDITOR={} git commit", 'echo vim | xargs -I X env GIT_EDITOR=X git commit',
+    'find . -name x -exec env GIT_EDITOR={} git commit \\;', "read -r GIT_EDITOR <<< 'rm -rf $HOME/x'; export GIT_EDITOR; git commit",
+    "printf -v GIT_EDITOR '%sm -rf ~/x' r; export GIT_EDITOR; git commit", 'mapfile -t GIT_PAGER < f; git log', 'getopts e GIT_EDITOR',
+    `N=EDI; M=TOR; printf -v "$N$M" '%sm -rf ~/x' r; GIT_EDITOR="$EDITOR" git commit`, 'for GIT_EDITOR in vim; do git commit; done',
+    `printf -v "$1" '%sm -rf ~/x' r; GIT_EDITOR="$EDITOR" git commit`, 'X="$(cat f)"; GIT_EDITOR="vim $X" git commit'], asksUnreadableToo);
+  // one value run in two directories: harmless in the project, outside it once git runs it after cd /
+  quiet("GIT_EDITOR='rm -rf build'; git commit");
+  asksRm("GIT_EDITOR='rm -rf build'; cd /; git commit");
+  asksRm(`GIT_EDITOR="\${X:-${RM}}" git commit`); // the literal of a default is judged
+});
+
 test('the spec quiet list and one reference to a variable the line does not write stay silent', () => {
   assertAll(['GIT_EDITOR=true git rebase --continue', 'GIT_PAGER=cat git diff', 'export EDITOR=vim', 'export GIT_EDITOR="code --wait"',
     'GIT_EDITOR="$EDITOR" git commit', 'export PAGER=less', 'git-lfs pull', 'git-tidy prune --base main', 'git-cliff -o CHANGELOG.md',
@@ -68,6 +85,10 @@ test('the spec quiet list and one reference to a variable the line does not writ
   assertAll(['GIT_EDITOR="${VISUAL}" git commit', 'GIT_PAGER=$PAGER git log', 'export EDITOR="$VISUAL"', 'GIT_PAGER="$P" git log',
     'GIT_SSH_COMMAND="ssh -i $HOME/.ssh/k" git fetch', 'GIT_SSH_COMMAND="ssh -i ~/.ssh/k -o IdentitiesOnly=yes" git fetch', ': "${EDITOR:=vim}"',
     'export GIT_PAGER=', 'EDITOR= git commit', "export VISUAL='code --wait'"], quiet);
+  // a default `${NAME:-literal}` judges the literal; a variable only as an argument is an opaque argument
+  assertAll(['export EDITOR="${EDITOR:-vim}"', 'export PAGER=${PAGER:-less}', 'GIT_PAGER="${PAGER:-less}" git log', 'GIT_EDITOR="${X:-vim}" git commit',
+    'GIT_SSH_COMMAND="ssh -i $KEY" git fetch', 'GIT_EDITOR="code --wait $FILE" git commit', 'GIT_EDITOR="vim $X" git commit',
+    'GIT_PAGER="less -R $LESSOPTS" git log', 'GIT_EDITOR="$HOME/bin/ed" git commit', 'git -c core.pager="less $OPTS" log'], quiet);
 });
 
 test('form 3: in git config writes `--` ends the options and the words after it are still key and value', () => {

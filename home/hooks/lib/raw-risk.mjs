@@ -17,7 +17,7 @@
 // A false positive costs a dialog. Commands with no hidden construct never reach this rule and keep the precise per-command checks.
 // Pure, no I/O; linear in the text length.
 import { ANSI_C_WORD, decodeAnsiC } from './ansi-c.mjs';
-import { asGitSubcommand, commandName } from './command-of.mjs';
+import { asGitSubcommand, commandCase, commandName } from './command-of.mjs';
 import { withoutMessageText } from './message-text.mjs';
 import { GIT_TOPLEVEL, GIT_TOPLEVEL_WORD } from './shell-words.mjs';
 import { COMMAND_ENV, configKind, GIT_UNREADABLE_REASON } from './git-runs.mjs';
@@ -132,7 +132,7 @@ const findDeletes = (after) => after.includes('-delete') || after.some((w, i) =>
 /** @returns {string | undefined} the category of the first dangerous word in this statement's words, or undefined */
 function dangerIn(words, prodText, prodNames) {
   for (let i = 0; i < words.length; i++) {
-    const word = words[i];
+    const word = commandCase(words[i]); // `GIT`, `RM` run git and rm where names ignore case (lib/command-of.mjs)
     const after = words.slice(i + 1, i + 1 + WINDOW);
     if (word === 'git' && (pushesIn(after) || after.some((w) => w.startsWith('alias.')))) return 'git';
     if (word === 'rm' && after.some((w) => RM_FLAG.test(w)) && after.some((w) => RISKY_RM_PATH.test(w))) return 'destructive';
