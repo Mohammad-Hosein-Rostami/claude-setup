@@ -1,11 +1,13 @@
 // Finds the environment variable names a source file reads (JS, TS, Vue, Svelte and friends).
-// Exports: scanCode(text, wrappers) -> { reads: [{ name, line, builtin }], dynamic }; CODE_FILE_PATTERN.
+// Exports: scanCode(text, wrappers) -> { reads: [{ name, line, builtin }], dynamic }; CODE_FILE_PATTERN; WRAPPER_NAME.
 // Invariants: pure; only names matched by the patterns below are captured, never a default value or anything else on the
 //   line. `dynamic` counts accesses whose name is not a plain string literal (they give no name).
 const NAME = '[A-Za-z_][A-Za-z0-9_]*';
 const LITERAL = `(['"\`])(${NAME})\\1`;
 const VITE_BUILTINS = new Set(['MODE', 'DEV', 'PROD', 'SSR', 'BASE_URL']);
 
+/** A function name a `--wrapper` may be: identifiers joined by dots. Also checked for a wrapper list read from a snapshot. */
+export const WRAPPER_NAME = /^[A-Za-z_$][A-Za-z0-9_$.]*$/;
 export const CODE_FILE_PATTERN = /\.(?:js|jsx|ts|tsx|mjs|cjs|mts|cts|vue|svelte)$/;
 
 const escapeForRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

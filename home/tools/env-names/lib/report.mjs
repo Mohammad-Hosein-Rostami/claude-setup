@@ -1,7 +1,14 @@
 // Turns collected facts and diffs into the text the tool prints (see ../README.md for the layout).
 // Exports: formatList(data) -> string; formatDiff(diff) -> string.
-// Invariants: pure; the text is built from names, counts and `file:line` references only.
+// Invariants: pure; the text is built from names, counts and `file:line` references only. Every path is printed with control
+//   characters (a newline in a folder name) replaced by `?`, so a path cannot forge a line of the report.
+import { isExampleFile } from './walk.mjs';
+
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/g;
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+/** A copy of `data` with control characters removed from every string value (the object keys are names, which are validated). */
+const printable = (data) => JSON.parse(JSON.stringify(data), (key, value) => (typeof value === 'string' ? value.replace(CONTROL_CHARACTERS, '?') : value));
 
 function envFileLine(file) {
   if (file.status !== undefined) return `${file.path}  (${file.status})`;
@@ -15,6 +22,8 @@ const sectionOf = (title, rows, count = rows.length) => [`${title} (${count}):`,
 /** One line per name that differs: who has it and who lacks it. */
 const differingLine = ({ name, has, lacks }) => `${name}  in ${has.join(', ')}; not in ${lacks.join(', ')}`;
 
+const undefinedLine = ({ name, firstUse, inExample }) => `${name}  ${firstUse}${inExample.length > 0 ? `  (only in example file: ${inExample.join(', ')})` : ''}`;
+
 /** The optional sections: they only appear when there is something to say. */
 function extraSections(data) {
   const builtinNames = Object.keys(data.builtin);
@@ -27,14 +36,18 @@ function extraSections(data) {
 }
 
 /**
- * @param {object} data the collected snapshot object
+ * @param {object} collected the collected snapshot object
  * @returns {string} the report, ending with the summary line
  */
-export function formatList(data) {
+export function formatList(collected) {
+  const data = printable({ ...collected, dynamic: Object.fromEntries(Object.entries(collected.dynamic).map(([path, count]) => [path.replace(CONTROL_CHARACTERS, '?'), count])) });
+  const examples = data.envFiles.filter((file) => isExampleFile(file.path));
   const { summary } = data;
   const lines = [
-    ...sectionOf('Env files', data.envFiles.map(envFileLine)),
-    ...sectionOf('Read by code but defined in no env file', data.undefinedNames.map(({ name, firstUse }) => `${name}  ${firstUse}`)),
+    ...sectionOf('Env files', data.envFiles.filter((file) => !isExampleFile(file.path)).map(envFileLine)),
+    ...sectionOf('Example files', examples.map(envFileLine)),
+    ...sectionOf('Read by code but defined in no env file', data.undefinedNames.map(undefinedLine)),
+    ...sectionOf('Read by code, defined only outside its folder chain (look at these)', data.outsideChain.map(({ name, firstUse, definedIn }) => `${name}  ${firstUse}  (defined in ${definedIn.join(', ')})`)),
     ...sectionOf('Defined but never read by code or deploy files', data.neverRead.map(({ name, files }) => `${name}  ${files.join(', ')}`)),
     ...sectionOf('Names that differ between env files of the same folder', data.differing.map(differingLine)),
     ...extraSections(data),
@@ -51,13 +64,16 @@ const envFileRows = (files) => files.flatMap(({ path, sameNamesAs }) => (sameNam
 const nameChangeLine = ({ path, added, removed }) => `${path}  ${[...added.map((name) => `+${name}`), ...removed.map((name) => `-${name}`)].join(' ')}`;
 
 /**
- * @param {object} diff the result of diffSnapshots
+ * @param {object} rawDiff the result of diffSnapshots
  * @returns {string} the sections that have rows ("Now undefined" first), then one closing line
  */
-export function formatDiff(diff) {
+export function formatDiff(rawDiff) {
+  const diff = printable(rawDiff);
   const optional = (title, rows, count = rows.length) => (rows.length > 0 ? sectionOf(title, rows, count) : []);
   const lines = [
     ...optional('Now undefined', diff.nowUndefined.map(({ name, firstUse, wasIn }) => `${name}  ${firstUse} (was defined in ${wasIn.join(', ')})`)),
+    ...optional("Definition moved out of the reader's folder chain (look at these)", diff.movedOutOfChain.map(({ name, firstUse, wasIn, nowIn }) => `${name}  ${firstUse} (was in ${wasIn.join(', ')}, now in ${nowIn.join(', ')})`)),
+    ...optional('Env files no longer read', diff.notReadNow.map(({ path, reason }) => `${path}  ${reason}`)),
     ...optional('Env files added', envFileRows(diff.envFiles.added), diff.envFiles.added.length),
     ...optional('Env files removed', envFileRows(diff.envFiles.removed), diff.envFiles.removed.length),
     ...optional('Names changed in env files', diff.namesChanged.map(nameChangeLine)),

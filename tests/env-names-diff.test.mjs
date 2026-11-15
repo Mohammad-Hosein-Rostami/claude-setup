@@ -2,7 +2,7 @@
 // for moved env files, exit codes, and the refusal of a bad snapshot (exit 2, plain reason, never file content).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { leaked, makeProject, run } from './env-names-fixtures.mjs';
 
@@ -116,14 +116,18 @@ test('--json prints the diff structure', async () => {
   assert.deepEqual(parsed.namesChanged, [{ path: '.env', added: [], removed: ['WILL_GO'] }]);
 });
 
-test('--wrapper applies to the new scan', async () => {
-  const dir = await makeProject(BASE);
-  const snapshot = await snapshotOf(dir);
-  await change(dir, { 'src/w.ts': "getEnvVariable('VIA_WRAPPER');\n" });
-  assert.equal(run(['diff', snapshot, dir]).status, 0); // without --wrapper the call is no read
-  const wrapped = run(['diff', snapshot, dir, '--wrapper', 'getEnvVariable']);
-  assert.equal(wrapped.status, 1);
-  assert.match(wrapped.stdout, /VIA_WRAPPER {2}src\/w\.ts:1/);
+test('the wrapper list is saved in the snapshot and diff uses it; a different --wrapper is a usage error', async () => {
+  const dir = await makeProject({ ...BASE, 'src/w.ts': "getEnvVariable('VIA_WRAPPER');\n" });
+  const file = join(dir, '..', `snap-wrapper-${Math.random().toString(36).slice(2)}.json`);
+  assert.equal(run(['list', dir, '--save', file, '--wrapper', 'getEnvVariable']).status, 0);
+  assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).wrappers, ['getEnvVariable']);
+  assert.equal(run(['diff', file, dir]).status, 0, 'no false "removed" when the snapshot already had the wrapper');
+  assert.equal(run(['diff', file, dir, '--wrapper', 'getEnvVariable']).status, 0);
+  const different = run(['diff', file, dir, '--wrapper', 'otherFn']);
+  assert.equal(different.status, 2);
+  assert.match(different.stderr, /saved with --wrapper getEnvVariable/);
+  const plain = await snapshotOf(dir);
+  assert.equal(run(['diff', plain, dir, '--wrapper', 'getEnvVariable']).status, 2);
 });
 
 async function badSnapshot(content) {

@@ -3,6 +3,7 @@
 // Invariants: strict shape and version check, no guessing. A reason names the field only: it never repeats a value found in
 //   the file, and the JSON parser's own message (which quotes the start of the text) is never used, so passing an env file
 //   by mistake cannot print any of it.
+import { WRAPPER_NAME } from './code-reads.mjs';
 import { UsageError } from './usage-error.mjs';
 
 const SUPPORTED_VERSION = 1;
@@ -19,6 +20,7 @@ const isEnvFileEntry = (entry) =>
 const isReferenceMap = (value) => isObject(value) && Object.entries(value).every(([name, refs]) => NAME_PATTERN.test(name) && isStringList(refs));
 
 const FIELD_CHECKS = [
+  ['wrappers', (value) => value === undefined || (isStringList(value) && value.every((wrapper) => WRAPPER_NAME.test(wrapper))), 'is not a list of function names'],
   ['envFiles', (value) => Array.isArray(value) && value.every(isEnvFileEntry), 'is not a list of { path, names, otherLines }'],
   ['readByCode', isReferenceMap, 'is not a map of variable name to a list of file:line'],
   ['deploy', isReferenceMap, 'is not a map of variable name to a list of file:line'],

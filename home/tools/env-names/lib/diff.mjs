@@ -1,7 +1,13 @@
 // Compares an old snapshot with the current collection: what moved between two points in time, by name only.
-// Exports: diffSnapshots(old, now) -> { since, changed, nowUndefined, envFiles: { added, removed }, namesChanged, readByCode, deploy }.
-// Invariants: pure; names, paths and `file:line` references only. Files are matched by path: a moved env file is one
-//   removed and one added, and `sameNamesAs` points to the partner when both hold the same (non-empty) set of names.
+// Exports: diffSnapshots(old, now) -> { since, changed, nowUndefined, movedOutOfChain, notReadNow, envFiles: { added, removed },
+//   namesChanged, readByCode, deploy }.
+// Invariants: pure; names, paths and `file:line` references only. Files are matched by path: a moved env file is one removed and
+//   one added, and `sameNamesAs` points to the partner when both hold the same (non-empty) set of names. Example files define
+//   nothing. An env file that is no longer read (link, binary, unreadable...) is reported as such and its names are never
+//   counted as undefined.
+import { refsOutsideChain } from './analyze.mjs';
+import { isExampleFile } from './walk.mjs';
+
 const byText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** Names in `next` that `previous` lacks, each with the references `next` has for it; both are name -> refs objects. */
@@ -28,12 +34,13 @@ function diffEnvFiles(oldFiles, nowFiles) {
   return { added: added.map((file) => describe(file, removed)), removed: removed.map((file) => describe(file, added)) };
 }
 
+/** Files read before and now, with names added or removed (a file not read on either side is left to `notReadNow`). */
 function diffNames(oldFiles, nowFiles) {
   const oldByPath = new Map(oldFiles.map((file) => [file.path, file]));
   const changed = [];
   for (const file of nowFiles) {
     const before = oldByPath.get(file.path);
-    if (before === undefined) continue;
+    if (before === undefined || before.status !== undefined || file.status !== undefined) continue;
     const added = file.names.filter((name) => !before.names.includes(name));
     const removed = before.names.filter((name) => !file.names.includes(name));
     if (added.length > 0 || removed.length > 0) changed.push({ path: file.path, added, removed });
@@ -41,13 +48,41 @@ function diffNames(oldFiles, nowFiles) {
   return changed.sort((a, b) => byText(a.path, b.path));
 }
 
-/** Names code reads now that an env file defined before and no env file defines now. */
-function findNowUndefined(old, now) {
-  const definedNow = new Set(now.envFiles.flatMap((file) => file.names));
-  return Object.entries(now.readByCode).flatMap(([name, refs]) => {
-    const wasIn = old.envFiles.filter((file) => file.names.includes(name)).map((file) => file.path);
-    return definedNow.has(name) || wasIn.length === 0 ? [] : [{ name, firstUse: refs[0], wasIn }];
-  });
+/** Env files that were read before and are not now, with the reason. */
+function findNotReadNow(oldFiles, nowFiles) {
+  const wasRead = new Set(oldFiles.filter((file) => file.status === undefined).map((file) => file.path));
+  return nowFiles.filter((file) => file.status !== undefined && wasRead.has(file.path)).map((file) => ({ path: file.path, reason: file.status }));
+}
+
+/** name -> paths of the real (non-example) env files that define it. */
+function definersOf(envFiles) {
+  const defined = new Map();
+  for (const file of envFiles.filter((envFile) => !isExampleFile(envFile.path))) {
+    for (const name of file.names) defined.set(name, [...(defined.get(name) ?? []), file.path]);
+  }
+  return defined;
+}
+
+/** Names code reads now: undefined now though defined before, and defined now but no longer in the reader's folder chain. */
+function findLostDefinitions(old, now, notReadNow) {
+  const before = definersOf(old.envFiles);
+  const after = definersOf(now.envFiles);
+  const unreadPaths = new Set(notReadNow.map((file) => file.path));
+  const namesOfUnread = new Set(old.envFiles.filter((file) => unreadPaths.has(file.path)).flatMap((file) => file.names));
+  const nowUndefined = [];
+  const movedOutOfChain = [];
+  for (const [name, refs] of Object.entries(now.readByCode)) {
+    if (!before.has(name) || namesOfUnread.has(name)) continue;
+    if (!after.has(name)) {
+      nowUndefined.push({ name, firstUse: refs[0], wasIn: before.get(name) });
+      continue;
+    }
+    const outsideNow = refsOutsideChain(refs, after.get(name));
+    if (outsideNow.length > 0 && refsOutsideChain(refs, before.get(name)).length === 0) {
+      movedOutOfChain.push({ name, firstUse: outsideNow[0], wasIn: before.get(name), nowIn: after.get(name) });
+    }
+  }
+  return { nowUndefined, movedOutOfChain };
 }
 
 /**
@@ -55,15 +90,17 @@ function findNowUndefined(old, now) {
  * @param {object} now the current collection (same shape)
  */
 export function diffSnapshots(old, now) {
+  const notReadNow = findNotReadNow(old.envFiles, now.envFiles);
   const result = {
     since: old.generatedAt,
-    nowUndefined: findNowUndefined(old, now),
+    ...findLostDefinitions(old, now, notReadNow),
+    notReadNow,
     envFiles: diffEnvFiles(old.envFiles, now.envFiles),
     namesChanged: diffNames(old.envFiles, now.envFiles),
     readByCode: diffReferences(old.readByCode, now.readByCode),
     deploy: diffReferences(old.deploy, now.deploy),
   };
-  const lists = [result.nowUndefined, result.envFiles.added, result.envFiles.removed, result.namesChanged,
-    result.readByCode.added, result.readByCode.removed, result.deploy.added, result.deploy.removed];
+  const lists = [result.nowUndefined, result.movedOutOfChain, result.notReadNow, result.envFiles.added, result.envFiles.removed,
+    result.namesChanged, result.readByCode.added, result.readByCode.removed, result.deploy.added, result.deploy.removed];
   return { ...result, changed: lists.some((list) => list.length > 0) };
 }

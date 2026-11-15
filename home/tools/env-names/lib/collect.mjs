@@ -75,7 +75,7 @@ export function collectProject(root, wrappers, now) {
   const namedElsewhere = new Set([...readByCode.keys(), ...builtin.keys(), ...deploy.keys()]);
   const envFiles = walked.envFiles.map((file) => describeEnvFile(root, file, namedElsewhere));
   const data = {
-    version: SNAPSHOT_VERSION, root, generatedAt: now.toISOString(), envFiles,
+    version: SNAPSHOT_VERSION, root, generatedAt: now.toISOString(), wrappers: [...new Set(wrappers)].sort(), envFiles,
     readByCode: toSortedObject(readByCode), builtin: toSortedObject(builtin), dynamic: toSortedObject(dynamic),
     deploy: toSortedObject(deploy), notRead: notRead.sort((a, b) => (a.path < b.path ? -1 : 1)),
   };

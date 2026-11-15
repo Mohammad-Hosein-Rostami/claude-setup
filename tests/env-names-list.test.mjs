@@ -30,12 +30,13 @@ test('report: env files, the undefined list, the never-read list and the folder 
   const dir = await makeProject(PROJECT);
   const result = run(['list', dir, '--wrapper', 'getEnvVariable']);
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(section(result, 'Env files').header, 'Env files (3):');
-  assert.deepEqual(section(result, 'Env files').body, ['.env  (3 names)', '.env.example  (3 names)', 'apps/web/.env.local  (1 name)']);
+  assert.equal(section(result, 'Env files').header, 'Env files (2):');
+  assert.deepEqual(section(result, 'Env files').body, ['.env  (3 names)', 'apps/web/.env.local  (1 name)']);
+  assert.deepEqual(section(result, 'Example files').body, ['.env.example  (3 names)']);
   assert.deepEqual(section(result, 'Read by code but defined in no env file').body, ['MISSING_ONE  apps/api/server.js:1', 'VITE_WEB  apps/web/src/main.ts:3', 'WRAPPED_ONE  apps/api/server.js:1']);
-  assert.deepEqual(section(result, 'Defined but never read').body, ['ONLY_ROOT  .env', 'UNUSED_EXAMPLE  .env.example']);
+  assert.deepEqual(section(result, 'Defined but never read').body, ['ONLY_ROOT  .env']); // an example file defines nothing
   assert.deepEqual(section(result, 'Names that differ').body, ['ONLY_ROOT  in .env; not in .env.example', 'UNUSED_EXAMPLE  in .env.example; not in .env']);
-  assert.equal(lines(result).filter(Boolean).at(-1), 'env-names: 3 env files, 5 defined names, 5 names read by code, values never read');
+  assert.equal(lines(result).filter(Boolean).at(-1), 'env-names: 2 env files, 4 defined names, 5 names read by code, values never read');
 });
 
 test('report: Vite built-ins are listed apart and dynamic access is counted per file', async () => {
