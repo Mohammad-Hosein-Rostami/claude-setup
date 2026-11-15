@@ -12,7 +12,8 @@ const isStringList = (value) => Array.isArray(value) && value.every((item) => ty
 
 const isEnvFileEntry = (entry) =>
   isObject(entry) && typeof entry.path === 'string' && isStringList(entry.names) && entry.names.every((name) => NAME_PATTERN.test(name))
-  && Number.isInteger(entry.otherLines) && entry.otherLines >= 0 && (entry.status === undefined || typeof entry.status === 'string');
+  && Number.isInteger(entry.otherLines) && entry.otherLines >= 0 && (entry.status === undefined || typeof entry.status === 'string')
+  && (entry.hiddenNames === undefined || (Number.isInteger(entry.hiddenNames) && entry.hiddenNames >= 0));
 
 /** A map of variable name -> list of `file:line` strings. */
 const isReferenceMap = (value) => isObject(value) && Object.entries(value).every(([name, refs]) => NAME_PATTERN.test(name) && isStringList(refs));

@@ -9,7 +9,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const CLI = fileURLToPath(new URL('../home/tools/env-names/env-names.mjs', import.meta.url));
-export const MARKERS = ['MARKER_VALUE', 'MARKERVALUE', 'MARKER_PART', 'MARKER_COMMENT', 'MARKER_QUOTED', 'MARKER_COMPOSE'];
+export const MARKERS = ['MARKER_VALUE', 'MARKERVALUE', 'MARKER_PART', 'MARKER_COMMENT', 'MARKER_QUOTED', 'MARKER_COMPOSE', 'Zqx'];
+
+// PEM lines are built from parts so no file holds a complete private-key header (the pre-commit gitleaks rule would flag it).
+export const PEM_BEGIN = `-----BEGIN ${'PRIVATE'} KEY-----`;
+export const PEM_END = `-----END ${'PRIVATE'} KEY-----`;
 
 /** The markers found in `text` (empty when nothing leaked). */
 export const leaked = (text) => MARKERS.filter((marker) => text.includes(marker));

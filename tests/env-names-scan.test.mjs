@@ -7,7 +7,7 @@ import { scanDeploy } from '../home/tools/env-names/lib/deploy-names.mjs';
 import { leaked } from './env-names-fixtures.mjs';
 
 const readNames = (text, wrappers) => scanCode(text, wrappers).reads.map((read) => `${read.name}@${read.line}${read.builtin ? ':builtin' : ''}`);
-const deployNames = (kind, text) => scanDeploy(kind, text).map((mention) => `${mention.name}@${mention.line}`);
+const deployNames = (kind, text) => scanDeploy(kind, text).mentions.map((mention) => `${mention.name}@${mention.line}`);
 
 test('code: process.env.NAME, process.env["NAME"], import.meta.env and Deno.env.get with the line number', () => {
   const text = [
@@ -120,4 +120,31 @@ test('deploy workflow: env keys, secrets.NAME and vars.NAME', () => {
 test('deploy gitlab: env and variables blocks plus secrets.NAME; absent case gives nothing', () => {
   assert.deepEqual(deployNames('gitlab', 'variables:\n  GL_VAR: MARKER_VALUE\nbuild:\n  script: make\n'), ['GL_VAR@2']);
   assert.deepEqual(deployNames('workflow', 'on: push\njobs:\n  a:\n    steps: []\n'), []);
+});
+
+test('deploy dockerfile: a continued ENV value is joined with no space and never printed (audit F2)', () => {
+  const cases = [
+    ['ENV TOKEN=ZqxFirstHalf\\\nZqxSecondHalf\n', ['TOKEN@1']],
+    ['ENV ZQX_NAME=\\\nZqxWholeToken\n', ['ZQX_NAME@1']],
+    ['ARG ZQX_ARG=\\\nZqxWholeToken\n', ['ZQX_ARG@1']],
+    ['ENV A=x ZqxWord\n', ['A@1']],
+    ['ENV A=x ZqxWord B=y\n', ['A@1']], // a bare word ends the scan: Docker would reject the line
+    ['ENV LEGACY \\\nZqxValue\n', ['LEGACY@1']],
+    ['ENV LEGACY ZqxValue more words\n', ['LEGACY@1']],
+  ];
+  for (const [text, expected] of cases) assert.deepEqual(deployNames('dockerfile', text), expected, text);
+});
+
+test('deploy output rule: odd-shaped names from the left of = are hidden and counted; YAML keys and ${NAME} may be mixed case', () => {
+  const dockerfile = scanDeploy('dockerfile', `ENV MixedCase=1 UPPER_OK=2\nENV ${'X'.repeat(70)}=3\n`);
+  assert.deepEqual(dockerfile, { mentions: [{ name: 'UPPER_OK', line: 1 }], hidden: 2 });
+  const compose = scanDeploy('compose', 'services:\n  a:\n    environment:\n      mixedKey: 1\n      - MixedItem=1\n      - PLAIN_ITEM=2\n    image: x:${MixedSub}\n');
+  assert.deepEqual(compose.mentions.map((mention) => mention.name), ['mixedKey', 'PLAIN_ITEM', 'MixedSub']);
+  assert.equal(compose.hidden, 1);
+  assert.deepEqual(scanDeploy('compose', `services:\n  a:\n    environment:\n      ${'k'.repeat(65)}: 1\n`), { mentions: [], hidden: 1 });
+});
+
+test('deploy workflow: secrets.X and vars.X count only inside ${{ }}, not in a plain string', () => {
+  const text = 'jobs:\n  a:\n    steps:\n      - run: echo "rotate secrets.ZqxNotAName"\n      - run: echo ${{ secrets.MixedRef }} ${{ vars.PLAIN_REF }}\n';
+  assert.deepEqual(deployNames('workflow', text), ['MixedRef@5', 'PLAIN_REF@5']);
 });

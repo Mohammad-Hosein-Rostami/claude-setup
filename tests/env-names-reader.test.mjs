@@ -41,10 +41,9 @@ test('a closed quote on the same line does not open a block', () => {
   assert.deepEqual(namesFromEnvText('A="MARKER_QUOTED" # MARKER_COMMENT\nB=\'x\'\nC=1\n').names, ['A', 'B', 'C']);
 });
 
-test('lines that are not NAME=value are counted, never kept', () => {
-  const text = 'just MARKER_PART words\n1ABC=1\nA-B=1\nhas space=1\nhttps://MARKER_PART/?q=1\nexport ONLY\nOK=1\n';
-  const result = namesFromEnvText(text);
-  assert.deepEqual(result, { names: ['OK'], otherLines: 6 });
+test('lines that are not NAME=value are counted, never kept (blank lines between them so each is judged alone)', () => {
+  const text = 'just MARKER_PART words\n\n1ABC=1\n\nA-B=1\n\nhas space=1\n\nhttps://MARKER_PART/?q=1\n\nexport ONLY\n\nOK=1\n';
+  assert.deepEqual(namesFromEnvText(text), { names: ['OK'], otherLines: 6 });
 });
 
 test('CRLF line ends and a UTF-8 BOM before the first name', () => {
@@ -84,5 +83,5 @@ test('readEnvFile: a missing file or a folder gives a status with the error code
   const dir = await makeProject({});
   assert.deepEqual(readEnvFile(join(dir, '.env')), { names: [], otherLines: 0, status: 'unreadable (ENOENT), not read' });
   await mkdir(join(dir, 'd.env'));
-  assert.deepEqual(readEnvFile(join(dir, 'd.env')), { names: [], otherLines: 0, status: 'unreadable (EISDIR), not read' });
+  assert.deepEqual(readEnvFile(join(dir, 'd.env')), { names: [], otherLines: 0, status: 'not a regular file, not read' });
 });

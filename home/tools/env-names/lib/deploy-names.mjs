@@ -1,12 +1,18 @@
 // Finds the environment variable names a deploy file mentions: Dockerfile ARG/ENV, compose `environment:` and `${NAME}`,
 // GitHub workflow and GitLab CI `env:` keys with `secrets.NAME` / `vars.NAME`.
-// Exports: scanDeploy(kind, text) -> [{ name, line }] sorted by line then name; deployKind(path) -> kind or null.
+// Exports: scanDeploy(kind, text) -> { mentions: [{ name, line }], hidden }; deployKind(path) -> kind or null.
 // Invariants: pure; only the name part of an assignment is captured, the value (even a quoted one holding `X=y`) is skipped
-//   unread. Kinds: dockerfile, compose, workflow, gitlab.
+//   unread. Kinds: dockerfile, compose, workflow, gitlab. Output rule: a name is kept when it is a plain name (see
+//   name-shape.mjs), or when it sits in a KEY position (`NAME:` of a YAML mapping, `${NAME`, `${{ secrets.NAME }}`) and has
+//   at most 64 characters; never one taken from the left of `=` in a Dockerfile or a `- NAME=value` item unless plain.
+//   Anything else is counted in `hidden`. Mentions are sorted by line, then name.
+import { MAX_NAME_LENGTH, isPlainName } from './name-shape.mjs';
+
 const NAME = '[A-Za-z_][A-Za-z0-9_]*';
 const NAME_AT_START = new RegExp(`^${NAME}`);
 const SUBSTITUTION = new RegExp(`\\$\\{(${NAME})`, 'g');
-const CI_REFERENCE = new RegExp(`\\b(?:secrets|vars)\\.(${NAME})`, 'g');
+// Only inside a `${{ ... }}` expression: the words secrets.X in a plain string are text, not a reference.
+const CI_REFERENCE = new RegExp(`(?<=\\$\\{\\{[^}]*)\\b(?:secrets|vars)\\.(${NAME})`, 'g');
 const MAP_ENTRY = new RegExp(`^(${NAME})\\s*:(?:\\s|$)`);
 const LIST_ENTRY = new RegExp(`^-\\s+['"]?(${NAME})(?:=|['"]|\\s|$)`);
 const BLOCK_OPENER = /^(\s*)([A-Za-z_-]+):\s*(?:#.*)?$/;
@@ -45,8 +51,8 @@ function assignmentNames(args) {
     if (name === undefined) break;
     const next = rest[name.length];
     if (next !== undefined && next !== '=' && !/\s/.test(next)) break;
-    names.push(name);
-    if (next !== '=') break; // `ENV NAME value`: the rest of the line is the value
+    if (next === '=' || names.length === 0) names.push(name); // after the first word only `NAME=...` counts
+    if (next !== '=') break; // `ENV NAME value`: the rest of the line is the value; a bare later word ends the scan
     at = skipValue(args, at + name.length + 1);
   }
   return names;
@@ -58,9 +64,9 @@ function scanDockerfile(lines) {
   for (let i = 0; i < lines.length; i += 1) {
     let joined = lines[i];
     const startLine = i + 1;
-    while (joined.trimEnd().endsWith('\\') && i + 1 < lines.length) joined = `${joined.trimEnd().slice(0, -1)} ${lines[(i += 1)]}`;
+    while (joined.trimEnd().endsWith('\\') && i + 1 < lines.length) joined = joined.trimEnd().slice(0, -1) + lines[(i += 1)]; // Docker joins with no space
     const args = INSTRUCTION.exec(joined)?.[1];
-    if (args !== undefined && !joined.trimStart().startsWith('#')) assignmentNames(args).forEach((name) => found.push({ name, line: startLine }));
+    if (args !== undefined && !joined.trimStart().startsWith('#')) assignmentNames(args).forEach((name) => found.push({ name, line: startLine, keyed: false }));
   }
   return found;
 }
@@ -82,8 +88,9 @@ function blockEntries(lines, keys) {
       blockIndent ??= indent;
       if (indent !== blockIndent) continue;
       const text = lines[i].trim();
-      const name = (MAP_ENTRY.exec(text) ?? LIST_ENTRY.exec(text))?.[1];
-      if (name !== undefined) found.push({ name, line: i + 1 });
+      const mapName = MAP_ENTRY.exec(text)?.[1];
+      const name = mapName ?? LIST_ENTRY.exec(text)?.[1];
+      if (name !== undefined) found.push({ name, line: i + 1, keyed: mapName !== undefined });
     }
   });
   return found;
@@ -94,7 +101,7 @@ function patternMentions(lines, pattern) {
   const found = [];
   lines.forEach((line, index) => {
     if (line.trimStart().startsWith('#')) return;
-    for (const match of line.matchAll(pattern)) found.push({ name: match[1], line: index + 1 });
+    for (const match of line.matchAll(pattern)) found.push({ name: match[1], line: index + 1, keyed: true });
   });
   return found;
 }
@@ -102,7 +109,7 @@ function patternMentions(lines, pattern) {
 /**
  * @param {'dockerfile'|'compose'|'workflow'|'gitlab'} kind
  * @param {string} text file content
- * @returns {{ name: string, line: number }[]} sorted by line, then name
+ * @returns {{ mentions: { name: string, line: number }[], hidden: number }} kept names sorted by line, then name; count of names left out
  */
 export function scanDeploy(kind, text) {
   const lines = text.split(/\r\n|\r|\n/);
@@ -110,5 +117,7 @@ export function scanDeploy(kind, text) {
   if (kind === 'dockerfile') found = scanDockerfile(lines);
   else if (kind === 'compose') found = [...blockEntries(lines, BLOCK_KEYS.compose), ...patternMentions(lines, SUBSTITUTION)];
   else found = [...blockEntries(lines, BLOCK_KEYS[kind]), ...patternMentions(lines, CI_REFERENCE)];
-  return found.sort((a, b) => a.line - b.line || a.name.localeCompare(b.name));
+  const kept = found.filter(({ name, keyed }) => isPlainName(name) || (keyed && name.length <= MAX_NAME_LENGTH));
+  const mentions = kept.map(({ name, line }) => ({ name, line })).sort((a, b) => a.line - b.line || a.name.localeCompare(b.name));
+  return { mentions, hidden: found.length - kept.length };
 }

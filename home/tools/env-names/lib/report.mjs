@@ -6,7 +6,8 @@ const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 function envFileLine(file) {
   if (file.status !== undefined) return `${file.path}  (${file.status})`;
   const other = file.otherLines > 0 ? `, ${plural(file.otherLines, 'other line')}` : '';
-  return `${file.path}  (${plural(file.names.length, 'name')}${other})`;
+  const hidden = file.hiddenNames > 0 ? `, ${plural(file.hiddenNames, 'name')} not shown (mixed case or too long)` : '';
+  return `${file.path}  (${plural(file.names.length, 'name')}${other}${hidden})`;
 }
 
 const sectionOf = (title, rows, count = rows.length) => [`${title} (${count}):`, ...rows.map((row) => `  ${row}`), ''];
