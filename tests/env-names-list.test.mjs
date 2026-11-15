@@ -127,3 +127,12 @@ test('exit 2 with a plain reason: no command, unknown command, missing folder, a
     assert.equal(result.stdout, '');
   }
 });
+
+test('names that are also object property names (__proto__, constructor) are ordinary names, in list and in a diff round trip', async () => {
+  const dir = await makeProject({ '.env': '__proto__=1\nconstructor=2\n', 'a.ts': 'process.env.__proto__;process.env.constructor;process.env.hasOwnProperty;\n' });
+  const result = run(['list', dir]);
+  assert.deepEqual(section(result, 'Read by code but defined in no env file').body, ['hasOwnProperty  a.ts:1']);
+  const snapshot = join(dir, 'snapshot.json');
+  assert.equal(run(['list', dir, '--save', snapshot]).status, 0);
+  assert.equal(run(['diff', snapshot, dir]).status, 0);
+});

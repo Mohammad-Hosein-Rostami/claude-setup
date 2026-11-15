@@ -18,11 +18,11 @@ The `ui-check` tool has its own tests: `pnpm --dir home/tools/ui-check test`.
 - `ask-queue*`: the `ask` tool's decision queue.
 - `mode*`, `ccm`, `skill-router*`, `statusline`: modes, the launcher, the skill router and the status line.
 - `install-order`, `merge-settings`, `doctor-*`: the install scripts, settings merge and health check.
-- `estimate*`, `readable*`, `recall-*`, `ui-coverage*`, `watch-*`: one group per tool in `home/tools/`.
+- `env-names*`, `estimate*`, `readable*`, `recall-*`, `ui-coverage*`, `watch-*`: one group per tool in `home/tools/`.
 
 ## Shared helpers (not tests)
 
-`hook-env.mjs`, `pin-home.mjs`, `warm-exec.mjs`, `estimate-fixtures.mjs`, `readable-helpers.mjs`, `recall-helpers.mjs`,
+`hook-env.mjs`, `pin-home.mjs`, `warm-exec.mjs`, `env-names-fixtures.mjs`, `estimate-fixtures.mjs`, `readable-helpers.mjs`, `recall-helpers.mjs`,
 `recall-fakes.mjs`, `timing.mjs`, `pre-bash-guard-final-cases.mjs`. Each starts with a comment saying what it gives you.
 
 ## Watch out for

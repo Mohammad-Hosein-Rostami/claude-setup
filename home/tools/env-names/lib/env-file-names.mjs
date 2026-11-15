@@ -1,8 +1,8 @@
 // The only code that sees the content of an env file: it returns the variable names and a count of other lines, never a value.
 // Exports: namesFromEnvText(text) -> { names, otherLines }; readEnvFile(path) -> { names, otherLines, status? }; MAX_ENV_FILE_BYTES.
 // Invariants: of every line only the text left of the first `=` is looked at as a name; the rest of the line is used for one
-//   thing, to see whether a quoted value continues on the next lines, and is never stored or returned. Lines inside such a
-//   multi-line quoted value, and lines that are not `NAME=...`, are only counted (`otherLines`). A file that cannot be read
+//   thing, to see whether the value continues on the next lines (an unclosed quote, or a trailing backslash), and is never
+//   stored or returned. Lines inside such a continued value, and lines that are not `NAME=...`, are only counted (`otherLines`). A file that cannot be read
 //   gives a `status` text built from the error code, never from the error message or the file content.
 import { lstatSync, readFileSync } from 'node:fs';
 
@@ -43,10 +43,16 @@ export function namesFromEnvText(text) {
   const names = new Set();
   let otherLines = 0;
   let openQuote = null;
+  let continuesPrevious = false; // the previous line ended with a backslash, so this line is part of its value
   for (const line of text.replace(BYTE_ORDER_MARK, '').split(/\r\n|\r|\n/)) {
     if (openQuote !== null) {
       otherLines += 1;
       if (closingQuote(line, openQuote, 0) !== -1) openQuote = null;
+      continue;
+    }
+    if (continuesPrevious) {
+      otherLines += 1;
+      continuesPrevious = line.trimEnd().endsWith('\\');
       continue;
     }
     if (line.trim() === '' || line.trimStart().startsWith('#')) continue;
@@ -57,7 +63,9 @@ export function namesFromEnvText(text) {
       continue;
     }
     names.add(name);
-    openQuote = openQuoteOf(line.slice(equalsAt + 1));
+    const afterEquals = line.slice(equalsAt + 1);
+    openQuote = openQuoteOf(afterEquals);
+    continuesPrevious = openQuote === null && afterEquals.trimEnd().endsWith('\\');
   }
   return { names: [...names].sort(), otherLines };
 }
