@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { scanCode } from './code-reads.mjs';
 import { analyze } from './analyze.mjs';
 import { scanDeploy } from './deploy-names.mjs';
+import { yamlParserInstalled } from './deploy-yaml-names.mjs';
 import { readEnvFile } from './env-file-names.mjs';
 import { isPlainName } from './name-shape.mjs';
 import { readRegularFile } from './read-regular-file.mjs';
@@ -54,9 +55,10 @@ const toSortedObject = (map) => Object.fromEntries([...map].sort(([a], [b]) => (
  * @param {string} root absolute path of an existing folder
  * @param {string[]} wrappers functions whose first string argument is a variable name
  * @param {Date} now stamp for `generatedAt`
+ * @param {boolean} parserInstalled whether the YAML parser is there; only tests pass it (to simulate a missing parser)
  * @returns the snapshot: { version, root, generatedAt, envFiles, readByCode, builtin, dynamic, deploy, notices, notRead, ...analysis }
  */
-export function collectProject(root, wrappers, now) {
+export function collectProject(root, wrappers, now, parserInstalled = yamlParserInstalled) {
   const walked = walkProject(root);
   const notRead = [...walked.notRead];
   const readByCode = new Map();
@@ -74,7 +76,7 @@ export function collectProject(root, wrappers, now) {
   for (const { path, kind } of walked.deploys) {
     const text = readScanned(root, path, notRead);
     if (text === null) continue;
-    const { mentions, unconfirmed, hidden, untrusted, parserMissing } = scanDeploy(kind, text);
+    const { mentions, unconfirmed, hidden, untrusted, parserMissing } = scanDeploy(kind, text, parserInstalled);
     if (parserMissing) yamlSkipped += 1;
     const confirmed = unconfirmed.filter(({ name }) => readByCode.has(name) || builtin.has(name));
     for (const { name, line } of [...mentions, ...confirmed]) addRef(deploy, name, `${path}:${line}`);

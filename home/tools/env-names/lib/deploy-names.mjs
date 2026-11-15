@@ -80,6 +80,7 @@ const isShownShape = ({ name, keyed }) => isPlainName(name) || (keyed && name.le
 /**
  * @param {'dockerfile'|'compose'|'workflow'|'gitlab'} kind
  * @param {string} text file content
+ * @param {boolean} parserInstalled whether the YAML parser is there; only tests pass it (to simulate a missing parser)
  * @returns {{ mentions: { name: string, line: number }[], unconfirmed: { name: string, line: number }[], hidden: number,
  *   untrusted: boolean, parserMissing: boolean }}
  *   `mentions`: names to print, sorted by line then name. `unconfirmed`: names from a YAML file the parser reported a problem
@@ -87,9 +88,9 @@ const isShownShape = ({ name, keyed }) => isPlainName(name) || (keyed && name.le
  *   `untrusted`: the YAML file had a problem (set even when no name was found). `parserMissing`: a YAML file was not read
  *   because the `yaml` package is not installed.
  */
-export function scanDeploy(kind, text) {
+export function scanDeploy(kind, text, parserInstalled = yamlParserInstalled) {
   const result = { mentions: [], unconfirmed: [], hidden: 0, untrusted: false, parserMissing: false };
-  if (kind !== 'dockerfile' && !yamlParserInstalled) return { ...result, parserMissing: true };
+  if (kind !== 'dockerfile' && !parserInstalled) return { ...result, parserMissing: true };
   const scanned = kind === 'dockerfile' ? { found: scanDockerfile(text.split(/\r\n|\r|\n/)), notNames: 0, untrusted: false } : scanYamlDeploy(kind, text);
   const kept = scanned.found.filter(isShownShape).map(toMention).sort(bySourceOrder);
   return {

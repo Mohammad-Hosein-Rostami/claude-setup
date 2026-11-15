@@ -59,14 +59,19 @@ Defence 2, the output rule, applied before anything is printed or saved:
   a map is counted, not printed. `${NAME}` (compose) and `secrets.NAME` / `vars.NAME` inside `${{ }}` are taken from the text of
   scalar values only, never from comments.
 - A YAML file is UNTRUSTED when the parser reports any error or warning in any of its documents, a scalar key appears twice in
-  one map, an alias does not resolve, there are more than 100 aliases, or the parser throws. From an untrusted file a name prints
-  only if code reads the same name; the rest are counted per file as `N names not shown (... the YAML parser reports a problem
-  ...)`. Aliases are followed one at a time and never expanded, so an alias bomb costs nothing.
-- If the `yaml` package is not installed, YAML deploy files are skipped and the report says
+  one map, an alias does not resolve, there are more than 100 aliases, a map merges itself, the walk does more than 4 units of
+  work per character of the file (a big map merged by many services), the parser throws, or the text holds a character that other
+  YAML parsers read differently: a lone CR, a control character other than tab, LF and CR (C0, DEL, C1 including U+0085), U+2028,
+  U+2029, or a BOM that is not the first character. (Docker Compose, GitLab and PyYAML break lines at those characters, so a
+  "comment" could hide a key or a block scalar for them.) From an untrusted file a name prints only if code reads the same name;
+  the rest are counted per file as `N names not shown (... the YAML parser reports a problem ...)`. Aliases are followed one at a
+  time and never expanded, so an alias bomb costs nothing.
+- The parser is loaded by file URL from this tool's own `node_modules/yaml`, never by the bare name `yaml`: a `node_modules/yaml`
+  in a parent folder or in the scanned project is not used. If it is not there, YAML deploy files are skipped and the report says
   `yaml parser not installed: N deploy files not read; run scripts/install.sh`; nothing falls back to scanning lines.
   Dockerfiles do not need it. There is no Kubernetes reader.
-- Residual risk: a file that the real consumer (Docker Compose, GitLab, GitHub) reads differently from this parser, for example
-  a YAML 1.1 quirk, is read as this parser reads it.
+- Legacy compose files without a `services:` key (the old version 1 layout) are not read; Compose itself rejects them.
+- Residual risk: a consumer's parser (Docker Compose, GitLab, GitHub) reading a file this parser accepts as clean in yet another way.
 
 Other rules that keep content out:
 - A file that cannot be read is listed with a fixed reason (`link, not read`, `binary, not read`, `too large, not read`,
@@ -168,7 +173,7 @@ when both hold exactly the same names each gets a `same names as <other path>` l
 - Names set by the host or CI at run time, and variables inherited from the shell.
 - `const { A, B } = process.env` and `...process.env`: not parsed as reads.
 - Code in comments counts as code (a commented-out `process.env.X` is listed).
-- Compose `env_file:`, a compose file with no `services:` key (the old version 1 layout), GitLab `variables:` outside the top level and the jobs, workflow `env:` outside the job and step levels.
+- Compose `env_file:`, GitLab `variables:` outside the top level and the jobs, workflow `env:` outside the job and step levels.
 - Moving only the code that reads a name, without changing the name, is invisible to `diff` (it compares names, not places).
 - Skipping is deliberate: an unclosed quote swallows the lines after it, a value ending in a backslash swallows the next line
   (a Windows path such as `DIR=C:\logs\` hides the line below it), and a stray line hides the lines up to the next blank

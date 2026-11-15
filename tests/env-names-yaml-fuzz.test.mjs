@@ -15,6 +15,9 @@ const MAX_PIECES = 5;
 const NAME_SHAPE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const PLAIN_NAME = /^(?:[A-Z_][A-Z0-9_]{0,63}|[a-z_][a-z0-9_]{0,63})$/;
 const MAX_KEY_LENGTH = 64;
+// Characters other YAML parsers (Docker Compose, GitLab, PyYAML) read as line breaks or reject; the tool treats a file with one as untrusted.
+const FOREIGN_CHARACTERS = ['\u2028', '\u2029', '\u0085', '\r', '\u0001', '\u007f', '\u009f', '\u000b'];
+const hasForeignCharacter = (text) => /\r(?!\n)|[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u2028\u2029]/.test(text.replace(/^\uFEFF/, '')) || text.replace(/^\uFEFF/, '').includes('\uFEFF');
 
 function seededRandom(seed) {
   let state = seed;
@@ -33,6 +36,10 @@ const VALID_MAP_PIECES = [
   (m, n) => [`OK_${n}: {a: ${m}, b: 2}`], (m, n) => [`OK_${n}: [${m}, x]`], (m, n) => [`"OK_${n}": ${m}`], (m, n) => [`OK_${n}: "multi`, `  ${m}`, '  end"'],
   (m, n) => [`OK_${n}: plain`, `  ${m} continued`], (m, n) => [`OK_${n}: 'one`, `  ${m}'`], (m, n) => [`OK_${n}: "C:\\\\dir\\\\ ${m}"`], (m, n) => [`${n}_NUM: ${m}`, `Mixed_${n}: 1`],
 ];
+// Valid YAML for this parser, but a foreign character hides what follows in a comment, a plain or a quoted value (the file must be untrusted).
+const FOREIGN_MAP_PIECES = FOREIGN_CHARACTERS.flatMap((character) => [
+  (m, n) => [`OK_${n}: 1 # c${character}  x: |`, `  ${m}: v`], (m, n) => [`OK_${n}: "one${character}two"`, `${m}: v`], (m, n) => [`OK_${n}: # c${character}${m}`, `\uFEFFK_${n}: 1`],
+]);
 const INVALID_MAP_PIECES = [
   (m) => ['K: &a "x', `${m}: v`, 'end"'], (m) => ['K: !!str "x', `${m}: v`, 'end"'], (m) => ['MY K: "x', `${m}: v`, 'end"'], (m) => ['"Q": "x', `${m}: v`, 'end"'],
   (m) => ['K:', '  "x', `${m}: v`, '  end"'], (m) => ['K: {a: 1,', `${m}: 2}`], (m) => ['K: [a,', `${m}: 2]`], (m) => [`\t${m}: 1`], (m) => ['K: *nowhere', `${m}: 1`],
@@ -52,7 +59,7 @@ const SKELETONS = {
 function buildDocument(random, kind, tag) {
   const pick = (list) => list[Math.floor(random() * list.length)];
   const list = kind === 'compose' && random() < 0.25;
-  const valid = list ? VALID_LIST_PIECES : VALID_MAP_PIECES;
+  const valid = list ? VALID_LIST_PIECES : [...VALID_MAP_PIECES, ...(random() < 0.3 ? FOREIGN_MAP_PIECES : [])];
   const invalid = list ? INVALID_LIST_PIECES : INVALID_MAP_PIECES;
   const block = [];
   for (let piece = 0, count = 1 + Math.floor(random() * MAX_PIECES); piece < count; piece += 1) {
@@ -81,8 +88,9 @@ const shownKeys = (env) => Object.keys(env ?? {}).filter((key) => NAME_SHAPE.tes
 const shownItems = (env) => env.filter((item) => typeof item === 'string').map((item) => item.split('=')[0]).filter((name) => PLAIN_NAME.test(name));
 const shownNames = (env) => (Array.isArray(env) ? shownItems(env) : shownKeys(env));
 
-/** The names the parser, used the plain way, says are keys at env positions; null when it reports any error or warning or `toJS` throws. */
+/** The names the parser, used the plain way, says are keys at env positions; null when it reports any error or warning, `toJS` throws, or the text holds a foreign character. */
 function oracleNames(kind, text) {
+  if (hasForeignCharacter(text)) return null;
   const documents = [...parseAllDocuments(text, { strict: true, uniqueKeys: true, merge: true })];
   if (documents.some((doc) => doc.errors.length > 0 || doc.warnings.length > 0)) return null;
   const found = new Set();

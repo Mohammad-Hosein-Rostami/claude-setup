@@ -1,13 +1,11 @@
 // Tests for reading YAML deploy files with a real parser (fourth audit, R4-1 to R4-3, and the accuracy the line scanner lost).
 // A name comes only from a parsed map key at an env position; a word from inside a value never prints. Marker words start "zqx".
-// Also: the parser missing (notice, no crash), and hostile input (alias bomb, deep nesting, 1 MB, duplicate keys, tab, a broken
+// Also: hostile input (alias bomb, deep nesting, 1 MB, duplicate keys, tab, a broken
 // second document, keys that are not names, CRLF and BOM).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
 import { scanDeploy } from '../home/tools/env-names/lib/deploy-names.mjs';
-import { CLI, everythingPrinted, makeProject, run } from './env-names-fixtures.mjs';
+import { everythingPrinted, run } from './env-names-fixtures.mjs';
 
 const MAX_SECONDS_FOR_BIG_FILE = 5;
 const BIG_FILE_BYTES = 1024 * 1024;
@@ -105,18 +103,6 @@ test('a key that is a number, null, a boolean or a map is never printed, and is 
 test('a key with spaces or odd characters is not a name: counted, never printed', () => {
   const found = scanDeploy('compose', lines('services:', '  s:', '    environment:', '      "my key": 1', '      GOOD_ONE: 2'));
   assert.deepEqual([found.mentions.map((mention) => mention.name), found.hidden], [['GOOD_ONE'], 1]);
-});
-
-test('the parser missing: YAML deploy files are skipped with one notice, the Dockerfile is still read, nothing crashes', async () => {
-  const dir = await makeProject({ 'docker-compose.yml': lines('services:', '  a:', '    environment:', '      YAML_NAME: 1'), '.gitlab-ci.yml': lines('variables:', '  CI_NAME: 1'), Dockerfile: 'ARG DOCKER_NAME\n' });
-  const missing = { ...process.env, ENV_NAMES_YAML_MODULE: join(dir, 'no-such-yaml-parser.mjs') };
-  const text = spawnSync(process.execPath, [CLI, 'list', dir], { encoding: 'utf8', env: missing });
-  assert.equal(text.status, 0);
-  assert.match(text.stdout, /^yaml parser not installed: 2 deploy files not read; run scripts\/install\.sh$/m);
-  const json = JSON.parse(spawnSync(process.execPath, [CLI, 'list', dir, '--json'], { encoding: 'utf8', env: missing }).stdout);
-  assert.deepEqual(Object.keys(json.deploy), ['DOCKER_NAME']);
-  assert.equal(run(['list', dir, '--json']).status, 0);
-  assert.deepEqual(Object.keys(JSON.parse(run(['list', dir, '--json']).stdout).deploy).sort(), ['CI_NAME', 'DOCKER_NAME', 'YAML_NAME']);
 });
 
 test('an alias bomb (nested aliases) neither hangs nor prints: the file is untrusted', () => {
