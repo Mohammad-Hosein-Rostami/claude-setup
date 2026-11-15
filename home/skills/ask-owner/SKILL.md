@@ -40,8 +40,8 @@ Because a timeout takes the recommended option, that option must be safe with no
 and the owner's stated bar kept, reusing what exists. Never make an outward-facing or irreversible action (push,
 publish, delete, send, spend) or a scope cut the recommended option; if the best choice is one of those, list it second
 and recommend "wait" or the reversible path. A question about keeping an element not in Figma or differing from it:
-the recommended option is always Match Figma. Log every answer taken by timeout in STATUS.md under "taken by default
-(revisit)" and repeat it in the final report; record a queue question taken by timeout with `ask.mjs answer --queue
+the recommended option is always Match Figma. Mark every answer taken by default or timeout `UNCONFIRMED` in STATUS.md
+`## Owner decisions` and ask it again in the next reply to the owner; record a queue question taken by timeout with `ask.mjs answer --queue
 <path> q<n> --default --option <N>` (`--default` marks it `by: timeout`, so `ui-coverage` never counts it as the owner's decision).
 
 ## Queue loop (background agents and workflows)
