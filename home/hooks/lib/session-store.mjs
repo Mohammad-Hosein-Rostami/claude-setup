@@ -14,9 +14,11 @@
 //   caught and a FIFO never blocks. A write creates a new temp file (random name, O_EXCL, O_NOFOLLOW, 0600) and renames it over the
 //   session file only while the folder is still the one checked. A missing folder is created 0700; an existing one keeps its mode.
 // - withSessionLock lets hooks that read and write one session file at the same moment take turns: the lock is a new empty file
-//   <session>.lock (O_EXCL, O_NOFOLLOW, 0600) in the checked folder, removed after the turn. A turn waits at most LOCK_WAIT_MS; a lock
-//   older than STALE_LOCK_MS was left by a killed hook and is removed. A link, FIFO or folder at the lock's name makes the store unusable.
-//   Cleanup counts an old lock as a store file too.
+//   <session>.lock (O_EXCL, O_NOFOLLOW, 0600) in the checked folder, removed after the turn. A lock older than STALE_LOCK_MS, or dated
+//   more than LOCK_CLOCK_SKEW_MS ahead, was not made by a running hook (a killed one, a clock change, a planted file) and is removed.
+//   Worst wait a caller sees: LOCK_WAIT_MS (1 s), after which it stores nothing; after a killed holder the next caller waits until that
+//   lock is STALE_LOCK_MS old (about 0.5 s). Only a send that may be denied (a bounce or advice) takes the lock: a plain allow never
+//   touches the store. A link, FIFO or folder at the lock's name makes the store unusable. Cleanup counts an old lock as a store file too.
 // - Cleanup (on each write unless the caller passes { sweep: false }, which a store of long-lived history uses) removes only
 //   this user's regular files older than 7 days, directly in the checked folder, whose names match STORE_FILE (a
 //   session file or its temp file). It never recurses and never follows a link. Node has no unlinkat, so the folder is checked again
@@ -34,6 +36,7 @@ const STORE_FILE = /^[A-Za-z0-9_-]{1,100}\.(?:json(?:\.[0-9a-f]{1,16}\.tmp)?|loc
 const LOCK_WAIT_MS = 1000; // the longest a hook waits for its turn; a turn (one read, one write) takes about 1 ms
 const LOCK_PAUSE_MS = 2; // between two tries for the lock
 const STALE_LOCK_MS = 500; // no turn takes this long: such a lock was left by a hook killed during its turn
+const LOCK_CLOCK_SKEW_MS = 1000; // a lock's time may run this far ahead of the clock; further ahead, no running hook made it
 const PAUSE = new Int32Array(new SharedArrayBuffer(4)); // Atomics.wait on it is a synchronous sleep
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -159,12 +162,16 @@ function takeLock(lock) {
   }
 }
 
-/** Removes a lock older than STALE_LOCK_MS. @returns {boolean} false when something other than this user's regular file holds the name */
+/**
+ * Removes a lock older than STALE_LOCK_MS or dated more than LOCK_CLOCK_SKEW_MS ahead (see the header).
+ * @returns {boolean} false when something other than this user's regular file holds the lock's name
+ */
 function clearStaleLock(dir, folder, lock) {
   const held = lstatOrNull(lock);
   if (held === null) return true; // released meanwhile: the next try takes it
   if (!isPrivateFile(held)) return false;
-  if (Date.now() - held.mtimeMs > STALE_LOCK_MS && sameNode(lstatSync(dir), folder)) rmSync(lock, { force: true });
+  const age = Date.now() - held.mtimeMs;
+  if ((age > STALE_LOCK_MS || age < -LOCK_CLOCK_SKEW_MS) && sameNode(lstatSync(dir), folder)) rmSync(lock, { force: true });
   return true;
 }
 

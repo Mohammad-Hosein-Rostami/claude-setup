@@ -7,7 +7,7 @@ import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -311,6 +311,19 @@ test('16 records at the same moment: all 16 digests are stored', { timeout: 60_0
   assert.deepEqual((await Promise.all(exits)).map(([code]) => code), Array(PARALLEL_RECORDS).fill(0));
   const { digests } = JSON.parse(readFileSync(join(home, '.claude', 'state', 'guard-bounced', 'sess1.json'), 'utf8'));
   assert.equal(new Set(digests).size, PARALLEL_RECORDS);
+});
+
+test('a store lock dated in the future is cleared like a stale one: the send is still recorded', () => {
+  const home = mkdtempSync(join(tmpdir(), 'advice-future-lock-'));
+  const env = { HOME: home, CLAUDE_GUARD_LOG: join(home, 'guard.jsonl') };
+  const store = join(home, '.claude', 'state', 'guard-bounced');
+  mkdirSync(store, { recursive: true, mode: 0o700 });
+  const lock = join(store, `${SESSION}.lock`);
+  writeFileSync(lock, '');
+  const hourAhead = new Date(Date.now() + 60 * 60 * 1000);
+  utimesSync(lock, hourAhead, hourAhead);
+  assert.notEqual(adviceOnce(['advice text'], { command: 'cmd', cwd: home, input: { session_id: SESSION } }, env), '', 'denied once: recorded');
+  assert.equal(existsSync(lock), false, 'the lock was cleared');
 });
 
 test('matrixLines: only lines that start with MATRIX: count; blanks and a CRLF are trimmed; empty values are left out; at most five', () => {
