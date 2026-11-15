@@ -5,6 +5,7 @@
 //   file, then line, then kind.
 import { basename, join } from 'node:path';
 import { Disk } from './disk.mjs';
+import { readPackageJson, readPnpmWorkspace } from './package.mjs';
 import { readTsconfig } from './tsconfig.mjs';
 import { walkTree } from './walk.mjs';
 
@@ -13,6 +14,8 @@ const isEnvFile = (rel) => basename(rel).startsWith('.env');
 
 const READERS = [
   { matches: (rel) => /^(tsconfig|jsconfig)[^/]*\.json$/.test(basename(rel)), read: readTsconfig },
+  { matches: (rel) => basename(rel) === 'package.json', read: readPackageJson },
+  { matches: (rel) => basename(rel) === 'pnpm-workspace.yaml', read: readPnpmWorkspace },
 ];
 
 const byFileThenLine = (a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line || (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0));
