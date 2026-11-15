@@ -3,7 +3,7 @@
 Compares the environment variables of a project by NAME, never by value. When you move apps, change the build tool or add
 Docker and CI, the env setup breaks silently: a variable the code reads is no longer defined, an env file is dropped, a
 prefix changes. Opening `.env` files to check puts secret values into a chat transcript; this tool gives the same answer
-from names only. Node 22, no dependencies.
+from names only. Node 22; one dependency, the `yaml` package (`npm ci` in this folder, done by `scripts/install.sh`).
 
 Run: `node ~/.claude/tools/env-names/env-names.mjs list [dir] [--json] [--save <file> [--overwrite]] [--wrapper <fn>]...`
 and `node ~/.claude/tools/env-names/env-names.mjs diff <old-snapshot.json> [dir] [--json]`.
@@ -51,16 +51,22 @@ Defence 2, the output rule, applied before anything is printed or saved:
   `${{ secrets.NAME }}`) may be mixed case up to 64 characters, because a key is never a value. A name from the left of `=` in a
   Dockerfile or in a `- NAME=value` item must be plain. Dockerfile heredoc bodies and compose `$${NAME}` (an escaped literal)
   are skipped.
-- Regular and irregular YAML blocks (the same idea as for env files, `lib/deploy-names.mjs`). A block under `environment:`
-  (compose), `env:` (workflow, GitLab) or `variables:` (GitLab) is REGULAR only if every line is blank, a comment, `NAME:` with
-  an empty value, a plain value or a value quoted completely on that line, or a list item `- NAME`, `- NAME=value` or the same
-  quoted on one line (a key may be in one pair of matching quotes), all at one indent, no tab, no backslash right before a
-  closing quote, and a plain value never starts with `&` `*` `!` `|` `>` `{` `[` or a quote. Anything else (an anchor, alias or tag,
-  a block scalar, a flow map or list, a quote that does not close on its line, a key with a space, a deeper or shifted line) makes
-  the whole block IRREGULAR. From an irregular block, and from every line after a quote or flow collection left open, a name
-  prints only if code reads the same name; the rest are counted per file as `N names not shown (... unusual layout ...)`.
-  Ordinary compose, workflow and GitLab files stay regular. A compose block that uses `<<: *anchor` or `${...}` flow values,
-  or a GitLab variable with `value:` / `description:` sub-keys, is irregular by this rule. There is no Kubernetes reader.
+- YAML deploy files (compose, GitHub workflow, GitLab CI) are read by a real YAML parser (`lib/deploy-yaml-names.mjs`): a name
+  comes only from a parsed map KEY (a plain or quoted string) or from the text before the first `=` of a string list item, at
+  these places: compose `services.*.environment` (a map or a list), GitLab `variables` (top level and per job), workflow `env`
+  (top level, job, step). Values, the sub-keys of a variable (`value:`, `description:`), anchors, tags and comments are never
+  read into a name. `<<: *anchor` merges and `NAME: {value: x}` are read correctly. A key that is a number, `null`, a boolean or
+  a map is counted, not printed. `${NAME}` (compose) and `secrets.NAME` / `vars.NAME` inside `${{ }}` are taken from the text of
+  scalar values only, never from comments.
+- A YAML file is UNTRUSTED when the parser reports any error or warning in any of its documents, a scalar key appears twice in
+  one map, an alias does not resolve, there are more than 100 aliases, or the parser throws. From an untrusted file a name prints
+  only if code reads the same name; the rest are counted per file as `N names not shown (... the YAML parser reports a problem
+  ...)`. Aliases are followed one at a time and never expanded, so an alias bomb costs nothing.
+- If the `yaml` package is not installed, YAML deploy files are skipped and the report says
+  `yaml parser not installed: N deploy files not read; run scripts/install.sh`; nothing falls back to scanning lines.
+  Dockerfiles do not need it. There is no Kubernetes reader.
+- Residual risk: a file that the real consumer (Docker Compose, GitLab, GitHub) reads differently from this parser, for example
+  a YAML 1.1 quirk, is read as this parser reads it.
 
 Other rules that keep content out:
 - A file that cannot be read is listed with a fixed reason (`link, not read`, `binary, not read`, `too large, not read`,
@@ -162,7 +168,7 @@ when both hold exactly the same names each gets a `same names as <other path>` l
 - Names set by the host or CI at run time, and variables inherited from the shell.
 - `const { A, B } = process.env` and `...process.env`: not parsed as reads.
 - Code in comments counts as code (a commented-out `process.env.X` is listed).
-- Compose `env_file:`, inline `environment: { A: 1 }` maps, GitLab `variables:` outside the blocks described above, YAML anchors.
+- Compose `env_file:`, a compose file with no `services:` key (the old version 1 layout), GitLab `variables:` outside the top level and the jobs, workflow `env:` outside the job and step levels.
 - Moving only the code that reads a name, without changing the name, is invisible to `diff` (it compares names, not places).
 - Skipping is deliberate: an unclosed quote swallows the lines after it, a value ending in a backslash swallows the next line
   (a Windows path such as `DIR=C:\logs\` hides the line below it), and a stray line hides the lines up to the next blank
@@ -173,8 +179,3 @@ when both hold exactly the same names each gets a `same names as <other path>` l
 - Irregular env files show few names (only those code or deploy files confirm); that is the price of never printing a fragment.
 - `-----BEGIN` in a comment makes the file irregular and skips to the next `-----END` or the end of the file.
 - Files above 16 MB (env files) or 4 MB (source and deploy files) are listed under `Not read`.
-
-## Layout
-
-`env-names.mjs` (CLI: arguments, exit codes, printing) over `lib/`, see `lib/README.md`. Tests:
-`node --test tests/env-names-*.test.mjs`.
