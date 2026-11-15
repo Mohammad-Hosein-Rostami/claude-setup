@@ -45,14 +45,21 @@ export function reflogOnlyCommits(repo, reflogs, removedBranch) {
   return outcome;
 }
 
+// Reflog subjects that record work done on the branch; moves along the base (creation, rebase finish, fast-forward, reset, rename) do not.
+const OWN_WORK_SUBJECT = /^(commit|cherry-pick|revert|am|pull)( |:|$)/;
+
 /**
- * True when a branch has never had a commit of its own: its reflog holds only the creation entry, or every entry points at the
- * commit it was created on. A reflog that is missing, empty, unreadable or longer than the entries read counts as "started",
- * so this only ever adds a reason to keep.
+ * True when a branch has never had a commit of its own: no reflog entry records work (a subject starting with commit,
+ * cherry-pick, revert, am or pull) and every entry's commit is on the base. So a lane that was only created, rebased onto a
+ * moved base or fast-forwarded to it still counts as not started. A reflog that is missing, empty, unreadable or longer than
+ * the entries read counts as "started", so this only ever adds a reason to keep.
  */
 export function isNotStarted(repo, name) {
-  const result = runGit(repo.dir, ['reflog', 'show', '--format=%H', '-n', String(MAX_ENTRIES + 1), `refs/heads/${name}`]);
+  const result = runGit(repo.dir, ['reflog', 'show', '--format=%H%x00%gs', '-n', String(MAX_ENTRIES + 1), `refs/heads/${name}`]);
   if (result.status !== 0) return false;
-  const hashes = result.stdout.split('\n').filter((line) => line !== '');
-  return hashes.length > 0 && hashes.length <= MAX_ENTRIES && hashes.every((hash) => hash === hashes.at(-1));
+  const entries = result.stdout.split('\n').filter((line) => line !== '').map((line) => line.split('\0'));
+  if (entries.length === 0 || entries.length > MAX_ENTRIES) return false;
+  if (entries.some(([, subject]) => OWN_WORK_SUBJECT.test(subject))) return false;
+  const offBase = runGit(repo.dir, ['rev-list', '-n', '1', ...entries.map(([hash]) => hash), '--not', repo.baseRef]);
+  return offBase.status === 0 && offBase.stdout.trim() === '';
 }

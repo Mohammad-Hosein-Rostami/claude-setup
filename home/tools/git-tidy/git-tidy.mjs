@@ -3,7 +3,8 @@
 // whose work is already on the base; `prune` removes exactly those, and only when it can prove they are merged.
 // Usage: git-tidy.mjs check [dir] [--base <branch>] [--json]
 //        git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]
-//        --include-recent  lifts only the rule that keeps a worktree used in the last 60 minutes
+//        --include-recent  lifts only the rule that keeps a worktree used in the last 60 minutes, and not for a lane
+//                          with no commit of its own yet (it stays protected for those 60 minutes)
 // Exit codes: check 0 clean, 1 findings; prune 0 (also when there is nothing to do), 1 when --apply could not remove
 // something it planned to (the line says why); both 2 for a usage error, a folder that is not a git repository, a base
 // branch that cannot be found, a git command that fails unexpectedly, or (prune --apply) a repository in the middle of a

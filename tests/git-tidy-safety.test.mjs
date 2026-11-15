@@ -211,7 +211,15 @@ test('base not given and main, master and develop all exist: --apply exits 2 nam
   assert.deepEqual(branches(dir), ['main']);
 });
 
-test('recently used: a worktree touched in the last hour is kept with its branch, with the minutes and the flag to lift it', () => {
+test('recently used: an empty lane touched in the last hour is kept without --include-recent, with the minutes and the flag', () => {
+  const dir = makeRepo();
+  const empty = addWorktree(dir, 'wt-empty', 'empty-lane');
+  const emptyResult = apply(dir);
+  assert.match(keptLine(emptyResult, 'merged-worktree', empty), /used \d+ min ago \(add --include-recent if you landed this lane yourself\)/);
+  assert.ok(existsSync(empty));
+});
+
+test('recently used: a landed lane touched in the last hour is kept, and --include-recent lifts that', () => {
   const dir = makeRepo();
   const wt = addWorktree(dir, 'wt-fresh', 'fresh-lane');
   commit(wt, 'lane.txt');

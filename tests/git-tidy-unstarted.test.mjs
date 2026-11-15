@@ -70,3 +70,39 @@ test('a fresh lane with no commit is kept in the plan too (worktree and branch)'
   assert.ok(lines(plan).some((line) => line.startsWith(`keep merged-worktree ${wt} `) && NOT_STARTED.test(line)), plan.stdout);
   assert.ok(lines(plan).some((line) => line.startsWith('keep merged-branch plan-lane ')), plan.stdout);
 });
+
+/** An empty lane in a worktree after main moved on by one commit; returns the repo and the worktree folder. */
+function emptyLaneBehindMovedBase(name) {
+  const dir = makeRepo();
+  const wt = addWorktree(dir, `wt-${name}`, name);
+  commit(dir, 'moved-on.txt');
+  return { dir, wt };
+}
+
+test('an empty lane rebased onto a base that moved on is still not started', () => {
+  const { dir, wt } = emptyLaneBehindMovedBase('rebased-lane');
+  git(wt, 'rebase', '-q', 'main');
+  const result = applyNow(dir);
+  assert.match(keptLine(result, 'merged-worktree', wt), NOT_STARTED);
+  assert.ok(existsSync(wt));
+});
+
+test('an empty lane fast-forwarded to a base that moved on is still not started', () => {
+  const { dir, wt } = emptyLaneBehindMovedBase('ff-lane');
+  git(wt, 'merge', '-q', '--ff-only', 'main');
+  const result = applyNow(dir);
+  assert.match(keptLine(result, 'merged-worktree', wt), NOT_STARTED);
+  assert.ok(existsSync(wt));
+});
+
+test('a lane with one commit, landed by fast-forward and then rebased onto a moved base, is removed', () => {
+  const dir = makeRepo();
+  const wt = addWorktree(dir, 'wt-landed', 'landed-lane');
+  commit(wt, 'work.txt');
+  git(dir, 'merge', '-q', '--ff-only', 'landed-lane');
+  commit(dir, 'moved-on.txt');
+  git(wt, 'rebase', '-q', 'main');
+  const result = applyNow(dir);
+  assert.equal(result.status, 0, result.stdout);
+  assert.ok(!existsSync(wt));
+});
