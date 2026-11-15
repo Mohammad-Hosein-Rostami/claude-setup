@@ -4,13 +4,14 @@ The parts of the `env-names` tool. `../env-names.mjs` is the command; see `../RE
 the rule that no env file value ever reaches an output.
 
 - `env-file-names.mjs`: the only code that sees env file content; returns names and a count of other lines, never a value.
+- `name-shape.mjs`: the shape a name must have to be printed without a second reason (the output rule, shared by `collect.mjs` and `deploy-names.mjs`).
 - `code-reads.mjs`: names a source file reads (`process.env.X`, `import.meta.env.X`, `Deno.env.get`, wrappers), and the count of dynamic accesses.
 - `deploy-names.mjs`: names in Dockerfile, compose, GitHub workflow and GitLab CI files, and which file is which kind.
-- `walk.mjs`: lists the env, source and deploy files of a folder without reading them (hidden folders in, symlinks not followed).
+- `walk.mjs`: lists the env, source and deploy files of a folder without reading them (hidden folders in, symlinks not followed), and tells example files and structured files (`.env.yaml`) apart.
 - `collect.mjs`: runs the walk, the reader and the scanners and builds the snapshot object (the same shape `list --json` prints).
-- `analyze.mjs`: from that object, the names read but undefined, defined but never read, and differing between env files of one folder.
+- `analyze.mjs`: from that object, the names read but undefined, read but defined only outside the reader's folder chain, defined but never read, and differing between env files of one folder. Example files define nothing.
 - `snapshot.mjs`: reads a saved snapshot back with a strict shape and version check.
-- `diff.mjs`: compares an old snapshot with the current collection.
+- `diff.mjs`: compares an old snapshot with the current collection (names now undefined, definitions moved out of the folder chain, env files no longer read, names added and removed).
 - `report.mjs`: turns an analysis or a diff into text.
 - `usage-error.mjs`: the error class the command turns into exit 2; its message never carries file content.
 
@@ -25,4 +26,5 @@ From the repo root:
 ## Watch out for
 
 - `readFileSync` may appear only in `env-file-names.mjs`, `collect.mjs` (source and deploy files) and `../env-names.mjs` (the snapshot); a test checks this.
+- `readFileSync` is also not allowed on an env-file path outside `readEnvFile`, which opens regular files only.
 - Never put an error object's `message` into output: for a JSON parse error it quotes the start of the file. Use `err.code`.

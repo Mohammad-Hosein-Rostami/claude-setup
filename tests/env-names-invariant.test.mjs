@@ -47,20 +47,39 @@ test('a value line after a trailing backslash is swallowed, not read as a name',
   assert.deepEqual(result, { names: ['A', 'B'], otherLines: 1 });
 });
 
-test('fuzz: random env text with markers in values, quotes, backslashes and junk never puts a marker in the result', () => {
+test('fuzz: random env files that mix definitions, colon definitions, junk and name-shaped junk never yield an unplanted name', () => {
   let seed = 20260101;
   const next = (limit) => {
-    seed = (seed * 1664525 + 1013904223) % 4294967296;
-    return seed % limit;
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return (seed >>> 16) % limit; // high bits: the low bit of this generator alternates and would make every file one kind of line
   };
-  const values = ['MARKER_VALUE', '"MARKER_VALUE', "'MARKER_QUOTED", 'MARKER_VALUE"', 'a=b MARKER_VALUE', '"MARKER_VALUE"', '', 'MARKER_VALUE\\', '`MARKER_PART', '# MARKER_COMMENT', 'x=MARKER_VALUE=='];
-  const junk = ['MARKER_PART words', '-----BEGIN MARKER_PART-----', '# MARKER_COMMENT=x', '', '   ', 'https://MARKER_PART/', '"', "'", 'MARKERVALUE+abc/def'];
-  for (let round = 0; round < 300; round += 1) {
+  const values = ['MARKER_VALUE', '"MARKER_VALUE', "'MARKER_QUOTED", 'MARKER_VALUE"', 'a=b MARKER_VALUE', '"MARKER_VALUE"', '', 'MARKER_VALUE\\', '`MARKER_PART', '# MARKER_COMMENT', 'x=MARKER_VALUE==', '|', '-----BEGIN MARKER_PART-----', "$'MARKER_QUOTED", '===='];
+  const junk = ['MARKER_PART words', '-----BEGIN MARKER_PART-----', '-----END MARKER_PART-----', '# MARKER_COMMENT=x', '', '   ', 'https://MARKER_PART/', '"', "'", '`', 'MARKERVALUE+abc/def',
+    'MARKERVALUEabc==', 'MARKERVALUE', 'MARKER_VALUE_UPPER', '  MARKERVALUEindented', 'MARKERVALUE====', 'export MARKERVALUE', '\\'];
+  const lineKinds = [(id) => `NAME_${id}=${values[next(values.length)]}`, (id) => `NAME_${id}: ${values[next(values.length)]}`, (id) => `export NAME_${id}=${values[next(values.length)]}`, () => junk[next(junk.length)], () => junk[next(junk.length)]];
+  let mixedFiles = 0;
+  for (let round = 0; round < 400; round += 1) {
     const lines = [];
-    for (let i = 0; i < 12; i += 1) lines.push(next(2) === 0 ? `NAME_${round}_${i}=${values[next(values.length)]}` : junk[next(junk.length)]);
+    const kindsInFile = new Set();
+    for (let i = 0; i < 14; i += 1) {
+      const kind = next(lineKinds.length);
+      kindsInFile.add(kind);
+      lines.push(lineKinds[kind](`${round}_${i}`));
+    }
+    if (kindsInFile.size >= 3) mixedFiles += 1;
     const result = namesFromEnvText(lines.join(['\n', '\r\n', '\r'][next(3)]));
     assert.deepEqual(leaked(JSON.stringify(result)), [], lines.join('|'));
     assert.ok(result.names.every((name) => /^NAME_\d+_\d+$/.test(name)), lines.join('|'));
+  }
+  assert.ok(mixedFiles > 350, `only ${mixedFiles} of 400 files mixed 3 or more kinds of line`);
+});
+
+test('a one-line env file given as the snapshot (the JSON parser would quote all of it) prints none of it', async () => {
+  const dir = await makeProject({ 'one.env': 'K=Zqx1', 'two.txt': 'Zqx', 'proj/.keep': '' });
+  for (const name of ['one.env', 'two.txt']) {
+    const result = run(['diff', join(dir, name), join(dir, 'proj')]);
+    assert.equal(result.status, 2);
+    assert.doesNotMatch(result.all, /Zqx/);
   }
 });
 

@@ -129,6 +129,8 @@ test('deploy dockerfile: a continued ENV value is joined with no space and never
     ['ARG ZQX_ARG=\\\nZqxWholeToken\n', ['ZQX_ARG@1']],
     ['ENV A=x ZqxWord\n', ['A@1']],
     ['ENV A=x ZqxWord B=y\n', ['A@1']], // a bare word ends the scan: Docker would reject the line
+    ['ENV A=x ZQX_WORD\n', ['A@1']], // a name-shaped bare word: only the parser rule stops it, not the output rule
+    ['ENV A=x\\\nB=y\n', ['A@1']], // Docker joins with no space: `xB=y` is one value, so B is no name
     ['ENV LEGACY \\\nZqxValue\n', ['LEGACY@1']],
     ['ENV LEGACY ZqxValue more words\n', ['LEGACY@1']],
   ];
