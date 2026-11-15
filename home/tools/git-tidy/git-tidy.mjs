@@ -5,7 +5,8 @@
 //        git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--json]
 // Exit codes: check 0 clean, 1 findings; prune 0 (also when there is nothing to do), 1 when --apply could not remove
 // something it planned to (the line says why); both 2 for a usage error, a folder that is not a git repository, a base
-// branch that cannot be found, or (prune --apply) a repository in the middle of a rebase, merge or similar.
+// branch that cannot be found, a git command that fails unexpectedly, or (prune --apply) a repository in the middle of a
+// rebase, merge or similar.
 // Invariants: logic lives in lib/; this file parses arguments, prints and sets the exit code. Only `prune --apply` writes.
 import { runCheck } from './lib/check.mjs';
 import { UsageError } from './lib/git.mjs';
@@ -52,8 +53,8 @@ function main(argv) {
     console.log(formatCheck({ base: repo.base, ...result }, options.json));
     return result.findings.length > 0 ? EXIT_FINDINGS : 0;
   } catch (error) {
-    if (!(error instanceof UsageError)) throw error;
-    console.error(`git-tidy: ${error.message}`);
+    // Any failure is exit 2, never Node's default 1: 1 must only ever mean findings or something left unremoved.
+    console.error(`git-tidy: ${error instanceof UsageError ? '' : 'unexpected git failure: '}${error.message}`);
     return EXIT_USAGE;
   }
 }

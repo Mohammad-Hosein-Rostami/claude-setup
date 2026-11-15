@@ -30,19 +30,21 @@ test('re-check at apply time: candidates found earlier are not trusted when the 
   git(dir, 'branch', 'got-work');
   git(dir, 'branch', 'got-checked-out');
   const dirtied = addWorktree(dir, 'wt-dirtied', 'dirtied');
+  const grows = addWorktree(dir, 'wt-grows', 'grows');
   const repo = openRepo(dir, null);
   const candidates = findLeftovers(repo);
-  assert.deepEqual(candidates.mergedBranches.map((b) => b.name).sort(), ['dirtied', 'got-checked-out', 'got-work']);
+  assert.deepEqual(candidates.mergedBranches.map((b) => b.name).sort(), ['dirtied', 'got-checked-out', 'got-work', 'grows']);
 
   git(dir, 'checkout', '-q', 'got-work');
   commit(dir, 'new-work.txt');
   git(dir, 'checkout', '-q', 'main');
   const holder = addWorktree(dir, 'wt-new-holder', 'got-checked-out', { create: false });
   writeFileSync(join(dirtied, 'late.txt'), 'written after the check');
+  commit(grows, 'grown.txt');
 
   const items = pruneRepo(repo, { apply: true, leftovers: candidates });
-  assert.deepEqual(branches(dir), ['dirtied', 'got-checked-out', 'got-work', 'main']);
-  assert.ok(existsSync(dirtied) && existsSync(holder) && existsSync(join(dirtied, 'late.txt')));
+  assert.deepEqual(branches(dir), ['dirtied', 'got-checked-out', 'got-work', 'grows', 'main']);
+  assert.ok(existsSync(dirtied) && existsSync(grows) && existsSync(holder) && existsSync(join(dirtied, 'late.txt')));
   assert.deepEqual(items.filter((entry) => entry.action === 'deleted' || entry.action === 'removed'), []);
   assert.ok(items.some((entry) => entry.subject === 'got-work' && entry.detail.includes('not on main')), JSON.stringify(items));
   assert.ok(items.some((entry) => entry.subject === 'got-checked-out' && entry.detail.includes('checked out in')), JSON.stringify(items));

@@ -221,6 +221,17 @@ test('odd branch names are deleted through `--`, and a tag with the same name as
   assert.equal(git(dir, 'rev-parse', 'refs/tags/dup'), unmerged);
 });
 
+test('a landed branch named like a tag that points at unmerged work is still judged by the branch, not the tag', () => {
+  const dir = makeRepo();
+  landRebased(dir, 'twin');
+  git(dir, 'checkout', '-q', '-b', 'other-work');
+  const otherWork = commit(dir, 'other.txt');
+  git(dir, 'checkout', '-q', 'main');
+  git(dir, 'tag', 'twin', otherWork);
+  assert.equal(apply(dir).status, 0);
+  assert.deepEqual(branches(dir).sort(), ['main', 'other-work']);
+});
+
 test('a worktree folder with a space in its path is removed', () => {
   const dir = makeRepo();
   const wt = addWorktree(dir, 'my worktree', 'spaced');
