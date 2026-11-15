@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/lane-new.sh', import.meta.url));
 const INSTALL = readFileSync(fileURLToPath(new URL('../scripts/install.sh', import.meta.url)), 'utf8');
+const INSTALL_PS1 = readFileSync(fileURLToPath(new URL('../scripts/install.ps1', import.meta.url)), 'utf8');
+const TOOLS_LINE = /^TOOLS_WITH_DEPS=\(([a-z-]+(?: [a-z-]+)*)\)$/m;
 const skip = process.platform === 'win32' && 'bash script';
 const GIT_IDENTITY = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 
@@ -32,7 +34,8 @@ function makeRepo() {
   const bin = join(parent, 'bin');
   mkdirSync(bin);
   const calls = join(parent, 'npm-calls.txt');
-  writeFileSync(join(bin, 'npm'), `#!/bin/sh\necho "$@" >> "${calls}"\n`);
+  // `npm ci` fails for any folder named in FAIL_TOOL, like a lockfile that does not match
+  writeFileSync(join(bin, 'npm'), `#!/bin/sh\necho "$@" >> "${calls}"\ncase "$*" in *"/$FAIL_TOOL") echo "npm ERR! stub failure" >&2; exit 1;; esac\n`);
   chmodSync(join(bin, 'npm'), 0o755);
   return { parent, repo, bin, calls };
 }
@@ -41,7 +44,13 @@ const lane = ({ repo, bin }, ...args) =>
   spawnSync('bash', [join(repo, 'scripts', 'lane-new.sh'), ...args], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ...GIT_IDENTITY } });
 
 test('install.sh keeps the one list of tools with dependencies that lane-new.sh reads', { skip }, () => {
-  assert.match(INSTALL, /^TOOLS_WITH_DEPS=\(ui-check env-names\)$/m);
+  assert.match(INSTALL, TOOLS_LINE);
+});
+
+test('install.ps1 installs the same tools, in the same order, as TOOLS_WITH_DEPS in install.sh', () => {
+  const shellTools = INSTALL.match(TOOLS_LINE)[1].split(' ');
+  const powershellTools = [...INSTALL_PS1.matchAll(/^\s*Install-OneToolDeps '([^']+)'/gm)].map((match) => match[1]);
+  assert.deepEqual(powershellTools, shellTools);
 });
 
 test('creates ../claude-setup-wt/<name> on lane/<name>, runs npm ci only where a lockfile exists, prints the path last', { skip }, () => {
@@ -78,4 +87,30 @@ test('refuses an existing branch, an existing folder and a bad name, and changes
   assert.equal(git(ctx.repo, 'branch', '--list', 'lane/there').stdout.trim(), '');
   for (const bad of [[], ['../evil'], ['-x'], ['a b']]) assert.equal(lane(ctx, ...bad).status, 2, bad.join(' '));
   assert.equal(existsSync(ctx.calls), false);
+});
+
+test('a failing npm ci prints what is half made and how to finish or remove it, exits non-zero, deletes nothing', { skip }, () => {
+  const ctx = makeRepo();
+  const r = spawnSync('bash', [join(ctx.repo, 'scripts', 'lane-new.sh'), 'f1'], { encoding: 'utf8', env: { ...process.env, PATH: `${ctx.bin}:${process.env.PATH}`, FAIL_TOOL: 'with-lock', ...GIT_IDENTITY } });
+  const path = join(ctx.parent, 'claude-setup-wt', 'f1');
+  assert.notEqual(r.status, 0);
+  assert.equal(r.stdout, '', 'the path is printed only for a lane that is ready');
+  assert.match(r.stderr, /lane not ready: npm ci failed for with-lock/);
+  assert.ok(r.stderr.includes(path));
+  assert.ok(r.stderr.includes(`npm ci --prefix ${path}/home/tools/with-lock`));
+  assert.ok(r.stderr.includes(`git worktree remove ${path}`));
+  assert.ok(r.stderr.includes('git branch -D lane/f1'));
+  assert.equal(existsSync(path), true);
+  assert.equal(git(ctx.repo, 'branch', '--list', '--format=%(refname:short)', 'lane/f1').stdout.trim(), 'lane/f1');
+});
+
+test('a base that starts with a dash or names nothing is refused before anything is created', { skip }, () => {
+  const ctx = makeRepo();
+  for (const base of ['--quiet', '-b', 'no-such-ref']) {
+    const r = lane(ctx, 'q1', base);
+    assert.equal(r.status, 2, base);
+    assert.match(r.stderr, /unknown base|usage/, base);
+  }
+  assert.equal(existsSync(join(ctx.parent, 'claude-setup-wt', 'q1')), false);
+  assert.equal(git(ctx.repo, 'branch', '--list', 'lane/q1').stdout.trim(), '');
 });

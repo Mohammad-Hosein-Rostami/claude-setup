@@ -109,7 +109,7 @@ function Install-OneToolDeps($Name) {
   Note "$Name dependencies"
 }
 
-# The tools with npm dependencies: ui-check (odiff-bin, pngjs) and env-names (yaml).
+# The tools with npm dependencies: ui-check (odiff-bin, pngjs) and env-names (yaml). Same list as TOOLS_WITH_DEPS in install.sh.
 function Install-ToolDeps {
   Install-OneToolDeps 'ui-check'
   Install-OneToolDeps 'env-names'

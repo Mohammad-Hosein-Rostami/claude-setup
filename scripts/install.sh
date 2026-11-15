@@ -9,7 +9,7 @@ CLAUDE_DIR="$HOME/.claude"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$HOME/.claude-backup-$STAMP"
 LINKS=(CLAUDE.md rules skills agents standards hooks tools project-notes modes statusline.mjs)
-# Tools with npm dependencies: ui-check (odiff-bin, pngjs) and env-names (yaml). scripts/lane-new.sh reads this line.
+# Tools with npm dependencies: ui-check (odiff-bin, pngjs) and env-names (yaml). scripts/lane-new.sh reads this line; install.ps1 keeps the same list (tests/lane-new.test.mjs checks they match).
 TOOLS_WITH_DEPS=(ui-check env-names)
 DRY_RUN=0
 WITH_PLUGINS=1
