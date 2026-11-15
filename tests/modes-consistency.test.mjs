@@ -54,3 +54,14 @@ test('ccm, docs/modes.md, home/CLAUDE.md and home/modes/_lead.md mention all fiv
     for (const mode of MODES) assert.ok(text.includes(mode), `${file} must mention ${mode}`);
   }
 });
+
+test('home/CLAUDE.md keeps the standing-rules, delegation-size and usage-limit bullets (L22)', () => {
+  const text = read('home/CLAUDE.md');
+  assert.match(text, /goes into STATUS\.md under `## Standing rules` the moment it is given, in the owner's words; every brief names that file; re-read it after a compaction or a resume\./);
+  assert.match(text, /Size a delegated job to finish within about 120 tool calls; split a bigger one into stages with a commit between them\. An agent that returns without its report is continued once \("commit, then report"\), not restarted\./);
+  assert.match(text, /At a usage limit: read the reset time from the message, tell the owner that time, and schedule ONE wake a few minutes after it\. Never retry before the reset\./);
+});
+
+test('ui-coverage hand-over step gives ONE link to the visual overview', () => {
+  assert.match(read('home/skills/ui-coverage/SKILL.md'), /Give the owner ONE link, to the visual overview \(a preview or side-by-side per state\), open it yourself first and check it shows what you describe; never hand over a bare index of routes or a mock's default listing\./);
+});

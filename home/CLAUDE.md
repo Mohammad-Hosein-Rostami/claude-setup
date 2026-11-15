@@ -14,6 +14,7 @@ Setup modes: `normal`, `medium` (default), `high`, `extra-high`, `ultra-high`; s
   done and no decision is left unasked; the user's decisions are asked as they come up, not left for the end.
 - Report sizes (`≤ N lines`) size the summary, not the work. When the detail matters, write it to a file and return
   the path.
+- At a usage limit: read the reset time from the message, tell the owner that time, and schedule ONE wake a few minutes after it. Never retry before the reset.
 
 ## Quality gates (every mode)
 
@@ -52,6 +53,7 @@ global setup combines with it.
   never re-read a file you just edited.
 - Delegate anything that would dump > ~150 lines (test logs, build output, big greps, docs
   crawling) to a `runner` / `scout` agent and ask for a summary of ≤ 20 lines.
+- Size a delegated job to finish within about 120 tool calls; split a bigger one into stages with a commit between them. An agent that returns without its report is continued once ("commit, then report"), not restarted.
 - **Cost = tool calls × context size.** Every tool call re-reads the whole conversation, so
   at 500k context one call costs ~30× a call in a fresh session. Therefore: batch (several
   reads/greps/commands in ONE call or one script), stop at the first sufficient answer, and
@@ -84,6 +86,7 @@ global setup combines with it.
 - AI work notes (STATUS.md, HANDOFF.md) may sit in a project but are never committed (hide them with
   `.git/info/exclude`). No memory or history notes unless asked (the review agents' own `memory: user` notes are the
   exception).
+- An owner instruction that holds for the rest of the work ("always", "keep", "from now on", "as we said") goes into STATUS.md under `## Standing rules` the moment it is given, in the owner's words; every brief names that file; re-read it after a compaction or a resume.
 
 ## Compact instructions
 

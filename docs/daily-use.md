@@ -57,6 +57,12 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
 - Before reporting, an agent tries to break its own work and says what it tried. The independent review still runs.
 - Review findings go back in one message. An agent that has been idle over 5 minutes is replaced by a fresh one that
   gets the spec and the diff, because resuming bills its old context again.
+- Agents commit what is green at 80 tool calls and must return a status report by 120. An agent that ends without one is
+  continued once, not restarted.
+- An instruction that holds for the whole job ("always", "keep", "from now on") is written to `STATUS.md` under
+  `## Standing rules`, so it survives a compaction or a resume.
+- Saying that a fix did not hold ("still wrong", "i told you before", "third time") makes the agent reproduce the exact
+  symptom first and check it before it replies.
 
 ## Restructuring a repository
 Say what to remove or merge ("remove Nx", "merge the apps into one project") and the `repo-restructure` skill loads.
