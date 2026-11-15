@@ -50,10 +50,19 @@ node home/tools/recall/recall.mjs search "<query>" [--project <substr>] [--since
                                    [--kind user|assistant|summary|agent|doc|note] [--session current|<id>] [--deep] [--k N] [--limit N=8] [--json]
                                    [--no-semantic] [--merge add|rrf] [--model <ollama model>]
 node home/tools/recall/recall.mjs show <id> [--around N=2]
+node home/tools/recall/recall.mjs --owner [--session current|<id>] [--since YYYY-MM-DD]
 node home/tools/recall/recall.mjs stats
 node home/tools/recall/recall.mjs embed [--model bge-m3]
 node home/tools/recall/recall.mjs eval <questions.jsonl> [--session-file <main.jsonl>] [--k 1,5,10] [--no-semantic]
 ```
+
+`--owner` lists what the owner typed in one session (default `current`), oldest first, one line each:
+`<number>`, tab, the message time, tab, the first 300 characters on one line. Tool results, hook and system reminders,
+task notifications, cross-session messages, compaction summaries and `!` shell captures are left out. Each message is
+masked before it is cut: `redact` plus a mask for chat-style credentials (`creds: a / b`, `user/pass: a/b`) and
+token-shaped words (24 or more letters, digits, `_`, `-` with both a letter and a digit), printed as `[masked]`; when in
+doubt it masks. It reads the transcript line by line, writes nothing and needs no index. Use it to backfill
+`## Standing rules` in STATUS.md from the owner's own words.
 
 `search` runs a quick incremental index first (capped at 3 s; on timeout, or when another process holds the database
 lock, it says so on stderr and searches what is already indexed). The first full `index` of a large history takes about
@@ -122,4 +131,4 @@ locks, usage log; default: the DB's folder), `RECALL_RERANK*` (see above), `RECA
 `lib/merge.mjs` (lexical/vector merge), `lib/vectors.mjs` (Ollama, cosine), `lib/eval.mjs` (hit@k scoring),
 `lib/pipeline.mjs` (search + reranker chain), `lib/rerank*.mjs` (reranker client, server, watchdog),
 `lib/checkpoint*.mjs`, `lib/notes.mjs`, `lib/slice.mjs`, `lib/claude-call.mjs`, `lib/usage.mjs` (checkpoints),
-`lib/digest.mjs` (post-compact digest), `lib/cli-admin.mjs` (`status`, `backfill`), `lib/paths.mjs` (state locations).
+`lib/digest.mjs` (post-compact digest), `lib/owner-messages.mjs` (`--owner`), `lib/cli-admin.mjs` (`status`, `backfill`), `lib/paths.mjs` (state locations).

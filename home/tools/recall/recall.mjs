@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Purpose: CLI for recall, a local search over past Claude Code sessions, their live checkpoint notes and project
 // notes: lexical + bge-m3 + qwen3-embedding-4b fused, then reranked by qwen3-reranker (0.6b, or 4b with --deep).
-// Commands: `recall "<query>"` (= search), index, search, show, stats, embed, eval, status, backfill (see README.md).
+// Commands: `recall "<query>"` (= search), `--owner` (the owner's own messages of a session), index, search, show, stats, embed, eval, status, backfill (see README.md).
 // Exports: none. Env: RECALL_DB (index file), RECALL_ROOT (transcripts dir), RECALL_HOME (project-notes/ and
 // recall.json), RECALL_OLLAMA_URL and RECALL_RERANK_URL (loopback only), RECALL_EMBED_MODEL (pins one model, no reranker).
 // Exit codes: 0 ok, 2 usage or runtime error. Never prints stack traces for expected errors. Every stage that is
@@ -20,8 +20,9 @@ import { cmdBackfill, cmdStatus } from './lib/cli-admin.mjs';
 import { parseLists, runSearch } from './lib/pipeline.mjs';
 import { rerankBase } from './lib/rerank.mjs';
 import { MERGE_MODES } from './lib/merge.mjs';
+import { findSession, ownerMessages } from './lib/owner-messages.mjs';
 
-const USAGE = 'usage: recall "<query>" [--session current|<id>] [--deep] [--k 8] | recall <index [--full] [--model m] | search "<query>" [--project s] [--since YYYY-MM-DD] [--kind k] [--limit N] [--json] | show <id> [--around N] | stats | status | backfill [--min-messages 20] [--yes] | embed [--model m] | eval <questions.jsonl> [--session-file <path>] [--k 1,5,10]>; search/eval also take [--no-semantic] [--merge add|rrf] [--model m] [--lists lex,bge,qwen] [--rerank N] (semantic and the reranker are automatic when Ollama, vectors and the reranker files exist)';
+const USAGE = 'usage: recall "<query>" [--session current|<id>] [--deep] [--k 8] | recall --owner [--session current|<id>] [--since YYYY-MM-DD] | recall <index [--full] [--model m] | search "<query>" [--project s] [--since YYYY-MM-DD] [--kind k] [--limit N] [--json] | show <id> [--around N] | stats | status | backfill [--min-messages 20] [--yes] | embed [--model m] | eval <questions.jsonl> [--session-file <path>] [--k 1,5,10]>; search/eval also take [--no-semantic] [--merge add|rrf] [--model m] [--lists lex,bge,qwen] [--rerank N] (semantic and the reranker are automatic when Ollama, vectors and the reranker files exist)';
 const SEARCH_INDEX_BUDGET_MS = 3000;
 const DEFAULT_LIMIT = 8;
 const DEFAULT_AROUND = 2;
@@ -39,7 +40,7 @@ const OPTIONS = {
   kind: { type: 'string' }, limit: { type: 'string' }, around: { type: 'string' }, k: { type: 'string' },
   'session-file': { type: 'string' }, semantic: { type: 'boolean' }, 'no-semantic': { type: 'boolean' },
   merge: { type: 'string' }, model: { type: 'string' }, lists: { type: 'string' }, rerank: { type: 'string' },
-  session: { type: 'string' }, deep: { type: 'boolean' }, 'min-messages': { type: 'string' }, yes: { type: 'boolean' },
+  session: { type: 'string' }, owner: { type: 'boolean' }, deep: { type: 'boolean' }, 'min-messages': { type: 'string' }, yes: { type: 'boolean' },
 };
 
 class UsageError extends Error {}
@@ -195,6 +196,19 @@ async function cmdEval(store, { values, positionals }) {
   console.log(formatReport(scoreEval(questions, (q) => hitsById.get(q.id), { sessionFile: resolve(sessionFile), ks })));
 }
 
+/** `recall --owner`: what the owner typed in one session (default: this one), oldest first, masked. Needs no index. */
+async function cmdOwner({ values }) {
+  const session = sessionFilter(values.session ?? 'current');
+  if (values.since && !DATE_PATTERN.test(values.since)) throw new UsageError('--since must be YYYY-MM-DD');
+  let file;
+  try {
+    file = findSession(resolveRoot(), session);
+  } catch (error) {
+    throw new UsageError(error.message);
+  }
+  for await (const { index, time, text } of ownerMessages(file, { since: values.since })) console.log(`${index}\t${time}\t${text}`);
+}
+
 const COMMANDS = {
   index: cmdIndex, search: cmdSearch, show: cmdShow, stats: cmdStats, embed: cmdEmbed, eval: cmdEval,
   status: (store) => cmdStatus(store),
@@ -203,6 +217,7 @@ const COMMANDS = {
 
 async function main(argv) {
   const parsed = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true });
+  if (parsed.values.owner) return cmdOwner(parsed);
   const first = parsed.positionals[0];
   if (first === undefined) throw new UsageError(USAGE);
   const named = Object.hasOwn(COMMANDS, first);

@@ -11,7 +11,7 @@ const HARD_SPLIT_CHARS = MAX_CHUNK_CHARS - OVERLAP_CHARS - 2; // room for the ov
 
 const HARNESS_PREFIXES = [
   '<task-notification', '<agent-message', '[SYSTEM NOTIFICATION', '<system-reminder>',
-  '<local-command', '<command-', 'Caveat:',
+  '<local-command', '<command-', '<cross-session-message', 'Caveat:',
 ];
 
 /** NFKC, Arabic ي/ك to Persian ی/ک, drop ZWNJ and tatweel. Applied to stored text and to queries. */
