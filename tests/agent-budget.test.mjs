@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CALL_CAP, EARLY_NOTICE_AT, READ_WARN_CHARS, readChars } from '../home/hooks/agent-budget.mjs';
 import { tempRoot } from '../home/hooks/lib/edit-log.mjs';
@@ -98,6 +98,30 @@ test('a subagent gets the limit text at call 120, silence until 130, then a remi
   assert.equal(contextOf(outputs[CALL_CAP + 9]), limitText(130));
   assert.ok(outputs.slice(CALL_CAP + 10, CALL_CAP + 19).every((o) => o === ''));
   assert.equal(contextOf(outputs[CALL_CAP + 19]), limitText(140));
+});
+
+test('the early notice survives a count that jumps past 80 (parallel calls): one notice, not skipped, not repeated', async () => {
+  const dir = await home();
+  const ids = { session_id: uid('s'), agent_id: uid('a') };
+  const counter = join(tempRoot(), 'budget', `${ids.session_id}--${ids.agent_id}`);
+  await mkdir(dirname(counter), { recursive: true });
+  await writeFile(counter, '.'.repeat(81)); // calls 80 and 81 were handled by racing processes that both saw 82
+  const input = { hook_event_name: 'PostToolUse', ...ids, tool_name: 'Bash' };
+  assert.equal(contextOf(run(BUDGET, dir, input).stdout), NOTICE_80, 'the call that sees 82 gives the notice');
+  assert.equal(run(BUDGET, dir, input).stdout, '', 'the call that sees 83 gives none');
+  assert.equal(run(BUDGET, dir, input).stdout, '');
+});
+
+test('the notice marker goes away with the counter when the agent ends', async () => {
+  const dir = await home();
+  const ids = { session_id: uid('s'), agent_id: uid('a') };
+  const counter = join(tempRoot(), 'budget', `${ids.session_id}--${ids.agent_id}`);
+  await mkdir(dirname(counter), { recursive: true });
+  await writeFile(counter, '.'.repeat(EARLY_NOTICE_AT - 1));
+  run(BUDGET, dir, { hook_event_name: 'PostToolUse', ...ids, tool_name: 'Bash' });
+  assert.ok(existsSync(`${counter}.notice`), 'marker written with the notice');
+  run(BUDGET, dir, { hook_event_name: 'SubagentStop', ...ids, agent_type: 'implementer', last_assistant_message: 'done' });
+  assert.ok(!existsSync(counter) && !existsSync(`${counter}.notice`), 'both removed');
 });
 
 test('the limit in the hook matches the budget the implementer agents and the lead rules state', () => {

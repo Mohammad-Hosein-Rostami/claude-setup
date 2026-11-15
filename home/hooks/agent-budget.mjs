@@ -1,6 +1,7 @@
 // PostToolUse (all tools) and SubagentStop: enforces the budgets the prompt only asked for.
-//   PostToolUse in a subagent -> counts its tool calls; at 80 injects "commit what is green" once, at 120 (and every 10
-//                   after) injects "commit, then return your status report". Advisory: it never blocks a call.
+//   PostToolUse in a subagent -> counts its tool calls; the first call that sees 80 or more injects "commit what is green"
+//                   once (a marker file next to the counter), at 120 (and every 10 after) it injects "commit, then
+//                   return your status report". Advisory: it never blocks a call.
 //   PostToolUse Read in the lead, mode ultra-high -> warns when the result is over ~20k chars (use scout / a small range).
 //   PostToolUse Bash in the lead -> after 15 Bash calls since the last Agent/Task call, one nudge to delegate; an
 //                   Agent/Task call resets the count.
@@ -25,6 +26,7 @@ export const EARLY_NOTICE_AT = 80;
 export const REMIND_EVERY = 10;
 export const READ_WARN_CHARS = 20_000;
 export const LEAD_BASH_NUDGE_AT = 15;
+const NOTICE_SUFFIX = '.notice'; // marker next to the counter file: the early notice was given
 const SPAWN_PROMPT_BYTES = 512 * 1024;
 const SAFE_ID = /^[\w-]{1,128}$/;
 const ULTRA_HIGH = 'ultra-high';
@@ -43,6 +45,23 @@ export function countCall(path) {
   mkdirSync(dirname(path), { recursive: true });
   appendFileSync(path, '.');
   return statSync(path).size;
+}
+
+/**
+ * Claims the one early notice of an agent: the first caller creates the marker file, every later caller finds it.
+ * Exclusive create is atomic, so parallel calls that all see a count past 80 still give the notice exactly once.
+ * @param {string | null} path counter file (null for unsafe ids)
+ * @returns {boolean} true for the one caller that may print the notice
+ */
+function claimEarlyNotice(path) {
+  if (!path) return false;
+  try {
+    closeSync(openSync(`${path}${NOTICE_SUFFIX}`, 'wx'));
+    return true;
+  } catch (error) {
+    if (error.code === 'EEXIST') return false;
+    throw error; // main() fails open
+  }
 }
 
 /**
@@ -84,8 +103,10 @@ const sessionMode = (sessionId) => {
  */
 export function postToolUseContext(input) {
   if (input.agent_id) {
-    const calls = countCall(budgetPath(input.session_id, input.agent_id));
-    if (calls === EARLY_NOTICE_AT) {
+    const path = budgetPath(input.session_id, input.agent_id);
+    const calls = countCall(path);
+    // "80 or more", not "exactly 80": parallel calls can step the count past 80 without any call seeing 80.
+    if (calls >= EARLY_NOTICE_AT && calls < CALL_CAP && claimEarlyNotice(path)) {
       return `Budget: ${EARLY_NOTICE_AT} tool calls used. Commit what is green now. If the brief will not be finished by about ${CALL_CAP} calls, pick the stopping point and write down the exact next step.`;
     }
     const due = calls === CALL_CAP || (calls > CALL_CAP && calls % REMIND_EVERY === 0);
@@ -170,7 +191,11 @@ async function main() {
       // blocked: the agent keeps running and its calls must keep counting
       process.stderr.write(`${reason}\n`);
       process.exitCode = 2;
-    } else if (path) rmSync(path, { force: true }); // the agent is ending: its counter is done
+    } else if (path) {
+      // the agent is ending: its counter and notice marker are done
+      rmSync(path, { force: true });
+      rmSync(`${path}${NOTICE_SUFFIX}`, { force: true });
+    }
   }
 }
 
