@@ -4,7 +4,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { findLeftovers } from '../home/tools/git-tidy/lib/leftovers.mjs';
 import { pruneRepo } from '../home/tools/git-tidy/lib/prune.mjs';
@@ -176,7 +177,27 @@ test('a repo with no commit has no base: exit 2 naming --base', () => {
   assert.match(result.stderr, /--base/);
 });
 
-test('300 branches: check and the prune plan each finish in a few seconds and sort every branch right', () => {
+// Counting git processes instead of timing: seconds measure how busy the machine is, the number of git processes
+// measures the tool. GIT_TRACE2_EVENT makes every git process append a "start" event (a PATH shim would not work on
+// Windows); the tool passes its environment on to git, and the repo is built before the counting starts.
+// Measured (3 branch kinds, 10 or 100 of each): check 54 / 324, prune plan 46 / 316, prune --apply 168 / 1518 calls
+// at 30 / 300 branches, so about 1 call per branch for check and plan and 5 for apply, plus a fixed 16 to 24.
+const CALLS_BASE = { check: 30, plan: 30, apply: 30 };
+const CALLS_PER_BRANCH = { check: 1.2, plan: 1.2, apply: 6 };
+const SMALL_BRANCHES = 30;
+const LARGE_BRANCHES = 300;
+const SIZE_RATIO = LARGE_BRANCHES / SMALL_BRANCHES;
+
+/** Runs the CLI and returns the result with the number of git processes it started. */
+function tidyCountingGit(args, dir) {
+  const traceFile = join(mkdtempSync(join(tmpdir(), 'git-trace-')), 'trace2.json');
+  const result = tidy(args, { cwd: dir, env: { GIT_TRACE2_EVENT: traceFile } });
+  const gitCalls = readFileSync(traceFile, 'utf8').split('\n').filter((line) => line.includes('"event":"start"')).length;
+  return { result, gitCalls };
+}
+
+/** A repo with `perKind` branches at an ancestor of main, `perKind` whose commit was cherry-picked, and `perKind` unmerged. */
+function makeRepoWithManyBranches(perKind) {
   const dir = makeRepo();
   const ancestorTip = git(dir, 'rev-parse', 'HEAD');
   git(dir, 'checkout', '-q', '-b', 'landed');
@@ -189,20 +210,42 @@ test('300 branches: check and the prune plan each finish in a few seconds and so
   git(dir, 'cherry-pick', 'landed');
   git(dir, 'branch', '-D', 'landed', 'open');
   const refs = [];
-  for (let i = 0; i < 100; i++) refs.push(`${ancestorTip} refs/heads/anc/${i}`, `${landedTip} refs/heads/landed/${i}`, `${openTip} refs/heads/open/${i}`);
+  for (let i = 0; i < perKind; i++) refs.push(`${ancestorTip} refs/heads/anc/${i}`, `${landedTip} refs/heads/landed/${i}`, `${openTip} refs/heads/open/${i}`);
   writeFileSync(join(dir, '.git', 'packed-refs'), `${refs.join('\n')}\n`);
-  const started = Date.now();
-  const check = tidy(['check', dir], { cwd: dir });
-  const plan = tidy(['prune', dir], { cwd: dir });
-  const seconds = (Date.now() - started) / 1000;
-  const merged = lines(check).filter((line) => line.startsWith('merged-branch ')).length;
-  const unmerged = lines(check).filter((line) => line.startsWith('unmerged-branch? ')).length;
-  assert.deepEqual([check.status, merged, unmerged], [1, 200, 100]);
-  assert.match(lines(plan).at(-1), /^git-tidy prune: 200 to remove, 0 kept/);
-  assert.ok(seconds < 16, `check and plan took ${seconds}s together (about 4 s each when the machine is idle)`);
-  assert.deepEqual(actions(JSON.parse(tidy(['prune', dir, '--json'], { cwd: dir }).stdout).items).filter((a) => a.startsWith('keep')), []);
-  const appliedAt = Date.now();
-  assert.equal(apply(dir).status, 0);
-  assert.ok((Date.now() - appliedAt) / 1000 < 60, 'apply re-reads every branch (about 7 git calls each) before deleting it');
+  return dir;
+}
+
+/** Git processes started by check, the prune plan and prune --apply on a fresh repo with `perKind` branches of each kind. */
+function countGitCalls(perKind) {
+  const dir = makeRepoWithManyBranches(perKind);
+  return {
+    check: tidyCountingGit(['check', dir], dir),
+    plan: tidyCountingGit(['prune', dir], dir),
+    apply: tidyCountingGit(['prune', dir, '--apply', '--include-recent'], dir),
+    dir,
+  };
+}
+
+test('300 branches: check, the prune plan and apply start a bounded number of git processes, grow linearly, and sort every branch right', () => {
+  const small = countGitCalls(SMALL_BRANCHES / 3);
+  const large = countGitCalls(LARGE_BRANCHES / 3);
+  const { check, plan, apply: applied, dir } = large;
+  const merged = lines(check.result).filter((line) => line.startsWith('merged-branch ')).length;
+  const unmerged = lines(check.result).filter((line) => line.startsWith('unmerged-branch? ')).length;
+  assert.deepEqual([check.result.status, merged, unmerged], [1, 200, 100]);
+  assert.match(lines(plan.result).at(-1), /^git-tidy prune: 200 to remove, 0 kept/);
+  assert.equal(applied.result.status, 0);
   assert.equal(branches(dir).length, 101, 'main and the 100 branches with their own commit remain');
+  for (const command of ['check', 'plan', 'apply']) {
+    const ceiling = (branchCount) => CALLS_BASE[command] + CALLS_PER_BRANCH[command] * branchCount;
+    assert.ok(large[command].gitCalls <= ceiling(LARGE_BRANCHES), `${command}: ${large[command].gitCalls} git calls for ${LARGE_BRANCHES} branches, limit ${ceiling(LARGE_BRANCHES)}`);
+    assert.ok(small[command].gitCalls <= ceiling(SMALL_BRANCHES), `${command}: ${small[command].gitCalls} git calls for ${SMALL_BRANCHES} branches, limit ${ceiling(SMALL_BRANCHES)}`);
+    const linearLimit = SIZE_RATIO * small[command].gitCalls + CALLS_BASE[command];
+    assert.ok(large[command].gitCalls <= linearLimit, `${command}: ${large[command].gitCalls} calls at ${LARGE_BRANCHES} branches against ${small[command].gitCalls} at ${SMALL_BRANCHES}: growth is not linear`);
+  }
+});
+
+test('300 branches: the prune --json plan keeps none of the merged branches', () => {
+  const dir = makeRepoWithManyBranches(LARGE_BRANCHES / 3);
+  assert.deepEqual(actions(JSON.parse(tidy(['prune', dir, '--json'], { cwd: dir }).stdout).items).filter((a) => a.startsWith('keep')), []);
 });
