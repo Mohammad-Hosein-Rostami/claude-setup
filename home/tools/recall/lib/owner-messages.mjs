@@ -3,8 +3,9 @@
 // Exports: ownerMessages (async generator), findSession, OWNER_TEXT_CHARS, OWNER_HEADER, NON_INTERACTIVE_NOTE.
 // Invariants: reads the transcript line by line (never the whole file) and writes nothing; only files that really
 // live under the transcripts root are read; a message is masked (owner-mask.mjs) BEFORE it is cut, so a cut can never
-// leave half a secret; every printed field is one line without control characters; a record whose text starts with a
-// `<tag>` wrapper is not owner text, and inside an owner message the text from the first wrapper tag on is dropped.
+// leave half a secret; every printed field is one line without control characters; a record that carries `origin` or
+// `promptSource` is owner text only when it says human/typed; an older record without both is judged by its text (a
+// leading `<tag>` wrapper is not owner text); inside an owner message the text from the first wrapper tag on is dropped.
 import { createReadStream, readdirSync, realpathSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { hasBashCapture, isHarnessText } from './extract.mjs';
@@ -71,15 +72,32 @@ export function findSession(root, id) {
   return matches[0];
 }
 
-/** What the owner typed in a user record: text blocks without wrapper blocks, `!` shell captures and compaction text; '' otherwise. */
+/**
+ * Whether the record itself says the owner typed it: true or false when it carries `origin` (owner only when
+ * `origin.kind` is "human") or else `promptSource` (owner only when "typed"); null for older transcripts with neither.
+ */
+function typedByOwner(entry) {
+  if (entry.origin !== undefined && entry.origin !== null) return entry.origin.kind === 'human';
+  if (entry.promptSource !== undefined && entry.promptSource !== null) return entry.promptSource === 'typed';
+  return null;
+}
+
+/**
+ * What the owner typed in a user record; '' for anything else. A record that names its origin is judged by that alone;
+ * only a record with neither field is judged by its text (no wrapper blocks, compaction text or skill text). Both paths
+ * drop `!` shell captures and cut a message at the first harness tag (a typed message can end in a hook block).
+ */
 function typedText(entry) {
   if (entry.type !== 'user' || entry.isMeta === true || entry.isCompactSummary === true || entry.isSidechain === true) return '';
+  const provenance = typedByOwner(entry);
+  if (provenance === false) return '';
   const content = entry.message?.content;
   const blocks = typeof content === 'string' ? [content]
     : Array.isArray(content) ? content.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text) : [];
   return blocks
     .map((text) => text.replace(/\p{Cf}/gu, ''))
     .filter((text) => {
+      if (provenance) return !hasBashCapture(text);
       const head = text.trimStart();
       return !WRAPPER_AT_START.test(head) && !isHarnessText(text) && !hasBashCapture(text)
         && !head.startsWith(COMPACTION_OPENING) && !head.startsWith(SKILL_OPENING);

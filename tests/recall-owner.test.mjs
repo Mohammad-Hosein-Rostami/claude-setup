@@ -149,6 +149,23 @@ test('text that is not the owner\'s is not listed: wrappers, hook output, tags a
   assert.deepEqual(printed.map((l) => l.split('\t')[2]), ['do X', 'real words']);
 });
 
+test('the record\'s own origin decides: human/typed prints; other kinds are skipped without reading the text', async () => {
+  const { env } = setup([
+    typed('2026-01-05T10:00:00Z', 'human with origin', { promptSource: 'typed', origin: { kind: 'human' } }),
+    typed('2026-01-05T10:01:00Z', 'typed without origin', { promptSource: 'typed' }),
+    typed('2026-01-05T10:02:00Z', 'plain words from a notification', { promptSource: 'system', origin: { kind: 'task-notification' }, producer: 'x' }),
+    typed('2026-01-05T10:03:00Z', 'plain words from a continuation', { promptSource: 'system', origin: { kind: 'auto-continuation' } }),
+    typed('2026-01-05T10:04:00Z', 'plain words of an unknown kind', { promptSource: 'typed', origin: { kind: 'something-new' } }),
+    typed('2026-01-05T10:05:00Z', 'system source without origin', { promptSource: 'system' }),
+    typed('2026-01-05T10:06:00Z', 'a sidechain record', { origin: { kind: 'human' }, isSidechain: true }),
+    typed('2026-01-05T10:07:00Z', 'no provenance at all'),
+    typed('2026-01-05T10:08:00Z', '<teammate-message>old record wrapper</teammate-message>'),
+    typed('2026-01-05T10:09:00Z', 'typed then hook\n<system-reminder>x</system-reminder>', { promptSource: 'typed', origin: { kind: 'human' } }),
+  ]);
+  assert.deepEqual(messageLines((await owner(env)).stdout).map((l) => l.split('\t')[2]),
+    ['human with origin', 'typed without origin', 'no provenance at all', 'typed then hook']);
+});
+
 test('a non-interactive session says so in the header; a terminal session does not', async () => {
   const program = setup([typed('2026-01-05T10:00:00Z', 'a brief', { entrypoint: 'sdk-cli' })]);
   assert.equal(lines((await owner(program.env)).stdout)[0], `${HEADER} (non-interactive session: prompts were written by a program)`);
