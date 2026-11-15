@@ -11,7 +11,7 @@
 import { statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { UsageError, estimateFile } from './lib/from-files.mjs';
-import { applyFactors, calibrationFactors } from './lib/calibration.mjs';
+import { applyFactors, calibrationFactors, phaseOf } from './lib/calibration.mjs';
 import { readLog } from './lib/estimate-log.mjs';
 import { finishClock, printedBounds } from './lib/report.mjs';
 import { cacheDir, writeEntry } from './lib/segment-cache.mjs';
@@ -22,7 +22,7 @@ function segment(statusPath) {
   try {
     const { result } = estimateFile(statusPath, { cwd: dirname(statusPath) });
     if (result.refused || result.delivered !== undefined) return none;
-    const shown = applyFactors(result, calibrationFactors(readLog(statusPath)));
+    const shown = applyFactors(result, calibrationFactors(readLog(statusPath), phaseOf(result)));
     return { text: `done ~${finishClock(shown)}`, highMs: printedBounds(shown).high };
   } catch (err) {
     if (err instanceof UsageError) return none; // a table or transcript folder the tool rejects: no segment, never an error text

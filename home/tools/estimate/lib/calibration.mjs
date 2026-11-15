@@ -1,13 +1,15 @@
 // Calibration of the finish estimate: scores logged estimates against the delivery that ended their job, turns the recent
 // scores into range factors, and counts the track record.
-// Exports: scoreEntries(entries, items, now) -> entries; calibrationFactors(entries) -> {low, high, scored};
+// Exports: scoreEntries(entries, items, now) -> entries; calibrationFactors(entries, phase?) -> {low, high, scored}; phaseOf(result);
 // trackRecord(entries) -> {scored, inside, late, early, medianLate}; applyFactors(result, factors) -> result;
 // logEntry(statusPath, result, items, printed) -> entry; MIN_SCORED; FACTOR_WINDOW; TARGET_INSIDE.
 // Invariants: pure. A log entry holds ids and numbers only (never item text, prompts or transcript content):
-// {v, at, status, open, points, closing, raw: [low, high] hours, printed: [low, high] ISO}; scoring adds actual (ISO, or
+// {v, at, status, open, points, closing, phase, raw: [low, high] hours, printed: [low, high] ISO}; scoring adds actual (ISO, or
 // "void" when every id left the table), inside (printed low <= actual <= printed high) and ratio ([hours to the delivery /
 // raw low, ... / raw high], null where raw is 0). Factors use raw ratios and the track record uses printed ranges, so the
-// adjustment never feeds back into its own inputs.
+// adjustment never feeds back into its own inputs. Two factor sets, by phase: 'job' (the first cycle: build, then closing) and
+// 'round' (a follow-up round after a delivery). One set would distort the job ranges: in the 14-15 Nov replay the rounds'
+// low ratios were 0.16-1.02 and the first cycles' 1.68 and up, so a shared p10 would pull every job's low end far too early.
 import { findDeliveries } from './history.mjs';
 
 const HOUR_MS = 3_600_000;
@@ -53,13 +55,18 @@ export function scoreEntries(entries, items, now) {
   return entries.map((entry) => (entry.actual === undefined ? scoreOne(entry, deliveries, byId) : entry));
 }
 
+/** The factor set an estimate belongs to: 'round' inside a follow-up round, else 'job'. */
+export const phaseOf = (result) => (result.followUp === undefined ? 'job' : 'round');
+
 /**
- * The range factors from the last FACTOR_WINDOW scored entries: high = max(1, p90 of ratio high), low = min(1, p10 of ratio
- * low), nearest rank, nulls left out; both 1 below MIN_SCORED scored entries.
- * @returns {{low: number, high: number, scored: number}} scored = how many entries are scored in all.
+ * The range factors of one phase from its last FACTOR_WINDOW scored entries: high = max(1, p90 of ratio high), low = min(1,
+ * p10 of ratio low), nearest rank, nulls left out; both 1 below MIN_SCORED scored entries.
+ * @param {object[]} entries log entries; one without `phase` (written before rounds existed) is a 'job'.
+ * @param {'job' | 'round'} [phase] which set; default 'job'.
+ * @returns {{low: number, high: number, scored: number}} scored = how many entries of that phase are scored in all.
  */
-export function calibrationFactors(entries) {
-  const scored = entries.filter(isScored);
+export function calibrationFactors(entries, phase = 'job') {
+  const scored = entries.filter((e) => isScored(e) && (e.phase ?? 'job') === phase);
   if (scored.length < MIN_SCORED) return { low: 1, high: 1, scored: scored.length };
   const recent = scored.slice(-FACTOR_WINDOW);
   const sortedRatios = (index) => recent.map((e) => e.ratio?.[index]).filter((r) => typeof r === 'number').sort((a, b) => a - b);
@@ -112,6 +119,7 @@ export function logEntry(statusPath, result, items, printed) {
     open: items.filter((i) => i.done === null).map((i) => i.id),
     points: result.openPoints,
     closing: result.closing.measured >= 2 ? 'measured' : 'default',
+    phase: phaseOf(result),
     raw: [round(result.raw.low, RAW_DECIMALS), round(result.raw.high, RAW_DECIMALS)],
     printed: [isoMinutes(printed.low), isoMinutes(printed.high)],
   };

@@ -136,7 +136,7 @@ test('CLI: a --now run without --log-dir writes no log; with --log-dir it append
   const logged = runCli([status, '--transcripts', root, '--now', isoAt(13.5), '--log-dir', logDir], home);
   assert.equal(logged.status, 0, logged.stderr);
   const [line] = await logLines(logDir);
-  assert.deepEqual(JSON.parse(line), { v: 1, at: isoAt(13.5), status, open: ['O1'], points: 1, closing: 'default', raw: [1.9, 5], printed: ['2026-11-10T15:20Z', '2026-11-10T18:30Z'] }); // O1's 0.5 h/point so far is below every done rate: band 1-3
+  assert.deepEqual(JSON.parse(line), { v: 1, at: isoAt(13.5), status, open: ['O1'], points: 1, closing: 'default', phase: 'job', raw: [1.9, 5], printed: ['2026-11-10T15:20Z', '2026-11-10T18:30Z'] }); // O1's 0.5 h/point so far is below every done rate: band 1-3
   assert.ok(!line.includes(SECRET));
   assert.match(logged.stdout, /^Track record: no scored estimate yet;/m);
 });
@@ -147,7 +147,7 @@ test('CLI: a later run scores the logged estimate at the delivery and prints the
   await writeFile(status, statusDoc(secretRows([...DELIVERED_ROWS, row({ id: 'O2' })])));
   const later = runCli([status, '--transcripts', root, '--now', isoAt(20), '--log-dir', logDir], home);
   assert.equal(later.status, 0, later.stderr);
-  assert.match(later.stdout, /^Track record: 1 of 1 inside, 0 late, 0 early; adjusted once 5 are scored$/m);
+  assert.match(later.stdout, /^Track record: 1 of 1 inside, 0 late, 0 early; follow-up rounds adjusted once 5 are scored$/m); // O2 opened after the delivery: a round
   const lines = await logLines(logDir);
   assert.equal(lines.length, 2);
   assert.deepEqual(JSON.parse(lines[0]).actual, isoAt(15.5));

@@ -8,10 +8,14 @@
 // Finish = now + [B(low) + max(0, closing low - E), B(high) + max(0, closing high - E)], the closing phase measured from this
 // table's deliveries (history.mjs) and always in series after the build part; E = the closing time already run (0 while a
 // build row is open).
+// Follow-up round (some row open after a delivery, history.mjs): every open row is work by size (close and rework too) and
+// Finish = [max(round start + round low, now + B(low)), max(round start + round high, now + B(high))], the round length
+// measured from this table's finished rounds; the closing phase is not added again.
 // A refusal is `{ refused: true, reason, needed, measured, now, missing, future, noTime, overrun }` and carries no finish time:
 // reason 'table' (too few measured rows, a done row without started, a time later than now, a done row with no working time)
-// or 'overrun' (no build row open and the closing has already run as long as its high end).
-import { DELIVERY_GAP_MS, closingElapsedHours, closingRange, closingStart, findDeliveries, overlapMs, reopenSummary } from './history.mjs';
+// or 'overrun' (no build row open and the closing has already run as long as its high end; or a follow-up round past its high
+// end with no open row left by size, then `overrun.round` is set).
+import { DELIVERY_GAP_MS, closingElapsedHours, closingRange, closingStart, findDeliveries, followUpRange, followUpRounds, openRound, overlapMs, reopenSummary } from './history.mjs';
 import { mergeIntervals } from './limits.mjs';
 
 export const MIN_DONE_ITEMS = 5;
@@ -99,12 +103,16 @@ function deliveredResult(items, deliveries, now) {
   return { computedAt: now, openItems: 0, delivered: lastDone, provisionalUntil, closingRow: closer.id, reopen: reopenSummary(items, deliveries, now) };
 }
 
-/** Rates, lanes, the build part and the other result fields that come from the rows' own times. */
-function measureRows(items, done, measured, windows, now) {
+/**
+ * Rates, lanes, the build part and the other result fields that come from the rows' own times.
+ * @param {{items: object[], done: object[], measured: object[], windows: object[], now: number}} context the table and its measured rows.
+ * @param {(item: object) => boolean} isWork which open rows the build part counts by size.
+ */
+function measureRows({ items, done, measured, windows, now }, isWork) {
   const open = items.filter((i) => i.done === null);
   const running = open.filter((i) => i.started !== null);
   const rate = rateBand(done, running.map((i) => workingMs(i.started, now, windows) / HOUR_MS / i.points));
-  const openBuild = open.filter(isOpenBuild);
+  const openBuild = open.filter(isWork);
   const time = timeline(measured, windows);
   const measuredLanes = done.reduce((sum, d) => sum + d.durationMs, 0) / time.activeMs;
   const lanes = Math.max(1, Math.min(measuredLanes, openBuild.length));
@@ -124,6 +132,38 @@ function measureRows(items, done, measured, windows, now) {
   };
 }
 
+/** The finish of the first cycle: the build part, then the closing phase in series (see the header). */
+function firstCycleResult(context, deliveries) {
+  const { items, windows, now } = context;
+  const closing = closingRange(deliveries);
+  const elapsed = closingElapsedHours(items, deliveries, windows, now);
+  const rows = measureRows(context, isOpenBuild);
+  if (rows.build.ids.length === 0 && elapsed >= closing.high) {
+    const overrun = { hours: elapsed, start: closingStart(items, deliveries, now), closing };
+    return refusal(now, { reason: 'overrun', measured: context.measured.length, overrun });
+  }
+  const raw = { low: rows.build.low + Math.max(0, closing.low - elapsed), high: rows.build.high + Math.max(0, closing.high - elapsed) };
+  return { ...rows, closing, closingElapsed: elapsed, raw, finish: { lowMs: now + raw.low * HOUR_MS, highMs: now + raw.high * HOUR_MS } };
+}
+
+/**
+ * The finish of an open follow-up round (see the header): never before now, never before the open rows' size range, and a
+ * refusal once the round has passed its high end with nothing left by size.
+ */
+function followUpResult(context, deliveries, round) {
+  const { items, windows, now } = context;
+  const range = followUpRange(followUpRounds(items, deliveries, windows));
+  const rows = measureRows(context, (i) => i.done === null);
+  const roundEnd = (hours) => round.start + hours * HOUR_MS;
+  if (roundEnd(range.high) <= now && rows.build.high <= 0) {
+    const overrun = { hours: workingMs(round.start, now, windows) / HOUR_MS, round, closing: range };
+    return refusal(now, { reason: 'overrun', measured: context.measured.length, overrun });
+  }
+  const lowMs = Math.max(roundEnd(range.low), now + rows.build.low * HOUR_MS); // the size term (>= 0) keeps it at or after now
+  const highMs = Math.max(roundEnd(range.high), now + rows.build.high * HOUR_MS, lowMs);
+  return { ...rows, closing: range, followUp: round, closingElapsed: 0, raw: { low: (lowMs - now) / HOUR_MS, high: (highMs - now) / HOUR_MS }, finish: { lowMs, highMs } };
+}
+
 /**
  * Computes when the whole job is finished.
  * @param {object[]} items parsed work items with `kind` (see parseWorkItems).
@@ -131,7 +171,7 @@ function measureRows(items, done, measured, windows, now) {
  * @param {number} now epoch ms: any started or done after it is a refusal.
  * @returns {object} the result (`finish {lowMs, highMs}`, `raw {low, high}` hours from now, `build`, `closing`, `reopen`, ...),
  *   a delivered result (`delivered`: epoch ms, `provisionalUntil`) when no row is open and the last done row is a close row,
- *   or a refusal (`refused: true`).
+ *   `followUp {deliveryAt, start, startRow}` with `closing` = the round range while a follow-up round is open, or a refusal (`refused: true`).
  */
 export function computeEstimate(items, windows, now) {
   const measured = items.filter(isMeasured);
@@ -144,21 +184,13 @@ export function computeEstimate(items, windows, now) {
   const deliveries = findDeliveries(items, windows, now);
   const delivered = deliveredResult(items, deliveries, now);
   if (delivered) return delivered;
-  const closing = closingRange(deliveries);
-  const elapsed = closingElapsedHours(items, deliveries, windows, now);
-  const rows = measureRows(items, done, measured, windows, now);
-  if (rows.build.ids.length === 0 && elapsed >= closing.high) {
-    const overrun = { hours: elapsed, start: closingStart(items, deliveries, now), closing };
-    return refusal(now, { reason: 'overrun', measured: measured.length, overrun });
-  }
-  const raw = { low: rows.build.low + Math.max(0, closing.low - elapsed), high: rows.build.high + Math.max(0, closing.high - elapsed) };
+  const context = { items, done, measured, windows, now };
+  const round = openRound(items, deliveries, now);
+  const finish = round === null ? firstCycleResult(context, deliveries) : followUpResult(context, deliveries, round);
+  if (finish.refused) return finish;
   return {
     computedAt: now,
-    ...rows,
-    closing,
-    closingElapsed: elapsed,
-    raw,
-    finish: { lowMs: now + raw.low * HOUR_MS, highMs: now + raw.high * HOUR_MS },
+    ...finish,
     reopen: reopenSummary(items, deliveries, now),
     measured: measured.length,
     newestEntry: Math.max(...items.flatMap((i) => [i.started, i.done]).filter((at) => at !== null)),

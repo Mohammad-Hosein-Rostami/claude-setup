@@ -7,7 +7,7 @@
 
 const CLOSE_AUTH = ['F1', 'F3', 'F4', 'F5', 'F6', 'F14', 'F15', 'F16', 'F17', 'F18', 'F19', 'F20', 'F21', 'F22', 'F23', 'F24', 'F25', 'F26', 'G3', 'G4', 'G5', 'G6', 'H3'];
 const REWORK_AUTH = ['H1', 'H2'];
-const CLOSE_RESTRUCTURE = ['W15', 'F4', 'F5'];
+const CLOSE_RESTRUCTURE = ['W15', 'F4', 'F5', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6'];
 const FIRST_AUTH_ROWS = 19; // F1-F19 were written together
 const AUTH_WRITTEN = {
   F20: '2026-11-14T20:32:18Z', F21: '2026-11-14T20:55:32Z', F22: '2026-11-14T20:55:32Z', F23: '2026-11-14T21:23:11Z',
@@ -45,7 +45,14 @@ const RESTRUCTURE_ROWS = [
   ['W12', 'M', '2026-11-15T07:34Z', '2026-11-15T08:16Z'], ['W13', 'S', '2026-11-15T08:16Z', '2026-11-15T08:23Z'],
   ['W14', 'M', '2026-11-15T06:54Z', '2026-11-15T08:29Z'], ['W15', 'M', '2026-11-15T08:30Z', '2026-11-15T10:55Z'],
   ['F4', 'M', '2026-11-15T10:24Z', '2026-11-15T10:28Z'], ['F5', 'S', '2026-11-15T10:45Z', '2026-11-15T10:50Z'],
+  // The follow-up round after the 10:55Z delivery (fixes after a verification), delivered 11:54Z.
+  ['V1', 'S', '2026-11-15T11:25Z', '2026-11-15T11:27Z'], ['V2', 'S', '2026-11-15T11:25Z', '2026-11-15T11:37Z'],
+  ['V3', 'S', '2026-11-15T11:27Z', '2026-11-15T11:33Z'], ['V4', 'S', '2026-11-15T11:28Z', '2026-11-15T11:29Z'],
+  ['V5', 'S', '2026-11-15T11:37Z', '2026-11-15T11:54Z'], ['V6', 'S', '2026-11-15T11:45Z', '2026-11-15T11:53Z'],
 ];
+// When the V rows were written is not known: taken as the round's first start (an approximation; the table copy at 11:39Z
+// showed six open rows, here V1, V3 and V4 carry the done times recorded later).
+const V_WRITTEN = '2026-11-15T11:25:00Z';
 
 function authWritten(id, index) {
   if (index < FIRST_AUTH_ROWS) return '2026-11-14T19:47:03Z';
@@ -56,6 +63,7 @@ function authWritten(id, index) {
 
 function restructureWritten(id, started) {
   if (id === 'W8b') return '2026-11-15T08:00:04Z';
+  if (id.startsWith('V')) return V_WRITTEN;
   return id.startsWith('F') ? started : '2026-11-15T06:04:31Z';
 }
 
@@ -70,16 +78,23 @@ export const TABLES = {
 const AUTH_DONE_14 = '2026-11-14T22:30Z';
 const AUTH_DONE_15 = '2026-11-15T08:10Z';
 const RESTRUCTURE_DONE = '2026-11-15T10:55Z';
-/** The owner's estimate requests; `finish` is the line the L30 spec's replay table gives, `truth` when the job was delivered. */
+const RESTRUCTURE_ROUND_DONE = '2026-11-15T11:54Z';
+/**
+ * The owner's estimate requests; `finish` is the line the L30 spec's replay table gives, `truth` when the job was delivered.
+ * A0 and A1 sit in the follow-up round after the 14 Nov 22:30Z delivery, so the follow-up round rule changed their lines (was
+ * 11:30-12:50 and 11:35-12:45; real finish 11:40). V9 is the live 15:09 request in the round after the 10:55Z delivery:
+ * `miss: 'early'` pins that the real finish (15:24) came before the printed range (default round, no finished round here yet).
+ */
 export const CASES = [
   { name: 'E7', table: 'auth', now: '2026-11-14T19:47:03Z', truth: AUTH_DONE_14, finish: 'Finish: Sun 15 Nov 00:50-02:25 (local +03:30, now 23:17)' },
   { name: 'E8', table: 'auth', now: '2026-11-14T21:26:37Z', truth: AUTH_DONE_14, finish: 'Finish: Sun 15 Nov 01:00-02:10 (local +03:30, now 00:56)' },
-  { name: 'A0', table: 'auth', now: '2026-11-15T06:39:43Z', truth: AUTH_DONE_15, finish: 'Finish: Sun 15 Nov 11:30-12:50 (local +03:30, now 10:09)' },
-  { name: 'A1', table: 'auth', now: '2026-11-15T08:02:39Z', truth: AUTH_DONE_15, finish: 'Finish: Sun 15 Nov 11:35-12:45 (local +03:30, now 11:32)', after: 'After your review: 0 of 1 earlier deliveries here were reopened by your corrections' },
+  { name: 'A0', table: 'auth', now: '2026-11-15T06:39:43Z', truth: AUTH_DONE_15, finish: 'Finish: Sun 15 Nov 11:35-12:30 (local +03:30, now 10:09)' },
+  { name: 'A1', table: 'auth', now: '2026-11-15T08:02:39Z', truth: AUTH_DONE_15, finish: 'Finish: Sun 15 Nov 11:40-12:30 (local +03:30, now 11:32)', after: 'After your review: 0 of 1 earlier deliveries here were reopened by your corrections' },
   { name: 'R1', table: 'restructure', now: '2026-11-15T07:48:03Z', truth: RESTRUCTURE_DONE, finish: 'Finish: Sun 15 Nov 12:40-14:35 (local +03:30, now 11:18)' },
   { name: 'R2', table: 'restructure', now: '2026-11-15T08:00:05Z', truth: RESTRUCTURE_DONE, finish: 'Finish: Sun 15 Nov 12:55-14:25 (local +03:30, now 11:30)' },
   { name: 'R4', table: 'restructure', now: '2026-11-15T08:30:30Z', truth: RESTRUCTURE_DONE, finish: 'Finish: Sun 15 Nov 13:20-14:30 (local +03:30, now 12:00)' },
   { name: 'R3', table: 'restructure', now: '2026-11-15T10:01:35Z', truth: RESTRUCTURE_DONE, finish: 'Finish: Sun 15 Nov 13:30-14:30 (local +03:30, now 13:31)' },
+  { name: 'V9', table: 'restructure', now: '2026-11-15T11:39:00Z', truth: RESTRUCTURE_ROUND_DONE, finish: 'Finish: Sun 15 Nov 16:40-17:35 (local +03:30, now 15:09)', miss: 'early' },
 ];
 
 const cell = (time, nowMs) => (time !== '-' && Date.parse(time) <= nowMs ? time : '-');

@@ -17,7 +17,7 @@
 // Invariants: logic lives in lib/ (pure); this file only parses arguments, reads files, prints and writes its log. The log
 // (lib/estimate-log.mjs) gets the earlier entries scored and one new entry per printed range; a refusal writes nothing.
 import { resolve } from 'node:path';
-import { applyFactors, calibrationFactors, logEntry, scoreEntries, trackRecord } from './lib/calibration.mjs';
+import { applyFactors, calibrationFactors, logEntry, phaseOf, scoreEntries, trackRecord } from './lib/calibration.mjs';
 import { logFile, readLog, writeLog } from './lib/estimate-log.mjs';
 import { UsageError, estimateFile } from './lib/from-files.mjs';
 import { formatEstimate, formatRefusal, printedBounds } from './lib/report.mjs';
@@ -43,7 +43,7 @@ function parseArgs(argv) {
 /** Prints the block scaled by the log's factors, then writes the log back: earlier entries scored, this range appended. */
 function printLogged(result, inputs, items, { statusPath, logDir }) {
   const entries = scoreEntries(readLog(statusPath, logDir), items, result.computedAt);
-  const factors = calibrationFactors(entries);
+  const factors = calibrationFactors(entries, phaseOf(result));
   const shown = result.finish === undefined ? result : applyFactors(result, factors);
   console.log(formatEstimate(shown, { ...inputs, calibration: { record: trackRecord(entries), factors } }));
   const kept = result.finish === undefined ? entries : [...entries, logEntry(statusPath, shown, items, printedBounds(shown))];

@@ -42,15 +42,15 @@ test('fix rounds (a): only build rows open adds the 1.4-2.5 h default closing af
 });
 
 test('fix rounds (a): two finished jobs give their measured tails 1.5 and 2 h as the closing phase', () => {
-  const items = itemsOf([...TWO_JOBS, row({ id: 'O1' })]);
+  const items = itemsOf([...TWO_JOBS, row({ id: 'B7', startedH: 20, doneH: 21 })]);
   assert.deepEqual(findDeliveries(items, [], at(30)), [
     { at: at(14.5), closingStart: at(13), tailHours: 1.5 },
     { at: at(19), closingStart: at(17), tailHours: 2 },
   ]);
-  const result = computeEstimate(items, [], at(30));
+  const result = computeEstimate(items, [], at(21.5)); // no open row, the last done row a build row: its closing lies ahead
   assert.deepEqual(result.closing, { low: 1.5, high: 2, measured: 2 });
-  nearRange(result.raw, [2.5, 5], 'raw');
-  assert.equal(block(result)[1], 'Includes: 1 open row (0 running); build 1-3 h (O1, 1 lane), then the closing phase 1.5-2 h in series (review, fix rounds, recheck, landing; measured from 2 finished jobs here)');
+  nearRange(result.raw, [1, 1.5], 'raw'); // 1.5-2 h minus the 0.5 h since B7 was done
+  assert.equal(block(result)[1], 'Includes: 0 open rows (0 running); no open build row: the closing phase 1.5-2 h (review, fix rounds, recheck, landing; measured from 2 finished jobs here) has run 0.5 h');
 });
 
 test('fix rounds (a): one finished job widens the default to include its tail; the last 5 tails are used', () => {
@@ -60,11 +60,18 @@ test('fix rounds (a): one finished job widens the default to include its tail; t
 });
 
 test('fix rounds (a): one open close row (W15-style) does not shrink the closing, whatever its size', () => {
-  const rows = (size) => [...TWO_JOBS, row({ id: 'B7', startedH: 20, doneH: 21 }), close({ id: 'C3', size, startedH: 21 })];
-  const small = estimate(rows('S'), 21.5);
-  const large = estimate(rows('L'), 21.5);
-  nearRange(small.raw, [1, 1.5], 'S'); // closing 1.5-2 h minus the 0.5 h since B7 was done
+  const rows = (size) => fiveDoneRows([close({ id: 'C3', size, startedH: 13.5 })]); // first cycle: D5 done 13 h
+  const small = estimate(rows('S'), 14);
+  const large = estimate(rows('L'), 14);
+  nearRange(small.raw, [0.4, 1.5], 'S'); // closing 1.4-2.5 h minus the 1 h since D5 was done
   assert.deepEqual(large.raw, small.raw);
+});
+
+test('fix rounds (a): after a delivery an open close row is a follow-up round, floored by its size', () => {
+  const rows = (size) => [...TWO_JOBS, row({ id: 'B7', startedH: 20, doneH: 21 }), close({ id: 'C3', size, startedH: 21 })];
+  // round from B7's start at 20 h, 1.8-3 h (default widened by the 16-19 h round); band 1-3 h/point, 0.5 h of C3 run
+  nearRange(estimate(rows('S'), 21.5).raw, [0.5, 2.5], 'S'); // size 0.5-2.5 h beats the round's 21.8-23 h
+  nearRange(estimate(rows('L'), 21.5).raw, [3.5, 11.5], 'L');
 });
 
 test('serial closing (d): an open L row and two close rows at 3 measured lanes run the closing after the build, not divided', () => {
@@ -172,8 +179,10 @@ test('overrun: no build row open and the closing ran as long as its high end is 
     + 'What to do: tell the owner the job is past its usual closing; this ends at delivery, whose length then joins the history. Work not in the table: add it as a row first.');
   const measured = estimate([...TWO_JOBS, row({ id: 'B7', startedH: 20, doneH: 21 })], 23);
   assert.match(formatRefusal(measured, TZ), /^No finish time: the closing phase has run 2 h since the last build row was done \(B7, 00:30\), longer than every closing measured here \(1\.5-2 h, 2 jobs\)\.\n/);
-  const onlyClose = estimate([...TWO_JOBS, close({ id: 'C3', startedH: 20 })], 23);
-  assert.match(formatRefusal(onlyClose, TZ), /run 3 h since the first closing row started \(C3, 23:30\)/);
+  const onlyClose = estimate([0, 1, 2, 3, 4].map((h, i) => close({ id: `K${i + 1}`, startedH: h, doneH: h + 1 })).concat(close({ id: 'K6', startedH: 5 })), 8);
+  assert.match(formatRefusal(onlyClose, TZ), /run 8 h since the first closing row started \(K1, 03:30\)/);
+  const round = estimate([...TWO_JOBS, close({ id: 'C3', startedH: 20 })], 23); // after a delivery: a follow-up round
+  assert.match(formatRefusal(round, TZ), /^No finish time: the follow-up round has run 3 h since it started \(C3, 23:30\), longer than the default round \(1\.8-3 h, widened by 1 finished round here\)/);
 });
 
 test('the table refusals keep their reasons under No finish time: and add one What to do sentence each', () => {

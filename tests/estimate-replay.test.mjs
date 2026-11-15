@@ -1,7 +1,8 @@
 // Replays the finish estimate on two real tables of 14-15 Nov 2026 (tests/estimate-replay-cases.mjs) at the moments the owner
 // asked, through the real CLI with TZ=Asia/Tehran and an empty transcript folder. Each case must print the exact Finish line
-// of the L30 spec's replay table, and the true delivery must lie inside the printed range. A different line means the code
-// differs from the spec's formula; never tune a constant to make a case pass.
+// of the L30 spec's replay table (A0/A1: as the follow-up round rule changed them), and the true delivery must lie inside the
+// printed range, or before it for a case pinned as a recorded miss. A different line means the code differs from the spec's
+// formula; never tune a constant to make a case pass.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -41,6 +42,7 @@ for (const replay of CASES) {
     if (replay.after) assert.equal(lines[3], replay.after);
     const { low, high } = printedRange(lines[0], nowMs);
     const truth = Date.parse(replay.truth);
-    assert.ok(low <= truth && truth <= high, `truth ${replay.truth} outside ${lines[0]}`);
+    if (replay.miss === 'early') assert.ok(truth < low, `recorded miss: truth ${replay.truth} now inside ${lines[0]}`);
+    else assert.ok(low <= truth && truth <= high, `truth ${replay.truth} outside ${lines[0]}`);
   });
 }

@@ -19,6 +19,7 @@ const CLOSING_WORK = 'review, fix rounds, recheck, landing';
 const EXCLUDES = 'Excludes: your review and any rework it starts (next line); usage-limit pauses from now on; steps only you do (push, deploy); requests that are not rows';
 const NO_DELIVERY = 'After your review: not measured here yet (no earlier delivery in this table)';
 const OVERRUN_ADVICE = 'What to do: tell the owner the job is past its usual closing; this ends at delivery, whose length then joins the history. Work not in the table: add it as a row first.';
+const ROUND_ADVICE = 'What to do: tell the owner the follow-up round is past its usual length; this ends at delivery, whose round length then joins the history. Work not in the table: add it as a row first.';
 
 /** Numbers under 10 keep one decimal (a trailing `.0` is dropped); larger ones round to whole numbers. */
 function num(value) {
@@ -117,13 +118,30 @@ function closingSource(closing) {
   return closing.measured === 1 ? 'default, widened by the 1 finished job here' : 'default, not yet measured here';
 }
 
-function includesLine(result) {
+/** Where a follow-up round's range comes from, for the Includes line and the round refusal. */
+function roundSource(range) {
+  if (range.measured >= MIN_MEASURED_TAILS) return `measured from ${range.measured} finished rounds here`;
+  return range.measured === 1 ? 'default, widened by the 1 finished round here' : 'default, not yet measured here';
+}
+
+const laneCount = (build) => (build.lanes === 1 ? '1 lane' : `${num(build.lanes)} lanes`);
+
+function followUpIncludes(result, timeZone) {
+  const { build, closing, followUp } = result;
+  const started = followUp.startRow === null ? 'no row started yet' : `started ${clockText(followUp.start, timeZone)} (${followUp.startRow})`;
+  const rows = `${plural(result.openItems, 'open row')} (${result.inFlight} running)`;
+  const sizes = `the open rows need at least ${range(build.low, build.high)} h by size (${listed(build.ids)}, ${laneCount(build)})`;
+  return `Includes: follow-up round after the delivery at ${clockText(followUp.deliveryAt, timeZone)}, ${started}: ${rows}; such rounds took ${range(closing.low, closing.high)} h here (${roundSource(closing)}); ${sizes}`;
+}
+
+function includesLine(result, timeZone) {
+  if (result.followUp !== undefined) return followUpIncludes(result, timeZone);
   const { build, closing } = result;
   const rows = `${plural(result.openItems, 'open row')} (${result.inFlight} running)`;
   const phase = `the closing phase ${range(closing.low, closing.high)} h`;
   const about = `(${CLOSING_WORK}; ${closingSource(closing)})`;
   if (build.ids.length === 0) return `Includes: ${rows}; no open build row: ${phase} ${about} has run ${num(result.closingElapsed)} h`;
-  const lanes = build.lanes === 1 ? '1 lane' : `${num(build.lanes)} lanes`;
+  const lanes = laneCount(build);
   const past = build.pastRate.length === 0 ? '' : `; ${listed(build.pastRate)} past every measured rate, ${build.pastRate.length === 1 ? 'its' : 'their'} remaining time is not known`;
   return `Includes: ${rows}; build ${range(build.low, build.high)} h (${listed(build.ids)}, ${lanes}${past}), then ${phase} in series ${about}`;
 }
@@ -140,14 +158,15 @@ function afterLine(reopen) {
   return `${counted}; those reworks took ${range(reopen.lowHours, reopen.highHours)} h${state ? ` (the latest ${state}, counted so far)` : ''}`;
 }
 
-/** How earlier printed ranges did and how the range is adjusted (see calibration.mjs). */
-function trackLine({ record, factors }) {
+/** How earlier printed ranges did and how the range is adjusted (see calibration.mjs); a follow-up round has its own factors. */
+function trackLine({ record, factors }, round) {
   const target = `${TARGET_INSIDE.inside} of ${TARGET_INSIDE.of}`;
   if (record.scored === 0) return `Track record: no scored estimate yet; the range is adjusted once ${MIN_SCORED} are scored (target: ${target} inside)`;
   const late = record.late > 0 ? ` (median x${num(record.medianLate)} of the printed time)` : '';
   const counts = `Track record: ${record.inside} of ${record.scored} inside, ${record.late} late${late}, ${record.early} early`;
-  if (factors.scored < MIN_SCORED) return `${counts}; adjusted once ${MIN_SCORED} are scored`;
-  return `${counts}; adjusted high x${num(factors.high)}, low x${num(factors.low)} (target ${target})`;
+  const adjusted = round ? 'follow-up rounds adjusted' : 'adjusted';
+  if (factors.scored < MIN_SCORED) return `${counts}; ${adjusted} once ${MIN_SCORED} are scored`;
+  return `${counts}; ${adjusted} high x${num(factors.high)}, low x${num(factors.low)} (target ${target})`;
 }
 
 function dateSpan(first, last, timeZone) {
@@ -159,7 +178,8 @@ function dateSpan(first, last, timeZone) {
 function laneText(result) {
   const measured = result.measuredLanes.toFixed(1);
   if (result.build.ids.length === 0) return `${result.lanes.toFixed(1)} lanes (measured ${measured}; no open build row)`;
-  if (result.lanes < result.measuredLanes) return `${result.lanes.toFixed(1)} lanes (measured ${measured}, capped by ${plural(result.build.ids.length, 'open build row')})`;
+  const counted = result.followUp === undefined ? 'open build row' : 'open row';
+  if (result.lanes < result.measuredLanes) return `${result.lanes.toFixed(1)} lanes (measured ${measured}, capped by ${plural(result.build.ids.length, counted)})`;
   return result.lanes > result.measuredLanes ? `1.0 lanes (measured ${measured}, raised to 1)` : `${result.lanes.toFixed(1)} lanes (measured)`;
 }
 
@@ -208,10 +228,19 @@ function deliveredBlock(result, timeZone) {
 export function formatEstimate(result, inputs) {
   const timeZone = inputs.timeZone ?? systemTimeZone();
   if (result.delivered !== undefined) return deliveredBlock(result, timeZone).join('\n');
+  const counted = result.followUp === undefined ? 'open build rows' : 'open rows';
   const agentHours = result.build.ids.length === 0 ? 'Agent-hours: 0 (no open build row)'
-    : `Agent-hours: ${result.agentHours.low.toFixed(1)}-${result.agentHours.high.toFixed(1)} for the open build rows, counted whole`;
-  const track = inputs.calibration === undefined ? [] : [trackLine(inputs.calibration)];
-  return [finishLine(result, timeZone), includesLine(result), EXCLUDES, afterLine(result.reopen), ...track, assumesLine(result, inputs, timeZone), agentHours, ...staleNote(result)].join('\n');
+    : `Agent-hours: ${result.agentHours.low.toFixed(1)}-${result.agentHours.high.toFixed(1)} for the ${counted}, counted whole`;
+  const track = inputs.calibration === undefined ? [] : [trackLine(inputs.calibration, result.followUp !== undefined)];
+  return [finishLine(result, timeZone), includesLine(result, timeZone), EXCLUDES, afterLine(result.reopen), ...track, assumesLine(result, inputs, timeZone), agentHours, ...staleNote(result)].join('\n');
+}
+
+function roundOverrunText({ overrun }, timeZone) {
+  const { round, closing } = overrun;
+  const since = round.startRow === null ? '' : ` since it started (${round.startRow}, ${clockText(round.start, timeZone)})`;
+  const than = closing.measured >= MIN_MEASURED_TAILS ? `every round measured here (${range(closing.low, closing.high)} h, ${closing.measured} rounds)`
+    : `the default round (${range(closing.low, closing.high)} h, ${closing.measured === 1 ? 'widened by 1 finished round here' : 'not yet measured here'})`;
+  return `No finish time: the follow-up round has run ${num(overrun.hours)} h${since}, longer than ${than}, and its open rows are past their measured rates.\n${ROUND_ADVICE}`;
 }
 
 function overrunText({ overrun }, timeZone) {
@@ -225,7 +254,7 @@ function overrunText({ overrun }, timeZone) {
 
 /** The refusal text: why there is no finish time and what to do, never a time to quote. */
 export function formatRefusal(refusal, timeZone = systemTimeZone()) {
-  if (refusal.reason === 'overrun') return overrunText(refusal, timeZone);
+  if (refusal.reason === 'overrun') return refusal.overrun.round === undefined ? overrunText(refusal, timeZone) : roundOverrunText(refusal, timeZone);
   const reasons = [];
   const advice = [];
   if (refusal.measured < refusal.needed) {
