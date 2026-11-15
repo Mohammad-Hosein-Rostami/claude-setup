@@ -85,6 +85,47 @@ test('a command word outside ASCII with no dangerous word in the line stays quie
   }
 });
 
+const UNLISTED = /^a brace expansion this guard cannot list/;
+
+test('an unquoted brace expression is expanded before any rule reads flags and options: each word bash makes is judged', () => {
+  for (const platform of PLATFORMS) {
+    assert.match(reasonOn(platform, 'rm {-rf,~/x}'), RM_OUTSIDE, platform);
+    assert.match(reasonOn(platform, "git {-c,'core.editor=rm -rf ~/x'} commit"), RM_OUTSIDE, platform);
+    assert.match(reasonOn(platform, '{git,push,--force,origin,main}'), /^DESTRUCTIVE: force push/, platform);
+    assert.match(reasonOn(platform, 'rm -rf {build/cache,/etc}'), RM_OUTSIDE, platform);
+    assert.match(reasonOn(platform, 'GIT_EDITOR={rm,-rf,~/x} git commit'), RM_OUTSIDE, platform); // a prefix keeps its braces; git's sh expands them
+    assert.match(reasonOn(platform, "export GIT_EDITOR={vim,'rm -rf ~/x'}; git commit"), RM_OUTSIDE, platform); // bash: the last word wins
+    assert.match(reasonOn(platform, 'export GIT_EDITOR={rm,-rf,~/x}; git commit'), RM_OUTSIDE, platform); // zsh: the braces stay
+  }
+});
+
+test('a brace word that cannot be listed asks in a command the guard reads, and only there', () => {
+  for (const platform of PLATFORMS) {
+    for (const line of ['A=r; V="${A}m -rf ~/x"; env {GIT_EDITOR="$V",git} commit', 'git {-c,"$X"} commit', 'rm {-rf,"$X"}',
+      'rm -rf build/x{1..300}', '${X:-{rm,-rf,~/x}}', 'ionice -c3 git {-c,"$X"} commit', `x${'{a,b}'.repeat(7)} -rf`]) {
+      assert.ok(reasonsOn(platform, line).some((reason) => UNLISTED.test(reason)), `${platform}: ${line}`);
+    }
+  }
+  const nested = Array.from({ length: 9 }, (_, level) => level).reduce((inner, level) => `{a${level},${inner}}`, 'z'); // {a8,{a7,...{a0,z}}}
+  assert.ok(reasonsOn('linux', `rm -rf ${nested}`).some((reason) => UNLISTED.test(reason)), 'nested too deep');
+  assert.ok(reasonsOn('linux', `rm -rf ${'{'.repeat(9)}a,b${'}'.repeat(9)}`).every((reason) => !UNLISTED.test(reason)), 'literal outer braces');
+});
+
+test('ordinary brace words stay quiet, quoted braces are text, and a quoted variable is one path', () => {
+  for (const line of ['echo {a,b}', 'mkdir -p src/{a,b}', 'cp file.{txt,bak}', 'rm -rf build/{cache,tmp}', 'for f in *.{js,ts}; do echo "$f"; done',
+    'git commit -m "fix: a {b,c} thing"', 'echo {$A,b}', 'touch a{1..100}.txt', 'git log -1 HEAD@{1}', "awk '{print $1}' f",
+    'find . -name x -exec echo {} +', 'D="./b /Users/x"; rm -rf "$D"', 'DIR=build; rm -rf "$DIR"', 'D="./b ./c"; rm -rf $D']) {
+    for (const platform of PLATFORMS) quietOn(platform, line);
+  }
+});
+
+test('an unquoted variable whose value has blanks is judged as each word bash splits it into', () => {
+  for (const line of ['D="./b /Users/x"; rm -rf $D', 'D=./build; D+=" /Users/x"; rm -rf $D', 'D="./b /Users/x"; rm -rf $D/cache',
+    'D="./b /Users/x"; find $D -name x -delete']) {
+    assert.match(reasonOn('linux', line), /^DESTRUCTIVE: (?:rm -r|find deleting) outside the project \(\/Users\/x/, line);
+  }
+});
+
 test('ordinary appends and array writes stay quiet', () => {
   for (const line of ['x+=1', 'arr[0]=a', 'files+=("$f")', 'X+=1 echo hi', 'PATH+=:/opt/bin npm test', 'arr[0]=a; echo "${arr[0]}"']) {
     for (const platform of PLATFORMS) quietOn(platform, line);

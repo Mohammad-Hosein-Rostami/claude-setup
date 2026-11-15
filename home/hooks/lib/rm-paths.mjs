@@ -1,7 +1,9 @@
 // Path rules for `rm -r` and `cd`: is a target inside the project or a temp dir, and which variables hold what.
 // Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; newScope(cwd, project) -> {vars, assigned};
-// trackAssignments(scope, tokens, nextTokens); substituteKnownWords(tokens, scope); nativePath, isUnder, sameFile, expandHome; RECURSIVE_FLAG;
-// withoutRedirects(args) (also read by lib/git-runs.mjs); DECLARERS (also read by lib/git-run-values.mjs).
+// trackAssignments(scope, tokens, nextTokens); substituteKnownWords(tokens, scope); bashReadings(word, splitWords) (also read by
+// lib/find-delete.mjs); nativePath, isUnder, sameFile, expandHome; RECURSIVE_FLAG; withoutRedirects(args) (also read by lib/git-runs.mjs);
+// DECLARERS (from lib/shell-words.mjs, also read by lib/git-run-values.mjs).
+// An unquoted `$D` whose value has blanks is judged as one path (zsh) and as the words bash splits it into; `X[2]=v` makes X unknown.
 // Variables are tracked in order within one command line and the LAST assignment wins (`D=$(mktemp -d); D=/etc` means /etc).
 // A literal value is used as is, `VAR=$(mktemp -d)` (default location; the tokenizer turns it into MKTEMP_WORD, also with a path
 // suffix `$(mktemp -d)/..` and in backticks) stands for one directory inside the temp dir, `D+=x` appends, and any
@@ -13,8 +15,10 @@
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, parse, relative, resolve } from 'node:path';
 import { expandBraces } from './braces.mjs';
-import { GIT_TOPLEVEL_WORD, MKTEMP_WORD, QUOTED_MARK, backtickAssignedNames, flagsOf } from './shell-words.mjs';
+import { DECLARERS, GIT_TOPLEVEL_WORD, MKTEMP_WORD, QUOTED_MARK, backtickAssignedNames, flagsOf } from './shell-words.mjs';
 import { destructive } from './verdict.mjs';
+
+export { DECLARERS };
 
 const SAFE_TEMP_ROOTS = ['/tmp', '/private/tmp', tmpdir()];
 const HOME_PREFIX = /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/;
@@ -25,8 +29,9 @@ const VAR_PREFIX = /^\$\{?(\w+)\}?(?=\/|$)/;
 const MKTEMP_NAME = MKTEMP_WORD.slice(1);
 const ANY_VAR = /\$\{(\w+)\}|\$(\w+)/g;
 const ASSIGNMENT = /^([A-Za-z_]\w*)(\+?)=([\s\S]*)$/;
+const SUBSCRIPT_ASSIGNMENT = /^([A-Za-z_]\w*)\[[^\]]*\]\+?=/; // `X[2]=v`: zsh changes part of a scalar, so its value is no longer known
 const MKTEMP_DIR = 'mktemp-variable';
-export const DECLARERS = new Set(['export', 'declare', 'local', 'readonly', 'typeset']);
+const BLANKS = /[ \t\n]+/; // where bash splits an unquoted variable's value into words (the default IFS)
 /** An rm option that deletes recursively: `-r`, `-R`, a cluster holding one (`-rf`, `-fR`), or `--recursive`. */
 export const RECURSIVE_FLAG = /^--recursive$|^-[a-zA-Z]*[rR]/;
 
@@ -56,8 +61,17 @@ function isBroadRoot(project) {
 export function newScope(cwd, project, command = '') {
   const vars = new Map([['TMPDIR', tmpdir()], ['CLAUDE_PROJECT_DIR', project], [MKTEMP_NAME, mktempDir()]]);
   if (cwd !== null) vars.set('PWD', cwd);
-  return { vars, assigned: new Set(), unknown: backtickAssignedNames(command) };
+  return { vars, assigned: new Set(), unknown: backtickAssignedNames(command), splitWords: new Set() };
 }
+
+/**
+ * A target as bash may read it: a word that substituteKnownWords filled from an unquoted variable whose value has blanks is also each of
+ * its blank-separated words (bash splits it, zsh keeps one word: both readings are judged).
+ * @param {string} word one target word
+ * @param {Set<string>} [splitWords] the scope's splitWords
+ * @returns {string[]} the word, then the words bash splits it into
+ */
+export const bashReadings = (word, splitWords) => (splitWords?.has(word) ? [word, ...word.split(BLANKS).filter(Boolean)] : [word]);
 
 export const expandVars = (target, vars) => target.replace(VAR_PREFIX, (whole, name) => (vars.has(name) ? vars.get(name) : whole));
 const mktempDir = () => join(tmpdir(), MKTEMP_DIR);
@@ -79,6 +93,10 @@ function valueOf(raw, vars) {
  */
 export function trackAssignments({ vars, assigned, unknown = new Set() }, tokens) {
   const words = DECLARERS.has(tokens[0]) ? tokens.slice(1) : tokens;
+  for (const word of words) {
+    if (!ASSIGNMENT.test(word) && !SUBSCRIPT_ASSIGNMENT.test(word)) break;
+    vars.delete(SUBSCRIPT_ASSIGNMENT.exec(word)?.[1]); // `X[2]=v` in front: X is no longer known
+  }
   if (['unset', 'read'].includes(tokens[0])) {
     for (const name of tokens.slice(1).filter((w) => !w.startsWith('-'))) vars.delete(name);
     return;
@@ -97,15 +115,18 @@ export function trackAssignments({ vars, assigned, unknown = new Set() }, tokens
 /**
  * Replaces `$NAME` / `${NAME}` inside words by the literal value assigned earlier in this command line, so `X=rm; $X -rf /x`
  * reads `rm -rf /x` and `v=r; ${v}m -rf /x` too. Names never assigned here, and mktemp directories, stay as they are.
+ * A word with a `$NAME` outside quotes (the segment's `.bareWords`) that gets blanks this way is added to `scope.splitWords` (bashReadings).
  * @param {string[]} tokens words of one segment
- * @param {{vars: Map<string, string>, assigned: Set<string>}} scope
+ * @param {{vars: Map<string, string>, assigned: Set<string>, splitWords?: Set<string>}} scope
  */
-export function substituteKnownWords(tokens, { vars, assigned }) {
+export function substituteKnownWords(tokens, { vars, assigned, splitWords }) {
   const replace = (whole, braced, plain) => {
     const name = braced ?? plain;
     return assigned.has(name) && vars.has(name) && !isMktempValue(vars.get(name)) ? vars.get(name) : whole;
   };
-  return tokens.map((word) => word.replace(ANY_VAR, replace));
+  const words = tokens.map((word) => word.replace(ANY_VAR, replace));
+  for (const at of tokens.bareWords ?? []) if (words[at] !== tokens[at] && BLANKS.test(words[at])) splitWords?.add(words[at]);
+  return words;
 }
 
 /** `$(git rev-parse --show-toplevel)` is the project root, but only from a directory inside the project (elsewhere it is unknown). */
@@ -143,9 +164,9 @@ export function withoutRedirects(args) {
  * @param {string[]} args words after `rm`
  * @returns {string | undefined} ask reason when a recursive rm targets something outside the project and the temp dirs (or an unknown variable)
  */
-export function checkRm(args, { cwd, project, vars }) {
+export function checkRm(args, { cwd, project, vars, splitWords }) {
   if (!flagsOf(args).some((f) => RECURSIVE_FLAG.test(f))) return undefined;
-  const words = withoutRedirects(args).filter((a) => !a.startsWith('-'));
+  const words = withoutRedirects(args).filter((a) => !a.startsWith('-')).flatMap((word) => bashReadings(word, splitWords));
   if (words.some((word) => expandBraces(word) === null)) return destructive('rm -r with a brace expansion that cannot be listed (check the targets by hand)');
   const outside = words.flatMap(expandBraces).find((t) => !insideProject(t, cwd, project, vars));
   return outside === undefined ? undefined : destructive(`rm -r outside the project (${outside.replace(QUOTED_MARK, '')})`);

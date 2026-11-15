@@ -80,6 +80,7 @@ const ASK_CLASS_PATTERNS = [
   ['su -c', /^su -c runs a command string as another user/],
   ['eval of a variable', /^eval of a variable or substitution hides the command/],
   ['command name it cannot read', /^a command name this guard cannot read/],
+  ['brace expansion it cannot list', /^a brace expansion this guard cannot list/],
   ['alias that asks', /^alias defines a command that asks: /],
   ['nesting too deep', /^commands are nested too deeply to check/],
   ['command too long', /^command too long to check/],

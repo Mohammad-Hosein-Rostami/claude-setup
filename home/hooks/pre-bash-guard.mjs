@@ -200,7 +200,7 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
     const words = substituteKnownWords(seg, scope);
     const parsed = asGitSubcommand(commandOf(words));
     commands.push({ ...parsed, piped: seg.piped === true }); // credential-send follows a pipe into ssh
-    const env = { cwd: dir, project, vars: scope.vars, prodHosts, parse, depth: depth + 1, judged, line };
+    const env = { cwd: dir, project, vars: scope.vars, splitWords: scope.splitWords, prodHosts, parse, depth: depth + 1, judged, line };
     reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript }), ...gitRunValueReasons(words, parsed, env, reasonsOf), ...unreadableNameReasons(parsed.cmd, command, prodHosts));
     if (parsed.cmd !== undefined) {
       reasons.push(...checkCommand({ ...parsed, before: words.slice(0, parsed.at) }, env, segs[index + 1] ?? []));

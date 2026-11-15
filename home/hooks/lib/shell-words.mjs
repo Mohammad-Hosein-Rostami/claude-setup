@@ -1,7 +1,9 @@
 // Pure shell-text parsing for pre-bash-guard: no I/O, never evaluates anything.
 // Exports: tokenize(command) -> {segs, nested}; segments(command) -> string[][]; stripHeredocs(command);
 // GIT_TOPLEVEL_WORD; MKTEMP_WORD; QUOTED_MARK; lex(command) (same shape as tokenize, from shell-lexer.mjs); unquote, basenameOf, flagsOf;
-// backtickAssignedNames(command).
+// backtickAssignedNames(command); DECLARERS.
+// Unquoted brace expressions are expanded the way bash does (`rm {-rf,x}` is `rm -rf x`), never in an assignment in front of the command;
+// a segment flags the words whose braces cannot be listed (`.unlistedBraces`) and those holding a `$NAME` outside quotes (`.bareWords`).
 // Words are unquoted the way a shell does: an unquoted backslash escapes the next character (`pu\sh` is `push`, `\/` is `/`,
 // `\;` is a literal `;` word, a backslash-newline vanishes); inside double quotes a backslash only escapes `\ " $ \``.
 // A quoted word that merely looks like a redirection (`">"`) gets QUOTED_MARK in front, so it stays a plain argument;
@@ -11,6 +13,7 @@
 // in place (so its body is still checked) rather than guessed at.
 
 import { ANSI_C_WORD, decodeAnsiC } from './ansi-c.mjs';
+import { expandRawBraces, hasUnquotedReference } from './braces.mjs';
 import { isSimpleSubstitutionBody, lexShell, markArrayList, markPiped, opensArrayList } from './shell-lexer.mjs';
 
 // Alternation order matters: `&&`/`||` first, then words (a word may be `&>` or follow `>`), then single separators.
@@ -131,14 +134,47 @@ export const backtickAssignedNames = (command) =>
 /** Drops heredoc bodies (data, not commands) so prose lines are not read as `rm` or `git`; quotes, comments and `$((1<<X))` are respected. */
 export const stripHeredocs = (command) => lexShell(command).stripped;
 
-/** Raw words -> unquoted words (continuation-only words vanish, attached redirects split off). */
-const wordsOfRaw = (raws) => raws.filter((raw) => !LINE_CONTINUATION_ONLY.test(raw)).flatMap((raw) => splitAttachedRedirect(raw).map(wordOf));
+/** Builtins whose `NAME=value` words are assignments (bash still brace-expands them, zsh does not). Also read by lib/rm-paths.mjs. */
+export const DECLARERS = new Set(['export', 'declare', 'local', 'readonly', 'typeset']);
+// words after which the next word is still in front of the command (`! X=1 cmd`, `if X=1 cmd`), as lib/command-of.mjs KEYWORDS
+const RESERVED_WORDS = new Set(['{', '}', '!', 'if', 'then', 'do', 'else', 'elif', 'while', 'until']);
+const ASSIGNMENT_WORD = /^[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=/;
 
-/** The raw words of one segment -> its unquoted words, keeping the segment's flags (`.piped`, `.arrayList`). */
+/** The raw words a segment word stands for after brace expansion (see wordsOfSegment), or null when they cannot be listed. */
+function expandedPieces(piece, { leading, declaration }) {
+  const assignment = ASSIGNMENT_WORD.test(piece);
+  if (leading && assignment) return [piece]; // `X={a,b} cmd` and `X={a,b}`: bash and zsh keep the braces
+  const expanded = expandRawBraces(piece);
+  return expanded !== null && declaration && assignment && expanded.length > 1 ? [piece, ...expanded] : expanded;
+}
+
+/**
+ * The raw words of one segment -> its unquoted words, keeping the segment's flags (`.piped`, `.arrayList`). Unquoted brace expressions
+ * are expanded as bash does (lib/braces.mjs); after export/declare/local/readonly/typeset an assignment keeps its own word too, since zsh
+ * does not expand it there. Two more flags: `.unlistedBraces` holds the indices of words whose braces cannot be listed (kept as written),
+ * `.bareWords` those with a `$NAME` outside quotes, which bash splits into words at blanks.
+ */
 function wordsOfSegment(raws) {
-  const words = wordsOfRaw(raws);
+  const words = [];
+  const unlisted = [];
+  const bare = new Set();
+  const state = { leading: true, declaration: false };
+  for (const piece of raws.filter((raw) => !LINE_CONTINUATION_ONLY.test(raw)).flatMap(splitAttachedRedirect)) {
+    if (state.leading && !ASSIGNMENT_WORD.test(piece) && !RESERVED_WORDS.has(piece)) {
+      state.leading = false;
+      state.declaration = DECLARERS.has(basenameOf(unquote(piece)));
+    }
+    const pieces = expandedPieces(piece, state);
+    if (pieces === null) unlisted.push(words.length);
+    for (const word of pieces ?? [piece]) {
+      if (hasUnquotedReference(word)) bare.add(words.length);
+      words.push(wordOf(word));
+    }
+  }
   if (raws.piped === true) markPiped(words);
   if (raws.arrayList === true) markArrayList(words);
+  if (unlisted.length > 0) Object.defineProperty(words, 'unlistedBraces', { value: unlisted });
+  if (bare.size > 0) Object.defineProperty(words, 'bareWords', { value: bare });
   return words;
 }
 

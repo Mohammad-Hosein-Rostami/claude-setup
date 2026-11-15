@@ -7,8 +7,11 @@
 //   first word of an array's element list (`files+=("$f")`, a segment marked `.arrayList`) is data, not a command word.
 // - a shell reads its commands from stdin: `curl x | bash`, `bash <<EOF`, `bash < file`, `sh -s`.
 // - `env -S "cmd"` and `su -c "cmd"` take the command as ONE string.
+// - a brace word the guard cannot list (`{-c,"$X"}`, more than 64 words; lib/braces.mjs) at or before the command word, or in a command
+//   whose words a rule reads (UNLISTED_BRACES_REASON); `echo {$a,b}` stays quiet.
 // A false positive only costs a dialog, so each rule is as narrow as the bypass it closes.
 import { commandName } from './command-of.mjs';
+import { SCAN_STOP, SCAN_VERBS } from './dangerous-scan.mjs';
 
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'ksh', 'dash']);
 const VARIABLE_WORD = /^\$(?:\{(\w+)[^}]*\}|(\w+))?$/; // `$X`, `${X}`, `${X:-default}`, or a bare `$` (the start of `$(...)` in a command position)
@@ -56,5 +59,18 @@ function oneStringCommand(seg, raw, parsed) {
  */
 export function shellHazards({ seg, raw, parsed, shellScript }) {
   const commandWord = seg.arrayList === true ? undefined : hiddenCommandWord(raw, parsed); // `files+=("$f")`: its elements are words
-  return [commandWord, shellFromStdin(seg, parsed, shellScript), oneStringCommand(seg, raw, parsed)].filter((reason) => reason !== undefined);
+  return [commandWord, shellFromStdin(seg, parsed, shellScript), oneStringCommand(seg, raw, parsed), unlistedBraces(seg, raw, parsed)]
+    .filter((reason) => reason !== undefined);
+}
+
+export const UNLISTED_BRACES_REASON = 'a brace expansion this guard cannot list (an alternative with $ or a backtick, too many words or '
+  + 'nested too deep) in a command it checks; write the words out';
+// the commands whose words a rule reads (flags, targets, options), beyond the verbs the position-independent scan tries
+const RULE_COMMANDS = new Set([...SCAN_VERBS, 'find', 'eval', 'su', 'env', 'xargs', 'parallel', 'security', 'alias', 'cp', 'mv', 'tee']);
+
+/** A brace word the tokenizer could not list (`.unlistedBraces`) asks where it may hide what runs: at or before the command word, or in a command a rule reads. */
+function unlistedBraces(seg, raw, parsed) {
+  const at = seg.unlistedBraces ?? [];
+  const rulesRead = RULE_COMMANDS.has(parsed.cmd) || (!SCAN_STOP.has(parsed.cmd) && seg.some((word, i) => i > raw.at && SCAN_VERBS.has(commandName(word))));
+  return at.length > 0 && (at.some((i) => i <= raw.at) || rulesRead) ? UNLISTED_BRACES_REASON : undefined;
 }
