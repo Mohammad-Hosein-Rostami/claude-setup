@@ -98,6 +98,7 @@ function makesMergeCommit(args) {
 
 /**
  * The C37 advice when a simple command of the line is a git merge or pull that can create a merge commit.
+ * Not covered: a merge hidden in a git or shell alias, a shell function, `bash -c` or eval. Acceptable: a quality hint never decides an ask.
  * @param {string} command raw command text (decide() asks for text over MAX_COMMAND_CHARS before this runs)
  * @returns {string[]} [MERGE_COMMIT_ADVICE], or [] when no simple command can create a merge commit
  */
