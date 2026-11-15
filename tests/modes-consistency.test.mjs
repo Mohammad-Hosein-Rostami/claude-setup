@@ -81,8 +81,19 @@ test('the estimate rules are verbatim in _lead.md and home/CLAUDE.md, and the ol
 // Modes differ in cost and speed only: every accuracy rule lives in home/CLAUDE.md or _lead.md, which every mode loads.
 const GATES = ['runner', 'reviewer', 'security-auditor', 'verify-done', 'ui-quality-pass', 'visual-qa', 'ui-coverage'];
 const LESS_ACCURACY = [/thrift/i, /\bskip\b/i, /nice-to-have/i, /fewer (checks|reviews|tests)/i, /\bno (review|verify|tests?)\b/i];
-// A short phrase that drops, skips or lessens a gate or check ("skip the reviewer", "no tests", "without verification").
-const LOWERS_A_GATE = /\b(skip|omit|drop|without|no|fewer|less)\b[^.;\n]{0,40}\b(runner|reviewers?|security-auditor|verify-done|ui-quality-pass|visual-qa|ui-coverage|reviews?|verif(y|ication)|tests?|checks?)\b/i;
+// Phrases that drop, skip or lessen a gate or check ("skip the reviewer", "no tests", "verify-done is optional").
+// One sentence is checked at a time; a pattern that would also hit an honest sentence is left out (see the fixtures).
+const LOWERS_A_GATE = /\b(skip|omit|drop|without|no|fewer|less|leave out)\b[^.;\n]{0,40}\b(runner|reviewers?|security-auditor|verify-done|ui-quality-pass|visual-qa|ui-coverage|reviews?|verif(y|ication)|tests?|checks?)\b/i;
+const LOWERS_OTHERWISE = [
+  /\bskip\b/i,
+  /\bis optional\b/i,
+  /\b(one|a single|the first) source is (enough|sufficient)\b/i,
+  /\bstop after the first\b/i,
+  /\bnot (fixed|listed|checked|reviewed|verified)\b/i,
+  /\b(reviews?|reviewer|verify-done)\b[^.;\n]{0,15}\bonly (for|on|when|if)\b/i,
+];
+const lowersAGate = (sentence) => LOWERS_A_GATE.test(sentence) || LOWERS_OTHERWISE.some((pattern) => pattern.test(sentence));
+const SHARED_TEXT_FILES = ['home/modes/_lead.md', ...MODES.map((mode) => `home/modes/${mode}.md`)];
 
 test('every playbook keeps the same gates and none lowers accuracy', () => {
   for (const mode of MODES) {
@@ -92,18 +103,32 @@ test('every playbook keeps the same gates and none lowers accuracy', () => {
   }
 });
 
-test('no playbook sentence lowers a gate that home/CLAUDE.md requires', () => {
-  for (const lowering of ['Skip the reviewer on small diffs.', 'Do small work without verify-done.', 'Fewer checks in this mode.', 'No tests for quick fixes.']) {
-    assert.match(lowering, LOWERS_A_GATE, `detector must flag: ${lowering}`);
+test('no sentence of _lead.md or a playbook lowers a gate that home/CLAUDE.md requires', () => {
+  const lowering = [
+    'Skip the reviewer on small diffs.', 'Do small work without verify-done.', 'Fewer checks in this mode.', 'No tests for quick fixes.',
+    'Reviews: only for risky changes.', 'Research: one source is enough.', 'verify-done is optional in this mode.',
+    'Leave out the reviewer for one-line fixes.', 'Stop after the first finding that explains the bug.',
+    'Reviewer findings marked optional are not fixed or listed.', 'Skip review on small diffs.', 'skip responsive',
+  ];
+  for (const sentence of lowering) assert.ok(lowersAGate(sentence), `detector must flag: ${sentence}`);
+  const honest = [
+    'Never downgrade a model or effort pick to save tokens; the quality gates still run.', 'No duplicate agents on the same question.',
+    'Gates to risk: one reviewer pass per batch on changed lines; `security-auditor` only auth/secrets/data/money/hooks/untrusted input.',
+    're-run browser/responsive checks only for failed, not-run or risky (auth, payments) items.',
+  ];
+  for (const sentence of honest) assert.ok(!lowersAGate(sentence), `detector must not flag: ${sentence}`);
+  for (const file of SHARED_TEXT_FILES) {
+    for (const sentence of read(file).split(/(?<=[.;])\s+|\n+/)) assert.ok(!lowersAGate(sentence), `${file} lowers a gate: ${sentence}`);
   }
-  for (const fine of ['Never downgrade a model or effort pick to save tokens; the quality gates still run.', 'routine reviews stay on Sonnet', 'No duplicate agents on the same question.']) {
-    assert.doesNotMatch(fine, LOWERS_A_GATE, `detector must not flag: ${fine}`);
-  }
-  for (const mode of MODES) assert.doesNotMatch(read(`home/modes/${mode}.md`), LOWERS_A_GATE, `${mode}.md lowers a gate`);
 });
 
 test('every gate is named in home/CLAUDE.md, which every session and agent loads', () => {
   const claude = read('home/CLAUDE.md');
+  const section = (heading) => claude.split(/^## /m).find((part) => part.startsWith(heading)) ?? '';
+  const qualityGates = section('Quality gates');
+  for (const gate of ['runner', 'reviewer', 'security-auditor', 'verify-done', 'ui-quality-pass']) assert.ok(qualityGates.includes(`\`${gate}\``), `Quality gates must name ${gate}`);
+  const uiRouting = section('Skill routing (UI)');
+  for (const gate of ['visual-qa', 'ui-coverage']) assert.ok(uiRouting.includes(`\`${gate}\``), `Skill routing (UI) must name ${gate}`);
   for (const gate of GATES) assert.ok(claude.includes(`\`${gate}\``), `home/CLAUDE.md must name ${gate}`);
 });
 
@@ -112,7 +137,7 @@ test('accuracy rules live in the shared files', () => {
   assert.match(claude, /re-read the cited lines/);
   assert.match(claude, /second independent source/);
   const lead = read('home/modes/_lead.md');
-  for (const needle of ['`architect`, not Plan', '`opus` judges', 'never on accuracy', 'security-critical decision']) {
+  for (const needle of ['`architect`, not Plan', '`opus` judges', 'never on accuracy', 'security-critical decision', 'with all it needs', '`security-auditor` `model: "opus", effort: "max"` for risky changes and the last review before push']) {
     assert.ok(lead.includes(needle), `_lead.md must mention ${needle}`);
   }
 });

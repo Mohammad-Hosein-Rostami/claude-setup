@@ -12,7 +12,7 @@ Run `ccm <mode>` (`ccm` alone is medium). Switch inside a session with `/mode <m
 | `normal` | Opus 5.5, effort high | Small or routine work; you want the week to last | Up to 2 agents at once, terse reports |
 | `medium` | Opus 5.5, effort high | Default for most tasks | Up to 3 agents; a workflow only after you say yes |
 | `high` | Opus 5.5, effort high | Wide, multi-part tasks where speed matters | Up to 6 agents, workflows on its own; more usage |
-| `extra-high` | Opus 5.5, effort max | Architecture, hard bugs, risky or final reviews, security | Max effort on the lead and important agents |
+| `extra-high` | Opus 5.5, effort max | Architecture, hard bugs, risky code, key decisions | Max effort on the lead and important agents |
 | `ultra-high` | Fable 5.2, effort high | The hardest work; Fable decides, others do the work | Fable is capped at 50% of the weekly limit |
 
 Fable cap: when `ultra-high` reports the limit, exit and run `ccm extra-high -c` to continue the same conversation on

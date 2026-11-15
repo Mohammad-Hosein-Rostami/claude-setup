@@ -4,10 +4,8 @@ Same quality gates as every mode (see the lead rules and CLAUDE.md). Unlike norm
 
 - Opus-max escalation, per Agent call `model: "opus", effort: "max"`, for jobs that need it:
   - architecture and planning (`architect`); hard or failed-once bugs (`deep-debugger`);
-  - risky or final reviews (`reviewer`: auth, data/migrations, money, concurrency, security, or the last review before
-    merge/push; routine reviews stay on Sonnet) and security audits (`security-auditor`);
   - risky or cross-module code (`implementer`); important decisions.
-- Everything else keeps its pinned model: Sonnet workers, Haiku for mechanical work. No duplicate agents.
+- Risky or final reviews and security audits run on Opus max in every mode (lead rules). Everything else keeps its pinned model: Sonnet workers, Haiku for mechanical work. No duplicate agents.
 - Lane budget: up to 6 agents at once (as high). Parallelism, workflows and report brevity as in high (short final answer, detail in files): wide fan-out in one message; Claude starts a workflow itself for
   substantive multi-part tasks, no size limit. Choosing `ccm extra-high` or `/mode extra-high` is the user's standing
   request for this.

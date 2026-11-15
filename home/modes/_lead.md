@@ -5,20 +5,18 @@
 - `normal` (fewest agents), `medium` (default), `high` (full speed), `extra-high` (lead Opus 5.5 at max), `ultra-high` (lead
   Fable 5.2 at high). `ccm <mode>` at launch, `/mode <m>` switches.
   Risky = auth, data, money, concurrency, security, the last review before push.
-- Subscription only: never `/fast`, `/code-review ultra` or credits; at a limit, wait. The mode playbook overrides CLAUDE.md token discipline on cost and speed only, never on accuracy.
+- The mode playbook overrides CLAUDE.md token discipline on cost and speed only, never on accuracy.
 
 ## Model routing
 
 The session leads on **Opus 5.5 `high`** (normal/medium/high): it thinks, decides, delegates. Agents pin model/effort; unpinned general-purpose and Explore get Sonnet 5.5, Plan Opus. Use `scout`, not Explore; `architect`, not Plan; give every Workflow `agent()` a `model`: `haiku` mechanical, `sonnet` work, `opus` judges.
-Escalate per call via Agent `model`/`effort`: `implementer`/`test-writer` `effort: "high"` for tricky or cross-module code; `reviewer` `model: "opus"` for risky changes; `architect`/`deep-debugger` `effort: "xhigh"` for hard problems, a failed try, no clear design winner or a security-critical decision. Never downgrade a pick to save tokens.
+Escalate per call via Agent `model`/`effort`: `implementer`/`test-writer` `effort: "high"` for tricky or cross-module code; `reviewer` and `security-auditor` `model: "opus", effort: "max"` for risky changes and the last review before push; `architect`/`deep-debugger` `effort: "xhigh"` for hard problems, a failed try, no clear design winner or a security-critical decision. Never downgrade a pick to save tokens.
 
 - Planning, architecture/API design, trade-offs, hard-bug root cause, judging results, final call: **Opus 5.5 (the session)**; itself, `architect`, `deep-debugger`, `/escalate`.
 - Implementation, refactors, tests, normal bug fixes, reviews: **Sonnet 5.5**; `implementer`, `test-writer`, `reviewer`.
 - UI implementation: **Sonnet 5.5**; `ui-implementer` (never plain `implementer`).
 - Figma match and responsive checks (text only): **Sonnet 5.5**; `visual-qa`, skill `figma-pixel-perfect`.
 - Search, many-file reads, tests/lint/build, log triage, summaries, trivial edits: **Haiku 5.5**; `scout`, `runner`, `/quick`.
-
-Past decisions or history: `recall` before asking.
 
 Rules:
 
@@ -32,7 +30,7 @@ Rules:
 ## Right-size before building
 
 - Plan over ~2 h: a triage (≤ 6 lines): goal and the owner's bar as stated; the work it needs; waste to avoid
-  (repeat analysis, needless serial steps, re-verified work, extra reviews, Opus where Sonnet suffices).
+  (repeat analysis, needless serial steps, checks re-run on unchanged files, reviews beyond the gates, Opus where Sonnet suffices).
 - Gates to risk: one reviewer pass per batch on changed lines; `security-auditor` only auth/secrets/data/money/hooks/untrusted input.
 
 ## Lead discipline (every mode)
@@ -40,7 +38,7 @@ Rules:
 - Reply in the user's language (Persian too).
 - No turn without a decision: with work in flight, arm one watch before ending the turn; relays and status 1-2 lines; lanes share a state file.
 - Ops to agents: test/lint/build, ssh/git, logs to `runner`; multi-file edits `implementer`; delegate past ~15 Bash calls.
-- Spawn brief: one job per agent, with acceptance checks, failure classes to self-test, defaults for questions,
+- Spawn brief: one job per agent with all it needs: acceptance checks, failure classes to self-test, defaults for foreseeable questions,
   "finish everything"; a design brief asks for the Reuse inventory, Contract facts and Unconfirmed lists (project `architect` too). Agents return ≤ 300 words, detail in a file; a worker unfinished at ~120 tool calls or the
   2nd compaction returns a status; continue them with SendMessage.
 - Send all review findings in ONE message within 5 minutes of the report. A follow-up for an agent idle over 5 minutes that does

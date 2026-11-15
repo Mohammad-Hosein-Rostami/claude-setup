@@ -1,6 +1,6 @@
 # Modes
 
-Five setup modes trade parallelism and lead strength against usage; accuracy is the same in every mode. Default is `medium` (the setup as `home/CLAUDE.md` and
+Five setup modes trade parallelism and lead strength against usage. Every mode runs the same rules and checks, including risky or final review on Opus at max; the modes differ in the lead model and effort, agents at once, workflow start, Fable-max escalation and report length. Default is `medium` (the setup as `home/CLAUDE.md` and
 `home/modes/_lead.md` describe it). Every session has its own mode; nothing a mode does touches machine-wide state or other sessions.
 
 ## Launch
@@ -41,9 +41,9 @@ at its launch effort and to run `ccm <mode> -c` to return it to Opus 5.5 at high
 ## Same in every mode
 
 Per-task model and effort (agent pins and the escalation rules in `home/modes/_lead.md`); the quality gates (tests,
-`runner` checks, `reviewer`, `security-auditor`, `verify-done`, `ui-quality-pass`, `visual-qa`, `ui-coverage`, the findings check and the judge models). normal, medium and high keep the lead at Opus 5.5 at
+`runner` checks, `reviewer`, `security-auditor`, `verify-done`, `ui-quality-pass`, `visual-qa`, `ui-coverage`, the findings check and the judge models), and risky or final review and security audit on Opus at max. normal, medium and high keep the lead at Opus 5.5 at
 effort high and change only parallelism, workflows and report brevity; extra-high and ultra-high also change the lead
-and add the Opus-max escalations.
+and add the Opus-max escalations for architecture, hard bugs and risky code (Fable max in ultra-high).
 
 ## What differs
 
@@ -54,13 +54,13 @@ A workflow is a script that runs many agents in phases.
 | normal | Opus 5.5, effort high | pinned agents + lead-rule escalations | up to 2 at once (lane budget) | only when you ask for one in your message; up to 4 agents | terse; `/compact` only when context is large |
 | medium | Opus 5.5, effort high | same | up to 3 at once, independent work in parallel | Claude may propose one and say roughly what it costs; starts only after you say yes; up to 9 agents | as the lead rules and `CLAUDE.md` |
 | high | Opus 5.5, effort high | same | up to 6 at once; wide fan-out: parallel research, one `deep-debugger` per hypothesis, test-writer + implementer, split parts, reviewer + security-auditor | Claude starts one itself for substantive multi-part tasks, no size limit | same short final answer as medium; detail goes to files |
-| extra-high | Opus 5.5, effort max | architecture/planning, hard or failed-once bugs, risky or final reviews, security audits, risky code, key decisions: agents with `model: "opus", effort: "max"` | as high (up to 6) | as high | as high |
-| ultra-high | Fable 5.2, effort high (`CCM_LEAD_EFFORT` overrides) | Fable decides and delegates; hard problems to `architect` / `deep-debugger` with `model: "fable", effort: "max"`; risky or final reviews, security audits and risky code to Opus 5.5 at max; the `agent-model-guard.mjs` hook moves Explore to Sonnet and Plan to Opus (every mode) when no model is given | as high, up to 8 at once | as high | as high |
+| extra-high | Opus 5.5, effort max | architecture/planning, hard or failed-once bugs, risky or cross-module code, key decisions: agents with `model: "opus", effort: "max"` | as high (up to 6) | as high | as high |
+| ultra-high | Fable 5.2, effort high (`CCM_LEAD_EFFORT` overrides) | Fable decides and delegates; hard problems to `architect` / `deep-debugger` with `model: "fable", effort: "max"`; risky or cross-module code to Opus 5.5 at max; the `agent-model-guard.mjs` hook moves Explore to Sonnet and Plan to Opus (every mode) when no model is given | as high, up to 8 at once | as high | as high |
 
 Every mode: a parallel request first gets a one-line usage-limit forecast.
 
 A risky or final review means auth, data or migrations, money, concurrency, security, and the last review before a
-merge or push. In extra-high and ultra-high these go to Opus at max (the independent second read in ultra-high).
+merge or push. In every mode these go to Opus at max (`reviewer`, `security-auditor`).
 
 Choosing `ccm high|extra-high|ultra-high` or `/mode` with one of them is your standing request for workflows. If
 Claude still asks first, answer "use a workflow" once.

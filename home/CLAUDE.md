@@ -14,7 +14,7 @@ Setup modes: `normal`, `medium` (default), `high`, `extra-high`, `ultra-high`; s
   done and no decision is left unasked; the user's decisions are asked as they come up, not left for the end.
 - Report sizes (`≤ N lines`) size the summary, not the work. When the detail matters, write it to a file and return
   the path.
-- At a usage limit: read the reset time from the message, tell the owner that time, and schedule ONE wake a few minutes after it. Never retry before the reset.
+- At a usage limit: read the reset time from the message, tell the owner that time, and schedule ONE wake a few minutes after it. Never retry before the reset. Subscription only: never `/fast`, `/code-review ultra` or credits.
 - Work with a `STATUS.md`: every owner request and every owner correction becomes a `## Work items` row (`id | item | size S/M/L | started | done | evidence`) before work on it starts (a correction's item starts `rework:`; never clear a done cell). Review, fixes from a review, recheck and landing rows start `close:`; before the first hand-over they may be left to the tool's closing phase, after it all remaining work is rows, reviews included; never fold them into a build row. When you report the job done to the owner, add a `deliver:` row with only its done time. Set started and done when they happen, from the clock (`date -u +%Y-%m-%dT%H:%MZ`), never from memory. Every estimate you give is the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` pasted as-is with its Excludes and After lines, never a number or clock time of your own; re-run it whenever rows change; if it refuses, give its reason and its What to do.
 
 ## Quality gates (every mode)
@@ -22,8 +22,8 @@ Setup modes: `normal`, `medium` (default), `high`, `extra-high`, `ultra-high`; s
 - After a change, run the checks that cover it through `runner` (targeted tests, typecheck, lint) ONCE, after the last
   edit, not after each step. `verify-done` reuses that run when no file changed after it.
 - Non-trivial change: `reviewer`. Risky change: also `security-auditor`. UI: `ui-quality-pass`. Then `verify-done`.
-- A design spec without Reuse inventory, Contract facts and Unconfirmed goes back to its author before an implementer starts.
-- Review findings: merge duplicates; re-read the cited lines of each blocking, should-fix or disputed finding and judge it alone before fixing or dismissing it (security findings apart); fix blocking and should-fix ones, list the rest; re-check the lines of each blocking fix.
+- Lead: send a design spec without Reuse inventory, Contract facts and Unconfirmed back to its author before briefing an implementer.
+- Review findings: merge duplicates; re-read the cited lines of each blocking, should-fix or disputed finding and judge it alone before fixing or dismissing it (security findings by a separate check, never dropped); fix blocking and should-fix ones, list the rest; re-check the lines of each blocking fix.
 
 ## Skill routing (UI)
 
@@ -55,6 +55,7 @@ global setup combines with it.
 
 - Search before reading (Grep tool or `rg`, Glob), read ranges (`offset`/`limit`) not whole files, and
   never re-read a file you just edited.
+- Past decisions or history: `recall` before asking.
 - Delegate anything that would dump > ~150 lines (test logs, build output, big greps, docs
   crawling) to a `runner` / `scout` agent and ask for a summary of ≤ 20 lines.
 - Size a delegated job to finish within about 120 tool calls; split a bigger one into stages with a commit between them. An agent that returns without its report is continued once ("commit, then report"), not restarted.
@@ -70,8 +71,8 @@ global setup combines with it.
   browser/Playwright MCP only when asked (each call also echoes its code back).
 - Pixel/visual bugs: read the code once and make the best fix; hand the compare-and-fix loop to `visual-qa` (it runs
   until it passes) instead of iterating screenshots and measurements on the main thread.
-- Separable parts (i18n) get their own lane. One scripted `runner` call measures every state. Reuse cached Figma pulls, diffs and the design system.
-- Lanes land one at a time by rebase and `git merge --ff-only`, then `git-tidy prune --apply` (C37).
+- Lead: give separable parts (i18n) their own lane. One scripted `runner` call measures every state. Reuse cached Figma pulls, diffs and the design system.
+- Lead: land lanes one at a time by rebase and `git merge --ff-only`, then `git-tidy prune --apply` (C37).
 - Run checks through `runner` so logs stay out of context; start servers/browsers only when the task needs a
   real-app check.
 - Owner decisions (scope, money, irreversible, credentials, a product fact the repo lacks such as length, timer, role, copy, brand name or design system vs local, real trade-offs): ask with AskUserQuestion the moment they

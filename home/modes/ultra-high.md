@@ -4,7 +4,7 @@ Same quality gates as every mode. The lead is Fable 5.2 at effort high (`ccm ult
 
 - Fable keeps (it has the context): the plan, key decisions, specs (<= 60 lines, to a file), judging reports and diffs, the root cause when agents disagree or a fix failed, the final call; few-line edits only when briefing costs more.
 - Fable never does what an agent does as well: reading beyond small ranges (`scout`), checks or logs (`runner`), implementation (`implementer`/`ui-implementer`), screenshot loops (`visual-qa`), polling, a second review of one diff.
-- Hard problems get more Fable (no clear design winner, a bug that survived a fix, a security-critical decision): run `architect` or `deep-debugger` with `model: "fable", effort: "max"` and a self-contained brief (spec path, what was ruled out). Opus max for risky or final reviews, security audits and risky or cross-module code.
+- Hard problems get more Fable (no clear design winner, a bug that survived a fix, a security-critical decision): run `architect` or `deep-debugger` with `model: "fable", effort: "max"` and a self-contained brief (spec path, what was ruled out). Opus max for risky or cross-module code.
 - No hidden Fable: forks and Workflow `agent()` without `model` run on Fable; fork only when the job needs this conversation; `fable` in `agent()` only where needed. No `/escalate`: think in place.
 - Agents return <= 200 words with file:line evidence.
 - Lens agents: continue only reachable items, once; what is still left goes to a fresh agent.
