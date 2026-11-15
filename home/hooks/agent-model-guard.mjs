@@ -1,7 +1,7 @@
 // PreToolUse(Agent|Task) guard: an Agent call with no `model` would inherit the lead model (Opus / Fable) and spend it
-// silently. In every mode, an unpinned call to a built-in type that pins no model itself (general-purpose, a call with
-// no subagent_type, Explore and the other built-ins) gets `sonnet`. In extra-high and ultra-high a Plan call without
-// one gets `opus`. Forks (subagent_type "fork", they inherit the lead on purpose), the repo's own agents (their files
+// silently. An unpinned call to a built-in type that pins no model itself (general-purpose, a call with no subagent_type,
+// Explore and the other built-ins) gets `sonnet`; a Plan call without one gets `opus`. The mode plays no part: every mode
+// is as accurate as the high ones. Forks (subagent_type "fork", they inherit the lead on purpose), the repo's own agents (their files
 // pin a model; a per-call model would override it), plugin agents, an explicit model, and unreadable input pass
 // through untouched: no output, exit 0.
 // Env interaction: settings/base.json sets CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-5-5. See docs/catalog.md for how
@@ -21,17 +21,16 @@
 // whose project has `## Standing rules`, and an architect or Plan brief gets the Reuse inventory / Contract facts line after it. Fixed
 // text plus a path only; any failure leaves the brief as it is.
 // Exports: guardedAgentInput (pure), matrixLines (pure), uiBriefDeny (the gate), MAX_MATRIX_BYTES. Invariants: the routing never blocks
-// or denies; the gate denies an identical call at most once per session; the mode comes from mode.mjs's state lookup.
+// or denies; the gate denies an identical call at most once per session.
 import { realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { UNPRINTABLE, readFileHead, withBriefLines } from './lib/agent-brief.mjs';
-import { SESSION_ID_PATTERN, activeMode, lazyProcessKey } from './mode.mjs';
 
-const PLAN_MODES = ['extra-high', 'ultra-high'];
 const FORK_TYPE = 'fork';
 const DEFAULT_MODEL = 'sonnet';
+const PLAN_MODEL = 'opus';
 // Built-in agent types that pin no model; an omitted subagent_type means general-purpose.
 const UNPINNED_BUILTIN_TYPES = ['general-purpose', 'Explore', 'claude', 'claude-code-guide', 'statusline-setup'];
 
@@ -55,17 +54,16 @@ const SEND_AGAIN = 'Send the same call again unchanged and it runs.';
 const SHORT_REASON = `\`MATRIX: none:\` needs a reason of ${MIN_REASON_CHARS} or more characters.`;
 
 /**
- * The Agent input with a cheaper model set, when this mode and call need it.
- * @param {string} mode - active setup mode.
+ * The Agent input with the model this call needs when it names none (the same in every mode).
  * @param {unknown} toolInput - `tool_input` of the Agent / Task call.
  * @returns {object | null} a copy of the input with `model` added, or null when nothing is to change.
  */
-export function guardedAgentInput(mode, toolInput) {
+export function guardedAgentInput(toolInput) {
   if (toolInput === null || typeof toolInput !== 'object') return null;
   if (toolInput.model !== undefined && toolInput.model !== '') return null;
   const type = toolInput.subagent_type;
   if (type === FORK_TYPE) return null;
-  if (type === 'Plan') return PLAN_MODES.includes(mode) ? { ...toolInput, model: 'opus' } : null;
+  if (type === 'Plan') return { ...toolInput, model: PLAN_MODEL };
   const unpinned = type === undefined || type === '' || UNPINNED_BUILTIN_TYPES.includes(type);
   return unpinned ? { ...toolInput, model: DEFAULT_MODEL } : null;
 }
@@ -153,9 +151,7 @@ async function main() {
     process.stdout.write(deny);
     return;
   }
-  const id = input?.session_id;
-  const sessionId = typeof id === 'string' && SESSION_ID_PATTERN.test(id) ? id : undefined;
-  const routed = guardedAgentInput(await activeMode(sessionId, lazyProcessKey()), input?.tool_input);
+  const routed = guardedAgentInput(input?.tool_input);
   const updatedInput = withBriefLines(routed ?? input?.tool_input, input?.cwd) ?? routed; // the brief lines on top of the model, if any
   if (!updatedInput) return;
   console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput } }));

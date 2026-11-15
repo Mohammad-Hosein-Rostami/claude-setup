@@ -12,52 +12,54 @@ import { guardedAgentInput } from '../home/hooks/agent-model-guard.mjs';
 const HOOK = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
 const BASE = { description: 'look', prompt: 'find x' };
 
-test('guardedAgentInput: Explore without model gets sonnet in every mode, Plan gets opus only in the lead modes', () => {
-  for (const mode of ['normal', 'medium', 'high', 'extra-high', 'ultra-high']) {
-    assert.deepEqual(guardedAgentInput(mode, { ...BASE, subagent_type: 'Explore' }), { ...BASE, subagent_type: 'Explore', model: 'sonnet' });
-  }
-  for (const mode of ['extra-high', 'ultra-high']) {
-    assert.deepEqual(guardedAgentInput(mode, { ...BASE, subagent_type: 'Plan' }), { ...BASE, subagent_type: 'Plan', model: 'opus' });
-  }
-  for (const mode of ['normal', 'medium', 'high']) assert.equal(guardedAgentInput(mode, { ...BASE, subagent_type: 'Plan' }), null);
+test('guardedAgentInput: Explore without model gets sonnet, Plan gets opus (the same in every mode)', () => {
+  assert.deepEqual(guardedAgentInput({ ...BASE, subagent_type: 'Explore' }), { ...BASE, subagent_type: 'Explore', model: 'sonnet' });
+  assert.deepEqual(guardedAgentInput({ ...BASE, subagent_type: 'Plan' }), { ...BASE, subagent_type: 'Plan', model: 'opus' });
 });
 
-test('guardedAgentInput: general-purpose and a call with no subagent_type get sonnet in every mode', () => {
-  for (const mode of ['normal', 'medium', 'high', 'extra-high', 'ultra-high']) {
-    assert.deepEqual(guardedAgentInput(mode, { ...BASE }), { ...BASE, model: 'sonnet' });
-    assert.deepEqual(guardedAgentInput(mode, { ...BASE, subagent_type: 'general-purpose' }), { ...BASE, subagent_type: 'general-purpose', model: 'sonnet' });
-  }
+test('guardedAgentInput: general-purpose and a call with no subagent_type get sonnet', () => {
+  assert.deepEqual(guardedAgentInput({ ...BASE }), { ...BASE, model: 'sonnet' });
+  assert.deepEqual(guardedAgentInput({ ...BASE, subagent_type: 'general-purpose' }), { ...BASE, subagent_type: 'general-purpose', model: 'sonnet' });
 });
 
 test('guardedAgentInput: an explicit model is kept', () => {
-  assert.equal(guardedAgentInput('ultra-high', { ...BASE, subagent_type: 'Explore', model: 'haiku' }), null);
-  assert.equal(guardedAgentInput('ultra-high', { ...BASE, subagent_type: 'Plan', model: 'fable' }), null);
-  assert.equal(guardedAgentInput('medium', { ...BASE, model: 'opus' }), null);
+  assert.equal(guardedAgentInput({ ...BASE, subagent_type: 'Explore', model: 'haiku' }), null);
+  assert.equal(guardedAgentInput({ ...BASE, subagent_type: 'Plan', model: 'fable' }), null);
+  assert.equal(guardedAgentInput({ ...BASE, subagent_type: 'Plan', model: 'sonnet' }), null);
+  assert.equal(guardedAgentInput({ ...BASE, model: 'opus' }), null);
 });
 
 test('guardedAgentInput: an empty model counts as absent (it would inherit the lead)', () => {
-  assert.equal(guardedAgentInput('ultra-high', { ...BASE, subagent_type: 'Explore', model: '' }).model, 'sonnet');
-  assert.equal(guardedAgentInput('medium', { ...BASE, model: '' }).model, 'sonnet');
+  assert.equal(guardedAgentInput({ ...BASE, subagent_type: 'Explore', model: '' }).model, 'sonnet');
+  assert.equal(guardedAgentInput({ ...BASE, subagent_type: 'Plan', model: '' }).model, 'opus');
+  assert.equal(guardedAgentInput({ ...BASE, model: '' }).model, 'sonnet');
 });
 
 test('guardedAgentInput: forks, the repo agents (they pin their own model) and odd input are untouched', () => {
-  for (const mode of ['medium', 'ultra-high']) {
-    assert.equal(guardedAgentInput(mode, { ...BASE, subagent_type: 'fork' }), null);
-    for (const type of ['scout', 'security-auditor', 'architect', 'reviewer', 'implementer', 'toString', 'some-plugin:agent']) {
-      assert.equal(guardedAgentInput(mode, { ...BASE, subagent_type: type }), null);
-    }
-    for (const bad of [undefined, null, 'Explore', 42]) assert.equal(guardedAgentInput(mode, bad), null);
+  assert.equal(guardedAgentInput({ ...BASE, subagent_type: 'fork' }), null);
+  for (const type of ['scout', 'security-auditor', 'architect', 'reviewer', 'implementer', 'toString', 'some-plugin:agent']) {
+    assert.equal(guardedAgentInput({ ...BASE, subagent_type: type }), null);
   }
+  for (const bad of [undefined, null, 'Explore', 42]) assert.equal(guardedAgentInput(bad), null);
 });
 
+// The hook runs in the temp HOME, so no STATUS.md of this repo adds a line to the brief.
 function run(mode, stdin) {
   const home = mkdtempSync(join(tmpdir(), 'model-guard-'));
   mkdirSync(join(home, '.claude', 'state', 'modes'), { recursive: true });
   writeFileSync(join(home, '.claude', 'state', 'modes', 'sess1'), `${mode}\n`);
   const env = { ...process.env, HOME: home, USERPROFILE: home };
   delete env.CLAUDE_MODE;
-  return spawnSync(process.execPath, [HOOK], { input: stdin, encoding: 'utf8', env });
+  return spawnSync(process.execPath, [HOOK], { input: stdin, encoding: 'utf8', env, cwd: home });
 }
+
+test('hook: a Plan call without model gets opus in all five modes; an explicit model wins', () => {
+  const plan = (extra) => JSON.stringify({ session_id: 'sess1', tool_input: { ...BASE, subagent_type: 'Plan', ...extra } });
+  for (const mode of ['normal', 'medium', 'high', 'extra-high', 'ultra-high']) {
+    assert.equal(JSON.parse(run(mode, plan({})).stdout).hookSpecificOutput.updatedInput.model, 'opus', mode);
+    assert.equal(JSON.parse(run(mode, plan({ model: 'sonnet' })).stdout).hookSpecificOutput.updatedInput.model, 'sonnet', `${mode}: explicit`);
+  }
+});
 
 test('hook: ultra-high Explore without model prints an allow decision with the full updated input', () => {
   const toolInput = { ...BASE, subagent_type: 'Explore' };

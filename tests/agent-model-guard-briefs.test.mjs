@@ -152,8 +152,10 @@ test('an architect or Plan brief without "Reuse inventory" gets the two-lists li
   const s = briefSession();
   for (const type of ['architect', 'Plan']) {
     const call = { prompt: PROMPT, subagent_type: type };
-    assert.deepEqual(s.send(call), allowed({ ...call, prompt: `${PROMPT}\n${DESIGN_LISTS}` }), type);
-    assert.equal(s.send({ ...call, prompt: `${PROMPT}\nList the Reuse inventory first.` }), null, `${type} with the words`);
+    const model = type === 'Plan' ? { model: 'opus' } : {}; // Plan gets opus in every mode
+    assert.deepEqual(s.send(call), allowed({ ...call, ...model, prompt: `${PROMPT}\n${DESIGN_LISTS}` }), type);
+    const withWords = { ...call, prompt: `${PROMPT}\nList the Reuse inventory first.` };
+    assert.deepEqual(s.send(withWords), type === 'Plan' ? allowed({ ...withWords, ...model }) : null, `${type} with the words: prompt unchanged`);
   }
 });
 
