@@ -101,7 +101,7 @@ test('hook contract: bad JSON is silent; a UI prompt emits additionalContext; a 
   assert.equal(backend.stdout, '');
 });
 
-const GATE_LINE = /^Skill router: (bug or failure|done or ship) /;
+const GATE_LINE = /^Skill router: (bug or failure|done or ship|repository restructure) /;
 
 // Each call gets its own temp dir as TMPDIR/TEMP so session markers never leak between tests or into real state.
 async function routerSession() {
@@ -225,6 +225,36 @@ test('gateLinesForPrompt: incidental words do not fire', () => {
     'when you are done, run the tests', 'resolve the merge conflicts in a.txt', 'a fixed width table', 'the done flag in the schema', 'rename the debugger config']) {
     assert.deepEqual(gateLinesForPrompt(prompt), [], prompt);
   }
+});
+
+test('gateLinesForPrompt: repository-level restructure intents fire repo-restructure', () => {
+  for (const prompt of ['i want to restructure ice-web-app, i want to remove nx from our project completely', 'restructure the project folders', 'restructure the repo',
+    'migrate off Nx', 'migrate away from turborepo', 'get rid of module federation', 'module federation is no longer needed, remove it',
+    'merge the apps and libraries into one project', 'merge everything into a simple project called portal', 'convert the monorepo to a single app',
+    'clean up the root of the repo and old configs', 'تغییر ساختار پروژه']) {
+    assert.match(gateLinesForPrompt(prompt).join(), /repo-restructure/, prompt);
+  }
+});
+
+test('gateLinesForPrompt: code-level or incidental restructure words do not fire repo-restructure', () => {
+  for (const prompt of ['restructure this function', 'restructure the reducer into smaller hooks', 'remove the nx-cache folder from .gitignore', 'why is nx build slow', 'remove nx from the gitignore',
+    'add a module federation remote', 'merge conflicts in package.json', 'merge this branch', 'clean up this component', 'move the button to the left']) {
+    assert.doesNotMatch(gateLinesForPrompt(prompt).join(), /repo-restructure/, prompt);
+  }
+});
+
+test('hook: repo-restructure line reaches additionalContext once per session, again after a compact', async () => {
+  const KEEP = { keepGates: true };
+  const { prompt, compact } = await routerSession();
+  assert.equal(
+    await prompt('restructure the repo', 'r1', KEEP),
+    'Skill router: repository restructure - invoke repo-restructure (skip if already loaded) before moving or deleting anything.',
+  );
+  assert.equal(await prompt('now migrate off Nx', 'r1', KEEP), '');
+  compact('r1');
+  assert.match(await prompt('migrate off Nx', 'r1', KEEP), /repo-restructure/);
+  assert.equal(await prompt('restructure this function', 'r2', KEEP), '');
+  assert.equal(await prompt('<agent-message>restructure the repo</agent-message>', 'r3', KEEP), '');
 });
 
 test('hook: gate lines reach additionalContext, also in a Gradle project and next to a UI route', async () => {

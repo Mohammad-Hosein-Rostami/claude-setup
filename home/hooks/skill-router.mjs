@@ -41,8 +41,13 @@ const PROMPT_ROUTES = [
 const HARNESS_EVENT = /^(<(task-notification|system-reminder|agent-message)|\[SYSTEM NOTIFICATION)/;
 // Gate routes: workflow skills that are not UI specific, named once per session (and again after a compact). Triggers
 // are intents, not words: an imperative "fix ..." / a bug, crash or failing test; a "done?", "ship it", "ready to
-// merge" request. "fixed", "prefix", "when you are done" and "merge conflicts" do not fire.
+// merge" request; a repository-level restructure ("remove Nx", "merge the apps into one project"). "fixed", "prefix",
+// "when you are done", "merge conflicts" and "restructure this function" do not fire.
 const SENTENCE_START = String.raw`(?:^|[.!?:]\s+|\b(?:please|pls|can you|could you|would you|need to|needs to|let'?s|and|then|go)\s+)`;
+// Build tools and layers whose removal restructures a whole repository. "nx-cache", "module federation remote" and
+// "remove nx from .gitignore" are single-file talk, so the name must not continue that way.
+const REMOVABLE_LAYER = String.raw`(?:the\s+)?(?:nx|turborepo|lerna|module federation|monorepo tool)(?![\w-]|\s+(?:cache|remotes?)\b|\s+(?:from|in)\s+(?:the\s+)?\.?(?:gitignore|package\.json|tsconfig|eslint|readme))`;
+const REPO_NOUN = String.raw`(?:repo(?:sitory)?|project|monorepo|codebase|workspace)`;
 const GATE_ROUTES = [
   {
     skill: 'root-cause-debug',
@@ -68,6 +73,20 @@ const GATE_ROUTES = [
     ),
     line: 'Skill router: done or ship - invoke verify-done (skip if already loaded) before claiming done, fixed or ready.',
   },
+  {
+    skill: 'repo-restructure',
+    test: new RegExp(
+      String.raw`\brestructur\w*\s+(?:the\s+|our\s+|this\s+|my\s+)?(?:whole\s+|entire\s+)?${REPO_NOUN}\b` +
+        String.raw`|\b(?:remove|drop|delete|get rid of|eliminate|replace|migrate (?:off|away from)|move (?:off|away from))\s+${REMOVABLE_LAYER}` +
+        String.raw`|\b(?:nx|turborepo|lerna|module federation)\s+(?:is |are )?(?:no longer|not) (?:needed|used|required)\b` +
+        String.raw`|\bmerge\s+(?:(?:all|the|our)\s+)*(?:everything|apps?|packages?|libs?|libraries|projects|repos|workspaces)\b[^.!?]{0,30}\binto\s+(?:an?|one|1|single|the)\b` +
+        String.raw`|\bconvert\s+(?:the\s+|our\s+|this\s+)?monorepo\b` +
+        String.raw`|\bclean[\s-]?up\s+(?:the\s+|our\s+)?(?:(?:root|top[\s-]level)\s+(?:folder\s+)?of\s+(?:the\s+|our\s+)?)?${REPO_NOUN}\b` +
+        String.raw`|(?:تغییر|بازسازی|بازآرایی)\s*ساختار\s*(?:پروژه|ریپو|مخزن|مونوریپو)`,
+      'i',
+    ),
+    line: 'Skill router: repository restructure - invoke repo-restructure (skip if already loaded) before moving or deleting anything.',
+  },
 ];
 const UI_FILE = /\.(tsx|jsx|vue|svelte|html|css|scss|sass|less)$/i;
 const NON_UI_FILE = /\.(test|spec|stories)\.\w+$/i;
@@ -81,7 +100,7 @@ const COMPACT_SOURCE = 'compact';
 const OFF_ENV = 'CLAUDE_SKILL_ROUTER';
 const GRADLE_FILES = ['settings.gradle', 'settings.gradle.kts', 'build.gradle', 'build.gradle.kts'];
 
-/** Returns the gate routes (bug -> root-cause-debug, done/ship -> verify-done) a prompt calls for. */
+/** Returns the gate routes (bug -> root-cause-debug, done/ship -> verify-done, repo restructure -> repo-restructure) a prompt calls for. */
 function gatesForPrompt(prompt) {
   return HARNESS_EVENT.test(prompt.trim()) ? [] : GATE_ROUTES.filter((gate) => gate.test.test(prompt));
 }
