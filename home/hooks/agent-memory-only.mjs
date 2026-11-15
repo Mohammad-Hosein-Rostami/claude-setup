@@ -4,7 +4,6 @@
 // <tmp>/claude-<current uid>/<project>/<input.session_id>/scratchpad/<file>, checked after path.resolve and realpath
 // (so `..` and symlinks out of it are refused; other sessions' and other users' scratchpads are refused).
 // <tmp> is the OS temp dir and /tmp (Claude Code puts the scratchpad under /tmp even where the OS temp dir differs).
-// Also allows a NEW file under ~/Desktop/claude-setup-reports/ (same realpath checks; an existing file there is refused).
 // Without a uid (Windows) the user directory is the plain `claude`. Fails closed: input it cannot read is denied.
 // Deny = exit 2 + reason on stderr.
 import { homedir, tmpdir } from 'node:os';
@@ -13,7 +12,6 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const MEMORY_ROOT = resolve(homedir(), '.claude', 'agent-memory') + sep;
-const defaultReportsRoot = () => join(homedir(), 'Desktop', 'claude-setup-reports');
 const SESSION_ID = /^[\w-]{1,128}$/;
 const SCRATCHPAD_DIR = 'scratchpad';
 // segments after <tmp>: claude-<uid>, <project>, <session id>, scratchpad, then at least one more (the file)
@@ -81,28 +79,6 @@ export function isScratchpadPath(filePath, cwd, sessionId, { roots = defaultTemp
   });
 }
 
-/**
- * Whether a write target is a NEW file inside the reports folder (a review agent may add a report, not replace one).
- * @param {unknown} filePath - `tool_input.file_path` from the hook JSON.
- * @param {string} cwd - directory relative paths resolve against.
- * @param {{ root?: string }} [options] - the reports folder (tests); default `~/Desktop/claude-setup-reports`.
- * @returns {boolean} true when the path stays inside the folder after resolve + realpath and nothing exists there yet.
- */
-export function isReportsPath(filePath, cwd, { root = defaultReportsRoot() } = {}) {
-  if (typeof filePath !== 'string' || filePath === '') return false;
-  const target = realpathLoose(resolve(cwd, filePath));
-  const realRoot = realpathLoose(resolve(root));
-  if (target === null || realRoot === null) return false;
-  const rel = relative(realRoot, target);
-  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return false;
-  try {
-    lstatSync(resolve(cwd, filePath));
-    return false; // already there: not a new report
-  } catch {
-    return true;
-  }
-}
-
 async function main() {
   let raw = '';
   for await (const chunk of process.stdin) raw += chunk;
@@ -114,8 +90,8 @@ async function main() {
   }
   const cwd = typeof input?.cwd === 'string' ? input.cwd : process.cwd();
   const target = input?.tool_input?.file_path;
-  if (isMemoryPath(target, cwd) || isScratchpadPath(target, cwd, input?.session_id) || isReportsPath(target, cwd)) return;
-  process.stderr.write('Blocked by agent-memory-only: this agent is read-only; it may write only under ~/.claude/agent-memory/, the scratchpad of this session, or a new file under ~/Desktop/claude-setup-reports/ (never inside a repository)\n');
+  if (isMemoryPath(target, cwd) || isScratchpadPath(target, cwd, input?.session_id)) return;
+  process.stderr.write('Blocked by agent-memory-only: this agent is read-only; it may write only under ~/.claude/agent-memory/ or the scratchpad of this session; report files go under the scratchpad folder of this session (named in your brief), never inside a repository\n');
   process.exitCode = 2;
 }
 

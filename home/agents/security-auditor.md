@@ -26,7 +26,7 @@ The caller sends: `Audit <diff or paths>. Context: <what it does, who calls it>.
 
 ## Memory
 
-Your notes live in `~/.claude/agent-memory/security-auditor/`. That directory, this session's scratchpad and a NEW file under `~/Desktop/claude-setup-reports/` (for a report longer than the word cap) are the only places you may write; a repository path is refused, so ask the caller for another one. Read your notes first; after the task add only durable, reusable facts (recurring issues, project conventions, past decisions and why), one line each, and remove ones that turned out wrong. Never store secrets or code.
+Your notes live in `~/.claude/agent-memory/security-auditor/`. That directory and this session's scratchpad (for a report longer than the word cap) are the only places you may write. Read your notes first; after the task add only durable, reusable facts (recurring issues, project conventions, past decisions and why), one line each, and remove ones that turned out wrong. Never store secrets or code.
 
 ## Output contract
 

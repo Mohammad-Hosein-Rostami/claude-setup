@@ -3,10 +3,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isMemoryPath, isReportsPath, isScratchpadPath } from '../home/hooks/agent-memory-only.mjs';
+import { isMemoryPath, isScratchpadPath } from '../home/hooks/agent-memory-only.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/agent-memory-only.mjs', import.meta.url));
 const MEMORY = join(homedir(), '.claude', 'agent-memory');
@@ -124,47 +124,19 @@ test('hook allows a write into the input session scratchpad only', { skip: proce
   assert.equal(run(JSON.stringify({ cwd: '/work', tool_input: { file_path: join(pad, 'lens.md') } })).status, 2); // no session id
 });
 
-// The reports folder: <home>/Desktop/claude-setup-reports/. A review agent may add a NEW file there, never overwrite one.
-const newReportsRoot = () => {
-  const root = join(realpathSync(mkdtempSync(join(tmpdir(), 'reports-root-'))), 'claude-setup-reports');
-  mkdirSync(join(root, 'round1'), { recursive: true });
-  return root;
-};
-
-test('isReportsPath allows a new file in the reports folder, nested or relative', () => {
-  const root = newReportsRoot();
-  assert.equal(isReportsPath(join(root, 'review.md'), '/anywhere', { root }), true);
-  assert.equal(isReportsPath(join(root, 'round1', 'new', 'review.md'), '/anywhere', { root }), true);
-  assert.equal(isReportsPath('round1/review.md', root, { root }), true);
+test('a refusal for a path inside a repository tells the agent where report files go', () => {
+  const r = run(JSON.stringify({ cwd: '/work', session_id: SESSION, tool_input: { file_path: '/work/repo/reports/review.md' } }));
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /report files go under the scratchpad folder of this session \(named in your brief\), never inside a repository/);
 });
 
-test('isReportsPath refuses an existing file, the folder itself, .. traversal, look-alikes and bad input', () => {
-  const root = newReportsRoot();
-  writeFileSync(join(root, 'round1', 'old.md'), 'someone else wrote this');
-  assert.equal(isReportsPath(join(root, 'round1', 'old.md'), '/anywhere', { root }), false);
-  assert.equal(isReportsPath(root, '/anywhere', { root }), false);
-  assert.equal(isReportsPath(join(root, '..', 'x.md'), '/anywhere', { root }), false);
-  assert.equal(isReportsPath(`${root}-evil/x.md`, '/anywhere', { root }), false);
-  assert.equal(isReportsPath('/work/src/a.ts', '/anywhere', { root }), false);
-  for (const bad of [undefined, null, 42, '', {}]) assert.equal(isReportsPath(bad, '/anywhere', { root }), false);
-});
-
-test('isReportsPath refuses symlinks that leave the folder', { skip: process.platform === 'win32' }, () => {
-  const root = newReportsRoot();
-  const outside = mkdtempSync(join(tmpdir(), 'reports-outside-'));
-  symlinkSync(outside, join(root, 'dirlink'));
-  symlinkSync(join(outside, 'new.md'), join(root, 'danglinglink'));
-  assert.equal(isReportsPath(join(root, 'dirlink', 'new.md'), '/anywhere', { root }), false);
-  assert.equal(isReportsPath(join(root, 'danglinglink'), '/anywhere', { root }), false);
-});
-
-test('hook allows a new file under <HOME>/Desktop/claude-setup-reports and refuses an existing one or a repo path', () => {
-  const home = realpathSync(mkdtempSync(join(tmpdir(), 'fake-home-')));
-  const reports = join(home, 'Desktop', 'claude-setup-reports');
-  mkdirSync(reports, { recursive: true });
-  writeFileSync(join(reports, 'old.md'), 'x');
-  const ask = (file) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ cwd: '/work', tool_input: { file_path: file } }), encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home } });
-  assert.equal(ask(join(reports, 'new.md')).status, 0);
-  assert.equal(ask(join(reports, 'old.md')).status, 2);
-  assert.equal(ask(join(home, 'Desktop', 'some-repo', 'reports', 'new.md')).status, 2);
+test('scratchpad writes stay allowed in both the /tmp and the /private/tmp spelling', { skip: process.platform !== 'darwin' }, (t) => {
+  const project = `proj-spell-${process.pid}`;
+  const pad = scratch('/private/tmp', project, SESSION);
+  t.after(() => rmSync(join('/private/tmp', UID_DIR, project), { recursive: true, force: true }));
+  for (const root of ['/tmp', '/private/tmp']) {
+    const r = run(JSON.stringify({ cwd: '/work', session_id: SESSION, tool_input: { file_path: join(root, UID_DIR, project, SESSION, 'scratchpad', 'new.md') } }));
+    assert.equal(r.status, 0, root);
+  }
+  assert.ok(pad.endsWith('scratchpad'));
 });
