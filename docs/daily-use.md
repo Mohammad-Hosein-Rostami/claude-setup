@@ -37,7 +37,9 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
   secret) is first sent back to Claude once with the fix, so no dialog waits; the message also names what will still
   ask after the rewrite (a push, an `rm` outside the project ...), and sent again unchanged, it gets the dialog. A
   secret sent back this way shows you no dialog, so Claude names its kind in the final report: rotate it if needed.
-  Every ask and its outcome is in `~/.claude/logs/guard.jsonl`.
+  A quality rule (a hand-edited lockfile, a `git merge` or plain `git pull` that can create a merge commit) is advice, not
+  a dialog: Claude gets the fix once (let the package manager write the lockfile; rebase or `--ff-only`), and the same
+  command sent again runs. Every ask and its outcome is in `~/.claude/logs/guard.jsonl`.
 - Watch a run from a second session: `node ~/.claude/tools/watch/watch.mjs <session-id>` under the Monitor tool; it
   prints one line per event that needs action and flags a stall. See its README (`home/tools/watch/README.md`).
   With `--exit-on-event` in a background command it prints the first such event and exits, so a quiet hour costs the

@@ -15,6 +15,7 @@ Setup modes: `normal`, `medium` (default), `high`, `extra-high`, `ultra-high`; s
 - Report sizes (`≤ N lines`) size the summary, not the work. When the detail matters, write it to a file and return
   the path.
 - At a usage limit: read the reset time from the message, tell the owner that time, and schedule ONE wake a few minutes after it. Never retry before the reset.
+- When the owner adds or changes work in a task that has a `STATUS.md`, update its work items and end that reply with the new finish estimate from `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` (never your own number; if it refuses, say why).
 
 ## Quality gates (every mode)
 
@@ -99,6 +100,6 @@ it after compaction), and the next step. Drop exploration dead-ends, full file c
 Look before deleting or overwriting. Confirm before outward-facing or hard-to-reverse
 actions (push, publish, delete, send). Git push, publish/release, PR merge, Artifact publish/delete, prod-host writes
 and deletes, and literal secrets in a command show a timed confirm dialog even in bypass mode: Allow is the default
-and auto-allow after 3 minutes (CLAUDE_ASK_TIMEOUT_S, 180; terminal questions auto-continue after 60 s, the CLI minimum, but never while that terminal window is focused or Remote Control is on: click another app before leaving); a click on Deny is honoured. The guard bounces a command once with the fix when part of it can be rewritten (a `$VAR` command word, rm or push inside `$(...)` or a heredoc, a literal secret), naming any other reason it still asks about; sent again unchanged, it asks as above. Report a bounced secret's kind to the owner. Reading files, `.env`
+and auto-allow after 3 minutes (CLAUDE_ASK_TIMEOUT_S, 180; terminal questions auto-continue after 60 s, the CLI minimum, but never while that terminal window is focused or Remote Control is on: click another app before leaving); a click on Deny is honoured. The guard bounces a command once with the fix when part of it can be rewritten (a `$VAR` command word, rm or push inside `$(...)` or a heredoc, a literal secret), naming any other reason it still asks about; sent again unchanged, it asks as above. A quality rule (a hand-edited lockfile, a `git merge` or plain `git pull` that can create a merge commit) is denied once with advice and no dialog: follow the advice (let the package manager write the lockfile; rebase or `--ff-only`); the same command sent again runs. Report a bounced secret's kind to the owner. Reading files, `.env`
 included, is allowed. Never print or commit secrets or `.env` contents; never put a literal password or token in
 a command (use env vars or files).
