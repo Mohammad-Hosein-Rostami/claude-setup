@@ -74,12 +74,12 @@ export function listWorktrees(repo) {
   return entries;
 }
 
-/** Local branches as `{ name, tip, short }` (full and abbreviated hash). */
+/** Local branches as `{ name, tip, short, date }` (full and abbreviated hash, date of the last commit as YYYY-MM-DD). */
 export function listBranches(repo) {
-  const output = gitText(repo.dir, ['for-each-ref', '--format=%(refname)%00%(objectname)%00%(objectname:short)', HEADS]);
+  const output = gitText(repo.dir, ['for-each-ref', '--format=%(refname)%00%(objectname)%00%(objectname:short)%00%(committerdate:short)', HEADS]);
   return output === '' ? [] : output.split('\n').map((line) => {
-    const [ref, tip, short] = line.split('\0');
-    return { name: ref.slice(HEADS.length), tip, short };
+    const [ref, tip, short, date] = line.split('\0');
+    return { name: ref.slice(HEADS.length), tip, short, date };
   });
 }
 

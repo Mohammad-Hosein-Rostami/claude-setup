@@ -2,7 +2,6 @@
 // Exports: runCheck.
 // Invariants: reads only. A finding is a fact (merge commit, merged branch or worktree, stale worktree) and sets exit 1;
 //   a hint (kind ends in `?`) is context and never does. Items are `{ kind, subject, detail }`.
-import { lastCommitDate } from './branches.mjs';
 import { runGit } from './git.mjs';
 import { findLeftovers } from './leftovers.mjs';
 import { changedFileCount, currentBranch, inProgressOperation, listWorktrees } from './repo.mjs';
@@ -70,7 +69,7 @@ export function runCheck(repo) {
     ...leftovers.staleWorktrees.map((w) => item('stale-worktree', w.path, 'folder missing')),
   ];
   const unmerged = leftovers.states.filter((b) => b.state === 'unmerged')
-    .map((b) => item('unmerged-branch?', b.name, `ahead ${b.ahead}, last commit ${lastCommitDate(repo, b.name)}`));
+    .map((b) => item('unmerged-branch?', b.name, `ahead ${b.ahead}, last commit ${b.date}`));
   const hints = [
     ...publishedMergeHint(repo), ...unmerged, ...mergedRemoteHints(repo),
     ...(repo.bare ? [] : behindBaseHint(repo)), ...worktreeHints(worktrees), ...shallowHint(repo),
