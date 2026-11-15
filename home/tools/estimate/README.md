@@ -121,7 +121,21 @@ Exit 3 message: `No estimate: <sentences>`, each sentence only when it applies:
 
 Long lists show the first five rows and `and N more`.
 
+## Status line segment
+
+The status line shows `est 3-5h left` (the running-time range of the open work, in the report's own rounding) for the project
+whose `<project dir>/STATUS.md` the tool accepts. Nothing is shown when there is no STATUS.md, the tool refuses (exit 3) or
+fails (exit 2), or nothing is left. The status line never computes it: it reads one cache file,
+`~/.claude/state/estimate-segment/<sha256 of the STATUS.md path>.json`
+(`{path, text, mtimeMs, size, computedAt, refreshStartedAt}`; `text` is null after a refusal), and shows the text while the
+file's mtime and size still match, or for 15 minutes (`STALE_SHOW_MS`) after a change while a refresh runs. When the cache is
+missing or no longer matches, the render stamps `refreshStartedAt` and starts `statusline-cache.mjs <STATUS.md>` detached, at
+most once per 2 minutes (`REFRESH_INTERVAL_MS`) per file; that script runs the same lib as the CLI (transcripts included) and
+writes the cache atomically (0600, never through a link). Both constants are in `lib/segment-cache.mjs`.
+
 ## Layout
 
 `estimate.mjs` (CLI: arguments, file reads, exit codes) over `lib/items.mjs` (table parser), `lib/limits.mjs` (windows,
-slug), `lib/compute.mjs` (formula) and `lib/report.mjs` (text). Tests: `tests/estimate.test.mjs`, `tests/estimate-cli.test.mjs`.
+slug), `lib/compute.mjs` (formula) and `lib/report.mjs` (text); `lib/from-files.mjs` reads the files for the CLI and for `statusline-cache.mjs`
+(refreshes the status line cache), `lib/segment-cache.mjs` is the status line's read side. Tests: `tests/estimate.test.mjs`,
+`tests/estimate-cli.test.mjs`, `tests/statusline-estimate.test.mjs`.
