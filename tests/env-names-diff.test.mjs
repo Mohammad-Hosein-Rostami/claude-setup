@@ -136,12 +136,13 @@ async function badSnapshot(content) {
 }
 
 test('a bad snapshot is refused with exit 2 and a plain reason', async () => {
-  const good = { version: 1, root: '/x', generatedAt: '2026-01-01T00:00:00.000Z', envFiles: [], readByCode: {}, deploy: {} };
+  const good = { version: 2, root: '/x', generatedAt: '2026-01-01T00:00:00.000Z', envFiles: [], readByCode: {}, deploy: {} };
   const cases = [
     ['not json {', /not valid JSON/],
     ['[]', /not an object/],
-    [JSON.stringify({ ...good, version: 2 }), /version is not 1/],
-    [JSON.stringify({ ...good, version: undefined }), /version is not 1/],
+    [JSON.stringify({ ...good, version: 3 }), /version is not 2/],
+    [JSON.stringify({ ...good, version: 1 }), /older snapshots may hold fragments/],
+    [JSON.stringify({ ...good, version: undefined }), /version is not 2/],
     [JSON.stringify({ ...good, envFiles: {} }), /envFiles/],
     [JSON.stringify({ ...good, envFiles: [{ path: 'a', names: ['bad name'], otherLines: 0 }] }), /envFiles/],
     [JSON.stringify({ ...good, envFiles: [{ path: 'a', names: [], otherLines: 'x' }] }), /envFiles/],

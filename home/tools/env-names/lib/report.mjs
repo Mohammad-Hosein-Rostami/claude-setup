@@ -13,8 +13,10 @@ const printable = (data) => JSON.parse(JSON.stringify(data), (key, value) => (ty
 function envFileLine(file) {
   if (file.status !== undefined) return `${file.path}  (${file.status})`;
   const other = file.otherLines > 0 ? `, ${plural(file.otherLines, 'other line')}` : '';
-  const hidden = file.hiddenNames > 0 ? `, ${plural(file.hiddenNames, 'name')} not shown (mixed case or too long)` : '';
-  return `${file.path}  (${plural(file.names.length, 'name')}${other}${hidden})`;
+  const why = file.irregular ? 'this file has multi-line or unusual values; only names also found in code or deploy files are listed' : 'mixed case or too long';
+  const hidden = file.hiddenNames > 0 ? `, ${plural(file.hiddenNames, 'name')} not shown (${why})` : '';
+  const irregular = file.irregular ? ', irregular' : '';
+  return `${file.path}  (${plural(file.names.length, 'name')}${other}${hidden}${irregular})`;
 }
 
 const sectionOf = (title, rows, count = rows.length) => [`${title} (${count}):`, ...rows.map((row) => `  ${row}`), ''];
@@ -61,6 +63,11 @@ const refsLine = ({ name, refs }) => `${name}  ${refs.join(', ')}`;
 /** A removed or added env file, with the extra line when another file holds exactly the same names. */
 const envFileRows = (files) => files.flatMap(({ path, sameNamesAs }) => (sameNamesAs === undefined ? [path] : [path, `  same names as ${sameNamesAs}`]));
 
+const hiddenChangeLine = ({ path, from, to, irregularFrom, irregularTo }) => {
+  const flag = irregularFrom === irregularTo ? '' : `; irregular: ${irregularFrom ? 'yes' : 'no'} -> ${irregularTo ? 'yes' : 'no'}`;
+  return `${path}  names not shown: ${from} -> ${to}${flag}`;
+};
+
 const nameChangeLine = ({ path, added, removed }) => `${path}  ${[...added.map((name) => `+${name}`), ...removed.map((name) => `-${name}`)].join(' ')}`;
 
 /**
@@ -77,6 +84,7 @@ export function formatDiff(rawDiff) {
     ...optional('Env files added', envFileRows(diff.envFiles.added), diff.envFiles.added.length),
     ...optional('Env files removed', envFileRows(diff.envFiles.removed), diff.envFiles.removed.length),
     ...optional('Names changed in env files', diff.namesChanged.map(nameChangeLine)),
+    ...optional('Names not shown changed (counts only)', diff.hiddenChanged.map(hiddenChangeLine)),
     ...optional('Names read by code added', diff.readByCode.added.map(refsLine)),
     ...optional('Names read by code removed', diff.readByCode.removed.map(refsLine)),
     ...optional('Names in deploy files added', diff.deploy.added.map(refsLine)),

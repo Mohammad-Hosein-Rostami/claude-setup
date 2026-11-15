@@ -1,5 +1,6 @@
 // The only code that sees the content of an env file: it returns the variable names and a count of other lines, never a value.
-// Exports: namesFromEnvText(text) -> { names, otherLines }; readEnvFile(path) -> { names, otherLines, status? }; MAX_ENV_FILE_BYTES.
+// Exports: namesFromEnvText(text) -> { names, otherLines }; isRegularEnvText(text) -> boolean;
+//   readEnvFile(path) -> { names, otherLines, irregular?, status? }; MAX_ENV_FILE_BYTES.
 // Invariants: of every line only the text left of the first `=` (or of `: ` in the dotenv colon form) is looked at as a name;
 //   the rest is used for one thing, to see whether the value goes on over the next lines, and is never stored or returned.
 //   When the reader is not sure a token is a name it counts the line (`otherLines`) and keeps nothing:
@@ -7,6 +8,8 @@
 //   - a PEM block (`-----BEGIN` to `-----END`, wherever it starts, also inside a value) is skipped whole;
 //   - lines inside a value that opens a quote, ends with a backslash or is a YAML block scalar (`|`, `>`) are skipped;
 //   - a line whose value is only `=` characters (base64 or base32 padding) is not a definition.
+//   A file is REGULAR only when every line is blank, a comment or one complete definition on that line (see isRegularEnvText);
+//   `irregular: true` tells the caller to show none of its names that no other file corroborates.
 //   A file that cannot be read gives a `status` text built from the error code, never from the error message or content.
 import { lstatSync, readFileSync } from 'node:fs';
 
@@ -38,6 +41,12 @@ function openQuoteOf(afterSeparator) {
   return closingQuote(value, value[0], 1) === -1 ? value[0] : null;
 }
 
+/** A `-----END` line ends the PEM region only; an open quote stays open unless it closes on that line after the END text. */
+function endPemRegion(state, line) {
+  Object.assign(state, { pem: false, backslash: false, block: false, skipping: false });
+  if (state.quote !== null && closingQuote(line, state.quote, line.indexOf(PEM_END)) !== -1) state.quote = null;
+}
+
 /** Splits `NAME=rest` or `NAME: rest` at whichever separator comes first; null when the left side is not a name. */
 function splitDefinition(line) {
   const equalsAt = line.indexOf('=');
@@ -63,7 +72,7 @@ export function namesFromEnvText(text) {
   for (const line of text.replace(BYTE_ORDER_MARK, '').split(/\r\n|\r|\n/)) {
     if (state.pem) {
       otherLines += 1;
-      if (line.includes(PEM_END)) Object.assign(state, { pem: false, quote: null, backslash: false, block: false, skipping: false });
+      if (line.includes(PEM_END)) endPemRegion(state, line);
       continue;
     }
     const pemAt = line.indexOf(PEM_BEGIN);
@@ -98,13 +107,42 @@ export function namesFromEnvText(text) {
   return { names: [...names].sort(), otherLines };
 }
 
+const LONE_CARRIAGE_RETURN = /\r(?!\n)/;
+const DEFINITION_LINE = /^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=(.*)$/;
+
+/** A value that is complete on its line: balanced quotes, nothing after a closing quote but a comment, no heredoc, no trailing backslash. */
+function isCompleteValue(value) {
+  const text = value.trim();
+  if (text.endsWith('\\') || text.includes('<<')) return false;
+  if ((text[0] === '$' && QUOTES.includes(text[1])) || /^=+$/.test(text)) return false; // bash `$'...'`, base64 padding
+  if (!QUOTES.includes(text[0])) return QUOTES.every((quote) => (text.split(quote).length - 1) % 2 === 0);
+  const close = closingQuote(text, text[0], 1);
+  const after = close === -1 ? 'open' : text.slice(close + 1).trim();
+  return after === '' || after.startsWith('#');
+}
+
+/**
+ * True when the file is regular: every line (split on CRLF, LF) is blank, a comment or ONE complete definition `NAME=value` or
+ * `export NAME=value`, and the file has no lone CR, no NUL, no PEM header text and no heredoc marker. Anything else is
+ * irregular: the reader cannot be sure where a value ends, so the caller shows only names that other files corroborate.
+ */
+export function isRegularEnvText(text) {
+  if (LONE_CARRIAGE_RETURN.test(text) || text.includes('\0') || text.includes(PEM_BEGIN)) return false;
+  for (const line of text.replace(BYTE_ORDER_MARK, '').split(/\r\n|\n/)) {
+    if (line.trim() === '' || line.trimStart().startsWith('#')) continue;
+    const match = DEFINITION_LINE.exec(line);
+    if (match === null || !isCompleteValue(match[1])) return false;
+  }
+  return true;
+}
+
 const notRead = (reason) => ({ names: [], otherLines: 0, status: `${reason}, not read` });
 
 /**
  * Reads one env file from disk. Only a regular file is opened: a symlink, a FIFO, a socket or a device is not.
  * A binary or oversized file is not read.
  * @param {string} path absolute path of the file
- * @returns {{ names: string[], otherLines: number, status?: string }} `status` is set when the file was not read
+ * @returns {{ names: string[], otherLines: number, irregular?: true, status?: string }} `status` is set when the file was not read
  */
 export function readEnvFile(path) {
   try {
@@ -114,7 +152,10 @@ export function readEnvFile(path) {
     if (info.size > MAX_ENV_FILE_BYTES) return notRead('too large');
     const bytes = readFileSync(path);
     if (bytes.includes(0)) return notRead('binary');
-    return namesFromEnvText(bytes.toString('utf8'));
+    const content = bytes.toString('utf8');
+    const result = namesFromEnvText(content);
+    // A line the parser had to count as `other` is also a reason to doubt the file, whatever the line check says.
+    return isRegularEnvText(content) && result.otherLines === 0 ? result : { ...result, irregular: true };
   } catch (err) {
     return notRead(`unreadable (${err.code ?? 'error'})`);
   }

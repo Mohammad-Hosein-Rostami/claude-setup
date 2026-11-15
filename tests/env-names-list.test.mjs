@@ -91,9 +91,11 @@ test('a symlinked folder is not entered', async () => {
   assert.deepEqual(section(run(['list', join(dir, 'start')]), 'Env files').body, []);
 });
 
-test('other lines are counted in the file line, CRLF and BOM files read normally', async () => {
-  const dir = await makeProject({ '.env': '\uFEFFA=1\r\nB=2\r\nnot a pair MARKER_PART\r\n' });
-  assert.deepEqual(section(run(['list', dir]), 'Env files').body, ['.env  (2 names, 1 other line)']);
+test('other lines are counted in the file line; CRLF and BOM files read normally; a stray line makes the file irregular', async () => {
+  const dir = await makeProject({ '.env': '\uFEFFA=1\r\nB=2\r\n', 'irregular/.env': 'A=1\r\nB=2\r\nnot a pair MARKER_PART\r\n', 'src/a.ts': 'process.env.A;\n' });
+  const body = section(run(['list', dir]), 'Env files').body;
+  assert.equal(body[0], '.env  (2 names)');
+  assert.equal(body[1], 'irregular/.env  (1 name, 1 other line, 1 name not shown (this file has multi-line or unusual values; only names also found in code or deploy files are listed), irregular)');
 });
 
 test('--json prints the full structure and --save writes the same JSON with version, root and generatedAt', async () => {
@@ -104,7 +106,7 @@ test('--json prints the full structure and --save writes the same JSON with vers
   const printed = JSON.parse(result.stdout);
   const written = JSON.parse(await readFile(saved, 'utf8'));
   assert.deepEqual(written, printed);
-  assert.equal(written.version, 1);
+  assert.equal(written.version, 2);
   assert.equal(written.root, dir);
   assert.ok(!Number.isNaN(Date.parse(written.generatedAt)));
   assert.deepEqual(written.envFiles.map((file) => file.path), ['.env', '.env.example', 'apps/web/.env.local']);

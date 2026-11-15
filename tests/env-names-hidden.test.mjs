@@ -55,6 +55,8 @@ test('audit inputs end to end: every printed name was planted as a name, no frag
   const parsed = JSON.parse(json.stdout);
   const printed = [...parsed.envFiles.flatMap((file) => file.names), ...Object.keys(parsed.deploy)];
   assert.deepEqual(printed.filter((name) => !planted.has(name)), []);
-  assert.ok(printed.includes('KEY') && printed.includes('TOTP') && printed.includes('ZQX_NAME'));
+  assert.ok(printed.includes('ZQX_NAME')); // deploy names are there: the check does not pass on empty output
+  const irregular = parsed.envFiles.filter((file) => file.irregular).map((file) => file.path);
+  assert.deepEqual(irregular, ['.env', 'colon/.env', 'escaped/.env', 'totp/.env']); // every file with a multi-line or unusual value
   assert.doesNotMatch(run(['list', dir]).all + json.all, /Zqx|ZQXTOTP|MIIEvQ/);
 });

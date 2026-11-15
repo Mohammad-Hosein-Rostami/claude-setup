@@ -1,8 +1,9 @@
 // Collects everything env-names knows about a project folder, as a plain object that is also the snapshot format.
-// Exports: SNAPSHOT_VERSION, collectProject(root, wrappers, now) -> snapshot object.
+// Exports: collectProject(root, wrappers, now) -> snapshot object.
 // Invariants: values never enter this object: env files come through readEnvFile (names only), code and deploy files
 //   through scanners that capture names only. A name from an env file is kept only when it is a plain name (name-shape.mjs) or
-//   code or a deploy file names it too; the others are counted in `hiddenNames`. Paths are posix relative to root.
+//   code or a deploy file names it too; the others are counted in `hiddenNames`. In an irregular env file (multi-line or unusual
+//   values) only names that code or a deploy file names are kept at all. Paths are posix relative to root.
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { scanCode } from './code-reads.mjs';
@@ -10,9 +11,9 @@ import { analyze } from './analyze.mjs';
 import { scanDeploy } from './deploy-names.mjs';
 import { readEnvFile } from './env-file-names.mjs';
 import { isPlainName } from './name-shape.mjs';
+import { SNAPSHOT_VERSION } from './snapshot.mjs';
 import { walkProject } from './walk.mjs';
 
-export const SNAPSHOT_VERSION = 1;
 const MAX_SCANNED_FILE_BYTES = 4 * 1024 * 1024;
 
 /** The text of a source or deploy file, or null after recording why it was not read. */
@@ -39,8 +40,10 @@ function describeEnvFile(root, { path, structured }, namedElsewhere) {
   if (structured) return { path, names: [], otherLines: 0, status: 'not read (structured file)' };
   const read = readEnvFile(join(root, path));
   if (read.status !== undefined) return { path, ...read };
-  const shown = read.names.filter((name) => isPlainName(name) || namedElsewhere.has(name));
-  return { path, names: shown, otherLines: read.otherLines, hiddenNames: read.names.length - shown.length };
+  // An irregular file may hold fragments of multi-line values that look like names: only names other files corroborate are shown.
+  const shown = read.names.filter((name) => namedElsewhere.has(name) || (!read.irregular && isPlainName(name)));
+  const entry = { path, names: shown, otherLines: read.otherLines, hiddenNames: read.names.length - shown.length };
+  return read.irregular ? { ...entry, irregular: true } : entry;
 }
 
 const toSortedObject = (map) => Object.fromEntries([...map].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));

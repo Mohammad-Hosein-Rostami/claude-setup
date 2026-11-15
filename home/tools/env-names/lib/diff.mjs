@@ -1,6 +1,6 @@
 // Compares an old snapshot with the current collection: what moved between two points in time, by name only.
 // Exports: diffSnapshots(old, now) -> { since, changed, nowUndefined, movedOutOfChain, notReadNow, envFiles: { added, removed },
-//   namesChanged, readByCode, deploy }.
+//   namesChanged, hiddenChanged, readByCode, deploy }. Names that are not shown are compared by count only.
 // Invariants: pure; names, paths and `file:line` references only. Files are matched by path: a moved env file is one removed and
 //   one added, and `sameNamesAs` points to the partner when both hold the same (non-empty) set of names. Example files define
 //   nothing. An env file that is no longer read (link, binary, unreadable...) is reported as such and its names are never
@@ -40,10 +40,23 @@ function diffNames(oldFiles, nowFiles) {
   const changed = [];
   for (const file of nowFiles) {
     const before = oldByPath.get(file.path);
-    if (before === undefined || before.status !== undefined || file.status !== undefined) continue;
+    if (before === undefined || before.status !== undefined || file.status !== undefined || before.irregular !== file.irregular) continue;
     const added = file.names.filter((name) => !before.names.includes(name));
     const removed = before.names.filter((name) => !file.names.includes(name));
     if (added.length > 0 || removed.length > 0) changed.push({ path: file.path, added, removed });
+  }
+  return changed.sort((a, b) => byText(a.path, b.path));
+}
+
+/** Files read before and now whose count of hidden names, or irregular mark, changed: counts only, never the hidden names. */
+function diffHidden(oldFiles, nowFiles) {
+  const oldByPath = new Map(oldFiles.map((file) => [file.path, file]));
+  const changed = [];
+  for (const file of nowFiles) {
+    const before = oldByPath.get(file.path);
+    if (before === undefined || before.status !== undefined || file.status !== undefined) continue;
+    const row = { path: file.path, from: before.hiddenNames ?? 0, to: file.hiddenNames ?? 0, irregularFrom: before.irregular === true, irregularTo: file.irregular === true };
+    if (row.from !== row.to || row.irregularFrom !== row.irregularTo) changed.push(row);
   }
   return changed.sort((a, b) => byText(a.path, b.path));
 }
@@ -97,10 +110,11 @@ export function diffSnapshots(old, now) {
     notReadNow,
     envFiles: diffEnvFiles(old.envFiles, now.envFiles),
     namesChanged: diffNames(old.envFiles, now.envFiles),
+    hiddenChanged: diffHidden(old.envFiles, now.envFiles),
     readByCode: diffReferences(old.readByCode, now.readByCode),
     deploy: diffReferences(old.deploy, now.deploy),
   };
   const lists = [result.nowUndefined, result.movedOutOfChain, result.notReadNow, result.envFiles.added, result.envFiles.removed,
-    result.namesChanged, result.readByCode.added, result.readByCode.removed, result.deploy.added, result.deploy.removed];
+    result.namesChanged, result.hiddenChanged, result.readByCode.added, result.readByCode.removed, result.deploy.added, result.deploy.removed];
   return { ...result, changed: lists.some((list) => list.length > 0) };
 }
