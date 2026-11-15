@@ -5,7 +5,7 @@ The parts of the `estimate` tool. `../estimate.mjs` is the command; it reads the
 
 - `items.mjs`: reads the `## Work items` table of a `STATUS.md` into work items (sizes S=1, M=2, L=4 points; kind `close`, `rework` or `build` from the item cell's prefix) and a list of row problems.
 - `limits.mjs`: finds usage-limit windows in the lead session transcripts and works out which transcript folder belongs to a project.
-- `history.mjs`: the table's job history: deliveries, the closing tail of each, the closing range, how long the open job's closing has run, the follow-up rounds after deliveries and their range, and how often a delivery was reopened by a `rework:` row.
+- `history.mjs`: the table's job history: deliveries (`deliver:` rows, else guessed from a pause), the closing tail of each, the closing range, how long the open job's closing has run, the follow-up rounds after deliveries and their range, and how often a delivery was reopened by a `rework:` row.
 - `compute.mjs`: the formula. Work items plus limit windows give the finish range: the build part, then the closing phase in series; after a delivery, the follow-up round floored by the open rows' sizes.
 - `calibration.mjs`: scores logged estimates against the delivery that ended their job, turns the recent scores into range factors (one set for first cycles, one for follow-up rounds), counts the track record, and builds a log line (ids and numbers only).
 - `estimate-log.mjs`: the calibration log file of a STATUS.md: where it lives, reading it, writing it back trimmed (through `hooks/lib/session-store.mjs`).

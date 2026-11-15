@@ -32,7 +32,7 @@ test('live shape: six open close rows after one delivery run as a follow-up roun
   near(result.finish.highMs, at(5), 'high');
   assert.deepEqual(block(result).slice(0, 2), [
     'Finish: Tue 10 Nov 06:15-08:30 (local +03:30, now 05:45)',
-    'Includes: follow-up round after the delivery at 05:00, started 05:30 (V1): 6 open rows (1 running); such rounds took 0.4-2.6 h here (default, not yet measured here); the open rows need at least 0.5-2.8 h by size (V1, V2, V3, V4, V5 and 1 more, 1 lane)',
+    'Includes: follow-up round after the delivery at 05:00, started 05:30 (V1): 6 open rows (1 running); such rounds took 0.4-2.6 h here (default, not yet measured here); the open rows need at least 0.5-2.8 h by size (V1, V2, V3, V4, V5 and 1 more, 1 lane); delivery guessed from a pause: add a deliver: row when you hand over',
   ]);
   assert.doesNotMatch(block(result).join('\n'), /closing phase 1\.4-2\.5/);
   assert.equal(block(result)[5], 'Agent-hours: 0.6-3.0 for the open rows, counted whole');
@@ -96,7 +96,7 @@ test('a follow-up round whose rows are all done, the last a rework row, keeps th
   assert.equal(phaseOf(result), 'round');
   near(result.finish.lowMs, at(2.6), 'low at now');
   near(result.finish.highMs, at(4.6), 'high');
-  assert.equal(block(result)[1], 'Includes: follow-up round after the delivery at 05:00, started 05:30 (R1): 0 open rows (0 running); such rounds took 0.4-2.6 h here (default, not yet measured here); no open row left');
+  assert.equal(block(result)[1], 'Includes: follow-up round after the delivery at 05:00, started 05:30 (R1): 0 open rows (0 running); such rounds took 0.4-2.6 h here (default, not yet measured here); no open row left; delivery guessed from a pause: add a deliver: row when you hand over');
   const past = estimate(rows, 4.7);
   assert.match(formatRefusal(past, TZ), /^No finish time: the follow-up round has run 2\.7 h since it started \(R1, 05:30\), longer than the default round \(0\.4-2\.6 h, not yet measured here\), and no open row is left\./);
 });

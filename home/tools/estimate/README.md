@@ -30,8 +30,9 @@ Heading `## Work items`, then the table (the header row is checked):
 - Done = `done` set and evidence non-empty (commit sha, file path or `check: <cmd> PASS`). A dropped open item: delete the row.
   Never clear a done cell: a correction of delivered work is a new row.
 - Kind, from the start of the item cell (case-insensitive): `close:` for review, fixes from a review, recheck, gate,
-  landing and the hand-over report; `rework:` for an owner correction; anything else is build work. Start the next
-  `close:` row when one ends: a closing chain that pauses 10 minutes or more with nothing running reads as a delivery.
+  landing and the hand-over report; `rework:` for an owner correction; `deliver:` for handing the job to the owner (its
+  done time is the delivery); anything else is build work. Without `deliver:` rows, start the next `close:` row when one
+  ends: a closing chain that pauses 10 minutes or more with nothing running reads as a delivery.
   Close rows may also be left out; the tool's closing phase covers them.
 - Rows without `done` are the remaining work; for in-flight rows (`started`, no `done`) the time already run is subtracted.
 - Exactly one `## Work items` section, and in it one contiguous table: the header (the six names in order, case and
@@ -53,8 +54,10 @@ All durations are wall-clock time minus the usage-limit windows found in the tra
   union (measured), clamped to 1..the number of open build and rework rows, so open close rows never add lanes. A running
   row that has already run as long as the band's slowest rate allows is named in the Includes line: `O1 past every
   measured rate, its remaining time is not known` (its remaining time counts as 0).
-- Delivery: the done time D of a `close:` row when every row started before D is done by D, no row starts in the 10
-  minutes after D, and those 10 minutes have passed (the real deliveries measured were followed by 19 and 470 quiet minutes, other quiet moments by 0-1).
+- Delivery: the done time D of a `deliver:` row; a table with one has no other deliveries. Without them it is guessed
+  from a pause, and the Includes line ends `delivery guessed from a pause: add a deliver: row when you hand over`: the
+  done time D of a `close:` row when every row started before D is done by D, no row starts in the 10 minutes after D,
+  and those 10 minutes have passed (the real deliveries measured were followed by 19 and 470 quiet minutes, other quiet moments by 0-1).
 - Closing phase C: each delivery's tail = D minus the latest done of a non-close row since the previous delivery (else
   the first start since it). C = min..max of the last 5 tails once 2 exist; before that the default 1.4-2.5 h (the tails
   1.48, 2.40 and 2.43 h of two projects, 14-15 Nov, rounded outward), widened to include a single tail.
@@ -109,8 +112,9 @@ Agent-hours: 0.6-1.0 for the open build rows, counted whole
   0.5-2.8 h by size (V1, V2, V3, V4, V5 and 1 more, 1 lane)`; with finished rounds `widened by the 1 finished round
   here` or `measured from 2 finished rounds here`.
 - No delivery in the table yet: `After your review: not measured here yet (no earlier delivery in this table)`.
-- No open row and the last done row a `close:` row: `Finish: delivered Sun 15 Nov 15:24 (local +03:30)`, an Includes line
-  saying there is no open row, and the After line; within 10 minutes of that row it reads `(local +03:30; provisional
+- No open row and the last done row a `deliver:` row: `Finish: delivered Sun 15 Nov 15:24 (local +03:30)`, an Includes
+  line saying there is no open row, and the After line. A table without `deliver:` rows uses its last `close:` row and,
+  within 10 minutes of it, reads `(local +03:30; provisional
   until 15:34: no open row)`. With no open row the tool never predicts a future finish; it is not a delivery in the
   history (closing tails, scoring) until the 10 minutes have passed. No status line segment, no log line. No open row
   but the last done row a build row: in the first cycle the closing phase still applies (the review and fix rounds are

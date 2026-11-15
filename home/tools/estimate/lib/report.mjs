@@ -19,6 +19,7 @@ const CLOSING_WORK = 'review, fix rounds, recheck, landing';
 const EXCLUDES = 'Excludes: your review and any rework it starts (next line); usage-limit pauses from now on; steps only you do (push, deploy); requests that are not rows';
 const NO_DELIVERY = 'After your review: not measured here yet (no earlier delivery in this table)';
 const OVERRUN_ADVICE = 'What to do: tell the owner the job is past its usual closing; this ends at delivery, whose length then joins the history. Work not in the table: add it as a row first.';
+const GUESSED_NOTE = 'delivery guessed from a pause: add a deliver: row when you hand over';
 const ROUND_ADVICE = 'What to do: tell the owner the follow-up round is past its usual length; this ends at delivery, whose round length then joins the history. Work not in the table: add it as a row first.';
 
 /** Numbers under 10 keep one decimal (a trailing `.0` is dropped); larger ones round to whole numbers. */
@@ -134,8 +135,13 @@ function followUpIncludes(result, timeZone) {
   return `Includes: follow-up round after the delivery at ${clockText(followUp.deliveryAt, timeZone)}, ${started}: ${rows}; such rounds took ${range(closing.low, closing.high)} h here (${roundSource(closing)}); ${sizes}`;
 }
 
+/** The Includes line, ending with GUESSED_NOTE when a delivery it relies on was guessed from a pause. */
 function includesLine(result, timeZone) {
-  if (result.followUp !== undefined) return followUpIncludes(result, timeZone);
+  const line = result.followUp !== undefined ? followUpIncludes(result, timeZone) : firstCycleIncludes(result);
+  return result.deliveryGuessed ? `${line}; ${GUESSED_NOTE}` : line;
+}
+
+function firstCycleIncludes(result) {
   const { build, closing } = result;
   const rows = `${plural(result.openItems, 'open row')} (${result.inFlight} running)`;
   const phase = `the closing phase ${range(closing.low, closing.high)} h`;

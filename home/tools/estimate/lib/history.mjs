@@ -2,12 +2,14 @@
 // the open job's closing has already run, the follow-up rounds after deliveries, and how often the owner reopened a delivery.
 // Exports: findDeliveries(items, windows, now) -> {at, closingStart, tailHours}[]; closingRange(deliveries) -> {low, high, measured};
 // followUpRounds(items, deliveries, windows) -> {start, at, hours}[]; followUpRange(rounds) -> {low, high, measured};
-// openRound(items, deliveries, now) -> {deliveryAt, start, startRow} | null; DEFAULT_FOLLOW_UP_HOURS; MIN_MEASURED_RANGE;
+// openRound(items, deliveries, now) -> {deliveryAt, start, startRow} | null; hasDeliverRows(items) -> boolean;
+// DEFAULT_FOLLOW_UP_HOURS; MIN_MEASURED_RANGE;
 // closingStart(items, deliveries, now) -> {at, item}; closingElapsedHours(items, deliveries, windows, now) -> hours;
 // reopenSummary(items, deliveries, now) -> summary | null; overlapMs(a, b); DELIVERY_GAP_MS; DEFAULT_CLOSING_HOURS; CLOSING_HISTORY.
 // Invariants: pure; times are epoch ms, results in hours. Rows are classed by `kind` (see items.mjs): `close` rows are the
 // closing phase (review, fix rounds, recheck, landing), `rework` rows are owner corrections, the rest is build work.
-// A delivery D is the done time of a close row when every row started before D is done by D, no row starts in
+// With `deliver` rows in the table, a delivery is the done time of a deliver row, and nothing else is. Without them it is
+// guessed from a pause: a delivery D is the done time of a close row when every row started before D is done by D, no row starts in
 // [D, D + DELIVERY_GAP_MS), and that gap has passed (D + DELIVERY_GAP_MS <= now). Usage-limit windows are taken out of closing tails and of the elapsed closing time.
 // A follow-up round is the work after a delivery: from the first row started after it to the next delivery (any kind of row;
 // it is not a new closing phase).
@@ -37,7 +39,11 @@ export function overlapMs(a, b) {
 }
 
 const workingHours = (start, end, windows) => (end - start - overlapMs([{ start, end }], windows)) / HOUR_MS;
-const isClose = (item) => item.kind === 'close';
+// Rows of the closing phase: review, fix rounds, recheck, landing (`close`) and the hand-over itself (`deliver`).
+const isClose = (item) => item.kind === 'close' || item.kind === 'deliver';
+
+/** True when the table marks its deliveries with `deliver:` rows; the pause rule is then off. */
+export const hasDeliverRows = (items) => items.some((i) => i.kind === 'deliver');
 
 /** True when D is a delivery: the gap after it has passed, nothing was in flight at D and nothing started within the gap. */
 function isDelivery(items, at, now) {
@@ -64,12 +70,14 @@ function closingStartBetween(items, after, until) {
  * The deliveries of the table, oldest first, each with the length of its closing tail.
  * @param {object[]} items parsed work items with `kind`.
  * @param {{start: number, end: number}[]} windows usage-limit windows, taken out of each tail.
- * @param {number} now epoch ms; a close row done later, or less than DELIVERY_GAP_MS before it, is not a delivery.
+ * @param {number} now epoch ms; a row done later is not a delivery, nor (pause rule) a close row done less than DELIVERY_GAP_MS before it.
  * @returns {{at: number, closingStart: number, tailHours: number}[]} at = delivery time, closingStart = where its closing began.
  */
 export function findDeliveries(items, windows, now) {
-  const candidates = [...new Set(items.filter((i) => isClose(i) && i.done !== null && i.done <= now).map((i) => i.done))].sort((a, b) => a - b);
-  const times = candidates.filter((at) => isDelivery(items, at, now));
+  const explicit = hasDeliverRows(items);
+  const kind = explicit ? 'deliver' : 'close';
+  const candidates = [...new Set(items.filter((i) => i.kind === kind && i.done !== null && i.done <= now).map((i) => i.done))].sort((a, b) => a - b);
+  const times = explicit ? candidates : candidates.filter((at) => isDelivery(items, at, now));
   return times.map((at, k) => {
     const start = closingStartBetween(items, k === 0 ? -Infinity : times[k - 1], at).at;
     return { at, closingStart: start, tailHours: workingHours(start, at, windows) };

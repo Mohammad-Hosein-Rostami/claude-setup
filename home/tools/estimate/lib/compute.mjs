@@ -15,7 +15,7 @@
 // reason 'table' (too few measured rows, a done row without started, a time later than now, a done row with no working time)
 // or 'overrun' (no build row open and the closing has already run as long as its high end; or a follow-up round past its high
 // end with no open row left by size, then `overrun.round` is set).
-import { DELIVERY_GAP_MS, closingElapsedHours, closingRange, closingStart, findDeliveries, followUpRange, followUpRounds, openRound, overlapMs, reopenSummary } from './history.mjs';
+import { DELIVERY_GAP_MS, closingElapsedHours, closingRange, closingStart, findDeliveries, followUpRange, followUpRounds, hasDeliverRows, openRound, overlapMs, reopenSummary } from './history.mjs';
 import { mergeIntervals } from './limits.mjs';
 
 export const MIN_DONE_ITEMS = 5;
@@ -32,7 +32,7 @@ const workingMs = (start, end, windows) => end - start - overlapMs([{ start, end
 const nearestRank = (sorted, p) => sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)];
 
 const isMeasured = (item) => item.done !== null && item.started !== null && item.evidence !== '';
-const isOpenBuild = (item) => item.done === null && item.kind !== 'close';
+const isOpenBuild = (item) => item.done === null && item.kind !== 'close' && item.kind !== 'deliver';
 const rowLabel = (item) => `${item.id} (line ${item.line})`;
 
 function refusal(now, fields) {
@@ -89,17 +89,18 @@ function buildPart(openBuild, rate, lanes, windows, now) {
 }
 
 /**
- * The delivered result when no row is open and the last done row is a close row, else null: with nothing open the tool never
- * predicts a future finish. Provisional (`provisionalUntil`, epoch ms) while the delivery's quiet gap has not passed yet; the
- * history (findDeliveries) counts it only after that gap. A last done row that is a build row is not delivered: the closing
- * phase still lies ahead (review and fix rounds are not rows).
+ * The delivered result when no row is open and the last done row is a `deliver` row (a close row when the table has no
+ * deliver rows), else null: with nothing open the tool never predicts a future finish. Without deliver rows it is provisional
+ * (`provisionalUntil`, epoch ms) while the quiet gap has not passed yet; the history (findDeliveries) counts it only after that
+ * gap. A last done row that is a build row is not delivered: the closing phase still lies ahead (review and fix rounds are not rows).
  */
 function deliveredResult(items, deliveries, now) {
   if (items.length === 0 || items.some((i) => i.done === null)) return null;
   const lastDone = Math.max(...items.map((i) => i.done));
-  const closer = items.find((i) => i.kind === 'close' && i.done === lastDone);
+  const explicit = hasDeliverRows(items);
+  const closer = items.find((i) => i.kind === (explicit ? 'deliver' : 'close') && i.done === lastDone);
   if (closer === undefined) return null;
-  const provisionalUntil = lastDone + DELIVERY_GAP_MS > now ? lastDone + DELIVERY_GAP_MS : null;
+  const provisionalUntil = !explicit && lastDone + DELIVERY_GAP_MS > now ? lastDone + DELIVERY_GAP_MS : null;
   return { computedAt: now, openItems: 0, delivered: lastDone, provisionalUntil, closingRow: closer.id, reopen: reopenSummary(items, deliveries, now) };
 }
 
@@ -192,6 +193,7 @@ export function computeEstimate(items, windows, now) {
     computedAt: now,
     ...finish,
     reopen: reopenSummary(items, deliveries, now),
+    deliveryGuessed: deliveries.length > 0 && !hasDeliverRows(items),
     measured: measured.length,
     newestEntry: Math.max(...items.flatMap((i) => [i.started, i.done]).filter((at) => at !== null)),
   };
