@@ -1,5 +1,5 @@
 // Purpose: turn transcript JSONL lines and doc text into normalised, redacted, chunked records.
-// Exports: normalize, redact (from redact.mjs), chunkText, sha1, isHarnessText, stripBashBlocks, createTranscriptParser, extractDoc, REDACTED.
+// Exports: normalize, redact (from redact.mjs), chunkText, sha1, isHarnessText, HARNESS_MARKERS, stripBashBlocks, createTranscriptParser, extractDoc, REDACTED.
 // Invariants: pure (no I/O); a malformed JSONL line is counted in parser.bad and skipped, never thrown;
 // redaction runs on the whole text before chunking so a split can never cut a secret in half.
 import { createHash } from 'node:crypto';
@@ -9,8 +9,10 @@ export const MAX_CHUNK_CHARS = 700; // measured: 700/100 beat 500, 800, 1000 and
 export const OVERLAP_CHARS = 100;
 const HARD_SPLIT_CHARS = MAX_CHUNK_CHARS - OVERLAP_CHARS - 2; // room for the overlap and its \n\n joiner
 
+// Bracketed markers the harness writes; `recall --owner` also cuts a message where one starts, not only at its head.
+export const HARNESS_MARKERS = ['[SYSTEM NOTIFICATION'];
 const HARNESS_PREFIXES = [
-  '<task-notification', '<agent-message', '[SYSTEM NOTIFICATION', '<system-reminder>',
+  '<task-notification', '<agent-message', ...HARNESS_MARKERS, '<system-reminder>',
   '<local-command', '<command-', '<cross-session-message', 'Caveat:',
 ];
 

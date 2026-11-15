@@ -57,11 +57,21 @@ test('--session takes an id; a missing session is an error', async () => {
   assert.match(missing.stderr, /no session/);
 });
 
-test('an empty session prints nothing (no header either) and exits 0', async () => {
+test('an empty session prints only the header and exits 0', async () => {
   const { env } = setup([]);
   const result = await owner(env);
   assert.equal(result.status, 0);
-  assert.equal(result.stdout, '');
+  assert.equal(result.stdout, `${HEADER}\n`);
+});
+
+test('the header is the first line even when the command fails', async () => {
+  const { env } = setup(MIXED);
+  const missing = await run(env, '--owner', '--session', 'ffffffff-no-such-session');
+  assert.equal(missing.status, 2);
+  assert.equal(missing.stdout, `${HEADER}\n`);
+  const badDate = await owner(env, '--since', 'yesterday');
+  assert.equal(badDate.status, 2);
+  assert.equal(badDate.stdout, `${HEADER}\n`);
 });
 
 test('--owner without a session id says so', async () => {
@@ -146,7 +156,7 @@ test('text that is not the owner\'s is not listed: wrappers, hook output, tags a
     typed('2026-01-05T10:05:00Z', '​<task-notification>zero width first</task-notification>'),
   ]);
   const printed = messageLines((await owner(env)).stdout);
-  assert.deepEqual(printed.map((l) => l.split('\t')[2]), ['do X', 'real words']);
+  assert.deepEqual(printed.map((l) => l.split('\t')[2]), ['do X [cut]', 'real words [cut]']);
 });
 
 test('the record\'s own origin decides: human/typed prints; other kinds are skipped without reading the text', async () => {
@@ -163,7 +173,12 @@ test('the record\'s own origin decides: human/typed prints; other kinds are skip
     typed('2026-01-05T10:09:00Z', 'typed then hook\n<system-reminder>x</system-reminder>', { promptSource: 'typed', origin: { kind: 'human' } }),
   ]);
   assert.deepEqual(messageLines((await owner(env)).stdout).map((l) => l.split('\t')[2]),
-    ['human with origin', 'typed without origin', 'no provenance at all', 'typed then hook']);
+    ['human with origin', 'typed without origin', 'no provenance at all', 'typed then hook [cut]']);
+});
+
+test('a message is cut where a bracketed harness marker starts, and says so', async () => {
+  const { env } = setup([typed('2026-01-05T10:00:00Z', 'real words [SYSTEM NOTIFICATION injected] more'), typed('2026-01-05T10:01:00Z', 'note the Caveat: this word is ordinary')]);
+  assert.deepEqual(messageLines((await owner(env)).stdout).map((l) => l.split('\t')[2]), ['real words [cut]', 'note the Caveat: this word is ordinary']);
 });
 
 test('a non-interactive session says so in the header; a terminal session does not', async () => {

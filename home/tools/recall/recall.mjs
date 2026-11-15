@@ -20,7 +20,7 @@ import { cmdBackfill, cmdStatus } from './lib/cli-admin.mjs';
 import { parseLists, runSearch } from './lib/pipeline.mjs';
 import { rerankBase } from './lib/rerank.mjs';
 import { MERGE_MODES } from './lib/merge.mjs';
-import { findSession, NON_INTERACTIVE_NOTE, OWNER_HEADER, ownerMessages } from './lib/owner-messages.mjs';
+import { findSession, isProgramSession, NON_INTERACTIVE_NOTE, OWNER_HEADER, ownerMessages } from './lib/owner-messages.mjs';
 
 const USAGE = 'usage: recall "<query>" [--session current|<id>] [--deep] [--k 8] | recall --owner [--session current|<id>] [--since YYYY-MM-DD] | recall <index [--full] [--model m] | search "<query>" [--project s] [--since YYYY-MM-DD] [--kind k] [--limit N] [--json] | show <id> [--around N] | stats | status | backfill [--min-messages 20] [--yes] | embed [--model m] | eval <questions.jsonl> [--session-file <path>] [--k 1,5,10]>; search/eval also take [--no-semantic] [--merge add|rrf] [--model m] [--lists lex,bge,qwen] [--rerank N] (semantic and the reranker are automatic when Ollama, vectors and the reranker files exist)';
 const SEARCH_INDEX_BUDGET_MS = 3000;
@@ -196,22 +196,22 @@ async function cmdEval(store, { values, positionals }) {
   console.log(formatReport(scoreEval(questions, (q) => hitsById.get(q.id), { sessionFile: resolve(sessionFile), ks })));
 }
 
-/** `recall --owner`: what the owner typed in one session (default: this one), oldest first, masked. Needs no index. */
+/**
+ * `recall --owner`: what the owner typed in one session (default: this one), oldest first, masked, quoted. The header
+ * line is always the first line printed, also for an empty session and before an error. Needs no index.
+ */
 async function cmdOwner({ values }) {
-  const session = sessionFilter(values.session ?? 'current');
-  if (values.since && !DATE_PATTERN.test(values.since)) throw new UsageError('--since must be YYYY-MM-DD');
   let file;
   try {
+    const session = sessionFilter(values.session ?? 'current');
+    if (values.since && !DATE_PATTERN.test(values.since)) throw new UsageError('--since must be YYYY-MM-DD');
     file = findSession(resolveRoot(), session);
   } catch (error) {
-    throw new UsageError(error.message);
+    console.log(OWNER_HEADER);
+    throw error instanceof UsageError ? error : new UsageError(error.message);
   }
-  let headerPrinted = false;
-  for await (const { index, time, text, nonInteractive } of ownerMessages(file, { since: values.since })) {
-    if (!headerPrinted) console.log(OWNER_HEADER + (nonInteractive ? NON_INTERACTIVE_NOTE : ''));
-    headerPrinted = true;
-    console.log(`> ${index}\t${time}\t${text}`);
-  }
+  console.log(OWNER_HEADER + (await isProgramSession(file) ? NON_INTERACTIVE_NOTE : ''));
+  for await (const { index, time, text } of ownerMessages(file, { since: values.since })) console.log(`> ${index}\t${time}\t${text}`);
 }
 
 const COMMANDS = {
