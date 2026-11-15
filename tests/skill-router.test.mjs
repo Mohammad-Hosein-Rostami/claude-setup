@@ -257,6 +257,36 @@ test('hook: repo-restructure line reaches additionalContext once per session, ag
   assert.equal(await prompt('<agent-message>restructure the repo</agent-message>', 'r3', KEEP), '');
 });
 
+test('gateLinesForPrompt: git history and branch intents fire git-linear-history', () => {
+  for (const prompt of ['clean up the git tree', 'merge everything to master', 'merge the branches into main', 'remove old branches that were merged',
+    'delete the merged branches', 'rebase my branch on main', 'the git history is messy, fix it', 'land the lanes on main', 'fix up the git tree to be clean',
+    'squash these commits', 'تاریخچه گیت را مرتب کن']) {
+    assert.match(gateLinesForPrompt(prompt).join(), /git-linear-history/, prompt);
+  }
+});
+
+test('gateLinesForPrompt: incidental branch, merge and tree words do not fire git-linear-history', () => {
+  for (const prompt of ['merge conflicts in package.json', 'this function has two branches', 'branch coverage is low', 'merge these two objects', 'merge sort',
+    'create a branch for the login work', 'what does git stash do', 'the tree view component', 'clean up this component', 'merge everything into main.ts',
+    'merge everything into a simple project called portal']) {
+    assert.doesNotMatch(gateLinesForPrompt(prompt).join(), /git-linear-history/, prompt);
+  }
+});
+
+test('hook: git-linear-history line reaches additionalContext once per session, again after a compact', async () => {
+  const KEEP = { keepGates: true };
+  const { prompt, compact } = await routerSession();
+  assert.equal(
+    await prompt('clean up the git tree', 'l1', KEEP),
+    'Skill router: git history or branches - invoke git-linear-history (skip if already loaded) before merging, rebasing or deleting branches.',
+  );
+  assert.equal(await prompt('now rebase my branch on main', 'l1', KEEP), '');
+  compact('l1');
+  assert.match(await prompt('rebase my branch on main', 'l1', KEEP), /git-linear-history/);
+  assert.equal(await prompt('merge sort', 'l2', KEEP), '');
+  assert.equal(await prompt('<agent-message>clean up the git tree</agent-message>', 'l3', KEEP), '');
+});
+
 test('hook: gate lines reach additionalContext, also in a Gradle project and next to a UI route', async () => {
   const KEEP = { keepGates: true };
   const { prompt, fire } = await routerSession();

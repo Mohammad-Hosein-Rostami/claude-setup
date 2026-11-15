@@ -41,13 +41,16 @@ const PROMPT_ROUTES = [
 const HARNESS_EVENT = /^(<(task-notification|system-reminder|agent-message)|\[SYSTEM NOTIFICATION)/;
 // Gate routes: workflow skills that are not UI specific, named once per session (and again after a compact). Triggers
 // are intents, not words: an imperative "fix ..." / a bug, crash or failing test; a "done?", "ship it", "ready to
-// merge" request; a repository-level restructure ("remove Nx", "merge the apps into one project"). "fixed", "prefix",
-// "when you are done", "merge conflicts" and "restructure this function" do not fire.
+// merge" request; a repository-level restructure ("remove Nx", "merge the apps into one project"); git history or
+// branch work ("clean up the git tree", "rebase", "delete the merged branches", "merge everything to master"). "fixed",
+// "prefix", "when you are done", "merge conflicts", "restructure this function", "branch coverage" and "merge sort" do not fire.
 const SENTENCE_START = String.raw`(?:^|[.!?:]\s+|\b(?:please|pls|can you|could you|would you|need to|needs to|let'?s|and|then|go)\s+)`;
 // Build tools and layers whose removal restructures a whole repository. "nx-cache", "module federation remote" and
 // "remove nx from .gitignore" are single-file talk, so the name must not continue that way.
 const REMOVABLE_LAYER = String.raw`(?:the\s+)?(?:nx|turborepo|lerna|module federation|monorepo tool)(?![\w-]|\s+(?:cache|remotes?)\b|\s+(?:from|in)\s+(?:the\s+)?\.?(?:gitignore|package\.json|tsconfig|eslint|readme))`;
 const REPO_NOUN = String.raw`(?:repo(?:sitory)?|project|monorepo|codebase|workspace)`;
+// Branch names a merge lands on. "main.ts" is a file, so the name must not continue as a path or word.
+const BASE_BRANCH = String.raw`(?:master|main|trunk|develop|the\s+base(?:\s+branch)?|the\s+default\s+branch)(?![\w-]|\.\w)`;
 const GATE_ROUTES = [
   {
     skill: 'root-cause-debug',
@@ -87,6 +90,21 @@ const GATE_ROUTES = [
     ),
     line: 'Skill router: repository restructure - invoke repo-restructure (skip if already loaded) before moving or deleting anything.',
   },
+  {
+    skill: 'git-linear-history',
+    test: new RegExp(
+      String.raw`\bgit\s+(?:tree|history|graph)\b` +
+        String.raw`|\brebas(?:e|ing)\b` +
+        String.raw`|\b(?:remove|delete|prune|drop|clean(?:[\s-]?up)?|get rid of)\s+(?:(?:the|all|old|stale|merged|leftover|local|remote|git)\s+)*(?:branches|worktrees)\b` +
+        String.raw`|\bmerged\s+(?:branch|worktree)\b` +
+        String.raw`|\bmerge\s+(?:(?:all|the|our|every|this|that|my)\s+)*(?:everything|branch(?:es)?|lanes?|worktrees?)\b[^.!?]{0,30}\b(?:to|into|onto)\s+${BASE_BRANCH}` +
+        String.raw`|\bland\s+(?:(?:the|all|our|these|my)\s+)*(?:lanes?|branch(?:es)?|worktrees?)\b` +
+        String.raw`|\bsquash\w*\s+(?:(?:the|these|those|my|all|our)\s+)*(?:commits?|history)\b` +
+        String.raw`|تاریخچه[\s‌]*گیت|درخت[\s‌]*گیت|برنچ`,
+      'i',
+    ),
+    line: 'Skill router: git history or branches - invoke git-linear-history (skip if already loaded) before merging, rebasing or deleting branches.',
+  },
 ];
 const UI_FILE = /\.(tsx|jsx|vue|svelte|html|css|scss|sass|less)$/i;
 const NON_UI_FILE = /\.(test|spec|stories)\.\w+$/i;
@@ -100,7 +118,7 @@ const COMPACT_SOURCE = 'compact';
 const OFF_ENV = 'CLAUDE_SKILL_ROUTER';
 const GRADLE_FILES = ['settings.gradle', 'settings.gradle.kts', 'build.gradle', 'build.gradle.kts'];
 
-/** Returns the gate routes (bug -> root-cause-debug, done/ship -> verify-done, repo restructure -> repo-restructure) a prompt calls for. */
+/** Returns the gate routes (bug -> root-cause-debug, done/ship -> verify-done, repo restructure -> repo-restructure, git history -> git-linear-history) a prompt calls for. */
 function gatesForPrompt(prompt) {
   return HARNESS_EVENT.test(prompt.trim()) ? [] : GATE_ROUTES.filter((gate) => gate.test.test(prompt));
 }
