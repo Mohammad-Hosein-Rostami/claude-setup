@@ -6,11 +6,12 @@
 //   default-state, state-widths, no-search, deliverable, duplicate-cell, bad-result, unmatched-result, missing-cell,
 //   unknown-cell, cell-status, todo, fail, no-reason, no-evidence, evidence-missing, na-locale, no-rtl-pass, and the Figma
 //   inventory codes of frames.mjs (frame-source, frame-missing, frame-unmapped, frame-cell, no-compare,
-//   figma-section-missing). A problem
+//   figma-section-missing) and of accepted.mjs (owner-ref, accepted-node). A problem
 //   about a cell carries `cell` (its label) and `cause` (what `report` groups by). A cell with status fail in the
 //   matrix and no result record is `handSet` (found by eye, listed on its own).
 import { isAbsolute, resolve } from 'node:path';
 import { cellKey, cellLabel as label, expectedCells, mergeResults } from './cells.mjs';
+import { acceptedChecks } from './accepted.mjs';
 import { frameChecks } from './frames.mjs';
 import { failCause } from './group.mjs';
 import { reuseProblems } from './reuse.mjs';
@@ -85,7 +86,8 @@ const countBy = (cells, status) => cells.filter((cell) => cell.status === status
  * @returns {{problems: {code:string,message:string}[], cells: object[], counts: object, notes: object[], handSet: object[], stateWidths: object|null, frames: object|undefined}}
  *   `problems` empty means done; `counts` has pass/fail/na/deferred/todo/missing; `notes` are the na and deferred cells
  *   (reported to the owner); `handSet` are the fail cells nobody measured; `stateWidths` is `{widths, reason}` when control states are narrowed, else null;
- *   `frames` is the summary of the Figma inventory (see frames.mjs; undefined when the matrix is structurally broken)
+ *   `frames` is the summary of the Figma inventory (see frames.mjs; undefined when the matrix is structurally broken);
+ *   `accepted` lists the failing compare cells the owner accepted (accepted.mjs): their `fail` problem is dropped and `counts` has `accepted <n>` and a `fail` without them
  */
 export function checkMatrix(matrix, records = [], options = {}) {
   const structure = validateStructure(matrix);
@@ -95,14 +97,19 @@ export function checkMatrix(matrix, records = [], options = {}) {
   const files = { baseDir: options.baseDir ?? '.', fileExists: options.fileExists ?? (() => true) };
   const counts = Object.fromEntries(STATUSES.map((status) => [status, countBy(merged.cells, status)]));
   counts.missing = coverage.filter((p) => p.code === 'missing-cell').length;
-  const frames = frameChecks(matrix, merged, records, { baseDir: files.baseDir, readText: options.readText });
+  const owner = acceptedChecks(matrix, merged, records, { baseDir: files.baseDir, readText: options.readText });
+  const acceptedLabels = new Set(owner.accepted.map((item) => item.cell));
+  const frames = frameChecks(matrix, merged, records, { baseDir: files.baseDir, readText: options.readText, accepted: new Set(owner.accepted.map((item) => item.key)) });
+  if (owner.accepted.length > 0) counts.accepted = owner.accepted.length;
+  counts.fail -= owner.accepted.length;
   return {
-    problems: [...validateRules(matrix), ...reuseProblems(matrix, { baseDir: files.baseDir, readText: options.readText }), ...merged.problems, ...coverage, ...naLocaleProblems(matrix, merged.cells), ...rtlProblems(matrix, merged.cells), ...fileProblems(matrix, merged.cells, files), ...frames.problems],
+    problems: [...validateRules(matrix), ...reuseProblems(matrix, { baseDir: files.baseDir, readText: options.readText }), ...merged.problems, ...coverage.filter((p) => !(p.code === 'fail' && acceptedLabels.has(p.cell))), ...naLocaleProblems(matrix, merged.cells), ...rtlProblems(matrix, merged.cells), ...fileProblems(matrix, merged.cells, files), ...frames.problems, ...owner.problems],
     cells: merged.cells,
     counts,
     notes: merged.cells.filter((cell) => cell.status === 'na' || cell.status === 'deferred'),
     handSet: merged.cells.filter((cell) => cell.status === 'fail' && !merged.recorded.has(cellKey(cell))),
     stateWidths: matrix.stateWidths ? { widths: matrix.stateWidths, reason: String(matrix.stateWidthsReason ?? '').trim() } : null,
     frames: frames.summary,
+    accepted: owner.accepted,
   };
 }

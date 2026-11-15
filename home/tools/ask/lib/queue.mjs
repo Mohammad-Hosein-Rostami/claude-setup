@@ -1,11 +1,12 @@
 // Pure logic of the owner-decision queue (an append-only JSONL file); no I/O here.
 // Exports: sanitize/oneLine(text), parseLine(line), parse(text), validate(obj), nextId(records), openQuestions(records),
-// answerFor(records, id), formatLine(q, answered), formatWatchLine(q), formatShow(q, answered), and the constants
+// answerFor(records, id), lastAnswer(records, id), formatLine(q, answered), formatWatchLine(q), formatShow(q, answered), and the constants
 // LIMITS, MIN_QUESTION_CHARS, MIN_OPTIONS, MAX_OPTIONS, MAX_LINE_CHARS, ID_PATTERN.
 // Invariants: the file is untrusted input (any local process or agent can append to it). A line is accepted only when it
 // is JSON of a known shape whose id matches ID_PATTERN and whose question fields pass `validate` (so the caps hold on
 // read too); malformed, oversized, duplicate-id and unknown-id-answer lines are counted and skipped, never thrown; the
-// last valid answer to an id wins (`answer` refuses to add a second one without --force); every printed field goes through `sanitize`, so one record can never produce more than one output line.
+// last valid answer to an id wins; an answer record may carry `by: "timeout"` (written by `answer --default`), and a record
+// without `by` was given by the owner (`answer` refuses to add a second one without --force); every printed field goes through `sanitize`, so one record can never produce more than one output line.
 
 export const MIN_QUESTION_CHARS = 15;
 export const MIN_OPTIONS = 2;
@@ -13,6 +14,8 @@ export const MAX_OPTIONS = 4;
 /** Longest accepted text per field (chars). */
 export const LIMITS = { question: 300, why: 300, effect: 200, label: 40, from: 60, blocks: 120 };
 export const MAX_LINE_CHARS = 8192;
+/** The `by` value of an answer that was taken by a timeout default, not given by the owner. */
+export const BY_TIMEOUT = 'timeout';
 /** A question id: `q` and 1 to 9 digits (so it stays far below Number precision limits). */
 export const ID_PATTERN = /^q\d{1,9}$/;
 export const MAX_ID_NUMBER = 999_999_999;
@@ -142,14 +145,23 @@ export function nextId(records, maxNumber = MAX_ID_NUMBER) {
 }
 
 /**
+ * The answer record of a question: the last one written.
+ * @param {object[]} records parsed records
+ * @param {string} id question id
+ * @returns {object | null} the `a` record (its `by` is `timeout` for a default); null while the question is open or the id is unknown
+ */
+export function lastAnswer(records, id) {
+  return records.findLast((r) => r.type === 'a' && r.id === id) ?? null;
+}
+
+/**
  * The answer text recorded for a question: the last one written.
  * @param {object[]} records parsed records
  * @param {string} id question id
  * @returns {string | null} null while the question is open or when the id is unknown
  */
 export function answerFor(records, id) {
-  const line = records.findLast((r) => r.type === 'a' && r.id === id);
-  return line ? line.answer : null;
+  return lastAnswer(records, id)?.answer ?? null;
 }
 
 /**

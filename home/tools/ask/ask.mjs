@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 // CLI of the owner-decision queue: agents `post` questions, the lead `watch`es, asks the owner, then `answer`s.
-// Usage: ask.mjs init | post [--queue P] --json OBJ | answer --queue P ID [--force] (--option N | --text-stdin | TEXT) | get --queue P ID
+// Usage: ask.mjs init | post [--queue P] --json OBJ | answer --queue P ID [--force] [--default] (--option N | --text-stdin | TEXT) | get --queue P ID
 //        | show --queue P ID
 //        | list --queue P [--open] | watch --queue P [--interval-ms 1000]    (--queue defaults to env ASK_QUEUE)
 // `--` ends the flags; an unknown --flag is an error. Exit codes: 0 ok, 2 usage or validation error, 3 `get` on an open question.
 // Invariants: the queue is append-only JSONL confined to ~/.claude/ask (see lib/store.mjs); logic lives in lib/queue.mjs,
 // so this file only parses arguments and prints; anything printed from queue data goes through `sanitize`. `answer` never
 // overwrites unasked: an already-answered id exits 2 and prints the existing answer (so a forged one is noticed);
-// `--force` appends a newer answer, and the last answer wins.
+// `--force` appends a newer answer, and the last answer wins. `--default` marks the answer `by: "timeout"`: a default taken
+// when the owner did not answer, which a reader (ui-coverage) must not count as the owner's decision.
 import { readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
-import { ID_PATTERN, QUEUE_FULL, answerFor, formatLine, formatShow, formatWatchLine, nextId, openQuestions, parseLine, sanitize, validate } from './lib/queue.mjs';
+import { BY_TIMEOUT, ID_PATTERN, QUEUE_FULL, answerFor, formatLine, formatShow, formatWatchLine, nextId, openQuestions, parseLine, sanitize, validate } from './lib/queue.mjs';
 import { UsageError, appendRecord, confineQueue, createQueue, readNew, readQueue, withLock } from './lib/store.mjs';
 
 const EXIT_USAGE = 2;
@@ -18,7 +19,7 @@ const EXIT_OPEN = 3;
 const DEFAULT_INTERVAL_MS = 1000;
 const MAX_ANSWER_CHARS = 2000;
 const VALUE_FLAGS = new Set(['--queue', '--json', '--interval-ms', '--option']);
-const BOOLEAN_FLAGS = new Set(['--open', '--text-stdin', '--force']);
+const BOOLEAN_FLAGS = new Set(['--open', '--text-stdin', '--force', '--default']);
 const STDIN_FD = 0;
 
 function fail(message) {
@@ -89,7 +90,7 @@ function post(flags) {
 // The answer text: the label of option N (so the lead never pastes agent-written text into a shell), stdin, or the words.
 function answerText(flags, question, words) {
   const sources = [flags['--option'] !== undefined, flags['--text-stdin'] === true, words.length > 0].filter(Boolean).length;
-  if (sources !== 1) throw new UsageError('usage: answer --queue <path> <id> (--option <n> | --text-stdin | <text>)');
+  if (sources !== 1) throw new UsageError('usage: answer --queue <path> <id> [--default] (--option <n> | --text-stdin | <text>)');
   if (flags['--option'] !== undefined) {
     const n = Number(flags['--option']);
     const option = Number.isInteger(n) ? question.options[n - 1] : undefined;
@@ -101,7 +102,7 @@ function answerText(flags, question, words) {
 
 function answer(flags, [id, ...words]) {
   const real = queueFile(flags);
-  if (!id) throw new UsageError('usage: answer --queue <path> <id> (--option <n> | --text-stdin | <text>)');
+  if (!id) throw new UsageError('usage: answer --queue <path> <id> [--default] (--option <n> | --text-stdin | <text>)');
   const outcome = withLock(real, () => {
     const records = readQueue(real);
     const question = questionFor(records, id);
@@ -110,7 +111,7 @@ function answer(flags, [id, ...words]) {
     const text = answerText(flags, question, words);
     if (!text) throw new UsageError('the answer is empty');
     if (text.length > MAX_ANSWER_CHARS) throw new UsageError(`answer is longer than ${MAX_ANSWER_CHARS} chars`);
-    appendRecord(real, { type: 'a', id, answer: text });
+    appendRecord(real, { type: 'a', id, answer: text, ...(flags['--default'] === true ? { by: BY_TIMEOUT } : {}) });
     return {};
   });
   if (outcome.existing !== undefined) {

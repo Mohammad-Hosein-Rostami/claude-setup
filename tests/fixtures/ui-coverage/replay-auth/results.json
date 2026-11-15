@@ -1,0 +1,117 @@
+[
+  {
+    "surface": "signin",
+    "state": "rest",
+    "locale": "en",
+    "width": 1440,
+    "status": "pass",
+    "evidence": "https://review.example/signin-en",
+    "findings": [],
+    "hints": 0
+  },
+  {
+    "surface": "signin",
+    "state": "rest",
+    "locale": "fa",
+    "width": 1440,
+    "status": "pass",
+    "evidence": "https://review.example/signin-fa",
+    "findings": [],
+    "hints": 0
+  },
+  {
+    "surface": "signup",
+    "state": "rest",
+    "locale": "en",
+    "width": 1440,
+    "status": "pass",
+    "evidence": "https://review.example/signup-en",
+    "findings": [],
+    "hints": 0
+  },
+  {
+    "surface": "signup",
+    "state": "rest",
+    "locale": "fa",
+    "width": 1440,
+    "status": "pass",
+    "evidence": "https://review.example/signup-fa",
+    "findings": [],
+    "hints": 0
+  },
+  {
+    "surface": "forgot",
+    "state": "rest",
+    "locale": "en",
+    "width": 1440,
+    "status": "pass",
+    "evidence": "https://review.example/forgot-en",
+    "findings": [],
+    "hints": 0
+  },
+  {
+    "surface": "forgot",
+    "state": "rest",
+    "locale": "fa",
+    "width": 1440,
+    "status": "pass",
+    "evidence": "https://review.example/forgot-fa",
+    "findings": [],
+    "hints": 0
+  },
+  {
+    "surface": "verify",
+    "state": "rest",
+    "locale": "en",
+    "width": 1440,
+    "status": "pass",
+    "evidence": "https://review.example/verify-en",
+    "findings": [],
+    "hints": 0
+  },
+  {
+    "surface": "verify",
+    "state": "rest",
+    "locale": "fa",
+    "width": 1440,
+    "status": "pass",
+    "evidence": "https://review.example/verify-fa",
+    "findings": [],
+    "hints": 0
+  },
+  {
+    "surface": "signin",
+    "state": "rest",
+    "locale": "en",
+    "width": 1440,
+    "status": "fail",
+    "evidence": "https://review.example/signin-en-compare",
+    "findings": [
+      {
+        "check": "element",
+        "element": "a.extra-link",
+        "detail": "has no box in the Figma frame"
+      }
+    ],
+    "hints": 0,
+    "part": "compare"
+  },
+  {
+    "surface": "signup",
+    "state": "rest",
+    "locale": "en",
+    "width": 1440,
+    "status": "fail",
+    "evidence": "https://review.example/signup-en-compare",
+    "findings": [
+      {
+        "check": "pixel",
+        "element": "body",
+        "detail": "3.200% of pixels differ, max 0.5%",
+        "percent": 3.2
+      }
+    ],
+    "hints": 0,
+    "part": "compare"
+  }
+]

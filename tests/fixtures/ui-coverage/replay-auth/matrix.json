@@ -1,0 +1,211 @@
+{
+  "locales": [
+    {
+      "tag": "en",
+      "dir": "ltr"
+    },
+    {
+      "tag": "fa",
+      "dir": "rtl"
+    }
+  ],
+  "widths": [
+    1440
+  ],
+  "searched": {
+    "backend": [
+      "rg -il auth api/ -> 0 hits"
+    ],
+    "siblings": [
+      "rg -il signin src/ -> 4 hits"
+    ]
+  },
+  "deliverable": {
+    "reviewUrl": "http://localhost:4099/review",
+    "mockExcluded": "grep -c authmock dist -> 0"
+  },
+  "surfaces": [
+    {
+      "id": "signin",
+      "kind": "screen",
+      "source": "src/signin.tsx",
+      "controls": "none: text and links only, no own controls"
+    },
+    {
+      "id": "signup",
+      "kind": "screen",
+      "source": "src/signup.tsx",
+      "controls": "none: text and links only, no own controls"
+    },
+    {
+      "id": "forgot",
+      "kind": "screen",
+      "source": "src/forgot.tsx",
+      "controls": "none: text and links only, no own controls"
+    },
+    {
+      "id": "verify",
+      "kind": "screen",
+      "source": "src/verify.tsx",
+      "controls": "none: text and links only, no own controls"
+    }
+  ],
+  "figma": {
+    "file": "AUTHKEY",
+    "framesFile": "frames.json"
+  },
+  "frames": [
+    {
+      "node": "8199:1",
+      "name": "Sign in",
+      "width": 1440,
+      "cells": [
+        {
+          "surface": "signin",
+          "state": "rest",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "node": "8199:2",
+      "name": "Sign up",
+      "width": 1440,
+      "cells": [
+        {
+          "surface": "signup",
+          "state": "rest",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "node": "8199:3",
+      "name": "Forgot password",
+      "width": 1440,
+      "cells": [
+        {
+          "surface": "forgot",
+          "state": "rest",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "node": "8199:4",
+      "name": "Verify code",
+      "width": 1440,
+      "cells": [
+        {
+          "surface": "verify",
+          "state": "rest",
+          "locale": "en"
+        }
+      ]
+    },
+    {
+      "node": "8199:5",
+      "name": "Org step 1",
+      "width": 1440,
+      "cells": []
+    },
+    {
+      "node": "8200:3",
+      "name": "Spacing helper",
+      "width": 1440,
+      "notBuilt": "a spacing helper frame, not a screen"
+    }
+  ],
+  "accepted": [
+    {
+      "node": "8199:1",
+      "surface": "signin",
+      "state": "rest",
+      "locale": "en",
+      "findings": [
+        {
+          "check": "element",
+          "element": "a.extra-link"
+        }
+      ],
+      "owner": {
+        "ask": "queue.jsonl#q2",
+        "answer": "Keep the extra link"
+      }
+    }
+  ],
+  "cells": [
+    {
+      "surface": "signin",
+      "state": "rest",
+      "locale": "en",
+      "width": 1440,
+      "status": "todo",
+      "evidence": "",
+      "reason": ""
+    },
+    {
+      "surface": "signin",
+      "state": "rest",
+      "locale": "fa",
+      "width": 1440,
+      "status": "todo",
+      "evidence": "",
+      "reason": ""
+    },
+    {
+      "surface": "signup",
+      "state": "rest",
+      "locale": "en",
+      "width": 1440,
+      "status": "todo",
+      "evidence": "",
+      "reason": ""
+    },
+    {
+      "surface": "signup",
+      "state": "rest",
+      "locale": "fa",
+      "width": 1440,
+      "status": "todo",
+      "evidence": "",
+      "reason": ""
+    },
+    {
+      "surface": "forgot",
+      "state": "rest",
+      "locale": "en",
+      "width": 1440,
+      "status": "todo",
+      "evidence": "",
+      "reason": ""
+    },
+    {
+      "surface": "forgot",
+      "state": "rest",
+      "locale": "fa",
+      "width": 1440,
+      "status": "todo",
+      "evidence": "",
+      "reason": ""
+    },
+    {
+      "surface": "verify",
+      "state": "rest",
+      "locale": "en",
+      "width": 1440,
+      "status": "todo",
+      "evidence": "",
+      "reason": ""
+    },
+    {
+      "surface": "verify",
+      "state": "rest",
+      "locale": "fa",
+      "width": 1440,
+      "status": "todo",
+      "evidence": "",
+      "reason": ""
+    }
+  ]
+}

@@ -52,6 +52,16 @@ Without these keys nothing changes. With them, every frame of the design must be
   frames:[{node:"12:40", name, width, cells:[{surface,state,locale}]} | {node, name, width, notBuilt:"<15+ characters>"}]
 ```
 A frame's cell has the frame's `width`, so the matrix `widths` must contain it. `frames` is the only place a cell gets a Figma node. Problems: `frame-source` (framesFile unreadable or not a frames file), `frame-missing` (a frame in the framesFile that `frames` lacks: run `expand`, then map it or mark it `notBuilt`), `frame-unmapped` (no cells and no `notBuilt` of 15+ characters), `frame-cell` (the frame maps to a cell the matrix does not demand; the message says what to change), `no-compare` (a mapped cell has no `ui-check batch` record with `part: "compare"`: a pass from another probe does not count), `figma-section-missing` (compare records in the results but no `figma` section). A frame listed twice, or with both non-empty `cells` and `notBuilt`, is a `shape` problem.
+
+### Accepting a difference from Figma
+A failing compare is closed only by the owner's decision, never by the session's own ledger:
+```
+  accepted:[{ node:"12:40", surface, state, locale,
+              findings:[{check:"element", element:"a.extra-link"} | {check:"pixel", maxPercent:0.8}],
+              owner:{ask:"<queue path>#q2", answer:"<exact answer text>"} | {status:"STATUS.md", line:"<exact line>"} }]
+```
+A cell is accepted when every failing record of it has `part: "compare"` (a hand-set fail or a responsive fail is never accepted) and every finding is covered by one entry for the same frame node and cell: an `element` finding by the same `element`, a `pixel` finding by a `percent` not above `maxPercent` (a pixel finding without a number, such as a size mismatch, is never covered; an `error` finding cannot be accepted). The entry's `owner` must be a decision the owner made: `ask` = the queue file (path relative to the matrix) whose last answer to that question equals `answer` exactly and was not given with `ask.mjs answer --default` (a timeout default); `status` = the notes file (path relative to the matrix) holding that exact line under `## Standing rules` or `## Owner decisions` (until the next `## `), and the line names the node id. Otherwise `owner-ref`: `accepted difference on <cell> (frame <node>) has no owner decision: <why>; ask the owner or match Figma` (why: no owner field, queue missing (copy the decision into STATUS.md Standing rules), q2 unanswered, q2 was taken by timeout, answer differs, line not under those headings, line does not name the node) and the cell keeps failing. An entry naming a frame or cell that `frames` do not map is an `accepted-node` problem.
+An accepted cell drops its `fail` problem; the counts line gains `accepted <n>` (and `fail` leaves it out), the report lists `accepted by the owner (<n>):` with each cell and its ref, and the `frames:` line counts the frame under `accepted`. Queue files are deleted after 14 days, so copy a decision into the notes file before it expires.
 Line 3 of the report, always: `frames: <p>/<total> compared and passing, <a> accepted by the owner, <n> not built` (`total` = matrix frames plus framesFile frames; `p` = frames with cells whose every cell passes with a passing compare record), or `frames: inventory off (...)` without a `figma` section. Paste it into the owner report.
 
 ## Results
@@ -60,13 +70,13 @@ the format `ui-check batch` writes to results.json. A record fills exactly the c
 and width (no fallback: a width-less record fills nothing and is `unmatched-result`). Per cell, a `fail` from any source
 (the matrix cell or any record) wins; a declared `na` / `deferred` that meets a fail record is a `fail` and the message
 says so; a `pass` record turns `todo`, `na` and `deferred` into `pass` but never clears a `fail`. A stale fail in an old
-results file therefore keeps failing: delete or re-run it. A record that matches no cell is an `unmatched-result` problem whose message says what to change: a width outside `widths` (`add the design frame width 1440 to widths`; a Figma compare record carries the frame width), an unknown state (`use rest or <control>:<state>; run ui-coverage states`), an unknown surface, or an unknown locale. Locale tags match exactly, ignoring letter case only: record `FA` fills matrix `fa`, record `fa-IR` does not (add `fa-IR` to `locales`, or record `fa`); two matrix tags that differ only in case are a duplicate.
+results file therefore keeps failing: delete or re-run it. A `fail` record from `ui-check batch` carries `part` (`compare` or `responsive`) and its pixel finding a `percent`; a failing compare is judged by the accepted rules below. A record that matches no cell is an `unmatched-result` problem whose message says what to change: a width outside `widths` (`add the design frame width 1440 to widths`; a Figma compare record carries the frame width), an unknown state (`use rest or <control>:<state>; run ui-coverage states`), an unknown surface, or an unknown locale. Locale tags match exactly, ignoring letter case only: record `FA` fills matrix `fa`, record `fa-IR` does not (add `fa-IR` to `locales`, or record `fa`); two matrix tags that differ only in case are a duplicate.
 
 ## check problems (exit 1)
 `shape` (broken structure), `surface-controls`, `control-component`, `control-states`, `control-reference`,
 `unproven-reuse`, `unproven-mount`, `duplicate-mount`, `unproven-reference`, `default-state`, `no-search` (`searched.backend` empty), `deliverable` (reviewUrl or mockExcluded empty),
 `missing-cell`, `todo`, `fail`, `no-reason` (na/deferred), `no-evidence` (pass), `cell-status`, `unknown-cell`,
-`duplicate-cell`, `bad-result`, `unmatched-result`, `evidence-missing`, `state-widths`, `todo` (also a `TODO` placeholder or an empty `controls: []`), `na-locale`, `no-rtl-pass` (an rtl locale exists but a surface has no rtl `pass`), and the frame problems above.
+`duplicate-cell`, `bad-result`, `unmatched-result`, `evidence-missing`, `state-widths`, `todo` (also a `TODO` placeholder or an empty `controls: []`), `na-locale`, `no-rtl-pass` (an rtl locale exists but a surface has no rtl `pass`), the frame problems above, and `owner-ref` / `accepted-node`.
 
 Output: the verdict first (`result: PASS`, or `result: FAIL, 268 cells, 8 causes`), the counts line, every `na` /
 `deferred` cell with its reason (paste both into the owner report), the hand-set fails (cells with status `fail` in the
@@ -76,4 +86,4 @@ reason text or same finding): a group of one prints as a line, a larger group pr
 
 ## Layout
 `ui-coverage.mjs` (CLI: arguments, files, printing), `lib/shape.mjs` (schema rules), `lib/states.mjs` (default states),
-`lib/frames.mjs` (Figma frame inventory), `lib/cells.mjs` (cell set, expand, merge, unmatched-record advice), `lib/scaffold.mjs` (states skeleton), `lib/init.mjs` (matrix skeleton), `lib/reuse.mjs` (mount-site proof), `lib/group.mjs` (root-cause grouping), `lib/check.mjs` (the check), `lib/report.mjs` (text). Tests: `tests/ui-coverage*.test.mjs`.
+`lib/frames.mjs` (Figma frame inventory), `lib/accepted.mjs` (owner-accepted compare differences), `lib/cells.mjs` (cell set, expand, merge, unmatched-record advice), `lib/scaffold.mjs` (states skeleton), `lib/init.mjs` (matrix skeleton), `lib/reuse.mjs` (mount-site proof), `lib/group.mjs` (root-cause grouping), `lib/check.mjs` (the check), `lib/report.mjs` (text). Tests: `tests/ui-coverage*.test.mjs`.

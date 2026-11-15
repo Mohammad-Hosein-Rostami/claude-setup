@@ -1,0 +1,62 @@
+{
+  "file": "AUTHKEY",
+  "source": "replay of a real two-day auth job (8 frames)",
+  "frames": [
+    {
+      "node": "8199:1",
+      "name": "Sign in",
+      "page": "Hosted",
+      "width": 1440,
+      "height": 1024
+    },
+    {
+      "node": "8199:2",
+      "name": "Sign up",
+      "page": "Hosted",
+      "width": 1440,
+      "height": 1024
+    },
+    {
+      "node": "8199:3",
+      "name": "Forgot password",
+      "page": "Hosted",
+      "width": 1440,
+      "height": 1024
+    },
+    {
+      "node": "8199:4",
+      "name": "Verify code",
+      "page": "Hosted",
+      "width": 1440,
+      "height": 1024
+    },
+    {
+      "node": "8199:5",
+      "name": "Org step 1",
+      "page": "Hosted",
+      "width": 1440,
+      "height": 1024
+    },
+    {
+      "node": "8200:1",
+      "name": "Welcome email",
+      "page": "Hosted",
+      "width": 600,
+      "height": 1024
+    },
+    {
+      "node": "8200:2",
+      "name": "Language dropdown sheet",
+      "page": "Hosted",
+      "width": 390,
+      "height": 1024
+    },
+    {
+      "node": "8200:3",
+      "name": "Spacing helper",
+      "page": "Hosted",
+      "width": 1440,
+      "height": 1024
+    }
+  ]
+}
