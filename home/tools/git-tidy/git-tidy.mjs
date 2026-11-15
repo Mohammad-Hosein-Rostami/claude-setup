@@ -9,8 +9,9 @@
 // Invariants: logic lives in lib/; this file parses arguments, prints and sets the exit code. Only `prune --apply` writes.
 import { runCheck } from './lib/check.mjs';
 import { UsageError } from './lib/git.mjs';
+import { pruneRepo } from './lib/prune.mjs';
 import { openRepo } from './lib/repo.mjs';
-import { formatCheck } from './lib/report.mjs';
+import { formatCheck, formatPrune, pruneExitCode } from './lib/report.mjs';
 
 const EXIT_FINDINGS = 1;
 const EXIT_USAGE = 2;
@@ -36,10 +37,17 @@ function parseArgs(argv) {
   return options;
 }
 
+function runPrune(repo, options) {
+  const items = pruneRepo(repo, { apply: options.apply });
+  console.log(formatPrune({ base: repo.base, apply: options.apply, items }, options.json));
+  return options.apply ? pruneExitCode(items) : 0;
+}
+
 function main(argv) {
   try {
     const options = parseArgs(argv);
     const repo = openRepo(options.dir, options.base);
+    if (options.command === 'prune') return runPrune(repo, options);
     const result = runCheck(repo);
     console.log(formatCheck({ base: repo.base, ...result }, options.json));
     return result.findings.length > 0 ? EXIT_FINDINGS : 0;
