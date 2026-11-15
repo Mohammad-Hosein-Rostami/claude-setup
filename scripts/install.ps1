@@ -93,20 +93,26 @@ function Build-Settings {
   Note 'wrote settings.json'
 }
 
-# Install ui-check's dependencies from its lockfile; plain install when there is none yet.
-function Install-ToolDeps {
-  $dir = Join-Path $ClaudeDir 'tools\ui-check'
-  $src = Join-Path $Repo 'home\tools\ui-check'
-  if ($DryRun) { Write-Host "[dry-run] install ui-check dependencies in $dir"; return }
-  if (-not (Test-Path $dir)) { Write-Warning "skip ui-check deps: $dir not found"; return }
+# Install one tool's dependencies from its lockfile; plain install when there is none yet.
+function Install-OneToolDeps($Name) {
+  $dir = Join-Path $ClaudeDir "tools\$Name"
+  $src = Join-Path $Repo "home\tools\$Name"
+  if ($DryRun) { Write-Host "[dry-run] install $Name dependencies in $dir"; return }
+  if (-not (Test-Path $dir)) { Write-Warning "skip $Name deps: $dir not found"; return }
   # npm ci --prefix through a symlinked folder reports a false lockfile mismatch: run inside the folder instead.
   Push-Location $dir
   if ((Test-Path (Join-Path $src 'pnpm-lock.yaml')) -and (Get-Command pnpm -ErrorAction SilentlyContinue)) { pnpm install --frozen-lockfile }
   elseif (Test-Path (Join-Path $src 'package-lock.json')) { npm ci }
   else { npm install --no-audit --no-fund }
   Pop-Location
-  if ($LASTEXITCODE -ne 0) { throw 'ui-check dependency install failed' }
-  Note 'ui-check dependencies'
+  if ($LASTEXITCODE -ne 0) { throw "$Name dependency install failed" }
+  Note "$Name dependencies"
+}
+
+# The tools with npm dependencies: ui-check (odiff-bin, pngjs) and env-names (yaml).
+function Install-ToolDeps {
+  Install-OneToolDeps 'ui-check'
+  Install-OneToolDeps 'env-names'
 }
 
 # Copy (or link) one launcher file from home\bin into $dir. Idempotent.
@@ -198,7 +204,7 @@ try {
   }
   if (-not $NoPlugins) { Install-Plugins }
   # Settings after plugins: `claude plugin install` re-enables plugins in settings.json; the merged repo settings must
-  # win. Tool deps after settings, so a failed ui-check dependency install cannot leave settings.json stale.
+  # win. Tool deps after settings, so a failed tool dependency install cannot leave settings.json stale.
   Build-Settings
   if (-not $NoTools) { Install-ToolDeps }
 } catch {

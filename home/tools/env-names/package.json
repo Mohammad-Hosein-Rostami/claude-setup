@@ -1,0 +1,13 @@
+{
+  "name": "env-names",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Lists environment variable names (never values) across env files, code and deploy files.",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "yaml": "2.9.1"
+  }
+}

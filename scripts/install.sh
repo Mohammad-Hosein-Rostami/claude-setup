@@ -142,21 +142,27 @@ install_plugins() {
   echo "Note: enabled/disabled state comes from settings.json enabledPlugins. gitkraken is installed by the GitKraken app."
 }
 
-# Install ui-check's dependencies (odiff-bin, pngjs) from its lockfile; falls back to a plain install without one.
-install_tool_deps() {
-  local dir="$CLAUDE_DIR/tools/ui-check" tool="$REPO/home/tools/ui-check" lock="" stamp
-  if [ "$DRY_RUN" != 1 ] && [ ! -d "$dir" ]; then echo "skip ui-check deps: $dir not found" >&2; return; fi
+# Install one tool's dependencies from its lockfile; falls back to a plain install without one.
+install_one_tool_deps() {
+  local name="$1" dir="$CLAUDE_DIR/tools/$1" tool="$REPO/home/tools/$1" lock="" stamp
+  if [ "$DRY_RUN" != 1 ] && [ ! -d "$dir" ]; then echo "skip $name deps: $dir not found" >&2; return; fi
   # npm ci --prefix through the ~/.claude/tools symlink reports a false lockfile mismatch: use the real path.
   [ -d "$dir" ] && dir=$(cd "$dir" && pwd -P)
   if [ -f "$tool/pnpm-lock.yaml" ] && command -v pnpm >/dev/null; then lock="$tool/pnpm-lock.yaml"
   elif [ -f "$tool/package-lock.json" ]; then lock="$tool/package-lock.json"; fi
   stamp="$dir/node_modules/.lock-cksum"
-  if [ -n "$lock" ] && [ -f "$stamp" ] && [ "$(cksum <"$lock")" = "$(cat "$stamp")" ]; then note "ok ui-check dependencies (lockfile unchanged)"; return; fi
+  if [ -n "$lock" ] && [ -f "$stamp" ] && [ "$(cksum <"$lock")" = "$(cat "$stamp")" ]; then note "ok $name dependencies (lockfile unchanged)"; return; fi
   if [ "$lock" = "$tool/pnpm-lock.yaml" ]; then act pnpm --dir "$dir" install --frozen-lockfile
   elif [ -n "$lock" ]; then act npm ci --prefix "$dir"
   else act npm install --prefix "$dir" --no-audit --no-fund; fi
   if [ -n "$lock" ] && [ "$DRY_RUN" != 1 ] && [ -d "$dir/node_modules" ]; then cksum <"$lock" >"$stamp"; fi
-  note "ui-check dependencies"
+  note "$name dependencies"
+}
+
+# The tools with npm dependencies: ui-check (odiff-bin, pngjs) and env-names (yaml).
+install_tool_deps() {
+  install_one_tool_deps ui-check
+  install_one_tool_deps env-names
 }
 
 enable_hooks() {
@@ -169,7 +175,7 @@ link_ccm
 enable_hooks
 if [ "$WITH_PLUGINS" = 1 ]; then install_plugins; fi
 # Settings after plugins: `claude plugin install` re-enables plugins in settings.json; the merged repo settings must
-# win. Tool deps after settings, so a failed ui-check dependency install cannot leave settings.json stale.
+# win. Tool deps after settings, so a failed tool dependency install cannot leave settings.json stale.
 build_settings
 if [ "$WITH_TOOLS" = 1 ]; then install_tool_deps; fi
 [ "$DRY_RUN" = 1 ] && echo "(dry-run: nothing changed)"

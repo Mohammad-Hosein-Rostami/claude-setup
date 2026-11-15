@@ -123,6 +123,11 @@ check_tools() {
   done
 }
 
+# env-names reads YAML deploy files with the `yaml` package; without it those files are skipped (the report says so).
+check_env_names() {
+  if [ -d "$REPO/home/tools/env-names/node_modules/yaml" ]; then ok "env-names dep yaml"; else bad "env-names dep yaml (run scripts/install.sh)"; fi
+}
+
 # ui-check: its dependencies resolve, and Playwright + Chromium are found from PROJECT (default: cwd).
 check_ui_check() {
   local tool="$REPO/home/tools/ui-check" project="${DOCTOR_PROJECT:-$PWD}" dep
@@ -216,7 +221,7 @@ check_recall() {
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_tools; check_lsp; check_ui_check; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_tools; check_lsp; check_ui_check; check_env_names; check_repo_tests
 }
 run_checks
 exit "$BAD"
