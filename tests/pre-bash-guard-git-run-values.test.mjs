@@ -149,7 +149,8 @@ test('zsh ${NAME::=v}, print -v, NAME[i]= and a write through a bash nameref are
       'A=r; print -v GIT_EDITOR "${A}m -rf ~/x"; export GIT_EDITOR; git commit', 'X=r; X[2]="m -rf ~/x"; GIT_EDITOR="$X" git commit',
       'GIT_EDITOR=r; GIT_EDITOR[2]="m -rf ~/x"; export GIT_EDITOR; git commit',
       'declare -n R=GIT_EDITOR; A=r; R="${A}m -rf ~/x"; export GIT_EDITOR; git commit',
-      'N=GIT_EDITOR; A=r; print -v "$N" "${A}m -rf ~/x"; GIT_EDITOR="$EDITOR" git commit'], asksUnreadableToo);
+      'N=GIT_EDITOR; A=r; print -v "$N" "${A}m -rf ~/x"; GIT_EDITOR="$EDITOR" git commit',
+      'print -v "$N" "${A}m -rf ~/x"; GIT_EDITOR="$EDITOR" git commit'], asksUnreadableToo); // N inherited: it may name EDITOR
     asksRm(`: \${GIT_EDITOR::='${RM}'}; export GIT_EDITOR; git commit`);
     asksRm('A=r; : ${GIT_EDITOR::="${A}m -rf ~/x"}; export GIT_EDITOR; git commit'); // A is known here, so the value is read
     assertAll(['declare -n R=GIT_EDITOR; echo "$R"', 'arr[0]=a; echo "${arr[0]}"', 'print -v X "%s" y; echo "$X"'], quiet);
