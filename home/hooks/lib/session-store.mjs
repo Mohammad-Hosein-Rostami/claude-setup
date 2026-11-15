@@ -3,7 +3,7 @@
 // cache and calibration log (keyed by a STATUS.md hash; the log is written with sweep off, so it never expires), each in its
 // own folder under ~/.claude/state.
 // Exports: isSessionId(session), readSessionFile(dir, session, maxBytes) -> text | null | undefined,
-// writeSessionFile(dir, session, text, options?) -> boolean.
+// writeSessionFile(dir, session, text, options?) -> boolean, withSessionLock(dir, session, work) -> work's result | undefined.
 // Why: a Bash command can put a link, a FIFO or a folder where these files live. The hook must never follow a link, hang on a FIFO, or
 // change or delete anything outside its own folder.
 // Invariants:
@@ -13,6 +13,10 @@
 // - A read opens with O_NOFOLLOW and O_NONBLOCK (POSIX) and checks the open handle again (fstat), so a path swapped after the lstat is
 //   caught and a FIFO never blocks. A write creates a new temp file (random name, O_EXCL, O_NOFOLLOW, 0600) and renames it over the
 //   session file only while the folder is still the one checked. A missing folder is created 0700; an existing one keeps its mode.
+// - withSessionLock lets hooks that read and write one session file at the same moment take turns: the lock is a new empty file
+//   <session>.lock (O_EXCL, O_NOFOLLOW, 0600) in the checked folder, removed after the turn. A turn waits at most LOCK_WAIT_MS; a lock
+//   older than STALE_LOCK_MS was left by a killed hook and is removed. A link, FIFO or folder at the lock's name makes the store unusable.
+//   Cleanup counts an old lock as a store file too.
 // - Cleanup (on each write unless the caller passes { sweep: false }, which a store of long-lived history uses) removes only
 //   this user's regular files older than 7 days, directly in the checked folder, whose names match STORE_FILE (a
 //   session file or its temp file). It never recurses and never follows a link. Node has no unlinkat, so the folder is checked again
@@ -25,7 +29,12 @@ import {
 import { join } from 'node:path';
 
 const SESSION_ID = /^[A-Za-z0-9_-]{1,100}$/;
-const STORE_FILE = /^[A-Za-z0-9_-]{1,100}\.json(?:\.[0-9a-f]{1,16}\.tmp)?$/; // <session>.json, or a temp file a crash left (pid or random hex)
+// <session>.json, a temp file a crash left (pid or random hex), or a lock
+const STORE_FILE = /^[A-Za-z0-9_-]{1,100}\.(?:json(?:\.[0-9a-f]{1,16}\.tmp)?|lock)$/;
+const LOCK_WAIT_MS = 1000; // the longest a hook waits for its turn; a turn (one read, one write) takes about 1 ms
+const LOCK_PAUSE_MS = 2; // between two tries for the lock
+const STALE_LOCK_MS = 500; // no turn takes this long: such a lock was left by a hook killed during its turn
+const PAUSE = new Int32Array(new SharedArrayBuffer(4)); // Atomics.wait on it is a synchronous sleep
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -109,6 +118,62 @@ export function writeSessionFile(dir, session, text, { sweep = true } = {}) {
     return replaceFile(dir, folder, `${session}.json`, text);
   } catch {
     return false; // the folder could not be made or checked, or the write failed: not stored
+  }
+}
+
+/**
+ * Runs work while this hook alone holds dir/<session>.lock (see the header), so a read and a write of the session file inside work never
+ * drop a change another hook makes at the same moment.
+ * @template T
+ * @param {string} dir the store folder (made 0700 when missing)
+ * @param {string} session the session id (see isSessionId)
+ * @param {() => T} work the read and the write; it runs at most once
+ * @returns {T | undefined} what work returned; undefined when the id is bad, the store is unusable, the lock stayed taken for
+ *   LOCK_WAIT_MS, or anything failed
+ */
+export function withSessionLock(dir, session, work) {
+  try {
+    const folder = isSessionId(session) ? privateFolder(dir) : undefined;
+    if (folder === undefined) return undefined;
+    const lock = join(dir, `${session}.lock`);
+    const deadline = Date.now() + LOCK_WAIT_MS;
+    while (Date.now() < deadline) {
+      if (takeLock(lock)) return runAndRelease(work, dir, folder, lock);
+      if (!clearStaleLock(dir, folder, lock)) return undefined;
+      Atomics.wait(PAUSE, 0, 0, LOCK_PAUSE_MS);
+    }
+    return undefined; // still taken: nothing is stored, as for any other unusable store
+  } catch {
+    return undefined;
+  }
+}
+
+/** @returns {boolean} true when this call created the lock; false when it exists already (any other error throws) */
+function takeLock(lock) {
+  try {
+    closeSync(openSync(lock, CREATE_FLAGS, FILE_MODE));
+    return true;
+  } catch (error) {
+    if (error.code === 'EEXIST') return false;
+    throw error;
+  }
+}
+
+/** Removes a lock older than STALE_LOCK_MS. @returns {boolean} false when something other than this user's regular file holds the name */
+function clearStaleLock(dir, folder, lock) {
+  const held = lstatOrNull(lock);
+  if (held === null) return true; // released meanwhile: the next try takes it
+  if (!isPrivateFile(held)) return false;
+  if (Date.now() - held.mtimeMs > STALE_LOCK_MS && sameNode(lstatSync(dir), folder)) rmSync(lock, { force: true });
+  return true;
+}
+
+/** Runs work, then removes the lock while dir is still the checked folder. */
+function runAndRelease(work, dir, folder, lock) {
+  try {
+    return work();
+  } finally {
+    if (sameNode(lstatSync(dir), folder)) rmSync(lock, { force: true });
   }
 }
 

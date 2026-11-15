@@ -32,7 +32,8 @@ Asking and remembering:
   Advice (a quality rule: a hand-edited lockfile, a merge commit) uses the same store: alone, the first send is sent back
   with the fix and the same command again runs with no dialog; next to a reason that asks, the advice is only added to it.
 - `session-store.mjs`: the per-session files of `allowed-literals.mjs` and `bounce-once.mjs`. It checks the folder and file
-  with lstat, never follows a link or waits on a FIFO, and cleans up only its own old files.
+  with lstat, never follows a link or waits on a FIFO, and cleans up only its own old files. `withSessionLock` makes hooks that
+  record at the same moment take turns, so none drops another's record.
 - `guard-log.mjs`: the decision log, one JSON line per decision.
 
 Other hooks:

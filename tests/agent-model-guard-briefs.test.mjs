@@ -1,7 +1,8 @@
 // Tests for the brief lines of home/hooks/agent-model-guard.mjs (lib/agent-brief.mjs): one line naming STATUS.md goes before any brief
 // whose project has `## Standing rules`, and one line asking for the Reuse inventory and Contract facts lists goes after an architect or
 // Plan brief. The hook runs as a process with the hook JSON on stdin; each test gets a private HOME (mode file, advice store), a project
-// folder holding a `.git` folder, and a private decision log. Nothing from a prompt or a STATUS.md may reach the added lines.
+// that is a real git repository whose .git/info/exclude ignores STATUS.md, and a private decision log. Nothing from a prompt or a
+// STATUS.md may reach the added lines.
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -11,6 +12,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { withBriefLines } from '../home/hooks/lib/agent-brief.mjs';
+import { CLEAN_ENV, git } from './git-tidy-helpers.mjs';
 import { hookEnv } from './hook-env.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
@@ -21,7 +23,7 @@ const RULES = '# Status\n\n## Standing rules\n\n- Reuse the existing snackbar.\n
 const posixOnly = { skip: process.platform === 'win32' ? 'no FIFO or plain symlinks on Windows' : false };
 
 // The two lines as the brief words them.
-const rulesLine = (path) => `Read "## Standing rules" in ${path} first; they are the owner's and override this brief.`;
+const rulesLine = (path) => `Read "## Standing rules" in ${path} first; where they differ from this brief, follow them.`;
 const DESIGN_LISTS = 'Your spec must include "Reuse inventory" (the existing component, string or helper for each need, or none: <search used>) '
   + 'and "Contract facts" (every default, fallback, limit and enum the API schema states, and what the design does about each); '
   + 'list product facts the repo does not state under "Unconfirmed".';
@@ -35,17 +37,30 @@ function outcome({ status, stdout, stderr, error }) {
   return stdout === '' ? null : JSON.parse(stdout).hookSpecificOutput;
 }
 
+/** Makes git ignore STATUS.md in the repository at dir through its .git/info/exclude. */
+function ignoreStatus(dir) {
+  mkdirSync(join(dir, '.git', 'info'), { recursive: true });
+  writeFileSync(join(dir, '.git', 'info', 'exclude'), 'STATUS.md\n');
+}
+
 /**
- * A private HOME with the session's mode and a project folder holding `.git`. send(toolInput, options) runs one Agent call;
- * options.cwd replaces the input's cwd (undefined: left out), options.processCwd is the hook process's own folder.
+ * A private HOME with the session's mode and a git repository (its real path, as git prints it) that ignores STATUS.md.
+ * send(toolInput, options) runs one Agent call; options.cwd replaces the input's cwd (undefined: left out), options.processCwd is the
+ * hook process's own folder. The hook's git sees no GIT_* variable (a pre-commit run sets GIT_DIR) and no user git config or global
+ * ignore file; extraEnv is added last.
  */
-function briefSession(mode = 'medium', projectPrefix = 'brief-project-') {
+function briefSession(mode = 'medium', projectPrefix = 'brief-project-', extraEnv = {}) {
   const home = mkdtempSync(join(tmpdir(), 'brief-home-'));
-  const project = mkdtempSync(join(tmpdir(), projectPrefix));
+  const project = realpathSync(mkdtempSync(join(tmpdir(), projectPrefix)));
   mkdirSync(join(home, '.claude', 'state', 'modes'), { recursive: true });
   writeFileSync(join(home, '.claude', 'state', 'modes', SESSION), `${mode}\n`);
-  mkdirSync(join(project, '.git'));
-  const env = hookEnv({ HOME: home, USERPROFILE: home });
+  git(project, 'init', '-q');
+  ignoreStatus(project);
+  const withGit = hookEnv({ HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: join(home, '.config') });
+  const env = {
+    ...Object.fromEntries(Object.entries(withGit).filter(([name]) => !name.startsWith('GIT_'))),
+    GIT_CONFIG_GLOBAL: CLEAN_ENV.GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM: CLEAN_ENV.GIT_CONFIG_NOSYSTEM, ...extraEnv,
+  };
   delete env.CLAUDE_MODE;
   const inputOf = (toolInput, options) => ({ session_id: SESSION, cwd: 'cwd' in options ? options.cwd : project, tool_name: 'Agent', tool_input: toolInput });
   return {
@@ -79,24 +94,67 @@ test('no rules line without the heading, with nothing under it, or when the brie
   assert.equal(s.send({ ...call, prompt: `${PROMPT} Follow STATUS.md.` }), null, 'the brief names STATUS.md');
 });
 
-test('a STATUS.md in a parent folder up to the git root counts; one above the git root or more than 5 levels up does not', () => {
+test('inside git only an untracked, ignored STATUS.md at the top of the work tree counts, from any depth below it', () => {
   const s = briefSession();
   writeFileSync(s.status, RULES);
   const call = { prompt: PROMPT, subagent_type: 'implementer' };
   const withRules = allowed({ ...call, prompt: `${rulesLine(s.status)}\n${PROMPT}` });
-  const five = join(s.project, '1', '2', '3', '4', '5');
-  mkdirSync(join(five, '6'), { recursive: true });
-  assert.deepEqual(s.send(call, { cwd: join(s.project, '1') }), withRules, 'one level up');
-  assert.deepEqual(s.send(call, { cwd: five }), withRules, 'five levels up');
-  assert.equal(s.send(call, { cwd: join(five, '6') }), null, 'six levels up: not looked for');
-  const inner = join(s.project, 'inner');
-  mkdirSync(join(inner, '.git'), { recursive: true });
-  assert.equal(s.send(call, { cwd: inner }), null, 'above the git root of inner');
+  const deep = join(s.project, '1', '2', '3', '4', '5', '6', '7');
+  mkdirSync(deep, { recursive: true });
+  assert.deepEqual(s.send(call), withRules, 'untracked and ignored (.git/info/exclude) at the top');
+  assert.deepEqual(s.send(call, { cwd: deep }), withRules, 'seven levels down');
+  git(s.project, 'add', '-f', 'STATUS.md');
+  assert.equal(s.send(call), null, 'tracked: a file the repository brings');
+  git(s.project, 'rm', '-q', '--cached', 'STATUS.md');
+  writeFileSync(join(s.project, '.git', 'info', 'exclude'), '');
+  assert.equal(s.send(call), null, 'untracked but not ignored');
+  writeFileSync(join(s.project, '.gitignore'), 'STATUS.md\n');
+  assert.deepEqual(s.send(call), withRules, 'ignored by a .gitignore');
+});
+
+test('a STATUS.md in a subfolder never counts: the one at the top wins, and without it there is no line', () => {
+  const s = briefSession();
+  const app = join(s.project, 'packages', 'app');
+  mkdirSync(app, { recursive: true });
+  writeFileSync(join(app, 'STATUS.md'), RULES); // ignored too: an exclude pattern without a slash matches in every folder
+  const call = { prompt: PROMPT, subagent_type: 'implementer' };
+  assert.equal(s.send(call, { cwd: app }), null, 'only the package folder has one');
+  writeFileSync(s.status, RULES);
+  assert.deepEqual(s.send(call, { cwd: app }), allowed({ ...call, prompt: `${rulesLine(s.status)}\n${PROMPT}` }), 'the top one wins');
+});
+
+test('inside a submodule the STATUS.md at the top of the superproject counts, never the submodule\'s own', () => {
+  const s = briefSession();
+  const ui = join(s.project, 'libs', 'ui');
+  mkdirSync(join(ui, 'src'), { recursive: true });
+  git(ui, 'init', '-q');
+  git(ui, 'commit', '-q', '--allow-empty', '-m', 'first');
+  git(s.project, 'add', 'libs/ui'); // the superproject's index holds libs/ui as a gitlink: a submodule
+  ignoreStatus(ui);
+  writeFileSync(join(ui, 'STATUS.md'), RULES);
+  const call = { prompt: PROMPT, subagent_type: 'implementer' };
+  assert.equal(s.send(call, { cwd: join(ui, 'src') }), null, 'the superproject has none');
+  writeFileSync(s.status, RULES);
+  assert.deepEqual(s.send(call, { cwd: join(ui, 'src') }), allowed({ ...call, prompt: `${rulesLine(s.status)}\n${PROMPT}` }));
+});
+
+test('outside git only the STATUS.md in cwd itself counts', () => {
+  const s = briefSession();
+  const call = { prompt: PROMPT, subagent_type: 'implementer' };
   const loose = mkdtempSync(join(tmpdir(), 'brief-no-git-'));
   mkdirSync(join(loose, 'sub'));
   writeFileSync(join(loose, 'STATUS.md'), RULES);
-  assert.equal(s.send(call, { cwd: join(loose, 'sub') }), null, 'outside git only the folder itself counts');
+  assert.equal(s.send(call, { cwd: join(loose, 'sub') }), null, 'a parent folder does not count');
   assert.deepEqual(s.send(call, { cwd: loose }), allowed({ ...call, prompt: `${rulesLine(join(loose, 'STATUS.md'))}\n${PROMPT}` }));
+});
+
+test('git missing from PATH: no rules line, and the call still runs with its model', () => {
+  const noGit = mkdtempSync(join(tmpdir(), 'brief-no-git-path-'));
+  const s = briefSession('medium', 'brief-project-', { PATH: noGit, Path: noGit }); // Path: the name Windows uses
+  writeFileSync(s.status, RULES);
+  assert.equal(s.send({ prompt: PROMPT, subagent_type: 'implementer' }), null);
+  const explore = { prompt: PROMPT, subagent_type: 'Explore' };
+  assert.deepEqual(s.send(explore), allowed({ ...explore, model: 'sonnet' }));
 });
 
 test('a STATUS.md that links out of the project is ignored, a link inside it counts; a FIFO or folder is never read', posixOnly, () => {

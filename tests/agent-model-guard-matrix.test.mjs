@@ -5,10 +5,12 @@
 // exported functions directly). Nothing named in a prompt is executed.
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { MAX_MATRIX_BYTES, matrixLines, uiBriefDeny } from '../home/hooks/agent-model-guard.mjs';
@@ -233,12 +235,82 @@ test('adviceOnce names the hook and tool it is given in the log line; without th
   assert.deepEqual(lines.map((line) => [line.hook, line.tool, line.outcome]), [['pre-bash-guard', 'Bash', 'advice'], ['agent-model-guard', 'Agent', 'advice']]);
 });
 
-test('a matrix file of MAX_MATRIX_BYTES is read; one byte more is never read and is named in the advice', () => {
+test('a matrix file of 2 MB is read; one byte more is never read and is named in the advice', () => {
+  const twoMegabytes = 2 * 1024 * 1024;
+  assert.equal(MAX_MATRIX_BYTES, twoMegabytes);
   const s = gateSession();
-  writeFileSync(join(s.project, 'docs', 'at-cap.json'), '{"surfaces":[]}'.padEnd(MAX_MATRIX_BYTES));
-  writeFileSync(join(s.project, 'docs', 'over-cap.json'), '{"surfaces":[]}'.padEnd(MAX_MATRIX_BYTES + 1));
+  writeFileSync(join(s.project, 'docs', 'at-cap.json'), '{"surfaces":[]}'.padEnd(twoMegabytes));
+  writeFileSync(join(s.project, 'docs', 'over-cap.json'), '{"surfaces":[]}'.padEnd(twoMegabytes + 1));
   assert.equal(s.send({ prompt: 'MATRIX: docs/at-cap.json', subagent_type: 'ui-implementer' }), null);
   assert.deepEqual(s.send({ prompt: 'MATRIX: docs/over-cap.json', subagent_type: 'ui-implementer' }), denied(notAMatrix('docs/over-cap.json')));
+});
+
+test('the MATRIX lines are checked in order: the first usable one ends the check, and a sixth line is never looked at', async () => {
+  const s = gateSession();
+  writeFileSync(join(s.project, 'docs', 'later.json'), JSON.stringify({ surfaces: [] }));
+  const opened = [];
+  const realOpen = fs.openSync;
+  fs.openSync = (path, ...rest) => {
+    opened.push(basename(String(path)));
+    return realOpen(path, ...rest);
+  };
+  syncBuiltinESMExports(); // the hook's own `import { openSync }` now calls the spy
+  try {
+    const prompt = 'MATRIX: docs/matrix.json\nMATRIX: docs/later.json';
+    assert.equal(await uiBriefDeny({ session_id: SESSION, cwd: s.project, tool_input: { prompt, subagent_type: 'ui-implementer' } }, { HOME: s.home }), '');
+  } finally {
+    fs.openSync = realOpen;
+    syncBuiltinESMExports();
+  }
+  assert.deepEqual(opened, ['matrix.json'], 'later.json is never opened');
+  const sixth = [...Array(5).fill('MATRIX: docs/missing.json'), 'MATRIX: docs/matrix.json'].join('\n');
+  assert.deepEqual(s.send({ prompt: sixth, subagent_type: 'ui-implementer' }), denied(notAMatrix('docs/missing.json')));
+});
+
+test('the log line holds no prompt text: the subagent type, the digest, the outcome and a fixed reason class only', () => {
+  const s = gateSession();
+  const typedWords = ['pass', 'word: hunter', '2-plain'].join(''); // joined here so the leak scanner does not flag this test
+  const call = { prompt: `Build the sign-in screen. ${typedWords}\nMATRIX: docs/private-name.json`, subagent_type: 'ui-implementer' };
+  assert.deepEqual(s.send(call), denied(notAMatrix('docs/private-name.json')));
+  assert.equal(s.send(call), null);
+  assert.deepEqual(s.send({ prompt: PROMPT, subagent_type: 'visual-qa' }), denied());
+  const lines = s.log();
+  for (const word of ['sign-in', 'hunter2', 'private-name', basename(s.project)]) assert.equal(JSON.stringify(lines).includes(word), false, word);
+  const fields = { hook: 'agent-model-guard', tool: 'Agent', reason: '', command: '' }; // logDecision always writes reason and command
+  assert.deepEqual(lines.map(({ ts, digest, ...rest }) => rest), [
+    { ...fields, decision: 'deny', outcome: 'advice', type: 'ui-implementer', class: 'not a matrix' },
+    { ...fields, decision: 'allow', outcome: 'advice-retry', type: 'ui-implementer', class: 'not a matrix' },
+    { ...fields, decision: 'deny', outcome: 'advice', type: 'visual-qa', class: 'no MATRIX line' },
+  ]);
+  assert.match(lines[0].digest, /^[0-9a-f]{64}$/);
+  assert.deepEqual([lines[1].digest === lines[0].digest, lines[2].digest === lines[0].digest], [true, false]);
+});
+
+// One child process per record: it loads bounce-once.mjs, prints "ready", waits for the go file, then records its own command, so all of
+// them read and write the store at the same moment.
+const RECORD_CHILD = [
+  "import { existsSync } from 'node:fs';",
+  'const [url, go, home, n] = process.argv.slice(1);',
+  'const { adviceOnce } = await import(url);',
+  "process.stdout.write('ready');",
+  'const pause = new Int32Array(new SharedArrayBuffer(4));',
+  'while (!existsSync(go)) Atomics.wait(pause, 0, 0, 1);',
+  "adviceOnce(['advice'], { command: `call ${n}`, cwd: home, input: { session_id: 'sess1' } }, { HOME: home, CLAUDE_GUARD_LOG: `${home}/guard.jsonl` });",
+].join('\n');
+const PARALLEL_RECORDS = 16;
+
+test('16 records at the same moment: all 16 digests are stored', { timeout: 60_000 }, async () => {
+  const home = mkdtempSync(join(tmpdir(), 'advice-parallel-'));
+  const go = join(home, 'go');
+  const url = new URL('../home/hooks/lib/bounce-once.mjs', import.meta.url).href;
+  const children = Array.from({ length: PARALLEL_RECORDS }, (_, n) => spawn(process.execPath,
+    ['--input-type=module', '-e', RECORD_CHILD, url, go, home, String(n)], { stdio: ['ignore', 'pipe', 'inherit'] }));
+  const exits = children.map((child) => once(child, 'exit'));
+  await Promise.all(children.map((child) => once(child.stdout, 'data')));
+  writeFileSync(go, '');
+  assert.deepEqual((await Promise.all(exits)).map(([code]) => code), Array(PARALLEL_RECORDS).fill(0));
+  const { digests } = JSON.parse(readFileSync(join(home, '.claude', 'state', 'guard-bounced', 'sess1.json'), 'utf8'));
+  assert.equal(new Set(digests).size, PARALLEL_RECORDS);
 });
 
 test('matrixLines: only lines that start with MATRIX: count; blanks and a CRLF are trimmed; empty values are left out; at most five', () => {

@@ -15,15 +15,15 @@
 // command, which is judged fresh.
 // Log: one line with outcome "bounce" and the bounce classes in `class`; it holds no command or reason text.
 // Invariants of bounceOnce: never an allow; a bounce only once its digest is stored, so the retry can ask; anything uncertain (no or odd session id, an
-// unusable, corrupt or oversized store, a failed write, an exception) returns undefined, which is today's ask. Two hooks writing at the same
-// moment cannot corrupt the file (temp file + rename), but one may drop the other's new digest: that command is then bounced once more,
-// never allowed. Subagents share their session's id, so they share its store.
+// unusable, corrupt or oversized store, a failed write, an exception) returns undefined, which is today's ask. Hooks recording at the same
+// moment take turns (lib/session-store.mjs withSessionLock), so none drops another's digest, and the file is never half-written (temp file
+// + rename); a store still locked after the wait records nothing (today's ask). Subagents share their session's id, so they share its store.
 // Advice (adviceOnce): a quality rule (lib/reason-classes.mjs ADVICE_CLASSES), not a safety rule. decide() returns it apart from the reasons
 // that ask, as `advice`, so it can never hide or replace one. A command whose only reasons are advice is denied once with the advice (log
 // outcome "advice") and its identical retry runs without the owner (outcome "advice-retry"); same store, same match as a bounce. Next to a
 // reason that asks or bounces, that path decides as before and its message only names the advice classes ("also: merge commit",
 // withAdvice): the advice text says its retry runs, which is false there. Every advice decision is logged like an ask (masked, cut command;
-// the advice as the reason). Advice that cannot be recorded (unusable store, no or odd session id, any failure) runs, logged
+// the advice as the reason); an Agent call passes `logged` instead (no prompt text: fixed fields, and the digest). Advice that cannot be recorded (unusable store, no or odd session id, any failure) runs, logged
 // "advice-unrecorded": a deny with no record would come back on every retry and stall the agent, and advice never asks the owner.
 // Decision table: what the hook answers, by the kinds of reasons decide() found ("ask" = lib/remembered-ask.mjs: a secret the owner already
 // allowed runs silently, its advice still given once as in the advice-only row; else the timed dialog, or the CLI's ask without a GUI):
@@ -38,7 +38,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { logDecision } from './guard-log.mjs';
 import { BOUNCE_CLASS, BOUNCE_CLASSES, reasonClass } from './reason-classes.mjs';
-import { readSessionFile, writeSessionFile } from './session-store.mjs';
+import { readSessionFile, withSessionLock, writeSessionFile } from './session-store.mjs';
 import { decisionOutput } from './timed-ask.mjs';
 import { BACKSTOP_MARK, secretKindOf } from './verdict.mjs';
 
@@ -110,15 +110,18 @@ function parseDigests(text) {
 }
 
 /**
- * Records one send of a command in this session's store.
+ * Records one send of a command in this session's store, holding the store's lock from the read to the write.
  * @returns {'first' | 'retry' | undefined} 'first' when the digest was not stored before and now is; 'retry' when it was stored before;
- *   undefined when the store is unusable or damaged, or the write failed
+ *   undefined when the store is unusable, damaged or still locked, or the write failed
  */
 function recordSend(session, digest, env) {
-  const stored = parseDigests(readSessionFile(bouncedDir(env), session, MAX_STORE_BYTES));
-  if (stored === undefined) return undefined;
-  if (stored.includes(digest)) return 'retry';
-  return writeSessionFile(bouncedDir(env), session, JSON.stringify({ digests: [...stored, digest].slice(-MAX_BOUNCED) })) ? 'first' : undefined;
+  const dir = bouncedDir(env);
+  return withSessionLock(dir, session, () => {
+    const stored = parseDigests(readSessionFile(dir, session, MAX_STORE_BYTES));
+    if (stored === undefined) return undefined;
+    if (stored.includes(digest)) return 'retry';
+    return writeSessionFile(dir, session, JSON.stringify({ digests: [...stored, digest].slice(-MAX_BOUNCED) })) ? 'first' : undefined;
+  });
 }
 
 const ADVICE_NOTE = 'also: ';
@@ -162,18 +165,23 @@ export function bounceOnce(ask, { command, cwd, input }, env = process.env) {
  * The hook stdout for a command whose only reasons are advice (decide's `allow: true` with `advice`, or an ask lib/remembered-ask.mjs
  * found already answered); see the decision table above. Every call writes one log line: the masked command, the advice as the reason.
  * @param {string[]} advice decide's `advice` (fixed texts, see lib/reason-classes.mjs)
- * @param {{command: string, cwd: string, input: {session_id?: unknown}, hook?: string, tool?: string}} call the call being guarded;
- *   hook and tool name it in the log line (default pre-bash-guard and Bash; agent-model-guard.mjs passes its own for an Agent call)
+ * @param {{command: string, cwd: string, input: {session_id?: unknown}, hook?: string, tool?: string, logged?: object}} call the call
+ *   being guarded; hook and tool name it in the log line (default pre-bash-guard and Bash; agent-model-guard.mjs passes its own for an
+ *   Agent call). logged, when given, replaces the advice, command, cwd and session in the log line (the digest is added): agent-model-guard
+ *   passes fixed fields, so no prompt text reaches the log
  * @param {Record<string, string | undefined>} env process environment (HOME, CLAUDE_GUARD_LOG)
  * @returns {string} a PreToolUse deny JSON line on the first send; '' (no decision: the command runs) on the identical retry, and when
  *   the send cannot be recorded (logged "advice-unrecorded"), so a deny never repeats and the owner is never asked
  */
-export function adviceOnce(advice, { command, cwd, input, hook = 'pre-bash-guard', tool = 'Bash' }, env = process.env) {
-  const log = (decision, outcome) => logDecision({ hook, tool, decision, outcome, reason: advice.join('; '), command,
-    cwd, session: input.session_id, class: unique(advice.map(reasonClass)).join(', ') }, env);
+export function adviceOnce(advice, { command, cwd, input, hook = 'pre-bash-guard', tool = 'Bash', logged }, env = process.env) {
+  const details = (digest) => (logged === undefined
+    ? { reason: advice.join('; '), command, cwd, session: input.session_id, class: unique(advice.map(reasonClass)).join(', ') }
+    : { ...logged, digest });
+  const log = (decision, outcome, digest) => logDecision({ hook, tool, decision, outcome, ...details(digest) }, env);
   try {
-    const send = recordSend(input.session_id, digestOf(cwd, command), env);
-    log(send === 'first' ? 'deny' : 'allow', ADVICE_OUTCOMES.get(send) ?? ADVICE_UNRECORDED);
+    const digest = digestOf(cwd, command);
+    const send = recordSend(input.session_id, digest, env);
+    log(send === 'first' ? 'deny' : 'allow', ADVICE_OUTCOMES.get(send) ?? ADVICE_UNRECORDED, digest);
     return send === 'first' ? decisionOutput({ decision: 'deny', reason: [ADVICE_HEADER, ...advice.map((line) => `- ${line}`)].join('\n') }) : '';
   } catch {
     log('allow', ADVICE_UNRECORDED); // logDecision never throws

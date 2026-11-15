@@ -12,8 +12,10 @@
 // starts (after optional blanks) with `MATRIX: <path>` naming a coverage matrix (a JSON object with a `surfaces` array; a relative path
 // starts at the call's cwd, `~` is the home folder) or with `MATRIX: none: <reason>` (15+ characters). Otherwise it is denied once with
 // the ui-coverage init advice and the identical call sent again runs: lib/bounce-once.mjs adviceOnce keeps the digest of cwd, type and
-// prompt in this session's store and logs "advice", "advice-retry" or "advice-unrecorded". A quality hint, not a safety rule: never the
-// owner, and any failure lets the call run. The path comes from the prompt, so it is untrusted: it is stat-ed and read only as a regular
+// prompt in this session's store and logs "advice", "advice-retry" or "advice-unrecorded" with the subagent type, the digest and a fixed
+// reason class only (no prompt text). The MATRIX lines are checked in order, at most MAX_MATRIX_LINES, and the first usable one ends the
+// check. A quality hint, not a safety rule: never the owner, and any failure lets the call run. The path comes from the prompt, so it is
+// untrusted: it is stat-ed and read only as a regular
 // file of at most MAX_MATRIX_BYTES, never run, its content never printed, and a UNC or device path (two leading slashes or backslashes)
 // is never looked up; the deny text quotes it without control characters, cut short.
 // Only these two types load the Bash guard's modules, so the routing never depends on them.
@@ -41,7 +43,7 @@ const MAX_MATRIX_LINES = 5; // a brief names one matrix; the cap bounds the file
 const NONE_PREFIX = 'none:';
 const MIN_REASON_CHARS = 15; // what ui-coverage asks of every reason
 const MAX_PATH_CHARS = 4096; // PATH_MAX on Linux: a longer value is not looked up
-export const MAX_MATRIX_BYTES = 16 * 1024 * 1024; // far above a real matrix; keeps the read well inside the hook's 5 s timeout
+export const MAX_MATRIX_BYTES = 2 * 1024 * 1024; // 2 MB: far above a real matrix (a few KB); bounds the memory and time of one read
 const MAX_QUOTED_CHARS = 200; // how much of a named path the deny text quotes
 const HOME_PREFIX = /^~(?=$|[\\/])/; // `~` and `~/...`; `~user` is left as it is
 // A UNC or device path (\\host\share, //host/share, \\.\pipe\x): on Windows a lookup reaches the network (and may send the user's
@@ -52,6 +54,9 @@ const INIT_ADVICE = 'Before the first UI lane run `node ~/.claude/tools/ui-cover
   + '--surfaces .. [--frames frames.json]` and add the line `MATRIX: <path>` (or `MATRIX: none: <reason>` for a one-file tweak with no Figma).';
 const SEND_AGAIN = 'Send the same call again unchanged and it runs.';
 const SHORT_REASON = `\`MATRIX: none:\` needs a reason of ${MIN_REASON_CHARS} or more characters.`;
+// The log names the problems by these fixed classes, never by prompt text
+const NO_MATRIX_LINE = 'no MATRIX line';
+const problemClass = (problem) => (problem === SHORT_REASON ? 'short none reason' : 'not a matrix');
 
 /**
  * The Agent input with the model this call needs when it names none (the same in every mode).
@@ -125,12 +130,18 @@ export async function uiBriefDeny(input, env = process.env) {
     const { subagent_type: type, prompt } = input?.tool_input ?? {};
     if (!UI_AGENT_TYPES.includes(type) || typeof prompt !== 'string') return '';
     const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-    const problems = matrixLines(prompt).map((value) => matrixProblem(value, cwd, env));
-    if (problems.includes(undefined)) return ''; // one usable MATRIX line is enough
+    const problems = [];
+    for (const value of matrixLines(prompt)) {
+      const problem = matrixProblem(value, cwd, env);
+      if (problem === undefined) return ''; // one usable MATRIX line is enough: the files named after it are never read
+      problems.push(problem);
+    }
     const advice = [...new Set(problems), INIT_ADVICE];
+    const logged = { type, class: problems.length === 0 ? NO_MATRIX_LINE : [...new Set(problems.map(problemClass))].join(', ') };
     const { adviceOnce } = await import('./lib/bounce-once.mjs');
-    // adviceOnce stores the digest (the identical retry runs) and logs the send; its deny text is worded for Bash, so the gate words its own
-    const recorded = adviceOnce(advice, { command: `${type}: ${prompt}`, cwd, input, hook: 'agent-model-guard', tool: 'Agent' }, env);
+    // adviceOnce stores the digest (the identical retry runs) and logs the send as `logged`; its deny text is worded for Bash, so the gate
+    // words its own
+    const recorded = adviceOnce(advice, { command: `${type}: ${prompt}`, cwd, input, hook: 'agent-model-guard', tool: 'Agent', logged }, env);
     return recorded === '' ? '' : denyOutput([NOT_STARTED, ...advice.map((line) => `- ${line}`), SEND_AGAIN].join('\n'));
   } catch {
     return ''; // a quality hint, not a safety rule: any failure lets the call run
