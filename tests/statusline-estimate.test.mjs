@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { estimateFile } from '../home/tools/estimate/lib/from-files.mjs';
-import { runningRange } from '../home/tools/estimate/lib/report.mjs';
+import { finishClock } from '../home/tools/estimate/lib/report.mjs';
 import {
   MAX_CACHE_BYTES, REFRESH_INTERVAL_MS, STALE_SHOW_MS, estimateSegment, readEntry, writeEntry,
 } from '../home/tools/estimate/lib/segment-cache.mjs';
@@ -20,9 +20,16 @@ const STATUSLINE = fileURLToPath(new URL('../home/statusline.mjs', import.meta.u
 const REFRESH_SCRIPT = fileURLToPath(new URL('../home/tools/estimate/statusline-cache.mjs', import.meta.url));
 const SEGMENT_LIB = fileURLToPath(new URL('../home/tools/estimate/lib/segment-cache.mjs', import.meta.url));
 const NOW = 1_800_000_000_000;
-const SEGMENT = 'est 3-5h left';
+const SEGMENT = 'done ~14:50-16:15';
 const USABLE_DOC = statusDoc(fiveDoneRows([row({ id: 'O1', size: 'L' })]));
 const REFUSED_DOC = statusDoc([row({ id: 'D1', startedH: 0, doneH: 1 }), row({ id: 'O1' })]); // one done item: refused, exit 3
+const DELIVERED_DOC = statusDoc(fiveDoneRows([row({ id: 'C1', item: 'close: row', startedH: 13, doneH: 14 })])); // nothing open after a delivery
+const iso = (ms) => new Date(ms).toISOString();
+const refreshIn = (root, projectDir, statusPath) => {
+  const home = join(root, 'home');
+  const run = spawnSync(process.execPath, [REFRESH_SCRIPT, statusPath], { cwd: projectDir, env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
+  return { run, entry: readEntry(join(home, '.claude', 'state', 'estimate-segment'), statusPath) };
+};
 
 /** A project folder with a STATUS.md and an empty cache folder; `spawns` records every refresh the render asked for. */
 async function setup(doc = USABLE_DOC) {
@@ -132,26 +139,28 @@ test('the render function takes only the cache entry and the file stat, never a 
   assert.deepEqual(imports.filter((name) => /compute|limits|items|from-files/.test(name)), []);
 });
 
-test('the refresh script writes the text the estimate lib returns for the same STATUS.md', async () => {
+test('the refresh script writes "done ~<finish clock>" from the estimate lib for the same STATUS.md', async () => {
   const { root, projectDir, statusPath } = await setup();
-  const home = join(root, 'home');
-  const run = spawnSync(process.execPath, [REFRESH_SCRIPT, statusPath], { cwd: projectDir, env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
+  const before = Date.now();
+  const { run, entry } = refreshIn(root, projectDir, statusPath);
+  const after = Date.now();
   assert.equal(run.status, 0, run.stderr);
-  const { result } = estimateFile(statusPath, { cwd: projectDir, transcripts: root });
-  const entry = readEntry(join(home, '.claude', 'state', 'estimate-segment'), statusPath);
-  assert.equal(entry.text, `est ${runningRange(result)}h left`);
+  // the script reads the clock itself: its text is the lib's text at some instant between the two readings
+  const expected = [before, after].map((now) => `done ~${finishClock(estimateFile(statusPath, { cwd: projectDir, transcripts: root, now: iso(now) }).result)}`);
+  assert.ok(expected.includes(entry.text), `${entry.text} not in ${expected}`);
+  assert.match(entry.text, /^done ~(\w{3} )?\d\d:\d\d-\d\d:\d\d$/);
   assert.equal(entry.size, (await stat(statusPath)).size);
   assert.equal(entry.mtimeMs, (await stat(statusPath)).mtimeMs);
 });
 
-test('the refresh script caches "no text" when the tool refuses (exit 3 case)', async () => {
-  const { root, projectDir, statusPath } = await setup(REFUSED_DOC);
-  const home = join(root, 'home');
-  const run = spawnSync(process.execPath, [REFRESH_SCRIPT, statusPath], { cwd: projectDir, env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
-  assert.equal(run.status, 0, run.stderr);
-  const entry = readEntry(join(home, '.claude', 'state', 'estimate-segment'), statusPath);
-  assert.equal(entry.text, null);
-  assert.equal(run.stdout + run.stderr, '');
+test('the refresh script caches "no text" when the tool refuses (exit 3 case) or the job is delivered', async () => {
+  for (const doc of [REFUSED_DOC, DELIVERED_DOC]) {
+    const { root, projectDir, statusPath } = await setup(doc);
+    const { run, entry } = refreshIn(root, projectDir, statusPath);
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(entry.text, null);
+    assert.equal(run.stdout + run.stderr, '');
+  }
 });
 
 test('the status line prints the segment from a fresh cache and omits it without STATUS.md', async () => {
@@ -164,6 +173,6 @@ test('the status line prints the segment from a fresh cache and omits it without
     env: { ...process.env, HOME: home, USERPROFILE: home },
     encoding: 'utf8',
   }).stdout;
-  assert.match(render(projectDir), /est 3-5h left/);
-  assert.doesNotMatch(render(root), /est /);
+  assert.match(render(projectDir), /done ~14:50-16:15/);
+  assert.doesNotMatch(render(root), /done ~/);
 });

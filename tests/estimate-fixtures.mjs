@@ -8,14 +8,15 @@ export const FIRST_ROW_LINE = 7;
 /** ISO 8601 UTC string `hours` after BASE_MS, minute precision (`2026-11-10T01:30Z`). */
 export const iso = (hours) => new Date(BASE_MS + hours * HOUR_MS).toISOString().replace(':00.000Z', 'Z');
 
-/** One table row; startedH/doneH are hours after BASE_MS or undefined for `-`; `raw` overrides a cell text. */
-export function row({ id, size = 'S', startedH, doneH, evidence = 'abc1234', raw = {} }) {
+/** One table row; startedH/doneH are hours after BASE_MS or undefined for `-`; `item` is the item cell (a `close:` or `rework:`
+ * prefix sets the row's kind); `raw` overrides a cell text. */
+export function row({ id, item = `item ${id}`, size = 'S', startedH, doneH, evidence = 'abc1234', raw = {} }) {
   const cells = {
     started: startedH === undefined ? '-' : iso(startedH),
     done: doneH === undefined ? '-' : iso(doneH),
     ...raw,
   };
-  return `| ${id} | item ${id} | ${size} | ${cells.started} | ${cells.done} | ${evidence} |`;
+  return `| ${id} | ${item} | ${size} | ${cells.started} | ${cells.done} | ${evidence} |`;
 }
 
 /** A STATUS.md with the `## Work items` table (header on line 5, first row on FIRST_ROW_LINE). */

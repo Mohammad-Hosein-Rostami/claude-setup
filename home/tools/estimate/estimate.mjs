@@ -1,15 +1,16 @@
 #!/usr/bin/env node
-// CLI of the work estimate: reads the `## Work items` table of a STATUS.md plus the project's lead transcripts and prints
-// a range of agent-hours, running time and calendar days (paste the output as-is; never quote a number of your own).
+// CLI of the finish estimate: reads the `## Work items` table of a STATUS.md plus the project's lead transcripts and prints
+// when the whole job is finished as a local clock range (line 1, `Finish:`), then what it includes, excludes and assumes
+// (paste the block as-is; never quote a number of your own). Clock times use the system time zone (`TZ` is honoured).
 // Usage: estimate.mjs <STATUS.md> [--transcripts <dir>] [--now <iso>]
 //        --transcripts  folder of the lead transcripts (*.jsonl, not subagents); default: ~/.claude/projects/<slug of cwd>,
 //                       walking up to the nearest parent whose folder exists (never the home folder); a missing or
 //                       unreadable path given here is exit 2
 //        --now          the "computed" stamp and the latest allowed started/done (default: the real clock)
-// Exit codes: 0 estimate printed; 2 usage or parse error (the file, a cell or a flag is wrong; the message names the row
-// line); 3 refused (the table reads fine but cannot support a number: fewer than 5 done items with started, done and
-// evidence, a done row without started, a time later than --now, a done item with no working time). Nothing that looks
-// like an estimate is printed on 2 or 3; transcript content is never printed.
+// Exit codes: 0 finish printed; 2 usage or parse error (the file, a cell or a flag is wrong; the message names the row
+// line); 3 refused (`No finish time:` and `What to do:`: fewer than 5 done items with started, done and evidence, a done row
+// without started, a time later than --now, a done item with no working time, or a closing phase already longer than every
+// closing measured). Nothing that looks like an estimate is printed on 2 or 3; transcript content is never printed.
 // Invariants: logic lives in lib/ (pure); this file only parses arguments, reads files and prints. It never writes.
 import { UsageError, estimateFile } from './lib/from-files.mjs';
 import { formatEstimate, formatRefusal } from './lib/report.mjs';

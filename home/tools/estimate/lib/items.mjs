@@ -1,5 +1,7 @@
 // Parses the `## Work items` table of a STATUS.md into work items plus per-row problems.
 // Exports: parseWorkItems(markdown) -> { items, problems }; parseInstant(text) -> epoch ms | null; INSTANT_FORMAT; SIZE_POINTS (S=1, M=2, L=4).
+// Each item has a kind: 'close' when the item cell starts `close:` (review, fixes from a review, recheck, gate, landing,
+// hand-over report), 'rework' when it starts `rework:` (an owner correction), else 'build'; case-insensitive.
 // Invariants: pure (no I/O); line numbers are 1-based in the given text (a leading BOM and CRLF do not change them); exactly
 // one `## Work items` section and one contiguous table in it, else a problem (nothing is skipped silently); a time must be a
 // real ISO 8601 instant (see INSTANT_FORMAT), a bare `10:45` or `2026-02-30T08:00Z` is a problem; `-` or an empty cell means
@@ -18,6 +20,10 @@ const MAX_OFFSET_MINUTES = 59;
 const EMPTY_CELL = '-';
 const PLACEHOLDER_EVIDENCE = /^(x+|n\/?a|none|tbd|todo|\?+|\.+)$/i;
 const PIPES_OF_A_ROW = EXPECTED_COLUMNS.length - 1;
+const KIND_PREFIXES = [['close', /^\s*close:/i], ['rework', /^\s*rework:/i]];
+
+/** The row's kind from its item cell prefix: 'close', 'rework' or 'build'. */
+const kindOf = (item) => KIND_PREFIXES.find(([, prefix]) => prefix.test(item))?.[0] ?? 'build';
 
 /** Splits a table line into trimmed cells; `\|` stays inside a cell. */
 function cellsOf(line) {
@@ -65,7 +71,7 @@ function parseRow(cells, line) {
   if (done.value !== null && evidence === '') return fail('done without evidence (commit sha, file path or `check: <cmd> PASS`)');
   if (done.value !== null && PLACEHOLDER_EVIDENCE.test(evidence)) return fail(`evidence "${evidence}" is a placeholder (commit sha, file path or \`check: <cmd> PASS\`)`);
   if (done.value !== null && started.value !== null && done.value <= started.value) return fail('done is not after started');
-  return { item: { id, item, size, points: SIZE_POINTS[size], started: started.value, done: done.value, evidence, line } };
+  return { item: { id, item, kind: kindOf(item), size, points: SIZE_POINTS[size], started: started.value, done: done.value, evidence, line } };
 }
 
 /** For each line: true when it is outside code fences. */

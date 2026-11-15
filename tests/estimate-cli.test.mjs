@@ -12,7 +12,7 @@ import { FIRST_ROW_LINE, LIMIT_TEXT, assistant, fiveDoneRows, jsonl, row, status
 const CLI = fileURLToPath(new URL('../home/tools/estimate/estimate.mjs', import.meta.url));
 const NOW = '2026-11-14T12:00:00Z';
 const run = (...args) => {
-  const result = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
+  const result = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env: { ...process.env, TZ: 'UTC' } }); // fixed zone: clock lines are exact
   return { ...result, all: `${result.stdout}${result.stderr}` };
 };
 
@@ -23,15 +23,17 @@ async function workdir(doc) {
   return { dir, status };
 }
 
-test('five done items give exit 0 and the pasted block with the slowest-fastest hours', async () => {
+test('five done items give exit 0 and the Finish block on the local clock (TZ honoured), starting with a weekday', async () => {
   const { status, dir } = await workdir(statusDoc(fiveDoneRows([row({ id: 'O1', size: 'L' })])));
   const result = run(status, '--transcripts', dir, '--now', NOW); // a folder with no .jsonl file
   assert.equal(result.status, 0, result.stderr);
   const lines = result.stdout.trim().split('\n');
-  assert.equal(lines[0], `Estimate (computed ${NOW} by estimate.mjs from ${status})`);
-  assert.equal(lines[1], 'Remaining: 1 item, 4 points (0 in flight, counted whole)');
-  assert.equal(lines[2], 'Agent-hours: 4-12 (median 8; range from the slowest and fastest of 5 finished items)');
-  assert.match(result.stdout, /usage-limit idle: not measured \(no transcripts at .*estimate-/);
+  assert.equal(lines[0], 'Finish: Sat 14 Nov 17:20 - Sun 15 Nov 02:30 (local +00:00, now 12:00)'); // now + 4 + 1.4 .. now + 12 + 2.5 h
+  assert.equal(lines[1], 'Includes: 1 open row (0 running); build 4-12 h (O1, 1 lane), then the closing phase 1.4-2.5 h in series (review, fix rounds, recheck, landing; default, not yet measured here)');
+  assert.equal(lines[5], 'Agent-hours: 4.0-12.0 for the open build rows, counted whole');
+  assert.match(result.stdout, /usage-limit windows not measured \(no transcripts at .*estimate-/);
+  const tehran = spawnSync(process.execPath, [CLI, status, '--transcripts', dir, '--now', NOW], { encoding: 'utf8', env: { ...process.env, TZ: 'Asia/Tehran' } });
+  assert.equal(tehran.stdout.split('\n')[0], 'Finish: Sat 14 Nov 20:50 - Sun 15 Nov 06:00 (local +03:30, now 15:30)');
 });
 
 test('four done items refuse with exit 3, name the rows missing started and print no agent-hours', async () => {
@@ -39,8 +41,8 @@ test('four done items refuse with exit 3, name the rows missing started and prin
   const { status } = await workdir(statusDoc(rows));
   const result = run(status, '--now', NOW);
   assert.equal(result.status, 3);
-  assert.match(result.all, new RegExp(`No estimate: 3 done items with started, done and evidence; need 5\\. Missing started on: M1 \\(line ${FIRST_ROW_LINE}\\)\\.`));
-  assert.doesNotMatch(result.all, /Agent-hours/);
+  assert.match(result.all, new RegExp(`No finish time: 3 done items with started, done and evidence; need 5\\. Missing started on: M1 \\(line ${FIRST_ROW_LINE}\\)\\.\nWhat to do: `));
+  assert.doesNotMatch(result.all, /Agent-hours|Finish:/);
 });
 
 test('a done row without evidence, size XL and a time without offset each exit 2 naming the line', async () => {
@@ -69,7 +71,7 @@ test('a missing table, a missing file, a bad flag and a bad --now exit 2', async
   assert.equal(run(ok.status, '--now', 'yesterday').status, 2);
 });
 
-test('limit windows from --transcripts reduce the hours and are counted in the From line', async () => {
+test('limit windows from --transcripts reduce the hours and are counted in the Assumes line', async () => {
   const { status, dir } = await workdir(statusDoc(fiveDoneRows([row({ id: 'O1', size: 'L' })])));
   const projects = join(dir, 'transcripts');
   await mkdir(join(projects, 'sub', 'subagents'), { recursive: true });
@@ -79,15 +81,15 @@ test('limit windows from --transcripts reduce the hours and are counted in the F
   const result = run(status, '--transcripts', projects, '--now', NOW);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /1 limit window \(2 h\) in 2 transcripts/);
-  assert.match(result.stdout, /usage-limit idle 15%/); // 2 h of a 13 h span
-  assert.match(result.stdout, /^Agent-hours: 4-8 \(median 4; range from the slowest and fastest of 5 finished items\)$/m); // D5 loses 2 h: r = 1,1,1,2,2
+  assert.match(result.stdout, /^Assumes: the table as it is now; 1-2 h\/point \(min-max of 5 done rows, 10 Nov\);/m); // D5 loses 2 h: r = 1,1,1,2,2
+  assert.match(result.stdout, /^Agent-hours: 4\.0-8\.0 for the open build rows, counted whole$/m);
 });
 
-test('nothing open prints Remaining: 0 items and exits 0', async () => {
-  const { status, dir } = await workdir(statusDoc(fiveDoneRows()));
+test('nothing open after a delivery prints when it was delivered and exits 0', async () => {
+  const { status, dir } = await workdir(statusDoc(fiveDoneRows([row({ id: 'C1', item: 'close: row', startedH: 13, doneH: 14 })])));
   const result = run(status, '--transcripts', dir, '--now', NOW);
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /^Remaining: 0 items$/m);
+  assert.equal(result.stdout.split('\n')[0], 'Finish: delivered Tue 10 Nov 14:00 (local +00:00)');
   assert.doesNotMatch(result.stdout, /Agent-hours/);
 });
 
@@ -96,7 +98,7 @@ test('nothing open prints Remaining: 0 items and exits 0', async () => {
 const HEADER_ROWS = ['| id | item | size | started | done | evidence |', '| -- | ---- | ---- | ------- | ---- | -------- |'];
 const assertNoEstimate = (result) => {
   assert.equal(result.stdout, '');
-  assert.doesNotMatch(result.all, /Agent-hours|Remaining: \d|Calendar:/);
+  assert.doesNotMatch(result.all, /Agent-hours|Finish:|Includes:/);
 };
 
 test('B1: two Work items sections and a row after a text line exit 2 naming the lines, with nothing on stdout', async () => {
@@ -146,8 +148,8 @@ test('S1/S2/S3: the block names the rate, the range basis with N and a note for 
   const { status, dir } = await workdir(statusDoc(fiveDoneRows([row({ id: 'O1', size: 'L' })])));
   const result = run(status, '--transcripts', dir, '--now', NOW);
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /^Rate: wall-clock time from started to done/m);
-  assert.match(result.stdout, /range from the slowest and fastest of 5 finished items/);
+  assert.match(result.stdout, /^Assumes: the table as it is now; /m);
+  assert.match(result.stdout, /min-max of 5 done rows/);
   assert.match(result.stdout, /^Note: the newest started or done in the table is 4 days old \(2026-11-10T13:00Z\)/m);
 });
 
@@ -181,16 +183,17 @@ test('S6: --transcripts that is missing, a file, or holds an unreadable or direc
   assert.equal(denied.stdout, '');
 });
 
-test('everything done exits 0 with "Nothing remaining" and no hours; no items at all exits 3', async () => {
+test('everything done with only build rows long ago exits 3 (closing overrun); no items at all exits 3', async () => {
   const done = await workdir(statusDoc(fiveDoneRows()));
   const result = run(done.status, '--transcripts', done.dir, '--now', NOW);
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /^Nothing remaining: every item in the table is done/m);
-  assert.doesNotMatch(result.stdout, /Agent-hours|h at /);
+  assert.equal(result.status, 3);
+  assert.match(result.stderr, /^No finish time: the closing phase has run 95 h since the last build row was done \(D5, 13:00\)/);
+  assert.match(result.stderr, /\nWhat to do: tell the owner the job is past its usual closing;/);
+  assertNoEstimate(result);
   const empty = await workdir(statusDoc([]));
   const refused = run(empty.status, '--transcripts', empty.dir, '--now', NOW);
   assert.equal(refused.status, 3);
-  assert.match(refused.stderr, /^No estimate: 0 done items with started, done and evidence; need 5\.$/m);
+  assert.match(refused.stderr, /^No finish time: 0 done items with started, done and evidence; need 5\.\nWhat to do: finish and record more rows\.$/m);
   assertNoEstimate(refused);
 });
 
@@ -201,6 +204,6 @@ test('a table of 5000 rows with a UTF-8 BOM and CRLF line ends is parsed in well
   const began = Date.now();
   const result = run(status, '--transcripts', dir, '--now', '2035-01-01T00:00:00Z');
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /From: 5000 done items/);
+  assert.match(result.stdout, /p25-p75 of 5000 done rows/);
   assert.ok(Date.now() - began < 5000);
 });

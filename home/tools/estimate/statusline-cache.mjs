@@ -4,19 +4,20 @@
 // Usage: statusline-cache.mjs <STATUS.md>   (run in the project folder: its transcripts are the project's)
 // Writes ~/.claude/state/estimate-segment/<id>.json (see lib/segment-cache.mjs); prints nothing. Exit 0 when the cache was written
 // (also when the tool refused or could not read the table: the cache then holds text null); exit 1 on a bad call or a failed write.
-// Invariants: the text is "est <running time range>h left" from the lib's own running-time range, never computed here; the file's
+// Invariants: the text is "done ~<finish clock>" (e.g. `done ~14:50-16:15`, `done ~Sun 00:50-02:25` when the low end is not
+// today) from the lib's own finishClock, never computed here; no text after a refusal or a delivery. The file's
 // mtime and size are read BEFORE the estimate so a file edited meanwhile is seen as changed by the next render.
 import { statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { UsageError, estimateFile } from './lib/from-files.mjs';
-import { runningRange } from './lib/report.mjs';
+import { finishClock } from './lib/report.mjs';
 import { cacheDir, writeEntry } from './lib/segment-cache.mjs';
 
-/** The segment text, or null when the tool refuses, has nothing left to estimate or cannot read the table. */
+/** The segment text, or null when the tool refuses, the job is delivered or the table cannot be read. */
 function segmentText(statusPath) {
   try {
     const { result } = estimateFile(statusPath, { cwd: dirname(statusPath) });
-    return result.refused || result.openItems === 0 ? null : `est ${runningRange(result)}h left`;
+    return result.refused || result.delivered !== undefined ? null : `done ~${finishClock(result)}`;
   } catch (err) {
     if (err instanceof UsageError) return null; // a table or transcript folder the tool rejects: no segment, never an error text
     throw err;

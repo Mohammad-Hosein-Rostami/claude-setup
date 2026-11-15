@@ -84,7 +84,7 @@ function claimRefresh(dir, statusPath, entry, now) {
  * @param {string | undefined} projectDir the project folder from the status line's JSON; only `<projectDir>/STATUS.md` is looked at
  * @param {{cacheDir?: string, now?: number, spawnRefresh?: (statusPath: string, projectDir: string) => void}} [deps] the cache folder,
  *   the clock (epoch ms) and the refresh starter; tests replace them
- * @returns {string | null} e.g. "est 3-5h left", or null for no segment (no STATUS.md, tool refused, no cache yet, any error)
+ * @returns {string | null} e.g. "done ~14:50-16:15", or null for no segment (no STATUS.md, tool refused, no cache yet, any error)
  */
 export function estimateSegment(projectDir, deps = {}) {
   try {

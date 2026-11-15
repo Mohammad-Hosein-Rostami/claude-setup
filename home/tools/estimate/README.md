@@ -1,10 +1,12 @@
 # estimate
 
-Turns the `## Work items` table of a `STATUS.md` plus the project's lead transcripts into a range of agent-hours,
-running time and calendar days, so the lead never quotes an estimate from intuition. Node 22, no dependencies.
+Turns the `## Work items` table of a `STATUS.md` plus the project's lead transcripts into the local clock time when the
+whole job is finished: the open build rows, then the closing phase (review, fix rounds, recheck, landing) measured from
+this table's earlier deliveries, always in series. The lead pastes that `Finish:` block and never quotes an estimate from
+intuition. Node 22, no dependencies.
 
 Run: `node ~/.claude/tools/estimate/estimate.mjs STATUS.md [--transcripts <dir>] [--now <iso>]` and paste the output as-is.
-If it refuses (exit 3), say what is missing; never give a number of your own.
+If it refuses (exit 3), give its reason and its `What to do:`; never give a number of your own.
 
 ## Record (in STATUS.md)
 
@@ -25,7 +27,12 @@ Heading `## Work items`, then the table (the header row is checked):
   and `T24:00` are errors (checked by a strict pattern plus a calendar round trip, never shifted to another day).
   `done` must be after `started`, and neither may be later than `--now` (default: the real clock).
 - Done = `done` set and evidence non-empty (commit sha, file path or `check: <cmd> PASS`). A dropped open item: delete the row.
-- Rows without `done` are the remaining work; in-flight rows (`started`, no `done`) count whole.
+  Never clear a done cell: a correction of delivered work is a new row.
+- Kind, from the start of the item cell (case-insensitive): `close:` for review, fixes from a review, recheck, gate,
+  landing and the hand-over report; `rework:` for an owner correction; anything else is build work. Start the next
+  `close:` row when one ends: a closing chain that pauses 10 minutes or more with nothing running reads as a delivery.
+  Close rows may also be left out; the tool's closing phase covers them.
+- Rows without `done` are the remaining work; for in-flight rows (`started`, no `done`) the time already run is subtracted.
 - Exactly one `## Work items` section, and in it one contiguous table: the header (the six names in order, case and
   spaces ignored), the separator line, then the rows with no blank or text line between them. Anything that cannot be
   read is an error naming the line; no row is skipped. Ids are unique ignoring case. Write a pipe inside a cell as `\|`
@@ -34,17 +41,26 @@ Heading `## Work items`, then the table (the header row is checked):
 
 ## Formula
 
-- Per done item: d = (done - started) minus its overlap with usage-limit windows; r = d / points (hours per point).
-- Needs at least 5 done items with started, done and evidence. The range of r is the slowest and fastest item while there
-  are fewer than 10 done items; from 10 it is the nearest-rank p25..p75 band (rank = ceil(p x n)). The median (p50) is
-  printed beside it.
-- Agent-hours = open points x that range.
-- The rate is wall-clock time from started to done: waiting and nights inside an item stay in it. Only usage-limit windows
-  found in the transcripts are taken out.
-- L = sum(d) / length of the union of the done intervals minus limit windows (measured lanes); lanes used = min(L, open rows).
-  Running time = agent-hours / lanes used.
-- a = that union / span (first started .. last done). Calendar days = running time / a / 24. The usage-limit idle share
-  (limit time inside the span / span) is printed; it is already inside a.
+All durations are wall-clock time minus the usage-limit windows found in the transcripts (waiting and nights stay in).
+
+- Rate band (hours per point): every done row's (done - started) / points, plus every running row's (now - started) /
+  points as a lower bound. Needs at least 5 done items with started, done and evidence. The band is min..max below 10
+  values, from 10 the nearest-rank p25..p75 (rank = ceil(p x n)).
+- Build part B(r) over the open build and rework rows: remaining = max(0, points x r - time already run); B = the larger of
+  (sum of remaining / lanes) and the largest single remaining, so a long row is never split across lanes. Low end at the
+  band's low rate, high end at its high rate. Lanes = sum of done durations / their union (measured), clamped to
+  1..open build rows; close rows never count as lanes.
+- Delivery: the done time D of a `close:` row when every row started before D is done by D and no row starts in the 10
+  minutes after D (the real deliveries measured were followed by 19 and 470 quiet minutes, other quiet moments by 0-1).
+- Closing phase C: each delivery's tail = D minus the latest done of a non-close row since the previous delivery (else
+  the first start since it). C = min..max of the last 5 tails once 2 exist; before that the default 1.4-2.5 h (the tails
+  1.48, 2.40 and 2.43 h of two projects, 14-15 Nov, rounded outward), widened to include a single tail.
+- Elapsed E: 0 while a build or rework row is open; else the time since the latest non-close done after the last
+  delivery (else the first start after it).
+- Finish = now + [B(low) + max(0, C low - E), B(high) + max(0, C high - E)], on the local clock: the low end floored and
+  the high end ceiled to 5 minutes, at least 5 minutes apart.
+- Reopened: a delivery counts as reopened when a `rework:` row starts after it (up to the next delivery, or now); the
+  rework time runs from that first start to the next delivery, or to now ("so far").
 
 Usage-limit windows come from the lead transcripts (`<dir>/*.jsonl`, subagent folders are not read): a window starts at
 an assistant entry with `message.model == "<synthetic>"` whose text matches `/hit your .*limit/i` (so a synthetic
@@ -62,23 +78,21 @@ backslashes); pass `--transcripts` there.
 ## Output
 
 ```
-Estimate (computed <now> by estimate.mjs from <path>)
-Remaining: 9 items, 17 points (3 in flight, counted whole)
-Agent-hours: 14-24 (median 18; range from the slowest and fastest of 8 finished items)
-Running time: 5-8 h at 2.9 lanes (measured)
-Calendar: 0.4-0.7 days (active 46% of elapsed; usage-limit idle 21%)
-Rate: wall-clock time from started to done, so it includes waiting and nights; only usage-limit windows found in the transcripts are taken out.
-From: 8 done items <first>..<last>, 1.1-1.9 h/point (fastest-slowest), 2 limit windows (5.9 h) in 3 transcripts
-Note: the newest started or done in the table is 3.9 days old (2026-11-10T13:00Z); update STATUS.md if work happened since.
+Finish: Sun 15 Nov 14:50-16:15 (local +03:30, now 13:21)
+Includes: 2 open rows (1 running); build 0-0.4 h (H2, 1 lane), then the closing phase 1.5-2.4 h in series (review, fix rounds, recheck, landing; measured from 2 finished jobs here)
+Excludes: your review and any rework it starts (next line); usage-limit pauses from now on; steps only you do (push, deploy); requests that are not rows
+After your review: 1 of 2 earlier deliveries here were reopened by your corrections; that rework took 1.4 h so far (still open)
+Assumes: the table as it is now; 0.14-0.25 h/point (p25-p75 of 33 done + 1 running rows, 14..15 Nov); 1.0 lanes (measured 2.2, capped by 1 open build row); no limit windows in the transcripts
+Agent-hours: 0.6-1.0 for the open build rows, counted whole
 ```
 
-- With 10 or more done items the label reads `p25-p75 band of N finished items` and the From line `(p25-p75)`. When every rate is
-  equal the label adds `all rates equal, real spread unknown`.
-- The `Note:` line appears only when the newest `started` or `done` is more than 24 h before `--now` and rows remain open.
-- No transcripts: the limit part says `usage-limit idle: not measured (no transcripts at <dir>)`, durations are not reduced,
-  the Rate line says so, the calendar line is still printed.
-- Nothing open: `Remaining: 0 items` and `Nothing remaining: ...`, no hours lines (exit 0).
-- When open rows cap the lanes the running line says `(measured 2.0, capped by open items)`.
+- Local = the system time zone (`TZ` is honoured). A range across midnight reads `Sat 14 Nov 23:50 - Sun 15 Nov 01:10`.
+- Before 2 finished jobs the closing reads `1.4-2.5 h in series (...; default, not yet measured here)`; with one, `default,
+  widened by the 1 finished job here`. With no build row open: `no open build row: the closing phase ... has run 1.5 h`.
+- No delivery in the table yet: `After your review: not measured here yet (no earlier delivery in this table)`.
+- Nothing open and the last done row is a delivery: `Finish: delivered Sun 15 Nov 14:25 (local +03:30)` and the After line.
+- The `Note:` line (last) appears only when the newest `started` or `done` is more than 24 h before `--now` and rows remain open.
+- No transcripts: the Assumes line ends `usage-limit windows not measured (no transcripts at <dir>)`.
 
 ## Exit codes
 
@@ -89,7 +103,7 @@ to stderr only: no estimate figure ever reaches stdout. Transcript text is never
 | ---- | ------- |
 | 0 | estimate printed on stdout |
 | 2 | usage or parse error, one `<file>:<line>: <reason>` per problem (below), unreadable file, bad flag, bad `--now`, bad `--transcripts` |
-| 3 | refusal: `No estimate: ...` (below) |
+| 3 | refusal: `No finish time: ...` then `What to do: ...` (below) |
 
 Exit 2 messages and what to do:
 
@@ -110,22 +124,23 @@ Exit 2 messages and what to do:
 | `--now "X" is not a real ISO 8601 instant` | pass an instant like `2026-11-14T12:00Z` |
 | `--transcripts <path> is not a folder that exists`, `cannot read transcript <file>: EACCES ...` | fix the path or the permissions, or drop the flag |
 
-Exit 3 message: `No estimate: <sentences>`, each sentence only when it applies:
+Exit 3 message: `No finish time: <sentences>` then `What to do: <sentences>`, each only when it applies:
 
-| Sentence | Add or fix |
+| Reason | What to do |
 | -------- | ---------- |
-| `N done items with started, done and evidence; need 5.` | finish and record more items |
-| `Missing started on: M1 (line 41), ...` | fill `started` of those rows (the real start, or delete the row) |
+| `N done items with started, done and evidence; need 5.` | finish and record more rows |
+| `Missing started on: M1 (line 41), ...` | fill started of those rows with the real start, or delete the row |
 | `Later than now (<now>): F1 (line 12) started <time>, ...` | correct the time, or pass the right `--now` |
-| `No working time left after removing usage-limit windows: D1 (line 7), ...` | correct `started`/`done` of those rows: they lie inside limit windows |
+| `No working time left after removing usage-limit windows: D1 (line 7), ...` | correct started and done of those rows: they lie inside usage-limit windows |
+| `the closing phase has run 2.5 h since the last build row was done (H2, 14:13), longer than every closing measured here (1.5-2.4 h, 2 jobs).` | tell the owner the job is past its usual closing; this ends at delivery, whose length then joins the history. Work not in the table: add it as a row first |
 
 Long lists show the first five rows and `and N more`.
 
 ## Status line segment
 
-The status line shows `est 3-5h left` (the running-time range of the open work, in the report's own rounding) for the project
-whose `<project dir>/STATUS.md` the tool accepts. Nothing is shown when there is no STATUS.md, the tool refuses (exit 3) or
-fails (exit 2), or nothing is left. The status line never computes it: it reads one cache file,
+The status line shows `done ~14:50-16:15` (the Finish range on the local clock; `done ~Sun 00:50-02:25` when the low end is
+not today) for the project whose `<project dir>/STATUS.md` the tool accepts. Nothing is shown when there is no STATUS.md,
+the tool refuses (exit 3) or fails (exit 2), or the job is delivered. The status line never computes it: it reads one cache file,
 `~/.claude/state/estimate-segment/<sha256 of the STATUS.md path>.json`
 (`{path, text, mtimeMs, size, computedAt, refreshStartedAt}`; `text` is null after a refusal), and shows the text while the
 file's mtime and size still match, or for 15 minutes (`STALE_SHOW_MS`) after a change while a refresh runs. When the cache is
@@ -135,7 +150,10 @@ writes the cache atomically (0600, never through a link). Both constants are in 
 
 ## Layout
 
-`estimate.mjs` (CLI: arguments, file reads, exit codes) over `lib/items.mjs` (table parser), `lib/limits.mjs` (windows,
-slug), `lib/compute.mjs` (formula) and `lib/report.mjs` (text); `lib/from-files.mjs` reads the files for the CLI and for `statusline-cache.mjs`
+`estimate.mjs` (CLI: arguments, file reads, exit codes) over `lib/items.mjs` (table parser, row kinds), `lib/limits.mjs` (windows,
+slug), `lib/history.mjs` (deliveries, closing tails, reopened deliveries), `lib/compute.mjs` (formula) and `lib/report.mjs` (text, local
+clock); `lib/from-files.mjs` reads the files for the CLI and for `statusline-cache.mjs`
 (refreshes the status line cache), `lib/segment-cache.mjs` is the status line's read side. Tests: `tests/estimate.test.mjs`,
-`tests/estimate-cli.test.mjs`, `tests/statusline-estimate.test.mjs`.
+`tests/estimate-finish.test.mjs`, `tests/estimate-replay.test.mjs` (with `tests/estimate-replay-cases.mjs`: two real tables of
+14-15 Nov as ids, sizes and times only, and the exact Finish line each request must print), `tests/estimate-cli.test.mjs`,
+`tests/statusline-estimate.test.mjs`.
