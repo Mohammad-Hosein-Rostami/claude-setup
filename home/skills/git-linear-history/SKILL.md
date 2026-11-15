@@ -14,12 +14,12 @@ Goal: `git log --graph` of the base branch is one line of small Conventional Com
 
 **Cleaning an existing tangle** (merge commits, branches merged into each other, leftovers)
 1. Stop feature work; every worktree clean; list worktrees, local and remote branches.
-2. Back up first: a tag `backup/<date>/<branch>` on every tip and `git bundle create <path outside the repo> --all`. Keep both until the owner releases them.
+2. Back up first: `git bundle create <path outside the repo> --all`, checked with `git bundle verify` and `git bundle list-heads` (every tip listed). The bundle is the backup that stays until the owner releases it. Tags `backup/<date>/<branch>` on the tips are a working aid only: they keep the old lines visible in the graph, so they are deleted in step 8.
 3. Inventory each branch against the base (`git log --oneline --no-merges <base>..<branch>`, `git cherry -v <base> <branch>`) in a STATUS.md table: commits not on the base, verdict (needed / contained elsewhere / obsolete), proof. Work that exists nowhere else is integrated or listed for the owner, never dropped on a guess.
 4. Build the state that holds all needed work and passes the checks; note its tree (`git rev-parse <tip>^{tree}`). That tree is the reference.
 5. Linearise on a new branch from the base: replay the real commits without the merge commits (`git rebase <base>` from the integrated tip), resolving conflicts as the merges did. Keep commits small; ask the owner before squashing a stretch that will not replay.
 6. Proof, quoted in the report: `git diff <reference> <new tip>` is empty; `git log --merges <base>..<new tip>` is empty; the checks pass on the new tip.
 7. Fast-forward the base to the new tip. If published history on the base would have to change: stop and ask the owner.
-8. `git-tidy prune --apply`; then the owner confirms each remote step (push, remote branch delete, force-with-lease).
+8. Remove everything that still reaches the old tangle: `git-tidy prune --apply` for merged branches and worktrees, then delete the `backup/` tags and the temporary branches by hand (the bundle holds the old history) and run `git fetch --prune`. The owner confirms each remote step (push, remote branch delete, force-with-lease). Leave stashes and anything you cannot account for; list them.
 
-Done-gate: `node ~/.claude/tools/git-tidy/git-tidy.mjs check` exits 0 (no unpublished merge commit, no merged branch or worktree left). Report: branches removed, branches kept and why, backup tags and bundle path, the three proofs.
+Done-gate: `node ~/.claude/tools/git-tidy/git-tidy.mjs check` exits 0 and prints `all local refs on one line: yes`: no unpublished merge commit is reachable from any local branch or tag and no merged branch, worktree or backup tag is left, so `git log --graph --all` shows one line (merge commits teammates already published stay; say how many). Report: branches removed, branches kept and why, backup tags removed and bundle path, the three proofs.
