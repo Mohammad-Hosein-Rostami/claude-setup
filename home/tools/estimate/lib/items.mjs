@@ -75,7 +75,8 @@ function parseRow(cells, line) {
   const startedAt = event && started.value === null ? done.value : started.value;
   if (done.value !== null && evidence === '' && !event) return fail('done without evidence (commit sha, file path or `check: <cmd> PASS`)');
   if (done.value !== null && PLACEHOLDER_EVIDENCE.test(evidence)) return fail(`evidence "${evidence}" is a placeholder (commit sha, file path or \`check: <cmd> PASS\`)`);
-  if (done.value !== null && startedAt !== null && (event ? done.value < startedAt : done.value <= startedAt)) return fail('done is not after started');
+  // equal is valid: times have minute precision, so a row of under a minute has done == started (compute.mjs leaves it out of the rates)
+  if (done.value !== null && startedAt !== null && done.value < startedAt) return fail('done is not after started');
   return { item: { id, item, kind, size, points: SIZE_POINTS[size], started: startedAt, done: done.value, evidence, line } };
 }
 

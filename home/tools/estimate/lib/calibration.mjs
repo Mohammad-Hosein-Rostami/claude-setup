@@ -58,7 +58,8 @@ function scoreOne(entry, deliveries, byId) {
   if (entry.open.length > 0 && kept.length === 0) return { ...entry, actual: VOID };
   if (checked && !kept.every((r) => sameStart(r.seen, byId.get(r.id).started, at))) return { ...entry, actual: REWRITTEN };
   const doneBy = (id, d) => byId.get(id).done !== null && byId.get(id).done <= d + DELIVERY_TOLERANCE_MS;
-  const delivery = deliveries.find((d) => d >= at && kept.every((r) => doneBy(r.id, d)));
+  // a delivery time has minute precision: one stamped in the minute of the entry (printed to the second) is not before it
+  const delivery = deliveries.find((d) => d >= toMinute(at) * MINUTE_MS && kept.every((r) => doneBy(r.id, d)));
   if (delivery === undefined) return entry;
   const hours = (delivery - at) / HOUR_MS;
   const [low, high] = entry.printed.map(Date.parse);

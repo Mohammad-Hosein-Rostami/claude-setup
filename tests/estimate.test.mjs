@@ -245,9 +245,9 @@ test('B4: impossible or partial instants are refused naming the id and the cell,
   }
 });
 
-test('B2/S4: done equal to started, a repeated id (any case), an empty id and placeholder evidence are refused naming the row', () => {
+test('B2/S4: done before started, a repeated id (any case), an empty id and placeholder evidence are refused naming the row', () => {
   const rows = [
-    row({ id: 'Z1', startedH: 1, doneH: 1 }),
+    row({ id: 'Z1', startedH: 1, doneH: 0.5 }),
     row({ id: 'A4' }),
     row({ id: 'a4' }),
     '| | no id | S | - | - | - |',

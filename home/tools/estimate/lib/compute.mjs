@@ -13,8 +13,11 @@
 // Finish = [max(round start + round low, now + B(low)), max(round start + round high, now + B(high))], the round length
 // measured from this table's finished rounds; the closing phase is not added again.
 // - round-done-not-delivered: a refusal (reason 'round-done'): nothing is open, so no future finish is printed.
+// - A row of under a minute (done == started: times have minute precision) is accepted but carries no rate: 0 h/point would pull
+//   the p25 down and its true length is anywhere under a minute. It is left out of the rate band, the lanes and the count of
+//   MIN_DONE_ITEMS rows, and its id is in `underMinute` of the result and of a count refusal.
 // - delivered: `delivered` (epoch ms), `provisionalUntil`. Every non-refused result carries `state`.
-// A refusal is `{ refused: true, reason, needed, measured, now, missing, future, noTime, overrun }` and carries no finish time:
+// A refusal is `{ refused: true, reason, needed, measured, now, missing, future, noTime, underMinute, overrun }` and carries no finish time:
 // reason 'table' (too few measured rows, a done row without started, a time later than now, a done row with no working time),
 // 'round-done' (see above; `round` set) or 'overrun' (no build row open and the closing has already run as long as its high end; or a follow-up round past its high
 // end with no open row left by size, then `overrun.round` is set).
@@ -24,6 +27,7 @@ import { mergeIntervals } from './limits.mjs';
 export const MIN_DONE_ITEMS = 5;
 export const MIN_BAND_ITEMS = 10;
 const HOUR_MS = 3_600_000;
+const MINUTE_MS = 60_000;
 const HOURS_PER_DAY = 24;
 export const STALE_AFTER_MS = HOURS_PER_DAY * HOUR_MS;
 const PERCENTILES = { p25: 0.25, p50: 0.5, p75: 0.75 };
@@ -35,12 +39,15 @@ const workingMs = (start, end, windows) => end - start - overlapMs([{ start, end
 const nearestRank = (sorted, p) => sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)];
 
 // A deliver row is an event (its started may equal its done), so it never gives a rate.
-const isMeasured = (item) => item.done !== null && item.started !== null && item.evidence !== '' && item.kind !== 'deliver';
+const hasTimes = (item) => item.done !== null && item.started !== null && item.evidence !== '' && item.kind !== 'deliver';
+// A row shorter than a minute (done == started at minute precision) gives no rate: see the header.
+const isUnderMinute = (item) => hasTimes(item) && item.done - item.started < MINUTE_MS;
+const isMeasured = (item) => hasTimes(item) && !isUnderMinute(item);
 const isOpenBuild = (item) => item.done === null && item.kind !== 'close' && item.kind !== 'deliver';
 const rowLabel = (item) => `${item.id} (line ${item.line})`;
 
 function refusal(now, fields) {
-  return { refused: true, reason: 'table', needed: MIN_DONE_ITEMS, measured: 0, now, missing: [], future: [], noTime: [], overrun: null, ...fields };
+  return { refused: true, reason: 'table', needed: MIN_DONE_ITEMS, measured: 0, now, missing: [], future: [], noTime: [], underMinute: [], overrun: null, ...fields };
 }
 
 /** A refusal for what the table says (count, missing started, later than now), or null when the table is usable. */
@@ -52,7 +59,7 @@ function tableRefusal(items, measured, now) {
     .filter(([, at]) => at !== null && at > now)
     .map(([cell, at]) => ({ row: rowLabel(i), cell, at })));
   if (missing.length === 0 && future.length === 0 && measured.length >= MIN_DONE_ITEMS) return null;
-  return refusal(now, { measured: measured.length, missing, future });
+  return refusal(now, { measured: measured.length, missing, future, underMinute: items.filter(isUnderMinute).map((i) => i.id) });
 }
 
 function measureDone(measured, windows) {
@@ -206,6 +213,7 @@ export function computeEstimate(items, windows, now) {
     deliveryGuessed: table.guessed,
     ignored: table.ignored,
     measured: measured.length,
+    underMinute: items.filter(isUnderMinute).map((i) => i.id),
     newestEntry: Math.max(...items.flatMap((i) => [i.started, i.done]).filter((at) => at !== null)),
   };
 }

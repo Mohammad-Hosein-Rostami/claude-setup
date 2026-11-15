@@ -213,7 +213,8 @@ function assumesLine(result, inputs, timeZone) {
   const rows = band.running > 0 ? `${band.done} done + ${band.running} running rows` : plural(band.done, 'done row');
   const equal = band.low === band.high ? '; all rates equal, real spread unknown' : '';
   const rates = `${rate(band.low)}-${rate(band.high)} h/point (${band.band} of ${rows}, ${dateSpan(result.first, result.last, timeZone)}${equal})`;
-  return `Assumes: the table as it is now; ${rates}; ${laneText(result)}; ${limitText(result, inputs)}`;
+  const brief = result.underMinute.length === 0 ? '' : `; ${listed(result.underMinute)} took under a minute and ${result.underMinute.length === 1 ? 'is' : 'are'} left out of the rates`;
+  return `Assumes: the table as it is now; ${rates}${brief}; ${laneText(result)}; ${limitText(result, inputs)}`;
 }
 
 function staleNote(result) {
@@ -280,7 +281,8 @@ export function formatRefusal(refusal, timeZone = systemTimeZone()) {
   const reasons = [];
   const advice = [];
   if (refusal.measured < refusal.needed) {
-    reasons.push(`${refusal.measured} done items with started, done and evidence; need ${refusal.needed}.`);
+    const brief = refusal.underMinute.length === 0 ? '' : ` (${listed(refusal.underMinute)} took under a minute and ${refusal.underMinute.length === 1 ? 'is' : 'are'} not counted)`;
+    reasons.push(`${refusal.measured} done items with started, done and evidence; need ${refusal.needed}${brief}.`);
     advice.push('finish and record more rows.');
   }
   if (refusal.missing.length > 0) {

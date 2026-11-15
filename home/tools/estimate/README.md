@@ -26,7 +26,9 @@ Heading `## Work items`, then the table (the header row is checked):
   e.g. `2026-11-14T10:45Z`; `-` when empty. Set them when they happen, from the clock (`date -u +%Y-%m-%dT%H:%MZ`),
   never from memory: a time ahead of the clock is refused. A bare date, `10:45` without a date, `2026-02-30`, month 13
   and `T24:00` are errors (checked by a strict pattern plus a calendar round trip, never shifted to another day).
-  `done` must be after `started`, and neither may be later than `--now` (default: the real clock).
+  `done` must not be before `started` (equal is valid: times have minute precision, so a task of under a minute has both in the
+  same minute; see the rate band below for what such a row does), and neither may be later than `--now` (default: the real clock);
+  a row started or done in the current minute is not later than now.
 - Done = `done` set and evidence non-empty (commit sha, file path or `check: <cmd> PASS`). A dropped open item: delete the row.
   Never clear a done cell: a correction of delivered work is a new row.
 - Kind, from the start of the item cell (case-insensitive): `close:` for review, fixes from a review, recheck, gate,
@@ -46,7 +48,9 @@ Heading `## Work items`, then the table (the header row is checked):
 
 All durations are wall-clock time minus the usage-limit windows found in the transcripts (waiting and nights stay in).
 
-- Rate band (hours per point): every done row's (done - started) / points, plus every running row's (now - started) /
+- Rate band (hours per point): every done row's (done - started) / points (a row shorter than a minute, `done == started`, gives no
+  rate: 0 h/point would pull the p25 down and its real length is anywhere under a minute. It is left out of the band, the lanes and
+  the count of 5 rows needed, and the Assumes line names it: `A17 took under a minute and is left out of the rates`), plus every running row's (now - started) /
   points when it is above the lowest done rate (a lower bound on that row's rate, so it can only raise the band). Needs at least 5 done items with started, done and evidence. The band is min..max below 10
   values, from 10 the nearest-rank p25..p75 (rank = ceil(p x n)).
 - Build part B(r) over the open build and rework rows: remaining = max(0, points x r - time already run); B = the larger of
@@ -189,7 +193,7 @@ Exit 2 messages and what to do:
 | `<id>: the id cell is empty`, `<id>: id repeated (ignoring case), first on line N` | give each row its own id |
 | `<id>: size "X" is not S, M or L` | use S, M or L (upper case) |
 | `<id>: started "X" is not a real ISO 8601 instant; accepted: ...` (same for `done`) | write e.g. `2026-11-14T10:45Z` |
-| `<id>: done is not after started` | correct the two times |
+| `<id>: done is not after started` (done is before started; equal times are valid) | correct the two times |
 | `<id>: done without evidence ...`, `<id>: evidence "x" is a placeholder ...` | add a commit sha, file path or `check: <cmd> PASS` |
 | `--now "X" is not a real ISO 8601 instant` | pass an instant like `2026-11-14T12:00Z` |
 | `--transcripts <path> is not a folder that exists`, `cannot read transcript <file>: EACCES ...` | fix the path or the permissions, or drop the flag |
@@ -198,7 +202,7 @@ Exit 3 message: `No finish time: <sentences>` then `What to do: <sentences>`, ea
 
 | Reason | What to do |
 | -------- | ---------- |
-| `N done items with started, done and evidence; need 5.` | finish and record more rows |
+| `N done items with started, done and evidence; need 5.` (`(A17 took under a minute and is not counted)` when such rows exist) | finish and record more rows |
 | `Missing started on: M1 (line 41), ...` | fill started of those rows with the real start, or delete the row |
 | `Later than now (<now>): F1 (line 12) started <time>, ...` | correct the time from the clock (`date -u +%Y-%m-%dT%H:%MZ`), never from memory, or pass the right `--now` |
 | `No working time left after removing usage-limit windows: D1 (line 7), ...` | correct started and done of those rows: they lie inside usage-limit windows |
