@@ -55,4 +55,5 @@ test('an estimate printed 30 s into the minute is scored against a delivery stam
   const [scored] = scoreEntries([entry], itemsOf(rows), at(20));
   assert.equal(scored.actual, '2026-11-10T15:30:00Z');
   assert.equal(scored.inside, true);
+  assert.deepEqual(scored.ratio, [0, 0]); // 30 s before the entry is not a negative time to the delivery
 });

@@ -46,8 +46,13 @@ export function overlapMs(a, b) {
 const workingHours = (start, end, windows) => (end - start - overlapMs([{ start, end }], windows)) / HOUR_MS;
 // Rows of the closing phase: review, fix rounds, recheck, landing (`close`) and the hand-over itself (`deliver`).
 const isClose = (item) => item.kind === 'close' || item.kind === 'deliver';
-/** True when a row started at or after a delivery: it belongs after it (a deliver row's own time is its done, not a start). */
-const startedFrom = (item, deliveryAt) => item.kind !== 'deliver' && item.started !== null && item.started >= deliveryAt;
+/**
+ * True when a row is part of the hand-over at `at`: started at or after it and done within DELIVERY_TOLERANCE_MS of it (a quick
+ * `close: land` in the delivery minute, now that done == started is valid). It belongs to the delivered job, not to a round.
+ */
+const withinHandOver = (item, at) => item.started !== null && item.started >= at && item.done !== null && item.done <= at + DELIVERY_TOLERANCE_MS;
+/** True when a row started at or after a delivery and is not part of its hand-over: it belongs after it (a deliver row's own time is its done, not a start). */
+const startedFrom = (item, deliveryAt) => item.kind !== 'deliver' && item.started !== null && item.started >= deliveryAt && !withinHandOver(item, deliveryAt);
 
 /** True when the table marks its deliveries with `deliver:` rows; the pause rule is then off. */
 export const hasDeliverRows = (items) => items.some((i) => i.kind === 'deliver');
@@ -56,7 +61,7 @@ export const hasDeliverRows = (items) => items.some((i) => i.kind === 'deliver')
 function isDelivery(items, at, now) {
   if (at + DELIVERY_GAP_MS > now) return false;
   const settled = items.every((i) => i.started === null || i.started >= at || (i.done !== null && i.done <= at));
-  const quietAfter = items.every((i) => i.started === null || i.started < at || i.started >= at + DELIVERY_GAP_MS);
+  const quietAfter = items.every((i) => i.started === null || i.started < at || i.started >= at + DELIVERY_GAP_MS || withinHandOver(i, at));
   return settled && quietAfter;
 }
 
@@ -168,19 +173,21 @@ function roundAfter(items, deliveryAt, now) {
 }
 
 /**
- * The open round or closing phase when it has run strictly longer than the high end of its range, else null. A round is
- * compared on the wall clock, like the formula's round end; a closing phase in working hours, like its elapsed time.
+ * The open round or closing phase when it has run strictly longer than the high end of the range in use (the measured or default
+ * range, its high end times the calibration's high factor), else null. A round is compared on the wall clock, like the formula's
+ * round end; a closing phase in working hours, like its elapsed time.
  * @returns {{kind: 'round' | 'closing', hours: number, closing: object, round?: object, start?: object} | null} closing = the range
  *   it outran (its field name is the one the refusal text already reads).
  */
-function overrunOf(state, { items, deliveries, round, windows, now }) {
+function overrunOf(state, { items, deliveries, round, windows, now, highFactor }) {
+  const scaled = (range) => ({ ...range, high: range.high * highFactor });
   if (state === 'round-open') {
-    const range = followUpRange(followUpRounds(items, deliveries, windows));
+    const range = scaled(followUpRange(followUpRounds(items, deliveries, windows)));
     if (now - round.start <= Math.round(range.high * HOUR_MS)) return null;
     return { kind: 'round', hours: workingHours(round.start, now, windows), closing: range, round };
   }
   if (state !== 'first-cycle-closing') return null;
-  const closing = closingRange([]); // a table has one first cycle: the default
+  const closing = scaled(closingRange([])); // a table has one first cycle: the default
   const hours = closingElapsedHours(items, deliveries, windows, now);
   return hours > closing.high ? { kind: 'closing', hours, closing, start: closingStart(items, deliveries, now) } : null;
 }
@@ -195,11 +202,12 @@ function overrunOf(state, { items, deliveries, round, windows, now }) {
  * @param {object[]} items parsed work items with `kind`.
  * @param {{start: number, end: number}[]} windows usage-limit windows.
  * @param {number} now epoch ms.
+ * @param {(state: string) => number} [highFactorOf] the calibration's high factor (>= 1) of a state's phase; default 1 (no scaling).
  * @returns {{state: string, deliveries: object[], round: object | null, ignored: object[], guessed: boolean, closer: object | null, overrun: object | null}}
  *   round = {deliveryAt, start, startRow} in a round state; guessed = a delivery came from the pause rule; closer = the
  *   delivering row of the delivered state; ignored = see ignoredDeliverRows; overrun = see overrunOf.
  */
-export function tableState(items, windows, now) {
+export function tableState(items, windows, now, highFactorOf = () => 1) {
   const explicit = hasDeliverRows(items);
   const deliveries = findDeliveries(items, windows, now);
   const closer = deliveringRow(items, deliveries, explicit);
@@ -207,14 +215,14 @@ export function tableState(items, windows, now) {
   if (closer !== null) return { ...facts, state: 'delivered' };
   const open = items.filter((i) => i.done === null);
   const last = deliveries.at(-1);
-  const context = { items, deliveries, windows, now };
+  const overrun = (state, round) => overrunOf(state, { items, deliveries, windows, now, round, highFactor: highFactorOf(state) });
   if (last === undefined) {
     const state = open.some((i) => !isClose(i)) ? 'first-cycle-building' : 'first-cycle-closing';
-    return { ...facts, state, overrun: overrunOf(state, { ...context, round: null }) };
+    return { ...facts, state, overrun: overrun(state, null) };
   }
   const round = roundAfter(items, last.at, now);
   const state = open.length > 0 ? 'round-open' : 'round-done-not-delivered';
-  return { ...facts, state, round, overrun: overrunOf(state, { ...context, round }) };
+  return { ...facts, state, round, overrun: overrun(state, round) };
 }
 
 /**

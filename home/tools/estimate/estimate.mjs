@@ -18,7 +18,7 @@
 // (lib/estimate-log.mjs) gets the earlier entries scored and one new entry per printed range unless it repeats the last one
 // (calibration.mjs isRepeat); a refusal writes nothing.
 import { resolve } from 'node:path';
-import { applyFactors, calibrationFactors, isRepeat, logEntry, phaseOf, scoreEntries, trackRecord } from './lib/calibration.mjs';
+import { applyFactors, calibrationFactors, isRepeat, logEntry, phaseOf, phaseOfState, scoreEntries, trackRecord } from './lib/calibration.mjs';
 import { logFile, readLog, writeLog } from './lib/estimate-log.mjs';
 import { UsageError, estimateFile } from './lib/from-files.mjs';
 import { formatEstimate, formatRefusal, printedBounds } from './lib/report.mjs';
@@ -55,12 +55,17 @@ function printLogged(result, inputs, items, { statusPath, logDir }) {
 
 function main(argv) {
   const { path, transcripts, now, logDir } = parseArgs(argv);
-  const { result, inputs, items } = estimateFile(path, { transcripts, now, cwd: process.cwd() });
+  const keepsLog = now === undefined || logDir !== undefined;
+  const highFactorOf = (rows, nowMs, state) => {
+    const phase = phaseOfState(state);
+    return phase === null || !keepsLog ? 1 : calibrationFactors(scoreEntries(readLog(resolve(path), logDir), rows, nowMs), phase).high;
+  };
+  const { result, inputs, items } = estimateFile(path, { transcripts, now, cwd: process.cwd(), highFactorOf });
   if (result.refused) {
     process.stderr.write(`${formatRefusal(result)}\n`);
     return EXIT_REFUSED;
   }
-  if (now !== undefined && logDir === undefined) console.log(formatEstimate(result, inputs));
+  if (!keepsLog) console.log(formatEstimate(result, inputs));
   else printLogged(result, inputs, items, { statusPath: resolve(path), logDir });
   return 0;
 }

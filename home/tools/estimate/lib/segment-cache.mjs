@@ -8,7 +8,7 @@
 // - Cache file: ~/.claude/state/estimate-segment/<sha256 of the STATUS.md path, 32 hex>.json, one JSON object
 //   {path, kind, text, highMs, mtimeMs, size, computedAt, refreshStartedAt}; kind is one of SEGMENT_KINDS and
 //   text is what to show (a finish, a delivery, or `done ? <cause>` after a refusal or an error); highMs (epoch ms) is the instant
-//   after which a range or not-before text is replaced by OVERDUE_TEXT, null for the other kinds. A file written before `kind`
+//   after which a range text is replaced by OVERDUE_TEXT, null for the other kinds (a not-before stays until the next refresh). A file written before `kind`
 //   existed has text null or a range text without kind: it is read as it always was (no text, or the range hidden once highMs
 //   has passed) until the next refresh replaces it. A delivered text is shown only while STATUS.md is unchanged; any other text
 //   also for STALE_SHOW_MS after a change. Opened and replaced through hooks/lib/session-store.mjs (no links, 0600, temp file + rename).
@@ -68,14 +68,14 @@ const matchesFile = (entry, file) => entry.mtimeMs === file.mtimeMs && entry.siz
 
 /**
  * The text to show: the cached text while it matches the file (a delivered one only then), else for STALE_SHOW_MS after it was
- * computed; once its high end has passed, OVERDUE_TEXT for a range or not-before (nothing for an entry without `kind`).
+ * computed; once its high end has passed, OVERDUE_TEXT for a range (nothing for an entry without `kind`; a not-before has no high end).
  */
 function segmentText(entry, file, now) {
   if (entry === null || entry.text === null) return null;
   const current = matchesFile(entry, file) || (entry.kind !== 'delivered' && now - entry.computedAt < STALE_SHOW_MS);
   if (!current) return null;
   if (entry.highMs === null || now <= entry.highMs) return entry.text;
-  return entry.kind === 'range' || entry.kind === 'not-before' ? OVERDUE_TEXT : null;
+  return entry.kind === 'range' ? OVERDUE_TEXT : null;
 }
 
 /**

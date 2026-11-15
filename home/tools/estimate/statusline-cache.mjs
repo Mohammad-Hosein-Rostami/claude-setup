@@ -11,7 +11,7 @@
 import { statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { estimateFile } from './lib/from-files.mjs';
-import { applyFactors, calibrationFactors, phaseOf } from './lib/calibration.mjs';
+import { applyFactors, calibrationFactors, phaseOf, phaseOfState } from './lib/calibration.mjs';
 import { readLog } from './lib/estimate-log.mjs';
 import { cacheDir, writeEntry } from './lib/segment-cache.mjs';
 import { errorSegment, refusalSegment, resultSegment } from './lib/segment-text.mjs';
@@ -19,7 +19,8 @@ import { errorSegment, refusalSegment, resultSegment } from './lib/segment-text.
 /** The segment {kind, text, highMs} for a STATUS.md: its finish, its delivery, or why there is none; never throws. */
 function segment(statusPath) {
   try {
-    const { result } = estimateFile(statusPath, { cwd: dirname(statusPath) });
+    const highFactorOf = (items, nowMs, state) => (phaseOfState(state) === null ? 1 : calibrationFactors(readLog(statusPath), phaseOfState(state)).high);
+    const { result } = estimateFile(statusPath, { cwd: dirname(statusPath), highFactorOf });
     if (result.refused) return refusalSegment(result);
     const phase = phaseOf(result); // null: delivered
     return resultSegment(phase === null ? result : applyFactors(result, calibrationFactors(readLog(statusPath), phase)));

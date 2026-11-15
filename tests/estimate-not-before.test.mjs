@@ -33,7 +33,7 @@ test('a round past its high end prints "not before" now + the open rows\' low re
   const lines = block(result);
   assert.equal(lines[0], 'Finish: not before Tue 10 Nov 08:35 (local +03:30, now 08:30)'); // 5 h + 0.1 h = 08:36, floored to 08:35
   assert.equal(lines[1], 'Includes: follow-up round after the delivery at 05:00, started 05:30 (V1): 2 open rows (1 running); '
-    + 'this round has run 3 h, longer than every measured round (0.4-2.6 h; default, not yet measured here): no upper end can be supported; '
+    + 'this round has run 3 h, longer than the range for such rounds (0.4-2.6 h; default, not yet measured here): no upper end can be supported; '
     + 'the open rows need at least 0.1-3 h by size (V1, V2, 1 lane); delivery guessed from a pause: add a deliver: row when you hand over'); // V1's 3 h so far raises the band's high rate to 3
   assert.equal(printedBounds(result, TZ).high, null);
 });
@@ -54,7 +54,7 @@ test('a first-cycle closing phase past its high end with a close row open prints
   assert.equal(result.notBefore, true);
   const lines = block(result);
   assert.equal(lines[0], 'Finish: not before Wed 11 Nov 00:30 (local +03:30, now 23:30)'); // 20 h + 1 h = 21:00Z = 00:30 local
-  assert.equal(lines[1], 'Includes: 1 open row (0 running); this closing phase has run 7 h, longer than every measured closing (1.4-2.5 h; default, not yet measured here): '
+  assert.equal(lines[1], 'Includes: 1 open row (0 running); this closing phase has run 7 h, longer than the range for such closing phases (1.4-2.5 h; default, not yet measured here): '
     + 'no upper end can be supported; the open rows need at least 1-3 h by size (K1, 1 lane)');
 });
 
@@ -103,4 +103,18 @@ test('the Track record line says how many not-before estimates held', () => {
   const record = { scored: 0, inside: 0, late: 0, early: 0, medianLate: null, rewritten: 0, deliveries: 0, lowOnly: 2, lowOnlyInside: 1 };
   const lines = formatEstimate(result, { transcriptDir: '/t', transcriptCount: 1, timeZone: TZ, calibration: { record, factors: { low: 1, high: 1, scored: 0, deliveries: 0 } } }).split('\n');
   assert.equal(lines[4], 'Track record (follow-up rounds): no scored estimate yet; 1 of 2 not-before estimates held (delivered no earlier than printed); the range is adjusted once 5 deliveries are scored (target: 8 of 10 inside)');
+});
+
+test('S3: "every measured round" only when the range was measured here; otherwise "the range for such rounds" with its source', () => {
+  const result = estimate(ROUND, 5);
+  const withRange = (closing) => formatEstimate({ ...result, overrun: { ...result.overrun, closing } }, { transcriptDir: '/t', transcriptCount: 1, timeZone: TZ }).split('\n')[1];
+  assert.match(withRange({ low: 0.4, high: 3, measured: 1 }), /longer than the range for such rounds \(0\.4-3 h; default, widened by the 1 finished round here\): no upper end/);
+  assert.match(withRange({ low: 0.5, high: 2, measured: 3 }), /longer than every measured round \(0\.5-2 h; measured from 3 finished rounds here\): no upper end/);
+});
+
+test('S2: a not-before whose low end is within 5 minutes of now is still a not-before, never an overdue range', () => {
+  const result = estimate([...FIRST_JOB, close({ id: 'V1', startedH: 2 }), close({ id: 'V2', item: 'close: row' })], 4.7); // low end = now + 0.1 h
+  assert.equal(result.notBefore, true);
+  assert.equal(printedBounds(result, TZ).high, null);
+  assert.equal(finishClock(result, TZ).startsWith('>='), true);
 });

@@ -198,11 +198,12 @@ function finishOf(context, table) {
  * @param {object[]} items parsed work items with `kind` (see parseWorkItems).
  * @param {{start: number, end: number}[]} windows merged usage-limit windows (empty when not measured).
  * @param {number} now epoch ms: any started or done after it is a refusal.
+ * @param {(state: string) => number} [highFactorOf] the calibration's high factor per table state (see tableState); default 1.
  * @returns {object} the result (`finish {lowMs, highMs}`, `raw {low, high}` hours from now, `build`, `closing`, `reopen`, ...),
  *   a delivered result (`delivered`: epoch ms, `provisionalUntil`) when no row is open and the last done row is a close row,
  *   `followUp {deliveryAt, start, startRow}` with `closing` = the round range while a follow-up round is open, or a refusal (`refused: true`).
  */
-export function computeEstimate(items, windows, now) {
+export function computeEstimate(items, windows, now, highFactorOf) {
   const measured = items.filter(isMeasured);
   const early = tableRefusal(items, measured, now);
   if (early) return early;
@@ -210,7 +211,7 @@ export function computeEstimate(items, windows, now) {
   const noTime = done.filter((d) => !(d.durationMs > 0) || !Number.isFinite(d.rate)).map((d) => rowLabel(d.item));
   if (noTime.length > 0) return refusal(now, { measured: measured.length, noTime });
 
-  const table = tableState(items, windows, now);
+  const table = tableState(items, windows, now, highFactorOf);
   const finish = finishOf({ items, done, measured, windows, now }, table);
   if (finish.refused || table.state === 'delivered') return finish;
   return {

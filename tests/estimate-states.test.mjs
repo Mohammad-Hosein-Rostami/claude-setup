@@ -143,3 +143,37 @@ test(`tableState: ${OVERRUN_SHAPES.length} overrun shapes, each with its state, 
     assert.ok(lineOne(computeEstimate(items, [], now)).startsWith(c.line), `${c.name}: ${lineOne(computeEstimate(items, [], now))}`);
   }
 });
+
+// Zero-length rows (done == started) around a hand-over, now valid: one started and done in the delivery minute, or within the
+// 2-minute tolerance after it, belongs to the delivered job; one done later starts a follow-up round (L1 of the l37 review).
+const DELIVERY_H = 14.5; // 14:30 on this fixture's clock
+const zero = (id, afterMin, item = ITEM.close) => row({ id, item, startedH: DELIVERY_H + afterMin / 60, doneH: DELIVERY_H + afterMin / 60 });
+const HAND_OVER = [row({ id: 'B1', startedH: 13, doneH: 14 }), event('X1', DELIVERY_H)];
+const PAUSE_RULE = [row({ id: 'B1', startedH: 13, doneH: 14 }), row({ id: 'C0', item: ITEM.close, startedH: 14, doneH: DELIVERY_H })];
+const HAND_OVER_SHAPES = [
+  { name: 'deliver row, a zero-length close row in the delivery minute', rows: fiveDoneRows([...HAND_OVER, zero('C1', 0)]), nowH: 14.6, code: 'D' },
+  { name: 'pause rule, a zero-length close row in the delivery minute', rows: fiveDoneRows([...PAUSE_RULE, zero('C1', 0)]), nowH: 14.9, code: 'D' },
+  { name: 'deliver row, two zero-length rows in the delivery minute', rows: fiveDoneRows([...HAND_OVER, zero('C1', 0), zero('C2', 0, ITEM.build)]), nowH: 14.6, code: 'D' },
+  { name: 'deliver row, a zero-length row one minute after it', rows: fiveDoneRows([...HAND_OVER, zero('C1', 1)]), nowH: 14.6, code: 'D' },
+  { name: 'deliver row, a zero-length row five minutes after it: a round, all done', rows: fiveDoneRows([...HAND_OVER, zero('C1', 5)]), nowH: 14.7, code: 'N' },
+  { name: 'deliver row, a rework row started in the delivery minute and still open: a round', rows: fiveDoneRows([...HAND_OVER, row({ id: 'R1', item: ITEM.rework, startedH: DELIVERY_H })]), nowH: 14.6, code: 'O' },
+];
+
+test(`tableState: ${HAND_OVER_SHAPES.length} hand-over shapes with zero-length rows (the state table has ${CASES.length + EXTRA.length + OVERRUN_SHAPES.length + HAND_OVER_SHAPES.length} shapes in all)`, () => {
+  for (const c of HAND_OVER_SHAPES) {
+    const now = Math.round(at(c.nowH));
+    const items = itemsOf(c.rows);
+    assert.equal(tableState(items, [], now).state, STATE[c.code], c.name);
+    assert.ok(lineOne(computeEstimate(items, [], now)).startsWith(LINE[c.code]), `${c.name}: ${lineOne(computeEstimate(items, [], now))}`);
+  }
+});
+
+test('S1: the overrun test uses the range in use: a round past the printed range but inside the high factor is still a range', () => {
+  const rows = fiveDoneRows([...ROUND, row({ id: 'O2' })]);
+  const items = itemsOf(rows);
+  const now = Math.round(at(16.6 + 0.5)); // the round ran 2.6 h + 30 minutes: past the default range, inside 2.6 x 1.5 = 3.9 h
+  assert.equal(tableState(items, [], now).overrun.kind, 'round');
+  assert.equal(tableState(items, [], now, () => 1.5).overrun, null);
+  const scaled = tableState(items, [], Math.round(at(16.6 + 1.5)), () => 1.5).overrun; // 4.1 h: past 3.9 h
+  assert.equal(scaled.closing.high, 2.6 * 1.5); // the text names the range in use
+});

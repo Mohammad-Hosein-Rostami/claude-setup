@@ -85,11 +85,17 @@ function roundSource(range) {
 
 const laneCount = (build) => (build.lanes === 1 ? '1 lane' : `${num(build.lanes)} lanes`);
 
-/** Why a round or closing phase that outran its range has no upper end (a `notBefore` result). */
+/**
+ * Why a round or closing phase that outran its range has no upper end (a `notBefore` result): "every measured round" only when the
+ * range was measured here, else the range for such rounds with where it comes from.
+ */
 function overrunReason({ overrun }) {
   const { kind, hours, closing } = overrun;
-  const [what, longest, source] = kind === 'round' ? ['round', 'every measured round', roundSource(closing)] : ['closing phase', 'every measured closing', CLOSING_SOURCE];
-  return `this ${what} has run ${num(hours)} h, longer than ${longest} (${range(closing.low, closing.high)} h; ${source}): no upper end can be supported`;
+  const round = kind === 'round';
+  const measured = round && closing.measured >= MIN_MEASURED_RANGE;
+  const longest = measured ? 'every measured round' : `the range for such ${round ? 'rounds' : 'closing phases'}`;
+  const source = round ? roundSource(closing) : CLOSING_SOURCE;
+  return `this ${round ? 'round' : 'closing phase'} has run ${num(hours)} h, longer than ${longest} (${range(closing.low, closing.high)} h; ${source}): no upper end can be supported`;
 }
 
 const sizesText = (build) => `the open rows need at least ${range(build.low, build.high)} h by size (${listed(build.ids)}, ${laneCount(build)})`;

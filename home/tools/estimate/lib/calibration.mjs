@@ -66,7 +66,7 @@ function scoreOne(entry, deliveries, byId) {
   // a delivery time has minute precision: one stamped in the minute of the entry (printed to the second) is not before it
   const delivery = deliveries.find((d) => d >= toMinute(at) * MINUTE_MS && kept.every((r) => doneBy(r.id, d)));
   if (delivery === undefined) return entry;
-  const hours = (delivery - at) / HOUR_MS;
+  const hours = Math.max(0, delivery - at) / HOUR_MS; // 0 for an entry logged in the delivery minute, after the delivery's stamp
   const [low, high] = entry.printed.map((printed) => (printed === null ? Infinity : Date.parse(printed)));
   return { ...entry, actual: isoSeconds(delivery), inside: low <= delivery && delivery <= high, ratio: entry.raw.map((raw) => (raw > 0 ? round(hours / raw, RATIO_DECIMALS) : null)) };
 }
@@ -85,14 +85,17 @@ export function scoreEntries(entries, items, now) {
 }
 
 /** The factor set an estimate belongs to, from the table state: 'job' in the first cycle, 'round' in an open follow-up round, null with no estimate. */
-export function phaseOf(result) {
-  switch (result.state) {
+export const phaseOf = (result) => phaseOfState(result.state);
+
+/** The same from a state name alone (tableState's). */
+export function phaseOfState(state) {
+  switch (state) {
     case 'first-cycle-building':
     case 'first-cycle-closing': return 'job';
     case 'round-open': return 'round';
     case 'delivered':
     case 'round-done-not-delivered': return null;
-    default: throw new Error(`unknown table state ${result.state}`);
+    default: throw new Error(`unknown table state ${state}`);
   }
 }
 

@@ -75,14 +75,15 @@ function transcriptFiles(explicitDir, cwd) {
 
 /**
  * @param {string} path the STATUS.md to read.
- * @param {{transcripts?: string, now?: string, cwd: string}} options transcripts: explicit transcript folder; now: ISO instant
+ * @param {{transcripts?: string, now?: string, cwd: string, highFactorOf?: (items: object[], nowMs: number, state: string) => number}} options
+ *   highFactorOf: the calibration's high factor of a table state, for the overrun test (see history.mjs tableState); default none. transcripts: explicit transcript folder; now: ISO instant
  *   (default the real clock); cwd: the project folder whose transcripts are used when `transcripts` is not given.
  * @returns {{result: object, inputs: {path: string, now: string, transcriptDir: string, transcriptCount: number}, items: object[]}} the
  *   computeEstimate result (or its refusal), what formatEstimate needs to say where the numbers came from, and the parsed rows
  *   (for scoring the calibration log).
  * @throws {UsageError} when a file, a table cell, `now` or the transcript folder cannot be used.
  */
-export function estimateFile(path, { transcripts, now, cwd }) {
+export function estimateFile(path, { transcripts, now, cwd, highFactorOf }) {
   const nowMs = now === undefined ? Date.now() : parseInstant(now);
   if (nowMs === null) throw new UsageError(`--now "${now}" is not a real ISO 8601 instant; accepted: ${INSTANT_FORMAT}`);
   const stamp = now ?? new Date(nowMs).toISOString().replace(/\.\d+Z$/, 'Z');
@@ -91,5 +92,5 @@ export function estimateFile(path, { transcripts, now, cwd }) {
 
   const { dir, names } = transcriptFiles(transcripts, cwd);
   const windows = limitWindows(names.map((name) => fileLines(join(dir, name))));
-  return { result: computeEstimate(items, windows, nowMs), inputs: { path, now: stamp, transcriptDir: dir, transcriptCount: names.length }, items };
+  return { result: computeEstimate(items, windows, nowMs, highFactorOf && ((state) => highFactorOf(items, nowMs, state))), inputs: { path, now: stamp, transcriptDir: dir, transcriptCount: names.length }, items };
 }

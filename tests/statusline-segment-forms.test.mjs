@@ -39,12 +39,12 @@ test('delivered: `delivered HH:MM`, the weekday when it is not today, a ? when g
   assert.equal(resultSegment(estimate(byRow, 20), TZ).highMs, null);
 });
 
-test('a range is `done ~a-b` and a not-before is `done >=a`; both expire at their last instant', () => {
+test('a range is `done ~a-b` with its high end and a not-before is `done >=a` with none', () => {
   const range = resultSegment(estimate(fiveDoneRows([row({ id: 'O1' })]), 14), TZ);
   assert.deepEqual([range.kind, range.text], ['range', 'done ~19:50-23:00']);
   assert.ok(range.highMs > at(14));
   const notBefore = resultSegment(computeEstimate(parseWorkItems(OUTRAN).items, [], at(5)), TZ);
-  assert.deepEqual([notBefore.kind, notBefore.text, notBefore.highMs === null], ['not-before', 'done >=08:35', false]);
+  assert.deepEqual([notBefore.kind, notBefore.text, notBefore.highMs], ['not-before', 'done >=08:35', null]);
 });
 
 test('a refusal shows `done ? <cause>`, the cause one of a fixed list', () => {
@@ -132,7 +132,7 @@ test('the render shows a marker, a delivery and an overdue range instead of noth
   const shown = (fields, at2 = now) => (writeEntry(cacheDir, statusPath, entry(fields)), render(at2));
   assert.equal(shown({}), 'done ~14:50-16:15');
   assert.equal(shown({}, now + 2 * HOUR_MS), OVERDUE_TEXT); // its high end has passed
-  assert.equal(shown({ kind: 'not-before', text: 'done >=17:10' }, now + 2 * HOUR_MS), OVERDUE_TEXT);
+  assert.equal(shown({ kind: 'not-before', text: 'done >=17:10', highMs: null }, now + 2 * HOUR_MS), 'done >=17:10'); // stays until the refresh recomputes it, never flips to overdue
   assert.equal(shown({ kind: 'refused', text: 'done ? overrun', highMs: null }, now + 5 * HOUR_MS), 'done ? overrun'); // a marker does not expire
   assert.equal(shown({ kind: 'delivered', text: 'delivered 17:30', highMs: null }, now + 5 * HOUR_MS), 'delivered 17:30');
   const changed = { mtimeMs: mtimeMs + 1, kind: 'delivered', text: 'delivered 17:30', highMs: null };

@@ -88,7 +88,7 @@ All durations are wall-clock time minus the usage-limit windows found in the tra
   open at 2.57 h (08:29Z-11:03Z), both from the 14-15 Nov analysis. It is wide because only three rounds were measured. Past S + R high see Overrun below (a
   `not before` line, or a refusal when no open row has time left by size). The first cycle (no delivery yet) is the build part and closing phase above.
 - Overrun: a follow-up round, or a first-cycle closing phase, that has run strictly longer than the high end of its range (exactly
-  at it is still a range) has no supportable upper end. `tableState` sets the `overrun` flag (on `round-open` and
+  at it is still a range) has no supportable upper end (the range in use: measured or default, its high end times the calibration's high factor; "every measured round" is said only when the range was measured from 2 or more finished rounds here). `tableState` sets the `overrun` flag (on `round-open` and
   `first-cycle-closing`; not a new state) and the tool prints no two-ended range: line 1 is `Finish: not before <day> <clock>
   (local <offset>, now HH:MM)`, the clock = now + the low end of the open rows' remaining time by size (every open row counts, close
   rows too; floored to 5 minutes like a low end), and the Includes line says why. When no open row has time left by size at the low
@@ -127,9 +127,9 @@ Agent-hours: 0.6-1.0 for the open build rows, counted whole
   build is done and the closing phase ... is not in rows yet; it has run 1.5 h`. After a delivery the After line counts
   reopened deliveries: `1 of 2 earlier deliveries here were reopened by your corrections; that rework took 1.4 h so far (still open)`.
 - Overrun, line 1 and Includes: `Finish: not before Sun 15 Nov 17:10 (local +03:30, now 16:54)` and `Includes: follow-up round after the
-  delivery at 11:40, started 11:59 (H1): 3 open rows (2 running); this round has run 4.9 h, longer than every measured round (0.4-2.6 h;
+  delivery at 11:40, started 11:59 (H1): 3 open rows (2 running); this round has run 4.9 h, longer than the range for such rounds (0.4-2.6 h;
   default, widened by the 1 finished round here): no upper end can be supported; the open rows need at least 0.3-0.6 h by size (H4, H5,
-  H9, 1.9 lanes)`; in a closing phase `this closing phase has run 7 h, longer than every measured closing (1.4-2.5 h; default, not yet
+  H9, 1.9 lanes)`; in a closing phase `this closing phase has run 7 h, longer than the range for such closing phases (1.4-2.5 h; default, not yet
   measured here)`. The other lines are as usual. The calibration factors do not scale it.
 - In a follow-up round the Includes line reads `follow-up round after the delivery at 14:25, started 14:55 (V1): 6 open
   rows (1 running); such rounds took 0.4-2.6 h here (default, not yet measured here); the open rows need at least
@@ -237,7 +237,7 @@ Only a missing STATUS.md shows nothing. The forms, at most 28 characters each:
 | `done ~14:50-16:15` | the Finish range on the local clock (`done ~Sun 00:50-02:25` when both ends are on another day, `done ~Sun 23:20 - Mon 01:10` across midnight) |
 | `done >=17:10` | not before 17:10 (`>=Sun 17:10` on another day): the round or closing phase has outrun its range and only a low end is supported (see Overrun) |
 | `delivered 17:54` | the job is delivered at that local time (`delivered Sun 17:54` when not today); `delivered 17:54?` when the delivery is provisional or guessed from a pause (add a `deliver:` row) |
-| `done ? overdue` | a range or `>=` text whose time has passed and the next refresh has not replaced it yet |
+| `done ? overdue` | a range whose high end has passed and the next refresh has not replaced it yet (`done >=` has no high end: it stays until the refresh recomputes its low end, never before now) |
 | `done ? row A17` | the table has an error naming row A17 (only an id of letters, digits, `.`, `_`, `-`, 17 characters at most; any other table error is `done ? table`) |
 | `done ? overrun` | refused: the closing phase or round has run past its range with no open row left by size |
 | `done ? no deliver row` | refused: every row of the follow-up round is done and no `deliver:` row marks the hand-over |
@@ -250,7 +250,7 @@ The status line never computes it: it reads one cache file, `~/.claude/state/est
 (`{path, kind, text, highMs, mtimeMs, size, computedAt, refreshStartedAt}`; `kind` is `range`, `not-before`, `delivered`, `refused` or
 `error`; a file from before `kind` existed is read as it was and replaced at the next refresh), and shows the text while the
 file's mtime and size still match, or, except for a delivery, for 15 minutes (`STALE_SHOW_MS`) after a change while a refresh runs.
-A range or `>=` text is replaced by `done ? overdue` once its printed high end (`highMs`; for `>=` its low end) has passed. On a
+A range is replaced by `done ? overdue` once its printed high end (`highMs`) has passed; a `>=` text has `highMs` null. On a
 daylight-saving fall-back night, when both ends fall on the same local date, the segment shows the two clock times as they are, so
 the high end can read earlier than the low end (`01:50-01:05`); line 1 of the CLI has the same limit. When the cache is missing, no
 longer matches or is 5 minutes old (`RECOMPUTE_AFTER_MS`: the finish moves with the clock even when the table does not), the

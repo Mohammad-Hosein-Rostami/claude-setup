@@ -1,7 +1,7 @@
 // The text of the status line's estimate segment, decided by the refresh script (never by the render, which only reads the cache).
 // Exports: resultSegment(result, timeZone?) -> segment; refusalSegment(refusal) -> segment; errorSegment(error) -> segment;
 // MAX_SEGMENT_CHARS. A segment is {kind, text, highMs}: kind is one of SEGMENT_KINDS (segment-cache.mjs), text is what the status
-// line shows, highMs (epoch ms or null) is the instant after which a range or not-before text no longer holds (the render then shows OVERDUE_TEXT, segment-cache.mjs).
+// line shows, highMs (epoch ms or null) is the instant after which a range text no longer holds (the render then shows OVERDUE_TEXT, segment-cache.mjs); null for every other kind.
 // Forms: `done ~14:50-16:15` (range), `done >=17:10` (not before), `delivered 17:54` (`delivered 17:54?` when the delivery is
 // provisional or guessed from a pause; `delivered Sun 17:54` when not today), `done ? <cause>` when the tool refuses or fails.
 // Invariants: pure; every text is at most MAX_SEGMENT_CHARS characters; a cause is a word from a fixed list or a row id that matches
@@ -57,8 +57,8 @@ export function resultSegment(result, timeZone = systemTimeZone()) {
     const unsure = result.guessed || result.provisionalUntil !== null;
     return segment('delivered', `delivered ${deliveredClock(result, timeZone)}${unsure ? '?' : ''}`);
   }
-  const { low, high } = printedBounds(result, timeZone);
-  // a not-before has no high end to expire on: its low end is the last instant the text says anything
-  if (high === null) return segment('not-before', `done ${finishClock(result, timeZone)}`, low);
+  const { high } = printedBounds(result, timeZone);
+  // a not-before has no high end to expire on: it stays until the next refresh recomputes its low end (never before now)
+  if (high === null) return segment('not-before', `done ${finishClock(result, timeZone)}`);
   return segment('range', `done ~${finishClock(result, timeZone)}`, high);
 }
