@@ -13,7 +13,7 @@
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, parse, relative, resolve } from 'node:path';
 import { expandBraces } from './braces.mjs';
-import { GIT_TOPLEVEL_WORD, MKTEMP_WORD, QUOTED_MARK, flagsOf } from './shell-words.mjs';
+import { GIT_TOPLEVEL_WORD, MKTEMP_WORD, QUOTED_MARK, backtickAssignedNames, flagsOf } from './shell-words.mjs';
 import { destructive } from './verdict.mjs';
 
 const SAFE_TEMP_ROOTS = ['/tmp', '/private/tmp', tmpdir()];
@@ -50,12 +50,13 @@ function isBroadRoot(project) {
 
 /**
  * Variable state for one command line: `vars` maps names to known values (`$TMPDIR`, `$CLAUDE_PROJECT_DIR`, `$PWD` when the
- * directory is known, then every literal assignment seen so far); `assigned` holds the names assigned in the command itself.
+ * directory is known, then every literal assignment seen so far); `assigned` holds the names assigned in the command itself; `unknown`
+ * the names `command` assigns from a backtick, whose value the parsers lose (always unknown).
  */
-export function newScope(cwd, project) {
+export function newScope(cwd, project, command = '') {
   const vars = new Map([['TMPDIR', tmpdir()], ['CLAUDE_PROJECT_DIR', project], [MKTEMP_NAME, mktempDir()]]);
   if (cwd !== null) vars.set('PWD', cwd);
-  return { vars, assigned: new Set() };
+  return { vars, assigned: new Set(), unknown: backtickAssignedNames(command) };
 }
 
 export const expandVars = (target, vars) => target.replace(VAR_PREFIX, (whole, name) => (vars.has(name) ? vars.get(name) : whole));
@@ -72,10 +73,11 @@ function valueOf(raw, vars) {
 /**
  * Updates `vars` for assignments in one segment (a bare `NAME=x` segment or `export NAME=x`), `unset`, `read`. Call after the
  * segment was checked. Names that become unknown are removed, so a later `$NAME` target is unknown.
- * @param {{vars: Map<string, string>, assigned: Set<string>}} scope tracked values (modified)
+ * @param {{vars: Map<string, string>, assigned: Set<string>, unknown?: Set<string>}} scope tracked values (modified); names in unknown
+ *   are never known
  * @param {string[]} tokens words of this segment
  */
-export function trackAssignments({ vars, assigned }, tokens) {
+export function trackAssignments({ vars, assigned, unknown = new Set() }, tokens) {
   const words = DECLARERS.has(tokens[0]) ? tokens.slice(1) : tokens;
   if (['unset', 'read'].includes(tokens[0])) {
     for (const name of tokens.slice(1).filter((w) => !w.startsWith('-'))) vars.delete(name);
@@ -87,7 +89,7 @@ export function trackAssignments({ vars, assigned }, tokens) {
     assigned.add(name);
     const added = valueOf(raw, vars);
     const value = append && added !== undefined ? (vars.has(name) ? vars.get(name) + added : undefined) : added; // `D+=x` extends the old value
-    if (value === undefined) vars.delete(name);
+    if (value === undefined || unknown.has(name)) vars.delete(name);
     else vars.set(name, value);
   }
 }

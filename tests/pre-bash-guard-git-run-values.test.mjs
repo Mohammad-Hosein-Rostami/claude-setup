@@ -71,7 +71,12 @@ test('audit follow-up: a reference glued to text, a config value from a substitu
     'find . -name x -exec env GIT_EDITOR={} git commit \\;', "read -r GIT_EDITOR <<< 'rm -rf $HOME/x'; export GIT_EDITOR; git commit",
     "printf -v GIT_EDITOR '%sm -rf ~/x' r; export GIT_EDITOR; git commit", 'mapfile -t GIT_PAGER < f; git log', 'getopts e GIT_EDITOR',
     `N=EDI; M=TOR; printf -v "$N$M" '%sm -rf ~/x' r; GIT_EDITOR="$EDITOR" git commit`, 'for GIT_EDITOR in vim; do git commit; done',
-    `printf -v "$1" '%sm -rf ~/x' r; GIT_EDITOR="$EDITOR" git commit`, 'X="$(cat f)"; GIT_EDITOR="vim $X" git commit'], asksUnreadableToo);
+    `printf -v "$1" '%sm -rf ~/x' r; GIT_EDITOR="$EDITOR" git commit`, 'X="$(cat f)"; GIT_EDITOR="vim $X" git commit',
+    'X=`cat f`; GIT_EDITOR="$X" git commit', "X=`printf '%sm -rf ~/x' r`; git -c core.editor=\"$X\" commit", 'X=`cat f`; git config core.editor "$X"',
+    'X=pre`cat f`; export GIT_EDITOR="$X"; git commit', 'X=`cat f` GIT_PAGER=$X git log'], asksUnreadableToo);
+  // the parsers lose a backtick's value: the variable is unknown for every rule, not empty; `pwd` and mktemp stay known
+  assert.ok(decide('X=`echo rm`; $X -rf ~/x', ctx).ask);
+  quiet('D=`pwd`; GIT_EDITOR="$D/bin/ed" git commit');
   // one value run in two directories: harmless in the project, outside it once git runs it after cd /
   quiet("GIT_EDITOR='rm -rf build'; git commit");
   asksRm("GIT_EDITOR='rm -rf build'; cd /; git commit");

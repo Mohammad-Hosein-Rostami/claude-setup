@@ -10,7 +10,7 @@
 // Exceptions: a value that is exactly one reference to a variable the line does not write (`"$EDITOR"`; one reference in the raw text too,
 // so `"$V"x` is not `$Vx`), and `${NAME:-literal}` (`-`, `:-`, `=`, `:=`) of such a variable, whose literal is judged. A git-run variable
 // that read, printf -v, mapfile, readarray, getopts, for or select writes asks the same. Both parsers lose a value given as an unquoted
-// backtick: lib/raw-risk.mjs asks for that one.
+// backtick: lib/raw-risk.mjs asks for that one, and a variable assigned from one stays unknown (lib/rm-paths.mjs newScope), so it asks here.
 // Pure, no I/O. judgeOnce checks each distinct text at most twice per command line (in its directory, then once with the directory
 // unknown), and lineFacts reads the line once, so a value that many git commands or assignments repeat costs one check.
 import { commandOf } from './command-of.mjs';

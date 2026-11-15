@@ -1,6 +1,7 @@
 // Pure shell-text parsing for pre-bash-guard: no I/O, never evaluates anything.
 // Exports: tokenize(command) -> {segs, nested}; segments(command) -> string[][]; stripHeredocs(command);
-// GIT_TOPLEVEL_WORD; MKTEMP_WORD; QUOTED_MARK; lex(command) (same shape as tokenize, from shell-lexer.mjs); unquote, basenameOf, flagsOf.
+// GIT_TOPLEVEL_WORD; MKTEMP_WORD; QUOTED_MARK; lex(command) (same shape as tokenize, from shell-lexer.mjs); unquote, basenameOf, flagsOf;
+// backtickAssignedNames(command).
 // Words are unquoted the way a shell does: an unquoted backslash escapes the next character (`pu\sh` is `push`, `\/` is `/`,
 // `\;` is a literal `;` word, a backslash-newline vanishes); inside double quotes a backslash only escapes `\ " $ \``.
 // A quoted word that merely looks like a redirection (`">"`) gets QUOTED_MARK in front, so it stays a plain argument;
@@ -116,6 +117,15 @@ const MKTEMP_LEAVES_TEMP = /[/~]|(?:^|\s)-p|--tmpdir=/; // an explicit directory
 const mktempWord = (whole, paren = '', backtick = '') => (MKTEMP_LEAVES_TEMP.test(paren + backtick) ? whole : MKTEMP_WORD);
 const prepare = (command) =>
   command.replace(GIT_TOPLEVEL, () => GIT_TOPLEVEL_WORD).replace(PWD_SUBSTITUTION, '$PWD').replace(MKTEMP_SUBSTITUTION, mktempWord);
+
+// `NAME=` glued to an unquoted backtick (maybe after some text): both parsers end the word at the backtick, so the value is lost
+const BACKTICK_ASSIGNMENT = /(?<![\w$]|\$\{)([A-Za-z_]\w*)\+?=[^\s;&|<>()`]*`/g;
+
+/**
+ * The names a command line assigns from a backtick substitution (`X=`cat f``): their values are unknown, as after `$(...)`, and not
+ * the empty text the parsers leave. The substitutions prepare() reads (`pwd`, mktemp, the project root) stay known.
+ */
+export const backtickAssignedNames = (command) => new Set([...prepare(command).matchAll(BACKTICK_ASSIGNMENT)].map(([, name]) => name));
 
 /** Drops heredoc bodies (data, not commands) so prose lines are not read as `rm` or `git`; quotes, comments and `$((1<<X))` are respected. */
 export const stripHeredocs = (command) => lexShell(command).stripped;

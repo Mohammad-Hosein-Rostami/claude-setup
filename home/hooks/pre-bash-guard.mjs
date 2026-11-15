@@ -192,7 +192,7 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
   const reasons = [];
   const secret = findLiteralSecret(command);
   if (secret !== undefined) reasons.push(secretReason(secret));
-  const scope = newScope(cwd, project);
+  const scope = newScope(cwd, project, command);
   const { segs, nested } = parse(command);
   const commands = [];
   let dir = cwd;
