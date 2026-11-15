@@ -65,3 +65,15 @@ test('home/CLAUDE.md keeps the standing-rules, delegation-size and usage-limit b
 test('ui-coverage hand-over step gives ONE link to the visual overview', () => {
   assert.match(read('home/skills/ui-coverage/SKILL.md'), /Give the owner ONE link, to the visual overview \(a preview or side-by-side per state\), open it yourself first and check it shows what you describe; never hand over a bare index of routes or a mock's default listing\./);
 });
+
+// L30 stage 2: sessions paste the estimate tool's Finish block and record the closing and rework rows that feed it.
+const LEAD_ESTIMATE_RULE = '- Multi-day: `STATUS.md` `## Work items`, a row per owner request or correction before work starts. Estimates: paste the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md`, never your own.';
+const GLOBAL_ESTIMATE_RULE = '- Work with a `STATUS.md`: every owner request and every owner correction becomes a `## Work items` row before work on it starts (a correction\'s item starts `rework:`; never clear a done cell). Review, fixes from a review, recheck and landing rows start `close:`, or are left to the tool\'s closing phase; never fold them into a build row. Set started and done when they happen. Every estimate you give is the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` pasted as-is with its Excludes and After lines, never a number or clock time of your own; re-run it whenever rows change; if it refuses, give its reason and its What to do.';
+
+test('the estimate rules are verbatim in _lead.md and home/CLAUDE.md, and the old bullet is gone', () => {
+  assert.ok(read('home/modes/_lead.md').split('\n').includes(LEAD_ESTIMATE_RULE), '_lead.md estimate line');
+  const global = read('home/CLAUDE.md');
+  assert.ok(global.split('\n').includes(GLOBAL_ESTIMATE_RULE), 'home/CLAUDE.md estimate rule');
+  assert.doesNotMatch(global, /end that reply with the new finish estimate/);
+  assert.match(read('docs/daily-use.md'), /pastes the `Finish:` block of `node ~\/\.claude\/tools\/estimate\/estimate\.mjs STATUS\.md` as every estimate/);
+});

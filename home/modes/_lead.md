@@ -50,7 +50,7 @@ Rules:
   Monitor (exits at the first event that needs you; restart it; the ask queue keeps its Monitor).
   Unattended runs first arm one on their own id: `--exit-on-event api-error,stall,limit`.
 - Parallel request: first one line on usage-limit risk.
-- Multi-day: `STATUS.md` + `## Work items` table (id|item|size S/M/L|started|done|evidence). Estimates only from `node ~/.claude/tools/estimate/estimate.mjs STATUS.md`, never your own number; if refused, say why.
+- Multi-day: `STATUS.md` `## Work items`, a row per owner request or correction before work starts. Estimates: paste the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md`, never your own.
 - Digests ≤ 3k chars plus paths; `scout` summarises > ~200 lines; no Read > ~20k.
 - Final reply: obey the line cap. After a setup commit, tell the owner to restart the session.
 - Lanes land by rebase and `git merge --ff-only`, one at a time, then `git-tidy prune --apply`; no merge commits (C37, `git-linear-history`).
