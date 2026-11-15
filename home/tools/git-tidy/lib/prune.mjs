@@ -10,7 +10,7 @@
 import { branchState, isMerged } from './branches.mjs';
 import { UsageError, runGit } from './git.mjs';
 import { findLeftovers } from './leftovers.mjs';
-import { branchReflogs, reflogOnlyCommits } from './reflog.mjs';
+import { branchReflogs, isNotStarted, reflogOnlyCommits } from './reflog.mjs';
 import { isBackupTag } from './tags.mjs';
 import {
   changedFileCount, contains, currentBranch, ignoredFiles, inProgressOperation, listWorktrees, minutesSinceUse, samePath,
@@ -18,6 +18,7 @@ import {
 
 const RECENT_MINUTES = 60;
 const IGNORED_SHOWN = 5;
+const NOT_STARTED = `not started yet (no commit of its own), used in the last ${RECENT_MINUTES} min`;
 const item = (action, kind, subject, detail) => ({ action, kind, subject, detail });
 
 // Where verdicts read their facts: with apply, git is asked again each time; a plan reads the worktree list once and
@@ -78,7 +79,11 @@ function contentReason(ctx, tree) {
   const reasons = [ignoredReason(tree.path), reflogReason(ctx.repo, [ctx.branchReflog(tree.branch), { cwd: tree.path, ref: 'HEAD' }], tree.branch)];
   const found = reasons.find((reason) => reason !== null);
   if (found) return found;
-  const used = ctx.includeRecent ? null : minutesSinceUse(tree.path, RECENT_MINUTES);
+  if (ctx.includeRecent) {
+    // --include-recent is for lanes that landed; a lane with no commit yet has not, so its recent use still protects it.
+    return isNotStarted(ctx.repo, tree.branch) && minutesSinceUse(tree.path, RECENT_MINUTES) !== null ? NOT_STARTED : null;
+  }
+  const used = minutesSinceUse(tree.path, RECENT_MINUTES);
   return used === null ? null : `used ${used} min ago (add --include-recent if you landed this lane yourself)`;
 }
 
@@ -195,7 +200,8 @@ function refuseUnsafeApply(repo) {
 /**
  * Plans (apply false) or performs (apply true) the removal of stale and merged worktrees and merged branches.
  * `leftovers` are the candidates (from findLeftovers); each is re-checked right before it is acted on, so candidates
- * found earlier may be out of date. `includeRecent` lifts only the "used in the last 60 minutes" rule. Returns items
+ * found earlier may be out of date. `includeRecent` lifts only the "used in the last 60 minutes" rule, and not for a lane with no commit of
+ * its own yet (see isNotStarted): that one stays protected while its worktree was used. Returns items
  * `{ action, kind, subject, detail }` with action `remove`/`keep` for a plan and `removed`/`deleted`/`kept`/`failed` for an
  * apply. Throws UsageError when apply meets an unfinished operation or an ambiguous base.
  */

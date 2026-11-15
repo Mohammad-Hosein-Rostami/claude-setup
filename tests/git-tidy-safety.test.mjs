@@ -7,20 +7,12 @@ import { existsSync, rmSync, utimesSync, writeFileSync, mkdirSync } from 'node:f
 import { join } from 'node:path';
 import { deleteBranch } from '../home/tools/git-tidy/lib/prune.mjs';
 import { openRepo } from '../home/tools/git-tidy/lib/repo.mjs';
-import { addWorktree, commit, git, lines, makeRepo, tidy } from './git-tidy-helpers.mjs';
+import { addWorktree, backdate, commit, git, lines, makeRepo, tidy } from './git-tidy-helpers.mjs';
 
 const apply = (dir, ...extra) => tidy(['prune', dir, '--apply', ...extra], { cwd: dir });
 const applyNow = (dir, ...extra) => apply(dir, '--include-recent', ...extra);
 const branches = (dir) => git(dir, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').split('\n').sort();
 const keptLine = (result, kind, subject) => lines(result).find((line) => line.startsWith(`kept ${kind} ${subject} `)) ?? '';
-
-/** Sets every file a "recently used" test looks at (tracked files, index, HEAD reflog) to two hours ago. */
-function backdate(worktree) {
-  const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
-  const gitDir = git(worktree, 'rev-parse', '--absolute-git-dir');
-  const tracked = git(worktree, 'ls-files').split('\n').map((name) => join(worktree, name));
-  for (const file of [join(gitDir, 'logs', 'HEAD'), join(gitDir, 'index'), ...tracked]) utimesSync(file, old, old);
-}
 
 test('whitespace-only difference: a branch whose patch ids equal the base but whose content differs is kept (python indentation)', () => {
   const dir = makeRepo();
@@ -102,6 +94,7 @@ test('reflog: a worktree that once visited another branch is not held back for t
   const wt = addWorktree(dir, 'wt-visitor', 'visitor');
   git(wt, 'checkout', '-q', 'other-work');
   git(wt, 'checkout', '-q', 'visitor');
+  backdate(wt);
   const result = applyNow(dir);
   assert.equal(result.status, 0, result.stdout);
   assert.ok(!existsSync(wt));
@@ -123,6 +116,7 @@ function worktreeWithIgnored(names) {
   const dir = makeRepo();
   commit(dir, '.gitignore', '.env\nreports/\nnode_modules/\ndist/\nextra*\n');
   const wt = addWorktree(dir, 'wt-ignored', 'ignored-lane');
+  backdate(wt); // a lane with no commit yet is protected while it is recent, even with --include-recent
   for (const name of names) {
     mkdirSync(join(wt, name, '..'), { recursive: true });
     writeFileSync(join(wt, name), 'only here');
@@ -220,6 +214,8 @@ test('base not given and main, master and develop all exist: --apply exits 2 nam
 test('recently used: a worktree touched in the last hour is kept with its branch, with the minutes and the flag to lift it', () => {
   const dir = makeRepo();
   const wt = addWorktree(dir, 'wt-fresh', 'fresh-lane');
+  commit(wt, 'lane.txt');
+  git(dir, 'merge', '-q', '--ff-only', 'fresh-lane');
   const result = apply(dir);
   assert.equal(result.status, 1);
   assert.match(keptLine(result, 'merged-worktree', wt), /used \d+ min ago \(add --include-recent if you landed this lane yourself\)/);

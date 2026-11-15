@@ -1,10 +1,10 @@
 // Shared fixtures for the git-tidy tests: build throw-away git repos in temp folders and run the CLI on them.
-// Exports: CLI, CLEAN_ENV, makeRepo, git, commit, addWorktree, tidy, lines, snapshot, withOrigin.
+// Exports: CLI, CLEAN_ENV, makeRepo, git, commit, addWorktree, backdate, tidy, lines, snapshot, withOrigin.
 // Invariants: every git call gets an explicit cwd inside the OS temp folder (checked in `git`) and an environment without
 //   GIT_* variables (under the pre-commit hook git sets GIT_DIR, which would point a child git at the real repo) and
 //   without the user's git config, so a test can never read or change the repository the tests run from.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,6 +54,14 @@ export function addWorktree(dir, name, branch, { create = true } = {}) {
   if (create) git(dir, 'worktree', 'add', '-q', '-b', branch, path);
   else git(dir, 'worktree', 'add', '-q', path, branch);
   return realpathSync(path);
+}
+
+/** Sets every file a "recently used" test looks at (tracked files, index, HEAD reflog) to two hours ago. */
+export function backdate(worktree) {
+  const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  const gitDir = git(worktree, 'rev-parse', '--absolute-git-dir');
+  const tracked = git(worktree, 'ls-files').split('\n').map((name) => join(worktree, name));
+  for (const file of [join(gitDir, 'logs', 'HEAD'), join(gitDir, 'index'), ...tracked]) utimesSync(file, old, old);
 }
 
 /** Runs the CLI with `args`; the folder `cwd` is where it runs from. Returns the spawn result. */

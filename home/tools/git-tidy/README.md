@@ -71,7 +71,7 @@ and prints why. With `--apply`, in this order, each fact read again from git rig
    its branch reflog or its HEAD reflog holds commits that are on no other ref (branch, tag, remote-tracking), not on the base
    and not landed there (a pre-rebase copy of a landed commit does not count, nor a commit of another branch the worktree
    once visited); more than 200 reflog entries (not checked); or any tracked file, its index or its HEAD
-   reflog changed in the last 60 minutes (`used <n> min ago`; `--include-recent` lifts only this rule). That rule reads file and reflog times, so `touch` can defeat it: it is a
+   reflog changed in the last 60 minutes (`used <n> min ago`; `--include-recent` lifts only this rule, and not for a lane that has no commit of its own yet: its branch reflog holds only the creation entry, so it is kept as `not started yet (no commit of its own), used in the last 60 min`; a missing or unreadable reflog counts as started). That rule reads file and reflog times, so `touch` can defeat it: it is a
    courtesy guard, not a lock.
 3. Each merged branch that is not checked out in any remaining worktree and whose reflog holds nothing that is not on the
    base: deleted with `git update-ref -d refs/heads/<name> <tip read a moment ago>`, so a branch that moved since is kept,
@@ -84,7 +84,7 @@ A failure of one item does not stop the others; the run ends with exit code 1 if
 
 The base, the current branch, a branch with commits the base lacks (`unmerged-branch?`), the branch checked out in the
 main worktree, the main worktree, a linked worktree with uncommitted, untracked or ignored files, a locked worktree, a
-detached-HEAD worktree (listed as kept), a worktree used in the last hour (unless `--include-recent`), anything whose reflog
+detached-HEAD worktree (listed as kept), a worktree used in the last hour (unless `--include-recent`, which does not apply to a lane with no commit yet), anything whose reflog
 holds commits that exist nowhere else, remote branches and tags. Nothing is removed while any worktree has an unfinished
 rebase, merge, cherry-pick, revert or bisect.
 

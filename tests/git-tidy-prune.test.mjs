@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { addWorktree, commit, git, lines, makeRepo, snapshot, tidy, withOrigin } from './git-tidy-helpers.mjs';
+import { addWorktree, backdate, commit, git, lines, makeRepo, snapshot, tidy, withOrigin } from './git-tidy-helpers.mjs';
 
 // Most tests build their worktrees seconds before pruning them, so they lift the "used in the last hour" rule.
 const prune = (dir, ...extra) => tidy(['prune', dir, '--include-recent', ...extra], { cwd: dir });
@@ -32,6 +32,7 @@ test('the plan lists what would go and what stays, and changes nothing (refs, wo
   commit(dir, 'wip.txt');
   git(dir, 'checkout', '-q', 'main');
   const before = snapshot(dir, clean, dirty);
+  backdate(clean); // after the snapshot: `git status` refreshes the index time; a lane with no commit yet is protected while recent
   const result = prune(dir);
   assert.equal(result.status, 0);
   assert.equal(snapshot(dir, clean, dirty), before);
@@ -102,6 +103,7 @@ test('a branch whose merge commit carries a change of its own is kept; one whose
 test('a clean worktree of a merged branch is removed together with its branch', () => {
   const dir = makeRepo();
   const wt = addWorktree(dir, 'wt done', 'done');
+  backdate(wt);
   const result = apply(dir);
   assert.equal(result.status, 0);
   assert.ok(lines(result).includes(`removed merged-worktree ${wt} branch done`), result.stdout);
@@ -138,6 +140,7 @@ test('a modified tracked file also keeps the worktree, and `status.showUntracked
 test('two worktrees on merged branches, one dirty: only the clean one and its branch go', () => {
   const dir = makeRepo();
   const clean = addWorktree(dir, 'wt-clean', 'clean-done');
+  backdate(clean); // a lane with no commit yet is protected while it is recent, even with --include-recent
   const dirty = addWorktree(dir, 'wt-dirty', 'dirty-done');
   writeFileSync(join(dirty, 'x.txt'), 'x');
   const result = apply(dir);
@@ -241,6 +244,7 @@ test('a landed branch named like a tag that points at unmerged work is still jud
 test('a worktree folder with a space in its path is removed', () => {
   const dir = makeRepo();
   const wt = addWorktree(dir, 'my worktree', 'spaced');
+  backdate(wt);
   assert.equal(apply(dir).status, 0);
   assert.ok(!existsSync(wt));
 });

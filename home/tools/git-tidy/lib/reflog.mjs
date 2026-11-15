@@ -1,6 +1,6 @@
 // Purpose: find commits that exist only in a reflog. `git worktree remove` deletes the worktree's HEAD reflog and deleting
 //   a branch deletes its reflog, so a commit dropped with `reset --hard` would become unrecoverable.
-// Exports: branchReflogs, reflogOnlyCommits.
+// Exports: branchReflogs, reflogOnlyCommits, isNotStarted.
 // Invariants: reads only; the newest MAX_ENTRIES entries of each reflog are read, more than that is reported as truncated
 //   (callers keep the item). A commit is safe when it is on the base, still reachable from another ref (a worktree that once
 //   visited another branch), or all its work landed on the base (a pre-rebase copy).
@@ -43,4 +43,16 @@ export function reflogOnlyCommits(repo, reflogs, removedBranch) {
   const reachableOnlyHere = walk.status === 0 ? new Set(walk.stdout.split('\n')) : new Set(all);
   outcome.count = all.filter((hash) => reachableOnlyHere.has(hash) && !isLanded(repo, hash)).length;
   return outcome;
+}
+
+/**
+ * True when a branch has never had a commit of its own: its reflog holds only the creation entry, or every entry points at the
+ * commit it was created on. A reflog that is missing, empty, unreadable or longer than the entries read counts as "started",
+ * so this only ever adds a reason to keep.
+ */
+export function isNotStarted(repo, name) {
+  const result = runGit(repo.dir, ['reflog', 'show', '--format=%H', '-n', String(MAX_ENTRIES + 1), `refs/heads/${name}`]);
+  if (result.status !== 0) return false;
+  const hashes = result.stdout.split('\n').filter((line) => line !== '');
+  return hashes.length > 0 && hashes.length <= MAX_ENTRIES && hashes.every((hash) => hash === hashes.at(-1));
 }
