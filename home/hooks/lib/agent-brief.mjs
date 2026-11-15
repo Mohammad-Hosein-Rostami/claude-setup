@@ -1,29 +1,37 @@
 // What agent-model-guard.mjs reads for an Agent brief and the lines it adds to one. Each line is fixed text plus at most one path:
-// nothing from the prompt or from STATUS.md is ever copied into it.
+// nothing from the prompt, from STATUS.md or from a git file is ever copied into it.
 // - Standing rules (every subagent type): a brief that does not contain "STATUS.md" gets one line before it naming the project's
-//   STATUS.md, when that file's `## Standing rules` section has a non-empty line. Inside git the project is the top folder of the work
-//   tree the call's cwd belongs to (of its superproject when cwd is in a submodule), and its STATUS.md counts only while git does not
-//   track it and ignores it (.gitignore, .git/info/exclude or the global ignore file): the owner's own note, never a file a repository
-//   brings, and never one in a subfolder. Outside git the project is cwd itself. The agent reads the file itself.
+//   STATUS.md, when that file's `## Standing rules` section has a non-empty line. The project is the nearest folder at or above cwd
+//   (at most MAX_PARENT_LEVELS up) holding an entry named exactly `.git`, and its STATUS.md counts only when that repository's own
+//   info/exclude has a line that, trimmed, is `STATUS.md` or `/STATUS.md`. info/exclude is local to this machine (no clone, package,
+//   submodule content or commit brings it) and is where the owner hides work notes; a .gitignore or a global excludes file never
+//   counts. A folder that only looks like a git folder (HEAD, objects, refs) is no repository. When the nearest `.git` does not list
+//   STATUS.md there is no line: no folder further up is used. With no `.git` up to the filesystem root the project is cwd itself; a
+//   walk that stops at MAX_PARENT_LEVELS gives no line. The agent reads the file itself.
 // - Design lists (architect and Plan): a brief without "Reuse inventory" gets one line after it asking for the Reuse inventory and
 //   Contract facts lists, with unstated product facts under "Unconfirmed".
-// Each line holds the text that suppresses it, so a brief is never extended twice. A STATUS.md is read only as a regular file whose real
-// path is inside the project: a link out of it is ignored. Only its first MAX_STATUS_BYTES are read. Git runs without a shell, with fixed
-// arguments (the path after `--`) and at most GIT_TIMEOUT_MS per call; git missing, slow or failing means no rules line.
-// Exports: withBriefLines(toolInput, cwd) -> input | null, readFileHead(path, maxBytes) -> text | undefined (the UI brief gate reads its
-// matrix with it too), UNPRINTABLE. Invariants: withBriefLines never throws (any failure: null, the brief stays as it is); bounded work
-// (at most 3 git calls and 1 read of at most MAX_STATUS_BYTES).
-import { spawnSync } from 'node:child_process';
-import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+// Each line holds the text that suppresses it, so a brief is never extended twice. No program ever runs: a `.git` folder is the git
+// folder; a `.git` file is followed to its `gitdir:` (and a linked worktree's `commondir`) only to read info/exclude; a `.git` link,
+// FIFO or device, or a UNC or device path in a git file, gives no line. Git files are read only as regular files (never through a link,
+// a FIFO never blocks), only up to their cap, and never printed. STATUS.md must be listed in its folder under exactly that name (on a
+// case-insensitive disk `status.md` is another file) and be a regular file whose real path is inside the project; only its first
+// MAX_STATUS_BYTES are read.
+// Exports: withBriefLines(toolInput, cwd) -> input | null, readFileHead(path, maxBytes, flags?) -> text | undefined (the UI brief gate
+// reads its matrix with it too), UNPRINTABLE, MAX_EXCLUDE_BYTES. Invariants: withBriefLines never throws (any failure: null, the brief
+// stays as it is); bounded work (at most MAX_PARENT_LEVELS + 1 folders looked at, two folder listings, four reads of capped size).
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const STATUS_FILE = 'STATUS.md';
+const GIT_ENTRY = '.git';
+const MAX_PARENT_LEVELS = 64; // folders above cwd looked at for a `.git`: deeper than any real project
 const MAX_STATUS_BYTES = 1024 * 1024; // only the start of a longer STATUS.md is read; the rules section sits near the top
-const GIT_TIMEOUT_MS = 1000; // per git call: a normal one takes about 10 ms, and three of them stay inside the hook's 5 s
-// git's message (in the C locale) when no folder from cwd up is a repository; "not a git repository: <path>" (a broken link) is a failure
-const OUTSIDE_GIT = /not a git repository \(or any/;
-const UNTRACKED_EXIT = 1; // `git ls-files --error-unmatch` for a path the index does not hold (a failure exits 128)
-const IGNORED_EXIT = 0; // `git check-ignore -q` for an ignored path (1: not ignored, which a tracked file never is)
+export const MAX_EXCLUDE_BYTES = 64 * 1024; // only the start of a longer info/exclude is read (a real one is a few lines)
+const MAX_PATH_FILE_BYTES = 4096; // a `.git` file or a `commondir` holds one path line
+const GITDIR_PREFIX = 'gitdir: '; // the first line of a `.git` file; its path is relative to the folder holding the file
+const EXCLUDE_LINES = ['STATUS.md', '/STATUS.md']; // the info/exclude lines that mark STATUS.md as the owner's own note
+// A UNC or device path (\\host\share, //host/share): on Windows a lookup reaches the network and may send the user's credentials
+const NETWORK_PATH = /^[\\/]{2}/;
 const RULES_HEADING = '## Standing rules';
 const SECTION_END = /^#{1,2}[ \t]/; // the next heading of level 1 or 2 ends the section
 const DESIGN_TYPES = ['architect', 'Plan'];
@@ -33,6 +41,7 @@ const DESIGN_LISTS = 'Your spec must include "Reuse inventory" (the existing com
   + 'list product facts the repo does not state under "Unconfirmed".';
 export const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu; // control and format characters (bidi marks included) and line separators
 const READ_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0); // a FIFO swapped in after a stat never blocks (POSIX only)
+const NO_FOLLOW = constants.O_NOFOLLOW ?? 0; // POSIX only; on Windows the lstat check before the open stands alone
 
 const rulesLine = (path) => `Read "## Standing rules" in ${path.replace(UNPRINTABLE, '')} first; where they differ from this brief, follow them.`;
 
@@ -40,11 +49,12 @@ const rulesLine = (path) => `Read "## Standing rules" in ${path.replace(UNPRINTA
  * The start of a regular file, read through a handle that is checked again after the open.
  * @param {string} path the file (the caller has checked with stat that it is a regular file: a FIFO or device is never opened)
  * @param {number} maxBytes the most that is read
+ * @param {number} [flags] the open flags (READ_FLAGS; the git files add O_NOFOLLOW)
  * @returns {string | undefined} its first maxBytes as UTF-8; undefined when the open handle is not a regular file
  * @throws {Error} when the file cannot be opened (the callers catch it)
  */
-export function readFileHead(path, maxBytes) {
-  const fd = openSync(path, READ_FLAGS);
+export function readFileHead(path, maxBytes, flags = READ_FLAGS) {
+  const fd = openSync(path, flags);
   try {
     const opened = fstatSync(fd);
     if (!opened.isFile()) return undefined;
@@ -76,34 +86,71 @@ function hasStandingRules(path, project) {
   }
 }
 
-/** Runs git in cwd: no shell, fixed arguments, the C locale (so its messages can be matched), at most GIT_TIMEOUT_MS; never throws. */
-const runGit = (args, cwd) => spawnSync('git', args, {
-  cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, windowsHide: true, env: { ...process.env, LC_ALL: 'C' },
-});
+/** @returns {import('node:fs').Stats | null} lstat of path; null when nothing is there (any other error throws: the caller fails open) */
+function lstatOrNull(path) {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+    throw error;
+  }
+}
+
+/** @returns {boolean} true when folder lists an entry named exactly `name` (a case-insensitive disk finds other spellings too) */
+const listsEntry = (folder, name) => readdirSync(folder).includes(name);
+
+/** @returns {string[] | undefined} the lines of a git file that is itself a regular file (a last line cut at maxBytes left out) */
+function gitFileLines(path, maxBytes) {
+  const stats = lstatOrNull(path);
+  if (!stats?.isFile()) return undefined; // missing, a link, a folder, a FIFO or a device
+  const lines = (readFileHead(path, maxBytes, READ_FLAGS | NO_FOLLOW) ?? '').split(/\r?\n/);
+  return stats.size > maxBytes ? lines.slice(0, -1) : lines;
+}
 
 /**
  * @param {string} cwd the call's folder
- * @returns {string | null | undefined} the top folder of the work tree cwd belongs to, or of its superproject when cwd is in a submodule;
- *   null outside git; undefined when git is missing, too slow or fails
+ * @returns {{top: string, entry: import('node:fs').Stats} | null | undefined} the nearest folder at or above cwd holding an entry named
+ *   exactly `.git`, with that entry's lstat; null when no folder up to the root has one; undefined when MAX_PARENT_LEVELS comes first
  */
-function workTreeTop(cwd) {
-  // git prints the superproject's top (only inside a submodule) before the work tree's own, so the first line is the one wanted
-  const result = runGit(['rev-parse', '--show-superproject-working-tree', '--show-toplevel'], cwd);
-  if (result.status === 0) return result.stdout.split(/\r?\n/)[0] || undefined;
-  return result.error === undefined && OUTSIDE_GIT.test(result.stderr) ? null : undefined;
+function nearestGitEntry(cwd) {
+  let folder = resolve(cwd);
+  for (let level = 0; level <= MAX_PARENT_LEVELS; level += 1) {
+    const entry = lstatOrNull(join(folder, GIT_ENTRY));
+    if (entry !== null && listsEntry(folder, GIT_ENTRY)) return { top: folder, entry };
+    if (dirname(folder) === folder) return null;
+    folder = dirname(folder);
+  }
+  return undefined;
 }
 
-/** @returns {boolean} true when git does not track the STATUS.md at the top folder `top` and ignores it */
-const isLocalNote = (top) => runGit(['ls-files', '--error-unmatch', '--', STATUS_FILE], top).status === UNTRACKED_EXIT
-  && runGit(['check-ignore', '-q', '--', STATUS_FILE], top).status === IGNORED_EXIT;
+/** @returns {string | undefined} the git folder a `.git` entry stands for: the folder itself, or the `gitdir:` of a `.git` file */
+function gitDirOf(top, entry) {
+  if (entry.isDirectory()) return join(top, GIT_ENTRY);
+  const first = entry.isFile() ? gitFileLines(join(top, GIT_ENTRY), MAX_PATH_FILE_BYTES)?.[0] : undefined; // a link or FIFO: none
+  const target = first?.startsWith(GITDIR_PREFIX) ? first.slice(GITDIR_PREFIX.length).trim() : '';
+  return target === '' || NETWORK_PATH.test(target) ? undefined : resolve(top, target);
+}
+
+/** @returns {boolean} true when the info/exclude of gitDir (of its main repository for a linked worktree) lists STATUS.md */
+function excludesStatus(gitDir) {
+  const common = gitFileLines(join(gitDir, 'commondir'), MAX_PATH_FILE_BYTES)?.[0]?.trim() ?? '';
+  if (NETWORK_PATH.test(common)) return false;
+  const shared = common === '' ? gitDir : resolve(gitDir, common); // linked worktrees share info/exclude through the common folder
+  if (!lstatOrNull(join(shared, 'info'))?.isDirectory()) return false; // missing, or a link that could lead anywhere
+  return (gitFileLines(join(shared, 'info', 'exclude'), MAX_EXCLUDE_BYTES) ?? []).some((line) => EXCLUDE_LINES.includes(line.trim()));
+}
 
 /** @returns {string | undefined} the project's STATUS.md when it has standing rules and may be named (see the header) */
 function standingRulesFile(cwd) {
-  const top = workTreeTop(cwd);
-  if (top === undefined) return undefined; // git missing or failing: no line
-  const project = top ?? resolve(cwd);
+  const found = nearestGitEntry(cwd);
+  if (found === undefined) return undefined; // deeper than the walk goes: no line
+  if (found !== null) {
+    const gitDir = gitDirOf(found.top, found.entry);
+    if (gitDir === undefined || !excludesStatus(gitDir)) return undefined; // the nearest .git decides: nothing further up is used
+  }
+  const project = found === null ? resolve(cwd) : found.top;
   const path = join(project, STATUS_FILE);
-  return hasStandingRules(path, realpathSync(project)) && (top === null || isLocalNote(top)) ? path : undefined;
+  return listsEntry(project, STATUS_FILE) && hasStandingRules(path, realpathSync(project)) ? path : undefined;
 }
 
 /**
