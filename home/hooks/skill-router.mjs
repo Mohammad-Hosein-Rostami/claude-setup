@@ -39,7 +39,8 @@ const PROMPT_ROUTES = [
 ];
 // Harness events (background task results, injected reminders) arrive as prompts but are not user text.
 const HARNESS_EVENT = /^(<(task-notification|system-reminder|agent-message)|\[SYSTEM NOTIFICATION)/;
-// Gate routes: workflow skills that are not UI specific, named once per session (and again after a compact). Triggers
+// Gate routes: workflow skills that are not UI specific, named once per session (and again after a compact); the
+// repeated-report route names no skill and fires on every match (`everyTime`). Triggers
 // are intents, not words: an imperative "fix ..." / a bug, crash or failing test; a "done?", "ship it", "ready to
 // merge" request; a repository-level restructure ("remove Nx", "merge the apps into one project"); git history or
 // branch work ("clean up the git tree", "rebase", "delete the merged branches", "merge everything to master"). "fixed",
@@ -104,6 +105,25 @@ const GATE_ROUTES = [
       'i',
     ),
     line: 'Skill router: git history or branches - invoke git-linear-history (skip if already loaded) before merging, rebasing or deleting branches.',
+  },
+  {
+    // The owner reports the same defect again or repeats an instruction. No skill to name, so no once-per-session
+    // marker: the line shows on every match (`everyTime`), because each repeat is a new failure of the last fix.
+    // "still", "again" and "same" alone are common words ("is it still running", "run it again"), so each pattern needs
+    // its partner: still + a symptom word, "not fixed", "same <defect> again", "i told you", "<ordinal> time".
+    everyTime: true,
+    test: new RegExp(
+      String.raw`\bstill\s+(?:wrong|broken|failing|incorrect|flash\w*|flicker\w*|blink\w*|not\s+(?:fixed|working|right|correct|resolved|solved|showing|visible))\b` +
+        String.raw`|\bnot\s+(?:yet\s+)?(?:fixed|resolved|solved)\b` +
+        String.raw`|\b(?:same|similar)\s+(?:problem|issue|bug|error|defect)s?\s+again\b|\bagain\s+(?:the\s+)?same\s+(?:problem|issue|bug|error|defect)` +
+        String.raw`|\bi\s+(?:already\s+)?(?:told|said|mentioned)\s+(?:you\b|(?:this|that|it)\s+before\b|before\b)` +
+        String.raw`|\bas\s+(?:i|we)\s+(?:said|talked|told|discussed|mentioned|agreed)\b` +
+        String.raw`|\bthe\s+(?:second|third|fourth|fifth|sixth|\d+(?:st|nd|rd|th))\s+time\b` +
+        String.raw`|هنوز\s*(?:هم\s*)?(?:درست|حل|رفع)?\s*(?:نشده|نشد|خراب|اشتباه)` +
+        String.raw`|دوباره\s+(?:همان|همون|همین)\s+(?:مشکل|باگ|خطا)`,
+      'i',
+    ),
+    line: 'Skill router: repeated report - the last fix did not hold: reproduce the exact symptom first, change approach (C22), and check that symptom itself before replying.',
   },
 ];
 const UI_FILE = /\.(tsx|jsx|vue|svelte|html|css|scss|sass|less)$/i;
@@ -274,8 +294,8 @@ function route(input) {
     const prompt = String(input.prompt ?? '');
     if (process.env[OFF_ENV] === 'off') return null;
     const ui = isQuiet(input.cwd) ? null : promptContext(prompt, input.session_id);
-    // The gate lines share the UI "named skills" marker, so each shows once per session and again after a compact.
-    const gates = gatesForPrompt(prompt).filter((gate) => !alreadyNamed(input.session_id, [gate.skill])).map((gate) => gate.line);
+    // The gate lines share the UI "named skills" marker, so each shows once per session and again after a compact; an `everyTime` route shows on every match.
+    const gates = gatesForPrompt(prompt).filter((gate) => gate.everyTime || !alreadyNamed(input.session_id, [gate.skill])).map((gate) => gate.line);
     return [ui, ...gates].filter(Boolean).join('\n') || null;
   }
   if (isQuiet(input.cwd)) return null;

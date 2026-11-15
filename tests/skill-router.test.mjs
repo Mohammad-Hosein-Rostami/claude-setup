@@ -287,6 +287,44 @@ test('hook: git-linear-history line reaches additionalContext once per session, 
   assert.equal(await prompt('<agent-message>clean up the git tree</agent-message>', 'l3', KEEP), '');
 });
 
+const REPEATED_REPORT_LINE = 'Skill router: repeated report - the last fix did not hold: reproduce the exact symptom first, change approach (C22), and check that symptom itself before replying.';
+const REPEATED_REPORT_FIRES = ['the border colour is still wrong', 'it is still flashing', 'still not fixed', 'this is not fixed', 'same problem again', 'again the same issue',
+  'i told you before', 'as i said before, keep testing with mock data', 'as we talked before keep testing with mock data', 'how about the other issues i told you',
+  'this is the third time', 'هنوز درست نشده', 'دوباره همان مشکل'];
+const REPEATED_REPORT_QUIET = ['is the server still running?', 'a still image for the hero', 'run the tests again', 'try again later', 'tell me again how the cache works',
+  'still, I prefer option B', 'keep the tests as they are', 'add the same problem statement to the README', 'fixed-width font'];
+
+test('gateLinesForPrompt: a repeated report fires the repeated-report line', () => {
+  for (const prompt of REPEATED_REPORT_FIRES) assert.ok(gateLinesForPrompt(prompt).includes(REPEATED_REPORT_LINE), prompt);
+});
+
+test('gateLinesForPrompt: still, again and same used in other ways do not fire the repeated-report line', () => {
+  for (const prompt of REPEATED_REPORT_QUIET) assert.ok(!gateLinesForPrompt(prompt).includes(REPEATED_REPORT_LINE), prompt);
+});
+
+test('hook: the repeated-report line fires on every matching prompt, not once per session, and never on harness events', async () => {
+  const KEEP = { keepGates: true };
+  const { prompt, compact } = await routerSession();
+  assert.equal(await prompt('the border colour is still wrong', 'q1', KEEP), REPEATED_REPORT_LINE);
+  assert.equal(await prompt('it is still flashing', 'q1', KEEP), REPEATED_REPORT_LINE);
+  assert.equal(await prompt('this is the third time', 'q1', KEEP), REPEATED_REPORT_LINE);
+  compact('q1');
+  assert.equal(await prompt('هنوز درست نشده', 'q1', KEEP), REPEATED_REPORT_LINE);
+  assert.equal(await prompt('run the tests again', 'q2', KEEP), '');
+  for (const event of ['<agent-message>the border colour is still wrong</agent-message>', '<task-notification>still not fixed</task-notification>', '[SYSTEM NOTIFICATION - NOT USER INPUT] i told you before']) {
+    assert.equal(await prompt(event, 'q3', KEEP), '', event);
+  }
+});
+
+test('hook: a repeated report that also names a bug gets both lines, and the bug line still shows once', async () => {
+  const KEEP = { keepGates: true };
+  const { prompt } = await routerSession();
+  const first = await prompt('the crash is still not fixed', 'q4', KEEP);
+  assert.match(first, /root-cause-debug/);
+  assert.ok(first.split('\n').includes(REPEATED_REPORT_LINE));
+  assert.equal(await prompt('the crash is still not fixed', 'q4', KEEP), REPEATED_REPORT_LINE);
+});
+
 test('hook: gate lines reach additionalContext, also in a Gradle project and next to a UI route', async () => {
   const KEEP = { keepGates: true };
   const { prompt, fire } = await routerSession();
