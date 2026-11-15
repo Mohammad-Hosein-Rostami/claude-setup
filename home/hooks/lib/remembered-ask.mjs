@@ -10,15 +10,15 @@
 // Advice (the ask's `advice`, quality rules) never changes a safety decision: "secret-only" is judged without it, and the reason the dialog,
 // the CLI's ask, the log and a bounce's deny text show only names its classes (withAdvice, lib/bounce-once.mjs). When a remembered secret
 // makes the command silent, its advice is still given once (adviceOnce), exactly as for a command with advice alone.
-// An allow or timeout is also handed to permission-timed-allow.mjs (lib/answered-commands.mjs), so Claude Code's own permission prompt
-// for the same command right after it opens no second dialog.
+// An allow or timeout is also handed to permission-timed-allow.mjs (lib/answered-commands.mjs, keyed on session, agent, directory and
+// command, 10 s), so Claude Code's own permission prompt for the same command right after it opens no second dialog.
 // Invariants: never remembers on deny, no-gui, dialog-failed or bounce; no raw value is logged or stored.
 import { isRemembered, remember } from './allowed-literals.mjs';
 import { rememberAnswered } from './answered-commands.mjs';
 import { adviceOnce, bounceOnce, withAdvice } from './bounce-once.mjs';
 import { logDecision } from './guard-log.mjs';
 import { literalSecretValues } from './secrets.mjs';
-import { ASK_TIMEOUT_ENV, askOwner, secretAskTimeoutSeconds } from './timed-ask.mjs';
+import { askOwner, secretAskTimeoutSeconds } from './timed-ask.mjs';
 import { isSecretOnlyReason } from './verdict.mjs';
 
 export const REMEMBERED_ENV_REF = '$GUARD_REMEMBERED';
@@ -54,11 +54,11 @@ export function askUnlessRemembered(ask, { command, cwd, input, recheck }, env =
   }
   const bounced = bounceOnce(ask, { command, cwd, input }, env); // never throws; undefined means "ask as usual"
   if (bounced) return bounced; // only a deny line ends here: empty hook output would be an allow
-  const askEnv = secretOnly ? { ...env, [ASK_TIMEOUT_ENV]: String(secretAskTimeoutSeconds(env)) } : env; // a secret-only dialog waits less
+  const timeoutS = secretOnly ? secretAskTimeoutSeconds(env) : undefined; // undefined: CLAUDE_ASK_TIMEOUT_S
   const onAnswer = (answer) => {
     if (answer.decision !== 'allow') return;
     remember(input.session_id, values, env);
-    rememberAnswered(input.session_id, command, env); // Claude Code's own prompt for this command then opens no second dialog
+    rememberAnswered({ session: input.session_id, agentId: input.agent_id, cwd, command }, env); // Claude Code's own prompt for it then opens no second dialog
   };
-  return askOwner({ hook: 'pre-bash-guard', tool: 'Bash', reason, command, cwd, sessionId: input.session_id, agentId: input.agent_id, omitCommandFromLog: ask.errorClass !== undefined, onAnswer }, askEnv);
+  return askOwner({ hook: 'pre-bash-guard', tool: 'Bash', reason, command, cwd, sessionId: input.session_id, agentId: input.agent_id, omitCommandFromLog: ask.errorClass !== undefined, onAnswer, timeoutS }, env);
 }

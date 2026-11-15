@@ -2,22 +2,25 @@
 // permissionTimeoutSeconds(env), guiAvailable(env, platform), dialogInvocation(platform, text,
 // title, timeoutS), parseDialogResult(platform, result) -> 'allow'|'deny'|'timeout'|'unavailable', answerAsk(request, env) ->
 // {decision, outcome, reason}, decisionOutput(answer) -> hook stdout, askOwner(request, env) -> hook stdout (asks, logs, formats).
-// Why: the native "ask" waits forever. The owner's policy is "block nothing": show a native dialog with Allow (default) and Deny,
-// and go ahead when nobody answers within CLAUDE_ASK_TIMEOUT_S (default 180; a secret-only ask uses CLAUDE_ASK_SECRET_TIMEOUT_S, default 30, see secretAskTimeoutSeconds; at most 190 so it stays under the 200 s hook
-// timeout; a built-in permission prompt answered by permission-timed-allow.mjs uses CLAUDE_PERMISSION_TIMEOUT_S, default 30, see
-// permissionTimeoutSeconds). Only a click on Deny denies. Allow and timeout print NO decision (empty stdout, exit 0): the CLI's normal permission
+// Why: the native "ask" waits forever. The owner's policy is "everything goes ahead after 30 s": show a native dialog with Allow
+// (default) and Deny, and go ahead when nobody answers within the request's timeoutS, else CLAUDE_ASK_TIMEOUT_S (default 30; a
+// secret-only ask passes CLAUDE_ASK_SECRET_TIMEOUT_S, default 30, see secretAskTimeoutSeconds; a Claude Code permission prompt answered
+// by permission-timed-allow.mjs passes CLAUDE_PERMISSION_TIMEOUT_S, default 30, see permissionTimeoutSeconds; each at most 190 so it
+// stays under the 200 s hook timeout). Only a click on Deny denies. Allow and timeout print NO decision (empty stdout, exit 0): the CLI's normal permission
 // flow then still applies, so base.json deny rules keep working and the rest of a compound command is not pre-approved.
 // A timeout only counts when the full time really passed; a dialog that was killed, crashed or gave up early is "dialog-failed".
 // No GUI (ssh session, CI, no display) or a failing dialog tool -> decision "ask": the CLI's own prompt, which also covers
 // bypassPermissions mode. Dialog tools: macOS osascript, Windows PowerShell WScript.Shell Popup (its buttons are fixed to
-// Yes = Allow / No = Deny), Linux zenity. The dialog text is built from masked, truncated text and is passed as an argument or
-// an environment variable, never spliced into a script. Invariants: never throws, never puts a secret in the dialog.
+// Yes = Allow / No = Deny), Linux zenity (plain text, --no-markup). The dialog text is passed as an argument or an environment
+// variable, never spliced into a script. Every shown value is made visible first (line breaks become a visible mark, control, bidi and
+// zero-width characters are dropped), so no value can fake a "Why:" line or hide part of a command; a long value shows its head, its
+// tail and its full length. Invariants: never throws, never puts a secret in the dialog (values are masked after they are made visible).
 import { spawnSync } from 'node:child_process';
 import { logDecision } from './guard-log.mjs';
 import { maskSecrets } from './secrets.mjs';
 
 export const ASK_TIMEOUT_ENV = 'CLAUDE_ASK_TIMEOUT_S';
-export const DEFAULT_ASK_TIMEOUT_S = 180;
+export const DEFAULT_ASK_TIMEOUT_S = 30; // the owner: every prompt goes ahead after 30 s unless Deny is clicked
 export const SECRET_ASK_TIMEOUT_ENV = 'CLAUDE_ASK_SECRET_TIMEOUT_S';
 export const DEFAULT_SECRET_ASK_TIMEOUT_S = 30;
 export const PERMISSION_TIMEOUT_ENV = 'CLAUDE_PERMISSION_TIMEOUT_S';
@@ -26,8 +29,14 @@ export const MAX_ASK_TIMEOUT_S = 190; // the hook timeout in settings/base.json 
 const TIMEOUT_SLACK_MS = 500; // a dialog tool may report its timeout marginally before the full time has elapsed
 const MS_PER_SECOND = 1000;
 const SPAWN_GRACE_S = 5; // the dialog tool gives up by itself at the timeout; this only stops one that hangs
-const MAX_COMMAND_CHARS = 200;
-const MAX_MASKED_INPUT = 2048;
+const MAX_COMMAND_CHARS = 200; // a value up to this length is shown whole
+const HEAD_CHARS = 120; // a longer one shows its first HEAD_CHARS and last TAIL_CHARS characters and its length
+const TAIL_CHARS = 80;
+const MAX_MASKED_INPUT = 2048; // the head and the tail are each masked from at most this many characters (regex work stays bounded)
+const LINE_BREAK = /\r\n|[\n\r\v\f\u0085\u2028\u2029]/g;
+const LINE_MARK = ' \u23CE '; // a visible return symbol where the value had a line break
+// C0 and C1 controls (tab handled apart), zero-width characters, bidi embeddings, overrides and isolates, word joiners, BOM
+const HIDDEN_CHARS = /[\u0000-\u0008\u000E-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g;
 const SECONDS_PER_MINUTE = 60;
 const DIALOG_TITLE = 'Claude Code: confirm action';
 const TEXT_ENV = 'CLAUDE_ASK_DIALOG_TEXT';
@@ -55,7 +64,7 @@ function positiveSeconds(raw, fallback) {
   return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, MAX_ASK_TIMEOUT_S) : fallback;
 }
 
-/** @returns {number} the dialog timeout in whole seconds: CLAUDE_ASK_TIMEOUT_S when it is a positive number (at most 190), else 180 */
+/** @returns {number} the dialog timeout in whole seconds: CLAUDE_ASK_TIMEOUT_S when it is a positive number (at most 190), else 30 */
 export function askTimeoutSeconds(env = process.env) {
   return positiveSeconds(env[ASK_TIMEOUT_ENV], DEFAULT_ASK_TIMEOUT_S);
 }
@@ -91,8 +100,6 @@ export function guiAvailable(env = process.env, platform = process.platform) {
   return platform === 'linux' ? Boolean(env.DISPLAY || env.WAYLAND_DISPLAY) : ['darwin', 'win32'].includes(platform);
 }
 
-const escapeMarkup = (text) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
 /**
  * @param {string} platform process.platform
  * @returns {string | undefined} the dialog executable for the platform, or undefined when there is none
@@ -113,7 +120,8 @@ export function dialogInvocation(platform, text, title, timeoutS) {
     return { command, args: ['-NoProfile', '-NonInteractive', '-Command', `& { ${WINDOWS_SCRIPT} }`, String(timeoutS)], env: { [TEXT_ENV]: text, [TITLE_ENV]: title } };
   }
   if (platform === 'linux') {
-    return { command, args: ['--question', `--title=${title}`, `--text=${escapeMarkup(text)}`, '--ok-label=Allow', '--cancel-label=Deny', `--timeout=${timeoutS}`, '--width=520'], env: {} };
+    // --no-markup: zenity then shows the text as it is (no Pango markup, no backslash escapes)
+    return { command, args: ['--question', '--no-markup', `--title=${title}`, `--text=${text}`, '--ok-label=Allow', '--cancel-label=Deny', `--timeout=${timeoutS}`, '--width=520'], env: {} };
   }
   return undefined;
 }
@@ -145,14 +153,25 @@ export function parseDialogResult(platform, result) {
   return 'unavailable';
 }
 
-/** @returns {string} the dialog body: tool, why, masked short command, directory, session/agent, and the 3-minute rule */
-function dialogText({ tool, reason, command, cwd, sessionId, agentId }, timeoutS) {
-  const masked = maskSecrets(String(command ?? '').slice(0, MAX_MASKED_INPUT)); // a huge command is cut before masking (regex work stays bounded)
-  const short = masked.length > MAX_COMMAND_CHARS ? `${masked.slice(0, MAX_COMMAND_CHARS)}...` : masked;
-  const who = [sessionId && `session ${String(sessionId).slice(0, 8)}`, agentId && `agent ${String(agentId).slice(0, 8)}`].filter(Boolean).join(', ');
-  const lines = [`Tool: ${tool}`, `Why: ${maskSecrets(String(reason))}`];
-  if (short) lines.push(`Command: ${short}`);
-  if (cwd) lines.push(`Directory: ${cwd}`);
+/** @returns {string} `text` on one line: line breaks become a visible mark, tabs a space, hidden characters are dropped */
+const visible = (text) => String(text ?? '').replace(LINE_BREAK, LINE_MARK).replace(/\t/g, ' ').replace(HIDDEN_CHARS, '');
+
+/** @returns {string} `text` made visible and masked; over MAX_COMMAND_CHARS it is head ... tail [length chars] */
+function shownValue(text) {
+  const raw = String(text ?? '');
+  const head = maskSecrets(visible(raw.slice(0, MAX_MASKED_INPUT)));
+  if (raw.length <= MAX_MASKED_INPUT && head.length <= MAX_COMMAND_CHARS) return head;
+  const tail = raw.length <= MAX_MASKED_INPUT ? head : maskSecrets(visible(raw.slice(-MAX_MASKED_INPUT)));
+  return `${head.slice(0, HEAD_CHARS)} ... ${tail.slice(-TAIL_CHARS)} [${raw.length} chars]`;
+}
+
+/** @returns {string} the dialog body: tool, why, the labelled target (head and tail), directory, session/agent, and the timeout rule */
+function dialogText({ tool, reason, command, targetLabel = 'Command', cwd, sessionId, agentId }, timeoutS) {
+  const target = shownValue(command);
+  const who = [sessionId && `session ${visible(String(sessionId).slice(0, 8))}`, agentId && `agent ${visible(String(agentId).slice(0, 8))}`].filter(Boolean).join(', ');
+  const lines = [`Tool: ${visible(tool)}`, `Why: ${maskSecrets(visible(reason))}`];
+  if (target) lines.push(`${visible(targetLabel)}: ${target}`);
+  if (cwd) lines.push(`Directory: ${visible(cwd)}`);
   if (who) lines.push(`From: ${who}`);
   lines.push('', `Allow is the default. With no answer in ${formatDuration(timeoutS)} it goes ahead.`);
   return lines.join('\n');
@@ -160,7 +179,9 @@ function dialogText({ tool, reason, command, cwd, sessionId, agentId }, timeoutS
 
 /**
  * Asks the owner through a native dialog and turns the answer into a decision.
- * @param {{tool: string, reason: string, command?: string, cwd?: string, sessionId?: string, agentId?: string}} request what to show
+ * @param {{tool: string, reason: string, command?: string, targetLabel?: string, timeoutS?: number, cwd?: string, sessionId?: string, agentId?: string}} request
+ *   what to show: `command` is the call's target (a command, or a file, URL or query when targetLabel says so; default label "Command");
+ *   timeoutS overrides CLAUDE_ASK_TIMEOUT_S for this dialog
  * @param {Record<string, string | undefined>} env process environment (timeout, ssh/CI detection, PATH)
  * @param {string} platform process.platform
  * @param {() => number} now clock in milliseconds (injectable so a test can simulate the full wait)
@@ -170,7 +191,7 @@ function dialogText({ tool, reason, command, cwd, sessionId, agentId }, timeoutS
 export function answerAsk(request, env = process.env, platform = process.platform, now = () => performance.now()) {
   const reason = maskSecrets(String(request.reason));
   if (!guiAvailable(env, platform)) return { decision: 'ask', outcome: 'no-gui', reason };
-  const timeoutS = askTimeoutSeconds(env);
+  const timeoutS = request.timeoutS ?? askTimeoutSeconds(env);
   let outcome = 'unavailable';
   try {
     const invocation = dialogInvocation(platform, dialogText(request, timeoutS), DIALOG_TITLE, timeoutS);
@@ -207,7 +228,7 @@ export function decisionOutput({ decision, reason }) {
 
 /**
  * The whole timed ask for one hook call: dialog, decision log, hook JSON.
- * @param {{hook: string, tool: string, reason: string, command?: string, cwd?: string, sessionId?: string, agentId?: string, omitCommandFromLog?: boolean, onAnswer?: (answer: ReturnType<typeof answerAsk>) => void}} request what to show and who asks
+ * @param {{hook: string, tool: string, reason: string, command?: string, timeoutS?: number, cwd?: string, sessionId?: string, agentId?: string, omitCommandFromLog?: boolean, onAnswer?: (answer: ReturnType<typeof answerAsk>) => void}} request what to show and who asks
  *   (omitCommandFromLog: the dialog shows the command, the decision log does not; onAnswer runs after the log line, e.g. to remember an allow)
  * @param {Record<string, string | undefined>} env process environment
  * @returns {string} the hook stdout line for the decision (allow, deny, or the native ask as a fallback)

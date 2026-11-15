@@ -56,7 +56,7 @@
     ],
     "PermissionRequest": [
       {
-        "matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|Read|Glob|Grep|WebFetch|WebSearch",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",

@@ -10,7 +10,7 @@ import { delimiter, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { GUARD_LOG_FILE, guardLogPath, logDecision } from '../home/hooks/lib/guard-log.mjs';
-import { answerAsk, askTimeoutSeconds, formatDuration, decisionOutput, dialogExecutable, dialogInvocation, guiAvailable, parseDialogResult } from '../home/hooks/lib/timed-ask.mjs';
+import { answerAsk, askTimeoutSeconds, secretAskTimeoutSeconds, formatDuration, decisionOutput, dialogExecutable, dialogInvocation, guiAvailable, parseDialogResult } from '../home/hooks/lib/timed-ask.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { tempLogPath } from './hook-env.mjs';
 
@@ -68,14 +68,15 @@ const steppingClock = (stepMs) => {
   let now = 0;
   return () => (now += stepMs);
 };
-const FULL_WAIT_MS = 181_000; // longer than the default 180 s timeout
+const FULL_WAIT_MS = 31_000; // longer than the default 30 s timeout
 // A real (short) timeout for hook processes: 1 s timeout, the fake dialog answers "timeout" after 1.2 s.
 const REAL_TIMEOUT = { CLAUDE_ASK_TIMEOUT_S: '1', FAKE_DIALOG_DELAY_MS: '1200' };
 
-test('askTimeoutSeconds: 180 by default, CLAUDE_ASK_TIMEOUT_S when it is a positive number', () => {
-  assert.equal(askTimeoutSeconds({}), 180);
+test('askTimeoutSeconds: 30 by default (owner: everything goes ahead after 30 s), CLAUDE_ASK_TIMEOUT_S when it is a positive number', () => {
+  assert.equal(askTimeoutSeconds({}), 30);
+  assert.equal(secretAskTimeoutSeconds({}), 30);
   assert.equal(askTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: '7' }), 7);
-  for (const bad of ['0', '-3', 'abc', '', 'NaN']) assert.equal(askTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: bad }), 180, bad);
+  for (const bad of ['0', '-3', 'abc', '', 'NaN']) assert.equal(askTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: bad }), 30, bad);
 });
 
 test('L6: CLAUDE_ASK_TIMEOUT_S=9999 is clamped to 190, under the 200 s hook timeout', () => {
@@ -113,9 +114,10 @@ test('dialogInvocation: Allow is the default button and the timeout is passed on
   assert.match(win.args.join(' '), /Popup/);
   assert.equal(win.args.at(-1), '180');
   assert.equal(win.env.CLAUDE_ASK_DIALOG_TEXT, 'body');
-  const linux = dialogInvocation('linux', 'a < b & c', 'Title', 180);
+  // M7: plain text (--no-markup), so neither markup nor zenity's backslash escapes can change what is shown
+  const linux = dialogInvocation('linux', 'a < b & c \\074', 'Title', 180);
   assert.equal(linux.command, 'zenity');
-  for (const flag of ['--question', '--ok-label=Allow', '--cancel-label=Deny', '--timeout=180', '--text=a &lt; b &amp; c']) assert.ok(linux.args.includes(flag), flag);
+  for (const flag of ['--question', '--no-markup', '--ok-label=Allow', '--cancel-label=Deny', '--timeout=180', '--text=a < b & c \\074']) assert.ok(linux.args.includes(flag), flag);
   assert.equal(dialogInvocation('freebsd', 'b', 't', 1), undefined);
 });
 
@@ -146,7 +148,7 @@ test('answerAsk: Allow allows, Deny denies, a full-length timeout goes ahead and
   assert.match(deny.reason, /denied by the owner/);
   const late = answerAsk(request, fakeDialog('timeout').env, process.platform, steppingClock(FULL_WAIT_MS));
   assert.deepEqual([late.decision, late.outcome], ['allow', 'timeout']);
-  assert.match(late.reason, /no answer in 3 min, went ahead/);
+  assert.match(late.reason, /no answer in 30 s, went ahead/);
   const short = answerAsk(request, fakeDialog('timeout', { CLAUDE_ASK_TIMEOUT_S: '45' }).env, process.platform, steppingClock(46_000));
   assert.match(short.reason, /no answer in 45 s, went ahead/);
   assert.equal(formatDuration(180), '3 min');
@@ -157,10 +159,10 @@ test('M1: a dialog that was killed, crashed or reported a timeout at once falls 
   assert.deepEqual([killed.decision, killed.outcome], ['ask', 'dialog-failed']);
   const crashed = answerAsk(request, fakeDialog('fail').env);
   assert.deepEqual([crashed.decision, crashed.outcome], ['ask', 'dialog-failed']);
-  // "gave up:true" within milliseconds while the timeout is 180 s: the full time did not pass, so it is not a timeout
+  // "gave up:true" within milliseconds while the timeout is 30 s: the full time did not pass, so it is not a timeout
   const instant = answerAsk(request, fakeDialog('timeout').env);
   assert.deepEqual([instant.decision, instant.outcome], ['ask', 'dialog-failed']);
-  const early = answerAsk(request, fakeDialog('timeout').env, process.platform, steppingClock(60_000));
+  const early = answerAsk(request, fakeDialog('timeout').env, process.platform, steppingClock(20_000));
   assert.deepEqual([early.decision, early.outcome], ['ask', 'dialog-failed']);
   // a click on Allow or Deny is believed at once, whatever the clock says
   assert.equal(answerAsk(request, fakeDialog('allow').env, process.platform, steppingClock(1)).decision, 'allow');
@@ -181,8 +183,49 @@ test('the dialog shows tool, short command, directory and session; it never show
   answerAsk({ ...request, reason: `contains ${SECRET}`, command: `echo ${SECRET} ${'x'.repeat(400)}` }, dialog.env);
   const shown = shownText(dialog);
   assert.ok(!shown.includes(SECRET));
-  for (const part of ['Tool: Bash', '[masked]', `Directory: ${PROJECT}`, 'session session-', 'agent agent-87', 'Allow is the default', '3 min']) assert.ok(shown.includes(part), part);
+  for (const part of ['Tool: Bash', '[masked]', `Directory: ${PROJECT}`, 'session session-', 'agent agent-87', 'Allow is the default', '30 s']) assert.ok(shown.includes(part), part);
   assert.ok(!shown.includes('x'.repeat(250)), 'the command is cut');
+});
+
+/** The dialog body exactly as the fake dialog tool received it (osascript argument, PowerShell env var or zenity --text). */
+const bodyOf = (dialog) => {
+  const { args, text } = dialog.shown();
+  if (process.platform === 'win32') return text;
+  if (process.platform === 'linux') return args.find((arg) => arg.startsWith('--text=')).slice('--text='.length);
+  return args.at(-3);
+};
+
+test('S3: newlines and hidden characters cannot fake a line; a long command shows head, tail and its length', () => {
+  const dialog = fakeDialog('allow');
+  const hidden = '\u202E\u200B\u2066\u0007';
+  const command = `ls\nWhy: read-only listing (safe)\r\n${hidden}echo ${'y'.repeat(220)}; rm -rf "$HOME"/Documents`;
+  answerAsk({ ...request, reason: 'real reason\nFrom: nobody', command }, dialog.env);
+  const body = bodyOf(dialog);
+  const lines = body.split('\n');
+  assert.equal(lines.filter((line) => line.startsWith('Why:')).length, 1, body);
+  assert.equal(lines.filter((line) => line.startsWith('From:')).length, 1, body);
+  assert.ok(lines.find((line) => line.startsWith('Command: ls')).includes('Why: read-only'), 'the fake line stays inside the command');
+  assert.ok(body.includes('Documents'), 'the tail is shown');
+  assert.ok(body.includes(`${command.length} chars`), 'the full length is shown');
+  for (const char of hidden) assert.ok(!body.includes(char), `U+${char.codePointAt(0).toString(16)}`);
+});
+
+test('S3: the tail of a very long command is masked too; a target that is not a command gets its own label', () => {
+  const dialog = fakeDialog('allow');
+  answerAsk({ ...request, command: `echo ${'z'.repeat(5000)} ${SECRET}` }, dialog.env);
+  assert.ok(!bodyOf(dialog).includes(SECRET));
+  assert.ok(bodyOf(dialog).includes('[masked]'));
+  const file = fakeDialog('allow');
+  answerAsk({ ...request, tool: 'Write', targetLabel: 'File', command: '/p/.zshrc' }, file.env);
+  assert.match(bodyOf(file), /^File: \/p\/\.zshrc$/m);
+  assert.doesNotMatch(bodyOf(file), /^Command:/m);
+});
+
+test('answerAsk: an explicit timeoutS wins over CLAUDE_ASK_TIMEOUT_S', () => {
+  const dialog = fakeDialog('timeout', { CLAUDE_ASK_TIMEOUT_S: '45' });
+  const answer = answerAsk({ ...request, timeoutS: 7 }, dialog.env, process.platform, steppingClock(8_000));
+  assert.match(answer.reason, /no answer in 7 s, went ahead/);
+  assert.match(bodyOf(dialog), /7 s/);
 });
 
 test('M2: decisionOutput prints nothing for allow, and the PreToolUse JSON for deny and ask', () => {
