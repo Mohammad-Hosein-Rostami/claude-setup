@@ -3,7 +3,8 @@
 // variable-command reasons, which lib/bounce-once.mjs sends back once for a rewrite); CONVENTIONAL_COMMAND_VARS (the names that
 // conventionally hold an editor, pager or compiler; lib/git-runs.mjs reads them too). Pure, no I/O.
 // - the command word is a variable or `$(...)` (`$X`, `X="git push"; $X`): the guard cannot see what runs. Names that conventionally hold
-//   an editor, pager or compiler (`$EDITOR file`) are fine, and so is a variable assigned earlier in the line to one plain word.
+//   an editor, pager or compiler (`$EDITOR file`) are fine, and so is a variable assigned earlier in the line to one plain word. The
+//   first word of an array's element list (`files+=("$f")`, a segment marked `.arrayList`) is data, not a command word.
 // - a shell reads its commands from stdin: `curl x | bash`, `bash <<EOF`, `bash < file`, `sh -s`.
 // - `env -S "cmd"` and `su -c "cmd"` take the command as ONE string.
 // A false positive only costs a dialog, so each rule is as narrow as the bypass it closes.
@@ -54,5 +55,6 @@ function oneStringCommand(seg, raw, parsed) {
  * @returns {string[]} ask reasons
  */
 export function shellHazards({ seg, raw, parsed, shellScript }) {
-  return [hiddenCommandWord(raw, parsed), shellFromStdin(seg, parsed, shellScript), oneStringCommand(seg, raw, parsed)].filter((reason) => reason !== undefined);
+  const commandWord = seg.arrayList === true ? undefined : hiddenCommandWord(raw, parsed); // `files+=("$f")`: its elements are words
+  return [commandWord, shellFromStdin(seg, parsed, shellScript), oneStringCommand(seg, raw, parsed)].filter((reason) => reason !== undefined);
 }

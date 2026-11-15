@@ -11,7 +11,7 @@
 // in place (so its body is still checked) rather than guessed at.
 
 import { ANSI_C_WORD, decodeAnsiC } from './ansi-c.mjs';
-import { isSimpleSubstitutionBody, lexShell, markPiped } from './shell-lexer.mjs';
+import { isSimpleSubstitutionBody, lexShell, markArrayList, markPiped, opensArrayList } from './shell-lexer.mjs';
 
 // Alternation order matters: `&&`/`||` first, then words (a word may be `&>` or follow `>`), then single separators.
 const WORD = '(?:"(?:\\\\[\\s\\S]|[^"\\\\])*"|' + ANSI_C_WORD + '|\'[^\']*\'|\\\\[\\s\\S]|(?<=[<>])&|(?<=>)\\||&(?=>)|[^\\s;|&()`\\\\])+';
@@ -134,6 +134,14 @@ export const stripHeredocs = (command) => lexShell(command).stripped;
 /** Raw words -> unquoted words (continuation-only words vanish, attached redirects split off). */
 const wordsOfRaw = (raws) => raws.filter((raw) => !LINE_CONTINUATION_ONLY.test(raw)).flatMap((raw) => splitAttachedRedirect(raw).map(wordOf));
 
+/** The raw words of one segment -> its unquoted words, keeping the segment's flags (`.piped`, `.arrayList`). */
+function wordsOfSegment(raws) {
+  const words = wordsOfRaw(raws);
+  if (raws.piped === true) markPiped(words);
+  if (raws.arrayList === true) markArrayList(words);
+  return words;
+}
+
 /** Starts a new segment after `current`; `piped` marks one fed by `|` (an empty segment is reused, so `a |<newline> b` stays piped). Returns the segment to fill next. */
 function startSegment(segs, current, piped) {
   if (current.length > 0) {
@@ -153,25 +161,26 @@ export function tokenize(command) {
   let current = segs[0];
   for (const m of stripped.matchAll(TOKEN)) {
     if (m[2] !== undefined) {
-      current.push(...wordsOfRaw([m[2]]));
+      if (!LINE_CONTINUATION_ONLY.test(m[2])) current.push(m[2]); // raw words; wordsOfSegment unquotes them once the segment is whole
       continue;
     }
     if (m[3] === '(') opened.push(stripped[m.index - 1] === '$' && stripped[m.index - 2] !== '\\' ? { outer: current, at: m.index } : null);
+    const arrayList = m[3] === '(' && stripped[m.index - 1] === '=' && opensArrayList(current.at(-1));
     current = startSegment(segs, current, m[3] === '|');
+    if (arrayList) markArrayList(current);
     // the words after the `)` closing a simple `$(` belong to the segment that held the `$` (`echo $(a) $(b)`: one echo, not a command `$`)
     if (m[3] === ')') {
       const sub = opened.pop();
       if (sub && isSimpleSubstitutionBody(stripped.slice(sub.at + 1, m.index))) current = sub.outer;
     }
   }
-  return { segs: segs.filter((s) => s.length), nested };
+  return { segs: segs.filter((s) => s.length).map(wordsOfSegment), nested };
 }
 
 /** Same result shape as tokenize, from the character-level lexer: the independent second parse behind the guard's raw-text backstop. */
 export function lex(command) {
   const { rawSegs, nested } = lexShell(prepare(command));
-  const segs = rawSegs.map((raw) => (raw.piped ? markPiped(wordsOfRaw(raw)) : wordsOfRaw(raw))).filter((s) => s.length);
-  return { segs, nested };
+  return { segs: rawSegs.map(wordsOfSegment).filter((s) => s.length), nested };
 }
 
 /** Command text -> list of segments, each a list of unquoted-word tokens (adjacent quoted parts joined, operators split). */

@@ -1,7 +1,9 @@
 // Character-level shell lexer: the second, independent parser behind pre-bash-guard's "matched in raw text" backstop, and the
 // source of truth for heredocs and `$(...)` bodies inside double quotes. Pure, no I/O, never evaluates anything.
-// Exports: lexShell(text) -> {rawSegs, nested, stripped}.
-//   rawSegs   simple commands as lists of RAW words (quotes and escapes intact; `.piped` is true when a `|` fed the segment)
+// Exports: lexShell(text) -> {rawSegs, nested, stripped}; isSimpleSubstitutionBody; markPiped, opensArrayList, markArrayList (also used
+// by the regex tokenizer).
+//   rawSegs   simple commands as lists of RAW words (quotes and escapes intact; `.piped` is true when a `|` fed the segment, `.arrayList`
+//             when the segment is the element list of `NAME=(...)` / `NAME+=(...)`)
 //   nested    bodies of `$(...)` / backticks found inside double quotes at the top level (the caller lexes them again)
 //   stripped  the text without heredoc bodies and their terminator lines
 // It follows the real nesting: quotes, `$'..'`, comments, `$((..))` arithmetic, `$(...)` inside double quotes (where quotes nest
@@ -52,6 +54,12 @@ export function isSimpleSubstitutionBody(body) {
 
 /** Marks a segment as fed by `|`; non-enumerable, so segments still compare equal to plain word lists. */
 export const markPiped = (seg) => Object.defineProperty(seg, 'piped', { value: true, configurable: true });
+// `NAME=(`, `NAME+=(`, `NAME[i]=(`: the list after it holds an array's elements, which are words, not a command
+const ARRAY_ASSIGNMENT = /^[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=$/;
+/** True when the `(` that follows the word `before` opens an array's element list (`files+=("$f")`). */
+export const opensArrayList = (before) => ARRAY_ASSIGNMENT.test(before ?? '');
+/** Marks a segment as an array's element list: the guard reads its words, but its first word is not a command word. */
+export const markArrayList = (seg) => Object.defineProperty(seg, 'arrayList', { value: true, configurable: true });
 
 /** The delimiter word after the `<<` at `at`, with quotes and backslashes removed from the WHOLE word (`"E"OF`, `E\\OF`, `'E'OF` all mean EOF), or undefined. */
 function heredocDelimiter(text, at) {
@@ -210,7 +218,9 @@ function walk(state, start, closer) {
     } else if (c === '(') {
       endWord(i);
       opened.push(text[i - 1] === '$' && text[i - 2] !== '\\' ? { outer: current, at: i } : null);
+      const arrayList = text[i - 1] === '=' && opensArrayList(current.at(-1));
       split(i);
+      if (arrayList) markArrayList(current);
       if (closer === ')') depth++;
       i++;
     } else if (c === ')' && closer === ')' && depth === 0) {

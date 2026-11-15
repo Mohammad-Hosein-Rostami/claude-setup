@@ -21,7 +21,8 @@ const WRAPPERS = new Map([
 // `command -v x` / `command -V x` only looks a name up (prints its path); nothing runs, so it is not a wrapper there
 const LOOKUP_OPTION = /^-p?[vV][pvV]*$/;
 const DURATION = /^\d+(\.\d+)?[smhd]?$/;
-const ASSIGNMENT = /^\w+=/;
+// `NAME=x`, `NAME+=x` and `NAME[index]=x`: bash and zsh run the command after any of them, so none is the command word
+const ASSIGNMENT = /^\w+(?:\[[^\]]*\])?\+?=/;
 // git runs subcommand <sub> as the program `git-<sub>` from its exec path (also for external ones such as git-lfs); git matches it as written
 const GIT_PROGRAM = /^git-([A-Za-z0-9][A-Za-z0-9-]*)$/;
 
