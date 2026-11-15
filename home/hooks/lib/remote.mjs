@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { commandOf } from './command-of.mjs';
+import { parseGitArgs } from './git-options.mjs';
 import { flagsOf, tokenize } from './shell-words.mjs';
 import { isReadOnlySql, sqlHosts, sqlOf } from './sql.mjs';
 
@@ -99,7 +100,9 @@ function isReadOnlyCommand({ cmd, args }) {
   if (cmd === 'docker') return first === 'compose' ? COMPOSE_READ.has(second) : DOCKER_READ.has(first);
   if (cmd === 'docker-compose') return COMPOSE_READ.has(first);
   if (cmd === 'kubectl') return KUBECTL_READ.has(first);
-  if (cmd === 'git') return GIT_READ.has(first);
+  // the first word that is no option is a read verb (an option value never counts: `git -C /srv status` is a write), and so is every
+  // subcommand git may run (lib/git-options.mjs): `git -C log reset --hard` runs reset
+  if (cmd === 'git') return GIT_READ.has(first) && parseGitArgs(args).subcommands.every(({ sub }) => GIT_READ.has(sub));
   if (cmd === 'psql' || cmd === 'mysql') return isReadOnlySql(sqlOf(cmd, args));
   return READ_ONLY_COMMANDS.has(cmd);
 }

@@ -4,19 +4,21 @@
 // Exports: checkGit(args, assigns), checkDiskWipe(cmd, args), checkLockfileEdit(cmd, args), checkHiddenRm(cmd, args),
 // checkStdinRm(cmd, args, before), checkStdinScriptRm(script, before), checkKeychainPrint(cmd, args), checkGhSecret(cmd, args) - each
 // returns an ask reason, or undefined when the command is fine; secretPrintOf(cmd, args) and isSecretPrintReason(reason) serve
-// lib/captured-read.mjs; LOCKFILES and lockfileAdvice(name) serve lib/reason-classes.mjs; gitSubcommand(args) serves lib/merge-commit.mjs.
+// lib/captured-read.mjs; LOCKFILES and lockfileAdvice(name) serve lib/reason-classes.mjs.
 // Pure, no I/O. Every rule is an ask (the hook shows a timed dialog); a destructive one starts with "DESTRUCTIVE: ". The one exception is
 // checkLockfileEdit: a quality rule, its text is advice (lib/bounce-once.mjs: denied once with the fix, the identical retry runs).
+// git's own options before the subcommand are read by lib/git-options.mjs; when they can be read more than one way, every reading is checked.
 import { commandName, commandOf } from './command-of.mjs';
+import { parseGitArgs } from './git-options.mjs';
 import { parsePushArgs, pushAsk } from './outward.mjs';
 import { RECURSIVE_FLAG } from './rm-paths.mjs';
 import { basenameOf, flagsOf, segments } from './shell-words.mjs';
-import { destructive } from './verdict.mjs';
+import { DESTRUCTIVE_PREFIX, destructive } from './verdict.mjs';
 
 export const LOCKFILES = new Set(['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lockb']);
 // rm is allowed on lockfiles (delete and reinstall is a normal fix); cp only writes its last argument.
 const FILE_WRITERS = new Set(['mv', 'cp', 'tee', 'truncate']);
-const GIT_VALUE_OPTIONS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace']);
+const CONFIG_ENV_ATTACHED = '--config-env=';
 const REDIRECT = /^(\d?>>?|&>>?)/;
 const NO_VERIFY = '--no-verify';
 const MIN_NO_VERIFY_PREFIX = 8; // `--no-ver`: git accepts any unique prefix of a long option
@@ -26,26 +28,22 @@ const DISKUTIL_WIPE = /^(?:erase|partition|zero|secureerase|reformat|apfs(?:dele
 const DISKUTIL_APFS_WIPE = /^(?:delete|erase)/i; // `diskutil apfs deleteContainer`, `apfs eraseVolume`
 const DEVICE_WRITERS = new Set(['cp', 'mv', 'install', 'tee']); // diskutil eraseDisk, partitionDisk, zeroDisk, secureErase, reformat
 const RAW_DEVICE_TARGET = /^\/dev\/(?:r?disk|sd|hd|nvme|vd|xvd|mmcblk)/; // `> /dev/disk2`, `>/dev/sda`
+// `git -c core.hooksPath=x` replaces the repo hooks for one command
 const isHooksPathConfig = (value = '') => /^core\.hookspath=/i.test(value);
+// `git -c alias.p=push p`, `git -c 'alias.x=!git push' x`: the alias hides what runs
+const isAliasConfig = (value = '') => /^alias\./i.test(value);
 const isLockfile = (p) => LOCKFILES.has(basenameOf(p));
 
-/** `git -c core.hooksPath=x` / `--config-env=core.hooksPath=x` replace the repo hooks for one command. */
-function usesHooksPathOverride(words) {
-  for (let i = 0; words[i]?.startsWith('-'); i += GIT_VALUE_OPTIONS.has(words[i]) ? 2 : 1) {
-    const opt = words[i];
-    const config = opt === '-c' ? words[i + 1] : opt.startsWith('-c') ? opt.slice(2) : opt.replace(/^--config-env=/, '');
-    if (isHooksPathConfig(config)) return true;
-  }
-  return false;
-}
-
-/** `git -c alias.p=push p`, `git -c 'alias.x=!git push' x`: the alias hides what runs. */
-function definesAlias(words) {
-  for (let i = 0; words[i]?.startsWith('-'); i += GIT_VALUE_OPTIONS.has(words[i]) ? 2 : 1) {
-    const config = words[i] === '-c' ? words[i + 1] : words[i].startsWith('-c') ? words[i].slice(2) : undefined;
-    if (/^alias\./i.test(config ?? '')) return true;
-  }
-  return false;
+/**
+ * The config one git option sets for this command: `-c <name>=<value>`, `--config-env <name>=<envvar>`, `--config-env=<name>=<envvar>`,
+ * and `-c<name>=<value>` (git rejects that spelling; it is read as config anyway, the safer reading).
+ * @param {(string | undefined)[]} option an option word and its value, as lib/git-options.mjs lists them
+ * @returns {string | undefined} the `name=...` text, or undefined for an option that sets no config
+ */
+function configOf([word, value]) {
+  if (word === '-c' || word === '--config-env') return value;
+  if (word.startsWith(CONFIG_ENV_ATTACHED)) return word.slice(CONFIG_ENV_ATTACHED.length);
+  return word.startsWith('-c') ? word.slice(2) : undefined;
 }
 
 /** @param {string[]} rest words after `push`; option values (`-o x`, `--repo r`) are not flags (see parsePushArgs) */
@@ -59,29 +57,31 @@ function checkGitPush(rest) {
   return deletes ? destructive('deleting a remote branch or tag') : pushAsk(options);
 }
 
-/**
- * Words after `git` -> the subcommand and its words, past git's own options (`git -C dir -c k=v --no-pager commit -n`).
- * @param {string[]} args words after `git`
- * @returns {{sub: string|undefined, rest: string[]}} sub undefined when only options are given
- */
-export function gitSubcommand(args) {
-  let i = 0;
-  while (args[i]?.startsWith('-')) i += GIT_VALUE_OPTIONS.has(args[i]) ? 2 : 1;
-  return { sub: args[i], rest: args.slice(i + 1) };
-}
-
-/** @param {string[]} args words after `git`; @param {string[]} assigns `VAR=x` words before the command */
-export function checkGit(args, assigns = []) {
-  if (assigns.includes('HUSKY=0')) return 'HUSKY=0 skips the git hooks';
-  if (usesHooksPathOverride(args)) return 'git -c core.hooksPath bypasses the git hooks';
-  if (definesAlias(args)) return 'git -c alias.* defines a command for this call (an alias can run push or any shell command); write the command out';
-  const { sub, rest } = gitSubcommand(args);
+/** The rules on one reading of the subcommand and its words (`commit -n`, `--no-verify`, push); undefined when none applies. */
+function checkGitSubcommand({ sub, rest }) {
   const flags = flagsOf(rest);
   // -n is the short form of --no-verify for commit (also inside clusters such as -nm)
   const shortNoVerify = sub === 'commit' && flags.some((f) => /^-[a-zA-Z]*n[a-zA-Z]*$/.test(f));
   const prefixNoVerify = flags.some((f) => f.length >= MIN_NO_VERIFY_PREFIX && NO_VERIFY.startsWith(f.split('=')[0]));
   if (prefixNoVerify || shortNoVerify) return `git ${NO_VERIFY} skips the git hooks`;
   return sub === 'push' ? checkGitPush(rest) : undefined;
+}
+
+/**
+ * The git rules: HUSKY=0, a config that replaces the hooks or defines an alias, --no-verify, push.
+ * @param {string[]} args words after `git`
+ * @param {string[]} assigns `VAR=x` words before the command
+ * @returns {string | undefined} the ask reason, or undefined; when git's options can be read more than one way (an option word the
+ *   guard does not know), the most dangerous reading decides: a destructive reason first, else the first reason found
+ */
+export function checkGit(args, assigns = []) {
+  if (assigns.includes('HUSKY=0')) return 'HUSKY=0 skips the git hooks';
+  const { options, subcommands } = parseGitArgs(args);
+  const configs = options.map(configOf);
+  if (configs.some(isHooksPathConfig)) return 'git -c core.hooksPath bypasses the git hooks';
+  if (configs.some(isAliasConfig)) return 'git -c alias.* defines a command for this call (an alias can run push or any shell command); write the command out';
+  const reasons = subcommands.map(checkGitSubcommand).filter((reason) => reason !== undefined);
+  return reasons.find((reason) => reason.startsWith(DESTRUCTIVE_PREFIX)) ?? reasons[0];
 }
 
 /** `diskutil erase*|partition*|zero*|secureErase|reformat` and `diskutil apfs delete*|erase*`. */

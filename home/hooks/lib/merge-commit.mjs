@@ -3,11 +3,12 @@
 // next to a reason that asks, it is only appended). Exports: MERGE_COMMIT_ADVICE (the text, classed exactly in lib/reason-classes.mjs)
 // and mergeCommitAdvice(command) -> [] | [MERGE_COMMIT_ADVICE].
 // Every simple command of the line is checked, through keywords, wrappers (sudo, env, command: lib/command-of.mjs) and git's own options
-// (`git -C dir --no-pager merge x`). A merge inside `$(...)`, backticks or a heredoc body is not this line's merge: heredoc bodies are
+// (`git -C dir --no-pager merge x`; lib/git-options.mjs, where an option it does not know is read both ways and either reading that
+// merges gives the advice). A merge inside `$(...)`, backticks or a heredoc body is not this line's merge: heredoc bodies are
 // dropped and substitution bodies cut out before parsing. Flags match git's exact spelling, after the branch too, until `--`. Not looked
 // into: alias bodies, `bash -c` and eval scripts, git config (`-c pull.rebase=true`). Pure, no I/O.
-import { gitSubcommand } from './command-checks.mjs';
 import { commandOf } from './command-of.mjs';
+import { parseGitArgs } from './git-options.mjs';
 import { segments, stripHeredocs } from './shell-words.mjs';
 
 export const MERGE_COMMIT_ADVICE = 'Linear history (C37): rebase the branch onto the base, then git merge --ff-only (for pull: git pull --rebase). '
@@ -88,9 +89,8 @@ function optionsOf(words) {
 
 const pullAvoidsMerge = (option) => PULL_WITHOUT_MERGE.has(option) || (option.startsWith('--rebase=') && !REBASE_OFF.test(option));
 
-/** True when `git <args>` is a merge or a pull that can create a merge commit. */
-function makesMergeCommit(args) {
-  const { sub, rest } = gitSubcommand(args);
+/** True when this reading of a git command (its subcommand and the words after it) is a merge or a pull that can create a merge commit. */
+function makesMergeCommit({ sub, rest }) {
   if (sub === 'merge') return !optionsOf(rest).some((option) => MERGE_WITHOUT_COMMIT.has(option));
   if (sub === 'pull') return !optionsOf(rest).some(pullAvoidsMerge);
   return false;
@@ -106,7 +106,7 @@ export function mergeCommitAdvice(command) {
   if (!MAY_MERGE.test(command.replace(SPELLING_BREAKS, ''))) return [];
   const merges = segments(withoutSubstitutions(stripHeredocs(command))).some((words) => {
     const { cmd, args } = commandOf(words);
-    return cmd === 'git' && makesMergeCommit(args);
+    return cmd === 'git' && parseGitArgs(args).subcommands.some(makesMergeCommit);
   });
   return merges ? [MERGE_COMMIT_ADVICE] : [];
 }
