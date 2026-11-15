@@ -1,10 +1,17 @@
 // Purpose: tags that are not on the base's history: leftovers (all their work is on the base, typically a backup made before a
 //   history clean-up) or tags on work the base lacks.
-// Exports: classifyTags.
+// Exports: classifyTags, isBackupTag.
 // Invariants: a tag that is an ancestor of the base (a release tag on the line) is never returned; only tags of commits are
 //   looked at; nothing is written.
 import { compareWithBase } from './branches.mjs';
 import { gitText } from './git.mjs';
+
+// The name the history clean-up procedure gives its temporary tags. Only these are findings: whether any other tag is
+// published cannot be known without the network (a release tag on a backport branch is normal), so those are hints.
+const BACKUP_TAG_PREFIX = 'backup/';
+
+/** True for a temporary backup tag (`backup/...`). */
+export const isBackupTag = (name) => name.startsWith(BACKUP_TAG_PREFIX);
 
 const FORMAT = ['%(refname:strip=2)', '%(objecttype)', '%(objectname)', '%(objectname:short)', '%(committerdate:short)', '%(*objecttype)', '%(*objectname)', '%(*objectname:short)', '%(*committerdate:short)'].join('%00');
 

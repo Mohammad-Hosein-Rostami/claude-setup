@@ -5,6 +5,7 @@
 //   throws (exit 2): a check that cannot read must never report clean.
 import { gitFlag, gitText } from './git.mjs';
 import { findLeftovers } from './leftovers.mjs';
+import { isBackupTag } from './tags.mjs';
 import { tangledRefs } from './tangled.mjs';
 import { changedFileCount, currentBranch, ignoredFiles, inProgressOperation, listWorktrees } from './repo.mjs';
 
@@ -24,11 +25,20 @@ function mergeCommitFindings(repo) {
   });
 }
 
-// The base and the current branch are covered by `merge-commit`, every other branch and tag by `tangled-ref`.
-function tangledRefFindings(repo) {
+const TAG_PREFIX = 'refs/tags/';
+const isPlainTag = (ref) => ref.startsWith(TAG_PREFIX) && !isBackupTag(ref.slice(TAG_PREFIX.length));
+
+// The base and the current branch are covered by `merge-commit`; every other branch and `backup/` tag is a `tangled-ref`
+// finding, any other tag only the hint `tangled-tag?` (it may be a published release tag).
+function tangledRefItems(repo) {
   const current = currentBranch(repo);
   const skip = new Set([repo.baseRef, ...(current === null ? [] : [`refs/heads/${current}`])]);
-  return tangledRefs(repo, skip).map(({ ref, count, newest }) => item('tangled-ref', ref, `${count} merge commits not on any remote, newest ${newest}`));
+  const refs = tangledRefs(repo, skip);
+  const detail = ({ count, newest }) => `${count} merge commits not on any remote, newest ${newest}`;
+  return {
+    findings: refs.filter(({ ref }) => !isPlainTag(ref)).map((entry) => item('tangled-ref', entry.ref, detail(entry))),
+    hints: refs.filter(({ ref }) => isPlainTag(ref)).map((entry) => item('tangled-tag?', entry.ref, detail(entry))),
+  };
 }
 
 function publishedMergeHint(repo) {
@@ -81,11 +91,13 @@ function shallowHint(repo) {
 export function runCheck(repo) {
   const leftovers = findLeftovers(repo);
   const worktrees = listWorktrees(repo);
+  const tangled = tangledRefItems(repo);
+  const mergedTags = leftovers.tags.filter((t) => t.state === 'patch-equal');
   const findings = [
     ...mergeCommitFindings(repo),
-    ...tangledRefFindings(repo),
+    ...tangled.findings,
     ...leftovers.mergedBranches.map((b) => item('merged-branch', b.name, `${b.short} ${b.state}`)),
-    ...leftovers.tags.filter((t) => t.state === 'patch-equal').map((t) => item('merged-tag', t.name, `${t.short} ${t.state}`)),
+    ...mergedTags.filter((t) => isBackupTag(t.name)).map((t) => item('merged-tag', t.name, `${t.short} ${t.state}`)),
     ...leftovers.mergedWorktrees.map((w) => item('merged-worktree', w.path, `branch ${w.branch}`)),
     ...leftovers.staleWorktrees.map((w) => item('stale-worktree', w.path, 'folder missing')),
   ];
@@ -94,7 +106,8 @@ export function runCheck(repo) {
   const unmergedTags = leftovers.tags.filter((t) => t.state === 'unmerged')
     .map((t) => item('unmerged-tag?', t.name, `ahead ${t.ahead}, last commit ${t.date}`));
   const hints = [
-    ...publishedMergeHint(repo), ...unmerged, ...unmergedTags, ...mergedRemoteHints(repo),
+    ...publishedMergeHint(repo), ...unmerged, ...unmergedTags,
+    ...mergedTags.filter((t) => !isBackupTag(t.name)).map((t) => item('merged-tag?', t.name, `${t.short} ${t.state}`)), ...tangled.hints, ...mergedRemoteHints(repo),
     ...(repo.bare ? [] : behindBaseHint(repo)), ...worktreeHints(worktrees), ...ignoredFileHints(leftovers.mergedWorktrees), ...shallowHint(repo),
   ];
   return { findings, hints };

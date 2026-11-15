@@ -2,7 +2,8 @@
 //   a branch deletes its reflog, so a commit dropped with `reset --hard` would become unrecoverable.
 // Exports: branchReflogs, reflogOnlyCommits.
 // Invariants: reads only; the newest MAX_ENTRIES entries of each reflog are read, more than that is reported as truncated
-//   (callers keep the item). A commit is safe when it is on the base or all its work landed there (a pre-rebase copy).
+//   (callers keep the item). A commit is safe when it is on the base, still reachable from another ref (a worktree that once
+//   visited another branch), or all its work landed on the base (a pre-rebase copy).
 import { isLanded } from './branches.mjs';
 import { gitText, runGit } from './git.mjs';
 
@@ -21,10 +22,11 @@ export function branchReflogs(repo) {
 
 /**
  * Looks at the reflogs given as `[{ cwd, ref, hashes? }]` (a branch reflog from the repo folder, a worktree's `HEAD` from
- * its own folder; `hashes` when already read, e.g. by branchReflogs). Returns `{ count, truncated, unreadable }`: how many distinct commits are neither on the base nor landed there,
+ * its own folder; `hashes` when already read, e.g. by branchReflogs). `removedBranch` is the branch about to go: its own ref does not make a commit safe. Returns `{ count, truncated, unreadable }`:
+ * how many distinct commits are not reachable from the base or from any other ref (branch, tag, remote-tracking) and not landed on the base,
  * whether a reflog has more than 200 entries, and whether one could not be read. Any of them non-zero means keep.
  */
-export function reflogOnlyCommits(repo, reflogs) {
+export function reflogOnlyCommits(repo, reflogs, removedBranch) {
   const commits = new Set();
   const outcome = { count: 0, truncated: false, unreadable: false };
   for (const { cwd, ref, hashes: known } of reflogs) {
@@ -35,9 +37,10 @@ export function reflogOnlyCommits(repo, reflogs) {
     hashes.forEach((hash) => commits.add(hash));
   }
   const all = [...commits];
-  // One call settles the usual case: every reflog commit is already on the base.
-  const outside = all.length > 0 ? runGit(repo.dir, ['rev-list', '--max-count=1', ...all, '--not', repo.baseRef]) : null;
-  if (outside === null || (outside.status === 0 && outside.stdout.trim() === '')) return outcome;
-  outcome.count = all.filter((hash) => !isLanded(repo, hash)).length;
+  if (all.length === 0) return outcome;
+  // Commits the walk still reaches are on no other ref and not on the base; an unreadable walk (a missing object) distrusts all.
+  const walk = runGit(repo.dir, ['rev-list', ...all, '--not', `--exclude=refs/heads/${removedBranch}`, '--all', repo.baseRef]);
+  const reachableOnlyHere = walk.status === 0 ? new Set(walk.stdout.split('\n')) : new Set(all);
+  outcome.count = all.filter((hash) => reachableOnlyHere.has(hash) && !isLanded(repo, hash)).length;
   return outcome;
 }

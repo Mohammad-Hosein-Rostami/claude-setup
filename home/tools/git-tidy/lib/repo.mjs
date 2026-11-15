@@ -17,6 +17,12 @@ const ORIGIN_PREFIX = 'refs/remotes/origin/';
 const REBUILDABLE_FOLDERS = new Set([
   'node_modules', 'dist', 'build', 'out', 'coverage', '.next', '.turbo', '.cache', '.nx', 'test-results', 'playwright-report', '.vite',
 ]);
+// Files the operating system drops everywhere; losing them costs nothing.
+const OS_CLUTTER = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
+const isClutter = (entry) => {
+  const name = entry.split('/').filter((part) => part !== '').at(-1) ?? '';
+  return OS_CLUTTER.has(name) || name.startsWith('._');
+};
 const MS_PER_MINUTE = 60_000;
 const OPERATION_MARKERS = [
   ['rebase-merge', 'rebase'], ['rebase-apply', 'rebase'], ['MERGE_HEAD', 'merge'],
@@ -120,13 +126,26 @@ export function changedFileCount(path) {
 }
 
 /**
- * Ignored files and folders in the worktree at `path` that a build would not recreate (a local `.env`, a `reports/` folder),
+ * Ignored files and folders in the worktree at `path` that a build would not recreate (a local `.env`, a `reports/` folder; not OS clutter such as `.DS_Store`),
  * as relative paths; null when git cannot say (callers treat null as "has some"). Folders are listed once, with a trailing `/`.
  */
 export function ignoredFiles(path) {
-  const result = runGit(path, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory']);
+  const listed = ignoredEntries(path, ['--directory']);
+  if (listed === null) return null;
+  const kept = [];
+  for (const entry of listed) {
+    // A listed folder holds only ignored files; look inside once, because it may hold nothing but OS clutter.
+    const inside = entry.endsWith('/') ? ignoredEntries(path, ['--', entry]) : [entry];
+    if (inside === null || inside.length > 0) kept.push(entry);
+  }
+  return kept;
+}
+
+// Ignored entries that matter (not rebuildable folders, not OS clutter); null when git fails.
+function ignoredEntries(path, extraArgs) {
+  const result = runGit(path, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', ...extraArgs]);
   if (result.status !== 0) return null;
-  return result.stdout.split('\0').filter((entry) => entry !== '' && !entry.split('/').some((part) => REBUILDABLE_FOLDERS.has(part)));
+  return result.stdout.split('\0').filter((entry) => entry !== '' && !isClutter(entry) && !entry.split('/').some((part) => REBUILDABLE_FOLDERS.has(part)));
 }
 
 /**

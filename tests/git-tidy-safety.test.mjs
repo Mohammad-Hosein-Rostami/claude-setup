@@ -94,6 +94,31 @@ test('reflog: more than 200 entries are not checked, the branch is kept and the 
   assert.ok(branches(dir).includes('busy'));
 });
 
+test('reflog: a worktree that once visited another branch is not held back for that branch\'s commits, unless nothing else holds them', () => {
+  const dir = makeRepo();
+  git(dir, 'checkout', '-q', '-b', 'other-work');
+  commit(dir, 'other.txt');
+  git(dir, 'checkout', '-q', 'main');
+  const wt = addWorktree(dir, 'wt-visitor', 'visitor');
+  git(wt, 'checkout', '-q', 'other-work');
+  git(wt, 'checkout', '-q', 'visitor');
+  const result = applyNow(dir);
+  assert.equal(result.status, 0, result.stdout);
+  assert.ok(!existsSync(wt));
+  assert.deepEqual(branches(dir), ['main', 'other-work']);
+
+  const lone = makeRepo();
+  git(lone, 'checkout', '-q', '-b', 'gone-soon');
+  commit(lone, 'gone.txt');
+  git(lone, 'checkout', '-q', 'main');
+  const holder = addWorktree(lone, 'wt-holder', 'holder');
+  git(holder, 'checkout', '-q', 'gone-soon');
+  git(holder, 'checkout', '-q', 'holder');
+  git(lone, 'branch', '-D', 'gone-soon');
+  const kept = applyNow(lone);
+  assert.match(keptLine(kept, 'merged-worktree', holder), /reflog holds commits that are not on the base \(1\)/);
+});
+
 function worktreeWithIgnored(names) {
   const dir = makeRepo();
   commit(dir, '.gitignore', '.env\nreports/\nnode_modules/\ndist/\nextra*\n');
@@ -114,6 +139,16 @@ test('ignored files that exist only in the worktree keep it and its branch; the 
   assert.ok(existsSync(join(wt, '.env')) && branches(dir).includes('ignored-lane'));
   const hint = lines(tidy(['check', dir], { cwd: dir })).find((entry) => entry.startsWith(`ignored-files? ${wt} `));
   assert.ok(hint?.includes('.env'), hint);
+});
+
+test('OS clutter (.DS_Store, Thumbs.db, desktop.ini, ._ files) does not keep a worktree and is not listed', () => {
+  const clutter = ['.DS_Store', 'sub/.DS_Store', 'Thumbs.db', 'desktop.ini', '._resource'];
+  const { dir, wt } = worktreeWithIgnored(clutter);
+  git(dir, 'config', 'core.excludesFile', join(dir, '.git', 'clutter-ignore'));
+  writeFileSync(join(dir, '.git', 'clutter-ignore'), '.DS_Store\nThumbs.db\ndesktop.ini\n._*\n');
+  const result = applyNow(dir);
+  assert.equal(result.status, 0, result.stdout);
+  assert.ok(!existsSync(wt));
 });
 
 test('ignored build output (node_modules, dist) alone does not keep a worktree', () => {

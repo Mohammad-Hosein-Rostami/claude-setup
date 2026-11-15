@@ -11,6 +11,7 @@ import { branchState, isMerged } from './branches.mjs';
 import { UsageError, runGit } from './git.mjs';
 import { findLeftovers } from './leftovers.mjs';
 import { branchReflogs, reflogOnlyCommits } from './reflog.mjs';
+import { isBackupTag } from './tags.mjs';
 import {
   changedFileCount, contains, currentBranch, ignoredFiles, inProgressOperation, listWorktrees, minutesSinceUse, samePath,
 } from './repo.mjs';
@@ -51,8 +52,8 @@ function protectedReason(repo, name, worktrees) {
 }
 
 /** Why a reflog forbids removal (commits that would be lost with it), or null. `reflogs` are `[{ cwd, ref }]`. */
-function reflogReason(repo, reflogs) {
-  const found = reflogOnlyCommits(repo, reflogs);
+function reflogReason(repo, reflogs, branch) {
+  const found = reflogOnlyCommits(repo, reflogs, branch);
   if (found.unreadable) return 'a reflog cannot be read';
   if (found.truncated) return 'reflog has more than 200 entries, not checked';
   return found.count > 0 ? `reflog holds commits that are not on the base (${found.count})` : null;
@@ -74,7 +75,7 @@ function contentReason(ctx, tree) {
   const changed = changedFileCount(tree.path);
   if (changed === null) return 'git status failed there, treated as dirty';
   if (changed > 0) return `${changed} uncommitted or untracked files`;
-  const reasons = [ignoredReason(tree.path), reflogReason(ctx.repo, [ctx.branchReflog(tree.branch), { cwd: tree.path, ref: 'HEAD' }])];
+  const reasons = [ignoredReason(tree.path), reflogReason(ctx.repo, [ctx.branchReflog(tree.branch), { cwd: tree.path, ref: 'HEAD' }], tree.branch)];
   const found = reasons.find((reason) => reason !== null);
   if (found) return found;
   const used = ctx.includeRecent ? null : minutesSinceUse(tree.path, RECENT_MINUTES);
@@ -114,7 +115,7 @@ function branchVerdict(ctx, candidate, gone) {
   if (!isMerged(state.state)) return keep(`${state.ahead} commits are not on ${repo.base}`);
   const holder = worktrees.find((entry) => entry.branch === name && !gone.has(entry.path));
   if (holder) return keep(`checked out in ${holder.path}`);
-  const lost = reflogReason(repo, [ctx.branchReflog(name)]);
+  const lost = reflogReason(repo, [ctx.branchReflog(name)], name);
   if (lost) return keep(lost);
   return { remove: true, tip: state.tip, state: state.state };
 }
@@ -206,7 +207,7 @@ export function pruneRepo(repo, { apply, includeRecent = false, leftovers = find
   for (const candidate of leftovers.mergedWorktrees) items.push(pruneWorktree(ctx, candidate, gone));
   for (const candidate of leftovers.mergedBranches) items.push(pruneBranch(ctx, candidate, gone));
   items.push(...detachedWorktrees(ctx));
-  const tagNames = leftovers.tags.filter((tag) => tag.state === 'patch-equal').map((tag) => tag.name);
+  const tagNames = leftovers.tags.filter((tag) => tag.state === 'patch-equal' && isBackupTag(tag.name)).map((tag) => tag.name);
   if (tagNames.length > 0) items.push(item('note', 'tags', tagNames.join(' '), 'not removed by this tool')); // a tag may be the only backup
   return apply ? items.map((entry) => (entry.action === 'keep' ? { ...entry, action: 'kept' } : entry)) : items;
 }

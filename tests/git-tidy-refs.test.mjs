@@ -9,7 +9,7 @@ const check = (dir, ...extra) => tidy(['check', dir, ...extra], { cwd: dir });
 const body = (result) => lines(result).slice(1, -1);
 const summary = (result) => lines(result).at(-1);
 
-/** Old tangled history behind the tag `backup-old`: a merge commit whose work was later rebased onto main; only the tag is left. */
+/** Old tangled history behind the tag `backup/old`: a merge commit whose work was later rebased onto main; only the tag is left. */
 function backupTagBehindMerge(dir) {
   git(dir, 'checkout', '-q', '-b', 'old');
   commit(dir, 'old.txt');
@@ -17,7 +17,7 @@ function backupTagBehindMerge(dir) {
   commit(dir, 'side.txt');
   git(dir, 'checkout', '-q', 'old');
   git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge side', 'side');
-  git(dir, 'tag', 'backup-old');
+  git(dir, 'tag', 'backup/old');
   const mergeShort = git(dir, 'rev-parse', '--short', 'old');
   git(dir, 'checkout', '-q', 'main');
   commit(dir, 'moved-on.txt');
@@ -29,12 +29,12 @@ function backupTagBehindMerge(dir) {
 test('a backup tag on a merged old tip with a merge commit behind it is both tangled-ref and merged-tag', () => {
   const dir = makeRepo();
   const mergeShort = backupTagBehindMerge(dir);
-  const tip = git(dir, 'rev-parse', '--short', 'backup-old');
+  const tip = git(dir, 'rev-parse', '--short', 'backup/old');
   const result = check(dir);
   assert.equal(result.status, 1);
   assert.deepEqual(body(result), [
-    `tangled-ref refs/tags/backup-old 1 merge commits not on any remote, newest ${mergeShort}`,
-    `merged-tag backup-old ${tip} patch-equal`,
+    `tangled-ref refs/tags/backup/old 1 merge commits not on any remote, newest ${mergeShort}`,
+    `merged-tag backup/old ${tip} patch-equal`,
   ]);
   assert.match(summary(result), /all local refs on one line: no$/);
 });
@@ -98,9 +98,26 @@ test('prune lists merged tags and --apply leaves every tag in place', () => {
   git(dir, 'branch', 'fresh');
   const before = git(dir, 'tag', '--list');
   const plan = tidy(['prune', dir, '--include-recent'], { cwd: dir });
-  assert.ok(lines(plan).includes('tags (not removed by this tool: delete by hand after verifying your bundle backup): backup-old'), plan.stdout);
+  assert.ok(lines(plan).includes('tags (not removed by this tool: delete by hand after verifying your bundle backup): backup/old'), plan.stdout);
   const applied = tidy(['prune', dir, '--apply', '--include-recent'], { cwd: dir });
   assert.equal(applied.status, 0);
   assert.equal(git(dir, 'tag', '--list'), before);
   assert.ok(!git(dir, 'for-each-ref', 'refs/heads').includes('fresh'), 'the merged branch itself still goes');
+});
+
+test('a tag not named backup/ is only a hint (it may be a published release tag): merged-tag? and tangled-tag?, exit 0', () => {
+  const dir = makeRepo();
+  const mergeShort = backupTagBehindMerge(dir);
+  git(dir, 'tag', 'v1.2.1', 'backup/old');
+  git(dir, 'tag', '-d', 'backup/old');
+  const tip = git(dir, 'rev-parse', '--short', 'v1.2.1');
+  const result = check(dir);
+  assert.equal(result.status, 0);
+  assert.deepEqual(body(result), [
+    `merged-tag? v1.2.1 ${tip} patch-equal`,
+    `tangled-tag? refs/tags/v1.2.1 1 merge commits not on any remote, newest ${mergeShort}`,
+  ]);
+  assert.match(summary(result), /all local refs on one line: yes$/);
+  const plan = tidy(['prune', dir, '--include-recent'], { cwd: dir });
+  assert.ok(!lines(plan).some((line) => line.startsWith('tags (')), 'only backup/ tags are offered for hand deletion');
 });

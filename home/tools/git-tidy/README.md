@@ -25,16 +25,16 @@ exists here: a wrong base would call work "merged" that is not on the branch you
 ## check
 
 One line per item, `<kind> <subject> <detail>`, findings first, then hints (kind ends in `?`), then
-`git-tidy: N findings, M hints (base <branch>), all local refs on one line: yes|no` (no when there is a `merge-commit`, `tangled-ref`, `merged-branch` or `merged-tag`). `--json` prints `{ base, findings, hints }` with items
+`git-tidy: N findings, M hints (base <branch>), all local refs on one line: yes|no` (no when there is a `merge-commit`, `tangled-ref`, `merged-branch` or `merged-tag` finding; hints do not count). `--json` prints `{ base, findings, hints }` with items
 `{ kind, subject, detail }` (a path with spaces is exact there).
 
 | Finding | Meaning |
 | ------- | ------- |
 | `merge-commit <hash> <subject>` | a merge commit reachable from `HEAD` or the base that the base's upstream does not have; with no upstream, every merge commit on the base and on `base..HEAD` |
 | `merged-branch <name> <hash> ancestor` | the branch tip is on the base (a branch created and never committed to also lands here) |
-| `tangled-ref <ref> <n> merge commits ...` | a local branch or tag (full ref name; not the base, not the current branch) that still reaches a merge commit no remote-tracking ref has (with no remote: that the base lacks). Old tangled history stays visible in `git log --graph --all` through such refs |
+| `tangled-ref <ref> <n> merge commits ...` | a local branch or a `backup/` tag (full ref name; not the base, not the current branch) that still reaches a merge commit no remote-tracking ref has (with no remote: that the base lacks). Old tangled history stays visible in `git log --graph --all` through such refs |
 | `merged-branch <name> <hash> patch-equal` | every non-merge commit has an equal patch on the base (a rebase or cherry-pick that landed) AND merging the branch into the base would change nothing (`git merge-tree --write-tree` gives the base's own tree). Patch ids ignore whitespace and skip merge commits, so the second proof is what keeps a branch that differs only in indentation, or holds a hand-made change in a merge, from being called merged |
-| `merged-tag <tag> <hash> patch-equal` | a tag that is not on the base's history but whose work is all on the base by the same test: typically a backup made before a history clean-up. A tag that is an ancestor of the base (a release tag) is never reported |
+| `merged-tag <tag> <hash> patch-equal` | a `backup/` tag that is not on the base's history but whose work is all on the base by the same test: a temporary backup made before a history clean-up. A tag that is an ancestor of the base (a release tag) is never reported |
 | `merged-worktree <path> branch <name>` | a linked worktree whose branch is a `merged-branch` |
 | `stale-worktree <path> folder missing` | a registered worktree whose folder is gone |
 
@@ -43,6 +43,7 @@ The base and the branch checked out in the main worktree are never reported as m
 | Hint | Meaning |
 | ---- | ------- |
 | `published-merge?` | merge commits already on the base's upstream; rewriting them needs the owner |
+| `merged-tag?`, `tangled-tag?` | the same two checks for a tag NOT named `backup/`. Whether a tag is published cannot be known without the network (a release tag on a backport branch is normal), so only `backup/` tags, the name the clean-up procedure gives its temporary tags, are findings |
 | `unmerged-branch?`, `unmerged-tag?` | a local branch or tag with commits the base lacks: how many, and the date of its last commit |
 | `ignored-files?` | a merged worktree holds ignored files that exist only there (`prune` keeps it) |
 | `merged-remote-branch?` | an `origin/*` branch fully contained in the base's upstream; deleting it is the owner's call |
@@ -65,11 +66,13 @@ and prints why. With `--apply`, in this order, each fact read again from git rig
 2. Each merged worktree is kept (`kept ...: <reason>`) when any of these holds, else `git worktree remove` (never `--force`):
    it is locked; it is the folder the command runs from or contains the shell's current folder; its branch is no longer
    merged; it has any `git status --porcelain` output (untracked files included, whatever `status.showUntrackedFiles` says)
-   or git status fails; it holds ignored files outside `node_modules`, `dist`, `build`, `out`, `coverage`, `.next`,
+   or git status fails; it holds ignored files (not OS clutter: `.DS_Store`, `Thumbs.db`, `desktop.ini`, `._*`) outside `node_modules`, `dist`, `build`, `out`, `coverage`, `.next`,
    `.turbo`, `.cache`, `.nx`, `test-results`, `playwright-report`, `.vite` (up to 5 paths are printed, `+N more`);
-   its branch reflog or its HEAD reflog holds commits that are neither on the base nor landed there (a pre-rebase copy of a
-   landed commit does not count); more than 200 reflog entries (not checked); or any tracked file, its index or its HEAD
-   reflog changed in the last 60 minutes (`used <n> min ago`; `--include-recent` lifts only this rule).
+   its branch reflog or its HEAD reflog holds commits that are on no other ref (branch, tag, remote-tracking), not on the base
+   and not landed there (a pre-rebase copy of a landed commit does not count, nor a commit of another branch the worktree
+   once visited); more than 200 reflog entries (not checked); or any tracked file, its index or its HEAD
+   reflog changed in the last 60 minutes (`used <n> min ago`; `--include-recent` lifts only this rule). That rule reads file and reflog times, so `touch` can defeat it: it is a
+   courtesy guard, not a lock.
 3. Each merged branch that is not checked out in any remaining worktree and whose reflog holds nothing that is not on the
    base: deleted with `git update-ref -d refs/heads/<name> <tip read a moment ago>`, so a branch that moved since is kept,
    printing `deleted <name> (was <full hash>)`. Its `branch.<name>.*` config section goes too. A branch name is always passed
@@ -87,7 +90,7 @@ rebase, merge, cherry-pick, revert or bisect.
 
 ### Tags are never deleted by this tool
 
-A tag may be the only backup of a history clean-up, so `prune` lists the `merged-tag` ones and leaves them. Delete one by
+A tag may be the only backup of a history clean-up, so `prune` lists the `backup/` ones that are merged and leaves them. Delete one by
 hand after you have verified your backup bundle: `git bundle verify <file>` (is it complete and valid) and
 `git bundle list-heads <file>` (does it hold the refs you expect).
 
