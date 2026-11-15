@@ -129,3 +129,51 @@ test('hook: a repeated report that also names a bug gets both lines, and the bug
   assert.ok(first.split('\n').includes(REPEATED_REPORT_LINE));
   assert.equal(await prompt('the crash is still not fixed', 'q4'), REPEATED_REPORT_LINE);
 });
+
+// Review of the L22 stack: code prompts and file names that must not fire the restructure route.
+const RESTRUCTURE_FALSE_FIRES = ['merge the projects list into a single array', 'merge the apps array into one object', 'merge everything into a single response',
+  'merge everything into the default export', 'merge the libraries into a single map for the lookup', 'merge all packages into the lockfile',
+  'clean up the project settings dialog', 'clean up the workspace switcher component', 'clean up the codebase naming in this module',
+  'restructure the repository pattern in the data layer', 'restructure the project route table in the router',
+  'delete lerna.json', 'remove nx.json from the exports', 'drop the nx dependency from this one package', 'replace the nx logo with our logo'];
+
+test('gateLinesForPrompt: code, file and component talk does not fire repo-restructure (review findings)', () => {
+  for (const prompt of RESTRUCTURE_FALSE_FIRES) assert.doesNotMatch(gateLinesForPrompt(prompt).join(), /repo-restructure/, prompt);
+});
+
+test('gateLinesForPrompt: repository-level wording still fires repo-restructure after the tightening', () => {
+  for (const prompt of ['clean up the project', 'clean up the repo before the release', 'restructure the project folders', 'remove nx from our project completely',
+    'remove nx.', 'delete lerna, we do not need it', 'merge the packages into a single package', 'merge all apps into one repo', 'replace nx with turborepo']) {
+    assert.match(gateLinesForPrompt(prompt).join(), /repo-restructure/, prompt);
+  }
+});
+
+test('gateLinesForPrompt: merging a base branch into a working branch fires git-linear-history', () => {
+  for (const prompt of ['git merge main into my branch', 'merge main into the feature branch', 'merge develop into my branch']) {
+    assert.match(gateLinesForPrompt(prompt).join(), /git-linear-history/, prompt);
+  }
+});
+
+test('gateLinesForPrompt: rebase fires only as an action, and Persian branch talk needs a clean-up or merge word', () => {
+  for (const prompt of ['rebase my branch on main', 'rebase onto develop', 'rebase this', 'please rebase', 'git rebase origin/main', 'برنچ‌های قدیمی را پاک کن', 'برنچ‌ها را ادغام کن']) {
+    assert.match(gateLinesForPrompt(prompt).join(), /git-linear-history/, prompt);
+  }
+  for (const prompt of ['what does rebase do', 'explain rebase vs merge', 'explain what git rebase does', 'یک برنچ جدید بساز', 'برنچ را عوض کن']) {
+    assert.doesNotMatch(gateLinesForPrompt(prompt).join(), /git-linear-history/, prompt);
+  }
+});
+
+test('gateLinesForPrompt: the repeated-report misses fire', () => {
+  for (const prompt of ['the bug is back again', 'it is back again', 'this still does not work', "still doesn't work", 'you did not fix it', "you didn't fix this",
+    'for the third time, the border is wrong', 'as I said earlier, keep the mock data', 'as we said before, no snapshots']) {
+    assert.ok(gateLinesForPrompt(prompt).includes(REPEATED_REPORT_LINE), prompt);
+  }
+});
+
+test('gateLinesForPrompt: nothing was reported before in these prompts, so the repeated-report line stays quiet', () => {
+  for (const prompt of ['the promise is not yet resolved when we render', 'it is not resolved by the cache', 'unit tests for the second time zone',
+    'the second time the function is called it returns the cached value, why?', 'the third time is a charm, implement retry', 'as I said in the ticket, the endpoint is /orders',
+    'as we agreed the API returns 404 for missing ids', 'does it still work in Safari?', 'come back again tomorrow', 'هنوز نشده بود که تمام کنم؟']) {
+    assert.ok(!gateLinesForPrompt(prompt).includes(REPEATED_REPORT_LINE), prompt);
+  }
+});
