@@ -4,7 +4,7 @@
 // Exports: checkGit(args, assigns), checkDiskWipe(cmd, args), checkLockfileEdit(cmd, args), checkHiddenRm(cmd, args),
 // checkStdinRm(cmd, args, before), checkStdinScriptRm(script, before), checkKeychainPrint(cmd, args), checkGhSecret(cmd, args) - each
 // returns an ask reason, or undefined when the command is fine; secretPrintOf(cmd, args) and isSecretPrintReason(reason) serve
-// lib/captured-read.mjs; LOCKFILES and lockfileAdvice(name) serve lib/reason-classes.mjs.
+// lib/captured-read.mjs; LOCKFILES and lockfileAdvice(name) serve lib/reason-classes.mjs; configOf(option) serves lib/git-runs.mjs.
 // Pure, no I/O. Every rule is an ask (the hook shows a timed dialog); a destructive one starts with "DESTRUCTIVE: ". The one exception is
 // checkLockfileEdit: a quality rule, its text is advice (lib/bounce-once.mjs: denied once with the fix, the identical retry runs).
 // git's own options before the subcommand are read by lib/git-options.mjs; when they can be read more than one way, every reading is checked.
@@ -40,7 +40,7 @@ const isLockfile = (p) => LOCKFILES.has(basenameOf(p));
  * @param {(string | undefined)[]} option an option word and its value, as lib/git-options.mjs lists them
  * @returns {string | undefined} the `name=...` text, or undefined for an option that sets no config
  */
-function configOf([word, value]) {
+export function configOf([word, value]) {
   if (word === '-c' || word === '--config-env') return value;
   if (word.startsWith(CONFIG_ENV_ATTACHED)) return word.slice(CONFIG_ENV_ATTACHED.length);
   return word.startsWith('-c') ? word.slice(2) : undefined;

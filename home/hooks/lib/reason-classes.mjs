@@ -59,6 +59,7 @@ const ASK_CLASS_PATTERNS = [
   ['git -c core.hooksPath', /^git -c core\.hooksPath bypasses the git hooks$/],
   ['git -c alias', /^git -c alias\.\* defines a command for this call/],
   ['git --no-verify', /^git --no-verify skips the git hooks$/],
+  ['git runs a command it cannot read', /^git runs a command this guard cannot read/],
   ['git push', /^git push publishes commits to a remote/],
   ['gh api graphql mutation', /^gh api graphql sends a mutation/],
   ['gh api write to a repository', /^gh api [A-Z]+ on .+ changes a repository, merge or release/],

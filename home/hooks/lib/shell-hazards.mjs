@@ -1,6 +1,7 @@
 // Rules for commands whose real command is hidden from the guard: it runs from a variable, from stdin, or from one string.
 // Exports: shellHazards({seg, raw, parsed, shellScript}) -> string[] ask reasons; VARIABLE_COMMAND_REASON, SPLIT_VARIABLE_REASON (the two
-// variable-command reasons, which lib/bounce-once.mjs sends back once for a rewrite). Pure, no I/O.
+// variable-command reasons, which lib/bounce-once.mjs sends back once for a rewrite); CONVENTIONAL_COMMAND_VARS (the names that
+// conventionally hold an editor, pager or compiler; lib/git-runs.mjs reads them too). Pure, no I/O.
 // - the command word is a variable or `$(...)` (`$X`, `X="git push"; $X`): the guard cannot see what runs. Names that conventionally hold
 //   an editor, pager or compiler (`$EDITOR file`) are fine, and so is a variable assigned earlier in the line to one plain word.
 // - a shell reads its commands from stdin: `curl x | bash`, `bash <<EOF`, `bash < file`, `sh -s`.
@@ -10,7 +11,7 @@ import { commandName } from './command-of.mjs';
 
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'ksh', 'dash']);
 const VARIABLE_WORD = /^\$(?:\{(\w+)[^}]*\}|(\w+))?$/; // `$X`, `${X}`, `${X:-default}`, or a bare `$` (the start of `$(...)` in a command position)
-const CONVENTIONAL_COMMAND_VARS = new Set(['EDITOR', 'VISUAL', 'PAGER', 'BROWSER', 'SHELL', 'CC', 'CXX', 'MAKE', 'GIT_EDITOR']);
+export const CONVENTIONAL_COMMAND_VARS = new Set(['EDITOR', 'VISUAL', 'PAGER', 'BROWSER', 'SHELL', 'CC', 'CXX', 'MAKE', 'GIT_EDITOR']);
 const STDIN_REDIRECT = /^\d*<(?!\()/; // `<file`, `<<EOF`, `<<<text`
 const STDIN_FLAG = /^-[a-zA-Z]*s[a-zA-Z]*$/;
 const ENV_SPLIT_STRING = /^--split-string|^-[a-zA-Z]*S/;

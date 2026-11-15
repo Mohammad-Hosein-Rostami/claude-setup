@@ -42,7 +42,7 @@
 // Handled: `& && || ; |` and newlines as separators; `( ) {` groups, `$(...)` and backticks (also inside double
 // quotes) re-checked as commands; leading `! if then do else elif while until`; command matched by basename
 // (`/bin/rm`, `\rm`) through wrappers command/builtin/env/sudo/doas/nohup/xargs/exec/nice/timeout/stdbuf/time/sshpass;
-// `bash -c '...'` is decided recursively.
+// `bash -c '...'` and every command git itself runs (lib/git-runs.mjs: `rebase -x`, `-c core.pager=`, GIT_SSH_COMMAND ...) are decided recursively.
 // Two parsers, one rule set: the regex tokenizer (lib/shell-words.mjs) and an independent character-level lexer (lib/shell-lexer.mjs: quotes,
 // comments, `$((..))`, `$(...)` inside double quotes, heredocs wherever they really start) both feed reasonsOf; `decide` merges them, and a
 // reason only the lexer found ends with "(matched in raw text)". So `out="$(git push origin)"` and `git commit -m "see <<EOF"` + `git push -f`
@@ -79,6 +79,7 @@ import { scanWrapped } from './lib/dangerous-scan.mjs';
 import { editLogPath, recordEdit } from './lib/edit-log.mjs';
 import { checkEval } from './lib/eval-check.mjs';
 import { checkFind } from './lib/find-delete.mjs';
+import { gitRunReasons } from './lib/git-runs.mjs';
 import { mergeCommitAdvice } from './lib/merge-commit.mjs';
 import { outwardAsk } from './lib/outward.mjs';
 import { readProdHosts, remoteAsk } from './lib/remote.mjs';
@@ -179,7 +180,7 @@ function checkCommand(command, env, nextWords) {
   const script = SHELLS.has(cmd) ? shellScript(args) : undefined;
   if (script) return [checkStdinScriptRm(script, command.before), ...reasonsOf(script, env)].filter((reason) => reason !== undefined);
   const evalReasons = cmd === 'eval' ? checkEval(args, nextWords, (text) => reasonsOf(text, env)) : [];
-  return [...checkSimple(command, env), ...evalReasons];
+  return [...checkSimple(command, env), ...evalReasons, ...(cmd === 'git' ? gitRunReasons(command, env, reasonsOf) : [])];
 }
 
 /**

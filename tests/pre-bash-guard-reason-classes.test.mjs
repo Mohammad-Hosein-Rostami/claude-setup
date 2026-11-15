@@ -38,6 +38,7 @@ const NEVER_BOUNCED = [
   ['git -c core.hooksPath', 'git -c core.hooksPath=/dev/null commit -m x'],
   ['git -c alias', 'git -c alias.p=status p'],
   ['git --no-verify', 'git commit --no-verify -m x'],
+  ['git runs a command it cannot read', 'git --config-env core.pager=MY_PAGER log'],
   ['git push', 'git push origin main'],
   ['gh api graphql mutation', `gh api graphql -f query='mutation { deleteRef(input: {refId: "x"}) { clientMutationId } }'`],
   ['gh api write to a repository', 'gh api -X DELETE repos/o/r'],

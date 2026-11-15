@@ -1,6 +1,7 @@
 // Path rules for `rm -r` and `cd`: is a target inside the project or a temp dir, and which variables hold what.
 // Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; newScope(cwd, project) -> {vars, assigned};
-// trackAssignments(scope, tokens, nextTokens); substituteKnownWords(tokens, scope); nativePath, isUnder, sameFile, expandHome; RECURSIVE_FLAG.
+// trackAssignments(scope, tokens, nextTokens); substituteKnownWords(tokens, scope); nativePath, isUnder, sameFile, expandHome; RECURSIVE_FLAG;
+// withoutRedirects(args) (also read by lib/git-runs.mjs).
 // Variables are tracked in order within one command line and the LAST assignment wins (`D=$(mktemp -d); D=/etc` means /etc).
 // A literal value is used as is, `VAR=$(mktemp -d)` (default location; the tokenizer turns it into MKTEMP_WORD, also with a path
 // suffix `$(mktemp -d)/..` and in backticks) stands for one directory inside the temp dir, `D+=x` appends, and any
@@ -127,7 +128,7 @@ function insideProject(rawTarget, cwd, project, vars) {
 }
 
 /** Drops redirections (`2>&1`, `> file`) so they are not mistaken for rm targets. */
-function withoutRedirects(args) {
+export function withoutRedirects(args) {
   const out = [];
   for (let i = 0; i < args.length; i++) {
     if (!REDIRECT_START.test(args[i])) out.push(args[i]);
