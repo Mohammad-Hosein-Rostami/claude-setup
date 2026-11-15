@@ -1,0 +1,78 @@
+// Shared fixtures for the git-tidy tests: build throw-away git repos in temp folders and run the CLI on them.
+// Exports: CLI, CLEAN_ENV, makeRepo, git, commit, addWorktree, tidy, lines, snapshot, withOrigin.
+// Invariants: every git call gets an explicit cwd inside the OS temp folder (checked in `git`) and an environment without
+//   GIT_* variables (under the pre-commit hook git sets GIT_DIR, which would point a child git at the real repo) and
+//   without the user's git config, so a test can never read or change the repository the tests run from.
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import assert from 'node:assert/strict';
+
+export const CLI = fileURLToPath(new URL('../home/tools/git-tidy/git-tidy.mjs', import.meta.url));
+const TEMP_ROOT = realpathSync(tmpdir());
+const NO_GIT_CONFIG = { GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+const IDENTITY = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+export const CLEAN_ENV = {
+  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))),
+  ...NO_GIT_CONFIG,
+  ...IDENTITY,
+};
+
+/** Runs git in `cwd` (must be inside the temp folder) and returns trimmed stdout; fails the test on a non-zero exit. */
+export function git(cwd, ...args) {
+  assert.ok(cwd.startsWith(TEMP_ROOT + sep), `refusing to run git outside the temp folder: ${cwd}`);
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: CLEAN_ENV });
+  assert.equal(result.status, 0, `git ${args.join(' ')}: ${result.stderr}`);
+  return result.stdout.trim();
+}
+
+/** A new repo on branch `main` with one commit; returns its real path. */
+export function makeRepo() {
+  const dir = join(realpathSync(mkdtempSync(join(tmpdir(), 'git-tidy-'))), 'repo');
+  const parent = join(dir, '..');
+  git(parent, 'init', '-q', '-b', 'main', dir);
+  git(dir, 'config', 'user.name', 't');
+  git(dir, 'config', 'user.email', 't@t');
+  git(dir, 'config', 'commit.gpgsign', 'false');
+  commit(dir, 'base.txt');
+  return dir;
+}
+
+/** Writes `file` (default: its name as text), commits it with `message` and returns the full hash. */
+export function commit(dir, file, text = file, message = `add ${file}`) {
+  writeFileSync(join(dir, file), text);
+  git(dir, 'add', '--', file);
+  git(dir, 'commit', '-q', '-m', message);
+  return git(dir, 'rev-parse', 'HEAD');
+}
+
+/** `git worktree add` of a new or existing branch in a sibling folder `name`; returns the real folder path. */
+export function addWorktree(dir, name, branch, { create = true } = {}) {
+  const path = join(dir, '..', name);
+  if (create) git(dir, 'worktree', 'add', '-q', '-b', branch, path);
+  else git(dir, 'worktree', 'add', '-q', path, branch);
+  return realpathSync(path);
+}
+
+/** Runs the CLI with `args`; the folder `cwd` is where it runs from. Returns the spawn result. */
+export const tidy = (args, { cwd, env = {} } = {}) =>
+  spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: { ...CLEAN_ENV, ...env }, maxBuffer: 64 << 20 });
+
+/** The non-empty output lines. */
+export const lines = (result) => result.stdout.split('\n').filter((line) => line !== '');
+
+/** Everything a plan must leave alone: all refs, the worktree list and the status of each given folder. */
+export const snapshot = (dir, ...folders) =>
+  [git(dir, 'for-each-ref'), git(dir, 'worktree', 'list', '--porcelain'), ...[dir, ...folders].map((f) => git(f, 'status', '--porcelain'))].join('\n--\n');
+
+/** A bare `origin` next to the repo, `main` pushed and set as the upstream of main. Returns the origin folder. */
+export function withOrigin(dir) {
+  const origin = join(dir, '..', 'origin.git');
+  git(dir, 'init', '-q', '--bare', origin);
+  git(dir, 'remote', 'add', 'origin', origin);
+  git(dir, 'push', '-q', '-u', 'origin', 'main');
+  git(dir, 'remote', 'set-head', 'origin', 'main');
+  return origin;
+}
