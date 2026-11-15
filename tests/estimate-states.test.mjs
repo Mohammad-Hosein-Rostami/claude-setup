@@ -1,7 +1,8 @@
 // The one table classification (lib/history.mjs tableState) walked over every shape: {no deliver rows, deliver rows} x
 // {before, after a delivery} x {last done row: build, close, rework, deliver} x {all done, an unstarted row open, a build row
 // running, a close row running}, each with its expected state and the first words of line 1; then the shapes the reviews
-// found (a deliver row done while rows still ran, a deliver row with only done). `now` is injected; zone UTC.
+// found (a deliver row done while rows still ran, a deliver row with only done); then the overrun shapes (a round or a first-cycle
+// closing phase past the high end of its range, or exactly at it). `now` is injected; zone UTC.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseWorkItems } from '../home/tools/estimate/lib/items.mjs';
@@ -118,4 +119,27 @@ test('a deliver row with only done (no started, no evidence) is accepted and del
   assert.equal(result.state, 'delivered');
   assert.equal(formatEstimate(result, INPUTS).split('\n')[0], 'Finish: delivered Tue 10 Nov 13:30 (local +00:00)');
   assert.equal(formatEstimate(result, INPUTS).split('\n')[1], 'Includes: no open row; the last done row (X1) is a deliver row');
+});
+
+// Overrun shapes: the flag of tableState on first-cycle-closing and round-open. The delivery C0 is done at 13.25 h, the round
+// starts with R1 at 14 h (default round 0.4-2.6 h, so its high end is 16.6 h); D5 is done at 13 h (default closing high end 15.5 h).
+const ROUND = [row({ id: 'C0', item: ITEM.close, startedH: 13.1, doneH: 13.25 }), row({ id: 'R1', startedH: 14 })];
+const OVERRUN_SHAPES = [
+  { name: 'round past its high end, an unstarted row open: not before', rows: fiveDoneRows([...ROUND, row({ id: 'O2' })]), nowH: 16.6 + 1 / 60, code: 'O', kind: 'round', line: 'Finish: not before Tue 10 Nov ' },
+  { name: 'round exactly at its high end: still a range', rows: fiveDoneRows([...ROUND, row({ id: 'O2' })]), nowH: 16.6, code: 'O', kind: null, line: 'Finish: Tue 10 Nov ' },
+  { name: 'round past its high end, the only open row past every rate: refused', rows: fiveDoneRows(ROUND), nowH: 17, code: 'O', kind: 'round', line: 'No finish time: the follow-up round has run' },
+  { name: 'closing phase past its high end, a close row open: not before', rows: fiveDoneRows([row({ id: 'K1', item: ITEM.close })]), nowH: 15.5 + 1 / 60, code: 'C', kind: 'closing', line: 'Finish: not before Tue 10 Nov ' },
+  { name: 'closing phase exactly at its high end: still a range', rows: fiveDoneRows([row({ id: 'K1', item: ITEM.close })]), nowH: 15.5, code: 'C', kind: null, line: 'Finish: Tue 10 Nov ' },
+  { name: 'closing phase past its high end, no row open: refused', rows: fiveDoneRows(), nowH: 15.5 + 1 / 60, code: 'C', kind: 'closing', line: 'No finish time: the closing phase has run' },
+];
+
+test(`tableState: ${OVERRUN_SHAPES.length} overrun shapes, each with its state, its overrun flag and its line 1`, () => {
+  for (const c of OVERRUN_SHAPES) {
+    const items = itemsOf(c.rows);
+    const now = Math.round(at(c.nowH));
+    const table = tableState(items, [], now);
+    assert.equal(table.state, STATE[c.code], c.name);
+    assert.equal(table.overrun?.kind ?? null, c.kind, c.name);
+    assert.ok(lineOne(computeEstimate(items, [], now)).startsWith(c.line), `${c.name}: ${lineOne(computeEstimate(items, [], now))}`);
+  }
 });

@@ -12,8 +12,8 @@
 //        --log-dir      folder of the calibration log (default ~/.claude/state/estimate-log)
 // Exit codes: 0 finish printed; 2 usage or parse error (the file, a cell or a flag is wrong; the message names the row
 // line); 3 refused (`No finish time:` and `What to do:`: fewer than 5 done items with started, done and evidence, a done row
-// without started, a time later than --now, a done item with no working time, or a closing phase already longer than every
-// closing measured). Nothing that looks like an estimate is printed on 2 or 3; transcript content is never printed.
+// without started, a time later than --now, a done item with no working time, or a round or closing phase already longer than
+// every one measured with no open row left by size; with open rows it prints `Finish: not before <clock>`). Nothing that looks like an estimate is printed on 2 or 3; transcript content is never printed.
 // Invariants: logic lives in lib/ (pure); this file only parses arguments, reads files, prints and writes its log. The log
 // (lib/estimate-log.mjs) gets the earlier entries scored and one new entry per printed range unless it repeats the last one
 // (calibration.mjs isRepeat); a refusal writes nothing.

@@ -3,9 +3,12 @@
 // Exports: scoreEntries(entries, items, now) -> entries; calibrationFactors(entries, phase?) -> {low, high, scored}; phaseOf(result);
 // trackRecord(entries, phase?) -> {scored, inside, late, early, medianLate, rewritten}; applyFactors(result, factors) -> result;
 // logEntry(statusPath, result, items, printed) -> entry; isRepeat(entries, entry) -> boolean; MIN_SCORED; FACTOR_WINDOW; TARGET_INSIDE.
-// Invariants: pure. A log entry holds ids and numbers only (never item text, prompts or transcript content):
+// Invariants: pure. A not-before prediction (a round or closing phase past its range: a low end only, see compute.mjs) is logged
+// with `printed` and `raw` high = null and called low-only; it is scored inside when the delivery is not before the printed low
+// end, counted apart in the track record (`lowOnly`, `lowOnlyInside`) and feeds neither factor: its low end is the open rows'
+// size floor, not the low end of a range. A log entry holds ids and numbers only (never item text, prompts or transcript content):
 // {v, at, status, open, started (each open row's started to the minute, or null), sizes, points, closing, phase,
-// raw: [low, high] hours, printed: [low, high] ISO}; scoring drops ids gone from the table and adds actual (ISO; "void" when
+// raw: [low, high] hours, printed: [low, high] ISO (high null when low-only)}; scoring drops ids gone from the table and adds actual (ISO; "void" when
 // every id is gone; "rewritten" when a kept row carries another started than it had, to the minute, a row unstarted then
 // excepted when it started after the entry: ids are reused and the log never expires), inside (printed low <= actual <= printed high) and ratio ([hours to the delivery /
 // raw low, ... / raw high], null where raw is 0). Factors use raw ratios and the track record uses printed ranges, so the
@@ -40,6 +43,8 @@ const isoMinutes = (ms) => new Date(ms).toISOString().replace(/:\d\d\.\d+Z$/, 'Z
 const round = (value, decimals) => Number(value.toFixed(decimals));
 const isScored = (entry) => typeof entry.actual === 'string' && !DROPPED.has(entry.actual);
 const phaseOfEntry = (entry) => entry.phase ?? 'job';
+const isLowOnly = (entry) => entry.printed?.[1] === null;
+const isRanged = (entry) => !isLowOnly(entry);
 const distinctDeliveries = (scored) => new Set(scored.map((e) => e.actual)).size;
 
 const toMinute = (ms) => Math.floor(ms / MINUTE_MS);
@@ -62,7 +67,7 @@ function scoreOne(entry, deliveries, byId) {
   const delivery = deliveries.find((d) => d >= toMinute(at) * MINUTE_MS && kept.every((r) => doneBy(r.id, d)));
   if (delivery === undefined) return entry;
   const hours = (delivery - at) / HOUR_MS;
-  const [low, high] = entry.printed.map(Date.parse);
+  const [low, high] = entry.printed.map((printed) => (printed === null ? Infinity : Date.parse(printed)));
   return { ...entry, actual: isoSeconds(delivery), inside: low <= delivery && delivery <= high, ratio: entry.raw.map((raw) => (raw > 0 ? round(hours / raw, RATIO_DECIMALS) : null)) };
 }
 
@@ -100,7 +105,7 @@ export function phaseOf(result) {
  *   in all, deliveries = at how many distinct deliveries.
  */
 export function calibrationFactors(entries, phase = 'job') {
-  const scored = entries.filter((e) => isScored(e) && phaseOfEntry(e) === phase);
+  const scored = entries.filter((e) => isScored(e) && isRanged(e) && phaseOfEntry(e) === phase);
   const deliveries = distinctDeliveries(scored);
   if (deliveries < MIN_SCORED) return { low: 1, high: 1, scored: scored.length, deliveries };
   const recent = scored.slice(-FACTOR_WINDOW);
@@ -121,11 +126,13 @@ export function calibrationFactors(entries, phase = 'job') {
  * entries dropped because their rows changed.
  * @param {object[]} entries log entries.
  * @param {'job' | 'round'} [phase] which phase; default 'job' (an entry without `phase` is a job).
- * @returns {{scored: number, inside: number, late: number, early: number, medianLate: number | null, rewritten: number, deliveries: number}}
+ * @returns {{scored: number, inside: number, late: number, early: number, medianLate: number | null, rewritten: number, deliveries: number, lowOnly: number, lowOnlyInside: number}}
+ *   scored, inside, late and early count ranges only; lowOnly = scored not-before predictions, lowOnlyInside = of them delivered not before the printed low end.
  */
 export function trackRecord(entries, phase = 'job') {
   const ofPhase = entries.filter((e) => phaseOfEntry(e) === phase);
-  const scored = ofPhase.filter(isScored);
+  const scored = ofPhase.filter((e) => isScored(e) && isRanged(e));
+  const lowOnly = ofPhase.filter((e) => isScored(e) && isLowOnly(e));
   const lateBy = [];
   let early = 0;
   for (const entry of scored) {
@@ -135,12 +142,13 @@ export function trackRecord(entries, phase = 'job') {
   }
   const sorted = lateBy.sort((a, b) => a - b);
   const rewritten = ofPhase.filter((e) => DROPPED.has(e.actual)).length;
-  return { scored: scored.length, inside: scored.length - sorted.length - early, late: sorted.length, early, medianLate: sorted.length > 0 ? nearestRank(sorted, MEDIAN) : null, rewritten, deliveries: distinctDeliveries(scored) };
+  return { scored: scored.length, inside: scored.length - sorted.length - early, late: sorted.length, early, medianLate: sorted.length > 0 ? nearestRank(sorted, MEDIAN) : null, rewritten, deliveries: distinctDeliveries(scored), lowOnly: lowOnly.length, lowOnlyInside: lowOnly.filter((e) => e.inside).length };
 }
 
-/** The result with its finish range scaled: now + [raw low x factors.low, raw high x factors.high]; raw stays as computed. */
+/** The result with its finish range scaled: now + [raw low x factors.low, raw high x factors.high]; raw stays as computed. A not-before result is not scaled. */
 export function applyFactors(result, factors) {
   const now = result.computedAt;
+  if (result.notBefore) return { ...result, factors };
   return { ...result, factors, finish: { lowMs: now + result.raw.low * factors.low * HOUR_MS, highMs: now + result.raw.high * factors.high * HOUR_MS } };
 }
 
@@ -149,7 +157,7 @@ export function applyFactors(result, factors) {
  * @param {string} statusPath absolute STATUS.md path.
  * @param {object} result the printed result (with finish and raw).
  * @param {object[]} items the table, for the ids of the open rows.
- * @param {{low: number, high: number}} printed the printed range ends, epoch ms.
+ * @param {{low: number, high: number | null}} printed the printed range ends, epoch ms (high null: a not-before prediction).
  * @returns {object} the entry.
  */
 export function logEntry(statusPath, result, items, printed) {
@@ -164,8 +172,8 @@ export function logEntry(statusPath, result, items, printed) {
     points: result.openPoints,
     closing: result.closing.measured >= MIN_MEASURED_RANGE ? 'measured' : 'default',
     phase: phaseOf(result),
-    raw: [round(result.raw.low, RAW_DECIMALS), round(result.raw.high, RAW_DECIMALS)],
-    printed: [isoMinutes(printed.low), isoMinutes(printed.high)],
+    raw: [round(result.raw.low, RAW_DECIMALS), result.raw.high === null ? null : round(result.raw.high, RAW_DECIMALS)],
+    printed: [isoMinutes(printed.low), printed.high === null ? null : isoMinutes(printed.high)],
   };
 }
 
@@ -173,7 +181,7 @@ export function logEntry(statusPath, result, items, printed) {
 const rowsKey = (entry) => JSON.stringify(entry.open.map((id, k) => [id, entry.sizes?.[k] ?? null, entry.started?.[k] ?? null]).sort());
 
 /**
- * True when the entry repeats the last logged entry: the same phase, the same open rows (ids, sizes, started) and less than
+ * True when the entry repeats the last logged entry: the same phase, the same kind (range or not-before), the same open rows (ids, sizes, started) and less than
  * RELOG_AFTER_MS since it. A repeat is not appended, so runs that differ only because the clock moved count once.
  * @param {object[]} entries the log, oldest first.
  * @param {object} entry the new entry from logEntry.
@@ -181,5 +189,5 @@ const rowsKey = (entry) => JSON.stringify(entry.open.map((id, k) => [id, entry.s
 export function isRepeat(entries, entry) {
   const last = entries.at(-1);
   if (last === undefined || phaseOfEntry(last) !== entry.phase) return false;
-  return rowsKey(last) === rowsKey(entry) && Date.parse(entry.at) - Date.parse(last.at) < RELOG_AFTER_MS;
+  return isLowOnly(last) === isLowOnly(entry) && rowsKey(last) === rowsKey(entry) && Date.parse(entry.at) - Date.parse(last.at) < RELOG_AFTER_MS;
 }

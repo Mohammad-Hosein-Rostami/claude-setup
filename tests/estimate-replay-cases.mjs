@@ -5,13 +5,16 @@
 // Finish line of the L30 spec and the true finish), statusAt(table, nowMs) -> STATUS.md text as it stood at that moment.
 // Invariant: at a moment, rows written later are left out and later started/done cells are blank, as the session saw it.
 
-const CLOSE_AUTH = ['F1', 'F3', 'F4', 'F5', 'F6', 'F14', 'F15', 'F16', 'F17', 'F18', 'F19', 'F20', 'F21', 'F22', 'F23', 'F24', 'F25', 'F26', 'G3', 'G4', 'G5', 'G6', 'H3'];
-const REWORK_AUTH = ['H1', 'H2'];
+const CLOSE_AUTH = ['F1', 'F3', 'F4', 'F5', 'F6', 'F14', 'F15', 'F16', 'F17', 'F18', 'F19', 'F20', 'F21', 'F22', 'F23', 'F24', 'F25', 'F26', 'G3', 'G4', 'G5', 'G6', 'H3', 'H5'];
+const REWORK_AUTH = ['H1', 'H2', 'H4', 'H6', 'H7', 'H8', 'H9', 'H10'];
 const CLOSE_RESTRUCTURE = ['W15', 'F4', 'F5', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6'];
 const FIRST_AUTH_ROWS = 19; // F1-F19 were written together
 const AUTH_WRITTEN = {
   F20: '2026-11-14T20:32:18Z', F21: '2026-11-14T20:55:32Z', F22: '2026-11-14T20:55:32Z', F23: '2026-11-14T21:23:11Z',
   F24: '2026-11-14T21:23:11Z', F25: '2026-11-14T21:37:16Z', F26: '2026-11-14T22:10:08Z',
+  // H4-H10 (the 15 Nov follow-up round): when each row was written is not known, taken as its start; H5 as its predecessor's start
+  H4: '2026-11-15T11:46:00Z', H5: '2026-11-15T11:46:00Z', H6: '2026-11-15T11:47:00Z', H7: '2026-11-15T11:52:00Z', H8: '2026-11-15T11:53:00Z',
+  H9: '2026-11-15T13:00:00Z', H10: '2026-11-15T13:55:00Z',
 };
 
 // [id, size, started, done]; '-' = empty. Times from the two STATUS.md tables (read-only), UTC.
@@ -33,7 +36,11 @@ const AUTH_ROWS = [
   ['G3', 'L', '2026-11-15T06:39Z', '2026-11-15T08:10Z'], ['G4', 'M', '2026-11-15T07:25Z', '2026-11-15T08:02Z'],
   ['G5', 'S', '2026-11-15T08:02Z', '2026-11-15T08:10Z'], ['G6', 'S', '2026-11-15T08:05Z', '2026-11-15T08:10Z'],
   ['H1', 'M', '2026-11-15T08:29Z', '2026-11-15T09:18Z'], ['H2', 'L', '2026-11-15T09:18Z', '2026-11-15T10:43Z'],
-  ['H3', 'M', '2026-11-15T10:43Z', '-'],
+  ['H3', 'M', '2026-11-15T10:43Z', '2026-11-15T11:46Z'],
+  ['H4', 'M', '2026-11-15T11:46Z', '2026-11-15T13:36Z'], ['H5', 'M', '2026-11-15T13:36Z', '2026-11-15T14:24Z'],
+  ['H6', 'M', '2026-11-15T11:47Z', '2026-11-15T13:05Z'], ['H7', 'M', '2026-11-15T11:52Z', '2026-11-15T12:17Z'],
+  ['H8', 'M', '2026-11-15T11:53Z', '2026-11-15T12:29Z'], ['H9', 'M', '2026-11-15T13:00Z', '2026-11-15T13:36Z'],
+  ['H10', 'S', '2026-11-15T13:55Z', '2026-11-15T14:24Z'],
 ];
 const RESTRUCTURE_ROWS = [
   ['W1', 'S', '2026-11-15T06:00Z', '2026-11-15T06:20Z'], ['W2', 'S', '2026-11-15T06:06Z', '2026-11-15T06:11Z'],
@@ -55,6 +62,7 @@ const RESTRUCTURE_ROWS = [
 const V_WRITTEN = '2026-11-15T11:25:00Z';
 
 function authWritten(id, index) {
+  if (Object.hasOwn(AUTH_WRITTEN, id)) return AUTH_WRITTEN[id];
   if (index < FIRST_AUTH_ROWS) return '2026-11-14T19:47:03Z';
   if (id.startsWith('G')) return '2026-11-15T06:39:38Z';
   if (id.startsWith('H')) return '2026-11-15T08:29:06Z';
@@ -79,12 +87,15 @@ const AUTH_DONE_14 = '2026-11-14T22:30Z';
 const AUTH_DONE_15 = '2026-11-15T08:10Z';
 const RESTRUCTURE_DONE = '2026-11-15T10:55Z';
 const RESTRUCTURE_ROUND_DONE = '2026-11-15T11:54Z';
+const AUTH_ROUND_DONE = '2026-11-15T14:24Z';
 /**
  * The owner's estimate requests; `finish` is the line the L30 spec's replay table gives, `truth` when the job was delivered.
  * A0 and A1 sit in the follow-up round after the 14 Nov 22:30Z delivery, so the follow-up round rule changed their lines (was
  * 11:30-12:50 and 11:35-12:45; real finish 11:40). V9 is the live 15:09 request in the round after the 10:55Z delivery
  * (real finish 15:24); its own 0.48 h round is one of the three behind the default round range. R3 printed 13:30 before
- * the low end was kept at or after now (13:31).
+ * the low end was kept at or after now (13:31). V10 is the live 16:54 request in the auth round after the 08:10Z delivery (the round
+ * had run 4.9 h, past its 0.4-2.6 h range; three rows open, two running): it prints `not before`, no upper end, and the job
+ * was really done at 17:54 local (14:24Z). The old rule printed 17:10-17:35 there.
  */
 export const CASES = [
   { name: 'E7', table: 'auth', now: '2026-11-14T19:47:03Z', truth: AUTH_DONE_14, finish: 'Finish: Sun 15 Nov 00:50-02:25 (local +03:30, now 23:17)' },
@@ -96,6 +107,7 @@ export const CASES = [
   { name: 'R4', table: 'restructure', now: '2026-11-15T08:30:30Z', truth: RESTRUCTURE_DONE, finish: 'Finish: Sun 15 Nov 13:20-14:30 (local +03:30, now 12:00)' },
   { name: 'R3', table: 'restructure', now: '2026-11-15T10:01:35Z', truth: RESTRUCTURE_DONE, finish: 'Finish: Sun 15 Nov 13:35-14:30 (local +03:30, now 13:31)' },
   { name: 'V9', table: 'restructure', now: '2026-11-15T11:39:00Z', truth: RESTRUCTURE_ROUND_DONE, finish: 'Finish: Sun 15 Nov 15:15-17:35 (local +03:30, now 15:09)' },
+  { name: 'V10', table: 'auth', now: '2026-11-15T13:24:00Z', truth: AUTH_ROUND_DONE, finish: 'Finish: not before Sun 15 Nov 17:10 (local +03:30, now 16:54)' },
 ];
 
 const cell = (time, nowMs) => (time !== '-' && Date.parse(time) <= nowMs ? time : '-');

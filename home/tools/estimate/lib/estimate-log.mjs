@@ -30,13 +30,15 @@ const logId = (statusPath) => createHash('sha256').update(statusPath).digest('he
 export const logFile = (statusPath, dir = logDir()) => join(dir, `${logId(statusPath)}.json`);
 
 const isPair = (value, type) => Array.isArray(value) && value.length === RANGE_LENGTH && value.every((v) => typeof v === type);
+// a not-before prediction has no high end: [low, null]
+const isLowOrRange = (value, type) => isPair(value, type) || (Array.isArray(value) && value.length === RANGE_LENGTH && typeof value[0] === type && value[1] === null);
 const isInstant = (text) => typeof text === 'string' && Number.isFinite(Date.parse(text));
 
 /** True for a well-formed entry of this STATUS.md (the fields calibration.mjs writes and reads). */
 function isEntry(entry, statusPath) {
   return entry?.v === 1 && entry.status === statusPath && isInstant(entry.at)
     && Array.isArray(entry.open) && entry.open.every((id) => typeof id === 'string')
-    && typeof entry.points === 'number' && isPair(entry.raw, 'number') && isPair(entry.printed, 'string') && entry.printed.every(isInstant)
+    && typeof entry.points === 'number' && isLowOrRange(entry.raw, 'number') && isLowOrRange(entry.printed, 'string') && entry.printed.filter((at) => at !== null).every(isInstant)
     && (entry.actual === undefined || entry.actual === 'void' || entry.actual === 'rewritten' || isInstant(entry.actual));
 }
 

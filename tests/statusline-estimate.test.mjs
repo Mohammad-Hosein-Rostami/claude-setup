@@ -169,6 +169,16 @@ test('the refresh script writes "done ~<finish clock>" from the estimate lib for
   assert.equal(entry.mtimeMs, (await stat(statusPath)).mtimeMs);
 });
 
+test('the refresh script writes "done >=<clock>" and expires it at the low end when the round has outrun its range', async () => {
+  const firstJob = [...[0, 0.2, 0.4, 0.6, 0.8].map((h, i) => row({ id: `D${i + 1}`, startedH: h, doneH: h + 0.1 })), row({ id: 'C1', item: 'close: row', startedH: 1, doneH: 1.5 })];
+  const { root, projectDir, statusPath } = await setup(statusDoc([...firstJob, row({ id: 'V1', item: 'close: row', startedH: 2 }), row({ id: 'V2', item: 'close: row' })])); // days past the 2.6 h round
+  const before = Date.now();
+  const { run, entry } = refreshIn(root, projectDir, statusPath);
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(entry.text, /^done >=(\w{3} )?\d\d:\d\d$/);
+  assert.ok(entry.highMs >= before, 'the low end stands in for the high end the render hides a passed text by');
+});
+
 test('the refresh script caches "no text" when the tool refuses (exit 3 case) or the job is delivered', async () => {
   for (const doc of [REFUSED_DOC, DELIVERED_DOC]) {
     const { root, projectDir, statusPath } = await setup(doc);

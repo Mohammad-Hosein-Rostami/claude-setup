@@ -60,7 +60,7 @@ All durations are wall-clock time minus the usage-limit windows found in the tra
   row that has already run as long as the band's slowest rate allows is named in the Includes line: `O1 past every
   measured rate, its remaining time is not known` (its remaining time counts as 0).
 - State: one function (`lib/history.mjs` tableState) classifies the table as first-cycle-building, first-cycle-closing,
-  round-open, round-done-not-delivered or delivered; every output switches on it. With nothing open only
+  round-open, round-done-not-delivered or delivered; every output switches on it, and it carries the overrun flag (below). With nothing open only
   first-cycle-closing (the build is done, the review is not in rows yet, and the Includes line says so) prints a future
   finish; round-done-not-delivered is refused and asks for the `deliver:` row.
 - Delivery: the done time D of a `deliver:` row when no other row was running at D (else the row is ignored and the
@@ -85,8 +85,14 @@ All durations are wall-clock time minus the usage-limit windows found in the tra
   finished rounds here once 2 exist; before that the default 0.4-2.6 h, widened to include a single round. The default
   is the spread of the only three rounds measured, rounded outward like the closing default: a restructure round of
   0.48 h (11:25Z-11:54Z, 15 Nov, live table), an auth round of 1.83 h (06:20Z-08:10Z) and an auth rework round still
-  open at 2.57 h (08:29Z-11:03Z), both from the 14-15 Nov analysis. It is wide because only three rounds were measured. A round past S + R high whose open rows are all past their measured rates is
-  refused (exit 3). The first cycle (no delivery yet) is the build part and closing phase above.
+  open at 2.57 h (08:29Z-11:03Z), both from the 14-15 Nov analysis. It is wide because only three rounds were measured. Past S + R high see Overrun below (a
+  `not before` line, or a refusal when no open row has time left by size). The first cycle (no delivery yet) is the build part and closing phase above.
+- Overrun: a follow-up round, or a first-cycle closing phase, that has run strictly longer than the high end of its range (exactly
+  at it is still a range) has no supportable upper end. `tableState` sets the `overrun` flag (on `round-open` and
+  `first-cycle-closing`; not a new state) and the tool prints no two-ended range: line 1 is `Finish: not before <day> <clock>
+  (local <offset>, now HH:MM)`, the clock = now + the low end of the open rows' remaining time by size (every open row counts, close
+  rows too; floored to 5 minutes like a low end), and the Includes line says why. When no open row has time left by size at the low
+  rate (or no row is open) there is nothing to say, and it is the refusal below: never `not before now`.
 - Reopened: a delivery counts as reopened when a `rework:` row starts after it (up to the next delivery, or now); the
   rework time runs from that first start to the next delivery, or to now: `so far (still open)` while a rework row is
   open, `so far (not delivered again yet)` once they are done.
@@ -120,6 +126,11 @@ Agent-hours: 0.6-1.0 for the open build rows, counted whole
 - With only close rows open: `no open build row: the closing phase ... has run 1.5 h`; with no row open: `no open row: the
   build is done and the closing phase ... is not in rows yet; it has run 1.5 h`. After a delivery the After line counts
   reopened deliveries: `1 of 2 earlier deliveries here were reopened by your corrections; that rework took 1.4 h so far (still open)`.
+- Overrun, line 1 and Includes: `Finish: not before Sun 15 Nov 17:10 (local +03:30, now 16:54)` and `Includes: follow-up round after the
+  delivery at 11:40, started 11:59 (H1): 3 open rows (2 running); this round has run 4.9 h, longer than every measured round (0.4-2.6 h;
+  default, widened by the 1 finished round here): no upper end can be supported; the open rows need at least 0.3-0.6 h by size (H4, H5,
+  H9, 1.9 lanes)`; in a closing phase `this closing phase has run 7 h, longer than every measured closing (1.4-2.5 h; default, not yet
+  measured here)`. The other lines are as usual. The calibration factors do not scale it.
 - In a follow-up round the Includes line reads `follow-up round after the delivery at 14:25, started 14:55 (V1): 6 open
   rows (1 running); such rounds took 0.4-2.6 h here (default, not yet measured here); the open rows need at least
   0.5-2.8 h by size (V1, V2, V3, V4, V5 and 1 more, 1 lane)`; with finished rounds `widened by the 1 finished round
@@ -142,7 +153,7 @@ Agent-hours: 0.6-1.0 for the open build rows, counted whole
 
 ## Calibration
 
-Each run that prints a finish range appends one line to its log, unless it repeats the last line: the same phase and the
+Each run that prints a finish range or a `not before` appends one line to its log, unless it repeats the last line: the same phase and the
 same open rows (ids, sizes, started) less than 60 minutes after it (`RELOG_AFTER_MS`), so runs that differ only because
 the clock moved count once:
 `~/.claude/state/estimate-log/<first 32 hex of sha256(absolute STATUS.md path)>.json` (outside every repo; `--log-dir` moves it):
@@ -152,7 +163,11 @@ replaced whole through a temp file (two racing runs may lose a line, never the f
 (`MAX_LOG_ENTRIES`) and 128 KiB; it never expires by age (a project paused for weeks keeps its track record). A refusal writes nothing; a `--now` run without
 `--log-dir` neither reads nor writes it; the status line cache only reads it.
 
-- Scoring (every run, written back): an entry is scored at the first delivery at or after it with all its open rows done by
+- Not-before (low-only) entries have `raw` and `printed` high = `null`. They are scored inside when the delivery is not before the
+  printed low end, counted apart in the Track record (`; 1 of 2 not-before estimates held (delivered no earlier than printed)`),
+  and feed neither factor (their low end is the open rows' size floor, not the low end of a range, and they have no high end to
+  learn from). A not-before run is not a repeat of an earlier range entry, nor the reverse.
+- Scoring (every run, written back): an entry is scored at the first delivery at or after it (to the minute: a delivery is stamped with minute precision) with all its open rows done by
   then, adding `actual`, `inside` (printed low <=
   delivery <= printed high) and `ratio` = [hours to the delivery / raw low, ... / raw high] (null where raw is 0). An id gone from the table is dropped
   and the rest scored (all gone: `"actual": "void"`). Ids are reused and the log never expires, so a kept row must still
@@ -215,12 +230,13 @@ Long lists show the first five rows and `and N more`.
 ## Status line segment
 
 The status line shows `done ~14:50-16:15` (the Finish range on the local clock; `done ~Sun 00:50-02:25` when both ends are
-on another day, `done ~Sun 23:20 - Mon 01:10` when they are on different days) for the project whose `<project dir>/STATUS.md` the tool accepts. Nothing is shown when there is no STATUS.md,
+on another day, `done ~Sun 23:20 - Mon 01:10` when they are on different days; `done >=17:10` (ASCII, `>=Sun 17:10` on another day) when the
+round or closing phase has outrun its range and only a low end is supported, see Overrun) for the project whose `<project dir>/STATUS.md` the tool accepts. Nothing is shown when there is no STATUS.md,
 the tool refuses (exit 3) or fails (exit 2), or the job is delivered. The status line never computes it: it reads one cache file,
 `~/.claude/state/estimate-segment/<sha256 of the STATUS.md path>.json`
 (`{path, text, highMs, mtimeMs, size, computedAt, refreshStartedAt}`; `text` and `highMs` are null after a refusal), and shows
 the text while the file's mtime and size still match, or for 15 minutes (`STALE_SHOW_MS`) after a change while a refresh runs,
-never after the printed high end (`highMs`) has passed. On a daylight-saving fall-back night, when both ends fall on the
+never after the printed high end (`highMs`) has passed (a `done >=` text has no high end: `highMs` is its low end). On a daylight-saving fall-back night, when both ends fall on the
 same local date, the segment shows the two clock times as they are, so the high end can read earlier than the low end
 (`01:50-01:05`); line 1 of the CLI has the same limit. When the cache is missing, no longer matches or is 5 minutes old
 (`RECOMPUTE_AFTER_MS`: the finish moves with the clock even when the table does not), the render stamps `refreshStartedAt` and starts `statusline-cache.mjs <STATUS.md>` detached, at
@@ -230,10 +246,10 @@ writes the cache atomically (0600, never through a link). The constants are in `
 ## Layout
 
 `estimate.mjs` (CLI: arguments, file reads, exit codes) over `lib/items.mjs` (table parser, row kinds), `lib/limits.mjs` (windows,
-slug), `lib/history.mjs` (deliveries, closing tails, reopened deliveries), `lib/compute.mjs` (formula), `lib/calibration.mjs` (scoring,
-factors, track record), `lib/estimate-log.mjs` (the log file) and `lib/report.mjs` (text, local clock); `lib/from-files.mjs` reads the files for the CLI and for `statusline-cache.mjs`
+slug), `lib/history.mjs` (deliveries, closing tails, reopened deliveries, `tableState`), `lib/compute.mjs` (formula), `lib/calibration.mjs` (scoring,
+factors, track record), `lib/estimate-log.mjs` (the log file), `lib/report.mjs` (text) and `lib/local-clock.mjs` (local clock, 5-minute grid); `lib/from-files.mjs` reads the files for the CLI and for `statusline-cache.mjs`
 (refreshes the status line cache), `lib/segment-cache.mjs` is the status line's read side. Tests: `tests/estimate.test.mjs`,
-`tests/estimate-finish.test.mjs`, `tests/estimate-calibration.test.mjs`, `tests/estimate-replay.test.mjs` (with `tests/estimate-replay-cases.mjs`: two real tables of
+`tests/estimate-finish.test.mjs`, `tests/estimate-calibration.test.mjs`, `tests/estimate-same-minute.test.mjs`, `tests/estimate-not-before.test.mjs`, `tests/estimate-replay.test.mjs` (with `tests/estimate-replay-cases.mjs`: two real tables of
 14-15 Nov as ids, sizes and times only, and the exact Finish line each request must print; replay V9 is in-sample, since
 its round is one of the three the round default comes from, so it shows consistency, not predictive accuracy), `tests/estimate-cli.test.mjs`,
 `tests/statusline-estimate.test.mjs`.

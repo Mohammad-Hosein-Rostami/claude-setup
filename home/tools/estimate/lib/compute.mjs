@@ -13,15 +13,19 @@
 // Finish = [max(round start + round low, now + B(low)), max(round start + round high, now + B(high))], the round length
 // measured from this table's finished rounds; the closing phase is not added again.
 // - round-done-not-delivered: a refusal (reason 'round-done'): nothing is open, so no future finish is printed.
+// - overrun (tableState's flag on first-cycle-closing and round-open): the round or closing phase has run strictly longer than
+//   the high end of its range, so no upper end can be supported. The result has `notBefore: true`, `finish.highMs` and `raw.high`
+//   null and `finish.lowMs` = now + the open rows' remaining time by size at the low rate (every open row counts, close rows
+//   too); when no open row has time left by size at that rate it is the refusal 'overrun' instead.
 // - A row of under a minute (done == started: times have minute precision) is accepted but carries no rate: 0 h/point would pull
 //   the p25 down and its true length is anywhere under a minute. It is left out of the rate band, the lanes and the count of
 //   MIN_DONE_ITEMS rows, and its id is in `underMinute` of the result and of a count refusal.
 // - delivered: `delivered` (epoch ms), `provisionalUntil`. Every non-refused result carries `state`.
 // A refusal is `{ refused: true, reason, needed, measured, now, missing, future, noTime, underMinute, overrun }` and carries no finish time:
 // reason 'table' (too few measured rows, a done row without started, a time later than now, a done row with no working time),
-// 'round-done' (see above; `round` set) or 'overrun' (no build row open and the closing has already run as long as its high end; or a follow-up round past its high
-// end with no open row left by size, then `overrun.round` is set).
-import { DELIVERY_GAP_MS, closingElapsedHours, closingRange, closingStart, followUpRange, followUpRounds, overlapMs, reopenSummary, tableState } from './history.mjs';
+// 'round-done' (see above; `round` set) or 'overrun' (a closing phase or follow-up round past its high end with no open row
+// left by size; `overrun` = {kind, hours, closing, start | round}).
+import { DELIVERY_GAP_MS, closingElapsedHours, closingRange, followUpRange, followUpRounds, overlapMs, reopenSummary, tableState } from './history.mjs';
 import { mergeIntervals } from './limits.mjs';
 
 export const MIN_DONE_ITEMS = 5;
@@ -143,31 +147,35 @@ function measureRows({ items, done, measured, windows, now }, isWork) {
 /** The finish of the first cycle: the build part, then the closing phase in series (see the header). */
 function firstCycleResult(context, table) {
   const { items, windows, now } = context;
-  const { deliveries } = table;
+  if (table.overrun !== null) return overrunResult(context, table);
   const closing = closingRange([]); // a table has one first cycle: no finished job of its own to measure the closing from
-  const elapsed = table.state === 'first-cycle-closing' ? closingElapsedHours(items, deliveries, windows, now) : 0;
+  const elapsed = table.state === 'first-cycle-closing' ? closingElapsedHours(items, table.deliveries, windows, now) : 0;
   const rows = measureRows(context, isOpenBuild);
-  if (table.state === 'first-cycle-closing' && elapsed >= closing.high) {
-    const overrun = { hours: elapsed, start: closingStart(items, deliveries, now), closing };
-    return refusal(now, { reason: 'overrun', measured: context.measured.length, overrun });
-  }
   const raw = { low: rows.build.low + Math.max(0, closing.low - elapsed), high: rows.build.high + Math.max(0, closing.high - elapsed) };
   return { ...rows, closing, closingElapsed: elapsed, raw, finish: { lowMs: now + raw.low * HOUR_MS, highMs: now + raw.high * HOUR_MS } };
 }
 
 /**
- * The finish of an open follow-up round (see the header): never before now, never before the open rows' size range, and a
- * refusal once the round has passed its high end with nothing left by size.
+ * The finish of a round or closing phase that has outrun its range (see the header): only the open rows' size floor is
+ * supported, so a low end alone (`notBefore`), or a refusal when no open row has time left by size at the low rate.
+ */
+function overrunResult(context, table) {
+  const { overrun } = table;
+  const rows = measureRows(context, (i) => i.done === null);
+  if (rows.build.low <= 0) return refusal(context.now, { reason: 'overrun', measured: context.measured.length, overrun });
+  const lowMs = context.now + rows.build.low * HOUR_MS;
+  const elapsed = overrun.kind === 'closing' ? overrun.hours : 0;
+  return { ...rows, closing: overrun.closing, ...(table.round === null ? {} : { followUp: table.round }), closingElapsed: elapsed, raw: { low: rows.build.low, high: null }, finish: { lowMs, highMs: null }, notBefore: true, overrun };
+}
+
+/**
+ * The finish of an open follow-up round (see the header): never before now, never before the open rows' size range.
  */
 function followUpResult(context, { deliveries, round }) {
   const { items, windows, now } = context;
   const range = followUpRange(followUpRounds(items, deliveries, windows));
   const rows = measureRows(context, (i) => i.done === null);
   const roundEnd = (hours) => round.start + hours * HOUR_MS;
-  if (roundEnd(range.high) <= now && rows.build.high <= 0) {
-    const overrun = { hours: workingMs(round.start, now, windows) / HOUR_MS, round, closing: range };
-    return refusal(now, { reason: 'overrun', measured: context.measured.length, overrun });
-  }
   const lowMs = Math.max(roundEnd(range.low), now + rows.build.low * HOUR_MS); // the size term (>= 0) keeps it at or after now
   const highMs = Math.max(roundEnd(range.high), now + rows.build.high * HOUR_MS, lowMs);
   return { ...rows, closing: range, followUp: round, closingElapsed: 0, raw: { low: (lowMs - now) / HOUR_MS, high: (highMs - now) / HOUR_MS }, finish: { lowMs, highMs } };
@@ -179,7 +187,7 @@ function finishOf(context, table) {
     case 'delivered': return deliveredResult(context.items, table, context.now);
     case 'first-cycle-building':
     case 'first-cycle-closing': return firstCycleResult(context, table);
-    case 'round-open': return followUpResult(context, table);
+    case 'round-open': return table.overrun === null ? followUpResult(context, table) : overrunResult(context, table);
     case 'round-done-not-delivered': return refusal(context.now, { reason: 'round-done', measured: context.measured.length, round: table.round });
     default: throw new Error(`unknown table state ${table.state}`);
   }

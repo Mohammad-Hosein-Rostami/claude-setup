@@ -16,16 +16,16 @@ const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 const LOCAL_OFFSET_MS = (3 * 60 + 30) * MINUTE_MS; // Asia/Tehran is +03:30 all year
 const CLOCK_STEP_MS = 5 * MINUTE_MS; // the low end may be now floored to this step
-const PRINTED = /^Finish: \w{3} \d+ \w{3} (\d\d):(\d\d)-(\d\d):(\d\d) /;
+const PRINTED = /^Finish: (?:not before )?\w{3} \d+ \w{3} (\d\d):(\d\d)(?:-(\d\d):(\d\d))? /;
 
-/** The printed clock range as epoch ms: each end is the first such local clock time at or after the local day of `now`. */
+/** The printed clock range as epoch ms: each end is the first such local clock time at or after the local day of `now`; a `not before` line has no high end (Infinity). */
 function printedRange(line, nowMs) {
-  const [, lowH, lowM, highH, highM] = PRINTED.exec(line).map(Number);
+  const [, lowH, lowM, highH, highM] = PRINTED.exec(line).map((part) => (part === undefined ? undefined : Number(part)));
   const dayStart = Math.floor((nowMs + LOCAL_OFFSET_MS) / DAY_MS) * DAY_MS - LOCAL_OFFSET_MS;
   const clock = (hours, minutes) => dayStart + (hours * 60 + minutes) * MINUTE_MS;
   const sameOrNextDay = (ms, notBefore) => (ms < notBefore ? ms + DAY_MS : ms);
   const low = sameOrNextDay(clock(lowH, lowM), dayStart + Math.floor((nowMs - dayStart) / CLOCK_STEP_MS) * CLOCK_STEP_MS);
-  return { low, high: sameOrNextDay(clock(highH, highM), low) };
+  return { low, high: highH === undefined ? Infinity : sameOrNextDay(clock(highH, highM), low) };
 }
 
 for (const replay of CASES) {

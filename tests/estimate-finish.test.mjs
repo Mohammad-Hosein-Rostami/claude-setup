@@ -176,7 +176,8 @@ test('missing clock (h): nothing open after a delivery prints when it was delive
 test('overrun: no build row open and the closing ran as long as its high end is refused with a reason and what to do', () => {
   const almost = estimate(fiveDoneRows(), 15.5 - 1 / 60);
   assert.equal(almost.refused, undefined);
-  const result = estimate(fiveDoneRows(), 15.5); // D5 done 13 h, default high 2.5 h
+  assert.equal(estimate(fiveDoneRows(), 15.5).refused, undefined); // exactly at the high end: still a range
+  const result = estimate(fiveDoneRows(), 15.5 + 1 / 60); // D5 done 13 h, default high 2.5 h: one minute past it
   assert.equal(result.refused, true);
   assert.equal(result.finish, undefined);
   assert.equal(formatRefusal(result, TZ), 'No finish time: the closing phase has run 2.5 h since the last build row was done (D5, 16:30), longer than the default closing (1.4-2.5 h, not yet measured here).\n'
@@ -185,7 +186,8 @@ test('overrun: no build row open and the closing ran as long as its high end is 
   assert.match(formatRefusal(afterDelivery, TZ), /^No finish time: every row of the follow-up round after the delivery at 22:30 \(started 23:30, B7\) is done, and no deliver: row marks its hand-over\.\n/);
   const onlyClose = estimate([0, 1, 2, 3, 4].map((h, i) => close({ id: `K${i + 1}`, startedH: h, doneH: h + 1 })).concat(close({ id: 'K6', startedH: 5 })), 8);
   assert.match(formatRefusal(onlyClose, TZ), /run 8 h since the first closing row started \(K1, 03:30\)/);
-  const round = estimate([...TWO_JOBS, close({ id: 'C3', startedH: 20 })], 23); // after a delivery: a follow-up round
+  assert.equal(estimate([...TWO_JOBS, close({ id: 'C3', startedH: 20 })], 23).refused, undefined); // exactly at the round's high end (3 h): still a range
+  const round = estimate([...TWO_JOBS, close({ id: 'C3', startedH: 20 })], 23 + 1 / 60); // after a delivery, one minute past the round's high end
   assert.match(formatRefusal(round, TZ), /^No finish time: the follow-up round has run 3 h since it started \(C3, 23:30\), longer than the default round \(0\.4-3 h, widened by 1 finished round here\)/);
 });
 

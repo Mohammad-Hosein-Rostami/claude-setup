@@ -2,7 +2,7 @@
 // the open job's closing has already run, the follow-up rounds after deliveries, and how often the owner reopened a delivery.
 // Exports: findDeliveries(items, windows, now) -> {at, closingStart, tailHours}[]; closingRange(deliveries) -> {low, high, measured};
 // followUpRounds(items, deliveries, windows) -> {start, at, hours}[]; followUpRange(rounds) -> {low, high, measured};
-// tableState(items, windows, now) -> {state, deliveries, round, ignored, guessed, closer}; ignoredDeliverRows(items, now);
+// tableState(items, windows, now) -> {state, deliveries, round, ignored, guessed, closer, overrun}; ignoredDeliverRows(items, now);
 // hasDeliverRows(items) -> boolean; TABLE_STATES; DEFAULT_FOLLOW_UP_HOURS; MIN_MEASURED_RANGE;
 // closingStart(items, deliveries, now) -> {at, item}; closingElapsedHours(items, deliveries, windows, now) -> hours;
 // reopenSummary(items, deliveries, now) -> summary | null; overlapMs(a, b); DELIVERY_GAP_MS; DEFAULT_CLOSING_HOURS; CLOSING_HISTORY.
@@ -13,7 +13,8 @@
 // guessed from a pause: a delivery D is the done time of a close row when every row started before D is done by D, no row starts in
 // [D, D + DELIVERY_GAP_MS), and that gap has passed (D + DELIVERY_GAP_MS <= now). Usage-limit windows are taken out of closing tails and of the elapsed closing time.
 // A follow-up round is the work after a delivery: from the first row started after it to the next delivery (any kind of row;
-// it is not a new closing phase).
+// it is not a new closing phase). Overrun: an open round, or a first-cycle closing phase, that has run strictly longer than the
+// high end of its range; tableState is the one place that says so (exactly at the high end it is still a range).
 
 const HOUR_MS = 3_600_000;
 const MINUTE_MS = 60_000;
@@ -167,28 +168,53 @@ function roundAfter(items, deliveryAt, now) {
 }
 
 /**
+ * The open round or closing phase when it has run strictly longer than the high end of its range, else null. A round is
+ * compared on the wall clock, like the formula's round end; a closing phase in working hours, like its elapsed time.
+ * @returns {{kind: 'round' | 'closing', hours: number, closing: object, round?: object, start?: object} | null} closing = the range
+ *   it outran (its field name is the one the refusal text already reads).
+ */
+function overrunOf(state, { items, deliveries, round, windows, now }) {
+  if (state === 'round-open') {
+    const range = followUpRange(followUpRounds(items, deliveries, windows));
+    if (now - round.start <= Math.round(range.high * HOUR_MS)) return null;
+    return { kind: 'round', hours: workingHours(round.start, now, windows), closing: range, round };
+  }
+  if (state !== 'first-cycle-closing') return null;
+  const closing = closingRange([]); // a table has one first cycle: the default
+  const hours = closingElapsedHours(items, deliveries, windows, now);
+  return hours > closing.high ? { kind: 'closing', hours, closing, start: closingStart(items, deliveries, now) } : null;
+}
+
+/**
  * The one classification of a table; nothing else derives it.
  * - delivered: no row open and the last done row is a delivery row (see deliveringRow);
  * - first-cycle-building / first-cycle-closing: no delivery yet, a build or rework row open / none open (the build is done,
  *   or only close and deliver rows are open);
  * - round-open / round-done-not-delivered: after a delivery, some row open / every row done but no delivery after them.
+ * Overrun is a flag on first-cycle-closing and round-open, not a state: see overrunOf.
  * @param {object[]} items parsed work items with `kind`.
  * @param {{start: number, end: number}[]} windows usage-limit windows.
  * @param {number} now epoch ms.
- * @returns {{state: string, deliveries: object[], round: object | null, ignored: object[], guessed: boolean, closer: object | null}}
+ * @returns {{state: string, deliveries: object[], round: object | null, ignored: object[], guessed: boolean, closer: object | null, overrun: object | null}}
  *   round = {deliveryAt, start, startRow} in a round state; guessed = a delivery came from the pause rule; closer = the
- *   delivering row of the delivered state; ignored = see ignoredDeliverRows.
+ *   delivering row of the delivered state; ignored = see ignoredDeliverRows; overrun = see overrunOf.
  */
 export function tableState(items, windows, now) {
   const explicit = hasDeliverRows(items);
   const deliveries = findDeliveries(items, windows, now);
   const closer = deliveringRow(items, deliveries, explicit);
-  const facts = { deliveries, round: null, ignored: explicit ? ignoredDeliverRows(items, now) : [], guessed: !explicit && (closer !== null || deliveries.length > 0), closer };
+  const facts = { deliveries, round: null, ignored: explicit ? ignoredDeliverRows(items, now) : [], guessed: !explicit && (closer !== null || deliveries.length > 0), closer, overrun: null };
   if (closer !== null) return { ...facts, state: 'delivered' };
   const open = items.filter((i) => i.done === null);
   const last = deliveries.at(-1);
-  if (last === undefined) return { ...facts, state: open.some((i) => !isClose(i)) ? 'first-cycle-building' : 'first-cycle-closing' };
-  return { ...facts, round: roundAfter(items, last.at, now), state: open.length > 0 ? 'round-open' : 'round-done-not-delivered' };
+  const context = { items, deliveries, windows, now };
+  if (last === undefined) {
+    const state = open.some((i) => !isClose(i)) ? 'first-cycle-building' : 'first-cycle-closing';
+    return { ...facts, state, overrun: overrunOf(state, { ...context, round: null }) };
+  }
+  const round = roundAfter(items, last.at, now);
+  const state = open.length > 0 ? 'round-open' : 'round-done-not-delivered';
+  return { ...facts, state, round, overrun: overrunOf(state, { ...context, round }) };
 }
 
 /**

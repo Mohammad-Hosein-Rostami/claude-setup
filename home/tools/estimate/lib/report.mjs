@@ -1,14 +1,17 @@
 // Renders a finish result as the text block the lead pastes as-is (see README.md for the exact lines), and the short clock
 // text of the status line segment.
 // Exports: formatEstimate(result, inputs) -> string; formatRefusal(refusal, timeZone?) -> string; finishClock(result, timeZone?) -> string;
-// printedBounds(result, timeZone?) -> {low, high} (the printed ends, epoch ms, for the calibration log).
-// Invariants: pure apart from reading the system time zone (`Intl`, so `TZ` is honoured) when none is given. Line 1 is always
+// printedBounds(result, timeZone?) -> {low, high} (the printed ends, epoch ms, for the calibration log; high is null for a notBefore result).
+// Invariants: pure apart from reading the system time zone (`Intl`, so `TZ` is honoured) when none is given. Line 1 is
 // `Finish: <weekday> <day> <month> <low>-<high> (local <offset>, now <clock>)` with the low end floored and the high end ceiled
-// to CLOCK_STEP_MS on the local clock; a refusal text never contains `Finish:` or a clock range, only the reason and what to do.
+// to CLOCK_STEP_MS on the local clock, or, for a result with `notBefore` (a round or closing phase past its range: no upper
+// end), `Finish: not before <weekday> <day> <month> <low> (local <offset>, now <clock>)`; a refusal text never contains
+// `Finish:` or a clock range, only the reason and what to do.
 // Never prints item text or transcript content: rows are named by id.
 import { MIN_SCORED, TARGET_INSIDE } from './calibration.mjs';
 import { STALE_AFTER_MS } from './compute.mjs';
 import { MIN_MEASURED_RANGE } from './history.mjs';
+import { CLOCK_STEP_MS, clockText, dayText, gridded, localDate, offsetText, systemTimeZone } from './local-clock.mjs';
 
 const DECIMAL_LIMIT = 10;
 const HOURS_PER_DAY = 24;
@@ -38,66 +41,21 @@ const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 const listed = (names) => (names.length <= LISTED_ROWS ? names.join(', ') : `${names.slice(0, LISTED_ROWS).join(', ')} and ${names.length - LISTED_ROWS} more`);
 const instant = (ms) => new Date(ms).toISOString().replace(/(:00)?\.000Z$/, 'Z');
 
-// ---- Local clock (Intl with an IANA zone: the system zone by default, so `TZ` is honoured, Windows included) ----
-const MINUTE_MS = 60_000;
-const SECOND_MS = 1000;
-const MINUTES_PER_HOUR = 60;
-const CLOCK_STEP_MS = 5 * MINUTE_MS; // finish ends are rounded to 5 minutes: finer would claim a precision the data does not have
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const WALL_FIELDS = { hourCycle: 'h23', weekday: 'short', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' };
-const pad = (value) => String(value).padStart(2, '0');
-const systemTimeZone = () => new Intl.DateTimeFormat().resolvedOptions().timeZone;
-
-/** The wall clock of an instant in a zone: numeric fields, the short weekday, and the zone's offset from UTC in ms. */
-function wallClock(ms, timeZone) {
-  const parts = new Intl.DateTimeFormat('en-US', { ...WALL_FIELDS, timeZone }).formatToParts(new Date(ms));
-  const field = (type) => parts.find((part) => part.type === type).value;
-  const [year, month, day, hour, minute, second] = ['year', 'month', 'day', 'hour', 'minute', 'second'].map((type) => Number(field(type)));
-  const offsetMs = Date.UTC(year, month - 1, day, hour, minute, second) - Math.floor(ms / SECOND_MS) * SECOND_MS;
-  return { year, month, day, hour, minute, weekday: field('weekday'), offsetMs };
-}
-
-const clockText = (ms, timeZone) => {
-  const wall = wallClock(ms, timeZone);
-  return `${pad(wall.hour)}:${pad(wall.minute)}`;
-};
-const dayText = (ms, timeZone) => {
-  const wall = wallClock(ms, timeZone);
-  return `${wall.weekday} ${wall.day} ${MONTHS[wall.month - 1]}`;
-};
-const localDate = (ms, timeZone) => {
-  const wall = wallClock(ms, timeZone);
-  return `${wall.year}-${wall.month}-${wall.day}`;
-};
-
-/** The zone's offset at an instant as `+03:30` / `-05:00` / `+00:00`. */
-function offsetText(ms, timeZone) {
-  const minutes = Math.round(wallClock(ms, timeZone).offsetMs / MINUTE_MS);
-  const sign = minutes < 0 ? '-' : '+';
-  return `${sign}${pad(Math.floor(Math.abs(minutes) / MINUTES_PER_HOUR))}:${pad(Math.abs(minutes) % MINUTES_PER_HOUR)}`;
-}
-
-/** An instant rounded down (or up) to CLOCK_STEP_MS on the zone's local clock. */
-function gridded(ms, timeZone, up) {
-  const { offsetMs } = wallClock(ms, timeZone);
-  const steps = (ms + offsetMs) / CLOCK_STEP_MS;
-  return (up ? Math.ceil(steps) : Math.floor(steps)) * CLOCK_STEP_MS - offsetMs;
-}
-
 /**
  * The finish range as printed: on the local grid, low floored, high ceiled, at least one step apart.
  * @param {object} result from computeEstimate with a `finish`.
  * @param {string} [timeZone] IANA zone; default the system zone.
- * @returns {{low: number, high: number}} epoch ms.
+ * @returns {{low: number, high: number | null}} epoch ms; high is null when the result is `notBefore`.
  */
 export function printedBounds(result, timeZone = systemTimeZone()) {
   const low = Math.max(gridded(result.finish.lowMs, timeZone, false), gridded(result.computedAt, timeZone, true));
+  if (result.notBefore) return { low, high: null };
   return { low, high: Math.max(gridded(result.finish.highMs, timeZone, true), low + CLOCK_STEP_MS) };
 }
 
 /**
  * The status line's clock text: `14:50-16:15` when both ends are today, `Sun 00:50-02:25` when both are on another day, and
- * `Sun 23:20 - Mon 01:10` when the ends are on different days.
+ * `Sun 23:20 - Mon 01:10` when the ends are on different days; `>=17:10` (`>=Sun 17:10` on another day) for a `notBefore` result.
  * @param {object} result from computeEstimate with a `finish` (not a refusal or a delivered result).
  * @param {string} [timeZone] IANA zone; default the system zone.
  * @returns {string}
@@ -105,6 +63,7 @@ export function printedBounds(result, timeZone = systemTimeZone()) {
 export function finishClock(result, timeZone = systemTimeZone()) {
   const { low, high } = printedBounds(result, timeZone);
   const weekday = (ms) => dayText(ms, timeZone).split(' ')[0];
+  if (high === null) return `>=${localDate(low, timeZone) === localDate(result.computedAt, timeZone) ? '' : `${weekday(low)} `}${clockText(low, timeZone)}`;
   if (localDate(low, timeZone) !== localDate(high, timeZone)) return `${weekday(low)} ${clockText(low, timeZone)} - ${weekday(high)} ${clockText(high, timeZone)}`;
   const today = localDate(low, timeZone) === localDate(result.computedAt, timeZone);
   return `${today ? '' : `${weekday(low)} `}${clockText(low, timeZone)}-${clockText(high, timeZone)}`;
@@ -113,6 +72,7 @@ export function finishClock(result, timeZone = systemTimeZone()) {
 function finishLine(result, timeZone) {
   const { low, high } = printedBounds(result, timeZone);
   const where = `(local ${offsetText(result.computedAt, timeZone)}, now ${clockText(result.computedAt, timeZone)})`;
+  if (high === null) return `Finish: not before ${dayText(low, timeZone)} ${clockText(low, timeZone)} ${where}`;
   if (dayText(low, timeZone) === dayText(high, timeZone)) return `Finish: ${dayText(low, timeZone)} ${clockText(low, timeZone)}-${clockText(high, timeZone)} ${where}`;
   return `Finish: ${dayText(low, timeZone)} ${clockText(low, timeZone)} - ${dayText(high, timeZone)} ${clockText(high, timeZone)} ${where}`;
 }
@@ -125,15 +85,26 @@ function roundSource(range) {
 
 const laneCount = (build) => (build.lanes === 1 ? '1 lane' : `${num(build.lanes)} lanes`);
 
+/** Why a round or closing phase that outran its range has no upper end (a `notBefore` result). */
+function overrunReason({ overrun }) {
+  const { kind, hours, closing } = overrun;
+  const [what, longest, source] = kind === 'round' ? ['round', 'every measured round', roundSource(closing)] : ['closing phase', 'every measured closing', CLOSING_SOURCE];
+  return `this ${what} has run ${num(hours)} h, longer than ${longest} (${range(closing.low, closing.high)} h; ${source}): no upper end can be supported`;
+}
+
+const sizesText = (build) => `the open rows need at least ${range(build.low, build.high)} h by size (${listed(build.ids)}, ${laneCount(build)})`;
+
 function followUpIncludes(result, timeZone) {
   const { build, closing, followUp } = result;
   const started = followUp.startRow === null ? 'no row started yet' : `started ${clockText(followUp.start, timeZone)} (${followUp.startRow})`;
   const rows = `${plural(result.openItems, 'open row')} (${result.inFlight} running)`;
-  const sizes = `the open rows need at least ${range(build.low, build.high)} h by size (${listed(build.ids)}, ${laneCount(build)})`;
-  return `Includes: follow-up round after the delivery at ${clockText(followUp.deliveryAt, timeZone)}, ${started}: ${rows}; such rounds took ${range(closing.low, closing.high)} h here (${roundSource(closing)}); ${sizes}`;
+  const took = result.notBefore ? overrunReason(result) : `such rounds took ${range(closing.low, closing.high)} h here (${roundSource(closing)})`;
+  return `Includes: follow-up round after the delivery at ${clockText(followUp.deliveryAt, timeZone)}, ${started}: ${rows}; ${took}; ${sizesText(build)}`;
 }
 
 const inRound = (result) => result.state === 'round-open';
+/** True when the open rows are counted by size whatever their kind (a round, or an overrun closing phase): the words say `open row`. */
+const countsAllRows = (result) => inRound(result) || result.notBefore === true;
 
 /** The deliver rows that were not deliveries, as `deliver row X1 ignored: 1 row was still running at 14:30`. */
 const ignoredNotes = (ignored, timeZone) => ignored.map((d) => `deliver row ${d.id} ignored: ${plural(d.running, 'row')} ${d.running === 1 ? 'was' : 'were'} still running at ${clockText(d.at, timeZone)}`);
@@ -155,6 +126,7 @@ function firstCycleIncludes(result) {
   const phase = `the closing phase ${range(closing.low, closing.high)} h`;
   const about = `(${CLOSING_WORK}; ${CLOSING_SOURCE})`;
   const elapsed = `has run ${num(result.closingElapsed)} h`;
+  if (result.notBefore) return `Includes: ${rows}; ${overrunReason(result)}; ${sizesText(build)}`;
   if (result.openItems === 0) return `Includes: no open row: the build is done and ${phase} ${about} is not in rows yet; it ${elapsed}`;
   if (build.ids.length === 0) return `Includes: ${rows}; no open build row: ${phase} ${about} ${elapsed}`;
   const lanes = laneCount(build);
@@ -177,7 +149,8 @@ function afterLine(reopen) {
 /** How earlier printed ranges of this phase did and how the range is adjusted (see calibration.mjs: one set per phase). */
 function trackLine({ record, factors }, round) {
   const [target, label] = [`${TARGET_INSIDE.inside} of ${TARGET_INSIDE.of}`, `Track record (${round ? 'follow-up rounds' : 'first cycles'}):`];
-  const dropped = record.rewritten > 0 ? `; ${record.rewritten} dropped (table rewritten)` : '';
+  const lowOnly = record.lowOnly > 0 ? `; ${record.lowOnlyInside} of ${record.lowOnly} not-before estimates held (delivered no earlier than printed)` : '';
+  const dropped = `${record.rewritten > 0 ? `; ${record.rewritten} dropped (table rewritten)` : ''}${lowOnly}`;
   const once = `adjusted once ${MIN_SCORED} deliveries are scored`;
   if (record.scored === 0) return `${label} no scored estimate yet${dropped}; the range is ${once} (target: ${target} inside)`;
   const late = record.late > 0 ? ` (median x${num(record.medianLate)} of the printed time)` : '';
@@ -196,7 +169,7 @@ function dateSpan(first, last, timeZone) {
 function laneText(result) {
   const measured = result.measuredLanes.toFixed(1);
   if (result.build.ids.length === 0) return `${result.lanes.toFixed(1)} lanes (measured ${measured}; no open build row)`;
-  const counted = inRound(result) ? 'open row' : 'open build row';
+  const counted = countsAllRows(result) ? 'open row' : 'open build row';
   if (result.lanes < result.measuredLanes) return `${result.lanes.toFixed(1)} lanes (measured ${measured}, capped by ${plural(result.build.ids.length, counted)})`;
   return result.lanes > result.measuredLanes ? `1.0 lanes (measured ${measured}, raised to 1)` : `${result.lanes.toFixed(1)} lanes (measured)`;
 }
@@ -247,7 +220,7 @@ function deliveredBlock(result, timeZone) {
 export function formatEstimate(result, inputs) {
   const timeZone = inputs.timeZone ?? systemTimeZone();
   if (result.state === 'delivered') return deliveredBlock(result, timeZone).join('\n');
-  const counted = inRound(result) ? 'open rows' : 'open build rows';
+  const counted = countsAllRows(result) ? 'open rows' : 'open build rows';
   const agentHours = result.build.ids.length === 0 ? 'Agent-hours: 0 (no open build row)'
     : `Agent-hours: ${result.agentHours.low.toFixed(1)}-${result.agentHours.high.toFixed(1)} for the ${counted}, counted whole`;
   const track = inputs.calibration === undefined ? [] : [trackLine(inputs.calibration, inRound(result))];
@@ -277,7 +250,7 @@ function overrunText({ overrun }, timeZone) {
 /** The refusal text: why there is no finish time and what to do, never a time to quote. */
 export function formatRefusal(refusal, timeZone = systemTimeZone()) {
   if (refusal.reason === 'round-done') return roundDoneText(refusal, timeZone);
-  if (refusal.reason === 'overrun') return refusal.overrun.round === undefined ? overrunText(refusal, timeZone) : roundOverrunText(refusal, timeZone);
+  if (refusal.reason === 'overrun') return refusal.overrun.kind === 'closing' ? overrunText(refusal, timeZone) : roundOverrunText(refusal, timeZone);
   const reasons = [];
   const advice = [];
   if (refusal.measured < refusal.needed) {

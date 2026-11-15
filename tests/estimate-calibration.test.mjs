@@ -94,8 +94,8 @@ test('S1: a row ticked done within 2 minutes after the deliver row still scores 
 
 test('trackRecord counts one phase and the entries dropped as table rewritten; the line names the phase', () => {
   const entries = [scored([1, 1]), scored([1, 1], { phase: 'round', actual: isoAt(17), inside: false }), entry({ actual: 'rewritten' }), entry({ phase: 'round', actual: 'rewritten' }), entry({ phase: 'round', actual: 'rewritten' })];
-  assert.deepEqual(trackRecord(entries), { scored: 1, inside: 1, late: 0, early: 0, medianLate: null, rewritten: 1, deliveries: 1 });
-  assert.deepEqual(trackRecord(entries, 'round'), { scored: 1, inside: 0, late: 1, early: 0, medianLate: 1.4, rewritten: 2, deliveries: 1 });
+  assert.deepEqual(trackRecord(entries), { scored: 1, inside: 1, late: 0, early: 0, medianLate: null, rewritten: 1, deliveries: 1, lowOnly: 0, lowOnlyInside: 0 });
+  assert.deepEqual(trackRecord(entries, 'round'), { scored: 1, inside: 0, late: 1, early: 0, medianLate: 1.4, rewritten: 2, deliveries: 1, lowOnly: 0, lowOnlyInside: 0 });
   const result = computeEstimate(itemsOf(fiveDoneRows([row({ id: 'O1' })])), [], at(20));
   const line = formatEstimate(result, { ...UTC_INPUTS, calibration: { record: trackRecord(entries), factors: calibrationFactors(entries) } }).split('\n')[4];
   assert.equal(line, 'Track record (first cycles): 1 of 1 inside, 0 late, 0 early; 1 dropped (table rewritten); adjusted once 5 deliveries are scored');
@@ -141,7 +141,7 @@ test('applyFactors scales the raw range from now; trackRecord counts inside, lat
     scored([1, 1], { actual: isoAt(14.5), inside: false }), // before the printed low end
     entry(), entry({ actual: 'void' }),
   ]);
-  assert.deepEqual(record, { scored: 4, inside: 1, late: 2, early: 1, medianLate: 1.4, rewritten: 1, deliveries: 4 }); // the void entry
+  assert.deepEqual(record, { scored: 4, inside: 1, late: 2, early: 1, medianLate: 1.4, rewritten: 1, deliveries: 4, lowOnly: 0, lowOnlyInside: 0 }); // the void entry
 });
 
 test('the Track record line: none yet, below 5 scored, and adjusted from 5', () => {
