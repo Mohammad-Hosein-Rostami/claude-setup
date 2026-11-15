@@ -46,7 +46,9 @@ function refusal(now, fields) {
 /** A refusal for what the table says (count, missing started, later than now), or null when the table is usable. */
 function tableRefusal(items, measured, now) {
   const missing = items.filter((i) => i.done !== null && i.started === null).map(rowLabel);
-  const future = items.flatMap((i) => [['started', i.started], ['done', i.done]]
+  // a deliver row's started may be its done (an event with done alone): name only the cell the session wrote
+  const cells = (i) => (i.kind === 'deliver' && i.started === i.done ? [['done', i.done]] : [['started', i.started], ['done', i.done]]);
+  const future = items.flatMap((i) => cells(i)
     .filter(([, at]) => at !== null && at > now)
     .map(([cell, at]) => ({ row: rowLabel(i), cell, at })));
   if (missing.length === 0 && future.length === 0 && measured.length >= MIN_DONE_ITEMS) return null;

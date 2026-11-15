@@ -12,10 +12,11 @@
 // adjustment never feeds back into its own inputs. Two factor sets, by phase: 'job' (the first cycle: build, then closing) and
 // 'round' (a follow-up round after a delivery). One set would let each kind move the other's ends: in the 14-15 Nov
 // replay the lowest low ratio was a round's (0.77; first cycles 1.68 and up), the rounds' high ratios 0.11-0.66 against 0.87-1.03.
-import { MIN_MEASURED_RANGE, findDeliveries } from './history.mjs';
+import { DELIVERY_TOLERANCE_MS, MIN_MEASURED_RANGE, findDeliveries } from './history.mjs';
 
 const HOUR_MS = 3_600_000;
-// From this many scored estimates on, the range is adjusted (spec open point: judgment; 13 estimates over 2 projects cannot pick it).
+// From this many distinct scored deliveries on, the range is adjusted (one delivery can score several estimates, which say
+// nearly the same thing; spec open point: judgment, 13 estimates over 2 projects cannot pick it).
 export const MIN_SCORED = 5;
 export const FACTOR_WINDOW = 10; // the factors come from this many most recent scored estimates
 export const TARGET_INSIDE = { inside: 8, of: 10 }; // the aim the factors serve: 8 of 10 deliveries inside the printed range
@@ -39,6 +40,7 @@ const isoMinutes = (ms) => new Date(ms).toISOString().replace(/:\d\d\.\d+Z$/, 'Z
 const round = (value, decimals) => Number(value.toFixed(decimals));
 const isScored = (entry) => typeof entry.actual === 'string' && !DROPPED.has(entry.actual);
 const phaseOfEntry = (entry) => entry.phase ?? 'job';
+const distinctDeliveries = (scored) => new Set(scored.map((e) => e.actual)).size;
 
 const toMinute = (ms) => Math.floor(ms / MINUTE_MS);
 
@@ -55,7 +57,8 @@ function scoreOne(entry, deliveries, byId) {
   const kept = entry.open.map((id, k) => ({ id, seen: checked ? entry.started[k] : undefined })).filter((r) => byId.has(r.id));
   if (entry.open.length > 0 && kept.length === 0) return { ...entry, actual: VOID };
   if (checked && !kept.every((r) => sameStart(r.seen, byId.get(r.id).started, at))) return { ...entry, actual: REWRITTEN };
-  const delivery = deliveries.find((d) => d >= at && kept.every((r) => byId.get(r.id).done !== null && byId.get(r.id).done <= d));
+  const doneBy = (id, d) => byId.get(id).done !== null && byId.get(id).done <= d + DELIVERY_TOLERANCE_MS;
+  const delivery = deliveries.find((d) => d >= at && kept.every((r) => doneBy(r.id, d)));
   if (delivery === undefined) return entry;
   const hours = (delivery - at) / HOUR_MS;
   const [low, high] = entry.printed.map(Date.parse);
@@ -89,14 +92,16 @@ export function phaseOf(result) {
 
 /**
  * The range factors of one phase from its last FACTOR_WINDOW scored entries: high = max(1, p90 of ratio high), low = min(1,
- * p10 of ratio low), nearest rank, nulls left out; both 1 below MIN_SCORED scored entries.
+ * p10 of ratio low), nearest rank, nulls left out; both 1 below MIN_SCORED distinct deliveries among the scored entries.
  * @param {object[]} entries log entries; one without `phase` (written before rounds existed) is a 'job'.
  * @param {'job' | 'round'} [phase] which set; default 'job'.
- * @returns {{low: number, high: number, scored: number}} scored = how many entries of that phase are scored in all.
+ * @returns {{low: number, high: number, scored: number, deliveries: number}} scored = how many entries of that phase are scored
+ *   in all, deliveries = at how many distinct deliveries.
  */
 export function calibrationFactors(entries, phase = 'job') {
   const scored = entries.filter((e) => isScored(e) && phaseOfEntry(e) === phase);
-  if (scored.length < MIN_SCORED) return { low: 1, high: 1, scored: scored.length };
+  const deliveries = distinctDeliveries(scored);
+  if (deliveries < MIN_SCORED) return { low: 1, high: 1, scored: scored.length, deliveries };
   const recent = scored.slice(-FACTOR_WINDOW);
   const sortedRatios = (index) => recent.map((e) => e.ratio?.[index]).filter((r) => typeof r === 'number').sort((a, b) => a - b);
   const lows = sortedRatios(0);
@@ -105,6 +110,7 @@ export function calibrationFactors(entries, phase = 'job') {
     low: lows.length > 0 ? Math.min(1, nearestRank(lows, LOW_PERCENTILE)) : 1,
     high: highs.length > 0 ? Math.max(1, nearestRank(highs, HIGH_PERCENTILE)) : 1,
     scored: scored.length,
+    deliveries,
   };
 }
 
@@ -114,7 +120,7 @@ export function calibrationFactors(entries, phase = 'job') {
  * entries dropped because their rows changed.
  * @param {object[]} entries log entries.
  * @param {'job' | 'round'} [phase] which phase; default 'job' (an entry without `phase` is a job).
- * @returns {{scored: number, inside: number, late: number, early: number, medianLate: number | null, rewritten: number}}
+ * @returns {{scored: number, inside: number, late: number, early: number, medianLate: number | null, rewritten: number, deliveries: number}}
  */
 export function trackRecord(entries, phase = 'job') {
   const ofPhase = entries.filter((e) => phaseOfEntry(e) === phase);
@@ -128,7 +134,7 @@ export function trackRecord(entries, phase = 'job') {
   }
   const sorted = lateBy.sort((a, b) => a - b);
   const rewritten = ofPhase.filter((e) => DROPPED.has(e.actual)).length;
-  return { scored: scored.length, inside: scored.length - sorted.length - early, late: sorted.length, early, medianLate: sorted.length > 0 ? nearestRank(sorted, MEDIAN) : null, rewritten };
+  return { scored: scored.length, inside: scored.length - sorted.length - early, late: sorted.length, early, medianLate: sorted.length > 0 ? nearestRank(sorted, MEDIAN) : null, rewritten, deliveries: distinctDeliveries(scored) };
 }
 
 /** The result with its finish range scaled: now + [raw low x factors.low, raw high x factors.high]; raw stays as computed. */

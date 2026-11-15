@@ -117,11 +117,12 @@ test('calibration keeps two factor sets: follow-up round estimates never adjust 
   assert.equal(logEntry('/s', round, itemsOf([...FIRST_JOB, ...sixOpen(2)]), printed).phase, 'round');
   assert.equal(phaseOf(firstCycle), 'job');
   // Replay ratios (actual / raw): rounds A0 [2.6, 0.66], A1 [0.77, 0.14], V9 [1.5, 0.11]; first cycles all >= 1.68 low.
-  const scored = (ratio, phase) => ({ actual: '2026-11-15T08:10:00Z', ratio, ...(phase ? { phase } : {}) });
+  let minute = 10;
+  const scored = (ratio, phase) => ({ actual: `2026-11-15T08:${minute++}:00Z`, ratio, ...(phase ? { phase } : {}) }); // each at its own delivery
   const entries = [...[1.7, 2, 2.2, 1.8, 18].map((low) => scored([low, 0.95])), ...[0.16, 0.77, 1.02, 0.5, 0.3].map((low) => scored([low, 0.5], 'round'))];
-  assert.deepEqual(calibrationFactors(entries), { low: 1, high: 1, scored: 5 }); // old entries without phase are jobs
-  assert.deepEqual(calibrationFactors(entries, 'round'), { low: 0.16, high: 1, scored: 5 });
-  const lineOf = (factors) => formatEstimate(round, { transcriptDir: '/t', transcriptCount: 1, timeZone: TZ, calibration: { record: { scored: 10, inside: 7, late: 0, early: 3, medianLate: null }, factors } }).split('\n')[4];
+  assert.deepEqual(calibrationFactors(entries), { low: 1, high: 1, scored: 5, deliveries: 5 }); // old entries without phase are jobs
+  assert.deepEqual(calibrationFactors(entries, 'round'), { low: 0.16, high: 1, scored: 5, deliveries: 5 });
+  const lineOf = (factors) => formatEstimate(round, { transcriptDir: '/t', transcriptCount: 1, timeZone: TZ, calibration: { record: { scored: 10, inside: 7, late: 0, early: 3, medianLate: null, deliveries: 10 }, factors } }).split('\n')[4];
   assert.equal(lineOf(calibrationFactors(entries, 'round')), 'Track record (follow-up rounds): 7 of 10 inside, 0 late, 3 early; adjusted high x1, low x0.2 (target 8 of 10)');
-  assert.equal(lineOf({ low: 1, high: 1, scored: 2 }), 'Track record (follow-up rounds): 7 of 10 inside, 0 late, 3 early; adjusted once 5 are scored');
+  assert.equal(lineOf({ low: 1, high: 1, scored: 2, deliveries: 2 }), 'Track record (follow-up rounds): 7 of 10 inside, 0 late, 3 early; adjusted once 5 deliveries are scored');
 });

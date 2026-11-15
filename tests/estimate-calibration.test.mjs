@@ -27,7 +27,9 @@ const SECRET = 'PRIVATE-ITEM-TEXT-7f3a';
 const STATUS = '/project/STATUS.md';
 /** A logged estimate made at 13.5 h with O1 (started 13 h) open, raw 1-2 h, printed 14:45-16:00 (UTC). */
 const entry = (fields = {}) => ({ v: 1, at: isoAt(13.5), status: STATUS, open: ['O1'], started: ['2026-11-10T13:00Z'], points: 1, closing: 'default', raw: [1, 2], printed: [isoAt(14.75), isoAt(16)], ...fields });
-const scored = (ratio, fields = {}) => entry({ actual: isoAt(15.5), inside: true, ratio, ...fields });
+let deliveryMinute = 0;
+/** A scored entry; each one at its own delivery (one minute apart, all inside 14:45-16:00) unless `actual` is given. */
+const scored = (ratio, fields = {}) => entry({ actual: isoAt(15.5 + (deliveryMinute++ % 20) / 60), inside: true, ratio, ...fields });
 /** fiveDone, O1 done at 14 h, then a close row done at 15.5 h: a delivery at 15.5 h. */
 const DELIVERED_ROWS = fiveDoneRows([row({ id: 'O1', startedH: 13, doneH: 14 }), row({ id: 'C1', item: 'close: row', startedH: 14, doneH: 15.5 })]);
 const UTC_INPUTS = { transcriptDir: '/t', transcriptCount: 1, timeZone: 'UTC' };
@@ -74,13 +76,29 @@ test('a provisional pause delivery, a pause in a deliver-rows table and an ignor
   assert.equal(scoreEntries([entry()], itemsOf(ignored), at(20))[0].actual, undefined); // B2 still ran at 15.5
 });
 
+test('S2: factors need 5 distinct deliveries, not 5 entries; the Track record line says both numbers when they differ', () => {
+  const oneDelivery = Array.from({ length: 7 }, () => scored([0.5, 2], { actual: isoAt(15.5) }));
+  assert.deepEqual(calibrationFactors(oneDelivery), { low: 1, high: 1, scored: 7, deliveries: 1 });
+  assert.equal(trackRecord(oneDelivery).deliveries, 1);
+  const fiveDeliveries = [...oneDelivery, ...[16, 16.5, 17, 17.5].map((h) => scored([0.5, 2], { actual: isoAt(h) }))];
+  assert.deepEqual(calibrationFactors(fiveDeliveries), { low: 0.5, high: 2, scored: 11, deliveries: 5 });
+  const result = computeEstimate(itemsOf(fiveDoneRows([row({ id: 'O1' })])), [], at(20));
+  const lineOf = (entries) => formatEstimate(result, { ...UTC_INPUTS, calibration: { record: trackRecord(entries), factors: calibrationFactors(entries) } }).split('\n')[4];
+  assert.match(lineOf(oneDelivery), /^Track record \(first cycles\): 7 of 7 inside \(7 predictions over 1 delivery\), 0 late, 0 early; adjusted once 5 deliveries are scored$/);
+});
+
+test('S1: a row ticked done within 2 minutes after the deliver row still scores the entry at that delivery', () => {
+  const rows = fiveDoneRows([row({ id: 'O1', startedH: 13, doneH: 15.5 + 1 / 60 }), row({ id: 'X1', item: 'deliver: row', raw: { done: isoAt(15.5) } })]);
+  assert.equal(scoreEntries([entry()], itemsOf(rows), at(20))[0].actual, isoAt(15.5));
+});
+
 test('trackRecord counts one phase and the entries dropped as table rewritten; the line names the phase', () => {
   const entries = [scored([1, 1]), scored([1, 1], { phase: 'round', actual: isoAt(17), inside: false }), entry({ actual: 'rewritten' }), entry({ phase: 'round', actual: 'rewritten' }), entry({ phase: 'round', actual: 'rewritten' })];
-  assert.deepEqual(trackRecord(entries), { scored: 1, inside: 1, late: 0, early: 0, medianLate: null, rewritten: 1 });
-  assert.deepEqual(trackRecord(entries, 'round'), { scored: 1, inside: 0, late: 1, early: 0, medianLate: 1.4, rewritten: 2 });
+  assert.deepEqual(trackRecord(entries), { scored: 1, inside: 1, late: 0, early: 0, medianLate: null, rewritten: 1, deliveries: 1 });
+  assert.deepEqual(trackRecord(entries, 'round'), { scored: 1, inside: 0, late: 1, early: 0, medianLate: 1.4, rewritten: 2, deliveries: 1 });
   const result = computeEstimate(itemsOf(fiveDoneRows([row({ id: 'O1' })])), [], at(20));
   const line = formatEstimate(result, { ...UTC_INPUTS, calibration: { record: trackRecord(entries), factors: calibrationFactors(entries) } }).split('\n')[4];
-  assert.equal(line, 'Track record (first cycles): 1 of 1 inside, 0 late, 0 early; 1 dropped (table rewritten); adjusted once 5 are scored');
+  assert.equal(line, 'Track record (first cycles): 1 of 1 inside, 0 late, 0 early; 1 dropped (table rewritten); adjusted once 5 deliveries are scored');
 });
 
 test('isRepeat: the same phase and open rows (ids, sizes, started) as the last entry, less than 60 minutes after it', () => {
@@ -96,8 +114,8 @@ test('isRepeat: the same phase and open rows (ids, sizes, started) as the last e
 
 test('calibrationFactors: below 5 scored entries the range is not adjusted; from 5 it is', () => {
   const four = Array.from({ length: 4 }, () => scored([0.5, 2]));
-  assert.deepEqual(calibrationFactors(four), { low: 1, high: 1, scored: 4 });
-  assert.deepEqual(calibrationFactors([...four, scored([0.5, 2]), entry(), entry({ actual: 'void' })]), { low: 0.5, high: 2, scored: 5 });
+  assert.deepEqual(calibrationFactors(four), { low: 1, high: 1, scored: 4, deliveries: 4 });
+  assert.deepEqual(calibrationFactors([...four, scored([0.5, 2]), entry(), entry({ actual: 'void' })]), { low: 0.5, high: 2, scored: 5, deliveries: 5 });
 });
 
 test('calibrationFactors: high = max(1, p90 of ratio high), low = min(1, p10 of ratio low), nearest rank over the last 10 scored', () => {
@@ -105,10 +123,10 @@ test('calibrationFactors: high = max(1, p90 of ratio high), low = min(1, p10 of 
   const lows = [0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5];
   const old = [scored([0.1, 9]), scored([0.1, 9])]; // outside the window of the last 10
   const entries = [...old, ...highs.map((high, i) => scored([lows[i], high]))];
-  assert.deepEqual(calibrationFactors(entries), { low: 0.6, high: 1.6, scored: 12 }); // ranks ceil(1) = 1st and ceil(9) = 9th
+  assert.deepEqual(calibrationFactors(entries), { low: 0.6, high: 1.6, scored: 12, deliveries: 12 }); // ranks ceil(1) = 1st and ceil(9) = 9th
   const early = Array.from({ length: 5 }, () => scored([1.5, 0.5]));
-  assert.deepEqual(calibrationFactors(early), { low: 1, high: 1, scored: 5 }); // never narrows the range
-  assert.deepEqual(calibrationFactors(Array.from({ length: 5 }, () => scored([null, 2]))), { low: 1, high: 2, scored: 5 });
+  assert.deepEqual(calibrationFactors(early), { low: 1, high: 1, scored: 5, deliveries: 5 }); // never narrows the range
+  assert.deepEqual(calibrationFactors(Array.from({ length: 5 }, () => scored([null, 2]))), { low: 1, high: 2, scored: 5, deliveries: 5 });
 });
 
 test('applyFactors scales the raw range from now; trackRecord counts inside, late (median of actual / printed time) and early', () => {
@@ -123,17 +141,17 @@ test('applyFactors scales the raw range from now; trackRecord counts inside, lat
     scored([1, 1], { actual: isoAt(14.5), inside: false }), // before the printed low end
     entry(), entry({ actual: 'void' }),
   ]);
-  assert.deepEqual(record, { scored: 4, inside: 1, late: 2, early: 1, medianLate: 1.4, rewritten: 1 }); // the void entry
+  assert.deepEqual(record, { scored: 4, inside: 1, late: 2, early: 1, medianLate: 1.4, rewritten: 1, deliveries: 4 }); // the void entry
 });
 
 test('the Track record line: none yet, below 5 scored, and adjusted from 5', () => {
   const result = computeEstimate(itemsOf(fiveDoneRows([row({ id: 'O1' })])), [], at(20));
   const lineOf = (record, factors) => formatEstimate(result, { ...UTC_INPUTS, calibration: { record, factors } }).split('\n')[4];
-  assert.equal(lineOf({ scored: 0, inside: 0, late: 0, early: 0, medianLate: null }, { low: 1, high: 1, scored: 0 }),
-    'Track record (first cycles): no scored estimate yet; the range is adjusted once 5 are scored (target: 8 of 10 inside)');
-  assert.equal(lineOf({ scored: 3, inside: 2, late: 1, early: 0, medianLate: 1.24 }, { low: 1, high: 1, scored: 3 }),
-    'Track record (first cycles): 2 of 3 inside, 1 late (median x1.2 of the printed time), 0 early; adjusted once 5 are scored');
-  assert.equal(lineOf({ scored: 13, inside: 9, late: 3, early: 1, medianLate: 1.4 }, { low: 0.9, high: 1.3, scored: 13 }),
+  assert.equal(lineOf({ scored: 0, inside: 0, late: 0, early: 0, medianLate: null, deliveries: 0 }, { low: 1, high: 1, scored: 0, deliveries: 0 }),
+    'Track record (first cycles): no scored estimate yet; the range is adjusted once 5 deliveries are scored (target: 8 of 10 inside)');
+  assert.equal(lineOf({ scored: 3, inside: 2, late: 1, early: 0, medianLate: 1.24, deliveries: 3 }, { low: 1, high: 1, scored: 3, deliveries: 3 }),
+    'Track record (first cycles): 2 of 3 inside, 1 late (median x1.2 of the printed time), 0 early; adjusted once 5 deliveries are scored');
+  assert.equal(lineOf({ scored: 13, inside: 9, late: 3, early: 1, medianLate: 1.4, deliveries: 13 }, { low: 0.9, high: 1.3, scored: 13, deliveries: 13 }),
     'Track record (first cycles): 9 of 13 inside, 3 late (median x1.4 of the printed time), 1 early; adjusted high x1.3, low x0.9 (target 8 of 10)');
   assert.equal(formatEstimate(result, UTC_INPUTS).split('\n')[4].startsWith('Assumes:'), true); // no calibration given: no line
 });

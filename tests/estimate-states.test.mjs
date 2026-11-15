@@ -31,7 +31,7 @@ function shape({ deliverRows, after, last, open }) {
 }
 
 const STATE = { B: 'first-cycle-building', C: 'first-cycle-closing', O: 'round-open', N: 'round-done-not-delivered', D: 'delivered' };
-const LINE = { B: 'Finish: Tue 10 Nov ', C: 'Finish: Tue 10 Nov ', O: 'Finish: Tue 10 Nov ', N: 'No finish time: every row of the follow-up round', D: 'Finish: delivered Tue 10 Nov 13:' };
+const LINE = { B: 'Finish: Tue 10 Nov ', C: 'Finish: Tue 10 Nov ', O: 'Finish: Tue 10 Nov ', N: 'No finish time: every row of the follow-up round', D: 'Finish: delivered Tue 10 Nov ' };
 const OPEN_SHAPES = ['done', 'unstarted', 'running', 'closeRunning'];
 // Expected state per open shape (in OPEN_SHAPES order), by hand from the rules in history.mjs tableState and README Delivery.
 const EXPECTED = [
@@ -52,15 +52,44 @@ const EXPECTED = [
   { deliverRows: true, after: true, last: 'rework', states: 'NOOO' },
   { deliverRows: true, after: true, last: 'deliver', states: 'DOOO' },
 ];
-const CASES = EXPECTED.flatMap((group) => OPEN_SHAPES.map((open, k) => ({ ...group, open, code: group.states[k] })));
+const CASES = EXPECTED.flatMap((group) => OPEN_SHAPES.map((open, k) => ({ ...group, open, code: group.states[k] })))
+  .map((c) => ({ ...c, name: `${c.deliverRows ? 'deliver rows' : 'no deliver rows'}, ${c.after ? 'after' : 'before'} a delivery, last ${c.last}, ${c.open}`, rows: shape(c) }));
+// Shapes from the last review: a row started in the same minute as the hand-over, and a row ticked done 1 or 5 minutes
+// after it (DELIVERY_TOLERANCE_MS: 2 minutes).
+const B1_STARTED = row({ id: 'B1', startedH: 13.5, doneH: 13.9 });
+const EXTRA = [
+  { name: 'rework started in the hand-over minute', rows: fiveDoneRows([event('X1', 13.5), row({ id: 'R1', item: ITEM.rework, startedH: 13.5 })]), code: 'O' },
+  { name: 'last row ticked 1 minute after the deliver row', rows: fiveDoneRows([row({ id: 'B1', startedH: 13.5, doneH: 14 + 1 / 60 }), event('X1', 14)]), code: 'D' },
+  { name: 'last row ticked 5 minutes after the deliver row', rows: fiveDoneRows([row({ id: 'B1', startedH: 13.5, doneH: 14 + 5 / 60 }), event('X1', 14)]), code: 'C' },
+  { name: 'a deliver row after a finished build row', rows: fiveDoneRows([B1_STARTED, event('X1', 14)]), code: 'D' },
+];
 
-test(`tableState: ${CASES.length} table shapes, each with one state and its line 1`, () => {
-  for (const c of CASES) {
-    const name = `${c.deliverRows ? 'deliver rows' : 'no deliver rows'}, ${c.after ? 'after' : 'before'} a delivery, last ${c.last}, ${c.open}`;
-    const items = itemsOf(shape(c));
-    assert.equal(tableState(items, [], at(NOW_H)).state, STATE[c.code], name);
-    assert.ok(lineOne(computeEstimate(items, [], at(NOW_H))).startsWith(LINE[c.code]), `${name}: ${lineOne(computeEstimate(items, [], at(NOW_H)))}`);
+test(`tableState: ${CASES.length + EXTRA.length} table shapes, each with one state and its line 1`, () => {
+  for (const c of [...CASES, ...EXTRA]) {
+    const items = itemsOf(c.rows);
+    assert.equal(tableState(items, [], at(NOW_H)).state, STATE[c.code], c.name);
+    assert.ok(lineOne(computeEstimate(items, [], at(NOW_H))).startsWith(LINE[c.code]), `${c.name}: ${lineOne(computeEstimate(items, [], at(NOW_H)))}`);
   }
+});
+
+test('B1: a row started in the minute of the hand-over opens the follow-up round, so the round can run past its end', () => {
+  const rows = fiveDoneRows([event('X1', 13.5), row({ id: 'R1', item: ITEM.rework, startedH: 13.5 })]);
+  const open = computeEstimate(itemsOf(rows), [], at(14));
+  assert.match(formatEstimate(open, INPUTS).split('\n')[1], /^Includes: follow-up round after the delivery at 13:30, started 13:30 \(R1\):/);
+  assert.equal(open.reopen.reopened, 1); // the rework reopened that delivery
+  const past = computeEstimate(itemsOf(rows), [], at(16.5)); // R1 ran 3 h: past the 0.4-2.6 h round and past every rate
+  assert.equal(past.reason, 'overrun');
+});
+
+test('S1: a row ticked done 5 minutes after the deliver row was still running: the note names it', () => {
+  const rows = fiveDoneRows([row({ id: 'B1', startedH: 13.5, doneH: 14 + 5 / 60 }), event('X1', 14)]);
+  assert.match(formatEstimate(computeEstimate(itemsOf(rows), [], at(NOW_H)), INPUTS).split('\n')[1], /; deliver row X1 ignored: 1 row was still running at 14:00$/);
+});
+
+test('S3: a done-only deliver row later than now is refused by its done time', () => {
+  const result = computeEstimate(itemsOf(fiveDoneRows([event('X1', 15)])), [], at(14));
+  assert.match(formatRefusal(result, 'UTC'), /Later than now \(2026-11-10T14:00Z\): X1 \(line 12\) done 2026-11-10T15:00Z\./);
+  assert.doesNotMatch(formatRefusal(result, 'UTC'), /started/);
 });
 
 test('N2: a deliver row done while a build row ran is ignored; the build done, the closing phase says it is not in rows yet', () => {

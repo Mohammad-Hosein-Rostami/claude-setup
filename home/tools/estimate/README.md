@@ -1,8 +1,8 @@
 # estimate
 
 Turns the `## Work items` table of a `STATUS.md` plus the project's lead transcripts into the local clock time when the
-whole job is finished: the open build rows, then the closing phase (review, fix rounds, recheck, landing) measured from
-this table's earlier deliveries, always in series. The lead pastes that `Finish:` block and never quotes an estimate from
+whole job is finished: the open build rows, then the closing phase (review, fix rounds, recheck, landing; a default range until the tool
+learns across jobs), always in series. After a delivery, follow-up rounds are measured per table. The lead pastes that `Finish:` block and never quotes an estimate from
 intuition. Node 22, no dependencies.
 
 Run: `node ~/.claude/tools/estimate/estimate.mjs STATUS.md [--transcripts <dir>] [--now <iso>] [--log-dir <dir>]` and paste the output as-is.
@@ -33,7 +33,8 @@ Heading `## Work items`, then the table (the header row is checked):
   landing; `rework:` for an owner correction; `deliver:` for handing the job to the owner, an event: done alone is
   enough (started is then the done time, evidence may be empty); anything else is build work. Without `deliver:` rows, start the next `close:` row when one
   ends: a closing chain that pauses 10 minutes or more with nothing running reads as a delivery.
-  Close rows may also be left out; the tool's closing phase covers them.
+  Before the first hand-over close rows may be left out (the tool's closing phase covers them); after it all remaining
+  work is rows, reviews included.
 - Rows without `done` are the remaining work; for in-flight rows (`started`, no `done`) the time already run is subtracted.
 - Exactly one `## Work items` section, and in it one contiguous table: the header (the six names in order, case and
   spaces ignored), the separator line, then the rows with no blank or text line between them. Anything that cannot be
@@ -59,7 +60,8 @@ All durations are wall-clock time minus the usage-limit windows found in the tra
   first-cycle-closing (the build is done, the review is not in rows yet, and the Includes line says so) prints a future
   finish; round-done-not-delivered is refused and asks for the `deliver:` row.
 - Delivery: the done time D of a `deliver:` row when no other row was running at D (else the row is ignored and the
-  Includes line says `deliver row X1 ignored: 1 row was still running at 14:30`); a table with one has no other deliveries. Without them it is guessed
+  Includes line says `deliver row X1 ignored: 1 row was still running at 14:30`); a table with one has no other deliveries. A row marked done at most 2 minutes after D
+  (`DELIVERY_TOLERANCE_MS`) was not running: ticking the last row just after the hand-over is normal. Without them it is guessed
   from a pause, and the Includes line ends `delivery guessed from a pause: add a deliver: row when you hand over`: the
   done time D of a `close:` row when every row started before D is done by D, no row starts in the 10 minutes after D,
   and those 10 minutes have passed (the real deliveries measured were followed by 19 and 470 quiet minutes, other quiet moments by 0-1).
@@ -72,7 +74,7 @@ All durations are wall-clock time minus the usage-limit windows found in the tra
 - Finish = now + [B(low) + max(0, C low - E), B(high) + max(0, C high - E)], on the local clock: the low end floored
   and the high end ceiled to 5 minutes, at least 5 minutes apart; line 1 never starts before now (a low end that would
   floor before now is rounded up instead). This holds for every kind of result.
-- Follow-up round: rows started after a delivery (fixes after a verification, owner corrections, new requests, of any
+- Follow-up round: rows started after a delivery, in its minute or later (fixes after a verification, owner corrections, new requests, of any
   kind) form a round, from the first row started after the delivery (now, if none has started) to the next delivery. It is
   not a new closing phase, also when all its rows are done and the last is not a `close:` row. While one is open, every open row counts by size (close and rework rows too) and Finish =
   [max(S + R low, now + B(low)), max(S + R high, now + B(high))] (so never before now), S = the round's start. R = min..max of the last 5
@@ -105,7 +107,7 @@ Finish: Sun 15 Nov 14:45-16:15 (local +03:30, now 13:21)
 Includes: 2 open rows (1 running); build 0-0.4 h (H2, 1 lane), then the closing phase 1.4-2.5 h in series (review, fix rounds, recheck, landing; default, not yet measured here)
 Excludes: your review and any rework it starts (next line); usage-limit pauses from now on; steps only you do (push, deploy); requests that are not rows
 After your review: not measured here yet (no earlier delivery in this table)
-Track record (first cycles): no scored estimate yet; the range is adjusted once 5 are scored (target: 8 of 10 inside)
+Track record (first cycles): no scored estimate yet; the range is adjusted once 5 deliveries are scored (target: 8 of 10 inside)
 Assumes: the table as it is now; 0.14-0.25 h/point (p25-p75 of 33 done + 1 running rows, 14..15 Nov); 1.0 lanes (measured 2.2, capped by 1 open build row); no limit windows in the transcripts
 Agent-hours: 0.6-1.0 for the open build rows, counted whole
 ```
@@ -127,8 +129,8 @@ Agent-hours: 0.6-1.0 for the open build rows, counted whole
   but the last done row a build row: in the first cycle the closing phase still applies (the review and fix rounds are
   not rows yet); after a delivery the follow-up round does.
 - Track record (see Calibration), for the phase of this estimate: `Track record (first cycles): 9 of 13 inside, 3 late
-  (median x1.4 of the printed time), 1 early; adjusted high x1.3, low x0.9 (target 8 of 10)`, below 5 scored `...; adjusted
-  once 5 are scored`; inside a follow-up round `Track record (follow-up rounds): ...`; `; 2 dropped (table rewritten)` when
+  (median x1.4 of the printed time), 1 early; adjusted high x1.3, low x0.9 (target 8 of 10)`, below 5 scored deliveries `...; adjusted
+  once 5 deliveries are scored`; `7 of 7 inside (7 predictions over 2 deliveries)` when several estimates share a delivery; inside a follow-up round `Track record (follow-up rounds): ...`; `; 2 dropped (table rewritten)` when
   entries were dropped. A `--now` run without `--log-dir` keeps no log and prints no
   Track record line.
 - The `Note:` line (last) appears only when the newest `started` or `done` is more than 24 h before `--now` and rows remain open.
@@ -153,7 +155,7 @@ replaced whole through a temp file (two racing runs may lose a line, never the f
   have the started the entry saw, to the minute (a row unstarted then may have started since); else the entry is
   `"actual": "rewritten"`. Void and rewritten entries stay in the log and are counted in the Track record line. Entries
   written before `started` existed are scored by id. Provisional and ignored deliveries score nothing.
-- Factors, from 5 scored entries on, over the last 10: high = max(1, p90 of ratio high), low = min(1, p10 of ratio low),
+- Factors, once the scored entries cover 5 distinct deliveries (estimates before one delivery count once), over the last 10: high = max(1, p90 of ratio high), low = min(1, p10 of ratio low),
   nearest rank. Printed range = now + [raw low x low, raw high x high], then rounded on the clock as above. The factors use
   the raw ratios and the track record the printed ranges, so the adjustment never feeds on itself. Target: 8 of 10 inside.
   The 5 and the 10 are judgment, not measured: 13 scored estimates over two projects cannot pick them.

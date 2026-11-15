@@ -176,13 +176,14 @@ function afterLine(reopen) {
 
 /** How earlier printed ranges of this phase did and how the range is adjusted (see calibration.mjs: one set per phase). */
 function trackLine({ record, factors }, round) {
-  const target = `${TARGET_INSIDE.inside} of ${TARGET_INSIDE.of}`;
-  const label = `Track record (${round ? 'follow-up rounds' : 'first cycles'}):`;
+  const [target, label] = [`${TARGET_INSIDE.inside} of ${TARGET_INSIDE.of}`, `Track record (${round ? 'follow-up rounds' : 'first cycles'}):`];
   const dropped = record.rewritten > 0 ? `; ${record.rewritten} dropped (table rewritten)` : '';
-  if (record.scored === 0) return `${label} no scored estimate yet${dropped}; the range is adjusted once ${MIN_SCORED} are scored (target: ${target} inside)`;
+  const once = `adjusted once ${MIN_SCORED} deliveries are scored`;
+  if (record.scored === 0) return `${label} no scored estimate yet${dropped}; the range is ${once} (target: ${target} inside)`;
   const late = record.late > 0 ? ` (median x${num(record.medianLate)} of the printed time)` : '';
-  const counts = `${label} ${record.inside} of ${record.scored} inside, ${record.late} late${late}, ${record.early} early${dropped}`;
-  if (factors.scored < MIN_SCORED) return `${counts}; adjusted once ${MIN_SCORED} are scored`;
+  const over = record.deliveries === record.scored ? '' : ` (${record.scored} predictions over ${record.deliveries} ${record.deliveries === 1 ? 'delivery' : 'deliveries'})`;
+  const counts = `${label} ${record.inside} of ${record.scored} inside${over}, ${record.late} late${late}, ${record.early} early${dropped}`;
+  if (factors.deliveries < MIN_SCORED) return `${counts}; ${once}`;
   return `${counts}; adjusted high x${num(factors.high)}, low x${num(factors.low)} (target ${target})`;
 }
 

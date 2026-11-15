@@ -20,6 +20,9 @@ const MINUTE_MS = 60_000;
 // Real deliveries in the two measured tables (14-15 Nov) were followed by 19 and 470 quiet minutes, every other quiet moment
 // by 0-1 minutes; so a closing chain paused this long with nothing running reads as a delivery.
 export const DELIVERY_GAP_MS = 10 * MINUTE_MS;
+// Sessions write the deliver row, then tick the last row done: a row done this soon after a deliver row's done time was not
+// still running at the hand-over (it does not void the delivery and is scored with it).
+export const DELIVERY_TOLERANCE_MS = 2 * MINUTE_MS;
 // Closing phase in hours when this table has fewer than 2 finished jobs: the measured tails 1.48, 2.40 and 2.43 h
 // (two projects, 14-15 Nov) rounded outward. Labelled "default, not yet measured here" in the output.
 export const DEFAULT_CLOSING_HOURS = { low: 1.4, high: 2.5 };
@@ -42,6 +45,8 @@ export function overlapMs(a, b) {
 const workingHours = (start, end, windows) => (end - start - overlapMs([{ start, end }], windows)) / HOUR_MS;
 // Rows of the closing phase: review, fix rounds, recheck, landing (`close`) and the hand-over itself (`deliver`).
 const isClose = (item) => item.kind === 'close' || item.kind === 'deliver';
+/** True when a row started at or after a delivery: it belongs after it (a deliver row's own time is its done, not a start). */
+const startedFrom = (item, deliveryAt) => item.kind !== 'deliver' && item.started !== null && item.started >= deliveryAt;
 
 /** True when the table marks its deliveries with `deliver:` rows; the pause rule is then off. */
 export const hasDeliverRows = (items) => items.some((i) => i.kind === 'deliver');
@@ -62,7 +67,7 @@ function isDelivery(items, at, now) {
 function closingStartBetween(items, after, until) {
   const built = items.filter((i) => !isClose(i) && i.done !== null && i.done > after && i.done <= until).sort((a, b) => b.done - a.done);
   if (built.length > 0) return { at: built[0].done, item: built[0], how: 'done' };
-  const started = items.filter((i) => i.started !== null && i.started > after && i.started <= until).sort((a, b) => a.started - b.started);
+  const started = items.filter((i) => startedFrom(i, after) && i.started <= until).sort((a, b) => a.started - b.started);
   if (started.length > 0) return { at: started[0].started, item: started[0], how: 'started' };
   return { at: until, item: null, how: 'none' };
 }
@@ -112,7 +117,7 @@ function measuredRange(allValues, fallback) {
  */
 export function followUpRounds(items, deliveries, windows) {
   return deliveries.slice(1).flatMap((delivery, k) => {
-    const starts = items.filter((i) => i.started !== null && i.started > deliveries[k].at && i.started <= delivery.at).map((i) => i.started);
+    const starts = items.filter((i) => startedFrom(i, deliveries[k].at) && i.started <= delivery.at).map((i) => i.started);
     if (starts.length === 0) return [];
     const start = Math.min(...starts);
     return [{ start, at: delivery.at, hours: workingHours(start, delivery.at, windows) }];
@@ -129,8 +134,8 @@ export function followUpRange(rounds) {
   return measuredRange(rounds.map((r) => r.hours), DEFAULT_FOLLOW_UP_HOURS);
 }
 
-/** Rows other than `deliver` rows that were running at `at`: started before it and not done by it. */
-const runningAt = (items, at) => items.filter((i) => i.kind !== 'deliver' && i.started !== null && i.started < at && (i.done === null || i.done > at));
+/** Rows other than `deliver` rows that were running at `at`: started before it and not done by it (DELIVERY_TOLERANCE_MS allowed). */
+const runningAt = (items, at) => items.filter((i) => i.kind !== 'deliver' && i.started !== null && i.started < at && (i.done === null || i.done > at + DELIVERY_TOLERANCE_MS));
 
 /**
  * The `deliver` rows done by now that are not deliveries because other rows were still running when they were done.
@@ -150,12 +155,14 @@ function deliveringRow(items, deliveries, explicit) {
   if (items.length === 0 || items.some((i) => i.done === null)) return null;
   const lastDone = Math.max(...items.map((i) => i.done));
   if (!explicit) return items.find((i) => i.kind === 'close' && i.done === lastDone) ?? null;
-  return deliveries.at(-1)?.at === lastDone ? items.find((i) => i.kind === 'deliver' && i.done === lastDone) : null;
+  const last = deliveries.at(-1);
+  if (last === undefined || lastDone > last.at + DELIVERY_TOLERANCE_MS || items.some((i) => startedFrom(i, last.at))) return null;
+  return items.find((i) => i.kind === 'deliver' && i.done === last.at);
 }
 
 /** The round after the delivery at `deliveryAt`: from the first row started after it, or now when none has started. */
 function roundAfter(items, deliveryAt, now) {
-  const first = items.filter((i) => i.started !== null && i.started > deliveryAt).sort((a, b) => a.started - b.started)[0];
+  const first = items.filter((i) => startedFrom(i, deliveryAt)).sort((a, b) => a.started - b.started)[0];
   return { deliveryAt, start: first?.started ?? now, startRow: first?.id ?? null };
 }
 
@@ -210,7 +217,7 @@ export function reopenSummary(items, deliveries, now) {
   if (deliveries.length === 0) return null;
   const reworks = deliveries.flatMap((delivery, k) => {
     const until = deliveries[k + 1]?.at ?? now;
-    const starts = items.filter((i) => i.kind === 'rework' && i.started !== null && i.started > delivery.at && i.started <= until).map((i) => i.started);
+    const starts = items.filter((i) => i.kind === 'rework' && startedFrom(i, delivery.at) && i.started <= until).map((i) => i.started);
     if (starts.length === 0) return [];
     return [{ hours: (until - Math.min(...starts)) / HOUR_MS, open: k === deliveries.length - 1 }];
   });
@@ -221,6 +228,6 @@ export function reopenSummary(items, deliveries, now) {
     lowHours: hours.length > 0 ? Math.min(...hours) : 0,
     highHours: hours.length > 0 ? Math.max(...hours) : 0,
     open: reworks.some((r) => r.open),
-    reworkOpen: items.some((i) => i.kind === 'rework' && i.done === null && i.started !== null && i.started > deliveries.at(-1).at),
+    reworkOpen: items.some((i) => i.kind === 'rework' && i.done === null && startedFrom(i, deliveries.at(-1).at)),
   };
 }
