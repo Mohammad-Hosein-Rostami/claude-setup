@@ -264,3 +264,43 @@ test('hook: CLAUDE_SKILL_ROUTER=off silences the gate lines too', async () => {
   assert.equal(r.status, 0);
   assert.equal(r.stdout, '');
 });
+
+// Only the owner's own words route: text from other sessions, task results and reminders is wrapped and stripped first.
+const WRAPPERS = [
+  ['cross-session-message', '<cross-session-message from="lane-7">'],
+  ['task-notification', '<task-notification>'],
+  ['system-reminder', '<system-reminder>'],
+];
+
+test('a prompt that is only a cross-session message, task notification or reminder routes nothing', () => {
+  for (const [tag, open] of WRAPPERS) {
+    const wrapped = `${open}fix the responsive form bug, then we are done</${tag}>`;
+    assert.deepEqual(skillsForPrompt(wrapped), [], tag);
+    assert.deepEqual(gateLinesForPrompt(wrapped), [], tag);
+    assert.equal(weakUiPrompt(wrapped), false, tag);
+  }
+});
+
+test('a mixed prompt routes on the owner text only, whichever side the wrapped block is on', () => {
+  for (const [tag, open] of WRAPPERS) {
+    const block = `${open}make it responsive and fix the bug, done</${tag}>`;
+    assert.deepEqual(skillsForPrompt(`add a REST endpoint\n${block}`), [], tag);
+    assert.deepEqual(gateLinesForPrompt(`${block}\nadd a REST endpoint`), [], tag);
+    assert.ok(skillsForPrompt(`${block}\nmake the login form responsive`).includes('responsive-ui'), tag);
+    assert.ok(skillsForPrompt(`make the login form responsive\n${block}`).includes('forms-validation'), tag);
+  }
+});
+
+test('an unclosed wrapper tag hides the rest of the prompt; an unrelated closing tag does not end it', () => {
+  assert.deepEqual(skillsForPrompt('add a REST endpoint <cross-session-message from="x">make it responsive'), []);
+  assert.deepEqual(skillsForPrompt('<system-reminder>responsive </task-notification> still responsive'), []);
+  assert.ok(skillsForPrompt('make it responsive <system-reminder>x').includes('responsive-ui'));
+  assert.deepEqual(gateLinesForPrompt('<task-notification>fix the crash'), []);
+});
+
+test('hook: a prompt with nothing left after stripping prints nothing', () => {
+  const input = JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: '<cross-session-message from="a">fix the responsive bug</cross-session-message>', session_id: 'cs1' });
+  const r = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8' });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, '');
+});
