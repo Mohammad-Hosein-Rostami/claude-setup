@@ -110,6 +110,13 @@ test('form 4: git config set writes its value like the legacy form', () => {
   assertAll(['git config set core.editor vim', 'git config set --global core.pager "less -R"'], quiet);
 });
 
+test('a default nested 2000 deep is read in one pass: quiet and bounded', () => {
+  const deepDefault = `GIT_EDITOR="${'${A:-'.repeat(2000)}vi${'}'.repeat(2000)}" git commit`;
+  quiet(deepDefault);
+  const fastest = fastestMs(() => decide(deepDefault, ctx));
+  assert.ok(fastest < MAX_MS, `took too long (fastest of 3: ${fastest.toFixed(1)} ms)`);
+});
+
 test('hostile shapes stay bounded: a value repeated by many git commands, many values, many keys', () => {
   const quote = (text, level) => (level % 2 === 0 ? `'${text.replaceAll("'", "'\\''")}'` : `"${text.replace(/["\\$`]/g, (c) => `\\${c}`)}"`);
   let manyGits = RM; // each level sets the pager and runs git four times: once exponential, now each value is judged once per line

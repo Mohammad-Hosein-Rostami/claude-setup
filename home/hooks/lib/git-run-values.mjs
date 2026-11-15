@@ -25,7 +25,8 @@ const RUN_NAMES = new Set(COMMAND_ENV);
 const ASSIGNMENT = /^([A-Za-z_]\w*)(\+?)=([\s\S]*)$/;
 const DEFAULT_ASSIGNMENT = /\$\{([A-Za-z_]\w*):{0,2}=([^}]*)\}/g; // assigns when unset (`:=` also when empty, zsh `::=` always)
 const ONE_REFERENCE = /^\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))$/;
-const DEFAULT_START = /^\$\{([A-Za-z_]\w*):?[-=]/; // `${NAME:-default}`: the variable's value, or the default when it is unset
+// `${NAME:-default}`: the variable's value, or the default when it is unset; sticky, so it matches only where the scan stands
+const DEFAULT_START = /\$\{([A-Za-z_]\w*):?[-=]/y;
 const POSITIONAL = /\$\{?[1-9@*]/; // `$1`..`$9`, `$@`, `$*`: arguments the guard never sees
 const SUBSCRIPT_ASSIGNMENT = /^([A-Za-z_]\w*)\[[^\]]*\]\+?=/; // `NAME[2]=v`: zsh changes part of the value
 const NAMEREF_OPTION = /^-[a-zA-Z]*n/; // `declare -n R=NAME`: every write to R writes NAME
@@ -108,7 +109,7 @@ export function valueReasons(text, env, reasonsOf, target) {
   const [, braced, bare] = ONE_REFERENCE.exec(text) ?? [];
   if (text.trim() === '' || ((braced ?? bare) !== undefined && unwritten(braced ?? bare) && env.line.alone(braced ?? bare))) return [];
   const fallback = defaultOf(text);
-  if (fallback !== undefined && unwritten(fallback.name)) return valueReasons(fallback.text, env, reasonsOf, target);
+  if (fallback !== undefined && fallback.names.every(unwritten)) return valueReasons(fallback.text, env, reasonsOf, target);
   if (POSITIONAL.test(text) || SUBSTITUTION.test(text) || env.line.placeholders.some((mark) => text.includes(mark))) return [GIT_UNREADABLE_REASON];
   const written = [...text.matchAll(REFERENCE)].some(([, inBraces, plain]) => !unwritten(inBraces ?? plain)); // assigned, not resolved
   if (written || variableCommandWord(text, env)) return [GIT_UNREADABLE_REASON];
@@ -116,17 +117,31 @@ export function valueReasons(text, env, reasonsOf, target) {
 }
 
 /**
- * `${NAME:-default}` (also `-`, `=`, `:=`) -> {name, text: default} when the default is a literal without `$` or a backtick, or itself
- * such a form (`${VISUAL:-${EDITOR:-vi}}`); undefined for anything else, which the caller reads as a substitution.
+ * `${NAME:-default}` (also `-`, `=`, `:=`) -> {names, text}: the names from the outside in and the innermost default, when that default
+ * is a literal without `$` or a backtick and every other level's default is the next level (`${VISUAL:-${EDITOR:-vi}}`); undefined for
+ * anything else, which the caller reads as a substitution. One pass over the text, so a default nested thousands deep stays linear.
  */
 function defaultOf(text) {
-  const start = DEFAULT_START.exec(text);
-  if (start === null || !text.endsWith('}')) return undefined;
-  const inner = text.slice(start[0].length, -1);
-  let depth = 0; // the braces inside must balance, so the last `}` closes the `${` at the start
-  for (const c of inner) depth += c === '{' ? 1 : c === '}' ? (depth === 0 ? -Infinity : -1) : 0;
-  if (depth !== 0 || inner.includes('`') || (inner.includes('$') && defaultOf(inner) === undefined)) return undefined;
-  return { name: start[1], text: inner };
+  const names = [];
+  let at = 0;
+  for (let start = defaultStartAt(text, at); start !== null; start = defaultStartAt(text, at)) {
+    names.push(start[1]);
+    at += start[0].length;
+  }
+  let depth = 0; // the literal's own braces must balance, so the first `}` outside them closes the innermost `${`
+  for (let i = at; names.length > 0 && i < text.length; i += 1) {
+    if (text[i] === '$' || text[i] === '`') return undefined;
+    if (text[i] === '{') depth += 1;
+    else if (text[i] === '}' && depth > 0) depth -= 1;
+    else if (text[i] === '}') return text.slice(i) === '}'.repeat(names.length) ? { names, text: text.slice(at, i) } : undefined;
+  }
+  return undefined;
+}
+
+/** The `${NAME:-` that starts exactly at `at` in `text`, or null. */
+function defaultStartAt(text, at) {
+  DEFAULT_START.lastIndex = at;
+  return DEFAULT_START.exec(text);
 }
 
 /** On Windows environment names ignore case, so `git_editor` is GIT_EDITOR there; elsewhere names are exact. */
