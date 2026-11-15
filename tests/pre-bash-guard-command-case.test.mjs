@@ -35,8 +35,11 @@ test('on macOS a command word in any case is the command the file system runs: g
   for (const command of REMOVALS) assert.match(reasonOn('darwin', command), RM_OUTSIDE, command);
   assert.equal(reasonOn('darwin', 'GIT commit --no-verify -m x'), NO_VERIFY);
   assert.deepEqual(decideOn('darwin', '$EDITOR notes.md'), { allow: true }); // a variable's name keeps its case: $EDITOR is not $editor
-  const heredoc = (git) => `xargs -I{} sh -c '{}' <<'EOF'\n${git} push -f origin main\nEOF`; // the raw-text backstop reads it too
-  assert.deepEqual(decideOn('darwin', heredoc('GIT')), decideOn('darwin', heredoc('git')));
+  // the raw-text scan keeps exact case: `Git` and `SSH` in quoted text are prose, not command words (the replay's false bounces)
+  const push = 'push --force origin main';
+  for (const line of [`echo "$(printf 'Git ${push} is refused')"`, `python3 - <<'PY'\nprint("Git ${push}")\nPY`, `echo "\`printf 'SSH and Git ${push}'\`"`]) {
+    assert.deepEqual(decideOn('darwin', line), { allow: true }, line);
+  }
 });
 
 test('on Windows names ignore case as before', () => {
