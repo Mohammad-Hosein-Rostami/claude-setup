@@ -200,7 +200,7 @@ Exit 3 message: `No finish time: <sentences>` then `What to do: <sentences>`, ea
 | `Missing started on: M1 (line 41), ...` | fill started of those rows with the real start, or delete the row |
 | `Later than now (<now>): F1 (line 12) started <time>, ...` | correct the time from the clock (`date -u +%Y-%m-%dT%H:%MZ`), never from memory, or pass the right `--now` |
 | `No working time left after removing usage-limit windows: D1 (line 7), ...` | correct started and done of those rows: they lie inside usage-limit windows |
-| `the closing phase has run 2.5 h since the last build row was done (H2, 14:13), longer than every closing measured here (1.5-2.4 h, 2 jobs).` | tell the owner the job is past its usual closing; this ends at delivery, whose length then joins the history. Work not in the table: add it as a row first |
+| `the closing phase has run 2.5 h since the last build row was done (H2, 14:13), longer than the default closing (1.4-2.5 h, not yet measured here).` | tell the owner the job is past its usual closing; this ends at delivery, whose length then joins the history. Work not in the table: add it as a row first |
 | `the follow-up round has run 4 h since it started (V1, 05:30), longer than the default round (0.4-2.6 h, not yet measured here), and its open rows are past their measured rates.` | tell the owner the follow-up round is past its usual length; this ends at delivery, whose round length then joins the history. Work not in the table: add it as a row first |
 | `every row of the follow-up round after the delivery at 05:00 (started 05:30, R1) is done, and no deliver: row marks its hand-over.` | if you handed the job over, add a deliver: row with its done time; if work remains, add it as rows |
 

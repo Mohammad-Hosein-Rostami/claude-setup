@@ -135,7 +135,7 @@ function measureRows({ items, done, measured, windows, now }, isWork) {
 function firstCycleResult(context, table) {
   const { items, windows, now } = context;
   const { deliveries } = table;
-  const closing = closingRange(deliveries);
+  const closing = closingRange([]); // a table has one first cycle: no finished job of its own to measure the closing from
   const elapsed = table.state === 'first-cycle-closing' ? closingElapsedHours(items, deliveries, windows, now) : 0;
   const rows = measureRows(context, isOpenBuild);
   if (table.state === 'first-cycle-closing' && elapsed >= closing.high) {

@@ -16,6 +16,8 @@ const HOUR_MS = 3_600_000;
 const DAYS_ABOVE_HOURS = 48;
 const LISTED_ROWS = 5;
 const CLOSING_WORK = 'review, fix rounds, recheck, landing';
+// A table has one first cycle, so its closing phase is always the default (compute.mjs firstCycleResult).
+const CLOSING_SOURCE = 'default, not yet measured here';
 const EXCLUDES = 'Excludes: your review and any rework it starts (next line); usage-limit pauses from now on; steps only you do (push, deploy); requests that are not rows';
 const NO_DELIVERY = 'After your review: not measured here yet (no earlier delivery in this table)';
 const OVERRUN_ADVICE = 'What to do: tell the owner the job is past its usual closing; this ends at delivery, whose length then joins the history. Work not in the table: add it as a row first.';
@@ -115,11 +117,6 @@ function finishLine(result, timeZone) {
   return `Finish: ${dayText(low, timeZone)} ${clockText(low, timeZone)} - ${dayText(high, timeZone)} ${clockText(high, timeZone)} ${where}`;
 }
 
-function closingSource(closing) {
-  if (closing.measured >= MIN_MEASURED_RANGE) return `measured from ${closing.measured} finished jobs here`;
-  return closing.measured === 1 ? 'default, widened by the 1 finished job here' : 'default, not yet measured here';
-}
-
 /** Where a follow-up round's range comes from, for the Includes line and the round refusal. */
 function roundSource(range) {
   if (range.measured >= MIN_MEASURED_RANGE) return `measured from ${range.measured} finished rounds here`;
@@ -156,7 +153,7 @@ function firstCycleIncludes(result) {
   const { build, closing } = result;
   const rows = `${plural(result.openItems, 'open row')} (${result.inFlight} running)`;
   const phase = `the closing phase ${range(closing.low, closing.high)} h`;
-  const about = `(${CLOSING_WORK}; ${closingSource(closing)})`;
+  const about = `(${CLOSING_WORK}; ${CLOSING_SOURCE})`;
   const elapsed = `has run ${num(result.closingElapsed)} h`;
   if (result.openItems === 0) return `Includes: no open row: the build is done and ${phase} ${about} is not in rows yet; it ${elapsed}`;
   if (build.ids.length === 0) return `Includes: ${rows}; no open build row: ${phase} ${about} ${elapsed}`;
@@ -272,9 +269,7 @@ function overrunText({ overrun }, timeZone) {
   const { start, closing } = overrun;
   const since = start.how === 'done' ? 'the last build row was done' : 'the first closing row started';
   const closings = range(closing.low, closing.high);
-  const than = closing.measured >= MIN_MEASURED_RANGE ? `every closing measured here (${closings} h, ${closing.measured} jobs)`
-    : `the default closing (${closings} h, ${closing.measured === 1 ? 'widened by 1 finished job here' : 'not yet measured here'})`;
-  return `No finish time: the closing phase has run ${num(overrun.hours)} h since ${since} (${start.item.id}, ${clockText(start.at, timeZone)}), longer than ${than}.\n${OVERRUN_ADVICE}`;
+  return `No finish time: the closing phase has run ${num(overrun.hours)} h since ${since} (${start.item.id}, ${clockText(start.at, timeZone)}), longer than the default closing (${closings} h, not yet measured here).\n${OVERRUN_ADVICE}`;
 }
 
 /** The refusal text: why there is no finish time and what to do, never a time to quote. */
