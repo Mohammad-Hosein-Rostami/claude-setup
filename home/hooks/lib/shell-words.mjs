@@ -125,7 +125,8 @@ const BACKTICK_ASSIGNMENT = /(?<![\w$]|\$\{)([A-Za-z_]\w*)\+?=[^\s;&|<>()`]*`/g;
  * The names a command line assigns from a backtick substitution (`X=`cat f``): their values are unknown, as after `$(...)`, and not
  * the empty text the parsers leave. The substitutions prepare() reads (`pwd`, mktemp, the project root) stay known.
  */
-export const backtickAssignedNames = (command) => new Set([...prepare(command).matchAll(BACKTICK_ASSIGNMENT)].map(([, name]) => name));
+export const backtickAssignedNames = (command) =>
+  (command.includes('`') ? new Set([...prepare(command).matchAll(BACKTICK_ASSIGNMENT)].map(([, name]) => name)) : new Set()); // most text has none
 
 /** Drops heredoc bodies (data, not commands) so prose lines are not read as `rm` or `git`; quotes, comments and `$((1<<X))` are respected. */
 export const stripHeredocs = (command) => lexShell(command).stripped;
