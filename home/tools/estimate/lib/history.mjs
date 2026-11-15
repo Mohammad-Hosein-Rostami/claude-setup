@@ -2,13 +2,14 @@
 // the open job's closing has already run, the follow-up rounds after deliveries, and how often the owner reopened a delivery.
 // Exports: findDeliveries(items, windows, now) -> {at, closingStart, tailHours}[]; closingRange(deliveries) -> {low, high, measured};
 // followUpRounds(items, deliveries, windows) -> {start, at, hours}[]; followUpRange(rounds) -> {low, high, measured};
-// openRound(items, deliveries, now) -> {deliveryAt, start, startRow} | null; hasDeliverRows(items) -> boolean;
-// DEFAULT_FOLLOW_UP_HOURS; MIN_MEASURED_RANGE;
+// tableState(items, windows, now) -> {state, deliveries, round, ignored, guessed, closer}; ignoredDeliverRows(items, now);
+// hasDeliverRows(items) -> boolean; TABLE_STATES; DEFAULT_FOLLOW_UP_HOURS; MIN_MEASURED_RANGE;
 // closingStart(items, deliveries, now) -> {at, item}; closingElapsedHours(items, deliveries, windows, now) -> hours;
 // reopenSummary(items, deliveries, now) -> summary | null; overlapMs(a, b); DELIVERY_GAP_MS; DEFAULT_CLOSING_HOURS; CLOSING_HISTORY.
 // Invariants: pure; times are epoch ms, results in hours. Rows are classed by `kind` (see items.mjs): `close` rows are the
 // closing phase (review, fix rounds, recheck, landing), `rework` rows are owner corrections, the rest is build work.
-// With `deliver` rows in the table, a delivery is the done time of a deliver row, and nothing else is. Without them it is
+// With `deliver` rows in the table, a delivery is the done time of a deliver row with no other row running at that moment
+// (a deliver row done while others still ran is ignored and named), and nothing else is. Without them it is
 // guessed from a pause: a delivery D is the done time of a close row when every row started before D is done by D, no row starts in
 // [D, D + DELIVERY_GAP_MS), and that gap has passed (D + DELIVERY_GAP_MS <= now). Usage-limit windows are taken out of closing tails and of the elapsed closing time.
 // A follow-up round is the work after a delivery: from the first row started after it to the next delivery (any kind of row;
@@ -77,7 +78,7 @@ export function findDeliveries(items, windows, now) {
   const explicit = hasDeliverRows(items);
   const kind = explicit ? 'deliver' : 'close';
   const candidates = [...new Set(items.filter((i) => i.kind === kind && i.done !== null && i.done <= now).map((i) => i.done))].sort((a, b) => a - b);
-  const times = explicit ? candidates : candidates.filter((at) => isDelivery(items, at, now));
+  const times = candidates.filter((at) => (explicit ? runningAt(items, at).length === 0 : isDelivery(items, at, now)));
   return times.map((at, k) => {
     const start = closingStartBetween(items, k === 0 ? -Infinity : times[k - 1], at).at;
     return { at, closingStart: start, tailHours: workingHours(start, at, windows) };
@@ -128,18 +129,59 @@ export function followUpRange(rounds) {
   return measuredRange(rounds.map((r) => r.hours), DEFAULT_FOLLOW_UP_HOURS);
 }
 
+/** Rows other than `deliver` rows that were running at `at`: started before it and not done by it. */
+const runningAt = (items, at) => items.filter((i) => i.kind !== 'deliver' && i.started !== null && i.started < at && (i.done === null || i.done > at));
+
 /**
- * The follow-up round in progress: the table has a delivery and a row started after the last one, or a row still open. It
- * starts at the first row started after the last delivery, or now when none has started yet.
- * @returns {{deliveryAt: number, start: number, startRow: string | null} | null} null in the first cycle, or when nothing
- *   happened after the last delivery.
+ * The `deliver` rows done by now that are not deliveries because other rows were still running when they were done.
+ * @returns {{id: string, at: number, running: number}[]}
  */
-export function openRound(items, deliveries, now) {
+export function ignoredDeliverRows(items, now) {
+  return items.filter((i) => i.kind === 'deliver' && i.done !== null && i.done <= now)
+    .map((i) => ({ id: i.id, at: i.done, running: runningAt(items, i.done).length }))
+    .filter((d) => d.running > 0);
+}
+
+// The five states a table can be in; every reader of the result switches on exactly these.
+export const TABLE_STATES = ['first-cycle-building', 'first-cycle-closing', 'round-open', 'round-done-not-delivered', 'delivered'];
+
+/** The row that makes a table with nothing open delivered: its last done row is a valid deliver row (a close row without deliver rows). */
+function deliveringRow(items, deliveries, explicit) {
+  if (items.length === 0 || items.some((i) => i.done === null)) return null;
+  const lastDone = Math.max(...items.map((i) => i.done));
+  if (!explicit) return items.find((i) => i.kind === 'close' && i.done === lastDone) ?? null;
+  return deliveries.at(-1)?.at === lastDone ? items.find((i) => i.kind === 'deliver' && i.done === lastDone) : null;
+}
+
+/** The round after the delivery at `deliveryAt`: from the first row started after it, or now when none has started. */
+function roundAfter(items, deliveryAt, now) {
+  const first = items.filter((i) => i.started !== null && i.started > deliveryAt).sort((a, b) => a.started - b.started)[0];
+  return { deliveryAt, start: first?.started ?? now, startRow: first?.id ?? null };
+}
+
+/**
+ * The one classification of a table; nothing else derives it.
+ * - delivered: no row open and the last done row is a delivery row (see deliveringRow);
+ * - first-cycle-building / first-cycle-closing: no delivery yet, a build or rework row open / none open (the build is done,
+ *   or only close and deliver rows are open);
+ * - round-open / round-done-not-delivered: after a delivery, some row open / every row done but no delivery after them.
+ * @param {object[]} items parsed work items with `kind`.
+ * @param {{start: number, end: number}[]} windows usage-limit windows.
+ * @param {number} now epoch ms.
+ * @returns {{state: string, deliveries: object[], round: object | null, ignored: object[], guessed: boolean, closer: object | null}}
+ *   round = {deliveryAt, start, startRow} in a round state; guessed = a delivery came from the pause rule; closer = the
+ *   delivering row of the delivered state; ignored = see ignoredDeliverRows.
+ */
+export function tableState(items, windows, now) {
+  const explicit = hasDeliverRows(items);
+  const deliveries = findDeliveries(items, windows, now);
+  const closer = deliveringRow(items, deliveries, explicit);
+  const facts = { deliveries, round: null, ignored: explicit ? ignoredDeliverRows(items, now) : [], guessed: !explicit && (closer !== null || deliveries.length > 0), closer };
+  if (closer !== null) return { ...facts, state: 'delivered' };
+  const open = items.filter((i) => i.done === null);
   const last = deliveries.at(-1);
-  if (last === undefined) return null;
-  const first = items.filter((i) => i.started !== null && i.started > last.at).sort((a, b) => a.started - b.started)[0];
-  if (first === undefined && items.every((i) => i.done !== null)) return null;
-  return { deliveryAt: last.at, start: first?.started ?? now, startRow: first?.id ?? null };
+  if (last === undefined) return { ...facts, state: open.some((i) => !isClose(i)) ? 'first-cycle-building' : 'first-cycle-closing' };
+  return { ...facts, round: roundAfter(items, last.at, now), state: open.length > 0 ? 'round-open' : 'round-done-not-delivered' };
 }
 
 /**
@@ -151,12 +193,8 @@ export function closingStart(items, deliveries, now) {
   return closingStartBetween(items, deliveries.at(-1)?.at ?? -Infinity, now);
 }
 
-/**
- * How long the open job's closing phase has run, in hours (usage-limit windows taken out); 0 while any build or rework
- * row is open, because the closing then still lies ahead.
- */
+/** How long the open job's closing phase has run, in hours (usage-limit windows taken out); asked in the first-cycle-closing state only. */
 export function closingElapsedHours(items, deliveries, windows, now) {
-  if (items.some((i) => !isClose(i) && i.done === null)) return 0;
   return workingHours(closingStart(items, deliveries, now).at, now, windows);
 }
 

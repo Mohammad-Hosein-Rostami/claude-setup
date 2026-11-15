@@ -15,8 +15,8 @@
 // without started, a time later than --now, a done item with no working time, or a closing phase already longer than every
 // closing measured). Nothing that looks like an estimate is printed on 2 or 3; transcript content is never printed.
 // Invariants: logic lives in lib/ (pure); this file only parses arguments, reads files, prints and writes its log. The log
-// (lib/estimate-log.mjs) gets the earlier entries scored and one new entry per printed range that differs from the last one of
-// its phase; a refusal writes nothing.
+// (lib/estimate-log.mjs) gets the earlier entries scored and one new entry per printed range unless it repeats the last one
+// (calibration.mjs isRepeat); a refusal writes nothing.
 import { resolve } from 'node:path';
 import { applyFactors, calibrationFactors, isRepeat, logEntry, phaseOf, scoreEntries, trackRecord } from './lib/calibration.mjs';
 import { logFile, readLog, writeLog } from './lib/estimate-log.mjs';
@@ -44,11 +44,11 @@ function parseArgs(argv) {
 /** Prints the block scaled by the log's factors, then writes the log back: earlier entries scored, this range appended unless it repeats the last one. */
 function printLogged(result, inputs, items, { statusPath, logDir }) {
   const entries = scoreEntries(readLog(statusPath, logDir), items, result.computedAt);
-  const phase = phaseOf(result);
-  const factors = calibrationFactors(entries, phase);
-  const shown = result.finish === undefined ? result : applyFactors(result, factors);
-  console.log(formatEstimate(shown, { ...inputs, calibration: { record: trackRecord(entries, phase), factors } }));
-  const entry = result.finish === undefined ? null : logEntry(statusPath, shown, items, printedBounds(shown));
+  const phase = phaseOf(result); // null when delivered: nothing to scale or log
+  const factors = phase === null ? null : calibrationFactors(entries, phase);
+  const shown = phase === null ? result : applyFactors(result, factors);
+  console.log(formatEstimate(shown, phase === null ? inputs : { ...inputs, calibration: { record: trackRecord(entries, phase), factors } }));
+  const entry = phase === null ? null : logEntry(statusPath, shown, items, printedBounds(shown));
   const kept = entry === null || isRepeat(entries, entry) ? entries : [...entries, entry];
   if (!writeLog(statusPath, kept, logDir)) process.stderr.write(`estimate: could not write the calibration log ${logFile(statusPath, logDir)}\n`);
 }

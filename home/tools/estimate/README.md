@@ -30,8 +30,8 @@ Heading `## Work items`, then the table (the header row is checked):
 - Done = `done` set and evidence non-empty (commit sha, file path or `check: <cmd> PASS`). A dropped open item: delete the row.
   Never clear a done cell: a correction of delivered work is a new row.
 - Kind, from the start of the item cell (case-insensitive): `close:` for review, fixes from a review, recheck, gate,
-  landing and the hand-over report; `rework:` for an owner correction; `deliver:` for handing the job to the owner (its
-  done time is the delivery); anything else is build work. Without `deliver:` rows, start the next `close:` row when one
+  landing; `rework:` for an owner correction; `deliver:` for handing the job to the owner, an event: done alone is
+  enough (started is then the done time, evidence may be empty); anything else is build work. Without `deliver:` rows, start the next `close:` row when one
   ends: a closing chain that pauses 10 minutes or more with nothing running reads as a delivery.
   Close rows may also be left out; the tool's closing phase covers them.
 - Rows without `done` are the remaining work; for in-flight rows (`started`, no `done`) the time already run is subtracted.
@@ -54,13 +54,19 @@ All durations are wall-clock time minus the usage-limit windows found in the tra
   union (measured), clamped to 1..the number of open build and rework rows, so open close rows never add lanes. A running
   row that has already run as long as the band's slowest rate allows is named in the Includes line: `O1 past every
   measured rate, its remaining time is not known` (its remaining time counts as 0).
-- Delivery: the done time D of a `deliver:` row; a table with one has no other deliveries. Without them it is guessed
+- State: one function (`lib/history.mjs` tableState) classifies the table as first-cycle-building, first-cycle-closing,
+  round-open, round-done-not-delivered or delivered; every output switches on it. With nothing open only
+  first-cycle-closing (the build is done, the review is not in rows yet, and the Includes line says so) prints a future
+  finish; round-done-not-delivered is refused and asks for the `deliver:` row.
+- Delivery: the done time D of a `deliver:` row when no other row was running at D (else the row is ignored and the
+  Includes line says `deliver row X1 ignored: 1 row was still running at 14:30`); a table with one has no other deliveries. Without them it is guessed
   from a pause, and the Includes line ends `delivery guessed from a pause: add a deliver: row when you hand over`: the
   done time D of a `close:` row when every row started before D is done by D, no row starts in the 10 minutes after D,
   and those 10 minutes have passed (the real deliveries measured were followed by 19 and 470 quiet minutes, other quiet moments by 0-1).
-- Closing phase C: each delivery's tail = D minus the latest done of a non-close row since the previous delivery (else
-  the first start since it). C = min..max of the last 5 tails once 2 exist; before that the default 1.4-2.5 h (the tails
-  1.48, 2.40 and 2.43 h of two projects, 14-15 Nov, rounded outward), widened to include a single tail.
+- Closing phase C: the default 1.4-2.5 h (the closing tails 1.48, 2.40 and 2.43 h of two projects, 14-15 Nov, rounded
+  outward; a tail = D minus the latest done of a non-close row before it). A table has one first cycle (work after a
+  delivery is a follow-up round), so its closing range stays this default until the tool learns across jobs; the output
+  always says `default, not yet measured here`.
 - Elapsed E: 0 while a build or rework row is open; else the time since the latest non-close done after the last
   delivery (else the first start after it).
 - Finish = now + [B(low) + max(0, C low - E), B(high) + max(0, C high - E)], on the local clock: the low end floored
@@ -95,18 +101,19 @@ backslashes); pass `--transcripts` there.
 ## Output
 
 ```
-Finish: Sun 15 Nov 14:50-16:15 (local +03:30, now 13:21)
-Includes: 2 open rows (1 running); build 0-0.4 h (H2, 1 lane), then the closing phase 1.5-2.4 h in series (review, fix rounds, recheck, landing; measured from 2 finished jobs here)
+Finish: Sun 15 Nov 14:45-16:15 (local +03:30, now 13:21)
+Includes: 2 open rows (1 running); build 0-0.4 h (H2, 1 lane), then the closing phase 1.4-2.5 h in series (review, fix rounds, recheck, landing; default, not yet measured here)
 Excludes: your review and any rework it starts (next line); usage-limit pauses from now on; steps only you do (push, deploy); requests that are not rows
-After your review: 1 of 2 earlier deliveries here were reopened by your corrections; that rework took 1.4 h so far (still open)
-Track record: no scored estimate yet; the range is adjusted once 5 are scored (target: 8 of 10 inside)
+After your review: not measured here yet (no earlier delivery in this table)
+Track record (first cycles): no scored estimate yet; the range is adjusted once 5 are scored (target: 8 of 10 inside)
 Assumes: the table as it is now; 0.14-0.25 h/point (p25-p75 of 33 done + 1 running rows, 14..15 Nov); 1.0 lanes (measured 2.2, capped by 1 open build row); no limit windows in the transcripts
 Agent-hours: 0.6-1.0 for the open build rows, counted whole
 ```
 
 - Local = the system time zone (`TZ` is honoured). A range across midnight reads `Sat 14 Nov 23:50 - Sun 15 Nov 01:10`.
-- Before 2 finished jobs the closing reads `1.4-2.5 h in series (...; default, not yet measured here)`; with one, `default,
-  widened by the 1 finished job here`. With no build row open: `no open build row: the closing phase ... has run 1.5 h`.
+- With only close rows open: `no open build row: the closing phase ... has run 1.5 h`; with no row open: `no open row: the
+  build is done and the closing phase ... is not in rows yet; it has run 1.5 h`. After a delivery the After line counts
+  reopened deliveries: `1 of 2 earlier deliveries here were reopened by your corrections; that rework took 1.4 h so far (still open)`.
 - In a follow-up round the Includes line reads `follow-up round after the delivery at 14:25, started 14:55 (V1): 6 open
   rows (1 running); such rounds took 0.4-2.6 h here (default, not yet measured here); the open rows need at least
   0.5-2.8 h by size (V1, V2, V3, V4, V5 and 1 more, 1 lane)`; with finished rounds `widened by the 1 finished round
@@ -129,10 +136,11 @@ Agent-hours: 0.6-1.0 for the open build rows, counted whole
 
 ## Calibration
 
-Each run that prints a finish range appends one line to its log, unless it repeats the last line of its phase (the same
-printed ends on the 5-minute grid and the same open rows), so many runs within one prediction count once:
+Each run that prints a finish range appends one line to its log, unless it repeats the last line: the same phase and the
+same open rows (ids, sizes, started) less than 60 minutes after it (`RELOG_AFTER_MS`), so runs that differ only because
+the clock moved count once:
 `~/.claude/state/estimate-log/<first 32 hex of sha256(absolute STATUS.md path)>.json` (outside every repo; `--log-dir` moves it):
-`{"v":1,"at":"2026-11-15T09:51:44Z","status":"/abs/STATUS.md","open":["H2","H3"],"started":["2026-11-15T09:40Z",null],"points":6,"closing":"measured","phase":"job","raw":[1.49,2.84],"printed":["2026-11-15T11:20Z","2026-11-15T12:45Z"]}`.
+`{"v":1,"at":"2026-11-15T09:51:44Z","status":"/abs/STATUS.md","open":["H2","H3"],"started":["2026-11-15T09:40Z",null],"sizes":["M","L"],"points":6,"closing":"measured","phase":"job","raw":[1.49,2.84],"printed":["2026-11-15T11:20Z","2026-11-15T12:45Z"]}`.
 Ids and numbers only: never item text, prompts or transcript content. The file is 0600, never written through a link,
 replaced whole through a temp file (two racing runs may lose a line, never the file), trimmed to the newest 200 entries
 (`MAX_LOG_ENTRIES`) and 128 KiB; it never expires by age (a project paused for weeks keeps its track record). A refusal writes nothing; a `--now` run without
@@ -140,9 +148,11 @@ replaced whole through a temp file (two racing runs may lose a line, never the f
 
 - Scoring (every run, written back): an entry is scored at the first delivery at or after it with all its open rows done by
   then, adding `actual`, `inside` (printed low <=
-  delivery <= printed high) and `ratio` = [hours to the delivery / raw low, ... / raw high] (null where raw is 0). Ids are reused and the log never expires, so an entry counts only while each row it covered is
-  still in the table with the started it saw (a row unstarted then may have started since); else it is dropped as
-  `"actual": "rewritten"` and counted in the Track record line.
+  delivery <= printed high) and `ratio` = [hours to the delivery / raw low, ... / raw high] (null where raw is 0). An id gone from the table is dropped
+  and the rest scored (all gone: `"actual": "void"`). Ids are reused and the log never expires, so a kept row must still
+  have the started the entry saw, to the minute (a row unstarted then may have started since); else the entry is
+  `"actual": "rewritten"`. Void and rewritten entries stay in the log and are counted in the Track record line. Entries
+  written before `started` existed are scored by id. Provisional and ignored deliveries score nothing.
 - Factors, from 5 scored entries on, over the last 10: high = max(1, p90 of ratio high), low = min(1, p10 of ratio low),
   nearest rank. Printed range = now + [raw low x low, raw high x high], then rounded on the clock as above. The factors use
   the raw ratios and the track record the printed ranges, so the adjustment never feeds on itself. Target: 8 of 10 inside.
@@ -192,6 +202,7 @@ Exit 3 message: `No finish time: <sentences>` then `What to do: <sentences>`, ea
 | `No working time left after removing usage-limit windows: D1 (line 7), ...` | correct started and done of those rows: they lie inside usage-limit windows |
 | `the closing phase has run 2.5 h since the last build row was done (H2, 14:13), longer than every closing measured here (1.5-2.4 h, 2 jobs).` | tell the owner the job is past its usual closing; this ends at delivery, whose length then joins the history. Work not in the table: add it as a row first |
 | `the follow-up round has run 4 h since it started (V1, 05:30), longer than the default round (0.4-2.6 h, not yet measured here), and its open rows are past their measured rates.` | tell the owner the follow-up round is past its usual length; this ends at delivery, whose round length then joins the history. Work not in the table: add it as a row first |
+| `every row of the follow-up round after the delivery at 05:00 (started 05:30, R1) is done, and no deliver: row marks its hand-over.` | if you handed the job over, add a deliver: row with its done time; if work remains, add it as rows |
 
 Long lists show the first five rows and `and N more`.
 

@@ -90,15 +90,12 @@ test('14 minutes into a round of S rows after S-row history, the low end is now 
   near(late.finish.lowMs, at(2.5), 'low at now');
 });
 
-test('a follow-up round whose rows are all done, the last a rework row, keeps the round range and the round factor set', () => {
+test('a follow-up round whose rows are all done, the last a rework row, prints no future finish: it asks for the deliver row', () => {
   const rows = [...FIRST_JOB, row({ id: 'R1', item: 'rework: row', startedH: 2, doneH: 2.5 })];
-  const result = estimate(rows, 2.6); // round from 2 h: 0.4-2.6 h, nothing left by size
-  assert.equal(phaseOf(result), 'round');
-  near(result.finish.lowMs, at(2.6), 'low at now');
-  near(result.finish.highMs, at(4.6), 'high');
-  assert.equal(block(result)[1], 'Includes: follow-up round after the delivery at 05:00, started 05:30 (R1): 0 open rows (0 running); such rounds took 0.4-2.6 h here (default, not yet measured here); no open row left; delivery guessed from a pause: add a deliver: row when you hand over');
-  const past = estimate(rows, 4.7);
-  assert.match(formatRefusal(past, TZ), /^No finish time: the follow-up round has run 2\.7 h since it started \(R1, 05:30\), longer than the default round \(0\.4-2\.6 h, not yet measured here\), and no open row is left\./);
+  const result = estimate(rows, 2.6);
+  assert.equal(result.reason, 'round-done');
+  assert.equal(formatRefusal(result, TZ), 'No finish time: every row of the follow-up round after the delivery at 05:00 (started 05:30, R1) is done, and no deliver: row marks its hand-over.\n'
+    + 'What to do: if you handed the job over, add a deliver: row with its done time; if work remains, add it as rows.');
 });
 
 test('line 1 never starts before now: a low end at now is rounded up to the clock step, not down', () => {

@@ -4,9 +4,10 @@
 // trackRecord(entries, phase?) -> {scored, inside, late, early, medianLate, rewritten}; applyFactors(result, factors) -> result;
 // logEntry(statusPath, result, items, printed) -> entry; isRepeat(entries, entry) -> boolean; MIN_SCORED; FACTOR_WINDOW; TARGET_INSIDE.
 // Invariants: pure. A log entry holds ids and numbers only (never item text, prompts or transcript content):
-// {v, at, status, open, started (each open row's started, ISO or null), points, closing, phase, raw: [low, high] hours,
-// printed: [low, high] ISO}; scoring adds actual (ISO, or "rewritten" when a covered row is gone or carries another started
-// than it had, unstarted rows excepted when they started after the entry: ids are reused, the log never expires), inside (printed low <= actual <= printed high) and ratio ([hours to the delivery /
+// {v, at, status, open, started (each open row's started to the minute, or null), sizes, points, closing, phase,
+// raw: [low, high] hours, printed: [low, high] ISO}; scoring drops ids gone from the table and adds actual (ISO; "void" when
+// every id is gone; "rewritten" when a kept row carries another started than it had, to the minute, a row unstarted then
+// excepted when it started after the entry: ids are reused and the log never expires), inside (printed low <= actual <= printed high) and ratio ([hours to the delivery /
 // raw low, ... / raw high], null where raw is 0). Factors use raw ratios and the track record uses printed ranges, so the
 // adjustment never feeds back into its own inputs. Two factor sets, by phase: 'job' (the first cycle: build, then closing) and
 // 'round' (a follow-up round after a delivery). One set would let each kind move the other's ends: in the 14-15 Nov
@@ -23,9 +24,14 @@ const LOW_PERCENTILE = 0.1;
 const MEDIAN = 0.5;
 const RATIO_DECIMALS = 3;
 const RAW_DECIMALS = 2;
+const MINUTE_MS = 60_000;
+// A run with the same phase and open rows as the last entry is logged again only after this long (runs a clock tick apart
+// predict the same thing; counting each would let one delivery score many correlated estimates).
+export const RELOG_AFTER_MS = 60 * MINUTE_MS;
 // Entries that are never scored: "rewritten" (see the header) and "void" (all ids gone, written before "rewritten" existed).
 const DROPPED = new Set(['rewritten', 'void']);
 const REWRITTEN = 'rewritten';
+const VOID = 'void';
 
 const nearestRank = (sorted, p) => sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)];
 const isoSeconds = (ms) => new Date(ms).toISOString().replace(/\.\d+Z$/, 'Z');
@@ -34,22 +40,22 @@ const round = (value, decimals) => Number(value.toFixed(decimals));
 const isScored = (entry) => typeof entry.actual === 'string' && !DROPPED.has(entry.actual);
 const phaseOfEntry = (entry) => entry.phase ?? 'job';
 
-/** True when every row the entry covered is still in the table with the started it saw (or, unstarted then, started later). */
-function sameRows(entry, byId) {
-  if (!Array.isArray(entry.started) || entry.started.length !== entry.open.length) return false;
-  return entry.open.every((id, k) => {
-    const started = byId.get(id)?.started;
-    if (started === undefined) return false;
-    if (entry.started[k] === null) return started === null || started >= Date.parse(entry.at);
-    return started === Date.parse(entry.started[k]);
-  });
+const toMinute = (ms) => Math.floor(ms / MINUTE_MS);
+
+/** True when a kept row still has the started the entry saw (to the minute), or was unstarted then and started later or not yet. */
+function sameStart(seen, started, entryAt) {
+  if (seen === null) return started === null || started >= entryAt;
+  return started !== null && toMinute(started) === toMinute(Date.parse(seen));
 }
 
-/** The entry scored at the first delivery at or after it with all its rows done; rewritten when its rows changed (see the header). */
+/** The entry scored at the first delivery at or after it with all its kept rows done; void or rewritten as the header says. */
 function scoreOne(entry, deliveries, byId) {
   const at = Date.parse(entry.at);
-  if (!sameRows(entry, byId)) return { ...entry, actual: REWRITTEN };
-  const delivery = deliveries.find((d) => d >= at && entry.open.every((id) => byId.get(id).done !== null && byId.get(id).done <= d));
+  const checked = Array.isArray(entry.started) && entry.started.length === entry.open.length; // entries before `started`: ids only
+  const kept = entry.open.map((id, k) => ({ id, seen: checked ? entry.started[k] : undefined })).filter((r) => byId.has(r.id));
+  if (entry.open.length > 0 && kept.length === 0) return { ...entry, actual: VOID };
+  if (checked && !kept.every((r) => sameStart(r.seen, byId.get(r.id).started, at))) return { ...entry, actual: REWRITTEN };
+  const delivery = deliveries.find((d) => d >= at && kept.every((r) => byId.get(r.id).done !== null && byId.get(r.id).done <= d));
   if (delivery === undefined) return entry;
   const hours = (delivery - at) / HOUR_MS;
   const [low, high] = entry.printed.map(Date.parse);
@@ -69,8 +75,17 @@ export function scoreEntries(entries, items, now) {
   return entries.map((entry) => (entry.actual === undefined ? scoreOne(entry, deliveries, byId) : entry));
 }
 
-/** The factor set an estimate belongs to: 'round' inside a follow-up round, else 'job'. */
-export const phaseOf = (result) => (result.followUp === undefined ? 'job' : 'round');
+/** The factor set an estimate belongs to, from the table state: 'job' in the first cycle, 'round' in an open follow-up round, null with no estimate. */
+export function phaseOf(result) {
+  switch (result.state) {
+    case 'first-cycle-building':
+    case 'first-cycle-closing': return 'job';
+    case 'round-open': return 'round';
+    case 'delivered':
+    case 'round-done-not-delivered': return null;
+    default: throw new Error(`unknown table state ${result.state}`);
+  }
+}
 
 /**
  * The range factors of one phase from its last FACTOR_WINDOW scored entries: high = max(1, p90 of ratio high), low = min(1,
@@ -138,6 +153,7 @@ export function logEntry(statusPath, result, items, printed) {
     status: statusPath,
     open: open.map((i) => i.id),
     started: open.map((i) => (i.started === null ? null : isoMinutes(i.started))),
+    sizes: open.map((i) => i.size),
     points: result.openPoints,
     closing: result.closing.measured >= MIN_MEASURED_RANGE ? 'measured' : 'default',
     phase: phaseOf(result),
@@ -146,15 +162,17 @@ export function logEntry(statusPath, result, items, printed) {
   };
 }
 
+/** The open rows of an entry as comparable text: id, size and started of each, in id order. */
+const rowsKey = (entry) => JSON.stringify(entry.open.map((id, k) => [id, entry.sizes?.[k] ?? null, entry.started?.[k] ?? null]).sort());
+
 /**
- * True when the entry repeats the last logged entry of its phase: the same printed ends (already on the 5-minute grid) and the
- * same open rows. A repeat is not appended, so many runs within one prediction count once.
+ * True when the entry repeats the last logged entry: the same phase, the same open rows (ids, sizes, started) and less than
+ * RELOG_AFTER_MS since it. A repeat is not appended, so runs that differ only because the clock moved count once.
  * @param {object[]} entries the log, oldest first.
  * @param {object} entry the new entry from logEntry.
  */
 export function isRepeat(entries, entry) {
-  const last = entries.filter((e) => phaseOfEntry(e) === entry.phase).at(-1);
-  if (last === undefined) return false;
-  const sameSet = (a, b) => a.length === b.length && a.every((id) => b.includes(id));
-  return last.printed[0] === entry.printed[0] && last.printed[1] === entry.printed[1] && sameSet(last.open, entry.open);
+  const last = entries.at(-1);
+  if (last === undefined || phaseOfEntry(last) !== entry.phase) return false;
+  return rowsKey(last) === rowsKey(entry) && Date.parse(entry.at) - Date.parse(last.at) < RELOG_AFTER_MS;
 }

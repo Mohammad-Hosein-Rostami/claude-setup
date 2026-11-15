@@ -1,8 +1,9 @@
 // Parses the `## Work items` table of a STATUS.md into work items plus per-row problems.
 // Exports: parseWorkItems(markdown) -> { items, problems }; parseInstant(text) -> epoch ms | null; INSTANT_FORMAT; SIZE_POINTS (S=1, M=2, L=4).
-// Each item has a kind: 'close' when the item cell starts `close:` (review, fixes from a review, recheck, gate, landing,
-// hand-over report), 'rework' when it starts `rework:` (an owner correction), 'deliver' when it starts `deliver:` (the job
-// handed over to the owner: its done time is a delivery), else 'build'; case-insensitive.
+// Each item has a kind: 'close' when the item cell starts `close:` (review, fixes from a review, recheck, gate, landing),
+// 'rework' when it starts `rework:` (an owner correction), 'deliver' when it starts `deliver:` (the job handed over to the
+// owner: its done time is a delivery), else 'build'; case-insensitive. A deliver row is an event: done alone is enough (its
+// started is then its done, evidence may be empty).
 // Invariants: pure (no I/O); line numbers are 1-based in the given text (a leading BOM and CRLF do not change them); exactly
 // one `## Work items` section and one contiguous table in it, else a problem (nothing is skipped silently); a time must be a
 // real ISO 8601 instant (see INSTANT_FORMAT), a bare `10:45` or `2026-02-30T08:00Z` is a problem; `-` or an empty cell means
@@ -69,10 +70,13 @@ function parseRow(cells, line) {
   if (started.error) return fail(started.error);
   if (done.error) return fail(done.error);
   const evidence = isEmptyCell(evidenceText) ? '' : evidenceText;
-  if (done.value !== null && evidence === '') return fail('done without evidence (commit sha, file path or `check: <cmd> PASS`)');
+  const kind = kindOf(item);
+  const event = kind === 'deliver'; // done alone marks the hand-over: started is then the done time
+  const startedAt = event && started.value === null ? done.value : started.value;
+  if (done.value !== null && evidence === '' && !event) return fail('done without evidence (commit sha, file path or `check: <cmd> PASS`)');
   if (done.value !== null && PLACEHOLDER_EVIDENCE.test(evidence)) return fail(`evidence "${evidence}" is a placeholder (commit sha, file path or \`check: <cmd> PASS\`)`);
-  if (done.value !== null && started.value !== null && done.value <= started.value) return fail('done is not after started');
-  return { item: { id, item, kind: kindOf(item), size, points: SIZE_POINTS[size], started: started.value, done: done.value, evidence, line } };
+  if (done.value !== null && startedAt !== null && (event ? done.value < startedAt : done.value <= startedAt)) return fail('done is not after started');
+  return { item: { id, item, kind, size, points: SIZE_POINTS[size], started: startedAt, done: done.value, evidence, line } };
 }
 
 /** For each line: true when it is outside code fences. */

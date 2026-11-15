@@ -21,8 +21,9 @@ function segment(statusPath) {
   const none = { text: null, highMs: null };
   try {
     const { result } = estimateFile(statusPath, { cwd: dirname(statusPath) });
-    if (result.refused || result.delivered !== undefined) return none;
-    const shown = applyFactors(result, calibrationFactors(readLog(statusPath), phaseOf(result)));
+    const phase = result.refused ? null : phaseOf(result); // null: delivered or no estimate
+    if (phase === null) return none;
+    const shown = applyFactors(result, calibrationFactors(readLog(statusPath), phase));
     return { text: `done ~${finishClock(shown)}`, highMs: printedBounds(shown).high };
   } catch (err) {
     if (err instanceof UsageError) return none; // a table or transcript folder the tool rejects: no segment, never an error text

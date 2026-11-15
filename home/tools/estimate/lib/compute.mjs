@@ -5,17 +5,20 @@
 // real rate, so it may only raise the band; a row started a minute ago carries no information); nearest-rank p25..p75 from MIN_BAND_ITEMS values,
 // else min..max. Build part B(r) = max(sum of remaining / lanes, largest remaining) over open build and rework rows, remaining =
 // max(0, points x r - elapsed). Lanes = sum of done durations / their union (windows removed), clamped to 1..open build rows.
-// Finish = now + [B(low) + max(0, closing low - E), B(high) + max(0, closing high - E)], the closing phase measured from this
-// table's deliveries (history.mjs) and always in series after the build part; E = the closing time already run (0 while a
-// build row is open).
-// Follow-up round (some row open after a delivery, history.mjs): every open row is work by size (close and rework too) and
+// The table's state comes from tableState (history.mjs) only; each state has one formula:
+// - first-cycle-building / -closing: Finish = now + [B(low) + max(0, C low - E), B(high) + max(0, C high - E)], C the
+//   closing phase (the default: a table has one first cycle), always in series after the build part; E = the closing time
+//   already run (0 while building).
+// - round-open: every open row is work by size (close and rework too) and
 // Finish = [max(round start + round low, now + B(low)), max(round start + round high, now + B(high))], the round length
 // measured from this table's finished rounds; the closing phase is not added again.
+// - round-done-not-delivered: a refusal (reason 'round-done'): nothing is open, so no future finish is printed.
+// - delivered: `delivered` (epoch ms), `provisionalUntil`. Every non-refused result carries `state`.
 // A refusal is `{ refused: true, reason, needed, measured, now, missing, future, noTime, overrun }` and carries no finish time:
-// reason 'table' (too few measured rows, a done row without started, a time later than now, a done row with no working time)
-// or 'overrun' (no build row open and the closing has already run as long as its high end; or a follow-up round past its high
+// reason 'table' (too few measured rows, a done row without started, a time later than now, a done row with no working time),
+// 'round-done' (see above; `round` set) or 'overrun' (no build row open and the closing has already run as long as its high end; or a follow-up round past its high
 // end with no open row left by size, then `overrun.round` is set).
-import { DELIVERY_GAP_MS, closingElapsedHours, closingRange, closingStart, findDeliveries, followUpRange, followUpRounds, hasDeliverRows, openRound, overlapMs, reopenSummary } from './history.mjs';
+import { DELIVERY_GAP_MS, closingElapsedHours, closingRange, closingStart, followUpRange, followUpRounds, overlapMs, reopenSummary, tableState } from './history.mjs';
 import { mergeIntervals } from './limits.mjs';
 
 export const MIN_DONE_ITEMS = 5;
@@ -31,7 +34,8 @@ const workingMs = (start, end, windows) => end - start - overlapMs([{ start, end
 /** Nearest-rank percentile of an ascending list. */
 const nearestRank = (sorted, p) => sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)];
 
-const isMeasured = (item) => item.done !== null && item.started !== null && item.evidence !== '';
+// A deliver row is an event (its started may equal its done), so it never gives a rate.
+const isMeasured = (item) => item.done !== null && item.started !== null && item.evidence !== '' && item.kind !== 'deliver';
 const isOpenBuild = (item) => item.done === null && item.kind !== 'close' && item.kind !== 'deliver';
 const rowLabel = (item) => `${item.id} (line ${item.line})`;
 
@@ -89,19 +93,13 @@ function buildPart(openBuild, rate, lanes, windows, now) {
 }
 
 /**
- * The delivered result when no row is open and the last done row is a `deliver` row (a close row when the table has no
- * deliver rows), else null: with nothing open the tool never predicts a future finish. Without deliver rows it is provisional
- * (`provisionalUntil`, epoch ms) while the quiet gap has not passed yet; the history (findDeliveries) counts it only after that
- * gap. A last done row that is a build row is not delivered: the closing phase still lies ahead (review and fix rounds are not rows).
+ * The delivered result (state 'delivered'): the delivering row's done time; provisional (`provisionalUntil`, epoch ms) while a
+ * pause-rule delivery's quiet gap has not passed yet (the history counts it only after that gap). A deliver row is final at once.
  */
-function deliveredResult(items, deliveries, now) {
-  if (items.length === 0 || items.some((i) => i.done === null)) return null;
-  const lastDone = Math.max(...items.map((i) => i.done));
-  const explicit = hasDeliverRows(items);
-  const closer = items.find((i) => i.kind === (explicit ? 'deliver' : 'close') && i.done === lastDone);
-  if (closer === undefined) return null;
-  const provisionalUntil = !explicit && lastDone + DELIVERY_GAP_MS > now ? lastDone + DELIVERY_GAP_MS : null;
-  return { computedAt: now, openItems: 0, delivered: lastDone, provisionalUntil, closingRow: closer.id, reopen: reopenSummary(items, deliveries, now) };
+function deliveredResult(items, table, now) {
+  const at = table.closer.done;
+  const provisionalUntil = table.guessed && at + DELIVERY_GAP_MS > now ? at + DELIVERY_GAP_MS : null;
+  return { computedAt: now, state: 'delivered', openItems: 0, delivered: at, provisionalUntil, closingRow: table.closer.id, closingKind: table.closer.kind, guessed: table.guessed, reopen: reopenSummary(items, table.deliveries, now) };
 }
 
 /**
@@ -134,12 +132,13 @@ function measureRows({ items, done, measured, windows, now }, isWork) {
 }
 
 /** The finish of the first cycle: the build part, then the closing phase in series (see the header). */
-function firstCycleResult(context, deliveries) {
+function firstCycleResult(context, table) {
   const { items, windows, now } = context;
+  const { deliveries } = table;
   const closing = closingRange(deliveries);
-  const elapsed = closingElapsedHours(items, deliveries, windows, now);
+  const elapsed = table.state === 'first-cycle-closing' ? closingElapsedHours(items, deliveries, windows, now) : 0;
   const rows = measureRows(context, isOpenBuild);
-  if (rows.build.ids.length === 0 && elapsed >= closing.high) {
+  if (table.state === 'first-cycle-closing' && elapsed >= closing.high) {
     const overrun = { hours: elapsed, start: closingStart(items, deliveries, now), closing };
     return refusal(now, { reason: 'overrun', measured: context.measured.length, overrun });
   }
@@ -151,18 +150,30 @@ function firstCycleResult(context, deliveries) {
  * The finish of an open follow-up round (see the header): never before now, never before the open rows' size range, and a
  * refusal once the round has passed its high end with nothing left by size.
  */
-function followUpResult(context, deliveries, round) {
+function followUpResult(context, { deliveries, round }) {
   const { items, windows, now } = context;
   const range = followUpRange(followUpRounds(items, deliveries, windows));
   const rows = measureRows(context, (i) => i.done === null);
   const roundEnd = (hours) => round.start + hours * HOUR_MS;
   if (roundEnd(range.high) <= now && rows.build.high <= 0) {
-    const overrun = { hours: workingMs(round.start, now, windows) / HOUR_MS, round, closing: range, openRows: rows.build.ids.length };
+    const overrun = { hours: workingMs(round.start, now, windows) / HOUR_MS, round, closing: range };
     return refusal(now, { reason: 'overrun', measured: context.measured.length, overrun });
   }
   const lowMs = Math.max(roundEnd(range.low), now + rows.build.low * HOUR_MS); // the size term (>= 0) keeps it at or after now
   const highMs = Math.max(roundEnd(range.high), now + rows.build.high * HOUR_MS, lowMs);
   return { ...rows, closing: range, followUp: round, closingElapsed: 0, raw: { low: (lowMs - now) / HOUR_MS, high: (highMs - now) / HOUR_MS }, finish: { lowMs, highMs } };
+}
+
+/** The finish (or delivered result, or refusal) of the table's state; the one switch over the states in this module. */
+function finishOf(context, table) {
+  switch (table.state) {
+    case 'delivered': return deliveredResult(context.items, table, context.now);
+    case 'first-cycle-building':
+    case 'first-cycle-closing': return firstCycleResult(context, table);
+    case 'round-open': return followUpResult(context, table);
+    case 'round-done-not-delivered': return refusal(context.now, { reason: 'round-done', measured: context.measured.length, round: table.round });
+    default: throw new Error(`unknown table state ${table.state}`);
+  }
 }
 
 /**
@@ -182,18 +193,16 @@ export function computeEstimate(items, windows, now) {
   const noTime = done.filter((d) => !(d.durationMs > 0) || !Number.isFinite(d.rate)).map((d) => rowLabel(d.item));
   if (noTime.length > 0) return refusal(now, { measured: measured.length, noTime });
 
-  const deliveries = findDeliveries(items, windows, now);
-  const delivered = deliveredResult(items, deliveries, now);
-  if (delivered) return delivered;
-  const context = { items, done, measured, windows, now };
-  const round = openRound(items, deliveries, now);
-  const finish = round === null ? firstCycleResult(context, deliveries) : followUpResult(context, deliveries, round);
-  if (finish.refused) return finish;
+  const table = tableState(items, windows, now);
+  const finish = finishOf({ items, done, measured, windows, now }, table);
+  if (finish.refused || table.state === 'delivered') return finish;
   return {
     computedAt: now,
+    state: table.state,
     ...finish,
-    reopen: reopenSummary(items, deliveries, now),
-    deliveryGuessed: deliveries.length > 0 && !hasDeliverRows(items),
+    reopen: reopenSummary(items, table.deliveries, now),
+    deliveryGuessed: table.guessed,
+    ignored: table.ignored,
     measured: measured.length,
     newestEntry: Math.max(...items.flatMap((i) => [i.started, i.done]).filter((at) => at !== null)),
   };

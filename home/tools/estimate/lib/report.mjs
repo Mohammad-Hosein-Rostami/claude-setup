@@ -20,6 +20,7 @@ const EXCLUDES = 'Excludes: your review and any rework it starts (next line); us
 const NO_DELIVERY = 'After your review: not measured here yet (no earlier delivery in this table)';
 const OVERRUN_ADVICE = 'What to do: tell the owner the job is past its usual closing; this ends at delivery, whose length then joins the history. Work not in the table: add it as a row first.';
 const GUESSED_NOTE = 'delivery guessed from a pause: add a deliver: row when you hand over';
+const ROUND_DONE_ADVICE = 'What to do: if you handed the job over, add a deliver: row with its done time; if work remains, add it as rows.';
 const ROUND_ADVICE = 'What to do: tell the owner the follow-up round is past its usual length; this ends at delivery, whose round length then joins the history. Work not in the table: add it as a row first.';
 
 /** Numbers under 10 keep one decimal (a trailing `.0` is dropped); larger ones round to whole numbers. */
@@ -131,14 +132,24 @@ function followUpIncludes(result, timeZone) {
   const { build, closing, followUp } = result;
   const started = followUp.startRow === null ? 'no row started yet' : `started ${clockText(followUp.start, timeZone)} (${followUp.startRow})`;
   const rows = `${plural(result.openItems, 'open row')} (${result.inFlight} running)`;
-  const sizes = build.ids.length === 0 ? 'no open row left' : `the open rows need at least ${range(build.low, build.high)} h by size (${listed(build.ids)}, ${laneCount(build)})`;
+  const sizes = `the open rows need at least ${range(build.low, build.high)} h by size (${listed(build.ids)}, ${laneCount(build)})`;
   return `Includes: follow-up round after the delivery at ${clockText(followUp.deliveryAt, timeZone)}, ${started}: ${rows}; such rounds took ${range(closing.low, closing.high)} h here (${roundSource(closing)}); ${sizes}`;
 }
 
-/** The Includes line, ending with GUESSED_NOTE when a delivery it relies on was guessed from a pause. */
+const inRound = (result) => result.state === 'round-open';
+
+/** The deliver rows that were not deliveries, as `deliver row X1 ignored: 1 row was still running at 14:30`. */
+const ignoredNotes = (ignored, timeZone) => ignored.map((d) => `deliver row ${d.id} ignored: ${plural(d.running, 'row')} ${d.running === 1 ? 'was' : 'were'} still running at ${clockText(d.at, timeZone)}`);
+
+/** The Includes line of the table's state, then the ignored deliver rows and GUESSED_NOTE when a delivery was guessed from a pause. */
 function includesLine(result, timeZone) {
-  const line = result.followUp !== undefined ? followUpIncludes(result, timeZone) : firstCycleIncludes(result);
-  return result.deliveryGuessed ? `${line}; ${GUESSED_NOTE}` : line;
+  const notes = [...ignoredNotes(result.ignored, timeZone), ...(result.deliveryGuessed ? [GUESSED_NOTE] : [])];
+  switch (result.state) {
+    case 'first-cycle-building':
+    case 'first-cycle-closing': return [firstCycleIncludes(result), ...notes].join('; ');
+    case 'round-open': return [followUpIncludes(result, timeZone), ...notes].join('; ');
+    default: throw new Error(`no Includes line for state ${result.state}`);
+  }
 }
 
 function firstCycleIncludes(result) {
@@ -146,7 +157,9 @@ function firstCycleIncludes(result) {
   const rows = `${plural(result.openItems, 'open row')} (${result.inFlight} running)`;
   const phase = `the closing phase ${range(closing.low, closing.high)} h`;
   const about = `(${CLOSING_WORK}; ${closingSource(closing)})`;
-  if (build.ids.length === 0) return `Includes: ${rows}; no open build row: ${phase} ${about} has run ${num(result.closingElapsed)} h`;
+  const elapsed = `has run ${num(result.closingElapsed)} h`;
+  if (result.openItems === 0) return `Includes: no open row: the build is done and ${phase} ${about} is not in rows yet; it ${elapsed}`;
+  if (build.ids.length === 0) return `Includes: ${rows}; no open build row: ${phase} ${about} ${elapsed}`;
   const lanes = laneCount(build);
   const past = build.pastRate.length === 0 ? '' : `; ${listed(build.pastRate)} past every measured rate, ${build.pastRate.length === 1 ? 'its' : 'their'} remaining time is not known`;
   return `Includes: ${rows}; build ${range(build.low, build.high)} h (${listed(build.ids)}, ${lanes}${past}), then ${phase} in series ${about}`;
@@ -185,7 +198,7 @@ function dateSpan(first, last, timeZone) {
 function laneText(result) {
   const measured = result.measuredLanes.toFixed(1);
   if (result.build.ids.length === 0) return `${result.lanes.toFixed(1)} lanes (measured ${measured}; no open build row)`;
-  const counted = result.followUp === undefined ? 'open build row' : 'open row';
+  const counted = inRound(result) ? 'open row' : 'open build row';
   if (result.lanes < result.measuredLanes) return `${result.lanes.toFixed(1)} lanes (measured ${measured}, capped by ${plural(result.build.ids.length, counted)})`;
   return result.lanes > result.measuredLanes ? `1.0 lanes (measured ${measured}, raised to 1)` : `${result.lanes.toFixed(1)} lanes (measured)`;
 }
@@ -219,7 +232,7 @@ function deliveredBlock(result, timeZone) {
   const provisional = result.provisionalUntil === null ? '' : `; provisional until ${clockText(result.provisionalUntil, timeZone)}: no open row`;
   return [
     `Finish: delivered ${dayText(at, timeZone)} ${clockText(at, timeZone)} (local ${offsetText(at, timeZone)}${provisional})`,
-    `Includes: no open row; the last done row (${result.closingRow}) is a close row`,
+    [`Includes: no open row; the last done row (${result.closingRow}) is a ${result.closingKind} row`, ...(result.guessed ? [GUESSED_NOTE] : [])].join('; '),
     afterLine(result.reopen),
   ];
 }
@@ -234,11 +247,11 @@ function deliveredBlock(result, timeZone) {
  */
 export function formatEstimate(result, inputs) {
   const timeZone = inputs.timeZone ?? systemTimeZone();
-  if (result.delivered !== undefined) return deliveredBlock(result, timeZone).join('\n');
-  const counted = result.followUp === undefined ? 'open build rows' : 'open rows';
+  if (result.state === 'delivered') return deliveredBlock(result, timeZone).join('\n');
+  const counted = inRound(result) ? 'open rows' : 'open build rows';
   const agentHours = result.build.ids.length === 0 ? 'Agent-hours: 0 (no open build row)'
     : `Agent-hours: ${result.agentHours.low.toFixed(1)}-${result.agentHours.high.toFixed(1)} for the ${counted}, counted whole`;
-  const track = inputs.calibration === undefined ? [] : [trackLine(inputs.calibration, result.followUp !== undefined)];
+  const track = inputs.calibration === undefined ? [] : [trackLine(inputs.calibration, inRound(result))];
   return [finishLine(result, timeZone), includesLine(result, timeZone), EXCLUDES, afterLine(result.reopen), ...track, assumesLine(result, inputs, timeZone), agentHours, ...staleNote(result)].join('\n');
 }
 
@@ -247,8 +260,12 @@ function roundOverrunText({ overrun }, timeZone) {
   const since = round.startRow === null ? '' : ` since it started (${round.startRow}, ${clockText(round.start, timeZone)})`;
   const than = closing.measured >= MIN_MEASURED_RANGE ? `every round measured here (${range(closing.low, closing.high)} h, ${closing.measured} rounds)`
     : `the default round (${range(closing.low, closing.high)} h, ${closing.measured === 1 ? 'widened by 1 finished round here' : 'not yet measured here'})`;
-  const rows = overrun.openRows === 0 ? 'no open row is left' : 'its open rows are past their measured rates';
-  return `No finish time: the follow-up round has run ${num(overrun.hours)} h${since}, longer than ${than}, and ${rows}.\n${ROUND_ADVICE}`;
+  return `No finish time: the follow-up round has run ${num(overrun.hours)} h${since}, longer than ${than}, and its open rows are past their measured rates.\n${ROUND_ADVICE}`;
+}
+
+function roundDoneText({ round }, timeZone) {
+  const since = round.startRow === null ? '' : ` (started ${clockText(round.start, timeZone)}, ${round.startRow})`;
+  return `No finish time: every row of the follow-up round after the delivery at ${clockText(round.deliveryAt, timeZone)}${since} is done, and no deliver: row marks its hand-over.\n${ROUND_DONE_ADVICE}`;
 }
 
 function overrunText({ overrun }, timeZone) {
@@ -262,6 +279,7 @@ function overrunText({ overrun }, timeZone) {
 
 /** The refusal text: why there is no finish time and what to do, never a time to quote. */
 export function formatRefusal(refusal, timeZone = systemTimeZone()) {
+  if (refusal.reason === 'round-done') return roundDoneText(refusal, timeZone);
   if (refusal.reason === 'overrun') return refusal.overrun.round === undefined ? overrunText(refusal, timeZone) : roundOverrunText(refusal, timeZone);
   const reasons = [];
   const advice = [];

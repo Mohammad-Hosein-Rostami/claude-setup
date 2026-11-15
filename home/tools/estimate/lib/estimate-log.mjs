@@ -37,7 +37,7 @@ function isEntry(entry, statusPath) {
   return entry?.v === 1 && entry.status === statusPath && isInstant(entry.at)
     && Array.isArray(entry.open) && entry.open.every((id) => typeof id === 'string')
     && typeof entry.points === 'number' && isPair(entry.raw, 'number') && isPair(entry.printed, 'string') && entry.printed.every(isInstant)
-    && (entry.actual === undefined || entry.actual === 'void' || isInstant(entry.actual));
+    && (entry.actual === undefined || entry.actual === 'void' || entry.actual === 'rewritten' || isInstant(entry.actual));
 }
 
 function parseLine(line) {
