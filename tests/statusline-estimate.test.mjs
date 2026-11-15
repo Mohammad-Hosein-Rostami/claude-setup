@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { estimateFile } from '../home/tools/estimate/lib/from-files.mjs';
 import { finishClock } from '../home/tools/estimate/lib/report.mjs';
 import {
-  MAX_CACHE_BYTES, REFRESH_INTERVAL_MS, STALE_SHOW_MS, estimateSegment, readEntry, writeEntry,
+  MAX_CACHE_BYTES, RECOMPUTE_AFTER_MS, REFRESH_INTERVAL_MS, STALE_SHOW_MS, estimateSegment, readEntry, writeEntry,
 } from '../home/tools/estimate/lib/segment-cache.mjs';
 import { fiveDoneRows, row, statusDoc } from './estimate-fixtures.mjs';
 
@@ -47,7 +47,7 @@ async function setup(doc = USABLE_DOC) {
 /** A cache entry that matches the file on disk now (the state after a finished refresh). */
 async function matchingEntry(statusPath, fields = {}) {
   const { mtimeMs, size } = await stat(statusPath);
-  return { path: statusPath, text: SEGMENT, mtimeMs, size, computedAt: NOW - 1, refreshStartedAt: NOW - 1, ...fields };
+  return { path: statusPath, text: SEGMENT, highMs: NOW + 10 * 3_600_000, mtimeMs, size, computedAt: NOW - 1, refreshStartedAt: NOW - 1, ...fields };
 }
 
 test('a cache that matches the file is shown and starts no refresh', async () => {
@@ -123,6 +123,21 @@ test('a missing cache starts exactly one refresh within the interval, another af
   assert.equal(spawns.length, 2);
 });
 
+test('review 2: a matching cache older than RECOMPUTE_AFTER_MS still shows its text and starts one refresh (the finish moves with the clock)', async () => {
+  const { statusPath, cacheDir, spawns, render } = await setup();
+  writeEntry(cacheDir, statusPath, await matchingEntry(statusPath, { computedAt: NOW - RECOMPUTE_AFTER_MS, refreshStartedAt: NOW - RECOMPUTE_AFTER_MS }));
+  assert.equal(render(NOW), SEGMENT);
+  assert.equal(render(NOW + 1), SEGMENT);
+  assert.equal(spawns.length, 1);
+});
+
+test('review 2: no segment once the cached range\'s high end has passed', async () => {
+  const { statusPath, cacheDir, render } = await setup();
+  writeEntry(cacheDir, statusPath, await matchingEntry(statusPath, { highMs: NOW - 1 }));
+  assert.equal(render(NOW), null);
+  assert.equal(render(NOW - 2), SEGMENT);
+});
+
 test('a changed file keeps the old text for STALE_SHOW_MS while one refresh runs, then shows nothing', async () => {
   const { statusPath, cacheDir, spawns, render } = await setup();
   const old = await matchingEntry(statusPath, { mtimeMs: 1, size: 1, computedAt: NOW, refreshStartedAt: 0 });
@@ -148,7 +163,8 @@ test('the refresh script writes "done ~<finish clock>" from the estimate lib for
   // the script reads the clock itself: its text is the lib's text at some instant between the two readings
   const expected = [before, after].map((now) => `done ~${finishClock(estimateFile(statusPath, { cwd: projectDir, transcripts: root, now: iso(now) }).result)}`);
   assert.ok(expected.includes(entry.text), `${entry.text} not in ${expected}`);
-  assert.match(entry.text, /^done ~(\w{3} )?\d\d:\d\d-\d\d:\d\d$/);
+  assert.match(entry.text, /^done ~(\w{3} )?\d\d:\d\d( - \w{3} |-)\d\d:\d\d$/);
+  assert.ok(entry.highMs > before, 'the printed high end is stored for the render to hide a passed range');
   assert.equal(entry.size, (await stat(statusPath)).size);
   assert.equal(entry.mtimeMs, (await stat(statusPath)).mtimeMs);
 });
@@ -159,6 +175,7 @@ test('the refresh script caches "no text" when the tool refuses (exit 3 case) or
     const { run, entry } = refreshIn(root, projectDir, statusPath);
     assert.equal(run.status, 0, run.stderr);
     assert.equal(entry.text, null);
+    assert.equal(entry.highMs, null);
     assert.equal(run.stdout + run.stderr, '');
   }
 });

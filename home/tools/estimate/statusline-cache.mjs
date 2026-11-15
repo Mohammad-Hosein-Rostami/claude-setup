@@ -13,17 +13,19 @@ import { dirname, resolve } from 'node:path';
 import { UsageError, estimateFile } from './lib/from-files.mjs';
 import { applyFactors, calibrationFactors } from './lib/calibration.mjs';
 import { readLog } from './lib/estimate-log.mjs';
-import { finishClock } from './lib/report.mjs';
+import { finishClock, printedBounds } from './lib/report.mjs';
 import { cacheDir, writeEntry } from './lib/segment-cache.mjs';
 
-/** The segment text, or null when the tool refuses, the job is delivered or the table cannot be read. */
-function segmentText(statusPath) {
+/** The segment text and the printed high end (epoch ms), both null when the tool refuses, the job is delivered or the table cannot be read. */
+function segment(statusPath) {
+  const none = { text: null, highMs: null };
   try {
     const { result } = estimateFile(statusPath, { cwd: dirname(statusPath) });
-    if (result.refused || result.delivered !== undefined) return null;
-    return `done ~${finishClock(applyFactors(result, calibrationFactors(readLog(statusPath))))}`;
+    if (result.refused || result.delivered !== undefined) return none;
+    const shown = applyFactors(result, calibrationFactors(readLog(statusPath)));
+    return { text: `done ~${finishClock(shown)}`, highMs: printedBounds(shown).high };
   } catch (err) {
-    if (err instanceof UsageError) return null; // a table or transcript folder the tool rejects: no segment, never an error text
+    if (err instanceof UsageError) return none; // a table or transcript folder the tool rejects: no segment, never an error text
     throw err;
   }
 }
@@ -36,6 +38,6 @@ if (process.argv.length !== 3 || !argument) {
 const statusPath = resolve(argument);
 const startedAt = Date.now();
 const { mtimeMs, size } = statSync(statusPath);
-const text = segmentText(statusPath);
-const stored = writeEntry(cacheDir(), statusPath, { path: statusPath, text, mtimeMs, size, computedAt: Date.now(), refreshStartedAt: startedAt });
+const { text, highMs } = segment(statusPath);
+const stored = writeEntry(cacheDir(), statusPath, { path: statusPath, text, highMs, mtimeMs, size, computedAt: Date.now(), refreshStartedAt: startedAt });
 process.exitCode = stored ? 0 : 1;

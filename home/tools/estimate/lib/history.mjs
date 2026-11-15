@@ -5,8 +5,8 @@
 // reopenSummary(items, deliveries, now) -> summary | null; overlapMs(a, b); DELIVERY_GAP_MS; DEFAULT_CLOSING_HOURS; CLOSING_HISTORY.
 // Invariants: pure; times are epoch ms, results in hours. Rows are classed by `kind` (see items.mjs): `close` rows are the
 // closing phase (review, fix rounds, recheck, landing), `rework` rows are owner corrections, the rest is build work.
-// A delivery D is the done time of a close row (D <= now) when every row started before D is done by D and no row starts
-// in [D, D + DELIVERY_GAP_MS). Usage-limit windows are taken out of closing tails and of the elapsed closing time.
+// A delivery D is the done time of a close row when every row started before D is done by D, no row starts in
+// [D, D + DELIVERY_GAP_MS), and that gap has passed (D + DELIVERY_GAP_MS <= now). Usage-limit windows are taken out of closing tails and of the elapsed closing time.
 
 const HOUR_MS = 3_600_000;
 const MINUTE_MS = 60_000;
@@ -29,8 +29,9 @@ export function overlapMs(a, b) {
 const workingHours = (start, end, windows) => (end - start - overlapMs([{ start, end }], windows)) / HOUR_MS;
 const isClose = (item) => item.kind === 'close';
 
-/** True when D is a delivery: nothing in flight at D and nothing starting within DELIVERY_GAP_MS after it. */
-function isDelivery(items, at) {
+/** True when D is a delivery: the gap after it has passed, nothing was in flight at D and nothing started within the gap. */
+function isDelivery(items, at, now) {
+  if (at + DELIVERY_GAP_MS > now) return false;
   const settled = items.every((i) => i.started === null || i.started >= at || (i.done !== null && i.done <= at));
   const quietAfter = items.every((i) => i.started === null || i.started < at || i.started >= at + DELIVERY_GAP_MS);
   return settled && quietAfter;
@@ -53,12 +54,12 @@ function closingStartBetween(items, after, until) {
  * The deliveries of the table, oldest first, each with the length of its closing tail.
  * @param {object[]} items parsed work items with `kind`.
  * @param {{start: number, end: number}[]} windows usage-limit windows, taken out of each tail.
- * @param {number} now epoch ms; a close row done later is ignored.
+ * @param {number} now epoch ms; a close row done later, or less than DELIVERY_GAP_MS before it, is not a delivery.
  * @returns {{at: number, closingStart: number, tailHours: number}[]} at = delivery time, closingStart = where its closing began.
  */
 export function findDeliveries(items, windows, now) {
   const candidates = [...new Set(items.filter((i) => isClose(i) && i.done !== null && i.done <= now).map((i) => i.done))].sort((a, b) => a - b);
-  const times = candidates.filter((at) => isDelivery(items, at));
+  const times = candidates.filter((at) => isDelivery(items, at, now));
   return times.map((at, k) => {
     const start = closingStartBetween(items, k === 0 ? -Infinity : times[k - 1], at).at;
     return { at, closingStart: start, tailHours: workingHours(start, at, windows) };
@@ -99,8 +100,9 @@ export function closingElapsedHours(items, deliveries, windows, now) {
  * How often a delivery was reopened by an owner correction: delivery k counts when a `rework` row starts after it and no
  * later than the next delivery (after the last delivery: up to now). Rework time = the next delivery (or now: "so far")
  * minus the first such start.
- * @returns {{deliveries: number, reopened: number, lowHours: number, highHours: number, open: boolean} | null} null when the
- *   table has no delivery yet; open = the last delivery is reopened and its rework is still running.
+ * @returns {{deliveries: number, reopened: number, lowHours: number, highHours: number, open: boolean, reworkOpen: boolean} | null}
+ *   null when the table has no delivery yet; open = the last delivery is reopened and not delivered again (its time runs to
+ *   now); reworkOpen = a rework row started after the last delivery is still open.
  */
 export function reopenSummary(items, deliveries, now) {
   if (deliveries.length === 0) return null;
@@ -117,5 +119,6 @@ export function reopenSummary(items, deliveries, now) {
     lowHours: hours.length > 0 ? Math.min(...hours) : 0,
     highHours: hours.length > 0 ? Math.max(...hours) : 0,
     open: reworks.some((r) => r.open),
+    reworkOpen: items.some((i) => i.kind === 'rework' && i.done === null && i.started !== null && i.started > deliveries.at(-1).at),
   };
 }

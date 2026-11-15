@@ -1,12 +1,13 @@
 // The status line's estimate segment: reads a small cache of the estimate's text and, when the cache is missing or out of date,
 // starts a detached refresh. Used by home/statusline.mjs on every render; written by ../statusline-cache.mjs.
 // Exports: estimateSegment(projectDir, deps) -> string | null; readEntry, writeEntry, cacheDir (the cache file store);
-// MAX_CACHE_BYTES, STALE_SHOW_MS, REFRESH_INTERVAL_MS.
+// MAX_CACHE_BYTES, STALE_SHOW_MS, REFRESH_INTERVAL_MS, RECOMPUTE_AFTER_MS.
 // Invariants:
 // - Fast: a render does one stat of STATUS.md and one small cache read. It never imports the estimate formula, the table parser or
 //   the transcript reader, so it can never read a transcript. The number comes only from the refresh script (the estimate lib).
 // - Cache file: ~/.claude/state/estimate-segment/<sha256 of the STATUS.md path, 32 hex>.json, one JSON object
-//   {path, text, mtimeMs, size, computedAt, refreshStartedAt}; text is null when the tool refused or errored. Opened and replaced
+//   {path, text, highMs, mtimeMs, size, computedAt, refreshStartedAt}; text and highMs (the printed high end, epoch ms) are null
+//   when the tool refused, errored or the job is delivered. No text is shown once highMs has passed. Opened and replaced
 //   through hooks/lib/session-store.mjs (no links, 0600, temp file + rename).
 // - A render claims a refresh by writing refreshStartedAt before it spawns; if the claim cannot be written (a link planted at the cache
 //   path, a read-only home) it spawns nothing, so a broken cache can never cause a refresh storm.
@@ -22,6 +23,9 @@ import { readSessionFile, writeSessionFile } from '../../../hooks/lib/session-st
 export const MAX_CACHE_BYTES = 4096; // an entry is ~200 bytes; a bigger file was not written by the refresh script
 export const STALE_SHOW_MS = 15 * 60 * 1000; // text of a changed STATUS.md is still shown this long while its refresh runs
 export const REFRESH_INTERVAL_MS = 2 * 60 * 1000; // at most one refresh start per STATUS.md in this time
+// The finish moves with the clock even when STATUS.md does not (running rows, the closing already run, a refused time that
+// is no longer ahead of the clock): recompute after this age. The printed ends move in 5-minute steps.
+export const RECOMPUTE_AFTER_MS = 5 * 60 * 1000;
 const CACHE_ID_HEX_CHARS = 32;
 const REFRESH_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'statusline-cache.mjs');
 
@@ -42,7 +46,7 @@ export function readEntry(dir, statusPath) {
   if (typeof text !== 'string') return null;
   try {
     const entry = JSON.parse(text);
-    const valid = entry?.path === statusPath && (entry.text === null || typeof entry.text === 'string')
+    const valid = entry?.path === statusPath && (entry.text === null || typeof entry.text === 'string') && (entry.highMs === null || isNumber(entry.highMs))
       && ['mtimeMs', 'size', 'computedAt', 'refreshStartedAt'].every((field) => isNumber(entry[field]));
     return valid ? entry : null;
   } catch {
@@ -55,14 +59,18 @@ export const writeEntry = (dir, statusPath, entry) => writeSessionFile(dir, cach
 
 const matchesFile = (entry, file) => entry.mtimeMs === file.mtimeMs && entry.size === file.size;
 
-/** The text to show: the cached text while it matches the file, or for STALE_SHOW_MS after it was computed. null when there is none. */
+/** The text to show: the cached text while it matches the file, or for STALE_SHOW_MS after it was computed, until its high end passes. */
 function segmentText(entry, file, now) {
-  if (entry === null || entry.text === null) return null;
+  if (entry === null || entry.text === null || (entry.highMs !== null && now > entry.highMs)) return null;
   return matchesFile(entry, file) || now - entry.computedAt < STALE_SHOW_MS ? entry.text : null;
 }
 
-/** A refresh is due when the cache does not describe the file as it is now and none was started in the last REFRESH_INTERVAL_MS. */
-const refreshDue = (entry, file, now) => entry === null || (!matchesFile(entry, file) && now - entry.refreshStartedAt >= REFRESH_INTERVAL_MS);
+/**
+ * A refresh is due when the cache does not describe the file as it is now or is RECOMPUTE_AFTER_MS old, and none was started in
+ * the last REFRESH_INTERVAL_MS.
+ */
+const refreshDue = (entry, file, now) => entry === null
+  || ((!matchesFile(entry, file) || now - entry.computedAt >= RECOMPUTE_AFTER_MS) && now - entry.refreshStartedAt >= REFRESH_INTERVAL_MS);
 
 /** Starts the refresh script for a STATUS.md, detached, and does not wait for it. */
 function spawnRefresh(statusPath, projectDir) {
@@ -75,7 +83,7 @@ function spawnRefresh(statusPath, projectDir) {
 
 /** Writes the claim "a refresh started at now", keeping what the old entry knew; false when it could not be stored. */
 function claimRefresh(dir, statusPath, entry, now) {
-  const base = entry ?? { path: statusPath, text: null, mtimeMs: 0, size: 0, computedAt: 0 };
+  const base = entry ?? { path: statusPath, text: null, highMs: null, mtimeMs: 0, size: 0, computedAt: 0 };
   return writeEntry(dir, statusPath, { ...base, refreshStartedAt: now });
 }
 

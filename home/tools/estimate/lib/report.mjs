@@ -86,20 +86,23 @@ function gridded(ms, timeZone, up) {
  * @returns {{low: number, high: number}} epoch ms.
  */
 export function printedBounds(result, timeZone = systemTimeZone()) {
-  const low = gridded(result.finish.lowMs, timeZone, false);
+  const low = gridded(Math.max(result.finish.lowMs, result.computedAt), timeZone, false);
   return { low, high: Math.max(gridded(result.finish.highMs, timeZone, true), low + CLOCK_STEP_MS) };
 }
 
 /**
- * The status line's clock text: `14:50-16:15`, or `Sun 00:50-02:25` when the low end is not today.
+ * The status line's clock text: `14:50-16:15` when both ends are today, `Sun 00:50-02:25` when both are on another day, and
+ * `Sun 23:20 - Mon 01:10` when the ends are on different days.
  * @param {object} result from computeEstimate with a `finish` (not a refusal or a delivered result).
  * @param {string} [timeZone] IANA zone; default the system zone.
  * @returns {string}
  */
 export function finishClock(result, timeZone = systemTimeZone()) {
   const { low, high } = printedBounds(result, timeZone);
+  const weekday = (ms) => dayText(ms, timeZone).split(' ')[0];
+  if (localDate(low, timeZone) !== localDate(high, timeZone)) return `${weekday(low)} ${clockText(low, timeZone)} - ${weekday(high)} ${clockText(high, timeZone)}`;
   const today = localDate(low, timeZone) === localDate(result.computedAt, timeZone);
-  return `${today ? '' : `${dayText(low, timeZone).split(' ')[0]} `}${clockText(low, timeZone)}-${clockText(high, timeZone)}`;
+  return `${today ? '' : `${weekday(low)} `}${clockText(low, timeZone)}-${clockText(high, timeZone)}`;
 }
 
 function finishLine(result, timeZone) {
@@ -121,15 +124,20 @@ function includesLine(result) {
   const about = `(${CLOSING_WORK}; ${closingSource(closing)})`;
   if (build.ids.length === 0) return `Includes: ${rows}; no open build row: ${phase} ${about} has run ${num(result.closingElapsed)} h`;
   const lanes = build.lanes === 1 ? '1 lane' : `${num(build.lanes)} lanes`;
-  return `Includes: ${rows}; build ${range(build.low, build.high)} h (${listed(build.ids)}, ${lanes}), then ${phase} in series ${about}`;
+  const past = build.pastRate.length === 0 ? '' : `; ${listed(build.pastRate)} past every measured rate, ${build.pastRate.length === 1 ? 'its' : 'their'} remaining time is not known`;
+  return `Includes: ${rows}; build ${range(build.low, build.high)} h (${listed(build.ids)}, ${lanes}${past}), then ${phase} in series ${about}`;
 }
+
+/** The latest rework's state when it is counted to now: '' once delivered again. */
+const reworkState = (reopen) => (!reopen.open ? '' : reopen.reworkOpen ? 'still open' : 'not delivered again yet');
 
 function afterLine(reopen) {
   if (reopen === null) return NO_DELIVERY;
   const counted = `After your review: ${reopen.reopened} of ${reopen.deliveries} earlier deliveries here were reopened by your corrections`;
   if (reopen.reopened === 0) return counted;
-  if (reopen.reopened === 1) return `${counted}; that rework took ${num(reopen.highHours)} h${reopen.open ? ' so far (still open)' : ''}`;
-  return `${counted}; those reworks took ${range(reopen.lowHours, reopen.highHours)} h${reopen.open ? ' (the latest still open, counted so far)' : ''}`;
+  const state = reworkState(reopen);
+  if (reopen.reopened === 1) return `${counted}; that rework took ${num(reopen.highHours)} h${state ? ` so far (${state})` : ''}`;
+  return `${counted}; those reworks took ${range(reopen.lowHours, reopen.highHours)} h${state ? ` (the latest ${state}, counted so far)` : ''}`;
 }
 
 /** How earlier printed ranges did and how the range is adjusted (see calibration.mjs). */

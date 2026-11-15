@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { parseWorkItems } from '../home/tools/estimate/lib/items.mjs';
 import { computeEstimate } from '../home/tools/estimate/lib/compute.mjs';
 import { closingRange, findDeliveries, reopenSummary } from '../home/tools/estimate/lib/history.mjs';
-import { finishClock, formatEstimate, formatRefusal } from '../home/tools/estimate/lib/report.mjs';
+import { finishClock, formatEstimate, formatRefusal, printedBounds } from '../home/tools/estimate/lib/report.mjs';
 import { BASE_MS, HOUR_MS, fiveDoneRows, row, statusDoc } from './estimate-fixtures.mjs';
 
 const TZ = 'Asia/Tehran';
@@ -84,14 +84,14 @@ test('serial closing (d): an L row and two S rows at 3 lanes never finish before
 test('rework (f): a rework row after a delivery is 1 of 1 reopened, counted so far while it is open', () => {
   const rows = [...fiveDoneRows(), close({ id: 'C1', startedH: 13, doneH: 14.5 }), rework({ id: 'R1', startedH: 16 })];
   const result = estimate(rows, 17);
-  assert.deepEqual(result.reopen, { deliveries: 1, reopened: 1, lowHours: 1, highHours: 1, open: true });
+  assert.deepEqual(result.reopen, { deliveries: 1, reopened: 1, lowHours: 1, highHours: 1, open: true, reworkOpen: true });
   assert.equal(block(result)[3], 'After your review: 1 of 1 earlier deliveries here were reopened by your corrections; that rework took 1 h so far (still open)');
 });
 
 test('rework (f): a reopened delivery that was delivered again counts until that delivery', () => {
   const rows = [...fiveDoneRows(), close({ id: 'C1', startedH: 13, doneH: 14.5 }), rework({ id: 'R1', startedH: 16, doneH: 17 }), close({ id: 'C2', startedH: 17, doneH: 18 }), row({ id: 'O1' })];
   const items = itemsOf(rows);
-  assert.deepEqual(reopenSummary(items, findDeliveries(items, [], at(20)), at(20)), { deliveries: 2, reopened: 1, lowHours: 2, highHours: 2, open: false });
+  assert.deepEqual(reopenSummary(items, findDeliveries(items, [], at(20)), at(20)), { deliveries: 2, reopened: 1, lowHours: 2, highHours: 2, open: false, reworkOpen: false });
   assert.equal(block(computeEstimate(items, [], at(20)))[3], 'After your review: 1 of 2 earlier deliveries here were reopened by your corrections; that rework took 2 h');
 });
 
@@ -103,11 +103,12 @@ test('rework (f): no delivery prints the default After line; a plain build row a
   assert.equal(block(plain)[3], 'After your review: 0 of 1 earlier deliveries here were reopened by your corrections');
 });
 
-test('rates (g): a row that ran 1.4 of its 1.5 h leaves at most 0.1 h, and its running time enters the band', () => {
-  const done = [0, 2, 4, 6, 8].map((h, i) => row({ id: `D${i + 1}`, startedH: h, doneH: h + 1.5 }));
+test('rates (g): a row that ran 1.4 of its 1.5 h leaves at most 0.1 h, and its running time enters the band above the lowest done rate', () => {
+  const done = [[0, 1], [2, 1.5], [4, 1.5], [6, 1.5], [8, 1.5]].map(([h, d], i) => row({ id: `D${i + 1}`, startedH: h, doneH: h + d }));
   const result = estimate([...done, row({ id: 'O1', startedH: 18.6 })], 20);
   assert.equal(result.rate.running, 1);
-  near(result.rate.low, 1.4, 'band low is the running row');
+  near(result.rate.p25, 1.4, 'p25 of 1, 1.4, 1.5 x4 is the running row');
+  near(result.rate.low, 1, 'band low');
   near(result.rate.high, 1.5, 'band high');
   near(result.build.low, 0, 'build low');
   assert.ok(result.build.high <= 0.1 + 1e-9, `build high ${result.build.high}`);
@@ -125,11 +126,12 @@ test('hidden hours (c): the block has no days; a 20-minute job prints a 5-minute
 test('hidden hours (c): a range across local midnight names both days; finishClock adds the weekday only when the low end is not today', () => {
   const evening = estimate(fiveDoneRows([row({ id: 'O1' })]), 18); // finish 20:24Z-23:30Z = 23:54-03:00 local
   assert.equal(block(evening)[0], 'Finish: Tue 10 Nov 23:50 - Wed 11 Nov 03:00 (local +03:30, now 21:30)');
-  assert.equal(finishClock(evening, TZ), '23:50-03:00');
+  assert.equal(finishClock(evening, TZ), 'Tue 23:50 - Wed 03:00');
   const late = estimate(fiveDoneRows([row({ id: 'O1' })]), 20); // finish 22:24Z-01:30Z = 01:54-05:00 local, after midnight
   assert.equal(block(late)[0], 'Finish: Wed 11 Nov 01:50-05:00 (local +03:30, now 23:30)');
   assert.equal(finishClock(late, TZ), 'Wed 01:50-05:00');
-  assert.equal(finishClock(late, 'UTC'), '22:20-01:30');
+  assert.equal(finishClock(late, 'UTC'), 'Tue 22:20 - Wed 01:30');
+  assert.equal(finishClock(estimate(fiveDoneRows([row({ id: 'O1' })]), 14), TZ), '19:50-23:00'); // both ends today: clock only
   assert.equal(block(late, { ...INPUTS, timeZone: 'UTC' })[0], 'Finish: Tue 10 Nov 22:20 - Wed 11 Nov 01:30 (local +00:00, now 20:00)');
 });
 
@@ -179,4 +181,37 @@ test('the table refusals keep their reasons under No finish time: and add one Wh
   const swallowed = computeEstimate(itemsOf(fiveDoneRows([row({ id: 'O1' })])), [{ start: BASE_MS, end: at(20) }], at(20));
   assert.match(formatRefusal(swallowed, TZ), /\nWhat to do: correct started and done of those rows: they lie inside usage-limit windows\.$/);
   for (const refusal of [few, later, swallowed]) assert.doesNotMatch(formatRefusal(refusal, TZ), /Finish:/);
+});
+
+// ---- Review of a8ed49f ----
+
+test('review 1: a running row only raises the band: one started a minute ago leaves the build at 8-24 h', () => {
+  const rows = fiveDoneRows([row({ id: 'L1', size: 'L', raw: { started: '2026-11-10T13:59Z' } }), row({ id: 'M1', size: 'M' }), row({ id: 'M2', size: 'M' })]);
+  const result = estimate(rows, 14);
+  assert.deepEqual([result.rate.low, result.rate.high, result.rate.running], [1, 3, 0]);
+  assert.equal(block(result, { ...INPUTS, timeZone: 'UTC' })[0], 'Finish: Tue 10 Nov 23:20 - Wed 11 Nov 16:30 (local +00:00, now 14:00)');
+});
+
+test('review 4: a close row done 2 minutes ago is not yet a delivery; the closing has run 2 h since the last build row', () => {
+  const rows = fiveDoneRows([close({ id: 'C1', startedH: 13.5, doneH: 15 }), close({ id: 'C2' })]);
+  assert.deepEqual(findDeliveries(itemsOf(rows), [], Date.parse('2026-11-10T15:02Z')), []);
+  assert.deepEqual(findDeliveries(itemsOf(rows), [], Date.parse('2026-11-10T15:10Z')).map((d) => d.at), [at(15)]);
+  const result = computeEstimate(itemsOf(rows), [], Date.parse('2026-11-10T15:02Z'));
+  assert.equal(block(result, { ...INPUTS, timeZone: 'UTC' })[0], 'Finish: Tue 10 Nov 15:00-15:30 (local +00:00, now 15:02)');
+});
+
+test('review 6a: a row running past every measured rate says its remaining time is not known', () => {
+  const result = estimate(fiveDoneRows([row({ id: 'O1', startedH: 13.5 })]), 20); // ran 6.5 h, slowest done row 3 h/point
+  assert.equal(block(result)[1], 'Includes: 1 open row (1 running); build 0-0 h (O1, 1 lane; O1 past every measured rate, its remaining time is not known), then the closing phase 1.4-2.5 h in series (review, fix rounds, recheck, landing; default, not yet measured here)');
+});
+
+test('review 6b: the printed low end is never earlier than now before the 5-minute floor', () => {
+  const result = { ...estimate(fiveDoneRows([row({ id: 'O1' })]), 20), finish: { lowMs: at(19), highMs: at(23) } };
+  assert.equal(printedBounds(result, 'UTC').low, at(20));
+});
+
+test('review 6c: a reopened delivery whose rework rows are done says "not delivered again yet", not "still open"', () => {
+  const rows = [...fiveDoneRows(), close({ id: 'C1', startedH: 13, doneH: 14.5 }), rework({ id: 'R1', startedH: 16, doneH: 17 }), close({ id: 'C2', startedH: 17 })];
+  const result = estimate(rows, 18);
+  assert.equal(block(result)[3], 'After your review: 1 of 1 earlier deliveries here were reopened by your corrections; that rework took 2 h so far (not delivered again yet)');
 });

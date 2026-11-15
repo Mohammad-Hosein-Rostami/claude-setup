@@ -135,7 +135,7 @@ test('CLI: a --now run without --log-dir writes no log; with --log-dir it append
   const logged = runCli([status, '--transcripts', root, '--now', isoAt(13.5), '--log-dir', logDir], home);
   assert.equal(logged.status, 0, logged.stderr);
   const [line] = await logLines(logDir);
-  assert.deepEqual(JSON.parse(line), { v: 1, at: isoAt(13.5), status, open: ['O1'], points: 1, closing: 'default', raw: [1.4, 5], printed: ['2026-11-10T14:50Z', '2026-11-10T18:30Z'] });
+  assert.deepEqual(JSON.parse(line), { v: 1, at: isoAt(13.5), status, open: ['O1'], points: 1, closing: 'default', raw: [1.9, 5], printed: ['2026-11-10T15:20Z', '2026-11-10T18:30Z'] }); // O1's 0.5 h/point so far is below every done rate: band 1-3
   assert.ok(!line.includes(SECRET));
   assert.match(logged.stdout, /^Track record: no scored estimate yet;/m);
 });

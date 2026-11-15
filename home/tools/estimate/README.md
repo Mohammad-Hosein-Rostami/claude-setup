@@ -45,23 +45,26 @@ Heading `## Work items`, then the table (the header row is checked):
 All durations are wall-clock time minus the usage-limit windows found in the transcripts (waiting and nights stay in).
 
 - Rate band (hours per point): every done row's (done - started) / points, plus every running row's (now - started) /
-  points as a lower bound. Needs at least 5 done items with started, done and evidence. The band is min..max below 10
+  points when it is above the lowest done rate (a lower bound on that row's rate, so it can only raise the band). Needs at least 5 done items with started, done and evidence. The band is min..max below 10
   values, from 10 the nearest-rank p25..p75 (rank = ceil(p x n)).
 - Build part B(r) over the open build and rework rows: remaining = max(0, points x r - time already run); B = the larger of
   (sum of remaining / lanes) and the largest single remaining, so a long row is never split across lanes. Low end at the
-  band's low rate, high end at its high rate. Lanes = sum of done durations / their union (measured), clamped to
-  1..open build rows; close rows never count as lanes.
-- Delivery: the done time D of a `close:` row when every row started before D is done by D and no row starts in the 10
-  minutes after D (the real deliveries measured were followed by 19 and 470 quiet minutes, other quiet moments by 0-1).
+  band's low rate, high end at its high rate. Lanes = sum of the durations of all done rows (close rows included) / their
+  union (measured), clamped to 1..the number of open build and rework rows, so open close rows never add lanes. A running
+  row that has already run as long as the band's slowest rate allows is named in the Includes line: `O1 past every
+  measured rate, its remaining time is not known` (its remaining time counts as 0).
+- Delivery: the done time D of a `close:` row when every row started before D is done by D, no row starts in the 10
+  minutes after D, and those 10 minutes have passed (the real deliveries measured were followed by 19 and 470 quiet minutes, other quiet moments by 0-1).
 - Closing phase C: each delivery's tail = D minus the latest done of a non-close row since the previous delivery (else
   the first start since it). C = min..max of the last 5 tails once 2 exist; before that the default 1.4-2.5 h (the tails
   1.48, 2.40 and 2.43 h of two projects, 14-15 Nov, rounded outward), widened to include a single tail.
 - Elapsed E: 0 while a build or rework row is open; else the time since the latest non-close done after the last
   delivery (else the first start after it).
-- Finish = now + [B(low) + max(0, C low - E), B(high) + max(0, C high - E)], on the local clock: the low end floored and
-  the high end ceiled to 5 minutes, at least 5 minutes apart.
+- Finish = now + [B(low) + max(0, C low - E), B(high) + max(0, C high - E)], on the local clock: the low end (never
+  before now) floored and the high end ceiled to 5 minutes, at least 5 minutes apart.
 - Reopened: a delivery counts as reopened when a `rework:` row starts after it (up to the next delivery, or now); the
-  rework time runs from that first start to the next delivery, or to now ("so far").
+  rework time runs from that first start to the next delivery, or to now: `so far (still open)` while a rework row is
+  open, `so far (not delivered again yet)` once they are done.
 
 Usage-limit windows come from the lead transcripts (`<dir>/*.jsonl`, subagent folders are not read): a window starts at
 an assistant entry with `message.model == "<synthetic>"` whose text matches `/hit your .*limit/i` (so a synthetic
@@ -161,15 +164,16 @@ Long lists show the first five rows and `and N more`.
 
 ## Status line segment
 
-The status line shows `done ~14:50-16:15` (the Finish range on the local clock; `done ~Sun 00:50-02:25` when the low end is
-not today) for the project whose `<project dir>/STATUS.md` the tool accepts. Nothing is shown when there is no STATUS.md,
+The status line shows `done ~14:50-16:15` (the Finish range on the local clock; `done ~Sun 00:50-02:25` when both ends are
+on another day, `done ~Sun 23:20 - Mon 01:10` when they are on different days) for the project whose `<project dir>/STATUS.md` the tool accepts. Nothing is shown when there is no STATUS.md,
 the tool refuses (exit 3) or fails (exit 2), or the job is delivered. The status line never computes it: it reads one cache file,
 `~/.claude/state/estimate-segment/<sha256 of the STATUS.md path>.json`
-(`{path, text, mtimeMs, size, computedAt, refreshStartedAt}`; `text` is null after a refusal), and shows the text while the
-file's mtime and size still match, or for 15 minutes (`STALE_SHOW_MS`) after a change while a refresh runs. When the cache is
-missing or no longer matches, the render stamps `refreshStartedAt` and starts `statusline-cache.mjs <STATUS.md>` detached, at
+(`{path, text, highMs, mtimeMs, size, computedAt, refreshStartedAt}`; `text` and `highMs` are null after a refusal), and shows
+the text while the file's mtime and size still match, or for 15 minutes (`STALE_SHOW_MS`) after a change while a refresh runs,
+never after the printed high end (`highMs`) has passed. When the cache is missing, no longer matches or is 5 minutes old
+(`RECOMPUTE_AFTER_MS`: the finish moves with the clock even when the table does not), the render stamps `refreshStartedAt` and starts `statusline-cache.mjs <STATUS.md>` detached, at
 most once per 2 minutes (`REFRESH_INTERVAL_MS`) per file; that script runs the same lib as the CLI (transcripts included) and
-writes the cache atomically (0600, never through a link). Both constants are in `lib/segment-cache.mjs`.
+writes the cache atomically (0600, never through a link). The constants are in `lib/segment-cache.mjs`.
 
 ## Layout
 

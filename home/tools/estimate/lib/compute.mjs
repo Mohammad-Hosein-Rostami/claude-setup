@@ -1,7 +1,8 @@
 // The finish formula: work items + usage-limit windows -> when the whole job is finished (build part, then the closing phase).
 // Exports: computeEstimate(items, windows, now) -> result | refusal; MIN_DONE_ITEMS; MIN_BAND_ITEMS; STALE_AFTER_MS.
 // Invariants: pure; times are epoch ms, durations hours. Rate band: per done row (done - started - window overlap) / points,
-// plus per running row (now - started - overlap) / points as a lower bound; nearest-rank p25..p75 from MIN_BAND_ITEMS values,
+// plus per running row (now - started - overlap) / points when it is above the lowest done rate (a lower bound on that row's
+// real rate, so it may only raise the band; a row started a minute ago carries no information); nearest-rank p25..p75 from MIN_BAND_ITEMS values,
 // else min..max. Build part B(r) = max(sum of remaining / lanes, largest remaining) over open build and rework rows, remaining =
 // max(0, points x r - elapsed). Lanes = sum of done durations / their union (windows removed), clamped to 1..open build rows.
 // Finish = now + [B(low) + max(0, closing low - E), B(high) + max(0, closing high - E)], the closing phase measured from this
@@ -51,8 +52,10 @@ function measureDone(measured, windows) {
   });
 }
 
-/** The h/point band: done rates plus running rows' lower bounds; min..max below MIN_BAND_ITEMS values, else p25-p75. */
-function rateBand(done, runningRates) {
+/** The h/point band: done rates plus running rows' lower bounds above the lowest done rate; min..max below MIN_BAND_ITEMS values, else p25-p75. */
+function rateBand(done, allRunningRates) {
+  const lowestDone = Math.min(...done.map((d) => d.rate));
+  const runningRates = allRunningRates.filter((rate) => rate > lowestDone);
   const rates = [...done.map((d) => d.rate), ...runningRates].sort((a, b) => a - b);
   const rate = Object.fromEntries(Object.entries(PERCENTILES).map(([name, p]) => [name, nearestRank(rates, p)]));
   const band = rates.length >= MIN_BAND_ITEMS;
@@ -67,14 +70,18 @@ function timeline(measured, windows) {
   return { first, last, span: [{ start: first, end: last }], activeMs: lengthMs(union) - overlapMs(union, windows) };
 }
 
-/** The build part in hours for the low and high rate: open build and rework rows, running time subtracted, never below the largest row. */
+/**
+ * The build part in hours for the low and high rate: open build and rework rows, running time subtracted, never below the
+ * largest row. pastRate = ids of running rows that have run at least as long as the band's slowest rate allows for them.
+ */
 function buildPart(openBuild, rate, lanes, windows, now) {
   const elapsedHours = (i) => (i.started === null ? 0 : workingMs(i.started, now, windows) / HOUR_MS);
   const at = (r) => {
     const remaining = openBuild.map((i) => Math.max(0, i.points * r - elapsedHours(i)));
     return remaining.length === 0 ? 0 : Math.max(remaining.reduce((sum, h) => sum + h, 0) / lanes, ...remaining);
   };
-  return { low: at(rate.low), high: at(rate.high), ids: openBuild.map((i) => i.id), lanes };
+  const pastRate = openBuild.filter((i) => i.started !== null && i.points * rate.high <= elapsedHours(i)).map((i) => i.id);
+  return { low: at(rate.low), high: at(rate.high), ids: openBuild.map((i) => i.id), lanes, pastRate };
 }
 
 /** The delivered result when nothing is open and the last done row is the last delivery, else null. */
