@@ -1,12 +1,16 @@
 // Every reason the Bash guard can give, sorted into named classes. lib/bounce-once.mjs uses them to tell a reason the agent can fix by
 // rewriting its command (a bounce class) from one that still needs the owner, and to name the latter in its deny text without repeating
-// any command text, path or host: a class name is fixed text.
-// Exports: BOUNCE_CLASS (the four bounce classes by key), BOUNCE_CLASSES, ASK_CLASSES (every other class), reasonClass(reason) -> name | undefined.
+// any command text, path or host: a class name is fixed text. decide() uses them to keep advice (quality rules) apart from what asks.
+// Exports: BOUNCE_CLASS (the four bounce classes by key), BOUNCE_CLASSES, ADVICE_CLASS, ADVICE_CLASSES, ASK_CLASSES (every class that asks
+// the owner), reasonClass(reason) -> name | undefined, isAdviceReason(reason), splitAdvice(reasons) -> {asks, advice}.
 // The bounce classes match exactly (the reason constants of lib/shell-hazards.mjs and lib/raw-risk.mjs, a literal-secret reason of
-// lib/verdict.mjs); every other class matches the fixed part of its rule's wording, so a reworded rule loses its class.
+// lib/verdict.mjs). The advice classes match exactly too, against the closed set of texts their rules can give: being advice is what lets
+// a command run without the owner, so another rule's reason that merely contains advice wording (from command text) stays an ask. Every
+// other class matches the fixed part of its rule's wording, so a reworded rule loses its class.
 // tests/pre-bash-guard-reason-classes.test.mjs checks that every reason the guard gives for the strings in its tests has a class and that
 // each class has a test command, so a new rule without a class, or a class without a test, fails the suite.
 // A reason only the backstop parser found (it ends with BACKSTOP_MARK) has the class of the plain reason.
+import { LOCKFILES, lockfileAdvice } from './command-checks.mjs';
 import { RISKY_REASON } from './raw-risk.mjs';
 import { SPLIT_VARIABLE_REASON, VARIABLE_COMMAND_REASON } from './shell-hazards.mjs';
 import { BACKSTOP_MARK, DESTRUCTIVE_PREFIX, secretKindOf } from './verdict.mjs';
@@ -25,6 +29,14 @@ const EXACT_BOUNCE_REASONS = new Map([
   [RISKY_REASON, BOUNCE_CLASS.riskyWord],
   [`${DESTRUCTIVE_PREFIX}${RISKY_REASON}`, BOUNCE_CLASS.riskyWord],
 ]);
+
+// Quality rules: the hook denies the first send with the advice and lets the identical retry run (lib/bounce-once.mjs), never the owner.
+export const ADVICE_CLASS = Object.freeze({
+  lockfile: 'hand-edited lockfile',
+});
+export const ADVICE_CLASSES = Object.values(ADVICE_CLASS);
+// every text an advice rule can give, exactly (see the header)
+const EXACT_ADVICE_REASONS = new Map([...LOCKFILES].map((name) => [lockfileAdvice(name), ADVICE_CLASS.lockfile]));
 
 // [class name, the fixed part of its rule's reason]. Names hold no comma or semicolon: a deny text lists them joined with "; ".
 const ASK_CLASS_PATTERNS = [
@@ -55,7 +67,6 @@ const ASK_CLASS_PATTERNS = [
   ['keychain secret print', /^security \S+ prints a stored secret into the transcript/],
   ['gh auth token print', /^gh auth token prints a stored secret into the transcript/],
   ['gh ssh-key add of a private key', /^gh ssh-key add uploads a key file that is not a \.pub public key/],
-  ['hand-edited lockfile', /^\S+ is generated; the package manager should write it/],
   ['production host write', /, a production host; confirm with the owner/],
   ['credential file next to a sender', / in the same command line as a private credential file \(/],
   ['shell reading commands from stdin', /^\S+ reads its commands from stdin/],
@@ -69,13 +80,33 @@ const ASK_CLASS_PATTERNS = [
 ];
 export const ASK_CLASSES = ASK_CLASS_PATTERNS.map(([name]) => name);
 
+const withoutMark = (reason) => (reason.endsWith(BACKSTOP_MARK) ? reason.slice(0, -BACKSTOP_MARK.length) : reason);
+
 /**
- * @param {string} reason ONE ask reason (decide's `reasons`, or decideSafely's "guard error")
- * @returns {string | undefined} its class name (a BOUNCE_CLASSES or ASK_CLASSES entry), or undefined for wording no class knows
+ * @param {string} reason ONE reason (decide's `reasons` or `advice`, or decideSafely's "guard error")
+ * @returns {string | undefined} its class name (a BOUNCE_CLASSES, ADVICE_CLASSES or ASK_CLASSES entry), or undefined for wording no class knows
  */
 export function reasonClass(reason) {
-  const plain = reason.endsWith(BACKSTOP_MARK) ? reason.slice(0, -BACKSTOP_MARK.length) : reason;
+  const plain = withoutMark(reason);
+  if (EXACT_ADVICE_REASONS.has(plain)) return EXACT_ADVICE_REASONS.get(plain);
   if (EXACT_BOUNCE_REASONS.has(plain)) return EXACT_BOUNCE_REASONS.get(plain);
   if (secretKindOf(plain) !== undefined) return BOUNCE_CLASS.secret;
   return ASK_CLASS_PATTERNS.find(([, pattern]) => pattern.test(plain))?.[0];
+}
+
+/**
+ * @param {string} reason ONE reason, with or without the backstop mark
+ * @returns {boolean} true only for a text an advice rule gives (an exact match, see the header)
+ */
+export const isAdviceReason = (reason) => EXACT_ADVICE_REASONS.has(withoutMark(reason));
+
+/**
+ * Splits the reasons of one command line into those that go to the owner (asks, and bounces whose retry asks) and advice, which never does.
+ * @param {string[]} reasons every reason found, advice included
+ * @returns {{asks: string[], advice: string[]}} asks unchanged and in order; advice without the backstop mark and without repeats
+ */
+export function splitAdvice(reasons) {
+  const asks = reasons.filter((reason) => !isAdviceReason(reason));
+  const advice = [...new Set(reasons.filter(isAdviceReason).map(withoutMark))];
+  return { asks, advice };
 }

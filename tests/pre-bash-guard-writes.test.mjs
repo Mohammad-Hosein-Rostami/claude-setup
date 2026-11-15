@@ -111,7 +111,7 @@ test('P2c: reading .env files, templates and lockfiles is never blocked', () => 
   }
 });
 
-test('lockfile hand-edits still ask (write guard, not a read rule)', () => {
-  assert.equal(decide('sed -i s/a/b/ pnpm-lock.yaml', ctx).ask, true);
-  assert.equal(decide('echo x > yarn.lock', ctx).ask, true);
+test('lockfile hand-edits still get the lockfile rule, now as advice (write guard, not a read rule)', () => {
+  assert.match(decide('sed -i s/a/b/ pnpm-lock.yaml', ctx).advice[0], /^pnpm-lock\.yaml is generated/);
+  assert.match(decide('echo x > yarn.lock', ctx).advice[0], /^yarn\.lock is generated/);
 });

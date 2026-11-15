@@ -7,9 +7,11 @@
 // still sees a secret the value extraction missed: nested, partial or re-quoted text). Anything uncertain shows the dialog.
 // A remembered value is checked before the bounce, so an already allowed secret is never bounced.
 // A secret-only dialog waits CLAUDE_ASK_SECRET_TIMEOUT_S (default 30 s, never more than CLAUDE_ASK_TIMEOUT_S) before going ahead as Allow.
+// Advice (the ask's `advice`, quality rules) never changes this path: "secret-only" is judged without it, and its text is only appended to
+// the reason the dialog, the CLI's ask and the log show (and to a bounce's deny text, lib/bounce-once.mjs).
 // Invariants: never remembers on deny, no-gui, dialog-failed or bounce; no raw value is logged or stored.
 import { isRemembered, remember } from './allowed-literals.mjs';
-import { bounceOnce } from './bounce-once.mjs';
+import { bounceOnce, withAdvice } from './bounce-once.mjs';
 import { logDecision } from './guard-log.mjs';
 import { literalSecretValues } from './secrets.mjs';
 import { ASK_TIMEOUT_ENV, askOwner, secretAskTimeoutSeconds } from './timed-ask.mjs';
@@ -30,7 +32,7 @@ export function neutralise(command, values) {
  * The hook stdout for an ask. A secret-only ask whose values the owner already allowed in this session is silent (logged as
  * "remembered") when the command is also clean with those values neutralised; otherwise a command the agent can rewrite is bounced the
  * first time (lib/bounce-once.mjs), and the rest get the timed dialog, where an allow or timeout on a secret-only ask is remembered.
- * @param {{reason: string, reasons?: string[], errorClass?: string}} ask the ask from decideSafely
+ * @param {{reason: string, reasons?: string[], advice?: string[], errorClass?: string}} ask the ask from decideSafely
  * @param {{command: string, cwd: string, input: {session_id?: string, agent_id?: string}, recheck: (text: string) => {allow?: boolean}}} call
  *   the Bash call being guarded; recheck runs the same rules (same context, prod hosts included) on other text
  * @param {Record<string, string | undefined>} env process environment (HOME, dialog, log)
@@ -38,7 +40,7 @@ export function neutralise(command, values) {
  */
 export function askUnlessRemembered(ask, { command, cwd, input, recheck }, env = process.env) {
   // after a rules error the log gets the error class and no command text (the dialog still shows it)
-  const reason = ask.errorClass ? `${ask.reason}: ${ask.errorClass}` : ask.reason;
+  const reason = ask.errorClass ? `${ask.reason}: ${ask.errorClass}` : withAdvice(ask.reason, ask.advice);
   const secretOnly = !ask.errorClass && isSecretOnlyReason(ask.reason);
   const values = secretOnly ? literalSecretValues(command) : [];
   if (isRemembered(input.session_id, values, env) && recheck(neutralise(command, values)).allow === true) {

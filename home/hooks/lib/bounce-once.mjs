@@ -2,7 +2,7 @@
 // timed dialog that nobody may be there to answer (it goes ahead after 30-180 s). The identical command sent again (same text, same cwd,
 // same session) takes the normal ask path, so the owner still decides whenever the agent really needs that exact command.
 // Exports: bounceText(reasons) -> deny text | undefined, bounceOnce(ask, call, env) -> hook stdout | undefined, bouncedDir(env),
-// MAX_BOUNCED, RETRY_LINE.
+// MAX_BOUNCED, RETRY_LINE, adviceOnce(advice, call, env) -> hook stdout, withAdvice(text, advice) -> text.
 // Bounce classes (lib/reason-classes.mjs), and only these: the command word is a variable or substitution; a variable holding several
 // words run as the command; a risky word inside shell expansion (plain and DESTRUCTIVE); a literal secret. An ask with none of them (push,
 // publish, rm outside the project, prod writes, stdin shells, credentials, guard errors, "too long") is untouched. A command with a bounce
@@ -14,10 +14,22 @@
 // is stored. At most MAX_BOUNCED digests (the oldest is dropped). The match is exact: one changed character (a trailing blank) makes a new
 // command, which is judged fresh.
 // Log: one line with outcome "bounce" and the bounce classes in `class`; it holds no command or reason text.
-// Invariants: never an allow; a bounce only once its digest is stored, so the retry can ask; anything uncertain (no or odd session id, an
+// Invariants of bounceOnce: never an allow; a bounce only once its digest is stored, so the retry can ask; anything uncertain (no or odd session id, an
 // unusable, corrupt or oversized store, a failed write, an exception) returns undefined, which is today's ask. Two hooks writing at the same
 // moment cannot corrupt the file (temp file + rename), but one may drop the other's new digest: that command is then bounced once more,
 // never allowed. Subagents share their session's id, so they share its store.
+// Advice (adviceOnce): a quality rule (lib/reason-classes.mjs ADVICE_CLASSES), not a safety rule. decide() returns it apart from the reasons
+// that ask, as `advice`, so it can never hide or replace one. A command whose only reasons are advice is denied once with the advice (log
+// outcome "advice") and its identical retry runs without the owner (outcome "advice-retry"); same store, same match as a bounce. Next to a
+// reason that asks or bounces, that path decides as before and the advice text is only appended to its message (withAdvice).
+// Decision table: what the hook answers, by the kinds of reasons decide() found ("ask" = lib/remembered-ask.mjs: a secret the owner already
+// allowed runs silently, else the timed dialog, or the CLI's ask without a GUI):
+//   reasons found                    | first send                                  | identical retry (same text, cwd, session)
+//   none                             | runs                                        | runs
+//   advice only                      | deny: the advice (adviceOnce)               | runs, never the owner
+//   ask, no bounce class (+ advice)  | ask (+ the advice text)                     | ask (+ the advice text)
+//   bounce class (+ ask) (+ advice)  | deny: the rewrite (+ the advice text)       | ask (+ the advice text)
+//   store unusable or any failure    | advice only: runs (a deny could repeat forever); every other row: ask
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -94,12 +106,26 @@ function parseDigests(text) {
   }
 }
 
-/** @returns {boolean} true only when this session never bounced this digest before AND it is now stored */
-function storeFirstBounce(session, digest, env) {
+/**
+ * Records one send of a command in this session's store.
+ * @returns {'first' | 'retry' | undefined} 'first' when the digest was not stored before and now is; 'retry' when it was stored before;
+ *   undefined when the store is unusable or damaged, or the write failed
+ */
+function recordSend(session, digest, env) {
   const stored = parseDigests(readSessionFile(bouncedDir(env), session, MAX_STORE_BYTES));
-  if (stored === undefined || stored.includes(digest)) return false;
-  return writeSessionFile(bouncedDir(env), session, JSON.stringify({ digests: [...stored, digest].slice(-MAX_BOUNCED) }));
+  if (stored === undefined) return undefined;
+  if (stored.includes(digest)) return 'retry';
+  return writeSessionFile(bouncedDir(env), session, JSON.stringify({ digests: [...stored, digest].slice(-MAX_BOUNCED) })) ? 'first' : undefined;
 }
+
+/**
+ * @param {string} text the message of today's path (a deny text, or an ask reason)
+ * @param {string[]} [advice] decide's `advice`
+ * @returns {string} text with each advice text appended on its own line (unchanged without advice)
+ */
+export const withAdvice = (text, advice = []) => [text, ...advice].join('\n');
+
+const ADVICE_HEADER = 'Not run: the guard sent this command back once with advice (the owner was not asked).';
 
 /**
  * The hook stdout for a bounce, or undefined when this ask takes the normal path (dialog or the CLI's ask).
@@ -111,11 +137,32 @@ function storeFirstBounce(session, digest, env) {
 export function bounceOnce(ask, { command, cwd, input }, env = process.env) {
   try {
     const text = Array.isArray(ask.reasons) ? bounceText(ask.reasons) : undefined; // a "guard error" ask has no reasons
-    if (text === undefined || !storeFirstBounce(input.session_id, digestOf(cwd, command), env)) return undefined;
+    if (text === undefined || recordSend(input.session_id, digestOf(cwd, command), env) !== 'first') return undefined;
     const bounced = unique(ask.reasons.map(reasonClass).filter((name) => BOUNCE_CLASSES.includes(name)));
     logDecision({ hook: 'pre-bash-guard', tool: 'Bash', decision: 'deny', outcome: 'bounce', class: bounced.join(', '), cwd, session: input.session_id }, env);
-    return decisionOutput({ decision: 'deny', reason: text });
+    return decisionOutput({ decision: 'deny', reason: withAdvice(text, ask.advice) });
   } catch {
     return undefined; // a failure in this step falls back to today's ask, never to an allow
+  }
+}
+
+/**
+ * The hook stdout for a command whose only reasons are advice (decide's `allow: true` with `advice`); see the decision table above.
+ * @param {string[]} advice decide's `advice` (fixed texts, see lib/reason-classes.mjs)
+ * @param {{command: string, cwd: string, input: {session_id?: unknown}}} call the Bash call being guarded
+ * @param {Record<string, string | undefined>} env process environment (HOME, CLAUDE_GUARD_LOG)
+ * @returns {string} a PreToolUse deny JSON line on the first send; '' (no decision: the command runs) on the identical retry, and when
+ *   the store is unusable or anything fails, so a deny never repeats and the owner is never asked
+ */
+export function adviceOnce(advice, { command, cwd, input }, env = process.env) {
+  try {
+    const send = recordSend(input.session_id, digestOf(cwd, command), env);
+    if (send === undefined) return '';
+    const first = send === 'first';
+    const classes = unique(advice.map(reasonClass)).join(', ');
+    logDecision({ hook: 'pre-bash-guard', tool: 'Bash', decision: first ? 'deny' : 'allow', outcome: first ? 'advice' : 'advice-retry', class: classes, cwd, session: input.session_id }, env);
+    return first ? decisionOutput({ decision: 'deny', reason: [ADVICE_HEADER, ...advice.map((line) => `- ${line}`)].join('\n') }) : '';
+  } catch {
+    return ''; // advice is never a reason to ask: a failure here lets the command run, as decide() allowed it
   }
 }

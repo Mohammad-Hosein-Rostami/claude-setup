@@ -4,15 +4,16 @@
 // Exports: checkGit(args, assigns), checkDiskWipe(cmd, args), checkLockfileEdit(cmd, args), checkHiddenRm(cmd, args),
 // checkStdinRm(cmd, args, before), checkStdinScriptRm(script, before), checkKeychainPrint(cmd, args), checkGhSecret(cmd, args) - each
 // returns an ask reason, or undefined when the command is fine; secretPrintOf(cmd, args) and isSecretPrintReason(reason) serve
-// lib/captured-read.mjs.
-// Pure, no I/O. Every rule is an ask (the hook shows a timed dialog); a destructive one starts with "DESTRUCTIVE: ".
+// lib/captured-read.mjs; LOCKFILES and lockfileAdvice(name) serve lib/reason-classes.mjs.
+// Pure, no I/O. Every rule is an ask (the hook shows a timed dialog); a destructive one starts with "DESTRUCTIVE: ". The one exception is
+// checkLockfileEdit: a quality rule, its text is advice (lib/bounce-once.mjs: denied once with the fix, the identical retry runs).
 import { commandName, commandOf } from './command-of.mjs';
 import { parsePushArgs, pushAsk } from './outward.mjs';
 import { RECURSIVE_FLAG } from './rm-paths.mjs';
 import { basenameOf, flagsOf, segments } from './shell-words.mjs';
 import { destructive } from './verdict.mjs';
 
-const LOCKFILES = new Set(['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lockb']);
+export const LOCKFILES = new Set(['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lockb']);
 // rm is allowed on lockfiles (delete and reinstall is a normal fix); cp only writes its last argument.
 const FILE_WRITERS = new Set(['mv', 'cp', 'tee', 'truncate']);
 const GIT_VALUE_OPTIONS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace']);
@@ -107,12 +108,22 @@ function redirectTargets(tokens) {
   return out;
 }
 
+/**
+ * The advice for a hand-edited lockfile: one fixed text per name in LOCKFILES, and lib/reason-classes.mjs matches exactly these texts, so
+ * no other rule's reason (whatever command text it carries) can pass for advice and skip the owner.
+ * @param {string} name a LOCKFILES name
+ * @returns {string} the advice text
+ */
+export const lockfileAdvice = (name) => `${name} is generated: let the package manager write it (pnpm install, npm install, yarn, bun install). `
+  + 'To delete or move it on purpose, send the same command again and it runs.';
+
+/** A write to a lockfile (`sed -i`, `perl -i`, mv, cp, tee, truncate, a redirect): its advice (a quality rule, not an ask), or undefined. */
 export function checkLockfileEdit(cmd, args) {
   const inPlace = ['sed', 'perl'].includes(cmd) && flagsOf(args).some((f) => /^-[a-zA-Z]*i/.test(f));
   const writes = FILE_WRITERS.has(cmd) || inPlace;
   const written = cmd === 'cp' ? args.filter((a) => !a.startsWith('-')).slice(-1) : args;
   const touched = [...(writes ? written : []), ...redirectTargets(args)].find(isLockfile);
-  return touched === undefined ? undefined : `${basenameOf(touched)} is generated; the package manager should write it, not a hand edit`;
+  return touched === undefined ? undefined : lockfileAdvice(basenameOf(touched));
 }
 
 /**

@@ -56,10 +56,10 @@ const DENIED = {
     'git push --mirror', 'git push origin +main', 'git push --delete origin x', 'git push -d origin x', 'git push origin :main',
     'git push origin :refs/tags/v1',
   ],
-  'lockfile edits': [
-    'sed -i s/a/b/ pnpm-lock.yaml', 'echo x > yarn.lock', 'cp a package-lock.json', 'mv x pnpm-lock.yaml', 'echo x &> bun.lockb',
-  ],
 };
+
+// A quality rule, not a safety rule: allowed by the rules, with advice the hook shows once (tests/pre-bash-guard-advice.test.mjs).
+const LOCKFILE_EDITS = ['sed -i s/a/b/ pnpm-lock.yaml', 'echo x > yarn.lock', 'cp a package-lock.json', 'mv x pnpm-lock.yaml', 'echo x &> bun.lockb'];
 
 const ALLOWED = [
   'git commit -m "feat: x"', 'git commit -am fix', 'rm -r ./dist', 'rm -rf node_modules', 'rm -rf dist 2>&1',
@@ -91,6 +91,13 @@ for (const [group, commands] of Object.entries(DENIED)) {
 
 test('decide allows normal dev commands', () => {
   for (const command of ALLOWED) assert.deepEqual(decide(command, ctx), { allow: true }, command);
+});
+
+test('decide gives lockfile edits advice, not an ask', () => {
+  for (const command of LOCKFILE_EDITS) {
+    const r = decide(command, ctx);
+    assert.deepEqual([r.allow, r.advice.length], [true, 1], command);
+  }
 });
 
 test('S3: $HOME, / and a drive root never count as the project', () => {
@@ -181,7 +188,7 @@ test('decide: deny reasons name the problem', () => {
   assert.match(decide('git push -fu origin main', ctx).reason, /force push/);
   assert.match(decide('git commit -n', ctx).reason, /--no-verify/);
   assert.match(decide('rm -rf ~/x', ctx).reason, /outside the project/);
-  assert.match(decide('echo x > pnpm-lock.yaml', ctx).reason, /generated/);
+  assert.match(decide('echo x > pnpm-lock.yaml', ctx).advice[0], /generated/);
 });
 
 test('decide: unknown cwd only denies relative rm -r targets', () => {

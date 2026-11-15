@@ -14,7 +14,7 @@ import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { allowedLiteralsDir, isRemembered, remember } from '../home/hooks/lib/allowed-literals.mjs';
-import { bouncedDir, bounceOnce } from '../home/hooks/lib/bounce-once.mjs';
+import { adviceOnce, bouncedDir, bounceOnce } from '../home/hooks/lib/bounce-once.mjs';
 import { logDecision } from '../home/hooks/lib/guard-log.mjs';
 import { readSessionFile, writeSessionFile } from '../home/hooks/lib/session-store.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
@@ -24,6 +24,7 @@ const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.m
 const posix = { skip: process.platform === 'win32' }; // links need extra rights on Windows, and it has no FIFOs or owner ids
 const PROJECT = resolve('/work/proj');
 const VARIABLE_COMMAND = '$CMD --version';
+const ADVICE_COMMAND = 'sed -i s/a/b/ pnpm-lock.yaml';
 const SECRET_COMMAND = `KEY='${['i6IW', 'fakefilekey', '0123'].join('')}' ./fetch-figma.sh`;
 const VALUE = 'alpha-value-123';
 const EIGHT_DAYS_AGO = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
@@ -43,6 +44,8 @@ const STORES = [
     remember('sess-1', [VALUE], env);
     return isRemembered('sess-1', [VALUE], env);
   }],
+  // advice shares the bounce store: it worked when the first send was denied (an unusable store lets the command run instead)
+  ['guard-bounced (advice)', bouncedDir, (env) => adviceOnce(decide(ADVICE_COMMAND, { cwd: PROJECT }).advice, { command: ADVICE_COMMAND, cwd: PROJECT, input: { session_id: 'sess-1' } }, env) !== ''],
 ];
 
 const makeOld = (path) => utimesSync(path, EIGHT_DAYS_AGO, EIGHT_DAYS_AGO);
@@ -237,6 +240,9 @@ test('a FIFO at both session files or at the guard log never makes the hook wait
     mkfifo(join(dirOf({ HOME: home }), 'sess-1.json'));
   }
   assert.equal(runHook(home, SECRET_COMMAND).decision, 'ask', 'both stores unusable: today\'s ask');
+  const advice = runHook(home, ADVICE_COMMAND);
+  assert.equal(advice.decision, 'allow', 'advice with an unusable store: the command runs, no deny that repeats, no owner');
+  assert.ok(advice.ms < HOOK_TIMEOUT_MS / 4, `advice answered at once (${advice.ms} ms)`);
   const logHome = privateEnv().HOME;
   mkfifo(join(logHome, 'guard.jsonl'));
   assert.equal(runHook(logHome, VARIABLE_COMMAND).decision, 'deny', 'the bounce works; only the log line is skipped');

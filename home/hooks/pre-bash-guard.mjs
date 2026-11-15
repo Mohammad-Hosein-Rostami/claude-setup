@@ -1,13 +1,15 @@
 // PreToolUse(Bash) guard. Reads the hook JSON from stdin, never evaluates the command.
-// Exports: decide(command, {cwd, project, prodHosts}) -> {allow: true} | {allow: false, ask: true, reason, reasons};
+// Exports: decide(command, {cwd, project, prodHosts}) -> {allow: true, advice?} | {allow: false, ask: true, reason, reasons, advice?};
 // segments(command) -> string[][]. Parsing lives in lib/shell-words.mjs and lib/command-of.mjs.
-// Nothing is denied for good. Every rule hit is an ASK, and the hook answers it with a timed native dialog (lib/timed-ask.mjs:
+// Nothing is denied for good. Every safety rule hit is an ASK, and the hook answers it with a timed native dialog (lib/timed-ask.mjs:
 // Allow is the default, no answer in 180 s (CLAUDE_ASK_TIMEOUT_S) goes ahead as Allow, only a click on Deny denies); with no
 // GUI (ssh, CI, no display) or a failing dialog it falls back to the CLI's own "ask" prompt, which also appears in
 // bypassPermissions mode (verified on CLI 2.1.323). Bounce once (lib/bounce-once.mjs): when a reason can be fixed by rewriting the
 // command (a variable command word, a risky word inside shell expansion, a literal secret), the first send is denied with the rewrite
 // instead, naming by class (lib/reason-classes.mjs) any other reason that will still ask; the identical command sent again gets the ask
-// above. Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
+// above. ADVICE (a quality rule: a hand-edited lockfile) is kept apart from the asks: alone, the first send is denied with the fix and the
+// identical retry runs without the owner; next to an ask or bounce it is only appended (decision table: lib/bounce-once.mjs).
+// Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
 // Rules. DESTRUCTIVE (the dialog says "DESTRUCTIVE: ..."): force push (incl. -fu clusters and +refspec), `push --mirror`,
 // remote branch delete, rm -r outside the project (temp dirs allowed, `cd` tracked within one command line, `cd` to `~`,
 // `$HOME` and `$(git rev-parse --show-toplevel)` (from inside the project only) is resolved, as are leading
@@ -16,7 +18,7 @@
 // $HOME, `/` and a drive root never count as the project), disk wipes (dd of=/dev/x, mkfs, wipefs, shred/blkdiscard on a device), rm -r run
 // by xargs or parallel, also inside the `sh -c` script they run (its targets come from stdin; `xargs rm -f` is fine; lib/command-checks.mjs).
 // Plain ASK: git
-// --no-verify (and unique prefixes), `git -c core.hooksPath`, `HUSKY=0 git`, hand-editing lockfiles, a literal secret in the
+// --no-verify (and unique prefixes), `git -c core.hooksPath`, `HUSKY=0 git`, a literal secret in the
 // command (lib/secrets.mjs; the text never repeats it), `git push` (not --dry-run), `gh release *`, `gh pr merge`, package
 // publish (lib/outward.mjs), ssh/scp/rsync/psql/mysql that write to a production host (lib/remote.mjs; list in
 // ~/.claude/private/prod-hosts), `security find-*-password -w|-g` / `dump-keychain` / `export` and `gh auth token` (print a stored secret),
@@ -81,6 +83,8 @@ import { outwardAsk } from './lib/outward.mjs';
 import { readProdHosts, remoteAsk } from './lib/remote.mjs';
 import { checkRm, expandHome, expandVars, isUnder, nativePath, newScope, sameFile, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
 import { askUnlessRemembered } from './lib/remembered-ask.mjs';
+import { adviceOnce } from './lib/bounce-once.mjs';
+import { isAdviceReason, splitAdvice } from './lib/reason-classes.mjs';
 import { findLiteralSecret } from './lib/secrets.mjs';
 import { shellHazards } from './lib/shell-hazards.mjs';
 import { askOwner } from './lib/timed-ask.mjs';
@@ -141,11 +145,12 @@ const HOST_VARIABLES = ['PGHOST', 'PGHOSTADDR', 'PGSERVICE', 'MYSQL_HOST'];
 /** Host variables set earlier in the same command line (`export PGHOST=prod-db` then `psql`), as `NAME=value` words like a prefix assignment. */
 const hostVariables = (vars = new Map()) => HOST_VARIABLES.filter((name) => vars.has(name)).map((name) => `${name}=${vars.get(name)}`);
 
-/** `alias p='git push -f'`: the alias body is a command line, so it is judged like one. */
+/** `alias p='git push -f'`: the alias body is a command line, so it is judged like one; a body with advice only gives that advice. */
 function checkAlias(args, env) {
   const bodies = args.filter((word) => word.includes('=')).map((word) => word.slice(word.indexOf('=') + 1));
   const reasons = bodies.flatMap((body) => reasonsOf(body, env));
-  return reasons.length > 0 ? `alias defines a command that asks: ${reasons[0]}` : undefined;
+  const asks = reasons.filter((reason) => !isAdviceReason(reason));
+  return asks.length > 0 ? [`alias defines a command that asks: ${asks[0]}`] : reasons;
 }
 
 /** The rules that look at one command's own name and words, and the words before it (`before`: wrappers; no shell recursion, no scan). */
@@ -161,7 +166,7 @@ function checkSimple({ cmd, args, assigns, before }, env) {
     checkDiskWipe(cmd, args),
     checkLockfileEdit(cmd, args),
     outwardAsk(cmd, args) ?? remoteAsk(cmd, args, [...assigns, ...hostVariables(env.vars)], env.prodHosts),
-    cmd === 'alias' ? checkAlias(args, env) : undefined,
+    ...(cmd === 'alias' ? checkAlias(args, env) : []),
   ].filter((reason) => reason !== undefined);
 }
 
@@ -215,8 +220,9 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
  * @param {string} command raw command text
  * @param {{cwd?: string|null, project?: string, prodHosts?: string[]}} ctx absolute paths (cwd null means "unknown
  *   directory") and the private production-host list (see lib/remote.mjs)
- * @returns {{allow: true} | {allow: false, ask: true, reason: string, reasons: string[]}} reason joins every rule hit, destructive
- *   first; reasons holds the same hits one by one, in the same order
+ * @returns {{allow: true, advice?: string[]} | {allow: false, ask: true, reason: string, reasons: string[], advice?: string[]}} reason
+ *   joins every rule hit, destructive first; reasons holds the same hits one by one, in the same order; advice (present only when some
+ *   quality rule hit) is never in reason or reasons: it never asks, and the hook shows it once (lib/bounce-once.mjs)
  */
 export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts = [] } = {}) {
   if (command.length > MAX_COMMAND_CHARS) return ask(['command too long to check; read it before allowing']);
@@ -226,14 +232,15 @@ export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts 
   const known = new Set(primary);
   const backstop = reasonsOf(command, { ...ctx, parse: lex }).filter((reason) => !known.has(reason)).map((reason) => `${reason} (matched in raw text)`);
   const recheck = (text) => [...reasonsOf(text, ctx), ...reasonsOf(text, { ...ctx, parse: lex })];
-  const reasons = withoutCapturedPrints([...new Set([...primary, ...backstop])], command, recheck); // `export T=$(gh auth token)` prints nothing
+  const found = withoutCapturedPrints([...new Set([...primary, ...backstop])], command, recheck); // `export T=$(gh auth token)` prints nothing
+  const { asks: reasons, advice } = splitAdvice(found); // advice must not make the backstop below redundant: it lets a command run
   // fail to ask: a hidden-execution construct next to a dangerous word asks even when both parsers saw nothing; only a non-secret reason
   // makes it redundant, so a literal secret never hides it (a secret-only ask is shortened and can be remembered, see lib/remembered-ask.mjs)
   const risky = riskyWordInExpansion(command, prodHosts);
   if (risky !== undefined && reasons.every(isSecretOnlyReason)) reasons.push(risky);
-  if (reasons.length === 0) return allow();
   reasons.sort((x, y) => Number(y.startsWith(DESTRUCTIVE_PREFIX)) - Number(x.startsWith(DESTRUCTIVE_PREFIX)));
-  return ask(reasons);
+  const verdict = reasons.length === 0 ? allow() : ask(reasons);
+  return advice.length === 0 ? verdict : { ...verdict, advice };
 }
 
 export const GUARD_ERROR_REASON = 'guard error';
@@ -283,6 +290,7 @@ async function main() {
   const rules = (text, ctx) => decide(text, { ...ctx, prodHosts: readProdHosts() }); // reading the host list is inside the guard too
   const r = decideSafely(command, { cwd, project }, rules);
   if (r.ask) process.stdout.write(askUnlessRemembered(r, { command, cwd, input, recheck: (text) => decideSafely(text, { cwd, project }, rules) }));
+  else if (r.advice) process.stdout.write(adviceOnce(r.advice, { command, cwd, input })); // advice only: never the owner
   logCodeWrites(command, input, cwd); // harmless when the owner denied: the typecheck gate only reads files that exist
 }
 
