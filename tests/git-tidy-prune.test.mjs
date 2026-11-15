@@ -6,7 +6,8 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { addWorktree, commit, git, lines, makeRepo, snapshot, tidy, withOrigin } from './git-tidy-helpers.mjs';
 
-const prune = (dir, ...extra) => tidy(['prune', dir, ...extra], { cwd: dir });
+// Most tests build their worktrees seconds before pruning them, so they lift the "used in the last hour" rule.
+const prune = (dir, ...extra) => tidy(['prune', dir, '--include-recent', ...extra], { cwd: dir });
 const apply = (dir, ...extra) => prune(dir, '--apply', ...extra);
 const branches = (dir) => git(dir, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').split('\n');
 

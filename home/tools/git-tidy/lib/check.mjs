@@ -1,19 +1,22 @@
 // Purpose: `git-tidy check`: is the history one straight line, and which branches and worktrees are leftovers.
 // Exports: runCheck.
 // Invariants: reads only. A finding is a fact (merge commit, merged branch or worktree, stale worktree) and sets exit 1;
-//   a hint (kind ends in `?`) is context and never does. Items are `{ kind, subject, detail }`.
-import { runGit } from './git.mjs';
+//   a hint (kind ends in `?`) is context and never does. Items are `{ kind, subject, detail }`. A git command that fails
+//   throws (exit 2): a check that cannot read must never report clean.
+import { gitFlag, gitText } from './git.mjs';
 import { findLeftovers } from './leftovers.mjs';
-import { changedFileCount, currentBranch, inProgressOperation, listWorktrees } from './repo.mjs';
+import { changedFileCount, currentBranch, ignoredFiles, inProgressOperation, listWorktrees } from './repo.mjs';
+
+const IGNORED_SHOWN = 5;
 
 const item = (kind, subject, detail) => ({ kind, subject, detail });
 
 function mergeCommitFindings(repo) {
-  const hasHead = runGit(repo.dir, ['rev-parse', '--verify', '--quiet', 'HEAD']).status === 0;
+  const hasHead = gitFlag(repo.dir, ['rev-parse', '--verify', '--quiet', 'HEAD']);
   const starts = hasHead ? [repo.baseRef, 'HEAD'] : [repo.baseRef];
   // With an upstream only merges it does not have yet count: rewriting those is free, published ones need the owner.
   const notPublished = repo.upstream ? [`^${repo.upstream.ref}`] : [];
-  const log = runGit(repo.dir, ['log', '--merges', '--format=%h %s', ...starts, ...notPublished, '--']).stdout;
+  const log = gitText(repo.dir, ['log', '--merges', '--format=%h %s', ...starts, ...notPublished, '--']);
   return log.split('\n').filter((line) => line !== '').map((line) => {
     const space = line.indexOf(' ');
     return item('merge-commit', line.slice(0, space), line.slice(space + 1));
@@ -22,22 +25,21 @@ function mergeCommitFindings(repo) {
 
 function publishedMergeHint(repo) {
   if (!repo.upstream) return [];
-  const count = Number(runGit(repo.dir, ['rev-list', '--merges', '--count', repo.upstream.ref]).stdout);
+  const count = Number(gitText(repo.dir, ['rev-list', '--merges', '--count', repo.upstream.ref]));
   return count > 0 ? [item('published-merge?', repo.upstream.name, `${count} merge commits already published`)] : [];
 }
 
 function mergedRemoteHints(repo) {
   if (!repo.upstream) return [];
-  const listed = runGit(repo.dir, ['for-each-ref', `--merged=${repo.upstream.ref}`, '--format=%(refname)%00%(objectname:short)', 'refs/remotes/origin']).stdout;
+  const listed = gitText(repo.dir, ['for-each-ref', `--merged=${repo.upstream.ref}`, '--format=%(refname)%00%(objectname:short)', 'refs/remotes/origin']);
   return listed.split('\n').filter((line) => line !== '').map((line) => line.split('\0'))
     .filter(([ref]) => ref !== repo.upstream.ref && ref !== 'refs/remotes/origin/HEAD')
     .map(([ref, hash]) => item('merged-remote-branch?', ref.replace(/^refs\/remotes\//, ''), hash));
 }
 
 function behindBaseHint(repo) {
-  const contains = runGit(repo.dir, ['merge-base', '--is-ancestor', repo.baseRef, 'HEAD']).status;
-  if (contains !== 1) return [];
-  const behind = runGit(repo.dir, ['rev-list', '--count', `HEAD..${repo.baseRef}`]).stdout.trim();
+  if (!gitFlag(repo.dir, ['rev-parse', '--verify', '--quiet', 'HEAD']) || gitFlag(repo.dir, ['merge-base', '--is-ancestor', repo.baseRef, 'HEAD'])) return [];
+  const behind = gitText(repo.dir, ['rev-list', '--count', `HEAD..${repo.baseRef}`]);
   return [item('behind-base?', currentBranch(repo) ?? 'HEAD', `behind ${repo.base} by ${behind}`)];
 }
 
@@ -53,8 +55,17 @@ function worktreeHints(worktrees) {
   return hints;
 }
 
+function ignoredFileHints(mergedWorktrees) {
+  return mergedWorktrees.flatMap((tree) => {
+    const ignored = ignoredFiles(tree.path);
+    if (ignored === null || ignored.length === 0) return [];
+    const more = ignored.length > IGNORED_SHOWN ? `, +${ignored.length - IGNORED_SHOWN} more` : '';
+    return [item('ignored-files?', tree.path, `exist only here, prune keeps this worktree (${ignored.slice(0, IGNORED_SHOWN).join(', ')}${more})`)];
+  });
+}
+
 function shallowHint(repo) {
-  const shallow = runGit(repo.dir, ['rev-parse', '--is-shallow-repository']).stdout.trim() === 'true';
+  const shallow = gitText(repo.dir, ['rev-parse', '--is-shallow-repository']) === 'true';
   return shallow ? [item('shallow?', 'repository', 'history is cut, so branches may look unmerged')] : [];
 }
 
@@ -72,7 +83,7 @@ export function runCheck(repo) {
     .map((b) => item('unmerged-branch?', b.name, `ahead ${b.ahead}, last commit ${b.date}`));
   const hints = [
     ...publishedMergeHint(repo), ...unmerged, ...mergedRemoteHints(repo),
-    ...(repo.bare ? [] : behindBaseHint(repo)), ...worktreeHints(worktrees), ...shallowHint(repo),
+    ...(repo.bare ? [] : behindBaseHint(repo)), ...worktreeHints(worktrees), ...ignoredFileHints(leftovers.mergedWorktrees), ...shallowHint(repo),
   ];
   return { findings, hints };
 }

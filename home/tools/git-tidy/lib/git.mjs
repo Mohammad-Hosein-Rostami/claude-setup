@@ -1,5 +1,5 @@
 // Purpose: run git without a shell and without any repository chosen by the environment.
-// Exports: UsageError, runGit, gitText.
+// Exports: UsageError, runGit, gitText, gitFlag.
 // Invariants: arguments are passed as an array to `git` (spawnSync, no shell), always with an explicit cwd; the variables
 //   that point git at a repository are removed, so the folder given on the command line is the only repository used; locks
 //   that only refresh caches (the index during `status`) are switched off so read-only commands write nothing.
@@ -28,9 +28,20 @@ export function runGit(cwd, args) {
   return { status: result.status, stdout: result.stdout, stderr: result.stderr.trim() };
 }
 
-/** Runs git and returns trimmed stdout; a non-zero exit throws an Error carrying git's message. */
+function failure(args, stderr) {
+  return new Error(`git ${args.slice(0, 2).join(' ')} failed: ${stderr.split('\n')[0]}`);
+}
+
+/** Runs git and returns trimmed stdout; a non-zero exit throws an Error naming the command and git's first message line. */
 export function gitText(cwd, args) {
   const { status, stdout, stderr } = runGit(cwd, args);
-  if (status !== 0) throw new Error(`git ${args.join(' ')} failed: ${stderr}`);
+  if (status !== 0) throw failure(args, stderr);
   return stdout.trim();
+}
+
+/** For yes/no git commands (`merge-base --is-ancestor`, `rev-parse --verify --quiet`): true on exit 0, false on 1, anything else throws. */
+export function gitFlag(cwd, args) {
+  const { status, stderr } = runGit(cwd, args);
+  if (status !== 0 && status !== 1) throw failure(args, stderr);
+  return status === 0;
 }

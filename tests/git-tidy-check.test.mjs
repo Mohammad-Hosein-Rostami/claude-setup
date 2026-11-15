@@ -5,8 +5,10 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addWorktree, commit, git, lines, makeRepo, tidy, withOrigin } from './git-tidy-helpers.mjs';
+import { addWorktree, commit, git, lines as allLines, makeRepo, tidy, withOrigin } from './git-tidy-helpers.mjs';
 
+// The first output line is the base line (tested on its own); the other tests read the lines after it.
+const lines = (result) => allLines(result).slice(1);
 const check = (dir, ...extra) => tidy(['check', dir, ...extra], { cwd: dir });
 const SUMMARY = (findings, hints, base = 'main') => `git-tidy: ${findings} findings, ${hints} hints (base ${base})`;
 
@@ -244,4 +246,12 @@ test('GIT_DIR from the environment does not redirect the tool away from the fold
   const result = tidy(['check', dir], { cwd: dir, env: { GIT_DIR: join(decoy, '.git'), GIT_WORK_TREE: decoy } });
   assert.equal(result.status, 0);
   assert.deepEqual(lines(result), [SUMMARY(0, 0)]);
+});
+
+test('the first line names the base and how it was chosen; the JSON keeps its shape', () => {
+  const dir = makeRepo();
+  assert.equal(allLines(check(dir))[0], 'base: main (fallback)');
+  assert.equal(allLines(check(dir, '--base', 'main'))[0], 'base: main (from --base)');
+  withOrigin(dir);
+  assert.equal(allLines(check(dir))[0], 'base: main (from origin/HEAD)');
 });
