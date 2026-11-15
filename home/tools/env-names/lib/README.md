@@ -4,6 +4,7 @@ The parts of the `env-names` tool. `../env-names.mjs` is the command; see `../RE
 the rule that no env file value ever reaches an output.
 
 - `env-file-names.mjs`: the only code that sees env file content; returns names and a count of other lines, never a value.
+- `read-regular-file.mjs`: opens a file once (no symlink followed, no FIFO block), checks type and size on that descriptor and reads from it; used for env files and for the scanned code and deploy files.
 - `name-shape.mjs`: the shape a name must have to be printed without a second reason (the output rule, shared by `collect.mjs` and `deploy-names.mjs`).
 - `code-reads.mjs`: names a source file reads (`process.env.X`, `import.meta.env.X`, `Deno.env.get`, wrappers), and the count of dynamic accesses.
 - `deploy-names.mjs`: names in Dockerfile, compose, GitHub workflow and GitLab CI files, and which file is which kind.
@@ -25,6 +26,6 @@ From the repo root:
 
 ## Watch out for
 
-- `readFileSync` may appear only in `env-file-names.mjs`, `collect.mjs` (source and deploy files) and `../env-names.mjs` (the snapshot); a test checks this.
-- `readFileSync` is also not allowed on an env-file path outside `readEnvFile`, which opens regular files only.
+- `readFileSync` may appear only in `read-regular-file.mjs` (env, source and deploy files) and `../env-names.mjs` (the snapshot); a test checks this.
+- Env-file paths are read only through `readEnvFile`, which reads regular files only (through `read-regular-file.mjs`).
 - Never put an error object's `message` into output: for a JSON parse error it quotes the start of the file. Use `err.code`.

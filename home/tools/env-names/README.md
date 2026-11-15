@@ -19,7 +19,8 @@ does not leak, and one rule decides when the tool stops trying to understand a f
 
 Regular and irregular env files. A file is REGULAR only if every line (split on CRLF, LF and a lone CR) is blank, a comment, or
 ONE complete definition `NAME=value` or `export NAME=value`, where the value has balanced quotes on that same line, has nothing
-after a closing quote but a comment and does not end in a backslash, and the file holds no `-----BEGIN` text, no lone CR, no NUL
+after a closing quote but a comment, does not end in a backslash and has no backslash right before a quote (`\"`: dotenv
+reads it as an escaped quote, this tool does not, so they could disagree on where the value ends), and the file holds no `-----BEGIN` text, no lone CR, no NUL
 byte and no heredoc marker (`<<`). Anything else (a stray line, `NAME: value`, a quote that opens and does not close, a PEM
 block, a JSON value spread over lines, a shell heredoc) is IRREGULAR: the tool cannot be sure where a value ends, so a "name"
 could be a piece of a secret. From a regular file names print under the name-shape rule below. From an irregular file a name
@@ -55,7 +56,9 @@ Defence 2, the output rule, applied before anything is printed or saved:
 Other rules that keep content out:
 - A file that cannot be read is listed with a fixed reason (`link, not read`, `binary, not read`, `too large, not read`,
   `not a regular file, not read`, `unreadable (EACCES), not read`), built from the error code and never from the error message.
-  Only regular files are opened: no symlink, FIFO, socket or device is ever opened, by `list`, `diff` or `--save`.
+  Only regular files are opened: no symlink, FIFO, socket or device is ever opened, by `list`, `diff` or `--save`. Env, code and
+  deploy files are opened once without following links or blocking, and the type and size are checked on that open file, so a file
+  swapped for a link or FIFO while the scan runs is not read and cannot hang it.
 - A snapshot that does not parse is refused with a fixed sentence; the JSON parser's message (which quotes the start of the
   text) is never shown, so passing an env file by mistake prints nothing of it.
 - File and folder names are printed as they are, but control characters and newlines in them are replaced by `?` so a name

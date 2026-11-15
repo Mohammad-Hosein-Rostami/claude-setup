@@ -6,18 +6,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isRegularEnvText, namesFromEnvText } from '../home/tools/env-names/lib/env-file-names.mjs';
-import { PEM_BEGIN, PEM_END, makeProject, run } from './env-names-fixtures.mjs';
+import { PEM_BEGIN, PEM_END, everythingPrinted, makeProject, run } from './env-names-fixtures.mjs';
 
 const lines = (...parts) => `${parts.join('\n')}\n`;
 const HIDDEN_NOTE = 'this file has multi-line or unusual values; only names also found in code or deploy files are listed';
-
-/** Everything the tool prints for a project with this env file: list text, list --json, the saved snapshot, and diff text and --json. */
-async function everythingPrinted(files) {
-  const dir = await makeProject(files);
-  const snapshot = join(dir, '..', `irregular-${Math.random().toString(36).slice(2)}.json`);
-  const outputs = [run(['list', dir, '--save', snapshot]), run(['list', dir, '--json']), run(['diff', snapshot, dir]), run(['diff', snapshot, dir, '--json'])];
-  return { dir, text: `${outputs.map((out) => out.all).join('\n')}\n${await readFile(snapshot, 'utf8')}` };
-}
 
 const REAUDIT_INPUTS = {
   'NEW-1 heredoc then blank line': lines("read -r -d '' APP_CONFIG <<'EOF'", 'zqxuser=admin', '', 'zqxpassword=ZqxPw1', 'ZQXUPPERPASSPHRASE=', 'EOF', 'AFTER=1'),

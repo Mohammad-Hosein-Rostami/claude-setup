@@ -11,7 +11,7 @@
 //   A file is REGULAR only when every line is blank, a comment or one complete definition on that line (see isRegularEnvText);
 //   `irregular: true` tells the caller to show none of its names that no other file corroborates.
 //   A file that cannot be read gives a `status` text built from the error code, never from the error message or content.
-import { lstatSync, readFileSync } from 'node:fs';
+import { readRegularFile } from './read-regular-file.mjs';
 
 export const MAX_ENV_FILE_BYTES = 16 * 1024 * 1024;
 const NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -108,11 +108,13 @@ export function namesFromEnvText(text) {
 }
 
 const LONE_CARRIAGE_RETURN = /\r(?!\n)/;
+const BACKSLASH_BEFORE_QUOTE = /\\["'`]/;
 const DEFINITION_LINE = /^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=(.*)$/;
 
-/** A value that is complete on its line: balanced quotes, nothing after a closing quote but a comment, no heredoc, no trailing backslash. */
+/** A value that is complete on its line: balanced quotes, nothing after a closing quote but a comment, no heredoc, no trailing backslash, no backslash before a quote. */
 function isCompleteValue(value) {
   const text = value.trim();
+  if (BACKSLASH_BEFORE_QUOTE.test(text)) return false; // dotenv reads `\"` as an escaped quote, this reader does not: they could disagree on where the value ends
   if (text.endsWith('\\') || text.includes('<<')) return false;
   if ((text[0] === '$' && QUOTES.includes(text[1])) || /^=+$/.test(text)) return false; // bash `$'...'`, base64 padding
   if (!QUOTES.includes(text[0])) return QUOTES.every((quote) => (text.split(quote).length - 1) % 2 === 0);
@@ -123,7 +125,7 @@ function isCompleteValue(value) {
 
 /**
  * True when the file is regular: every line (split on CRLF, LF) is blank, a comment or ONE complete definition `NAME=value` or
- * `export NAME=value`, and the file has no lone CR, no NUL, no PEM header text and no heredoc marker. Anything else is
+ * `export NAME=value` with no backslash right before a quote character, and the file has no lone CR, no NUL, no PEM header text and no heredoc marker. Anything else is
  * irregular: the reader cannot be sure where a value ends, so the caller shows only names that other files corroborate.
  */
 export function isRegularEnvText(text) {
@@ -139,18 +141,16 @@ export function isRegularEnvText(text) {
 const notRead = (reason) => ({ names: [], otherLines: 0, status: `${reason}, not read` });
 
 /**
- * Reads one env file from disk. Only a regular file is opened: a symlink, a FIFO, a socket or a device is not.
+ * Reads one env file from disk. Only a regular file is read, through one descriptor opened without following links or blocking
+ * (see read-regular-file.mjs): a symlink, a FIFO, a socket or a device is not, even if the path is swapped during the scan.
  * A binary or oversized file is not read.
  * @param {string} path absolute path of the file
  * @returns {{ names: string[], otherLines: number, irregular?: true, status?: string }} `status` is set when the file was not read
  */
 export function readEnvFile(path) {
   try {
-    const info = lstatSync(path);
-    if (info.isSymbolicLink()) return notRead('link');
-    if (!info.isFile()) return notRead('not a regular file');
-    if (info.size > MAX_ENV_FILE_BYTES) return notRead('too large');
-    const bytes = readFileSync(path);
+    const { bytes, skipped } = readRegularFile(path, MAX_ENV_FILE_BYTES);
+    if (skipped !== undefined) return notRead(skipped);
     if (bytes.includes(0)) return notRead('binary');
     const content = bytes.toString('utf8');
     const result = namesFromEnvText(content);

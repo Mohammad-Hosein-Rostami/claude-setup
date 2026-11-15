@@ -4,13 +4,13 @@
 //   through scanners that capture names only. A name from an env file is kept only when it is a plain name (name-shape.mjs) or
 //   code or a deploy file names it too; the others are counted in `hiddenNames`. In an irregular env file (multi-line or unusual
 //   values) only names that code or a deploy file names are kept at all. Paths are posix relative to root.
-import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { scanCode } from './code-reads.mjs';
 import { analyze } from './analyze.mjs';
 import { scanDeploy } from './deploy-names.mjs';
 import { readEnvFile } from './env-file-names.mjs';
 import { isPlainName } from './name-shape.mjs';
+import { readRegularFile } from './read-regular-file.mjs';
 import { SNAPSHOT_VERSION } from './snapshot.mjs';
 import { walkProject } from './walk.mjs';
 
@@ -19,11 +19,10 @@ const MAX_SCANNED_FILE_BYTES = 4 * 1024 * 1024;
 /** The text of a source or deploy file, or null after recording why it was not read. */
 function readScanned(root, path, notRead) {
   try {
-    if (statSync(join(root, path)).size > MAX_SCANNED_FILE_BYTES) {
-      notRead.push({ path, reason: 'too large, not read' });
-      return null;
-    }
-    return readFileSync(join(root, path), 'utf8');
+    const { bytes, skipped } = readRegularFile(join(root, path), MAX_SCANNED_FILE_BYTES);
+    if (skipped === undefined) return bytes.toString('utf8');
+    notRead.push({ path, reason: `${skipped}, not read` });
+    return null;
   } catch (err) {
     notRead.push({ path, reason: `unreadable (${err.code ?? 'error'}), not read` });
     return null;

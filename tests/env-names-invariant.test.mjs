@@ -131,12 +131,12 @@ test('bad input paths and flags produce messages written by the tool, with no fi
   }
 });
 
-test('structure: only the reader, the scanners and the snapshot reader open files; env files go through the reader alone', async () => {
+test('structure: only the descriptor reader and the snapshot reader open files; env files go through readEnvFile alone', async () => {
   const toolDir = fileURLToPath(new URL('../home/tools/env-names/', import.meta.url));
   const files = [join(toolDir, 'env-names.mjs'), ...(await readdir(join(toolDir, 'lib'))).filter((name) => name.endsWith('.mjs')).map((name) => join(toolDir, 'lib', name))];
   const openers = [];
   for (const file of files) if (/readFileSync|readSync|createReadStream|readFile\(/.test(await readFile(file, 'utf8'))) openers.push(file.slice(toolDir.length));
-  assert.deepEqual(openers.sort(), ['env-names.mjs', 'lib/collect.mjs', 'lib/env-file-names.mjs']);
+  assert.deepEqual(openers.sort(), ['env-names.mjs', 'lib/read-regular-file.mjs']); // the snapshot reader and the one descriptor reader
   const collect = await readFile(join(toolDir, 'lib/collect.mjs'), 'utf8');
   assert.match(collect, /readEnvFile\(join\(root, path\)\)/); // env files only through the reader
 });

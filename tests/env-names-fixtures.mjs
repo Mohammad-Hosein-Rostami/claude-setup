@@ -1,9 +1,9 @@
 // Shared helpers for the env-names tests: temp project folders built from a {path: content} map, the CLI runner, and the
-// planted marker values. Exports: CLI, MARKERS, makeProject(files), run(args, cwd), leaked(text).
+// planted marker values. Exports: CLI, MARKERS, makeProject(files), run(args, cwd), leaked(text), everythingPrinted(files).
 // Invariant: every value planted in a fixture contains one of MARKERS, so `leaked(output)` finds any value that escaped.
 // Markers are made-up words, never a real secret format (the pre-commit hook runs gitleaks).
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,4 +32,12 @@ export async function makeProject(files) {
 export function run(args, cwd) {
   const result = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', cwd });
   return { ...result, all: `${result.stdout}${result.stderr}` };
+}
+
+/** Everything the tool prints for a project: list text, list --json, the saved snapshot, and diff text and --json, as one string. */
+export async function everythingPrinted(files) {
+  const dir = await makeProject(files);
+  const snapshot = join(dir, '..', `printed-${Math.random().toString(36).slice(2)}.json`);
+  const outputs = [run(['list', dir, '--save', snapshot]), run(['list', dir, '--json']), run(['diff', snapshot, dir]), run(['diff', snapshot, dir, '--json'])];
+  return { dir, text: `${outputs.map((out) => out.all).join('\n')}\n${await readFile(snapshot, 'utf8')}` };
 }

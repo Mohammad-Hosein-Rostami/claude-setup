@@ -15,7 +15,6 @@ const NAME_AT_START = new RegExp(`^${NAME}`);
 const SUBSTITUTION = new RegExp(`(?<!\\$)\\$\\{(${NAME})`, 'g');
 // Only inside a `${{ ... }}` expression: the words secrets.X in a plain string are text, not a reference.
 const CI_REFERENCE = new RegExp(`(?<=\\$\\{\\{[^}]*)\\b(?:secrets|vars)\\.(${NAME})`, 'g');
-const MAP_ENTRY = new RegExp(`^(${NAME})\\s*:(?:\\s|$)`);
 const LIST_ENTRY = new RegExp(`^-\\s+['"]?(${NAME})(?:=|['"]|\\s|$)`);
 const BLOCK_OPENER = /^(\s*)([A-Za-z_-]+):\s*(?:#.*)?$/;
 const INSTRUCTION = /^\s*(?:ARG|ENV)\s+(.*)$/i;
@@ -82,26 +81,73 @@ function scanDockerfile(lines) {
 const indentOf = (line) => line.length - line.trimStart().length;
 const isSkippable = (line) => line.trim() === '' || line.trimStart().startsWith('#');
 
-/** True when a YAML `"` (backslash escapes) or `'` (`''` is a literal quote) closes in `line` at or after `from`. */
-function yamlQuoteCloses(line, quote, from) {
-  for (let i = from; i < line.length; i += 1) {
-    if (quote === '"' && line[i] === '\\') i += 1;
-    else if (line[i] === quote && quote === "'" && line[i + 1] === "'") i += 1;
-    else if (line[i] === quote) return true;
+const FLOW_OPENERS = '{[';
+const FLOW_CLOSERS = '}]';
+const QUOTE_BEFORE = /[\s{[,:]/;
+// The key at the start of a block line: a name or a quoted name (map entry), captured for the name check.
+const MAP_ENTRY = new RegExp(`^(?:"(${NAME})"|'(${NAME})'|(${NAME}))\\s*:(?:\\s|$)`);
+// Any key (plain, dotted, quoted) that precedes a value on a block line.
+const ANY_KEY = /^(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[\w.\-/]+)\s*:(?:\s+|$)/;
+
+/**
+ * Follows a YAML value over its text: `open` is { quote, depth }, the quote still open (`"` with backslash escapes, `'` with
+ * `''` as a literal quote) and the depth of unclosed `{` / `[`. A fresh value (nothing open) is only a quote or flow collection
+ * when it starts with one; plain text ends the scan at once. Mutates `open`.
+ */
+function followValue(open, text) {
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (open.quote !== null) {
+      if (open.quote === '"' && char === '\\') i += 1;
+      else if (open.quote === "'" && char === "'" && text[i + 1] === "'") i += 1;
+      else if (char === open.quote) open.quote = null;
+    } else if ((char === '"' || char === "'") && (open.depth === 0 || QUOTE_BEFORE.test(text[i - 1] ?? ' '))) {
+      open.quote = char;
+    } else if (FLOW_OPENERS.includes(char)) {
+      open.depth += 1;
+    } else if (FLOW_CLOSERS.includes(char)) {
+      open.depth = Math.max(0, open.depth - 1);
+    }
+    if (open.quote === null && open.depth === 0) return;
   }
-  return false;
 }
 
-/** The quote a YAML value opens and does not close on its own line, or null. */
-function yamlOpenQuote(entryText) {
-  const value = entryText.replace(/^-\s+/, '').replace(new RegExp(`^${NAME}\\s*:\\s*`), '');
-  return (value[0] === '"' || value[0] === "'") && !yamlQuoteCloses(value, value[0], 1) ? value[0] : null;
+/** The value of a block line (after `- ` and a key), trimmed; the text itself when it has no key. */
+const valueOfLine = (text) => text.replace(/^-\s+/, '').replace(ANY_KEY, '').trim();
+const isOpen = (open) => open.quote !== null || open.depth > 0;
+
+/**
+ * Entries under one `environment:`-style line at `from`: lines at the block's own indent are keys, deeper lines are not.
+ * Every line is followed for open quotes and unclosed `{` / `[`, so a value that goes on over lines, a quoted value that starts on
+ * the next line and a flow map never give a key. Returns the line (1-based) where a quote or bracket was left open, or 0.
+ */
+function scanBlock(lines, from, openerIndent, found) {
+  let blockIndent = null;
+  let openedAt = 0;
+  const open = { quote: null, depth: 0 };
+  for (let i = from; i < lines.length; i += 1) {
+    if (isOpen(open) && (open.quote !== null || !isSkippable(lines[i]))) {
+      followValue(open, lines[i].trim());
+      continue;
+    }
+    if (isSkippable(lines[i])) continue;
+    const indent = indentOf(lines[i]);
+    if (indent <= openerIndent || (blockIndent !== null && indent < blockIndent)) break;
+    blockIndent ??= indent;
+    const text = lines[i].trim();
+    const mapMatch = indent === blockIndent ? MAP_ENTRY.exec(text) : null;
+    const mapName = mapMatch?.slice(1).find((group) => group !== undefined);
+    const name = mapName ?? (indent === blockIndent ? LIST_ENTRY.exec(text)?.[1] : undefined);
+    if (name !== undefined) found.push({ name, line: i + 1, keyed: mapName !== undefined });
+    followValue(open, valueOfLine(text));
+    openedAt = i + 1;
+  }
+  return isOpen(open) ? openedAt : 0;
 }
 
 /**
- * Entries of the block under `keys: ` lines: only lines at the block's own indent count, deeper lines (block scalars with any
- * `|` or `>` indicator) do not, and the lines of a quoted value that continues are skipped until the quote closes.
- * `unclosedAt` is the line where a quote never closed (names after it are not trusted), or Infinity.
+ * Entries of the blocks under `keys: ` lines (see scanBlock). `unclosedAt` is the first line where a quote or bracket never
+ * closed (names after it are not trusted), or Infinity.
  */
 function blockEntries(lines, keys) {
   const found = [];
@@ -109,27 +155,8 @@ function blockEntries(lines, keys) {
   lines.forEach((line, index) => {
     const opener = BLOCK_OPENER.exec(line);
     if (opener === null || !keys.includes(opener[2])) return;
-    let blockIndent = null;
-    let openQuote = null;
-    let quoteLine = 0;
-    for (let i = index + 1; i < lines.length; i += 1) {
-      if (openQuote !== null) {
-        if (yamlQuoteCloses(lines[i], openQuote, 0)) openQuote = null;
-        continue;
-      }
-      if (isSkippable(lines[i])) continue;
-      const indent = indentOf(lines[i]);
-      if (indent <= indentOf(line) || (blockIndent !== null && indent < blockIndent)) break;
-      blockIndent ??= indent;
-      if (indent !== blockIndent) continue;
-      const text = lines[i].trim();
-      const mapName = MAP_ENTRY.exec(text)?.[1];
-      const name = mapName ?? LIST_ENTRY.exec(text)?.[1];
-      if (name !== undefined) found.push({ name, line: i + 1, keyed: mapName !== undefined });
-      openQuote = yamlOpenQuote(text);
-      quoteLine = i + 1;
-    }
-    if (openQuote !== null) unclosedAt = Math.min(unclosedAt, quoteLine);
+    const openedAt = scanBlock(lines, index + 1, indentOf(line), found);
+    if (openedAt > 0) unclosedAt = Math.min(unclosedAt, openedAt);
   });
   return { found, unclosedAt };
 }
