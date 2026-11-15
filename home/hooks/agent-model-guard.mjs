@@ -17,12 +17,16 @@
 // file of at most MAX_MATRIX_BYTES, never run, its content never printed, and a UNC or device path (two leading slashes or backslashes)
 // is never looked up; the deny text quotes it without control characters, cut short.
 // Only these two types load the Bash guard's modules, so the routing never depends on them.
+// Brief lines (lib/agent-brief.mjs), after the gate and on top of the routing: a line naming the project's STATUS.md goes before a brief
+// whose project has `## Standing rules`, and an architect or Plan brief gets the Reuse inventory / Contract facts line after it. Fixed
+// text plus a path only; any failure leaves the brief as it is.
 // Exports: guardedAgentInput (pure), matrixLines (pure), uiBriefDeny (the gate), MAX_MATRIX_BYTES. Invariants: the routing never blocks
 // or denies; the gate denies an identical call at most once per session; the mode comes from mode.mjs's state lookup.
-import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { UNPRINTABLE, readFileHead, withBriefLines } from './lib/agent-brief.mjs';
 import { SESSION_ID_PATTERN, activeMode, lazyProcessKey } from './mode.mjs';
 
 const PLAN_MODES = ['extra-high', 'ultra-high'];
@@ -40,12 +44,10 @@ const MIN_REASON_CHARS = 15; // what ui-coverage asks of every reason
 const MAX_PATH_CHARS = 4096; // PATH_MAX on Linux: a longer value is not looked up
 export const MAX_MATRIX_BYTES = 16 * 1024 * 1024; // far above a real matrix; keeps the read well inside the hook's 5 s timeout
 const MAX_QUOTED_CHARS = 200; // how much of a named path the deny text quotes
-const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu; // control and format characters (bidi marks included) and line separators
 const HOME_PREFIX = /^~(?=$|[\\/])/; // `~` and `~/...`; `~user` is left as it is
 // A UNC or device path (\\host\share, //host/share, \\.\pipe\x): on Windows a lookup reaches the network (and may send the user's
 // NTLM credentials) or a pipe, so a value written like that is never looked up
 const NETWORK_PATH = /^[\\/]{2}/;
-const READ_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0); // a FIFO swapped in after the stat never blocks (POSIX only)
 const NOT_STARTED = 'Not started: the UI brief names no coverage matrix (the owner was not asked).';
 const INIT_ADVICE = 'Before the first UI lane run `node ~/.claude/tools/ui-coverage/ui-coverage.mjs init <matrix.json> --locales .. --widths .. '
   + '--surfaces .. [--frames frames.json]` and add the line `MATRIX: <path>` (or `MATRIX: none: <reason>` for a one-file tweak with no Figma).';
@@ -90,24 +92,12 @@ function quoted(value) {
   return printable.length > MAX_QUOTED_CHARS ? `${printable.slice(0, MAX_QUOTED_CHARS)}...` : printable;
 }
 
-/** @returns {string | undefined} the text of a regular file of at most MAX_MATRIX_BYTES, checked again on the open handle */
-function readSmallFile(path) {
-  const fd = openSync(path, READ_FLAGS);
-  try {
-    const opened = fstatSync(fd);
-    if (!opened.isFile() || opened.size > MAX_MATRIX_BYTES) return undefined;
-    const buffer = Buffer.alloc(opened.size);
-    return buffer.toString('utf8', 0, readSync(fd, buffer, 0, opened.size, 0));
-  } finally {
-    closeSync(fd);
-  }
-}
-
 /** @returns {boolean} true when path is a regular file of at most MAX_MATRIX_BYTES holding a JSON object with a `surfaces` array */
 function isMatrixFile(path) {
   try {
-    if (!statSync(path).isFile()) return false; // a folder, FIFO or device is never opened
-    const text = readSmallFile(path);
+    const stats = statSync(path);
+    if (!stats.isFile() || stats.size > MAX_MATRIX_BYTES) return false; // a folder, FIFO, device or bigger file is never opened
+    const text = readFileHead(path, MAX_MATRIX_BYTES);
     return text !== undefined && Array.isArray(JSON.parse(text)?.surfaces); // of all JSON values only an object has a `surfaces` key
   } catch {
     return false; // missing, unreadable or not JSON: not a matrix
@@ -165,7 +155,8 @@ async function main() {
   }
   const id = input?.session_id;
   const sessionId = typeof id === 'string' && SESSION_ID_PATTERN.test(id) ? id : undefined;
-  const updatedInput = guardedAgentInput(await activeMode(sessionId, lazyProcessKey()), input?.tool_input);
+  const routed = guardedAgentInput(await activeMode(sessionId, lazyProcessKey()), input?.tool_input);
+  const updatedInput = withBriefLines(routed ?? input?.tool_input, input?.cwd) ?? routed; // the brief lines on top of the model, if any
   if (!updatedInput) return;
   console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput } }));
 }
