@@ -31,6 +31,8 @@ const REBASE_ACTION = String.raw`\brebas(?:e|ing)\s+(?:(?:my|the|our|this|that|t
   String.raw`|${SENTENCE_START}rebase\b(?!\s+(?:vs|versus|do|does|work|works|mean|means|is|are)\b)`;
 // Persian "branch" (برنچ) only with a clean-up or merge word (پاک, حذف, ادغام, مرج); "create a branch" is not git history work.
 const PERSIAN_BRANCH_CLEANUP = String.raw`(?:پاک|حذف|ادغام|مرج)\S*\s+(?:\S+\s+){0,2}?برنچ|برنچ\S*\s+(?:\S+\s+){0,2}?(?:پاک|حذف|ادغام|مرج)`;
+// "branches of the decision tree", "remove branches from the AST": branches of a data structure, not of a repository.
+const NOT_CODE_STRUCTURE = String.raw`(?!\s+(?:of|from|in)\s+(?:the\s+|an?\s+)?(?:\w+\s+)?(?:tree|ast|graph|diagram|animation|dom|json|parser|compiler|state machine)\b)`;
 export const GATE_ROUTES = [
   {
     skill: 'root-cause-debug',
@@ -73,13 +75,13 @@ export const GATE_ROUTES = [
   {
     skill: 'git-linear-history',
     test: new RegExp(
-      String.raw`\bgit\s+(?:tree|history|graph)\b` +
+      String.raw`\bgit\s+(?:tree|history)\b|\b(?:clean(?:[\s-]?up)?|tidy|fix|straighten|linearize|flatten)\s+(?:up\s+)?(?:the\s+)?git\s+graph\b` +
         String.raw`|${REBASE_ACTION}` +
         String.raw`|\bmerge\s+${BASE_BRANCH}\s+into\s+(?:my|the|this|our|your)\s+(?:\w+\s+)?(?:branch|lane|worktree)\b` +
-        String.raw`|\b(?:remove|delete|prune|drop|clean(?:[\s-]?up)?|get rid of)\s+(?:(?:the|all|old|stale|merged|leftover|local|remote|git)\s+)*(?:branches|worktrees)\b` +
+        String.raw`|\b(?:remove|delete|prune|drop|clean(?:[\s-]?up)?|get rid of)\s+(?:(?:the|all|old|stale|merged|leftover|local|remote|git)\s+)*(?:branches|worktrees)\b${NOT_CODE_STRUCTURE}` +
         String.raw`|\bmerged\s+(?:branch|worktree)\b` +
         String.raw`|\bmerge\s+(?:(?:all|the|our|every|this|that|my)\s+)*(?:everything|branch(?:es)?|lanes?|worktrees?)\b[^.!?]{0,30}\b(?:to|into|onto)\s+${BASE_BRANCH}` +
-        String.raw`|\bland\s+(?:(?:the|all|our|these|my)\s+)*(?:lanes?|branch(?:es)?|worktrees?)\b` +
+        String.raw`|\bland\s+(?:(?:the|all|our|these|my)\s+)*(?:lanes?|branch(?:es)?|worktrees?)\b${NOT_CODE_STRUCTURE}` +
         String.raw`|\bsquash\w*\s+(?:(?:the|these|those|my|all|our)\s+)*(?:commits?|history)\b` +
         String.raw`|تاریخچه[\s‌]*گیت|درخت[\s‌]*گیت|${PERSIAN_BRANCH_CLEANUP}`,
       'i',
@@ -98,6 +100,7 @@ export const GATE_ROUTES = [
         String.raw`|\bnot\s+(?:yet\s+)?fixed\b|\b(?:is|are|it'?s|they'?re)\s+back\s+again\b` +
         String.raw`|\byou\s+(?:didn'?t|did\s+not|haven'?t|have\s+not|never)\s+(?:fix|fixed|solve|solved|resolve|resolved)\b` +
         String.raw`|\b(?:same|similar)\s+(?:problem|issue|bug|error|defect)s?\s+again\b|\bagain\s+(?:the\s+)?same\s+(?:problem|issue|bug|error|defect)` +
+        String.raw`|\bi\s+(?:already\s+)?asked\s+you\b[^.!?]{0,40}\b(?:twice|three times|several times|already|before)\b` +
         String.raw`|\bi\s+(?:already\s+)?(?:told|said|mentioned)\s+(?:you\b|(?:this|that|it)\s+before\b|before\b)` +
         String.raw`|\bas\s+(?:i|we)\s+(?:said|talked|told|discussed|mentioned|agreed)\s+(?:before|earlier|already|previously|you)\b` +
         String.raw`|\bthis\s+is\s+the\s+(?:second|third|fourth|fifth|sixth|\d+(?:st|nd|rd|th))\s+time\b` +

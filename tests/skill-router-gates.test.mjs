@@ -177,3 +177,24 @@ test('gateLinesForPrompt: nothing was reported before in these prompts, so the r
     assert.ok(!gateLinesForPrompt(prompt).includes(REPEATED_REPORT_LINE), prompt);
   }
 });
+
+// Remaining review findings: branch and tree words about code, and one more repeated-report miss.
+test('gateLinesForPrompt: git graph, branches and trees in code or a UI do not fire git-linear-history', () => {
+  for (const prompt of ['how does the git graph in the VS Code extension render?', 'prune the branches of the decision tree', 'remove branches from the AST that are dead code',
+    'land the branches of the tree in the animation']) {
+    assert.doesNotMatch(gateLinesForPrompt(prompt).join(), /git-linear-history/, prompt);
+  }
+});
+
+test('gateLinesForPrompt: tidying the git graph and deleting repository branches still fire git-linear-history', () => {
+  for (const prompt of ['clean up the git graph', 'tidy the git graph', 'delete the branches from the remote', 'prune the merged branches', 'land the branches on main']) {
+    assert.match(gateLinesForPrompt(prompt).join(), /git-linear-history/, prompt);
+  }
+});
+
+test('gateLinesForPrompt: asking the same thing repeatedly fires the repeated-report line', () => {
+  for (const prompt of ['I asked you to fix this twice already', 'i already asked you before to keep the mock data']) {
+    assert.ok(gateLinesForPrompt(prompt).includes(REPEATED_REPORT_LINE), prompt);
+  }
+  assert.ok(!gateLinesForPrompt('I asked you to run the tests again').includes(REPEATED_REPORT_LINE), 'a plain request to run again is not a repeated report');
+});
