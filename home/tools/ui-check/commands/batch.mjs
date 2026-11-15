@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parse, need } from '../lib/args.mjs';
-import { compareRecords, errorRecords, exitCodeFor, readPriorRecords, removePartialResults, responsiveRecords, withCloseFailures, writeBatchResults, writePartialResults } from '../lib/batch-records.mjs';
+import { compareRecords, errorRecords, exitCodeFor, readPriorRecords, removePartialResults, responsiveRecords, withCloseFailures, withPart, writeBatchResults, writePartialResults } from '../lib/batch-records.mjs';
 import { parseJobs, partitionStates, progressLine, resumeFilter, runPool } from '../lib/batch-schedule.mjs';
 import { loadChromium, launch } from '../lib/browser.mjs';
 import { readCache } from '../lib/cache.mjs';
@@ -88,7 +88,7 @@ export async function guarded(browser, { state, dir, part, slots, job }) {
     keepStack(dir, part, error);
     records = errorRecords(state, slots, error, dir);
   }
-  return withCloseFailures(records, state, await closeContexts(browser, dir, part));
+  return withPart(withCloseFailures(records, state, await closeContexts(browser, dir, part)), part);
 }
 
 /** A view of the browser that remembers only its own contexts, so closing after a part never closes the contexts of states running in parallel. */

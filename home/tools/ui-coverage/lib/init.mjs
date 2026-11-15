@@ -1,7 +1,7 @@
 // Purpose: write the skeleton of a new matrix: locales, widths and surfaces from the command line, TODO placeholders for
 // everything the task has to find out, and a todo cell for every surface x locale x width, so `check` rejects it with
 // `todo` problems only until the placeholders are replaced.
-// Exports: initMatrix({locales, widths, surfaces}), parseLocales(text), parseWidths(text), parseSurfaces(text).
+// Exports: initMatrix({locales, widths, surfaces, framesSource}), parseLocales(text), parseWidths(text), parseSurfaces(text).
 // Invariants: pure; the parse functions throw a TypeError with a message for the person (the CLI turns it into exit 2).
 //   Every placeholder starts with `TODO` (see isPlaceholder in shape.mjs); surfaces start as `screen` with `controls: []`.
 import { expandMatrix } from './cells.mjs';
@@ -38,19 +38,22 @@ export function parseSurfaces(text) {
 
 /**
  * The skeleton matrix, expanded to todo cells.
- * @param {{locales: {tag: string, dir: string}[], widths: number[], surfaces: string[]}} input parsed command-line values
+ * @param {{locales: {tag: string, dir: string}[], widths: number[], surfaces: string[], framesSource?: {path: string, data: {file: string, frames: object[]}}}} input
+ *   parsed command-line values; `framesSource` is the frames file (its path as the matrix will name it, relative to the matrix, and its parsed content):
+ *   the matrix then gets a `figma` section and every frame with `cells: []`
  * @returns {object} a matrix that passes the structure check and fails `check` with `todo` problems
  * @throws {TypeError} when the values do not form a sound matrix (for example a duplicate surface id)
  */
-export function initMatrix({ locales, widths, surfaces }) {
+export function initMatrix({ locales, widths, surfaces, framesSource }) {
   const matrix = {
     locales,
     widths,
     searched: { backend: [TODO_SEARCH], siblings: [TODO_SEARCH], reference: [TODO_SEARCH] },
     deliverable: { reviewUrl: 'TODO: URL or path of the live review page', mockExcluded: 'TODO: the build and grep command that proves no dev-only mock ships, with its output' },
     surfaces: surfaces.map((id) => ({ id, kind: 'screen', source: TODO_SOURCE, controls: [] })),
+    ...(framesSource ? { figma: { file: framesSource.data.file, framesFile: framesSource.path } } : {}),
   };
   const problems = validateStructure(matrix);
   if (problems.length > 0) throw new TypeError(problems.map((p) => p.message).join('; '));
-  return expandMatrix(matrix);
+  return expandMatrix(matrix, framesSource?.data.frames ?? []);
 }

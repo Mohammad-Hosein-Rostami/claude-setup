@@ -4,7 +4,8 @@
 // Invariants: validateStructure checks only what the cell logic needs to run (locales, widths, stateWidths, surface and
 //   control ids, control class, cell widths); when it returns problems the caller must stop. validateRules assumes a
 //   sound structure and reports the content rules (component, states, reference, default states, searched, deliverable,
-//   reasons, `todo` placeholders). A width is a positive integer or null. A reason has at least MIN_REASON_CHARS non-space
+//   reasons, `todo` placeholders). The optional Figma keys are checked for shape only: `figma` is {file, framesFile} and
+//   `frames` is a list of {node, name, width, cells} or {node, name, width, notBuilt} with unique nodes. A width is a positive integer or null. A reason has at least MIN_REASON_CHARS non-space
 //   characters. A problem may carry `cell` (the cell label) and `cause` (the root-cause key `check` groups by).
 import { defaultStatesFor, isKnownClass, knownClassNames } from './states.mjs';
 
@@ -90,6 +91,35 @@ function cellStructure(cells) {
   return cells.filter((cell) => !isValidWidth(cell.width)).map((cell) => problem('shape', `cell has a bad width (positive integer or null): ${JSON.stringify([cell.surface, cell.state, cell.locale, cell.width])}`));
 }
 
+function frameCellProblems(frame) {
+  const cells = frame.cells === undefined ? [] : frame.cells;
+  const where = `frame ${frame.node}`;
+  if (!Array.isArray(cells) || !cells.every((cell) => isObject(cell) && [cell.surface, cell.state, cell.locale].every(isText))) return [problem('shape', `${where}: cells must be an array of {surface, state, locale}`)];
+  if (cells.length === 0) return [];
+  const found = [];
+  if (!Number.isInteger(frame.width) || frame.width <= 0) found.push(problem('shape', `${where}: cells need the frame width as a positive integer`));
+  if (isText(frame.notBuilt)) found.push(problem('shape', `${where} has both cells and notBuilt: keep one`));
+  return found;
+}
+
+function frameStructure(frames) {
+  if (frames === undefined) return [];
+  if (!Array.isArray(frames) || !frames.every(isObject)) return [problem('shape', 'frames must be an array of objects')];
+  const seen = new Set();
+  return frames.flatMap((frame) => {
+    if (!isText(frame.node)) return [problem('shape', `a frame needs a node id: ${JSON.stringify(frame)}`)];
+    const duplicate = seen.has(frame.node) ? [problem('shape', `duplicate frame node: ${frame.node}`)] : [];
+    seen.add(frame.node);
+    const notBuilt = frame.notBuilt === undefined || typeof frame.notBuilt === 'string' ? [] : [problem('shape', `frame ${frame.node}: notBuilt must be a text`)];
+    return [...duplicate, ...notBuilt, ...frameCellProblems(frame)];
+  });
+}
+
+function figmaStructure(figma) {
+  if (figma === undefined) return [];
+  return isObject(figma) && isText(figma.file) && isText(figma.framesFile) ? [] : [problem('shape', 'figma must be {file, framesFile}: the Figma file key and the path of the frames file')];
+}
+
 /**
  * Checks the skeleton the cell logic relies on.
  * @param {unknown} matrix the parsed matrix.json
@@ -100,7 +130,7 @@ export function validateStructure(matrix) {
   const common = [...localeProblems(matrix.locales), ...widthProblems(matrix.widths, matrix.stateWidths)];
   if (!Array.isArray(matrix.surfaces) || matrix.surfaces.length === 0) return [problem('shape', 'surfaces must be a non-empty array'), ...common];
   const seenIds = new Set();
-  return [...common, ...matrix.surfaces.flatMap((surface) => surfaceStructure(surface, seenIds)), ...cellStructure(matrix.cells)];
+  return [...common, ...matrix.surfaces.flatMap((surface) => surfaceStructure(surface, seenIds)), ...cellStructure(matrix.cells), ...figmaStructure(matrix.figma), ...frameStructure(matrix.frames)];
 }
 
 const componentOk = (component) => isText(component) || (isObject(component) && isReason(component.new));

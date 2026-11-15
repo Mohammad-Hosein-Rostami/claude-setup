@@ -7,9 +7,9 @@ Run: `node ~/.claude/tools/ui-coverage/ui-coverage.mjs <command>`
 
 | Command | What it does |
 | ------- | ------------ |
-| `init <matrix> --locales en:ltr,fa:rtl --widths 320,768,1280 --surfaces login,signup` | Writes a valid skeleton: the surfaces (kind `screen`, `controls: []`, source `TODO`), `TODO` placeholders in `searched` and `deliverable`, and a `todo` cell per surface x locale x width. `check` rejects it with `todo` problems only. Refuses to overwrite an existing file (exit 2). |
-| `expand <matrix> [--out F]` | Adds a `todo` cell for every surface x state x locale that is missing (`rest` also per width). Idempotent; writes the matrix in place. Exit 1 (file untouched) when the matrix structure is broken. |
-| `scaffold <matrix> [--out states.json]` | Writes a `ui-check batch --states` skeleton: one entry `{surface, state, locale, widths, url:"", steps:[]}` per surface x state x locale that still has a cell that is not `pass`, `na` or `deferred` (its open widths grouped in `widths`), and `defaults: {}` for you to fill. The names come from the matrix, so batch records match the cells by construction. An existing `--out` keeps all its entries and `defaults` (matched on surface + state + locale) and only gets the missing entries. Default `--out`: `states.json` in the current directory. Exit 1 (nothing written) for a broken matrix, 2 for a bad flag or an unreadable states file. Flow: expand, scaffold, fill `url` and `steps`, `ui-check batch`, check. |
+| `init <matrix> --locales en:ltr,fa:rtl --widths 320,768,1280 --surfaces login,signup [--frames frames.json]` | With `--frames` (a file from `ui-check figma-frames`; exit 2 if unreadable) adds the `figma` section and every frame with `cells: []`; without it prints `no Figma source: frame inventory off`. Writes a valid skeleton: the surfaces (kind `screen`, `controls: []`, source `TODO`), `TODO` placeholders in `searched` and `deliverable`, and a `todo` cell per surface x locale x width. `check` rejects it with `todo` problems only. Refuses to overwrite an existing file (exit 2). |
+| `expand <matrix> [--out F]` | Adds a `todo` cell for every surface x state x locale that is missing (`rest` also per width). Also appends the frames of `figma.framesFile` that the matrix lacks (as `cells: []`, never editing or removing a frame; exit 1 with `[frame-source]` when the file cannot be read). Idempotent; writes the matrix in place. Exit 1 (file untouched) when the matrix structure is broken. |
+| `scaffold <matrix> [--out states.json]` | Writes a `ui-check batch --states` skeleton: one entry `{surface, state, locale, widths, url:"", steps:[]}` per surface x state x locale that still has a cell that is not `pass`, `na` or `deferred` (its open widths grouped in `widths`), and `defaults: {}` for you to fill. When the matrix maps a frame to the entry (same surface, state, locale, at one of its open widths) the entry gets `figma: {file, node}` (the first such frame). The names come from the matrix, so batch records match the cells by construction. An existing `--out` keeps all its entries and `defaults` (matched on surface + state + locale) and only gets the missing entries. Default `--out`: `states.json` in the current directory. Exit 1 (nothing written) for a broken matrix, 2 for a bad flag or an unreadable states file. Flow: expand, scaffold, fill `url` and `steps`, `ui-check batch`, check. |
 | `states` | Prints the default states per control class (the single list, `lib/states.mjs`). |
 | `check <matrix> [--results F]... [--verbose]` | Validates, merges result records, prints the summary, exits 0 (complete) or 1 (problems). Never writes. Exit 2: bad flag, unreadable or invalid JSON. `--verbose` lists every problem instead of the groups. |
 
@@ -45,6 +45,15 @@ Run: `node ~/.claude/tools/ui-coverage/ui-coverage.mjs <command>`
 - A `na` cell in a non-base locale is allowed only when the same surface, state and width is `na` in the base locale;
   otherwise it must be `pass` or `deferred` with a reason.
 
+## Figma frames (optional)
+Without these keys nothing changes. With them, every frame of the design must be accounted for:
+```
+  figma:{file:"<Figma file key>", framesFile:"<path relative to the matrix>"},   // file written by `ui-check figma-frames`; present = inventory rules on
+  frames:[{node:"12:40", name, width, cells:[{surface,state,locale}]} | {node, name, width, notBuilt:"<15+ characters>"}]
+```
+A frame's cell has the frame's `width`, so the matrix `widths` must contain it. `frames` is the only place a cell gets a Figma node. Problems: `frame-source` (framesFile unreadable or not a frames file), `frame-missing` (a frame in the framesFile that `frames` lacks: run `expand`, then map it or mark it `notBuilt`), `frame-unmapped` (no cells and no `notBuilt` of 15+ characters), `frame-cell` (the frame maps to a cell the matrix does not demand; the message says what to change), `no-compare` (a mapped cell has no `ui-check batch` record with `part: "compare"`: a pass from another probe does not count), `figma-section-missing` (compare records in the results but no `figma` section). A frame listed twice, or with both non-empty `cells` and `notBuilt`, is a `shape` problem.
+Line 3 of the report, always: `frames: <p>/<total> compared and passing, <a> accepted by the owner, <n> not built` (`total` = matrix frames plus framesFile frames; `p` = frames with cells whose every cell passes with a passing compare record), or `frames: inventory off (...)` without a `figma` section. Paste it into the owner report.
+
 ## Results
 `--results F` (repeatable): a JSON array (or `{"results":[...]}`) of `{surface,state,locale,width,status:"pass|fail",evidence}`,
 the format `ui-check batch` writes to results.json. A record fills exactly the cell with the same surface, state, locale
@@ -57,7 +66,7 @@ results file therefore keeps failing: delete or re-run it. A record that matches
 `shape` (broken structure), `surface-controls`, `control-component`, `control-states`, `control-reference`,
 `unproven-reuse`, `unproven-mount`, `duplicate-mount`, `unproven-reference`, `default-state`, `no-search` (`searched.backend` empty), `deliverable` (reviewUrl or mockExcluded empty),
 `missing-cell`, `todo`, `fail`, `no-reason` (na/deferred), `no-evidence` (pass), `cell-status`, `unknown-cell`,
-`duplicate-cell`, `bad-result`, `unmatched-result`, `evidence-missing`, `state-widths`, `todo` (also a `TODO` placeholder or an empty `controls: []`), `na-locale`, `no-rtl-pass` (an rtl locale exists but a surface has no rtl `pass`).
+`duplicate-cell`, `bad-result`, `unmatched-result`, `evidence-missing`, `state-widths`, `todo` (also a `TODO` placeholder or an empty `controls: []`), `na-locale`, `no-rtl-pass` (an rtl locale exists but a surface has no rtl `pass`), and the frame problems above.
 
 Output: the verdict first (`result: PASS`, or `result: FAIL, 268 cells, 8 causes`), the counts line, every `na` /
 `deferred` cell with its reason (paste both into the owner report), the hand-set fails (cells with status `fail` in the
@@ -67,4 +76,4 @@ reason text or same finding): a group of one prints as a line, a larger group pr
 
 ## Layout
 `ui-coverage.mjs` (CLI: arguments, files, printing), `lib/shape.mjs` (schema rules), `lib/states.mjs` (default states),
-`lib/cells.mjs` (cell set, expand, merge, unmatched-record advice), `lib/scaffold.mjs` (states skeleton), `lib/init.mjs` (matrix skeleton), `lib/reuse.mjs` (mount-site proof), `lib/group.mjs` (root-cause grouping), `lib/check.mjs` (the check), `lib/report.mjs` (text). Tests: `tests/ui-coverage*.test.mjs`.
+`lib/frames.mjs` (Figma frame inventory), `lib/cells.mjs` (cell set, expand, merge, unmatched-record advice), `lib/scaffold.mjs` (states skeleton), `lib/init.mjs` (matrix skeleton), `lib/reuse.mjs` (mount-site proof), `lib/group.mjs` (root-cause grouping), `lib/check.mjs` (the check), `lib/report.mjs` (text). Tests: `tests/ui-coverage*.test.mjs`.

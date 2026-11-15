@@ -1,8 +1,8 @@
 // Purpose: build the `batch` result records and write results.json and summary.md.
-// Exports: compareRecords, responsiveRecords, errorRecords, withCloseFailures, exitCodeFor, summaryMarkdown, writeBatchResults, writePartialResults, readPriorRecords.
+// Exports: compareRecords, responsiveRecords, errorRecords, withCloseFailures, withPart, exitCodeFor, summaryMarkdown, writeBatchResults, writePartialResults, readPriorRecords.
 // Invariant: a record is { surface, state, locale, width, status: "pass"|"fail", evidence, findings }; another tool
 // (`ui-coverage check --results`) reads these exact field names, so never rename them. evidence is the path of that state's report.
-// hints is the number of heuristic hints (report.json `hints` at `evidence`): reported, never part of status. width is the viewport width the part ran at (an integer; a compare record carries the Figma frame width). It is null only on an
+// part is "compare" or "responsive", added by `withPart` once the part is known (an error record carries the part that threw); a record without it counts as not-compare. A pixel finding carries `percent` (the diff share, a number) unless the image sizes differ. hints is the number of heuristic hints (report.json `hints` at `evidence`): reported, never part of status. width is the viewport width the part ran at (an integer; a compare record carries the Figma frame width). It is null only on an
 // error record whose Figma cache could not be read, so the frame size is unknown.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,7 +31,8 @@ export function compareRecords(state, { md, pixels, elementRows }, { root, maxDi
   const findings = elementRows.map((r) => ({ check: 'element', element: r.element, detail: `${r.prop}: is ${r.is}, should be ${r.should} (delta ${r.delta})` }));
   if (!pixels.pass) {
     const size = pixels.sizeMismatch ? `size mismatch baseline ${pixels.sizeMismatch.baseline.join('x')} vs page ${pixels.sizeMismatch.actual.join('x')}; ` : '';
-    findings.push({ check: 'pixel', element: root, detail: `${size}${pixels.diffPercent.toFixed(3)}% of pixels differ (${pixels.diffCount} px), max ${maxDiff}%` });
+    const percent = pixels.sizeMismatch ? {} : { percent: pixels.diffPercent }; // a size mismatch is not a small diff: no number to accept against
+    findings.push({ check: 'pixel', element: root, detail: `${size}${pixels.diffPercent.toFixed(3)}% of pixels differ (${pixels.diffCount} px), max ${maxDiff}%`, ...percent });
   }
   return [record(state, width, findings, md)];
 }
@@ -72,6 +73,13 @@ export function withCloseFailures(records, state, messages) {
   const findings = messages.map((message) => ({ check: 'error', element: state.url, detail: `closing the browser context failed: ${message}` }));
   return records.map((r) => ({ ...r, status: 'fail', findings: [...r.findings, ...findings] }));
 }
+
+/**
+ * Tag every record of one part with the part's name, so a reader can tell a compare failure from a responsive one.
+ * @param {object[]} records records of one part of a state
+ * @param {'compare'|'responsive'} part
+ */
+export const withPart = (records, part) => records.map((r) => ({ ...r, part }));
 
 /** 1 when any record fails, and also when there are no records at all (nothing ran, so nothing is proved). */
 export const exitCodeFor = (records) => (records.length === 0 || records.some((r) => r.status === 'fail') ? 1 : 0);

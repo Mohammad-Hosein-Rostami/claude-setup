@@ -26,6 +26,7 @@ The browser binary is found by Playwright itself in its cache (`~/Library/Caches
 | Command | Flags | What it does |
 | ------- | ----- | ------------ |
 | `figma-pull` | `--file KEY --node ID [--scale 1] [--refresh]` | Needs env `FIGMA_TOKEN`. Writes `baseline.png`, `spec.json`, `meta.json` to `~/.cache/figma/<KEY>/<ID>/` (`:` in IDs becomes `-`). Skips the fetch if cached. |
+| `figma-frames` | `--file KEY --node ID [--node ID]... --out frames.json` | Needs env `FIGMA_TOKEN`. One REST call per `--node` (nodes endpoint, depth 2). A frame is each `FRAME` or `COMPONENT` whose parent is a `--node` or a `SECTION` under it; `width` and `height` are rounded up. Writes `{file, source, frames:[{node, name, page, width, height}]}` (a frame reached from two nodes is listed once; `page` is the name of the `--node` it was found under) and prints the count. This file is the design inventory `ui-coverage` checks the matrix against. Exit 2 without a token or on an API error; the token is never printed. No token: write the same shape by hand from the Figma MCP `get_metadata`. |
 | `compare` | `--url U --root SEL --cache DIR [--map map.json] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--max-diff 0.5] [context flags] [--out DIR]` | Viewport = frame size, DSF = scale. Element gate (box +-1px, font, line-height, letter-spacing, colour, background, radius, padding, gap) then pixel gate (odiff, threshold 0.1, anti-aliasing ignored; size mismatch is reported first and both images are padded). |
 | `responsive` | `--url U [--widths 320,...,1920] [--height 900] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--same-in-all-locales "ICE,Google"] [context flags] [--out DIR]` | Per width, the findings in the table below. Screenshots `w<width>.png` stay on disk. |
 | `batch` | `--states file.json [--only surface[,surface]] [--jobs 4] [--resume] [--out DIR]` | Many states in one run (below). `compare` for a state with `figma`, `responsive` for a state with widths. |
@@ -144,8 +145,10 @@ Output in `--out` (default under the OS temp dir): `results.json`, `summary.md` 
 ```json
 { "surface": "login", "state": "language:open", "locale": "fa", "width": 320, "status": "fail",
   "evidence": "/tmp/ui-check/batch/<run>/0-login--language-open--fa/responsive/report.md",
-  "findings": [{ "check": "bidi-field", "element": "input#otp", "detail": "..." }], "hints": 0 }
+  "findings": [{ "check": "bidi-field", "element": "input#otp", "detail": "..." }], "hints": 0, "part": "responsive" }
 ```
+
+`part` is `compare` or `responsive`: the part of the state that made the record (an error record carries the part that threw). `ui-coverage` counts only `part: "compare"` records as the Figma compare of a frame; a record without `part` (an older run) counts as not-compare. A `pixel` finding also carries `percent`, the share of differing pixels as a number (`{"check":"pixel","element":"#card","detail":"...","percent":0.42}`); a size mismatch has no `percent`, because it is not a small difference that a maximum could accept.
 
 `width` is the viewport width the part ran at: the audited width for a `responsive` record, and for the compare record the Figma frame width (`ceil(meta.width)` of the cache, an integer), so the matrix `widths` must contain the frame width. It is `null` only on an error record whose Figma cache could not be read. `locale` is `null` when none was set. `evidence` is the state's report, or the state folder when the state threw before a report existed.
 

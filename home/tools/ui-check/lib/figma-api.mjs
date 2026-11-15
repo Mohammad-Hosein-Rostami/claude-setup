@@ -1,5 +1,5 @@
 // Purpose: minimal Figma REST client (node tree + PNG export). Never logs or returns the token.
-// Exports: fetchNode, fetchBaseline. Invariant: error messages carry status codes only.
+// Exports: fetchNode(fileKey, nodeId, depth?), fetchBaseline. Invariant: error messages carry status codes only.
 import { UsageError } from './errors.mjs';
 
 const API = 'https://api.figma.com/v1';
@@ -16,9 +16,10 @@ async function getJson(url) {
   return res.json();
 }
 
-/** Fetch one node's document from /v1/files/:key/nodes. */
-export async function fetchNode(fileKey, nodeId) {
-  const url = `${API}/files/${encodeURIComponent(fileKey)}/nodes?ids=${encodeURIComponent(nodeId)}`;
+/** Fetch one node's document from /v1/files/:key/nodes; `depth` limits how many levels of children come back (the whole subtree when omitted). */
+export async function fetchNode(fileKey, nodeId, depth) {
+  const limit = depth === undefined ? '' : `&depth=${depth}`;
+  const url = `${API}/files/${encodeURIComponent(fileKey)}/nodes?ids=${encodeURIComponent(nodeId)}${limit}`;
   const body = await getJson(url);
   const entry = body.nodes?.[nodeId];
   if (!entry?.document) throw new Error(`node ${nodeId} not found in file ${fileKey}`);

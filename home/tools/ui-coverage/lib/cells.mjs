@@ -1,12 +1,13 @@
 // Purpose: the cell set a matrix demands, expansion into `todo` cells, and merging of ui-check result records.
-// Exports: normalizeWidth, cellKey, expectedCells(matrix), expandMatrix(matrix), mergeResults(matrix, records).
+// Exports: normalizeWidth, cellKey, cellLabel, expectedCells(matrix), expandMatrix(matrix, sourceFrames), unmatchedAdvice, mergeResults(matrix, records).
 // Invariants: pure (inputs are never mutated). A cell is identified by surface + state + locale + width; the locale tag is
 //   compared exactly but ignoring letter case (`FA` is `fa`; `fa-IR` is not `fa`). State ids are
 //   `rest` and `<controlId>:<state>`; EVERY state is demanded at every width of `widths` for every locale (control
 //   states only at `stateWidths` when the matrix narrows them). A result record fills exactly its own key; there is no
 //   width fallback. Merge per key: a `fail` from any source (matrix cell or any record) wins over everything, and a
 //   declared na/deferred that meets a fail record becomes a `fail` carrying `declared`; a `pass` record turns a
-//   todo/na/deferred cell into pass but never clears a fail.
+//   todo/na/deferred cell into pass but never clears a fail. Frames (the optional Figma inventory) are never cells:
+//   expandMatrix only appends frames the source file has and the matrix lacks.
 import { REST_STATE, controlsOf, isText, isValidWidth, problem } from './shape.mjs';
 
 /** Width as stored in a key: undefined means "no width" (null); a valid width is kept as is. */
@@ -17,6 +18,9 @@ export const normalizeLocale = (locale) => (typeof locale === 'string' ? locale.
 
 /** Stable identity of a cell or result record. */
 export const cellKey = (cell) => JSON.stringify([cell.surface, cell.state, normalizeLocale(cell.locale), normalizeWidth(cell.width)]);
+
+/** Human label of a cell or record: `surface state locale @width` (no width part when it has none). */
+export const cellLabel = (cell) => `${cell.surface} ${cell.state} ${cell.locale}${normalizeWidth(cell.width) === null ? '' : ` @${cell.width}`}`;
 
 /** Returns every {surface,state,locale,width} a structurally sound matrix demands, in a stable order. */
 export function expectedCells(matrix) {
@@ -33,24 +37,34 @@ export function expectedCells(matrix) {
   );
 }
 
+// Frames of the source file that the matrix does not list yet, each once, as empty (unmapped) matrix frames.
+function missingFrames(matrix, sourceFrames) {
+  const known = new Set((matrix.frames ?? []).map((frame) => frame.node));
+  const fresh = new Map(sourceFrames.filter((frame) => !known.has(frame.node)).map((frame) => [frame.node, { node: frame.node, name: frame.name, width: frame.width ?? null, cells: [] }]));
+  return [...fresh.values()];
+}
+
 /**
- * Adds a `todo` cell for every demanded cell that is missing; existing cells are kept as they are.
+ * Adds a `todo` cell for every demanded cell that is missing, and an unmapped frame for every source frame the matrix
+ * lacks; existing cells and frames are kept as they are.
  * @param {object} matrix a structurally sound matrix
+ * @param {{node: string, name?: string, width?: number|null}[]} [sourceFrames] the frames of the Figma frames file (none: frames are left alone)
  * @returns {object} a new matrix; expanding it again returns an equal matrix
  */
-export function expandMatrix(matrix) {
+export function expandMatrix(matrix, sourceFrames = []) {
   const cells = matrix.cells ?? [];
   const have = new Set(cells.map(cellKey));
   const added = expectedCells(matrix)
     .filter((cell) => !have.has(cellKey(cell)))
     .map((cell) => ({ ...cell, status: 'todo', evidence: '', reason: '' }));
-  return { ...matrix, cells: [...cells, ...added] };
+  const frames = missingFrames(matrix, sourceFrames);
+  return { ...matrix, cells: [...cells, ...added], ...(frames.length > 0 ? { frames: [...(matrix.frames ?? []), ...frames] } : {}) };
 }
 
 const list = (values) => [...new Set(values)].join(', ');
 
-// Why a well-formed record fills no cell, and what to change; one sentence per wrong part (surface, state, locale, width).
-function unmatchedAdvice(matrix, record, wanted) {
+/** Why a well-formed record or frame cell fills no cell, and what to change; one sentence per wrong part. */
+export function unmatchedAdvice(matrix, record, wanted) {
   const cells = [...wanted.values()];
   const ofSurface = cells.filter((cell) => cell.surface === record.surface);
   if (ofSurface.length === 0) return [`unknown surface "${record.surface}": use a matrix surface id (${list(cells.map((cell) => cell.surface))})`];

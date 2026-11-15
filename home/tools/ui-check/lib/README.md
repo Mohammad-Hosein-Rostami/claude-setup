@@ -2,7 +2,7 @@
 
 - `args.mjs` - strict CLI flag parsing that reports mistakes as UsageError.
 - `audit.mjs` - in-page responsive audit (serialised into the browser by Playwright).
-- `batch-records.mjs` - `batch` result records ({surface, state, locale, width, status, evidence, findings}), results.json, summary.md and checkpoint writers, prior-record reader for `--resume`.
+- `batch-records.mjs` - `batch` result records ({surface, state, locale, width, status, evidence, findings, part}; a pixel finding has `percent`), results.json, summary.md and checkpoint writers, prior-record reader for `--resume`.
 - `batch-schedule.mjs` - `batch` scheduling: `--jobs`, parallel/serial split, worker pool, progress line, `--resume` decision.
 - `bidi.mjs` - the pure `bidi-field` (filled state), `bidi-placeholder` and `bidi-placeholder?` decisions for fields in an rtl context (the containing element, not only `<html>`).
 - `browser.mjs` - open deterministic pages (CPU raster and explicit autofocus by default; opt-in `bypassCSP`, `steps`, locale, colour scheme, storage, cookies, expected direction).

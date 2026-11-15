@@ -4,18 +4,19 @@
 //   yields `shape` problems and stops). Done means `problems` is empty. Problem codes: shape, surface-controls,
 //   control-component, control-states, control-reference, unproven-reference, unproven-reuse, unproven-mount, duplicate-mount,
 //   default-state, state-widths, no-search, deliverable, duplicate-cell, bad-result, unmatched-result, missing-cell,
-//   unknown-cell, cell-status, todo, fail, no-reason, no-evidence, evidence-missing, na-locale, no-rtl-pass. A problem
+//   unknown-cell, cell-status, todo, fail, no-reason, no-evidence, evidence-missing, na-locale, no-rtl-pass, and the Figma
+//   inventory codes of frames.mjs (frame-source, frame-missing, frame-unmapped, frame-cell, no-compare,
+//   figma-section-missing). A problem
 //   about a cell carries `cell` (its label) and `cause` (what `report` groups by). A cell with status fail in the
 //   matrix and no result record is `handSet` (found by eye, listed on its own).
 import { isAbsolute, resolve } from 'node:path';
-import { cellKey, expectedCells, mergeResults, normalizeWidth } from './cells.mjs';
+import { cellKey, cellLabel as label, expectedCells, mergeResults } from './cells.mjs';
+import { frameChecks } from './frames.mjs';
 import { failCause } from './group.mjs';
 import { reuseProblems } from './reuse.mjs';
 import { MIN_REASON_CHARS, STATUSES, isPlaceholder, isReason, isText, problem, validateRules, validateStructure } from './shape.mjs';
 
 const URL_EVIDENCE = /^(https?|file):\/\//i;
-
-const label = (cell) => `${cell.surface} ${cell.state} ${cell.locale}${normalizeWidth(cell.width) === null ? '' : ` @${cell.width}`}`;
 
 function cellProblem(cell) {
   const at = (code, message, cause) => problem(code, message, { cell: label(cell), cause });
@@ -81,9 +82,10 @@ const countBy = (cells, status) => cells.filter((cell) => cell.status === status
  * @param {{baseDir?: string, fileExists?: (path: string) => boolean, readText?: (path: string) => string|null}} [options]
  *   where relative paths resolve from (the matrix file's directory), how to test a file and how to read one (null = no
  *   such file); the default accepts every evidence path and skips the mount-site file tests (the CLI passes the real ones)
- * @returns {{problems: {code:string,message:string}[], cells: object[], counts: object, notes: object[], handSet: object[], stateWidths: object|null}}
+ * @returns {{problems: {code:string,message:string}[], cells: object[], counts: object, notes: object[], handSet: object[], stateWidths: object|null, frames: object|undefined}}
  *   `problems` empty means done; `counts` has pass/fail/na/deferred/todo/missing; `notes` are the na and deferred cells
- *   (reported to the owner); `handSet` are the fail cells nobody measured; `stateWidths` is `{widths, reason}` when control states are narrowed, else null
+ *   (reported to the owner); `handSet` are the fail cells nobody measured; `stateWidths` is `{widths, reason}` when control states are narrowed, else null;
+ *   `frames` is the summary of the Figma inventory (see frames.mjs; undefined when the matrix is structurally broken)
  */
 export function checkMatrix(matrix, records = [], options = {}) {
   const structure = validateStructure(matrix);
@@ -93,12 +95,14 @@ export function checkMatrix(matrix, records = [], options = {}) {
   const files = { baseDir: options.baseDir ?? '.', fileExists: options.fileExists ?? (() => true) };
   const counts = Object.fromEntries(STATUSES.map((status) => [status, countBy(merged.cells, status)]));
   counts.missing = coverage.filter((p) => p.code === 'missing-cell').length;
+  const frames = frameChecks(matrix, merged, records, { baseDir: files.baseDir, readText: options.readText });
   return {
-    problems: [...validateRules(matrix), ...reuseProblems(matrix, { baseDir: files.baseDir, readText: options.readText }), ...merged.problems, ...coverage, ...naLocaleProblems(matrix, merged.cells), ...rtlProblems(matrix, merged.cells), ...fileProblems(matrix, merged.cells, files)],
+    problems: [...validateRules(matrix), ...reuseProblems(matrix, { baseDir: files.baseDir, readText: options.readText }), ...merged.problems, ...coverage, ...naLocaleProblems(matrix, merged.cells), ...rtlProblems(matrix, merged.cells), ...fileProblems(matrix, merged.cells, files), ...frames.problems],
     cells: merged.cells,
     counts,
     notes: merged.cells.filter((cell) => cell.status === 'na' || cell.status === 'deferred'),
     handSet: merged.cells.filter((cell) => cell.status === 'fail' && !merged.recorded.has(cellKey(cell))),
     stateWidths: matrix.stateWidths ? { widths: matrix.stateWidths, reason: String(matrix.stateWidthsReason ?? '').trim() } : null,
+    frames: frames.summary,
   };
 }

@@ -3,19 +3,28 @@
 // Exports: scaffoldStates(matrix, existing).
 // Invariants: pure (inputs are never mutated). One entry per surface + state + locale (letter case of the locale ignored)
 // that still has an open cell (anything but pass, na or deferred); its widths are the open widths, in matrix order. An
-// existing states file keeps every entry and its `defaults` exactly as they are; only missing entries are appended.
+// existing states file keeps every entry and its `defaults` exactly as they are; only missing entries are appended. When
+// the matrix maps a Figma frame to an entry's surface, state and locale at one of its open widths, the entry gets
+// `figma: {file, node}` (the first such frame; a second frame of the same state needs a hand-made entry).
 import { cellKey, expandMatrix, expectedCells, normalizeLocale } from './cells.mjs';
 
 const DONE = new Set(['pass', 'na', 'deferred']);
 
 const entryKey = (entry) => JSON.stringify([entry.surface, entry.state, normalizeLocale(entry.locale ?? null)]);
 
+// The node of the first frame whose cell is this entry's surface, state and locale at one of its widths; undefined when none.
+function frameLookup(matrix) {
+  const mapped = (matrix.figma ? matrix.frames ?? [] : []).flatMap((frame) => (Array.isArray(frame.cells) ? frame.cells : []).map((cell) => ({ ...cell, width: frame.width, node: frame.node })));
+  return (entry) => mapped.find((cell) => entryKey(cell) === entryKey(entry) && entry.widths.includes(cell.width))?.node;
+}
+
 /**
  * The entries a matrix still needs, one per surface + state + locale with its open widths grouped.
  * @param {object} matrix a structurally sound matrix (cells optional; missing cells count as todo)
- * @returns {{surface: string, state: string, locale: string, widths: number[], url: string, steps: []}[]}
+ * @returns {{surface: string, state: string, locale: string, widths: number[], url: string, steps: [], figma?: {file: string, node: string}}[]}
  */
 function openEntries(matrix) {
+  const figmaOf = frameLookup(matrix);
   const wanted = new Set(expectedCells(matrix).map(cellKey));
   const open = expandMatrix(matrix).cells.filter((cell) => wanted.has(cellKey(cell)) && !DONE.has(cell.status));
   const grouped = new Map();
@@ -25,7 +34,10 @@ function openEntries(matrix) {
     entry.widths.push(width);
     grouped.set(key, entry);
   }
-  return [...grouped.values()];
+  return [...grouped.values()].map((entry) => {
+    const node = figmaOf(entry);
+    return node ? { ...entry, figma: { file: matrix.figma.file, node } } : entry;
+  });
 }
 
 /**
