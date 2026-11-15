@@ -4,7 +4,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, stat, utimes, writeFile } from 'node:fs/promises';
+import { writeSessionFile } from '../home/hooks/lib/session-store.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -189,4 +190,25 @@ test('the status line cache applies the log\'s factors and never writes the log'
   assert.ok(expected.includes(text), `${text} not in ${expected}`);
   const after = await stat(join(logDir, logFile));
   assert.deepEqual([after.mtimeMs, after.size], [before.mtimeMs, before.size]);
+});
+
+test('a log untouched for 30 days is still read and scored, and a write to the log folder does not sweep it', async () => {
+  const dir = join(await mkdtemp(join(tmpdir(), 'estimate-log-age-')), 'log');
+  assert.equal(writeLog(STATUS, [entry()], dir), true);
+  const [file] = await readdir(dir);
+  const monthAgo = new Date(Date.now() - 30 * 24 * HOUR_MS);
+  await utimes(join(dir, file), monthAgo, monthAgo);
+  assert.equal(writeLog('/other/STATUS.md', [entry({ status: '/other/STATUS.md' })], dir), true); // a write in the same folder
+  assert.ok((await readdir(dir)).includes(file), 'the 30-day-old log is kept');
+  const [scoredEntry] = scoreEntries(readLog(STATUS, dir), itemsOf(DELIVERED_ROWS), at(20));
+  assert.equal(scoredEntry.actual, isoAt(15.5));
+});
+
+test('the other state stores still sweep their own files older than 7 days', async () => {
+  const dir = join(await mkdtemp(join(tmpdir(), 'state-sweep-')), 'store');
+  assert.equal(writeSessionFile(dir, 'old-session', '{}'), true);
+  const monthAgo = new Date(Date.now() - 30 * 24 * HOUR_MS);
+  await utimes(join(dir, 'old-session.json'), monthAgo, monthAgo);
+  assert.equal(writeSessionFile(dir, 'new-session', '{}'), true);
+  assert.deepEqual(await readdir(dir), ['new-session.json']);
 });

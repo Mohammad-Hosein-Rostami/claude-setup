@@ -1,7 +1,7 @@
 // Per-session state files of the Bash guard, safe against planted links and special files. lib/allowed-literals.mjs (guard-allowed) and
 // lib/bounce-once.mjs (guard-bounced) each keep one small JSON file per session id in their own folder under ~/.claude/state.
 // Exports: isSessionId(session), readSessionFile(dir, session, maxBytes) -> text | null | undefined,
-// writeSessionFile(dir, session, text) -> boolean.
+// writeSessionFile(dir, session, text, options?) -> boolean.
 // Why: a Bash command can put a link, a FIFO or a folder where these files live. The hook must never follow a link, hang on a FIFO, or
 // change or delete anything outside its own folder.
 // Invariants:
@@ -11,7 +11,8 @@
 // - A read opens with O_NOFOLLOW and O_NONBLOCK (POSIX) and checks the open handle again (fstat), so a path swapped after the lstat is
 //   caught and a FIFO never blocks. A write creates a new temp file (random name, O_EXCL, O_NOFOLLOW, 0600) and renames it over the
 //   session file only while the folder is still the one checked. A missing folder is created 0700; an existing one keeps its mode.
-// - Cleanup removes only this user's regular files older than 7 days, directly in the checked folder, whose names match STORE_FILE (a
+// - Cleanup (on each write unless the caller passes { sweep: false }, which a store of long-lived history uses) removes only
+//   this user's regular files older than 7 days, directly in the checked folder, whose names match STORE_FILE (a
 //   session file or its temp file). It never recurses and never follows a link. Node has no unlinkat, so the folder is checked again
 //   (same device and inode) right before each delete: only a folder swapped inside that gap could lose such a file.
 // - Nothing here throws.
@@ -93,14 +94,16 @@ function readOpened(path, maxBytes) {
  * @param {string} dir the store folder
  * @param {string} session the session id (see isSessionId)
  * @param {string} text the new content
+ * @param {{sweep?: boolean}} [options] sweep: remove this folder's files older than 7 days first (default true); false for a
+ *   store whose files must outlive an idle week
  * @returns {boolean} true when stored; false when the id is bad, the store is unusable or the write failed
  */
-export function writeSessionFile(dir, session, text) {
+export function writeSessionFile(dir, session, text, { sweep = true } = {}) {
   try {
     const folder = isSessionId(session) ? privateFolder(dir) : undefined;
     const existing = folder === undefined ? undefined : lstatOrNull(join(dir, `${session}.json`));
     if (existing === undefined || (existing !== null && !isPrivateFile(existing))) return false;
-    pruneOld(dir, folder, Date.now());
+    if (sweep) pruneOld(dir, folder, Date.now());
     return replaceFile(dir, folder, `${session}.json`, text);
   } catch {
     return false; // the folder could not be made or checked, or the write failed: not stored

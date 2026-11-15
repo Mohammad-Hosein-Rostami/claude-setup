@@ -109,7 +109,7 @@ Each run that prints a finish range appends one line to its log,
 `{"v":1,"at":"2026-11-15T09:51:44Z","status":"/abs/STATUS.md","open":["H2","H3"],"points":6,"closing":"measured","raw":[1.49,2.84],"printed":["2026-11-15T11:20Z","2026-11-15T12:45Z"]}`.
 Ids and numbers only: never item text, prompts or transcript content. The file is 0600, never written through a link,
 replaced whole through a temp file (two racing runs may lose a line, never the file), trimmed to the last 200 entries and
-128 KiB; a log nobody wrote for 7 days is removed by the store. A refusal writes nothing; a `--now` run without
+128 KiB; it never expires by age (a project paused for weeks keeps its track record). A refusal writes nothing; a `--now` run without
 `--log-dir` neither reads nor writes it; the status line cache only reads it.
 
 - Scoring (every run, written back): an entry is scored at the first delivery at or after it with all its open ids done by
@@ -170,7 +170,9 @@ the tool refuses (exit 3) or fails (exit 2), or the job is delivered. The status
 `~/.claude/state/estimate-segment/<sha256 of the STATUS.md path>.json`
 (`{path, text, highMs, mtimeMs, size, computedAt, refreshStartedAt}`; `text` and `highMs` are null after a refusal), and shows
 the text while the file's mtime and size still match, or for 15 minutes (`STALE_SHOW_MS`) after a change while a refresh runs,
-never after the printed high end (`highMs`) has passed. When the cache is missing, no longer matches or is 5 minutes old
+never after the printed high end (`highMs`) has passed. On a daylight-saving fall-back night, when both ends fall on the
+same local date, the segment shows the two clock times as they are, so the high end can read earlier than the low end
+(`01:50-01:05`); line 1 of the CLI has the same limit. When the cache is missing, no longer matches or is 5 minutes old
 (`RECOMPUTE_AFTER_MS`: the finish moves with the clock even when the table does not), the render stamps `refreshStartedAt` and starts `statusline-cache.mjs <STATUS.md>` detached, at
 most once per 2 minutes (`REFRESH_INTERVAL_MS`) per file; that script runs the same lib as the CLI (transcripts included) and
 writes the cache atomically (0600, never through a link). The constants are in `lib/segment-cache.mjs`.

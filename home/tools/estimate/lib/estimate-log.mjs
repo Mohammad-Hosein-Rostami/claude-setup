@@ -5,7 +5,10 @@
 // - Location: ~/.claude/state/estimate-log/<first 32 hex of sha256(absolute STATUS.md path)>.json, outside every repo. One JSON
 //   entry per line (see calibration.mjs): ids and numbers only, never item text, prompts or transcript content.
 // - Opened and replaced through hooks/lib/session-store.mjs: no links, 0600, a new temp file renamed over the old one, so two
-//   racing runs can lose one line but never leave a broken file. The store removes a log nobody wrote for 7 days.
+//   racing runs can lose one line but never leave a broken file. Written with { sweep: false }: the store's 7-day cleanup is
+//   for per-session state, while this log is calibration history that must outlive a project paused for weeks. Reusing the
+//   store (rather than a second copy of its link-safe reads and writes) keeps one audited implementation; its folder holds
+//   only these logs, so no other store's sweep reaches it.
 // - The whole file is rewritten on each write, keeping the last MAX_LOG_ENTRIES entries within MAX_LOG_BYTES.
 // - A line that is not a valid entry of this STATUS.md is left out on read; nothing here throws or prints.
 import { createHash } from 'node:crypto';
@@ -66,5 +69,5 @@ export function readLog(statusPath, dir = logDir()) {
 export function writeLog(statusPath, entries, dir = logDir()) {
   const lines = entries.slice(-MAX_LOG_ENTRIES).map((entry) => JSON.stringify(entry));
   while (lines.length > 0 && Buffer.byteLength(`${lines.join('\n')}\n`) > MAX_LOG_BYTES) lines.shift();
-  return writeSessionFile(dir, logId(statusPath), `${lines.join('\n')}\n`);
+  return writeSessionFile(dir, logId(statusPath), `${lines.join('\n')}\n`, { sweep: false });
 }
