@@ -98,7 +98,9 @@ test('diff compares hidden names by count only, and notes an irregular flip', as
   assert.match(changed.stdout, /Names not shown changed \(counts only\) \(1\):\n {2}\.env {2}names not shown: 3 -> 2\n/);
   assert.doesNotMatch(changed.all, /zqx/i);
   await writeFile(join(dir, '.env'), lines('CORR_ONE=1', 'zqxa=1', 'zqxrenamed=2'));
-  assert.match(run(['diff', snapshot, dir]).stdout, /\.env {2}names not shown: 3 -> 0; irregular: yes -> no/);
+  const flipped = run(['diff', snapshot, dir]);
+  assert.match(flipped.stdout, /\.env {2}names not shown: 3 -> 0; irregular: yes -> no/);
+  assert.doesNotMatch(flipped.stdout, /Names changed in env files/); // names shown under different rules are not compared
 });
 
 test('fuzz: irregular files never print an uncorroborated name or a zqx word; regular files print exactly their definitions', async () => {

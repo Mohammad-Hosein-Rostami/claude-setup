@@ -15,15 +15,27 @@ snapshot and `diff` uses it, so the two scans are comparable; a different `--wra
 
 No value of any env file ever reaches stdout, stderr, a snapshot file or an error message. The rule is: when the tool is not
 sure a token is a variable name, it counts it and prints nothing. Two independent defences guard every leak, so one mistake
-does not leak.
+does not leak, and one rule decides when the tool stops trying to understand a file at all.
 
-Defence 1, the parsers (`lib/env-file-names.mjs` is the only code that sees env file content):
+Regular and irregular env files. A file is REGULAR only if every line (split on CRLF, LF and a lone CR) is blank, a comment, or
+ONE complete definition `NAME=value` or `export NAME=value`, where the value has balanced quotes on that same line, has nothing
+after a closing quote but a comment and does not end in a backslash, and the file holds no `-----BEGIN` text, no lone CR, no NUL
+byte and no heredoc marker (`<<`). Anything else (a stray line, `NAME: value`, a quote that opens and does not close, a PEM
+block, a JSON value spread over lines, a shell heredoc) is IRREGULAR: the tool cannot be sure where a value ends, so a "name"
+could be a piece of a secret. From a regular file names print under the name-shape rule below. From an irregular file a name
+prints only if code reads the same name or a deploy file names it too; every other name is counted, never shown:
+`N names not shown (this file has multi-line or unusual values; only names also found in code or deploy files are listed)`.
+The file is marked `irregular` in the text report, the JSON and the snapshot. `diff` compares hidden names by count only
+(`names not shown: 3 -> 2`), never by value.
+
+Defence 1, the parsers (`lib/env-file-names.mjs` is the only code that sees env file content; its skip rules stay on for every
+file, regular or not):
 - Of each line only the text left of the first `=` (or `: ` in dotenv's colon form) is a candidate name; the rest is used only
   to see whether the value goes on, and is dropped.
 - A line that is not blank, a comment or a definition starts a skipped region that lasts until the next blank line. A PEM block
   (`-----BEGIN` to `-----END`, wherever it starts, also as the start of a value) is skipped whole. A value that opens a quote
   (`"`, `'`, backtick, bash `$'`) that is not closed, ends with a backslash, or is a YAML block scalar (`|`, `>`) swallows the
-  lines after it. A line whose value is only `=` characters (base64 or base32 padding) is not a definition. Skipped lines are
+  lines after it; a `-----END` line ends the PEM region only, never an open quote. A line whose value is only `=` characters (base64 or base32 padding) is not a definition. Skipped lines are
   counted as `other lines`, never parsed and never echoed.
 - The scanners for code and deploy files capture names only (a regular expression group around the name), never the line.
   A Dockerfile continuation is joined with no space, as Docker does, and after the first `NAME=value` only words of the form
@@ -35,7 +47,9 @@ Defence 2, the output rule, applied before anything is printed or saved:
   a deploy file names the same name. Others are counted per file as `N names not shown (mixed case or too long)`. A fragment of
   a secret (a base64 line, a token) almost never has that shape.
 - Names from deploy files follow the same rule, except that a name in a key position (`NAME:` of a YAML mapping, `${NAME`,
-  `${{ secrets.NAME }}`) may be mixed case up to 64 characters. A name from the left of `=` in a Dockerfile or in a
+  `${{ secrets.NAME }}`) may be mixed case up to 64 characters, because a key is never a value. The lines of a quoted YAML value
+  that continues, block scalars (`|`, `>` with any indicator), Dockerfile heredoc bodies and compose `$${NAME}` (an escaped
+  literal) are skipped; after a YAML quote that never closes no later name of that file is kept (counted as hidden). A name from the left of `=` in a Dockerfile or in a
   `- NAME=value` item must be plain. Hidden deploy names are counted under `Not read`.
 
 Other rules that keep content out:
@@ -52,10 +66,12 @@ every place a value can sit (and every multi-line shape found in a security revi
 
 ## Saving a snapshot
 
-`--save <file>` creates the file with the exclusive flag: any existing path, a symlink included, is refused (exit 2).
-`--overwrite` replaces an existing regular file, still never a symlink or a special file. A file name that looks like an env file
-(`.env`, `.env.*`, `*.env`) is refused in every case, so a snapshot can never replace or be mistaken for a real env file.
-`diff` reads only a regular file (a symlinked snapshot is refused).
+`--save <file>` creates the file with the exclusive, no-follow flags: any existing path, a symlink included, is refused (exit 2).
+`--overwrite` replaces an existing file only if it is a regular file that already holds one of this tool's snapshots (so
+`package.json`, notes, a hard link to a real `.env` are refused), opened without following a symlink. A file name that looks like
+an env file (`.env`, `.env.*`, `*.env`), in any letter case, is refused in every case, so a snapshot can never replace or be
+mistaken for a real env file. `diff` opens only a regular file without following links (a FIFO or symlink is refused) and
+refuses a snapshot of an older version (version 1 snapshots may hold fragments of values; save a new one).
 
 ## What it collects
 
@@ -84,9 +100,10 @@ A deploy file mention does not define a name; it counts as use in "Defined but n
 ## Output of `list`
 
 ```
-Env files (2):
-  .env  (3 names, 1 other line)
+Env files (3):
+  .env  (3 names)
   apps/web/.env.local  (1 name)
+  tools/.env  (1 name, 4 other lines, 6 names not shown (this file has multi-line or unusual values; only names also found in code or deploy files are listed), irregular)
 
 Example files (1):
   .env.example  (3 names)
@@ -102,11 +119,11 @@ Defined but never read by code or deploy files (1):
 Names that differ between env files of the same folder (2):
   ONLY_ROOT  in .env; not in .env.example
 
-env-names: 2 env files, 4 defined names, 5 names read by code, values never read
+env-names: 3 env files, 4 defined names, 5 names read by code, values never read
 ```
 
 `Vite built-ins read`, `Dynamic access` and `Not read` sections appear only when they have rows. `--json` prints the full
-structure; `--save` writes the same JSON with `{ version: 1, root, generatedAt, wrappers }` (a snapshot).
+structure; `--save` writes the same JSON with `{ version: 2, root, generatedAt, wrappers }` (a snapshot).
 
 ## Output of `diff`
 
@@ -123,7 +140,7 @@ when both hold exactly the same names each gets a `same names as <other path>` l
 | Command | Code | Meaning |
 | ------- | ---- | ------- |
 | list | 0 | printed |
-| list, diff | 2 | usage error, a folder that is not readable, a snapshot that is unreadable, not a regular file, not JSON, of the wrong shape or of a version other than 1 (refused, not guessed), a `--save` that is refused or cannot be written, a `--wrapper` that differs from the snapshot's |
+| list, diff | 2 | usage error, a folder that is not readable, a snapshot that is unreadable, not a regular file, not JSON, of the wrong shape or of a version other than 2 (refused, not guessed), a `--save` that is refused or cannot be written, a `--wrapper` that differs from the snapshot's |
 | diff | 0 | nothing changed |
 | diff | 1 | something changed |
 
@@ -138,8 +155,11 @@ when both hold exactly the same names each gets a `same names as <other path>` l
 - Skipping is deliberate: an unclosed quote swallows the lines after it, a value ending in a backslash swallows the next line
   (a Windows path such as `DIR=C:\logs\` hides the line below it), and a stray line hides the lines up to the next blank
   line. Losing a name shows up in `other lines`; leaking a part of a value is not allowed.
-- A quoted YAML value in a compose file that continues on a line of its own is not tracked; a plain-shaped name inside it could
-  be printed (mixed-case ones are hidden by the output rule).
+- In a REGULAR env file an unquoted value that continues on the next line, where the continuation is itself `NAME=...`, reads as
+  a second definition: every dotenv reader does the same, so no rule can tell them apart. A single-case name of a secret that
+  ends in `=` (a base32 seed) could print this way. Keep secrets of that shape in quotes.
+- Irregular env files show few names (only those code or deploy files confirm); that is the price of never printing a fragment.
+- `-----BEGIN` in a comment makes the file irregular and skips to the next `-----END` or the end of the file.
 - Files above 16 MB (env files) or 4 MB (source and deploy files) are listed under `Not read`.
 
 ## Layout
