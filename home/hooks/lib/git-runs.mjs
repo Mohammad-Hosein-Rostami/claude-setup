@@ -1,23 +1,25 @@
 // The commands git itself runs, read off one git command: the Bash guard checks each like a `bash -c` body and their reasons join the git
-// command's (pre-bash-guard.mjs checkCommand). Exports: gitRunReasons(command, env, reasonsOf) -> string[]; GIT_UNREADABLE_REASON.
+// command's (pre-bash-guard.mjs checkCommand). Exports: gitRunReasons(command, env, reasonsOf) -> string[]; GIT_UNREADABLE_REASON;
+// COMMAND_ENV and configKind(name), which lib/raw-risk.mjs reads to find what git runs in raw text.
 // Forms (git 2.54: each command's `git help`, `git help config|git`, git-hook, git-remote-ext; the quoting probed on the installed git):
 // - COMMAND_OPTIONS: `rebase -x|--exec`, `filter-branch --*-filter|--setup`, `grep -O<pager>`, `clone -u|--upload-pack` ...; a long option
 //   also as a prefix (git takes a unique one), a short one stuck on or in a cluster (`-xcmd`, `-ix cmd`);
 // - word lists: `bisect run <words>` (git quotes each word), `submodule foreach <cmd> [<words>]` (git runs the first as shell text with
 //   the rest as its arguments), `for-each-repo <words>` (`git <words>` in other repositories, so in a directory the guard does not know);
-// - config for this call (`-c`, `--config-env` with its variable assigned in the line, GIT_CONFIG_KEY_<n>/VALUE_<n>, GIT_CONFIG_PARAMETERS):
-//   COMMAND_CONFIG keys run their value (section and key in any case, any subsection), `alias.*` runs `!<shell text>` or else git with
-//   the value as its words, `remote.*.vcs` runs `git remote-<value>`; COMMAND_ENV variables set in front of git (also by `env`) or earlier
-//   in the line; `ext::<command>` URLs among git's words and config values (git-remote-ext splits the command at unescaped spaces).
+// - config for this call (`-c`, `--config-env` with its variable assigned in the line, GIT_CONFIG_KEY_<n>/VALUE_<n>, GIT_CONFIG_PARAMETERS,
+//   clone's own `-c|--config`) and what `git config` writes: COMMAND_CONFIG keys run their value (section and key in any case, any
+//   subsection), `alias.*` runs `!<shell text>` or else git with the value as its words, `remote.*.vcs` runs `git remote-<value>`, and
+//   core.hooksPath asks as `-c` does; COMMAND_ENV variables set in front of git (also by `env`) or earlier in the line; `ext::<command>`
+//   URLs among git's words and config values, and `git remote-ext <remote> <command>` (git-remote-ext splits it at unescaped spaces).
 // A config or environment value that is a variable or substitution is not a "variable command word" ask (`GIT_PAGER="$P" git log` stays
 // silent; lib/raw-risk.mjs still asks next to a dangerous word); an option value is a `bash -c` body in every way. GIT_UNREADABLE_REASON
 // asks for a `--config-env` variable the line does not set (EDITOR-style variables excepted), a GIT_CONFIG_KEY_<n> without its value,
 // `ext::` switched on (protocol.ext.allow, protocol.allow, GIT_ALLOW_PROTOCOL) and word lists that differ between readings of git's
-// options. Config files (GIT_CONFIG_GLOBAL, include.path) are lib/raw-risk.mjs's job. `-C <dir>` moves the commands; --git-dir,
-// --work-tree, GIT_DIR and GIT_WORK_TREE make their directory unknown (null).
+// options. Config files and values set in ways the guard cannot read (`declare -x`, `printf -v`, `"$A$B"`) are lib/raw-risk.mjs's job.
+// `-C <dir>` moves the commands; --git-dir, --work-tree, GIT_DIR and GIT_WORK_TREE make their directory unknown (null).
 // Pure, no I/O. Each subcommand's options are read once, each distinct command is checked once, and the caller's MAX_NESTING bounds depth.
 import { resolve } from 'node:path';
-import { configOf } from './command-checks.mjs';
+import { configOf, HOOKS_PATH_REASON } from './command-checks.mjs';
 import { parseGitArgs } from './git-options.mjs';
 import { expandHome, nativePath, withoutRedirects } from './rm-paths.mjs';
 import { CONVENTIONAL_COMMAND_VARS, SPLIT_VARIABLE_REASON, VARIABLE_COMMAND_REASON } from './shell-hazards.mjs';
@@ -40,6 +42,9 @@ const COMMAND_OPTIONS = new Map([
     '--tag-name-filter')],
   ['send-email', longOptions('--sendmail-cmd', '--to-cmd', '--cc-cmd', '--header-cmd', '--smtp-server')],
 ]);
+// subcommand -> its own option that sets config for the call: only clone in git 2.54 (`-c|--config <key>=<value>`, used during the
+// clone); `for-each-repo --config` and `web--browse --config` name a key, `maintenance --config-file` a file
+const CONFIG_OPTIONS = new Map([['clone', [{ long: '--config', short: 'c' }]]]);
 // config `section.key` (lowercase, a subsection dropped: `diff.<driver>.textconv` is diff.textconv) whose value git runs; `*.path` keys
 // name the program of a difftool, mergetool, browser or man viewer
 const COMMAND_CONFIG = new Set(['core.pager', 'core.editor', 'core.sshcommand', 'core.fsmonitor', 'core.askpass', 'core.gitproxy',
@@ -51,7 +56,9 @@ const COMMAND_CONFIG = new Set(['core.pager', 'core.editor', 'core.sshcommand', 
 const COMMAND_SECTIONS = new Set(['pager', 'instaweb']); // `pager.<command>`, and every instaweb key (httpd, browser ...)
 const SENDEMAIL_COMMAND = /cmd$|^smtpserver$/; // sendemail.sendmailCmd, toCmd, ccCmd, headerCmd, smtpServer (also per identity)
 // environment variables whose value git runs (`git help git`, `git help config`); EDITOR, VISUAL and PAGER are git's fallbacks
-const COMMAND_ENV = ['GIT_SSH_COMMAND', 'GIT_SSH', 'GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'GIT_PAGER', 'PAGER', 'EDITOR', 'VISUAL',
+const CONFIG_COMMAND = new Set(['config']);
+const EXT_HELPER = new Set(['remote-ext']); // `git remote-ext <remote> <command>`, the helper behind `ext::` (remote-fd runs no command)
+export const COMMAND_ENV = ['GIT_SSH_COMMAND', 'GIT_SSH', 'GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'GIT_PAGER', 'PAGER', 'EDITOR', 'VISUAL',
   'GIT_EXTERNAL_DIFF', 'GIT_ASKPASS', 'SSH_ASKPASS', 'GIT_PROXY_COMMAND'];
 const ASSIGNMENT = /^([A-Za-z_]\w*)=([\s\S]*)$/;
 const UNREADABLE_NAME = /[$`]/;
@@ -95,13 +102,20 @@ function optionValue(word, next, { long, short, attachedOnly = false }) {
   return attached !== '' || attachedOnly ? attached : next;
 }
 
-/** The commands given to command options, each subcommand read once in its longest reading (it holds every later reading's words). */
-function optionCommands(subcommands) {
+/** subcommand name (one of `names`) -> the words after it in its longest reading, which holds the words of every later reading. */
+function longestReadings(subcommands, names) {
   const longest = new Map();
   for (const { sub, rest } of subcommands) {
-    if (COMMAND_OPTIONS.has(sub) && rest.length >= (longest.get(sub)?.length ?? 0)) longest.set(sub, rest);
+    if (names.has(sub) && rest.length >= (longest.get(sub)?.length ?? 0)) longest.set(sub, rest);
   }
-  return [...longest].flatMap(([sub, rest]) => rest.flatMap((word, i) => COMMAND_OPTIONS.get(sub).map((option) => optionValue(word, rest[i + 1], option))));
+  return longest;
+}
+
+/** The values of the options of `optionsBySub` (subcommand -> option specs), each subcommand read once in its longest reading. */
+function optionValues(subcommands, optionsBySub) {
+  const readings = [...longestReadings(subcommands, optionsBySub)];
+  const values = readings.flatMap(([sub, rest]) => rest.flatMap((word, i) => optionsBySub.get(sub).map((option) => optionValue(word, rest[i + 1], option))));
+  return values.filter((value) => value !== undefined);
 }
 
 /** True when this reading of git's words runs a word list: `bisect run ...`, `submodule [options] foreach ...`, `for-each-repo ...`. */
@@ -111,10 +125,7 @@ function runsList({ sub, rest }) {
   return sub === 'for-each-repo';
 }
 
-/**
- * How many words one option of `for-each-repo` (git 2.54) takes: `--config <name>` 2, `--config=<name>` or `--[no-]keep-going` 1, also
- * as a unique prefix (git takes one); 0 for any other word, which starts the words git runs.
- */
+/** Words one for-each-repo option takes (git 2.54): 2 for `--config <name>`, 1 for `--config=<name>` or `--[no-]keep-going` (or a prefix), else 0. */
 function forEachRepoOptionLength(word = '') {
   const [name] = word.split('=');
   const prefixOf = (option) => name.length > LONG_PREFIX.length && option.startsWith(name);
@@ -122,10 +133,7 @@ function forEachRepoOptionLength(word = '') {
   return !word.includes('=') && FOR_EACH_REPO_FLAGS.some(prefixOf) ? 1 : 0;
 }
 
-/**
- * The git words of `for-each-repo`: after its own options and `--`. An option it does not know (git 2.54 rejects it, a later git may
- * not) starts the words, so lib/git-options.mjs reads it as git's own option, both ways.
- */
+/** The git words of for-each-repo, after its options and `--`; an option it does not know starts them (lib/git-options.mjs reads it both ways). */
 function forEachRepoWords(rest) {
   let i = 0;
   for (let length = forEachRepoOptionLength(rest[i]); length > 0; length = forEachRepoOptionLength(rest[i])) i += length;
@@ -165,11 +173,8 @@ function numberedConfig(valuesOf) {
   return entries;
 }
 
-/**
- * Every config this git command sets: {name, value}, or {name, variable} for a `--config-env` variable this line does not assign.
- * From `-c`, `--config-env`, GIT_CONFIG_PARAMETERS (git's own single quoting, read by the shell word splitter) and numbered config.
- */
-function configEntries(options, valuesOf) {
+/** Every config this git command sets, {name, value} or {name, variable} (a `--config-env` variable this line does not assign). */
+function configEntries(options, subcommands, valuesOf) {
   const fromOptions = options.flatMap((option) => {
     const text = configOf(option);
     if (text === undefined || !option[0].startsWith(CONFIG_ENV_OPTION)) return text === undefined ? [] : [pairOf(text)];
@@ -179,17 +184,28 @@ function configEntries(options, valuesOf) {
     return values.length > 0 ? values.map((value) => ({ name, value })) : [{ name, variable }];
   });
   const parameters = valuesOf('GIT_CONFIG_PARAMETERS').flatMap((text) => segments(text).flat().map(pairOf));
-  return [...fromOptions, ...parameters, ...numberedConfig(valuesOf)];
+  const fromSubcommands = [...optionValues(subcommands, CONFIG_OPTIONS).map(pairOf), ...configWrites(longestReadings(subcommands, CONFIG_COMMAND).get('config'))];
+  return [...fromOptions, ...parameters, ...numberedConfig(valuesOf), ...fromSubcommands];
 }
 
-/** What git does with the value of config `name`: 'command', 'alias', 'vcs', 'protocol' (switches ext:: on) or undefined (nothing run). */
-function configKind(name) {
+/**
+ * What `git config [set] [--add|--replace-all] [--global|--file <f>] <name> <value>` writes: {name, value} for each command-running key
+ * and the plain word after it (option words skipped). A read has no value after the key, or a value pattern, checked the same way (rare).
+ */
+function configWrites(rest = []) {
+  const words = rest.filter((word) => !word.startsWith('-'));
+  return words.flatMap((name, i) => (i + 1 < words.length && configKind(name) !== undefined ? [{ name, value: words[i + 1] }] : []));
+}
+
+/** What git does with config `name`'s value: 'command', 'alias', 'vcs', 'protocol' (ext:: on), 'hooks' (core.hooksPath) or undefined. */
+export function configKind(name) {
   const parts = name.toLowerCase().split('.');
   const [section] = parts;
   const key = parts.length > 1 ? parts.at(-1) : '';
   if (UNREADABLE_NAME.test(name)) return 'command'; // a name the guard cannot read may name any of them
   if (section === 'alias') return 'alias';
   if (`${section}.${key}` === 'remote.vcs') return 'vcs';
+  if (`${section}.${key}` === 'core.hookspath') return 'hooks';
   if (`${section}.${key}` === 'protocol.allow') return parts.length === 2 || parts[1] === 'ext' ? 'protocol' : undefined;
   const runs = COMMAND_CONFIG.has(`${section}.${key}`) || COMMAND_SECTIONS.has(section) || (section === 'sendemail' && SENDEMAIL_COMMAND.test(key));
   return runs ? 'command' : undefined;
@@ -199,6 +215,7 @@ function configKind(name) {
 function configRun({ name, value, variable }) {
   const kind = name === undefined ? 'command' : configKind(name);
   if (kind === undefined) return {};
+  if (kind === 'hooks') return { ask: HOOKS_PATH_REASON };
   if (variable !== undefined) return CONVENTIONAL_COMMAND_VARS.has(variable) ? {} : { ask: GIT_UNREADABLE_REASON };
   if (value === undefined || value === '') return {};
   if (kind === 'protocol') return value.toLowerCase() === PROTOCOL_OFF ? {} : { ask: GIT_UNREADABLE_REASON };
@@ -231,23 +248,21 @@ function innerCwd(options, cwd, valuesOf) {
   return dir;
 }
 
-/**
- * The commands this git command makes git run, each with the directory it runs in; `value` marks a config or environment value.
- * @returns {{runs: {text: string, cwd: string|null, value?: boolean}[], asks: string[]}} asks: what git runs that the guard cannot read
- */
+/** What this git command makes git run, as {runs: [{text, cwd, value?}], asks}; value marks a config or environment value. */
 function commandsOf({ args, before }, env) {
   const valuesOf = assignmentsOf(before, env.vars ?? new Map());
   const { options, subcommands } = parseGitArgs(args);
-  const entries = configEntries(options, valuesOf);
+  const entries = configEntries(options, subcommands, valuesOf);
   const fromConfig = entries.map(configRun);
   const lists = subcommands.filter(runsList); // differing readings would each need their own list: ask instead of checking them all
   const extOn = valuesOf('GIT_ALLOW_PROTOCOL').some((list) => list.toLowerCase().split(':').includes('ext'));
   const asks = [...fromConfig.map((run) => run.ask), extOn || lists.length > 1 ? GIT_UNREADABLE_REASON : undefined];
   const cwd = innerCwd(options, env.cwd, valuesOf);
   const urls = [...args.map(plain), ...entries.map((entry) => entry.value ?? '')].map((word) => EXT_URL.exec(word)?.[1]).filter((url) => url !== undefined);
+  const helperCommands = (longestReadings(subcommands, EXT_HELPER).get('remote-ext') ?? []).map(plain);
   const list = lists.length === 1 ? listCommand(lists[0]) : undefined;
   const runs = [
-    ...[...optionCommands(subcommands), ...urls.map(extCommand)].map((text) => ({ text, cwd })),
+    ...[...optionValues(subcommands, COMMAND_OPTIONS), ...[...urls, ...helperCommands].map(extCommand)].map((text) => ({ text, cwd })),
     ...[...fromConfig.map((run) => run.text), ...COMMAND_ENV.flatMap(valuesOf)].map((text) => ({ text, cwd, value: true })),
     ...(list === undefined ? [] : [{ text: list.text, cwd: list.elsewhere ? null : cwd }]),
   ];

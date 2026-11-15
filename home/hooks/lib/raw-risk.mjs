@@ -4,8 +4,11 @@
 // Hidden-execution constructs: `$(`, backtick, `<<` / `<<<` (except a plain top-level heredoc with a quoted delimiter read by cat or tee, whose
 // body is data), `<(` / `>(`, `eval`, `trap`, `source` / `.`, `coproc`, `case`, a carriage return, a pipe into a shell, and the commands that
 // run a text argument: watch, parallel, `PROMPT_COMMAND=`, `script|expect -c`, `perl|python|node|ruby|deno|bun -e|-c|-p`, `osascript -e`,
-// `tmux new|send-keys`, `fish|pwsh -c`, `npx -c`, `npm exec -c`; and git config read from a file the guard cannot see, whose commands
-// lib/git-runs.mjs cannot read (`GIT_CONFIG_GLOBAL|SYSTEM=` other than /dev/null, `include.path`, `includeIf.<condition>.path`).
+// `tmux new|send-keys`, `fish|pwsh -c`, `npx -c`, `npm exec -c`. Git constructs, whose commands lib/git-runs.mjs cannot read: config read
+// from a file (`GIT_CONFIG_GLOBAL|SYSTEM=` other than /dev/null, `include.path`, `includeIf.<condition>.path`), and in a line that runs
+// git, a variable or config key whose value git runs (git-runs COMMAND_ENV, configKind) next to a `$`, backtick, `+=`, `declare`, `read`
+// or `printf -v`. Git may run any variable's value, so with a git construct the words of assignment values count too; when only git
+// hides what runs, the reason is GIT_UNREADABLE_REASON (an ask: no rewrite helps).
 // Dangerous words (looked up as words of the quote-stripped, ANSI-C-decoded text): git push (by position) / git alias, rm with a recursive or forced flag and (also find -delete / -exec rm with)
 // an absolute, `~`, `$` or `..` path, npm-style publish, gh mutations (judged by position: `gh <group> <verb>`), disk tools and raw device paths,
 // psql/mysql/ssh near a production name. Message text of `git commit` and `gh pr|issue create|edit|comment` is data (message-text.mjs), so
@@ -15,12 +18,20 @@
 import { ANSI_C_WORD, decodeAnsiC } from './ansi-c.mjs';
 import { withoutMessageText } from './message-text.mjs';
 import { GIT_TOPLEVEL, GIT_TOPLEVEL_WORD } from './shell-words.mjs';
+import { COMMAND_ENV, configKind, GIT_UNREADABLE_REASON } from './git-runs.mjs';
 import { DESTRUCTIVE_PREFIX } from './verdict.mjs';
 
 export const RISKY_REASON = 'risky word inside shell expansion';
 const HIDDEN_CONSTRUCT = /\$\(|`|<<|<\(|>\(|\r|\b(?:eval|trap|source|coproc|case)\b|(?:^|[;&|(\n])[ \t]*\.[ \t]+\S|\|[ \t]*(?:sudo[ \t]+)?(?:ba|z|da|k)?sh\b/;
 // `git help config`: these make git read config, which may run commands, from a file; /dev/null is empty. Config names match in any case.
 const GIT_FILE_CONFIG = /\bGIT_CONFIG_(?:GLOBAL|SYSTEM)=(?!["']?\/dev\/null["']?(?:[\s;&|)]|$))|include(?:if\.[^\s=]*)?\.path\b/i;
+const GIT_COMMAND_WORD = /(?:^|[\s;&|(`/\\])git(?=[\s;&|)`]|$)/;
+// a variable git runs, not read as `$NAME` / `${NAME}`
+const GIT_RUN_VARIABLE = new RegExp(`(?<![\\w$]|\\$\\{)(?:${[...COMMAND_ENV, 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_(?:KEY|VALUE)_\\d+'].join('|')})\\b`);
+const UNREAD_VALUE = /[$`]|\+=|\b(?:declare|typeset|local|readonly|read|mapfile|readarray)\b|\bprintf\s+-v\b/;
+const KEY_BREAK = /[\s="'`$;&|()<>]+/;
+const RUN_VALUE_ASSIGNMENT = /PROMPT_COMMAND=/g; // the shell runs this variable's value
+const ANY_ASSIGNMENT = /(?:^|[\s;&|(])[A-Za-z_]\w*\+?=/g;
 const ANSI_C = new RegExp(ANSI_C_WORD, 'g');
 const STATEMENT_BREAK = /[;&|\n\r]+/;
 const WORD_BREAK = /[\s<>`]+|\$\(|\(/;
@@ -185,12 +196,28 @@ export function riskyWordInExpansion(command, prodHosts = []) {
   // `$(git rev-parse --show-toplevel)` is a known, harmless substitution (the per-command rm check judges where it points)
   const text = joinContinuations(decodeAnsiCWords(command)).replace(GIT_TOPLEVEL, GIT_TOPLEVEL_WORD);
   const visible = withoutPlainHeredocs(withoutMessageText(text));
-  const statements = visible.replace(/PROMPT_COMMAND=/g, 'PROMPT_COMMAND= ').replace(/[\\'"]/g, '').split(STATEMENT_BREAK).map(wordsOf);
-  if (!HIDDEN_CONSTRUCT.test(visible) && !GIT_FILE_CONFIG.test(visible) && !statements.some(runsText)) return undefined;
+  const statements = statementsOf(visible, RUN_VALUE_ASSIGNMENT);
+  const otherHidden = HIDDEN_CONSTRUCT.test(visible) || statements.some(runsText);
+  const gitHidden = GIT_FILE_CONFIG.test(visible) || hidesGitRun(visible);
+  if (!otherHidden && !gitHidden) return undefined;
   const prodText = visible.toLowerCase();
   const prodNames = prodHosts.map((host) => host.replace(/[*?]/g, '')).filter(Boolean);
-  const destructive = statements.map((words) => dangerIn(words, prodText, prodNames));
+  const scanned = gitHidden ? statementsOf(visible, ANY_ASSIGNMENT) : statements;
+  const destructive = scanned.map((words) => dangerIn(words, prodText, prodNames));
   const found = destructive.find((category) => category !== undefined);
   if (found === undefined) return undefined;
+  if (!otherHidden) return GIT_UNREADABLE_REASON;
   return destructive.includes('destructive') ? `${DESTRUCTIVE_PREFIX}${RISKY_REASON}` : RISKY_REASON;
+}
+
+/** The quote-stripped words of each statement; the value of each `NAME=` word that `assignments` matches is split off as words. */
+function statementsOf(visible, assignments) {
+  return visible.replace(assignments, (assignment) => `${assignment} `).replace(/[\\'"]/g, '').split(STATEMENT_BREAK).map(wordsOf);
+}
+
+/** True when the line runs git and sets a variable or config key whose value git runs in a way the guard does not read to a literal. */
+function hidesGitRun(text) {
+  if (!GIT_COMMAND_WORD.test(text) || !UNREAD_VALUE.test(text)) return false;
+  const isRunningKey = (word) => word.includes('.') && configKind(word.replace(/^[^A-Za-z]+/, '')) !== undefined;
+  return GIT_RUN_VARIABLE.test(text) || text.split(KEY_BREAK).some(isRunningKey);
 }

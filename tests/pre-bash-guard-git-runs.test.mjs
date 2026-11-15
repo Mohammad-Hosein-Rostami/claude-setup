@@ -90,6 +90,19 @@ const NUMBERED_CONFIG_FORMS = {
   'GIT_CONFIG_COUNT/KEY_0/VALUE_0': (c) => `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='${c}' git log`,
   'GIT_CONFIG_KEY_1, an editor': (c) => `GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=color.ui GIT_CONFIG_VALUE_0=never GIT_CONFIG_KEY_1=Core.Editor GIT_CONFIG_VALUE_1='${c}' git commit`,
 };
+// clone's own -c|--config sets config in the new repository, used during the clone (`git help clone`); no other subcommand has one
+const CLONE_CONFIG_FORMS = {
+  'clone -c': (c) => `git clone -c 'core.sshCommand=${c}' ../src dst`, 'clone -qc (a cluster)': (c) => `git clone -qc 'core.sshCommand=${c}' ../src dst`,
+  'clone --config=': (c) => `git clone --config='core.sshCommand=${c}' ../src dst`, 'clone --config': (c) => `git clone --config 'core.fsmonitor=${c}' ../src dst`,
+};
+// `git config` writing a command-running key is checked like -c, though git runs the value later
+const CONFIG_WRITE_FORMS = {
+  'config <key> <value>': (c) => `git config core.editor '${c}'`, 'config set': (c) => `git config set core.editor '${c}'`,
+  'config --global': (c) => `git config --global core.pager '${c}'`, 'config --file <f>': (c) => `git config --file .git/config core.fsmonitor '${c}'`,
+  'config --local --add': (c) => `git config --local --add sequence.editor '${c}'`,
+  'config --worktree --replace-all': (c) => `git config --worktree --replace-all core.sshCommand '${c}'`,
+  'config --type=path, a subsection': (c) => `git config --type=path diff.lfs.textconv '${c}'`, 'config alias.x !': (c) => `git config alias.st '!${c}'`,
+};
 // an alias runs `!<shell text>`; the alias ask of main stays
 const ALIAS_FORMS = {
   '-c alias.x=!': (c) => `git -c 'alias.x=!${c}' x`, '-c alias.x.command=!': (c) => `git -c 'alias.x.command=!${c}' x`,
@@ -107,6 +120,7 @@ const EXT_FORMS = {
   'clone ext::': (c) => `git clone 'ext::${c}' dst`, 'fetch ext::': (c) => `git fetch 'ext::${c}' main`,
   'remote add ext::': (c) => `git remote add up 'ext::${c}'`, '-c remote.<name>.url=ext::': (c) => `git -c 'remote.up.url=ext::${c}' fetch up`,
   '--config-env remote.<name>.url=': (c) => `U='ext::${c}' git --config-env remote.up.url=U fetch up`, // the URL is in no word of git's
+  'remote set-url ext::': (c) => `git remote set-url up 'ext::${c}'`, 'remote-ext, the helper itself': (c) => `git remote-ext up '${c}'`,
 };
 
 test('a command given to a subcommand option gets exactly the verdict it gets alone', () => {
@@ -124,12 +138,45 @@ test('config set for the call (-c, --config-env, GIT_CONFIG_*) whose value git r
   assertForms(ALIAS_FORMS, reasonsOf('git -c alias.x=status x'));
 });
 
+test('clone -c|--config and git config writes: a command-running value gets exactly the verdict it gets alone', () => {
+  assertForms(CLONE_CONFIG_FORMS);
+  assertForms(CONFIG_WRITE_FORMS);
+});
+
+test('git config: reads and ordinary writes stay quiet; a hooks path asks like -c; an alias without ! is git arguments', () => {
+  const quiet = ['git config --get core.editor', 'git config get core.editor', 'git config list', 'git config --list --show-origin',
+    'git config user.name x', 'git config core.pager cat', 'git config core.editor "code --wait"', 'git config --global alias.co checkout',
+    'git config --unset core.pager', 'git config protocol.file.allow always', 'git config --global --get-regexp alias'];
+  for (const command of quiet) assert.deepEqual(decide(command, ctx), { allow: true }, command);
+  const hooksPath = 'git -c core.hooksPath bypasses the git hooks';
+  for (const command of ['git config core.hooksPath /dev/null', 'git config set --global core.hooksPath .githooks',
+    'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=x git commit']) {
+    assert.ok(reasonsOf(command).includes(hooksPath), command);
+  }
+  assert.match(reasonOf(`git config alias.p '${PUSH.slice(4)}'`), FORCE_PUSH);
+  assert.deepEqual(reasonsOf('git config protocol.ext.allow always'), [GIT_UNREADABLE_REASON]);
+});
+
+test('a git-run variable or config value set from what the guard cannot read asks, only next to a dangerous word', () => {
+  const doubled = `A0='${RM}'; A1="$A0$A0"`;
+  const hidden = [`${doubled}; GIT_EDITOR="$A1" git commit`, `${doubled}; git -c core.editor="$A1" commit`, `declare -x GIT_EDITOR='${RM}'; git commit`,
+    `printf -v GIT_EDITOR %s '${RM}'; export GIT_EDITOR; git commit`, `printf -v E %s '${RM}'; git config core.editor "$E"`,
+    `typeset -x GIT_SSH_COMMAND='${RM}'; git fetch`, `${doubled}; git clone -c core.sshCommand="$A1" ../src dst`];
+  for (const command of hidden) assert.deepEqual(reasonsOf(command), [GIT_UNREADABLE_REASON], command);
+  const quiet = ['GIT_EDITOR="$EDITOR" git commit', 'git -c core.editor="$EDITOR" commit', 'declare -x GIT_EDITOR=vim; git commit',
+    'printf -v GIT_EDITOR %s vim; export GIT_EDITOR; git commit', 'GIT_EDITOR=vim git commit && rm -rf /tmp/build', `A0='${RM}'; echo "$A0"`,
+    `A0='${RM}'; EDITOR="$A0" true`, 'git commit -e; echo "$EDITOR" && rm -rf /tmp/build']; // no git run / only reads the variable
+  for (const command of quiet) assert.deepEqual(decide(command, ctx), { allow: true }, command);
+});
+
 test('an environment variable git runs, set in front of git or earlier in the line, gets exactly the verdict of its value', () => assertForms(ENV_FORMS));
 
 test('an ext:: URL runs its command: checked word by word as git-remote-ext splits it', () => {
   assertForms(EXT_FORMS);
   assert.match(reasonOf("git clone 'ext::sh -c rm% -rf% ~/x' dst"), RM_OUTSIDE);
   assert.deepEqual(decide("git clone 'ext::ssh -i key git@example.com %S repo' dst", ctx), { allow: true });
+  assert.match(reasonOf(`printf 'connect git-upload-pack\\n' | git remote-ext up 'sh -c rm% -rf% ~/x'`), RM_OUTSIDE);
+  assert.deepEqual(decide("git remote-fd up 'fd::3,4'", ctx), { allow: true }); // remote-fd talks over file descriptors: no command
 });
 
 test('for-each-repo runs git with its words in other repositories: checked as that git command, relative paths unknown', () => {
@@ -211,7 +258,7 @@ test('config read from a file the guard cannot read (GIT_CONFIG_GLOBAL|SYSTEM, i
   const written = `printf '[core]\\n\\tpager = ${RM}\\n' > /tmp/c.cfg`;
   for (const reads of ['GIT_CONFIG_GLOBAL=/tmp/c.cfg git log', 'GIT_CONFIG_SYSTEM=/tmp/c.cfg git log', 'git -c include.path=/tmp/c.cfg log',
     'git -c includeIf.onbranch:main.path=/tmp/c.cfg log', 'export GIT_CONFIG_GLOBAL=/tmp/c.cfg; git log']) {
-    assert.match(reasonOf(`${written}; ${reads}`), RISKY, reads);
+    assert.deepEqual(reasonsOf(`${written}; ${reads}`), [GIT_UNREADABLE_REASON], reads); // no rewrite helps: the owner confirms
     assert.deepEqual(decide(reads, ctx), { allow: true }, reads);
   }
   assert.deepEqual(decide(`${written}; GIT_CONFIG_GLOBAL=/dev/null git log`, ctx), { allow: true }); // /dev/null is read: it is empty

@@ -4,7 +4,7 @@
 // Exports: checkGit(args, assigns), checkDiskWipe(cmd, args), checkLockfileEdit(cmd, args), checkHiddenRm(cmd, args),
 // checkStdinRm(cmd, args, before), checkStdinScriptRm(script, before), checkKeychainPrint(cmd, args), checkGhSecret(cmd, args) - each
 // returns an ask reason, or undefined when the command is fine; secretPrintOf(cmd, args) and isSecretPrintReason(reason) serve
-// lib/captured-read.mjs; LOCKFILES and lockfileAdvice(name) serve lib/reason-classes.mjs; configOf(option) serves lib/git-runs.mjs.
+// lib/captured-read.mjs; LOCKFILES and lockfileAdvice(name) serve lib/reason-classes.mjs; configOf(option) and HOOKS_PATH_REASON serve lib/git-runs.mjs.
 // Pure, no I/O. Every rule is an ask (the hook shows a timed dialog); a destructive one starts with "DESTRUCTIVE: ". The one exception is
 // checkLockfileEdit: a quality rule, its text is advice (lib/bounce-once.mjs: denied once with the fix, the identical retry runs).
 // git's own options before the subcommand are read by lib/git-options.mjs; when they can be read more than one way, every reading is checked.
@@ -29,6 +29,7 @@ const DISKUTIL_APFS_WIPE = /^(?:delete|erase)/i; // `diskutil apfs deleteContain
 const DEVICE_WRITERS = new Set(['cp', 'mv', 'install', 'tee']); // diskutil eraseDisk, partitionDisk, zeroDisk, secureErase, reformat
 const RAW_DEVICE_TARGET = /^\/dev\/(?:r?disk|sd|hd|nvme|vd|xvd|mmcblk)/; // `> /dev/disk2`, `>/dev/sda`
 // `git -c core.hooksPath=x` replaces the repo hooks for one command
+export const HOOKS_PATH_REASON = 'git -c core.hooksPath bypasses the git hooks';
 const isHooksPathConfig = (value = '') => /^core\.hookspath=/i.test(value);
 // `git -c alias.p=push p`, `git -c 'alias.x=!git push' x`: the alias hides what runs
 const isAliasConfig = (value = '') => /^alias\./i.test(value);
@@ -78,7 +79,7 @@ export function checkGit(args, assigns = []) {
   if (assigns.includes('HUSKY=0')) return 'HUSKY=0 skips the git hooks';
   const { options, subcommands } = parseGitArgs(args);
   const configs = options.map(configOf);
-  if (configs.some(isHooksPathConfig)) return 'git -c core.hooksPath bypasses the git hooks';
+  if (configs.some(isHooksPathConfig)) return HOOKS_PATH_REASON;
   if (configs.some(isAliasConfig)) return 'git -c alias.* defines a command for this call (an alias can run push or any shell command); write the command out';
   const reasons = subcommands.map(checkGitSubcommand).filter((reason) => reason !== undefined);
   return reasons.find((reason) => reason.startsWith(DESTRUCTIVE_PREFIX)) ?? reasons[0];
