@@ -1,6 +1,6 @@
 // Tests for the third security audit (LOW findings R3-1, R3-2, R3-3): a backslash before a quote makes an env file irregular,
 // env and scanned files are read through one opened descriptor (no symlink, no FIFO hang, no swap between check and read),
-// and the deploy YAML reader prints nothing from a quoted key's value, a value on the next line or a multi-line flow map.
+// (R3-3, the deploy YAML reader, is tested in env-names-deploy-whitelist.test.mjs).
 // Marker words start with "zqx" (made up, any case); no real env file is used.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,14 +8,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import { link, readFile, rename, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scanDeploy } from '../home/tools/env-names/lib/deploy-names.mjs';
 import { isRegularEnvText, readEnvFile } from '../home/tools/env-names/lib/env-file-names.mjs';
 import { readRegularFile } from '../home/tools/env-names/lib/read-regular-file.mjs';
 import { everythingPrinted, makeProject } from './env-names-fixtures.mjs';
 
 const lines = (...parts) => `${parts.join('\n')}\n`;
-const names = (kind, text) => scanDeploy(kind, text).mentions.map((mention) => mention.name);
-const compose = (...entries) => `services:\n  a:\n    environment:\n${entries.map((entry) => `      ${entry}`).join('\n')}\n`;
 const onlyPosix = { skip: process.platform === 'win32' ? 'no FIFO, symlink flags or mkfifo on Windows' : false };
 const MAX_BYTES = 1024;
 const FLIP_MILLISECONDS = 1500;
@@ -96,27 +93,4 @@ test('R3-2: the scanned-file reader in collect.mjs goes through readRegularFile'
   const collect = await readFile(fileURLToPath(new URL('../home/tools/env-names/lib/collect.mjs', import.meta.url)), 'utf8');
   assert.match(collect, /readRegularFile\(/);
   assert.doesNotMatch(collect, /statSync|readFileSync/);
-});
-
-// R3-3: a value is not a key position: a quoted key's value, a value on the next line and a flow map that goes on over lines.
-test('R3-3: a quoted key with a multi-line value gives its own name and none from the value', () => {
-  assert.deepEqual(names('compose', compose('"QUOTED_KEY": "line one', 'zqxquotedkey: v', 'end"', 'AFTER: 1')), ['QUOTED_KEY', 'AFTER']);
-  assert.deepEqual(names('compose', compose("'SINGLE_KEY': 'line one", 'zqxsinglekey: v', "end'", 'AFTER: 1')), ['SINGLE_KEY', 'AFTER']);
-  assert.deepEqual(names('gitlab', 'variables:\n  "QK": "start\n  zqxglquoted: v\n  end"\n  AFTER: 1\n'), ['QK', 'AFTER']);
-});
-
-test('R3-3: a quoted value that starts on the line after its key is skipped to its closing quote', () => {
-  assert.deepEqual(names('compose', compose('KEY:', '  "multi', 'zqxnextline: v', '  end"', 'AFTER: 1')), ['KEY', 'AFTER']);
-  assert.deepEqual(names('workflow', 'on: push\njobs:\n  a:\n    env:\n      KEY:\n        \'multi\n      zqxwfnext: v\n        end\'\n      AFTER: 1\n'), ['KEY', 'AFTER']);
-});
-
-test('R3-3: a flow map or list that goes on over lines gives no name from the lines inside it', () => {
-  assert.deepEqual(names('compose', compose('KEY: {a: 1,', 'zqxflowkey: 2}', 'AFTER: 1')), ['KEY', 'AFTER']);
-  assert.deepEqual(names('compose', compose('KEY: [a,', 'zqxflowseq: 2]', 'AFTER: 1')), ['KEY', 'AFTER']);
-  assert.deepEqual(names('compose', compose('KEY: {a: {b: 1,', 'zqxnested: 2},', 'zqxsecond: 3}', 'AFTER: 1')), ['KEY', 'AFTER']);
-  assert.deepEqual(names('compose', compose('KEY: {a: "x,', 'zqxinquote: y",', 'b: 1}', 'AFTER: 1')), ['KEY', 'AFTER']);
-});
-
-test('R3-3: values that close on their own line, or are plain text, still let the next key through', () => {
-  assert.deepEqual(names('compose', compose('A: {x: 1}', 'B: [1, 2]', 'C: "done"', "D: 'it''s'", 'E: it\'s plain', 'F: 1')), ['A', 'B', 'C', 'D', 'E', 'F']);
 });

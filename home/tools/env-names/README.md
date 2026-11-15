@@ -48,10 +48,19 @@ Defence 2, the output rule, applied before anything is printed or saved:
   a deploy file names the same name. Others are counted per file as `N names not shown (mixed case or too long)`. A fragment of
   a secret (a base64 line, a token) almost never has that shape.
 - Names from deploy files follow the same rule, except that a name in a key position (`NAME:` of a YAML mapping, `${NAME`,
-  `${{ secrets.NAME }}`) may be mixed case up to 64 characters, because a key is never a value. The lines of a quoted YAML value
-  that continues, block scalars (`|`, `>` with any indicator), Dockerfile heredoc bodies and compose `$${NAME}` (an escaped
-  literal) are skipped; after a YAML quote that never closes no later name of that file is kept (counted as hidden). A name from the left of `=` in a Dockerfile or in a
-  `- NAME=value` item must be plain. Hidden deploy names are counted under `Not read`.
+  `${{ secrets.NAME }}`) may be mixed case up to 64 characters, because a key is never a value. A name from the left of `=` in a
+  Dockerfile or in a `- NAME=value` item must be plain. Dockerfile heredoc bodies and compose `$${NAME}` (an escaped literal)
+  are skipped.
+- Regular and irregular YAML blocks (the same idea as for env files, `lib/deploy-names.mjs`). A block under `environment:`
+  (compose), `env:` (workflow, GitLab) or `variables:` (GitLab) is REGULAR only if every line is blank, a comment, `NAME:` with
+  an empty value, a plain value or a value quoted completely on that line, or a list item `- NAME`, `- NAME=value` or the same
+  quoted on one line (a key may be in one pair of matching quotes), all at one indent, no tab, no backslash right before a
+  closing quote, and a plain value never starts with `&` `*` `!` `|` `>` `{` `[` or a quote. Anything else (an anchor, alias or tag,
+  a block scalar, a flow map or list, a quote that does not close on its line, a key with a space, a deeper or shifted line) makes
+  the whole block IRREGULAR. From an irregular block, and from every line after a quote or flow collection left open, a name
+  prints only if code reads the same name; the rest are counted per file as `N names not shown (... unusual layout ...)`.
+  Ordinary compose, workflow and GitLab files stay regular. A compose block that uses `<<: *anchor` or `${...}` flow values,
+  or a GitLab variable with `value:` / `description:` sub-keys, is irregular by this rule. There is no Kubernetes reader.
 
 Other rules that keep content out:
 - A file that cannot be read is listed with a fixed reason (`link, not read`, `binary, not read`, `too large, not read`,

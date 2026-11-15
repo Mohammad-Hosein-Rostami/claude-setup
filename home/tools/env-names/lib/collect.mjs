@@ -15,6 +15,8 @@ import { SNAPSHOT_VERSION } from './snapshot.mjs';
 import { walkProject } from './walk.mjs';
 
 const MAX_SCANNED_FILE_BYTES = 4 * 1024 * 1024;
+const NOT_SHOWN_SHAPE = 'mixed case or too long';
+const NOT_SHOWN_UNUSUAL_LAYOUT = 'mixed case, too long, or in a block with an unusual layout: only names read by code are listed';
 
 /** The text of a source or deploy file, or null after recording why it was not read. */
 function readScanned(root, path, notRead) {
@@ -70,9 +72,11 @@ export function collectProject(root, wrappers, now) {
   for (const { path, kind } of walked.deploys) {
     const text = readScanned(root, path, notRead);
     if (text === null) continue;
-    const { mentions, hidden } = scanDeploy(kind, text);
-    for (const { name, line } of mentions) addRef(deploy, name, `${path}:${line}`);
-    if (hidden > 0) notRead.push({ path, reason: `${hidden} names not shown (mixed case or too long)` });
+    const { mentions, unconfirmed, hidden } = scanDeploy(kind, text);
+    const confirmed = unconfirmed.filter(({ name }) => readByCode.has(name) || builtin.has(name));
+    for (const { name, line } of [...mentions, ...confirmed]) addRef(deploy, name, `${path}:${line}`);
+    const notShown = hidden + unconfirmed.length - confirmed.length;
+    if (notShown > 0) notRead.push({ path, reason: `${notShown} names not shown (${unconfirmed.length > 0 ? NOT_SHOWN_UNUSUAL_LAYOUT : NOT_SHOWN_SHAPE})` });
   }
   const namedElsewhere = new Set([...readByCode.keys(), ...builtin.keys(), ...deploy.keys()]);
   const envFiles = walked.envFiles.map((file) => describeEnvFile(root, file, namedElsewhere));

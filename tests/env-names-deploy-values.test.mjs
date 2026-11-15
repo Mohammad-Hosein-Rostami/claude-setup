@@ -8,33 +8,33 @@ import { PEM_BEGIN, PEM_END } from './env-names-fixtures.mjs';
 const names = (kind, text) => scanDeploy(kind, text).mentions.map((mention) => mention.name);
 const compose = (...entries) => `services:\n  a:\n    environment:\n${entries.map((entry) => `      ${entry}`).join('\n')}\n`;
 
-test('compose: a double-quoted value continued at the key indent gives no name from its lines', () => {
-  assert.deepEqual(names('compose', compose(`CERT: "${PEM_BEGIN}`, 'ZqxCertKey: abc', `${PEM_END}"`, 'AFTER: 1')), ['CERT', 'AFTER']);
+test('compose: a double-quoted value continued at the key indent gives no trusted name (the block is irregular: its names print only when code reads them)', () => {
+  assert.deepEqual(names('compose', compose(`CERT: "${PEM_BEGIN}`, 'ZqxCertKey: abc', `${PEM_END}"`, 'AFTER: 1')), []);
 });
 
 test('compose: single-quoted, list-form and escaped-quote continuations', () => {
-  assert.deepEqual(names('compose', compose("NOTE: 'line one", 'zqxpassword: ZqxV', "'", 'AFTER: 1')), ['NOTE', 'AFTER']);
-  assert.deepEqual(names('compose', compose('- "CERT=-----first', '- zqxlooks=1', '"', '- AFTER=1')), ['CERT', 'AFTER']);
-  assert.deepEqual(names('compose', compose('NOTE: "has \\" inside', 'zqxinner: 1', '"', 'AFTER: 1')), ['NOTE', 'AFTER']);
-  assert.deepEqual(names('compose', compose("NOTE: 'it''s", 'zqxinner: 1', "'", 'AFTER: 1')), ['NOTE', 'AFTER']);
+  assert.deepEqual(names('compose', compose("NOTE: 'line one", 'zqxpassword: ZqxV', "'", 'AFTER: 1')), []);
+  assert.deepEqual(names('compose', compose('- "CERT=-----first', '- zqxlooks=1', '"', '- AFTER=1')), []);
+  assert.deepEqual(names('compose', compose('NOTE: "has \\" inside', 'zqxinner: 1', '"', 'AFTER: 1')), []);
+  assert.deepEqual(names('compose', compose("NOTE: 'it''s", 'zqxinner: 1', "'", 'AFTER: 1')), []);
 });
 
 test('workflow and gitlab: the same continued quoted value in env and variables blocks', () => {
-  assert.deepEqual(names('workflow', 'jobs:\n  a:\n    steps:\n      - run: x\n        env:\n          CERT: "multi\n          ZqxWfKey: abc\n          "\n          AFTER: 1\n'), ['CERT', 'AFTER']);
-  assert.deepEqual(names('gitlab', 'variables:\n  CERT: "multi\n  zqxglkey: abc\n  "\n  AFTER: 1\n'), ['CERT', 'AFTER']);
+  assert.deepEqual(names('workflow', 'jobs:\n  a:\n    steps:\n      - run: x\n        env:\n          CERT: "multi\n          ZqxWfKey: abc\n          "\n          AFTER: 1\n'), []);
+  assert.deepEqual(names('gitlab', 'variables:\n  CERT: "multi\n  zqxglkey: abc\n  "\n  AFTER: 1\n'), []);
 });
 
-test('a block scalar with any indicator is skipped by indentation', () => {
+test('a block scalar with any indicator makes the block irregular (no trusted name)', () => {
   for (const indicator of ['|', '>', '|-', '>-', '|+', '>+', '|2', '>2-', '|2+ # note']) {
-    assert.deepEqual(names('compose', compose(`SCRIPT: ${indicator}`, '  zqxinner: 1', '  ZqxMixed: 2', 'AFTER: 1')), ['SCRIPT', 'AFTER'], indicator);
+    assert.deepEqual(names('compose', compose(`SCRIPT: ${indicator}`, '  zqxinner: 1', '  ZqxMixed: 2', 'AFTER: 1')), [], indicator);
   }
 });
 
-test('a quote that never closes: nothing after it is trusted, and what was left out is counted as hidden', () => {
+test('a quote that never closes: the block and every line after it are unconfirmed, none is trusted', () => {
   const text = `${compose('FIRST: 1', 'BROKEN: "never closes', 'zqxlater: 1')}    image: x:\${LATER_SUBSTITUTION}\n`;
   const result = scanDeploy('compose', text);
-  assert.deepEqual(result.mentions.map((mention) => mention.name), ['FIRST', 'BROKEN']);
-  assert.ok(result.hidden >= 1);
+  assert.deepEqual(result.mentions, []);
+  assert.deepEqual(result.unconfirmed.map((mention) => mention.name), ['FIRST', 'BROKEN', 'zqxlater', 'LATER_SUBSTITUTION']);
 });
 
 test('dockerfile: heredoc bodies are skipped for RUN, COPY and ADD, tags quoted or with <<-', () => {
