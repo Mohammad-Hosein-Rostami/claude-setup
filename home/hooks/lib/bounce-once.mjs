@@ -2,7 +2,7 @@
 // timed dialog that nobody may be there to answer (it goes ahead after 30-180 s). The identical command sent again (same text, same cwd,
 // same session) takes the normal ask path, so the owner still decides whenever the agent really needs that exact command.
 // Exports: bounceText(reasons) -> deny text | undefined, bounceOnce(ask, call, env) -> hook stdout | undefined, bouncedDir(env),
-// MAX_BOUNCED, RETRY_LINE, adviceOnce(advice, call, env) -> hook stdout, withAdvice(text, advice) -> text.
+// MAX_BOUNCED, RETRY_LINE, adviceOnce(advice, call, env) -> hook stdout (also used by agent-model-guard.mjs), withAdvice(text, advice) -> text.
 // Bounce classes (lib/reason-classes.mjs), and only these: the command word is a variable or substitution; a variable holding several
 // words run as the command; a risky word inside shell expansion (plain and DESTRUCTIVE); a literal secret. An ask with none of them (push,
 // publish, rm outside the project, prod writes, stdin shells, credentials, guard errors, "too long") is untouched. A command with a bounce
@@ -162,13 +162,14 @@ export function bounceOnce(ask, { command, cwd, input }, env = process.env) {
  * The hook stdout for a command whose only reasons are advice (decide's `allow: true` with `advice`, or an ask lib/remembered-ask.mjs
  * found already answered); see the decision table above. Every call writes one log line: the masked command, the advice as the reason.
  * @param {string[]} advice decide's `advice` (fixed texts, see lib/reason-classes.mjs)
- * @param {{command: string, cwd: string, input: {session_id?: unknown}}} call the Bash call being guarded
+ * @param {{command: string, cwd: string, input: {session_id?: unknown}, hook?: string, tool?: string}} call the call being guarded;
+ *   hook and tool name it in the log line (default pre-bash-guard and Bash; agent-model-guard.mjs passes its own for an Agent call)
  * @param {Record<string, string | undefined>} env process environment (HOME, CLAUDE_GUARD_LOG)
  * @returns {string} a PreToolUse deny JSON line on the first send; '' (no decision: the command runs) on the identical retry, and when
  *   the send cannot be recorded (logged "advice-unrecorded"), so a deny never repeats and the owner is never asked
  */
-export function adviceOnce(advice, { command, cwd, input }, env = process.env) {
-  const log = (decision, outcome) => logDecision({ hook: 'pre-bash-guard', tool: 'Bash', decision, outcome, reason: advice.join('; '), command,
+export function adviceOnce(advice, { command, cwd, input, hook = 'pre-bash-guard', tool = 'Bash' }, env = process.env) {
+  const log = (decision, outcome) => logDecision({ hook, tool, decision, outcome, reason: advice.join('; '), command,
     cwd, session: input.session_id, class: unique(advice.map(reasonClass)).join(', ') }, env);
   try {
     const send = recordSend(input.session_id, digestOf(cwd, command), env);

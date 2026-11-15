@@ -75,6 +75,13 @@ test('hook: medium mode general-purpose gets sonnet too', () => {
   assert.equal(JSON.parse(r.stdout).hookSpecificOutput.updatedInput.model, 'sonnet');
 });
 
+test('hook: a long non-ASCII prompt reaches the agent intact (stdin is decoded once, not chunk by chunk)', () => {
+  const toolInput = { ...BASE, subagent_type: 'Explore', prompt: 'سلام دنیا، این یک آزمایش است. '.repeat(10000) }; // about 530 KB, mostly 2-byte characters: many 64 KB stdin chunks
+  const r = run('medium', JSON.stringify({ session_id: 'sess1', tool_input: toolInput }));
+  assert.equal(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).hookSpecificOutput.updatedInput.prompt, toolInput.prompt);
+});
+
 test('hook: explicit model, a fork, a pinned repo agent and bad JSON exit 0 with no output', () => {
   const explore = { session_id: 'sess1', tool_input: { ...BASE, subagent_type: 'Explore', model: 'haiku' } };
   const asType = (subagent_type) => JSON.stringify({ ...explore, tool_input: { ...BASE, subagent_type } });
