@@ -21,6 +21,6 @@ test('T11 the replayed auth job exits 1 with frame-missing, frame-unmapped, no-c
   assert.equal(codes('frame-unmapped').length, 1);
   assert.equal(codes('no-compare').length, 2);
   assert.equal(codes('owner-ref').length, 1);
-  assert.match(codes('owner-ref')[0], /q2 unanswered/);
+  assert.match(codes('owner-ref')[0], /queue file is outside the ask queue folder/, 'a queue file kept beside the matrix is not the ask queue folder');
   assert.equal(codes('fail').length, 2, 'the unaccepted difference and the pixel difference both still fail');
 });

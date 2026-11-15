@@ -79,3 +79,16 @@ test('run: no token is a UsageError (exit 2) before any request; missing flags a
   });
   await assert.rejects(() => run(['--file', 'K']), UsageError);
 });
+
+test('run: a --node in the URL form (8199-243551) is asked for, and recorded, as 8199:243551', async () => {
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'figma-frames-')), 'frames.json');
+  const logs = mock.method(console, 'log', () => {});
+  const urls = await withToken('t', async () => {
+    const asked = stubFetch({ '8199:243551': PAGE });
+    assert.equal(await run(['--file', 'KEY', '--node', '8199-243551', '--out', out]), 0);
+    return asked;
+  });
+  logs.mock.restore();
+  assert.match(urls[0], /ids=8199%3A243551&depth=2$/);
+  assert.match(JSON.parse(fs.readFileSync(out, 'utf8')).source, /--node 8199:243551$/);
+});

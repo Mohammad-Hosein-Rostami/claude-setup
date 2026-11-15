@@ -1,5 +1,5 @@
 // Purpose: `figma-frames` - list the frames under some Figma nodes into a frames file that `ui-coverage` reads as the design inventory.
-// Exports: options, framesOf, run. Invariants: framesOf is pure; the only network call is the Figma nodes endpoint (depth 2),
+// Exports: options, framesOf, run. A `--node` may be a URL id (`12-40`); it is sent to Figma as `12:40`. Invariants: framesOf is pure; the only network call is the Figma nodes endpoint (depth 2),
 // through lib/figma-api.mjs, which reads FIGMA_TOKEN and never prints it. Exit 0 ok; no token or an API error is exit 2 (cli.mjs).
 import fs from 'node:fs';
 import { parse, need } from '../lib/args.mjs';
@@ -15,6 +15,9 @@ export const options = {
 const NODE_DEPTH = 2;
 const FRAME_TYPES = new Set(['FRAME', 'COMPONENT']);
 const JSON_INDENT = 2;
+
+/** A Figma node id as the API wants it: the URL form `12-40` becomes `12:40`. */
+const apiNodeId = (node) => node.trim().replace(/^(\d+)-(\d+)$/, '$1:$2');
 
 const sizeOf = (box, side) => (box && Number.isFinite(box[side]) ? Math.ceil(box[side]) : null);
 
@@ -35,12 +38,13 @@ export function framesOf(document) {
 export async function run(argv) {
   const values = parse(argv, options);
   need(values, 'file', 'node', 'out');
+  const nodes = values.node.map(apiNodeId);
   const frames = new Map();
-  for (const node of values.node) {
+  for (const node of nodes) {
     for (const frame of framesOf(await fetchNode(values.file, node, NODE_DEPTH))) frames.set(frame.node, frame);
   }
-  const source = `ui-check figma-frames --file ${values.file} ${values.node.map((node) => `--node ${node}`).join(' ')}`;
+  const source = `ui-check figma-frames --file ${values.file} ${nodes.map((node) => `--node ${node}`).join(' ')}`;
   fs.writeFileSync(values.out, `${JSON.stringify({ file: values.file, source, frames: [...frames.values()] }, null, JSON_INDENT)}\n`);
-  console.log(`${values.out}: ${frames.size} frames from ${values.node.length} node${values.node.length === 1 ? '' : 's'}`);
+  console.log(`${values.out}: ${frames.size} frames from ${nodes.length} node${nodes.length === 1 ? '' : 's'}`);
   return 0;
 }

@@ -71,12 +71,12 @@ test('frame-cell: a frame mapped to a surface, state or width the matrix lacks s
   assert.match(messages[1], /^frame 12:41 maps to signin rest en @390, which is not a matrix cell: width 390 is not in widths: add the design frame width 390/);
 });
 
-test('frame-source: a missing, non-JSON or wrongly shaped frames file is a problem line, never a crash; an empty frames list is fine', () => {
+test('frame-source: a missing, non-JSON or wrongly shaped frames file is a problem line, never a crash; an empty frames list is a problem too', () => {
   for (const text of [null, 'not json {', '[]', '{"file":"K"}', '{"file":"K","frames":[{"name":"no node"}]}']) {
     const result = check(withFigma([SIGN_IN]), [COMPARE_PASS], text);
     assert.deepEqual(result.problems.map((p) => [p.code, p.message]), [['frame-source', `figma.framesFile ${FRAMES_PATH} cannot be read or is not a frames file: write it with ui-check figma-frames`]], String(text));
   }
-  assert.deepEqual(check(withFigma([SIGN_IN]), [COMPARE_PASS], '{"file":"K","frames":[]}').problems, []);
+  assert.deepEqual(check(withFigma([SIGN_IN]), [COMPARE_PASS], '{"file":"KEY","frames":[]}').problems.map((p) => p.message), [`figma.framesFile ${FRAMES_PATH} lists no frame: write it with ui-check figma-frames`]);
 });
 
 test('a frame listed twice, or with both cells and notBuilt, is a shape problem that stops the check', () => {
@@ -154,4 +154,17 @@ test('T10 scaffold gives the entry of a mapped frame figma {file, node}; entries
   await writeFile(out, JSON.stringify({ defaults: {}, states: [{ surface: 'signin', state: 'rest', locale: 'en', url: 'http://x', widths: [1440] }] }));
   run('scaffold', join(dir, 'matrix.json'), '--out', out);
   assert.deepEqual(JSON.parse(await readFile(out, 'utf8')).states[0], { surface: 'signin', state: 'rest', locale: 'en', url: 'http://x', widths: [1440] });
+});
+
+test('frame-source: figma.file and the file key of the frames file must be the same Figma file', () => {
+  const other = JSON.stringify({ file: 'OTHER', frames: [{ node: '12:40', name: 'Sign in', width: 1440 }] });
+  assert.deepEqual(check(withFigma([SIGN_IN]), [COMPARE_PASS], other).problems.map((p) => p.message), [`figma.file KEY does not match file OTHER in ${FRAMES_PATH}: use one Figma file`]);
+});
+
+test('node ids in the URL form (12-40) and the API form (12:40) are one frame: no frame-missing, no duplicate, one in the total', () => {
+  const urlForm = { node: '12-40', name: 'Sign in', width: 1440 };
+  const result = check(withFigma([SIGN_IN]), [COMPARE_PASS], framesFile(urlForm));
+  assert.deepEqual(result.problems, []);
+  assert.equal(result.frames.total, 1);
+  assert.deepEqual(check(withFigma([SIGN_IN, { ...SIGN_IN, node: '12-40' }]), [COMPARE_PASS]).problems.map((p) => p.message), ['duplicate frame node: 12-40']);
 });

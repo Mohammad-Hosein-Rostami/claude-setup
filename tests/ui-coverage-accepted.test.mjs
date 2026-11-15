@@ -6,11 +6,12 @@ import assert from 'node:assert/strict';
 import { checkMatrix } from '../home/tools/ui-coverage/lib/check.mjs';
 import { formatReport } from '../home/tools/ui-coverage/lib/report.mjs';
 
-const QUEUE = '/m/queue.jsonl';
+const QUEUE_DIR = '/q';
+const QUEUE = `${QUEUE_DIR}/queue.jsonl`;
 const NOTES = '/m/STATUS.md';
 const SIGN_IN = { node: '12:40', name: 'Sign in', width: 1440, cells: [{ surface: 'signin', state: 'rest', locale: 'en' }] };
 const CELL = { surface: 'signin', state: 'rest', locale: 'en' };
-const QUESTION = { type: 'q', id: 'q2', question: 'Keep the extra link on the sign in page?', why: 'It is not in Figma', options: [{ label: 'Match Figma', effect: 'remove' }, { label: 'Keep it', effect: 'keep' }], recommended: 'Match Figma', blocks: 'sign in', from: 'visual-qa' };
+const QUESTION = { type: 'q', id: 'q2', question: 'Keep the extra link on the sign in page (frame 12:40)?', why: 'It is not in Figma', options: [{ label: 'Match Figma', effect: 'remove' }, { label: 'Keep it', effect: 'keep' }], recommended: 'Match Figma', blocks: 'sign in', from: 'visual-qa' };
 const KEEP_LINK = 'Keep the extra link';
 const answerLine = (extra = {}) => JSON.stringify({ type: 'a', id: 'q2', ts: 't', answer: KEEP_LINK, ...extra });
 const queueText = (...lines) => [JSON.stringify(QUESTION), ...lines].join('\n');
@@ -33,7 +34,7 @@ const matrixWith = (accepted) => ({
 const FRAMES_TEXT = JSON.stringify({ file: 'KEY', frames: [{ node: '12:40', name: 'Sign in', width: 1440 }] });
 function check(accepted, records, files = {}) {
   const texts = { '/m/frames.json': FRAMES_TEXT, ...files };
-  return checkMatrix(matrixWith(accepted), records, { baseDir: '/m', readText: (path) => texts[path] ?? null });
+  return checkMatrix(matrixWith(accepted), records, { baseDir: '/m', readText: (path) => texts[path] ?? null, queueDir: QUEUE_DIR, realPath: (path) => path });
 }
 const ownerWhy = (result) => result.problems.filter((p) => p.code === 'owner-ref').map((p) => p.message.replace(/^.*has no owner decision: /, '').replace(/; ask the owner or match Figma$/, ''));
 const LINK_FAIL = failRecord([elementFinding('a.extra-link')]);
@@ -46,6 +47,9 @@ test('T5 owner-ref: no owner, an unanswered q2, a differing answer, a timeout an
     [accept(refAsk), { [QUEUE]: queueText(answerLine({ answer: 'Match Figma' })) }, 'answer differs'],
     [accept(refAsk), { [QUEUE]: queueText(answerLine({ by: 'timeout' })) }, 'q2 was taken by timeout, not answered by the owner'],
     [accept(refAsk), {}, 'queue missing (copy the decision into STATUS.md Standing rules)'],
+    [accept(refAsk), { [QUEUE]: queueText(answerLine({ by: 'default' })) }, 'q2 was marked by "default", not answered by the owner'],
+    [accept(refAsk), { [QUEUE]: queueText(answerLine({ by: 'Timeout' })) }, 'q2 was marked by "Timeout", not answered by the owner'],
+    [accept({ ask: '/m/queue.jsonl#q2', answer: KEEP_LINK }), { '/m/queue.jsonl': queueText(answerLine()) }, 'queue file is outside the ask queue folder (copy the decision into STATUS.md Standing rules)'],
     [accept({ status: 'STATUS.md', line: STANDING }), { [NOTES]: `## Taken by default\n${STANDING}\n` }, 'line not under those headings (## Standing rules, ## Owner decisions)'],
     [accept({ status: 'STATUS.md', line: STANDING }), { [NOTES]: `## Standing rules\nnothing here\n## Taken by default\n${STANDING}\n` }, 'line not under those headings (## Standing rules, ## Owner decisions)'],
     [accept({ status: 'STATUS.md', line: '- keep a.extra-link, owner said yes' }), { [NOTES]: '## Standing rules\n- keep a.extra-link, owner said yes\n' }, 'line does not name 12:40'],
@@ -117,4 +121,30 @@ test('an accepted entry naming a node or a cell that frames do not map is an acc
   const garbage = check([accept({ ask: `${QUEUE}#q2`, answer: KEEP_LINK })], [LINK_FAIL], { [QUEUE]: 'not json\n{"half"\n\u0000\u0000' });
   assert.deepEqual(ownerWhy(garbage), ['q2 unanswered']);
   assert.deepEqual(ownerWhy(check([accept({ ask: 'no-hash-here', answer: 'x' })], [LINK_FAIL])), ['owner.ask must look like <queue path>#q2']);
+});
+
+test('an answered question that does not name the frame is not the owner\'s decision for it; a longer node id in the question or the line does not count', () => {
+  const unrelated = { ...QUESTION, id: 'q1', question: 'Proceed with the build now, yes or no?' };
+  const ref = { ask: `${QUEUE}#q1`, answer: 'Yes' };
+  const queue = [JSON.stringify(unrelated), JSON.stringify({ type: 'a', id: 'q1', ts: 't', answer: 'Yes' })].join('\n');
+  assert.deepEqual(ownerWhy(check([accept(ref)], [LINK_FAIL], { [QUEUE]: queue })), ['q1 does not name frame 12:40']);
+  const longer = JSON.stringify({ ...unrelated, question: 'Keep the extra link on frame 12:401 or 112:40?' });
+  assert.deepEqual(ownerWhy(check([accept(ref)], [LINK_FAIL], { [QUEUE]: [longer, JSON.stringify({ type: 'a', id: 'q1', ts: 't', answer: 'Yes' })].join('\n') })), ['q1 does not name frame 12:40']);
+});
+
+test('a queue file reached through a link out of the ask folder is outside it (the real path is judged)', () => {
+  const linked = { ...matrixWith([accept({ ask: `${QUEUE}#q2`, answer: KEEP_LINK })]) };
+  const result = checkMatrix(linked, [LINK_FAIL], { baseDir: '/m', readText: (path) => ({ '/m/frames.json': FRAMES_TEXT, '/elsewhere/real.jsonl': queueText(answerLine()) })[path] ?? null, queueDir: QUEUE_DIR, realPath: (path) => (path === QUEUE ? '/elsewhere/real.jsonl' : path) });
+  assert.deepEqual(ownerWhy(result), ['queue file is outside the ask queue folder (copy the decision into STATUS.md Standing rules)']);
+});
+
+test('a Standing rules line names the node only as a whole token (12:4 vs 12:40, 112:4, 12:4;5:6)', () => {
+  const frames = [{ ...SIGN_IN, node: '12:4' }];
+  const run = (line) => checkMatrix({ ...matrixWith([accept({ status: 'STATUS.md', line }, undefined, { node: '12:4' })]), frames }, [LINK_FAIL], { baseDir: '/m', readText: (path) => ({ '/m/frames.json': JSON.stringify({ file: 'KEY', frames: [{ node: '12:4', name: 'x', width: 1440 }] }), [NOTES]: `## Standing rules\n${line}\n` })[path] ?? null });
+  for (const line of ['- 12:40 keep a.extra-link', '- frame 112:4 keep a.extra-link', '- 12:4;5:6 keep a.extra-link', '- keep a.extra-link on 12:4:7', '- keep a.extra-link on 12-4x 12:41']) {
+    assert.deepEqual(run(line).problems.filter((p) => p.code === 'owner-ref').map((p) => p.message.includes('line does not name 12:4')), [true], line);
+  }
+  for (const line of ['12:4 keep a.extra-link', '- keep a.extra-link on 12:4', '- keep a.extra-link (12:4), said yes', '- frame 12:4: keep a.extra-link']) {
+    assert.deepEqual(run(line).problems, [], line);
+  }
 });

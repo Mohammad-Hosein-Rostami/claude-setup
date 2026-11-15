@@ -6,32 +6,49 @@
 //   not above `maxPercent` (a pixel finding without a number is never covered). The entry's `owner` must name a decision the
 //   owner made: `{ask: "<queue>#q2", answer}` (the last answer to q2 equals `answer` exactly and was not taken by timeout) or
 //   `{status: "STATUS.md", line}` (that exact line sits under `## Standing rules` or `## Owner decisions` and names the node).
-//   Paths resolve from the matrix directory. A covering entry with a bad owner is an `owner-ref` problem and the cell keeps
+//   Only an answer record with no `by` field counts as the owner's (anything marked, `timeout` or otherwise, fails closed);
+//   the question must name the node as a whole token; the queue file must lie directly in the ask queue folder (real path,
+//   no link out of it). Paths resolve from the matrix directory. A covering entry with a bad owner is an `owner-ref` problem and the cell keeps
 //   failing. An entry that names a frame cell the matrix does not map is an `accepted-node` problem.
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { BY_TIMEOUT, ID_PATTERN, lastAnswer, parse } from '../../ask/lib/queue.mjs';
 import { cellKey, cellLabel } from './cells.mjs';
-import { isText, problem } from './shape.mjs';
+import { isText, namesNode, normalizeNode, problem } from './shape.mjs';
 
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 const OWNER_SECTIONS = new Set(['## Standing rules', '## Owner decisions']);
 const SECTION_START = '## ';
 const REF_HASH = '#';
 
-const queueWhy = (id, record) => {
+const MAX_MARK_CHARS = 40;
+const MISSING = 'queue missing (copy the decision into STATUS.md Standing rules)';
+const OUTSIDE = 'queue file is outside the ask queue folder (copy the decision into STATUS.md Standing rules)';
+
+// Why an answer record is not the owner's, or null: only a record without a `by` mark was written by an owner answer.
+function markWhy(id, record) {
   if (record === null) return `${id} unanswered`;
-  return record.by === BY_TIMEOUT ? `${id} was taken by timeout, not answered by the owner` : null;
-};
+  if (record.by === undefined) return null;
+  if (record.by === BY_TIMEOUT) return `${id} was taken by timeout, not answered by the owner`;
+  return `${id} was marked by ${JSON.stringify(record.by).slice(0, MAX_MARK_CHARS)}, not answered by the owner`;
+}
 
 // Why an `ask` owner ref is not an owner decision, or null when it is.
-function askWhy(owner, { baseDir, readText }) {
+function askWhy(owner, node, { baseDir, readText, queueDir, realPath }) {
   const at = isText(owner.ask) ? owner.ask.lastIndexOf(REF_HASH) : -1;
   const id = at < 0 ? '' : owner.ask.slice(at + 1);
   if (!ID_PATTERN.test(id)) return 'owner.ask must look like <queue path>#q2';
-  const text = readText(resolve(baseDir, owner.ask.slice(0, at)));
-  if (text === null) return 'queue missing (copy the decision into STATUS.md Standing rules)';
-  const record = lastAnswer(parse(text).records, id);
-  return queueWhy(id, record) ?? (record.answer === owner.answer ? null : 'answer differs');
+  const real = realPath(resolve(baseDir, owner.ask.slice(0, at)));
+  if (real === null) return MISSING;
+  if (queueDir === null || queueDir === undefined || dirname(real) !== queueDir) return OUTSIDE;
+  const text = readText(real);
+  if (text === null) return MISSING;
+  const { records } = parse(text);
+  const record = lastAnswer(records, id);
+  const why = markWhy(id, record);
+  if (why !== null) return why;
+  if (record.answer !== owner.answer) return 'answer differs';
+  const question = records.find((r) => r.type === 'q' && r.id === id);
+  return namesNode(question.question, node) ? null : `${id} does not name frame ${node}`;
 }
 
 // The lines of the owner sections (`## Standing rules`, `## Owner decisions`) of a notes file; CRLF files are read like LF ones.
@@ -50,13 +67,13 @@ function statusWhy(owner, node, { baseDir, readText }) {
   const text = isText(owner.status) ? readText(resolve(baseDir, owner.status)) : null;
   if (text === null) return `${owner.status} cannot be read`;
   if (!isText(owner.line) || !ownerSectionLines(text).includes(owner.line)) return 'line not under those headings (## Standing rules, ## Owner decisions)';
-  return owner.line.includes(node) ? null : `line does not name ${node}`;
+  return namesNode(owner.line, node) ? null : `line does not name ${node}`;
 }
 
 // Why the owner field of an accepted entry is not an owner decision, or null when it is.
 function ownerWhy(entry, files) {
   if (!isObject(entry.owner)) return 'no owner field';
-  if (entry.owner.ask !== undefined) return askWhy(entry.owner, files);
+  if (entry.owner.ask !== undefined) return askWhy(entry.owner, entry.node, files);
   if (entry.owner.status !== undefined) return statusWhy(entry.owner, entry.node, files);
   return 'no owner field';
 }
@@ -83,7 +100,7 @@ function compareOnlyFindings(matrix, merged, records) {
 
 // The key of the cell an entry accepts, or null when the matrix frames do not map that cell for that node.
 function entryKey(matrix, entry) {
-  const frame = (matrix.frames ?? []).find((candidate) => candidate.node === entry.node);
+  const frame = (matrix.frames ?? []).find((candidate) => normalizeNode(candidate.node) === normalizeNode(entry.node));
   const mapped = (frame?.cells ?? []).some((cell) => cell.surface === entry.surface && cell.state === entry.state && cell.locale === entry.locale);
   return mapped ? cellKey({ surface: entry.surface, state: entry.state, locale: entry.locale, width: frame.width }) : null;
 }
@@ -93,11 +110,12 @@ function entryKey(matrix, entry) {
  * @param {object} matrix a structurally sound matrix
  * @param {{cells: object[]}} merged the result of mergeResults
  * @param {unknown[]} records ui-check result records
- * @param {{baseDir: string, readText: (path: string) => string|null}} options where relative paths resolve from, and how to read a file (null = no such file)
+ * @param {{baseDir: string, readText: (path: string) => string|null, queueDir?: string|null, realPath?: (path: string) => string|null}} options where relative
+ *   paths resolve from, how to read a file (null = no such file), the real path of the ask queue folder (none: every queue ref is outside it) and how to resolve a real path (null = no such file)
  * @returns {{problems: object[], accepted: {key: string, cell: string, node: string, ref: string}[]}} `accepted` lists the cells whose `fail` problem is dropped
  */
-export function acceptedChecks(matrix, merged, records, { baseDir, readText }) {
-  const files = { baseDir, readText: readText ?? (() => null) };
+export function acceptedChecks(matrix, merged, records, { baseDir, readText, queueDir, realPath }) {
+  const files = { baseDir, readText: readText ?? (() => null), queueDir, realPath: realPath ?? (() => null) };
   const prepared = (Array.isArray(matrix.accepted) ? matrix.accepted : []).map((entry) => ({ entry, key: entryKey(matrix, entry), why: ownerWhy(entry, files) }));
   const problems = prepared
     .filter((item) => item.key === null)

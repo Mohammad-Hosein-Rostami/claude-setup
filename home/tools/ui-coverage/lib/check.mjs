@@ -80,9 +80,9 @@ const countBy = (cells, status) => cells.filter((cell) => cell.status === status
  * Checks a matrix against its cells and result records.
  * @param {unknown} matrix the parsed matrix.json
  * @param {unknown[]} [records] ui-check result records `{surface,state,locale,width,status,evidence}`
- * @param {{baseDir?: string, fileExists?: (path: string) => boolean, readText?: (path: string) => string|null}} [options]
+ * @param {{baseDir?: string, fileExists?: (path: string) => boolean, readText?: (path: string) => string|null, queueDir?: string|null, realPath?: (path: string) => string|null}} [options]
  *   where relative paths resolve from (the matrix file's directory), how to test a file and how to read one (null = no
- *   such file); the default accepts every evidence path and skips the mount-site file tests (the CLI passes the real ones)
+ *   such file); the default accepts every evidence path and skips the mount-site file tests (the CLI passes the real ones); `queueDir` and `realPath` (ask queue folder, real-path lookup) decide which queue files may back an accepted difference
  * @returns {{problems: {code:string,message:string}[], cells: object[], counts: object, notes: object[], handSet: object[], stateWidths: object|null, frames: object|undefined}}
  *   `problems` empty means done; `counts` has pass/fail/na/deferred/todo/missing; `notes` are the na and deferred cells
  *   (reported to the owner); `handSet` are the fail cells nobody measured; `stateWidths` is `{widths, reason}` when control states are narrowed, else null;
@@ -97,7 +97,7 @@ export function checkMatrix(matrix, records = [], options = {}) {
   const files = { baseDir: options.baseDir ?? '.', fileExists: options.fileExists ?? (() => true) };
   const counts = Object.fromEntries(STATUSES.map((status) => [status, countBy(merged.cells, status)]));
   counts.missing = coverage.filter((p) => p.code === 'missing-cell').length;
-  const owner = acceptedChecks(matrix, merged, records, { baseDir: files.baseDir, readText: options.readText });
+  const owner = acceptedChecks(matrix, merged, records, { baseDir: files.baseDir, readText: options.readText, queueDir: options.queueDir, realPath: options.realPath });
   const acceptedLabels = new Set(owner.accepted.map((item) => item.cell));
   const frames = frameChecks(matrix, merged, records, { baseDir: files.baseDir, readText: options.readText, accepted: new Set(owner.accepted.map((item) => item.key)) });
   if (owner.accepted.length > 0) counts.accepted = owner.accepted.length;

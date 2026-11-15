@@ -3,12 +3,12 @@
 // Exports: readFramesFile(text), frameChecks(matrix, merged, records, options), framesLine(summary).
 // Invariants: pure apart from the injected `readText`; never throws. The inventory is on only when the matrix has a `figma`
 //   section; without one `frameChecks` reports `figma-section-missing` when compare records exist, and nothing else.
-//   Problem codes: frame-source, frame-missing, frame-unmapped, frame-cell, no-compare, figma-section-missing. A record counts
+//   Node ids are compared in their API form (`12-40` is `12:40`). Problem codes: frame-source (unreadable, empty or another file), frame-missing, frame-unmapped, frame-cell, no-compare, figma-section-missing. A record counts
 //   as a compare record only when it carries `part: "compare"` (ui-check batch writes it); a pass from another probe, or a
 //   record without `part`, does not. A frame is "passing" when it has cells and every cell passes with a passing compare record.
 import { resolve } from 'node:path';
 import { cellKey, cellLabel, expectedCells, unmatchedAdvice } from './cells.mjs';
-import { isReason, isText, problem } from './shape.mjs';
+import { isReason, isText, normalizeNode, problem } from './shape.mjs';
 
 const COMPARE = 'compare';
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -61,10 +61,12 @@ function frameProblems(matrix, frame, wanted, compared) {
 }
 
 function sourceProblems(matrix, source) {
-  const { framesFile } = matrix.figma;
+  const { framesFile, file } = matrix.figma;
   if (source === null) return [problem('frame-source', `figma.framesFile ${framesFile} cannot be read or is not a frames file: write it with ui-check figma-frames`)];
-  const listed = new Set((matrix.frames ?? []).map((frame) => frame.node));
-  const missing = new Map(source.frames.filter((frame) => !listed.has(frame.node)).map((frame) => [frame.node, frame]));
+  if (source.frames.length === 0) return [problem('frame-source', `figma.framesFile ${framesFile} lists no frame: write it with ui-check figma-frames`)];
+  if (source.file !== file) return [problem('frame-source', `figma.file ${file} does not match file ${source.file} in ${framesFile}: use one Figma file`)];
+  const listed = new Set((matrix.frames ?? []).map((frame) => normalizeNode(frame.node)));
+  const missing = new Map(source.frames.filter((frame) => !listed.has(normalizeNode(frame.node))).map((frame) => [normalizeNode(frame.node), frame]));
   return [...missing.values()].map((frame) => problem('frame-missing', `frame ${frame.node} ${frameName(frame)} is in ${framesFile} but not in matrix frames: run expand, then map it or mark it notBuilt`));
 }
 
@@ -77,7 +79,7 @@ function summarize(matrix, source, merged, compared, accepted) {
   const hasAccepted = (frame) => frameCells(frame).some((cell) => accepted.has(cellKey(cell)));
   return {
     inventory: true,
-    total: new Set([...frames.map((frame) => frame.node), ...(source?.frames ?? []).map((frame) => frame.node)]).size,
+    total: new Set([...frames, ...(source?.frames ?? [])].map((frame) => normalizeNode(frame.node))).size,
     passing: frames.filter((frame) => settled(frame) && !hasAccepted(frame)).length,
     accepted: frames.filter((frame) => settled(frame) && hasAccepted(frame)).length,
     notBuilt: frames.filter((frame) => frameCells(frame).length === 0 && isReason(frame.notBuilt)).length,

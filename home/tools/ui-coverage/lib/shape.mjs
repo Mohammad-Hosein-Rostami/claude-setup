@@ -1,5 +1,5 @@
 // Purpose: validate a matrix.json with hand-written schema rules (no dependency) and return problems, never throw.
-// Exports: problem(code, message, extra), isText(v), isReason(v), isPlaceholder(v), isValidWidth(v), noneReason(v),
+// Exports: problem(code, message, extra), normalizeNode(node), namesNode(text, node), isText(v), isReason(v), isPlaceholder(v), isValidWidth(v), noneReason(v),
 //   validateStructure(matrix), validateRules(matrix), SURFACE_KINDS, STATUSES, REST_STATE, MIN_REASON_CHARS, controlsOf(surface).
 // Invariants: validateStructure checks only what the cell logic needs to run (locales, widths, stateWidths, surface and
 //   control ids, control class, cell widths); when it returns problems the caller must stop. validateRules assumes a
@@ -34,6 +34,15 @@ export const isValidWidth = (value) => value === null || value === undefined || 
 
 /** Returns the text after "none:" when `value` starts with it, else null. */
 export const noneReason = (value) => (typeof value === 'string' && value.trim().startsWith(NONE_PREFIX) ? value.trim().slice(NONE_PREFIX.length) : null);
+
+/** A Figma node id in its API form: the URL form `12-40` becomes `12:40`; anything else (`I1:2;3:4`) is kept. */
+export const normalizeNode = (node) => String(node).trim().replace(/^(\d+)-(\d+)$/, '$1:$2');
+
+/** True when `text` names the node id as a whole token: not inside a longer id (`112:4`, `12:40` for `12:4`, `12:4;5:6`). A colon followed by a space or the end is punctuation, not an id part. */
+export function namesNode(text, node) {
+  const escaped = normalizeNode(node).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^0-9:;-])${escaped}($|[^0-9:;-]|:(?=\\s|$))`).test(String(text));
+}
 
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -109,8 +118,8 @@ function frameStructure(frames) {
   const seen = new Set();
   return frames.flatMap((frame) => {
     if (!isText(frame.node)) return [problem('shape', `a frame needs a node id: ${JSON.stringify(frame)}`)];
-    const duplicate = seen.has(frame.node) ? [problem('shape', `duplicate frame node: ${frame.node}`)] : [];
-    seen.add(frame.node);
+    const duplicate = seen.has(normalizeNode(frame.node)) ? [problem('shape', `duplicate frame node: ${frame.node}`)] : [];
+    seen.add(normalizeNode(frame.node));
     const notBuilt = frame.notBuilt === undefined || typeof frame.notBuilt === 'string' ? [] : [problem('shape', `frame ${frame.node}: notBuilt must be a text`)];
     return [...duplicate, ...notBuilt, ...frameCellProblems(frame)];
   });

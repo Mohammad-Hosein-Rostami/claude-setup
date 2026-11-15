@@ -8,7 +8,7 @@
 //   declared na/deferred that meets a fail record becomes a `fail` carrying `declared`; a `pass` record turns a
 //   todo/na/deferred cell into pass but never clears a fail. Frames (the optional Figma inventory) are never cells:
 //   expandMatrix only appends frames the source file has and the matrix lacks.
-import { REST_STATE, controlsOf, isText, isValidWidth, problem } from './shape.mjs';
+import { REST_STATE, controlsOf, isText, isValidWidth, normalizeNode, problem } from './shape.mjs';
 
 /** Width as stored in a key: undefined means "no width" (null); a valid width is kept as is. */
 export const normalizeWidth = (width) => (width === undefined ? null : width);
@@ -39,8 +39,8 @@ export function expectedCells(matrix) {
 
 // Frames of the source file that the matrix does not list yet, each once, as empty (unmapped) matrix frames.
 function missingFrames(matrix, sourceFrames) {
-  const known = new Set((matrix.frames ?? []).map((frame) => frame.node));
-  const fresh = new Map(sourceFrames.filter((frame) => !known.has(frame.node)).map((frame) => [frame.node, { node: frame.node, name: frame.name, width: frame.width ?? null, cells: [] }]));
+  const known = new Set((matrix.frames ?? []).map((frame) => normalizeNode(frame.node)));
+  const fresh = new Map(sourceFrames.filter((frame) => !known.has(normalizeNode(frame.node))).map((frame) => [normalizeNode(frame.node), { node: normalizeNode(frame.node), name: frame.name, width: frame.width ?? null, cells: [] }]));
   return [...fresh.values()];
 }
 
