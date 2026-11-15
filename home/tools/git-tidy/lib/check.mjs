@@ -5,6 +5,7 @@
 //   throws (exit 2): a check that cannot read must never report clean.
 import { gitFlag, gitText } from './git.mjs';
 import { findLeftovers } from './leftovers.mjs';
+import { tangledRefs } from './tangled.mjs';
 import { changedFileCount, currentBranch, ignoredFiles, inProgressOperation, listWorktrees } from './repo.mjs';
 
 const IGNORED_SHOWN = 5;
@@ -21,6 +22,13 @@ function mergeCommitFindings(repo) {
     const space = line.indexOf(' ');
     return item('merge-commit', line.slice(0, space), line.slice(space + 1));
   });
+}
+
+// The base and the current branch are covered by `merge-commit`, every other branch and tag by `tangled-ref`.
+function tangledRefFindings(repo) {
+  const current = currentBranch(repo);
+  const skip = new Set([repo.baseRef, ...(current === null ? [] : [`refs/heads/${current}`])]);
+  return tangledRefs(repo, skip).map(({ ref, count, newest }) => item('tangled-ref', ref, `${count} merge commits not on any remote, newest ${newest}`));
 }
 
 function publishedMergeHint(repo) {
@@ -75,14 +83,18 @@ export function runCheck(repo) {
   const worktrees = listWorktrees(repo);
   const findings = [
     ...mergeCommitFindings(repo),
+    ...tangledRefFindings(repo),
     ...leftovers.mergedBranches.map((b) => item('merged-branch', b.name, `${b.short} ${b.state}`)),
+    ...leftovers.tags.filter((t) => t.state === 'patch-equal').map((t) => item('merged-tag', t.name, `${t.short} ${t.state}`)),
     ...leftovers.mergedWorktrees.map((w) => item('merged-worktree', w.path, `branch ${w.branch}`)),
     ...leftovers.staleWorktrees.map((w) => item('stale-worktree', w.path, 'folder missing')),
   ];
   const unmerged = leftovers.states.filter((b) => b.state === 'unmerged')
     .map((b) => item('unmerged-branch?', b.name, `ahead ${b.ahead}, last commit ${b.date}`));
+  const unmergedTags = leftovers.tags.filter((t) => t.state === 'unmerged')
+    .map((t) => item('unmerged-tag?', t.name, `ahead ${t.ahead}, last commit ${t.date}`));
   const hints = [
-    ...publishedMergeHint(repo), ...unmerged, ...mergedRemoteHints(repo),
+    ...publishedMergeHint(repo), ...unmerged, ...unmergedTags, ...mergedRemoteHints(repo),
     ...(repo.bare ? [] : behindBaseHint(repo)), ...worktreeHints(worktrees), ...ignoredFileHints(leftovers.mergedWorktrees), ...shallowHint(repo),
   ];
   return { findings, hints };

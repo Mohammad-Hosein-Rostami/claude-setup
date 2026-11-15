@@ -63,6 +63,7 @@ test('forged candidates: the base, the current branch, a main-worktree path, an 
     staleWorktrees: [{ path: dir }],
     mergedWorktrees: [{ path: dir, branch: 'current-one' }, { path: wt, branch: 'main' }],
     mergedBranches: ['main', 'current-one', 'wip', 'no-such-branch'].map((name) => ({ name, short: 'abc' })),
+    tags: [],
   };
   const items = pruneRepo(repo, { apply: true, includeRecent: true, leftovers: forged });
   assert.deepEqual(items.filter((entry) => ['removed', 'deleted', 'failed'].includes(entry.action)), [], JSON.stringify(items));

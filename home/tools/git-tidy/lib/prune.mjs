@@ -206,5 +206,7 @@ export function pruneRepo(repo, { apply, includeRecent = false, leftovers = find
   for (const candidate of leftovers.mergedWorktrees) items.push(pruneWorktree(ctx, candidate, gone));
   for (const candidate of leftovers.mergedBranches) items.push(pruneBranch(ctx, candidate, gone));
   items.push(...detachedWorktrees(ctx));
+  const tagNames = leftovers.tags.filter((tag) => tag.state === 'patch-equal').map((tag) => tag.name);
+  if (tagNames.length > 0) items.push(item('note', 'tags', tagNames.join(' '), 'not removed by this tool')); // a tag may be the only backup
   return apply ? items.map((entry) => (entry.action === 'keep' ? { ...entry, action: 'kept' } : entry)) : items;
 }

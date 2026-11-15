@@ -79,19 +79,24 @@ test('--apply never deletes a branch with commits the base lacks, nor the base, 
   assert.deepEqual(branches(dir).sort(), ['half', 'main', 'wip']);
 });
 
-test('a patch-equal branch that holds a merge commit is kept (the merge may carry changes cherry cannot see)', () => {
+test('a branch whose merge commit carries a change of its own is kept; one whose merge changes nothing goes', () => {
   const dir = makeRepo();
-  git(dir, 'checkout', '-q', '-b', 'feat');
-  commit(dir, 'feat.txt');
-  git(dir, 'checkout', '-q', '-b', 'inner');
-  commit(dir, 'inner.txt');
-  git(dir, 'checkout', '-q', 'feat');
-  git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge inner', 'inner');
-  git(dir, 'checkout', '-q', 'main');
-  commit(dir, 'moved-on.txt');
-  git(dir, 'cherry-pick', 'feat~1', 'inner');
+  for (const [name, evil] of [['plain', false], ['evil', true]]) {
+    git(dir, 'checkout', '-q', '-b', name);
+    commit(dir, `${name}.txt`);
+    git(dir, 'checkout', '-q', '-b', `${name}-inner`);
+    commit(dir, `${name}-inner.txt`);
+    git(dir, 'checkout', '-q', name);
+    git(dir, 'merge', '-q', '--no-ff', '--no-commit', `${name}-inner`);
+    if (evil) writeFileSync(join(dir, 'only-in-the-merge.txt'), 'hand-made change');
+    if (evil) git(dir, 'add', 'only-in-the-merge.txt');
+    git(dir, 'commit', '-q', '-m', 'Merge inner');
+    git(dir, 'checkout', '-q', 'main');
+    commit(dir, `moved-on-${name}.txt`);
+    git(dir, 'cherry-pick', `${name}~1`, `${name}-inner`);
+  }
   assert.equal(apply(dir).status, 0);
-  assert.deepEqual(branches(dir).sort(), ['feat', 'main'], 'inner landed by cherry-pick and goes; feat holds a merge and stays');
+  assert.deepEqual(branches(dir), ['evil', 'main']);
 });
 
 test('a clean worktree of a merged branch is removed together with its branch', () => {

@@ -10,7 +10,7 @@ import { addWorktree, commit, git, lines as allLines, makeRepo, tidy, withOrigin
 // The first output line is the base line (tested on its own); the other tests read the lines after it.
 const lines = (result) => allLines(result).slice(1);
 const check = (dir, ...extra) => tidy(['check', dir, ...extra], { cwd: dir });
-const SUMMARY = (findings, hints, base = 'main') => `git-tidy: ${findings} findings, ${hints} hints (base ${base})`;
+const SUMMARY = (findings, hints, oneLine = findings === 0, base = 'main') => `git-tidy: ${findings} findings, ${hints} hints (base ${base}), all local refs on one line: ${oneLine ? 'yes' : 'no'}`;
 
 /** Merges a new branch `side` into main with a real merge commit; returns the short hash of the merge. */
 function mergeSide(dir) {
@@ -111,20 +111,31 @@ test('a branch with two commits of which one landed is unmerged, counting only t
   assert.match(lines(result)[0], /^unmerged-branch\? half ahead 1, last commit \d{4}-\d\d-\d\d$/);
 });
 
-test('a patch-equal branch that also holds a merge commit is not called merged (the merge may hold hand-made changes)', () => {
-  const dir = makeRepo();
+/** feat = one commit + a merge of `inner` (one commit); main gets both commits as cherry-picks. `evil` adds a file to the merge only. */
+function landBranchWithMerge(dir, { evil }) {
   git(dir, 'checkout', '-q', '-b', 'feat');
   commit(dir, 'feat.txt');
   git(dir, 'checkout', '-q', '-b', 'inner');
   commit(dir, 'inner.txt');
   git(dir, 'checkout', '-q', 'feat');
-  git(dir, 'merge', '-q', '--no-ff', '-m', 'Merge inner', 'inner');
+  git(dir, 'merge', '-q', '--no-ff', '--no-commit', 'inner');
+  if (evil) writeFileSync(join(dir, 'only-in-the-merge.txt'), 'hand-made change');
+  if (evil) git(dir, 'add', 'only-in-the-merge.txt');
+  git(dir, 'commit', '-q', '-m', 'Merge inner');
   git(dir, 'checkout', '-q', 'main');
   commit(dir, 'moved-on.txt');
   git(dir, 'cherry-pick', 'feat~1', 'inner');
-  const result = check(dir);
-  assert.ok(!lines(result).some((line) => line.startsWith('merged-branch feat ')), result.stdout);
-  assert.ok(lines(result).some((line) => line.startsWith('unmerged-branch? feat ')), result.stdout);
+}
+
+test('a branch holding a merge commit is patch-equal when merging it changes nothing, and unmerged when the merge carries its own change', () => {
+  const plain = makeRepo();
+  landBranchWithMerge(plain, { evil: false });
+  assert.ok(lines(check(plain)).some((line) => line.startsWith('merged-branch feat ') && line.endsWith(' patch-equal')), 'no hand-made change in the merge');
+  const evil = makeRepo();
+  landBranchWithMerge(evil, { evil: true });
+  const out = lines(check(evil));
+  assert.ok(!out.some((line) => line.startsWith('merged-branch feat ')), out.join('\n'));
+  assert.ok(out.some((line) => line.startsWith('unmerged-branch? feat ')), out.join('\n'));
 });
 
 test('the base and the branch checked out in the main worktree are never merged-branch', () => {
@@ -190,20 +201,20 @@ test('--json prints { base, findings, hints } with kind, subject and detail', ()
 test('base: --base wins, then origin/HEAD, then main, master, develop; none is exit 2 naming --base', () => {
   const dir = makeRepo();
   git(dir, 'branch', '-m', 'main', 'develop');
-  assert.match(lines(check(dir)).at(-1), /\(base develop\)$/);
+  assert.match(lines(check(dir)).at(-1), /\(base develop\)/);
   git(dir, 'branch', 'master');
-  assert.match(lines(check(dir)).at(-1), /\(base master\)$/);
+  assert.match(lines(check(dir)).at(-1), /\(base master\)/);
   git(dir, 'branch', 'main');
-  assert.match(lines(check(dir)).at(-1), /\(base main\)$/);
-  assert.match(lines(check(dir, '--base', 'develop')).at(-1), /\(base develop\)$/);
+  assert.match(lines(check(dir)).at(-1), /\(base main\)/);
+  assert.match(lines(check(dir, '--base', 'develop')).at(-1), /\(base develop\)/);
 
   withOrigin(dir);
   git(dir, 'branch', 'trunk');
   git(dir, 'update-ref', 'refs/remotes/origin/trunk', 'trunk');
   git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk');
-  assert.match(lines(check(dir)).at(-1), /\(base trunk\)$/);
+  assert.match(lines(check(dir)).at(-1), /\(base trunk\)/);
   git(dir, 'branch', '-D', 'trunk');
-  assert.match(lines(check(dir)).at(-1), /\(base main\)$/, 'origin/HEAD naming a missing local branch falls through');
+  assert.match(lines(check(dir)).at(-1), /\(base main\)/, 'origin/HEAD naming a missing local branch falls through');
 
   const none = makeRepo();
   git(none, 'branch', '-m', 'main', 'trunk');

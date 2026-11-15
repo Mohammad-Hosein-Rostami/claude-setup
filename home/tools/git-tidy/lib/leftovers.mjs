@@ -4,12 +4,13 @@
 //   (the main worktree is never one); a worktree whose folder is gone is stale, never merged.
 import { ancestorBranches, branchState, isMerged } from './branches.mjs';
 import { currentBranch, listBranches, listWorktrees } from './repo.mjs';
+import { classifyTags } from './tags.mjs';
 
 /**
- * Reads the repository once. Returns `{ states, mergedBranches, mergedWorktrees, staleWorktrees }`: `states` has every
+ * Reads the repository once. Returns `{ states, mergedBranches, mergedWorktrees, staleWorktrees, tags }`: `states` has every
  * local branch except the base as `{ name, short, date, state, tip, ahead }`; `mergedBranches` are those whose work is on the base;
  * `mergedWorktrees` are linked worktrees on one of them (`{ path, branch, ... }`); `staleWorktrees` are linked
- * worktrees whose folder is missing.
+ * worktrees whose folder is missing; `tags` are the tags off the base's history (see classifyTags).
  */
 export function findLeftovers(repo) {
   const worktrees = listWorktrees(repo);
@@ -26,5 +27,6 @@ export function findLeftovers(repo) {
     mergedBranches,
     mergedWorktrees: linked.filter((tree) => !tree.missing && tree.branch !== null && mergedNames.has(tree.branch)),
     staleWorktrees: linked.filter((tree) => tree.missing),
+    tags: classifyTags(repo),
   };
 }
