@@ -15,7 +15,9 @@ function launchCommand(mode) {
 /**
  * One line telling the user how to get the lead that a mode needs, or '' when nothing is to be said.
  * A switch (previousMode given) into extra-high / ultra-high always gets the launch note, because the hook cannot
- * see or change the lead; a switch out of them says the lead is still at its launch effort. At session start (no previousMode)
+ * see or change the lead; a switch out of them says the lead is still at its launch effort. A base mode (normal /
+ * medium / high) gets a note when the session model is known and is not Opus, so a resume that kept Fable or Sonnet is
+ * pointed to `ccm <mode> -c`; with no model or an empty one it stays silent. At session start (no previousMode)
  * the note appears when the process was not launched with `ccm <mode>` (launchedAs differs: its --model/--effort
  * flags are missing, e.g. a plain `claude --resume`) or when the session model is known and does not match.
  * @param {{mode: string, model?: string, previousMode?: string, launchedAs?: string}} state - active mode, session
@@ -33,6 +35,9 @@ export function leadNote({ mode, model, previousMode, launchedAs }) {
     return `The lead model/effort for ${mode} is set at launch: tell the user to run \`${launchCommand(mode)}\` to continue this conversation with ${lead.label} at ${lead.effort} effort (avoid \`/model\`: it saves machine-wide).`;
   }
   const left = switched ? LEAD_MODES[previousMode] : undefined;
-  if (!left) return '';
+  if (!left) {
+    if (typeof model !== 'string' || model === '' || model.toLowerCase().includes('opus')) return '';
+    return `The lead for ${mode} is ${BASE_LEAD} but this session runs ${model}: tell the user to run \`${launchCommand(mode)}\` (or \`ccm ${mode} --resume <id>\`) to switch it back (avoid \`/model\`: it saves machine-wide).`;
+  }
   return `The lead is still ${left.label} at ${left.effort}: tell the user to run \`${launchCommand(mode)}\` to return it to ${BASE_LEAD}.`;
 }

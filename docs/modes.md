@@ -34,15 +34,15 @@ resumes it in that mode instead. In a window started with `ccm <mode>`, `/resume
 mode; use `/mode` to change it.
 
 The lead model and effort cannot be changed by a hook, and `/model <x>` inside a session saves machine-wide. So
-extra-high and ultra-high set the lead at launch with `ccm`. A `/mode` switch into them (unless this window was
-launched with `ccm <mode>`), or a start not launched with `ccm <mode>` or whose model does not match, makes the hook add a note telling you to run `ccm <mode> -c`; a switch out of them says the lead is still
+`ccm` sets the lead at launch for every mode (Opus 5.5 at high for normal/medium/high). A `/mode` switch into extra-high or ultra-high (unless this window was
+launched with `ccm <mode>`), or a start not launched with `ccm <mode>` or whose model does not match (for normal/medium/high: a known model that is not Opus), makes the hook add a note telling you to run `ccm <mode> -c`; a switch out of them says the lead is still
 at its launch effort and to run `ccm <mode> -c` to return it to Opus 5.5 at high.
 
 ## Same in every mode
 
 Per-task model and effort (agent pins and the escalation rules in `home/modes/_lead.md`); the quality gates (tests,
-`runner` checks, `reviewer`, `security-auditor`, `verify-done`, `ui-quality-pass`, `visual-qa`, `ui-coverage`, the findings check and the judge models), and risky or final review and security audit on Opus at max. normal, medium and high keep the lead at Opus 5.5 at
-effort high and change only parallelism, workflows and report brevity; extra-high and ultra-high also change the lead
+`runner` checks, `reviewer`, `security-auditor`, `verify-done`, `ui-quality-pass`, `visual-qa`, `ui-coverage`, the findings check and the judge models), and risky or final review and security audit on Opus at max. normal, medium and high lead on Opus 5.5 at
+effort high (`ccm` pins it, so a resume of a Fable session returns to Opus) and change only parallelism, workflows and report brevity; extra-high and ultra-high change the lead
 and add the Opus-max escalations for architecture, hard bugs and risky code (Fable max in ultra-high).
 
 ## What differs

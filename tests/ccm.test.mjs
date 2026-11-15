@@ -25,8 +25,10 @@ test('no mode word unsets CLAUDE_MODE and adds no lead flags', () => {
   assert.equal(out.stdout.trim(), 'env -u CLAUDE_MODE claude');
 });
 
-test('high passes extra args and no lead flags', () => {
-  assert.equal(dryRun('high', '-c').stdout.trim(), 'env CLAUDE_MODE=high claude -c');
+test('normal, medium and high pin the base lead (Opus at high) and pass extra args', () => {
+  for (const mode of ['normal', 'medium', 'high']) {
+    assert.equal(dryRun(mode, '-c').stdout.trim(), `env CLAUDE_MODE=${mode} claude --model opus --effort high -c`);
+  }
 });
 
 test('extra-high launches Opus at max effort', () => {
@@ -41,7 +43,9 @@ test('CCM_LEAD_EFFORT overrides the effort of extra-high and ultra-high only', (
   assert.equal(dryRunEffort('max', 'ultra-high').stdout.trim(), 'env CLAUDE_MODE=ultra-high claude --model fable --effort max');
   assert.equal(dryRunEffort('xhigh', 'ultra-high').stdout.trim(), 'env CLAUDE_MODE=ultra-high claude --model fable --effort xhigh');
   assert.equal(dryRunEffort('high', 'extra-high').stdout.trim(), 'env CLAUDE_MODE=extra-high claude --model opus --effort high');
-  assert.equal(dryRunEffort('low', 'high').stdout.trim(), 'env CLAUDE_MODE=high claude');
+  for (const mode of ['normal', 'medium', 'high']) {
+    assert.equal(dryRunEffort('max', mode).stdout.trim(), `env CLAUDE_MODE=${mode} claude --model opus --effort high`);
+  }
   assert.equal(dryRunEffort('bogus', 'medium').status, 0);
 });
 
@@ -64,6 +68,8 @@ test('ccm.ps1 has the same mode words and lead args as ccm', () => {
   const bash = readFileSync(CCM, 'utf8');
   const ps1 = readFileSync(CCM_PS1, 'utf8');
   for (const mode of MODES) assert.ok(ps1.includes(`'${mode}'`), `ccm.ps1 lacks mode ${mode}`);
+  assert.match(bash, /normal\|medium\|high\) echo "--model opus --effort high"/);
+  assert.match(ps1, /'--model', 'opus', '--effort', 'high'/);
   assert.match(bash, /extra-high\) echo "--model opus --effort \$\{effort:-max\}"/);
   assert.match(bash, /ultra-high\) echo "--model fable --effort \$\{effort:-high\}"/);
   assert.match(ps1, /'--model', 'opus', '--effort', \$\(if \(\$effort\) \{ \$effort \} else \{ 'max' \}\)/);
@@ -79,6 +85,8 @@ test('ccm.ps1 dry run prints the same lead args (needs pwsh)', { skip: !HAS_PWSH
   assert.equal(runEffort('max', 'ultra-high').stdout.trim(), 'env CLAUDE_MODE=ultra-high claude --model fable --effort max');
   assert.equal(runEffort('bogus', 'ultra-high').status, EXIT_USAGE);
   assert.equal(run().stdout.trim(), 'env -u CLAUDE_MODE claude');
+  assert.equal(run('high', '-c').stdout.trim(), 'env CLAUDE_MODE=high claude --model opus --effort high -c');
+  assert.equal(runEffort('max', 'high').stdout.trim(), 'env CLAUDE_MODE=high claude --model opus --effort high');
   assert.equal(run('bogus').status, EXIT_USAGE);
 });
 

@@ -1,8 +1,9 @@
 # Purpose: PowerShell port of home/bin/ccm - launch Claude Code in a setup mode
-# (normal | medium | high | extra-high | ultra-high). extra-high and ultra-high also set the lead at launch
-# (`--model opus --effort max` / `--model fable --effort high`), because a hook cannot change the lead.
+# (normal | medium | high | extra-high | ultra-high) and pin the lead at launch, because a hook cannot change it and a
+# resume would otherwise keep the session's last model: normal/medium/high `--model opus --effort high` (the base lead),
+# extra-high `--model opus --effort max`, ultra-high `--model fable --effort high`.
 # CCM_LEAD_EFFORT=low|medium|high|xhigh|max overrides that effort for extra-high / ultra-high only (any other value is
-# a usage error, exit 2); normal/medium/high ignore it.
+# a usage error, exit 2); normal/medium/high ignore it (their effort is always high).
 # Usage: ccm.ps1 [normal|medium|high|extra-high|ultra-high] [claude args...]   (no mode word: CLAUDE_MODE is removed
 # for the child, so a new session starts in medium and a resumed one keeps its saved mode)
 # Invariants: sets CLAUDE_MODE only for the child process (restored afterwards), writes no files, passes no --settings.
@@ -13,7 +14,8 @@ $Efforts = @('low', 'medium', 'high', 'xhigh', 'max')
 
 # Lead flags per mode; CCM_LEAD_EFFORT replaces the default effort of the two lead modes (invalid value: exit 2).
 function Get-LeadArgs([string]$mode) {
-  if ($mode -ne 'extra-high' -and $mode -ne 'ultra-high') { return @() }
+  if (-not $mode) { return @() }
+  if ($mode -ne 'extra-high' -and $mode -ne 'ultra-high') { return @('--model', 'opus', '--effort', 'high') }
   $effort = $env:CCM_LEAD_EFFORT
   if ($effort -and $Efforts -cnotcontains $effort) {
     [Console]::Error.WriteLine("ccm: CCM_LEAD_EFFORT must be low|medium|high|xhigh|max (got: $effort)")

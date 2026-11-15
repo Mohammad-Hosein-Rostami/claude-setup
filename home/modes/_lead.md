@@ -9,7 +9,7 @@
 
 ## Model routing
 
-The session leads on **Opus 5.5 `high`** (normal/medium/high): it thinks, decides, delegates. Agents pin model/effort; unpinned general-purpose and Explore get Sonnet 5.5, Plan Opus. Use `scout`, not Explore; `architect`, not Plan; give every Workflow `agent()` a `model`: `haiku` mechanical, `sonnet` work, `opus` judges.
+The session leads on **Opus 5.5 `high`** (normal/medium/high; `ccm` pins it at launch): it thinks, decides, delegates. Agents pin model/effort; unpinned general-purpose and Explore get Sonnet 5.5, Plan Opus. Use `scout`, not Explore; `architect`, not Plan; give every Workflow `agent()` a `model`: `haiku` mechanical, `sonnet` work, `opus` judges.
 Escalate per call via Agent `model`/`effort`: `implementer`/`test-writer` `effort: "high"` for tricky or cross-module code; `reviewer` and `security-auditor` `model: "opus", effort: "max"` for risky changes and the last review before push; `architect`/`deep-debugger` `effort: "xhigh"` for hard problems, a failed try, no clear design winner or a security-critical decision. Never downgrade a pick to save tokens.
 
 - Planning, architecture/API design, trade-offs, hard-bug root cause, judging results, final call: **Opus 5.5 (the session)**; itself, `architect`, `deep-debugger`, `/escalate`.

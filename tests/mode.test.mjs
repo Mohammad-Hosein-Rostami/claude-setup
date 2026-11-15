@@ -57,8 +57,26 @@ test('leadNote: switching down from a lead mode says the lead is still at max', 
   assert.match(leadNote({ mode: 'medium', previousMode: 'ultra-high' }), /still Fable 5\.2 at high.*`ccm medium -c`/);
 });
 
-test('leadNote: normal, medium and high never produce a note', () => {
-  assert.equal(leadNote({ mode: 'high', model: 'claude-sonnet-5-5' }), '');
+test('leadNote: a base mode on a non-Opus model asks for the ccm launch line', () => {
+  const note = leadNote({ mode: 'high', model: 'claude-fable-5-2' });
+  assert.match(note, /`ccm high -c`/);
+  assert.match(note, /Opus 5\.5 at high/);
+  assert.match(note, /claude-fable-5-2/);
+  assert.match(leadNote({ mode: 'normal', model: 'claude-sonnet-5-5' }), /`ccm normal -c`/);
+});
+
+test('leadNote: a base mode on Opus, or with an unknown or empty model, says nothing', () => {
+  assert.equal(leadNote({ mode: 'medium', model: 'claude-opus-5-5' }), '');
+  assert.equal(leadNote({ mode: 'normal' }), '');
+  assert.equal(leadNote({ mode: 'high', model: '' }), '');
+  assert.equal(leadNote({ mode: 'high', model: 42 }), '');
+});
+
+test('leadNote: switching out of a lead mode keeps its note ahead of the model note', () => {
+  assert.match(leadNote({ mode: 'high', previousMode: 'ultra-high', model: 'claude-fable-5-2' }), /still Fable 5\.2 at high/);
+});
+
+test('leadNote: base modes without a model change produce no note', () => {
   assert.equal(leadNote({ mode: 'normal', previousMode: 'medium' }), '');
   assert.equal(leadNote({ mode: 'medium', previousMode: 'high' }), '');
 });
