@@ -232,7 +232,7 @@ async function onExpansion(input, sessionId, getProcKey) {
 async function onPromptSubmit(input, sessionId, getProcKey) {
   const current = await activeMode(sessionId, getProcKey);
   if (current !== DEFAULT_MODE) console.log(`Mode: ${current} - follow ~/.claude/modes/${current}.md`);
-  const big = await bigContextNote({ mode: current, prompt: input.prompt, transcriptPath: input.transcript_path, dir: stateDir(), sessionId });
+  const big = await bigContextNote({ prompt: input.prompt, transcriptPath: input.transcript_path, dir: stateDir(), sessionId });
   if (big) console.log(big);
 }
 

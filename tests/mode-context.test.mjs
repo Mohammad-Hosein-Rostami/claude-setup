@@ -64,23 +64,21 @@ test('compact tells the lead to reload Monitor, SendMessage and TaskStop in one 
   assert.match(out, /Monitor, SendMessage and TaskStop in ONE ToolSearch call/);
 });
 
-test('the first big prompt on a context over 60k in high / ultra-high says "/clear or start a new session first", once', async () => {
+test('the first big prompt on a context over 60k in every mode says "/clear or start a new session first", once', async () => {
   const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
   const big = await transcript([usageLine(70_000)]);
   const submit = (mode, id, prompt = BIG_PROMPT, transcript_path = big) => runHook(home, mode, { hook_event_name: 'UserPromptSubmit', session_id: id, prompt, transcript_path }).stdout;
   const first = submit('high', 'b1');
   assert.match(first, /~70k tokens.*"\/clear or start a new session first"/);
   assert.doesNotMatch(submit('high', 'b1'), /new session first/); // once per session
-  assert.match(submit('ultra-high', 'b2'), /new session first/);
+  for (const [index, mode] of ['normal', 'medium', 'extra-high', 'ultra-high'].entries()) assert.match(submit(mode, `b-${index}`), /new session first/, mode);
 });
 
-test('no big-context note for medium or extra-high, a small context, a short prompt, a slash command or no transcript', async () => {
+test('no big-context note for a small context, a short prompt, a slash command or no transcript', async () => {
   const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
   const big = await transcript([usageLine(70_000)]);
   const small = await transcript([usageLine(50_000)]);
   const submit = (mode, id, prompt, transcript_path) => runHook(home, mode, { hook_event_name: 'UserPromptSubmit', session_id: id, prompt, transcript_path }).stdout;
-  assert.doesNotMatch(submit('medium', 'n1', BIG_PROMPT, big), /new session first/);
-  assert.doesNotMatch(submit('extra-high', 'n2', BIG_PROMPT, big), /new session first/);
   assert.doesNotMatch(submit('high', 'n3', BIG_PROMPT, small), /new session first/);
   assert.doesNotMatch(submit('high', 'n4', 'continue', big), /new session first/);
   assert.doesNotMatch(submit('high', 'n5', `/foo ${BIG_PROMPT}`, big), /new session first/);
