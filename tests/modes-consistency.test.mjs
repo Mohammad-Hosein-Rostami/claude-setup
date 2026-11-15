@@ -35,7 +35,7 @@ test('_lead.md carries the lead-discipline rules and stays small', () => {
 test('ultra-high playbook keeps the assembly and compact-before-waiting rules', () => {
   const playbook = read('home/modes/ultra-high.md');
   assert.match(playbook, /Workflow assembly is not judgment/);
-  assert.match(playbook, /max 1 continuation/);
+  assert.match(playbook, /continue only reachable items, once; what is still left goes to a fresh agent/);
   assert.match(playbook, /`\/compact` first/);
 });
 
@@ -76,4 +76,51 @@ test('the estimate rules are verbatim in _lead.md and home/CLAUDE.md, and the ol
   assert.ok(global.split('\n').includes(GLOBAL_ESTIMATE_RULE), 'home/CLAUDE.md estimate rule');
   assert.doesNotMatch(global, /end that reply with the new finish estimate/);
   assert.match(read('docs/daily-use.md'), /pastes the `Finish:` block of `node ~\/\.claude\/tools\/estimate\/estimate\.mjs STATUS\.md` as every estimate/);
+});
+
+// Modes differ in cost and speed only: every accuracy rule lives in home/CLAUDE.md or _lead.md, which every mode loads.
+const GATES = ['runner', 'reviewer', 'security-auditor', 'verify-done', 'ui-quality-pass', 'visual-qa', 'ui-coverage'];
+const LESS_ACCURACY = [/thrift/i, /\bskip\b/i, /nice-to-have/i, /fewer (checks|reviews|tests)/i, /\bno (review|verify|tests?)\b/i];
+// A short phrase that drops, skips or lessens a gate or check ("skip the reviewer", "no tests", "without verification").
+const LOWERS_A_GATE = /\b(skip|omit|drop|without|no|fewer|less)\b[^.;\n]{0,40}\b(runner|reviewers?|security-auditor|verify-done|ui-quality-pass|visual-qa|ui-coverage|reviews?|verif(y|ication)|tests?|checks?)\b/i;
+
+test('every playbook keeps the same gates and none lowers accuracy', () => {
+  for (const mode of MODES) {
+    const playbook = read(`home/modes/${mode}.md`);
+    assert.match(playbook, /same quality gates as every mode/i, `${mode}.md must state the shared gates`);
+    for (const pattern of LESS_ACCURACY) assert.doesNotMatch(playbook, pattern, `${mode}.md lowers accuracy: ${pattern}`);
+  }
+});
+
+test('no playbook sentence lowers a gate that home/CLAUDE.md requires', () => {
+  for (const lowering of ['Skip the reviewer on small diffs.', 'Do small work without verify-done.', 'Fewer checks in this mode.', 'No tests for quick fixes.']) {
+    assert.match(lowering, LOWERS_A_GATE, `detector must flag: ${lowering}`);
+  }
+  for (const fine of ['Never downgrade a model or effort pick to save tokens; the quality gates still run.', 'routine reviews stay on Sonnet', 'No duplicate agents on the same question.']) {
+    assert.doesNotMatch(fine, LOWERS_A_GATE, `detector must not flag: ${fine}`);
+  }
+  for (const mode of MODES) assert.doesNotMatch(read(`home/modes/${mode}.md`), LOWERS_A_GATE, `${mode}.md lowers a gate`);
+});
+
+test('every gate is named in home/CLAUDE.md, which every session and agent loads', () => {
+  const claude = read('home/CLAUDE.md');
+  for (const gate of GATES) assert.ok(claude.includes(`\`${gate}\``), `home/CLAUDE.md must name ${gate}`);
+});
+
+test('accuracy rules live in the shared files', () => {
+  const claude = read('home/CLAUDE.md');
+  assert.match(claude, /re-read the cited lines/);
+  assert.match(claude, /second independent source/);
+  const lead = read('home/modes/_lead.md');
+  for (const needle of ['`architect`, not Plan', '`opus` judges', 'never on accuracy', 'security-critical decision']) {
+    assert.ok(lead.includes(needle), `_lead.md must mention ${needle}`);
+  }
+});
+
+test('review agents report every blocking and should-fix finding, with no cap', () => {
+  for (const agent of ['reviewer', 'security-auditor']) {
+    const text = read(`home/agents/${agent}.md`);
+    assert.doesNotMatch(text, /\b(at most|max) 12\b/i, `${agent}.md must not cap findings at 12`);
+    assert.match(text, /no cap/i, `${agent}.md must say findings have no cap`);
+  }
 });

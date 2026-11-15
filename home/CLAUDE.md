@@ -23,6 +23,7 @@ Setup modes: `normal`, `medium` (default), `high`, `extra-high`, `ultra-high`; s
   edit, not after each step. `verify-done` reuses that run when no file changed after it.
 - Non-trivial change: `reviewer`. Risky change: also `security-auditor`. UI: `ui-quality-pass`. Then `verify-done`.
 - A design spec without Reuse inventory, Contract facts and Unconfirmed goes back to its author before an implementer starts.
+- Review findings: merge duplicates; re-read the cited lines of each blocking, should-fix or disputed finding and judge it alone before fixing or dismissing it (security findings apart); fix blocking and should-fix ones, list the rest; re-check the lines of each blocking fix.
 
 ## Skill routing (UI)
 
@@ -31,6 +32,7 @@ Invoke these with the Skill tool before writing code, in every project; a `skill
 - Any UI code: `accessibility-build` + `responsive-ui` while building; `ui-quality-pass` before saying done.
 - Figma link/frame/node: `figma-pixel-perfect` first, then `visual-qa` for compare + responsive.
 - Inputs/forms: `forms-validation`. Screens with server data: `async-ui-states`. Dates: `datetime-handling`.
+- A UI task with more than one component, any Figma work or an "all screens" request: `ui-coverage` first.
 - A project skill with the same purpose whose `paths:` match the files wins (e.g. `design-parity`).
 
 ## Project config layers
@@ -68,9 +70,11 @@ global setup combines with it.
   browser/Playwright MCP only when asked (each call also echoes its code back).
 - Pixel/visual bugs: read the code once and make the best fix; hand the compare-and-fix loop to `visual-qa` (it runs
   until it passes) instead of iterating screenshots and measurements on the main thread.
+- Separable parts (i18n) get their own lane. One scripted `runner` call measures every state. Reuse cached Figma pulls, diffs and the design system.
+- Lanes land one at a time by rebase and `git merge --ff-only`, then `git-tidy prune --apply` (C37).
 - Run checks through `runner` so logs stay out of context; start servers/browsers only when the task needs a
   real-app check.
-- Owner decisions (scope, money, irreversible, credentials, real trade-offs): ask with AskUserQuestion the moment they
+- Owner decisions (scope, money, irreversible, credentials, a product fact the repo lacks such as length, timer, role, copy, brand name or design system vs local, real trade-offs): ask with AskUserQuestion the moment they
   come up while other work keeps running (see `ask-owner`). Technical choices: pick the default, say so in one line.
 - Final answers: what changed and what was not run. No recap of the process.
 
@@ -79,6 +83,7 @@ global setup combines with it.
 - Understand before editing: read the failing output or the code path in full; do not guess
   library APIs - check the installed version's docs (docs MCP if configured) when behaviour
   is version-sensitive.
+- A fact a decision rests on that is version-, date- or price-sensitive, or disputed, gets a second independent source, even when the first looks sufficient.
 - An owner rule of the form "every/all X gets Y" is applied by a search that lists every X (the count goes in the report), not by fixing the examples seen.
 - Fix root causes, not symptoms; never silence a check to make it pass.
 - Say "verified" only for what you ran; never imply a check passed that was not run.

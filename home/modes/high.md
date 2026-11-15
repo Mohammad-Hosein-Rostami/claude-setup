@@ -13,12 +13,9 @@ Same models per task, same lead effort, same quality gates as every mode (see th
   no size limit. Choosing `ccm high` or `/mode high` is the user's standing request for this.
 - Reports: same short final answer as every mode (what changed, what was not run); agents return ≤ 300 words with
   file:line evidence; detail goes to files and the report gives the path.
-- Merge duplicate findings, then verify only high/medium or disputed ones in batches: group by file or lens, ≤ 5 per
-  verifier; each verifier re-reads the cited lines and judges each finding separately; security findings get their own
-  verifier.
+- Findings check (CLAUDE.md quality gates) runs as verifier agents in parallel: group by file or lens, ≤ 5 per verifier; security findings get their own verifier.
 - Not wasteful: no duplicate agents on the same question; keep Haiku for mechanical work; keep each agent's pinned
   model unless an escalation rule in the lead rules applies.
-- Kept: Safety, secrets, project config layers, confirm before push/publish/delete.
 - Subscription usage only: speed comes from parallel agents and workflows, never from usage-credit features.
 
 Applies to this session only.

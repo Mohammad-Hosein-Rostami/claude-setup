@@ -13,7 +13,6 @@ Same quality gates as every mode (see the lead rules and CLAUDE.md). Unlike norm
   request for this.
 - The lead is set at launch. If the hook says it does not match, tell the user to run `ccm extra-high -c`; avoid
   `/model` (it saves machine-wide).
-- Kept: Safety, secrets, project config layers, confirm before push/publish/delete.
 - Subscription usage only: never fast mode, never usage-credit features; at a usage limit, wait for the reset.
 
 Applies to this session only.

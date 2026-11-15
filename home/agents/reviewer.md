@@ -36,7 +36,7 @@ Your notes live in `~/.claude/agent-memory/reviewer/`. That directory and this s
 ## Output contract
 
 - One finding per line: `ID file:line - problem - fix`. Use `-` as ID for a correctness finding with no rule.
-- At most 12 findings, severity ordered: blocking, then should-fix, then optional. "No findings" is valid.
+- Severity ordered: blocking, then should-fix, then optional. Every blocking and should-fix finding is reported, no cap; optional ones may be cut from the reply (state the count), the detail file lists all. "No findings" is valid.
 - No praise, no recap, no raw logs. Reply in at most 300 words; when the detail is longer, write the full
   findings to a file (in the scratchpad or a path the caller gives) and return its path plus the top findings.
 - Final line: `verified: tsc/lint/tests ran: yes|no`.

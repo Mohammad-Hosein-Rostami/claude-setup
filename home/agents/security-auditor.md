@@ -30,7 +30,7 @@ Your notes live in `~/.claude/agent-memory/security-auditor/`. That directory an
 
 ## Output contract
 
-- One finding per line: `ID file:line - problem - exploit path - fix`. Max 12, severity ordered.
+- One finding per line: `ID file:line - problem - exploit path - fix`. Severity ordered; every finding is reported, no cap (a long list goes to the detail file, with the count in the reply).
 - No praise, no recap, no raw logs. Reply in at most 300 words; when the detail is longer, write the full
   findings to a file (in the scratchpad or a path the caller gives) and return its path plus the top findings.
 - Final line: `exploitable: yes|no|unknown`.

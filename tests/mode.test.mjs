@@ -262,3 +262,22 @@ test('real _lead.md plus the longest playbook and a lead note stay under the hoo
     assert.ok(longest > 0 && longest <= MAX_HOOK_OUTPUT_CHARS - MIN_HEADROOM_CHARS, `longest ${source} output is ${longest} chars`);
   }
 });
+
+test('the worst compact output (status file path, 3rd compaction, longest playbook and lead note) also stays under the cap', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'mode-size-'));
+  await mkdir(join(home, '.claude'), { recursive: true });
+  await cp(fileURLToPath(new URL('../home/modes', import.meta.url)), join(home, '.claude', 'modes'), { recursive: true });
+  const transcript = join(home, 'transcript.jsonl');
+  const write = { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write', input: { file_path: join(home, 'project', 'STATUS.md') } }] } };
+  await writeFile(transcript, `${JSON.stringify(write)}\n`);
+  // The playbook printed on compact is the one the process last saved, so a startup per mode, then three compactions each.
+  let longest = 0;
+  for (const mode of ['normal', 'medium', 'high', 'extra-high', 'ultra-high']) {
+    runHook(home, { CLAUDE_MODE: mode }, { hook_event_name: 'SessionStart', session_id: `worst-${mode}`, source: 'startup', model: 'claude-haiku-5-5' });
+    for (let compaction = 0; compaction < 3; compaction += 1) {
+      const out = runHook(home, { CLAUDE_MODE: mode }, { hook_event_name: 'SessionStart', session_id: `worst-${mode}`, source: 'compact', model: 'claude-haiku-5-5', transcript_path: transcript }).stdout;
+      longest = Math.max(longest, out.length);
+    }
+  }
+  assert.ok(longest > 0 && longest <= MAX_HOOK_OUTPUT_CHARS - MIN_HEADROOM_CHARS, `longest worst-case compact output is ${longest} chars`);
+});

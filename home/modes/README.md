@@ -1,6 +1,6 @@
 # modes
 
-Setup modes: normal (thrift), medium (default), high (full speed), extra-high (high plus lead Opus 5.5 at max) and
+Setup modes: normal (fewest agents), medium (default), high (full speed), extra-high (high plus lead Opus 5.5 at max) and
 ultra-high (high plus lead Fable 5.2 at high). normal/medium/high change only parallelism, workflows and report
 brevity; extra-high/ultra-high also change the lead and send important jobs to Opus at max. Each applies to one
 session only.

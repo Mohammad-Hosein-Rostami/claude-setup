@@ -6,7 +6,6 @@ Same models per task, same lead effort, same quality gates as every mode (see th
   one-line usage-limit forecast first.
 - Workflows (a script that runs many agents in phases): Claude may propose one when it clearly helps and say roughly
   what it costs; it starts only after the user says yes; up to 9 agents.
-- Work as the lead rules and `~/.claude/CLAUDE.md` describe; stop at the first sufficient answer when researching.
-- Safety, secrets, project config layers and quality rules apply.
+- Work as the lead rules and `~/.claude/CLAUDE.md` describe; stop at the first sufficient answer when researching, except facts CLAUDE.md says need a second source.
 
 Applies to this session only.
