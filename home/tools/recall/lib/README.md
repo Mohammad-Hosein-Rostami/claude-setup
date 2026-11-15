@@ -12,7 +12,7 @@ settings and the fallbacks. Needs Node 22.13 or newer (`node:sqlite`). No npm de
 - Vectors: `vectors.mjs` (local Ollama embeddings, cosine), `models.mjs` (the embedding models and their query prefixes).
 - Reranking: `rerank.mjs` (client), `rerank-server.mjs` (starts the local `llama-server` on demand), `rerank-watch.mjs` (stops it when idle).
 - Checkpoints: `checkpoint.mjs` (the job), `checkpoint-state.mjs` (trigger rule and lock), `slice.mjs` (reads a part of a transcript), `notes.mjs` (the prompt and the JSON check), `claude-call.mjs` (one `claude -p` call), `usage.mjs` (logs each call).
-- After compaction: `digest.mjs` (the short block of notes), `owner-messages.mjs` (`recall --owner`: the owner's own typed messages of one session, masked).
+- After compaction: `digest.mjs` (the short block of notes), `owner-messages.mjs` (`recall --owner`: the owner's own typed messages of one session) and `owner-mask.mjs` (its credential masking).
 - Commands and scoring: `cli-admin.mjs` (`status`, `backfill`), `eval.mjs` (hit@k scoring).
 
 ## Test

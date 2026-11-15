@@ -20,7 +20,7 @@ import { cmdBackfill, cmdStatus } from './lib/cli-admin.mjs';
 import { parseLists, runSearch } from './lib/pipeline.mjs';
 import { rerankBase } from './lib/rerank.mjs';
 import { MERGE_MODES } from './lib/merge.mjs';
-import { findSession, ownerMessages } from './lib/owner-messages.mjs';
+import { findSession, NON_INTERACTIVE_NOTE, OWNER_HEADER, ownerMessages } from './lib/owner-messages.mjs';
 
 const USAGE = 'usage: recall "<query>" [--session current|<id>] [--deep] [--k 8] | recall --owner [--session current|<id>] [--since YYYY-MM-DD] | recall <index [--full] [--model m] | search "<query>" [--project s] [--since YYYY-MM-DD] [--kind k] [--limit N] [--json] | show <id> [--around N] | stats | status | backfill [--min-messages 20] [--yes] | embed [--model m] | eval <questions.jsonl> [--session-file <path>] [--k 1,5,10]>; search/eval also take [--no-semantic] [--merge add|rrf] [--model m] [--lists lex,bge,qwen] [--rerank N] (semantic and the reranker are automatic when Ollama, vectors and the reranker files exist)';
 const SEARCH_INDEX_BUDGET_MS = 3000;
@@ -206,7 +206,12 @@ async function cmdOwner({ values }) {
   } catch (error) {
     throw new UsageError(error.message);
   }
-  for await (const { index, time, text } of ownerMessages(file, { since: values.since })) console.log(`${index}\t${time}\t${text}`);
+  let headerPrinted = false;
+  for await (const { index, time, text, nonInteractive } of ownerMessages(file, { since: values.since })) {
+    if (!headerPrinted) console.log(OWNER_HEADER + (nonInteractive ? NON_INTERACTIVE_NOTE : ''));
+    headerPrinted = true;
+    console.log(`> ${index}\t${time}\t${text}`);
+  }
 }
 
 const COMMANDS = {
