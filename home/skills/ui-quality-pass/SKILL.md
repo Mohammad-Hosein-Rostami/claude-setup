@@ -11,10 +11,10 @@ Rules: F7-F9, U1-U12 (`rules/ui.md`; examples in `standards/ui-a11y.md`). Build-
 4. Contrast: text 4.5:1, large text and UI parts 3:1; state is not shown by colour alone (U3, U9).
 5. Responsive: run `ui-check responsive` (see `responsive-ui`); targets 44px preferred on touch (U2, U6). Built from a Figma frame: run `figma-pixel-perfect` first.
 6. Motion: honour `prefers-reduced-motion` (U9).
-7. Async states: loading, empty with next step, error with retry, success (F7, F8, U11). Destructive actions confirm or undo (U10).
+7. Async states: loading, empty with next step, error with retry, success (F7, F8, U11). Destructive actions confirm or undo (U10). Cold-load each entry URL per user state with a slow session response: loader, then the one right screen, no other screen in between (`async-ui-states` 7-8).
 8. Copy: plain sentence case, no placeholder text (U12).
 9. Run axe (or the project's a11y test) and use `ui-check responsive` for breakpoints (reports, not screenshots) if Playwright is available; otherwise state "not run".
 
 Done-gate: checklist 1-8 each marked pass or a fix commit; `ui-coverage check` exits 0 (paste the summary) for multi-component or multi-locale work; dev-only mocks/showcases proven absent from the production build (build, grep the output, quote it); axe result or "not run" stated; then `verify-done`.
 
-Typical misses: raw hex/px, `div` with `onClick`, missing loading/empty/error states, `new Date(string)`, `100vh` on mobile, overflow at 320 px, console errors.
+Typical misses: raw hex/px, `div` with `onClick`, missing loading/empty/error states, `new Date(string)`, `100vh` on mobile, overflow at 320 px, console errors, a wrong screen shown for a moment before a redirect.

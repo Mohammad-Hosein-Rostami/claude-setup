@@ -9,7 +9,7 @@ descriptions are quoted from their frontmatter; those descriptions are what make
 | ----- | --------------------- | ----- |
 | `accessibility-build` | Use while writing or changing UI code (.tsx/.jsx/.vue/.html; MUI components, dialogs, menus, icon buttons, forms) so it is accessible from the start - semantic HTML, keyboard, focus, labels, contrast, motion (WCAG 2.2 AA). | session model |
 | `ask-owner` | Use when a decision is the owner's (scope, money, irreversible or outward-facing actions, credentials, real trade-offs), or when an ASK line arrives from the decision queue - how to word the question and run the queue loop. | session model |
-| `async-ui-states` | Use for any screen that loads or changes server data - loading, empty, error, offline, stale responses, pagination, search-as-you-type. | session model |
+| `async-ui-states` | Use for any screen that loads or changes server data, or whose first screen depends on sign-in, role or saved progress - loading, empty, error, offline, stale responses, pagination, search-as-you-type, no wrong screen before a redirect. | session model |
 | `clean-code` | Use when writing or changing code, and again before finishing a coding step - naming, size, complexity, errors, comments, duplication, dead code, scope. | session model |
 | `datetime-handling` | Use whenever code stores, parses, compares, shows or schedules dates and times, in the UI or the backend - time zones, DST, date-only values, formats. | session model |
 | `e2e-browser-test` | Use when writing or fixing end-to-end or browser tests, or when verifying a UI in a real browser. | session model |
