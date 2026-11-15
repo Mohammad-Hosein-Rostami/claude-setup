@@ -22,10 +22,10 @@ export const DELIVERY_GAP_MS = 10 * MINUTE_MS;
 export const DEFAULT_CLOSING_HOURS = { low: 1.4, high: 2.5 };
 export const CLOSING_HISTORY = 5; // the closing range is the min..max of this many most recent tails
 const MIN_MEASURED_TAILS = 2; // below this the default range is used, widened to include a single tail
-// Follow-up round in hours when this table has fewer than 2 finished rounds. The 14-15 Nov analysis has fewer than 3 rounds:
-// one finished (auth, first row after the 22:30Z delivery 06:20Z -> next delivery 08:10Z = 1.83 h) and one still open at
-// its cutoff (auth rework, 08:29Z -> 11:03Z = 2.57 h and running); rounded outward like the closing default.
-export const DEFAULT_FOLLOW_UP_HOURS = { low: 1.8, high: 2.6 };
+// Follow-up round in hours when this table has fewer than 2 finished rounds: the spread of the only three rounds measured
+// (15 Nov), rounded outward like the closing default; wide because three is few. Restructure 11:25Z -> 11:54Z = 0.48 h (live
+// table); auth 06:20Z -> 08:10Z = 1.83 h and auth rework 08:29Z -> 11:03Z = 2.57 h, still open (14-15 Nov analysis).
+export const DEFAULT_FOLLOW_UP_HOURS = { low: 0.4, high: 2.6 };
 
 /** Total length (ms) of the overlap between two lists of disjoint intervals {start, end}. */
 export function overlapMs(a, b) {

@@ -66,9 +66,10 @@ All durations are wall-clock time minus the usage-limit windows found in the tra
   kind) form a round, from the first row started after the delivery (now, if none has started) to the next delivery. It is
   not a new closing phase. While one is open, every open row counts by size (close and rework rows too) and Finish =
   [max(S + R low, now + B(low)), max(S + R high, now + B(high))] (so never before now), S = the round's start. R = min..max of the last 5
-  finished rounds here once 2 exist; before that the default 1.8-2.6 h, widened to include a single round. The default
-  comes from fewer than 3 rounds (the 14-15 Nov analysis has one finished round, 1.83 h, and one still open at 2.57 h),
-  rounded outward like the closing default. A round past S + R high whose open rows are all past their measured rates is
+  finished rounds here once 2 exist; before that the default 0.4-2.6 h, widened to include a single round. The default
+  is the spread of the only three rounds measured, rounded outward like the closing default: a restructure round of
+  0.48 h (11:25Z-11:54Z, 15 Nov, live table), an auth round of 1.83 h (06:20Z-08:10Z) and an auth rework round still
+  open at 2.57 h (08:29Z-11:03Z), both from the 14-15 Nov analysis. It is wide because only three rounds were measured. A round past S + R high whose open rows are all past their measured rates is
   refused (exit 3). The first cycle (no delivery yet) is the build part and closing phase above.
 - Reopened: a delivery counts as reopened when a `rework:` row starts after it (up to the next delivery, or now); the
   rework time runs from that first start to the next delivery, or to now: `so far (still open)` while a rework row is
@@ -103,7 +104,7 @@ Agent-hours: 0.6-1.0 for the open build rows, counted whole
 - Before 2 finished jobs the closing reads `1.4-2.5 h in series (...; default, not yet measured here)`; with one, `default,
   widened by the 1 finished job here`. With no build row open: `no open build row: the closing phase ... has run 1.5 h`.
 - In a follow-up round the Includes line reads `follow-up round after the delivery at 14:25, started 14:55 (V1): 6 open
-  rows (1 running); such rounds took 1.8-2.6 h here (default, not yet measured here); the open rows need at least
+  rows (1 running); such rounds took 0.4-2.6 h here (default, not yet measured here); the open rows need at least
   0.5-2.8 h by size (V1, V2, V3, V4, V5 and 1 more, 1 lane)`; with finished rounds `widened by the 1 finished round
   here` or `measured from 2 finished rounds here`.
 - No delivery in the table yet: `After your review: not measured here yet (no earlier delivery in this table)`.
@@ -136,9 +137,9 @@ replaced whole through a temp file (two racing runs may lose a line, never the f
   the raw ratios and the track record the printed ranges, so the adjustment never feeds on itself. Target: 8 of 10 inside.
   The 5 and the 10 are judgment, not measured: 13 scored estimates over two projects cannot pick them.
 - Two factor sets, by `phase`: `job` (first cycle) and `round` (follow-up round; its Track record line says `follow-up
-  rounds adjusted ...`); an entry without `phase` is a job. One shared set would distort the job ranges: in the 14-15 Nov
-  replay the rounds' raw low ratios were 0.16-1.02 and the first cycles' 1.68 and up, so a shared p10 would pull every
-  job's low end far too early.
+  rounds adjusted ...`); an entry without `phase` is a job. One shared set would let each kind move the other's ends: in the
+  14-15 Nov replay the lowest raw low ratio was a round's (0.77; first cycles 1.68 and up) and the rounds' high ratios
+  (0.11-0.66) sat far below the first cycles' (0.87-1.03).
 
 ## Exit codes
 
@@ -179,7 +180,7 @@ Exit 3 message: `No finish time: <sentences>` then `What to do: <sentences>`, ea
 | `Later than now (<now>): F1 (line 12) started <time>, ...` | correct the time from the clock (`date -u +%Y-%m-%dT%H:%MZ`), never from memory, or pass the right `--now` |
 | `No working time left after removing usage-limit windows: D1 (line 7), ...` | correct started and done of those rows: they lie inside usage-limit windows |
 | `the closing phase has run 2.5 h since the last build row was done (H2, 14:13), longer than every closing measured here (1.5-2.4 h, 2 jobs).` | tell the owner the job is past its usual closing; this ends at delivery, whose length then joins the history. Work not in the table: add it as a row first |
-| `the follow-up round has run 4 h since it started (V1, 05:30), longer than the default round (1.8-2.6 h, not yet measured here), and its open rows are past their measured rates.` | tell the owner the follow-up round is past its usual length; this ends at delivery, whose round length then joins the history. Work not in the table: add it as a row first |
+| `the follow-up round has run 4 h since it started (V1, 05:30), longer than the default round (0.4-2.6 h, not yet measured here), and its open rows are past their measured rates.` | tell the owner the follow-up round is past its usual length; this ends at delivery, whose round length then joins the history. Work not in the table: add it as a row first |
 
 Long lists show the first five rows and `and N more`.
 

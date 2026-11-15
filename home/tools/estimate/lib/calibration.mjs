@@ -8,8 +8,8 @@
 // "void" when every id left the table), inside (printed low <= actual <= printed high) and ratio ([hours to the delivery /
 // raw low, ... / raw high], null where raw is 0). Factors use raw ratios and the track record uses printed ranges, so the
 // adjustment never feeds back into its own inputs. Two factor sets, by phase: 'job' (the first cycle: build, then closing) and
-// 'round' (a follow-up round after a delivery). One set would distort the job ranges: in the 14-15 Nov replay the rounds'
-// low ratios were 0.16-1.02 and the first cycles' 1.68 and up, so a shared p10 would pull every job's low end far too early.
+// 'round' (a follow-up round after a delivery). One set would let each kind move the other's ends: in the 14-15 Nov
+// replay the lowest low ratio was a round's (0.77; first cycles 1.68 and up), the rounds' high ratios 0.11-0.66 against 0.87-1.03.
 import { findDeliveries } from './history.mjs';
 
 const HOUR_MS = 3_600_000;

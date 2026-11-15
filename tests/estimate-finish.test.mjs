@@ -69,8 +69,8 @@ test('fix rounds (a): one open close row (W15-style) does not shrink the closing
 
 test('fix rounds (a): after a delivery an open close row is a follow-up round, floored by its size', () => {
   const rows = (size) => [...TWO_JOBS, row({ id: 'B7', startedH: 20, doneH: 21 }), close({ id: 'C3', size, startedH: 21 })];
-  // round from B7's start at 20 h, 1.8-3 h (default widened by the 16-19 h round); band 1-3 h/point, 0.5 h of C3 run
-  nearRange(estimate(rows('S'), 21.5).raw, [0.5, 2.5], 'S'); // size 0.5-2.5 h beats the round's 21.8-23 h
+  // round from B7's start at 20 h, 0.4-3 h (default widened by the 16-19 h round); band 1-3 h/point, 0.5 h of C3 run
+  nearRange(estimate(rows('S'), 21.5).raw, [0.5, 2.5], 'S'); // size 0.5-2.5 h beats the round's 20.4-23 h
   nearRange(estimate(rows('L'), 21.5).raw, [3.5, 11.5], 'L');
 });
 
@@ -182,7 +182,7 @@ test('overrun: no build row open and the closing ran as long as its high end is 
   const onlyClose = estimate([0, 1, 2, 3, 4].map((h, i) => close({ id: `K${i + 1}`, startedH: h, doneH: h + 1 })).concat(close({ id: 'K6', startedH: 5 })), 8);
   assert.match(formatRefusal(onlyClose, TZ), /run 8 h since the first closing row started \(K1, 03:30\)/);
   const round = estimate([...TWO_JOBS, close({ id: 'C3', startedH: 20 })], 23); // after a delivery: a follow-up round
-  assert.match(formatRefusal(round, TZ), /^No finish time: the follow-up round has run 3 h since it started \(C3, 23:30\), longer than the default round \(1\.8-3 h, widened by 1 finished round here\)/);
+  assert.match(formatRefusal(round, TZ), /^No finish time: the follow-up round has run 3 h since it started \(C3, 23:30\), longer than the default round \(0\.4-3 h, widened by 1 finished round here\)/);
 });
 
 test('the table refusals keep their reasons under No finish time: and add one What to do sentence each', () => {
