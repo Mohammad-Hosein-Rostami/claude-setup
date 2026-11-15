@@ -1,5 +1,5 @@
 // Renders an estimate result as the text block the lead pastes as-is (see README.md for the exact lines).
-// Exports: formatEstimate(result, inputs) -> string; formatRefusal(refusal) -> string.
+// Exports: formatEstimate(result, inputs) -> string; formatRefusal(refusal) -> string; runningRange(result) -> string.
 // Invariants: pure; a refusal text never contains an estimate number (no "Agent-hours" line); every hours figure is
 // printed with its range and the number of finished items it comes from.
 import { STALE_AFTER_MS } from './compute.mjs';
@@ -55,6 +55,13 @@ function staleNote(result) {
 }
 
 /**
+ * The running-time range as the report prints it ("5-8", hours): the one source for the status line segment too.
+ * @param {object} result from computeEstimate (not a refusal, with open items).
+ * @returns {string} low-high in hours, in the report's own rounding.
+ */
+export const runningRange = (result) => range(result.running.low, result.running.high);
+
+/**
  * The estimate block.
  * @param {object} result from computeEstimate (not a refusal).
  * @param {{path: string, now: string, transcriptDir: string, transcriptCount: number}} inputs where the numbers came from.
@@ -70,7 +77,7 @@ export function formatEstimate(result, inputs) {
   lines.push(
     `Remaining: ${plural(result.openItems, 'item')}, ${plural(result.openPoints, 'point')} (${result.inFlight} in flight, counted whole)`,
     `Agent-hours: ${range(result.agentHours.low, result.agentHours.high)} (median ${num(result.agentHours.median)}; ${rangeLabel(result)})`,
-    `Running time: ${range(result.running.low, result.running.high)} h at ${result.lanes.toFixed(1)} lanes (${capped})`,
+    `Running time: ${runningRange(result)} h at ${result.lanes.toFixed(1)} lanes (${capped})`,
     `Calendar: ${range(result.calendarDays.low, result.calendarDays.high)} days (active ${pct(result.activeShare)} of elapsed; ${limits.idle})`,
     rateMeaning(inputs),
     from,
