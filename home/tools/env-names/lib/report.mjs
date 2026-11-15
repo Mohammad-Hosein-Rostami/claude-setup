@@ -1,5 +1,5 @@
-// Turns collected facts into the text the tool prints for `list` (see ../README.md for the layout).
-// Exports: formatList(data) -> string.
+// Turns collected facts and diffs into the text the tool prints (see ../README.md for the layout).
+// Exports: formatList(data) -> string; formatDiff(diff) -> string.
 // Invariants: pure; the text is built from names, counts and `file:line` references only.
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
@@ -9,7 +9,7 @@ function envFileLine(file) {
   return `${file.path}  (${plural(file.names.length, 'name')}${other})`;
 }
 
-const sectionOf = (title, rows) => [`${title} (${rows.length}):`, ...rows.map((row) => `  ${row}`), ''];
+const sectionOf = (title, rows, count = rows.length) => [`${title} (${count}):`, ...rows.map((row) => `  ${row}`), ''];
 
 /** One line per name that differs: who has it and who lacks it. */
 const differingLine = ({ name, has, lacks }) => `${name}  in ${has.join(', ')}; not in ${lacks.join(', ')}`;
@@ -38,6 +38,33 @@ export function formatList(data) {
     ...sectionOf('Names that differ between env files of the same folder', data.differing.map(differingLine)),
     ...extraSections(data),
     `env-names: ${summary.envFiles} env files, ${summary.definedNames} defined names, ${summary.readNames} names read by code, values never read`,
+  ];
+  return lines.join('\n');
+}
+
+const refsLine = ({ name, refs }) => `${name}  ${refs.join(', ')}`;
+
+/** A removed or added env file, with the extra line when another file holds exactly the same names. */
+const envFileRows = (files) => files.flatMap(({ path, sameNamesAs }) => (sameNamesAs === undefined ? [path] : [path, `  same names as ${sameNamesAs}`]));
+
+const nameChangeLine = ({ path, added, removed }) => `${path}  ${[...added.map((name) => `+${name}`), ...removed.map((name) => `-${name}`)].join(' ')}`;
+
+/**
+ * @param {object} diff the result of diffSnapshots
+ * @returns {string} the sections that have rows ("Now undefined" first), then one closing line
+ */
+export function formatDiff(diff) {
+  const optional = (title, rows, count = rows.length) => (rows.length > 0 ? sectionOf(title, rows, count) : []);
+  const lines = [
+    ...optional('Now undefined', diff.nowUndefined.map(({ name, firstUse, wasIn }) => `${name}  ${firstUse} (was defined in ${wasIn.join(', ')})`)),
+    ...optional('Env files added', envFileRows(diff.envFiles.added), diff.envFiles.added.length),
+    ...optional('Env files removed', envFileRows(diff.envFiles.removed), diff.envFiles.removed.length),
+    ...optional('Names changed in env files', diff.namesChanged.map(nameChangeLine)),
+    ...optional('Names read by code added', diff.readByCode.added.map(refsLine)),
+    ...optional('Names read by code removed', diff.readByCode.removed.map(refsLine)),
+    ...optional('Names in deploy files added', diff.deploy.added.map(refsLine)),
+    ...optional('Names in deploy files removed', diff.deploy.removed.map(refsLine)),
+    `env-names: ${diff.changed ? 'changes' : 'no changes'} since ${diff.since}`,
   ];
   return lines.join('\n');
 }

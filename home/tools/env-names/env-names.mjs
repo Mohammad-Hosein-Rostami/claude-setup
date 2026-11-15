@@ -10,10 +10,12 @@
 // a snapshot that is unreadable, of the wrong shape or the wrong version (refused, never guessed).
 // Invariants: no value of any env file reaches stdout, stderr or a snapshot (see lib/env-file-names.mjs); error messages
 // are written by this tool and never carry file content. This file only parses arguments, calls lib/ and prints.
-import { statSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { collectProject } from './lib/collect.mjs';
-import { formatList } from './lib/report.mjs';
+import { diffSnapshots } from './lib/diff.mjs';
+import { formatDiff, formatList } from './lib/report.mjs';
+import { parseSnapshot } from './lib/snapshot.mjs';
 import { UsageError } from './lib/usage-error.mjs';
 
 const EXIT_USAGE = 2;
@@ -66,12 +68,30 @@ function runList(options) {
   return 0;
 }
 
+function readSnapshotFile(path) {
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (err) {
+    throw new UsageError(`cannot read snapshot ${path} (${err.code ?? 'error'})`);
+  }
+  return parseSnapshot(text);
+}
+
+function runDiff(options) {
+  if (options.positional.length < 1 || options.positional.length > 2 || options.save !== undefined) throw new UsageError(USAGE);
+  const old = readSnapshotFile(options.positional[0]);
+  const now = collectProject(scanRoot(options.positional[1]), options.wrappers, new Date());
+  const diff = diffSnapshots(old, now);
+  console.log(options.json ? JSON.stringify(diff, null, 2) : formatDiff(diff));
+  return diff.changed ? 1 : 0;
+}
+
 function main(argv) {
   const [command, ...rest] = argv;
   if (!COMMANDS.includes(command)) throw new UsageError(USAGE);
   const options = parseArgs(rest);
-  if (command === 'list') return runList(options);
-  throw new UsageError(USAGE);
+  return command === 'list' ? runList(options) : runDiff(options);
 }
 
 try {
