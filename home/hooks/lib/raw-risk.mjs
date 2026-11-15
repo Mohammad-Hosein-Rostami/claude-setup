@@ -1,6 +1,7 @@
 // Fail-to-ask rule: a command that uses ANY construct which can hide execution AND names a dangerous word anywhere in its raw
 // text asks, whatever the quoting. It does not depend on either parser being right, so a lexer bug cannot turn into a silent bypass.
-// Exports: riskyWordInExpansion(command, prodHosts) -> reason | undefined; RISKY_REASON.
+// Exports: riskyWordInExpansion(command, prodHosts) -> reason | undefined; RISKY_REASON; unreadableNameReasons(cmd, command, prodHosts)
+// -> string[] and UNREADABLE_NAME_REASON (a command word outside ASCII next to a dangerous word: a look-alike name hides what runs).
 // Hidden-execution constructs: `$(`, backtick, `<<` / `<<<` (except a plain top-level heredoc with a quoted delimiter read by cat or tee, whose
 // body is data), `<(` / `>(`, `eval`, `trap`, `source` / `.`, `coproc`, `case`, a carriage return, a pipe into a shell, and the commands that
 // run a text argument: watch, parallel, `PROMPT_COMMAND=`, `script|expect -c`, `perl|python|node|ruby|deno|bun -e|-c|-p`, `osascript -e`,
@@ -216,6 +217,29 @@ export function riskyWordInExpansion(command, prodHosts = []) {
   if (found === undefined) return BACKTICK_RUN_VALUE.test(visible) ? GIT_UNREADABLE_REASON : undefined;
   if (!otherHidden) return GIT_UNREADABLE_REASON;
   return destructive.includes('destructive') ? `${DESTRUCTIVE_PREFIX}${RISKY_REASON}` : RISKY_REASON;
+}
+
+export const UNREADABLE_NAME_REASON = 'a command name this guard cannot read (a character outside ASCII) next to a dangerous word; confirm it';
+const NON_ASCII = /[^\x00-\x7F]/;
+const NON_ASCII_WORD = /[^\s\x00-\x7F]+/g;
+
+/**
+ * A command word that still has a character outside ASCII after folding (lib/command-of.mjs commandCase) may be a look-alike of a real
+ * command (`ѕh` with a Cyrillic letter, `ſh` on Linux): next to a dangerous word anywhere in the line it asks. The line's characters
+ * outside ASCII are folded for that scan, so `ﬁnd ~ -delete` names find.
+ * @param {string|undefined} cmd the command word as the guard named it (commandName)
+ * @param {string} command the command line it is part of
+ * @param {string[]} prodHosts production host names (see riskyWordInExpansion)
+ * @returns {string[]} [UNREADABLE_NAME_REASON], or none
+ */
+export function unreadableNameReasons(cmd, command, prodHosts = []) {
+  if (!NON_ASCII.test(cmd ?? '')) return [];
+  const text = joinContinuations(decodeAnsiCWords(command)).replace(NON_ASCII_WORD, (chars) => chars.toUpperCase().toLowerCase());
+  const visible = withoutPlainHeredocs(withoutMessageText(text));
+  const prodText = visible.toLowerCase();
+  const prodNames = prodHosts.map((host) => host.replace(/[*?]/g, '')).filter(Boolean);
+  const dangerous = statementsOf(visible, ANY_ASSIGNMENT).some((words) => dangerIn(words, prodText, prodNames) !== undefined);
+  return dangerous ? [UNREADABLE_NAME_REASON] : [];
 }
 
 /** The quote-stripped words of each statement; the value of each `NAME=` word that `assignments` matches is split off as words. */

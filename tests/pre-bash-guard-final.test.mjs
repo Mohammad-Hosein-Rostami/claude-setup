@@ -156,7 +156,8 @@ test('decideSafely: a throwing rule set asks with the reason "guard error" and t
 test('the hook with a throwing lib asks "guard error", logs the error class and never the command text', () => {
   const copy = mkdtempSync(join(tmpdir(), 'guard-copy-'));
   cpSync(resolve('home/hooks'), join(copy, 'hooks'), { recursive: true });
-  writeFileSync(join(copy, 'hooks/lib/raw-risk.mjs'), "export const RISKY_REASON = 'x';\nexport function riskyWordInExpansion() { throw new TypeError('injected'); }\n");
+  writeFileSync(join(copy, 'hooks/lib/raw-risk.mjs'), "export const RISKY_REASON = 'x';\nexport function riskyWordInExpansion() { throw new TypeError('injected'); }\n"
+    + 'export const unreadableNameReasons = () => [];\n'); // the stub keeps every export the guard imports, so only the throw differs
   const log = tempLogPath();
   const command = 'echo sentinel-command-text';
   const run = spawnSync(process.execPath, [join(copy, 'hooks/pre-bash-guard.mjs')], {

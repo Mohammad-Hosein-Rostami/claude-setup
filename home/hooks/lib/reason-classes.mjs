@@ -79,6 +79,7 @@ const ASK_CLASS_PATTERNS = [
   ['env -S', /^env -S runs a command given as one string/],
   ['su -c', /^su -c runs a command string as another user/],
   ['eval of a variable', /^eval of a variable or substitution hides the command/],
+  ['command name it cannot read', /^a command name this guard cannot read/],
   ['alias that asks', /^alias defines a command that asks: /],
   ['nesting too deep', /^commands are nested too deeply to check/],
   ['command too long', /^command too long to check/],

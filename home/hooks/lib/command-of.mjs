@@ -29,8 +29,11 @@ const GIT_PROGRAM = /^git-([A-Za-z0-9][A-Za-z0-9-]*)$/;
 // file systems that ignore case in names: Windows, and macOS (APFS and HFS+ as installed), where `GIT`, `RM` and `GIT-PUSH` run git, rm, git push
 const CASE_INSENSITIVE_PLATFORMS = new Set(['win32', 'darwin']);
 
-/** A command name as the file system matches it: lowercased where names ignore case (Windows, macOS), exact elsewhere (Linux). */
-export const commandCase = (name) => (CASE_INSENSITIVE_PLATFORMS.has(process.platform) ? name.toLowerCase() : name);
+/**
+ * A command name as the file system matches it: case-folded where names ignore case (Windows, macOS), exact elsewhere (Linux). Folding
+ * through upper case also maps the letters APFS folds to ASCII (`ſh` runs sh, `ﬁnd` runs find), which a plain lowercase keeps.
+ */
+export const commandCase = (name) => (CASE_INSENSITIVE_PLATFORMS.has(process.platform) ? name.toUpperCase().toLowerCase() : name);
 
 /**
  * Command word -> bare name: `/bin/rm`, `\rm` and `rm.exe` all become `rm`, and `RM` too where names ignore case (commandCase). A word

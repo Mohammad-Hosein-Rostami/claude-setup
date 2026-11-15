@@ -58,6 +58,7 @@ const NEVER_BOUNCED = [
   ['env -S', "env -S 'ls -la'"],
   ['su -c', "su -c 'ls' root"],
   ['eval of a variable', 'eval "$X"'],
+  ['command name it cannot read', 'ѕh -c "git push origin main"'], // a Cyrillic letter in `sh`
   ['alias that asks', "alias p='git push'"],
   ['nesting too deep', `echo "${'$(echo "'.repeat(30)}x${'")'.repeat(30)}"`],
   ['command too long', `echo ${'a'.repeat(33 * 1024)}`],
