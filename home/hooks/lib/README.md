@@ -32,6 +32,7 @@ Asking and remembering:
 
 Other hooks:
 - `diagnostics.mjs`, `edit-log.mjs`: used by `post-edit.mjs` and `typecheck-gate.mjs` (check output parsing, list of edited files).
+- `gate-routes.mjs`: the prompt patterns and lines of the skill router's gate routes (bug, done, restructure, git history, repeated report); used by `skill-router.mjs`.
 - `reply-cap.mjs`: reads a reply-size cap from a prompt; used by `agent-budget.mjs` and `final-reply-cap.mjs`.
 - `transcript.mjs`: reads the session transcript (context size, STATUS file).
 - `big-context.mjs`, `compact-notes.mjs`, `lead-note.mjs`: the notes `mode.mjs` prints at session start.
