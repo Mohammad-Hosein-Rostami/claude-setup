@@ -131,3 +131,13 @@ test('ordinary appends and array writes stay quiet', () => {
     for (const platform of PLATFORMS) quietOn(platform, line);
   }
 });
+
+test('an array list is data, but a substitution in it still runs and a word after it is still a command', () => {
+  const RM = 'rm -rf ~/x';
+  for (const platform of PLATFORMS) {
+    for (const line of [`X=( $(${RM}) )`, `files+=( \`${RM}\` )`, `local X=( "$(${RM})" )`, `X=( a <(${RM}) )`, `X=(a) ${RM}`]) {
+      assert.ok(reasonsOn(platform, line).some((reason) => /^DESTRUCTIVE: rm -r outside the project/.test(reason)), `${platform}: ${line}`);
+    }
+    for (const line of ['X=(a) "$CMD"', 'X=( a ); "$CMD" b', 'X[1]=( a ) "$CMD"']) assert.ok(reasonsOn(platform, line).length > 0, `${platform}: ${line}`);
+  }
+});
