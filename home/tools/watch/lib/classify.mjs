@@ -11,7 +11,10 @@
 // counts decides: a `system` turn_duration, or an assistant message whose stop_reason is end_turn or stop_sequence, finishes the turn; any
 // other user or assistant entry (a prompt, a tool result, a task notification, a tool_use, an API error entry, an unknown stop_reason) means
 // it is running, and so does a meta user entry that carries any origin kind (a peer message, an auto-continuation, a kind not known yet).
-// Sidechain and compaction-summary entries, other meta entries, other system subtypes, attachments and unparseable lines do not count. A
+// Sidechain and compaction-summary entries, other meta entries, other system subtypes, attachments and unparseable lines do not count.
+// Local commands (the owner types a slash command that Claude Code answers itself, no model turn): a `<local-command-stdout>` or `-stderr`
+// user entry never clears the turn end; a `<command-name>` entry does (a skill starts a model turn), but when the next counting entry is
+// that local output the earlier turn end is restored. A `<command-name>` with nothing after it, or followed by anything else, stays running. A
 // finishing entry without a valid timestamp is not trusted (undefined). seed() tracks it too, so a watch started on an idle file knows.
 // resetTurn() forgets it (the file was truncated or replaced). endsInFinishedReply(text) is the same test for the last line of a subagent transcript.
 // Invariants: pure apart from the INPUT_MODE and limit-window memory (Claude Code repeats the mode every turn; only changes are events);
@@ -28,6 +31,8 @@ const ERROR_CLASS = /^[A-Za-z0-9_.-]{1,40}$/;
 const LIMIT_ERROR_CLASS = 'rate_limit';
 const MS_PER_MINUTE = 60_000;
 const TURN_END_STOP_REASONS = new Set(['end_turn', 'stop_sequence']);
+const LOCAL_COMMAND_OUTPUT = /^\s*<local-command-(?:stdout|stderr)>/;
+const LOCAL_COMMAND_NAME = /^\s*<command-name>/;
 
 // jq `//`: null, undefined and false fall back to the default.
 const orElse = (value, fallback) => (value === null || value === undefined || value === false ? fallback : value);
@@ -41,6 +46,14 @@ const parse = (text) => {
   try { const entry = JSON.parse(text); return entry !== null && typeof entry === 'object' ? entry : undefined; } catch { return undefined; }
 };
 const finishesTurn = (entry) => entry.type === 'assistant' && entry.isApiErrorMessage !== true && TURN_END_STOP_REASONS.has(entry.message?.stop_reason);
+
+// The text of a user entry's content: the string, or the text of an array that holds one text block; otherwise undefined.
+function singleText(entry) {
+  const content = entry.message?.content;
+  if (typeof content === 'string') return content;
+  const only = Array.isArray(content) && content.length === 1 ? content[0] : undefined;
+  return only?.type === 'text' && typeof only.text === 'string' ? only.text : undefined;
+}
 
 /** @param {string} text one JSONL line @returns {boolean} true for an assistant reply that ends its turn (end_turn or stop_sequence, not an API error) */
 export const endsInFinishedReply = (text) => {
@@ -121,14 +134,27 @@ export function createClassifier() {
   let limitStartedAt; // timestamp of the first LIMIT of the current limit window
   let assistantEntries = 0;
   let turnEndedAt;
+  let turnEndBeforeCommand; // the turn end as it was when a `<command-name>` entry came, until the next counting entry
+  const trackUserTurn = (entry) => {
+    const text = entry.isMeta === true ? undefined : singleText(entry);
+    if (text !== undefined && LOCAL_COMMAND_OUTPUT.test(text)) {
+      if (turnEndBeforeCommand !== undefined) turnEndedAt = turnEndBeforeCommand;
+      turnEndBeforeCommand = undefined;
+      return;
+    }
+    turnEndBeforeCommand = text !== undefined && LOCAL_COMMAND_NAME.test(text) ? turnEndedAt : undefined;
+    turnEndedAt = undefined;
+  };
   const trackTurn = (entry) => {
     if (entry.isSidechain === true || entry.isCompactSummary === true) return;
     if (entry.isMeta === true && !(entry.type === 'user' && entry.origin?.kind != null)) return;
     const endedAt = Date.parse(entry.timestamp);
     const stamped = Number.isFinite(endedAt) ? endedAt : undefined;
-    if (entry.type === 'system' && entry.subtype === 'turn_duration') turnEndedAt = stamped;
-    else if (entry.type === 'user') turnEndedAt = undefined;
-    else if (entry.type === 'assistant') turnEndedAt = finishesTurn(entry) ? stamped : undefined;
+    if (entry.type === 'user') { trackUserTurn(entry); return; }
+    const isTurnDuration = entry.type === 'system' && entry.subtype === 'turn_duration';
+    if (!isTurnDuration && entry.type !== 'assistant') return;
+    turnEndBeforeCommand = undefined;
+    turnEndedAt = isTurnDuration || finishesTurn(entry) ? stamped : undefined;
   };
   const minutesSince = (stamp) => {
     const minutes = Math.floor((Date.parse(stamp) - Date.parse(limitStartedAt)) / MS_PER_MINUTE);
@@ -168,7 +194,7 @@ export function createClassifier() {
   return {
     get assistantEntries() { return assistantEntries; },
     get turnEndedAt() { return turnEndedAt; },
-    resetTurn() { turnEndedAt = undefined; },
+    resetTurn() { turnEndedAt = undefined; turnEndBeforeCommand = undefined; },
     feed(text) {
       const entry = parse(text);
       if (entry === undefined) return [];

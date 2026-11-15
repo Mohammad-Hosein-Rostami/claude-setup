@@ -3,7 +3,7 @@
 // (made-up text; no prompt or command text of a real session).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, unlink, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, rm, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createClassifier } from '../home/tools/watch/lib/classify.mjs';
@@ -29,6 +29,11 @@ const reply = (at, stopReason, extra = {}) => line(at, { type: 'assistant', mess
 const toolCall = (at, extra = {}) => line(at, { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: {} }], stop_reason: 'tool_use' }, ...extra });
 const toolResult = (at, extra = {}) => line(at, { type: 'user', message: { content: [{ type: 'tool_result', content: 'made-up output' }] }, ...extra });
 const prompt = (at, text = 'made-up question', extra = {}) => line(at, { type: 'user', message: { content: text }, ...extra });
+// A slash command that Claude Code handled itself: caveat (meta), command name, then its output (made-up text only).
+const caveat = (at) => prompt(at, '<local-command-caveat>made-up caveat</local-command-caveat>', { isMeta: true });
+const commandName = (at) => prompt(at, '<command-name>/made-up</command-name>');
+const commandOutput = (at, tag = 'stdout') => prompt(at, `<local-command-${tag}>made-up output</local-command-${tag}>`);
+const localCommand = (at, tag) => caveat(at) + commandName(at + 1) + commandOutput(at + 2, tag);
 const finished = (at = T0) => reply(at - SECOND, 'end_turn') + turnDuration(at);
 
 async function setup(t, { transcript, mtimeMs = T0, clockStart = T0, registry = registered, isAlive = () => true, label = 'cccccccc' } = {}) {
@@ -272,4 +277,90 @@ test('with a delay set, IDLE wakes at once and does not use up the stall retry w
   const gate = createWakeGate({ wanted: internalClasses(['idle', 'stall']), skip: 0, delayMs: 60 * SECOND, replies: () => 0, now: () => now, wake: (text, cls) => woke.push(cls) });
   gate('x: IDLE turn ended 5 min ago, waiting for the owner', EVENT_CLASS.IDLE);
   assert.deepEqual(woke, [EVENT_CLASS.IDLE]);
+});
+
+test('a local slash command after the turn end (caveat, command name, output) leaves it IDLE, counted from the original turn end', async (t) => {
+  const ctx = await setup(t, { transcript: finished(T0 - 2 * MIN) + localCommand(T0 - SECOND) });
+  assert.deepEqual(await run(ctx), [EVENT_CLASS.IDLE]);
+  assert.match(ctx.emitted[0].text, /IDLE turn ended 7 min ago/);
+});
+
+test('local command output on stderr, or without the caveat, or as one text block: IDLE', async (t) => {
+  const blockOutput = line(T0 + 3, { type: 'user', message: { content: [{ type: 'text', text: '<local-command-stdout>made-up</local-command-stdout>' }] } });
+  const cases = {
+    stderr: finished() + localCommand(T0 + SECOND, 'stderr'),
+    'no caveat': finished() + commandName(T0 + SECOND) + commandOutput(T0 + 2 * SECOND),
+    'one text block': finished() + caveat(T0 + SECOND) + commandName(T0 + 2 * SECOND) + blockOutput,
+    'output only, no command name': finished() + commandOutput(T0 + SECOND),
+    'a sidechain entry in between': finished() + caveat(T0 + SECOND) + commandName(T0 + 2 * SECOND) + toolCall(T0 + 3 * SECOND, { isSidechain: true }) + commandOutput(T0 + 4 * SECOND),
+    'two local commands': finished() + localCommand(T0 + SECOND) + localCommand(T0 + 2 * SECOND),
+  };
+  for (const [name, transcript] of Object.entries(cases)) assert.deepEqual(await verdictFor(t, transcript), [EVENT_CLASS.IDLE], name);
+});
+
+test('a command name with no local output after it, or with the model working after it, stays a STALL', async (t) => {
+  const cases = {
+    'command name, then nothing': finished() + caveat(T0 + SECOND) + commandName(T0 + 2 * SECOND),
+    'command name, then an assistant tool call': finished() + commandName(T0 + SECOND) + toolCall(T0 + 2 * SECOND),
+    'command name, a tool call, then local output': finished() + commandName(T0 + SECOND) + toolCall(T0 + 2 * SECOND) + commandOutput(T0 + 3 * SECOND),
+    'command name, a tool result, then local output': finished() + commandName(T0 + SECOND) + toolResult(T0 + 2 * SECOND) + commandOutput(T0 + 3 * SECOND),
+    'command name, a meta entry with an origin, then local output': finished() + commandName(T0 + SECOND) + prompt(T0 + 2 * SECOND, 'made-up', { isMeta: true, origin: { kind: 'peer' } }) + commandOutput(T0 + 3 * SECOND),
+    'output arrives before the command name': finished() + commandOutput(T0 + SECOND) + commandName(T0 + 2 * SECOND),
+    'two command names, one output': finished() + commandName(T0 + SECOND) + commandName(T0 + 2 * SECOND) + commandOutput(T0 + 3 * SECOND),
+  };
+  for (const [name, transcript] of Object.entries(cases)) assert.deepEqual(await verdictFor(t, transcript), [EVENT_CLASS.STALL], name);
+});
+
+test('a real owner prompt after a local command is an OWNER line and the silence after it is a STALL', async (t) => {
+  const ctx = await setup(t, { transcript: finished() + localCommand(T0 + SECOND) + prompt(T0 + 5 * SECOND) });
+  assert.deepEqual(await run(ctx), [EVENT_CLASS.OWNER, EVENT_CLASS.STALL]);
+});
+
+test('a local command during a running turn does not make it idle: STALL', async (t) => {
+  assert.deepEqual(await verdictFor(t, toolCall(T0 - SECOND) + localCommand(T0)), [EVENT_CLASS.STALL]);
+});
+
+test('a watch started on a transcript that already ends with a local command pair: the first verdict is IDLE', async (t) => {
+  const longAgo = T0 - 3 * 60 * MIN;
+  const ctx = await setup(t, { transcript: finished(longAgo) + localCommand(longAgo + 2 * SECOND), mtimeMs: longAgo });
+  await ctx.watcher.poll();
+  assert.deepEqual(ctx.emitted.map((item) => item.cls), [EVENT_CLASS.IDLE]);
+  assert.match(ctx.emitted[0].text, /IDLE turn ended 180 min ago/);
+});
+
+test('the local command entries arriving in separate polls end IDLE; stopping after the command name is a STALL', async (t) => {
+  for (const [name, entries, expected] of [
+    ['all three', [caveat, commandName, commandOutput], EVENT_CLASS.IDLE],
+    ['command name only', [caveat, commandName], EVENT_CLASS.STALL],
+  ]) {
+    const ctx = await setup(t, { transcript: finished() });
+    await ctx.watcher.poll();
+    for (const [index, entry] of entries.entries()) {
+      await appendFile(ctx.path, entry(ctx.clock.now + index));
+      await utimes(ctx.path, ctx.clock.now / SECOND, ctx.clock.now / SECOND);
+      await ctx.watcher.poll();
+      ctx.clock.now += POLL_MS;
+    }
+    assert.deepEqual(await run(ctx, RUN_MS + 3 * POLL_MS), [expected], name);
+  }
+});
+
+test('the classifier restores the turn end only when local output follows the command name directly', () => {
+  const classifier = createClassifier();
+  classifier.feed(turnDuration(T0));
+  classifier.feed(prompt(T0 + 1, ' \n<local-command-stdout>made-up</local-command-stdout>'));
+  assert.equal(classifier.turnEndedAt, T0, 'output after blanks is still local output');
+  classifier.feed(caveat(T0 + 1));
+  classifier.feed(commandName(T0 + 2));
+  assert.equal(classifier.turnEndedAt, undefined);
+  classifier.feed(commandOutput(T0 + 3));
+  assert.equal(classifier.turnEndedAt, T0);
+  classifier.feed(commandName(T0 + 4));
+  classifier.feed(systemNote(T0 + 5, 'stop_hook_summary'));
+  classifier.feed(commandOutput(T0 + 6));
+  assert.equal(classifier.turnEndedAt, T0, 'a system note that does not count leaves the pair intact');
+  classifier.feed(commandName(T0 + 7));
+  classifier.resetTurn();
+  classifier.feed(commandOutput(T0 + 8));
+  assert.equal(classifier.turnEndedAt, undefined, 'a reset forgets the turn end to restore');
 });
