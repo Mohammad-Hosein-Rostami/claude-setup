@@ -1,11 +1,12 @@
 // Purpose: answer "does this path exist" the way a case-sensitive file system (Linux CI) would, and list folders, with
 //   a cache. macOS and Windows hide case-only mistakes; here every segment below the scanned root must match a real
 //   directory entry exactly.
-// Exports: Disk.
+// Exports: Disk, MAX_FILE_BYTES.
 // Invariants: reads folder listings and file contents only through this class; never writes. A path outside the scanned
 //   root is checked with a plain stat (its case cannot be judged from here).
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { NEVER_ENTER, walkTree } from './walk.mjs';
 
 export const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const nfc = (name) => name.normalize('NFC'); // macOS stores names decomposed; compare composed
@@ -16,6 +17,16 @@ export class Disk {
     this.root = resolve(root);
     this.names = new Map(); // folder -> Set of entry names
     this.listings = new Map(); // folder -> [{name, isDir}]
+    this.everyName = null; // see allNames()
+  }
+
+  /** Every file and folder name under the root, build output folders included (only .git and node_modules are not entered). */
+  allNames() {
+    if (this.everyName === null) {
+      const { files, folders } = walkTree(this.root, NEVER_ENTER);
+      this.everyName = new Set([...files, ...folders].map((path) => basename(path)));
+    }
+    return this.everyName;
   }
 
   /** Entries of a folder with a flag for folders (a symlink to a folder counts); empty when it cannot be read. */

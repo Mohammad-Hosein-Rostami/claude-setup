@@ -9,12 +9,12 @@ const COMPOSE = [
   '    volumes:', '      - "./conf:/etc/conf"', 'volumes:', '  data:', '',
 ].join('\n');
 
-test('compose-path: build context, dockerfile, env_file entries and bind mounts; present paths give nothing', () => {
+test('compose-path: build context, dockerfile, env_file entries and bind mounts; present paths give nothing; env_file and mounts are hints', () => {
   const root = project({ 'docker-compose.yml': COMPOSE, 'app/Dockerfile.dev': '', '.env': 'A=1\n', 'src/x': '', 'api/x': '', 'api.env': '' });
   assert.deepEqual(findingLines(refs(root)), [
-    'docker-compose.yml:8 compose-path ./web.env -> missing',
-    'docker-compose.yml:12 compose-path ../refs-sibling-gone -> missing',
-    'docker-compose.yml:17 compose-path ./conf -> missing',
+    'docker-compose.yml:8 compose-path? ./web.env -> missing',
+    'docker-compose.yml:12 compose-path? ../refs-sibling-gone -> missing',
+    'docker-compose.yml:17 compose-path? ./conf -> missing',
   ]);
 });
 
@@ -23,7 +23,7 @@ test('compose-path: a missing context, a missing dockerfile and a missing short-
   const lines = findingLines(refs(root));
   assert.ok(lines.includes('compose.yaml:5 compose-path Dockerfile.dev -> missing'), lines.join('\n'));
   assert.ok(lines.includes('compose.yaml:14 compose-path ./api -> missing'), lines.join('\n'));
-  assert.ok(lines.includes('compose.yaml:15 compose-path api.env -> missing'), lines.join('\n'));
+  assert.ok(lines.includes('compose.yaml:15 compose-path? api.env -> missing'), lines.join('\n'));
   assert.ok(!lines.some((line) => line.includes('./app ')), lines.join('\n'));
 });
 
@@ -90,4 +90,31 @@ test('codeowners-path: patterns without wildcards that match nothing', () => {
     '.github/CODEOWNERS:7 codeowners-path src/gone/ -> missing',
     '.github/CODEOWNERS:8 codeowners-path /gone/ -> missing',
   ]);
+});
+
+test('codeowners-path: a folder that the walk skips (build/) is still found on disk', () => {
+  const root = project({ 'CODEOWNERS': 'build/ @a\ndist @b\nnode_modules/ @c\ngone/ @d\n', 'build/x.js': '', 'dist/y.js': '', 'node_modules/p/z.js': '' });
+  assert.deepEqual(findingLines(refs(root)), ['CODEOWNERS:4 codeowners-path gone/ -> missing']);
+});
+
+test('dockerfile-copy?, compose-path? and ci-path? when the missing path is under a build output folder', () => {
+  const dockerfile = 'FROM x\nCOPY dist/ /app/\nCOPY .next/standalone ./\nCOPY gone.txt /g\n';
+  const compose = 'services:\n  a:\n    build:\n      context: ./out/app\n';
+  const workflow = 'steps:\n  - run: x\n    working-directory: ./coverage/report\n  - run: y\n    working-directory: ./gone\n';
+  const root = project({ Dockerfile: dockerfile, 'docker-compose.yml': compose, '.github/workflows/ci.yml': workflow });
+  assert.deepEqual(findingLines(refs(root)), [
+    '.github/workflows/ci.yml:5 ci-path ./gone -> missing',
+    'Dockerfile:4 dockerfile-copy gone.txt -> missing',
+    '.github/workflows/ci.yml:3 ci-path? ./coverage/report -> missing',
+    'Dockerfile:2 dockerfile-copy? dist/ -> missing',
+    'Dockerfile:3 dockerfile-copy? .next/standalone -> missing',
+    'docker-compose.yml:4 compose-path? ./out/app -> missing',
+  ]);
+});
+
+test('dockerfile-copy: COPY and ADD text inside a RUN heredoc body is shell text, whatever the tag or form', () => {
+  const dockerfile = [
+    'FROM x', 'RUN <<EOT', 'COPY nothing-a here', 'EOT', "RUN <<-'END'", '\tADD nothing-b here', 'END', 'RUN cat <<"TAG" > /f', 'COPY nothing-c here', 'TAG', 'COPY real-gone.txt /r', '',
+  ].join('\n');
+  assert.deepEqual(findingLines(refs(project({ Dockerfile: dockerfile }))), ['Dockerfile:11 dockerfile-copy real-gone.txt -> missing']);
 });

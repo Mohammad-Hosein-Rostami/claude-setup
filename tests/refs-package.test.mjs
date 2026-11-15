@@ -77,3 +77,12 @@ test('workspace-glob: ** and {a,b} patterns match nested and alternative folders
   const root = project({ 'pnpm-workspace.yaml': yaml, 'libs/a/b/x': '', 'tools/t/x': '' });
   assert.deepEqual(findingLines(refs(root)), ['pnpm-workspace.yaml:4 workspace-glob {nope,never}/* -> missing']);
 });
+
+test('package-entry: main, module, types and typings without an extension, or naming a folder with index.*, are fine', () => {
+  const text = '{\n  "main": "src/index",\n  "module": "esm/entry",\n  "types": "types",\n  "typings": "src/gone"\n}\n';
+  const root = project({ 'package.json': text, 'src/index.cjs': '', 'esm/entry.mjs': '', 'types/index.d.ts': '' });
+  assert.deepEqual(findingLines(refs(root)), ['package.json:5 package-entry src/gone -> missing']);
+  for (const [name, file] of [['js', 'a.js'], ['mjs', 'a.mjs'], ['ts', 'a.ts'], ['tsx', 'a.tsx'], ['mts', 'a.mts'], ['cts', 'a.cts'], ['d.ts', 'a.d.ts'], ['json', 'a.json']]) {
+    assert.deepEqual(findingLines(refs(project({ 'package.json': '{ "main": "a" }', [file]: '' }))), [], name);
+  }
+});

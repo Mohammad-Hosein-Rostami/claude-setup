@@ -63,3 +63,17 @@ test('config-path? with --no-hints prints nothing and still exits 0', () => {
   assert.equal(result.status, 0);
   assert.equal(result.stdout, 'refs: 0 findings, 0 hints in 1 files scanned\n');
 });
+
+test('config-path?: a string that is an object key is skipped (module-federation exposes)', () => {
+  const text = "export default {\n  exposes: { './XRemote': './src/remote-gone.ts', './Other': './src/other.ts' },\n};\n";
+  const root = project({ 'federation.config.js': text, 'src/other.ts': '' });
+  assert.deepEqual(findingLines(refs(root)), ['federation.config.js:2 config-path? ./src/remote-gone.ts -> missing']);
+});
+
+test('config-path?: values of output or cache keys are skipped, other keys still fire', () => {
+  const text = [
+    'export default {', "  cacheDir: './node_modules/.vite-gone',", "  build: { outDir: './out-gone' },", "  outputPath: './o-gone',", "  reportsDirectory: './r-gone',",
+    "  dir: './d-gone',", "  tmp: './t-gone',", "  setupFile: './setup-gone.js',", '};', '',
+  ].join('\n');
+  assert.deepEqual(findingLines(refs(project({ 'vite.config.ts': text }))), ['vite.config.ts:8 config-path? ./setup-gone.js -> missing']);
+});

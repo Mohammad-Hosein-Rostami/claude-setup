@@ -64,3 +64,21 @@ test('files named .env* are never opened, whatever their extension', () => {
   assert.doesNotMatch(result.stdout + result.stderr, new RegExp(marker));
   assert.equal(JSON.parse(result.stdout).scanned, 1);
 });
+
+test('md-link: balanced parentheses and <...> targets are read whole', () => {
+  const text = '[a](docs/a_(b).md)\n[b](docs/gone_(c).md)\n[c](<docs/with (parens).md>)\n[d](docs/a_(b).md "title")\n[e](docs/a_(b).md#x)\n';
+  const root = project({ 'README.md': text, 'docs/a_(b).md': '', 'docs/with (parens).md': '' });
+  assert.deepEqual(findingLines(refs(root)), ['README.md:2 md-link docs/gone_(c).md -> missing']);
+});
+
+test('md-link: site-root links and links that leave the scanned folder are skipped', () => {
+  const root = project({ 'sub/README.md': '[a](/api/users) [b](../../issues/12) [c](../../../x/y.md) [d](../gone.md)\n' });
+  assert.deepEqual(findingLines(refs(root)), ['sub/README.md:1 md-link ../gone.md -> missing']);
+});
+
+test('md-path?: npm names are skipped (@scope/pkg and a dependency of a scanned package.json); a real missing path still fires', () => {
+  const text = 'Use `@nx/react`, `react-dom/client` and `tools/gone.sh`.\n';
+  const pkg = '{ "dependencies": { "react-dom": "1" }, "devDependencies": { "@nx/react": "1" } }';
+  const root = project({ 'README.md': text, 'package.json': pkg, '@nx/react/x': '', 'react-dom/y': '', 'tools/a.sh': '' });
+  assert.deepEqual(findingLines(refs(root)), ['README.md:1 md-path? tools/gone.sh -> missing']);
+});

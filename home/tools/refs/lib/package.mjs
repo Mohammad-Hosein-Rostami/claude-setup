@@ -10,6 +10,8 @@ import { folderBeforeWildcard, resolveRef } from './ref-path.mjs';
 import { scanYaml } from './yaml-lines.mjs';
 
 const BUILD_OUTPUT_FOLDERS = new Set(['dist', 'build', 'lib', 'out']);
+const MODULE_FIELDS = new Set(['main', 'module', 'types', 'typings']);
+const MODULE_EXTENSIONS = ['.js', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts', '.d.ts', '.json'];
 const ENTRY_FIELDS = ['main', 'module', 'types', 'typings', 'bin', 'exports'];
 
 const entryExists = (folder, value, disk) => disk.exists(resolveRef(folder, value.includes('*') ? folderBeforeWildcard(value) || '.' : value));
@@ -19,9 +21,17 @@ function entryKind(value) {
   return BUILD_OUTPUT_FOLDERS.has(first) ? 'package-entry?' : 'package-entry';
 }
 
+/** `main: "src/index"` is valid: Node and TypeScript add an extension or look for index.* in a folder. */
+function moduleEntryExists(folder, value, disk) {
+  const path = resolveRef(folder, value);
+  return [path, ...MODULE_EXTENSIONS.flatMap((extension) => [path + extension, `${path}/index${extension}`])].some((candidate) => disk.exists(candidate));
+}
+
 function entryResults(root, folder, disk) {
-  return ENTRY_FIELDS.flatMap((field) => stringLeaves(objectGet(root, field)))
-    .filter((leaf) => !entryExists(folder, leaf.value, disk))
+  const exists = (field) => (MODULE_FIELDS.has(field) ? moduleEntryExists : entryExists);
+  return ENTRY_FIELDS.flatMap((field) => stringLeaves(objectGet(root, field)).map((leaf) => ({ field, leaf })))
+    .filter(({ field, leaf }) => !exists(field)(folder, leaf.value, disk))
+    .map(({ leaf }) => leaf)
     .map((leaf) => ({ kind: entryKind(leaf.value), value: leaf.value, line: leaf.line }));
 }
 

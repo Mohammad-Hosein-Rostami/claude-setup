@@ -1,5 +1,5 @@
 // Purpose: small path rules shared by the readers: turn a value written in a config into a path to check.
-// Exports: resolveRef, hasGlobChars, folderBeforeWildcard, codePathExists.
+// Exports: resolveRef, hasGlobChars, folderBeforeWildcard, codePathExists, underBuildOutput.
 // Invariants: a Windows `\` separator in a value is read as `/`; the value printed in a finding stays as written.
 import { resolve } from 'node:path';
 
@@ -24,4 +24,12 @@ export function codePathExists(disk, path) {
   const candidates = [path, ...CODE_EXTENSIONS.map((extension) => path + extension), ...CODE_EXTENSIONS.map((extension) => `${path}/index${extension}`)];
   if (swapped) candidates.push(path.slice(0, -swapped[0].length) + swapped[1]);
   return candidates.some((candidate) => disk.exists(candidate));
+}
+
+const BUILD_OUTPUT_FOLDERS = new Set(['dist', 'build', 'out', 'coverage', '.next', '.output']);
+
+/** True when the value starts in a build output folder: something else (a build, a test run) creates what is there, so a miss is only a hint. */
+export function underBuildOutput(value) {
+  const first = value.replaceAll('\\', '/').replace(/^(\.\/|\/)+/, '').split('/')[0];
+  return BUILD_OUTPUT_FOLDERS.has(first);
 }

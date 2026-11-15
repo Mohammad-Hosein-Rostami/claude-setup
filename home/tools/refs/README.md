@@ -32,28 +32,35 @@ leaves the hints out. A file that cannot be read or parsed is the hint `unreadab
 | ---- | ----- | ------- |
 | `tsconfig-extends` | `tsconfig*.json`, `jsconfig*.json` | `extends` (a package name is skipped) |
 | `tsconfig-reference` | same | `references[].path` |
-| `tsconfig-path` | same | each alias target against `baseUrl`; with `*` checked up to the wildcard |
+| `tsconfig-path` | same | each alias target against the `baseUrl` found through `extends` (else the file's folder); with `*` checked up to the wildcard |
 | `tsconfig-include` | same | literal `include` and `files` entries (no globs) |
-| `package-entry` | `package.json` | `main`, `module`, `types`, `typings`, `bin`, string leaves of `exports` |
+| `package-entry` | `package.json` | `main`, `module`, `types`, `typings` (an extension or `index.*` may be added), `bin`, string leaves of `exports` |
 | `workspace-glob` | `pnpm-workspace.yaml`, `workspaces` | an entry that matches no folder (`!` entries skipped) |
-| `compose-path` | `docker-compose*.yml`, `compose*.yml` | build `context`, `dockerfile`, `env_file`, bind mounts starting `./` or `../` |
-| `dockerfile-copy` | `Dockerfile*` | each `COPY`/`ADD` source, tried in the Dockerfile's folder, the scanned root and any compose build context naming it |
+| `compose-path` | `docker-compose*.yml`, `compose*.yml` | build `context` and `dockerfile` |
+| `dockerfile-copy` | `Dockerfile*` | each `COPY`/`ADD` source, tried in the Dockerfile's folder, the scanned root and any compose build context naming it (heredoc bodies are shell text and skipped) |
 | `ci-path` | `.github/workflows/*.yml` | `working-directory`, `cache-dependency-path`, `uses: ./...` (values with `${{` skipped) |
 | `codeowners-path` | `CODEOWNERS` (root, `.github`, `docs`) | a pattern without wildcards that matches nothing |
-| `md-link` | `*.md`, `*.mdc` | relative `[text](path)` links; `#anchor`, `?query`, URLs, links in code skipped |
+| `md-link` | `*.md`, `*.mdc` | relative `[text](path)` links; `#anchor`, `?query`, URLs, `/site-root` links, links leaving the folder and links in code skipped |
 
 ## Hints (heuristics, can be wrong)
 
 | Kind | Where | Meaning |
 | ---- | ----- | ------- |
 | `package-entry?` | `package.json` | the missing entry is under `dist`, `build`, `lib` or `out`: a build probably creates it |
+| `compose-path?` | compose files | a missing `env_file` or bind-mount source (often git-ignored or made by the host), or a path under a build output folder |
+| `dockerfile-copy?`, `ci-path?` | Dockerfile, workflows | the missing path is under `dist`, `build`, `out`, `coverage`, `.next` or `.output`: a build or an earlier step creates it |
+| `tsconfig-path?` | tsconfig | `paths` not judged because the `extends` chain cannot be followed (package parent, missing or unreadable parent); the value says why |
 | `script-path?` | `package.json` `scripts` | a `./x` or `dir/file.ext` token that does not exist next to the package |
-| `config-path?` | `*.config.{js,cjs,mjs,ts,mts}`, `eslint.config.*`, `.eslintrc*` | a `./` or `../` string literal that does not exist |
-| `md-path?` | markdown | a backticked `dir/file` whose first folder exists at the top level but the full path does not |
+| `config-path?` | `*.config.{js,cjs,mjs,ts,mts}`, `eslint.config.*`, `.eslintrc*` | a `./` or `../` string literal that does not exist; object keys and values of output or cache keys (`outDir`, `cacheDir`, ...) are skipped |
+| `md-path?` | markdown | a backticked `dir/file` whose first folder exists at the top level but the full path does not (npm names such as `@scope/pkg` or a dependency are skipped) |
 | `unreadable?` | any scanned file | the file could not be read or parsed |
+
+A finding must be certain. Whatever something else may create (a build, a test run, the Docker host, an earlier CI step)
+is a hint, so the exit code only reports paths that are really gone.
 
 ## Rules of the walk
 
+- Existence questions (CODEOWNERS, links, globs) go to the real file system, so a build folder that the walk skips still counts as present.
 - Skipped folders: `.git`, `node_modules`, `dist`, `build`, `coverage`, `.nx`, `.next`, `.turbo`, `.cache`.
 - Symlinks are never followed, so a link out of the directory or a loop is never entered.
 - Files named `.env*` are never opened (a reference to one is still checked for existence).

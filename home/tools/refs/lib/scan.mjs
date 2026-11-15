@@ -6,6 +6,7 @@
 import { basename, dirname, join } from 'node:path';
 import { readCodeowners, readWorkflow } from './ci.mjs';
 import { Disk } from './disk.mjs';
+import { objectGet, parseJsonc } from './jsonc.mjs';
 import { readCompose, readDockerfile } from './docker.mjs';
 import { readConfigPaths, readScriptPaths } from './hints.mjs';
 import { readMarkdown } from './markdown.mjs';
@@ -13,6 +14,7 @@ import { readPackageJson, readPnpmWorkspace } from './package.mjs';
 import { readTsconfig } from './tsconfig.mjs';
 import { walkTree } from './walk.mjs';
 
+const DEPENDENCY_SECTIONS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
 const UNREADABLE = 'unreadable?';
 const isEnvFile = (rel) => basename(rel).startsWith('.env');
 
@@ -39,6 +41,20 @@ const READERS = [
   { matches: (rel) => basename(rel) === 'CODEOWNERS' && ['.', '.github', 'docs'].includes(dirname(rel)), read: readCodeowners },
 ];
 
+/** Names of the packages any scanned package.json depends on (a file that cannot be parsed is reported later by its own reader). */
+function dependencyNames(files, disk) {
+  const names = new Set();
+  for (const rel of files.filter((path) => basename(path) === 'package.json')) {
+    try {
+      const root = parseJsonc(disk.readText(join(disk.root, rel)));
+      for (const section of DEPENDENCY_SECTIONS) objectGet(root, section)?.entries.forEach((entry) => names.add(entry.key));
+    } catch {
+      // unreadable here; readOne reports it
+    }
+  }
+  return names;
+}
+
 const byFileThenLine = (a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line || (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0));
 
 function readOne(rel, readers, context) {
@@ -58,9 +74,9 @@ function readOne(rel, readers, context) {
  * @throws when the root cannot be read
  */
 export function scanDirectory(root) {
-  const { files, folders, problems } = walkTree(root);
-  const names = new Set([...files, ...folders].map((path) => basename(path)));
-  const context = { disk: new Disk(root), files, folders, names, topFolders: new Set(folders.filter((path) => !path.includes('/'))), composeBuilds: [] };
+  const { files, problems } = walkTree(root);
+  const disk = new Disk(root);
+  const context = { disk, dependencies: dependencyNames(files, disk), composeBuilds: [] };
   const results = problems.map((problem) => ({ file: problem.path, line: 1, kind: UNREADABLE, value: problem.reason }));
   let scanned = 0;
   const readable = files.filter((path) => !isEnvFile(path));

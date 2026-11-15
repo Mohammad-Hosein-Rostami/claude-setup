@@ -1,10 +1,10 @@
 // Purpose: answer "does this glob match anything" against real directory entries (case-exact), for workspace patterns,
 //   Dockerfile COPY sources and CI paths.
 // Exports: globMatches.
-// Invariants: supports `*`, `**`, `?`, `[abc]` and `{a,b}`; `**` never descends into symlinked or skipped folders. A
+// Invariants: supports `*`, `**`, `?`, `[abc]` and `{a,b}`; `**` never descends into symlinked folders, `.git` or `node_modules`; build output folders are searched. A
 //   pattern without glob characters is looked up entry by entry, so a case-only difference does not match.
 import { join, resolve } from 'node:path';
-import { SKIPPED_FOLDERS } from './walk.mjs';
+import { NEVER_ENTER } from './walk.mjs';
 
 const REGEX_SPECIAL = /[.+^$()|\\]/g;
 
@@ -30,7 +30,7 @@ function matchSegments(disk, folder, segments, dirsOnly) {
   if (head === '..') return matchSegments(disk, resolve(folder, '..'), rest, dirsOnly);
   const entries = disk.entries(folder);
   if (head === '**') {
-    const deeper = entries.some((entry) => entry.isDir && !SKIPPED_FOLDERS.has(entry.name) && matchSegments(disk, join(folder, entry.name), segments, dirsOnly));
+    const deeper = entries.some((entry) => entry.isDir && !NEVER_ENTER.has(entry.name) && matchSegments(disk, join(folder, entry.name), segments, dirsOnly));
     return deeper || matchSegments(disk, folder, rest, dirsOnly);
   }
   const wanted = /[*?[]/.test(head) ? segmentToRegex(head) : null;

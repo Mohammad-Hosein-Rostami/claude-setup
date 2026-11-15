@@ -6,6 +6,12 @@
 //   reader can skip it; an unterminated string ends at the end of its line, so one bad quote cannot swallow the file.
 const REGEX_PRECEDERS = new Set(['', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '~', '^']);
 
+/** The property name in `name: <string>` or `'name': <string>` just before position `index`, or null. */
+function keyBefore(text, index) {
+  const match = /([\w$-]+|"[^"\n]*"|'[^'\n]*')\s*:\s*$/.exec(text.slice(Math.max(0, index - 80), index));
+  return match === null ? null : match[1].replace(/^["']|["']$/g, '');
+}
+
 function endOfString(text, start) {
   const quote = text[start];
   let index = start + 1;
@@ -39,7 +45,7 @@ function skipComment(text, index) {
 
 /**
  * @param {string} text file content
- * @returns {{value: string, line: number}[]}
+ * @returns {{value: string, line: number, isKey: boolean, key: string|null}[]} isKey: the string is itself a property name; key: the property it is the value of
  */
 export function stringLiterals(text) {
   const found = [];
@@ -50,7 +56,7 @@ export function stringLiterals(text) {
     if (char === '\n') line += 1;
     if (char === '"' || char === "'" || char === '`') {
       const end = endOfString(text, index);
-      found.push({ value: text.slice(index + 1, end), line });
+      found.push({ value: text.slice(index + 1, end), line, isKey: /^\s*:/.test(text.slice(end + 1, end + 40)), key: keyBefore(text, index) });
       line += text.slice(index, end).split('\n').length - 1;
       index = text[end] === '\n' ? end - 1 : end; // an unterminated string stops before its newline
       previous = char;

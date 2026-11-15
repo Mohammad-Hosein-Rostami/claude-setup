@@ -112,3 +112,45 @@ test('an unparsable tsconfig is a hint unreadable? and the exit code stays 0', (
   assert.match(findingLines(result)[0], /^tsconfig\.json:\d+ unreadable\? .+/);
   assert.match(result.stdout, /refs: 0 findings, 1 hints in 1 files scanned/);
 });
+
+const withPaths = (extra = '') => `{\n  ${extra}"compilerOptions": {\n    "paths": { "@app/*": ["app/*"] }\n  }\n}\n`;
+
+test('tsconfig-path: baseUrl set in the extends parent decides where alias targets are looked for', () => {
+  const parent = '{ "compilerOptions": { "baseUrl": "./src" } }';
+  const child = withPaths('"extends": "../../tsconfig.base.json",\n  ');
+  const present = project({ 'tsconfig.base.json': parent, 'apps/x/tsconfig.json': child, 'src/app/a.ts': '' });
+  assert.deepEqual(findingLines(refs(present)), []);
+  const missing = project({ 'tsconfig.base.json': parent, 'apps/x/tsconfig.json': child, 'apps/x/app/a.ts': '' });
+  assert.deepEqual(findingLines(refs(missing)), ['apps/x/tsconfig.json:4 tsconfig-path app/* -> missing']);
+});
+
+test('tsconfig-path: baseUrl is found through a two-level chain, and the last entry of an extends array wins', () => {
+  const chain = project({
+    'a.json': '{ "compilerOptions": { "baseUrl": "./libs" } }', 'b.json': '{ "extends": "./a" }', 'tsconfig.json': withPaths('"extends": "./b.json",\n  '),
+    'libs/app/x.ts': '',
+  });
+  assert.deepEqual(findingLines(refs(chain)), []);
+  const array = project({
+    'one.json': '{ "compilerOptions": { "baseUrl": "./wrong" } }', 'two.json': '{ "compilerOptions": { "baseUrl": "./right" } }',
+    'tsconfig.json': withPaths('"extends": ["./one.json", "./two.json"],\n  '), 'right/app/x.ts': '',
+  });
+  assert.deepEqual(findingLines(refs(array)), []);
+});
+
+test('tsconfig-path: with no baseUrl anywhere the targets are relative to the file that defines paths', () => {
+  const root = project({ 'base.json': '{}', 'tsconfig.json': withPaths('"extends": "./base.json",\n  '), 'app/x.ts': '' });
+  assert.deepEqual(findingLines(refs(root)), []);
+  const missing = project({ 'base.json': '{}', 'tsconfig.json': withPaths('"extends": "./base.json",\n  ') });
+  assert.deepEqual(findingLines(refs(missing)), ['tsconfig.json:4 tsconfig-path app/* -> missing']);
+});
+
+test('tsconfig-path: a package parent or a missing parent gives one hint tsconfig-path? and no finding', () => {
+  const viaPackage = refs(project({ 'tsconfig.json': withPaths('"extends": "@tsconfig/node20/tsconfig.json",\n  ') }));
+  assert.equal(viaPackage.status, 0);
+  assert.deepEqual(findingLines(viaPackage), ['tsconfig.json:4 tsconfig-path? paths not checked: extends "@tsconfig/node20/tsconfig.json" names a package']);
+  const missingParent = refs(project({ 'tsconfig.json': withPaths('"extends": "./gone.json",\n  ') }));
+  assert.deepEqual(findingLines(missingParent), [
+    'tsconfig.json:2 tsconfig-extends ./gone.json -> missing',
+    'tsconfig.json:4 tsconfig-path? paths not checked: extends "./gone.json" cannot be read',
+  ]);
+});

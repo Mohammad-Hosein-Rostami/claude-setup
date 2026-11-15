@@ -3,13 +3,14 @@
 // Exports: readCompose, readDockerfile.
 // Invariants: compose paths are relative to the compose file, `dockerfile` to the build context. The builds found in
 //   compose files are pushed to context.composeBuilds, so a Dockerfile is also tried against the context that names it.
-//   A Dockerfile source is a finding only when it matches nothing in every candidate context. Values with `$` and URLs
+//   A Dockerfile source is a finding only when it matches nothing in every candidate context; lines inside a heredoc body (`RUN <<EOT`) are not instructions. A miss under a build output folder, an env_file or a bind mount is a hint (`...?`): something else makes it. Values with `$` and URLs
 //   are skipped; `COPY --from=...` is skipped.
 import { dirname, resolve } from 'node:path';
 import { globMatches } from './glob.mjs';
-import { hasGlobChars, resolveRef } from './ref-path.mjs';
+import { hasGlobChars, resolveRef, underBuildOutput } from './ref-path.mjs';
 import { scanYaml } from './yaml-lines.mjs';
 
+const HEREDOC = /<<-?(["']?)([A-Za-z_]\w*)\1/g;
 const isCheckable = (value) => value !== null && !value.includes('$') && !value.includes('://');
 const inBuild = (entry) => entry.parents.length === 3 && entry.parents[0] === 'services' && entry.parents[2] === 'build';
 
@@ -24,6 +25,12 @@ function composeReference(entry) {
   if (bindMount) return { value: entry.value.split(':')[0], line: entry.line, role: 'mount', service };
   if (inBuild(entry) && (entry.key === 'context' || entry.key === 'dockerfile')) return { value: entry.value, line: entry.line, role: entry.key, service };
   return null;
+}
+
+/** An env_file or a bind-mount source is often git-ignored or made by the host, and a build output folder is made by a build: those are hints. */
+function composeKind(reference) {
+  const madeElsewhere = reference.role === 'env_file' || reference.role === 'mount' || underBuildOutput(reference.value);
+  return madeElsewhere ? 'compose-path?' : 'compose-path';
 }
 
 /**
@@ -45,7 +52,7 @@ export function readCompose(file, { disk, composeBuilds }) {
     for (const reference of mine) {
       const base = reference.role === 'dockerfile' ? contextPath : folder;
       if (reference.role === 'dockerfile' && !disk.exists(contextPath)) continue; // the missing context is reported already
-      if (!disk.exists(resolveRef(base, reference.value))) results.push({ kind: 'compose-path', value: reference.value, line: reference.line });
+      if (!disk.exists(resolveRef(base, reference.value))) results.push({ kind: composeKind(reference), value: reference.value, line: reference.line });
     }
   }
   return results;
@@ -55,13 +62,19 @@ export function readCompose(file, { disk, composeBuilds }) {
 function instructions(text) {
   const found = [];
   let pending = null;
+  let bodyEnds = []; // heredoc tags still to be closed: their lines are shell text, not instructions
   text.replace(/^\uFEFF/, '').split(/\r?\n/).forEach((raw, index) => {
+    if (bodyEnds.length > 0) {
+      if (raw.trim() === bodyEnds[0]) bodyEnds.shift();
+      return;
+    }
     if (pending === null && (raw.trim() === '' || raw.trim().startsWith('#'))) return;
     const joined = (pending?.text ?? '') + raw.trim();
     const start = pending?.line ?? index + 1;
     if (joined.endsWith('\\')) pending = { line: start, text: `${joined.slice(0, -1)} ` };
     else {
       found.push({ line: start, text: joined });
+      bodyEnds = [...joined.matchAll(HEREDOC)].map((match) => match[2]);
       pending = null;
     }
   });
@@ -101,5 +114,5 @@ export function readDockerfile(file, { disk, composeBuilds }) {
   const candidates = [dirname(file.abs), disk.root, ...composeBuilds.filter((build) => build.dockerfile === file.abs).map((build) => build.context)];
   return instructions(file.text).flatMap((instruction) => copySources(instruction.text)
     .filter((source) => isCheckable(source) && !candidates.some((base) => sourceExists(disk, base, source)))
-    .map((source) => ({ kind: 'dockerfile-copy', value: source, line: instruction.line })));
+    .map((source) => ({ kind: underBuildOutput(source) ? 'dockerfile-copy?' : 'dockerfile-copy', value: source, line: instruction.line })));
 }
