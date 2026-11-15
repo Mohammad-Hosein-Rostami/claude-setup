@@ -52,7 +52,7 @@ The hook list with exact triggers is in `docs/catalog.md` (section Hooks) and `h
 | A workflow | `home/skills/<name>/SKILL.md` | update its row in `docs/catalog.md` |
 | A permission or hook wiring | `settings/base.json` (or the OS file) | run `scripts/install.sh` to rebuild `~/.claude/settings.json` |
 
-Edit in a git worktree, not the main checkout: the files are live in every session. Details: `CLAUDE.md` (this repo's
+Edit in a git worktree, not the main checkout: the files are live in every session. Land by rebasing onto main and fast-forwarding (`git merge --ff-only`). Details: `CLAUDE.md` (this repo's
 own rules) and `docs/usage.md`.
 
 ## Turn a hook off by hand

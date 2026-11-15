@@ -3,7 +3,7 @@
 This repo is the owner's personal Claude Code setup. `home/` is symlinked live into `~/.claude`, so an edit there is
 live in every running session at once. A half-written hook breaks Bash everywhere.
 
-- Edit hooks, the guard and tools in a git worktree and merge when the suite is green. Parallel agents each use their
+- Edit hooks, the guard and tools in a git worktree; when the suite is green, rebase onto main and fast-forward (`git merge --ff-only`). Parallel agents each use their
   own worktree; never edit the main checkout while others work.
 - Tests: `node --test tests/*.test.mjs` (never bare `node --test`). The pre-commit hook runs it plus gitleaks.
 - Commit only your own paths: `git commit -m "<conventional message>" -- <paths>`. Never `--no-verify`.

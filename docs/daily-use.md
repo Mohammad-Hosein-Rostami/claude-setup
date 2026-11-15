@@ -67,6 +67,14 @@ Say what to remove or merge ("remove Nx", "merge the apps into one project") and
 - You can run the two checks yourself: `node ~/.claude/tools/refs/refs.mjs check .` (paths that point nowhere) and
   `node ~/.claude/tools/env-names/env-names.mjs diff <saved-file> .` (env names added or removed).
 
+## Clean git history
+History stays one straight line (rule C37): no merge commits, no branch merged into another.
+- Agents commit on their own branch; the lead rebases each lane onto main and lands it with `git merge --ff-only`, one
+  lane at a time, then removes the landed branch and worktree.
+- Ask "clean up the git tree" and the `git-linear-history` skill loads; it backs up first and proves the tree is unchanged.
+- The two commands: `node ~/.claude/tools/git-tidy/git-tidy.mjs check` (what is left to clean) and `... prune --apply`.
+- Pushes and remote branch deletes still ask you.
+
 ## Keeping context
 - Auto-compaction runs at a 400000-token window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`); the status line shows the
   context size. Run `/compact` at a natural seam, not mid-step.
@@ -88,8 +96,8 @@ cap means `ccm extra-high -c`, not credits.
 - Settings, hooks config, CLAUDE.md, agents and plugins are read when a session starts, and the lead rules load at
   start: restart open sessions (`/exit`, then `claude -c`).
 - `~/.claude/settings.json` is a merged copy: change `settings/base.json`, then re-run `scripts/install.sh`.
-- Because the repo is live in every session, edit hooks and tools in a git worktree and merge when the suite is
-  green.
+- Because the repo is live in every session, edit hooks and tools in a git worktree; when the suite is green, rebase onto main and
+  fast-forward (`git merge --ff-only`).
 
 ## Another machine
 `git pull`, then `scripts/install.sh` (Windows PowerShell:
