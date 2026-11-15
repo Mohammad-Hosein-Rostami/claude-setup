@@ -25,6 +25,7 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 Asking and remembering:
 - `timed-ask.mjs`: the timed dialog (osascript, PowerShell or zenity).
 - `remembered-ask.mjs`, `allowed-literals.mjs`: per-session memory of secrets the owner already allowed (hashes only).
+- `answered-commands.mjs`: a command the guard's dialog allowed, handed to `permission-timed-allow.mjs` so Claude Code's own prompt for it opens no second dialog (hashes only, used once).
 - `bounce-once.mjs`: the first time a command asks because of how it is written (a variable command word, a risky word
   inside `$(...)` or a heredoc, a literal secret), it is sent back to the agent with the fix instead of the dialog, and any
   other reason it asks for is named as one that will still ask; the same command again gets the dialog. Per-session store

@@ -34,7 +34,9 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
   pauses while that terminal window is focused, after a keypress, and with Remote Control on. Click another app before
   you leave. The recommended option is chosen to be safe with nobody there, and each default taken is logged.
 - Guard dialogs (`git push`, publish, `rm -rf` outside the project, prod-host writes, literal secrets) default to
-  Allow and go ahead after 180 s (`CLAUDE_ASK_TIMEOUT_S`); a secret-only ask after 30 s. A click on Deny blocks
+  Allow and go ahead after 180 s (`CLAUDE_ASK_TIMEOUT_S`); a secret-only ask after 30 s. Claude Code's own prompts that
+  still appear in bypass mode ("Dangerous rm operation not ruled out") get the same dialog and go ahead after 30 s
+  (`CLAUDE_PERMISSION_TIMEOUT_S`). A click on Deny blocks
   for good. A command Claude can rewrite (a `$VAR` command word, `rm`/`push` inside `$(...)` or a heredoc, a literal
   secret) is first sent back to Claude once with the fix, so no dialog waits; the message also names what will still
   ask after the rewrite (a push, an `rm` outside the project ...), and sent again unchanged, it gets the dialog. A
