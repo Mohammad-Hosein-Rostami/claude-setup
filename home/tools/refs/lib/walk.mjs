@@ -30,7 +30,7 @@ export function walkTree(root) {
     }
     for (const entry of entries) {
       const rel = relFolder === '' ? entry.name : `${relFolder}/${entry.name}`;
-      if (entry.isSymbolicLink()) continue;
+      // a Dirent for a symlink is neither a file nor a directory, so links fall through both branches and are never followed
       if (entry.isFile()) files.push(rel);
       else if (entry.isDirectory() && !SKIPPED_FOLDERS.has(entry.name)) {
         folders.push(rel);

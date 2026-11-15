@@ -5,9 +5,8 @@
 //   TypeScript or JavaScript extension, like the compiler resolves them.
 import { dirname } from 'node:path';
 import { objectGet, parseJsonc, stringLeaves } from './jsonc.mjs';
-import { folderBeforeWildcard, hasGlobChars, resolveRef } from './ref-path.mjs';
+import { codePathExists, folderBeforeWildcard, hasGlobChars, resolveRef } from './ref-path.mjs';
 
-const CODE_EXTENSIONS = ['.ts', '.tsx', '.d.ts', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.json'];
 const isPackageName = (value) => !value.startsWith('.') && !value.startsWith('/');
 
 function extendsFindings(root, folder, disk) {
@@ -27,8 +26,7 @@ function referenceFindings(root, folder, disk) {
 
 function aliasTargetExists(base, target, disk) {
   if (target.includes('*')) return disk.exists(resolveRef(base, folderBeforeWildcard(target) || '.'));
-  const path = resolveRef(base, target);
-  return disk.exists(path) || CODE_EXTENSIONS.some((extension) => disk.exists(path + extension));
+  return codePathExists(disk, resolveRef(base, target));
 }
 
 function pathFindings(root, folder, disk) {
