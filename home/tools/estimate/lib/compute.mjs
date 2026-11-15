@@ -11,7 +11,7 @@
 // A refusal is `{ refused: true, reason, needed, measured, now, missing, future, noTime, overrun }` and carries no finish time:
 // reason 'table' (too few measured rows, a done row without started, a time later than now, a done row with no working time)
 // or 'overrun' (no build row open and the closing has already run as long as its high end).
-import { closingElapsedHours, closingRange, closingStart, findDeliveries, overlapMs, reopenSummary } from './history.mjs';
+import { DELIVERY_GAP_MS, closingElapsedHours, closingRange, closingStart, findDeliveries, overlapMs, reopenSummary } from './history.mjs';
 import { mergeIntervals } from './limits.mjs';
 
 export const MIN_DONE_ITEMS = 5;
@@ -84,12 +84,19 @@ function buildPart(openBuild, rate, lanes, windows, now) {
   return { low: at(rate.low), high: at(rate.high), ids: openBuild.map((i) => i.id), lanes, pastRate };
 }
 
-/** The delivered result when nothing is open and the last done row is the last delivery, else null. */
+/**
+ * The delivered result when no row is open and the last done row is a close row, else null: with nothing open the tool never
+ * predicts a future finish. Provisional (`provisionalUntil`, epoch ms) while the delivery's quiet gap has not passed yet; the
+ * history (findDeliveries) counts it only after that gap. A last done row that is a build row is not delivered: the closing
+ * phase still lies ahead (review and fix rounds are not rows).
+ */
 function deliveredResult(items, deliveries, now) {
-  const last = deliveries.at(-1);
-  if (items.some((i) => i.done === null) || last === undefined) return null;
-  if (Math.max(...items.map((i) => i.done)) !== last.at) return null;
-  return { computedAt: now, openItems: 0, delivered: last.at, reopen: reopenSummary(items, deliveries, now) };
+  if (items.length === 0 || items.some((i) => i.done === null)) return null;
+  const lastDone = Math.max(...items.map((i) => i.done));
+  const closer = items.find((i) => i.kind === 'close' && i.done === lastDone);
+  if (closer === undefined) return null;
+  const provisionalUntil = lastDone + DELIVERY_GAP_MS > now ? lastDone + DELIVERY_GAP_MS : null;
+  return { computedAt: now, openItems: 0, delivered: lastDone, provisionalUntil, closingRow: closer.id, reopen: reopenSummary(items, deliveries, now) };
 }
 
 /** Rates, lanes, the build part and the other result fields that come from the rows' own times. */
@@ -123,7 +130,8 @@ function measureRows(items, done, measured, windows, now) {
  * @param {{start: number, end: number}[]} windows merged usage-limit windows (empty when not measured).
  * @param {number} now epoch ms: any started or done after it is a refusal.
  * @returns {object} the result (`finish {lowMs, highMs}`, `raw {low, high}` hours from now, `build`, `closing`, `reopen`, ...),
- *   a delivered result (`delivered`: epoch ms) when nothing is open after a delivery, or a refusal (`refused: true`).
+ *   a delivered result (`delivered`: epoch ms, `provisionalUntil`) when no row is open and the last done row is a close row,
+ *   or a refusal (`refused: true`).
  */
 export function computeEstimate(items, windows, now) {
   const measured = items.filter(isMeasured);

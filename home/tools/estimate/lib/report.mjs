@@ -186,8 +186,19 @@ function staleNote(result) {
   return [`Note: the newest started or done in the table is ${age} old (${instant(result.newestEntry)}); update STATUS.md if work happened since.`];
 }
 
+/** The delivered block: when, provisional while its quiet gap runs, no open row, and the After line. */
+function deliveredBlock(result, timeZone) {
+  const at = result.delivered;
+  const provisional = result.provisionalUntil === null ? '' : `; provisional until ${clockText(result.provisionalUntil, timeZone)}: no open row`;
+  return [
+    `Finish: delivered ${dayText(at, timeZone)} ${clockText(at, timeZone)} (local ${offsetText(at, timeZone)}${provisional})`,
+    `Includes: no open row; the last done row (${result.closingRow}) is a close row`,
+    afterLine(result.reopen),
+  ];
+}
+
 /**
- * The finish block (or the two-line delivered block).
+ * The finish block (or the three-line delivered block).
  * @param {object} result from computeEstimate (not a refusal), its finish already scaled by the calibration factors.
  * @param {{transcriptDir: string, transcriptCount: number, timeZone?: string, calibration?: {record: object, factors: object}}} inputs
  *   where the windows came from; the zone for every clock time (default the system zone); the track record and factors
@@ -196,10 +207,7 @@ function staleNote(result) {
  */
 export function formatEstimate(result, inputs) {
   const timeZone = inputs.timeZone ?? systemTimeZone();
-  if (result.delivered !== undefined) {
-    const at = result.delivered;
-    return [`Finish: delivered ${dayText(at, timeZone)} ${clockText(at, timeZone)} (local ${offsetText(at, timeZone)})`, afterLine(result.reopen)].join('\n');
-  }
+  if (result.delivered !== undefined) return deliveredBlock(result, timeZone).join('\n');
   const agentHours = result.build.ids.length === 0 ? 'Agent-hours: 0 (no open build row)'
     : `Agent-hours: ${result.agentHours.low.toFixed(1)}-${result.agentHours.high.toFixed(1)} for the open build rows, counted whole`;
   const track = inputs.calibration === undefined ? [] : [trackLine(inputs.calibration)];

@@ -155,7 +155,11 @@ test('missing clock (h): a 9-minute quiet gap after a close row is not a deliver
 test('missing clock (h): nothing open after a delivery prints when it was delivered', () => {
   const result = estimate(TWO_JOBS, 20);
   assert.equal(result.delivered, at(19));
-  assert.deepEqual(block(result), ['Finish: delivered Tue 10 Nov 22:30 (local +03:30)', 'After your review: 0 of 2 earlier deliveries here were reopened by your corrections']);
+  assert.deepEqual(block(result), [
+    'Finish: delivered Tue 10 Nov 22:30 (local +03:30)',
+    'Includes: no open row; the last done row (C2) is a close row',
+    'After your review: 0 of 2 earlier deliveries here were reopened by your corrections',
+  ]);
 });
 
 test('overrun: no build row open and the closing ran as long as its high end is refused with a reason and what to do', () => {
@@ -214,4 +218,39 @@ test('review 6c: a reopened delivery whose rework rows are done says "not delive
   const rows = [...fiveDoneRows(), close({ id: 'C1', startedH: 13, doneH: 14.5 }), rework({ id: 'R1', startedH: 16, doneH: 17 }), close({ id: 'C2', startedH: 17 })];
   const result = estimate(rows, 18);
   assert.equal(block(result)[3], 'After your review: 1 of 1 earlier deliveries here were reopened by your corrections; that rework took 2 h so far (not delivered again yet)');
+});
+
+// ---- Live case of 15 Nov: every row done, the last a close row finished a minute ago ----
+
+const CLOSED = fiveDoneRows([close({ id: 'C1', startedH: 13, doneH: 14 })]); // C1 done 14:00Z = 17:30 local
+
+test('no open row and the last done row a close row: delivered, provisional until its 10 quiet minutes have passed', () => {
+  const result = computeEstimate(itemsOf(CLOSED), [], Date.parse('2026-11-10T14:01Z'));
+  assert.equal(result.finish, undefined);
+  assert.deepEqual(block(result), [
+    'Finish: delivered Tue 10 Nov 17:30 (local +03:30; provisional until 17:40: no open row)',
+    'Includes: no open row; the last done row (C1) is a close row',
+    'After your review: not measured here yet (no earlier delivery in this table)',
+  ]);
+});
+
+test('no open row, 11 minutes after the last close row: delivered, final', () => {
+  const result = computeEstimate(itemsOf(CLOSED), [], Date.parse('2026-11-10T14:11Z'));
+  assert.deepEqual(block(result), [
+    'Finish: delivered Tue 10 Nov 17:30 (local +03:30)',
+    'Includes: no open row; the last done row (C1) is a close row',
+    'After your review: 0 of 1 earlier deliveries here were reopened by your corrections',
+  ]);
+});
+
+test('a row started inside the 10 quiet minutes brings back a normal Finish range', () => {
+  const result = computeEstimate(itemsOf([...CLOSED, row({ id: 'B6', raw: { started: '2026-11-10T14:05Z' } })]), [], Date.parse('2026-11-10T14:06Z'));
+  assert.equal(result.delivered, undefined);
+  assert.match(block(result)[0], /^Finish: Tue 10 Nov \d\d:\d\d/);
+});
+
+test('no open row but the last done row a build row: the closing phase still applies', () => {
+  const result = estimate(fiveDoneRows(), 13.5); // D5 done 13 h: closing 1.4-2.5 h, 0.5 h of it run
+  assert.equal(result.delivered, undefined);
+  nearRange(result.raw, [0.9, 2], 'raw');
 });

@@ -95,7 +95,11 @@ Agent-hours: 0.6-1.0 for the open build rows, counted whole
 - Before 2 finished jobs the closing reads `1.4-2.5 h in series (...; default, not yet measured here)`; with one, `default,
   widened by the 1 finished job here`. With no build row open: `no open build row: the closing phase ... has run 1.5 h`.
 - No delivery in the table yet: `After your review: not measured here yet (no earlier delivery in this table)`.
-- Nothing open and the last done row is a delivery: `Finish: delivered Sun 15 Nov 14:25 (local +03:30)` and the After line.
+- No open row and the last done row a `close:` row: `Finish: delivered Sun 15 Nov 15:24 (local +03:30)`, an Includes line
+  saying there is no open row, and the After line; within 10 minutes of that row it reads `(local +03:30; provisional
+  until 15:34: no open row)`. With no open row the tool never predicts a future finish; it is not a delivery in the
+  history (closing tails, scoring) until the 10 minutes have passed. No status line segment, no log line. No open row
+  but the last done row a build row: the closing phase still applies (the review and fix rounds are not rows yet).
 - Track record (see Calibration): `9 of 13 inside, 3 late (median x1.4 of the printed time), 1 early; adjusted high x1.3, low x0.9
   (target 8 of 10)`, below 5 scored `...; adjusted once 5 are scored`. A `--now` run without `--log-dir` keeps no log and prints no
   Track record line.
