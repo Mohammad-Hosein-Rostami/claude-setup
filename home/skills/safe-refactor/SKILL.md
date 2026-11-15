@@ -5,6 +5,8 @@ description: Use when restructuring code without changing behaviour, including r
 
 Rules: R1-R4 (`~/.claude/standards/refactor.md`), C1-C4, C18.
 
+This skill is for code-level refactors. A whole-repository restructure (removing a build tool, merging packages, folder moves with config changes) uses `repo-restructure`.
+
 1. State the goal and the behaviour that must not change. If the goal needs a behaviour change, split it out first.
 2. Check coverage of the code to move. If thin, write characterisation tests that pin current behaviour (odd outputs too) and commit them first (T2).
 3. Capture the public API (exports, route shapes, schemas) as a baseline list.

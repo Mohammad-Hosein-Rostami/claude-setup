@@ -58,6 +58,15 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
 - Review findings go back in one message. An agent that has been idle over 5 minutes is replaced by a fresh one that
   gets the spec and the diff, because resuming bills its old context again.
 
+## Restructuring a repository
+Say what to remove or merge ("remove Nx", "merge the apps into one project") and the `repo-restructure` skill loads.
+- The agent writes lists of what to delete, keep and propose (it asks before deleting anything you did not name), and
+  records a baseline (install, typecheck, lint, tests, build) before the first change.
+- Each step is a small commit you can revert alone; files git does not track are never touched without your yes.
+- Env files are compared by variable name only, and a final sweep greps hidden folders for leftovers of the old layout.
+- You can run the two checks yourself: `node ~/.claude/tools/refs/refs.mjs check .` (paths that point nowhere) and
+  `node ~/.claude/tools/env-names/env-names.mjs diff <saved-file> .` (env names added or removed).
+
 ## Keeping context
 - Auto-compaction runs at a 400000-token window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`); the status line shows the
   context size. Run `/compact` at a natural seam, not mid-step.
