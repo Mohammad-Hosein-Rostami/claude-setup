@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -314,6 +315,15 @@ test('hook: the repeated-report line fires on every matching prompt, not once pe
   for (const event of ['<agent-message>the border colour is still wrong</agent-message>', '<task-notification>still not fixed</task-notification>', '[SYSTEM NOTIFICATION - NOT USER INPUT] i told you before']) {
     assert.equal(await prompt(event, 'q3', KEEP), '', event);
   }
+});
+
+test('hook: the repeated-report line leaves no once-per-session marker behind', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'router-no-marker-'));
+  const env = { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp };
+  const input = JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'still not fixed', session_id: 'nm1' });
+  const r = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env });
+  assert.match(r.stdout, /repeated report/);
+  assert.equal(existsSync(join(tmp, 'claude-skill-router', 'prompt', 'nm1')), false);
 });
 
 test('hook: a repeated report that also names a bug gets both lines, and the bug line still shows once', async () => {
