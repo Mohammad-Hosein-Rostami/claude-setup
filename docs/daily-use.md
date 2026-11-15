@@ -104,7 +104,7 @@ cap means `ccm extra-high -c`, not credits.
 - Settings, hooks config, CLAUDE.md, agents and plugins are read when a session starts, and the lead rules load at
   start: restart open sessions (`/exit`, then `claude -c`).
 - `~/.claude/settings.json` is a merged copy: change `settings/base.json`, then re-run `scripts/install.sh`.
-- Because the repo is live in every session, edit hooks and tools in a git worktree; when the suite is green, rebase onto main and
+- Because the repo is live in every session, edit hooks and tools in a git worktree (`scripts/lane-new.sh <name>` makes one on `lane/<name>` and installs the tool dependencies); when the suite is green, rebase onto main and
   fast-forward (`git merge --ff-only`).
 
 ## Another machine

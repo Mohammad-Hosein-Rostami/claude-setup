@@ -17,7 +17,7 @@ The `ui-check` tool has its own tests: `pnpm --dir home/tools/ui-check test`.
 - `ask-gate`, `artifact-ask`, `agent-*`, `test-files-only`, `post-edit*`, `typecheck-gate`: the other hooks.
 - `ask-queue*`: the `ask` tool's decision queue.
 - `mode*`, `ccm`, `skill-router*`, `statusline`: modes, the launcher, the skill router and the status line.
-- `install-order`, `merge-settings`, `doctor-*`: the install scripts, settings merge and health check.
+- `install-order`, `lane-new`, `merge-settings`, `doctor-*`: the install scripts, the new-lane script, settings merge and health check.
 - `env-names*`, `estimate*`, `readable*`, `recall-*`, `ui-coverage*`, `watch-*`: one group per tool in `home/tools/`.
 
 ## Shared helpers (not tests)

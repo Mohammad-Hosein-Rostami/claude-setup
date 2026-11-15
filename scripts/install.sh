@@ -9,6 +9,8 @@ CLAUDE_DIR="$HOME/.claude"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$HOME/.claude-backup-$STAMP"
 LINKS=(CLAUDE.md rules skills agents standards hooks tools project-notes modes statusline.mjs)
+# Tools with npm dependencies: ui-check (odiff-bin, pngjs) and env-names (yaml). scripts/lane-new.sh reads this line.
+TOOLS_WITH_DEPS=(ui-check env-names)
 DRY_RUN=0
 WITH_PLUGINS=1
 WITH_TOOLS=1
@@ -159,10 +161,9 @@ install_one_tool_deps() {
   note "$name dependencies"
 }
 
-# The tools with npm dependencies: ui-check (odiff-bin, pngjs) and env-names (yaml).
 install_tool_deps() {
-  install_one_tool_deps ui-check
-  install_one_tool_deps env-names
+  local name
+  for name in "${TOOLS_WITH_DEPS[@]}"; do install_one_tool_deps "$name"; done
 }
 
 enable_hooks() {

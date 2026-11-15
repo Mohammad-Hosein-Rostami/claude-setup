@@ -178,4 +178,5 @@ are appended to the shared ones (e.g. the PC's Android incubator hook).
 | ------ | ------- |
 | `install.sh` / `install.ps1` | Link `home/*` into `~/.claude`, build `settings.json`, install ui-check and env-names dependencies, set the git hook path, install plugins. Flags: `--dry-run`, `--no-plugins`, `--no-tools`. |
 | `merge-settings.jq` | The shared jq merge (deep merge, `hooks` appended per event) used by `install.sh` and `doctor.sh`; `install.ps1` mirrors it. |
+| `lane-new.sh` | `lane-new.sh <name> [base]`: new worktree `../claude-setup-wt/<name>` on branch `lane/<name>` (refuses an existing branch or folder), then `npm ci` in the tools `install.sh` lists in `TOOLS_WITH_DEPS`; prints the path. |
 | `doctor.sh` | Read-only report: links, settings drift, plugins, CLI tools, ui-check and env-names dependencies and Chromium. |
