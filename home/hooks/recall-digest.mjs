@@ -5,12 +5,16 @@
 // to RECALL_DIGEST_WAIT_MS (default 8000). Prints nothing when there are no notes; never fails the session start.
 // Exports: digestFor.
 // Invariants: the digest is wrapped in <recall-digest> tags and note text cannot contain such a tag (defanged in buildDigest).
+import '../tools/recall/lib/quiet-sqlite-warning.mjs'; // first: it must run before node:sqlite loads
 import { existsSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { lockHeld } from '../tools/recall/lib/checkpoint-state.mjs';
 import { buildDigest } from '../tools/recall/lib/digest.mjs';
 import { defaultDbPath } from '../tools/recall/lib/paths.mjs';
+
+// Loaded here, not with a static import: Node loads a static `node:sqlite` import (and prints its warning) before any
+// module body runs, so the quiet-sqlite-warning import above would be too late.
+const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
 
 const DEFAULT_WAIT_MS = 8000;
 const POLL_MS = 200;

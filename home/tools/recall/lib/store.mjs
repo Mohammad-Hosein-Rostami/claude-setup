@@ -6,11 +6,15 @@
 // BEGIN IMMEDIATE; a DB dir that recall creates is 0700 (an existing parent such as /tmp is never chmod-ed) and the
 // db/-wal/-shm files are 0600 (POSIX); addChunk skips a chunk whose hash
 // already exists for the same session; FTS tables and vecs are kept in step with `chunks` by this module only.
-import { DatabaseSync } from 'node:sqlite';
+import './quiet-sqlite-warning.mjs'; // first: it must run before node:sqlite loads
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { sha1 } from './extract.mjs';
 import { defaultDbPath } from './paths.mjs';
+
+// Loaded here, not with a static import: Node loads a static `node:sqlite` import (and prints its warning) before any
+// module body runs, so the quiet-sqlite-warning import above would be too late.
+const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
 
 const BUSY_TIMEOUT_MS = 5000;
 const SQLITE_BUSY = 5;

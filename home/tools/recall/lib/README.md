@@ -6,7 +6,7 @@ settings and the fallbacks. Needs Node 22.13 or newer (`node:sqlite`). No npm de
 
 ## Files by job
 
-- Storing: `store.mjs` (SQLite schema, locking, writes), `private-fs.mjs` (owner-only files), `paths.mjs` (where state lives).
+- Storing: `store.mjs` (SQLite schema, locking, writes), `private-fs.mjs` (owner-only files), `paths.mjs` (where state lives), `quiet-sqlite-warning.mjs` (hides Node 22's "SQLite is experimental" notice, nothing else).
 - Reading sources: `extract.mjs` (parse transcripts and docs, chunk), `redact.mjs` (replace secrets), `indexer.mjs` (find files, index only what changed).
 - Searching: `search.mjs` (queries, ranking, output), `rank.mjs` (snippets), `merge.mjs` (join word and vector hits), `pipeline.mjs` (one search from query to final hits).
 - Vectors: `vectors.mjs` (local Ollama embeddings, cosine), `models.mjs` (the embedding models and their query prefixes).
@@ -25,6 +25,7 @@ From the repo root:
 
 ## Watch out for
 
+- A file that loads `node:sqlite` imports `quiet-sqlite-warning.mjs` first and loads sqlite with `process.getBuiltinModule('node:sqlite')` in its body, never a static `import`: Node loads a static builtin import (and prints its warning) before any module body runs. `tests/quiet-sqlite-warning.test.mjs` checks this for every such file.
 - `checkpoint-state.mjs` is imported by a hook that must return in well under 50 ms. Keep it to Node built-ins.
 - Secrets are redacted when indexing and again on output; keep both.
 - State files are mode 0600 and folders 0700 on purpose.
