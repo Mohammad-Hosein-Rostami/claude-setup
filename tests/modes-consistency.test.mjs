@@ -44,7 +44,7 @@ test('home/CLAUDE.md names Persian replies, the STATUS.md re-read and the Grep t
   assert.match(text, /Persian included/);
   assert.match(text, /`STATUS\.md` path/);
   assert.match(text, /Grep tool or `rg`/);
-  assert.match(text, /Git push[\s\S]*confirm dialog even in bypass mode[\s\S]*auto-allow after 3 minutes[\s\S]*literal password or token/);
+  assert.match(text, /Git push[\s\S]*confirm dialog even in bypass mode[\s\S]*auto-allow after 30 s[\s\S]*literal password or token/);
 });
 
 test('ccm, docs/modes.md, home/CLAUDE.md and home/modes/_lead.md mention all five modes', () => {

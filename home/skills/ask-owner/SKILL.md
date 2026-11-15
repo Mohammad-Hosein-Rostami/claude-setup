@@ -33,7 +33,7 @@ Bad -> good:
 
 ## If the box times out
 
-`askUserQuestionTimeout` (settings) auto-continues an unanswered terminal question after 60 s, the CLI minimum; the timer pauses while that terminal window is focused, after any keypress, and with Remote Control on, so an unattended lead asks only real owner calls and logs each default it takes (the Bash guard's timed dialog is separate: it auto-allows after 3 min, a secret-only ask after 30 s). If the box times out, take
+`askUserQuestionTimeout` (settings) auto-continues an unanswered terminal question after 60 s, the CLI minimum; the timer pauses while that terminal window is focused, after any keypress, and with Remote Control on, so an unattended lead asks only real owner calls and logs each default it takes (the Bash guard's timed dialog and every permission prompt are separate: they auto-allow after 30 s unless Deny is clicked). If the box times out, take
 the recommended option, keep going, and say which one you took in the next message.
 
 Because a timeout takes the recommended option, that option must be safe with nobody there: reversible, the full scope

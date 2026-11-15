@@ -1,5 +1,5 @@
 // Bounce once: an ask the agent can remove by rewriting its command is denied the first time, with the rewrite instruction, instead of a
-// timed dialog that nobody may be there to answer (it goes ahead after 30-180 s). The identical command sent again (same text, same cwd,
+// timed dialog that nobody may be there to answer (it goes ahead after 30 s). The identical command sent again (same text, same cwd,
 // same session) takes the normal ask path, so the owner still decides whenever the agent really needs that exact command.
 // Exports: bounceText(reasons) -> deny text | undefined, bounceOnce(ask, call, env) -> hook stdout | undefined, bouncedDir(env),
 // MAX_BOUNCED, RETRY_LINE, adviceOnce(advice, call, env) -> hook stdout (also used by agent-model-guard.mjs), withAdvice(text, advice) -> text.

@@ -1,5 +1,5 @@
 // PreToolUse(Artifact): publishing or deleting an artifact is an outward action, so it asks the owner with a timed dialog
-// (lib/timed-ask.mjs: Allow by default, auto-allow after 180 s, Deny only on a click), falling back to the CLI's own ask
+// (lib/timed-ask.mjs: Allow by default, auto-allow after 30 s, Deny only on a click), falling back to the CLI's own ask
 // (a prompt even in bypassPermissions mode, verified on CLI 2.1.323) when there is no GUI. Read, list, open, pin, unpin and
 // quickstart pass.
 // Exports: decideArtifact(toolInput) -> reason | undefined.
