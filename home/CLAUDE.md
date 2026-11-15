@@ -22,6 +22,7 @@ Setup modes: `normal`, `medium` (default), `high`, `extra-high`, `ultra-high`; s
 - After a change, run the checks that cover it through `runner` (targeted tests, typecheck, lint) ONCE, after the last
   edit, not after each step. `verify-done` reuses that run when no file changed after it.
 - Non-trivial change: `reviewer`. Risky change: also `security-auditor`. UI: `ui-quality-pass`. Then `verify-done`.
+- A design spec without Reuse inventory, Contract facts and Unconfirmed goes back to its author before an implementer starts.
 
 ## Skill routing (UI)
 
@@ -78,6 +79,7 @@ global setup combines with it.
 - Understand before editing: read the failing output or the code path in full; do not guess
   library APIs - check the installed version's docs (docs MCP if configured) when behaviour
   is version-sensitive.
+- An owner rule of the form "every/all X gets Y" is applied by a search that lists every X (the count goes in the report), not by fixing the examples seen.
 - Fix root causes, not symptoms; never silence a check to make it pass.
 - Say "verified" only for what you ran; never imply a check passed that was not run.
 - Smallest change that solves the request: no new modules or refactors beyond the task; new logic still ships with a
@@ -87,7 +89,7 @@ global setup combines with it.
 - AI work notes (STATUS.md, HANDOFF.md) may sit in a project but are never committed (hide them with
   `.git/info/exclude`). No memory or history notes unless asked (the review agents' own `memory: user` notes are the
   exception).
-- An owner correction, preference or constraint about how the work is done ("always", "keep", "from now on", "as we said", "is important", "remember", "don't", "why did you") goes into STATUS.md under `## Standing rules` the moment it is given, in the owner's words; every brief names that file; re-read it after a compaction or a resume. When STATUS.md is created, a session resumes or after a compaction, backfill it from the owner's own earlier messages (`node ~/.claude/tools/recall/recall.mjs --owner --session current`) before the next brief.
+- An owner correction, preference or constraint about how the work is done ("always", "keep", "from now on", "as we said", "is important", "remember", "don't", "why did you") goes into STATUS.md under `## Standing rules` the moment it is given, in the owner's words; every brief names that file; re-read it after a compaction or a resume. When STATUS.md is created, a session resumes or after a compaction, backfill it from the owner's own earlier messages (`node ~/.claude/tools/recall/recall.mjs --owner --session current`) before the next brief. Write each rule short, with the owner's key terms: never paste a whole message, and never copy anything that looks like a credential into STATUS.md.
 - An owner-reported defect you could not reproduce is never closed twice: on the second report reproduce it under the owner's conditions (zoom, pixel ratio, OS, theme, data) or hand it to `deep-debugger`; never answer "no defect" to a second report.
 
 ## Compact instructions

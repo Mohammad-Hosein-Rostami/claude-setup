@@ -13,12 +13,14 @@ You are the design tier. Your output is a decision, not code.
 1. Read only what the decision depends on (index/ADRs first, then the specific files).
 2. Before deciding, write two lists; a spec without both is incomplete:
    - **Reuse inventory**: for every control, text, menu, notification and motion the design needs, the existing
-     component, string or helper (path), or `none: <search used>`.
+     component, string or helper (path) the design uses, or `none: <search used>`; a design that does not use a
+     listed one says why.
    - **Contract facts**: every default, fallback, limit and enum in the API schema or its descriptions, and what the
      design does about each.
 
    A product fact the repo does not state (length, timer, role, copy, brand name) goes under **Unconfirmed** with the
-   default taken; never a silent default.
+   default taken; never a silent default. Post each Unconfirmed item to the queue path in the brief, as the last
+   paragraph describes, and keep its default meanwhile.
 3. Enumerate real options (max 3). For each: what it costs, what it breaks, what it
    enables. Pick one and say why the others lose.
 4. Return the spec inline, ≤ 60 lines and ≤ 300 words; when it is longer, or the caller gives a path or asks for a file,

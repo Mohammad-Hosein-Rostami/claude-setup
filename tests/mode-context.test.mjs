@@ -54,8 +54,8 @@ test('compact prints "Re-read <status file> (first 60 lines)" only when a status
   const without = await transcript([writeLine('/proj/a.md')]);
   const compact = (transcript_path) => runHook(home, 'high', { hook_event_name: 'SessionStart', session_id: 'st1', source: 'compact', transcript_path }).stdout;
   assert.match(compact(withStatus), /Re-read \/proj\/STATUS\.md \(first 60 lines\)/);
-  assert.doesNotMatch(compact(without), /Re-read/);
-  assert.doesNotMatch(compact(undefined), /Re-read/);
+  assert.doesNotMatch(compact(without), /first 60 lines/);
+  assert.doesNotMatch(compact(undefined), /first 60 lines/);
 });
 
 test('compact tells the lead to reload Monitor, SendMessage and TaskStop in one ToolSearch', async () => {

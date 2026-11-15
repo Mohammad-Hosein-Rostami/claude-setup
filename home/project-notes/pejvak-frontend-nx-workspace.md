@@ -11,6 +11,6 @@ skills add on top:
   `figma-pixel-perfect`, `responsive-ui` and `visual-qa`.
 - The project `ui-implementer` preloads only `ds-*` skills: when delegating, name `accessibility-build`,
   `responsive-ui`, `ui-quality-pass`, `ui-coverage` (+ `forms-validation` / `async-ui-states`) in the prompt.
-- The project `architect` and `ui-implementer` shadow the global ones: a design brief asks for the Reuse inventory and
-  Contract facts lists and names `STATUS.md` `## Standing rules`.
+- The project `architect` and `ui-implementer` shadow the global ones: a design brief asks for the Reuse inventory,
+  Contract facts and Unconfirmed lists and names `STATUS.md` `## Standing rules`.
 - `/escalate` and `/quick` still work here (global skills); token cost: `node ~/.claude/hooks/token-audit.mjs`.

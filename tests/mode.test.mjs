@@ -139,7 +139,7 @@ test('compact adds the recall line, and the handoff line from the 3rd compaction
   const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
   const compact = (id) => runHook(home, { CLAUDE_MODE: 'high' }, { hook_event_name: 'SessionStart', session_id: id, source: 'compact' }).stdout;
   assert.match(compact('k1'), /Context was compacted.*recall .*--session current.*select:Monitor,SendMessage,TaskStop/);
-  assert.match(compact('k3'), /Backfill `## Standing rules` with `recall --owner --session current`/);
+  assert.match(compact('k3'), /Re-read `## Standing rules`; backfill it with `recall --owner --session current`/);
   assert.doesNotMatch(compact('k1'), /has compacted/);
   assert.match(compact('k1'), /This session has compacted 3 times.*`handoff` skill/);
   assert.match(compact('k1'), /compacted 4 times/);
