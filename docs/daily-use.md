@@ -28,6 +28,8 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
 - The final answer says what changed and what was not run. No recap of the process.
 
 ## Long or unattended runs
+- Run long or unattended sessions in a plain terminal app (or tmux), not an editor's built-in terminal: closing or
+  reloading the editor window ends every session in it. Resume with `ccm <mode> -c`.
 - A terminal question that nobody answers auto-continues after 60 s and Claude takes the recommended option. The timer
   pauses while that terminal window is focused, after a keypress, and with Remote Control on. Click another app before
   you leave. The recommended option is chosen to be safe with nobody there, and each default taken is logged.
