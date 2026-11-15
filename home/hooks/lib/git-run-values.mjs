@@ -5,11 +5,13 @@
 // Exports: gitRunValueReasons(words, parsed, env, reasonsOf); valueReasons(text, env, reasonsOf, target); judgeOnce(text, env, reasonsOf);
 // lineFacts(line) -> {writes, alone, placeholders}.
 // A value is judged as a nested command, a variable in it as an opaque argument. It asks GIT_UNREADABLE_REASON when the guard cannot read
-// what runs: a substitution (`$(`, a backtick, `${...}` with an operator), the placeholder xargs, parallel or find fills in, a variable the
-// line writes that the guard could not resolve, or a variable as a command word (other than $HOME and the ones the guard resolves).
-// Exceptions: a value that is exactly one reference to a variable the line does not write (`"$EDITOR"`; one reference in the raw text too,
-// so `"$V"x` is not `$Vx`), and `${NAME:-literal}` (`-`, `:-`, `=`, `:=`) of such a variable, whose literal is judged. A git-run variable
-// that read, printf -v, mapfile, readarray, getopts, for or select writes asks the same. Both parsers lose a value given as an unquoted
+// what runs: a substitution (`$(`, a backtick, `${...}` with an operator), a positional parameter (`$1`..`$9`, `$@`, `$*`), the placeholder
+// xargs, parallel or find fills in, a variable the line writes that the guard could not resolve, or a variable as a command word (other
+// than $HOME and the ones the guard resolves). Exceptions: a value that is exactly one reference to a variable the line does not write
+// (`"$EDITOR"`; one reference in the raw text too, so `"$V"x` is not `$Vx`), and `${NAME:-literal}` (`-`, `:-`, `=`, `:=`) of such a
+// variable, nested too (`${VISUAL:-${EDITOR:-vi}}`), whose innermost literal is judged. A git-run variable that read, printf -v, zsh print
+// -v, mapfile, readarray, getopts, for or select writes asks the same, and so do `NAME[i]=v` and a write through a bash nameref
+// (`declare -n R=GIT_EDITOR; R=...`); zsh `${NAME::=v}` assigns like `:=`. On Windows the names ignore case (`git_editor`). Both parsers lose a value given as an unquoted
 // backtick: lib/raw-risk.mjs asks for that one, and a variable assigned from one stays unknown (lib/rm-paths.mjs newScope), so it asks here.
 // Pure, no I/O. judgeOnce checks each distinct text at most twice per command line (in its directory, then once with the directory
 // unknown), and lineFacts reads the line once, so a value that many git commands or assignments repeat costs one check.
@@ -21,19 +23,22 @@ import { tokenize } from './shell-words.mjs';
 
 const RUN_NAMES = new Set(COMMAND_ENV);
 const ASSIGNMENT = /^([A-Za-z_]\w*)(\+?)=([\s\S]*)$/;
-const DEFAULT_ASSIGNMENT = /\$\{([A-Za-z_]\w*):?=([^}]*)\}/g; // assigns when the variable is unset (`:=` also when it is empty)
+const DEFAULT_ASSIGNMENT = /\$\{([A-Za-z_]\w*):{0,2}=([^}]*)\}/g; // assigns when unset (`:=` also when empty, zsh `::=` always)
 const ONE_REFERENCE = /^\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))$/;
-const DEFAULT_VALUE = /^\$\{([A-Za-z_]\w*):?[-=]([^}$`]*)\}$/; // the variable's value, or the literal when it is unset
+const DEFAULT_START = /^\$\{([A-Za-z_]\w*):?[-=]/; // `${NAME:-default}`: the variable's value, or the default when it is unset
+const POSITIONAL = /\$\{?[1-9@*]/; // `$1`..`$9`, `$@`, `$*`: arguments the guard never sees
+const SUBSCRIPT_ASSIGNMENT = /^([A-Za-z_]\w*)\[[^\]]*\]\+?=/; // `NAME[2]=v`: zsh changes part of the value
+const NAMEREF_OPTION = /^-[a-zA-Z]*n/; // `declare -n R=NAME`: every write to R writes NAME
 const REFERENCE = /\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))/g;
 // what the guard cannot read: `$(`, a backtick, `${...}` with an operator, or a `$` that ends the value (the parsers end a value there when
 // they split off an unquoted `$(...)`)
 const SUBSTITUTION = /`|\$\(|\$\{(?![A-Za-z_]\w*\})|\$$/;
 // a name that stands outside a `$NAME` / `${NAME...}` reference (an assignment, `read NAME`, `printf -v NAME`, `for NAME`), or `${NAME:=`
-const NAME_WRITE = /(?<![\w$]|\$\{)([A-Za-z_]\w*)(?!\w)|\$\{([A-Za-z_]\w*):?=/g;
+const NAME_WRITE = /(?<![\w$]|\$\{)([A-Za-z_]\w*)(?!\w)|\$\{([A-Za-z_]\w*):{0,2}=/g;
 // a reference that is a whole word of the raw line: after `=` or a space, maybe in double quotes, before a word end
 const ALONE_REFERENCE = /(?:^|[=\s])"?\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})"?(?=[\s;&|()<>}]|$)/g;
 // a write whose variable name is itself a variable (`printf -v "$N"`, `export "$N=x"`): it may write any name
-const UNKNOWN_TARGET = /\bprintf\s+(?:-\S+\s+)*-v\s*["']?\$|\b(?:read|mapfile|readarray|getopts|export|declare|typeset|local|readonly)\b(?:\s+-\S+)*\s+["']?\$/;
+const UNKNOWN_TARGET = /\bprintf?\s+(?:-\S+\s+)*-v\s*["']?\$|\b(?:read|mapfile|readarray|getopts|export|declare|typeset|local|readonly)\b(?:\s+-\S+)*\s+["']?\$/;
 const FILLS_PLACEHOLDERS = /(?:^|[\s;&|(])(?:xargs|parallel)(?=\s)/;
 const REPLACE_OPTION = /(?:^|\s)(?:-I\s*|--replace=|-i)([^\s;&|]+)/g; // xargs and parallel `-I R`, `-IR`, `--replace=R`, xargs `-iR`
 const PLACEHOLDER = '{}'; // find -exec, parallel, xargs -i
@@ -102,13 +107,30 @@ export function valueReasons(text, env, reasonsOf, target) {
   const unwritten = (name) => !env.line.writes(name, target);
   const [, braced, bare] = ONE_REFERENCE.exec(text) ?? [];
   if (text.trim() === '' || ((braced ?? bare) !== undefined && unwritten(braced ?? bare) && env.line.alone(braced ?? bare))) return [];
-  const fallback = DEFAULT_VALUE.exec(text);
-  if (fallback !== null && unwritten(fallback[1])) return valueReasons(fallback[2], env, reasonsOf, target);
-  if (SUBSTITUTION.test(text) || env.line.placeholders.some((mark) => text.includes(mark))) return [GIT_UNREADABLE_REASON];
+  const fallback = defaultOf(text);
+  if (fallback !== undefined && unwritten(fallback.name)) return valueReasons(fallback.text, env, reasonsOf, target);
+  if (POSITIONAL.test(text) || SUBSTITUTION.test(text) || env.line.placeholders.some((mark) => text.includes(mark))) return [GIT_UNREADABLE_REASON];
   const written = [...text.matchAll(REFERENCE)].some(([, inBraces, plain]) => !unwritten(inBraces ?? plain)); // assigned, not resolved
   if (written || variableCommandWord(text, env)) return [GIT_UNREADABLE_REASON];
   return judgeOnce(text, env, reasonsOf).filter((reason) => !VARIABLE_COMMAND_REASONS.has(reason));
 }
+
+/**
+ * `${NAME:-default}` (also `-`, `=`, `:=`) -> {name, text: default} when the default is a literal without `$` or a backtick, or itself
+ * such a form (`${VISUAL:-${EDITOR:-vi}}`); undefined for anything else, which the caller reads as a substitution.
+ */
+function defaultOf(text) {
+  const start = DEFAULT_START.exec(text);
+  if (start === null || !text.endsWith('}')) return undefined;
+  const inner = text.slice(start[0].length, -1);
+  let depth = 0; // the braces inside must balance, so the last `}` closes the `${` at the start
+  for (const c of inner) depth += c === '{' ? 1 : c === '}' ? (depth === 0 ? -Infinity : -1) : 0;
+  if (depth !== 0 || inner.includes('`') || (inner.includes('$') && defaultOf(inner) === undefined)) return undefined;
+  return { name: start[1], text: inner };
+}
+
+/** On Windows environment names ignore case, so `git_editor` is GIT_EDITOR there; elsewhere names are exact. */
+const isRunName = (name) => RUN_NAMES.has(process.platform === 'win32' ? name.toUpperCase() : name);
 
 /** The text git would run after one assignment; `NAME+=x` adds to the value the line set before, or to an unknown inherited one. */
 const valueText = ([, name, append, value], vars) => (append === '' ? value : `${vars.has(name) ? vars.get(name) : `$${name}`}${value}`);
@@ -116,10 +138,20 @@ const valueText = ([, name, append, value], vars) => (append === '' ? value : `$
 /** The variables `printf -v NAME` and `printf -vNAME` write. */
 const printfTargets = (args) => args.flatMap((word, i) => (word === '-v' ? [args[i + 1]] : word.startsWith('-v') ? [word.slice(2)] : []));
 
-/** True when read, printf -v, mapfile, readarray, getopts, for or select writes a variable git runs: its value is out of sight. */
+/** True when read, printf -v, zsh print -v, mapfile, readarray, getopts, for or select writes a variable git runs: its value is out of sight. */
 function writesOutOfSight(cmd, args) {
-  const targets = cmd === 'printf' ? printfTargets(args) : OUT_OF_SIGHT_WRITERS.has(cmd) ? args : [];
-  return targets.some((name) => RUN_NAMES.has(name));
+  const targets = cmd === 'printf' || cmd === 'print' ? printfTargets(args) : OUT_OF_SIGHT_WRITERS.has(cmd) ? args : [];
+  return targets.some(isRunName);
+}
+
+/**
+ * True when the words write a git-run variable in a way whose value is out of sight: `NAME[i]=v` (zsh changes part of it), or a bash
+ * nameref to it (`declare -n R=GIT_EDITOR`) that the line writes through.
+ */
+function writesThroughName(words, { cmd, args, at }, line) {
+  const subscripted = [...words.slice(0, at + 1), ...(DECLARERS.has(cmd) ? args : [])].some((word) => isRunName(SUBSCRIPT_ASSIGNMENT.exec(word)?.[1] ?? ''));
+  if (subscripted || cmd === undefined || !DECLARERS.has(cmd) || !args.some((word) => NAMEREF_OPTION.test(word))) return subscripted;
+  return args.map((word) => ASSIGNMENT.exec(word)).some((match) => match !== null && isRunName(match[3]) && line.writes(match[1], match[1]));
 }
 
 /**
@@ -132,11 +164,11 @@ function writesOutOfSight(cmd, args) {
  * @returns {string[]} ask reasons, empty when every value is fine
  */
 export function gitRunValueReasons(words, { cmd, args, at }, env, reasonsOf) {
-  if (writesOutOfSight(cmd, args)) return [GIT_UNREADABLE_REASON];
+  if (writesOutOfSight(cmd, args) || writesThroughName(words, { cmd, args, at }, env.line)) return [GIT_UNREADABLE_REASON];
   if (!words.some((word) => word.includes('='))) return []; // no assignment and no `${NAME:=value}` (most commands, and fast)
   const assignments = [...words.slice(0, at + 1), ...(DECLARERS.has(cmd) ? args : [])].map((word) => ASSIGNMENT.exec(word));
-  const values = assignments.filter((match) => match !== null && RUN_NAMES.has(match[1])).map((match) => [match[1], valueText(match, env.vars)]);
-  const defaults = [...words.join(' ').matchAll(DEFAULT_ASSIGNMENT)].filter(([, name]) => RUN_NAMES.has(name)).map(([, name, text]) => [name, text]);
+  const values = assignments.filter((match) => match !== null && isRunName(match[1])).map((match) => [match[1], valueText(match, env.vars)]);
+  const defaults = [...words.join(' ').matchAll(DEFAULT_ASSIGNMENT)].filter(([, name]) => isRunName(name)).map(([, name, text]) => [name, text]);
   const distinct = new Map([...values, ...defaults].map(([target, text]) => [`${target}=${text}`, [target, text]]));
   return [...distinct.values()].flatMap(([target, text]) => valueReasons(text, env, reasonsOf, target));
 }

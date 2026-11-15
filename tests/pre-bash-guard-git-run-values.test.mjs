@@ -123,3 +123,50 @@ test('hostile shapes stay bounded: a value repeated by many git commands, many v
   const fastest = fastestMs(() => [manyGits, values, defaults, keys].forEach((command) => decide(command, ctx)));
   assert.ok(fastest < MAX_MS, `took too long (fastest of 3: ${fastest.toFixed(1)} ms)`);
 });
+
+// The L31 re-audit's last gaps (L36 items 6-9). Each runs on an injected platform, so the result does not depend on the machine.
+const PLATFORMS = ['linux', 'darwin', 'win32'];
+/** Runs `work` with process.platform set to `platform`, then restores it. */
+function onPlatform(platform, work) {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { ...original, value: platform });
+  try {
+    return work();
+  } finally {
+    Object.defineProperty(process, 'platform', original);
+  }
+}
+const onEachPlatform = (work) => PLATFORMS.forEach((platform) => onPlatform(platform, work));
+
+test('a git-run value with a positional parameter ($1..$9, $@, $*) cannot be read: it asks', () => {
+  onEachPlatform(() => assertAll(['A=r; set -- "${A}m -rf ~/x"; GIT_EDITOR="sh -c \\"$1\\"" git commit', `GIT_EDITOR="sh -c '$@'" git commit`,
+    `git -c core.editor='sh -c "$*"' commit`, 'GIT_PAGER="less $2" git log'], asksUnreadableToo));
+});
+
+test('zsh ${NAME::=v}, print -v, NAME[i]= and a write through a bash nameref are read or ask', () => {
+  onEachPlatform(() => {
+    assertAll(['A=r; : ${X::="${A}m -rf ~/x"}; GIT_EDITOR="$X" git commit', ': ${GIT_EDITOR::="${A}m -rf ~/x"}; export GIT_EDITOR; git commit',
+      'A=r; print -v GIT_EDITOR "${A}m -rf ~/x"; export GIT_EDITOR; git commit', 'X=r; X[2]="m -rf ~/x"; GIT_EDITOR="$X" git commit',
+      'GIT_EDITOR=r; GIT_EDITOR[2]="m -rf ~/x"; export GIT_EDITOR; git commit',
+      'declare -n R=GIT_EDITOR; A=r; R="${A}m -rf ~/x"; export GIT_EDITOR; git commit'], asksUnreadableToo);
+    asksRm(`: \${GIT_EDITOR::='${RM}'}; export GIT_EDITOR; git commit`);
+    asksRm('A=r; : ${GIT_EDITOR::="${A}m -rf ~/x"}; export GIT_EDITOR; git commit'); // A is known here, so the value is read
+    assertAll(['declare -n R=GIT_EDITOR; echo "$R"', 'arr[0]=a; echo "${arr[0]}"', 'print -v X "%s" y; echo "$X"'], quiet);
+  });
+});
+
+test('nested defaults with a plain innermost literal stay quiet; any other default still asks or is judged', () => {
+  onEachPlatform(() => {
+    assertAll(['GIT_EDITOR="${VISUAL:-${EDITOR:-vi}}" git commit', 'export EDITOR="${VISUAL:-${EDITOR:-nano}}"'], quiet);
+    assertAll(['GIT_EDITOR="${VISUAL:-vi $X}" git commit', 'GIT_EDITOR="${VISUAL:-$EDITOR}" git commit',
+      'GIT_EDITOR="${VISUAL:-${EDITOR:-$(cat f)}}" git commit', 'GIT_EDITOR="${VISUAL:-${EDITOR:-vi}x}" git commit'], asksUnreadableToo);
+    asksRm(`GIT_EDITOR="\${VISUAL:-\${EDITOR:-${RM}}}" git commit`);
+  });
+});
+
+test('on Windows git-run variable names ignore case (git_editor is GIT_EDITOR); on macOS and Linux they are exact', () => {
+  for (const line of [`git_editor='${RM}' git commit`, `export Git_Editor='${RM}'; git commit`, `env git_ssh_command='${RM}' git fetch`]) {
+    onPlatform('win32', () => asksRm(line));
+    for (const platform of ['linux', 'darwin']) onPlatform(platform, () => quiet(line));
+  }
+});
