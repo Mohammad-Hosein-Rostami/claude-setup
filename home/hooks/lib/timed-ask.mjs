@@ -12,9 +12,10 @@
 // No GUI (ssh session, CI, no display) or a failing dialog tool -> decision "ask": the CLI's own prompt, which also covers
 // bypassPermissions mode. Dialog tools: macOS osascript, Windows PowerShell WScript.Shell Popup (its buttons are fixed to
 // Yes = Allow / No = Deny), Linux zenity (plain text, --no-markup). The dialog text is passed as an argument or an environment
-// variable, never spliced into a script. Every shown value is made visible first (line breaks become a visible mark, control, bidi and
-// zero-width characters are dropped), so no value can fake a "Why:" line or hide part of a command; a long value shows its head, its
-// tail and its full length. Invariants: never throws, never puts a secret in the dialog (values are masked after they are made visible).
+// variable, never spliced into a script. Every shown value is masked and then made visible (line breaks become a visible mark, control,
+// format, bidi, zero-width and other default-ignorable characters are dropped), so no value can fake a "Why:" line or hide part of a
+// command; a long value shows its head, its tail and its full length. Invariants: never throws, never puts a secret in the dialog (the
+// whole value is masked with its real line breaks, before it is flattened or cut).
 import { spawnSync } from 'node:child_process';
 import { logDecision } from './guard-log.mjs';
 import { maskSecrets } from './secrets.mjs';
@@ -32,11 +33,11 @@ const SPAWN_GRACE_S = 5; // the dialog tool gives up by itself at the timeout; t
 const MAX_COMMAND_CHARS = 200; // a value up to this length is shown whole
 const HEAD_CHARS = 120; // a longer one shows its first HEAD_CHARS and last TAIL_CHARS characters and its length
 const TAIL_CHARS = 80;
-const MAX_MASKED_INPUT = 2048; // the head and the tail are each masked from at most this many characters (regex work stays bounded)
 const LINE_BREAK = /\r\n|[\n\r\v\f\u0085\u2028\u2029]/g;
 const LINE_MARK = ' \u23CE '; // a visible return symbol where the value had a line break
-// C0 and C1 controls (tab handled apart), zero-width characters, bidi embeddings, overrides and isolates, word joiners, BOM
-const HIDDEN_CHARS = /[\u0000-\u0008\u000E-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g;
+// Controls (except the \n that LINE_BREAK leaves), format characters (bidi marks, overrides, isolates, zero-width, tags, soft hyphen) and
+// every other default-ignorable code point (fillers, variation selectors): none of them shows, so each could hide or reorder text.
+const HIDDEN_CHARS = /(?!\n)[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/gu;
 const SECONDS_PER_MINUTE = 60;
 const DIALOG_TITLE = 'Claude Code: confirm action';
 const TEXT_ENV = 'CLAUDE_ASK_DIALOG_TEXT';
@@ -153,23 +154,35 @@ export function parseDialogResult(platform, result) {
   return 'unavailable';
 }
 
-/** @returns {string} `text` on one line: line breaks become a visible mark, tabs a space, hidden characters are dropped */
-const visible = (text) => String(text ?? '').replace(LINE_BREAK, LINE_MARK).replace(/\t/g, ' ').replace(HIDDEN_CHARS, '');
+/** @returns {string} `text` with every line break as \n, tabs as spaces and hidden characters dropped (still multi-line) */
+const plain = (text) => String(text ?? '').replace(LINE_BREAK, '\n').replace(/\t/g, ' ').replace(HIDDEN_CHARS, '');
 
-/** @returns {string} `text` made visible and masked; over MAX_COMMAND_CHARS it is head ... tail [length chars] */
+/** @returns {string} `text` on one line: line breaks become a visible mark, tabs a space, hidden characters are dropped */
+const visible = (text) => plain(text).replace(/\n/g, LINE_MARK);
+
+/**
+ * @returns {string} `text` masked, then put on one line. The masker must see the real line breaks: its rules stop at a newline (a header value
+ * is not a literal when a `$` follows on the SAME line), so flattening first would let a later line unmask a secret.
+ */
+const maskedVisible = (text) => maskSecrets(plain(text)).replace(/\n/g, LINE_MARK);
+
+/**
+ * @returns {string} `text` masked and made visible; over MAX_COMMAND_CHARS it is head ... tail [length chars]. The whole text is masked
+ * before it is cut, so a value whose prefix is in the head never shows its own tail; past the masker's 32 KB scan limit the tail is the
+ * end of the scanned part, marked "[...cut]", never unmasked text.
+ */
 function shownValue(text) {
   const raw = String(text ?? '');
-  const head = maskSecrets(visible(raw.slice(0, MAX_MASKED_INPUT)));
-  if (raw.length <= MAX_MASKED_INPUT && head.length <= MAX_COMMAND_CHARS) return head;
-  const tail = raw.length <= MAX_MASKED_INPUT ? head : maskSecrets(visible(raw.slice(-MAX_MASKED_INPUT)));
-  return `${head.slice(0, HEAD_CHARS)} ... ${tail.slice(-TAIL_CHARS)} [${raw.length} chars]`;
+  const shown = maskedVisible(raw);
+  if (shown.length <= MAX_COMMAND_CHARS) return shown;
+  return `${shown.slice(0, HEAD_CHARS)} ... ${shown.slice(-TAIL_CHARS)} [${raw.length} chars]`;
 }
 
 /** @returns {string} the dialog body: tool, why, the labelled target (head and tail), directory, session/agent, and the timeout rule */
 function dialogText({ tool, reason, command, targetLabel = 'Command', cwd, sessionId, agentId }, timeoutS) {
   const target = shownValue(command);
   const who = [sessionId && `session ${visible(String(sessionId).slice(0, 8))}`, agentId && `agent ${visible(String(agentId).slice(0, 8))}`].filter(Boolean).join(', ');
-  const lines = [`Tool: ${visible(tool)}`, `Why: ${maskSecrets(visible(reason))}`];
+  const lines = [`Tool: ${visible(tool)}`, `Why: ${maskedVisible(reason)}`];
   if (target) lines.push(`${visible(targetLabel)}: ${target}`);
   if (cwd) lines.push(`Directory: ${visible(cwd)}`);
   if (who) lines.push(`From: ${who}`);

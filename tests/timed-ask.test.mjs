@@ -221,6 +221,42 @@ test('S3: the tail of a very long command is masked too; a target that is not a 
   assert.doesNotMatch(bodyOf(file), /^Command:/m);
 });
 
+// Built from parts, like SECRET: a header value with no known token shape, so only the header rule can mask it.
+const HEADER_SECRET = ['Q9vT2', 'mLx8R', 'pW4zK'].join('');
+
+test('re-audit 1: secrets are masked before line breaks are flattened, so a later line holding `$`, `<` or a backtick cannot unmask a header', () => {
+  const commands = [
+    `curl -H X-Api-Key:${HEADER_SECRET} https://api.example.com/v1/items\necho done in $SECONDS s`,
+    `cat > h.txt <<'EOF'\nCookie: session=${HEADER_SECRET}\nEOF\nwc -l < h.txt`,
+  ];
+  for (const command of commands) {
+    const dialog = fakeDialog('allow');
+    answerAsk({ ...request, reason: `secret in ${command}`, command }, dialog.env);
+    const body = bodyOf(dialog);
+    assert.ok(!body.includes(HEADER_SECRET), body);
+    assert.ok(body.includes('[masked]'), body);
+    assert.ok(body.includes(' \u23CE '), 'line breaks are still shown as the mark');
+  }
+});
+
+test('re-audit 1: a masked value longer than the shown head never shows its own tail', () => {
+  const dialog = fakeDialog('allow');
+  const value = `Zq8${'k3P9'.repeat(800)}TAILEND77`;
+  answerAsk({ ...request, command: `export API_KEY=${value}` }, dialog.env);
+  const body = bodyOf(dialog);
+  assert.ok(!body.includes('TAILEND77'), body);
+  assert.ok(!body.includes('k3P9k3P9'), body);
+});
+
+test('re-audit 5a: every default-ignorable and format character is dropped from the dialog', () => {
+  const dialog = fakeDialog('allow');
+  const hidden = ['\u061C', '\u00AD', '\u034F', '\u3164', '\uFFA0', '\u206A', '\u206F', '\u180E', '\u17B4', '\uFE0F', '\u{E0041}', '\uFFF9'];
+  answerAsk({ ...request, command: `echo a${hidden.join('b')}c` }, dialog.env);
+  const body = bodyOf(dialog);
+  for (const char of hidden) assert.ok(!body.includes(char), `U+${char.codePointAt(0).toString(16)}`);
+  assert.match(body, /^Command: echo abbbbbbbbbbbc$/m);
+});
+
 test('answerAsk: an explicit timeoutS wins over CLAUDE_ASK_TIMEOUT_S', () => {
   const dialog = fakeDialog('timeout', { CLAUDE_ASK_TIMEOUT_S: '45' });
   const answer = answerAsk({ ...request, timeoutS: 7 }, dialog.env, process.platform, steppingClock(8_000));

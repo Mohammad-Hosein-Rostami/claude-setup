@@ -1,4 +1,5 @@
 // Literal secrets typed into a Bash command. Exports: findLiteralSecret(command) -> string | undefined; maskSecrets(command) -> string;
+// maskSecretFields(toolInput) -> masked JSON (secret-named fields of any tool input, then maskSecrets);
 // literalSecretValues(command) -> string[] (the raw values, for lib/allowed-literals.mjs, which only hashes them; never log or print them).
 // Returns only a KIND label ("an Anthropic API key", ...), never the secret itself: the caller prints it in a deny message.
 // Detected: sk-ant-..., ghp_/gho_/ghu_/ghs_/ghr_/github_pat_ tokens, AWS access key ids, `--password=x` / `--password x`,
@@ -147,6 +148,10 @@ const VALUE_KINDS = [
   mask: new RegExp(`(${prefix})${start}${lookahead}(?:${value ?? VALUE_RUN})`, `g${flags}`),
 }));
 const MASK = '[masked]';
+// A field name that holds a credential in a tool's JSON input: the same KEY/TOKEN and SECRET/PASS/PASSWORD parts as the variable rules above,
+// plus header-style names. camelCase humps count as a boundary (`apiKey`, `clientSecret`); `keyboard`, `passport` and `max_tokens` do not match.
+const SECRET_FIELD_NAME = new RegExp(`${PASSWORD_NAME_PART}|${TOKEN_NAME_PART}|AUTHORIZATION|COOKIE|CREDENTIAL|(?<![A-Za-z0-9])AUTH(?![A-Za-z0-9])`, 'i');
+const CAMEL_HUMP = /([a-z0-9])([A-Z])/g;
 
 /**
  * @param {string} command raw command text
@@ -170,6 +175,20 @@ export function maskSecrets(command) {
   for (const [pattern] of TOKEN_KINDS) text = text.replace(new RegExp(pattern.source, 'g'), MASK);
   for (const { mask } of VALUE_KINDS) text = text.replace(mask, `$1${MASK}`);
   return command.length > MAX_SCAN_CHARS ? `${text}[...cut]` : text;
+}
+
+/**
+ * A tool input (any JSON value, e.g. an MCP call) as JSON with every credential hidden, so it can go to a dialog or a log: a string or number
+ * under a secret-looking field name (`password`, `apiKey`, `X-Api-Key`, `Authorization`, at any depth) becomes "[masked]", then maskSecrets
+ * hides the secret shapes left in other fields.
+ * @param {unknown} value parsed tool input
+ * @returns {string} masked JSON text
+ * @throws {TypeError} when the value cannot be written as JSON (a cycle or a BigInt), as JSON.stringify does
+ */
+export function maskSecretFields(value) {
+  const isSecretName = (name) => SECRET_FIELD_NAME.test(name.replace(CAMEL_HUMP, '$1_$2'));
+  const json = JSON.stringify(value, (name, field) => ((typeof field === 'string' || typeof field === 'number') && isSecretName(name) ? MASK : field));
+  return json === undefined ? '' : maskSecrets(json);
 }
 
 const WORD_REST = /^[^\s;&|]*/;

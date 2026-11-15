@@ -8,17 +8,22 @@
 // AskUserQuestion is a multiple-choice question, not a permission: never answered here (askUserQuestionTimeout covers it).
 // ExitPlanMode needs updatedInput with an allow (hooks docs), so its allow echoes the plan input back.
 // The input carries no prompt reason, so the dialog says what the tool asks to do, in which mode, and that Claude Code gave no reason;
-// for Bash it also runs the guard's rules (pre-bash-guard.mjs decideSafely) and shows the guard's own reason when the guard asks, so a
-// guard ask whose own dialog failed is never shown under a generic reason.
+// for Bash it also runs the guard's rules (pre-bash-guard.mjs decideSafely) and for Artifact the Artifact hook's (artifact-ask.mjs
+// decideArtifact), and shows that hook's own reason when it asks, so an ask whose own dialog failed is never shown under a generic reason.
 // A Bash command the guard's dialog allowed moments before (same session, agent, directory and command, 10 s, used once,
-// lib/answered-commands.mjs) is allowed without a second dialog. A deny rule still wins over an allow (hooks docs); an ask rule is a
-// prompt like any other and gets the dialog. Invariants: never throws out of main; every answered prompt is logged to the guard log.
+// lib/answered-commands.mjs) is allowed without a second dialog, unless the guard classes it as DESTRUCTIVE: that one always gets this
+// dialog, so a forged record cannot let it through unseen. A deny rule still wins over an allow (hooks docs); an ask rule is a
+// prompt like any other and gets the dialog. A JSON input (MCP and other tools) is shown and logged with its secret-named fields masked
+// (lib/secrets.mjs maskSecretFields). Invariants: never throws out of main; every answered prompt is logged to the guard log.
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { takeAnswered } from './lib/answered-commands.mjs';
 import { logDecision } from './lib/guard-log.mjs';
 import { readProdHosts } from './lib/remote.mjs';
+import { maskSecretFields } from './lib/secrets.mjs';
 import { answerAsk, permissionTimeoutSeconds } from './lib/timed-ask.mjs';
+import { DESTRUCTIVE_PREFIX } from './lib/verdict.mjs';
+import { decideArtifact } from './artifact-ask.mjs';
 import { decide, decideSafely } from './pre-bash-guard.mjs';
 
 export const NEVER_ANSWERED = ['AskUserQuestion'];
@@ -47,7 +52,7 @@ function targetOf(toolInput) {
   const found = TARGET_FIELDS.find(([field]) => typeof toolInput?.[field] === 'string');
   if (found) return { label: found[1], text: toolInput[found[0]] };
   try {
-    return { label: 'Input', text: toolInput === undefined ? '' : JSON.stringify(toolInput) };
+    return { label: 'Input', text: maskSecretFields(toolInput) };
   } catch {
     return { label: 'Input', text: '(input not shown: it cannot be written as JSON)' };
   }
@@ -84,12 +89,15 @@ export function permissionReply(input, env = process.env, answer = answerAsk) {
   const record = { hook: HOOK_NAME, tool, command: text, cwd, session: input.session_id };
   const allow = NEEDS_UPDATED_INPUT.includes(tool) ? { behavior: 'allow', updatedInput: input.tool_input } : { behavior: 'allow' };
   const isBash = tool === 'Bash' && label === 'Command';
-  if (isBash && takeAnswered({ session: input.session_id, agentId: input.agent_id, cwd, command: text }, env)) {
+  const guard = isBash ? guardReason(text, cwd, env) : undefined;
+  const handOver = isBash && !guard?.startsWith(DESTRUCTIVE_PREFIX); // a destructive command always gets the dialog
+  if (handOver && takeAnswered({ session: input.session_id, agentId: input.agent_id, cwd, command: text }, env)) {
     logDecision({ ...record, decision: 'allow', outcome: 'guard-answered', reason: 'the guard dialog answered it' }, env);
     return replyLine(allow);
   }
-  const guard = isBash ? guardReason(text, cwd, env) : undefined;
-  const reason = guard ? `Bash guard: ${guard}. ${promptReason(tool, input.permission_mode)}` : promptReason(tool, input.permission_mode);
+  const artifact = tool === 'Artifact' ? decideArtifact(input.tool_input) : undefined;
+  const hookReason = guard ? `Bash guard: ${guard}` : artifact && `Artifact hook: ${artifact}`;
+  const reason = hookReason ? `${hookReason}. ${promptReason(tool, input.permission_mode)}` : promptReason(tool, input.permission_mode);
   const request = { tool, reason, command: text, targetLabel: label, timeoutS: permissionTimeoutSeconds(env), cwd, sessionId: input.session_id, agentId: input.agent_id };
   const result = answer(request, env);
   logDecision({ ...record, decision: result.decision, outcome: result.outcome, reason }, env);

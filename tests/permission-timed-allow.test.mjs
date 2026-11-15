@@ -177,13 +177,63 @@ test('settings/base.json registers the hook for every tool, with a timeout above
 
 test('a Bash command the guard already asked about is allowed once without a second dialog', () => {
   const env = privateEnv();
-  rememberAnswered(callOf(), env);
+  const input = promptInput({ tool_input: { command: 'git push origin main' } }); // the guard asks, but not as DESTRUCTIVE
+  rememberAnswered(callOf(input), env);
   const first = fakeAnswer('deny', 'deny');
-  assert.deepEqual(decisionOf(permissionReply(promptInput(), env, first.answer)), { behavior: 'allow' });
+  assert.deepEqual(decisionOf(permissionReply(input, env, first.answer)), { behavior: 'allow' });
   assert.equal(first.calls.length, 0);
   const second = fakeAnswer('deny', 'deny');
-  assert.equal(decisionOf(permissionReply(promptInput(), env, second.answer)).behavior, 'deny'); // used up: asks again
+  assert.equal(decisionOf(permissionReply(input, env, second.answer)).behavior, 'deny'); // used up: asks again
   assert.equal(second.calls.length, 1);
+});
+
+test('re-audit 4: a command the guard classes as DESTRUCTIVE always gets the dialog, even with a (forged) answered record', () => {
+  for (const command of ['git push --force origin main', RM_COMMAND]) {
+    const env = privateEnv();
+    const input = promptInput({ tool_input: { command } });
+    rememberAnswered(callOf(input), env);
+    const { answer, calls } = fakeAnswer('deny', 'deny');
+    assert.equal(decisionOf(permissionReply(input, env, answer)).behavior, 'deny', command);
+    assert.equal(calls.length, 1, command);
+    assert.match(calls[0].request.reason, /^Bash guard: DESTRUCTIVE: /, command);
+  }
+});
+
+// Built from parts so this file never holds a string that looks like a real credential.
+const PASSWORD = ['Hq7', 'Lm2', 'Vx9', 'Rt4'].join('');
+const TOKEN = ['Tk5', 'Pz8', 'Wd3', 'Ny6'].join('');
+
+test('re-audit 2: secret-named fields of any tool input (nested, any case) are masked in the dialog and in the guard log', () => {
+  const toolInput = {
+    host: 'db.internal',
+    password: PASSWORD,
+    options: { headers: { 'X-Api-Key': TOKEN, Authorization: `Basic ${TOKEN}`, Cookie: `sid=${TOKEN}` }, list: [{ access_token: TOKEN }] },
+    apiKey: TOKEN, clientSecret: TOKEN, api_key: TOKEN, credentials: TOKEN, db_pass: PASSWORD,
+    max_tokens: 5, keyboard: 'us', passport: 'id', note: `export DB_PASSWORD=${PASSWORD}`,
+  };
+  const env = privateEnv();
+  const { answer, calls } = fakeAnswer('allow', 'timeout');
+  permissionReply(promptInput({ tool_name: 'mcp__db__connect', tool_input: toolInput }), env, answer);
+  const shown = calls[0].request.command;
+  const logged = readFileSync(env.CLAUDE_GUARD_LOG, 'utf8');
+  for (const text of [shown, logged]) {
+    assert.ok(!text.includes(PASSWORD), text);
+    assert.ok(!text.includes(TOKEN), text);
+  }
+  assert.ok(shown.includes('"host":"db.internal"') && shown.includes('"password":"[masked]"'), shown);
+  for (const plain of ['"max_tokens":5', '"keyboard":"us"', '"passport":"id"']) assert.ok(shown.includes(plain), plain);
+});
+
+test('re-audit 3: an Artifact prompt (its own dialog failed) names the real action, as the Artifact hook does', () => {
+  const cases = [[{ action: 'delete', url: 'https://claude.ai/artifact/abc' }, /^Artifact hook: Artifact delete permanently removes/], [{ file_path: '/p/a.html' }, /^Artifact hook: Artifact publish creates/]];
+  for (const [toolInput, reason] of cases) {
+    const { answer, calls } = fakeAnswer('allow', 'timeout');
+    permissionReply(promptInput({ tool_name: 'Artifact', tool_input: toolInput }), privateEnv(), answer);
+    assert.match(calls[0].request.reason, reason);
+  }
+  const read = fakeAnswer('allow', 'timeout');
+  permissionReply(promptInput({ tool_name: 'Artifact', tool_input: { action: 'read', url: 'https://claude.ai/artifact/abc' } }), privateEnv(), read.answer);
+  assert.doesNotMatch(read.calls[0].request.reason, /Artifact hook/);
 });
 
 test('S4/M1: the hand-over is keyed on session, agent, directory and the exact command', () => {
