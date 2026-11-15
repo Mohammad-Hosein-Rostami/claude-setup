@@ -1,6 +1,7 @@
 // Purpose: browser-free tests for `figma-frames` (T9): framesOf on a stub node tree, and the command with a stubbed fetch
 // (request URL with depth 2, output file, dedupe, no token printed, exit 2 without a token). Exports: none.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -91,4 +92,18 @@ test('run: a --node in the URL form (8199-243551) is asked for, and recorded, as
   logs.mock.restore();
   assert.match(urls[0], /ids=8199%3A243551&depth=2$/);
   assert.match(JSON.parse(fs.readFileSync(out, 'utf8')).source, /--node 8199:243551$/);
+});
+
+test('run: --out in a folder that does not exist is one readable setup error (exit 2), before any request', async () => {
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'figma-frames-')), 'missing', 'frames.json');
+  await withToken('t', async () => {
+    const urls = stubFetch({ '1:1': PAGE });
+    await assert.rejects(() => run(['--file', 'KEY', '--node', '1:1', '--out', out]),
+      (error) => error instanceof UsageError && error.message === `cannot write ${out}: the folder does not exist`);
+    assert.equal(urls.length, 0);
+  });
+  const cli = spawnSync(process.execPath, [new URL('../cli.mjs', import.meta.url).pathname, 'figma-frames', '--file', 'K', '--node', '1:1', '--out', out],
+    { encoding: 'utf8', env: { ...process.env, FIGMA_TOKEN: '' } });
+  assert.equal(cli.status, 2);
+  assert.equal(cli.stderr, `usage/setup error: cannot write ${out}: the folder does not exist\n`);
 });
