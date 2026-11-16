@@ -206,6 +206,11 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/final-reply-cap.mjs\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/status-deliver.mjs\"",
+            "timeout": 10
           }
         ]
       }

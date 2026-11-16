@@ -1,0 +1,81 @@
+// Stop: records the hand-over by itself. When the lead's turn ends, runs `status.mjs deliver --auto` on the STATUS.md this session
+// last edited or estimated (its link in ~/.claude/state/estimate/session/), so a job handed over with nothing open gets its
+// `deliver:N` row and the estimator can score its commitment (0 of 16 old commitments were scored: nobody wrote the rows).
+// Exports: deliverAtStop(input, { stateDir, now }) -> { code, message } | null (null: no usable session id or no link).
+// Invariants: never blocks a stop and never prints a decision: stdout stays empty, exit is always 0, a refusal or error is one
+// stderr line. deliver --auto itself writes only when no work row is open and one was done after the last hand-over.
+// Safety (the hook edits a file named in a state file): the stdin JSON is read up to MAX_INPUT_BYTES; the linked path must be
+// absolute and named STATUS.md, its folder must be its own real path (no link anywhere in the chain), the file a regular file
+// (lstat, never followed) of at most MAX_STATUS_BYTES; status.mjs then edits it under its lock with its own link refusal.
+// Stop hooks of one group run side by side, so this one assumes nothing about the others.
+import { lstatSync, realpathSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { isSessionId } from './lib/session-store.mjs';
+import { linkedStatusPath, stateDir as defaultStateDir } from '../tools/estimate/lib/table-store.mjs';
+import { runStatus } from '../tools/status/status.mjs';
+
+const MAX_INPUT_BYTES = 1 << 20; // 1 MiB: the Stop JSON carries the last reply; a larger input is not a normal stop and is skipped
+const MAX_STATUS_BYTES = 4 << 20; // 4 MiB: the largest live STATUS.md is about 60 KB; status.mjs reads the whole file
+const STATUS_NAME = 'STATUS.md';
+
+/** Why the linked path may not be edited, or null when it is a plain STATUS.md in a folder reached without links. */
+function unsafeReason(path) {
+  if (basename(path) !== STATUS_NAME) return 'is not a STATUS.md';
+  let stats;
+  try {
+    if (realpathSync(dirname(path)) !== dirname(path)) return 'sits behind a link in its folder path';
+    stats = lstatSync(path);
+  } catch (error) {
+    return `cannot be read (${error.code ?? error.message})`;
+  }
+  if (!stats.isFile()) return 'is a link or not a regular file';
+  if (stats.size > MAX_STATUS_BYTES) return `is over ${MAX_STATUS_BYTES} bytes`;
+  return null;
+}
+
+/**
+ * Runs `deliver --auto` on the session's linked STATUS.md.
+ * @param {{session_id?: string} | null} input the Stop hook JSON
+ * @param {{stateDir: string, now: Date}} options the estimator's store and the clock
+ * @returns {{code: number, message: string} | null} the status edit's outcome (code 0 also when nothing was due), code 1 when the
+ *   linked path is refused; null when the input has no usable session id or the session linked no STATUS.md
+ */
+export function deliverAtStop(input, { stateDir, now }) {
+  const sessionId = input?.session_id;
+  if (!isSessionId(sessionId)) return null;
+  const path = linkedStatusPath(stateDir, sessionId);
+  if (path === null) return null;
+  const unsafe = unsafeReason(path);
+  if (unsafe !== null) return { code: 1, message: `the linked ${path} ${unsafe}: refused` };
+  return runStatus(['--file', path, 'deliver', '--auto'], { cwd: dirname(path), now, sessionId, stateDir });
+}
+
+/** The stdin text, or null when it is longer than MAX_INPUT_BYTES. */
+async function boundedStdin() {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of process.stdin) {
+    size += chunk.length;
+    if (size > MAX_INPUT_BYTES) return null;
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+async function main() {
+  const text = await boundedStdin();
+  if (text === null) return; // not a normal Stop input: nothing to do, and nothing to say
+  const outcome = deliverAtStop(JSON.parse(text), { stateDir: defaultStateDir(), now: new Date() });
+  if (outcome !== null && outcome.code !== 0) process.stderr.write(`status-deliver: ${outcome.message}\n`);
+}
+
+// ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
+  try {
+    await main();
+  } catch (error) {
+    process.stderr.write(`status-deliver: ${error.message}\n`); // never trap a session
+  }
+  process.exitCode = 0;
+}
