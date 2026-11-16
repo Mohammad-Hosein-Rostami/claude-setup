@@ -456,3 +456,20 @@ test('an unclosed code fence above the section: add, deliver, rule and decision 
   assert.deepEqual([auto.code, /nothing recorded/.test(auto.message)], [0, true], auto.message);
   assert.equal(await read(), UNCLOSED_FENCE);
 });
+
+// Review of 75af2e9: the same-bullet check looked at every line, so a rule quoted in a code fence was never added to the section.
+test('rule adds a bullet that only appears inside a code fence elsewhere in the file', async () => {
+  const quoted = `\`\`\`\n- keep going\n\`\`\`\n\n${PIPED}`;
+  const { run, read } = await project(quoted);
+  assert.equal(run('rule', 'keep going').code, 0);
+  assert.match(await read(), /## Standing rules\n- keep it short\n- keep going\n/);
+});
+
+test('add makes a new Work items section after one blank line and ends the file with a newline', async () => {
+  const { run, read } = await project('# STATUS\n');
+  assert.equal(run('add', '1', 'first', 'S').code, 0);
+  assert.equal(await read(), '# STATUS\n\n## Work items\n\n| id | item | size | started | done | evidence |\n| -- | -- | -- | -- | -- | -- |\n| 1 | first | S | - | - | - |\n');
+  const empty = await project('');
+  assert.equal(empty.run('add', '1', 'first', 'S').code, 0);
+  assert.ok((await empty.read()).startsWith('## Work items\n'), 'an empty file gets no leading blank line');
+});

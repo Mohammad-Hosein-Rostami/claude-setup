@@ -212,3 +212,12 @@ test('a cwd typed in another case still holds the STATUS.md on a case-insensitiv
   assert.equal(outcome.code, 0, outcome.message);
   assert.match(read(), DELIVER_ROW);
 });
+
+test('a cwd below the STATUS.md folder, with no project dir, does not hold it: no hand-over', async () => {
+  const stateDir = await tempDir('deliver-state-');
+  const { cwd, read } = await linkedProject(ALL_DONE, stateDir);
+  mkdirSync(join(cwd, 'src'));
+  const outcome = deliverAtStop({ session_id: SESSION, cwd: join(cwd, 'src') }, { stateDir, now: NOW });
+  assert.match(outcome.message, /outside/);
+  assert.doesNotMatch(read(), /deliver:/);
+});

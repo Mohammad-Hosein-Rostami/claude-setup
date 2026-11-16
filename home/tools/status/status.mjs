@@ -84,8 +84,10 @@ function tableToEdit(lines) {
   if (table === null) {
     const hidden = hiddenEndReason(lines);
     if (hidden !== null) return { error: hidden };
-    lines.push('', `## ${WORK_ITEMS}`, '', `| ${COLUMNS.join(' | ')} |`, `| ${COLUMNS.map(() => '--').join(' | ')} |`);
-    return { header: lines.length - 2, rows: [] };
+    while (lines.length > 0 && lines.at(-1).trim() === '') lines.pop(); // one blank line before the new heading, not two
+    if (lines.length > 0) lines.push('');
+    lines.push(`## ${WORK_ITEMS}`, '', `| ${COLUMNS.join(' | ')} |`, `| ${COLUMNS.map(() => '--').join(' | ')} |`, '');
+    return { header: lines.length - 3, rows: [] };
   }
   if (table.header === -1) return { error: 'the `## Work items` section has no table header: id | item | size | started | done | evidence' };
   return table;
@@ -193,8 +195,8 @@ function addBullet(lines, kind, text, now) {
   const body = oneLine(text);
   if (!body) return { usage: `${kind} needs the text` };
   const bullet = kind === 'decision' ? `- ${stamp(now).slice(0, 10)} ${body}` : `- ${body}`;
-  if (lines.includes(bullet)) return {};
   const section = findSection(lines, SECTION_FOR[kind]);
+  if (lines.some((line, i) => section.visible[i] && line === bullet)) return {}; // a copy inside a code fence does not count
   if (section.start === -1) {
     const workItems = findSection(lines, WORK_ITEMS).start;
     const hidden = workItems === -1 ? hiddenEndReason(lines) : null;
