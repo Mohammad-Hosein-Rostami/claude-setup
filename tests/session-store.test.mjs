@@ -4,6 +4,8 @@
 // inside a fresh temp folder made here; command strings are only passed to decide() or the hook, nothing is executed.
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync, linkSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync,
@@ -316,4 +318,62 @@ test('lockFile names the lock instead of <session>.lock; a name with a path or n
     assert.equal(withSessionLock(dir, 'STATUS', () => 'ran', { lockFile }), undefined, lockFile);
   }
   assert.deepEqual(readdirSync(dir), []);
+});
+
+// Audit of 75af2e9 (m1): a waiter that judged a lock stale and paused right before deleting it removed the lock another waiter had
+// taken meanwhile, so both ran. The other waiter's take-over is put right before this caller's first change at the lock's name.
+test('a lock another waiter takes just before the stale one is removed stays, and this caller does not run over it', () => {
+  const dir = tempDir('lock-');
+  const lock = agedLock(dir, `${deadPid()} ${'a'.repeat(32)}`, 600);
+  const { rmSync: realRm, renameSync: realRename } = fs;
+  let raced = false;
+  const otherWaiterTakesOver = (path) => {
+    if (raced || path !== lock) return;
+    raced = true;
+    realRm(lock); // the other waiter removed the stale lock ...
+    fs.writeFileSync(lock, OTHER_TOKEN); // ... and took a new one: a live pid, fresh
+  };
+  fs.rmSync = (path, ...rest) => { otherWaiterTakesOver(path); return realRm(path, ...rest); };
+  fs.renameSync = (from, ...rest) => { otherWaiterTakesOver(from); return realRename(from, ...rest); };
+  syncBuiltinESMExports();
+  let outcome;
+  try {
+    outcome = withSessionLock(dir, 'sess-1', () => 'ran');
+  } finally {
+    Object.assign(fs, { rmSync: realRm, renameSync: realRename });
+    syncBuiltinESMExports();
+  }
+  assert.equal(raced, true, 'the take-over happened');
+  assert.equal(outcome, undefined, 'the live lock is waited on, not run over');
+  assert.equal(readFileSync(lock, 'utf8'), OTHER_TOKEN);
+  assert.deepEqual(readdirSync(dir), ['sess-1.lock'], 'nothing moved aside is left');
+});
+
+test('when a third caller takes the free name before the moved lock is put back, its lock stays and nothing moved aside is left', () => {
+  const dir = tempDir('lock-');
+  const lock = agedLock(dir, `${deadPid()} ${'a'.repeat(32)}`, 600);
+  const third = `${process.pid} ${'e'.repeat(32)}`;
+  const { renameSync: realRename, linkSync: realLink } = fs;
+  fs.renameSync = (from, ...rest) => {
+    if (from === lock && readFileSync(lock, 'utf8') !== OTHER_TOKEN) {
+      fs.rmSync(lock); // a second waiter removed the stale lock and took a new one, just before this caller's rename
+      fs.writeFileSync(lock, OTHER_TOKEN);
+    }
+    return realRename(from, ...rest);
+  };
+  fs.linkSync = (from, to) => {
+    fs.writeFileSync(to, third); // a third caller took the free name first
+    return realLink(from, to);
+  };
+  syncBuiltinESMExports();
+  let outcome;
+  try {
+    outcome = withSessionLock(dir, 'sess-1', () => 'ran');
+  } finally {
+    Object.assign(fs, { renameSync: realRename, linkSync: realLink });
+    syncBuiltinESMExports();
+  }
+  assert.equal(outcome, undefined, 'the third caller\'s live lock is waited on');
+  assert.equal(readFileSync(lock, 'utf8'), third);
+  assert.deepEqual(readdirSync(dir), ['sess-1.lock']);
 });

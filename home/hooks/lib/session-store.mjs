@@ -17,8 +17,8 @@
 //   <session>.lock (or the caller's lockFile name; O_EXCL, O_NOFOLLOW, 0600) in the checked folder holding `<pid> <random token>`.
 //   After the turn it is removed only while it still holds that token. A lock is left behind, and removed, when it is dated more than
 //   LOCK_CLOCK_SKEW_MS ahead (a clock change, a planted file), older than HELD_LOCK_MAX_MS, or older than STALE_LOCK_MS with its pid
-//   gone or no `<pid> <token>` text (a killed holder, an older version's empty lock); it is read again right before the delete and
-//   must be unchanged. Worst wait a caller sees: LOCK_WAIT_MS (1 s), after which it stores nothing; after a killed holder the next
+//   gone or no `<pid> <token>` text (a killed holder, an older version's empty lock); it is renamed to a unique name first and
+//   deleted only when that file is the one judged stale, else linked back (removeStaleLock). Worst wait a caller sees: LOCK_WAIT_MS (1 s), after which it stores nothing; after a killed holder the next
 //   caller waits until that lock is STALE_LOCK_MS old (about 0.5 s). Only a send that may be denied (a bounce or advice) takes the lock: a plain allow never
 //   touches the store. A link, FIFO or folder at the lock's name makes the store unusable. Cleanup counts an old lock as a store file too.
 // - Cleanup (on each write unless the caller passes { sweep: false }, which a store of long-lived history uses) removes only
@@ -28,7 +28,7 @@
 // - Nothing here throws.
 import { randomBytes } from 'node:crypto';
 import {
-  closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmSync, unlinkSync, writeFileSync,
+  closeSync, constants, fchmodSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 
@@ -223,8 +223,7 @@ function isStale(held, nowMs) {
 }
 
 /**
- * Removes a lock that was left behind (see isStale). Right before the delete the lock is read again and must still be the same file
- * with the same text, so a lock another caller took meanwhile is never removed.
+ * Removes a lock that was left behind (see isStale) through removeStaleLock, so a lock another caller took meanwhile is never removed.
  * @returns {boolean} false when something other than this user's regular file holds the lock's name
  */
 function clearStaleLock(dir, folder, lock) {
@@ -235,10 +234,34 @@ function clearStaleLock(dir, folder, lock) {
   if (held === null) return true;
   if (!isPrivateFile(held.stats)) return false; // swapped after the lstat
   if (!isStale(held, Date.now())) return true;
-  const again = readLock(lock);
-  const unchanged = again !== null && sameNode(again.stats, held.stats) && again.text === held.text;
-  if (unchanged && sameNode(lstatSync(dir), folder)) rmSync(lock, { force: true });
+  if (sameNode(lstatSync(dir), folder)) removeStaleLock(lock, held);
   return true;
+}
+
+/**
+ * Removes the lock judged stale (held) with no gap between the check and the delete: it is renamed to a unique name first (one
+ * atomic step, after which a new lock can no longer be lost under the old name), then checked and deleted. When the renamed file is
+ * not the one judged stale (another waiter removed that one and took the lock just before), it is linked back at once; only when a
+ * third caller took the free name in that instant does that waiter's lock stay lost (its release never removes the new one).
+ * @throws EEXIST when that third caller took the name; any other error of the rename (but ENOENT), the read or the link
+ */
+function removeStaleLock(lock, held) {
+  const aside = `${lock}.${randomBytes(TEMP_NAME_BYTES).toString('hex')}.stale`;
+  try {
+    renameSync(lock, aside);
+  } catch (error) {
+    if (error.code === 'ENOENT') return; // released or cleared meanwhile: the next try takes it
+    throw error;
+  }
+  try {
+    const moved = readLock(aside);
+    const judged = moved !== null && sameNode(moved.stats, held.stats) && moved.text === held.text;
+    // another waiter's live lock: back under its name (same file, same mtime); EEXIST (a third caller took the name) throws, and
+    // withSessionLock then gives up as for a busy lock
+    if (!judged) linkSync(aside, lock);
+  } finally {
+    rmSync(aside, { force: true }); // the stale lock itself, or the extra name of the lock put back
+  }
 }
 
 /** Runs work, then removes the lock while dir is still the checked folder and the lock still holds this caller's token. */
