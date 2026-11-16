@@ -45,7 +45,7 @@ test('backtest prints the scanner numbers and every threshold row, and exits 1 w
   assert.match(result.stdout, /t0\.STATUS\.md: working time first to last stamp 0\.67 h; 2 done work rows, 2 with a cost; jobs \(rows, hours\): 2, 0\.67/);
   assert.match(result.stdout, /rows with a cost: 4/);
   assert.match(result.stdout, /Replay: 4 instants over 2 handed-over jobs/);
-  assert.match(result.stdout, /\| instants with a time \| 0 of 4 \| >= 60 \| FAIL \|/); // two S rows per side: below the 5-row minimum
+  assert.match(result.stdout, /\| instants with a time \| 0 of 4 \| >= 58 \| FAIL \|/); // two S rows per side: below the 5-row minimum
   assert.equal(result.stdout.match(/\| (PASS|FAIL) \|$/gm).length, 12);
   assert.doesNotMatch(result.stdout, /secret/);
 });

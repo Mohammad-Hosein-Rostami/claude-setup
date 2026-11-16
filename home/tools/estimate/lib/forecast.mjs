@@ -14,7 +14,8 @@ const RUNS = 2000;
 const MIN_CLASS_ROWS = 5;
 /** Rows per size kept in the pool, newest by done time: all 146 measured rows fit; old rows leave without an age cliff (design 9). */
 const CLASS_WINDOW_ROWS = 200;
-/** Growth is pooled over the newest jobs until they hold this much work: 20 hours, minutes (design 3.4; the measured pool held 21.3 h). */
+/** Growth is pooled over the newest jobs until they hold this much work: 20 hours, minutes (design 3.4). The four
+ *  measured tables hold 21.3 h, just over it, so the job that crosses 20 h is the last one taken. */
 const GROWTH_WINDOW_MIN = 1200;
 /** Growth at or above this share means most of the work is usually missing from the table: no time is given (design 3.7, U5). */
 const MAX_GROWTH = 0.75;

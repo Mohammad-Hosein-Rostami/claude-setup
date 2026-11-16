@@ -36,9 +36,12 @@ const STEP_MIN = 20; // then one every 20 minutes until the hand-over
 const SLOW_ROW_SHARE = 0.85; // a running row past its class p85 is a move's cause
 const NO_SEED = { rows: [], jobs: [] };
 const DROPPED = /^dropped:/i;
-// Design 8.3: measured on the four frozen tables (3 seeds) and the threshold each number must meet.
+// Design 8.3: measured on the four frozen tables (3 seeds) and the threshold each number must meet. One threshold differs from the
+// design: instants with a time is >= 58, not >= 60. The design's checker had no 5-row minimum per size (MIN_CLASS_ROWS) and gave a
+// time at 63 of 64; this code keeps the minimum, so with auth left out its open L rows (4 finished L rows elsewhere) get the honest
+// "only 4 finished L rows" refusal at 5 instants. The lead chose the refusal over a guess and set the threshold to the measured 58.
 const THRESHOLDS = [
-  ['instants with a time', (s) => s.timed, (s) => `${s.timed} of ${s.instants}`, (v) => v >= 60, '>= 60'],
+  ['instants with a time', (s) => s.timed, (s) => `${s.timed} of ${s.instants}`, (v) => v >= 58, '>= 58'],
   ['hand-over within p85', (s) => s.within.p85 / s.timed, (s) => share(s.within.p85, s.timed), (v) => v >= 0.8 && v <= 0.95, '80-95 %'],
   ['within p95', (s) => s.within.p95 / s.timed, (s) => share(s.within.p95, s.timed), (v) => v >= 0.85, '>= 85 %'],
   ['within p50', (s) => s.within.p50 / s.timed, (s) => share(s.within.p50, s.timed), (v) => v >= 0.3 && v <= 0.65, '30-65 %'],
