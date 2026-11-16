@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { activeRuns, sessionTranscripts } from '../home/tools/estimate/lib/activity.mjs';
@@ -157,4 +157,40 @@ test('sessionTranscripts never follows a folder link: a link out is not read and
   assert.equal(child.signal, null, 'the walk must end');
   assert.equal(child.status, 0, child.stderr);
   assert.deepEqual(JSON.parse(child.stdout), [join(sessionFolder, 'subagents', 'agent-a.jsonl')]);
+});
+
+const INDEX_CAP_BYTES = 16 * (1 << 20); // the index's size cap
+const indexFile = (state) => join(state, 'activity', `${SESSION}.json`);
+
+test('an activity index over the cap is kept as it is, named once on stderr, and this run still counts the transcripts', (t) => {
+  const { root, projects, folder, state } = fixture();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(folder, `${SESSION}.jsonl`), line('2026-11-16T10:00:00.000Z'));
+  activeRuns([SESSION], { projectsDir: projects, stateDir: state }); // makes the private folder
+  const oversized = `${JSON.stringify({ v: 2, files: {}, runs: [[1, 2]] })}${' '.repeat(INDEX_CAP_BYTES)}`;
+  writeFileSync(indexFile(state), oversized);
+  const stderr = t.mock.method(process.stderr, 'write', () => true);
+  assert.deepEqual(activeRuns([SESSION], { projectsDir: projects, stateDir: state }), [[minuteOf('2026-11-16T10:00Z'), minuteOf('2026-11-16T10:01Z')]]);
+  assert.ok(readFileSync(indexFile(state), 'utf8') === oversized, 'its stored minutes are not dropped');
+  assert.equal(stderr.mock.callCount(), 1);
+  assert.match(stderr.mock.calls[0].arguments[0], /^estimate: .*\.json is over 16 MiB; it is kept as it is and not used\n$/);
+});
+
+test('an index under the old 1 MiB cap\'s size is still read, and one that would grow over the cap is not written', (t) => {
+  const { root, projects, folder, state } = fixture();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const main = join(folder, `${SESSION}.jsonl`);
+  writeFileSync(main, line('2026-11-16T10:00:00.000Z'));
+  activeRuns([SESSION], { projectsDir: projects, stateDir: state });
+  const runText = (k) => `[${31_000_000 + 2 * k},${31_000_001 + 2 * k}]`; // 20 bytes with its comma, after the test minutes (2026)
+  const head = '{"v":2,"files":{},"runs":[';
+  const count = Math.floor((INDEX_CAP_BYTES - head.length - 2) / (runText(0).length + 1));
+  const nearCap = `${head}${Array.from({ length: count }, (_, k) => runText(k)).join(',')}]}`;
+  writeFileSync(indexFile(state), nearCap);
+  const stderr = t.mock.method(process.stderr, 'write', () => true);
+  const runs = activeRuns([SESSION], { projectsDir: projects, stateDir: state });
+  assert.equal(runs.length, count + 1, 'the stored runs were read and this run\'s minute added');
+  assert.ok(readFileSync(indexFile(state), 'utf8') === nearCap, 'a file the reader would refuse is never written');
+  assert.equal(stderr.mock.callCount(), 1);
+  assert.match(stderr.mock.calls[0].arguments[0], /would grow over 16 MiB/);
 });

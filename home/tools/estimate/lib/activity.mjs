@@ -8,13 +8,18 @@
 // deletes old ones). The stored offset stays OVERLAP_BYTES short of what was read, so a match cut by the end of a read is seen whole
 // next time; a file shorter than its offset is read from 0. No lock is taken: each writer stores offsets and minutes from one
 // consistent read, so a lost write is only read again. Without a stateDir nothing is read from or written to the index.
+// Size: the reader and the writer share MAX_ACTIVITY_BYTES, so the tool never writes an index it refuses to read. An index over it
+// is kept as it is (its minutes are not dropped), not used and not replaced; one stderr line names it. An index that would grow
+// over it is not written (one stderr line); this run's minutes still count.
 import { closeSync, fstatSync, lstatSync, openSync, readSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { isSessionId, readSessionFile, writeSessionFile } from '../../../hooks/lib/session-store.mjs';
 
 const INDEX_VERSION = 2;
 const ACTIVITY_FOLDER = 'activity';
-const MAX_ACTIVITY_BYTES = 1 << 20; // 1 MiB: a session with 1200 subagent files (the longest measured) needs about 200 KB
+// 16 MiB: the longest measured session (1203 transcript files) has a 234 KB index, so this holds about 80000 files.
+const MAX_ACTIVITY_BYTES = 16 * (1 << 20);
+const MAX_ACTIVITY_TEXT = '16 MiB';
 const READ_CHUNK_BYTES = 1 << 20; // 1 MiB per read: the scan holds one chunk, never a whole line
 const PATTERN = Buffer.from('"timestamp":"');
 const STAMP_BYTES = 16; // YYYY-MM-DDTHH:MM
@@ -125,11 +130,26 @@ const isRun = (run) => Array.isArray(run) && run.length === 2 && run.every(Numbe
 const isOffsetMap = (files) => files !== null && typeof files === 'object' && !Array.isArray(files)
   && Object.values(files).every((bytes) => Number.isInteger(bytes) && bytes >= 0);
 
-/** The stored index of a session, or an empty one when there is none, it is unreadable or it has the wrong shape (then all is read again). */
+const indexPath = (stateDir, sessionId) => join(stateDir, ACTIVITY_FOLDER, `${sessionId}.json`);
+
+/** True when the index is a regular file over the cap (readSessionFile returns undefined for it as for an unusable store). */
+function isOverCap(path) {
+  const file = lstatOrNull(path);
+  return file !== null && file.isFile() && file.size > MAX_ACTIVITY_BYTES;
+}
+
+/**
+ * The stored index of a session, or an empty one when there is none, it is unreadable or it has the wrong shape (then all is read
+ * again); null when it is over the cap: then it must not be replaced either, or its minutes would be lost.
+ */
 function readIndex(stateDir, sessionId) {
   const empty = { v: INDEX_VERSION, files: {}, runs: [] };
   if (!stateDir) return empty;
   const text = readSessionFile(join(stateDir, ACTIVITY_FOLDER), sessionId, MAX_ACTIVITY_BYTES);
+  if (text === undefined && isOverCap(indexPath(stateDir, sessionId))) {
+    process.stderr.write(`estimate: ${indexPath(stateDir, sessionId)} is over ${MAX_ACTIVITY_TEXT}; it is kept as it is and not used\n`);
+    return null;
+  }
   if (typeof text !== 'string') return empty;
   let index;
   try {
@@ -141,9 +161,19 @@ function readIndex(stateDir, sessionId) {
   return valid ? index : empty;
 }
 
+/** Writes the index unless it would be over the cap (then the stored one is kept and one stderr line says so). */
+function storeIndex(stateDir, sessionId, text) {
+  if (Buffer.byteLength(text) > MAX_ACTIVITY_BYTES) {
+    process.stderr.write(`estimate: ${indexPath(stateDir, sessionId)} would grow over ${MAX_ACTIVITY_TEXT}; it is kept as it is and this run's minutes are not stored\n`);
+    return;
+  }
+  writeSessionFile(join(stateDir, ACTIVITY_FOLDER), sessionId, text, { sweep: false });
+}
+
 /** Brings one session's index up to date with its transcripts and stores it when a stateDir is given. */
 function sessionRuns(sessionId, projectsDir, stateDir) {
-  const index = readIndex(stateDir, sessionId);
+  const stored = readIndex(stateDir, sessionId);
+  const index = stored ?? { files: {}, runs: [] };
   const minutes = new Set();
   const files = {};
   for (const path of sessionTranscripts(projectsDir, sessionId)) {
@@ -151,7 +181,7 @@ function sessionRuns(sessionId, projectsDir, stateDir) {
     if (offset !== null) files[path] = offset;
   }
   const runs = mergeRuns([...index.runs, ...runsOfMinutes(minutes)]);
-  if (stateDir) writeSessionFile(join(stateDir, ACTIVITY_FOLDER), sessionId, JSON.stringify({ v: INDEX_VERSION, files, runs }), { sweep: false });
+  if (stateDir && stored !== null) storeIndex(stateDir, sessionId, JSON.stringify({ v: INDEX_VERSION, files, runs }));
   return runs;
 }
 

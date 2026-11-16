@@ -13,7 +13,7 @@
 // Exit codes: 0 finish, all done or handed over printed; 2 usage or table problem (the message names the line; nothing that looks
 // like an estimate is printed); 3 refused (`No finish time:` and `What to do:` on stderr, never a clock time).
 // Invariants: the logic lives in lib/ (from-files.mjs estimateFile, shared with the status line); this file parses arguments and
-// prints. A busy store records nothing and says so on stderr.
+// prints. A store that cannot be updated records nothing and says so on stderr.
 import { parseArgs } from 'node:util';
 import { isSessionId } from '../../hooks/lib/session-store.mjs';
 import { UsageError, estimateFile } from './lib/from-files.mjs';
@@ -43,7 +43,8 @@ function readOptions(argv) {
 function main(argv) {
   const { path, options } = readOptions(argv);
   const { result, inputs } = estimateFile(path, Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)));
-  if (inputs.busy) process.stderr.write('estimate: the store was busy; this run recorded nothing\n');
+  // Not only a busy lock: an unusable or over-cap store file records nothing too (table-store names an over-cap file on its own line).
+  if (inputs.busy) process.stderr.write('estimate: this run recorded nothing (the store was busy or a store file could not be used)\n');
   if (result.state === 'refused') {
     process.stderr.write(`${formatRefusal(result)}\n`);
     return EXIT_REFUSED;

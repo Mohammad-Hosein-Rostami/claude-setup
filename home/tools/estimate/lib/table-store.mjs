@@ -11,7 +11,7 @@
 // so no scan or simulation may run inside it); a busy or unusable store records nothing and returns undefined or false. A file that
 // is not a table is skipped, never trusted.
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,10 @@ const TABLE_FOLDER = 'table';
 const SESSION_FOLDER = 'session';
 const TABLE_ID_HEX = 32; // 128 bits of sha256: no two STATUS.md paths on one machine collide
 const TABLE_FILE = /^([0-9a-f]{32})\.json$/;
-const MAX_TABLE_BYTES = 1 << 20; // 1 MiB: 230 rows, 200 log entries and the first-seen map of the largest table take about 120 KB
+// 16 MiB: the largest table (230 rows, 200 log entries, its first-seen map) takes about 120 KB, so this is over 100 times that. The
+// writer checks the same cap, so it never stores a file the reader refuses.
+const MAX_TABLE_BYTES = 16 * (1 << 20);
+const MAX_TABLE_TEXT = '16 MiB';
 const MAX_LINK_BYTES = 1 << 10; // 1 KiB: one path and one time
 const SIZES = ['S', 'M', 'L'];
 const DEFAULT_SEED = fileURLToPath(new URL('../seed.json', import.meta.url));
@@ -62,9 +65,30 @@ function parsedOrUndefined(text) {
   }
 }
 
+const warnedOverCap = new Set();
+
+/** One stderr line per file and process: the file is over the cap, so it is neither used nor replaced (its data is kept). */
+function warnOverCap(path) {
+  if (warnedOverCap.has(path)) return;
+  warnedOverCap.add(path);
+  process.stderr.write(`estimate: ${path} is over ${MAX_TABLE_TEXT}; it is kept as it is and not used\n`);
+}
+
+/** True when the table file is a regular file over the cap (readSessionFile returns undefined for it as for an unusable store). */
+function isOverCap(path) {
+  try {
+    const file = lstatSync(path);
+    return file.isFile() && file.size > MAX_TABLE_BYTES;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 /** @returns {object | null | undefined} the stored table; null when there is none or it is not a table; undefined when the store is unusable */
 function readTable(folder, id) {
   const text = readSessionFile(folder, id, MAX_TABLE_BYTES);
+  if (text === undefined && isOverCap(join(folder, `${id}.json`))) warnOverCap(join(folder, `${id}.json`));
   if (typeof text !== 'string') return text;
   const table = parsedOrUndefined(text);
   return isTable(table) ? table : null;
@@ -97,7 +121,8 @@ export function readAllTables(dir) {
  * @param {string} statusPath the STATUS.md
  * @param {(table: object) => object} change gets the stored table (an empty one when there is none) and returns the table to
  *   store; it must be quick (no scan, no simulation)
- * @returns {object | undefined} the stored table; undefined when the lock stayed busy, the store is unusable or the write failed
+ * @returns {object | undefined} the stored table; undefined when the lock stayed busy, the store is unusable, the stored or the new
+ *   table is over MAX_TABLE_BYTES (one stderr line names the file; nothing is replaced) or the write failed
  */
 export function updateTable(dir, statusPath, change) {
   const folder = join(dir, TABLE_FOLDER);
@@ -106,7 +131,12 @@ export function updateTable(dir, statusPath, change) {
     const current = readTable(folder, id);
     if (current === undefined) return undefined;
     const next = change(current ?? emptyTable(statusPath));
-    return writeSessionFile(folder, id, JSON.stringify(next), STORE) ? next : undefined;
+    const text = JSON.stringify(next);
+    if (Buffer.byteLength(text) > MAX_TABLE_BYTES) {
+      process.stderr.write(`estimate: ${join(folder, `${id}.json`)} would grow over ${MAX_TABLE_TEXT}; it is kept as it is and this run recorded nothing\n`);
+      return undefined;
+    }
+    return writeSessionFile(folder, id, text, STORE) ? next : undefined;
   });
 }
 

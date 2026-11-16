@@ -4,11 +4,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tableId } from '../home/tools/estimate/lib/table-store.mjs';
 import { FIRST_ROW_LINE, SESSION, iso, plainDoc, row, statusDoc, writeTranscript } from './estimate-tables.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/estimate/estimate.mjs', import.meta.url));
@@ -66,6 +67,18 @@ test('a --now run without --state-dir records nothing; with it the store holds t
   const state = join(dir, 'state');
   assert.equal(run(status, '--now', NOW, '--state-dir', state, ...projects).status, 0);
   assert.deepEqual(readdirSync(state).sort(), ['activity', 'table']);
+});
+
+test('a table file over the size cap: the estimate still prints, stderr names the file, and no line blames a busy store', async () => {
+  const { status, run, projects, dir } = await workdir(statusDoc(OPEN_ROWS));
+  const state = join(dir, 'state');
+  assert.equal(run(status, '--now', NOW, '--state-dir', state, ...projects).status, 0);
+  const file = join(state, 'table', `${tableId(status)}.json`);
+  writeFileSync(file, `${readFileSync(file, 'utf8')}${' '.repeat(16 * (1 << 20))}`);
+  const result = run(status, '--now', NOW, '--state-dir', state, ...projects);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^Finish: /);
+  assert.equal(result.stderr, `estimate: ${file} is over 16 MiB; it is kept as it is and not used\nestimate: this run recorded nothing (the store was busy or a store file could not be used)\n`);
 });
 
 test('refusals exit 3 on stderr with No finish time and What to do, never a clock time', async () => {

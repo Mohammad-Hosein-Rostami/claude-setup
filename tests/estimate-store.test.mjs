@@ -13,6 +13,7 @@ import { linkedStatusPath, noteTable, readAllTables, readSeed, stateDir, tableId
 const STORE_URL = new URL('../home/tools/estimate/lib/table-store.mjs', import.meta.url).href;
 const SESSION = '11111111-2222-3333-4444-555555555555';
 const NOW_MS = Date.parse('2026-11-16T10:00Z');
+const TABLE_CAP_BYTES = 16 * (1 << 20); // the store's size cap for a table file
 const run = promisify(execFile);
 
 function fixture(t) {
@@ -79,7 +80,8 @@ test('updateTable records nothing while another run holds the lock', (t) => {
 test('updateTable leaves a table file it cannot read (too big) untouched and records nothing', (t) => {
   const { statusPath, state } = fixture(t);
   mkdirSync(join(state, 'table'), { recursive: true });
-  const tooBig = `${'x'.repeat(1 << 20)}!`;
+  const tooBig = `${'x'.repeat(TABLE_CAP_BYTES)}!`;
+  t.mock.method(process.stderr, 'write', () => true); // the over-cap line, checked in its own test
   writeFileSync(tableFile(state, statusPath), tooBig);
   assert.equal(updateTable(state, statusPath, (table) => table), undefined);
   assert.equal(readFileSync(tableFile(state, statusPath), 'utf8'), tooBig);
@@ -142,4 +144,37 @@ test('readSeed returns no rows for a missing file and keeps only well-formed ent
   assert.deepEqual(readSeed(file), { rows: [good], jobs: [job] });
   writeFileSync(file, '{"v":2,');
   assert.throws(() => readSeed(file), /seed\.json/);
+});
+
+const overCapTable = (statusPath) => `${JSON.stringify({ v: 2, path: statusPath, sessions: [], added: {}, rows: [], jobs: [], commit: null, log: [] })}${' '.repeat(TABLE_CAP_BYTES)}`;
+
+test('updateTable never writes a table file the reader would refuse: over the cap it stores nothing and says so once', (t) => {
+  const { statusPath, state } = fixture(t);
+  updateTable(state, statusPath, (table) => table);
+  const before = readFileSync(tableFile(state, statusPath), 'utf8');
+  const stderr = t.mock.method(process.stderr, 'write', () => true);
+  const huge = updateTable(state, statusPath, (table) => ({ ...table, rows: [{ size: 'S', kind: 'x'.repeat(TABLE_CAP_BYTES), done: '2026-11-16T10:00:00.000Z', cost: 1 }] }));
+  assert.equal(huge, undefined);
+  assert.equal(readFileSync(tableFile(state, statusPath), 'utf8'), before);
+  assert.equal(stderr.mock.callCount(), 1);
+  assert.match(stderr.mock.calls[0].arguments[0], /over 16 MiB/);
+});
+
+test('a table file over the cap is kept as it is and named on stderr, never mistaken for a busy lock', (t) => {
+  const { statusPath, state } = fixture(t);
+  updateTable(state, statusPath, (table) => table);
+  writeFileSync(tableFile(state, statusPath), overCapTable(statusPath));
+  const stderr = t.mock.method(process.stderr, 'write', () => true);
+  assert.equal(updateTable(state, statusPath, (table) => ({ ...table, commit: null })), undefined);
+  assert.equal(readFileSync(tableFile(state, statusPath), 'utf8').length, overCapTable(statusPath).length);
+  assert.equal(stderr.mock.callCount(), 1);
+  assert.match(stderr.mock.calls[0].arguments[0], /^estimate: .*\.json is over 16 MiB; it is kept as it is and not used\n$/);
+});
+
+test('a table file a little over the old 1 MiB cap is read and updated (realistic tables must never be refused)', (t) => {
+  const { statusPath, state } = fixture(t);
+  const rows = Array.from({ length: 20_000 }, () => ({ size: 'S', kind: 'build', done: '2026-11-16T10:00:00.000Z', cost: 12.5 }));
+  assert.ok(updateTable(state, statusPath, (table) => ({ ...table, rows })));
+  assert.ok(readFileSync(tableFile(state, statusPath)).length > (1 << 20));
+  assert.equal(readAllTables(state)[0].rows.length, 20_000);
 });
