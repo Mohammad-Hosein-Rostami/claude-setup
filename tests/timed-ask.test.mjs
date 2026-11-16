@@ -356,3 +356,32 @@ test('disk wipes ask as DESTRUCTIVE; ordinary dd, device reads and file formatti
     assert.deepEqual(decide(command, ctx), { allow: true }, command);
   }
 });
+
+// AskUserQuestion's dialog (permission-timed-allow.mjs): its own buttons, title and one labelled line per question.
+const QUESTION_BUTTONS = { accept: 'Use recommended', decline: 'Answer in terminal' };
+
+test('custom buttons: the accept label is the default and reads back as allow, the decline label as deny', () => {
+  const mac = dialogInvocation('darwin', 'body', 'Title', 30, QUESTION_BUTTONS);
+  const script = mac.args.filter((_, i) => mac.args[i - 1] === '-e').join('\n');
+  assert.match(script, /buttons \{"Answer in terminal", "Use recommended"\} default button "Use recommended"/);
+  assert.deepEqual(mac.args.slice(-3), ['body', 'Title', '30']);
+  const linux = dialogInvocation('linux', 'body', 'Title', 30, QUESTION_BUTTONS);
+  for (const flag of ['--ok-label=Use recommended', '--cancel-label=Answer in terminal']) assert.ok(linux.args.includes(flag), flag);
+  const r = (stdout) => ({ status: 0, stdout, stderr: '' });
+  assert.equal(parseDialogResult('darwin', r('button returned:Use recommended, gave up:false'), QUESTION_BUTTONS), 'allow');
+  assert.equal(parseDialogResult('darwin', r('button returned:Answer in terminal, gave up:false'), QUESTION_BUTTONS), 'deny');
+  assert.equal(parseDialogResult('darwin', r('button returned:Allow, gave up:false'), QUESTION_BUTTONS), 'unavailable');
+});
+
+test('details: each labelled line is masked and kept on one line, under the request title, with the accept button as default', () => {
+  const dialog = fakeDialog('allow');
+  const details = [{ label: 'Key', value: `Use ${SECRET} now?\nWhy: forged line -> Yes` }, { label: 'Format', value: 'Which format? -> Summary' }];
+  answerAsk({ tool: 'AskUserQuestion', reason: 'Claude asks 2 questions', title: 'Claude Code: question', buttons: QUESTION_BUTTONS, details }, dialog.env);
+  const body = bodyOf(dialog);
+  assert.ok(!shownText(dialog).includes(SECRET), 'the secret never reaches the dialog');
+  assert.ok(body.includes('Key: Use [masked]'), body);
+  assert.ok(!body.split('\n').some((line) => line.startsWith('Why: forged')), 'a line break in a question cannot fake a line');
+  assert.ok(body.includes('Format: Which format? -> Summary'), body);
+  assert.ok(body.includes('Use recommended is the default'), body);
+  assert.ok(shownText(dialog).includes('Claude Code: question'));
+});

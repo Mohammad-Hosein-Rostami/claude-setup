@@ -30,14 +30,17 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
 ## Long or unattended runs
 - Run long or unattended sessions in a plain terminal app (or tmux), not an editor's built-in terminal: closing or
   reloading the editor window ends every session in it. Resume with `ccm <mode> -c`.
-- A terminal question that nobody answers auto-continues after 60 s and Claude takes the recommended option. The timer
-  pauses while that terminal window is focused, after a keypress, and with Remote Control on. Click another app before
-  you leave. The recommended option is chosen to be safe with nobody there, and each default taken is logged.
+- A question (AskUserQuestion) opens a timed dialog listing each question and the option it will take: with no answer in
+  30 s (`CLAUDE_PERMISSION_TIMEOUT_S`) or on "Use recommended" each question takes its "(Recommended)" option, else its
+  first; "Answer in terminal" opens the normal question. Over ssh or with no display the terminal question stays and
+  auto-continues after 60 s (`askUserQuestionTimeout`, the CLI minimum), but its timer pauses while that terminal window
+  is focused, after a keypress, and with Remote Control on. The recommended option is chosen to be safe with nobody
+  there, and each default taken is logged.
 - Guard dialogs (`git push`, publish, `rm -rf` outside the project, prod-host writes, literal secrets) default to
   Allow and go ahead after 30 s (`CLAUDE_ASK_TIMEOUT_S`; a secret-only ask `CLAUDE_ASK_SECRET_TIMEOUT_S`, also 30 s).
   Every Claude Code permission prompt (any tool, MCP tools, Agent, plan approval, protected files, any mode, background
   agents and `claude -p`) gets the same dialog and goes ahead after 30 s (`CLAUDE_PERMISSION_TIMEOUT_S`); the dialog
-  shows the guard's reason when the guard asked. AskUserQuestion is not a permission and keeps its own timer (above).
+  shows the guard's reason when the guard asked. Questions get their own dialog (above).
   Over ssh or with no display there is no dialog: Claude Code's own prompt, or its deny in a `-p` run. A click on Deny blocks
   for good. A command Claude can rewrite (a `$VAR` command word, `rm`/`push` inside `$(...)` or a heredoc, a literal
   secret) is first sent back to Claude once with the fix, so no dialog waits; the message also names what will still

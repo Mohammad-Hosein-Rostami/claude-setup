@@ -1,6 +1,6 @@
 // Timed ask for PreToolUse and PermissionRequest hooks. Exports: askTimeoutSeconds(env), secretAskTimeoutSeconds(env),
 // permissionTimeoutSeconds(env), guiAvailable(env, platform), dialogInvocation(platform, text,
-// title, timeoutS), parseDialogResult(platform, result) -> 'allow'|'deny'|'timeout'|'unavailable', answerAsk(request, env) ->
+// title, timeoutS, buttons), parseDialogResult(platform, result, buttons) -> 'allow'|'deny'|'timeout'|'unavailable', answerAsk(request, env) ->
 // {decision, outcome, reason}, decisionOutput(answer) -> hook stdout, askOwner(request, env) -> hook stdout (asks, logs, formats).
 // Why: the native "ask" waits forever. The owner's policy is "everything goes ahead after 30 s": show a native dialog with Allow
 // (default) and Deny, and go ahead when nobody answers within the request's timeoutS, else CLAUDE_ASK_TIMEOUT_S (default 30; a
@@ -16,6 +16,8 @@
 // format, bidi, zero-width and other default-ignorable characters are dropped), so no value can fake a "Why:" line or hide part of a
 // command; a long value shows its head, its tail and its full length. Invariants: never throws, never puts a secret in the dialog (the
 // whole value is masked with its real line breaks, before it is flattened or cut).
+// A request may name its own buttons ({accept, decline}, default Allow/Deny; accept is the default and the timeout answer), title and
+// labelled detail lines (AskUserQuestion's dialog uses all three); Windows keeps Yes/No and the body says which is which.
 import { spawnSync } from 'node:child_process';
 import { logDecision } from './guard-log.mjs';
 import { maskSecrets } from './secrets.mjs';
@@ -40,6 +42,7 @@ const LINE_MARK = ' \u23CE '; // a visible return symbol where the value had a l
 const HIDDEN_CHARS = /(?!\n)[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/gu;
 const SECONDS_PER_MINUTE = 60;
 const DIALOG_TITLE = 'Claude Code: confirm action';
+export const ALLOW_DENY_BUTTONS = { accept: 'Allow', decline: 'Deny' };
 const TEXT_ENV = 'CLAUDE_ASK_DIALOG_TEXT';
 const TITLE_ENV = 'CLAUDE_ASK_DIALOG_TITLE';
 const WINDOWS_POPUP_ALLOW = 6;
@@ -53,9 +56,10 @@ const USER_CANCELED_TEXT = /user canceled/i;
 
 // Popup(text, seconds, title, 4 + 32): Yes/No buttons, question icon, first button (Yes) is the default.
 const WINDOWS_SCRIPT = `$ErrorActionPreference='Stop'; $w=New-Object -ComObject WScript.Shell; [Console]::Out.Write($w.Popup($env:${TEXT_ENV}, ${'$'}args[0], $env:${TITLE_ENV}, 36))`;
-const MAC_SCRIPT = [
+// The button labels are constants from this code (never caller text), so they may sit in the script; the body and title travel as arguments.
+const macScript = ({ accept, decline }) => [
   'on run argv',
-  'display dialog (item 1 of argv) with title (item 2 of argv) buttons {"Deny", "Allow"} default button "Allow" with icon caution giving up after ((item 3 of argv) as integer)',
+  `display dialog (item 1 of argv) with title (item 2 of argv) buttons {"${decline}", "${accept}"} default button "${accept}" with icon caution giving up after ((item 3 of argv) as integer)`,
   'end run',
 ];
 
@@ -112,17 +116,18 @@ export const dialogExecutable = (platform) => ({ darwin: 'osascript', win32: 'po
  * @param {string} text dialog body (already masked)
  * @param {string} title dialog title
  * @param {number} timeoutS seconds until the dialog closes itself
+ * @param {{accept: string, decline: string}} buttons button labels; accept is the default (Windows always shows Yes/No)
  * @returns {{command: string, args: string[], env: Record<string, string>} | undefined} how to run the dialog; undefined for an unknown platform
  */
-export function dialogInvocation(platform, text, title, timeoutS) {
+export function dialogInvocation(platform, text, title, timeoutS, buttons = ALLOW_DENY_BUTTONS) {
   const command = dialogExecutable(platform);
-  if (platform === 'darwin') return { command, args: [...MAC_SCRIPT.flatMap((line) => ['-e', line]), text, title, String(timeoutS)], env: {} };
+  if (platform === 'darwin') return { command, args: [...macScript(buttons).flatMap((line) => ['-e', line]), text, title, String(timeoutS)], env: {} };
   if (platform === 'win32') {
     return { command, args: ['-NoProfile', '-NonInteractive', '-Command', `& { ${WINDOWS_SCRIPT} }`, String(timeoutS)], env: { [TEXT_ENV]: text, [TITLE_ENV]: title } };
   }
   if (platform === 'linux') {
     // --no-markup: zenity then shows the text as it is (no Pango markup, no backslash escapes)
-    return { command, args: ['--question', '--no-markup', `--title=${title}`, `--text=${text}`, '--ok-label=Allow', '--cancel-label=Deny', `--timeout=${timeoutS}`, '--width=520'], env: {} };
+    return { command, args: ['--question', '--no-markup', `--title=${title}`, `--text=${text}`, `--ok-label=${buttons.accept}`, `--cancel-label=${buttons.decline}`, `--timeout=${timeoutS}`, '--width=520'], env: {} };
   }
   return undefined;
 }
@@ -130,16 +135,17 @@ export function dialogInvocation(platform, text, title, timeoutS) {
 /**
  * @param {string} platform process.platform
  * @param {{status: number | null, stdout?: string, stderr?: string, error?: Error}} result spawnSync result
- * @returns {'allow' | 'deny' | 'timeout' | 'unavailable'} what the person did; "unavailable" when the dialog tool failed
+ * @param {{accept: string, decline: string}} buttons the labels the dialog showed (macOS reports the clicked label)
+ * @returns {'allow' | 'deny' | 'timeout' | 'unavailable'} what the person did (accept -> allow, decline -> deny); "unavailable" when the dialog tool failed
  */
-export function parseDialogResult(platform, result) {
+export function parseDialogResult(platform, result, buttons = ALLOW_DENY_BUTTONS) {
   if (result.error) return 'unavailable';
   const out = String(result.stdout ?? '');
   const err = String(result.stderr ?? '');
   if (platform === 'darwin') {
     if (/gave up:true/.test(out)) return 'timeout';
-    if (/button returned:Allow/.test(out)) return 'allow';
-    if (/button returned:Deny/.test(out) || USER_CANCELED_TEXT.test(err)) return 'deny';
+    if (out.includes(`button returned:${buttons.accept},`)) return 'allow';
+    if (out.includes(`button returned:${buttons.decline},`) || USER_CANCELED_TEXT.test(err)) return 'deny';
     return 'unavailable';
   }
   if (platform === 'win32') {
@@ -178,23 +184,26 @@ function shownValue(text) {
   return `${shown.slice(0, HEAD_CHARS)} ... ${shown.slice(-TAIL_CHARS)} [${raw.length} chars]`;
 }
 
-/** @returns {string} the dialog body: tool, why, the labelled target (head and tail), directory, session/agent, and the timeout rule */
-function dialogText({ tool, reason, command, targetLabel = 'Command', cwd, sessionId, agentId }, timeoutS) {
+/** @returns {string} the dialog body: tool, why, the labelled target (head and tail), detail lines, directory, session/agent, the timeout rule */
+function dialogText({ tool, reason, command, targetLabel = 'Command', details = [], cwd, sessionId, agentId, buttons = ALLOW_DENY_BUTTONS }, timeoutS, platform) {
   const target = shownValue(command);
   const who = [sessionId && `session ${visible(String(sessionId).slice(0, 8))}`, agentId && `agent ${visible(String(agentId).slice(0, 8))}`].filter(Boolean).join(', ');
   const lines = [`Tool: ${visible(tool)}`, `Why: ${maskedVisible(reason)}`];
   if (target) lines.push(`${visible(targetLabel)}: ${target}`);
+  for (const { label, value } of details) lines.push(`${visible(label)}: ${shownValue(value)}`);
   if (cwd) lines.push(`Directory: ${visible(cwd)}`);
   if (who) lines.push(`From: ${who}`);
-  lines.push('', `Allow is the default. With no answer in ${formatDuration(timeoutS)} it goes ahead.`);
+  const yesNo = platform === 'win32' ? ` (Yes = ${buttons.accept}, No = ${buttons.decline})` : '';
+  lines.push('', `${buttons.accept} is the default${yesNo}. With no answer in ${formatDuration(timeoutS)} it goes ahead.`);
   return lines.join('\n');
 }
 
 /**
  * Asks the owner through a native dialog and turns the answer into a decision.
- * @param {{tool: string, reason: string, command?: string, targetLabel?: string, timeoutS?: number, cwd?: string, sessionId?: string, agentId?: string}} request
+ * @param {{tool: string, reason: string, command?: string, targetLabel?: string, details?: Array<{label: string, value: string}>, title?: string,
+ *   buttons?: {accept: string, decline: string}, timeoutS?: number, cwd?: string, sessionId?: string, agentId?: string}} request
  *   what to show: `command` is the call's target (a command, or a file, URL or query when targetLabel says so; default label "Command");
- *   timeoutS overrides CLAUDE_ASK_TIMEOUT_S for this dialog
+ *   details are extra labelled lines; buttons default to Allow/Deny (accept -> "allow", decline -> "deny"); timeoutS overrides CLAUDE_ASK_TIMEOUT_S
  * @param {Record<string, string | undefined>} env process environment (timeout, ssh/CI detection, PATH)
  * @param {string} platform process.platform
  * @param {() => number} now clock in milliseconds (injectable so a test can simulate the full wait)
@@ -207,7 +216,8 @@ export function answerAsk(request, env = process.env, platform = process.platfor
   const timeoutS = request.timeoutS ?? askTimeoutSeconds(env);
   let outcome = 'unavailable';
   try {
-    const invocation = dialogInvocation(platform, dialogText(request, timeoutS), DIALOG_TITLE, timeoutS);
+    const buttons = request.buttons ?? ALLOW_DENY_BUTTONS;
+    const invocation = dialogInvocation(platform, dialogText(request, timeoutS, platform), request.title ?? DIALOG_TITLE, timeoutS, buttons);
     if (invocation) {
       const started = now();
       const result = spawnSync(invocation.command, invocation.args, {
@@ -217,7 +227,7 @@ export function answerAsk(request, env = process.env, platform = process.platfor
         windowsHide: true,
       });
       // killed or crashed dialog -> unavailable; a "timeout" is only believed when the full time has passed
-      outcome = result.signal || result.status === null ? 'unavailable' : parseDialogResult(platform, result);
+      outcome = result.signal || result.status === null ? 'unavailable' : parseDialogResult(platform, result, buttons);
       const waitedMs = now() - started;
       if (outcome === 'timeout' && waitedMs < timeoutS * MS_PER_SECOND - TIMEOUT_SLACK_MS) outcome = 'unavailable';
     }

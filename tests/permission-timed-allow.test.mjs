@@ -1,5 +1,5 @@
 // Tests for home/hooks/permission-timed-allow.mjs (PermissionRequest) and lib/answered-commands.mjs: every Claude Code permission
-// prompt (any tool but AskUserQuestion, any mode, interactive or -p) gets the timed dialog with a 30 s default; no answer -> allow,
+// prompt (any tool, any mode, interactive or -p; AskUserQuestion is in permission-question.test.mjs) gets the timed dialog with a 30 s default; no answer -> allow,
 // Deny -> deny, no GUI -> no output. The dialog is injected (permissionReply's third argument) or, for the guard hand-over test, a
 // fake dialog tool sits first on PATH. No test opens a real dialog.
 import './pin-home.mjs';
@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { answeredCommandsDir, rememberAnswered, takeAnswered } from '../home/hooks/lib/answered-commands.mjs';
 import { dialogExecutable, MAX_ASK_TIMEOUT_S, permissionTimeoutSeconds } from '../home/hooks/lib/timed-ask.mjs';
-import { NEVER_ANSWERED, permissionReply } from '../home/hooks/permission-timed-allow.mjs';
+import { permissionReply } from '../home/hooks/permission-timed-allow.mjs';
 import { hookEnv, tempLogPath } from './hook-env.mjs';
 import { warmExec } from './warm-exec.mjs';
 
@@ -129,9 +129,8 @@ test('ExitPlanMode: an allow carries updatedInput (the docs require it), the dia
   assert.match(calls[0].request.reason, /plan/i);
 });
 
-test('AskUserQuestion is a question, not a permission: never answered, no dialog', () => {
-  assert.deepEqual(NEVER_ANSWERED, ['AskUserQuestion']);
-  for (const tool of ['AskUserQuestion', '', undefined]) {
+test('a prompt with no tool name is never answered, no dialog', () => {
+  for (const tool of ['', undefined]) {
     const { answer, calls } = fakeAnswer('allow', 'timeout');
     assert.equal(permissionReply(promptInput({ tool_name: tool, tool_input: { questions: [] } }), privateEnv(), answer), '', String(tool));
     assert.equal(calls.length, 0, String(tool));

@@ -4,8 +4,12 @@
 // a team's ask rules), any permission mode, and any session kind (interactive, background agents, `claude -p`, where Claude Code runs
 // this hook too and denies when no hook decides). No GUI (ssh, CI, tests) or a failed dialog prints nothing: Claude Code's normal
 // behaviour (its prompt, or a deny where nobody can be asked).
-// Exports: NEVER_ANSWERED, permissionReply(input, env, answer) -> hook stdout.
-// AskUserQuestion is a multiple-choice question, not a permission: never answered here (askUserQuestionTimeout covers it).
+// Exports: permissionReply(input, env, answer) -> hook stdout.
+// AskUserQuestion (the owner: "nothing should wait for me") gets one timed dialog listing each question and the option that will be
+// taken: its "(Recommended)" option, else its first; a multiSelect question gets that single option. "Use recommended" (default) or no
+// answer in CLAUDE_PERMISSION_TIMEOUT_S -> allow with updatedInput = the input plus `answers` {question text: option label} (hooks docs,
+// AskUserQuestion input and PermissionRequest decision control). "Answer in terminal", no GUI or a failed dialog print nothing: Claude
+// Code's own question UI (settings askUserQuestionTimeout still applies there), never an invented answer.
 // ExitPlanMode needs updatedInput with an allow (hooks docs), so its allow echoes the plan input back.
 // The input carries no prompt reason, so the dialog says what the tool asks to do, in which mode, and that Claude Code gave no reason;
 // for Bash it also runs the guard's rules (pre-bash-guard.mjs decideSafely) and for Artifact the Artifact hook's (artifact-ask.mjs
@@ -26,7 +30,10 @@ import { DESTRUCTIVE_PREFIX } from './lib/verdict.mjs';
 import { decideArtifact } from './artifact-ask.mjs';
 import { decide, decideSafely } from './pre-bash-guard.mjs';
 
-export const NEVER_ANSWERED = ['AskUserQuestion'];
+const QUESTION_TOOL = 'AskUserQuestion';
+const QUESTION_BUTTONS = { accept: 'Use recommended', decline: 'Answer in terminal' };
+const QUESTION_TITLE = 'Claude Code: question';
+const RECOMMENDED = /\(Recommended\)\s*$/i; // how Claude marks the option it would pick
 const NEEDS_UPDATED_INPUT = ['ExitPlanMode']; // an allow without updatedInput is ignored for it
 const HOOK_NAME = 'permission-timed-allow';
 // [tool_input field, dialog label], first match wins; any other input is shown as JSON under "Input"
@@ -74,6 +81,35 @@ function guardReason(command, cwd, env) {
   return verdict.errorClass ? `${verdict.reason}: ${verdict.errorClass}` : verdict.reason;
 }
 
+/** @returns {boolean} true for a non-empty list of questions, each with question text and options that all have a label */
+const isQuestionList = (questions) => Array.isArray(questions) && questions.length > 0 && questions.every((item) =>
+  typeof item?.question === 'string' && Array.isArray(item.options) && item.options.length > 0
+  && item.options.every((option) => typeof option?.label === 'string'));
+
+/** @returns {string} the label of the option marked "(Recommended)", else of the first option */
+const recommendedLabel = (options) => (options.find((option) => RECOMMENDED.test(option.label)) ?? options[0]).label;
+
+/**
+ * Answers an AskUserQuestion prompt with each question's recommended option, unless the owner chooses to answer in the terminal.
+ * @param {object} input hook JSON for an AskUserQuestion PermissionRequest
+ * @param {Record<string, string | undefined>} env process environment
+ * @param {typeof answerAsk} answer the dialog
+ * @returns {string} an allow line carrying the answers, or '' to leave the question to Claude Code's own UI
+ */
+function questionReply(input, env, answer) {
+  const questions = input.tool_input?.questions;
+  if (!isQuestionList(questions)) return '';
+  const answers = Object.fromEntries(questions.map((item) => [item.question, recommendedLabel(item.options)]));
+  const details = questions.map((item) => ({ label: item.header || 'Question', value: `${item.question} -> ${answers[item.question]}` }));
+  const reason = `Claude asks ${questions.length} question(s); with no answer each takes the option shown`;
+  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  const request = { tool: QUESTION_TOOL, reason, title: QUESTION_TITLE, buttons: QUESTION_BUTTONS, details, timeoutS: permissionTimeoutSeconds(env), cwd, sessionId: input.session_id, agentId: input.agent_id };
+  const result = answer(request, env);
+  const decision = result.decision === 'allow' ? 'allow' : 'ask'; // "ask": Claude Code's own question UI
+  logDecision({ hook: HOOK_NAME, tool: QUESTION_TOOL, command: targetOf(input.tool_input).text, cwd, session: input.session_id, decision, outcome: result.outcome, reason }, env);
+  return decision === 'allow' ? replyLine({ behavior: 'allow', updatedInput: { ...input.tool_input, answers } }) : '';
+}
+
 /**
  * Answers one PermissionRequest.
  * @param {{tool_name?: string, tool_input?: object, permission_mode?: string, cwd?: string, session_id?: string, agent_id?: string}} input hook JSON
@@ -83,7 +119,8 @@ function guardReason(command, cwd, env) {
  */
 export function permissionReply(input, env = process.env, answer = answerAsk) {
   const tool = input?.tool_name;
-  if (typeof tool !== 'string' || tool === '' || NEVER_ANSWERED.includes(tool)) return '';
+  if (typeof tool !== 'string' || tool === '') return '';
+  if (tool === QUESTION_TOOL) return questionReply(input, env, answer);
   const { label, text } = targetOf(input.tool_input);
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd(); // the guard keys its records the same way
   const record = { hook: HOOK_NAME, tool, command: text, cwd, session: input.session_id };
