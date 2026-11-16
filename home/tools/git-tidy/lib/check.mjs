@@ -1,7 +1,7 @@
 // Purpose: `git-tidy check`: is the history one straight line, and which branches and worktrees are leftovers.
 // Exports: runCheck.
 // Invariants: reads only. A finding is a fact (merge commit, merged branch or worktree, stale worktree, a folder whose branch moved
-//   under it) and sets exit 1;
+//   under it, edits in the base folder) and sets exit 1;
 //   a hint (kind ends in `?`) is context and never does. Items are `{ kind, subject, detail }`. A git command that fails
 //   throws (exit 2): a check that cannot read must never report clean.
 import { gitFlag, gitText, runGit } from './git.mjs';
@@ -13,6 +13,8 @@ import { changedFileCount, currentBranch, ignoredFiles, inProgressOperation, lis
 const IGNORED_SHOWN = 5;
 // earlier branch positions compared with a folder's index; the landing that moved a branch under its folder is recent
 const BRANCH_POSITIONS_CHECKED = 50;
+const UNLANDED_AFTER_HOURS = 2; // a lane with no commit for this long is waiting to land, not being worked on
+const MS_PER_HOUR = 60 * 60 * 1000;
 
 const item = (kind, subject, detail) => ({ kind, subject, detail });
 
@@ -118,8 +120,29 @@ function staleCheckoutFindings(worktrees) {
   });
 }
 
+// `unlanded-lane?`: a branch with work the base lacks and no commit for UNLANDED_AFTER_HOURS: land it or say why it waits.
+function unlandedLaneHints(repo, unmergedStates, now) {
+  const listed = gitText(repo.dir, ['for-each-ref', '--format=%(refname)%00%(committerdate:unix)', 'refs/heads']); // one git call for all
+  const committedAt = new Map(listed.split('\n').map((line) => line.split('\0')).map(([ref, seconds]) => [ref.slice('refs/heads/'.length), Number(seconds)]));
+  return unmergedStates.filter(({ name }) => committedAt.has(name)).flatMap(({ name, ahead }) => {
+    const hours = Math.floor((now - committedAt.get(name) * 1000) / MS_PER_HOUR);
+    if (hours < UNLANDED_AFTER_HOURS) return [];
+    return [item('unlanded-lane?', name, `ahead ${ahead}, no commit for ${hours} h: land it (rebase, merge --ff-only) or say why it waits`)];
+  });
+}
+
+// `dirty-base`: the folder where the base is checked out has uncommitted changes to tracked files; edits belong in a lane worktree.
+function dirtyBaseFindings(repo, worktrees) {
+  return worktrees.filter((tree) => !tree.missing && !tree.bare && tree.branch === repo.base).flatMap((tree) => {
+    const changed = gitText(tree.path, ['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=none']);
+    if (changed === '') return [];
+    const count = changed.split('\n').length;
+    return [item('dirty-base', tree.path, `${count} changed tracked files: commit them in a lane worktree, the base folder holds no edits`)];
+  });
+}
+
 /** Runs every check on `repo` (from openRepo). Returns `{ findings, hints }`. */
-export function runCheck(repo) {
+export function runCheck(repo, now = Date.now()) {
   const leftovers = findLeftovers(repo);
   const worktrees = listWorktrees(repo);
   const tangled = tangledRefItems(repo);
@@ -132,13 +155,14 @@ export function runCheck(repo) {
     ...leftovers.mergedWorktrees.map((w) => item('merged-worktree', w.path, `branch ${w.branch}`)),
     ...leftovers.staleWorktrees.map((w) => item('stale-worktree', w.path, 'folder missing')),
     ...staleCheckoutFindings(worktrees),
+    ...dirtyBaseFindings(repo, worktrees),
   ];
   const unmerged = leftovers.states.filter((b) => b.state === 'unmerged')
     .map((b) => item('unmerged-branch?', b.name, `ahead ${b.ahead}, last commit ${b.date}`));
   const unmergedTags = leftovers.tags.filter((t) => t.state === 'unmerged')
     .map((t) => item('unmerged-tag?', t.name, `ahead ${t.ahead}, last commit ${t.date}`));
   const hints = [
-    ...publishedMergeHint(repo), ...unmerged, ...unmergedTags,
+    ...publishedMergeHint(repo), ...unmerged, ...unlandedLaneHints(repo, leftovers.states.filter((b) => b.state === 'unmerged'), now), ...unmergedTags,
     ...mergedTags.filter((t) => !isBackupTag(t.name)).map((t) => item('merged-tag?', t.name, `${t.short} ${t.state}`)), ...tangled.hints, ...mergedRemoteHints(repo),
     ...(repo.bare ? [] : behindBaseHint(repo)), ...worktreeHints(worktrees), ...ignoredFileHints(leftovers.mergedWorktrees), ...shallowHint(repo),
   ];

@@ -37,6 +37,7 @@ One line per item, `<kind> <subject> <detail>`, findings first, then hints (kind
 | `merged-tag <tag> <hash> patch-equal` | a `backup/` tag that is not on the base's history but whose work is all on the base by the same test: a temporary backup made before a history clean-up. A tag that is an ancestor of the base (a release tag) is never reported |
 | `merged-worktree <path> branch <name>` | a linked worktree whose branch is a `merged-branch` |
 | `stale-worktree <path> folder missing` | a registered worktree whose folder is gone |
+| `dirty-base <path> <n> changed tracked files: ...` | the folder where the base is checked out has uncommitted changes to tracked files (untracked and ignored files do not count); edits belong in a lane worktree |
 | `stale-checkout <path> index is at <old>, branch <b> moved to <new> under it (<n> commits): ...` | the branch checked out there moved forward without the folder (`git update-ref`, `branch -f` or `push/fetch .` from another worktree): the index still equals an earlier position of the branch from its reflog (last 50), behind the tip, so every landed change shows as staged. Fix: `git -C <path> status`, back up real edits, then reset. A soft reset is not reported (it leaves the index ahead of the tip); a folder that also has real staged edits on top is not found |
 
 The base and the branch checked out in the main worktree are never reported as merged.
@@ -46,6 +47,7 @@ The base and the branch checked out in the main worktree are never reported as m
 | `published-merge?` | merge commits already on the base's upstream; rewriting them needs the owner |
 | `merged-tag?`, `tangled-tag?` | the same two checks for a tag NOT named `backup/`. Whether a tag is published cannot be known without the network (a release tag on a backport branch is normal), so only `backup/` tags, the name the clean-up procedure gives its temporary tags, are findings |
 | `unmerged-branch?`, `unmerged-tag?` | a local branch or tag with commits the base lacks: how many, and the date of its last commit |
+| `unlanded-lane? <name> ahead <n>, no commit for <h> h: ...` | such a branch whose last commit is over 2 hours old: land it or say why it waits |
 | `ignored-files?` | a merged worktree holds ignored files that exist only there (`prune` keeps it) |
 | `merged-remote-branch?` | an `origin/*` branch fully contained in the base's upstream; deleting it is the owner's call |
 | `behind-base?` | the current branch does not contain the base tip (rebase needed) |
