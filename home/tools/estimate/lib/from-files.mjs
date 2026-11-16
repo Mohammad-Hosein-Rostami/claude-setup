@@ -86,8 +86,24 @@ function measure(statusPath, items, options) {
   return { id, stored, sessions, intervals, jobs, own, pool, lastHandOver: handOvers.at(-1) ?? null };
 }
 
-/** The stored commitment when it belongs to the current job (made after the last hand-over), else null. */
-const currentCommit = (commit, lastHandOver) => (commit && (lastHandOver === null || Date.parse(commit.at) > lastHandOver) ? commit : null);
+/**
+ * The stored commitment when it belongs to the current job, else null. Both times are whole minutes, so a commitment in the hand-over's
+ * minute is ambiguous: it is the new job's when it lists a row the hand-over did not close (the old job's rows were all done by then).
+ */
+function currentCommit(commit, lastHandOver, items) {
+  if (!commit || lastHandOver === null) return commit ?? null;
+  const atMs = Date.parse(commit.at);
+  if (atMs !== lastHandOver) return atMs > lastHandOver ? commit : null;
+  const doneOf = new Map(items.map((item) => [item.id, item.done]));
+  return commit.ids.some((id) => doneOf.has(id) && (doneOf.get(id) === null || doneOf.get(id) > lastHandOver)) ? commit : null;
+}
+
+/** True when a work row of the current job (open, or done after the last hand-over) has a started stamp. */
+const jobHasStarted = (items, lastHandOver) => items.some((item) => isWorkRow(item) && item.started !== null
+  && (item.done === null || lastHandOver === null || item.done > lastHandOver));
+
+/** The log with the entry of the replaced commitment (same time, a commitment entry) taken out. */
+const withoutEntryOf = (log, commit) => log.filter((entry) => !(typeof entry.first === 'boolean' && entry.at === commit.at));
 
 /** Stale rows (run longer than every finished row of their size), longest first, as Check facts. */
 function staleChecks(stale, openRows, pool) {
@@ -148,11 +164,15 @@ const sizeCounts = (openRows) => Object.fromEntries(['S', 'M', 'L'].map((size) =
 function finishResult(items, facts, forecast, options) {
   const { nowMin } = options;
   const context = { nowMin, openIds: forecast.openRows.map((row) => row.id), slowRowId: slowRowOf(forecast.openRows, facts.pool) };
+  const started = jobHasStarted(items, facts.lastHandOver);
   const change = (table) => {
-    const commit = currentCommit(table.commit, facts.lastHandOver);
+    const current = currentCommit(table.commit, facts.lastHandOver, items);
+    // Before any row of the job has started, rows are still being listed: the first commitment is made again, not moved.
+    const commit = started ? current : null;
+    const log = current !== null && !started ? withoutEntryOf(table.log, current) : table.log;
     const leftMin = commit === null ? null : commit.budgetMin - workedMinutes(facts.intervals, minuteOf(commit.at), nowMin);
     const next = nextCommitment(commit, forecast.work, leftMin, context);
-    return { ...table, commit: next.commit, log: next.entry === null ? table.log : capped([...table.log, next.entry]) };
+    return { ...table, commit: next.commit, log: next.entry === null ? log : capped([...log, next.entry]) };
   };
   const { table, recorded } = settle(options.statusPath, items, facts, options, change);
   const sizeOf = new Map(items.map((item) => [item.id, item.size]));

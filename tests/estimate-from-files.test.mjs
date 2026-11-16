@@ -141,3 +141,26 @@ test('without a store nothing is read or written; with one the session is linked
   assert.deepEqual(stored().rows.map((stored) => [stored.size, stored.cost]), [['S', 30]]);
   assert.equal(JSON.parse(readFileSync(join(stateDir, 'session', `${SESSION}.json`), 'utf8')).path.endsWith('STATUS.md'), true);
 });
+
+test('while no row of the job has started, a run replaces the first commitment in place: no move, still one first entry', async () => {
+  const unstarted = (ids) => statusDoc(ids.map((id) => row({ id })));
+  const { run, stored } = await setup(unstarted(['O1']));
+  await run(1);
+  const listed = (await run(1.05, unstarted(['O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7']))).result;
+  assert.equal(listed.commit.moved, null);
+  assert.equal(listed.commit.budgetMin, listed.work.p85);
+  assert.deepEqual(stored().log.map((entry) => [entry.first, entry.ids.length]), [[true, 7]]);
+  assert.doesNotMatch(formatEstimate(listed, { timeZone: 'UTC' }), /Moved/);
+  const more = ['O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8', 'O9', 'O10', 'O11', 'O12', 'O13'].map((id) => row({ id }));
+  const moved = (await run(1.1, statusDoc([row({ id: 'O1', startedH: 1.05 }), ...more]))).result;
+  assert.equal(moved.commit.moved?.cause, 'rows-added', 'once a row has started the hold/move rule applies again');
+  assert.deepEqual(stored().log.map((entry) => entry.first), [true, false]);
+});
+
+test('a commitment made in the same minute as the last hand-over belongs to the new job: logged as first once', async () => {
+  const handedOver = [row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'deliver:1', item: 'report', raw: { done: iso(1) }, evidence: '-' })];
+  const { run, stored } = await setup(statusDoc([...handedOver, row({ id: 'O1', startedH: 1 })]));
+  await run(1);
+  await run(1);
+  assert.deepEqual(stored().log.map((entry) => entry.first), [true]);
+});
