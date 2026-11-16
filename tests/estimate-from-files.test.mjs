@@ -167,3 +167,11 @@ test('a commitment made in the same minute as the last hand-over belongs to the 
   await run(1);
   assert.deepEqual(stored().log.map((entry) => entry.first), [true]);
 });
+
+test('a commitment of the old job made in the hand-over\'s minute stays the old job\'s: the next job gets its own first entry', async () => {
+  const { run, stored } = await setup(statusDoc([row({ id: 'O1', startedH: 0.5 })]));
+  await run(1); // commits at 1:00 for O1
+  const handedOver = [row({ id: 'O1', startedH: 0.5, doneH: 1 }), row({ id: 'deliver:1', item: 'report', raw: { done: iso(1) }, evidence: '-' })];
+  await run(1.05, statusDoc([...handedOver, row({ id: 'O2' })]));
+  assert.deepEqual(stored().log.map((entry) => [entry.first, entry.ids]), [[true, ['O1']], [true, ['O2']]]);
+});
