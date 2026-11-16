@@ -14,7 +14,7 @@ C12 | Before done, run the checks the owner asked for; list the rest as "not run
 C13 | Never weaken checks: no ts-ignore, eslint-disable, skip, only | grep diff
 C14 | Add no dependency unless needed; verify it exists | audit
 C15 | No secrets in code, logs or commits | gitleaks
-C16 | Small atomic Conventional Commits | commitlint
+C16 | Small atomic Conventional Commits; commit after every green step; never end a turn or an agent run with uncommitted work | commitlint, commit-gate
 C17 | Match the repo's existing conventions; read neighbours first | rev
 C18 | Touch only files the task needs | diff vs file list
 C19 | TS strict, no any, no unexplained !, exhaustive switch | tsc, eslint

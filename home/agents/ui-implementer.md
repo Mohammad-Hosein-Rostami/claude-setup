@@ -45,6 +45,7 @@ You implement a given UI spec exactly. The preloaded skills are binding, not bac
   sleep over 60 s and never a loop that only sleeps. Start long commands in the background and let the harness tell
   you when they end.
 - Git: commit on your own branch; never merge another branch into it; if the base moved, `git rebase <base>`; leave landing to the lead.
+- Commit your own paths after each green step; never return with uncommitted changes (if the brief forbids commits, say why in the report).
 - Checkpoint: after each finished step, commit when the brief allows commits, else append a line to a progress note
   in the scratchpad, so a dropped connection loses little.
 - Budget: if the brief is still unfinished after about 120 tool calls or the 2nd compaction, stop and return a status (done, left, next step). You cannot spawn agents or message others.
