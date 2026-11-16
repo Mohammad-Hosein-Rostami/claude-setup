@@ -1,14 +1,20 @@
-// Stop and SubagentStop: blocks a stop once when the session's own git worktree has uncommitted work, so a run never ends with
-// edits left lying around (C16). Exports: decide(input, env) -> {block: false} | {block: true, reason}, dirtyCount(status).
+// Stop and SubagentStop: blocks a stop once when files this session (for a subagent: this agent) changed are still uncommitted in its
+// own git worktree, so a run never ends with edits left lying around (C16). PostToolUse Edit/Write/MultiEdit/NotebookEdit: records the
+// changed file (lib/own-edits.mjs). Exports: decide(input, env) -> {block: false} | {block: true, reason}.
 // Invariants:
+// - Only recorded files count: each PostToolUse of a file tool adds [agent id ('' for the lead), real path] to
+//   ~/.claude/state/commit-gate/edits/<session>.json (lib/own-edits.mjs).
+//   A subagent's stop counts its own files, the lead's stop every file of the session (its agents' too). Another session's or another
+//   agent's dirt in the same folder never blocks. Limit: files a Bash command makes or changes (sed -i, codegen, git mv) are unknowable
+//   here and never count; neither does an edit whose record failed (fail open).
 // - Only the session's own worktree is gated: for the main session the one holding CLAUDE_PROJECT_DIR, for a subagent the one
 //   holding the folder it started in (the first `cwd` of its transcript). Never the hook input's cwd: a folder the session only
 //   cd'd into may be someone else's repo, and its git config is not trusted.
 // - git never runs a program the repository names: every call has core.fsmonitor off, core.hooksPath empty and bare-repo discovery
 //   off (a package laid out like a bare repo is not a repository here); a worktree whose repo-level config (includes followed)
 //   defines a filter is passed without a word, since `git status` would run its clean command. Submodules are not looked into.
-// - Blocks at most once per dirty state of each agent: the state is the agent id, the worktree path and the hash of
-//   `git status --porcelain=v1 -z`, kept in ~/.claude/state/commit-gate/<session>.json (lib/session-store.mjs). A continued stop
+// - Blocks at most once per dirty state of each agent: the state is the agent id, the worktree path and the hash of the recorded
+//   files' entries in `git status --porcelain=v1 -z`, kept in ~/.claude/state/commit-gate/<session>.json (lib/session-store.mjs). A continued stop
 //   (stop_hook_active, another gate blocked first) is checked too, but gets at most MAX_CHAINED_BLOCKS blocks in a row, so the gate
 //   can never loop. A state that cannot be stored is not blocked.
 // - A subagent whose definition cannot write files (built-in Explore and Plan, or an agent file whose `tools:` line has no Write or
@@ -26,6 +32,7 @@ import { devNull, homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readSessionFile, withSessionLock, writeSessionFile } from './lib/session-store.mjs';
+import { LEAD, realPathOf, recordEditedFile, recordedEntries, recordedPaths } from './lib/own-edits.mjs';
 import { agentFileWrites } from './lib/writer-agents.mjs';
 
 const PASS = Object.freeze({ block: false });
@@ -41,7 +48,6 @@ const REPOSITORY_VARIABLES = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT
 // config that would make a read-only git call run a program; given on the command line, so it beats the repository's own config
 const HARDENED = ['-c', 'core.fsmonitor=false', '-c', 'safe.bareRepository=explicit', '-c', `core.hooksPath=${devNull}`];
 const REPOSITORY_SCOPES = new Set(['local', 'worktree']); // config that comes with the repository, not the owner's own
-const RENAME_OR_COPY = /^[RC]|^.[RC]/; // in -z output such an entry is followed by its old path as one more field
 const READ_ONLY_BUILT_INS = new Set(['Explore', 'Plan']);
 
 const stateDir = (env) => join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'commit-gate');
@@ -59,21 +65,6 @@ const gitOut = (cwd, args) => {
 };
 const gitSucceeds = (cwd, args) => runGit(cwd, args).status === 0;
 const gitText = (cwd, args) => (gitOut(cwd, args) ?? '').trim();
-
-/**
- * Number of changed paths in `git status --porcelain=v1 -z` output (a rename counts once; an untracked folder counts once).
- * @param {string} status the raw output
- * @returns {number}
- */
-export function dirtyCount(status) {
-  const fields = status.split('\0').filter((field) => field !== '');
-  let count = 0;
-  for (let i = 0; i < fields.length; i += 1) {
-    count += 1;
-    if (RENAME_OR_COPY.test(fields[i])) i += 1;
-  }
-  return count;
-}
 
 /** The first `maxBytes` of a regular file as text; null when it is missing, not a regular file or unreadable. */
 function readHead(path, maxBytes) {
@@ -201,15 +192,19 @@ function recordOnce(env, session, { agent, state, continued }) {
  */
 export function decide(input, env = process.env) {
   if (input === null || typeof input !== 'object') return PASS;
+  const agent = typeof input.agent_id === 'string' ? input.agent_id : LEAD;
+  const recorded = recordedPaths(env, input.session_id, agent);
+  if (recorded.size === 0) return PASS; // nothing changed by this session or agent: no git call at all
   const folder = gatedFolder(input, env);
   const tree = folder === null ? null : worktreeOf(folder);
   if (tree === null || IN_PROGRESS_MARKERS.some((marker) => existsSync(join(tree.gitDir, marker))) || namesFilterProgram(tree.top)) return PASS;
   const status = gitOut(tree.top, ['status', '--porcelain=v1', '-z', '--untracked-files=normal', '--ignore-submodules=all']);
   if (status === null || status === '') return PASS;
-  const agent = typeof input.agent_id === 'string' ? input.agent_id : '';
-  const state = createHash('sha256').update(`${agent}\0${tree.top}\0${status}`).digest('hex');
+  const own = recordedEntries(status, realPathOf(tree.top), recorded);
+  if (own.length === 0) return PASS;
+  const state = createHash('sha256').update(`${agent}\0${tree.top}\0${own.join('\0')}`).digest('hex');
   if (!recordOnce(env, input.session_id, { agent, state, continued: input.stop_hook_active === true })) return PASS;
-  return { block: true, reason: reasonFor(tree, dirtyCount(status)) };
+  return { block: true, reason: reasonFor(tree, own.length) };
 }
 
 async function readStdin() {
@@ -219,7 +214,12 @@ async function readStdin() {
 }
 
 async function main() {
-  const result = decide(JSON.parse(await readStdin()));
+  const input = JSON.parse(await readStdin());
+  if (input?.hook_event_name === 'PostToolUse') {
+    recordEditedFile(input);
+    return;
+  }
+  const result = decide(input);
   if (result.block) process.stdout.write(`${JSON.stringify({ decision: 'block', reason: result.reason })}\n`);
 }
 
