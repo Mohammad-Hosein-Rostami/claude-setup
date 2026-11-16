@@ -19,6 +19,8 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
   `raw-risk.mjs`, `outward.mjs`, `remote.mjs`, `code-writes.mjs`, `git-runs.mjs`: one file per kind of risky command (`rm -r`,
   `find -delete`, `eval`, hidden execution, push or publish, production hosts, code rewritten from Bash, commands git runs).
 - `merge-commit.mjs`: advice, never an ask: a `git merge` or `git pull` that can create a merge commit (linear history, C37).
+- `branch-move.mjs`: advice, never an ask: a branch moved by `update-ref`, `branch -f` or `push|fetch .`, which leaves the folder
+  where it is checked out behind (land with `merge --ff-only`, C37).
 - `secrets.mjs`: finds literal secrets in a command and masks them.
 - `verdict.mjs`: shared wording of the reasons.
 

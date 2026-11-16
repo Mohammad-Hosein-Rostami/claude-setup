@@ -1,7 +1,7 @@
 // C37 advice for the Bash guard: a `git merge` or `git pull` that can create a merge commit. A quality rule, not a safety rule, so its
 // text is advice (lib/bounce-once.mjs: alone, the first send is denied with the fix and the identical retry runs without the owner;
 // next to a reason that asks, it is only appended). Exports: MERGE_COMMIT_ADVICE (the text, classed exactly in lib/reason-classes.mjs)
-// and mergeCommitAdvice(command) -> [] | [MERGE_COMMIT_ADVICE].
+// mergeCommitAdvice(command) -> [] | [MERGE_COMMIT_ADVICE], and withoutSubstitutions(text) (shared with lib/branch-move.mjs).
 // Every simple command of the line is checked, through keywords, wrappers (sudo, env, command: lib/command-of.mjs) and git's own options
 // (`git -C dir --no-pager merge x`; lib/git-options.mjs, where an option it does not know is read both ways and either reading that
 // merges gives the advice). A merge inside `$(...)`, backticks or a heredoc body is not this line's merge: heredoc bodies are
@@ -54,7 +54,7 @@ function parenEnd(text, open) {
 }
 
 /** Text with comments dropped and each `$(...)` or backtick body replaced by SUBSTITUTION_STAND_IN: a command there only fills in a word. */
-function withoutSubstitutions(text) {
+export function withoutSubstitutions(text) {
   let out = '';
   let quote = ''; // `'` or `"` while the outer text is inside quotes
   for (let i = 0; i < text.length; i += 1) {

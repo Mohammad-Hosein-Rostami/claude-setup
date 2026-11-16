@@ -79,6 +79,7 @@ const BOUNCED = [
 const ADVICE = [
   [ADVICE_CLASS.lockfile, 'sed -i s/a/b/ pnpm-lock.yaml'],
   [ADVICE_CLASS.mergeCommit, 'git merge feature'],
+  [ADVICE_CLASS.branchMove, 'git update-ref refs/heads/main abc'],
 ];
 
 const askFor = (name, command) => (name === 'guard error' ? decideSafely(command, ctx, throwingRules) : decide(command, ctx));

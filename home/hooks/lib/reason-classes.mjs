@@ -10,6 +10,7 @@
 // tests/pre-bash-guard-reason-classes.test.mjs checks that every reason the guard gives for the strings in its tests has a class and that
 // each class has a test command, so a new rule without a class, or a class without a test, fails the suite.
 // A reason only the backstop parser found (it ends with BACKSTOP_MARK) has the class of the plain reason.
+import { BRANCH_MOVE_ADVICE } from './branch-move.mjs';
 import { LOCKFILES, lockfileAdvice } from './command-checks.mjs';
 import { MERGE_COMMIT_ADVICE } from './merge-commit.mjs';
 import { RISKY_REASON } from './raw-risk.mjs';
@@ -35,12 +36,14 @@ const EXACT_BOUNCE_REASONS = new Map([
 export const ADVICE_CLASS = Object.freeze({
   lockfile: 'hand-edited lockfile',
   mergeCommit: 'merge commit',
+  branchMove: 'branch moved by plumbing',
 });
 export const ADVICE_CLASSES = Object.values(ADVICE_CLASS);
 // every text an advice rule can give, exactly (see the header)
 const EXACT_ADVICE_REASONS = new Map([
   ...[...LOCKFILES].map((name) => [lockfileAdvice(name), ADVICE_CLASS.lockfile]),
   [MERGE_COMMIT_ADVICE, ADVICE_CLASS.mergeCommit],
+  [BRANCH_MOVE_ADVICE, ADVICE_CLASS.branchMove],
 ]);
 
 // [class name, the fixed part of its rule's reason]. Names hold no comma or semicolon: a deny text lists them joined with "; ".

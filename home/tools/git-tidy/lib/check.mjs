@@ -1,15 +1,18 @@
 // Purpose: `git-tidy check`: is the history one straight line, and which branches and worktrees are leftovers.
 // Exports: runCheck.
-// Invariants: reads only. A finding is a fact (merge commit, merged branch or worktree, stale worktree) and sets exit 1;
+// Invariants: reads only. A finding is a fact (merge commit, merged branch or worktree, stale worktree, a folder whose branch moved
+//   under it) and sets exit 1;
 //   a hint (kind ends in `?`) is context and never does. Items are `{ kind, subject, detail }`. A git command that fails
 //   throws (exit 2): a check that cannot read must never report clean.
-import { gitFlag, gitText } from './git.mjs';
+import { gitFlag, gitText, runGit } from './git.mjs';
 import { findLeftovers } from './leftovers.mjs';
 import { isBackupTag } from './tags.mjs';
 import { tangledRefs } from './tangled.mjs';
 import { changedFileCount, currentBranch, ignoredFiles, inProgressOperation, listWorktrees } from './repo.mjs';
 
 const IGNORED_SHOWN = 5;
+// earlier branch positions compared with a folder's index; the landing that moved a branch under its folder is recent
+const BRANCH_POSITIONS_CHECKED = 50;
 
 const item = (kind, subject, detail) => ({ kind, subject, detail });
 
@@ -87,6 +90,34 @@ function shallowHint(repo) {
   return shallow ? [item('shallow?', 'repository', 'history is cut, so branches may look unmerged')] : [];
 }
 
+const succeeds = (path, args) => runGit(path, args).status === 0; // a missing commit or reflog reads as "no", never as an error
+
+/** Earlier positions of `branch` from its reflog, newest first, without `tip`; [] when the branch has no reflog. */
+function earlierPositions(path, branch, tip) {
+  const { status, stdout } = runGit(path, ['reflog', 'show', '--format=%H', '-n', String(BRANCH_POSITIONS_CHECKED), `refs/heads/${branch}`]);
+  if (status !== 0) return [];
+  return [...new Set(stdout.split('\n').filter((hash) => hash !== '' && hash !== tip))];
+}
+
+// `stale-checkout`: the branch of a folder moved forward without it (git update-ref, branch -f or push/fetch to `.` from another
+// worktree), so its index still holds an earlier position of the branch and every change since shows as staged. Found when the index
+// differs from the tip, equals an earlier reflog position exactly, and that position is behind the tip (a soft reset leaves the index
+// ahead of the tip instead).
+function staleCheckoutFindings(worktrees) {
+  return worktrees.filter((tree) => !tree.missing && !tree.bare && tree.branch !== null).flatMap((tree) => {
+    const { path, branch } = tree;
+    if (!succeeds(path, ['rev-parse', '--verify', '--quiet', 'HEAD']) || succeeds(path, ['diff', '--cached', '--quiet', 'HEAD'])) return [];
+    const tip = gitText(path, ['rev-parse', 'HEAD']);
+    const indexAt = earlierPositions(path, branch, tip)
+      .find((hash) => succeeds(path, ['merge-base', '--is-ancestor', hash, tip]) && succeeds(path, ['diff', '--cached', '--quiet', hash]));
+    if (indexAt === undefined) return [];
+    const [from, to] = [indexAt, tip].map((hash) => gitText(path, ['rev-parse', '--short', hash]));
+    const behind = gitText(path, ['rev-list', '--count', `${indexAt}..${tip}`]);
+    const advice = `git -C ${path} status, then reset only after backing up real edits`;
+    return [item('stale-checkout', path, `index is at ${from}, branch ${branch} moved to ${to} under it (${behind} commits): ${advice}`)];
+  });
+}
+
 /** Runs every check on `repo` (from openRepo). Returns `{ findings, hints }`. */
 export function runCheck(repo) {
   const leftovers = findLeftovers(repo);
@@ -100,6 +131,7 @@ export function runCheck(repo) {
     ...mergedTags.filter((t) => isBackupTag(t.name)).map((t) => item('merged-tag', t.name, `${t.short} ${t.state}`)),
     ...leftovers.mergedWorktrees.map((w) => item('merged-worktree', w.path, `branch ${w.branch}`)),
     ...leftovers.staleWorktrees.map((w) => item('stale-worktree', w.path, 'folder missing')),
+    ...staleCheckoutFindings(worktrees),
   ];
   const unmerged = leftovers.states.filter((b) => b.state === 'unmerged')
     .map((b) => item('unmerged-branch?', b.name, `ahead ${b.ahead}, last commit ${b.date}`));
