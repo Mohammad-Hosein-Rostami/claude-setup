@@ -1,14 +1,16 @@
-// Tests for home/tools/status/status.mjs: add, done, rule and decision edits of a STATUS.md (seen live: the lead made 78 hand
-// edits of STATUS.md rows with python/sed). The edited table must still be readable by the estimate tool.
+// Tests for home/tools/status/status.mjs: add, start, done, deliver, rule and decision edits of a STATUS.md (seen live: the lead
+// made 78 hand edits of STATUS.md rows with python/sed). The edited table must still be readable by the estimate tool, and every
+// edit records the table for the estimator (noteTable) without ever failing because of it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { lstatSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { lstatSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseWorkItems } from '../home/tools/estimate/lib/items.mjs';
+import { linkedStatusPath, readAllTables } from '../home/tools/estimate/lib/table-store.mjs';
 import { runStatus } from '../home/tools/status/status.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/status/status.mjs', import.meta.url));
@@ -44,17 +46,26 @@ deliver: | report | S | | 2026-11-16T10:31Z |
 
 async function project(text) {
   const cwd = await mkdtemp(join(tmpdir(), 'status-'));
+  const stateDir = await mkdtemp(join(tmpdir(), 'status-state-'));
   if (text !== undefined) await writeFile(join(cwd, 'STATUS.md'), text);
-  const run = (...argv) => runStatus(argv, { cwd, now: new Date(argv.includes('done') ? LATER : NOW) });
+  const run = (...argv) => runStatus(argv, { cwd, now: new Date(argv.includes('done') ? LATER : NOW), stateDir });
   const read = () => readFile(join(cwd, 'STATUS.md'), 'utf8');
-  return { cwd, run, read };
+  return { cwd, run, read, stateDir };
 }
 
-test('add puts a row with started = now after the last row of a piped table, and estimate still reads it', async () => {
+/** The CLI with its own home folder, so its noteTable writes land in a temp store and never in the real one. */
+async function cliIn(cwd) {
+  const home = await mkdtemp(join(tmpdir(), 'status-home-'));
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  delete env.CLAUDE_CODE_SESSION_ID;
+  return (...argv) => spawnSync('node', [CLI, ...argv], { cwd, encoding: 'utf8', env });
+}
+
+test('add puts a row with started empty after the last row of a piped table, and estimate still reads it', async () => {
   const { run, read } = await project(PIPED);
   assert.equal(run('add', '2', 'second item', 'M').code, 0);
   const text = await read();
-  assert.match(text, /\| 1 \| first \| S \|.*\n\| 2 \| second item \| M \| 2026-11-16T14:05Z \| - \| - \|\n\n## Owner decisions/);
+  assert.match(text, /\| 1 \| first \| S \|.*\n\| 2 \| second item \| M \| - \| - \| - \|\n\n## Owner decisions/);
   const { items, problems } = parseWorkItems(text);
   assert.deepEqual(problems, []);
   assert.deepEqual(items.map((item) => item.id), ['1', '2']);
@@ -63,7 +74,7 @@ test('add puts a row with started = now after the last row of a piped table, and
 test('add follows a table without outer pipes (empty cells stay empty) and goes after the last row, not after a bullet', async () => {
   const { run, read } = await project(PIPELESS);
   assert.equal(run('add', 'close:2', 'review | audit', 'S').code, 0);
-  assert.match(await read(), /deliver: \| report \| S \| \| 2026-11-16T10:31Z \|\nclose:2 \| review \\\| audit \| S \| 2026-11-16T14:05Z \| \|\n- a bullet between rows/);
+  assert.match(await read(), /deliver: \| report \| S \| \| 2026-11-16T10:31Z \|\nclose:2 \| review \\\| audit \| S \| \| \|\n- a bullet between rows/);
 });
 
 test('add refuses a repeated id (ignoring case), a bad size and missing words, and writes nothing', async () => {
@@ -131,7 +142,7 @@ test('decision adds a dated bullet under Owner decisions, and both sections are 
 
 test('the CLI prints ok and exits 0, prints the refusal on stderr and exits 1, usage exits 2', async () => {
   const { cwd } = await project(PIPED);
-  const cli = (...argv) => spawnSync('node', [CLI, ...argv], { cwd, encoding: 'utf8' });
+  const cli = await cliIn(cwd);
   const added = cli('add', '7', 'from the cli', 'S');
   assert.equal(added.status, 0);
   assert.match(added.stdout, /add: ok/);
@@ -139,6 +150,7 @@ test('the CLI prints ok and exits 0, prints the refusal on stderr and exits 1, u
   assert.equal(again.status, 1);
   assert.match(again.stderr, /id 7 already exists/);
   assert.equal(cli().status, 2);
+  assert.equal(cli('start', '7').status, 0);
   assert.match(await readFile(join(cwd, 'STATUS.md'), 'utf8'), /\| 7 \| from the cli \| S \| 20\d\d-\d\d-\d\dT\d\d:\d\dZ \| - \| - \|/);
 });
 
@@ -151,7 +163,7 @@ test('a missing STATUS.md is refused with the reason', async () => {
 
 // Audit of db40977 (S5, M1-M4): the lead runs Bash calls in parallel, and the file sits in a folder other tools write to.
 const cliAsync = (cwd, ...argv) => new Promise((done) => {
-  const child = spawn('node', [CLI, ...argv], { cwd });
+  const child = spawn('node', [CLI, ...argv], { cwd, env: { ...process.env, HOME: cwd, USERPROFILE: cwd } });
   child.on('close', (code) => done(code));
 });
 
@@ -199,9 +211,127 @@ test('an id that is not one plain word is refused: no heading or bullet can be s
 
 test('the clock cannot be set from the command line, and an item that reads --file is an item', async () => {
   const { cwd, read } = await project(PIPED);
-  const cli = (...argv) => spawnSync('node', [CLI, ...argv], { cwd, encoding: 'utf8' });
+  const cli = await cliIn(cwd);
   assert.equal(cli('--now', '2020-01-01T00:00Z', 'add', '9', 'back-dated', 'S').status, 2);
   assert.doesNotMatch(await read(), /back-dated|2020-01-01/);
   assert.equal(cli('add', '10', '--file', 'S').status, 0);
   assert.match(await read(), /\| 10 \| --file \| S \|/);
+});
+
+// Stage 3 of the estimator rebuild (design section 6): rows are listed first and started on their own, hand-overs are rows the
+// tool numbers, and only the one table under `## Work items` is ever edited.
+const DONE_ROW = '| 1 | first | S | 2026-11-16T10:00Z | 2026-11-16T10:30Z | abc123 |';
+const WITH_LISTED = PIPED.replace(DONE_ROW, `${DONE_ROW}\n| 2 | second | M | - | - | - |`);
+const STRAY = `${PIPED}| 9 | stray | S | 2026-11-16T10:00Z | - | - |\n`;
+
+test('start stamps started on a listed row; a started, done, unknown or missing id is refused and nothing changes', async () => {
+  const { run, read } = await project(WITH_LISTED);
+  assert.equal(run('start', '2').code, 0);
+  assert.match(await read(), /\| 2 \| second \| M \| 2026-11-16T14:05Z \| - \| - \|/);
+  const before = await read();
+  const again = run('start', '2');
+  assert.equal(again.code, 1);
+  assert.match(again.message, /already started/);
+  assert.match(run('start', '1').message, /already done/);
+  assert.equal(run('start', '7').code, 1);
+  assert.equal(run('start').code, 2);
+  assert.equal(await read(), before);
+  assert.deepEqual(parseWorkItems(before).problems, []);
+});
+
+test('done on a row that was never started stamps both and says to use start', async () => {
+  const { run, read } = await project(WITH_LISTED);
+  const result = run('done', '2', 'abc');
+  assert.equal(result.code, 0);
+  assert.match(result.message, /status\.mjs start 2/);
+  assert.match(await read(), /\| 2 \| second \| M \| 2026-11-16T15:30Z \| 2026-11-16T15:30Z \| abc \|/);
+});
+
+test('a work row after another heading is not the table: add goes into the table, start and done cannot reach the stray row', async () => {
+  const { run, read } = await project(STRAY);
+  assert.equal(run('add', '2', 'listed', 'S').code, 0);
+  assert.match(await read(), /\| 1 \| first .*\n\| 2 \| listed \| S \| - \| - \| - \|\n\n## Owner decisions/);
+  assert.match(run('start', '9').message, /no row with id 9/);
+  assert.match(run('done', '9', 'x').message, /no row with id 9/);
+  const { problems } = parseWorkItems(await read());
+  assert.deepEqual(problems.map((problem) => problem.line), [15]);
+  assert.match(problems[0].reason, /outside the `## Work items` table/);
+});
+
+test('add refuses ids that start deliver: in any case; they are reserved for hand-overs', async () => {
+  const { run, read } = await project(PIPED);
+  for (const id of ['deliver:3', 'Deliver:x', 'deliver:']) {
+    const result = run('add', id, 'report', 'S');
+    assert.equal(result.code, 1, id);
+    assert.match(result.message, /reserved.*status\.mjs deliver/);
+  }
+  assert.equal(await read(), PIPED);
+});
+
+test('deliver writes deliver:N rows numbered after the highest one, readable in either pipe style', async () => {
+  const piped = await project(PIPED);
+  assert.equal(piped.run('deliver', 'first part').code, 0);
+  assert.equal(piped.run('deliver', 'second part').code, 0);
+  const text = await piped.read();
+  assert.match(text, /\| deliver:1 \| deliver: first part \| S \| - \| 2026-11-16T14:05Z \| - \|\n\| deliver:2 \| deliver: second part \| S \| - \| 2026-11-16T14:05Z \| - \|\n\n## Owner decisions/);
+  assert.deepEqual(parseWorkItems(text).problems, []);
+  assert.deepEqual(parseWorkItems(text).items.map((item) => item.kind), ['build', 'deliver', 'deliver']);
+  const bare = await project(PIPELESS.replace('- a bullet between rows', 'deliver:3 | older | S | | 2026-11-16T11:00Z |'));
+  assert.equal(bare.run('deliver', 'report').code, 0);
+  const bareText = await bare.read();
+  assert.match(bareText, /deliver:3 \| older \| S \| \| 2026-11-16T11:00Z \|\ndeliver:4 \| deliver: report \| S \| \| 2026-11-16T14:05Z \|\n/);
+  assert.deepEqual(parseWorkItems(bareText).problems, []);
+  assert.equal(piped.run('deliver').code, 2);
+  assert.equal(piped.run('deliver', ' ').code, 2);
+});
+
+const AUTO_CASES = [
+  ['a running row', PIPED.replace('2026-11-16T10:30Z | abc123 |', '- | - |'), /open/],
+  ['a listed row not started', PIPED.replace('2026-11-16T10:30Z | abc123 |', '2026-11-16T10:30Z | abc123 |\n| 2 | next | S | - | - | - |'), /open/],
+  ['no row done since the last hand-over', PIPED.replace('abc123 |', 'abc123 |\n| deliver:1 | deliver: report | S | - | 2026-11-16T10:30Z | - |'), /since the last hand-over/],
+  ['no work row at all', '## Work items\n\n| id | item | size | started | done | evidence |\n| -- | -- | -- | -- | -- | -- |\n', /since the last hand-over/],
+  ['a table with a problem', STRAY.replace('| 9 | stray | S | 2026-11-16T10:00Z | - | - |', '| 9 | stray | S | 2026-11-16T10:00Z | 2026-11-16T10:20Z | x9 |'), /line 14/],
+];
+
+for (const [name, text, reason] of AUTO_CASES) {
+  test(`deliver --auto writes nothing with ${name}`, async () => {
+    const { run, read } = await project(text);
+    const result = run('deliver', '--auto');
+    assert.equal(result.code, 0);
+    assert.match(result.message, reason);
+    assert.equal(await read(), text);
+  });
+}
+
+test('deliver --auto writes one row when nothing is open and a row was done after the last hand-over, and only once', async () => {
+  const text = PIPED.replace('abc123 |', 'abc123 |\n| deliver:1 | deliver: report | S | - | 2026-11-16T10:30Z | - |\n| 2 | more | S | 2026-11-16T11:00Z | 2026-11-16T12:00Z | def456 |');
+  const { run, read } = await project(text);
+  assert.equal(run('deliver', '--auto').code, 0);
+  const written = await read();
+  assert.match(written, /\| 2 \| more .*\n\| deliver:2 \| deliver: turn ended with no open row \| S \| - \| 2026-11-16T14:05Z \| - \|\n/);
+  assert.deepEqual(parseWorkItems(written).problems, []);
+  assert.match(run('deliver', '--auto').message, /since the last hand-over/);
+  assert.equal(await read(), written);
+  assert.equal(run('deliver', '--auto', 'extra').code, 2);
+});
+
+test('every edit records the table for the estimator and links the session to this STATUS.md', async () => {
+  const { cwd, stateDir } = await project(PIPED);
+  const result = runStatus(['add', '2', 'listed', 'S'], { cwd, now: new Date(NOW), stateDir, sessionId: 'session-a' });
+  assert.equal(result.code, 0);
+  assert.doesNotMatch(result.message, /not recorded/);
+  assert.equal(linkedStatusPath(stateDir, 'session-a'), realpathSync(join(cwd, 'STATUS.md')));
+  const [table] = readAllTables(stateDir);
+  assert.deepEqual(table.sessions, ['session-a']);
+  assert.deepEqual(Object.keys(table.added), ['1', '2']);
+});
+
+test('a store that cannot be written is a note in the message, never a failed edit', async () => {
+  const { cwd, read } = await project(PIPED);
+  const blocked = join(await mkdtemp(join(tmpdir(), 'status-blocked-')), 'not-a-folder');
+  writeFileSync(blocked, 'a file where the store folder should be');
+  const result = runStatus(['add', '2', 'listed', 'S'], { cwd, now: new Date(NOW), stateDir: blocked, sessionId: 'session-a' });
+  assert.equal(result.code, 0);
+  assert.match(result.message, /^add: ok .*not recorded for the estimate/);
+  assert.match(await read(), /\| 2 \| listed \|/);
 });
