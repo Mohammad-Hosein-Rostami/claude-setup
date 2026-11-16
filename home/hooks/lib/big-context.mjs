@@ -1,9 +1,11 @@
 // One-time warning for the first big prompt of a session that starts on an already large context.
 // Exports: bigContextNote({ prompt, transcriptPath, dir, sessionId }).
+// A pasted log or a compaction summary does not count as a new task (lib/owner-words.mjs).
 // Invariants: every mode; at most once per session (flag file `<dir>/<sessionId>.bigctx`, pruned with
 // the mode state files); a failed flag write only means the warning may repeat, reported to stderr; never throws.
 import { mkdir, writeFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
+import { ownerWords } from './owner-words.mjs';
 import { contextTokens } from './transcript.mjs';
 
 const BIG_CONTEXT_TOKENS = 60_000;
@@ -17,7 +19,7 @@ const TOKENS_PER_K = 1000;
  */
 export async function bigContextNote({ prompt, transcriptPath, dir, sessionId }) {
   if (!sessionId) return '';
-  if (typeof prompt !== 'string' || prompt.startsWith('/') || prompt.trim().length < BIG_PROMPT_CHARS) return '';
+  if (typeof prompt !== 'string' || prompt.startsWith('/') || ownerWords(prompt).trim().length < BIG_PROMPT_CHARS) return '';
   const flag = join(dir, `${sessionId}.bigctx`);
   if (await access(flag).then(() => true, () => false)) return '';
   const tokens = await contextTokens(transcriptPath);

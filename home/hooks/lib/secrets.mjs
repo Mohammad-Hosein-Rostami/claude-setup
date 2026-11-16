@@ -61,7 +61,10 @@ const PLACEHOLDER = `(?:%[-+# 0]{0,5}(?:\\d{1,3}|\\*)?(?:\\.(?:\\d{1,3}|\\*))?[a
 // After the closing quote only a real boundary may follow (closing brackets, then whitespace, `;&|`, `,` plus whitespace, or the end): `-H "X: %s"R` is a value.
 const AFTER_QUOTE = '(?=[)}\\]]{0,4}(?:[\\s;&|]|,\\s|$))';
 const OPENER = '(?<=^|[\\s(=,\\[{:])';
-const FORMAT_PLACEHOLDER = `(?!(?<=${OPENER}(?<q>["'])(?:(?!\\s--?[A-Za-z])[^"'\\n]){0,500})${PLACEHOLDER}[ \\t]*\\k<q>${AFTER_QUOTE}|${PLACEHOLDER}[ \\t]*(?:\\n|$))`;
+// A TypeScript type annotation (`cookie: string`, `cookie: string | null;`, `x-api-key: string[]`) names a type, not a value: a primitive type word (or a `|` union of them, with `[]`) that ends at `; , } )`, a quote, `=` or the line end.
+const TS_TYPE_WORD = '(?:string|number|boolean|bigint|symbol|object|unknown|any|never|void|null|undefined)(?:\\[\\])?';
+const TS_TYPE = `${TS_TYPE_WORD}(?:[ \\t]*\\|[ \\t]*${TS_TYPE_WORD}){0,6}[ \\t]*(?:[;,})=\\]"']|\\n|$)`;
+const FORMAT_PLACEHOLDER = `(?!(?<=${OPENER}(?<q>["'])(?:(?!\\s--?[A-Za-z])[^"'\\n]){0,500})${PLACEHOLDER}[ \\t]*\\k<q>${AFTER_QUOTE}|${PLACEHOLDER}[ \\t]*(?:\\n|$)|${TS_TYPE})`;
 const STDIN_FLAG = '--(?:with-token|password-stdin)\\b';
 // the value is echoed/printed (`echo -n T`, `printf '%s' T`) and piped into a command that has the stdin flag
 const ECHOED_INTO_STDIN_FLAG = `(?=(?:"[^"]*"|'[^']*'|[^\\s"';&|]+)[ \\t]*\\|[^\\n;&|]{0,${GAP}}${STDIN_FLAG})`;
@@ -75,7 +78,9 @@ const REGEX_VALUE = `"/[^"\\n]{0,500}\\|[^"\\n]{0,500}"|'/[^'\\n]{0,500}\\|[^'\\
 const TEMPLATE_EXPRESSION = `(?:\\{\\{-?|\\{%-?)[ \\t]{0,5}(?:\\.|[A-Za-z_]\\w{0,39}(?:\\.|[ \\t]{0,5}\\||[ \\t]{1,5}(?![ \\t}%-])))[^{}\\n]{0,200}(?:\\}\\}|%\\})`;
 // It must end the value: its own closing quote (when one opened it) and then whitespace, `;&|)>` or the end (`"{{.x}}"R` is a value).
 const TEMPLATE_VALUE = `(?:\\\\?(?<tq>["'])${TEMPLATE_EXPRESSION}\\\\?\\k<tq>|${TEMPLATE_EXPRESSION})(?=[\\s;&|)>]|$)`;
-const CODE_VALUE = `(?!${REGEX_VALUE}|${TEMPLATE_VALUE}|["']?(?:(?:\\.{1,2}|~)/|/(?:${ABSOLUTE_ROOTS})/)|[=>(\\[]|\\{(?!\\{)|[\\w$]{1,40}\\s*=>|lambda\\b|[\\w$]{1,40}(?:\\.[\\w$]{1,40}){0,6}\\s*[(\\[])`;
+// A boolean, null or one- or two-digit flag value (`passwordReset=1`, `password=true`) ends at whitespace, a quote or a shell separator; no real secret is `true` or `1`.
+const FLAG_VALUE = `["']?(?:true|false|null|undefined|\\d{1,2})["']?(?=[\\s;&|)}\\],]|$)`;
+const CODE_VALUE = `(?!${REGEX_VALUE}|${FLAG_VALUE}|${TEMPLATE_VALUE}|["']?(?:(?:\\.{1,2}|~)/|/(?:${ABSOLUTE_ROOTS})/)|[=>(\\[]|\\{(?!\\{)|[\\w$]{1,40}\\s*=>|lambda\\b|[\\w$]{1,40}(?:\\.[\\w$]{1,40}){0,6}\\s*[(\\[])`;
 const QUERY_TOKEN_KEYS = caseless('api[_-]?key|access[_-]?(?:token|key)|auth[_-]?token|token');
 const QUERY_SECRET_KEYS = caseless('client[_-]?secret|secret|password|passwd|pwd');
 // What may follow the end of a quoted or bracketed query value: closing brackets, then whitespace, `;`, the end, or a `,` that is followed by whitespace or by the

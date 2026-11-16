@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { GATE_ROUTES } from './lib/gate-routes.mjs';
+import { ownerWords } from './lib/owner-words.mjs';
 
 const PROMPT_ROUTES = [
   { test: /figma\.com|figma|pixel[\s-]?perfect|match (the )?(design|frame)|فیگما/i, skills: ['figma-pixel-perfect', 'responsive-ui'] },
@@ -41,10 +42,8 @@ const PROMPT_ROUTES = [
     skills: ['accessibility-build', 'responsive-ui', 'ui-quality-pass'],
   },
 ];
-// Harness events that arrive as the whole prompt are not user text; wrapped blocks inside a prompt are cut by ownerWords.
+// Harness events that arrive as the whole prompt are not user text; wrapped blocks, pasted logs and compaction summaries are cut by ownerWords (lib/owner-words.mjs).
 const HARNESS_EVENT = /^(<agent-message|\[SYSTEM NOTIFICATION)/;
-// Text other sessions and the harness put in a prompt: a block runs to its closing tag, or to the end when unclosed.
-const WRAPPED_BLOCK = /<(cross-session-message|task-notification|system-reminder)\b[\s\S]*?(?:<\/\1>|$)/gi;
 const UI_FILE = /\.(tsx|jsx|vue|svelte|html|css|scss|sass|less)$/i;
 const NON_UI_FILE = /\.(test|spec|stories)\.\w+$/i;
 const SAFE_ID = /^[\w-]{1,128}$/;
@@ -56,9 +55,6 @@ const FOLLOW_UP_SKILLS = ['accessibility-build', 'responsive-ui', 'ui-quality-pa
 const COMPACT_SOURCE = 'compact';
 const OFF_ENV = 'CLAUDE_SKILL_ROUTER';
 const GRADLE_FILES = ['settings.gradle', 'settings.gradle.kts', 'build.gradle', 'build.gradle.kts'];
-
-/** The owner's own words: the prompt without cross-session messages, task notifications and system reminders. */
-const ownerWords = (prompt) => prompt.replace(WRAPPED_BLOCK, ' ');
 
 /** Returns the gate routes (bug -> root-cause-debug, done/ship -> verify-done, repo restructure -> repo-restructure, git history -> git-linear-history) a prompt calls for. */
 function gatesForPrompt(prompt) {
