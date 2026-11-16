@@ -62,8 +62,10 @@ const PLACEHOLDER = `(?:%[-+# 0]{0,5}(?:\\d{1,3}|\\*)?(?:\\.(?:\\d{1,3}|\\*))?[a
 const AFTER_QUOTE = '(?=[)}\\]]{0,4}(?:[\\s;&|]|,\\s|$))';
 const OPENER = '(?<=^|[\\s(=,\\[{:])';
 // A TypeScript type annotation (`cookie: string`, `cookie: string | null;`, `x-api-key: string[]`) names a type, not a value: a primitive type word (or a `|` union of them, with `[]`) that ends at `; , } )`, a quote, `=` or the line end.
+// It is the WHOLE value, never a prefix: what ends it must end the header too (`; ,` then a blank, a closing bracket or quote then a boundary, ` =`),
+// and no `name=value` may follow on the line (`Cookie: undefined=x; session=R`, `X-Api-Key: string,R` and `any"R` are values).
 const TS_TYPE_WORD = '(?:string|number|boolean|bigint|symbol|object|unknown|any|never|void|null|undefined)(?:\\[\\])?';
-const TS_TYPE = `${TS_TYPE_WORD}(?:[ \\t]*\\|[ \\t]*${TS_TYPE_WORD}){0,6}[ \\t]*(?:[;,})=\\]"']|\\n|$)`;
+const TS_TYPE = `(?![^\\n"']{0,500}[\\w-]=[^\\s=])${TS_TYPE_WORD}(?:[ \\t]*\\|[ \\t]*${TS_TYPE_WORD}){0,6}[ \\t]*(?:[;,](?=\\s|$)|[})\\]](?=[\\s;,)}\\]]|$)|(?<=[ \\t])=|["'](?=[\\s;,)}\\]]|$)|\\n|$)`;
 const FORMAT_PLACEHOLDER = `(?!(?<=${OPENER}(?<q>["'])(?:(?!\\s--?[A-Za-z])[^"'\\n]){0,500})${PLACEHOLDER}[ \\t]*\\k<q>${AFTER_QUOTE}|${PLACEHOLDER}[ \\t]*(?:\\n|$)|${TS_TYPE})`;
 const STDIN_FLAG = '--(?:with-token|password-stdin)\\b';
 // the value is echoed/printed (`echo -n T`, `printf '%s' T`) and piped into a command that has the stdin flag
@@ -79,7 +81,9 @@ const TEMPLATE_EXPRESSION = `(?:\\{\\{-?|\\{%-?)[ \\t]{0,5}(?:\\.|[A-Za-z_]\\w{0
 // It must end the value: its own closing quote (when one opened it) and then whitespace, `;&|)>` or the end (`"{{.x}}"R` is a value).
 const TEMPLATE_VALUE = `(?:\\\\?(?<tq>["'])${TEMPLATE_EXPRESSION}\\\\?\\k<tq>|${TEMPLATE_EXPRESSION})(?=[\\s;&|)>]|$)`;
 // A boolean, null or one- or two-digit flag value (`passwordReset=1`, `password=true`) ends at whitespace, a quote or a shell separator; no real secret is `true` or `1`.
-const FLAG_VALUE = `["']?(?:true|false|null|undefined|\\d{1,2})["']?(?=[\\s;&|)}\\],]|$)`;
+// It is the WHOLE value, never a prefix: a closing quote only matches the opening one, glued brackets or commas must be followed by a boundary
+// (`=12,R`, `=null]R`, `"12 R"` are values), and a field inside a quoted string (`-d "password=12 R"`) is never exempt.
+const FLAG_VALUE = `(?<!["'][\\w.-]{0,80}=)(?<fq>["']?)(?:true|false|null|undefined|\\d{1,2})\\k<fq>(?=[)}\\],]{0,4}(?:[\\s;&|]|$))`;
 const CODE_VALUE = `(?!${REGEX_VALUE}|${FLAG_VALUE}|${TEMPLATE_VALUE}|["']?(?:(?:\\.{1,2}|~)/|/(?:${ABSOLUTE_ROOTS})/)|[=>(\\[]|\\{(?!\\{)|[\\w$]{1,40}\\s*=>|lambda\\b|[\\w$]{1,40}(?:\\.[\\w$]{1,40}){0,6}\\s*[(\\[])`;
 const QUERY_TOKEN_KEYS = caseless('api[_-]?key|access[_-]?(?:token|key)|auth[_-]?token|token');
 const QUERY_SECRET_KEYS = caseless('client[_-]?secret|secret|password|passwd|pwd');
