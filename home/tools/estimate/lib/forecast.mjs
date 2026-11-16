@@ -1,5 +1,5 @@
 // The work-left forecast: a reference pool of finished rows and jobs, seeded runs over the open rows, and why no time can be given.
-// Exports: RUNS, MIN_CLASS_ROWS, MAX_GROWTH, nearestRank(sortedValues, share), referencePool(tables, seed),
+// Exports: nearestRank(sortedValues, share), referencePool(tables, seed),
 // forecastWork(openRows, pool, seedText), refusalOf(openRows, pool, work).
 // Model (estimator design 3.5-3.7): the class of a row is its size alone; one run draws, for each open row, a finished cost of its
 // size longer than the row's elapsed share (minus that share), or any cost of its size when the row has run longer than all of them
@@ -9,15 +9,15 @@
 import { createHash } from 'node:crypto';
 
 /** Runs per forecast: the 85th percentile of 2000 draws moves by under 1 % between seeds on the measured jobs (design 8.3, 3 seeds). */
-export const RUNS = 2000;
+const RUNS = 2000;
 /** A size needs this many finished rows before its rows can be forecast (design 3.5; L had 7 on the measured tables). */
-export const MIN_CLASS_ROWS = 5;
+const MIN_CLASS_ROWS = 5;
 /** Rows per size kept in the pool, newest by done time: all 146 measured rows fit; old rows leave without an age cliff (design 9). */
 const CLASS_WINDOW_ROWS = 200;
 /** Growth is pooled over the newest jobs until they hold this much work: 20 hours, minutes (design 3.4; the measured pool held 21.3 h). */
 const GROWTH_WINDOW_MIN = 1200;
 /** Growth at or above this share means most of the work is usually missing from the table: no time is given (design 3.7, U5). */
-export const MAX_GROWTH = 0.75;
+const MAX_GROWTH = 0.75;
 /** A forecast median above this many times the longest finished job is past what the pool has seen (design 3.7). */
 const HORIZON_FACTOR = 2;
 const SIZES = ['S', 'M', 'L'];
