@@ -1,22 +1,24 @@
 // Stop: records the hand-over by itself. When the lead's turn ends, runs `status.mjs deliver --auto` on the STATUS.md this session
-// last edited or estimated (its link in ~/.claude/state/estimate/session/), so a job handed over with nothing open gets its
-// `deliver:N` row and the estimator can score its commitment (0 of 16 old commitments were scored: nobody wrote the rows).
-// Exports: deliverAtStop(input, { stateDir, now }) -> { code, message } | null (null: no usable session id or no link).
+// last edited (its link in ~/.claude/state/estimate/session/), so a job handed over with nothing open gets its `deliver:N` row and
+// the estimator can score its commitment (0 of 16 old commitments were scored: nobody wrote the rows).
+// Exports: deliverAtStop(input, { stateDir, now, projectDir }) -> { code, message } | null (null: no usable session id or no link).
 // Invariants: never blocks a stop and never prints a decision: stdout stays empty, exit is always 0, a refusal or error is one
-// stderr line. deliver --auto itself writes only when no work row is open and one was done after the last hand-over.
+// stderr line. deliver --auto itself writes only when no work row is open and one was done after the last hand-over. A STATUS.md
+// outside the Stop input's cwd and CLAUDE_PROJECT_DIR (both resolved with realpath) is never written: subagents and other sessions
+// share links, and another project's table must not get this session's hand-over (exit 0, no stderr line).
 // Safety (the hook edits a file named in a state file): the stdin JSON is read up to MAX_INPUT_BYTES; the linked path must be
 // absolute and named STATUS.md, its folder must be its own real path (no link anywhere in the chain), the file a regular file
 // (lstat, never followed) of at most MAX_STATUS_BYTES; status.mjs then edits it under its lock with its own link refusal.
 // Stop hooks of one group run side by side, so this one assumes nothing about the others.
 import { lstatSync, realpathSync } from 'node:fs';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isSessionId } from './lib/session-store.mjs';
 import { linkedStatusPath, stateDir as defaultStateDir } from '../tools/estimate/lib/table-store.mjs';
 import { runStatus } from '../tools/status/status.mjs';
+import { MAX_STATUS_BYTES } from '../tools/status/status-file.mjs';
 
 const MAX_INPUT_BYTES = 1 << 20; // 1 MiB: the Stop JSON carries the last reply; a larger input is not a normal stop and is skipped
-const MAX_STATUS_BYTES = 4 << 20; // 4 MiB: the largest live STATUS.md is about 60 KB; status.mjs reads the whole file
 const STATUS_NAME = 'STATUS.md';
 
 /** Why the linked path may not be edited, or null when it is a plain STATUS.md in a folder reached without links. */
@@ -34,20 +36,36 @@ function unsafeReason(path) {
   return null;
 }
 
+/** True when folder (a real path) is root or below it, root given as any path that resolves (realpath); false for a bad root. */
+function isWithin(folder, root) {
+  if (typeof root !== 'string' || root === '') return false;
+  let real;
+  try {
+    real = realpathSync(root);
+  } catch {
+    return false; // a cwd or project dir that does not resolve holds nothing
+  }
+  return folder === real || folder.startsWith(real.endsWith(sep) ? real : `${real}${sep}`);
+}
+
 /**
- * Runs `deliver --auto` on the session's linked STATUS.md.
- * @param {{session_id?: string} | null} input the Stop hook JSON
- * @param {{stateDir: string, now: Date}} options the estimator's store and the clock
- * @returns {{code: number, message: string} | null} the status edit's outcome (code 0 also when nothing was due), code 1 when the
- *   linked path is refused; null when the input has no usable session id or the session linked no STATUS.md
+ * Runs `deliver --auto` on the session's linked STATUS.md when it lies inside the Stop input's cwd or the project dir.
+ * @param {{session_id?: string, cwd?: string} | null} input the Stop hook JSON
+ * @param {{stateDir: string, now: Date, projectDir?: string}} options the estimator's store, the clock and CLAUDE_PROJECT_DIR
+ * @returns {{code: number, message: string} | null} the status edit's outcome (code 0 also when nothing was due, and when the
+ *   STATUS.md is outside both folders: another project's table is never touched), code 1 when the linked path is refused; null
+ *   when the input has no usable session id or the session linked no STATUS.md
  */
-export function deliverAtStop(input, { stateDir, now }) {
+export function deliverAtStop(input, { stateDir, now, projectDir }) {
   const sessionId = input?.session_id;
   if (!isSessionId(sessionId)) return null;
   const path = linkedStatusPath(stateDir, sessionId);
   if (path === null) return null;
   const unsafe = unsafeReason(path);
   if (unsafe !== null) return { code: 1, message: `the linked ${path} ${unsafe}: refused` };
+  if (!isWithin(dirname(path), input.cwd) && !isWithin(dirname(path), projectDir)) {
+    return { code: 0, message: `the linked ${path} is outside this session's cwd and project dir: no hand-over written` };
+  }
   return runStatus(['--file', path, 'deliver', '--auto'], { cwd: dirname(path), now, sessionId, stateDir });
 }
 
@@ -66,7 +84,7 @@ async function boundedStdin() {
 async function main() {
   const text = await boundedStdin();
   if (text === null) return; // not a normal Stop input: nothing to do, and nothing to say
-  const outcome = deliverAtStop(JSON.parse(text), { stateDir: defaultStateDir(), now: new Date() });
+  const outcome = deliverAtStop(JSON.parse(text), { stateDir: defaultStateDir(), now: new Date(), projectDir: process.env.CLAUDE_PROJECT_DIR });
   if (outcome !== null && outcome.code !== 0) process.stderr.write(`status-deliver: ${outcome.message}\n`);
 }
 

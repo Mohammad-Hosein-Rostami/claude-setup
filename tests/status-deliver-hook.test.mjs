@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeSessionFile } from '../home/hooks/lib/session-store.mjs';
 import { deliverAtStop } from '../home/hooks/status-deliver.mjs';
@@ -44,20 +44,20 @@ test('no session id, an unsafe one, or a session with no link: null, nothing wri
 
 test('a linked table with nothing open and a row done since the last hand-over gets one deliver row', async () => {
   const stateDir = await tempDir('deliver-state-');
-  const { read } = await linkedProject(ALL_DONE, stateDir);
-  const outcome = deliverAtStop({ session_id: SESSION, stop_hook_active: false }, { stateDir, now: NOW });
+  const { cwd, read } = await linkedProject(ALL_DONE, stateDir);
+  const outcome = deliverAtStop({ session_id: SESSION, cwd, stop_hook_active: false }, { stateDir, now: NOW });
   assert.equal(outcome.code, 0);
   assert.match(read(), DELIVER_ROW);
-  const again = deliverAtStop({ session_id: SESSION }, { stateDir, now: NOW });
+  const again = deliverAtStop({ session_id: SESSION, cwd }, { stateDir, now: NOW });
   assert.match(again.message, /since the last hand-over/);
   assert.equal(read().match(/deliver:/g).length, 2); // the id and the item of the one row
 });
 
 test('a linked table with an open row is left as it is', async () => {
   const stateDir = await tempDir('deliver-state-');
-  const { read } = await linkedProject(ONE_OPEN, stateDir);
+  const { cwd, read } = await linkedProject(ONE_OPEN, stateDir);
   const before = read();
-  const outcome = deliverAtStop({ session_id: SESSION }, { stateDir, now: NOW });
+  const outcome = deliverAtStop({ session_id: SESSION, cwd }, { stateDir, now: NOW });
   assert.equal(outcome.code, 0);
   assert.match(outcome.message, /row 2 is open/);
   assert.equal(read(), before);
@@ -106,14 +106,19 @@ test('a linked STATUS.md over the size cap or missing is refused without reading
   assert.equal(deliverAtStop({ session_id: SESSION }, { stateDir, now: NOW }).code, 1);
 });
 
-/** The hook as Claude Code runs it, with its own home folder (the store is ~/.claude/state/estimate under it). */
+/**
+ * The hook as Claude Code runs it, with its own home folder (the store is ~/.claude/state/estimate under it) and no project dir.
+ * stdin is the input text, or a function of the prepared project that returns it.
+ */
 async function runHook(stdin, prepare) {
   const home = await tempDir('deliver-home-');
   const stateDir = join(home, '.claude', 'state', 'estimate');
   mkdirSync(stateDir, { recursive: true });
   const project = prepare ? await prepare(stateDir) : undefined;
   const env = { ...process.env, HOME: home, USERPROFILE: home };
-  const run = spawnSync('node', [HOOK], { input: stdin, encoding: 'utf8', env });
+  delete env.CLAUDE_PROJECT_DIR;
+  const input = typeof stdin === 'function' ? stdin(project) : stdin;
+  const run = spawnSync('node', [HOOK], { input, encoding: 'utf8', env });
   return { run, project };
 }
 
@@ -128,9 +133,58 @@ test('the hook exits 0 silently without a link, with bad input and with input ov
 });
 
 test('the hook writes the deliver row for the linked table and prints nothing', async () => {
-  const { run, project } = await runHook(JSON.stringify({ session_id: SESSION, stop_hook_active: false }), (stateDir) => linkedProject(ALL_DONE, stateDir));
+  const stdin = ({ cwd }) => JSON.stringify({ session_id: SESSION, cwd, stop_hook_active: false });
+  const { run, project } = await runHook(stdin, (stateDir) => linkedProject(ALL_DONE, stateDir));
   assert.equal(run.status, 0);
   assert.equal(run.stdout, '');
   assert.equal(run.stderr, '');
   assert.match(project.read(), /\| deliver:1 \| deliver: turn ended with no open row \| S \| - \| \d{4}-\d\d-\d\dT\d\d:\d\dZ \| - \|/);
+});
+
+// Audit of 768f9aa (SF1, option a): a session's Stop wrote a hand-over into a table of another project it had only estimated, and a
+// second session in the same project wrote one into the first session's table. A hand-over is now written only into a STATUS.md
+// inside the Stop input's cwd or the project dir, both resolved with realpath.
+test('a linked STATUS.md outside the Stop cwd and the project dir is left alone, without a stderr line', async () => {
+  const stateDir = await tempDir('deliver-state-');
+  const { read } = await linkedProject(ALL_DONE, stateDir);
+  const before = read();
+  const elsewhere = await tempDir('deliver-elsewhere-');
+  for (const input of [{ session_id: SESSION, cwd: elsewhere }, { session_id: SESSION }]) {
+    const outcome = deliverAtStop(input, { stateDir, now: NOW, projectDir: elsewhere });
+    assert.equal(outcome.code, 0, JSON.stringify(input));
+    assert.match(outcome.message, /outside/);
+  }
+  assert.equal(read(), before);
+  const { run, project } = await runHook(JSON.stringify({ session_id: SESSION, cwd: elsewhere }), (dir) => linkedProject(ALL_DONE, dir));
+  assert.deepEqual([run.status, run.stdout, run.stderr], [0, '', '']);
+  assert.doesNotMatch(project.read(), /deliver:/);
+});
+
+test('a linked STATUS.md in a subfolder of the cwd, under the project dir, or under a cwd reached through a link gets its row', async () => {
+  const cases = [
+    ['parent cwd', (cwd) => ({ input: { cwd: dirname(cwd) } })],
+    ['project dir', (cwd, other) => ({ input: { cwd: other }, projectDir: cwd })],
+    ['cwd through a link', (cwd, other) => {
+      symlinkSync(cwd, join(other, 'linked'));
+      return { input: { cwd: join(other, 'linked') } };
+    }],
+  ];
+  for (const [name, setup] of cases) {
+    const stateDir = await tempDir('deliver-state-');
+    const { cwd, read } = await linkedProject(ALL_DONE, stateDir);
+    const { input, projectDir } = setup(cwd, await tempDir('deliver-other-'));
+    const outcome = deliverAtStop({ session_id: SESSION, ...input }, { stateDir, now: NOW, projectDir });
+    assert.equal(outcome.code, 0, name);
+    assert.match(read(), DELIVER_ROW, name);
+  }
+});
+
+test('a cwd whose path is only a name prefix of the STATUS.md folder does not count as holding it', async () => {
+  const stateDir = await tempDir('deliver-state-');
+  const { cwd, read } = await linkedProject(ALL_DONE, stateDir);
+  const prefix = cwd.slice(0, -2); // `/tmp/deliver-project-ab` for `/tmp/deliver-project-abcd`: a sibling folder, not a parent
+  mkdirSync(prefix);
+  const outcome = deliverAtStop({ session_id: SESSION, cwd: prefix }, { stateDir, now: NOW });
+  assert.match(outcome.message, /outside/);
+  assert.doesNotMatch(read(), /deliver:/);
 });
