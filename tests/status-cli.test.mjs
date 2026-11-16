@@ -412,3 +412,31 @@ test('a STATUS.md over the size cap is refused and left as it is', async () => {
   assert.match(result.message, /over/);
   assert.equal(await read(), big);
 });
+
+// Audit of 75af2e9 (S2): a fenced example INSIDE the real section, above its header, must not be taken for the table either.
+const FENCE_IN_SECTION = PIPED.replace('## Work items\n\n', `## Work items
+
+An example row:
+
+\`\`\`
+| id | item | size | started | done | evidence |
+| -- | ---- | ---- | ------- | ---- | -------- |
+| 9 | example | S | - | - | - |
+\`\`\`
+
+`);
+
+test('a fenced example inside the Work items section, above the header: add, start, done and deliver change only the real table', async () => {
+  const { run, read } = await project(FENCE_IN_SECTION);
+  const fence = FENCE_IN_SECTION.slice(0, FENCE_IN_SECTION.indexOf('```\n\n|') + 4);
+  assert.equal(run('add', '2', 'listed', 'S').code, 0);
+  assert.equal(run('start', '2').code, 0);
+  assert.equal(run('done', '2', 'def456').code, 0);
+  assert.equal(run('deliver', 'report').code, 0);
+  assert.equal(run('start', '9').code, 1); // the example's row is out of reach
+  const text = await read();
+  assert.ok(text.startsWith(fence), 'the fenced example is unchanged');
+  const { items, problems } = parseWorkItems(text);
+  assert.deepEqual(problems, []);
+  assert.deepEqual(items.map((item) => item.id), ['1', '2', 'deliver:1']);
+});
