@@ -8,7 +8,8 @@
 //                   another Bash call (no Agent/Task call between) counts as ignored, in a per-session file next to the count.
 //   PreToolUse Bash in the lead -> after 2 ignored nudges, at 150k+ context, the next lead Bash call that is not git or
 //                   read-only (lib/read-only-command.mjs) is denied once with "delegate to runner/implementer" (lib/bounce-once.mjs
-//                   adviceOnce: the identical retry runs) and the ignored count starts over, so it never loops. Subagents are
+//                   adviceOnce with a store of its own, ~/.claude/state/budget-denied: the identical retry runs; the guard's bounce store
+//                   is never touched, so the guard's own bounce of that call still comes) and the ignored count starts over, so it never loops. Subagents are
 //                   never blocked; an unknown context size never denies.
 //   SubagentStop -> blocks once when the final report is over the cap the spawn prompt states (first user message of the
 //                   agent transcript); no stated cap means no check, so agents that return data are never sent back.
@@ -142,7 +143,8 @@ export async function leadBashDeny(input, env = process.env) {
     + '(C: cost = calls × context). git and read-only commands stay with the lead.';
   const { adviceOnce } = await import('./lib/bounce-once.mjs');
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  const deny = adviceOnce([advice], { command, cwd, input, hook: 'agent-budget', tool: 'Bash' }, env);
+  const store = join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'budget-denied'); // never the guard's: see adviceOnce
+  const deny = adviceOnce([advice], { command, cwd, input, hook: 'agent-budget', tool: 'Bash', store }, env);
   if (deny !== '') rmSync(ignoredPath(input.session_id), { force: true }); // one deny per escalation: never a loop
   return deny;
 }

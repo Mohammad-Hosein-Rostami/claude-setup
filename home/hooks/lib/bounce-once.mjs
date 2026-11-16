@@ -9,7 +9,7 @@
 // reason AND other reasons is bounced too, and its deny text names those other reasons by class (fixed names, never command text): the
 // rewritten command still asks the owner about them, and the identical retry's ask shows every reason. A literal secret's deny text ends
 // with an instruction to tell the owner, in the final report, which kind of secret was typed: the transcript holds it now.
-// Store: ~/.claude/state/guard-bounced/<session>.json through lib/session-store.mjs (lstat-checked: never through a link, never a FIFO;
+// Store (adviceOnce callers may name their own folder instead): ~/.claude/state/guard-bounced/<session>.json through lib/session-store.mjs (lstat-checked: never through a link, never a FIFO;
 // folder 0700, file 0600): {"digests": [oldest, ..., newest]}, each the sha256 of [cwd, command] as JSON, so no command text and no secret
 // is stored. At most MAX_BOUNCED digests (the oldest is dropped). The match is exact: one changed character (a trailing blank) makes a new
 // command, which is judged fresh.
@@ -114,8 +114,7 @@ function parseDigests(text) {
  * @returns {'first' | 'retry' | undefined} 'first' when the digest was not stored before and now is; 'retry' when it was stored before;
  *   undefined when the store is unusable, damaged or still locked, or the write failed
  */
-function recordSend(session, digest, env) {
-  const dir = bouncedDir(env);
+function recordSend(session, digest, env, dir = bouncedDir(env)) {
   return withSessionLock(dir, session, () => {
     const stored = parseDigests(readSessionFile(dir, session, MAX_STORE_BYTES));
     if (stored === undefined) return undefined;
@@ -168,19 +167,21 @@ export function bounceOnce(ask, { command, cwd, input }, env = process.env) {
  * @param {{command: string, cwd: string, input: {session_id?: unknown}, hook?: string, tool?: string, logged?: object}} call the call
  *   being guarded; hook and tool name it in the log line (default pre-bash-guard and Bash; agent-model-guard.mjs passes its own for an
  *   Agent call). logged, when given, replaces the advice, command, cwd and session in the log line (the digest is added): agent-model-guard
- *   passes fixed fields, so no prompt text reaches the log
+ *   passes fixed fields, so no prompt text reaches the log. store, when given, is the folder of a store of the caller's own (default: the
+ *   guard's bounce store): a hook that runs on the same Bash call as the guard (agent-budget) must not use the guard's, or its deny would
+ *   mark the command as already bounced and the guard would ask instead of giving its rewrite advice
  * @param {Record<string, string | undefined>} env process environment (HOME, CLAUDE_GUARD_LOG)
  * @returns {string} a PreToolUse deny JSON line on the first send; '' (no decision: the command runs) on the identical retry, and when
  *   the send cannot be recorded (logged "advice-unrecorded"), so a deny never repeats and the owner is never asked
  */
-export function adviceOnce(advice, { command, cwd, input, hook = 'pre-bash-guard', tool = 'Bash', logged }, env = process.env) {
+export function adviceOnce(advice, { command, cwd, input, hook = 'pre-bash-guard', tool = 'Bash', logged, store }, env = process.env) {
   const details = (digest) => (logged === undefined
     ? { reason: advice.join('; '), command, cwd, session: input.session_id, class: unique(advice.map(reasonClass)).join(', ') }
     : { ...logged, digest });
   const log = (decision, outcome, digest) => logDecision({ hook, tool, decision, outcome, ...details(digest) }, env);
   try {
     const digest = digestOf(cwd, command);
-    const send = recordSend(input.session_id, digest, env);
+    const send = recordSend(input.session_id, digest, env, store);
     log(send === 'first' ? 'deny' : 'allow', ADVICE_OUTCOMES.get(send) ?? ADVICE_UNRECORDED, digest);
     return send === 'first' ? decisionOutput({ decision: 'deny', reason: [ADVICE_HEADER, ...advice.map((line) => `- ${line}`)].join('\n') }) : '';
   } catch {

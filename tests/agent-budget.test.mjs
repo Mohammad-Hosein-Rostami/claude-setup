@@ -259,6 +259,26 @@ test('after 2 ignored nudges at 150k+ context the next lead Bash call that is no
   assert.equal(preDecision(dir, preBash(sid, transcript, 'sed -i s/a/b/ a.txt')), null);
 });
 
+// Audit of db40977 (S2): both hooks run on the same Bash call. The budget's deny-once shared the guard's bounce store, so after the budget
+// denied a command with a literal secret the guard found that command "already bounced" and asked instead: the rewrite advice and the
+// "tell the owner, rotate it" line were never given.
+const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
+test('the budget deny keeps its own store: the guard still bounces the same command with its secret advice', async () => {
+  const dir = await home();
+  const sid = uid('s');
+  const transcript = await transcriptAt(dir, CONTEXT_TOKENS);
+  for (let i = 0; i < 31; i += 1) run(BUDGET, dir, leadBash(sid, transcript));
+  const command = `DB_${['PASS', 'WORD'].join('')}=${['Xk9pQ2vL', 'm3Nq8Rt5'].join('')} ./migrate.sh`;
+  assert.match(preDecision(dir, preBash(sid, transcript, command)), /delegate to runner\/implementer/);
+  const guard = spawnSync(process.execPath, [GUARD], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', session_id: sid, cwd: '/work', tool_name: 'Bash', tool_input: { command } }),
+    encoding: 'utf8', env: { ...process.env, HOME: dir, USERPROFILE: dir, SSH_CONNECTION: 'test', CLAUDE_PROJECT_DIR: '/work', CLAUDE_GUARD_LOG: join(dir, 'guard.jsonl') },
+  });
+  const out = JSON.parse(guard.stdout).hookSpecificOutput;
+  assert.equal(out.permissionDecision, 'deny', guard.stdout);
+  assert.match(out.permissionDecisionReason, /may want to rotate it/);
+});
+
 test('isReadOnlyCommand: git and reading commands only, with no writing option and no output sent to a file', () => {
   for (const command of ['git commit -m x && git log', 'ls 2>/dev/null', 'git log 2>&1 | head -3', '/bin/cat a | sort | uniq', 'sed -n 1,5p a',
     'find . -name "*.mjs"', 'cd /tmp && pwd', 'FOO=1 rg x']) assert.equal(isReadOnlyCommand(command), true, command);
