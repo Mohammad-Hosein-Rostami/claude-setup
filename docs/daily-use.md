@@ -97,7 +97,7 @@ History stays one straight line (rule C37): no merge commits, no branch merged i
 - Auto-compaction runs at a 400000-token window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`); the status line shows the
   context size. Run `/compact` at a natural seam, not mid-step.
 - Multi-day work: keep `STATUS.md` (decisions, vocabulary, a `## Work items` table); the lead re-reads its first 60 lines
-  after a compaction, adds a `deliver:` row when it hands the job over, and pastes the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` as every estimate; the status
+  after a compaction, lists the job's rows first and edits them only with `status.mjs add|start|done|deliver`; a hand-over is recorded by itself (the `status-deliver.mjs` Stop hook) when a turn ends with no open row, and `status.mjs deliver "<what>"` records one while rows stay open. The lead pastes the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` as every estimate; the status
   line shows the same committed time as `done by 21:40`, `all rows done`, `handed over 17:54`, `work left ~99 h` for a job longer than any finished one, or `done ? <cause>` when the tool refuses or fails (nothing only when STATUS.md is missing; the forms are in the estimate README).
 - A detail from an earlier session or before a compaction: `recall`
   (`node ~/.claude/tools/recall/recall.mjs "<terms>"`, add `--session current` after a compaction).
