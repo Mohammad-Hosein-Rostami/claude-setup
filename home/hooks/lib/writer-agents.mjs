@@ -1,21 +1,34 @@
 // Which agents write files, and which writing agents of a session still run. agent-model-guard.mjs records each writer launch it lets
-// start (PreToolUse Agent/Task); agent-budget.mjs, which already ends an agent's call counter on SubagentStop, records the finish here too.
+// start (PreToolUse Agent/Task) as pending; agent-budget.mjs marks it started on SubagentStart and ends it on SubagentStop.
 // Why a record of its own: agent-budget's counter file appears only after an agent's first tool call and holds no agent type, so writers
 // launched in parallel in one message would all see none running.
-// Exports: agentFileWrites(type, env), isWritingAgent(type, env), recordWriterLaunch(session, type, env, options), recordWriterStop(session,
-// agentId, type, env), WRITER_STALE_MS.
+// Exports: agentFileWrites(type, env), isWritingAgent(type, env), recordWriterLaunch(session, type, env, options), recordWriterStart(session,
+// agentId, type, env), recordWriterStop(session, agentId, type, env), callCounterPath(session, agentId), PENDING_MS, IDLE_MS.
 // Store: ~/.claude/state/agent-writers/<session>.json through lib/session-store.mjs (lstat-checked, locked, 0600):
-// {"launches": [{"type", "at"}], "stopped": [agent ids]}. A stop has an agent id and type but a launch has only a type, so a stop ends the
-// oldest launch of its type; the id is kept so a stop that comes again (another gate blocked it) ends nothing more.
-// Limits: a stop that another SubagentStop gate blocks still counts as the finish (the agent may run a little longer); an agent that ends
-// with no SubagentStop at all counts as running until its launch is WRITER_STALE_MS old.
+// {"launches": [{"type", "at", "agent"?}], "stopped": [agent ids]}. SubagentStart has the agent id and type but no tool_use_id, so it
+// marks the oldest pending launch of its type started (agent = its id, at = the start); a stop ends the launch of its id, else the oldest
+// of its type; stopped ids are kept so a stop that comes again (another gate blocked it) ends nothing more.
+// When a launch counts as running (Claude Code 2.1.325: a launch the owner or a sibling hook denies, or Esc cuts before it starts, gets no
+// SubagentStart and no SubagentStop, so a launch alone proves nothing):
+//   pending (no SubagentStart yet): for PENDING_MS after the launch: long enough for writers sent in one message to see each other and
+//     for a permission dialog, short enough that a denied launch stops blocking others within minutes;
+//   started: while its last sign of work is under IDLE_MS old: the later of its start and its last tool call (the mtime of the call
+//     counter agent-budget.mjs appends to on each tool call, callCounterPath). A working agent makes a tool call far more often than
+//     that; one that ended without SubagentStop stops counting after IDLE_MS;
+//   never: a launch dated more than CLOCK_SKEW_MS ahead of the clock (a clock step back or a planted record).
+// Limits: a stop that another SubagentStop gate blocks still counts as the finish (the agent may run a little longer); a single tool call
+// that runs longer than IDLE_MS (a long build) lets one more writer start without the advice.
 // Invariants: never throws; an unusable store or a lock that stays taken returns undefined and the caller lets the call run.
 import { closeSync, openSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { tempRoot } from './edit-log.mjs';
 import { readSessionFile, withSessionLock, writeSessionFile } from './session-store.mjs';
 
-export const WRITER_STALE_MS = 4 * 60 * 60 * 1000; // 4 h: far past the ~120-call agent budget
+export const PENDING_MS = 2 * 60 * 1000;
+export const IDLE_MS = 30 * 60 * 1000;
+const CLOCK_SKEW_MS = 60 * 1000;
+const SAFE_ID = /^[\w-]{1,128}$/;
 const MAX_STORE_BYTES = 64 * 1024;
 const LAUNCHES_KEPT = 100;
 const STOPPED_IDS_KEPT = 200;
@@ -75,12 +88,36 @@ export function isWritingAgent(type, env) {
   return WRITER_TYPES.has(name) || agentFileWrites(name, env) === true;
 }
 
-/** Parses the store; a corrupt or odd file reads as empty (a running writer may then be missed once). */
-function parseRecord(text, now) {
+/**
+ * The file agent-budget.mjs appends one byte to on each tool call of a subagent (its mtime is the agent's last tool call).
+ * @returns {string | null} the path; null when an id is not a safe file name part
+ */
+export const callCounterPath = (session, agentId) =>
+  SAFE_ID.test(session ?? '') && SAFE_ID.test(agentId ?? '') ? join(tempRoot(), 'budget', `${session}--${agentId}`) : null;
+
+/** The time of an agent's last tool call, or 0 when it has made none (or its counter cannot be read). */
+function lastToolCall(session, agentId) {
+  const path = callCounterPath(session, agentId);
+  try {
+    return path === null ? 0 : statSync(path).mtimeMs;
+  } catch {
+    return 0; // no tool call yet
+  }
+}
+
+/** Whether a stored launch still counts as a running writer (the rules in the header). */
+function isRunning(launch, now, session) {
+  if (launch.at > now + CLOCK_SKEW_MS) return false;
+  if (typeof launch.agent !== 'string') return now - launch.at < PENDING_MS;
+  return now - Math.max(launch.at, lastToolCall(session, launch.agent)) < IDLE_MS;
+}
+
+/** Parses the store, keeping the launches that still run; a corrupt or odd file reads as empty (a running writer may then be missed once). */
+function parseRecord(text, now, session) {
   try {
     const record = text === null ? {} : JSON.parse(text);
     const launches = (Array.isArray(record?.launches) ? record.launches : [])
-      .filter((launch) => typeof launch?.type === 'string' && Number.isFinite(launch.at) && now - launch.at < WRITER_STALE_MS);
+      .filter((launch) => typeof launch?.type === 'string' && Number.isFinite(launch.at) && isRunning(launch, now, session));
     const stopped = (Array.isArray(record?.stopped) ? record.stopped : []).filter((id) => typeof id === 'string');
     return { launches, stopped };
   } catch {
@@ -107,14 +144,37 @@ export function recordWriterLaunch(session, type, env, { unlessRunning = false }
     const now = Date.now();
     const text = readSessionFile(dir, session, MAX_STORE_BYTES);
     if (text === undefined) return undefined;
-    const record = parseRecord(text, now);
+    const record = parseRecord(text, now, session);
     if (unlessRunning && record.launches.length > 0) return 'running';
     return store(env, session, { ...record, launches: [...record.launches, { type: typeOf(type), at: now }] }) ? 'recorded' : undefined;
   });
 }
 
 /**
- * Records that an agent stopped: ends the oldest running launch of its type, once per agent id.
+ * Records that an agent started (SubagentStart): the oldest pending launch of its type becomes its launch, dated now.
+ * @param {unknown} session hook input session_id
+ * @param {unknown} agentId hook input agent_id
+ * @param {unknown} type hook input agent_type
+ * @param {Record<string, string | undefined>} env HOME / USERPROFILE
+ * @returns {boolean} true when a pending launch was marked started (false for no such launch: not a writer this hook let start)
+ */
+export function recordWriterStart(session, agentId, type, env) {
+  if (typeof agentId !== 'string' || agentId === '') return false;
+  const dir = writersDir(env);
+  return withSessionLock(dir, session, () => {
+    const text = readSessionFile(dir, session, MAX_STORE_BYTES);
+    if (text === undefined || text === null) return false;
+    const now = Date.now();
+    const record = parseRecord(text, now, session);
+    const index = record.launches.findIndex((launch) => launch.type === typeOf(type) && typeof launch.agent !== 'string');
+    if (index === -1) return false;
+    const launches = record.launches.map((launch, at) => (at === index ? { type: launch.type, at: now, agent: agentId } : launch));
+    return store(env, session, { ...record, launches });
+  }) === true;
+}
+
+/**
+ * Records that an agent stopped: ends the launch of its agent id, else the oldest running launch of its type, once per agent id.
  * @param {unknown} session hook input session_id
  * @param {unknown} agentId hook input agent_id
  * @param {unknown} type hook input agent_type
@@ -127,8 +187,9 @@ export function recordWriterStop(session, agentId, type, env) {
   return withSessionLock(dir, session, () => {
     const text = readSessionFile(dir, session, MAX_STORE_BYTES);
     if (text === undefined || text === null) return false;
-    const record = parseRecord(text, Date.now());
-    const index = record.launches.findIndex((launch) => launch.type === typeOf(type));
+    const record = parseRecord(text, Date.now(), session);
+    const own = record.launches.findIndex((launch) => launch.agent === agentId);
+    const index = own !== -1 ? own : record.launches.findIndex((launch) => launch.type === typeOf(type));
     if (record.stopped.includes(agentId) || index === -1) return false;
     const launches = record.launches.filter((_, at) => at !== index);
     return store(env, session, { launches, stopped: [...record.stopped, agentId] });

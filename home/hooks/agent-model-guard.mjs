@@ -26,7 +26,8 @@
 // test-writer, general-purpose, claude, or an agent file whose tools include Write/Edit; scout, runner, reviewer, security-auditor, Explore,
 // Plan and architect never) launched while another writing agent of this session still runs must carry `isolation: "worktree"`, else it
 // is denied once with that advice (adviceOnce, as the UI gate) and the identical call sent again runs. "Still runs" comes from the
-// session's own record: every writer launch this hook lets start, ended by agent-budget.mjs on SubagentStop (limits in that lib).
+// session's own record: every writer launch this hook lets start, marked started on SubagentStart and ended on SubagentStop by
+// agent-budget.mjs; a launch that never started or an agent idle for 30 min stops counting (rules and limits in lib/writer-agents.mjs).
 // Exports: guardedAgentInput (pure), matrixLines (pure), uiBriefDeny and writerIsolationDeny (the gates), MAX_MATRIX_BYTES. Invariants: the
 // routing never blocks or denies; each gate denies an identical call at most once per session.
 import { realpathSync, statSync } from 'node:fs';

@@ -1,4 +1,4 @@
-// PostToolUse (all tools), PreToolUse Bash and SubagentStop: enforces the budgets the prompt only asked for.
+// PostToolUse (all tools), PreToolUse Bash, SubagentStart and SubagentStop: enforces the budgets the prompt only asked for.
 //   PostToolUse in a subagent -> counts its tool calls; the first call that sees 80 or more injects "commit what is green"
 //                   once (a marker file next to the counter), at 120 (and every 10 after) it injects "commit, then
 //                   return your status report". Advisory: it never blocks a call.
@@ -14,6 +14,7 @@
 //   SubagentStop -> blocks once when the final report is over the cap the spawn prompt states (first user message of the
 //                   agent transcript); no stated cap means no check, so agents that return data are never sent back.
 //                   A stop it lets through also ends the agent's launch in lib/writer-agents.mjs (agent-model-guard's writer gate).
+//   SubagentStart -> marks the agent's pending launch started in lib/writer-agents.mjs (a launch never started stops counting soon).
 // Verified against Claude Code 2.1.323: hook input has `agent_id` only inside a subagent (agent_type alongside it);
 // PostToolUse accepts hookSpecificOutput.additionalContext; SubagentStop gets agent_id, agent_type, agent_transcript_path,
 // last_assistant_message and stop_hook_active, and exit 2 sends stderr to the subagent and keeps it running.
@@ -29,7 +30,7 @@ import { tempRoot } from './lib/edit-log.mjs';
 import { overCap, parseCap } from './lib/reply-cap.mjs';
 import { isReadOnlyCommand } from './lib/read-only-command.mjs';
 import { contextTokens } from './lib/transcript.mjs';
-import { recordWriterStop } from './lib/writer-agents.mjs';
+import { callCounterPath, recordWriterStart, recordWriterStop } from './lib/writer-agents.mjs';
 
 // The agent files (implementer, ui-implementer, test-writer) and the lead rules say "about 120 tool calls"; a test keeps them equal.
 export const CALL_CAP = 120;
@@ -47,8 +48,7 @@ const SAFE_ID = /^[\w-]{1,128}$/;
 const ULTRA_HIGH = 'ultra-high';
 const DELEGATING_TOOLS = new Set(['Agent', 'Task']);
 
-const budgetPath = (sessionId, agentId) =>
-  SAFE_ID.test(sessionId ?? '') && SAFE_ID.test(agentId ?? '') ? join(tempRoot(), 'budget', `${sessionId}--${agentId}`) : null;
+const budgetPath = callCounterPath; // its mtime is also the writer gate's sign that the agent still works
 
 /**
  * Counts one tool call of a subagent: appends one byte and reads the file size, so parallel calls never lose a count.
@@ -251,6 +251,8 @@ async function main() {
   } else if (input?.hook_event_name === 'PostToolUse') {
     const additionalContext = await postToolUseContext(input);
     if (additionalContext) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext } }));
+  } else if (input?.hook_event_name === 'SubagentStart') {
+    recordWriterStart(input.session_id, input.agent_id, input.agent_type, process.env); // agent-model-guard's writer gate: it really runs
   } else if (input?.hook_event_name === 'SubagentStop') {
     const path = budgetPath(input.session_id, input.agent_id);
     const reason = subagentStopReason(input);
