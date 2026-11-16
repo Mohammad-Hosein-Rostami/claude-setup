@@ -23,7 +23,8 @@ tables inside code fences (an example table in ```` ``` ```` ) are skipped, as t
 `findSection` from `home/tools/estimate/lib/items.mjs`, so they always see the same table and the same `## Standing rules` and
 `## Owner decisions` sections.
 
-A missing section is created. The table may have outer pipes (`| a | b |`) or none (`a | b`); a new row copies the style of the header.
+A missing section is created, except below a code fence that is never closed: everything after it is hidden from the estimate tool,
+so the edit is refused (`unclosed code fence at line N`) and the fence must be closed first. The table may have outer pipes (`| a | b |`) or none (`a | b`); a new row copies the style of the header.
 Exit 0 done, 1 refused (reason on stderr), 2 usage. `--file` goes before the command; the clock is always the system's (no flag
 back-dates a row). An id is one word of letters, digits and `_ . : -` that starts with a letter or digit (`7`, `21a`, `close:5`,
 `rework:12`); a leading `-` would make the row read as a bullet.

@@ -440,3 +440,19 @@ test('a fenced example inside the Work items section, above the header: add, sta
   assert.deepEqual(problems, []);
   assert.deepEqual(items.map((item) => item.id), ['1', '2', 'deliver:1']);
 });
+
+// Audit of 75af2e9 (m2): with a code fence above the section that is never closed, the estimator sees no section; each add used to
+// append a new `## Work items` at the end, inside the open fence, and print ok. A new section there would be hidden, so it is refused.
+const UNCLOSED_FENCE = `# STATUS\n\n\`\`\`\nan example that was never closed\n\n${PIPED.replace('# STATUS\n\n', '')}`;
+
+test('an unclosed code fence above the section: add, deliver, rule and decision are refused with its line, nothing written', async () => {
+  const { run, read } = await project(UNCLOSED_FENCE);
+  for (const argv of [['add', '2', 'listed', 'S'], ['deliver', 'report'], ['rule', 'x'], ['decision', 'y']]) {
+    const result = run(...argv);
+    assert.equal(result.code, 1, argv.join(' '));
+    assert.match(result.message, /unclosed code fence at line 3/, argv.join(' '));
+  }
+  const auto = run('deliver', '--auto'); // the estimator finds no table, so no hand-over is due: a skip, as for any table problem
+  assert.deepEqual([auto.code, /nothing recorded/.test(auto.message)], [0, true], auto.message);
+  assert.equal(await read(), UNCLOSED_FENCE);
+});

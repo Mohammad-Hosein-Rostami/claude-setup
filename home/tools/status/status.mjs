@@ -11,7 +11,7 @@
 // Invariants: touches only the one line it adds or changes; rows are only those of the one table under `## Work items` (header
 // `id | item | size | started | done | evidence`, the contiguous rows below its separator, with or without outer pipes, found and
 // read with the estimator's own findSection/rowCells/isTableRow, so code fences are skipped the same way), so a work row anywhere
-// else is never edited; ids and items starting `deliver:` are reserved for hand-overs; times are UTC to the minute, the format the
+// else is never edited; a missing section is never made below a code fence left open (it would be hidden: refused); ids and items starting `deliver:` are reserved for hand-overs; times are UTC to the minute, the format the
 // estimate tool reads; exit 1 = refused, 2 = usage. After every edit that changed the file, noteTable records the table and links
 // the session (CLAUDE_CODE_SESSION_ID) for the estimator; when that fails the edit still stands and the message says so.
 // Safety: edits run one at a time (the lead runs Bash calls in parallel): an O_EXCL lock file `.<name>.status-lock` next to the file
@@ -60,19 +60,30 @@ function sectionEnd(lines, { start, end }) {
  * under the separator. null when there is no `## Work items` section. Code fences are skipped as the estimator skips them.
  */
 function workTable(lines) {
-  const section = findSection(lines, WORK_ITEMS);
-  if (section === null) return null;
-  const { start, end, visible } = section;
+  const { start, end, visible } = findSection(lines, WORK_ITEMS);
+  if (start === -1) return null;
   const header = lines.findIndex((line, i) => i > start && i < end && visible[i] && isHeader(line));
   const rows = [];
   for (let i = header + 2; header !== -1 && i < end && visible[i] && isTableRow(lines[i]); i += 1) rows.push(i);
   return { header, rows };
 }
 
-/** The work table, made at the end of the file when there is no section; `{ error }` when the section has no header. */
+/** Why a section made at the end of the file would be hidden (a code fence left open above it), or null. */
+function hiddenEndReason(lines) {
+  const { openFence } = findSection(lines, WORK_ITEMS);
+  if (openFence === -1) return null;
+  return `unclosed code fence at line ${openFence + 1}: everything below it is hidden from the estimate tool, so a section made at the end would be too; close the fence first`;
+}
+
+/**
+ * The work table, made at the end of the file when there is no section; `{ error }` when the section has no header or a new one
+ * would be hidden in an unclosed code fence.
+ */
 function tableToEdit(lines) {
   const table = workTable(lines);
   if (table === null) {
+    const hidden = hiddenEndReason(lines);
+    if (hidden !== null) return { error: hidden };
     lines.push('', `## ${WORK_ITEMS}`, '', `| ${COLUMNS.join(' | ')} |`, `| ${COLUMNS.map(() => '--').join(' | ')} |`);
     return { header: lines.length - 2, rows: [] };
   }
@@ -184,9 +195,11 @@ function addBullet(lines, kind, text, now) {
   const bullet = kind === 'decision' ? `- ${stamp(now).slice(0, 10)} ${body}` : `- ${body}`;
   if (lines.includes(bullet)) return {};
   const section = findSection(lines, SECTION_FOR[kind]);
-  if (section === null) {
-    const before = findSection(lines, WORK_ITEMS)?.start ?? lines.length;
-    lines.splice(before, 0, `## ${SECTION_FOR[kind]}`, bullet, '');
+  if (section.start === -1) {
+    const workItems = findSection(lines, WORK_ITEMS).start;
+    const hidden = workItems === -1 ? hiddenEndReason(lines) : null;
+    if (hidden !== null) return { error: hidden };
+    lines.splice(workItems === -1 ? lines.length : workItems, 0, `## ${SECTION_FOR[kind]}`, bullet, '');
   } else {
     lines.splice(sectionEnd(lines, section), 0, bullet);
   }

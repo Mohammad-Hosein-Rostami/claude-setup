@@ -2,7 +2,7 @@
 // rowCells and isTableRow from here, so a table it can edit is a table the estimator can read.
 // Exports: parseWorkItems(markdown, nowMs?) -> { items, problems } (a problem is {line, reason} plus `id` when it is about one row);
 // rowCells(line) -> cells; isTableRow(line) -> boolean; parseInstant(text) -> epoch ms | null; INSTANT_FORMAT;
-// findSection(lines, name) -> { start, end, visible } | null (the fence-aware section finder status.mjs uses).
+// findSection(lines, name) -> { start, end, visible, openFence } (the fence-aware section finder status.mjs uses; start -1: none).
 // Each item has a kind: 'close' when the item cell starts `close:` (review, fixes from a review, recheck, gate, landing),
 // 'rework' when it starts `rework:` (an owner correction), 'deliver' when it starts `deliver:` (the job handed over to the
 // owner: its done time is a hand-over), else 'build'; case-insensitive; an item cell without a prefix takes the id cell's
@@ -125,18 +125,21 @@ function unfencedLines(lines) {
  * edits the same `## Work items` table the estimator reads.
  * @param {string[]} lines the file split into lines
  * @param {string} name the heading text, matched ignoring case (e.g. 'Work items')
- * @returns {{start: number, end: number, visible: boolean[]} | null} start: index of the first such heading outside fences; end:
- *   index of the next heading of any level outside fences, or the line count; visible[i]: line i is outside code fences (fence
- *   lines themselves are not). null when no such heading is outside fences.
+ * @returns {{start: number, end: number, visible: boolean[], openFence: number}} start: index of the first such heading outside
+ *   fences, -1 when there is none (end is then -1 too); end: index of the next heading of any level outside fences, or the line
+ *   count; visible[i]: line i is outside code fences (fence lines themselves are not); openFence: index of the fence line that is
+ *   never closed (everything after it is hidden, so a section added at the end would be too), -1 when every fence is closed.
  */
 export function findSection(lines, name) {
   const visible = unfencedLines(lines);
+  const fences = lines.flatMap((text, i) => (FENCE.test(text) ? [i] : []));
+  const openFence = fences.length % 2 === 1 ? fences.at(-1) : -1;
   const heading = new RegExp(`^##\\s+${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'i');
   const start = lines.findIndex((text, i) => visible[i] && heading.test(text));
-  if (start === -1) return null;
+  if (start === -1) return { start, end: -1, visible, openFence };
   let end = start + 1;
   while (end < lines.length && !(visible[end] && ANY_HEADING.test(lines[end]))) end += 1;
-  return { start, end, visible };
+  return { start, end, visible, openFence };
 }
 
 /** A line of the table block: a line with an unescaped pipe that is not a heading or a bullet (cell counts are checked later). */
