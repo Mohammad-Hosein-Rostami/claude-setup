@@ -49,7 +49,8 @@ function pooledGrowth(jobs) {
 }
 
 /**
- * The reference pool: the rows and jobs of every table file, plus the seed's rows and jobs whose table has no file here.
+ * The reference pool: the rows and jobs of every table file, plus the seed's rows and jobs whose table has no file here and that no
+ * table holds under another id (same size and done time for a row, same hand-over time for a job).
  * @param {{ id: string, rows: object[], jobs: object[] }[]} tables rows: { size, kind, done, cost }; jobs: { at, minutes, growthNum, growthDen }
  * @param {{ rows: object[], jobs: object[] }} seed the same shapes, each with the `table` id it came from
  * @returns {{ costs: { S: number[], M: number[], L: number[] }, growth: number, longestJobMin: number, rowCount: number, jobCount: number }}
@@ -57,9 +58,20 @@ function pooledGrowth(jobs) {
  */
 export function referencePool(tables, seed) {
   const known = new Set(tables.map((table) => table.id));
-  const fromSeed = (entry) => !known.has(entry.table);
-  const rows = [...tables.flatMap((table) => table.rows), ...seed.rows.filter(fromSeed)].filter(isReferenceRow);
-  const jobs = [...tables.flatMap((table) => table.jobs), ...seed.jobs.filter(fromSeed)].filter(isJob);
+  const liveRows = tables.flatMap((table) => table.rows);
+  const liveJobs = tables.flatMap((table) => table.jobs);
+  // A table id is a hash of the STATUS.md's real path, and the seed was written on the Mac: on another machine (the PC, another
+  // home) the same STATUS.md has another id, so the id check alone counted its rows twice. A live row with the same size and done
+  // minute, or a live job with the same hand-over time, is that same row or job: the live one is kept (its cost is this
+  // machine's measure). Kept over re-keying the seed by a path relative to the repo or home: a STATUS.md need not be in a repo,
+  // and changing the id would orphan every stored table. Two unrelated rows done in the same minute at the same size cost at most
+  // one seed row.
+  const liveRowKeys = new Set(liveRows.map((row) => `${row.size}|${timeOf(row.done)}`));
+  const liveJobTimes = new Set(liveJobs.map((job) => timeOf(job.at)));
+  const seedRows = seed.rows.filter((row) => !known.has(row.table) && !liveRowKeys.has(`${row.size}|${timeOf(row.done)}`));
+  const seedJobs = seed.jobs.filter((job) => !known.has(job.table) && !liveJobTimes.has(timeOf(job.at)));
+  const rows = [...liveRows, ...seedRows].filter(isReferenceRow);
+  const jobs = [...liveJobs, ...seedJobs].filter(isJob);
   const costs = Object.fromEntries(SIZES.map((size) => [size, rows
     .filter((row) => row.size === size)
     .sort((a, b) => newestFirst(a.done, b.done))

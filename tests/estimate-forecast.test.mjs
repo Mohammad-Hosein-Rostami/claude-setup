@@ -27,6 +27,19 @@ test('referencePool joins every table and the seed rows whose table has no file;
   assert.equal(pool.rowCount, 5);
 });
 
+test('referencePool counts a seed row or job once when a live table under another path id holds it (the PC has other paths)', () => {
+  const job = (k, minutes) => ({ at: doneAt(k), minutes, growthNum: 0, growthDen: 1 });
+  // The same STATUS.md on another machine: its table id differs from the seed's, its rows keep their done times; costs differ
+  // because that machine measures its own transcripts.
+  const live = [{ id: 'a'.repeat(32), rows: rowsOf('S', [6, 8]), jobs: [job(5, 40)] }];
+  const fromMac = (entry) => ({ table: 'f'.repeat(32), ...entry });
+  const seed = { rows: [...rowsOf('S', [5, 7, 9]).map(fromMac), ...rowsOf('M', [30]).map(fromMac)], jobs: [job(5, 50), job(9, 70)].map(fromMac) };
+  const pool = referencePool(live, seed);
+  assert.deepEqual(pool.costs, { S: [6, 8, 9], M: [30], L: [] }); // seed S rows done at minutes 0 and 1 are the live rows
+  assert.equal(pool.jobCount, 2);
+  assert.equal(pool.longestJobMin, 70);
+});
+
 test('referencePool keeps the 200 most recent rows of a size', () => {
   const old = rowsOf('M', Array(10).fill(1), 0);
   const recent = rowsOf('M', Array(200).fill(2), 100);

@@ -45,7 +45,10 @@ function realStatusPath(statusPath) {
   }
 }
 
-/** @returns {string} the first 32 hex of sha256 of the STATUS.md's real path */
+/**
+ * @returns {string} the first 32 hex of sha256 of the STATUS.md's real path; machine-bound, so the seed's ids (the Mac's) are
+ *   matched to another machine's tables by row and job times instead (forecast.mjs referencePool)
+ */
 export const tableId = (statusPath) => createHash('sha256').update(realStatusPath(statusPath)).digest('hex').slice(0, TABLE_ID_HEX);
 
 const emptyTable = (statusPath) => ({ v: TABLE_VERSION, path: realStatusPath(statusPath), sessions: [], added: {}, rows: [], jobs: [], commit: null, log: [] });

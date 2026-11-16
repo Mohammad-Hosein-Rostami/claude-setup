@@ -46,7 +46,8 @@ deliver:1 | report to owner | S | | 2026-11-14T10:30Z |
 - Jobs: the rows done between two hand-overs. Growth: for each finished job, the cost-weighted share of the remaining work
   that was not in the table yet, pooled over the newest jobs holding 20 hours of work (0.416 on the measured tables).
 - Pool: the finished rows of the same size in every table file on this machine plus `seed.json` (the 200 newest per size;
-  a seed entry whose table has a file here is skipped).
+  a seed entry whose table has a file here is skipped, and so is one a table here holds under another id: a row with the same
+  size and done time, a job with the same hand-over time, as on the PC, where the same STATUS.md has another path).
 - Forecast: 2000 seeded runs; each open row draws a finished cost of its size longer than its elapsed share (minus that
   share), or any cost of its size when it has run longer than all of them; the total is divided by (1 - growth). Same table
   state, same numbers, in the CLI and the status line.
