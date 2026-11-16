@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { lstatSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { parseWorkItems } from '../home/tools/estimate/lib/items.mjs';
 import { linkedStatusPath, readAllTables } from '../home/tools/estimate/lib/table-store.mjs';
 import { runStatus } from '../home/tools/status/status.mjs';
+import { MAX_STATUS_BYTES } from '../home/tools/status/status-file.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/status/status.mjs', import.meta.url));
 const NOW = '2026-11-16T14:05Z';
@@ -334,4 +335,80 @@ test('a store that cannot be written is a note in the message, never a failed ed
   assert.equal(result.code, 0);
   assert.match(result.message, /^add: ok .*not recorded for the estimate/);
   assert.match(await read(), /\| 2 \| listed \|/);
+});
+
+// Audit of 768f9aa (SF2, M2-M4): the tool sees the same table as the estimator, its lock never takes another tool's file name, an
+// item cannot make a row a hand-over, and the file is read through one handle that is checked again.
+const FENCED_EXAMPLE = `# STATUS
+
+An example of the table:
+
+\`\`\`
+## Work items
+
+| id | item | size | started | done | evidence |
+| -- | ---- | ---- | ------- | ---- | -------- |
+| 1 | example | S | - | - | - |
+\`\`\`
+
+${PIPED.replace('# STATUS\n\n', '')}`;
+
+test('a fenced example table above the real section: add, start, done and deliver change only the real table', async () => {
+  const { run, read } = await project(FENCED_EXAMPLE);
+  const fence = FENCED_EXAMPLE.slice(0, FENCED_EXAMPLE.indexOf('## Standing rules'));
+  assert.equal(run('add', '2', 'listed', 'S').code, 0);
+  assert.equal(run('start', '2').code, 0);
+  assert.equal(run('done', '2', 'def456').code, 0);
+  assert.equal(run('deliver', 'report').code, 0);
+  assert.equal(run('done', '1', 'x').code, 1); // row 1 of the real table is done; the example's open row 1 is out of reach
+  const text = await read();
+  assert.ok(text.startsWith(fence), 'the fenced example is unchanged');
+  const { items, problems } = parseWorkItems(text);
+  assert.deepEqual(problems, []);
+  assert.deepEqual(items.map((item) => item.id), ['1', '2', 'deliver:1']);
+});
+
+test('rule and decision skip a fenced heading of the same name', async () => {
+  const fenced = `\`\`\`\n## Standing rules\n## Owner decisions\n\`\`\`\n\n${PIPED}`;
+  const { run, read } = await project(fenced);
+  assert.equal(run('rule', 'new rule').code, 0);
+  assert.equal(run('decision', 'new decision').code, 0);
+  const text = await read();
+  assert.ok(text.startsWith('```\n## Standing rules\n## Owner decisions\n```\n'));
+  assert.match(text, /- keep it short\n- new rule\n/);
+  assert.match(text, /- 2026-11-15 earlier decision\n- 2026-11-16 new decision\n/);
+});
+
+test('add refuses an item that starts deliver: (only deliver writes hand-overs) and an id that does not start with a letter or digit', async () => {
+  const { run, read } = await project(PIPED);
+  for (const item of ['deliver: report to owner', '  Deliver:x']) {
+    const result = run('add', '7', item, 'S');
+    assert.equal(result.code, 1, item);
+    assert.match(result.message, /deliver:.*status\.mjs deliver/);
+  }
+  for (const id of ['-', '.x', ':a', '_a', '-7']) assert.equal(run('add', id, 'dash id', 'S').code, 2, id);
+  assert.equal(await read(), PIPED);
+  for (const id of ['close:22', 'rework:7', '21a', 'a_b.c-d']) assert.equal(run('add', id, `ok ${id}`, 'S').code, 0, id);
+  assert.deepEqual(parseWorkItems(await read()).problems, []);
+});
+
+test('the lock never uses another tool\'s file name: an old uv.lock next to uv.md stays, and no lock is left behind', async () => {
+  const { cwd, stateDir } = await project(undefined);
+  writeFileSync(join(cwd, 'uv.md'), PIPED);
+  writeFileSync(join(cwd, 'uv.lock'), 'version = 1\n');
+  const minuteAgo = new Date(Date.now() - 60_000);
+  utimesSync(join(cwd, 'uv.lock'), minuteAgo, minuteAgo);
+  const result = runStatus(['--file', 'uv.md', 'add', '2', 'listed', 'S'], { cwd, now: new Date(NOW), stateDir });
+  assert.equal(result.code, 0, result.message);
+  assert.equal(readFileSync(join(cwd, 'uv.lock'), 'utf8'), 'version = 1\n');
+  assert.deepEqual(readdirSync(cwd).sort(), ['uv.lock', 'uv.md']);
+});
+
+test('a STATUS.md over the size cap is refused and left as it is', async () => {
+  const big = `${PIPED}${'x'.repeat(MAX_STATUS_BYTES)}\n`;
+  const { run, read } = await project(big);
+  const result = run('rule', 'x');
+  assert.equal(result.code, 1);
+  assert.match(result.message, /over/);
+  assert.equal(await read(), big);
 });

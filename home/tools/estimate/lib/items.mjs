@@ -1,7 +1,8 @@
 // Parses the `## Work items` table of a STATUS.md into work items plus per-row problems. The one row reader: status.mjs takes
 // rowCells and isTableRow from here, so a table it can edit is a table the estimator can read.
 // Exports: parseWorkItems(markdown, nowMs?) -> { items, problems } (a problem is {line, reason} plus `id` when it is about one row);
-// rowCells(line) -> cells; isTableRow(line) -> boolean; parseInstant(text) -> epoch ms | null; INSTANT_FORMAT.
+// rowCells(line) -> cells; isTableRow(line) -> boolean; parseInstant(text) -> epoch ms | null; INSTANT_FORMAT;
+// findSection(lines, name) -> { start, end, visible } | null (the fence-aware section finder status.mjs uses).
 // Each item has a kind: 'close' when the item cell starts `close:` (review, fixes from a review, recheck, gate, landing),
 // 'rework' when it starts `rework:` (an owner correction), 'deliver' when it starts `deliver:` (the job handed over to the
 // owner: its done time is a hand-over), else 'build'; case-insensitive; an item cell without a prefix takes the id cell's
@@ -117,6 +118,25 @@ function unfencedLines(lines) {
     if (FENCE.test(text)) inFence = !inFence;
     return !inFence && !FENCE.test(text);
   });
+}
+
+/**
+ * Finds a `## <name>` section the way parseWorkItems reads the file: a heading inside a code fence does not count, so status.mjs
+ * edits the same `## Work items` table the estimator reads.
+ * @param {string[]} lines the file split into lines
+ * @param {string} name the heading text, matched ignoring case (e.g. 'Work items')
+ * @returns {{start: number, end: number, visible: boolean[]} | null} start: index of the first such heading outside fences; end:
+ *   index of the next heading of any level outside fences, or the line count; visible[i]: line i is outside code fences (fence
+ *   lines themselves are not). null when no such heading is outside fences.
+ */
+export function findSection(lines, name) {
+  const visible = unfencedLines(lines);
+  const heading = new RegExp(`^##\\s+${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'i');
+  const start = lines.findIndex((text, i) => visible[i] && heading.test(text));
+  if (start === -1) return null;
+  let end = start + 1;
+  while (end < lines.length && !(visible[end] && ANY_HEADING.test(lines[end]))) end += 1;
+  return { start, end, visible };
 }
 
 /** A line of the table block: a line with an unescaped pipe that is not a heading or a bullet (cell counts are checked later). */

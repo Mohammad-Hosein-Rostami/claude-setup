@@ -9,36 +9,36 @@
 //   rule "<text>" | decision "<text>"   bullet under `## Standing rules` (the owner's words) | `## Owner decisions`, dated
 // Exports: runStatus(argv, { cwd, now, sessionId, stateDir }) -> { code, message }; the CLI prints message (stdout for 0) and exits code.
 // Invariants: touches only the one line it adds or changes; rows are only those of the one table under `## Work items` (header
-// `id | item | size | started | done | evidence`, the contiguous rows below its separator, with or without outer pipes, read with
-// the estimator's own rowCells/isTableRow), so a work row anywhere else is never edited; ids starting `deliver:` are reserved for
-// hand-overs; times are UTC to the minute, the format the estimate tool reads; exit 1 = refused, 2 = usage. After every edit that
-// changed the file, noteTable records the table and links the session (CLAUDE_CODE_SESSION_ID) for the estimator; when that fails
-// the edit still stands and the message says so.
-// Safety: edits run one at a time (the lead runs Bash calls in parallel): an O_EXCL lock file `<name>.lock` next to the file
-// (hooks/lib/session-store.mjs withSessionLock: a lock older than 0.5 s was left by a killed run and is removed; after 1 s of waiting the
-// edit is refused). The new text goes to a new temp file (random name, O_EXCL, never through a link) renamed over the file. A STATUS.md
-// that is a link, FIFO or anything but a regular file is refused. An id is one plain word (ID), so no heading or bullet rides in on it.
-import { randomBytes } from 'node:crypto';
-import { closeSync, constants, lstatSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+// `id | item | size | started | done | evidence`, the contiguous rows below its separator, with or without outer pipes, found and
+// read with the estimator's own findSection/rowCells/isTableRow, so code fences are skipped the same way), so a work row anywhere
+// else is never edited; ids and items starting `deliver:` are reserved for hand-overs; times are UTC to the minute, the format the
+// estimate tool reads; exit 1 = refused, 2 = usage. After every edit that changed the file, noteTable records the table and links
+// the session (CLAUDE_CODE_SESSION_ID) for the estimator; when that fails the edit still stands and the message says so.
+// Safety: edits run one at a time (the lead runs Bash calls in parallel): an O_EXCL lock file `.<name>.status-lock` next to the file
+// (hooks/lib/session-store.mjs withSessionLock: it holds a pid and a token, a lock of a gone process older than 0.5 s is removed; after
+// 1 s of waiting the edit is refused). status-file.mjs reads the file through one checked handle (a regular file of at most
+// MAX_STATUS_BYTES) and renames a new temp file over it, so a STATUS.md that is a link, FIFO or anything but a regular file is
+// refused. An id is one plain word starting with a letter or digit (ID), so no heading or bullet rides in on it.
+import { lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { withSessionLock } from '../../hooks/lib/session-store.mjs';
-import { isTableRow, parseWorkItems, rowCells } from '../estimate/lib/items.mjs';
+import { findSection, isTableRow, parseWorkItems, rowCells } from '../estimate/lib/items.mjs';
 import { noteTable, stateDir as defaultStateDir } from '../estimate/lib/table-store.mjs';
+import { readStatusFile, replaceStatusFile } from './status-file.mjs';
 
 const COLUMNS = ['id', 'item', 'size', 'started', 'done', 'evidence'];
 const SIZES = ['S', 'M', 'L'];
 const USAGE = 'usage: status.mjs [--file STATUS.md] add <id> <item> <size S|M|L> | start <id> | done <id> <evidence> | deliver "<what>" | deliver --auto | rule "<text>" | decision "<text>"';
 const SECTION_FOR = { rule: 'Standing rules', decision: 'Owner decisions' };
 const WORK_ITEMS = 'Work items';
-const HEADING = /^#{1,6}\s/;
-const ID = /^[\w.:-]{1,40}$/; // `7`, `17a`, `close:5`, `rework:12`, `deliver:3`
+const ID = /^[A-Za-z0-9][\w.:-]{0,39}$/; // `7`, `17a`, `close:5`, `rework:12`, `deliver:3`; a leading `-` would read as a bullet
 const RESERVED_ID = /^deliver:/i; // hand-over rows: only `deliver` writes them, numbered
 const DELIVER_ID = /^deliver:(\d+)$/i;
 const AUTO_DELIVER_WHAT = 'turn ended with no open row';
-const TEMP_NAME_BYTES = 8;
-const NEW_FILE = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
-const LOCK_NAME_PARTS = /[^A-Za-z0-9_-]/g; // the lock is `<file name without .md>.lock`, in the characters the lock helper takes
+const LOCK_NAME_PARTS = /[^A-Za-z0-9_-]/g; // the lock's name part is the file name without .md, in the characters the lock helper takes
+// `.<name>.status-lock`: no other tool uses it (a `<name>.lock` next to uv.md was uv's own lock file, and a stale one was deleted)
+const LOCK_SUFFIX = '.status-lock';
 
 /** The clock as the estimate tool wants it: UTC, minute precision. */
 const stamp = (date) => date.toISOString().slice(0, 16) + 'Z';
@@ -48,33 +48,24 @@ const isEmpty = (cell) => cell === '' || cell === '-';
 const oneLine = (text) => text.replace(/\s+/g, ' ').trim();
 const sameId = (line, id) => rowCells(line)[0].toLowerCase() === id.toLowerCase();
 
-/** Index of `## <name>`, or -1. */
-const headingIndex = (lines, name) => lines.findIndex((line) => new RegExp(`^##\\s+${name}\\s*$`, 'i').test(line));
-
-/** Index of the first heading after `start`, or the line count. */
-function nextHeading(lines, start) {
-  for (let i = start + 1; i < lines.length; i += 1) if (HEADING.test(lines[i])) return i;
-  return lines.length;
-}
-
-/** Index just after the last non-blank line of the section that opens at `start`. */
-function sectionEnd(lines, start) {
-  let end = nextHeading(lines, start);
-  while (end > start + 1 && lines[end - 1].trim() === '') end -= 1;
-  return end;
+/** Index just after the last non-blank line of a section (from findSection). */
+function sectionEnd(lines, { start, end }) {
+  let last = end;
+  while (last > start + 1 && lines[last - 1].trim() === '') last -= 1;
+  return last;
 }
 
 /**
  * The one work table: the header's index (-1 when the section has none) and the indexes of its rows, the contiguous table rows
- * under the separator. null when there is no `## Work items` section.
+ * under the separator. null when there is no `## Work items` section. Code fences are skipped as the estimator skips them.
  */
 function workTable(lines) {
-  const section = headingIndex(lines, WORK_ITEMS);
-  if (section === -1) return null;
-  const end = nextHeading(lines, section);
-  const header = lines.findIndex((line, i) => i > section && i < end && isHeader(line));
+  const section = findSection(lines, WORK_ITEMS);
+  if (section === null) return null;
+  const { start, end, visible } = section;
+  const header = lines.findIndex((line, i) => i > start && i < end && visible[i] && isHeader(line));
   const rows = [];
-  for (let i = header + 2; header !== -1 && i < end && isTableRow(lines[i]); i += 1) rows.push(i);
+  for (let i = header + 2; header !== -1 && i < end && visible[i] && isTableRow(lines[i]); i += 1) rows.push(i);
   return { header, rows };
 }
 
@@ -107,6 +98,7 @@ function insertRow(lines, table, cells) {
 function addRow(lines, [id, item, size]) {
   if (!ID.test(id ?? '') || !item || !SIZES.includes(size)) return { usage: `add needs <id> <item> <size ${SIZES.join('|')}> (id: letters, digits, _ . : -)` };
   if (RESERVED_ID.test(id)) return { error: 'ids starting deliver: are reserved for hand-overs; record one with `status.mjs deliver "<what>"`' };
+  if (RESERVED_ID.test(oneLine(item))) return { error: 'an item starting deliver: makes the row a hand-over; record one with `status.mjs deliver "<what>"`' };
   const table = tableToEdit(lines);
   if (table.error) return table;
   if (rowIndex(lines, table, id) !== -1) return { error: `id ${id} already exists` };
@@ -191,12 +183,12 @@ function addBullet(lines, kind, text, now) {
   if (!body) return { usage: `${kind} needs the text` };
   const bullet = kind === 'decision' ? `- ${stamp(now).slice(0, 10)} ${body}` : `- ${body}`;
   if (lines.includes(bullet)) return {};
-  const start = headingIndex(lines, SECTION_FOR[kind]);
-  if (start === -1) {
-    const before = headingIndex(lines, WORK_ITEMS);
-    lines.splice(before === -1 ? lines.length : before, 0, `## ${SECTION_FOR[kind]}`, bullet, '');
+  const section = findSection(lines, SECTION_FOR[kind]);
+  if (section === null) {
+    const before = findSection(lines, WORK_ITEMS)?.start ?? lines.length;
+    lines.splice(before, 0, `## ${SECTION_FOR[kind]}`, bullet, '');
   } else {
-    lines.splice(sectionEnd(lines, start), 0, bullet);
+    lines.splice(sectionEnd(lines, section), 0, bullet);
   }
   return {};
 }
@@ -210,41 +202,27 @@ const EDITS = {
   decision: (lines, [text], at) => addBullet(lines, 'decision', text ?? '', at),
 };
 
-/** Writes text to a new temp file next to `file` (never an existing file or link) and renames it over `file`. */
-function replaceFile(file, text) {
-  const temp = `${file}.${randomBytes(TEMP_NAME_BYTES).toString('hex')}.tmp`;
-  const fd = openSync(temp, NEW_FILE, lstatSync(file).mode & 0o777);
-  try {
-    writeFileSync(fd, text);
-  } finally {
-    closeSync(fd);
-  }
-  try {
-    renameSync(temp, file);
-  } finally {
-    rmSync(temp, { force: true }); // after the rename nothing is left at that name
-  }
-}
-
 /**
  * Reads, edits and writes the file; runs under the file's lock.
  * @returns {{code: number, message?: string, text?: string, changed?: boolean, note?: string, skip?: string}} code 0 with the new
  *   text, or the refusal (1) or usage error (2) and its message
  */
 function editFile(file, edit) {
-  let original;
+  let current;
   try {
     if (!lstatSync(file).isFile()) return { code: 1, message: `${file} is not a regular file (a link or special file): refused` };
-    original = readFileSync(file, 'utf8');
+    current = readStatusFile(file);
   } catch (error) {
     return { code: 1, message: `cannot read ${file}: ${error.code ?? error.message}` };
   }
+  if (current.refused) return { code: 1, message: `${file} ${current.refused}: refused` };
+  const original = current.text;
   const lines = original.split('\n');
   const outcome = edit(lines);
   if (outcome.usage) return { code: 2, message: outcome.usage };
   if (outcome.error) return { code: 1, message: outcome.error };
   const text = lines.join('\n');
-  if (text !== original) replaceFile(file, text);
+  if (text !== original) replaceStatusFile(file, text);
   return { code: 0, text, changed: text !== original, note: outcome.note, skip: outcome.skip };
 }
 
@@ -285,8 +263,9 @@ export function runStatus(argv, { cwd = process.cwd(), now = new Date(), session
   }
   const file = join(folder, basename(given));
   const lockName = basename(file).replace(/\.md$/i, '').replace(LOCK_NAME_PARTS, '_').slice(0, 100) || 'STATUS';
-  const result = withSessionLock(folder, lockName, () => editFile(file, (lines) => EDITS[command](lines, rest, now)));
-  if (result === undefined) return { code: 1, message: `${file} is busy (another status edit holds ${lockName}.lock) or its folder is not usable: run it again` };
+  const lockFile = `.${lockName}${LOCK_SUFFIX}`;
+  const result = withSessionLock(folder, lockName, () => editFile(file, (lines) => EDITS[command](lines, rest, now)), { lockFile });
+  if (result === undefined) return { code: 1, message: `${file} is busy (another status edit holds ${lockFile}) or its folder is not usable: run it again` };
   if (result.code !== 0) return result;
   if (result.skip) return { code: 0, message: `${command} --auto: nothing recorded, ${result.skip} (${file})` };
   const notes = [result.note, result.changed ? recordTable(file, result.text, { sessionId, stateDir, now }) : null].filter(Boolean);

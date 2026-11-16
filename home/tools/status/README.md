@@ -8,7 +8,7 @@ Run: `node ~/.claude/tools/status/status.mjs [--file STATUS.md] <command>`
 
 | Command | What it does |
 | ------- | ------------ |
-| `add <id> <item> <size>` | New row at the end of the `## Work items` table (made when there is none); size `S`, `M` or `L`; `started` stays empty: list the job's rows first. An id that exists (any case) is refused, and so is an id starting `deliver:` (reserved for hand-overs). |
+| `add <id> <item> <size>` | New row at the end of the `## Work items` table (made when there is none); size `S`, `M` or `L`; `started` stays empty: list the job's rows first. An id that exists (any case) is refused, and so are an id and an item starting `deliver:` (reserved for hand-overs: such an item would make the row one). |
 | `start <id>` | `started` = now, when work on the row begins. A row already started or done is refused. |
 | `done <id> <evidence>` | `done` = now, evidence set (added after an existing one with `; `). A row never started gets `started` = now too, costs 0 minutes, and the message says to use `start`. A row whose `done` is set is refused: never clear or change a done cell, add a new row for a correction. |
 | `deliver "<what>"` | A hand-over row: `deliver:N \| deliver: <what> \| S \| - \| <now> \| -`, N one above the highest `deliver:` number in the table. Use it to hand over a part while rows stay open. |
@@ -18,19 +18,26 @@ Run: `node ~/.claude/tools/status/status.mjs [--file STATUS.md] <command>`
 
 Only the one table under `## Work items` is read and edited: its header `id | item | size | started | done | evidence` and the
 rows right below its separator. A work row anywhere else (for example after `## Owner decisions`) is never found by `start` or
-`done`; the estimate tool reports it as a problem that names its line, so move it into the table by hand once.
+`done`; the estimate tool reports it as a problem that names its line, so move it into the table by hand once. Headings and
+tables inside code fences (an example table in ```` ``` ```` ) are skipped, as the estimate tool skips them: both use
+`findSection` from `home/tools/estimate/lib/items.mjs`, so they always see the same table and the same `## Standing rules` and
+`## Owner decisions` sections.
 
 A missing section is created. The table may have outer pipes (`| a | b |`) or none (`a | b`); a new row copies the style of the header.
 Exit 0 done, 1 refused (reason on stderr), 2 usage. `--file` goes before the command; the clock is always the system's (no flag
-back-dates a row). An id is one word of letters, digits and `_ . : -` (`7`, `close:5`, `rework:12`).
+back-dates a row). An id is one word of letters, digits and `_ . : -` that starts with a letter or digit (`7`, `21a`, `close:5`,
+`rework:12`); a leading `-` would make the row read as a bullet.
 
 After every edit that changed the file it records the table for the estimator (`noteTable` in `home/tools/estimate/lib/table-store.mjs`:
 the rows' first-seen times, and the link from the session in `CLAUDE_CODE_SESSION_ID` to this STATUS.md, under
 `~/.claude/state/estimate/`). When that store is busy or unusable the edit still stands and the message ends with
 `not recorded for the estimate (...)`; the next estimate run records it.
 
-Parallel runs are safe: each edit takes a lock file (`STATUS.lock` next to the file, gone after the edit; one left by a killed run is
-removed after 0.5 s) and writes a new temp file renamed over the old one. A run that waits over a second for the lock is refused with
-exit 1: run it again. A `STATUS.md` that is a link or not a regular file is refused.
+Parallel runs are safe: each edit takes a lock file (`.STATUS.status-lock` next to the file, `.<name>.status-lock` for `--file
+<name>.md`, a name no other tool uses; gone after the edit). The lock holds the run's pid and a random token: a run removes it only
+while it still holds its own token, and one left by a killed run (pid gone, or no token) is removed after 0.5 s, one of a live pid
+only after 5 s. A run that waits over a second for the lock is refused with exit 1: run it again. `status-file.mjs` reads the file
+through one handle that never follows a link or waits on a FIFO and writes a new temp file renamed over the old one. A `STATUS.md`
+that is a link, not a regular file, or over 4 MiB is refused.
 
 Not covered: changing a row's size or item, deleting a row.
