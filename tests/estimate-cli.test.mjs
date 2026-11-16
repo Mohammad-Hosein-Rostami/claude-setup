@@ -50,10 +50,11 @@ test('open rows exit 0 with the Finish block on the local clock (TZ honoured), t
 });
 
 test('a table without outer pipes (the setup repo\'s own STATUS.md style) gives the same block', async () => {
-  const piped = await workdir(statusDoc(OPEN_ROWS));
-  const plain = await workdir(plainDoc(OPEN_ROWS));
-  const expected = piped.run(piped.status, '--now', NOW, ...piped.projects);
-  const result = plain.run(plain.status, '--now', NOW, ...plain.projects);
+  // One path for both: the forecast's random draws are seeded by the table id, a hash of the STATUS.md path.
+  const { status, run, projects } = await workdir(statusDoc(OPEN_ROWS));
+  const expected = run(status, '--now', NOW, ...projects);
+  await writeFile(status, plainDoc(OPEN_ROWS));
+  const result = run(status, '--now', NOW, ...projects);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.split('\n').slice(1).join('\n'), expected.stdout.split('\n').slice(1).join('\n'));
 });
