@@ -3,9 +3,11 @@
 // the estimator can score its commitment (0 of 16 old commitments were scored: nobody wrote the rows).
 // Exports: deliverAtStop(input, { stateDir, now, projectDir }) -> { code, message } | null (null: no usable session id or no link).
 // Invariants: never blocks a stop and never prints a decision: stdout stays empty, exit is always 0, a refusal or error is one
-// stderr line. deliver --auto itself writes only when no work row is open and one was done after the last hand-over. A STATUS.md
-// outside the Stop input's cwd and CLAUDE_PROJECT_DIR (both resolved with realpath) is never written: subagents and other sessions
-// share links, and another project's table must not get this session's hand-over (exit 0, no stderr line).
+// stderr line. deliver --auto itself writes only when no work row is open and one was done after the last hand-over. The hand-over
+// goes to the STATUS.md this session last edited with status.mjs, and only when it is inside the Stop input's cwd or
+// CLAUDE_PROJECT_DIR (both resolved with realpath; outside both: exit 0, no stderr line). That narrows a wrong target, it does not
+// rule one out: a subagent shares the session id, so its status.mjs edit moves the link, and a cwd or project dir high up (such
+// as ~) holds every project below it.
 // Safety (the hook edits a file named in a state file): the stdin JSON is read up to MAX_INPUT_BYTES; the linked path must be
 // absolute and named STATUS.md, its folder must be its own real path (no link anywhere in the chain), the file a regular file
 // (lstat, never followed) of at most MAX_STATUS_BYTES; status.mjs then edits it under its lock with its own link refusal.
@@ -53,7 +55,7 @@ function isWithin(folder, root) {
  * @param {{session_id?: string, cwd?: string} | null} input the Stop hook JSON
  * @param {{stateDir: string, now: Date, projectDir?: string}} options the estimator's store, the clock and CLAUDE_PROJECT_DIR
  * @returns {{code: number, message: string} | null} the status edit's outcome (code 0 also when nothing was due, and when the
- *   STATUS.md is outside both folders: another project's table is never touched), code 1 when the linked path is refused; null
+ *   STATUS.md is outside both folders: then nothing is written), code 1 when the linked path is refused; null
  *   when the input has no usable session id or the session linked no STATUS.md
  */
 export function deliverAtStop(input, { stateDir, now, projectDir }) {

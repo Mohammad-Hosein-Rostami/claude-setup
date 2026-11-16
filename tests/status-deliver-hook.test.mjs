@@ -188,3 +188,15 @@ test('a cwd whose path is only a name prefix of the STATUS.md folder does not co
   assert.match(outcome.message, /outside/);
   assert.doesNotMatch(read(), /deliver:/);
 });
+
+// The documented rule (status-deliver.mjs header): the hand-over goes to the STATUS.md the session last edited with status.mjs when
+// it is inside the cwd. A cwd above two projects holds both, so the earlier project's table gets nothing (the audit's S1 residual).
+test('the hand-over goes to the STATUS.md last edited with status.mjs, also when the cwd holds an earlier edited project', async () => {
+  const stateDir = await tempDir('deliver-state-');
+  const first = await linkedProject(ALL_DONE, stateDir);
+  const last = await linkedProject(ALL_DONE, stateDir);
+  const outcome = deliverAtStop({ session_id: SESSION, cwd: dirname(first.cwd) }, { stateDir, now: NOW });
+  assert.equal(outcome.code, 0, outcome.message);
+  assert.match(last.read(), DELIVER_ROW);
+  assert.doesNotMatch(first.read(), /deliver:/);
+});
