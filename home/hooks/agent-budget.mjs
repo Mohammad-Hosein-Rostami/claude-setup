@@ -7,6 +7,7 @@
 //                   Agent/Task call resets the count.
 //   SubagentStop -> blocks once when the final report is over the cap the spawn prompt states (first user message of the
 //                   agent transcript); no stated cap means no check, so agents that return data are never sent back.
+//                   A stop it lets through also ends the agent's launch in lib/writer-agents.mjs (agent-model-guard's writer gate).
 // Verified against Claude Code 2.1.323: hook input has `agent_id` only inside a subagent (agent_type alongside it);
 // PostToolUse accepts hookSpecificOutput.additionalContext; SubagentStop gets agent_id, agent_type, agent_transcript_path,
 // last_assistant_message and stop_hook_active, and exit 2 sends stderr to the subagent and keeps it running.
@@ -19,6 +20,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { tempRoot } from './lib/edit-log.mjs';
 import { overCap, parseCap } from './lib/reply-cap.mjs';
+import { recordWriterStop } from './lib/writer-agents.mjs';
 
 // The agent files (implementer, ui-implementer, test-writer) and the lead rules say "about 120 tool calls"; a test keeps them equal.
 export const CALL_CAP = 120;
@@ -191,10 +193,13 @@ async function main() {
       // blocked: the agent keeps running and its calls must keep counting
       process.stderr.write(`${reason}\n`);
       process.exitCode = 2;
-    } else if (path) {
-      // the agent is ending: its counter and notice marker are done
-      rmSync(path, { force: true });
-      rmSync(`${path}${NOTICE_SUFFIX}`, { force: true });
+    } else {
+      recordWriterStop(input.session_id, input.agent_id, input.agent_type, process.env); // agent-model-guard's writer gate: it finished
+      if (path) {
+        // the agent is ending: its counter and notice marker are done
+        rmSync(path, { force: true });
+        rmSync(`${path}${NOTICE_SUFFIX}`, { force: true });
+      }
     }
   }
 }

@@ -7,7 +7,7 @@ import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -66,9 +66,12 @@ function gateSession(mode = 'medium') {
     project,
     store: join(home, '.claude', 'state', 'guard-bounced'),
     log: () => (existsSync(env.CLAUDE_GUARD_LOG) ? readFileSync(env.CLAUDE_GUARD_LOG, 'utf8').trim().split('\n').map((line) => JSON.parse(line)) : []),
-    send: (toolInput, options = {}) => outcome(spawnSync(process.execPath, [HOOK], {
-      input: JSON.stringify(inputOf(toolInput, options)), encoding: 'utf8', env, cwd: options.processCwd, timeout: HOOK_TIMEOUT_MS,
-    })),
+    send: (toolInput, options = {}) => {
+      rmSync(join(home, '.claude', 'state', 'agent-writers'), { recursive: true, force: true }); // earlier agents finished: this file tests other gates
+      return outcome(spawnSync(process.execPath, [HOOK], {
+        input: JSON.stringify(inputOf(toolInput, options)), encoding: 'utf8', env, cwd: options.processCwd, timeout: HOOK_TIMEOUT_MS,
+      }));
+    },
   };
 }
 
@@ -289,7 +292,7 @@ test('the log line holds no prompt text: the subagent type, the digest, the outc
 // One child process per record: it loads bounce-once.mjs, prints "ready", waits for the go file, then records its own command, so all of
 // them read and write the store at the same moment.
 const RECORD_CHILD = [
-  "import { existsSync } from 'node:fs';",
+  "import { existsSync, rmSync } from 'node:fs';",
   'const [url, go, home, n] = process.argv.slice(1);',
   'const { adviceOnce } = await import(url);',
   "process.stdout.write('ready');",

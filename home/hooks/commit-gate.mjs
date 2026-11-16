@@ -26,6 +26,7 @@ import { devNull, homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readSessionFile, withSessionLock, writeSessionFile } from './lib/session-store.mjs';
+import { agentFileWrites } from './lib/writer-agents.mjs';
 
 const PASS = Object.freeze({ block: false });
 const BASE_BRANCHES = new Set(['main', 'master', 'develop']);
@@ -36,15 +37,12 @@ const MAX_STORE_BYTES = 16 * 1024;
 const MAX_CHAINED_BLOCKS = 2; // blocks given to continued stops in a row, a hard bound on how long a stop can be held
 const BRANCH_POSITIONS_CHECKED = 50; // reflog entries searched for the index (as git-tidy's stale-checkout)
 const TRANSCRIPT_HEAD_BYTES = 4 * 1024 * 1024; // the first transcript line holds the brief, which can be long
-const AGENT_FILE_BYTES = 64 * 1024;
 const REPOSITORY_VARIABLES = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'];
 // config that would make a read-only git call run a program; given on the command line, so it beats the repository's own config
 const HARDENED = ['-c', 'core.fsmonitor=false', '-c', 'safe.bareRepository=explicit', '-c', `core.hooksPath=${devNull}`];
 const REPOSITORY_SCOPES = new Set(['local', 'worktree']); // config that comes with the repository, not the owner's own
 const RENAME_OR_COPY = /^[RC]|^.[RC]/; // in -z output such an entry is followed by its old path as one more field
 const READ_ONLY_BUILT_INS = new Set(['Explore', 'Plan']);
-const AGENT_TYPE = /^[\w-]{1,64}$/; // a name that can be a file name part; plugin agents (`plugin:name`) are gated
-const WRITING_TOOLS = /\b(?:Write|Edit|MultiEdit|NotebookEdit)\b/;
 
 const stateDir = (env) => join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'commit-gate');
 
@@ -109,13 +107,7 @@ function startFolder(transcriptPath) {
 
 /** False for an agent type that cannot write files: a read-only built-in, or an agent file whose `tools:` line names no writer. */
 function writesFiles(agentType, env) {
-  if (READ_ONLY_BUILT_INS.has(agentType)) return false;
-  if (typeof agentType !== 'string' || !AGENT_TYPE.test(agentType)) return true;
-  const home = env.HOME || env.USERPROFILE || homedir();
-  const folders = [env.CLAUDE_PROJECT_DIR, home].filter(Boolean).map((root) => join(root, '.claude', 'agents')); // project wins
-  const text = folders.map((folder) => readHead(join(folder, `${agentType}.md`), AGENT_FILE_BYTES)).find((found) => found !== null);
-  const tools = text?.match(/^tools:(.*)$/m);
-  return !tools || WRITING_TOOLS.test(tools[1]);
+  return !READ_ONLY_BUILT_INS.has(agentType) && agentFileWrites(agentType, env) !== false;
 }
 
 /** The folder whose worktree this stop gates, or null: CLAUDE_PROJECT_DIR for the main session, the start folder for a subagent. */

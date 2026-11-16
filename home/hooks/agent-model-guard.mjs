@@ -22,13 +22,19 @@
 // Brief lines (lib/agent-brief.mjs), after the gate and on top of the routing: a line naming the project's STATUS.md goes before a brief
 // whose project has `## Standing rules`, and an architect or Plan brief gets the Reuse inventory / Contract facts line after it. Fixed
 // text plus a path only; any failure leaves the brief as it is.
-// Exports: guardedAgentInput (pure), matrixLines (pure), uiBriefDeny (the gate), MAX_MATRIX_BYTES. Invariants: the routing never blocks
-// or denies; the gate denies an identical call at most once per session.
+// Writer isolation gate (after the UI gate): a writing agent (lib/writer-agents.mjs isWritingAgent: implementer, ui-implementer,
+// test-writer, general-purpose, claude, or an agent file whose tools include Write/Edit; scout, runner, reviewer, security-auditor, Explore,
+// Plan and architect never) launched while another writing agent of this session still runs must carry `isolation: "worktree"`, else it
+// is denied once with that advice (adviceOnce, as the UI gate) and the identical call sent again runs. "Still runs" comes from the
+// session's own record: every writer launch this hook lets start, ended by agent-budget.mjs on SubagentStop (limits in that lib).
+// Exports: guardedAgentInput (pure), matrixLines (pure), uiBriefDeny and writerIsolationDeny (the gates), MAX_MATRIX_BYTES. Invariants: the
+// routing never blocks or denies; each gate denies an identical call at most once per session.
 import { realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { UNPRINTABLE, readFileHead, withBriefLines } from './lib/agent-brief.mjs';
+import { isWritingAgent, recordWriterLaunch } from './lib/writer-agents.mjs';
 
 const FORK_TYPE = 'fork';
 const DEFAULT_MODEL = 'sonnet';
@@ -148,6 +154,36 @@ export async function uiBriefDeny(input, env = process.env) {
   }
 }
 
+const WORKTREE_ISOLATION = 'worktree';
+const PARALLEL_WRITER_ADVICE = 'Another writing agent of this session is still running in the shared folder: launch this one with '
+  + '`isolation: "worktree"` (parallel writers each get their own worktree), or wait until the running writer has finished.';
+
+/**
+ * The writer isolation gate (see the header). Records the launch of every writer it lets start, so a writer launched next sees it.
+ * @param {unknown} input the hook input: tool_input {subagent_type, isolation, prompt}, cwd, session_id
+ * @param {Record<string, string | undefined>} env process environment (HOME for the stores and agent files, CLAUDE_PROJECT_DIR)
+ * @returns {Promise<string>} the deny JSON line on the first send of a writer without isolation while another writer runs; '' otherwise,
+ *   on the identical retry, when nothing can be recorded, and on any failure
+ */
+export async function writerIsolationDeny(input, env = process.env) {
+  try {
+    const { subagent_type: type, isolation, prompt } = input?.tool_input ?? {};
+    if (!isWritingAgent(type, env)) return '';
+    const session = input.session_id;
+    const isolated = isolation === WORKTREE_ISOLATION;
+    if (recordWriterLaunch(session, type, env, { unlessRunning: !isolated }) !== 'running') return '';
+    const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+    const { adviceOnce } = await import('./lib/bounce-once.mjs');
+    const call = { command: `${type}: isolation ${String(isolation)}: ${String(prompt)}`, cwd, input, hook: 'agent-model-guard', tool: 'Agent' };
+    const recorded = adviceOnce([PARALLEL_WRITER_ADVICE], { ...call, logged: { type, class: 'parallel writer without isolation' } }, env);
+    if (recorded !== '') return denyOutput([`Not started: ${PARALLEL_WRITER_ADVICE}`, SEND_AGAIN].join('\n'));
+    recordWriterLaunch(session, type, env); // the identical retry runs: it is a running writer now
+    return '';
+  } catch {
+    return ''; // a quality rule, not a safety rule: any failure lets the call run
+  }
+}
+
 async function main() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
@@ -157,7 +193,7 @@ async function main() {
   } catch {
     return; // not hook JSON: stay silent, never block
   }
-  const deny = await uiBriefDeny(input);
+  const deny = (await uiBriefDeny(input)) || (await writerIsolationDeny(input));
   if (deny !== '') {
     process.stdout.write(deny);
     return;

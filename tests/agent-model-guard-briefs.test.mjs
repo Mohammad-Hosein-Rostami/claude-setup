@@ -6,7 +6,7 @@
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { test } from 'node:test';
@@ -60,9 +60,12 @@ function briefSession(mode = 'medium', projectPrefix = 'brief-project-', extraEn
     project,
     status: join(project, 'STATUS.md'),
     exclude: (text) => writeExclude(join(project, '.git'), text),
-    send: (toolInput, options = {}) => outcome(spawnSync(process.execPath, [HOOK], {
-      input: JSON.stringify(inputOf(toolInput, options)), encoding: 'utf8', env, cwd: options.processCwd, timeout: HOOK_TIMEOUT_MS,
-    })),
+    send: (toolInput, options = {}) => {
+      rmSync(join(home, '.claude', 'state', 'agent-writers'), { recursive: true, force: true }); // earlier agents finished: this file tests other gates
+      return outcome(spawnSync(process.execPath, [HOOK], {
+        input: JSON.stringify(inputOf(toolInput, options)), encoding: 'utf8', env, cwd: options.processCwd, timeout: HOOK_TIMEOUT_MS,
+      }));
+    },
   };
 }
 
