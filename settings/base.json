@@ -49,6 +49,15 @@
         ]
       },
       {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/commit-gate.mjs\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "Artifact",
         "hooks": [
           {

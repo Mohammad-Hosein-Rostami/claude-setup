@@ -42,6 +42,7 @@ Asking and remembering:
 Other hooks:
 - `diagnostics.mjs`, `edit-log.mjs`: used by `post-edit.mjs` and `typecheck-gate.mjs` (check output parsing, list of edited files).
 - `own-edits.mjs`: the files a session or agent changed with Edit/Write/MultiEdit/NotebookEdit, recorded and read by `commit-gate.mjs`.
+- `dirty-baseline.mjs`: the dirty files of a worktree (path + content hash) at the first tool call of a session or agent, so `commit-gate.mjs` can count files a Bash command made or changed.
 - `read-only-command.mjs`: whether a Bash command is git or reading only (no writing option, no output to a file), for
   `agent-budget.mjs`'s escalation.
 - `writer-agents.mjs`: which agent types write files (agent files' `tools:` line), and the record of a session's running writers that

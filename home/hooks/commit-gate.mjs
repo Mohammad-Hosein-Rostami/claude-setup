@@ -1,12 +1,15 @@
 // Stop and SubagentStop: blocks a stop once when files this session (for a subagent: this agent) changed are still uncommitted in its
 // own git worktree, so a run never ends with edits left lying around (C16). PostToolUse Edit/Write/MultiEdit/NotebookEdit: records the
-// changed file (lib/own-edits.mjs). Exports: decide(input, env) -> {block: false} | {block: true, reason}.
+// changed file (lib/own-edits.mjs). PreToolUse (every tool): the first call of a session or agent takes the dirty baseline
+// (lib/dirty-baseline.mjs). Exports: decide(input, env) -> {block: false} | {block: true, reason}, takeBaseline(input, env).
 // Invariants:
-// - Only recorded files count: each PostToolUse of a file tool adds [agent id ('' for the lead), real path] to
-//   ~/.claude/state/commit-gate/edits/<session>.json (lib/own-edits.mjs).
-//   A subagent's stop counts its own files, the lead's stop every file of the session (its agents' too). Another session's or another
-//   agent's dirt in the same folder never blocks. Limit: files a Bash command makes or changes (sed -i, codegen, git mv) are unknowable
-//   here and never count; neither does an edit whose record failed (fail open).
+// - Counted files: (1) recorded ones: each PostToolUse of a file tool adds [agent id ('' for the lead), real path] to
+//   ~/.claude/state/commit-gate/edits/<session>.json (lib/own-edits.mjs); (2) files a Bash command made or changed: dirty now and clean,
+//   or different, at the baseline of the session or agent taken at its first tool call (path + content hash), in the same worktree.
+//   A subagent's stop counts its own files, the lead's stop every file of the session (its agents' too). A file in another agent's
+//   record never counts for an agent, dirt from before the first tool call never counts, nor another session's recorded files. Limits:
+//   another session or a non-isolated parallel agent changing files through Bash in the same worktree counts as this one's Bash; a
+//   record or baseline that failed is lost (fail open: fewer files count). The baseline runs the same hardened git as the stop.
 // - Only the session's own worktree is gated: for the main session the one holding CLAUDE_PROJECT_DIR, for a subagent the one
 //   holding the folder it started in (the first `cwd` of its transcript). Never the hook input's cwd: a folder the session only
 //   cd'd into may be someone else's repo, and its git config is not trusted.
@@ -32,7 +35,8 @@ import { devNull, homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readSessionFile, withSessionLock, writeSessionFile } from './lib/session-store.mjs';
-import { LEAD, realPathOf, recordEditedFile, recordedEntries, recordedPaths } from './lib/own-edits.mjs';
+import { changedSinceBaseline, hasBaseline, saveBaseline } from './lib/dirty-baseline.mjs';
+import { LEAD, isRecordedEntry, realPathOf, recordEditedFile, recordedPaths, statusEntries } from './lib/own-edits.mjs';
 import { agentFileWrites } from './lib/writer-agents.mjs';
 
 const PASS = Object.freeze({ block: false });
@@ -194,17 +198,44 @@ export function decide(input, env = process.env) {
   if (input === null || typeof input !== 'object') return PASS;
   const agent = typeof input.agent_id === 'string' ? input.agent_id : LEAD;
   const recorded = recordedPaths(env, input.session_id, agent);
-  if (recorded.size === 0) return PASS; // nothing changed by this session or agent: no git call at all
+  if (recorded.size === 0 && !hasBaseline(env, input.session_id, agent)) return PASS; // nothing changed by this session or agent: no git call
   const folder = gatedFolder(input, env);
   const tree = folder === null ? null : worktreeOf(folder);
   if (tree === null || IN_PROGRESS_MARKERS.some((marker) => existsSync(join(tree.gitDir, marker))) || namesFilterProgram(tree.top)) return PASS;
-  const status = gitOut(tree.top, ['status', '--porcelain=v1', '-z', '--untracked-files=normal', '--ignore-submodules=all']);
+  const status = dirtyStatus(tree.top);
   if (status === null || status === '') return PASS;
-  const own = recordedEntries(status, realPathOf(tree.top), recorded);
+  const top = realPathOf(tree.top);
+  const entries = statusEntries(status, top);
+  const others = agent === LEAD ? new Set() : recordedPaths(env, input.session_id, LEAD); // every agent's; own ones are matched first
+  const recordedHere = entries.filter((entry) => isRecordedEntry(entry, recorded));
+  const unrecorded = entries.filter((entry) => !isRecordedEntry(entry, recorded) && !isRecordedEntry(entry, others));
+  const own = [...recordedHere, ...changedSinceBaseline(env, input.session_id, agent, top, unrecorded)].map(({ field }) => field);
   if (own.length === 0) return PASS;
   const state = createHash('sha256').update(`${agent}\0${tree.top}\0${own.join('\0')}`).digest('hex');
   if (!recordOnce(env, input.session_id, { agent, state, continued: input.stop_hook_active === true })) return PASS;
   return { block: true, reason: reasonFor(tree, own.length) };
+}
+
+const dirtyStatus = (top) => gitOut(top, ['status', '--porcelain=v1', '-z', '--untracked-files=normal', '--ignore-submodules=all']);
+
+/**
+ * At the first tool call of the session or agent: stores which files of its worktree are dirty, and how (lib/dirty-baseline.mjs), so a
+ * stop can tell files Bash made from dirt that was there before. Later calls only check that a baseline exists.
+ * @param {{session_id?: string, agent_id?: string, cwd?: string}} input PreToolUse hook JSON (an agent's cwd is the folder it works in)
+ * @param {Record<string, string | undefined>} [env] HOME and CLAUDE_PROJECT_DIR (the lead's worktree)
+ */
+export function takeBaseline(input, env = process.env) {
+  const agent = typeof input?.agent_id === 'string' ? input.agent_id : LEAD;
+  if (hasBaseline(env, input?.session_id, agent)) return;
+  const folder = agent === LEAD ? env.CLAUDE_PROJECT_DIR : input.cwd;
+  const tree = typeof folder === 'string' && isAbsolute(folder) ? worktreeOf(folder) : null;
+  if (tree === null || namesFilterProgram(tree.top)) {
+    saveBaseline(env, input.session_id, agent, null, []); // nothing to gate here: later calls skip git
+    return;
+  }
+  const top = realPathOf(tree.top);
+  const status = dirtyStatus(tree.top);
+  if (status !== null) saveBaseline(env, input.session_id, agent, top, statusEntries(status, top));
 }
 
 async function readStdin() {
@@ -217,6 +248,10 @@ async function main() {
   const input = JSON.parse(await readStdin());
   if (input?.hook_event_name === 'PostToolUse') {
     recordEditedFile(input);
+    return;
+  }
+  if (input?.hook_event_name === 'PreToolUse') {
+    takeBaseline(input);
     return;
   }
   const result = decide(input);

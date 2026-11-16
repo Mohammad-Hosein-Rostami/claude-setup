@@ -1,9 +1,9 @@
 // The files a session or one of its agents changed with Edit, Write, MultiEdit or NotebookEdit, for commit-gate.mjs: it records them on
 // PostToolUse and at a stop gates only those still dirty. Exports: LEAD, realPathOf(file), recordEditedFile(input, env) -> boolean,
-// recordedPaths(env, session, agent) -> Set, recordedEntries(status, top, recorded) -> string[].
+// recordedPaths(env, session, agent) -> Set, recordedEntries(status, top, recorded) -> string[], statusEntries(status, top), isRecordedEntry.
 // Store: ~/.claude/state/commit-gate/edits/<session>.json through lib/session-store.mjs (lstat-checked, locked, 0600):
 // {"edits": [[agent id ('' for the lead), real path], ...]}, the newest EDITS_KEPT pairs within MAX_EDITS_BYTES.
-// Limit: what a Bash command changes is unknowable here and is never recorded. Invariants: never throws; a failed record is lost (the
+// What a Bash command changes is never recorded here: lib/dirty-baseline.mjs compares the worktree with its first-call state. Invariants: never throws; a failed record is lost (the
 // gate then passes that file).
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -18,13 +18,16 @@ const MAX_EDITS_BYTES = 1024 * 1024;
 
 const editsDir = (env) => join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'commit-gate', 'edits');
 
-/** The real path of a file (of its folder when the file is gone), so it compares with git's real worktree path. */
+/**
+ * The real path of a file (of its folder when the file is gone), so it compares with git's real worktree path. The native call gives
+ * the case on disk: on a case-insensitive disk an Edit through `SRC/A.ts` must still match git's `src/a.ts`.
+ */
 export function realPathOf(file) {
   try {
-    return realpathSync(file);
+    return realpathSync.native(file);
   } catch {
     try {
-      return join(realpathSync(dirname(file)), basename(file));
+      return join(realpathSync.native(dirname(file)), basename(file));
     } catch {
       return resolve(file); // folder gone too: the path as given
     }
@@ -79,6 +82,28 @@ export function recordedPaths(env, session, agent) {
 }
 
 /**
+ * The entries of `git status --porcelain=v1 -z` with their real paths (a rename's old path is skipped).
+ * @param {string} status the raw output
+ * @param {string} top the worktree's real path
+ * @returns {{field: string, path: string}[]} each entry (`XY path`) and its path under top (an untracked folder ends with the separator)
+ */
+export function statusEntries(status, top) {
+  const fields = status.split('\0').filter((field) => field !== '');
+  const entries = [];
+  for (let i = 0; i < fields.length; i += 1) {
+    entries.push({ field: fields[i], path: join(top, fields[i].slice(STATUS_PATH_AT)) });
+    if (RENAME_OR_COPY.test(fields[i])) i += 1;
+  }
+  return entries;
+}
+
+/** Whether a status entry is a recorded file, or an untracked folder (`dir/`) holding one. */
+export function isRecordedEntry({ path }, recorded) {
+  if (!path.endsWith(sep)) return recorded.has(path);
+  return [...recorded].some((file) => file.startsWith(path));
+}
+
+/**
  * The `git status --porcelain=v1 -z` entries of recorded files: a file listed itself, or an untracked folder (`dir/`) holding one.
  * @param {string} status the raw output
  * @param {string} top the worktree's real path
@@ -86,14 +111,5 @@ export function recordedPaths(env, session, agent) {
  * @returns {string[]} the entries (`XY path`), a rename once
  */
 export function recordedEntries(status, top, recorded) {
-  const fields = status.split('\0').filter((field) => field !== '');
-  const entries = [];
-  for (let i = 0; i < fields.length; i += 1) {
-    const listed = fields[i].slice(STATUS_PATH_AT);
-    const path = join(top, listed);
-    const own = listed.endsWith('/') ? [...recorded].some((file) => file.startsWith(path.endsWith(sep) ? path : `${path}${sep}`)) : recorded.has(path);
-    if (own) entries.push(fields[i]);
-    if (RENAME_OR_COPY.test(fields[i])) i += 1;
-  }
-  return entries;
+  return statusEntries(status, top).filter((entry) => isRecordedEntry(entry, recorded)).map(({ field }) => field);
 }

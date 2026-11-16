@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,7 +62,15 @@ function gateSession() {
     writeFileSync(path, text);
     record(path, who);
   };
-  return { home, stop, agentStop, record, write };
+  /** One PreToolUse (any tool) of the lead or of an agent (who.agent_id) in `cwd`: the hook takes its dirty baseline on the first. */
+  const toolCall = (project, who = {}) => {
+    const input = { hook_event_name: 'PreToolUse', session_id: 'sess-1', tool_name: 'Bash', tool_input: { command: 'make' }, cwd: project, ...who };
+    const env = { ...CLEAN_ENV, HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: who.project ?? project };
+    const { status, stdout, stderr } = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), encoding: 'utf8', env });
+    assert.equal(status, 0, stderr);
+    assert.equal(`${stdout}${stderr}`, '', 'the baseline is silent');
+  };
+  return { home, stop, agentStop, record, write, toolCall };
 }
 const A1 = { agent_id: 'a1' }; // the agent agentStop sends by default
 
@@ -157,7 +165,7 @@ test('only the session\'s own worktree is gated: a dirty repo the session cd\'d 
 });
 
 test('no program runs: fsmonitor and filters in .git/config, an include, a bare-repo layout and a planted cd folder leave no marker', posixOnly, () => {
-  const { stop, agentStop, write } = gateSession();
+  const { stop, agentStop, write, toolCall } = gateSession();
   const markers = mkdtempSync(join(tmpdir(), 'commit-gate-markers-'));
   const scripts = mkdtempSync(join(tmpdir(), 'commit-gate-scripts-'));
   const marker = (name) => join(markers, name);
@@ -178,7 +186,11 @@ test('no program runs: fsmonitor and filters in .git/config, an include, a bare-
     return dir;
   };
   const appendConfig = (dir, text) => writeFileSync(join(dir, '.git', 'config'), readFileSync(join(dir, '.git', 'config'), 'utf8') + text);
-  assert.equal(stop(filtered('filter', appendConfig)), null, 'a repo whose config names a filter is passed without a word');
+  const withFilter = filtered('filter', appendConfig);
+  toolCall(withFilter); // the first-call baseline runs the same hardened git: no filter, no fsmonitor
+  toolCall(withFilter, { agent_id: 'a9' });
+  toolCall(monitored, { agent_id: 'a8' });
+  assert.equal(stop(withFilter), null, 'a repo whose config names a filter is passed without a word');
   const included = filtered('include', (dir, text) => {
     writeFileSync(join(dir, '.git', 'extra.cfg'), text);
     appendConfig(dir, '[include]\n\tpath = extra.cfg\n');
@@ -280,4 +292,54 @@ test('recording is silent and fails open: no path, an odd tool input, a bad sess
     assert.equal(`${stdout}${stderr}`, '');
   }
   assert.deepEqual(readdirSync(home), [], 'nothing recorded');
+});
+
+// Audit of db40977 (S6): only Edit/Write paths counted, so files a Bash command made or changed (heredoc, sed -i, codegen) never blocked.
+// The hook now takes a baseline of the dirty files (path + content hash) at the first tool call of the session or agent, and a stop also
+// counts files dirty now that were clean, or different, at that baseline and are not in another agent's own-edits record.
+test('files made or changed by Bash after the first tool call count; dirt that was there before and is unchanged does not', () => {
+  const { stop, toolCall } = gateSession();
+  const dir = makeRepo();
+  commit(dir, 'tracked.txt', 'v1');
+  writeFileSync(join(dir, 'old-dirt.txt'), 'someone else'); // dirty before the session's first tool call
+  writeFileSync(join(dir, 'tracked.txt'), 'v2'); // dirty before too, then changed again by the session
+  toolCall(dir);
+  assert.equal(stop(dir), null, 'nothing changed since the baseline');
+  writeFileSync(join(dir, 'made-by-bash.txt'), 'heredoc');
+  writeFileSync(join(dir, 'tracked.txt'), 'v3 by sed -i');
+  toolCall(dir); // a later call keeps the first baseline
+  assert.equal(stop(dir), dirtyReason(dir, 2), 'the Bash-made file and the file changed again; never the untouched old dirt');
+});
+
+test('an agent counts its own Bash-made files from its first tool call, never another agent\'s recorded edits', () => {
+  const { agentStop, toolCall, write } = gateSession();
+  const dir = makeRepo();
+  toolCall(dir, A1);
+  write(join(dir, 'other-agent.txt'), 'x', { agent_id: 'a2' });
+  assert.equal(agentStop(dir), null, 'only another agent\'s recorded file is new');
+  writeFileSync(join(dir, 'codegen.ts'), 'export {}');
+  assert.equal(agentStop(dir), dirtyReason(dir, 1));
+});
+
+test('no baseline (no tool call seen, or another worktree) keeps the old rule: only recorded files count', () => {
+  const { stop, toolCall } = gateSession();
+  const dir = makeRepo();
+  const other = makeRepo();
+  toolCall(other);
+  writeFileSync(join(dir, 'made-by-bash.txt'), 'x');
+  assert.equal(stop(dir), null);
+});
+
+// Audit of db40977 (M5): on a case-insensitive disk (APFS, NTFS) an Edit through SRC/A.ts kept the typed case and never matched git's src/a.ts.
+test('an edit recorded through a path in another case still counts on a case-insensitive disk', (t) => {
+  const { stop, write } = gateSession();
+  const dir = makeRepo();
+  mkdirSync(join(dir, 'src'));
+  writeFileSync(join(dir, 'src', 'a.ts'), 'x');
+  if (!existsSync(join(dir, 'SRC', 'A.TS'))) {
+    t.skip('case-sensitive disk');
+    return;
+  }
+  write(join(dir, 'SRC', 'A.TS'), 'changed');
+  assert.equal(stop(dir), dirtyReason(dir, 1));
 });
