@@ -3,12 +3,16 @@
 // index, so it falls behind its own branch with phantom changes. A quality rule, not a safety rule (lib/bounce-once.mjs: alone, the
 // first send is denied with the advice and the identical retry runs). Exports: BRANCH_MOVE_ADVICE (the text, classed exactly in
 // lib/reason-classes.mjs) and branchMoveAdvice(command) -> [] | [BRANCH_MOVE_ADVICE].
-// Gives the advice for: `git update-ref <refs/heads/x | HEAD> <new>` (behind -C, --git-dir, -m, --create-reflog; HEAD only without
-// --no-deref, since HEAD then means the checked-out branch), `git update-ref --stdin` when the line's text holds an `update` or `create`
-// of refs/heads/ (a pipe or heredoc; input from a file is not seen), `git branch -f|--force <x> [<sha>]`, and `git fetch|push . a:b`
-// whose destination is a branch. Silent on purpose: `update-ref -d` and stdin `delete`/`verify` (cleanup; this pure check cannot tell
-// whether the ref is checked out, and deleting it moves no files), refs outside refs/heads/ (refs/backup, refs/tags, refs/stash,
-// refs/remotes), `update-ref --no-deref HEAD` (detaches, moves no branch), branch -f next to delete, move, copy or list.
+// Gives the advice for: `git update-ref <refs/heads/x | HEAD | a ref in a variable> <new>` (behind -C, --git-dir, -m,
+// --create-reflog; HEAD only without --no-deref, since HEAD then means the checked-out branch; `"$REF"`, `${REF}` or a printf slot may
+// be a branch), `git update-ref --stdin` when the line's text holds an `update`, `create` or `symref-update` of any ref but a literal
+// one outside refs/heads/ (HEAD, `%s`, `$REF` and a quoted ref count; a pipe or heredoc; input from a file is not seen),
+// `git branch -f|--force <x> [<sha>]`, `git fetch|push . a:b` and `git fetch -u|--update-head-ok <any repository> a:b` whose
+// destination is a branch. git itself refuses branch -f and a plain fetch/push to `.` onto a branch checked out in any worktree; the
+// advice stays for them because the move skips the folder's files all the same. Silent on purpose: `update-ref -d` and stdin
+// `delete`/`verify` (cleanup; this pure check cannot tell whether the ref is checked out, and deleting it moves no files), literal refs
+// outside refs/heads/ (refs/backup, refs/tags, refs/stash, refs/remotes), `update-ref --no-deref HEAD` (detaches, moves no branch),
+// branch -f next to delete, move, copy or list, fetch without -u to a remote.
 // Commands inside `$(...)`, backticks or a heredoc body are not looked into (as lib/merge-commit.mjs). Pure, no I/O.
 import { asGitSubcommand, commandOf } from './command-of.mjs';
 import { parseGitArgs } from './git-options.mjs';
@@ -22,8 +26,11 @@ export const BRANCH_MOVE_ADVICE = 'Land with git -C <folder where the branch is 
 const BRANCHES = 'refs/heads/';
 const MAY_MOVE = /update-ref|branch|fetch|push/; // cheap first look, after quotes, backslashes and blanks are dropped
 const SPELLING_BREAKS = /["'\\\s]/g;
-// a --stdin instruction that sets a branch: `update refs/heads/x <new>` or `create refs/heads/x <new>` (-z keeps the space after the verb)
-const STDIN_BRANCH_SET = /(?:update|create)[ \t]+refs\/heads\//;
+// a --stdin instruction that sets a ref, with the ref it names: `update|create|symref-update <ref> ...` (-z keeps the space after
+// the verb; the ref ends at a blank, a quote or the backslash of a printf escape)
+const STDIN_SET = /\b(?:update|create|symref-update)[ \t]+([^\s'"\\]*)/g;
+const NOT_LITERAL = /[$`%{]/; // a variable, a substitution or a printf slot: the ref may well be a branch
+const UPDATE_HEAD_OK = new Set(['-u', '--update-head-ok']); // fetch then writes even the checked-out branch
 const UPDATE_REF_VALUE_OPTIONS = new Set(['-m']); // the message is the next word
 const BRANCH_FORCE = new Set(['-f', '--force']);
 // branch modes where -f forces something other than moving an existing branch to a commit
@@ -47,12 +54,20 @@ function splitWords(rest, valueOptions = new Set()) {
   return { options, positional };
 }
 
+/** True for a ref that is, or may be, a branch: refs/heads/..., HEAD, or a ref that is not literal text. */
+const mayBeBranch = (ref) => ref.startsWith(BRANCHES) || ref === 'HEAD' || NOT_LITERAL.test(ref);
+
+/** True when --stdin text sets a ref other than a literal one outside refs/heads/ (an empty or odd ref counts as a branch). */
+function stdinSetsBranch(rawText) {
+  return [...rawText.matchAll(STDIN_SET)].some(([, ref]) => mayBeBranch(ref) || !ref.startsWith('refs/'));
+}
+
 function updateRefMoves(rest, rawText) {
   const { options, positional } = splitWords(rest, UPDATE_REF_VALUE_OPTIONS);
   if (options.includes('-d')) return false;
-  if (options.includes('--stdin')) return STDIN_BRANCH_SET.test(rawText);
+  if (options.includes('--stdin')) return stdinSetsBranch(rawText);
   const [ref = ''] = positional;
-  return ref.startsWith(BRANCHES) || (ref === 'HEAD' && !options.includes('--no-deref'));
+  return ref === 'HEAD' ? !options.includes('--no-deref') : mayBeBranch(ref);
 }
 
 function branchForceMoves(rest) {
@@ -68,9 +83,11 @@ function setsBranch(refspec) {
   return destination.startsWith(BRANCHES) || (destination !== '' && !destination.startsWith('refs/'));
 }
 
-function localTransferMoves(rest) {
-  const { positional } = splitWords(rest);
-  const repository = positional.findIndex((word) => THIS_REPOSITORY.has(word));
+/** push/fetch to `.`, or fetch -u|--update-head-ok from any repository, whose refspec sets a branch. */
+function transferMoves(sub, rest) {
+  const { options, positional } = splitWords(rest);
+  const anyRepository = sub === 'fetch' && options.some((option) => UPDATE_HEAD_OK.has(option));
+  const repository = anyRepository ? 0 : positional.findIndex((word) => THIS_REPOSITORY.has(word));
   return repository !== -1 && positional.slice(repository + 1).some(setsBranch);
 }
 
@@ -78,7 +95,7 @@ function localTransferMoves(rest) {
 function movesBranch({ sub, rest }, rawText) {
   if (sub === 'update-ref') return updateRefMoves(rest, rawText);
   if (sub === 'branch') return branchForceMoves(rest);
-  if (sub === 'fetch' || sub === 'push') return localTransferMoves(rest);
+  if (sub === 'fetch' || sub === 'push') return transferMoves(sub, rest);
   return false;
 }
 

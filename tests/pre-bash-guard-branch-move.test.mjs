@@ -32,6 +32,12 @@ const MOVES = [
   'git branch -f -- main abc', 'git branch main abc -f',
   'git fetch . lane:main', 'git fetch . +lane:main', 'git fetch -q . lane:refs/heads/main', 'git -C ../repo fetch . lane:main',
   'git fetch ./ lane:main',
+  // --stdin text whose ref is not a literal outside refs/heads/, a ref held in a variable, fetch -u from any repository
+  "printf 'update %s %s\\n' refs/heads/main \"$SHA\" | git update-ref --stdin", 'echo "update $REF $SHA" | git update-ref --stdin',
+  'echo "update HEAD $SHA" | git -C ../base update-ref --stdin', "printf 'symref-update HEAD refs/heads/x\\n' | git update-ref --stdin",
+  "printf 'update refs/$NS/main abc\\n' | git update-ref --stdin", "printf 'update \"refs/heads/main\" abc\\n' | git update-ref --stdin", // C-quoted
+  'git update-ref "$REF" "$SHA"', 'REF=refs/heads/main; git update-ref "$REF" x', 'git update-ref ${REF} x', 'git update-ref --no-deref "$REF" x',
+  'git fetch -u ../base lane:main', 'git fetch --update-head-ok origin main:main', 'git -C ../b fetch -u /path/repo +lane:refs/heads/main',
 ];
 const ALLOWED = [
   'git update-ref -d refs/heads/lane', 'git update-ref -d refs/heads/lane abc', 'git update-ref -m gone -d refs/heads/lane',
@@ -45,6 +51,8 @@ const ALLOWED = [
   'git rev-parse refs/heads/main', 'git show-ref', 'git for-each-ref refs/heads', 'git log --grep=update-ref',
   'echo git update-ref refs/heads/main x', 'echo "git branch -f main x"', "cat <<'EOF'\ngit update-ref refs/heads/main x\nEOF",
   'git switch main && git merge --ff-only lane', 'git -C ../repo merge --ff-only lane', 'git commit -m "no update-ref refs/heads/main"',
+  'git update-ref -d "$REF"', "printf 'update refs/tags/v1 abc\\ncreate refs/backup/y def\\n' | git update-ref --stdin",
+  'git fetch origin main:main', 'git fetch -u origin main', 'git fetch -u origin main:refs/remotes/origin/main',
 ];
 
 test('C37: moving a branch ref by plumbing gets the landing advice (update-ref, --stdin update/create, branch -f, fetch .)', () => {
@@ -61,6 +69,7 @@ test('C37: git push . lane:main still asks like any push, the landing advice car
   assert.deepEqual(push.advice, [BRANCH_MOVE_ADVICE]);
   for (const command of ['git push . +lane:refs/heads/main', 'git push -q ./ HEAD:main']) assert.deepEqual(decide(command, ctx).advice, [BRANCH_MOVE_ADVICE], command);
   assert.equal(decide('git push . lane:refs/backup/lane', ctx).advice, undefined);
+  assert.equal(decide('git push -u origin lane:main', ctx).advice, undefined, 'push -u is --set-upstream, not fetch -u');
 });
 
 test('C37 through the hook: git update-ref refs/heads/main is denied once with the advice, the identical retry runs', () => {
