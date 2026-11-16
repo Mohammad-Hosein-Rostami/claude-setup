@@ -3,7 +3,7 @@
 // cache and calibration log (keyed by a STATUS.md hash; the log is written with sweep off, so it never expires), each in its
 // own folder under ~/.claude/state.
 // Exports: isSessionId(session), readSessionFile(dir, session, maxBytes) -> text | null | undefined,
-// writeSessionFile(dir, session, text, options?) -> boolean, withSessionLock(dir, session, work) -> work's result | undefined.
+// writeSessionFile(dir, session, text, options?) -> boolean, withSessionLock(dir, session, work, { lockFile }?) -> work's result | undefined.
 // Why: a Bash command can put a link, a FIFO or a folder where these files live. The hook must never follow a link, hang on a FIFO, or
 // change or delete anything outside its own folder.
 // Invariants:
@@ -13,11 +13,13 @@
 // - A read opens with O_NOFOLLOW and O_NONBLOCK (POSIX) and checks the open handle again (fstat), so a path swapped after the lstat is
 //   caught and a FIFO never blocks. A write creates a new temp file (random name, O_EXCL, O_NOFOLLOW, 0600) and renames it over the
 //   session file only while the folder is still the one checked. A missing folder is created 0700; an existing one keeps its mode.
-// - withSessionLock lets hooks that read and write one session file at the same moment take turns: the lock is a new empty file
-//   <session>.lock (O_EXCL, O_NOFOLLOW, 0600) in the checked folder, removed after the turn. A lock older than STALE_LOCK_MS, or dated
-//   more than LOCK_CLOCK_SKEW_MS ahead, was not made by a running hook (a killed one, a clock change, a planted file) and is removed.
-//   Worst wait a caller sees: LOCK_WAIT_MS (1 s), after which it stores nothing; after a killed holder the next caller waits until that
-//   lock is STALE_LOCK_MS old (about 0.5 s). Only a send that may be denied (a bounce or advice) takes the lock: a plain allow never
+// - withSessionLock lets hooks that read and write one session file at the same moment take turns: the lock is a new file
+//   <session>.lock (or the caller's lockFile name; O_EXCL, O_NOFOLLOW, 0600) in the checked folder holding `<pid> <random token>`.
+//   After the turn it is removed only while it still holds that token. A lock is left behind, and removed, when it is dated more than
+//   LOCK_CLOCK_SKEW_MS ahead (a clock change, a planted file), older than HELD_LOCK_MAX_MS, or older than STALE_LOCK_MS with its pid
+//   gone or no `<pid> <token>` text (a killed holder, an older version's empty lock); it is read again right before the delete and
+//   must be unchanged. Worst wait a caller sees: LOCK_WAIT_MS (1 s), after which it stores nothing; after a killed holder the next
+//   caller waits until that lock is STALE_LOCK_MS old (about 0.5 s). Only a send that may be denied (a bounce or advice) takes the lock: a plain allow never
 //   touches the store. A link, FIFO or folder at the lock's name makes the store unusable. Cleanup counts an old lock as a store file too.
 // - Cleanup (on each write unless the caller passes { sweep: false }, which a store of long-lived history uses) removes only
 //   this user's regular files older than 7 days, directly in the checked folder, whose names match STORE_FILE (a
@@ -37,6 +39,13 @@ const LOCK_WAIT_MS = 1000; // the longest a hook waits for its turn; a turn (one
 const LOCK_PAUSE_MS = 2; // between two tries for the lock
 const STALE_LOCK_MS = 500; // no turn takes this long: such a lock was left by a hook killed during its turn
 const LOCK_CLOCK_SKEW_MS = 1000; // a lock's time may run this far ahead of the clock; further ahead, no running hook made it
+// A lock whose process still runs is taken only past this age: the slowest turn measured is 185 ms (status.mjs on a 4 MiB
+// STATUS.md), so a live pid on an older lock is a reused pid, not a holder.
+const HELD_LOCK_MAX_MS = 5000;
+const LOCK_TOKEN_BYTES = 16; // the random half of the lock's text `<pid> <32 hex>`: release compares it, so it never removes another's lock
+const LOCK_TEXT_MAX_BYTES = 64; // `<pid> <32 hex>` is at most 43 bytes
+const LOCK_OWNER = /^(\d{1,10}) [0-9a-f]{32}$/;
+const LOCK_FILE_NAME = /^\.?[A-Za-z0-9_-]{1,100}\.[a-z-]{1,20}$/; // `<session>.lock`, `.<name>.status-lock`: one name, no path
 const PAUSE = new Int32Array(new SharedArrayBuffer(4)); // Atomics.wait on it is a synchronous sleep
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -125,23 +134,27 @@ export function writeSessionFile(dir, session, text, { sweep = true } = {}) {
 }
 
 /**
- * Runs work while this hook alone holds dir/<session>.lock (see the header), so a read and a write of the session file inside work never
- * drop a change another hook makes at the same moment.
+ * Runs work while this caller alone holds the lock dir/<session>.lock (see the header), so a read and a write of the session file
+ * inside work never drop a change another hook makes at the same moment.
  * @template T
  * @param {string} dir the store folder (made 0700 when missing)
  * @param {string} session the session id (see isSessionId)
  * @param {() => T} work the read and the write; it runs at most once
- * @returns {T | undefined} what work returned; undefined when the id is bad, the store is unusable, the lock stayed taken for
- *   LOCK_WAIT_MS, or anything failed
+ * @param {{lockFile?: string}} [options] lockFile: the lock's file name in dir instead of `<session>.lock`, for a folder other tools
+ *   write lock files into (status.mjs uses `.<name>.status-lock`); one name with an extension, no path (LOCK_FILE_NAME)
+ * @returns {T | undefined} what work returned; undefined when the id or lock name is bad, the store is unusable, the lock stayed
+ *   taken for LOCK_WAIT_MS, or anything failed
  */
-export function withSessionLock(dir, session, work) {
+export function withSessionLock(dir, session, work, { lockFile = `${session}.lock` } = {}) {
   try {
-    const folder = isSessionId(session) ? privateFolder(dir) : undefined;
+    const usable = isSessionId(session) && LOCK_FILE_NAME.test(lockFile);
+    const folder = usable ? privateFolder(dir) : undefined;
     if (folder === undefined) return undefined;
-    const lock = join(dir, `${session}.lock`);
+    const lock = join(dir, lockFile);
+    const token = `${process.pid} ${randomBytes(LOCK_TOKEN_BYTES).toString('hex')}`;
     const deadline = Date.now() + LOCK_WAIT_MS;
     while (Date.now() < deadline) {
-      if (takeLock(lock)) return runAndRelease(work, dir, folder, lock);
+      if (takeLock(lock, token)) return runAndRelease(work, { dir, folder, lock, token });
       if (!clearStaleLock(dir, folder, lock)) return undefined;
       Atomics.wait(PAUSE, 0, 0, LOCK_PAUSE_MS);
     }
@@ -151,10 +164,10 @@ export function withSessionLock(dir, session, work) {
   }
 }
 
-/** @returns {boolean} true when this call created the lock; false when it exists already (any other error throws) */
-function takeLock(lock) {
+/** @returns {boolean} true when this call created the lock (holding token); false when it exists already (any other error throws) */
+function takeLock(lock, token) {
   try {
-    closeSync(openSync(lock, CREATE_FLAGS, FILE_MODE));
+    writeFileSync(lock, token, { flag: CREATE_FLAGS, mode: FILE_MODE }); // a write cut short leaves a lock without a token: stale at 0.5 s
     return true;
   } catch (error) {
     if (error.code === 'EEXIST') return false;
@@ -162,25 +175,78 @@ function takeLock(lock) {
   }
 }
 
+/** @returns {{stats: import('node:fs').Stats, text: string} | null} the lock read through one checked handle; null when it is gone */
+function readLock(lock) {
+  let fd;
+  try {
+    fd = openSync(lock, READ_FLAGS);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+  try {
+    const stats = fstatSync(fd);
+    if (!stats.isFile()) return { stats, text: '' }; // never read a FIFO or device that was swapped in
+    const buffer = Buffer.alloc(LOCK_TEXT_MAX_BYTES);
+    return { stats, text: buffer.toString('utf8', 0, readSync(fd, buffer, 0, buffer.length, 0)) };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** @returns {boolean} true when the lock still holds token; false when it is gone, changed or cannot be read (then it is not ours) */
+function holdsToken(lock, token) {
+  try {
+    return readLock(lock)?.text === token;
+  } catch {
+    return false; // a link or special file now at the lock's name: not our lock, so it is left alone
+  }
+}
+
+/** @returns {boolean} false only when the process is known to be gone (ESRCH); EPERM means it runs under another user */
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code !== 'ESRCH';
+  }
+}
+
+/** Whether a held lock was left behind: see the header for the three cases. */
+function isStale(held, nowMs) {
+  const age = nowMs - held.stats.mtimeMs;
+  if (age < -LOCK_CLOCK_SKEW_MS || age > HELD_LOCK_MAX_MS) return true;
+  if (age <= STALE_LOCK_MS) return false;
+  const owner = LOCK_OWNER.exec(held.text);
+  return owner === null || !isAlive(Number(owner[1]));
+}
+
 /**
- * Removes a lock older than STALE_LOCK_MS or dated more than LOCK_CLOCK_SKEW_MS ahead (see the header).
+ * Removes a lock that was left behind (see isStale). Right before the delete the lock is read again and must still be the same file
+ * with the same text, so a lock another caller took meanwhile is never removed.
  * @returns {boolean} false when something other than this user's regular file holds the lock's name
  */
 function clearStaleLock(dir, folder, lock) {
-  const held = lstatOrNull(lock);
-  if (held === null) return true; // released meanwhile: the next try takes it
-  if (!isPrivateFile(held)) return false;
-  const age = Date.now() - held.mtimeMs;
-  if ((age > STALE_LOCK_MS || age < -LOCK_CLOCK_SKEW_MS) && sameNode(lstatSync(dir), folder)) rmSync(lock, { force: true });
+  const seen = lstatOrNull(lock);
+  if (seen === null) return true; // released meanwhile: the next try takes it
+  if (!isPrivateFile(seen)) return false;
+  const held = readLock(lock);
+  if (held === null) return true;
+  if (!isPrivateFile(held.stats)) return false; // swapped after the lstat
+  if (!isStale(held, Date.now())) return true;
+  const again = readLock(lock);
+  const unchanged = again !== null && sameNode(again.stats, held.stats) && again.text === held.text;
+  if (unchanged && sameNode(lstatSync(dir), folder)) rmSync(lock, { force: true });
   return true;
 }
 
-/** Runs work, then removes the lock while dir is still the checked folder. */
-function runAndRelease(work, dir, folder, lock) {
+/** Runs work, then removes the lock while dir is still the checked folder and the lock still holds this caller's token. */
+function runAndRelease(work, { dir, folder, lock, token }) {
   try {
     return work();
   } finally {
-    if (sameNode(lstatSync(dir), folder)) rmSync(lock, { force: true });
+    if (holdsToken(lock, token) && sameNode(lstatSync(dir), folder)) rmSync(lock, { force: true });
   }
 }
 

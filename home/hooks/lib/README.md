@@ -36,7 +36,9 @@ Asking and remembering:
   with the fix and the same command again runs with no dialog; next to a reason that asks, the advice is only added to it.
 - `session-store.mjs`: the per-session files of `allowed-literals.mjs` and `bounce-once.mjs`. It checks the folder and file
   with lstat, never follows a link or waits on a FIFO, and cleans up only its own old files. `withSessionLock` makes hooks that
-  record at the same moment take turns, so none drops another's record.
+  record at the same moment take turns, so none drops another's record. The lock holds `<pid> <random token>` and is removed
+  only by the run that holds it; a lock is taken over only when its pid is gone (or it has no token) and it is over 0.5 s old,
+  or it is over 5 s old. A caller may name the lock file (`lockFile`, as `status.mjs` does with `.<name>.status-lock`).
 - `guard-log.mjs`: the decision log, one JSON line per decision.
 
 Other hooks:

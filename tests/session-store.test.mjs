@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { allowedLiteralsDir, isRemembered, remember } from '../home/hooks/lib/allowed-literals.mjs';
 import { adviceOnce, bouncedDir, bounceOnce } from '../home/hooks/lib/bounce-once.mjs';
 import { logDecision } from '../home/hooks/lib/guard-log.mjs';
-import { readSessionFile, writeSessionFile } from '../home/hooks/lib/session-store.mjs';
+import { readSessionFile, withSessionLock, writeSessionFile } from '../home/hooks/lib/session-store.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { hookEnv } from './hook-env.mjs';
 
@@ -258,4 +258,62 @@ test('a link at the guard log is not followed: its target keeps its text and mod
   symlinkSync(victim, log);
   logDecision({ hook: 'h', tool: 'Bash', decision: 'ask', outcome: 'no-gui', reason: 'r', command: 'ls' }, { CLAUDE_GUARD_LOG: log });
   assert.deepEqual([readFileSync(victim, 'utf8'), statSync(victim).mode & 0o777], ['keep', 0o644]);
+});
+
+// Audit of 768f9aa (M1, M3): a slow holder's lock was stolen after 0.5 s and its release then deleted the next holder's lock, so
+// three writers each "won"; and status.mjs's `<stem>.lock` deleted a package manager's lock file. The lock now holds `<pid> <token>`.
+const LOCK_TOKEN = /^(\d+) [0-9a-f]{32}$/;
+const OTHER_TOKEN = `${process.pid} ${'f'.repeat(32)}`;
+function agedLock(dir, text, ageMs) {
+  const lock = join(dir, 'sess-1.lock');
+  writeFileSync(lock, text);
+  const then = new Date(Date.now() - ageMs);
+  utimesSync(lock, then, then);
+  return lock;
+}
+const deadPid = () => spawnSync(process.execPath, ['-e', '']).pid; // the child has exited when spawnSync returns
+
+test('withSessionLock holds a lock naming this process with a random token, and removes it after the turn', () => {
+  const dir = tempDir('lock-');
+  const seen = withSessionLock(dir, 'sess-1', () => readFileSync(join(dir, 'sess-1.lock'), 'utf8'));
+  assert.equal(LOCK_TOKEN.exec(seen)?.[1], String(process.pid));
+  assert.deepEqual(readdirSync(dir), []);
+});
+
+test('a release removes only its own lock: a lock that now holds another token stays', () => {
+  const dir = tempDir('lock-');
+  const outcome = withSessionLock(dir, 'sess-1', () => {
+    writeFileSync(join(dir, 'sess-1.lock'), OTHER_TOKEN); // another caller took the lock over meanwhile
+    return 'ran';
+  });
+  assert.equal(outcome, 'ran');
+  assert.equal(readFileSync(join(dir, 'sess-1.lock'), 'utf8'), OTHER_TOKEN);
+});
+
+test('a live process\'s lock older than 0.5 s but younger than the held limit is not taken: the caller gives up, the lock stays', () => {
+  const dir = tempDir('lock-');
+  const lock = agedLock(dir, OTHER_TOKEN, 900);
+  let ran = false;
+  assert.equal(withSessionLock(dir, 'sess-1', () => { ran = true; }), undefined);
+  assert.equal(ran, false);
+  assert.equal(readFileSync(lock, 'utf8'), OTHER_TOKEN);
+});
+
+test('a stale lock is taken when its process is gone, its owner is unknown (empty file), or it is far older than any turn', () => {
+  for (const [text, ageMs] of [[`${deadPid()} ${'a'.repeat(32)}`, 600], ['', 600], [OTHER_TOKEN, 10_000]]) {
+    const dir = tempDir('lock-');
+    agedLock(dir, text, ageMs);
+    assert.equal(withSessionLock(dir, 'sess-1', () => 'ran'), 'ran', JSON.stringify(text));
+    assert.deepEqual(readdirSync(dir), [], 'our lock is gone after the turn');
+  }
+});
+
+test('lockFile names the lock instead of <session>.lock; a name with a path or no extension is refused before any work', () => {
+  const dir = tempDir('lock-');
+  const names = withSessionLock(dir, 'STATUS', () => readdirSync(dir), { lockFile: '.STATUS.status-lock' });
+  assert.deepEqual(names, ['.STATUS.status-lock']);
+  for (const lockFile of ['../x.lock', 'a/b.lock', 'plain', '..', '.lock']) {
+    assert.equal(withSessionLock(dir, 'STATUS', () => 'ran', { lockFile }), undefined, lockFile);
+  }
+  assert.deepEqual(readdirSync(dir), []);
 });
