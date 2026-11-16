@@ -41,6 +41,8 @@ Asking and remembering:
 
 Other hooks:
 - `diagnostics.mjs`, `edit-log.mjs`: used by `post-edit.mjs` and `typecheck-gate.mjs` (check output parsing, list of edited files).
+- `read-only-command.mjs`: whether a Bash command is git or reading only (no writing option, no output to a file), for
+  `agent-budget.mjs`'s escalation.
 - `writer-agents.mjs`: which agent types write files (agent files' `tools:` line), and the record of a session's running writers that
   `agent-model-guard.mjs` writes on launch and `agent-budget.mjs` ends on SubagentStop; `commit-gate.mjs` uses its agent-file check.
 - `gate-routes.mjs`: the prompt patterns and lines of the skill router's gate routes (bug, done, restructure, git history, repeated report); used by `skill-router.mjs`.

@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CALL_CAP, EARLY_NOTICE_AT, READ_WARN_CHARS, readChars } from '../home/hooks/agent-budget.mjs';
 import { tempRoot } from '../home/hooks/lib/edit-log.mjs';
+import { isReadOnlyCommand } from '../home/hooks/lib/read-only-command.mjs';
 import { measure, overCap, parseCap } from '../home/hooks/lib/reply-cap.mjs';
 
 const BUDGET = fileURLToPath(new URL('../home/hooks/agent-budget.mjs', import.meta.url));
@@ -200,8 +201,90 @@ test('the lead gets one delegate nudge after 15 Bash calls, silent before and af
   assert.ok(outputs.slice(0, 14).every((o) => o === ''));
   const out = JSON.parse(outputs[14]).hookSpecificOutput;
   assert.equal(out.hookEventName, 'PostToolUse');
-  assert.equal(out.additionalContext, '15 Bash calls in a row: delegate the rest to runner/implementer');
-  assert.ok(outputs.slice(15).every((o) => o === ''), 'one line only');
+  assert.equal(out.additionalContext, '15 Bash calls in a row (context size unknown): delegate the rest to runner/implementer (cost = calls x context).');
+  assert.ok(outputs.slice(15).every((o) => o === ''), 'one line only until the 30th');
+});
+
+const CONTEXT_TOKENS = 212_345;
+const SMALL_CONTEXT_TOKENS = 149_000;
+/** A main-session transcript whose last assistant message was sent with `tokens` of context. */
+async function transcriptAt(dir, tokens) {
+  const path = join(dir, `t-${uid('c')}.jsonl`);
+  const usage = { input_tokens: 1000, cache_read_input_tokens: tokens - 1500, cache_creation_input_tokens: 500 };
+  await writeFile(path, `${userLine('go')}\n${JSON.stringify({ type: 'assistant', isSidechain: false, message: { role: 'assistant', usage } })}\n`);
+  return path;
+}
+const leadBash = (sid, transcript) => ({ ...bash(sid), transcript_path: transcript });
+const preBash = (sid, transcript, command, extra = {}) => ({
+  hook_event_name: 'PreToolUse', session_id: sid, tool_name: 'Bash', tool_input: { command }, cwd: '/work', transcript_path: transcript, ...extra,
+});
+/** The PreToolUse decision for one lead Bash command: the deny reason, or null when the hook is silent. */
+function preDecision(dir, input) {
+  const r = spawnSync(process.execPath, [BUDGET], {
+    input: JSON.stringify(input), encoding: 'utf8', env: { ...process.env, HOME: dir, USERPROFILE: dir, CLAUDE_MODE: '', CLAUDE_GUARD_LOG: join(dir, 'guard.jsonl') },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  if (r.stdout === '') return null;
+  const out = JSON.parse(r.stdout).hookSpecificOutput;
+  assert.equal(out.permissionDecision, 'deny');
+  return out.permissionDecisionReason;
+}
+
+test('the nudge states the context size and comes again every 15 Bash calls of the same run', async () => {
+  const dir = await home();
+  const sid = uid('s');
+  const transcript = await transcriptAt(dir, CONTEXT_TOKENS);
+  const outputs = [];
+  for (let i = 1; i <= 30; i += 1) outputs.push(run(BUDGET, dir, leadBash(sid, transcript)).stdout);
+  assert.equal(JSON.parse(outputs[14]).hookSpecificOutput.additionalContext,
+    '15 Bash calls in a row at ~212k context: delegate the rest to runner/implementer (cost = calls x context).');
+  assert.match(JSON.parse(outputs[29]).hookSpecificOutput.additionalContext, /^30 Bash calls in a row at ~212k context: .* 1 nudge ignored so far; .*denied once/);
+  assert.equal(outputs.filter((o) => o !== '').length, 2);
+});
+
+test('after 2 ignored nudges at 150k+ context the next lead Bash call that is not git or read-only is denied once, then the count starts over', async () => {
+  const dir = await home();
+  const sid = uid('s');
+  const transcript = await transcriptAt(dir, CONTEXT_TOKENS);
+  for (let i = 0; i < 31; i += 1) run(BUDGET, dir, leadBash(sid, transcript)); // nudges at 15 and 30, both followed by more Bash
+  for (const command of ['git status && git log --oneline -3', 'ls -la | head -5', 'rg TODO src; sed -n 1,20p a.txt', 'cat a.txt | wc -l']) {
+    assert.equal(preDecision(dir, preBash(sid, transcript, command)), null, command);
+  }
+  assert.equal(preDecision(dir, preBash(sid, transcript, 'npm test', { agent_id: uid('a') })), null, 'a subagent is never blocked');
+  const reason = preDecision(dir, preBash(sid, transcript, 'npm test'));
+  assert.match(reason, /delegate to runner\/implementer \(C: cost = calls × context\)/);
+  assert.match(reason, /~212k context/);
+  assert.equal(preDecision(dir, preBash(sid, transcript, 'npm test')), null, 'the identical retry runs');
+  assert.equal(preDecision(dir, preBash(sid, transcript, 'npm run build')), null, 'one deny per escalation: no loop');
+  assert.equal(preDecision(dir, preBash(sid, transcript, 'sed -i s/a/b/ a.txt')), null);
+});
+
+test('isReadOnlyCommand: git and reading commands only, with no writing option and no output sent to a file', () => {
+  for (const command of ['git commit -m x && git log', 'ls 2>/dev/null', 'git log 2>&1 | head -3', '/bin/cat a | sort | uniq', 'sed -n 1,5p a',
+    'find . -name "*.mjs"', 'cd /tmp && pwd', 'FOO=1 rg x']) assert.equal(isReadOnlyCommand(command), true, command);
+  for (const command of ['npm test', 'echo hi > f', 'cat a >>b', 'ls &>out', 'sed -i "" s/a/b/ f', 'sed -ni p f', 'sed --in-place s/a/b/ f',
+    'find . -delete', 'find . -exec rm {} ;', 'echo $(rm -rf x)', 'git status; node x.mjs', '', 'cat <<EOF > f\nx\nEOF']) {
+    assert.equal(isReadOnlyCommand(command), false, command);
+  }
+});
+
+test('no deny below 150k context, after one ignored nudge, or when the nudges were followed by a delegation', async () => {
+  const dir = await home();
+  const small = await transcriptAt(dir, SMALL_CONTEXT_TOKENS);
+  const big = await transcriptAt(dir, CONTEXT_TOKENS);
+  const lowSid = uid('s');
+  for (let i = 0; i < 31; i += 1) run(BUDGET, dir, leadBash(lowSid, small));
+  assert.equal(preDecision(dir, preBash(lowSid, small, 'npm test')), null, 'below 150k');
+  const oneSid = uid('s');
+  for (let i = 0; i < 16; i += 1) run(BUDGET, dir, leadBash(oneSid, big));
+  assert.equal(preDecision(dir, preBash(oneSid, big, 'npm test')), null, 'one ignored nudge');
+  const heedSid = uid('s');
+  for (let round = 0; round < 3; round += 1) {
+    for (let i = 0; i < 15; i += 1) run(BUDGET, dir, leadBash(heedSid, big));
+    run(BUDGET, dir, { hook_event_name: 'PostToolUse', session_id: heedSid, tool_name: 'Agent' });
+  }
+  assert.equal(preDecision(dir, preBash(heedSid, big, 'npm test')), null, 'each nudge was followed by an Agent call');
+  assert.equal(preDecision(dir, preBash(heedSid, undefined, 'npm test')), null, 'no transcript: context unknown, no deny');
 });
 
 test('an Agent or Task call resets the lead Bash count; other tools neither count nor reset', async () => {
