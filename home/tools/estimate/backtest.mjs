@@ -22,7 +22,7 @@ import { isSessionId } from '../../hooks/lib/session-store.mjs';
 import { activeRuns } from './lib/activity.mjs';
 import { nextCommitment } from './lib/commitment.mjs';
 import { forecastWork, nearestRank, referencePool, refusalOf } from './lib/forecast.mjs';
-import { UsageError } from './lib/from-files.mjs';
+import { UsageError, forecastSeedText, referenceRows, slowRowOf, storedJob } from './lib/from-files.mjs';
 import { parseInstant, parseWorkItems } from './lib/items.mjs';
 import { stateDir, tableId } from './lib/table-store.mjs';
 import { elapsedShares, handedOverJobs, rowCosts, workedMinutes, workingIntervals } from './lib/worked.mjs';
@@ -33,9 +33,7 @@ const MS_PER_MIN = 60_000;
 const MIN_PER_HOUR = 60;
 const FIRST_INSTANT_MIN = 10; // the first forecast of a job is 10 minutes after its start
 const STEP_MIN = 20; // then one every 20 minutes until the hand-over
-const SLOW_ROW_SHARE = 0.85; // a running row past its class p85 is a move's cause
 const NO_SEED = { rows: [], jobs: [] };
-const DROPPED = /^dropped:/i;
 // Design 8.3: measured on the four frozen tables (3 seeds) and the threshold each number must meet. One threshold differs from the
 // design: instants with a time is >= 58, not >= 60. The design's checker had no 5-row minimum per size (MIN_CLASS_ROWS) and gave a
 // time at 63 of 64; this code keeps the minimum, so with auth left out its open L rows (4 finished L rows elsewhere) get the honest
@@ -60,7 +58,6 @@ const hours = (minutes) => (minutes / MIN_PER_HOUR).toFixed(2);
 const iso = (ms) => new Date(ms).toISOString();
 const median = (values) => (values.length === 0 ? Number.NaN : nearestRank([...values].sort((a, b) => a - b), 0.5)); // NaN fails every threshold
 const isWorkRow = (item) => item.kind !== 'deliver';
-const storedJob = (job) => ({ at: iso(job.at), minutes: job.minutes, growthNum: job.growthNum, growthDen: job.growthDen });
 
 function readOptions(argv) {
   let parsed;
@@ -82,10 +79,6 @@ function readOptions(argv) {
   return { jobs, nowMs, seedFile: values['write-seed'], projectsDir: values.projects ?? join(homedir(), '.claude', 'projects'), stateDir: values['state-dir'] ?? stateDir() };
 }
 
-/** Done work rows with a cost, as the pool stores them; a row closed as dropped is no observation. */
-const referenceRows = (items, costs) => items
-  .filter((item) => isWorkRow(item) && item.done !== null && (costs.get(item.id) ?? 0) > 0 && !DROPPED.test(item.evidence ?? ''))
-  .map((item) => ({ size: item.size, kind: item.kind, done: iso(item.done), cost: costs.get(item.id) }));
 
 function loadTable({ statusPath, sessionId }, options) {
   let text;
@@ -109,10 +102,7 @@ const tableAt = (items, tMs) => items
   .map((item) => ({ ...item, started: item.started !== null && item.started <= tMs ? item.started : null, done: item.done !== null && item.done <= tMs ? item.done : null }));
 
 const othersOf = (table, tables) => tables.filter((other) => other !== table).map((other) => ({ id: other.id, rows: other.rows, jobs: other.jobs.map(storedJob) }));
-const seedText = (id, openRows) => `${id}|${openRows.map((row) => row.id).sort().join(',')}`;
 
-/** A running row whose elapsed share is above its class p85, for a move's cause. */
-const slowRowOf = (openRows, pool) => openRows.find((row) => row.elapsed > 0 && row.elapsed > nearestRank(pool.costs[row.size], SLOW_ROW_SHARE))?.id ?? null;
 
 function forecastAt(table, others, job, tMs) {
   const tMin = tMs / MS_PER_MIN;
@@ -126,7 +116,7 @@ function forecastAt(table, others, job, tMs) {
   const pool = referencePool([...others, own], NO_SEED);
   const { elapsed } = elapsedShares(view, intervalsAt, tMin);
   const openRows = listed.map((item) => ({ id: item.id, size: item.size, elapsed: elapsed.get(item.id) ?? 0 }));
-  const work = forecastWork(openRows, pool, seedText(table.id, openRows));
+  const work = forecastWork(openRows, pool, forecastSeedText(table.id, openRows));
   const actual = workedMinutes(table.intervals, tMin, job.at / MS_PER_MIN);
   return { tMin, intervalsAt, openRows, pool, work, refusal: refusalOf(openRows, pool, work), actual };
 }
@@ -218,7 +208,7 @@ function openTableLines(tables, nowMs) {
     const pool = referencePool([...othersOf(table, tables), own], NO_SEED);
     const { elapsed } = elapsedShares(table.items, table.intervals, Math.floor(nowMs / MS_PER_MIN));
     const openRows = table.items.filter((item) => isWorkRow(item) && item.done === null).map((item) => ({ id: item.id, size: item.size, elapsed: elapsed.get(item.id) }));
-    const work = forecastWork(openRows, pool, seedText(table.id, openRows));
+    const work = forecastWork(openRows, pool, forecastSeedText(table.id, openRows));
     const state = refusalOf(openRows, pool, work)?.reason ?? 'finish';
     const left = work === null ? '' : `; work left p50 ${hours(work.p50)} h, p85 ${hours(work.p85)} h, p95 ${hours(work.p95)} h`;
     return `  ${table.name}: ${state}; ${openRows.length} open rows; growth ${pool.growth.toFixed(3)}${left}`;

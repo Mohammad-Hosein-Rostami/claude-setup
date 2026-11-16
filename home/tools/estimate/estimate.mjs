@@ -1,72 +1,54 @@
 #!/usr/bin/env node
-// CLI of the finish estimate: reads the `## Work items` table of a STATUS.md plus the project's lead transcripts and prints
-// when the whole job is finished as a local clock range (line 1, `Finish:`), then what it includes, excludes and assumes
-// and how earlier estimates did (paste the block as-is; never quote a number of your own). Clock times use the system time
-// zone (`TZ` is honoured).
-// Usage: estimate.mjs <STATUS.md> [--transcripts <dir>] [--now <iso>] [--log-dir <dir>]
-//        --transcripts  folder of the lead transcripts (*.jsonl, not subagents); default: ~/.claude/projects/<slug of cwd>,
-//                       walking up to the nearest parent whose folder exists (never the home folder); a missing or
-//                       unreadable path given here is exit 2
-//        --now          the "computed" stamp and the latest allowed started/done (default: the real clock); a --now run
-//                       neither reads nor writes the calibration log unless --log-dir is given (tests, replays)
-//        --log-dir      folder of the calibration log (default ~/.claude/state/estimate-log)
-// Exit codes: 0 finish printed; 2 usage or parse error (the file, a cell or a flag is wrong; the message names the row
-// line); 3 refused (`No finish time:` and `What to do:`: fewer than 5 done items with started, done and evidence, a done row
-// without started, a time later than --now, a done item with no working time, or a round or closing phase already longer than
-// every one measured with no open row left by size; with open rows it prints `Finish: not before <clock>`). Nothing that looks like an estimate is printed on 2 or 3; transcript content is never printed.
-// Invariants: logic lives in lib/ (pure); this file only parses arguments, reads files, prints and writes its log. The log
-// (lib/estimate-log.mjs) gets the earlier entries scored and one new entry per printed range unless it repeats the last one
-// (calibration.mjs isRepeat); a refusal writes nothing.
-import { resolve } from 'node:path';
-import { applyFactors, calibrationFactors, isRepeat, logEntry, phaseOf, phaseOfState, scoreEntries, trackRecord } from './lib/calibration.mjs';
-import { logFile, readLog, writeLog } from './lib/estimate-log.mjs';
+// CLI of the finish estimate: reads the `## Work items` table of a STATUS.md and the working time in the session transcripts, and
+// prints the one committed finish time of the job (line 1, `Finish:`), what it covers and excludes, whether it held or moved and why,
+// the track record and any Check lines (paste the block as-is; never quote a number of your own). Clock times use the system time
+// zone (`TZ` is honoured). The estimator design and the exact lines are in README.md.
+// Usage: estimate.mjs <STATUS.md> [--session <id>] [--now <iso>] [--state-dir <dir>] [--projects <dir>]
+//        --session    the session whose transcripts count, besides the sessions already linked to the table (default
+//                     $CLAUDE_CODE_SESSION_ID)
+//        --now        the instant to estimate at and the latest allowed started/done (default: the clock); a --now run without
+//                     --state-dir neither reads nor writes the store (tests, replays)
+//        --state-dir  the estimate store (default ~/.claude/state/estimate)
+//        --projects   Claude Code's projects folder (default ~/.claude/projects)
+// Exit codes: 0 finish, all done or handed over printed; 2 usage or table problem (the message names the line; nothing that looks
+// like an estimate is printed); 3 refused (`No finish time:` and `What to do:` on stderr, never a clock time).
+// Invariants: the logic lives in lib/ (from-files.mjs estimateFile, shared with the status line); this file parses arguments and
+// prints. A busy store records nothing and says so on stderr.
+import { parseArgs } from 'node:util';
+import { isSessionId } from '../../hooks/lib/session-store.mjs';
 import { UsageError, estimateFile } from './lib/from-files.mjs';
-import { formatEstimate, formatRefusal, printedBounds } from './lib/report.mjs';
+import { formatEstimate, formatRefusal } from './lib/report.mjs';
+import { stateDir } from './lib/table-store.mjs';
 
 const EXIT_USAGE = 2;
 const EXIT_REFUSED = 3;
-const USAGE = 'usage: estimate.mjs <STATUS.md> [--transcripts <dir>] [--now <iso>] [--log-dir <dir>]';
-const VALUE_FLAGS = ['--transcripts', '--now', '--log-dir'];
+const USAGE = 'usage: estimate.mjs <STATUS.md> [--session <id>] [--now <iso>] [--state-dir <dir>] [--projects <dir>]';
+const OPTIONS = { session: { type: 'string' }, now: { type: 'string' }, 'state-dir': { type: 'string' }, projects: { type: 'string' } };
 
-function parseArgs(argv) {
-  const flags = {};
-  const positional = [];
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (!arg.startsWith('--')) positional.push(arg);
-    else if (VALUE_FLAGS.includes(arg) && i + 1 < argv.length) flags[arg] = argv[(i += 1)];
-    else throw new UsageError(`unknown or incomplete flag ${arg}`);
+function readOptions(argv) {
+  let parsed;
+  try {
+    parsed = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true });
+  } catch (error) {
+    throw new UsageError(`${error.message}\n${USAGE}`);
   }
-  if (positional.length !== 1) throw new UsageError(USAGE);
-  return { path: positional[0], transcripts: flags['--transcripts'], now: flags['--now'], logDir: flags['--log-dir'] };
-}
-
-/** Prints the block scaled by the log's factors, then writes the log back: earlier entries scored, this range appended unless it repeats the last one. */
-function printLogged(result, inputs, items, { statusPath, logDir }) {
-  const entries = scoreEntries(readLog(statusPath, logDir), items, result.computedAt);
-  const phase = phaseOf(result); // null when delivered: nothing to scale or log
-  const factors = phase === null ? null : calibrationFactors(entries, phase);
-  const shown = phase === null ? result : applyFactors(result, factors);
-  console.log(formatEstimate(shown, phase === null ? inputs : { ...inputs, calibration: { record: trackRecord(entries, phase), factors } }));
-  const entry = phase === null ? null : logEntry(statusPath, shown, items, printedBounds(shown));
-  const kept = entry === null || isRepeat(entries, entry) ? entries : [...entries, entry];
-  if (!writeLog(statusPath, kept, logDir)) process.stderr.write(`estimate: could not write the calibration log ${logFile(statusPath, logDir)}\n`);
+  const { values, positionals } = parsed;
+  if (positionals.length !== 1) throw new UsageError(USAGE);
+  if (values.session !== undefined && !isSessionId(values.session)) throw new UsageError(`--session "${values.session}" is not a session id`);
+  const sessionId = values.session ?? (isSessionId(process.env.CLAUDE_CODE_SESSION_ID) ? process.env.CLAUDE_CODE_SESSION_ID : undefined);
+  const store = values['state-dir'] ?? (values.now === undefined ? stateDir() : null);
+  return { path: positionals[0], options: { now: values.now, stateDir: store, projectsDir: values.projects, sessionId, record: store !== null } };
 }
 
 function main(argv) {
-  const { path, transcripts, now, logDir } = parseArgs(argv);
-  const keepsLog = now === undefined || logDir !== undefined;
-  const highFactorOf = (rows, nowMs, state) => {
-    const phase = phaseOfState(state);
-    return phase === null || !keepsLog ? 1 : calibrationFactors(scoreEntries(readLog(resolve(path), logDir), rows, nowMs), phase).high;
-  };
-  const { result, inputs, items } = estimateFile(path, { transcripts, now, cwd: process.cwd(), highFactorOf });
-  if (result.refused) {
+  const { path, options } = readOptions(argv);
+  const { result, inputs } = estimateFile(path, Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)));
+  if (inputs.busy) process.stderr.write('estimate: the store was busy; this run recorded nothing\n');
+  if (result.state === 'refused') {
     process.stderr.write(`${formatRefusal(result)}\n`);
     return EXIT_REFUSED;
   }
-  if (!keepsLog) console.log(formatEstimate(result, inputs));
-  else printLogged(result, inputs, items, { statusPath: resolve(path), logDir });
+  process.stdout.write(`${formatEstimate(result)}\n`);
   return 0;
 }
 

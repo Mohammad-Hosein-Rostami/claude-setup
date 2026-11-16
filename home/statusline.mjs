@@ -1,5 +1,5 @@
 // Status line: model tier, effort, CONTEXT SIZE in tokens (what every tool call re-reads), cost,
-// the finish-time estimate of the project's STATUS.md (cache only), and account usage windows (5h / 7d) with reset times
+// the finish time of the session's STATUS.md (cache only), and account usage windows (5h / 7d) with reset times
 // from `rate_limits`.
 import { estimateSegment } from './tools/estimate/lib/segment-cache.mjs';
 
@@ -29,8 +29,8 @@ process.stdin.on('end', () => {
   const cost = d.cost?.total_cost_usd;
   const parts = [`${tier} ${name}${effort ? ` (${effort})` : ''}`, `\x1b[${color}mctx ${k}k\x1b[0m`];
   if (typeof cost === 'number') parts.push(`$${cost.toFixed(2)}`);
-  // Finish-time estimate of the project's STATUS.md: read from a cache only, refreshed in the background (see segment-cache.mjs).
-  const estimate = estimateSegment(d.workspace?.project_dir ?? d.cwd);
+  // Finish time of the session's STATUS.md (the one it last touched, else the project's): read from a cache only, refreshed in the background (see segment-cache.mjs).
+  const estimate = estimateSegment({ projectDir: d.workspace?.project_dir ?? d.cwd, sessionId: d.session_id });
   if (estimate) parts.push(`\x1b[36m${estimate}\x1b[0m`);
   const five = d.rate_limits?.five_hour;
   // Claude Code omits five_hour when the server sends no data for it (claude-code#92081);

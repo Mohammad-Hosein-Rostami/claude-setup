@@ -1,281 +1,127 @@
-// Renders a finish result as the text block the lead pastes as-is (see README.md for the exact lines), and the short clock
-// text of the status line segment.
-// Exports: formatEstimate(result, inputs) -> string; formatRefusal(refusal, timeZone?) -> string; finishClock(result, timeZone?) -> string;
-// printedBounds(result, timeZone?) -> {low, high} (the printed ends, epoch ms, for the calibration log; high is null for a notBefore result).
-// Invariants: pure apart from reading the system time zone (`Intl`, so `TZ` is honoured) when none is given. Line 1 is
-// `Finish: <weekday> <day> <month> <low>-<high> (local <offset>, now <clock>)` with the low end floored and the high end ceiled
-// to CLOCK_STEP_MS on the local clock, or, for a result with `notBefore` (a round or closing phase past its range: no upper
-// end), `Finish: not before <weekday> <day> <month> <low> (local <offset>, now <clock>)`; a refusal text never contains
-// `Finish:` or a clock range, only the reason and what to do.
-// Never prints item text or transcript content: rows are named by id.
-import { MIN_SCORED, TARGET_INSIDE } from './calibration.mjs';
-import { STALE_AFTER_MS } from './compute.mjs';
-import { MIN_MEASURED_RANGE } from './history.mjs';
-import { CLOCK_STEP_MS, clockText, dayText, gridded, localDate, offsetText, systemTimeZone } from './local-clock.mjs';
+// Renders an estimate result as the text block the lead pastes as-is (estimator design 4.1) and a refusal as its reason and
+// what to do (4.2). The exact lines are in ../README.md.
+// Exports: formatEstimate(result, inputs) -> string; formatRefusal(result) -> string; workText(minutes) -> '35 min' |
+// '2 h 35'; hoursText(minutes) -> '99 h' from 10 hours up, else workText; plural, listed (shared with segment-text.mjs).
+// Invariants: pure apart from reading the system time zone (`Intl`, so `TZ` is honoured) when none is given. Clock times are on
+// the local clock, rounded up to CLOCK_STEP_MS; a refusal text never contains `Finish:` or a clock time. Rows are named by id,
+// never by their text.
+import { clockText, dayText, gridded, localDate, offsetText, systemTimeZone } from './local-clock.mjs';
 
-const DECIMAL_LIMIT = 10;
-const HOURS_PER_DAY = 24;
-const HOUR_MS = 3_600_000;
-const DAYS_ABOVE_HOURS = 48;
 const LISTED_ROWS = 5;
-const CLOSING_WORK = 'review, fix rounds, recheck, landing';
-// A table has one first cycle, so its closing phase is always the default (compute.mjs firstCycleResult).
-const CLOSING_SOURCE = 'default, not yet measured here';
-const EXCLUDES = 'Excludes: your review and any rework it starts (next line); usage-limit pauses from now on; steps only you do (push, deploy); requests that are not rows';
-const NO_DELIVERY = 'After your review: not measured here yet (no earlier delivery in this table)';
-const OVERRUN_ADVICE = 'What to do: tell the owner the job is past its usual closing; this ends at delivery, whose length then joins the history. Work not in the table: add it as a row first.';
-const GUESSED_NOTE = 'delivery guessed from a pause: add a deliver: row when you hand over';
-const ROUND_DONE_ADVICE = 'What to do: if you handed the job over, add a deliver: row with its done time; if work remains, add it as rows.';
-const ROUND_ADVICE = 'What to do: tell the owner the follow-up round is past its usual length; this ends at delivery, whose round length then joins the history. Work not in the table: add it as a row first.';
+const MAX_CHECK_LINES = 3; // more stale rows than this are counted on one line (design 3.10)
+const MIN_PER_HOUR = 60;
+const WHOLE_HOURS_FROM_MIN = 10 * MIN_PER_HOUR; // from 10 hours of work up, minutes say nothing: `99 h`
+const PAUSE_SHOWN_MIN = 5; // pauses since the commitment are named from 5 minutes up (design 4.1)
+const PERCENT = 100;
+const SIZES = ['S', 'M', 'L'];
+const SMALLER_SIZE = { L: 'M', M: 'S' };
+const EXCLUDES = 'Excludes: pauses (nights, usage limits, waiting for you) move the time hour for hour; rework after hand-over; new requests.';
 
-/** Numbers under 10 keep one decimal (a trailing `.0` is dropped); larger ones round to whole numbers. */
-function num(value) {
-  if (value >= DECIMAL_LIMIT) return String(Math.round(value));
-  return String(Number(value.toFixed(1)));
+export const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+/** The first few names of a list, then how many more, so a line stays readable on a table of hundreds of rows. */
+export const listed = (names) => (names.length <= LISTED_ROWS ? names.join(', ') : `${names.slice(0, LISTED_ROWS).join(', ')} and ${names.length - LISTED_ROWS} more`);
+
+/** Work as `35 min` under an hour, else `2 h 35`. */
+export function workText(minutes) {
+  const whole = Math.max(0, Math.round(minutes));
+  if (whole < MIN_PER_HOUR) return `${whole} min`;
+  return `${Math.floor(whole / MIN_PER_HOUR)} h ${String(whole % MIN_PER_HOUR).padStart(2, '0')}`;
 }
 
-const range = (low, high) => `${num(low)}-${num(high)}`;
-const rate = (value) => String(Number(value.toFixed(2)));
-const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
-/** The first few names of a list, then how many more, so a line stays readable on a table of thousands of rows. */
-const listed = (names) => (names.length <= LISTED_ROWS ? names.join(', ') : `${names.slice(0, LISTED_ROWS).join(', ')} and ${names.length - LISTED_ROWS} more`);
-const instant = (ms) => new Date(ms).toISOString().replace(/(:00)?\.000Z$/, 'Z');
+/** Work as whole hours (`99 h`) from 10 hours up, else as workText. */
+export const hoursText = (minutes) => (minutes >= WHOLE_HOURS_FROM_MIN ? `${Math.round(minutes / MIN_PER_HOUR)} h` : workText(minutes));
 
-/**
- * The finish range as printed: on the local grid, low floored, high ceiled, at least one step apart.
- * @param {object} result from computeEstimate with a `finish`.
- * @param {string} [timeZone] IANA zone; default the system zone.
- * @returns {{low: number, high: number | null}} epoch ms; high is null when the result is `notBefore`.
- */
-export function printedBounds(result, timeZone = systemTimeZone()) {
-  const low = Math.max(gridded(result.finish.lowMs, timeZone, false), gridded(result.computedAt, timeZone, true));
-  if (result.notBefore) return { low, high: null };
-  return { low, high: Math.max(gridded(result.finish.highMs, timeZone, true), low + CLOCK_STEP_MS) };
-}
-
-/**
- * The status line's clock text: `14:50-16:15` when both ends are today, `Sun 00:50-02:25` when both are on another day, and
- * `Sun 23:20 - Mon 01:10` when the ends are on different days; `>=17:10` (`>=Sun 17:10` on another day) for a `notBefore` result.
- * @param {object} result from computeEstimate with a `finish` (not a refusal or a delivered result).
- * @param {string} [timeZone] IANA zone; default the system zone.
- * @returns {string}
- */
-export function finishClock(result, timeZone = systemTimeZone()) {
-  const { low, high } = printedBounds(result, timeZone);
-  const weekday = (ms) => dayText(ms, timeZone).split(' ')[0];
-  if (high === null) return `>=${localDate(low, timeZone) === localDate(result.computedAt, timeZone) ? '' : `${weekday(low)} `}${clockText(low, timeZone)}`;
-  if (localDate(low, timeZone) !== localDate(high, timeZone)) return `${weekday(low)} ${clockText(low, timeZone)} - ${weekday(high)} ${clockText(high, timeZone)}`;
-  const today = localDate(low, timeZone) === localDate(result.computedAt, timeZone);
-  return `${today ? '' : `${weekday(low)} `}${clockText(low, timeZone)}-${clockText(high, timeZone)}`;
-}
+const percent = (share) => `${Math.round(share * PERCENT)}%`;
+const day = (ms, timeZone) => `${dayText(ms, timeZone)} ${clockText(ms, timeZone)}`;
+/** A clock, with its weekday when it falls on another local day than `sameDayAs`. */
+const clockOn = (ms, sameDayAs, timeZone) => `${localDate(ms, timeZone) === localDate(sameDayAs, timeZone) ? '' : `${dayText(ms, timeZone).split(' ')[0]} `}${clockText(ms, timeZone)}`;
 
 function finishLine(result, timeZone) {
-  const { low, high } = printedBounds(result, timeZone);
-  const where = `(local ${offsetText(result.computedAt, timeZone)}, now ${clockText(result.computedAt, timeZone)})`;
-  if (high === null) return `Finish: not before ${dayText(low, timeZone)} ${clockText(low, timeZone)} ${where}`;
-  if (dayText(low, timeZone) === dayText(high, timeZone)) return `Finish: ${dayText(low, timeZone)} ${clockText(low, timeZone)}-${clockText(high, timeZone)} ${where}`;
-  return `Finish: ${dayText(low, timeZone)} ${clockText(low, timeZone)} - ${dayText(high, timeZone)} ${clockText(high, timeZone)} ${where}`;
+  const up = (ms) => gridded(ms, timeZone, true);
+  const clock = up(result.finish.clockMs);
+  const where = `local ${offsetText(result.nowMs, timeZone)}, now ${clockText(result.nowMs, timeZone)}`;
+  const likely = clockOn(up(result.finish.likelyMs), clock, timeZone);
+  if (result.finish.ahead) return `Finish: ${day(clock, timeZone)} (likely ${likely}, ahead of the time given; ${where})`;
+  return `Finish: ${day(clock, timeZone)} (85% sure; likely ${likely}, 95% by ${clockOn(up(result.finish.lateMs), clock, timeZone)}; ${where})`;
 }
 
-/** Where a follow-up round's range comes from, for the Includes line and the round refusal. */
-function roundSource(range) {
-  if (range.measured >= MIN_MEASURED_RANGE) return `measured from ${range.measured} finished rounds here`;
-  return range.measured === 1 ? 'default, widened by the 1 finished round here' : 'default, not yet measured here';
+function coversLine({ covers, commit }) {
+  const sizes = SIZES.filter((size) => covers.sizes[size] > 0).map((size) => `${covers.sizes[size]} ${size}`).join(', ');
+  const rows = `${plural(covers.open, 'open row')} (${covers.running} running; ${sizes})`;
+  return `Covers: ${rows} and work not listed yet (usually ${percent(covers.growth)} of what is left); ${workText(commit.leftMin)} of work left in this time.`;
 }
 
-const laneCount = (build) => (build.lanes === 1 ? '1 lane' : `${num(build.lanes)} lanes`);
-
-/**
- * Why a round or closing phase that outran its range has no upper end (a `notBefore` result): "every measured round" only when the
- * range was measured here, else the range for such rounds with where it comes from.
- */
-function overrunReason({ overrun }) {
-  const { kind, hours, closing } = overrun;
-  const round = kind === 'round';
-  const measured = round && closing.measured >= MIN_MEASURED_RANGE;
-  const longest = measured ? 'every measured round' : `the range for such ${round ? 'rounds' : 'closing phases'}`;
-  const source = round ? roundSource(closing) : CLOSING_SOURCE;
-  return `this ${round ? 'round' : 'closing phase'} has run ${num(hours)} h, longer than ${longest} (${range(closing.low, closing.high)} h; ${source}): no upper end can be supported`;
+function causeText(moved) {
+  if (moved.cause === 'rows-added') return `because ${plural(moved.ids.length, 'row')} ${moved.ids.length === 1 ? 'was' : 'were'} added (${listed(moved.ids)})`;
+  if (moved.cause === 'slow-row') return `because row ${moved.ids[0]} is taking longer than 85% of ${moved.size ?? 'its size\'s'} rows`;
+  return 'because the open rows are taking longer than usual';
 }
 
-const sizesText = (build) => `the open rows need at least ${range(build.low, build.high)} h by size (${listed(build.ids)}, ${laneCount(build)})`;
-
-function followUpIncludes(result, timeZone) {
-  const { build, closing, followUp } = result;
-  const started = followUp.startRow === null ? 'no row started yet' : `started ${clockText(followUp.start, timeZone)} (${followUp.startRow})`;
-  const rows = `${plural(result.openItems, 'open row')} (${result.inFlight} running)`;
-  const took = result.notBefore ? overrunReason(result) : `such rounds took ${range(closing.low, closing.high)} h here (${roundSource(closing)})`;
-  return `Includes: follow-up round after the delivery at ${clockText(followUp.deliveryAt, timeZone)}, ${started}: ${rows}; ${took}; ${sizesText(build)}`;
+/** Held or Moved, built from the stored commitment so it reads the same in every run, plus the pauses since it was made. */
+function commitLine({ commit, nowMs }, timeZone) {
+  const pauses = commit.pausedMin >= PAUSE_SHOWN_MIN ? ` Pauses since then: ${workText(commit.pausedMin)}.` : '';
+  if (commit.moved === null) return `Held: given ${day(commit.atMs, timeZone)}, unchanged since.${pauses}`;
+  const { moved } = commit;
+  const from = clockOn(gridded(moved.wasClockMs, timeZone, true), nowMs, timeZone);
+  return `Moved: at ${clockOn(moved.atMs, nowMs, timeZone)} from ${from}, ${causeText(moved)}; unchanged since.${pauses}`;
 }
 
-const inRound = (result) => result.state === 'round-open';
-/** True when the open rows are counted by size whatever their kind (a round, or an overrun closing phase): the words say `open row`. */
-const countsAllRows = (result) => inRound(result) || result.notBefore === true;
+function recordLine(result) {
+  const { record, pool } = result;
+  if (record === null) return `Track record: no job scored yet; learned from ${plural(pool.rows, 'finished row')} and ${plural(pool.jobs, 'job')}.`;
+  return `Track record: ${record.met} of the last ${plural(record.of, 'job')} ${record.of === 1 ? 'was' : 'were'} done by the first time given.`;
+}
 
-/** The deliver rows that were not deliveries, as `deliver row X1 ignored: 1 row was still running at 14:30`. */
-const ignoredNotes = (ignored, timeZone) => ignored.map((d) => `deliver row ${d.id} ignored: ${plural(d.running, 'row')} ${d.running === 1 ? 'was' : 'were'} still running at ${clockText(d.at, timeZone)}`);
-
-/** The Includes line of the table's state, then the ignored deliver rows and GUESSED_NOTE when a delivery was guessed from a pause. */
-function includesLine(result, timeZone) {
-  const notes = [...ignoredNotes(result.ignored, timeZone), ...(result.deliveryGuessed ? [GUESSED_NOTE] : [])];
-  switch (result.state) {
-    case 'first-cycle-building':
-    case 'first-cycle-closing': return [firstCycleIncludes(result), ...notes].join('; ');
-    case 'round-open': return [followUpIncludes(result, timeZone), ...notes].join('; ');
-    default: throw new Error(`no Includes line for state ${result.state}`);
+/** The Check lines: at most MAX_CHECK_LINES stale rows, longest first, then the count of the rest, then untracked work. */
+function checkLines(checks) {
+  const stale = checks.filter((check) => check.kind === 'stale');
+  const lines = stale.slice(0, MAX_CHECK_LINES).map((check) => `Check: row ${check.id} (${check.size}) has taken ${workText(check.elapsedMin)} of work, longer than every finished ${check.size} row (${workText(check.longestMin)}): finish it, or close it with evidence "dropped: <why>".`);
+  if (stale.length > MAX_CHECK_LINES) lines.push(`Check: and ${stale.length - MAX_CHECK_LINES} more.`);
+  for (const check of checks.filter((item) => item.kind === 'untracked')) {
+    lines.push(`Check: ${workText(check.minutes)} of work in this job ran with no started row: start rows with status.mjs start <id>.`);
   }
-}
-
-function firstCycleIncludes(result) {
-  const { build, closing } = result;
-  const rows = `${plural(result.openItems, 'open row')} (${result.inFlight} running)`;
-  const phase = `the closing phase ${range(closing.low, closing.high)} h`;
-  const about = `(${CLOSING_WORK}; ${CLOSING_SOURCE})`;
-  const elapsed = `has run ${num(result.closingElapsed)} h`;
-  if (result.notBefore) return `Includes: ${rows}; ${overrunReason(result)}; ${sizesText(build)}`;
-  if (result.openItems === 0) return `Includes: no open row: the build is done and ${phase} ${about} is not in rows yet; it ${elapsed}`;
-  if (build.ids.length === 0) return `Includes: ${rows}; no open build row: ${phase} ${about} ${elapsed}`;
-  const lanes = laneCount(build);
-  const past = build.pastRate.length === 0 ? '' : `; ${listed(build.pastRate)} past every measured rate, ${build.pastRate.length === 1 ? 'its' : 'their'} remaining time is not known`;
-  return `Includes: ${rows}; build ${range(build.low, build.high)} h (${listed(build.ids)}, ${lanes}${past}), then ${phase} in series ${about}`;
-}
-
-/** The latest rework's state when it is counted to now: '' once delivered again. */
-const reworkState = (reopen) => (!reopen.open ? '' : reopen.reworkOpen ? 'still open' : 'not delivered again yet');
-
-function afterLine(reopen) {
-  if (reopen === null) return NO_DELIVERY;
-  const counted = `After your review: ${reopen.reopened} of ${reopen.deliveries} earlier deliveries here were reopened by your corrections`;
-  if (reopen.reopened === 0) return counted;
-  const state = reworkState(reopen);
-  if (reopen.reopened === 1) return `${counted}; that rework took ${num(reopen.highHours)} h${state ? ` so far (${state})` : ''}`;
-  return `${counted}; those reworks took ${range(reopen.lowHours, reopen.highHours)} h${state ? ` (the latest ${state}, counted so far)` : ''}`;
-}
-
-/** How earlier printed ranges of this phase did and how the range is adjusted (see calibration.mjs: one set per phase). */
-function trackLine({ record, factors }, round) {
-  const [target, label] = [`${TARGET_INSIDE.inside} of ${TARGET_INSIDE.of}`, `Track record (${round ? 'follow-up rounds' : 'first cycles'}):`];
-  const lowOnly = record.lowOnly > 0 ? `; ${record.lowOnlyInside} of ${record.lowOnly} not-before estimates held (delivered no earlier than printed)` : '';
-  const dropped = `${record.rewritten > 0 ? `; ${record.rewritten} dropped (table rewritten)` : ''}${lowOnly}`;
-  const once = `adjusted once ${MIN_SCORED} deliveries are scored`;
-  if (record.scored === 0) return `${label} no scored estimate yet${dropped}; the range is ${once} (target: ${target} inside)`;
-  const late = record.late > 0 ? ` (median x${num(record.medianLate)} of the printed time)` : '';
-  const over = record.deliveries === record.scored ? '' : ` (${record.scored} predictions over ${record.deliveries} ${record.deliveries === 1 ? 'delivery' : 'deliveries'})`;
-  const counts = `${label} ${record.inside} of ${record.scored} inside${over}, ${record.late} late${late}, ${record.early} early${dropped}`;
-  if (factors.deliveries < MIN_SCORED) return `${counts}; ${once}`;
-  return `${counts}; adjusted high x${num(factors.high)}, low x${num(factors.low)} (target ${target})`;
-}
-
-function dateSpan(first, last, timeZone) {
-  const [a, b] = [dayText(first, timeZone).split(' ').slice(1), dayText(last, timeZone).split(' ').slice(1)];
-  if (a.join(' ') === b.join(' ')) return a.join(' ');
-  return a[1] === b[1] ? `${a[0]}..${b.join(' ')}` : `${a.join(' ')}..${b.join(' ')}`;
-}
-
-function laneText(result) {
-  const measured = result.measuredLanes.toFixed(1);
-  if (result.build.ids.length === 0) return `${result.lanes.toFixed(1)} lanes (measured ${measured}; no open build row)`;
-  const counted = countsAllRows(result) ? 'open row' : 'open build row';
-  if (result.lanes < result.measuredLanes) return `${result.lanes.toFixed(1)} lanes (measured ${measured}, capped by ${plural(result.build.ids.length, counted)})`;
-  return result.lanes > result.measuredLanes ? `1.0 lanes (measured ${measured}, raised to 1)` : `${result.lanes.toFixed(1)} lanes (measured)`;
-}
-
-function limitText(result, inputs) {
-  if (inputs.transcriptCount === 0) return `usage-limit windows not measured (no transcripts at ${inputs.transcriptDir})`;
-  const { count, hours } = result.windowsInSpan;
-  if (count === 0) return 'no limit windows in the transcripts';
-  return `${plural(count, 'limit window')} (${num(hours)} h) in ${plural(inputs.transcriptCount, 'transcript')} taken out`;
-}
-
-function assumesLine(result, inputs, timeZone) {
-  const { rate: band } = result;
-  const rows = band.running > 0 ? `${band.done} done + ${band.running} running rows` : plural(band.done, 'done row');
-  const equal = band.low === band.high ? '; all rates equal, real spread unknown' : '';
-  const rates = `${rate(band.low)}-${rate(band.high)} h/point (${band.band} of ${rows}, ${dateSpan(result.first, result.last, timeZone)}${equal})`;
-  const brief = result.underMinute.length === 0 ? '' : `; ${listed(result.underMinute)} took under a minute and ${result.underMinute.length === 1 ? 'is' : 'are'} left out of the rates`;
-  return `Assumes: the table as it is now; ${rates}${brief}; ${laneText(result)}; ${limitText(result, inputs)}`;
-}
-
-function staleNote(result) {
-  const ageMs = result.computedAt - result.newestEntry;
-  if (result.openItems === 0 || ageMs <= STALE_AFTER_MS) return [];
-  const hours = ageMs / HOUR_MS;
-  const age = hours >= DAYS_ABOVE_HOURS ? `${num(hours / HOURS_PER_DAY)} days` : `${num(hours)} hours`;
-  return [`Note: the newest started or done in the table is ${age} old (${instant(result.newestEntry)}); update STATUS.md if work happened since.`];
-}
-
-/** The delivered block: when, provisional while its quiet gap runs, no open row, and the After line. */
-function deliveredBlock(result, timeZone) {
-  const at = result.delivered;
-  const provisional = result.provisionalUntil === null ? '' : `; provisional until ${clockText(result.provisionalUntil, timeZone)}: no open row`;
-  return [
-    `Finish: delivered ${dayText(at, timeZone)} ${clockText(at, timeZone)} (local ${offsetText(at, timeZone)}${provisional})`,
-    [`Includes: no open row; the last done row (${result.closingRow}) is a ${result.closingKind} row`, ...(result.guessed ? [GUESSED_NOTE] : [])].join('; '),
-    afterLine(result.reopen),
-  ];
+  return lines;
 }
 
 /**
- * The finish block (or the three-line delivered block).
- * @param {object} result from computeEstimate (not a refusal), its finish already scaled by the calibration factors.
- * @param {{transcriptDir: string, transcriptCount: number, timeZone?: string, calibration?: {record: object, factors: object}}} inputs
- *   where the windows came from; the zone for every clock time (default the system zone); the track record and factors
- *   (no Track record line without them, e.g. a --now run that keeps no log).
- * @returns {string} the block, no trailing newline.
+ * The block to paste: the finish (design 4.1), or the one-line all-done block, or the hand-over and the track record.
+ * @param {object} result estimateFile's result in the state finish, all-done or handed-over
+ * @param {{ timeZone?: string }} [inputs] the zone for every clock time (default the system zone)
+ * @returns {string} the block, no trailing newline
  */
-export function formatEstimate(result, inputs) {
+export function formatEstimate(result, inputs = {}) {
   const timeZone = inputs.timeZone ?? systemTimeZone();
-  if (result.state === 'delivered') return deliveredBlock(result, timeZone).join('\n');
-  const counted = countsAllRows(result) ? 'open rows' : 'open build rows';
-  const agentHours = result.build.ids.length === 0 ? 'Agent-hours: 0 (no open build row)'
-    : `Agent-hours: ${result.agentHours.low.toFixed(1)}-${result.agentHours.high.toFixed(1)} for the ${counted}, counted whole`;
-  const track = inputs.calibration === undefined ? [] : [trackLine(inputs.calibration, inRound(result))];
-  return [finishLine(result, timeZone), includesLine(result, timeZone), EXCLUDES, afterLine(result.reopen), ...track, assumesLine(result, inputs, timeZone), agentHours, ...staleNote(result)].join('\n');
+  switch (result.state) {
+    case 'all-done': return `Finish: now (all ${plural(result.rows, 'row')} ${result.rows === 1 ? 'is' : 'are'} done; the hand-over is recorded when this turn ends)`;
+    case 'handed-over': return [`Finish: handed over ${day(result.handedOverMs, timeZone)} (${plural(result.rows, 'row')}, ${workText(result.workedMin)} of work)`, recordLine(result)].join('\n');
+    case 'finish': return [finishLine(result, timeZone), coversLine(result), EXCLUDES, commitLine(result, timeZone), recordLine(result), ...checkLines(result.checks)].join('\n');
+    default: throw new Error(`no finish block for state ${result.state}`);
+  }
 }
 
-function roundOverrunText({ overrun }, timeZone) {
-  const { round, closing } = overrun;
-  const since = round.startRow === null ? '' : ` since it started (${round.startRow}, ${clockText(round.start, timeZone)})`;
-  const than = closing.measured >= MIN_MEASURED_RANGE ? `every round measured here (${range(closing.low, closing.high)} h, ${closing.measured} rounds)`
-    : `the default round (${range(closing.low, closing.high)} h, ${closing.measured === 1 ? 'widened by 1 finished round here' : 'not yet measured here'})`;
-  return `No finish time: the follow-up round has run ${num(overrun.hours)} h${since}, longer than ${than}, and its open rows are past their measured rates.\n${ROUND_ADVICE}`;
+function noReferenceAdvice(size) {
+  const smaller = SMALLER_SIZE[size];
+  return smaller === undefined ? 'finish rows of that size first.' : `finish rows of that size first, or split the ${size} rows into ${smaller} rows.`;
 }
 
-function roundDoneText({ round }, timeZone) {
-  const since = round.startRow === null ? '' : ` (started ${clockText(round.start, timeZone)}, ${round.startRow})`;
-  return `No finish time: every row of the follow-up round after the delivery at ${clockText(round.deliveryAt, timeZone)}${since} is done, and no deliver: row marks its hand-over.\n${ROUND_DONE_ADVICE}`;
+/** The No finish time and What to do lines of a refusal (design 4.2), plus the Work left line of a long job. */
+function refusalLines(refusal) {
+  switch (refusal.reason) {
+    case 'no-rows': return ['No finish time: the table has no work row.', 'What to do: list the job\'s rows with `status.mjs add`.'];
+    case 'no-reference': return [`No finish time: only ${refusal.rows} finished ${refusal.size} rows to learn from (${refusal.needed} needed).`, `What to do: ${noReferenceAdvice(refusal.size)}`];
+    case 'growth': return [`No finish time: in the recent jobs ${percent(refusal.growth)} of the work was not in the table when it was estimated.`, 'What to do: list the job\'s rows first (`status.mjs add`), then `status.mjs start` each as its work begins.'];
+    case 'horizon': return [
+      `No finish time: this job is longer than any finished one (longest: ${workText(refusal.longestJobMin)} of work).`,
+      `Work left: likely ${hoursText(refusal.work.p50)}, 85% sure within ${hoursText(refusal.work.p85)}, of work (not clock time).`,
+      'What to do: quote the work left as hours of work; hand over in parts (`status.mjs deliver "<part>"`) so jobs of this length get scored.',
+    ];
+    default: throw new Error(`no refusal text for reason ${refusal.reason}`);
+  }
 }
 
-function overrunText({ overrun }, timeZone) {
-  const { start, closing } = overrun;
-  const since = start.how === 'done' ? 'the last build row was done' : 'the first closing row started';
-  const closings = range(closing.low, closing.high);
-  return `No finish time: the closing phase has run ${num(overrun.hours)} h since ${since} (${start.item.id}, ${clockText(start.at, timeZone)}), longer than the default closing (${closings} h, not yet measured here).\n${OVERRUN_ADVICE}`;
-}
-
-/** The refusal text: why there is no finish time and what to do, never a time to quote. */
-export function formatRefusal(refusal, timeZone = systemTimeZone()) {
-  if (refusal.reason === 'round-done') return roundDoneText(refusal, timeZone);
-  if (refusal.reason === 'overrun') return refusal.overrun.kind === 'closing' ? overrunText(refusal, timeZone) : roundOverrunText(refusal, timeZone);
-  const reasons = [];
-  const advice = [];
-  if (refusal.measured < refusal.needed) {
-    const brief = refusal.underMinute.length === 0 ? '' : ` (${listed(refusal.underMinute)} took under a minute and ${refusal.underMinute.length === 1 ? 'is' : 'are'} not counted)`;
-    reasons.push(`${refusal.measured} done items with started, done and evidence; need ${refusal.needed}${brief}.`);
-    advice.push('finish and record more rows.');
-  }
-  if (refusal.missing.length > 0) {
-    reasons.push(`Missing started on: ${listed(refusal.missing)}.`);
-    advice.push('fill started of those rows with the real start, or delete the row.');
-  }
-  if (refusal.future.length > 0) {
-    reasons.push(`Later than now (${instant(refusal.now)}): ${listed(refusal.future.map((f) => `${f.row} ${f.cell} ${instant(f.at)}`))}.`);
-    advice.push('correct the time from the clock (`date -u +%Y-%m-%dT%H:%MZ`), never from memory, or pass the right --now.');
-  }
-  if (refusal.noTime.length > 0) {
-    reasons.push(`No working time left after removing usage-limit windows: ${listed(refusal.noTime)}.`);
-    advice.push('correct started and done of those rows: they lie inside usage-limit windows.');
-  }
-  const sentences = advice.map((text, i) => (i === 0 ? text : text[0].toUpperCase() + text.slice(1)));
-  return `No finish time: ${reasons.join(' ')}\nWhat to do: ${sentences.join(' ')}`;
-}
+/**
+ * The refusal text: why there is no finish time and what to do, never a clock time; Check lines follow.
+ * @param {object} result estimateFile's result in the state refused
+ * @returns {string} the lines, no trailing newline
+ */
+export const formatRefusal = (result) => [...refusalLines(result.refusal), ...checkLines(result.checks ?? [])].join('\n');

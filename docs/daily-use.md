@@ -98,7 +98,7 @@ History stays one straight line (rule C37): no merge commits, no branch merged i
   context size. Run `/compact` at a natural seam, not mid-step.
 - Multi-day work: keep `STATUS.md` (decisions, vocabulary, a `## Work items` table); the lead re-reads its first 60 lines
   after a compaction, adds a `deliver:` row when it hands the job over, and pastes the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` as every estimate; the status
-  line shows the same finish as `done ~14:50-16:15`, `done >=17:10`, `delivered 17:54`, or `done ? <cause>` when the tool refuses or fails (nothing only when STATUS.md is missing; the forms are in the estimate README).
+  line shows the same committed time as `done by 21:40`, `all rows done`, `handed over 17:54`, `work left ~99 h` for a job longer than any finished one, or `done ? <cause>` when the tool refuses or fails (nothing only when STATUS.md is missing; the forms are in the estimate README).
 - A detail from an earlier session or before a compaction: `recall`
   (`node ~/.claude/tools/recall/recall.mjs "<terms>"`, add `--session current` after a compaction).
 - Phase change, repeated compactions or `/clear`: run the `handoff` skill, then `/clear` and say

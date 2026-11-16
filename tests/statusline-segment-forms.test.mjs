@@ -1,7 +1,7 @@
 // Tests for the forms of the status line's estimate segment (lib/segment-text.mjs, written by statusline-cache.mjs, read by
-// lib/segment-cache.mjs): a finish range, `done >=` (not before), `delivered HH:MM`, and `done ? <cause>` after a refusal or an
-// error, so the segment never silently disappears. In the render tests the clock and the spawner are injected; the refresh script
-// runs for real with HOME in a temp folder. Zone Asia/Tehran (+03:30); BASE_MS = Tue 10 Nov 00:00Z = 03:30 local.
+// lib/segment-cache.mjs), estimator design 4.3: `done by 21:40`, `all rows done`, `handed over 17:54`, `work left ~99 h`, and
+// `done ? <cause>` after a refusal or an error, so the segment never silently disappears. In the render tests the clock and the
+// spawner are injected; the refresh script runs for real with HOME in a temp folder. Zone Asia/Tehran (+03:30).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -9,58 +9,41 @@ import { mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { computeEstimate } from '../home/tools/estimate/lib/compute.mjs';
 import { UsageError } from '../home/tools/estimate/lib/from-files.mjs';
 import { parseWorkItems } from '../home/tools/estimate/lib/items.mjs';
 import { OVERDUE_TEXT, STALE_SHOW_MS, estimateSegment, readEntry, writeEntry } from '../home/tools/estimate/lib/segment-cache.mjs';
-import { MAX_SEGMENT_CHARS, errorSegment, refusalSegment, resultSegment } from '../home/tools/estimate/lib/segment-text.mjs';
-import { BASE_MS, HOUR_MS, fiveDoneRows, row, statusDoc } from './estimate-fixtures.mjs';
+import { MAX_SEGMENT_CHARS, errorSegment, resultSegment } from '../home/tools/estimate/lib/segment-text.mjs';
+import { HOUR_MS, iso, row, statusDoc } from './estimate-tables.mjs';
 
 const REFRESH_SCRIPT = fileURLToPath(new URL('../home/tools/estimate/statusline-cache.mjs', import.meta.url));
 const TZ = 'Asia/Tehran';
-const at = (hours) => Math.round(BASE_MS + hours * HOUR_MS);
-const close = (spec) => row({ ...spec, item: 'close: row' });
-const deliverRow = (id, doneH) => row({ id, item: 'deliver: row', raw: { done: new Date(at(doneH)).toISOString().replace(':00.000Z', 'Z') }, evidence: '-' });
-const FIRST_JOB = [...[0, 0.2, 0.4, 0.6, 0.8].map((h, i) => row({ id: `D${i + 1}`, startedH: h, doneH: h + 0.1 })), close({ id: 'C1', startedH: 1, doneH: 1.5 })];
-const USABLE = statusDoc(fiveDoneRows([row({ id: 'O1', size: 'L' })]));
-const FEW_ROWS = statusDoc([row({ id: 'D1', startedH: 0, doneH: 1 }), row({ id: 'O1' })]);
-const TABLE_ERROR = statusDoc([...fiveDoneRows(), row({ id: 'A17', size: 'XL' })]);
-const OUTRAN = statusDoc([...FIRST_JOB, close({ id: 'V1', startedH: 2 }), close({ id: 'V2' })]); // far past the 2.6 h round
-const estimate = (rows, nowH, windows = []) => computeEstimate(parseWorkItems(statusDoc(rows)).items, windows, at(nowH));
+const at = (hour, minute, day = 16) => Date.UTC(2026, 10, day, hour, minute);
+const NOW = at(15, 35); // Mon 19:05 local
+const finishAt = (clockMs) => ({ state: 'finish', nowMs: NOW, finish: { clockMs } });
+const refused = (refusal) => ({ state: 'refused', nowMs: NOW, refusal, checks: [] });
+const OPEN = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 })]);
+const TABLE_ERROR = statusDoc([row({ id: 'A17', size: 'XL' })]);
 
-test('delivered: `delivered HH:MM`, the weekday when it is not today, a ? when guessed from a pause or provisional', () => {
-  const byRow = [...fiveDoneRows(), deliverRow('X1', 14)]; // delivered 14 h = 17:30 local
-  assert.equal(resultSegment(estimate(byRow, 20), TZ).text, 'delivered 17:30');
-  assert.equal(resultSegment(estimate(byRow, 30), TZ).text, 'delivered Tue 17:30'); // computed on Wed 11 Nov
-  const guessed = [...fiveDoneRows(), close({ id: 'C1', startedH: 13, doneH: 14 })];
-  assert.equal(resultSegment(estimate(guessed, 20), TZ).text, 'delivered 17:30?'); // the pause rule only guesses
-  assert.equal(resultSegment(estimate(guessed, 14 + 5 / 60), TZ).text, 'delivered 17:30?'); // provisional for 10 minutes
-  assert.equal(resultSegment(estimate(byRow, 20), TZ).kind, 'delivered');
-  assert.equal(resultSegment(estimate(byRow, 20), TZ).highMs, null);
+test('a finish is `done by` its committed clock rounded up, with the weekday on another day, and highMs is that clock', () => {
+  assert.deepEqual(resultSegment(finishAt(at(18, 8)), TZ), { kind: 'finish', text: 'done by 21:40', highMs: at(18, 10) });
+  assert.deepEqual(resultSegment(finishAt(at(20, 46)), TZ), { kind: 'finish', text: 'done by Tue 00:20', highMs: at(20, 50) });
+  assert.equal(resultSegment(finishAt(at(18, 8)), 'UTC').text, 'done by 18:10');
 });
 
-test('a range is `done ~a-b` with its high end and a not-before is `done >=a` with none', () => {
-  const range = resultSegment(estimate(fiveDoneRows([row({ id: 'O1' })]), 14), TZ);
-  assert.deepEqual([range.kind, range.text], ['range', 'done ~19:50-23:00']);
-  assert.ok(range.highMs > at(14));
-  const notBefore = resultSegment(computeEstimate(parseWorkItems(OUTRAN).items, [], at(5)), TZ);
-  assert.deepEqual([notBefore.kind, notBefore.text, notBefore.highMs], ['not-before', 'done >=08:35', null]);
+test('all done, handed over (weekday when not today) and the work left of a long job', () => {
+  assert.deepEqual(resultSegment({ state: 'all-done', nowMs: NOW, rows: 3 }, TZ), { kind: 'finish', text: 'all rows done', highMs: null });
+  assert.deepEqual(resultSegment({ state: 'handed-over', nowMs: NOW, handedOverMs: at(14, 24) }, TZ), { kind: 'handed-over', text: 'handed over 17:54', highMs: null });
+  assert.equal(resultSegment({ state: 'handed-over', nowMs: NOW, handedOverMs: at(14, 24, 15) }, TZ).text, 'handed over Sun 17:54');
+  const horizon = refused({ reason: 'horizon', longestJobMin: 355, work: { p50: 5400, p85: 5940, p95: 6300 } });
+  assert.deepEqual(resultSegment(horizon, TZ), { kind: 'work-left', text: 'work left ~99 h', highMs: null });
 });
 
 test('a refusal shows `done ? <cause>`, the cause one of a fixed list', () => {
-  const causes = {
-    'no rows': estimate([], 20),
-    'few rows': estimate([row({ id: 'D1', startedH: 0, doneH: 1 })], 20),
-    'no start time': estimate([...fiveDoneRows(), row({ id: 'M1', doneH: 1 })], 20),
-    'time ahead': estimate([...fiveDoneRows(), row({ id: 'F1', startedH: 500 })], 20),
-    'no work time': estimate(fiveDoneRows([row({ id: 'O1' })]), 20, [{ start: BASE_MS, end: at(20) }]),
-    overrun: estimate(fiveDoneRows(), 16),
-    'no deliver row': estimate([...FIRST_JOB, row({ id: 'R1', item: 'rework: row', startedH: 2, doneH: 2.5 })], 2.6),
-  };
-  for (const [cause, refusal] of Object.entries(causes)) {
-    assert.equal(refusal.refused, true, cause);
-    assert.deepEqual([refusalSegment(refusal).kind, refusalSegment(refusal).text], ['refused', `done ? ${cause}`]);
-  }
+  assert.equal(resultSegment(refused({ reason: 'no-rows' }), TZ).text, 'done ? no rows');
+  assert.equal(resultSegment(refused({ reason: 'no-reference', size: 'L', rows: 4, needed: 5 }), TZ).text, 'done ? few rows');
+  assert.equal(resultSegment(refused({ reason: 'growth', growth: 0.8 }), TZ).text, 'done ? rows listed late');
+  assert.equal(resultSegment(refused({ reason: 'surprise' }), TZ).text, 'done ? tool error');
+  assert.equal(resultSegment({ state: 'surprise' }, TZ).text, 'done ? tool error');
 });
 
 test('an error shows the row id when the table names one with a normal id, else `done ? table`, else `done ? tool error`', () => {
@@ -80,18 +63,22 @@ test('a row id with odd characters or too long is never shown: `done ? table`', 
   assert.equal(errorSegment(new UsageError('x', [{ line: 1, id: 'W8b.v-2_x', reason: '' }])).text, 'done ? row W8b.v-2_x');
 });
 
-test(`no segment text is longer than ${MAX_SEGMENT_CHARS} characters, the longest id included`, () => {
+test(`no segment text is longer than ${MAX_SEGMENT_CHARS} characters, the longest id and the longest forms included`, () => {
   const longestId = 'A'.repeat(17);
   const texts = [
     errorSegment(new UsageError('x', [{ line: 1, id: longestId, reason: '' }])).text,
-    ...['no rows', 'few rows', 'no start time', 'time ahead', 'no work time', 'overrun', 'no deliver row', 'table', 'tool error'].map((cause) => `done ? ${cause}`),
-    OVERDUE_TEXT, 'delivered Wed 23:59?', 'done >=Wed 23:55', 'done ~Wed 23:50 - Thu 01:10',
+    ...['no-rows', 'no-reference', 'growth'].map((reason) => resultSegment(refused({ reason }), TZ).text),
+    resultSegment(finishAt(at(20, 46, 20)), TZ).text,
+    resultSegment({ state: 'handed-over', nowMs: NOW, handedOverMs: at(14, 24, 12) }, TZ).text,
+    resultSegment(refused({ reason: 'horizon', work: { p85: 99_999 * 60 } }), TZ).text,
+    resultSegment(refused({ reason: 'horizon', work: { p85: 599 } }), TZ).text,
+    'all rows done', OVERDUE_TEXT, 'done ? tool error', 'done ? table',
   ];
   assert.equal(texts[0], `done ? row ${longestId}`);
   for (const text of texts) assert.ok(text.length <= MAX_SEGMENT_CHARS, `${text} is ${text.length}`);
 });
 
-/** A project folder with a STATUS.md and a HOME whose cache folder the refresh script writes. */
+/** A project folder with a STATUS.md and a HOME whose cache folder and estimate store the refresh script writes. */
 async function project(doc) {
   const root = await mkdtemp(join(tmpdir(), 'segment-forms-'));
   const projectDir = join(root, 'project');
@@ -101,20 +88,21 @@ async function project(doc) {
   const home = join(root, 'home');
   const cacheDir = join(home, '.claude', 'state', 'estimate-segment');
   const refresh = () => {
-    const run = spawnSync(process.execPath, [REFRESH_SCRIPT, statusPath], { cwd: projectDir, env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
+    const run = spawnSync(process.execPath, [REFRESH_SCRIPT, statusPath], { cwd: projectDir, env: { ...process.env, HOME: home, USERPROFILE: home, TZ: 'UTC' }, encoding: 'utf8' });
     assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stdout + run.stderr, '');
     return readEntry(cacheDir, statusPath);
   };
-  const render = (now) => estimateSegment(projectDir, { cacheDir, now, spawnRefresh: () => {} });
+  const render = (now) => estimateSegment({ projectDir }, { cacheDir, stateDir: join(home, '.claude', 'state', 'estimate'), now, spawnRefresh: () => {} });
   return { statusPath, cacheDir, refresh, render };
 }
 
 test('the refresh script caches each form with its kind', async () => {
   const forms = [
-    [USABLE, 'range', /^done ~(\w{3} )?\d\d:\d\d( - \w{3} |-)\d\d:\d\d$/],
-    [OUTRAN, 'not-before', /^done >=(\w{3} )?\d\d:\d\d$/],
-    [statusDoc([...fiveDoneRows(), deliverRow('X1', 14)]), 'delivered', /^delivered (\w{3} )?\d\d:\d\d$/],
-    [FEW_ROWS, 'refused', /^done \? few rows$/],
+    [OPEN, 'finish', /^done by (\w{3} )?\d\d:\d\d$/],
+    [statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 })]), 'finish', /^all rows done$/],
+    [statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'deliver:1', item: 'report', raw: { done: iso(1) }, evidence: '-' })]), 'handed-over', /^handed over Tue 01:00$/],
+    [statusDoc([]), 'refused', /^done \? no rows$/],
     [TABLE_ERROR, 'error', /^done \? row A17$/],
   ];
   for (const [doc, kind, text] of forms) {
@@ -124,45 +112,41 @@ test('the refresh script caches each form with its kind', async () => {
   }
 });
 
-test('the render shows a marker, a delivery and an overdue range instead of nothing; a delivery only while the file is unchanged', async () => {
-  const { statusPath, cacheDir, render } = await project(USABLE);
+test('the render shows a marker, a hand-over and an overdue finish instead of nothing; a hand-over only while the file is unchanged', async () => {
+  const { statusPath, cacheDir, render } = await project(OPEN);
   const { mtimeMs, size } = await stat(statusPath);
   const now = 1_800_000_000_000;
-  const entry = (fields) => ({ path: statusPath, kind: 'range', text: 'done ~14:50-16:15', highMs: now + HOUR_MS, mtimeMs, size, computedAt: now - 1, refreshStartedAt: now - 1, ...fields });
+  const entry = (fields) => ({ path: statusPath, kind: 'finish', text: 'done by 16:15', highMs: now + HOUR_MS, mtimeMs, size, computedAt: now - 1, refreshStartedAt: now - 1, ...fields });
   const shown = (fields, at2 = now) => (writeEntry(cacheDir, statusPath, entry(fields)), render(at2));
-  assert.equal(shown({}), 'done ~14:50-16:15');
-  assert.equal(shown({}, now + 2 * HOUR_MS), OVERDUE_TEXT); // its high end has passed
-  assert.equal(shown({ kind: 'not-before', text: 'done >=17:10', highMs: null }, now + 2 * HOUR_MS), 'done >=17:10'); // stays until the refresh recomputes it, never flips to overdue
-  assert.equal(shown({ kind: 'refused', text: 'done ? overrun', highMs: null }, now + 5 * HOUR_MS), 'done ? overrun'); // a marker does not expire
-  assert.equal(shown({ kind: 'delivered', text: 'delivered 17:30', highMs: null }, now + 5 * HOUR_MS), 'delivered 17:30');
-  const changed = { mtimeMs: mtimeMs + 1, kind: 'delivered', text: 'delivered 17:30', highMs: null };
-  assert.equal(shown(changed), null); // the file changed: no longer the delivery the text was about
+  assert.equal(shown({}), 'done by 16:15');
+  assert.equal(shown({}, now + 2 * HOUR_MS), OVERDUE_TEXT); // its clock has passed
+  assert.equal(shown({ kind: 'work-left', text: 'work left ~99 h', highMs: null }, now + 2 * HOUR_MS), 'work left ~99 h');
+  assert.equal(shown({ kind: 'refused', text: 'done ? few rows', highMs: null }, now + 5 * HOUR_MS), 'done ? few rows'); // a marker does not expire
+  assert.equal(shown({ kind: 'handed-over', text: 'handed over 17:30', highMs: null }, now + 5 * HOUR_MS), 'handed over 17:30');
+  const changed = { mtimeMs: mtimeMs + 1, kind: 'handed-over', text: 'handed over 17:30', highMs: null };
+  assert.equal(shown(changed), null); // the file changed: no longer the hand-over the text was about
   assert.equal(shown({ ...changed, kind: 'refused', text: 'done ? row A17' }), 'done ? row A17'); // a marker stays for STALE_SHOW_MS while the refresh runs
   assert.equal(shown({ ...changed, kind: 'refused', text: 'done ? row A17' }, now + STALE_SHOW_MS + 1), null);
 });
 
-test('a cache file from before `kind` existed is read as it always was, and a bad kind is ignored', async () => {
-  const { statusPath, cacheDir, render } = await project(USABLE);
+test('an entry the old tool wrote (no kind, or an old kind) is no entry; a bad kind is ignored', async () => {
+  const { statusPath, cacheDir, render } = await project(OPEN);
   const { mtimeMs, size } = await stat(statusPath);
   const now = 1_800_000_000_000;
   const old = { path: statusPath, text: 'done ~14:50-16:15', highMs: now + HOUR_MS, mtimeMs, size, computedAt: now - 1, refreshStartedAt: now - 1 };
-  writeEntry(cacheDir, statusPath, old);
-  assert.equal(render(now), 'done ~14:50-16:15');
-  assert.equal(render(now + 2 * HOUR_MS), null); // as before: hidden once the high end has passed (no kind, no overdue text)
-  writeEntry(cacheDir, statusPath, { ...old, text: null, highMs: null });
-  assert.equal(render(now), null);
-  writeEntry(cacheDir, statusPath, { ...old, kind: 'surprise' });
-  assert.equal(render(now), null); // foreign entry: ignored
+  for (const kind of [undefined, 'range', 'not-before', 'delivered', 'surprise']) {
+    writeEntry(cacheDir, statusPath, { ...old, kind });
+    assert.equal(render(now), null, String(kind));
+  }
 });
 
-test('refused, then the table fixed: the marker gives way to a range at the next refresh', async () => {
-  const { statusPath, refresh, render } = await project(FEW_ROWS);
+test('refused, then the table fixed: the marker gives way to a finish at the next refresh', async () => {
+  const { statusPath, refresh, render } = await project(statusDoc([]));
   const first = refresh();
-  assert.equal(render(first.computedAt + 1000), 'done ? few rows');
-  await writeFile(statusPath, USABLE);
-  const stale = render(first.computedAt + 2000); // the file changed: the old marker still shows while the refresh runs
-  assert.equal(stale, 'done ? few rows');
+  assert.equal(render(first.computedAt + 1000), 'done ? no rows');
+  await writeFile(statusPath, OPEN);
+  assert.equal(render(first.computedAt + 2000), 'done ? no rows'); // the file changed: the old marker still shows while the refresh runs
   const second = refresh();
-  assert.equal(second.kind, 'range');
-  assert.match(render(second.computedAt + 1000), /^done ~/);
+  assert.equal(second.kind, 'finish');
+  assert.match(render(second.computedAt + 1000), /^done by /);
 });

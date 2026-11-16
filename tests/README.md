@@ -22,7 +22,7 @@ The `ui-check` tool has its own tests: `pnpm --dir home/tools/ui-check test`.
 
 ## Shared helpers (not tests)
 
-`hook-env.mjs`, `pin-home.mjs`, `warm-exec.mjs`, `env-names-fixtures.mjs`, `estimate-fixtures.mjs`, `readable-helpers.mjs`, `recall-helpers.mjs`,
+`hook-env.mjs`, `pin-home.mjs`, `warm-exec.mjs`, `env-names-fixtures.mjs`, `estimate-tables.mjs`, `readable-helpers.mjs`, `recall-helpers.mjs`,
 `recall-fakes.mjs`, `timing.mjs`, `pre-bash-guard-final-cases.mjs`. Each starts with a comment saying what it gives you.
 
 ## Watch out for
