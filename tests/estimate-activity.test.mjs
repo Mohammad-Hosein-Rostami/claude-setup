@@ -2,11 +2,14 @@
 // and the per-session index (only appended bytes are read; minutes outlive the transcripts). All transcripts are synthetic.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { activeRuns, sessionTranscripts } from '../home/tools/estimate/lib/activity.mjs';
 
+const ACTIVITY_URL = new URL('../home/tools/estimate/lib/activity.mjs', import.meta.url).href;
+const HANG_LIMIT_MS = 10_000; // a scan of these small fixtures takes milliseconds; a loop that never ends is killed here
 const SESSION = '11111111-2222-3333-4444-555555555555';
 const OTHER = '99999999-2222-3333-4444-555555555555';
 const minuteOf = (iso) => Date.parse(iso) / 60_000;
@@ -105,4 +108,53 @@ test('activeRuns merges several sessions and, without a state folder, scans with
   writeFileSync(join(folder, `${OTHER}.jsonl`), line('2026-11-16T10:01:00.000Z'));
   assert.deepEqual(activeRuns([SESSION, OTHER], { projectsDir: projects, stateDir: null }), [[minuteOf('2026-11-16T10:00Z'), minuteOf('2026-11-16T10:02Z')]]);
   assert.deepEqual(activeRuns([SESSION, OTHER], { projectsDir: projects, stateDir: state }), [[minuteOf('2026-11-16T10:00Z'), minuteOf('2026-11-16T10:02Z')]]);
+});
+
+/** Runs an ES module script in a child node killed after HANG_LIMIT_MS, so a scan that never ends fails the test instead of hanging it. */
+const runChild = (script) => spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: HANG_LIMIT_MS });
+
+test('activeRuns stops when a transcript shrinks during the scan (a short read) and keeps the minutes it read', (t) => {
+  const { root, projects, folder } = fixture();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const main = join(folder, `${SESSION}.jsonl`);
+  const chunk = 1 << 20; // the scan's read size: shrinking to just past it makes every later read short
+  writeFileSync(main, line('2026-11-16T10:00:00.000Z') + 'x'.repeat(3 * chunk) + '\n');
+  const script = `
+    import fs from 'node:fs';
+    import { syncBuiltinESMExports } from 'node:module';
+    const readSync = fs.readSync;
+    let shrunk = false; // module loading reads files too: shrink after the scan's first full chunk, nothing earlier
+    fs.readSync = (...args) => {
+      const length = readSync(...args);
+      if (!shrunk && args[3] === ${chunk}) { shrunk = true; fs.truncateSync(${JSON.stringify(main)}, ${chunk + 20}); }
+      return length;
+    };
+    syncBuiltinESMExports();
+    const { activeRuns } = await import(${JSON.stringify(ACTIVITY_URL)});
+    process.stdout.write(JSON.stringify(activeRuns([${JSON.stringify(SESSION)}], { projectsDir: ${JSON.stringify(projects)} })));`;
+  const child = runChild(script);
+  assert.equal(child.signal, null, 'the scan must end, not loop on the shrunk file');
+  assert.equal(child.status, 0, child.stderr);
+  assert.deepEqual(JSON.parse(child.stdout), [[minuteOf('2026-11-16T10:00Z'), minuteOf('2026-11-16T10:01Z')]]);
+});
+
+test('sessionTranscripts never follows a folder link: a link out is not read and self-links do not loop', (t) => {
+  const { root, projects, folder } = fixture();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const sessionFolder = join(folder, SESSION);
+  const elsewhere = join(root, 'elsewhere');
+  mkdirSync(elsewhere);
+  writeFileSync(join(elsewhere, 'planted.jsonl'), line('2026-11-16T05:00:00.000Z'));
+  writeFileSync(join(sessionFolder, 'subagents', 'agent-a.jsonl'), line('2026-11-16T10:05:00.000Z'));
+  // 'junction' lets Windows make a folder link without admin rights; other systems ignore the type. Targets are absolute for it.
+  symlinkSync(elsewhere, join(sessionFolder, 'subagents', 'linked'), 'junction');
+  symlinkSync(sessionFolder, join(sessionFolder, 'a'), 'junction');
+  symlinkSync(sessionFolder, join(sessionFolder, 'b'), 'junction');
+  const script = `
+    import { sessionTranscripts } from ${JSON.stringify(ACTIVITY_URL)};
+    process.stdout.write(JSON.stringify(sessionTranscripts(${JSON.stringify(projects)}, ${JSON.stringify(SESSION)})));`;
+  const child = runChild(script);
+  assert.equal(child.signal, null, 'the walk must end');
+  assert.equal(child.status, 0, child.stderr);
+  assert.deepEqual(JSON.parse(child.stdout), [join(sessionFolder, 'subagents', 'agent-a.jsonl')]);
 });

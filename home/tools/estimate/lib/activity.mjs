@@ -35,12 +35,18 @@ function lstatOrNull(path) {
   }
 }
 
-/** Every regular .jsonl file at any depth under folder (links are not followed). */
+/**
+ * Every regular .jsonl file at any depth under folder. Walked by hand with withFileTypes (lstat types), descending only into real
+ * folders: readdirSync's own recursive walk follows folder links, so a planted link escaped the folder and a self-link never ended.
+ */
 function nestedTranscripts(folder) {
-  return readdirSync(folder, { recursive: true })
-    .filter((name) => name.endsWith(TRANSCRIPT_SUFFIX))
-    .map((name) => join(folder, name))
-    .filter((path) => lstatOrNull(path)?.isFile() === true);
+  const found = [];
+  for (const entry of readdirSync(folder, { withFileTypes: true })) {
+    const path = join(folder, entry.name);
+    if (entry.isDirectory()) found.push(...nestedTranscripts(path));
+    else if (entry.isFile() && entry.name.endsWith(TRANSCRIPT_SUFFIX)) found.push(path);
+  }
+  return found;
 }
 
 /**
@@ -88,11 +94,13 @@ function scanFile(path, offset, minutes) {
     const buffer = Buffer.alloc(READ_CHUNK_BYTES);
     let position = size < offset ? 0 : offset;
     while (position < size) {
-      const length = readSync(fd, buffer, 0, Math.min(READ_CHUNK_BYTES, size - position), position);
-      if (length === 0) break;
+      const wanted = Math.min(READ_CHUNK_BYTES, size - position);
+      const length = readSync(fd, buffer, 0, wanted, position);
       collectMinutes(buffer.subarray(0, length), length, minutes);
+      // A short read: the file shrank during the scan. Stop at what was read; stepping back OVERLAP_BYTES would never advance.
+      if (length < wanted) return Math.max(0, position + length - OVERLAP_BYTES);
       if (position + length >= size) break;
-      position += length - OVERLAP_BYTES;
+      position += length - OVERLAP_BYTES; // a full chunk (READ_CHUNK_BYTES > OVERLAP_BYTES) always moves forward
     }
     return Math.max(0, size - OVERLAP_BYTES);
   } finally {
