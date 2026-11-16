@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Refresh of the status line's estimate cache: runs the same estimate as the CLI (lib/from-files.mjs estimateFile, recording like a
-// CLI run, so both keep and show one committed time) and stores the short segment text. Started detached by lib/segment-cache.mjs
+// Refresh of the status line's estimate cache: runs the same estimate as the CLI (lib/from-files.mjs estimateFile, recording the
+// commitment like a CLI run, so both keep and show one committed time; like every estimate run it never links the session) and stores the short segment text. Started detached by lib/segment-cache.mjs
 // (never by the status line render itself: it reads transcripts and is slow).
 // Usage: statusline-cache.mjs <STATUS.md> [<session-id>]   (the session whose transcripts count; the table's linked sessions also do)
 // Writes ~/.claude/state/estimate-segment/<id>.json (see lib/segment-cache.mjs) and the table's file in ~/.claude/state/estimate/;

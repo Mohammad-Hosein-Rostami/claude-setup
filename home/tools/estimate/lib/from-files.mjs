@@ -1,10 +1,12 @@
-// The one estimate function: reads a STATUS.md, links it to the session, measures working time from the transcripts, builds the
+// The one estimate function: reads a STATUS.md, measures working time from the transcripts, builds the
 // reference pool, forecasts the work left and keeps the job's one committed time. Used by estimate.mjs (the CLI) and by
 // statusline-cache.mjs (the status line), so both show the same time for the same table state.
 // Exports: UsageError, estimateFile(path, options) -> { result, inputs }; referenceRows(items, costs), storedJob(job),
 // forecastSeedText(id, openRows), slowRowOf(openRows, pool) (shared with backtest.mjs, so the replay uses the tool's own steps).
 // Invariants: the table file's lock is taken only for the quick read-change-write of the commitment (estimator design 3.8), never
 // around the scan or the simulation; a busy lock means this run shows what it computed from the state it read and records nothing.
+// A run never links a session to the table (table.sessions and the session link are written by status.mjs edits only); the given
+// session's transcripts count for this run alone.
 // Without a stateDir nothing is read from or written to the store. Transcripts are never printed. Work is in minutes; `now` is
 // floored to the minute so that the CLI and the status line, run in the same minute, agree.
 import { readFileSync } from 'node:fs';
@@ -211,12 +213,12 @@ function closedResult(items, facts, options) {
 }
 
 /**
- * Estimates one STATUS.md (estimator design section 3): parse, link, activity, costs, pool, state, commitment inside the lock, write.
+ * Estimates one STATUS.md (estimator design section 3): parse, activity, costs, pool, state, commitment inside the lock, write.
  * @param {string} path the STATUS.md
  * @param {{ now?: string, stateDir?: string | null, projectsDir?: string, sessionId?: string, record?: boolean, seedFile?: string }} [options]
  *   now: ISO instant (default the clock); stateDir: the store root (null: no store read or written); projectsDir: Claude Code's
- *   projects folder (default ~/.claude/projects); sessionId: the session to link (its transcripts count); record: write the link,
- *   first-seen times, rows, jobs, commitment and log; seedFile: the seed (default seed.json beside the tool, for tests)
+ *   projects folder (default ~/.claude/projects); sessionId: a session whose transcripts count for this run (never linked); record:
+ *   write first-seen times, rows, jobs, commitment and log; seedFile: the seed (default seed.json beside the tool, for tests)
  * @returns {{ result: object, inputs: { path: string, sessions: number, recorded: boolean, busy: boolean } }} result as in design
  *   section 15; busy: recording was asked but the table file stayed locked, so nothing was recorded
  * @throws {UsageError} when the file, a table cell or `now` cannot be used (problems carry the table's problem lines)
@@ -227,7 +229,9 @@ export function estimateFile(path, { now, stateDir = null, projectsDir = join(ho
   const statusPath = resolve(path);
   const items = parsedTable(statusPath, nowMs);
   const recording = record && stateDir !== null;
-  if (recording) noteTable(stateDir, statusPath, { sessionId, ids: items.map((item) => item.id), nowMs });
+  // First-seen times only: a run never links a session (only status.mjs edits do), so a refresh from another session in the
+  // folder neither counts its transcripts for this table for good nor points its Stop hook here (audit SF1, option a).
+  if (recording) noteTable(stateDir, statusPath, { sessionId: undefined, ids: items.map((item) => item.id), nowMs });
   const options = { statusPath, nowMin: Math.floor(nowMs / MS_PER_MIN), stateDir, projectsDir, sessionId, record: recording, seedFile };
   const facts = measure(statusPath, items, options);
   const run = () => {

@@ -3,7 +3,7 @@
 // Exports: estimateSegment({ projectDir, sessionId }, deps) -> string | null; readEntry, writeEntry, cacheDir (the cache file store);
 // SEGMENT_KINDS, OVERDUE_TEXT, MAX_CACHE_BYTES, STALE_SHOW_MS, REFRESH_INTERVAL_MS, RECOMPUTE_AFTER_MS.
 // Invariants:
-// - The STATUS.md looked at is the one the session last touched (its link in the estimate store), else <projectDir>/STATUS.md.
+// - The STATUS.md looked at is the one the session last edited with status.mjs (its link in the estimate store), else <projectDir>/STATUS.md.
 // - Fast: a render reads one small link file, does one stat of STATUS.md and one small cache read. It never imports the forecast,
 //   the table parser or the transcript reader, so it can never read a transcript. The text comes only from the refresh script.
 // - Cache file: ~/.claude/state/estimate-segment/<sha256 of the STATUS.md path, 32 hex>.json, one JSON object

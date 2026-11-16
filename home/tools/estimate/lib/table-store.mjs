@@ -1,5 +1,6 @@
 // The estimator's stored state: one file per STATUS.md (its sessions, first-seen times, finished rows and jobs, the commitment and
-// its log), one link per session to the STATUS.md it last touched, and the seed shipped in the repo.
+// its log), one link per session to the STATUS.md it last edited with status.mjs (only noteTable with a session id writes it), and
+// the seed shipped in the repo.
 // Exports: stateDir(), tableId(statusPath), readAllTables(dir), updateTable(dir, statusPath, change), noteTable(dir, statusPath,
 // { sessionId, ids, nowMs }), linkedStatusPath(dir, sessionId), readSeed(file).
 // Layout under dir (default ~/.claude/state/estimate): table/<id>.json = { v: 2, path, sessions, added: { rowId: iso }, rows:

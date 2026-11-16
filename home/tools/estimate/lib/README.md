@@ -10,7 +10,7 @@ The parts of the `estimate` tool. `../estimate.mjs` (the CLI) and `../statusline
 - `forecast.mjs` (pure): the reference pool, the seeded runs, the refusal reasons.
 - `commitment.mjs` (pure): first, hold or move the committed budget; scoring, widening, track record.
 - `table-store.mjs`: the store files (table, session link, seed) under a short lock.
-- `from-files.mjs`: `estimateFile`, the one function of the design: parse, link, activity, costs, pool, state, commitment.
+- `from-files.mjs`: `estimateFile`, the one function of the design: parse, activity, costs, pool, state, commitment (it never links a session).
 - `report.mjs`: the printed block and the refusal text. `local-clock.mjs`: local clock text and the 5-minute grid.
 - `segment-text.mjs`: the status line text of a result. `segment-cache.mjs`: the status line's read side (the cache, the
   session link, the detached refresh); it imports none of the forecast, parser or transcript code, so a render never reads a transcript.

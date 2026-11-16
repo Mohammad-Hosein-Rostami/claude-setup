@@ -93,13 +93,14 @@ Check: row b12 (M) has taken 3 h 10 of work, longer than every finished M row (2
 
 ## Status line segment
 
-`home/statusline.mjs` shows, for the STATUS.md the session last touched (its link in the store), else
+`home/statusline.mjs` shows, for the STATUS.md the session last edited with `status.mjs` (its link in the store), else
 `<project dir>/STATUS.md`: `done by 21:40` (`done by Tue 21:40` on another day), `all rows done`, `handed over 17:54`,
 `work left ~99 h`, `done ? overdue` once the shown time has passed, or `done ? <cause>`: `no rows`, `few rows`,
 `rows listed late`, `table`, `row <id>`, `tool error`. At most 28 characters. The render only reads a small cache
 (`~/.claude/state/estimate-segment/`); when it is missing, no longer matches the file or is 5 minutes old it starts
 `statusline-cache.mjs <STATUS.md> [<session-id>]` detached, at most once per 2 minutes per file. That script runs the CLI's
-own function (recording like a CLI run), so both show the same committed time. A hand-over text is shown only while the file
+own function (recording the commitment like a CLI run), so both show the same committed time. Neither run links the
+session to the table: only `status.mjs` edits do, so a session that only looks at a table never counts as working on it. A hand-over text is shown only while the file
 is unchanged; any other text for 15 more minutes while a refresh runs.
 
 ## Store
@@ -107,7 +108,7 @@ is unchanged; any other text for 15 more minutes while a refresh runs.
 `~/.claude/state/estimate/`: `table/<32 hex of sha256 of the real STATUS.md path>.json` (sessions, first-seen time of each
 row id, finished rows and jobs without ids or text, the commitment and its log, at most 200 entries), `activity/<session>.json`
 (bytes read per transcript and the active minutes, so each run reads only appended bytes), `session/<session>.json` (the
-STATUS.md the session last touched). Written through `hooks/lib/session-store.mjs`, never swept. The table file's lock is held
+STATUS.md the session last edited with `status.mjs`). Written through `hooks/lib/session-store.mjs`, never swept. The table file's lock is held
 only for its read-change-write; a busy lock records nothing (`estimate: the store was busy; this run recorded nothing`).
 The old `~/.claude/state/estimate-log/` is no longer read; it can be deleted by hand.
 

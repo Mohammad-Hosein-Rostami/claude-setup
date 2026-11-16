@@ -59,13 +59,13 @@ test('a table without outer pipes (the setup repo\'s own STATUS.md style) gives 
   assert.equal(result.stdout.split('\n').slice(1).join('\n'), expected.stdout.split('\n').slice(1).join('\n'));
 });
 
-test('a --now run without --state-dir records nothing; with it the store holds the table, the link and the activity index', async () => {
+test('a --now run without --state-dir records nothing; with it the store holds the table and the activity index, never a session link', async () => {
   const { dir, status, run, projects } = await workdir(statusDoc(OPEN_ROWS));
   assert.equal(run(status, '--now', NOW, ...projects).status, 0);
   assert.equal(existsSync(join(dir, 'home')), false);
   const state = join(dir, 'state');
   assert.equal(run(status, '--now', NOW, '--state-dir', state, ...projects).status, 0);
-  assert.deepEqual(readdirSync(state).sort(), ['activity', 'session', 'table']);
+  assert.deepEqual(readdirSync(state).sort(), ['activity', 'table']);
 });
 
 test('refusals exit 3 on stderr with No finish time and What to do, never a clock time', async () => {

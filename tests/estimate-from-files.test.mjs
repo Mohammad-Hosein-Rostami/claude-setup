@@ -129,7 +129,7 @@ test('a table problem throws a UsageError carrying the problems; a bad now is a 
   assert.throws(() => estimateFile(statusPath, { now: '2026-02-30T08:00Z' }), UsageError);
 });
 
-test('without a store nothing is read or written; with one the session is linked and the rows are stored for other tables', async () => {
+test('without a store nothing is read or written; with one the rows are stored for other tables and no session is linked', async () => {
   const { root, statusPath, projectsDir, seedFile, stateDir, run, stored } = await setup();
   const { result, inputs } = estimateFile(statusPath, { now: iso(1), stateDir: null, projectsDir, sessionId: SESSION, seedFile });
   assert.equal(result.state, 'finish');
@@ -137,9 +137,12 @@ test('without a store nothing is read or written; with one the session is linked
   assert.equal(existsSync(join(root, 'state')), false);
   const recorded = await run(1);
   assert.deepEqual([recorded.inputs.recorded, recorded.inputs.sessions], [true, 1]);
-  assert.deepEqual(stored().sessions, [SESSION]);
   assert.deepEqual(stored().rows.map((stored) => [stored.size, stored.cost]), [['S', 30]]);
-  assert.equal(JSON.parse(readFileSync(join(stateDir, 'session', `${SESSION}.json`), 'utf8')).path.endsWith('STATUS.md'), true);
+  assert.deepEqual(Object.keys(stored().added).sort(), ['D1', 'O1'], 'first-seen times are still recorded');
+  // Only status.mjs edits link a session (audit option a): an estimate or a status-line refresh must not make a session's
+  // transcripts count for this table for good, nor point its Stop hook at this table.
+  assert.deepEqual(stored().sessions, []);
+  assert.equal(existsSync(join(stateDir, 'session', `${SESSION}.json`)), false);
 });
 
 test('while no row of the job has started, a run replaces the first commitment in place: no move, still one first entry', async () => {
