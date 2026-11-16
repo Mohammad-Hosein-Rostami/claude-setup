@@ -217,11 +217,18 @@ check_recall() {
   if [ -n "$errors" ]; then warn "recall: last checkpoint error: $errors"; else ok "recall: no checkpoint errors"; fi
 }
 
+# A project's own .claude/agents files that set maxTurns or shadow a personal agent stop agents mid-task (the owner's rule is no maxTurns).
+check_project_agents() {
+  local project="${DOCTOR_PROJECT:-$PWD}" note
+  note="$(node "$REPO/home/hooks/lib/project-agents.mjs" "$project" "$CLAUDE_DIR/agents" 2>/dev/null)"
+  if [ -n "$note" ]; then warn "$note"; else ok "project agents in $project: no maxTurns, no shadowed personal agent"; fi
+}
+
 # DOCTOR_ONLY="check_a check_b" runs just those checks (used by tests; the full run executes the repo tests).
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_tools; check_lsp; check_ui_check; check_env_names; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_tools; check_lsp; check_ui_check; check_project_agents; check_env_names; check_repo_tests
 }
 run_checks
 exit "$BAD"

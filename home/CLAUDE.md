@@ -15,7 +15,7 @@ Setup modes: `normal`, `medium` (default), `high`, `extra-high`, `ultra-high`; s
 - Report sizes (`≤ N lines`) size the summary, not the work. When the detail matters, write it to a file and return
   the path.
 - At a usage limit: read the reset time from the message, tell the owner that time, and schedule ONE wake a few minutes after it. Never retry before the reset. Subscription only: never `/fast`, `/code-review ultra` or credits.
-- Work with a `STATUS.md`: every owner request and every owner correction becomes a `## Work items` row (`id | item | size S/M/L | started | done | evidence`) before work on it starts (a correction's item starts `rework:`; never clear a done cell). Review, fixes from a review, recheck and landing rows start `close:`; before the first hand-over they may be left to the tool's closing phase, after it all remaining work is rows, reviews included; never fold them into a build row. When you report the job done to the owner, add a `deliver:` row with only its done time. Set started and done when they happen, from the clock (`date -u +%Y-%m-%dT%H:%MZ`), never from memory. Every estimate you give is the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` pasted as-is with its Excludes and After lines, never a number or clock time of your own; re-run it whenever rows change; if it refuses, give its reason and its What to do.
+- Work with a `STATUS.md`: every owner request and every owner correction becomes a `## Work items` row (`id | item | size S/M/L | started | done | evidence`) before work on it starts (a correction's item starts `rework:`; never clear a done cell). Review, fixes from a review, recheck and landing rows start `close:`; before the first hand-over they may be left to the tool's closing phase, after it all remaining work is rows, reviews included; never fold them into a build row. When you report the job done to the owner, add a `deliver:` row with only its done time. Set started and done when they happen, from the clock (`date -u +%Y-%m-%dT%H:%MZ`), never from memory; `node ~/.claude/tools/status/status.mjs add|done|rule|decision` does the row edits. Every estimate you give is the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` pasted as-is with its Excludes and After lines, never a number or clock time of your own; re-run it whenever rows change; if it refuses, give its reason and its What to do.
 
 ## Quality gates (every mode)
 
@@ -77,7 +77,7 @@ global setup combines with it.
   real-app check.
 - Owner decisions (scope, money, irreversible, credentials, a product fact the repo lacks such as length, timer, role, copy, brand name or design system vs local, real trade-offs): ask with AskUserQuestion the moment they
   come up while other work keeps running (see `ask-owner`). Technical choices: pick the default, say so in one line.
-- Final answers: what changed and what was not run. No recap of the process.
+- Final answers: what changed and what was not run. No recap of the process. A command the owner must run is given with the machine (MacBook, PC or server) and the folder it runs in.
 
 ## Working method (quality)
 

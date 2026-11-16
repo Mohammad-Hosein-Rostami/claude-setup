@@ -17,3 +17,6 @@ Return:
   context; collapse repeats ("x12 same error"). Cap at 30 lines total.
 - Never paste full logs. If the command could not run (missing tool, bad path), say why in
   one line.
+
+Run each command once and report. Never start a background loop, watcher, poller or dev server, and never re-run a command
+until it passes: a command that needs one is the caller's to start, say so in one line.
