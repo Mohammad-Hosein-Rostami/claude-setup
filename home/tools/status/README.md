@@ -13,6 +13,11 @@ Run: `node ~/.claude/tools/status/status.mjs [--file STATUS.md] <command>`
 | `decision "<text>"` | Dated bullet at the end of `## Owner decisions`. |
 
 A missing section is created. The table may have outer pipes (`| a | b |`) or none (`a | b`); a new row copies the style of the header.
-Exit 0 done, 1 refused (reason on stderr), 2 usage. `--now <ISO instant>` replaces the clock (tests).
+Exit 0 done, 1 refused (reason on stderr), 2 usage. `--file` goes before the command; the clock is always the system's (no flag
+back-dates a row). An id is one word of letters, digits and `_ . : -` (`7`, `close:5`, `rework:12`).
+
+Parallel runs are safe: each edit takes a lock file (`STATUS.lock` next to the file, gone after the edit; one left by a killed run is
+removed after 0.5 s) and writes a new temp file renamed over the old one. A run that waits over a second for the lock is refused with
+exit 1: run it again. A `STATUS.md` that is a link or not a regular file is refused.
 
 Not covered: `deliver:` rows (edit by hand: only its done time), changing a row's size or item, deleting a row.
