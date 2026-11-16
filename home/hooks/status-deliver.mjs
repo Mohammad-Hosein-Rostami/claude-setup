@@ -5,7 +5,7 @@
 // Invariants: never blocks a stop and never prints a decision: stdout stays empty, exit is always 0, a refusal or error is one
 // stderr line. deliver --auto itself writes only when no work row is open and one was done after the last hand-over. The hand-over
 // goes to the STATUS.md this session last edited with status.mjs, and only when it is inside the Stop input's cwd or
-// CLAUDE_PROJECT_DIR (both resolved with realpath; outside both: exit 0, no stderr line). That narrows a wrong target, it does not
+// CLAUDE_PROJECT_DIR (each side resolved with realpathSync.native, the case on disk; outside both: exit 0, no stderr line). That narrows a wrong target, it does not
 // rule one out: a subagent shares the session id, so its status.mjs edit moves the link, and a cwd or project dir high up (such
 // as ~) holds every project below it.
 // Safety (the hook edits a file named in a state file): the stdin JSON is read up to MAX_INPUT_BYTES; the linked path must be
@@ -38,16 +38,22 @@ function unsafeReason(path) {
   return null;
 }
 
-/** True when folder (a real path) is root or below it, root given as any path that resolves (realpath); false for a bad root. */
+/**
+ * True when folder is root or below it, both resolved with realpathSync.native: it returns the case stored on disk, while the JS
+ * realpath keeps the typed case, so on a case-insensitive disk (macOS, Windows) a cwd typed in another case still matches.
+ * False for a root that is not a string or does not resolve.
+ */
 function isWithin(folder, root) {
   if (typeof root !== 'string' || root === '') return false;
   let real;
+  let realFolder;
   try {
-    real = realpathSync(root);
+    real = realpathSync.native(root);
+    realFolder = realpathSync.native(folder);
   } catch {
     return false; // a cwd or project dir that does not resolve holds nothing
   }
-  return folder === real || folder.startsWith(real.endsWith(sep) ? real : `${real}${sep}`);
+  return realFolder === real || realFolder.startsWith(real.endsWith(sep) ? real : `${real}${sep}`);
 }
 
 /**

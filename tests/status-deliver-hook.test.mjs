@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -199,4 +199,16 @@ test('the hand-over goes to the STATUS.md last edited with status.mjs, also when
   assert.equal(outcome.code, 0, outcome.message);
   assert.match(last.read(), DELIVER_ROW);
   assert.doesNotMatch(first.read(), /deliver:/);
+});
+
+// Audit of 75af2e9 (m3): on a case-insensitive disk (macOS, Windows) Node's JS realpath keeps the typed case, so a cwd typed in
+// another case did not hold the STATUS.md and the hand-over was silently skipped. Both sides are compared as realpathSync.native.
+test('a cwd typed in another case still holds the STATUS.md on a case-insensitive disk', async (t) => {
+  const stateDir = await tempDir('deliver-state-');
+  const { cwd, read } = await linkedProject(ALL_DONE, stateDir);
+  const otherCase = cwd.toUpperCase() === cwd ? cwd.toLowerCase() : cwd.toUpperCase();
+  if (!existsSync(join(otherCase, 'STATUS.md'))) return t.skip('this disk is case-sensitive');
+  const outcome = deliverAtStop({ session_id: SESSION, cwd: otherCase }, { stateDir, now: NOW });
+  assert.equal(outcome.code, 0, outcome.message);
+  assert.match(read(), DELIVER_ROW);
 });
