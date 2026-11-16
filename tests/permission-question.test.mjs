@@ -1,6 +1,7 @@
 // Tests for AskUserQuestion in home/hooks/permission-timed-allow.mjs: one timed dialog per question call; no answer in 30 s
 // (CLAUDE_PERMISSION_TIMEOUT_S) or "Use recommended" answers every question with its "(Recommended)" option, else its first
-// option; "Answer in terminal", a failed dialog or no GUI print nothing, so Claude Code's own question UI appears.
+// option, and only a timeout adds a note per answer saying nobody chose it (UNCONFIRMED); "Answer in terminal", a failed
+// dialog or no GUI print nothing, so Claude Code's own question UI appears.
 // The dialog is injected (permissionReply's third argument); no test opens a real dialog.
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
@@ -45,16 +46,33 @@ const decisionOf = (stdout) => {
 };
 const WATCHER = question('Where should the watcher run?', ['PC watcher', 'Mac watcher (Recommended)', 'None']);
 
-test('no answer in 30 s or "Use recommended": the option marked (Recommended) is taken, the questions echoed back', () => {
-  for (const outcome of ['timeout', 'allow']) {
-    const { answer, calls } = fakeAnswer('allow', outcome);
-    const decision = decisionOf(permissionReply(askInput([WATCHER]), privateEnv(), answer));
-    assert.deepEqual(decision, { behavior: 'allow', updatedInput: { questions: [WATCHER], answers: { 'Where should the watcher run?': 'Mac watcher (Recommended)' } } });
-    assert.equal(calls.length, 1, 'one dialog');
-    assert.equal(calls[0].timeoutS, 30);
-    assert.deepEqual(calls[0].buttons, { accept: 'Use recommended', decline: 'Answer in terminal' });
-    assert.deepEqual(calls[0].details, [{ label: 'Where should', value: 'Where should the watcher run? -> Mac watcher (Recommended)' }]);
-  }
+const TIMEOUT_NOTE = 'No answer in 30 s: this option was taken by default, not chosen by the owner (UNCONFIRMED)';
+
+test('"Use recommended": the option marked (Recommended) is taken, the questions echoed back, no note added', () => {
+  const { answer, calls } = fakeAnswer('allow', 'allow');
+  const decision = decisionOf(permissionReply(askInput([WATCHER]), privateEnv(), answer));
+  assert.deepEqual(decision, { behavior: 'allow', updatedInput: { questions: [WATCHER], answers: { 'Where should the watcher run?': 'Mac watcher (Recommended)' } } });
+  assert.equal(calls.length, 1, 'one dialog');
+  assert.equal(calls[0].timeoutS, 30);
+  assert.deepEqual(calls[0].buttons, { accept: 'Use recommended', decline: 'Answer in terminal' });
+  assert.deepEqual(calls[0].details, [
+    { label: 'Question 1', value: '[Where should] Where should the watcher run?' },
+    { label: 'Answer 1', value: 'Mac watcher (Recommended)', keepStart: true },
+  ]);
+});
+
+test('no answer in 30 s: the same option is taken, but each answer carries a note that nobody chose it (UNCONFIRMED)', () => {
+  const decision = decisionOf(permissionReply(askInput([WATCHER]), privateEnv(), fakeAnswer('allow', 'timeout').answer));
+  assert.deepEqual(decision.updatedInput.answers, { 'Where should the watcher run?': 'Mac watcher (Recommended)' });
+  assert.deepEqual(decision.updatedInput.annotations, { 'Where should the watcher run?': { notes: TIMEOUT_NOTE } });
+});
+
+test('no answer: the note joins annotations already in the input and names the wait that passed', () => {
+  const input = askInput([WATCHER, question('Ship it?', ['No', 'Yes (Recommended)'])]);
+  input.tool_input.annotations = { 'Ship it?': { preview: 'diff' } };
+  const decision = decisionOf(permissionReply(input, privateEnv({ CLAUDE_PERMISSION_TIMEOUT_S: '45' }), fakeAnswer('allow', 'timeout').answer));
+  const note = TIMEOUT_NOTE.replace('30 s', '45 s');
+  assert.deepEqual(decision.updatedInput.annotations, { 'Where should the watcher run?': { notes: note }, 'Ship it?': { preview: 'diff', notes: note } });
 });
 
 test('no option marked (Recommended): the first option is taken', () => {
@@ -70,8 +88,9 @@ test('several questions: one dialog lists each, each gets its own answer; CLAUDE
   assert.deepEqual(decision.updatedInput.answers, { 'Where should the watcher run?': 'Mac watcher (Recommended)', 'Which format?': 'Summary', 'Ship it?': 'Yes (Recommended)' });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].timeoutS, 12);
-  assert.deepEqual(calls[0].details.map((line) => line.value), [
-    'Where should the watcher run? -> Mac watcher (Recommended)', 'Which format? -> Summary', 'Ship it? -> Yes (Recommended)',
+  assert.deepEqual(calls[0].details.map((line) => `${line.label}: ${line.value}`), [
+    'Question 1: [Where should] Where should the watcher run?', 'Answer 1: Mac watcher (Recommended)',
+    'Question 2: [Which format] Which format?', 'Answer 2: Summary', 'Question 3: [Ship it?] Ship it?', 'Answer 3: Yes (Recommended)',
   ]);
 });
 

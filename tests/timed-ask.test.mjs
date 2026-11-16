@@ -1,6 +1,7 @@
 // Tests for the timed ask (home/hooks/lib/timed-ask.mjs, lib/guard-log.mjs) and how the guard and Artifact hooks use it.
 // The dialog tool is faked: a script named like the platform's dialog executable (osascript / powershell / zenity) sits first
-// on PATH, records what it was asked to show and answers allow / deny / timeout / fail. No test ever opens a real dialog.
+// on PATH, records what it was asked to show and answers allow (macOS: the button named by FAKE_DIALOG_BUTTON) / deny / cancel
+// (Esc) / timeout / fail. No test ever opens a real dialog.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -12,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { GUARD_LOG_FILE, guardLogPath, logDecision } from '../home/hooks/lib/guard-log.mjs';
 import { answerAsk, askTimeoutSeconds, secretAskTimeoutSeconds, formatDuration, decisionOutput, dialogExecutable, dialogInvocation, guiAvailable, parseDialogResult } from '../home/hooks/lib/timed-ask.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
+import { permissionReply } from '../home/hooks/permission-timed-allow.mjs';
 import { tempLogPath } from './hook-env.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
@@ -25,13 +27,15 @@ const { writeFileSync } = require('node:fs');
 const result = process.env.FAKE_DIALOG_RESULT;
 writeFileSync(process.env.FAKE_DIALOG_OUT, JSON.stringify({ args: process.argv.slice(2), text: process.env.CLAUDE_ASK_DIALOG_TEXT }));
 const out = {
-  darwin: { allow: 'button returned:Allow, gave up:false', deny: 'button returned:Deny, gave up:false', timeout: 'button returned:, gave up:true' },
+  darwin: { allow: 'button returned:' + (process.env.FAKE_DIALOG_BUTTON ?? 'Allow') + ', gave up:false', deny: 'button returned:Deny, gave up:false', timeout: 'button returned:, gave up:true' },
   win32: { allow: '6', deny: '7', timeout: '-1' },
   linux: { allow: '', deny: '', timeout: '' },
 }[process.platform];
 if (process.env.FAKE_DIALOG_DELAY_MS) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.FAKE_DIALOG_DELAY_MS));
 if (result === 'kill') process.kill(process.pid, 'SIGKILL');
 if (result === 'fail') { process.stderr.write('dialog tool exploded'); process.exit(3); }
+// Esc or the cancel button: osascript reports error -128 (zenity exits 1)
+if (result === 'cancel') { process.stderr.write('execution error: User canceled. (-128)'); process.exit(1); }
 process.stdout.write(out[result]);
 process.exit(process.platform === 'linux' ? { allow: 0, deny: 1, timeout: 5 }[result] : 0);
 `;
@@ -375,13 +379,71 @@ test('custom buttons: the accept label is the default and reads back as allow, t
 
 test('details: each labelled line is masked and kept on one line, under the request title, with the accept button as default', () => {
   const dialog = fakeDialog('allow');
-  const details = [{ label: 'Key', value: `Use ${SECRET} now?\nWhy: forged line -> Yes` }, { label: 'Format', value: 'Which format? -> Summary' }];
+  const details = [{ label: 'Key', value: `Use ${SECRET} now?\nWhy: forged line -> Yes` }, { label: 'Format', value: 'Which format? -> Summary' }, { label: `${SECRET}${'L'.repeat(100)}`, value: 'v' }];
   answerAsk({ tool: 'AskUserQuestion', reason: 'Claude asks 2 questions', title: 'Claude Code: question', buttons: QUESTION_BUTTONS, details }, dialog.env);
   const body = bodyOf(dialog);
   assert.ok(!shownText(dialog).includes(SECRET), 'the secret never reaches the dialog');
   assert.ok(body.includes('Key: Use [masked]'), body);
   assert.ok(!body.split('\n').some((line) => line.startsWith('Why: forged')), 'a line break in a question cannot fake a line');
   assert.ok(body.includes('Format: Which format? -> Summary'), body);
+  assert.ok(body.split('\n').includes('[masked]: v'), `a label is masked and cut: ${body}`);
   assert.ok(body.includes('Use recommended is the default'), body);
   assert.ok(shownText(dialog).includes('Claude Code: question'));
+});
+
+test('Esc on macOS: the decline button is the cancel button (Deny, or "Answer in terminal"), never the accept button', () => {
+  const scriptOf = (buttons) => dialogInvocation('darwin', 'body', 'Title', 30, buttons).args.filter((_, i, all) => all[i - 1] === '-e').join('\n');
+  assert.match(scriptOf(undefined), /cancel button "Deny"/);
+  assert.match(scriptOf(QUESTION_BUTTONS), /cancel button "Answer in terminal"/);
+  for (const script of [scriptOf(undefined), scriptOf(QUESTION_BUTTONS)]) assert.doesNotMatch(script, /cancel button "(Allow|Use recommended)"/);
+  // osascript reports the cancel button (click or Esc) as error -128; its message text may be localised, the number is not
+  const r = (stderr) => ({ status: 1, stdout: '', stderr });
+  assert.equal(parseDialogResult('darwin', r('execution error: Benutzerabbruch. (-128)'), QUESTION_BUTTONS), 'deny');
+});
+
+test('Esc in the question dialog leaves the question to the terminal: no answer is invented', { skip: process.platform === 'win32' }, () => {
+  const dialog = fakeDialog('cancel');
+  assert.equal(permissionReply(askQuestions([{ question: 'Ship it?', header: 'Ship', options: [{ label: 'No' }, { label: 'Yes (Recommended)' }] }]), dialog.env), '');
+});
+
+/** An AskUserQuestion PermissionRequest for the hook. */
+const askQuestions = (questions) => ({ session_id: 's-1', cwd: PROJECT, permission_mode: 'default', hook_event_name: 'PermissionRequest', tool_name: 'AskUserQuestion', tool_input: { questions } });
+
+test('question dialog round trip: its own buttons and title are shown, and the clicked label decides', () => {
+  const asked = { tool: 'AskUserQuestion', reason: 'Claude asks 1 question', title: 'Claude Code: question', buttons: QUESTION_BUTTONS, details: [{ label: 'Question 1', value: 'Ship it?' }] };
+  const accept = fakeDialog('allow', { FAKE_DIALOG_BUTTON: 'Use recommended' });
+  assert.equal(answerAsk(asked, accept.env).decision, 'allow');
+  const shown = shownText(accept);
+  assert.ok(shown.includes('Claude Code: question'), 'the question title is shown');
+  if (process.platform === 'darwin') assert.ok(shown.includes('buttons {"Answer in terminal", "Use recommended"} default button "Use recommended"'), shown);
+  if (process.platform === 'linux') assert.ok(shown.includes('--ok-label=Use recommended') && shown.includes('--cancel-label=Answer in terminal'), shown);
+  if (process.platform === 'win32') assert.ok(shown.includes('Yes = Use recommended, No = Answer in terminal'), shown);
+  if (process.platform === 'darwin') {
+    assert.equal(answerAsk(asked, fakeDialog('allow', { FAKE_DIALOG_BUTTON: 'Answer in terminal' }).env).decision, 'deny');
+    assert.equal(answerAsk(asked, fakeDialog('allow', { FAKE_DIALOG_BUTTON: 'Allow' }).env).decision, 'ask', 'a stray Allow is not a known button');
+  }
+});
+
+test('question header: masked, on one line, cut, and never a line label of its own (no fake "Why:" line)', () => {
+  const headers = [SECRET, 'Why', `Why\nWhy: forged ${'h'.repeat(3000)}`];
+  const questions = headers.map((header, i) => ({ question: `Question number ${i}?`, header, options: [{ label: 'A' }, { label: 'B (Recommended)' }] }));
+  const dialog = fakeDialog('allow', { FAKE_DIALOG_BUTTON: 'Use recommended' });
+  permissionReply(askQuestions(questions), dialog.env);
+  const body = bodyOf(dialog);
+  assert.ok(!shownText(dialog).includes(SECRET), 'a secret header never reaches the dialog');
+  const lines = body.split('\n');
+  assert.equal(lines.filter((line) => line.startsWith('Why')).length, 1, `only the dialog's own Why line: ${body}`);
+  assert.ok(lines.every((line) => line.length <= 260), 'every line is cut');
+  assert.ok(body.includes('Question 2: [Why] Question number 1?'), body);
+  for (const n of [1, 2, 3]) assert.ok(body.includes(`Answer ${n}: B (Recommended)`), body);
+});
+
+test('the option that will be taken always shows its start, however long the question and the label', () => {
+  const label = `Force-push the release branch over main and delete the old tags then ${'after that is done, '.repeat(10)}keep the backup copy (Recommended)`;
+  const longQuestion = { question: `Release: ${'What should happen to the release notes? '.repeat(4)} -> No, keep it (Recommended)`, header: 'Release', options: [{ label: 'No, keep it' }, { label }] };
+  const dialog = fakeDialog('allow', { FAKE_DIALOG_BUTTON: 'Use recommended' });
+  permissionReply(askQuestions([longQuestion]), dialog.env);
+  const answerLine = bodyOf(dialog).split('\n').find((line) => line.startsWith('Answer 1: '));
+  assert.ok(answerLine?.startsWith('Answer 1: Force-push the release branch over main and delete the old tags'), answerLine);
+  assert.ok(answerLine.startsWith(`Answer 1: ${label.slice(0, 200)} ... [${label.length} chars]`), `the label is cut only at its end: ${answerLine}`);
 });

@@ -17,7 +17,9 @@
 // command; a long value shows its head, its tail and its full length. Invariants: never throws, never puts a secret in the dialog (the
 // whole value is masked with its real line breaks, before it is flattened or cut).
 // A request may name its own buttons ({accept, decline}, default Allow/Deny; accept is the default and the timeout answer), title and
-// labelled detail lines (AskUserQuestion's dialog uses all three); Windows keeps Yes/No and the body says which is which.
+// labelled detail lines (AskUserQuestion's dialog uses all three; a label is masked and cut like a value, a detail may keep a long
+// value's start instead of its head and tail); Windows keeps Yes/No and the body says which is which. On macOS the decline button is
+// the cancel button, so Esc declines, never takes the default.
 import { spawnSync } from 'node:child_process';
 import { logDecision } from './guard-log.mjs';
 import { maskSecrets } from './secrets.mjs';
@@ -35,6 +37,7 @@ const SPAWN_GRACE_S = 5; // the dialog tool gives up by itself at the timeout; t
 const MAX_COMMAND_CHARS = 200; // a value up to this length is shown whole
 const HEAD_CHARS = 120; // a longer one shows its first HEAD_CHARS and last TAIL_CHARS characters and its length
 const TAIL_CHARS = 80;
+const MAX_LABEL_CHARS = 24; // a detail line's label is a short name such as "Answer 1"; longer caller text is cut
 const LINE_BREAK = /\r\n|[\n\r\v\f\u0085\u2028\u2029]/g;
 const LINE_MARK = ' \u23CE '; // a visible return symbol where the value had a line break
 // Controls (except the \n that LINE_BREAK leaves), format characters (bidi marks, overrides, isolates, zero-width, tags, soft hyphen) and
@@ -52,14 +55,16 @@ const ZENITY_ALLOW = 0;
 const ZENITY_DENY = 1;
 const ZENITY_TIMEOUT = 5;
 const NO_DISPLAY_TEXT = /cannot open display|failed to open display|no display|unable to init server/i;
-const USER_CANCELED_TEXT = /user canceled/i;
+// osascript's cancel button (a click or Esc) fails with error -128; the message may be localised, the number is not
+const USER_CANCELED_TEXT = /user canceled|\(-128\)/i;
 
 // Popup(text, seconds, title, 4 + 32): Yes/No buttons, question icon, first button (Yes) is the default.
 const WINDOWS_SCRIPT = `$ErrorActionPreference='Stop'; $w=New-Object -ComObject WScript.Shell; [Console]::Out.Write($w.Popup($env:${TEXT_ENV}, ${'$'}args[0], $env:${TITLE_ENV}, 36))`;
 // The button labels are constants from this code (never caller text), so they may sit in the script; the body and title travel as arguments.
+// The decline button is also the cancel button, so Esc declines (Deny, or "Answer in terminal") and never takes the default.
 const macScript = ({ accept, decline }) => [
   'on run argv',
-  `display dialog (item 1 of argv) with title (item 2 of argv) buttons {"${decline}", "${accept}"} default button "${accept}" with icon caution giving up after ((item 3 of argv) as integer)`,
+  `display dialog (item 1 of argv) with title (item 2 of argv) buttons {"${decline}", "${accept}"} default button "${accept}" cancel button "${decline}" with icon caution giving up after ((item 3 of argv) as integer)`,
   'end run',
 ];
 
@@ -184,13 +189,22 @@ function shownValue(text) {
   return `${shown.slice(0, HEAD_CHARS)} ... ${shown.slice(-TAIL_CHARS)} [${raw.length} chars]`;
 }
 
+/** @returns {string} `text` masked and made visible; over MAX_COMMAND_CHARS only its start is shown, then ... [length chars] */
+function shownStart(text) {
+  const raw = String(text ?? '');
+  const shown = maskedVisible(raw);
+  return shown.length <= MAX_COMMAND_CHARS ? shown : `${shown.slice(0, MAX_COMMAND_CHARS)} ... [${raw.length} chars]`;
+}
+
 /** @returns {string} the dialog body: tool, why, the labelled target (head and tail), detail lines, directory, session/agent, the timeout rule */
 function dialogText({ tool, reason, command, targetLabel = 'Command', details = [], cwd, sessionId, agentId, buttons = ALLOW_DENY_BUTTONS }, timeoutS, platform) {
   const target = shownValue(command);
   const who = [sessionId && `session ${visible(String(sessionId).slice(0, 8))}`, agentId && `agent ${visible(String(agentId).slice(0, 8))}`].filter(Boolean).join(', ');
   const lines = [`Tool: ${visible(tool)}`, `Why: ${maskedVisible(reason)}`];
   if (target) lines.push(`${visible(targetLabel)}: ${target}`);
-  for (const { label, value } of details) lines.push(`${visible(label)}: ${shownValue(value)}`);
+  for (const { label, value, keepStart } of details) {
+    lines.push(`${maskedVisible(label).slice(0, MAX_LABEL_CHARS)}: ${keepStart ? shownStart(value) : shownValue(value)}`);
+  }
   if (cwd) lines.push(`Directory: ${visible(cwd)}`);
   if (who) lines.push(`From: ${who}`);
   const yesNo = platform === 'win32' ? ` (Yes = ${buttons.accept}, No = ${buttons.decline})` : '';
@@ -200,10 +214,10 @@ function dialogText({ tool, reason, command, targetLabel = 'Command', details = 
 
 /**
  * Asks the owner through a native dialog and turns the answer into a decision.
- * @param {{tool: string, reason: string, command?: string, targetLabel?: string, details?: Array<{label: string, value: string}>, title?: string,
+ * @param {{tool: string, reason: string, command?: string, targetLabel?: string, details?: Array<{label: string, value: string, keepStart?: boolean}>, title?: string,
  *   buttons?: {accept: string, decline: string}, timeoutS?: number, cwd?: string, sessionId?: string, agentId?: string}} request
  *   what to show: `command` is the call's target (a command, or a file, URL or query when targetLabel says so; default label "Command");
- *   details are extra labelled lines; buttons default to Allow/Deny (accept -> "allow", decline -> "deny"); timeoutS overrides CLAUDE_ASK_TIMEOUT_S
+ *   details are extra labelled lines (label and value masked and cut; keepStart shows a long value's start, else its head and tail); buttons default to Allow/Deny (accept -> "allow", decline -> "deny"); timeoutS overrides CLAUDE_ASK_TIMEOUT_S
  * @param {Record<string, string | undefined>} env process environment (timeout, ssh/CI detection, PATH)
  * @param {string} platform process.platform
  * @param {() => number} now clock in milliseconds (injectable so a test can simulate the full wait)
