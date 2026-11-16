@@ -38,7 +38,7 @@ Rules:
 - Reply in the user's language (Persian too).
 - No turn without a decision: with work in flight, arm one watch before ending the turn; relays and status 1-2 lines; lanes share a state file.
 - Ops to agents: test/lint/build, ssh/git, logs to `runner`; multi-file edits `implementer`; delegate past ~15 Bash calls.
-- Land each lane the moment its checks pass (rebase, ff-only from the base folder), prune at once; never update-ref; the base folder holds no edits.
+- Land each lane the moment its checks and required review/audit pass (rebase, ff-only from the base folder), prune at once; never update-ref; the base folder holds no edits.
 - Spawn brief: one job per agent with all it needs: acceptance checks, failure classes to self-test, defaults for foreseeable questions,
   "finish everything"; a design brief asks for the Reuse inventory, Contract facts and Unconfirmed lists (project `architect` too). Agents return ≤ 300 words, detail in a file; a worker unfinished at ~120 tool calls or the
   2nd compaction returns a status; continue them with SendMessage.
