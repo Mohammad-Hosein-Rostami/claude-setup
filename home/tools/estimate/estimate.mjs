@@ -13,11 +13,16 @@
 // Exit codes: 0 finish, all done or handed over printed; 2 usage or table problem (the message names the line; nothing that looks
 // like an estimate is printed); 3 refused (`No finish time:` and `What to do:` on stderr, never a clock time).
 // Invariants: the logic lives in lib/ (from-files.mjs estimateFile, shared with the status line); this file parses arguments and
-// prints. A store that cannot be updated records nothing and says so on stderr.
+// prints. A store that cannot be updated records nothing and says so on stderr. A recorded run at the real clock also writes the
+// status line's cache entry from its result (lib/segment-cache.mjs), so the CLI and the status line show the same time.
+import { statSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { isSessionId } from '../../hooks/lib/session-store.mjs';
 import { UsageError, estimateFile } from './lib/from-files.mjs';
 import { formatEstimate, formatRefusal } from './lib/report.mjs';
+import { cacheDir, writeEntry } from './lib/segment-cache.mjs';
+import { resultSegment } from './lib/segment-text.mjs';
 import { stateDir } from './lib/table-store.mjs';
 
 const EXIT_USAGE = 2;
@@ -40,9 +45,32 @@ function readOptions(argv) {
   return { path: positionals[0], options: { now: values.now, stateDir: store, projectsDir: values.projects, sessionId, record: store !== null } };
 }
 
+/**
+ * Stores this run's segment in the status line's cache, as statusline-cache.mjs would, so a commitment the CLI made or moved is what
+ * the status line shows at once (else the two could differ until the next refresh, up to RECOMPUTE_AFTER_MS). A failed write only
+ * leaves the old entry, which the next refresh replaces.
+ */
+function storeSegment(statusPath, file, result, startedAt) {
+  const { kind, text, highMs } = resultSegment(result);
+  writeEntry(cacheDir(), statusPath, { path: statusPath, kind, text, highMs, mtimeMs: file.mtimeMs, size: file.size, computedAt: Date.now(), refreshStartedAt: startedAt });
+}
+
+/** The file's stat, or null when it cannot be read: estimateFile then reports the file as a usage error (exit 2). */
+function statOrNull(path) {
+  try {
+    return statSync(path);
+  } catch {
+    return null; // e.g. missing or no permission: the estimate's own read names the problem
+  }
+}
+
 function main(argv) {
   const { path, options } = readOptions(argv);
+  const startedAt = Date.now();
+  const file = statOrNull(path); // before the estimate, as the refresh does: an edit meanwhile reads as a change
   const { result, inputs } = estimateFile(path, Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)));
+  // Only a recorded run at the real clock: a --now run describes another instant.
+  if (inputs.recorded && options.now === undefined && file?.isFile()) storeSegment(resolve(path), file, result, startedAt);
   // Not only a busy lock: an unusable or over-cap store file records nothing too (table-store names an over-cap file on its own line).
   if (inputs.busy) process.stderr.write('estimate: this run recorded nothing (the store was busy or a store file could not be used)\n');
   if (result.state === 'refused') {

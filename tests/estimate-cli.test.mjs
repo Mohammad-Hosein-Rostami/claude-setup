@@ -4,11 +4,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readEntry } from '../home/tools/estimate/lib/segment-cache.mjs';
 import { tableId } from '../home/tools/estimate/lib/table-store.mjs';
 import { FIRST_ROW_LINE, SESSION, iso, plainDoc, row, statusDoc, writeTranscript } from './estimate-tables.mjs';
 
@@ -79,6 +80,18 @@ test('a table file over the size cap: the estimate still prints, stderr names th
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /^Finish: /);
   assert.equal(result.stderr, `estimate: ${file} is over 16 MiB; it is kept as it is and not used\nestimate: this run recorded nothing (the store was busy or a store file could not be used)\n`);
+});
+
+test('a recorded CLI run writes the status-line cache entry from its own result, so the two never show different times', async () => {
+  const { dir, status, run, projects } = await workdir(statusDoc(OPEN_ROWS));
+  const result = run(status, ...projects); // the real clock and the default store under the temp HOME
+  assert.equal(result.status, 0, result.stderr);
+  const entry = readEntry(join(dir, 'home', '.claude', 'state', 'estimate-segment'), status);
+  assert.equal(entry?.kind, 'finish');
+  const clock = result.stdout.match(/^Finish: \w{3} \d+ \w{3} (\d\d:\d\d) /)[1];
+  assert.match(entry.text, new RegExp(`^done by (\\w{3} )?${clock}$`));
+  const file = statSync(status);
+  assert.deepEqual([entry.mtimeMs, entry.size], [file.mtimeMs, file.size]);
 });
 
 test('refusals exit 3 on stderr with No finish time and What to do, never a clock time', async () => {

@@ -100,7 +100,9 @@ Check: row b12 (M) has taken 3 h 10 of work, longer than every finished M row (2
 (`~/.claude/state/estimate-segment/`); when it is missing, no longer matches the file or is 5 minutes old it starts
 `statusline-cache.mjs <STATUS.md> [<session-id>]` detached, at most once per 2 minutes per file. That script runs the CLI's
 own function (recording the commitment like a CLI run), so both show the same committed time. Neither run links the
-session to the table: only `status.mjs` edits do, so a session that only looks at a table never counts as working on it. A hand-over text is shown only while the file
+session to the table: only `status.mjs` edits do, so a session that only looks at a table never counts as working on it.
+A recorded CLI run at the real clock (no `--now`) also writes the cache entry from its own result, so a time the CLI just made
+or moved is what the status line shows next. A hand-over text is shown only while the file
 is unchanged; any other text for 15 more minutes while a refresh runs.
 
 ## Store
