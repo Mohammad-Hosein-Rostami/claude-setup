@@ -17,7 +17,9 @@ function laneAhead(dir) {
   return [lane, commit(lane, 'two.txt')];
 }
 
-const advice = (dir) => `git -C ${dir} status, then reset only after backing up real edits`;
+// never "commit them" or stash + reset --hard + pop: both re-apply the phantom staged changes and revert the landed commits
+const advice = (dir, from, to) => 'never commit or stash these staged changes (they undo landed work); sync with '
+  + `git -C ${dir} reset --soft ${from} && git -C ${dir} merge --ff-only ${to} (unstaged edits stay)`;
 
 test('main moved by update-ref from a lane worktree: the main folder is stale-checkout with the old and new tips', () => {
   const dir = makeRepo();
@@ -27,7 +29,7 @@ test('main moved by update-ref from a lane worktree: the main folder is stale-ch
   const result = check(dir);
   assert.equal(result.status, 1);
   const short = git(dir, 'rev-parse', '--short', tip);
-  assert.deepEqual(staleLines(result), [`stale-checkout ${dir} index is at ${old}, branch main moved to ${short} under it (2 commits): ${advice(dir)}`]);
+  assert.deepEqual(staleLines(result), [`stale-checkout ${dir} index is at ${old}, branch main moved to ${short} under it (2 commits): ${advice(dir, old, short)}`]);
 });
 
 test('main moved by git -C <main folder> update-ref (its own HEAD reflog follows): still stale-checkout', () => {

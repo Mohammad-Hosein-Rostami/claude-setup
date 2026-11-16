@@ -115,7 +115,9 @@ function staleCheckoutFindings(worktrees) {
     if (indexAt === undefined) return [];
     const [from, to] = [indexAt, tip].map((hash) => gitText(path, ['rev-parse', '--short', hash]));
     const behind = gitText(path, ['rev-list', '--count', `${indexAt}..${tip}`]);
-    const advice = `git -C ${path} status, then reset only after backing up real edits`;
+    // never commit or stash them: both re-apply the gap as changes and revert the landed commits
+    const advice = 'never commit or stash these staged changes (they undo landed work); sync with '
+      + `git -C ${path} reset --soft ${from} && git -C ${path} merge --ff-only ${to} (unstaged edits stay)`;
     return [item('stale-checkout', path, `index is at ${from}, branch ${branch} moved to ${to} under it (${behind} commits): ${advice}`)];
   });
 }
