@@ -50,3 +50,18 @@ test('big-context still fires for a long prompt typed by the owner', async () =>
   const typed = 'please look into the new feature for the billing export and then rewrite the settings screen so it works with the new API '.repeat(2);
   assert.match(await bigContextNote({ prompt: typed, transcriptPath: transcript, dir, sessionId: 's3' }), /\/clear or start a new session/);
 });
+
+// Audit of db40977 (S1): Claude Code 2.1.325 closes a paste as `</pasted_content id="...">` (the id of its opener, seen in the binary).
+// A cut that only knew `</pasted_content>` ran to the end of the prompt, so the owner's words after a paste routed nothing.
+test('the owner words after a pasted block with an id still route (the CLI closing tag carries the id)', () => {
+  const prompt = `Here is the log:\n<pasted_content id="ab12">${LOG}</pasted_content id="ab12">\nPlease fix this bug and make the form responsive`;
+  assert.equal(skillsForPrompt(prompt).length, 4, String(skillsForPrompt(prompt)));
+  assert.equal(gateLinesForPrompt(prompt).length > 0, true);
+});
+
+test('a block is cut only to the closing tag of its own id; another id does not close it', () => {
+  const prompt = `<pasted_content id="ab12">${LOG}</pasted_content id="zz99">make the form responsive</pasted_content id="ab12">`;
+  assert.deepEqual(skillsForPrompt(prompt), []);
+  const unclosed = `<pasted_content id="ab12">${LOG}\nmake the form responsive`;
+  assert.deepEqual(skillsForPrompt(unclosed), []);
+});
