@@ -7,7 +7,7 @@ import { CLASS_TIER, LOCK_TAG, RACE_TAG, classifyFiles, isCodeFile, isSizeable, 
 import { buildReviews } from './reviews.mjs';
 
 const TAGS = [LOCK_TAG, RACE_TAG];
-const FIX_ROUND_COMMAND = 'node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --landing';
+const FIX_ROUND_COMMAND = 'node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --lane-classes <previous-round-json> --landing';
 
 /** Union of two class lists, in display order (classes first, then tags). */
 const union = (a, b) => [...Object.keys(CLASS_TIER), ...TAGS].filter((name) => a.includes(name) || b.includes(name));

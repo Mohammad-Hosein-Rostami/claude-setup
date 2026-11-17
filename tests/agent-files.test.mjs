@@ -27,3 +27,7 @@ test('worker agents return a status after ~120 calls or the 2nd compaction', () 
 test('reviewer, security-auditor and architect cap the reply at 300 words with detail in a file', () => {
   for (const name of ['reviewer', 'security-auditor', 'architect']) assert.match(agent(name), /300 words[\s\S]*file/, name);
 });
+
+test('security-auditor final line has a race field between stress and mutants', () => {
+  assert.match(agent('security-auditor'), /stress: [^\n]*or not asked; race: <violations> over <runs> runs, or not asked; mutants: <killed>\/<n>/);
+});

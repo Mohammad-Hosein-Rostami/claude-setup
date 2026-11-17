@@ -221,3 +221,40 @@ test('a planted fake key never appears in the report', () => {
   assert.ok(result.classes.includes('security'));
   assert.ok(!JSON.stringify(result).includes(key));
 });
+
+test('a code file named like a doc (changelog.mjs, README.js) is still scanned; docs keep prose and image extensions', () => {
+  for (const path of ['tools/changelog.mjs', 'tools/README.js', 'src/license-check.mjs']) {
+    const result = report([changed(path, ['const out = execSync(cmd);'])]);
+    assert.ok(result.classes.includes('security'), path);
+    assert.ok(!result.classes.includes('docs'), path);
+  }
+  for (const path of ['CHANGELOG.md', 'LICENSE', 'LICENSE-MIT', 'README.en.md', 'docs/logo.png']) {
+    assert.deepEqual(report([changed(path, ['execSync(cmd);'])]).classes, ['docs'], path);
+  }
+});
+
+test('a call whose arguments continue on the next line is untrusted-input; a closed call with literals is not', () => {
+  for (const line of ['const file = path.join(', 'const file = path.join(__dirname,', 'const res = await fetch(', 'const res = await fetch(url,']) {
+    assert.ok(report([logicLine(line)]).classes.includes('untrusted-input'), line);
+  }
+  assert.ok(!report([logicLine("const file = path.join('a', 'b');")]).classes.includes('untrusted-input'));
+});
+
+test('dirname and fileURLToPath are trusted only around a known root, not around any value', () => {
+  for (const line of ["path.join(dirname(userPath), 'x')", "path.join(fileURLToPath(userUrl), 'x')", "path.join(dirname(dirname(userPath)), 'x')"]) {
+    assert.ok(report([logicLine(line)]).classes.includes('untrusted-input'), line);
+  }
+  for (const line of ["path.join(dirname(fileURLToPath(import.meta.url)), 'x')", "path.join(dirname(__filename), 'x')", "path.resolve(dirname(dirname(fileURLToPath(import.meta.url))), 'x')"]) {
+    assert.ok(!report([logicLine(line)]).classes.includes('untrusted-input'), line);
+  }
+});
+
+test('concurrency-lite and security in one file give the auditor the race and stress plan', () => {
+  const file = 'src/worker.mjs';
+  const result = report([changed(file, ['setTimeout(tick, 5);', 'spawnSync(cmd);'])], { newFiles: { [file]: "import { writeFileSync } from 'node:fs';\nwriteFileSync(a, b);\n" } });
+  assert.ok(result.classes.includes('concurrency-lite'));
+  const auditor = reviewBy(result, 'security-auditor', 'opus', 'max');
+  assert.deepEqual(auditor.plan.race, { runs: 200 });
+  const apart = report([changed('src/auth.mjs', ['const a = 1;']), changed(file, ['setTimeout(tick, 5);'])], { newFiles: { [file]: 'writeFileSync(a, b);\n' } });
+  assert.equal(reviewBy(apart, 'security-auditor', 'opus', 'max').plan.race, null);
+});

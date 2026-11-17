@@ -89,7 +89,7 @@ export function buildReviews(input) {
     const extra = ['size', ...CONCURRENCY_CLASSES].filter((name) => classes.has(name));
     reviews.push(make('reviewer', 'opus', 'high', `extra: ${extra.join(', ')}`, rules, { ...plan, mutation: null }, hits.filter((hit) => extra.includes(hit.class))));
   }
-  const sharesFile = Object.values(fileClasses).some((names) => names.includes('concurrency') && names.includes('security'));
+  const sharesFile = Object.values(fileClasses).some((names) => fileHas(names, ...CONCURRENCY_CLASSES) && names.includes('security'));
   const auditorPlan = { ...plan, stress: sharesFile ? plan.stress : null, race: sharesFile ? plan.race : null };
   if (hasAny(classes, AUDITOR_CLASSES) || landing) {
     reviews.push(make('security-auditor', 'opus', 'max', hasAny(classes, AUDITOR_CLASSES) ? `audit: ${AUDITOR_CLASSES.filter((name) => classes.has(name)).join(', ')}` : 'audit: landing', 'backend', auditorPlan, hits.filter((hit) => AUDITOR_CLASSES.includes(hit.class))));

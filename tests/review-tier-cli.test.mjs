@@ -41,7 +41,7 @@ test('CLI: a branch diff is classified; the report names paths and lines, the lo
   assert.match(text.stdout.split('\n')[0], /^review-tier: tier 2 \(security, logic\), 1 files, 2 changed lines, main\.\.\.HEAD$/);
   assert.match(text.stdout, /\nwhy:\n {2}security src\/run\.mjs:1\n/);
   assert.match(text.stdout, /\nrun together:\n- reviewer sonnet high, lens correctness: /);
-  assert.match(text.stdout.trimEnd().split('\n').at(-1), /^fix round: node ~\/\.claude\/tools\/review-tier\/review-tier\.mjs --delta <reviewed-sha> --landing$/);
+  assert.match(text.stdout.trimEnd().split('\n').at(-1), /^fix round: node ~\/\.claude\/tools\/review-tier\/review-tier\.mjs --delta <reviewed-sha> --lane-classes <previous-round-json> --landing$/);
   assert.ok(!(text.stdout + JSON.stringify(result) + readFileSync(log, 'utf8')).includes(key));
   const logged = JSON.parse(readFileSync(log, 'utf8').split('\n')[0]);
   assert.deepEqual(Object.keys(logged), ['ts', 'repo', 'range', 'tier', 'classes', 'files', 'changedLines', 'landing', 'added']);
@@ -129,6 +129,31 @@ test('CLI: a delta lists callers of the changed functions as required reading (f
   const result = json('--delta', reviewed);
   assert.deepEqual(result.reviews[0].requiredReading, ['src/use.mjs:1']);
   assert.match(result.reviews[0].brief, /Read first \(callers and callees\): src\/use\.mjs:1\./);
+});
+
+test('CLI: a fix inside a function body lists its callers (from the hunk header) and the definitions it calls', () => {
+  const { write, json } = lane();
+  write('src/caller.mjs', 'const out = loadRows(1);\n');
+  write('src/helper.mjs', 'export function parseRow(row) {\n  return row;\n}\n');
+  const reviewed = write('src/rows.mjs', 'export function loadRows(a) {\n  const x = 1;\n  return a + x;\n}\n');
+  write('src/rows.mjs', 'export function loadRows(a) {\n  const x = 1;\n  return parseRow(a) + x;\n}\n');
+  const reading = json('--delta', reviewed).reviews[0].requiredReading;
+  assert.ok(reading.includes('src/caller.mjs:1'), `callers: ${reading}`);
+  assert.ok(reading.includes('src/helper.mjs:1'), `callees: ${reading}`);
+});
+
+test('CLI: diff.noprefix and diff.mnemonicPrefix do not cut the paths or lose the file-level plan', () => {
+  const { dir, write, json } = lane();
+  git(dir, 'config', 'diff.noprefix', 'true');
+  write('src/worker.mjs', "import { writeFileSync } from 'node:fs';\nwriteFileSync(a, b);\nsetTimeout(tick, 5);\n");
+  const result = json();
+  assert.deepEqual(Object.keys(result.fileClasses), ['src/worker.mjs']);
+  assert.ok(result.classes.includes('concurrency-lite'));
+  git(dir, 'config', '--unset', 'diff.noprefix');
+  git(dir, 'config', 'diff.mnemonicPrefix', 'true');
+  const reviewed = write('src/other.mjs', 'const a = 1;\n');
+  write('src/other.mjs', 'const a = 2;\n');
+  assert.deepEqual(Object.keys(json('--delta', reviewed).fileClasses), ['src/other.mjs']);
 });
 
 // ---- reviewer and auditor contracts ----

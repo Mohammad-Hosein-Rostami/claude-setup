@@ -11,7 +11,7 @@ Run: `node ~/.claude/tools/review-tier/review-tier.mjs [<range>] [--landing] [--
 | -------- | ------- |
 | `<range>` | `a..b` or `a...b`. Default `<base>...HEAD`, the base being the first of main, master, develop. |
 | `--landing` | The last review before the base moves: adds the Opus max lens, the auditor at Opus max (tier 1 and up) and a mutation plan for a code diff. |
-| `--delta <sha>` | A fix round: only what changed since the reviewed sha. A sha that is no longer an ancestor (a rebased lane) lists only the lane commits whose patch the reviewed set does not hold. Callers of the changed functions (at most 20 `file:line`) go in as required reading. |
+| `--delta <sha>` | A fix round: only what changed since the reviewed sha. A sha that is no longer an ancestor (a rebased lane) lists only the lane commits whose patch the reviewed set does not hold. Callers of the changed functions (named on an added line or in the `@@` hunk header, so a fix inside a body counts) and the definitions the changed lines call (at most 20 `file:line` together) go in as required reading. |
 | `--lane-classes <file>` | The `--json` of the previous round. Each file keeps the classes (and the plan kind) it had in the lane, so a small fix to a file that was concurrency code still gets the stress plan. |
 | `--add-class <c>` | The lead raises the set: adds that class's reviews and plan. It never removes one. An unknown class is exit 2. |
 

@@ -11,8 +11,12 @@ export const MAX_READING = 20; // callers and callees listed as required reading
 const MAX_WHOLE_FILE_CHARS = 1 << 20;
 const MIN_NAME_LENGTH = 3;
 const BASE_FALLBACKS = ['main', 'master', 'develop'];
-const DIFF_FLAGS = ['-c', 'core.quotePath=false', 'diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', '-M'];
-const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+// Fixed prefixes: diff.noprefix and diff.mnemonicPrefix would change the `+++ b/path` lines parsePatch cuts.
+const PATH_PREFIXES = ['--src-prefix=a/', '--dst-prefix=b/'];
+const DIFF_FLAGS = ['-c', 'core.quotePath=false', 'diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', '-M', ...PATH_PREFIXES];
+const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$/;
+const CALL = /(?<![.\w$])([A-Za-z_$][\w$]*)\(/g;
+const NOT_A_FUNCTION = new Set(['if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'typeof', 'await', 'new', 'import', 'require', 'super']);
 const FUNCTION_DEFINITION = /\bfunction\s*\*?\s+([A-Za-z_$][\w$]*)|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>|\b(?:def|func|fn)\s+([A-Za-z_$][\w$]*)/;
 
 /** The first of main, master, develop that exists (or the requested base); a UsageError when none does. */
@@ -41,7 +45,8 @@ export function checkRange(top, range) {
 
 /**
  * Parses `git diff -U0` text into one entry per path (a path in several patches is merged).
- * @returns {{path: string, added: {line: number, text: string}[], removed: {line: number, text: string}[]}[]}
+ * `hunkHeads` holds the text after each `@@` (the enclosing function line git picked).
+ * @returns {{path: string, added: {line: number, text: string}[], removed: {line: number, text: string}[], hunkHeads: string[]}[]}
  */
 export function parsePatch(text) {
   const byPath = new Map();
@@ -49,7 +54,7 @@ export function parsePatch(text) {
   let newLine = 0;
   let inHunk = false;
   const entry = (path) => {
-    if (!byPath.has(path)) byPath.set(path, { path, added: [], removed: [] });
+    if (!byPath.has(path)) byPath.set(path, { path, added: [], removed: [], hunkHeads: [] });
     return byPath.get(path);
   };
   for (const line of text.split('\n')) {
@@ -57,7 +62,12 @@ export function parsePatch(text) {
     if (!inHunk && line.startsWith('+++ ')) { if (line !== '+++ /dev/null') current = entry(line.slice(6)); continue; }
     if (!inHunk && line.startsWith('--- ')) { if (line !== '--- /dev/null') current = entry(line.slice(6)); continue; }
     const hunk = HUNK.exec(line);
-    if (hunk !== null) { inHunk = true; newLine = Number(hunk[1]); continue; }
+    if (hunk !== null) {
+      inHunk = true;
+      newLine = Number(hunk[1]);
+      if (current !== null && hunk[2] !== '') current.hunkHeads.push(hunk[2]);
+      continue;
+    }
     if (!inHunk || current === null) continue;
     if (line.startsWith('+')) current.added.push({ line: newLine++, text: line.slice(1) });
     else if (line.startsWith('-')) current.removed.push({ line: newLine, text: line.slice(1) });
@@ -69,7 +79,7 @@ export function parsePatch(text) {
 function withHunklessFiles(top, args, files) {
   const names = gitText(top, [...DIFF_FLAGS.slice(0, 2), 'diff', '--name-only', '-M', ...args]).split('\n').filter((name) => name !== '');
   const known = new Set(files.map((file) => file.path));
-  return [...files, ...names.filter((name) => !known.has(name)).map((path) => ({ path, added: [], removed: [] }))];
+  return [...files, ...names.filter((name) => !known.has(name)).map((path) => ({ path, added: [], removed: [], hunkHeads: [] }))];
 }
 
 /** The changed files of `range` (`a..b` or `a...b`). */
@@ -86,9 +96,11 @@ export function newFileReader(top, rev) {
   };
 }
 
+const showPatch = (top, commit) => gitText(top, [...DIFF_FLAGS.slice(0, 2), 'show', '-U0', '--format=', '--no-color', '-M', ...PATH_PREFIXES, commit]);
+
 /** A fingerprint of one commit's patch (its paths and changed lines, not its line numbers, parents or message). */
 function patchKey(top, commit) {
-  const text = gitText(top, [...DIFF_FLAGS.slice(0, 2), 'show', '-U0', '--format=', '--no-color', '-M', commit]);
+  const text = showPatch(top, commit);
   const body = text.split('\n').filter((line) => /^(\+|-|diff --git)/.test(line)).join('\n');
   return createHash('sha1').update(body).digest('hex');
 }
@@ -108,34 +120,58 @@ export function readDelta(top, base, reviewedSha) {
   }
   const reviewed = new Set(commitsOf(top, `${base}..${reviewedSha}`).map((commit) => patchKey(top, commit)));
   const fresh = commitsOf(top, `${base}..HEAD`).filter((commit) => !reviewed.has(patchKey(top, commit)));
-  const text = fresh.map((commit) => gitText(top, [...DIFF_FLAGS.slice(0, 2), 'show', '-U0', '--format=', '--no-color', '-M', commit])).join('\n');
+  const text = fresh.map((commit) => showPatch(top, commit)).join('\n');
   return { range: `patches ${fresh.map((commit) => commit.slice(0, 8)).join(',') || 'none'} of ${base}..HEAD`, files: parsePatch(text) };
 }
 
-/** Function names defined on the added lines (JS arrow and function forms, def, func, fn), without duplicates. */
+const nameDefinedIn = (text) => {
+  const match = FUNCTION_DEFINITION.exec(text);
+  return match?.[1] ?? match?.[2] ?? match?.[3];
+};
+
+/** Names of the changed functions: defined on an added line, or the function a hunk sits in (its `@@` header), no duplicates. */
 export function functionNames(files) {
   const names = new Set();
   for (const file of files) {
-    for (const { text } of file.added) {
-      const match = FUNCTION_DEFINITION.exec(text);
-      const name = match?.[1] ?? match?.[2] ?? match?.[3];
+    for (const text of [...file.added.map((added) => added.text), ...file.hunkHeads]) {
+      const name = nameDefinedIn(text);
       if (name !== undefined && name.length >= MIN_NAME_LENGTH) names.add(name);
     }
   }
   return [...names];
 }
 
-/** `file:line` of other uses of the changed function names (at most MAX_READING, spread over the names). */
+/** Names called (not as a method) on the added lines that are not themselves changed here: the callees to read. */
+function calleeNames(files, changedNames) {
+  const names = new Set();
+  for (const file of files) {
+    for (const { text } of file.added) {
+      for (const [, name] of text.matchAll(CALL)) {
+        if (name.length >= MIN_NAME_LENGTH && !NOT_A_FUNCTION.has(name) && !changedNames.includes(name)) names.add(name);
+      }
+    }
+  }
+  return [...names].slice(0, MAX_READING);
+}
+
+/** `file:line` of the rows `git grep` finds for `name` (all uses, or only its definitions). */
+function placesOf(top, name, onlyDefinitions) {
+  const { stdout } = runGit(top, ['grep', '-n', '-w', '-F', '-I', '-e', name, '--']);
+  return stdout.split('\n').map((row) => /^(.+?):(\d+):(.*)$/.exec(row))
+    .filter((m) => m !== null && (!onlyDefinitions || nameDefinedIn(m[3]) === name))
+    .map((m) => `${m[1]}:${m[2]}`);
+}
+
+/**
+ * `file:line` of other uses of the changed functions (callers) and of the definitions of the functions the changed lines
+ * call (callees); at most MAX_READING, callers spread over the names, callees keeping up to half the room.
+ */
 export function requiredReadingFor(top, files) {
   const names = functionNames(files);
-  if (names.length === 0) return [];
+  const callees = calleeNames(files, names).flatMap((name) => placesOf(top, name, true));
   const changed = new Set(files.flatMap((file) => file.added.map((added) => `${file.path}:${added.line}`)));
-  const perName = Math.max(1, Math.floor(MAX_READING / names.length));
-  const reading = [];
-  for (const name of names) {
-    const { stdout } = runGit(top, ['grep', '-n', '-w', '-F', '-I', '-e', name, '--']);
-    const places = stdout.split('\n').map((row) => /^(.+?):(\d+):/.exec(row)).filter(Boolean).map((m) => `${m[1]}:${m[2]}`);
-    reading.push(...places.filter((place) => !changed.has(place)).slice(0, perName));
-  }
-  return [...new Set(reading)].slice(0, MAX_READING);
+  const calleePlaces = [...new Set(callees)].filter((place) => !changed.has(place)).slice(0, MAX_READING / 2);
+  const perName = Math.max(1, Math.floor((MAX_READING - calleePlaces.length) / Math.max(1, names.length)));
+  const callers = names.flatMap((name) => placesOf(top, name, false).filter((place) => !changed.has(place)).slice(0, perName));
+  return [...new Set([...callers, ...calleePlaces])].slice(0, MAX_READING);
 }

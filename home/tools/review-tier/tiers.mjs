@@ -21,7 +21,8 @@ export const MAX_HITS_PER_CLASS_FILE = 20; // a huge generated file must not mak
 const LOCKFILES = new Set(['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'cargo.lock', 'poetry.lock', 'go.sum']);
 const PROSE = /\.(md|mdx|txt|rst)$/;
 const BEHAVIOUR_PATH = /(^|\/)(claude|agents)\.md$|(^|\/)\.claude\/|^home\/(claude\.md|(modes|rules|agents|skills|standards|workflows)\/)/;
-const DOC_PATH = /(^|\/)(readme|changelog|license)[^/]*$|(^|\/)docs\/|\.(md|txt|png|jpg)$/;
+// README, CHANGELOG and LICENSE are docs only with a prose or image extension (or none): changelog.mjs is code.
+const DOC_PATH = /(^|\/)(readme|changelog|license)([^/]*\.(md|mdx|txt|rst|png|jpg)|[^/.]*)$|(^|\/)docs\/|\.(md|txt|png|jpg)$/;
 const TEST_PATH = /(^|\/)(tests?|__tests__)\/|\.(test|spec)\./;
 const UI_PATH = /\.(tsx|jsx|vue|svelte|css|scss)$/;
 const INFRA_PATH = /(^|\/)(dockerfile|docker-compose[^/]*|\.github\/|k8s\/|terraform\/|helm\/)|\.tf$/;
@@ -38,32 +39,43 @@ const SIZE_LINES = 400;
 const WRITE_CALL = /\b(writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream|copyFile|copyFileSync)\b|openSync\([^)]*['"][wa]/;
 // Anything that acts on the file system after a check: what makes an existsSync/stat a stat-then-act race.
 const ACT_CALL = /\b(writeFile(Sync)?|appendFile(Sync)?|copyFile(Sync)?|rm(Sync)?|rename(Sync)?|mkdir(Sync)?|open(Sync)?|unlink(Sync)?|rmdir(Sync)?)\(|\bcreateWriteStream\b/;
-const TRUSTED_ARGUMENT = /^(__dirname|__filename|import\.meta\.(dirname|filename|url)|process\.cwd\(\)|(os\.)?(homedir|tmpdir)\(\)|(fileURLToPath|dirname)\(.*\))$/;
+const TRUSTED_ARGUMENT = /^(__dirname|__filename|import\.meta\.(dirname|filename|url)|process\.cwd\(\)|(os\.)?(homedir|tmpdir)\(\))$/;
+const PATH_WRAPPER = /^(fileURLToPath|dirname)\((.*)\)$/; // trusted only around a trusted root: dirname(userPath) is not
 const LITERAL_ARGUMENT = /^(['"][^'"]*['"]|`[^`$]*`|\d+)$/;
 
-/** The text of the arguments of the first `callName(` on the line (balanced on that line, else to its end). */
+/** The text of the arguments of the first `callName(` on the line; `closed` is false when they go on to the next line. */
 function argumentsOf(line, callPattern) {
   const start = callPattern.exec(line);
   if (start === null) return null;
   const parts = [];
   let depth = 0;
   let current = '';
+  let closed = false;
   for (let i = start.index + start[0].length; i < line.length; i++) {
     const char = line[i];
-    if (char === ')' && depth === 0) break;
+    if (char === ')' && depth === 0) { closed = true; break; }
     if ('([{'.includes(char)) depth++;
     if (')]}'.includes(char)) depth--;
     if (char === ',' && depth === 0) { parts.push(current.trim()); current = ''; } else current += char;
   }
   if (current.trim() !== '') parts.push(current.trim());
-  return parts;
+  return { parts, closed };
 }
 
+/** True for a literal, or a known root (`__dirname`, `import.meta.url`, `homedir()`) alone or inside dirname(...) / fileURLToPath(...). */
+function isTrustedValue(part) {
+  let text = part;
+  for (let wrapped = PATH_WRAPPER.exec(text); wrapped !== null; wrapped = PATH_WRAPPER.exec(text)) text = wrapped[2].trim();
+  return LITERAL_ARGUMENT.test(text) || TRUSTED_ARGUMENT.test(text);
+}
+
+// A call whose arguments run on to the next line cannot be judged here, so it counts as a hit.
 const hasUntrustedArgument = (callPattern, allArguments) => (line) => {
-  const parts = argumentsOf(line, callPattern);
-  if (parts === null || parts.length === 0) return false;
-  const untrusted = (part) => !LITERAL_ARGUMENT.test(part) && !TRUSTED_ARGUMENT.test(part);
-  return allArguments ? parts.some(untrusted) : untrusted(parts[0]);
+  const call = argumentsOf(line, callPattern);
+  if (call === null) return false;
+  if (!call.closed) return true;
+  if (call.parts.length === 0) return false;
+  return allArguments ? call.parts.some((part) => !isTrustedValue(part)) : !isTrustedValue(call.parts[0]);
 };
 
 const words = (list) => new RegExp(`\\b(${list})s?\\b`, 'i');
