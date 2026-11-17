@@ -1,5 +1,5 @@
 // Behaviour of home/workflows/land.js (spec section 7 `land`): rebase-only check, suite PASS at the tip, then the ff-only land, with the
-// results the caller branches on: landed, conflict, needs-review, failed. The git-tidy and test-pass tools have their own tests; here the
+// results the caller branches on: landed, conflict, red, needs-review, failed. The git-tidy and test-pass tools have their own tests; here the
 // runner agents are scripted.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -54,6 +54,17 @@ test('a red suite returns red with the tip and the suite tail, and never lands',
   const run = await runScript(LAND, ARGS, { replies: [atTip(), rebased(), suite({ exit: 1, tail: '3 failing' })] });
   assert.deepEqual(run.result, { status: 'red', sha: 'abc1234', patchesChanged: 0, tidy: '3 failing' });
   assert.ok(!run.started.includes('close:4:land'));
+});
+
+test('a red suite names the failing test files and their first error line, from the suite step, at the rebased tip (not the reviewed one)', async () => {
+  const run = await runScript(LAND, ARGS, { replies: [atTip(), rebased({ tip: 'fed9876' }), suite({ exit: 1, tip: 'fed9876', files: ['tests/a.test.mjs', 'tests/b.test.mjs'], tail: 'not ok 1 - parses: expected 2, got 3' })] });
+  assert.equal(run.result.status, 'red');
+  assert.equal(run.result.sha, 'fed9876');
+  assert.match(run.result.tidy, /tests\/a\.test\.mjs, tests\/b\.test\.mjs/);
+  assert.match(run.result.tidy, /not ok 1 - parses: expected 2, got 3/);
+  const suitePrompt = run.calls.find((call) => /:suite$/.test(call.label)).prompt;
+  assert.match(suitePrompt, /failing test files/, 'the runner is told to report the failing files, not the last output lines');
+  assert.match(suitePrompt, /check fed9876 /, 'the suite is checked at the rebased tip');
 });
 
 test('a base that moved during the land (exit 5) goes back to the rebase check and lands on the second try', async () => {

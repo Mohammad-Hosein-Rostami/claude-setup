@@ -5,7 +5,7 @@
 //   `run --suite` from the repo's own declaration; tip: the sha the review cleared. Land refuses a branch that is not at it, so a branch the
 //   review never read cannot land.)
 // Returns: { status: 'landed'|'conflict'|'red'|'needs-review'|'failed', sha, patchesChanged, tidy: 'clean'|text } (spec section 9, LANDED).
-//   conflict: the caller sends an implementer, then a review of the delta; red: the suite failed at the rebased tip (tidy is its output tail),
+//   conflict: the caller sends an implementer, then a review of the delta; red: the suite failed at the rebased tip (tidy is the failing test files and their first error lines, else its output tail),
 //   the caller treats it like a conflict: an implementer fixes it, then a review of the delta; needs-review: the rebase changed patches, review
 //   the delta again; failed: the base folder is not ready or a runner stopped; the text says which.
 // Exit codes of git-tidy land: 0 landed clean, 1 landed with findings, 2 not ready, 3 conflict, 4 no suite PASS at the tip, 5 base moved.
@@ -62,9 +62,9 @@ while (true) {
   if (rebase.patchesChanged > 0) return { status: 'needs-review', sha: rebase.tip, patchesChanged: rebase.patchesChanged, tidy: rebase.tail }
 
   phase('Suite')
-  const suite = await runner('suite', 'Suite', `Check for a full-suite PASS at the tip: ${TEST_PASS} check ${rebase.tip} --repo ${args.repo} --suite. If it exits 0 you are done (report exit 0). Otherwise run the suite on the tip: in ${args.worktree} when its HEAD is ${rebase.tip} and it has no changes, else in a detached worktree of ${rebase.tip} that you remove afterwards: ${TEST_PASS} run --repo <that folder> --suite (no command after it: test-pass runs the repo's declared suite) and report its exit.`)
+  const suite = await runner('suite', 'Suite', `Check for a full-suite PASS at the tip: ${TEST_PASS} check ${rebase.tip} --repo ${args.repo} --suite. If it exits 0 you are done (report exit 0). Otherwise run the suite on the tip: in ${args.worktree} when its HEAD is ${rebase.tip} and it has no changes, else in a detached worktree of ${rebase.tip} that you remove afterwards: ${TEST_PASS} run --repo <that folder> --suite (no command after it: test-pass runs the repo's declared suite) and report its exit. When the suite exits non-zero, report in files the failing test files and in tail each one's first error line (for node --test, its first "not ok" line and the first error message under it): the last output lines never name the failing test.`)
   if (suite === null) return failed(rebase.tip, 'the suite runner was stopped')
-  if (suite.exit !== 0) return { status: 'red', sha: rebase.tip, patchesChanged: 0, tidy: suite.tail }
+  if (suite.exit !== 0) return { status: 'red', sha: rebase.tip, patchesChanged: 0, tidy: suite.files.length > 0 ? `${suite.files.join(', ')}: ${suite.tail}` : suite.tail }
 
   phase('Land')
   const land = await runner('land', 'Land', `In ${args.repo} run: ${TIDY} land ${args.branch} ${args.repo} --base ${args.base} --json`)
