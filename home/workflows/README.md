@@ -36,6 +36,7 @@ Args marked `?` are optional. Every script also accepts `scriptsDir` (this folde
   A runner recomputes the review set with `review-tier` every round, from the lane's worktree and with every `--add-class`; the fix agent never supplies it. A tier that did not exit 0, has no `reviews` list,
   or (landing) is empty with nothing carried over ends the run `failed`. A verifier or judge that threw ends the round `incomplete`. The result's `tip` is the reviewed sha.
 - `land` first checks that the branch is at the reviewed `tip` (else `failed`, nothing lands), runs `git-tidy land --rebase-only`, then a suite PASS at the tip, then `git-tidy land`; results `landed`, `conflict`, `needs-review`, `failed`.
+- `land` and `build` start with a disk check (`~/.claude/tools/disk-free`, README there): below 5 GB free (`DISK_FAIL_FREE_GB`), or a check that could not run, `land` returns `failed` and `build` marks every lane `failed` before any agent or git step, with the message that names the caches to clear. `WARN` (below 15 GB) does not stop them.
 - `build` runs lanes as a pipeline (implementer and, for `acceptanceTests`, a test-writer, each in a worktree), a Join runner, the `review`
   child, then a serial land queue through the `land` child, so lane A lands while lane B is still in review. A conflict or changed patches go back through `review`.
   A lane whose review is clean but whose `leadList` holds a security finding ruled not real is held (`lead-decision`), never landed. `build` is run from its script file only: its children cannot run from an inline script.

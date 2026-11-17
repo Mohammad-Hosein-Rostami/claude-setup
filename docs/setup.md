@@ -23,7 +23,7 @@ The installer links `home/*` (CLAUDE.md, rules, skills, agents, standards, hooks
 `~/.claude` (macOS/Linux/Git Bash also put `ccm` in `~/.local/bin`; keep it on PATH), builds `~/.claude/settings.json`, installs `home/tools/ui-check` dependencies (lockfile if present,
 otherwise a plain install), sets `core.hooksPath` to `.githooks`, then installs plugins. Anything replaced is moved
 to `~/.claude-backup-<stamp>/`, never deleted. Check the result with `scripts/doctor.sh`
-(`DOCTOR_PROJECT=/path/to/app scripts/doctor.sh` also checks Playwright and Chromium from that project). Its last check runs the repo tests, unless a full-suite PASS is already recorded for HEAD (`test-pass`) and the working tree is clean (`git status --porcelain` prints nothing; an edit or a new file since then runs the suite); the full output is kept in `~/.claude/logs/doctor-repo-tests.log` and a failure prints each failing test with its first error line and that path.
+(`DOCTOR_PROJECT=/path/to/app scripts/doctor.sh` also checks Playwright and Chromium from that project). It also reports free disk space (FAIL below 5 GB, WARN below 15 GB; `DISK_FAIL_FREE_GB` and `DISK_WARN_FREE_GB` move the limits) and names the caches to clear. Its last check runs the repo tests, unless a full-suite PASS is already recorded for HEAD (`test-pass`) and the working tree is clean (`git status --porcelain` prints nothing; an edit or a new file since then runs the suite); the full output is kept in `~/.claude/logs/doctor-repo-tests.log` and a failure prints each failing test with its first error line and that path.
 
 ## settings and local.json
 `settings.json` = deep merge of `settings/base.json` + `settings/<macos|linux|windows>.json` + `settings/local.json`,

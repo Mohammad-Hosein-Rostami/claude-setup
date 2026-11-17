@@ -3,6 +3,7 @@
 | Symptom | Cause and fix |
 | ------- | ------------- |
 | `doctor.sh`: `link X` FAIL | `~/.claude/X` is not the repo symlink. Run `scripts/install.sh`; the old item is in `~/.claude-backup-<stamp>/`. |
+| `doctor.sh`: `FAIL disk free ...` (or a workflow or build refused with it) | Less than 5 GB free (`DISK_FAIL_FREE_GB`; `WARN` below 15 GB, `DISK_WARN_FREE_GB`). Clear the caches the line names, biggest first (Xcode DerivedData, CoreSimulator, `~/Library/Caches`, npm/pnpm stores, `docker builder prune`, old `/private/tmp/claude-<uid>` session folders), then re-run. |
 | `doctor.sh`: settings differ | Live edits (`/config`). Copy wanted keys into `settings/*.json`, re-run the installer. |
 | A change does not show in a session | The session started before it. Restart it (`/exit`, `claude -c`); after a `settings/` change re-run the installer first. |
 | A hook never fires | Test it as Claude runs it: `echo '{"hook_event_name":"UserPromptSubmit","cwd":"/tmp","prompt":"fix the button layout"}' \| node ~/.claude/hooks/skill-router.mjs`. No output means the script did not run `main()`: the entry check must compare `realpathSync(process.argv[1])`, because `~/.claude/hooks` is a symlink and `import.meta.url` is the resolved path. |
