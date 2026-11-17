@@ -1,15 +1,20 @@
 // review: review a lane the way the setup's rules say, as a pipeline, then fix what the reviews confirm and review the fixes again until a round
 // is clean. Lenses come from review-tier (classes, models, efforts, stress and mutation plans); the script adds nothing and removes nothing.
-// Args: { row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, initialFindings? }
+// Args: { row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, initialFindings?, waiverAt?, principles?, audit? }
 //   suite: the repo's declared full-suite command (test-pass runs it as `run --suite`, never from this text);
 //   tier: review-tier JSON from the lead to use for round 0 instead of running the tool; laneClasses: file of an earlier round's tier JSON (classes and
 //   plans are kept, I4); deltaOf: a sha already reviewed (round 0 reviews only what changed since); initialFindings: findings that are
 //   confirmed already (red tests after a join, a rebase conflict) and go to the fix queue first; fix:false only reports.
-// Returns: { status: 'clean'|'findings'|'incomplete'|'failed', rounds, tip (the reviewed sha: land only that), worktree (the lane's worktree after the
+//   waiverAt: the sha build.js's join proved by its checkpoints; round 0 then runs only `tier.waivable.reviews` (runner-computed tier, no weakened
+//   check, no deltaOf), and any finding, open item or red suite makes round 1 a whole-range full-set round. principles: {id, question}[] the lens
+//   prompts add to the tier's own. audit: {base, tip} recorded shas: the post-land audit of a waived lane (needs fix:false, landing:false).
+// Returns: { status: 'clean'|'findings'|'incomplete'|'failed', rounds, tip (the reviewed sha: land only that), baseSha (merge-base of the last
+//   round, audit.base in audit mode, null when no tier ran), waived (round 0 was waived and ended clean), worktree (the lane's worktree after the
 //   fixes), tierFile, suite, findings, optional, leadList, text } (a `clean` status means every required lens and verdict of the last round is in,
 //   none confirmed anything, and with `landing` the suite passed at tip).
 // Review set: a runner recomputes it with review-tier every round (with every --add-class and the lane's classes); the fix agent never supplies it.
 //   A run whose tier did not exit 0, has no `reviews` list, or (with `landing`) has an empty one and nothing carried over is `failed`, never clean.
+//   Audit mode reviews with `tier.waivable.audit`, or the full set when the range is no longer waivable; an empty audit (no lens, 0 changed lines) is `failed`.
 // Rules kept here (spec round 4, I2 and I3): a verifier is as strong as its finder; its `real: false` drops a finding only when it is at least
 // as strong and the finding is not security, else an Opus-max judge rules; a security finding the judge calls not real goes to leadList with
 // the reason; a finding whose lines a fix already moved is carried into the next round as an open item, never judged at a newer HEAD.
@@ -29,6 +34,7 @@ export const meta = {
 }
 checkArgs(args)
 
+const RANGE = args.audit ? `${args.audit.base}..${args.audit.tip}` : args.range // an audit reads recorded shas, never a branch name
 const RUNNER = { agentType: 'runner', model: 'haiku', effort: 'low' }
 const FINDINGS_PER_VERIFIER = 5
 const MODEL_RANK = { haiku: 0, sonnet: 1, opus: 2 }
@@ -51,7 +57,7 @@ const VERDICT = {
 }
 const VERDICTS = { type: 'object', properties: { verdicts: { type: 'array', items: VERDICT } }, required: ['verdicts'] }
 const JUDGED = { type: 'object', properties: { id: str, real: { type: 'boolean' }, why: str }, required: ['id', 'real', 'why'] }
-const PREPARED = { type: 'object', properties: { exit: { type: 'number' }, sha: str, reviewWorktree: str, tierFile: str, tier: { type: 'object' } }, required: ['exit', 'sha', 'reviewWorktree', 'tierFile', 'tier'] }
+const PREPARED = { type: 'object', properties: { exit: { type: 'number' }, baseSha: str, sha: str, reviewWorktree: str, tierFile: str, tier: { type: 'object' } }, required: ['exit', 'baseSha', 'sha', 'reviewWorktree', 'tierFile', 'tier'] }
 const IMPLEMENTED = {
   type: 'object',
   properties: { branch: str, worktree: str, sha: str, tests: { type: 'object' }, deferred: { type: 'array', items: str } },
@@ -83,31 +89,33 @@ const planText = (plan) => [
 
 // State across rounds. lastFixed: findings fixed in the previous round (their finders re-check them); recheck: findings still open
 // (deferred by a fix agent, or moved by a fix) that the next round's lenses judge again.
-const run = { round: 0, tip: null, deltaOf: args.deltaOf ?? null, laneClasses: args.laneClasses ?? null, worktree: args.worktree, knownTier: args.tier ?? null, fixShas: [], expectedTip: null }
+const run = { round: 0, tip: null, deltaOf: args.deltaOf ?? null, laneClasses: args.laneClasses ?? null, worktree: args.worktree, knownTier: args.tier ?? null, fixShas: [], expectedTip: null, baseSha: null, notes: '' }
 let lastFixed = []
 let recheck = []
 let blockingFiles = new Set()
 let tierFile = args.laneClasses ?? null
 const leadList = []
 const optional = []
-const outcome = (status, text, extra = {}) => ({ status, rounds: run.round + 1, tip: run.tip, worktree: run.worktree, tierFile, suite: 'none', findings: [], optional, leadList, text, ...extra })
+const outcome = (status, text, extra = {}) => ({ status, rounds: run.round + 1, tip: run.tip, baseSha: run.baseSha, waived: false, worktree: run.worktree, tierFile, suite: 'none', findings: [], optional, leadList, text, ...extra })
 
 const tierPrompt = (known) => {
-  const command = [`node ~/.claude/tools/review-tier/review-tier.mjs ${run.deltaOf ? `--delta ${run.deltaOf}` : args.range}`, args.landing ? '--landing' : '',
+  const command = [`node ~/.claude/tools/review-tier/review-tier.mjs ${run.deltaOf ? `--delta ${run.deltaOf}` : RANGE}`, args.landing || args.audit ? '--landing' : '',
     ...(args.addClasses ?? []).map((name) => `--add-class ${name}`), run.laneClasses ? `--lane-classes ${run.laneClasses}` : '', '--json'].filter(Boolean).join(' ')
   const tierFile = `\${TMPDIR:-/tmp}/${slug(args.row)}-tier-<sha8>.json`
   return `Work in ${run.worktree} (lane ${args.branch}, base ${args.base}): cd there first, review-tier reads the git repository of its working folder. The reviewed sha is its HEAD (git rev-parse HEAD).\n`
     + `Add a detached review worktree of that sha outside every repo folder: git -C ${args.repo} worktree add --detach <scratch>/${slug(args.row)}-<sha8> <sha> (<sha8> is the first 8 characters of the sha).\n`
     + `${known ? `Use this review-tier JSON as it is (report exit 0): ${JSON.stringify(known)}` : `Run it from ${run.worktree}: ${command}\nReport its exit code as exit and its JSON output as tier.`}\n`
     + `Write the tier JSON (with its fileClasses) to ${tierFile}. Never write over ${run.laneClasses ?? 'an existing file'}: when the name is taken, add -2, -3 until it is free. `
-    + 'Return exit, sha (full 40 characters), reviewWorktree (the new folder), tierFile (that path), tier (the JSON).'
+    + `Also report baseSha: ${args.audit ? args.audit.base : `git merge-base ${args.base} HEAD (full sha)`}. `
+    + 'Return exit, baseSha, sha (full 40 characters), reviewWorktree (the new folder), tierFile (that path), tier (the JSON).'
 }
 
 const reviewPrompt = (review, sha, reviewWorktree, items) => [
-  `Review lane ${args.branch} of ${args.repo} by reading ONLY the detached review worktree ${reviewWorktree} (at ${sha}); ${run.deltaOf ? `the change to review is the delta since ${run.deltaOf}` : `range ${args.range}`}. Never edit it; never run the full suite (a recorded PASS covers it).`,
+  `Review lane ${args.branch} of ${args.repo} by reading ONLY the detached review worktree ${reviewWorktree} (at ${sha}); ${run.deltaOf ? `the change to review is the delta since ${run.deltaOf}` : `range ${RANGE}`}. Never edit it; never run the full suite (a recorded PASS covers it).`,
   review.agent === 'skill' ? `Invoke the ${review.lens} skill with the Skill tool first and follow it on the files of the range; it only reads: edit nothing.` : '',
   `Lens: ${review.lens}. Rules: ${review.rules}`,
   review.brief,
+  run.notes,
   review.requiredReading?.length ? `Required reading first: ${review.requiredReading.join(', ')}` : '',
   planText(review.plan),
   items.length ? `Items from the last round. fixed: check it is really gone and the fix broke nothing; open: judge whether it is still present at ${sha}, and report it as a finding if it is.\n${items.map(itemText).join('\n')}` : '',
@@ -130,9 +138,15 @@ while (true) {
   const { sha, reviewWorktree, tier } = prepared
   const tierProblem = problemWithTier(prepared)
   if (tierProblem !== null) return outcome('failed', tierProblem)
-  if (args.landing && tier.reviews.length === 0 && recheck.length + lastFixed.length === 0) return outcome('failed', `the landing review set of ${sha} is empty: review-tier gives at least one lens for a landing diff, so the tier was lost`)
+  const waiver = run.round === 0 && canWaive(knownTier, sha, tier)
+  // An audit uses the waiver's audit half; a range that is no longer waivable (a land-loop fix touched a gate path) gets the full set, never a failure (N3).
+  const reviewSet = args.audit ? (Array.isArray(tier.waivable?.audit) ? tier.waivable.audit : tier.reviews) : waiver ? tier.waivable.reviews : tier.reviews
+  if (args.audit && (reviewSet.length === 0 || !(tier.changedLines > 0))) return outcome('failed', `empty audit: ${RANGE} has ${tier.changedLines} changed lines and ${reviewSet.length} lenses, so nothing was audited`)
+  if (args.landing && reviewSet.length === 0 && recheck.length + lastFixed.length === 0) return outcome('failed', `the landing review set of ${sha} is empty: review-tier gives at least one lens for a landing diff, so the tier was lost`)
   tierFile = prepared.tierFile
   run.tip = sha
+  run.baseSha = prepared.baseSha
+  run.notes = notesOf(tier)
   run.fixShas = []
   const roundFixes = []
   let fixFailure = null
@@ -196,7 +210,7 @@ while (true) {
   phase('Review')
   const carried = [...recheck, ...lastFixed]
   recheck = []
-  const reviews = [...tier.reviews]
+  const reviews = [...reviewSet]
   for (const item of carried) {
     if (!reviews.some((review) => sameOrigin(originOf(review), item.origin ?? DEFAULT_ORIGIN))) reviews.push({ ...(item.origin ?? DEFAULT_ORIGIN), rules: '', brief: 'Re-check only the items listed below.', requiredReading: [], plan: {} })
   }
@@ -211,6 +225,7 @@ while (true) {
   }
   const confirmed = results.flatMap((entry) => entry.confirmed)
   const open = results.flatMap((entry) => entry.open)
+  const isClean = confirmed.length + open.length === 0
   const suite = await suiteRun
   const suiteRed = suite !== null && suite.exit !== 0
   if (suiteRed && args.fix) enqueueFix([{ id: `suite-${run.round}`, severity: 'blocking', file: '(suite)', line: 0, problem: `the full suite is red at ${sha}: ${suite.tail}`, fix: 'make the suite pass', security: false }])
@@ -219,13 +234,13 @@ while (true) {
 
   const suiteState = suite === null ? 'none' : suiteRed ? 'red' : 'pass'
   if (fixFailure !== null) return outcome('failed', fixFailure, { findings: [...confirmed, ...open], suite: suiteState })
-  if (!args.fix) return outcome(confirmed.length + open.length > 0 || suiteRed ? 'findings' : 'clean', '', { findings: [...confirmed, ...open], suite: suiteState })
-  if (roundFixes.length === 0 && recheck.length === 0 && open.length === 0 && !suiteRed) return outcome('clean', '', { suite: suiteState })
+  if (!args.fix) return outcome(!isClean || suiteRed ? 'findings' : 'clean', '', { findings: [...confirmed, ...open], suite: suiteState, waived: waiver && isClean && !suiteRed })
+  if (roundFixes.length === 0 && recheck.length === 0 && open.length === 0 && !suiteRed) return outcome('clean', '', { suite: suiteState, waived: waiver })
   blockingFiles = new Set(confirmed.filter((item) => item.severity === 'blocking').map((item) => item.file))
   recheck.push(...open)
   lastFixed = roundFixes
   run.round += 1
-  run.deltaOf = sha
+  run.deltaOf = waiver ? null : sha // a waived round 0 that found anything is re-reviewed over the whole range with the full set
   run.laneClasses = tierFile
 }
 
@@ -234,20 +249,38 @@ while (true) {
  * must be the HEAD the last fix returned, and the review worktree and tier file must be plain, fresh paths (they go into a `worktree remove --force`).
  */
 function problemWithTier(prepared) {
-  const { exit, sha, reviewWorktree, tierFile: file, tier } = prepared
+  const { exit, baseSha, sha, reviewWorktree, tierFile: file, tier } = prepared
   if (exit !== 0) return `review-tier exited ${exit}, so no review set exists for ${run.worktree}`
   if (!Array.isArray(tier?.reviews)) return 'the tier JSON has no `reviews` list, so no review set exists'
   if (!SHA.test(sha)) return `the reviewed sha ${sha} is not a git sha`
+  if (!SHA.test(baseSha)) return `the baseSha ${baseSha} is not a git sha`
+  if (args.audit && !sameSha(sha, args.audit.tip)) return `the reviewed sha ${sha} is not the audit tip ${args.audit.tip}`
+  if (args.audit && !sameSha(baseSha, args.audit.base)) return `the baseSha ${baseSha} is not the audit base ${args.audit.base}`
   if (run.expectedTip !== null && !sameSha(sha, run.expectedTip)) return `the lane worktree is at ${sha}, not at ${run.expectedTip}, the HEAD of the last fix`
   if (!SAFE_PATH.test(reviewWorktree) || !reviewWorktree.endsWith(`${slug(args.row)}-${sha.slice(0, 8)}`)) return `the review worktree ${reviewWorktree} is not <scratch>/${slug(args.row)}-<sha8>`
   if (!SAFE_PATH.test(file) || file === run.laneClasses) return `the tier file ${file} is not a new plain path`
   return null
 }
 
+/** Round 0 is waived only for a runner-computed tier of the sha the join proved, with a waivable part, no weakened check and no delta (I1, spec 6). */
+function canWaive(knownTier, sha, tier) {
+  return args.waiverAt !== undefined && args.deltaOf === undefined && knownTier === null && sameSha(sha, args.waiverAt)
+    && Array.isArray(tier.waivable?.reviews) && tier.waivable.reviews.length > 0 && Array.isArray(tier.weakened) && tier.weakened.length === 0
+}
+
+/** The prompt lines every lens gets: weakened checks the diff adds, and the principle questions (the args' wording first, then the tier's other ids). */
+function notesOf(tier) {
+  const weakened = (tier.weakened ?? []).map(({ path, line, kind }) => `${path}:${line} ${kind}`)
+  const asked = args.principles ?? []
+  const principles = [...asked.map(({ id, question }) => `${id}: ${question}`), ...(tier.principles ?? []).filter((id) => !asked.some((entry) => entry.id === id))]
+  return [weakened.length > 0 ? `Weakened checks this diff adds (each is a finding unless the lane spec asks for it): ${weakened.join('; ')}` : '',
+    principles.length > 0 ? `Principles (ids refer to ~/.claude/rules/principles.md; answer each yes/no with file:line in verified; a no is a finding): ${principles.join(' | ')}` : ''].filter(Boolean).join('\n')
+}
+
 function checkArgs(given) {
   const name = 'review' // the tool cuts `meta` out of the body, so the script's own name is written here
   const required = { row: 'string', repo: 'string', base: 'string', range: 'string', landing: 'boolean', fix: 'boolean', branch: 'string', worktree: 'string', suite: 'string' }
-  const optional = { tier: 'object', addClasses: 'array', laneClasses: 'string', deltaOf: 'string', initialFindings: 'array' }
+  const optional = { tier: 'object', addClasses: 'array', laneClasses: 'string', deltaOf: 'string', initialFindings: 'array', waiverAt: 'string', principles: 'array', audit: 'object' }
   const check = (key, type) => {
     const value = given === undefined || given === null ? undefined : given[key]
     const ok = type === 'array' ? Array.isArray(value) : typeof value === type
@@ -255,4 +288,9 @@ function checkArgs(given) {
   }
   for (const [key, type] of Object.entries(required)) check(key, type)
   for (const [key, type] of Object.entries(optional)) if (given[key] !== undefined) check(key, type)
+  if (given.audit !== undefined) {
+    const shaLike = /^[0-9a-f]{7,40}$/ // SHA is declared below the call of checkArgs, so it cannot be read here
+    if (given.audit === null || given.fix !== false || given.landing !== false) throw new Error(`${name}: args.audit needs fix:false and landing:false`)
+    if (!shaLike.test(given.audit.base) || !shaLike.test(given.audit.tip)) throw new Error(`${name}: args.audit.base and args.audit.tip must be git shas`)
+  }
 }

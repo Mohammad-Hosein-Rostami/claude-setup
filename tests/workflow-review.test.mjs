@@ -15,6 +15,7 @@ const OPUS = { agent: 'reviewer', model: 'opus', effort: 'max', lens: 'risk', ru
 const finding = (id, extra = {}) => ({ id, severity: 'blocking', file: 'a.mjs', line: 3, problem: `problem ${id}`, fix: 'fix it', security: false, ...extra });
 const clean = { findings: [], verified: 'read it' };
 const verdict = (id, real, extra = {}) => ({ id, real, why: `because ${id}`, reviewedSha: 'a1b2c31', linesMoved: false, ...extra });
+const BASE_SHA = 'ba5e0001' // what `git merge-base <base> HEAD` prints: the tier runner returns it as baseSha
 const sha = (n) => `a1b2c3${n}` // a git sha is hex: the script checks the shape before it puts one in a command
 const implemented = (tip, extra = {}) => ({ branch: 'lane/a', worktree: '/p-wt/fix', sha: tip, tests: { cmd: 'npm test', exit: 0 }, deferred: [], ...extra });
 
@@ -26,7 +27,7 @@ function world({ tiers, lens = {}, verify = () => ({ verdicts: [] }), judge = ()
   return {
     counts: () => ({ tierCalls, fixCalls }),
     replies: [
-      { match: /:tier$/, reply: () => { const at = tierCalls++; return { exit: 0, sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1)}`, tierFile: `/t${at}.json`, tier: tiers[Math.min(at, tiers.length - 1)] }; } },
+      { match: /:tier$/, reply: () => { const at = tierCalls++; return { exit: 0, baseSha: BASE_SHA, sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1)}`, tierFile: `/t${at}.json`, tier: tiers[Math.min(at, tiers.length - 1)] }; } },
       ...Object.entries(lens).map(([name, reply]) => ({ match: new RegExp(`:review:${name}$`), reply: (...rest) => reply(round(), ...rest) })),
       { match: /:verify:/, reply: (prompt, opts, call) => verify(round(), call.label, prompt) },
       { match: /:judge:/, reply: (...rest) => judge(...rest) },
@@ -145,7 +146,7 @@ test('with landing an empty review set is lost, not clean; without landing it is
 test('Windows drive-letter review worktree and tier file paths are plain paths', async () => {
   for (const [reviewWorktree, tierFile] of [[`C:/scratch/close-2-${sha(1)}`, 'C:/t0.json'], [`C:\\scratch\\close-2-${sha(1)}`, 'C:\\t0.json']]) {
     const w = world({ tiers: [tierOf(SONNET)], lens: { correctness: () => clean } });
-    w.replies[0] = { match: /:tier$/, reply: { exit: 0, sha: sha(1), reviewWorktree, tierFile, tier: tierOf(SONNET) } };
+    w.replies[0] = { match: /:tier$/, reply: { exit: 0, baseSha: BASE_SHA, sha: sha(1), reviewWorktree, tierFile, tier: tierOf(SONNET) } };
     const run = await runScript(REVIEW, ARGS, { replies: w.replies });
     assert.equal(run.result.status, 'clean', reviewWorktree);
   }
@@ -161,7 +162,7 @@ test('a tier file that would overwrite the lane classes, a review worktree not n
   ];
   for (const [change, why] of bad) {
     const w = world({ tiers: [tierOf(SONNET)], lens: { correctness: () => clean } });
-    w.replies[0] = { match: /:tier$/, reply: { exit: 0, sha: sha(1), reviewWorktree: `/scratch/close-2-${sha(1)}`, tierFile: '/t0.json', tier: tierOf(SONNET), ...change } };
+    w.replies[0] = { match: /:tier$/, reply: { exit: 0, baseSha: BASE_SHA, sha: sha(1), reviewWorktree: `/scratch/close-2-${sha(1)}`, tierFile: '/t0.json', tier: tierOf(SONNET), ...change } };
     const run = await runScript(REVIEW, { ...ARGS, laneClasses: '/t-prev.json' }, { replies: w.replies });
     assert.equal(run.result.status, 'failed', JSON.stringify(change));
     assert.match(run.result.text, why);
