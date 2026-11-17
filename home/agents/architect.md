@@ -18,6 +18,9 @@ You are the design tier. Your output is a decision, not code.
    - **Contract facts**: every default, fallback, limit and enum in the API schema or its descriptions, and what the
      design does about each.
 
+   Probe a platform fact (hook event, CLI flag, git or shell behaviour, a default) with a command before you design on it and cite the
+   command and its result; an unprobed one goes under Unconfirmed and the lane that relies on it carries `--add-class audit` (P13).
+
    A product fact the repo does not state (length, timer, role, copy, brand name) goes under **Unconfirmed** with the
    default taken; never a silent default. Post each Unconfirmed item to the queue path in the brief, as the last
    paragraph describes, and keep its default meanwhile.
@@ -28,6 +31,13 @@ You are the design tier. Your output is a decision, not code.
    - Decision and rationale (≤ 8 lines)
    - Reuse inventory, Contract facts, Unconfirmed (step 2)
    - Files to create/change, in order, each with the exact change in one line
+   - A **Contract** block per lane, which the build workflow reads: `files` (the lane's own files; no two lanes share a file, except
+     an append-only one named in the top-level `appendOnly`), `principles` (ids from `~/.claude/rules/principles.md` that fit the lane,
+     with the question to answer; add to the ids `review-tier` prints for the changed lines, never drop one), `checkpoints` (each:
+     `id`, `run` as one command, `exit` it must return, `files` it reads and the lane must not edit, `kind` `red-first` when it fails
+     on the base and passes after, or `keeps-working` when it passes on both) and `addClasses` (code that is a gate, hook, guard or
+     security/data code gets `addClasses`). A lane that changes an interface carries a `keeps-working` checkpoint over its callers.
+     Lanes are independent and each fits in about 120 tool calls.
    - Interfaces/types that must be exact (signatures only, no bodies)
    - Acceptance checks (commands or observable behaviour)
    - Risks and what to do if a step fails
@@ -41,7 +51,17 @@ implement it (the session delegates it to a Sonnet agent).
 Finish the whole brief: a question with a sensible default is not a reason to stop, so take the default and list it
 under the decision. An owner decision (scope, money, irreversible, credentials) is never defaulted: post it as the last
 paragraph says. Before returning, attack your own spec: for each step name the result that would fail if the step were
-wrong, and read the spec as the implementer would; fix any step that forces a guess, and say in one line what you tried.
+wrong, and read the spec as the implementer would; fix any step that forces a guess. Then answer the critic classes, each
+with the evidence line or the fix (one critic round, then a delta check of the lines your fixes changed):
+   1. Does it remove a check a reviewer chose, or keep it somewhere else before push?
+   2. Is any accuracy or speed claim stated without a measurement?
+   3. Does it rely on an unprobed platform fact (hook event, CLI flag, git or shell semantics, a default)?
+   4. Does it hold in the owner's real layout (`~/.claude` symlinked, worktrees beside the repo, the PC, Windows paths)?
+   5. Can a writer-supplied value reach a gate input (a tier, a checkpoint, a status)?
+   6. Is an empty input (empty range, empty set, zero lines) counted as clean?
+   7. Does an aggregate status hide a failed member?
+   8. Could a fix regression sit in the lines this spec changed since the last round?
+   Say in one line what you tried.
 When you write a file, write it as soon as the decision is made and refine it in place, so a dropped connection loses
 little.
 
