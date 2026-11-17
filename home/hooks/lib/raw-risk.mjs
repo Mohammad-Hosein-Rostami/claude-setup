@@ -15,10 +15,12 @@
 // an absolute, `~`, `$` or `..` path, npm-style publish, gh mutations (judged by position: `gh <group> <verb>`), disk tools and raw device paths,
 // psql/mysql/ssh near a production name. Message text of `git commit` and `gh pr|issue create|edit|comment` is data (message-text.mjs), so
 // `git commit -m "$(cat <<'EOF' ... git push ... EOF)"` is silent; a message with another `$(` or a backtick is still scanned.
+// A single-quoted argument of a program that never runs its arguments (echo, printf, grep, rg, jq, sed, git log) is data too (lib/inert-arguments.mjs).
 // A false positive costs a dialog. Commands with no hidden construct never reach this rule and keep the precise per-command checks.
 // Pure, no I/O; linear in the text length.
 import { ANSI_C_WORD, decodeAnsiC } from './ansi-c.mjs';
 import { asGitSubcommand, commandName } from './command-of.mjs';
+import { withoutInertArguments } from './inert-arguments.mjs';
 import { withoutMessageText } from './message-text.mjs';
 import { GIT_TOPLEVEL, GIT_TOPLEVEL_WORD } from './shell-words.mjs';
 import { COMMAND_ENV, configKind, GIT_UNREADABLE_REASON } from './git-runs.mjs';
@@ -204,7 +206,7 @@ function runsText(words) {
 export function riskyWordInExpansion(command, prodHosts = []) {
   // `$(git rev-parse --show-toplevel)` is a known, harmless substitution (the per-command rm check judges where it points)
   const text = joinContinuations(decodeAnsiCWords(command)).replace(GIT_TOPLEVEL, GIT_TOPLEVEL_WORD);
-  const visible = withoutPlainHeredocs(withoutMessageText(text));
+  const visible = withoutInertArguments(withoutPlainHeredocs(withoutMessageText(text)));
   const statements = statementsOf(visible, RUN_VALUE_ASSIGNMENT);
   const otherHidden = HIDDEN_CONSTRUCT.test(visible) || statements.some(runsText);
   const gitHidden = GIT_FILE_CONFIG.test(visible) || hidesGitRun(visible);
