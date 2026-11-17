@@ -1,7 +1,7 @@
 // The folder whose git state a Stop or SubagentStop gate looks at, and the hardened git calls that read it. Shared by commit-gate.mjs and
 // git-tidy-gate.mjs.
 // Exports: runGit, gitOut, gitSucceeds, gitText (git in a folder, hardened), startFolder(transcriptPath), gatedFolder(input, env),
-// worktreeOf(folder), namesFilterProgram(top).
+// worktreeOf(folder), namesFilterProgram(top), readHead(path, maxBytes).
 // Invariants:
 // - gatedFolder is the session's own worktree folder: for the main session CLAUDE_PROJECT_DIR, for a subagent the first `cwd` of its
 //   transcript (null for an agent that cannot write files). Never the hook input's cwd: a folder the session only cd'd into may be
@@ -37,7 +37,7 @@ export const gitSucceeds = (cwd, args) => runGit(cwd, args).status === 0;
 export const gitText = (cwd, args) => (gitOut(cwd, args) ?? '').trim();
 
 /** The first `maxBytes` of a regular file as text; null when it is missing, not a regular file or unreadable. */
-function readHead(path, maxBytes) {
+export function readHead(path, maxBytes) {
   try {
     if (!statSync(path).isFile()) return null;
     const fd = openSync(path, 'r');

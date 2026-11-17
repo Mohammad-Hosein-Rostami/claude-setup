@@ -209,6 +209,11 @@
           },
           {
             "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/git-tidy-gate.mjs\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/ask-gate.mjs\"",
             "timeout": 10
           },
@@ -251,6 +256,11 @@
           },
           {
             "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/git-tidy-gate.mjs\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/agent-budget.mjs\"",
             "timeout": 5
           }
@@ -264,6 +274,11 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/checkpoint.mjs\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/git-tidy-gate.mjs\"",
+            "timeout": 10
           }
         ]
       }

@@ -69,3 +69,12 @@ test('base.json askUserQuestionTimeout is a value the CLI accepts (others are dr
   const base = JSON.parse(readFileSync(fileURLToPath(new URL('../settings/base.json', import.meta.url)), 'utf8'));
   assert.ok(['60s', '5m', '10m', 'never'].includes(base.askUserQuestionTimeout), String(base.askUserQuestionTimeout));
 });
+
+test('base.json registers git-tidy-gate on Stop, SubagentStop and PreCompact, each with a timeout that covers its 4 s check', () => {
+  const base = JSON.parse(readFileSync(fileURLToPath(new URL('../settings/base.json', import.meta.url)), 'utf8'));
+  for (const event of ['Stop', 'SubagentStop', 'PreCompact']) {
+    const gates = base.hooks[event].flatMap((group) => group.hooks).filter((hook) => hook.command.includes('hooks/git-tidy-gate.mjs'));
+    assert.equal(gates.length, 1, `${event} has exactly one git-tidy-gate entry`);
+    assert.ok(gates[0].timeout >= 10, `${event} timeout ${gates[0].timeout}`);
+  }
+});
