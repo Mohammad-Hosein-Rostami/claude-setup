@@ -7,7 +7,7 @@
 // when the state file disappears, names another pid, or the server is gone; "idle" is now - lastUsed in that file,
 // and every search touches lastUsed.
 import { execFileSync } from 'node:child_process';
-import { readFileSync, rmSync } from 'node:fs';
+import { readFileSync, realpathSync, rmSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 export const DEFAULT_IDLE_MS = 20 * 60 * 1000; // spec: the server stops after 20 minutes without a search
@@ -85,7 +85,7 @@ export async function watch(statePath, pid, { idleMs, now = Date.now, pause = sl
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const [statePath, pidText] = process.argv.slice(2);
   await watch(statePath, Number(pidText), { idleMs: idleLimitMs() });
 }

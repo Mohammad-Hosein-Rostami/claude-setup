@@ -13,6 +13,7 @@
 // Invariants: a record is written only when the command exits 0, the tree had no uncommitted change before it started, and HEAD's
 //   tree is unchanged after it. Records live in lib/store.mjs. Exports: hasPass, declaredSuite (for git-tidy land).
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { commitOf, declaredSuite, hasPass, isCleanTree, recordPass, treeOf } from './lib/store.mjs';
 
@@ -114,4 +115,4 @@ function main(argv) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) process.exitCode = main(process.argv.slice(2));
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) process.exitCode = main(process.argv.slice(2));

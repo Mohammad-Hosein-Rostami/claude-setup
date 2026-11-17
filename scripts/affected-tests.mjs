@@ -10,7 +10,7 @@
 //   the branch main or master, a map that cannot be built); only a change that no test can read (documents) runs nothing.
 //   Exit codes: 0 ok (or the tests' own code with --run), 2 usage or a test path with a space (the hook word-splits the list).
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -260,4 +260,4 @@ function main(argv) {
   return spawnSync(process.execPath, ['--test', '--test-reporter=dot', ...result.tests], { cwd: root, stdio: 'inherit' }).status ?? 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) process.exitCode = main(process.argv.slice(2));
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) process.exitCode = main(process.argv.slice(2));

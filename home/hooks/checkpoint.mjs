@@ -5,7 +5,7 @@
 // is skipped. One job per session: the lock is taken here, before the job starts, so two hooks never start two jobs.
 // Never blocks, never prints, never fails a tool call: every error exits 0. Exports: handleCheckpointHook.
 import { spawn } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { acquireLock, decideCheckpoint, readCheckpoint, requestPending, takePending } from '../tools/recall/lib/checkpoint-state.mjs';
 
@@ -42,7 +42,7 @@ export function handleCheckpointHook(input, env = process.env) {
   return 'started';
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   let raw = '';
   process.stdin.setEncoding('utf8');
   for await (const chunk of process.stdin) raw += chunk;

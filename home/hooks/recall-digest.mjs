@@ -6,7 +6,7 @@
 // Exports: digestFor.
 // Invariants: the digest is wrapped in <recall-digest> tags and note text cannot contain such a tag (defanged in buildDigest).
 import '../tools/recall/lib/quiet-sqlite-warning.mjs'; // first: it must run before node:sqlite loads
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { lockHeld } from '../tools/recall/lib/checkpoint-state.mjs';
 import { buildDigest } from '../tools/recall/lib/digest.mjs';
@@ -40,7 +40,7 @@ export async function digestFor(input, env = process.env) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   let raw = '';
   process.stdin.setEncoding('utf8');
   for await (const chunk of process.stdin) raw += chunk;
