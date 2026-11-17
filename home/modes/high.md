@@ -2,15 +2,14 @@
 
 Same models per task, same lead effort, same quality gates as every mode (see the lead rules and CLAUDE.md). This mode only sets parallelism, workflows and report brevity.
 
-- Lane budget: up to 6 agents at once. Wide fan-out, in parallel in one message (a parallel request gets a one-line
+- Lane budget: up to 6 agents at once (writing agents; reads, reviews and verifiers are not capped by the mode). Wide fan-out, in parallel in one message (a parallel request gets a one-line
   usage-limit forecast first):
   - research: several sources at once;
   - debugging: one `deep-debugger` per hypothesis;
   - build: `test-writer` and `implementer` together; split independent parts across agents (worktree
     isolation when they touch the same repo; land by rebase + `--ff-only`, C37);
   - review: `reviewer` and `security-auditor` together.
-- Workflows (a script that runs many agents in phases): Claude starts one itself for substantive multi-part tasks,
-  no size limit. Choosing `ccm high` or `/mode high` is the user's standing request for this.
+- Workflows: every agent runs in one (CLAUDE.md).
 - Reports: same short final answer as every mode (what changed, what was not run); agents return ≤ 300 words with
   file:line evidence; detail goes to files and the report gives the path.
 - Findings check (CLAUDE.md quality gates) runs as verifier agents in parallel: group by file or lens, ≤ 5 per verifier; security findings get their own verifier.

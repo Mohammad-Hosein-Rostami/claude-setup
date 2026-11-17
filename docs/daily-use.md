@@ -10,8 +10,8 @@ Run `ccm <mode>` (`ccm` alone is medium). Switch inside a session with `/mode <m
 | Mode | Lead model | Pick it when | Cost note |
 | ---- | ---------- | ------------ | --------- |
 | `normal` | Opus 5.5, effort high | Small or routine work; you want the week to last | Up to 2 agents at once, terse reports |
-| `medium` | Opus 5.5, effort high | Default for most tasks | Up to 3 agents; a workflow only after you say yes |
-| `high` | Opus 5.5, effort high | Wide, multi-part tasks where speed matters | Up to 6 agents, workflows on its own; more usage |
+| `medium` | Opus 5.5, effort high | Default for most tasks | Up to 3 writing agents at once |
+| `high` | Opus 5.5, effort high | Wide, multi-part tasks where speed matters | Up to 6 writing agents at once; more usage |
 | `extra-high` | Opus 5.5, effort max | Architecture, hard bugs, risky code, key decisions | Max effort on the lead and important agents |
 | `ultra-high` | Fable 5.2, effort high | The hardest work; Fable decides, others do the work | Fable is capped at 50% of the weekly limit |
 
@@ -23,8 +23,15 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
 - One task per session. For an unrelated next task, `/clear` or start a new session first.
 - The lead plans, decides and delegates: `scout` reads, `runner` runs checks, `implementer` writes code, `reviewer`
   and `security-auditor` review. Technical choices are made and stated in one line; owner decisions are asked.
-- Gates: targeted checks once after the last edit (through `runner`); `reviewer` for a non-trivial change, plus
-  `security-auditor` for a risky one; `ui-quality-pass` for UI; then `verify-done`.
+- Every agent runs inside a workflow (any mode): `/wf-build` for an implementation, `/wf-bugfix` for a bug,
+  `/wf-research` for a question that needs sources, `/wf-review` and `/wf-land` for review and landing, `/wf-sync` for the
+  MacBook and PC, `/wf-git-cleanup` for old branches, `/wf-step` for one agent (architect, UI, visual-qa); `/quick` for a
+  read-only lookup. A one-file or under-30-line edit is done inline, but still runs `review-tier` before it lands.
+- Gates: targeted checks once after the last edit (through `runner`); the `wf-review` workflow runs the set `review-tier`
+  prints (`reviewer`, plus `security-auditor` and Opus lenses for risky classes and at landing); `ui-quality-pass` for UI;
+  then `verify-done`.
+- While a workflow runs you can keep talking to the lead: it answers questions and asks yours without stopping the
+  agents. A command that runs over about 2 minutes goes to the background with a timeout and `watch.mjs`.
 - The final answer says what changed and what was not run. No recap of the process.
 
 ## Long or unattended runs

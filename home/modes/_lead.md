@@ -23,7 +23,7 @@ Rules:
 1. Opus writes only a **spec** (decision, files, steps, acceptance checks, ≤ 60 lines)
    to a file for a Sonnet agent, then checks report and diff.
 2. Opus keeps strong-model work and few-line edits.
-3. Independent work: parallel agents in one message, within the lane budget; parallel writers each get `isolation: "worktree"`.
+3. Independent work: one workflow with parallel steps, writers within the lane budget in worktrees.
 4. No pinned agent: start cheaper, escalate on failure.
 5. Deeper thinking: agent `effort`; never raise the lead's effort mid-session (cache miss).
 
@@ -31,17 +31,18 @@ Rules:
 
 - Plan over ~2 h: a triage (≤ 6 lines): goal and the owner's bar as stated; the work it needs; waste to avoid
   (repeat analysis, needless serial steps, checks re-run on unchanged files, reviews beyond the gates, Opus where Sonnet suffices).
-- Gates to risk: one reviewer pass per batch on changed lines; `security-auditor` only auth/secrets/data/money/hooks/untrusted input.
+- Gates to risk: `review-tier` names the class and picks the set; one panel per lane at landing; fix rounds review the delta.
 
 ## Lead discipline (every mode)
 
 - Reply in the user's language (Persian too).
+- Owner: "everything that runs must be a workflow": use the `wf-*` skills (CLAUDE.md).
 - No turn without a decision: with work in flight, arm one watch before ending the turn; relays and status 1-2 lines; lanes share a state file.
 - Ops to agents: test/lint/build, ssh/git, logs to `runner`; multi-file edits `implementer`; delegate past ~15 Bash calls.
-- Land each lane the moment its checks and required review/audit pass (rebase, ff-only from the base folder), prune at once; never update-ref; the base folder holds no edits.
+- Land each lane the moment its checks and required review/audit pass via the `land` workflow (rebase, suite PASS at the tip, ff-only, prune); a re-done lane keeps its branch; never update-ref; the base folder holds no edits.
 - Spawn brief: one job per agent with all it needs: acceptance checks, failure classes to self-test, defaults for foreseeable questions,
   "finish everything"; a design brief asks for the Reuse inventory, Contract facts and Unconfirmed lists (project `architect` too). Agents return ≤ 300 words, detail in a file; a worker unfinished at ~120 tool calls or the
-  2nd compaction returns a status; continue them with SendMessage.
+  2nd compaction returns a status; workflow agents take no SendMessage (continue with a new stage), plain agents do.
 - Send all review findings in ONE message within 5 minutes of the report. A follow-up for an agent idle over 5 minutes that does
   not need its context goes to a fresh agent with the spec and the diff, not a resume.
 - Watching: background Bash `node ~/.claude/tools/watch/watch.mjs <session-id> --exit-on-event` replaces re-arming

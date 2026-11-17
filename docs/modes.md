@@ -1,6 +1,6 @@
 # Modes
 
-Five setup modes trade parallelism and lead strength against usage. Every mode runs the same rules and checks, including risky or final review on Opus at max; the modes differ in the lead model and effort, agents at once, workflow start, Fable-max escalation and report length. Default is `medium` (the setup as `home/CLAUDE.md` and
+Five setup modes trade parallelism and lead strength against usage. Every mode runs the same rules and checks, including risky or final review on Opus at max; the modes differ in the lead model and effort, writing agents at once, Fable-max escalation and report length. Default is `medium` (the setup as `home/CLAUDE.md` and
 `home/modes/_lead.md` describe it). Every session has its own mode; nothing a mode does touches machine-wide state or other sessions.
 
 ## Launch
@@ -49,11 +49,11 @@ and add the Opus-max escalations for architecture, hard bugs and risky code (Fab
 
 A workflow is a script that runs many agents in phases.
 
-| Mode | Lead (main session) | Important jobs | Parallel agents | Workflows | Reports |
+| Mode | Lead (main session) | Important jobs | Writing agents at once | Workflows | Reports |
 | ---- | ------------------- | -------------- | --------------- | --------- | ------- |
-| normal | Opus 5.5, effort high | pinned agents + lead-rule escalations | up to 2 at once (lane budget) | only when you ask for one in your message; up to 4 agents | terse; `/compact` only when context is large |
-| medium | Opus 5.5, effort high | same | up to 3 at once, independent work in parallel | Claude may propose one and say roughly what it costs; starts only after you say yes; up to 9 agents | as the lead rules and `CLAUDE.md` |
-| high | Opus 5.5, effort high | same | up to 6 at once; wide fan-out: parallel research, one `deep-debugger` per hypothesis, test-writer + implementer, split parts, reviewer + security-auditor | Claude starts one itself for substantive multi-part tasks, no size limit | same short final answer as medium; detail goes to files |
+| normal | Opus 5.5, effort high | pinned agents + lead-rule escalations | up to 2 at once (lane budget) | every agent runs in one | terse; `/compact` only when context is large |
+| medium | Opus 5.5, effort high | same | up to 3 at once, independent work in parallel | every agent runs in one | as the lead rules and `CLAUDE.md` |
+| high | Opus 5.5, effort high | same | up to 6 at once; wide fan-out: parallel research, one `deep-debugger` per hypothesis, test-writer + implementer, split parts, reviewer + security-auditor | every agent runs in one | same short final answer as medium; detail goes to files |
 | extra-high | Opus 5.5, effort max | architecture/planning, hard or failed-once bugs, risky or cross-module code, key decisions: agents with `model: "opus", effort: "max"` | as high (up to 6) | as high | as high |
 | ultra-high | Fable 5.2, effort high (`CCM_LEAD_EFFORT` overrides) | Fable decides and delegates; hard problems to `architect` / `deep-debugger` with `model: "fable", effort: "max"`; risky or cross-module code to Opus 5.5 at max; the `agent-model-guard.mjs` hook moves Explore to Sonnet and Plan to Opus (every mode) when no model is given | as high, up to 8 at once | as high | as high |
 
@@ -62,8 +62,40 @@ Every mode: a parallel request first gets a one-line usage-limit forecast.
 A risky or final review means auth, data or migrations, money, concurrency, security, and the last review before a
 merge or push. In every mode these go to Opus at max (`reviewer`, `security-auditor`).
 
-Choosing `ccm high|extra-high|ultra-high` or `/mode` with one of them is your standing request for workflows. If
-Claude still asks first, answer "use a workflow" once.
+Every agent runs inside a workflow in every mode (your standing rule, `home/CLAUDE.md`), started through the `wf-*` skills
+listed in [workflows](../home/workflows/README.md). A mode limits only the agents that write at once; reads, reviews and
+verifiers are not capped by the mode.
+
+## Picks per step (same in every mode)
+
+Reviews, verifiers, judges, tests and runners use the same model and effort in every mode. A mode changes cost and speed,
+never a gate. Extra-high starts the first try of architect, deep-debugger and a risky implementer one rung higher (never lower).
+
+| Step | Model / effort | Escalate |
+| ---- | -------------- | -------- |
+| Plan, design | lead inline; `architect` Opus high | xhigh when hard or security-critical; max as tie-break |
+| Build: implementer, test-writer | Sonnet medium; implementer high for cross-module code; Opus high for lock or transaction code | two failed verify rounds: one rung up |
+| Runner steps (tier, join, suite, rebase, land, status, sync, cleanup) | Haiku low | unclassified failure: Sonnet medium diagnoses |
+| Review: correctness lens | `reviewer` Sonnet high | |
+| Review: risk lens (risky class or landing) | `reviewer` Opus max | |
+| Review: extra lens (over 400 lines, concurrency-lite, mid-lane) | `reviewer` Opus high | risky class: max |
+| Review: audit | `security-auditor` Opus max for security, data, money, untrusted input, concurrency with security, and at every landing; Opus high for a hooks-only change mid-lane | `exploitable: unknown`: max audit of those lines |
+| Review: verifier (per 5 findings) | same model and effort as the finder at least | `real: false` from a weaker model, or verifier and finder disagree: Opus max judge; security findings are never dropped |
+| Review: fix | `implementer` Sonnet high; Opus high for concurrency findings | blocking twice in one area: `deep-debugger` |
+| Bugfix: hypotheses, judge | `deep-debugger` Opus high; judge Opus xhigh | failed fix: xhigh, then max |
+| Research: scope, synthesis, critic | Opus high | |
+| Research: gatherers, re-checks, patches | Sonnet high | |
+| Quick lookup | `/quick` (scout, Haiku low) | needs judgement: `wf-step` with `scout` Sonnet |
+| One-step work (architect design, UI build, visual-qa loop) | `wf-step`: the agent file's model and effort | |
+| Git cleanup plan | Sonnet high | owner items go to the lead |
+
+| Mode | Writing agents at once | Lead | First try one rung higher (cost only) |
+| ---- | ---------------------- | ---- | -------------------------------------- |
+| normal | 2 | Opus high | |
+| medium | 3 | Opus high | |
+| high | 6 | Opus high | |
+| extra-high | 6 | Opus max | architect, deep-debugger, risky implementer start at Opus max |
+| ultra-high | 8 | Fable high | hard design or bug starts at Fable max |
 
 ## Subscription only
 

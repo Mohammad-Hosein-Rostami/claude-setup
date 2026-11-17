@@ -10,8 +10,8 @@ Same quality gates as every mode. The lead is Fable 5.2 at effort high (`ccm ult
 - Lens agents: continue only reachable items, once; what is still left goes to a fresh agent.
 - Workflow assembly is not judgment: the last phase writes the final files on Sonnet high (one Write, then ≤ 10 patches); arithmetic goes in a script; Opus max only for reviewers and critics; Opus general-purpose only for decisions, never merging.
 - Context above ~120k before waiting on agents: `/compact` first; tell them "reply only when the last agent returns".
-- Lane budget: up to 8 agents at once. Workflows as in high: Claude starts one itself for substantive multi-part tasks (`ccm ultra-high` or `/mode ultra-high` is the user's standing request).
-- Launch: `ccm ultra-high`; hardest work `CCM_LEAD_EFFORT=xhigh` or `max`.
-- Fable is only on Max/Ultra/Team Premium plans up to 50% of the weekly limit; beyond that (or on Pro) it bills credits: never use or suggest them; near the cap, tell the user to run `ccm extra-high -c`.
+- Lane budget: up to 8 agents at once (writing agents; reads, reviews and verifiers are not capped by the mode).
+- Workflows: every agent runs in one (CLAUDE.md).
+- Fable past 50% of the weekly limit (or on Pro) bills credits: never use or suggest them; near the cap, tell the user to run `ccm extra-high -c`.
 
 Applies to this session only.
