@@ -14,6 +14,8 @@ import { deliverAtStop } from '../home/hooks/status-deliver.mjs';
 import { runStatus } from '../home/tools/status/status.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/status-deliver.mjs', import.meta.url));
+const ESTIMATE = fileURLToPath(new URL('../home/tools/estimate/estimate.mjs', import.meta.url));
+const STATUSLINE_REFRESH = fileURLToPath(new URL('../home/tools/estimate/statusline-cache.mjs', import.meta.url));
 const SESSION = 'lead-session-1';
 const NOW = new Date('2026-11-16T14:05Z');
 const HEADER = '## Work items\n\n| id | item | size | started | done | evidence |\n| -- | -- | -- | -- | -- | -- |\n';
@@ -104,6 +106,31 @@ test('a linked STATUS.md over the size cap or missing is refused without reading
   assert.equal(readFileSync(join(cwd, 'STATUS.md'), 'utf8'), big);
   plantLink(stateDir, join(cwd, 'gone', 'STATUS.md'));
   assert.equal(deliverAtStop({ session_id: SESSION }, { stateDir, now: NOW }).code, 1);
+});
+
+// Review of 2ca5bb1 (2) and audit S2: an estimate run and the status line's refresh also wrote the session link, so the hand-over went
+// to the last STATUS.md ESTIMATED, in another job's table. Only status.mjs edits move it now (the estimator passes no session to noteTable).
+test('an estimate run and a status-line refresh on another STATUS.md do not move the hand-over target', async () => {
+  const home = await tempDir('deliver-home-');
+  const stateDir = join(home, '.claude', 'state', 'estimate');
+  const parent = await tempDir('deliver-parent-');
+  const edited = join(parent, 'edited');
+  const estimated = join(parent, 'estimated');
+  mkdirSync(edited);
+  mkdirSync(estimated);
+  writeFileSync(join(edited, 'STATUS.md'), ALL_DONE);
+  writeFileSync(join(estimated, 'STATUS.md'), ALL_DONE);
+  assert.equal(runStatus(['rule', 'linked'], { cwd: edited, now: NOW, sessionId: SESSION, stateDir }).code, 0);
+  const env = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CODE_SESSION_ID: SESSION };
+  const estimate = spawnSync('node', [ESTIMATE, join(estimated, 'STATUS.md')], { encoding: 'utf8', env });
+  assert.equal(estimate.status, 0, estimate.stderr);
+  const refresh = spawnSync('node', [STATUSLINE_REFRESH, join(estimated, 'STATUS.md'), SESSION], { encoding: 'utf8', env });
+  assert.equal(refresh.status, 0, refresh.stderr);
+  assert.equal(existsSync(join(stateDir, 'table')), true, 'both runs recorded the estimated table, so a link could have been written');
+  const outcome = deliverAtStop({ session_id: SESSION, cwd: parent }, { stateDir, now: NOW });
+  assert.equal(outcome.code, 0);
+  assert.match(readFileSync(join(edited, 'STATUS.md'), 'utf8'), DELIVER_ROW);
+  assert.doesNotMatch(readFileSync(join(estimated, 'STATUS.md'), 'utf8'), /deliver:/);
 });
 
 /**
