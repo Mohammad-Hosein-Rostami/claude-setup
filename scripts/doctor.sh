@@ -112,8 +112,20 @@ check_prod_hosts() {
   fi
 }
 
+# The suite output goes to a log file so a failure can be named. DOCTOR_TEST_COMMAND replaces the real suite (used by tests);
+# DOCTOR_LOG_DIR moves the log. On failure: each failing test with its first error line (TAP "not ok" / "error:" lines), else the last log lines.
 check_repo_tests() {
-  if (cd "$REPO" && node --test tests/*.test.mjs >/dev/null 2>&1); then ok "repo tests pass"; else bad "repo tests fail (node --test tests/*.test.mjs)"; fi
+  local suite="${DOCTOR_TEST_COMMAND:-node --test --test-reporter=tap tests/*.test.mjs}"
+  local log_dir="${DOCTOR_LOG_DIR:-$CLAUDE_DIR/logs}" log failing
+  mkdir -p "$log_dir" 2>/dev/null || log_dir="${TMPDIR:-/tmp}"
+  log="$log_dir/doctor-repo-tests.log"
+  if (cd "$REPO" && bash -c "$suite" >"$log" 2>&1); then ok "repo tests pass"; return; fi
+  bad "repo tests fail (node --test tests/*.test.mjs); full output: $log"
+  failing="$(awk '
+    /^ *not ok [0-9]+ - /  { sub(/^ */, ""); print "      " $0; waiting = 1; next }
+    waiting && /^ *error: / { sub(/^ *error: */, ""); if ($0 == "|-" || $0 == "|") { getline; sub(/^ */, "") } print "        " $0; waiting = 0 }
+  ' "$log" | head -40)"
+  if [ -n "$failing" ]; then echo "$failing"; else tail -n 15 "$log" | sed 's/^/      /'; fi
 }
 
 check_tools() {
