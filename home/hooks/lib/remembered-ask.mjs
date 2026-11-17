@@ -6,7 +6,7 @@
 // is replaced by an environment reference (that re-check also runs the fail-to-ask backstop, which a secret reason switches off, and
 // still sees a secret the value extraction missed: nested, partial or re-quoted text). Anything uncertain shows the dialog.
 // A remembered value is checked before the bounce, so an already allowed secret is never bounced.
-// A secret-only dialog waits CLAUDE_ASK_SECRET_TIMEOUT_S (default 30 s, never more than CLAUDE_ASK_TIMEOUT_S) before going ahead as Allow.
+// A secret-only dialog waits CLAUDE_ASK_SECRET_TIMEOUT_S (default 2 min, never more than CLAUDE_ASK_TIMEOUT_S) before going ahead as Allow.
 // Advice (the ask's `advice`, quality rules) never changes a safety decision: "secret-only" is judged without it, and the reason the dialog,
 // the CLI's ask, the log and a bounce's deny text show only names its classes (withAdvice, lib/bounce-once.mjs). When a remembered secret
 // makes the command silent, its advice is still given once (adviceOnce), exactly as for a command with advice alone.

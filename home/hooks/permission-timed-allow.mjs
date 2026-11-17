@@ -1,6 +1,6 @@
 // PermissionRequest: every Claude Code permission prompt gets the timed native dialog of lib/timed-ask.mjs with a
-// CLAUDE_PERMISSION_TIMEOUT_S (default 30, at most 190) wait: no answer -> allow, Allow click -> allow, Deny click -> deny. The owner's
-// rule is "everything should be auto yes 30 sec": any tool (built-in, MCP, Agent, ExitPlanMode plan approval, protected-file writes,
+// CLAUDE_PERMISSION_TIMEOUT_S (default 120, at most 190) wait: no answer -> allow, Allow click -> allow, Deny click -> deny. The owner's
+// rule is "everything should be auto yes, now 2 min": any tool (built-in, MCP, Agent, ExitPlanMode plan approval, protected-file writes,
 // a team's ask rules), any permission mode, and any session kind (interactive, background agents, `claude -p`, where Claude Code runs
 // this hook too and denies when no hook decides). No GUI (ssh, CI, tests) or a failed dialog prints nothing: Claude Code's normal
 // behaviour (its prompt, or a deny where nobody can be asked).

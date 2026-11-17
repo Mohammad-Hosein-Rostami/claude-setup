@@ -1,5 +1,5 @@
 // Tests for home/hooks/permission-timed-allow.mjs (PermissionRequest) and lib/answered-commands.mjs: every Claude Code permission
-// prompt (any tool, any mode, interactive or -p; AskUserQuestion is in permission-question.test.mjs) gets the timed dialog with a 30 s default; no answer -> allow,
+// prompt (any tool, any mode, interactive or -p; AskUserQuestion is in permission-question.test.mjs) gets the timed dialog with a 2 min default; no answer -> allow,
 // Deny -> deny, no GUI -> no output. The dialog is injected (permissionReply's third argument) or, for the guard hand-over test, a
 // fake dialog tool sits first on PATH. No test opens a real dialog.
 import './pin-home.mjs';
@@ -59,20 +59,20 @@ const decisionOf = (stdout) => {
   return out.decision;
 };
 
-test('permissionTimeoutSeconds: 30 by default, CLAUDE_PERMISSION_TIMEOUT_S when positive, capped at 190, bad values fall back', () => {
-  assert.equal(permissionTimeoutSeconds({}), 30);
+test('permissionTimeoutSeconds: 120 by default, CLAUDE_PERMISSION_TIMEOUT_S when positive, capped at 190, bad values fall back', () => {
+  assert.equal(permissionTimeoutSeconds({}), 120);
   assert.equal(permissionTimeoutSeconds({ CLAUDE_PERMISSION_TIMEOUT_S: '12' }), 12);
   assert.equal(permissionTimeoutSeconds({ CLAUDE_PERMISSION_TIMEOUT_S: '9999' }), MAX_ASK_TIMEOUT_S);
-  assert.equal(permissionTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: '180' }), 30); // the guard's timeout does not change this one
-  for (const bad of ['0', '-5', 'abc', '', 'NaN']) assert.equal(permissionTimeoutSeconds({ CLAUDE_PERMISSION_TIMEOUT_S: bad }), 30, bad);
+  assert.equal(permissionTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: '180' }), 120); // the guard's timeout does not change this one
+  for (const bad of ['0', '-5', 'abc', '', 'NaN']) assert.equal(permissionTimeoutSeconds({ CLAUDE_PERMISSION_TIMEOUT_S: bad }), 120, bad);
 });
 
-test('no answer in time: allowed; the timeout travels as an argument (30 s, or CLAUDE_PERMISSION_TIMEOUT_S), the env is passed unchanged', () => {
+test('no answer in time: allowed; the timeout travels as an argument (2 min, or CLAUDE_PERMISSION_TIMEOUT_S), the env is passed unchanged', () => {
   const { answer, calls } = fakeAnswer('allow', 'timeout');
   const env = privateEnv();
   assert.deepEqual(decisionOf(permissionReply(promptInput(), env, answer)), { behavior: 'allow' });
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].request.timeoutS, 30);
+  assert.equal(calls[0].request.timeoutS, 120);
   assert.equal(calls[0].env, env, 'no env copy with an overridden CLAUDE_ASK_TIMEOUT_S');
   assert.equal(calls[0].request.tool, 'Bash');
   assert.equal(calls[0].request.command, RM_COMMAND);

@@ -1,4 +1,4 @@
-// Two live false positives from an unattended Desap session (each ask stalls 30 s), and the probes that must keep asking:
+// Two live false positives from an unattended Desap session (each ask stalls up to 2 min), and the probes that must keep asking:
 // 1. a BEM modifier / state id glued to a word (`.card--password`, `inv-new-staff--password`) is not a `--password` flag;
 // 2. JS code that mentions a token name (`'csrf_token=…').slice(0, 80)`) is not a token value, but a password-kind value keeps the broad rule.
 // Every secret-looking value is built at runtime so the repo itself holds no token-shaped string (gitleaks).

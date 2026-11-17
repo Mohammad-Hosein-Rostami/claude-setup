@@ -1,6 +1,6 @@
 // Round 5 of the guard audit (final): find that deletes, the git top-level as project root, gh/commit text as data, heredoc readers,
 // more hidden-execution triggers, "guard error" on an exception, secrets piped into --with-token / --password-stdin.
-// Every repro of the final audit is a case here; the harmless commands must stay silent (a false positive costs an unattended run up to 30 s).
+// Every repro of the final audit is a case here; the harmless commands must stay silent (a false positive costs an unattended run up to 2 min).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';

@@ -2,10 +2,10 @@
 // permissionTimeoutSeconds(env), guiAvailable(env, platform), dialogInvocation(platform, text,
 // title, timeoutS, buttons), parseDialogResult(platform, result, buttons) -> 'allow'|'deny'|'timeout'|'unavailable', answerAsk(request, env) ->
 // {decision, outcome, reason}, decisionOutput(answer) -> hook stdout, askOwner(request, env) -> hook stdout (asks, logs, formats).
-// Why: the native "ask" waits forever. The owner's policy is "everything goes ahead after 30 s": show a native dialog with Allow
-// (default) and Deny, and go ahead when nobody answers within the request's timeoutS, else CLAUDE_ASK_TIMEOUT_S (default 30; a
-// secret-only ask passes CLAUDE_ASK_SECRET_TIMEOUT_S, default 30, see secretAskTimeoutSeconds; a Claude Code permission prompt answered
-// by permission-timed-allow.mjs passes CLAUDE_PERMISSION_TIMEOUT_S, default 30, see permissionTimeoutSeconds; each at most 190 so it
+// Why: the native "ask" waits forever. The owner's policy is "everything goes ahead after 2 min": show a native dialog with Allow
+// (default) and Deny, and go ahead when nobody answers within the request's timeoutS, else CLAUDE_ASK_TIMEOUT_S (default 120; a
+// secret-only ask passes CLAUDE_ASK_SECRET_TIMEOUT_S, default 120, see secretAskTimeoutSeconds; a Claude Code permission prompt answered
+// by permission-timed-allow.mjs passes CLAUDE_PERMISSION_TIMEOUT_S, default 120, see permissionTimeoutSeconds; each at most 190 so it
 // stays under the 200 s hook timeout). Only a click on Deny denies. Allow and timeout print NO decision (empty stdout, exit 0): the CLI's normal permission
 // flow then still applies, so base.json deny rules keep working and the rest of a compound command is not pre-approved.
 // A timeout only counts when the full time really passed; a dialog that was killed, crashed or gave up early is "dialog-failed".
@@ -25,11 +25,11 @@ import { logDecision } from './guard-log.mjs';
 import { maskSecrets } from './secrets.mjs';
 
 export const ASK_TIMEOUT_ENV = 'CLAUDE_ASK_TIMEOUT_S';
-export const DEFAULT_ASK_TIMEOUT_S = 30; // the owner: every prompt goes ahead after 30 s unless Deny is clicked
+export const DEFAULT_ASK_TIMEOUT_S = 120; // seconds; the owner: every prompt goes ahead after 2 min unless Deny is clicked
 export const SECRET_ASK_TIMEOUT_ENV = 'CLAUDE_ASK_SECRET_TIMEOUT_S';
-export const DEFAULT_SECRET_ASK_TIMEOUT_S = 30;
+export const DEFAULT_SECRET_ASK_TIMEOUT_S = 120; // seconds
 export const PERMISSION_TIMEOUT_ENV = 'CLAUDE_PERMISSION_TIMEOUT_S';
-export const DEFAULT_PERMISSION_TIMEOUT_S = 30;
+export const DEFAULT_PERMISSION_TIMEOUT_S = 120; // seconds
 export const MAX_ASK_TIMEOUT_S = 190; // the hook timeout in settings/base.json is 200 s
 const TIMEOUT_SLACK_MS = 500; // a dialog tool may report its timeout marginally before the full time has elapsed
 const MS_PER_SECOND = 1000;
@@ -74,7 +74,7 @@ function positiveSeconds(raw, fallback) {
   return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, MAX_ASK_TIMEOUT_S) : fallback;
 }
 
-/** @returns {number} the dialog timeout in whole seconds: CLAUDE_ASK_TIMEOUT_S when it is a positive number (at most 190), else 30 */
+/** @returns {number} the dialog timeout in whole seconds: CLAUDE_ASK_TIMEOUT_S when it is a positive number (at most 190), else 120 */
 export function askTimeoutSeconds(env = process.env) {
   return positiveSeconds(env[ASK_TIMEOUT_ENV], DEFAULT_ASK_TIMEOUT_S);
 }
@@ -82,7 +82,7 @@ export function askTimeoutSeconds(env = process.env) {
 /**
  * The shorter timeout for a secret-only ask (a repeated "confirm" about a value the owner typed themselves should not hold up a run).
  * @param {Record<string, string | undefined>} env process environment
- * @returns {number} CLAUDE_ASK_SECRET_TIMEOUT_S (default 30), but never more than the normal ask timeout
+ * @returns {number} CLAUDE_ASK_SECRET_TIMEOUT_S (default 120), but never more than the normal ask timeout
  */
 export function secretAskTimeoutSeconds(env = process.env) {
   return Math.min(positiveSeconds(env[SECRET_ASK_TIMEOUT_ENV], DEFAULT_SECRET_ASK_TIMEOUT_S), askTimeoutSeconds(env));
@@ -91,7 +91,7 @@ export function secretAskTimeoutSeconds(env = process.env) {
 /**
  * The timeout for Claude Code's own permission prompts (a "Dangerous rm operation not ruled out" check in bypassPermissions mode).
  * @param {Record<string, string | undefined>} env process environment
- * @returns {number} CLAUDE_PERMISSION_TIMEOUT_S when it is a positive number (at most 190), else 30; independent of CLAUDE_ASK_TIMEOUT_S
+ * @returns {number} CLAUDE_PERMISSION_TIMEOUT_S when it is a positive number (at most 190), else 120; independent of CLAUDE_ASK_TIMEOUT_S
  */
 export function permissionTimeoutSeconds(env = process.env) {
   return positiveSeconds(env[PERMISSION_TIMEOUT_ENV], DEFAULT_PERMISSION_TIMEOUT_S);

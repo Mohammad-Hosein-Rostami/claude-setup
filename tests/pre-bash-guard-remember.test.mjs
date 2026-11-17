@@ -189,7 +189,7 @@ test('a secret-only ask waits the short secret timeout, a push ask the normal on
   assert.match(lower.shownText(), /With no answer in 5 s/);
   const byDefault = session();
   byDefault.run(SECRET_COMMAND, 'allow');
-  assert.match(byDefault.shownText(), /With no answer in 30 s/);
+  assert.match(byDefault.shownText(), /With no answer in 2 min/);
 });
 
 const HIDDEN_PUSH = `import os;os.system('git push -f origin main')`;

@@ -2,7 +2,7 @@
 // Exports: decide(command, {cwd, project, prodHosts}) -> {allow: true, advice?} | {allow: false, ask: true, reason, reasons, advice?};
 // segments(command) -> string[][]. Parsing lives in lib/shell-words.mjs and lib/command-of.mjs.
 // Nothing is denied for good. Every safety rule hit is an ASK, and the hook answers it with a timed native dialog (lib/timed-ask.mjs:
-// Allow is the default, no answer in 30 s (CLAUDE_ASK_TIMEOUT_S) goes ahead as Allow, only a click on Deny denies); with no
+// Allow is the default, no answer in 2 min (CLAUDE_ASK_TIMEOUT_S) goes ahead as Allow, only a click on Deny denies); with no
 // GUI (ssh, CI, no display) or a failing dialog it falls back to the CLI's own "ask" prompt, which also appears in
 // bypassPermissions mode (verified on CLI 2.1.323). Bounce once (lib/bounce-once.mjs): when a reason can be fixed by rewriting the
 // command (a variable command word, a risky word inside shell expansion, a literal secret), the first send is denied with the rewrite
@@ -101,7 +101,7 @@ const SHELL_OPTIONS_WITH_VALUE = new Set(['-o', '+o', '-O', '+O', '--rcfile', '-
 const UNKNOWN_CD_TARGET = /^-|[~$`*?[\]{}]/;
 
 const allow = () => ({ allow: true });
-// Every rule is an ask. The hook turns it into a timed dialog (Allow by default, auto-allow after 30 s), or, the first time a
+// Every rule is an ask. The hook turns it into a timed dialog (Allow by default, auto-allow after 2 min), or, the first time a
 // reason can be fixed by rewriting the command, into a bounce (lib/bounce-once.mjs reads `reasons` one by one). Only a click on
 // Deny denies for good. A destructive rule says so, so its dialog stands out.
 const ask = (reasons) => ({ allow: false, ask: true, reason: reasons.join('; '), reasons });

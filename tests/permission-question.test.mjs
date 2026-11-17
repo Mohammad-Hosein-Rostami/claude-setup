@@ -1,4 +1,4 @@
-// Tests for AskUserQuestion in home/hooks/permission-timed-allow.mjs: one timed dialog per question call; no answer in 30 s
+// Tests for AskUserQuestion in home/hooks/permission-timed-allow.mjs: one timed dialog per question call; no answer in 2 min
 // (CLAUDE_PERMISSION_TIMEOUT_S) or "Use recommended" answers every question with its "(Recommended)" option, else its first
 // option, and only a timeout adds a note per answer saying nobody chose it (UNCONFIRMED); "Answer in terminal", a failed
 // dialog or no GUI print nothing, so Claude Code's own question UI appears.
@@ -46,14 +46,14 @@ const decisionOf = (stdout) => {
 };
 const WATCHER = question('Where should the watcher run?', ['PC watcher', 'Mac watcher (Recommended)', 'None']);
 
-const TIMEOUT_NOTE = 'No answer in 30 s: this option was taken by default, not chosen by the owner (UNCONFIRMED)';
+const TIMEOUT_NOTE = 'No answer in 2 min: this option was taken by default, not chosen by the owner (UNCONFIRMED)';
 
 test('"Use recommended": the option marked (Recommended) is taken, the questions echoed back, no note added', () => {
   const { answer, calls } = fakeAnswer('allow', 'allow');
   const decision = decisionOf(permissionReply(askInput([WATCHER]), privateEnv(), answer));
   assert.deepEqual(decision, { behavior: 'allow', updatedInput: { questions: [WATCHER], answers: { 'Where should the watcher run?': 'Mac watcher (Recommended)' } } });
   assert.equal(calls.length, 1, 'one dialog');
-  assert.equal(calls[0].timeoutS, 30);
+  assert.equal(calls[0].timeoutS, 120);
   assert.deepEqual(calls[0].buttons, { accept: 'Use recommended', decline: 'Answer in terminal' });
   assert.deepEqual(calls[0].details, [
     { label: 'Question 1', value: '[Where should] Where should the watcher run?' },
@@ -61,7 +61,7 @@ test('"Use recommended": the option marked (Recommended) is taken, the questions
   ]);
 });
 
-test('no answer in 30 s: the same option is taken, but each answer carries a note that nobody chose it (UNCONFIRMED)', () => {
+test('no answer in 2 min: the same option is taken, but each answer carries a note that nobody chose it (UNCONFIRMED)', () => {
   const decision = decisionOf(permissionReply(askInput([WATCHER]), privateEnv(), fakeAnswer('allow', 'timeout').answer));
   assert.deepEqual(decision.updatedInput.answers, { 'Where should the watcher run?': 'Mac watcher (Recommended)' });
   assert.deepEqual(decision.updatedInput.annotations, { 'Where should the watcher run?': { notes: TIMEOUT_NOTE } });
@@ -71,7 +71,7 @@ test('no answer: the note joins annotations already in the input and names the w
   const input = askInput([WATCHER, question('Ship it?', ['No', 'Yes (Recommended)'])]);
   input.tool_input.annotations = { 'Ship it?': { preview: 'diff' } };
   const decision = decisionOf(permissionReply(input, privateEnv({ CLAUDE_PERMISSION_TIMEOUT_S: '45' }), fakeAnswer('allow', 'timeout').answer));
-  const note = TIMEOUT_NOTE.replace('30 s', '45 s');
+  const note = TIMEOUT_NOTE.replace('2 min', '45 s');
   assert.deepEqual(decision.updatedInput.annotations, { 'Where should the watcher run?': { notes: note }, 'Ship it?': { preview: 'diff', notes: note } });
 });
 

@@ -72,15 +72,15 @@ const steppingClock = (stepMs) => {
   let now = 0;
   return () => (now += stepMs);
 };
-const FULL_WAIT_MS = 31_000; // longer than the default 30 s timeout
+const FULL_WAIT_MS = 121_000; // ms, longer than the default 120 s timeout
 // A real (short) timeout for hook processes: 1 s timeout, the fake dialog answers "timeout" after 1.2 s.
 const REAL_TIMEOUT = { CLAUDE_ASK_TIMEOUT_S: '1', FAKE_DIALOG_DELAY_MS: '1200' };
 
-test('askTimeoutSeconds: 30 by default (owner: everything goes ahead after 30 s), CLAUDE_ASK_TIMEOUT_S when it is a positive number', () => {
-  assert.equal(askTimeoutSeconds({}), 30);
-  assert.equal(secretAskTimeoutSeconds({}), 30);
+test('askTimeoutSeconds: 120 by default (owner: everything goes ahead after 2 min), CLAUDE_ASK_TIMEOUT_S when it is a positive number', () => {
+  assert.equal(askTimeoutSeconds({}), 120);
+  assert.equal(secretAskTimeoutSeconds({}), 120);
   assert.equal(askTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: '7' }), 7);
-  for (const bad of ['0', '-3', 'abc', '', 'NaN']) assert.equal(askTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: bad }), 30, bad);
+  for (const bad of ['0', '-3', 'abc', '', 'NaN']) assert.equal(askTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: bad }), 120, bad);
 });
 
 test('L6: CLAUDE_ASK_TIMEOUT_S=9999 is clamped to 190, under the 200 s hook timeout', () => {
@@ -152,7 +152,7 @@ test('answerAsk: Allow allows, Deny denies, a full-length timeout goes ahead and
   assert.match(deny.reason, /denied by the owner/);
   const late = answerAsk(request, fakeDialog('timeout').env, process.platform, steppingClock(FULL_WAIT_MS));
   assert.deepEqual([late.decision, late.outcome], ['allow', 'timeout']);
-  assert.match(late.reason, /no answer in 30 s, went ahead/);
+  assert.match(late.reason, /no answer in 2 min, went ahead/);
   const short = answerAsk(request, fakeDialog('timeout', { CLAUDE_ASK_TIMEOUT_S: '45' }).env, process.platform, steppingClock(46_000));
   assert.match(short.reason, /no answer in 45 s, went ahead/);
   assert.equal(formatDuration(180), '3 min');
@@ -187,7 +187,7 @@ test('the dialog shows tool, short command, directory and session; it never show
   answerAsk({ ...request, reason: `contains ${SECRET}`, command: `echo ${SECRET} ${'x'.repeat(400)}` }, dialog.env);
   const shown = shownText(dialog);
   assert.ok(!shown.includes(SECRET));
-  for (const part of ['Tool: Bash', '[masked]', `Directory: ${PROJECT}`, 'session session-', 'agent agent-87', 'Allow is the default', '30 s']) assert.ok(shown.includes(part), part);
+  for (const part of ['Tool: Bash', '[masked]', `Directory: ${PROJECT}`, 'session session-', 'agent agent-87', 'Allow is the default', '2 min']) assert.ok(shown.includes(part), part);
   assert.ok(!shown.includes('x'.repeat(250)), 'the command is cut');
 });
 

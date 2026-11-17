@@ -34,12 +34,12 @@ test('neutralise: every occurrence of each value becomes the env reference, long
   assert.equal(neutralise('nothing here', ['absent-value']), 'nothing here');
 });
 
-test('secretAskTimeoutSeconds: 30 by default, its own env, never above the normal ask timeout, bad values fall back', () => {
-  assert.equal(secretAskTimeoutSeconds({}), 30);
+test('secretAskTimeoutSeconds: 120 by default, its own env, never above the normal ask timeout, bad values fall back', () => {
+  assert.equal(secretAskTimeoutSeconds({}), 120);
   assert.equal(secretAskTimeoutSeconds({ CLAUDE_ASK_SECRET_TIMEOUT_S: '7' }), 7);
   assert.equal(secretAskTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: '10' }), 10);
   assert.equal(secretAskTimeoutSeconds({ CLAUDE_ASK_TIMEOUT_S: '10', CLAUDE_ASK_SECRET_TIMEOUT_S: '99' }), 10);
-  for (const bad of ['0', '-1', 'abc', '']) assert.equal(secretAskTimeoutSeconds({ CLAUDE_ASK_SECRET_TIMEOUT_S: bad }), 30, bad);
+  for (const bad of ['0', '-1', 'abc', '']) assert.equal(secretAskTimeoutSeconds({ CLAUDE_ASK_SECRET_TIMEOUT_S: bad }), 120, bad);
 });
 
 test('decide: a literal secret never hides the hidden-risk backstop, so the ask is not secret-only', () => {
