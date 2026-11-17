@@ -15,6 +15,7 @@ import { skillFor, workflowBackstop } from '../home/hooks/lib/workflow-backstop.
 const GUARD = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
 const SKILLS = ['wf-build', 'wf-review', 'wf-bugfix', 'wf-research', 'wf-step', 'quick'];
 let counter = 0;
+const GIT_TIMEOUT_FOR_TESTS_MS = 60_000; // the suite runs beside other work; the hook's 1 s default would silently skip the advice
 
 /** A private HOME holding the named skills; send(toolInput, extra) runs the hook once and returns the parsed hookSpecificOutput or null. */
 function session({ skills = SKILLS, envExtra = {}, settings } = {}) {
@@ -94,8 +95,8 @@ test('workflowBackstop never throws on odd input', () => {
 });
 
 // The copy-branch gate through the hook: a real temp repo holds the lane branch; the agent's cwd is that repo.
-function repoSession(options) {
-  const s = session(options);
+function repoSession({ envExtra, ...options } = {}) {
+  const s = session({ ...options, envExtra: { COPY_BRANCH_GIT_TIMEOUT_MS: String(GIT_TIMEOUT_FOR_TESTS_MS), ...envExtra } });
   const repo = makeRepo();
   git(repo, 'branch', 'lane/x');
   return { ...s, send: (toolInput) => s.send(toolInput, { cwd: repo }) };

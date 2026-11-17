@@ -20,6 +20,7 @@ const MAX_NAMES = 8; // a brief names a few branches; the cap bounds the git cal
 const MAX_SCAN_CHARS = 32 * 1024; // a brief is a few KB; text past this is pasted material, not instructions
 const MAX_WORDS_BEFORE_B = 8; // words between `worktree add` and `-b` (a path, `--detach`, `--no-track`, ...)
 const GIT_TIMEOUT_MS = 1000; // one local ref lookup takes a few ms
+const GIT_TIMEOUT_ENV = 'COPY_BRANCH_GIT_TIMEOUT_MS'; // a longer bound for the test suite: on a busy machine a lookup past 1 s means no advice
 const LEADING_NOISE = '`\'"([';
 const TRAILING_NOISE = '`\'"),.;:]';
 const NAME = /^[A-Za-z0-9][\w./-]{0,199}$/;
@@ -64,7 +65,7 @@ function branchExists(name, repoDir) {
   if (!NAME.test(name) || typeof repoDir !== 'string' || !isAbsolute(repoDir)) return false;
   const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
   for (const variable of REPOSITORY_VARIABLES) delete env[variable];
-  const result = spawnSync('git', [...HARDENED, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`], { cwd: repoDir, env, encoding: 'utf8', timeout: GIT_TIMEOUT_MS });
+  const result = spawnSync('git', [...HARDENED, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`], { cwd: repoDir, env, encoding: 'utf8', timeout: Number(process.env[GIT_TIMEOUT_ENV]) || GIT_TIMEOUT_MS });
   return result.status === 0;
 }
 

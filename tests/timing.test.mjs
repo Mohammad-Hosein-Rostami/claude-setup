@@ -15,8 +15,9 @@ test('fastestCpuMs does not count the time a job waits', () => {
 });
 
 test('fastestCpuMs counts the CPU a job burns', () => {
-  const burn = () => { for (const until = performance.now() + WAIT_MS; performance.now() < until;); };
-  assert.ok(fastestCpuMs(burn, 1) >= WAIT_MS / 2);
+  const cpuMs = () => { const { user, system } = process.cpuUsage(); return (user + system) / 1000; };
+  const burn = () => { for (const until = cpuMs() + WAIT_MS; cpuMs() < until;); }; // spins until WAIT_MS of CPU is used, however long the wall clock takes
+  assert.ok(fastestCpuMs(burn, 1) >= WAIT_MS - 5);
 });
 
 test('the fastest of several runs is returned', () => {
