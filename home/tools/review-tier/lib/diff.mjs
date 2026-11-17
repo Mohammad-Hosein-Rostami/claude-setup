@@ -75,10 +75,8 @@ export function parsePatch(text) {
   return [...byPath.values()];
 }
 
-/** Every changed path of a diff, also one with no hunk (both paths of a pure rename, a binary file, a mode change). */
-function withHunklessFiles(top, args, files) {
-  // --no-renames: a pure rename lists both its paths, so a gate file renamed away is still read as changed.
-  const names = gitText(top, [...DIFF_FLAGS.slice(0, 2), 'diff', '--name-only', '--no-renames', ...args]).split('\n').filter((name) => name !== '');
+/** Adds to `files` every path in `names` that has no entry yet: one with no hunk (both paths of a pure rename, a binary file, a mode change). */
+function withHunklessFiles(names, files) {
   const known = new Set(files.map((file) => file.path));
   return [...files, ...names.filter((name) => !known.has(name)).map((path) => ({ path, added: [], removed: [], hunkHeads: [] }))];
 }
@@ -86,7 +84,9 @@ function withHunklessFiles(top, args, files) {
 /** The changed files of `range` (`a..b` or `a...b`). */
 export function readRange(top, range) {
   const args = [range, '--'];
-  return withHunklessFiles(top, args, parsePatch(gitText(top, [...DIFF_FLAGS, ...args])));
+  // --no-renames: a pure rename lists both its paths, so a gate file renamed away is still read as changed.
+  const names = gitText(top, [...DIFF_FLAGS.slice(0, 2), 'diff', '--name-only', '--no-renames', ...args]).split('\n').filter((name) => name !== '');
+  return withHunklessFiles(names, parsePatch(gitText(top, [...DIFF_FLAGS, ...args])));
 }
 
 /** The whole text of `path` at `rev` (cut at 1 MiB), or null when it does not exist there. */
@@ -122,7 +122,8 @@ export function readDelta(top, base, reviewedSha) {
   const reviewed = new Set(commitsOf(top, `${base}..${reviewedSha}`).map((commit) => patchKey(top, commit)));
   const fresh = commitsOf(top, `${base}..HEAD`).filter((commit) => !reviewed.has(patchKey(top, commit)));
   const text = fresh.map((commit) => showPatch(top, commit)).join('\n');
-  return { range: `patches ${fresh.map((commit) => commit.slice(0, 8)).join(',') || 'none'} of ${base}..HEAD`, files: parsePatch(text) };
+  const names = fresh.flatMap((commit) => gitText(top, [...DIFF_FLAGS.slice(0, 2), 'show', '--name-only', '--no-renames', '--format=', commit]).split('\n')).filter((name) => name !== '');
+  return { range: `patches ${fresh.map((commit) => commit.slice(0, 8)).join(',') || 'none'} of ${base}..HEAD`, files: withHunklessFiles(names, parsePatch(text)) };
 }
 
 const nameDefinedIn = (text) => {

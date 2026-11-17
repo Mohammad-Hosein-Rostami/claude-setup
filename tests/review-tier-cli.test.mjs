@@ -121,6 +121,21 @@ test('CLI: a delta with a rebased (non-ancestor) sha lists only the new patches'
   assert.match(result.range, /^patches [0-9a-f]{8} of main\.\.HEAD$/);
 });
 
+test('CLI: a delta on a rebased lane still sees a gate file renamed away (a rename has no hunk)', () => {
+  const { dir, write, json } = lane();
+  const reviewed = write('tsconfig.json', '{}\n');
+  git(dir, 'checkout', '-q', 'main');
+  write('other.txt', 'main moved\n');
+  git(dir, 'checkout', '-q', 'lane');
+  git(dir, 'rebase', '-q', 'main');
+  git(dir, 'mv', 'tsconfig.json', 'tsconfig.json.off');
+  git(dir, 'commit', '-q', '-m', 'rename tsconfig away');
+  assert.notEqual(git(dir, 'rev-parse', 'HEAD~1'), reviewed);
+  const result = json('--delta', reviewed, '--landing');
+  assert.ok(result.tier >= 1, `tier ${result.tier}`);
+  assert.ok(Object.keys(result.fileClasses).includes('tsconfig.json'));
+});
+
 test('CLI: a delta lists callers of the changed functions as required reading (file:line only, at most 20)', () => {
   const { write, json } = lane();
   write('src/use.mjs', 'const out = computeTotal(1);\n');
