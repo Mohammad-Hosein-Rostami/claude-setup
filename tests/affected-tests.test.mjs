@@ -81,6 +81,13 @@ test('affected: a change that only touches documents runs no test', () => {
   assert.deepEqual(result, { full: false, reason: 'no code or text file that a test reads changed', tests: [] });
 });
 
+test('affected: the two documents a test reads run that test, any other document still runs nothing', () => {
+  const map = mapOf({ 'tests/modes-consistency.test.mjs': PASSING, 'tests/watch-idle-cli.test.mjs': PASSING, 'tests/b.test.mjs': PASSING });
+  assert.deepEqual(affected(['docs/modes.md'], map, { onBase: false }).tests, ['tests/modes-consistency.test.mjs']);
+  assert.deepEqual(affected(['docs/daily-use.md'], map, { onBase: false }).tests, ['tests/modes-consistency.test.mjs', 'tests/watch-idle-cli.test.mjs']);
+  assert.deepEqual(affected(['docs/catalog.md'], map, { onBase: false }).tests, []);
+});
+
 test('affected: a changed test runs itself, a changed helper runs the tests that import it, a deleted test is ignored', () => {
   const map = smallMap();
   assert.deepEqual(affected(['tests/b.test.mjs'], map, { onBase: false }).tests, ['tests/b.test.mjs']);

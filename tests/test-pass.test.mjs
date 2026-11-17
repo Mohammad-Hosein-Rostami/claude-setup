@@ -97,6 +97,15 @@ test('run --suite runs the declared command and records a suite PASS; a related-
   assert.equal(hasPass(repo, 'HEAD', { suite: true, env }), true);
 });
 
+test('a run of the declared command without --suite is not a suite PASS', () => {
+  const { repo, env, run } = setup();
+  writeFileSync(join(repo, 'package.json'), JSON.stringify({ scripts: { test: 'node -e process.exit(0)' } }));
+  git(repo, 'add', 'package.json');
+  git(repo, 'commit', '-q', '-m', 'declare suite');
+  assert.equal(run('--', 'node', '-e', 'process.exit(0)').status, 0);
+  assert.equal(hasPass(repo, 'HEAD', { suite: true, cmd: 'node -e process.exit(0)', env }), false);
+});
+
 test('a suite PASS recorded under another command than the wanted one does not count', () => {
   const { repo, env, run } = setup();
   writeFileSync(join(repo, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }));

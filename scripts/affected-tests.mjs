@@ -35,8 +35,10 @@ const TEXT_FILE_TESTS = [
   ['home/agents/', ['agent-files', 'agent-model-guard', 'agent-model-guard-briefs', 'agent-model-guard-matrix', 'agent-model-guard-writers', 'project-agents', 'modes-consistency', 'rules-text']],
   ['home/skills/', ['agent-files', 'modes-consistency', 'mode-context', 'skill-router']],
   ['home/workflows/', ['workflow-scripts']],
+  ['docs/modes.md', ['modes-consistency']],
+  ['docs/daily-use.md', ['modes-consistency', 'watch-idle-cli']],
 ];
-// Documents no test reads at run time: a change here runs nothing.
+// Documents no test reads at run time (docs/modes.md and docs/daily-use.md are read, see above): a change here runs nothing.
 const DOCUMENT_PREFIXES = ['docs/', 'home/standards/', 'home/project-notes/'];
 
 const posix = (path) => path.split(sep).join('/');
