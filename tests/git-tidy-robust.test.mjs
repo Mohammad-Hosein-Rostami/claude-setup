@@ -210,7 +210,10 @@ function makeRepoWithManyBranches(perKind) {
   git(dir, 'cherry-pick', 'landed');
   git(dir, 'branch', '-D', 'landed', 'open');
   const refs = [];
-  for (let i = 0; i < perKind; i++) refs.push(`${ancestorTip} refs/heads/anc/${i}`, `${landedTip} refs/heads/landed/${i}`, `${openTip} refs/heads/open/${i}`);
+  // Each unmerged branch gets its own tip (branches with one tip are copies of each other and prune removes all but one).
+  const openTree = git(dir, 'rev-parse', `${openTip}^{tree}`);
+  const openTips = Array.from({ length: perKind }, (_, i) => git(dir, 'commit-tree', openTree, '-p', openTip, '-m', `open ${i}`));
+  for (let i = 0; i < perKind; i++) refs.push(`${ancestorTip} refs/heads/anc/${i}`, `${landedTip} refs/heads/landed/${i}`, `${openTips[i]} refs/heads/open/${i}`);
   writeFileSync(join(dir, '.git', 'packed-refs'), `${refs.join('\n')}\n`);
   return dir;
 }

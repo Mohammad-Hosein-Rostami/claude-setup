@@ -1,9 +1,10 @@
-// Purpose: `git-tidy check`: is the history one straight line, and which branches and worktrees are leftovers.
+// Purpose: `git-tidy check`: is the history one straight line, and which branches and worktrees are leftovers (merged, or copies of newer work).
 // Exports: runCheck.
 // Invariants: reads only. A finding is a fact (merge commit, merged branch or worktree, stale worktree, a folder whose branch moved
 //   under it, edits in the base folder) and sets exit 1;
 //   a hint (kind ends in `?`) is context and never does. Items are `{ kind, subject, detail }`. A git command that fails
 //   throws (exit 2): a check that cannot read must never report clean.
+import { copyFindings } from './copies.mjs';
 import { gitFlag, gitText, runGit } from './git.mjs';
 import { findLeftovers } from './leftovers.mjs';
 import { isBackupTag } from './tags.mjs';
@@ -149,10 +150,13 @@ export function runCheck(repo, now = Date.now()) {
   const worktrees = listWorktrees(repo);
   const tangled = tangledRefItems(repo);
   const mergedTags = leftovers.tags.filter((t) => t.state === 'patch-equal');
+  const copies = copyFindings(repo, leftovers);
+  const reportedAsCopy = new Set(copies.map((copy) => copy.subject)); // an agent branch on the base is one finding, the more specific one
   const findings = [
     ...mergeCommitFindings(repo),
     ...tangled.findings,
-    ...leftovers.mergedBranches.map((b) => item('merged-branch', b.name, `${b.short} ${b.state}`)),
+    ...copies,
+    ...leftovers.mergedBranches.filter((b) => !reportedAsCopy.has(b.name)).map((b) => item('merged-branch', b.name, `${b.short} ${b.state}`)),
     ...mergedTags.filter((t) => isBackupTag(t.name)).map((t) => item('merged-tag', t.name, `${t.short} ${t.state}`)),
     ...leftovers.mergedWorktrees.map((w) => item('merged-worktree', w.path, `branch ${w.branch}`)),
     ...leftovers.staleWorktrees.map((w) => item('stale-worktree', w.path, 'folder missing')),
@@ -164,7 +168,7 @@ export function runCheck(repo, now = Date.now()) {
   const unmergedTags = leftovers.tags.filter((t) => t.state === 'unmerged')
     .map((t) => item('unmerged-tag?', t.name, `ahead ${t.ahead}, last commit ${t.date}`));
   const hints = [
-    ...publishedMergeHint(repo), ...unmerged, ...unlandedLaneHints(repo, leftovers.states.filter((b) => b.state === 'unmerged'), now), ...unmergedTags,
+    ...publishedMergeHint(repo), ...unmerged, ...unlandedLaneHints(repo, leftovers.states.filter((b) => b.state === 'unmerged' && !reportedAsCopy.has(b.name)), now), ...unmergedTags,
     ...mergedTags.filter((t) => !isBackupTag(t.name)).map((t) => item('merged-tag?', t.name, `${t.short} ${t.state}`)), ...tangled.hints, ...mergedRemoteHints(repo),
     ...(repo.bare ? [] : behindBaseHint(repo)), ...worktreeHints(worktrees), ...ignoredFileHints(leftovers.mergedWorktrees), ...shallowHint(repo),
   ];

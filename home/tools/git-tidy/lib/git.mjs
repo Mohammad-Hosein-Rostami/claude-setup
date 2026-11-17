@@ -21,9 +21,9 @@ function gitEnvironment() {
   return env;
 }
 
-/** Runs `git <args>` in `cwd`; returns `{ status, stdout, stderr }` and never throws for a non-zero exit. */
-export function runGit(cwd, args) {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: gitEnvironment(), maxBuffer: MAX_OUTPUT_BYTES });
+/** Runs `git <args>` in `cwd` (with `input` as stdin when given); returns `{ status, stdout, stderr }` and never throws for a non-zero exit. */
+export function runGit(cwd, args, input = undefined) {
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: gitEnvironment(), maxBuffer: MAX_OUTPUT_BYTES, input });
   if (result.error) throw new Error(`cannot run git: ${result.error.message}`);
   return { status: result.status, stdout: result.stdout, stderr: result.stderr.trim() };
 }

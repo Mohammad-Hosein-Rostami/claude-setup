@@ -1,5 +1,6 @@
-// Purpose: `git-tidy prune`: remove the worktrees and branches whose work is already on the base, and nothing else.
-// Exports: pruneRepo, deleteBranch (exported so a test can move a branch between the check and the delete).
+// Purpose: `git-tidy prune`: remove the worktrees and branches whose work is already on the base, the older copies of a re-done
+//   lane and the leftover branches of workflow agents (lib/copies.mjs), and nothing else.
+// Exports: pruneRepo, deleteBranch (exported so a test can move a branch between the check and the delete), refuseUnsafeApply (land asks it first).
 // Invariants: the only writes are `git worktree prune`, `git worktree remove` (never --force), `git update-ref -d` with the
 //   old value and the removal of the branch's config section, and only with apply. Principle: remove only what is provably
 //   on the base AND leaves no only-copy behind (uncommitted, untracked or ignored files, commits that live in a reflog only).
@@ -8,6 +9,7 @@
 //   Anything not proven is kept, with the reason. Order: stale entries, worktrees, branches (a branch is free once its
 //   worktree is gone).
 import { branchState, isMerged } from './branches.mjs';
+import { copyCandidates, isStillCopy } from './copies.mjs';
 import { UsageError, runGit } from './git.mjs';
 import { findLeftovers } from './leftovers.mjs';
 import { branchReflogs, isNotStarted, reflogOnlyCommits } from './reflog.mjs';
@@ -19,11 +21,12 @@ import {
 const RECENT_MINUTES = 60;
 const IGNORED_SHOWN = 5;
 const NOT_STARTED = `not started yet (no commit of its own), used in the last ${RECENT_MINUTES} min`;
+const NOT_A_COPY = 'it is no longer a copy of a newer branch';
 const item = (action, kind, subject, detail) => ({ action, kind, subject, detail });
 
 // Where verdicts read their facts: with apply, git is asked again each time; a plan reads the worktree list once and
 // takes branch states from the candidates it was given.
-function makeContext(repo, { apply, includeRecent }, leftovers) {
+function makeContext(repo, { apply, includeRecent }, leftovers, copies) {
   const listed = apply ? null : listWorktrees(repo);
   const states = new Map(leftovers.mergedBranches.map((entry) => [entry.name, entry]));
   let reflogs = null;
@@ -31,6 +34,7 @@ function makeContext(repo, { apply, includeRecent }, leftovers) {
     repo,
     apply,
     includeRecent,
+    copies: new Map(copies.map((copy) => [copy.name, copy])),
     worktrees: () => listed ?? listWorktrees(repo),
     stateOf: (name) => states.get(name) ?? branchState(repo, name),
     // A plan reads every branch reflog in one call; an apply asks git per branch, right before acting.
@@ -52,6 +56,9 @@ function protectedReason(repo, name, worktrees) {
   return null;
 }
 
+// A copy's commits are safe when they are on the branch that holds its work (as a landed branch's are when on the base).
+const holderRepo = (repo, copy) => (copy?.by ? { ...repo, baseRef: `refs/heads/${copy.by}` } : repo);
+
 /** Why a reflog forbids removal (commits that would be lost with it), or null. `reflogs` are `[{ cwd, ref }]`. */
 function reflogReason(repo, reflogs, branch) {
   const found = reflogOnlyCommits(repo, reflogs, branch);
@@ -69,22 +76,24 @@ function ignoredReason(path) {
 }
 
 // What the worktree holds that removal would destroy, or that says it is in use: unfinished operation, uncommitted or
-// untracked files, ignored files, commits only in a reflog, recent use.
-function contentReason(ctx, tree) {
+// untracked files, ignored files, commits only in a reflog, recent use. A copy's worktree may hold a live agent, so
+// --include-recent never lifts the recent-use rule for it.
+function contentReason(ctx, tree, copy) {
   const operation = inProgressOperation(tree.path);
   if (operation !== null) return `a ${operation} is not finished there`;
   const changed = changedFileCount(tree.path);
   if (changed === null) return 'git status failed there, treated as dirty';
   if (changed > 0) return `${changed} uncommitted or untracked files`;
-  const reasons = [ignoredReason(tree.path), reflogReason(ctx.repo, [ctx.branchReflog(tree.branch), { cwd: tree.path, ref: 'HEAD' }], tree.branch)];
+  const reasons = [ignoredReason(tree.path), reflogReason(holderRepo(ctx.repo, copy), [ctx.branchReflog(tree.branch), { cwd: tree.path, ref: 'HEAD' }], tree.branch)];
   const found = reasons.find((reason) => reason !== null);
   if (found) return found;
-  if (ctx.includeRecent) {
+  if (ctx.includeRecent && !copy) {
     // --include-recent is for lanes that landed; a lane with no commit yet has not, so its recent use still protects it.
     return isNotStarted(ctx.repo, tree.branch) && minutesSinceUse(tree.path, RECENT_MINUTES) !== null ? NOT_STARTED : null;
   }
   const used = minutesSinceUse(tree.path, RECENT_MINUTES);
-  return used === null ? null : `used ${used} min ago (add --include-recent if you landed this lane yourself)`;
+  if (used === null) return null;
+  return copy ? `used ${used} min ago (an agent may still work there)` : `used ${used} min ago (add --include-recent if you landed this lane yourself)`;
 }
 
 /** Re-reads one linked worktree and decides. Returns `{ remove: true }` or `{ remove: false, reason }`. */
@@ -101,9 +110,14 @@ function worktreeVerdict(ctx, candidate) {
   if (runsFromHere) return keep('the command runs from this folder');
   const protection = protectedReason(repo, tree.branch, worktrees);
   if (protection) return keep(protection);
-  const state = ctx.apply ? branchState(repo, tree.branch) : ctx.stateOf(tree.branch);
-  if (!isMerged(state.state)) return keep(`branch ${tree.branch} is not on ${repo.base} (${state.ahead} commits ahead)`);
-  const reason = contentReason(ctx, tree);
+  const copy = ctx.copies.get(tree.branch);
+  if (copy) {
+    if (ctx.apply && !isStillCopy(repo, copy)) return keep(NOT_A_COPY);
+  } else {
+    const state = ctx.apply ? branchState(repo, tree.branch) : ctx.stateOf(tree.branch);
+    if (!isMerged(state.state)) return keep(`branch ${tree.branch} is not on ${repo.base} (${state.ahead} commits ahead)`);
+  }
+  const reason = contentReason(ctx, tree, copy);
   return reason === null ? { remove: true } : keep(reason);
 }
 
@@ -115,12 +129,17 @@ function branchVerdict(ctx, candidate, gone) {
   const keep = (reason) => ({ remove: false, reason });
   const protection = protectedReason(repo, name, worktrees);
   if (protection) return keep(protection);
-  const state = ctx.apply ? branchState(repo, name) : candidate;
-  if (state.state === 'missing') return keep('it is already gone');
-  if (!isMerged(state.state)) return keep(`${state.ahead} commits are not on ${repo.base}`);
+  const copy = ctx.copies.get(name);
+  const state = copy ? { state: copy.kind, tip: copy.tip } : ctx.apply ? branchState(repo, name) : candidate;
+  if (copy) {
+    if (ctx.apply && !isStillCopy(repo, copy)) return keep(NOT_A_COPY);
+  } else {
+    if (state.state === 'missing') return keep('it is already gone');
+    if (!isMerged(state.state)) return keep(`${state.ahead} commits are not on ${repo.base}`);
+  }
   const holder = worktrees.find((entry) => entry.branch === name && !gone.has(entry.path));
   if (holder) return keep(`checked out in ${holder.path}`);
-  const lost = reflogReason(repo, [ctx.branchReflog(name)], name);
+  const lost = reflogReason(holderRepo(repo, copy), [ctx.branchReflog(name)], name);
   if (lost) return keep(lost);
   return { remove: true, tip: state.tip, state: state.state };
 }
@@ -152,13 +171,14 @@ function pruneWorktree(ctx, candidate, gone) {
   const { repo, apply } = ctx;
   const verdict = worktreeVerdict(ctx, candidate);
   const detail = `branch ${candidate.branch}`;
-  if (!verdict.remove) return item('keep', 'merged-worktree', candidate.path, verdict.reason);
+  const kind = ctx.copies.has(candidate.branch) ? 'copy-worktree' : 'merged-worktree';
+  if (!verdict.remove) return item('keep', kind, candidate.path, verdict.reason);
   if (!apply) {
     gone.add(candidate.path);
-    return item('remove', 'merged-worktree', candidate.path, detail);
+    return item('remove', kind, candidate.path, detail);
   }
   const result = runGit(repo.dir, ['worktree', 'remove', '--', candidate.path]);
-  return result.status === 0 ? item('removed', 'merged-worktree', candidate.path, detail) : item('failed', 'merged-worktree', candidate.path, result.stderr);
+  return result.status === 0 ? item('removed', kind, candidate.path, detail) : item('failed', kind, candidate.path, result.stderr);
 }
 
 // Compare-and-delete: update-ref fails when the branch no longer points at the tip the verdict was made for. A branch's
@@ -177,8 +197,9 @@ export function deleteBranch(repo, name, tip) {
 
 function pruneBranch(ctx, candidate, gone) {
   const verdict = branchVerdict(ctx, candidate, gone);
-  if (!verdict.remove) return item('keep', 'merged-branch', candidate.name, verdict.reason);
-  if (!ctx.apply) return item('remove', 'merged-branch', candidate.name, `${candidate.short} ${verdict.state}`);
+  const kind = ctx.copies.get(candidate.name)?.kind ?? 'merged-branch';
+  if (!verdict.remove) return item('keep', kind, candidate.name, verdict.reason);
+  if (!ctx.apply) return item('remove', kind, candidate.name, `${candidate.short} ${verdict.state}`);
   return deleteBranch(ctx.repo, candidate.name, verdict.tip);
 }
 
@@ -187,7 +208,8 @@ function detachedWorktrees(ctx) {
     .map((tree) => item('keep', 'detached-worktree', tree.path, 'detached HEAD, not touched'));
 }
 
-function refuseUnsafeApply(repo) {
+/** Throws UsageError when an operation is unfinished in any worktree or the base is ambiguous: nothing may be removed then. */
+export function refuseUnsafeApply(repo) {
   for (const tree of listWorktrees(repo).filter((entry) => !entry.missing && !entry.bare)) {
     const operation = inProgressOperation(tree.path);
     if (operation !== null) throw new UsageError(`a ${operation} is not finished in ${tree.path}; finish or abort it before --apply`);
@@ -208,10 +230,15 @@ function refuseUnsafeApply(repo) {
 export function pruneRepo(repo, { apply, includeRecent = false, leftovers = findLeftovers(repo) }) {
   if (apply) refuseUnsafeApply(repo);
   const gone = new Set();
-  const ctx = makeContext(repo, { apply, includeRecent }, leftovers);
+  const mergedNames = new Set(leftovers.mergedBranches.map((entry) => entry.name));
+  // A copy on the base is already a merged branch; only the others go through the copy path.
+  const copies = copyCandidates(repo, leftovers).filter((copy) => !mergedNames.has(copy.name));
+  const ctx = makeContext(repo, { apply, includeRecent }, leftovers, copies);
+  const copyBranches = copies.map((copy) => ({ name: copy.name, short: copy.tip.slice(0, 7) }));
+  const copyWorktrees = listWorktrees(repo).filter((tree) => !tree.main && !tree.missing && ctx.copies.has(tree.branch)).map(({ path, branch }) => ({ path, branch }));
   const items = pruneStale(ctx, leftovers.staleWorktrees, gone);
-  for (const candidate of leftovers.mergedWorktrees) items.push(pruneWorktree(ctx, candidate, gone));
-  for (const candidate of leftovers.mergedBranches) items.push(pruneBranch(ctx, candidate, gone));
+  for (const candidate of [...leftovers.mergedWorktrees, ...copyWorktrees]) items.push(pruneWorktree(ctx, candidate, gone));
+  for (const candidate of [...leftovers.mergedBranches, ...copyBranches]) items.push(pruneBranch(ctx, candidate, gone));
   items.push(...detachedWorktrees(ctx));
   const tagNames = leftovers.tags.filter((tag) => tag.state === 'patch-equal' && isBackupTag(tag.name)).map((tag) => tag.name);
   if (tagNames.length > 0) items.push(item('note', 'tags', tagNames.join(' '), 'not removed by this tool')); // a tag may be the only backup
