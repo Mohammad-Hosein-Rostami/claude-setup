@@ -457,6 +457,27 @@ test('an unclosed code fence above the section: add, deliver, rule and decision 
   assert.equal(await read(), UNCLOSED_FENCE);
 });
 
+// Review of 2ca5bb1 (1): an unclosed fence INSIDE the `## Standing rules` section hides everything below it, so `rule` put the bullet at
+// the end of the file, inside the fence, printed ok and added a second copy on the next run. It is refused like the new-section case.
+const FENCE_OPEN_IN_RULES = `# STATUS\n\n## Standing rules\n- one\n\`\`\`\npasted and never closed\n\n## Work items\n\n| id | item | size | started | done | evidence |\n| -- | -- | -- | -- | -- | -- |\n| 1 | a | S | - | - | - |\n`;
+
+test('an unclosed code fence inside the section: rule and decision are refused with the fence line, nothing written', async () => {
+  const { run, read } = await project(FENCE_OPEN_IN_RULES);
+  for (const argv of [['rule', 'two'], ['decision', 'two']]) {
+    const result = run(...argv);
+    assert.equal(result.code, 1, argv.join(' '));
+    assert.match(result.message, /unclosed code fence at line 5/, argv.join(' '));
+  }
+  assert.equal(await read(), FENCE_OPEN_IN_RULES);
+});
+
+test('an unclosed code fence below the section does not stop a rule from being added above it', async () => {
+  const text = `# STATUS\n\n## Standing rules\n- one\n\n## Notes\n\`\`\`\nnever closed\n`;
+  const { run, read } = await project(text);
+  assert.equal(run('rule', 'two').code, 0);
+  assert.match(await read(), /## Standing rules\n- one\n- two\n\n## Notes/);
+});
+
 // Review of 75af2e9: the same-bullet check looked at every line, so a rule quoted in a code fence was never added to the section.
 test('rule adds a bullet that only appears inside a code fence elsewhere in the file', async () => {
   const quoted = `\`\`\`\n- keep going\n\`\`\`\n\n${PIPED}`;

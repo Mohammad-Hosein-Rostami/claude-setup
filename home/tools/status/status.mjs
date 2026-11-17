@@ -202,6 +202,8 @@ function addBullet(lines, kind, text, now) {
     const hidden = workItems === -1 ? hiddenEndReason(lines) : null;
     if (hidden !== null) return { error: hidden };
     lines.splice(workItems === -1 ? lines.length : workItems, 0, `## ${SECTION_FOR[kind]}`, bullet, '');
+  } else if (section.openFence > section.start && section.openFence < section.end) {
+    return { error: `unclosed code fence at line ${section.openFence + 1}, inside the \`## ${SECTION_FOR[kind]}\` section: a bullet added at its end would be hidden in the fence; close the fence first` };
   } else {
     lines.splice(sectionEnd(lines, section), 0, bullet);
   }
