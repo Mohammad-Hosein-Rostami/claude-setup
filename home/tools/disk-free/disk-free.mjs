@@ -6,7 +6,7 @@
 // Env: DISK_FAIL_FREE_GB (default 5) and DISK_WARN_FREE_GB (default 15) move the thresholds; the warn value must be above the fail value.
 //   Test hooks: DISK_FREE_DF_OUTPUT replaces the `df -Pk` text, DISK_FREE_CLAUDE_TMP replaces the claude session-folder root,
 //   DISK_FREE_DU_TIMEOUT_MS shortens the total time for measuring all folders.
-// Exports: availableGb, judgeFreeSpace (tests). The tool only reads: it measures folders and prints advice, it never deletes.
+// Exports: availableGb, judgeFreeSpace (tests), claudeSessionRoot (disk-clean.mjs). The tool only reads: it measures folders and prints advice, it never deletes.
 import { spawnSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -49,7 +49,8 @@ export function judgeFreeSpace(freeGb, env) {
   return { level, failGb, warnGb };
 }
 
-const claudeSessionRoot = (env) => env.DISK_FREE_CLAUDE_TMP ?? `${process.platform === 'darwin' ? '/private/tmp' : '/tmp'}/claude-${process.getuid?.() ?? 'user'}`;
+/** The folder Claude Code keeps the session scratchpads in: /private/tmp/claude-<uid> (macOS) or /tmp/claude-<uid>; DISK_FREE_CLAUDE_TMP replaces it. */
+export const claudeSessionRoot = (env) => env.DISK_FREE_CLAUDE_TMP ?? `${process.platform === 'darwin' ? '/private/tmp' : '/tmp'}/claude-${process.getuid?.() ?? 'user'}`;
 
 /** Rebuildable caches that exist here, each { name, shown, path, how }. Docker has no folder to measure, so it has no path. */
 function cacheCandidates(home, env) {
