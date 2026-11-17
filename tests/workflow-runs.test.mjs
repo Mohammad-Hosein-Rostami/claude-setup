@@ -14,7 +14,11 @@ import { liveRuns } from '../home/tools/estimate/lib/workflow-runs.mjs';
 const NOW = 1_800_000_000_000;
 const MIN_MS = 60_000;
 const META = "export const meta = { name: 'build', description: 'a { brace } in text', phases: [{ title: 'Plan' }, { title: 'Build', detail: 'x' }, { title: 'Review' }, { title: 'Land' }] };\nawait agent('x');\n";
-const entry = (type, agentId, label, phase) => JSON.stringify({ type, agentId, label, phase });
+// The shapes Claude Code 2.1.326 writes (real journal wf_08afbeb5-043): only `started` carries label and phase; `result` has just the agent
+// id (and its result text); `launched` has no agent at all.
+const started = (agentId, label, phase) => JSON.stringify({ type: 'started', key: `v2:${agentId}`, agentId, label, phase });
+const result = (agentId) => JSON.stringify({ type: 'result', key: `v2:${agentId}`, agentId, result: 'text', remoteControlDeviceReport: false, toolsUsed: ['Bash'] });
+const LAUNCHED = JSON.stringify({ type: 'launched' });
 
 /** A session folder: returns the transcript path the status line gets and helpers to add journals, summaries and script copies. */
 async function session() {
@@ -43,10 +47,10 @@ async function session() {
 }
 
 const REVIEW_LINES = [
-  entry('launched', 'a1', 'impl-a:plan', 'Plan'), entry('started', 'a1', 'impl-a:plan', 'Plan'), entry('result', 'a1', 'impl-a:plan', 'Plan'),
-  ...['b1', 'b2', 'b3', 'b4'].flatMap((id) => [entry('launched', id, 'impl-a:review', 'Review'), entry('started', id, 'impl-a:review', 'Review')]),
-  entry('result', 'b1', 'impl-a:review', 'Review'), entry('result', 'b2', 'impl-a:review', 'Review'),
-  entry('launched', 'b5', 'impl-a:fix', 'Review'),
+  LAUNCHED, started('a1', 'impl-a:plan', 'Plan'), result('a1'),
+  ...['b1', 'b2', 'b3', 'b4'].map((id) => started(id, 'impl-a:review', 'Review')),
+  result('b1'), result('b2'),
+  started('b5', 'impl-a:fix', 'Review'),
 ];
 
 test('a live run: its name, the row of the newest agent, the phase with its place in the script\'s phases, and agents done of agents seen', async () => {
@@ -56,6 +60,36 @@ test('a live run: its name, the row of the newest agent, the phase with its plac
   assert.deepEqual(liveRuns(s.transcriptPath, NOW), [
     { runId: 'wf_a', name: 'build', row: 'impl-a', phase: 'Review', phaseIndex: 3, phaseTotal: 4, started: 5, done: 2 },
   ]);
+});
+
+test('result lines carry no label or phase: they count in the phase and row of the agent that started', async () => {
+  const s = await session();
+  s.journal('wf_a', [started('a1', 'impl-a:plan', 'Plan'), ...['b1', 'b2', 'b3', 'b4'].map((id) => started(id, `impl-${id}:review`, 'Review')), result('b1'), result('b2')]);
+  s.script('wf_a');
+  assert.deepEqual(liveRuns(s.transcriptPath, NOW), [
+    { runId: 'wf_a', name: 'build', row: 'impl-b2', phase: 'Review', phaseIndex: 3, phaseTotal: 4, started: 4, done: 2 },
+  ]);
+});
+
+test('a journal as Claude Code wrote it (wf_08afbeb5-043, results cut short): the phase and row come from the started lines', async () => {
+  const s = await session();
+  const real = [
+    '{"type":"launched"}',
+    '{"type":"started","key":"v2:fa56","agentId":"adbfd59422c35558d","label":"g1:c","phase":"G1"}',
+    '{"type":"started","key":"v2:e924","agentId":"a51b4d53810c5b96e","label":"g1:a","phase":"G1"}',
+    '{"type":"started","key":"v2:c118","agentId":"a953c02d717531869","label":"g1:b","phase":"G1"}',
+    '{"type":"result","key":"v2:c118","agentId":"a953c02d717531869","result":"exit code: 0","remoteControlDeviceReport":false,"toolsUsed":["Bash"]}',
+    '{"type":"result","key":"v2:fa56","agentId":"adbfd59422c35558d","result":"exit code: 0","remoteControlDeviceReport":false,"toolsUsed":["Bash"]}',
+    '{"type":"result","key":"v2:e924","agentId":"a51b4d53810c5b96e","result":"exit code: 0","remoteControlDeviceReport":false,"toolsUsed":["Bash"]}',
+  ];
+  s.journal('wf_real', real);
+  assert.deepEqual(liveRuns(s.transcriptPath, NOW).map((run) => [run.row, run.phase, run.started, run.done]), [['g1', 'G1', 3, 3]]);
+});
+
+test('a result whose agent has no started line in view is ignored, never counted in a made-up phase', async () => {
+  const s = await session();
+  s.journal('wf_a', [result('gone'), started('a1', 'impl-a:x', 'Plan'), result('a1'), result('gone')]);
+  assert.deepEqual(liveRuns(s.transcriptPath, NOW).map((run) => [run.row, run.phase, run.started, run.done]), [['impl-a', 'Plan', 1, 1]]);
 });
 
 test('without the script copy the name is "workflow", the phase total is unknown and the place counts the phases seen so far', async () => {
@@ -79,8 +113,8 @@ test('a script copy whose meta has no phases, or whose meta cannot be read, give
 
 test('a label without a colon names no row; a run with no phase has none', async () => {
   const s = await session();
-  s.journal('wf_a', [entry('launched', 'a1', 'Review security', 'Review')]);
-  s.journal('wf_b', [JSON.stringify({ type: 'launched', agentId: 'z', label: 'impl-b:x' })]);
+  s.journal('wf_a', [started('a1', 'Review security', 'Review')]);
+  s.journal('wf_b', [JSON.stringify({ type: 'started', agentId: 'z', label: 'impl-b:x' })]);
   const runs = Object.fromEntries(liveRuns(s.transcriptPath, NOW).map((run) => [run.runId, run]));
   assert.equal(runs.wf_a.row, null);
   assert.deepEqual([runs.wf_b.row, runs.wf_b.phase, runs.wf_b.phaseIndex], ['impl-b', null, 0]);
@@ -105,7 +139,7 @@ test('the newest journal comes first when several runs are live', async () => {
 
 test('garbage never shows: bad JSON lines, wrong shapes and unknown types are skipped; a journal with nothing usable is no run', async () => {
   const s = await session();
-  s.journal('wf_a', ['{not json', '[]', '"text"', 'null', JSON.stringify({ type: 'surprise', agentId: 'q', label: 'x:y', phase: 'P' }), JSON.stringify({ type: 'started', agentId: 5, label: 7 }), entry('started', 'a1', 'r:s', 'Plan')]);
+  s.journal('wf_a', ['{not json', '[]', '"text"', 'null', JSON.stringify({ type: 'surprise', agentId: 'q', label: 'x:y', phase: 'P' }), JSON.stringify({ type: 'started', agentId: 5, label: 7 }), started('a1', 'r:s', 'Plan')]);
   assert.deepEqual(liveRuns(s.transcriptPath, NOW).map((run) => [run.row, run.phase, run.started, run.done]), [['r', 'Plan', 1, 0]]);
   s.journal('wf_b', ['{not json', '', '[1]']);
   s.journal('wf_c', []);
@@ -114,7 +148,7 @@ test('garbage never shows: bad JSON lines, wrong shapes and unknown types are sk
 
 test('control characters and over-long text in a label, a phase or a script name never reach the line', async () => {
   const s = await session();
-  s.journal('wf_a', [entry('started', 'a1', `ro\u001b[31mw${'x'.repeat(100)}:step`, 'Pha\u0007se\n2')]);
+  s.journal('wf_a', [started('a1', `ro\u001b[31mw${'x'.repeat(100)}:step`, 'Pha\u0007se\n2')]);
   s.script('wf_a', "export const meta = { name: 'na\u001bme', phases: [{ title: 'Phase' }] };\n");
   const [run] = liveRuns(s.transcriptPath, NOW);
   for (const text of [run.name, run.row, run.phase]) assert.doesNotMatch(text, /[\u0000-\u001f\u007f-\u009f]/);
@@ -131,17 +165,17 @@ test('no or odd transcript path, a missing session folder, a run id that is no p
 
 test('a journal over 256 KB is read from its tail: right counts when the tail shows the phase began in it, nothing when it cannot', async () => {
   const s = await session();
-  const filler = (phase, count) => Array.from({ length: count }, (_, k) => entry('result', `f${k}`, `old:${k}`, phase));
-  s.journal('wf_big', [...filler('Plan', 60_000), ...REVIEW_LINES.slice(3)]); // about 6 MB: Plan lines, then the Review lines
+  const filler = (phase, count) => Array.from({ length: count }, (_, k) => [started(`f${k}`, `old:${k}`, phase), result(`f${k}`)]).flat();
+  s.journal('wf_big', [...filler('Plan', 30_000), ...REVIEW_LINES.slice(3)]); // about 8 MB: Plan lines, then the Review lines
   s.script('wf_big');
   assert.deepEqual(liveRuns(s.transcriptPath, NOW).map((run) => [run.phase, run.started, run.done]), [['Review', 5, 2]]);
-  s.journal('wf_flat', filler('Review', 60_000)); // the whole tail is one phase: its start is out of sight
+  s.journal('wf_flat', filler('Review', 30_000)); // the whole tail is one phase: its start is out of sight
   assert.deepEqual(liveRuns(s.transcriptPath, NOW).map((run) => run.runId), ['wf_big']);
 });
 
 test('a 10 MB journal is read in under 100 ms of CPU time (p95 of 20 reads; CPU time, so a busy machine does not fail it)', async () => {
   const s = await session();
-  const lines = Array.from({ length: 100_000 }, (_, k) => entry('result', `f${k}`, `old:${k}`, k < 99_990 ? 'Plan' : 'Review'));
+  const lines = Array.from({ length: 50_000 }, (_, k) => [started(`f${k}`, `old:${k}`, k < 49_990 ? 'Plan' : 'Review'), result(`f${k}`)]).flat();
   s.journal('wf_big', lines);
   const times = Array.from({ length: 20 }, () => {
     const from = process.cpuUsage();

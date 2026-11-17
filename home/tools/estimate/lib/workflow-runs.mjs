@@ -2,12 +2,12 @@
 // 2.1.326, undocumented: a different shape shows nothing, never a wrong number).
 // Exports: liveRuns(transcriptPath, nowMs) -> { runId, name, row, phase, phaseIndex, phaseTotal, started, done }[], newest journal first.
 // Layout read, next to the transcript <proj>/<session>.jsonl: <session>/subagents/workflows/<runId>/journal.jsonl (one JSON line per
-// agent event: { type: launched | started | result, agentId, label, phase }), <session>/workflows/<runId>.json (written when the run is
-// over: its presence means not live), <session>/workflows/scripts/<name>-<runId>.js (a copy of the script: its `meta` gives the name and
+// agent event: { type: launched | started | result, agentId, ... }: `started` has label and phase, `result` only the agent id, `launched`
+// nothing), <session>/workflows/<runId>.json (written when the run is over: its presence means not live), <session>/workflows/scripts/<name>-<runId>.js (a copy of the script: its `meta` gives the name and
 // the phase titles, so the phase total).
 // Rules: a run is live when its journal was written in the last LIVE_WINDOW_MS and it has no summary json. The current phase is the phase of
-// the newest line; `started` = agents seen in it (any line), `done` = those with a result line; `row` = the newest label's text before its first `:`
-// (null when it has no colon). Only the last MAX_JOURNAL_BYTES of a journal are read; if that tail cannot show where the current phase began
+// the newest line's agent (a result takes the phase and label of its agent's `started` line); `started` = agents started in it, `done` = those
+// with a result line; `row` = the newest agent's label text before its first `:` (null when it has no colon). Only the last MAX_JOURNAL_BYTES of a journal are read; if that tail cannot show where the current phase began
 // (its first line is already of that phase) the run is left out, so a count is right or absent. phaseIndex is the phase's place in the script's
 // phases (1-based), else its place among the phases seen (0 = unknown when the journal was cut); phaseTotal null without the script's phases.
 // Invariants: never throws, reads only plain files (no links), caps every read, strips control characters and cuts every name that reaches the
@@ -22,7 +22,7 @@ const MAX_SCRIPT_BYTES = 64 * 1024;
 /** Newest journals read per render: the status line shows two runs, and a render must stay fast with many old live-looking runs. */
 const MAX_RUNS_READ = 8;
 const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/;
-const EVENT_TYPES = ['launched', 'started', 'result'];
+const EVENT_TYPES = ['started', 'result']; // `launched` lines name no agent: nothing to read from them
 const MAX_NAME_CHARS = 16;
 const MAX_ROW_CHARS = 24;
 const MAX_PHASE_CHARS = 24;
@@ -98,6 +98,7 @@ function scriptOf(sessionFolder, runId) {
   return { name: meta?.name || clean(file.slice(0, -suffix.length), MAX_NAME_CHARS) || 'workflow', titles: meta?.titles ?? [] };
 }
 
+/** One journal line as an event; [] for anything else. A `started` line carries label and phase, a `result` line only the agent id. */
 const parsedEvent = (line) => {
   try {
     const event = JSON.parse(line);
@@ -108,8 +109,18 @@ const parsedEvent = (line) => {
   }
 };
 
-/** The usable events of a journal's tail, oldest first; a line cut by the tail's start is not JSON and is skipped like any other garbage. */
-const eventsOf = ({ text }) => text.split('\n').flatMap(parsedEvent);
+/**
+ * The usable events of a journal's tail, oldest first, each with its agent's label and phase (the ones on its `started` line). A line cut by
+ * the tail's start is not JSON and is skipped like any other garbage; a result whose `started` line is not in view has no phase and is left out.
+ */
+function eventsOf({ text }) {
+  const raw = text.split('\n').flatMap(parsedEvent);
+  const startedBy = new Map(raw.filter((event) => event.type === 'started').map((event) => [event.agentId, event]));
+  return raw.flatMap((event) => {
+    const start = startedBy.get(event.agentId);
+    return start === undefined ? [] : [{ type: event.type, agentId: event.agentId, label: start.label, phase: start.phase }];
+  });
+}
 
 function runOf(sessionFolder, runId, journal) {
   const events = eventsOf(journal);
