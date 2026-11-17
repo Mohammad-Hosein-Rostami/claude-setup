@@ -1,7 +1,17 @@
 // Status line: model tier, effort, CONTEXT SIZE in tokens (what every tool call re-reads), cost,
 // the finish time of the session's STATUS.md (cache only), and account usage windows (5h / 7d) with reset times
-// from `rate_limits`.
+// from `rate_limits`. Under it, when there is something to show: the job's progress bar (line 2) and one line per live workflow
+// run (lines 3-4), from the same cache and from the session's workflow journals (see tools/estimate/lib/progress-line.mjs).
+import { progressLines } from './tools/estimate/lib/progress-line.mjs';
 import { estimateSegment } from './tools/estimate/lib/segment-cache.mjs';
+import { liveRuns } from './tools/estimate/lib/workflow-runs.mjs';
+
+// Claude Code sets COLUMNS for the command; without it assume a plain 80-column terminal (an 8-cell bar).
+const DEFAULT_COLUMNS = 80;
+const terminalColumns = () => {
+  const columns = Number.parseInt(process.env.COLUMNS ?? '', 10);
+  return columns > 0 ? columns : DEFAULT_COLUMNS;
+};
 
 // Tier label by model id/name; an unrecognised model shows "?" rather than guessing sonnet.
 function modelTier(text) {
@@ -40,7 +50,8 @@ process.stdin.on('end', () => {
   if (week) parts.push(usage('7d', week, true));
   if (tokens >= 150000) parts.push('\x1b[31m/clear before the next task\x1b[0m');
   else if (tokens >= 60000) parts.push('\x1b[33mlong ctx: batch calls\x1b[0m');
-  console.log(parts.join(' │ '));
+  const under = progressLines(estimate?.progress ?? null, liveRuns(d.transcript_path, Date.now()), { columns: terminalColumns(), color: !process.env.NO_COLOR });
+  console.log([parts.join(' │ '), ...under].join('\n'));
 });
 
 // ccusage takes ~10 s, too slow for every refresh: read a cached JSON, refresh it detached at most once a minute.

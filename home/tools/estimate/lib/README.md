@@ -8,18 +8,23 @@ The parts of the `estimate` tool. `../estimate.mjs` (the CLI) and `../statusline
 - `activity.mjs`: a session's transcript files and the active minutes in them, kept in a per-session index.
 - `worked.mjs` (pure): working intervals, row costs, open rows' elapsed shares, handed-over jobs and their growth parts.
 - `forecast.mjs` (pure): the reference pool, the seeded runs, the refusal reasons.
+- `progress.mjs` (pure): the job's progress percent (`progressOf`): from the forecast's median, or from row weights when the tool refuses;
+  held per job (never falls), 99 until every row is done.
 - `commitment.mjs` (pure): first, hold or move the committed budget; scoring, widening, track record.
 - `table-store.mjs`: the store files (table, session link, seed) under a short lock.
 - `from-files.mjs`: `estimateFile`, the one function of the design: parse, activity, costs, pool, state, commitment (it never links a session).
+- `workflow-runs.mjs`: the live workflow runs of a session, read from Claude Code's workflow journals (an undocumented layout: an
+  unrecognised shape shows nothing). `progress-line.mjs` (pure): the status line's job bar and run lines.
 - `report.mjs`: the printed block and the refusal text. `local-clock.mjs`: local clock text and the 5-minute grid.
 - `segment-text.mjs`: the status line text of a result. `segment-cache.mjs`: the status line's read side (the cache, the
-  session link, the detached refresh); it imports none of the forecast, parser or transcript code, so a render never reads a transcript.
+  session link, the detached refresh); it imports none of the forecast, parser or transcript code, so a render never reads a transcript. The status line itself also reads the session's
+  workflow journals (`workflow-runs.mjs`: at most 256 KB of each of the 8 newest).
 
 ## Test
 
 From the repo root:
 
-    node --test tests/estimate*.test.mjs tests/statusline-estimate.test.mjs tests/statusline-segment-forms.test.mjs
+    node --test tests/estimate*.test.mjs tests/workflow-runs.test.mjs tests/statusline-estimate.test.mjs tests/statusline-segment-forms.test.mjs
 
 `tests/estimate-tables.mjs` builds synthetic tables, transcripts and seeds; no real transcript is used.
 

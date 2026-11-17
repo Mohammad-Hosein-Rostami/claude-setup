@@ -65,6 +65,7 @@ Covers: 9 open rows (2 running; 5 S, 3 M, 1 L) and work not listed yet (usually 
 Excludes: pauses (nights, usage limits, waiting for you) move the time hour for hour; rework after hand-over; new requests.
 Held: given Mon 16 Nov 18:10, unchanged since.
 Track record: 9 of the last 10 jobs were done by the first time given.
+Progress: 54% (5 of 9 rows; median left 30 min; clock at 85%)
 Check: row b12 (M) has taken 3 h 10 of work, longer than every finished M row (2 h 19): finish it, or close it with evidence "dropped: <why>".
 ```
 
@@ -79,6 +80,24 @@ Check: row b12 (M) has taken 3 h 10 of work, longer than every finished M row (2
 - No open row: `Finish: now (all 12 rows are done; the hand-over is recorded when this turn ends)`; after a `deliver:` row:
   `Finish: handed over Mon 16 Nov 17:54 (12 rows, 3 h 05 of work)` and the track record line.
 - Work is `35 min` under an hour, else `2 h 35`.
+
+## Progress
+
+The `Progress:` line (after the track record, before the `Check:` lines) says how far the job is: the rows done of the job's
+rows (the work rows open or done after the last hand-over) and a percent.
+
+- With a forecast: `floor(100 x worked / (worked + median left))`, `worked` being the working minutes since the job's first
+  started row. The percent uses the forecast's **median**; the clock uses the **85% budget**, so the percent can read higher
+  than the clock looks (`clock at 85%` on the line says so).
+- Without a forecast (a refusal): `Progress: ~31% (2 of 4 rows; time n/a: too few finished rows)`. Each row weighs its size's pool
+  median (when the size has 5 finished rows), else S 3 / M 9 / L 40 minutes; done rows count fully, an open row counts its
+  elapsed minutes up to 90% of its weight; the total is divided by `1 - growth` (the pool's growth below 0.75, else 0.416). The
+  `~` marks it as approximate. No work row, no progress line.
+- Held: the highest percent of a job is stored in its table file (`held: { start, pct }`, the job's first started time is the
+  key), so rows added or a move never lower it; a new job (after a hand-over) starts again. 99 until every row is done, 100
+  only then (`all rows done`). A hand-over shows no progress.
+- Tags on the status line's bar: `moved` (the committed time moved), `+rows` (rows were added), `overdue` (the committed
+  work budget is used up).
 
 ## Refusals (exit 3, stderr; never a clock time)
 
@@ -97,7 +116,14 @@ Check: row b12 (M) has taken 3 h 10 of work, longer than every finished M row (2
 `home/statusline.mjs` shows, for the STATUS.md the session last edited with `status.mjs` (its link in the store), else
 `<project dir>/STATUS.md`: `done by 21:40` (`done by Tue 21:40` on another day), `all rows done`, `handed over 17:54`,
 `work left ~99 h`, `done ? overdue` once the shown time has passed, or `done ? <cause>`: `no rows`, `few rows`,
-`rows listed late`, `table`, `row <id>`, `tool error`. At most 28 characters. The render only reads a small cache
+`rows listed late`, `table`, `row <id>`, `tool error`. At most 28 characters. Under that line (from `COLUMNS`, default 80; plain
+ASCII `#`/`-` and no colour when `NO_COLOR` is set) it prints, when there is something to show, line 2 the job bar from the
+cached progress (`██████░░░░░░ 54% · 5/9 rows · 30 min left · moved`: 12 cells from 100 columns, 8 from 70, text only below;
+green, yellow for `moved` and `+rows`, red for `overdue`) and then one line per live workflow run, at most two
+(`wf build impl-a · Review (3/4) · 5/7 agents`), read from the session's workflow journals under
+`<session>/subagents/workflows/<run>/journal.jsonl` (a journal written in the last 30 minutes, with no
+`<session>/workflows/<run>.json` summary yet; at most 256 KB of its tail; the phase total from the script copy's `meta`).
+Claude Code writes those journals without documenting them: a shape this reads wrongly shows no run line, never a wrong count. The render only reads a small cache
 (`~/.claude/state/estimate-segment/`); when it is missing, no longer matches the file or is 5 minutes old it starts
 `statusline-cache.mjs <STATUS.md> [<session-id>]` detached, at most once per 2 minutes per file. That script runs the CLI's
 own function (recording the commitment like a CLI run), so both show the same committed time. Neither run links the
@@ -109,7 +135,8 @@ is unchanged; any other text for 15 more minutes while a refresh runs.
 ## Store
 
 `~/.claude/state/estimate/`: `table/<32 hex of sha256 of the real STATUS.md path>.json` (sessions, first-seen time of each
-row id, finished rows and jobs without ids or text, the commitment and its log, at most 200 entries), `activity/<session>.json`
+row id, finished rows and jobs without ids or text, the commitment and its log, at most 200 entries, the held progress percent of the
+current job), `activity/<session>.json`
 (bytes read per transcript and the active minutes, so each run reads only appended bytes), `session/<session>.json` (the
 STATUS.md the session last edited with `status.mjs`). Written through `hooks/lib/session-store.mjs` and `session-lock.mjs`, never swept. The table file's lock is held
 only for its read-change-write; a busy lock or an unusable file records nothing (`estimate: this run recorded nothing (the store
@@ -130,4 +157,4 @@ bill-and-ben tables and two finished tables (147 rows, 10 jobs): size, kind, don
 
 `estimate.mjs` (CLI) and `statusline-cache.mjs` (status line refresh) call `lib/from-files.mjs` `estimateFile`; see
 `lib/README.md` for the parts. Tests: `tests/estimate*.test.mjs`, `tests/statusline-estimate.test.mjs`,
-`tests/statusline-segment-forms.test.mjs`, with `tests/estimate-tables.mjs` (synthetic tables, transcripts and seeds).
+`tests/statusline-segment-forms.test.mjs`, `tests/workflow-runs.test.mjs`, with `tests/estimate-tables.mjs` (synthetic tables, transcripts and seeds).

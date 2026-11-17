@@ -1,7 +1,8 @@
 // The text of the status line's estimate segment, decided by the refresh script (never by the render, which only reads the cache).
 // Exports: resultSegment(result, timeZone?) -> segment; errorSegment(error) -> segment; MAX_SEGMENT_CHARS. A segment is
-// {kind, text, highMs, progress}: progress is the result's job progress (progress.mjs) or null; kind is one of SEGMENT_KINDS (segment-cache.mjs), text is what the status line shows, highMs (epoch ms or
-// null) is the shown clock of a finish, after which the render shows OVERDUE_TEXT (segment-cache.mjs); null for every other kind.
+// {kind, text, highMs, progress}: kind is one of SEGMENT_KINDS (segment-cache.mjs), text is what the status line shows, highMs (epoch ms
+// or null) is the shown clock of a finish, after which the render shows OVERDUE_TEXT (segment-cache.mjs); null for every other kind;
+// progress is the result's job progress (progress.mjs), null when the result has none (no rows, a hand-over, an error).
 // Forms (estimator design 4.3): `done by 21:40` (`done by Tue 21:40` on another day), `all rows done`, `handed over 17:54`,
 // `work left ~99 h` (a job longer than any finished one), `done ? <cause>` when the tool refuses or fails.
 // Invariants: pure; every text is at most MAX_SEGMENT_CHARS characters; a cause is a word from a fixed list or a row id that matches
