@@ -1,0 +1,144 @@
+// bugfix workflow: reproduce a bug, test three hypotheses in parallel, fix the confirmed root cause, verify the fix,
+// then review and land it through the `review` and `land` workflows (run it with the /wf-bugfix skill).
+// Args: { row, closeRow, statusFile, repo, base, symptom, repro?, suite, scriptsDir, branch? }.
+// Returns: { status: 'landed', sha, tidy } | { status: 'not-reproduced' | 'unresolved' | 'review-failed' | 'failed', ... }.
+// Invariants: the fix may start on the first confirmed hypothesis while the others finish, but verify, review and land
+// start only after every hypothesis returned and, on 0 or 2+ confirmed, the judge ruled (a fix for a non-root cause is
+// redone, C22). Writers of the lane run one at a time. A failed verify retries with new hypotheses at xhigh, then max.
+// The lane keeps one branch for every attempt: a redo reverts the earlier fix commits on it, never opens `<lane>-2`.
+export const meta = {
+  name: 'bugfix',
+  description: 'Reproduce a bug, test 3 hypotheses in parallel, fix the confirmed root cause, verify, then review and land',
+  whenToUse: 'A bug with a symptom, ideally a repro command, in a git repo with a declared full-suite command',
+  phases: [
+    { title: 'Reproduce', detail: 'runner runs the repro, or an implementer writes the failing test' },
+    { title: 'Hypotheses', detail: 'deep-debugger lists 3 hypotheses and probes each in parallel; Opus judge on 0 or 2+ confirmed' },
+    { title: 'Fix', detail: 'implementer fixes the confirmed root cause on the lane branch' },
+    { title: 'Verify', detail: 'repro green, related tests, one mutation of the fix line' },
+    { title: 'Review', detail: 'the review workflow on the fix, landing set' },
+    { title: 'Land', detail: 'the land workflow: rebase, suite PASS, ff-only, prune' },
+  ],
+}
+checkArgs(args)
+
+const HYPOTHESIS_COUNT = 3
+const EFFORT_LADDER = ['high', 'xhigh', 'max']
+const { row, closeRow, statusFile, repo, base, symptom, suite, scriptsDir } = args
+const branch = args.branch ?? `lane/${row}`
+const lane = { exists: false, worktree: '', reproSha: '' }
+const CONTEXT = `Repo ${repo}, base branch ${base}. Bug: ${symptom}. ${args.repro ? `Repro command: ${args.repro}.` : 'No repro command is known yet.'}`
+const FINISH = `Related tests only while iterating; the full suite (${suite}) is run later by the land step. Commit after each green step on the lane branch ${branch}; no merge commits; never push. Run node ~/.claude/tools/review-tier/review-tier.mjs ${base}...HEAD --landing --json last and return its JSON as tier. Return IMPLEMENTED: branch, worktree (your folder), sha, tests {cmd, exit}, tier.`
+
+const OBJECT = { type: 'object' }
+const REPRO_SCHEMA = { type: 'object', properties: { reproduces: { type: 'boolean' }, cmd: { type: 'string' }, exit: { type: 'number' }, branch: { type: 'string' }, worktree: { type: 'string' }, sha: { type: 'string' }, tail: { type: 'string' } }, required: ['reproduces', 'cmd', 'tail'] }
+const HYPOTHESES_SCHEMA = { type: 'object', properties: { hypotheses: { type: 'array', minItems: HYPOTHESIS_COUNT, maxItems: HYPOTHESIS_COUNT, items: { type: 'object', properties: { id: { type: 'string' }, claim: { type: 'string' }, observation: { type: 'string' } }, required: ['id', 'claim', 'observation'] } } }, required: ['hypotheses'] }
+const PROBE_SCHEMA = { type: 'object', properties: { id: { type: 'string' }, confirmed: { type: 'boolean' }, rootCause: { type: 'string' }, evidence: { type: 'string' }, minimalFix: { type: 'string' } }, required: ['id', 'confirmed', 'rootCause', 'evidence', 'minimalFix'] }
+const JUDGE_SCHEMA = { type: 'object', properties: { found: { type: 'boolean' }, hypothesisId: { type: 'string' }, rootCause: { type: 'string' }, minimalFix: { type: 'string' } }, required: ['found', 'hypothesisId', 'rootCause', 'minimalFix'] }
+const IMPLEMENTED_SCHEMA = { type: 'object', properties: { branch: { type: 'string' }, worktree: { type: 'string' }, sha: { type: 'string' }, tests: { type: 'object', properties: { cmd: { type: 'string' }, exit: { type: 'number' } }, required: ['cmd', 'exit'] }, tier: OBJECT }, required: ['branch', 'worktree', 'sha', 'tests'] }
+const VERIFY_SCHEMA = { type: 'object', properties: { reproGreen: { type: 'boolean' }, relatedExit: { type: 'number' }, mutantKilled: { type: 'boolean' }, treeClean: { type: 'boolean' }, tail: { type: 'string' } }, required: ['reproGreen', 'relatedExit', 'mutantKilled', 'treeClean', 'tail'] }
+
+const runner = (step, prompt, phaseTitle) => agent(`Run exactly this and report PASS or FAIL with the one-line reason: ${prompt}`, { label: `${row}:${step}`, phase: phaseTitle, agentType: 'runner', model: 'haiku', effort: 'low' })
+const statusStep = (command, phaseTitle) => runner('status', `node ~/.claude/tools/status/status.mjs --file ${statusFile} ${command}`, phaseTitle)
+
+phase('Reproduce')
+const repro = await reproduce()
+if (!repro || !repro.reproduces) return { status: 'not-reproduced', repro }
+lane.exists = Boolean(repro.branch)
+lane.worktree = repro.worktree ?? ''
+lane.reproSha = repro.sha ?? ''
+
+const failedAttempts = []
+let verified = null
+for (const effort of EFFORT_LADDER) {
+  const attempt = await tryRound(effort)
+  if (attempt.fix) { verified = attempt.fix; break }
+  failedAttempts.push(attempt.note)
+}
+if (!verified) return { status: 'unresolved', notes: failedAttempts }
+
+await statusStep(`done ${row} "verified: repro green, related tests pass, mutation of the fix line caught"`, 'Verify')
+phase('Review')
+await statusStep(`start ${closeRow}`, 'Review')
+return reviewAndLand(verified)
+
+function reproduce() {
+  if (args.repro) {
+    return agent(`${CONTEXT} Run the repro command in ${repo} and report whether the bug shows. Return reproduces, cmd, exit and the failing tail (at most 15 lines). Change nothing.`, { label: `${row}:reproduce`, phase: 'Reproduce', agentType: 'runner', model: 'haiku', effort: 'low', schema: REPRO_SCHEMA })
+  }
+  return agent(`${CONTEXT} Write the smallest failing test that shows this bug, on a new lane branch: rename your worktree branch with git branch -m ${branch}, commit only the test. Run it and return reproduces (true only if it fails for the bug's reason, not a typo), cmd, exit, tail, branch, worktree, sha. ${FINISH}`, { label: `${row}:reproduce`, phase: 'Reproduce', agentType: 'implementer', model: 'sonnet', effort: 'high', isolation: 'worktree', schema: REPRO_SCHEMA })
+}
+
+/** One round of hypotheses at `effort`; returns { fix } when verified, else { note }. */
+async function tryRound(effort) {
+  phase('Hypotheses')
+  const listed = await agent(`${CONTEXT} Earlier failed attempts: ${failedAttempts.join(' | ') || 'none'}. List ${HYPOTHESIS_COUNT} different, ranked hypotheses for the root cause, each with the cheapest observation that would falsify it. Read only; change nothing.`, { label: `${row}:hypotheses:${effort}`, phase: 'Hypotheses', agentType: 'deep-debugger', model: 'opus', effort, schema: HYPOTHESES_SCHEMA })
+  if (!listed) return { note: `no hypotheses at ${effort}` }
+  let early = null
+  const probes = await pipeline(listed.hypotheses, (hypothesis) => probe(hypothesis, effort), (result) => {
+    if (result?.confirmed && !early) early = { id: result.id, done: runLaneAgent('fix:early', fixTask(result)) }
+    return result
+  })
+  const answered = probes.filter(Boolean)
+  const confirmed = answered.filter((p) => p.confirmed)
+  const root = confirmed.length === 1 ? confirmed[0] : await judge(answered, effort)
+  if (early) await early.done
+  if (!root) return { note: `no root cause at ${effort}: ${answered.map((p) => `${p.id} not confirmed`).join(', ')}` }
+  const fix = early && early.id === root.id ? await early.done : await runLaneAgent('fix:redo', fixTask(root))
+  if (!fix) return { note: `fix agent returned nothing for ${root.id}` }
+  const check = await verify(fix)
+  const passed = check && check.reproGreen && check.relatedExit === 0 && check.mutantKilled && check.treeClean
+  return passed ? { fix } : { note: `fix for ${root.id} failed verify: ${check ? check.tail : 'no result'}` }
+}
+
+function probe(hypothesis, effort) {
+  return agent(`${CONTEXT} Test this hypothesis only: ${hypothesis.claim}. Cheapest observation: ${hypothesis.observation}. Read and run commands; edit nothing. Confirmed only with file:line evidence for the root cause; return id ${hypothesis.id}, confirmed, rootCause, evidence, minimalFix.`, { label: `${row}:probe:${hypothesis.id}`, phase: 'Hypotheses', agentType: 'deep-debugger', model: 'opus', effort, schema: PROBE_SCHEMA })
+}
+
+async function judge(answered, effort) {
+  const ruling = await agent(`${CONTEXT} ${answered.filter((p) => p.confirmed).length} of ${answered.length} hypotheses were confirmed. Probe results: ${JSON.stringify(answered)}. Decide the single root cause (it may be a new one after you read the code yourself) and return found true with hypothesisId (the probe's id, or "judge") and the minimal fix; found false when none holds. Read only.`, { label: `${row}:judge`, phase: 'Hypotheses', agentType: 'deep-debugger', model: 'opus', effort: effort === 'high' ? 'xhigh' : effort, schema: JUDGE_SCHEMA })
+  return ruling?.found ? { id: ruling.hypothesisId, rootCause: ruling.rootCause, minimalFix: ruling.minimalFix } : null
+}
+
+function fixTask(root) {
+  const undo = lane.reproSha ? ` If the branch has commits after ${lane.reproSha}, they are a fix for a different cause: undo them with git revert before you start.` : ''
+  return `Fix this confirmed root cause: ${root.rootCause}. Minimal fix: ${root.minimalFix}. The repro test must go green, nothing else may change behaviour.${undo}`
+}
+
+/** Runs one isolated implementer on the lane branch (one writer at a time); keeps the lane branch and updates its worktree. */
+async function runLaneAgent(tag, task) {
+  if (lane.worktree) {
+    await runner('release', `git -C ${repo} worktree remove ${lane.worktree}`, 'Fix')
+    lane.worktree = ''
+  }
+  const start = lane.exists ? `First run git switch ${branch} && git rebase ${base}, then delete your own worktree-agent-* branch with git branch -d.` : `First rename your worktree branch with git branch -m ${branch}.`
+  const done = await agent(`${CONTEXT} ${start} ${task} ${FINISH}`, { label: `${row}:${tag}`, phase: 'Fix', agentType: 'implementer', model: 'sonnet', effort: 'high', isolation: 'worktree', schema: IMPLEMENTED_SCHEMA })
+  if (done) { lane.exists = true; lane.worktree = done.worktree }
+  return done
+}
+
+function verify(fix) {
+  return agent(`${CONTEXT} Work in ${fix.worktree} on ${branch}; never push. 1) Run the repro test: it must pass. 2) Run only the tests related to the changed files. 3) Mutate the fixed line so the bug returns, confirm the repro test fails, then restore it with git checkout -- <file> and confirm git status is clean. Return reproGreen, relatedExit, mutantKilled, treeClean and a short tail.`, { label: `${row}:verify`, phase: 'Verify', agentType: 'implementer', model: 'sonnet', effort: 'medium', schema: VERIFY_SCHEMA })
+}
+
+/** Review, then land; a conflict or changed patches go back through review of the delta, with no round cap. */
+async function reviewAndLand(fix) {
+  let tier = fix.tier
+  for (;;) {
+    const review = await workflow({ scriptPath: `${scriptsDir}/review.js` }, { row, repo, base, range: `${base}...${branch}`, landing: true, fix: true, branch, worktree: lane.worktree, suite, tier })
+    if (!review) return { status: 'review-failed' }
+    phase('Land')
+    const landed = await workflow({ scriptPath: `${scriptsDir}/land.js` }, { row, closeRow, statusFile, repo, base, branch, worktree: lane.worktree, suite })
+    if (landed?.status === 'landed') return { status: 'landed', sha: landed.sha, tidy: landed.tidy }
+    if (!landed || landed.status === 'failed') return { status: 'failed', landed }
+    if (landed.status === 'conflict') tier = (await runLaneAgent('fix:conflict', `The rebase onto ${base} conflicted. Resolve it keeping the intent of both sides, rerun the related tests, commit.`))?.tier
+    phase('Review')
+  }
+}
+
+function checkArgs(given) {
+  const required = { row: 'string', closeRow: 'string', statusFile: 'string', repo: 'string', base: 'string', symptom: 'string', suite: 'string', scriptsDir: 'string' }
+  for (const [key, type] of Object.entries(required)) {
+    if (typeof given?.[key] !== type) throw new Error(`bugfix: args.${key} must be ${type}`)
+  }
+  if (given.repro !== undefined && typeof given.repro !== 'string') throw new Error('bugfix: args.repro must be string')
+}
