@@ -59,7 +59,7 @@ test('a red suite returns red with the tip and the suite tail, and never lands',
 });
 
 test('a red suite names the failing test files and their first error line, from the suite step, at the rebased tip (not the reviewed one)', async () => {
-  const run = await runScript(LAND, ARGS, { replies: [atTip(), rebased({ tip: 'fed9876' }), suite({ exit: 1, tip: 'fed9876', files: ['tests/a.test.mjs', 'tests/b.test.mjs'], tail: 'not ok 1 - parses: expected 2, got 3' })] });
+  const run = await runScript(LAND, ARGS, { replies: [disk(), atTip(), rebased({ tip: 'fed9876' }), suite({ exit: 1, tip: 'fed9876', files: ['tests/a.test.mjs', 'tests/b.test.mjs'], tail: 'not ok 1 - parses: expected 2, got 3' })] });
   assert.equal(run.result.status, 'red');
   assert.equal(run.result.sha, 'fed9876');
   assert.match(run.result.tidy, /tests\/a\.test\.mjs, tests\/b\.test\.mjs/);

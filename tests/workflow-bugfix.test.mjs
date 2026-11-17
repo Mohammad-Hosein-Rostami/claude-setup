@@ -184,6 +184,7 @@ test('bugfix: with the real land.js a red suite loops to a fix, a review of it a
   const step = (reply) => ({ exit: 0, tip: '', patchesChanged: 0, files: [], tail: '', ...reply });
   const run = await runScript(ARGS, {
     replies: replies([
+      { match: /:disk$/, reply: { exit: 0, tail: 'ok    disk free 80.0 GB' } },
       { match: /:tip$/, reply: () => step({ tip: reviewedTip }) },
       { match: /:rebase$/, reply: () => step({ tip: reviewedTip }) },
       { match: /:suite$/, reply: () => step(suites.shift()) },
