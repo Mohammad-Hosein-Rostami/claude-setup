@@ -26,6 +26,9 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 
 Asking and remembering:
 - `timed-ask.mjs`: the timed dialog (osascript, PowerShell or zenity).
+- `timed-ask-async.mjs`: the same dialog as a promise that an abort signal (or `closeLiveDialogs`, run when the hook is stopped) can close; used by the question popups.
+- `question-reply.mjs`: AskUserQuestion for `permission-timed-allow.mjs`, one popup per question with its own wait.
+- `question-answered.mjs`: the mark that the owner answered a question in the terminal (hashes of session, agent and question texts only), so the open popup closes.
 - `remembered-ask.mjs`, `allowed-literals.mjs`: per-session memory of secrets the owner already allowed (hashes only).
 - `answered-commands.mjs`: a command the guard's dialog allowed, handed to `permission-timed-allow.mjs` so Claude Code's own prompt for it opens no second dialog (hashes of session, agent, directory and command only; used once; 10 s window).
 - `bounce-once.mjs`: the first time a command asks because of how it is written (a variable command word, a risky word
