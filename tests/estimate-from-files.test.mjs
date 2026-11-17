@@ -175,3 +175,13 @@ test('a commitment of the old job made in the hand-over\'s minute stays the old 
   await run(1.05, statusDoc([...handedOver, row({ id: 'O2' })]));
   assert.deepEqual(stored().log.map((entry) => [entry.first, entry.ids]), [[true, ['O1']], [true, ['O2']]]);
 });
+
+test('rows done before the last hand-over do not count as a started job: listing the next job\'s rows still replaces its first commitment', async () => {
+  const handedOver = [row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'deliver:1', item: 'report', raw: { done: iso(0.6) }, evidence: '-' })];
+  const listed = (ids) => statusDoc([...handedOver, ...ids.map((id) => row({ id }))]);
+  const { run, stored } = await setup(listed(['O1']));
+  await run(1);
+  const more = (await run(1.05, listed(['O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8']))).result;
+  assert.equal(more.commit.moved, null);
+  assert.deepEqual(stored().log.map((entry) => [entry.first, entry.ids.length]), [[true, 8]]);
+});
