@@ -217,7 +217,7 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
 
 /**
  * Pure decision for one Bash command line. Never a deny: a rule hit is an ask (the hook shows a timed dialog or bounces it once),
- * and a destructive one (force push, rm outside the project, disk wipe) leads the reason.
+ * and a destructive one (force push, rm outside the project, disk wipe) leads the reason. Advice may run git (lib/git-advice.mjs, 2 s for the line).
  * @param {string} command raw command text
  * @param {{cwd?: string|null, project?: string, prodHosts?: string[]}} ctx absolute paths (cwd null means "unknown
  *   directory") and the private production-host list (see lib/remote.mjs)

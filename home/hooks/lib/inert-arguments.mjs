@@ -26,7 +26,7 @@ const BAIL_OUT = /<<|<\(|>\(|\r|\$'/;
 const BAIL_WORDS = new Set(['case', 'esac', 'eval', 'source', '.', 'alias', 'function', 'trap', 'coproc']);
 // a variable that changes which program or library runs (`PATH=./bin:$PATH grep ...`)
 const CHANGES_WHAT_RUNS = /^(?:PATH|BASH_ENV|ENV|IFS|PAGER|LD_\w+|DYLD_\w+|GIT_\w+)=/;
-const CLOSERS = new Set(['}', 'done', 'fi', 'esac']);
+const CLOSERS = new Set(['}', 'done', 'fi', 'esac']); // a group or loop piped onward: its statements are not told apart, so the line is left alone
 const ASSIGNMENT = /^[A-Za-z_]\w*=/;
 const LONG_FLAG_VALUE = /^--[\w-]+=$/;
 const SED_WRITES_FILES = /^(?:-[A-Za-z]*i|--i)/; // -i, -ni, -i.bak, --in-place and its abbreviations
@@ -133,7 +133,6 @@ function tokenize(text) {
     if (piece === null) return null;
     if (separator !== undefined) {
       flush();
-      // a group or loop piped onward: this tokenizer does not tell which of its statements feed the pipe
       if (separator.type === 'pipe' && CLOSERS.has(plainText(tokens.at(-1)?.parts ?? []))) return null;
       tokens.push({ type: separator.type });
       i += separator.length - 1;
