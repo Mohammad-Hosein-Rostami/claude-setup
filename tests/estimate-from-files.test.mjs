@@ -105,7 +105,7 @@ test('all done without a hand-over says so; the commitment is kept for the hand-
   const { run, stored } = await setup();
   await run(1);
   const { result } = await run(1, statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5, doneH: 1 })]));
-  assert.deepEqual(result, { state: 'all-done', nowMs: Date.parse(iso(1)), rows: 2 });
+  assert.deepEqual(result, { state: 'all-done', nowMs: Date.parse(iso(1)), rows: 2, progress: { pct: 100, approx: false, rowsDone: 2, rowsTotal: 2, leftMin: 0, tag: null } });
   assert.notEqual(stored().commit, null);
 });
 

@@ -1,6 +1,6 @@
 // Renders an estimate result as the text block the lead pastes as-is (estimator design 4.1) and a refusal as its reason and
 // what to do (4.2). The exact lines are in ../README.md.
-// Exports: formatEstimate(result, inputs) -> string; formatRefusal(result) -> string; workText(minutes) -> '35 min' |
+// Exports: formatEstimate(result, inputs) -> string (a finish block ends with the Progress line, before the Check lines; a refusal text too); formatRefusal(result) -> string; workText(minutes) -> '35 min' |
 // '2 h 35'; hoursText(minutes) -> '99 h' from 10 hours up, else workText; plural, listed (shared with segment-text.mjs).
 // Invariants: pure apart from reading the system time zone (`Intl`, so `TZ` is honoured) when none is given. Clock times are on
 // the local clock, rounded up to CLOCK_STEP_MS; a refusal text never contains `Finish:` or a clock time. Rows are named by id,
@@ -15,6 +15,8 @@ const PAUSE_SHOWN_MIN = 5; // pauses since the commitment are named from 5 minut
 const PERCENT = 100;
 const SIZES = ['S', 'M', 'L'];
 const SMALLER_SIZE = { L: 'M', M: 'S' };
+// Why a refusal shows no time, as the Progress line says it (the status line's shorter words are in segment-text.mjs).
+const NO_TIME_CAUSE = { 'no-reference': 'too few finished rows', growth: 'too much unlisted work', horizon: 'job longer than any finished one' };
 const EXCLUDES = 'Excludes: pauses (nights, usage limits, waiting for you) move the time hour for hour; rework after hand-over; new requests.';
 
 export const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
@@ -72,6 +74,17 @@ function recordLine(result) {
   return `Track record: ${record.met} of the last ${plural(record.of, 'job')} ${record.of === 1 ? 'was' : 'were'} done by the first time given.`;
 }
 
+/**
+ * The Progress line (null when the result has no progress): the percent from the median, and why the clock may differ (it uses the 85% budget);
+ * a refusal has no median, so its percent is approximate and says why there is no time.
+ */
+function progressLine(progress, refusal) {
+  if (!progress) return [];
+  const rows = `${progress.rowsDone} of ${plural(progress.rowsTotal, 'row')}`;
+  if (progress.approx) return [`Progress: ~${progress.pct}% (${rows}; time n/a: ${NO_TIME_CAUSE[refusal?.reason] ?? 'no forecast'})`];
+  return [`Progress: ${progress.pct}% (${rows}; median left ${workText(progress.leftMin)}; clock at 85%)`];
+}
+
 /** The Check lines: at most MAX_CHECK_LINES stale rows, longest first, then the count of the rest, then untracked work. */
 function checkLines(checks) {
   const stale = checks.filter((check) => check.kind === 'stale');
@@ -94,7 +107,7 @@ export function formatEstimate(result, inputs = {}) {
   switch (result.state) {
     case 'all-done': return `Finish: now (all ${plural(result.rows, 'row')} ${result.rows === 1 ? 'is' : 'are'} done; the hand-over is recorded when this turn ends)`;
     case 'handed-over': return [`Finish: handed over ${day(result.handedOverMs, timeZone)} (${plural(result.rows, 'row')}, ${workText(result.workedMin)} of work)`, recordLine(result)].join('\n');
-    case 'finish': return [finishLine(result, timeZone), coversLine(result), EXCLUDES, commitLine(result, timeZone), recordLine(result), ...checkLines(result.checks)].join('\n');
+    case 'finish': return [finishLine(result, timeZone), coversLine(result), EXCLUDES, commitLine(result, timeZone), recordLine(result), ...progressLine(result.progress), ...checkLines(result.checks)].join('\n');
     default: throw new Error(`no finish block for state ${result.state}`);
   }
 }
@@ -124,4 +137,4 @@ function refusalLines(refusal) {
  * @param {object} result estimateFile's result in the state refused
  * @returns {string} the lines, no trailing newline
  */
-export const formatRefusal = (result) => [...refusalLines(result.refusal), ...checkLines(result.checks ?? [])].join('\n');
+export const formatRefusal = (result) => [...refusalLines(result.refusal), ...progressLine(result.progress, result.refusal), ...checkLines(result.checks ?? [])].join('\n');

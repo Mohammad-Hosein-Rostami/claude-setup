@@ -48,7 +48,7 @@ async function matchingEntry(statusPath, fields = {}) {
 test('a cache that matches the file is shown and starts no refresh', async () => {
   const { statusPath, cacheDir, spawns, render } = await setup();
   writeEntry(cacheDir, statusPath, await matchingEntry(statusPath));
-  assert.equal(render(NOW), SEGMENT);
+  assert.equal(render(NOW)?.text, SEGMENT);
   assert.equal(spawns.length, 0);
 });
 
@@ -130,16 +130,16 @@ test('a missing cache starts exactly one refresh within the interval, another af
 test('a matching cache older than RECOMPUTE_AFTER_MS still shows its text and starts one refresh (a pause slides the time)', async () => {
   const { statusPath, cacheDir, spawns, render } = await setup();
   writeEntry(cacheDir, statusPath, await matchingEntry(statusPath, { computedAt: NOW - RECOMPUTE_AFTER_MS, refreshStartedAt: NOW - RECOMPUTE_AFTER_MS }));
-  assert.equal(render(NOW), SEGMENT);
-  assert.equal(render(NOW + 1), SEGMENT);
+  assert.equal(render(NOW)?.text, SEGMENT);
+  assert.equal(render(NOW + 1)?.text, SEGMENT);
   assert.equal(spawns.length, 1);
 });
 
 test('a changed file keeps the old text for STALE_SHOW_MS while one refresh runs, then shows nothing', async () => {
   const { statusPath, cacheDir, spawns, render } = await setup();
   writeEntry(cacheDir, statusPath, await matchingEntry(statusPath, { mtimeMs: 1, size: 1, computedAt: NOW, refreshStartedAt: 0 }));
-  assert.equal(render(NOW + 1), SEGMENT);
-  assert.equal(render(NOW + 2), SEGMENT);
+  assert.equal(render(NOW + 1)?.text, SEGMENT);
+  assert.equal(render(NOW + 2)?.text, SEGMENT);
   assert.equal(spawns.length, 1, 'the second render sees the claim and spawns nothing');
   assert.equal(render(NOW + STALE_SHOW_MS), null);
 });
@@ -200,4 +200,51 @@ test('the status line prints the segment of the session\'s linked STATUS.md from
   const linked = realpathSync(statusPath); // the link holds the real path, and the refresh caches under it
   writeEntry(cacheDir, linked, { ...(await matchingEntry(statusPath, { computedAt: Date.now(), refreshStartedAt: Date.now() })), path: linked });
   assert.match(render({ workspace: { project_dir: root }, session_id: SESSION }), /done by 16:15/);
+});
+
+const PROGRESS = { pct: 54, approx: false, rowsDone: 5, rowsTotal: 9, leftMin: 30, tag: 'moved' };
+
+test('a cache entry carries the job progress and the render returns it with the text; an entry without one gives null', async () => {
+  const { statusPath, cacheDir, render } = await setup();
+  writeEntry(cacheDir, statusPath, await matchingEntry(statusPath, { progress: PROGRESS }));
+  assert.deepEqual(render(NOW), { text: SEGMENT, progress: PROGRESS });
+  writeEntry(cacheDir, statusPath, await matchingEntry(statusPath));
+  assert.deepEqual(render(NOW), { text: SEGMENT, progress: null });
+  assert.ok(JSON.stringify(await matchingEntry(statusPath, { progress: PROGRESS })).length < MAX_CACHE_BYTES / 8);
+});
+
+test('a progress that is not the stored shape is dropped, the entry and its text stay', async () => {
+  const { statusPath, cacheDir, render } = await setup();
+  const bad = [{ ...PROGRESS, pct: 101 }, { ...PROGRESS, pct: 'x' }, { ...PROGRESS, tag: 'boom' }, { ...PROGRESS, rowsTotal: -1 }, { ...PROGRESS, leftMin: 'soon' }, 'text', [], { pct: 5 }];
+  for (const progress of bad) {
+    writeEntry(cacheDir, statusPath, await matchingEntry(statusPath, { progress }));
+    assert.deepEqual(render(NOW), { text: SEGMENT, progress: null }, JSON.stringify(progress));
+  }
+});
+
+test('once the shown clock has passed the render shows the overdue text and the overdue tag, whatever the stored tag', async () => {
+  const { statusPath, cacheDir, render } = await setup();
+  writeEntry(cacheDir, statusPath, await matchingEntry(statusPath, { progress: { ...PROGRESS, tag: null }, highMs: NOW + 1 }));
+  assert.deepEqual(render(NOW + 2), { text: 'done ? overdue', progress: { ...PROGRESS, tag: 'overdue' } });
+});
+
+test('the refresh script stores the progress of the job it estimated', async () => {
+  const { home, statusPath, env } = await liveHome();
+  const refresh = spawnSync(process.execPath, [REFRESH_SCRIPT, statusPath, SESSION], { env, encoding: 'utf8' });
+  assert.equal(refresh.status, 0, refresh.stderr);
+  const { progress } = readEntry(join(home, '.claude', 'state', 'estimate-segment'), statusPath);
+  assert.equal(progress.rowsDone, 1);
+  assert.equal(progress.rowsTotal, 2);
+  assert.equal(progress.approx, false);
+  assert.ok(Number.isInteger(progress.pct) && progress.pct >= 0 && progress.pct <= 99);
+});
+
+test('a CLI run at the real clock stores the same progress in the cache as the Finish block prints', async () => {
+  const { home, statusPath, env } = await liveHome();
+  const cli = spawnSync(process.execPath, [CLI, statusPath, '--session', SESSION], { env, encoding: 'utf8' });
+  assert.equal(cli.status, 0, cli.stderr);
+  const printed = cli.stdout.match(/^Progress: (\d+)% \((\d+) of (\d+) rows; median left .+; clock at 85%\)$/m);
+  assert.ok(printed, cli.stdout);
+  const { progress } = readEntry(join(home, '.claude', 'state', 'estimate-segment'), statusPath);
+  assert.deepEqual([progress.pct, progress.rowsDone, progress.rowsTotal], printed.slice(1).map(Number));
 });

@@ -16,7 +16,7 @@ import { cacheDir, writeEntry } from './lib/segment-cache.mjs';
 import { errorSegment, resultSegment } from './lib/segment-text.mjs';
 import { stateDir } from './lib/table-store.mjs';
 
-/** The segment {kind, text, highMs} for a STATUS.md: its finish, its hand-over, or why there is none; never throws. */
+/** The segment {kind, text, highMs, progress} for a STATUS.md: its finish, its hand-over, or why there is none; never throws. */
 function segment(statusPath, sessionId) {
   try {
     return resultSegment(estimateFile(statusPath, { stateDir: stateDir(), sessionId, record: true }).result);
@@ -33,6 +33,6 @@ if (!argument || rest.length > 0 || (sessionId !== undefined && !isSessionId(ses
 const statusPath = resolve(argument);
 const startedAt = Date.now();
 const { mtimeMs, size } = statSync(statusPath);
-const { kind, text, highMs } = segment(statusPath, sessionId);
-const stored = writeEntry(cacheDir(), statusPath, { path: statusPath, kind, text, highMs, mtimeMs, size, computedAt: Date.now(), refreshStartedAt: startedAt });
+const { kind, text, highMs, progress } = segment(statusPath, sessionId);
+const stored = writeEntry(cacheDir(), statusPath, { path: statusPath, kind, text, highMs, progress, mtimeMs, size, computedAt: Date.now(), refreshStartedAt: startedAt });
 process.exitCode = stored ? 0 : 1;

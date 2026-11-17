@@ -31,7 +31,7 @@ process.stdin.on('end', () => {
   if (typeof cost === 'number') parts.push(`$${cost.toFixed(2)}`);
   // Finish time of the session's STATUS.md (the one it last touched, else the project's): read from a cache only, refreshed in the background (see segment-cache.mjs).
   const estimate = estimateSegment({ projectDir: d.workspace?.project_dir ?? d.cwd, sessionId: d.session_id });
-  if (estimate) parts.push(`\x1b[36m${estimate}\x1b[0m`);
+  if (estimate) parts.push(`\x1b[36m${estimate.text}\x1b[0m`);
   const five = d.rate_limits?.five_hour;
   // Claude Code omits five_hour when the server sends no data for it (claude-code#92081);
   // then show ccusage's local 5h-block estimate (cost spent, reset time), never a fake percent.

@@ -1,13 +1,14 @@
 // The status line's estimate segment: reads a small cache of the estimate's text and, when the cache is missing or out of date,
 // starts a detached refresh. Used by home/statusline.mjs on every render; written by ../statusline-cache.mjs.
-// Exports: estimateSegment({ projectDir, sessionId }, deps) -> string | null; readEntry, writeEntry, cacheDir (the cache file store);
+// Exports: estimateSegment({ projectDir, sessionId }, deps) -> { text, progress } | null; readEntry, writeEntry, cacheDir (the cache file store);
 // SEGMENT_KINDS, OVERDUE_TEXT, MAX_CACHE_BYTES, STALE_SHOW_MS, REFRESH_INTERVAL_MS, RECOMPUTE_AFTER_MS.
 // Invariants:
 // - The STATUS.md looked at is the one the session last edited with status.mjs (its link in the estimate store), else <projectDir>/STATUS.md.
 // - Fast: a render reads one small link file, does one stat of STATUS.md and one small cache read. It never imports the forecast,
 //   the table parser or the transcript reader, so it can never read a transcript. The text comes only from the refresh script.
 // - Cache file: ~/.claude/state/estimate-segment/<sha256 of the STATUS.md path, 32 hex>.json, one JSON object
-//   {path, kind, text, highMs, mtimeMs, size, computedAt, refreshStartedAt}; kind is one of SEGMENT_KINDS and text is what to show
+//   {path, kind, text, highMs, progress, mtimeMs, size, computedAt, refreshStartedAt}; progress is the job's progress (progress.mjs
+//   progressOf, a small object) or null, shown by the status line's second line under the same freshness rules as the text; kind is one of SEGMENT_KINDS and text is what to show
 //   (a finish, a hand-over, the work left of a long job, or `done ? <cause>` after a refusal or an error); highMs (epoch ms) is the
 //   shown clock of a finish, after which OVERDUE_TEXT is shown; null for the other kinds. An entry of another kind (written by the
 //   old tool) is no entry: the next refresh replaces it. A handed-over text is shown only while STATUS.md is unchanged; any other
@@ -42,6 +43,14 @@ export const cacheDir = () => join(homedir(), '.claude', 'state', 'estimate-segm
 
 const cacheId = (statusPath) => createHash('sha256').update(statusPath).digest('hex').slice(0, CACHE_ID_HEX_CHARS);
 const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
+const isCount = (value) => Number.isInteger(value) && value >= 0;
+const PROGRESS_TAGS = [null, 'moved', '+rows', 'overdue'];
+const MAX_PERCENT = 100;
+
+/** True for the object progressOf returns (a stored one is checked, never trusted: it is printed on the status line). */
+const isProgress = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+  && isCount(value.pct) && value.pct <= MAX_PERCENT && typeof value.approx === 'boolean' && isCount(value.rowsDone) && isCount(value.rowsTotal)
+  && (value.leftMin === null || isNumber(value.leftMin)) && PROGRESS_TAGS.includes(value.tag);
 
 /**
  * @param {string} dir the cache folder
@@ -57,7 +66,7 @@ export function readEntry(dir, statusPath) {
     const valid = entry?.path === statusPath && (entry.text === null || typeof entry.text === 'string') && (entry.highMs === null || isNumber(entry.highMs))
       && (entry.kind === null || SEGMENT_KINDS.includes(entry.kind))
       && ['mtimeMs', 'size', 'computedAt', 'refreshStartedAt'].every((field) => isNumber(entry[field]));
-    return valid ? entry : null;
+    return valid ? { ...entry, progress: isProgress(entry.progress) ? entry.progress : null } : null;
   } catch {
     return null; // a half-written or foreign file: treated as no cache, the next refresh replaces it
   }
@@ -69,15 +78,15 @@ export const writeEntry = (dir, statusPath, entry) => writeSessionFile(dir, cach
 const matchesFile = (entry, file) => entry.mtimeMs === file.mtimeMs && entry.size === file.size;
 
 /**
- * The text to show: the cached text while it matches the file (a hand-over only then), else for STALE_SHOW_MS after it was
- * computed; once a finish's clock has passed, OVERDUE_TEXT.
+ * The text and progress to show: the cached ones while the entry matches the file (a hand-over only then), else for STALE_SHOW_MS after
+ * it was computed; once a finish's clock has passed, OVERDUE_TEXT and the overdue tag.
  */
-function segmentText(entry, file, now) {
+function shownEntry(entry, file, now) {
   if (entry === null || entry.text === null) return null;
   const current = matchesFile(entry, file) || (entry.kind !== 'handed-over' && now - entry.computedAt < STALE_SHOW_MS);
   if (!current) return null;
-  if (entry.highMs === null || now <= entry.highMs) return entry.text;
-  return OVERDUE_TEXT;
+  if (entry.highMs === null || now <= entry.highMs) return { text: entry.text, progress: entry.progress };
+  return { text: OVERDUE_TEXT, progress: entry.progress === null ? null : { ...entry.progress, tag: 'overdue' } };
 }
 
 /**
@@ -99,7 +108,7 @@ function spawnRefresh(statusPath, sessionId) {
 
 /** Writes the claim "a refresh started at now", keeping what the old entry knew; false when it could not be stored. */
 function claimRefresh(dir, statusPath, entry, now) {
-  const base = entry ?? { path: statusPath, kind: null, text: null, highMs: null, mtimeMs: 0, size: 0, computedAt: 0 };
+  const base = entry ?? { path: statusPath, kind: null, text: null, highMs: null, progress: null, mtimeMs: 0, size: 0, computedAt: 0 };
   return writeEntry(dir, statusPath, { ...base, refreshStartedAt: now });
 }
 
@@ -115,8 +124,8 @@ function statusPathOf(projectDir, sessionId, store) {
  * @param {{ projectDir?: string, sessionId?: string }} where the project folder and the session id from the status line's JSON
  * @param {{cacheDir?: string, stateDir?: string, now?: number, spawnRefresh?: (statusPath: string, sessionId?: string) => void}} [deps]
  *   the cache folder, the estimate store (for the session's link), the clock (epoch ms) and the refresh starter; tests replace them
- * @returns {string | null} e.g. "done by 21:40", "handed over 17:54" or "done ? few rows", or null for no segment (no STATUS.md,
- *   no cache yet, any error)
+ * @returns {{ text: string, progress: object | null } | null} text e.g. "done by 21:40", "handed over 17:54" or "done ? few rows"; progress
+ *   as progressOf returns it, or null; null for no segment (no STATUS.md, no cache yet, any error)
  */
 export function estimateSegment({ projectDir, sessionId } = {}, deps = {}) {
   try {
@@ -127,7 +136,7 @@ export function estimateSegment({ projectDir, sessionId } = {}, deps = {}) {
     if (!file?.isFile()) return null;
     const entry = readEntry(dir, statusPath);
     if (refreshDue(entry, file, now) && claimRefresh(dir, statusPath, entry, now)) start(statusPath, sessionId);
-    return segmentText(entry, file, now);
+    return shownEntry(entry, file, now);
   } catch {
     return null; // the status line must always render; no segment is the safe answer
   }

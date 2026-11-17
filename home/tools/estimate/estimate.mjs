@@ -53,8 +53,8 @@ function readOptions(argv) {
  * leaves the old entry, which the next refresh replaces.
  */
 function storeSegment(statusPath, file, result, startedAt) {
-  const { kind, text, highMs } = resultSegment(result);
-  writeEntry(cacheDir(), statusPath, { path: statusPath, kind, text, highMs, mtimeMs: file.mtimeMs, size: file.size, computedAt: Date.now(), refreshStartedAt: startedAt });
+  const { kind, text, highMs, progress } = resultSegment(result);
+  writeEntry(cacheDir(), statusPath, { path: statusPath, kind, text, highMs, progress, mtimeMs: file.mtimeMs, size: file.size, computedAt: Date.now(), refreshStartedAt: startedAt });
 }
 
 /** The file's stat, or null when it cannot be read: estimateFile then reports the file as a usage error (exit 2). */

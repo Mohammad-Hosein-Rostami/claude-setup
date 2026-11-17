@@ -25,17 +25,17 @@ const OPEN = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O
 const TABLE_ERROR = statusDoc([row({ id: 'A17', size: 'XL' })]);
 
 test('a finish is `done by` its committed clock rounded up, with the weekday on another day, and highMs is that clock', () => {
-  assert.deepEqual(resultSegment(finishAt(at(18, 8)), TZ), { kind: 'finish', text: 'done by 21:40', highMs: at(18, 10) });
-  assert.deepEqual(resultSegment(finishAt(at(20, 46)), TZ), { kind: 'finish', text: 'done by Tue 00:20', highMs: at(20, 50) });
+  assert.deepEqual(resultSegment(finishAt(at(18, 8)), TZ), { kind: 'finish', text: 'done by 21:40', highMs: at(18, 10), progress: null });
+  assert.deepEqual(resultSegment(finishAt(at(20, 46)), TZ), { kind: 'finish', text: 'done by Tue 00:20', highMs: at(20, 50), progress: null });
   assert.equal(resultSegment(finishAt(at(18, 8)), 'UTC').text, 'done by 18:10');
 });
 
 test('all done, handed over (weekday when not today) and the work left of a long job', () => {
-  assert.deepEqual(resultSegment({ state: 'all-done', nowMs: NOW, rows: 3 }, TZ), { kind: 'finish', text: 'all rows done', highMs: null });
-  assert.deepEqual(resultSegment({ state: 'handed-over', nowMs: NOW, handedOverMs: at(14, 24) }, TZ), { kind: 'handed-over', text: 'handed over 17:54', highMs: null });
+  assert.deepEqual(resultSegment({ state: 'all-done', nowMs: NOW, rows: 3 }, TZ), { kind: 'finish', text: 'all rows done', highMs: null, progress: null });
+  assert.deepEqual(resultSegment({ state: 'handed-over', nowMs: NOW, handedOverMs: at(14, 24) }, TZ), { kind: 'handed-over', text: 'handed over 17:54', highMs: null, progress: null });
   assert.equal(resultSegment({ state: 'handed-over', nowMs: NOW, handedOverMs: at(14, 24, 15) }, TZ).text, 'handed over Sun 17:54');
   const horizon = refused({ reason: 'horizon', longestJobMin: 355, work: { p50: 5400, p85: 5940, p95: 6300 } });
-  assert.deepEqual(resultSegment(horizon, TZ), { kind: 'work-left', text: 'work left ~99 h', highMs: null });
+  assert.deepEqual(resultSegment(horizon, TZ), { kind: 'work-left', text: 'work left ~99 h', highMs: null, progress: null });
 });
 
 test('a refusal shows `done ? <cause>`, the cause one of a fixed list', () => {
@@ -117,7 +117,7 @@ test('the render shows a marker, a hand-over and an overdue finish instead of no
   const { mtimeMs, size } = await stat(statusPath);
   const now = 1_800_000_000_000;
   const entry = (fields) => ({ path: statusPath, kind: 'finish', text: 'done by 16:15', highMs: now + HOUR_MS, mtimeMs, size, computedAt: now - 1, refreshStartedAt: now - 1, ...fields });
-  const shown = (fields, at2 = now) => (writeEntry(cacheDir, statusPath, entry(fields)), render(at2));
+  const shown = (fields, at2 = now) => (writeEntry(cacheDir, statusPath, entry(fields)), render(at2)?.text ?? null);
   assert.equal(shown({}), 'done by 16:15');
   assert.equal(shown({}, now + 2 * HOUR_MS), OVERDUE_TEXT); // its clock has passed
   assert.equal(shown({ kind: 'work-left', text: 'work left ~99 h', highMs: null }, now + 2 * HOUR_MS), 'work left ~99 h');
@@ -143,10 +143,10 @@ test('an entry the old tool wrote (no kind, or an old kind) is no entry; a bad k
 test('refused, then the table fixed: the marker gives way to a finish at the next refresh', async () => {
   const { statusPath, refresh, render } = await project(statusDoc([]));
   const first = refresh();
-  assert.equal(render(first.computedAt + 1000), 'done ? no rows');
+  assert.equal(render(first.computedAt + 1000)?.text, 'done ? no rows');
   await writeFile(statusPath, OPEN);
-  assert.equal(render(first.computedAt + 2000), 'done ? no rows'); // the file changed: the old marker still shows while the refresh runs
+  assert.equal(render(first.computedAt + 2000)?.text, 'done ? no rows'); // the file changed: the old marker still shows while the refresh runs
   const second = refresh();
   assert.equal(second.kind, 'finish');
-  assert.match(render(second.computedAt + 1000), /^done by /);
+  assert.match(render(second.computedAt + 1000)?.text, /^done by /);
 });
