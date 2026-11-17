@@ -75,7 +75,7 @@
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/permission-timed-allow.mjs\"",
-            "timeout": 200
+            "timeout": 800
           }
         ]
       }
@@ -144,6 +144,16 @@
       }
     ],
     "PostToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/question-answered.mjs\"",
+            "timeout": 5
+          }
+        ]
+      },
       {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [

@@ -166,12 +166,21 @@ test('S2: a Bash prompt for a command the guard asks about shows the guard\'s re
   assert.doesNotMatch(quiet.calls[0].request.reason, /Bash guard/);
 });
 
-test('settings/base.json registers the hook for every tool, with a timeout above the longest dialog', () => {
+const MAX_QUESTIONS = 4; // AskUserQuestion takes 1 to 4 questions, each with its own popup of at most MAX_ASK_TIMEOUT_S
+
+test('settings/base.json registers the hook for every tool, with a timeout above four popups in a row', () => {
   const entries = JSON.parse(readFileSync(BASE_SETTINGS, 'utf8')).hooks.PermissionRequest;
   const ours = entries.filter((entry) => entry.hooks.some((hook) => hook.command.includes('permission-timed-allow.mjs')));
   assert.equal(ours.length, 1);
   assert.equal(ours[0].matcher, '*');
-  assert.ok(ours[0].hooks[0].timeout > MAX_ASK_TIMEOUT_S);
+  assert.ok(ours[0].hooks[0].timeout > MAX_QUESTIONS * MAX_ASK_TIMEOUT_S, 'one popup per question: the hook must outlive all of them');
+});
+
+test('settings/base.json registers the PostToolUse hook that marks a terminal answer, for AskUserQuestion only', () => {
+  const entries = JSON.parse(readFileSync(BASE_SETTINGS, 'utf8')).hooks.PostToolUse;
+  const ours = entries.filter((entry) => entry.hooks.some((hook) => hook.command.includes('question-answered.mjs')));
+  assert.equal(ours.length, 1);
+  assert.equal(ours[0].matcher, 'AskUserQuestion');
 });
 
 test('a Bash command the guard already asked about is allowed once without a second dialog', () => {
