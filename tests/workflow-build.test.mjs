@@ -9,10 +9,10 @@ import { assertWellFormedCalls, readMeta, runScript } from './workflow-sandbox.m
 
 const BUILD = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'workflows', 'build.js');
 const META = readMeta(readFileSync(BUILD, 'utf8')).meta;
-const lane = (key, extra = {}) => ({ row: `impl-${key}`, closeRow: `close-${key}`, branch: `lane/${key}`, spec: '/spec.md', files: ['a.mjs'], acceptanceTests: false, implementer: { model: 'sonnet', effort: 'medium' }, ...extra });
+const lane = (key, extra = {}) => ({ row: `impl-${key}`, closeRow: `close-${key}`, branch: `lane/${key}`, spec: '/spec.md', files: [`${key}.mjs`], acceptanceTests: false, implementer: { model: 'sonnet', effort: 'medium' }, ...extra });
 const ARGS = (lanes, extra = {}) => ({ base: 'main', repo: '/p', suite: 'npm test', writers: 4, statusFile: '/p/STATUS.md', scriptsDir: '/scripts', lanes, ...extra });
 const built = (key) => ({ branch: `lane/${key}`, worktree: `/wt/${key}`, sha: `s-${key}`, tests: { cmd: 't', exit: 0 }, tier: {} });
-const joined = (key, extra = {}) => ({ red: false, tail: 'green', sha: `j-${key}`, worktree: `/wt/${key}`, ...extra });
+const joined = (key, extra = {}) => ({ red: false, tail: 'green', sha: `j-${key}`, worktree: `/wt/${key}`, vacuous: [], outOfScope: [], contractTouched: [], checkpoints: [], ...extra });
 const reviewed = (key) => ({ status: 'clean', rounds: 1, tip: `t-${key}`, worktree: `/wt/${key}`, tierFile: `/t-${key}.json`, suite: 'pass', findings: [], optional: [], leadList: [], text: '' });
 const landedOk = (key) => ({ status: 'landed', sha: `m-${key}`, patchesChanged: 0, tidy: 'clean' });
 const key = (label) => label.split(':')[0].replace('impl-', '');
