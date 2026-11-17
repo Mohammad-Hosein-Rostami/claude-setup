@@ -1,7 +1,9 @@
 // Timed ask for PreToolUse and PermissionRequest hooks. Exports: askTimeoutSeconds(env), secretAskTimeoutSeconds(env),
 // permissionTimeoutSeconds(env), guiAvailable(env, platform), dialogInvocation(platform, text,
-// title, timeoutS, buttons), parseDialogResult(platform, result, buttons) -> 'allow'|'deny'|'timeout'|'unavailable', answerAsk(request, env) ->
+// title, timeoutS, buttons), requestInvocation(request, timeoutS, platform), parseDialogResult(platform, result, buttons) ->
+// 'allow'|'deny'|'timeout'|'unavailable', answerFromOutcome(outcome, {reason, timeoutS, waitedMs}), answerAsk(request, env) ->
 // {decision, outcome, reason}, decisionOutput(answer) -> hook stdout, askOwner(request, env) -> hook stdout (asks, logs, formats).
+// answerAsk blocks until the dialog ends; lib/timed-ask-async.mjs opens the same dialog as a child that can be closed from outside.
 // Why: the native "ask" waits forever. The owner's policy is "everything goes ahead after 2 min": show a native dialog with Allow
 // (default) and Deny, and go ahead when nobody answers within the request's timeoutS, else CLAUDE_ASK_TIMEOUT_S (default 120; a
 // secret-only ask passes CLAUDE_ASK_SECRET_TIMEOUT_S, default 120, see secretAskTimeoutSeconds; a Claude Code permission prompt answered
@@ -213,6 +215,29 @@ function dialogText({ tool, reason, command, targetLabel = 'Command', details = 
 }
 
 /**
+ * @param {object} request what to show (see answerAsk)
+ * @param {number} timeoutS seconds until the dialog closes itself
+ * @param {string} platform process.platform
+ * @returns {{command: string, args: string[], env: Record<string, string>} | undefined} how to run the dialog for this request; undefined for an unknown platform
+ */
+export const requestInvocation = (request, timeoutS, platform) =>
+  dialogInvocation(platform, dialogText(request, timeoutS, platform), request.title ?? DIALOG_TITLE, timeoutS, request.buttons ?? ALLOW_DENY_BUTTONS);
+
+/**
+ * Turns what the person did into the decision answerAsk returns. A "timeout" is only believed when the full time really passed.
+ * @param {'allow' | 'deny' | 'timeout' | 'unavailable'} outcome parseDialogResult's answer ("unavailable": no dialog, killed, crashed)
+ * @param {{reason: string, timeoutS: number, waitedMs: number}} context the masked reason, the dialog's timeout and how long it was open
+ * @returns {{decision: 'allow' | 'deny' | 'ask', outcome: 'allow' | 'deny' | 'timeout' | 'dialog-failed', reason: string}}
+ */
+export function answerFromOutcome(outcome, { reason, timeoutS, waitedMs }) {
+  const early = outcome === 'timeout' && waitedMs < timeoutS * MS_PER_SECOND - TIMEOUT_SLACK_MS;
+  if (outcome === 'unavailable' || early) return { decision: 'ask', outcome: 'dialog-failed', reason };
+  if (outcome === 'deny') return { decision: 'deny', outcome, reason: `denied by the owner in the dialog (${reason})` };
+  if (outcome === 'timeout') return { decision: 'allow', outcome, reason: `no answer in ${formatDuration(timeoutS)}, went ahead (${reason})` };
+  return { decision: 'allow', outcome, reason: `allowed by the owner in the dialog (${reason})` };
+}
+
+/**
  * Asks the owner through a native dialog and turns the answer into a decision.
  * @param {{tool: string, reason: string, command?: string, targetLabel?: string, details?: Array<{label: string, value: string, keepStart?: boolean}>, title?: string,
  *   buttons?: {accept: string, decline: string}, timeoutS?: number, cwd?: string, sessionId?: string, agentId?: string}} request
@@ -229,9 +254,9 @@ export function answerAsk(request, env = process.env, platform = process.platfor
   if (!guiAvailable(env, platform)) return { decision: 'ask', outcome: 'no-gui', reason };
   const timeoutS = request.timeoutS ?? askTimeoutSeconds(env);
   let outcome = 'unavailable';
+  let waitedMs = 0;
   try {
-    const buttons = request.buttons ?? ALLOW_DENY_BUTTONS;
-    const invocation = dialogInvocation(platform, dialogText(request, timeoutS, platform), request.title ?? DIALOG_TITLE, timeoutS, buttons);
+    const invocation = requestInvocation(request, timeoutS, platform);
     if (invocation) {
       const started = now();
       const result = spawnSync(invocation.command, invocation.args, {
@@ -240,18 +265,14 @@ export function answerAsk(request, env = process.env, platform = process.platfor
         timeout: (timeoutS + SPAWN_GRACE_S) * MS_PER_SECOND,
         windowsHide: true,
       });
-      // killed or crashed dialog -> unavailable; a "timeout" is only believed when the full time has passed
-      outcome = result.signal || result.status === null ? 'unavailable' : parseDialogResult(platform, result, buttons);
-      const waitedMs = now() - started;
-      if (outcome === 'timeout' && waitedMs < timeoutS * MS_PER_SECOND - TIMEOUT_SLACK_MS) outcome = 'unavailable';
+      // killed or crashed dialog -> unavailable
+      outcome = result.signal || result.status === null ? 'unavailable' : parseDialogResult(platform, result, request.buttons ?? ALLOW_DENY_BUTTONS);
+      waitedMs = now() - started;
     }
   } catch {
     outcome = 'unavailable';
   }
-  if (outcome === 'unavailable') return { decision: 'ask', outcome: 'dialog-failed', reason };
-  if (outcome === 'deny') return { decision: 'deny', outcome, reason: `denied by the owner in the dialog (${reason})` };
-  if (outcome === 'timeout') return { decision: 'allow', outcome, reason: `no answer in ${formatDuration(timeoutS)}, went ahead (${reason})` };
-  return { decision: 'allow', outcome, reason: `allowed by the owner in the dialog (${reason})` };
+  return answerFromOutcome(outcome, { reason, timeoutS, waitedMs });
 }
 
 /**
