@@ -83,8 +83,9 @@ test('a table file over the size cap: the estimate still prints, stderr names th
 });
 
 test('a recorded CLI run writes the status-line cache entry from its own result, so the two never show different times', async () => {
-  const { dir, status, run, projects } = await workdir(statusDoc(OPEN_ROWS));
-  const result = run(status, ...projects); // the real clock and the default store under the temp HOME
+  const { dir, status, run } = await workdir(statusDoc(OPEN_ROWS));
+  writeTranscript(join(dir, 'home', '.claude', 'projects'), SESSION, 0, 1); // the default projects folder under the temp HOME
+  const result = run(status, '--session', SESSION); // the real clock, the default store and projects folder
   assert.equal(result.status, 0, result.stderr);
   const entry = readEntry(join(dir, 'home', '.claude', 'state', 'estimate-segment'), status);
   assert.equal(entry?.kind, 'finish');
@@ -92,6 +93,17 @@ test('a recorded CLI run writes the status-line cache entry from its own result,
   assert.match(entry.text, new RegExp(`^done by (\\w{3} )?${clock}$`));
   const file = statSync(status);
   assert.deepEqual([entry.mtimeMs, entry.size], [file.mtimeMs, file.size]);
+});
+
+test('a recorded run on another --state-dir or --projects leaves the real status-line cache alone', async () => {
+  const { dir, status, run, projects } = await workdir(statusDoc(OPEN_ROWS));
+  const cache = join(dir, 'home', '.claude', 'state', 'estimate-segment');
+  const probes = [['--state-dir', join(dir, 'probe-state')], [...projects]];
+  for (const flags of probes) {
+    const result = run(status, ...flags);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readEntry(cache, status), null, `${flags[0]} wrote the real cache`);
+  }
 });
 
 test('refusals exit 3 on stderr with No finish time and What to do, never a clock time', async () => {

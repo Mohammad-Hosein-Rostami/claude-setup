@@ -42,7 +42,9 @@ function readOptions(argv) {
   if (values.session !== undefined && !isSessionId(values.session)) throw new UsageError(`--session "${values.session}" is not a session id`);
   const sessionId = values.session ?? (isSessionId(process.env.CLAUDE_CODE_SESSION_ID) ? process.env.CLAUDE_CODE_SESSION_ID : undefined);
   const store = values['state-dir'] ?? (values.now === undefined ? stateDir() : null);
-  return { path: positionals[0], options: { now: values.now, stateDir: store, projectsDir: values.projects, sessionId, record: store !== null } };
+  // A run pointed at another store or transcript folder is a probe: its result must not reach the real status-line cache.
+  const isProbe = values['state-dir'] !== undefined || values.projects !== undefined;
+  return { path: positionals[0], isProbe, options: { now: values.now, stateDir: store, projectsDir: values.projects, sessionId, record: store !== null } };
 }
 
 /**
@@ -65,12 +67,12 @@ function statOrNull(path) {
 }
 
 function main(argv) {
-  const { path, options } = readOptions(argv);
+  const { path, options, isProbe } = readOptions(argv);
   const startedAt = Date.now();
   const file = statOrNull(path); // before the estimate, as the refresh does: an edit meanwhile reads as a change
   const { result, inputs } = estimateFile(path, Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)));
-  // Only a recorded run at the real clock: a --now run describes another instant.
-  if (inputs.recorded && options.now === undefined && file?.isFile()) storeSegment(resolve(path), file, result, startedAt);
+  // Only a recorded run at the real clock on the real folders: a --now run describes another instant, a probe another table.
+  if (inputs.recorded && options.now === undefined && !isProbe && file?.isFile()) storeSegment(resolve(path), file, result, startedAt);
   // Not only a busy lock: an unusable or over-cap store file records nothing too (table-store names an over-cap file on its own line).
   if (inputs.busy) process.stderr.write('estimate: this run recorded nothing (the store was busy or a store file could not be used)\n');
   if (result.state === 'refused') {
