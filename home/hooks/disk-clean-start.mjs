@@ -3,7 +3,8 @@
 // Exports: startIfDue(input, deps) -> 'started' | 'not-due' | 'skipped'; openLogFile, cleanEnv (tests).
 // Invariants: never waits for the clean-up (detached child, stdio to a log file, unref); never fails the session start (an error goes to stderr,
 //   the exit code stays 0); skips subagents and any source other than startup. Two sessions that start together run one clean-up: the check
-//   and the stamp write happen while holding a lock file made with O_EXCL (a lock older than a minute is a crashed hook's and is replaced).
+//   and the stamp write happen while holding a lock file made with O_EXCL (lib/lock-file.mjs: a lock older than a minute is a crashed hook's
+//   and is replaced by one breaker only). An empty or relative HOME skips the run.
 //   The stamp is written to a new file and renamed over the old one, the lock and the log are opened with O_NOFOLLOW and O_NONBLOCK, and
 //   a stamp or log that is a symlink, a FIFO or any other non-plain file is never read through, written to or waited on.
 //   The child gets a minimal environment (no tokens or other secrets). Test hooks: DISK_CLEAN_TOOL replaces the tool path, HOME the state and log folders.
@@ -11,8 +12,9 @@ import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, realpathSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { releaseLock, takeLock } from '../tools/disk-free/lib/lock-file.mjs';
 
 const MIN_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const LOCK_STALE_MS = 60 * 1000; // the check and the stamp write take microseconds; a lock this old was left by a crashed hook
@@ -66,25 +68,6 @@ const stampAgeMs = (stampPath, nowMs) => {
   }
 };
 
-/** Creates the lock file; false when another start holds it. */
-function takeLock(lockPath, nowMs) {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      closeSync(openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW | NO_BLOCK, PRIVATE_FILE));
-      return true;
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-    }
-    try {
-      if (nowMs - lstatSync(lockPath).mtimeMs < LOCK_STALE_MS) return false;
-      unlinkSync(lockPath);
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
-  }
-  return false;
-}
-
 /** Writes the stamp to a new file and renames it over the old one: atomic, and a link or FIFO at the stamp path is replaced, not followed. */
 function writeStamp(stampPath, nowMs) {
   const temp = `${stampPath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
@@ -106,17 +89,13 @@ function writeStamp(stampPath, nowMs) {
 function claimStamp(stampPath, nowMs) {
   mkdirSync(dirname(stampPath), { recursive: true });
   const lockPath = `${stampPath}.lock`;
-  if (!takeLock(lockPath, nowMs)) return false;
+  if (!takeLock(lockPath, nowMs, LOCK_STALE_MS)) return false;
   try {
     if (stampAgeMs(stampPath, nowMs) < MIN_INTERVAL_MS) return false;
     writeStamp(stampPath, nowMs);
     return true;
   } finally {
-    try {
-      unlinkSync(lockPath);
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error; // a stale-lock breaker may have removed it already
-    }
+    releaseLock(lockPath);
   }
 }
 
@@ -141,7 +120,9 @@ async function main() {
     if (size > MAX_INPUT_BYTES) return;
     chunks.push(chunk);
   }
-  const claudeDir = join(homedir(), '.claude');
+  const home = homedir();
+  if (!isAbsolute(home)) throw new Error(`skipped: the home folder ${JSON.stringify(home)} is not an absolute path`); // an empty HOME would put the state folder in the working directory
+  const claudeDir = join(home, '.claude');
   startIfDue(JSON.parse(Buffer.concat(chunks).toString('utf8')), {
     stampPath: join(claudeDir, 'state', 'disk-clean.stamp'), logPath: join(claudeDir, 'logs', 'disk-clean.log'), tool: process.env.DISK_CLEAN_TOOL ?? TOOL, nowMs: Date.now(),
   });

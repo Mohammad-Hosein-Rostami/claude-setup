@@ -1,28 +1,33 @@
-// What disk-clean may remove, and the removal itself. Exports: UnsafeRoot, inspectRoot, ownedFolder, removeInside.
+// What disk-clean may remove, and the removal itself. Exports: UnsafeRoot, inspectRoot, ownedFolder, removeInside, moveAside, moveBack, originalName.
 // Why it is written by hand: Node has no unlinkat, so a path-based removal can be redirected when a folder on the way is swapped for a
-// symlink. Two defences close that: (1) every folder from the root down to the item, and every folder inside the item, must be owned by
-// this user, not a symlink and not writable by group or others, so nobody else can swap anything; (2) before each unlink the folder's
-// identity (device and inode) is compared with what was seen when it was entered, so an accidental swap by this user's own processes
-// stops the removal. What remains is the instant between that comparison and the unlink call, open only to a process of this same user.
-// A shared sticky folder (/tmp) is accepted as a root only for items that are owned by this user.
+// symlink. Three defences close that: (1) every folder from the root down to the item, and every folder inside the item, must be owned by
+// this user, not a symlink and not writable by group or others, so nobody else can swap anything; (2) the removal works from inside the
+// folder: it changes the working directory into it, checks that "." is the folder that was inspected (device and inode) and then removes
+// bare names only, so a swap of any folder on the path after that point changes nothing; (3) a shared sticky folder (/tmp) counts as a
+// root only when root owns it, because the owner of a sticky folder can rename everyone's entries in it.
+// The process changes its working directory while it removes (removal is synchronous, so nothing else runs meanwhile) and puts it back.
 // Windows has no uid: the ownership and mode checks are skipped there and a root must be under the temp or home folder (see the README).
-import { lstatSync, opendirSync, realpathSync, rmdirSync, unlinkSync } from 'node:fs';
+import { lstatSync, opendirSync, realpathSync, renameSync, rmdirSync, unlinkSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { lstatOrNull } from './clean-scan.mjs';
 
 const MY_UID = process.getuid?.(); // undefined on Windows
+const ROOT_UID = 0;
 const MAX_DEPTH = 64;
 const BATCH_SIZE = 1000; // names read before removing them: memory stays small however many entries a planted folder holds
 const MAX_BATCHES = 100_000;
 const STICKY_AND_WORLD_WRITABLE = 0o1002;
 const GROUP_OR_OTHERS_WRITE = 0o022;
+const ASIDE_PREFIX = '.removing-';
+const ASIDE_NAME = /^\.removing-\d+-(.+)$/;
 
 export class UnsafeRoot extends Error {}
 
 const isMine = (info) => MY_UID === undefined || info.uid === MY_UID;
 const isClosedToOthers = (info) => MY_UID === undefined || (info.mode & GROUP_OR_OTHERS_WRITE) === 0;
-const isSharedTemp = (info) => MY_UID !== undefined && info.isDirectory() && (info.mode & STICKY_AND_WORLD_WRITABLE) === STICKY_AND_WORLD_WRITABLE;
+const isSharedTemp = (info) => MY_UID !== undefined && info.isDirectory() && info.uid === ROOT_UID && (info.mode & STICKY_AND_WORLD_WRITABLE) === STICKY_AND_WORLD_WRITABLE;
+const isMineAndClosed = (info) => info.isDirectory() && isMine(info) && isClosedToOthers(info);
 const isInside = (real, base) => real === base || real.startsWith(base + sep);
 const realOrNull = (path) => {
   try {
@@ -32,10 +37,13 @@ const realOrNull = (path) => {
   }
 };
 
+/** The name a folder had before a clean-up renamed it aside (`.removing-<pid>-<name>`); any other name is returned as it is. */
+export const originalName = (name) => ASIDE_NAME.exec(name)?.[1] ?? name;
+
 /** lstat info of a real folder (not a link) owned by this user and closed to group and others, else null. */
 export function ownedFolder(path) {
   const info = lstatOrNull(path);
-  return info !== null && info.isDirectory() && isMine(info) && isClosedToOthers(info) ? info : null;
+  return info !== null && isMineAndClosed(info) ? info : null;
 }
 
 function allowedBases(home) {
@@ -47,31 +55,29 @@ function allowedBases(home) {
 /**
  * Decides whether a folder may be the root of a clean-up.
  * @param {unknown} root the configured root
- * @param {string} home the home folder (never a root)
- * @returns {{ real: string, shared: boolean } | null} its real path, and whether it is a shared sticky folder like /tmp; null when it does not exist
- * @throws {UnsafeRoot} when it is empty or relative, a link, not a folder, the home folder, not under the temp, /tmp or ~/.claude folders,
- *   or neither owned by this user and closed to others nor a shared sticky folder
+ * @param {string} home the home folder (never a root); it must be an absolute path
+ * @returns {{ real: string, shared: boolean } | null} its real path, and whether it is a shared sticky folder like /tmp (owned by root); null when it does not exist
+ * @throws {UnsafeRoot} when it is empty or relative, the home folder is unknown, it is a link, not a folder, the home folder, not under the temp, /tmp
+ *   or ~/.claude folders, or neither owned by this user and closed to others nor a sticky folder owned by root
  */
 export function inspectRoot(root, home = homedir()) {
   if (typeof root !== 'string' || root === '' || !isAbsolute(root)) throw new UnsafeRoot(`root ${JSON.stringify(root)} is empty or not an absolute path`);
+  if (!isAbsolute(home)) throw new UnsafeRoot(`the home folder ${JSON.stringify(home)} is not an absolute path`);
   const info = lstatOrNull(root);
   if (info === null) return null;
   if (!info.isDirectory()) throw new UnsafeRoot(`root ${root} is a symlink or not a folder`); // lstat: a link is never a directory
   const real = realpathSync(root);
   if (real === realOrNull(home)) throw new UnsafeRoot(`root ${root} is the home folder`);
   if (!allowedBases(home).some((base) => isInside(real, base))) throw new UnsafeRoot(`root ${root} is not under the temp folder, /tmp or ~/.claude`);
-  if (isMine(info) && isClosedToOthers(info)) return { real, shared: false };
+  if (isMineAndClosed(info)) return { real, shared: false };
   if (isSharedTemp(info)) return { real, shared: true };
   throw new UnsafeRoot(`root ${root} is owned by someone else or writable by others`);
 }
 
-const sameFolder = (path, expected) => {
-  const now = lstatOrNull(path);
-  return now !== null && now.isDirectory() && now.dev === expected.dev && now.ino === expected.ino;
-};
-
-function assertSameFolder(path, expected) {
-  if (!sameFolder(path, expected)) throw new Error(`disk-clean: ${path} changed while it was being removed`);
+/** Throws unless the working directory "." is the folder that was inspected (same device and inode). */
+function assertHere(expected) {
+  const now = lstatSync('.');
+  if (!now.isDirectory() || now.dev !== expected.dev || now.ino !== expected.ino) throw new Error('disk-clean: a folder changed while it was being removed');
 }
 
 function namesIn(folder) {
@@ -85,54 +91,114 @@ function namesIn(folder) {
   }
 }
 
-/** Empties and removes one folder. Links inside are unlinked, never entered; a folder inside that is not safe stops the removal. */
-function removeFolder(folder, info, depth) {
-  if (depth > MAX_DEPTH) throw new Error(`disk-clean: ${folder} is nested deeper than ${MAX_DEPTH} folders`);
+/** Removes one entry of the working directory: a file or link is unlinked (never entered), a folder must be safe and is emptied and removed. */
+function removeEntry(name, parentInfo, depth) {
+  let child;
+  try {
+    child = lstatSync(name);
+  } catch (error) {
+    if (error.code === 'ENOENT') return; // gone already; any other error stops the removal instead of looping on an entry that cannot be looked at
+    throw error;
+  }
+  if (!child.isDirectory()) return unlinkSync(name);
+  if (!isMineAndClosed(child) || child.dev !== parentInfo.dev) throw new Error(`disk-clean: ${name} is not owned by you, is writable by others or is another file system: kept`);
+  removeFolder(name, child, parentInfo, depth + 1);
+}
+
+/** Working directory is the parent of `name`. Enters the folder, empties it, goes back out and removes it. */
+function removeFolder(name, info, parentInfo, depth) {
+  if (depth > MAX_DEPTH) throw new Error(`disk-clean: ${name} is nested deeper than ${MAX_DEPTH} folders`);
+  process.chdir(name); // follows a link, so the identity check below is what proves this is the folder that was inspected
+  assertHere(info);
   for (let batch = 0; batch <= MAX_BATCHES; batch += 1) {
-    const names = namesIn(folder);
+    const names = namesIn('.');
     if (names.length === 0) break;
-    for (const name of names) {
-      assertSameFolder(folder, info);
-      const child = join(folder, name);
-      const childInfo = lstatOrNull(child);
-      if (childInfo === null) continue;
-      if (!childInfo.isDirectory()) {
-        unlinkSync(child);
-        continue;
-      }
-      if (!isMine(childInfo) || !isClosedToOthers(childInfo) || childInfo.dev !== info.dev) throw new Error(`disk-clean: ${child} is not owned by you, is writable by others or is another file system: kept`);
-      removeFolder(child, childInfo, depth + 1);
+    for (const entry of names) removeEntry(entry, info, depth);
+  }
+  process.chdir('..');
+  assertHere(parentInfo);
+  rmdirSync(name);
+}
+
+/** Every folder from the root down to the parent of `path` must pass the owner, mode, link and file-system checks. */
+function checkedParent(realRoot, path) {
+  const inside = relative(realRoot, path);
+  if (inside === '' || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) throw new Error(`disk-clean: ${path} is not inside ${realRoot}`);
+  const rootInfo = lstatSync(realRoot);
+  if (!rootInfo.isDirectory() || !(isMineAndClosed(rootInfo) || isSharedTemp(rootInfo))) throw new Error(`disk-clean: root ${realRoot} is not a folder owned by you or by root (sticky)`);
+  let parent = { path: realRoot, info: rootInfo };
+  const names = inside.split(sep);
+  for (const folderName of names.slice(0, -1)) {
+    const folder = join(parent.path, folderName);
+    const info = lstatSync(folder);
+    if (!isMineAndClosed(info) || info.dev !== rootInfo.dev) throw new Error(`disk-clean: ${folder} is a symlink, is not owned by you, is writable by others or is another file system`);
+    parent = { path: folder, info };
+  }
+  return { parent, name: names.at(-1), rootInfo };
+}
+
+/** Runs action(name, parentInfo, rootInfo) with the working directory inside the checked parent of `path`; puts the directory back afterwards. */
+function inParent(realRoot, path, action) {
+  const { parent, name, rootInfo } = checkedParent(realRoot, path);
+  const original = process.cwd();
+  try {
+    process.chdir(parent.path);
+    assertHere(parent.info);
+    return action(name, parent.info, rootInfo);
+  } finally {
+    try {
+      process.chdir(original);
+    } catch {
+      process.chdir(realRoot); // the old directory is gone (it was inside what was removed): the root always exists
     }
   }
-  assertSameFolder(folder, info);
-  rmdirSync(folder);
+}
+
+/** lstat of a named item that must be a real folder or file of this user on the root's file system, never a link. */
+function checkedItem(name, rootInfo) {
+  const item = lstatSync(name);
+  if (item.isSymbolicLink()) throw new Error(`disk-clean: ${name} is a symlink and is never removed`);
+  if (!isMine(item)) throw new Error(`disk-clean: ${name} is not owned by you`);
+  if (item.dev !== rootInfo.dev) throw new Error(`disk-clean: ${name} is on another file system (a mount point): kept`);
+  if (item.isDirectory() && !isClosedToOthers(item)) throw new Error(`disk-clean: ${name} is writable by others: kept`);
+  return item;
 }
 
 /**
- * Removes `path` (a file, or a folder with everything in it). Every folder from the root down must pass ownedFolder; the item itself
- * must be owned by this user and not a symlink.
+ * Removes `path` (a file, or a folder with everything in it). Every folder from the root down must be safe; the item itself must be owned by
+ * this user, not a symlink and on the root's file system.
  * @param {string} realRoot realpath of the root (from inspectRoot)
  * @param {string} path what to remove
  * @throws {Error} when the path is the root or outside it, is a symlink, is not safe (see the file header), or changes while being removed
  */
 export function removeInside(realRoot, path) {
-  const inside = relative(realRoot, path);
-  if (inside === '' || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) throw new Error(`disk-clean: ${path} is not inside ${realRoot}`);
-  const rootInfo = lstatSync(realRoot);
-  if (!rootInfo.isDirectory() || !((isMine(rootInfo) && isClosedToOthers(rootInfo)) || isSharedTemp(rootInfo))) throw new Error(`disk-clean: root ${realRoot} is not a folder owned by you`);
-  const chain = [{ path: realRoot, info: rootInfo }];
-  const names = inside.split(sep);
-  for (const name of names.slice(0, -1)) {
-    const folder = join(chain.at(-1).path, name);
-    const info = lstatSync(folder);
-    if (!info.isDirectory() || !isMine(info) || !isClosedToOthers(info)) throw new Error(`disk-clean: ${folder} is a symlink, is not owned by you or is writable by others`);
-    chain.push({ path: folder, info });
-  }
-  const item = lstatSync(path);
-  if (item.isSymbolicLink()) throw new Error(`disk-clean: ${path} is a symlink and is never removed`);
-  if (!isMine(item)) throw new Error(`disk-clean: ${path} is not owned by you`);
-  for (const { path: folder, info } of chain) assertSameFolder(folder, info);
-  if (!item.isDirectory()) return unlinkSync(path);
-  if (!isClosedToOthers(item)) throw new Error(`disk-clean: ${path} is writable by others: kept`);
-  return removeFolder(path, item, 0);
+  inParent(realRoot, path, (name, parentInfo, rootInfo) => {
+    const item = checkedItem(name, rootInfo);
+    if (!item.isDirectory()) return unlinkSync(name);
+    return removeFolder(name, item, parentInfo, 0);
+  });
+}
+
+/**
+ * Renames a folder to `.removing-<pid>-<name>` in the same parent, atomically, so a session that resumes now writes to a new folder and the
+ * old one can be checked again before it is removed.
+ * @returns {string} the new path
+ * @throws {Error} as removeInside, or when the folder is not a folder
+ */
+export function moveAside(realRoot, path) {
+  const asideName = `${ASIDE_PREFIX}${process.pid}-${basename(path)}`;
+  inParent(realRoot, path, (name, _parentInfo, rootInfo) => {
+    if (!checkedItem(name, rootInfo).isDirectory()) throw new Error(`disk-clean: ${path} is not a folder`);
+    renameSync(name, asideName);
+  });
+  return join(dirname(path), asideName);
+}
+
+/** Renames a folder that moveAside moved back to its own name; throws when the name is taken by a folder that is not empty (the session wrote there). */
+export function moveBack(realRoot, asidePath, originalPath) {
+  if (dirname(asidePath) !== dirname(originalPath)) throw new Error(`disk-clean: ${asidePath} and ${originalPath} are not in one folder`);
+  inParent(realRoot, asidePath, (name, _parentInfo, rootInfo) => {
+    checkedItem(name, rootInfo);
+    renameSync(name, basename(originalPath));
+  });
 }

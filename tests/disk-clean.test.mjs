@@ -9,11 +9,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runClean } from '../home/tools/disk-free/disk-clean.mjs';
 import { removeInside } from '../home/tools/disk-free/lib/safe-remove.mjs';
-import { age, CURRENT, folder, NEWEST, NO_TRANSCRIPT_OLD, NO_TRANSCRIPT_RECENT, OLD, RECENT, transcript, world } from './disk-clean-helpers.mjs';
+import { age, CURRENT, folder, NEWEST, NO_TRANSCRIPT_OLD, NO_TRANSCRIPT_RECENT, OLD, posix, RECENT, transcript, world } from './disk-clean-helpers.mjs';
 
 const TOOL = fileURLToPath(new URL('../home/tools/disk-free/disk-clean.mjs', import.meta.url));
 const LIB = fileURLToPath(new URL('../home/tools/disk-free/lib/', import.meta.url));
-const posix = { skip: process.platform === 'win32' && 'symlinks need extra rights' };
 
 test('session folders: removed when the transcript is idle for 3 days, or missing and the folder is; kept otherwise', async () => {
   const w = world();
@@ -152,7 +151,22 @@ test('CLI: --json prints one summary line, a dry run is the default, a bad flag 
   assert.equal(existsSync(join(w.tmp, 'cs-test-cli-AbCdEf')), true);
   assert.equal(spawnSync(process.execPath, [TOOL, '--bogus'], { encoding: 'utf8' }).status, 2);
   assert.equal(spawnSync(process.execPath, [TOOL, '--now', 'soon'], { encoding: 'utf8' }).status, 2);
-  const applied = spawnSync(process.execPath, [TOOL, '--apply', ...roots], { encoding: 'utf8' });
+  const applied = spawnSync(process.execPath, [TOOL, '--apply', ...roots], { encoding: 'utf8', env: { ...process.env, HOME: w.home } }); // HOME: the run lock lives there
   assert.match(applied.stdout, /1 removed/);
   assert.equal(existsSync(join(w.tmp, 'cs-test-cli-AbCdEf')), false);
+});
+
+test('CLI --apply: a second run at the same time does nothing; a run lock older than 6 hours is replaced and released', posix, () => {
+  const w = world();
+  const path = folder(join(w.tmp, 'cs-run-AbCdEf'), { days: 3 });
+  mkdirSync(join(w.home, '.claude', 'state'), { recursive: true });
+  const lock = join(w.home, '.claude', 'state', 'disk-clean.run.lock');
+  writeFileSync(lock, '');
+  const args = [TOOL, '--apply', '--claude-tmp', w.claudeTmp, '--projects', w.projects, '--tmp', w.tmp];
+  const run = () => spawnSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, HOME: w.home } });
+  assert.match(run().stdout, /another run is working/);
+  assert.equal(existsSync(path), true);
+  age(lock, 7 / 24);
+  assert.match(run().stdout, /1 removed/);
+  assert.equal(existsSync(lock), false, 'the lock is released when the run ends');
 });

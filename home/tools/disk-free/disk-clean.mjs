@@ -10,16 +10,18 @@
 //   a lower bound. --apply has no scan limit (it runs in the background).
 // Output: what would go (or went) per rule with the item count and bytes; --json prints one line {apply, items, bytes, removed, changed, failed, refused, partial, rules}.
 //   Measuring sizes stops at --budget-ms (default 20 s): later items are still counted and removed, their bytes are not added up and the totals say "partial".
+// --apply takes a lock file (~/.claude/state/disk-clean.run.lock): a second run at the same time does nothing (it says so and exits 0).
 // Exit codes: 0 ok, 1 something could not be removed, 2 usage error. An error on one item is listed and the run goes on with the next.
 // Env: DISK_FREE_CLAUDE_TMP replaces the scratchpad root (as for disk-free). The flags replace the other roots (tests use fake ones).
-import { realpathSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { claudeSessionRoot } from './disk-free.mjs';
-import { treeBytes } from './lib/clean-scan.mjs';
+import { lstatOrNull, treeBytes } from './lib/clean-scan.mjs';
+import { releaseLock, takeLock } from './lib/lock-file.mjs';
 import { rulesFor } from './lib/clean-rules.mjs';
-import { removeInside } from './lib/safe-remove.mjs';
+import { moveAside, moveBack, originalName, removeInside } from './lib/safe-remove.mjs';
 
 const EXIT_FAILED = 1;
 const EXIT_USAGE = 2;
@@ -27,6 +29,7 @@ const SAMPLE_PER_RULE = 5; // items listed per rule; the rest are only counted
 const DEFAULT_BUDGET_MS = 20_000;
 const DEFAULT_DRY_RUN_SCAN_MS = 30_000;
 const BYTES_PER_GB = 1024 ** 3;
+const RUN_LOCK_STALE_MS = 6 * 60 * 60 * 1000; // a run takes minutes; a lock this old was left by a killed run
 const USAGE = 'usage: disk-clean.mjs [--apply] [--json] [--session <id>] [--claude-tmp <dir>] [--projects <dir>] [--tmp <dir>] [--sessions <dir>] [--now <ms>] [--budget-ms <n>] [--scan-ms <n>]';
 const VALUE_FLAGS = new Set(['--session', '--claude-tmp', '--projects', '--tmp', '--sessions', '--now', '--budget-ms', '--scan-ms']);
 const TEXT_OPTION = { '--session': 'session', '--claude-tmp': 'claudeTmp', '--projects': 'projects', '--tmp': 'tmp', '--sessions': 'sessions' };
@@ -35,10 +38,12 @@ const NUMBER_OPTION = { '--now': 'nowMs', '--budget-ms': 'budgetMs', '--scan-ms'
 class UsageError extends Error {}
 
 function parseArgs(argv, env) {
-  const claudeDir = join(homedir(), '.claude');
+  const home = homedir();
+  // With CLAUDE_CONFIG_DIR set, Claude Code keeps its transcripts and session registry elsewhere: the default folders would show no sessions at all.
+  const claudeDir = isAbsolute(home) && !env.CLAUDE_CONFIG_DIR ? join(home, '.claude') : undefined;
   const options = {
     apply: false, json: false, session: env.CLAUDE_CODE_SESSION_ID || env.CLAUDE_SESSION_ID || undefined, claudeTmp: claudeSessionRoot(env),
-    projects: join(claudeDir, 'projects'), sessions: join(claudeDir, 'sessions'), tmp: tmpdir(), nowMs: Date.now(), budgetMs: DEFAULT_BUDGET_MS, scanMs: undefined,
+    projects: claudeDir && join(claudeDir, 'projects'), sessions: claudeDir && join(claudeDir, 'sessions'), tmp: tmpdir(), nowMs: Date.now(), budgetMs: DEFAULT_BUDGET_MS, scanMs: undefined,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
@@ -54,6 +59,30 @@ function parseArgs(argv, env) {
   return options;
 }
 
+/**
+ * Removes one item that was just found removable. A folder is first renamed aside (atomic, same parent) and looked at again: a session that
+ * resumed after the last look writes to a new folder, and the old one goes back if the session is live after all.
+ */
+async function removeItem(item, summary, options) {
+  const isFolder = lstatOrNull(item.path)?.isDirectory() === true;
+  const isAside = originalName(basename(item.path)) !== basename(item.path); // left by a killed run: already renamed
+  const target = isFolder && !isAside ? moveAside(item.root, item.path) : item.path;
+  if (target !== item.path) {
+    await options.afterMoveAside?.(target);
+    if (!(await item.stillRemovable(target))) {
+      try {
+        moveBack(item.root, target, item.path);
+      } catch (error) {
+        throw new Error(`a session came back during the removal and the folder could not be renamed back, it stays as ${target}: ${error.message}`);
+      }
+      summary.changed += 1;
+      return;
+    }
+  }
+  removeInside(item.root, target);
+  summary.removed += 1;
+}
+
 /** Measures one found item and, with options.apply, removes it if it is still removable. An error is listed, never thrown. */
 async function handleItem(item, found, summary, options, deadlineMs) {
   try {
@@ -64,12 +93,8 @@ async function handleItem(item, found, summary, options, deadlineMs) {
     if (found.sample.length < SAMPLE_PER_RULE) found.sample.push({ path: item.path, bytes });
     if (!options.apply) return;
     await options.beforeRemove?.(item.path);
-    if (!(await item.stillRemovable())) {
-      summary.changed += 1;
-      return;
-    }
-    removeInside(item.root, item.path);
-    summary.removed += 1;
+    if (await item.stillRemovable(item.path)) await removeItem(item, summary, options);
+    else summary.changed += 1;
   } catch (error) {
     summary.failed.push(`${item.path}: ${error.message}`);
   }
@@ -92,7 +117,7 @@ async function runRule(rule, context, summary) {
 
 /**
  * Runs the rules; with options.apply also removes what they find.
- * @param {object} options as parseArgs makes them (claudeTmp, projects, tmp, sessions, session, nowMs, budgetMs, scanMs, apply); beforeRemove(path) is a test hook called before each removal
+ * @param {object} options as parseArgs makes them (claudeTmp, projects, tmp, sessions, session, nowMs, budgetMs, scanMs, apply); beforeRemove(path) and afterMoveAside(path) are test hooks called before the first look and after the folder was renamed aside
  * @returns {Promise<{ items: number, bytes: number, removed: number, changed: number, failed: string[], refused: string[], partial: boolean, rules: object[] }>}
  */
 export async function runClean(options) {
@@ -127,15 +152,41 @@ function report(summary, apply) {
   return lines.join('\n');
 }
 
+/** Takes the lock that keeps two --apply runs from working at once. Returns the release function, or null with the reason printed. */
+function takeRunLock() {
+  const home = homedir();
+  if (!isAbsolute(home)) {
+    console.log(`disk-clean: nothing done, the home folder ${JSON.stringify(home)} is not an absolute path`);
+    return null;
+  }
+  const lockPath = join(home, '.claude', 'state', 'disk-clean.run.lock');
+  mkdirSync(dirname(lockPath), { recursive: true });
+  if (!takeLock(lockPath, Date.now(), RUN_LOCK_STALE_MS)) {
+    console.log('disk-clean: nothing done, another run is working');
+    return null;
+  }
+  return () => releaseLock(lockPath);
+}
+
+async function runAndPrint(options) {
+  const summary = await runClean(options);
+  if (options.json) {
+    const rules = Object.fromEntries(summary.rules.map((rule) => [rule.name, { items: rule.items, bytes: rule.bytes }]));
+    console.log(JSON.stringify({ apply: options.apply, items: summary.items, bytes: summary.bytes, removed: summary.removed, changed: summary.changed, failed: summary.failed.length, refused: summary.refused.length, partial: summary.partial, rules }));
+  } else console.log(report(summary, options.apply));
+  return summary.failed.length > 0 ? EXIT_FAILED : 0;
+}
+
 async function main(argv, env) {
   try {
     const options = parseArgs(argv, env);
-    const summary = await runClean(options);
-    if (options.json) {
-      const rules = Object.fromEntries(summary.rules.map((rule) => [rule.name, { items: rule.items, bytes: rule.bytes }]));
-      console.log(JSON.stringify({ apply: options.apply, items: summary.items, bytes: summary.bytes, removed: summary.removed, changed: summary.changed, failed: summary.failed.length, refused: summary.refused.length, partial: summary.partial, rules }));
-    } else console.log(report(summary, options.apply));
-    return summary.failed.length > 0 ? EXIT_FAILED : 0;
+    const release = options.apply ? takeRunLock() : () => {};
+    if (release === null) return 0;
+    try {
+      return await runAndPrint(options);
+    } finally {
+      release();
+    }
   } catch (error) {
     if (!(error instanceof UsageError)) throw error;
     console.error(error.message);

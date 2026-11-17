@@ -49,8 +49,11 @@ export function judgeFreeSpace(freeGb, env) {
   return { level, failGb, warnGb };
 }
 
-/** The folder Claude Code keeps the session scratchpads in: /private/tmp/claude-<uid> (macOS) or /tmp/claude-<uid>; DISK_FREE_CLAUDE_TMP replaces it. */
-export const claudeSessionRoot = (env) => env.DISK_FREE_CLAUDE_TMP ?? `${process.platform === 'darwin' ? '/private/tmp' : '/tmp'}/claude-${process.getuid?.() ?? 'user'}`;
+/**
+ * The folder Claude Code keeps the session scratchpads in: /private/tmp/claude-<uid> (macOS) or /tmp/claude-<uid>, where Windows has no uid and
+ * Claude Code uses 0 (so \tmp\claude-0); DISK_FREE_CLAUDE_TMP replaces it. disk-clean refuses a Windows root: C:\tmp is outside the temp folders.
+ */
+export const claudeSessionRoot = (env) => env.DISK_FREE_CLAUDE_TMP ?? `${process.platform === 'darwin' ? '/private/tmp' : '/tmp'}/claude-${process.getuid?.() ?? 0}`;
 
 /** Rebuildable caches that exist here, each { name, shown, path, how }. Docker has no folder to measure, so it has no path. */
 function cacheCandidates(home, env) {

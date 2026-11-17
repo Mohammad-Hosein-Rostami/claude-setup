@@ -1,17 +1,21 @@
 // The four clean-up rules of disk-clean. Exports: AGE, rulesFor.
 // Each rule is an async generator that yields { path, root, stillRemovable } for one thing to remove: `root` is the real path the rule is
-// confined to, `stillRemovable()` is asked again right before the removal (a session may have been resumed since the scan). Rules only
+// confined to, `stillRemovable(where)` is asked again right before the removal and once more after the folder was renamed aside to
+// `.removing-<pid>-<name>` (a session may have been resumed since the scan); `where` is the path to look at. A `.removing-*` folder left by a
+// killed run is found by the rules like the folder it was and removed only when the same checks pass for its original name. Rules only
 // look (they remove nothing), stream (nothing holds a whole folder listing) and stop when context.timeUp() says the scan time is over.
 //   session-folders  /private/tmp/claude-<uid>/<project>/<session-id>/ of a session that is not running, whose transcript is idle for 3 days (or missing) and whose folder is idle for 3 days
 //   test-temp        os.tmpdir() folders named by this repo's test prefixes, idle for 1 day
 //   temp-projects    ~/.claude/projects/<slug> folders that Claude Code made for a throwaway temp path, idle for 3 days
 //   hook-state       os.tmpdir()/claude-post-edit and /claude-skill-router: per-session counters and markers of the hooks, idle for 3 days
 // Never yields the current session (--session, the newest transcript) or a running one (~/.claude/sessions/*.json with a live pid).
-// A root that is not safe (see safe-remove.mjs inspectRoot) is refused and noted in context.refused.
-import { join } from 'node:path';
+// A root that is not safe (see safe-remove.mjs inspectRoot) is refused and noted in context.refused. The session-folders rule also needs the
+// transcripts folder and the sessions registry to be absolute, readable folders: without them every session would look finished.
+import { accessSync, constants, statSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { entriesOf, lstatOrNull, mtimeOf, touchedSince } from './clean-scan.mjs';
 import { liveSessionIds } from './live-sessions.mjs';
-import { inspectRoot, ownedFolder, UnsafeRoot } from './safe-remove.mjs';
+import { inspectRoot, originalName, ownedFolder, UnsafeRoot } from './safe-remove.mjs';
 import { OLD_TEST_PREFIXES } from './test-temp-prefixes.mjs';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -32,15 +36,34 @@ const TRANSCRIPT_FILE = /^(.+)\.jsonl$/;
 const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const OLD_TEST_NAME = new RegExp(`^(?:${OLD_TEST_PREFIXES.map(escapeRegex).join('|')})[A-Za-z0-9]{${RANDOM_SUFFIX_LENGTH}}$`);
 
-/** The real path and kind of a rule's root, or null when it is missing or refused (the reason goes to context.refused). */
-function trustedRoot(context, folder) {
+/**
+ * The real path and kind of a rule's root, or null when it is missing or refused (the reason goes to context.refused).
+ * @param {{ allowShared?: boolean }} options a root shared with others (/tmp) is refused unless allowShared
+ */
+function trustedRoot(context, folder, { allowShared = false } = {}) {
   try {
-    return inspectRoot(folder, context.home);
+    const trusted = inspectRoot(folder, context.home);
+    if (trusted?.shared && !allowShared) throw new UnsafeRoot(`root ${folder} is shared with other users; this rule needs a folder of its own`);
+    return trusted;
   } catch (error) {
     if (!(error instanceof UnsafeRoot)) throw error;
     context.refused.push(error.message);
     return null;
   }
+}
+
+/** True when `folder` is an absolute path to a folder this process can read; otherwise the reason goes to context.refused. */
+function isReadableFolder(context, folder, what) {
+  try {
+    if (typeof folder === 'string' && isAbsolute(folder) && statSync(folder).isDirectory()) {
+      accessSync(folder, constants.R_OK);
+      return true;
+    }
+  } catch {
+    // falls through to the refusal below: an unreadable folder is reported, not guessed at
+  }
+  context.refused.push(`${what} ${JSON.stringify(folder)} is not an absolute path to a readable folder; session folders are kept`);
+  return false;
 }
 
 /** Map of session id -> { mtimeMs, files } of its transcripts, over every project folder (a few dozen folders, one small read each). */
@@ -65,7 +88,7 @@ const newestOf = (files) => Math.max(0, ...files.map((file) => mtimeOf(file) ?? 
 
 async function* sessionFolders(context) {
   const trusted = trustedRoot(context, context.claudeTmp);
-  if (trusted === null) return;
+  if (trusted === null || !isReadableFolder(context, context.projects, 'the transcripts folder') || !isReadableFolder(context, context.sessions, 'the sessions registry')) return;
   const root = trusted.real;
   const times = await transcriptTimes(context);
   const newest = [...times.entries()].sort((a, b) => b[1].mtimeMs - a[1].mtimeMs)[0]?.[0];
@@ -78,28 +101,31 @@ async function* sessionFolders(context) {
     for await (const folder of entriesOf(projectPath)) {
       if (context.timeUp()) return;
       const path = join(projectPath, folder.name);
-      if (!SESSION_ID.test(folder.name) || folder.name === context.session || folder.name === newest || ownedFolder(path) === null) continue;
-      const isIdle = async (liveNow) => {
-        const transcript = times.get(folder.name);
-        if (liveNow.has(folder.name) || (transcript !== undefined && newestOf(transcript.files) >= cutoff)) return false;
-        return !(await touchedSince(path, cutoff));
+      const id = originalName(folder.name);
+      if (!SESSION_ID.test(id) || id === context.session || id === newest || ownedFolder(path) === null) continue;
+      // The transcript of the same project folder is looked at again: a resumed session may have made it since the scan.
+      const transcriptFiles = () => [...(times.get(id)?.files ?? []), join(context.projects, project.name, `${id}.jsonl`)];
+      const isIdle = async (liveNow, where) => {
+        if (liveNow.has(id) || newestOf(transcriptFiles()) >= cutoff) return false;
+        return !(await touchedSince(where, cutoff));
       };
-      if (await isIdle(live)) yield { path, root, stillRemovable: async () => isIdle(await liveSessionIds(context.sessions)) };
+      if (await isIdle(live, path)) yield { path, root, stillRemovable: async (where = path) => isIdle(await liveSessionIds(context.sessions), where) };
     }
   }
 }
 
 async function* testTemp(context) {
-  const trusted = trustedRoot(context, context.tmp);
+  const trusted = trustedRoot(context, context.tmp, { allowShared: true });
   if (trusted === null) return;
   const { real: root, shared } = trusted;
   const cutoff = context.nowMs - AGE.testTempMs;
   for await (const entry of entriesOf(root)) {
     if (context.timeUp()) return;
     // In a shared /tmp only the names this repo makes now: an old prefix plus 6 characters could be anyone's folder.
-    if (!(NEW_TEST_NAME.test(entry.name) || (!shared && OLD_TEST_NAME.test(entry.name)))) continue;
+    const name = originalName(entry.name);
+    if (!(NEW_TEST_NAME.test(name) || (!shared && OLD_TEST_NAME.test(name)))) continue;
     const path = join(root, entry.name);
-    const isOld = () => (ownedFolder(path)?.mtimeMs ?? Infinity) < cutoff;
+    const isOld = (where = path) => (ownedFolder(where)?.mtimeMs ?? Infinity) < cutoff;
     if (isOld()) yield { path, root, stillRemovable: isOld };
   }
 }
@@ -114,15 +140,15 @@ async function* tempProjects(context) {
   const sessionsIn = async () => [context.session, ...(await liveSessionIds(context.sessions))].filter((id) => id !== undefined);
   for await (const entry of entriesOf(root)) {
     if (context.timeUp()) return;
-    if (!TEMP_PROJECT_SLUG.test(entry.name)) continue;
+    if (!TEMP_PROJECT_SLUG.test(originalName(entry.name))) continue;
     const path = join(root, entry.name);
-    const isIdle = async () => ownedFolder(path) !== null && !holdsSession(path, await sessionsIn()) && !(await touchedSince(path, cutoff));
+    const isIdle = async (where = path) => ownedFolder(where) !== null && !holdsSession(where, await sessionsIn()) && !(await touchedSince(where, cutoff));
     if (await isIdle()) yield { path, root, stillRemovable: isIdle };
   }
 }
 
 async function* hookState(context) {
-  const trusted = trustedRoot(context, context.tmp);
+  const trusted = trustedRoot(context, context.tmp, { allowShared: true });
   if (trusted === null) return;
   const root = trusted.real;
   const cutoff = context.nowMs - AGE.hookStateMs;
@@ -145,7 +171,7 @@ async function* hookState(context) {
   }
 }
 
-/** @returns {{ name: string, label: string, find: (context: object) => AsyncGenerator<{ path: string, root: string, stillRemovable: () => Promise<boolean> | boolean }> }[]} */
+/** @returns {{ name: string, label: string, find: (context: object) => AsyncGenerator<{ path: string, root: string, stillRemovable: (where?: string) => Promise<boolean> | boolean }> }[]} */
 export const rulesFor = () => [
   { name: 'session-folders', label: 'finished sessions\' scratchpad folders', find: sessionFolders },
   { name: 'test-temp', label: 'leftover test temp folders', find: testTemp },

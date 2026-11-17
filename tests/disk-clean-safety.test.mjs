@@ -1,23 +1,22 @@
-// Safety tests for disk-clean: a session resumed or running during the run keeps its folder, unsafe roots and folders are refused, a folder
-// swapped for a symlink while it is removed does not redirect the removal, an error on one item does not stop the others, the age limits
-// hold at their boundaries, and the scan limits make the totals partial. Fake roots only (tests/disk-clean-helpers.mjs).
+// Safety tests for disk-clean, the scan side: a session resumed or running during the run keeps its folder (also when it is registered only after
+// the scan), the age limits hold at their boundaries, the registry and transcripts folders must be known, and the scan limits make the totals
+// partial. The removal side (roots, owners, swaps, rename aside) is in tests/disk-clean-removal.test.mjs. Fake roots only (tests/disk-clean-helpers.mjs).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import fs, { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
-import { syncBuiltinESMExports } from 'node:module';
+import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runClean } from '../home/tools/disk-free/disk-clean.mjs';
+import { claudeSessionRoot } from '../home/tools/disk-free/disk-free.mjs';
 import { rulesFor } from '../home/tools/disk-free/lib/clean-rules.mjs';
+import { liveSessionIds } from '../home/tools/disk-free/lib/live-sessions.mjs';
 import { touchedSince, treeBytes, walkTree } from '../home/tools/disk-free/lib/clean-scan.mjs';
 import { OLD_TEST_PREFIXES } from '../home/tools/disk-free/lib/test-temp-prefixes.mjs';
-import { age, CURRENT, folder, NEWEST, OLD, OTHER, sessionFile, transcript, world } from './disk-clean-helpers.mjs';
+import { age, CURRENT, folder, NEWEST, OLD, OTHER, posix, sessionFile, sessionFolder, transcript, world } from './disk-clean-helpers.mjs';
 
 const TOOL = fileURLToPath(new URL('../home/tools/disk-free/disk-clean.mjs', import.meta.url));
-const posix = { skip: process.platform === 'win32' && 'needs symlinks and file modes' };
-const sessionFolder = (w, id, days) => folder(join(w.claudeTmp, '-proj', id), { days });
 
 test('a session resumed during the run (its transcript written after the scan) keeps its folder', async () => {
   const w = world();
@@ -149,83 +148,6 @@ test('hook state: a symlinked state folder, a symlinked kind folder and a folder
   assert.deepEqual([summary.rules.find((rule) => rule.name === 'hook-state').items, summary.failed.length], [0, 0], 'nothing was even found, so nothing was tried');
 });
 
-test('refused roots: empty, relative, the home folder, outside the temp folders, a symlink and a folder others can write to', posix, async () => {
-  const w = world();
-  const victim = folder(join(w.root, 'victim', 'Devices', OLD), { days: 10 });
-  symlinkSync(join(w.root, 'victim'), join(w.root, 'linked-claude'));
-  const open = folder(join(w.root, 'open'), { days: 0 });
-  chmodSync(open, 0o777);
-  const ownedButElsewhere = fileURLToPath(new URL('.', import.meta.url)); // this repo's tests folder: ours, but not under a temp folder
-  const outside = tmpdir().startsWith(ownedButElsewhere) || ownedButElsewhere.startsWith(tmpdir()) ? [] : [ownedButElsewhere];
-  for (const claudeTmp of ['', 'relative/dir', w.home, '/usr', ...outside, join(w.root, 'linked-claude'), open]) {
-    const summary = await runClean({ ...w.options, claudeTmp });
-    assert.equal(summary.refused.length, 1, `root ${JSON.stringify(claudeTmp)} should be refused`);
-    assert.equal(summary.removed, 0);
-  }
-  assert.equal(existsSync(join(victim, 'f.txt')), true);
-});
-
-test('a root reached through a symlinked parent folder is cleaned by its real path', posix, async () => {
-  const w = world();
-  folder(join(w.tmp, 'cs-run-Linked'), { days: 3 });
-  symlinkSync(w.root, join(w.root, 'via-link'));
-  const summary = await runClean({ ...w.options, tmp: join(w.root, 'via-link', 'tmp') });
-  assert.deepEqual([summary.removed, existsSync(join(w.tmp, 'cs-run-Linked'))], [1, false]);
-});
-
-test('a shared sticky root (like /tmp) is cleaned for cs-run- and cs-test- names only', posix, async () => {
-  const w = world();
-  chmodSync(w.tmp, 0o1777);
-  const go = folder(join(w.tmp, 'cs-run-AbCdEf'), { days: 3 });
-  const keep = folder(join(w.tmp, 'git-tidy-QQQQQQ'), { days: 3 });
-  const summary = await runClean(w.options);
-  assert.deepEqual([existsSync(go), existsSync(keep), summary.refused.length], [false, true, 0]);
-});
-
-test('an item is kept and listed when a folder on the way down is writable by others; the other items still go', posix, async () => {
-  const w = world();
-  transcript(w, '-proj', NEWEST, 0);
-  const unsafeInside = sessionFolder(w, OLD, 10);
-  mkdirSync(join(unsafeInside, 'open'));
-  writeFileSync(join(unsafeInside, 'open', 'f'), 'x');
-  chmodSync(join(unsafeInside, 'open'), 0o777);
-  for (const path of [join(unsafeInside, 'open', 'f'), join(unsafeInside, 'open'), unsafeInside]) age(path, 10);
-  const fine = sessionFolder(w, OTHER, 10);
-  const summary = await runClean(w.options);
-  assert.deepEqual([existsSync(unsafeInside), existsSync(fine), summary.failed.length], [true, false, 1], 'an error on one item does not stop the run');
-  chmodSync(join(unsafeInside, 'open'), 0o755);
-});
-
-test('a folder swapped for a symlink while it is being removed is not followed: the victim keeps its files', posix, async () => {
-  const w = world();
-  const victim = folder(join(w.root, 'owner-home'), { days: 0, files: { 'thesis.txt': 'precious' } });
-  const item = join(realpathSync(w.tmp), 'cs-run-Swap01'); // the tool works with real paths
-  const inner = join(item, 'd');
-  folder(inner, { days: 3, files: { 'thesis.txt': 'bait' } });
-  age(item, 3);
-  const realOpendir = fs.opendirSync;
-  let swapped = false;
-  fs.opendirSync = (path, ...rest) => {
-    const handle = realOpendir(path, ...rest);
-    if (!swapped && path === inner) { // after the listing is read, before the unlink: the swap
-      swapped = true;
-      renameSync(inner, join(w.root, 'spare'));
-      symlinkSync(victim, inner);
-    }
-    return handle;
-  };
-  syncBuiltinESMExports();
-  try {
-    const summary = await runClean(w.options);
-    assert.ok(swapped);
-    assert.equal(summary.failed.length, 1);
-  } finally {
-    fs.opendirSync = realOpendir;
-    syncBuiltinESMExports();
-  }
-  assert.equal(readFileSync(join(victim, 'thesis.txt'), 'utf8'), 'precious');
-});
-
 test('a dry run is partial when the size measuring ran out of time, and when the scan time is over before anything was looked at', async () => {
   const w = world();
   for (const name of ['cs-run-AaAaAa', 'cs-run-BbBbBb']) folder(join(w.tmp, name), { days: 3 });
@@ -244,7 +166,7 @@ test('CLI: the running session id from CLAUDE_CODE_SESSION_ID (or the older CLAU
     transcript(w, '-proj', NEWEST, 0);
     const mine = sessionFolder(w, CURRENT, 20);
     const roots = ['--claude-tmp', w.claudeTmp, '--projects', w.projects, '--tmp', w.tmp, '--sessions', w.sessions];
-    const env = { ...process.env, CLAUDE_CODE_SESSION_ID: '', CLAUDE_SESSION_ID: '', [variable]: CURRENT };
+    const env = { ...process.env, HOME: w.home, CLAUDE_CODE_SESSION_ID: '', CLAUDE_SESSION_ID: '', [variable]: CURRENT };
     assert.equal(spawnSync(process.execPath, [TOOL, '--apply', ...roots], { env, encoding: 'utf8' }).status, 0);
     assert.equal(existsSync(mine), true, variable);
   }
@@ -269,33 +191,74 @@ test('an error on one item is listed and the run goes on with the next items', a
   assert.deepEqual([summary.failed.length, summary.removed, paths.filter(existsSync).length], [1, 2, 1]);
 });
 
-test('removeInside refuses a path under a folder that others can write to, and a path in a sibling that only shares the name prefix', posix, async () => {
-  const { removeInside } = await import('../home/tools/disk-free/lib/safe-remove.mjs');
+test('a session registered as running after the scan (not before it) keeps its folder: the registry is read again before the removal', async () => {
   const w = world();
-  const root = realpathSync(w.tmp);
-  const target = folder(join(root, 'open', 'item'), { days: 9 });
-  chmodSync(join(root, 'open'), 0o777);
-  assert.throws(() => removeInside(root, target), /writable by others/);
-  const sibling = folder(`${root}-evil/item`, { days: 9 });
-  assert.throws(() => removeInside(root, sibling), /not inside/);
-  assert.equal(existsSync(target), true);
-  chmodSync(join(root, 'open'), 0o755);
+  transcript(w, '-proj', OLD, 10);
+  transcript(w, '-proj', NEWEST, 0);
+  const path = sessionFolder(w, OLD, 10);
+  const summary = await runClean({ ...w.options, beforeRemove: () => sessionFile(w, process.pid, OLD) });
+  assert.deepEqual([existsSync(path), summary.removed, summary.changed], [true, 0, 1]);
 });
 
-test('every rule yields the real path of its root, also when the configured root is reached through a symlinked parent', posix, async () => {
+test('session folders are kept when the transcripts folder or the sessions registry is missing, relative, a file or unset; the reason is listed', async () => {
+  const notAFolder = join(world().root, 'a-file');
+  writeFileSync(notAFolder, 'x');
+  for (const missing of [{ projects: join(notAFolder, '..', 'none') }, { sessions: join(notAFolder, '..', 'none') }, { sessions: 'relative/sessions' }, { projects: undefined }, { sessions: undefined }, { sessions: notAFolder }]) {
+    const w = world();
+    transcript(w, '-proj', NEWEST, 0);
+    const path = sessionFolder(w, OLD, 10);
+    const summary = await runClean({ ...w.options, ...missing });
+    assert.deepEqual([existsSync(path), summary.removed, summary.refused.length >= 1], [true, 0, true], JSON.stringify(missing));
+  }
+});
+
+test('an empty or relative home folder makes every rule refuse its root: nothing is removed', async () => {
+  for (const home of ['', 'relative-home']) {
+    const w = world();
+    transcript(w, '-proj', NEWEST, 0);
+    const session = sessionFolder(w, OLD, 10);
+    const testTemp = folder(join(w.tmp, 'cs-run-AbCdEf'), { days: 3 });
+    const summary = await runClean({ ...w.options, home });
+    assert.deepEqual([existsSync(session), existsSync(testTemp), summary.removed, summary.refused.length], [true, true, 0, 4], JSON.stringify(home));
+  }
+});
+
+test('CLI: HOME empty or CLAUDE_CONFIG_DIR set means no session folder is removed (the default transcripts and registry are not where Claude Code keeps them)', posix, () => {
   const w = world();
-  symlinkSync(w.root, join(w.root, 'via-link'));
-  const via = (name) => join(w.root, 'via-link', name);
   transcript(w, '-proj', NEWEST, 0);
-  sessionFolder(w, OLD, 10);
-  folder(join(w.tmp, 'cs-run-Viaaaa'), { days: 3 });
-  folder(join(w.projects, '-tmp-via'), { days: 10 });
-  mkdirSync(join(w.tmp, 'claude-post-edit', 'k'), { recursive: true });
-  writeFileSync(join(w.tmp, 'claude-post-edit', 'k', 'f'), '.');
-  age(join(w.tmp, 'claude-post-edit', 'k', 'f'), 10);
-  const context = { ...w.options, claudeTmp: via('claude-501'), projects: via('projects'), tmp: via('tmp'), refused: [], timeUp: () => false };
-  const roots = {};
-  for (const rule of rulesFor()) for await (const item of rule.find(context)) roots[rule.name] = item.root;
-  assert.deepEqual(Object.keys(roots).sort(), ['hook-state', 'session-folders', 'temp-projects', 'test-temp']);
-  for (const root of Object.values(roots)) assert.equal(root, realpathSync(root));
+  const path = sessionFolder(w, OLD, 10);
+  mkdirSync(join(w.home, '.claude', 'projects'), { recursive: true });
+  mkdirSync(join(w.home, '.claude', 'sessions'), { recursive: true });
+  const args = [TOOL, '--apply', '--claude-tmp', w.claudeTmp, '--tmp', w.tmp];
+  const withEnv = (env) => spawnSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: '', HOME: w.home, ...env } });
+  assert.match(withEnv({ HOME: '' }).stdout, /nothing done/);
+  assert.match(withEnv({ CLAUDE_CONFIG_DIR: join(w.root, 'elsewhere') }).stdout, /SKIPPED/);
+  assert.equal(existsSync(path), true);
+  assert.match(withEnv({}).stdout, /1 removed/, 'with neither set, the same folder goes (the default folders are used)');
+});
+
+test('the session registry: a symlink, a FIFO and a file over 64 KiB named *.json are not read through or waited on; a plain file of a live pid counts', posix, async () => {
+  const w = world();
+  const real = join(w.root, 'real.json');
+  writeFileSync(real, JSON.stringify({ pid: process.pid, sessionId: OLD }));
+  symlinkSync(real, join(w.sessions, 'link.json'));
+  assert.equal(spawnSync('mkfifo', [join(w.sessions, 'fifo.json')]).status, 0);
+  writeFileSync(join(w.sessions, 'big.json'), JSON.stringify({ pid: process.pid, sessionId: OTHER, pad: 'x'.repeat(70_000) }));
+  assert.deepEqual([...(await liveSessionIds(w.sessions))], [], 'none of them counts');
+  sessionFile(w, process.pid, CURRENT);
+  assert.deepEqual([...(await liveSessionIds(w.sessions))], [CURRENT]);
+});
+
+test('Windows root name: no uid means Claude Code\'s claude-0 under \\tmp, never a made-up name; DISK_FREE_CLAUDE_TMP replaces it', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  const getuid = process.getuid;
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  process.getuid = undefined;
+  try {
+    assert.equal(claudeSessionRoot({}), '/tmp/claude-0');
+    assert.equal(claudeSessionRoot({ DISK_FREE_CLAUDE_TMP: join(tmpdir(), 'x') }), join(tmpdir(), 'x'));
+  } finally {
+    Object.defineProperty(process, 'platform', platform);
+    process.getuid = getuid;
+  }
 });

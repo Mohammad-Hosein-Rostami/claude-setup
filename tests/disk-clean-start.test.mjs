@@ -13,7 +13,7 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 const HOOK = fileURLToPath(new URL('../home/hooks/disk-clean-start.mjs', import.meta.url));
 const HOUR_MS = 60 * 60 * 1000;
 const posix = { skip: process.platform === 'win32' && 'needs FIFOs and symlinks' };
-const STARTUP_RACERS = 2;
+const STARTUP_RACERS = 16; // enough that some of them read the stamp before the first one has written it: the check under the lock is what stops them
 const RACE_ROUNDS = Number(process.env.DISK_CLEAN_RACE_ROUNDS ?? 10);
 const SESSION = '11111111-2222-4333-8444-555555555555';
 
@@ -126,6 +126,17 @@ test('a state folder that cannot be made does not fail the hook: exit 0 and a li
   assert.equal(existsSync(join(home, 'started')), false, 'no real clean-up and no fake one was started');
 });
 
+test('an empty or relative HOME skips the run: exit 0, a line on stderr, no state folder in the working directory, nothing started', posix, async () => {
+  for (const emptyHome of ['', 'relative-home']) {
+    const home = makeTempDir('dcs-nohome-');
+    const { code, stderr } = await runHook(home, { HOME: emptyHome, USERPROFILE: emptyHome, DISK_CLEAN_TOOL: fakeTool(home) });
+    assert.equal(code, 0);
+    assert.match(stderr, /skipped: the home folder/);
+    assert.equal(existsSync(join(home, 'started')), false);
+    assert.equal(existsSync(join(process.cwd(), '.claude', 'state')) || existsSync(join(process.cwd(), 'relative-home')), false, 'nothing was created relative to the working directory');
+  }
+});
+
 test('a stamp that is a symlink is replaced, never written through; one that is a FIFO does not block the hook', posix, () => {
   const { started, deps } = setup();
   mkdirSync(join(deps.stampPath, '..'), { recursive: true });
@@ -182,7 +193,7 @@ startIfDue({ source: 'startup', session_id: 'x' }, { stampPath: ${JSON.stringify
   return existsSync(join(home, 'starts')) ? readFileSync(join(home, 'starts'), 'utf8').length : 0;
 }
 
-test(`two sessions starting at the same instant run one clean-up (${RACE_ROUNDS} rounds, half of them with a stale stamp)`, async () => {
+test(`${STARTUP_RACERS} sessions starting at the same instant run one clean-up (${RACE_ROUNDS} rounds, half of them with a stale stamp)`, async () => {
   for (let round = 0; round < RACE_ROUNDS; round += 1) {
     const home = makeTempDir('dcs-race-');
     const stampPath = join(home, 'state', 'disk-clean.stamp');
