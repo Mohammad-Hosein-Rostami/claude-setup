@@ -100,3 +100,52 @@ test('a link or FIFO swapped in after status.mjs\'s lstat is refused by the read
   assert.deepEqual([viaFifo.swapped, viaFifo.code], [true, 1], viaFifo.message);
   assert.match(viaFifo.message, /not a regular file/);
 });
+
+// Audit of 2ca5bb1 (S6): two mutants survived the targeted files: the "grew while it was read" refusal removed, and the temp file made
+// with O_CREAT|O_TRUNC instead of O_EXCL|O_NOFOLLOW.
+const GROWN_IN_CHILD = `
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+const realFstat = fs.fstatSync;
+// the file is written in place while it is read: fstat said it was one byte smaller than what the read then finds
+fs.fstatSync = (fd, ...rest) => Object.assign(Object.create(Object.getPrototypeOf(realFstat(fd))), realFstat(fd, ...rest), { size: realFstat(fd).size - 1 });
+syncBuiltinESMExports();
+const { readStatusFile } = await import(process.argv[1]);
+console.log(JSON.stringify(readStatusFile(process.argv[2])));`;
+
+test('a file that is longer than its fstat size says is refused as grown while read, not taken as the whole text', posix, async () => {
+  const dir = await tempDir();
+  writeFileSync(join(dir, 'STATUS.md'), TEXT);
+  assert.deepEqual(inChild(GROWN_IN_CHILD, [STATUS_FILE_URL, join(dir, 'STATUS.md')]), { refused: 'grew while it was read' });
+});
+
+// The temp name is made fixed here (randomBytes returns eight 0x11 bytes), so the test can plant something at it first.
+const FIXED_TEMP_NAME = '1111111111111111';
+const REPLACE_WITH_FIXED_TEMP = `
+import crypto from 'node:crypto';
+import { syncBuiltinESMExports } from 'node:module';
+crypto.randomBytes = (size) => Buffer.alloc(size, 0x11);
+syncBuiltinESMExports();
+const { replaceStatusFile } = await import(process.argv[1]);
+try {
+  replaceStatusFile(process.argv[2], 'new text\\n');
+  console.log(JSON.stringify({ code: null }));
+} catch (error) {
+  console.log(JSON.stringify({ code: error.code }));
+}`;
+
+test('replaceStatusFile never writes into something already at its temp name: a link or file there is refused, nothing changes', posix, async () => {
+  for (const plant of ['link', 'file']) {
+    const dir = await tempDir();
+    const file = join(dir, 'STATUS.md');
+    const temp = `${file}.${FIXED_TEMP_NAME}.tmp`;
+    writeFileSync(file, TEXT);
+    writeFileSync(join(dir, 'victim.txt'), 'keep\n');
+    if (plant === 'link') symlinkSync(join(dir, 'victim.txt'), temp);
+    else writeFileSync(temp, 'keep\n');
+    assert.equal(inChild(REPLACE_WITH_FIXED_TEMP, [STATUS_FILE_URL, file]).code, 'EEXIST', plant);
+    assert.equal(readFileSync(join(dir, 'victim.txt'), 'utf8'), 'keep\n', `${plant}: the link target was not written through`);
+    assert.equal(readFileSync(file, 'utf8'), TEXT, `${plant}: STATUS.md was not replaced`);
+    assert.equal(lstatSync(temp).isSymbolicLink(), plant === 'link', `${plant}: the planted entry was left as it was`);
+  }
+});
