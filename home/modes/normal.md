@@ -1,6 +1,6 @@
 # Mode: normal (fewest agents at once, so the week lasts)
 
-Same models per task, same lead effort, same quality gates as every mode (see the lead rules and CLAUDE.md). This mode only sets parallelism, workflows and report brevity.
+Same models per task, same lead effort, same quality gates as every mode (see the lead rules and CLAUDE.md). This mode only sets parallelism and report brevity; the job decides inline, agent or workflow (CLAUDE.md, "Inline, agent or workflow").
 
 - Lane budget: up to 2 agents at once (writing agents; reads, reviews and verifiers are not capped by the mode); a parallel request gets a one-line usage-limit forecast first.
 - Terse reports from agents and in the final answer (evidence, not-run checks and open decisions stay); suggest `/compact` at a seam only when context is large (above ~100k).

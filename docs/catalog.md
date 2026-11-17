@@ -164,7 +164,7 @@ System CLIs (`tools/Brewfile`, `tools/windows-tools.ps1`): jq, ripgrep, gitleaks
 
 ## Workflows (`home/workflows/`, run by the `wf-*` skills)
 
-Scripts for the Workflow tool, so every job that runs agents shows in the progress view with `<STATUS row>:<step>` labels. The tool finds named
+Scripts for the Workflow tool, used when the job needs one (2+ lanes in parallel, review panels, research fan-out, a multi-stage job that must survive an exit; `home/CLAUDE.md`, "Inline, agent or workflow"), so the progress view shows it with `<STATUS row>:<step>` labels. The tool finds named
 workflows only in a project's `.claude/workflows/`, so each skill calls `Workflow({scriptPath: "${CLAUDE_SKILL_DIR}/../../workflows/<name>.js", args})`
 (`~/.claude/workflows` links to the folder; the path must be in `permissions.additionalDirectories`). Details, the worktree protocol and the
 rules the tests check: `home/workflows/README.md`. Tests: `tests/workflow-*.test.mjs` (runtime: `tests/workflow-sandbox.mjs`).

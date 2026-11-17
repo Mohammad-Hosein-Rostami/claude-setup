@@ -42,7 +42,7 @@ at its launch effort and to run `ccm <mode> -c` to return it to Opus 5.5 at high
 
 Per-task model and effort (agent pins and the escalation rules in `home/modes/_lead.md`); the quality gates (tests,
 `runner` checks, `reviewer`, `security-auditor`, `verify-done`, `ui-quality-pass`, `visual-qa`, `ui-coverage`, the findings check and the judge models), and risky or final review and security audit on Opus at max. normal, medium and high lead on Opus 5.5 at
-effort high (`ccm` pins it, so a resume of a Fable session returns to Opus) and change only parallelism, workflows and report brevity; extra-high and ultra-high change the lead
+effort high (`ccm` pins it, so a resume of a Fable session returns to Opus) and change only parallelism and report brevity; extra-high and ultra-high change the lead
 and add the Opus-max escalations for architecture, hard bugs and risky code (Fable max in ultra-high).
 
 ## What differs

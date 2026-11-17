@@ -5,7 +5,7 @@ when_to_use: A lane passed its last review and must reach main; also for a finis
 argument-hint: <branch>
 ---
 
-Use this when the job fits a workflow by the rule in CLAUDE.md ("Inline, agent or workflow"); a single lane or one review set is one background agent instead. First add and start this job's STATUS.md rows
+Use this when the job fits a workflow by the rule in CLAUDE.md ("Inline, agent or workflow"). Landing always runs this workflow, whatever the size: land.js is the only check that the branch is still at the reviewed tip. First add and start this job's STATUS.md rows
 (`node ~/.claude/tools/status/status.mjs add|start`) so the progress line follows them; the script's agent labels start with the row ids you pass.
 
 Args to fill: `row`, `closeRow`, `statusFile`, `repo`, `base`, `branch`, `worktree`, `suite`, `tip` (the sha the review cleared, the review result's `tip`; land refuses a branch that is not at it).

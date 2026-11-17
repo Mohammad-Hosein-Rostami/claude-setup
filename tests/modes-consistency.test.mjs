@@ -167,6 +167,20 @@ test('home/CLAUDE.md states the inline / agent / workflow rule once; _lead.md an
 test('no setup document tells sessions to run every agent or job as a workflow', () => {
   const files = ['home/CLAUDE.md', 'home/modes/_lead.md', ...MODES.map((mode) => `home/modes/${mode}.md`), 'docs/daily-use.md', 'docs/modes.md', 'docs/catalog.md', 'home/hooks/README.md', 'home/workflows/README.md',
     ...['build', 'land', 'review', 'step', 'bugfix', 'research', 'sync', 'git-cleanup'].map((skill) => `home/skills/wf-${skill}/SKILL.md`)];
-  const everythingIsAWorkflow = /Workflows always|everything that runs (is|must be) a workflow|every agent runs (inside a workflow|in one)|instead of single (sub)?agents|not as single agents|every job that runs agents goes through/i;
+  const everythingIsAWorkflow = /Workflows always|everything that runs (is|must be) a workflow|every agent runs (inside a workflow|in one)|instead of single (sub)?agents|not as single agents|every job that runs agents (goes through|shows in)|(parallelism|sets), workflows and report brevity/i;
   for (const file of files) assert.doesNotMatch(read(file), everythingIsAWorkflow, `${file} still says workflows for everything`);
+});
+
+// Round 6 review: landing is the one job whose workflow holds a safety check (land.js: the branch is still at the reviewed tip), so a size rule must not send it to an agent.
+const ALWAYS_WORKFLOW = { land: 'wf-land', 'sync-machines': 'wf-sync', 'git-cleanup': 'wf-git-cleanup', bugfix: 'wf-bugfix' };
+
+test('landing, machine sync, git cleanup and bugfix always run their workflow, and no wf-land text sends a landing to an agent', () => {
+  const rule = read('home/CLAUDE.md').split('\n').find((line) => line.includes('Always a workflow, whatever the size')) ?? '';
+  for (const [workflow, skill] of Object.entries(ALWAYS_WORKFLOW)) {
+    assert.ok(rule.includes(`(\`${workflow}\`)`), `the routing rule names the ${workflow} workflow`);
+    assert.ok(read(`home/workflows/${workflow}.js`).length > 0 && read(`home/skills/${skill}/SKILL.md`).includes(`${workflow}.js`), `${skill} runs ${workflow}.js`);
+  }
+  assert.doesNotMatch(read('home/skills/wf-land/SKILL.md'), /background agent instead|one background agent/i, 'wf-land must not offer an agent for a landing');
+  assert.match(read('home/skills/wf-land/SKILL.md'), /always runs this workflow/i);
+  assert.match(read('home/modes/_lead.md'), /via the `land` workflow/, '_lead.md lands through the land workflow');
 });
