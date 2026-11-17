@@ -4,15 +4,12 @@
 // a team's ask rules), any permission mode, and any session kind (interactive, background agents, `claude -p`, where Claude Code runs
 // this hook too and denies when no hook decides). No GUI (ssh, CI, tests) or a failed dialog prints nothing: Claude Code's normal
 // behaviour (its prompt, or a deny where nobody can be asked).
-// Exports: permissionReply(input, env, answer) -> hook stdout.
-// AskUserQuestion (the owner: "nothing should wait for me") gets one timed dialog listing each question and the option that will be
-// taken: its "(Recommended)" option, else its first; a multiSelect question gets that single option. "Use recommended" (default) or no
-// answer in CLAUDE_PERMISSION_TIMEOUT_S -> allow with updatedInput = the input plus `answers` {question text: option label} (hooks docs,
-// AskUserQuestion input and PermissionRequest decision control). On a timeout only, `annotations` {question text: {notes}} also says each
-// answer was taken by default, not chosen by the owner (UNCONFIRMED), so Claude can tell it from a click. The dialog shows each question
-// (header inside the masked, cut value, never as a line label) and on its own line the start of the option that will be taken.
-// "Answer in terminal" (or Esc on macOS), no GUI or a failed dialog print nothing: Claude
-// Code's own question UI (settings askUserQuestionTimeout still applies there), never an invented answer.
+// Exports: permissionReply(input, env, answer) -> hook stdout (every tool except AskUserQuestion).
+// AskUserQuestion (the owner: "nothing should wait for me") is answered by lib/question-reply.mjs from main: one timed popup PER question,
+// each with its own CLAUDE_PERMISSION_TIMEOUT_S wait, closed at once when the owner answers in the terminal (the PostToolUse hook
+// question-answered.mjs leaves the mark) or when Claude Code stops this hook. Its decision is an allow with updatedInput = the input plus
+// `answers`; "Answer in terminal" (or Esc on macOS), no GUI or a failed dialog print nothing: Claude Code's own question UI
+// (settings askUserQuestionTimeout still applies there), never an invented answer.
 // ExitPlanMode needs updatedInput with an allow (hooks docs), so its allow echoes the plan input back.
 // The input carries no prompt reason, so the dialog says what the tool asks to do, in which mode, and that Claude Code gave no reason;
 // for Bash it also runs the guard's rules (pre-bash-guard.mjs decideSafely) and for Artifact the Artifact hook's (artifact-ask.mjs
@@ -28,15 +25,14 @@ import { takeAnswered } from './lib/answered-commands.mjs';
 import { logDecision } from './lib/guard-log.mjs';
 import { readProdHosts } from './lib/remote.mjs';
 import { maskSecretFields } from './lib/secrets.mjs';
-import { answerAsk, formatDuration, permissionTimeoutSeconds } from './lib/timed-ask.mjs';
+import { questionReply } from './lib/question-reply.mjs';
+import { installDialogCleanup } from './lib/timed-ask-async.mjs';
+import { answerAsk, permissionTimeoutSeconds } from './lib/timed-ask.mjs';
 import { DESTRUCTIVE_PREFIX } from './lib/verdict.mjs';
 import { decideArtifact } from './artifact-ask.mjs';
 import { decide, decideSafely } from './pre-bash-guard.mjs';
 
 const QUESTION_TOOL = 'AskUserQuestion';
-const QUESTION_BUTTONS = { accept: 'Use recommended', decline: 'Answer in terminal' };
-const QUESTION_TITLE = 'Claude Code: question';
-const RECOMMENDED = /\(Recommended\)\s*$/i; // how Claude marks the option it would pick
 const NEEDS_UPDATED_INPUT = ['ExitPlanMode']; // an allow without updatedInput is ignored for it
 const HOOK_NAME = 'permission-timed-allow';
 // [tool_input field, dialog label], first match wins; any other input is shown as JSON under "Input"
@@ -84,55 +80,6 @@ function guardReason(command, cwd, env) {
   return verdict.errorClass ? `${verdict.reason}: ${verdict.errorClass}` : verdict.reason;
 }
 
-/** @returns {boolean} true for a non-empty list of questions, each with question text and options that all have a label */
-const isQuestionList = (questions) => Array.isArray(questions) && questions.length > 0 && questions.every((item) =>
-  typeof item?.question === 'string' && Array.isArray(item.options) && item.options.length > 0
-  && item.options.every((option) => typeof option?.label === 'string'));
-
-/** @returns {string} the label of the option marked "(Recommended)", else of the first option */
-const recommendedLabel = (options) => (options.find((option) => RECOMMENDED.test(option.label)) ?? options[0]).label;
-
-/** @returns {Array<{label: string, value: string, keepStart?: boolean}>} two dialog lines per question: the question (its header first) and the option that will be taken, start kept */
-const questionDetails = (questions, answers) => questions.flatMap((item, index) => [
-  { label: `Question ${index + 1}`, value: item.header ? `[${item.header}] ${item.question}` : item.question },
-  { label: `Answer ${index + 1}`, value: answers[item.question], keepStart: true },
-]);
-
-/**
- * Marks every answer as taken by default. Claude Code puts each note in the tool result ("Q"="A" notes: ...) and then tells
- * Claude to read the answers carefully instead of "Your questions have been answered" (read from the CLI 2.1.325 code).
- * @returns {object} the input's annotations with a timeout note on each question, other annotation fields kept
- */
-function timeoutAnnotations(toolInput, timeoutS) {
-  const notes = `No answer in ${formatDuration(timeoutS)}: this option was taken by default, not chosen by the owner (UNCONFIRMED)`;
-  const existing = toolInput.annotations && typeof toolInput.annotations === 'object' ? toolInput.annotations : {};
-  return { ...existing, ...Object.fromEntries(toolInput.questions.map(({ question }) => [question, { ...existing[question], notes }])) };
-}
-
-/**
- * Answers an AskUserQuestion prompt with each question's recommended option, unless the owner chooses to answer in the terminal.
- * @param {object} input hook JSON for an AskUserQuestion PermissionRequest
- * @param {Record<string, string | undefined>} env process environment
- * @param {typeof answerAsk} answer the dialog
- * @returns {string} an allow line carrying the answers, or '' to leave the question to Claude Code's own UI
- */
-function questionReply(input, env, answer) {
-  const questions = input.tool_input?.questions;
-  if (!isQuestionList(questions)) return '';
-  const answers = Object.fromEntries(questions.map((item) => [item.question, recommendedLabel(item.options)]));
-  const reason = `Claude asks ${questions.length} question(s); with no answer each takes the option shown`;
-  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  const timeoutS = permissionTimeoutSeconds(env);
-  const details = questionDetails(questions, answers);
-  const request = { tool: QUESTION_TOOL, reason, title: QUESTION_TITLE, buttons: QUESTION_BUTTONS, details, timeoutS, cwd, sessionId: input.session_id, agentId: input.agent_id };
-  const result = answer(request, env);
-  const decision = result.decision === 'allow' ? 'allow' : 'ask'; // "ask": Claude Code's own question UI
-  logDecision({ hook: HOOK_NAME, tool: QUESTION_TOOL, command: targetOf(input.tool_input).text, cwd, session: input.session_id, decision, outcome: result.outcome, reason }, env);
-  if (decision !== 'allow') return '';
-  const annotations = result.outcome === 'timeout' ? { annotations: timeoutAnnotations(input.tool_input, timeoutS) } : {};
-  return replyLine({ behavior: 'allow', updatedInput: { ...input.tool_input, answers, ...annotations } });
-}
-
 /**
  * Answers one PermissionRequest.
  * @param {{tool_name?: string, tool_input?: object, permission_mode?: string, cwd?: string, session_id?: string, agent_id?: string}} input hook JSON
@@ -143,7 +90,7 @@ function questionReply(input, env, answer) {
 export function permissionReply(input, env = process.env, answer = answerAsk) {
   const tool = input?.tool_name;
   if (typeof tool !== 'string' || tool === '') return '';
-  if (tool === QUESTION_TOOL) return questionReply(input, env, answer);
+  if (tool === QUESTION_TOOL) return ''; // answered by questionReply in main: its popups are asynchronous
   const { label, text } = targetOf(input.tool_input);
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd(); // the guard keys its records the same way
   const record = { hook: HOOK_NAME, tool, command: text, cwd, session: input.session_id };
@@ -178,6 +125,12 @@ async function main() {
     input = JSON.parse(await readStdin());
   } catch {
     return; // not hook JSON: leave the prompt alone
+  }
+  if (input?.tool_name === QUESTION_TOOL) {
+    installDialogCleanup(); // Claude Code stopping this hook must not leave a popup open
+    const decision = await questionReply(input, process.env);
+    process.stdout.write(decision ? replyLine(decision) : '');
+    return;
   }
   process.stdout.write(permissionReply(input));
 }

@@ -8,7 +8,7 @@
 // (default) and Deny, and go ahead when nobody answers within the request's timeoutS, else CLAUDE_ASK_TIMEOUT_S (default 120; a
 // secret-only ask passes CLAUDE_ASK_SECRET_TIMEOUT_S, default 120, see secretAskTimeoutSeconds; a Claude Code permission prompt answered
 // by permission-timed-allow.mjs passes CLAUDE_PERMISSION_TIMEOUT_S, default 120, see permissionTimeoutSeconds; each at most 190 so it
-// stays under the 200 s hook timeout). Only a click on Deny denies. Allow and timeout print NO decision (empty stdout, exit 0): the CLI's normal permission
+// stays under the 200 s hook timeout; the question popups of permission-timed-allow.mjs run up to 4 in a row under its 800 s). Only a click on Deny denies. Allow and timeout print NO decision (empty stdout, exit 0): the CLI's normal permission
 // flow then still applies, so base.json deny rules keep working and the rest of a compound command is not pre-approved.
 // A timeout only counts when the full time really passed; a dialog that was killed, crashed or gave up early is "dialog-failed".
 // No GUI (ssh session, CI, no display) or a failing dialog tool -> decision "ask": the CLI's own prompt, which also covers
@@ -32,7 +32,7 @@ export const SECRET_ASK_TIMEOUT_ENV = 'CLAUDE_ASK_SECRET_TIMEOUT_S';
 export const DEFAULT_SECRET_ASK_TIMEOUT_S = 120; // seconds
 export const PERMISSION_TIMEOUT_ENV = 'CLAUDE_PERMISSION_TIMEOUT_S';
 export const DEFAULT_PERMISSION_TIMEOUT_S = 120; // seconds
-export const MAX_ASK_TIMEOUT_S = 190; // the hook timeout in settings/base.json is 200 s
+export const MAX_ASK_TIMEOUT_S = 190; // seconds; one popup's longest wait: the hook timeouts in settings/base.json are 200 s (800 s for 4 question popups)
 const TIMEOUT_SLACK_MS = 500; // a dialog tool may report its timeout marginally before the full time has elapsed
 const MS_PER_SECOND = 1000;
 const SPAWN_GRACE_S = 5; // the dialog tool gives up by itself at the timeout; this only stops one that hangs

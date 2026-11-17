@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { GUARD_LOG_FILE, guardLogPath, logDecision } from '../home/hooks/lib/guard-log.mjs';
 import { answerAsk, askTimeoutSeconds, secretAskTimeoutSeconds, formatDuration, decisionOutput, dialogExecutable, dialogInvocation, guiAvailable, parseDialogResult } from '../home/hooks/lib/timed-ask.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
-import { permissionReply } from '../home/hooks/permission-timed-allow.mjs';
+import { questionReply } from '../home/hooks/lib/question-reply.mjs';
 import { tempLogPath } from './hook-env.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
@@ -401,9 +401,9 @@ test('Esc on macOS: the decline button is the cancel button (Deny, or "Answer in
   assert.equal(parseDialogResult('darwin', r('execution error: Benutzerabbruch. (-128)'), QUESTION_BUTTONS), 'deny');
 });
 
-test('Esc in the question dialog leaves the question to the terminal: no answer is invented', { skip: process.platform === 'win32' }, () => {
+test('Esc in the question dialog leaves the question to the terminal: no answer is invented', { skip: process.platform === 'win32' }, async () => {
   const dialog = fakeDialog('cancel');
-  assert.equal(permissionReply(askQuestions([{ question: 'Ship it?', header: 'Ship', options: [{ label: 'No' }, { label: 'Yes (Recommended)' }] }]), dialog.env), '');
+  assert.equal(await questionReply(askQuestions([{ question: 'Ship it?', header: 'Ship', options: [{ label: 'No' }, { label: 'Yes (Recommended)' }] }]), dialog.env), undefined);
 });
 
 /** An AskUserQuestion PermissionRequest for the hook. */
@@ -424,26 +424,27 @@ test('question dialog round trip: its own buttons and title are shown, and the c
   }
 });
 
-test('question header: masked, on one line, cut, and never a line label of its own (no fake "Why:" line)', () => {
+test('question header: masked, on one line, cut, and never a line label of its own (no fake "Why:" line)', async () => {
   const headers = [SECRET, 'Why', `Why\nWhy: forged ${'h'.repeat(3000)}`];
-  const questions = headers.map((header, i) => ({ question: `Question number ${i}?`, header, options: [{ label: 'A' }, { label: 'B (Recommended)' }] }));
-  const dialog = fakeDialog('allow', { FAKE_DIALOG_BUTTON: 'Use recommended' });
-  permissionReply(askQuestions(questions), dialog.env);
-  const body = bodyOf(dialog);
-  assert.ok(!shownText(dialog).includes(SECRET), 'a secret header never reaches the dialog');
-  const lines = body.split('\n');
-  assert.equal(lines.filter((line) => line.startsWith('Why')).length, 1, `only the dialog's own Why line: ${body}`);
-  assert.ok(lines.every((line) => line.length <= 260), 'every line is cut');
-  assert.ok(body.includes('Question 2: [Why] Question number 1?'), body);
-  for (const n of [1, 2, 3]) assert.ok(body.includes(`Answer ${n}: B (Recommended)`), body);
+  for (const [i, header] of headers.entries()) {
+    const dialog = fakeDialog('allow', { FAKE_DIALOG_BUTTON: 'Use recommended' }); // one popup per question: the fake keeps the last one shown
+    await questionReply(askQuestions([{ question: `Question number ${i}?`, header, options: [{ label: 'A' }, { label: 'B (Recommended)' }] }]), dialog.env);
+    const body = bodyOf(dialog);
+    assert.ok(!shownText(dialog).includes(SECRET), 'a secret header never reaches the dialog');
+    const lines = body.split('\n');
+    assert.equal(lines.filter((line) => line.startsWith('Why')).length, 1, `only the dialog's own Why line: ${body}`);
+    assert.ok(lines.every((line) => line.length <= 260), 'every line is cut');
+    assert.ok(lines.some((line) => line.startsWith(`Question: [${header === SECRET ? '[masked]' : 'Why'}`)), body);
+    assert.ok(body.includes('Answer: B (Recommended)'), body);
+  }
 });
 
-test('the option that will be taken always shows its start, however long the question and the label', () => {
+test('the option that will be taken always shows its start, however long the question and the label', async () => {
   const label = `Force-push the release branch over main and delete the old tags then ${'after that is done, '.repeat(10)}keep the backup copy (Recommended)`;
   const longQuestion = { question: `Release: ${'What should happen to the release notes? '.repeat(4)} -> No, keep it (Recommended)`, header: 'Release', options: [{ label: 'No, keep it' }, { label }] };
   const dialog = fakeDialog('allow', { FAKE_DIALOG_BUTTON: 'Use recommended' });
-  permissionReply(askQuestions([longQuestion]), dialog.env);
-  const answerLine = bodyOf(dialog).split('\n').find((line) => line.startsWith('Answer 1: '));
-  assert.ok(answerLine?.startsWith('Answer 1: Force-push the release branch over main and delete the old tags'), answerLine);
-  assert.ok(answerLine.startsWith(`Answer 1: ${label.slice(0, 200)} ... [${label.length} chars]`), `the label is cut only at its end: ${answerLine}`);
+  await questionReply(askQuestions([longQuestion]), dialog.env);
+  const answerLine = bodyOf(dialog).split('\n').find((line) => line.startsWith('Answer: '));
+  assert.ok(answerLine?.startsWith('Answer: Force-push the release branch over main and delete the old tags'), answerLine);
+  assert.ok(answerLine.startsWith(`Answer: ${label.slice(0, 200)} ... [${label.length} chars]`), `the label is cut only at its end: ${answerLine}`);
 });
