@@ -12,6 +12,8 @@
     scripts/install.sh                  # macOS, Linux, Git Bash
     scripts/install.sh --no-plugins     # skip `claude plugin` calls
     scripts/install.sh --no-tools       # skip tool dependency install (ui-check, env-names)
+    scripts/install.sh --project-workflows <repo>         # also link the workflow scripts into <repo>/.claude/workflows (personal: hidden in .git/info/exclude)
+    scripts/install.sh --project-workflows <repo> --copy  # copy them instead, for the team to commit
 
 Windows (PowerShell): `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-DryRun] [-NoPlugins] [-NoTools]`.
 Symlinks need Developer Mode on Windows; otherwise items are copied (a warning is printed) and do not follow later

@@ -78,3 +78,11 @@ test('base.json registers git-tidy-gate on Stop, SubagentStop and PreCompact, ea
     assert.ok(gates[0].timeout >= 10, `${event} timeout ${gates[0].timeout}`);
   }
 });
+
+test('additionalDirectories is a de-duplicated union, so a local file cannot drop the shared workflows folder', { skip }, async () => {
+  const merged = await merge(
+    { permissions: { additionalDirectories: ['/home/x/.claude/workflows'] } },
+    { permissions: { additionalDirectories: ['/data', '/home/x/.claude/workflows'] } },
+  );
+  assert.deepEqual(merged.permissions.additionalDirectories, ['/home/x/.claude/workflows', '/data']);
+});

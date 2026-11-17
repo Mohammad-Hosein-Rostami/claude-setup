@@ -32,3 +32,9 @@ for (const [file, plugins, settings, tools] of [
     assert.ok(toolsCall > settingsCall, `tool deps on line ${toolsCall + 1}, before settings (${settingsCall + 1})`);
   });
 }
+
+for (const file of ['scripts/install.sh', 'scripts/install.ps1', 'scripts/doctor.sh']) {
+  test(`${file}: the workflows link is in the list of linked home items`, () => {
+    assert.match(readFileSync(`${root}${file}`, 'utf8'), /project-notes[ ',]+modes[ ',]+workflows[ ',]+statusline\.mjs/);
+  });
+}

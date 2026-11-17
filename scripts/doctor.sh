@@ -15,7 +15,7 @@ is_windows() { case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; *) return
 # On Git Bash install.sh may have copied instead of linking (no symlink permission): a present copy is a warning, not a FAIL.
 check_links() {
   local name target
-  for name in CLAUDE.md rules skills agents standards hooks tools project-notes modes statusline.mjs; do
+  for name in CLAUDE.md rules skills agents standards hooks tools project-notes modes workflows statusline.mjs; do
     target="$CLAUDE_DIR/$name"
     if [ -L "$target" ] && [ "$(readlink "$target")" = "$REPO/home/$name" ]; then ok "link $name"
     elif is_windows && [ -e "$target" ] && [ ! -L "$target" ]; then ok "copy $name (not live-linked; re-run install.sh after repo changes)"
@@ -217,6 +217,23 @@ check_recall() {
   if [ -n "$errors" ]; then warn "recall: last checkpoint error: $errors"; else ok "recall: no checkpoint errors"; fi
 }
 
+# The wf-* skills call workflow scripts through ~/.claude/workflows (the link to home/workflows); settings must let Workflow read that link path.
+check_workflows() {
+  local skill name script live="$CLAUDE_DIR/settings.json" link_path="$CLAUDE_DIR/workflows" missing=0
+  case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) link_path="$(cygpath -m "$CLAUDE_DIR" 2>/dev/null || echo "${CLAUDE_DIR//\\//}")/workflows" ;; esac
+  for skill in "$REPO"/home/skills/wf-*/SKILL.md; do
+    [ -f "$skill" ] || continue
+    name="$(basename "$(dirname "$skill")")"
+    script="$(grep -o 'workflows/[A-Za-z0-9._-]*\.js' "$skill" | head -1)"
+    if [ -z "$script" ]; then bad "$name names no workflow script"; missing=1
+    elif [ ! -f "$CLAUDE_DIR/$script" ]; then bad "$name: $script missing under $CLAUDE_DIR (re-run scripts/install.sh)"; missing=1; fi
+  done
+  [ "$missing" = 0 ] && ok "every wf-* skill's workflow script exists under $CLAUDE_DIR/workflows"
+  if jq -e --arg d "$link_path" '(.permissions.additionalDirectories // []) | index($d) != null' "$live" >/dev/null 2>&1; then ok "settings.json lets Workflow read $link_path"
+  else bad "settings.json lacks permissions.additionalDirectories $link_path (re-run scripts/install.sh)"; fi
+  return 0
+}
+
 # A project's own .claude/agents files that set maxTurns or shadow a personal agent stop agents mid-task (the owner's rule is no maxTurns).
 check_project_agents() {
   local project="${DOCTOR_PROJECT:-$PWD}" note
@@ -228,7 +245,7 @@ check_project_agents() {
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_tools; check_lsp; check_ui_check; check_project_agents; check_env_names; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_tools; check_lsp; check_ui_check; check_project_agents; check_workflows; check_env_names; check_repo_tests
 }
 run_checks
 exit "$BAD"

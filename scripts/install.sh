@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Purpose: install the portable Claude Code setup on macOS/Linux (also Git Bash on Windows).
-# Usage: scripts/install.sh [--dry-run] [--no-plugins] [--no-tools]
+# Usage: scripts/install.sh [--dry-run] [--no-plugins] [--no-tools] [--project-workflows <repo> [--copy]]
 # Invariants: never deletes; anything replaced in ~/.claude is moved to ~/.claude-backup-<stamp>/.
 set -euo pipefail
 
@@ -8,7 +8,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$HOME/.claude-backup-$STAMP"
-LINKS=(CLAUDE.md rules skills agents standards hooks tools project-notes modes statusline.mjs)
+LINKS=(CLAUDE.md rules skills agents standards hooks tools project-notes modes workflows statusline.mjs)
 # Tools with npm dependencies: ui-check (odiff-bin, pngjs) and env-names (yaml). scripts/lane-new.sh reads this line; install.ps1 keeps the same list (tests/lane-new.test.mjs checks they match).
 TOOLS_WITH_DEPS=(ui-check env-names)
 DRY_RUN=0
@@ -18,15 +18,23 @@ DONE=()
 PLUGIN_FAILURES=0
 PLUGIN_FAILED_LIST=""
 SUMMARY_SHOWN=0
+PROJECT_REPO=""
+COPY_WORKFLOWS=0
 
-for arg in "$@"; do
-  case "$arg" in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --no-plugins) WITH_PLUGINS=0 ;;
     --no-tools) WITH_TOOLS=0 ;;
-    *) echo "unknown flag: $arg (use --dry-run, --no-plugins, --no-tools)" >&2; exit 2 ;;
+    --project-workflows)
+      [ $# -ge 2 ] || { echo "--project-workflows needs a repo folder" >&2; exit 2; }
+      PROJECT_REPO="$2"; shift ;;
+    --copy) COPY_WORKFLOWS=1 ;;
+    *) echo "unknown flag: $1 (use --dry-run, --no-plugins, --no-tools, --project-workflows <repo> [--copy])" >&2; exit 2 ;;
   esac
+  shift
 done
+if [ "$COPY_WORKFLOWS" = 1 ] && [ -z "$PROJECT_REPO" ]; then echo "--copy needs --project-workflows <repo>" >&2; exit 2; fi
 
 # Run a mutating command, or only print it under --dry-run.
 act() { if [ "$DRY_RUN" = 1 ]; then echo "[dry-run] $*"; else "$@"; fi; }
@@ -97,6 +105,35 @@ link_ccm() {
     act ln -s "$src" "$dst"; note "linked ccm -> $dst"
   fi
   case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "WARNING: $HOME/.local/bin is not on PATH; add it to run ccm" >&2 ;; esac
+}
+
+# Optional, default off: make the workflow scripts usable by name (`/<name>`) in one project. A link stays personal (hidden by
+# .git/info/exclude); --copy copies the scripts so the team can commit them, because a link into ~/.claude would break for them.
+project_workflows() {
+  local repo="$1" target exclude
+  [ -e "$repo/.git" ] || { echo "$repo is not a git repository" >&2; exit 2; }
+  target="$repo/.claude/workflows"
+  act mkdir -p "$repo/.claude"
+  if [ "$COPY_WORKFLOWS" = 1 ]; then
+    if [ -L "$target" ]; then backup "$target"; fi # a link we made earlier; a real folder is kept and only same-named scripts are overwritten (git shows the diff)
+    act mkdir -p "$target"
+    act cp "$REPO"/home/workflows/*.js "$target"/
+    note "copied workflows into $target"
+    return
+  fi
+  if [ -L "$target" ] && [ "$(readlink "$target")" = "$REPO/home/workflows" ]; then note "ok project workflows link"
+  else
+    backup "$target"
+    act ln -s "$REPO/home/workflows" "$target"
+    note "linked $target"
+  fi
+  exclude="$(git -C "$repo" rev-parse --git-path info/exclude)"
+  case "$exclude" in /*) ;; *) exclude="$repo/$exclude" ;; esac
+  if [ "$DRY_RUN" != 1 ] && ! grep -qx '.claude/workflows' "$exclude" 2>/dev/null; then
+    mkdir -p "$(dirname "$exclude")"
+    echo '.claude/workflows' >> "$exclude"
+    note "hid .claude/workflows in $exclude"
+  fi
 }
 
 detect_os() {
@@ -174,6 +211,7 @@ need jq
 link_all
 link_ccm
 enable_hooks
+if [ -n "$PROJECT_REPO" ]; then project_workflows "$PROJECT_REPO"; fi
 if [ "$WITH_PLUGINS" = 1 ]; then install_plugins; fi
 # Settings after plugins: `claude plugin install` re-enables plugins in settings.json; the merged repo settings must
 # win. Tool deps after settings, so a failed tool dependency install cannot leave settings.json stale.

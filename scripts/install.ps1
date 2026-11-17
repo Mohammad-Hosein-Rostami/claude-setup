@@ -1,15 +1,16 @@
 # Purpose: install the portable Claude Code setup on Windows (PowerShell 5.1+ or 7).
-# Usage: powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-DryRun] [-NoPlugins] [-NoTools]
+# Usage: powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-DryRun] [-NoPlugins] [-NoTools] [-ProjectWorkflows <repo> [-Copy]]
 # Invariants: never deletes; replaced items go to ~\.claude-backup-<stamp>\. Symlinks need Developer Mode;
 # otherwise items are copied and a warning is printed. Mirrors scripts/install.sh.
-param([switch]$DryRun, [switch]$NoPlugins, [switch]$NoTools)
+param([switch]$DryRun, [switch]$NoPlugins, [switch]$NoTools, [string]$ProjectWorkflows = '', [switch]$Copy)
 $ErrorActionPreference = 'Stop'
+if ($Copy -and -not $ProjectWorkflows) { Write-Error '-Copy needs -ProjectWorkflows <repo>'; exit 2 }
 
 $Repo = Split-Path -Parent $PSScriptRoot
 $ClaudeDir = Join-Path $HOME '.claude'
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $BackupDir = Join-Path $HOME ".claude-backup-$Stamp"
-$Links = @('CLAUDE.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'modes', 'statusline.mjs')
+$Links = @('CLAUDE.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'modes', 'workflows', 'statusline.mjs')
 # home/bin/ccm.ps1 is the PowerShell launcher and ccm.cmd its shim; Install-Launcher puts ccm.cmd in ~\.claude\bin
 # (the PATH folder) and ccm.ps1 in ~\.claude\bin\ps so PowerShell cannot resolve it before the shim
 # (home/bin/ccm is the bash one).
@@ -56,9 +57,9 @@ function ConvertTo-Hashtable($node) {
 }
 
 # Same semantics as scripts/merge-settings.jq: objects deep-merge (b wins), `hooks` lists append per event,
-# permissions allow/deny/ask are a de-duplicated union (base, os, local); other arrays replace.
+# permissions allow/deny/ask/additionalDirectories are a de-duplicated union (base, os, local); other arrays replace.
 # A null or non-object top-level permissions is treated as {}.
-$UnionKeys = @('allow', 'deny', 'ask')
+$UnionKeys = @('allow', 'deny', 'ask', 'additionalDirectories')
 function Merge-Json($a, $b, $key = '') {
   foreach ($k in @($b.Keys)) {
     if ($key -eq '' -and $k -eq 'permissions') {
@@ -168,6 +169,37 @@ function Install-Launcher {
   if (@($env:Path -split ';') -notcontains $binDir) { $env:Path = "$env:Path;$binDir" }
 }
 
+# Optional, default off: make the workflow scripts usable by name (/<name>) in one project. A link stays personal (hidden by
+# .git\info\exclude); -Copy copies the scripts so the team can commit them (a link into ~\.claude would break for them).
+function Install-ProjectWorkflows($ProjectRepo) {
+  if (-not (Test-Path (Join-Path $ProjectRepo '.git'))) { throw "$ProjectRepo is not a git repository" }
+  $target = Join-Path $ProjectRepo '.claude\workflows'
+  $src = Join-Path $Repo 'home\workflows'
+  if ($DryRun) { Write-Host "[dry-run] workflows into $target"; return }
+  New-Item -ItemType Directory -Force (Join-Path $ProjectRepo '.claude') | Out-Null
+  $existing = Get-Item $target -Force -ErrorAction SilentlyContinue
+  if ($Copy) {
+    if ($existing -and $existing.LinkType) { Backup $target }
+    New-Item -ItemType Directory -Force $target | Out-Null
+    Copy-Item (Join-Path $src '*.js') $target -Force
+    Note "copied workflows into $target"
+    return
+  }
+  if ($existing -and $existing.LinkType -eq 'SymbolicLink' -and $existing.Target -eq $src) { Note 'ok project workflows link' }
+  else {
+    Backup $target
+    try { New-Item -ItemType SymbolicLink -Path $target -Target $src | Out-Null; Note "linked $target" }
+    catch { throw "could not link $target (enable Developer Mode, or use -Copy)" }
+  }
+  $exclude = git -C $ProjectRepo rev-parse --git-path info/exclude
+  if (-not [IO.Path]::IsPathRooted($exclude)) { $exclude = Join-Path $ProjectRepo $exclude }
+  New-Item -ItemType Directory -Force (Split-Path $exclude) | Out-Null
+  if (-not (Test-Path $exclude) -or -not (Select-String -Path $exclude -Pattern '^\.claude/workflows$' -Quiet)) {
+    Add-Content -Path $exclude -Value '.claude/workflows'
+    Note "hid .claude/workflows in $exclude"
+  }
+}
+
 function Install-Plugins {
   $claude = Get-Command claude -ErrorAction SilentlyContinue
   if (-not $claude) { Write-Host 'claude CLI not found. Manual: run /plugin and add the items in plugins\plugins.json.'; return }
@@ -198,6 +230,7 @@ try {
   $commands = Join-Path $Repo 'home\commands'
   if ((Test-Path $commands) -and (Get-ChildItem $commands -Force | Select-Object -First 1)) { Link-Item 'commands' }
   Install-Launcher
+  if ($ProjectWorkflows) { Install-ProjectWorkflows $ProjectWorkflows }
   if (Test-Path (Join-Path $Repo '.git')) {
     if (-not $DryRun) { git -C $Repo config core.hooksPath .githooks }
     Note 'git hooksPath = .githooks'

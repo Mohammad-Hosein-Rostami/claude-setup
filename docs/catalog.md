@@ -194,12 +194,13 @@ Marketplaces: `anthropic-plugin-directory`, `claude-plugins-official`, `gitkrake
 | `env.CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY` | 1; removes survey prompts |
 | `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` | 400000 (models have 1M); fewer compactions, less forgetting; owner traded per-turn cost for it |
 | `env.CLAUDE_CODE_SUBAGENT_MODEL` | `claude-sonnet-5-5`; model for agents that pin none |
-| `permissions.allow` | WebSearch, WebFetch |
+| `permissions.allow` | WebSearch, WebFetch, Workflow (the `wf-*` skills start workflows without a dialog per run; every agent's tool calls keep their own checks) |
+| `permissions.additionalDirectories` | `{{CLAUDE_HOME}}/workflows` (the link path, not its target): lets `Workflow({scriptPath})` read the scripts under `~/.claude/workflows` from a session in any project, with or without the setup's permission hook (probe P1, 2026-11-17); a union across the settings files |
 | `permissions.deny` | credentials files, `~/.ssh/**`, `~/.aws/**`, `*.pem`, `.npmrc` (Read and Bash patterns) |
 | `autoContinueAtUsageLimit` | true; a run continues past a usage limit |
 | `model` | `opus` (the session leads at effort high; see `home/modes/_lead.md`) |
 | `hooks` | PreToolUse(Bash) -> `pre-bash-guard.mjs`, `agent-budget.mjs`; PreToolUse(Agent, Task) -> `agent-model-guard.mjs`; PreToolUse(all) -> `commit-gate.mjs`; PreToolUse(Artifact) -> `artifact-ask.mjs`; PermissionRequest(all tools) -> `permission-timed-allow.mjs`; UserPromptSubmit -> `skill-router.mjs`, `mode.mjs`; SessionStart -> `mode.mjs` (+ `skill-router.mjs`, `recall-digest.mjs` on "compact"); UserPromptExpansion -> `mode.mjs`; PostToolUse(Edit, Write, MultiEdit) -> `post-edit.mjs`, `skill-router.mjs`; PostToolUse(Edit, Write, MultiEdit, NotebookEdit) -> `commit-gate.mjs`; PostToolUse(AskUserQuestion) -> `question-answered.mjs`; PostToolUse(all) -> `agent-budget.mjs`, `checkpoint.mjs`; PreCompact -> `checkpoint.mjs`, `git-tidy-gate.mjs`; Stop -> `typecheck-gate.mjs`, `commit-gate.mjs`, `git-tidy-gate.mjs`, `ask-gate.mjs`, `final-reply-cap.mjs`, `status-deliver.mjs`; SubagentStart -> `agent-budget.mjs`; SubagentStop -> `typecheck-gate.mjs`, `commit-gate.mjs`, `git-tidy-gate.mjs`, `agent-budget.mjs` |
-| `statusLine` | command: `statusline.mjs` |
+| `statusLine` | command: `statusline.mjs`; `refreshInterval` 30 (seconds) repaints the line while a background workflow waits |
 | `enabledPlugins` | plugin id -> true/false (mirrors `plugins/plugins.json`) |
 | `modelSettings` | effort per model: Opus 5.5 high, Sonnet 5.5 medium, Haiku 5.5 low |
 

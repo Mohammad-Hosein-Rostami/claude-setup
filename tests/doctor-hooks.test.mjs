@@ -86,3 +86,38 @@ test('check_hook_files also covers hook files named in agent frontmatter', { ski
   assert.equal(present.status, 0);
   assert.match(present.stdout, /ok\s+hook files referenced by agent frontmatter exist/);
 });
+
+// check_workflows: every wf-* skill's script is reachable through ~/.claude/workflows, and settings let Workflow read that link path.
+async function workflowRepo({ script = true, linked = true, allowed = true } = {}) {
+  const home = await mkdtemp(join(tmpdir(), 'doctor-wf-'));
+  const repo = join(home, 'repo');
+  await mkdir(join(repo, 'scripts'), { recursive: true });
+  await mkdir(join(repo, 'home', 'skills', 'wf-x'), { recursive: true });
+  await mkdir(join(home, '.claude', 'workflows'), { recursive: true });
+  await cp(DOCTOR, join(repo, 'scripts', 'doctor.sh'));
+  await writeFile(join(repo, 'home', 'skills', 'wf-x', 'SKILL.md'), 'scriptPath `${CLAUDE_SKILL_DIR}/../../workflows/x.js`\n');
+  if (script && linked) await writeFile(join(home, '.claude', 'workflows', 'x.js'), '// stub\n');
+  const dirs = allowed ? [join(home, '.claude', 'workflows')] : [];
+  await writeFile(join(home, '.claude', 'settings.json'), JSON.stringify({ permissions: { additionalDirectories: dirs } }));
+  return { home, repo };
+}
+const workflowCheck = ({ home, repo }) => spawnSync('bash', [join(repo, 'scripts', 'doctor.sh')], { env: { ...process.env, HOME: home, DOCTOR_ONLY: 'check_workflows' }, encoding: 'utf8' });
+
+test('check_workflows passes when every wf- skill script exists and the link path is allowed', { skip }, async () => {
+  const run = workflowCheck(await workflowRepo());
+  assert.equal(run.status, 0, run.stdout);
+  assert.match(run.stdout, /ok\s+every wf-\* skill's workflow script exists/);
+  assert.match(run.stdout, /ok\s+settings.json lets Workflow read/);
+});
+
+test('check_workflows fails and names a skill whose script is missing under ~/.claude/workflows', { skip }, async () => {
+  const run = workflowCheck(await workflowRepo({ script: false }));
+  assert.equal(run.status, 1);
+  assert.match(run.stdout, /FAIL\s+wf-x: workflows\/x\.js missing under .*\.claude \(re-run scripts\/install\.sh\)/);
+});
+
+test('check_workflows fails when permissions.additionalDirectories lacks the workflows link path', { skip }, async () => {
+  const run = workflowCheck(await workflowRepo({ allowed: false }));
+  assert.equal(run.status, 1);
+  assert.match(run.stdout, /FAIL\s+settings.json lacks permissions.additionalDirectories/);
+});
