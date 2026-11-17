@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Purpose: before a push, make sure (1) the full suite passed on the tree that is checked out and (2) no post-land audit of a
-# commit being pushed is pending, failed or has an unresolved finding. test-pass remembers a pass per tree, so a branch that
-# landed through `test-pass run --suite` is not run again. It tests the checked-out tree, not the pushed refs.
-# The audit gate (`audit-log gate`) runs only where audit-log.mjs exists; a repo without it is gated by the suite alone.
+# commit the push sends is pending, failed or has an unresolved finding. test-pass remembers a pass per tree, so a branch that
+# landed through `test-pass run --suite` is not run again. The suite check tests the checked-out tree, not the pushed refs.
+# The audit gate (`audit-log gate`) runs once per local sha git sends on stdin (a push of main from another branch or a detached
+# HEAD is still gated); with no sha on stdin it gates HEAD. It runs only where audit-log.mjs exists; a repo without it is gated
+# by the suite alone.
 set -euo pipefail
 unset $(git rev-parse --local-env-vars)
+PUSHED_REFS=$(cat)
 if node home/tools/test-pass/test-pass.mjs check HEAD --suite; then
   echo "pre-push: the full suite already passed on this tree"
 else
@@ -12,5 +15,10 @@ else
 fi
 AUDIT_LOG=home/tools/review-tier/audit-log.mjs
 if [ -f "$AUDIT_LOG" ]; then
-  node "$AUDIT_LOG" gate --repo "$(git rev-parse --show-toplevel)" --tip HEAD
+  TOP=$(git rev-parse --show-toplevel)
+  # stdin lines are "<local ref> <local sha> <remote ref> <remote sha>"; a deleted ref has an all-zero local sha
+  PUSHED_TIPS=$(printf '%s\n' "$PUSHED_REFS" | awk 'NF == 4 && $2 !~ /^0+$/ { print $2 }')
+  for tip in ${PUSHED_TIPS:-HEAD}; do
+    node "$AUDIT_LOG" gate --repo "$TOP" --tip "$tip"
+  done
 fi

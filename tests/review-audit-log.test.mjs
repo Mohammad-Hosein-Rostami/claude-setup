@@ -114,7 +114,7 @@ test('record writes one private JSON line with the full shas and the state', () 
   const entry = JSON.parse(line);
   assert.equal(entry.tip, tips[0], 'a short sha is stored in full');
   assert.equal(entry.base, base);
-  assert.equal(entry.repo, repo);
+  assert.equal(entry.repo, realpathSync(join(repo, '.git')), 'a repository is keyed by its git common dir');
   assert.equal(entry.state, 'done');
   assert.equal(entry.confirmed, 0);
   assert.equal(statSync(sandbox.logFile).mode & 0o777, 0o600);
@@ -225,19 +225,53 @@ test('resolve opens the gate for a confirmed miss and needs the tip to be an anc
 
 test('resolve does not reset the streak: a done miss still breaks it', () => {
   const sandbox = makeSandbox();
-  const { repo, base, tips } = makeHistory(2);
+  const { repo, base, tips } = makeHistory(3);
   record(sandbox, repo, tips[0], base, 'done', 0);
   record(sandbox, repo, tips[1], base, 'done', 1);
-  sandbox.run('resolve', '--repo', repo, '--tip', tips[1], '--fixed-by', tips[1]);
+  assert.equal(sandbox.run('resolve', '--repo', repo, '--tip', tips[1], '--fixed-by', tips[2]).status, 0);
   assert.equal(shouldAudit(sandbox).json().streak, 0);
 });
 
 test('a new record after a resolve reopens a pending state (the resolve covered the older state only)', () => {
   const sandbox = makeSandbox();
-  const { repo, base, tips } = makeHistory(1);
-  record(sandbox, repo, tips[0], base, 'error');
-  sandbox.run('resolve', '--repo', repo, '--tip', tips[0], '--fixed-by', tips[0]);
+  const { repo, base, tips } = makeHistory(2);
+  record(sandbox, repo, tips[0], base, 'done', 2);
+  assert.equal(sandbox.run('resolve', '--repo', repo, '--tip', tips[0], '--fixed-by', tips[1]).status, 0);
   record(sandbox, repo, tips[0], base, 'pending');
+  assert.equal(sandbox.run('gate', '--repo', repo, '--tip', 'HEAD').status, 1);
+});
+
+test('resolve closes only an unresolved done record with findings; a pending or error audit needs an audit record', () => {
+  for (const state of ['pending', 'error']) {
+    const sandbox = makeSandbox();
+    const { repo, base, tips } = makeHistory(2);
+    record(sandbox, repo, tips[0], base, state);
+    assert.equal(sandbox.run('resolve', '--repo', repo, '--tip', tips[0], '--fixed-by', tips[1]).status, 2, `${state} is not resolved by a fix`);
+    assert.equal(sandbox.run('gate', '--repo', repo, '--tip', 'HEAD').status, 1, `${state} still closes the gate`);
+  }
+  const sandbox = makeSandbox();
+  const { repo, base, tips } = makeHistory(2);
+  record(sandbox, repo, tips[0], base, 'done', 0);
+  assert.equal(sandbox.run('resolve', '--repo', repo, '--tip', tips[0], '--fixed-by', tips[1]).status, 2, 'a clean audit has nothing to resolve');
+  assert.equal(sandbox.run('resolve', '--repo', repo, '--tip', tips[1], '--fixed-by', tips[1]).status, 2, 'a tip with no record');
+});
+
+test('resolve refuses a fix that is the tip itself, and an already resolved finding', () => {
+  const sandbox = makeSandbox();
+  const { repo, base, tips } = makeHistory(2);
+  record(sandbox, repo, tips[0], base, 'done', 3);
+  assert.equal(sandbox.run('resolve', '--repo', repo, '--tip', tips[0], '--fixed-by', tips[0]).status, 2);
+  assert.equal(sandbox.run('gate', '--repo', repo, '--tip', 'HEAD').status, 1);
+  assert.equal(sandbox.run('resolve', '--repo', repo, '--tip', tips[0], '--fixed-by', tips[1]).status, 0);
+  assert.equal(sandbox.run('resolve', '--repo', repo, '--tip', tips[0], '--fixed-by', tips[1]).status, 2, 'resolved once');
+});
+
+test('resolving one tip leaves another unresolved finding closing the gate', () => {
+  const sandbox = makeSandbox();
+  const { repo, base, tips } = makeHistory(3);
+  record(sandbox, repo, tips[0], base, 'done', 1);
+  record(sandbox, repo, tips[1], tips[0], 'done', 1);
+  assert.equal(sandbox.run('resolve', '--repo', repo, '--tip', tips[0], '--fixed-by', tips[2]).status, 0);
   assert.equal(sandbox.run('gate', '--repo', repo, '--tip', 'HEAD').status, 1);
 });
 
@@ -263,6 +297,83 @@ test('gate skips a log line that is not valid JSON instead of failing open on th
   writeFileSync(sandbox.logFile, 'not json\n');
   record(sandbox, repo, tips[0], base, 'pending');
   assert.equal(sandbox.run('gate', '--repo', repo, '--tip', 'HEAD').status, 1);
+});
+
+test('gate finds an entry recorded from a subfolder or a linked worktree: the repository is the key, not the folder', () => {
+  const sandbox = makeSandbox();
+  const { repo, base } = makeHistory(0);
+  mkdirSync(join(repo, 'sub'));
+  const landed = commit(repo, 'sub/x.txt');
+  record(sandbox, join(repo, 'sub'), landed, base, 'pending');
+  const worktree = join(repo, '..', 'linked-worktree');
+  git(repo, 'worktree', 'add', '-q', '-b', 'side', worktree);
+  assert.equal(sandbox.run('gate', '--repo', repo, '--tip', 'HEAD').status, 1, 'recorded from a subfolder');
+  assert.equal(sandbox.run('gate', '--repo', realpathSync(worktree), '--tip', 'HEAD').status, 1, 'gate run from a linked worktree');
+});
+
+test('--repo must be absolute even when the folder exists, and a folder outside any repository is a usage error', () => {
+  const sandbox = makeSandbox();
+  const { repo, base, tips } = makeHistory(1);
+  const relative = sandbox.run('record', '--repo', '.', '--tip', tips[0], '--base', base, '--state', 'pending');
+  assert.equal(relative.status, 2);
+  assert.equal(sandbox.run('gate', '--repo', sandbox.home, '--tip', 'HEAD').status, 2, 'not a git repository');
+});
+
+test('record done needs a non-empty range: the base must be a strict ancestor of the tip', () => {
+  const sandbox = makeSandbox();
+  const { repo, base, tips } = makeHistory(2);
+  assert.equal(record(sandbox, repo, tips[0], tips[0], 'done', 0).status, 2, 'base equal to tip: an empty audit is not a clean one');
+  assert.equal(record(sandbox, repo, tips[0], tips[1], 'done', 0).status, 2, 'base after the tip');
+  assert.equal(record(sandbox, repo, tips[0], base, 'done', 0).status, 0);
+  assert.equal(record(sandbox, repo, tips[0], tips[0], 'pending').status, 0, 'other states keep any base');
+});
+
+test('record --reviewed keeps the range base..reviewed tip while the landed sha stays the gate key', () => {
+  const sandbox = makeSandbox();
+  const { repo, base } = makeHistory(0);
+  git(repo, 'switch', '-q', '-c', 'lane');
+  const reviewed = commit(repo, 'lane.txt');
+  git(repo, 'switch', '-q', 'main');
+  commit(repo, 'other.txt');
+  git(repo, 'switch', '-q', 'lane');
+  git(repo, 'rebase', '-q', 'main');
+  git(repo, 'switch', '-q', 'main');
+  git(repo, 'merge', '-q', '--ff-only', 'lane');
+  const landed = git(repo, 'rev-parse', 'HEAD');
+  const result = sandbox.run('record', '--repo', repo, '--tip', landed, '--base', base, '--reviewed', reviewed, '--state', 'done', '--confirmed', '0');
+  assert.equal(result.status, 0, result.stderr);
+  const entry = JSON.parse(sandbox.lines()[0]);
+  assert.equal(entry.reviewed, reviewed);
+  assert.equal(entry.tip, landed);
+  const outside = sandbox.run('record', '--repo', repo, '--tip', landed, '--base', base, '--reviewed', 'f'.repeat(40), '--state', 'pending');
+  assert.equal(outside.status, 2, 'an unknown reviewed commit');
+});
+
+test('a torn last line (a crash mid-write) does not swallow the record appended after it', () => {
+  const sandbox = makeSandbox();
+  const { repo, base, tips } = makeHistory(1);
+  writeFileSync(sandbox.logFile, '{"at":"2026-01-01T00:00:00.000Z","repo":"/x","ti');
+  assert.equal(record(sandbox, repo, tips[0], base, 'pending').status, 0);
+  assert.equal(sandbox.run('gate', '--repo', repo, '--tip', 'HEAD').status, 1);
+});
+
+test('record exits 1 when the log cannot be written (the audit workflow relies on a loud failure)', () => {
+  const sandbox = makeSandbox();
+  const { repo, base, tips } = makeHistory(1);
+  const blocker = join(sandbox.home, 'blocker');
+  writeFileSync(blocker, 'a file, not a folder');
+  const env = { ...sandbox.env, REVIEW_AUDIT_LOG: join(blocker, 'review-audit.jsonl') };
+  const result = spawnSync(process.execPath, [CLI, 'record', '--repo', repo, '--tip', tips[0], '--base', base, '--state', 'pending'], { encoding: 'utf8', env });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /log not written/);
+});
+
+test('should-audit --escalate and the streak: escalate is accepted by the CLI, and one tip recorded done twice counts once', () => {
+  const sandbox = makeSandbox();
+  const { repo, base, tips } = makeHistory(1);
+  for (let count = 0; count < 3; count += 1) record(sandbox, repo, tips[0], base, 'done', 0);
+  assert.equal(shouldAudit(sandbox, '--escalate').json().streak, 1, 'the same tip three times is one clean lane');
+  assert.equal(shouldAudit(sandbox, '--escalate').status, 0);
 });
 
 test('stats counts each tip by its newest state and reports the last miss', () => {
@@ -342,4 +453,43 @@ test('pre-push without audit-log.mjs in the repo behaves as before (gate skipped
   git(repo, 'commit', '-q', '-m', 'drop audit-log');
   const result = push();
   assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
+/** A hook repo with a bare `origin` that has main at the seed commit, the hook enabled, and one landed commit recorded pending. */
+function makePushRepo() {
+  const { sandbox, repo, base, push } = makeHookRepo();
+  const bare = join(repo, '..', 'origin.git');
+  git(join(repo, '..'), 'init', '-q', '--bare', bare);
+  git(repo, 'remote', 'add', 'origin', bare);
+  git(repo, 'push', '-q', 'origin', 'main');
+  const landed = commit(repo, 'lane.txt');
+  git(repo, 'config', 'core.hooksPath', '.githooks'); // after the commit: the pre-commit hook needs files this fixture lacks
+  record(sandbox, repo, landed, base, 'pending');
+  const gitPush = (cwd, ...args) => spawnSync('git', ['push', ...args], { cwd, encoding: 'utf8', env: sandbox.env });
+  return { sandbox, repo, base, landed, push, gitPush, remoteMain: () => git(bare, 'rev-parse', 'refs/heads/main') };
+}
+
+test('pre-push gates the pushed commits, not HEAD of the folder it runs in', { skip: skipBash }, () => {
+  const fixture = makePushRepo();
+  const worktree = join(fixture.repo, '..', 'linked-worktree');
+  git(fixture.repo, 'worktree', 'add', '-q', '--detach', worktree, fixture.base);
+  fixture.gitPush(worktree, 'origin', 'main');
+  assert.equal(fixture.remoteMain(), fixture.base, 'a push of main from a linked worktree at an older commit must stop');
+  git(fixture.repo, 'checkout', '-q', '--detach', fixture.base);
+  fixture.gitPush(fixture.repo, 'origin', 'main');
+  assert.equal(fixture.remoteMain(), fixture.base, 'a push of main while HEAD is detached at an older commit must stop');
+  git(fixture.repo, 'checkout', '-q', 'main');
+  fixture.gitPush(fixture.repo, 'origin', 'main');
+  assert.equal(fixture.remoteMain(), fixture.base, 'the plain push stops too');
+  record(fixture.sandbox, fixture.repo, fixture.landed, fixture.base, 'done', 0);
+  fixture.gitPush(fixture.repo, 'origin', 'main');
+  assert.equal(fixture.remoteMain(), fixture.landed, 'a settled audit lets the push through');
+});
+
+test('pre-push still gates after a recorded suite pass (the cached pass must not skip the audit gate)', { skip: skipBash }, () => {
+  const fixture = makePushRepo();
+  spawnSync(process.execPath, ['home/tools/test-pass/test-pass.mjs', 'run', '--suite', '--quiet'], { cwd: fixture.repo, env: fixture.sandbox.env });
+  const result = fixture.push();
+  assert.match(result.stdout, /already passed/);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
 });
