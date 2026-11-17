@@ -50,7 +50,7 @@ test('a plain lead Agent call is never sent back for a workflow: every agent typ
 
 // The copy-branch gate through the hook: a real temp repo holds the lane branch; the agent's cwd is that repo.
 function repoSession({ envExtra, ...options } = {}) {
-  const s = session({ ...options, envExtra: { COPY_BRANCH_GIT_TIMEOUT_MS: String(GIT_TIMEOUT_FOR_TESTS_MS), ...envExtra } });
+  const s = session({ ...options, envExtra: { COPY_BRANCH_GIT_TIMEOUT_MS: String(GIT_TIMEOUT_FOR_TESTS_MS), COPY_BRANCH_DEADLINE_MS: String(GIT_TIMEOUT_FOR_TESTS_MS), ...envExtra } });
   const repo = makeRepo();
   git(repo, 'branch', 'lane/x');
   return { ...s, send: (toolInput) => s.send(toolInput, { cwd: repo }) };

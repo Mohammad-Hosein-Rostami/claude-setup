@@ -3,6 +3,9 @@
 // The git repos are real temp repos (tests/git-tidy-helpers.mjs).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import { branchNames, copyBranchBriefAdvice, copyBranchStem } from '../home/hooks/lib/copy-branch-brief.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -81,4 +84,28 @@ test('branchNames still finds `-b <name>` a few words after `worktree add`, acro
   assert.deepEqual(branchNames('git worktree add ../wt\n-b lane/x-2').created, []);
   assert.deepEqual(branchNames(`${'x'.repeat(40 * 1024)}\ngit checkout -b lane/x-2`).created, [], 'text past the scan limit is not read');
   assert.deepEqual(branchNames('git checkout -b (`lane/x-2`),').created, ['lane/x-2']);
+});
+
+// Round 6 review (L2): 16 candidate names x 1 s per git call ran past the hook's 5 s timeout, and a killed hook skips the later gates and the model pin.
+test('a slow git cannot hold the gate past its total deadline: later names are not looked up and the brief passes (fail open)', { skip: process.platform === 'win32' && 'the fake git is a shell script' }, () => {
+  const bin = makeTempDir('copy-brief-slow-git-');
+  const calls = join(bin, 'calls.log');
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\necho call >> '${calls}'\nsleep 0.3\nexit 1\n`);
+  chmodSync(join(bin, 'git'), 0o755);
+  spawnSync(join(bin, 'git')); // the first run of a new script can take long (macOS scans it); keep that out of the measured calls
+  writeFileSync(calls, '');
+  const names = Array.from({ length: 8 }, (_, index) => `lane/slow-${index}`);
+  const prompt = [...names.map((name) => `new branch off ${name}`), ...names.map((name) => `git checkout -b ${name}-2`)].join('\n');
+  const saved = { path: process.env.PATH, deadline: process.env.COPY_BRANCH_DEADLINE_MS };
+  process.env.PATH = `${bin}${delimiter}${saved.path}`;
+  process.env.COPY_BRANCH_DEADLINE_MS = '1000'; // the real default is 2 s; a shorter one keeps the test fast
+  try {
+    assert.deepEqual(copyBranchBriefAdvice(input(repoWithLane(), prompt), ENV), { deny: false });
+  } finally {
+    process.env.PATH = saved.path;
+    if (saved.deadline === undefined) delete process.env.COPY_BRANCH_DEADLINE_MS;
+    else process.env.COPY_BRANCH_DEADLINE_MS = saved.deadline;
+  }
+  const started = readFileSync(calls, 'utf8').trim().split('\n').length;
+  assert.ok(started >= 1 && started <= 5, `git started ${started} times for 16 names; the deadline should stop it after about 3`);
 });
