@@ -79,8 +79,9 @@ const LINE_RULES = [
   { cls: 'security', test: /\bexec\b/, alsoInFile: /child_process|execa/ },
   { cls: 'security', test: words('password|secret|apiKey|api_key|bearer|jwt|createHash|createHmac|randomBytes|Authorization|cookie|permissionDecision') },
   { cls: 'security', test: /\$queryRaw|\.raw\(/ },
-  { cls: 'data', test: /ALTER TABLE|DROP (TABLE|COLUMN|INDEX)|CREATE (TABLE|INDEX)|DELETE FROM|TRUNCATE|\b(deleteMany|updateMany|createMany)\b|\$executeRaw|\.(delete|update|upsert|destroy)\(\s*\{/i },
-  { cls: 'money', test: words(MONEY_WORDS) },
+  { cls: 'data', test: /ALTER TABLE|DROP (TABLE|COLUMN|INDEX)|CREATE (TABLE|INDEX)|DELETE FROM|TRUNCATE TABLE|\b(deleteMany|updateMany|createMany)\b|\$executeRaw|\.(delete|update|upsert|destroy)\(\s*\{/i },
+  { cls: 'data', test: /\bTRUNCATE\b/ }, // upper case only: `truncated` and truncate(text) are ordinary code
+  { cls: 'money', test: new RegExp(`(?<!git\\s+)\\b(${MONEY_WORDS})s?\\b`, 'i') }, // `git checkout` is not a shop checkout
   { cls: 'untrusted-input', test: /\breq\.(body|query|params|headers)|\brequest\.(body|query|params|json\()|JSON\.parse\(|process\.stdin|readFileSync\(\s*(0|['"]\/dev\/stdin['"])/ },
   { cls: 'untrusted-input', test: hasUntrustedArgument(/\bfetch\(/, false) },
   { cls: 'untrusted-input', test: hasUntrustedArgument(/\bpath\.(join|resolve)\(/, true) },
