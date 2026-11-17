@@ -78,7 +78,7 @@ test('read rule: a call whose arguments go on to the next line counts as a hit',
 test('write rule: a write call with a non-literal first argument is data; a literal target is not', () => {
   for (const line of [
     'writeFileSync(path, text)', 'await appendFile(log, line)', 'createWriteStream(out)', 'copyFileSync(a, b)', 'cpSync(a, b, { recursive: true })',
-    'renameSync(a, b)', 'symlinkSync(target, link)', 'mkdirSync(join(dir, "x"))', 'await cp(src, dest)',
+    'renameSync(a, b)', 'symlinkSync(target, link)', 'mkdirSync(join(dir, "x"))', 'await cp(src, dest)', 'writeFileSync(__dirname, text)', 'mkdirSync(homedir())',
   ]) assert.ok(codeLine(line).classes.includes('data'), line);
   for (const line of ['writeFileSync("out.txt", text)', "appendFileSync('a.log', line)", 'mkdirSync("tmp", { recursive: true })', 'cpSync("a", b)']) {
     assert.ok(!codeLine(line).classes.includes('data'), line);

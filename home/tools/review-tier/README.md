@@ -2,7 +2,8 @@
 
 Reads a git range and says which reviews to run together for it: the agent, model, effort, lens, a ready brief and the
 checks to plan (stress, race, mutation). It only ADDS planned checks: reviewers and auditors keep their own loops, stress
-and mutants; the only thing the plan replaces is a full-suite re-run (the test-pass record covers that). Node 22, no
+and mutants; the only thing the plan replaces is a full-suite re-run (the test-pass record covers that). The one exception is
+`waivable` (below): the Opus max pair of a clean tier-1 landing moves from before land to after it. Node 22, no
 dependencies; it reads git and writes one log line.
 
 Run: `node ~/.claude/tools/review-tier/review-tier.mjs [<range>] [--landing] [--delta <reviewed-sha>] [--lane-classes <file>] [--add-class <c>]... [--base <b>] [--json]`
@@ -19,7 +20,8 @@ Exit 0 printed, 1 git failed (not a repository, git error), 2 usage (bad range, 
 Text output: `review-tier: tier <n> (<classes>), <files> files, <lines> changed lines, <range>`, then `why:` (one
 `<class> <path>:<line>` per class), `run together:` (one line per review) and the command for the next fix round.
 `--json` prints the whole report: `tier`, `classes`, `added`, `landing`, `range`, `files`,
-`changedLines`, `hits`, `fileClasses`, `reviews` (each with `plan: {stress, race, mutation}` and `requiredReading`), `deltaOf`.
+`changedLines`, `hits`, `fileClasses`, `reviews` (each with `plan: {stress, race, mutation}` and `requiredReading`), `waivable`,
+`weakened`, `principles`, `deltaOf`. The text output has one line each for `waivable:`, `weakened:` and `principles:`.
 Line texts are matched in memory and never printed or logged. The log is `~/.claude/logs/review-tier.jsonl`
 (`REVIEW_TIER_LOG` overrides; folder 0700, file 0600): `ts, repo, range, tier, classes, files, changedLines, landing, added`.
 
@@ -31,17 +33,52 @@ code files (not tests, docs or prose files); a "file also has" condition reads t
 | Class (tier) | Hit by | Reviews added |
 | ------------ | ------ | ------------- |
 | docs (0) | README, CHANGELOG, LICENSE, `docs/`, `.md .txt .png .jpg` that are not behaviour text | none mid-lane; at `--landing` the Sonnet lens |
+| gate (1, not risky) | a path that holds a gate: settings, `home/{claude.md,modes,agents,rules,workflows}`, the `wf-*` and `verify-done` skills, `home/tools/{review-tier,test-pass,git-tidy}`, `scripts/{affected-tests.mjs,doctor.sh}`, `.githooks/`, `.husky/`, CI files, `package.json`, `tsconfig*.json`, eslint, vitest, jest and playwright config (`GATE_PATH` in `tiers.mjs`). Docs count: a README in a gate folder is gate. | the tier-1 set; the class only removes the waiver |
 | behaviour, tests, logic, ui, infra (1) | `CLAUDE.md`, `.claude/`, `home/{modes,rules,agents,skills,standards,workflows}/`; test paths; anything else; `.tsx .vue .css`...; Dockerfile, `.github/`, `.tf` | Sonnet high correctness lens (`reviewer`, rules `core` plus the domain); ui adds the `ui-quality-pass` skill line |
-| security (2, risky) | path words (auth, session, token, secret, permission, guard, crypto ...), lockfiles; lines with exec, spawn, eval, innerHTML, password, secret, cookie, Authorization, `$queryRaw` ... | Opus max lens + auditor Opus max + mutation plan |
-| data (2, risky) | migrations, prisma, `.sql`, `schema.`; ALTER/DROP/CREATE/DELETE FROM/TRUNCATE, `deleteMany`, `.delete({` ... | same |
+| security (2, risky) | path words (auth, session, token, secret, permission, guard, crypto ...), lockfiles; lines with exec, spawn, eval, innerHTML, password, secret, cookie, Authorization, `$queryRaw` ...; credentials: `access/auth/api/bearer/refresh/session/github/npm/oauth` + `token(s)`, `credential(s)`, `private key`, `.env`, `keychain` | Opus max lens + auditor Opus max + mutation plan |
+| data (2, risky) | migrations, prisma, `.sql`, `schema.`; ALTER/DROP/CREATE/DELETE FROM/TRUNCATE, `deleteMany`, `.delete({` ...; a write call (`writeFile`, `appendFile`, `createWriteStream`, `copyFile`, `cp`, `rename`, `symlink`, `mkdir`, with or without `Sync`) whose first argument is not a literal, so its target cannot be shown to be in the repo; `state-dir` / `stateDir` (the store override of principle P8); a delete (`rm`, `unlink`, `rmdir`, `rm -r`/`-f`, `git branch -D`, `git worktree remove`, `git reset --hard`, `git clean -f`, `git push` with `--force` or `-f`) | same |
 | money (2, risky) | payment, invoice, billing, refund, checkout, stripe, wallet, ledger (path or line; `git checkout` excluded) | same |
-| untrusted-input (2, risky) | `req.body`, `JSON.parse(`, `process.stdin`, `fetch(` and `path.join(` with a non-literal argument (`__dirname`, `process.cwd()`, `homedir()` count as literal) | same |
+| untrusted-input (2, risky) | `req.body`, `JSON.parse(`, `process.stdin`, `fetch(` and `path.join(` with a non-literal argument (`__dirname`, `process.cwd()`, `homedir()` count as literal); a read call (`readFile(Sync)`, `createReadStream`, `readSync`, `readdir(Sync)`, `opendir(Sync)`, `readlink(Sync)`) whose first argument is not a literal or such a root | same |
 | audit (2) | a file under `hooks/` with no security hit | auditor Opus high mid-lane, Opus max at `--landing` |
 | size (2) | more than 400 changed lines | Opus high lens |
 | concurrency-lite (2) | `link(`, `Promise.all(`, timers, in a file that also writes | Opus high lens + stress or race plan |
 | concurrency (3, risky) | a `lock` path or word, mutex, flock, `O_EXCL`, `'wx'`, transactions; `rename(`, `unlink(`, `rm(`, `rmdir(`, `mkdir(` without `recursive`; `existsSync(`/`stat(` in a file that also writes, renames, removes or opens | Opus max lens + the plan below |
 
 Every `--landing` of tier 1 or more adds the Opus max lens and the auditor at Opus max (the last review before a push).
+
+## Waivable, weakened and principles
+
+- `waivable` (with `--landing`): `null`, or `{reviews, audit}` only when the landing is tier 1 and no file is `gate`. `reviews` run before
+  land: the Sonnet high correctness lens (carrying the mutation plan when the diff has code, since the risk lens is not run) and the
+  `ui-quality-pass` line for ui. `audit` is the Opus max `risk: landing` lens and the auditor `audit: landing`, run after land and before
+  any sync or push (the caller decides when, see `audit-log`). Both name the report's `range`.
+- I1 (the rule behind it): review-tier only adds checks; the one exception is `waivable`: a tier-1, non-gate landing whose contract passed
+  (`waiverAt`) runs `waivable.reviews` before land and `waivable.audit` after land, before any sync or push, as `audit-log` decides.
+- `weakened`: `{path, line, kind}` for added lines of test files and test, lint and type config that weaken a check: `only`
+  (`.only(`, `only: true`), `skip` (`.skip(`, `skip: <not false>`), `todo`, `ignore` (`ts-ignore`, `ts-nocheck`, `eslint-disable`),
+  `bound` (a removed and an added line equal once digits are masked, the numbers differ), `removed-test` and `removed-assert`
+  (removed `test(`/`it(`/`describe(` or `assert`/`expect(` lines beyond the added ones). A caller must not waive while it is non-empty.
+  A platform skip such as `{ skip: process.platform === 'win32' }` counts too: it is a skip, and the full set is the safe answer.
+- `principles`: the ids (`P<n>`, sorted by number) that the hits ask the brief to carry, from `PRINCIPLES_BY_TRIGGER` in `tiers.mjs`:
+  read rule P1 P5; write rule P7 P8; delete rule P2 P8; a security hit on a line with `git` P2; gate P3; a `hooks/` path P1 P9;
+  untrusted-input P5 P12; `setTimeout`/`setInterval` P9.
+
+## Waiver population (measured)
+
+How many of the replay's fix commits (`evidence-defect-replay.md`, round 5) a waiver would have covered. One scripted run of
+`review-tier <sha>^..<sha> --landing --json` at each of the 25 commits the replay names (22 items; items without a named commit are
+not measured), with the classifier of this version. Found by: A auditor, R reviewer, `-` not recorded.
+
+| Result | Items (commits) | Found by |
+| ------ | --------------- | -------- |
+| tier 1, no gate: waivable | 67 (9307a36, b1d165f, e725471), 74 (c403eec), 75 (a4cafec), 76 (137cd18) | R, R, `-`, `-` |
+| tier 2 or 3, no gate | 61, 62, 63, 64, 69 (2 commits), 70, 71, 72, 73, 80, 81, 82, 83, 84 | A, except 72 (`-`) |
+| tier 2 or 3 and gate | 77, 78, 79, 85 | A |
+
+4 of 22 items (6 of 25 commits) stay waivable, 18 % of the items; none of the 17 auditor-found items is among them. Items 71 and 73 are
+tier 2 (acceptance of lane R1). `weakened` was non-empty on 5 commits (70, 77, 78, 82, 85), each a platform `skip:` or `t.skip(`
+in a test, all of them already tier 2 or more. The population is small and each item's class is one reader's judgement: it is a
+measurement, not a miss-rate bound.
 
 ## The plan (checks to run, never fewer than the reviewer would choose)
 
@@ -59,4 +96,6 @@ Every `--landing` of tier 1 or more adds the Opus max lens and the auditor at Op
 - Hits are capped at 20 per class and file, so a generated file cannot make the JSON huge; the class still applies.
 
 Files: `review-tier.mjs` (CLI), `tiers.mjs` (class rules), `lib/diff.mjs` (git reading, delta, required reading), `lib/reviews.mjs`
-(sets, plans, briefs), `lib/report.mjs` (report, text, JSON), `lib/log.mjs`. Tests: `tests/review-tier.test.mjs`.
+(sets, plans, briefs, waivable), `lib/report.mjs` (report, text, JSON), `lib/weakened.mjs` (weakened checks), `lib/log.mjs`. Tests:
+`tests/review-tier.test.mjs`, `review-tier-cli`, `review-tier-gate` (gate, line rules, principles, items 71 and 73), `review-tier-waivable`,
+`review-tier-weakened`.
