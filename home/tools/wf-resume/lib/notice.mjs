@@ -60,7 +60,7 @@ function unfinishedEntries(params, deps) {
 const mayBeRunning = (entry, params) => entry.state.state === 'unfinished' && ((params.source === 'compact' && entry.isOwn) || (entry.state.ageMs < LIVE_WINDOW_MS && !(params.source === 'resume' && entry.isOwn)));
 
 function progressLine(state) {
-  if (state.state === 'lost') return 'journal not found: nothing to resume from; re-run the script with the same args (a saved workflow skips finished work when given `resume: true`)';
+  if (state.state === 'lost') return 'journal not found: nothing to resume from; re-run the script with the same args (`build` also takes `resume: true` and skips lanes STATUS.md shows landed; `land` and `review` read the git state themselves)';
   const cut = state.interruptedCount === 0 ? 'no agent was cut off' : `interrupted: ${state.interrupted.join(', ')}${state.interruptedCount > state.interrupted.length ? ` and ${state.interruptedCount - state.interrupted.length} more` : ''}`;
   return `done: ${plural(state.done, 'agent')}; ${cut}; not reached: ${state.notReached.length === 0 ? 'none known' : state.notReached.join(', ')}`;
 }

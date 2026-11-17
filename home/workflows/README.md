@@ -13,7 +13,7 @@ Args marked `?` are optional. Every script also accepts `scriptsDir` (this folde
 
 | script | skill | phases | args |
 | --- | --- | --- | --- |
-| `build.js` | `wf-build` | Build, Join, Review, Land | `base, repo, suite, writers, statusFile, scriptsDir, lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?}]` |
+| `build.js` | `wf-build` | Build, Join, Review, Land | `base, repo, suite, writers, statusFile, scriptsDir, resume?, lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?}]` |
 | `review.js` | `wf-review` | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, initialFindings?` |
 | `land.js` | `wf-land` | Rebase, Suite, Land | `row, closeRow, statusFile, repo, base, branch, worktree, suite, tip` |
 | `step.js` | `wf-step` | Step | `row, agentType, prompt, model, effort, isolation?, alone?, statusFile?` |
@@ -41,6 +41,15 @@ Args marked `?` are optional. Every script also accepts `scriptsDir` (this folde
   child, then a serial land queue through the `land` child, so lane A lands while lane B is still in review. A conflict or changed patches go back through `review`.
   A lane whose review is clean but whose `leadList` holds a security finding ruled not real is held (`lead-decision`), never landed. `build` is run from its script file only: its children cannot run from an inline script.
 - `step` runs one agent with the given type, model and effort. A workflow spawn does not fire `agent-model-guard`, so `step` repeats its gates by shape: a UI agent needs a `MATRIX:` line, a writer needs `isolation` or `alone: true`, `statusFile` adds the standing-rules line.
+
+## Restart (after a stop that lost the journal)
+
+The Workflow tool resumes a run from its journal (`resumeFromRunId`, see `docs/daily-use.md`, "Resume after an exit"); `tools/wf-resume` finds the runs and
+copies the journal into a new session. When the journal is gone the script is run again with the same args, so each script checks the real state first:
+`land` looks a vanished branch up on the base (`git cherry`: no patch of the reviewed tip missing) and returns `landed` with the base tip and records the
+close row; `build` takes `resume: true` and skips a lane whose close row STATUS.md shows landed; `review` removes the review worktree a killed run left at
+the same path. A lane worktree a killed fix agent still holds (its branch checked out there) is not repaired by a script: the resume notice names the
+worktrees and branches a run owns, and the lead continues that lane from them.
 
 ## Worktree protocol (why the scripts look like this)
 

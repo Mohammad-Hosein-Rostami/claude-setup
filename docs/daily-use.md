@@ -113,6 +113,13 @@ History stays one straight line (rule C37): no merge commits, no branch merged i
   "continue from HANDOFF.md".
 - Start a fresh session for an unrelated task, or when context is large and the next step is a new phase.
 
+## Resume after an exit or an account switch
+Workflow runs keep a journal on disk, so an exit, a usage-limit stop or a switch of account loses no finished agent.
+1. Start the session again: `ccm <mode> -c` (or `claude --resume <session id>`) in the same folder. After a switch of account, start it in the same folder with the other account.
+2. The start notice (`<workflow-resume>`) lists every unfinished run of the folder: what finished, what was cut off, the worktrees and branches it owns, the STATUS.md last used. Say "/wf-resume" and the lead continues each run (same script and args; a run of another session gets its journal copied in first).
+3. A run marked "may still be running" is left alone until `/workflows` shows it ended. `node ~/.claude/tools/wf-resume/wf-resume.mjs list` prints the notice again at any time.
+Only the session that owns a journal can resume it by itself; the copy step (`wf-resume.mjs adopt`) is what makes a new session able to. Re-check it after a Claude Code upgrade: it relies on the undocumented folder layout.
+
 ## At a usage limit
 Wait for the subscription reset. Never turn on credits, `/fast`, or `/code-review ultra`. In `ultra-high`, a Fable
 cap means `ccm extra-high -c`, not credits.
