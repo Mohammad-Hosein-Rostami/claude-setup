@@ -118,7 +118,7 @@ test('credential rule: tokens, credentials, private keys, .env and keychain are 
 });
 
 test('credential rule: a `.env` file is security; process.env, a spread env and import.meta.env are ordinary code', () => {
-  for (const line of ["join(dir, '.env.local')", 'cat .env', 'const file = `${root}/.env`;']) assert.ok(codeLine(line).classes.includes('security'), line);
+  for (const line of ["join(dir, '.env.local')", 'cat .env', 'const file = `${root}/.env`;', "readFileSync('prod.env')", 'load("config/docker.env")']) assert.ok(codeLine(line).classes.includes('security'), line);
   for (const line of ['const quiet = process.env.QUIET === "1";', 'const merged = { ...env, A: 1 };', 'const mode = import.meta.env.MODE;', 'const home = options.env.HOME;']) {
     assert.ok(!codeLine(line).classes.includes('security'), line);
   }
