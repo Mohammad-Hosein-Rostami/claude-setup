@@ -1,14 +1,17 @@
 // Tests for home/hooks/lib/copy-branch-brief.mjs (git-root-cause proposal 2): a writer brief that creates `<lane>-2` while `<lane>` exists,
 // or says "new branch off <existing>", is advised once; the lane's own name, a brief with no branch and a read-only agent are not.
 // The git repos are real temp repos (tests/git-tidy-helpers.mjs).
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
-import { branchNames, copyBranchBriefAdvice, copyBranchStem } from '../home/hooks/lib/copy-branch-brief.mjs';
+import { TOTAL_DEADLINE_MS, branchNames, copyBranchBriefAdvice, copyBranchStem } from '../home/hooks/lib/copy-branch-brief.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+
+const NO_FAKE_GIT = process.platform === 'win32' && 'the fake git is a shell script';
+const KNOBS = ['COPY_BRANCH_DEADLINE_MS', 'COPY_BRANCH_GIT_TIMEOUT_MS'];
 
 const EMPTY_HOME = makeTempDir('copy-brief-home-');
 const ENV = { HOME: EMPTY_HOME, USERPROFILE: EMPTY_HOME };
@@ -86,26 +89,116 @@ test('branchNames still finds `-b <name>` a few words after `worktree add`, acro
   assert.deepEqual(branchNames('git checkout -b (`lane/x-2`),').created, ['lane/x-2']);
 });
 
-// Round 6 review (L2): 16 candidate names x 1 s per git call ran past the hook's 5 s timeout, and a killed hook skips the later gates and the model pin.
-test('a slow git cannot hold the gate past its total deadline: later names are not looked up and the brief passes (fail open)', { skip: process.platform === 'win32' && 'the fake git is a shell script' }, () => {
-  const bin = makeTempDir('copy-brief-slow-git-');
+/**
+ * Puts a fake `git` first on PATH: it appends a line to a log when it starts, runs `body`, then exits with `status`.
+ * @returns {{ starts: () => number, restore: () => void }} the number of times it started, and the undo of the PATH change
+ */
+function fakeGit(body, status) {
+  const bin = makeTempDir('copy-brief-fake-git-');
   const calls = join(bin, 'calls.log');
-  writeFileSync(join(bin, 'git'), `#!/bin/sh\necho call >> '${calls}'\nsleep 0.3\nexit 1\n`);
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\necho call >> '${calls}'\n${body}\nexit ${status}\n`);
   chmodSync(join(bin, 'git'), 0o755);
   spawnSync(join(bin, 'git')); // the first run of a new script can take long (macOS scans it); keep that out of the measured calls
   writeFileSync(calls, '');
-  const names = Array.from({ length: 8 }, (_, index) => `lane/slow-${index}`);
-  const prompt = [...names.map((name) => `new branch off ${name}`), ...names.map((name) => `git checkout -b ${name}-2`)].join('\n');
-  const saved = { path: process.env.PATH, deadline: process.env.COPY_BRANCH_DEADLINE_MS };
-  process.env.PATH = `${bin}${delimiter}${saved.path}`;
-  process.env.COPY_BRANCH_DEADLINE_MS = '1000'; // the real default is 2 s; a shorter one keeps the test fast
-  try {
-    assert.deepEqual(copyBranchBriefAdvice(input(repoWithLane(), prompt), ENV), { deny: false });
-  } finally {
-    process.env.PATH = saved.path;
-    if (saved.deadline === undefined) delete process.env.COPY_BRANCH_DEADLINE_MS;
-    else process.env.COPY_BRANCH_DEADLINE_MS = saved.deadline;
+  const savedPath = process.env.PATH;
+  process.env.PATH = `${bin}${delimiter}${savedPath}`;
+  return {
+    starts: () => readFileSync(calls, 'utf8').split('\n').filter(Boolean).length,
+    restore: () => { process.env.PATH = savedPath; },
+  };
+}
+
+/** Runs `run` with the two COPY_BRANCH knobs set to `values` (a knob not named is unset), then puts them back. */
+function withKnobs(values, run) {
+  const saved = Object.fromEntries(KNOBS.map((name) => [name, process.env[name]]));
+  for (const name of KNOBS) {
+    if (values[name] === undefined) delete process.env[name];
+    else process.env[name] = values[name];
   }
-  const started = readFileSync(calls, 'utf8').trim().split('\n').length;
-  assert.ok(started >= 1 && started <= 5, `git started ${started} times for 16 names; the deadline should stop it after about 3`);
+  try {
+    return run();
+  } finally {
+    for (const name of KNOBS) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
+  }
+}
+
+function sixteenNames() {
+  const names = Array.from({ length: 8 }, (_, index) => `lane/slow-${index}`);
+  return [...names.map((name) => `new branch off ${name}`), ...names.map((name) => `git checkout -b ${name}-2`)].join('\n');
+}
+
+const HOOK_TIMEOUT_MS = JSON.parse(readFileSync(new URL('../settings/base.json', import.meta.url), 'utf8'))
+  .hooks.PreToolUse.flatMap((entry) => entry.hooks).find((hook) => hook.command.includes('agent-model-guard.mjs')).timeout * 1000;
+
+test('the total deadline is well under the hook timeout in settings/base.json, so the later gates and the model pin still run', () => {
+  assert.ok(Number.isInteger(HOOK_TIMEOUT_MS) && HOOK_TIMEOUT_MS > 0, `hook timeout ${HOOK_TIMEOUT_MS}`);
+  assert.ok(TOTAL_DEADLINE_MS * 2 <= HOOK_TIMEOUT_MS, `${TOTAL_DEADLINE_MS} ms is not well under the ${HOOK_TIMEOUT_MS} ms hook timeout`);
+});
+
+// Round 6 review (L2): 16 candidate names x 1 s per git call ran past the hook's 5 s timeout, and a killed hook skips the later gates and the model pin.
+test('with no knob set, a slow git cannot hold the gate past the production deadline: later names are not looked up and the brief passes (fail open)', { skip: NO_FAKE_GIT }, () => {
+  const fake = fakeGit('sleep 0.5', 1);
+  try {
+    const started = performance.now();
+    const advice = withKnobs({}, () => copyBranchBriefAdvice(input(repoWithLane(), sixteenNames()), ENV));
+    const elapsed = performance.now() - started;
+    assert.deepEqual(advice, { deny: false });
+    assert.ok(fake.starts() >= 2 && fake.starts() <= 5, `git started ${fake.starts()} times for 16 names; 2 s of 0.5 s calls allows about 4`);
+    assert.ok(elapsed < HOOK_TIMEOUT_MS, `${Math.round(elapsed)} ms is past the hook timeout`);
+  } finally {
+    fake.restore();
+  }
+});
+
+test('the last lookup is clipped to the time left: a git that hangs ends at the deadline, not after its own 1 s timeout', { skip: NO_FAKE_GIT }, () => {
+  const fake = fakeGit('exec sleep 5', 0);
+  try {
+    const started = performance.now();
+    const stem = withKnobs({}, () => copyBranchStem('lane/hang-2', repoWithLane(), performance.now() + 200));
+    const elapsed = performance.now() - started;
+    assert.equal(stem, null);
+    assert.equal(fake.starts(), 1);
+    assert.ok(elapsed < 700, `${Math.round(elapsed)} ms: the lookup ran past the 200 ms left (the per-call timeout is 1000 ms)`);
+  } finally {
+    fake.restore();
+  }
+});
+
+test('git never starts when no time is left: at exactly 0 ms or past the deadline the stem is not looked up', { skip: NO_FAKE_GIT }, () => {
+  const fake = fakeGit('', 0); // exits 0: every branch "exists", so only the deadline can make the answer null
+  const clock = mock.method(performance, 'now', () => 5000);
+  try {
+    assert.equal(copyBranchStem('lane/x-2', repoWithLane(), 5000), null, 'exactly 0 ms left');
+    assert.equal(copyBranchStem('lane/x-2', repoWithLane(), 4999), null, '1 ms past');
+    assert.equal(fake.starts(), 0);
+    assert.equal(copyBranchStem('lane/x-2', repoWithLane(), 5500), 'lane/x', '500 ms left starts git (control)');
+    assert.equal(fake.starts(), 1);
+  } finally {
+    clock.mock.restore();
+    fake.restore();
+  }
+});
+
+test('COPY_BRANCH_DEADLINE_MS takes only a positive whole number; -1, 0, 1.5, text and an empty value fall back to the default', { skip: NO_FAKE_GIT }, () => {
+  const repo = repoWithLane();
+  const prompt = 'git checkout -b lane/r4-w1-2';
+  const fake = fakeGit('', 0);
+  try {
+    for (const bad of ['-1', '0', '1.5', 'abc', '', 'Infinity']) {
+      const advice = withKnobs({ COPY_BRANCH_DEADLINE_MS: bad }, () => copyBranchBriefAdvice(input(repo, prompt), ENV));
+      assert.equal(advice.deny, true, `${JSON.stringify(bad)} must not switch the gate off`);
+    }
+    assert.equal(fake.starts(), 6, 'git ran once per bad value');
+  } finally {
+    fake.restore();
+  }
+  const tiny = withKnobs({ COPY_BRANCH_DEADLINE_MS: '1' }, () => {
+    const wasted = performance.now() + 5;
+    while (performance.now() < wasted); // a 1 ms deadline is gone before the first lookup
+    return copyBranchBriefAdvice(input(repo, prompt), ENV);
+  });
+  assert.equal(tiny.deny, false, 'a positive value is honoured (control)');
 });

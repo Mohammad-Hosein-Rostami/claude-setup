@@ -128,7 +128,7 @@ test('a brief the UI gate denies is not recorded as a running writer either', ()
 // In-process: the hook's own environment is the process environment there, so only a direct call can tell the env argument from process.env.
 test('copyBranchBriefDeny records under the environment it is given, and a failure inside it lets the call run', async () => {
   const s = repoSession();
-  const env = hookEnv({ HOME: s.home, USERPROFILE: s.home, COPY_BRANCH_GIT_TIMEOUT_MS: String(GIT_TIMEOUT_FOR_TESTS_MS) });
+  const env = hookEnv({ HOME: s.home, USERPROFILE: s.home });
   const input = { session_id: 'in-process-session', cwd: s.repo, tool_input: call('implementer', COPY_BRIEF) };
   assert.ok(JSON.parse(await copyBranchBriefDeny(input, env)).hookSpecificOutput.permissionDecision === 'deny');
   assert.equal(readFileSync(env.CLAUDE_GUARD_LOG, 'utf8').trim().split('\n').length, 1, 'the row went to the log of the given env');

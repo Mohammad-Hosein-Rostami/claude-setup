@@ -2,10 +2,11 @@
 // `<lane>-2`, `<lane>-fix`, `<lane>-v2`, `<lane>-redo` (or any `<stem>-<n>|fix|fixes|v<n>|redo`) while `<lane>` exists, or says "new branch off
 // <existing branch>", is sent back once with the same-branch steps. Why: a branch copy per fix round left old branches and worktrees behind
 // (round 4, git-root-cause.md proposal 2); the copy name is also what the Bash guard's git advice catches at `git checkout -b`.
-// Exports: copyBranchBriefAdvice(input, env) -> { deny: false } | { deny: true, reason }, copyBranchStem(name, repoDir) -> existing stem | null,
-// branchNames(prompt) (pure, the names a brief tells the agent to create).
-// TODO(round4-G): copyBranchStem is lane G's function in lib/git-advice.mjs (spec section 9); this local copy has the same signature so the lanes
-// can land in any order. When G has landed, delete it here and import it from ./git-advice.mjs (the one place that knows the copy-name rule).
+// Exports: copyBranchBriefAdvice(input, env) -> { deny: false } | { deny: true, reason }, copyBranchStem(name, repoDir, deadline) -> existing stem | null,
+// branchNames(prompt) (pure, the names a brief tells the agent to create), TOTAL_DEADLINE_MS.
+// TODO(round4-G): copyBranchStem is lane G's function in lib/git-advice.mjs (spec section 9); this local copy takes the same name and folder plus a
+// deadline, the way git-advice.mjs calls it: `(dir, args) => runGit(dir, args, env, deadline)`. When G has landed, delete it here and import it
+// from ./git-advice.mjs (the one place that knows the copy-name rule).
 // Names come from the prompt, which is untrusted: a name is only tested against a strict character set and looked up with `git show-ref`
 // as a full ref (`refs/heads/<name>`), so it can never act as an option; the prompt text is never copied into the advice.
 // Invariants: never throws; one hardened, read-only git call per candidate name (at most MAX_NAMES), each with a timeout and all of them within
@@ -21,8 +22,8 @@ const MAX_NAMES = 8; // a brief names a few branches; the cap bounds the git cal
 const MAX_SCAN_CHARS = 32 * 1024; // a brief is a few KB; text past this is pasted material, not instructions
 const MAX_WORDS_BEFORE_B = 8; // words between `worktree add` and `-b` (a path, `--detach`, `--no-track`, ...)
 const GIT_TIMEOUT_MS = 1000; // one local ref lookup takes a few ms
-const TOTAL_DEADLINE_MS = 2000; // all lookups of one brief together: well under the hook's 5 s timeout, so the later gates and the model pin still run
-const DEADLINE_ENV = 'COPY_BRANCH_DEADLINE_MS'; // a shorter or longer total for the test suite
+export const TOTAL_DEADLINE_MS = 2000; // all lookups of one brief together: well under the hook's 5 s timeout, so the later gates and the model pin still run
+const DEADLINE_ENV = 'COPY_BRANCH_DEADLINE_MS'; // a shorter or longer total for the test suite (a positive whole number of ms, else the default)
 const GIT_TIMEOUT_ENV = 'COPY_BRANCH_GIT_TIMEOUT_MS'; // a longer bound for the test suite: on a busy machine a lookup past 1 s means no advice
 const LEADING_NOISE = '`\'"([';
 const TRAILING_NOISE = '`\'"),.;:]';
@@ -63,14 +64,21 @@ export function branchNames(prompt) {
   return { created: pick(CREATING_PHRASES), offOf: pick([BRANCH_OFF]) };
 }
 
-/** True when the local branch `name` exists in the repository at `repoDir` (false for no repository, no git, any failure or a passed `deadline`, in ms since the epoch). */
-function branchExists(name, repoDir, deadline = Infinity) {
+/** The environment variable as a positive whole number of milliseconds, else `fallback` (-1, 0, 1.5, text and an unset variable all give the fallback). */
+function positiveMs(variable, fallback) {
+  const value = Number(process.env[variable]);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+/** True when the local branch `name` exists in the repository at `repoDir` (false for no repository, no git, any failure or a passed `deadline`, in performance.now() ms). */
+function branchExists(name, repoDir, deadline) {
   if (!NAME.test(name) || typeof repoDir !== 'string' || !isAbsolute(repoDir)) return false;
-  const remaining = deadline - Date.now();
-  if (remaining <= 0) return false;
+  const remaining = deadline - performance.now();
+  // spawnSync reads a timeout of 0 as "no timeout", so git never starts with nothing left
+  if (!(remaining > 0)) return false;
   const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
   for (const variable of REPOSITORY_VARIABLES) delete env[variable];
-  const result = spawnSync('git', [...HARDENED, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`], { cwd: repoDir, env, encoding: 'utf8', timeout: Math.min(remaining, Number(process.env[GIT_TIMEOUT_ENV]) || GIT_TIMEOUT_MS) });
+  const result = spawnSync('git', [...HARDENED, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`], { cwd: repoDir, env, encoding: 'utf8', timeout: Math.ceil(Math.min(remaining, positiveMs(GIT_TIMEOUT_ENV, GIT_TIMEOUT_MS))) }); // whole ms: spawnSync rejects a fraction
   return result.status === 0;
 }
 
@@ -78,7 +86,7 @@ function branchExists(name, repoDir, deadline = Infinity) {
  * The existing branch a new branch name copies.
  * @param {string} name the branch about to be created
  * @param {string} repoDir an absolute folder inside the repository
- * @param {number} deadline time (ms since the epoch) after which no git is started (default: none)
+ * @param {number} deadline performance.now() time in ms after which no git is started (default: none)
  * @returns {string | null} the stem when `name` is `<stem>-<n>|-fix|-fixes|-v<n>|-redo` and `<stem>` exists locally, else null
  */
 export function copyBranchStem(name, repoDir, deadline = Infinity) {
@@ -98,7 +106,7 @@ export function copyBranchBriefAdvice(input, env) {
     if (typeof prompt !== 'string' || !isWritingAgent(type, env)) return { deny: false };
     const repoDir = typeof input.cwd === 'string' ? input.cwd : env.CLAUDE_PROJECT_DIR;
     const { created, offOf } = branchNames(prompt);
-    const deadline = Date.now() + (Number(process.env[DEADLINE_ENV]) || TOTAL_DEADLINE_MS);
+    const deadline = performance.now() + positiveMs(DEADLINE_ENV, TOTAL_DEADLINE_MS);
     const copies = created.some((name) => copyBranchStem(name, repoDir, deadline) !== null) || offOf.some((name) => branchExists(name, repoDir, deadline));
     return copies ? { deny: true, reason: ADVICE } : { deny: false };
   } catch {
