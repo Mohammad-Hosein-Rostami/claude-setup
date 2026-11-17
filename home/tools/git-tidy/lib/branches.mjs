@@ -1,5 +1,5 @@
 // Purpose: decide whether a local branch (or any commit) is already on the base, and how many commits it still has that are not.
-// Exports: ancestorBranches, branchState, compareWithBase, isLanded, isMerged.
+// Exports: ancestorBranches, branchState, compareWithBase, isLanded, isMerged, mergeChangesNothing.
 // Invariants: only `ancestor` and `patch-equal` mean "merged"; anything that cannot be proven is `unmerged` (fail closed).
 //   `patch-equal` needs two proofs: no non-merge commit has an unequal patch (`git cherry` logic), and merging the branch into
 //   the base must change nothing (`git merge-tree --write-tree` prints the base's own tree). The second one matters because
@@ -28,7 +28,7 @@ export function ancestorBranches(repo, name = null) {
 const baseTrees = new WeakMap();
 
 // True when merging `ref` into the base would change nothing: exact content, where patch ids ignore whitespace.
-function mergeChangesNothing(repo, ref) {
+export function mergeChangesNothing(repo, ref) {
   const merged = runGit(repo.dir, ['merge-tree', '--write-tree', repo.baseRef, ref]);
   if (!baseTrees.has(repo)) baseTrees.set(repo, runGit(repo.dir, ['rev-parse', `${repo.baseRef}^{tree}`]).stdout.trim());
   const baseTree = baseTrees.get(repo);

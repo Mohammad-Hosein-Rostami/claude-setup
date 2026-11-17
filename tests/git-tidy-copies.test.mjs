@@ -161,3 +161,43 @@ test('unlanded-lane? is named for the newest copy only', () => {
   const { hints } = runCheck(openRepo(dir, null), later);
   assert.deepEqual(hints.filter((hint) => hint.kind === 'unlanded-lane?').map((hint) => hint.subject), ['lane/x-3']);
 });
+
+test('a newer copy that differs from the older one only in whitespace does not supersede it (patch ids alone ignore whitespace)', () => {
+  const dir = makeRepo();
+  git(dir, 'checkout', '-q', '-b', 'lane/x');
+  commit(dir, 'Makefile', 'all:\n\tcc main.c\n');
+  git(dir, 'checkout', '-q', 'main');
+  git(dir, 'checkout', '-q', '-b', 'lane/x-2');
+  commit(dir, 'Makefile', 'all:\n    cc main.c\n');
+  git(dir, 'checkout', '-q', 'main');
+  assert.deepEqual(kinds(checkJson(dir), 'superseded-copy'), []);
+  assert.equal(git(dir, 'rev-parse', 'lane/x-2:Makefile') === git(dir, 'rev-parse', 'lane/x:Makefile'), false, 'sanity: the two files differ');
+});
+
+test('a copy with a merge commit is never proven by patch ids: the newer linear branch is the copy of it, not the other way round', () => {
+  const dir = makeRepo();
+  git(dir, 'checkout', '-q', '-b', 'job');
+  commit(dir, 'one.txt');
+  git(dir, 'checkout', '-q', '-b', 'side', 'main');
+  commit(dir, 'two.txt');
+  git(dir, 'checkout', '-q', 'job');
+  git(dir, 'merge', '-q', '--no-ff', '-m', 'merge side', 'side');
+  git(dir, 'branch', '-D', 'side');
+  git(dir, 'checkout', '-q', '-b', 'job-2', 'main');
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const picked = spawnSync('git', ['cherry-pick', 'job~1', 'job^2'], { cwd: dir, encoding: 'utf8', env: { ...CLEAN_ENV, GIT_COMMITTER_DATE: tomorrow } });
+  assert.equal(picked.status, 0, picked.stderr);
+  git(dir, 'checkout', '-q', 'main');
+  assert.deepEqual(kinds(checkJson(dir), 'superseded-copy'), ['job-2'], 'job has a merge commit, so job-2 (newest, linear) cannot supersede it');
+});
+
+test('a workflow agent branch (worktree-wf_<run>-<n>) is a leftover like a worktree-agent branch, and is never an unlanded lane', () => {
+  const { dir } = billAndGinShape();
+  git(dir, 'branch', 'worktree-wf_run1-1', 'main');
+  git(dir, 'branch', 'worktree-wf_run1-2', 'lane/x-3');
+  const report = checkJson(dir);
+  assert.deepEqual(kinds(report, 'agent-leftover'), ['worktree-wf_run1-1', 'worktree-wf_run1-2']);
+  const later = Date.now() + 3 * 60 * 60 * 1000;
+  const { hints } = runCheck(openRepo(dir, null), later);
+  assert.deepEqual(hints.filter((hint) => hint.kind === 'unlanded-lane?').map((hint) => hint.subject), ['lane/x-3']);
+});

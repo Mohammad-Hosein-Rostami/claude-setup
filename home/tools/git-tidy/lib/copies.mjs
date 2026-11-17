@@ -1,23 +1,28 @@
 // Purpose: find branches that only repeat work another branch holds: older copies of a re-done lane (`X`, `X-2`, `X-fixes`,
 //   or any branches with the same tip) and the leftover branch a workflow agent's worktree started on. `check` reports them,
 //   `prune` removes them.
-// Exports: copyFindings, copyCandidates, isStillCopy, patchIdsOf, familyStem.
-// Invariants: reads only. A branch is a `superseded-copy` of B only when its tip is an ancestor of B or every `git patch-id --stable`
-//   of `base..branch` is in `base..B` (a branch with a merge commit only by the ancestor proof, since patch ids skip merges), and B is not
-//   itself a copy. Between branches that cover each other the newest committer date stays (then the one checked out in a worktree,
+// Exports: copyFindings, copyCandidates, isStillCopy, isAgentBranch, patchIdsOf, familyStem.
+// Invariants: reads only. A branch is a `superseded-copy` of B only when its tip is an ancestor of B or every `git patch-id --verbatim`
+//   of `base..branch` is in `base..B` and merging the branch into B changes nothing (a branch with a merge commit only by the ancestor
+//   proof, since patch ids skip merges), and B is not itself a copy. Between branches that cover each other the newest committer date stays (then the one checked out in a worktree,
 //   then the name). Only branches in one family are compared (same name stem, or same tip), so cost stays linear in branches.
-//   An `agent-leftover` is a `worktree-agent-*` branch whose every commit is on the base or on a branch that is not an agent
+//   An `agent-leftover` is a `worktree-agent-*` or `worktree-wf_*` (workflow agent) branch whose every commit is on the base or on a branch that is not an agent
 //   branch, and that no existing worktree has checked out.
+import { mergeChangesNothing } from './branches.mjs';
 import { gitText, runGit } from './git.mjs';
 import { findLeftovers } from './leftovers.mjs';
 import { listWorktrees } from './repo.mjs';
 
 const HEADS = 'refs/heads/';
-const AGENT_BRANCH_PREFIX = 'worktree-agent-';
+// a subagent's worktree branch, and a workflow agent's (`worktree-wf_<run>-<n>`)
+const AGENT_BRANCH_PREFIXES = ['worktree-agent-', 'worktree-wf_'];
 // `-2`, `-fix`, `-fixes`, `-v3`, `-redo` at the end of a name; the lookbehind keeps a name that is only a suffix whole
 const FAMILY_SUFFIX = /(?<=.)-(?:\d+|fix|fixes|v\d+|redo)$/;
 // Off: user config such as diff.external or a textconv filter would run a program while the patch is read.
 const PLAIN_DIFF = ['--no-ext-diff', '--no-textconv', '--no-show-signature', '--no-color'];
+
+/** True for the branch an agent's isolated worktree started on (`worktree-agent-<id>` or `worktree-wf_<run>-<n>`). */
+export const isAgentBranch = (name) => AGENT_BRANCH_PREFIXES.some((prefix) => name.startsWith(prefix));
 
 /** The name without its re-do suffixes: `r2/cell-roll-pin-3` and `r2/cell-roll-pin-fixes` both give `r2/cell-roll-pin`. */
 export function familyStem(name) {
@@ -26,11 +31,11 @@ export function familyStem(name) {
   return stem;
 }
 
-/** Patch ids (`git patch-id --stable`) of the non-merge commits of `ref` that the base lacks, one per commit that changes something. */
+/** Patch ids (`git patch-id --verbatim`, so a whitespace change makes a different patch) of the non-merge commits of `ref` that the base lacks, one per commit that changes something. */
 export function patchIdsOf(repo, ref) {
   const log = runGit(repo.dir, ['log', '-p', '--no-merges', ...PLAIN_DIFF, `^${repo.baseRef}`, ref, '--']);
   if (log.status !== 0) throw new Error(`git log failed for ${ref}: ${log.stderr.split('\n')[0]}`);
-  const ids = runGit(repo.dir, ['patch-id', '--stable'], log.stdout);
+  const ids = runGit(repo.dir, ['patch-id', '--verbatim'], log.stdout);
   if (ids.status !== 0) throw new Error(`git patch-id failed for ${ref}: ${ids.stderr.split('\n')[0]}`);
   return ids.stdout.split('\n').filter((line) => line !== '').map((line) => line.split(' ')[0]);
 }
@@ -71,7 +76,7 @@ function covers(repo, holder, copy) {
   if (holder.contains.has(copy.name)) return true;
   if (copy.patches.size === 0 || ![...copy.patches].every((id) => holder.patches.has(id))) return false;
   copy.merges ??= hasMerges(repo, copy.ref);
-  return !copy.merges;
+  return !copy.merges && mergeChangesNothing({ ...repo, baseRef: holder.ref }, copy.ref);
 }
 
 function supersededIn(repo, family, dates, checkedOut) {
@@ -94,15 +99,16 @@ function supersededIn(repo, family, dates, checkedOut) {
     .map((copy) => ({ kind: 'superseded-copy', name: copy.name, tip: copy.tip, by: holderOf.get(groups.get(copy.tip)[0].name) }));
 }
 
-// A worktree-agent branch has no commit of its own when every commit is on the base or on a branch that is not an agent branch.
+// An agent branch has no commit of its own when every commit is on the base or on a branch that is not an agent branch.
 function ownCommitFree(repo, name) {
-  const walk = runGit(repo.dir, ['rev-list', '-n', '1', `${HEADS}${name}`, '--not', `--exclude=${AGENT_BRANCH_PREFIX}*`, '--branches']);
+  const otherAgents = AGENT_BRANCH_PREFIXES.map((prefix) => `--exclude=${prefix}*`);
+  const walk = runGit(repo.dir, ['rev-list', '-n', '1', `${HEADS}${name}`, '--not', ...otherAgents, '--branches']);
   return walk.status === 0 && walk.stdout.trim() === '';
 }
 
 const checkedOutNames = (repo) => new Set(listWorktrees(repo).filter((tree) => !tree.missing && tree.branch !== null).map((tree) => tree.branch));
 
-const isAgentLeftover = (repo, name, checkedOut) => name.startsWith(AGENT_BRANCH_PREFIX) && !checkedOut.has(name) && ownCommitFree(repo, name);
+const isAgentLeftover = (repo, name, checkedOut) => isAgentBranch(name) && !checkedOut.has(name) && ownCommitFree(repo, name);
 
 /**
  * The copies in the repository as candidates `{ kind, name, tip, by }` (`by` is the branch that holds the work, null for an
@@ -114,7 +120,7 @@ export function copyCandidates(repo, leftovers = findLeftovers(repo)) {
   const agents = states.filter(({ name }) => isAgentLeftover(repo, name, checkedOut))
     .map(({ name, tip }) => ({ kind: 'agent-leftover', name, tip, by: null }));
   const dates = commitDates(repo);
-  const lanes = states.filter(({ state, name }) => state === 'unmerged' && !name.startsWith(AGENT_BRANCH_PREFIX));
+  const lanes = states.filter(({ state, name }) => state === 'unmerged' && !isAgentBranch(name));
   return [...agents, ...familiesOf(lanes).flatMap((family) => supersededIn(repo, family, dates, checkedOut))];
 }
 
