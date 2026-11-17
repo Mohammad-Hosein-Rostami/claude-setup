@@ -131,9 +131,9 @@ test('home/CLAUDE.md: long-command line says ~5 min, not ~2 min', () => {
   assert.doesNotMatch(claude, /A command over ~2 min/);
 });
 
-test('home/CLAUDE.md Workflows line: contract first, probes beside lanes, repos apart, one critic round, one sync', () => {
+test('home/CLAUDE.md job-order line: contract first, probes beside lanes, repos apart, one critic round, one sync', () => {
   const claude = read('home/CLAUDE.md');
-  const line = claude.split('\n').find((candidate) => candidate.startsWith('- Workflows always')) ?? '';
+  const line = claude.split('\n').find((candidate) => candidate.startsWith('- Order a job as')) ?? '';
   assert.match(line, /contract first/i);
   assert.match(line, /probes (run )?beside (the )?lanes/i);
   assert.match(line, /independent repos[^.;]*separate workflows/i);

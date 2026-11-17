@@ -1,11 +1,11 @@
 ---
 name: wf-build
-description: Build lanes of a spec in parallel worktrees, review them with fixes, and land each on the base branch (workflow).
-when_to_use: Implementing a spec or plan of one or more lanes; any job that writes code and must reach the base branch.
+description: Build lanes of a spec in parallel worktrees, review them with fixes, and land each on the base branch (workflow). Fits 2+ lanes in parallel; one lane is one implementer agent.
+when_to_use: Implementing a spec of 2+ lanes or writers in parallel that must reach the base branch; a single lane is one implementer agent.
 argument-hint: <spec path> [lanes]
 ---
 
-Run this job as a workflow (the owner's rule: everything that runs is a workflow), not as single agents. First add and start this job's STATUS.md rows
+Use this when the job fits a workflow by the rule in CLAUDE.md ("Inline, agent or workflow"); a single lane or one review set is one background agent instead. First add and start this job's STATUS.md rows
 (`node ~/.claude/tools/status/status.mjs add|start`) so the progress line follows them; the script's agent labels start with the row ids you pass.
 
 Args to fill: `base`, `repo`, `suite` (the repo's declared full-suite command), `writers` (the mode's lane budget), `statusFile`, `lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?, principles?, checkpoints?, addClasses?}]` (`matrix` is required for a ui-implementer: a coverage matrix path or `none: <reason>`), and `appendOnly?` (files several lanes may list, such as `docs/catalog.md`).

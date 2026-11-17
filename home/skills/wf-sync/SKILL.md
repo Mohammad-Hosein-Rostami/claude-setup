@@ -1,6 +1,6 @@
 ---
 name: wf-sync
-description: Sync the MacBook and the PC to the same base tip through the sync-machines workflow - bundle, ff-only pull, install, doctor on both. Never pushes.
+description: Sync the MacBook and the PC to the same base tip through the sync-machines workflow - bundle, ff-only pull, install, doctor on both. Never pushes. Fits a multi-stage job on two machines that must survive an exit.
 when_to_use: After a landing on the setup repo, or when the owner asks to sync the machines. Not for project repos.
 argument-hint: <repo folder, base branch>
 ---

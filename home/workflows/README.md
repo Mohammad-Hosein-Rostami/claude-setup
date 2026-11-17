@@ -1,6 +1,6 @@
 # Saved workflows (`home/workflows/`)
 
-Scripts for the Workflow tool: every job that runs agents goes through one of them, so the progress view shows it and each agent's label
+Scripts for the Workflow tool, used when the job needs one (2+ lanes in parallel, review panels across lanes, research over several sources, a multi-stage job that must survive an exit; `home/CLAUDE.md`, "Inline, agent or workflow"), so the progress view shows it and each agent's label
 (`<STATUS row>:<step>`) links to a row of STATUS.md. Claude Code resolves workflow names only from a project's `.claude/workflows/`, so the
 setup runs them by path: each `wf-*` skill (`home/skills/wf-*/SKILL.md`) calls `Workflow({scriptPath: "${CLAUDE_SKILL_DIR}/../../workflows/<name>.js", args})`.
 `~/.claude/workflows` is a link to this folder (the install adds its link path to `permissions.additionalDirectories`, so the path is readable

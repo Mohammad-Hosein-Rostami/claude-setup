@@ -1,11 +1,11 @@
 ---
 name: wf-land
-description: Land one reviewed lane on the base branch on one straight line: rebase check, suite PASS at the tip, ff-only, prune (workflow).
+description: Land one reviewed lane on the base branch on one straight line: rebase check, suite PASS at the tip, ff-only, prune (workflow). Fits landing that must survive an exit or several lanes in turn.
 when_to_use: A lane passed its last review and must reach main; also for a finished branch of a git cleanup.
 argument-hint: <branch>
 ---
 
-Run this job as a workflow (the owner's rule: everything that runs is a workflow), not as single agents. First add and start this job's STATUS.md rows
+Use this when the job fits a workflow by the rule in CLAUDE.md ("Inline, agent or workflow"); a single lane or one review set is one background agent instead. First add and start this job's STATUS.md rows
 (`node ~/.claude/tools/status/status.mjs add|start`) so the progress line follows them; the script's agent labels start with the row ids you pass.
 
 Args to fill: `row`, `closeRow`, `statusFile`, `repo`, `base`, `branch`, `worktree`, `suite`, `tip` (the sha the review cleared, the review result's `tip`; land refuses a branch that is not at it).

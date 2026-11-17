@@ -1,7 +1,7 @@
 ---
 name: wf-bugfix
-description: Fix a bug through the bugfix workflow - reproduce, three parallel hypotheses, fix, verify, then review and land. Use for any bug with a symptom, instead of single agents.
-when_to_use: A bug, failing test or unexpected behaviour in a git repo, when the cause is not already known to be a one-line change.
+description: Fix a bug through the bugfix workflow - reproduce, three parallel hypotheses, fix, verify, then review and land. Fits a bug that needs parallel hypotheses and a landed fix.
+when_to_use: A bug with a symptom and no known cause that needs parallel hypotheses; one hypothesis set is one deep-debugger agent, a one-line fix is inline.
 argument-hint: <symptom, repro command if known>
 ---
 

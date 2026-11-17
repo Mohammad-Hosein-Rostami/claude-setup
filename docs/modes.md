@@ -47,13 +47,13 @@ and add the Opus-max escalations for architecture, hard bugs and risky code (Fab
 
 ## What differs
 
-A workflow is a script that runs many agents in phases.
+A workflow is a script that runs many agents in phases; the lead uses one only when the job needs it (below).
 
 | Mode | Lead (main session) | Important jobs | Writing agents at once | Workflows | Reports |
 | ---- | ------------------- | -------------- | --------------- | --------- | ------- |
-| normal | Opus 5.5, effort high | pinned agents + lead-rule escalations | up to 2 at once (lane budget) | every agent runs in one | terse; `/compact` only when context is large |
-| medium | Opus 5.5, effort high | same | up to 3 at once, independent work in parallel | every agent runs in one | as the lead rules and `CLAUDE.md` |
-| high | Opus 5.5, effort high | same | up to 6 at once; wide fan-out: parallel research, one `deep-debugger` per hypothesis, test-writer + implementer, split parts, reviewer + security-auditor | every agent runs in one | same short final answer as medium; detail goes to files |
+| normal | Opus 5.5, effort high | pinned agents + lead-rule escalations | up to 2 at once (lane budget) | by the job (see below) | terse; `/compact` only when context is large |
+| medium | Opus 5.5, effort high | same | up to 3 at once, independent work in parallel | by the job (see below) | as the lead rules and `CLAUDE.md` |
+| high | Opus 5.5, effort high | same | up to 6 at once; wide fan-out: parallel research, one `deep-debugger` per hypothesis, test-writer + implementer, split parts, reviewer + security-auditor | by the job (see below) | same short final answer as medium; detail goes to files |
 | extra-high | Opus 5.5, effort max | architecture/planning, hard or failed-once bugs, risky or cross-module code, key decisions: agents with `model: "opus", effort: "max"` | as high (up to 6) | as high | as high |
 | ultra-high | Fable 5.2, effort high (`CCM_LEAD_EFFORT` overrides) | Fable decides and delegates; hard problems to `architect` / `deep-debugger` with `model: "fable", effort: "max"`; risky or cross-module code to Opus 5.5 at max; the `agent-model-guard.mjs` hook moves Explore to Sonnet and Plan to Opus (every mode) when no model is given | as high, up to 8 at once | as high | as high |
 
@@ -62,8 +62,8 @@ Every mode: a parallel request first gets a one-line usage-limit forecast.
 A risky or final review means auth, data or migrations, money, concurrency, security, and the last review before a
 merge or push. In every mode these go to Opus at max (`reviewer`, `security-auditor`).
 
-Every agent runs inside a workflow in every mode (your standing rule, `home/CLAUDE.md`), started through the `wf-*` skills
-listed in [workflows](../home/workflows/README.md). A mode limits only the agents that write at once; reads, reviews and
+In every mode the lead picks inline, one background agent or a workflow by the job (`home/CLAUDE.md`, "Inline, agent or
+workflow"); a workflow is started through the `wf-*` skills listed in [workflows](../home/workflows/README.md). A mode limits only the agents that write at once; reads, reviews and
 verifiers are not capped by the mode.
 
 ## Picks per step (same in every mode)

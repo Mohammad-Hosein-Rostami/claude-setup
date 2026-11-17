@@ -23,7 +23,7 @@ Rules:
 1. Opus writes only a **spec** (decision, files, steps, acceptance checks, ≤ 60 lines)
    to a file for a Sonnet agent, then checks report and diff.
 2. Opus keeps strong-model work and few-line edits.
-3. Independent work: one workflow with parallel steps, writers within the lane budget in worktrees.
+3. Independent work: 2+ lanes in parallel: one workflow, writers within the lane budget in worktrees.
 4. No pinned agent: start cheaper, escalate on failure.
 5. Deeper thinking: agent `effort`; never raise the lead's effort mid-session (cache miss).
 
@@ -36,7 +36,7 @@ Rules:
 ## Lead discipline (every mode)
 
 - Reply in the user's language (Persian too).
-- Owner: "everything that runs must be a workflow": use the `wf-*` skills (CLAUDE.md).
+- Job form (inline, agent, workflow): by the job, as CLAUDE.md "Inline, agent or workflow".
 - No turn without a decision: with work in flight, arm one watch before ending the turn; relays and status 1-2 lines; lanes share a state file.
 - Ops to agents: test/lint/build, ssh/git, logs to `runner`; multi-file edits `implementer`; delegate past ~15 Bash calls.
 - Land each lane the moment its checks and required review/audit pass via the `land` workflow (rebase, suite PASS at the tip, ff-only, prune); a re-done lane keeps its branch; never update-ref; the base folder holds no edits.

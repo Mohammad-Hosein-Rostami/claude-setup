@@ -151,3 +151,22 @@ test('review agents report every blocking and should-fix finding, with no cap', 
     assert.match(text, /no cap/i, `${agent}.md must say findings have no cap`);
   }
 });
+
+// Round 6 (owner, 2026-11-17): the form of a job (inline, one agent, a workflow) is decided by the job, stated once in home/CLAUDE.md.
+test('home/CLAUDE.md states the inline / agent / workflow rule once; _lead.md and the wf-* skills point to it', () => {
+  const claude = read('home/CLAUDE.md');
+  const heading = '- Inline, agent or workflow: decide by the job';
+  assert.equal(claude.split(heading).length, 2, 'stated exactly once');
+  for (const tier of ['Inline, no agent:', 'One background agent (Agent tool):', 'Workflow (the `wf-*` skills:', 'Quality gates do not change with the form']) {
+    assert.ok(claude.includes(tier), `the rule names ${tier}`);
+  }
+  assert.match(read('home/modes/_lead.md'), /"Inline, agent or workflow"/, '_lead.md points to the rule');
+  for (const skill of ['wf-build', 'wf-land', 'wf-review', 'wf-step']) assert.match(read(`home/skills/${skill}/SKILL.md`), /"Inline, agent or workflow"/, `${skill} points to the rule`);
+});
+
+test('no setup document tells sessions to run every agent or job as a workflow', () => {
+  const files = ['home/CLAUDE.md', 'home/modes/_lead.md', ...MODES.map((mode) => `home/modes/${mode}.md`), 'docs/daily-use.md', 'docs/modes.md', 'docs/catalog.md', 'home/hooks/README.md', 'home/workflows/README.md',
+    ...['build', 'land', 'review', 'step', 'bugfix', 'research', 'sync', 'git-cleanup'].map((skill) => `home/skills/wf-${skill}/SKILL.md`)];
+  const everythingIsAWorkflow = /Workflows always|everything that runs (is|must be) a workflow|every agent runs (inside a workflow|in one)|instead of single (sub)?agents|not as single agents|every job that runs agents goes through/i;
+  for (const file of files) assert.doesNotMatch(read(file), everythingIsAWorkflow, `${file} still says workflows for everything`);
+});

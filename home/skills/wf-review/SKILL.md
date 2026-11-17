@@ -1,11 +1,11 @@
 ---
 name: wf-review
-description: Review a lane or branch with its tiered lens set, verify findings, fix them, and re-review the fixes until a round is clean (workflow).
-when_to_use: A change needs its review (and fixes) before landing, or the owner asks to review a branch.
+description: Review a lane or branch with its tiered lens set, verify findings, fix them, and re-review the fixes until a round is clean (workflow). Fits panels with verifiers and fix rounds across lanes.
+when_to_use: Review panels with verifiers and fix rounds across 2+ lanes, or the owner asks for it; one lane's review set is reviewer and security-auditor as parallel agents.
 argument-hint: <branch or range>
 ---
 
-Run this job as a workflow (the owner's rule: everything that runs is a workflow), not as single agents. First add and start this job's STATUS.md rows
+Use this when the job fits a workflow by the rule in CLAUDE.md ("Inline, agent or workflow"); a single lane or one review set is one background agent instead. First add and start this job's STATUS.md rows
 (`node ~/.claude/tools/status/status.mjs add|start`) so the progress line follows them; the script's agent labels start with the row ids you pass.
 
 Args to fill: `row`, `repo`, `base`, `range`, `landing` (true before a push or landing), `fix`, `branch`, `worktree`, `suite`; optional `tier`, `addClasses`, `laneClasses`, `deltaOf`, `initialFindings`, `waiverAt`, `principles`, `audit`.

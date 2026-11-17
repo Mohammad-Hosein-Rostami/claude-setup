@@ -9,7 +9,6 @@ Same models per task, same lead effort, same quality gates as every mode (see th
   - build: `test-writer` and `implementer` together; split independent parts across agents (worktree
     isolation when they touch the same repo; land by rebase + `--ff-only`, C37);
   - review: `reviewer` and `security-auditor` together.
-- Workflows: every agent runs in one (CLAUDE.md).
 - Reports: same short final answer as every mode (what changed, what was not run); agents return ≤ 300 words with
   file:line evidence; detail goes to files and the report gives the path.
 - Findings check (CLAUDE.md quality gates) runs as verifier agents in parallel: group by file or lens, ≤ 5 per verifier; security findings get their own verifier.

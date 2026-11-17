@@ -182,9 +182,8 @@ rules the tests check: `home/workflows/README.md`. Tests: `tests/workflow-*.test
 
 `build`, `review`, `land`, `step` and their four skills ship first; `bugfix`, `research`, `sync-machines`, `git-cleanup` follow.
 
-The hook side (`agent-model-guard.mjs`, described in the Hooks section): a plain Agent call from the lead is denied once with the `wf-*` skill for its
-agent type (not for a call from inside an agent, a fork, with workflows disabled, or when the skill is not installed), and a writer brief that
-creates a copy of an existing branch is denied once with the same-branch steps. `agent-budget.mjs` counts a `Workflow` call as a delegation, like
+The hook side (`agent-model-guard.mjs`, described in the Hooks section): a writer brief that
+creates a copy of an existing branch is denied once with the same-branch steps. No hook sends a plain Agent call to a workflow: the lead picks inline, one agent or a workflow by the job (`home/CLAUDE.md`). `agent-budget.mjs` counts a `Workflow` call as a delegation, like
 Agent and Task. A workflow's own agents do not fire the Agent hook (probe, Claude Code 2.1.326), so the scripts carry their own checks.
 
 ## Plugins (`plugins/plugins.json`)

@@ -1,7 +1,7 @@
 ---
 name: wf-git-cleanup
-description: Clean leftover branches, copies (-2, -3), merged worktrees and tangled history in one or more repos through the git-cleanup workflow - Sonnet plan with patch-id proof, apply only proven items.
-when_to_use: The owner asks to clean git, or git-tidy reports findings in a repo. One repo or several.
+description: Clean leftover branches, copies (-2, -3), merged worktrees and tangled history in one or more repos through the git-cleanup workflow - Sonnet plan with patch-id proof, apply only proven items. Fits several repos or a plan that must survive an exit.
+when_to_use: The owner asks to clean git across repos, or git-tidy reports findings in several; one repo's few leftovers are `git-tidy prune --apply` inline.
 argument-hint: <repo folders>
 ---
 
