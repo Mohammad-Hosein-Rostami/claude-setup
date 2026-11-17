@@ -81,14 +81,14 @@ test('a llama-server that recall did not start blocks the start (never two big m
   const ollamaDir = join(dir, 'ollama', 'lib');
   for (const d of [foreignDir, ollamaDir]) { mkdirSync(d, { recursive: true }); copyFileSync(join(bin, 'llama-server'), join(d, 'llama-server')); chmodSync(join(d, 'llama-server'), 0o755); }
   const checked = { ...env, RECALL_RERANK_FOREIGN_CHECK: 'on', RECALL_RERANK_FOREIGN_MATCH: dir }; // only this test's processes count, never the owner's real servers
-  const ollama = spawn(join(ollamaDir, 'llama-server'), ['-m', 'x', '--port', '18999'], { stdio: 'ignore', env });
+  const ollama = spawn(join(ollamaDir, 'llama-server'), ['-m', 'x', '--port', String(Number(env.RECALL_RERANK_PORT) + 1)], { stdio: 'ignore', env });
   t.after(() => ollama.kill());
   assert.ok(await waitFor(() => llamaStarts().length >= 1), 'the Ollama stand-in is running');
   t.after(stopAfter(checked));
   const first = await ensureServer({ env: checked });
   assert.ok(first.base, 'an Ollama runner is not a foreign server');
   await stopAfter(checked)();
-  const foreign = spawn(join(foreignDir, 'llama-server'), ['-m', 'x', '--port', '18998'], { stdio: 'ignore', env });
+  const foreign = spawn(join(foreignDir, 'llama-server'), ['-m', 'x', '--port', String(Number(env.RECALL_RERANK_PORT) + 2)], { stdio: 'ignore', env });
   t.after(() => foreign.kill());
   assert.ok(await waitFor(() => llamaStarts().length >= 3), 'the foreign server is running');
   await assert.rejects(ensureServer({ env: checked }), /another llama-server is running/);

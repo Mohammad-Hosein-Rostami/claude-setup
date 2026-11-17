@@ -56,7 +56,7 @@ process.on('SIGTERM', () => process.exit(0));
 /**
  * A sandbox: fake claude and llama-server on a private PATH, a state dir, DB path and model dir with both reranker files.
  * The reranker port is random in 20000-29999: wide enough that suites running at once in several worktrees rarely pick the same
- * one, and clear of the fixed 18998/18999 stand-ins in recall-rerank-chain.test.mjs.
+ * one, and the Ollama and foreign stand-ins of recall-rerank-chain.test.mjs take the next two ports (never a fixed port: parallel suite runs would collide on it).
  * @returns {{dir: string, bin: string, env: object, claudeCalls: () => object[], llamaStarts: () => object[], dbPath: string}}
  */
 export function fakeStack({ claudeMode = 'ok', port = 20000 + Math.floor(Math.random() * 10000) } = {}) {
