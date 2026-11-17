@@ -76,6 +76,23 @@ test('sync: the PC steps are bundle, copy, ff-only pull, install, doctor over ss
   }
 });
 
+test('sync: the doctor runner runs one foreground command with a 10 minute Bash timeout, never in the background and never polling', async () => {
+  const run = await runScript('sync-machines', SYNC_ARGS, { replies: syncReplies() });
+  for (const machine of ['macbook', 'pc']) {
+    const prompt = run.calls.find((c) => c.label === `s1:doctor:${machine}`).prompt;
+    assert.match(prompt, /timeout: 600000/);
+    assert.match(prompt, /foreground/);
+    assert.match(prompt, /never (start it )?in the background|do not background/i);
+    assert.doesNotMatch(prompt, /start it in the background/);
+  }
+});
+
+test('sync: the verify step also checks the audit-log gate for the tip when the tool exists', async () => {
+  const run = await runScript('sync-machines', SYNC_ARGS, { replies: syncReplies() });
+  const prompt = run.calls.find((c) => c.label === 's1:verify').prompt;
+  assert.match(prompt, /\(5\) when \S*review-tier\/audit-log\.mjs exists, node \S*audit-log\.mjs gate --repo \/r --tip SHA exits 0/);
+});
+
 test('sync: a bad args object throws the named error before any agent starts', async () => {
   const run = await runScript('sync-machines', { row: 's1', repo: '/r' }, { replies: syncReplies() });
   assert.equal(run.error.message, 'sync-machines: args.base must be a string');

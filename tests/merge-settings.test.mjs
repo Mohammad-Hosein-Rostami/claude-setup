@@ -86,3 +86,8 @@ test('additionalDirectories is a de-duplicated union, so a local file cannot dro
   );
   assert.deepEqual(merged.permissions.additionalDirectories, ['/home/x/.claude/workflows', '/data']);
 });
+
+test('base.json raises the Bash default timeout to 5 minutes (300000 ms) so a suite is not moved to the background', () => {
+  const base = JSON.parse(readFileSync(fileURLToPath(new URL('../settings/base.json', import.meta.url)), 'utf8'));
+  assert.equal(base.env.BASH_DEFAULT_TIMEOUT_MS, '300000');
+});

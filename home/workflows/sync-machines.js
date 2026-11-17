@@ -4,15 +4,16 @@
 // relative to the home folder.
 // Returns: { status: 'stopped', problems } | { status: 'synced' | 'partial', machines: { machine, synced, sha, doctorExit, diagnosis }[] }.
 // `synced` means every machine synced and its doctor exited 0; `partial` means one failed, and its row says why. There is one row per machine.
-// Invariants: it starts only when the base folder has no tracked changes, git-tidy is clean and the full suite has a PASS
-// at the base tip (untracked files are allowed and untouched). The PC gets the tip as a git bundle and a fast-forward
+// Invariants: it starts only when the base folder has no tracked changes, git-tidy is clean, the full suite has a PASS
+// at the base tip and, when review-tier ships an audit-log, `audit-log gate` exits 0 for the tip (no open audit or audit
+// finding) (untracked files are allowed and untouched). The PC gets the tip as a git bundle and a fast-forward
 // pull, never a push. A machine that cannot sync skips its doctor and gets a diagnosis; the other machine goes on.
 export const meta = {
   name: 'sync-machines',
   description: 'Sync the MacBook and the PC to the base tip: bundle, ff-only pull, install, doctor on both; never pushes',
   whenToUse: 'After a landing on the setup repo, when both machines must run the same setup',
   phases: [
-    { title: 'Verify', detail: 'no tracked changes, git-tidy clean, suite PASS at the base tip' },
+    { title: 'Verify', detail: 'no tracked changes, git-tidy clean, suite PASS and audit-log gate at the base tip' },
     { title: 'Sync', detail: 'MacBook install; PC bundle, ff-only pull, install, side by side' },
     { title: 'Doctor', detail: 'doctor.sh on each machine that synced' },
   ],
@@ -20,7 +21,7 @@ export const meta = {
 checkArgs(args)
 
 const MACHINES = ['macbook', 'pc']
-const DOCTOR_TIMEOUT_MIN = 30 // doctor runs the whole suite; with no measured duration yet, the lead's long-command default
+const DOCTOR_TIMEOUT_MS = 600000 // the Bash tool's maximum: doctor runs the suite when no PASS is recorded (about 4 minutes), so it stays in the foreground
 const { row, repo, base } = args
 
 const VERIFY_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' }, sha: { type: 'string' }, problems: { type: 'array', items: { type: 'string' } } }, required: ['ok', 'sha', 'problems'] }
@@ -30,7 +31,7 @@ const DOCTOR_SCHEMA = { type: 'object', properties: { exit: { type: 'number' }, 
 const runner = (step, prompt, phaseTitle, schema) => agent(prompt, { label: `${row}:${step}`, phase: phaseTitle, agentType: 'runner', model: 'haiku', effort: 'low', schema })
 
 phase('Verify')
-const ready = await runner('verify', `In ${repo} check, in this order, and stop at the first failure: (1) git branch --show-current is ${base}; (2) git status --porcelain --untracked-files=no prints nothing; (3) node ~/.claude/tools/git-tidy/git-tidy.mjs check ${repo} --base ${base} exits 0; (4) with SHA from git rev-parse ${base}: node ~/.claude/tools/test-pass/test-pass.mjs check SHA --repo ${repo} --suite exits 0. Change nothing. Return ok, sha and one problem line per failed check.`, 'Verify', VERIFY_SCHEMA)
+const ready = await runner('verify', `In ${repo} check, in this order, and stop at the first failure: (1) git branch --show-current is ${base}; (2) git status --porcelain --untracked-files=no prints nothing; (3) node ~/.claude/tools/git-tidy/git-tidy.mjs check ${repo} --base ${base} exits 0; (4) with SHA from git rev-parse ${base}: node ~/.claude/tools/test-pass/test-pass.mjs check SHA --repo ${repo} --suite exits 0; (5) when ~/.claude/tools/review-tier/audit-log.mjs exists, node ~/.claude/tools/review-tier/audit-log.mjs gate --repo ${repo} --tip SHA exits 0 (a waived lane's audit is still open or found a defect: report its output). Change nothing. Return ok, sha and one problem line per failed check.`, 'Verify', VERIFY_SCHEMA)
 if (!ready || !ready.ok) return { status: 'stopped', problems: ready ? ready.problems : ['verify step returned nothing'] }
 
 const rows = await pipeline(MACHINES, syncMachine, doctorMachine)
@@ -51,7 +52,7 @@ function pcSteps() {
 async function doctorMachine(synced, machine) {
   if (!synced?.ok) return { machine, synced: false, sha: '', doctorExit: null, diagnosis: await diagnose(machine, synced?.tail ?? 'no result') }
   const where = machine === 'pc' ? `over ssh pc in the PC's checkout of the repo (same path relative to the home folder as ${repo})` : `in ${repo}`
-  const doctor = await runner(`doctor:${machine}`, `Run scripts/doctor.sh ${where}. It runs the whole test suite and takes minutes: start it in the background with a ${DOCTOR_TIMEOUT_MIN} minute timeout and wait for it. Return exit (doctor.sh's exit code) and the FAIL and WARN lines as tail.`, 'Doctor', DOCTOR_SCHEMA)
+  const doctor = await runner(`doctor:${machine}`, `Run scripts/doctor.sh ${where}. It reuses a recorded suite PASS, else runs the whole suite and takes minutes: run it as ONE foreground Bash command with timeout: ${DOCTOR_TIMEOUT_MS}, never in the background and never in a polling loop. Return exit (doctor.sh's exit code) and the FAIL and WARN lines as tail.`, 'Doctor', DOCTOR_SCHEMA)
   const exit = doctor ? doctor.exit : null
   const diagnosis = exit === 0 ? '' : await diagnose(machine, doctor ? doctor.tail : 'doctor returned nothing')
   return { machine, synced: true, sha: synced.sha, doctorExit: exit, diagnosis }

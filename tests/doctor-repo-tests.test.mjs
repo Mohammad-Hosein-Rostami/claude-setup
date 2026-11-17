@@ -7,6 +7,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { commitOf, declaredSuite, recordPass, treeOf } from '../home/tools/test-pass/lib/store.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 
@@ -72,4 +73,28 @@ test('when the log folder cannot be made, the fallback log is a fresh file, not 
   assert.match(result.stdout, /not ok 1 - real failure/);
   assert.doesNotMatch(result.stdout, /PLANTED-BY-ANOTHER-USER/);
   assert.ok(!result.stdout.includes(plantedLog), 'the fixed, plantable path is not used');
+});
+
+const REPO = fileURLToPath(new URL('..', import.meta.url));
+
+/** Runs the check with a temp HOME that already holds a test-pass row for HEAD's tree; the suite command would fail if it ran. */
+async function runWithRecord({ suite }) {
+  const home = await mkdtemp(join(tmpdir(), 'doctor-suite-'));
+  const row = { tree: treeOf(REPO, 'HEAD'), sha: commitOf(REPO, 'HEAD'), cmd: declaredSuite(REPO), suite, at: new Date().toISOString(), ms: 1 };
+  assert.ok(recordPass(REPO, row, { HOME: home }), 'the record was stored');
+  const env = { ...process.env, HOME: home, DOCTOR_ONLY: 'check_repo_tests', DOCTOR_TEST_COMMAND: 'echo "suite ran"; exit 1', DOCTOR_LOG_DIR: join(home, 'log-dir') };
+  return spawnSync('bash', [DOCTOR], { env, encoding: 'utf8' });
+}
+
+test('a full-suite PASS recorded for HEAD is reused: ok, and the suite does not run again', async () => {
+  const result = await runWithRecord({ suite: true });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /^ok\s+suite PASS recorded at HEAD/m);
+  assert.doesNotMatch(result.stdout, /suite ran|FAIL/);
+});
+
+test('a record of related tests only (not the full suite) does not skip the suite', async () => {
+  const result = await runWithRecord({ suite: false });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /^FAIL\s+repo tests fail/m);
 });

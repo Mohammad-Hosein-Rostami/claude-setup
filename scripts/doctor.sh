@@ -119,6 +119,8 @@ check_repo_tests() {
   local log_dir="${DOCTOR_LOG_DIR:-$CLAUDE_DIR/logs}" log failing
   # Fallback when the log folder cannot be made: a fresh mktemp file, never a fixed name in a shared /tmp that another user could plant.
   if mkdir -p "$log_dir" 2>/dev/null; then log="$log_dir/doctor-repo-tests.log"; else log="$(mktemp "${TMPDIR:-/tmp}/doctor-repo-tests.XXXXXX")"; fi
+  # A full-suite PASS that test-pass recorded for HEAD's tree (a landing or the last review round) is not worth a second run.
+  if node "$REPO/home/tools/test-pass/test-pass.mjs" check HEAD --repo "$REPO" --suite >/dev/null 2>&1; then ok "suite PASS recorded at HEAD"; return; fi
   if (cd "$REPO" && bash -c "$suite" >"$log" 2>&1); then ok "repo tests pass"; return; fi
   bad "repo tests fail (node --test tests/*.test.mjs); full output: $log"
   failing="$(awk '
