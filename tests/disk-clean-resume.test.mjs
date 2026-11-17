@@ -56,8 +56,33 @@ test('a folder left aside by a killed run is removed by the next run only when t
   const live = leftover(OTHER);
   sessionFile(w, process.pid, OTHER);
   const tempAside = folder(join(w.tmp, '.removing-4242-cs-run-AbCdEf'), { days: 3 });
+  const longSlug = `-tmp-${'x'.repeat(225)}`; // renamed aside again it would not fit in a file name: a leftover is removed where it is
+  const projectAside = folder(join(w.projects, `.removing-4242-${longSlug}`), { days: 10 });
   const youngAside = folder(join(w.tmp, '.removing-4242-cs-run-ZzZzZz'), { days: 0 });
   const summary = await runClean(w.options);
-  assert.deepEqual([existsSync(idle), existsSync(live), existsSync(tempAside), existsSync(youngAside), summary.removed], [false, true, false, true, 2]);
+  assert.deepEqual([existsSync(idle), existsSync(live), existsSync(tempAside), existsSync(youngAside), summary.removed], [false, true, false, true, 3]);
+  assert.equal(existsSync(projectAside), false);
 });
 
+
+test('a test temp folder written to between the scan and the first look is kept', posix, async () => {
+  const w = world();
+  const path = folder(join(w.tmp, 'cs-run-AbCdEf'), { days: 3 });
+  const summary = await runClean({ ...w.options, beforeRemove: () => writeFileSync(join(path, 'new.txt'), 'x') });
+  assert.deepEqual([existsSync(join(path, 'new.txt')), summary.changed, summary.removed], [true, 1, 0]);
+});
+
+test('a session whose transcript appears between the scan and the first look keeps its folder (the transcript of its project is looked at again)', posix, async () => {
+  const w = world();
+  transcript(w, '-proj', NEWEST, 0);
+  const path = sessionFolder(w, OLD, 10); // no transcript at the scan: the folder alone is idle
+  const summary = await runClean({ ...w.options, beforeRemove: () => transcript(w, '-proj', OLD, 0) });
+  assert.deepEqual([existsSync(join(path, 'f.txt')), summary.changed, summary.removed], [true, 1, 0]);
+});
+
+test('a session that is live at the first look is never renamed: the first look comes before the rename', posix, async () => {
+  const { w, path } = resumeWorld();
+  let renamed = 0;
+  const summary = await runClean({ ...w.options, beforeRemove: () => sessionFile(w, process.pid, OLD), afterMoveAside: () => { renamed += 1; } });
+  assert.deepEqual([renamed, existsSync(join(path, 'f.txt')), summary.changed], [0, true, 1]);
+});

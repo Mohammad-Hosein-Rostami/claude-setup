@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -203,7 +203,7 @@ test('a session registered as running after the scan (not before it) keeps its f
 test('session folders are kept when the transcripts folder or the sessions registry is missing, relative, a file or unset; the reason is listed', async () => {
   const notAFolder = join(world().root, 'a-file');
   writeFileSync(notAFolder, 'x');
-  for (const missing of [{ projects: join(notAFolder, '..', 'none') }, { sessions: join(notAFolder, '..', 'none') }, { sessions: 'relative/sessions' }, { projects: undefined }, { sessions: undefined }, { sessions: notAFolder }]) {
+  for (const missing of [{ projects: join(notAFolder, '..', 'none') }, { sessions: join(notAFolder, '..', 'none') }, { sessions: 'relative/sessions' }, { sessions: 'tests' },  { projects: undefined }, { sessions: undefined }, { sessions: notAFolder }]) {
     const w = world();
     transcript(w, '-proj', NEWEST, 0);
     const path = sessionFolder(w, OLD, 10);
@@ -243,7 +243,7 @@ test('the session registry: a symlink, a FIFO and a file over 64 KiB named *.jso
   writeFileSync(real, JSON.stringify({ pid: process.pid, sessionId: OLD }));
   symlinkSync(real, join(w.sessions, 'link.json'));
   assert.equal(spawnSync('mkfifo', [join(w.sessions, 'fifo.json')]).status, 0);
-  writeFileSync(join(w.sessions, 'big.json'), JSON.stringify({ pid: process.pid, sessionId: OTHER, pad: 'x'.repeat(70_000) }));
+  writeFileSync(join(w.sessions, 'big.json'), `${JSON.stringify({ pid: process.pid, sessionId: OTHER })}${' '.repeat(70_000)}`); // valid JSON in its first 64 KiB, so only the size limit refuses it
   assert.deepEqual([...(await liveSessionIds(w.sessions))], [], 'none of them counts');
   sessionFile(w, process.pid, CURRENT);
   assert.deepEqual([...(await liveSessionIds(w.sessions))], [CURRENT]);
@@ -260,5 +260,24 @@ test('Windows root name: no uid means Claude Code\'s claude-0 under \\tmp, never
   } finally {
     Object.defineProperty(process, 'platform', platform);
     process.getuid = getuid;
+  }
+});
+
+test('the session registry: pid 1 (alive, not ours) counts as running; a pid of 0, below 0, a fraction or a string never does', posix, async () => {
+  const w = world();
+  sessionFile(w, 1, OLD);
+  assert.deepEqual([...(await liveSessionIds(w.sessions))], [OLD]);
+  for (const pid of [0, -1, 1.5, '1']) writeFileSync(join(w.sessions, `bad-${pid}.json`), JSON.stringify({ pid, sessionId: OTHER }));
+  assert.deepEqual([...(await liveSessionIds(w.sessions))], [OLD]);
+});
+
+test('touchedSince: a folder that cannot be opened counts as busy', posix, async () => {
+  const w = world();
+  const locked = folder(join(w.root, 'locked'), { days: 9 });
+  chmodSync(locked, 0o000);
+  try {
+    assert.equal(await touchedSince(locked, Date.now() - 3 * 86_400_000), process.getuid?.() === 0 ? false : true);
+  } finally {
+    chmodSync(locked, 0o755);
   }
 });

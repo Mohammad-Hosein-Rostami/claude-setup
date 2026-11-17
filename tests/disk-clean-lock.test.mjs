@@ -3,7 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { releaseLock, takeLock } from '../home/tools/disk-free/lib/lock-file.mjs';
 import { posix } from './disk-clean-helpers.mjs';
@@ -79,4 +80,24 @@ test(`${RACERS} processes taking a stale lock at the same instant: exactly one g
     setAge(lock, 2 * STALE_MS);
     assert.equal(await racedTakes(lock), 1, `round ${round}`);
   }
+});
+
+test('a breaker that saw the stale lock before another process replaced it with a fresh one leaves the fresh lock alone (same inode or not)', posix, () => {
+  const lock = lockIn();
+  takeLock(lock, Date.now(), STALE_MS); // a fresh lock: the new one
+  const real = fs.lstatSync;
+  let looks = 0;
+  fs.lstatSync = (path, ...rest) => {
+    const info = real(path, ...rest);
+    return path === lock && (looks += 1) === 1 ? Object.assign(Object.create(Object.getPrototypeOf(info)), info, { mtimeMs: info.mtimeMs - 2 * STALE_MS }) : info; // the first look: the old, stale one
+  };
+  syncBuiltinESMExports();
+  try {
+    assert.equal(takeLock(lock, Date.now(), STALE_MS), false);
+  } finally {
+    fs.lstatSync = real;
+    syncBuiltinESMExports();
+  }
+  assert.equal(existsSync(lock), true);
+  assert.deepEqual(readdirSync(join(lock, '..')), ['the.lock']);
 });

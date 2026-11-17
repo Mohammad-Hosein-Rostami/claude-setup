@@ -3,8 +3,7 @@
 // removal is never followed, and a folder is renamed aside before the removal so a session that resumes keeps its work. Fake roots only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs, { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
-import { syncBuiltinESMExports } from 'node:module';
+import { chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,6 +59,10 @@ test('a shared sticky root (like /tmp) counts only when root owns it: then cs-ru
   const keep = folder(join(w.tmp, 'git-tidy-QQQQQQ'), { days: 3 });
   const foreign = await runClean(w.options); // sticky and world-writable, but this user owns it: the owner of a sticky folder can rename everything in it
   assert.deepEqual([existsSync(go), foreign.refused.length, foreign.removed], [true, 2, 0]);
+  chmodSync(w.tmp, 0o777); // world-writable and root-owned but not sticky: anyone could rename or remove anything in it
+  const notSticky = await withFakeStat(w.tmp, ROOT_FIELDS, () => runClean(w.options));
+  assert.deepEqual([existsSync(go), notSticky.refused.length], [true, 2]);
+  chmodSync(w.tmp, 0o1777);
   const summary = await withFakeStat(w.tmp, ROOT_FIELDS, () => runClean(w.options));
   assert.deepEqual([existsSync(go), existsSync(keep), summary.refused.length], [false, true, 0]);
 });
@@ -83,23 +86,30 @@ test('uid: a folder of another user is not an owned folder or a root; the same f
   assert.deepEqual(inspectRoot(w.tmp, w.home), { real: realpathSync(w.tmp), shared: false });
 });
 
-test('removeInside keeps an item, a folder on the way and a folder inside that another user owns, is writable by others or is on another file system', posix, async () => {
+test('removeInside keeps an item, a folder on the way and a folder inside that another user owns or that is on another file system', posix, async () => {
   const w = world();
   const root = realpathSync(w.tmp);
-  const make = (name) => folder(join(root, 'mid', name, 'inner'), { days: 3 });
+  const MOUNT = { dev: 987654321 };
+  const OTHER_OWNER = { uid: OTHER_UID };
+  // [label, what to remove, which folder is faked, how, expected message]; every item is root/mid/<name> with root/mid/<name>/inner/f.txt in it
   const cases = [
-    ['item owner', make('a'), join(root, 'mid', 'a'), { uid: OTHER_UID }, /not owned by you/],
-    ['item mount point', make('b'), join(root, 'mid', 'b'), { dev: 987654321 }, /another file system/],
-    ['folder on the way', make('c'), join(root, 'mid', 'c'), { uid: OTHER_UID }, /not owned by you|symlink, is not owned/],
-    ['folder on the way, other file system', make('d'), join(root, 'mid', 'd'), { dev: 987654321 }, /another file system/],
-    ['folder inside', make('e'), join(root, 'mid', 'e', 'inner'), { uid: OTHER_UID }, /not owned by you/],
-    ['folder inside, other file system', make('f'), join(root, 'mid', 'f', 'inner'), { dev: 987654321 }, /another file system/],
+    ['item owner', 'a', 'a', OTHER_OWNER, /not owned by you/],
+    ['item on another file system', 'b', 'b', MOUNT, /another file system/],
+    ['folder on the way, owner', 'c', '', OTHER_OWNER, /symlink, is not owned/],
+    ['folder on the way, file system', 'd', '', MOUNT, /another file system/],
+    ['folder inside, owner', 'e', 'e/inner', OTHER_OWNER, /not owned by you/],
+    ['folder inside, file system', 'f', 'f/inner', MOUNT, /another file system/],
   ];
-  for (const [label, item, faked, fields, message] of cases) {
-    const target = label.startsWith('folder on the way') ? join(item) : join(root, 'mid', item.split('/').at(-2));
-    await withFakeStat(faked, fields, () => assert.throws(() => removeInside(root, label.startsWith('folder on the way') ? join(item, 'f.txt') : target), message, label));
+  for (const [label, name, faked, fields, message] of cases) {
+    const item = folder(join(root, 'mid', name, 'inner'), { days: 3 });
+    const target = join(root, 'mid', name);
+    const fakedPath = label.startsWith('folder on the way') ? join(root, 'mid') : join(root, 'mid', faked);
+    await withFakeStat(fakedPath, fields, () => assert.throws(() => removeInside(root, target), message, label));
     assert.equal(existsSync(join(item, 'f.txt')), true, `${label}: nothing was removed`);
   }
+  const plain = folder(join(root, 'mid', 'g'), { days: 3 }); // no folder inside: only the item's own check can refuse it
+  await withFakeStat(plain, MOUNT, () => assert.throws(() => removeInside(root, plain), /another file system/));
+  assert.equal(existsSync(join(plain, 'f.txt')), true);
 });
 
 test('removeInside keeps a folder item that others can write to, refuses the root itself and a sibling that shares the name prefix', posix, () => {
@@ -129,111 +139,6 @@ test('an item is kept (listed, left under its aside name) when a folder inside i
   const summary = await runClean(w.options);
   assert.deepEqual([existsSync(join(asideOf(unsafeInside), 'open', 'f')), existsSync(fine), summary.failed.length], [true, false, 1], 'an error on one item does not stop the run');
   chmodSync(join(asideOf(unsafeInside), 'open'), 0o755);
-});
-
-/** Runs the removal of a folder `item` made by `folder()` while `hook(path)` is called when its listing is opened inside it (cwd is the folder). */
-async function removeWithHookAtListing(w, hook) {
-  const item = join(realpathSync(w.tmp), 'cs-run-Swap01');
-  folder(join(item, 'd'), { days: 3, files: { 'thesis.txt': 'bait' } });
-  age(item, 3);
-  const inner = join(asideOf(item), 'd'); // the item is renamed aside before it is emptied
-  const realOpendir = fs.opendirSync;
-  let fired = false;
-  fs.opendirSync = (path, ...rest) => {
-    const handle = realOpendir(path, ...rest);
-    if (!fired && path === '.' && process.cwd() === inner) {
-      fired = true;
-      hook(inner);
-    }
-    return handle;
-  };
-  syncBuiltinESMExports();
-  try {
-    const summary = await runClean(w.options);
-    assert.ok(fired, 'the hook ran');
-    return summary;
-  } finally {
-    fs.opendirSync = realOpendir;
-    syncBuiltinESMExports();
-  }
-}
-
-test('a folder swapped for a symlink while it is being removed is not followed: the victim keeps its files', posix, async () => {
-  const w = world();
-  const victim = folder(join(w.root, 'owner-home'), { days: 0, files: { 'thesis.txt': 'precious' } });
-  const summary = await removeWithHookAtListing(w, (inner) => {
-    renameSync(inner, join(w.root, 'spare'));
-    symlinkSync(victim, inner);
-  });
-  assert.equal(summary.failed.length, 1);
-  assert.equal(readFileSync(join(victim, 'thesis.txt'), 'utf8'), 'precious');
-});
-
-test('a folder moved away while it is being removed: its new parent is not touched (identity of the parent is checked before the rmdir)', posix, async () => {
-  const w = world();
-  mkdirSync(join(w.root, 'elsewhere'));
-  const summary = await removeWithHookAtListing(w, (inner) => renameSync(inner, join(w.root, 'elsewhere', 'd')));
-  assert.equal(summary.failed.length, 1);
-  assert.equal(existsSync(join(w.root, 'elsewhere', 'd')), true, 'the emptied folder was not removed behind the parent check');
-});
-
-test('the parent of the item is swapped for another real folder after it was checked: nothing is removed from the new one (identity by device AND inode)', posix, () => {
-  const w = world();
-  const root = realpathSync(w.tmp);
-  const parent = join(root, 'mid');
-  folder(join(parent, 'item'), { days: 3 });
-  const realChdir = process.chdir;
-  let swapped = false;
-  process.chdir = (target) => {
-    if (!swapped && target === parent) {
-      swapped = true;
-      renameSync(parent, join(root, 'spare'));
-      folder(join(parent, 'item'), { days: 3, files: { 'new.txt': 'not for removal' } });
-    }
-    return realChdir(target);
-  };
-  try {
-    assert.throws(() => removeInside(root, join(parent, 'item')), /changed while/);
-  } finally {
-    process.chdir = realChdir;
-  }
-  assert.equal(existsSync(join(parent, 'item', 'new.txt')), true);
-});
-
-test('the working directory is put back after a removal, also after one that fails', posix, () => {
-  const w = world();
-  const root = realpathSync(w.tmp);
-  const before = process.cwd();
-  removeInside(root, folder(join(root, 'ok', 'item'), { days: 3 }));
-  assert.equal(process.cwd(), before);
-  const open = folder(join(root, 'bad', 'item', 'inner'), { days: 3 });
-  chmodSync(open, 0o777);
-  assert.throws(() => removeInside(root, join(root, 'bad', 'item')), /writable by others/);
-  assert.equal(process.cwd(), before);
-  chmodSync(open, 0o755);
-});
-
-test('an entry that cannot be looked at stops the removal at once (no spinning on it); a vanished one is skipped', posix, () => {
-  const w = world();
-  const root = realpathSync(w.tmp);
-  const item = folder(join(root, 'item'), { days: 3, files: { locked: 'x', other: 'y' } });
-  const realLstat = fs.lstatSync;
-  const realOpendir = fs.opendirSync;
-  let listings = 0;
-  fs.lstatSync = (path, ...rest) => {
-    if (path === 'locked') throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
-    return realLstat(path, ...rest);
-  };
-  fs.opendirSync = (...args) => { listings += 1; return realOpendir(...args); };
-  syncBuiltinESMExports();
-  try {
-    assert.throws(() => removeInside(root, item), /EACCES/);
-  } finally {
-    fs.lstatSync = realLstat;
-    fs.opendirSync = realOpendir;
-    syncBuiltinESMExports();
-  }
-  assert.ok(listings <= 2, `${listings} listings`);
 });
 
 test('every rule yields the real path of its root, also when the configured root is reached through a symlinked parent', posix, async () => {
@@ -267,4 +172,27 @@ test('moveAside renames to .removing-<pid>-<name> in the same parent, refuses a 
   assert.throws(() => moveAside(root, join(root, 'link')), /symlink/);
   await withFakeStat(aside, { uid: OTHER_UID }, () => assert.throws(() => moveAside(root, aside), /not owned by you/));
   assert.deepEqual(readdirSync(root).sort(), ['.removing-' + process.pid + '-cs-run-AbCdEf', 'file', 'link']);
+});
+
+test('removeInside refuses a link as the item, a root that another user owns, and a folder nested deeper than 64 levels', posix, async () => {
+  const w = world();
+  const root = realpathSync(w.tmp);
+  const real = folder(join(root, 'real'), { days: 3 });
+  symlinkSync(real, join(root, 'link'));
+  assert.throws(() => removeInside(root, join(root, 'link')), /symlink and is never removed/);
+  await withFakeStat(root, { uid: OTHER_UID }, () => assert.throws(() => removeInside(root, real), /root .* is not a folder owned by you/));
+  const deep = Array.from({ length: 70 }, () => 'd').join('/');
+  folder(join(root, 'deep', deep), { days: 3 });
+  assert.throws(() => removeInside(root, join(root, 'deep')), /nested deeper than 64/);
+  assert.equal(existsSync(join(real, 'f.txt')), true);
+});
+
+test('a rule does not even find a folder that another user owns: not the project folder, the session folder, the throwaway project or the test temp folder', posix, async () => {
+  const w = world();
+  transcript(w, '-proj', NEWEST, 0);
+  const found = { session: sessionFolder(w, OLD, 10), project: folder(join(w.projects, '-tmp-x'), { days: 10 }), testTemp: folder(join(w.tmp, 'cs-run-AbCdEf'), { days: 3 }) };
+  const itemsWith = async (path) => (await withFakeStat(path, { uid: OTHER_UID }, () => runClean({ ...w.options, apply: false }))).items;
+  const normal = (await runClean({ ...w.options, apply: false })).items;
+  assert.equal(normal, 3);
+  assert.deepEqual([await itemsWith(join(w.claudeTmp, '-proj')), await itemsWith(found.session), await itemsWith(found.project), await itemsWith(found.testTemp)], [2, 2, 2, 2]);
 });

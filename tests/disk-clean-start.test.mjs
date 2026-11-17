@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cleanEnv, openLogFile, startIfDue } from '../home/hooks/disk-clean-start.mjs';
@@ -179,6 +179,12 @@ test('the log: a symlink or a FIFO is not opened (nothing written through, no wa
   const fd = openLogFile(join(home, 'plain.log'));
   assert.equal(typeof fd, 'number');
   assert.equal(statSync(join(home, 'plain.log')).size, 0);
+  const reader = openSync(join(home, 'fifo.log'), constants.O_RDONLY | constants.O_NONBLOCK); // a FIFO with a reader opens for writing: only the file type check refuses it
+  try {
+    assert.equal(openLogFile(join(home, 'fifo.log')), null);
+  } finally {
+    closeSync(reader);
+  }
 });
 
 /** Starts STARTUP_RACERS processes that all call startIfDue at the same instant on one stamp; returns how many started a clean-up. */
