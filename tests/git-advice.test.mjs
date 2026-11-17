@@ -1,0 +1,115 @@
+// Tests for lib/git-advice.mjs: the two new C37 advices next to the merge-commit and branch-move ones.
+//  - copy branch: `checkout -b`, `switch -c`, `branch`, `worktree add -b` of NAME-<n>|-fix|-fixes|-v<n>|-redo while NAME exists locally.
+//  - no PASS: `git merge --ff-only <ref>` in a folder on main/master/develop when the full suite has no PASS record at that commit.
+// Real temporary repos (tests/git-tidy-helpers.mjs); `hasPass` is injected because the PASS record belongs to the test-pass tool.
+import './pin-home.mjs';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { decide } from '../home/hooks/pre-bash-guard.mjs';
+import { COPY_BRANCH_ADVICE_PATTERN, copyBranchStem, gitAdvice, NO_PASS_ADVICE_PATTERN } from '../home/hooks/lib/git-advice.mjs';
+import { MERGE_COMMIT_ADVICE } from '../home/hooks/lib/merge-commit.mjs';
+import { BRANCH_MOVE_ADVICE } from '../home/hooks/lib/branch-move.mjs';
+import { ADVICE_CLASS, reasonClass } from '../home/hooks/lib/reason-classes.mjs';
+import { commit, git, makeRepo } from './git-tidy-helpers.mjs';
+import { hookEnv } from './hook-env.mjs';
+
+const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
+const lane = (repo) => { // a repo on main with a lane branch `lane-x` that exists locally
+  git(repo, 'branch', 'lane-x');
+  return repo;
+};
+const noPass = { hasPass: () => false };
+const hasPass = { hasPass: () => true };
+const matches = (advice, pattern) => advice.length === 1 && pattern.test(advice[0]);
+
+test('copyBranchStem: the existing stem for a -<n>, -fix, -fixes, -v<n> or -redo copy, null otherwise', () => {
+  const repo = lane(makeRepo());
+  for (const name of ['lane-x-2', 'lane-x-12', 'lane-x-fix', 'lane-x-fixes', 'lane-x-v3', 'lane-x-redo']) assert.equal(copyBranchStem(name, repo), 'lane-x', name);
+  for (const name of ['other-2', 'lane-x', 'lane-x-two', 'lane-x-', 'lane-xfix', 'lane-x-v', 'lane-x-2a']) assert.equal(copyBranchStem(name, repo), null, name);
+  assert.equal(copyBranchStem('lane-x-2', join(repo, 'no-such-folder')), null, 'a git error is null, never a throw');
+});
+
+test('copy branch: each way to create a branch NAME-<n> while NAME exists gets the advice', () => {
+  const repo = lane(makeRepo());
+  for (const command of [
+    'git checkout -b lane-x-2', 'git checkout -B lane-x-fix', 'git switch -c lane-x-v2', 'git switch -C lane-x-redo', 'git switch --create lane-x-fixes',
+    'git branch lane-x-3', 'git branch lane-x-3 main', 'git worktree add -b lane-x-2 ../wt', 'git worktree add ../wt -b lane-x-redo',
+    'git checkout -b lane-x-2 main', 'git -C . checkout -b lane-x-2', 'git --no-pager branch lane-x-2',
+  ]) assert.ok(matches(gitAdvice(command, repo, process.env, noPass), COPY_BRANCH_ADVICE_PATTERN), command);
+  assert.equal(reasonClass(gitAdvice('git checkout -b lane-x-2', repo)[0]), ADVICE_CLASS.copyBranch);
+});
+
+test('copy branch: the folder is the cwd, `git -C dir` or a `cd dir &&` before the command', () => {
+  const repo = lane(makeRepo());
+  const elsewhere = mkdtempSync(join(tmpdir(), 'git-advice-elsewhere-'));
+  assert.equal(gitAdvice('git checkout -b lane-x-2', elsewhere).length, 0);
+  assert.ok(matches(gitAdvice(`git -C ${repo} checkout -b lane-x-2`, elsewhere), COPY_BRANCH_ADVICE_PATTERN));
+  assert.ok(matches(gitAdvice(`cd ${repo} && git checkout -b lane-x-2`, elsewhere), COPY_BRANCH_ADVICE_PATTERN));
+});
+
+test('copy branch twin: no advice when the stem is missing, nothing is created, or the text only names the command', () => {
+  const repo = lane(makeRepo());
+  for (const command of [
+    'git checkout -b other-2', 'git checkout lane-x-2', 'git switch lane-x-2', 'git branch -d lane-x-2', 'git branch -D lane-x-2', 'git branch -m lane-x lane-x-2',
+    'git branch --list lane-x-2', 'git branch', 'git checkout -b lane-y', 'echo "git checkout -b lane-x-2"', 'git log --grep "checkout -b lane-x-2"',
+    'git checkout -b "lane x-2"', 'git checkout -b lane-x-2$(date)', 'git checkout -b $NAME',
+  ]) assert.deepEqual(gitAdvice(command, repo, process.env, noPass), [], command);
+});
+
+test('no PASS: merge --ff-only on main without a suite PASS at the commit gets the advice with the short sha', () => {
+  const repo = lane(makeRepo());
+  git(repo, 'checkout', '-q', 'lane-x');
+  const tip = commit(repo, 'lane.txt');
+  git(repo, 'checkout', '-q', 'main');
+  for (const command of ['git merge --ff-only lane-x', 'git -C . merge --ff-only lane-x', 'git merge --ff-only lane-x && echo done']) {
+    const advice = gitAdvice(command, repo, process.env, noPass);
+    assert.ok(matches(advice, NO_PASS_ADVICE_PATTERN), command);
+    assert.ok(advice[0].includes(tip.slice(0, 12)), 'names the commit');
+    assert.equal(reasonClass(advice[0]), ADVICE_CLASS.noPass);
+  }
+});
+
+test('no PASS twin: a PASS record, a lane folder, a plain merge, an unknown ref or a failing check give no PASS advice', () => {
+  const repo = lane(makeRepo());
+  assert.deepEqual(gitAdvice('git merge --ff-only lane-x', repo, process.env, hasPass), [], 'proven');
+  assert.deepEqual(gitAdvice('git merge --ff-only no-such-ref', repo, process.env, noPass), [], 'unknown ref');
+  assert.deepEqual(gitAdvice('git merge --ff-only lane-x', repo, process.env, { hasPass: () => { throw new Error('store unreadable'); } }), [], 'check failed: let it through');
+  assert.deepEqual(gitAdvice('git merge --ff-only lane-x', repo, process.env, { hasPass: () => undefined }), [], 'unknown answer: let it through');
+  assert.deepEqual(gitAdvice('git merge --ff-only --abort', repo, process.env, noPass), [], 'no ref');
+  assert.deepEqual(gitAdvice('git merge --ff-only lane-x', join(repo, 'no-such-folder'), process.env, noPass), [], 'a git error');
+  git(repo, 'checkout', '-q', 'lane-x');
+  assert.deepEqual(gitAdvice('git merge --ff-only main', repo, process.env, noPass), [], 'a lane branch is not a base');
+  git(repo, 'checkout', '-q', 'main');
+  assert.deepEqual(gitAdvice('git merge lane-x', repo, process.env, noPass), [MERGE_COMMIT_ADVICE], 'a plain merge has the C37 advice only');
+});
+
+test('the merge-commit and branch-move advices are still given, once each, by the same call', () => {
+  const repo = lane(makeRepo());
+  assert.deepEqual(gitAdvice('git merge feature', repo), [MERGE_COMMIT_ADVICE]);
+  assert.deepEqual(gitAdvice('git update-ref refs/heads/main abc', repo), [BRANCH_MOVE_ADVICE]);
+  assert.deepEqual(gitAdvice('git status', repo), []);
+});
+
+test('through decide() and the hook: a copy branch is denied once with the advice, the identical retry runs', () => {
+  const repo = lane(makeRepo());
+  const verdict = decide('git checkout -b lane-x-2', { cwd: repo, project: repo });
+  assert.equal(verdict.allow, true);
+  assert.ok(matches(verdict.advice, COPY_BRANCH_ADVICE_PATTERN));
+  const home = mkdtempSync(join(tmpdir(), 'git-advice-home-'));
+  const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: repo });
+  const send = (command) => {
+    const input = JSON.stringify({ cwd: repo, session_id: 'sess-1', tool_input: { command } });
+    const { status, stdout, stderr } = spawnSync(process.execPath, [GUARD], { input, encoding: 'utf8', env });
+    assert.equal(status, 0, stderr);
+    return stdout === '' ? { decision: 'allow' } : JSON.parse(stdout).hookSpecificOutput;
+  };
+  const first = send('git checkout -b lane-x-2');
+  assert.equal(first.permissionDecision, 'deny');
+  assert.match(first.permissionDecisionReason, /a re-done lane continues the same branch/);
+  assert.deepEqual(send('git checkout -b lane-x-2'), { decision: 'allow' });
+});

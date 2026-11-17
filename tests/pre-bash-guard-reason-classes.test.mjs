@@ -12,7 +12,9 @@ import { bounceOnce, bounceText } from '../home/hooks/lib/bounce-once.mjs';
 import {
   ADVICE_CLASS, ADVICE_CLASSES, ASK_CLASSES, BOUNCE_CLASS, BOUNCE_CLASSES, isAdviceReason, reasonClass,
 } from '../home/hooks/lib/reason-classes.mjs';
+import { gitAdvice } from '../home/hooks/lib/git-advice.mjs';
 import { decide, decideSafely, GUARD_ERROR_REASON } from '../home/hooks/pre-bash-guard.mjs';
+import { git, makeRepo } from './git-tidy-helpers.mjs';
 
 const PROJECT = resolve('/work/proj');
 const PROD = 'db.prod.example';
@@ -81,6 +83,12 @@ const ADVICE = [
   [ADVICE_CLASS.mergeCommit, 'git merge feature'],
   [ADVICE_CLASS.branchMove, 'git update-ref refs/heads/main abc'],
 ];
+// Advice whose text names a branch or a commit depends on the repository, so it is made by gitAdvice in a real temporary repo
+// (the PASS check is replaced: the PASS record belongs to the test-pass tool).
+const REPOSITORY_ADVICE = [
+  [ADVICE_CLASS.copyBranch, 'git checkout -b lane-x-2'],
+  [ADVICE_CLASS.noPass, 'git merge --ff-only lane-x'],
+];
 
 const askFor = (name, command) => (name === 'guard error' ? decideSafely(command, ctx, throwingRules) : decide(command, ctx));
 const reasonsOf = (ask) => ask.reasons ?? [ask.reason];
@@ -95,7 +103,7 @@ test('every class that is not a bounce class has exactly one row in NEVER_BOUNCE
   assert.equal(new Set(tested).size, tested.length, 'one row per class');
   assert.deepEqual(new Set(tested), new Set(ASK_CLASSES), 'a class without a row (or a row without a class)');
   assert.deepEqual(new Set(BOUNCED.map(([name]) => name)), new Set(BOUNCE_CLASSES));
-  assert.deepEqual(new Set(ADVICE.map(([name]) => name)), new Set(ADVICE_CLASSES));
+  assert.deepEqual(new Set([...ADVICE, ...REPOSITORY_ADVICE].map(([name]) => name)), new Set(ADVICE_CLASSES));
   assert.equal(ASK_CLASSES.some((name) => BOUNCE_CLASSES.includes(name)), false);
   assert.equal(ADVICE_CLASSES.some((name) => ASK_CLASSES.includes(name) || BOUNCE_CLASSES.includes(name)), false);
 });
@@ -105,6 +113,18 @@ test('each advice class is allowed by the rules with only its advice: no reason 
     const r = decide(command, ctx);
     assert.deepEqual([r.allow, r.ask, r.advice.map(reasonClass)], [true, undefined, [name]], name);
     assert.equal(isAdviceReason(`${r.advice[0]} (matched in raw text)`), true, `${name}: a backstop-only advice is advice too`);
+  }
+});
+
+test('each advice class with a branch or commit in its text is classed by its whole text, and is advice even with the backstop mark', () => {
+  const repo = makeRepo();
+  git(repo, 'branch', 'lane-x');
+  for (const [name, command] of REPOSITORY_ADVICE) {
+    const [text] = gitAdvice(command, repo, process.env, { hasPass: () => false });
+    assert.equal(reasonClass(text), name, name);
+    assert.equal(isAdviceReason(`${text} (matched in raw text)`), true, name);
+    assert.equal(isAdviceReason(`${text} and then some other wording`), false, `${name}: text that only starts like the advice asks`);
+    assert.equal(isAdviceReason(`x ${text}`), false, name);
   }
 });
 
