@@ -234,3 +234,36 @@ test('the findings and optional findings of a review come back with the lane, la
   assert.deepEqual([run.result.lanes[0].status, run.result.lanes[0].findings, run.result.lanes[0].optional], ['review-findings', [{ id: 'F1' }], [{ id: 'O1' }]]);
   assert.deepEqual([run.result.lanes[1].status, run.result.lanes[1].optional, 'findings' in run.result.lanes[1]], ['landed', [{ id: 'O2' }], false]);
 });
+
+test('a ui-implementer lane needs a matrix and carries it as the MATRIX line; every build brief names the standing rules (S3)', async () => {
+  const ui = lane('a', { implementer: { agentType: 'ui-implementer', model: 'sonnet', effort: 'medium' } });
+  for (const matrix of [undefined, '', 'none: short']) {
+    const run = await runScript(BUILD, ARGS([{ ...ui, matrix }]), { replies: standard() });
+    assert.match(String(run.error?.message), /args\.lanes\[0\]\.matrix must be a coverage matrix path or `none: <reason of 15\+ characters>`/);
+    assert.equal(run.calls.length, 0);
+  }
+  const run = await runScript(BUILD, ARGS([{ ...ui, matrix: '/p/matrix.json', acceptanceTests: true }]), {
+    replies: [...standard(), { match: /:tests$/, reply: { branch: 'lane/a--tests', worktree: '/wt/at', sha: 'tw1' } }],
+    children: children(() => reviewed('a'), () => landedOk('a')),
+  });
+  const implement = run.calls.find((call) => call.label === 'impl-a:implement');
+  assert.match(implement.prompt, /^MATRIX: \/p\/matrix\.json\nRead the `## Standing rules` of \/p\/STATUS\.md/);
+  assert.match(run.calls.find((call) => call.label === 'impl-a:tests').prompt, /^Read the `## Standing rules` of \/p\/STATUS\.md/);
+  const plain = await runScript(BUILD, ARGS([lane('b')]), { replies: standard(), children: children(() => reviewed('b'), () => landedOk('b')) });
+  assert.doesNotMatch(plain.calls.find((call) => call.label === 'impl-b:implement').prompt, /MATRIX/);
+});
+
+test('a worktree path with shell characters, from an agent or the join runner, ends only that lane (N1)', async () => {
+  const run = await runScript(BUILD, ARGS([lane('a'), lane('b'), lane('c')]), {
+    replies: [
+      { match: /impl-a:implement/, reply: { ...built('a'), worktree: '/wt/a; echo x' } },
+      { match: /impl-b:implement/, reply: built('b') },
+      { match: /impl-c:implement/, reply: built('c') },
+      { match: /impl-b:join/, reply: joined('b', { worktree: '/wt/b $(x)' }) },
+      { match: /impl-c:join/, reply: joined('c') },
+    ],
+    children: children((a) => reviewed(a.branch.slice(-1)), (a) => landedOk(a.branch.slice(-1))),
+  });
+  assert.deepEqual(run.result.lanes.map((entry) => entry.status), ['failed', 'join-failed', 'landed']);
+  assert.match(run.result.lanes[0].text, /not a plain absolute path/);
+});

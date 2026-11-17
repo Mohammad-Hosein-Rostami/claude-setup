@@ -2,7 +2,8 @@
 // isolated worktrees, a runner Join (cherry-pick the test commits, run the related tests, close the implement row, start the close row),
 // the `review` child (landing review with fixes), then a serial land queue through the `land` child. Lane A lands while lane B is still in review.
 // Args: { base, repo, suite, writers, statusFile, scriptsDir, lanes: [{ row, closeRow, branch, spec, files, acceptanceTests, implementer:
-//   { agentType?, model, effort } }] }  (scriptsDir: the folder holding review.js and land.js; writers: writer agents at once, across lanes).
+//   { agentType?, model, effort }, matrix? }] }  (matrix: the coverage matrix path, or `none: <reason of 15+ characters>`, required when the implementer is a
+//   ui-implementer: the UI brief gate of agent-model-guard does not fire for a workflow spawn; scriptsDir: the folder holding review.js and land.js; writers: writer agents at once, across lanes).
 // Returns: { lanes: [{ row, closeRow, status, sha, text, findings?, optional? }], leadList } with status landed | implementer-stopped | wrong-branch |
 //   join-failed | review-<status of the review> | lead-decision | failed (land said so); the lead reads text and decides.
 //   lead-decision: the review is clean but a security finding was ruled not real by a weaker check or the judge: the lane is held, never landed, until
@@ -37,6 +38,8 @@ const IMPLEMENTED = {
 const TESTS_WRITTEN = { type: 'object', properties: { branch: str, worktree: str, sha: str }, required: ['branch', 'worktree', 'sha'] }
 const JOINED = { type: 'object', properties: { red: { type: 'boolean' }, tail: str, sha: str, worktree: str }, required: ['red', 'tail', 'sha', 'worktree'] }
 const leadList = []
+// Worktree paths agents return go into later shell commands (a worktree remove, a cherry-pick): only a plain absolute path passes (N1).
+const SAFE_PATH = /^\/[\w@+=.,/-]+$/
 
 // At most args.writers writer agents at once, across all lanes (scripts cannot import, so the limiter lives here).
 let writersRunning = 0
@@ -57,13 +60,16 @@ const inLandQueue = (task) => {
   return run
 }
 
-const implementerPrompt = (lane) => `Implement lane ${lane.row} of the spec ${lane.spec}: touch only ${lane.files.join(', ')}. `
+// agent-model-guard does not fire for a workflow spawn, so the brief carries its two lines: the UI matrix and the standing rules (S3).
+const matrixLine = (lane) => (lane.implementer.agentType === 'ui-implementer' ? `MATRIX: ${lane.matrix}\n` : '')
+const standingRulesLine = `Read the \`## Standing rules\` of ${args.statusFile} (if it has any) first and follow them.\n`
+const implementerPrompt = (lane) => `${matrixLine(lane)}${standingRulesLine}Implement lane ${lane.row} of the spec ${lane.spec}: touch only ${lane.files.join(', ')}. `
   + `Your worktree starts on a throwaway branch (git branch --show-current, named worktree-...). Branch ${lane.branch} must hold your work, based on ${args.base}: `
   + `if it does not exist yet, rename the throwaway branch with \`git branch -m ${lane.branch}\` (git rebase ${args.base} if it is not based on it); `
   + `if it already exists (a re-done lane) never make a copy: remove the old worktree that holds it (git worktree list, then git worktree remove <path>), run \`git switch ${lane.branch} && git rebase ${args.base}\`, and delete the throwaway branch (\`git branch -d <its name>\`). `
   + `Run only the tests related to your changes while iterating (quiet reporter), commit after each green step, never merge, never push. `
   + `Last run \`node ~/.claude/tools/review-tier/review-tier.mjs ${args.base}...HEAD --landing --json\` and return IMPLEMENTED: branch (must be ${lane.branch}), worktree (your pwd), sha (HEAD), tests {cmd, exit}, tier (that JSON).`
-const testWriterPrompt = (lane) => `Write the acceptance tests of lane ${lane.row} from the spec ${lane.spec} (files: ${lane.files.join(', ')}): test files only, each test fails without the behaviour it checks. `
+const testWriterPrompt = (lane) => `${standingRulesLine}Write the acceptance tests of lane ${lane.row} from the spec ${lane.spec} (files: ${lane.files.join(', ')}): test files only, each test fails without the behaviour it checks. `
   + `Your worktree starts on a throwaway branch (named worktree-...): rename it with \`git branch -m ${testBranch(lane)}\`. Commit; never merge, never push. Return branch, worktree (your pwd), sha (HEAD).`
 const joinPrompt = (lane, built, written) => `Join lane ${lane.row} in its worktree ${built.worktree} (branch ${lane.branch}).\n`
   + `${written ? `Cherry-pick the test commit(s) of ${written.branch} (worktree ${written.worktree}, sha ${written.sha}) onto the lane, then delete the helper branch ${written.branch} and its worktree.\n` : ''}`
@@ -95,6 +101,7 @@ async function buildLane(lane) {
   if (built === null || (lane.acceptanceTests && written === null)) return outcome(lane, 'implementer-stopped', '', 'a build agent was stopped before it returned')
   // An agent that stays on another branch would have its work reviewed under one name and landed under another (B1).
   if (built.branch !== lane.branch) return outcome(lane, 'wrong-branch', built.sha, `the implementer is on branch ${built.branch}, not ${lane.branch}: the lane was not joined or landed`)
+  if (!SAFE_PATH.test(built.worktree) || (written !== null && !SAFE_PATH.test(written.worktree))) return outcome(lane, 'failed', built.sha, `a build agent returned a worktree path that is not a plain absolute path: ${built.worktree}${written ? `, ${written.worktree}` : ''}`)
   if (written !== null && written.branch !== testBranch(lane)) return outcome(lane, 'wrong-branch', written.sha, `the test-writer is on branch ${written.branch}, not ${testBranch(lane)}: the lane was not joined or landed`)
   return { lane, built, written }
 }
@@ -104,6 +111,7 @@ async function joinLane(step) {
   const { lane, built, written } = step
   const joined = await agent(joinPrompt(lane, built, written), { label: `${lane.row}:join`, phase: 'Join', schema: JOINED, ...RUNNER })
   if (joined === null) return outcome(lane, 'join-failed', built.sha, 'the join runner was stopped')
+  if (!SAFE_PATH.test(joined.worktree)) return outcome(lane, 'join-failed', built.sha, `the join runner returned a worktree path that is not a plain absolute path: ${joined.worktree}`)
   return { lane, joined }
 }
 
@@ -151,5 +159,9 @@ function checkArgs(given) {
     const laneKeys = { row: 'string', closeRow: 'string', branch: 'string', spec: 'string', files: 'array', acceptanceTests: 'boolean', implementer: 'object' }
     for (const [key, type] of Object.entries(laneKeys)) check(lane, `lanes[${at}].`, key, type)
     for (const key of ['model', 'effort']) check(lane.implementer, `lanes[${at}].implementer.`, key, 'string')
+    if (lane.implementer.agentType === 'ui-implementer') {
+      const usable = typeof lane.matrix === 'string' && (lane.matrix.startsWith('none:') ? lane.matrix.slice('none:'.length).trim().length >= 15 : lane.matrix.trim() !== '')
+      if (!usable) throw new Error(`${name}: args.lanes[${at}].matrix must be a coverage matrix path or \`none: <reason of 15+ characters>\` for a ui-implementer`)
+    }
   })
 }

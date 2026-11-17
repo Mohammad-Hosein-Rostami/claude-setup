@@ -111,3 +111,17 @@ test('a base that is reported moved twice while it did not change fails instead 
   assert.equal(moving.result.status, 'landed');
   assert.equal(tries, 3);
 });
+
+test('a failed branch lookup is a failure even when the runner still printed the expected sha; a base that cannot be read after exit 5 fails', async () => {
+  const lookup = await runScript(LAND, ARGS, { replies: [atTip({ exit: 128, tip: 'abc1234' })] });
+  assert.equal(lookup.result.status, 'failed');
+  assert.match(lookup.result.tidy, /branch lane\/a not found/);
+  assert.deepEqual(lookup.started, ['close:4:tip']);
+  const exit5 = { exit: 5, tip: 'x', patchesChanged: 0, files: [], tail: 'base moved' };
+  for (const base of [null, { exit: 128, tip: 'b000002', patchesChanged: 0, files: [], tail: 'fatal' }]) {
+    const run = await runScript(LAND, ARGS, { replies: [atTip(), rebased(), suite({}), { match: /:base$/, reply: base }, { match: /:land$/, reply: exit5 }] });
+    assert.equal(run.result.status, 'failed');
+    assert.match(run.result.tidy, /could not be read after "base moved"/);
+    assert.equal(run.started.filter((label) => label.endsWith(':rebase')).length, 1);
+  }
+});

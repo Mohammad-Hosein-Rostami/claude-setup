@@ -13,7 +13,7 @@ Args marked `?` are optional. Every script also accepts `scriptsDir` (this folde
 
 | script | skill | phases | args |
 | --- | --- | --- | --- |
-| `build.js` | `wf-build` | Build, Join, Review, Land | `base, repo, suite, writers, statusFile, scriptsDir, lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}}]` |
+| `build.js` | `wf-build` | Build, Join, Review, Land | `base, repo, suite, writers, statusFile, scriptsDir, lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?}]` |
 | `review.js` | `wf-review` | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, initialFindings?` |
 | `land.js` | `wf-land` | Rebase, Suite, Land | `row, closeRow, statusFile, repo, base, branch, worktree, suite, tip` |
 | `step.js` | `wf-step` | Step | `row, agentType, prompt, model, effort, isolation?, alone?, statusFile?` |
