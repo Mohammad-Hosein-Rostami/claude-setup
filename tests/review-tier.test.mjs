@@ -132,8 +132,12 @@ test('prisma.user.deleteMany({ is data with the auditor at Opus max; a migration
   assert.equal(migration.reviews[0].rules, 'core+db');
 });
 
+test('a stale-checkout path is not money', () => {
+  assert.ok(!report([changed('tests/git-tidy-stale-checkout.test.mjs', ['x'])]).classes.includes('money'));
+});
+
 test('ordinary words are not data or money: truncated, truncate(text), git checkout', () => {
-  for (const line of ['outcome.truncated = true;', 'const short = truncate(text);', "run('git checkout main');"]) {
+  for (const line of ['outcome.truncated = true;', 'const short = truncate(text);', "run('git checkout main');", "item('stale-checkout', path);"]) {
     const classes = report([logicLine(line)]).classes;
     assert.ok(!classes.includes('data') && !classes.includes('money'), line);
   }

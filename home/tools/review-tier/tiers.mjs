@@ -28,7 +28,8 @@ const INFRA_PATH = /(^|\/)(dockerfile|docker-compose[^/]*|\.github\/|k8s\/|terra
 const SECURITY_PATH = /auth|login|session|token|secret|credential|passw|crypto|permission|guard|sandbox|sanitiz|upload|webhook|oauth|jwt|cookie|csrf|cors/;
 const DATA_PATH = /(^|\/)(migrations?|prisma)\/|\.sql$|schema\./;
 const MONEY_WORDS = 'payment|invoice|billing|refund|checkout|stripe|wallet|ledger';
-const MONEY_PATH = new RegExp(MONEY_WORDS);
+const NOT_SHOP = '(?<!git\\s+|stale-)'; // `git checkout` and git-tidy's `stale-checkout` are not a shop checkout
+const MONEY_PATH = new RegExp(`${NOT_SHOP}(${MONEY_WORDS})`);
 const HOOKS_PATH = /(^|\/)hooks\//;
 const LOCK_WORD = /^(un)?lock(s|ed|ing|file)?$/;
 const SIZE_LINES = 400;
@@ -81,7 +82,7 @@ const LINE_RULES = [
   { cls: 'security', test: /\$queryRaw|\.raw\(/ },
   { cls: 'data', test: /ALTER TABLE|DROP (TABLE|COLUMN|INDEX)|CREATE (TABLE|INDEX)|DELETE FROM|TRUNCATE TABLE|\b(deleteMany|updateMany|createMany)\b|\$executeRaw|\.(delete|update|upsert|destroy)\(\s*\{/i },
   { cls: 'data', test: /\bTRUNCATE\b/ }, // upper case only: `truncated` and truncate(text) are ordinary code
-  { cls: 'money', test: new RegExp(`(?<!git\\s+)\\b(${MONEY_WORDS})s?\\b`, 'i') }, // `git checkout` is not a shop checkout
+  { cls: 'money', test: new RegExp(`${NOT_SHOP}\\b(${MONEY_WORDS})s?\\b`, 'i') },
   { cls: 'untrusted-input', test: /\breq\.(body|query|params|headers)|\brequest\.(body|query|params|json\()|JSON\.parse\(|process\.stdin|readFileSync\(\s*(0|['"]\/dev\/stdin['"])/ },
   { cls: 'untrusted-input', test: hasUntrustedArgument(/\bfetch\(/, false) },
   { cls: 'untrusted-input', test: hasUntrustedArgument(/\bpath\.(join|resolve)\(/, true) },
