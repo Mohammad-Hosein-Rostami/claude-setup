@@ -106,7 +106,8 @@ async function runWithRecord(repo, { suite, doctorPath = join(repo, 'scripts', '
     assert.ok(recordPass(repo, row, { HOME: home }), 'the record was stored');
   }
   const env = { ...process.env, HOME: home, DOCTOR_ONLY: 'check_repo_tests', DOCTOR_TEST_COMMAND: FAILING_SUITE, DOCTOR_LOG_DIR: join(home, 'log-dir') };
-  return spawnSync('bash', [doctorPath], { env, encoding: 'utf8' });
+  // cwd is not the repo, so doctor must pass --repo to test-pass itself.
+  return spawnSync('bash', [doctorPath], { env, cwd: home, encoding: 'utf8' });
 }
 
 test('a full-suite PASS recorded for HEAD is reused: ok, and the suite does not run again', async () => {

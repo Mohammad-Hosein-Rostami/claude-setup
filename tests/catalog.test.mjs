@@ -1,6 +1,6 @@
 // Tests for docs/catalog.md as a union-merged file: parallel lanes append rows to it, so git merges them by `merge=union`
 // (.gitattributes). Union keeps both sides' lines and cannot tell a duplicated or lost row from a good one, so these tests catch that.
-// Exports: none (node:test file).
+// Exports: readTables, duplicateKeys, missingFiles (the checks, so the fixture test can run them on a small catalog).
 // Invariants: (1) the first cell of a row is unique within its table; (2) every file a row of a file table names exists;
 // (3) two lanes that each append a row to the same table rebase one after the other with no conflict and keep both rows.
 import test from 'node:test';

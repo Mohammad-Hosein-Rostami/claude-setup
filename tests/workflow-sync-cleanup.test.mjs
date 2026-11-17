@@ -81,7 +81,9 @@ test('sync: the doctor runner runs one foreground command with a 10 minute Bash 
   for (const machine of ['macbook', 'pc']) {
     const prompt = run.calls.find((c) => c.label === `s1:doctor:${machine}`).prompt;
     assert.match(prompt, /timeout: 600000/);
-    assert.match(prompt, /foreground/);
+    assert.match(prompt, /ONE foreground Bash command/);
+    assert.match(prompt, /never in a polling loop/);
+    assert.match(prompt, /never in the background/);
     assert.match(prompt, /never (start it )?in the background|do not background/i);
     assert.doesNotMatch(prompt, /start it in the background/);
   }
@@ -90,7 +92,8 @@ test('sync: the doctor runner runs one foreground command with a 10 minute Bash 
 test('sync: the verify step also checks the audit-log gate for the tip when the tool exists', async () => {
   const run = await runScript('sync-machines', SYNC_ARGS, { replies: syncReplies() });
   const prompt = run.calls.find((c) => c.label === 's1:verify').prompt;
-  assert.match(prompt, /\(5\) when \S*review-tier\/audit-log\.mjs exists, node \S*audit-log\.mjs gate --repo \/r --tip SHA exits 0/);
+  // The repo's own copy, not the installed one: a copied or stale install would skip the gate or run an old one.
+  assert.match(prompt, /\(5\) when \/r\/home\/tools\/review-tier\/audit-log\.mjs exists, node \/r\/home\/tools\/review-tier\/audit-log\.mjs gate --repo \/r --tip SHA exits 0/);
 });
 
 test('sync: a bad args object throws the named error before any agent starts', async () => {
