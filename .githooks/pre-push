@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# Purpose: before a push, make sure the full suite passed on the tree that is checked out. test-pass remembers a pass per tree, so
-# a branch that landed through `test-pass run --suite` is not run again. It tests the checked-out tree, not the pushed refs.
+# Purpose: before a push, make sure (1) the full suite passed on the tree that is checked out and (2) no post-land audit of a
+# commit being pushed is pending, failed or has an unresolved finding. test-pass remembers a pass per tree, so a branch that
+# landed through `test-pass run --suite` is not run again. It tests the checked-out tree, not the pushed refs.
+# The audit gate (`audit-log gate`) runs only where audit-log.mjs exists; a repo without it is gated by the suite alone.
 set -euo pipefail
 unset $(git rev-parse --local-env-vars)
 if node home/tools/test-pass/test-pass.mjs check HEAD --suite; then
   echo "pre-push: the full suite already passed on this tree"
-  exit 0
+else
+  node home/tools/test-pass/test-pass.mjs run --suite --quiet
 fi
-exec node home/tools/test-pass/test-pass.mjs run --suite --quiet
+AUDIT_LOG=home/tools/review-tier/audit-log.mjs
+if [ -f "$AUDIT_LOG" ]; then
+  node "$AUDIT_LOG" gate --repo "$(git rev-parse --show-toplevel)" --tip HEAD
+fi
