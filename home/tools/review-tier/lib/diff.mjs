@@ -1,0 +1,141 @@
+// Purpose: read the changed files and lines of a range (or of a delta round) from git for review-tier.
+// Exports: MAX_READING, parsePatch(text), baseOf(top, requested), checkRange(top, range), readRange(top, range),
+//   readDelta(top, base, reviewedSha), newFileReader(top, rev), functionNames(files), requiredReadingFor(top, files).
+// Invariants: git runs through git-tidy's runGit (no shell, no repository from the environment). A range or sha that starts
+//   with `-` is refused, so it can never be read as an option. Only paths and line numbers leave this module through the
+//   report; line texts stay in memory for the class tests.
+import { createHash } from 'node:crypto';
+import { UsageError, gitFlag, gitText, runGit } from '../../git-tidy/lib/git.mjs';
+
+export const MAX_READING = 20; // callers and callees listed as required reading
+const MAX_WHOLE_FILE_CHARS = 1 << 20;
+const MIN_NAME_LENGTH = 3;
+const BASE_FALLBACKS = ['main', 'master', 'develop'];
+const DIFF_FLAGS = ['-c', 'core.quotePath=false', 'diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', '-M'];
+const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+const FUNCTION_DEFINITION = /\bfunction\s*\*?\s+([A-Za-z_$][\w$]*)|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>|\b(?:def|func|fn)\s+([A-Za-z_$][\w$]*)/;
+
+/** The first of main, master, develop that exists (or the requested base); a UsageError when none does. */
+export function baseOf(top, requested) {
+  const candidates = requested ? [requested] : BASE_FALLBACKS;
+  const found = candidates.find((name) => !name.startsWith('-') && gitFlag(top, ['rev-parse', '--verify', '--quiet', `${name}^{commit}`]));
+  if (found === undefined) throw new UsageError(requested ? `unknown base ${requested}` : 'no base branch (main, master, develop); pass --base <branch>');
+  return found;
+}
+
+/** Splits `a..b` or `a...b` into its sides (an empty right side is HEAD); anything else is a UsageError. */
+function sidesOf(range) {
+  const match = /^([^\s.][^\s]*?)\.{2,3}([^\s.]*[^\s]*)?$/.exec(range);
+  if (match === null || /\.{4}/.test(range)) throw new UsageError(`bad range "${range}": use <a>..<b> or <a>...<b>`);
+  return [match[1], match[2] || 'HEAD'];
+}
+
+/** Checks both sides of a range name a commit; returns the right side (the tree the new files are read from). */
+export function checkRange(top, range) {
+  const sides = sidesOf(range);
+  for (const side of sides) {
+    if (side.startsWith('-') || !gitFlag(top, ['rev-parse', '--verify', '--quiet', `${side}^{commit}`])) throw new UsageError(`unknown revision "${side}" in range "${range}"`);
+  }
+  return sides[1];
+}
+
+/**
+ * Parses `git diff -U0` text into one entry per path (a path in several patches is merged).
+ * @returns {{path: string, added: {line: number, text: string}[], removed: {line: number, text: string}[]}[]}
+ */
+export function parsePatch(text) {
+  const byPath = new Map();
+  let current = null;
+  let newLine = 0;
+  let inHunk = false;
+  const entry = (path) => {
+    if (!byPath.has(path)) byPath.set(path, { path, added: [], removed: [] });
+    return byPath.get(path);
+  };
+  for (const line of text.split('\n')) {
+    if (line.startsWith('diff --git ')) { current = null; inHunk = false; continue; }
+    if (!inHunk && line.startsWith('+++ ')) { if (line !== '+++ /dev/null') current = entry(line.slice(6)); continue; }
+    if (!inHunk && line.startsWith('--- ')) { if (line !== '--- /dev/null') current = entry(line.slice(6)); continue; }
+    const hunk = HUNK.exec(line);
+    if (hunk !== null) { inHunk = true; newLine = Number(hunk[1]); continue; }
+    if (!inHunk || current === null) continue;
+    if (line.startsWith('+')) current.added.push({ line: newLine++, text: line.slice(1) });
+    else if (line.startsWith('-')) current.removed.push({ line: newLine, text: line.slice(1) });
+  }
+  return [...byPath.values()];
+}
+
+/** Every changed path of a diff, also one with no hunk (a pure rename, a binary file, a mode change). */
+function withHunklessFiles(top, args, files) {
+  const names = gitText(top, [...DIFF_FLAGS.slice(0, 2), 'diff', '--name-only', '-M', ...args]).split('\n').filter((name) => name !== '');
+  const known = new Set(files.map((file) => file.path));
+  return [...files, ...names.filter((name) => !known.has(name)).map((path) => ({ path, added: [], removed: [] }))];
+}
+
+/** The changed files of `range` (`a..b` or `a...b`). */
+export function readRange(top, range) {
+  const args = [range, '--'];
+  return withHunklessFiles(top, args, parsePatch(gitText(top, [...DIFF_FLAGS, ...args])));
+}
+
+/** The whole text of `path` at `rev` (cut at 1 MiB), or null when it does not exist there. */
+export function newFileReader(top, rev) {
+  return (path) => {
+    const { status, stdout } = runGit(top, ['show', `${rev}:${path}`]);
+    return status === 0 ? stdout.slice(0, MAX_WHOLE_FILE_CHARS) : null;
+  };
+}
+
+/** A fingerprint of one commit's patch (its paths and changed lines, not its line numbers, parents or message). */
+function patchKey(top, commit) {
+  const text = gitText(top, [...DIFF_FLAGS.slice(0, 2), 'show', '-U0', '--format=', '--no-color', '-M', commit]);
+  const body = text.split('\n').filter((line) => /^(\+|-|diff --git)/.test(line)).join('\n');
+  return createHash('sha1').update(body).digest('hex');
+}
+
+const commitsOf = (top, range) => gitText(top, ['rev-list', '--reverse', '--no-merges', range]).split('\n').filter((sha) => sha !== '');
+
+/**
+ * The delta since `reviewedSha`: its range when the sha is an ancestor of HEAD; otherwise (a rebased lane) only the lane
+ * commits whose patch the reviewed set does not hold.
+ * @returns {{range: string, files: object[]}}
+ */
+export function readDelta(top, base, reviewedSha) {
+  if (reviewedSha.startsWith('-') || !gitFlag(top, ['rev-parse', '--verify', '--quiet', `${reviewedSha}^{commit}`])) throw new UsageError(`unknown sha "${reviewedSha}" for --delta`);
+  if (gitFlag(top, ['merge-base', '--is-ancestor', reviewedSha, 'HEAD'])) {
+    const range = `${reviewedSha}..HEAD`;
+    return { range, files: readRange(top, range) };
+  }
+  const reviewed = new Set(commitsOf(top, `${base}..${reviewedSha}`).map((commit) => patchKey(top, commit)));
+  const fresh = commitsOf(top, `${base}..HEAD`).filter((commit) => !reviewed.has(patchKey(top, commit)));
+  const text = fresh.map((commit) => gitText(top, [...DIFF_FLAGS.slice(0, 2), 'show', '-U0', '--format=', '--no-color', '-M', commit])).join('\n');
+  return { range: `patches ${fresh.map((commit) => commit.slice(0, 8)).join(',') || 'none'} of ${base}..HEAD`, files: parsePatch(text) };
+}
+
+/** Function names defined on the added lines (JS arrow and function forms, def, func, fn), without duplicates. */
+export function functionNames(files) {
+  const names = new Set();
+  for (const file of files) {
+    for (const { text } of file.added) {
+      const match = FUNCTION_DEFINITION.exec(text);
+      const name = match?.[1] ?? match?.[2] ?? match?.[3];
+      if (name !== undefined && name.length >= MIN_NAME_LENGTH) names.add(name);
+    }
+  }
+  return [...names];
+}
+
+/** `file:line` of other uses of the changed function names (at most MAX_READING, spread over the names). */
+export function requiredReadingFor(top, files) {
+  const names = functionNames(files);
+  if (names.length === 0) return [];
+  const changed = new Set(files.flatMap((file) => file.added.map((added) => `${file.path}:${added.line}`)));
+  const perName = Math.max(1, Math.floor(MAX_READING / names.length));
+  const reading = [];
+  for (const name of names) {
+    const { stdout } = runGit(top, ['grep', '-n', '-w', '-F', '-I', '-e', name, '--']);
+    const places = stdout.split('\n').map((row) => /^(.+?):(\d+):/.exec(row)).filter(Boolean).map((m) => `${m[1]}:${m[2]}`);
+    reading.push(...places.filter((place) => !changed.has(place)).slice(0, perName));
+  }
+  return [...new Set(reading)].slice(0, MAX_READING);
+}

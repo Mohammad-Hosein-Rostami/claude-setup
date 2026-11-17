@@ -78,7 +78,7 @@ export function buildReviews(input) {
     agent, model, effort, lens, rules, brief: briefOf({ range, deltaOf, rules, hits: ownHits, plan, requiredReading }), requiredReading, plan,
   });
   const rules = rulesOf(classes);
-  if (tier === 0) return landing ? [make('reviewer', 'sonnet', 'high', 'correctness (docs landing)', rules, NO_PLAN, hits)] : [];
+  if (tier === 0) return landing ? [make('reviewer', 'sonnet', 'high', 'correctness (tier 0: docs only)', rules, NO_PLAN, hits)] : [];
   const plan = planOf(input);
   const reviews = [make('reviewer', 'sonnet', 'high', 'correctness', rules, NO_PLAN, hits)];
   const risky = RISKY_CLASSES.filter((name) => classes.has(name));
