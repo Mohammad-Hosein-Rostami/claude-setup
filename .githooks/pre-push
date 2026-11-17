@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Purpose: before a push, make sure the full suite passed on the tree that is checked out. test-pass remembers a pass per tree, so
+# a branch that landed through `test-pass run --suite` is not run again. It tests the checked-out tree, not the pushed refs.
+set -euo pipefail
+unset $(git rev-parse --local-env-vars)
+if node home/tools/test-pass/test-pass.mjs check HEAD --suite; then
+  echo "pre-push: the full suite already passed on this tree"
+  exit 0
+fi
+exec node home/tools/test-pass/test-pass.mjs run --suite --quiet

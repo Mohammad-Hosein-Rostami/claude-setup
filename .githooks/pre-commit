@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
-# Purpose: block commits that contain secrets (gitleaks on staged changes) or break the repo tests.
+# Purpose: block commits that contain secrets (gitleaks on staged changes) or break the tests the commit can affect.
+# The whole suite runs at landing and in pre-push (test-pass), not here: scripts/affected-tests.mjs names the tests that reach the
+# staged files and falls back to every test when it cannot tell (see its header).
 set -euo pipefail
 command -v gitleaks >/dev/null || { echo "gitleaks not installed; see tools/Brewfile" >&2; exit 1; }
 gitleaks protect --staged --redact
+# List the tests BEFORE the git variables are cleared below: for `git commit -- <path>` the staged files are only visible through
+# GIT_INDEX_FILE, a temporary index. A failing list (exit 2: a test path with a space) stops the commit through `set -e`.
+affected="$(node scripts/affected-tests.mjs --staged --list)"
 # Git exports GIT_DIR, GIT_INDEX_FILE and friends to hooks. A test that runs `git init` or `git config` in a temp
 # folder would inherit them and write into THIS repository (it once set core.bare=true here). Clear them first.
 unset $(git rev-parse --local-env-vars)
-node --test tests/*.test.mjs
+if [ -z "$affected" ]; then
+  echo "pre-commit: no affected tests"
+else
+  # shellcheck disable=SC2086 # one test path per word; the tool refuses a path with a space
+  node --test --test-reporter=dot $affected
+fi
