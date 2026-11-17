@@ -193,6 +193,7 @@ Marketplaces: `anthropic-plugin-directory`, `claude-plugins-official`, `gitkrake
 | --- | --------------- |
 | `env.CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY` | 1; removes survey prompts |
 | `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` | 400000 (models have 1M); fewer compactions, less forgetting; owner traded per-turn cost for it |
+| `env.BASH_DEFAULT_TIMEOUT_MS` | `"300000"` (ms, 5 minutes; CLI default 120000); a Bash call that runs longer moves to the background, and the longest test suite takes about 4 minutes; a call's own `timeout` can ask for more, up to `BASH_MAX_TIMEOUT_MS` (600000 by default) |
 | `env.CLAUDE_CODE_SUBAGENT_MODEL` | `claude-sonnet-5-5`; model for agents that pin none |
 | `permissions.allow` | WebSearch, WebFetch, Workflow (the `wf-*` skills start workflows without a dialog per run; every agent's tool calls keep their own checks) |
 | `permissions.additionalDirectories` | `{{CLAUDE_HOME}}/workflows` (the link path, not its target): lets `Workflow({scriptPath})` read the scripts under `~/.claude/workflows` from a session in any project, with or without the setup's permission hook (probe P1, 2026-11-17); a union across the settings files |

@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -76,25 +76,75 @@ test('when the log folder cannot be made, the fallback log is a fresh file, not 
 });
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
+const FAILING_SUITE = 'echo "suite ran"; exit 1';
 
-/** Runs the check with a temp HOME that already holds a test-pass row for HEAD's tree; the suite command would fail if it ran. */
-async function runWithRecord({ suite }) {
+function git(cwd, ...args) {
+  const result = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' });
+  assert.equal(result.status, 0, `git ${args.join(' ')}: ${result.stderr}`);
+}
+
+/** A small committed repo with its own copy of doctor.sh and test-pass, so the tests never depend on the state of this checkout. */
+async function makeRepo() {
+  const repo = await mkdtemp(join(tmpdir(), 'doctor-repo-'));
+  await mkdir(join(repo, 'scripts'));
+  await mkdir(join(repo, 'home', 'hooks'), { recursive: true });
+  await cp(DOCTOR, join(repo, 'scripts', 'doctor.sh'));
+  await cp(join(REPO, 'home', 'tools', 'test-pass'), join(repo, 'home', 'tools', 'test-pass'), { recursive: true });
+  await cp(join(REPO, 'home', 'hooks', 'lib'), join(repo, 'home', 'hooks', 'lib'), { recursive: true });
+  await writeFile(join(repo, 'package.json'), JSON.stringify({ scripts: { test: 'node --test' } }));
+  git(repo, 'init', '-q', '-b', 'main');
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-q', '-m', 'base');
+  return repo;
+}
+
+/** Runs the check from `doctorPath` with a temp HOME that holds a test-pass row for `repo`'s HEAD (none when `suite` is undefined). */
+async function runWithRecord(repo, { suite, doctorPath = join(repo, 'scripts', 'doctor.sh') }) {
   const home = await mkdtemp(join(tmpdir(), 'doctor-suite-'));
-  const row = { tree: treeOf(REPO, 'HEAD'), sha: commitOf(REPO, 'HEAD'), cmd: declaredSuite(REPO), suite, at: new Date().toISOString(), ms: 1 };
-  assert.ok(recordPass(REPO, row, { HOME: home }), 'the record was stored');
-  const env = { ...process.env, HOME: home, DOCTOR_ONLY: 'check_repo_tests', DOCTOR_TEST_COMMAND: 'echo "suite ran"; exit 1', DOCTOR_LOG_DIR: join(home, 'log-dir') };
-  return spawnSync('bash', [DOCTOR], { env, encoding: 'utf8' });
+  if (suite !== undefined) {
+    const row = { tree: treeOf(repo, 'HEAD'), sha: commitOf(repo, 'HEAD'), cmd: declaredSuite(repo), suite, at: new Date().toISOString(), ms: 1 };
+    assert.ok(recordPass(repo, row, { HOME: home }), 'the record was stored');
+  }
+  const env = { ...process.env, HOME: home, DOCTOR_ONLY: 'check_repo_tests', DOCTOR_TEST_COMMAND: FAILING_SUITE, DOCTOR_LOG_DIR: join(home, 'log-dir') };
+  return spawnSync('bash', [doctorPath], { env, encoding: 'utf8' });
 }
 
 test('a full-suite PASS recorded for HEAD is reused: ok, and the suite does not run again', async () => {
-  const result = await runWithRecord({ suite: true });
+  const result = await runWithRecord(await makeRepo(), { suite: true });
   assert.equal(result.status, 0);
   assert.match(result.stdout, /^ok\s+suite PASS recorded at HEAD/m);
   assert.doesNotMatch(result.stdout, /suite ran|FAIL/);
 });
 
 test('a record of related tests only (not the full suite) does not skip the suite', async () => {
-  const result = await runWithRecord({ suite: false });
+  const result = await runWithRecord(await makeRepo(), { suite: false });
   assert.equal(result.status, 1);
   assert.match(result.stdout, /^FAIL\s+repo tests fail/m);
+});
+
+test('a tracked file edited after the PASS was recorded runs the suite instead of reusing the PASS', async () => {
+  const repo = await makeRepo();
+  await writeFile(join(repo, 'package.json'), JSON.stringify({ scripts: { test: 'node --test' }, edited: true }));
+  const result = await runWithRecord(repo, { suite: true });
+  assert.equal(result.status, 1);
+  assert.doesNotMatch(result.stdout, /suite PASS recorded/);
+  assert.match(result.stdout, /^FAIL\s+repo tests fail/m);
+});
+
+test('an untracked file in the working tree also runs the suite', async () => {
+  const repo = await makeRepo();
+  await writeFile(join(repo, 'new-test.mjs'), 'x');
+  const result = await runWithRecord(repo, { suite: true });
+  assert.equal(result.status, 1);
+  assert.doesNotMatch(result.stdout, /suite PASS recorded/);
+});
+
+test('doctor started through a symlinked repo path with no record runs the suite and does not report a PASS', async () => {
+  const repo = await makeRepo();
+  const link = join(await mkdtemp(join(tmpdir(), 'doctor-link-')), 'repo-link');
+  await symlink(repo, link);
+  const result = await runWithRecord(repo, { doctorPath: join(link, 'scripts', 'doctor.sh') });
+  assert.doesNotMatch(result.stdout, /suite PASS recorded/);
+  assert.match(result.stdout, /^FAIL\s+repo tests fail/m);
+  assert.equal(result.status, 1);
 });
