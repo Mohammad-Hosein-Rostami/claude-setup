@@ -1,0 +1,23 @@
+---
+paths: ["**/*.mjs","**/*.cjs","**/*.sh","**/.githooks/**","**/workflows/**","**/settings/*.json"]
+---
+# Principles for tools, hooks, workflows and settings: P1-P13
+
+The lessons of the 85 defects found in review rounds, one row each, so an implementer meets them before the reviewer does.
+A brief names the ids that fit its files; `review-tier` adds the ones its changed lines trigger (`principles` in its JSON).
+At hand-off answer each named question yes or no with `file:line`; a no is a finding.
+
+id | areas | principle | yes/no question | mechanical check
+P1 | hooks, guards, anything run by a timeout | One total deadline below the hook timeout; every subprocess has its own timeout; a hostile file system (FIFO, link, /dev/zero, short read) fails closed | Does every read and subprocess end before the hook timeout, and does a FIFO, link or short read deny instead of hang or allow? | a test with a FIFO and a symlink; a timeout test
+P2 | git in hooks and tools | Hardened plumbing commands with pinned output flags; copy proof is a verbatim patch-id plus merge-tree; land the tested sha, never a moving ref | Does every git call use plumbing with fixed flags and a sha, and is the landed sha the tested one? | grep for porcelain in the diff; land test at a moved base
+P3 | gates, workflows, review and land | Fail closed on empty, missing or writer-reported gate input; an agent() null or throw is incomplete; the aggregate status lists failed members; no ignored result (C9) | If this input is empty, missing or supplied by the writer, does the gate stop instead of pass, and does the aggregate still show a failed member? | a test feeding empty input and a failing member
+P4 | guards and permission exemptions | An exemption is a small allowlist grammar matched on the raw undecoded text; anything else asks | Is every exemption an allowlist on the raw text, so anything unlisted asks? | a corpus diff against main: any ask turning into allow fails
+P5 | any code reading branch names, subjects, headers, file names or other untrusted text | Untrusted text is quoted, refused or capped before it reaches a command, a dialog or the context | Is every untrusted string quoted, refused or length-capped before it is used in a command, dialog or prompt? | a test with a hostile name (space, newline, leading dash)
+P6 | writers and readers of one store | The writer's size cap equals the reader's size cap | Do the writer and the reader of this store use one named cap? | a test writing exactly the cap and one byte over
+P7 | locks, shared stores, temp names | Own namespace: lock names, shared store keys and temp names are unique per run | Is every lock, key and temp name unique to this run, so two runs cannot collide? | a two-process stress test
+P8 | tools with state or logs | Every write honours the --state-dir or --projects overrides; probes and tests never touch real state | Does every write go through the override, and does the test run under a temp HOME? | run the tests with HOME set to a temp folder and diff the real one
+P9 | retry loops, timers, nested waits | A retry on a timer backs off on any failure; nested waits sum to less than every outer timeout | Does each retry back off on any failure, and do the nested waits fit inside the outer timeout? | a fake-clock test of the failure path
+P10 | dialogs, prompts, defaults | A timeout or Enter hands back safely and is never consent; a default taken for the owner is marked UNCONFIRMED | Does a timeout or Enter refuse or hand back, and is each default taken marked UNCONFIRMED? | a test that answers nothing
+P11 | paths, branches, platforms | Environment facts: leads start in ~, Windows is primary (drive paths), workflow branches are `worktree-wf_*`, APFS paths are case-insensitive | Does the code hold for a start in ~, a drive path, a `worktree-wf_*` branch and a differently cased path? | a test with a mixed-case path and a drive path
+P12 | parsers, input, tests | Reuse the existing parser (C2); validate input with a schema (C10); no wall-clock asserts in the suite | Is the existing parser reused, the input validated by a schema, and no test asserting elapsed time? | grep the diff for `Date.now` asserts and a second parser
+P13 | any lane relying on platform behaviour (hook events, CLI flags, git or shell semantics) | The behaviour is probed and cited in the spec, or the lane carries `--add-class audit` | Is each platform behaviour this lane relies on probed with the command and result cited, or does the lane carry `--add-class audit`? | the cited probe command re-run; `review-tier --add-class audit` present

@@ -63,6 +63,7 @@ Routing policy (which tier does what) is in `home/modes/_lead.md` (injected into
 | `db.md` | `**/migrations/**`, `**/*.sql`, `**/schema.*`, `**/prisma/**` | D1-D7 |
 | `infra.md` | `Dockerfile*`, `**/.github/**`, `**/*.tf`, `**/*.yml` | I1-I6 |
 | `test.md` | `**/*.test.*`, `**/*.spec.*`, `**/e2e/**` | T1-T8 |
+| `principles.md` | `**/*.mjs`, `**/*.cjs`, `**/*.sh`, `**/.githooks/**`, `**/workflows/**`, `**/settings/*.json` | P1-P13 (what past review rounds found, each with a yes/no question; briefs name the ids, `review-tier` adds the triggered ones) |
 
 Rules are one line each (`id | rule | check`) and load when a matching file is in play.
 
