@@ -1,16 +1,20 @@
 // Tests for home/hooks/disk-clean-start.mjs: the clean-up starts at most once per 24 h, only for a startup of the main session,
-// the stamp is written before the start, and the hook exits at once while the clean-up is still running.
+// the stamp is written before the start, two starts at once run one clean-up, a stamp or log that is a link or a FIFO is not followed or waited
+// on, the child gets no secrets, and the hook exits at once while the clean-up is still running.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startIfDue } from '../home/hooks/disk-clean-start.mjs';
+import { cleanEnv, openLogFile, startIfDue } from '../home/hooks/disk-clean-start.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/disk-clean-start.mjs', import.meta.url));
 const HOUR_MS = 60 * 60 * 1000;
+const posix = { skip: process.platform === 'win32' && 'needs FIFOs and symlinks' };
+const STARTUP_RACERS = 2;
+const RACE_ROUNDS = Number(process.env.DISK_CLEAN_RACE_ROUNDS ?? 10);
 const SESSION = '11111111-2222-4333-8444-555555555555';
 
 function setup() {
@@ -37,6 +41,15 @@ test('a stamp younger than 24 h means not due; one older than 24 h starts it aga
   assert.equal(started.length, 2);
 });
 
+test('a stamp 23 hours old is not due', () => {
+  const { started, deps } = setup();
+  startIfDue(startup, deps);
+  const recent = new Date(deps.nowMs - 23 * HOUR_MS);
+  utimesSync(deps.stampPath, recent, recent);
+  assert.equal(startIfDue(startup, deps), 'not-due');
+  assert.equal(started.length, 1);
+});
+
 test('resume, compact, a subagent and garbage input start nothing', () => {
   const { started, deps } = setup();
   for (const input of [{ ...startup, source: 'resume' }, { ...startup, source: 'compact' }, { ...startup, agent_id: 'a1' }, null, 'text', {}]) assert.equal(startIfDue(input, deps), 'skipped');
@@ -50,31 +63,135 @@ test('an unsafe session id is not passed on', () => {
   assert.deepEqual(started, [['/the/tool.mjs', '--apply']]);
 });
 
-test('the hook process exits at once while the clean-up it started is still running, and the clean-up finishes later', async () => {
-  const home = makeTempDir('dcs-run-');
-  const marker = join(home, 'cleaned');
-  const slowTool = join(home, 'slow-tool.mjs');
-  writeFileSync(slowTool, `import { writeFileSync } from 'node:fs';\nawait new Promise((resolve) => setTimeout(resolve, 1500));\nwriteFileSync(${JSON.stringify(marker)}, process.argv.slice(2).join(' '));\n`);
-  const startedAt = Date.now();
-  const hook = spawn(process.execPath, [HOOK], { env: { ...process.env, HOME: home, USERPROFILE: home, DISK_CLEAN_TOOL: slowTool }, stdio: ['pipe', 'ignore', 'pipe'] });
+/** A fake clean-up tool: records its own start, waits for a `release` file, then records that it finished and what it was given. */
+function fakeTool(home, extra = '') {
+  const tool = join(home, 'fake-tool.mjs');
+  writeFileSync(tool, `import { existsSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+writeFileSync(${JSON.stringify(join(home, 'started'))}, JSON.stringify({ pid: process.pid, env: process.env, args: process.argv.slice(2), pgid: process.platform === 'win32' ? '' : spawnSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], { encoding: 'utf8' }).stdout.trim() }));
+while (!existsSync(${JSON.stringify(join(home, 'release'))})) await new Promise((resolve) => setTimeout(resolve, 20));
+${extra}
+writeFileSync(${JSON.stringify(join(home, 'cleaned'))}, 'done');
+`);
+  return tool;
+}
+
+const runHook = (home, env) => {
+  const hook = spawn(process.execPath, [HOOK], { env: { ...process.env, HOME: home, USERPROFILE: home, ...env }, stdio: ['pipe', 'ignore', 'pipe'] });
+  let stderr = '';
+  hook.stderr.on('data', (chunk) => { stderr += chunk; });
   hook.stdin.end(JSON.stringify(startup));
-  const code = await new Promise((resolve) => hook.on('close', resolve));
-  assert.equal(code, 0);
-  assert.ok(Date.now() - startedAt < 1400, 'the hook did not wait for the clean-up');
-  assert.equal(existsSync(marker), false, 'the clean-up is still running when the hook has exited');
+  return new Promise((resolve) => hook.on('close', (code) => resolve({ code, stderr })));
+};
+const waitFor = async (path) => {
   const deadline = Date.now() + 10_000;
-  while (!existsSync(marker) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.equal(readFileSync(marker, 'utf8'), `--apply --session ${SESSION}`);
+  while (!existsSync(path) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+  return existsSync(path);
+};
+
+test('the hook exits while the clean-up it started is still running (it waits for a release file); the clean-up gets the session and finishes later', async () => {
+  const home = makeTempDir('dcs-run-');
+  const { code } = await runHook(home, { DISK_CLEAN_TOOL: fakeTool(home) });
+  assert.equal(code, 0);
+  assert.equal(await waitFor(join(home, 'started')), true);
+  assert.equal(existsSync(join(home, 'cleaned')), false, 'the clean-up is still waiting when the hook has exited');
+  writeFileSync(join(home, 'release'), '');
+  assert.equal(await waitFor(join(home, 'cleaned')), true);
+  assert.deepEqual(JSON.parse(readFileSync(join(home, 'started'), 'utf8')).args, ['--apply', '--session', SESSION]);
+});
+
+test('the clean-up runs in its own process group (detached) and gets no tokens or keys, only what it needs to find its folders', posix, async () => {
+  const home = makeTempDir('dcs-env-');
+  writeFileSync(join(home, 'release'), '');
+  const secrets = { CLAUDE_CODE_OAUTH_TOKEN: 'a', ANTHROPIC_API_KEY: 'b', GITHUB_TOKEN: 'c', AWS_SECRET_ACCESS_KEY: 'd', MY_PASSWORD: 'e' };
+  await runHook(home, { DISK_CLEAN_TOOL: fakeTool(home), ...secrets });
+  assert.equal(await waitFor(join(home, 'cleaned')), true);
+  const { pid, pgid, env } = JSON.parse(readFileSync(join(home, 'started'), 'utf8'));
+  assert.equal(String(pid), pgid, 'a detached child leads its own process group');
+  for (const name of Object.keys(secrets)) assert.equal(env[name], undefined, name);
+  assert.equal(env.HOME, home);
+});
+
+test('cleanEnv keeps only the allowed names', () => {
+  assert.deepEqual(cleanEnv({ HOME: '/h', TMPDIR: '/t', ANTHROPIC_API_KEY: 'x', PATH: '/bin' }), { HOME: '/h', TMPDIR: '/t' });
 });
 
 test('a state folder that cannot be made does not fail the hook: exit 0 and a line on stderr', async () => {
   const home = makeTempDir('dcs-bad-');
   mkdirSync(join(home, '.claude'), { recursive: true });
   writeFileSync(join(home, '.claude', 'state'), 'a file where the folder should be');
-  const hook = spawn(process.execPath, [HOOK], { env: { ...process.env, HOME: home, USERPROFILE: home }, stdio: ['pipe', 'ignore', 'pipe'] });
-  let stderr = '';
-  hook.stderr.on('data', (chunk) => { stderr += chunk; });
-  hook.stdin.end(JSON.stringify(startup));
-  assert.equal(await new Promise((resolve) => hook.on('close', resolve)), 0);
+  const { code, stderr } = await runHook(home, { DISK_CLEAN_TOOL: fakeTool(home) });
+  assert.equal(code, 0);
   assert.match(stderr, /disk-clean-start:/);
+  assert.equal(existsSync(join(home, 'started')), false, 'no real clean-up and no fake one was started');
+});
+
+test('a stamp that is a symlink is replaced, never written through; one that is a FIFO does not block the hook', posix, () => {
+  const { started, deps } = setup();
+  mkdirSync(join(deps.stampPath, '..'), { recursive: true });
+  const victim = join(deps.stampPath, '..', 'victim.txt');
+  writeFileSync(victim, 'precious');
+  symlinkSync(victim, deps.stampPath);
+  assert.equal(startIfDue(startup, deps), 'started');
+  assert.equal(readFileSync(victim, 'utf8'), 'precious');
+  assert.ok(statSync(deps.stampPath).isFile());
+  const fifo = `${deps.stampPath}-fifo`;
+  assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
+  assert.equal(startIfDue(startup, { ...deps, stampPath: fifo }), 'started');
+  assert.ok(statSync(fifo).isFile(), 'the FIFO was replaced by a plain stamp');
+  assert.equal(started.length, 2);
+});
+
+test('a lock file that is a FIFO or left by a crashed hook: a young one means not due, one older than a minute is replaced', posix, () => {
+  const { started, deps } = setup();
+  mkdirSync(join(deps.stampPath, '..'), { recursive: true });
+  const lock = `${deps.stampPath}.lock`;
+  assert.equal(spawnSync('mkfifo', [lock]).status, 0);
+  assert.equal(startIfDue(startup, deps), 'not-due');
+  const stale = new Date(deps.nowMs - 2 * 60 * 1000);
+  utimesSync(lock, stale, stale);
+  assert.equal(startIfDue(startup, deps), 'started');
+  assert.equal(started.length, 1);
+  assert.equal(existsSync(lock), false, 'the lock is released');
+});
+
+test('the log: a symlink or a FIFO is not opened (nothing written through, no waiting); a plain file is cut to empty', posix, () => {
+  const home = makeTempDir('dcs-log-');
+  const victim = join(home, 'victim.txt');
+  writeFileSync(victim, 'precious');
+  symlinkSync(victim, join(home, 'link.log'));
+  assert.equal(openLogFile(join(home, 'link.log')), null);
+  assert.equal(readFileSync(victim, 'utf8'), 'precious');
+  assert.equal(spawnSync('mkfifo', [join(home, 'fifo.log')]).status, 0);
+  assert.equal(openLogFile(join(home, 'fifo.log')), null);
+  writeFileSync(join(home, 'plain.log'), 'old output');
+  const fd = openLogFile(join(home, 'plain.log'));
+  assert.equal(typeof fd, 'number');
+  assert.equal(statSync(join(home, 'plain.log')).size, 0);
+});
+
+/** Starts STARTUP_RACERS processes that all call startIfDue at the same instant on one stamp; returns how many started a clean-up. */
+async function racedStarts(home, stampPath) {
+  const barrier = Date.now() + 600;
+  const script = `import { appendFileSync } from 'node:fs';
+import { startIfDue } from ${JSON.stringify(new URL('../home/hooks/disk-clean-start.mjs', import.meta.url).href)};
+while (Date.now() < ${barrier}) {}
+startIfDue({ source: 'startup', session_id: 'x' }, { stampPath: ${JSON.stringify(stampPath)}, logPath: ${JSON.stringify(join(home, 'log'))}, tool: 't', nowMs: Date.now(), start: () => appendFileSync(${JSON.stringify(join(home, 'starts'))}, 'x') });`;
+  const racers = Array.from({ length: STARTUP_RACERS }, () => new Promise((resolve) => spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: 'ignore' }).on('close', resolve)));
+  await Promise.all(racers);
+  return existsSync(join(home, 'starts')) ? readFileSync(join(home, 'starts'), 'utf8').length : 0;
+}
+
+test(`two sessions starting at the same instant run one clean-up (${RACE_ROUNDS} rounds, half of them with a stale stamp)`, async () => {
+  for (let round = 0; round < RACE_ROUNDS; round += 1) {
+    const home = makeTempDir('dcs-race-');
+    const stampPath = join(home, 'state', 'disk-clean.stamp');
+    if (round % 2 === 1) {
+      mkdirSync(join(home, 'state'));
+      writeFileSync(stampPath, 'old');
+      const stale = new Date(Date.now() - 25 * HOUR_MS);
+      utimesSync(stampPath, stale, stale);
+    }
+    assert.equal(await racedStarts(home, stampPath), 1, `round ${round}`);
+  }
 });

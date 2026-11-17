@@ -1,37 +1,124 @@
 // SessionStart(startup): starts `disk-clean --apply` in the background at most once every 24 hours, so old scratchpads, test leftovers
 // and hook counters never pile up. The stamp file `~/.claude/state/disk-clean.stamp` records the last start (its mtime).
-// Exports: startIfDue(input, deps) -> 'started' | 'not-due' | 'skipped'.
+// Exports: startIfDue(input, deps) -> 'started' | 'not-due' | 'skipped'; openLogFile, cleanEnv (tests).
 // Invariants: never waits for the clean-up (detached child, stdio to a log file, unref); never fails the session start (an error goes to stderr,
-//   the exit code stays 0); skips subagents and any source other than startup; the stamp is written BEFORE the child starts, so two sessions
-//   that start together run one clean-up. Test hooks: DISK_CLEAN_TOOL replaces the tool path, HOME the state and log folders.
+//   the exit code stays 0); skips subagents and any source other than startup. Two sessions that start together run one clean-up: the check
+//   and the stamp write happen while holding a lock file made with O_EXCL (a lock older than a minute is a crashed hook's and is replaced).
+//   The stamp is written to a new file and renamed over the old one, the lock and the log are opened with O_NOFOLLOW and O_NONBLOCK, and
+//   a stamp or log that is a symlink, a FIFO or any other non-plain file is never read through, written to or waited on.
+//   The child gets a minimal environment (no tokens or other secrets). Test hooks: DISK_CLEAN_TOOL replaces the tool path, HOME the state and log folders.
 import { spawn } from 'node:child_process';
-import { closeSync, mkdirSync, openSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { closeSync, constants, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, realpathSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const MIN_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const LOCK_STALE_MS = 60 * 1000; // the check and the stamp write take microseconds; a lock this old was left by a crashed hook
 const MAX_INPUT_BYTES = 1 << 20;
 const SESSION_ID = /^[\w-]{1,128}$/;
 const TOOL = fileURLToPath(new URL('../tools/disk-free/disk-clean.mjs', import.meta.url));
+// What the clean-up needs to find the folders it works in; anything else (tokens, API keys, secrets) stays behind.
+const CHILD_ENV_NAMES = ['HOME', 'USERPROFILE', 'TMPDIR', 'TMP', 'TEMP', 'SystemRoot', 'LANG', 'DISK_FREE_CLAUDE_TMP'];
+const NO_FOLLOW = constants.O_NOFOLLOW ?? 0; // not defined on Windows
+const NO_BLOCK = constants.O_NONBLOCK ?? 0;
+const PRIVATE_FILE = 0o600;
+
+/** @returns {Record<string, string>} the environment variables the clean-up child gets */
+export const cleanEnv = (env) => Object.fromEntries(CHILD_ENV_NAMES.filter((name) => env[name] !== undefined).map((name) => [name, env[name]]));
+
+/** Opens the log for writing (cut to empty) without following a symlink or waiting on a FIFO; null when it is not a plain file of ours. */
+export function openLogFile(logPath) {
+  mkdirSync(dirname(logPath), { recursive: true });
+  let fd;
+  try {
+    fd = openSync(logPath, constants.O_WRONLY | constants.O_CREAT | NO_FOLLOW | NO_BLOCK, PRIVATE_FILE);
+  } catch (error) {
+    if (['ELOOP', 'ENXIO', 'EACCES', 'EISDIR'].includes(error.code)) return null; // a symlink, a FIFO nobody reads, not ours
+    throw error;
+  }
+  const info = fstatSync(fd);
+  if (!info.isFile() || (process.getuid !== undefined && info.uid !== process.getuid())) {
+    closeSync(fd);
+    return null;
+  }
+  ftruncateSync(fd, 0);
+  return fd;
+}
 
 /** Starts the detached clean-up. The log keeps only the last run's output. */
 function spawnClean(args, logPath) {
-  mkdirSync(dirname(logPath), { recursive: true });
-  const log = openSync(logPath, 'w');
-  const child = spawn(process.execPath, args, { detached: true, stdio: ['ignore', log, log] });
+  const log = openLogFile(logPath);
+  const child = spawn(process.execPath, args, { detached: true, windowsHide: true, env: cleanEnv(process.env), stdio: ['ignore', log ?? 'ignore', log ?? 'ignore'] });
   child.unref();
-  closeSync(log);
+  if (log !== null) closeSync(log);
 }
 
+/** Age of the stamp; Infinity when there is none or it is not a plain file (such a stamp is replaced, never read through). */
 const stampAgeMs = (stampPath, nowMs) => {
   try {
-    return nowMs - statSync(stampPath).mtimeMs;
+    const info = lstatSync(stampPath);
+    return info.isFile() ? nowMs - info.mtimeMs : Infinity;
   } catch (error) {
     if (error.code === 'ENOENT') return Infinity;
     throw error;
   }
 };
+
+/** Creates the lock file; false when another start holds it. */
+function takeLock(lockPath, nowMs) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      closeSync(openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW | NO_BLOCK, PRIVATE_FILE));
+      return true;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+    try {
+      if (nowMs - lstatSync(lockPath).mtimeMs < LOCK_STALE_MS) return false;
+      unlinkSync(lockPath);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+  }
+  return false;
+}
+
+/** Writes the stamp to a new file and renames it over the old one: atomic, and a link or FIFO at the stamp path is replaced, not followed. */
+function writeStamp(stampPath, nowMs) {
+  const temp = `${stampPath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW, PRIVATE_FILE);
+  try {
+    writeSync(fd, new Date(nowMs).toISOString());
+  } finally {
+    closeSync(fd);
+  }
+  try {
+    renameSync(temp, stampPath);
+  } catch (error) {
+    unlinkSync(temp);
+    throw error;
+  }
+}
+
+/** True when this call won the right to start the clean-up and has written the stamp. */
+function claimStamp(stampPath, nowMs) {
+  mkdirSync(dirname(stampPath), { recursive: true });
+  const lockPath = `${stampPath}.lock`;
+  if (!takeLock(lockPath, nowMs)) return false;
+  try {
+    if (stampAgeMs(stampPath, nowMs) < MIN_INTERVAL_MS) return false;
+    writeStamp(stampPath, nowMs);
+    return true;
+  } finally {
+    try {
+      unlinkSync(lockPath);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error; // a stale-lock breaker may have removed it already
+    }
+  }
+}
 
 /**
  * @param {object | null} input the SessionStart hook JSON (session_id, source, agent_id)
@@ -40,9 +127,7 @@ const stampAgeMs = (stampPath, nowMs) => {
  */
 export function startIfDue(input, { stampPath, logPath, tool, nowMs, start = spawnClean }) {
   if (input === null || typeof input !== 'object' || input.agent_id || input.source !== 'startup') return 'skipped';
-  if (stampAgeMs(stampPath, nowMs) < MIN_INTERVAL_MS) return 'not-due';
-  mkdirSync(dirname(stampPath), { recursive: true });
-  writeFileSync(stampPath, new Date(nowMs).toISOString());
+  if (stampAgeMs(stampPath, nowMs) < MIN_INTERVAL_MS || !claimStamp(stampPath, nowMs)) return 'not-due';
   const session = SESSION_ID.test(String(input.session_id ?? '')) ? ['--session', input.session_id] : [];
   start([tool, '--apply', ...session], logPath);
   return 'started';
