@@ -23,7 +23,7 @@ The installer links `home/*` (CLAUDE.md, rules, skills, agents, standards, hooks
 `~/.claude` (macOS/Linux/Git Bash also put `ccm` in `~/.local/bin`; keep it on PATH), builds `~/.claude/settings.json`, installs `home/tools/ui-check` dependencies (lockfile if present,
 otherwise a plain install), sets `core.hooksPath` to `.githooks`, then installs plugins. Anything replaced is moved
 to `~/.claude-backup-<stamp>/`, never deleted. Check the result with `scripts/doctor.sh`
-(`DOCTOR_PROJECT=/path/to/app scripts/doctor.sh` also checks Playwright and Chromium from that project).
+(`DOCTOR_PROJECT=/path/to/app scripts/doctor.sh` also checks Playwright and Chromium from that project). Its last check runs the repo tests; the full output is kept in `~/.claude/logs/doctor-repo-tests.log` and a failure prints each failing test with its first error line and that path.
 
 ## settings and local.json
 `settings.json` = deep merge of `settings/base.json` + `settings/<macos|linux|windows>.json` + `settings/local.json`,
