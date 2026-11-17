@@ -174,7 +174,7 @@ test('restart: the branch is gone but every patch of the reviewed tip is on the 
 });
 
 test('restart: the branch is gone, its patches are on the base, but the base tip cannot be read: failed as branch not found, no close row recorded', async () => {
-  const run = await runScript(LAND, ARGS, { replies: [atTip({ exit: 1, tip: '' }), onBase({}), { match: /:base$/, reply: { exit: 128, tip: '', patchesChanged: 0, files: [], tail: 'fatal: bad ref' } }] });
+  const run = await runScript(LAND, ARGS, { replies: [disk(), atTip({ exit: 1, tip: '' }), onBase({}), { match: /:base$/, reply: { exit: 128, tip: '', patchesChanged: 0, files: [], tail: 'fatal: bad ref' } }] });
   assert.equal(run.result.status, 'failed');
   assert.match(run.result.tidy, /branch lane\/a not found/);
   assert.ok(!run.started.includes('close:4:status'));
