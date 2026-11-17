@@ -264,3 +264,21 @@ test('bugfix: a bad args object throws the named error before any agent starts',
   assert.equal(run.error.message, 'bugfix: args.symptom must be a string');
   assert.equal(run.calls.length, 0);
 });
+
+test('bugfix: the real land.js accepts what bugfix passes: the reviewed tip goes through, and a branch at that tip lands', async () => {
+  const reviewedTip = 'abc1234';
+  const step = (reply) => ({ exit: 0, tip: reviewedTip, patchesChanged: 0, files: [], tail: 'ok', ...reply });
+  const landSteps = [
+    { match: /:tip$/, reply: step({}) },
+    { match: /:rebase$/, reply: step({}) },
+    { match: /:suite$/, reply: step({ tail: 'PASS' }) },
+    { match: /:land$/, reply: step({ tip: 'def5678', tail: 'landed' }) },
+    { match: /:status$/, reply: step({}) },
+  ];
+  const landScript = join(dirname(SCRIPT), 'land.js');
+  const run = await runScript(ARGS, { replies: replies(landSteps), children: { review: () => ({ ...CLEAN_REVIEW, tip: reviewedTip }), land: landScript } });
+  assert.equal(run.error, null);
+  assert.equal(run.result.status, 'landed');
+  assert.equal(run.result.sha, 'def5678');
+  assert.match(run.calls.find((call) => call.label === 'b1:suite').prompt, new RegExp(`test-pass\\.mjs check ${reviewedTip}`), 'the suite PASS is checked at the reviewed tip');
+});
