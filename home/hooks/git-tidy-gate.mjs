@@ -7,7 +7,9 @@
 //   deps (tests): runCheck(top, timeoutMs, env), checkTimeoutMs, hasPass (null: no test-pass tool), now (ms, for the cache age).
 //   Env: GIT_TIDY_GATE_CHECK_TIMEOUT_MS overrides CHECK_TIMEOUT_MS (a loaded machine, the test suite).
 // Invariants:
-// - The gated folder is the session's own worktree (lib/gated-folder.mjs). The check runs as a child of `git-tidy.mjs check --json` with
+// - The gated folder is the session's own worktree (lib/gated-folder.mjs). A lead also gates the worktrees of files the session itself
+//   edited (up to 5, newest first; one stop spends at most one check budget across them), so a session started in a folder that is no
+//   repo (~) is still checked; a repo the session did not edit in is never touched. A subagent gates its start folder only. The check runs as a child of `git-tidy.mjs check --json` with
 //   core.fsmonitor and log.showSignature off and bare repositories off, and never in a repo where any worktree's own config view names a
 //   filter (`git status` there would run it): there only a cached verdict is read, so such a repo is never judged.
 // - A finding blocks only when the advised `prune` would act on it (a dry run in the same child, so a fresh worktree at the base, which
@@ -26,7 +28,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { gatedFolder, gitOut, gitText, namesFilterProgram, readHead, worktreeOf } from './lib/gated-folder.mjs';
+import { editedWorktrees, gatedFolder, gitOut, gitText, namesFilterProgram, readHead, worktreeOf } from './lib/gated-folder.mjs';
 import { isSessionId } from './lib/session-store.mjs';
 import { statusFileOf } from './lib/status-file-of.mjs';
 import { cachedVerdict, recordOnce, storeVerdict } from './lib/tidy-gate-store.mjs';
@@ -128,6 +130,8 @@ function anyWorktreeNamesFilter(top) {
   return [top, ...folders].some(namesFilterProgram);
 }
 
+const checkBudgetMs = (env, deps) => deps.checkTimeoutMs ?? (Number(env.GIT_TIDY_GATE_CHECK_TIMEOUT_MS) || CHECK_TIMEOUT_MS);
+
 /** The check verdict of `top` for this repo state: from the cache, else from a bounded child run; null when there is none (error, timeout). */
 function verdictFor(env, session, top, deps) {
   const fingerprint = fingerprintOf(top);
@@ -137,7 +141,7 @@ function verdictFor(env, session, top, deps) {
   if (cached !== undefined) return cached;
   if (anyWorktreeNamesFilter(top)) return null; // only the child's `git status` could run a filter, so a cache hit never needs this call
   const run = deps.runCheck ?? runCheckChild;
-  const fresh = run(top, deps.checkTimeoutMs ?? (Number(env.GIT_TIDY_GATE_CHECK_TIMEOUT_MS) || CHECK_TIMEOUT_MS), env);
+  const fresh = run(top, checkBudgetMs(env, deps), env);
   if (fresh === 'timeout') {
     startRefresh(top, session, env);
     return null;
@@ -249,8 +253,18 @@ function agentReason(input, top) {
 function gatedTree(input, env) {
   if (input === null || typeof input !== 'object' || !isSessionId(input.session_id)) return null;
   const folder = gatedFolder(input, env);
-  const tree = folder === null ? null : worktreeOf(folder);
-  return tree;
+  return folder === null ? null : worktreeOf(folder);
+}
+
+/**
+ * The trees a lead's stop looks at: its project folder's worktree, then the worktrees of files the session edited (a session started in
+ * ~ has no project repo of its own). Empty for an unusable session.
+ */
+function leadTrees(input, env) {
+  if (input === null || typeof input !== 'object' || !isSessionId(input.session_id)) return [];
+  const project = gatedTree(input, env);
+  const edited = editedWorktrees(input.session_id, env).filter(({ top }) => top !== project?.top);
+  return project === null ? edited : [project, ...edited];
 }
 
 /**
@@ -261,10 +275,23 @@ function gatedTree(input, env) {
  * @returns {Promise<{block: false} | {block: true, reason: string}>}
  */
 export async function decide(input, env = process.env, deps = {}) {
-  const tree = gatedTree(input, env);
-  if (tree === null) return PASS;
-  const agent = typeof input.agent_id === 'string' && input.agent_id !== '' ? input.agent_id : null;
-  const found = agent === null ? await leadReason(input, env, deps, tree.top) : agentReason(input, tree.top);
+  const agent = typeof input?.agent_id === 'string' && input.agent_id !== '' ? input.agent_id : null;
+  if (agent !== null) {
+    const tree = gatedTree(input, env);
+    return tree === null ? PASS : blockOnce(input, env, agent, tree, agentReason(input, tree.top));
+  }
+  const trees = leadTrees(input, env);
+  const startedMs = Date.now();
+  for (const [index, tree] of trees.entries()) {
+    if (index > 0 && Date.now() - startedMs >= checkBudgetMs(env, deps)) break; // one stop never waits for several slow repos
+    const result = blockOnce(input, env, agent, tree, await leadReason(input, env, deps, tree.top));
+    if (result.block) return result;
+  }
+  return PASS;
+}
+
+/** The block for `found` (a reason or null) the first time its state is seen in this session, else PASS. */
+function blockOnce(input, env, agent, tree, found) {
   if (found === null) return PASS;
   const state = sha256(`${agent ?? ''}\0${tree.top}\0${found.state}`);
   const allowed = recordOnce(env, input.session_id, { agent: agent ?? '', state, continued: input.stop_hook_active === true });
@@ -277,9 +304,12 @@ export async function decide(input, env = process.env, deps = {}) {
  */
 export async function openLanes(input, env = process.env, deps = {}) {
   if (typeof input?.agent_id === 'string' && input.agent_id !== '') return [];
-  const tree = gatedTree(input, env);
-  const verdict = tree === null ? null : verdictFor(env, input.session_id, tree.top, deps);
-  return (verdict?.hints ?? []).filter(({ kind }) => kind === OPEN_LANE).map(({ subject, detail }) => `open lane ${subject}: ${detail}`);
+  const lines = [];
+  for (const { top } of leadTrees(input, env)) {
+    const verdict = verdictFor(env, input.session_id, top, deps);
+    for (const { kind, subject, detail } of verdict?.hints ?? []) if (kind === OPEN_LANE) lines.push(`open lane ${subject}: ${detail}`);
+  }
+  return lines;
 }
 
 /** The detached job: check `top` for as long as it takes and store the verdict for the next stop. */

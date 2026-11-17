@@ -1,18 +1,21 @@
 // The folder whose git state a Stop or SubagentStop gate looks at, and the hardened git calls that read it. Shared by commit-gate.mjs and
 // git-tidy-gate.mjs.
 // Exports: runGit, gitOut, gitSucceeds, gitText (git in a folder, hardened), startFolder(transcriptPath), gatedFolder(input, env),
-// worktreeOf(folder), namesFilterProgram(top), readHead(path, maxBytes).
+// worktreeOf(folder), namesFilterProgram(top), readHead(path, maxBytes), editedWorktrees(session, env).
 // Invariants:
 // - gatedFolder is the session's own worktree folder: for the main session CLAUDE_PROJECT_DIR, for a subagent the first `cwd` of its
 //   transcript (null for an agent that cannot write files). Never the hook input's cwd: a folder the session only cd'd into may be
 //   someone else's repo, and its git config is not trusted.
 // - git never runs a program the repository names: every call has core.fsmonitor off, core.hooksPath empty, log.showSignature off and bare-repo discovery off,
 //   and the variables that point git at another repository are removed.
+// - editedWorktrees is the worktrees of the files the session itself edited (lib/own-edits.mjs records): the only other folders a lead's
+//   gate may look at, for a session started where there is no repo (~). git runs only in the folder of a recorded file, never elsewhere.
 // - Nothing here throws: a missing or unreadable input gives null.
 import { spawnSync } from 'node:child_process';
-import { closeSync, openSync, readSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
 import { devNull } from 'node:os';
-import { isAbsolute } from 'node:path';
+import { dirname, isAbsolute, sep } from 'node:path';
+import { LEAD, recordedPaths } from './own-edits.mjs';
 import { agentFileWrites } from './writer-agents.mjs';
 
 const TRANSCRIPT_HEAD_BYTES = 4 * 1024 * 1024; // the first transcript line holds the brief, which can be long
@@ -23,6 +26,8 @@ const HARDENED = [
   '-c', 'core.fsmonitor=false', '-c', 'safe.bareRepository=explicit', '-c', `core.hooksPath=${devNull}`, '-c', 'log.showSignature=false',
 ];
 const REPOSITORY_SCOPES = new Set(['local', 'worktree']); // config that comes with the repository, not the owner's own
+const MAX_EDITED_WORKTREES = 5; // repos one stop looks at; a session that edited in more is not held up by all of them
+const MAX_FOLDERS_PROBED = 30; // folders of recorded files asked for their worktree, newest edit first
 const READ_ONLY_BUILT_INS = new Set(['Explore', 'Plan']);
 
 /** git in `cwd`, hardened, without the variables that point at another repository and without taking optional locks. */
@@ -98,4 +103,25 @@ export function namesFilterProgram(top) {
     const [scope, key = ''] = line.split('\t');
     return REPOSITORY_SCOPES.has(scope) && key.toLowerCase().startsWith('filter.');
   });
+}
+
+/**
+ * The worktrees holding the files this session (the lead and its agents) edited, newest edit first, each once.
+ * A folder of a file that is already inside a found worktree is not asked again; a file whose folder is gone is skipped.
+ * @param {string} session the session id
+ * @param {Record<string, string | undefined>} env HOME (the edit records)
+ * @returns {{top: string, gitDir: string, branch: string}[]} at most MAX_EDITED_WORKTREES
+ */
+export function editedWorktrees(session, env) {
+  const found = [];
+  let probed = 0;
+  for (const file of [...recordedPaths(env, session, LEAD)].reverse()) {
+    if (found.length >= MAX_EDITED_WORKTREES || probed >= MAX_FOLDERS_PROBED) break;
+    const folder = dirname(file);
+    if (found.some(({ top }) => folder === top || folder.startsWith(top + sep)) || !existsSync(folder)) continue;
+    probed += 1;
+    const tree = worktreeOf(folder);
+    if (tree !== null && !found.some(({ top }) => top === tree.top)) found.push(tree);
+  }
+  return found;
 }
