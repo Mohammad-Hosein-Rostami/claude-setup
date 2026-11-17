@@ -14,7 +14,13 @@ import { lockHeld, readCheckpoint } from '../home/tools/recall/lib/checkpoint-st
 import { bigTranscript, fakeStack } from './recall-fakes.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
-const UNGUARDED = /import\.meta\.url\s*===\s*pathToFileURL\(\s*process\.argv\[1\]\s*\)/;
+// process.argv[1] handed to pathToFileURL or compared with ===, with no realpathSync around it; a bare `process.argv[1] &&` truthiness test is fine.
+const UNRESOLVED_ARGV = /pathToFileURL\(\s*process\.argv\[1\]|[!=]==?\s*process\.argv\[1\]|process\.argv\[1\]\s*[!=]==?/;
+
+/** True when a file that reads import.meta.url also uses process.argv[1] without realpathSync, in either operand order. */
+function hasUnresolvedMainCheck(source) {
+  return source.includes('import.meta.url') && UNRESOLVED_ARGV.test(source);
+}
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Every .mjs/.js file under `folder` (relative to the repo), skipping node_modules. */
@@ -51,8 +57,18 @@ async function waitFor(check, ms = 20000) {
 }
 
 test('no script under home/ or scripts/ compares import.meta.url with an unresolved process.argv[1]', () => {
-  const offenders = [...scriptFiles('home'), ...scriptFiles('scripts')].filter((file) => UNGUARDED.test(readFileSync(join(REPO, file), 'utf8')));
+  const offenders = [...scriptFiles('home'), ...scriptFiles('scripts')].filter((file) => hasUnresolvedMainCheck(readFileSync(join(REPO, file), 'utf8')));
   assert.deepEqual(offenders, [], 'wrap process.argv[1] in realpathSync, as home/tools/status/status.mjs does');
+});
+
+test('the scan flags every spelling of the unresolved check and passes the resolved one', () => {
+  const flagged = [
+    'if (import.meta.url === pathToFileURL(process.argv[1]).href) main();',
+    'if (pathToFileURL(process.argv[1]).href === import.meta.url) main();',
+    'if (fileURLToPath(import.meta.url) === process.argv[1]) main();',
+  ];
+  for (const source of flagged) assert.equal(hasUnresolvedMainCheck(source), true, source);
+  assert.equal(hasUnresolvedMainCheck('if (import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) main();'), false);
 });
 
 test('test-pass reached through a symlink to home/ still runs: an unknown command exits 2', () => {
