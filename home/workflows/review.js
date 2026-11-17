@@ -102,7 +102,7 @@ const tierPrompt = (known) => {
     ...(args.addClasses ?? []).map((name) => `--add-class ${name}`), run.laneClasses ? `--lane-classes ${run.laneClasses}` : '', '--json'].filter(Boolean).join(' ')
   const tierFile = `\${TMPDIR:-/tmp}/${slug(args.row)}-tier-<sha8>.json`
   return `Work in ${run.worktree} (lane ${args.branch}, base ${args.base}): cd there first, review-tier reads the git repository of its working folder. The reviewed sha is its HEAD (git rev-parse HEAD).\n`
-    + `Add a detached review worktree of that sha outside every repo folder: git -C ${args.repo} worktree add --detach <scratch>/${slug(args.row)}-<sha8> <sha> (<sha8> is the first 8 characters of the sha).\n`
+    + `Add a detached review worktree of that sha outside every repo folder: git -C ${args.repo} worktree add --detach <scratch>/${slug(args.row)}-<sha8> <sha> (<sha8> is the first 8 characters of the sha). When that folder already exists, a killed run left it: first git -C ${args.repo} worktree remove --force <it> and git -C ${args.repo} worktree prune.\n`
     + `${known ? `Use this review-tier JSON as it is (report exit 0): ${JSON.stringify(known)}` : `Run it from ${run.worktree}: ${command}\nReport its exit code as exit and its JSON output as tier.`}\n`
     + `Write the tier JSON (with its fileClasses) to ${tierFile}. Never write over ${run.laneClasses ?? 'an existing file'}: when the name is taken, add -2, -3 until it is free. `
     + `Also report baseSha: ${args.audit ? args.audit.base : `git merge-base ${args.base} HEAD (full sha)`}. `

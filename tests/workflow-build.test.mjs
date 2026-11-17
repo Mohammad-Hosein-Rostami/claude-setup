@@ -313,3 +313,18 @@ test('disk: a WARN (exit 0) does not stop the build, and a build with no lanes s
   assert.deepEqual(empty.result, { lanes: [], leadList: [] });
   assert.deepEqual(empty.started, []);
 });
+
+test('resume: a lane whose close row STATUS.md shows landed is not built again; the other lane runs normally; without resume nothing is asked', async () => {
+  const replies = [{ match: /impl-a:resumed$/, reply: { landed: true, sha: 'm-old' } }, { match: /impl-b:resumed$/, reply: { landed: false, sha: '' } }, ...standard()];
+  const run = await runScript(BUILD, ARGS([lane('a'), lane('b')], { resume: true }), { replies, children: children(() => reviewed('b'), () => landedOk('b')) });
+  assert.equal(run.error, null);
+  assert.deepEqual(run.result.lanes.map((entry) => [entry.row, entry.status, entry.sha]), [['impl-a', 'landed', 'm-old'], ['impl-b', 'landed', 'm-b']]);
+  assert.ok(!run.started.includes('impl-a:implement') && run.started.includes('impl-b:implement'));
+  const ask = run.calls.find((call) => call.label === 'impl-a:resumed');
+  assert.match(ask.prompt, /\/p\/STATUS\.md.*close-a/s);
+  assertWellFormedCalls(run.calls.filter((call) => call.label.startsWith('impl-a:')), 'impl-a', META);
+  const plain = await runScript(BUILD, ARGS([lane('a')]), { replies: standard(), children: children(() => reviewed('a'), () => landedOk('a')) });
+  assert.ok(!plain.started.some((label) => label.endsWith(':resumed')));
+  const bad = await runScript(BUILD, ARGS([lane('a')], { resume: 'yes' }), { replies: standard() });
+  assert.match(String(bad.error?.message), /args\.resume must be a boolean/);
+});

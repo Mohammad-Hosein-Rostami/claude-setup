@@ -433,3 +433,10 @@ test('a round with only a deferred finding, only an open finding, or only a red 
   assert.equal(second.result.rounds, 2, 'an open finding is judged again in the next round');
   assert.equal(labels(second, /:fix$/).length, 0);
 });
+
+test('restart: the review worktree a killed run left at the same path is removed before the new one is added', async () => {
+  const w = world({ tiers: [{ reviews: [SONNET], fileClasses: {} }], lens: { correctness: () => clean } });
+  const run = await runScript(REVIEW, ARGS, { replies: w.replies });
+  const tier = run.calls.find((call) => call.label === 'close:2:tier');
+  assert.match(tier.prompt, /already exists, a killed run left it.*worktree remove --force.*worktree prune/s);
+});

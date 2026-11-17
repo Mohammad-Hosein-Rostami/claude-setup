@@ -17,6 +17,7 @@ const landed = (reply) => ({ match: /:land$/, reply: { exit: 0, tip: 'def5678', 
 const atTip = (reply = {}) => ({ match: /:tip$/, reply: { exit: 0, tip: 'abc1234', patchesChanged: 0, files: [], tail: 'abc1234', ...reply } });
 const baseAt = (tip) => ({ match: /:base$/, reply: { exit: 0, tip, patchesChanged: 0, files: [], tail: tip } });
 const disk = (reply = {}) => ({ match: /:disk$/, reply: { exit: 0, tip: '', patchesChanged: 0, files: [], tail: 'ok    disk free 80.0 GB', ...reply } });
+const onBase = (reply) => ({ match: /:onbase$/, reply: { exit: 0, tip: '', patchesChanged: 0, files: [], tail: '', ...reply } });
 const status = { match: /:status$/, reply: { exit: 0, tip: '', patchesChanged: 0, files: [], tail: 'ok' } };
 
 test('a clean lane: rebase check, suite, land, then the close row is done with the landed sha; every call is well formed', async () => {
@@ -101,10 +102,10 @@ test('a branch that is not at the reviewed tip is never landed: the old branch o
 });
 
 test('a branch that does not exist, or a tip that is empty, fails before any rebase; a longer or shorter form of the same sha passes', async () => {
-  for (const reply of [{ exit: 1, tip: '', tail: 'fatal: Needed a single revision' }, { exit: 0, tip: '' }]) {
-    const run = await runScript(LAND, ARGS, { replies: [disk(), atTip(reply)] });
+  for (const [reply, started] of [[{ exit: 1, tip: '', tail: 'fatal: Needed a single revision' }, ['close:4:disk', 'close:4:tip', 'close:4:onbase']], [{ exit: 0, tip: '' }, ['close:4:disk', 'close:4:tip']]]) {
+    const run = await runScript(LAND, ARGS, { replies: [disk(), atTip(reply), onBase({ exit: 0, patchesChanged: 2 })] });
     assert.equal(run.result.status, 'failed');
-    assert.deepEqual(run.started, ['close:4:disk', 'close:4:tip']);
+    assert.deepEqual(run.started, started);
   }
   const full = await runScript(LAND, { ...ARGS, tip: 'abc1234def' }, { replies: [disk(), atTip({ tip: 'abc1234def5678' }), rebased(), suite({}), landed({}), status] });
   assert.equal(full.result.status, 'landed');
@@ -126,10 +127,10 @@ test('a base that is reported moved twice while it did not change fails instead 
 });
 
 test('a failed branch lookup is a failure even when the runner still printed the expected sha; a base that cannot be read after exit 5 fails', async () => {
-  const lookup = await runScript(LAND, ARGS, { replies: [disk(), atTip({ exit: 128, tip: 'abc1234' })] });
+  const lookup = await runScript(LAND, ARGS, { replies: [disk(), atTip({ exit: 128, tip: 'abc1234' }), onBase({ exit: 128, tail: 'fatal: bad object' })] });
   assert.equal(lookup.result.status, 'failed');
   assert.match(lookup.result.tidy, /branch lane\/a not found/);
-  assert.deepEqual(lookup.started, ['close:4:disk', 'close:4:tip']);
+  assert.deepEqual(lookup.started, ['close:4:disk', 'close:4:tip', 'close:4:onbase']);
   const exit5 = { exit: 5, tip: 'x', patchesChanged: 0, files: [], tail: 'base moved' };
   for (const base of [null, { exit: 128, tip: 'b000002', patchesChanged: 0, files: [], tail: 'fatal' }]) {
     const run = await runScript(LAND, ARGS, { replies: [disk(), atTip(), rebased(), suite({}), { match: /:base$/, reply: base }, { match: /:land$/, reply: exit5 }] });
@@ -161,4 +162,20 @@ test('disk: a disk check that could not run (exit 2) or was stopped refuses to l
 test('disk: a WARN line (exit 0) lands as usual', async () => {
   const run = await runScript(LAND, ARGS, { replies: [disk({ tail: 'WARN  disk free 10.0 GB is below 15 GB' }), atTip(), rebased(), suite({}), landed({}), status] });
   assert.equal(run.result.status, 'landed');
+});
+
+test('restart: the branch is gone but every patch of the reviewed tip is on the base (a killed run had landed): landed with the base tip, the close row recorded, nothing rebased or run again', async () => {
+  const run = await runScript(LAND, ARGS, { replies: [disk(), atTip({ exit: 1, tip: '', tail: 'fatal: Needed a single revision' }), onBase({}), baseAt('b000009'), status] });
+  assert.equal(run.error, null);
+  assert.deepEqual(run.result, { status: 'landed', sha: 'b000009', patchesChanged: 0, tidy: 'already on main (found on restart)' });
+  assert.deepEqual(run.started, ['close:4:disk', 'close:4:tip', 'close:4:onbase', 'close:4:base', 'close:4:status']);
+  assert.match(run.calls[2].prompt, /git cherry main abc1234/);
+  assert.match(run.calls[4].prompt, /status\.mjs --file \/p\/STATUS\.md done close:4 .*b000009/);
+});
+
+test('restart: the branch is gone and the base lacks some of its patches: failed, the lead decides', async () => {
+  const run = await runScript(LAND, ARGS, { replies: [disk(), atTip({ exit: 1, tip: '' }), onBase({ patchesChanged: 1 })] });
+  assert.equal(run.result.status, 'failed');
+  assert.match(run.result.tidy, /branch lane\/a not found/);
+  assert.ok(!run.started.includes('close:4:status'));
 });

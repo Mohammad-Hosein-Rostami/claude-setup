@@ -1,7 +1,7 @@
 // build: implement lanes in parallel worktrees, join, review, land. Per lane: implementer (and a test-writer when acceptanceTests) in isolated worktrees, a runner Join
 // (cherry-pick the test commits, run the related tests, close the implement row, start the close row), the `review` child (landing review with fixes), then a serial
 // land queue through the `land` child. Lane A lands while lane B is still in review.
-// Args: { base, repo, suite, writers, statusFile, scriptsDir, appendOnly?, lanes: [{ row, closeRow, branch, spec, files, acceptanceTests, implementer: { agentType?, model, effort },
+// Args: { base, repo, suite, writers, statusFile, scriptsDir, appendOnly?, resume?, lanes: [{ row, closeRow, branch, spec, files, acceptanceTests, implementer: { agentType?, model, effort },
 //   matrix?, principles?, checkpoints?, addClasses? }] } (home/skills/wf-build/SKILL.md explains each key). checkArgs throws when two lanes share a file that is not in appendOnly
 //   (a folder and a file inside it count), when a checkpoint's files overlap its lane's files, when two checkpoints of a lane share an id, or when a ui-implementer lane has no matrix.
 // Returns: { lanes: [{ row, closeRow, status, sha, text, findings?, optional?, audit? }], leadList } with status landed | implementer-stopped | wrong-branch | join-failed |
@@ -11,6 +11,7 @@
 //   audit found something or could not finish; sync and push stay closed (audit-log gate), except audit-error with "gate holds nothing" in its text: nothing was recorded, run the audit by hand.
 // Join: a runner runs commands and reports exit codes; this script judges them. A lane gets `waiverAt` (the review may use its short waived set) only with a test-writer, a red-first
 //   checkpoint, every checkpoint met at base and head, nothing vacuous or out of scope and no dispute. A lane with nothing locked is not asked for contractTouched.
+//   resume: true on a re-run after a stop that lost the journal (wf-resume): a lane whose close row STATUS.md already shows landed is not built again (status landed, sha from STATUS.md).
 // Writers of one lane's fixes run one at a time inside `review`; `writers` bounds the build agents of all lanes. Branch rule: a lane's agent renames its throwaway worktree branch to
 // the lane branch; a re-done lane (the branch exists) continues that branch. Scripts cannot import, so checkArgs and the limiter are repeated where needed (home/workflows/README.md).
 export const meta = {
@@ -43,6 +44,7 @@ const AUDIT_RECORDED = shape({ exit: num, tail: str }, ['exit'])
 const AUDIT_LOG = 'node ~/.claude/tools/review-tier/audit-log.mjs'
 const GIT_SHA = /^[0-9a-f]{7,40}$/ // shas go into runner commands: only hex passes
 const DISK_CHECKED = shape({ exit: num, tail: str }, ['exit', 'tail'])
+const LANDED_ROW = shape({ landed: bool, sha: str }, ['landed', 'sha'])
 const leadList = []
 // Worktree paths agents return go into later shell commands (a worktree remove, a cherry-pick): only a plain absolute path passes (N1): POSIX or a
 // Windows drive path (C:/x or C:\x); no spaces, quotes, `$`, `;` or `%`.
@@ -138,7 +140,18 @@ const reviewChild = async (lane, extra) => {
   return reviewed
 }
 
+// resume: the state of the world beats the script's memory. A lane landed before the stop is found in STATUS.md (land.js records `landed <sha>` on the close row).
+const landedBeforeStop = async (lane) => {
+  const row = await agent(`Read ${args.statusFile} (change nothing): find the Work items row with id ${lane.closeRow}. Report landed true only when its done cell is not empty and its evidence says "landed"; sha = the sha its evidence names after "landed", else "".`,
+    { label: `${lane.row}:resumed`, phase: 'Build', schema: LANDED_ROW, ...RUNNER })
+  return row?.landed === true ? outcome(lane, 'landed', row.sha, 'already landed: STATUS.md shows the close row done (found on restart)') : null
+}
+
 async function buildLane(lane) {
+  if (args.resume === true) {
+    const already = await landedBeforeStop(lane)
+    if (already !== null) return already
+  }
   const implement = limitedWriter(() => agent(implementerPrompt(lane), {
     label: `${lane.row}:implement`, phase: 'Build', agentType: lane.implementer.agentType ?? 'implementer', model: lane.implementer.model, effort: lane.implementer.effort, isolation: 'worktree', schema: IMPLEMENTED,
   }))
@@ -272,6 +285,7 @@ function checkArgs(given) {
     if (!(type === 'array' ? Array.isArray(value) : typeof value === type)) throw new Error(`${name}: args.${path}${key} must be ${typeName(type)}`)
   }
   for (const [key, type] of Object.entries({ base: 'string', repo: 'string', suite: 'string', writers: 'number', statusFile: 'string', scriptsDir: 'string', lanes: 'array' })) check(given, '', key, type)
+  if (given.resume !== undefined) check(given, '', 'resume', 'boolean')
   given.lanes.forEach((lane, at) => {
     for (const [key, type] of Object.entries({ row: 'string', closeRow: 'string', branch: 'string', spec: 'string', files: 'array', acceptanceTests: 'boolean', implementer: 'object' })) check(lane, `lanes[${at}].`, key, type)
     for (const key of ['model', 'effort']) check(lane.implementer, `lanes[${at}].implementer.`, key, 'string')

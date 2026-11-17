@@ -10,6 +10,8 @@
 //   the delta again; failed: the base folder is not ready or a runner stopped; the text says which.
 // The first step is the disk check (tools/disk-free): below the fail threshold (default 5 GB) or a check that could not run is `failed` before any git step.
 // Exit codes of git-tidy land: 0 landed clean, 1 landed with findings, 2 not ready, 3 conflict, 4 no suite PASS at the tip, 5 base moved.
+// Restart: a killed run may have landed and pruned the branch before it stopped. A branch that is gone is then looked up on the base (`git cherry`
+// shows no patch of the reviewed tip missing there): that is `landed` with the base tip, and the close row is recorded; anything else stays `failed`.
 // A moved base is retried from the rebase check with no cap: each retry follows a real landing by someone else. From the second exit 5 on, the
 // base must differ from the base seen at the last exit 5, else the exit was misreported and the run fails instead of looping.
 // Scripts cannot import, so checkArgs is repeated in each script (home/workflows/README.md).
@@ -57,7 +59,15 @@ if (disk.exit !== 0) return failed('', `disk space check refused the landing, no
 
 const reviewedTip = await runner('tip', 'Rebase', `In ${args.repo} run: git rev-parse --verify refs/heads/${args.branch}. Report exit and tip (the full sha it printed).`)
 if (reviewedTip === null) return failed('', 'the tip runner was stopped')
-if (reviewedTip.exit !== 0) return failed('', `branch ${args.branch} not found in ${args.repo}: ${reviewedTip.tail}`)
+if (reviewedTip.exit !== 0) {
+  const notFound = failed('', `branch ${args.branch} not found in ${args.repo}: ${reviewedTip.tail}`)
+  const onBase = await runner('onbase', 'Rebase', `In ${args.repo} run: git cherry ${args.base} ${args.tip}. Report its exit, and patchesChanged = the number of its output lines that start with "+" (patches the base does not have). tip is "".`)
+  if (onBase === null || onBase.exit !== 0 || onBase.patchesChanged > 0) return notFound
+  const baseNow = await runner('base', 'Rebase', `In ${args.repo} run: git rev-parse --verify refs/heads/${args.base}. Report exit and tip (the full sha it printed).`)
+  if (baseNow === null || baseNow.exit !== 0) return notFound
+  await runner('status', 'Rebase', `Record the landing: ${STATUS} --file ${args.statusFile} done ${args.closeRow} "landed ${args.tip} on ${args.base} (found already on ${args.base} after a restart; base ${baseNow.tip})".`)
+  return { status: 'landed', sha: baseNow.tip, patchesChanged: 0, tidy: `already on ${args.base} (found on restart)` }
+}
 if (!sameSha(reviewedTip.tip, args.tip)) return failed(reviewedTip.tip, `branch ${args.branch} is at ${reviewedTip.tip}, not at the reviewed ${args.tip}: nothing was landed`)
 
 let baseAtLastMove = null
