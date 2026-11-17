@@ -236,6 +236,21 @@ check_recall() {
   if [ -n "$errors" ]; then warn "recall: last checkpoint error: $errors"; else ok "recall: no checkpoint errors"; fi
 }
 
+# Free disk (tools/disk-free): FAIL below 5 GB, WARN below 15 GB (DISK_FAIL_FREE_GB / DISK_WARN_FREE_GB move them). The tool prints one line,
+# `ok|WARN|FAIL  <message>`, and the message names the biggest rebuildable caches; a full disk makes every agent fail with ENOSPC.
+check_disk_free() {
+  local out level message
+  if ! out="$(node "$REPO/home/tools/disk-free/disk-free.mjs" check 2>&1)" && [ "${out%% *}" != "FAIL" ]; then
+    bad "disk free check could not run: $out"; return
+  fi
+  level="${out%% *}"; message="$(sed 's/^[A-Za-z]*  *//' <<<"$out")"
+  case "$level" in
+    ok) ok "$message" ;;
+    WARN) warn "$message" ;;
+    *) bad "$message" ;;
+  esac
+}
+
 # The wf-* skills call workflow scripts through ~/.claude/workflows (the link to home/workflows); settings must let Workflow read that link path.
 check_workflows() {
   local skill name script live="$CLAUDE_DIR/settings.json" link_path="$CLAUDE_DIR/workflows" missing=0
@@ -264,7 +279,7 @@ check_project_agents() {
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_tools; check_lsp; check_ui_check; check_project_agents; check_workflows; check_env_names; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_disk_free; check_tools; check_lsp; check_ui_check; check_project_agents; check_workflows; check_env_names; check_repo_tests
 }
 run_checks
 exit "$BAD"

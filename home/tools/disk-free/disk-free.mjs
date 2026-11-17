@@ -4,7 +4,8 @@
 // Output: ONE line, `ok|WARN|FAIL  disk free <n> GB ...`; on WARN and FAIL the line also names the biggest rebuildable caches.
 // Exit codes: 0 ok or WARN, 1 FAIL (free space below the fail threshold), 2 usage error or a threshold that is not a number.
 // Env: DISK_FAIL_FREE_GB (default 5) and DISK_WARN_FREE_GB (default 15) move the thresholds; the warn value must be above the fail value.
-//   Test hooks: DISK_FREE_DF_OUTPUT replaces the `df -Pk` text, DISK_FREE_CLAUDE_TMP replaces the claude session-folder root.
+//   Test hooks: DISK_FREE_DF_OUTPUT replaces the `df -Pk` text, DISK_FREE_CLAUDE_TMP replaces the claude session-folder root,
+//   DISK_FREE_DU_TIMEOUT_MS shortens the per-folder size measurement.
 // Exports: availableGb, judgeFreeSpace (tests). The tool only reads: it measures folders and prints advice, it never deletes.
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -17,7 +18,7 @@ const DEFAULT_FAIL_GB = 5;
 const DEFAULT_WARN_GB = 15;
 const EXIT_FAIL = 1;
 const EXIT_USAGE = 2;
-const DU_TIMEOUT_MS = 30_000; // a huge cache folder must not stall a doctor run or a workflow start; its size is then unknown
+const DU_TIMEOUT_MS = 30_000; // a huge cache folder must not stall a doctor run or a workflow start; it is then named without a size
 const CACHES_NAMED = 3;
 const USAGE = 'usage: disk-free.mjs check [--path <dir>]';
 // df -Pk columns from the right: 1024-blocks, Used, Available, Capacity, Mounted on (the filesystem and mount names may hold spaces).
@@ -64,20 +65,21 @@ function cacheCandidates(home, env) {
   ].filter((cache) => existsSync(cache.path));
 }
 
-function sizeGb(path) {
-  const run = spawnSync('du', ['-sk', path], { encoding: 'utf8', timeout: DU_TIMEOUT_MS });
+function sizeGb(path, env) {
+  const run = spawnSync('du', ['-sk', path], { encoding: 'utf8', timeout: Number(env.DISK_FREE_DU_TIMEOUT_MS ?? DU_TIMEOUT_MS) });
   const kb = Number(run.stdout?.split('\t')[0]);
   return run.error || !(kb >= 0) ? null : kb / KB_PER_GB;
 }
 
-/** One sentence naming the biggest caches (largest first), then docker, whose builder cache cannot be measured as a folder. */
+/** One sentence naming the biggest caches (largest first), then the ones too big to measure in time, then docker (no folder to measure). */
 function cacheAdvice(home, env) {
-  const named = cacheCandidates(home, env)
-    .map((cache) => ({ ...cache, gb: sizeGb(cache.path) }))
+  const measured = cacheCandidates(home, env).map((cache) => ({ ...cache, gb: sizeGb(cache.path, env) }));
+  const named = measured
     .filter((cache) => cache.gb !== null)
     .sort((a, b) => b.gb - a.gb)
     .slice(0, CACHES_NAMED)
     .map((cache) => `${cache.name} ${cache.gb.toFixed(1)} GB (${cache.shown}: ${cache.how})`);
+  for (const cache of measured.filter((entry) => entry.gb === null)) named.push(`${cache.name} (size not measured in time; ${cache.shown}: ${cache.how})`);
   named.push('docker builder cache (docker builder prune)');
   return `Rebuildable caches to clear, biggest first: ${named.join('; ')}.`;
 }

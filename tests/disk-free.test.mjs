@@ -100,6 +100,11 @@ test('check counts old claude session folders under DISK_FREE_CLAUDE_TMP', async
   assert.match(result.stdout, /claude session folders/);
 });
 
+test('a folder too big to measure in time is still named, without a size', async () => {
+  const result = check(await fakeHome({ caches: 2048 }), 3, { DISK_FREE_DU_TIMEOUT_MS: '1' });
+  assert.match(result.stdout, /~\/Library\/Caches \(size not measured in time/);
+});
+
 test('check honours the env override of the fail threshold', async () => {
   const result = check(await fakeHome({}), 8, { DISK_FAIL_FREE_GB: '10', DISK_WARN_FREE_GB: '20' });
   assert.equal(result.status, 1);
