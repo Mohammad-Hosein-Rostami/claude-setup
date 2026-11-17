@@ -325,6 +325,8 @@ test('resume: a lane whose close row STATUS.md shows landed is not built again; 
   assertWellFormedCalls(run.calls.filter((call) => call.label.startsWith('impl-a:')), 'impl-a', META);
   const plain = await runScript(BUILD, ARGS([lane('a')]), { replies: standard(), children: children(() => reviewed('a'), () => landedOk('a')) });
   assert.ok(!plain.started.some((label) => label.endsWith(':resumed')));
+  const off = await runScript(BUILD, ARGS([lane('a')], { resume: false }), { replies: standard(), children: children(() => reviewed('a'), () => landedOk('a')) });
+  assert.ok(!off.started.some((label) => label.endsWith(':resumed')));
   const bad = await runScript(BUILD, ARGS([lane('a')], { resume: 'yes' }), { replies: standard() });
   assert.match(String(bad.error?.message), /args\.resume must be a boolean/);
 });

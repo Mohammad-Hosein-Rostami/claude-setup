@@ -182,7 +182,7 @@ test('after a compaction this session\'s own runs are marked as possibly still r
   const w = await world();
   seedRun(w, { ageMin: 120 });
   const text = ask(w, { source: 'compact' });
-  assert.match(text, /may still be running/);
+  assert.match(text, /\| may still be running \(journal written 120 min ago\)/);
   assert.doesNotMatch(text, /process that started them ended/);
 });
 
