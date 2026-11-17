@@ -16,7 +16,9 @@ const joined = (key, extra = {}) => ({ red: false, tail: 'green', sha: `j-${key}
 const reviewed = (key) => ({ status: 'clean', rounds: 1, tip: `t-${key}`, worktree: `/wt/${key}`, tierFile: `/t-${key}.json`, suite: 'pass', findings: [], optional: [], leadList: [], text: '' });
 const landedOk = (key) => ({ status: 'landed', sha: `m-${key}`, patchesChanged: 0, tidy: 'clean' });
 const key = (label) => label.split(':')[0].replace('impl-', '');
+const diskOk = { match: /:disk$/, reply: { exit: 0, tail: 'ok    disk free 80.0 GB' } };
 const standard = (overrides = {}) => [
+  diskOk,
   ...Object.entries(overrides).map(([name, reply]) => ({ match: new RegExp(`:${name}$`), reply })), // the first matching reply wins
   { match: /:implement$/, reply: (prompt, opts, call) => built(key(call.label)) },
   { match: /:join$/, reply: (prompt, opts, call) => joined(key(call.label)) },
@@ -112,7 +114,7 @@ test('writers: 1 lets only one writer agent run at a time across lanes', async (
     return built(key);
   };
   const run = await runScript(BUILD, ARGS([lane('a'), lane('b'), lane('c')], { writers: 1 }), {
-    replies: [{ match: /impl-a:implement/, reply: writer('a') }, { match: /impl-b:implement/, reply: writer('b') }, { match: /impl-c:implement/, reply: writer('c') },
+    replies: [diskOk, { match: /impl-a:implement/, reply: writer('a') }, { match: /impl-b:implement/, reply: writer('b') }, { match: /impl-c:implement/, reply: writer('c') },
       { match: /:join$/, reply: (p, o, call) => joined(key(call.label)) }],
     children: children((a) => reviewed(a.branch.slice(-1)), (a) => landedOk(a.branch.slice(-1))),
   });
@@ -152,7 +154,7 @@ test('a review that is not clean stops the lane before it lands; a failed land i
 
 test('an implementer that was stopped ends only its lane', async () => {
   const run = await runScript(BUILD, ARGS([lane('a'), lane('b')]), {
-    replies: [{ match: /impl-a:implement/, reply: null }, { match: /impl-b:implement/, reply: built('b') }, { match: /:join$/, reply: joined('b') }],
+    replies: [diskOk, { match: /impl-a:implement/, reply: null }, { match: /impl-b:implement/, reply: built('b') }, { match: /:join$/, reply: joined('b') }],
     children: children(() => reviewed('b'), () => landedOk('b')),
   });
   assert.deepEqual(run.result.lanes.map((entry) => entry.status), ['implementer-stopped', 'landed']);
@@ -183,7 +185,7 @@ test('two lanes whose reviews finish together still land one after the other', a
 
 test('an implementer or test-writer on another branch than the lane\'s ends only that lane as wrong-branch: a re-done lane never lands its old branch (B1)', async () => {
   const run = await runScript(BUILD, ARGS([lane('a'), lane('b', { acceptanceTests: true }), lane('c')]), {
-    replies: [
+    replies: [diskOk,
       { match: /impl-a:implement/, reply: { ...built('a'), branch: 'worktree-wf_9' } },
       { match: /impl-b:implement/, reply: built('b') },
       { match: /impl-b:tests/, reply: { branch: 'worktree-wf_8', worktree: '/wt/bt', sha: 'tw' } },
@@ -255,7 +257,7 @@ test('a ui-implementer lane needs a matrix and carries it as the MATRIX line; ev
 
 test('a Windows drive-letter worktree path, with / or \\, is a plain path and does not end the lane', async () => {
   const run = await runScript(BUILD, ARGS([lane('a'), lane('b')]), {
-    replies: [
+    replies: [diskOk,
       { match: /impl-a:implement/, reply: { ...built('a'), worktree: 'C:/wt/a' } },
       { match: /impl-b:implement/, reply: built('b') },
       { match: /impl-a:join/, reply: joined('a', { worktree: 'D:\\wt\\a' }) },
@@ -268,7 +270,7 @@ test('a Windows drive-letter worktree path, with / or \\, is a plain path and do
 
 test('a worktree path with shell characters, from an agent or the join runner, ends only that lane (N1)', async () => {
   const run = await runScript(BUILD, ARGS([lane('a'), lane('b'), lane('c')]), {
-    replies: [
+    replies: [diskOk,
       { match: /impl-a:implement/, reply: { ...built('a'), worktree: '/wt/a; echo x' } },
       { match: /impl-b:implement/, reply: built('b') },
       { match: /impl-c:implement/, reply: built('c') },
@@ -279,4 +281,33 @@ test('a worktree path with shell characters, from an agent or the join runner, e
   });
   assert.deepEqual(run.result.lanes.map((entry) => entry.status), ['failed', 'join-failed', 'landed']);
   assert.match(run.result.lanes[0].text, /not a plain absolute path/);
+});
+
+test('disk: a low disk refuses the whole build before any implementer starts, naming the caches in the lane texts', async () => {
+  const message = 'FAIL  disk free 3.0 GB is below 5 GB: agents and builds will fail with ENOSPC. Rebuildable caches to clear, biggest first: CoreSimulator 8.0 GB';
+  const run = await runScript(BUILD, ARGS([lane('a'), lane('b')]), { replies: [{ match: /:disk$/, reply: { exit: 1, tail: message } }] });
+  assert.equal(run.error, null);
+  assert.deepEqual(run.started, ['impl-a:disk'], 'nothing else starts');
+  assert.deepEqual(run.result.lanes.map((entry) => entry.status), ['failed', 'failed']);
+  assert.match(run.result.lanes[0].text, /disk free 3\.0 GB is below 5 GB.*CoreSimulator/);
+  assert.match(run.calls[0].prompt, /disk-free\.mjs check/);
+});
+
+test('disk: a disk check that could not run (exit 2) or was stopped refuses the build too', async () => {
+  const broken = await runScript(BUILD, ARGS([lane('a')]), { replies: [{ match: /:disk$/, reply: { exit: 2, tail: 'DISK_FAIL_FREE_GB must be a positive number' } }] });
+  assert.equal(broken.result.lanes[0].status, 'failed');
+  assert.deepEqual(broken.started, ['impl-a:disk']);
+  const stopped = await runScript(BUILD, ARGS([lane('a')]), { replies: [{ match: /:disk$/, reply: null }] });
+  assert.equal(stopped.result.lanes[0].status, 'failed');
+  assert.match(stopped.result.lanes[0].text, /disk/);
+});
+
+test('disk: a WARN (exit 0) does not stop the build, and a build with no lanes starts no agent', async () => {
+  const run = await runScript(BUILD, ARGS([lane('a')]), {
+    replies: [{ match: /:disk$/, reply: { exit: 0, tail: 'WARN  disk free 10.0 GB is below 15 GB' } }, ...standard()],
+    children: children(() => reviewed('a'), () => landedOk('a')),
+  });
+  assert.equal(run.result.lanes[0].status, 'landed');
+  const empty = await runScript(BUILD, ARGS([]), {});
+  assert.deepEqual(empty.started, []);
 });

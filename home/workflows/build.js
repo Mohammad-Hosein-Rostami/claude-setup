@@ -42,6 +42,7 @@ const AUDIT_PREPARED = shape({ ancestor: bool, changedLines: num, worktree: str,
 const AUDIT_RECORDED = shape({ exit: num, tail: str }, ['exit'])
 const AUDIT_LOG = 'node ~/.claude/tools/review-tier/audit-log.mjs'
 const GIT_SHA = /^[0-9a-f]{7,40}$/ // shas go into runner commands: only hex passes
+const DISK_CHECKED = shape({ exit: num, tail: str }, ['exit', 'tail'])
 const leadList = []
 // Worktree paths agents return go into later shell commands (a worktree remove, a cherry-pick): only a plain absolute path passes (N1): POSIX or a
 // Windows drive path (C:/x or C:\x); no spaces, quotes, `$`, `;` or `%`.
@@ -252,7 +253,14 @@ async function auditAfterLand(step, { lane, baseSha, tip, landedSha, escalated }
   return { ...step, audit: { status: 'clean', findings: [] } }
 }
 
+// A full disk makes every agent fail with ENOSPC and no clear cause, so the build refuses to start below the fail threshold of tools/disk-free
+// (exit 1; a check that could not run, exit 2, also refuses) and every lane's text carries the message that names the caches to clear.
 phase('Build')
+if (args.lanes.length > 0) {
+  const disk = await agent(`Run: node ~/.claude/tools/disk-free/disk-free.mjs check. Do not change anything. Report exit (its exit code) and tail (its one output line, whole).`, { label: `${args.lanes[0].row}:disk`, phase: 'Build', schema: DISK_CHECKED, ...RUNNER })
+  const refusal = disk === null ? 'the disk check runner was stopped' : disk.exit === 0 ? '' : `disk space check refused the build: ${disk.tail}`
+  if (refusal !== '') return { lanes: args.lanes.map((lane) => outcome(lane, 'failed', '', `${refusal}. Nothing was built.`)), leadList }
+}
 const lanes = await pipeline(args.lanes, buildLane, joinLane, reviewLane, landLane, auditLane)
 return { lanes: lanes.map((entry, at) => entry ?? outcome(args.lanes[at], 'failed', '', 'the lane stopped on an error')), leadList }
 

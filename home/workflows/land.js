@@ -8,6 +8,7 @@
 //   conflict: the caller sends an implementer, then a review of the delta; red: the suite failed at the rebased tip (tidy is the failing test files and their first error lines, else its output tail),
 //   the caller treats it like a conflict: an implementer fixes it, then a review of the delta; needs-review: the rebase changed patches, review
 //   the delta again; failed: the base folder is not ready or a runner stopped; the text says which.
+// The first step is the disk check (tools/disk-free): below the fail threshold (default 5 GB) or a check that could not run is `failed` before any git step.
 // Exit codes of git-tidy land: 0 landed clean, 1 landed with findings, 2 not ready, 3 conflict, 4 no suite PASS at the tip, 5 base moved.
 // A moved base is retried from the rebase check with no cap: each retry follows a real landing by someone else. From the second exit 5 on, the
 // base must differ from the base seen at the last exit 5, else the exit was misreported and the run fails instead of looping.
@@ -39,6 +40,7 @@ const STEP_SCHEMA = {
 const TIDY = 'node ~/.claude/tools/git-tidy/git-tidy.mjs'
 const TEST_PASS = 'node ~/.claude/tools/test-pass/test-pass.mjs'
 const STATUS = 'node ~/.claude/tools/status/status.mjs'
+const DISK_FREE = 'node ~/.claude/tools/disk-free/disk-free.mjs'
 const FIELDS = 'Return exit (the command\'s exit code), tip (the sha it printed after `tip`, else ""), patchesChanged (the number after `patches-changed`, else 0), files (file names it listed for a conflict, else []), tail (its last 3 output lines, no secrets).'
 // The suite step reports failing tests, so it gets its own text: FIELDS would tell it files are for conflicts and tail is the last 3 lines.
 const SUITE_FIELDS = 'Return exit (the command\'s exit code), tip (the sha it printed after `tip`, else ""), patchesChanged (0), files (the failing test files when the suite exits non-zero, else []), tail (each failing file\'s first error line when the suite exits non-zero, else the last 3 lines of output; no secrets).'
@@ -47,7 +49,12 @@ const runner = (step, phase, prompt, fields = FIELDS) => agent(`${prompt}\nDo no
 const failed = (sha, text) => ({ status: 'failed', sha, patchesChanged: 0, tidy: text })
 const sameSha = (a, b) => a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a))
 
+// A full disk makes every later step fail with ENOSPC and no clear cause, so the first step refuses below the fail threshold (exit 1) and says what to clear.
 phase('Rebase')
+const disk = await runner('disk', 'Rebase', `In ${args.repo} run: ${DISK_FREE} check. Report exit and tail (its one output line, whole).`)
+if (disk === null) return failed('', 'the disk check runner was stopped: nothing was landed')
+if (disk.exit !== 0) return failed('', `disk space check refused the landing, nothing was landed: ${disk.tail}`)
+
 const reviewedTip = await runner('tip', 'Rebase', `In ${args.repo} run: git rev-parse --verify refs/heads/${args.branch}. Report exit and tip (the full sha it printed).`)
 if (reviewedTip === null) return failed('', 'the tip runner was stopped')
 if (reviewedTip.exit !== 0) return failed('', `branch ${args.branch} not found in ${args.repo}: ${reviewedTip.tail}`)
