@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { lstatSync, readdirSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -386,6 +386,40 @@ test('rule goes after the last bullet of a section that holds a fenced heading, 
   const { run, read } = await project(text);
   assert.equal(run('rule', 'three').code, 0);
   assert.equal(await read(), text.replace('- two\n', '- two\n- three\n'));
+});
+
+// Audit of 2ca5bb1 (S4): a link, FIFO or folder at the lock's name made every edit in that folder fail with "is busy ... run it again",
+// and running it again never helped (git can commit a link, so a cloned repo can ship one). The refusal names the file to remove.
+const LOCK_NAME = '.STATUS.status-lock';
+const PLANTS = [
+  ['a link', (path, victim) => symlinkSync(victim, path)],
+  ['a FIFO', (path) => assert.equal(spawnSync('mkfifo', [path]).status, 0)],
+  ['a folder', (path) => mkdirSync(path)],
+];
+
+for (const [name, plant] of PLANTS) {
+  test(`${name} at the lock's name: the edit is refused naming the lock to remove, not "run it again"`, { skip: process.platform === 'win32' }, async () => {
+    const { cwd, run, read } = await project('# STATUS\n');
+    const victim = join(cwd, 'victim.txt');
+    writeFileSync(victim, 'keep');
+    const lock = join(realpathSync(cwd), LOCK_NAME);
+    plant(lock, victim);
+    const result = run('add', '1', 'first', 'S');
+    assert.equal(result.code, 1);
+    assert.ok(result.message.includes(`${lock} is not a plain lock file`), result.message);
+    assert.match(result.message, /remove it/);
+    assert.doesNotMatch(result.message, /run it again/);
+    assert.equal(readFileSync(victim, 'utf8'), 'keep');
+    assert.equal(await read(), '# STATUS\n');
+  });
+}
+
+test('a live holder of the lock still gives the "busy, run it again" refusal', { skip: process.platform === 'win32' }, async () => {
+  const { cwd, run } = await project('# STATUS\n');
+  writeFileSync(join(realpathSync(cwd), LOCK_NAME), `${process.pid} ${'f'.repeat(32)}`); // this process is alive and the lock is fresh
+  const result = run('add', '1', 'first', 'S');
+  assert.equal(result.code, 1);
+  assert.match(result.message, /busy.*run it again/);
 });
 
 test('add refuses an item that starts deliver: (only deliver writes hand-overs) and an id that does not start with a letter or digit', async () => {

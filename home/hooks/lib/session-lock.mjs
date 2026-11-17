@@ -1,5 +1,6 @@
 // A lock file that makes hooks (and status.mjs) take turns on the files of one store folder, built on lib/session-store.mjs.
-// Exports: withSessionLock(dir, session, work, { lockFile }?) -> work's result | undefined.
+// Exports: withSessionLock(dir, session, work, { lockFile }?) -> work's result | undefined; BREAKER_SUFFIX (the breaker file's suffix, for
+// a caller that names a file that blocks the lock).
 // Why: two hooks that read and write one session file at the same moment must not drop each other's change, and a hook killed
 // mid-turn must not block the store for good.
 // Invariants:
@@ -28,7 +29,7 @@ const LOCK_CLOCK_SKEW_MS = 1000; // a lock's time may run this far ahead of the 
 // A lock whose process still runs is taken only past this age: the slowest turn measured is 185 ms (status.mjs on a 4 MiB
 // STATUS.md), so a live pid on an older lock is a reused pid, not a holder.
 const HELD_LOCK_MAX_MS = 5000;
-const BREAKER_SUFFIX = '.break'; // `<lock>.break`: held by the one waiter that is removing a stale lock
+export const BREAKER_SUFFIX = '.break'; // `<lock>.break`: held by the one waiter that is removing a stale lock
 const LOCK_TOKEN_BYTES = 16; // the random half of the lock's text `<pid> <32 hex>`: release compares it, so it never removes another's lock
 const LOCK_TEXT_MAX_BYTES = 64; // `<pid> <32 hex>` is at most 43 bytes
 const LOCK_OWNER = /^(\d{1,10}) [0-9a-f]{32}$/;

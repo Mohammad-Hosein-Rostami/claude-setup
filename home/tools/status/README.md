@@ -37,7 +37,7 @@ the rows' first-seen times, and the link from the session in `CLAUDE_CODE_SESSIO
 Parallel runs are safe: each edit takes a lock file (`.STATUS.status-lock` next to the file, `.<name>.status-lock` for `--file
 <name>.md`, a name no other tool uses; gone after the edit). The lock holds the run's pid and a random token: a run removes it only
 while it still holds its own token, and one left by a killed run (pid gone, or no token) is removed after 0.5 s, one of a live pid
-only after 5 s (one waiter at a time removes it, behind `<lock>.break` next to it). A run that waits over a second for the lock is refused with exit 1: run it again. `status-file.mjs` reads the file
+only after 5 s (one waiter at a time removes it, behind `<lock>.break` next to it). A run that waits over a second for the lock is refused with exit 1: run it again. A link, FIFO or folder at the lock's name (or its `.break` file) is refused at once with the path to remove. `status-file.mjs` reads the file
 through one handle that never follows a link or waits on a FIFO and writes a new temp file renamed over the old one. A `STATUS.md`
 that is a link, not a regular file, or over 4 MiB is refused.
 

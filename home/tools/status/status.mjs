@@ -22,7 +22,7 @@
 import { lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { withSessionLock } from '../../hooks/lib/session-lock.mjs';
+import { BREAKER_SUFFIX, withSessionLock } from '../../hooks/lib/session-lock.mjs';
 import { findSection, isTableRow, parseWorkItems, rowCells } from '../estimate/lib/items.mjs';
 import { noteTable, stateDir as defaultStateDir } from '../estimate/lib/table-store.mjs';
 import { readStatusFile, replaceStatusFile } from './status-file.mjs';
@@ -255,6 +255,18 @@ function recordTable(file, text, { sessionId, stateDir, now }) {
   return `not recorded for the estimate (${failure}); the edit stands, the next estimate run records it`;
 }
 
+/** The lock path, or its breaker file's, when something other than a regular file sits there (never opened: a FIFO would block); else null. */
+function notPlainLock(lock) {
+  for (const path of [lock, `${lock}${BREAKER_SUFFIX}`]) {
+    try {
+      if (!lstatSync(path).isFile()) return path;
+    } catch {
+      // nothing at this name (or it cannot be read): not the cause
+    }
+  }
+  return null;
+}
+
 /**
  * Runs one status command on a STATUS.md file.
  * @param {string[]} argv - arguments after the script name: `--file <path>` may come before the command, nothing else is a flag
@@ -282,7 +294,11 @@ export function runStatus(argv, { cwd = process.cwd(), now = new Date(), session
   const lockName = basename(file).replace(/\.md$/i, '').replace(LOCK_NAME_PARTS, '_').slice(0, 100) || 'STATUS';
   const lockFile = `.${lockName}${LOCK_SUFFIX}`;
   const result = withSessionLock(folder, lockName, () => editFile(file, (lines) => EDITS[command](lines, rest, now)), { lockFile });
-  if (result === undefined) return { code: 1, message: `${file} is busy (another status edit holds ${lockFile}) or its folder is not usable: run it again` };
+  if (result === undefined) {
+    const blocking = notPlainLock(join(folder, lockFile));
+    if (blocking !== null) return { code: 1, message: `${blocking} is not a plain lock file (a link, FIFO or folder): remove it` };
+    return { code: 1, message: `${file} is busy (another status edit holds ${lockFile}) or its folder is not usable: run it again` };
+  }
   if (result.code !== 0) return result;
   if (result.skip) return { code: 0, message: `${command} --auto: nothing recorded, ${result.skip} (${file})` };
   const notes = [result.note, result.changed ? recordTable(file, result.text, { sessionId, stateDir, now }) : null].filter(Boolean);
