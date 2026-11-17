@@ -323,6 +323,15 @@ test('an Agent or Task call resets the lead Bash count; other tools neither coun
   assert.match(run(BUDGET, dir, bash(sid)).stdout, /15 Bash calls/, 'Edit does not reset');
 });
 
+test('a Workflow call resets the lead Bash count like Agent and Task: a lead running workflows is not nudged to delegate', async () => {
+  const dir = await home();
+  const sid = uid('s');
+  for (let i = 0; i < 14; i += 1) run(BUDGET, dir, bash(sid));
+  assert.equal(run(BUDGET, dir, { hook_event_name: 'PostToolUse', session_id: sid, tool_name: 'Workflow' }).stdout, '');
+  for (let i = 1; i < 15; i += 1) assert.equal(run(BUDGET, dir, bash(sid)).stdout, '', `call ${i} after the Workflow call`);
+  assert.match(run(BUDGET, dir, bash(sid)).stdout, /15 Bash calls in a row/, 'the 15th after the reset nudges again');
+});
+
 test('subagent Bash calls never trigger the lead nudge and unsafe session ids are silent', async () => {
   const dir = await home();
   const sid = uid('s');

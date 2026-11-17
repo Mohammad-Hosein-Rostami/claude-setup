@@ -3,8 +3,8 @@
 //                   once (a marker file next to the counter), at 120 (and every 10 after) it injects "commit, then
 //                   return your status report". Advisory: it never blocks a call.
 //   PostToolUse Read in the lead, mode ultra-high -> warns when the result is over ~20k chars (use scout / a small range).
-//   PostToolUse Bash in the lead -> every 15 Bash calls since the last Agent/Task call, a nudge to delegate that states the
-//                   context size (lib/transcript.mjs contextTokens); an Agent/Task call resets the count. A nudge followed by
+//   PostToolUse Bash in the lead -> every 15 Bash calls since the last Agent/Task/Workflow call, a nudge to delegate that states the
+//                   context size (lib/transcript.mjs contextTokens); an Agent/Task/Workflow call resets the count. A nudge followed by
 //                   another Bash call (no Agent/Task call between) counts as ignored, in a per-session file next to the count.
 //   PreToolUse Bash in the lead -> after 2 ignored nudges, at 150k+ context, the next lead Bash call that is not git or
 //                   read-only (lib/read-only-command.mjs) is denied once with "delegate to runner/implementer" (lib/bounce-once.mjs
@@ -46,7 +46,7 @@ const NOTICE_SUFFIX = '.notice'; // marker next to the counter file: the early n
 const SPAWN_PROMPT_BYTES = 512 * 1024;
 const SAFE_ID = /^[\w-]{1,128}$/;
 const ULTRA_HIGH = 'ultra-high';
-const DELEGATING_TOOLS = new Set(['Agent', 'Task']);
+const DELEGATING_TOOLS = new Set(['Agent', 'Task', 'Workflow']); // the owner rule: workflows are how agents run, so a Workflow call is a delegation too
 
 const budgetPath = callCounterPath; // its mtime is also the writer gate's sign that the agent still works
 
@@ -93,9 +93,9 @@ function ignoredNudges(sessionId) {
 }
 
 /**
- * Counts one lead Bash call since the last Agent/Task call, or resets the count when `tool` delegates.
+ * Counts one lead Bash call since the last Agent/Task/Workflow call, or resets the count when `tool` delegates.
  * @param {string} sessionId hook input session id
- * @param {string} tool tool name: 'Bash' counts, Agent or Task resets, anything else is ignored
+ * @param {string} tool tool name: 'Bash' counts, Agent, Task or Workflow resets, anything else is ignored
  * @returns {number} Bash calls since the last delegation (0 for other tools or an unsafe id)
  */
 export function leadBashCalls(sessionId, tool) {

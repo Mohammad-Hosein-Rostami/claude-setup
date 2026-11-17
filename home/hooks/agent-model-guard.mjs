@@ -28,13 +28,19 @@
 // is denied once with that advice (adviceOnce, as the UI gate) and the identical call sent again runs. "Still runs" comes from the
 // session's own record: every writer launch this hook lets start, marked started on SubagentStart and ended on SubagentStop by
 // agent-budget.mjs; a launch that never started or an agent idle for 30 min stops counting (rules and limits in lib/writer-agents.mjs).
-// Exports: guardedAgentInput (pure), matrixLines (pure), uiBriefDeny and writerIsolationDeny (the gates), MAX_MATRIX_BYTES. Invariants: the
-// routing never blocks or denies; each gate denies an identical call at most once per session.
+// Workflow gates (run first, round 4): the backstop (lib/workflow-backstop.mjs) sends a plain Agent call from the lead back once with the name of the
+// wf-* skill that covers its agent type (owner rule: everything that runs is a workflow); the copy-branch brief gate (lib/copy-branch-brief.mjs) sends
+// a writer brief back once that creates a copy of an existing branch (`<lane>-2`) instead of continuing the lane's own. Same deny-once mechanics as the
+// gates above, with their own digests (logged class "plain agent call" / "copy branch brief"). A workflow spawn does not fire this hook (probe P2).
+// Exports: guardedAgentInput (pure), matrixLines (pure), uiBriefDeny, writerIsolationDeny and workflowAdviceDeny (the gates), MAX_MATRIX_BYTES.
+// Invariants: the routing never blocks or denies; each gate denies an identical call at most once per session.
 import { realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { UNPRINTABLE, readFileHead, withBriefLines } from './lib/agent-brief.mjs';
+import { copyBranchBriefAdvice } from './lib/copy-branch-brief.mjs';
+import { BACKSTOP_CLASS, workflowBackstop } from './lib/workflow-backstop.mjs';
 import { isWritingAgent, recordWriterLaunch } from './lib/writer-agents.mjs';
 
 const FORK_TYPE = 'fork';
@@ -185,6 +191,36 @@ export async function writerIsolationDeny(input, env = process.env) {
   }
 }
 
+const COPY_BRANCH_CLASS = 'copy branch brief';
+const WORKFLOW_GATES = [
+  { check: workflowBackstop, logClass: BACKSTOP_CLASS, label: 'workflow backstop' },
+  { check: copyBranchBriefAdvice, logClass: COPY_BRANCH_CLASS, label: 'copy-branch brief' },
+];
+
+/**
+ * The workflow gates (see the header): the first one whose check advises gives its deny once per identical call; the identical call sent again
+ * passes that gate (and meets the next one, with a digest of its own).
+ * @param {unknown} input the hook input: tool_input {subagent_type, prompt}, cwd, session_id, agent_id (inside an agent only)
+ * @param {Record<string, string | undefined>} env process environment (HOME, CLAUDE_GUARD_LOG, CLAUDE_CODE_DISABLE_WORKFLOWS)
+ * @returns {Promise<string>} the deny JSON line, or '' when no gate advises, on the identical retry and on any failure
+ */
+export async function workflowAdviceDeny(input, env = process.env) {
+  try {
+    const { subagent_type: type, prompt } = input?.tool_input ?? {};
+    const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+    for (const { check, logClass, label } of WORKFLOW_GATES) {
+      const verdict = check(input, env);
+      if (!verdict.deny) continue;
+      const { adviceOnce } = await import('./lib/bounce-once.mjs');
+      const call = { command: `${label}: ${String(type)}: ${String(prompt)}`, cwd, input, hook: 'agent-model-guard', tool: 'Agent', logged: { type, class: logClass } };
+      if (adviceOnce([verdict.reason], call, env) !== '') return denyOutput([`Not started: ${verdict.reason}`, SEND_AGAIN].join('\n'));
+    }
+    return '';
+  } catch {
+    return ''; // a quality hint, not a safety rule: any failure lets the call run
+  }
+}
+
 async function main() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
@@ -194,7 +230,7 @@ async function main() {
   } catch {
     return; // not hook JSON: stay silent, never block
   }
-  const deny = (await uiBriefDeny(input)) || (await writerIsolationDeny(input));
+  const deny = (await workflowAdviceDeny(input)) || (await uiBriefDeny(input)) || (await writerIsolationDeny(input));
   if (deny !== '') {
     process.stdout.write(deny);
     return;

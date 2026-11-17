@@ -154,6 +154,31 @@ layers" in `home/CLAUDE.md`.
 
 System CLIs (`tools/Brewfile`, `tools/windows-tools.ps1`): jq, ripgrep, gitleaks, gh, volta.
 
+## Workflows (`home/workflows/`, run by the `wf-*` skills)
+
+Scripts for the Workflow tool, so every job that runs agents shows in the progress view with `<STATUS row>:<step>` labels. The tool finds named
+workflows only in a project's `.claude/workflows/`, so each skill calls `Workflow({scriptPath: "${CLAUDE_SKILL_DIR}/../../workflows/<name>.js", args})`
+(`~/.claude/workflows` links to the folder; the path must be in `permissions.additionalDirectories`). Details, the worktree protocol and the
+rules the tests check: `home/workflows/README.md`. Tests: `tests/workflow-*.test.mjs` (runtime: `tests/workflow-sandbox.mjs`).
+
+| Workflow | Skill | Phases | Args (`?` optional) |
+| -------- | ----- | ------ | ------------------- |
+| `build` | `wf-build` | Build, Join, Review, Land | `base, repo, suite, writers, statusFile, scriptsDir, lanes[{row, closeRow, branch, spec, files, acceptanceTests, implementer{agentType?, model, effort}}]` |
+| `review` | `wf-review` | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, initialFindings?` |
+| `land` | `wf-land` | Rebase, Suite, Land | `row, closeRow, statusFile, repo, base, branch, worktree, suite` |
+| `step` | `wf-step` | Step | `row, agentType, prompt, model, effort, isolation?` |
+| `bugfix` | `wf-bugfix` | Reproduce, Hypotheses, Fix, Verify | `row, closeRow, statusFile, repo, base, symptom, repro?, suite, scriptsDir` |
+| `research` | `wf-research` | Scope, Gather, Synthesize, Critic | `row, question, out, depth` |
+| `sync-machines` | `wf-sync` | Verify, Sync, Doctor | `row, repo, base` |
+| `git-cleanup` | `wf-git-cleanup` | Inventory, Plan, Apply | `row, repos` |
+
+`build`, `review`, `land`, `step` and their four skills ship first; `bugfix`, `research`, `sync-machines`, `git-cleanup` follow.
+
+The hook side (`agent-model-guard.mjs`, described in the Hooks section): a plain Agent call from the lead is denied once with the `wf-*` skill for its
+agent type (not for a call from inside an agent, a fork, with workflows disabled, or when the skill is not installed), and a writer brief that
+creates a copy of an existing branch is denied once with the same-branch steps. `agent-budget.mjs` counts a `Workflow` call as a delegation, like
+Agent and Task. A workflow's own agents do not fire the Agent hook (probe, Claude Code 2.1.326), so the scripts carry their own checks.
+
 ## Plugins (`plugins/plugins.json`)
 
 Enabled: `frontend-design@anthropic-plugin-directory`, `code-review-anthropics@anthropic-plugin-directory`, `context7@anthropic-plugin-directory`, `skill-creator@anthropic-plugin-directory`, `code-simplifier@anthropic-plugin-directory`, `playwright@anthropic-plugin-directory`, `claude-md-management@anthropic-plugin-directory`, `typescript-lsp@claude-plugins-official`, `claude-code-setup@anthropic-plugin-directory`, `figma@claude-plugins-official`, `chrome-devtools-mcp@claude-plugins-official`. Off globally, enabled per project in `.claude/settings.local.json` (`enabledPlugins`): `superdesign@anthropic-plugin-directory`, `miro@claude-plugins-official`.
