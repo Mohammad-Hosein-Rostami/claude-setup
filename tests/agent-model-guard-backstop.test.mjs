@@ -4,13 +4,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
 import { hookEnv } from './hook-env.mjs';
 import { skillFor, workflowBackstop } from '../home/hooks/lib/workflow-backstop.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
 const SKILLS = ['wf-build', 'wf-review', 'wf-bugfix', 'wf-research', 'wf-step', 'quick'];
@@ -19,8 +19,8 @@ const GIT_TIMEOUT_FOR_TESTS_MS = 60_000; // the suite runs beside other work; th
 
 /** A private HOME holding the named skills; send(toolInput, extra) runs the hook once and returns the parsed hookSpecificOutput or null. */
 function session({ skills = SKILLS, envExtra = {}, settings } = {}) {
-  const home = mkdtempSync(join(tmpdir(), 'backstop-home-'));
-  const project = mkdtempSync(join(tmpdir(), 'backstop-project-'));
+  const home = makeTempDir('backstop-home-');
+  const project = makeTempDir('backstop-project-');
   for (const name of skills) {
     mkdirSync(join(home, '.claude', 'skills', name), { recursive: true });
     writeFileSync(join(home, '.claude', 'skills', name, 'SKILL.md'), `---\nname: ${name}\n---\n`);

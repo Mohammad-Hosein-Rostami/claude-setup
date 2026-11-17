@@ -3,8 +3,7 @@
 // Each case is the exact example from the audit. M1, M2 and L6 (timed ask) are in timed-ask.test.mjs.
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { logDecision } from '../home/hooks/lib/guard-log.mjs';
@@ -12,6 +11,7 @@ import { isReadOnlySql } from '../home/hooks/lib/remote.mjs';
 import { findLiteralSecret, maskSecrets } from '../home/hooks/lib/secrets.mjs';
 import { segments } from '../home/hooks/lib/shell-words.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const PROJECT = resolve('/work/proj');
 const ctx = { cwd: PROJECT, project: PROJECT, prodHosts: [] };
@@ -123,7 +123,7 @@ const SECRETS = {
 };
 
 test('M4: every audited secret form is detected, masked in text, reasons and the log, and a variable is not a secret', () => {
-  const logPath = join(mkdtempSync(join(tmpdir(), 'audit-log-')), 'guard.jsonl');
+  const logPath = join(makeTempDir('audit-log-'), 'guard.jsonl');
   for (const [label, commands] of Object.entries(SECRETS)) {
     for (const command of commands) {
       assert.ok(findLiteralSecret(command), `${label}: ${command}`);

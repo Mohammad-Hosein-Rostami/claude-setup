@@ -5,13 +5,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore } from '../home/tools/recall/lib/store.mjs';
 import { lockHeld, readCheckpoint } from '../home/tools/recall/lib/checkpoint-state.mjs';
 import { bigTranscript, fakeStack } from './recall-fakes.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 // process.argv[1] handed to pathToFileURL or compared with ===, with no realpathSync around it; a bare `process.argv[1] &&` truthiness test is fine.
@@ -34,7 +34,7 @@ function scriptFiles(folder) {
 
 /** A temp dir holding `<name> -> <repo>/<target>`; returns the symlink path. */
 function linkTo(target, name) {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'main-guard-')));
+  const dir = realpathSync(makeTempDir('main-guard-'));
   const link = join(dir, name);
   symlinkSync(join(REPO, target), link);
   return link;
@@ -115,7 +115,7 @@ test('the recall-digest hook reached through a symlink prints the same digest as
 
 test('the reranker watchdog reached through a symlink acts on its state file like the real path', async () => {
   const link = linkTo('home', 'claude');
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'rerank-watch-')));
+  const dir = realpathSync(makeTempDir('rerank-watch-'));
   const bystander = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); // not a llama-server: must never be signalled
   try {
     const statePath = join(dir, 'reranker.json');

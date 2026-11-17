@@ -2,11 +2,11 @@
 // Each test builds its own repo in a temp folder (see git-tidy-helpers.mjs) and runs the real CLI on it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { addWorktree, CLEAN_ENV, commit, git, lines as allLines, makeRepo, tidy, withOrigin } from './git-tidy-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 // The first output line is the base line (tested on its own); the other tests read the lines after it.
 const lines = (result) => allLines(result).slice(1);
@@ -228,7 +228,7 @@ test('base: --base wins, then origin/HEAD, then main, master, develop; none is e
 });
 
 test('exit 2: not a repo, missing folder, unknown command or flag, two folders, --base without a value', () => {
-  const plain = realpathSync(mkdtempSync(join(tmpdir(), 'git-tidy-plain-')));
+  const plain = realpathSync(makeTempDir('git-tidy-plain-'));
   const dir = makeRepo();
   const runs = [['check', plain], ['check', join(plain, 'missing')], [], ['list', dir], ['check', dir, '--wat'], ['check', dir, dir], ['check', dir, '--base']];
   for (const args of runs) {
@@ -270,8 +270,8 @@ test('the first line names the base and how it was chosen; the JSON keeps its sh
 
 test('check never runs a textconv program of the repository config (the staged-changes test uses plumbing)', () => {
   const dir = makeRepo();
-  const marker = join(mkdtempSync(join(tmpdir(), 'git-tidy-textconv-')), 'ran');
-  const program = join(mkdtempSync(join(tmpdir(), 'git-tidy-textconv-program-')), 'textconv.sh');
+  const marker = join(makeTempDir('git-tidy-textconv-'), 'ran');
+  const program = join(makeTempDir('git-tidy-textconv-program-'), 'textconv.sh');
   writeFileSync(program, `#!/bin/sh\ntouch '${marker}'\ncat "$1"\n`);
   chmodSync(program, 0o755);
   commit(dir, 'data.bin', 'one\n');

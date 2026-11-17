@@ -5,8 +5,7 @@
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +16,7 @@ import { BRANCH_MOVE_ADVICE } from '../home/hooks/lib/branch-move.mjs';
 import { ADVICE_CLASS, reasonClass } from '../home/hooks/lib/reason-classes.mjs';
 import { commit, git, makeRepo } from './git-tidy-helpers.mjs';
 import { hookEnv } from './hook-env.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const lane = (repo) => { // a repo on main with a lane branch `lane-x` that exists locally
@@ -46,7 +46,7 @@ test('copy branch: each way to create a branch NAME-<n> while NAME exists gets t
 
 test('copy branch: the folder is the cwd, `git -C dir` or a `cd dir &&` before the command', () => {
   const repo = lane(makeRepo());
-  const elsewhere = mkdtempSync(join(tmpdir(), 'git-advice-elsewhere-'));
+  const elsewhere = makeTempDir('git-advice-elsewhere-');
   assert.equal(gitAdvice('git checkout -b lane-x-2', elsewhere).length, 0);
   assert.ok(matches(gitAdvice(`git -C ${repo} checkout -b lane-x-2`, elsewhere), COPY_BRANCH_ADVICE_PATTERN));
   assert.ok(matches(gitAdvice(`cd ${repo} && git checkout -b lane-x-2`, elsewhere), COPY_BRANCH_ADVICE_PATTERN));
@@ -100,7 +100,7 @@ test('through decide() and the hook: a copy branch is denied once with the advic
   const verdict = decide('git checkout -b lane-x-2', { cwd: repo, project: repo });
   assert.equal(verdict.allow, true);
   assert.ok(matches(verdict.advice, COPY_BRANCH_ADVICE_PATTERN));
-  const home = mkdtempSync(join(tmpdir(), 'git-advice-home-'));
+  const home = makeTempDir('git-advice-home-');
   const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: repo });
   const send = (command) => {
     const input = JSON.stringify({ cwd: repo, session_id: 'sess-1', tool_input: { command } });
@@ -140,7 +140,7 @@ test('copy branch: git branch listing options are not creating a branch; merge -
 
 test('one time budget for all git calls of a command line: a repository that hangs git costs the line a couple of seconds, not 5 s per reading', (t) => {
   if (process.platform === 'win32') return; // no mkfifo
-  const repo = join(mkdtempSync(join(tmpdir(), 'git-advice-fifo-')), 'repo');
+  const repo = join(makeTempDir('git-advice-fifo-'), 'repo');
   mkdirSync(join(repo, '.git', 'objects'), { recursive: true });
   mkdirSync(join(repo, '.git', 'refs'));
   assert.equal(spawnSync('mkfifo', [join(repo, '.git', 'HEAD')]).status, 0); // a read of HEAD blocks until the time limit

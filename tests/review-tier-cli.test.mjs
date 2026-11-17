@@ -3,11 +3,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLEAN_ENV, git, makeRepo } from './git-tidy-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/review-tier/review-tier.mjs', import.meta.url));
 
@@ -53,7 +53,7 @@ test('CLI: a bad range, an unknown sha or class, a missing flag value exit 2; a 
   for (const args of [['not-a-range'], ['nope..HEAD'], ['--delta', 'deadbeef'], ['--add-class', 'nonsense'], ['--delta'], ['--bogus'], ['-x..HEAD'], ['a..b', '--delta', 'HEAD']]) {
     assert.equal(tier(...args).status, 2, args.join(' '));
   }
-  const outside = mkdtempSync(join(realpathSync(tmpdir()), 'review-tier-none-'));
+  const outside = realpathSync(makeTempDir('review-tier-none-'));
   assert.equal(spawnSync(process.execPath, [CLI], { cwd: outside, encoding: 'utf8', env: CLEAN_ENV }).status, 1);
 });
 

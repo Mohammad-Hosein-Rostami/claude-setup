@@ -3,13 +3,13 @@
 // inside an open window still reports LIMIT_RESET, `limit-reset` alone is reachable, a watcher started after the reset is not woken.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { appendFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createTail } from '../home/tools/watch/lib/tail.mjs';
 import { createClassifier } from '../home/tools/watch/lib/classify.mjs';
 import { createSessionWatcher } from '../home/tools/watch/lib/watcher.mjs';
 import { startWatcher } from './watch-follow-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const at = (minutes) => new Date(Date.parse('2026-11-14T10:00:00.000Z') + minutes * 60_000).toISOString();
 const line = (value) => `${JSON.stringify(value)}\n`;
@@ -18,7 +18,7 @@ const reply = (minutes) => line({ type: 'assistant', timestamp: at(minutes), mes
 const ownerPrompt = (minutes) => line({ type: 'user', timestamp: at(minutes), message: { content: 'hello' } });
 
 async function scratch(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'watch-window-'));
+  const dir = makeTempDir('watch-window-');
   t.after(() => rm(dir, { recursive: true, force: true }));
   return dir;
 }

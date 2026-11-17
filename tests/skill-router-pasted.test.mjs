@@ -2,11 +2,11 @@
 // (seen live in 2 PC sessions: skills were injected 6 of 6 times on `<pasted_content>` or the compaction summary).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { gateLinesForPrompt, skillsForPrompt, weakUiPrompt } from '../home/hooks/skill-router.mjs';
 import { bigContextNote } from '../home/hooks/lib/big-context.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const LOG = 'TypeError: form validation failed at responsive layout, bug in the page, we are done, fix the crash';
 const SUMMARY_OPENING = 'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier part of the conversation.';
@@ -32,7 +32,7 @@ test('a compaction summary prompt routes nothing', () => {
 });
 
 async function bigTranscript() {
-  const dir = await mkdtemp(join(tmpdir(), 'bigctx-'));
+  const dir = makeTempDir('bigctx-');
   const transcript = join(dir, 't.jsonl');
   await writeFile(transcript, `${JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 90_000, output_tokens: 10 } } })}\n`);
   return { dir, transcript };

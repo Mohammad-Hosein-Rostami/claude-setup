@@ -3,10 +3,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/lane-new.sh', import.meta.url));
 const INSTALL = readFileSync(fileURLToPath(new URL('../scripts/install.sh', import.meta.url)), 'utf8');
@@ -19,7 +19,7 @@ const git = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8', en
 
 /** A repo `<parent>/claude-setup` on branch main with the script, an install.sh listing two tools, and a lockfile for one. */
 function makeRepo() {
-  const parent = realpathSync(mkdtempSync(join(tmpdir(), 'lane-new-')));
+  const parent = realpathSync(makeTempDir('lane-new-'));
   const repo = join(parent, 'claude-setup');
   mkdirSync(join(repo, 'scripts'), { recursive: true });
   mkdirSync(join(repo, 'home', 'tools', 'with-lock'), { recursive: true });

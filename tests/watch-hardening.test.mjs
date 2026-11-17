@@ -4,8 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFile, chmod, mkdir, mkdtemp, rename, rm, unlink, utimes, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { appendFile, chmod, mkdir, rename, rm, unlink, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { actionFor } from '../home/tools/watch/lib/actions.mjs';
@@ -15,6 +14,7 @@ import { resolveTarget } from '../home/tools/watch/lib/resolve.mjs';
 import { createSubagentWatcher } from '../home/tools/watch/lib/subagents.mjs';
 import { createTail } from '../home/tools/watch/lib/tail.mjs';
 import { createSessionWatcher } from '../home/tools/watch/lib/watcher.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/watch/watch.mjs', import.meta.url));
 const SESSION = 'abababab-1111-2222-3333-444444444444';
@@ -25,7 +25,7 @@ const feed = (entry) => createClassifier().feed(JSON.stringify({ timestamp: STAM
 const canRead000 = process.platform !== 'win32' && process.getuid?.() !== 0;
 
 async function scratch(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'watch-hard-'));
+  const dir = makeTempDir('watch-hard-');
   t.after(() => rm(dir, { recursive: true, force: true }));
   return dir;
 }

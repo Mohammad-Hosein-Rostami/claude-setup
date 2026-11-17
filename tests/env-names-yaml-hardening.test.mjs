@@ -4,9 +4,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { cp, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { collectProject } from '../home/tools/env-names/lib/collect.mjs';
@@ -14,6 +13,7 @@ import { scanDeploy } from '../home/tools/env-names/lib/deploy-names.mjs';
 import { loadYamlParser, scanYamlDeploy } from '../home/tools/env-names/lib/deploy-yaml-names.mjs';
 import { formatList } from '../home/tools/env-names/lib/report.mjs';
 import { everythingPrinted, makeProject } from './env-names-fixtures.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const TOOL_DIR = fileURLToPath(new URL('../home/tools/env-names/', import.meta.url));
 const MAX_WORK_PER_CHARACTER = 3; // linear work: a few passes over the text; the walk's own limit is 4
@@ -115,7 +115,7 @@ test('F3: with no parser the YAML files are skipped with one notice and the Dock
 });
 
 test('F3: loadYamlParser gives null for a folder with no yaml package, and reads the entry file the package.json names', async () => {
-  const empty = await mkdtemp(join(tmpdir(), 'env-names-no-yaml-'));
+  const empty = makeTempDir('env-names-no-yaml-');
   assert.equal(await loadYamlParser(pathToFileURL(`${empty}/`)), null);
   const real = await loadYamlParser();
   assert.equal(typeof real.parseAllDocuments, 'function');
@@ -125,7 +125,7 @@ test('F3: a node_modules/yaml in a parent folder or in the scanned project is ne
   const fakeYaml = 'require("node:fs").writeFileSync(__dirname + "/loaded.txt", "x");\nmodule.exports = { parseAllDocuments() { return []; } };\n';
   const fakePackage = JSON.stringify({ name: 'yaml', version: '0.0.0', main: './index.js', exports: { '.': { node: './index.js' } } });
   for (const place of ['parent folder of the tool', 'scanned project that holds the tool']) {
-    const root = await mkdtemp(join(tmpdir(), 'env-names-planted-'));
+    const root = makeTempDir('env-names-planted-');
     const project = place === 'parent folder of the tool' ? join(root, 'project') : root;
     const toolCopy = place === 'parent folder of the tool' ? join(root, 'tool') : join(root, 'tools', 'env-names');
     await cp(TOOL_DIR, toolCopy, { recursive: true, filter: (source) => !source.includes('node_modules') });

@@ -2,14 +2,14 @@
 // --full count, and privacy hardening (bash tags in agent text, --json wrapper, symlinked doc dirs, DB dir mode).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { indexAll } from '../home/tools/recall/lib/indexer.mjs';
 import { openStore } from '../home/tools/recall/lib/store.mjs';
 import { createTranscriptParser } from '../home/tools/recall/lib/extract.mjs';
 import { formatJson, searchChunks } from '../home/tools/recall/lib/search.mjs';
 import { SESSION, assistant, j, run, setup, unwrap, user } from './recall-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 // ---- B: correctness ----
 
@@ -90,7 +90,7 @@ test('filters are validated before anything is indexed; --limit 0 is rejected', 
 });
 
 test('--project escapes LIKE wildcards: "_" and "%" match themselves only', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'recall-like-'));
+  const dir = makeTempDir('recall-like-');
   const store = openStore(join(dir, 'l.db'));
   const add = (project, session) => store.addChunk({ project, session, source: `/${session}`, line: 1, ts: '2025-01-01T00:00:00Z', role: 'x', kind: 'user', text: 'like probe words' });
   add('a_b', 's1');
@@ -160,7 +160,7 @@ test('symlinked directories under a recall.json glob root are not followed', { s
 });
 
 test('an existing RECALL_DB parent directory keeps its mode', { skip: process.platform === 'win32' }, () => {
-  const dir = mkdtempSync(join(tmpdir(), 'recall-perm-'));
+  const dir = makeTempDir('recall-perm-');
   const shared = join(dir, 'shared');
   mkdirSync(shared);
   chmodSync(shared, 0o755);

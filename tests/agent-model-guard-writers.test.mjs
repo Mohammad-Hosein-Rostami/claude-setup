@@ -5,12 +5,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hookEnv } from './hook-env.mjs';
 import { IDLE_MS, PENDING_MS, callCounterPath } from '../home/hooks/lib/writer-agents.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
 const BUDGET = fileURLToPath(new URL('../home/hooks/agent-budget.mjs', import.meta.url));
@@ -21,8 +21,8 @@ let counter = 0;
 
 /** A private HOME; launch(toolInput) sends one Agent call and returns its hookSpecificOutput (null when silent); stop(...) ends one. */
 function writerSession() {
-  const home = mkdtempSync(join(tmpdir(), 'writer-gate-home-'));
-  const project = mkdtempSync(join(tmpdir(), 'writer-gate-project-'));
+  const home = makeTempDir('writer-gate-home-');
+  const project = makeTempDir('writer-gate-project-');
   const session = `writers-${process.pid}-${counter++}`;
   const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: project });
   const input = (toolInput) => JSON.stringify({ hook_event_name: 'PreToolUse', session_id: session, cwd: project, tool_name: 'Agent', tool_input: toolInput });

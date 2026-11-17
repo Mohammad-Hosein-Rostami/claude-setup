@@ -3,13 +3,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { indexAll } from '../home/tools/recall/lib/indexer.mjs';
 import { isBusyError, openStore } from '../home/tools/recall/lib/store.mjs';
 import { createTranscriptParser } from '../home/tools/recall/lib/extract.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/recall/recall.mjs', import.meta.url));
 const SESSION = 'aaaaaaaa-1111-2222-3333-444444444444';
@@ -17,7 +17,7 @@ const j = (o) => `${JSON.stringify(o)}\n`;
 const user = (text) => j({ type: 'user', timestamp: '2026-01-05T10:00:00Z', message: { content: text } });
 
 function setup() {
-  const dir = mkdtempSync(join(tmpdir(), 'recall-store-'));
+  const dir = makeTempDir('recall-store-');
   const root = join(dir, 'projects');
   mkdirSync(join(root, '-p'), { recursive: true });
   const file = join(root, '-p', `${SESSION}.jsonl`);

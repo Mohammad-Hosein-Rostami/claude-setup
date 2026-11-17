@@ -5,13 +5,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readEntry } from '../home/tools/estimate/lib/segment-cache.mjs';
 import { tableId } from '../home/tools/estimate/lib/table-store.mjs';
 import { FIRST_ROW_LINE, SESSION, iso, plainDoc, row, statusDoc, writeTranscript } from './estimate-tables.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/estimate/estimate.mjs', import.meta.url));
 const NOW = iso(1);
@@ -20,7 +20,7 @@ const OPEN_ROWS = [row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', s
 
 /** A folder with a STATUS.md, a projects folder holding an hour of the session's activity, and HOME inside it. */
 async function workdir(doc) {
-  const dir = await mkdtemp(join(tmpdir(), 'estimate-'));
+  const dir = makeTempDir('estimate-');
   const status = join(dir, 'STATUS.md');
   await writeFile(status, doc);
   writeTranscript(join(dir, 'projects'), SESSION, 0, 1);

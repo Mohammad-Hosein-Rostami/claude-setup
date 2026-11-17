@@ -3,16 +3,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { cp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { commitOf, declaredSuite, recordPass, treeOf } from '../home/tools/test-pass/lib/store.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 
 async function runCheck(suiteCommand) {
-  const home = await mkdtemp(join(tmpdir(), 'doctor-suite-'));
+  const home = makeTempDir('doctor-suite-');
   const logDir = join(home, 'log-dir');
   const env = { ...process.env, HOME: home, DOCTOR_ONLY: 'check_repo_tests', DOCTOR_TEST_COMMAND: suiteCommand, DOCTOR_LOG_DIR: logDir };
   const result = spawnSync('bash', [DOCTOR], { env, encoding: 'utf8' });
@@ -57,7 +57,7 @@ test('a failing suite with no test lines (crash) still prints the last log lines
 });
 
 test('when the log folder cannot be made, the fallback log is a fresh file, not a fixed name another user could plant', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'doctor-suite-'));
+  const home = makeTempDir('doctor-suite-');
   const sharedTmp = join(home, 'shared-tmp');
   const blocker = join(home, 'blocker');
   await writeFile(blocker, 'a file, so a folder cannot be made below it');
@@ -85,7 +85,7 @@ function git(cwd, ...args) {
 
 /** A small committed repo with its own copy of doctor.sh and test-pass, so the tests never depend on the state of this checkout. */
 async function makeRepo() {
-  const repo = await mkdtemp(join(tmpdir(), 'doctor-repo-'));
+  const repo = makeTempDir('doctor-repo-');
   await mkdir(join(repo, 'scripts'));
   await mkdir(join(repo, 'home', 'hooks'), { recursive: true });
   await cp(DOCTOR, join(repo, 'scripts', 'doctor.sh'));
@@ -100,7 +100,7 @@ async function makeRepo() {
 
 /** Runs the check from `doctorPath` with a temp HOME that holds a test-pass row for `repo`'s HEAD (none when `suite` is undefined). */
 async function runWithRecord(repo, { suite, doctorPath = join(repo, 'scripts', 'doctor.sh') }) {
-  const home = await mkdtemp(join(tmpdir(), 'doctor-suite-'));
+  const home = makeTempDir('doctor-suite-');
   if (suite !== undefined) {
     const row = { tree: treeOf(repo, 'HEAD'), sha: commitOf(repo, 'HEAD'), cmd: declaredSuite(repo), suite, at: new Date().toISOString(), ms: 1 };
     assert.ok(recordPass(repo, row, { HOME: home }), 'the record was stored');
@@ -142,7 +142,7 @@ test('an untracked file in the working tree also runs the suite', async () => {
 
 test('doctor started through a symlinked repo path with no record runs the suite and does not report a PASS', async () => {
   const repo = await makeRepo();
-  const link = join(await mkdtemp(join(tmpdir(), 'doctor-link-')), 'repo-link');
+  const link = join(makeTempDir('doctor-link-'), 'repo-link');
   await symlink(repo, link);
   const result = await runWithRecord(repo, { doctorPath: join(link, 'scripts', 'doctor.sh') });
   assert.doesNotMatch(result.stdout, /suite PASS recorded/);

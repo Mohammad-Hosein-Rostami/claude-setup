@@ -2,14 +2,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const STATUSLINE = fileURLToPath(new URL('../home/statusline.mjs', import.meta.url));
 
 async function render(model) {
-  const home = await mkdtemp(`${tmpdir()}/statusline-home-`);
+  const home = makeTempDir('statusline-home-');
   const input = JSON.stringify({ model, rate_limits: { five_hour: {} } });
   return spawnSync(process.execPath, [STATUSLINE], { input, env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' }).stdout;
 }

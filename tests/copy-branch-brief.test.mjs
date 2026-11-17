@@ -3,13 +3,11 @@
 // The git repos are real temp repos (tests/git-tidy-helpers.mjs).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { branchNames, copyBranchBriefAdvice, copyBranchStem } from '../home/hooks/lib/copy-branch-brief.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
-const EMPTY_HOME = mkdtempSync(join(tmpdir(), 'copy-brief-home-'));
+const EMPTY_HOME = makeTempDir('copy-brief-home-');
 const ENV = { HOME: EMPTY_HOME, USERPROFILE: EMPTY_HOME };
 const input = (repo, prompt, type = 'implementer') => ({ cwd: repo, tool_input: { subagent_type: type, prompt } });
 
@@ -47,7 +45,7 @@ test('the lane branch itself, a brief with no branch, a rename and a stem that d
 test('read-only agents and non-repositories pass; odd input never throws', () => {
   const repo = repoWithLane();
   assert.equal(copyBranchBriefAdvice(input(repo, 'git checkout -b lane/r4-w1-2', 'reviewer'), ENV).deny, false);
-  assert.equal(copyBranchBriefAdvice(input(mkdtempSync(join(tmpdir(), 'not-a-repo-')), 'git checkout -b lane/r4-w1-2'), ENV).deny, false);
+  assert.equal(copyBranchBriefAdvice(input(makeTempDir('not-a-repo-'), 'git checkout -b lane/r4-w1-2'), ENV).deny, false);
   for (const bad of [undefined, null, 4, {}, { tool_input: { prompt: 5 } }, { cwd: 'relative', tool_input: { subagent_type: 'implementer', prompt: 'git checkout -b a-2' } }]) {
     assert.equal(typeof copyBranchBriefAdvice(bad, ENV).deny, 'boolean');
   }

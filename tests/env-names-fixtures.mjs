@@ -4,11 +4,11 @@
 // Fails at import, with one line, when the tool's yaml dependency is missing.
 // Markers are made-up words, never a real secret format (the pre-commit hook runs gitleaks).
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { yamlParserInstalled } from '../home/tools/env-names/lib/deploy-yaml-names.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 // A worktree without `npm ci` would fail dozens of tests one by one; stop at the first import with the one fix instead.
 if (!yamlParserInstalled) {
@@ -28,7 +28,7 @@ export const leaked = (text) => MARKERS.filter((marker) => text.includes(marker)
 
 /** Creates a temp folder holding `files` ({ 'a/b.txt': string | Buffer }) and returns its path. */
 export async function makeProject(files) {
-  const dir = await mkdtemp(join(tmpdir(), 'env-names-'));
+  const dir = makeTempDir('env-names-');
   for (const [path, content] of Object.entries(files)) {
     await mkdir(dirname(join(dir, path)), { recursive: true });
     await writeFile(join(dir, path), content);

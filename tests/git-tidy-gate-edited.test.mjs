@@ -4,16 +4,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { decide, openLanes } from '../home/hooks/git-tidy-gate.mjs';
 import { editedWorktrees, worktreeOf } from '../home/hooks/lib/gated-folder.mjs';
 import { recordEditedFile } from '../home/hooks/lib/own-edits.mjs';
 import { addWorktree, CLEAN_ENV, git, makeRepo } from './git-tidy-helpers.mjs';
 import { billAndGinShape, CHECK_TIMEOUT_FOR_TESTS_MS, gateSession, oldLane, SESSION } from './git-tidy-gate-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
-const plainFolder = () => mkdtempSync(join(tmpdir(), 'git-tidy-gate-plain-'));
+const plainFolder = () => makeTempDir('git-tidy-gate-plain-');
 
 /** Records, as the session's own edit, a file of `repo` (base.txt exists in every repo the helpers build). */
 function recordEditIn(gate, repo, agent) {
@@ -177,7 +177,7 @@ test('finding the edited repos stops at the deadline, after the first', () => {
 });
 
 test('a folder whose .git/HEAD never answers (a FIFO) is given up on at once, not waited for', posixOnly, () => {
-  const folder = mkdtempSync(join(tmpdir(), 'git-tidy-gate-fifo-'));
+  const folder = makeTempDir('git-tidy-gate-fifo-');
   mkdirSync(join(folder, '.git'));
   assert.equal(spawnSync('mkfifo', [join(folder, '.git', 'HEAD')]).status, 0);
   const startedMs = Date.now();

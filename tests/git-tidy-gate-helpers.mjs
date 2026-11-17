@@ -2,13 +2,13 @@
 // Exports: SESSION, HOUR_MS, CHECK_TIMEOUT_FOR_TESTS_MS, gateSession, billAndGinShape, inProcessGate, oldLane, linkStatus.
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decide } from '../home/hooks/git-tidy-gate.mjs';
 import { runStatus } from '../home/tools/status/status.mjs';
 import { CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/git-tidy-gate.mjs', import.meta.url));
 export const SESSION = 'sess-1';
@@ -17,7 +17,7 @@ export const CHECK_TIMEOUT_FOR_TESTS_MS = 60_000; // the suite runs test files i
 
 /** A private HOME and a way to send events of the lead (`stop`, `compact`) and of a subagent (`agentStop`) to the real hook process. */
 export function gateSession() {
-  const home = mkdtempSync(join(tmpdir(), 'git-tidy-gate-home-'));
+  const home = makeTempDir('git-tidy-gate-home-');
   const run = (input, project) => {
     const env = { ...CLEAN_ENV, HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: project, GIT_TIDY_GATE_CHECK_TIMEOUT_MS: String(CHECK_TIMEOUT_FOR_TESTS_MS) };
     return spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), encoding: 'utf8', env });
@@ -37,10 +37,10 @@ export function gateSession() {
     return result.stdout.split('\n').filter((line) => line !== '');
   };
   const agentStop = (start, extra = {}) => {
-    const transcript = join(mkdtempSync(join(tmpdir(), 'git-tidy-gate-agent-')), 'agent.jsonl');
+    const transcript = join(makeTempDir('git-tidy-gate-agent-'), 'agent.jsonl');
     writeFileSync(transcript, `${JSON.stringify({ type: 'user', cwd: start })}\n`);
     const input = { hook_event_name: 'SubagentStop', session_id: SESSION, agent_id: 'a1', agent_type: 'implementer', cwd: start, agent_transcript_path: transcript, stop_hook_active: false, ...extra };
-    return verdict(run(input, mkdtempSync(join(tmpdir(), 'git-tidy-gate-lead-'))));
+    return verdict(run(input, makeTempDir('git-tidy-gate-lead-')));
   };
   return { home, run, stop, compact, agentStop };
 }
@@ -59,7 +59,7 @@ export function billAndGinShape() {
 }
 
 export function inProcessGate(dir) {
-  const home = mkdtempSync(join(tmpdir(), 'git-tidy-gate-home-'));
+  const home = makeTempDir('git-tidy-gate-home-');
   const env = { ...CLEAN_ENV, HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: dir, GIT_TIDY_GATE_CHECK_TIMEOUT_MS: String(CHECK_TIMEOUT_FOR_TESTS_MS) };
   return { home, env, stop: (extra, deps) => decide({ hook_event_name: 'Stop', session_id: SESSION, cwd: dir, ...extra }, env, deps) };
 }

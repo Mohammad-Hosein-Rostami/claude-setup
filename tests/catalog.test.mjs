@@ -6,10 +6,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const CATALOG = join(REPO, 'docs', 'catalog.md');
@@ -81,7 +81,7 @@ test('every file a catalog row names exists', () => {
 });
 
 test('the key check finds a row that was added twice, and the path check finds a row whose file is gone', () => {
-  const root = mkdtempSync(join(tmpdir(), 'catalog-fixture-'));
+  const root = makeTempDir('catalog-fixture-');
   mkdirSync(join(root, 'home', 'agents'), { recursive: true });
   writeFileSync(join(root, 'home', 'agents', 'present.md'), 'x');
   const table = '## Agents (`home/agents/<name>.md`)\n\n| Agent | Description |\n| ----- | ----------- |\n| `present` | a |\n| `present` | again |\n| `gone` | b |\n';
@@ -97,7 +97,7 @@ function git(cwd, ...args) {
 }
 
 test('two lanes that each append a catalog row rebase one after the other with no conflict and keep both rows', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'catalog-rebase-'));
+  const dir = makeTempDir('catalog-rebase-');
   git(dir, 'init', '-q', '-b', 'main');
   mkdirSync(join(dir, 'docs'));
   writeFileSync(join(dir, '.gitattributes'), readFileSync(join(REPO, '.gitattributes')));

@@ -2,11 +2,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gateLinesForPrompt, isQuiet, isUiFile, skillsForPrompt, weakUiPrompt } from '../home/hooks/skill-router.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/skill-router.mjs', import.meta.url));
 
@@ -79,7 +79,7 @@ test('isUiFile accepts UI sources and rejects tests and stories', () => {
 test('isQuiet: env off, Gradle without package.json, otherwise loud', async () => {
   assert.equal(isQuiet('/nonexistent', { CLAUDE_SKILL_ROUTER: 'off' }), true);
   assert.equal(isQuiet(undefined, {}), false);
-  const gradle = await mkdtemp(join(tmpdir(), 'router-gradle-'));
+  const gradle = makeTempDir('router-gradle-');
   await writeFile(join(gradle, 'build.gradle.kts'), '');
   assert.equal(isQuiet(gradle, {}), true);
   await writeFile(join(gradle, 'package.json'), '{}');
@@ -105,7 +105,7 @@ const GATE_LINE = /^Skill router: (bug or failure|done or ship|repository restru
 
 // Each call gets its own temp dir as TMPDIR/TEMP so session markers never leak between tests or into real state.
 async function routerSession() {
-  const tmp = await mkdtemp(join(tmpdir(), 'router-state-'));
+  const tmp = makeTempDir('router-state-');
   const env = { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp };
   const fire = (event, { keepGates = false } = {}) => {
     const r = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(event), encoding: 'utf8', env });
@@ -235,7 +235,7 @@ test('hook: gate lines reach additionalContext, also in a Gradle project and nex
   const both = await prompt('fix the form validation bug', 's3', KEEP);
   assert.match(both, /forms-validation/);
   assert.match(both, /root-cause-debug/);
-  const gradle = await mkdtemp(join(tmpdir(), 'router-gradle-gate-'));
+  const gradle = makeTempDir('router-gradle-gate-');
   await writeFile(join(gradle, 'build.gradle.kts'), '');
   const ctx = fire({ hook_event_name: 'UserPromptSubmit', prompt: 'fix the responsive layout bug', session_id: 's4', cwd: gradle }, KEEP);
   assert.match(ctx, /root-cause-debug/);
@@ -257,7 +257,7 @@ test('hook: each gate line shows once per session, again after a compact, and pe
 });
 
 test('hook: CLAUDE_SKILL_ROUTER=off silences the gate lines too', async () => {
-  const tmp = await mkdtemp(join(tmpdir(), 'router-off-'));
+  const tmp = makeTempDir('router-off-');
   const env = { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp, CLAUDE_SKILL_ROUTER: 'off' };
   const input = JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'fix the crash, then ship it', session_id: 'off1' });
   const r = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env });

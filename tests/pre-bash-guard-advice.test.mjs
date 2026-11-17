@@ -7,8 +7,7 @@ import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +16,7 @@ import { adviceOnce, bouncedDir } from '../home/hooks/lib/bounce-once.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { hookEnv } from './hook-env.mjs';
 import { fastestMs } from './timing.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const PROJECT = resolve('/work/proj');
@@ -51,7 +51,7 @@ const hookInput = (command, options = {}) => JSON.stringify({ cwd: options.cwd ?
 
 /** A private HOME and decision log; run() sends one Bash call to the guard hook and returns what it decided. */
 function guardSession() {
-  const home = mkdtempSync(join(tmpdir(), 'advice-home-'));
+  const home = makeTempDir('advice-home-');
   const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: PROJECT });
   return {
     home,

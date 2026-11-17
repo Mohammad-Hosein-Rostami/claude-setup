@@ -4,13 +4,12 @@
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { hookEnv } from './hook-env.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const PROJECT = resolve('/work/proj');
@@ -73,7 +72,7 @@ test('C37: git push . lane:main still asks like any push, the landing advice car
 });
 
 test('C37 through the hook: git update-ref refs/heads/main is denied once with the advice, the identical retry runs', () => {
-  const home = mkdtempSync(join(tmpdir(), 'branch-move-home-'));
+  const home = makeTempDir('branch-move-home-');
   const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: PROJECT });
   const send = (command) => {
     const input = JSON.stringify({ cwd: PROJECT, session_id: 'sess-1', tool_input: { command } });

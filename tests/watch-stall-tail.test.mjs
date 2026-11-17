@@ -2,11 +2,11 @@
 // then reports RESUMED, and the tail keeps a partial last line until its newline arrives, survives truncation and late files.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFile, mkdtemp, rm, truncate, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { appendFile, rm, truncate, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createStallDetector } from '../home/tools/watch/lib/stall.mjs';
 import { createTail } from '../home/tools/watch/lib/tail.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const MIN = 60_000;
 
@@ -26,7 +26,7 @@ test('stall: an unknown last write (no file yet) never stalls', () => {
 });
 
 async function scratch(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'watch-tail-'));
+  const dir = makeTempDir('watch-tail-');
   t.after(() => rm(dir, { recursive: true, force: true }));
   return dir;
 }

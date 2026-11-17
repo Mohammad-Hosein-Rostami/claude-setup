@@ -7,9 +7,8 @@ import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +16,7 @@ import { MAX_MATRIX_BYTES, matrixLines, uiBriefDeny } from '../home/hooks/agent-
 import { adviceOnce } from '../home/hooks/lib/bounce-once.mjs';
 import { hookEnv } from './hook-env.mjs';
 import { fastestMs } from './timing.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
 const SESSION = 'sess1';
@@ -50,8 +50,8 @@ function outcome({ status, stdout, stderr, error }) {
  * (present but undefined: left out of the input), options.processCwd is the hook process's own folder.
  */
 function gateSession(mode = 'medium') {
-  const home = mkdtempSync(join(tmpdir(), 'matrix-gate-home-'));
-  const project = mkdtempSync(join(tmpdir(), 'matrix-gate-project-'));
+  const home = makeTempDir('matrix-gate-home-');
+  const project = makeTempDir('matrix-gate-project-');
   mkdirSync(join(home, '.claude', 'state', 'modes'), { recursive: true });
   writeFileSync(join(home, '.claude', 'state', 'modes', SESSION), `${mode}\n`);
   mkdirSync(join(project, 'docs'));
@@ -228,7 +228,7 @@ test('a huge prompt is decided within the hook timeout', () => {
 });
 
 test('adviceOnce names the hook and tool it is given in the log line; without them the line says pre-bash-guard and Bash as before', () => {
-  const home = mkdtempSync(join(tmpdir(), 'advice-names-'));
+  const home = makeTempDir('advice-names-');
   const env = { HOME: home, CLAUDE_GUARD_LOG: join(home, 'guard.jsonl') };
   const input = { session_id: SESSION };
   adviceOnce(['advice text'], { command: 'first', cwd: home, input }, env);
@@ -303,7 +303,7 @@ const RECORD_CHILD = [
 const PARALLEL_RECORDS = 16;
 
 test('16 records at the same moment: all 16 digests are stored', { timeout: 60_000 }, async () => {
-  const home = mkdtempSync(join(tmpdir(), 'advice-parallel-'));
+  const home = makeTempDir('advice-parallel-');
   const go = join(home, 'go');
   const url = new URL('../home/hooks/lib/bounce-once.mjs', import.meta.url).href;
   const children = Array.from({ length: PARALLEL_RECORDS }, (_, n) => spawn(process.execPath,
@@ -317,7 +317,7 @@ test('16 records at the same moment: all 16 digests are stored', { timeout: 60_0
 });
 
 test('a store lock dated in the future is cleared like a stale one: the send is still recorded', () => {
-  const home = mkdtempSync(join(tmpdir(), 'advice-future-lock-'));
+  const home = makeTempDir('advice-future-lock-');
   const env = { HOME: home, CLAUDE_GUARD_LOG: join(home, 'guard.jsonl') };
   const store = join(home, '.claude', 'state', 'guard-bounced');
   mkdirSync(store, { recursive: true, mode: 0o700 });
@@ -345,7 +345,7 @@ test('matrixLines: a huge hostile prompt is scanned in linear time', () => {
 });
 
 test('uiBriefDeny fails open: input or an environment that throws when read, and odd input, give no output', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'matrix-gate-odd-'));
+  const home = makeTempDir('matrix-gate-odd-');
   const env = { HOME: home, CLAUDE_GUARD_LOG: join(home, 'guard.jsonl') };
   const exploding = new Proxy({}, { get: () => { throw new Error('exploded'); } });
   assert.equal(await uiBriefDeny(exploding, env), '');

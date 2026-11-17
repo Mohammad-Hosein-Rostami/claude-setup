@@ -5,13 +5,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decide, openLanes } from '../home/hooks/git-tidy-gate.mjs';
 import { addWorktree, CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
 import { billAndGinShape, CHECK_TIMEOUT_FOR_TESTS_MS, gateSession, HOUR_MS, inProcessGate, linkStatus, oldLane, SESSION } from './git-tidy-gate-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/git-tidy-gate.mjs', import.meta.url));
 
@@ -106,8 +106,8 @@ test('the check child never runs a program the repository config names (fsmonito
   commit(dir, 'y.txt');
   git(dir, 'checkout', '-q', 'main');
   const worktree = addWorktree(dir, 'wt-y', 'lane/y', { create: false });
-  const marker = join(mkdtempSync(join(tmpdir(), 'git-tidy-gate-marker-')), 'ran');
-  const program = join(mkdtempSync(join(tmpdir(), 'git-tidy-gate-program-')), 'fsmonitor.sh');
+  const marker = join(makeTempDir('git-tidy-gate-marker-'), 'ran');
+  const program = join(makeTempDir('git-tidy-gate-program-'), 'fsmonitor.sh');
   writeFileSync(program, `#!/bin/sh\ntouch '${marker}'\nprintf '\\0'\n`);
   chmodSync(program, 0o755);
   git(dir, 'config', 'core.fsmonitor', program);
@@ -128,7 +128,7 @@ test('a repository whose own config defines a filter is never checked (git statu
 // base tip moved this session -------------------------------------------------------------------------------------------------
 
 function transcriptStartedAt(startMs) {
-  const path = join(mkdtempSync(join(tmpdir(), 'git-tidy-gate-transcript-')), 'lead.jsonl');
+  const path = join(makeTempDir('git-tidy-gate-transcript-'), 'lead.jsonl');
   writeFileSync(path, `${JSON.stringify({ type: 'summary' })}\n${JSON.stringify({ type: 'user', timestamp: new Date(startMs).toISOString() })}\n`);
   return path;
 }
@@ -252,7 +252,7 @@ test('PreCompact prints one line per open lane, and nothing when there is none',
 
 test('outside a git repository, with unusable input or with an unusable event, the hook says nothing and exits 0', () => {
   const gate = gateSession();
-  const outside = mkdtempSync(join(tmpdir(), 'git-tidy-gate-plain-'));
+  const outside = makeTempDir('git-tidy-gate-plain-');
   assert.equal(gate.stop(outside), null);
   assert.equal(gate.stop(makeRepo(), { session_id: '../escape' }), null);
   const garbage = spawnSync(process.execPath, [HOOK], { input: 'not json', encoding: 'utf8', env: { ...CLEAN_ENV, HOME: gate.home } });

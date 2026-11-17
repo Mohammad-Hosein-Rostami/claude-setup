@@ -4,13 +4,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkMatrix } from '../home/tools/ui-coverage/lib/check.mjs';
 import { expandMatrix } from '../home/tools/ui-coverage/lib/cells.mjs';
 import { formatReport } from '../home/tools/ui-coverage/lib/report.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/ui-coverage/ui-coverage.mjs', import.meta.url));
 const run = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
@@ -116,7 +116,7 @@ test('reference: "none:" is accepted only when searched.reference lists a search
 });
 
 async function project(files) {
-  const dir = await mkdtemp(join(tmpdir(), 'ui-coverage-v2-'));
+  const dir = makeTempDir('ui-coverage-v2-');
   for (const [name, text] of Object.entries(files)) {
     await mkdir(dirname(join(dir, name)), { recursive: true });
     await writeFile(join(dir, name), text);
@@ -143,7 +143,7 @@ test('CLI: the proof-run mistake (component path, mount file never mentions it) 
 });
 
 test('init writes a skeleton that check rejects with todo problems only, and refuses to overwrite', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'ui-coverage-init-'));
+  const dir = makeTempDir('ui-coverage-init-');
   const file = join(dir, 'matrix.json');
   const first = run('init', file, '--locales', 'en:ltr,fa:rtl', '--widths', '320,768,1280', '--surfaces', 'login,signup');
   assert.equal(first.status, 0, first.stderr);
@@ -167,7 +167,7 @@ test('init writes a skeleton that check rejects with todo problems only, and ref
 });
 
 test('init rejects bad arguments with exit 2 and writes nothing', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'ui-coverage-init-'));
+  const dir = makeTempDir('ui-coverage-init-');
   const file = join(dir, 'm.json');
   const good = ['--locales', 'en:ltr', '--widths', '320', '--surfaces', 'a'];
   const swap = (flag, value) => good.map((part, i) => (good[i - 1] === flag ? value : part));

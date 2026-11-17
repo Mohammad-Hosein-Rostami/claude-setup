@@ -5,9 +5,8 @@
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { warmExec } from './warm-exec.mjs';
-import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +14,7 @@ import { allowedLiteralsDir } from '../home/hooks/lib/allowed-literals.mjs';
 import { RETRY_LINE } from '../home/hooks/lib/bounce-once.mjs';
 import { dialogExecutable } from '../home/hooks/lib/timed-ask.mjs';
 import { hookEnv } from './hook-env.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const PROJECT = resolve('/work/proj');
@@ -37,7 +37,7 @@ process.exit(process.platform === 'linux' ? { allow: 0, deny: 1, timeout: 5 }[pr
 
 /** One simulated owner session: a private HOME, decision log and fake dialog whose answer can change between calls. */
 function session() {
-  const dir = mkdtempSync(join(tmpdir(), 'remember-'));
+  const dir = makeTempDir('remember-');
   const script = join(dir, 'fake.cjs');
   writeFileSync(script, FAKE_SCRIPT);
   const bin = join(dir, dialogExecutable(process.platform) + (process.platform === 'win32' ? '.cmd' : ''));

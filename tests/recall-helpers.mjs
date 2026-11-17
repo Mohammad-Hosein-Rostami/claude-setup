@@ -2,10 +2,10 @@
 // Ollama that records requests. Not a test file (no .test suffix), so `node --test tests/*.test.mjs` does not run it.
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 export const CLI = fileURLToPath(new URL('../home/tools/recall/recall.mjs', import.meta.url));
 export const SESSION = 'cccccccc-1111-2222-3333-444444444444';
@@ -15,7 +15,7 @@ export const user = (text) => j({ type: 'user', timestamp: '2026-01-05T10:00:00Z
 export const assistant = (id, text) => j({ type: 'assistant', timestamp: '2026-01-05T10:01:00Z', message: { id, content: [{ type: 'text', text }] } });
 
 export function setup(lines = [user('a kitten story'), user('a feline friend slept all day')]) {
-  const dir = mkdtempSync(join(tmpdir(), 'recall-fix2-'));
+  const dir = makeTempDir('recall-fix2-');
   const root = join(dir, 'projects');
   mkdirSync(join(root, '-p'), { recursive: true });
   const file = join(root, '-p', `${SESSION}.jsonl`);

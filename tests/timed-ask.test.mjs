@@ -4,9 +4,8 @@
 // (Esc) / timeout / fail. No test ever opens a real dialog.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { warmExec } from './warm-exec.mjs';
-import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +14,7 @@ import { answerAsk, askTimeoutSeconds, secretAskTimeoutSeconds, formatDuration, 
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { questionReply } from '../home/hooks/lib/question-reply.mjs';
 import { tempLogPath } from './hook-env.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const ARTIFACT = fileURLToPath(new URL('../home/hooks/artifact-ask.mjs', import.meta.url));
@@ -42,7 +42,7 @@ process.exit(process.platform === 'linux' ? { allow: 0, deny: 1, timeout: 5 }[re
 
 /** A directory holding a fake dialog tool, plus the env that makes the hooks use it. */
 function fakeDialog(result, extra = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'fake-dialog-'));
+  const dir = makeTempDir('fake-dialog-');
   const script = join(dir, 'fake.cjs');
   writeFileSync(script, FAKE_SCRIPT);
   const bin = join(dir, dialogExecutable(process.platform) + (process.platform === 'win32' ? '.cmd' : ''));
@@ -338,13 +338,13 @@ test('guard-log: one masked, truncated JSON line per decision; the path is overr
   assert.match(line.ts, /^\d{4}-\d\d-\d\dT/);
   assert.equal(guardLogPath({ CLAUDE_GUARD_LOG: path }), path);
   assert.equal(guardLogPath({}), GUARD_LOG_FILE);
-  const blocker = join(mkdtempSync(join(tmpdir(), 'blocker-')), 'file');
+  const blocker = join(makeTempDir('blocker-'), 'file');
   writeFileSync(blocker, 'x');
   assert.doesNotThrow(() => logDecision({ hook: 'h' }, { CLAUDE_GUARD_LOG: join(blocker, 'sub', 'g.jsonl') }));
 });
 
 test('M4: the log file is created 0600 and a new log directory 0700', { skip: process.platform === 'win32' }, () => {
-  const path = join(mkdtempSync(join(tmpdir(), 'perm-')), 'new-dir', 'guard.jsonl');
+  const path = join(makeTempDir('perm-'), 'new-dir', 'guard.jsonl');
   logDecision({ hook: 'h', tool: 'Bash', decision: 'allow', outcome: 'allow', reason: 'r' }, { CLAUDE_GUARD_LOG: path });
   assert.equal(statSync(path).mode & 0o777, 0o600);
   assert.equal(statSync(join(path, '..')).mode & 0o777, 0o700);

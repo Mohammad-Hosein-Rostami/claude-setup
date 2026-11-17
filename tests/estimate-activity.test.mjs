@@ -3,10 +3,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { activeRuns, sessionTranscripts } from '../home/tools/estimate/lib/activity.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const ACTIVITY_URL = new URL('../home/tools/estimate/lib/activity.mjs', import.meta.url).href;
 const HANG_LIMIT_MS = 10_000; // a scan of these small fixtures takes milliseconds; a loop that never ends is killed here
@@ -16,7 +16,7 @@ const minuteOf = (iso) => Date.parse(iso) / 60_000;
 const line = (iso, text = 'hi') => `${JSON.stringify({ type: 'assistant', message: { content: text }, timestamp: iso })}\n`;
 
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), 'est-activity-'));
+  const root = makeTempDir('est-activity-');
   const projects = join(root, 'projects');
   const folder = join(projects, '-Users-me-project');
   mkdirSync(join(folder, SESSION, 'subagents'), { recursive: true });

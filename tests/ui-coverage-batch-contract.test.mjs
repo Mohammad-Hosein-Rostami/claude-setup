@@ -4,11 +4,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compareRecords, responsiveRecords, writeBatchResults } from '../home/tools/ui-check/lib/batch-records.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/ui-coverage/ui-coverage.mjs', import.meta.url));
 const run = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
@@ -28,7 +28,7 @@ const MATRIX = {
 };
 
 async function expandedMatrix() {
-  const dir = await mkdtemp(join(tmpdir(), 'ui-batch-contract-'));
+  const dir = makeTempDir('ui-batch-contract-');
   const file = join(dir, 'matrix.json');
   await writeFile(file, JSON.stringify(MATRIX));
   await mkdir(join(dir, 'src'));

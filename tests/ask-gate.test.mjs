@@ -3,11 +3,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listsDeferredDecisions } from '../home/hooks/ask-gate.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/ask-gate.mjs', import.meta.url));
 const DECISIONS = 'Work is done.\nDecisions you must make:\nD1: what 12-05 means\nD2: which plan to buy';
@@ -158,7 +158,7 @@ const ASK_CALL = assistant([{ type: 'tool_use', id: 't1', name: 'AskUserQuestion
 const RESULT = user([{ type: 'tool_result', tool_use_id: 't1', content: 'answered' }]);
 
 async function sandbox() {
-  const dir = await mkdtemp(join(tmpdir(), 'ask-gate-'));
+  const dir = makeTempDir('ask-gate-');
   const transcript = async (entries) => {
     const p = join(dir, 'transcript.jsonl');
     await writeFile(p, entries.map((e) => (typeof e === 'string' ? e : JSON.stringify(e))).join('\n') + '\n');

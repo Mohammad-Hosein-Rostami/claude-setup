@@ -2,11 +2,12 @@
 // return, deadline and process-tree kills) and runCheck's kill handle. Posix only where a fake package manager runs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, readFile, rm, writeFile } from 'node:fs/promises';
 import { warmExec } from './warm-exec.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCheck, runStages, stagesFor } from '../home/hooks/post-edit.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const names = (stages) => stages.map((stage) => stage.map((c) => c.name));
 const ALL_CHECKS = ['format', 'lint', 'typecheck'].map((name) => ({ name, args: ['run', name] }));
@@ -61,7 +62,7 @@ setTimeout(() => {
 `;
 
 async function fakeProject(env) {
-  const dir = await mkdtemp(join(tmpdir(), 'post-edit-fake-'));
+  const dir = makeTempDir('post-edit-fake-');
   const pm = join(dir, 'fake-pm');
   await writeFile(pm, FAKE_PM);
   await chmod(pm, 0o755);
@@ -128,7 +129,7 @@ test('runStages reports a missing package manager as a HOOK failure', async () =
 // A fake package manager that leaves a long-lived grandchild holding the stdout pipe: only a tree kill and a
 // timer-driven resolve return in time.
 test('runStages returns within the deadline even when a grandchild outlives the check', posix, async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'post-edit-tree-'));
+  const dir = makeTempDir('post-edit-tree-');
   const pm = join(dir, 'fake-pm');
   const pidFile = join(dir, 'grandchild.pid');
   await writeFile(pm, `#!${process.execPath}
@@ -172,7 +173,7 @@ if (name === 'lint') {
 `;
 
 async function lintFirstPm(env) {
-  const dir = await mkdtemp(join(tmpdir(), 'post-edit-lintfirst-'));
+  const dir = makeTempDir('post-edit-lintfirst-');
   const pm = join(dir, 'fake-pm');
   await writeFile(pm, LINT_FIRST_PM);
   await chmod(pm, 0o755);

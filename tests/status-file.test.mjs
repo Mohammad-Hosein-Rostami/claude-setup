@@ -6,10 +6,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { lstatSync, readFileSync, realpathSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MAX_STATUS_BYTES, readStatusFile } from '../home/tools/status/status-file.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const posix = { skip: process.platform === 'win32' ? 'no O_NOFOLLOW, FIFO or /dev/null on Windows' : false };
 const STATUS_FILE_URL = new URL('../home/tools/status/status-file.mjs', import.meta.url).href;
@@ -52,7 +51,7 @@ const outcome = runStatus(['rule', 'swapped'], { cwd: dir, now: new Date('2026-1
 console.log(JSON.stringify({ swapped, ...outcome }));`;
 
 // status.mjs works on the real path (/private/var on macOS), and the swap matches the path it lstats
-const tempDir = async () => realpathSync(await mkdtemp(join(tmpdir(), 'status-file-')));
+const tempDir = async () => realpathSync(makeTempDir('status-file-'));
 
 test('readStatusFile reads a regular file under the cap', async () => {
   const file = join(await tempDir(), 'STATUS.md');

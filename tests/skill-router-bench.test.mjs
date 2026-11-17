@@ -3,10 +3,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { skillsForPrompt, weakUiPrompt } from '../home/hooks/skill-router.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/skill-router.mjs', import.meta.url));
 
@@ -114,7 +113,7 @@ test(`routing bench: ${passed}/${total}`, () => {
 });
 
 test('sticky rows: weak prompt follows up with the marker, stays silent without it', async () => {
-  const tmp = await mkdtemp(`${tmpdir()}/router-bench-`);
+  const tmp = makeTempDir('router-bench-');
   const env = { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp };
   const ask = (prompt, session_id) => {
     const input = JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt, session_id });

@@ -6,13 +6,14 @@
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { MAX_EXCLUDE_BYTES, withBriefLines } from '../home/hooks/lib/agent-brief.mjs';
 import { hookEnv } from './hook-env.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
 const SESSION = 'sess1';
@@ -48,8 +49,8 @@ function writeExclude(gitDir, text) {
  * options.processCwd is the hook process's own folder; exclude(text) rewrites the project's info/exclude; extraEnv is added last.
  */
 function briefSession(mode = 'medium', projectPrefix = 'brief-project-', extraEnv = {}) {
-  const home = mkdtempSync(join(tmpdir(), 'brief-home-'));
-  const project = realpathSync(mkdtempSync(join(tmpdir(), projectPrefix)));
+  const home = makeTempDir('brief-home-');
+  const project = realpathSync(makeTempDir(projectPrefix));
   mkdirSync(join(home, '.claude', 'state', 'modes'), { recursive: true });
   writeFileSync(join(home, '.claude', 'state', 'modes', SESSION), `${mode}\n`);
   writeExclude(join(project, '.git'), 'STATUS.md\n');
@@ -116,14 +117,14 @@ test('the file must be listed in its folder as exactly STATUS.md: a status.md is
   writeFileSync(join(s.project, 'status.md'), RULES);
   const call = { prompt: PROMPT, subagent_type: 'implementer' };
   assert.equal(s.send(call), null, 'in a repository');
-  const loose = mkdtempSync(join(tmpdir(), 'brief-no-git-'));
+  const loose = makeTempDir('brief-no-git-');
   writeFileSync(join(loose, 'status.md'), RULES);
   assert.equal(s.send(call, { cwd: loose }), null, 'outside git');
 });
 
 test('a linked worktree reads the exclude list of its main repository through commondir', () => {
   const s = briefSession();
-  const worktree = realpathSync(mkdtempSync(join(tmpdir(), 'brief-worktree-')));
+  const worktree = realpathSync(makeTempDir('brief-worktree-'));
   const admin = join(s.project, '.git', 'worktrees', 'wt'); // the layout `git worktree add` writes
   mkdirSync(admin, { recursive: true });
   writeFileSync(join(admin, 'commondir'), '../..\n');
@@ -155,7 +156,7 @@ test('a .git that is a FIFO or a link: no line, and nothing waits', posixOnly, (
   const call = { prompt: PROMPT, subagent_type: 'implementer' };
   const makers = { FIFO: (path) => spawnSync('mkfifo', [path]), link: (path) => symlinkSync(join(s.project, '.git'), path) };
   for (const [name, make] of Object.entries(makers)) {
-    const repo = mkdtempSync(join(tmpdir(), 'brief-odd-git-'));
+    const repo = makeTempDir('brief-odd-git-');
     make(join(repo, '.git'));
     writeFileSync(join(repo, 'STATUS.md'), RULES);
     assert.equal(s.send(call, { cwd: repo }), null, name);
@@ -176,8 +177,8 @@ test('an info/exclude of 5 MB is read only from its start; a line cut at the rea
 });
 
 test('no program runs: a disguised git folder with core.fsmonitor and a fake git first on PATH leave no marker', posixOnly, () => {
-  const bin = mkdtempSync(join(tmpdir(), 'brief-fake-bin-'));
-  const markers = mkdtempSync(join(tmpdir(), 'brief-markers-'));
+  const bin = makeTempDir('brief-fake-bin-');
+  const markers = makeTempDir('brief-markers-');
   const script = (marker) => `#!/bin/sh\ntouch '${join(markers, marker)}'\n`;
   writeFileSync(join(bin, 'git'), script('git-ran'), { mode: 0o755 });
   const s = briefSession('medium', 'brief-project-', { PATH: `${bin}${delimiter}${process.env.PATH}` });
@@ -209,7 +210,7 @@ test('a STATUS.md in a subfolder never counts: the one at the top wins, and with
 test('outside git only the STATUS.md in cwd itself counts', () => {
   const s = briefSession();
   const call = { prompt: PROMPT, subagent_type: 'implementer' };
-  const loose = mkdtempSync(join(tmpdir(), 'brief-no-git-'));
+  const loose = makeTempDir('brief-no-git-');
   mkdirSync(join(loose, 'sub'));
   writeFileSync(join(loose, 'STATUS.md'), RULES);
   assert.equal(s.send(call, { cwd: join(loose, 'sub') }), null, 'a parent folder does not count');
@@ -219,7 +220,7 @@ test('outside git only the STATUS.md in cwd itself counts', () => {
 test('a STATUS.md that links out of the project is ignored, a link inside it counts; a FIFO or folder is never read', posixOnly, () => {
   const call = { prompt: PROMPT, subagent_type: 'implementer' };
   const out = briefSession();
-  const outside = mkdtempSync(join(tmpdir(), 'brief-outside-'));
+  const outside = makeTempDir('brief-outside-');
   writeFileSync(join(outside, 'STATUS.md'), RULES);
   symlinkSync(join(outside, 'STATUS.md'), out.status);
   assert.equal(out.send(call), null, 'a link out of the project');
@@ -328,7 +329,7 @@ test('withBriefLines fails open: input that throws when read, odd input or an od
   for (const odd of [exploding, undefined, null, 42, 'text', { prompt: 42, subagent_type: 'architect' }]) assert.equal(withBriefLines(odd, tmpdir()), null);
   // an odd cwd means "this folder": run from an empty one, so a STATUS.md where the suite was started cannot change the result
   const startedIn = process.cwd();
-  process.chdir(mkdtempSync(join(tmpdir(), 'brief-empty-')));
+  process.chdir(makeTempDir('brief-empty-'));
   try {
     assert.equal(withBriefLines({ prompt: PROMPT, subagent_type: 'implementer' }, { not: 'a path' }), null, 'not a string: this folder, no STATUS.md');
   } finally {

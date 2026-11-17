@@ -4,17 +4,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gateLinesForPrompt } from '../home/hooks/skill-router.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/skill-router.mjs', import.meta.url));
 
 // One hook process per call, each session in its own temp dir: returns what the hook injected for a prompt.
 async function routerSession() {
-  const tmp = await mkdtemp(join(tmpdir(), 'router-gates-'));
+  const tmp = makeTempDir('router-gates-');
   const env = { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp };
   const fire = (event) => {
     const r = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(event), encoding: 'utf8', env });
@@ -114,7 +113,7 @@ test('hook: the repeated-report line fires on every matching prompt, not once pe
 });
 
 test('hook: the repeated-report line leaves no once-per-session marker behind', async () => {
-  const tmp = await mkdtemp(join(tmpdir(), 'router-no-marker-'));
+  const tmp = makeTempDir('router-no-marker-');
   const env = { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp };
   const input = JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'still not fixed', session_id: 'nm1' });
   const r = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env });

@@ -4,18 +4,17 @@
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readdirSync } from 'node:fs';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { markQuestionAnswered, questionAnsweredDir, questionTexts, wasQuestionAnswered } from '../home/hooks/lib/question-answered.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/question-answered.mjs', import.meta.url));
 const SESSION = 'session-marker-1';
 const MARK_TTL_MS = 15 * 60 * 1000; // the marker store forgets a mark after 15 min
 const privateEnv = () => {
-  const home = mkdtempSync(join(tmpdir(), 'marker-home-'));
+  const home = makeTempDir('marker-home-');
   return { HOME: home, USERPROFILE: home };
 };
 const call = (extra = {}) => ({ session: SESSION, agentId: undefined, questions: ['Where?', 'Ship it?'], ...extra });

@@ -3,18 +3,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MAX_AGENT_FILES, projectAgentNote } from '../home/hooks/lib/project-agents.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 const MODE_HOOK = fileURLToPath(new URL('../home/hooks/mode.mjs', import.meta.url));
 const agent = (name, extra = '') => `---\nname: ${name}\ndescription: x\n${extra}---\nBody\n`;
 
 async function sandbox({ project = {}, personal = { runner: '', reviewer: '' } } = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'proj-agents-'));
+  const root = makeTempDir('proj-agents-');
   const home = join(root, 'home');
   const projectDir = join(root, 'proj');
   await mkdir(join(home, '.claude', 'agents'), { recursive: true });

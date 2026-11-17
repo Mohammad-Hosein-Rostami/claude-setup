@@ -2,16 +2,16 @@
 // Exports: project, refs, findingLines, CLI.
 // Invariants: every project is a fresh temp folder; tests only use made-up content.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 export const CLI = fileURLToPath(new URL('../home/tools/refs/refs.mjs', import.meta.url));
 
 /** Builds a temp folder from {path: text} and returns its path. */
 export function project(files) {
-  const root = mkdtempSync(join(tmpdir(), 'refs-'));
+  const root = makeTempDir('refs-');
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     writeFileSync(join(root, path), text);

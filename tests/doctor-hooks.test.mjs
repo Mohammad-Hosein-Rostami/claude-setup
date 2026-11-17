@@ -2,10 +2,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { cp, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 const hasJq = spawnSync('jq', ['--version']).status === 0;
@@ -16,7 +16,7 @@ const ALL_EVENTS = ['SessionStart', 'UserPromptSubmit', 'UserPromptExpansion'];
 const hookBlock = (events) => Object.fromEntries(events.map((event) => [event, [{ hooks: [{ type: 'command', command: MODE_HOOK }] }]]));
 
 async function fakeHome({ events = ALL_EVENTS, plugin } = {}) {
-  const home = await mkdtemp(join(tmpdir(), 'doctor-home-'));
+  const home = makeTempDir('doctor-home-');
   const claude = join(home, '.claude');
   await mkdir(join(claude, 'hooks'), { recursive: true });
   await mkdir(join(claude, 'modes'), { recursive: true });
@@ -69,7 +69,7 @@ test('check_plugin_session_start is quiet about disabled plugins and clean hooks
 });
 
 test('check_hook_files also covers hook files named in agent frontmatter', { skip }, async () => {
-  const repo = await mkdtemp(join(tmpdir(), 'doctor-repo-'));
+  const repo = makeTempDir('doctor-repo-');
   await mkdir(join(repo, 'scripts'), { recursive: true });
   await mkdir(join(repo, 'settings'), { recursive: true });
   await mkdir(join(repo, 'home', 'hooks'), { recursive: true });
@@ -91,7 +91,7 @@ test('check_hook_files also covers hook files named in agent frontmatter', { ski
 const SCRIPT_SKILL = 'scriptPath `${CLAUDE_SKILL_DIR}/../../workflows/x.js`\n';
 const RESUME_SKILL = 'list runs: `node ~/.claude/tools/wf-resume/wf-resume.mjs list`\n';
 async function workflowRepo({ script = true, linked = true, allowed = true, skillText = SCRIPT_SKILL, resumeTool = false } = {}) {
-  const home = await mkdtemp(join(tmpdir(), 'doctor-wf-'));
+  const home = makeTempDir('doctor-wf-');
   const repo = join(home, 'repo');
   await mkdir(join(repo, 'scripts'), { recursive: true });
   await mkdir(join(repo, 'home', 'skills', 'wf-x'), { recursive: true });

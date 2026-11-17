@@ -8,14 +8,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decide } from '../home/hooks/commit-gate.mjs';
 import { recordEditedFile } from '../home/hooks/lib/own-edits.mjs';
 import { addWorktree, CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
 import { fastestMs } from './timing.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/commit-gate.mjs', import.meta.url));
 const SPEED_TARGET_MS = 300;
@@ -32,7 +32,7 @@ const BASE_SENTENCE = (branch) => ` This is the base folder (${branch}) and lane
  * record(path, who) sends the PostToolUse event of an Edit (who: {agent_id, session_id, tool_name}); write(path, text, who) also writes it.
  */
 function gateSession() {
-  const home = mkdtempSync(join(tmpdir(), 'commit-gate-home-'));
+  const home = makeTempDir('commit-gate-home-');
   const send = (input, project) => {
     const env = { ...CLEAN_ENV, HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: project };
     const { status, stdout, stderr } = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), encoding: 'utf8', env });
@@ -45,11 +45,11 @@ function gateSession() {
   };
   const stop = (project, extra = {}) => send({ hook_event_name: 'Stop', session_id: 'sess-1', cwd: project, stop_hook_active: false, ...extra }, project);
   const agentStop = (start, extra = {}) => {
-    const transcript = join(mkdtempSync(join(tmpdir(), 'commit-gate-agent-')), 'agent.jsonl');
+    const transcript = join(makeTempDir('commit-gate-agent-'), 'agent.jsonl');
     const first = { type: 'user', message: { role: 'user', content: 'brief naming "cwd":"/elsewhere"' }, cwd: start, agentId: 'a1' };
     writeFileSync(transcript, `${JSON.stringify(first)}\n${JSON.stringify({ type: 'assistant', cwd: '/moved/on' })}\n`);
     const input = { hook_event_name: 'SubagentStop', session_id: 'sess-1', agent_id: 'a1', agent_type: 'implementer', cwd: start, agent_transcript_path: transcript, stop_hook_active: false, ...extra };
-    return send(input, extra.project ?? mkdtempSync(join(tmpdir(), 'commit-gate-lead-')));
+    return send(input, extra.project ?? makeTempDir('commit-gate-lead-'));
   };
   const record = (path, who = {}) => {
     const { tool_name: tool = 'Edit', ...ids } = who;
@@ -101,13 +101,13 @@ test('staged and untracked files count; a project in a subfolder names the workt
   mkdirSync(join(dir, 'sub'));
   write(join(dir, 'sub', 'loose.txt'), 'u', A1);
   assert.equal(stop(join(dir, 'sub')), dirtyReason(dir, 2));
-  assert.equal(agentStop(join(dir, 'sub'), { cwd: mkdtempSync(join(tmpdir(), 'cd-elsewhere-')) }), dirtyReason(dir, 2));
+  assert.equal(agentStop(join(dir, 'sub'), { cwd: makeTempDir('cd-elsewhere-') }), dirtyReason(dir, 2));
 });
 
 test('passes: a clean repo, a folder outside git, ignored and .git/info/exclude files, an unfinished merge', () => {
   const { stop, write } = gateSession();
   assert.equal(stop(makeRepo()), null);
-  assert.equal(stop(mkdtempSync(join(tmpdir(), 'not-a-repo-'))), null);
+  assert.equal(stop(makeTempDir('not-a-repo-')), null);
   const ignored = makeRepo();
   writeFileSync(join(ignored, '.gitignore'), 'build/\n');
   commit(ignored, '.gitignore', 'build/\n');
@@ -167,8 +167,8 @@ test('only the session\'s own worktree is gated: a dirty repo the session cd\'d 
 
 test('no program runs: fsmonitor and filters in .git/config, an include, a bare-repo layout and a planted cd folder leave no marker', posixOnly, () => {
   const { stop, agentStop, write, toolCall } = gateSession();
-  const markers = mkdtempSync(join(tmpdir(), 'commit-gate-markers-'));
-  const scripts = mkdtempSync(join(tmpdir(), 'commit-gate-scripts-'));
+  const markers = makeTempDir('commit-gate-markers-');
+  const scripts = makeTempDir('commit-gate-scripts-');
   const marker = (name) => join(markers, name);
 
   const monitored = makeRepo();
@@ -198,7 +198,7 @@ test('no program runs: fsmonitor and filters in .git/config, an include, a bare-
   });
   assert.equal(agentStop(included), null, 'a filter hidden behind include.path');
 
-  const bare = join(realpathSync(mkdtempSync(join(tmpdir(), 'commit-gate-bare-'))), 'pkg');
+  const bare = join(realpathSync(makeTempDir('commit-gate-bare-')), 'pkg');
   mkdirSync(join(bare, 'objects'), { recursive: true });
   mkdirSync(join(bare, 'refs', 'heads'), { recursive: true });
   writeFileSync(join(bare, 'HEAD'), 'ref: refs/heads/main\n');
@@ -254,7 +254,7 @@ test(`decides in under ${SPEED_TARGET_MS} ms on a dirty repo with a lane`, () =>
   const dir = makeRepo();
   addWorktree(dir, 'wt-lane', 'lane');
   writeFileSync(join(dir, 'base.txt'), 'changed');
-  const home = mkdtempSync(join(tmpdir(), 'commit-gate-home-'));
+  const home = makeTempDir('commit-gate-home-');
   const env = { HOME: home, CLAUDE_PROJECT_DIR: dir };
   const fastest = fastestMs(() => {
     const session = `s${Math.random().toString(36).slice(2)}`;
@@ -286,7 +286,7 @@ test('only files this session or agent changed count: another agent\'s or sessio
 });
 
 test('recording is silent and fails open: no path, an odd tool input, a bad session id', () => {
-  const home = mkdtempSync(join(tmpdir(), 'commit-gate-home-'));
+  const home = makeTempDir('commit-gate-home-');
   for (const input of [{ hook_event_name: 'PostToolUse', session_id: 'sess-1', tool_name: 'Edit', tool_input: {} },
     { hook_event_name: 'PostToolUse', session_id: '../x', tool_name: 'Write', tool_input: { file_path: '/tmp/a' } },
     { hook_event_name: 'PostToolUse', session_id: 'sess-1', tool_name: 'Write', tool_input: { file_path: 7 } }]) {

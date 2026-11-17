@@ -3,11 +3,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { guardedAgentInput } from '../home/hooks/agent-model-guard.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
 const BASE = { description: 'look', prompt: 'find x' };
@@ -45,7 +45,7 @@ test('guardedAgentInput: forks, the repo agents (they pin their own model) and o
 
 // The hook runs in the temp HOME, so no STATUS.md of this repo adds a line to the brief.
 function run(mode, stdin) {
-  const home = mkdtempSync(join(tmpdir(), 'model-guard-'));
+  const home = makeTempDir('model-guard-');
   mkdirSync(join(home, '.claude', 'state', 'modes'), { recursive: true });
   writeFileSync(join(home, '.claude', 'state', 'modes', 'sess1'), `${mode}\n`);
   const env = { ...process.env, HOME: home, USERPROFILE: home };

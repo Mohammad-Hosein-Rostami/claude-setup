@@ -3,13 +3,13 @@
 // for the basic stop, subagent and compaction behaviour). Fixtures are in git-tidy-gate-helpers.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdtempSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { decide } from '../home/hooks/git-tidy-gate.mjs';
 import { cachedVerdict, storeVerdict } from '../home/hooks/lib/tidy-gate-store.mjs';
 import { addWorktree, commit, git, makeRepo } from './git-tidy-helpers.mjs';
 import { billAndGinShape, gateSession, inProcessGate, linkStatus, oldLane, SESSION } from './git-tidy-gate-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 test('fresh worktrees at the base (a new lane, a background agent) never block: prune would keep them', () => {
   const gate = gateSession();
@@ -80,7 +80,7 @@ test('a 70 KB merge subject still blocks, then passes once, and the store stays 
 });
 
 test('the store drops the oldest repos before it would pass the size it can read back', () => {
-  const env = { HOME: mkdtempSync(join(tmpdir(), 'git-tidy-gate-store-')) };
+  const env = { HOME: makeTempDir('git-tidy-gate-store-') };
   const verdict = { base: 'main', findings: [{ kind: 'merge-commit', subject: 'a', detail: 'z'.repeat(30_000) }], hints: [] };
   for (const top of ['/r/1', '/r/2', '/r/3']) storeVerdict(env, SESSION, { top, fingerprint: 'f' }, verdict);
   assert.deepEqual(cachedVerdict(env, SESSION, { top: '/r/3', fingerprint: 'f' }), verdict, 'the newest repo is kept');
@@ -111,7 +111,7 @@ test('PreCompact lists the lanes only: not an older copy, and not an agent branc
 test('a repository where another worktree\'s config view defines a filter is never checked', () => {
   const dir = billAndGinShape();
   const lane = addWorktree(dir, 'wt-lane', 'lane/y');
-  const include = join(mkdtempSync(join(tmpdir(), 'git-tidy-gate-include-')), 'filter.cfg');
+  const include = join(makeTempDir('git-tidy-gate-include-'), 'filter.cfg');
   writeFileSync(include, '[filter "sneaky"]\n\tclean = cat\n');
   git(dir, 'config', 'includeIf.onbranch:main.path', include); // only the worktree on main sees the filter
   assert.equal(gateSession().stop(lane), null);
@@ -119,8 +119,8 @@ test('a repository where another worktree\'s config view defines a filter is nev
 
 test('the check child never runs the gpg program of a signed commit (log.showSignature in the repository config)', () => {
   const dir = makeRepo();
-  const marker = join(mkdtempSync(join(tmpdir(), 'git-tidy-gate-marker-')), 'ran');
-  const program = join(mkdtempSync(join(tmpdir(), 'git-tidy-gate-gpg-')), 'gpg.sh');
+  const marker = join(makeTempDir('git-tidy-gate-marker-'), 'ran');
+  const program = join(makeTempDir('git-tidy-gate-gpg-'), 'gpg.sh');
   writeFileSync(program, `#!/bin/sh\ntouch '${marker}'\ncase "$*" in *--verify*) exit 0;; esac\ncat >/dev/null\nprintf -- '-----BEGIN PGP SIGNATURE-----\\n\\nAAAA\\n-----END PGP SIGNATURE-----\\n'\nprintf '[GNUPG:] SIG_CREATED D 1 8 00 1 ABCD\\n' >&2\n`);
   chmodSync(program, 0o755);
   git(dir, 'config', 'gpg.program', program);

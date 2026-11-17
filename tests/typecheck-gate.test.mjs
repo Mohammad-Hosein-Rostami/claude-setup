@@ -4,12 +4,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decideExit, incrementalTypecheck, runGate, timeoutMessage, typescriptMajor } from '../home/hooks/typecheck-gate.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/typecheck-gate.mjs', import.meta.url));
 const POST_EDIT_HOOK = fileURLToPath(new URL('../home/hooks/post-edit.mjs', import.meta.url));
@@ -47,7 +48,7 @@ const FAIL_JS = (lines, status = 1) => `${lines.map((l) => `console.log(${JSON.s
 
 // A fake project with logged edits. `tmp` is the redirected temp dir; `run(input, env)` runs the hook for session s1.
 async function gateProject({ output = ['src/a.ts(3,1): error TS2322: x'], status = 1, logged = ['src/a.ts'], script = 'node fail.js', scriptName = 'typecheck', extraScripts = {} } = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'typecheck-gate-'));
+  const root = makeTempDir('typecheck-gate-');
   const proj = join(root, 'proj');
   await mkdir(join(proj, 'src'), { recursive: true });
   await writeFile(join(proj, 'package.json'), JSON.stringify({ scripts: { [scriptName]: script, ...extraScripts } }));
@@ -277,7 +278,7 @@ test('decideExit on a timeout tells the user which files were not checked and st
 
 // Lays out node_modules the way an installer would and returns the roots.
 async function tscLayout() {
-  const root = await mkdtemp(join(tmpdir(), 'ts-major-'));
+  const root = makeTempDir('ts-major-');
   const writeTs = async (dir, version) => {
     await mkdir(join(dir, 'typescript'), { recursive: true });
     await writeFile(join(dir, 'typescript', 'package.json'), JSON.stringify({ name: 'typescript', version }));

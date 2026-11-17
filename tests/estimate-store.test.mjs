@@ -3,12 +3,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { activeRuns } from '../home/tools/estimate/lib/activity.mjs';
 import { linkedStatusPath, noteTable, readAllTables, readSeed, stateDir, tableId, updateTable } from '../home/tools/estimate/lib/table-store.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const STORE_URL = new URL('../home/tools/estimate/lib/table-store.mjs', import.meta.url).href;
 const SESSION = '11111111-2222-3333-4444-555555555555';
@@ -17,7 +17,7 @@ const TABLE_CAP_BYTES = 16 * (1 << 20); // the store's size cap for a table file
 const run = promisify(execFile);
 
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'est-store-'));
+  const root = makeTempDir('est-store-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const statusPath = join(root, 'STATUS.md');
   writeFileSync(statusPath, '## Work items\n');

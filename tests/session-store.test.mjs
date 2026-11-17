@@ -7,11 +7,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { spawn, spawnSync } from 'node:child_process';
-import {
-  chmodSync, linkSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync,
-} from 'node:fs';
+import { chmodSync, linkSync, lstatSync, lutimesSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +19,7 @@ import { withSessionLock } from '../home/hooks/lib/session-lock.mjs';
 import { readSessionFile, writeSessionFile } from '../home/hooks/lib/session-store.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { hookEnv } from './hook-env.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const posix = { skip: process.platform === 'win32' }; // links need extra rights on Windows, and it has no FIFOs or owner ids
@@ -33,7 +31,7 @@ const VALUE = 'alpha-value-123';
 const EIGHT_DAYS_AGO = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
 const HOOK_TIMEOUT_MS = 20_000; // far above a normal run (about 0.2 s): reaching it means the hook hung
 
-const tempDir = (prefix) => mkdtempSync(join(tmpdir(), prefix));
+const tempDir = (prefix) => makeTempDir(prefix);
 function privateEnv() {
   const home = tempDir('store-home-');
   return { HOME: home, USERPROFILE: home, CLAUDE_GUARD_LOG: join(home, 'guard.jsonl') };
@@ -146,7 +144,7 @@ test('a session file of another owner (a hard link to a root-owned file) is not 
 
 test('a socket at the session file is not used either', posix, async () => {
   for (const [store, dirOf, use] of STORES) {
-    const home = mkdtempSync('/tmp/ss-'); // a socket path must stay short (about 100 bytes)
+    const home = makeTempDir('ss-', '/tmp'); // a unix socket path must stay short (about 100 bytes), and the launcher's TMPDIR is long
     const env = { HOME: home, USERPROFILE: home, CLAUDE_GUARD_LOG: join(home, 'g.jsonl') };
     mkdirSync(dirOf(env), { recursive: true, mode: 0o700 });
     const server = createServer();

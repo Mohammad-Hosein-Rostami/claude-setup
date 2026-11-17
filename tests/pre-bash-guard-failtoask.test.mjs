@@ -3,8 +3,7 @@
 // Every silent bypass of the re-audit is a case in ASKS; HARMLESS must stay silent (a false positive costs an unattended run up to 2 min).
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { isReadOnlySql } from '../home/hooks/lib/sql.mjs';
@@ -13,6 +12,7 @@ import { riskyWordInExpansion } from '../home/hooks/lib/raw-risk.mjs';
 import { logDecision } from '../home/hooks/lib/guard-log.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { fastestMs } from './timing.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const PROJECT = resolve('/work/proj');
 const ctx = { cwd: PROJECT, project: PROJECT, prodHosts: ['db.prod.example.com'] };
@@ -230,7 +230,7 @@ test('R4: a command over 32 KB asks "command too long to check" and is decided f
   const r = decide(huge, ctx);
   assert.equal(r.ask, true);
   assert.match(r.reason, /command too long to check/);
-  const dir = mkdtempSync(join(tmpdir(), 'guard-r4-'));
+  const dir = makeTempDir('guard-r4-');
   const file = join(dir, 'guard.jsonl');
   const secret = `ghp_${'A1'.repeat(18)}`;
   logDecision({ hook: 'pre-bash', tool: 'Bash', decision: 'ask', reason: r.reason, command: `${secret} ${huge}` }, { CLAUDE_GUARD_LOG: file });

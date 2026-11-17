@@ -4,8 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore } from '../home/tools/recall/lib/store.mjs';
@@ -13,12 +12,13 @@ import { MAX_SHOW_CHARS, formatHits, formatShow, searchChunks } from '../home/to
 import { mergeSemantic } from '../home/tools/recall/lib/merge.mjs';
 import { cosineTop, embedStore, semanticFor } from '../home/tools/recall/lib/vectors.mjs';
 import { parseQuestions, sessionFileOf } from '../home/tools/recall/lib/eval.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/recall/recall.mjs', import.meta.url));
 const SECRET = 'Hunter2Hunter2';
 
 function seeded() {
-  const dir = mkdtempSync(join(tmpdir(), 'recall-search-'));
+  const dir = makeTempDir('recall-search-');
   const store = openStore(join(dir, 'r.db'));
   let line = 0;
   const add = (o) => { line += 10; return store.addChunk({ project: 'p', session: 's', source: '/s', line, ts: '2025-01-01T00:00:00Z', role: 'x', kind: 'user', ...o }); };
@@ -159,7 +159,7 @@ test('semanticFor is null without vectors for the model, without calling Ollama'
 });
 
 test('the embed command stores vectors through the CLI', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'recall-embed-cli-'));
+  const dir = makeTempDir('recall-embed-cli-');
   const root = join(dir, 'projects');
   mkdirSync(join(root, '-p'), { recursive: true });
   writeFileSync(join(root, '-p', 'bbbbbbbb-1111-2222-3333-444444444444.jsonl'),

@@ -2,11 +2,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { diagnostics, isBroadScript, isCodeFile, isSamePath, plannedChecks, shellCommand, skipFilter, typecheckAtEdit } from '../home/hooks/post-edit.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/post-edit.mjs', import.meta.url));
 
@@ -126,7 +126,7 @@ test('hook contract: bad JSON, empty stdin and non-code files exit 0 silently', 
 
 // Hook contract for the edit log: run the real hook against a fake project, with the temp dir redirected.
 async function loggedEdit({ env = {}, input = {}, typecheck = 'tsc --noEmit' }) {
-  const root = await mkdtemp(join(tmpdir(), 'post-edit-log-'));
+  const root = makeTempDir('post-edit-log-');
   const proj = join(root, 'proj');
   await mkdir(join(proj, 'src'), { recursive: true });
   await writeFile(join(proj, 'package.json'), JSON.stringify({ scripts: { typecheck } }));

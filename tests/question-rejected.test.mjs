@@ -2,11 +2,12 @@
 // terminal ("Chat about this" or Esc), which never runs the tool and so never reaches the PostToolUse mark. Only lines written after the
 // watch starts count; a line still being written is read once it is complete. Real files in a temp folder, no mocks.
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { watchTerminalRejection } from '../home/hooks/lib/question-rejected.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const line = (entry) => `${JSON.stringify(entry)}\n`;
 const REJECTED = line({ type: 'user', toolDenialKind: 'user-rejected', message: { role: 'user', content: [{ type: 'tool_result', is_error: true, content: 'The user doesn\'t want to proceed with this tool use.' }] } });
@@ -14,7 +15,7 @@ const CLARIFY = line({ type: 'user', message: { role: 'user', content: [{ type: 
 const ORDINARY = line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'working' }] } });
 
 const transcript = (text = '') => {
-  const path = join(mkdtempSync(join(tmpdir(), 'transcript-')), 'session.jsonl');
+  const path = join(makeTempDir('transcript-'), 'session.jsonl');
   writeFileSync(path, text);
   return path;
 };

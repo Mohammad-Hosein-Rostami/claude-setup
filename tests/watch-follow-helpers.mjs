@@ -2,10 +2,10 @@
 // Exports: SESSION, STAMP, entry(value), startWatcher(t, options) -> running watcher with output(), append(), appendUntilExit(), waitForExit().
 // The watcher starts at the end of the file, so a test appends after START_SETTLE_MS (its first look) or repeats a one-line event.
 import { spawn } from 'node:child_process';
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { appendFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 export const CLI = fileURLToPath(new URL('../home/tools/watch/watch.mjs', import.meta.url));
 export const SESSION = 'eeeeeeee-1111-2222-3333-444444444444';
@@ -24,7 +24,7 @@ export const entry = (value) => `${JSON.stringify({ timestamp: STAMP, ...value }
  * @returns {Promise<object>} dir, home, path, guardLog, child, output(), errors(), append(text), appendUntilExit(text, ms), waitForExit(ms)
  */
 export async function startWatcher(t, { transcript = '', args = ['--exit-on-event'], settle = false, prepare } = {}) {
-  const dir = await mkdtemp(join(tmpdir(), 'watch-follow-'));
+  const dir = makeTempDir('watch-follow-');
   t.after(() => rm(dir, { recursive: true, force: true }));
   const home = join(dir, 'home');
   const project = join(home, '.claude', 'projects', '-proj');

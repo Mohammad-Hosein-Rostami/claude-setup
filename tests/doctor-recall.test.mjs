@@ -4,10 +4,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 const skip = spawnSync('jq', ['--version']).status !== 0 && 'jq not installed';
@@ -15,7 +15,7 @@ const entry = (script) => [{ hooks: [{ type: 'command', command: `node "{{HOME}}
 const REGISTERED = { PostToolUse: entry('checkpoint.mjs'), PreCompact: entry('checkpoint.mjs'), SessionStart: entry('recall-digest.mjs') };
 
 async function sandbox({ hooks = REGISTERED, rerankers = true, checkpointError } = {}) {
-  const home = await mkdtemp(join(tmpdir(), 'doctor-recall-'));
+  const home = makeTempDir('doctor-recall-');
   const state = join(home, 'state');
   const models = join(home, 'models');
   await mkdir(join(home, '.claude'), { recursive: true });

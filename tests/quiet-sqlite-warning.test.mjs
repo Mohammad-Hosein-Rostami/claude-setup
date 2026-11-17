@@ -5,10 +5,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const FILTER = fileURLToPath(new URL('../home/tools/recall/lib/quiet-sqlite-warning.mjs', import.meta.url));
@@ -113,7 +113,7 @@ test('each such file imports the filter first and loads node:sqlite from its bod
 
 const NODE_22 = process.versions.node.startsWith('22.');
 test('recall index on an empty root prints nothing on stderr', { skip: !NODE_22 && `the SQLite warning exists only on Node 22 (this is ${process.version})` }, () => {
-  const dir = mkdtempSync(join(tmpdir(), 'quiet-sqlite-'));
+  const dir = makeTempDir('quiet-sqlite-');
   const env = { ...process.env, RECALL_DB: join(dir, 'db', 'index.db'), RECALL_ROOT: join(dir, 'projects'), RECALL_HOME: dir, RECALL_RERANK: 'off' };
   const result = spawnSync(process.execPath, [CLI, 'index'], { env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);

@@ -3,12 +3,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFile, link, mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { appendFile, link, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appendRecord, readNew, readQueue, UsageError } from '../home/tools/ask/lib/store.mjs';
 import { QUEUE_FULL, nextId } from '../home/tools/ask/lib/queue.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/ask/ask.mjs', import.meta.url));
 const posix = { skip: process.platform === 'win32' };
@@ -17,7 +17,7 @@ const qRecord = (id, extra = {}) => JSON.stringify({ type: 'q', id, ts: 't', ...
 const aRecord = (id, answer) => JSON.stringify({ type: 'a', id, ts: 't', answer });
 
 async function sandbox() {
-  const home = await mkdtemp(join(tmpdir(), 'ask-h-'));
+  const home = makeTempDir('ask-h-');
   const env = { ...process.env, HOME: home, USERPROFILE: home, ASK_QUEUE: '' };
   const run = (args, extra = {}) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env, ...extra });
   const queue = run(['init']).stdout.trim();

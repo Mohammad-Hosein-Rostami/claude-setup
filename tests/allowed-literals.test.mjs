@@ -1,12 +1,12 @@
 // Tests for the per-session allow memory: literalSecretValues (lib/secrets.mjs) and lib/allowed-literals.mjs.
 // Values are built from parts so this file never holds a string that looks like a real credential.
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { allowedLiteralsDir, isRemembered, remember } from '../home/hooks/lib/allowed-literals.mjs';
 import { literalSecretValues } from '../home/hooks/lib/secrets.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const GENERIC = ['abc123', 'def456', 'ghi789'].join('');
 const ANTHROPIC = ['sk', 'ant', 'api03', 'Zx9Qw', '3Er5T', 'y7Ui1'].join('-');
@@ -39,7 +39,7 @@ test('store: values shorter than 8 characters are never stored and never count a
   assert.equal(isRemembered('sess-1', ['long-enough-value'], env), true);
 });
 
-const homeEnv =() => ({ HOME: mkdtempSync(join(tmpdir(), 'allowed-home-')) });
+const homeEnv =() => ({ HOME: makeTempDir('allowed-home-') });
 const fileOf = (env, session) => join(allowedLiteralsDir(env), `${session}.json`);
 
 test('store: remember then isRemembered; an unseen second value, another session or no values is not remembered', () => {
@@ -80,7 +80,7 @@ test('store: a damaged file is not remembered and is replaced by the next write;
   assert.equal(isRemembered('sess-1', ['alpha-value'], env), false);
   remember('sess-1', ['alpha-value'], env);
   assert.equal(isRemembered('sess-1', ['alpha-value'], env), true);
-  const blocked = join(mkdtempSync(join(tmpdir(), 'allowed-file-')), 'a-file');
+  const blocked = join(makeTempDir('allowed-file-'), 'a-file');
   writeFileSync(blocked, '');
   assert.doesNotThrow(() => remember('sess-1', ['x'], { HOME: blocked }));
   assert.equal(isRemembered('sess-1', ['x'], { HOME: blocked }), false);

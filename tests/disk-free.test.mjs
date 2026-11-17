@@ -3,11 +3,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { availableGb, judgeFreeSpace } from '../home/tools/disk-free/disk-free.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const TOOL = fileURLToPath(new URL('../home/tools/disk-free/disk-free.mjs', import.meta.url));
 const KB_PER_GB = 1024 * 1024;
@@ -44,7 +44,7 @@ test('a threshold that is not a positive number is refused, not ignored', () => 
 });
 
 async function fakeHome(sizesKb) {
-  const home = await mkdtemp(join(tmpdir(), 'disk-free-home-'));
+  const home = makeTempDir('disk-free-home-');
   const folders = {
     derivedData: 'Library/Developer/Xcode/DerivedData',
     simulators: 'Library/Developer/CoreSimulator',
@@ -106,7 +106,7 @@ test('a folder too big to measure in time is still named, without a size', async
 });
 
 test('the time limit covers all folders together, so many slow folders cannot pass the runner timeout', async () => {
-  const slowBin = await mkdtemp(join(tmpdir(), 'disk-free-slow-du-'));
+  const slowBin = makeTempDir('disk-free-slow-du-');
   await writeFile(join(slowBin, 'du'), '#!/bin/sh\nexec sleep 5\n', { mode: 0o755 });
   const home = await fakeHome({ derivedData: 1, simulators: 1, caches: 1, npm: 1 });
   const startedAt = Date.now();

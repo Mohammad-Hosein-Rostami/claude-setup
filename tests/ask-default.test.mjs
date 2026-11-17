@@ -3,17 +3,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { lastAnswer, parse } from '../home/tools/ask/lib/queue.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/ask/ask.mjs', import.meta.url));
 const QUESTION = { question: 'Keep the extra link on the page?', why: 'It is not in Figma', options: [{ label: 'Match Figma', effect: 'remove it' }, { label: 'Keep it', effect: 'keep it' }], recommended: 'Match Figma', blocks: 'sign in', from: 'visual-qa' };
 
 async function sandbox() {
-  const home = await mkdtemp(join(tmpdir(), 'ask-default-'));
+  const home = makeTempDir('ask-default-');
   const env = { ...process.env, HOME: home, USERPROFILE: home, ASK_QUEUE: '' };
   const run = (args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env });
   const queue = run(['init']).stdout.trim();

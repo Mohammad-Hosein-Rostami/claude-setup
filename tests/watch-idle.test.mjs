@@ -3,8 +3,7 @@
 // (made-up text; no prompt or command text of a real session).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFile, mkdir, mkdtemp, rm, unlink, utimes, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { appendFile, mkdir, rm, unlink, utimes, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createClassifier } from '../home/tools/watch/lib/classify.mjs';
 import { DEFAULT_EXIT_CLASSES, DELAYED_CLASSES, EVENT_CLASS, EXIT_CLASS_NAMES, internalClasses } from '../home/tools/watch/lib/events.mjs';
@@ -12,6 +11,7 @@ import { parseArgs } from '../home/tools/watch/lib/args.mjs';
 import { createWakeGate } from '../home/tools/watch/lib/wake.mjs';
 import { createSessionWatcher } from '../home/tools/watch/lib/watcher.mjs';
 import { SESSION } from './watch-follow-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const SECOND = 1000;
 const MIN = 60 * SECOND;
@@ -37,7 +37,7 @@ const localCommand = (at, tag) => caveat(at) + commandName(at + 1) + commandOutp
 const finished = (at = T0) => reply(at - SECOND, 'end_turn') + turnDuration(at);
 
 async function setup(t, { transcript, mtimeMs = T0, clockStart = T0, registry = registered, isAlive = () => true, label = 'cccccccc' } = {}) {
-  const dir = await mkdtemp(join(tmpdir(), 'watch-idle-'));
+  const dir = makeTempDir('watch-idle-');
   t.after(() => rm(dir, { recursive: true, force: true }));
   const path = join(dir, `${SESSION}.jsonl`);
   await writeFile(path, transcript);

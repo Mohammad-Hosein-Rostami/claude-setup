@@ -4,8 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { estimateFile } from '../home/tools/estimate/lib/from-files.mjs';
 import { classMedians, progressOf } from '../home/tools/estimate/lib/progress.mjs';
@@ -13,6 +12,7 @@ import { formatEstimate, formatRefusal } from '../home/tools/estimate/lib/report
 import { errorSegment, resultSegment } from '../home/tools/estimate/lib/segment-text.mjs';
 import { tableId } from '../home/tools/estimate/lib/table-store.mjs';
 import { BASE_MS, HOUR_MS, SESSION, iso, row as tableRow, seedRows, statusDoc, writeSeed, writeTranscript } from './estimate-tables.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const row = (size, done, elapsedMin = 0) => ({ size, done, elapsedMin });
 const NO_POOL = { medians: {}, growth: null };
@@ -79,7 +79,7 @@ const OPEN_DOC = statusDoc([tableRow({ id: 'D1', startedH: 0, doneH: 0.5 }), tab
 
 /** A table, a transcript active from 0 to 1 h, a seed (5 S rows, 5 M rows unless given) and an empty store; run(hours, doc?) estimates it. */
 async function setup(doc = OPEN_DOC, seed = [...S_COSTS.flatMap((cost) => seedRows('S', 1, cost)), ...seedRows('M', 5, 90)]) {
-  const root = await mkdtemp(join(tmpdir(), 'estimate-progress-'));
+  const root = makeTempDir('estimate-progress-');
   const statusPath = join(root, 'STATUS.md');
   const projectsDir = join(root, 'projects');
   const stateDir = join(root, 'state');

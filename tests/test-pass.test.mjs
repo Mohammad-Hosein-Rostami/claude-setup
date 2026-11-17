@@ -3,13 +3,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MAX_ROWS, recordPass } from '../home/tools/test-pass/lib/store.mjs';
 import { declaredSuite, hasPass } from '../home/tools/test-pass/test-pass.mjs';
 import { CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/test-pass/test-pass.mjs', import.meta.url));
 const PASS = [process.execPath, '-e', 'process.exit(0)'];
@@ -18,7 +19,7 @@ const FAIL = [process.execPath, '-e', 'process.exit(3)'];
 /** A repo plus a private HOME for the state files; `run` and `check` call the CLI with that HOME. */
 function setup() {
   const repo = makeRepo();
-  const home = realpathSync(mkdtempSync(join(tmpdir(), 'test-pass-home-')));
+  const home = realpathSync(makeTempDir('test-pass-home-'));
   const env = { ...CLEAN_ENV, HOME: home, USERPROFILE: home };
   const cli = (...args) => spawnSync(process.execPath, [CLI, ...args], { cwd: repo, encoding: 'utf8', env });
   return { repo, home, env, cli, run: (...args) => cli('run', ...args), check: (...args) => cli('check', ...args) };

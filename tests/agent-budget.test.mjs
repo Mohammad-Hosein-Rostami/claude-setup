@@ -4,14 +4,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CALL_CAP, EARLY_NOTICE_AT, READ_WARN_CHARS, readChars } from '../home/hooks/agent-budget.mjs';
 import { tempRoot } from '../home/hooks/lib/edit-log.mjs';
 import { isReadOnlyCommand } from '../home/hooks/lib/read-only-command.mjs';
 import { measure, overCap, parseCap } from '../home/hooks/lib/reply-cap.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const BUDGET = fileURLToPath(new URL('../home/hooks/agent-budget.mjs', import.meta.url));
 const REPLY_CAP = fileURLToPath(new URL('../home/hooks/final-reply-cap.mjs', import.meta.url));
@@ -19,7 +19,7 @@ let counter = 0;
 const uid = (prefix) => `${prefix}${process.pid}x${Date.now()}x${counter++}`; // counter files live in the shared temp dir
 
 async function home() {
-  const dir = await mkdtemp(join(tmpdir(), 'agent-budget-'));
+  const dir = makeTempDir('agent-budget-');
   await mkdir(join(dir, '.claude', 'state', 'modes'), { recursive: true });
   return dir;
 }

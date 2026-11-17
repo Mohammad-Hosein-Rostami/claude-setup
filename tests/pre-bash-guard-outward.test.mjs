@@ -5,12 +5,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { hookEnv } from './hook-env.mjs';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { isProdHost, isReadOnlyRemote, isReadOnlySql, readProdHosts } from '../home/hooks/lib/remote.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const PROJECT = resolve('/work/proj');
@@ -132,7 +132,7 @@ test('isReadOnlySql and isReadOnlyRemote', () => {
 });
 
 test('readProdHosts reads lines, skips comments and blanks, lowercases; a missing file gives []', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'prod-hosts-'));
+  const dir = makeTempDir('prod-hosts-');
   const file = join(dir, 'prod-hosts');
   writeFileSync(file, '# my hosts\nDB1.Example.com   # primary\n\n*.corp.example.com\n');
   assert.deepEqual(readProdHosts(file), ['db1.example.com', '*.corp.example.com']);
@@ -157,7 +157,7 @@ test('hook contract: an ask prints a PreToolUse permissionDecision "ask" JSON an
 });
 
 test('hook contract: the private list file is read from CLAUDE_PROD_HOSTS_FILE', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'prod-hosts-'));
+  const dir = makeTempDir('prod-hosts-');
   const file = join(dir, 'prod-hosts');
   writeFileSync(file, 'db1.example.com\n');
   assert.equal(JSON.parse(runHook('ssh db1.example.com "rm x"', { CLAUDE_PROD_HOSTS_FILE: file }).stdout).hookSpecificOutput.permissionDecision, 'ask');

@@ -2,12 +2,12 @@
 // the platform's dialog tool (osascript / powershell / zenity) sits first on PATH, writes its pid to a file, and either answers
 // right away or stays open ("hang") until it is killed, as a real popup does. No test ever opens a real dialog.
 // Exports: fakePopup(result, extra) -> {env, pid(), alive()}; result is allow | deny | timeout | hang.
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { dialogExecutable } from '../home/hooks/lib/timed-ask.mjs';
 import { tempLogPath } from './hook-env.mjs';
 import { warmExec } from './warm-exec.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HANG_MS = 60_000; // a hanging popup outlives every test; the test kills it
 const SCRIPT = `
@@ -44,7 +44,7 @@ const isAlive = (pid) => {
  *   pid() is the popup's process id once it started (the popup writes it); alive() tells whether it still runs
  */
 export function fakePopup(result, extra = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'fake-popup-'));
+  const dir = makeTempDir('fake-popup-');
   const script = join(dir, 'fake.cjs');
   writeFileSync(script, SCRIPT);
   const bin = join(dir, dialogExecutable(process.platform) + (process.platform === 'win32' ? '.cmd' : ''));

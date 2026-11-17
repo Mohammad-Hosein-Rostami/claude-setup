@@ -7,8 +7,7 @@
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +15,7 @@ import { markQuestionAnswered } from '../home/hooks/lib/question-answered.mjs';
 import { TERMINAL_AUTO_CONTINUE_S, questionReply } from '../home/hooks/lib/question-reply.mjs';
 import { hookEnv, tempLogPath } from './hook-env.mjs';
 import { fakePopup } from './fake-dialog-tool.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/permission-timed-allow.mjs', import.meta.url));
 // Built from parts so this file never holds a string that looks like a real credential.
@@ -25,7 +25,7 @@ const WAIT_LIMIT_MS = 8000;
 const POLL_MS = 10; // the marker poll of a test; the hook's own is slower
 
 const privateEnv = (extra = {}) => {
-  const home = mkdtempSync(join(tmpdir(), 'question-home-'));
+  const home = makeTempDir('question-home-');
   return { HOME: home, USERPROFILE: home, CLAUDE_GUARD_LOG: tempLogPath(), ...extra };
 };
 
@@ -194,7 +194,7 @@ test('a mark from before this popup opened (an earlier identical question) does 
 });
 
 test('the owner turns the question down in the terminal (Chat about this, Esc): the open popup closes and no later one opens', async () => {
-  const transcriptPath = join(mkdtempSync(join(tmpdir(), 'question-transcript-')), 'session.jsonl');
+  const transcriptPath = join(makeTempDir('question-transcript-'), 'session.jsonl');
   writeFileSync(transcriptPath, '');
   const opened = [];
   const ask = openUntilAborted((request) => {

@@ -5,8 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { UsageError } from '../home/tools/estimate/lib/from-files.mjs';
@@ -14,6 +13,7 @@ import { parseWorkItems } from '../home/tools/estimate/lib/items.mjs';
 import { OVERDUE_TEXT, STALE_SHOW_MS, estimateSegment, readEntry, writeEntry } from '../home/tools/estimate/lib/segment-cache.mjs';
 import { MAX_SEGMENT_CHARS, errorSegment, resultSegment } from '../home/tools/estimate/lib/segment-text.mjs';
 import { HOUR_MS, iso, row, statusDoc } from './estimate-tables.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const REFRESH_SCRIPT = fileURLToPath(new URL('../home/tools/estimate/statusline-cache.mjs', import.meta.url));
 const TZ = 'Asia/Tehran';
@@ -80,7 +80,7 @@ test(`no segment text is longer than ${MAX_SEGMENT_CHARS} characters, the longes
 
 /** A project folder with a STATUS.md and a HOME whose cache folder and estimate store the refresh script writes. */
 async function project(doc) {
-  const root = await mkdtemp(join(tmpdir(), 'segment-forms-'));
+  const root = makeTempDir('segment-forms-');
   const projectDir = join(root, 'project');
   await mkdir(projectDir);
   const statusPath = join(projectDir, 'STATUS.md');

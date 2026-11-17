@@ -5,13 +5,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { hookEnv } from './hook-env.mjs';
-import { mkdtempSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { bashCodeWrites } from '../home/hooks/lib/code-writes.mjs';
 import { editLogPath, readEdits } from '../home/hooks/lib/edit-log.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const PROJECT = resolve('/work/proj');
@@ -60,7 +60,7 @@ const runHook = (command, env, input = {}) =>
   });
 
 test('hook contract: an allowed code write is recorded in the agent edit log; reads are not, and a command the owner is asked about is still logged', () => {
-  const temp = mkdtempSync(join(tmpdir(), 'bash-writes-'));
+  const temp = makeTempDir('bash-writes-');
   const env = { TMPDIR: temp, TMP: temp, TEMP: temp };
   assert.equal(runHook('sed -i s/a/b/ src/a.ts', env).status, 0);
   assert.equal(runHook('cat src/read-only.ts', env).status, 0);

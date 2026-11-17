@@ -3,9 +3,9 @@
 // `claude` behaviour is chosen per call with FAKE_CLAUDE_MODE (ok | bad-then-ok | bad | error | slow-ok); every call is
 // appended to $FAKE_CLAUDE_LOG as one JSON line {args, stdin}. `llama-server` serves /health and /v1/rerank on --port
 // and scores a document by how many query words it contains; FAKE_LLAMA_LOG records start lines {model, port}.
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const FAKE_CLAUDE = `#!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -60,7 +60,7 @@ process.on('SIGTERM', () => process.exit(0));
  * @returns {{dir: string, bin: string, env: object, claudeCalls: () => object[], llamaStarts: () => object[], dbPath: string}}
  */
 export function fakeStack({ claudeMode = 'ok', port = 20000 + Math.floor(Math.random() * 10000) } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'recall-stack-'));
+  const dir = makeTempDir('recall-stack-');
   const bin = join(dir, 'bin');
   const models = join(dir, 'models');
   mkdirSync(bin);

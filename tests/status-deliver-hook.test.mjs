@@ -5,13 +5,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeSessionFile } from '../home/hooks/lib/session-store.mjs';
 import { deliverAtStop } from '../home/hooks/status-deliver.mjs';
 import { runStatus } from '../home/tools/status/status.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/status-deliver.mjs', import.meta.url));
 const ESTIMATE = fileURLToPath(new URL('../home/tools/estimate/estimate.mjs', import.meta.url));
@@ -23,7 +22,7 @@ const ALL_DONE = `${HEADER}| 1 | first | S | 2026-11-16T10:00Z | 2026-11-16T10:3
 const ONE_OPEN = `${ALL_DONE}| 2 | second | S | 2026-11-16T11:00Z | - | - |\n`;
 const DELIVER_ROW = /\| deliver:1 \| deliver: turn ended with no open row \| S \| - \| 2026-11-16T14:05Z \| - \|/;
 
-const tempDir = async (name) => realpathSync(await mkdtemp(join(tmpdir(), name)));
+const tempDir = async (name) => realpathSync(makeTempDir(name));
 
 /** A project whose STATUS.md the session linked through a status edit, as in real use. */
 async function linkedProject(text, stateDir) {

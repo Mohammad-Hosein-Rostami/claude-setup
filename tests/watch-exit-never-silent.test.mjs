@@ -3,11 +3,11 @@
 // poll steps, an injected liveness check. A case that needs a class list without session-end shows the stall check survives it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, unlink, utimes, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, rm, unlink, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DEFAULT_EXIT_CLASSES, internalClasses } from '../home/tools/watch/lib/events.mjs';
 import { createSessionWatcher } from '../home/tools/watch/lib/watcher.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const MIN = 60_000;
 const POLL_MS = 1500;
@@ -31,7 +31,7 @@ async function timeToWake(watcher, clock, emitted, classNames, limitMs) {
 }
 
 async function setup(t, { transcript = reply, registry, isAlive, path: pathOverride } = {}) {
-  const dir = await mkdtemp(join(tmpdir(), 'watch-silent-'));
+  const dir = makeTempDir('watch-silent-');
   t.after(() => rm(dir, { recursive: true, force: true }));
   const path = pathOverride?.(dir) ?? join(dir, `${SESSION}.jsonl`);
   if (transcript !== null) {

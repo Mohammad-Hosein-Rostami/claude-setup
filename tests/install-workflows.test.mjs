@@ -5,16 +5,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { lstatSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, existsSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { lstatSync, readFileSync, readdirSync, readlinkSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const skip = spawnSync('jq', ['--version']).status === 0 ? false : 'jq not installed';
 
 function install(flags) {
-  const home = mkdtempSync(join(tmpdir(), 'install-wf-'));
+  const home = makeTempDir('install-wf-');
   const project = join(home, 'project');
   mkdirSync(project);
   spawnSync('git', ['init', '-q', project]);
@@ -57,8 +57,8 @@ test('--project-workflows --copy copies the scripts for the team to commit and l
 });
 
 test('--project-workflows needs a git repository and --copy needs --project-workflows', { skip }, () => {
-  const plain = mkdtempSync(join(tmpdir(), 'install-wf-plain-'));
-  const home = mkdtempSync(join(tmpdir(), 'install-wf-home-'));
+  const plain = makeTempDir('install-wf-plain-');
+  const home = makeTempDir('install-wf-home-');
   const notGit = spawnSync('bash', [join(REPO, 'scripts', 'install.sh'), '--no-plugins', '--no-tools', '--project-workflows', plain], { env: { ...process.env, HOME: home }, encoding: 'utf8' });
   assert.equal(notGit.status, 2);
   assert.match(notGit.stderr, /not a git repository/);

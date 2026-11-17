@@ -4,11 +4,12 @@
 //   GIT_* variables (under the pre-commit hook git sets GIT_DIR, which would point a child git at the real repo) and
 //   without the user's git config, so a test can never read or change the repository the tests run from.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
+import { realpathSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 export const CLI = fileURLToPath(new URL('../home/tools/git-tidy/git-tidy.mjs', import.meta.url));
 const TEMP_ROOT = realpathSync(tmpdir());
@@ -30,7 +31,7 @@ export function git(cwd, ...args) {
 
 /** A new repo on branch `main` with one commit; returns its real path. */
 export function makeRepo() {
-  const dir = join(realpathSync(mkdtempSync(join(tmpdir(), 'git-tidy-'))), 'repo');
+  const dir = join(realpathSync(makeTempDir('git-tidy-')), 'repo');
   const parent = join(dir, '..');
   git(parent, 'init', '-q', '-b', 'main', dir);
   git(dir, 'config', 'user.name', 't');

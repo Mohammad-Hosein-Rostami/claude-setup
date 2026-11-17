@@ -4,12 +4,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkMatrix } from '../home/tools/ui-coverage/lib/check.mjs';
 import { formatReport } from '../home/tools/ui-coverage/lib/report.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/ui-coverage/ui-coverage.mjs', import.meta.url));
 const run = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
@@ -106,7 +106,7 @@ test('T6 the frames line is the third line: on a pass, on a fail, and off when t
 });
 
 async function workdir(files) {
-  const dir = await mkdtemp(join(tmpdir(), 'ui-frames-'));
+  const dir = makeTempDir('ui-frames-');
   for (const [name, content] of Object.entries(files)) await writeFile(join(dir, name), typeof content === 'string' ? content : JSON.stringify(content));
   return dir;
 }

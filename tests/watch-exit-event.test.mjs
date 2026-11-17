@@ -3,11 +3,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { appendFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, UsageError } from '../home/tools/watch/lib/args.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/watch/watch.mjs', import.meta.url));
 const SESSION = 'dddddddd-1111-2222-3333-444444444444';
@@ -18,7 +18,7 @@ const compact = entry({ type: 'system', subtype: 'compact_boundary', compactMeta
 const apiError = (error = 'server_error') => entry({ type: 'assistant', isApiErrorMessage: true, error, message: { model: '<synthetic>', content: [{ type: 'text', text: 'API Error: boom' }] } });
 
 async function sandbox(t, transcript) {
-  const home = await mkdtemp(join(tmpdir(), 'watch-exit-'));
+  const home = makeTempDir('watch-exit-');
   t.after(() => rm(home, { recursive: true, force: true }));
   const project = join(home, '.claude', 'projects', '-proj');
   await mkdir(project, { recursive: true });

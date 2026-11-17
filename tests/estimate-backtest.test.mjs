@@ -3,10 +3,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/estimate/backtest.mjs', import.meta.url));
 const SESSIONS = ['aaaaaaaa-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000002'];
@@ -14,7 +14,7 @@ const HEADER = '## Work items\n\n| id | item | size | started | done | evidence 
 
 /** Two tables of two done S rows and one hand-over each; every minute of 10:00-10:40 is active in both sessions. */
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'est-backtest-'));
+  const root = makeTempDir('est-backtest-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const folder = join(root, 'projects', '-Users-me-p');
   mkdirSync(folder, { recursive: true });

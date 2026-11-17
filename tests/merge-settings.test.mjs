@@ -3,11 +3,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const FILTER = fileURLToPath(new URL('../scripts/merge-settings.jq', import.meta.url));
 const HAS_JQ = spawnSync('jq', ['--version']).status === 0;
@@ -15,7 +15,7 @@ const skip = HAS_JQ ? false : 'jq not installed';
 
 /** Merge the given settings objects through the real jq filter and return the parsed result. */
 async function merge(...docs) {
-  const dir = await mkdtemp(join(tmpdir(), 'merge-settings-'));
+  const dir = makeTempDir('merge-settings-');
   const files = [];
   for (const [index, doc] of docs.entries()) {
     const file = join(dir, `${index}.json`);

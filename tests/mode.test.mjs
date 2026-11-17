@@ -2,11 +2,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findOwnerPid, isMode, isStale, leadNote, parseModeArg } from '../home/hooks/mode.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -88,7 +88,7 @@ function runHook(home, env, input) {
 }
 
 test('SessionStart and /mode leave settings.json untouched and record only the session state', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
+  const home = makeTempDir('mode-home-');
   await mkdir(join(home, '.claude'), { recursive: true });
   const settings = join(home, '.claude', 'settings.json');
   const original = '{"a":1,\n"b":[2]}\n';
@@ -124,7 +124,7 @@ function hasClaudeAncestor() {
 }
 
 test('a mode set with /mode survives /clear (new session id, same process) but not a new process', { skip: !hasClaudeAncestor() && 'no claude ancestor process' }, async () => {
-  const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
+  const home = makeTempDir('mode-home-');
   const env = { CLAUDE_MODE: 'medium' };
   runHook(home, env, { hook_event_name: 'UserPromptExpansion', session_id: 'a1', command_name: 'mode', command_args: 'high' });
   const afterClear = runHook(home, env, { hook_event_name: 'SessionStart', session_id: 'a2', source: 'clear' });
@@ -137,7 +137,7 @@ test('a mode set with /mode survives /clear (new session id, same process) but n
 
 
 test('a resumed session keeps its saved mode unless launched with an explicit mode', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
+  const home = makeTempDir('mode-home-');
   const start = (env, id, source) => runHook(home, env, { hook_event_name: 'SessionStart', session_id: id, source }).stdout;
   start({ CLAUDE_MODE: 'high' }, 'r1', 'startup');
   assert.match(start({ CLAUDE_MODE: '' }, 'r1', 'resume'), /^Mode: high/);
@@ -147,14 +147,14 @@ test('a resumed session keeps its saved mode unless launched with an explicit mo
 });
 
 test('compact keeps the session mode over the launch env', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
+  const home = makeTempDir('mode-home-');
   runHook(home, { CLAUDE_MODE: 'high' }, { hook_event_name: 'UserPromptExpansion', session_id: 'c1', command_name: 'mode', command_args: 'normal' });
   const compacted = runHook(home, { CLAUDE_MODE: 'high' }, { hook_event_name: 'SessionStart', session_id: 'c1', source: 'compact' });
   assert.match(compacted.stdout, /^Mode: normal/);
 });
 
 test('compact adds the recall line, and the handoff line from the 3rd compaction on', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
+  const home = makeTempDir('mode-home-');
   const compact = (id) => runHook(home, { CLAUDE_MODE: 'high' }, { hook_event_name: 'SessionStart', session_id: id, source: 'compact' }).stdout;
   assert.match(compact('k1'), /Context was compacted.*recall .*--session current.*select:Monitor,SendMessage,TaskStop/);
   assert.match(compact('k3'), /Re-read `## Standing rules`; backfill it with `recall --owner --session current`/);
@@ -167,7 +167,7 @@ test('compact adds the recall line, and the handoff line from the 3rd compaction
 });
 
 test('/mode reports a failed save instead of claiming the switch', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
+  const home = makeTempDir('mode-home-');
   await mkdir(join(home, '.claude'), { recursive: true });
   await writeFile(join(home, '.claude', 'state'), 'not a directory');
   const out = runHook(home, {}, { hook_event_name: 'UserPromptExpansion', session_id: 'f1', command_name: 'mode', command_args: 'high' });
@@ -176,7 +176,7 @@ test('/mode reports a failed save instead of claiming the switch', async () => {
 });
 
 test('an unsafe session_id is never used as a file name', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
+  const home = makeTempDir('mode-home-');
   const out = runHook(home, {}, { hook_event_name: 'UserPromptExpansion', session_id: '../evil', command_name: 'mode', command_args: 'high' });
   assert.match(out.stdout, /Mode NOT switched/);
   await assert.rejects(readFile(join(home, '.claude', 'state', 'evil'), 'utf8'));
@@ -184,7 +184,7 @@ test('an unsafe session_id is never used as a file name', async () => {
 });
 
 test('/mode ultra-high writes the state and prints the playbook and the lead note', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
+  const home = makeTempDir('mode-home-');
   const out = runHook(home, { CLAUDE_MODE: 'medium' }, { hook_event_name: 'UserPromptExpansion', session_id: 'u1', command_name: 'mode', command_args: 'ultra high' });
   assert.equal((await readFile(join(home, '.claude', 'state', 'modes', 'u1'), 'utf8')).trim(), 'ultra-high');
   assert.match(out.stdout, /Mode switched to ultra-high \(this session only\)\./);
@@ -192,7 +192,7 @@ test('/mode ultra-high writes the state and prints the playbook and the lead not
 });
 
 test('SessionStart adds the lead note only when the session model mismatches', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'mode-home-'));
+  const home = makeTempDir('mode-home-');
   const start = (model) => runHook(home, { CLAUDE_MODE: 'extra-high' }, { hook_event_name: 'SessionStart', session_id: 'm1', source: 'startup', model }).stdout;
   assert.match(start('claude-sonnet-5-5'), /^Mode: extra-high[\s\S]*`ccm extra-high -c`/);
   assert.doesNotMatch(start('claude-opus-5-5'), /ccm extra-high -c/);
@@ -209,8 +209,8 @@ test('leadNote: switching back into the mode this window was launched in needs n
 });
 
 test('UserPromptSubmit does not spawn `ps` when the session file answers', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'mode-lazy-'));
-  const emptyBin = await mkdtemp(join(tmpdir(), 'mode-nobin-'));
+  const home = makeTempDir('mode-lazy-');
+  const emptyBin = makeTempDir('mode-nobin-');
   await mkdir(join(home, '.claude', 'state', 'modes'), { recursive: true });
   await writeFile(join(home, '.claude', 'state', 'modes', 's2'), 'high\n');
   const result = runHook(home, { PATH: emptyBin }, { hook_event_name: 'UserPromptSubmit', session_id: 's2' });
@@ -219,7 +219,7 @@ test('UserPromptSubmit does not spawn `ps` when the session file answers', async
 });
 
 async function homeWithModes(files) {
-  const home = await mkdtemp(join(tmpdir(), 'mode-lead-'));
+  const home = makeTempDir('mode-lead-');
   await mkdir(join(home, '.claude', 'modes'), { recursive: true });
   for (const [name, text] of Object.entries(files)) await writeFile(join(home, '.claude', 'modes', name), text);
   return home;
@@ -264,9 +264,10 @@ test('SessionStart prints _lead.md for resume, clear and compact too (it re-fire
 // Hook output is injected into the lead's context; the CLI truncates large hook output, so the real files must fit.
 const MAX_HOOK_OUTPUT_CHARS = 9000;
 const MIN_HEADROOM_CHARS = 150; // room for a longer path or note without crossing the cap
+const SHORT_TEMP_ROOT = '/tmp'; // the output carries the home path: a short one keeps the size check about the files, not the launcher's long TMPDIR
 
 test('real _lead.md plus the longest playbook and a lead note stay under the hook output cap, startup and compact', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'mode-size-'));
+  const home = makeTempDir('mode-size-', SHORT_TEMP_ROOT);
   await mkdir(join(home, '.claude'), { recursive: true });
   await cp(fileURLToPath(new URL('../home/modes', import.meta.url)), join(home, '.claude', 'modes'), { recursive: true });
   for (const source of ['startup', 'compact']) {
@@ -282,7 +283,7 @@ test('real _lead.md plus the longest playbook and a lead note stay under the hoo
 });
 
 test('the worst compact output (status file path, 3rd compaction, longest playbook and lead note) also stays under the cap', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'mode-size-'));
+  const home = makeTempDir('mode-size-', SHORT_TEMP_ROOT);
   await mkdir(join(home, '.claude'), { recursive: true });
   await cp(fileURLToPath(new URL('../home/modes', import.meta.url)), join(home, '.claude', 'modes'), { recursive: true });
   const transcript = join(home, 'transcript.jsonl');

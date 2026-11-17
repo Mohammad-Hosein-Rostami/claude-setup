@@ -2,9 +2,8 @@
 // folders under <projects>/<project>/<session>/, a per-session workflow registry, and the estimator's state folder. Nothing here touches the
 // real ~/.claude. Exports: world(), PostToolUse input builders (launchInput), journal line builders (started, result, LAUNCHED).
 import { mkdirSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 export const NOW = Date.parse('2026-11-17T12:00:00Z');
 export const MIN_MS = 60_000;
@@ -27,9 +26,12 @@ export function launchInput({ session = 'sess-1', runId = 'wf_aaa', scriptPath =
   };
 }
 
+// The notice prints these paths and cuts its text at a length cap, so tests that count the runs it shows need a short root (the launcher's TMPDIR is long).
+const SHORT_TEMP_ROOT = '/tmp';
+
 /** A temp world with the folders the hooks read. `addRun` writes the run folder of a session (journal lines, script copy, summary json). */
 export async function world() {
-  const root = realpathSync(await mkdtemp(join(tmpdir(), 'wf-resume-')));
+  const root = realpathSync(makeTempDir('wf-resume-', SHORT_TEMP_ROOT));
   // root plays HOME, so a hook spawned with HOME=root finds the same folders the library functions are given.
   const claude = join(root, '.claude');
   const paths = { root, registryDir: join(claude, 'state', 'workflow-runs'), projectsRoot: join(claude, 'projects'), estimateDir: join(claude, 'state', 'estimate') };

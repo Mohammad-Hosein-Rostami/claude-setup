@@ -4,7 +4,7 @@
 // that must stay silent (a false-positive dialog costs an unattended run minutes).
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -15,6 +15,7 @@ import { isReadOnlySql } from '../home/hooks/lib/sql.mjs';
 import { findLiteralSecret, maskSecrets } from '../home/hooks/lib/secrets.mjs';
 import { lex, segments } from '../home/hooks/lib/shell-words.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 // fake credentials are built from parts so gitleaks does not flag this file
 const PW = `PW${'1'}23`;
@@ -197,7 +198,7 @@ test('item 5: --token, --api-key, --password, --secret, --client-secret are mask
 });
 
 test('item 5: the guard log is made 0600 in a 0700 directory on every write, also when it already existed looser', { skip: process.platform === 'win32' }, () => {
-  const dir = join(mkdtempSync(join(tmpdir(), 'guard-log-')), 'logs');
+  const dir = join(makeTempDir('guard-log-'), 'logs');
   const file = join(dir, 'guard.jsonl');
   mkdirSync(dir, { mode: 0o755 });
   chmodSync(dir, 0o755);
@@ -207,7 +208,7 @@ test('item 5: the guard log is made 0600 in a 0700 directory on every write, als
   assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.equal(statSync(dir).mode & 0o777, 0o700);
   assert.doesNotMatch(readFileSync(file, 'utf8'), new RegExp(PW));
-  const sharedDir = mkdtempSync(join(tmpdir(), 'guard-parent-'));
+  const sharedDir = makeTempDir('guard-parent-');
   chmodSync(sharedDir, 0o755);
   logDecision({ hook: 'h', tool: 'Bash', decision: 'ask', outcome: 'allow', reason: 'r' }, { CLAUDE_GUARD_LOG: join(sharedDir, 'guard.jsonl') });
   assert.equal(statSync(sharedDir).mode & 0o777, 0o700, 'a private directory we own is tightened');

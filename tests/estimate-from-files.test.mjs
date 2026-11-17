@@ -4,20 +4,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { UsageError, estimateFile } from '../home/tools/estimate/lib/from-files.mjs';
 import { formatEstimate } from '../home/tools/estimate/lib/report.mjs';
 import { tableId } from '../home/tools/estimate/lib/table-store.mjs';
 import { MIN_MS, SESSION, iso, row, seedRows, statusDoc, writeSeed, writeTranscript } from './estimate-tables.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const S_COSTS = [20, 40, 60, 80, 100];
 const OPEN_DOC = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 })]);
 
 /** A table, a transcript active from 0 to 1 h, a seed of S and M rows and an empty store; run(now, doc?) estimates it. */
 async function setup(doc = OPEN_DOC, seed = [...S_COSTS.flatMap((cost) => seedRows('S', 1, cost)), ...seedRows('M', 5, 90)]) {
-  const root = await mkdtemp(join(tmpdir(), 'estimate-file-'));
+  const root = makeTempDir('estimate-file-');
   const statusPath = join(root, 'STATUS.md');
   const projectsDir = join(root, 'projects');
   const stateDir = join(root, 'state');

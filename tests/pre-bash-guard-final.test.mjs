@@ -3,14 +3,14 @@
 // Every repro of the final audit is a case here; the harmless commands must stay silent (a false positive costs an unattended run up to 2 min).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { riskyWordInExpansion } from '../home/hooks/lib/raw-risk.mjs';
 import { decide, decideSafely } from '../home/hooks/pre-bash-guard.mjs';
 import { hookEnv, tempLogPath } from './hook-env.mjs';
 import { AUDIT_HARMLESS, HEREDOC_READER_ASKS, NOT_COVERED_STILL_ASK, RUNS_TEXT_ASKS } from './pre-bash-guard-final-cases.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const PROJECT = resolve('/work/proj');
 const ctx = { cwd: PROJECT, project: PROJECT, prodHosts: [] };
@@ -154,7 +154,7 @@ test('decideSafely: a throwing rule set asks with the reason "guard error" and t
 });
 
 test('the hook with a throwing lib asks "guard error", logs the error class and never the command text', () => {
-  const copy = mkdtempSync(join(tmpdir(), 'guard-copy-'));
+  const copy = makeTempDir('guard-copy-');
   cpSync(resolve('home/hooks'), join(copy, 'hooks'), { recursive: true });
   writeFileSync(join(copy, 'hooks/lib/raw-risk.mjs'), "export const RISKY_REASON = 'x';\nexport function riskyWordInExpansion() { throw new TypeError('injected'); }\n"
     + 'export const unreadableNameReasons = () => [];\n'); // the stub keeps every export the guard imports, so only the throw differs

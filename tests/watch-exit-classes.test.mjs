@@ -4,13 +4,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { actionFor } from '../home/tools/watch/lib/actions.mjs';
 import { createClassifier } from '../home/tools/watch/lib/classify.mjs';
 import { DEFAULT_EXIT_CLASSES, EVENT_CLASS, EXIT_CLASS_NAMES, internalClasses } from '../home/tools/watch/lib/events.mjs';
 import { CLI, SESSION, STAMP, entry, startWatcher } from './watch-follow-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const WAKE_WAIT_MS = 20_000;
 const QUIET_MS = 4_000;
@@ -120,7 +120,7 @@ test('error class: alert words in an agent description or a successful tool resu
 });
 
 test('plain mode still prints an alert-word line of an agent description, as before', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'watch-plain-'));
+  const dir = makeTempDir('watch-plain-');
   t.after(() => rm(dir, { recursive: true, force: true }));
   const file = join(dir, `${SESSION}.jsonl`);
   await writeFile(file, agentCall('map the RATE handling'));
@@ -138,7 +138,7 @@ test('sidechain entries: an API error from a subagent turn does not wake and a s
 });
 
 test('with --log the event line is in the log file before the process exits', async (t) => {
-  const logDir = await mkdtemp(join(tmpdir(), 'watch-log-'));
+  const logDir = makeTempDir('watch-log-');
   t.after(() => rm(logDir, { recursive: true, force: true }));
   const watcher = await startWatcher(t, { args: ['--exit-on-event', 'owner', '--log', logDir] });
   assert.equal(await watcher.appendUntilExit(owner('log me'), WAKE_WAIT_MS), 0);
@@ -146,7 +146,7 @@ test('with --log the event line is in the log file before the process exits', as
 });
 
 test('a folder-clash WATCH_NOTE goes to stderr in exit mode, so stdout is the one event line', async (t) => {
-  const home = await mkdtemp(join(tmpdir(), 'watch-note-'));
+  const home = makeTempDir('watch-note-');
   t.after(() => rm(home, { recursive: true, force: true }));
   for (const project of ['-proj-a', '-proj-b']) {
     await mkdir(join(home, '.claude', 'projects', project), { recursive: true });

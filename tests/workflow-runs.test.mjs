@@ -5,11 +5,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { progressLines } from '../home/tools/estimate/lib/progress-line.mjs';
 import { liveRuns } from '../home/tools/estimate/lib/workflow-runs.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const NOW = 1_800_000_000_000;
 const MIN_MS = 60_000;
@@ -22,7 +21,7 @@ const LAUNCHED = JSON.stringify({ type: 'launched' });
 
 /** A session folder: returns the transcript path the status line gets and helpers to add journals, summaries and script copies. */
 async function session() {
-  const root = await mkdtemp(join(tmpdir(), 'workflow-runs-'));
+  const root = makeTempDir('workflow-runs-');
   const dir = join(root, 'proj', 'sess-1');
   const journalOf = (runId) => join(dir, 'subagents', 'workflows', runId, 'journal.jsonl');
   return {

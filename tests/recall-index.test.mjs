@@ -3,14 +3,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { indexAll } from '../home/tools/recall/lib/indexer.mjs';
 import { openStore } from '../home/tools/recall/lib/store.mjs';
 import { buildMatch, formatHits, queryTerms, searchChunks } from '../home/tools/recall/lib/search.mjs';
 import { isHit, parseQuestions, scoreEval } from '../home/tools/recall/lib/eval.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/recall/recall.mjs', import.meta.url));
 const SESSION = '02058d66-aaaa-bbbb-cccc-000000000000';
@@ -19,7 +19,7 @@ const user = (text, extra = {}) => j({ type: 'user', timestamp: '2026-01-05T10:0
 const assistant = (id, text) => j({ type: 'assistant', timestamp: '2026-01-05T10:01:00Z', message: { id, content: [{ type: 'text', text }] } });
 
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'recall-'));
+  const dir = makeTempDir('recall-');
   const root = join(dir, 'projects');
   const project = join(root, '-Users-me-demo');
   mkdirSync(join(project, SESSION, 'subagents'), { recursive: true });
@@ -117,7 +117,7 @@ test('queryTerms drops stopwords; buildMatch quotes and prefixes long terms', ()
 });
 
 function rankStore() {
-  const store = openStore(join(mkdtempSync(join(tmpdir(), 'recall-rank-')), 'r.db'));
+  const store = openStore(join(makeTempDir('recall-rank-'), 'r.db'));
   const add = (o) => store.addChunk({ project: 'p', session: 's', source: '/s', line: 1, ts: '2025-01-01T00:00:00Z', role: 'x', ...o });
   return { store, add };
 }

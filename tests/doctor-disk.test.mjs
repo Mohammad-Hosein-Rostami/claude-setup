@@ -3,17 +3,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 const KB_PER_GB = 1024 * 1024;
 const dfWithFreeGb = (gb) => `Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/disk3s5 976490576 900000000 ${gb * KB_PER_GB} 99% /\n`;
 
 async function doctorDisk(freeGb, env = {}) {
-  const home = await mkdtemp(join(tmpdir(), 'doctor-disk-'));
+  const home = makeTempDir('doctor-disk-');
   return spawnSync('bash', [DOCTOR], {
     env: { ...process.env, HOME: home, DOCTOR_ONLY: 'check_disk_free', DISK_FREE_DF_OUTPUT: dfWithFreeGb(freeGb), DISK_FREE_CLAUDE_TMP: join(home, 'none'), ...env },
     encoding: 'utf8',

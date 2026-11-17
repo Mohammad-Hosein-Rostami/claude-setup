@@ -3,13 +3,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildReport } from '../home/tools/review-tier/lib/report.mjs';
 import { PRINCIPLES_BY_TRIGGER } from '../home/tools/review-tier/tiers.mjs';
 import { CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const changed = (path, added = [], removed = []) => ({
   path,
@@ -180,7 +179,7 @@ const CLI = fileURLToPath(new URL('../home/tools/review-tier/review-tier.mjs', i
 
 for (const [item, commit] of [[71, '9ef7c21'], [73, 'c55d28f']]) {
   test(`acceptance: replay item ${item} (${commit}) is tier 2 at its fix commit`, () => {
-    const home = mkdtempSync(join(tmpdir(), 'review-tier-home-'));
+    const home = makeTempDir('review-tier-home-');
     const env = { PATH: process.env.PATH, HOME: home, USERPROFILE: home, REVIEW_TIER_LOG: join(home, 'review-tier.jsonl') };
     const run = spawnSync(process.execPath, [CLI, `${commit}^..${commit}`, '--landing', '--json'], { cwd: REPO, encoding: 'utf8', env });
     assert.equal(run.status, 0, run.stderr);

@@ -3,17 +3,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, writeFile, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, writeFile, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/ask/ask.mjs', import.meta.url));
 const posix = { skip: process.platform === 'win32' };
 const OK = { question: 'Which year does 12-05 mean here?', why: 'Dates are ambiguous', options: [{ label: 'Dec 5', effect: 'US reading' }, { label: 'May 12', effect: 'EU reading' }], recommended: 'Dec 5', blocks: 'the date parser', from: 'implementer' };
 
 async function sandbox() {
-  const home = await mkdtemp(join(tmpdir(), 'ask-q-'));
+  const home = makeTempDir('ask-q-');
   const env = { ...process.env, HOME: home, USERPROFILE: home, ASK_QUEUE: '' };
   const run = (args, extra = {}) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env: { ...env, ...extra } });
   const queue = run(['init']).stdout.trim();

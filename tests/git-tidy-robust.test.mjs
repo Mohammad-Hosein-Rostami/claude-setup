@@ -4,13 +4,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { findLeftovers } from '../home/tools/git-tidy/lib/leftovers.mjs';
 import { pruneRepo } from '../home/tools/git-tidy/lib/prune.mjs';
 import { openRepo } from '../home/tools/git-tidy/lib/repo.mjs';
 import { CLEAN_ENV, addWorktree, commit, git, lines, makeRepo, tidy } from './git-tidy-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const apply = (dir, ...extra) => tidy(['prune', dir, '--apply', '--include-recent', ...extra], { cwd: dir });
 const branches = (dir) => git(dir, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').split('\n').sort();
@@ -190,7 +190,7 @@ const SIZE_RATIO = LARGE_BRANCHES / SMALL_BRANCHES;
 
 /** Runs the CLI and returns the result with the number of git processes it started. */
 function tidyCountingGit(args, dir) {
-  const traceFile = join(mkdtempSync(join(tmpdir(), 'git-trace-')), 'trace2.json');
+  const traceFile = join(makeTempDir('git-trace-'), 'trace2.json');
   const result = tidy(args, { cwd: dir, env: { GIT_TRACE2_EVENT: traceFile } });
   const gitCalls = readFileSync(traceFile, 'utf8').split('\n').filter((line) => line.includes('"event":"start"')).length;
   return { result, gitCalls };

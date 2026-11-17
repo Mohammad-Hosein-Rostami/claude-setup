@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readdirSync, realpathSync, rmSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +15,7 @@ import {
 } from '../home/tools/estimate/lib/segment-cache.mjs';
 import { noteTable } from '../home/tools/estimate/lib/table-store.mjs';
 import { BASE_MS, HOUR_MS, MIN_MS, SESSION, iso, row, statusDoc, writeTranscript } from './estimate-tables.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const STATUSLINE = fileURLToPath(new URL('../home/statusline.mjs', import.meta.url));
 const REFRESH_SCRIPT = fileURLToPath(new URL('../home/tools/estimate/statusline-cache.mjs', import.meta.url));
@@ -26,7 +27,7 @@ const DOC = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1
 
 /** A project folder with a STATUS.md, an empty cache folder and store; `spawns` records every refresh the render asked for. */
 async function setup(doc = DOC) {
-  const root = await mkdtemp(join(tmpdir(), 'estimate-segment-'));
+  const root = makeTempDir('estimate-segment-');
   const projectDir = join(root, 'project');
   await mkdir(projectDir);
   const statusPath = join(projectDir, 'STATUS.md');
@@ -152,7 +153,7 @@ test('the render never imports the forecast, the parser or the transcript reader
 
 /** A HOME with a STATUS.md whose rows ran in the last hour of the real clock, and a transcript of that hour. */
 async function liveHome() {
-  const root = await mkdtemp(join(tmpdir(), 'estimate-live-'));
+  const root = makeTempDir('estimate-live-');
   const home = join(root, 'home');
   const nowH = Math.floor((Date.now() - BASE_MS) / MIN_MS) / 60;
   writeTranscript(join(home, '.claude', 'projects'), SESSION, nowH - 1, nowH);

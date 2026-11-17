@@ -2,11 +2,11 @@
 // Covers stall -> RESUMED, partial last line, subagent model mismatch, SESSION_END, and the guard follower for watched sessions.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFile, mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { appendFile, mkdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createGuardFollower, createSessionWatcher } from '../home/tools/watch/lib/watcher.mjs';
 import { isModelMismatch } from '../home/tools/watch/lib/subagents.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const MIN = 60_000;
 const STEP = 30_000;
@@ -15,7 +15,7 @@ const T0 = Date.parse('2026-11-14T10:00:00.000Z');
 const prompt = (text) => `${JSON.stringify({ type: 'user', timestamp: '2026-11-14T10:00:00.000Z', message: { content: text } })}\n`;
 
 async function harness(t, extra = {}) {
-  const dir = await mkdtemp(join(tmpdir(), 'watch-session-'));
+  const dir = makeTempDir('watch-session-');
   t.after(() => rm(dir, { recursive: true, force: true }));
   const path = join(dir, `${SESSION}.jsonl`);
   await writeFile(path, '');
@@ -93,7 +93,7 @@ test('a partial last line is not lost: it prints once its newline arrives', asyn
 });
 
 test('content already in the file when watching starts is not replayed in follow mode', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'watch-session-'));
+  const dir = makeTempDir('watch-session-');
   t.after(() => rm(dir, { recursive: true, force: true }));
   const path = join(dir, `${SESSION}.jsonl`);
   await writeFile(path, prompt('old prompt'));
@@ -104,7 +104,7 @@ test('content already in the file when watching starts is not replayed in follow
 });
 
 test('once mode reads existing content, flushes an unterminated last line and never reports a stall', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'watch-session-'));
+  const dir = makeTempDir('watch-session-');
   t.after(() => rm(dir, { recursive: true, force: true }));
   const path = join(dir, `${SESSION}.jsonl`);
   await writeFile(path, prompt('first') + prompt('second').trimEnd());
@@ -162,7 +162,7 @@ test('SESSION_END is reported once when the registered process is gone, and stop
 });
 
 test('guard follower: watched session only, secret-ask timeouts skipped, other timeouts printed', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'watch-guard-'));
+  const dir = makeTempDir('watch-guard-');
   t.after(() => rm(dir, { recursive: true, force: true }));
   const log = join(dir, 'guard.jsonl');
   await writeFile(log, '');

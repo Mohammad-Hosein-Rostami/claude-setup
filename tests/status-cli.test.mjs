@@ -5,14 +5,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseWorkItems } from '../home/tools/estimate/lib/items.mjs';
 import { linkedStatusPath, readAllTables } from '../home/tools/estimate/lib/table-store.mjs';
 import { runStatus } from '../home/tools/status/status.mjs';
 import { MAX_STATUS_BYTES } from '../home/tools/status/status-file.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/status/status.mjs', import.meta.url));
 const NOW = '2026-11-16T14:05Z';
@@ -46,8 +46,8 @@ deliver: | report | S | | 2026-11-16T10:31Z |
 `;
 
 async function project(text) {
-  const cwd = await mkdtemp(join(tmpdir(), 'status-'));
-  const stateDir = await mkdtemp(join(tmpdir(), 'status-state-'));
+  const cwd = makeTempDir('status-');
+  const stateDir = makeTempDir('status-state-');
   if (text !== undefined) await writeFile(join(cwd, 'STATUS.md'), text);
   const run = (...argv) => runStatus(argv, { cwd, now: new Date(argv.includes('done') ? LATER : NOW), stateDir });
   const read = () => readFile(join(cwd, 'STATUS.md'), 'utf8');
@@ -56,7 +56,7 @@ async function project(text) {
 
 /** The CLI with its own home folder, so its noteTable writes land in a temp store and never in the real one. */
 async function cliIn(cwd) {
-  const home = await mkdtemp(join(tmpdir(), 'status-home-'));
+  const home = makeTempDir('status-home-');
   const env = { ...process.env, HOME: home, USERPROFILE: home };
   delete env.CLAUDE_CODE_SESSION_ID;
   return (...argv) => spawnSync('node', [CLI, ...argv], { cwd, encoding: 'utf8', env });
@@ -179,7 +179,7 @@ test('8 parallel adds on one file keep all 8 rows (a lock around the read-modify
 
 test('a STATUS.md that is a link is refused and the file it points at is untouched', async () => {
   const { cwd, run } = await project(undefined);
-  const outside = join(await mkdtemp(join(tmpdir(), 'status-outside-')), 'notes.md');
+  const outside = join(makeTempDir('status-outside-'), 'notes.md');
   writeFileSync(outside, PIPED);
   symlinkSync(outside, join(cwd, 'STATUS.md'));
   const result = run('rule', 'x');
@@ -191,7 +191,7 @@ test('a STATUS.md that is a link is refused and the file it points at is untouch
 
 test('a link planted at a predictable temp name is never written through', async () => {
   const { cwd, run, read } = await project(PIPED);
-  const victim = join(await mkdtemp(join(tmpdir(), 'status-victim-')), 'victim.txt');
+  const victim = join(makeTempDir('status-victim-'), 'victim.txt');
   writeFileSync(victim, 'keep');
   symlinkSync(victim, join(cwd, `STATUS.md.tmp-${process.pid}`));
   assert.equal(run('rule', 'planted').code, 0);
@@ -329,7 +329,7 @@ test('every edit records the table for the estimator and links the session to th
 
 test('a store that cannot be written is a note in the message, never a failed edit', async () => {
   const { cwd, read } = await project(PIPED);
-  const blocked = join(await mkdtemp(join(tmpdir(), 'status-blocked-')), 'not-a-folder');
+  const blocked = join(makeTempDir('status-blocked-'), 'not-a-folder');
   writeFileSync(blocked, 'a file where the store folder should be');
   const result = runStatus(['add', '2', 'listed', 'S'], { cwd, now: new Date(NOW), stateDir: blocked, sessionId: 'session-a' });
   assert.equal(result.code, 0);

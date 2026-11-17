@@ -5,8 +5,7 @@
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, lstatSync, mkdtempSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, lstatSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +14,7 @@ import { dialogExecutable, MAX_ASK_TIMEOUT_S, permissionTimeoutSeconds } from '.
 import { permissionReply } from '../home/hooks/permission-timed-allow.mjs';
 import { hookEnv, tempLogPath } from './hook-env.mjs';
 import { warmExec } from './warm-exec.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/permission-timed-allow.mjs', import.meta.url));
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
@@ -26,7 +26,7 @@ const ANSWER_WINDOW_MS = 10_000; // the brief: a guard answer is handed over for
 
 /** A private HOME and decision log, so the answered-commands store and the log never touch the real ~/.claude. */
 const privateEnv = (extra = {}) => {
-  const home = mkdtempSync(join(tmpdir(), 'perm-home-'));
+  const home = makeTempDir('perm-home-');
   return { HOME: home, USERPROFILE: home, CLAUDE_GUARD_LOG: tempLogPath(), ...extra };
 };
 
@@ -290,7 +290,7 @@ test('S4: the store is private (0700 folder, 0600 file) and a symlinked record i
   const dir = answeredCommandsDir(env);
   assert.equal(lstatSync(dir).mode & 0o777, 0o700);
   assert.equal(lstatSync(join(dir, `${SESSION}.json`)).mode & 0o777, 0o600);
-  const elsewhere = join(mkdtempSync(join(tmpdir(), 'perm-link-')), 'real.json');
+  const elsewhere = join(makeTempDir('perm-link-'), 'real.json');
   renameSync(join(dir, `${SESSION}.json`), elsewhere);
   symlinkSync(elsewhere, join(dir, `${SESSION}.json`));
   assert.equal(takeAnswered(callOf(), env), false);
@@ -316,7 +316,7 @@ test('M3: a store that turns read-only during the take: the record is not taken 
 
 /** A fake dialog tool on PATH that always answers Allow (the guard spawns it as a separate process). */
 function allowingDialogEnv() {
-  const dir = mkdtempSync(join(tmpdir(), 'perm-dialog-'));
+  const dir = makeTempDir('perm-dialog-');
   const script = join(dir, 'fake.cjs');
   const out = { darwin: 'button returned:Allow, gave up:false', win32: '6', linux: '' }[process.platform];
   writeFileSync(script, `process.stdout.write(${JSON.stringify(out)});`);

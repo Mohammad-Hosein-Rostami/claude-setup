@@ -3,8 +3,7 @@
 // class without a row here, fails this file. Only command strings are passed to decide(); nothing is executed.
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +14,7 @@ import {
 import { gitAdvice } from '../home/hooks/lib/git-advice.mjs';
 import { decide, decideSafely, GUARD_ERROR_REASON } from '../home/hooks/pre-bash-guard.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const PROJECT = resolve('/work/proj');
 const PROD = 'db.prod.example';
@@ -93,7 +93,7 @@ const REPOSITORY_ADVICE = [
 const askFor = (name, command) => (name === 'guard error' ? decideSafely(command, ctx, throwingRules) : decide(command, ctx));
 const reasonsOf = (ask) => ask.reasons ?? [ask.reason];
 const store = () => {
-  const home = mkdtempSync(join(tmpdir(), 'classes-home-'));
+  const home = makeTempDir('classes-home-');
   return { HOME: home, USERPROFILE: home, CLAUDE_GUARD_LOG: join(home, 'guard.jsonl') };
 };
 const call = (command) => ({ command, cwd: PROJECT, input: { session_id: 'sess-1' } });

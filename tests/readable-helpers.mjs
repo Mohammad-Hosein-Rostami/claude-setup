@@ -3,11 +3,11 @@
 // Invariants: every GIT_* variable is removed from the child environment. Under the pre-commit hook git sets GIT_DIR and
 //   GIT_INDEX_FILE, and a child git would then act on the repo being committed instead of the fixture.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/readable/readable.mjs', import.meta.url));
 export const HEADER = '// Purpose: fixture.\n';
@@ -16,7 +16,7 @@ const GIT_ENV = { ...CLEAN_ENV, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', G
 
 /** Builds a temp folder from {path: text} and returns its path. */
 export function project(files) {
-  const root = mkdtempSync(join(tmpdir(), 'readable-'));
+  const root = makeTempDir('readable-');
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     writeFileSync(join(root, path), text);

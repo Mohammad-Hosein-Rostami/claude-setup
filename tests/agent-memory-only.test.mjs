@@ -2,11 +2,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { homedir, tmpdir } from 'node:os';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { mkdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMemoryPath, isScratchpadPath } from '../home/hooks/agent-memory-only.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/agent-memory-only.mjs', import.meta.url));
 const MEMORY = join(homedir(), '.claude', 'agent-memory');
@@ -50,7 +51,7 @@ const scratch = (root, project = 'proj', session = SESSION) => {
   mkdirSync(dir, { recursive: true });
   return dir;
 };
-const newRoot = () => realpathSync(mkdtempSync(join(tmpdir(), 'scratch-root-')));
+const newRoot = () => realpathSync(makeTempDir('scratch-root-'));
 const allows = (root, file, session = SESSION, userDir = UID_DIR) => isScratchpadPath(file, '/anywhere', session, { roots: [root], userDir });
 
 test('isScratchpadPath allows files in this session scratchpad, new or nested, absolute or relative', () => {
@@ -88,7 +89,7 @@ test('isScratchpadPath rejects another session and another uid', () => {
 test('isScratchpadPath rejects symlinks that leave the scratchpad (file or directory), allows one that stays inside', { skip: process.platform === 'win32' }, () => {
   const root = newRoot();
   const pad = scratch(root);
-  const outside = mkdtempSync(join(tmpdir(), 'scratch-outside-'));
+  const outside = makeTempDir('scratch-outside-');
   symlinkSync(outside, join(pad, 'dirlink'));
   symlinkSync(join(outside, 'secret'), join(pad, 'filelink'));
   mkdirSync(join(pad, 'real'));
