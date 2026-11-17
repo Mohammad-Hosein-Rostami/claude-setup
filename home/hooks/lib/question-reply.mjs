@@ -1,7 +1,7 @@
 // AskUserQuestion for the PermissionRequest hook (permission-timed-allow.mjs): one timed popup per question, one after the other.
 // Exports: questionReply(input, env, {ask, pollMs}) -> Promise<{behavior: 'allow', updatedInput} | undefined>.
 // Each question gets its own popup (title "question 2 of 3", that question and the option that will be taken) and its own wait,
-// CLAUDE_PERMISSION_TIMEOUT_S (default 2 min, see lib/timed-ask.mjs). "Use recommended" or no answer in the wait takes that question's
+// CLAUDE_PERMISSION_TIMEOUT_S (default 2 min, see lib/timed-ask.mjs; cut so that all popups end before the terminal question auto-continues). "Use recommended" or no answer in the wait takes that question's
 // "(Recommended)" option, else its first; a multiSelect question gets that single option. Only a timeout adds `annotations` {question text:
 // {notes}} saying the answer was taken by default, not chosen by the owner (UNCONFIRMED), for that question alone. After the last question
 // the result is an allow with updatedInput = the input plus `answers` {question text: option label} (hooks docs, AskUserQuestion input and
@@ -10,10 +10,12 @@
 // (which already shows every question) takes over; answers already collected are dropped, never an invented answer.
 // Terminal answer: Claude Code shows its own question and runs this hook side by side and never says when the owner answers there. The
 // PostToolUse hook question-answered.mjs leaves a mark (lib/question-answered.mjs); it is polled every pollMs while a popup is open and
-// checked before each next one. A mark closes the open popup (abort signal, lib/timed-ask-async.mjs) and the loop ends with undefined.
+// checked before each next one. Turning the question down in the terminal ("Chat about this", Esc) runs no tool and leaves no mark, so the
+// session transcript is watched for it too (lib/question-rejected.mjs). A mark or a rejection closes the open popup (abort signal, lib/timed-ask-async.mjs) and the loop ends with undefined.
 // Invariants: never two popups at once; every popup is logged (guard log) without secrets; no exception leaves this function for a bad input.
 import { logDecision } from './guard-log.mjs';
 import { wasQuestionAnswered } from './question-answered.mjs';
+import { watchTerminalRejection } from './question-rejected.mjs';
 import { answerAskAsync } from './timed-ask-async.mjs';
 import { formatDuration, permissionTimeoutSeconds } from './timed-ask.mjs';
 
@@ -22,6 +24,10 @@ const QUESTION_TOOL = 'AskUserQuestion';
 const QUESTION_BUTTONS = { accept: 'Use recommended', decline: 'Answer in terminal' };
 const QUESTION_TITLE = 'Claude Code: question';
 const RECOMMENDED = /\(Recommended\)\s*$/i; // how Claude marks the option it would pick
+// The terminal question runs beside this hook and auto-continues (settings askUserQuestionTimeout "10m") with the answers chosen so far, which
+// would end the hook's remaining popups. So all popups together must end before it: the wait of each is cut to fit, with a margin for starting them.
+export const TERMINAL_AUTO_CONTINUE_S = 600;
+const POPUP_MARGIN_S = 30;
 const TERMINAL_POLL_MS = 250; // how often the open popup looks for the terminal answer mark: a closing popup is seen within this
 
 /** @returns {boolean} true for a non-empty list of questions, each with question text and options that all have a label */
@@ -72,10 +78,11 @@ export async function questionReply(input, env, { ask = answerAskAsync, pollMs =
   const toolInput = input.tool_input;
   if (!isQuestionList(toolInput?.questions)) return undefined;
   const questions = toolInput.questions;
-  const timeoutS = permissionTimeoutSeconds(env);
+  const timeoutS = Math.min(permissionTimeoutSeconds(env), Math.floor((TERMINAL_AUTO_CONTINUE_S - POPUP_MARGIN_S) / questions.length));
   const terminalMark = { session: input.session_id, agentId: input.agent_id, questions: questions.map((item) => item.question) };
   const openedAt = Date.now();
-  const answeredInTerminal = () => wasQuestionAnswered(terminalMark, openedAt, env);
+  const turnedDownInTerminal = watchTerminalRejection(input.transcript_path);
+  const answeredInTerminal = () => wasQuestionAnswered(terminalMark, openedAt, env) || turnedDownInTerminal();
   const closePopup = new AbortController();
   const watch = setInterval(() => { if (answeredInTerminal()) closePopup.abort(); }, pollMs);
   const answers = {};

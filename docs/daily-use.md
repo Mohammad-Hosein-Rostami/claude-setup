@@ -32,8 +32,9 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
   reloading the editor window ends every session in it. Resume with `ccm <mode> -c`.
 - A question (AskUserQuestion) opens a timed dialog listing each question and the option it will take: with no answer in
   2 min (`CLAUDE_PERMISSION_TIMEOUT_S`) or on "Use recommended" each question takes its "(Recommended)" option, else its
-  first; "Answer in terminal" opens the normal question. Over ssh or with no display the terminal question stays and
-  auto-continues after 5 min (`askUserQuestionTimeout`; the CLI takes only 60s, 5m, 10m or never), but its timer pauses while that terminal window
+  first; "Answer in terminal" opens the normal question; answering it there, or turning it down ("Chat about this", Esc), closes the open dialog. Over ssh or with no display the terminal question stays and
+  auto-continues after 10 min (`askUserQuestionTimeout`; the CLI takes only 60s, 5m, 10m or never; 10 min covers four questions of 2 min,
+  and each question's wait is cut to fit when `CLAUDE_PERMISSION_TIMEOUT_S` is higher), but its timer pauses while that terminal window
   is focused, after a keypress, and with Remote Control on. The recommended option is chosen to be safe with nobody
   there, and each default taken is logged.
 - Guard dialogs (`git push`, publish, `rm -rf` outside the project, prod-host writes, literal secrets) default to

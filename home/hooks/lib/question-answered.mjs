@@ -7,6 +7,8 @@
 // kept by lib/session-store.mjs (a per-user 0700 folder, 0600 files, links and special files refused) with lib/session-lock.mjs.
 // Invariants: only digests are stored, never question text; a mark counts only when it is at least as new as the popup (`sinceMs`), so an
 // earlier identical question never closes a newer popup; marks older than MARK_TTL_MS are dropped on the next write; nothing throws.
+// Trust: any process of the same user can write a mark and so close the popups; the only effect is that the question stays with Claude Code's
+// own terminal UI (the popup loop ends with undefined and prints nothing), so a forged mark fails safe.
 // Limit: the key has no tool_use_id (the PermissionRequest input has none), so two identical question sets asked at the same moment in one
 // session and agent cannot be told apart.
 import { createHash } from 'node:crypto';

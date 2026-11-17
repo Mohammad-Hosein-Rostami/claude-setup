@@ -269,7 +269,7 @@
       }
     ]
   },
-  "askUserQuestionTimeout": "5m",
+  "askUserQuestionTimeout": "10m",
   "statusLine": {
     "type": "command",
     "command": "node \"{{CLAUDE_HOME}}/statusline.mjs\""

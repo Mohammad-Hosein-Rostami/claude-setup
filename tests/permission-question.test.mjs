@@ -7,13 +7,13 @@
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { markQuestionAnswered } from '../home/hooks/lib/question-answered.mjs';
-import { questionReply } from '../home/hooks/lib/question-reply.mjs';
+import { TERMINAL_AUTO_CONTINUE_S, questionReply } from '../home/hooks/lib/question-reply.mjs';
 import { hookEnv, tempLogPath } from './hook-env.mjs';
 import { fakePopup } from './fake-dialog-tool.mjs';
 
@@ -181,6 +181,42 @@ test('a mark from before this popup opened (an earlier identical question) does 
   const env = privateEnv();
   markQuestionAnswered({ session: SESSION, agentId: undefined, questions: ['Where should the watcher run?'] }, env, () => Date.now() - 60_000);
   assert.equal((await reply(askInput([WATCHER]), env, fakeAsk('allow'))).behavior, 'allow');
+});
+
+test('the owner turns the question down in the terminal (Chat about this, Esc): the open popup closes and no later one opens', async () => {
+  const transcriptPath = join(mkdtempSync(join(tmpdir(), 'question-transcript-')), 'session.jsonl');
+  writeFileSync(transcriptPath, '');
+  const opened = [];
+  const ask = openUntilAborted((request) => {
+    opened.push(request);
+    appendFileSync(transcriptPath, `${JSON.stringify({ type: 'user', toolDenialKind: 'user-rejected', message: { role: 'user', content: [] } })}\n`);
+  });
+  assert.equal(await reply({ ...askInput([WATCHER, FORMAT]), transcript_path: transcriptPath }, privateEnv(), ask), undefined);
+  assert.equal(opened.length, 1);
+});
+
+test('all popups fit inside the terminal question auto-continue: question 3 and 4 still get their own full wait', async () => {
+  const ask = fakeAsk('timeout');
+  const four = [WATCHER, FORMAT, SHIP, question('Last one?', ['A', 'B'])];
+  await reply(askInput(four), privateEnv({ CLAUDE_PERMISSION_TIMEOUT_S: '190' }), ask);
+  const waits = ask.calls.map((call) => call.timeoutS);
+  assert.equal(waits.length, 4);
+  assert.ok(waits.every((wait) => wait === waits[0]), 'every question gets the same wait');
+  assert.ok(waits.reduce((sum, wait) => sum + wait, 0) < TERMINAL_AUTO_CONTINUE_S, `${waits} must add up to less than ${TERMINAL_AUTO_CONTINUE_S} s`);
+});
+
+test('the default 2 min per question and a single question keep their full wait', async () => {
+  const four = fakeAsk('timeout');
+  await reply(askInput([WATCHER, FORMAT, SHIP, question('Last one?', ['A', 'B'])]), privateEnv(), four);
+  assert.deepEqual(four.calls.map((call) => call.timeoutS), [120, 120, 120, 120]);
+  const one = fakeAsk('timeout');
+  await reply(askInput([WATCHER]), privateEnv({ CLAUDE_PERMISSION_TIMEOUT_S: '190' }), one);
+  assert.deepEqual(one.calls.map((call) => call.timeoutS), [190]);
+});
+
+test('settings/base.json askUserQuestionTimeout is the time the popups are planned inside (it auto-continues the terminal question)', () => {
+  const base = JSON.parse(readFileSync(fileURLToPath(new URL('../settings/base.json', import.meta.url)), 'utf8'));
+  assert.equal(base.askUserQuestionTimeout, `${TERMINAL_AUTO_CONTINUE_S / 60}m`);
 });
 
 /** Starts the hook as a process with a hanging fake popup; returns the child and what it printed. */
