@@ -2,8 +2,11 @@
 // JSON validation and retry, the pointer note on failure, the post-compact digest (cap and order) and `recall --session`.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { handleCheckpointHook } from '../home/hooks/checkpoint.mjs';
 import { digestFor } from '../home/hooks/recall-digest.mjs';
 import { HAIKU_ARGS, claudePlan } from '../home/tools/recall/lib/claude-call.mjs';
@@ -385,4 +388,18 @@ test('a failing run drops a pending request and still releases the lock', async 
   await assert.rejects(runJob({ session, transcript: path, env, run: async () => { throw new Error('boom'); } }), /boom/);
   assert.equal(hasPending(session, env), false, 'a broken claude would only fail again');
   assert.equal(lockHeld(session, env), false);
+});
+
+// Doctor once warned "recall: last checkpoint error: x: ENOENT ... stat 'y'": a `checkpoint-job.mjs x y ...` run with the real HOME wrote its
+// error into the owner's ~/.claude/recall. The job takes its state folder from RECALL_STATE_DIR, RECALL_DB, or else HOME, so a run under a fake HOME must stay there.
+test('the checkpoint job run on a missing transcript saves its error under HOME and leaves the real state alone', () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'checkpoint-home-'));
+  const env = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome };
+  delete env.RECALL_DB;
+  delete env.RECALL_STATE_DIR;
+  const job = fileURLToPath(new URL('../home/tools/recall/checkpoint-job.mjs', import.meta.url));
+  const result = spawnSync(process.execPath, [job, 'x', 'no-such-transcript', 'PostToolUse'], { env, encoding: 'utf8' });
+  assert.equal(result.status, 1, result.stderr);
+  const saved = JSON.parse(readFileSync(join(fakeHome, '.claude', 'recall', 'checkpoints', 'x.json'), 'utf8'));
+  assert.match(saved.error.message, /ENOENT/);
 });
