@@ -1,27 +1,37 @@
 // The workflow registry: one small private file per session listing the workflow runs that session launched, so a later session (after an
 // exit, a usage-limit stop or an account switch) can find the runs that did not finish.
-// Exports: launchRecord(hookInput, nowIso), saveRun(dir, record), runsOfSession(dir, session), latestOtherSession(dir, {cwd, exceptSession}),
-//   findRun(dir, runId), launchedWithoutArgs(record), defaultRegistryDir(), MAX_RUNS_PER_SESSION, MAX_ARGS_BYTES.
+// Exports: launchRecord(hookInput, nowIso), saveRun(dir, record), runsOfSession(dir, session), otherSessionRuns(dir, {cwd, exceptSession}),
+//   findRun(dir, runId), launchedWithoutArgs(record), scriptShaOf(path), defaultRegistryDir(), MAX_RUNS_PER_SESSION, MAX_ARGS_BYTES, RETENTION_DAYS.
 // File: <dir>/<session>.json holds one JSON record per line (the `.json` name is the session store's, lib/session-store.mjs in the hooks:
 // atomic write, 0600 file in a 0700 folder, never through a link). A record: { sessionId, runId, name, scriptPath, argsDigest, args?, started,
-// lastLaunch, cwd, row, projectDir }. `projectDir` is the folder name under ~/.claude/projects, so the run folder is
-// <projects>/<projectDir>/<sessionId>/subagents/workflows/<runId>; a path from this file is never followed, the folder is rebuilt from names.
+// lastLaunch, cwd, row, projectDir, projectsRoot, scriptSha }. `projectDir` is the folder name under the projects folder of the account that ran it
+// (`projectsRoot`, the config dir's `projects`; an account switch changes it), so the run folder is <projectsRoot>/<projectDir>/<sessionId>/
+// subagents/workflows/<runId>; it is rebuilt from these names, never from a path read out of a run folder. `scriptSha` is the first 16 hex
+// characters of the script file's sha256 at launch (null when unreadable): a resumed run caches an agent only for an identical prompt, so a
+// changed script is flagged.
 // Invariants: a run is recorded only when the tool result names a run id (a refused launch leaves nothing); a resume of the same run id
 // updates its record (first start time kept); at most MAX_RUNS_PER_SESSION records per file (oldest dropped); args are stored only up to
-// MAX_ARGS_BYTES (a resume needs them, the registry file is as private as the transcript that holds them) and are never printed by the hooks.
+// MAX_ARGS_BYTES and never when they hold a secret (a resume then says to take them from the old transcript); the hooks never print them.
+// Retention: a save drops records, and other sessions' files, older than RETENTION_DAYS (the transcripts' own default, so a record never
+// outlives the run folder it points to by much).
 // Completion is not stored: it is computed on read from the run folder (lib/run-state.mjs). Nothing here throws.
 import { createHash } from 'node:crypto';
-import { readdirSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { isSessionId, readSessionFile, writeSessionFile } from '../../../hooks/lib/session-store.mjs';
 import { withSessionLock } from '../../../hooks/lib/session-lock.mjs';
+import { maskSecretFields } from '../../../hooks/lib/secrets.mjs';
 
 export const MAX_RUNS_PER_SESSION = 25;
 export const MAX_ARGS_BYTES = 4096;
+export const RETENTION_DAYS = 30;
+const MS_PER_DAY = 86_400_000;
+const MAX_SCRIPT_BYTES = 1 << 20;
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_SESSIONS_READ = 200; // newest files looked at when searching across sessions
 const DIGEST_HEX = 12;
+const SCRIPT_SHA_HEX = 16;
 const digestOf = (argsText) => createHash('sha256').update(argsText).digest('hex').slice(0, DIGEST_HEX);
 const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const PROJECT_DIR = /^(?!\.+$)[A-Za-z0-9._-]{1,255}$/;
@@ -38,7 +48,8 @@ export const launchedWithoutArgs = (record) => record.argsDigest === digestOf('n
 export const defaultRegistryDir = () => join(homedir(), '.claude', 'state', 'workflow-runs');
 
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
-const cleanText = (text, max) => text.replace(CONTROL_CHARS, '').slice(0, max);
+const ANGLE_BRACKETS = /[<>]/g; // a name is shown to the lead inside a tag: it must not be able to close it
+const cleanText = (text, max) => text.replace(CONTROL_CHARS, '').replace(ANGLE_BRACKETS, '').slice(0, max);
 const absolutePath = (value) => (typeof value === 'string' && isAbsolute(value) && value.length <= MAX_PATH_CHARS && !HAS_CONTROL_CHARS.test(value) ? value : null);
 
 /** The run id, script path and workflow name a Workflow tool result names: its fields when it is an object, else its text lines. */
@@ -47,7 +58,31 @@ function launchedRun(response) {
     return { runId: response.runId, scriptPath: response.scriptPath, name: response.workflowName };
   }
   const text = typeof response === 'string' ? response : '';
-  return { runId: /^Run ID: (\S+)/m.exec(text)?.[1], scriptPath: /^Script file: (.+)$/m.exec(text)?.[1]?.trim(), name: /^Summary: (.+)$/m.exec(text)?.[1] };
+  // The labels may sit on their own lines or in one line ("Task ID: w1 Run ID: wf_x"), so none is anchored to a line start.
+  return { runId: /\bRun ID: (\S+)/.exec(text)?.[1], scriptPath: /\bScript file: (.+?)(?=\s+(?:Run|Task) ID:|\s*$)/m.exec(text)?.[1]?.trim(), name: /\bSummary: (.+)$/m.exec(text)?.[1] };
+}
+
+/** The first 16 hex characters of the script file's sha256; null when it cannot be read as a plain file of at most MAX_SCRIPT_BYTES. */
+export function scriptShaOf(path) {
+  try {
+    const info = lstatSync(path);
+    return info.isFile() && info.size <= MAX_SCRIPT_BYTES ? createHash('sha256').update(readFileSync(path)).digest('hex').slice(0, SCRIPT_SHA_HEX) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The projects folder a transcript path lives in (<projects>/<project>/<session>.jsonl); '' when the path is not plain. */
+const projectsRootOf = (transcriptPath) => (typeof transcriptPath === 'string' ? absolutePath(dirname(dirname(transcriptPath))) ?? '' : '');
+
+/** True when the args can be written back as they are: small enough and holding no secret value or secret-named field. */
+function storableArgs(args, argsText) {
+  if (args === undefined || Buffer.byteLength(argsText) > MAX_ARGS_BYTES) return false;
+  try {
+    return maskSecretFields(args) === argsText;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -71,12 +106,14 @@ export function launchRecord(input, nowIso) {
     name: cleanText(typeof launched.name === 'string' && launched.name !== '' ? launched.name : 'workflow', MAX_NAME_CHARS),
     scriptPath,
     argsDigest: digestOf(argsText),
-    ...(toolInput.args !== undefined && Buffer.byteLength(argsText) <= MAX_ARGS_BYTES ? { args: toolInput.args } : {}),
+    ...(storableArgs(toolInput.args, argsText) ? { args: toolInput.args } : {}),
     started: nowIso,
     lastLaunch: nowIso,
     cwd: absolutePath(input.cwd) ?? '',
     row: typeof row === 'string' && ROW_LABEL.test(row) ? row : null,
     projectDir: PROJECT_DIR.test(projectDir) ? projectDir : '',
+    projectsRoot: projectsRootOf(input.transcript_path),
+    scriptSha: scriptShaOf(scriptPath),
   };
 }
 
@@ -105,18 +142,33 @@ export function runsOfSession(dir, session) {
  * @returns {boolean} true when stored
  */
 export function saveRun(dir, record) {
+  const oldestKept = Date.parse(record.started) - RETENTION_DAYS * MS_PER_DAY;
   const stored = withSessionLock(dir, record.sessionId, () => {
-    const runs = runsOfSession(dir, record.sessionId);
+    const runs = runsOfSession(dir, record.sessionId).filter((run) => Date.parse(run.started) >= oldestKept);
     const before = runs.find((run) => run.runId === record.runId);
     const merged = before === undefined ? record : { ...record, started: before.started };
     const kept = [...runs.filter((run) => run.runId !== record.runId), merged].slice(-MAX_RUNS_PER_SESSION);
     return writeSessionFile(dir, record.sessionId, `${kept.map((run) => JSON.stringify(run)).join('\n')}\n`, { sweep: false });
   });
+  if (stored === true) removeOldSessionFiles(dir, record.sessionId, oldestKept);
   return stored === true;
 }
 
+/** Deletes other sessions' registry files last written before `oldestKept` (epoch ms): plain files matched by name only, never a link. */
+function removeOldSessionFiles(dir, keepSession, oldestKept) {
+  for (const { sessionId, mtimeMs } of sessionFiles(dir, Infinity)) {
+    if (sessionId === keepSession || mtimeMs >= oldestKept) continue;
+    try {
+      const path = join(dir, `${sessionId}.json`);
+      if (lstatSync(path).isFile()) unlinkSync(path);
+    } catch {
+      // best effort: the file vanished or is busy; the next save tries again
+    }
+  }
+}
+
 /** The newest session files of the registry folder, newest first: [{ sessionId, mtimeMs }]. */
-function sessionFiles(dir) {
+function sessionFiles(dir, limit = MAX_SESSIONS_READ) {
   let names;
   try {
     names = readdirSync(dir);
@@ -130,19 +182,23 @@ function sessionFiles(dir) {
     } catch {
       return [];
     }
-  }).sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, MAX_SESSIONS_READ);
+  }).sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, limit);
 }
 
 /**
- * The most recent other session that launched a run in this cwd (the one whose newest run started last).
- * @returns {{ sessionId: string, runs: object[] } | null}
+ * The runs of every other session that launched one in this cwd; a run id held by several sessions (adopted and relaunched) appears once, as
+ * its newest record. Newest first.
+ * @returns {object[]}
  */
-export function latestOtherSession(dir, { cwd, exceptSession }) {
-  const candidates = sessionFiles(dir).filter((file) => file.sessionId !== exceptSession)
-    .map((file) => ({ sessionId: file.sessionId, runs: runsOfSession(dir, file.sessionId).filter((run) => run.cwd === cwd) }))
-    .filter((session) => session.runs.length > 0);
-  const newest = (session) => session.runs.reduce((latest, run) => (run.started > latest ? run.started : latest), '');
-  return candidates.sort((a, b) => newest(b).localeCompare(newest(a)))[0] ?? null;
+export function otherSessionRuns(dir, { cwd, exceptSession }) {
+  const newestPerRun = new Map();
+  for (const file of sessionFiles(dir).filter((entry) => entry.sessionId !== exceptSession)) {
+    for (const run of runsOfSession(dir, file.sessionId).filter((record) => record.cwd === cwd)) {
+      const held = newestPerRun.get(run.runId);
+      if (held === undefined || run.started > held.started) newestPerRun.set(run.runId, run);
+    }
+  }
+  return [...newestPerRun.values()].sort((a, b) => b.started.localeCompare(a.started));
 }
 
 /** @returns {object | null} the newest record with this run id in any session's file */

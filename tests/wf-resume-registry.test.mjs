@@ -4,10 +4,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findRun, latestOtherSession, launchRecord, MAX_ARGS_BYTES, MAX_RUNS_PER_SESSION, runsOfSession, saveRun } from '../home/tools/wf-resume/lib/registry.mjs';
+import { findRun, otherSessionRuns, launchRecord, MAX_ARGS_BYTES, MAX_RUNS_PER_SESSION, runsOfSession, saveRun } from '../home/tools/wf-resume/lib/registry.mjs';
 import { launchInput, launchResponse, world } from './wf-resume-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/workflow-register.mjs', import.meta.url));
@@ -83,18 +83,61 @@ test('lines that are not valid records (a planted or damaged file) are ignored',
   assert.deepEqual(runsOfSession(registryDir, 'sess-1').map((run) => run.runId), ['wf_aaa']);
 });
 
-test('latestOtherSession: the newest other session of the same cwd, never the current one or another cwd', async () => {
+test('otherSessionRuns: the runs of every other session of the same cwd, a run id once (the newest record), never the current session or another cwd', async () => {
   const { registryDir } = await world();
-  saveRun(registryDir, launchRecord(launchInput({ session: 'old-1', runId: 'wf_1', response: launchResponse('wf_1', '/s/a.js') }), '2026-11-16T10:00:00.000Z'));
-  saveRun(registryDir, launchRecord(launchInput({ session: 'old-2', runId: 'wf_2', response: launchResponse('wf_2', '/s/b.js') }), '2026-11-17T09:00:00.000Z'));
-  saveRun(registryDir, launchRecord(launchInput({ session: 'other-cwd', cwd: '/work/else', response: launchResponse('wf_3', '/s/c.js') }), '2026-11-17T11:00:00.000Z'));
-  saveRun(registryDir, launchRecord(launchInput({ session: 'now', response: launchResponse('wf_4', '/s/d.js') }), '2026-11-17T11:30:00.000Z'));
-  const found = latestOtherSession(registryDir, { cwd: '/work/proj', exceptSession: 'now' });
-  assert.equal(found.sessionId, 'old-2');
-  assert.deepEqual(found.runs.map((run) => run.runId), ['wf_2']);
-  assert.equal(latestOtherSession(registryDir, { cwd: '/work/nowhere', exceptSession: 'now' }), null);
-  assert.equal(findRun(registryDir, 'wf_1').sessionId, 'old-1');
+  const save = (session, runId, at, cwd) => saveRun(registryDir, launchRecord(launchInput({ session, runId, cwd, response: launchResponse(runId, `/s/${runId}.js`) }), at));
+  save('old-1', 'wf_1', '2026-11-16T10:00:00.000Z');
+  save('old-1', 'wf_2', '2026-11-16T10:05:00.000Z');
+  save('old-2', 'wf_1', '2026-11-17T09:00:00.000Z'); // wf_1 adopted into old-2 and relaunched there
+  save('other-cwd', 'wf_3', '2026-11-17T11:00:00.000Z', '/work/else');
+  save('now', 'wf_4', '2026-11-17T11:30:00.000Z');
+  const found = otherSessionRuns(registryDir, { cwd: '/work/proj', exceptSession: 'now' });
+  assert.deepEqual(found.map((run) => [run.runId, run.sessionId]).sort(), [['wf_1', 'old-2'], ['wf_2', 'old-1']]);
+  assert.deepEqual(otherSessionRuns(registryDir, { cwd: '/work/nowhere', exceptSession: 'now' }), []);
+  assert.equal(findRun(registryDir, 'wf_3').sessionId, 'other-cwd');
   assert.equal(findRun(registryDir, 'wf_missing'), null);
+});
+
+test('a one-line tool result ("Task ID: w1 Run ID: wf_x") still gives the run id', () => {
+  const text = 'Workflow launched in background. Task ID: w1 Run ID: wf_one Script file: /s/step-wf_one.js';
+  const record = launchRecord(launchInput({ response: text, toolInput: { script: 'x' } }), NOW_ISO);
+  assert.equal(record?.runId, 'wf_one');
+  assert.equal(record?.scriptPath, '/s/step-wf_one.js');
+});
+
+test('args that hold a secret are never stored (only the digest); harmless args are', () => {
+  const fakeKey = ['sk', 'ant', 'abcdefghijklmnop1234'].join('-'); // built here so no literal key-shaped text sits in the file
+  const secret = launchRecord(launchInput({ args: { row: '1', note: fakeKey } }), NOW_ISO);
+  assert.equal(secret.args, undefined);
+  assert.match(secret.argsDigest, /^[0-9a-f]{12}$/);
+  const named = launchRecord(launchInput({ args: { row: '1', password: 'not-a-real-value-123' } }), NOW_ISO);
+  assert.equal(named.args, undefined, 'a secret-named field counts too');
+  assert.deepEqual(launchRecord(launchInput({ args: { row: '1', branch: 'lane/x' } }), NOW_ISO).args, { row: '1', branch: 'lane/x' });
+});
+
+test('the record keeps the projects folder of the account that ran it, and a hash of the script as launched', async () => {
+  const { root } = await world();
+  const script = join(root, 'run-wf_aaa.js');
+  writeFileSync(script, 'export const meta = {}\n');
+  const record = launchRecord(launchInput({ projectsRoot: '/cfg/two/projects', response: launchResponse('wf_aaa', script) }), NOW_ISO);
+  assert.equal(record.projectsRoot, '/cfg/two/projects');
+  assert.match(record.scriptSha, /^[0-9a-f]{16}$/);
+  assert.equal(launchRecord(launchInput(), NOW_ISO).scriptSha, null, 'a script file that cannot be read: no hash');
+  assert.equal(launchRecord(launchInput({ projectsRoot: '/x/ev\u0000il/projects' }), NOW_ISO).projectsRoot, '');
+});
+
+test('a save drops this session\'s records and other sessions\' files older than 30 days, and keeps the rest', async () => {
+  const { registryDir } = await world();
+  const save = (session, runId, at) => saveRun(registryDir, launchRecord(launchInput({ session, runId, response: launchResponse(runId, `/s/${runId}.js`) }), at));
+  save('stale', 'wf_stale', '2026-09-01T10:00:00.000Z');
+  save('recent', 'wf_recent', '2026-11-10T10:00:00.000Z');
+  const old = new Date('2026-09-01T10:00:00Z');
+  utimesSync(join(registryDir, 'stale.json'), old, old);
+  save('mine', 'wf_oldrun', '2026-09-01T10:00:00.000Z');
+  save('mine', 'wf_newrun', NOW_ISO);
+  assert.equal(findRun(registryDir, 'wf_stale'), null);
+  assert.ok(findRun(registryDir, 'wf_recent'));
+  assert.deepEqual(runsOfSession(registryDir, 'mine').map((run) => run.runId), ['wf_newrun']);
 });
 
 test('the hook writes the registry from stdin, prints nothing and exits 0 even on garbage', async () => {

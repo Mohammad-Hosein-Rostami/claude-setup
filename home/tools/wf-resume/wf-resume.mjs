@@ -6,6 +6,7 @@
 //   wf-resume.mjs adopt <runId> --into <session folder> [--from <session folder>]   copy the run's journal into another session, print the call
 // Exit codes: 0 done, 1 refused (reason on stderr), 2 usage.
 // The registry (written by hooks/workflow-register.mjs) and the notice text are in lib/; see README.md for the whole flow.
+import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -58,7 +59,8 @@ export function runCli(argv, env) {
   return usage;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// ~/.claude/tools is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const projectsRoot = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects');
   const outcome = runCli(process.argv.slice(2), { registryDir: defaultRegistryDir(), projectsRoot, estimateStateDir: estimateStateDir(), cwd: process.cwd(), nowMs: Date.now() });
   if (outcome.out !== '') console.log(outcome.out);

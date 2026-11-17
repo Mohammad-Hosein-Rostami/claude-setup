@@ -18,10 +18,10 @@ export const SCRIPT_TEXT = "export const meta = { name: 'land', description: 'x'
 export const launchResponse = (runId, scriptPath, workflowName = 'land') => ({ status: 'async_launched', taskId: 'w1', taskType: 'local_workflow', workflowName, runId, summary: 's', transcriptDir: '/x', scriptPath });
 
 /** A PostToolUse hook input for one Workflow launch. */
-export function launchInput({ session = 'sess-1', runId = 'wf_aaa', scriptPath = '/s/land-wf_aaa.js', args, cwd = '/work/proj', toolInput, response, project = PROJECT } = {}) {
+export function launchInput({ session = 'sess-1', runId = 'wf_aaa', scriptPath = '/s/land-wf_aaa.js', args, cwd = '/work/proj', toolInput, response, project = PROJECT, projectsRoot = '/home/u/.claude/projects' } = {}) {
   return {
     session_id: session, cwd, hook_event_name: 'PostToolUse', tool_name: 'Workflow',
-    transcript_path: `/home/u/.claude/projects/${project}/${session}.jsonl`,
+    transcript_path: `${projectsRoot}/${project}/${session}.jsonl`,
     tool_input: toolInput ?? { scriptPath, ...(args === undefined ? {} : { args }) },
     tool_response: response ?? launchResponse(runId, scriptPath),
   };
@@ -34,7 +34,7 @@ export async function world() {
   const claude = join(root, '.claude');
   const paths = { root, registryDir: join(claude, 'state', 'workflow-runs'), projectsRoot: join(claude, 'projects'), estimateDir: join(claude, 'state', 'estimate') };
   const sessionFolder = (session, project = PROJECT) => join(paths.projectsRoot, project, session);
-  const addRun = ({ session, runId, lines, finished = false, project = PROJECT, ageMin = 120, script = SCRIPT_TEXT }) => {
+  const addRun = ({ session, runId, lines, finished = false, summary = '{}', project = PROJECT, ageMin = 120, script = SCRIPT_TEXT }) => {
     const folder = sessionFolder(session, project);
     const runDir = join(folder, 'subagents', 'workflows', runId);
     mkdirSync(runDir, { recursive: true });
@@ -45,7 +45,7 @@ export async function world() {
     mkdirSync(join(folder, 'workflows', 'scripts'), { recursive: true });
     const scriptPath = join(folder, 'workflows', 'scripts', `land-${runId}.js`);
     writeFileSync(scriptPath, script);
-    if (finished) writeFileSync(join(folder, 'workflows', `${runId}.json`), '{}');
+    if (finished) writeFileSync(join(folder, 'workflows', `${runId}.json`), summary);
     return { folder, journal, scriptPath };
   };
   return { ...paths, sessionFolder, addRun };

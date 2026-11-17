@@ -3,7 +3,7 @@
 // How: the run's stored args name its repo, base, branches and worktree paths in plain string fields (`repo`, `branch`, `worktree`,
 // `lanes[].branch`...). Every string in the args is a candidate; a local branch or a worktree (other than the repo's own folder) whose
 // name or path equals a candidate is the run's. The base branch is never listed.
-// Invariants: read-only git (`worktree list --porcelain`, `for-each-ref`), run with the repository hooks and fsmonitor off through
+// Invariants: each git call is cut off after GIT_TIMEOUT_MS (a hung repository must not hold the session start; the first failure ends the lookup: nothing is listed); read-only git (`worktree list --porcelain`, `for-each-ref`), run with the repository hooks and fsmonitor off through
 // git-tidy's runGit (explicit cwd, no GIT_DIR from the caller); never throws; at most MAX_LISTED of each; only the git answers reach the
 // output, never args text.
 import { existsSync, statSync } from 'node:fs';
@@ -11,6 +11,7 @@ import { isAbsolute } from 'node:path';
 import { runGit } from '../../git-tidy/lib/git.mjs';
 
 const MAX_LISTED = 3;
+const GIT_TIMEOUT_MS = 1500;
 const MAX_CANDIDATES = 300;
 const MAX_DEPTH = 4;
 const HARDENED = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'safe.bareRepository=explicit', '-c', 'core.pager=cat'];
@@ -25,7 +26,7 @@ function stringsOf(value, found = new Set(), depth = 0) {
 }
 
 const isFolder = (path) => typeof path === 'string' && isAbsolute(path) && existsSync(path) && statSync(path).isDirectory();
-const git = (dir, args) => runGit(dir, [...HARDENED, ...args]);
+const git = (dir, args) => runGit(dir, [...HARDENED, ...args], undefined, { timeoutMs: GIT_TIMEOUT_MS });
 
 /** The worktrees of the repo as { path, branch | null }, main checkout first. */
 function worktreesOf(dir) {

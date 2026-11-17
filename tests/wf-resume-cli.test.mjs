@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchRecord, saveRun } from '../home/tools/wf-resume/lib/registry.mjs';
@@ -17,7 +17,7 @@ const cli = (w, ...args) => spawnSync(process.execPath, [CLI, ...args], { encodi
 
 function seed(w, { session = 'old-1', runId = 'wf_old', args = { row: '4', branch: 'lane/x' } } = {}) {
   const files = w.addRun({ session, runId, lines: KILLED });
-  saveRun(w.registryDir, launchRecord(launchInput({ session, runId, args, response: launchResponse(runId, files.scriptPath) }), '2026-11-17T10:00:00.000Z'));
+  saveRun(w.registryDir, launchRecord(launchInput({ session, runId, args, projectsRoot: w.projectsRoot, response: launchResponse(runId, files.scriptPath) }), '2026-11-17T10:00:00.000Z'));
   return files;
 }
 
@@ -103,4 +103,27 @@ test('a usage mistake exits 2 with the usage text', async () => {
   const out = cli(w, 'frobnicate');
   assert.equal(out.status, 2);
   assert.match(out.stderr, /Usage/);
+});
+
+test('run through a symlinked folder (as ~/.claude/tools is), the commands still run and print', async () => {
+  const w = await world();
+  seed(w);
+  const link = join(w.root, 'tools-link');
+  symlinkSync(fileURLToPath(new URL('../home/tools/wf-resume', import.meta.url)), link);
+  const run = (...args) => spawnSync(process.execPath, [join(link, 'wf-resume.mjs'), ...args], { encoding: 'utf8', env: { ...process.env, HOME: w.root, USERPROFILE: w.root, CLAUDE_CONFIG_DIR: '' } });
+  const called = run('call', 'wf_old');
+  assert.equal(called.status, 0, called.stderr);
+  assert.match(called.stdout, /resumeFromRunId: "wf_old"/);
+  assert.match(run('list', '--cwd', '/nowhere').stdout, /No unfinished workflow runs/);
+  assert.equal(run('call').status, 2, 'a usage mistake still exits 2 through the link');
+});
+
+test('adopt finds the journal of a run recorded under another account\'s projects folder', async () => {
+  const w = await world();
+  const files = w.addRun({ session: 'old-1', runId: 'wf_old', lines: KILLED });
+  saveRun(w.registryDir, launchRecord(launchInput({ session: 'old-1', runId: 'wf_old', projectsRoot: w.projectsRoot, response: launchResponse('wf_old', files.scriptPath) }), '2026-11-17T10:00:00.000Z'));
+  const second = join(w.root, 'other-account', 'projects', '-Users-me-proj', 'new-1');
+  const out = spawnSync(process.execPath, [CLI, 'adopt', 'wf_old', '--into', second], { encoding: 'utf8', env: { ...process.env, HOME: w.root, USERPROFILE: w.root, CLAUDE_CONFIG_DIR: join(w.root, 'other-account') } });
+  assert.equal(out.status, 0, out.stderr);
+  assert.equal(readFileSync(join(second, 'subagents', 'workflows', 'wf_old', 'journal.jsonl'), 'utf8'), readFileSync(files.journal, 'utf8'));
 });
