@@ -28,17 +28,16 @@
 //   are that gap, not work: the reason gives the sync command instead of "commit them". When the dirty worktree has the base branch
 //   (main, master, develop) checked out and other worktrees exist, the reason adds that edits belong in a lane worktree.
 // - Any internal error is one stderr line and exit 0: a session is never trapped. A few git calls, well under 300 ms.
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
-import { devNull, homedir } from 'node:os';
+import { existsSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { withSessionLock } from './lib/session-lock.mjs';
 import { readSessionFile, writeSessionFile } from './lib/session-store.mjs';
 import { changedSinceBaseline, hasBaseline, saveBaseline } from './lib/dirty-baseline.mjs';
 import { LEAD, isRecordedEntry, realPathOf, recordEditedFile, recordedPaths, statusEntries } from './lib/own-edits.mjs';
-import { agentFileWrites } from './lib/writer-agents.mjs';
+import { gatedFolder, gitOut, gitSucceeds, gitText, worktreeOf } from './lib/gated-folder.mjs';
 
 const PASS = Object.freeze({ block: false });
 const BASE_BRANCHES = new Set(['main', 'master', 'develop']);
@@ -48,79 +47,9 @@ const STATES_KEPT = 50; // dirty states remembered per session; older ones may b
 const MAX_STORE_BYTES = 16 * 1024;
 const MAX_CHAINED_BLOCKS = 2; // blocks given to continued stops in a row, a hard bound on how long a stop can be held
 const BRANCH_POSITIONS_CHECKED = 50; // reflog entries searched for the index (as git-tidy's stale-checkout)
-const TRANSCRIPT_HEAD_BYTES = 4 * 1024 * 1024; // the first transcript line holds the brief, which can be long
-const REPOSITORY_VARIABLES = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'];
-// config that would make a read-only git call run a program; given on the command line, so it beats the repository's own config
-const HARDENED = ['-c', 'core.fsmonitor=false', '-c', 'safe.bareRepository=explicit', '-c', `core.hooksPath=${devNull}`];
 const REPOSITORY_SCOPES = new Set(['local', 'worktree']); // config that comes with the repository, not the owner's own
-const READ_ONLY_BUILT_INS = new Set(['Explore', 'Plan']);
 
 const stateDir = (env) => join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'commit-gate');
-
-/** git in `cwd`, hardened, without the variables that point at another repository and without taking optional locks. */
-function runGit(cwd, args) {
-  const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
-  for (const name of REPOSITORY_VARIABLES) delete env[name];
-  return spawnSync('git', [...HARDENED, ...args], { cwd, encoding: 'utf8', env });
-}
-
-const gitOut = (cwd, args) => {
-  const result = runGit(cwd, args);
-  return result.status === 0 ? result.stdout : null;
-};
-const gitSucceeds = (cwd, args) => runGit(cwd, args).status === 0;
-const gitText = (cwd, args) => (gitOut(cwd, args) ?? '').trim();
-
-/** The first `maxBytes` of a regular file as text; null when it is missing, not a regular file or unreadable. */
-function readHead(path, maxBytes) {
-  try {
-    if (!statSync(path).isFile()) return null;
-    const fd = openSync(path, 'r');
-    try {
-      const buffer = Buffer.alloc(maxBytes);
-      return buffer.toString('utf8', 0, readSync(fd, buffer, 0, maxBytes, 0));
-    } finally {
-      closeSync(fd);
-    }
-  } catch {
-    return null; // nothing to read means nothing to gate
-  }
-}
-
-/** The folder an agent started in: the first absolute `cwd` among its transcript's first lines; null when there is none. */
-function startFolder(transcriptPath) {
-  if (typeof transcriptPath !== 'string' || !isAbsolute(transcriptPath)) return null;
-  for (const line of (readHead(transcriptPath, TRANSCRIPT_HEAD_BYTES) ?? '').split('\n')) {
-    try {
-      const { cwd } = JSON.parse(line);
-      if (typeof cwd === 'string' && isAbsolute(cwd)) return cwd;
-    } catch {
-      // a line cut at the read cap, or not JSON: look at the next one
-    }
-  }
-  return null;
-}
-
-/** False for an agent type that cannot write files: a read-only built-in, or an agent file whose `tools:` line names no writer. */
-function writesFiles(agentType, env) {
-  return !READ_ONLY_BUILT_INS.has(agentType) && agentFileWrites(agentType, env) !== false;
-}
-
-/** The folder whose worktree this stop gates, or null: CLAUDE_PROJECT_DIR for the main session, the start folder for a subagent. */
-function gatedFolder(input, env) {
-  if (typeof input.agent_id === 'string' && input.agent_id !== '') {
-    return writesFiles(input.agent_type, env) ? startFolder(input.agent_transcript_path) : null;
-  }
-  return typeof env.CLAUDE_PROJECT_DIR === 'string' && isAbsolute(env.CLAUDE_PROJECT_DIR) ? env.CLAUDE_PROJECT_DIR : null;
-}
-
-/** The worktree of `folder`: {top, gitDir, branch}, or null outside a worktree or before the first commit. */
-function worktreeOf(folder) {
-  const out = gitOut(folder, ['rev-parse', '--show-toplevel', '--absolute-git-dir', '--abbrev-ref', 'HEAD']);
-  if (out === null) return null;
-  const [top, gitDir, branch] = out.trim().split('\n');
-  return top && gitDir && branch ? { top, gitDir, branch } : null;
-}
 
 /** True when the repository's own config (includes followed) defines a filter, or cannot be read: status would run it. */
 function namesFilterProgram(top) {
