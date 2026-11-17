@@ -67,3 +67,20 @@ test('branchNames reads names out of a brief and ignores prose and options', () 
   assert.deepEqual(created, ['a-1', 'b-2']);
   assert.deepEqual(offOf, ['main']);
 });
+
+// The hook has a 5 s timeout and a killed hook skips the later gates, so a long brief (pasted text is untrusted) must scan in linear time.
+test('branchNames reads a 260 KB hostile brief in well under a second (quadratic regexes took 7 s)', () => {
+  const hostile = ['worktree add '.repeat(20000), `checkout -b ${')'.repeat(120000)}x`, 'git branch '.repeat(20000), 'new branch '.repeat(20000)];
+  for (const text of hostile) {
+    const start = performance.now();
+    branchNames(text);
+    assert.ok(performance.now() - start < 500, `${text.slice(0, 20)}: ${Math.round(performance.now() - start)} ms`);
+  }
+});
+
+test('branchNames still finds `-b <name>` a few words after `worktree add`, across spaces but not across lines, and only in the first 32 KB', () => {
+  assert.deepEqual(branchNames('git worktree add --detach ../wt -b lane/x-2').created, ['lane/x-2']);
+  assert.deepEqual(branchNames('git worktree add ../wt\n-b lane/x-2').created, []);
+  assert.deepEqual(branchNames(`${'x'.repeat(40 * 1024)}\ngit checkout -b lane/x-2`).created, [], 'text past the scan limit is not read');
+  assert.deepEqual(branchNames('git checkout -b (`lane/x-2`),').created, ['lane/x-2']);
+});

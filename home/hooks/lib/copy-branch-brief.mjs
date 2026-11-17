@@ -8,13 +8,20 @@
 // can land in any order. When G has landed, delete it here and import it from ./git-advice.mjs (the one place that knows the copy-name rule).
 // Names come from the prompt, which is untrusted: a name is only tested against a strict character set and looked up with `git show-ref`
 // as a full ref (`refs/heads/<name>`), so it can never act as an option; the prompt text is never copied into the advice.
-// Invariants: never throws; one hardened, read-only git call per candidate name (at most MAX_NAMES); no repository or no git means no advice.
+// Invariants: never throws; one hardened, read-only git call per candidate name (at most MAX_NAMES), each with a timeout; no repository or no git
+// means no advice. The prompt is read only up to MAX_SCAN_CHARS and every pattern is linear in it (the hook has a 5 s timeout and a killed hook
+// skips the gates after it): `worktree add` allows at most MAX_WORDS_BEFORE_B words before `-b`, on one line, and names are trimmed by a loop.
 import { spawnSync } from 'node:child_process';
 import { devNull } from 'node:os';
 import { isAbsolute } from 'node:path';
 import { isWritingAgent } from './writer-agents.mjs';
 
 const MAX_NAMES = 8; // a brief names a few branches; the cap bounds the git calls of one send
+const MAX_SCAN_CHARS = 32 * 1024; // a brief is a few KB; text past this is pasted material, not instructions
+const MAX_WORDS_BEFORE_B = 8; // words between `worktree add` and `-b` (a path, `--detach`, `--no-track`, ...)
+const GIT_TIMEOUT_MS = 1000; // one local ref lookup takes a few ms
+const LEADING_NOISE = '`\'"([';
+const TRAILING_NOISE = '`\'"),.;:]';
 const NAME = /^[A-Za-z0-9][\w./-]{0,199}$/;
 const COPY_SUFFIX = /^(.+)-(\d+|fix|fixes|v\d+|redo)$/;
 const REPOSITORY_VARIABLES = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'];
@@ -23,7 +30,7 @@ const HARDENED = ['-c', 'core.fsmonitor=false', '-c', 'safe.bareRepository=expli
 const CREATING_PHRASES = [
   /\bcheckout\s+-[bB]\s+(\S+)/g,
   /\bswitch\s+-[cC]\s+(\S+)/g,
-  /\bworktree\s+add\s+(?:\S+\s+)*?-b\s+(\S+)/g,
+  new RegExp(String.raw`\bworktree\s+add\s+(?:\S+[^\S\n]+){0,${MAX_WORDS_BEFORE_B}}?-b\s+(\S+)`, 'g'),
   /\bgit\s+branch\s+(\S+)/g, // an option (-d, -m) is no name: the NAME test drops it
   /\bnew branch\s+(?:named |called )?(?!off\b|from\b|based\b)(\S+)/gi,
 ];
@@ -31,7 +38,14 @@ const BRANCH_OFF = /\bnew branch\s+(?:off|from|based on)\s+(\S+)/gi;
 const ADVICE = 'A re-done lane continues the same branch: remove its old worktree, then `git switch <lane> && git rebase <base>` '
   + '(implementer.md, "Same branch on a re-do"). Do not create a copy of an existing branch (`<lane>-2`, `-fix`, `-v2`, `-redo`).';
 
-const cleaned = (word) => word.replace(/^[`'"([]+/, '').replace(/[`'"),.;:\]]+$/, '');
+/** The word without quotes, brackets and sentence punctuation around it (a loop, not a regex: a long run of them must not cost quadratic time). */
+function cleaned(word) {
+  let start = 0;
+  let end = word.length;
+  while (start < end && LEADING_NOISE.includes(word[start])) start += 1;
+  while (end > start && TRAILING_NOISE.includes(word[end - 1])) end -= 1;
+  return word.slice(start, end);
+}
 
 /**
  * The branch names a brief tells an agent to create, and the existing branches it says to branch off.
@@ -39,7 +53,8 @@ const cleaned = (word) => word.replace(/^[`'"([]+/, '').replace(/[`'"),.;:\]]+$/
  * @returns {{ created: string[], offOf: string[] }} candidate names (strict character set, at most MAX_NAMES each, no duplicates)
  */
 export function branchNames(prompt) {
-  const pick = (patterns) => [...new Set(patterns.flatMap((pattern) => [...prompt.matchAll(pattern)].map((found) => cleaned(found[1]))))]
+  const text = prompt.slice(0, MAX_SCAN_CHARS);
+  const pick = (patterns) => [...new Set(patterns.flatMap((pattern) => [...text.matchAll(pattern)].map((found) => cleaned(found[1]))))]
     .filter((name) => NAME.test(name)).slice(0, MAX_NAMES);
   return { created: pick(CREATING_PHRASES), offOf: pick([BRANCH_OFF]) };
 }
@@ -49,7 +64,7 @@ function branchExists(name, repoDir) {
   if (!NAME.test(name) || typeof repoDir !== 'string' || !isAbsolute(repoDir)) return false;
   const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
   for (const variable of REPOSITORY_VARIABLES) delete env[variable];
-  const result = spawnSync('git', [...HARDENED, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`], { cwd: repoDir, env, encoding: 'utf8' });
+  const result = spawnSync('git', [...HARDENED, 'show-ref', '--verify', '--quiet', `refs/heads/${name}`], { cwd: repoDir, env, encoding: 'utf8', timeout: GIT_TIMEOUT_MS });
   return result.status === 0;
 }
 
