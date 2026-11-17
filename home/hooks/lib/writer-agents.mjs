@@ -23,7 +23,8 @@ import { closeSync, openSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { tempRoot } from './edit-log.mjs';
-import { readSessionFile, withSessionLock, writeSessionFile } from './session-store.mjs';
+import { withSessionLock } from './session-lock.mjs';
+import { readSessionFile, writeSessionFile } from './session-store.mjs';
 
 export const PENDING_MS = 2 * 60 * 1000;
 export const IDLE_MS = 30 * 60 * 1000;

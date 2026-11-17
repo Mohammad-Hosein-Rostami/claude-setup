@@ -1,4 +1,4 @@
-// Tests for lib/session-store.mjs, the two guard stores that use it (guard-bounced: lib/bounce-once.mjs, guard-allowed:
+// Tests for lib/session-store.mjs and lib/session-lock.mjs, the two guard stores that use it (guard-bounced: lib/bounce-once.mjs, guard-allowed:
 // lib/allowed-literals.mjs) and the guard log (lib/guard-log.mjs): a link, FIFO, socket, folder or file planted where a store or the log
 // lives is never followed, never waited on and never cleaned up, and the guard then asks as if nothing were stored. Everything is planted
 // inside a fresh temp folder made here; command strings are only passed to decide() or the hook, nothing is executed.
@@ -18,7 +18,8 @@ import { fileURLToPath } from 'node:url';
 import { allowedLiteralsDir, isRemembered, remember } from '../home/hooks/lib/allowed-literals.mjs';
 import { adviceOnce, bouncedDir, bounceOnce } from '../home/hooks/lib/bounce-once.mjs';
 import { logDecision } from '../home/hooks/lib/guard-log.mjs';
-import { readSessionFile, withSessionLock, writeSessionFile } from '../home/hooks/lib/session-store.mjs';
+import { withSessionLock } from '../home/hooks/lib/session-lock.mjs';
+import { readSessionFile, writeSessionFile } from '../home/hooks/lib/session-store.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { hookEnv } from './hook-env.mjs';
 
@@ -388,7 +389,7 @@ const STALE_ROUNDS = 40; // each round is its own folder with its own stale lock
 const ROUND_MS = 120; // all waiters start a round together: the whole race happens in the first few ms
 const FIRST_ROUND_DELAY_MS = 600; // node start-up of the waiter processes, before round 0
 const TURN_MS = 3; // a turn long enough that an overlapping caller finds the other still inside
-const SESSION_LOCK_URL = new URL('../home/hooks/lib/session-store.mjs', import.meta.url).href;
+const SESSION_LOCK_URL = new URL('../home/hooks/lib/session-lock.mjs', import.meta.url).href;
 const WAITER_SCRIPT = `
 import { closeSync, openSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';

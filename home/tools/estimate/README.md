@@ -111,7 +111,7 @@ is unchanged; any other text for 15 more minutes while a refresh runs.
 `~/.claude/state/estimate/`: `table/<32 hex of sha256 of the real STATUS.md path>.json` (sessions, first-seen time of each
 row id, finished rows and jobs without ids or text, the commitment and its log, at most 200 entries), `activity/<session>.json`
 (bytes read per transcript and the active minutes, so each run reads only appended bytes), `session/<session>.json` (the
-STATUS.md the session last edited with `status.mjs`). Written through `hooks/lib/session-store.mjs`, never swept. The table file's lock is held
+STATUS.md the session last edited with `status.mjs`). Written through `hooks/lib/session-store.mjs` and `session-lock.mjs`, never swept. The table file's lock is held
 only for its read-change-write; a busy lock or an unusable file records nothing (`estimate: this run recorded nothing (the store
 was busy or a store file could not be used)`). Table and activity files are capped at 16 MiB (the largest real ones are
 about 120 KB and 234 KB); the tool never writes a bigger one, and a bigger file is kept as it is, not used, and named in one

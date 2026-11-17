@@ -16,7 +16,7 @@
 // Log: one line with outcome "bounce" and the bounce classes in `class`; it holds no command or reason text.
 // Invariants of bounceOnce: never an allow; a bounce only once its digest is stored, so the retry can ask; anything uncertain (no or odd session id, an
 // unusable, corrupt or oversized store, a failed write, an exception) returns undefined, which is today's ask. Hooks recording at the same
-// moment take turns (lib/session-store.mjs withSessionLock), so none drops another's digest, and the file is never half-written (temp file
+// moment take turns (lib/session-lock.mjs withSessionLock), so none drops another's digest, and the file is never half-written (temp file
 // + rename); a store still locked after the wait records nothing (today's ask). Subagents share their session's id, so they share its store.
 // Advice (adviceOnce): a quality rule (lib/reason-classes.mjs ADVICE_CLASSES), not a safety rule. decide() returns it apart from the reasons
 // that ask, as `advice`, so it can never hide or replace one. A command whose only reasons are advice is denied once with the advice (log
@@ -38,7 +38,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { logDecision } from './guard-log.mjs';
 import { BOUNCE_CLASS, BOUNCE_CLASSES, reasonClass } from './reason-classes.mjs';
-import { readSessionFile, withSessionLock, writeSessionFile } from './session-store.mjs';
+import { withSessionLock } from './session-lock.mjs';
+import { readSessionFile, writeSessionFile } from './session-store.mjs';
 import { decisionOutput } from './timed-ask.mjs';
 import { BACKSTOP_MARK, secretKindOf } from './verdict.mjs';
 

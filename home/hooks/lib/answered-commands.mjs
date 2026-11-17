@@ -15,7 +15,8 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { isSessionId, readSessionFile, withSessionLock, writeSessionFile } from './session-store.mjs';
+import { withSessionLock } from './session-lock.mjs';
+import { isSessionId, readSessionFile, writeSessionFile } from './session-store.mjs';
 
 const ANSWER_TTL_MS = 10 * 1000; // the prompt comes right after the guard's answer; an older record belongs to an earlier call
 const MAX_STORE_BYTES = 64 * 1024; // a few hundred live answers at most; a bigger file was not written here

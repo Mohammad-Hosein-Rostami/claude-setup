@@ -15,7 +15,8 @@ import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isSessionId, readSessionFile, withSessionLock, writeSessionFile } from '../../../hooks/lib/session-store.mjs';
+import { withSessionLock } from '../../../hooks/lib/session-lock.mjs';
+import { isSessionId, readSessionFile, writeSessionFile } from '../../../hooks/lib/session-store.mjs';
 
 const TABLE_VERSION = 2;
 const TABLE_FOLDER = 'table';

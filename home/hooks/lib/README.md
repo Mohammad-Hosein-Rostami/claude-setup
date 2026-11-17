@@ -35,10 +35,15 @@ Asking and remembering:
   Advice (a quality rule: a hand-edited lockfile, a merge commit) uses the same store: alone, the first send is sent back
   with the fix and the same command again runs with no dialog; next to a reason that asks, the advice is only added to it.
 - `session-store.mjs`: the per-session files of `allowed-literals.mjs` and `bounce-once.mjs`. It checks the folder and file
-  with lstat, never follows a link or waits on a FIFO, and cleans up only its own old files. `withSessionLock` makes hooks that
-  record at the same moment take turns, so none drops another's record. The lock holds `<pid> <random token>` and is removed
-  only by the run that holds it; a lock is taken over only when its pid is gone (or it has no token) and it is over 0.5 s old,
-  or it is over 5 s old. One waiter at a time takes a lock over, behind an O_EXCL `<lock>.break` file (a waiter that cannot create it treats the lock as busy; a stale `.break` file is removed by the next waiter); the lock is renamed aside only while it is still the stale one, and a different file is linked back. If the stale lock's holder releases in that instant and two callers take the name, the moved lock is deleted: a lock is not guaranteed to survive a take-over. A caller may name the lock file (`lockFile`, as `status.mjs` does with `.<name>.status-lock`).
+  with lstat, never follows a link or waits on a FIFO, and cleans up only its own old files.
+- `session-lock.mjs`: `withSessionLock` makes hooks that record at the same moment take turns, so none drops another's record
+  (built on `session-store.mjs`). The lock holds `<pid> <random token>` and is removed only by the run that holds it; a lock is
+  taken over only when its pid is gone (or it has no token) and it is over 0.5 s old, or it is over 5 s old. One waiter at a time
+  takes a lock over, behind an O_EXCL `<lock>.break` file (a waiter that cannot create it treats the lock as busy; a stale `.break`
+  file is removed by the next waiter); the lock is renamed aside only while it is still the stale one, and a different file is
+  linked back. If the stale lock's holder releases in that instant and two callers take the name, the moved lock is deleted: a lock
+  is not guaranteed to survive a take-over. A caller may name the lock file (`lockFile`, as `status.mjs` does with
+  `.<name>.status-lock`).
 - `guard-log.mjs`: the decision log, one JSON line per decision.
 
 Other hooks:

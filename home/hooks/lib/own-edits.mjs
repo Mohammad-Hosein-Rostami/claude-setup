@@ -8,7 +8,8 @@
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import { readSessionFile, withSessionLock, writeSessionFile } from './session-store.mjs';
+import { withSessionLock } from './session-lock.mjs';
+import { readSessionFile, writeSessionFile } from './session-store.mjs';
 
 export const LEAD = ''; // the agent key of the main session
 const STATUS_PATH_AT = 3; // a porcelain entry is `XY <path>`

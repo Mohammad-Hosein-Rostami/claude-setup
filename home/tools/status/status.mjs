@@ -15,14 +15,14 @@
 // estimate tool reads; exit 1 = refused, 2 = usage. After every edit that changed the file, noteTable records the table and links
 // the session (CLAUDE_CODE_SESSION_ID) for the estimator; when that fails the edit still stands and the message says so.
 // Safety: edits run one at a time (the lead runs Bash calls in parallel): an O_EXCL lock file `.<name>.status-lock` next to the file
-// (hooks/lib/session-store.mjs withSessionLock: it holds a pid and a token, a lock of a gone process older than 0.5 s is removed; after
+// (hooks/lib/session-lock.mjs withSessionLock: it holds a pid and a token, a lock of a gone process older than 0.5 s is removed; after
 // 1 s of waiting the edit is refused). status-file.mjs reads the file through one checked handle (a regular file of at most
 // MAX_STATUS_BYTES) and renames a new temp file over it, so a STATUS.md that is a link, FIFO or anything but a regular file is
 // refused. An id is one plain word starting with a letter or digit (ID), so no heading or bullet rides in on it.
 import { lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { withSessionLock } from '../../hooks/lib/session-store.mjs';
+import { withSessionLock } from '../../hooks/lib/session-lock.mjs';
 import { findSection, isTableRow, parseWorkItems, rowCells } from '../estimate/lib/items.mjs';
 import { noteTable, stateDir as defaultStateDir } from '../estimate/lib/table-store.mjs';
 import { readStatusFile, replaceStatusFile } from './status-file.mjs';

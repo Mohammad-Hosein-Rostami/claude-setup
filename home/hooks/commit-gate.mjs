@@ -34,7 +34,8 @@ import { closeSync, existsSync, openSync, readSync, realpathSync, statSync } fro
 import { devNull, homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readSessionFile, withSessionLock, writeSessionFile } from './lib/session-store.mjs';
+import { withSessionLock } from './lib/session-lock.mjs';
+import { readSessionFile, writeSessionFile } from './lib/session-store.mjs';
 import { changedSinceBaseline, hasBaseline, saveBaseline } from './lib/dirty-baseline.mjs';
 import { LEAD, isRecordedEntry, realPathOf, recordEditedFile, recordedPaths, statusEntries } from './lib/own-edits.mjs';
 import { agentFileWrites } from './lib/writer-agents.mjs';
