@@ -35,10 +35,10 @@ Args marked `?` are optional. Every script also accepts `scriptsDir` (this folde
   With `landing`, the full suite runs on each round's tip beside the reviews (`test-pass run --repo <dir> --suite`, never with the command text). Result `clean` is the only landable state.
   A runner recomputes the review set with `review-tier` every round, from the lane's worktree and with every `--add-class`; the fix agent never supplies it. A tier that did not exit 0, has no `reviews` list,
   or (landing) is empty with nothing carried over ends the run `failed`. A verifier or judge that threw ends the round `incomplete`. The result's `tip` is the reviewed sha.
-- `land` first checks that the branch is at the reviewed `tip` (else `failed`, nothing lands), runs `git-tidy land --rebase-only`, then a suite PASS at the tip, then `git-tidy land`; results `landed`, `conflict`, `needs-review`, `failed`.
+- `land` first checks that the branch is at the reviewed `tip` (else `failed`, nothing lands), runs `git-tidy land --rebase-only`, then a suite PASS at the tip, then `git-tidy land`; results `landed`, `conflict`, `needs-review`, `red`, `failed`.
 - `land` and `build` start with a disk check (`~/.claude/tools/disk-free`, README there): below 5 GB free (`DISK_FAIL_FREE_GB`), or a check that could not run, `land` returns `failed` and `build` marks every lane `failed` before any agent or git step, with the message that names the caches to clear. `WARN` (below 15 GB) does not stop them.
 - `build` runs lanes as a pipeline (implementer and, for `acceptanceTests`, a test-writer, each in a worktree), a Join runner, the `review`
-  child, then a serial land queue through the `land` child, so lane A lands while lane B is still in review. A conflict or changed patches go back through `review`.
+  child, then a serial land queue through the `land` child, so lane A lands while lane B is still in review. A conflict, a `red` suite or changed patches go back through `review`.
   A lane whose review is clean but whose `leadList` holds a security finding ruled not real is held (`lead-decision`), never landed. `build` is run from its script file only: its children cannot run from an inline script.
 - `step` runs one agent with the given type, model and effort. A workflow spawn does not fire `agent-model-guard`, so `step` repeats its gates by shape: a UI agent needs a `MATRIX:` line, a writer needs `isolation` or `alone: true`, `statusFile` adds the standing-rules line.
 
@@ -47,23 +47,24 @@ Args marked `?` are optional. Every script also accepts `scriptsDir` (this folde
 Checkpoints and a waiver replace the second full review of a lane that a contract and its tests have already proven; an Opus-max audit after the land keeps the accuracy.
 
 - `review`: `waiverAt` is the sha `build` proved by its checkpoints. Round 0 then runs only `tier.waivable.reviews`, and only when `waiverAt` is that sha, the tier came from the runner (not `args.tier`),
-  `tier.waivable` is not null, `tier.weakened` is empty and `deltaOf` is absent. `waived` in the result is true when that round 0 ended clean. Any confirmed finding, open item or red suite makes
+  `tier.waivable.reviews` is not empty, `tier.weakened` is empty and `deltaOf` is absent. `waived` in the result is true when that round 0 ended clean. Any confirmed finding, open item or red suite makes
   round 1 a whole-range, full-set round (`deltaOf` reset). `weakened` entries (a skipped test, a loosened bound, a removed assert) are listed in every lens prompt. `principles` (`{id, question}[]`,
   ids from `home/rules/principles.md`) are added to the tier's own `principles` in every lens prompt: each is answered yes or no with `file:line`, and a no is a finding. The result's `baseSha` (merge-base
   of the last round) and `tip` are the range that was reviewed.
 - `review` audit mode: `audit: {base, tip}` (recorded shas, never a branch name) needs `fix: false` and `landing: false`, else the script throws; it refuses `deltaOf`, `tier`, `waiverAt` and `initialFindings`.
-  It reviews `tier.waivable.audit`, or the full set when the range is no longer waivable; a missing or empty set, or 0 changed lines, is `failed` ("empty audit"), never clean.
+  It reviews `tier.waivable.audit`, or the full set when the range is no longer waivable; a missing set gets the full set, but only an empty set, or 0 changed lines, is `failed` ("empty audit"), never clean.
 - `build` contract: each lane may carry `principles`, `checkpoints` (`{id, run, exit, files, kind: 'red-first'|'keeps-working'}`) and `addClasses`; top-level `appendOnly` lists the files lanes may share.
   `checkArgs` throws when two lanes share another file or a checkpoint's `files` overlap its lane's `files`. The implementer never edits locked files (checkpoint files and the test-writer's); it writes `contract-dispute: <file>: <why>` instead.
 - `build` join: a runner reports, the script judges. Lists: `vacuous` (test-writer files that already pass at the base side), `outOfScope` (changed files outside `files` and the tests), `contractTouched`
   (locked files the implementer changed), and `checkpoints` with `baseExit` and `headExit`. `contractTouched` not empty gives status `contract-touched`: refused, not reviewed. A checkpoint passes when `headExit`
   equals its `exit`; `red-first` must differ at the base side, `keeps-working` must pass at both. `waiverAt` is the joined sha only with a test-writer, one `red-first` checkpoint, every checkpoint met,
-  and `vacuous` and `outOfScope` empty. Each failure becomes a first finding of the review.
+  `vacuous` and `outOfScope` empty, and no `contract-dispute` from the implementer. Each failure becomes a first finding of the review.
 - `build` stage 5, `auditLane` (a lane that is `landed` and was `waived`): `audit-log record --state pending` under the landed sha (the gate key), then `should-audit`; sampled out is recorded as such; otherwise a detached
   worktree at the reviewed tip T and a `review` child in audit mode on `B..T`; the result is `record --state done --confirmed N`, or `error` when the child did not finish. N above 0 gives the lane status
   `audit-findings` (landed, with the findings); an audit that could not run gives `audit-error`. While a record is `pending`, `error` or has findings with no `resolve`, `audit-log gate` fails, and so do the push hook and the sync-machines verify step.
-- `land`: a suite that exits non-zero at the rebased tip returns `red` (`patchesChanged: 0`, `tidy` holds the failing tests). `build` handles `red` like `conflict`: an implementer fixes it, then the delta is reviewed.
-- `bugfix`: takes no `tier` arg (the review runner computes it); a land `red` goes to a fix agent, then review, like a conflict.
+  One exception: when `record --state pending` itself fails, the gate holds nothing for the lane, and the lane's text says to run the audit by hand.
+- `land`: a suite that exits non-zero at the rebased tip returns `red` (`patchesChanged: 0`, `tidy` holds the failing tests). `build` turns `red` into an `initialFindings` entry of a delta review, and that review's fix agent repairs it (a conflict is handled the same way).
+- `bugfix`: takes no `tier` arg (the review runner computes it); a land `red` goes to a lane fix agent, then the whole range is reviewed again, like a conflict.
 
 ## Restart (after a stop that lost the journal)
 

@@ -63,3 +63,25 @@ test('README: the args table lists the round 5 args', () => {
     assert.ok(text.includes(needle), `args table misses ${needle}`);
   }
 });
+
+test('README: the older land and build bullets name `red` too', () => {
+  const text = read('home/workflows/README.md');
+  const bulletStartingWith = (start) => text.slice(text.indexOf(start)).split('\n- ')[0];
+  const landBullet = bulletStartingWith('- `land` first checks');
+  const buildBullet = bulletStartingWith('- `build` runs lanes as a pipeline');
+  assert.match(landBullet, /`red`/, 'the land results list misses `red`');
+  assert.match(buildBullet, /`red`/, 'the build re-review sentence misses `red`');
+});
+
+test('README: red is fixed differently in build and bugfix, and the waiver and gate exceptions are stated', () => {
+  const section = readmeSection('Round 5: contracts, waiver and audit');
+  assert.match(section, /initialFindings[^\n]*fix agent|fix agent[^\n]*initialFindings/, 'build path of red is not stated');
+  assert.match(section, /`waiverAt` is the joined sha[\s\S]*?no `contract-dispute`/, 'waiverAt does not mention contract-dispute');
+  assert.match(section, /record --state pending` itself fails[^\n]*holds nothing/, 'pending-record failure exception is missing');
+});
+
+test('README: waivable conditions match review.js (non-empty waivable.reviews; a missing audit set gets the full set)', () => {
+  const section = readmeSection('Round 5: contracts, waiver and audit');
+  assert.match(section, /`tier\.waivable\.reviews` is not empty/);
+  assert.match(section, /only an empty set[^\n]*failed|an empty set[^\n]*`failed`/);
+});
