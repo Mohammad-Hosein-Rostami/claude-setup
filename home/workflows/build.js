@@ -1,24 +1,18 @@
-// build: implement lanes in parallel worktrees, join, review, land. Per lane: implementer (and a test-writer when acceptanceTests) in
-// isolated worktrees, a runner Join (cherry-pick the test commits, run the related tests, close the implement row, start the close row),
-// the `review` child (landing review with fixes), then a serial land queue through the `land` child. Lane A lands while lane B is still in review.
-// Args: { base, repo, suite, writers, statusFile, scriptsDir, appendOnly?, lanes: [{ row, closeRow, branch, spec, files, acceptanceTests, implementer:
-//   { agentType?, model, effort }, matrix?, principles?, checkpoints?, addClasses? }] }  (matrix: the coverage matrix path, or `none: <reason of 15+ characters>`, required when the implementer is a
-//   ui-implementer: the UI brief gate of agent-model-guard does not fire for a workflow spawn; scriptsDir: the folder holding review.js and land.js; writers: writer agents at once, across lanes;
-//   lane contract: principles [{id, question}], checkpoints [{id, run, exit, files, kind: red-first|keeps-working}], addClasses [review-tier classes]; appendOnly: files several lanes may list,
-//   such as docs/catalog.md; checkArgs throws when two lanes share any other file or a checkpoint's files overlap its lane's files).
-// Returns: { lanes: [{ row, closeRow, status, sha, text, findings?, optional?, audit? }], leadList } with status landed | implementer-stopped | wrong-branch |
-//   join-failed | contract-touched | review-<status of the review> | lead-decision | failed (land said so) | audit-findings | audit-error; the lead reads text and decides.
-//   lead-decision: the review is clean but a security finding was ruled not real by a weaker check or the judge: the lane is held, never landed, until
-//   the lead rules (sha is the reviewed tip to land with wf-land). findings and optional (kept only when not empty) are the review's own lists.
-//   contract-touched: the implementer edited a locked file (a checkpoint's files or the test-writer's): refused, not reviewed. audit-findings / audit-error: the
-//   lane landed, but its post-land audit found something or could not finish; sync and push stay closed (audit-log gate).
-// Join: a runner runs commands and reports exit codes; this script judges them. A lane gets `waiverAt` (the review may use its short waived set) only with a test-writer,
-//   a red-first checkpoint, every checkpoint met at base and head, nothing vacuous or out of scope. Stage 5 `auditLane` runs after the land, beside the other lanes.
-// Landing: land gets the reviewed tip and refuses a branch that is not at it. wrong-branch: an agent returned a branch other than the lane's.
-// Writers of one lane's fixes run one at a time inside `review`; `writers` bounds the build agents of all lanes, so fix agents (one per lane at
-// most) are not counted in it. Branch rule: a lane's agent renames its throwaway worktree branch to the lane branch; a re-done lane (the branch exists) continues
-// that branch instead (remove the old worktree, switch, rebase, delete the throwaway branch).
-// Scripts cannot import, so checkArgs and the limiter are repeated where needed (home/workflows/README.md).
+// build: implement lanes in parallel worktrees, join, review, land. Per lane: implementer (and a test-writer when acceptanceTests) in isolated worktrees, a runner Join
+// (cherry-pick the test commits, run the related tests, close the implement row, start the close row), the `review` child (landing review with fixes), then a serial
+// land queue through the `land` child. Lane A lands while lane B is still in review.
+// Args: { base, repo, suite, writers, statusFile, scriptsDir, appendOnly?, lanes: [{ row, closeRow, branch, spec, files, acceptanceTests, implementer: { agentType?, model, effort },
+//   matrix?, principles?, checkpoints?, addClasses? }] } (home/skills/wf-build/SKILL.md explains each key). checkArgs throws when two lanes share a file that is not in appendOnly
+//   (a folder and a file inside it count), when a checkpoint's files overlap its lane's files, or when a ui-implementer lane has no matrix.
+// Returns: { lanes: [{ row, closeRow, status, sha, text, findings?, optional?, audit? }], leadList } with status landed | implementer-stopped | wrong-branch | join-failed |
+//   contract-touched | review-<status of the review> | lead-decision | failed (land said so) | audit-findings | audit-error; the lead reads text and decides.
+//   lead-decision: a clean review with a security finding ruled not real by a weaker check or the judge: held, never landed, until the lead rules. leadList also holds each `contract-dispute`.
+//   contract-touched: the implementer edited a locked file (a checkpoint's files or the test-writer's): not reviewed. audit-findings / audit-error: the lane landed, but its post-land
+//   audit found something or could not finish; sync and push stay closed (audit-log gate), except audit-error with "gate holds nothing" in its text: nothing was recorded, run the audit by hand.
+// Join: a runner runs commands and reports exit codes; this script judges them. A lane gets `waiverAt` (the review may use its short waived set) only with a test-writer, a red-first
+//   checkpoint, every checkpoint met at base and head, nothing vacuous or out of scope and no dispute. A lane with nothing locked is not asked for contractTouched.
+// Writers of one lane's fixes run one at a time inside `review`; `writers` bounds the build agents of all lanes. Branch rule: a lane's agent renames its throwaway worktree branch to
+// the lane branch; a re-done lane (the branch exists) continues that branch. Scripts cannot import, so checkArgs and the limiter are repeated where needed (home/workflows/README.md).
 export const meta = {
   name: 'build',
   description: 'Implement lanes in parallel worktrees, join, review with fixes, land one lane at a time',
@@ -93,14 +87,17 @@ const testWriterPrompt = (lane) => `${standingRulesLine}Write the acceptance tes
   + `Your worktree starts on a throwaway branch (named worktree-...): rename it with \`git branch -m ${testBranch(lane)}\`. Commit; never merge, never push. Return branch, worktree (your pwd), sha (HEAD).`
 // The join runner only runs commands and reports numbers and file lists; judgeContract below decides from the exit codes (never a model's reading).
 const joinPrompt = (lane, built, written) => {
+  const checkpoints = lane.checkpoints ?? []
   const baseSide = written ? `the test-writer worktree ${written.worktree} (at ${written.sha})` : 'a detached worktree at `git merge-base ' + args.base + ' HEAD` (git worktree add --detach, removed when you are done)'
-  const locked = lockedFiles(lane).join(' ')
+  const lockedPathspec = [...lockedFiles(lane), ...(written ? [`<the test files changed by ${written.sha}>`] : [])].join(' ')
+  // Nothing locked (no checkpoint, no test-writer): no base-side run and no contractTouched. An empty pathspec would list every changed file.
+  const locked = lockedPathspec !== ''
   return [
     `Join lane ${lane.row} in its worktree ${built.worktree} (branch ${lane.branch}). Bash timeout 600000 for every test or checkpoint command, 60000 for any other.`,
     written ? `Cherry-pick onto the lane only the commits of ${written.branch} (worktree ${written.worktree}, sha ${written.sha}) that \`git cherry ${lane.branch} ${written.branch}\` marks +. Keep the helper branch and worktree until the base-side runs below are done.` : '',
-    `Base-side runs, in ${baseSide}: ${written ? `run each test file changed by ${written.sha} (git diff --name-only ${args.base}...${written.sha}) alone with the repo's single-file test command and list in vacuous those that exit 0; ` : ''}${(lane.checkpoints ?? []).length > 0 ? `run each checkpoint's command and keep its exit as baseExit: ${lane.checkpoints.map((checkpoint) => `${checkpoint.id}: ${checkpoint.run}`).join('; ')}.` : ''}`,
-    (lane.checkpoints ?? []).length > 0 ? `Head runs, in ${built.worktree} (the joined HEAD): run the same checkpoint commands, keep each exit as headExit and the last 3 output lines as tail (no secrets). Report every checkpoint as {id, baseExit, headExit, tail}.` : '',
-    `Lists (file names, empty when none): outOfScope = files in \`git diff --name-only ${args.base}...HEAD\` that are neither inside ${lane.files.join(', ')} nor test files of the lane; contractTouched = \`git diff ${written ? written.sha : '<the merge-base sha above>'} HEAD --name-only -- ${locked}${written ? ` <the test files changed by ${written.sha}>` : ''}\`.`,
+    locked ? `Base-side runs, in ${baseSide}: ${written ? `run each test file changed by ${written.sha} (git diff --name-only ${args.base}...${written.sha}) alone with the repo's single-file test command and list in vacuous those that exit 0; ` : ''}${checkpoints.length > 0 ? `run each checkpoint's command and keep its exit as baseExit: ${checkpoints.map((checkpoint) => `${checkpoint.id}: ${checkpoint.run}`).join('; ')}.` : ''}` : '',
+    checkpoints.length > 0 ? `Head runs, in ${built.worktree} (the joined HEAD): run the same checkpoint commands, keep each exit as headExit and the last 3 output lines as tail (no secrets). Report every checkpoint as {id, baseExit, headExit, tail}.` : '',
+    `Lists (file names, empty when none): outOfScope = files in \`git diff --name-only ${args.base}...HEAD\` that are neither inside ${lane.files.join(', ')} nor test files of the lane${locked ? `; contractTouched = \`git diff ${written ? written.sha : '<the merge-base sha above>'} HEAD --name-only -- ${lockedPathspec}\`` : ''}.`,
     written ? `Then delete the helper branch ${written.branch} and its worktree.` : '',
     `Run the related tests for the lane's changed files with the repo's own command (e.g. node scripts/affected-tests.mjs --base ${args.base} --run, vitest related --run, jest --findRelatedTests) and report red true when any fail, with the failing lines in tail.`,
     `Then update the rows: ${STATUS} --file ${args.statusFile} done ${lane.row} "implemented ${lane.branch}; related tests green or red as you found them" and ${STATUS} --file ${args.statusFile} start ${lane.closeRow}. Return red, tail, sha (HEAD of the lane), worktree, vacuous, outOfScope, contractTouched, checkpoints.`,
@@ -117,7 +114,7 @@ const listsOf = (reviewed) => ({ ...(reviewed.findings?.length > 0 ? { findings:
 const heldForLead = (lane, reviewed) => outcome(lane, 'lead-decision', reviewed.tip,
   `security findings ruled not real by a weaker check, so the lane is held: ${reviewed.leadList.map((item) => `${item.id} ${item.file}:${item.line} (${item.reason})`).join('; ')}. Land with wf-land at tip ${reviewed.tip} only after the lead rules.`, listsOf(reviewed))
 // The verdict on the join's numbers. Passing at head means headExit equals the declared exit; red-first must differ at base, keeps-working must match.
-// waiverAt is only the joined sha when a test-writer ran, a red-first checkpoint exists and nothing below produced a finding.
+// waiverAt is only the joined sha when a test-writer ran, a red-first checkpoint exists, nothing below produced a finding and the implementer disputed nothing.
 const judgeContract = (lane, written, built, joined) => {
   const findings = []
   const problem = (id, text) => findings.push(finding(`contract-${lane.row}-${id}`, '(contract)', text, 'fix the change (or add the missing test) so the contract holds; locked files are never edited'))
@@ -131,9 +128,8 @@ const judgeContract = (lane, written, built, joined) => {
   }
   joined.vacuous.forEach((file) => problem(`vacuous-${file}`, `test ${file} passes without the change (vacuous)`))
   joined.outOfScope.forEach((file) => problem(`scope-${file}`, `${file} changed but is outside the lane's files`))
-  ;(built.disputes ?? []).forEach((line, at) => problem(`dispute-${at}`, `implementer dispute, unresolved: ${line}`))
   const redFirst = (lane.checkpoints ?? []).some((checkpoint) => checkpoint.kind === 'red-first')
-  return { findings, waiverAt: written !== null && redFirst && findings.length === 0 ? joined.sha : undefined }
+  return { findings, waiverAt: written !== null && redFirst && findings.length === 0 && (built.disputes ?? []).length === 0 ? joined.sha : undefined }
 }
 const reviewChild = async (lane, extra) => {
   const reviewed = await workflow({ scriptPath: `${args.scriptsDir}/review.js` }, extra)
@@ -163,7 +159,8 @@ async function joinLane(step) {
   const joined = await agent(joinPrompt(lane, built, written), { label: `${lane.row}:join`, phase: 'Join', schema: JOINED, ...RUNNER })
   if (joined === null) return outcome(lane, 'join-failed', built.sha, 'the join runner was stopped')
   if (!SAFE_PATH.test(joined.worktree)) return outcome(lane, 'join-failed', built.sha, `the join runner returned a worktree path that is not a plain absolute path: ${joined.worktree}`)
-  if (joined.contractTouched.length > 0) {
+  const nothingLocked = written === null && lockedFiles(lane).length === 0 // then the runner was never asked for contractTouched
+  if (!nothingLocked && joined.contractTouched.length > 0) {
     return outcome(lane, 'contract-touched', joined.sha, `locked contract files were edited: ${joined.contractTouched.join(', ')}; not reviewed or landed. Disputes: ${(built.disputes ?? []).join('; ') || 'none given'}`)
   }
   return { lane, built, written, joined }
@@ -173,6 +170,8 @@ async function reviewLane(step) {
   if (step.status) return step
   const { lane, built, written, joined } = step
   const contract = judgeContract(lane, written, built, joined)
+  // A dispute asks the lead to rule on a locked file: the fix agent cannot edit it, so it is no finding of the review (the lane's waiver is blocked above).
+  leadList.push(...(built.disputes ?? []).map((line, at) => ({ id: `dispute-${lane.row}-${at}`, file: '(contract)', line: 0, reason: `implementer dispute, unresolved: ${line}` })))
   const initialFindings = [...(joined.red ? [finding(`join-${lane.row}`, '(tests)', `related tests are red after the join: ${joined.tail}`, 'make the related tests pass')] : []), ...contract.findings]
   const reviewed = await reviewChild(lane, reviewArgs(lane, joined.worktree, { ...(initialFindings.length > 0 ? { initialFindings } : {}), ...(contract.waiverAt ? { waiverAt: contract.waiverAt } : {}) }))
   if (reviewed.status !== 'clean') return outcome(lane, `review-${reviewed.status}`, reviewed.tip, reviewed.text, listsOf(reviewed))
@@ -219,12 +218,13 @@ async function auditLane(step) {
 
 async function auditAfterLand(step, { lane, baseSha, tip, landedSha, escalated }) {
   const failedAudit = (text, findings = []) => ({ ...step, status: 'audit-error', text, audit: { status: 'error', findings } })
-  if (![baseSha, tip, landedSha].every((sha) => GIT_SHA.test(sha ?? ''))) return failedAudit(`no usable shas to audit (base ${baseSha}, tip ${tip}, landed ${landedSha}): nothing was recorded`)
+  if (![baseSha, tip, landedSha].every((sha) => GIT_SHA.test(sha ?? ''))) return failedAudit(`no usable shas to audit (base ${baseSha}, tip ${tip}, landed ${landedSha}): nothing was recorded, so the audit-log gate holds nothing for this lane: run the audit by hand`)
   const auditStep = (name, schema, prompt) => agent(prompt, { label: `${lane.row}:audit-${name}`, phase: 'Audit', schema, ...RUNNER })
   const record = (state, more = '') => `${AUDIT_LOG} record --repo ${args.repo} --tip ${landedSha} --base ${baseSha} --state ${state}${more}`
   const decision = await auditStep('decide', AUDIT_DECISION, `In ${args.repo} run: ${record('pending')}. Then run: ${AUDIT_LOG} should-audit --tip ${landedSha}${escalated ? ' --escalate' : ''} --json. Do not change anything else. Report recordExit, shouldExit, audit (the JSON's audit), reason, tail.`)
-  if (decision === null || decision.recordExit !== 0) return failedAudit(`the audit could not be recorded as pending (${decision === null ? 'the runner was stopped' : decision.tail}), so the audit-log gate cannot be trusted: re-run the audit by hand`)
-  if (decision.shouldExit === 0 && decision.audit === false) {
+  // A stopped runner (null) audits: the finish record settles the state either way (fail closed).
+  if (decision !== null && decision.recordExit !== 0) return failedAudit(`the audit could not be recorded as pending (${decision.tail}), so the audit-log gate holds nothing for this lane: run the audit by hand`)
+  if (decision !== null && decision.shouldExit === 0 && decision.audit === false) {
     const marked = await auditStep('sampled', AUDIT_RECORDED, `In ${args.repo} run: ${record('sampled-out')}. Report exit and tail.`)
     if (marked === null || marked.exit !== 0) return failedAudit('sampled-out could not be recorded: the record stays pending, so sync and push stay closed')
     return { ...step, audit: { status: 'sampled-out', findings: [] } }
@@ -233,7 +233,8 @@ async function auditAfterLand(step, { lane, baseSha, tip, landedSha, escalated }
   const prepared = await auditStep('prepare', AUDIT_PREPARED, `In ${args.repo} run: git merge-base --is-ancestor ${baseSha} ${tip} (ancestor is true when it exits 0) and git diff --numstat ${baseSha} ${tip} (changedLines = the sum of the added and deleted columns). `
     + `Only when ancestor is true and changedLines is above 0: git worktree add --detach <a new folder named ${worktreeName} inside the scratchpad directory your instructions name> ${tip}, and report its absolute path as worktree; otherwise worktree is "". Do not change anything else. Report ancestor, changedLines, worktree, tail.`)
   if (prepared === null || !prepared.ancestor || prepared.changedLines < 1 || !SAFE_PATH.test(prepared.worktree) || !prepared.worktree.endsWith(worktreeName)) {
-    await auditStep('error', AUDIT_RECORDED, `In ${args.repo} run: ${record('error')}. Report exit and tail.`)
+    const refusedWorktree = prepared !== null && SAFE_PATH.test(prepared.worktree) && prepared.worktree.endsWith(worktreeName) ? `git worktree remove --force ${prepared.worktree}. Then run: ` : ''
+    await auditStep('error', AUDIT_RECORDED, `In ${args.repo} run: ${refusedWorktree}${record('error')}. Report exit and tail.`)
     return failedAudit(`the audit range ${baseSha}..${tip} cannot be audited (${prepared === null ? 'the prepare runner was stopped' : JSON.stringify(prepared)}); recorded as error, an empty range is never clean`)
   }
   let audited
@@ -260,40 +261,38 @@ function checkArgs(given) {
   const typeName = (type) => (type === 'array' ? 'an array' : `a ${type}`)
   const check = (holder, path, key, type) => {
     const value = holder === undefined || holder === null ? undefined : holder[key]
-    const ok = type === 'array' ? Array.isArray(value) : typeof value === type
-    if (!ok) throw new Error(`${name}: args.${path}${key} must be ${typeName(type)}`)
+    if (!(type === 'array' ? Array.isArray(value) : typeof value === type)) throw new Error(`${name}: args.${path}${key} must be ${typeName(type)}`)
   }
-  const required = { base: 'string', repo: 'string', suite: 'string', writers: 'number', statusFile: 'string', scriptsDir: 'string', lanes: 'array' }
-  for (const [key, type] of Object.entries(required)) check(given, '', key, type)
+  for (const [key, type] of Object.entries({ base: 'string', repo: 'string', suite: 'string', writers: 'number', statusFile: 'string', scriptsDir: 'string', lanes: 'array' })) check(given, '', key, type)
   given.lanes.forEach((lane, at) => {
-    const laneKeys = { row: 'string', closeRow: 'string', branch: 'string', spec: 'string', files: 'array', acceptanceTests: 'boolean', implementer: 'object' }
-    for (const [key, type] of Object.entries(laneKeys)) check(lane, `lanes[${at}].`, key, type)
+    for (const [key, type] of Object.entries({ row: 'string', closeRow: 'string', branch: 'string', spec: 'string', files: 'array', acceptanceTests: 'boolean', implementer: 'object' })) check(lane, `lanes[${at}].`, key, type)
     for (const key of ['model', 'effort']) check(lane.implementer, `lanes[${at}].implementer.`, key, 'string')
     checkContract(lane, at)
-    if (lane.implementer.agentType === 'ui-implementer') {
-      const usable = typeof lane.matrix === 'string' && (lane.matrix.startsWith('none:') ? lane.matrix.slice('none:'.length).trim().length >= 15 : lane.matrix.trim() !== '')
-      if (!usable) throw new Error(`${name}: args.lanes[${at}].matrix must be a coverage matrix path or \`none: <reason of 15+ characters>\` for a ui-implementer`)
-    }
+    const usable = typeof lane.matrix === 'string' && (lane.matrix.startsWith('none:') ? lane.matrix.slice('none:'.length).trim().length >= 15 : lane.matrix.trim() !== '')
+    if (lane.implementer.agentType === 'ui-implementer' && !usable) throw new Error(`${name}: args.lanes[${at}].matrix must be a coverage matrix path or \`none: <reason of 15+ characters>\` for a ui-implementer`)
   })
   if (given.appendOnly !== undefined) check(given, '', 'appendOnly', 'array')
-  const owner = new Map() // file -> the first lane that lists it; a file two lanes share must be appendOnly (their edits would conflict at the land)
+  const owners = [] // {file, row}: a file two lanes share (x and ./x, or a folder and a file in it) must be appendOnly: their edits would conflict at the land
   for (const lane of given.lanes) {
     for (const file of lane.files) {
-      if (owner.has(file) && !(given.appendOnly ?? []).includes(file)) throw new Error(`${name}: lanes ${owner.get(file)} and ${lane.row} both list ${file}: split the lanes or add it to args.appendOnly`)
-      if (!owner.has(file)) owner.set(file, lane.row)
+      const clash = owners.find((owner) => pathsOverlap(owner.file, file))
+      if (clash && !(given.appendOnly ?? []).includes(file)) throw new Error(`${name}: lanes ${clash.row} and ${lane.row} both list ${clash.file === file ? file : `${clash.file} and ${file}`}: split the lanes or add it to args.appendOnly`)
+      if (!clash) owners.push({ file, row: lane.row })
     }
+  }
+  function pathsOverlap(first, second) {
+    const [a, b] = [first, second].map((path) => path.replace(/\\/g, '/').replace(/^(\.\/)+/, '').replace(/\/+$/, ''))
+    return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`)
   }
 
   function checkContract(lane, at) {
     for (const [key, type] of Object.entries({ principles: 'array', checkpoints: 'array', addClasses: 'array' })) if (lane[key] !== undefined) check(lane, `lanes[${at}].`, key, type)
-    ;(lane.principles ?? []).forEach((principle, index) => {
-      for (const key of ['id', 'question']) check(principle, `lanes[${at}].principles[${index}].`, key, 'string')
-    })
+    ;(lane.principles ?? []).forEach((principle, index) => ['id', 'question'].forEach((key) => check(principle, `lanes[${at}].principles[${index}].`, key, 'string')))
     ;(lane.checkpoints ?? []).forEach((checkpoint, index) => {
       const path = `lanes[${at}].checkpoints[${index}].`
       for (const [key, type] of Object.entries({ id: 'string', run: 'string', exit: 'number', files: 'array', kind: 'string' })) check(checkpoint, path, key, type)
       if (checkpoint.kind !== 'red-first' && checkpoint.kind !== 'keeps-working') throw new Error(`${name}: args.${path}kind must be red-first or keeps-working`)
-      const shared = checkpoint.files.filter((file) => lane.files.includes(file))
+      const shared = checkpoint.files.filter((file) => lane.files.some((own) => pathsOverlap(own, file)))
       if (shared.length > 0) throw new Error(`${name}: args.${path}files lists ${shared.join(', ')} of its own lane: checkpoint ${checkpoint.id} files are locked, a lane never edits them`)
     })
   }

@@ -261,3 +261,93 @@ test('an audit that throws leaves the landed lane reported as audit-error, not l
   assert.equal(run.result.lanes[0].sha, LANDED);
   assert.match(call(run, ':audit-finish').prompt, /--state error/);
 });
+
+const reviewOf = (run) => run.calls.find((entry) => entry.workflow === 'review' && !entry.args.audit).args;
+const auditChildren = (run) => run.calls.filter((entry) => entry.workflow === 'review' && entry.args.audit);
+const worktreeNameOf = (prompt) => /named (audit-\S+)/.exec(prompt)[1];
+
+test('a lane with no checkpoints and no test-writer locks nothing: no empty-pathspec diff, no base-side run, and a contractTouched the runner lists anyway is ignored', async () => {
+  const bare = lane('a');
+  const run = await runScript(BUILD, ARGS([bare]), { replies: buildReplies(joined('a', { checkpoints: [], contractTouched: ['a.mjs', 'b.mjs'] })), children: { review: () => reviewedClean('a', { waived: false }), land: () => landedOk() } });
+  const { prompt } = call(run, ':join');
+  assert.doesNotMatch(prompt, /name-only -- *[`.]/, 'no diff with an empty pathspec');
+  assert.doesNotMatch(prompt, /contractTouched = /);
+  assert.doesNotMatch(prompt, /Base-side runs/);
+  assert.equal(run.result.lanes[0].status, 'landed');
+  assert.match(prompt, /outOfScope = /);
+});
+
+test('an implementer dispute goes to the lead (leadList), not into the review as a finding, and blocks waiverAt', async () => {
+  const run = await runContract(contractLane(), { replies: [{ match: /:implement$/, reply: { ...built('a'), disputes: ['tests/a.test.mjs: asserts the wrong exit'] } }] });
+  const review = reviewOf(run);
+  assert.equal(review.waiverAt, undefined);
+  assert.equal((review.initialFindings ?? []).length, 0);
+  assert.equal(run.result.leadList.length, 1);
+  assert.match(JSON.stringify(run.result.leadList[0]), /asserts the wrong exit/);
+  assert.equal(run.result.lanes[0].status, 'landed');
+  assert.equal(run.result.lanes[0].audit, undefined, 'a lane whose waiver was blocked is not audited');
+});
+
+test('a stopped should-audit runner (null) audits anyway: the spec says null means audit', async () => {
+  const run = await runContract(contractLane(), { replies: [{ match: /:audit-decide$/, reply: null }] });
+  assert.equal(auditChildren(run).length, 1);
+  assert.equal(run.result.lanes[0].audit.status, 'clean');
+});
+
+test('shas that are not hex are audit-error before any agent runs: nothing is recorded, and the text says so', async () => {
+  const run = await runContract(contractLane(), { review: (a) => (a.audit ? audited() : reviewedClean('a', { baseSha: 'not a sha; rm' })) });
+  assert.equal(run.result.lanes[0].status, 'audit-error');
+  assert.match(run.result.lanes[0].text, /nothing was recorded/);
+  assert.ok(!run.started.some((label) => label.includes(':audit-')));
+});
+
+test('the audit worktree must be a safe path AND end with the name asked for: each check refuses alone, and a refused safe worktree is removed', async () => {
+  const cases = [['unsafe path that ends right', (name) => `/scratch/$HOME/${name}`], ['safe path that ends wrong', () => '/scratch/other-audit']];
+  for (const [name, pathOf] of cases) {
+    const run = await runContract(contractLane(), { replies: [{ match: /:audit-prepare$/, reply: (p) => ({ ancestor: true, changedLines: 3, worktree: pathOf(worktreeNameOf(p)), tail: '' }) }] });
+    assert.equal(run.result.lanes[0].status, 'audit-error', name);
+    assert.equal(auditChildren(run).length, 0, name);
+    assert.match(call(run, ':audit-error').prompt, /--state error/, name);
+  }
+  const goodName = (p) => worktreeNameOf(p);
+  const empty = await runContract(contractLane(), { replies: [{ match: /:audit-prepare$/, reply: (p) => ({ ancestor: true, changedLines: 0, worktree: `/scratch/${goodName(p)}`, tail: '' }) }] });
+  assert.match(call(empty, ':audit-error').prompt, new RegExp(`git worktree remove --force /scratch/audit-impl-a-${TIP}`), 'a refused worktree that was created is removed');
+});
+
+test('a throw outside the audit review (an audit step that dies) is audit-error with the landed sha, not a lost lane', async () => {
+  const run = await runContract(contractLane(), { replies: [{ match: /:audit-prepare$/, reply: () => { throw new Error('runner died'); } }] });
+  const [entry] = run.result.lanes;
+  assert.equal(entry.status, 'audit-error');
+  assert.equal(entry.sha, LANDED);
+  assert.match(entry.text, /runner died/);
+});
+
+test('a review leadList item counts as confirmed in the done record and makes the lane audit-findings', async () => {
+  const run = await runContract(contractLane(), { review: (a) => (a.audit ? audited({ leadList: [{ id: 'L1', file: 'a.mjs', line: 1, reason: 'weaker check' }] }) : reviewedClean('a')) });
+  assert.match(call(run, ':audit-finish').prompt, /--state done --confirmed 1/);
+  assert.equal(run.result.lanes[0].status, 'audit-findings');
+  assert.deepEqual(run.result.lanes[0].audit.findings.map((item) => item.id), ['L1']);
+});
+
+test('a record that did not take (finish exit, sampled-out exit, or a null runner) is audit-error: the record stays pending', async () => {
+  const finish = await runContract(contractLane(), { replies: [{ match: /:audit-finish$/, reply: { exit: 3, tail: 'no repo' } }] });
+  assert.equal(finish.result.lanes[0].status, 'audit-error');
+  assert.match(finish.result.lanes[0].text, /stay closed/);
+  const finishNull = await runContract(contractLane(), { replies: [{ match: /:audit-finish$/, reply: null }] });
+  assert.equal(finishNull.result.lanes[0].status, 'audit-error');
+  const sampledOut = { match: /:audit-decide$/, reply: { recordExit: 0, shouldExit: 0, audit: false, reason: '', tail: '' } };
+  const sampled = await runContract(contractLane(), { replies: [sampledOut, { match: /:audit-sampled$/, reply: { exit: 1, tail: '' } }] });
+  assert.equal(sampled.result.lanes[0].status, 'audit-error');
+  assert.equal(auditChildren(sampled).length, 0);
+  const sampledNull = await runContract(contractLane(), { replies: [sampledOut, { match: /:audit-sampled$/, reply: null }] });
+  assert.equal(sampledNull.result.lanes[0].status, 'audit-error');
+});
+
+test('checkArgs: lanes that list the same file written two ways, or a folder and a file inside it, are refused', async () => {
+  for (const [first, second] of [['x.mjs', './x.mjs'], ['src', 'src/a.mjs'], ['src/', 'src/a.mjs']]) {
+    const run = await runScript(BUILD, ARGS([lane('a', { files: [first] }), lane('b', { files: [second] })]), { replies: [] });
+    assert.match(String(run.error?.message), /impl-a.*impl-b/, `${first} vs ${second}`);
+  }
+  const folder = lane('a', { files: ['tests'], checkpoints: [CHECKPOINT] });
+  assert.match(String((await runScript(BUILD, ARGS([folder]), { replies: [] })).error?.message), /checkpoint c1/);
+});
