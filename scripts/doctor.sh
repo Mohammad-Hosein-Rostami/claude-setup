@@ -255,10 +255,12 @@ check_disk_free() {
 # What disk-clean (dry run) could remove: an INFO line with the total, a WARN above 2 GB. DOCTOR_DISK_CLEAN_ARGS adds flags (tests point the
 # roots at fake folders; the dry run stops looking after 30 s, so doctor stays fast and the total is then a lower bound).
 check_disk_clean() {
-  local json summary level message warn_bytes="${DOCTOR_DISK_CLEAN_WARN_BYTES:-2147483648}" # 2 GB; the variable is a test hook
-  if ! json="$(node "$REPO/home/tools/disk-free/disk-clean.mjs" --json ${DOCTOR_DISK_CLEAN_ARGS:-} 2>&1)"; then
-    echo "INFO  disk-clean dry run could not run: $json"; return
+  local json summary level message errors warn_bytes="${DOCTOR_DISK_CLEAN_WARN_BYTES:-2147483648}" # 2 GB; the variable is a test hook
+  errors="$(mktemp)"
+  if ! json="$(node "$REPO/home/tools/disk-free/disk-clean.mjs" --json ${DOCTOR_DISK_CLEAN_ARGS:-} 2>"$errors")"; then
+    echo "INFO  disk-clean dry run could not run: $json $(cat "$errors")"; rm -f "$errors"; return
   fi
+  rm -f "$errors" # stderr stays out of the JSON
   summary="$(node -e 'const r = JSON.parse(process.argv[1]); console.log(`${r.bytes > Number(process.argv[2]) ? "WARN" : "INFO"} ${r.items} items, ${(r.bytes / 1024 ** 3).toFixed(2)} GB${r.partial ? " or more" : ""}`)' "$json" "$warn_bytes")"
   level="${summary%% *}"
   message="disk-clean could remove ${summary#* }: run node ~/.claude/tools/disk-free/disk-clean.mjs --apply"

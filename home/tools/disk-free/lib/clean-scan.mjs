@@ -1,9 +1,14 @@
-// Safe file-system helpers for disk-clean. Exports: entriesOf, mtimeOf, treeBytes, touchedSince, removeInside.
-// Invariants: nothing here follows a symlink (lstat and Dirent only); folders are read with opendir one entry at a time, so a folder
-// of a million entries is never held in memory; removeInside refuses any path that is not strictly inside the real path of its root.
-import { lstatSync, realpathSync, rmSync } from 'node:fs';
+// Read-only file-system helpers for disk-clean. Exports: entriesOf, lstatOrNull, mtimeOf, walkTree, treeBytes, touchedSince.
+// Invariants: nothing here follows a symlink (lstat and Dirent only); folders are read with opendir one entry at a time and a walk keeps
+// only one open folder per level, so a folder of a million entries (or a planted one of many more) never fills the memory; a walk stops at
+// a cap of entries and depth and says so. The removal itself is in safe-remove.mjs.
+import { lstatSync } from 'node:fs';
 import { opendir } from 'node:fs/promises';
-import { dirname, join, relative, isAbsolute, sep } from 'node:path';
+import { join } from 'node:path';
+
+export const MAX_WALK_ENTRIES = 2_000_000;
+export const MAX_WALK_DEPTH = 64;
+const BYTES_PER_BLOCK = 512;
 
 /** Streams the entries (Dirent) of a folder; yields nothing when it cannot be read (missing folder, no permission). */
 export async function* entriesOf(folder) {
@@ -11,19 +16,67 @@ export async function* entriesOf(folder) {
   try {
     handle = await opendir(folder);
   } catch (error) {
-    if (error.code === 'ENOENT' || error.code === 'ENOTDIR' || error.code === 'EACCES') return;
+    if (['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error.code)) return;
     throw error;
   }
   yield* handle;
 }
 
-/** Modification time (ms) without following a symlink; null when the path is gone (another process, or the owner, removed it meanwhile). */
-export function mtimeOf(path) {
+/** lstat info without following a symlink; null when the path is gone or cannot be looked at (never throws: unknown means keep). */
+export function lstatOrNull(path) {
   try {
-    return lstatSync(path).mtimeMs;
-  } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    throw error;
+    return lstatSync(path);
+  } catch {
+    return null;
+  }
+}
+
+/** Modification time (ms) without following a symlink; null when the path is gone or cannot be looked at. */
+export const mtimeOf = (path) => lstatOrNull(path)?.mtimeMs ?? null;
+
+/**
+ * Streams the lstat info of a path and, for a folder, of everything under it (depth first, links never entered).
+ * @param {string} root
+ * @param {{ maxEntries?: number, maxDepth?: number }} limits
+ * @param {{ cutShort?: boolean }} outcome set to cutShort=true when a limit or an unreadable folder left part of the tree unseen
+ */
+export async function* walkTree(root, { maxEntries = MAX_WALK_ENTRIES, maxDepth = MAX_WALK_DEPTH } = {}, outcome = {}) {
+  const rootInfo = lstatOrNull(root);
+  if (rootInfo === null) return;
+  yield rootInfo;
+  if (!rootInfo.isDirectory()) return;
+  const rootDir = await opendir(root).catch(() => null);
+  if (rootDir === null) {
+    outcome.cutShort = true;
+    return;
+  }
+  const open = [{ dir: rootDir, path: root }];
+  let seen = 0;
+  try {
+    while (open.length > 0) {
+      const top = open.at(-1);
+      const entry = await top.dir.read();
+      if (entry === null) {
+        open.pop();
+        await top.dir.close();
+        continue;
+      }
+      seen += 1;
+      if (seen > maxEntries) {
+        outcome.cutShort = true;
+        return;
+      }
+      const path = join(top.path, entry.name);
+      const info = lstatOrNull(path);
+      if (info === null) continue;
+      yield info;
+      if (!info.isDirectory()) continue;
+      const dir = open.length >= maxDepth ? null : await opendir(path).catch(() => null);
+      if (dir === null) outcome.cutShort = true;
+      else open.push({ dir, path });
+    }
+  } finally {
+    for (const { dir } of open) await dir.close().catch(() => {});
   }
 }
 
@@ -31,55 +84,31 @@ export function mtimeOf(path) {
  * Bytes of a file or folder tree as lstat sees them (symlinks count as themselves, are never entered).
  * @param {string} path
  * @param {number} deadlineMs Date.now() value after which measuring stops
- * @returns {Promise<{ bytes: number, complete: boolean }>} complete is false when the deadline cut the walk short
+ * @returns {Promise<{ bytes: number, complete: boolean }>} complete is false when the deadline or a walk limit cut the walk short
  */
 export async function treeBytes(path, deadlineMs) {
   let bytes = 0;
-  const pending = [path];
-  while (pending.length > 0) {
+  const outcome = {};
+  for await (const info of walkTree(path, {}, outcome)) {
     if (Date.now() > deadlineMs) return { bytes, complete: false };
-    const current = pending.pop();
-    let info;
-    try {
-      info = lstatSync(current);
-    } catch {
-      continue; // gone while walking: another process removed it
-    }
-    bytes += info.blocks === undefined ? info.size : info.blocks * 512;
-    if (!info.isDirectory()) continue;
-    for await (const entry of entriesOf(current)) pending.push(join(current, entry.name));
+    bytes += info.blocks === undefined ? info.size : info.blocks * BYTES_PER_BLOCK;
   }
-  return { bytes, complete: true };
-}
-
-/** True when the folder or any entry directly in it was modified after `cutoffMs` (stops at the first one found). */
-export async function touchedSince(folder, cutoffMs) {
-  try {
-    if (lstatSync(folder).mtimeMs > cutoffMs) return true;
-  } catch {
-    return false;
-  }
-  for await (const entry of entriesOf(folder)) {
-    try {
-      if (lstatSync(join(folder, entry.name)).mtimeMs > cutoffMs) return true;
-    } catch {
-      // removed meanwhile
-    }
-  }
-  return false;
+  return { bytes, complete: outcome.cutShort !== true };
 }
 
 /**
- * Removes `path` (a file, or a folder with everything in it; links inside are removed, never entered).
- * @param {string} realRoot realpath of the root the clean-up works in
- * @param {string} path what to remove
- * @throws {Error} when the path is the root itself, is outside it, is a symlink, or its parent folder resolves outside the root
+ * True when the path, or anything anywhere under it, was modified after `cutoffMs` (stops at the first one found). Also true when the
+ * path is gone or the walk was cut short: what cannot be seen counts as busy, so it is kept.
+ * @param {string} path
+ * @param {number} cutoffMs
+ * @param {{ maxEntries?: number, maxDepth?: number }} limits the walk caps (tests make them small)
  */
-export function removeInside(realRoot, path) {
-  const inside = relative(realRoot, path);
-  if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) throw new Error(`disk-clean: ${path} is not inside ${realRoot}`);
-  if (lstatSync(path).isSymbolicLink()) throw new Error(`disk-clean: ${path} is a symlink and is never removed`);
-  const parent = realpathSync(dirname(path));
-  if (parent !== realRoot && !parent.startsWith(realRoot + sep)) throw new Error(`disk-clean: ${path} resolves outside ${realRoot}`);
-  rmSync(path, { recursive: true, force: true });
+export async function touchedSince(path, cutoffMs, limits = {}) {
+  const outcome = {};
+  let sawRoot = false;
+  for await (const info of walkTree(path, limits, outcome)) {
+    sawRoot = true;
+    if (info.mtimeMs > cutoffMs) return true;
+  }
+  return !sawRoot || outcome.cutShort === true;
 }

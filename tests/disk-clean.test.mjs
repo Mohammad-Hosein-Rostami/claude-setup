@@ -4,50 +4,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runClean } from '../home/tools/disk-free/disk-clean.mjs';
-import { removeInside } from '../home/tools/disk-free/lib/clean-scan.mjs';
-import { makeTempDir } from './temp-dir-helpers.mjs';
+import { removeInside } from '../home/tools/disk-free/lib/safe-remove.mjs';
+import { age, CURRENT, folder, NEWEST, NO_TRANSCRIPT_OLD, NO_TRANSCRIPT_RECENT, OLD, RECENT, transcript, world } from './disk-clean-helpers.mjs';
 
 const TOOL = fileURLToPath(new URL('../home/tools/disk-free/disk-clean.mjs', import.meta.url));
 const LIB = fileURLToPath(new URL('../home/tools/disk-free/lib/', import.meta.url));
-const DAY_MS = 24 * 60 * 60 * 1000;
 const posix = { skip: process.platform === 'win32' && 'symlinks need extra rights' };
-const OLD = 'aaaaaaaa-0000-4000-8000-000000000001';
-const RECENT = 'bbbbbbbb-0000-4000-8000-000000000002';
-const NO_TRANSCRIPT_OLD = 'cccccccc-0000-4000-8000-000000000003';
-const NO_TRANSCRIPT_RECENT = 'dddddddd-0000-4000-8000-000000000004';
-const CURRENT = 'eeeeeeee-0000-4000-8000-000000000005';
-const NEWEST = 'ffffffff-0000-4000-8000-000000000006';
-
-/** A fake world: { claudeTmp, projects, tmp, options }. Times are set from `now`, so no test depends on the clock. */
-function world() {
-  const root = makeTempDir('disk-clean-');
-  const dirs = { claudeTmp: join(root, 'claude-501'), projects: join(root, 'projects'), tmp: join(root, 'tmp') };
-  for (const dir of Object.values(dirs)) mkdirSync(dir, { recursive: true });
-  const now = Date.now();
-  return { ...dirs, root, now, options: { ...dirs, nowMs: now, budgetMs: 5000, apply: true, session: undefined } };
-}
-
-const ago = (days) => new Date(Date.now() - days * DAY_MS);
-const age = (path, days) => utimesSync(path, ago(days), ago(days));
-function folder(path, { days = 0, files = { 'f.txt': 'data' } } = {}) {
-  mkdirSync(path, { recursive: true });
-  for (const [name, text] of Object.entries(files)) {
-    writeFileSync(join(path, name), text);
-    age(join(path, name), days);
-  }
-  age(path, days);
-  return path;
-}
-function transcript(w, slug, id, days) {
-  mkdirSync(join(w.projects, slug), { recursive: true });
-  const file = join(w.projects, slug, `${id}.jsonl`);
-  writeFileSync(file, '{}\n');
-  age(file, days);
-}
 
 test('session folders: removed when the transcript is idle for 3 days, or missing and the folder is; kept otherwise', async () => {
   const w = world();
@@ -92,20 +58,21 @@ test('session folders: a folder that is not named like a session id, or is a sym
 
 test('test temp: old cs-test-, cs-run- and old-prefix folders go; fresh ones, wrong shapes, files, links and other folders stay', posix, async () => {
   const w = world();
-  const old = ['cs-test-x-AbCdEf', 'cs-run-Zz9Zz9', 'refs-Ab12Cd', 'git-tidy-QQQQQQ'].map((name) => folder(join(w.tmp, name), { days: 2 }));
+  const old = ['cs-test-x-AbCdEf', 'cs-run-Zz9Zz9', 'advice-home-Ab12Cd', 'git-tidy-QQQQQQ'].map((name) => folder(join(w.tmp, name), { days: 2 }));
   const keep = [
     folder(join(w.tmp, 'cs-test-fresh-AbCdEf'), { days: 0 }),
-    folder(join(w.tmp, 'refs-Ab12'), { days: 5 }), // not prefix + 6 characters
+    folder(join(w.tmp, 'advice-home-Ab12'), { days: 5 }), // not prefix + 6 characters
+    folder(join(w.tmp, 'refs-Ab12Cd'), { days: 5 }), // a generic old prefix: not on the list any more
     folder(join(w.tmp, 'my-project'), { days: 5 }),
   ];
-  writeFileSync(join(w.tmp, 'refs-FileXX'), 'a file, not a folder');
-  age(join(w.tmp, 'refs-FileXX'), 5);
+  writeFileSync(join(w.tmp, 'advice-home-FileXX'), 'a file, not a folder');
+  age(join(w.tmp, 'advice-home-FileXX'), 5);
   const victim = folder(join(w.root, 'victim'), { days: 5, files: { 'keep.txt': 'precious' } });
-  symlinkSync(victim, join(w.tmp, 'refs-LinkXX'));
+  symlinkSync(victim, join(w.tmp, 'advice-home-LinkXX'));
   await runClean(w.options);
   assert.deepEqual(old.map(existsSync), [false, false, false, false]);
-  assert.deepEqual(keep.map(existsSync), [true, true, true]);
-  assert.equal(existsSync(join(w.tmp, 'refs-FileXX')), true);
+  assert.deepEqual(keep.map(existsSync), [true, true, true, true]);
+  assert.equal(existsSync(join(w.tmp, 'advice-home-FileXX')), true);
   assert.equal(readFileSync(join(victim, 'keep.txt'), 'utf8'), 'precious');
 });
 

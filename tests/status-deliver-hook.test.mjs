@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { writeSessionFile } from '../home/hooks/lib/session-store.mjs';
 import { deliverAtStop } from '../home/hooks/status-deliver.mjs';
 import { runStatus } from '../home/tools/status/status.mjs';
-import { makeTempDir } from './temp-dir-helpers.mjs';
+import { makeTempDir, removeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/status-deliver.mjs', import.meta.url));
 const ESTIMATE = fileURLToPath(new URL('../home/tools/estimate/estimate.mjs', import.meta.url));
@@ -210,9 +210,13 @@ test('a cwd whose path is only a name prefix of the STATUS.md folder does not co
   const { cwd, read } = await linkedProject(ALL_DONE, stateDir);
   const prefix = cwd.slice(0, -2); // `/tmp/deliver-project-ab` for `/tmp/deliver-project-abcd`: a sibling folder, not a parent
   mkdirSync(prefix);
-  const outcome = deliverAtStop({ session_id: SESSION, cwd: prefix }, { stateDir, now: NOW });
-  assert.match(outcome.message, /outside/);
-  assert.doesNotMatch(read(), /deliver:/);
+  try {
+    const outcome = deliverAtStop({ session_id: SESSION, cwd: prefix }, { stateDir, now: NOW });
+    assert.match(outcome.message, /outside/);
+    assert.doesNotMatch(read(), /deliver:/);
+  } finally {
+    removeTempDir(prefix);
+  }
 });
 
 // The documented rule (status-deliver.mjs header): the hand-over goes to the STATUS.md the session last edited with status.mjs when

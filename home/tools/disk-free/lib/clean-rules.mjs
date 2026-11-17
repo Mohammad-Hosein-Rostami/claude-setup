@@ -1,14 +1,17 @@
 // The four clean-up rules of disk-clean. Exports: AGE, rulesFor.
-// Each rule is an async generator that yields { path, root } for one thing to remove, where `root` is the real path the rule is
-// confined to. Rules only look (they remove nothing) and stream: nothing holds a whole folder listing.
-//   session-folders  /private/tmp/claude-<uid>/<project>/<session-id>/ whose transcript is idle for 3 days (or missing and the folder idle 3 days)
+// Each rule is an async generator that yields { path, root, stillRemovable } for one thing to remove: `root` is the real path the rule is
+// confined to, `stillRemovable()` is asked again right before the removal (a session may have been resumed since the scan). Rules only
+// look (they remove nothing), stream (nothing holds a whole folder listing) and stop when context.timeUp() says the scan time is over.
+//   session-folders  /private/tmp/claude-<uid>/<project>/<session-id>/ of a session that is not running, whose transcript is idle for 3 days (or missing) and whose folder is idle for 3 days
 //   test-temp        os.tmpdir() folders named by this repo's test prefixes, idle for 1 day
 //   temp-projects    ~/.claude/projects/<slug> folders that Claude Code made for a throwaway temp path, idle for 3 days
 //   hook-state       os.tmpdir()/claude-post-edit and /claude-skill-router: per-session counters and markers of the hooks, idle for 3 days
-// Never yields the current session: its id (--session) and the session with the newest transcript.
-import { lstatSync, realpathSync } from 'node:fs';
+// Never yields the current session (--session, the newest transcript) or a running one (~/.claude/sessions/*.json with a live pid).
+// A root that is not safe (see safe-remove.mjs inspectRoot) is refused and noted in context.refused.
 import { join } from 'node:path';
-import { entriesOf, mtimeOf, touchedSince } from './clean-scan.mjs';
+import { entriesOf, lstatOrNull, mtimeOf, touchedSince } from './clean-scan.mjs';
+import { liveSessionIds } from './live-sessions.mjs';
+import { inspectRoot, ownedFolder, UnsafeRoot } from './safe-remove.mjs';
 import { OLD_TEST_PREFIXES } from './test-temp-prefixes.mjs';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -20,106 +23,129 @@ export const AGE = {
 };
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TEMP_PROJECT_SLUG = /^-(?:private-var-folders|private-tmp|tmp)-/;
-const NEW_TEST_PREFIX = /^cs-(?:test|run)-/; // tests/temp-dir-helpers.mjs and with-run-tmp.mjs
 const RANDOM_SUFFIX_LENGTH = 6; // what mkdtemp appends
+// tests/temp-dir-helpers.mjs makes cs-test-<label><6 characters>, with-run-tmp.mjs makes cs-run-<6 characters>.
+const NEW_TEST_NAME = new RegExp(`^(?:cs-test-[\\w.-]*|cs-run-)[A-Za-z0-9]{${RANDOM_SUFFIX_LENGTH}}$`);
 const HOOK_STATE_FOLDERS = ['claude-post-edit', 'claude-skill-router'];
 const TRANSCRIPT_FILE = /^(.+)\.jsonl$/;
 
-const realRootOf = (folder) => {
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const OLD_TEST_NAME = new RegExp(`^(?:${OLD_TEST_PREFIXES.map(escapeRegex).join('|')})[A-Za-z0-9]{${RANDOM_SUFFIX_LENGTH}}$`);
+
+/** The real path and kind of a rule's root, or null when it is missing or refused (the reason goes to context.refused). */
+function trustedRoot(context, folder) {
   try {
-    return realpathSync(folder);
-  } catch {
+    return inspectRoot(folder, context.home);
+  } catch (error) {
+    if (!(error instanceof UnsafeRoot)) throw error;
+    context.refused.push(error.message);
     return null;
   }
-};
-const isRealFolder = (path) => {
-  try {
-    return lstatSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-};
+}
 
-/** Map of session id -> newest transcript mtime, over every project folder (a few dozen folders, one small read each). */
-async function transcriptTimes(projectsRoot) {
+/** Map of session id -> { mtimeMs, files } of its transcripts, over every project folder (a few dozen folders, one small read each). */
+async function transcriptTimes(context) {
   const times = new Map();
-  for await (const project of entriesOf(projectsRoot)) {
+  for await (const project of entriesOf(context.projects)) {
     if (!project.isDirectory()) continue;
-    for await (const file of entriesOf(join(projectsRoot, project.name))) {
+    for await (const file of entriesOf(join(context.projects, project.name))) {
+      if (context.timeUp()) return times;
       const id = TRANSCRIPT_FILE.exec(file.name)?.[1];
-      if (id === undefined || !SESSION_ID.test(id)) continue;
-      try {
-        times.set(id, Math.max(times.get(id) ?? 0, lstatSync(join(projectsRoot, project.name, file.name)).mtimeMs));
-      } catch {
-        // removed meanwhile
-      }
+      const path = join(context.projects, project.name, file.name);
+      const mtimeMs = id !== undefined && SESSION_ID.test(id) ? mtimeOf(path) : null;
+      if (mtimeMs === null) continue;
+      const known = times.get(id) ?? { mtimeMs: 0, files: [] };
+      times.set(id, { mtimeMs: Math.max(known.mtimeMs, mtimeMs), files: [...known.files, path] });
     }
   }
   return times;
 }
 
-async function* sessionFolders({ claudeTmp, projects, session, nowMs }) {
-  const root = realRootOf(claudeTmp);
-  if (root === null) return;
-  const times = await transcriptTimes(projects);
-  const newest = [...times.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-  const cutoff = nowMs - AGE.sessionFolderMs;
+const newestOf = (files) => Math.max(0, ...files.map((file) => mtimeOf(file) ?? 0));
+
+async function* sessionFolders(context) {
+  const trusted = trustedRoot(context, context.claudeTmp);
+  if (trusted === null) return;
+  const root = trusted.real;
+  const times = await transcriptTimes(context);
+  const newest = [...times.entries()].sort((a, b) => b[1].mtimeMs - a[1].mtimeMs)[0]?.[0];
+  const cutoff = context.nowMs - AGE.sessionFolderMs;
+  const live = await liveSessionIds(context.sessions);
   for await (const project of entriesOf(root)) {
-    if (!project.isDirectory()) continue;
-    for await (const folder of entriesOf(join(root, project.name))) {
-      const path = join(root, project.name, folder.name);
-      if (!folder.isDirectory() || !SESSION_ID.test(folder.name) || folder.name === session || folder.name === newest) continue;
-      const transcriptTime = times.get(folder.name);
-      const idle = transcriptTime === undefined ? !(await touchedSince(path, cutoff)) : transcriptTime < cutoff;
-      if (idle) yield { path, root };
+    const projectPath = join(root, project.name);
+    if (context.timeUp()) return;
+    if (ownedFolder(projectPath) === null) continue;
+    for await (const folder of entriesOf(projectPath)) {
+      if (context.timeUp()) return;
+      const path = join(projectPath, folder.name);
+      if (!SESSION_ID.test(folder.name) || folder.name === context.session || folder.name === newest || ownedFolder(path) === null) continue;
+      const isIdle = async (liveNow) => {
+        const transcript = times.get(folder.name);
+        if (liveNow.has(folder.name) || (transcript !== undefined && newestOf(transcript.files) >= cutoff)) return false;
+        return !(await touchedSince(path, cutoff));
+      };
+      if (await isIdle(live)) yield { path, root, stillRemovable: async () => isIdle(await liveSessionIds(context.sessions)) };
     }
   }
 }
 
-const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const OLD_TEST_NAME = new RegExp(`^(?:${OLD_TEST_PREFIXES.map(escapeRegex).join('|')})[A-Za-z0-9]{${RANDOM_SUFFIX_LENGTH}}$`);
-
-async function* testTemp({ tmp, nowMs }) {
-  const root = realRootOf(tmp);
-  if (root === null) return;
-  const cutoff = nowMs - AGE.testTempMs;
+async function* testTemp(context) {
+  const trusted = trustedRoot(context, context.tmp);
+  if (trusted === null) return;
+  const { real: root, shared } = trusted;
+  const cutoff = context.nowMs - AGE.testTempMs;
   for await (const entry of entriesOf(root)) {
-    if (!entry.isDirectory() || !(NEW_TEST_PREFIX.test(entry.name) || OLD_TEST_NAME.test(entry.name))) continue;
+    if (context.timeUp()) return;
+    // In a shared /tmp only the names this repo makes now: an old prefix plus 6 characters could be anyone's folder.
+    if (!(NEW_TEST_NAME.test(entry.name) || (!shared && OLD_TEST_NAME.test(entry.name)))) continue;
     const path = join(root, entry.name);
-    if ((mtimeOf(path) ?? Infinity) < cutoff) yield { path, root };
+    const isOld = () => (ownedFolder(path)?.mtimeMs ?? Infinity) < cutoff;
+    if (isOld()) yield { path, root, stillRemovable: isOld };
   }
 }
 
-async function* tempProjects({ projects, session, nowMs }) {
-  const root = realRootOf(projects);
-  if (root === null) return;
-  const cutoff = nowMs - AGE.tempProjectMs;
+const holdsSession = (folder, ids) => ids.some((id) => ownedFolder(join(folder, id)) !== null || lstatOrNull(join(folder, `${id}.jsonl`)) !== null);
+
+async function* tempProjects(context) {
+  const trusted = trustedRoot(context, context.projects);
+  if (trusted === null) return;
+  const root = trusted.real;
+  const cutoff = context.nowMs - AGE.tempProjectMs;
+  const sessionsIn = async () => [context.session, ...(await liveSessionIds(context.sessions))].filter((id) => id !== undefined);
   for await (const entry of entriesOf(root)) {
-    if (!entry.isDirectory() || !TEMP_PROJECT_SLUG.test(entry.name)) continue;
+    if (context.timeUp()) return;
+    if (!TEMP_PROJECT_SLUG.test(entry.name)) continue;
     const path = join(root, entry.name);
-    const holdsCurrentSession = session !== undefined && isRealFolder(join(path, session));
-    if (!holdsCurrentSession && !(await touchedSince(path, cutoff))) yield { path, root };
+    const isIdle = async () => ownedFolder(path) !== null && !holdsSession(path, await sessionsIn()) && !(await touchedSince(path, cutoff));
+    if (await isIdle()) yield { path, root, stillRemovable: isIdle };
   }
 }
 
-async function* hookState({ tmp, nowMs }) {
-  const root = realRootOf(tmp);
-  if (root === null) return;
-  const cutoff = nowMs - AGE.hookStateMs;
+async function* hookState(context) {
+  const trusted = trustedRoot(context, context.tmp);
+  if (trusted === null) return;
+  const root = trusted.real;
+  const cutoff = context.nowMs - AGE.hookStateMs;
   for (const folderName of HOOK_STATE_FOLDERS) {
     const folder = join(root, folderName);
-    if (!isRealFolder(folder)) continue;
+    if (ownedFolder(folder) === null) continue;
     for await (const kind of entriesOf(folder)) {
-      if (!kind.isDirectory()) continue;
-      for await (const file of entriesOf(join(folder, kind.name))) {
-        const path = join(folder, kind.name, file.name);
-        if (file.isFile() && (mtimeOf(path) ?? Infinity) < cutoff) yield { path, root };
+      const kindPath = join(folder, kind.name);
+      if (ownedFolder(kindPath) === null) continue;
+      for await (const file of entriesOf(kindPath)) {
+        if (context.timeUp()) return;
+        const path = join(kindPath, file.name);
+        const isOld = () => {
+          const info = lstatOrNull(path);
+          return info !== null && info.isFile() && info.mtimeMs < cutoff;
+        };
+        if (isOld()) yield { path, root, stillRemovable: isOld };
       }
     }
   }
 }
 
-/** @returns {{ name: string, label: string, find: (context: object) => AsyncGenerator<{ path: string, root: string }> }[]} */
+/** @returns {{ name: string, label: string, find: (context: object) => AsyncGenerator<{ path: string, root: string, stillRemovable: () => Promise<boolean> | boolean }> }[]} */
 export const rulesFor = () => [
   { name: 'session-folders', label: 'finished sessions\' scratchpad folders', find: sessionFolders },
   { name: 'test-temp', label: 'leftover test temp folders', find: testTemp },
