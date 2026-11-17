@@ -2,7 +2,8 @@
 // (run it with the /wf-sync skill).
 // Args: { row, repo, base }. `repo` is this machine's checkout of the repo; the PC's checkout sits at the same path
 // relative to the home folder.
-// Returns: { status: 'stopped', problems } | { status: 'synced', machines: { machine, synced, sha, doctorExit, diagnosis }[] }.
+// Returns: { status: 'stopped', problems } | { status: 'synced' | 'partial', machines: { machine, synced, sha, doctorExit, diagnosis }[] }.
+// `synced` means every machine synced and its doctor exited 0; `partial` means one failed, and its row says why. There is one row per machine.
 // Invariants: it starts only when the base folder has no tracked changes, git-tidy is clean and the full suite has a PASS
 // at the base tip (untracked files are allowed and untouched). The PC gets the tip as a git bundle and a fast-forward
 // pull, never a push. A machine that cannot sync skips its doctor and gets a diagnosis; the other machine goes on.
@@ -32,8 +33,10 @@ phase('Verify')
 const ready = await runner('verify', `In ${repo} check, in this order, and stop at the first failure: (1) git branch --show-current is ${base}; (2) git status --porcelain --untracked-files=no prints nothing; (3) node ~/.claude/tools/git-tidy/git-tidy.mjs check ${repo} --base ${base} exits 0; (4) with SHA from git rev-parse ${base}: node ~/.claude/tools/test-pass/test-pass.mjs check SHA --repo ${repo} --suite exits 0. Change nothing. Return ok, sha and one problem line per failed check.`, 'Verify', VERIFY_SCHEMA)
 if (!ready || !ready.ok) return { status: 'stopped', problems: ready ? ready.problems : ['verify step returned nothing'] }
 
-const machines = await pipeline(MACHINES, syncMachine, doctorMachine)
-return { status: 'synced', machines: machines.filter(Boolean) }
+const rows = await pipeline(MACHINES, syncMachine, doctorMachine)
+const machines = MACHINES.map((machine, index) => rows[index] ?? { machine, synced: false, sha: '', doctorExit: null, diagnosis: 'the steps for this machine returned nothing' })
+const allGood = machines.every((entry) => entry.synced && entry.doctorExit === 0)
+return { status: allGood ? 'synced' : 'partial', machines }
 
 function syncMachine(machine) {
   const steps = machine === 'pc' ? pcSteps() : `In ${repo} run scripts/install.sh, then report git rev-parse HEAD.`
@@ -60,6 +63,6 @@ function diagnose(machine, tail) {
 
 function checkArgs(given) {
   for (const key of ['row', 'repo', 'base']) {
-    if (typeof given?.[key] !== 'string') throw new Error(`sync-machines: args.${key} must be string`)
+    if (typeof given?.[key] !== 'string') throw new Error(`sync-machines: args.${key} must be a string`)
   }
 }

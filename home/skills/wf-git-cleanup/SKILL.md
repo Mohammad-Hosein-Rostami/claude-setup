@@ -10,4 +10,5 @@ Call Workflow with `scriptPath` `${CLAUDE_SKILL_DIR}/../../workflows/git-cleanup
 It removes only what `git-tidy prune` proves merged and the plan clears, after a backup bundle in each repo's `.git/`.
 It never touches dirty worktrees, unique commits or published merges: they return in `ownerItems`. Ask the owner each item
 (`ask-owner`), land what `NEEDS LANDING` says, then run it again.
+`scriptsDir` (`${CLAUDE_SKILL_DIR}/../../workflows`) is not needed: this script starts no other workflow.
 If Workflow refuses the path, Read the file and pass its text as `script` with the same `args`.

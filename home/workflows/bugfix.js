@@ -1,11 +1,13 @@
 // bugfix workflow: reproduce a bug, test three hypotheses in parallel, fix the confirmed root cause, verify the fix,
 // then review and land it through the `review` and `land` workflows (run it with the /wf-bugfix skill).
 // Args: { row, closeRow, statusFile, repo, base, symptom, repro?, suite, scriptsDir, branch? }.
-// Returns: { status: 'landed', sha, tidy } | { status: 'not-reproduced' | 'unresolved' | 'review-failed' | 'failed', ... }.
+// Returns: { status: 'landed', sha, tidy, leadList } | { status: 'not-reproduced' | 'unresolved' | 'failed', ... }
+//   | { status: 'review-findings' | 'review-incomplete' | 'review-failed', text, leadList }.
 // Invariants: the fix may start on the first confirmed hypothesis while the others finish, but verify, review and land
 // start only after every hypothesis returned and, on 0 or 2+ confirmed, the judge ruled (a fix for a non-root cause is
 // redone, C22). Writers of the lane run one at a time. A failed verify retries with new hypotheses at xhigh, then max.
 // The lane keeps one branch for every attempt: a redo reverts the earlier fix commits on it, never opens `<lane>-2`.
+// Only a review with status `clean` lands (I3); every other status comes back to the lead with the review's leadList (I2).
 export const meta = {
   name: 'bugfix',
   description: 'Reproduce a bug, test 3 hypotheses in parallel, fix the confirmed root cause, verify, then review and land',
@@ -25,7 +27,7 @@ const HYPOTHESIS_COUNT = 3
 const EFFORT_LADDER = ['high', 'xhigh', 'max']
 const { row, closeRow, statusFile, repo, base, symptom, suite, scriptsDir } = args
 const branch = args.branch ?? `lane/${row}`
-const lane = { exists: false, worktree: '', reproSha: '' }
+const lane = { exists: false, worktree: '', reproSha: '', problem: '' }
 const CONTEXT = `Repo ${repo}, base branch ${base}. Bug: ${symptom}. ${args.repro ? `Repro command: ${args.repro}.` : 'No repro command is known yet.'}`
 const FINISH = `Related tests only while iterating; the full suite (${suite}) is run later by the land step. Commit after each green step on the lane branch ${branch}; no merge commits; never push. Run node ~/.claude/tools/review-tier/review-tier.mjs ${base}...HEAD --landing --json last and return its JSON as tier. Return IMPLEMENTED: branch, worktree (your folder), sha, tests {cmd, exit}, tier.`
 
@@ -35,9 +37,10 @@ const HYPOTHESES_SCHEMA = { type: 'object', properties: { hypotheses: { type: 'a
 const PROBE_SCHEMA = { type: 'object', properties: { id: { type: 'string' }, confirmed: { type: 'boolean' }, rootCause: { type: 'string' }, evidence: { type: 'string' }, minimalFix: { type: 'string' } }, required: ['id', 'confirmed', 'rootCause', 'evidence', 'minimalFix'] }
 const JUDGE_SCHEMA = { type: 'object', properties: { found: { type: 'boolean' }, hypothesisId: { type: 'string' }, rootCause: { type: 'string' }, minimalFix: { type: 'string' } }, required: ['found', 'hypothesisId', 'rootCause', 'minimalFix'] }
 const IMPLEMENTED_SCHEMA = { type: 'object', properties: { branch: { type: 'string' }, worktree: { type: 'string' }, sha: { type: 'string' }, tests: { type: 'object', properties: { cmd: { type: 'string' }, exit: { type: 'number' } }, required: ['cmd', 'exit'] }, tier: OBJECT }, required: ['branch', 'worktree', 'sha', 'tests'] }
+const RELEASE_SCHEMA = { type: 'object', properties: { exit: { type: 'number' }, tail: { type: 'string' } }, required: ['exit', 'tail'] }
 const VERIFY_SCHEMA = { type: 'object', properties: { reproGreen: { type: 'boolean' }, relatedExit: { type: 'number' }, mutantKilled: { type: 'boolean' }, treeClean: { type: 'boolean' }, tail: { type: 'string' } }, required: ['reproGreen', 'relatedExit', 'mutantKilled', 'treeClean', 'tail'] }
 
-const runner = (step, prompt, phaseTitle) => agent(`Run exactly this and report PASS or FAIL with the one-line reason: ${prompt}`, { label: `${row}:${step}`, phase: phaseTitle, agentType: 'runner', model: 'haiku', effort: 'low' })
+const runner = (step, prompt, phaseTitle, schema) => agent(`Run exactly this and report PASS or FAIL with the one-line reason: ${prompt}`, { label: `${row}:${step}`, phase: phaseTitle, agentType: 'runner', model: 'haiku', effort: 'low', schema })
 const statusStep = (command, phaseTitle) => runner('status', `node ~/.claude/tools/status/status.mjs --file ${statusFile} ${command}`, phaseTitle)
 
 phase('Reproduce')
@@ -45,7 +48,7 @@ const repro = await reproduce()
 if (!repro || !repro.reproduces) return { status: 'not-reproduced', repro }
 lane.exists = Boolean(repro.branch)
 lane.worktree = repro.worktree ?? ''
-lane.reproSha = repro.sha ?? ''
+lane.reproSha = repro.sha || base // a repro command makes no commit: the base tip is where the fix commits start
 
 const failedAttempts = []
 let verified = null
@@ -84,7 +87,7 @@ async function tryRound(effort) {
   if (early) await early.done
   if (!root) return { note: `no root cause at ${effort}: ${answered.map((p) => `${p.id} not confirmed`).join(', ')}` }
   const fix = early && early.id === root.id ? await early.done : await runLaneAgent('fix:redo', fixTask(root))
-  if (!fix) return { note: `fix agent returned nothing for ${root.id}` }
+  if (!fix) return { note: `fix agent returned nothing for ${root.id}${lane.problem ? `: ${lane.problem}` : ''}` }
   const check = await verify(fix)
   const passed = check && check.reproGreen && check.relatedExit === 0 && check.mutantKilled && check.treeClean
   return passed ? { fix } : { note: `fix for ${root.id} failed verify: ${check ? check.tail : 'no result'}` }
@@ -100,14 +103,19 @@ async function judge(answered, effort) {
 }
 
 function fixTask(root) {
-  const undo = lane.reproSha ? ` If the branch has commits after ${lane.reproSha}, they are a fix for a different cause: undo them with git revert before you start.` : ''
+  const undo = ` If the branch has commits after ${lane.reproSha}, they are a fix for a different cause: undo them with git revert before you start.`
   return `Fix this confirmed root cause: ${root.rootCause}. Minimal fix: ${root.minimalFix}. The repro test must go green, nothing else may change behaviour.${undo}`
 }
 
 /** Runs one isolated implementer on the lane branch (one writer at a time); keeps the lane branch and updates its worktree. */
 async function runLaneAgent(tag, task) {
   if (lane.worktree) {
-    await runner('release', `git -C ${repo} worktree remove ${lane.worktree}`, 'Fix')
+    // no --force: a worktree with uncommitted changes must stop the lane, not lose them
+    const released = await runner('release', `git -C ${repo} worktree remove ${lane.worktree}. Return its exit code and the last 5 lines of its output as tail.`, 'Fix', RELEASE_SCHEMA)
+    if (!released || released.exit !== 0) {
+      lane.problem = `the lane worktree ${lane.worktree} could not be removed: ${released ? released.tail : 'runner returned nothing'}`
+      return null
+    }
     lane.worktree = ''
   }
   const start = lane.exists ? `First run git switch ${branch} && git rebase ${base}, then delete your own worktree-agent-* branch with git branch -d.` : `First rename your worktree branch with git branch -m ${branch}.`
@@ -123,22 +131,29 @@ function verify(fix) {
 /** Review, then land; a conflict or changed patches go back through review of the delta, with no round cap. */
 async function reviewAndLand(fix) {
   let tier = fix.tier
+  const leadList = []
   for (;;) {
     const review = await workflow({ scriptPath: `${scriptsDir}/review.js` }, { row, repo, base, range: `${base}...${branch}`, landing: true, fix: true, branch, worktree: lane.worktree, suite, tier })
-    if (!review) return { status: 'review-failed' }
+    if (!review) return { status: 'review-failed', text: 'the review workflow returned nothing', leadList }
+    leadList.push(...review.leadList)
+    if (review.status !== 'clean') return { status: `review-${review.status}`, text: review.text, leadList }
+    lane.worktree = review.worktree // the review's fixes may have moved the lane to a new worktree
     phase('Land')
     const landed = await workflow({ scriptPath: `${scriptsDir}/land.js` }, { row, closeRow, statusFile, repo, base, branch, worktree: lane.worktree, suite })
-    if (landed?.status === 'landed') return { status: 'landed', sha: landed.sha, tidy: landed.tidy }
-    if (!landed || landed.status === 'failed') return { status: 'failed', landed }
-    if (landed.status === 'conflict') tier = (await runLaneAgent('fix:conflict', `The rebase onto ${base} conflicted. Resolve it keeping the intent of both sides, rerun the related tests, commit.`))?.tier
+    if (landed?.status === 'landed') return { status: 'landed', sha: landed.sha, tidy: landed.tidy, leadList }
+    if (!landed || landed.status === 'failed') return { status: 'failed', landed, leadList }
+    if (landed.status === 'conflict') {
+      const resolved = await runLaneAgent('fix:conflict', `The rebase onto ${base} conflicted. Resolve it keeping the intent of both sides, rerun the related tests, commit.`)
+      if (!resolved) return { status: 'failed', landed, leadList, problem: lane.problem || 'the conflict-resolving agent returned nothing' }
+      tier = resolved.tier
+    }
     phase('Review')
   }
 }
 
 function checkArgs(given) {
-  const required = { row: 'string', closeRow: 'string', statusFile: 'string', repo: 'string', base: 'string', symptom: 'string', suite: 'string', scriptsDir: 'string' }
-  for (const [key, type] of Object.entries(required)) {
-    if (typeof given?.[key] !== type) throw new Error(`bugfix: args.${key} must be ${type}`)
+  for (const key of ['row', 'closeRow', 'statusFile', 'repo', 'base', 'symptom', 'suite', 'scriptsDir']) {
+    if (typeof given?.[key] !== 'string') throw new Error(`bugfix: args.${key} must be a string`)
   }
-  if (given.repro !== undefined && typeof given.repro !== 'string') throw new Error('bugfix: args.repro must be string')
+  if (given.repro !== undefined && typeof given.repro !== 'string') throw new Error('bugfix: args.repro must be a string')
 }

@@ -65,6 +65,6 @@ function ownerItemsOf(entry) {
 }
 
 function checkArgs(given) {
-  if (typeof given?.row !== 'string') throw new Error('git-cleanup: args.row must be string')
-  if (!Array.isArray(given.repos)) throw new Error('git-cleanup: args.repos must be array')
+  if (typeof given?.row !== 'string') throw new Error('git-cleanup: args.row must be a string')
+  if (!Array.isArray(given.repos)) throw new Error('git-cleanup: args.repos must be an array')
 }

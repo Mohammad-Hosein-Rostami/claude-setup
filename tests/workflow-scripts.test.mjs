@@ -14,12 +14,16 @@ const SKILLS = join(REPO, 'home', 'skills');
 const PROBE = /^probe/;
 const LIVE_SCRIPTS = ['review', 'land', 'build', 'step'];
 // The required keys of each script and the wrong value that must be refused (spec section 9, "Workflow args"). A script of another lane
-// adds its own row here when it lands.
+// adds its own row here when it lands. (`depth` of research also has to be one of simple, compare, complex: tested in workflow-research.test.mjs.)
 const REQUIRED_ARGS = {
   review: { row: 'string', repo: 'string', base: 'string', range: 'string', landing: 'boolean', fix: 'boolean', branch: 'string', worktree: 'string', suite: 'string' },
   land: { row: 'string', closeRow: 'string', statusFile: 'string', repo: 'string', base: 'string', branch: 'string', worktree: 'string', suite: 'string', tip: 'string' },
   build: { base: 'string', repo: 'string', suite: 'string', writers: 'number', statusFile: 'string', scriptsDir: 'string', lanes: 'array' },
   step: { row: 'string', agentType: 'string', prompt: 'string', model: 'string', effort: 'string' },
+  bugfix: { row: 'string', closeRow: 'string', statusFile: 'string', repo: 'string', base: 'string', symptom: 'string', suite: 'string', scriptsDir: 'string' },
+  research: { row: 'string', question: 'string', out: 'string', depth: 'string' },
+  'sync-machines': { row: 'string', repo: 'string', base: 'string' },
+  'git-cleanup': { row: 'string', repos: 'array' },
 };
 const WRONG = { string: 42, boolean: 'yes', number: 'two', array: 'not-a-list' };
 const GOOD = { string: 'x', boolean: true, number: 2, array: [] };
