@@ -1,5 +1,5 @@
 // A dangerous word written as DATA is not a reason to ask: in a single-quoted argument of a program that never runs its arguments
-// (echo, printf, grep, rg, jq, sed without e/w, git log), even next to an unrelated `$(...)`. Round 4 replay: 74 bounces and 34 dialogs
+// (echo, printf, grep, rg, jq, sed without e/w, git log), even next to an unrelated `$(...)`. Round 4 replay of the guard log (2026-11-17): 78 bounces and 27 dialogs
 // of the "risky word inside shell expansion" class, a part of them `sed 's/rm -rf .../'` or `printf '... git push ...'` next to `$(date)`.
 // Every program that runs its arguments (shells, interpreters, eval, ssh, xargs, env, sudo, find -exec, watch, flock, tmux, docker exec,
 // kubectl exec, parallel, git rebase --exec) stays flagged, and so does any shape where the quoted text can still reach a shell
@@ -49,6 +49,7 @@ test('data that can reach a shell stays flagged: pipe, file, command substitutio
     `printf 'rm -rf /tmp/x' | xargs ${OTHER_CONSTRUCT}`,
     `for f in a; do echo 'rm -rf /tmp/x'; done | sh ${OTHER_CONSTRUCT}`,
     `{ echo 'rm -rf /tmp/x'; } | sh ${OTHER_CONSTRUCT}`,
+    `echo 'rm -rf /tmp/x' | tee run.sh ${OTHER_CONSTRUCT}`, // a reader that writes a file a later `sh run.sh` runs
     `echo 'rm -rf /tmp/x' > run.sh ${OTHER_CONSTRUCT}`,
     `echo 'rm -rf /tmp/x' >> run.sh ${OTHER_CONSTRUCT}`,
     `sh -c "$(echo 'rm -rf /tmp/x')"`,

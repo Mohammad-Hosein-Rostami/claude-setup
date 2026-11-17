@@ -68,7 +68,7 @@ const TS_TYPE_WORD = '(?:string|number|boolean|bigint|symbol|object|unknown|any|
 const TS_TYPE = `(?![^\\n"']{0,500}[\\w-]=[^\\s=])${TS_TYPE_WORD}(?:[ \\t]*\\|[ \\t]*${TS_TYPE_WORD}){0,6}[ \\t]*(?:[;,](?=\\s|$)|[})\\]](?=[\\s;,)}\\]]|$)|(?<=[ \\t])=|["'](?=[\\s;,)}\\]]|$)|\\n|$)`;
 const FORMAT_PLACEHOLDER = `(?!(?<=${OPENER}(?<q>["'])(?:(?!\\s--?[A-Za-z])[^"'\\n]){0,500})${PLACEHOLDER}[ \\t]*\\k<q>${AFTER_QUOTE}|${PLACEHOLDER}[ \\t]*(?:\\n|$)|${TS_TYPE})`;
 const BEARER_PROSE_WORD = '[a-z]{1,12}(?![\\w-])'; // 12 letters at most, no digit or capital, not the start of a longer hyphenated word
-const STDIN_FLAG ='--(?:with-token|password-stdin)\\b';
+const STDIN_FLAG = '--(?:with-token|password-stdin)\\b';
 // the value is echoed/printed (`echo -n T`, `printf '%s' T`) and piped into a command that has the stdin flag
 const ECHOED_INTO_STDIN_FLAG = `(?=(?:"[^"]*"|'[^']*'|[^\\s"';&|]+)[ \\t]*\\|[^\\n;&|]{0,${GAP}}${STDIN_FLAG})`;
 // A value that looks like a path or a regex held in a variable is not a literal: `./x`, `../x`, `~/x`; a `/x|y/` regex (`STATE_KEY=/state|hover/`);
