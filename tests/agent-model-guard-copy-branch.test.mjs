@@ -8,9 +8,11 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { copyBranchBriefDeny } from '../home/hooks/agent-model-guard.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
 import { hookEnv } from './hook-env.mjs';
 
+const SEND_AGAIN = 'Send the same call again unchanged and it runs.';
 const GUARD = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
 const SKILLS = ['wf-build', 'wf-review', 'wf-bugfix', 'wf-research', 'wf-step', 'quick'];
 let counter = 0;
@@ -18,15 +20,15 @@ const GIT_TIMEOUT_FOR_TESTS_MS = 60_000; // the suite runs beside other work; th
 
 /** A private HOME holding the named skills; send(toolInput, extra) runs the hook once and returns the parsed hookSpecificOutput or null. */
 function session({ skills = SKILLS, envExtra = {}, settings } = {}) {
-  const home = mkdtempSync(join(tmpdir(), 'backstop-home-'));
-  const project = mkdtempSync(join(tmpdir(), 'backstop-project-'));
+  const home = mkdtempSync(join(tmpdir(), 'copy-brief-home-'));
+  const project = mkdtempSync(join(tmpdir(), 'copy-brief-project-'));
   for (const name of skills) {
     mkdirSync(join(home, '.claude', 'skills', name), { recursive: true });
     writeFileSync(join(home, '.claude', 'skills', name, 'SKILL.md'), `---\nname: ${name}\n---\n`);
   }
   if (settings !== undefined) writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify(settings));
   const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: project, ...envExtra });
-  const sessionId = `backstop-${process.pid}-${counter++}`;
+  const sessionId = `copy-brief-${process.pid}-${counter++}`;
   const log = () => readFileSync(env.CLAUDE_GUARD_LOG, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
   const send = (toolInput, extra = {}) => {
     const input = { hook_event_name: 'PreToolUse', session_id: sessionId, cwd: project, tool_name: 'Agent', tool_input: toolInput, ...extra };
@@ -34,7 +36,7 @@ function session({ skills = SKILLS, envExtra = {}, settings } = {}) {
     assert.equal(status, 0, stderr);
     return stdout === '' ? null : JSON.parse(stdout).hookSpecificOutput;
   };
-  return { home, project, send, log };
+  return { home, project, send, log, logPath: env.CLAUDE_GUARD_LOG };
 }
 const denied = (out) => out?.permissionDecision === 'deny';
 // isolation: "worktree" keeps the writer isolation gate (another gate of the same hook) out of these tests
@@ -53,7 +55,7 @@ function repoSession({ envExtra, ...options } = {}) {
   const s = session({ ...options, envExtra: { COPY_BRANCH_GIT_TIMEOUT_MS: String(GIT_TIMEOUT_FOR_TESTS_MS), COPY_BRANCH_DEADLINE_MS: String(GIT_TIMEOUT_FOR_TESTS_MS), ...envExtra } });
   const repo = makeRepo();
   git(repo, 'branch', 'lane/x');
-  return { ...s, send: (toolInput) => s.send(toolInput, { cwd: repo }) };
+  return { ...s, repo, sendIn: s.send, send: (toolInput, extra = {}) => s.send(toolInput, { cwd: repo, ...extra }) };
 }
 
 test('a writer brief that creates a copy of an existing lane branch is denied once with the same-branch steps; the resend runs', () => {
@@ -66,4 +68,71 @@ test('a writer brief that creates a copy of an existing lane branch is denied on
   assert.equal(denied(s.send(call('implementer', 'git checkout -b lane/x'))), false, 'the lane itself');
   assert.equal(denied(s.send(call('reviewer', 'git checkout -b lane/x-2'))), false, 'a read-only agent');
   assert.ok(s.log().some((row) => row.class === 'copy branch brief' && row.outcome === 'advice'));
+});
+
+// Round 6 review (L1): the deleted backstop test was the only one that checked gate order and the separate digest of each gate.
+const COPY_BRIEF = 'Fix the findings.\ngit checkout -b lane/x-2\nthen test';
+const OTHER_COPY_BRIEF = 'Fix the findings.\ngit switch -c lane/x-fix\nthen test';
+const UI_ADVICE = /coverage matrix/;
+
+test('every different copy brief is denied once: the digest holds the prompt, the type and the folder, so a second brief, type or folder is judged fresh', () => {
+  const s = repoSession();
+  assert.ok(denied(s.send(call('implementer', COPY_BRIEF))));
+  assert.ok(denied(s.send(call('implementer', OTHER_COPY_BRIEF))), 'a second, different brief of the same type and folder');
+  assert.equal(denied(s.send(call('implementer', OTHER_COPY_BRIEF))), false, 'and its identical resend runs');
+  assert.ok(denied(s.send(call('test-writer', COPY_BRIEF))), 'the same brief from another agent type');
+  const otherRepo = makeRepo();
+  git(otherRepo, 'branch', 'lane/x');
+  assert.ok(denied(s.sendIn(call('implementer', COPY_BRIEF), { cwd: otherRepo })), 'the same brief in another folder');
+  const rows = s.log().filter((row) => row.class === 'copy branch brief' && row.outcome === 'advice');
+  assert.deepEqual(rows.map((row) => row.type), ['implementer', 'implementer', 'test-writer', 'implementer'], 'one row per deny, each with its agent type');
+  assert.equal(new Set(rows.map((row) => row.digest)).size, 4, 'four different digests');
+});
+
+test('the deny text starts with "Not started:", gives the same-branch steps and tells the agent to send the call again', () => {
+  const reason = repoSession().send(call('implementer', COPY_BRIEF)).permissionDecisionReason;
+  assert.ok(reason.startsWith('Not started: A re-done lane continues the same branch'), reason);
+  assert.ok(reason.endsWith(`\n${SEND_AGAIN}`), reason);
+});
+
+test('the log row of a copy deny holds fixed fields and the digest, never the prompt; a call from inside an agent (agent_id) is advised too', () => {
+  const s = repoSession();
+  assert.ok(denied(s.send(call('implementer', `${COPY_BRIEF}\nsecret-marker-text`), { agent_id: 'agent-1' })));
+  const text = readFileSync(s.logPath, 'utf8');
+  assert.ok(!text.includes('secret-marker-text') && !text.includes('lane/x-2'), 'no prompt text in the log');
+  assert.match(text, /"digest":"[0-9a-f]{64}"/);
+});
+
+test('the copy gate comes before the UI gate: a ui-implementer copy brief with no MATRIX is denied twice (copy, then UI) and only then runs', () => {
+  const s = repoSession();
+  const brief = call('ui-implementer', COPY_BRIEF);
+  assert.match(s.send(brief).permissionDecisionReason, /continues the same branch/);
+  assert.match(s.send(brief).permissionDecisionReason, UI_ADVICE, 'the second send is the UI gate\'s own first deny');
+  assert.equal(denied(s.send(brief)), false, 'the third send runs');
+  assert.deepEqual(s.log().filter((row) => row.outcome === 'advice').map((row) => row.class), ['copy branch brief', 'no MATRIX line'], 'one record per gate');
+});
+
+test('a copy-denied writer is not recorded as running: the next writer of the session without isolation starts', () => {
+  const s = repoSession();
+  const writer = (prompt) => call('implementer', prompt, { isolation: undefined });
+  assert.ok(denied(s.send(writer(COPY_BRIEF))), 'denied by the copy gate before the writer gate sees it');
+  assert.equal(denied(s.send(writer('Plain job, no branch.'))), false, 'no phantom running writer');
+});
+
+test('a brief the UI gate denies is not recorded as a running writer either', () => {
+  const s = repoSession();
+  assert.match(s.send(call('ui-implementer', 'Build the form.', { isolation: undefined })).permissionDecisionReason, UI_ADVICE);
+  assert.equal(denied(s.send(call('implementer', 'Plain job, no branch.', { isolation: undefined }))), false);
+});
+
+// In-process: the hook's own environment is the process environment there, so only a direct call can tell the env argument from process.env.
+test('copyBranchBriefDeny records under the environment it is given, and a failure inside it lets the call run', async () => {
+  const s = repoSession();
+  const env = hookEnv({ HOME: s.home, USERPROFILE: s.home, COPY_BRANCH_GIT_TIMEOUT_MS: String(GIT_TIMEOUT_FOR_TESTS_MS) });
+  const input = { session_id: 'in-process-session', cwd: s.repo, tool_input: call('implementer', COPY_BRIEF) };
+  assert.ok(JSON.parse(await copyBranchBriefDeny(input, env)).hookSpecificOutput.permissionDecision === 'deny');
+  assert.equal(readFileSync(env.CLAUDE_GUARD_LOG, 'utf8').trim().split('\n').length, 1, 'the row went to the log of the given env');
+  let reads = 0;
+  const failing = { get tool_input() { reads += 1; if (reads > 1) throw new Error('boom'); return call('implementer', OTHER_COPY_BRIEF); }, cwd: s.repo };
+  assert.equal(await copyBranchBriefDeny(failing, env), '', 'an error after the verdict never rejects');
 });

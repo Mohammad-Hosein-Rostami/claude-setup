@@ -194,7 +194,7 @@ const COPY_BRANCH_CLASS = 'copy branch brief';
 
 /**
  * The copy-branch brief gate (see the header): deny once per identical call; the identical call sent again passes.
- * @param {unknown} input the hook input: tool_input {subagent_type, prompt}, cwd, session_id, agent_id (inside an agent only)
+ * @param {unknown} input the hook input: tool_input {subagent_type, prompt}, cwd, session_id
  * @param {Record<string, string | undefined>} env process environment (HOME, CLAUDE_GUARD_LOG)
  * @returns {Promise<string>} the deny JSON line, or '' when the brief is fine, on the identical retry and on any failure
  */

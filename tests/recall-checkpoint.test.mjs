@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -398,8 +398,12 @@ test('the checkpoint job run on a missing transcript saves its error under HOME 
   delete env.RECALL_DB;
   delete env.RECALL_STATE_DIR;
   const job = fileURLToPath(new URL('../home/tools/recall/checkpoint-job.mjs', import.meta.url));
-  const result = spawnSync(process.execPath, [job, 'x', 'no-such-transcript', 'PostToolUse'], { env, encoding: 'utf8' });
-  assert.equal(result.status, 1, result.stderr);
-  const saved = JSON.parse(readFileSync(join(fakeHome, '.claude', 'recall', 'checkpoints', 'x.json'), 'utf8'));
-  assert.match(saved.error.message, /ENOENT/);
+  try {
+    const result = spawnSync(process.execPath, [job, 'x', 'no-such-transcript', 'PostToolUse'], { env, encoding: 'utf8' });
+    assert.equal(result.status, 1, result.stderr);
+    const saved = JSON.parse(readFileSync(join(fakeHome, '.claude', 'recall', 'checkpoints', 'x.json'), 'utf8'));
+    assert.match(saved.error.message, /ENOENT/);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
 });
