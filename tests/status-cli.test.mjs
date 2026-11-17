@@ -379,6 +379,15 @@ test('rule and decision skip a fenced heading of the same name', async () => {
   assert.match(text, /- 2026-11-15 earlier decision\n- 2026-11-16 new decision\n/);
 });
 
+// Review of 2ca5bb1 (5): findSection ends a section at the next heading OUTSIDE fences; with `!ANY_HEADING.test(lines[end])` alone a
+// heading quoted in a fence ended the section, and the new bullet went inside the fence.
+test('rule goes after the last bullet of a section that holds a fenced heading, not inside the fence', async () => {
+  const text = '# STATUS\n\n## Standing rules\n- one\n```\n## quoted heading\n```\n- two\n\n## Work items\n\n| id | item | size | started | done | evidence |\n| -- | -- | -- | -- | -- | -- |\n| 1 | a | S | - | - | - |\n';
+  const { run, read } = await project(text);
+  assert.equal(run('rule', 'three').code, 0);
+  assert.equal(await read(), text.replace('- two\n', '- two\n- three\n'));
+});
+
 test('add refuses an item that starts deliver: (only deliver writes hand-overs) and an id that does not start with a letter or digit', async () => {
   const { run, read } = await project(PIPED);
   for (const item of ['deliver: report to owner', '  Deliver:x']) {
