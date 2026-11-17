@@ -39,7 +39,8 @@ const TESTS_WRITTEN = { type: 'object', properties: { branch: str, worktree: str
 const JOINED = { type: 'object', properties: { red: { type: 'boolean' }, tail: str, sha: str, worktree: str }, required: ['red', 'tail', 'sha', 'worktree'] }
 const leadList = []
 // Worktree paths agents return go into later shell commands (a worktree remove, a cherry-pick): only a plain absolute path passes (N1).
-const SAFE_PATH = /^\/[\w@+=.,/-]+$/
+// An absolute POSIX path or a Windows drive path (C:/x or C:\x); no spaces, quotes, `$`, `;` or `%`.
+const SAFE_PATH = /^(?:[A-Za-z]:[\\/]|\/)[\w@+=.,/\\-]+$/
 
 // At most args.writers writer agents at once, across all lanes (scripts cannot import, so the limiter lives here).
 let writersRunning = 0

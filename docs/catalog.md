@@ -163,10 +163,10 @@ rules the tests check: `home/workflows/README.md`. Tests: `tests/workflow-*.test
 
 | Workflow | Skill | Phases | Args (`?` optional) |
 | -------- | ----- | ------ | ------------------- |
-| `build` | `wf-build` | Build, Join, Review, Land | `base, repo, suite, writers, statusFile, scriptsDir, lanes[{row, closeRow, branch, spec, files, acceptanceTests, implementer{agentType?, model, effort}}]` |
+| `build` | `wf-build` | Build, Join, Review, Land | `base, repo, suite, writers, statusFile, scriptsDir, lanes[{row, closeRow, branch, spec, files, acceptanceTests, matrix?, implementer{agentType?, model, effort}}]` (`matrix`: required for a `ui-implementer`) |
 | `review` | `wf-review` | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, initialFindings?` |
-| `land` | `wf-land` | Rebase, Suite, Land | `row, closeRow, statusFile, repo, base, branch, worktree, suite` |
-| `step` | `wf-step` | Step | `row, agentType, prompt, model, effort, isolation?` |
+| `land` | `wf-land` | Rebase, Suite, Land | `row, closeRow, statusFile, repo, base, branch, worktree, suite, tip` |
+| `step` | `wf-step` | Step | `row, agentType, prompt, model, effort, isolation?, alone?, statusFile?` |
 | `bugfix` | `wf-bugfix` | Reproduce, Hypotheses, Fix, Verify | `row, closeRow, statusFile, repo, base, symptom, repro?, suite, scriptsDir` |
 | `research` | `wf-research` | Scope, Gather, Synthesize, Critic | `row, question, out, depth` |
 | `sync-machines` | `wf-sync` | Verify, Sync, Doctor | `row, repo, base` |

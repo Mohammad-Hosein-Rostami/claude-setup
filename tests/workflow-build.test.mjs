@@ -253,6 +253,19 @@ test('a ui-implementer lane needs a matrix and carries it as the MATRIX line; ev
   assert.doesNotMatch(plain.calls.find((call) => call.label === 'impl-b:implement').prompt, /MATRIX/);
 });
 
+test('a Windows drive-letter worktree path, with / or \\, is a plain path and does not end the lane', async () => {
+  const run = await runScript(BUILD, ARGS([lane('a'), lane('b')]), {
+    replies: [
+      { match: /impl-a:implement/, reply: { ...built('a'), worktree: 'C:/wt/a' } },
+      { match: /impl-b:implement/, reply: built('b') },
+      { match: /impl-a:join/, reply: joined('a', { worktree: 'D:\\wt\\a' }) },
+      { match: /impl-b:join/, reply: joined('b') },
+    ],
+    children: children((a) => reviewed(a.branch.slice(-1)), (a) => landedOk(a.branch.slice(-1))),
+  });
+  assert.deepEqual(run.result.lanes.map((entry) => entry.status), ['landed', 'landed']);
+});
+
 test('a worktree path with shell characters, from an agent or the join runner, ends only that lane (N1)', async () => {
   const run = await runScript(BUILD, ARGS([lane('a'), lane('b'), lane('c')]), {
     replies: [

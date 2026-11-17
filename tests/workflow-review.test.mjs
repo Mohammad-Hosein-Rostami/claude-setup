@@ -142,6 +142,15 @@ test('with landing an empty review set is lost, not clean; without landing it is
   assert.equal(plain.result.status, 'clean');
 });
 
+test('Windows drive-letter review worktree and tier file paths are plain paths', async () => {
+  for (const [reviewWorktree, tierFile] of [[`C:/scratch/close-2-${sha(1)}`, 'C:/t0.json'], [`C:\\scratch\\close-2-${sha(1)}`, 'C:\\t0.json']]) {
+    const w = world({ tiers: [tierOf(SONNET)], lens: { correctness: () => clean } });
+    w.replies[0] = { match: /:tier$/, reply: { exit: 0, sha: sha(1), reviewWorktree, tierFile, tier: tierOf(SONNET) } };
+    const run = await runScript(REVIEW, ARGS, { replies: w.replies });
+    assert.equal(run.result.status, 'clean', reviewWorktree);
+  }
+});
+
 test('a tier file that would overwrite the lane classes, a review worktree not named for the row and sha, and an unsafe path are refused', async () => {
   const bad = [
     [{ tierFile: '/t-prev.json' }, /not a new plain path/],

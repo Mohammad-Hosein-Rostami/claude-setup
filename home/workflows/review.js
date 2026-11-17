@@ -70,7 +70,8 @@ const SKILL_LENS_AGENT = 'general-purpose'
 const lensAgentTypeOf = (review) => (review.agent === 'skill' ? SKILL_LENS_AGENT : agentTypeOf(review))
 // Agents return paths, branches and shas that go into later shell commands: only plain values pass (N1).
 const SHA = /^[0-9a-f]{7,40}$/
-const SAFE_PATH = /^\/[\w@+=.,/-]+$/
+// An absolute POSIX path or a Windows drive path (C:/x or C:\x); no spaces, quotes, `$`, `;` or `%`.
+const SAFE_PATH = /^(?:[A-Za-z]:[\\/]|\/)[\w@+=.,/\\-]+$/
 const sameSha = (a, b) => a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a))
 const runner = (step, phase, prompt, schema = RUN) => agent(`${prompt}\nDo nothing else; report no secrets.`, { label: `${args.row}:${step}`, phase, schema, ...RUNNER })
 const itemText = (item) => `- [${item.status ?? item.severity}] ${item.id} ${item.file}:${item.line}: ${item.problem}`
