@@ -3,12 +3,14 @@
 // Repos are built in temp folders; the hook runs as the real process with a private HOME, except the timeout test, which calls `decide`.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { decide, openLanes } from '../home/hooks/git-tidy-gate.mjs';
+import { editedWorktrees, worktreeOf } from '../home/hooks/lib/gated-folder.mjs';
 import { recordEditedFile } from '../home/hooks/lib/own-edits.mjs';
-import { CLEAN_ENV, git, makeRepo } from './git-tidy-helpers.mjs';
+import { addWorktree, CLEAN_ENV, git, makeRepo } from './git-tidy-helpers.mjs';
 import { billAndGinShape, gateSession, oldLane, SESSION } from './git-tidy-gate-helpers.mjs';
 
 const plainFolder = () => mkdtempSync(join(tmpdir(), 'git-tidy-gate-plain-'));
@@ -81,12 +83,99 @@ test('a subagent stop is still gated by its own start folder only', () => {
   assert.equal(gate.agentStop(plainFolder()), null);
 });
 
-test('an edited repo whose check does not finish in time passes instead of holding the stop', async () => {
+const CLEAN_VERDICT = { base: 'main', findings: [], hints: [] };
+const SLOW_CHECK_MS = 600;
+const BUDGET_MS = 500;
+const posixOnly = { skip: process.platform === 'win32' ? 'no mkfifo on Windows' : false };
+
+/** A runCheck stub that records the time each call was given, takes `takesMs` and finds nothing. */
+function countingCheck(takesMs) {
+  const timeouts = [];
+  const runCheck = (top, timeoutMs) => {
+    timeouts.push(timeoutMs);
+    for (const until = Date.now() + takesMs; Date.now() < until;); // a check that really takes that long
+    return CLEAN_VERDICT;
+  };
+  return { timeouts, runCheck };
+}
+
+/** A gate whose project folder is no repo and which edited a file in each of `repos`; returns the env for decide/openLanes. */
+function sessionThatEdited(repos) {
   const gate = gateSession();
-  const repo = billAndGinShape();
-  recordEditIn(gate, repo);
-  const env = { ...CLEAN_ENV, HOME: gate.home, USERPROFILE: gate.home, CLAUDE_PROJECT_DIR: plainFolder() };
-  assert.deepEqual(await decide({ hook_event_name: 'Stop', session_id: SESSION }, env, { checkTimeoutMs: 1 }), { block: false });
+  for (const repo of repos) recordEditIn(gate, repo);
+  return { ...CLEAN_ENV, HOME: gate.home, USERPROFILE: gate.home, CLAUDE_PROJECT_DIR: plainFolder() };
+}
+
+test('an edited repo whose check does not finish in time passes instead of holding the stop', async () => {
+  const env = sessionThatEdited([billAndGinShape()]);
+  const { timeouts, runCheck } = countingCheck(0);
+  assert.deepEqual(await decide({ hook_event_name: 'Stop', session_id: SESSION }, env, { checkTimeoutMs: 1, runCheck: () => 'timeout' }), { block: false });
+  await decide({ hook_event_name: 'Stop', session_id: SESSION }, env, { checkTimeoutMs: BUDGET_MS, runCheck });
+  assert.equal(timeouts.length, 1, 'the edited repo is checked');
+});
+
+test('one stop spends one check budget over all its repos: a second check gets only the time left, or none', async () => {
+  const env = sessionThatEdited([makeRepo(), makeRepo()]);
+  const quick = countingCheck(200);
+  await decide({ hook_event_name: 'Stop', session_id: SESSION }, env, { checkTimeoutMs: BUDGET_MS, runCheck: quick.runCheck });
+  assert.equal(quick.timeouts.length, 2);
+  assert.ok(quick.timeouts[1] <= BUDGET_MS - 200, `the second check was given ${quick.timeouts[1]} ms`);
+  const slow = countingCheck(SLOW_CHECK_MS);
+  const envOther = sessionThatEdited([makeRepo(), makeRepo()]);
+  await decide({ hook_event_name: 'Stop', session_id: SESSION }, envOther, { checkTimeoutMs: BUDGET_MS, runCheck: slow.runCheck });
+  assert.equal(slow.timeouts.length, 1, 'no time left: the second repo is not checked');
+});
+
+test('PreCompact keeps to the same budget, so the project lines are not lost to a kill', async () => {
+  const env = sessionThatEdited([makeRepo(), makeRepo()]);
+  const slow = countingCheck(SLOW_CHECK_MS);
+  await openLanes({ hook_event_name: 'PreCompact', session_id: SESSION }, env, { checkTimeoutMs: BUDGET_MS, runCheck: slow.runCheck });
+  assert.equal(slow.timeouts.length, 1);
+});
+
+test('a lead looks at no more than 5 repos in one stop', async () => {
+  const env = sessionThatEdited(Array.from({ length: 6 }, makeRepo));
+  const quick = countingCheck(0);
+  await decide({ hook_event_name: 'Stop', session_id: SESSION }, env, { checkTimeoutMs: 60_000, runCheck: quick.runCheck });
+  assert.equal(quick.timeouts.length, 5);
+});
+
+test('a lane worktree of the project repo is the same repo: blocked once, not once for the checkout and once for the worktree', () => {
+  const gate = gateSession();
+  const project = billAndGinShape();
+  recordEditIn(gate, addWorktree(project, 'lane-wt', 'lane/wt'));
+  assert.ok(gate.stop(project).includes(`Git hygiene in ${project}`));
+  assert.equal(gate.stop(project), null, 'the worktree adds no second block');
+});
+
+test('many worktrees of one repo use one slot: another edited repo is still reached', () => {
+  const gate = gateSession();
+  const other = makeRepo();
+  const crowded = makeRepo();
+  recordEditIn(gate, other);
+  recordEditIn(gate, crowded);
+  for (let n = 1; n <= 5; n += 1) recordEditIn(gate, addWorktree(crowded, `lane-wt-${n}`, `lane/wt-${n}`));
+  const env = { ...CLEAN_ENV, HOME: gate.home, USERPROFILE: gate.home };
+  const found = editedWorktrees(SESSION, env);
+  assert.equal(found.length, 2);
+  assert.ok(found.some(({ top }) => top === other), 'the other repo is reached');
+});
+
+test('finding the edited repos stops at the deadline, after the first', () => {
+  const gate = gateSession();
+  for (const repo of [makeRepo(), makeRepo(), makeRepo()]) recordEditIn(gate, repo);
+  const env = { ...CLEAN_ENV, HOME: gate.home, USERPROFILE: gate.home };
+  assert.equal(editedWorktrees(SESSION, env, { deadlineMs: 0 }).length, 1);
+  assert.equal(editedWorktrees(SESSION, env).length, 3);
+});
+
+test('a folder whose .git/HEAD never answers (a FIFO) is given up on at once, not waited for', posixOnly, () => {
+  const folder = mkdtempSync(join(tmpdir(), 'git-tidy-gate-fifo-'));
+  mkdirSync(join(folder, '.git'));
+  assert.equal(spawnSync('mkfifo', [join(folder, '.git', 'HEAD')]).status, 0);
+  const startedMs = Date.now();
+  assert.equal(worktreeOf(folder, 300), null);
+  assert.ok(Date.now() - startedMs < 3000);
 });
 
 test('PreCompact lists the open lanes of an edited repo too', async () => {

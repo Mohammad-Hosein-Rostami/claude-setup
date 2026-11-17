@@ -8,8 +8,10 @@
 //   Env: GIT_TIDY_GATE_CHECK_TIMEOUT_MS overrides CHECK_TIMEOUT_MS (a loaded machine, the test suite).
 // Invariants:
 // - The gated folder is the session's own worktree (lib/gated-folder.mjs). A lead also gates the worktrees of files the session itself
-//   edited (up to 5, newest first; one stop spends at most one check budget across them), so a session started in a folder that is no
-//   repo (~) is still checked; a repo the session did not edit in is never touched. A subagent gates its start folder only. The check runs as a child of `git-tidy.mjs check --json` with
+//   edited (one per repository, up to 5, newest first; one stop spends at most one check budget in all, finding them included, and each
+//   check gets only the time left; PreCompact keeps to the same budget), so a session started in a folder that is no repo (~) is still
+//   checked; a repo the session did not edit in is never touched. A subagent gates its start folder only. The check runs as a child of
+//   `git-tidy.mjs check --json` with
 //   core.fsmonitor and log.showSignature off and bare repositories off, and never in a repo where any worktree's own config view names a
 //   filter (`git status` there would run it): there only a cached verdict is read, so such a repo is never judged.
 // - A finding blocks only when the advised `prune` would act on it (a dry run in the same child, so a fresh worktree at the base, which
@@ -132,8 +134,8 @@ function anyWorktreeNamesFilter(top) {
 
 const checkBudgetMs = (env, deps) => deps.checkTimeoutMs ?? (Number(env.GIT_TIDY_GATE_CHECK_TIMEOUT_MS) || CHECK_TIMEOUT_MS);
 
-/** The check verdict of `top` for this repo state: from the cache, else from a bounded child run; null when there is none (error, timeout). */
-function verdictFor(env, session, top, deps) {
+/** The check verdict of `top` for this repo state: from the cache, else from a child run bound by `timeoutMs`; null when there is none (error, timeout). */
+function verdictFor(env, session, top, deps, timeoutMs) {
   const fingerprint = fingerprintOf(top);
   if (fingerprint === null) return null;
   const repoState = { top, fingerprint };
@@ -141,7 +143,7 @@ function verdictFor(env, session, top, deps) {
   if (cached !== undefined) return cached;
   if (anyWorktreeNamesFilter(top)) return null; // only the child's `git status` could run a filter, so a cache hit never needs this call
   const run = deps.runCheck ?? runCheckChild;
-  const fresh = run(top, checkBudgetMs(env, deps), env);
+  const fresh = run(top, timeoutMs, env);
   if (fresh === 'timeout') {
     startRefresh(top, session, env);
     return null;
@@ -226,8 +228,8 @@ function verdictProblems(verdict, input, env, top) {
   return { problems, pruneLine: prune ? `node ~/.claude/tools/git-tidy/git-tidy.mjs prune ${shellWord(top)} --apply --include-recent` : null };
 }
 
-async function leadReason(input, env, deps, top) {
-  const verdict = verdictFor(env, input.session_id, top, deps);
+async function leadReason(input, env, deps, { top, timeoutMs }) {
+  const verdict = verdictFor(env, input.session_id, top, deps, timeoutMs);
   if (verdict === null) return null;
   const { problems, pruneLine } = verdictProblems(verdict, input, env, top);
   const baseProblem = await baseTipProblem(top, verdict.base, input.transcript_path, deps);
@@ -257,14 +259,29 @@ function gatedTree(input, env) {
 }
 
 /**
- * The trees a lead's stop looks at: its project folder's worktree, then the worktrees of files the session edited (a session started in
- * ~ has no project repo of its own). Empty for an unusable session.
+ * The trees a lead's stop looks at: its project folder's worktree, then one worktree of each other repository the session edited a file
+ * in (a session started in ~ has no project repo of its own). Empty for an unusable session. Finding them stops at `deadlineMs`.
  */
-function leadTrees(input, env) {
+function leadTrees(input, env, deadlineMs) {
   if (input === null || typeof input !== 'object' || !isSessionId(input.session_id)) return [];
   const project = gatedTree(input, env);
-  const edited = editedWorktrees(input.session_id, env).filter(({ top }) => top !== project?.top);
+  const edited = editedWorktrees(input.session_id, env, { deadlineMs, except: project });
   return project === null ? edited : [project, ...edited];
+}
+
+/**
+ * Runs `inspect(tree, timeoutMs)` on each of a lead's trees until the one check budget is spent: each call gets only the time left, and
+ * no tree after the first is started once none is left. `inspect` returns a stop value to end the loop with, else undefined.
+ */
+async function inspectWithinBudget(input, env, deps, inspect) {
+  const deadlineMs = Date.now() + checkBudgetMs(env, deps);
+  for (const [index, tree] of leadTrees(input, env, deadlineMs).entries()) {
+    const timeLeftMs = deadlineMs - Date.now();
+    if (index > 0 && timeLeftMs <= 0) break; // one stop never waits for several slow repos
+    const done = await inspect(tree, Math.max(timeLeftMs, 1));
+    if (done !== undefined) return done;
+  }
+  return undefined;
 }
 
 /**
@@ -280,14 +297,11 @@ export async function decide(input, env = process.env, deps = {}) {
     const tree = gatedTree(input, env);
     return tree === null ? PASS : blockOnce(input, env, agent, tree, agentReason(input, tree.top));
   }
-  const trees = leadTrees(input, env);
-  const startedMs = Date.now();
-  for (const [index, tree] of trees.entries()) {
-    if (index > 0 && Date.now() - startedMs >= checkBudgetMs(env, deps)) break; // one stop never waits for several slow repos
-    const result = blockOnce(input, env, agent, tree, await leadReason(input, env, deps, tree.top));
-    if (result.block) return result;
-  }
-  return PASS;
+  const blocked = await inspectWithinBudget(input, env, deps, async (tree, timeoutMs) => {
+    const result = blockOnce(input, env, agent, tree, await leadReason(input, env, deps, { top: tree.top, timeoutMs }));
+    return result.block ? result : undefined;
+  });
+  return blocked ?? PASS;
 }
 
 /** The block for `found` (a reason or null) the first time its state is seen in this session, else PASS. */
@@ -305,10 +319,10 @@ function blockOnce(input, env, agent, tree, found) {
 export async function openLanes(input, env = process.env, deps = {}) {
   if (typeof input?.agent_id === 'string' && input.agent_id !== '') return [];
   const lines = [];
-  for (const { top } of leadTrees(input, env)) {
-    const verdict = verdictFor(env, input.session_id, top, deps);
+  await inspectWithinBudget(input, env, deps, ({ top }, timeoutMs) => {
+    const verdict = verdictFor(env, input.session_id, top, deps, timeoutMs);
     for (const { kind, subject, detail } of verdict?.hints ?? []) if (kind === OPEN_LANE) lines.push(`open lane ${subject}: ${detail}`);
-  }
+  });
   return lines;
 }
 
