@@ -40,8 +40,10 @@ const TIDY = 'node ~/.claude/tools/git-tidy/git-tidy.mjs'
 const TEST_PASS = 'node ~/.claude/tools/test-pass/test-pass.mjs'
 const STATUS = 'node ~/.claude/tools/status/status.mjs'
 const FIELDS = 'Return exit (the command\'s exit code), tip (the sha it printed after `tip`, else ""), patchesChanged (the number after `patches-changed`, else 0), files (file names it listed for a conflict, else []), tail (its last 3 output lines, no secrets).'
+// The suite step reports failing tests, so it gets its own text: FIELDS would tell it files are for conflicts and tail is the last 3 lines.
+const SUITE_FIELDS = 'Return exit (the command\'s exit code), tip (the sha it printed after `tip`, else ""), patchesChanged (0), files (the failing test files when the suite exits non-zero, else []), tail (each failing file\'s first error line when the suite exits non-zero, else the last 3 lines of output; no secrets).'
 
-const runner = (step, phase, prompt) => agent(`${prompt}\nDo not change anything else. ${FIELDS}`, { label: `${args.row}:${step}`, phase, schema: STEP_SCHEMA, ...RUNNER })
+const runner = (step, phase, prompt, fields = FIELDS) => agent(`${prompt}\nDo not change anything else. ${fields}`, { label: `${args.row}:${step}`, phase, schema: STEP_SCHEMA, ...RUNNER })
 const failed = (sha, text) => ({ status: 'failed', sha, patchesChanged: 0, tidy: text })
 const sameSha = (a, b) => a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a))
 
@@ -62,7 +64,7 @@ while (true) {
   if (rebase.patchesChanged > 0) return { status: 'needs-review', sha: rebase.tip, patchesChanged: rebase.patchesChanged, tidy: rebase.tail }
 
   phase('Suite')
-  const suite = await runner('suite', 'Suite', `Check for a full-suite PASS at the tip: ${TEST_PASS} check ${rebase.tip} --repo ${args.repo} --suite. If it exits 0 you are done (report exit 0). Otherwise run the suite on the tip: in ${args.worktree} when its HEAD is ${rebase.tip} and it has no changes, else in a detached worktree of ${rebase.tip} that you remove afterwards: ${TEST_PASS} run --repo <that folder> --suite (no command after it: test-pass runs the repo's declared suite) and report its exit. When the suite exits non-zero, report in files the failing test files and in tail each one's first error line (for node --test, its first "not ok" line and the first error message under it): the last output lines never name the failing test.`)
+  const suite = await runner('suite', 'Suite', `Check for a full-suite PASS at the tip: ${TEST_PASS} check ${rebase.tip} --repo ${args.repo} --suite. If it exits 0 you are done (report exit 0). Otherwise run the suite on the tip: in ${args.worktree} when its HEAD is ${rebase.tip} and it has no changes, else in a detached worktree of ${rebase.tip} that you remove afterwards: ${TEST_PASS} run --repo <that folder> --suite (no command after it: test-pass runs the repo's declared suite) and report its exit. When the suite exits non-zero, report in files the failing test files and in tail each one's first error line (for node --test, its first "not ok" line and the first error message under it): the last output lines never name the failing test.`, SUITE_FIELDS)
   if (suite === null) return failed(rebase.tip, 'the suite runner was stopped')
   if (suite.exit !== 0) return { status: 'red', sha: rebase.tip, patchesChanged: 0, tidy: suite.files.length > 0 ? `${suite.files.join(', ')}: ${suite.tail}` : suite.tail }
 

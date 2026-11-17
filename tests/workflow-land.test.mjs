@@ -65,6 +65,7 @@ test('a red suite names the failing test files and their first error line, from 
   const suitePrompt = run.calls.find((call) => /:suite$/.test(call.label)).prompt;
   assert.match(suitePrompt, /failing test files/, 'the runner is told to report the failing files, not the last output lines');
   assert.match(suitePrompt, /check fed9876 /, 'the suite is checked at the rebased tip');
+  assert.doesNotMatch(suitePrompt, /listed for a conflict|its last 3 output lines/, 'the shared field text must not contradict the suite step');
 });
 
 test('a base that moved during the land (exit 5) goes back to the rebase check and lands on the second try', async () => {
