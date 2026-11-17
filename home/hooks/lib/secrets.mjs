@@ -67,7 +67,9 @@ const OPENER = '(?<=^|[\\s(=,\\[{:])';
 const TS_TYPE_WORD = '(?:string|number|boolean|bigint|symbol|object|unknown|any|never|void|null|undefined)(?:\\[\\])?';
 const TS_TYPE = `(?![^\\n"']{0,500}[\\w-]=[^\\s=])${TS_TYPE_WORD}(?:[ \\t]*\\|[ \\t]*${TS_TYPE_WORD}){0,6}[ \\t]*(?:[;,](?=\\s|$)|[})\\]](?=[\\s;,)}\\]]|$)|(?<=[ \\t])=|["'](?=[\\s;,)}\\]]|$)|\\n|$)`;
 const FORMAT_PLACEHOLDER = `(?!(?<=${OPENER}(?<q>["'])(?:(?!\\s--?[A-Za-z])[^"'\\n]){0,500})${PLACEHOLDER}[ \\t]*\\k<q>${AFTER_QUOTE}|${PLACEHOLDER}[ \\t]*(?:\\n|$)|${TS_TYPE})`;
-const BEARER_PROSE_WORD = '[a-z]{1,12}(?![\\w-])'; // 12 letters at most, no digit or capital, not the start of a longer hyphenated word
+// 12 lowercase letters at most that END the word: punctuation or a closing quote may follow, then a blank or the end. A token head glued to
+// more text (a slash, plus, dot or colon, then the rest of the token) is not prose.
+const BEARER_PROSE_WORD = '[a-z]{1,12}(?=[.,;:!?"\')\\]]*(?:\\s|$))';
 const STDIN_FLAG = '--(?:with-token|password-stdin)\\b';
 // the value is echoed/printed (`echo -n T`, `printf '%s' T`) and piped into a command that has the stdin flag
 const ECHOED_INTO_STDIN_FLAG = `(?=(?:"[^"]*"|'[^']*'|[^\\s"';&|]+)[ \\t]*\\|[^\\n;&|]{0,${GAP}}${STDIN_FLAG})`;
@@ -109,8 +111,9 @@ const QUERY_CODE = `["'\`][ \\t]*(?:\\+(?![ \\t]*["'\`])|[})]${QUERY_END})|["']?
 const QUERY_START = '(?!["\']?(?:`|<|\\s|;|&|\\||$))';
 // A kebab-case mock word (`token=verify-ok`): lowercase (these rules have no 'i' flag), 24 chars at most, one hyphen at least, and it ENDS the
 // value: a quote not followed by more value, whitespace, `&`, `#`, `)` or the end. Only for token-like keys, never password/secret keys.
-// It also ends at a backtick that closes a JS template literal (`/reset?token=verify-ok`) and at a `${...}` that follows it (`mock-token-${id}`).
-const MOCK_WORD_ENDS_IN_TEMPLATE = '`(?=[)}\\]\\s;,.]|$)|-?\\$\\{';
+// It also ends at a backtick that closes a JS template literal (then a blank, a closer, or a method call such as `.replace(`) and at `${...}` parts
+// that END the value (`mock-token-${id}`): a token glued after them is not a mock word.
+const MOCK_WORD_ENDS_IN_TEMPLATE = '`(?=[)}\\]\\s;,]|\\.[A-Za-z_]\\w{0,20}\\(|$)|(?:-?\\$\\{[\\w.]{1,40}\\})+(?=[`"\'&#)\\s]|$)';
 const QUERY_MOCK_WORD = `(?=[a-z-]{1,24}(?![\\w-]))[a-z]+(?:-[a-z]+)+(?:["'](?:${QUERY_END}|${IN_CODE_CONCAT}[ \\t]*\\+(?![ \\t]*["'\`]))|\\)${QUERY_END}|${MOCK_WORD_ENDS_IN_TEMPLATE}|[\\s&#]|$)`;
 const QUERY_NOT_LITERAL = `${QUERY_MIN_LENGTH}(?!${QUERY_CODE})`;
 const QUERY_TOKEN_NOT_LITERAL = `${QUERY_MIN_LENGTH}(?!${QUERY_CODE}|${QUERY_MOCK_WORD})`;

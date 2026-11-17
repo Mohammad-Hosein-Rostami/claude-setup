@@ -33,6 +33,17 @@ test('twin: a real bearer value, a header, a capitalised scheme or a longer word
   ]) assert.ok(findLiteralSecret(command), command);
 });
 
+test('twin: a short lowercase head glued to the rest of a token by / + . ~ : is still a secret', () => {
+  const doppler = ['dp', 'st', 'prd', 'Zq8Lw2Nf7Kp3Xr5Tb9Mh4Vc6Jd1Gs0Ya2Ue8'].join('.');
+  const mapbox = ['sk', 'eyJ1IjoiYWJjZGVmIiwiYSI6ImNsMTIzNDU2Nzg5MCJ9', 'Xr5Tb9Mh4Vc6Jd1Gs0Ya2U'].join('.');
+  for (const glue of ['/', '+', '~', ':']) {
+    assert.ok(findLiteralSecret(`echo "${BEARER} abcdef${glue}${RANDOM_TOKEN}"`), `glued by ${glue}`);
+  }
+  for (const value of [doppler, mapbox]) {
+    assert.ok(findLiteralSecret(`AUTH="${BEARER} ${value}" ./client.sh`), 'a variable outside an Authorization header');
+  }
+});
+
 test('a kebab-case mock word closed by a backtick or followed by ${...} is not a literal secret', () => {
   for (const command of [
     'cat > t.js <<EOF\nawait page.goto(`/reset?token=verify-ok`);\nEOF',
@@ -49,5 +60,7 @@ test('twin: the same shapes with a real-looking token, a capital or no hyphen ar
     'cat > t.js <<EOF\nawait page.goto(`/reset?token=verifyokverifyok`);\nEOF',
     `cat > t.js <<EOF\nawait page.goto(\`/reset?token=verify-ok-${RANDOM_TOKEN}\`);\nEOF`,
     `cat > t.js <<EOF\nawait page.goto(\`/reset?token=verify-ok${RANDOM_TOKEN}\`);\nEOF`, // a token glued to the mock word
+    `cat > t.js <<EOF\nawait goto(\`/r?token=verify-ok-\${id}${RANDOM_TOKEN}\`);\nEOF`, // a token glued after the ${...}
+    `cat > t.js <<EOF\nawait goto(\`/r?token=verify-ok\`.${RANDOM_TOKEN});\nEOF`, // a token after the closing backtick, not a method call
   ]) assert.ok(findLiteralSecret(command), command);
 });
