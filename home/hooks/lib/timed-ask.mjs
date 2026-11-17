@@ -20,7 +20,8 @@
 // whole value is masked with its real line breaks, before it is flattened or cut).
 // A request may name its own buttons ({accept, decline}, default Allow/Deny; accept is the default and the timeout answer), title and
 // labelled detail lines (AskUserQuestion's dialog uses all three; a label is masked and cut like a value, a detail may keep a long
-// value's start instead of its head and tail); Windows keeps Yes/No and the body says which is which. On macOS the decline button is
+// value's start instead of its head and tail; buttons.defaultButton 'decline' makes Enter hit the decline button, for a popup that may open
+// while the owner types elsewhere); Windows keeps Yes/No and the body says which is which. On macOS the decline button is
 // the cancel button, so Esc declines, never takes the default.
 import { spawnSync } from 'node:child_process';
 import { logDecision } from './guard-log.mjs';
@@ -60,13 +61,15 @@ const NO_DISPLAY_TEXT = /cannot open display|failed to open display|no display|u
 // osascript's cancel button (a click or Esc) fails with error -128; the message may be localised, the number is not
 const USER_CANCELED_TEXT = /user canceled|\(-128\)/i;
 
-// Popup(text, seconds, title, 4 + 32): Yes/No buttons, question icon, first button (Yes) is the default.
-const WINDOWS_SCRIPT = `$ErrorActionPreference='Stop'; $w=New-Object -ComObject WScript.Shell; [Console]::Out.Write($w.Popup($env:${TEXT_ENV}, ${'$'}args[0], $env:${TITLE_ENV}, 36))`;
+// Popup(text, seconds, title, 4 + 32 [+ 256]): Yes/No buttons, question icon, first button (Yes) is the default, or the second (No) with 256.
+const WINDOWS_YES_NO_QUESTION = 36;
+const WINDOWS_SECOND_BUTTON_DEFAULT = 256;
+const windowsScript = (decideByDefault) => `$ErrorActionPreference='Stop'; $w=New-Object -ComObject WScript.Shell; [Console]::Out.Write($w.Popup($env:${TEXT_ENV}, ${'$'}args[0], $env:${TITLE_ENV}, ${WINDOWS_YES_NO_QUESTION + (decideByDefault ? WINDOWS_SECOND_BUTTON_DEFAULT : 0)}))`;
 // The button labels are constants from this code (never caller text), so they may sit in the script; the body and title travel as arguments.
 // The decline button is also the cancel button, so Esc declines (Deny, or "Answer in terminal") and never takes the default.
-const macScript = ({ accept, decline }) => [
+const macScript = ({ accept, decline, defaultButton }) => [
   'on run argv',
-  `display dialog (item 1 of argv) with title (item 2 of argv) buttons {"${decline}", "${accept}"} default button "${accept}" cancel button "${decline}" with icon caution giving up after ((item 3 of argv) as integer)`,
+  `display dialog (item 1 of argv) with title (item 2 of argv) buttons {"${decline}", "${accept}"} default button "${defaultButton === 'decline' ? decline : accept}" cancel button "${decline}" with icon caution giving up after ((item 3 of argv) as integer)`,
   'end run',
 ];
 
@@ -123,18 +126,19 @@ export const dialogExecutable = (platform) => ({ darwin: 'osascript', win32: 'po
  * @param {string} text dialog body (already masked)
  * @param {string} title dialog title
  * @param {number} timeoutS seconds until the dialog closes itself
- * @param {{accept: string, decline: string}} buttons button labels; accept is the default (Windows always shows Yes/No)
+ * @param {{accept: string, decline: string, defaultButton?: 'decline'}} buttons button labels; accept is the default (Windows always shows Yes/No)
+ *   unless defaultButton is 'decline': then Enter lands on decline, and accept stays clickable and is still the timeout answer
  * @returns {{command: string, args: string[], env: Record<string, string>} | undefined} how to run the dialog; undefined for an unknown platform
  */
 export function dialogInvocation(platform, text, title, timeoutS, buttons = ALLOW_DENY_BUTTONS) {
   const command = dialogExecutable(platform);
   if (platform === 'darwin') return { command, args: [...macScript(buttons).flatMap((line) => ['-e', line]), text, title, String(timeoutS)], env: {} };
   if (platform === 'win32') {
-    return { command, args: ['-NoProfile', '-NonInteractive', '-Command', `& { ${WINDOWS_SCRIPT} }`, String(timeoutS)], env: { [TEXT_ENV]: text, [TITLE_ENV]: title } };
+    return { command, args: ['-NoProfile', '-NonInteractive', '-Command', `& { ${windowsScript(buttons.defaultButton === 'decline')} }`, String(timeoutS)], env: { [TEXT_ENV]: text, [TITLE_ENV]: title } };
   }
   if (platform === 'linux') {
     // --no-markup: zenity then shows the text as it is (no Pango markup, no backslash escapes)
-    return { command, args: ['--question', '--no-markup', `--title=${title}`, `--text=${text}`, `--ok-label=${buttons.accept}`, `--cancel-label=${buttons.decline}`, `--timeout=${timeoutS}`, '--width=520'], env: {} };
+    return { command, args: ['--question', '--no-markup', `--title=${title}`, `--text=${text}`, `--ok-label=${buttons.accept}`, `--cancel-label=${buttons.decline}`, `--timeout=${timeoutS}`, '--width=520', ...(buttons.defaultButton === 'decline' ? ['--default-cancel'] : [])], env: {} };
   }
   return undefined;
 }
@@ -210,7 +214,9 @@ function dialogText({ tool, reason, command, targetLabel = 'Command', details = 
   if (cwd) lines.push(`Directory: ${visible(cwd)}`);
   if (who) lines.push(`From: ${who}`);
   const yesNo = platform === 'win32' ? ` (Yes = ${buttons.accept}, No = ${buttons.decline})` : '';
-  lines.push('', `${buttons.accept} is the default${yesNo}. With no answer in ${formatDuration(timeoutS)} it goes ahead.`);
+  const timeoutRule = buttons.defaultButton === 'decline' ? `${buttons.accept} is taken.` : 'it goes ahead.';
+  const defaultLabel = buttons.defaultButton === 'decline' ? buttons.decline : buttons.accept;
+  lines.push('', `${defaultLabel} is the default${yesNo}. With no answer in ${formatDuration(timeoutS)} ${timeoutRule}`);
   return lines.join('\n');
 }
 

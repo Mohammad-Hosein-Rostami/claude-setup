@@ -11,7 +11,7 @@ import { delimiter, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { GUARD_LOG_FILE, guardLogPath, logDecision } from '../home/hooks/lib/guard-log.mjs';
-import { answerAsk, askTimeoutSeconds, secretAskTimeoutSeconds, formatDuration, decisionOutput, dialogExecutable, dialogInvocation, guiAvailable, parseDialogResult } from '../home/hooks/lib/timed-ask.mjs';
+import { answerAsk, askTimeoutSeconds, secretAskTimeoutSeconds, formatDuration, decisionOutput, dialogExecutable, dialogInvocation, guiAvailable, parseDialogResult, requestInvocation } from '../home/hooks/lib/timed-ask.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { questionReply } from '../home/hooks/lib/question-reply.mjs';
 import { tempLogPath } from './hook-env.mjs';
@@ -375,6 +375,19 @@ test('custom buttons: the accept label is the default and reads back as allow, t
   assert.equal(parseDialogResult('darwin', r('button returned:Use recommended, gave up:false'), QUESTION_BUTTONS), 'allow');
   assert.equal(parseDialogResult('darwin', r('button returned:Answer in terminal, gave up:false'), QUESTION_BUTTONS), 'deny');
   assert.equal(parseDialogResult('darwin', r('button returned:Allow, gave up:false'), QUESTION_BUTTONS), 'unavailable');
+});
+
+test('defaultButton "decline": Enter lands on the decline button on every platform, the labels and the timeout answer stay', () => {
+  const buttons = { ...QUESTION_BUTTONS, defaultButton: 'decline' };
+  const mac = dialogInvocation('darwin', 'body', 'Title', 30, buttons);
+  const script = mac.args.filter((_, i) => mac.args[i - 1] === '-e').join('\n');
+  assert.match(script, /buttons \{"Answer in terminal", "Use recommended"\} default button "Answer in terminal" cancel button "Answer in terminal"/);
+  assert.ok(dialogInvocation('linux', 'body', 'Title', 30, buttons).args.includes('--default-cancel'));
+  assert.ok(!dialogInvocation('linux', 'body', 'Title', 30, QUESTION_BUTTONS).args.includes('--default-cancel'));
+  assert.match(dialogInvocation('win32', 'body', 'Title', 30, buttons).args.join(' '), /, 292\)/, 'Popup flags: Yes/No + question icon + second button default');
+  assert.match(dialogInvocation('win32', 'body', 'Title', 30, QUESTION_BUTTONS).args.join(' '), /, 36\)/);
+  const body = requestInvocation({ tool: 'AskUserQuestion', reason: 'r', buttons }, 30, 'darwin').args.at(-3);
+  assert.ok(body.includes('Answer in terminal is the default') && body.includes('With no answer in 30 s Use recommended is taken.'), body);
 });
 
 test('details: each labelled line is masked and kept on one line, under the request title, with the accept button as default', () => {

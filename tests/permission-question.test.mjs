@@ -106,6 +106,16 @@ test('several questions: one popup per question, one after the other, each with 
   ]);
 });
 
+test('popups 2..N default (Enter) to "Answer in terminal", so an Enter typed in the terminal question cannot pick an answer; popup 1 keeps "Use recommended"', async () => {
+  const ask = fakeAsk('allow');
+  await reply(askInput([WATCHER, FORMAT, SHIP]), privateEnv(), ask);
+  assert.deepEqual(ask.calls.map((call) => call.buttons.defaultButton), [undefined, 'decline', 'decline']);
+  for (const call of ask.calls) assert.deepEqual([call.buttons.accept, call.buttons.decline], ['Use recommended', 'Answer in terminal'], 'both buttons stay clickable');
+  const single = fakeAsk('allow');
+  await reply(askInput([WATCHER]), privateEnv(), single);
+  assert.equal(single.calls[0].buttons.defaultButton, undefined);
+});
+
 test('mixed: a click on questions 1 and 3 and a timeout on 2 -> only question 2 carries the UNCONFIRMED note', async () => {
   const decision = await reply(askInput([WATCHER, FORMAT, SHIP]), privateEnv(), fakeAsk('allow', 'timeout', 'allow'));
   assert.deepEqual(decision.updatedInput.annotations, { 'Which format?': { notes: TIMEOUT_NOTE } });

@@ -6,6 +6,7 @@
 // {notes}} saying the answer was taken by default, not chosen by the owner (UNCONFIRMED), for that question alone. After the last question
 // the result is an allow with updatedInput = the input plus `answers` {question text: option label} (hooks docs, AskUserQuestion input and
 // PermissionRequest decision control).
+// Popup 1 has "Use recommended" as its default (Enter) button; popups 2..N have "Answer in terminal" (a stray Enter typed into the terminal question must not answer).
 // "Answer in terminal" (Esc on macOS), a failed dialog or no GUI on any question stop the loop: undefined, so Claude Code's own question UI
 // (which already shows every question) takes over; answers already collected are dropped, never an invented answer.
 // Terminal answer: Claude Code shows its own question and runs this hook side by side and never says when the owner answers there. The
@@ -22,6 +23,9 @@ import { formatDuration, permissionTimeoutSeconds } from './timed-ask.mjs';
 const HOOK_NAME = 'permission-timed-allow';
 const QUESTION_TOOL = 'AskUserQuestion';
 const QUESTION_BUTTONS = { accept: 'Use recommended', decline: 'Answer in terminal' };
+// Popups 2..N open minutes after the terminal question appeared, often while the owner types in it: a stray Enter must not pick an answer,
+// so there Enter hits "Answer in terminal" (the safe hand-back). "Use recommended" and the timeout answer stay as they are.
+const LATER_QUESTION_BUTTONS = { ...QUESTION_BUTTONS, defaultButton: 'decline' };
 const QUESTION_TITLE = 'Claude Code: question';
 const RECOMMENDED = /\(Recommended\)\s*$/i; // how Claude marks the option it would pick
 // The terminal question runs beside this hook and auto-continues (settings askUserQuestionTimeout "10m") with the answers chosen so far, which
@@ -44,7 +48,7 @@ function popupRequest({ item, index, count, answer, timeoutS, input }) {
     tool: QUESTION_TOOL,
     reason: `Claude asks question ${index + 1} of ${count}; with no answer it takes the option shown`,
     title: count > 1 ? `${QUESTION_TITLE} ${index + 1} of ${count}` : QUESTION_TITLE,
-    buttons: QUESTION_BUTTONS,
+    buttons: index === 0 ? QUESTION_BUTTONS : LATER_QUESTION_BUTTONS,
     details: [
       { label: 'Question', value: item.header ? `[${item.header}] ${item.question}` : item.question },
       { label: 'Answer', value: answer, keepStart: true },
