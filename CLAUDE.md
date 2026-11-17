@@ -3,9 +3,11 @@
 This repo is the owner's personal Claude Code setup. `home/` is symlinked live into `~/.claude`, so an edit there is
 live in every running session at once. A half-written hook breaks Bash everywhere.
 
-- Edit hooks, the guard and tools in a git worktree; when the suite is green, rebase onto main and fast-forward (`git merge --ff-only`). Parallel agents each use their
-  own worktree; never edit the main checkout while others work.
-- Tests: `node --test tests/*.test.mjs` (never bare `node --test`). The pre-commit hook runs it plus gitleaks.
+- Edit hooks, the guard and tools in a git worktree. While building, run the affected tests (`node scripts/affected-tests.mjs <path>... --run`).
+  To land: rebase onto main, run the full suite on the rebased tip through `node home/tools/test-pass/test-pass.mjs run --suite`, then
+  fast-forward (`git merge --ff-only`). Parallel agents each use their own worktree; never edit the main checkout while others work.
+- Tests: `node --test tests/*.test.mjs` (never bare `node --test`). The pre-commit hook runs the tests the staged files can affect plus
+  gitleaks; the pre-push hook runs this full suite unless that tree already passed it.
 - Commit only your own paths: `git commit -m "<conventional message>" -- <paths>`. Never `--no-verify`.
 - `~/.claude/settings.json` is a merged copy: change `settings/base.json` (or an OS file) and re-merge with
   `scripts/install.sh`.

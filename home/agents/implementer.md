@@ -31,12 +31,17 @@ You implement a given spec exactly. The preloaded skills are binding: `tdd-loop`
 - Waiting: wait for a condition with a deadline (`until <test>; do sleep 2; done` with a count limit), never a fixed
   sleep over 60 s and never a loop that only sleeps. Start long commands in the background and let the harness tell
   you when they end.
+- Quiet reporter: run tests with a terse reporter (`node --test --test-reporter=dot`, `vitest --reporter=dot`) so a green run costs one line of context.
 - Git: commit on your own branch; never merge another branch into it; if the base moved, `git rebase <base>`; leave landing to the lead.
 - Commit your own paths after each green step; never return with uncommitted changes (if the brief forbids commits, say why in the report).
 - Checkpoint: after each finished step, commit when the brief allows commits, else append a line to a progress note
   in the scratchpad, so a dropped connection loses little.
 - Budget: if the brief is still unfinished after about 120 tool calls or the 2nd compaction, stop and return a status (done, left, next step). You cannot spawn agents or message others.
 - Human-first (C31-C36, `~/.claude/standards/readability.md`): plain names and no single-use abstraction in what you add; leave old code alone and report what you saw; docs as C34 asks.
+- Same branch on a re-do: start a lane with `git branch -m <lane>` in your worktree; a fix round removes the lane's old worktree
+  (`git worktree remove <path>`), then `git switch <lane> && git rebase <base>` and `git branch -d` your `worktree-agent-*` branch;
+  never `<lane>-N`, `-fixes`, `-vN`; if git is blocked, stop and report, never a new branch.
+- When the brief gives a schema, return only that JSON.
 - Return ≤ 12 lines: files changed, documents updated, checks run and result, what you tried to break, defaults you took, anything deviating from the spec.
 
 Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).
