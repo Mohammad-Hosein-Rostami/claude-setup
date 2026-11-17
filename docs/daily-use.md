@@ -26,9 +26,10 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
 - The lead picks the form by the job (any mode; the rule is in `home/CLAUDE.md`, "Inline, agent or workflow"). Inline, no agent:
   lookups (`/quick` for a read-only one), reading code, one command, a one-file or under-30-line edit (it still runs
   `review-tier` before it lands). One background agent: one implementer lane, one lane's review set, one research question,
-  one debug hypothesis set. A workflow: 2+ lanes or writers in parallel (`/wf-build`), review panels with fix rounds across
+  one debug hypothesis set inside a running job. A workflow: 2+ lanes or writers in parallel (`/wf-build`), review panels with fix rounds across
   lanes (`/wf-review`), research over several sources (`/wf-research`), `/wf-bugfix`, `/wf-land`, `/wf-sync`,
-  `/wf-git-cleanup`, a multi-stage job that must survive an exit, or when you ask (`/wf-step` runs one agent in the progress view).
+  `/wf-git-cleanup`, a multi-stage job that must survive an exit, or when you ask (`/wf-step` runs one agent in the progress view). Landing, machine sync, git cleanup and a bugfix job always run their
+  workflow, whatever the size; a hypothesis set inside a running job is an agent, a bugfix job is always `/wf-bugfix`.
 - Gates: targeted checks once after the last edit (through `runner`); the set `review-tier`
   prints (agents or the `wf-review` workflow, by the rule above) (`reviewer`, plus `security-auditor` and Opus lenses for risky classes and at landing); `ui-quality-pass` for UI;
   then `verify-done`.

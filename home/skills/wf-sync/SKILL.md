@@ -1,10 +1,11 @@
 ---
 name: wf-sync
 description: Sync the MacBook and the PC to the same base tip through the sync-machines workflow - bundle, ff-only pull, install, doctor on both. Never pushes. Fits a multi-stage job on two machines that must survive an exit.
-when_to_use: After a landing on the setup repo, or when the owner asks to sync the machines. Not for project repos.
+when_to_use: After a landing on the setup repo, or when the owner asks to sync the machines. Not for project repos. Machine sync always runs this workflow, whatever the size.
 argument-hint: <repo folder, base branch>
 ---
 
+Machine sync always runs this workflow, whatever the size (rule in CLAUDE.md, "Inline, agent or workflow").
 Call Workflow with `scriptPath` `${CLAUDE_SKILL_DIR}/../../workflows/sync-machines.js` and `args` `{row, repo, base}`
 (`repo` the setup checkout on this machine, `base` its base branch, usually `main`; `row` the STATUS.md row).
 It stops unless the base folder has no tracked changes, `git-tidy` is clean, the full suite has a PASS at the tip and, when review-tier ships `audit-log`, `audit-log gate` exits 0 for the tip (no open or failed post-land audit).

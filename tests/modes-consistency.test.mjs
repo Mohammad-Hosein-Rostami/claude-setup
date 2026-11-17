@@ -181,6 +181,12 @@ test('landing, machine sync, git cleanup and bugfix always run their workflow, a
     assert.ok(read(`home/workflows/${workflow}.js`).length > 0 && read(`home/skills/${skill}/SKILL.md`).includes(`${workflow}.js`), `${skill} runs ${workflow}.js`);
   }
   assert.doesNotMatch(read('home/skills/wf-land/SKILL.md'), /background agent instead|one background agent/i, 'wf-land must not offer an agent for a landing');
-  assert.match(read('home/skills/wf-land/SKILL.md'), /always runs this workflow/i);
+  for (const skill of ['wf-land', 'wf-sync', 'wf-git-cleanup', 'wf-bugfix']) {
+    assert.match(read(`home/skills/${skill}/SKILL.md`), /always runs this workflow/i, `${skill} says its job always runs this workflow`);
+  }
+  for (const file of ['docs/daily-use.md', 'docs/modes.md']) {
+    assert.match(read(file), /Landing, machine sync, git cleanup and (a )?bugfix( job)? always run their\s+workflow/i, `${file} points at the always-a-workflow tier`);
+  }
+  assert.doesNotMatch(read('home/CLAUDE.md').split('\n').find((line) => line.includes('One background agent')) ?? '', /one debug hypothesis set\.$/, 'the agent line limits a hypothesis set to inside a running job');
   assert.match(read('home/modes/_lead.md'), /via the `land` workflow/, '_lead.md lands through the land workflow');
 });
