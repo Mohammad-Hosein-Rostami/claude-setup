@@ -13,11 +13,11 @@ Args marked `?` are optional. Every script also accepts `scriptsDir` (this folde
 
 | script | skill | phases | args |
 | --- | --- | --- | --- |
-| `build.js` | `wf-build` | Build, Join, Review, Land | `base, repo, suite, writers, statusFile, scriptsDir, resume?, lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?}]` |
-| `review.js` | `wf-review` | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, initialFindings?` |
+| `build.js` | `wf-build` | Build, Join, Review, Land, Audit | `base, repo, suite, writers, statusFile, scriptsDir, resume?, lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?, principles?, checkpoints?, addClasses?}], appendOnly?` |
+| `review.js` | `wf-review` | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, initialFindings?, waiverAt?, principles?, audit?` |
 | `land.js` | `wf-land` | Rebase, Suite, Land | `row, closeRow, statusFile, repo, base, branch, worktree, suite, tip` |
 | `step.js` | `wf-step` | Step | `row, agentType, prompt, model, effort, isolation?, alone?, statusFile?` |
-| `bugfix.js` | `wf-bugfix` | Reproduce, Hypotheses, Fix, Verify | `row, closeRow, statusFile, repo, base, symptom, repro?, suite, scriptsDir` |
+| `bugfix.js` | `wf-bugfix` | Reproduce, Hypotheses, Fix, Verify | `row, closeRow, statusFile, repo, base, symptom, repro?, suite, scriptsDir, branch?` |
 | `research.js` | `wf-research` | Scope, Gather, Synthesize, Critic | `row, question, out, depth: 'simple'|'compare'|'complex'` |
 | `sync-machines.js` | `wf-sync` | Verify, Sync, Doctor | `row, repo, base` |
 | `git-cleanup.js` | `wf-git-cleanup` | Inventory, Plan, Apply | `row, repos` |
@@ -41,6 +41,29 @@ Args marked `?` are optional. Every script also accepts `scriptsDir` (this folde
   child, then a serial land queue through the `land` child, so lane A lands while lane B is still in review. A conflict or changed patches go back through `review`.
   A lane whose review is clean but whose `leadList` holds a security finding ruled not real is held (`lead-decision`), never landed. `build` is run from its script file only: its children cannot run from an inline script.
 - `step` runs one agent with the given type, model and effort. A workflow spawn does not fire `agent-model-guard`, so `step` repeats its gates by shape: a UI agent needs a `MATRIX:` line, a writer needs `isolation` or `alone: true`, `statusFile` adds the standing-rules line.
+
+## Round 5: contracts, waiver and audit
+
+Checkpoints and a waiver replace the second full review of a lane that a contract and its tests have already proven; an Opus-max audit after the land keeps the accuracy.
+
+- `review`: `waiverAt` is the sha `build` proved by its checkpoints. Round 0 then runs only `tier.waivable.reviews`, and only when `waiverAt` is that sha, the tier came from the runner (not `args.tier`),
+  `tier.waivable` is not null, `tier.weakened` is empty and `deltaOf` is absent. `waived` in the result is true when that round 0 ended clean. Any confirmed finding, open item or red suite makes
+  round 1 a whole-range, full-set round (`deltaOf` reset). `weakened` entries (a skipped test, a loosened bound, a removed assert) are listed in every lens prompt. `principles` (`{id, question}[]`,
+  ids from `home/rules/principles.md`) are added to the tier's own `principles` in every lens prompt: each is answered yes or no with `file:line`, and a no is a finding. The result's `baseSha` (merge-base
+  of the last round) and `tip` are the range that was reviewed.
+- `review` audit mode: `audit: {base, tip}` (recorded shas, never a branch name) needs `fix: false` and `landing: false`, else the script throws; it refuses `deltaOf`, `tier`, `waiverAt` and `initialFindings`.
+  It reviews `tier.waivable.audit`, or the full set when the range is no longer waivable; a missing or empty set, or 0 changed lines, is `failed` ("empty audit"), never clean.
+- `build` contract: each lane may carry `principles`, `checkpoints` (`{id, run, exit, files, kind: 'red-first'|'keeps-working'}`) and `addClasses`; top-level `appendOnly` lists the files lanes may share.
+  `checkArgs` throws when two lanes share another file or a checkpoint's `files` overlap its lane's `files`. The implementer never edits locked files (checkpoint files and the test-writer's); it writes `contract-dispute: <file>: <why>` instead.
+- `build` join: a runner reports, the script judges. Lists: `vacuous` (test-writer files that already pass at the base side), `outOfScope` (changed files outside `files` and the tests), `contractTouched`
+  (locked files the implementer changed), and `checkpoints` with `baseExit` and `headExit`. `contractTouched` not empty gives status `contract-touched`: refused, not reviewed. A checkpoint passes when `headExit`
+  equals its `exit`; `red-first` must differ at the base side, `keeps-working` must pass at both. `waiverAt` is the joined sha only with a test-writer, one `red-first` checkpoint, every checkpoint met,
+  and `vacuous` and `outOfScope` empty. Each failure becomes a first finding of the review.
+- `build` stage 5, `auditLane` (a lane that is `landed` and was `waived`): `audit-log record --state pending` under the landed sha (the gate key), then `should-audit`; sampled out is recorded as such; otherwise a detached
+  worktree at the reviewed tip T and a `review` child in audit mode on `B..T`; the result is `record --state done --confirmed N`, or `error` when the child did not finish. N above 0 gives the lane status
+  `audit-findings` (landed, with the findings); an audit that could not run gives `audit-error`. While a record is `pending`, `error` or has findings with no `resolve`, `audit-log gate` fails, and so do the push hook and the sync-machines verify step.
+- `land`: a suite that exits non-zero at the rebased tip returns `red` (`patchesChanged: 0`, `tidy` holds the failing tests). `build` handles `red` like `conflict`: an implementer fixes it, then the delta is reviewed.
+- `bugfix`: takes no `tier` arg (the review runner computes it); a land `red` goes to a fix agent, then review, like a conflict.
 
 ## Restart (after a stop that lost the journal)
 
