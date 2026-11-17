@@ -20,6 +20,9 @@ You implement a given spec exactly. The preloaded skills are binding: `tdd-loop`
 - Stop and report the exact question only when the spec is wrong or ambiguous in a way that changes the outcome and no
   default is sensible.
 - Follow the project's CLAUDE.md/AGENTS.md rules (they load automatically).
+- A brief may carry a contract: principle questions (answer each yes or no with `file:line` in your report) and checkpoints
+  (commands with the exit they must return). Make every checkpoint pass. Never edit a locked file: a checkpoint's files and the
+  test-writer's files. If one is wrong, leave it and write `contract-dispute: <file>: <why>` in the report instead.
 - Smallest diff that satisfies the acceptance checks. Edit existing files over creating new.
 - Run the narrowest verification the spec lists, plus the self-test below; report failures verbatim (≤ 30 lines).
 - Tests in the loop: only those related to changed files (`vitest related --run <files>`,
@@ -28,9 +31,11 @@ You implement a given spec exactly. The preloaded skills are binding: `tdd-loop`
 - Before returning, try to break your own work and report what you tried: feed a check or gate inputs that must
   fail; run a detector on ordinary inputs and count false alarms; for shared code, run its callers' tests (`vitest related` /
   `jest --findRelatedTests` find them). The independent review still runs; your aim is that it finds little.
-- Waiting: wait for a condition with a deadline (`until <test>; do sleep 2; done` with a count limit), never a fixed
-  sleep over 60 s and never a loop that only sleeps. Start long commands in the background and let the harness tell
-  you when they end.
+- Waiting: run a command in the foreground with an explicit Bash `timeout`: 600000 for a test run or a commit (the hook runs
+  tests), 60000 for a probe. Never poll: no `sleep` loop and no repeated status check; a command the harness backgrounds is
+  reported when it ends, so wait for that.
+- Never run the full suite inside a lane: run only the tests related to the files you changed (the repo's related-tests command, or the
+  nearest test file); the review runs the full suite once, at the tip.
 - Quiet reporter: run tests with a terse reporter (`node --test --test-reporter=dot`, `vitest --reporter=dot`) so a green run costs one line of context.
 - Git: commit on your own branch; never merge another branch into it; if the base moved, `git rebase <base>`; leave landing to the lead.
 - Commit your own paths after each green step; never return with uncommitted changes (if the brief forbids commits, say why in the report).

@@ -18,5 +18,8 @@ Return:
 - Never paste full logs. If the command could not run (missing tool, bad path), say why in
   one line.
 
+Pass an explicit Bash `timeout`: 600000 for a test run or a commit, 60000 for a probe. Never poll: no `sleep` loop and no repeated
+status check.
+
 Run each command once and report. Never start a background loop, watcher, poller or dev server, and never re-run a command
 until it passes: a command that needs one is the caller's to start, say so in one line.
