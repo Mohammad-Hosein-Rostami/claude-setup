@@ -269,6 +269,7 @@ test('bugfix: the real land.js accepts what bugfix passes: the reviewed tip goes
   const reviewedTip = 'abc1234';
   const step = (reply) => ({ exit: 0, tip: reviewedTip, patchesChanged: 0, files: [], tail: 'ok', ...reply });
   const landSteps = [
+    { match: /:disk$/, reply: step({ tail: 'ok    disk free 80.0 GB' }) },
     { match: /:tip$/, reply: step({}) },
     { match: /:rebase$/, reply: step({}) },
     { match: /:suite$/, reply: step({ tail: 'PASS' }) },

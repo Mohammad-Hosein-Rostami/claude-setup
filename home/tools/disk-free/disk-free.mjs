@@ -8,7 +8,7 @@
 //   DISK_FREE_DU_TIMEOUT_MS shortens the total time for measuring all folders.
 // Exports: availableGb, judgeFreeSpace (tests). The tool only reads: it measures folders and prints advice, it never deletes.
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -114,4 +114,4 @@ function main(argv, env) {
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) process.exitCode = main(process.argv.slice(2), process.env);
+if (import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) process.exitCode = main(process.argv.slice(2), process.env);
