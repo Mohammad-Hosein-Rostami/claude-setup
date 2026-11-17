@@ -351,3 +351,24 @@ test('checkArgs: lanes that list the same file written two ways, or a folder and
   const folder = lane('a', { files: ['tests'], checkpoints: [CHECKPOINT] });
   assert.match(String((await runScript(BUILD, ARGS([folder]), { replies: [] })).error?.message), /checkpoint c1/);
 });
+
+test('a checkpoint with no locked files still gets its base-side run (no test-writer): the verdict needs baseExit, and contractTouched stays off', async () => {
+  const unlocked = lane('a', { checkpoints: [{ ...CHECKPOINT, files: [], kind: 'keeps-working' }] });
+  const run = await runScript(BUILD, ARGS([unlocked]), { replies: buildReplies(joined('a', { checkpoints: [checkpointResult({ baseExit: 0 })] })), children: { review: () => reviewedClean('a', { waived: false }), land: () => landedOk() } });
+  const { prompt } = call(run, ':join');
+  assert.match(prompt, /Base-side runs, in a detached worktree at `git merge-base main HEAD`.*c1: node --test tests\/a\.test\.mjs/s);
+  assert.doesNotMatch(prompt, /contractTouched = /);
+  assert.equal((reviewOf(run).initialFindings ?? []).length, 0, 'baseExit 0 meets a keeps-working checkpoint');
+});
+
+test('checkArgs: two checkpoints of one lane may not share an id (the verdict keeps one result per id)', async () => {
+  const twins = lane('a', { checkpoints: [CHECKPOINT, { ...CHECKPOINT, run: 'node --test tests/b.test.mjs', files: ['tests/b.test.mjs'] }] });
+  assert.match(String((await runScript(BUILD, ARGS([twins]), { replies: [] })).error?.message), /id c1 is used twice/);
+});
+
+test('the audit review gets the lane\'s principles and added classes, like the landing review', async () => {
+  const run = await runContract(contractLane());
+  const [audit] = auditChildren(run);
+  assert.deepEqual(audit.args.principles, [{ id: 'P1', question: 'is every read path trusted?' }]);
+  assert.deepEqual(audit.args.addClasses, ['audit']);
+});

@@ -3,7 +3,7 @@
 // land queue through the `land` child. Lane A lands while lane B is still in review.
 // Args: { base, repo, suite, writers, statusFile, scriptsDir, appendOnly?, lanes: [{ row, closeRow, branch, spec, files, acceptanceTests, implementer: { agentType?, model, effort },
 //   matrix?, principles?, checkpoints?, addClasses? }] } (home/skills/wf-build/SKILL.md explains each key). checkArgs throws when two lanes share a file that is not in appendOnly
-//   (a folder and a file inside it count), when a checkpoint's files overlap its lane's files, or when a ui-implementer lane has no matrix.
+//   (a folder and a file inside it count), when a checkpoint's files overlap its lane's files, when two checkpoints of a lane share an id, or when a ui-implementer lane has no matrix.
 // Returns: { lanes: [{ row, closeRow, status, sha, text, findings?, optional?, audit? }], leadList } with status landed | implementer-stopped | wrong-branch | join-failed |
 //   contract-touched | review-<status of the review> | lead-decision | failed (land said so) | audit-findings | audit-error; the lead reads text and decides.
 //   lead-decision: a clean review with a security finding ruled not real by a weaker check or the judge: held, never landed, until the lead rules. leadList also holds each `contract-dispute`.
@@ -90,12 +90,12 @@ const joinPrompt = (lane, built, written) => {
   const checkpoints = lane.checkpoints ?? []
   const baseSide = written ? `the test-writer worktree ${written.worktree} (at ${written.sha})` : 'a detached worktree at `git merge-base ' + args.base + ' HEAD` (git worktree add --detach, removed when you are done)'
   const lockedPathspec = [...lockedFiles(lane), ...(written ? [`<the test files changed by ${written.sha}>`] : [])].join(' ')
-  // Nothing locked (no checkpoint, no test-writer): no base-side run and no contractTouched. An empty pathspec would list every changed file.
+  // Nothing locked: no contractTouched (an empty pathspec would list every changed file). A checkpoint with no locked files still needs its base-side run.
   const locked = lockedPathspec !== ''
   return [
     `Join lane ${lane.row} in its worktree ${built.worktree} (branch ${lane.branch}). Bash timeout 600000 for every test or checkpoint command, 60000 for any other.`,
     written ? `Cherry-pick onto the lane only the commits of ${written.branch} (worktree ${written.worktree}, sha ${written.sha}) that \`git cherry ${lane.branch} ${written.branch}\` marks +. Keep the helper branch and worktree until the base-side runs below are done.` : '',
-    locked ? `Base-side runs, in ${baseSide}: ${written ? `run each test file changed by ${written.sha} (git diff --name-only ${args.base}...${written.sha}) alone with the repo's single-file test command and list in vacuous those that exit 0; ` : ''}${checkpoints.length > 0 ? `run each checkpoint's command and keep its exit as baseExit: ${checkpoints.map((checkpoint) => `${checkpoint.id}: ${checkpoint.run}`).join('; ')}.` : ''}` : '',
+    written || checkpoints.length > 0 ? `Base-side runs, in ${baseSide}: ${written ? `run each test file changed by ${written.sha} (git diff --name-only ${args.base}...${written.sha}) alone with the repo's single-file test command and list in vacuous those that exit 0; ` : ''}${checkpoints.length > 0 ? `run each checkpoint's command and keep its exit as baseExit: ${checkpoints.map((checkpoint) => `${checkpoint.id}: ${checkpoint.run}`).join('; ')}.` : ''}` : '',
     checkpoints.length > 0 ? `Head runs, in ${built.worktree} (the joined HEAD): run the same checkpoint commands, keep each exit as headExit and the last 3 output lines as tail (no secrets). Report every checkpoint as {id, baseExit, headExit, tail}.` : '',
     `Lists (file names, empty when none): outOfScope = files in \`git diff --name-only ${args.base}...HEAD\` that are neither inside ${lane.files.join(', ')} nor test files of the lane${locked ? `; contractTouched = \`git diff ${written ? written.sha : '<the merge-base sha above>'} HEAD --name-only -- ${lockedPathspec}\`` : ''}.`,
     written ? `Then delete the helper branch ${written.branch} and its worktree.` : '',
@@ -239,7 +239,7 @@ async function auditAfterLand(step, { lane, baseSha, tip, landedSha, escalated }
   }
   let audited
   try {
-    audited = await reviewChild(lane, { row: lane.closeRow, repo: args.repo, base: baseSha, range: `${baseSha}..${tip}`, landing: false, fix: false, branch: lane.branch, worktree: prepared.worktree, suite: args.suite, audit: { base: baseSha, tip } })
+    audited = await reviewChild(lane, { row: lane.closeRow, repo: args.repo, base: baseSha, range: `${baseSha}..${tip}`, landing: false, fix: false, branch: lane.branch, worktree: prepared.worktree, suite: args.suite, audit: { base: baseSha, tip }, ...contractArgs(lane) })
   } catch (error) {
     audited = { status: 'failed', text: `the audit review stopped on an error: ${error.message}`, findings: [], leadList: [] }
   }
@@ -293,6 +293,7 @@ function checkArgs(given) {
       for (const [key, type] of Object.entries({ id: 'string', run: 'string', exit: 'number', files: 'array', kind: 'string' })) check(checkpoint, path, key, type)
       if (checkpoint.kind !== 'red-first' && checkpoint.kind !== 'keeps-working') throw new Error(`${name}: args.${path}kind must be red-first or keeps-working`)
       const shared = checkpoint.files.filter((file) => lane.files.some((own) => pathsOverlap(own, file)))
+      if ((lane.checkpoints ?? []).findIndex((other) => other.id === checkpoint.id) !== index) throw new Error(`${name}: args.${path}id ${checkpoint.id} is used twice in the lane: checkpoint ids are unique`)
       if (shared.length > 0) throw new Error(`${name}: args.${path}files lists ${shared.join(', ')} of its own lane: checkpoint ${checkpoint.id} files are locked, a lane never edits them`)
     })
   }
