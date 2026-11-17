@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { makeProject, run } from './env-names-fixtures.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const change = async (dir, files) => {
   for (const [path, content] of Object.entries(files)) {
@@ -16,7 +17,7 @@ const change = async (dir, files) => {
   }
 };
 const snapshotOf = (dir) => {
-  const file = join(dir, '..', `snap-def-${Math.random().toString(36).slice(2)}.json`);
+  const file = join(makeTempDir('sibling-'), `snap-def-${Math.random().toString(36).slice(2)}.json`);
   assert.equal(run(['list', dir, '--save', file]).status, 0);
   return file;
 };

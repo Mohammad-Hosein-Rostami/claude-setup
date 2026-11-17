@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isRegularEnvText, namesFromEnvText } from '../home/tools/env-names/lib/env-file-names.mjs';
 import { PEM_BEGIN, PEM_END, everythingPrinted, makeProject, run } from './env-names-fixtures.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const lines = (...parts) => `${parts.join('\n')}\n`;
 const HIDDEN_NOTE = 'this file has multi-line or unusual values; only names also found in code or deploy files are listed';
@@ -78,7 +79,7 @@ test('a name a deploy file names (key position) also corroborates an irregular f
 
 test('diff compares hidden names by count only, and notes an irregular flip', async () => {
   const dir = await makeProject({ '.env': lines('CORR_ONE=1', 'stray line', '', 'zqxa=1', 'zqxb=2', 'zqxc=3'), 'src/a.ts': 'process.env.CORR_ONE;\n' });
-  const snapshot = join(dir, '..', `hidden-${Math.random().toString(36).slice(2)}.json`);
+  const snapshot = join(makeTempDir('sibling-'), `hidden-${Math.random().toString(36).slice(2)}.json`);
   assert.equal(run(['list', dir, '--save', snapshot]).status, 0);
   assert.equal(run(['diff', snapshot, dir]).status, 0);
   const saved = JSON.parse(await readFile(snapshot, 'utf8'));

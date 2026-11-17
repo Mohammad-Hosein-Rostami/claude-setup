@@ -6,8 +6,9 @@ import { spawnSync } from 'node:child_process';
 import { readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { leaked, makeProject, run } from './env-names-fixtures.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
-const OUTSIDE = (dir) => join(dir, '..', `outside-${Math.random().toString(36).slice(2)}.txt`);
+const OUTSIDE = (dir) => join(makeTempDir('sibling-'), `outside-${Math.random().toString(36).slice(2)}.txt`);
 
 test('--save to an env file name is refused in every case and the real file is untouched', async () => {
   const dir = await makeProject({ '.env': 'KEEP=MARKER_VALUE\n' });
@@ -83,7 +84,7 @@ test('control characters in a folder name never forge report lines, in list, dif
   assert.doesNotMatch(listed.stdout, /\u001b|\u0085/);
   assert.ok(listed.stdout.split('\n').every((line) => !line.startsWith('Now undefined') && !line.startsWith('  FORGED')));
   assert.match(listed.stdout, /evil\?Now undefined \(9\):\?/);
-  const snapshot = join(dir, '..', `snap-evil-${Math.random().toString(36).slice(2)}.json`);
+  const snapshot = join(makeTempDir('sibling-'), `snap-evil-${Math.random().toString(36).slice(2)}.json`);
   assert.equal(run(['list', dir, '--save', snapshot]).status, 0);
   const diffed = run(['diff', snapshot, dir]);
   assert.match(diffed.stdout, /no changes/);

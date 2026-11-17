@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { namesFromEnvText } from '../home/tools/env-names/lib/env-file-names.mjs';
 import { leaked, makeProject, run } from './env-names-fixtures.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const FULL_OF_VALUES = {
   '.env': [
@@ -23,7 +24,7 @@ const FULL_OF_VALUES = {
 };
 
 async function everyOutput(dir) {
-  const snapshot = join(dir, '..', `invariant-${Math.random().toString(36).slice(2)}.json`);
+  const snapshot = join(makeTempDir('sibling-'), `invariant-${Math.random().toString(36).slice(2)}.json`);
   const outputs = [run(['list', dir, '--save', snapshot]), run(['list', dir, '--json']), run(['diff', snapshot, dir]), run(['diff', snapshot, dir, '--json'])];
   return `${outputs.map((out) => out.all).join('\n')}\n${await readFile(snapshot, 'utf8')}`;
 }

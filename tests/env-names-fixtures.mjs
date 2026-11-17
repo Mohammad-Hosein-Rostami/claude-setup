@@ -45,7 +45,7 @@ export function run(args, cwd) {
 /** Everything the tool prints for a project: list text, list --json, the saved snapshot, and diff text and --json, as one string. */
 export async function everythingPrinted(files) {
   const dir = await makeProject(files);
-  const snapshot = join(dir, '..', `printed-${Math.random().toString(36).slice(2)}.json`);
+  const snapshot = join(makeTempDir('sibling-'), `printed-${Math.random().toString(36).slice(2)}.json`);
   const outputs = [run(['list', dir, '--save', snapshot]), run(['list', dir, '--json']), run(['diff', snapshot, dir]), run(['diff', snapshot, dir, '--json'])];
   return { dir, text: `${outputs.map((out) => out.all).join('\n')}\n${await readFile(snapshot, 'utf8')}` };
 }

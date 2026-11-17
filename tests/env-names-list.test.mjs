@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { readFile, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { leaked, makeProject, run } from './env-names-fixtures.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const lines = (result) => result.stdout.split('\n');
 const section = (result, title) => {
@@ -100,7 +101,7 @@ test('other lines are counted in the file line; CRLF and BOM files read normally
 
 test('--json prints the full structure and --save writes the same JSON with version, root and generatedAt', async () => {
   const dir = await makeProject(PROJECT);
-  const saved = join(dir, '..', `snapshot-${Date.now()}.json`);
+  const saved = join(makeTempDir('sibling-'), `snapshot-${Date.now()}.json`);
   const result = run(['list', dir, '--json', '--save', saved, '--wrapper', 'getEnvVariable']);
   assert.equal(result.status, 0, result.stderr);
   const printed = JSON.parse(result.stdout);

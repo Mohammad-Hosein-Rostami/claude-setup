@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { leaked, makeProject, run } from './env-names-fixtures.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const BASE = {
   '.env': 'KEEP=MARKER_VALUE\nWILL_GO=MARKER_VALUE\nSHARED=1\n',
@@ -14,7 +15,7 @@ const BASE = {
 };
 
 async function snapshotOf(dir) {
-  const file = join(dir, '..', `snap-${Math.random().toString(36).slice(2)}.json`);
+  const file = join(makeTempDir('sibling-'), `snap-${Math.random().toString(36).slice(2)}.json`);
   const saved = run(['list', dir, '--save', file]);
   assert.equal(saved.status, 0, saved.stderr);
   return file;
@@ -118,7 +119,7 @@ test('--json prints the diff structure', async () => {
 
 test('the wrapper list is saved in the snapshot and diff uses it; a different --wrapper is a usage error', async () => {
   const dir = await makeProject({ ...BASE, 'src/w.ts': "getEnvVariable('VIA_WRAPPER');\n" });
-  const file = join(dir, '..', `snap-wrapper-${Math.random().toString(36).slice(2)}.json`);
+  const file = join(makeTempDir('sibling-'), `snap-wrapper-${Math.random().toString(36).slice(2)}.json`);
   assert.equal(run(['list', dir, '--save', file, '--wrapper', 'getEnvVariable']).status, 0);
   assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).wrappers, ['getEnvVariable']);
   assert.equal(run(['diff', file, dir]).status, 0, 'no false "removed" when the snapshot already had the wrapper');
