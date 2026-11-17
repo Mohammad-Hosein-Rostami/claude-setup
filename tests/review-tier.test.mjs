@@ -146,7 +146,7 @@ test('ordinary words are not data or money: truncated, truncate(text), git check
 });
 
 test('a behaviour-text file is tier 1 and its prose lines are not scanned', () => {
-  const result = report([changed('home/modes/x.md', ['never print the password or the secret'])]);
+  const result = report([changed('home/standards/x.md', ['never print the password or the secret'])]);
   assert.deepEqual(result.classes, ['behaviour']);
   assert.equal(result.tier, 1);
 });

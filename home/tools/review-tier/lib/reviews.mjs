@@ -1,9 +1,11 @@
 // Purpose: turn a set of classes into the reviews to run together (agent, model, effort, lens, brief) and their plans.
-// Exports: STRESS_PLAN, RACE_RUNS, MUTANTS_PER_FILE, buildReviews(input).
-// Invariants: only ADDS checks (I1): efforts are today's (Sonnet high correctness lens always at tier >= 1; Opus max lens for a
+// Exports: STRESS_PLAN, RACE_RUNS, MUTANTS_PER_FILE, buildReviews(input), buildWaivable(input).
+// Invariants: only ADDS checks (I1, one exception: `waivable`, below): efforts are today's (Sonnet high correctness lens always at tier >= 1; Opus max lens for a
 //   risky class or a landing; Opus high lens for size or concurrency-lite; auditor Opus max for security, data, money,
 //   untrusted-input and every landing of tier >= 1, Opus high for a hooks-only change mid-lane). A plan item rides on the
 //   risk lens and the auditor, never on the correctness lens. Brief text holds file:line only, never a line's text.
+//   `waivable` exists only for a landing of tier 1 with no gate path: the Opus max pair moves from before land to after it
+//   (`audit`), and the Sonnet lens takes the mutation plan the risk lens would have had (`reviews`).
 import { LOCK_TAG, RACE_TAG, RISKY_CLASSES, tierOf } from '../tiers.mjs';
 
 /** The stale-lock stress plan (A.1): a seeded stale lock, holders killed mid-turn, runs at 8 and at 20 waiters. */
@@ -67,16 +69,20 @@ function briefOf({ range, deltaOf, rules, hits, plan, requiredReading }) {
   return parts.join(' ');
 }
 
+const reviewMaker = ({ range, deltaOf, requiredReading }) => (agent, model, effort, lens, rules, plan, ownHits) => ({
+  agent, model, effort, lens, rules, brief: briefOf({ range, deltaOf, rules, hits: ownHits, plan, requiredReading }), requiredReading, plan,
+});
+
+const uiSkillReview = (range) => ({ agent: 'skill', model: null, effort: null, lens: 'ui-quality-pass', rules: '', brief: `Run the ui-quality-pass skill on the ui files of ${range}.`, requiredReading: [], plan: NO_PLAN });
+
 /**
  * @param {object} input classes (Set), fileClasses, hits, landing, range, deltaOf, requiredReading, hasCode, changedLines, fileCount
  * @returns {object[]} reviews, in the order of the spec's `run together` list
  */
 export function buildReviews(input) {
-  const { classes, fileClasses, hits, landing, range, deltaOf, requiredReading } = input;
+  const { classes, fileClasses, hits, landing, range } = input;
   const tier = tierOf(classes);
-  const make = (agent, model, effort, lens, rules, plan, ownHits) => ({
-    agent, model, effort, lens, rules, brief: briefOf({ range, deltaOf, rules, hits: ownHits, plan, requiredReading }), requiredReading, plan,
-  });
+  const make = reviewMaker(input);
   const rules = rulesOf(classes);
   if (tier === 0) return landing ? [make('reviewer', 'sonnet', 'high', 'correctness (tier 0: docs only)', rules, NO_PLAN, hits)] : [];
   const plan = planOf(input);
@@ -96,8 +102,21 @@ export function buildReviews(input) {
   } else if (classes.has('audit')) {
     reviews.push(make('security-auditor', 'opus', 'high', 'audit: hooks', 'backend', auditorPlan, hits.filter((hit) => hit.class === 'audit')));
   }
-  if (classes.has('ui')) {
-    reviews.push({ agent: 'skill', model: null, effort: null, lens: 'ui-quality-pass', rules: '', brief: `Run the ui-quality-pass skill on the ui files of ${range}.`, requiredReading: [], plan: NO_PLAN });
-  }
+  if (classes.has('ui')) reviews.push(uiSkillReview(range));
   return reviews;
+}
+
+const AUDIT_LENSES = ['risk: landing', 'audit: landing'];
+
+/**
+ * The waiver of a landing: `reviews` run before land, `audit` (the Opus max pair) after it and before any sync or push.
+ * @param {object} input as buildReviews
+ * @returns {{reviews: object[], audit: object[]} | null} null unless the landing is tier 1 and no file is a gate path
+ */
+export function buildWaivable(input) {
+  const { classes, landing, hits, range } = input;
+  if (!landing || tierOf(classes) !== 1 || classes.has('gate')) return null;
+  const reviews = [reviewMaker(input)('reviewer', 'sonnet', 'high', 'correctness', rulesOf(classes), { ...NO_PLAN, mutation: planOf(input).mutation }, hits)];
+  if (classes.has('ui')) reviews.push(uiSkillReview(range));
+  return { reviews, audit: buildReviews(input).filter((review) => AUDIT_LENSES.includes(review.lens)) };
 }
