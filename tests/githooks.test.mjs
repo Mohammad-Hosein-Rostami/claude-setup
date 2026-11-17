@@ -4,11 +4,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLEAN_ENV, git, makeRepo } from './git-tidy-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const skip = process.platform === 'win32' && 'bash hooks';
@@ -25,10 +25,10 @@ function write(repo, files) {
 /** A repo on branch feat with the hooks installed (core.hooksPath), tests a and b (each reaching only its own hook script). */
 function makeHookRepo({ gitleaksExit = 0 } = {}) {
   const repo = makeRepo();
-  const bin = realpathSync(mkdtempSync(join(tmpdir(), 'githooks-bin-')));
+  const bin = realpathSync(makeTempDir('githooks-bin-'));
   writeFileSync(join(bin, 'gitleaks'), `#!/bin/sh\nexit ${gitleaksExit}\n`);
   chmodSync(join(bin, 'gitleaks'), 0o755);
-  for (const path of ['.githooks', 'scripts/affected-tests.mjs', 'home/tools/test-pass', 'home/hooks/lib/session-store.mjs']) {
+  for (const path of ['.githooks', 'scripts/affected-tests.mjs', 'home/tools/test-pass', 'home/tools/disk-free/with-run-tmp.mjs', 'home/hooks/lib/session-store.mjs']) {
     mkdirSync(join(repo, path, '..'), { recursive: true });
     cpSync(join(ROOT, path), join(repo, path), { recursive: true });
   }

@@ -126,7 +126,8 @@ check_repo_tests() {
   real_repo="$(cd "$REPO" && pwd -P)"
   if [ -z "$(git -C "$real_repo" status --porcelain 2>/dev/null)" ] \
     && node "$real_repo/home/tools/test-pass/test-pass.mjs" check HEAD --repo "$real_repo" --suite >/dev/null 2>&1; then ok "suite PASS recorded at HEAD"; return; fi
-  if (cd "$REPO" && bash -c "$suite" >"$log" 2>&1); then ok "repo tests pass"; return; fi
+  # The suite runs in its own TMPDIR that is removed afterwards, so a doctor run leaves no temp folders.
+  if (cd "$REPO" && node "$REPO/home/tools/disk-free/with-run-tmp.mjs" -- bash -c "$suite" >"$log" 2>&1); then ok "repo tests pass"; return; fi
   bad "repo tests fail (node --test tests/*.test.mjs); full output: $log"
   failing="$(awk '
     /^ *not ok [0-9]+ - /  { sub(/^ */, ""); print "      " $0; waiting = 1; next }

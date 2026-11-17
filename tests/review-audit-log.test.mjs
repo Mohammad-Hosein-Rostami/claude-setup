@@ -4,12 +4,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, cpSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
 import { AUDIT_ONE_IN, CALIBRATION_LANES, decideAudit } from '../home/tools/review-tier/audit-log.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CLI = join(ROOT, 'home/tools/review-tier/audit-log.mjs');
@@ -18,7 +18,7 @@ const skipBash = process.platform === 'win32' && 'bash hooks';
 
 /** A temp folder with its own log file; `run(args)` runs the CLI against it and returns { status, stdout, stderr, json() }. */
 function makeSandbox() {
-  const home = realpathSync(mkdtempSync(join(tmpdir(), 'audit-log-')));
+  const home = realpathSync(makeTempDir('audit-log-'));
   const logFile = join(home, 'review-audit.jsonl');
   const env = { ...OUTSIDE_A_TEST_RUN, HOME: home, USERPROFILE: home, REVIEW_AUDIT_LOG: logFile };
   const run = (...args) => {
@@ -421,7 +421,7 @@ test('the CLI works when started through a symlinked folder (the owner layout of
 function makeHookRepo() {
   const sandbox = makeSandbox();
   const repo = makeRepo();
-  for (const path of ['.githooks', 'home/tools/test-pass', 'home/tools/review-tier', 'home/tools/git-tidy/lib', 'home/hooks/lib/session-store.mjs']) {
+  for (const path of ['.githooks', 'home/tools/test-pass', 'home/tools/disk-free/with-run-tmp.mjs', 'home/tools/review-tier', 'home/tools/git-tidy/lib', 'home/hooks/lib/session-store.mjs']) {
     mkdirSync(join(repo, path, '..'), { recursive: true });
     cpSync(join(ROOT, path), join(repo, path), { recursive: true });
   }

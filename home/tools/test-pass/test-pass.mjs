@@ -14,11 +14,13 @@
 //   tree is unchanged after it. Records live in lib/store.mjs. Exports: hasPass, declaredSuite (for git-tidy land).
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { commitOf, declaredSuite, hasPass, isCleanTree, recordPass, treeOf } from './lib/store.mjs';
 
 export { declaredSuite, hasPass };
 
+// Every command runs inside this wrapper: it gives the run its own TMPDIR and removes it afterwards, so a suite cannot fill the disk with temp folders.
+const WITH_RUN_TMP = fileURLToPath(new URL('../disk-free/with-run-tmp.mjs', import.meta.url));
 const EXIT_NONE = 1;
 const EXIT_USAGE = 2;
 const TAIL_LINES = 60; // lines of a failed quiet run that are printed
@@ -63,9 +65,8 @@ function commandToRun(options) {
 function execute(command, repo, quiet) {
   const stdio = quiet ? 'pipe' : 'inherit';
   const started = Date.now();
-  const result = command.shell
-    ? spawnSync(command.text, { cwd: repo, shell: true, stdio, encoding: 'utf8', maxBuffer: 256 << 20 })
-    : spawnSync(command.args[0], command.args.slice(1), { cwd: repo, stdio, encoding: 'utf8', maxBuffer: 256 << 20 });
+  const wrapped = command.shell ? ['--shell', '--', command.text] : ['--', ...command.args];
+  const result = spawnSync(process.execPath, [WITH_RUN_TMP, ...wrapped], { cwd: repo, stdio, encoding: 'utf8', maxBuffer: 256 << 20 });
   const code = result.status ?? 1;
   const ms = Date.now() - started;
   if (quiet && code === 0) console.log(`test-pass: ${command.text} passed in ${(ms / 1000).toFixed(1)} s`);

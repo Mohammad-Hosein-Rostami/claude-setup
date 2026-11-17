@@ -4,12 +4,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { copyFileSync, mkdirSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { affected, buildMap } from '../scripts/affected-tests.mjs';
 import { CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/affected-tests.mjs', import.meta.url));
 const REPO = fileURLToPath(new URL('..', import.meta.url));
@@ -17,7 +17,7 @@ const PASSING = "import test from 'node:test';\ntest('ok', () => {});\n";
 
 /** Writes `files` ({ 'rel/path': text }) under a new temp folder and returns the folder. */
 function makeTree(files) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'affected-')));
+  const root = realpathSync(makeTempDir('affected-'));
   addFiles(root, files);
   return root;
 }
@@ -152,6 +152,8 @@ function makeCliRepo() {
   });
   mkdirSync(join(repo, 'scripts'));
   copyFileSync(SCRIPT, join(repo, 'scripts', 'affected-tests.mjs'));
+  mkdirSync(join(repo, 'home/tools/disk-free'), { recursive: true });
+  copyFileSync(fileURLToPath(new URL('../home/tools/disk-free/with-run-tmp.mjs', import.meta.url)), join(repo, 'home/tools/disk-free/with-run-tmp.mjs'));
   git(repo, 'add', '.');
   git(repo, 'commit', '-q', '-m', 'seed');
   git(repo, 'switch', '-q', '-c', 'feat');

@@ -18,6 +18,7 @@ const CODE_FILE = /\.(?:mjs|cjs|js|sh|ps1|jq)$/;
 const SOURCE_FOLDERS = ['home', 'scripts', 'tests'];
 const SKIPPED_FOLDERS = new Set(['node_modules', '.git']);
 const SCRIPT_PATH = 'scripts/affected-tests.mjs';
+const WITH_RUN_TMP = fileURLToPath(new URL('../home/tools/disk-free/with-run-tmp.mjs', import.meta.url)); // gives the test run its own TMPDIR and removes it afterwards
 const ALWAYS_FULL_PREFIXES = ['.githooks/', 'settings/'];
 const BASE_BRANCHES = ['main', 'master'];
 const NOTHING_CHANGED = 'no code or text file that a test reads changed';
@@ -257,7 +258,7 @@ function main(argv) {
     return 0;
   }
   if (result.tests.length === 0) return 0;
-  return spawnSync(process.execPath, ['--test', '--test-reporter=dot', ...result.tests], { cwd: root, stdio: 'inherit' }).status ?? 1;
+  return spawnSync(process.execPath, [WITH_RUN_TMP, '--', process.execPath, '--test', '--test-reporter=dot', ...result.tests], { cwd: root, stdio: 'inherit' }).status ?? 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) process.exitCode = main(process.argv.slice(2));
