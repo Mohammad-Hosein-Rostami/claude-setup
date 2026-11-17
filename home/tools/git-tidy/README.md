@@ -1,20 +1,24 @@
 # git-tidy
 
 Checks that a repository's history is one straight line, and finds (and, on request, removes) the branches and worktrees
-whose work is already on the base. The rule it enforces: rebase, never merge; no merge commits; a branch and its
+whose work is already on the base, older copies of a re-done lane and the leftover branches of workflow agents; `land`
+puts a lane on the base. The rule it enforces: rebase, never merge; no merge commits; a branch and its
 worktree are removed once their work is on the base. Node 22 and git 2.38 or newer (`merge-tree --write-tree`), no dependencies. Git is run
 without a shell, with an explicit folder, and `GIT_DIR`, `GIT_WORK_TREE` and the other variables that pick a repository
 are removed from its environment, so only the folder you give is ever read or changed.
 
 Run: `node ~/.claude/tools/git-tidy/git-tidy.mjs check [dir] [--base <branch>] [--json]`
 and `node ~/.claude/tools/git-tidy/git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]`.
-Both print `base: <branch> (from --base | from origin/HEAD | fallback)` first.
+`land <branch> [dir] [--base <branch>] [--rebase-only] [--json]` is described under "land" below.
+`check` and `prune` print `base: <branch> (from --base | from origin/HEAD | fallback)` first.
 `dir` defaults to the current folder (any folder inside a repository, a linked worktree or a bare repository).
 
 The base is `--base`, else the branch `origin/HEAD` points at, else the first that exists of `main`, `master`, `develop`.
 It must be a local branch; when none is found the exit code is 2 and the message names `--base`. `prune --apply` also
 exits 2, deleting nothing, when the base was not given with `--base` and more than one of `main`, `master`, `develop`
 exists here: a wrong base would call work "merged" that is not on the branch you work against.
+
+`land` has its own codes (0 landed and clean, 1 landed with findings, 2 not ready, 3 conflict, 4 no suite PASS, 5 base moved).
 
 | Code | `check` | `prune` |
 | ---- | ------- | ------- |
@@ -25,7 +29,7 @@ exists here: a wrong base would call work "merged" that is not on the branch you
 ## check
 
 One line per item, `<kind> <subject> <detail>`, findings first, then hints (kind ends in `?`), then
-`git-tidy: N findings, M hints (base <branch>), all local refs on one line: yes|no` (no when there is a `merge-commit`, `tangled-ref`, `merged-branch` or `merged-tag` finding; hints do not count). `--json` prints `{ base, findings, hints }` with items
+`git-tidy: N findings, M hints (base <branch>), all local refs on one line: yes|no` (no when there is a `merge-commit`, `tangled-ref`, `merged-branch`, `merged-tag`, `superseded-copy` or `agent-leftover` finding; hints do not count). `--json` prints `{ base, findings, hints }` with items
 `{ kind, subject, detail }` (a path with spaces is exact there).
 
 | Finding | Meaning |
@@ -35,6 +39,8 @@ One line per item, `<kind> <subject> <detail>`, findings first, then hints (kind
 | `tangled-ref <ref> <n> merge commits ...` | a local branch or a `backup/` tag (full ref name; not the base, not the current branch) that still reaches a merge commit no remote-tracking ref has (with no remote: that the base lacks). Old tangled history stays visible in `git log --graph --all` through such refs |
 | `merged-branch <name> <hash> patch-equal` | every non-merge commit has an equal patch on the base (a rebase or cherry-pick that landed) AND merging the branch into the base would change nothing (`git merge-tree --write-tree` gives the base's own tree). Patch ids ignore whitespace and skip merge commits, so the second proof is what keeps a branch that differs only in indentation, or holds a hand-made change in a merge, from being called merged |
 | `merged-tag <tag> <hash> patch-equal` | a `backup/` tag that is not on the base's history but whose work is all on the base by the same test: a temporary backup made before a history clean-up. A tag that is an ancestor of the base (a release tag) is never reported |
+| `superseded-copy <name> <hash> all its work is in <B>` | an older copy of a re-done lane: it is in a family with B (same name once `-<n>`, `-fix`, `-fixes`, `-v<n>`, `-redo` are cut off, or the same tip) and its tip is an ancestor of B, or every `git patch-id --stable` of `base..<name>` is in `base..B` (a branch with a merge commit only by the ancestor proof). B is never itself a copy; between branches that cover each other the newest committer date stays, then the one checked out in a worktree, then the name. The newest of the family is named by `unlanded-lane?` |
+| `agent-leftover <name> ...` | a `worktree-agent-*` branch every commit of which is on the base or on a branch that is not an agent branch, and that no existing worktree has checked out (the Agent tool leaves one behind). It replaces the `merged-branch` line of the same branch |
 | `merged-worktree <path> branch <name>` | a linked worktree whose branch is a `merged-branch` |
 | `stale-worktree <path> folder missing` | a registered worktree whose folder is gone |
 | `dirty-base <path> <n> changed tracked files: ...` | the folder where the base is checked out has uncommitted changes to tracked files (untracked and ignored files do not count); edits belong in a lane worktree |
@@ -84,13 +90,34 @@ and prints why. With `--apply`, in this order, each fact read again from git rig
    printing `deleted <name> (was <full hash>)`. Its `branch.<name>.*` config section goes too. A branch name is always passed
    as a full ref, so a tag with the same name is never confused with it.
 
+4. Copies (`superseded-copy`, `agent-leftover`) go the same way (their worktree first, then the branch) with the same safeties, and these
+   differences: the proof is "all its work is in B" (read again right before the removal) instead of "on the base"; the reflog check
+   counts a commit as safe when it is on B; and a copy's worktree used in the last 60 minutes is always kept
+   (`used <n> min ago (an agent may still work there)`), `--include-recent` does not lift it, because an agent may still be working there.
+   An `agent-leftover` that is on the base is a merged branch for prune.
+
 A failure of one item does not stop the others; the run ends with exit code 1 if anything was kept or failed.
+
+## land
+
+`git-tidy land <branch> [dir] [--base <branch>] [--rebase-only] [--json]` puts a lane on the base as one straight line:
+
+1. The base branch must be checked out in a worktree (the base folder) with no tracked changes, else exit 2 naming the files.
+   Untracked files there never block and are never touched, except an untracked path the lane would write over: exit 2 naming it, before any change.
+2. The lane is rebased onto the base in the worktree that holds it, or in a temporary worktree that is removed afterwards. A conflict aborts the rebase,
+   leaves the lane where it was and exits 3 naming the files. `patches-changed` counts the lane's commits whose `git patch-id --stable` differs after the rebase.
+   `--rebase-only` stops here and prints `tip <sha>` and `patches-changed <n>`.
+3. The rebased tip needs a full-suite PASS record (`hasPass(base folder, tip, { suite: true })` of `../test-pass/test-pass.mjs`), else exit 4.
+   When the tool cannot be loaded no commit has a PASS and the exit is 4 as well.
+4. The base moves with `git merge --ff-only` run in the base folder. When the base moved since the rebase: exit 5, rerun the landing.
+5. Cleanup is `prune --apply --include-recent` (all its safeties): the lane worktree and branch, helper branches and older copies whose work is on the base, agent
+   leftovers. Then `check` runs. Exit 0 when it is clean (`check: clean` is printed), 1 when findings are left (printed).
 
 ### What `prune --apply` never touches
 
 The base, the current branch, a branch with commits the base lacks (`unmerged-branch?`), the branch checked out in the
 main worktree, the main worktree, a linked worktree with uncommitted, untracked or ignored files, a locked worktree, a
-detached-HEAD worktree (listed as kept), a worktree used in the last hour (unless `--include-recent`, which does not apply to a lane with no commit of its own yet), anything whose reflog
+detached-HEAD worktree (listed as kept), a worktree used in the last hour (unless `--include-recent`, which does not apply to a lane with no commit of its own yet, nor to the worktree of a copy), anything whose reflog
 holds commits that exist nowhere else, remote branches and tags. Nothing is removed while any worktree has an unfinished
 rebase, merge, cherry-pick, revert or bisect.
 
@@ -119,4 +146,5 @@ branch whose reflog holds only-copy commits, and a worktree holding ignored or u
 
 ## Layout
 
-`git-tidy.mjs` (arguments, printing, exit code) over `lib/`; see `lib/README.md`. Tests: `tests/git-tidy-*.test.mjs`.
+`git-tidy.mjs` (arguments, printing, exit code) over `lib/`; see `lib/README.md`. Tests: `tests/git-tidy-*.test.mjs`. The Stop gate that runs `check --json`
+at the end of a session is `home/hooks/git-tidy-gate.mjs`.
