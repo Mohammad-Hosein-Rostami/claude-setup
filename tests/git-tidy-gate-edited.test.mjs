@@ -11,7 +11,7 @@ import { decide, openLanes } from '../home/hooks/git-tidy-gate.mjs';
 import { editedWorktrees, worktreeOf } from '../home/hooks/lib/gated-folder.mjs';
 import { recordEditedFile } from '../home/hooks/lib/own-edits.mjs';
 import { addWorktree, CLEAN_ENV, git, makeRepo } from './git-tidy-helpers.mjs';
-import { billAndGinShape, gateSession, oldLane, SESSION } from './git-tidy-gate-helpers.mjs';
+import { billAndGinShape, CHECK_TIMEOUT_FOR_TESTS_MS, gateSession, oldLane, SESSION } from './git-tidy-gate-helpers.mjs';
 
 const plainFolder = () => mkdtempSync(join(tmpdir(), 'git-tidy-gate-plain-'));
 
@@ -88,12 +88,15 @@ const SLOW_CHECK_MS = 600;
 const BUDGET_MS = 500;
 const posixOnly = { skip: process.platform === 'win32' ? 'no mkfifo on Windows' : false };
 
-/** A runCheck stub that records the time each call was given, takes `takesMs` and finds nothing. */
-function countingCheck(takesMs) {
+/** Makes `Date` a fake clock for this test, so the budget arithmetic does not depend on how long real git calls take on a busy machine. */
+const useFakeClock = (t) => t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+
+/** A runCheck stub that records the time each call was given, takes `takesMs` of the fake clock (`useFakeClock`) and finds nothing. */
+function countingCheck(t, takesMs) {
   const timeouts = [];
   const runCheck = (top, timeoutMs) => {
     timeouts.push(timeoutMs);
-    for (const until = Date.now() + takesMs; Date.now() < until;); // a check that really takes that long
+    t.mock.timers.tick(takesMs);
     return CLEAN_VERDICT;
   };
   return { timeouts, runCheck };
@@ -106,36 +109,40 @@ function sessionThatEdited(repos) {
   return { ...CLEAN_ENV, HOME: gate.home, USERPROFILE: gate.home, CLAUDE_PROJECT_DIR: plainFolder() };
 }
 
-test('an edited repo whose check does not finish in time passes instead of holding the stop', async () => {
+test('an edited repo whose check does not finish in time passes instead of holding the stop', async (t) => {
+  useFakeClock(t);
   const env = sessionThatEdited([billAndGinShape()]);
-  const { timeouts, runCheck } = countingCheck(0);
+  const { timeouts, runCheck } = countingCheck(t, 0);
   assert.deepEqual(await decide({ hook_event_name: 'Stop', session_id: SESSION }, env, { checkTimeoutMs: 1, runCheck: () => 'timeout' }), { block: false });
   await decide({ hook_event_name: 'Stop', session_id: SESSION }, env, { checkTimeoutMs: BUDGET_MS, runCheck });
   assert.equal(timeouts.length, 1, 'the edited repo is checked');
 });
 
-test('one stop spends one check budget over all its repos: a second check gets only the time left, or none', async () => {
+test('one stop spends one check budget over all its repos: a second check gets only the time left, or none', async (t) => {
+  useFakeClock(t);
   const env = sessionThatEdited([makeRepo(), makeRepo()]);
-  const quick = countingCheck(200);
+  const quick = countingCheck(t, 200);
   await decide({ hook_event_name: 'Stop', session_id: SESSION }, env, { checkTimeoutMs: BUDGET_MS, runCheck: quick.runCheck });
   assert.equal(quick.timeouts.length, 2);
   assert.ok(quick.timeouts[1] <= BUDGET_MS - 200, `the second check was given ${quick.timeouts[1]} ms`);
-  const slow = countingCheck(SLOW_CHECK_MS);
+  const slow = countingCheck(t, SLOW_CHECK_MS);
   const envOther = sessionThatEdited([makeRepo(), makeRepo()]);
   await decide({ hook_event_name: 'Stop', session_id: SESSION }, envOther, { checkTimeoutMs: BUDGET_MS, runCheck: slow.runCheck });
   assert.equal(slow.timeouts.length, 1, 'no time left: the second repo is not checked');
 });
 
-test('PreCompact keeps to the same budget, so the project lines are not lost to a kill', async () => {
+test('PreCompact keeps to the same budget, so the project lines are not lost to a kill', async (t) => {
+  useFakeClock(t);
   const env = sessionThatEdited([makeRepo(), makeRepo()]);
-  const slow = countingCheck(SLOW_CHECK_MS);
+  const slow = countingCheck(t, SLOW_CHECK_MS);
   await openLanes({ hook_event_name: 'PreCompact', session_id: SESSION }, env, { checkTimeoutMs: BUDGET_MS, runCheck: slow.runCheck });
   assert.equal(slow.timeouts.length, 1);
 });
 
-test('a lead looks at no more than 5 repos in one stop', async () => {
+test('a lead looks at no more than 5 repos in one stop', async (t) => {
+  useFakeClock(t);
   const env = sessionThatEdited(Array.from({ length: 6 }, makeRepo));
-  const quick = countingCheck(0);
+  const quick = countingCheck(t, 0);
   await decide({ hook_event_name: 'Stop', session_id: SESSION }, env, { checkTimeoutMs: 60_000, runCheck: quick.runCheck });
   assert.equal(quick.timeouts.length, 5);
 });
@@ -183,7 +190,7 @@ test('PreCompact lists the open lanes of an edited repo too', async () => {
   const repo = makeRepo();
   oldLane(repo, 'lane/one');
   recordEditIn(gate, repo);
-  const env = { ...CLEAN_ENV, HOME: gate.home, USERPROFILE: gate.home, CLAUDE_PROJECT_DIR: plainFolder() };
+  const env = { ...CLEAN_ENV, HOME: gate.home, USERPROFILE: gate.home, CLAUDE_PROJECT_DIR: plainFolder(), GIT_TIDY_GATE_CHECK_TIMEOUT_MS: String(CHECK_TIMEOUT_FOR_TESTS_MS) };
   const lines = await openLanes({ hook_event_name: 'PreCompact', session_id: SESSION }, env, {});
   assert.equal(lines.length, 1);
   assert.match(lines[0], /^open lane lane\/one: /);

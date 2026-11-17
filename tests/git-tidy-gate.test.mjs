@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decide, openLanes } from '../home/hooks/git-tidy-gate.mjs';
 import { addWorktree, CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
-import { billAndGinShape, gateSession, HOUR_MS, inProcessGate, linkStatus, oldLane, SESSION } from './git-tidy-gate-helpers.mjs';
+import { billAndGinShape, CHECK_TIMEOUT_FOR_TESTS_MS, gateSession, HOUR_MS, inProcessGate, linkStatus, oldLane, SESSION } from './git-tidy-gate-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/git-tidy-gate.mjs', import.meta.url));
 
@@ -69,7 +69,7 @@ test('a merge commit on the base blocks with the rebase advice, a merged branch 
 test('a cache hit runs no check', async () => {
   const dir = billAndGinShape();
   const gate = gateSession();
-  const env = { ...CLEAN_ENV, HOME: gate.home, USERPROFILE: gate.home, CLAUDE_PROJECT_DIR: dir };
+  const env = { ...CLEAN_ENV, HOME: gate.home, USERPROFILE: gate.home, CLAUDE_PROJECT_DIR: dir, GIT_TIDY_GATE_CHECK_TIMEOUT_MS: String(CHECK_TIMEOUT_FOR_TESTS_MS) };
   let childRuns = 0;
   const countingCheck = (...args) => {
     childRuns += 1;

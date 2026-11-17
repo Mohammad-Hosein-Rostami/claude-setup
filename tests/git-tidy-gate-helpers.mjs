@@ -1,5 +1,5 @@
 // Shared fixtures of the git-tidy-gate tests: a private HOME with the real hook process, the repo shapes the gate judges, and an in-process gate.
-// Exports: SESSION, HOUR_MS, gateSession, billAndGinShape, inProcessGate, oldLane, linkStatus.
+// Exports: SESSION, HOUR_MS, CHECK_TIMEOUT_FOR_TESTS_MS, gateSession, billAndGinShape, inProcessGate, oldLane, linkStatus.
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -13,7 +13,7 @@ import { CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
 const HOOK = fileURLToPath(new URL('../home/hooks/git-tidy-gate.mjs', import.meta.url));
 export const SESSION = 'sess-1';
 export const HOUR_MS = 60 * 60 * 1000;
-const CHECK_TIMEOUT_FOR_TESTS_MS = 60_000; // the suite runs test files in parallel; a check must not time out because the machine is busy
+export const CHECK_TIMEOUT_FOR_TESTS_MS = 60_000; // the suite runs test files in parallel; a check must not time out because the machine is busy
 
 /** A private HOME and a way to send events of the lead (`stop`, `compact`) and of a subagent (`agentStop`) to the real hook process. */
 export function gateSession() {
@@ -60,7 +60,7 @@ export function billAndGinShape() {
 
 export function inProcessGate(dir) {
   const home = mkdtempSync(join(tmpdir(), 'git-tidy-gate-home-'));
-  const env = { ...CLEAN_ENV, HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: dir };
+  const env = { ...CLEAN_ENV, HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: dir, GIT_TIDY_GATE_CHECK_TIMEOUT_MS: String(CHECK_TIMEOUT_FOR_TESTS_MS) };
   return { home, env, stop: (extra, deps) => decide({ hook_event_name: 'Stop', session_id: SESSION, cwd: dir, ...extra }, env, deps) };
 }
 
