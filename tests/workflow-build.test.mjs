@@ -309,5 +309,7 @@ test('disk: a WARN (exit 0) does not stop the build, and a build with no lanes s
   });
   assert.equal(run.result.lanes[0].status, 'landed');
   const empty = await runScript(BUILD, ARGS([]), {});
+  assert.equal(empty.error, null);
+  assert.deepEqual(empty.result, { lanes: [], leadList: [] });
   assert.deepEqual(empty.started, []);
 });

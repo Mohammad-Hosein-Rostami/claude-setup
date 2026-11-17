@@ -105,6 +105,17 @@ test('a folder too big to measure in time is still named, without a size', async
   assert.match(result.stdout, /~\/Library\/Caches \(size not measured in time/);
 });
 
+test('the time limit covers all folders together, so many slow folders cannot pass the runner timeout', async () => {
+  const slowBin = await mkdtemp(join(tmpdir(), 'disk-free-slow-du-'));
+  await writeFile(join(slowBin, 'du'), '#!/bin/sh\nexec sleep 5\n', { mode: 0o755 });
+  const home = await fakeHome({ derivedData: 1, simulators: 1, caches: 1, npm: 1 });
+  const startedAt = Date.now();
+  const result = check(home, 3, { PATH: `${slowBin}:${process.env.PATH}`, DISK_FREE_DU_TIMEOUT_MS: '1000' });
+  const elapsedMs = Date.now() - startedAt;
+  assert.equal((result.stdout.match(/size not measured in time/g) ?? []).length, 4, 'every folder is still named');
+  assert.ok(elapsedMs < 2500, `4 folders with a 1000 ms total limit took ${elapsedMs} ms`);
+});
+
 test('check honours the env override of the fail threshold', async () => {
   const result = check(await fakeHome({}), 8, { DISK_FAIL_FREE_GB: '10', DISK_WARN_FREE_GB: '20' });
   assert.equal(result.status, 1);
