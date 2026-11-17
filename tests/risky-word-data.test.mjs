@@ -18,7 +18,7 @@ test('a dangerous word in a single-quoted argument of a data program is not flag
   for (const command of [
     `echo 'rm -rf /tmp/x' ${OTHER_CONSTRUCT}`,
     `echo ${OTHER_CONSTRUCT} 'rm -rf /tmp/x'`,
-    `printf '%s\\n' 'git push origin main' "${OTHER_CONSTRUCT}"`,
+    `printf '%s\\n' 'git push origin main' ${OTHER_CONSTRUCT}`,
     `grep 'rm -rf /x' notes.txt ${OTHER_CONSTRUCT}`,
     `grep -e 'git push' notes.txt ${OTHER_CONSTRUCT}`,
     `rg 'git push' src ${OTHER_CONSTRUCT}`,
@@ -114,6 +114,14 @@ test('data that the shell can still run stays flagged (one case per review findi
   const shapes = {
     'ANSI-C quote that decodes to a plain quote': `echo $'\\x27'; trap "rm -rf ~/x" EXIT; echo $'\\x27'`,
     'double quotes that hold a nested double-quoted script': `echo "$(sh -c "trap 'rm -rf ~/x' EXIT ")"`,
+    'single-quoted bracket hides where the substitution ends (ssh)': `echo "$(echo ')'; ssh h " 'rm -rf /x' "; echo '(')"`,
+    'single-quoted bracket hides where the substitution ends (perl)': `echo "$(echo ')'; perl -e " system 'rm -rf /x' "; echo '(')"`,
+    'single-quoted bracket hides where the substitution ends (xargs)': `echo "$(echo ')'; xargs -I{} sh -c " {} 'rm -rf /x' "; echo '(')"`,
+    'backtick substitution inside double quotes': 'echo "`echo \')\'; ssh h ` \'rm -rf /x\' "',
+    'hash points grep at a shell': `hash -p /bin/sh grep; grep -c 'rm -rf /x' f ${OTHER_CONSTRUCT}`,
+    'hash points grep at a shell (zsh)': `hash grep=/bin/sh; grep -c 'rm -rf /x' f ${OTHER_CONSTRUCT}`,
+    'enable loads a builtin': `enable -f ./x.so grep; grep -c 'rm -rf /x' f ${OTHER_CONSTRUCT}`,
+    'PATH extended with +=': `PATH+=:/tmp/b; grep -c 'rm -rf /x' f ${OTHER_CONSTRUCT}`,
     'group written to a file, then run': `{ echo 'rm -rf ~/x'; } > run.sh; sh run.sh ${OTHER_CONSTRUCT}`,
     'group piped to a file writer': `{ echo 'rm -rf ~/x'; } | tee run.sh; sh run.sh ${OTHER_CONSTRUCT}`,
     'redirect glued to the quoted word': `echo 'rm -rf ~/x'>run.sh; sh run.sh ${OTHER_CONSTRUCT}`,

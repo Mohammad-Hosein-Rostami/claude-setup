@@ -9,7 +9,7 @@
 //     the output of a substitution can be run (`sh -c "$(echo 'rm -rf /x')"`);
 //   - the statement is not piped onward; the whole line writes no file (a later `sh file` could run it: any `>` except `>/dev/null` and `>&N`),
 //     has no pipe into a stage that is not a reader (`... | sh`, `| tee f`) and no pipe out of a group or loop (`} | tee f`, `done | sed w`), no `<<`,
-//     `<(`, `>(`, `$'`, `${`, a `$(` or backtick inside double quotes, `case`, `eval`, `source`, `.`, `alias`, `function`, `trap`, `()`, `PATH=`
+//     `<(`, `>(`, `$'`, `${`, a `$(` or backtick inside double quotes, `case`, `eval`, `source`, `.`, `alias`, `function`, `trap`, `hash`, `enable`, `()`, `PATH=` or `PATH+=`
 //     or another variable that changes what runs, and no carriage return (the shell may read quotes or comments differently from this tokenizer);
 //   - the argument is one whole single-quoted word, optionally after `--flag=`; a double-quoted or mixed word is left alone.
 // Quotes are read like the shell reads them outside heredocs: `\x`, `'..'`, `".."` (opaque, never emptied), comments; a quote that never closes
@@ -22,10 +22,10 @@ const DATA_PROGRAMS = new Set(['echo', 'printf', 'grep', 'rg', 'jq', 'sed']);
 const DATA_STAGES = new Set([...DATA_PROGRAMS, 'cat', 'head', 'tail', 'wc', 'cut', 'tr']);
 const RG_RUNS_A_COMMAND = /^--(?:pre|hostname-bin)(?:=|$)/;
 const BAIL_OUT = /<<|<\(|>\(|\r|\$'/;
-// words that define or run what a later word means: a function or alias named `echo`, a sourced file, a case pattern that ends a `$(` early
-const BAIL_WORDS = new Set(['case', 'esac', 'eval', 'source', '.', 'alias', 'function', 'trap', 'coproc']);
+// words that define or run what a later word means: a function or alias named `echo`, a sourced file, a case pattern that ends a `$(` early, `hash` / `enable` that point a name at another program
+const BAIL_WORDS = new Set(['case', 'esac', 'eval', 'source', '.', 'alias', 'function', 'trap', 'coproc', 'hash', 'enable', 'command_not_found_handle']);
 // a variable that changes which program or library runs (`PATH=./bin:$PATH grep ...`)
-const CHANGES_WHAT_RUNS = /^(?:PATH|BASH_ENV|ENV|IFS|PAGER|LD_\w+|DYLD_\w+|GIT_\w+)=/;
+const CHANGES_WHAT_RUNS = /^(?:PATH|BASH_ENV|ENV|IFS|PAGER|LD_\w+|DYLD_\w+|GIT_\w+)\+?=/;
 const CLOSERS = new Set(['}', 'done', 'fi', 'esac']); // a group or loop piped onward: its statements are not told apart, so the line is left alone
 const ASSIGNMENT = /^[A-Za-z_]\w*=/;
 const LONG_FLAG_VALUE = /^--[\w-]+=$/;
@@ -64,15 +64,15 @@ function sedScriptIsPlain(script) {
 
 /**
  * Index of the `"` that closes the double-quoted text opened at `start`; -1 when it never closes or the text inside may nest quotes the shell reads
- * differently: a `${` (a default value can hold quotes), or a `$(` or backtick that the first `"` cuts in two (`"$(sh -c "x")"`: unbalanced).
+ * differently: a `${` (a default value can hold quotes), or any `$(` or backtick (a single-quoted `')'` inside the substitution hides where it
+ * ends, so counting brackets cannot tell which `"` closes the string).
  */
 function plainDoubleQuoteEnd(text, start) {
   let end = start + 1;
   while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
   if (end >= text.length) return -1;
   const inside = text.slice(start + 1, end).replace(/\\[\s\S]/g, '');
-  const count = (char) => inside.split(char).length - 1;
-  return inside.includes('${') || count('(') !== count(')') || count('`') % 2 === 1 ? -1 : end;
+  return inside.includes('${') || inside.includes('$(') || inside.includes('`') ? -1 : end;
 }
 
 /** The separator that starts at `text[i]` (`|`, `|&`, `||`, `;`, newline, `&`, `&&`) as `{type, length}`, or undefined. */
