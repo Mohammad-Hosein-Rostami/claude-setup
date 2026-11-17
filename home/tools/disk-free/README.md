@@ -30,3 +30,33 @@ named, with "size not measured in time". The Docker builder cache has no folder,
 
 `DISK_FREE_DF_OUTPUT` replaces the `df -Pk` text, `DISK_FREE_CLAUDE_TMP` the session-folder root and `DISK_FREE_DU_TIMEOUT_MS` the 30 s
 total measuring limit. Tests: `tests/disk-free.test.mjs`, `tests/doctor-disk.test.mjs`.
+
+## disk-clean: removing what piles up
+
+`disk-free` only reads. `disk-clean.mjs` removes (dry run unless `--apply`):
+
+`node ~/.claude/tools/disk-free/disk-clean.mjs [--apply] [--json] [--session <id>] [--scan-ms <n>]`
+
+| Rule | What goes | When |
+| ---- | --------- | ---- |
+| session folders | `/private/tmp/claude-<uid>/<project>/<session-id>/` (scratchpads of agent runs, copies of repos) | the session's transcript (`~/.claude/projects/*/<session-id>.jsonl`) was not modified for 3 days, or there is none and the folder itself is idle for 3 days |
+| test temp | folders in `os.tmpdir()` named `cs-test-*`, `cs-run-*` or by an old test prefix plus 6 random characters (`lib/test-temp-prefixes.mjs`) | older than 1 day |
+| temp projects | `~/.claude/projects/<slug>` where the slug is a temp path (`-private-var-folders-`, `-private-tmp-`, `-tmp-`) | nothing in it modified for 3 days |
+| hook state | files in `os.tmpdir()/claude-post-edit/*` and `claude-skill-router/*` (agent call counters, edit logs, tsbuildinfo, router markers) | older than 3 days |
+
+Never removed: the current session (`--session`, `$CLAUDE_SESSION_ID`) and the session with the newest transcript; anything that is a symlink
+(and a symlink's target); anything outside the root of its rule (every removal is checked against the real path of the root). Folders are read
+with `opendir`, one entry at a time, so a temp folder with a million entries does not fill the memory. A dry run stops looking after
+`--scan-ms` (default 30 s) and says the total is a lower bound; `--apply` has no limit. The flags `--claude-tmp`, `--projects` and `--tmp` replace the three roots (tests use fake ones);
+`DISK_FREE_CLAUDE_TMP` replaces the first. Exit 0 ok, 1 something could not be removed, 2 usage.
+
+Where it runs: the SessionStart(startup) hook `home/hooks/disk-clean-start.mjs` starts `--apply` in the background at most once per 24 h, and `doctor.sh`
+prints the dry-run total as INFO (WARN above 2 GB).
+
+## with-run-tmp: a suite run that leaves nothing behind
+
+`node ~/.claude/tools/disk-free/with-run-tmp.mjs [--shell] -- <command>` runs the command with `TMPDIR`, `TMP` and `TEMP` set to a fresh `cs-run-*` folder
+(children and grandchildren inherit it) and removes the folder when the command passes, fails or gets SIGINT/SIGTERM/SIGHUP. `test-pass run`, `scripts/affected-tests.mjs --run`,
+`.githooks/pre-commit` and doctor's repo-test run all use it. Tests make their own folders with `makeTempDir` from `tests/temp-dir-helpers.mjs` (prefix `cs-test-`,
+removed when the test process ends); a guard test fails when a test file calls `mkdtemp` itself. Hard kills (SIGKILL) leave one `cs-run-*` folder that `disk-clean` removes after a day.
+Tests: `tests/disk-clean.test.mjs`, `tests/disk-clean-start.test.mjs`, `tests/with-run-tmp.test.mjs`, `tests/temp-dir-helpers.test.mjs`.

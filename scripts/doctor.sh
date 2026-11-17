@@ -252,6 +252,19 @@ check_disk_free() {
   esac
 }
 
+# What disk-clean (dry run) could remove: an INFO line with the total, a WARN above 2 GB. DOCTOR_DISK_CLEAN_ARGS adds flags (tests point the
+# roots at fake folders; the dry run stops looking after 30 s, so doctor stays fast and the total is then a lower bound).
+check_disk_clean() {
+  local json summary level message warn_bytes="${DOCTOR_DISK_CLEAN_WARN_BYTES:-2147483648}" # 2 GB; the variable is a test hook
+  if ! json="$(node "$REPO/home/tools/disk-free/disk-clean.mjs" --json ${DOCTOR_DISK_CLEAN_ARGS:-} 2>&1)"; then
+    echo "INFO  disk-clean dry run could not run: $json"; return
+  fi
+  summary="$(node -e 'const r = JSON.parse(process.argv[1]); console.log(`${r.bytes > Number(process.argv[2]) ? "WARN" : "INFO"} ${r.items} items, ${(r.bytes / 1024 ** 3).toFixed(2)} GB${r.partial ? " or more" : ""}`)' "$json" "$warn_bytes")"
+  level="${summary%% *}"
+  message="disk-clean could remove ${summary#* }: run node ~/.claude/tools/disk-free/disk-clean.mjs --apply"
+  if [ "$level" = "WARN" ]; then warn "$message"; else echo "INFO  $message"; fi
+}
+
 # The wf-* skills call workflow scripts through ~/.claude/workflows (the link to home/workflows); settings must let Workflow read that link path.
 check_workflows() {
   local skill name script live="$CLAUDE_DIR/settings.json" link_path="$CLAUDE_DIR/workflows" missing=0 RESUME_TOOL="tools/wf-resume/wf-resume.mjs"
@@ -282,7 +295,7 @@ check_project_agents() {
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_disk_free; check_tools; check_lsp; check_ui_check; check_project_agents; check_workflows; check_env_names; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_disk_free; check_disk_clean; check_tools; check_lsp; check_ui_check; check_project_agents; check_workflows; check_env_names; check_repo_tests
 }
 run_checks
 exit "$BAD"

@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -48,4 +49,27 @@ test('check_disk_free FAILs, not passes, when the tool cannot read the disk', as
   const result = await doctorDisk(50, { DISK_FREE_DF_OUTPUT: 'garbage' });
   assert.equal(result.status, 1);
   assert.match(result.stdout, /^FAIL\s+disk free check could not run/m);
+});
+
+function doctorDiskClean(fakeBytes, env = {}) {
+  const home = makeTempDir('doctor-clean-');
+  const tmp = join(home, 'tmp');
+  mkdirSync(join(tmp, 'cs-test-old-AbCdEf'), { recursive: true });
+  writeFileSync(join(tmp, 'cs-test-old-AbCdEf', 'big.bin'), 'x'.repeat(fakeBytes));
+  const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  utimesSync(join(tmp, 'cs-test-old-AbCdEf'), old, old);
+  const roots = `--claude-tmp ${join(home, 'none')} --projects ${join(home, 'projects')} --tmp ${tmp}`;
+  return spawnSync('bash', [DOCTOR], { env: { ...process.env, HOME: home, DOCTOR_ONLY: 'check_disk_clean', DOCTOR_DISK_CLEAN_ARGS: roots, ...env }, encoding: 'utf8' });
+}
+
+test('check_disk_clean prints an INFO line with the dry-run total and exits 0', () => {
+  const result = doctorDiskClean(10_000);
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /^INFO\s+disk-clean could remove 1 items, 0\.00 GB: run node .*disk-clean\.mjs --apply/m);
+});
+
+test('check_disk_clean WARNs above the limit (2 GB; a test hook lowers it) and still exits 0', () => {
+  const result = doctorDiskClean(50_000, { DOCTOR_DISK_CLEAN_WARN_BYTES: '20000' });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /^WARN\s+disk-clean could remove 1 items, 0\.00 GB/m);
 });

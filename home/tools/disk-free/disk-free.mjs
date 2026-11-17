@@ -6,7 +6,7 @@
 // Env: DISK_FAIL_FREE_GB (default 5) and DISK_WARN_FREE_GB (default 15) move the thresholds; the warn value must be above the fail value.
 //   Test hooks: DISK_FREE_DF_OUTPUT replaces the `df -Pk` text, DISK_FREE_CLAUDE_TMP replaces the claude session-folder root,
 //   DISK_FREE_DU_TIMEOUT_MS shortens the total time for measuring all folders.
-// Exports: availableGb, judgeFreeSpace (tests), claudeSessionRoot (disk-clean.mjs). The tool only reads: it measures folders and prints advice, it never deletes.
+// Exports: availableGb, judgeFreeSpace (tests), claudeSessionRoot (disk-clean.mjs). This tool only reads: it measures folders and prints advice, it never deletes (disk-clean.mjs, next to it, does the deleting).
 import { spawnSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
