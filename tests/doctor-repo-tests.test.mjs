@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,4 +53,23 @@ test('a failing suite with no test lines (crash) still prints the last log lines
   const { result } = await runCheck('echo "Error: cannot find module x" >&2; exit 1');
   assert.equal(result.status, 1);
   assert.match(result.stdout, /cannot find module x/);
+});
+
+test('when the log folder cannot be made, the fallback log is a fresh file, not a fixed name another user could plant', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'doctor-suite-'));
+  const sharedTmp = join(home, 'shared-tmp');
+  const blocker = join(home, 'blocker');
+  await writeFile(blocker, 'a file, so a folder cannot be made below it');
+  spawnSync('mkdir', [sharedTmp]);
+  const plantedLog = join(sharedTmp, 'doctor-repo-tests.log');
+  await writeFile(plantedLog, 'PLANTED-BY-ANOTHER-USER', { mode: 0o444 });
+  const env = {
+    ...process.env, HOME: home, TMPDIR: sharedTmp, DOCTOR_ONLY: 'check_repo_tests',
+    DOCTOR_TEST_COMMAND: 'echo "not ok 1 - real failure"; exit 1', DOCTOR_LOG_DIR: join(blocker, 'logs'),
+  };
+  const result = spawnSync('bash', [DOCTOR], { env, encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /not ok 1 - real failure/);
+  assert.doesNotMatch(result.stdout, /PLANTED-BY-ANOTHER-USER/);
+  assert.ok(!result.stdout.includes(plantedLog), 'the fixed, plantable path is not used');
 });

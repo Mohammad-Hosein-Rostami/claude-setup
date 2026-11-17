@@ -117,8 +117,8 @@ check_prod_hosts() {
 check_repo_tests() {
   local suite="${DOCTOR_TEST_COMMAND:-node --test --test-reporter=tap tests/*.test.mjs}"
   local log_dir="${DOCTOR_LOG_DIR:-$CLAUDE_DIR/logs}" log failing
-  mkdir -p "$log_dir" 2>/dev/null || log_dir="${TMPDIR:-/tmp}"
-  log="$log_dir/doctor-repo-tests.log"
+  # Fallback when the log folder cannot be made: a fresh mktemp file, never a fixed name in a shared /tmp that another user could plant.
+  if mkdir -p "$log_dir" 2>/dev/null; then log="$log_dir/doctor-repo-tests.log"; else log="$(mktemp "${TMPDIR:-/tmp}/doctor-repo-tests.XXXXXX")"; fi
   if (cd "$REPO" && bash -c "$suite" >"$log" 2>&1); then ok "repo tests pass"; return; fi
   bad "repo tests fail (node --test tests/*.test.mjs); full output: $log"
   failing="$(awk '
