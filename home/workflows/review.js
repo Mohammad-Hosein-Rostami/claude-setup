@@ -7,7 +7,7 @@
 //   confirmed already (red tests after a join, a rebase conflict) and go to the fix queue first; fix:false only reports.
 //   waiverAt: the sha build.js's join proved by its checkpoints; round 0 then runs only `tier.waivable.reviews` (runner-computed tier, no weakened
 //   check, no deltaOf), and any finding, open item or red suite makes round 1 a whole-range full-set round. principles: {id, question}[] the lens
-//   prompts add to the tier's own. audit: {base, tip} recorded shas: the post-land audit of a waived lane (needs fix:false, landing:false).
+//   prompts add to the tier's own. audit: {base, tip} recorded shas: the post-land audit of a waived lane (needs fix:false, landing:false; refuses deltaOf, tier, waiverAt and initialFindings).
 // Returns: { status: 'clean'|'findings'|'incomplete'|'failed', rounds, tip (the reviewed sha: land only that), baseSha (merge-base of the last
 //   round, audit.base in audit mode, null when no tier ran), waived (round 0 was waived and ended clean), worktree (the lane's worktree after the
 //   fixes), tierFile, suite, findings, optional, leadList, text } (a `clean` status means every required lens and verdict of the last round is in,
@@ -75,7 +75,6 @@ const agentTypeOf = (review) => (review.agent === 'security-auditor' ? 'security
 const SKILL_LENS_AGENT = 'general-purpose'
 const lensAgentTypeOf = (review) => (review.agent === 'skill' ? SKILL_LENS_AGENT : agentTypeOf(review))
 // Agents return paths, branches and shas that go into later shell commands: only plain values pass (N1).
-const SHA = /^[0-9a-f]{7,40}$/
 // An absolute POSIX path or a Windows drive path (C:/x or C:\x); no spaces, quotes, `$`, `;` or `%`.
 const SAFE_PATH = /^(?:[A-Za-z]:[\\/]|\/)[\w@+=.,/\\-]+$/
 const sameSha = (a, b) => a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a))
@@ -89,7 +88,7 @@ const planText = (plan) => [
 
 // State across rounds. lastFixed: findings fixed in the previous round (their finders re-check them); recheck: findings still open
 // (deferred by a fix agent, or moved by a fix) that the next round's lenses judge again.
-const run = { round: 0, tip: null, deltaOf: args.deltaOf ?? null, laneClasses: args.laneClasses ?? null, worktree: args.worktree, knownTier: args.tier ?? null, fixShas: [], expectedTip: null, baseSha: null, notes: '' }
+const run = { round: 0, tip: null, deltaOf: args.deltaOf ?? null, laneClasses: args.laneClasses ?? null, worktree: args.worktree, knownTier: args.tier ?? null, fixShas: [], expectedTip: null, baseSha: null, lensNotes: '' }
 let lastFixed = []
 let recheck = []
 let blockingFiles = new Set()
@@ -115,7 +114,7 @@ const reviewPrompt = (review, sha, reviewWorktree, items) => [
   review.agent === 'skill' ? `Invoke the ${review.lens} skill with the Skill tool first and follow it on the files of the range; it only reads: edit nothing.` : '',
   `Lens: ${review.lens}. Rules: ${review.rules}`,
   review.brief,
-  run.notes,
+  run.lensNotes,
   review.requiredReading?.length ? `Required reading first: ${review.requiredReading.join(', ')}` : '',
   planText(review.plan),
   items.length ? `Items from the last round. fixed: check it is really gone and the fix broke nothing; open: judge whether it is still present at ${sha}, and report it as a finding if it is.\n${items.map(itemText).join('\n')}` : '',
@@ -140,13 +139,13 @@ while (true) {
   if (tierProblem !== null) return outcome('failed', tierProblem)
   const waiver = run.round === 0 && canWaive(knownTier, sha, tier)
   // An audit uses the waiver's audit half; a range that is no longer waivable (a land-loop fix touched a gate path) gets the full set, never a failure (N3).
-  const reviewSet = args.audit ? (Array.isArray(tier.waivable?.audit) ? tier.waivable.audit : tier.reviews) : waiver ? tier.waivable.reviews : tier.reviews
+  const reviewSet = reviewSetOf(tier, waiver)
   if (args.audit && (reviewSet.length === 0 || !(tier.changedLines > 0))) return outcome('failed', `empty audit: ${RANGE} has ${tier.changedLines} changed lines and ${reviewSet.length} lenses, so nothing was audited`)
   if (args.landing && reviewSet.length === 0 && recheck.length + lastFixed.length === 0) return outcome('failed', `the landing review set of ${sha} is empty: review-tier gives at least one lens for a landing diff, so the tier was lost`)
   tierFile = prepared.tierFile
   run.tip = sha
   run.baseSha = prepared.baseSha
-  run.notes = notesOf(tier)
+  run.lensNotes = notesOf(tier)
   run.fixShas = []
   const roundFixes = []
   let fixFailure = null
@@ -164,7 +163,7 @@ while (true) {
     const fixed = await agent(fixPrompt(batch, sha, diagnosis), { label: `${args.row}:fix`, phase: 'Fix', agentType: 'implementer', model: concurrent ? 'opus' : 'sonnet', effort: 'high', isolation: 'worktree', schema: IMPLEMENTED })
     if (fixed === null) { fixFailure = 'the fix agent was stopped'; return }
     // The next round reviews the HEAD of the worktree it returns, so it must be the lane branch's own and a plain path and sha (B1, N1).
-    if (fixed.branch !== args.branch || !SAFE_PATH.test(fixed.worktree) || !SHA.test(fixed.sha)) { fixFailure = `the fix agent returned branch ${fixed.branch}, worktree ${fixed.worktree}, sha ${fixed.sha}: not the lane ${args.branch}`; return }
+    if (fixed.branch !== args.branch || !SAFE_PATH.test(fixed.worktree) || !isSha(fixed.sha)) { fixFailure = `the fix agent returned branch ${fixed.branch}, worktree ${fixed.worktree}, sha ${fixed.sha}: not the lane ${args.branch}`; return }
     run.worktree = fixed.worktree
     run.expectedTip = fixed.sha
     run.fixShas.push(fixed.sha)
@@ -252,8 +251,8 @@ function problemWithTier(prepared) {
   const { exit, baseSha, sha, reviewWorktree, tierFile: file, tier } = prepared
   if (exit !== 0) return `review-tier exited ${exit}, so no review set exists for ${run.worktree}`
   if (!Array.isArray(tier?.reviews)) return 'the tier JSON has no `reviews` list, so no review set exists'
-  if (!SHA.test(sha)) return `the reviewed sha ${sha} is not a git sha`
-  if (!SHA.test(baseSha)) return `the baseSha ${baseSha} is not a git sha`
+  if (!isSha(sha)) return `the reviewed sha ${sha} is not a git sha`
+  if (!isSha(baseSha)) return `the baseSha ${baseSha} is not a git sha`
   if (args.audit && !sameSha(sha, args.audit.tip)) return `the reviewed sha ${sha} is not the audit tip ${args.audit.tip}`
   if (args.audit && !sameSha(baseSha, args.audit.base)) return `the baseSha ${baseSha} is not the audit base ${args.audit.base}`
   if (run.expectedTip !== null && !sameSha(sha, run.expectedTip)) return `the lane worktree is at ${sha}, not at ${run.expectedTip}, the HEAD of the last fix`
@@ -268,6 +267,13 @@ function canWaive(knownTier, sha, tier) {
     && Array.isArray(tier.waivable?.reviews) && tier.waivable.reviews.length > 0 && Array.isArray(tier.weakened) && tier.weakened.length === 0
 }
 
+/** The lenses of this round: an audit uses the waiver's audit half, a waived round 0 its waiver half, anything else the full set. */
+function reviewSetOf(tier, waiver) {
+  if (args.audit) return Array.isArray(tier.waivable?.audit) ? tier.waivable.audit : tier.reviews
+  if (waiver) return tier.waivable.reviews
+  return tier.reviews
+}
+
 /** The prompt lines every lens gets: weakened checks the diff adds, and the principle questions (the args' wording first, then the tier's other ids). */
 function notesOf(tier) {
   const weakened = (tier.weakened ?? []).map(({ path, line, kind }) => `${path}:${line} ${kind}`)
@@ -275,6 +281,11 @@ function notesOf(tier) {
   const principles = [...asked.map(({ id, question }) => `${id}: ${question}`), ...(tier.principles ?? []).filter((id) => !asked.some((entry) => entry.id === id))]
   return [weakened.length > 0 ? `Weakened checks this diff adds (each is a finding unless the lane spec asks for it): ${weakened.join('; ')}` : '',
     principles.length > 0 ? `Principles (ids refer to ~/.claude/rules/principles.md; answer each yes/no with file:line in verified; a no is a finding): ${principles.join(' | ')}` : ''].filter(Boolean).join('\n')
+}
+
+/** A git sha as an agent reports it. A function, not a const: checkArgs runs before the body's consts exist. */
+function isSha(text) {
+  return /^[0-9a-f]{7,40}$/.test(text)
 }
 
 function checkArgs(given) {
@@ -288,9 +299,11 @@ function checkArgs(given) {
   }
   for (const [key, type] of Object.entries(required)) check(key, type)
   for (const [key, type] of Object.entries(optional)) if (given[key] !== undefined) check(key, type)
+  if (given.principles !== undefined && !given.principles.every((entry) => typeof entry?.id === 'string' && typeof entry?.question === 'string')) throw new Error(`${name}: args.principles entries must be {id, question} strings`)
   if (given.audit !== undefined) {
-    const shaLike = /^[0-9a-f]{7,40}$/ // SHA is declared below the call of checkArgs, so it cannot be read here
     if (given.audit === null || given.fix !== false || given.landing !== false) throw new Error(`${name}: args.audit needs fix:false and landing:false`)
-    if (!shaLike.test(given.audit.base) || !shaLike.test(given.audit.tip)) throw new Error(`${name}: args.audit.base and args.audit.tip must be git shas`)
+    // Each of these would let a clean audit cover less than, or other than, the recorded base..tip with its own lenses.
+    for (const key of ['deltaOf', 'tier', 'waiverAt', 'initialFindings']) if (given[key] !== undefined) throw new Error(`${name}: args.audit cannot be combined with args.${key}`)
+    if (!isSha(given.audit.base) || !isSha(given.audit.tip)) throw new Error(`${name}: args.audit.base and args.audit.tip must be git shas`)
   }
 }

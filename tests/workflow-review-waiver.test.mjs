@@ -18,7 +18,7 @@ const AUDITOR = lens('audit', 'opus', 'max', 'security-auditor');
 const finding = (id) => ({ id, severity: 'blocking', file: 'a.mjs', line: 3, problem: `problem ${id}`, fix: 'fix it', security: false });
 const clean = { findings: [], verified: 'read it' };
 const ARGS = { row: 'close:2', repo: '/p', base: 'main', range: 'main...HEAD', landing: true, fix: true, branch: 'lane/a', worktree: '/p-wt/a', suite: 'npm test', waiverAt: TIP };
-const AUDIT_ARGS = { ...ARGS, waiverAt: undefined, landing: false, fix: false, range: `${BASE_SHA}..${TIP}`, worktree: '/scratch/audit-1', audit: { base: BASE_SHA, tip: TIP } };
+const AUDIT_ARGS = { ...ARGS, waiverAt: undefined, landing: false, fix: false, range: 'main...HEAD', worktree: '/scratch/audit-1', audit: { base: BASE_SHA, tip: TIP } };
 
 /** A review-tier JSON of a tier-1 non-gate landing: the full set, and the waiver's two halves. */
 const tierJson = (extra = {}) => ({
@@ -159,6 +159,11 @@ test('audit mode runs review-tier on the recorded range, reviews with the audit 
   assert.equal(run.error, null);
   const tier = run.calls.find((call) => call.label === 'close:2:tier');
   assert.match(tier.prompt, new RegExp(`review-tier\\.mjs ${BASE_SHA}\\.\\.${TIP} --landing --json`));
+  assert.doesNotMatch(tier.prompt, /main\.\.\.HEAD/, 'the recorded range, not args.range, goes to review-tier');
+  for (const call of run.calls.filter((entry) => /:review:/.test(entry.label))) {
+    assert.match(call.prompt, new RegExp(`range ${BASE_SHA}\\.\\.${TIP}`));
+    assert.doesNotMatch(call.prompt, /main\.\.\.HEAD/);
+  }
   assert.deepEqual(lensLabels(run), ['close:2:review:audit', 'close:2:review:risk']);
   assert.equal(labels(run, /:suite$|:fix$/).length, 0);
   assert.equal(run.result.status, 'clean');
@@ -214,4 +219,34 @@ test('waiverAt, principles and audit with the wrong type throw', async () => {
     const run = await runScript(REVIEW, { ...ARGS, ...change }, { replies: [] });
     assert.match(run.error?.message ?? '', /^review: args\./, JSON.stringify(change));
   }
+});
+
+test('audit mode throws on deltaOf, tier, waiverAt and initialFindings: each would let a clean audit cover less than the recorded range', async () => {
+  for (const change of [{ deltaOf: sha(9) }, { tier: tierJson() }, { waiverAt: TIP }, { initialFindings: [finding('F1')] }]) {
+    const run = await runScript(REVIEW, { ...AUDIT_ARGS, ...change }, { replies: world({ tiers: [tierJson()], lenses: everyLens }).replies });
+    assert.match(run.error?.message ?? '', /^review: args\.audit cannot be combined with/, JSON.stringify(change));
+    assert.equal(run.calls.length, 0);
+  }
+});
+
+test('a principles entry that is not {id, question} strings throws', async () => {
+  for (const principles of [['P1'], [{ id: 'P1' }], [{ id: 'P1', question: 7 }], [null]]) {
+    const run = await runScript(REVIEW, { ...ARGS, principles }, { replies: [] });
+    assert.match(run.error?.message ?? '', /^review: args\.principles/, JSON.stringify(principles));
+  }
+});
+
+test('a tier without a weakened list never waives', async () => {
+  const w = world({ tiers: [tierJson({ weakened: undefined })], lenses: everyLens });
+  const run = await runScript(REVIEW, ARGS, { replies: w.replies });
+  assert.equal(lensLabels(run).length, 3);
+  assert.equal(run.result.waived, false);
+});
+
+test('fix false with a finding in the waived round returns findings and waived false', async () => {
+  const w = world({ tiers: [tierJson()], lenses: { correctness: () => ({ findings: [finding('F1')], verified: 'x' }), risk: () => clean, audit: () => clean } });
+  const run = await runScript(REVIEW, { ...ARGS, fix: false, landing: false }, { replies: w.replies });
+  assert.equal(run.result.status, 'findings');
+  assert.equal(run.result.waived, false);
+  assert.equal(labels(run, /:fix$/).length, 0);
 });
