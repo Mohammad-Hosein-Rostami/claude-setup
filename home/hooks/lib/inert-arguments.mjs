@@ -1,28 +1,38 @@
 // Data is not a command: a dangerous word inside a SINGLE-QUOTED argument of a program that never runs its arguments does not make the raw-text
 // rule (raw-risk.mjs) ask. Exports: withoutInertArguments(text) -> text with those quoted arguments emptied (`'rm -rf /x'` -> `''`).
 // Allowlist (each entry has a test in tests/risky-word-data.test.mjs): echo, printf (not with -v, which fills a variable), grep, rg (not with --pre / --hostname-bin, which run a
-// command), jq, sed whose script only substitutes or prints (no e or w, see sedScriptIsPlain), `git log`. `git commit -m` is already data
+// command), jq, sed whose script only substitutes or prints (no e or w, see sedScriptIsPlain; no -i), `git log` (not with --output). `git commit -m` is already data
 // through lib/message-text.mjs. Everything else stays as written, among them shells, interpreters, eval, ssh, xargs, env, sudo, watch, flock,
 // tmux, docker/kubectl exec, parallel, `git rebase --exec` and `find -exec`.
 // A quoted argument is emptied only when ALL of these hold, else the text comes back unchanged (the safe, asking side):
 //   - the command word is a bare allowlisted word (not quoted, no path), at the top level: not inside `$(...)`, backticks or `( )`, because
 //     the output of a substitution can be run (`sh -c "$(echo 'rm -rf /x')"`);
-//   - the statement is not piped onward and writes no file (a later `sh file` could run it); the whole line has no pipe into a stage that is
-//     not a data program (`... | sh`, `done | sh`, `} | xargs`), no `<<`, `<(`, `>(` and no carriage return;
+//   - the statement is not piped onward; the whole line writes no file (a later `sh file` could run it: any `>` except `>/dev/null` and `>&N`),
+//     has no pipe into a stage that is not a reader (`... | sh`, `| tee f`) and no pipe out of a group or loop (`} | tee f`, `done | sed w`), no `<<`,
+//     `<(`, `>(`, `$'`, `${`, a `$(` or backtick inside double quotes, `case`, `eval`, `source`, `.`, `alias`, `function`, `trap`, `()`, `PATH=`
+//     or another variable that changes what runs, and no carriage return (the shell may read quotes or comments differently from this tokenizer);
 //   - the argument is one whole single-quoted word, optionally after `--flag=`; a double-quoted or mixed word is left alone.
 // Quotes are read like the shell reads them outside heredocs: `\x`, `'..'`, `".."` (opaque, never emptied), comments; a quote that never closes
-// stops everything. Pure, no I/O; linear in the text length.
+// stops everything. The caller (raw-risk.mjs) does not call this when the command holds a `$'...'` word, whose decoded text can hold a quote the
+// shell does not read as one. Pure, no I/O; linear in the text length.
 import { KEYWORDS } from './command-of.mjs';
 
 const DATA_PROGRAMS = new Set(['echo', 'printf', 'grep', 'rg', 'jq', 'sed']);
-// stages that may follow a `|`: the data programs plus plain readers; anything else may run what it reads
-const DATA_STAGES = new Set([...DATA_PROGRAMS, 'git', 'cat', 'head', 'tail', 'wc', 'sort', 'uniq', 'cut', 'tr', 'tee']);
+// stages that may follow a `|`: the data programs plus readers that write nothing; anything else may run or store what it reads
+const DATA_STAGES = new Set([...DATA_PROGRAMS, 'cat', 'head', 'tail', 'wc', 'cut', 'tr']);
 const RG_RUNS_A_COMMAND = /^--(?:pre|hostname-bin)(?:=|$)/;
-const BAIL_OUT = /<<|<\(|>\(|\r/;
+const BAIL_OUT = /<<|<\(|>\(|\r|\$'/;
+// words that define or run what a later word means: a function or alias named `echo`, a sourced file, a case pattern that ends a `$(` early
+const BAIL_WORDS = new Set(['case', 'esac', 'eval', 'source', '.', 'alias', 'function', 'trap', 'coproc']);
+// a variable that changes which program or library runs (`PATH=./bin:$PATH grep ...`)
+const CHANGES_WHAT_RUNS = /^(?:PATH|BASH_ENV|ENV|IFS|PAGER|LD_\w+|DYLD_\w+|GIT_\w+)=/;
+const CLOSERS = new Set(['}', 'done', 'fi', 'esac']);
 const ASSIGNMENT = /^[A-Za-z_]\w*=/;
 const LONG_FLAG_VALUE = /^--[\w-]+=$/;
-const REDIRECT_TO_FILE = /^(?:\d*>>?|&>>?)(?!&\d|\/dev\/null$)/;
-const COMMENT_BEFORE = /[\s;&|(]/;
+const SED_WRITES_FILES = /^(?:-[A-Za-z]*i|--i)/; // -i, -ni, -i.bak, --in-place and its abbreviations
+const GIT_LOG_WRITES_FILES = /^--ou/; // --output and its abbreviations (git takes any unique prefix)
+const HARMLESS_REDIRECT = />{1,2}(?:&[\d-]|[ \t]*\/dev\/null(?![\w./-]))/y; // to a descriptor or /dev/null; any other `>` may write a file
+const COMMENT_BEFORE = /[\s;&|()<>]/; // the characters after which the shell starts a comment at `#`
 
 /** True when a sed script only substitutes (`s/x/y/` with flags g p i I and digits) or prints, deletes or quits, so it cannot run or write anything. */
 function sedScriptIsPlain(script) {
@@ -52,37 +62,88 @@ function sedScriptIsPlain(script) {
   return true;
 }
 
+/**
+ * Index of the `"` that closes the double-quoted text opened at `start`; -1 when it never closes or the text inside may nest quotes the shell reads
+ * differently: a `${` (a default value can hold quotes), or a `$(` or backtick that the first `"` cuts in two (`"$(sh -c "x")"`: unbalanced).
+ */
+function plainDoubleQuoteEnd(text, start) {
+  let end = start + 1;
+  while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
+  if (end >= text.length) return -1;
+  const inside = text.slice(start + 1, end).replace(/\\[\s\S]/g, '');
+  const count = (char) => inside.split(char).length - 1;
+  return inside.includes('${') || count('(') !== count(')') || count('`') % 2 === 1 ? -1 : end;
+}
+
+/** The separator that starts at `text[i]` (`|`, `|&`, `||`, `;`, newline, `&`, `&&`) as `{type, length}`, or undefined. */
+function separatorAt(text, i) {
+  const char = text[i];
+  const next = text[i + 1];
+  if (char === '|') return { type: next === '|' ? 'stop' : 'pipe', length: next === '|' || next === '&' ? 2 : 1 };
+  if (char === ';' || char === '\n') return { type: 'stop', length: 1 };
+  if (char === '&' && !/[<>]/.test(text[i - 1] ?? '') && next !== '>') return { type: 'stop', length: next === '&' ? 2 : 1 };
+  return undefined;
+}
+
+const OPAQUE = { kind: 'opaque' };
+
+/** Index of the last character of the comment that starts at `text[start]`: the one before its newline. */
+function commentEnd(text, start) {
+  const lineEnd = text.indexOf('\n', start);
+  return lineEnd === -1 ? text.length : lineEnd - 1;
+}
+
+/**
+ * The piece of a word that starts at `text[i]` when it is quoted, escaped or a redirect: `{part, end}` (a word part) or `{plain, end}` (text kept as
+ * plain), `end` being the index of its last character; null when the shell may read it differently from this tokenizer; undefined when it is none.
+ */
+function pieceAt(text, i) {
+  const char = text[i];
+  const next = text[i + 1];
+  if (char === "'") {
+    const end = text.indexOf("'", i + 1);
+    return end === -1 ? null : { part: { kind: 'single', start: i, end: end + 1 }, end };
+  }
+  if (char === '"') {
+    const end = plainDoubleQuoteEnd(text, i);
+    return end === -1 ? null : { part: OPAQUE, end };
+  }
+  if (char === '\\') return next === '`' ? null : { part: OPAQUE, end: i + 1 }; // an escaped backtick is a nested substitution
+  if (char === '$' && next === '{') return null; // a default value may hold quotes that nest
+  if (char !== '>') return undefined;
+  HARMLESS_REDIRECT.lastIndex = i;
+  const redirect = HARMLESS_REDIRECT.exec(text);
+  return redirect === null ? null : { plain: redirect[0], end: i + redirect[0].length - 1 }; // any other `>` may write a file
+}
+
 /** Tokens of the text: words (as parts: plain text, single-quoted range, opaque) and the separators `stop`, `pipe`, `open`, `close`. Null when unclear. */
 function tokenize(text) {
   const tokens = [];
   let parts = [];
   const flush = () => { if (parts.length > 0) tokens.push({ type: 'word', parts }); parts = []; };
-  const addPlain = (char) => {
-    if (parts.at(-1)?.kind === 'plain') parts.at(-1).text += char;
-    else parts.push({ kind: 'plain', text: char });
+  const addPlain = (chars) => {
+    if (parts.at(-1)?.kind === 'plain') parts.at(-1).text += chars;
+    else parts.push({ kind: 'plain', text: chars });
   };
   const sub = []; // what each open `$(`, `(` or backtick was, innermost last
   for (let i = 0; i < text.length; i++) {
     const char = text[i];
-    const next = text[i + 1];
-    if (char === "'") {
-      const end = text.indexOf("'", i + 1);
-      if (end === -1) return null;
-      parts.push({ kind: 'single', start: i, end: end + 1 });
-      i = end;
-    } else if (char === '"') {
-      let end = i + 1;
-      while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
-      if (end >= text.length) return null;
-      parts.push({ kind: 'opaque' });
-      i = end;
-    } else if (char === '\\') {
-      parts.push({ kind: 'opaque' });
-      i++;
+    const separator = separatorAt(text, i);
+    const piece = separator === undefined ? pieceAt(text, i) : undefined;
+    if (piece === null) return null;
+    if (separator !== undefined) {
+      flush();
+      // a group or loop piped onward: this tokenizer does not tell which of its statements feed the pipe
+      if (separator.type === 'pipe' && CLOSERS.has(plainText(tokens.at(-1)?.parts ?? []))) return null;
+      tokens.push({ type: separator.type });
+      i += separator.length - 1;
+    } else if (piece !== undefined) {
+      if (piece.plain === undefined) parts.push(piece.part);
+      else addPlain(piece.plain);
+      i = piece.end;
     } else if (char === '#' && parts.length === 0 && (i === 0 || COMMENT_BEFORE.test(text[i - 1]))) {
-      const lineEnd = text.indexOf('\n', i);
-      i = lineEnd === -1 ? text.length : lineEnd - 1;
-    } else if ((char === '$' && next === '(') || char === '(' || char === '`') {
+      i = commentEnd(text, i);
+    } else if ((char === '$' && text[i + 1] === '(') || char === '(' || char === '`') {
       if (char === '`' && sub.at(-1) === '`') { sub.pop(); flush(); tokens.push({ type: 'close', resumes: true }); continue; }
       flush();
       sub.push(char === '(' ? '(' : char === '`' ? '`' : '$(');
@@ -91,14 +152,6 @@ function tokenize(text) {
     } else if (char === ')') {
       flush();
       tokens.push({ type: 'close', resumes: sub.pop() !== '(' });
-    } else if (char === '|') {
-      flush();
-      tokens.push({ type: next === '|' ? 'stop' : 'pipe' });
-      if (next === '|' || next === '&') i++;
-    } else if (char === ';' || char === '\n' || (char === '&' && !/[<>]/.test(text[i - 1] ?? '') && next !== '>')) {
-      flush();
-      tokens.push({ type: 'stop' });
-      if (char === '&' && next === '&') i++;
     } else if (/[ \t]/.test(char)) flush();
     else addPlain(char);
   }
@@ -129,22 +182,19 @@ function statementsOf(tokens) {
   return done;
 }
 
-const plainText = (word) => (word.length === 1 && word[0].kind === 'plain' ? word[0].text : undefined);
+/** The text of a word that is one plain run (no quotes or escapes), else undefined. */
+function plainText(word) {
+  return word.length === 1 && word[0].kind === 'plain' ? word[0].text : undefined;
+}
+
+/** The plain text a word starts with, even when quotes follow (`NAME="x"` starts with `NAME=`), else ''. */
+const startText = (word) => (word[0]?.kind === 'plain' ? word[0].text : '');
 
 /** Index of the command word (after keywords and `NAME=value` words), or -1. */
 const commandIndex = (words) => words.findIndex((word) => {
   const text = plainText(word);
   return text === undefined || (!ASSIGNMENT.test(text) && !KEYWORDS.has(text));
 });
-
-/** True when a plain word of the statement redirects output to anything but /dev/null or another descriptor. */
-function writesAFile(words) {
-  return words.some((word, at) => {
-    const text = plainText(word);
-    if (text === undefined || !REDIRECT_TO_FILE.test(text)) return false;
-    return !(/^(?:\d*>>?|&>>?)$/.test(text) && plainText(words[at + 1] ?? []) === '/dev/null');
-  });
-}
 
 /** The ranges (text offsets) of the single-quoted arguments of this statement that are data, or [] when the statement is not a data statement. */
 function dataRanges(statement, text) {
@@ -153,9 +203,12 @@ function dataRanges(statement, text) {
   const program = at === -1 ? undefined : plainText(words[at]);
   const args = words.slice(at + 1);
   const isGitLog = program === 'git' && plainText(args[0] ?? []) === 'log';
-  if (statement.nested || statement.pipedOut || !(DATA_PROGRAMS.has(program) || isGitLog) || writesAFile(words)) return [];
-  if (program === 'printf' && args.some((word) => plainText(word) === '-v')) return []; // `printf -v VAR '...'` fills a variable that git or the shell may run
-  if (program === 'rg' && args.some((word) => RG_RUNS_A_COMMAND.test(word[0].kind === 'plain' ? word[0].text : ''))) return [];
+  if (statement.nested || statement.pipedOut || !(DATA_PROGRAMS.has(program) || isGitLog)) return [];
+  const argText = args.map(startText);
+  if (program === 'printf' && argText.some((word) => word.startsWith('-v'))) return []; // `printf -v VAR '...'` (also `-vVAR`) fills a variable that git or the shell may run
+  if (program === 'rg' && argText.some((word) => RG_RUNS_A_COMMAND.test(word))) return [];
+  if (program === 'sed' && argText.some((word) => SED_WRITES_FILES.test(word))) return [];
+  if (isGitLog && argText.some((word) => GIT_LOG_WRITES_FILES.test(word))) return [];
   const ranges = [];
   for (const word of args) {
     const quoted = word.at(-1)?.kind === 'single' ? word.at(-1) : undefined;
@@ -167,8 +220,19 @@ function dataRanges(statement, text) {
   return ranges;
 }
 
+/** True when the line has a shape in which the quoted text may still run, or that this tokenizer may read differently from the shell. */
+function mayRunQuotedText(tokens, statements) {
+  const opensAndCloses = tokens.some((token, at) => token.type === 'open' && tokens[at + 1]?.type === 'close'); // `echo() { ...; }` or `$()`
+  const words = statements.flatMap((statement) => statement.words);
+  const runsWhatItReads = statements.some((statement) => {
+    const at = commandIndex(statement.words);
+    return statement.pipedIn && !DATA_STAGES.has(at === -1 ? '' : plainText(statement.words[at]) ?? '');
+  });
+  return opensAndCloses || runsWhatItReads || words.some((word) => BAIL_WORDS.has(plainText(word) ?? '') || CHANGES_WHAT_RUNS.test(startText(word)));
+}
+
 /**
- * @param {string} text command text (line continuations joined, ANSI-C words decoded)
+ * @param {string} text command text (line continuations joined; the caller does not pass a command with a `$'...'` word)
  * @returns {string} the text with the contents of data arguments removed; unchanged when nothing qualifies or anything is unclear
  */
 export function withoutInertArguments(text) {
@@ -176,11 +240,7 @@ export function withoutInertArguments(text) {
   const tokens = tokenize(text);
   if (tokens === null) return text;
   const statements = statementsOf(tokens);
-  const runsWhatItReads = statements.some((statement) => {
-    const at = commandIndex(statement.words);
-    return statement.pipedIn && !DATA_STAGES.has(at === -1 ? '' : plainText(statement.words[at]) ?? '');
-  });
-  if (runsWhatItReads) return text;
+  if (mayRunQuotedText(tokens, statements)) return text;
   let out = '';
   let copied = 0;
   const ranges = statements.flatMap((statement) => dataRanges(statement, text)).sort((x, y) => x[0] - y[0]);

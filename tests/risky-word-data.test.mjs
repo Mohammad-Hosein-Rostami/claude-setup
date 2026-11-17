@@ -107,3 +107,40 @@ test('through decide(): the data shape needs no owner, the runner next to it sti
   assert.equal(decide(`printf '%s\\n' 'rm -rf /tmp/x' ${OTHER_CONSTRUCT}`, ctx).allow, true);
   assert.equal(decide(`printf '%s\\n' 'x' ${OTHER_CONSTRUCT}; sh -c 'rm -rf /tmp/x'`, ctx).allow, false);
 });
+
+// Round 4 review of lane G: shapes where the shell runs the quoted word, or reads the quotes differently from the tokenizer. Each one asked on
+// main, so each one must still ask. The text is only parsed; nothing is executed.
+test('data that the shell can still run stays flagged (one case per review finding)', () => {
+  const shapes = {
+    'ANSI-C quote that decodes to a plain quote': `echo $'\\x27'; trap "rm -rf ~/x" EXIT; echo $'\\x27'`,
+    'double quotes that hold a nested double-quoted script': `echo "$(sh -c "trap 'rm -rf ~/x' EXIT ")"`,
+    'group written to a file, then run': `{ echo 'rm -rf ~/x'; } > run.sh; sh run.sh ${OTHER_CONSTRUCT}`,
+    'group piped to a file writer': `{ echo 'rm -rf ~/x'; } | tee run.sh; sh run.sh ${OTHER_CONSTRUCT}`,
+    'redirect glued to the quoted word': `echo 'rm -rf ~/x'>run.sh; sh run.sh ${OTHER_CONSTRUCT}`,
+    'descriptor opened on a file': `exec 3>run.sh; echo 'rm -rf ~/x' >&3; sh run.sh ${OTHER_CONSTRUCT}`,
+    'read-write redirect': `echo 'rm -rf ~/x' 1<>run.sh; sh run.sh ${OTHER_CONSTRUCT}`,
+    'printf -v with the name glued to the flag': `printf -vC 'rm -rf ~/x'; GIT_SSH_COMMAND=$C git fetch`,
+    'PATH changed for the data program': `PATH=./bin:$PATH grep 'rm -rf ~/x' f ${OTHER_CONSTRUCT}`,
+    'PATH changed before the data program': `export PATH=./bin:$PATH; grep 'rm -rf ~/x' f ${OTHER_CONSTRUCT}`,
+    'echo redefined as a function': `echo() { command sh -c "$1"; }; echo 'rm -rf ~/x' ${OTHER_CONSTRUCT}`,
+    'a # after ) is a comment': `(:)#;echo '\nrm -rf ~/x ${OTHER_CONSTRUCT}\n#'`,
+    'quotes inside a ${...} default': `: "\${x:-" ;echo '"}" ;rm -rf ~/x ${OTHER_CONSTRUCT}; : \\'`,
+    'case pattern closes the substitution': `: $(case x in x) echo 'rm -rf ~/x';; esac)`,
+    'sed -i writes the file a later command runs': `sed -i 's/^/ rm -rf ~\\/x /' run.sh && sh run.sh ${OTHER_CONSTRUCT}`,
+    'sed with the e flag': `sed 's/x/ rm -rf ~\\/x/e' f ${OTHER_CONSTRUCT}`,
+    'git log --output writes a file': `git log -1 --output=run.sh --format=' rm -rf ~/x' && sh run.sh ${OTHER_CONSTRUCT}`,
+    'git log with an abbreviated --output': `git log -1 --out=run.sh --format=' rm -rf ~/x' && sh run.sh ${OTHER_CONSTRUCT}`,
+    'unquoted heredoc whose body runs a substitution': `cat <<EOF\necho '$(rm -rf ~/x)'\nEOF`,
+  };
+  const notFlagged = Object.entries(shapes).filter(([, command]) => !flagged(command)).map(([name]) => name);
+  assert.deepEqual(notFlagged, []);
+});
+
+test('twin: the harmless redirects and plain assignments next to a data argument still do not ask', () => {
+  for (const command of [
+    `echo 'rm -rf /tmp/x' >/dev/null 2>&1 ${OTHER_CONSTRUCT}`,
+    `echo 'rm -rf /tmp/x' &>/dev/null ${OTHER_CONSTRUCT}`,
+    `LC_ALL=C grep 'rm -rf /tmp/x' f ${OTHER_CONSTRUCT}`,
+    `sed -n 's/rm -rf \\/x/y/p' f ${OTHER_CONSTRUCT}`,
+  ]) assert.equal(flagged(command), false, command);
+});

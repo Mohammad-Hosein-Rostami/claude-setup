@@ -1,5 +1,7 @@
 // Fail-to-ask rule: a command that uses ANY construct which can hide execution AND names a dangerous word anywhere in its raw
-// text asks, whatever the quoting. It does not depend on either parser being right, so a lexer bug cannot turn into a silent bypass.
+// text asks, whatever the quoting. It does not depend on either primary parser being right, so a lexer bug cannot turn into a silent bypass.
+// One exemption reads quotes itself (lib/inert-arguments.mjs, data arguments); it only empties a word in shapes it can prove harmless and gives
+// the text back unchanged (so the rule asks) for anything it cannot read the way the shell does.
 // Exports: riskyWordInExpansion(command, prodHosts) -> reason | undefined; RISKY_REASON; unreadableNameReasons(cmd, command, prodHosts)
 // -> string[] and UNREADABLE_NAME_REASON (a command word outside ASCII next to a dangerous word: a look-alike name hides what runs).
 // Hidden-execution constructs: `$(`, backtick, `<<` / `<<<` (except a plain top-level heredoc with a quoted delimiter read by cat or tee, whose
@@ -206,7 +208,9 @@ function runsText(words) {
 export function riskyWordInExpansion(command, prodHosts = []) {
   // `$(git rev-parse --show-toplevel)` is a known, harmless substitution (the per-command rm check judges where it points)
   const text = joinContinuations(decodeAnsiCWords(command)).replace(GIT_TOPLEVEL, GIT_TOPLEVEL_WORD);
-  const visible = withoutInertArguments(withoutPlainHeredocs(withoutMessageText(text)));
+  // a `$'...'` word decodes to text that can hold a quote the shell does not read as one (`$'\x27'`): no data argument is exempted then
+  const withoutData = command.includes("$'") ? (kept) => kept : withoutInertArguments;
+  const visible = withoutData(withoutPlainHeredocs(withoutMessageText(text)));
   const statements = statementsOf(visible, RUN_VALUE_ASSIGNMENT);
   const otherHidden = HIDDEN_CONSTRUCT.test(visible) || statements.some(runsText);
   const gitHidden = GIT_FILE_CONFIG.test(visible) || hidesGitRun(visible);
