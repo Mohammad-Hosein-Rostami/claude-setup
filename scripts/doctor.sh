@@ -253,12 +253,14 @@ check_disk_free() {
 
 # The wf-* skills call workflow scripts through ~/.claude/workflows (the link to home/workflows); settings must let Workflow read that link path.
 check_workflows() {
-  local skill name script live="$CLAUDE_DIR/settings.json" link_path="$CLAUDE_DIR/workflows" missing=0
+  local skill name script live="$CLAUDE_DIR/settings.json" link_path="$CLAUDE_DIR/workflows" missing=0 RESUME_TOOL="tools/wf-resume/wf-resume.mjs"
   case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) link_path="$(cygpath -m "$CLAUDE_DIR" 2>/dev/null || echo "${CLAUDE_DIR//\\//}")/workflows" ;; esac
   for skill in "$REPO"/home/skills/wf-*/SKILL.md; do
     [ -f "$skill" ] || continue
     name="$(basename "$(dirname "$skill")")"
     script="$(grep -o 'workflows/[A-Za-z0-9._-]*\.js' "$skill" | head -1)"
+    # wf-resume relaunches each run's stored script through its tool, so it names the tool instead of one script.
+    [ -z "$script" ] && grep -q "$RESUME_TOOL" "$skill" && script="$RESUME_TOOL"
     if [ -z "$script" ]; then bad "$name names no workflow script"; missing=1
     elif [ ! -f "$CLAUDE_DIR/$script" ]; then bad "$name: $script missing under $CLAUDE_DIR (re-run scripts/install.sh)"; missing=1; fi
   done

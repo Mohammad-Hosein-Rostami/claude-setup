@@ -88,14 +88,20 @@ test('check_hook_files also covers hook files named in agent frontmatter', { ski
 });
 
 // check_workflows: every wf-* skill's script is reachable through ~/.claude/workflows, and settings let Workflow read that link path.
-async function workflowRepo({ script = true, linked = true, allowed = true } = {}) {
+const SCRIPT_SKILL = 'scriptPath `${CLAUDE_SKILL_DIR}/../../workflows/x.js`\n';
+const RESUME_SKILL = 'list runs: `node ~/.claude/tools/wf-resume/wf-resume.mjs list`\n';
+async function workflowRepo({ script = true, linked = true, allowed = true, skillText = SCRIPT_SKILL, resumeTool = false } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'doctor-wf-'));
   const repo = join(home, 'repo');
   await mkdir(join(repo, 'scripts'), { recursive: true });
   await mkdir(join(repo, 'home', 'skills', 'wf-x'), { recursive: true });
   await mkdir(join(home, '.claude', 'workflows'), { recursive: true });
   await cp(DOCTOR, join(repo, 'scripts', 'doctor.sh'));
-  await writeFile(join(repo, 'home', 'skills', 'wf-x', 'SKILL.md'), 'scriptPath `${CLAUDE_SKILL_DIR}/../../workflows/x.js`\n');
+  await writeFile(join(repo, 'home', 'skills', 'wf-x', 'SKILL.md'), skillText);
+  if (resumeTool) {
+    await mkdir(join(home, '.claude', 'tools', 'wf-resume'), { recursive: true });
+    await writeFile(join(home, '.claude', 'tools', 'wf-resume', 'wf-resume.mjs'), '// stub\n');
+  }
   if (script && linked) await writeFile(join(home, '.claude', 'workflows', 'x.js'), '// stub\n');
   const dirs = allowed ? [join(home, '.claude', 'workflows')] : [];
   await writeFile(join(home, '.claude', 'settings.json'), JSON.stringify({ permissions: { additionalDirectories: dirs } }));
@@ -120,4 +126,22 @@ test('check_workflows fails when permissions.additionalDirectories lacks the wor
   const run = workflowCheck(await workflowRepo({ allowed: false }));
   assert.equal(run.status, 1);
   assert.match(run.stdout, /FAIL\s+settings.json lacks permissions.additionalDirectories/);
+});
+
+test('check_workflows passes a skill that names the wf-resume tool when the tool exists under ~/.claude/tools', { skip }, async () => {
+  const run = workflowCheck(await workflowRepo({ skillText: RESUME_SKILL, resumeTool: true, script: false }));
+  assert.equal(run.status, 0, run.stdout);
+  assert.doesNotMatch(run.stdout, /FAIL/);
+});
+
+test('check_workflows fails a skill that names the wf-resume tool when the tool is missing', { skip }, async () => {
+  const run = workflowCheck(await workflowRepo({ skillText: RESUME_SKILL }));
+  assert.equal(run.status, 1);
+  assert.match(run.stdout, /FAIL\s+wf-x: tools\/wf-resume\/wf-resume\.mjs missing under .*\.claude/);
+});
+
+test('check_workflows still fails a skill that names neither a workflow script nor the wf-resume tool', { skip }, async () => {
+  const run = workflowCheck(await workflowRepo({ skillText: 'no script here\n', resumeTool: true }));
+  assert.equal(run.status, 1);
+  assert.match(run.stdout, /FAIL\s+wf-x names no workflow script/);
 });
