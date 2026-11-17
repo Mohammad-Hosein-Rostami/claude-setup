@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildReport } from '../home/tools/review-tier/lib/report.mjs';
 import { PRINCIPLES_BY_TRIGGER } from '../home/tools/review-tier/tiers.mjs';
+import { CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
 
 const changed = (path, added = [], removed = []) => ({
   path,
@@ -66,9 +67,14 @@ test('read rule: a read call with a non-trusted first argument is untrusted-inpu
     'readFileSync(file, "utf8")', 'await readFile(p)', 'createReadStream(p)', 'readSync(fd, buffer, 0, 8, 0)', 'readdirSync(folder, { withFileTypes: true })',
     'opendirSync(dir)', 'readlinkSync(link)', 'fs.promises.readdir(dir)',
   ]) assert.ok(codeLine(line).classes.includes('untrusted-input'), line);
-  for (const line of ['readFileSync("a.txt", "utf8")', 'readFileSync(__filename)', 'readdirSync(homedir())', 'readFileSync(new URL("./a", import.meta.url))'.replace('new URL("./a", import.meta.url)', 'import.meta.url'), 'const readFileSyncName = 1;']) {
+  for (const line of ['readFileSync("a.txt", "utf8")', 'readFileSync(__filename)', 'readdirSync(homedir())', 'readFileSync(import.meta.url)', 'const readFileSyncName = 1;']) {
     assert.ok(!codeLine(line).classes.includes('untrusted-input'), line);
   }
+});
+
+test('read rule: only the first argument is judged (a trusted path with a variable encoding is not a hit)', () => {
+  assert.ok(!codeLine('readFileSync(__filename, encoding)').classes.includes('untrusted-input'));
+  assert.ok(codeLine('readFileSync(file, "utf8")').classes.includes('untrusted-input'));
 });
 
 test('read rule: a call whose arguments go on to the next line counts as a hit', () => {
@@ -111,11 +117,33 @@ test('credential rule: tokens, credentials, private keys, .env and keychain are 
   }
 });
 
+test('credential rule: a `.env` file is security; process.env, a spread env and import.meta.env are ordinary code', () => {
+  for (const line of ["join(dir, '.env.local')", 'cat .env', 'const file = `${root}/.env`;']) assert.ok(codeLine(line).classes.includes('security'), line);
+  for (const line of ['const quiet = process.env.QUIET === "1";', 'const merged = { ...env, A: 1 };', 'const mode = import.meta.env.MODE;', 'const home = options.env.HOME;']) {
+    assert.ok(!codeLine(line).classes.includes('security'), line);
+  }
+});
+
 test('line rules never read a tests file, a doc or a prose file', () => {
   for (const path of ['tests/x.test.mjs', 'docs/x.md', 'README.md', 'notes.txt']) {
     const result = report([changed(path, ['rmSync(dir);', 'writeFileSync(p, t);', 'readFileSync(p);', 'const accessToken = 1;'])]);
     assert.ok(!['data', 'security', 'untrusted-input'].some((name) => result.classes.includes(name)), path);
   }
+});
+
+// A pure rename has no hunk, so the old path (the gate file that stopped being one) must be read as changed too.
+test('gate class: a pure rename of a gate file away from its name is still a gate change and not waivable', () => {
+  const dir = makeRepo();
+  commit(dir, 'tsconfig.json', '{ "compilerOptions": { "strict": true } }\n');
+  git(dir, 'checkout', '-q', '-b', 'lane');
+  git(dir, 'mv', 'tsconfig.json', 'tsconfig.json.off');
+  git(dir, 'commit', '-q', '-m', 'switch the type check off');
+  const env = { ...CLEAN_ENV, REVIEW_TIER_LOG: join(dir, '..', 'review-tier.jsonl') };
+  const run = spawnSync(process.execPath, [fileURLToPath(new URL('../home/tools/review-tier/review-tier.mjs', import.meta.url)), '--landing', '--json'], { cwd: dir, encoding: 'utf8', env });
+  assert.equal(run.status, 0, run.stderr);
+  const result = JSON.parse(run.stdout);
+  assert.ok(result.classes.includes('gate'));
+  assert.equal(result.waivable, null);
 });
 
 // principles field

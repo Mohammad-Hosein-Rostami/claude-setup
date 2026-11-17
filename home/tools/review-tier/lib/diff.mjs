@@ -75,9 +75,10 @@ export function parsePatch(text) {
   return [...byPath.values()];
 }
 
-/** Every changed path of a diff, also one with no hunk (a pure rename, a binary file, a mode change). */
+/** Every changed path of a diff, also one with no hunk (both paths of a pure rename, a binary file, a mode change). */
 function withHunklessFiles(top, args, files) {
-  const names = gitText(top, [...DIFF_FLAGS.slice(0, 2), 'diff', '--name-only', '-M', ...args]).split('\n').filter((name) => name !== '');
+  // --no-renames: a pure rename lists both its paths, so a gate file renamed away is still read as changed.
+  const names = gitText(top, [...DIFF_FLAGS.slice(0, 2), 'diff', '--name-only', '--no-renames', ...args]).split('\n').filter((name) => name !== '');
   const known = new Set(files.map((file) => file.path));
   return [...files, ...names.filter((name) => !known.has(name)).map((path) => ({ path, added: [], removed: [], hunkHeads: [] }))];
 }

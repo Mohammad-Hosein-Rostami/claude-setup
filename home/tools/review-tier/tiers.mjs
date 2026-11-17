@@ -59,7 +59,8 @@ const DELETE_CALL = /\b(rm|unlink|rmdir)(Sync)?\(/;
 const DELETE_COMMAND = /\brm\s+(-\w*[rf]|--(recursive|force)\b)|\bgit\s+(branch\s+-\w*D\b|worktree\s+remove\b|reset\s+--hard\b|clean\s+-\w*f|push\b.*(--force\b|\s-f\b))/;
 // The store override of principle P8: code that picks where state is written.
 const STATE_DIR_WORD = /\bstate[-_]?dir\b/i;
-const CREDENTIAL_WORD = /\b(access|auth|api|bearer|refresh|session|github|npm|oauth)[_-]?tokens?\b|\bcredentials?\b|\bprivate[_-]?key\b|\.env\b|\bkeychain\b/i;
+// `.env` is the file: process.env, `...env` and import.meta.env are ordinary code (132 of the 179 `.env` lines of home/ and scripts/).
+const CREDENTIAL_WORD = /\b(access|auth|api|bearer|refresh|session|github|npm|oauth)[_-]?tokens?\b|\bcredentials?\b|\bprivate[_-]?key\b|(?<![\w.])\.env\b|\bkeychain\b/i;
 
 /** The text of the arguments of the first `callName(` on the line; `closed` is false when they go on to the next line. */
 function argumentsOf(line, callPattern) {
