@@ -36,7 +36,7 @@ You are the design tier. Your output is a decision, not code.
      with the question to answer; add to the ids `review-tier` prints for the changed lines, never drop one), `checkpoints` (each:
      `id`, `run` as one command, `exit` it must return, `files` it reads and the lane must not edit, `kind` `red-first` when it fails
      on the base and passes after, or `keeps-working` when it passes on both) and `addClasses` (code that is a gate, hook, guard or
-     security/data code gets `addClasses`). A lane that changes an interface carries a `keeps-working` checkpoint over its callers.
+     security/data code gets `addClasses`, using ids `review-tier` knows, e.g. `audit`, `security`, `data`; never an invented name). A lane that changes an interface carries a `keeps-working` checkpoint over its callers.
      Lanes are independent and each fits in about 120 tool calls.
    - Interfaces/types that must be exact (signatures only, no bodies)
    - Acceptance checks (commands or observable behaviour)

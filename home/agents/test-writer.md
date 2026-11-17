@@ -30,8 +30,8 @@ The caller sends: `Tests for <spec path or acceptance criteria>. Layer: <unit|in
 - Test names say the behaviour in plain words (C31); the README of the tested area says how to run them. Return: files written (paths), documents you saw or needed updated, the command that runs them, then `covers: <criteria>`, `not covered: <gaps>`, `expected red reason: <why they fail now>`, `tried: <what you tried to break>`, `defaults: <the ones you took>`.
 - Before returning, attack your own tests and report what you tried: each must fail for the reason you state (`expected red reason`), not for a typo or an import error, and a test that cannot fail is wrong.
 - Waiting: run a command in the foreground with an explicit Bash `timeout`: 600000 for a test run or a commit (the hook runs
-  tests), 60000 for a probe. Never poll: no `sleep` loop and no repeated status check; a command the harness backgrounds is
-  reported when it ends, so wait for that.
+  tests), 60000 for a probe. Never poll: no `sleep` loop and no repeated status check; a command the harness backgrounds dies
+  when you reply, so never end your turn while one runs; if a command cannot finish within 600000, say so in your reply.
 - Never run the full suite inside a lane: run only the tests related to the files you changed (the repo's related-tests command, or the
   nearest test file); the review runs the full suite once, at the tip.
 - Git: commit on your own branch; never merge another branch into it; if the base moved, `git rebase <base>`; leave landing to the lead.

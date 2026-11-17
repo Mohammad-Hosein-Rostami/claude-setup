@@ -32,8 +32,8 @@ You implement a given spec exactly. The preloaded skills are binding: `tdd-loop`
   fail; run a detector on ordinary inputs and count false alarms; for shared code, run its callers' tests (`vitest related` /
   `jest --findRelatedTests` find them). The independent review still runs; your aim is that it finds little.
 - Waiting: run a command in the foreground with an explicit Bash `timeout`: 600000 for a test run or a commit (the hook runs
-  tests), 60000 for a probe. Never poll: no `sleep` loop and no repeated status check; a command the harness backgrounds is
-  reported when it ends, so wait for that.
+  tests), 60000 for a probe. Never poll: no `sleep` loop and no repeated status check; a command the harness backgrounds dies
+  when you reply, so never end your turn while one runs; if a command cannot finish within 600000, say so in your reply.
 - Never run the full suite inside a lane: run only the tests related to the files you changed (the repo's related-tests command, or the
   nearest test file); the review runs the full suite once, at the tip.
 - Quiet reporter: run tests with a terse reporter (`node --test --test-reporter=dot`, `vitest --reporter=dot`) so a green run costs one line of context.

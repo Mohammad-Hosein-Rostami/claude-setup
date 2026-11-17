@@ -83,7 +83,9 @@ test('lane agents: Bash timeout 600000 for suite and commit, 60000 for probes, n
   for (const agent of [...LANE_AGENTS, 'runner']) {
     const text = read(`home/agents/${agent}.md`);
     assert.match(text, /timeout.{0,40}600000/s, `${agent}.md names the 600000 timeout`);
-    assert.match(text, /60000/, `${agent}.md names the 60000 probe timeout`);
+    assert.match(text, /\b60000 for a probe/, `${agent}.md names the 60000 probe timeout`);
+    assert.match(text, /dies\s+when you reply[^.]*never end your turn/, `${agent}.md says a backgrounded command dies at the reply`);
+    assert.doesNotMatch(text, /reported when it ends/, `${agent}.md drops the false wait-for-notice line`);
     assert.match(text, /never poll/i, `${agent}.md forbids polling`);
     assert.doesNotMatch(text, /until <test>; do sleep/, `${agent}.md drops the sleep-loop recipe`);
     assert.doesNotMatch(text, /Start long commands in the background/, `${agent}.md no longer backgrounds long commands`);
@@ -108,9 +110,19 @@ test('home/CLAUDE.md Reviews line: waived lane audit after land, sync and push w
   assert.match(line, /risky, `gate` and hooks[^;.]*Opus max/);
   assert.match(line, /waived lane[^.]*post-land audit/);
   assert.match(line, /every waived lane is audited/i);
-  assert.match(line, /audit-log gate/);
+  assert.match(line, /tools\/review-tier\/audit-log\.mjs gate --repo <repo> --tip HEAD/);
+  assert.match(line, /Opus max before land/);
+  assert.match(line, /except a waived lane/);
   assert.match(line, /`rework:` row/);
   assert.match(line, /audit-log resolve/);
+});
+
+test('runner.md names the 600000 timeout for land and installs; P10 and the architect keep their fixes', () => {
+  assert.match(read('home/agents/runner.md'), /600000 for a test run, a commit, `git-tidy land` or an install/);
+  assert.match(read('home/rules/principles.md'), /Enter never acts as a click/);
+  assert.doesNotMatch(read('home/rules/principles.md'), /never consent/);
+  assert.match(read('home/agents/architect.md'), /ids `review-tier` knows/);
+  assert.match(read('home/CLAUDE.md'), /a lane that reads a probe waits for it or carries `--add-class audit`/);
 });
 
 test('home/CLAUDE.md: long-command line says ~5 min, not ~2 min', () => {
