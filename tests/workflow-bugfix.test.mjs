@@ -131,6 +131,51 @@ test('bugfix: a land conflict sends an implementer, then the delta goes back to 
   assert.equal(run.calls.filter((c) => /:fix:conflict/.test(c.label)).length, 1);
 });
 
+test('bugfix: a red suite at land sends an implementer like a conflict, then the fix goes back to review before landing again', async () => {
+  const answers = [{ status: 'red', sha: 'c0', patchesChanged: 0, tidy: '2 failing: a.test.mjs' }, LANDED];
+  const run = await runScript(ARGS, { replies: replies(), children: { review: () => CLEAN_REVIEW, land: () => answers.shift() } });
+  assert.equal(run.result.status, 'landed');
+  assert.deepEqual(run.started.filter((label) => label.startsWith('workflow:')), ['workflow:review', 'workflow:land', 'workflow:review', 'workflow:land']);
+  const fixes = run.calls.filter((c) => /:fix:red/.test(c.label));
+  assert.equal(fixes.length, 1);
+  assert.match(fixes[0].prompt, /2 failing: a\.test\.mjs/, 'the fix agent is told what is red');
+});
+
+test('bugfix: a red-fix agent that returns nothing ends the run as failed instead of looping', async () => {
+  const answers = [{ status: 'red', sha: 'c0', patchesChanged: 0, tidy: 'x' }, LANDED]; // the second answer only keeps a missing red branch from looping forever
+  const run = await runScript(ARGS, { replies: replies([{ match: /:fix:red/, reply: null }]), children: { review: () => CLEAN_REVIEW, land: () => answers.shift() } });
+  assert.equal(run.result.status, 'failed');
+  assert.equal(run.started.filter((label) => label === 'workflow:land').length, 1);
+});
+
+test('bugfix: the writer tier is not passed to the review, and the writer is not asked for one', async () => {
+  let reviewArgs = null;
+  const run = await runScript(ARGS, { replies: replies([{ match: /:fix:/, reply: { ...FIX, tier: { reviews: [] } } }]), children: { review: (given) => { reviewArgs = given; return CLEAN_REVIEW; }, land: () => LANDED } });
+  assert.equal(run.result.status, 'landed');
+  assert.equal('tier' in reviewArgs, false, 'review.js computes the tier itself');
+  for (const call of run.calls.filter((c) => /:fix:/.test(c.label))) assert.doesNotMatch(call.prompt, /review-tier/, call.label);
+});
+
+test('bugfix: with the real land.js a red suite loops to a fix, a review of it and a second land (tip passed on)', async () => {
+  const tips = ['abc1234', 'def5678'];
+  const suites = [{ exit: 1, tail: '1 failing' }, { exit: 0, tail: 'PASS' }];
+  let reviewedTip = '';
+  const step = (reply) => ({ exit: 0, tip: '', patchesChanged: 0, files: [], tail: '', ...reply });
+  const run = await runScript(ARGS, {
+    replies: replies([
+      { match: /:tip$/, reply: () => step({ tip: reviewedTip }) },
+      { match: /:rebase$/, reply: () => step({ tip: reviewedTip }) },
+      { match: /:suite$/, reply: () => step(suites.shift()) },
+      { match: /:land$/, reply: step({ tip: 'ff00aa1' }) },
+    ]),
+    children: { review: () => { reviewedTip = tips.shift(); return { ...CLEAN_REVIEW, tip: reviewedTip }; }, land: SCRIPT.replace('bugfix.js', 'land.js') },
+  });
+  assert.equal(run.error, null);
+  assert.equal(run.result.status, 'landed');
+  assert.equal(run.calls.filter((c) => /:fix:red/.test(c.label)).length, 1);
+  assert.deepEqual(run.started.filter((label) => /^(workflow:|b1:suite$)/.test(label)), ['workflow:review', 'workflow:land', 'b1:suite', 'workflow:review', 'workflow:land', 'b1:suite']);
+});
+
 test('bugfix: a conflict agent that returns nothing ends the run as failed instead of looping', async () => {
   const run = await runScript(ARGS, { replies: replies([{ match: /:fix:conflict/, reply: null }]), children: { review: () => CLEAN_REVIEW, land: () => ({ status: 'conflict', sha: '', patchesChanged: 0, tidy: '' }) } });
   assert.equal(run.result.status, 'failed');

@@ -29,14 +29,13 @@ const { row, closeRow, statusFile, repo, base, symptom, suite, scriptsDir } = ar
 const branch = args.branch ?? `lane/${row}`
 const lane = { exists: false, worktree: '', reproSha: '', problem: '' }
 const CONTEXT = `Repo ${repo}, base branch ${base}. Bug: ${symptom}. ${args.repro ? `Repro command: ${args.repro}.` : 'No repro command is known yet.'}`
-const FINISH = `Related tests only while iterating; the full suite (${suite}) is run later by the land step. Commit after each green step on the lane branch ${branch}; no merge commits; never push. Run node ~/.claude/tools/review-tier/review-tier.mjs ${base}...HEAD --landing --json last and return its JSON as tier. Return IMPLEMENTED: branch, worktree (your folder), sha, tests {cmd, exit}, tier.`
+const FINISH = `Related tests only while iterating; the full suite (${suite}) is run later by the land step. Commit after each green step on the lane branch ${branch}; no merge commits; never push. Return IMPLEMENTED: branch, worktree (your folder), sha, tests {cmd, exit}.`
 
-const OBJECT = { type: 'object' }
 const REPRO_SCHEMA = { type: 'object', properties: { reproduces: { type: 'boolean' }, cmd: { type: 'string' }, exit: { type: 'number' }, branch: { type: 'string' }, worktree: { type: 'string' }, sha: { type: 'string' }, tail: { type: 'string' } }, required: ['reproduces', 'cmd', 'tail'] }
 const HYPOTHESES_SCHEMA = { type: 'object', properties: { hypotheses: { type: 'array', minItems: HYPOTHESIS_COUNT, maxItems: HYPOTHESIS_COUNT, items: { type: 'object', properties: { id: { type: 'string' }, claim: { type: 'string' }, observation: { type: 'string' } }, required: ['id', 'claim', 'observation'] } } }, required: ['hypotheses'] }
 const PROBE_SCHEMA = { type: 'object', properties: { id: { type: 'string' }, confirmed: { type: 'boolean' }, rootCause: { type: 'string' }, evidence: { type: 'string' }, minimalFix: { type: 'string' } }, required: ['id', 'confirmed', 'rootCause', 'evidence', 'minimalFix'] }
 const JUDGE_SCHEMA = { type: 'object', properties: { found: { type: 'boolean' }, hypothesisId: { type: 'string' }, rootCause: { type: 'string' }, minimalFix: { type: 'string' } }, required: ['found', 'hypothesisId', 'rootCause', 'minimalFix'] }
-const IMPLEMENTED_SCHEMA = { type: 'object', properties: { branch: { type: 'string' }, worktree: { type: 'string' }, sha: { type: 'string' }, tests: { type: 'object', properties: { cmd: { type: 'string' }, exit: { type: 'number' } }, required: ['cmd', 'exit'] }, tier: OBJECT }, required: ['branch', 'worktree', 'sha', 'tests'] }
+const IMPLEMENTED_SCHEMA = { type: 'object', properties: { branch: { type: 'string' }, worktree: { type: 'string' }, sha: { type: 'string' }, tests: { type: 'object', properties: { cmd: { type: 'string' }, exit: { type: 'number' } }, required: ['cmd', 'exit'] } }, required: ['branch', 'worktree', 'sha', 'tests'] }
 const RELEASE_SCHEMA = { type: 'object', properties: { exit: { type: 'number' }, tail: { type: 'string' } }, required: ['exit', 'tail'] }
 const VERIFY_SCHEMA = { type: 'object', properties: { reproGreen: { type: 'boolean' }, relatedExit: { type: 'number' }, mutantKilled: { type: 'boolean' }, treeClean: { type: 'boolean' }, tail: { type: 'string' } }, required: ['reproGreen', 'relatedExit', 'mutantKilled', 'treeClean', 'tail'] }
 
@@ -62,7 +61,7 @@ if (!verified) return { status: 'unresolved', notes: failedAttempts }
 await statusStep(`done ${row} "verified: repro green, related tests pass, mutation of the fix line caught"`, 'Verify')
 phase('Review')
 await statusStep(`start ${closeRow}`, 'Review')
-return reviewAndLand(verified)
+return reviewAndLand()
 
 function reproduce() {
   if (args.repro) {
@@ -128,24 +127,25 @@ function verify(fix) {
   return agent(`${CONTEXT} Work in ${fix.worktree} on ${branch}; never push. 1) Run the repro test: it must pass. 2) Run only the tests related to the changed files. 3) Mutate the fixed line so the bug returns, confirm the repro test fails, then restore it with git checkout -- <file> and confirm git status is clean. Return reproGreen, relatedExit, mutantKilled, treeClean and a short tail.`, { label: `${row}:verify`, phase: 'Verify', agentType: 'implementer', model: 'sonnet', effort: 'medium', schema: VERIFY_SCHEMA })
 }
 
-/** Review, then land; a conflict or changed patches go back through review of the delta, with no round cap. */
-async function reviewAndLand(fix) {
-  let tier = fix.tier
+/** Review, then land; a conflict, a red suite or changed patches go back through review of the delta, with no round cap. */
+async function reviewAndLand() {
   const leadList = []
   for (;;) {
-    const review = await workflow({ scriptPath: `${scriptsDir}/review.js` }, { row, repo, base, range: `${base}...${branch}`, landing: true, fix: true, branch, worktree: lane.worktree, suite, tier })
+    const review = await workflow({ scriptPath: `${scriptsDir}/review.js` }, { row, repo, base, range: `${base}...${branch}`, landing: true, fix: true, branch, worktree: lane.worktree, suite })
     if (!review) return { status: 'review-failed', text: 'the review workflow returned nothing', leadList }
     leadList.push(...review.leadList)
     if (review.status !== 'clean') return { status: `review-${review.status}`, text: review.text, leadList }
     lane.worktree = review.worktree // the review's fixes may have moved the lane to a new worktree
     phase('Land')
-    const landed = await workflow({ scriptPath: `${scriptsDir}/land.js` }, { row, closeRow, statusFile, repo, base, branch, worktree: lane.worktree, suite })
+    const landed = await workflow({ scriptPath: `${scriptsDir}/land.js` }, { row, closeRow, statusFile, repo, base, branch, worktree: lane.worktree, suite, tip: review.tip })
     if (landed?.status === 'landed') return { status: 'landed', sha: landed.sha, tidy: landed.tidy, leadList }
     if (!landed || landed.status === 'failed') return { status: 'failed', landed, leadList }
-    if (landed.status === 'conflict') {
-      const resolved = await runLaneAgent('fix:conflict', `The rebase onto ${base} conflicted. Resolve it keeping the intent of both sides, rerun the related tests, commit.`)
-      if (!resolved) return { status: 'failed', landed, leadList, problem: lane.problem || 'the conflict-resolving agent returned nothing' }
-      tier = resolved.tier
+    if (landed.status === 'conflict' || landed.status === 'red') {
+      const task = landed.status === 'conflict'
+        ? `The rebase onto ${base} conflicted. Resolve it keeping the intent of both sides, rerun the related tests, commit.`
+        : `The full suite (${suite}) is red on the lane rebased onto ${base}: ${landed.tidy}. Find the cause in the lane's change or its interaction with the new base, fix it, rerun the related tests, commit.`
+      const resolved = await runLaneAgent(`fix:${landed.status}`, task)
+      if (!resolved) return { status: 'failed', landed, leadList, problem: lane.problem || `the ${landed.status}-fixing agent returned nothing` }
     }
     phase('Review')
   }

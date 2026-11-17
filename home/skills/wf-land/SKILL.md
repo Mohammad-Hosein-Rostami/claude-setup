@@ -12,4 +12,4 @@ Args to fill: `row`, `closeRow`, `statusFile`, `repo`, `base`, `branch`, `worktr
 
 Call the Workflow tool with `scriptPath` `${CLAUDE_SKILL_DIR}/../../workflows/land.js` and `args` = those keys plus `scriptsDir` set to
 `${CLAUDE_SKILL_DIR}/../../workflows`. If Workflow refuses the path, Read that file and pass its text as `script` (same args).
-Result: `{status, sha, patchesChanged, tidy}`. `landed` is the only landed state; `conflict` needs an implementer and a review of the delta; `needs-review` needs a review of the delta; `failed` names why in `tidy`. Tell the owner what came back; never report more than the result says. Details: `home/workflows/README.md`.
+Result: `{status, sha, patchesChanged, tidy}`. `landed` is the only landed state; `conflict` and `red` (the suite failed at the rebased tip; `tidy` is its output) need an implementer and a review of the delta; `needs-review` needs a review of the delta; `failed` names why in `tidy`. Tell the owner what came back; never report more than the result says. Details: `home/workflows/README.md`.

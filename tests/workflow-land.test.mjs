@@ -50,10 +50,9 @@ test('patches changed by the rebase return needs-review: nothing lands', async (
   assert.deepEqual(run.started, ['close:4:tip', 'close:4:rebase']);
 });
 
-test('a red suite returns failed and never lands', async () => {
+test('a red suite returns red with the tip and the suite tail, and never lands', async () => {
   const run = await runScript(LAND, ARGS, { replies: [atTip(), rebased(), suite({ exit: 1, tail: '3 failing' })] });
-  assert.equal(run.result.status, 'failed');
-  assert.match(run.result.tidy, /suite.*3 failing/);
+  assert.deepEqual(run.result, { status: 'red', sha: 'abc1234', patchesChanged: 0, tidy: '3 failing' });
   assert.ok(!run.started.includes('close:4:land'));
 });
 
