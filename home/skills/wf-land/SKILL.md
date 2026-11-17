@@ -8,7 +8,7 @@ argument-hint: <branch>
 Run this job as a workflow (the owner's rule: everything that runs is a workflow), not as single agents. First add and start this job's STATUS.md rows
 (`node ~/.claude/tools/status/status.mjs add|start`) so the progress line follows them; the script's agent labels start with the row ids you pass.
 
-Args to fill: `row`, `closeRow`, `statusFile`, `repo`, `base`, `branch`, `worktree`, `suite`.
+Args to fill: `row`, `closeRow`, `statusFile`, `repo`, `base`, `branch`, `worktree`, `suite`, `tip` (the sha the review cleared, the review result's `tip`; land refuses a branch that is not at it).
 
 Call the Workflow tool with `scriptPath` `${CLAUDE_SKILL_DIR}/../../workflows/land.js` and `args` = those keys plus `scriptsDir` set to
 `${CLAUDE_SKILL_DIR}/../../workflows`. If Workflow refuses the path, Read that file and pass its text as `script` (same args).

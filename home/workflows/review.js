@@ -1,11 +1,15 @@
 // review: review a lane the way the setup's rules say, as a pipeline, then fix what the reviews confirm and review the fixes again until a round
 // is clean. Lenses come from review-tier (classes, models, efforts, stress and mutation plans); the script adds nothing and removes nothing.
 // Args: { row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, initialFindings? }
-//   tier: review-tier JSON to use for round 0 instead of running the tool; laneClasses: file of an earlier round's tier JSON (classes and
+//   suite: the repo's declared full-suite command (test-pass runs it as `run --suite`, never from this text);
+//   tier: review-tier JSON from the lead to use for round 0 instead of running the tool; laneClasses: file of an earlier round's tier JSON (classes and
 //   plans are kept, I4); deltaOf: a sha already reviewed (round 0 reviews only what changed since); initialFindings: findings that are
 //   confirmed already (red tests after a join, a rebase conflict) and go to the fix queue first; fix:false only reports.
-// Returns: { status: 'clean'|'findings'|'incomplete'|'failed', rounds, tip, worktree (the lane's worktree after the fixes), tierFile, suite, findings, optional, leadList, text } (a
-//   `clean` status means every required lens and verdict of the last round is in, none confirmed anything, and with `landing` the suite passed at tip).
+// Returns: { status: 'clean'|'findings'|'incomplete'|'failed', rounds, tip (the reviewed sha: land only that), worktree (the lane's worktree after the
+//   fixes), tierFile, suite, findings, optional, leadList, text } (a `clean` status means every required lens and verdict of the last round is in,
+//   none confirmed anything, and with `landing` the suite passed at tip).
+// Review set: a runner recomputes it with review-tier every round (with every --add-class and the lane's classes); the fix agent never supplies it.
+//   A run whose tier did not exit 0, has no `reviews` list, or (with `landing`) has an empty one and nothing carried over is `failed`, never clean.
 // Rules kept here (spec round 4, I2 and I3): a verifier is as strong as its finder; its `real: false` drops a finding only when it is at least
 // as strong and the finding is not security, else an Opus-max judge rules; a security finding the judge calls not real goes to leadList with
 // the reason; a finding whose lines a fix already moved is carried into the next round as an open item, never judged at a newer HEAD.
@@ -47,10 +51,10 @@ const VERDICT = {
 }
 const VERDICTS = { type: 'object', properties: { verdicts: { type: 'array', items: VERDICT } }, required: ['verdicts'] }
 const JUDGED = { type: 'object', properties: { id: str, real: { type: 'boolean' }, why: str }, required: ['id', 'real', 'why'] }
-const PREPARED = { type: 'object', properties: { sha: str, reviewWorktree: str, tierFile: str, tier: { type: 'object' } }, required: ['sha', 'reviewWorktree', 'tierFile', 'tier'] }
+const PREPARED = { type: 'object', properties: { exit: { type: 'number' }, sha: str, reviewWorktree: str, tierFile: str, tier: { type: 'object' } }, required: ['exit', 'sha', 'reviewWorktree', 'tierFile', 'tier'] }
 const IMPLEMENTED = {
   type: 'object',
-  properties: { branch: str, worktree: str, sha: str, tests: { type: 'object' }, tier: { type: 'object' }, deferred: { type: 'array', items: str } },
+  properties: { branch: str, worktree: str, sha: str, tests: { type: 'object' }, deferred: { type: 'array', items: str } },
   required: ['branch', 'worktree', 'sha', 'tests', 'deferred'],
 }
 const RUN = { type: 'object', properties: { exit: { type: 'number' }, tail: str }, required: ['exit', 'tail'] }
@@ -61,6 +65,13 @@ const specOf = (review) => ({ model: review.model ?? 'sonnet', effort: review.ef
 const originOf = (review) => ({ agent: review.agent, model: review.model, effort: review.effort, lens: review.lens })
 const sameOrigin = (a, b) => a.agent === b.agent && a.model === b.model && a.effort === b.effort && a.lens === b.lens
 const agentTypeOf = (review) => (review.agent === 'security-auditor' ? 'security-auditor' : 'reviewer')
+// A review-tier lens with agent `skill` is a skill (ui-quality-pass): the agent must call it, which the read-only reviewer agent cannot.
+const SKILL_LENS_AGENT = 'general-purpose'
+const lensAgentTypeOf = (review) => (review.agent === 'skill' ? SKILL_LENS_AGENT : agentTypeOf(review))
+// Agents return paths, branches and shas that go into later shell commands: only plain values pass (N1).
+const SHA = /^[0-9a-f]{7,40}$/
+const SAFE_PATH = /^\/[\w@+=.,/-]+$/
+const sameSha = (a, b) => a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a))
 const runner = (step, phase, prompt, schema = RUN) => agent(`${prompt}\nDo nothing else; report no secrets.`, { label: `${args.row}:${step}`, phase, schema, ...RUNNER })
 const itemText = (item) => `- [${item.status ?? item.severity}] ${item.id} ${item.file}:${item.line}: ${item.problem}`
 const fixText = (item) => `${itemText(item)}\n  fix: ${item.fix}`
@@ -71,7 +82,7 @@ const planText = (plan) => [
 
 // State across rounds. lastFixed: findings fixed in the previous round (their finders re-check them); recheck: findings still open
 // (deferred by a fix agent, or moved by a fix) that the next round's lenses judge again.
-const run = { round: 0, tip: null, deltaOf: args.deltaOf ?? null, laneClasses: args.laneClasses ?? null, worktree: args.worktree, knownTier: args.tier ?? null, fixShas: [] }
+const run = { round: 0, tip: null, deltaOf: args.deltaOf ?? null, laneClasses: args.laneClasses ?? null, worktree: args.worktree, knownTier: args.tier ?? null, fixShas: [], expectedTip: null }
 let lastFixed = []
 let recheck = []
 let blockingFiles = new Set()
@@ -83,13 +94,17 @@ const outcome = (status, text, extra = {}) => ({ status, rounds: run.round + 1, 
 const tierPrompt = (known) => {
   const command = [`node ~/.claude/tools/review-tier/review-tier.mjs ${run.deltaOf ? `--delta ${run.deltaOf}` : args.range}`, args.landing ? '--landing' : '',
     ...(args.addClasses ?? []).map((name) => `--add-class ${name}`), run.laneClasses ? `--lane-classes ${run.laneClasses}` : '', '--json'].filter(Boolean).join(' ')
-  return `In ${run.worktree} (lane ${args.branch}, base ${args.base}) the reviewed sha is its HEAD. Add a detached review worktree of that sha outside every repo folder: git -C ${args.repo} worktree add --detach <scratch>/${args.row}-<sha8> <sha>.\n`
-    + `${known ? `Use this review-tier JSON as it is: ${JSON.stringify(known)}` : `Run: ${command}`}\n`
-    + `Write the tier JSON (with its fileClasses) to \${TMPDIR:-/tmp}/${args.row}-tier-${run.round}.json. Return sha, reviewWorktree (the new folder), tierFile (that path), tier (the JSON).`
+  const tierFile = `\${TMPDIR:-/tmp}/${slug(args.row)}-tier-<sha8>.json`
+  return `Work in ${run.worktree} (lane ${args.branch}, base ${args.base}): cd there first, review-tier reads the git repository of its working folder. The reviewed sha is its HEAD (git rev-parse HEAD).\n`
+    + `Add a detached review worktree of that sha outside every repo folder: git -C ${args.repo} worktree add --detach <scratch>/${slug(args.row)}-<sha8> <sha> (<sha8> is the first 8 characters of the sha).\n`
+    + `${known ? `Use this review-tier JSON as it is (report exit 0): ${JSON.stringify(known)}` : `Run it from ${run.worktree}: ${command}\nReport its exit code as exit and its JSON output as tier.`}\n`
+    + `Write the tier JSON (with its fileClasses) to ${tierFile}. Never write over ${run.laneClasses ?? 'an existing file'}: when the name is taken, add -2, -3 until it is free. `
+    + 'Return exit, sha (full 40 characters), reviewWorktree (the new folder), tierFile (that path), tier (the JSON).'
 }
 
 const reviewPrompt = (review, sha, reviewWorktree, items) => [
   `Review lane ${args.branch} of ${args.repo} by reading ONLY the detached review worktree ${reviewWorktree} (at ${sha}); ${run.deltaOf ? `the change to review is the delta since ${run.deltaOf}` : `range ${args.range}`}. Never edit it; never run the full suite (a recorded PASS covers it).`,
+  review.agent === 'skill' ? `Invoke the ${review.lens} skill with the Skill tool first and follow it on the files of the range; it only reads: edit nothing.` : '',
   `Lens: ${review.lens}. Rules: ${review.rules}`,
   review.brief,
   review.requiredReading?.length ? `Required reading first: ${review.requiredReading.join(', ')}` : '',
@@ -100,10 +115,10 @@ const reviewPrompt = (review, sha, reviewWorktree, items) => [
 
 const fixPrompt = (batch, sha, diagnosis) => `Fix these confirmed findings of lane ${args.branch} (base ${args.base}), in this order:\n${batch.map(fixText).join('\n')}\n`
   + `${diagnosis ? `Root-cause diagnosis (follow it): ${diagnosis}\n` : ''}`
-  + `Setup: your worktree starts on a worktree-agent-* branch. Run \`git switch ${args.branch} && git rebase ${args.base}\`, then \`git branch -d <your worktree-agent branch>\`. `
+  + `Setup: your worktree starts on a throwaway branch (git branch --show-current, named worktree-...). Run \`git switch ${args.branch} && git rebase ${args.base}\`, then delete the throwaway branch (\`git branch -d <its name>\`). `
   + `If an earlier fix of this round already changed a cited line (git log ${sha}..HEAD -- <file>), do not fix that finding: list its id in deferred. `
   + 'For each fix: read callers and callees of the changed functions first, add a test that fails without it, run related tests only while iterating (quiet reporter), commit after each green step. '
-  + `Last run node ~/.claude/tools/review-tier/review-tier.mjs --delta ${sha} --lane-classes ${tierFile} ${args.landing ? '--landing ' : ''}--json and return its output as tier. Return IMPLEMENTED: branch, worktree (your pwd), sha (HEAD), tests, tier, deferred.`
+  + `Return IMPLEMENTED: branch (must be ${args.branch}), worktree (your pwd), sha (HEAD), tests, deferred.`
 
 while (true) {
   phase('Tier')
@@ -112,13 +127,16 @@ while (true) {
   const prepared = await runner('tier', 'Tier', tierPrompt(knownTier), PREPARED)
   if (prepared === null) return outcome('failed', 'the tier runner was stopped')
   const { sha, reviewWorktree, tier } = prepared
+  const tierProblem = problemWithTier(prepared)
+  if (tierProblem !== null) return outcome('failed', tierProblem)
+  if (args.landing && tier.reviews.length === 0 && recheck.length + lastFixed.length === 0) return outcome('failed', `the landing review set of ${sha} is empty: review-tier gives at least one lens for a landing diff, so the tier was lost`)
   tierFile = prepared.tierFile
   run.tip = sha
   run.fixShas = []
   const roundFixes = []
   let fixFailure = null
   const suiteRun = args.landing
-    ? runner('suite', 'Review', `Run the full suite on the exact tip ${sha} beside the reviews: add a detached worktree of ${sha} outside every repo folder, run node ~/.claude/tools/test-pass/test-pass.mjs run --repo <that folder> --suite -- ${args.suite}, remove the worktree. Return the command's exit and its last 5 lines.`)
+    ? runner('suite', 'Review', `Run the full suite on the exact tip ${sha} beside the reviews: add a detached worktree of ${sha} outside every repo folder, run node ~/.claude/tools/test-pass/test-pass.mjs run --repo <that folder> --suite (no command after it: test-pass runs the repo's declared suite), remove the worktree. Return the command's exit and its last 5 lines.`)
     : Promise.resolve(null)
 
   // The fix queue: one fix at a time in the lane. A batch enters it as soon as its verdicts are in, while slower lenses still read.
@@ -130,8 +148,10 @@ while (true) {
     const concurrent = batch.some((item) => (tier.fileClasses?.[item.file] ?? []).some((name) => name.startsWith('concurrency')))
     const fixed = await agent(fixPrompt(batch, sha, diagnosis), { label: `${args.row}:fix`, phase: 'Fix', agentType: 'implementer', model: concurrent ? 'opus' : 'sonnet', effort: 'high', isolation: 'worktree', schema: IMPLEMENTED })
     if (fixed === null) { fixFailure = 'the fix agent was stopped'; return }
+    // The next round reviews the HEAD of the worktree it returns, so it must be the lane branch's own and a plain path and sha (B1, N1).
+    if (fixed.branch !== args.branch || !SAFE_PATH.test(fixed.worktree) || !SHA.test(fixed.sha)) { fixFailure = `the fix agent returned branch ${fixed.branch}, worktree ${fixed.worktree}, sha ${fixed.sha}: not the lane ${args.branch}`; return }
     run.worktree = fixed.worktree
-    run.knownTier = fixed.tier ?? null
+    run.expectedTip = fixed.sha
     run.fixShas.push(fixed.sha)
     roundFixes.push(...batch.filter((item) => !fixed.deferred.includes(item.id)).map((item) => ({ ...item, status: 'fixed' })))
     recheck.push(...batch.filter((item) => fixed.deferred.includes(item.id)).map((item) => ({ ...item, status: 'open' })))
@@ -156,13 +176,17 @@ while (true) {
     const verdicts = await agent(`Verify each finding independently by reading the code at ${reviewWorktree} (sha ${sha}); try to refute it; real is false only when you can show why. ${moved}\n${batch.map(fixText).join('\n')}`, { label: `${args.row}:verify:${slug(review.lens)}-${at + 1}`, phase: 'Verify', agentType: agentTypeOf(review), ...verifier, schema: VERDICTS })
     return parallel(batch.map((item) => () => rule(item, verdicts?.verdicts.find((verdict) => verdict.id === item.id), verifier, finder)))
   }
+  // A verifier or judge that threw (parallel gives null) stands for findings nobody ruled on: the round is incomplete, never clean (C9).
+  const unruled = (batches) => batches.some((entries) => entries === null || entries.some((entry) => entry === null))
   const verify = async (found, review) => {
     if (found === null) return { dead: true }
     const finder = specOf(review)
     optional.push(...found.findings.filter((item) => item.severity === 'optional'))
     const needing = found.findings.filter((item) => item.severity !== 'optional').map((item) => ({ ...item, origin: originOf(review) }))
     const batches = Array.from({ length: Math.ceil(needing.length / FINDINGS_PER_VERIFIER) }, (_, at) => needing.slice(at * FINDINGS_PER_VERIFIER, (at + 1) * FINDINGS_PER_VERIFIER))
-    const ruled = (await parallel(batches.map((batch, at) => () => verifyBatch(batch, at, review, finder, VERIFIER)))).flat().filter(Boolean)
+    const ruledBatches = await parallel(batches.map((batch, at) => () => verifyBatch(batch, at, review, finder, VERIFIER)))
+    if (unruled(ruledBatches)) return { dead: true }
+    const ruled = ruledBatches.flat()
     const confirmed = ruled.filter((entry) => entry.real && !entry.moved).map((entry) => entry.item)
     if (args.fix && confirmed.length > 0) enqueueFix(confirmed)
     return { confirmed, open: ruled.filter((entry) => entry.real && entry.moved).map((entry) => ({ ...entry.item, status: 'open' })) }
@@ -171,13 +195,13 @@ while (true) {
   phase('Review')
   const carried = [...recheck, ...lastFixed]
   recheck = []
-  const reviews = [...(tier.reviews ?? [])]
+  const reviews = [...tier.reviews]
   for (const item of carried) {
     if (!reviews.some((review) => sameOrigin(originOf(review), item.origin ?? DEFAULT_ORIGIN))) reviews.push({ ...(item.origin ?? DEFAULT_ORIGIN), rules: '', brief: 'Re-check only the items listed below.', requiredReading: [], plan: {} })
   }
   const results = await pipeline(
     reviews,
-    (review) => agent(reviewPrompt(review, sha, reviewWorktree, carried.filter((item) => sameOrigin(originOf(review), item.origin ?? DEFAULT_ORIGIN))), { label: `${args.row}:review:${slug(review.lens)}`, phase: 'Review', agentType: agentTypeOf(review), ...specOf(review), schema: FINDINGS }),
+    (review) => agent(reviewPrompt(review, sha, reviewWorktree, carried.filter((item) => sameOrigin(originOf(review), item.origin ?? DEFAULT_ORIGIN))), { label: `${args.row}:review:${slug(review.lens)}`, phase: 'Review', agentType: lensAgentTypeOf(review), ...specOf(review), schema: FINDINGS }),
     verify,
   )
   if (results.some((entry) => entry === null || entry.dead)) {
@@ -202,6 +226,21 @@ while (true) {
   run.round += 1
   run.deltaOf = sha
   run.laneClasses = tierFile
+}
+
+/**
+ * Why a tier runner's answer cannot be trusted, or null when it can (B1, B2, N1): review-tier must have exited 0 with a `reviews` list, the reviewed sha
+ * must be the HEAD the last fix returned, and the review worktree and tier file must be plain, fresh paths (they go into a `worktree remove --force`).
+ */
+function problemWithTier(prepared) {
+  const { exit, sha, reviewWorktree, tierFile: file, tier } = prepared
+  if (exit !== 0) return `review-tier exited ${exit}, so no review set exists for ${run.worktree}`
+  if (!Array.isArray(tier?.reviews)) return 'the tier JSON has no `reviews` list, so no review set exists'
+  if (!SHA.test(sha)) return `the reviewed sha ${sha} is not a git sha`
+  if (run.expectedTip !== null && !sameSha(sha, run.expectedTip)) return `the lane worktree is at ${sha}, not at ${run.expectedTip}, the HEAD of the last fix`
+  if (!SAFE_PATH.test(reviewWorktree) || !reviewWorktree.endsWith(`${slug(args.row)}-${sha.slice(0, 8)}`)) return `the review worktree ${reviewWorktree} is not <scratch>/${slug(args.row)}-<sha8>`
+  if (!SAFE_PATH.test(file) || file === run.laneClasses) return `the tier file ${file} is not a new plain path`
+  return null
 }
 
 function checkArgs(given) {

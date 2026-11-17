@@ -41,6 +41,9 @@ test('one lane: implement, join, review child (landing, fix), land child; the re
   assert.deepEqual([implement.opts.agentType, implement.opts.model, implement.opts.effort], ['implementer', 'sonnet', 'medium']);
   assert.match(implement.prompt, /review-tier.* --landing --json/);
   assert.match(implement.prompt, /git branch -m lane\/a/);
+  assert.match(implement.prompt, /throwaway branch/);
+  assert.match(implement.prompt, /already exists \(a re-done lane\) never make a copy: remove the old worktree .*git switch lane\/a && git rebase main.*git branch -d/);
+  assert.equal(landArgs.tip, 't-a', 'land gets the reviewed tip');
   const join = run.calls.find((call) => call.label === 'impl-a:join');
   assert.match(join.prompt, /status\.mjs --file \/p\/STATUS\.md done impl-a/);
   assert.match(join.prompt, /status\.mjs --file \/p\/STATUS\.md start close-a/);
@@ -176,4 +179,58 @@ test('two lanes whose reviews finish together still land one after the other', a
   const run = await runScript(BUILD, ARGS([lane('a'), lane('b')]), { replies: standard(), children: children((a) => reviewed(a.branch.slice(-1)), land) });
   assert.equal(overlapped, false);
   assert.deepEqual(run.result.lanes.map((entry) => entry.status), ['landed', 'landed']);
+});
+
+test('an implementer or test-writer on another branch than the lane\'s ends only that lane as wrong-branch: a re-done lane never lands its old branch (B1)', async () => {
+  const run = await runScript(BUILD, ARGS([lane('a'), lane('b', { acceptanceTests: true }), lane('c')]), {
+    replies: [
+      { match: /impl-a:implement/, reply: { ...built('a'), branch: 'worktree-wf_9' } },
+      { match: /impl-b:implement/, reply: built('b') },
+      { match: /impl-b:tests/, reply: { branch: 'worktree-wf_8', worktree: '/wt/bt', sha: 'tw' } },
+      { match: /impl-c:implement/, reply: built('c') },
+      { match: /:join$/, reply: (p, o, call) => joined(key(call.label)) },
+    ],
+    children: children((a) => reviewed(a.branch.slice(-1)), (a) => landedOk(a.branch.slice(-1))),
+  });
+  assert.deepEqual(run.result.lanes.map((entry) => entry.status), ['wrong-branch', 'wrong-branch', 'landed']);
+  assert.match(run.result.lanes[0].text, /worktree-wf_9, not lane\/a/);
+  assert.match(run.result.lanes[1].text, /worktree-wf_8, not lane\/b--tests/);
+  assert.ok(!run.started.includes('impl-a:join') && !run.started.includes('impl-b:join'));
+});
+
+test('a clean review with a security finding ruled not real holds the lane for the lead: it is not landed, in the first review or after a conflict (S2)', async () => {
+  const disputed = { id: 'S1', file: 'a.mjs', line: 3, reason: 'not reachable' };
+  let landCalls = 0;
+  const first = await runScript(BUILD, ARGS([lane('a')]), {
+    replies: standard(),
+    children: children(() => ({ ...reviewed('a'), leadList: [disputed], optional: [{ id: 'O1' }] }), () => { landCalls += 1; return landedOk('a'); }),
+  });
+  assert.equal(landCalls, 0);
+  const [held] = first.result.lanes;
+  assert.equal(held.status, 'lead-decision');
+  assert.equal(held.sha, 't-a');
+  assert.match(held.text, /S1 a\.mjs:3 \(not reachable\).*wf-land at tip t-a/);
+  assert.deepEqual(held.optional, [{ id: 'O1' }]);
+  assert.equal(first.result.leadList.length, 1);
+
+  let reviews = 0;
+  let landTries = 0;
+  const later = await runScript(BUILD, ARGS([lane('a')]), {
+    replies: standard(),
+    children: children(() => ({ ...reviewed('a'), leadList: (reviews += 1) === 2 ? [disputed] : [] }), () => ((landTries += 1) === 1 ? { status: 'needs-review', sha: 'x', patchesChanged: 1, tidy: '' } : landedOk('a'))),
+  });
+  assert.equal(later.result.lanes[0].status, 'lead-decision');
+  assert.equal(landTries, 1, 'the second land never ran');
+});
+
+test('the findings and optional findings of a review come back with the lane, landed or not', async () => {
+  const run = await runScript(BUILD, ARGS([lane('a'), lane('b')]), {
+    replies: standard(),
+    children: children(
+      (a) => (a.branch === 'lane/a' ? { ...reviewed('a'), status: 'findings', findings: [{ id: 'F1' }], optional: [{ id: 'O1' }] } : { ...reviewed('b'), optional: [{ id: 'O2' }] }),
+      () => landedOk('b'),
+    ),
+  });
+  assert.deepEqual([run.result.lanes[0].status, run.result.lanes[0].findings, run.result.lanes[0].optional], ['review-findings', [{ id: 'F1' }], [{ id: 'O1' }]]);
+  assert.deepEqual([run.result.lanes[1].status, run.result.lanes[1].optional, 'findings' in run.result.lanes[1]], ['landed', [{ id: 'O2' }], false]);
 });

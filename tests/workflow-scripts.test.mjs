@@ -17,7 +17,7 @@ const LIVE_SCRIPTS = ['review', 'land', 'build', 'step'];
 // adds its own row here when it lands.
 const REQUIRED_ARGS = {
   review: { row: 'string', repo: 'string', base: 'string', range: 'string', landing: 'boolean', fix: 'boolean', branch: 'string', worktree: 'string', suite: 'string' },
-  land: { row: 'string', closeRow: 'string', statusFile: 'string', repo: 'string', base: 'string', branch: 'string', worktree: 'string', suite: 'string' },
+  land: { row: 'string', closeRow: 'string', statusFile: 'string', repo: 'string', base: 'string', branch: 'string', worktree: 'string', suite: 'string', tip: 'string' },
   build: { base: 'string', repo: 'string', suite: 'string', writers: 'number', statusFile: 'string', scriptsDir: 'string', lanes: 'array' },
   step: { row: 'string', agentType: 'string', prompt: 'string', model: 'string', effort: 'string' },
 };
@@ -81,6 +81,8 @@ for (const path of scripts) {
     const text = readFileSync(join(SKILLS, naming[0], 'SKILL.md'), 'utf8');
     assert.match(text, /\$\{CLAUDE_SKILL_DIR\}\/\.\.\/\.\.\/workflows\//);
     assert.match(text, /scriptsDir/);
-    assert.match(text, /script`? ?(input|parameter)|as `script`/i, 'keeps the inline-script sentence (F2)');
+    // build runs the child workflows review and land, which an inline script cannot run: its skill says so instead of offering the fallback
+    if (file === 'build') assert.match(text, /no inline fallback/);
+    else assert.match(text, /script`? ?(input|parameter)|as `script`/i, 'keeps the inline-script sentence (F2)');
   });
 }
