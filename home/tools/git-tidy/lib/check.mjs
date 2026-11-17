@@ -93,6 +93,7 @@ function shallowHint(repo) {
   return shallow ? [item('shallow?', 'repository', 'history is cut, so branches may look unmerged')] : [];
 }
 
+// plumbing (diff-index), not `diff`: `diff` runs a textconv program the repository config names, plumbing never does
 const succeeds = (path, args) => runGit(path, args).status === 0; // a missing commit or reflog reads as "no", never as an error
 
 /** Earlier positions of `branch` from its reflog, newest first, without `tip`; [] when the branch has no reflog. */
@@ -109,10 +110,10 @@ function earlierPositions(path, branch, tip) {
 function staleCheckoutFindings(worktrees) {
   return worktrees.filter((tree) => !tree.missing && !tree.bare && tree.branch !== null).flatMap((tree) => {
     const { path, branch } = tree;
-    if (!succeeds(path, ['rev-parse', '--verify', '--quiet', 'HEAD']) || succeeds(path, ['diff', '--cached', '--quiet', 'HEAD'])) return [];
+    if (!succeeds(path, ['rev-parse', '--verify', '--quiet', 'HEAD']) || succeeds(path, ['diff-index', '--cached', '--quiet', 'HEAD'])) return [];
     const tip = gitText(path, ['rev-parse', 'HEAD']);
     const indexAt = earlierPositions(path, branch, tip)
-      .find((hash) => succeeds(path, ['merge-base', '--is-ancestor', hash, tip]) && succeeds(path, ['diff', '--cached', '--quiet', hash]));
+      .find((hash) => succeeds(path, ['merge-base', '--is-ancestor', hash, tip]) && succeeds(path, ['diff-index', '--cached', '--quiet', hash]));
     if (indexAt === undefined) return [];
     const [from, to] = [indexAt, tip].map((hash) => gitText(path, ['rev-parse', '--short', hash]));
     const behind = gitText(path, ['rev-list', '--count', `${indexAt}..${tip}`]);

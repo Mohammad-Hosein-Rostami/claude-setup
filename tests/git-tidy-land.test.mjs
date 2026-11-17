@@ -172,3 +172,38 @@ test('an unknown lane, and the base itself, are usage errors (exit 2)', () => {
   assert.equal(tidy(['land', 'no-such-lane', dir], { cwd: dir }).status, 2);
   assert.equal(tidy(['land', 'main', dir], { cwd: dir }).status, 2);
 });
+
+test('the base gets the commit the PASS was found for, not a commit added to the lane meanwhile', () => {
+  const { dir, worktree } = laneWithWorktree();
+  const commitDuringLookup = () => { commit(worktree, 'late.txt'); return true; };
+  const result = land(dir, 'lane/x', { hasPass: commitDuringLookup });
+  assert.equal(git(dir, 'rev-parse', 'main'), result.tip, 'main is the tested tip');
+  assert.equal(git(dir, 'ls-tree', '--name-only', 'main', '--', 'late.txt'), '', 'the untested commit is not on main');
+  assert.ok(branchNames(dir).includes('lane/x'), 'the lane keeps its extra commit');
+});
+
+test('cleanup after a landing keeps another lane\'s recently used worktree (only the landed lane skips the 60-minute rule)', () => {
+  const { dir } = laneWithWorktree();
+  git(dir, 'checkout', '-q', '-b', 'lane/other');
+  commit(dir, 'other.txt');
+  git(dir, 'checkout', '-q', 'main');
+  git(dir, 'merge', '-q', '--ff-only', 'lane/other');
+  const inUse = addWorktree(dir, 'wt-other', 'lane/other', { create: false });
+  const result = land(dir, 'lane/x');
+  assert.equal(result.status, 'landed');
+  assert.ok(existsSync(inUse), 'a worktree somebody may be using is not the landed lane\'s to remove');
+  assert.ok(!result.removed.some((entry) => entry.includes('wt-other')));
+});
+
+test('a cleanup that must refuse after the fast-forward still reports the landing (exit 1 with the leftovers), not a usage error', () => {
+  const { dir, worktree } = laneWithWorktree();
+  const unfinishedElsewhere = addWorktree(dir, 'wt-busy', 'busy');
+  const startMerge = () => { writeFileSync(join(git(unfinishedElsewhere, 'rev-parse', '--absolute-git-dir'), 'MERGE_HEAD'), `${git(dir, 'rev-parse', 'main')}\n`); return true; };
+  const result = land(dir, 'lane/x', { hasPass: startMerge });
+  assert.equal(result.status, 'landed');
+  assert.equal(git(dir, 'rev-parse', 'main'), result.tip, 'main moved');
+  assert.match(result.cleanupRefused, /merge is not finished/);
+  assert.ok(existsSync(worktree), 'nothing was removed');
+  assert.equal(landExitCode(result), 1);
+  assert.match(formatLand(result, false), /cleanup skipped: .*merge is not finished/);
+});

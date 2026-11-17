@@ -5,7 +5,9 @@
 //   touched, and an untracked path the lane would overwrite is refused before anything changes. The rebase runs in the worktree that
 //   holds the lane, or in a temporary one that is removed again; a conflict aborts the rebase and leaves the lane where it was. The
 //   base moves only by `merge --ff-only` run in the base folder, and only when `hasPass(<base folder>, <rebased tip>, { suite: true })`
-//   is true, so the tip that lands is the exact tree the suite passed on. Cleanup is prune's (every safety it has), nothing extra.
+//   is true, and the merge names that very commit (not the lane's branch, which may have moved since), so what lands is exactly the tree
+//   the suite passed on. Cleanup is prune's (every safety it has); only the landed lane skips prune's 60-minute rule, and a cleanup
+//   that prune refuses (an unfinished operation somewhere) is reported in `cleanupRefused` since the base has already moved.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -87,14 +89,25 @@ function changedPatches(before, after) {
 
 const tipOf = (repo, branch) => gitText(repo.dir, ['rev-parse', `refs/heads/${branch}`]);
 
-// The base folder has the base branch at `base`; a failed fast-forward is "the base moved" when the lane no longer sits on top of it.
-function fastForward(repo, baseFolder, branch) {
-  const onTop = () => runGit(repo.dir, ['merge-base', '--is-ancestor', `refs/heads/${repo.base}`, `refs/heads/${branch}`]).status === 0;
+// The base folder has the base branch at `base`; a failed fast-forward is "the base moved" when `tip` no longer sits on top of it.
+function fastForward(repo, baseFolder, tip) {
+  const onTop = () => runGit(repo.dir, ['merge-base', '--is-ancestor', `refs/heads/${repo.base}`, tip]).status === 0;
   if (!onTop()) return { moved: true };
-  const merged = runGit(baseFolder, ['merge', '--ff-only', '--quiet', `refs/heads/${branch}`]);
+  const merged = runGit(baseFolder, ['merge', '--ff-only', '--quiet', tip]);
   if (merged.status === 0) return { moved: false };
   if (!onTop()) return { moved: true };
   throw new Error(`git merge --ff-only failed: ${merged.stderr.split('\n')[0]}`);
+}
+
+// Prune everything provable after the landing; a refusal (UsageError) is the answer, never an exit 2 for a base that already moved.
+function cleanUp(atBase, branch) {
+  try {
+    const items = pruneRepo(atBase, { apply: true, includeRecent: [branch] });
+    return { removed: items.filter((entry) => REMOVED_ACTIONS.has(entry.action)).map((entry) => `${entry.kind} ${entry.subject}`), cleanupRefused: null };
+  } catch (error) {
+    if (error instanceof UsageError) return { removed: [], cleanupRefused: error.message };
+    throw error;
+  }
 }
 
 /**
@@ -104,7 +117,7 @@ function fastForward(repo, baseFolder, branch) {
  * @param {{ rebaseOnly?: boolean, hasPass: (repoDir: string, rev: string, options: { suite: boolean }) => boolean }} options
  *   `rebaseOnly` stops after the rebase; `hasPass` is test-pass's lookup of a suite PASS for a commit
  * @returns {{ status: 'landed'|'rebased'|'conflict'|'no-pass'|'base-moved', tip: string, patchesChanged: number, removed: string[],
- *   findings: object[], files: string[] }} `tip` is the lane's tip after the rebase, `files` the conflicting files, `removed` what
+ *   cleanupRefused: string|null, findings: object[], files: string[] }} `tip` is the lane's tip after the rebase, `files` the conflicting files, `removed` what
  *   cleanup removed (`<kind> <name or path>`), `findings` what `check` still reports on the base afterwards
  * @throws {UsageError} when the base folder is not ready (not checked out, tracked changes, an untracked path in the way), the lane
  *   is missing or is the base, or a rebase or merge is unfinished somewhere; any other git failure throws an Error
@@ -114,13 +127,13 @@ export function landLane(repo, branch, { rebaseOnly = false, hasPass }) {
   const before = patchIdsOf(repo, `refs/heads/${branch}`);
   const { conflict } = rebaseLane(repo, branch, laneFolder);
   const tip = tipOf(repo, branch); // read before cleanup removes the branch
-  const result = (status, extra = {}) => ({ status, tip, patchesChanged: 0, removed: [], findings: [], files: [], ...extra });
+  const result = (status, extra = {}) => ({ status, tip, patchesChanged: 0, removed: [], cleanupRefused: null, findings: [], files: [], ...extra });
   if (conflict !== null) return result('conflict', { files: conflict });
   const patchesChanged = changedPatches(before, patchIdsOf(repo, `refs/heads/${branch}`));
   if (rebaseOnly) return result('rebased', { patchesChanged });
   if (!hasPass(baseFolder, tip, { suite: true })) return result('no-pass', { patchesChanged });
-  if (fastForward(repo, baseFolder, branch).moved) return result('base-moved', { patchesChanged });
+  if (fastForward(repo, baseFolder, tip).moved) return result('base-moved', { patchesChanged });
   const atBase = openRepo(baseFolder, repo.base);
-  const removed = pruneRepo(atBase, { apply: true, includeRecent: true }).filter((entry) => REMOVED_ACTIONS.has(entry.action)).map((entry) => `${entry.kind} ${entry.subject}`);
-  return result('landed', { patchesChanged, removed, findings: runCheck(atBase).findings });
+  const { removed, cleanupRefused } = cleanUp(atBase, branch);
+  return result('landed', { patchesChanged, removed, cleanupRefused, findings: runCheck(atBase).findings });
 }

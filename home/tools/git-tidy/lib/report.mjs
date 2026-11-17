@@ -42,11 +42,12 @@ export const landExitCode = ({ status, findings }) => (status === 'landed' ? (fi
 /** `land` result as text (`tip` and `patches-changed` for a rebase; else what happened, what was removed, `check: clean` or the findings) or as JSON. */
 export function formatLand(result, json) {
   if (json) return JSON.stringify(result, null, 2);
-  const { status, tip, patchesChanged, removed, findings, files } = result;
+  const { status, tip, patchesChanged, removed, cleanupRefused, findings, files } = result;
   if (status === 'rebased') return `tip ${tip}\npatches-changed ${patchesChanged}`;
   if (status === 'conflict') return [`conflict: the rebase hit conflicts and was aborted, the lane is unchanged`, ...files.map((file) => `conflict ${file}`)].join('\n');
   if (status === 'no-pass') return `no-pass: no full-suite PASS at ${tip.slice(0, 8)}: run \`test-pass run --suite\` on it, then land again`;
   if (status === 'base-moved') return 'base-moved: the base moved during the landing: run land again (the lane stays rebased)';
   const outcome = findings.length === 0 ? ['check: clean'] : findings.map(line);
-  return [`landed ${tip}`, ...removed.map((entry) => `removed ${entry}`), ...outcome].join('\n');
+  const refused = cleanupRefused === null ? [] : [`cleanup skipped: ${cleanupRefused}`];
+  return [`landed ${tip}`, ...removed.map((entry) => `removed ${entry}`), ...refused, ...outcome].join('\n');
 }

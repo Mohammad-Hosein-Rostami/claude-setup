@@ -2,10 +2,11 @@
 // Each test builds its own repo in a temp folder (see git-tidy-helpers.mjs) and runs the real CLI on it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addWorktree, commit, git, lines as allLines, makeRepo, tidy, withOrigin } from './git-tidy-helpers.mjs';
+import { spawnSync } from 'node:child_process';
+import { addWorktree, CLEAN_ENV, commit, git, lines as allLines, makeRepo, tidy, withOrigin } from './git-tidy-helpers.mjs';
 
 // The first output line is the base line (tested on its own); the other tests read the lines after it.
 const lines = (result) => allLines(result).slice(1);
@@ -265,4 +266,22 @@ test('the first line names the base and how it was chosen; the JSON keeps its sh
   assert.equal(allLines(check(dir, '--base', 'main'))[0], 'base: main (from --base)');
   withOrigin(dir);
   assert.equal(allLines(check(dir))[0], 'base: main (from origin/HEAD)');
+});
+
+test('check never runs a textconv program of the repository config (the staged-changes test uses plumbing)', () => {
+  const dir = makeRepo();
+  const marker = join(mkdtempSync(join(tmpdir(), 'git-tidy-textconv-')), 'ran');
+  const program = join(mkdtempSync(join(tmpdir(), 'git-tidy-textconv-program-')), 'textconv.sh');
+  writeFileSync(program, `#!/bin/sh\ntouch '${marker}'\ncat "$1"\n`);
+  chmodSync(program, 0o755);
+  commit(dir, 'data.bin', 'one\n');
+  writeFileSync(join(dir, '.gitattributes'), '*.bin diff=sneaky\n');
+  git(dir, 'config', 'diff.sneaky.textconv', program);
+  writeFileSync(join(dir, 'data.bin'), 'two\n');
+  git(dir, 'add', 'data.bin');
+  spawnSync('git', ['diff', '--cached', '--quiet', 'HEAD'], { cwd: dir, env: CLEAN_ENV });
+  assert.ok(existsSync(marker), 'sanity: porcelain git diff runs the textconv program');
+  rmSync(marker);
+  assert.ok([0, 1].includes(check(dir).status));
+  assert.ok(!existsSync(marker), 'check did not run it');
 });

@@ -6,7 +6,7 @@
 // - gatedFolder is the session's own worktree folder: for the main session CLAUDE_PROJECT_DIR, for a subagent the first `cwd` of its
 //   transcript (null for an agent that cannot write files). Never the hook input's cwd: a folder the session only cd'd into may be
 //   someone else's repo, and its git config is not trusted.
-// - git never runs a program the repository names: every call has core.fsmonitor off, core.hooksPath empty and bare-repo discovery off,
+// - git never runs a program the repository names: every call has core.fsmonitor off, core.hooksPath empty, log.showSignature off and bare-repo discovery off,
 //   and the variables that point git at another repository are removed.
 // - Nothing here throws: a missing or unreadable input gives null.
 import { spawnSync } from 'node:child_process';
@@ -18,7 +18,10 @@ import { agentFileWrites } from './writer-agents.mjs';
 const TRANSCRIPT_HEAD_BYTES = 4 * 1024 * 1024; // the first transcript line holds the brief, which can be long
 const REPOSITORY_VARIABLES = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'];
 // config that would make a read-only git call run a program; given on the command line, so it beats the repository's own config
-const HARDENED = ['-c', 'core.fsmonitor=false', '-c', 'safe.bareRepository=explicit', '-c', `core.hooksPath=${devNull}`];
+// (log.showSignature runs gpg.program for a signed commit; core.fsmonitor and core.hooksPath name a program directly)
+const HARDENED = [
+  '-c', 'core.fsmonitor=false', '-c', 'safe.bareRepository=explicit', '-c', `core.hooksPath=${devNull}`, '-c', 'log.showSignature=false',
+];
 const REPOSITORY_SCOPES = new Set(['local', 'worktree']); // config that comes with the repository, not the owner's own
 const READ_ONLY_BUILT_INS = new Set(['Explore', 'Plan']);
 

@@ -75,6 +75,9 @@ function ignoredReason(path) {
   return `ignored files that exist only here (${ignored.slice(0, IGNORED_SHOWN).join(', ')}${more})`;
 }
 
+// `includeRecent` is true (every lane), or the names of the lanes that landed: only those skip the recent-use rule.
+const liftsRecentRule = (includeRecent, branch) => (Array.isArray(includeRecent) ? includeRecent.includes(branch) : includeRecent === true);
+
 // What the worktree holds that removal would destroy, or that says it is in use: unfinished operation, uncommitted or
 // untracked files, ignored files, commits only in a reflog, recent use. A copy's worktree may hold a live agent, so
 // --include-recent never lifts the recent-use rule for it.
@@ -87,7 +90,7 @@ function contentReason(ctx, tree, copy) {
   const reasons = [ignoredReason(tree.path), reflogReason(holderRepo(ctx.repo, copy), [ctx.branchReflog(tree.branch), { cwd: tree.path, ref: 'HEAD' }], tree.branch)];
   const found = reasons.find((reason) => reason !== null);
   if (found) return found;
-  if (ctx.includeRecent && !copy) {
+  if (liftsRecentRule(ctx.includeRecent, tree.branch) && !copy) {
     // --include-recent is for lanes that landed; a lane with no commit yet has not, so its recent use still protects it.
     return isNotStarted(ctx.repo, tree.branch) && minutesSinceUse(tree.path, RECENT_MINUTES) !== null ? NOT_STARTED : null;
   }
@@ -222,7 +225,7 @@ export function refuseUnsafeApply(repo) {
 /**
  * Plans (apply false) or performs (apply true) the removal of stale and merged worktrees and merged branches.
  * `leftovers` are the candidates (from findLeftovers); each is re-checked right before it is acted on, so candidates
- * found earlier may be out of date. `includeRecent` lifts only the "used in the last 60 minutes" rule, and not for a lane with no commit of
+ * found earlier may be out of date. `includeRecent` (true, or an array of lane names that it applies to) lifts only the "used in the last 60 minutes" rule, and not for a lane with no commit of
  * its own yet (see isNotStarted): that one stays protected while its worktree was used. Returns items
  * `{ action, kind, subject, detail }` with action `remove`/`keep` for a plan and `removed`/`deleted`/`kept`/`failed` for an
  * apply. Throws UsageError when apply meets an unfinished operation or an ambiguous base.

@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { addWorktree, backdate, CLEAN_ENV, commit, git, makeRepo, tidy } from './git-tidy-helpers.mjs';
 import { runCheck } from '../home/tools/git-tidy/lib/check.mjs';
+import { copyCandidates, isStillCopy } from '../home/tools/git-tidy/lib/copies.mjs';
 import { openRepo } from '../home/tools/git-tidy/lib/repo.mjs';
 
 const checkJson = (dir) => {
@@ -200,4 +201,25 @@ test('a workflow agent branch (worktree-wf_<run>-<n>) is a leftover like a workt
   const later = Date.now() + 3 * 60 * 60 * 1000;
   const { hints } = runCheck(openRepo(dir, null), later);
   assert.deepEqual(hints.filter((hint) => hint.kind === 'unlanded-lane?').map((hint) => hint.subject), ['lane/x-3']);
+});
+
+// isStillCopy is what prune asks again right before each removal, so a branch that changed after the plan is kept.
+const candidateNamed = (dir, name) => copyCandidates(openRepo(dir, null)).find((candidate) => candidate.name === name);
+
+test('isStillCopy: true while nothing changed; false once the copy got a commit of its own, the holder lost the work, or the leftover got a worktree', () => {
+  const { dir, worktrees } = billAndGinShape();
+  git(dir, 'branch', 'worktree-agent-aaa', 'main');
+  const [copy, leftover] = [candidateNamed(dir, 'lane/x'), candidateNamed(dir, 'worktree-agent-aaa')];
+  assert.equal(isStillCopy(openRepo(dir, null), copy), true);
+  assert.equal(isStillCopy(openRepo(dir, null), leftover), true);
+
+  addWorktree(dir, 'wt-leftover', 'worktree-agent-aaa', { create: false });
+  assert.equal(isStillCopy(openRepo(dir, null), leftover), false, 'a worktree now uses the leftover');
+
+  commit(worktrees[0], 'own.txt');
+  assert.equal(isStillCopy(openRepo(dir, null), copy), false, 'the copy moved since the plan');
+
+  const afresh = candidateNamed(dir, 'lane/x-2');
+  git(dir, 'update-ref', 'refs/heads/lane/x-3', 'main'); // the holder no longer has the work of lane/x-2
+  assert.equal(isStillCopy(openRepo(dir, null), afresh), false, 'the holder moved away from the work');
 });

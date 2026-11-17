@@ -4,13 +4,17 @@
 // by no open row of the session's STATUS.md. A SubagentStop is blocked once when the agent left its own empty `worktree-agent-<id>` branch.
 // PreCompact prints one line per open lane so the summary keeps them.
 // Exports: decide(input, env, deps) -> Promise<{block: false} | {block: true, reason}>, openLanes(input, env, deps) -> Promise<string[]>.
-//   deps (tests): runCheck(top, timeoutMs, env), checkTimeoutMs, hasPass (null: no test-pass tool).
+//   deps (tests): runCheck(top, timeoutMs, env), checkTimeoutMs, hasPass (null: no test-pass tool), now (ms, for the cache age).
+//   Env: GIT_TIDY_GATE_CHECK_TIMEOUT_MS overrides CHECK_TIMEOUT_MS (a loaded machine, the test suite).
 // Invariants:
 // - The gated folder is the session's own worktree (lib/gated-folder.mjs). The check runs as a child of `git-tidy.mjs check --json` with
-//   core.fsmonitor off and bare repositories off, and never in a repo whose own config names a filter (`git status` would run it): there
-//   only a cached verdict is read, so such a repo is never judged.
+//   core.fsmonitor and log.showSignature off and bare repositories off, and never in a repo where any worktree's own config view names a
+//   filter (`git status` there would run it): there only a cached verdict is read, so such a repo is never judged.
+// - A finding blocks only when the advised `prune` would act on it (a dry run in the same child, so a fresh worktree at the base, which
+//   prune protects, never blocks), or is a merge commit; names and subjects reach the reason quoted and capped (they are data).
 // - State: ~/.claude/state/git-tidy-gate/<session>.json holds the check verdict per (repo, fingerprint) and the states already blocked. The
-//   fingerprint is a hash of all refs and the worktree list, so an unchanged repo is a cache hit: two git calls and no child.
+//   fingerprint is a hash of all refs and the worktree list, so a repo unchanged for under 10 minutes is a cache hit: two git calls and no
+//   child (the age bound is because findings such as "unlanded for 2 h" change with time alone).
 //   A miss runs the child with a CHECK_TIMEOUT_MS bound; on a timeout the stop passes and one detached refresh fills the cache.
 // - Blocks at most once per state (agent + repo + the problems found); a continued stop (stop_hook_active) gets at most
 //   MAX_CHAINED_BLOCKS blocks in a row (lib/tidy-gate-store.mjs), so the gate can never loop. A state that cannot be stored is not blocked.
@@ -18,7 +22,7 @@
 // - Any internal error is one stderr line and exit 0: a session is never trapped.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -27,12 +31,14 @@ import { isSessionId } from './lib/session-store.mjs';
 import { statusFileOf } from './lib/status-file-of.mjs';
 import { cachedVerdict, recordOnce, storeVerdict } from './lib/tidy-gate-store.mjs';
 import { parseWorkItems } from '../tools/estimate/lib/items.mjs';
+import { isAgentBranch } from '../tools/git-tidy/lib/copies.mjs';
 import { readStatusFile } from '../tools/status/status-file.mjs';
 
 const GIT_TIDY = fileURLToPath(new URL('../tools/git-tidy/git-tidy.mjs', import.meta.url));
 const TEST_PASS = '../tools/test-pass/test-pass.mjs';
 const PASS = Object.freeze({ block: false });
 const CHECK_TIMEOUT_MS = 4000; // a Stop hook must answer fast; a slower check is finished by the detached refresh
+const MAX_TEXT_CHARS = 200; // of one name, path or commit subject kept from a check, so one odd value cannot flood a reason or the store
 const REFRESH_TIMEOUT_MS = 60_000;
 const MAX_LISTED = 20; // entries of one kind kept in a verdict and shown in a reason
 const TRANSCRIPT_HEAD_BYTES = 4 * 1024 * 1024;
@@ -40,13 +46,15 @@ const AGENT_BRANCH_PREFIX = 'worktree-agent-';
 // findings the gate blocks on; all but merge-commit are removed by `git-tidy prune`
 const MERGE_COMMIT = 'merge-commit';
 const PRUNE_KINDS = new Set(['superseded-copy', 'agent-leftover', 'merged-branch', 'merged-worktree', 'stale-worktree']);
+const COPY_KINDS = new Set(['superseded-copy', 'agent-leftover']);
 const UNLANDED = 'unlanded-lane?';
 const OPEN_LANE = 'unmerged-branch?';
 // command-scope config beats the repository's own: the child's git never starts a program the repository names
 const CHILD_GIT_CONFIG = {
-  GIT_CONFIG_COUNT: '2',
+  GIT_CONFIG_COUNT: '3',
   GIT_CONFIG_KEY_0: 'core.fsmonitor', GIT_CONFIG_VALUE_0: 'false',
   GIT_CONFIG_KEY_1: 'safe.bareRepository', GIT_CONFIG_VALUE_1: 'explicit',
+  GIT_CONFIG_KEY_2: 'log.showSignature', GIT_CONFIG_VALUE_2: 'false',
 };
 
 const homeOf = (env) => env.HOME || env.USERPROFILE || homedir();
@@ -61,46 +69,81 @@ function fingerprintOf(top) {
 }
 
 const listOf = (items, kinds) => items.filter(({ kind }) => kinds.has(kind)).slice(0, MAX_LISTED);
+const plainText = (text) => String(text).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, MAX_TEXT_CHARS);
+const plainItem = ({ kind, subject, detail }) => ({ kind, subject: plainText(subject), detail: plainText(detail) });
 
-/** Only what the gate reads of a `check --json` report, so a repo with hundreds of branches stays small in the store. */
-function slimVerdict({ base, findings, hints }) {
-  const blocking = new Set([MERGE_COMMIT, ...PRUNE_KINDS]);
-  return { base, findings: listOf(findings, blocking), hints: [...listOf(hints, new Set([UNLANDED])), ...listOf(hints, new Set([OPEN_LANE]))] };
+/**
+ * Only what the gate reads of a `check --json` report, so a repo with hundreds of branches stays small in the store. `removable` holds the
+ * names and paths the prune dry run would remove: of the findings that prune fixes, only those block (prune keeps a fresh worktree).
+ * Copies and agent branches are not lanes, so they are left out of the lane hints.
+ */
+function slimVerdict({ base, findings, hints }, removable) {
+  const blocking = findings.filter(({ kind, subject }) => kind === MERGE_COMMIT || (PRUNE_KINDS.has(kind) && removable.has(subject)));
+  const notLanes = new Set(findings.filter(({ kind }) => COPY_KINDS.has(kind)).map(({ subject }) => subject));
+  const isLane = ({ subject }) => !notLanes.has(subject) && !isAgentBranch(subject);
+  return {
+    base,
+    findings: blocking.slice(0, MAX_LISTED).map(plainItem),
+    hints: [...listOf(hints, new Set([UNLANDED])).filter(isLane), ...listOf(hints, new Set([OPEN_LANE])).filter(isLane)].map(plainItem),
+  };
 }
 
-/** `git-tidy check --json` of `top` as a child: the slim verdict, 'timeout', or undefined (one stderr line) when it cannot be read. */
-function runCheckChild(top, timeoutMs, env) {
-  const result = spawnSync(process.execPath, [GIT_TIDY, 'check', top, '--json'], {
+/** `git-tidy <args> --json` as a child: its parsed report, 'timeout', or undefined (one stderr line) when it cannot be read. */
+function runTidyChild(args, timeoutMs, env, okStatuses) {
+  const result = spawnSync(process.execPath, [GIT_TIDY, ...args], {
     encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL', env: { ...env, ...CHILD_GIT_CONFIG }, maxBuffer: 64 << 20,
   });
   if (result.error?.code === 'ETIMEDOUT') return 'timeout';
-  if (result.error || (result.status !== 0 && result.status !== 1)) {
-    process.stderr.write(`git-tidy-gate: git-tidy check failed: ${result.error?.message ?? result.stderr.split('\n')[0]}\n`);
+  if (result.error || !okStatuses.includes(result.status)) {
+    process.stderr.write(`git-tidy-gate: git-tidy ${args[0]} failed: ${result.error?.message ?? result.stderr.split('\n')[0]}\n`);
     return undefined;
   }
-  return slimVerdict(JSON.parse(result.stdout));
+  return JSON.parse(result.stdout);
+}
+
+/** The slim verdict of `top` from `git-tidy check` and, when something is prunable, a prune dry run; 'timeout' or undefined as runTidyChild. */
+function runCheckChild(top, timeoutMs, env) {
+  const startedMs = Date.now();
+  const report = runTidyChild(['check', top, '--json'], timeoutMs, env, [0, 1]);
+  if (report === 'timeout' || report === undefined) return report;
+  if (!report.findings.some(({ kind }) => PRUNE_KINDS.has(kind))) return slimVerdict(report, new Set());
+  const plan = runTidyChild(['prune', top, '--include-recent', '--json'], Math.max(timeoutMs - (Date.now() - startedMs), 1), env, [0]);
+  if (plan === 'timeout' || plan === undefined) return plan;
+  return slimVerdict(report, new Set(plan.items.filter(({ action }) => action === 'remove').map(({ subject }) => subject)));
 }
 
 /** One detached run of this file that checks `top` without a time bound worth waiting for and stores the verdict. */
 function startRefresh(top, session, env) {
-  spawn(process.execPath, [fileURLToPath(import.meta.url), '--refresh', top, session], { detached: true, stdio: 'ignore', env }).unref();
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), '--refresh', top, session], { detached: true, stdio: 'ignore', env, windowsHide: true });
+  child.on('error', (error) => process.stderr.write(`git-tidy-gate: cannot start the refresh: ${error.message}\n`));
+  child.unref();
+}
+
+/** True when the config view of the worktree `top`, or of any worktree of its repository, defines a filter (each worktree has its own view). */
+function anyWorktreeNamesFilter(top) {
+  const listed = gitOut(top, ['worktree', 'list', '--porcelain']);
+  if (listed === null) return true;
+  const folders = listed.split('\n\n').filter((block) => !block.split('\n').includes('bare'))
+    .map((block) => block.split('\n')[0].replace(/^worktree /, '')).filter((folder) => existsSync(folder));
+  return [top, ...folders].some(namesFilterProgram);
 }
 
 /** The check verdict of `top` for this repo state: from the cache, else from a bounded child run; null when there is none (error, timeout). */
 function verdictFor(env, session, top, deps) {
   const fingerprint = fingerprintOf(top);
   if (fingerprint === null) return null;
-  const cached = cachedVerdict(env, session, top, fingerprint);
+  const repoState = { top, fingerprint };
+  const cached = cachedVerdict(env, session, repoState, deps.now ?? Date.now());
   if (cached !== undefined) return cached;
-  if (namesFilterProgram(top)) return null; // only the child's `git status` could run a filter, so a cache hit never needs this call
+  if (anyWorktreeNamesFilter(top)) return null; // only the child's `git status` could run a filter, so a cache hit never needs this call
   const run = deps.runCheck ?? runCheckChild;
-  const fresh = run(top, deps.checkTimeoutMs ?? CHECK_TIMEOUT_MS, env);
+  const fresh = run(top, deps.checkTimeoutMs ?? (Number(env.GIT_TIDY_GATE_CHECK_TIMEOUT_MS) || CHECK_TIMEOUT_MS), env);
   if (fresh === 'timeout') {
     startRefresh(top, session, env);
     return null;
   }
   if (fresh === undefined) return null;
-  storeVerdict(env, session, top, fingerprint, fresh);
+  storeVerdict(env, session, repoState, fresh);
   return fresh;
 }
 
@@ -152,24 +195,31 @@ function openRowTexts(input, env) {
   return parseWorkItems(read.text).items.filter((row) => row.kind !== 'deliver' && row.done === null).map((row) => `${row.id} ${row.item}`.toLowerCase());
 }
 
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// the whole word: `ui` is not named by "build the docs", while `r4-x` is named by "lane r4-x: implement it"
+const namesWord = (row, word) => new RegExp(`(?<![a-z0-9_-])${escapeRegExp(word.toLowerCase())}(?![a-z0-9_-])`).test(row);
+
+// words that a shell reads as one argument stay as they are; any other value is single-quoted
+const shellWord = (value) => (/^[A-Za-z0-9._/@%+=:,-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`);
+
 /** The unlanded-lane hints that no open row names by the branch or its last path segment. */
 function unnamedLanes(hints, input, env) {
   const unlanded = hints.filter(({ kind }) => kind === UNLANDED);
   const rows = unlanded.length === 0 ? null : openRowTexts(input, env);
   if (rows === null) return [];
-  return unlanded.filter(({ subject }) => !rows.some((row) => row.includes(subject.toLowerCase()) || row.includes(subject.split('/').at(-1).toLowerCase())));
+  return unlanded.filter(({ subject }) => !rows.some((row) => namesWord(row, subject) || namesWord(row, subject.split('/').at(-1))));
 }
 
 function verdictProblems(verdict, input, env, top) {
   const problems = verdict.findings.map(({ kind, subject, detail }) => ({
     key: `${kind}:${subject}`,
-    text: kind === MERGE_COMMIT ? `${kind} ${subject} ${detail}: rebase it away (git-linear-history skill), never merge` : `${kind} ${subject}: ${detail}`,
+    text: kind === MERGE_COMMIT ? `${kind} ${subject} ${JSON.stringify(detail)}: rebase it away (git-linear-history skill), never merge` : `${kind} ${subject}: ${detail}`,
   }));
   for (const { subject } of unnamedLanes(verdict.hints, input, env)) {
-    problems.push({ key: `${UNLANDED}:${subject}`, text: `${UNLANDED} ${subject} is named by no open row of STATUS.md: land it (\`node ~/.claude/tools/git-tidy/git-tidy.mjs land ${subject}\`) or start its row` });
+    problems.push({ key: `${UNLANDED}:${subject}`, text: `${UNLANDED} ${subject} is named by no open row of STATUS.md: land it (\`node ~/.claude/tools/git-tidy/git-tidy.mjs land ${shellWord(subject)}\`) or start its row` });
   }
   const prune = verdict.findings.some(({ kind }) => PRUNE_KINDS.has(kind));
-  return { problems, pruneLine: prune ? `node ~/.claude/tools/git-tidy/git-tidy.mjs prune "${top}" --apply --include-recent` : null };
+  return { problems, pruneLine: prune ? `node ~/.claude/tools/git-tidy/git-tidy.mjs prune ${shellWord(top)} --apply --include-recent` : null };
 }
 
 async function leadReason(input, env, deps, top) {
@@ -191,7 +241,7 @@ function agentReason(input, top) {
   const tip = gitText(top, ['rev-parse', '--verify', '--quiet', `refs/heads/${name}`]);
   if (tip === '' || (gitOut(top, ['worktree', 'list', '--porcelain']) ?? '').includes(`branch refs/heads/${name}`)) return null;
   const holders = gitText(top, ['for-each-ref', '--contains', tip, '--format=%(refname:short)', 'refs/heads']).split('\n');
-  if (holders.every((holder) => holder === name || holder.startsWith(AGENT_BRANCH_PREFIX))) return null; // it holds a commit of its own
+  if (holders.every((holder) => holder === name || isAgentBranch(holder))) return null; // it holds a commit of its own
   return { state: name, reason: `Your leftover branch ${name} holds no work of its own and no worktree uses it: delete it: \`git branch -d ${name}\`` };
 }
 
@@ -235,8 +285,8 @@ export async function openLanes(input, env = process.env, deps = {}) {
 /** The detached job: check `top` for as long as it takes and store the verdict for the next stop. */
 function refresh(top, session, env) {
   const fingerprint = fingerprintOf(top);
-  const verdict = fingerprint === null || !isSessionId(session) || namesFilterProgram(top) ? undefined : runCheckChild(top, REFRESH_TIMEOUT_MS, env);
-  if (verdict !== undefined && verdict !== 'timeout') storeVerdict(env, session, top, fingerprint, verdict);
+  const verdict = fingerprint === null || !isSessionId(session) || anyWorktreeNamesFilter(top) ? undefined : runCheckChild(top, REFRESH_TIMEOUT_MS, env);
+  if (verdict !== undefined && verdict !== 'timeout') storeVerdict(env, session, { top, fingerprint }, verdict);
 }
 
 async function readStdin() {
