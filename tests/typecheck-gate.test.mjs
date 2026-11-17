@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { decideExit, incrementalTypecheck, runGate, timeoutMessage, typescriptMajor } from '../home/hooks/typecheck-gate.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/typecheck-gate.mjs', import.meta.url));
+const POST_EDIT_HOOK = fileURLToPath(new URL('../home/hooks/post-edit.mjs', import.meta.url));
 const posix = { skip: process.platform === 'win32' };
 const TSC = '/p/node_modules/.bin/tsc';
 const INFO = '/tmp/private.tsbuildinfo';
@@ -45,11 +46,11 @@ test('incrementalTypecheck on win32 needs paths the unquoted Windows shell can t
 const FAIL_JS = (lines, status = 1) => `${lines.map((l) => `console.log(${JSON.stringify(l)});`).join('\n')}\nprocess.exitCode = ${status};\n`;
 
 // A fake project with logged edits. `tmp` is the redirected temp dir; `run(input, env)` runs the hook for session s1.
-async function gateProject({ output = ['src/a.ts(3,1): error TS2322: x'], status = 1, logged = ['src/a.ts'], script = 'node fail.js' } = {}) {
+async function gateProject({ output = ['src/a.ts(3,1): error TS2322: x'], status = 1, logged = ['src/a.ts'], script = 'node fail.js', scriptName = 'typecheck', extraScripts = {} } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'typecheck-gate-'));
   const proj = join(root, 'proj');
   await mkdir(join(proj, 'src'), { recursive: true });
-  await writeFile(join(proj, 'package.json'), JSON.stringify({ scripts: { typecheck: script } }));
+  await writeFile(join(proj, 'package.json'), JSON.stringify({ scripts: { [scriptName]: script, ...extraScripts } }));
   await writeFile(join(proj, 'fail.js'), FAIL_JS(output, status));
   for (const name of ['a.ts', 'b.ts']) await writeFile(join(proj, 'src', name), 'export {};\n');
   const tmp = join(root, 'tmp');
@@ -57,13 +58,13 @@ async function gateProject({ output = ['src/a.ts(3,1): error TS2322: x'], status
   await mkdir(edits, { recursive: true });
   const log = join(edits, 's1--main');
   if (logged.length) await writeFile(log, logged.map((f) => `${join(proj, f)}\n`).join(''));
+  const gateEnv = (env = {}) => ({ ...process.env, CLAUDE_TYPECHECK_AT: '', CLAUDE_POST_EDIT_SKIP: '', TMPDIR: tmp, TEMP: tmp, TMP: tmp, ...env });
   const run = (input = {}, env = {}) =>
-    spawnSync(process.execPath, [HOOK], {
-      input: JSON.stringify({ session_id: 's1', hook_event_name: 'Stop', ...input }),
-      encoding: 'utf8',
-      env: { ...process.env, CLAUDE_TYPECHECK_AT: '', CLAUDE_POST_EDIT_SKIP: '', TMPDIR: tmp, TEMP: tmp, TMP: tmp, ...env },
-    });
-  return { proj, tmp, log, run };
+    spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ session_id: 's1', hook_event_name: 'Stop', ...input }), encoding: 'utf8', env: gateEnv(env) });
+  // The PostToolUse hook that logs an edited file for the gate.
+  const editFile = (file) =>
+    spawnSync(process.execPath, [POST_EDIT_HOOK], { input: JSON.stringify({ session_id: 's1', tool_input: { file_path: join(proj, file) } }), encoding: 'utf8', env: gateEnv() });
+  return { proj, tmp, log, run, editFile };
 }
 
 test('hook contract: bad JSON, empty stdin and no log exit 0 silently', () => {
@@ -87,6 +88,29 @@ test('a failing typecheck about a logged file blocks the stop with that line', a
   assert.equal(r.status, 2);
   assert.equal(r.stderr, 'src/a.ts:3 TS2322 x\n');
   assert.ok(existsSync(log), 'the log stays so the next stop checks again');
+});
+
+test('a package whose script is named type-check is gated like one named typecheck', async () => {
+  const { run, log } = await gateProject({ scriptName: 'type-check' });
+  const r = run();
+  assert.equal(r.status, 2);
+  assert.equal(r.stderr, 'src/a.ts:3 TS2322 x\n');
+  assert.ok(existsSync(log));
+});
+
+test('when both scripts exist the typecheck script runs and type-check does not', async () => {
+  const { run } = await gateProject({ script: 'node -e 0', status: 0, extraScripts: { 'type-check': 'node fail.js' } });
+  const r = run();
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout + r.stderr, '');
+});
+
+test('post-edit logs an edit in a type-check package, so the gate checks it at stop', async () => {
+  const { run, log, editFile } = await gateProject({ scriptName: 'type-check', logged: [] });
+  assert.equal(existsSync(log), false);
+  assert.equal(editFile('src/a.ts').status, 0);
+  assert.equal(existsSync(log), true);
+  assert.equal(run().status, 2);
 });
 
 test('the same failure after a retry (stop_hook_active) lets the agent stop with a user message', async () => {

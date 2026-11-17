@@ -18,7 +18,7 @@ import { editLogPath, recordEdit } from './lib/edit-log.mjs';
 const SAFE_PATH = /^[\w@+=:,./-]+$/; // no `%`: cmd.exe expands %VAR%
 const BUDGET_MS = 18_000; // hook timeout is 20 s
 const FILE_SCRIPTS = ['format', 'lint']; // take the edited file after `--`
-const PROJECT_SCRIPTS = ['typecheck']; // whole project; output is filtered to the edited file
+const TYPECHECK_SCRIPTS = ['typecheck', 'type-check']; // whole project; output is filtered to the edited file; the first that exists runs
 const FILE_TOOLS = { format: ['prettier', '--write'], lint: ['eslint'] }; // per-file fallback for broad scripts
 const BROAD_SCRIPT = /(^|\s)\.\/?(\s|$)|\*|\brun-many\b|\bnx\b|\bturbo\b|\blerna\b/;
 const FIXING_SCRIPT = /\bfix\b|--write\b|--apply\b/; // a lint script that rewrites the file while tsc reads it: keep those checks sequential
@@ -32,6 +32,16 @@ export const typecheckAtEdit = (env = process.env) => env[TYPECHECK_AT_ENV] === 
 export { diagnostics, isSamePath } from './lib/diagnostics.mjs';
 
 export const isCodeFile = (file) => CODE_FILE.test(file);
+
+/**
+ * The package script that typechecks the project: the first of `typecheck`, `type-check` that is a string.
+ * @param {Record<string, unknown> | undefined} scripts the `scripts` of a package.json
+ * @returns {{ name: string, text: string } | null}
+ */
+export function typecheckScript(scripts) {
+  const name = TYPECHECK_SCRIPTS.find((candidate) => typeof scripts?.[candidate] === 'string');
+  return name ? { name, text: scripts[name] } : null;
+}
 
 /** Nearest directory at or above `file` that holds a package.json, or null. */
 export function findPackageDir(file) {
@@ -75,8 +85,9 @@ export function plannedChecks(scripts, file, findTool = () => null, atEdit = typ
     const cmd = findTool(tool);
     return cmd ? [{ name, cmd, args: [...flags, file] }] : [];
   });
-  const projectChecks = PROJECT_SCRIPTS.filter((n) => atEdit && script(n) !== null && !isBroadScript(script(n)));
-  return [...fileChecks, ...projectChecks.map((name) => ({ name, args: ['run', name] }))];
+  const typecheck = typecheckScript(scripts);
+  const projectChecks = atEdit && typecheck && !isBroadScript(typecheck.text) ? [{ name: 'typecheck', args: ['run', typecheck.name] }] : [];
+  return [...fileChecks, ...projectChecks];
 }
 
 /** Finder for the nearest node_modules/.bin/<tool> walking up from `dir` (a monorepo hoists binaries to the root); returns null when absent. */
@@ -261,8 +272,8 @@ function recordTypecheckEdit(file, input) {
   const dir = logPath && isCodeFile(file) && existsSync(file) ? findPackageDir(file) : null;
   if (!dir) return;
   try {
-    const script = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).scripts?.typecheck;
-    if (typeof script === 'string' && !isBroadScript(script)) recordEdit(logPath, file);
+    const typecheck = typecheckScript(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).scripts);
+    if (typecheck && !isBroadScript(typecheck.text)) recordEdit(logPath, file);
   } catch {
     // unreadable package.json is reported by checkFile; nothing to gate here
   }

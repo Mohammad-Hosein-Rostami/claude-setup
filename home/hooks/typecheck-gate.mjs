@@ -11,7 +11,7 @@ import { dirname, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { MAX_LINES, diagnosticsDetailed } from './lib/diagnostics.mjs';
 import { editLogPath, readEdits, tempRoot } from './lib/edit-log.mjs';
-import { SKIP_ENV, findPackageDir, isBroadScript, packageManager, runCheck, skipFilter, toolFinder, typecheckAtEdit } from './post-edit.mjs';
+import { SKIP_ENV, findPackageDir, isBroadScript, packageManager, runCheck, skipFilter, toolFinder, typecheckAtEdit, typecheckScript } from './post-edit.mjs';
 
 const BUDGET_MS = 140_000; // hook timeout is 150 s
 const MAX_NAMED_FILES = 10;
@@ -76,14 +76,15 @@ export function typescriptMajor(tscPath) {
   }
 }
 
-// The typecheck command of one package plus the shared/private tsbuildinfo paths when it runs incrementally.
+// The typecheck command of one package (`script`: its { name, text } from typecheckScript) plus the shared/private tsbuildinfo
+// paths when it runs incrementally.
 function typecheckPlan(dir, script) {
   const shared = join(tempRoot(), 'tsbuildinfo', sha256(dir));
   const privateInfo = `${shared}.${process.pid}`;
   const tsc = toolFinder(dir)('tsc');
   const major = tsc ? typescriptMajor(tsc) : null;
-  const incremental = tsc && major !== null ? incrementalTypecheck(script, major, tsc, privateInfo) : null;
-  if (!incremental) return { check: { name: 'typecheck', args: ['run', 'typecheck'] } };
+  const incremental = tsc && major !== null ? incrementalTypecheck(script.text, major, tsc, privateInfo) : null;
+  if (!incremental) return { check: { name: 'typecheck', args: ['run', script.name] } };
   return { check: { name: 'typecheck', ...incremental }, shared, privateInfo };
 }
 
@@ -116,10 +117,10 @@ function judgeOutput(output, rels) {
 }
 
 /** Result of one package for all its logged files: see {@link runGate}. */
-async function checkPackage(dir, files, scripts, deadline) {
+async function checkPackage(dir, files, script, deadline) {
   const left = deadline - Date.now();
   if (left <= 0) return { ...NOTHING, timedOut: true };
-  const plan = typecheckPlan(dir, scripts.typecheck);
+  const plan = typecheckPlan(dir, script);
   if (plan.shared) seed(plan);
   const r = await runCheck(packageManager(dir), plan.check, dir, left);
   if (plan.shared) r.timedOut ? rmSync(plan.privateInfo, { force: true }) : publish(plan);
@@ -129,10 +130,11 @@ async function checkPackage(dir, files, scripts, deadline) {
   return r.status === 0 ? NOTHING : judgeOutput(`${r.stdout}\n${r.stderr}`, rels);
 }
 
-function packageScripts(dir) {
+// The package's typecheck script (the first of `typecheck`, `type-check`), or null when it has none the gate can run.
+function packageTypecheck(dir) {
   try {
-    const scripts = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).scripts;
-    return typeof scripts?.typecheck === 'string' && !isBroadScript(scripts.typecheck) ? scripts : null;
+    const script = typecheckScript(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).scripts);
+    return script && !isBroadScript(script.text) ? script : null;
   } catch {
     return null; // unreadable package.json: post-edit already reported it
   }
@@ -146,8 +148,8 @@ function groupByPackage(files) {
     if (dir) groups.set(dir, [...(groups.get(dir) ?? []), file]);
   }
   return [...groups].flatMap(([dir, group]) => {
-    const scripts = packageScripts(dir);
-    return scripts ? [{ dir, files: group, scripts }] : [];
+    const script = packageTypecheck(dir);
+    return script ? [{ dir, files: group, script }] : [];
   });
 }
 
@@ -163,8 +165,8 @@ export async function runGate(files, deadline) {
   const groups = groupByPackage(files);
   const lines = [];
   const unparsed = [];
-  for (const [i, { dir, files: group, scripts }] of groups.entries()) {
-    const result = await checkPackage(dir, group, scripts, deadline);
+  for (const [i, { dir, files: group, script }] of groups.entries()) {
+    const result = await checkPackage(dir, group, script, deadline);
     if (result.timedOut) return { ...NOTHING, timedOut: true, unchecked: groups.slice(i).flatMap((g) => g.files) };
     lines.push(...result.lines);
     unparsed.push(...result.unparsed);
