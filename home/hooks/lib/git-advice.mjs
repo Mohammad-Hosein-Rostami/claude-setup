@@ -8,8 +8,11 @@
 //    cwd, a `cd <dir> &&` before the command, or `git -C <dir>`.
 //  - No PASS: `git merge --ff-only <ref>` in a folder on main, master or develop, when the test-pass tool has no full-suite PASS for the commit
 //    <ref> names: land with `git-tidy land`, or run the suite in the lane worktree first.
-// Both new advices ask git (a hardened call: no hooks, no fsmonitor, no pager, no prompt, a 5 s limit) and decide from its answer; ANY git error,
-// timeout, unknown answer or exception gives no advice for that rule, so the command goes through (an advice never blocks what it cannot judge).
+// Both new advices ask git (a hardened call: no hooks, no fsmonitor, no embedded bare repository, no pager, no prompt) and decide from its answer; ANY
+// git error, timeout, unknown answer or exception gives no advice for that rule, so the command goes through (an advice never blocks what it cannot judge).
+// All git and PASS calls of one command line share ONE time budget (ADVICE_BUDGET_MS): a repository that makes git hang (a FIFO as .git/HEAD) costs a
+// command at most that long, never one timeout per git reading, so the guard hook cannot run into its own timeout. After a `cd` it cannot read
+// (`cd "$X"`, `pushd`, `cd -`) or with an unknown start folder (cwd null) the folder is unknown and a reading gives no advice.
 // The PASS answer comes from `home/tools/test-pass/test-pass.mjs check <sha> --repo <dir> --suite` (exit 0 PASS, 1 none, else unknown); when that tool
 // is not installed there is no PASS advice. `deps` lets a test replace the git runner and the PASS check.
 import { spawnSync } from 'node:child_process';
@@ -23,7 +26,7 @@ import { parseGitArgs } from './git-options.mjs';
 import { mergeCommitAdvice, withoutSubstitutions } from './merge-commit.mjs';
 import { segments, stripHeredocs } from './shell-words.mjs';
 
-const GIT_TIMEOUT_MS = 5000;
+const ADVICE_BUDGET_MS = 2000; // for every git call and PASS check of one command line together
 const BASE_BRANCHES = new Set(['main', 'master', 'develop']);
 const COPY_BRANCH_NAME = /^(.+)-(?:\d+|fix|fixes|v\d+|redo)$/;
 const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/; // a branch or ref we are willing to put in advice text and hand to git
@@ -48,18 +51,29 @@ export const COPY_BRANCH_ADVICE_PATTERN = new RegExp(`^${escapeText(KEEP_SAME_BR
   + `rebase it onto the base and keep committing there instead of creating ${REF_TEXT}\\. ${escapeText(copyRetry)}$`);
 export const NO_PASS_ADVICE_PATTERN = new RegExp(`^no full-suite PASS at [0-9a-f]{${SHORT_SHA}}: ${escapeText('run `test-pass run --suite` in the lane worktree, or land with `git-tidy land` (C37). ')}${escapeText(passRetry)}$`);
 
-/** Hardened git: no repository hooks or fsmonitor, no pager, no prompt, no GIT_* from the caller; trimmed stdout, or null on any failure. */
-function runGit(dir, args, env = process.env) {
+/**
+ * Hardened git: no repository hooks or fsmonitor, no embedded bare repository, no pager, no prompt, no GIT_* from the caller.
+ * @param {string} dir folder to run in
+ * @param {string[]} args git arguments
+ * @param {Record<string, string | undefined>} env caller environment (its GIT_* variables are dropped)
+ * @param {number} deadline time (ms since the epoch) after which no git is started and a running one is stopped
+ * @returns {string | null} trimmed stdout, or null on any failure or when the deadline has passed
+ */
+export function runGit(dir, args, env = process.env, deadline = Date.now() + ADVICE_BUDGET_MS) {
+  const timeout = deadline - Date.now();
+  if (timeout <= 0) return null;
   const clean = Object.fromEntries(Object.entries(env).filter(([name]) => !name.startsWith('GIT_')));
-  const options = { cwd: dir, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, env: { ...clean, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1' } };
-  const result = spawnSync('git', ['-c', 'core.fsmonitor=false', '-c', 'core.pager=cat', '-c', 'core.hooksPath=/dev/null', ...args], options);
+  const options = { cwd: dir, encoding: 'utf8', timeout, env: { ...clean, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1' } };
+  const hardened = ['-c', 'core.fsmonitor=false', '-c', 'safe.bareRepository=explicit', '-c', 'core.pager=cat', '-c', 'core.hooksPath=/dev/null'];
+  const result = spawnSync('git', [...hardened, ...args], options);
   return result.error === undefined && result.status === 0 ? result.stdout.trim() : null;
 }
 
-/** The PASS tool's answer for `sha` in `dir`: true (exit 0), false (exit 1: no record) or PASS_UNKNOWN (tool missing or any other exit). */
-function suitePassed(dir, sha) {
-  if (!existsSync(TEST_PASS_TOOL)) return PASS_UNKNOWN;
-  const result = spawnSync(process.execPath, [TEST_PASS_TOOL, 'check', sha, '--repo', dir, '--suite'], { encoding: 'utf8', timeout: GIT_TIMEOUT_MS });
+/** The PASS tool's answer for `sha` in `dir`: true (exit 0), false (exit 1: no record) or PASS_UNKNOWN (tool missing, deadline passed or any other exit). */
+function suitePassed(dir, sha, deadline) {
+  const timeout = deadline - Date.now();
+  if (!existsSync(TEST_PASS_TOOL) || timeout <= 0) return PASS_UNKNOWN;
+  const result = spawnSync(process.execPath, [TEST_PASS_TOOL, 'check', sha, '--repo', dir, '--suite'], { encoding: 'utf8', timeout });
   if (result.error !== undefined) return PASS_UNKNOWN;
   return result.status === 0 ? true : result.status === 1 ? false : PASS_UNKNOWN;
 }
@@ -69,7 +83,7 @@ const DEFAULT_DEPS = { git: runGit, hasPass: suitePassed };
 /**
  * @param {string} name a branch about to be created
  * @param {string} repoDir a folder of the repository
- * @param {typeof runGit} git the git runner (a test replaces it)
+ * @param {(dir: string, args: string[]) => string | null} git the git runner (a test replaces it)
  * @returns {string | null} the stem when `name` is `<stem>-<n>|-fix|-fixes|-v<n>|-redo` and a local branch `<stem>` exists; null otherwise, and on any git error
  */
 export function copyBranchStem(name, repoDir, git = runGit) {
@@ -85,7 +99,7 @@ function valueAfter(rest, flags) {
   const at = rest.findIndex((word) => flags.includes(word));
   return at === -1 ? undefined : rest[at + 1];
 }
-const BRANCH_OTHER_MODES = new Set(['-d', '-D', '--delete', '-m', '-M', '--move', '-c', '-C', '--copy', '-l', '--list', '-a', '--all', '-r', '--remotes', '--show-current', '-u', '--set-upstream-to', '--unset-upstream', '--edit-description']);
+const BRANCH_OTHER_MODES = new Set(['--merged', '--no-merged', '--contains', '--no-contains', '--points-at', '-d', '-D', '--delete', '-m', '-M', '--move', '-c', '-C', '--copy', '-l', '--list', '-a', '--all', '-r', '--remotes', '--show-current', '-u', '--set-upstream-to', '--unset-upstream', '--edit-description']);
 
 /** The branch name a git subcommand reading would create, or undefined. */
 function createdBranch({ sub, rest }) {
@@ -95,54 +109,66 @@ function createdBranch({ sub, rest }) {
   return sub === 'worktree' && rest[0] === 'add' ? valueAfter(rest, ['-b', '-B']) : undefined;
 }
 
-/** The folder a `cd` word moves to (literal paths only), else the same folder. */
+const MERGE_VALUE_OPTIONS = new Set(['-m', '--message', '-F', '--file', '-s', '--strategy', '-X', '--strategy-option']);
+/** The ref a merge names: its first word that is neither an option nor the value of one (`merge --ff-only -m text ref`). */
+const mergedRef = (rest) => positionalWords(rest.filter((word, at) => !MERGE_VALUE_OPTIONS.has(rest[at - 1] ?? '')))[0];
+
+/** The folder a `cd` word moves to (literal paths only); null when it is not known: `cd "$X"`, `cd -`, `cd ~user`, or a relative path from an unknown folder. */
 function afterCd(dir, args) {
-  const target = args.find((word) => !word.startsWith('-'));
-  if (target === undefined || /[$`*?]/.test(target)) return dir;
-  return resolve(dir, target === '~' || target.startsWith('~/') ? target.replace('~', homedir()) : target);
+  const target = args.find((word) => !word.startsWith('-') || word === '-') ?? '~';
+  if (target === '-' || /[$`*?]/.test(target) || (target.startsWith('~') && target !== '~' && !target.startsWith('~/'))) return null;
+  const expanded = target === '~' || target.startsWith('~/') ? target.replace('~', homedir()) : target;
+  if (isAbsolute(expanded)) return resolve(expanded);
+  return dir === null ? null : resolve(dir, expanded);
 }
 
-/** The folder git runs in: `dir` moved by each literal `-C` option of this reading (relative ones from the folder before). */
-const gitFolder = (dir, options) => options.filter((option) => option[0] === '-C' && option[1] !== undefined).reduce((from, [, next]) => (isAbsolute(next) ? next : resolve(from, next)), dir);
+/** The folder git runs in: `dir` moved by each literal `-C` option of this reading (relative ones from the folder before); null when unknown. */
+const gitFolder = (dir, options) => options.filter((option) => option[0] === '-C' && option[1] !== undefined).reduce((from, [, next]) => {
+  if (/[$`*?]/.test(next)) return null;
+  return isAbsolute(next) ? next : from === null ? null : resolve(from, next);
+}, dir);
 
-/** Advice for one git command reading: a copy branch or a fast-forward merge into a base without a PASS. */
-function readingAdvice({ sub, rest }, options, dir, deps, env) {
-  const folder = gitFolder(dir, options);
+/** Advice for one git command reading: a copy branch or a fast-forward merge into a base without a PASS. `scope` is `{dir, deps, env, deadline}`. */
+function readingAdvice({ sub, rest }, options, scope) {
+  const { deps, env, deadline } = scope;
+  const folder = gitFolder(scope.dir, options);
+  if (folder === null) return [];
   const name = createdBranch({ sub, rest });
   if (name !== undefined) {
-    const stem = copyBranchStem(name, folder, (where, args) => deps.git(where, args, env));
+    const stem = copyBranchStem(name, folder, (where, args) => deps.git(where, args, env, deadline));
     return stem === null ? [] : [copyBranchAdvice(stem, name)];
   }
   if (sub !== 'merge' || !rest.includes('--ff-only')) return [];
-  const ref = positionalWords(rest)[0];
+  const ref = mergedRef(rest);
   if (ref === undefined || !SAFE_REF.test(ref)) return [];
-  const branch = deps.git(folder, ['symbolic-ref', '--short', '-q', 'HEAD'], env);
+  const branch = deps.git(folder, ['symbolic-ref', '--short', '-q', 'HEAD'], env, deadline);
   if (branch === null || !BASE_BRANCHES.has(branch)) return [];
-  const sha = deps.git(folder, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], env);
-  if (sha === null || deps.hasPass(folder, sha) !== false) return [];
+  const sha = deps.git(folder, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], env, deadline);
+  if (sha === null || deps.hasPass(folder, sha, deadline) !== false) return [];
   return [noPassAdvice(sha.slice(0, SHORT_SHA))];
 }
 
-/** The copy-branch and no-PASS advice of the command line; a failure anywhere gives none. */
+/** The copy-branch and no-PASS advice of the command line; a failure anywhere gives none. `cwd` null is an unknown folder. */
 function repositoryAdvice(command, cwd, env, deps) {
   if (!MAY_NEED_ADVICE.test(command.replace(SPELLING_BREAKS, ''))) return [];
   const found = [];
-  let dir = cwd;
+  const scope = { dir: cwd, deps, env, deadline: Date.now() + ADVICE_BUDGET_MS };
   for (const words of segments(withoutSubstitutions(stripHeredocs(command)))) {
     const { cmd, args } = asGitSubcommand(commandOf(words));
-    if (cmd === 'cd') dir = afterCd(dir, args);
+    if (cmd === 'cd') scope.dir = afterCd(scope.dir, args);
+    if (cmd === 'pushd' || cmd === 'popd') scope.dir = null;
     if (cmd !== 'git') continue;
     const { options, subcommands } = parseGitArgs(args);
-    for (const reading of subcommands) found.push(...readingAdvice(reading, options, dir, deps, env));
+    for (const reading of subcommands) found.push(...readingAdvice(reading, options, scope));
   }
   return found;
 }
 
 /**
  * @param {string} command raw command text
- * @param {string} cwd the folder the command starts in
+ * @param {string | null} cwd the folder the command starts in; null when unknown (no repository advice)
  * @param {Record<string, string | undefined>} env environment handed to git
- * @param {{git?: typeof runGit, hasPass?: (dir: string, sha: string) => boolean | symbol | undefined}} deps replaceable git runner and PASS check
+ * @param {{git?: typeof runGit, hasPass?: (dir: string, sha: string, deadline: number) => boolean | symbol | undefined}} deps replaceable git runner and PASS check
  * @returns {string[]} advice texts without repeats; [] when none applies or anything could not be judged
  */
 export function gitAdvice(command, cwd, env = process.env, deps = {}) {

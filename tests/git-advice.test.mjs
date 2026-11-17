@@ -5,13 +5,13 @@
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
-import { COPY_BRANCH_ADVICE_PATTERN, copyBranchStem, gitAdvice, NO_PASS_ADVICE_PATTERN } from '../home/hooks/lib/git-advice.mjs';
+import { COPY_BRANCH_ADVICE_PATTERN, copyBranchStem, gitAdvice, NO_PASS_ADVICE_PATTERN, runGit } from '../home/hooks/lib/git-advice.mjs';
 import { MERGE_COMMIT_ADVICE } from '../home/hooks/lib/merge-commit.mjs';
 import { BRANCH_MOVE_ADVICE } from '../home/hooks/lib/branch-move.mjs';
 import { ADVICE_CLASS, reasonClass } from '../home/hooks/lib/reason-classes.mjs';
@@ -112,4 +112,67 @@ test('through decide() and the hook: a copy branch is denied once with the advic
   assert.equal(first.permissionDecision, 'deny');
   assert.match(first.permissionDecisionReason, /a re-done lane continues the same branch/);
   assert.deepEqual(send('git checkout -b lane-x-2'), { decision: 'allow' });
+});
+
+// Round 4 review of lane G.
+
+test('copy branch: after a cd or pushd the guard cannot read, or with an unknown start folder, there is no advice', () => {
+  const repo = lane(makeRepo());
+  const copy = 'git checkout -b lane-x-2';
+  for (const command of [`cd "$TARGET" && ${copy}`, `pushd /tmp && ${copy}`, `cd - && ${copy}`, `cd ~someone && ${copy}`, `cd sub/$X && ${copy}`]) {
+    assert.deepEqual(gitAdvice(command, repo, process.env, noPass), [], command);
+  }
+  assert.deepEqual(gitAdvice(copy, null, process.env, noPass), [], 'start folder unknown');
+  assert.deepEqual(gitAdvice(`git -C "$X" checkout -b lane-x-2`, repo, process.env, noPass), [], 'a -C the guard cannot read');
+  assert.ok(matches(gitAdvice(`cd "$TARGET"; cd ${repo} && ${copy}`, repo, process.env, noPass), COPY_BRANCH_ADVICE_PATTERN), 'a literal cd afterwards knows the folder again');
+});
+
+test('copy branch: git branch listing options are not creating a branch; merge --ff-only -m text ref reads the ref', () => {
+  const repo = lane(makeRepo());
+  for (const command of ['git branch --merged lane-x-2', 'git branch --contains lane-x-2', 'git branch --no-merged lane-x-2', 'git branch --points-at lane-x-2']) {
+    assert.deepEqual(gitAdvice(command, repo, process.env, noPass), [], command);
+  }
+  git(repo, 'checkout', '-q', 'lane-x');
+  commit(repo, 'lane.txt');
+  git(repo, 'checkout', '-q', 'main');
+  assert.ok(matches(gitAdvice('git merge --ff-only -m message lane-x', repo, process.env, noPass), NO_PASS_ADVICE_PATTERN));
+});
+
+test('one time budget for all git calls of a command line: a repository that hangs git costs the line a couple of seconds, not 5 s per reading', (t) => {
+  if (process.platform === 'win32') return; // no mkfifo
+  const repo = join(mkdtempSync(join(tmpdir(), 'git-advice-fifo-')), 'repo');
+  mkdirSync(join(repo, '.git', 'objects'), { recursive: true });
+  mkdirSync(join(repo, '.git', 'refs'));
+  assert.equal(spawnSync('mkfifo', [join(repo, '.git', 'HEAD')]).status, 0); // a read of HEAD blocks until the time limit
+  const command = [1, 2, 3].map((n) => `git -C ${repo} switch -c lane-x-${n}`).join('; ');
+  const started = Date.now();
+  assert.deepEqual(gitAdvice(command, repo, process.env), []);
+  assert.ok(Date.now() - started < 3500, `took ${Date.now() - started} ms`);
+  t.diagnostic('three readings, each would wait the full per-call limit without a shared budget');
+});
+
+test('runGit never lets the repository or the caller choose what runs: fsmonitor, hooks, an embedded bare repository, GIT_* variables', () => {
+  const repo = makeRepo();
+  const marker = join(repo, '..', 'ran');
+  const program = join(repo, '..', 'program.sh');
+  writeFileSync(program, `#!/bin/sh\ntouch "${marker}"\n`);
+  chmodSync(program, 0o755);
+  git(repo, 'config', 'core.fsmonitor', program);
+  runGit(repo, ['status', '--porcelain']);
+  assert.equal(existsSync(marker), false, 'core.fsmonitor ran a program');
+
+  const hook = join(repo, '.git', 'hooks', 'reference-transaction');
+  mkdirSync(join(repo, '.git', 'hooks'), { recursive: true });
+  writeFileSync(hook, `#!/bin/sh\ntouch "${marker}"\n`);
+  chmodSync(hook, 0o755);
+  runGit(repo, ['update-ref', 'refs/heads/probe', 'HEAD']);
+  assert.equal(existsSync(marker), false, 'a repository hook ran');
+
+  const bare = join(repo, '..', 'bare');
+  git(join(repo, '..'), 'init', '-q', '--bare', bare);
+  assert.equal(runGit(bare, ['rev-parse', '--git-dir']), null, 'an embedded bare repository was entered');
+
+  const other = makeRepo();
+  assert.equal(runGit(repo, ['rev-parse', '--git-dir'], { ...process.env, GIT_DIR: join(other, '.git') }), '.git', 'GIT_DIR from the caller was used');
+  assert.equal(runGit(repo, ['rev-parse', '--git-dir'], process.env, Date.now() - 1), null, 'a passed deadline starts no git');
 });
