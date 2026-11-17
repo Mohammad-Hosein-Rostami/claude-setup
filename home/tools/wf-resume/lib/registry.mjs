@@ -1,7 +1,7 @@
 // The workflow registry: one small private file per session listing the workflow runs that session launched, so a later session (after an
 // exit, a usage-limit stop or an account switch) can find the runs that did not finish.
 // Exports: launchRecord(hookInput, nowIso), saveRun(dir, record), runsOfSession(dir, session), latestOtherSession(dir, {cwd, exceptSession}),
-//   findRun(dir, runId), defaultRegistryDir(), MAX_RUNS_PER_SESSION, MAX_ARGS_BYTES.
+//   findRun(dir, runId), launchedWithoutArgs(record), defaultRegistryDir(), MAX_RUNS_PER_SESSION, MAX_ARGS_BYTES.
 // File: <dir>/<session>.json holds one JSON record per line (the `.json` name is the session store's, lib/session-store.mjs in the hooks:
 // atomic write, 0600 file in a 0700 folder, never through a link). A record: { sessionId, runId, name, scriptPath, argsDigest, args?, started,
 // lastLaunch, cwd, row, projectDir }. `projectDir` is the folder name under ~/.claude/projects, so the run folder is
@@ -22,6 +22,7 @@ export const MAX_ARGS_BYTES = 4096;
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_SESSIONS_READ = 200; // newest files looked at when searching across sessions
 const DIGEST_HEX = 12;
+const digestOf = (argsText) => createHash('sha256').update(argsText).digest('hex').slice(0, DIGEST_HEX);
 const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const PROJECT_DIR = /^(?!\.+$)[A-Za-z0-9._-]{1,255}$/;
 const ROW_LABEL = /^[A-Za-z0-9._:-]{1,40}$/;
@@ -30,6 +31,9 @@ const HAS_CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/; // no g flag: a global
 const MAX_PATH_CHARS = 500;
 const MAX_NAME_CHARS = 40;
 const STORE_FILE = /^([A-Za-z0-9_-]{1,100})\.json$/;
+
+/** True when the launch had no args at all (the digest of `null`): then there is nothing to pass again. */
+export const launchedWithoutArgs = (record) => record.argsDigest === digestOf('null');
 
 export const defaultRegistryDir = () => join(homedir(), '.claude', 'state', 'workflow-runs');
 
@@ -66,7 +70,7 @@ export function launchRecord(input, nowIso) {
     runId: launched.runId,
     name: cleanText(typeof launched.name === 'string' && launched.name !== '' ? launched.name : 'workflow', MAX_NAME_CHARS),
     scriptPath,
-    argsDigest: createHash('sha256').update(argsText).digest('hex').slice(0, DIGEST_HEX),
+    argsDigest: digestOf(argsText),
     ...(toolInput.args !== undefined && Buffer.byteLength(argsText) <= MAX_ARGS_BYTES ? { args: toolInput.args } : {}),
     started: nowIso,
     lastLaunch: nowIso,

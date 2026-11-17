@@ -98,7 +98,7 @@ test('latestOtherSession: the newest other session of the same cwd, never the cu
 });
 
 test('the hook writes the registry from stdin, prints nothing and exits 0 even on garbage', async () => {
-  const { root, registryDir } = await world();
+  const { root } = await world();
   const env = { ...process.env, HOME: root, USERPROFILE: root };
   const run = (input) => spawnSync(process.execPath, [HOOK], { input, env, encoding: 'utf8' });
   const ok = run(JSON.stringify(launchInput({ args: { row: '3' } })));
@@ -109,7 +109,7 @@ test('the hook writes the registry from stdin, prints nothing and exits 0 even o
   const garbage = run('{ not json');
   assert.equal(garbage.status, 0);
   assert.equal(garbage.stdout, '');
-  assert.equal(runsOfSession(registryDir, 'sess-1').length, 0, 'the temp registry folder of this test stays untouched');
+  assert.equal(readFileSync(file, 'utf8').split('\n').filter(Boolean).length, 1, 'garbage added no record');
 });
 
 test('a script path with a control character is not recorded, and the next clean launch still is', () => {

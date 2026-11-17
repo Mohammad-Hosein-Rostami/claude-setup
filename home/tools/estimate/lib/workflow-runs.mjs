@@ -1,6 +1,7 @@
 // The workflow runs that are live in a session, for the status line's run lines. Read from the journals Claude Code writes (observed in
 // 2.1.326, undocumented: a different shape shows nothing, never a wrong number).
-// Exports: liveRuns(transcriptPath, nowMs) -> { runId, name, row, phase, phaseIndex, phaseTotal, started, done }[], newest journal first.
+// Exports: liveRuns(transcriptPath, nowMs) -> { runId, name, row, phase, phaseIndex, phaseTotal, started, done }[], newest journal first;
+// readPart and metaOf (also used by tools/wf-resume/lib/run-state.mjs).
 // Layout read, next to the transcript <proj>/<session>.jsonl: <session>/subagents/workflows/<runId>/journal.jsonl (one JSON line per
 // agent event: { type: launched | started | result, agentId, ... }: `started` has label and phase, `result` only the agent id, `launched`
 // nothing), <session>/workflows/<runId>.json (written when the run is over: its presence means not live), <session>/workflows/scripts/<name>-<runId>.js (a copy of the script: its `meta` gives the name and
@@ -32,7 +33,7 @@ const QUOTES = ['"', "'", '`'];
 const clean = (text, max) => text.replace(CONTROL_CHARS, '').slice(0, max);
 
 /** The first `max` bytes (head) or last `max` bytes (tail) of a plain file; null when it is not a plain file. `truncated`: the file was longer. */
-function readPart(file, max, fromEnd) {
+export function readPart(file, max, fromEnd) {
   const info = lstatSync(file, { throwIfNoEntry: false });
   if (!info?.isFile()) return null;
   const length = Math.min(info.size, max);
@@ -67,7 +68,7 @@ function balanced(text, start) {
 }
 
 /** The workflow name and phase titles of a script copy's `export const meta = {...}` (a literal: it is read, never run); null when not found. */
-function metaOf(scriptText) {
+export function metaOf(scriptText) {
   const at = scriptText.indexOf('export const meta');
   const literal = at < 0 ? null : balanced(scriptText, scriptText.indexOf('{', at));
   if (literal === null) return null;

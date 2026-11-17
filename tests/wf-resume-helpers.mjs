@@ -30,7 +30,9 @@ export function launchInput({ session = 'sess-1', runId = 'wf_aaa', scriptPath =
 /** A temp world with the folders the hooks read. `addRun` writes the run folder of a session (journal lines, script copy, summary json). */
 export async function world() {
   const root = realpathSync(await mkdtemp(join(tmpdir(), 'wf-resume-')));
-  const paths = { root, registryDir: join(root, 'state', 'workflow-runs'), projectsRoot: join(root, 'claude', 'projects'), estimateDir: join(root, 'state', 'estimate') };
+  // root plays HOME, so a hook spawned with HOME=root finds the same folders the library functions are given.
+  const claude = join(root, '.claude');
+  const paths = { root, registryDir: join(claude, 'state', 'workflow-runs'), projectsRoot: join(claude, 'projects'), estimateDir: join(claude, 'state', 'estimate') };
   const sessionFolder = (session, project = PROJECT) => join(paths.projectsRoot, project, session);
   const addRun = ({ session, runId, lines, finished = false, project = PROJECT, ageMin = 120, script = SCRIPT_TEXT }) => {
     const folder = sessionFolder(session, project);
