@@ -6,7 +6,7 @@ import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync, linkSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync,
 } from 'node:fs';
@@ -376,4 +376,97 @@ test('when a third caller takes the free name before the moved lock is put back,
   assert.equal(outcome, undefined, 'the third caller\'s live lock is waited on');
   assert.equal(readFileSync(lock, 'utf8'), third);
   assert.deepEqual(readdirSync(dir), ['sess-1.lock']);
+});
+
+// Audit of 2ca5bb1 (S1): taking over a stale lock by renaming it aside freed the lock's name, so with several waiters a third caller took
+// it, ran inside the live holder's turn, and the put-back then failed or deleted that holder's lock. Now one waiter at a time breaks a
+// stale lock, behind an O_EXCL `<lock>.break` file.
+const BREAKER_NAME = 'sess-1.lock.break';
+const STALE_LOCK_AGE_MS = 600; // above the 0.5 s a dead holder's lock needs to count as stale
+const WAITERS = 8;
+const STALE_ROUNDS = 40; // each round is its own folder with its own stale lock; the old code overlapped in about 1 round in 8
+const ROUND_MS = 120; // all waiters start a round together: the whole race happens in the first few ms
+const FIRST_ROUND_DELAY_MS = 600; // node start-up of the waiter processes, before round 0
+const TURN_MS = 3; // a turn long enough that an overlapping caller finds the other still inside
+const SESSION_LOCK_URL = new URL('../home/hooks/lib/session-store.mjs', import.meta.url).href;
+const WAITER_SCRIPT = `
+import { closeSync, openSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
+import { withSessionLock } from ${JSON.stringify(SESSION_LOCK_URL)};
+const [root, startAt, rounds, roundMs, turnMs] = process.argv.slice(1);
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const tally = { ran: 0, overlapped: 0 };
+for (let round = 0; round < Number(rounds); round++) {
+  pause(Math.max(0, Number(startAt) + round * Number(roundMs) - Date.now()));
+  const dir = join(root, 'round-' + round);
+  const inside = join(dir, 'inside');
+  withSessionLock(dir, 'sess-1', () => {
+    try {
+      closeSync(openSync(inside, 'wx')); // exists while a turn runs: a second turn at the same time finds it
+    } catch {
+      tally.overlapped++;
+      return;
+    }
+    pause(Number(turnMs));
+    unlinkSync(inside);
+    tally.ran++;
+  });
+}
+console.log(JSON.stringify(tally));
+`;
+
+function runWaiters(root) {
+  const startAt = Date.now() + FIRST_ROUND_DELAY_MS;
+  const args = ['--input-type=module', '-e', WAITER_SCRIPT, root, String(startAt), String(STALE_ROUNDS), String(ROUND_MS), String(TURN_MS)];
+  return Promise.all(Array.from({ length: WAITERS }, () => new Promise((done, fail) => {
+    const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'inherit'] });
+    let out = '';
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.on('error', fail);
+    child.on('close', (code) => (code === 0 ? done(JSON.parse(out)) : fail(new Error(`waiter exited ${code}`))));
+  })));
+}
+
+test('several waiters on one stale lock never run two turns at once', posix, async () => {
+  const root = tempDir('lock-race-');
+  for (let round = 0; round < STALE_ROUNDS; round++) {
+    const dir = join(root, `round-${round}`);
+    mkdirSync(dir, { mode: 0o700 });
+    agedLock(dir, `${deadPid()} ${'a'.repeat(32)}`, STALE_LOCK_AGE_MS);
+  }
+  const tallies = await runWaiters(root);
+  const total = (key) => tallies.reduce((sum, tally) => sum + tally[key], 0);
+  assert.equal(total('overlapped'), 0, 'two turns ran at the same time');
+  assert.ok(total('ran') >= STALE_ROUNDS, 'every round was taken over by someone');
+});
+
+test('a waiter that cannot create <lock>.break treats a stale lock as busy and leaves it where it is', () => {
+  const dir = tempDir('lock-');
+  const lock = agedLock(dir, `${deadPid()} ${'a'.repeat(32)}`, STALE_LOCK_AGE_MS);
+  const breaker = join(dir, BREAKER_NAME);
+  writeFileSync(breaker, OTHER_TOKEN); // another waiter is breaking this lock right now
+  assert.equal(withSessionLock(dir, 'sess-1', () => 'ran'), undefined);
+  assert.deepEqual(readdirSync(dir).sort(), ['sess-1.lock', BREAKER_NAME]);
+  assert.equal(readFileSync(lock, 'utf8').endsWith('a'.repeat(32)), true, 'the stale lock was not touched');
+});
+
+test('a .break file left by a killed waiter is removed once it is stale, and the lock is then taken over', () => {
+  const dir = tempDir('lock-');
+  agedLock(dir, `${deadPid()} ${'a'.repeat(32)}`, STALE_LOCK_AGE_MS);
+  const breaker = join(dir, BREAKER_NAME);
+  writeFileSync(breaker, `${deadPid()} ${'b'.repeat(32)}`);
+  const then = new Date(Date.now() - STALE_LOCK_AGE_MS);
+  utimesSync(breaker, then, then);
+  assert.equal(withSessionLock(dir, 'sess-1', () => 'ran'), 'ran');
+  assert.deepEqual(readdirSync(dir), [], 'neither the lock nor the breaker file is left');
+});
+
+test('a link planted at the .break name is never followed: the store is unusable and the link target is untouched', posix, () => {
+  const dir = tempDir('lock-');
+  agedLock(dir, `${deadPid()} ${'a'.repeat(32)}`, STALE_LOCK_AGE_MS);
+  const victim = join(tempDir('lock-outside-'), 'victim.txt');
+  writeFileSync(victim, 'keep');
+  symlinkSync(victim, join(dir, BREAKER_NAME));
+  assert.equal(withSessionLock(dir, 'sess-1', () => 'ran'), undefined);
+  assert.equal(readFileSync(victim, 'utf8'), 'keep');
 });

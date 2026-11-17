@@ -17,10 +17,15 @@
 //   <session>.lock (or the caller's lockFile name; O_EXCL, O_NOFOLLOW, 0600) in the checked folder holding `<pid> <random token>`.
 //   After the turn it is removed only while it still holds that token. A lock is left behind, and removed, when it is dated more than
 //   LOCK_CLOCK_SKEW_MS ahead (a clock change, a planted file), older than HELD_LOCK_MAX_MS, or older than STALE_LOCK_MS with its pid
-//   gone or no `<pid> <token>` text (a killed holder, an older version's empty lock); it is renamed to a unique name first and
-//   deleted only when that file is the one judged stale, else linked back (removeStaleLock). Worst wait a caller sees: LOCK_WAIT_MS (1 s), after which it stores nothing; after a killed holder the next
-//   caller waits until that lock is STALE_LOCK_MS old (about 0.5 s). Only a send that may be denied (a bounce or advice) takes the lock: a plain allow never
-//   touches the store. A link, FIFO or folder at the lock's name makes the store unusable. Cleanup counts an old lock as a store file too.
+//   gone or no `<pid> <token>` text (a killed holder, an older version's empty lock). One waiter at a time removes such a lock: it
+//   first creates `<lock>.break` (O_EXCL, `<pid> <token>` text); a waiter that cannot create it treats the lock as busy, and the
+//   breaker deletes that file when done (a `.break` file that is stale by the same rule is removed by the next waiter). Under it the
+//   lock is read again and renamed aside only if it is still the one judged stale, so many waiters on one stale lock never delete a
+//   lock another took. Left over: if the stale lock's own holder releases in the instant before the rename and two callers then take
+//   the name, the lock moved aside is deleted (a lost mutual exclusion, not a crash). Worst wait a caller sees: LOCK_WAIT_MS (1 s),
+//   after which it stores nothing; after a killed holder the next caller waits until that lock is STALE_LOCK_MS old (about 0.5 s).
+//   Only a send that may be denied (a bounce or advice) takes the lock: a plain allow never touches the store. A link, FIFO or folder
+//   at the lock's or the breaker's name makes the store unusable. Cleanup counts an old lock or breaker file as a store file too.
 // - Cleanup (on each write unless the caller passes { sweep: false }, which a store of long-lived history uses) removes only
 //   this user's regular files older than 7 days, directly in the checked folder, whose names match STORE_FILE (a
 //   session file or its temp file). It never recurses and never follows a link. Node has no unlinkat, so the folder is checked again
@@ -33,8 +38,8 @@ import {
 import { join } from 'node:path';
 
 const SESSION_ID = /^[A-Za-z0-9_-]{1,100}$/;
-// <session>.json, a temp file a crash left (pid or random hex), or a lock
-const STORE_FILE = /^[A-Za-z0-9_-]{1,100}\.(?:json(?:\.[0-9a-f]{1,16}\.tmp)?|lock)$/;
+// <session>.json, a temp file a crash left (pid or random hex), a lock, or a lock's breaker file
+const STORE_FILE = /^[A-Za-z0-9_-]{1,100}\.(?:json(?:\.[0-9a-f]{1,16}\.tmp)?|lock(?:\.break)?)$/;
 const LOCK_WAIT_MS = 1000; // the longest a hook waits for its turn; a turn (one read, one write) takes about 1 ms
 const LOCK_PAUSE_MS = 2; // between two tries for the lock
 const STALE_LOCK_MS = 500; // no turn takes this long: such a lock was left by a hook killed during its turn
@@ -42,6 +47,7 @@ const LOCK_CLOCK_SKEW_MS = 1000; // a lock's time may run this far ahead of the 
 // A lock whose process still runs is taken only past this age: the slowest turn measured is 185 ms (status.mjs on a 4 MiB
 // STATUS.md), so a live pid on an older lock is a reused pid, not a holder.
 const HELD_LOCK_MAX_MS = 5000;
+const BREAKER_SUFFIX = '.break'; // `<lock>.break`: held by the one waiter that is removing a stale lock
 const LOCK_TOKEN_BYTES = 16; // the random half of the lock's text `<pid> <32 hex>`: release compares it, so it never removes another's lock
 const LOCK_TEXT_MAX_BYTES = 64; // `<pid> <32 hex>` is at most 43 bytes
 const LOCK_OWNER = /^(\d{1,10}) [0-9a-f]{32}$/;
@@ -223,8 +229,8 @@ function isStale(held, nowMs) {
 }
 
 /**
- * Removes a lock that was left behind (see isStale) through removeStaleLock, so a lock another caller took meanwhile is never removed.
- * @returns {boolean} false when something other than this user's regular file holds the lock's name
+ * Removes a lock that was left behind (see isStale), one waiter at a time (breakStaleLock).
+ * @returns {boolean} false when something other than this user's regular file holds the lock's or its breaker's name
  */
 function clearStaleLock(dir, folder, lock) {
   const seen = lstatOrNull(lock);
@@ -234,16 +240,45 @@ function clearStaleLock(dir, folder, lock) {
   if (held === null) return true;
   if (!isPrivateFile(held.stats)) return false; // swapped after the lstat
   if (!isStale(held, Date.now())) return true;
-  if (sameNode(lstatSync(dir), folder)) removeStaleLock(lock, held);
+  return !sameNode(lstatSync(dir), folder) || breakStaleLock(lock, held);
+}
+
+/**
+ * Removes the lock judged stale (held) while holding `<lock>.break`, so no other waiter renames anything at the lock's name at the
+ * same time. A waiter that cannot take the breaker file leaves the lock for its holder (a busy lock for it); a breaker file that is
+ * stale itself (a waiter killed here) is removed.
+ * @returns {boolean} false when something other than this user's regular file sits at the breaker's name
+ */
+function breakStaleLock(lock, held) {
+  const breaker = `${lock}${BREAKER_SUFFIX}`;
+  const token = `${process.pid} ${randomBytes(LOCK_TOKEN_BYTES).toString('hex')}`;
+  if (!takeLock(breaker, token)) return clearStaleBreaker(breaker);
+  try {
+    const again = readLock(lock); // another waiter may have replaced the stale lock before this one got the breaker
+    if (again !== null && sameNode(again.stats, held.stats) && again.text === held.text) removeStaleLock(lock, held);
+  } finally {
+    if (holdsToken(breaker, token)) rmSync(breaker, { force: true });
+  }
+  return true;
+}
+
+/** @returns {boolean} false when something other than this user's regular file sits at the breaker's name; a stale breaker is removed */
+function clearStaleBreaker(breaker) {
+  const seen = readLock(breaker);
+  if (seen === null) return true;
+  if (!isPrivateFile(seen.stats)) return false;
+  if (!isStale(seen, Date.now())) return true;
+  const again = readLock(breaker); // not removed if another waiter replaced it since
+  if (again !== null && sameNode(again.stats, seen.stats) && again.text === seen.text) rmSync(breaker, { force: true });
   return true;
 }
 
 /**
  * Removes the lock judged stale (held) with no gap between the check and the delete: it is renamed to a unique name first (one
- * atomic step, after which a new lock can no longer be lost under the old name), then checked and deleted. When the renamed file is
- * not the one judged stale (another waiter removed that one and took the lock just before), it is linked back at once; only when a
- * third caller took the free name in that instant does that waiter's lock stay lost (its release never removes the new one).
- * @throws EEXIST when that third caller took the name; any other error of the rename (but ENOENT), the read or the link
+ * atomic step), then checked and deleted. Only the holder of the breaker file calls this. When the renamed file is not the one judged
+ * stale (its holder released and a new caller took the lock in the instant since breakStaleLock read it), it is linked back at once.
+ * @throws EEXIST when a third caller took the free name meanwhile (the moved lock is then gone); any other error of the rename (but
+ *   ENOENT), the read or the link
  */
 function removeStaleLock(lock, held) {
   const aside = `${lock}.${randomBytes(TEMP_NAME_BYTES).toString('hex')}.stale`;
@@ -256,7 +291,7 @@ function removeStaleLock(lock, held) {
   try {
     const moved = readLock(aside);
     const judged = moved !== null && sameNode(moved.stats, held.stats) && moved.text === held.text;
-    // another waiter's live lock: back under its name (same file, same mtime); EEXIST (a third caller took the name) throws, and
+    // a live lock moved by mistake: back under its name (same file, same mtime); EEXIST (a third caller took the name) throws, and
     // withSessionLock then gives up as for a busy lock
     if (!judged) linkSync(aside, lock);
   } finally {
