@@ -8,53 +8,19 @@
 // CLAUDE_PROJECT_DIR (each side resolved with realpathSync.native, the case on disk; outside both: exit 0, no stderr line). That narrows a wrong target, it does not
 // rule one out: a subagent shares the session id, so its status.mjs edit moves the link, and a cwd or project dir high up (such
 // as ~) holds every project below it.
+// The lookup of that file and its safety checks live in lib/status-file-of.mjs (git-tidy-gate.mjs reads the same file).
 // Safety (the hook edits a file named in a state file): the stdin JSON is read up to MAX_INPUT_BYTES; the linked path must be
 // absolute and named STATUS.md, its folder must be its own real path (no link anywhere in the chain), the file a regular file
 // (lstat, never followed) of at most MAX_STATUS_BYTES; status.mjs then edits it under its lock with its own link refusal.
 // Stop hooks of one group run side by side, so this one assumes nothing about the others.
-import { lstatSync, realpathSync } from 'node:fs';
-import { basename, dirname, sep } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { isSessionId } from './lib/session-store.mjs';
-import { linkedStatusPath, stateDir as defaultStateDir } from '../tools/estimate/lib/table-store.mjs';
+import { statusFileOf } from './lib/status-file-of.mjs';
+import { stateDir as defaultStateDir } from '../tools/estimate/lib/table-store.mjs';
 import { runStatus } from '../tools/status/status.mjs';
-import { MAX_STATUS_BYTES } from '../tools/status/status-file.mjs';
 
 const MAX_INPUT_BYTES = 1 << 20; // 1 MiB: the Stop JSON carries the last reply; a larger input is not a normal stop and is skipped
-const STATUS_NAME = 'STATUS.md';
-
-/** Why the linked path may not be edited, or null when it is a plain STATUS.md in a folder reached without links. */
-function unsafeReason(path) {
-  if (basename(path) !== STATUS_NAME) return 'is not a STATUS.md';
-  let stats;
-  try {
-    if (realpathSync(dirname(path)) !== dirname(path)) return 'sits behind a link in its folder path';
-    stats = lstatSync(path);
-  } catch (error) {
-    return `cannot be read (${error.code ?? error.message})`;
-  }
-  if (!stats.isFile()) return 'is a link or not a regular file';
-  if (stats.size > MAX_STATUS_BYTES) return `is over ${MAX_STATUS_BYTES} bytes`;
-  return null;
-}
-
-/**
- * True when folder is root or below it, both resolved with realpathSync.native: it returns the case stored on disk, while the JS
- * realpath keeps the typed case, so on a case-insensitive disk (macOS, Windows) a cwd typed in another case still matches.
- * False for a root that is not a string or does not resolve.
- */
-function isWithin(folder, root) {
-  if (typeof root !== 'string' || root === '') return false;
-  let real;
-  let realFolder;
-  try {
-    real = realpathSync.native(root);
-    realFolder = realpathSync.native(folder);
-  } catch {
-    return false; // a cwd or project dir that does not resolve holds nothing
-  }
-  return realFolder === real || realFolder.startsWith(real.endsWith(sep) ? real : `${real}${sep}`);
-}
 
 /**
  * Runs `deliver --auto` on the session's linked STATUS.md when it lies inside the Stop input's cwd or the project dir.
@@ -65,16 +31,10 @@ function isWithin(folder, root) {
  *   when the input has no usable session id or the session linked no STATUS.md
  */
 export function deliverAtStop(input, { stateDir, now, projectDir }) {
-  const sessionId = input?.session_id;
-  if (!isSessionId(sessionId)) return null;
-  const path = linkedStatusPath(stateDir, sessionId);
-  if (path === null) return null;
-  const unsafe = unsafeReason(path);
-  if (unsafe !== null) return { code: 1, message: `the linked ${path} ${unsafe}: refused` };
-  if (!isWithin(dirname(path), input.cwd) && !isWithin(dirname(path), projectDir)) {
-    return { code: 0, message: `the linked ${path} is outside this session's cwd and project dir: no hand-over written` };
-  }
-  return runStatus(['--file', path, 'deliver', '--auto'], { cwd: dirname(path), now, sessionId, stateDir });
+  const found = statusFileOf(input, { stateDir, projectDir });
+  if (found === null || found.path === undefined) return found;
+  const { path } = found;
+  return runStatus(['--file', path, 'deliver', '--auto'], { cwd: dirname(path), now, sessionId: input.session_id, stateDir });
 }
 
 /** The stdin text, or null when it is longer than MAX_INPUT_BYTES. */

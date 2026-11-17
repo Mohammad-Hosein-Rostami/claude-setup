@@ -37,7 +37,7 @@ import { withSessionLock } from './lib/session-lock.mjs';
 import { readSessionFile, writeSessionFile } from './lib/session-store.mjs';
 import { changedSinceBaseline, hasBaseline, saveBaseline } from './lib/dirty-baseline.mjs';
 import { LEAD, isRecordedEntry, realPathOf, recordEditedFile, recordedPaths, statusEntries } from './lib/own-edits.mjs';
-import { gatedFolder, gitOut, gitSucceeds, gitText, worktreeOf } from './lib/gated-folder.mjs';
+import { gatedFolder, gitOut, gitSucceeds, gitText, namesFilterProgram, worktreeOf } from './lib/gated-folder.mjs';
 
 const PASS = Object.freeze({ block: false });
 const BASE_BRANCHES = new Set(['main', 'master', 'develop']);
@@ -47,19 +47,8 @@ const STATES_KEPT = 50; // dirty states remembered per session; older ones may b
 const MAX_STORE_BYTES = 16 * 1024;
 const MAX_CHAINED_BLOCKS = 2; // blocks given to continued stops in a row, a hard bound on how long a stop can be held
 const BRANCH_POSITIONS_CHECKED = 50; // reflog entries searched for the index (as git-tidy's stale-checkout)
-const REPOSITORY_SCOPES = new Set(['local', 'worktree']); // config that comes with the repository, not the owner's own
 
 const stateDir = (env) => join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'commit-gate');
-
-/** True when the repository's own config (includes followed) defines a filter, or cannot be read: status would run it. */
-function namesFilterProgram(top) {
-  const list = gitOut(top, ['config', '--list', '--name-only', '--show-scope']);
-  if (list === null) return true;
-  return list.split('\n').some((line) => {
-    const [scope, key = ''] = line.split('\t');
-    return REPOSITORY_SCOPES.has(scope) && key.toLowerCase().startsWith('filter.');
-  });
-}
 
 function hasLanes(top) {
   const list = gitOut(top, ['worktree', 'list', '--porcelain']);

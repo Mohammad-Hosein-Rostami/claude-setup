@@ -1,7 +1,7 @@
 // The folder whose git state a Stop or SubagentStop gate looks at, and the hardened git calls that read it. Shared by commit-gate.mjs and
 // git-tidy-gate.mjs.
 // Exports: runGit, gitOut, gitSucceeds, gitText (git in a folder, hardened), startFolder(transcriptPath), gatedFolder(input, env),
-// worktreeOf(folder).
+// worktreeOf(folder), namesFilterProgram(top).
 // Invariants:
 // - gatedFolder is the session's own worktree folder: for the main session CLAUDE_PROJECT_DIR, for a subagent the first `cwd` of its
 //   transcript (null for an agent that cannot write files). Never the hook input's cwd: a folder the session only cd'd into may be
@@ -19,6 +19,7 @@ const TRANSCRIPT_HEAD_BYTES = 4 * 1024 * 1024; // the first transcript line hold
 const REPOSITORY_VARIABLES = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'];
 // config that would make a read-only git call run a program; given on the command line, so it beats the repository's own config
 const HARDENED = ['-c', 'core.fsmonitor=false', '-c', 'safe.bareRepository=explicit', '-c', `core.hooksPath=${devNull}`];
+const REPOSITORY_SCOPES = new Set(['local', 'worktree']); // config that comes with the repository, not the owner's own
 const READ_ONLY_BUILT_INS = new Set(['Explore', 'Plan']);
 
 /** git in `cwd`, hardened, without the variables that point at another repository and without taking optional locks. */
@@ -84,4 +85,14 @@ export function worktreeOf(folder) {
   if (out === null) return null;
   const [top, gitDir, branch] = out.trim().split('\n');
   return top && gitDir && branch ? { top, gitDir, branch } : null;
+}
+
+/** True when the repository's own config (includes followed) defines a filter, or cannot be read: status would run it. */
+export function namesFilterProgram(top) {
+  const list = gitOut(top, ['config', '--list', '--name-only', '--show-scope']);
+  if (list === null) return true;
+  return list.split('\n').some((line) => {
+    const [scope, key = ''] = line.split('\t');
+    return REPOSITORY_SCOPES.has(scope) && key.toLowerCase().startsWith('filter.');
+  });
 }
