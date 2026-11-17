@@ -21,7 +21,7 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 | `settings/` | `base.json` plus one file per OS. They are merged into `~/.claude/settings.json`. |
 | `plugins/` | The list of plugins to install. |
 | `tools/` | System programs to install (`Brewfile`, `windows-tools.ps1`); not the same as `home/tools/`. |
-| `.githooks/` | The pre-commit hook (runs the tests and gitleaks). It only runs after `scripts/install.sh` sets `core.hooksPath`. |
+| `.githooks/` | The pre-commit hook (gitleaks and the tests the staged files can affect) and the pre-push hook (the full suite, skipped when that tree already passed it). They only run after `scripts/install.sh` sets `core.hooksPath`. |
 | `scripts/` | `install.sh`, `install.ps1` and `doctor.sh`. |
 | `tests/` | The test suite (`node:test`). |
 | `docs/` | The documents for people. Start with `catalog.md` for a list of everything. |
@@ -77,8 +77,13 @@ From the repo root:
 
     node --test tests/*.test.mjs
 
-Never run bare `node --test`. The `ui-check` tool has its own tests: `pnpm --dir home/tools/ui-check test`. The
-pre-commit hook runs the suite and gitleaks, so a commit with a failing test is refused.
+Never run bare `node --test`. The `ui-check` tool has its own tests: `pnpm --dir home/tools/ui-check test`.
+
+While you work, run only the tests a change can break: `node scripts/affected-tests.mjs <path>... --run` (or `--staged`, or
+`--base main`). The pre-commit hook does this for the staged files, so a commit with a failing affected test is refused; when
+the script cannot tell which tests a file reaches it names the whole suite. The full suite runs when a branch lands: run
+`node home/tools/test-pass/test-pass.mjs run --suite` on the rebased tip, which records the pass per tree, and the pre-push
+hook then skips a second run on the same tree.
 
 ## Check a project for readability
 
