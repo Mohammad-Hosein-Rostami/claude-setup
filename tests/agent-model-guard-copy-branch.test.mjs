@@ -4,13 +4,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { copyBranchBriefDeny } from '../home/hooks/agent-model-guard.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
 import { hookEnv } from './hook-env.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const SEND_AGAIN = 'Send the same call again unchanged and it runs.';
 const GUARD = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
@@ -20,8 +20,8 @@ const GIT_TIMEOUT_FOR_TESTS_MS = 60_000; // the suite runs beside other work; th
 
 /** A private HOME holding the named skills; send(toolInput, extra) runs the hook once and returns the parsed hookSpecificOutput or null. */
 function session({ skills = SKILLS, envExtra = {}, settings } = {}) {
-  const home = mkdtempSync(join(tmpdir(), 'copy-brief-home-'));
-  const project = mkdtempSync(join(tmpdir(), 'copy-brief-project-'));
+  const home = makeTempDir('copy-brief-home-');
+  const project = makeTempDir('copy-brief-project-');
   for (const name of skills) {
     mkdirSync(join(home, '.claude', 'skills', name), { recursive: true });
     writeFileSync(join(home, '.claude', 'skills', name, 'SKILL.md'), `---\nname: ${name}\n---\n`);

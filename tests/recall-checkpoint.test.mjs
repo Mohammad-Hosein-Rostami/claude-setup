@@ -3,8 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handleCheckpointHook } from '../home/hooks/checkpoint.mjs';
@@ -18,6 +17,7 @@ import { readSlice } from '../home/tools/recall/lib/slice.mjs';
 import { openStore } from '../home/tools/recall/lib/store.mjs';
 import { run } from './recall-helpers.mjs';
 import { bigTranscript, fakeStack } from './recall-fakes.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const THRESHOLD_BYTES = 40000 * 3.5;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -393,7 +393,7 @@ test('a failing run drops a pending request and still releases the lock', async 
 // Doctor once warned "recall: last checkpoint error: x: ENOENT ... stat 'y'": a `checkpoint-job.mjs x y ...` run with the real HOME wrote its
 // error into the owner's ~/.claude/recall. The job takes its state folder from RECALL_STATE_DIR, RECALL_DB, or else HOME, so a run under a fake HOME must stay there.
 test('the checkpoint job run on a missing transcript saves its error under HOME and leaves the real state alone', () => {
-  const fakeHome = mkdtempSync(join(tmpdir(), 'checkpoint-home-'));
+  const fakeHome = makeTempDir('checkpoint-home-');
   const env = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome };
   delete env.RECALL_DB;
   delete env.RECALL_STATE_DIR;
