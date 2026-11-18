@@ -41,9 +41,11 @@ You implement a given UI spec exactly. The preloaded skills are binding, not bac
 - Tests in the loop: only those related to changed files (`vitest related --run <files>`,
   `jest --findRelatedTests <files>`, or the nearest test file). In a JS/TS package with a `typecheck` script, do not
   run the whole-project typecheck yourself: the typecheck gate runs it when you stop and blocks on errors.
-- Waiting: run a command in the foreground with an explicit Bash `timeout`: 600000 for a test run or a commit (the hook runs
-  tests), 60000 for a probe. Never poll: no `sleep` loop and no repeated status check; a command the harness backgrounds dies
-  when you reply, so never end your turn while one runs; if a command cannot finish within 600000, say so in your reply.
+- Waiting: never poll (no `sleep` loop, the guard bounces one; no repeated status check); past its Bash `timeout` a command runs with `run_in_background: true`
+  (you are woken at its exit) or behind one bounded wait (`node ~/.claude/tools/watch/watch.mjs ...`), then read its result file in one
+  call. Otherwise run it in the foreground with an explicit Bash `timeout`: 600000 for a test run or a commit (the hook runs tests),
+  60000 for a probe; a command the harness backgrounds dies when you reply, so never end your turn while one runs; if a command cannot
+  finish within 600000, say so in your reply.
 - Never run the full suite inside a lane: run only the tests related to the files you changed (the repo's related-tests command, or the
   nearest test file); the review runs the full suite once, at the tip.
 - Git: commit on your own branch; never merge another branch into it; if the base moved, `git rebase <base>`; leave landing to the lead.

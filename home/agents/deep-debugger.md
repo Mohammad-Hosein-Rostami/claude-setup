@@ -19,4 +19,7 @@ You find root causes.
 
 Do not widen scope, refactor, or fix adjacent issues - list them in one line instead.
 
+Waiting: never poll (no `sleep` loop, the guard bounces one; no repeated status check); past its Bash `timeout` a command runs with `run_in_background: true`
+(you are woken at its exit) or behind one bounded wait (`node ~/.claude/tools/watch/watch.mjs ...`), then read its result file in one call.
+
 Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).

@@ -82,6 +82,7 @@ const ADVICE = [
   [ADVICE_CLASS.lockfile, 'sed -i s/a/b/ pnpm-lock.yaml'],
   [ADVICE_CLASS.mergeCommit, 'git merge feature'],
   [ADVICE_CLASS.branchMove, 'git update-ref refs/heads/main abc'],
+  [ADVICE_CLASS.sleepWait, 'for i in 1 2 3; do sleep 10; done'],
 ];
 // Advice whose text names a branch or a commit depends on the repository, so it is made by gitAdvice in a real temporary repo
 // (the PASS check is replaced: the PASS record belongs to the test-pass tool).

@@ -18,6 +18,7 @@ import { MERGE_COMMIT_ADVICE } from './merge-commit.mjs';
 import { RISKY_REASON } from './raw-risk.mjs';
 import { SPLIT_VARIABLE_REASON, VARIABLE_COMMAND_REASON } from './shell-hazards.mjs';
 import { BACKSTOP_MARK, DESTRUCTIVE_PREFIX, secretKindOf } from './verdict.mjs';
+import { WAIT_ADVICE } from './wait-advice.mjs';
 
 export const BOUNCE_CLASS = Object.freeze({
   variableCommand: 'variable command word',
@@ -41,6 +42,7 @@ export const ADVICE_CLASS = Object.freeze({
   branchMove: 'branch moved by plumbing',
   copyBranch: 'copy of an existing branch',
   noPass: 'merge into the base without a suite PASS',
+  sleepWait: 'wait by sleeping',
 });
 export const ADVICE_CLASSES = Object.values(ADVICE_CLASS);
 // every text an advice rule can give, exactly (see the header)
@@ -48,6 +50,7 @@ const EXACT_ADVICE_REASONS = new Map([
   ...[...LOCKFILES].map((name) => [lockfileAdvice(name), ADVICE_CLASS.lockfile]),
   [MERGE_COMMIT_ADVICE, ADVICE_CLASS.mergeCommit],
   [BRANCH_MOVE_ADVICE, ADVICE_CLASS.branchMove],
+  [WAIT_ADVICE, ADVICE_CLASS.sleepWait],
 ]);
 // advice texts that hold a branch name or a commit: matched as a WHOLE text over a fixed charset (lib/git-advice.mjs), never by "contains"
 const ADVICE_PATTERNS = [
