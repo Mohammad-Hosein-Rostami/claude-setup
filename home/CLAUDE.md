@@ -10,7 +10,7 @@ Setup modes: `normal`, `medium` (default), `high`, `extra-high`, `ultra-high`; s
 
 ## Finish the run (no hard limits)
 
-- No turn, step or attempt caps: agents have no `maxTurns`, rules set no retry counts. A run ends when the task is
+- No turn, step or attempt caps: agents have no `maxTurns`, rules set no retry counts. This covers a project's team agent files too: when `.claude/agents/*.md` sets `maxTurns`, remove it in that project without asking (owner's standing order) and say so in one line. A run ends when the task is
   done and no decision is left unasked; the user's decisions are asked as they come up, not left for the end.
 - Report sizes (`≤ N lines`) size the summary, not the work. When the detail matters, write it to a file and return
   the path.
