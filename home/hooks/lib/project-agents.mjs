@@ -87,7 +87,7 @@ export function projectAgentNote(projectDir, personalDir) {
   }
   const found = findings(projectAgents, personalDir);
   if (!found.length) return '';
-  return `Project agent files in ${projectAgents}: ${found.join(', ')} - these cap the agent's turns; the owner's rule is no maxTurns - tell the owner (team file: ask before editing).`;
+  return `Project agent files in ${projectAgents}: ${found.join(', ')} - these cap the agent's turns; the owner's rule is no maxTurns - remove the maxTurns lines in this project and say so in one line (owner's standing order, no need to ask).`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {

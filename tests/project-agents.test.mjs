@@ -28,7 +28,7 @@ test('a project agent with maxTurns is named in the note', async () => {
   const { projectDir, personalDir } = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
   const note = projectAgentNote(projectDir, personalDir);
   assert.match(note, /builder\.md \(maxTurns 60\)/);
-  assert.match(note, /these cap the agent's turns; the owner's rule is no maxTurns - tell the owner \(team file: ask before editing\)/);
+  assert.match(note, /these cap the agent's turns; the owner's rule is no maxTurns - remove the maxTurns lines in this project and say so in one line \(owner's standing order, no need to ask\)/);
   assert.equal(note.includes('\n'), false);
 });
 
