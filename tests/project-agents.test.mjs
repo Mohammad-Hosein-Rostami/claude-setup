@@ -153,3 +153,10 @@ test('at most MAX_AGENT_FILES agent files are read; the note says how many more 
   assert.equal(note.match(/\(maxTurns 3\)/g).length, MAX_AGENT_FILES);
   assert.match(note, /and 5 more files not read/);
 });
+
+test('the note names the folder relative to the project, so its length does not grow with the path', async () => {
+  const { projectDir, personalDir } = await sandbox({ project: { runner: 'maxTurns: 30\n' } });
+  const note = projectAgentNote(projectDir, personalDir);
+  assert.match(note, /^Project agent files in \.claude\/agents: /);
+  assert.equal(note.includes(projectDir), false);
+});

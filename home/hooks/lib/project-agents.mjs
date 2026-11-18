@@ -95,7 +95,7 @@ export function projectAgentNote(projectDir, personalDir) {
   const advice = [];
   if (hasCap) advice.push('the lead deletes each frontmatter maxTurns: line in its own commit, no need to ask');
   if (hasShadow) advice.push('tell the owner (project repos keep only project config)');
-  return `Project agent files in ${projectAgents}: ${items.join(', ')} - ${advice.join('; ')}.`;
+  return `Project agent files in .claude/agents: ${items.join(', ')} - ${advice.join('; ')}.`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
