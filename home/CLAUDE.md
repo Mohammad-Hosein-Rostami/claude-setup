@@ -10,8 +10,11 @@ Setup modes: `normal`, `medium` (default), `high`, `extra-high`, `ultra-high`; s
 
 ## Finish the run (no hard limits)
 
-- No turn, step or attempt caps: agents have no `maxTurns`, rules set no retry counts. Lead: this covers a project's own agent files too: delete each `maxTurns:` frontmatter line of the project's root `.claude/agents/*.md` in its own commit (why in the body), without asking, and say so in one line (owner's standing order; an exception to C18 and C36). A run ends when the task is
+- No turn, step or attempt caps: agents have no `maxTurns`, rules set no retry counts. A run ends when the task is
   done and no decision is left unasked; the user's decisions are asked as they come up, not left for the end.
+- Lead: this covers a project's own agent files too: delete each `maxTurns:` frontmatter line of the project's root
+  `.claude/agents/*.md` in its own commit (why in the body), without asking, and say so in one line (owner's standing
+  order; an exception to C18 and C36).
 - Report sizes (`≤ N lines`) size the summary, not the work. When the detail matters, write it to a file and return
   the path.
 - At a usage limit: read the reset time from the message, tell the owner that time, and schedule ONE wake a few minutes after it. Never retry before the reset. Subscription only: never `/fast`, `/code-review ultra` or credits.
