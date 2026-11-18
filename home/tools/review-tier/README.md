@@ -6,13 +6,14 @@ and mutants; the only thing the plan replaces is a full-suite re-run (the test-p
 `waivable` (below): the Opus max pair of a clean tier-1 landing moves from before land to after it. Node 22, no
 dependencies; it reads git and writes one log line.
 
-Run: `node ~/.claude/tools/review-tier/review-tier.mjs [<range>] [--landing] [--delta <reviewed-sha>] [--lane-classes <file>] [--add-class <c>]... [--base <b>] [--json]`
+Run: `node ~/.claude/tools/review-tier/review-tier.mjs [<range>] [--landing] [--delta <reviewed-sha> [--prior <file>]] [--lane-classes <file>] [--add-class <c>]... [--base <b>] [--json]`
 
 | Argument | Meaning |
 | -------- | ------- |
 | `<range>` | `a..b` or `a...b`. Default `<base>...HEAD`, the base being the first of main, master, develop. |
 | `--landing` | The last review before the base moves: adds the Opus max lens, the auditor at Opus max (tier 1 and up) and a mutation plan for a code diff. |
 | `--delta <sha>` | A fix round: only what changed since the reviewed sha. A sha that is no longer an ancestor (a rebased lane) lists only the lane commits whose patch the reviewed set does not hold. Callers of the changed functions (named on an added line or in the `@@` hunk header, so a fix inside a body counts) and the definitions the changed lines call (at most 20 `file:line` together) go in as required reading. |
+| `--prior <file>` | With `--delta` only (otherwise exit 2; an unreadable file is exit 2). The findings file of the previous round. Every review of a delta round starts with one ready line: `Delta review: <sha>..HEAD only, plus callers of changed lines; prior findings file: <abs path or none> - mark each closed/open; do not re-review unchanged lines; do not re-run the full suite (PASS record covers it).` Paste the brief as it is; the agents' Delta mode section reads it. The JSON has `priorFile`. |
 | `--lane-classes <file>` | The `--json` of the previous round. Each file keeps the classes (and the plan kind) it had in the lane, so a small fix to a file that was concurrency code still gets the stress plan. |
 | `--add-class <c>` | The lead raises the set: adds that class's reviews and plan. It never removes one. An unknown class is exit 2. |
 

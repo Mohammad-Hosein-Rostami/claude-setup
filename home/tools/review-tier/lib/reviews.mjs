@@ -59,8 +59,12 @@ function planText(plan) {
 
 const hitText = (hit) => (hit.line > 0 ? `${hit.path}:${hit.line}` : hit.path);
 
-function briefOf({ range, deltaOf, rules, hits, plan, requiredReading }) {
-  const parts = [deltaOf === null ? `Review ${range}.` : `Review ${range} (delta of ${deltaOf.slice(0, 8)}; each file keeps the lane's classes).`, `Rules: ${rules}.`];
+/** The ready line of a fix-round re-review: the delta range, the prior findings to close, and what not to redo. */
+const deltaLine = (deltaOf, priorFile) => `Delta review: ${deltaOf}..HEAD only, plus callers of changed lines; prior findings file: ${priorFile ?? 'none'} - mark each closed/open; do not re-review unchanged lines; do not re-run the full suite (PASS record covers it).`;
+
+function briefOf({ range, deltaOf, priorFile, rules, hits, plan, requiredReading }) {
+  const parts = [`Review ${range}.`, `Rules: ${rules}.`];
+  if (deltaOf !== null) parts.splice(1, 0, deltaLine(deltaOf, priorFile), "Each file keeps the lane's classes.");
   const shown = [...new Set(hits.slice(0, MAX_BRIEF_HITS).map((hit) => `${hit.class} ${hitText(hit)}`))];
   if (shown.length > 0) parts.push(`Hits: ${shown.join(', ')}.`);
   const text = planText(plan);
@@ -69,14 +73,14 @@ function briefOf({ range, deltaOf, rules, hits, plan, requiredReading }) {
   return parts.join(' ');
 }
 
-const reviewMaker = ({ range, deltaOf, requiredReading }) => (agent, model, effort, lens, rules, plan, ownHits) => ({
-  agent, model, effort, lens, rules, brief: briefOf({ range, deltaOf, rules, hits: ownHits, plan, requiredReading }), requiredReading, plan,
+const reviewMaker = ({ range, deltaOf, priorFile, requiredReading }) => (agent, model, effort, lens, rules, plan, ownHits) => ({
+  agent, model, effort, lens, rules, brief: briefOf({ range, deltaOf, priorFile, rules, hits: ownHits, plan, requiredReading }), requiredReading, plan,
 });
 
 const uiSkillReview = (range) => ({ agent: 'skill', model: null, effort: null, lens: 'ui-quality-pass', rules: '', brief: `Run the ui-quality-pass skill on the ui files of ${range}.`, requiredReading: [], plan: NO_PLAN });
 
 /**
- * @param {object} input classes (Set), fileClasses, hits, landing, range, deltaOf, requiredReading, hasCode, changedLines, fileCount
+ * @param {object} input classes (Set), fileClasses, hits, landing, range, deltaOf, priorFile, requiredReading, hasCode, changedLines, fileCount
  * @returns {object[]} reviews, in the order of the spec's `run together` list
  */
 export function buildReviews(input) {

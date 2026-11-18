@@ -25,7 +25,7 @@ const principlesOf = (triggers) => [...new Set([...triggers].flatMap((trigger) =
  *   range, deltaOf, requiredReading
  * @returns {object} the JSON of section 9
  */
-export function buildReport({ files, readNewFile, landing, addClasses, laneClasses, range, deltaOf, requiredReading }) {
+export function buildReport({ files, readNewFile, landing, addClasses, laneClasses, range, deltaOf, priorFile = null, requiredReading }) {
   const { fileClasses: fresh, hits, changedLines, triggers } = classifyFiles(files, readNewFile);
   const fileClasses = {};
   for (const [path, names] of Object.entries(fresh)) fileClasses[path] = union(names, laneClasses?.[path] ?? []);
@@ -34,7 +34,7 @@ export function buildReport({ files, readNewFile, landing, addClasses, laneClass
   const added = addClasses.filter((name) => !classes.has(name));
   for (const name of addClasses) classes.add(name);
   const hasCode = files.some((file) => isCodeFile(file.path));
-  const reviewInput = { classes, fileClasses, hits, landing, range, deltaOf, requiredReading, hasCode, changedLines, fileCount: files.length };
+  const reviewInput = { classes, fileClasses, hits, landing, range, deltaOf, priorFile, requiredReading, hasCode, changedLines, fileCount: files.length };
   return {
     tier: tierOf(classes),
     classes: Object.keys(CLASS_TIER).filter((name) => classes.has(name)),
@@ -50,6 +50,7 @@ export function buildReport({ files, readNewFile, landing, addClasses, laneClass
     weakened: weakenedChecks(files),
     principles: principlesOf(triggers),
     deltaOf,
+    priorFile,
   };
 }
 

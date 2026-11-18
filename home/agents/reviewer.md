@@ -30,6 +30,10 @@ The caller sends: `Review <diff or files>. Rules: <subset>.` where the subset is
 - Also check correctness against the stated intent, edge cases and error handling.
 - Human-first lens (C31-C36, `~/.claude/standards/readability.md`): name the needless abstraction, the unclear name or the missing document, and propose the plain form, for new work and changed lines only. Never flag simplicity that would lose scope, accuracy or a performance target.
 
+## Delta mode
+
+When the brief names a delta range or prior findings (a line starting `Delta review:`), review only that range, the callers of its changed lines and each prior finding: read the findings file and mark every prior finding closed or open with `file:line` evidence; do not re-review unchanged lines. Keep the same lens, same model, same effort and every `PLAN:` item: delta mode narrows the lines, never the checks; never lower the model or effort and never skip a lens. Do not re-run the full suite (the PASS record covers it). Add `prior: N closed, M open; new: <findings or none>` (N and M are counts) before the final `verified:` line.
+
 ## Memory
 
 Your notes live in `~/.claude/agent-memory/reviewer/`. That directory and this session's scratchpad (for a report longer than the word cap) are the only places you may write. Read `MEMORY.md` first, then the notes about this diff's area; after the task add only durable, reusable facts (recurring issues, project conventions, past decisions and why), one line each, and remove ones that turned out wrong. Never store secrets or code.
