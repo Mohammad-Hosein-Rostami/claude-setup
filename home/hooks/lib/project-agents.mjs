@@ -87,7 +87,14 @@ export function projectAgentNote(projectDir, personalDir) {
   }
   const found = findings(projectAgents, personalDir);
   if (!found.length) return '';
-  return `Project agent files in ${projectAgents}: ${found.join(', ')} - these cap the agent's turns; the owner's rule is no maxTurns - remove the maxTurns lines in this project and say so in one line (owner's standing order, no need to ask).`;
+  const advice = [];
+  if (found.some((item) => item.includes('maxTurns'))) {
+    advice.push("maxTurns caps the agent's turns: the lead deletes each maxTurns: line in its own commit, no need to ask (owner's standing order)");
+  }
+  if (found.some((item) => item.includes('shadows'))) {
+    advice.push('a shadowing copy replaces the personal agent: tell the owner (project repos keep only project-related config)');
+  }
+  return `Project agent files in ${projectAgents}: ${found.join(', ')} - ${advice.join('; ')}.`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {

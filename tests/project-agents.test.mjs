@@ -28,7 +28,8 @@ test('a project agent with maxTurns is named in the note', async () => {
   const { projectDir, personalDir } = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
   const note = projectAgentNote(projectDir, personalDir);
   assert.match(note, /builder\.md \(maxTurns 60\)/);
-  assert.match(note, /these cap the agent's turns; the owner's rule is no maxTurns - remove the maxTurns lines in this project and say so in one line \(owner's standing order, no need to ask\)/);
+  assert.match(note, /maxTurns caps the agent's turns: the lead deletes each maxTurns: line in its own commit, no need to ask/);
+  assert.doesNotMatch(note, /shadowing copy/);
   assert.equal(note.includes('\n'), false);
 });
 
@@ -38,6 +39,7 @@ test('a project agent that shadows a personal agent is named, with or without ma
   assert.match(note, /runner\.md \(shadows the personal agent\)/);
   assert.match(note, /reviewer\.md \(maxTurns 30, shadows the personal agent\)/);
   assert.doesNotMatch(note, /builder/);
+  assert.match(note, /a shadowing copy replaces the personal agent: tell the owner/);
 });
 
 test('no note for clean project agents, no agents folder, or maxTurns only in the body', async () => {
@@ -61,7 +63,7 @@ function runModeHook(home, projectDir, source = 'startup') {
 
 test('the SessionStart mode hook prints the note for a capped project agent and stays quiet otherwise', async () => {
   const capped = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
-  assert.match(runModeHook(capped.home, capped.projectDir).stdout, /builder\.md \(maxTurns 60\).*no maxTurns/);
+  assert.match(runModeHook(capped.home, capped.projectDir).stdout, /builder\.md \(maxTurns 60\).*deletes each maxTurns: line/);
   const clean = await sandbox({ project: { builder: '' } });
   assert.doesNotMatch(runModeHook(clean.home, clean.projectDir).stdout, /maxTurns/);
 });
