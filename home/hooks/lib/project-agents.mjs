@@ -52,11 +52,14 @@ function agentFiles(dir) {
   }
 }
 
-/** One finding per project agent file that sets maxTurns or shares its name with a personal agent, plus how many files were not read. */
+/**
+ * One finding per project agent file that sets maxTurns or shares its name with a personal agent, plus how many files were not read.
+ * The flags say which reasons were found: the advice is chosen from them, never from the item text, which carries untrusted file names.
+ */
 function findings(projectAgents, personalAgents) {
   const personal = new Set(agentFiles(personalAgents).map((file) => basename(file, '.md')));
   const files = agentFiles(projectAgents);
-  const found = [];
+  const found = { items: [], hasCap: false, hasShadow: false };
   for (const file of files.slice(0, MAX_AGENT_FILES)) {
     const frontmatter = readAgentHead(join(projectAgents, file)).match(FRONTMATTER)?.[1] ?? '';
     const name = frontmatter.match(NAME_LINE)?.[1] ?? basename(file, '.md');
@@ -64,10 +67,12 @@ function findings(projectAgents, personalAgents) {
     const turns = frontmatter.match(MAX_TURNS_LINE)?.[1];
     if (turns) reasons.push(TURNS_NUMBER.test(turns) ? `maxTurns ${turns}` : 'maxTurns set');
     if (personal.has(name)) reasons.push('shadows the personal agent');
-    if (reasons.length) found.push(`${shownName(file)} (${reasons.join(', ')})`);
+    if (reasons.length) found.items.push(`${shownName(file)} (${reasons.join(', ')})`);
+    found.hasCap ||= Boolean(turns);
+    found.hasShadow ||= personal.has(name);
   }
   const unread = files.length - MAX_AGENT_FILES;
-  if (found.length && unread > 0) found.push(`and ${unread} more files not read`);
+  if (found.items.length && unread > 0) found.items.push(`and ${unread} more files not read`);
   return found;
 }
 
@@ -85,16 +90,12 @@ export function projectAgentNote(projectDir, personalDir) {
   } catch {
     // no project agents folder: findings() returns nothing
   }
-  const found = findings(projectAgents, personalDir);
-  if (!found.length) return '';
+  const { items, hasCap, hasShadow } = findings(projectAgents, personalDir);
+  if (!items.length) return '';
   const advice = [];
-  if (found.some((item) => item.includes('maxTurns'))) {
-    advice.push("maxTurns caps the agent's turns: the lead deletes each maxTurns: line in its own commit, no need to ask (owner's standing order)");
-  }
-  if (found.some((item) => item.includes('shadows'))) {
-    advice.push('a shadowing copy replaces the personal agent: tell the owner (project repos keep only project-related config)');
-  }
-  return `Project agent files in ${projectAgents}: ${found.join(', ')} - ${advice.join('; ')}.`;
+  if (hasCap) advice.push('the lead deletes each frontmatter maxTurns: line in its own commit, no need to ask');
+  if (hasShadow) advice.push('tell the owner (project repos keep only project config)');
+  return `Project agent files in ${projectAgents}: ${items.join(', ')} - ${advice.join('; ')}.`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
