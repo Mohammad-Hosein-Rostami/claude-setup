@@ -244,3 +244,30 @@ test('the delta line does not lower the set: a fix round runs the members of the
 test('the review-tier README names --prior', () => {
   assert.match(readFileSync(README, 'utf8'), /--prior <[^>]*>/);
 });
+
+test('review S6 (mutant M1): --prior without --delta exits 2: it belongs to a fix round', () => {
+  const { tier } = laneWithFix();
+  for (const flags of [[], ['--landing'], ['main...HEAD']]) {
+    const result = tier(...flags, '--prior', priorFile());
+    assert.equal(result.status, 2, flags.join(' '));
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /--prior belongs to a --delta round/);
+  }
+});
+
+test('review S6 (mutant M2): a relative --prior is resolved: the briefs and the JSON name its absolute path', () => {
+  const { dir, json, reviewed } = laneWithFix();
+  const absolute = join(dir, '..', 'findings-relative.md');
+  writeFileSync(absolute, '| F1 | blocking | src/run.mjs:2 | a finding |\n');
+  const result = json('--delta', reviewed, '--prior', '../findings-relative.md');
+  assert.equal(result.priorFile, absolute);
+  assert.equal(result.prior.file, absolute);
+  for (const review of result.reviews) assert.ok(review.brief.includes(`Prior findings: ${absolute} (sha256 `), review.brief);
+});
+
+test('review N7: the refusal of a path that is not plain says what to do about it', () => {
+  const { tier, reviewed } = laneWithFix();
+  const result = tier('--delta', reviewed, '--prior', join(makeTempDir('review-tier-prior-'), 'Application Support', 'findings.md'));
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /copy the report to a path without them/);
+});

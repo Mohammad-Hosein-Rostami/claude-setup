@@ -175,3 +175,15 @@ test('review N12: the brief names the resolved full sha, not the text given to -
   assert.equal(result.range, `${reviewed}..HEAD`);
   for (const review of result.reviews) assert.doesNotMatch(review.brief, /HEAD~1/);
 });
+
+test('security N1: a rewritten lane commit whose added line moved to another place is not counted as reviewed', () => {
+  const { dir, write, json } = lane();
+  const before = write('src/gate.mjs', 'const checks = [];\nchecks.push(isTrusted);\nrunChecks(checks);\nconst verdict = decide();\n');
+  const reviewed = write('src/gate.mjs', 'const checks = [];\nchecks.push(isTrusted);\nrunChecks(checks);\nallowAll();\nconst verdict = decide();\n');
+  git(dir, 'reset', '-q', '--hard', before);
+  const moved = write('src/gate.mjs', 'allowAll();\nconst checks = [];\nchecks.push(isTrusted);\nrunChecks(checks);\nconst verdict = decide();\n');
+  const note = write('NOTES.md', 'fix: note\n');
+  const result = json('--delta', reviewed, '--prior', priorFile());
+  assert.equal(result.range, `patches ${moved.slice(0, 8)},${note.slice(0, 8)} of main..HEAD`, 'the same added line before the checks is a new patch');
+  assert.equal(result.files, 2);
+});

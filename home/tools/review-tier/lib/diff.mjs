@@ -5,7 +5,6 @@
 //   with `-` is refused, so it can never be read as an option. Only paths and line numbers leave this module through the
 //   report; line texts stay in memory for the class tests. Required reading and the patch-list range are written with names as data
 //   (lib/brief-data.mjs): they go into briefs as they are.
-import { createHash } from 'node:crypto';
 import { UsageError, gitFlag, gitText, runGit } from '../../git-tidy/lib/git.mjs';
 import { asData, placeText } from './brief-data.mjs';
 
@@ -107,11 +106,16 @@ export function newFileReader(top, rev) {
 
 const showPatch = (top, commit) => gitText(top, [...DIFF_FLAGS.slice(0, 2), 'show', '-U0', '--format=', '--no-color', '-M', ...PATH_PREFIXES, commit]);
 
-/** A fingerprint of one commit's patch (its paths and changed lines, not its line numbers, parents or message). */
+/**
+ * A fingerprint of one commit's patch: `git patch-id --verbatim` of its diff with context lines (as git-tidy's copy proof), so the same
+ * added line at another place in the file is another patch. Line numbers, parents and the message do not count; a rebase that changes
+ * the lines around a hunk makes the patch fresh, which only adds to what a delta round reads.
+ */
 function patchKey(top, commit) {
-  const text = showPatch(top, commit);
-  const body = text.split('\n').filter((line) => /^(\+|-|diff --git)/.test(line)).join('\n');
-  return createHash('sha1').update(body).digest('hex');
+  const patch = gitText(top, [...DIFF_FLAGS.slice(0, 2), 'show', '--format=', '--no-color', '--no-ext-diff', '--no-textconv', '-M', ...PATH_PREFIXES, commit]);
+  const { status, stdout, stderr } = runGit(top, ['patch-id', '--verbatim'], `${patch}\n`);
+  if (status !== 0) throw new Error(`git patch-id failed for ${commit}: ${stderr.split('\n')[0]}`);
+  return stdout.split(' ')[0].trim();
 }
 
 const commitsOf = (top, range) => gitText(top, ['rev-list', '--reverse', '--no-merges', range]).split('\n').filter((sha) => sha !== '');
