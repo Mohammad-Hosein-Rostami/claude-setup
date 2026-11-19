@@ -3,8 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { rename, symlink, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MAX_AGENT_FILES, NOTE_MAX_CHARS, projectAgentNote } from '../home/hooks/lib/project-agents.mjs';
 import { BOTH_ADVICE, CAP_ADVICE, POSIX, agent, noteOf, sandbox } from './project-agents-helpers.mjs';
@@ -83,13 +83,30 @@ test('the SessionStart mode hook prints the note for a capped project agent and 
 
 const hasJq = spawnSync('jq', ['--version']).status === 0;
 
-test('doctor warns about a capped project agent (DOCTOR_PROJECT) and is ok for a clean one', { skip: !hasJq && 'jq not installed' }, async () => {
-  const run = ({ home, projectDir }) => spawnSync('bash', [DOCTOR], { encoding: 'utf8', env: { ...process.env, HOME: home, DOCTOR_PROJECT: projectDir, DOCTOR_ONLY: 'check_project_agents' } });
-  const capped = run(await sandbox({ project: { builder: 'maxTurns: 60\n' } }));
-  assert.match(capped.stdout, /^WARN\s+Project agent files .*builder\.md \(maxTurns 60\)/m);
+const runDoctor = (home, projectDir) => spawnSync('bash', [DOCTOR], { encoding: 'utf8', env: { ...process.env, HOME: home, DOCTOR_PROJECT: projectDir, DOCTOR_ONLY: 'check_project_agents' } });
+
+test('doctor warns about a capped project agent (DOCTOR_PROJECT), names the project, and is ok for a clean one', { skip: !hasJq && 'jq not installed' }, async () => {
+  const made = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
+  const capped = runDoctor(made.home, made.projectDir);
+  assert.match(capped.stdout, /^WARN\s+.*Project agent files .*builder\.md \(maxTurns 60\)/m);
+  assert.ok(capped.stdout.startsWith(`WARN  ${made.projectDir}: Project agent files in .claude/agents `), 'the WARN line says which project it means');
   assert.equal(capped.status, 0);
-  const clean = run(await sandbox({ project: { builder: '' } }));
+  const cleanMade = await sandbox({ project: { builder: '' } });
+  const clean = runDoctor(cleanMade.home, cleanMade.projectDir);
   assert.match(clean.stdout, /^ok\s+project agents/m);
+});
+
+// Security review p0-0.1, N3: the folder name comes from a repository or an archive; ESC and BEL in it set the window title and colour.
+test('doctor prints the project path without control characters', { skip: (!hasJq && 'jq not installed') || (!POSIX && 'control characters in a folder name are POSIX only') }, async () => {
+  const CONTROL_CHARACTER = /[\u0000-\u0009\u000b-\u001f\u007f]/; // every C0 control but the line feed that ends the line, and DEL
+  for (const project of [{ builder: '' }, { builder: 'maxTurns: 60\n' }]) {
+    const { home, projectDir } = await sandbox({ project });
+    const hostile = join(dirname(projectDir), 'proj\u001b]0;title-set-by-folder\u0007\u001b[31mRED');
+    await rename(projectDir, hostile);
+    const { stdout } = runDoctor(home, hostile);
+    assert.doesNotMatch(stdout, CONTROL_CHARACTER);
+    assert.ok(stdout.includes(`${join(dirname(projectDir), 'proj?]0;title-set-by-folder??[31mRED')}: `), stdout);
+  }
 });
 
 // Audit of db40977 (B1, S4): the agent files come from a cloned repository, so they are untrusted. A link to /dev/zero or a FIFO once

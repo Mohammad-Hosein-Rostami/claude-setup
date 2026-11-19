@@ -288,9 +288,12 @@ check_workflows() {
 
 # A project's own .claude/agents files that set maxTurns or shadow a personal agent stop agents mid-task (the owner's rule is no maxTurns).
 check_project_agents() {
-  local project="${DOCTOR_PROJECT:-$PWD}" note
+  local project="${DOCTOR_PROJECT:-$PWD}" note shown_project
+  # The folder name comes from a repository or an archive: its control characters (ESC, BEL: window title, colours) never reach the terminal.
+  shown_project="${project//[[:cntrl:]]/?}"
   note="$(node "$REPO/home/hooks/lib/project-agents.mjs" "$project" "$CLAUDE_DIR/agents" 2>/dev/null)"
-  if [ -n "$note" ]; then warn "$note"; else ok "project agents in $project: no maxTurns, no shadowed personal agent"; fi
+  # The note names .claude/agents relative to the project, so the line names the project itself.
+  if [ -n "$note" ]; then warn "$shown_project: $note"; else ok "project agents in $shown_project: no maxTurns, no shadowed personal agent, no link"; fi
 }
 
 # DOCTOR_ONLY="check_a check_b" runs just those checks (used by tests; the full run executes the repo tests).
