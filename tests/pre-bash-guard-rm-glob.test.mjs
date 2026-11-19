@@ -62,6 +62,33 @@ const ASK_GLOB_BELOW_GLOB_IN_SUBFOLDER = [`${RM} -rf **/*`, `${RM} -rf ./**/*`, 
 const ASK_UNKNOWN_DIRECTORY = [`cd "$SOMEWHERE" && ${RM} -rf *`, `cd "$SOMEWHERE" && ${RM} -rf ./**/*`, `cd "$SOMEWHERE" && ${RM} -rf ./*`];
 const ASK_IN_SUBFOLDER = [`${RM} -rf *`, `${RM} -rf .*`, `${RM} -rf .`, `${RM} -rf ./`, `${RM} -rf "$PWD"`, `${RM} -rf ../*`];
 const ALREADY_ASKED = [`${RM} -rf /`, `${RM} -rf /*`, `${RM} -rf ~`, `${RM} -rf ~/*`, `${RM} -rf .`, `cd ~ && ${RM} -rf *`];
+// every bracket form is a glob: POSIX classes, a `]` in first place, negation, equivalence classes and collating symbols
+const ASK_BRACKET_FORMS = [
+  `${RM} -rf [[:alnum:]]*`,
+  `${RM} -rf [[:print:]]*`,
+  `${RM} -rf [![:space:]]*`,
+  `${RM} -rf *[[:alnum:]]`,
+  `${RM} -rf [[:alpha:][:digit:]]*`,
+  `${RM} -rf src [[:alnum:]]* .[[:alnum:]]*`,
+  `${RM} -rf []a]*`,
+  `${RM} -rf [!]]*`,
+  `${RM} -rf [^]a-z]?`,
+  `${RM} -rf [[=a=]]*`,
+  `${RM} -rf [[.hyphen.]]*`,
+  `${RM} -rf [a[:digit:]_]*`,
+  `${RM} -rf ./[[:upper:]]*/[[:lower:]]*`,
+  `${RM} -rf [[:x]*`, // no class after all: a set of `[`, `:` and `x`
+  `${RM} -rf [[:alpha:]][[:x]*`,
+];
+const SILENT_BRACKET_FORMS = [
+  `${RM} -rf [[:alnum:]]*.log`,
+  `${RM} -rf build[[:digit:]]`,
+  `${RM} -rf [[:alnum:]`, // the set never closes: bash reads a plain name
+  `${RM} -rf [abc`,
+  `${RM} -rf *[`,
+  `${RM} -rf src/[[:alnum:]]*`,
+  `${RM} -rf [[:alnum:]]*/dist`,
+];
 const SILENT = [
   `${RM} -rf src/*`,
   `${RM} -rf ./dist/*`,
@@ -101,6 +128,11 @@ test('a bare glob after a cd that cannot be resolved still asks, as an unknown t
 
 test('root, home and the project root keep asking as before', () => {
   for (const command of ALREADY_ASKED) assert.ok(asksDestructive(command, atRoot), command);
+});
+
+test('POSIX classes and every other bracket form count as a bare glob', () => {
+  for (const command of ASK_BRACKET_FORMS) assert.ok(asksDestructive(command, atRoot), command);
+  for (const command of SILENT_BRACKET_FORMS) assert.deepEqual(decide(command, atRoot), { allow: true }, command);
 });
 
 test('a glob of a sub-folder, a glob with a name part, named targets and a non-recursive rm stay silent', () => {
