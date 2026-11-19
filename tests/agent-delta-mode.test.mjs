@@ -32,6 +32,26 @@ test('Delta mode starts when the brief names a delta range or prior findings, an
   }
 });
 
+test('Delta mode still reads what a fix can break outside the range: callers, and the readers of shared state, config and data the changed lines write', () => {
+  for (const name of AGENTS) {
+    const section = deltaSection(name);
+    assert.match(section, /shared state, config and data the changed lines write that other code reads/, name);
+    assert.match(section, /reader that never calls/, `${name}: says why callers are not enough`);
+  }
+});
+
+test('Delta mode says where the prior findings are when the brief names no findings file', () => {
+  for (const name of AGENTS) assert.match(deltaSection(name), /`none`[^.]*items the brief lists/, name);
+});
+
+test('the prior line goes before the final line, so a report still ends with the line the Output contract names', () => {
+  const finalLine = { reviewer: 'verified:', 'security-auditor': 'exploitable:' };
+  for (const name of AGENTS) {
+    assert.ok(deltaSection(name).includes(`before the final \`${finalLine[name]}\` line`), name);
+    assert.ok(read(`home/agents/${name}.md`).includes(`\n- Final line: \`${finalLine[name]} `), `${name}: the Output contract still ends with ${finalLine[name]}`);
+  }
+});
+
 test('Delta mode keeps the same lens, model and effort', () => {
   for (const name of AGENTS) assert.match(deltaSection(name), /same lens,? same model,? same effort/i, name);
 });

@@ -59,8 +59,11 @@ function planText(plan) {
 
 const hitText = (hit) => (hit.line > 0 ? `${hit.path}:${hit.line}` : hit.path);
 
-/** The ready line of a fix-round re-review: the delta range, the prior findings to close, and what not to redo. */
-const deltaLine = (deltaOf, priorFile) => `Delta review: ${deltaOf}..HEAD only, plus callers of changed lines; prior findings file: ${priorFile ?? 'none'} - mark each closed/open; do not re-review unchanged lines; do not re-run the full suite (PASS record covers it).`;
+/**
+ * The ready line of a fix-round re-review: the delta range, what to read outside it (a fix can break a caller, or a reader of
+ * what it writes that never calls it), the prior findings to close, and what not to redo.
+ */
+const deltaLine = (deltaOf, priorFile) => `Delta review: ${deltaOf}..HEAD only, plus callers of changed lines and the code that reads the shared state, config or data those lines write; prior findings file: ${priorFile ?? 'none'} - mark each closed/open; do not re-review unchanged lines beyond those; do not re-run the full suite (PASS record covers it).`;
 
 function briefOf({ range, deltaOf, priorFile, rules, hits, plan, requiredReading }) {
   const parts = [`Review ${range}.`, `Rules: ${rules}.`];

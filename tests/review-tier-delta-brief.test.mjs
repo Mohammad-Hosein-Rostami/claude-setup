@@ -53,6 +53,13 @@ test('delta: every member of a landing set gets the ready delta line naming <rev
   }
 });
 
+test('delta: the ready line names what to read outside the range: callers, and the readers of shared state, config and data the changed lines write', () => {
+  const { json, reviewed } = laneWithFix();
+  for (const review of json('--delta', reviewed, '--landing').reviews) {
+    assert.match(review.brief, /plus callers of changed lines and the code that reads the shared state, config or data those lines write;/, review.brief);
+  }
+});
+
 test('delta: the text output carries the delta line on every "run together" member line', () => {
   const { tier, reviewed } = laneWithFix();
   const result = tier('--delta', reviewed, '--landing');
