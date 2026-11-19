@@ -11,9 +11,10 @@
 // inside an item or a \u escape), always keeps the advice, and counts the items it left out together with the files not read in one
 // "and N more files not shown".
 import { constants, existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readFileHead } from './agent-brief.mjs';
+import { frontmatterOf, hasToken, maxTurnsIn } from './agent-frontmatter.mjs';
 import { shownName } from './shown-name.mjs';
 
 export const MAX_AGENT_FILES = 200; // a real project has a few dozen agents at most
@@ -27,10 +28,6 @@ const NOTE_START = 'Project agent files in .claude/agents (file names are reposi
 const LIST_START = 'Files: ';
 const AGENT_HEAD_BYTES = 8 * 1024; // the frontmatter sits at the top; a longer file is cut there
 const AGENT_FILE = /\.md$/i;
-const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
-const MAX_TURNS_LINE = /^maxTurns:[ \t]*(\S+)/m;
-const TURNS_NUMBER = /^\d{1,6}$/;
-const NAME_LINE = /^name:\s*["']?([\w.-]+)/m;
 const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0); // Windows has neither flag: lstat stands alone
 
 /** The head of a regular agent file, or '' for a link, FIFO, device, folder or unreadable file. */
@@ -51,24 +48,31 @@ function agentFiles(dir) {
   }
 }
 
+const baseName = (file) => file.replace(AGENT_FILE, '');
+
+/** Whether a project agent file can take the place of a personal agent: its own base name is one, or its frontmatter names one. */
+function shadowsPersonal(file, frontmatter, personal) {
+  return personal.has(baseName(file)) || [...personal].some((name) => hasToken(frontmatter, name));
+}
+
 /**
- * One finding per project agent file that sets maxTurns or shares its name with a personal agent, plus how many files were not read (`unread`).
- * The flags say which reasons were found: the advice is chosen from them, never from the item text, which carries untrusted file names.
+ * One finding per project agent file that sets maxTurns or names a personal agent, plus how many files were not read (`unread`).
+ * The frontmatter is found by Claude Code's rules and matched tolerantly (agent-frontmatter.mjs): a finding may be one the CLI would
+ * not act on, never the other way round. The flags say which reasons were found: the advice is chosen from them, never from the item
+ * text, which carries untrusted file names.
  */
 function findings(projectAgents, personalAgents) {
-  const personal = new Set(agentFiles(personalAgents).map((file) => basename(file, '.md')));
+  const personal = new Set(agentFiles(personalAgents).map(baseName));
   const files = agentFiles(projectAgents);
   const found = { items: [], hasCap: false, hasShadow: false, unread: Math.max(0, files.length - MAX_AGENT_FILES) };
   for (const file of files.slice(0, MAX_AGENT_FILES)) {
-    const frontmatter = readAgentHead(join(projectAgents, file)).match(FRONTMATTER)?.[1] ?? '';
-    const name = frontmatter.match(NAME_LINE)?.[1] ?? basename(file, '.md');
-    const reasons = [];
-    const turns = frontmatter.match(MAX_TURNS_LINE)?.[1];
-    if (turns) reasons.push(TURNS_NUMBER.test(turns) ? `maxTurns ${turns}` : 'maxTurns set');
-    if (personal.has(name)) reasons.push('shadows the personal agent');
+    const frontmatter = frontmatterOf(readAgentHead(join(projectAgents, file)));
+    const turns = maxTurnsIn(frontmatter);
+    const shadows = shadowsPersonal(file, frontmatter, personal);
+    const reasons = [...(turns ? [turns] : []), ...(shadows ? ['shadows the personal agent'] : [])];
     if (reasons.length) found.items.push(`${shownName(file)} (${reasons.join(', ')})`);
     found.hasCap ||= Boolean(turns);
-    found.hasShadow ||= personal.has(name);
+    found.hasShadow ||= shadows;
   }
   return found;
 }

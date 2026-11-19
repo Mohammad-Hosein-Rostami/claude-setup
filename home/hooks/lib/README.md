@@ -65,7 +65,7 @@ Other hooks:
 - `gate-routes.mjs`: the prompt patterns and lines of the skill router's gate routes (bug, done, restructure, git history, repeated report); used by `skill-router.mjs`.
 - `reply-cap.mjs`: reads a reply-size cap from a prompt; used by `agent-budget.mjs` and `final-reply-cap.mjs`.
 - `transcript.mjs`: reads the session transcript (context size, STATUS file).
-- `big-context.mjs`, `compact-notes.mjs`, `lead-note.mjs`, `project-agents.mjs`: the notes `mode.mjs` prints (`project-agents.mjs` also runs as a command for `doctor.sh`). `shown-name.mjs`: how the project-agents note shows a file name from the repository (plain, or quoted with everything outside printable ASCII escaped).
+- `big-context.mjs`, `compact-notes.mjs`, `lead-note.mjs`, `project-agents.mjs`: the notes `mode.mjs` prints (`project-agents.mjs` also runs as a command for `doctor.sh`). `shown-name.mjs`: how the project-agents note shows a file name from the repository (plain, or quoted with everything outside printable ASCII escaped). `agent-frontmatter.mjs`: an agent file's frontmatter found by Claude Code's own rules, and the tolerant `maxTurns` and name matches the note decides with.
 - `owner-words.mjs`: the owner's words in a prompt, without pasted logs (`<pasted_content>`), harness blocks and compaction summaries; used by `skill-router.mjs` and `big-context.mjs`.
 
 ## Test
