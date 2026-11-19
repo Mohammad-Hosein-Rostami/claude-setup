@@ -114,6 +114,8 @@ const ASK_DOT_PARTS = [
   `${RM} -rf ${PROJECT}/./*/./*`,
 ];
 const SILENT_DOT_PARTS = [`${RM} -rf src/./*`, `${RM} -rf ./src/./*/./*`, `${RM} -rf */./dist`, `${RM} -rf src/.`, `${RM} -rf ./src/./`];
+// the shared temp roots hold other sessions' work (every scratchpad): a bare glob of one empties them all
+const ASK_TEMP_ROOT = [`${RM} -rf /tmp/*`, `${RM} -rf /private/tmp/*`, `${RM} -rf "$TMPDIR"/*`, `${RM} -rf $TMPDIR/.*`, `${RM} -rf /tmp/**/*`, `${RM} -rf /tmp/./*`];
 const SILENT = [
   `${RM} -rf src/*`,
   `${RM} -rf ./dist/*`,
@@ -171,6 +173,11 @@ test('POSIX classes and every other bracket form count as a bare glob', () => {
 test('a . part or a doubled slash between bare globs changes nothing: the target is normalised before the check', () => {
   for (const command of ASK_DOT_PARTS) assert.ok(asksDestructive(command, atRoot), command);
   for (const command of SILENT_DOT_PARTS) assert.deepEqual(decide(command, atRoot), { allow: true }, command);
+});
+
+test('a bare glob of a temp root asks; a folder inside one stays silent', () => {
+  for (const command of ASK_TEMP_ROOT) assert.ok(asksDestructive(command, atRoot), command);
+  for (const command of [`${RM} -rf /tmp/x/*`, `${RM} -rf "$TMPDIR"/build/*`, `${RM} -rf /tmp/x`]) assert.deepEqual(decide(command, atRoot), { allow: true }, command);
 });
 
 test('a glob of a sub-folder, a glob with a name part, named targets and a non-recursive rm stay silent', () => {

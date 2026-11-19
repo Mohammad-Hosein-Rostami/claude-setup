@@ -13,7 +13,8 @@
 // `$(git rev-parse --show-toplevel)` counts as the project root from a directory inside the project (`rm -rf "$(git rev-parse --show-toplevel)/dist"`).
 // Only a recursive rm asks about an unknown or outside target; `rm -f x` of one file is not judged here.
 // Inside the project a recursive rm still asks when it empties a whole folder: the working directory itself, or a bare glob (`*`, `./*`,
-// `.*`, `?`, `[a-z]*`) of the working directory, the project root, home or `/`. A glob with a name part (`*.log`) or of a sub-folder does not.
+// `.*`, `?`, `[a-z]*`) of the working directory, the project root, home, `/` or a temp root (`/tmp/*` empties every session's scratch folder).
+// A glob with a name part (`*.log`) or of a sub-folder does not.
 // A bare glob below a bare glob (`./**/*`, `*/*`) counts as a glob of the folder the first one is in: it empties every sub-folder there
 // (lib/bare-glob.mjs reads the globs). Work budget: a target over MAX_TARGET_CHARS is not read, it asks.
 // `$PWD` (also written `${PWD}` or `$(pwd)`) in a target is the folder the line's `cd`s led to, unknown after a `cd` the guard could not follow;
@@ -184,7 +185,7 @@ function insideProject(rawTarget, cwd, project, vars) {
 
 /**
  * True when the target is the working directory itself, or a bare glob (also one below other bare globs, lib/bare-glob.mjs) whose folder is
- * the working directory, the project root, home or a file-system root: removing it empties that whole folder even though every entry is
+ * the working directory, the project root, home, a temp root or a file-system root: removing it empties that whole folder even though every entry is
  * inside the project. Unknown targets return false (insideProject already asks about them). After a `cd` the guard could not follow
  * (`cwd` null) an absolute target is still judged, against the project root, home and the roots; a relative one was asked about already.
  */
@@ -196,7 +197,7 @@ function emptiesWholeFolder(rawTarget, cwd, project, vars) {
   if (cwd === null && !isAbsolute(native)) return false;
   const abs = resolve(cwd ?? native, native);
   if (folder === undefined) return cwd !== null && sameFile(abs, resolve(nativePath(cwd)));
-  const wholeFolders = [cwd, project, homedir()].filter((whole) => whole !== null).map((whole) => resolve(nativePath(whole)));
+  const wholeFolders = [cwd, project, homedir(), ...SAFE_TEMP_ROOTS].filter((whole) => whole !== null).map((whole) => resolve(nativePath(whole)));
   return wholeFolders.some((whole) => sameFile(abs, whole)) || sameFile(abs, parse(abs).root) || GIT_BASH_DRIVE_ROOT.test(abs);
 }
 
