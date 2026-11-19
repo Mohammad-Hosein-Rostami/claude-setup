@@ -3,8 +3,10 @@
 // stops the agent mid-task (the owner's rule is no maxTurns). Used by the SessionStart mode hook and by scripts/doctor.sh
 // (run this file as `node project-agent-note <projectDir> <personalAgentsDir>`: it prints the note, or nothing).
 // Invariants: read-only; never throws (an unreadable folder or file counts as "nothing found"). The files come from whatever repository
-// the session opens, so they are untrusted: a link, FIFO, device or folder is never read (lstat, then O_NOFOLLOW and O_NONBLOCK with the
-// type checked on the open handle), only the first AGENT_HEAD_BYTES of a file and at most MAX_AGENT_FILES files are read (the base name
+// the session opens, so they are untrusted. Nothing is read through a link: when `.claude` or `.claude/agents` is a link (the real path
+// of the agents folder is not <real project>/.claude/agents) the folder is not listed and the note gives no edit advice, only "tell the
+// owner"; inside the folder a link, FIFO, device or folder is never read (lstat, then O_NOFOLLOW and O_NONBLOCK with the type checked on
+// the open handle). The check and the read are separate calls: a folder swapped for a link between them is not caught. Further, only the first AGENT_HEAD_BYTES of a file and at most MAX_AGENT_FILES files are read (the base name
 // of every file, also past that limit, is still checked against the personal set: that needs no read), and a file name or
 // maxTurns value reaches the note only as data on one line: the advice stands before the list, the list is labelled as repository data,
 // a name that is not plain is quoted and escaped down to printable ASCII (shown-name.mjs), and a maxTurns value that is not a number
@@ -14,7 +16,7 @@
 // apart: "N agent files past the first 200 not checked" (never read; printed also when nothing else was found) and "and N more files
 // not shown" (found, but no room in the note).
 import { constants, existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readFileHead } from './agent-brief.mjs';
 import { frontmatterOf, hasToken, maxTurnsIn } from './agent-frontmatter.mjs';
@@ -35,6 +37,9 @@ const SHADOWED_START = 'Shadowed personal agents: ';
 const LIST_START = 'Files: ';
 const CAP_ADVICE = 'the lead deletes each frontmatter maxTurns: line in its own commit, no need to ask';
 const SHADOW_ADVICE = 'tell the owner (project repos keep only project config)';
+// For a linked folder: no file is named and no maxTurns advice is given, because an edit there would land outside the project's own files.
+const LINK_OUTSIDE_NOTE = 'Project agent files: .claude/agents is a link to outside the project (or lies behind one), so it is not read and nothing there is edited - tell the owner.';
+const LINK_INSIDE_NOTE = 'Project agent files: .claude/agents is a link (or lies behind one), so it is not read and nothing is edited through it - tell the owner.';
 const AGENT_HEAD_BYTES = 8 * 1024; // the frontmatter sits at the top; a longer file is cut there
 const AGENT_FILE = /\.md$/i;
 const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0); // Windows has neither flag: lstat stands alone
@@ -128,20 +133,36 @@ function cappedNote(found) {
 }
 
 /**
+ * The note for an agents folder that is not scanned, or undefined when it is the project's own real folder and must be scanned.
+ * @returns {string | undefined} '' for no folder, the personal folder itself (a session started in the home folder) or a path that
+ *   cannot be resolved (a link loop); the link note when `.claude` or `.claude/agents` is a link, inside the project or out of it.
+ */
+function unscannedFolderNote(projectDir, projectAgents, personalDir) {
+  try {
+    const realAgents = realpathSync(projectAgents);
+    if (existsSync(personalDir) && realAgents === realpathSync(personalDir)) return '';
+    const realProject = realpathSync(projectDir);
+    if (realAgents === join(realProject, '.claude', 'agents')) return undefined;
+    const fromProject = relative(realProject, realAgents);
+    const outside = fromProject === '..' || fromProject.startsWith(`..${sep}`) || isAbsolute(fromProject);
+    return outside ? LINK_OUTSIDE_NOTE : LINK_INSIDE_NOTE;
+  } catch {
+    return ''; // no agents folder, a link loop or an unreadable path: there is nothing an agent could be loaded from
+  }
+}
+
+/**
  * The one-line note, at most NOTE_MAX_CHARS long, for a session whose project has agent files that cap turns or shadow personal agents.
  * @param {string} projectDir - the session's project folder.
  * @param {string} personalDir - the personal agents folder (`~/.claude/agents`).
- * @returns {string} the note, or '' when nothing was found and every file was checked (also when the project agents folder is the
- *   personal one).
+ * @returns {string} the note; '' when nothing was found and every file was checked (also when the project agents folder is the
+ *   personal one); for an agents folder behind a link, a note that names no file and tells the lead to edit nothing.
  */
 export function projectAgentNote(projectDir, personalDir) {
   if (typeof projectDir !== 'string' || projectDir === '') return '';
   const projectAgents = join(projectDir, '.claude', 'agents');
-  try {
-    if (existsSync(personalDir) && realpathSync(projectAgents) === realpathSync(personalDir)) return '';
-  } catch {
-    // no project agents folder: findings() returns nothing
-  }
+  const unscanned = unscannedFolderNote(projectDir, projectAgents, personalDir);
+  if (unscanned !== undefined) return unscanned;
   const found = findings(projectAgents, agentFiles(personalDir).map(baseName));
   return found.items.length || found.unchecked ? cappedNote(found) : '';
 }
