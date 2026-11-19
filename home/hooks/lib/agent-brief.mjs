@@ -17,7 +17,8 @@
 // case-insensitive disk `status.md` is another file) and be a regular file whose real path is inside the project; only its first
 // MAX_STATUS_BYTES are read.
 // Exports: withBriefLines(toolInput, cwd) -> input | null, readFileHead(path, maxBytes, flags?) -> text | undefined (the UI brief gate
-// reads its matrix with it too), UNPRINTABLE, MAX_EXCLUDE_BYTES. Invariants: withBriefLines never throws (any failure: null, the brief
+// reads its matrix with it too), UNPRINTABLE, MAX_EXCLUDE_BYTES, and for agent-folders.mjs (which finds the same git root) isInside,
+// nearestGitEntry, gitDirOf, sharedGitDir. Invariants: withBriefLines never throws (any failure: null, the brief
 // stays as it is); bounded work (at most MAX_PARENT_LEVELS + 1 folders looked at, two folder listings, four reads of capped size).
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -66,7 +67,7 @@ export function readFileHead(path, maxBytes, flags = READ_FLAGS) {
 }
 
 /** @returns {boolean} true when the real path `path` is the real folder `project` or inside it */
-function isInside(path, project) {
+export function isInside(path, project) {
   const rest = relative(project, path);
   return !isAbsolute(rest) && rest !== '..' && !rest.startsWith(`..${sep}`);
 }
@@ -112,7 +113,7 @@ function gitFileLines(path, maxBytes) {
  * @returns {{top: string, entry: import('node:fs').Stats} | null | undefined} the nearest folder at or above cwd holding an entry named
  *   exactly `.git`, with that entry's lstat; null when no folder up to the root has one; undefined when MAX_PARENT_LEVELS comes first
  */
-function nearestGitEntry(cwd) {
+export function nearestGitEntry(cwd) {
   let folder = resolve(cwd);
   for (let level = 0; level <= MAX_PARENT_LEVELS; level += 1) {
     const entry = lstatOrNull(join(folder, GIT_ENTRY));
@@ -124,18 +125,24 @@ function nearestGitEntry(cwd) {
 }
 
 /** @returns {string | undefined} the git folder a `.git` entry stands for: the folder itself, or the `gitdir:` of a `.git` file */
-function gitDirOf(top, entry) {
+export function gitDirOf(top, entry) {
   if (entry.isDirectory()) return join(top, GIT_ENTRY);
   const first = entry.isFile() ? gitFileLines(join(top, GIT_ENTRY), MAX_PATH_FILE_BYTES)?.[0] : undefined; // a link or FIFO: none
   const target = first?.startsWith(GITDIR_PREFIX) ? first.slice(GITDIR_PREFIX.length).trim() : '';
   return target === '' || NETWORK_PATH.test(target) ? undefined : resolve(top, target);
 }
 
+/** @returns {string | undefined} the git folder a linked worktree shares with its main repository (its `commondir`), else gitDir itself; undefined for a network path */
+export function sharedGitDir(gitDir) {
+  const common = gitFileLines(join(gitDir, 'commondir'), MAX_PATH_FILE_BYTES)?.[0]?.trim() ?? '';
+  if (NETWORK_PATH.test(common)) return undefined;
+  return common === '' ? gitDir : resolve(gitDir, common);
+}
+
 /** @returns {boolean} true when the info/exclude of gitDir (of its main repository for a linked worktree) lists STATUS.md */
 function excludesStatus(gitDir) {
-  const common = gitFileLines(join(gitDir, 'commondir'), MAX_PATH_FILE_BYTES)?.[0]?.trim() ?? '';
-  if (NETWORK_PATH.test(common)) return false;
-  const shared = common === '' ? gitDir : resolve(gitDir, common); // linked worktrees share info/exclude through the common folder
+  const shared = sharedGitDir(gitDir); // linked worktrees share info/exclude through the common folder
+  if (shared === undefined) return false;
   if (!lstatOrNull(join(shared, 'info'))?.isDirectory()) return false; // missing, or a link that could lead anywhere
   return (gitFileLines(join(shared, 'info', 'exclude'), MAX_EXCLUDE_BYTES) ?? []).some((line) => EXCLUDE_LINES.includes(line.trim()));
 }
