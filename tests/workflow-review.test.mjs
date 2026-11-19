@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertWellFormedCalls, readMeta, runScript } from './workflow-sandbox.mjs';
+import { priorOfTierPrompt, withPriorLine } from './workflow-review-helpers.mjs';
 
 const REVIEW = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'workflows', 'review.js');
 const META = readMeta(readFileSync(REVIEW, 'utf8')).meta;
@@ -27,8 +28,9 @@ function world({ tiers, lens = {}, verify = () => ({ verdicts: [] }), judge = ()
   return {
     counts: () => ({ tierCalls, fixCalls }),
     replies: [
-      { match: /:tier$/, reply: () => { const at = tierCalls++; return { exit: 0, baseSha: BASE_SHA, sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1)}`, tierFile: `/t${at}.json`, tier: tiers[Math.min(at, tiers.length - 1)] }; } },
-      ...Object.entries(lens).map(([name, reply]) => ({ match: new RegExp(`:review:${name}$`), reply: (...rest) => reply(round(), ...rest) })),
+      // A delta round: the runner reports the `prior` review-tier counted, and a lens that sets none answers with every prior finding fixed.
+      { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: BASE_SHA, sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1)}`, tierFile: `/t${at}.json`, tier: { ...tiers[Math.min(at, tiers.length - 1)], ...priorOfTierPrompt(prompt) } }; } },
+      ...Object.entries(lens).map(([name, reply]) => ({ match: new RegExp(`:review:${name}$`), reply: (prompt, ...rest) => withPriorLine(prompt, reply(round(), prompt, ...rest)) })),
       { match: /:verify:/, reply: (prompt, opts, call) => verify(round(), call.label, prompt) },
       { match: /:judge:/, reply: (...rest) => judge(...rest) },
       { match: /:diagnose$/, reply: 'the cause' },
@@ -93,7 +95,7 @@ test('each fix round uses the --delta set with the lane classes, and a fix agent
   assert.ok(run.started.indexOf('close:2:release') < run.started.indexOf('close:2:fix'), 'release before the fix');
   const second = run.calls.filter((call) => call.label === 'close:2:tier')[1];
   assert.match(second.prompt, /cd there first/);
-  assert.match(second.prompt, /Run it from \/p-wt\/fix: node .*review-tier\.mjs --delta a1b2c31 --lane-classes \/t0\.json --json/);
+  assert.match(second.prompt, /Run it from \/p-wt\/fix: node .*review-tier\.mjs --delta a1b2c31 --prior <the prior findings file> --lane-classes \/t0\.json --json/);
   assert.match(second.prompt, /close-2-tier-<sha8>\.json/);
 });
 

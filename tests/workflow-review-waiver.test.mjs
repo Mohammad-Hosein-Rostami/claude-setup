@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runScript } from './workflow-sandbox.mjs';
+import { priorOfTierPrompt, withPriorLine } from './workflow-review-helpers.mjs';
 
 const REVIEW = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'workflows', 'review.js');
 const BASE_SHA = 'ba5e0001';
@@ -34,8 +35,8 @@ function world({ tiers, lenses, bases = [BASE_SHA], found = {}, suite = { exit: 
   return {
     counts: () => ({ tierCalls, fixCalls }),
     replies: [
-      { match: /:tier$/, reply: () => { const at = tierCalls++; return { exit: 0, baseSha: bases[Math.min(at, bases.length - 1)], sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1)}`, tierFile: `/t${at}.json`, tier: tiers[Math.min(at, tiers.length - 1)], ...found }; } },
-      ...Object.entries(lenses).map(([name, reply]) => ({ match: new RegExp(`:review:${name}$`), reply: () => reply(round()) })),
+      { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: bases[Math.min(at, bases.length - 1)], sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1)}`, tierFile: `/t${at}.json`, tier: { ...tiers[Math.min(at, tiers.length - 1)], ...priorOfTierPrompt(prompt) }, ...found }; } },
+      ...Object.entries(lenses).map(([name, reply]) => ({ match: new RegExp(`:review:${name}$`), reply: (prompt) => withPriorLine(prompt, reply(round())) })),
       { match: /:verify:/, reply: () => ({ verdicts: [{ id: 'F1', real: true, why: 'yes', reviewedSha: TIP, linesMoved: false }] }) },
       { match: /:release$/, reply: { exit: 0, tail: '' } },
       { match: /:fix$/, reply: () => { fixCalls += 1; return { branch: 'lane/a', worktree: '/p-wt/fix', sha: sha(fixCalls + 1), tests: {}, deferred: [] }; } },

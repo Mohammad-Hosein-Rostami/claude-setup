@@ -31,7 +31,10 @@ Args marked `?` are optional. Every script also accepts `scriptsDir` (this folde
   read, and a round ends only when every lens, verifier and judge of it has returned. A verifier's `real: false` drops a finding only when the
   verifier is at least as strong as the finder and the finding is not security; otherwise an Opus-max judge rules, and a security finding the judge
   calls not real goes to `leadList` with the reason. A finding whose lines a fix already changed becomes an open item of the next round (delta
-  round, `review-tier --delta`, lane classes and plans kept). The same file blocking in two rounds in a row calls the `deep-debugger` before the next fix.
+  round, `review-tier --delta`: the lane's whole set, classes and plans, never a lighter one). In a delta round a runner writes the prior findings (fixed and open ones, one line each with its severity,
+  no fixed/open claim) to a file for `--prior`; `review-tier` must count exactly that many (else `failed`), every lens gets all of them with the file's hash and returns `prior: <n> fixed, <m> open`, and the
+  round is clean only when every lens has `m` 0 and `n + m` that count (else `incomplete`). `review-tier` refuses an empty delta, so a `deltaOf` run with nothing new to read is `failed`, also when it
+  only carries `initialFindings` (the re-review `build` starts after a conflict or a red suite at land; open until `build` fixes first). The same file blocking in two rounds in a row calls the `deep-debugger` before the next fix.
   With `landing`, the full suite runs on each round's tip beside the reviews (`test-pass run --repo <dir> --suite`, never with the command text). Result `clean` is the only landable state.
   A runner recomputes the review set with `review-tier` every round, from the lane's worktree and with every `--add-class`; the fix agent never supplies it. A tier that did not exit 0, has no `reviews` list,
   or (landing) is empty with nothing carried over ends the run `failed`. A verifier or judge that threw ends the round `incomplete`. The result's `tip` is the reviewed sha.
