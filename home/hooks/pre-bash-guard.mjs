@@ -64,7 +64,7 @@
 // global: extra asks only), an ssh alias that hides a production host, and the PowerShell tool (the hook matcher covers Bash only).
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { bashCodeWrites } from './lib/code-writes.mjs';
+import { logCodeWrites } from './lib/code-writes.mjs';
 import {
   checkDiskWipe, checkGhSecret, checkGit, checkHiddenRm, checkKeychainPrint, checkLockfileEdit, checkStdinRm, checkStdinScriptRm,
 } from './lib/command-checks.mjs';
@@ -72,7 +72,6 @@ import { withoutCapturedPrints } from './lib/captured-read.mjs';
 import { asGitSubcommand, commandOf } from './lib/command-of.mjs';
 import { checkCredentialSend } from './lib/credential-send.mjs';
 import { scanWrapped } from './lib/dangerous-scan.mjs';
-import { editLogPath, recordEdit } from './lib/edit-log.mjs';
 import { checkEval } from './lib/eval-check.mjs';
 import { checkFind } from './lib/find-delete.mjs';
 import { gitRunValueReasons, judgeOnce, lineFacts, valueReasons } from './lib/git-run-values.mjs';
@@ -240,16 +239,6 @@ export function decideSafely(command, ctx, rules = decide) {
     return rules(command, ctx);
   } catch (error) {
     return { allow: false, ask: true, reason: GUARD_ERROR_REASON, errorClass: error instanceof Error ? error.name : typeof error };
-  }
-}
-
-/** Code files this command may rewrite go to the edit log, so the Stop typecheck gate covers them. Never throws. */
-function logCodeWrites(command, input, cwd) {
-  try {
-    const logPath = editLogPath(input.session_id, input.agent_id);
-    if (logPath) for (const file of bashCodeWrites(command, cwd)) recordEdit(logPath, file);
-  } catch {
-    // logging is best effort: a failure here must never block a command
   }
 }
 

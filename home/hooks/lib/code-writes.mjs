@@ -1,11 +1,12 @@
 // Code files a Bash command may rewrite (`sed -i`, `perl -i`, `tee`, `> file`, `cp`/`mv` targets, python/node/ruby/perl
-// inline or heredoc scripts). Exports: bashCodeWrites(command, cwd) -> string[] of absolute paths.
+// inline or heredoc scripts). Exports: bashCodeWrites(command, cwd) -> string[] of absolute paths; logCodeWrites(command, input, cwd).
 // Used by pre-bash-guard to log them for the typecheck gate (lib/edit-log.mjs); it never blocks. Over-logging is
 // harmless (the gate skips files that do not exist or have no typecheck script), missing a write is not.
 // Interpreter scripts are not parsed: every code-looking path word in the command text (heredoc body included) counts.
 import { isAbsolute, resolve } from 'node:path';
 import { CODE_FILE } from './diagnostics.mjs';
 import { commandOf } from './command-of.mjs';
+import { editLogPath, recordEdit } from './edit-log.mjs';
 import { flagsOf, tokenize } from './shell-words.mjs';
 
 const INTERPRETERS = /^(python\d*(\.\d+)?|node|nodejs|deno|bun|ruby|perl|php)$/;
@@ -59,4 +60,19 @@ export function bashCodeWrites(command, cwd) {
     if (parsed.cmd !== undefined && INTERPRETERS.test(parsed.cmd) && inline) add(command.match(CODE_WORD) ?? []);
   }
   return [...files];
+}
+
+/**
+ * Code files this command may rewrite go to the edit log, so the Stop typecheck gate covers them. Never throws.
+ * @param {string} command raw command text
+ * @param {{session_id?: string, agent_id?: string}} input the hook input (names the edit log)
+ * @param {string} cwd working directory of the call
+ */
+export function logCodeWrites(command, input, cwd) {
+  try {
+    const logPath = editLogPath(input.session_id, input.agent_id);
+    if (logPath) for (const file of bashCodeWrites(command, cwd)) recordEdit(logPath, file);
+  } catch {
+    // logging is best effort: a failure here must never block a command
+  }
 }
