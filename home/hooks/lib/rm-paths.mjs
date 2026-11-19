@@ -16,6 +16,8 @@
 // `.*`, `?`, `[a-z]*`) of the working directory, the project root, home or `/`. A glob with a name part (`*.log`) or of a sub-folder does not.
 // A bare glob below a bare glob (`./**/*`, `*/*`) counts as a glob of the folder the first one is in: it empties every sub-folder there
 // (lib/bare-glob.mjs reads the globs). Work budget: a target over MAX_TARGET_CHARS is not read, it asks.
+// `$PWD` (also written `${PWD}` or `$(pwd)`) in a target is the folder the line's `cd`s led to, unknown after a `cd` the guard could not follow;
+// the value the line started with or assigned is judged as well (readingsOf), so following the `cd` never drops an ask.
 // Invariants: pure apart from reading homedir()/tmpdir(); never touches the file system.
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, parse, relative, resolve } from 'node:path';
@@ -32,6 +34,7 @@ const GIT_BASH_DRIVE_ROOT = /^\/[a-zA-Z]$/;
 const REDIRECT_START = /^(\d*>>?|\d*<|&>>?)/;
 const REDIRECT_OPERATOR_ONLY = /^(\d*>>?|\d*<{1,2}|&>>?)$/;
 const VAR_PREFIX = /^\$\{?(\w+)\}?(?=\/|$)/;
+const PWD_TARGET = /^\$(?:PWD|\{PWD\})(?=\/|$)/; // `$(pwd)` and a backtick pwd reach here as `$PWD` (lib/shell-words.mjs)
 const MKTEMP_NAME = MKTEMP_WORD.slice(1);
 const ANY_VAR = /\$\{(\w+)\}|\$(\w+)/g;
 const ASSIGNMENT = /^([A-Za-z_]\w*)(\+?)=([\s\S]*)$/;
@@ -147,6 +150,23 @@ function expandToplevel(target, cwd, project) {
   return sameFile(here, root) || isUnder(root, here) ? root + target.slice(GIT_TOPLEVEL_WORD.length) : target;
 }
 
+/**
+ * The variable values one rm target is judged with. A `$PWD` target is read with PWD as the folder the line's `cd`s led to (`cwd`; no
+ * value when the guard could not follow one, so the target is unknown and asks), and also with the value the line started with or
+ * assigned: that second reading is what the guard judged before it followed `cd`, and keeping it means no ask is ever lost.
+ * @param {string} target one rm target as written
+ * @param {string | null} cwd the tracked working directory
+ * @param {Map<string, string>} vars the scope's known values
+ * @returns {Map<string, string>[]} one map, or two for a `$PWD` target whose tracked folder differs from the scope's PWD
+ */
+function readingsOf(target, cwd, vars) {
+  if (!PWD_TARGET.test(target) || vars.get('PWD') === cwd) return [vars];
+  const followed = new Map(vars);
+  if (cwd === null) followed.delete('PWD');
+  else followed.set('PWD', cwd);
+  return [followed, vars];
+}
+
 /** A target with `$(git rev-parse --show-toplevel)`, `~`/`$HOME` and the known variables filled in. */
 const expandedTarget = (rawTarget, cwd, project, vars) => expandVars(expandHome(expandToplevel(rawTarget, cwd, project)), vars);
 
@@ -193,6 +213,7 @@ export function nextCwd(cmd, args, cwd, project, vars) {
   if (cmd === 'popd') return null;
   if (cmd !== 'cd' && cmd !== 'pushd') return cwd;
   if (cwd === null || args.length !== 1) return null;
+  if (PWD_TARGET.test(args[0]) && vars.get('PWD') !== cwd) return null; // `cd "$PWD"/x` after the folder moved: not guessed, unknown from here on
   const target = expandVars(expandCdTarget(args[0], cwd, project), vars); // `cd "$D"` after `D=$(mktemp -d)` is the temp dir
   return UNKNOWN_CD_TARGET.test(target) ? null : resolve(cwd, nativePath(target));
 }
@@ -217,9 +238,9 @@ export function checkRm(args, { cwd, project, vars, splitWords }) {
   const long = words.find((word) => word.length > MAX_TARGET_CHARS);
   if (long !== undefined) return destructive(`rm -r with a target too long to check (${long.length} characters, the guard reads up to ${MAX_TARGET_CHARS})`);
   if (words.some((word) => expandBraces(word) === null)) return destructive('rm -r with a brace expansion that cannot be listed (check the targets by hand)');
-  const targets = words.flatMap(expandBraces);
-  const outside = targets.find((t) => !insideProject(t, cwd, project, vars));
-  if (outside !== undefined) return destructive(`rm -r outside the project (${outside.replace(QUOTED_MARK, '')})`);
-  const whole = targets.find((t) => emptiesWholeFolder(t, cwd, project, vars));
-  return whole === undefined ? undefined : destructive(`rm -r that empties a whole folder (${whole.replace(QUOTED_MARK, '')}): the working directory itself, or a bare glob of it, the project root, home or /`);
+  const judged = words.flatMap(expandBraces).flatMap((target) => readingsOf(target, cwd, vars).map((reading) => ({ target, reading })));
+  const outside = judged.find(({ target, reading }) => !insideProject(target, cwd, project, reading));
+  if (outside !== undefined) return destructive(`rm -r outside the project (${outside.target.replace(QUOTED_MARK, '')})`);
+  const whole = judged.find(({ target, reading }) => emptiesWholeFolder(target, cwd, project, reading));
+  return whole === undefined ? undefined : destructive(`rm -r that empties a whole folder (${whole.target.replace(QUOTED_MARK, '')}): the working directory itself, or a bare glob of it, the project root, home or /`);
 }
