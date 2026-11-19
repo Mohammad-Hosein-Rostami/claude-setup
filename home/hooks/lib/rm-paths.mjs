@@ -45,6 +45,7 @@ const UNKNOWN_CD_TARGET = /^-|[~$`*?[\]{}]/;
 const BLANKS = /[ \t\n]+/; // where bash splits an unquoted variable's value into words (the default IFS)
 /** Work budget for one rm target: PATH_MAX is 4096 on Linux and 1024 on macOS, so a longer word is no path a real command names. */
 export const MAX_TARGET_CHARS = 4096;
+const MAX_SHOWN_TARGET_CHARS = 120; // how much of a target a reason repeats: the reason goes into the dialog and back to the model
 /** An rm option that deletes recursively: `-r`, `-R`, a cluster holding one (`-rf`, `-fR`), or `--recursive`. */
 export const RECURSIVE_FLAG = /^--recursive$|^-[a-zA-Z]*[rR]/;
 
@@ -219,6 +220,12 @@ export function nextCwd(cmd, args, cwd, project, vars) {
   return UNKNOWN_CD_TARGET.test(target) ? null : resolve(cwd, nativePath(target));
 }
 
+/** A target as a reason shows it: without the quote mark, and only its start when it is long (the agent wrote it; it is not ours to repeat in full). */
+function shown(target) {
+  const text = target.replace(QUOTED_MARK, '');
+  return text.length > MAX_SHOWN_TARGET_CHARS ? `${text.slice(0, MAX_SHOWN_TARGET_CHARS)}… (${text.length} characters)` : text;
+}
+
 /** Drops redirections (`2>&1`, `> file`) so they are not mistaken for rm targets. */
 export function withoutRedirects(args) {
   const out = [];
@@ -241,7 +248,7 @@ export function checkRm(args, { cwd, project, vars, splitWords }) {
   if (words.some((word) => expandBraces(word) === null)) return destructive('rm -r with a brace expansion that cannot be listed (check the targets by hand)');
   const judged = words.flatMap(expandBraces).flatMap((target) => readingsOf(target, cwd, vars).map((reading) => ({ target, reading })));
   const outside = judged.find(({ target, reading }) => !insideProject(target, cwd, project, reading));
-  if (outside !== undefined) return destructive(`rm -r outside the project (${outside.target.replace(QUOTED_MARK, '')})`);
+  if (outside !== undefined) return destructive(`rm -r outside the project (${shown(outside.target)})`);
   const whole = judged.find(({ target, reading }) => emptiesWholeFolder(target, cwd, project, reading));
-  return whole === undefined ? undefined : destructive(`rm -r that empties a whole folder (${whole.target.replace(QUOTED_MARK, '')}): the working directory itself, or a bare glob of it, the project root, home or /`);
+  return whole === undefined ? undefined : destructive(`rm -r that empties a whole folder (${shown(whole.target)}): the working directory itself, or a bare glob of it, the project root, home, a temp root or /`);
 }

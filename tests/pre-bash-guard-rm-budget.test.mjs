@@ -59,3 +59,14 @@ test('targets at the budget that were slow to read are judged like short ones', 
   const ASK_AT_BUDGET = [fill('*'), fill('?*'), fill('[a]'), `.${fill('/', '*').slice(1)}`];
   for (const target of ASK_AT_BUDGET) assert.match(decide(`${RM} -rf ${target}`, ctx).reasons?.[0] ?? 'allowed', WHOLE_FOLDER, `${target.slice(0, 12)}... (${target.length})`);
 });
+
+test('a reason repeats only the start of a long target, with its length: the text goes into the dialog and back to the model', () => {
+  const target = `/etc/${'a'.repeat(900)}`;
+  const [reason] = decide(`${RM} -rf ${target}`, ctx).reasons;
+  assert.match(reason, /^DESTRUCTIVE: rm -r outside the project \(\/etc\/a+… \(905 characters\)\)$/);
+  assert.ok(reason.length < 250, String(reason.length));
+  const [whole] = decide(`${RM} -rf ${'*/'.repeat(500)}*`, ctx).reasons;
+  assert.match(whole, /^DESTRUCTIVE: rm -r that empties a whole folder \((?:\*\/)+\*?… \(1001 characters\)\): /);
+  assert.ok(whole.length < 350, String(whole.length));
+  assert.equal(decide(`${RM} -rf /etc/x`, ctx).reasons[0], 'DESTRUCTIVE: rm -r outside the project (/etc/x)', 'a short target is shown whole');
+});
