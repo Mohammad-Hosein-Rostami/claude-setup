@@ -23,3 +23,16 @@ test('the catalog line for pre-bash-guard describes the sleep loop bounce', () =
   assert.match(row, /sleep/i);
   assert.match(row, /run_in_background/);
 });
+
+test('the catalog rows name timeout with the 2-h maximum, and watch.mjs only for waiting on a session or an agent', () => {
+  const rows = read('docs/catalog.md').split('\n');
+  const guardRow = rows.find((text) => text.startsWith('| `pre-bash-guard.mjs`'));
+  const adviceRow = rows.find((text) => text.startsWith('| `lib/wait-advice.mjs`'));
+  assert.ok(adviceRow, 'wait-advice row');
+  for (const row of [guardRow, adviceRow]) {
+    assert.match(row, /`run_in_background: true` (and|with) `timeout`[^.;]*7200000 ms/);
+    assert.doesNotMatch(row, /bounded wait/);
+  }
+  assert.match(adviceRow, /unattended run \(`-p`, Agent SDK, CI, cloud\)[^.]*30 min \(10 min for a text `-p` prompt\)/);
+  assert.match(adviceRow, /`watch\.mjs` is named only for waiting on a session or an agent/);
+});

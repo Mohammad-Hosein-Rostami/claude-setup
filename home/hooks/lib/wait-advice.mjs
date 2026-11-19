@@ -7,13 +7,22 @@
 // (through wrappers such as `timeout 100 sleep 40`); its time is the sum of its literal arguments (`5`, `0.5`, `1m`, `2h`, `infinity`), and
 // a time it cannot read (`sleep $n`) gives no advice. Loops are counted from `for|while|until` to `done`. Not looked into: `bash -c`
 // scripts, eval, aliases. A missed advice costs only a poll; this rule never decides an ask. Pure, no I/O.
+// The text's facts (Claude Code tools reference, Bash tool; changelog 2.1.285 and 2.1.288): in an unattended run (`-p`, Agent SDK, CI, cloud) a
+// background command stops after 30 min (10 min for a text `-p` prompt) unless `timeout` is passed, and 7200000 ms is the most; an interactive
+// session has no limit. No page says which of the two a workflow agent is, so the advice is "set timeout" for every background command.
+// watch.mjs watches session transcripts: it is named for waiting on a session or an agent, never as a way to run or bound a command.
 import { commandOf, KEYWORDS } from './command-of.mjs';
 import { withoutSubstitutions } from './merge-commit.mjs';
 import { segments, stripHeredocs } from './shell-words.mjs';
 
+const BACKGROUND_TIMEOUT_MAX_MS = 7200000; // 2 h: the longest `timeout` the Bash tool takes for a background command
+
 export const WAIT_ADVICE = 'Waiting (speed): do not wait with a sleep loop, every poll is a model call that re-reads the whole conversation. '
-  + 'Run the long command with run_in_background: true (you are woken when it exits), or make one bounded wait '
-  + '(node ~/.claude/tools/watch/watch.mjs ..., or a single command with a timeout), then read its result file in one call. '
+  + `Run the long command with run_in_background: true and set timeout to its expected run plus a margin, at most ${BACKGROUND_TIMEOUT_MAX_MS} ms (2 h): `
+  + 'you are woken when it exits, then read its result file in one call. '
+  + 'Set timeout for every background command: in an unattended run (-p, Agent SDK, CI, cloud) one without it stops after 30 min '
+  + '(10 min for a text -p prompt). A run over 2 h is split, or started in an interactive session, where background commands have no limit. '
+  + 'node ~/.claude/tools/watch/watch.mjs waits on a session or an agent only: it never runs or bounds a command. '
   + 'If a sleep is what you need, send the same command again and it runs.';
 
 const LOOP_SLEEP_SECONDS = 5; // a shorter sleep inside a loop is a pause between steps, not a wait

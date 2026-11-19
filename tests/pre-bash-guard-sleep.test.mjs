@@ -1,5 +1,5 @@
 // Tests for the sleep/poll-loop bounce of home/hooks/pre-bash-guard.mjs (lane r7-waits): a loop that sleeps 5 s or more, or a lone
-// `sleep` of 30 s or more, is denied once with advice (run in the background, or one bounded wait); the identical command sent
+// `sleep` of 30 s or more, is denied once with advice (run in the background with a `timeout` of at most 2 h); the identical command sent
 // again runs. Short sleeps, loops without sleep and the word "sleep" inside quotes or a heredoc body are never bounced.
 // The hook runs with a private HOME (the bounce store) and no GUI; command strings are only sent to the hook, never executed.
 import './pin-home.mjs';
@@ -69,6 +69,28 @@ test('a loop that sleeps 5 s or more, or a lone sleep of 30 s or more, is denied
     assert.match(reason, /timeout/, command);
     assert.match(reason, /same command again/i, command);
   }
+});
+
+/** The sentences of an advice text: cut after each full stop that a blank follows (`watch.mjs` and `2 h)` stay whole). */
+const sentencesOf = (text) => text.split(/(?<=\.)\s+/);
+
+test('the deny reason names run_in_background, timeout and the 2-h maximum in one sentence, and the path for a run over 2 h', () => {
+  const { reason } = guardSession().run(BOUNCED[0]);
+  const background = sentencesOf(reason).filter((sentence) => /run_in_background/.test(sentence));
+  assert.equal(background.length, 1, reason);
+  assert.match(background[0], /set timeout to its expected run plus a margin, at most 7200000 ms \(2 h\)/);
+  assert.match(reason, /Set timeout for every background command/);
+  assert.match(reason, /unattended run \(-p, Agent SDK, CI, cloud\)[^.]*30 min \(10 min for a text -p prompt\)/);
+  const overTwoHours = sentencesOf(reason).find((sentence) => /over 2 h/.test(sentence)) ?? '';
+  assert.match(overTwoHours, /is split, or started in an interactive session, where background commands have no limit/);
+});
+
+test('the deny reason names watch.mjs only for waiting on a session or an agent, never as the way to run or bound a command', () => {
+  const { reason } = guardSession().run(BOUNCED[0]);
+  const naming = sentencesOf(reason).filter((sentence) => /watch\.mjs/.test(sentence));
+  assert.equal(naming.length, 1, reason);
+  assert.match(naming[0], /waits on a session or an agent only: it never runs or bounds a command/);
+  assert.doesNotMatch(reason, /bounded wait/);
 });
 
 test('the identical command sent again runs, and a third send runs too', () => {
