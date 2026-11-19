@@ -62,7 +62,6 @@
 // stdin paths that xargs hands to anything but rm -r, a credential sent by a tool off the sender list, copied first (`cp -r ~/.ssh /tmp/x`),
 // piped into ssh from a `{ }` group or loop, or passed as an ssh argument (`ssh h "$(cat key)"`), `cd` scoping in subshells (treated as
 // global: extra asks only), an ssh alias that hides a production host, and the PowerShell tool (the hook matcher covers Bash only).
-import { resolve } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { bashCodeWrites } from './lib/code-writes.mjs';
@@ -82,14 +81,14 @@ import { gitAdvice } from './lib/git-advice.mjs';
 import { waitAdvice } from './lib/wait-advice.mjs';
 import { outwardAsk } from './lib/outward.mjs';
 import { readProdHosts, remoteAsk } from './lib/remote.mjs';
-import { checkRm, expandHome, expandVars, isUnder, nativePath, newScope, sameFile, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
+import { checkRm, newScope, nextCwd, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
 import { askUnlessRemembered } from './lib/remembered-ask.mjs';
 import { adviceOnce } from './lib/bounce-once.mjs';
 import { isAdviceReason, splitAdvice } from './lib/reason-classes.mjs';
 import { findLiteralSecret } from './lib/secrets.mjs';
 import { shellHazards } from './lib/shell-hazards.mjs';
 import { askOwner } from './lib/timed-ask.mjs';
-import { GIT_TOPLEVEL_WORD, lex, segments, tokenize } from './lib/shell-words.mjs';
+import { lex, segments, tokenize } from './lib/shell-words.mjs';
 import { riskyWordInExpansion, unreadableNameReasons } from './lib/raw-risk.mjs';
 import { DESTRUCTIVE_PREFIX, isSecretOnlyReason, MAX_COMMAND_CHARS, secretReason } from './lib/verdict.mjs';
 
@@ -97,30 +96,12 @@ export { segments };
 
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'ksh', 'dash']);
 const SHELL_OPTIONS_WITH_VALUE = new Set(['-o', '+o', '-O', '+O', '--rcfile', '--init-file']);
-const UNKNOWN_CD_TARGET = /^-|[~$`*?[\]{}]/;
 
 const allow = () => ({ allow: true });
 // Every rule is an ask. The hook turns it into a timed dialog (Allow by default, auto-allow after 2 min), or, the first time a
 // reason can be fixed by rewriting the command, into a bounce (lib/bounce-once.mjs reads `reasons` one by one). Only a click on
 // Deny denies for good. A destructive rule says so, so its dialog stands out.
 const ask = (reasons) => ({ allow: false, ask: true, reason: reasons.join('; '), reasons });
-
-/** Like expandHome; the git top-level word -> the project, but only from inside it (elsewhere the top-level is unknown). */
-function expandCdTarget(target, cwd, project) {
-  if (target !== GIT_TOPLEVEL_WORD && !target.startsWith(`${GIT_TOPLEVEL_WORD}/`)) return expandHome(target);
-  const root = resolve(nativePath(project));
-  const inside = sameFile(resolve(cwd), root) || isUnder(root, resolve(cwd));
-  return inside ? root + target.slice(GIT_TOPLEVEL_WORD.length) : target;
-}
-
-/** Working directory after `cd`/`pushd`/`popd`: literal targets are resolved, anything else makes it unknown (null). */
-function nextCwd(cmd, args, cwd, project, vars) {
-  if (cmd === 'popd') return null;
-  if (cmd !== 'cd' && cmd !== 'pushd') return cwd;
-  if (cwd === null || args.length !== 1) return null;
-  const target = expandVars(expandCdTarget(args[0], cwd, project), vars); // `cd "$D"` after `D=$(mktemp -d)` is the temp dir
-  return UNKNOWN_CD_TARGET.test(target) ? null : resolve(cwd, nativePath(target));
-}
 
 /**
  * The `-c` script of a shell invocation: `-c` may sit anywhere in the option cluster or list (`-ec`, `-e -c`, `-c --`, `-o pipefail -c`).

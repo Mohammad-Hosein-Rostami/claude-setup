@@ -1,5 +1,6 @@
 // Path rules for `rm -r` and `cd`: is a target inside the project or a temp dir, and which variables hold what.
-// Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; MAX_TARGET_CHARS; newScope(cwd, project) -> {vars, assigned};
+// Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; MAX_TARGET_CHARS; nextCwd(cmd, args, cwd, project, vars) -> folder | null;
+// newScope(cwd, project) -> {vars, assigned};
 // trackAssignments(scope, tokens, nextTokens); substituteKnownWords(tokens, scope); bashReadings(word, splitWords) (also read by
 // lib/find-delete.mjs); nativePath, isUnder, sameFile, expandHome; RECURSIVE_FLAG; withoutRedirects(args) (also read by lib/git-runs.mjs);
 // DECLARERS (from lib/shell-words.mjs, also read by lib/git-run-values.mjs).
@@ -36,6 +37,7 @@ const ANY_VAR = /\$\{(\w+)\}|\$(\w+)/g;
 const ASSIGNMENT = /^([A-Za-z_]\w*)(\+?)=([\s\S]*)$/;
 const SUBSCRIPT_ASSIGNMENT = /^([A-Za-z_]\w*)\[[^\]]*\]\+?=/; // `X[2]=v`: zsh changes part of a scalar, so its value is no longer known
 const MKTEMP_DIR = 'mktemp-variable';
+const UNKNOWN_CD_TARGET = /^-|[~$`*?[\]{}]/;
 const BLANKS = /[ \t\n]+/; // where bash splits an unquoted variable's value into words (the default IFS)
 /** Work budget for one rm target: PATH_MAX is 4096 on Linux and 1024 on macOS, so a longer word is no path a real command names. */
 export const MAX_TARGET_CHARS = 4096;
@@ -174,6 +176,23 @@ function emptiesWholeFolder(rawTarget, cwd, project, vars) {
   const wholeFolders = [cwd, project, homedir()].map((whole) => resolve(nativePath(whole)));
   if (folder === undefined) return sameFile(abs, wholeFolders[0]);
   return wholeFolders.some((whole) => sameFile(abs, whole)) || sameFile(abs, parse(abs).root) || GIT_BASH_DRIVE_ROOT.test(abs);
+}
+
+/** Like expandHome; the git top-level word -> the project, but only from inside it (elsewhere the top-level is unknown). */
+function expandCdTarget(target, cwd, project) {
+  if (target !== GIT_TOPLEVEL_WORD && !target.startsWith(`${GIT_TOPLEVEL_WORD}/`)) return expandHome(target);
+  const root = resolve(nativePath(project));
+  const inside = sameFile(resolve(cwd), root) || isUnder(root, resolve(cwd));
+  return inside ? root + target.slice(GIT_TOPLEVEL_WORD.length) : target;
+}
+
+/** Working directory after `cd`/`pushd`/`popd`: literal targets are resolved, anything else makes it unknown (null). */
+export function nextCwd(cmd, args, cwd, project, vars) {
+  if (cmd === 'popd') return null;
+  if (cmd !== 'cd' && cmd !== 'pushd') return cwd;
+  if (cwd === null || args.length !== 1) return null;
+  const target = expandVars(expandCdTarget(args[0], cwd, project), vars); // `cd "$D"` after `D=$(mktemp -d)` is the temp dir
+  return UNKNOWN_CD_TARGET.test(target) ? null : resolve(cwd, nativePath(target));
 }
 
 /** Drops redirections (`2>&1`, `> file`) so they are not mistaken for rm targets. */
