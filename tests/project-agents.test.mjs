@@ -94,7 +94,7 @@ test('doctor warns about a capped project agent (DOCTOR_PROJECT) and is ok for a
 
 // Audit of db40977 (B1, S4): the agent files come from a cloned repository, so they are untrusted. A link to /dev/zero or a FIFO once
 // grew the SessionStart hook to gigabytes or hung it until its timeout killed it, and the mode line and lead rules were lost.
-test('a link or a FIFO among the agent files is skipped and the SessionStart output still has the mode line', { skip: !POSIX && 'POSIX only' }, async () => {
+test('a link or a FIFO among the agent files is not read and the SessionStart output still has the mode line', { skip: !POSIX && 'POSIX only' }, async () => {
   const { home, projectDir } = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
   const agents = join(projectDir, '.claude', 'agents');
   await symlink('/dev/zero', join(agents, 'zero.md'));
@@ -106,7 +106,8 @@ test('a link or a FIFO among the agent files is skipped and the SessionStart out
   assert.equal(run.signal, null, 'the hook ends on its own');
   assert.match(run.stdout, /^Mode: /m);
   assert.match(run.stdout, /builder\.md \(maxTurns 60\)/);
-  assert.doesNotMatch(run.stdout, /zero\.md|pipe\.md/);
+  assert.match(run.stdout, /"zero\.md" \(a link: not read\)/, 'the link is named, not read');
+  assert.doesNotMatch(run.stdout, /pipe\.md/);
 });
 
 test('only the head of an agent file is read: a maxTurns line past it is not seen', async () => {

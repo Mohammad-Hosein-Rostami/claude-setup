@@ -1,5 +1,6 @@
 // Shared fixtures for the project-agents tests (tests/project-agents*.test.mjs).
-// Exports: agent(name, extra), sandbox({ project, personal }) -> { home, projectDir, personalDir, agentsDir }, noteOf(parts), NOTE_START, CAP_ADVICE, SHADOW_ADVICE, BOTH_ADVICE, POSIX.
+// Exports: agent(name, extra), sandbox({ project, personal }) -> { home, projectDir, personalDir, agentsDir }, noteOf(parts), NOTE_START,
+// CAP_ADVICE, SHADOW_ADVICE, BOTH_ADVICE, LINK_ADVICE, POSIX.
 // Invariants: every folder is a temp folder that removes itself (temp-dir-helpers.mjs); the note texts here are written out a second
 // time on purpose, so a change of the note's wording in home/hooks/lib/project-agents.mjs fails the tests that pin it.
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -11,6 +12,7 @@ export const NOTE_START = 'Project agent files in .claude/agents (file names are
 export const CAP_ADVICE = 'the lead deletes each frontmatter maxTurns: line in its own commit, no need to ask';
 export const SHADOW_ADVICE = 'tell the owner (project repos keep only project config)';
 export const BOTH_ADVICE = `${CAP_ADVICE}; ${SHADOW_ADVICE}`;
+export const LINK_ADVICE = 'tell the owner about each link (a link is not read, and nothing is edited through it)';
 
 /** The text of an agent file with this frontmatter name; `extra` is more frontmatter lines, each ending in a newline. */
 export const agent = (name, extra = '') => `---\nname: ${name}\ndescription: x\n${extra}---\nBody\n`;
