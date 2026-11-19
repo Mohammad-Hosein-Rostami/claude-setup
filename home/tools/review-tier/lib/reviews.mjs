@@ -1,6 +1,7 @@
 // Purpose: turn a set of classes into the reviews to run together (agent, model, effort, lens, brief) and their plans.
 // Exports: STRESS_PLAN, RACE_RUNS, MUTANTS_PER_FILE, DELTA_READING, buildReviews(input), buildWaivable(input).
-// Invariants: only ADDS checks (I1, one exception: `waivable`, below): efforts are today's (Sonnet high correctness lens always at tier >= 1; Opus max lens for a
+// Invariants: file names and ranges enter a brief as data (lib/brief-data.mjs); `requiredReading` arrives already written that way (lib/diff.mjs).
+//   It only ADDS checks (I1, one exception: `waivable`, below): efforts are today's (Sonnet high correctness lens always at tier >= 1; Opus max lens for a
 //   risky class or a landing; Opus high lens for size or concurrency-lite; auditor Opus max for security, data, money,
 //   untrusted-input and every landing of tier >= 1, Opus high for a hooks-only change mid-lane). A plan item rides on the
 //   risk lens and the auditor, never on the correctness lens. Brief text holds file:line only, never a line's text.
@@ -9,6 +10,7 @@
 //   `waivable` exists only for a landing of tier 1 with no gate path: the Opus max pair moves from before land to after it
 //   (`audit`), and the Sonnet lens takes the mutation plan the risk lens would have had (`reviews`).
 import { LOCK_TAG, RACE_TAG, RISKY_CLASSES, tierOf } from '../tiers.mjs';
+import { asData, placeText } from './brief-data.mjs';
 
 /** The stale-lock stress plan (A.1): a seeded stale lock, holders killed mid-turn, runs at 8 and at 20 waiters. */
 export const STRESS_PLAN = Object.freeze({ staleLock: true, killPct: 5, waiters: [8, 20], repeats: 3, count: ['double-holders', 'lost-updates'] });
@@ -65,7 +67,8 @@ function planText(plan) {
  */
 export const DELTA_READING = 'Read: the changed lines; the callers and the callees of every changed function; every use of a name the fix removed or renamed (search the old name in the whole repo); the readers of any state, config, default or data the fix starts or stops writing; the tests the fix touched (nothing weakened); every prior finding. A security finding is never dropped. If you cannot bound the effect of the fix this way, say `needs the full range`: the round is then not clean.';
 
-const hitText = (hit) => (hit.line > 0 ? `${hit.path}:${hit.line}` : hit.path);
+/** The range as a brief names it: a delta round's is made by the tool (a full sha, or a patch list with the base as data); any other is the caller's text. */
+const rangeText = (range, deltaOf) => (deltaOf === null ? asData(range) : range);
 
 /**
  * What a fix-round reviewer does with the report of the round before. Nothing in it rests on the writer's word: the hash ties the
@@ -80,9 +83,9 @@ const priorText = (prior) => `Prior findings: ${prior.file} (sha256 ${prior.sha2
 const deltaLine = (range, prior) => `Delta review: ${range} only. ${DELTA_READING} Do not look for new defects in code the fix cannot reach; do not re-run the full suite (PASS record covers it).${prior === null ? '' : ` ${priorText(prior)}`}`;
 
 function briefOf({ range, deltaOf, prior, rules, hits, plan, requiredReading }) {
-  const parts = [`Review ${range}.`, `Rules: ${rules}.`];
+  const parts = [`Review ${rangeText(range, deltaOf)}.`, `Rules: ${rules}.`];
   if (deltaOf !== null) parts.splice(1, 0, deltaLine(range, prior), "The set, models, efforts and PLAN items are the lane's: nothing is skipped.");
-  const shown = [...new Set(hits.slice(0, MAX_BRIEF_HITS).map((hit) => `${hit.class} ${hitText(hit)}`))];
+  const shown = [...new Set(hits.slice(0, MAX_BRIEF_HITS).map((hit) => `${hit.class} ${placeText(hit.path, hit.line)}`))];
   if (shown.length > 0) parts.push(`Hits: ${shown.join(', ')}.`);
   const text = planText(plan);
   if (text !== '') parts.push(text);
@@ -94,7 +97,7 @@ const reviewMaker = ({ range, deltaOf, prior, requiredReading }) => (agent, mode
   agent, model, effort, lens, rules, brief: briefOf({ range, deltaOf, prior, rules, hits: ownHits, plan, requiredReading }), requiredReading, plan,
 });
 
-const uiSkillReview = (range) => ({ agent: 'skill', model: null, effort: null, lens: 'ui-quality-pass', rules: '', brief: `Run the ui-quality-pass skill on the ui files of ${range}.`, requiredReading: [], plan: NO_PLAN });
+const uiSkillReview = (range, deltaOf) => ({ agent: 'skill', model: null, effort: null, lens: 'ui-quality-pass', rules: '', brief: `Run the ui-quality-pass skill on the ui files of ${rangeText(range, deltaOf)}.`, requiredReading: [], plan: NO_PLAN });
 
 /**
  * @param {object} input classes (Set), fileClasses, hits, landing, range, deltaOf, prior, requiredReading, hasCode, changedLines, fileCount
@@ -123,7 +126,7 @@ export function buildReviews(input) {
   } else if (classes.has('audit')) {
     reviews.push(make('security-auditor', 'opus', 'high', 'audit: hooks', 'backend', auditorPlan, hits.filter((hit) => hit.class === 'audit')));
   }
-  if (classes.has('ui')) reviews.push(uiSkillReview(range));
+  if (classes.has('ui')) reviews.push(uiSkillReview(range, input.deltaOf));
   return reviews;
 }
 
@@ -139,6 +142,6 @@ export function buildWaivable(input) {
   // A fix round is never waived: the waiver belongs to the first review of the whole range, and a delta round runs the lane's whole set.
   if (deltaOf !== null || !landing || tierOf(classes) !== 1 || classes.has('gate')) return null;
   const reviews = [reviewMaker(input)('reviewer', 'sonnet', 'high', 'correctness', rulesOf(classes), { ...NO_PLAN, mutation: planOf(input).mutation }, hits)];
-  if (classes.has('ui')) reviews.push(uiSkillReview(range));
+  if (classes.has('ui')) reviews.push(uiSkillReview(range, input.deltaOf));
   return { reviews, audit: buildReviews(input).filter((review) => AUDIT_LENSES.includes(review.lens)) };
 }

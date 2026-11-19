@@ -23,7 +23,7 @@ Text output: `review-tier: tier <n> (<classes>), <files> files, <lines> changed 
 `--json` prints the whole report: `tier`, `classes`, `added`, `kept` (classes that come from the lane or an earlier round, not from this run's own files), `landing`, `range`, `files`,
 `changedLines`, `hits`, `fileClasses`, `reviews` (each with `plan: {stress, race, mutation}` and `requiredReading`), `waivable`,
 `weakened`, `principles`, `deltaOf`, `prior`, `priorFile`. The text output has one line each for `waivable:`, `weakened:` and `principles:`.
-Line texts are matched in memory and never printed or logged. The log is `~/.claude/logs/review-tier.jsonl`
+Line texts are matched in memory and never printed or logged. Names are data: a file path, base or range that is not plain (letters, digits and `_@+=.,/~^{}-`) is written into briefs, required reading and the text output as one JSON string with `<`, `>` and everything outside printable ASCII escaped (`lib/brief-data.mjs`), and the text given to `--delta` is never printed (the resolved sha is); the JSON fields `range`, `hits` and `fileClasses` keep the real names. The log is `~/.claude/logs/review-tier.jsonl`
 (`REVIEW_TIER_LOG` overrides; folder 0700, file 0600): `ts, repo, range, tier, classes, files, changedLines, landing, added`.
 
 ## Classes and sets
@@ -99,6 +99,6 @@ measurement, not a miss-rate bound.
 - Hits are capped at 20 per class and file, so a generated file cannot make the JSON huge; the class still applies.
 
 Files: `review-tier.mjs` (CLI), `tiers.mjs` (class rules), `lib/diff.mjs` (git reading, delta, required reading), `lib/reviews.mjs`
-(sets, plans, briefs, waivable), `lib/report.mjs` (report, text, JSON), `lib/prior.mjs` (hash and finding counts of the `--prior` report), `lib/weakened.mjs` (weakened checks), `lib/log.mjs`. Tests:
+(sets, plans, briefs, waivable), `lib/report.mjs` (report, text, JSON), `lib/prior.mjs` (hash and finding counts of the `--prior` report), `lib/brief-data.mjs` (names as data), `lib/weakened.mjs` (weakened checks), `lib/log.mjs`. Tests:
 `tests/review-tier.test.mjs`, `review-tier-cli`, `review-tier-gate` (gate, line rules, principles, items 71 and 73), `review-tier-waivable`,
-`review-tier-weakened`, `review-tier-delta-set` (a fix round is never lighter than the lane), `review-tier-delta-brief` (the delta line and the prior file).
+`review-tier-weakened`, `review-tier-delta-set` (a fix round is never lighter than the lane), `review-tier-delta-brief` (the delta line and the prior file), `review-tier-brief-data` (hostile names).

@@ -3,9 +3,11 @@
 //   readDelta(top, base, reviewedRef), newFileReader(top, rev), functionNames(files), removedNames(files), requiredReadingFor(top, files).
 // Invariants: git runs through git-tidy's runGit (no shell, no repository from the environment). A range or sha that starts
 //   with `-` is refused, so it can never be read as an option. Only paths and line numbers leave this module through the
-//   report; line texts stay in memory for the class tests.
+//   report; line texts stay in memory for the class tests. Required reading and the patch-list range are written with names as data
+//   (lib/brief-data.mjs): they go into briefs as they are.
 import { createHash } from 'node:crypto';
 import { UsageError, gitFlag, gitText, runGit } from '../../git-tidy/lib/git.mjs';
+import { asData, placeText } from './brief-data.mjs';
 
 export const MAX_READING = 20; // callers and callees listed as required reading
 const MAX_WHOLE_FILE_CHARS = 1 << 20;
@@ -14,6 +16,7 @@ const BASE_FALLBACKS = ['main', 'master', 'develop'];
 // Fixed prefixes: diff.noprefix and diff.mnemonicPrefix would change the `+++ b/path` lines parsePatch cuts.
 const PATH_PREFIXES = ['--src-prefix=a/', '--dst-prefix=b/'];
 const DIFF_FLAGS = ['-c', 'core.quotePath=false', 'diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', '-M', ...PATH_PREFIXES];
+const HEADER_PREFIX_LENGTH = '+++ b/'.length;
 const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$/;
 const CALL = /(?<![.\w$])([A-Za-z_$][\w$]*)\(/g;
 const NOT_A_FUNCTION = new Set(['if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'typeof', 'await', 'new', 'import', 'require', 'super']);
@@ -45,6 +48,9 @@ export function checkRange(top, range) {
   return sides[1];
 }
 
+/** The path of a `+++ b/<path>` or `--- a/<path>` line. Git ends the line with a TAB when the path holds a space: that TAB is no part of the name. */
+const pathOf = (headerLine) => headerLine.slice(HEADER_PREFIX_LENGTH).replace(/\t$/, '');
+
 /**
  * Parses `git diff -U0` text into one entry per path (a path in several patches is merged).
  * `hunkHeads` holds the text after each `@@` (the enclosing function line git picked).
@@ -61,8 +67,8 @@ export function parsePatch(text) {
   };
   for (const line of text.split('\n')) {
     if (line.startsWith('diff --git ')) { current = null; inHunk = false; continue; }
-    if (!inHunk && line.startsWith('+++ ')) { if (line !== '+++ /dev/null') current = entry(line.slice(6)); continue; }
-    if (!inHunk && line.startsWith('--- ')) { if (line !== '--- /dev/null') current = entry(line.slice(6)); continue; }
+    if (!inHunk && line.startsWith('+++ ')) { if (line !== '+++ /dev/null') current = entry(pathOf(line)); continue; }
+    if (!inHunk && line.startsWith('--- ')) { if (line !== '--- /dev/null') current = entry(pathOf(line)); continue; }
     const hunk = HUNK.exec(line);
     if (hunk !== null) {
       inHunk = true;
@@ -116,7 +122,7 @@ function freshPatches(top, base, reviewedSha) {
   const fresh = commitsOf(top, `${base}..HEAD`).filter((commit) => !reviewed.has(patchKey(top, commit)));
   const text = fresh.map((commit) => showPatch(top, commit)).join('\n');
   const names = fresh.flatMap((commit) => gitText(top, [...DIFF_FLAGS.slice(0, 2), 'show', '--name-only', '--no-renames', '--format=', commit]).split('\n')).filter((name) => name !== '');
-  return { range: `patches ${fresh.map((commit) => commit.slice(0, 8)).join(',') || 'none'} of ${base}..HEAD`, files: withHunklessFiles(names, parsePatch(text)) };
+  return { range: `patches ${fresh.map((commit) => commit.slice(0, 8)).join(',') || 'none'} of ${asData(base)}..HEAD`, files: withHunklessFiles(names, parsePatch(text)) };
 }
 
 /**
@@ -177,13 +183,13 @@ function placesOf(top, name, onlyDefinitions) {
   const { stdout } = runGit(top, ['grep', '-n', '-w', '-F', '-I', '-e', name, '--']);
   return stdout.split('\n').map((row) => /^(.+?):(\d+):(.*)$/.exec(row))
     .filter((m) => m !== null && (!onlyDefinitions || nameDefinedIn(m[3]) === name))
-    .map((m) => `${m[1]}:${m[2]}`);
+    .map((m) => placeText(m[1], Number(m[2])));
 }
 
 /** `path:line` of the first changed line of each file (a file with no hunk: its path), at most MAX_READING. */
 const changedPlaces = (files) => files.slice(0, MAX_READING).map((file) => {
   const line = (file.added[0] ?? file.removed[0])?.line;
-  return line === undefined ? file.path : `${file.path}:${line}`;
+  return placeText(file.path, line ?? 0);
 });
 
 /**
@@ -194,7 +200,7 @@ const changedPlaces = (files) => files.slice(0, MAX_READING).map((file) => {
 export function requiredReadingFor(top, files) {
   const names = [...new Set([...functionNames(files), ...removedNames(files)])];
   const callees = calleeNames(files, names).flatMap((name) => placesOf(top, name, true));
-  const changed = new Set(files.flatMap((file) => file.added.map((added) => `${file.path}:${added.line}`)));
+  const changed = new Set(files.flatMap((file) => file.added.map((added) => placeText(file.path, added.line))));
   const calleePlaces = [...new Set(callees)].filter((place) => !changed.has(place)).slice(0, MAX_READING / 2);
   const perName = Math.max(1, Math.floor((MAX_READING - calleePlaces.length) / Math.max(1, names.length)));
   const callers = names.flatMap((name) => placesOf(top, name, false).filter((place) => !changed.has(place)).slice(0, perName));

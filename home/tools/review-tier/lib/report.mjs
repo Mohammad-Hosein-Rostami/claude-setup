@@ -1,6 +1,7 @@
 // Purpose: assemble the review-tier report (classes, tier, reviews) from parsed diffs, and print it as text or JSON.
 // Exports: FIX_ROUND_COMMAND, buildReport(input), formatText(report), formatJson(report), logRecord(report, repoName, now).
-// Invariants: pure (no git, no files); never holds or prints a line's text, only class, path and line number.
+// Invariants: pure (no git, no files); never holds or prints a line's text, only class, path and line number. The text output writes
+//   paths and a caller's range as data (lib/brief-data.mjs); the JSON keeps them as they are (JSON strings).
 //   `principles` are the ids the hits ask the brief to carry (sorted by number); `weakened` lists lines that weaken a check;
 //   `waivable` is null unless the landing is tier 1 with no gate path, and always null in a delta round.
 //   A delta round (`laneFiles` given) is never lighter than the lane: its classes are those of the whole lane range, of the earlier
@@ -8,6 +9,7 @@
 //   Outside a delta round `--lane-classes` keeps each file's highest classes (I4): a file's classes are the union of its earlier and new ones.
 //   `--add-class` only raises: an added class is unioned into the set, never removed.
 import { CLASS_TIER, LOCK_TAG, PRINCIPLES_BY_TRIGGER, RACE_TAG, classifyFiles, isCodeFile, isSizeable, tierOf } from '../tiers.mjs';
+import { asData, placeText } from './brief-data.mjs';
 import { buildReviews, buildWaivable } from './reviews.mjs';
 import { weakenedChecks } from './weakened.mjs';
 
@@ -81,15 +83,13 @@ export function buildReport({ files, laneFiles = null, readNewFile, landing, add
   };
 }
 
-const hitText = (hit) => (hit.line > 0 ? `${hit.path}:${hit.line}` : hit.path);
-
 /** The text output of A.1: summary line, `why:` (first hit per class, or where a class without one comes from), `run together:` and the fix-round command. */
 export function formatText(report) {
-  const lines = [`review-tier: tier ${report.tier} (${report.classes.join(', ') || 'none'}), ${report.files} files, ${report.changedLines} changed lines, ${report.range}`];
+  const lines = [`review-tier: tier ${report.tier} (${report.classes.join(', ') || 'none'}), ${report.files} files, ${report.changedLines} changed lines, ${report.deltaOf === null ? asData(report.range) : report.range}`];
   lines.push('why:');
   for (const name of report.classes) {
     const hit = report.hits.find((candidate) => candidate.class === name);
-    lines.push(`  ${name}${hit ? ` ${hitText(hit)}` : report.added.includes(name) ? ' (added by --add-class)' : report.kept.includes(name) ? KEPT_FROM_LANE : ''}`);
+    lines.push(`  ${name}${hit ? ` ${placeText(hit.path, hit.line)}` : report.added.includes(name) ? ' (added by --add-class)' : report.kept.includes(name) ? KEPT_FROM_LANE : ''}`);
   }
   if (report.reviews.length === 0) lines.push('run: none (docs only); checks still run');
   else {
@@ -100,7 +100,7 @@ export function formatText(report) {
     }
   }
   lines.push(report.waivable === null ? 'waivable: no' : `waivable: yes (${report.waivable.reviews.length} review before land, ${report.waivable.audit.length} audit after it)`);
-  lines.push(`weakened: ${report.weakened.length === 0 ? 'none' : report.weakened.map((entry) => `${entry.path}:${entry.line} ${entry.kind}`).join(', ')}`);
+  lines.push(`weakened: ${report.weakened.length === 0 ? 'none' : report.weakened.map((entry) => `${placeText(entry.path, entry.line)} ${entry.kind}`).join(', ')}`);
   lines.push(`principles: ${report.principles.join(', ') || 'none'}`);
   if (report.prior !== null) lines.push(`prior: ${report.prior.file} sha256 ${report.prior.sha256}, ${report.prior.blocking} blocking, ${report.prior.shouldFix} should-fix`);
   // A class the lead added by hand is known to no later run, so the line repeats it: copied as it is, the fix round loses nothing.
