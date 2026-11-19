@@ -1,6 +1,5 @@
-// PreToolUse(Bash) guard. Reads the hook JSON from stdin, never evaluates the command.
-// Exports: decide(command, {cwd, project, prodHosts}) -> {allow: true, advice?} | {allow: false, ask: true, reason, reasons, advice?};
-// segments(command) -> string[][]. Parsing lives in lib/shell-words.mjs and lib/command-of.mjs.
+// PreToolUse(Bash) guard. Reads the hook JSON from stdin, never evaluates the command. Parsing lives in lib/shell-words.mjs and lib/command-of.mjs.
+// Exports: decide(command, {cwd, project, prodHosts}) -> {allow: true, advice?} | {allow: false, ask: true, reason, reasons, advice?}; segments(command) -> string[][].
 // Nothing is denied for good. Every safety rule hit is an ASK, and the hook answers it with a timed native dialog (lib/timed-ask.mjs:
 // Allow is the default, no answer in 2 min (CLAUDE_ASK_TIMEOUT_S) goes ahead as Allow, only a click on Deny denies); with no
 // GUI (ssh, CI, no display) or a failing dialog it falls back to the CLI's own "ask" prompt, which also appears in
@@ -10,10 +9,9 @@
 // above. ADVICE (quality rules: a hand-edited lockfile, a merge that can create a merge commit, a branch moved by update-ref, a copy of an existing lane branch, a fast-forward merge into the base without a suite PASS: lib/git-advice.mjs, a `for|while|until` loop that sleeps 5 s or more or a single sleep of 30 s or more: lib/wait-advice.mjs) never asks: alone,
 // the first send is denied with the fix and the identical retry runs; next to an ask or bounce it is appended (table: lib/bounce-once.mjs) Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
 // Rules. DESTRUCTIVE (the dialog says "DESTRUCTIVE: ..."): force push (incl. -fu clusters and +refspec), `push --mirror`,
-// remote branch delete, rm -r of a whole folder (the working directory, a bare glob such as `*` of it, the project root, home, `/`:
-// lib/rm-paths.mjs), rm -r outside the project (temp dirs allowed, `cd` tracked within one command line, `cd` to `~`,
-// `$HOME` and `$(git rev-parse --show-toplevel)` (from inside the project only) is resolved, as are leading
-// `~`/`$HOME`/`$TMPDIR`/`$CLAUDE_PROJECT_DIR` and variables assigned earlier in the line (the last assignment wins,
+// remote branch delete, rm -r of a whole folder (the working directory, a bare glob such as `*` or `./**/*` of it, the project root, home, `/`: lib/rm-paths.mjs),
+// rm -r outside the project (temp dirs allowed, `cd` tracked within one command line, `cd` to `~`, `$HOME` and `$(git rev-parse --show-toplevel)` (from inside
+// the project only) is resolved, as are leading `~`/`$HOME`/`$TMPDIR`/`$CLAUDE_PROJECT_DIR` and variables assigned earlier in the line (the last assignment wins,
 // `VAR=$(mktemp -d)` is the temp dir, `..` is resolved after substitution; an unknown variable asks for `rm -r` only; lib/rm-paths.mjs;
 // $HOME, `/` and a drive root never count as the project), disk wipes (dd of=/dev/x, mkfs, wipefs, shred/blkdiscard on a device), rm -r run
 // by xargs or parallel, also inside the `sh -c` script they run (its targets come from stdin; `xargs rm -f` is fine; lib/command-checks.mjs).

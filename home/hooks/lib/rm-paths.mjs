@@ -13,6 +13,7 @@
 // Only a recursive rm asks about an unknown or outside target; `rm -f x` of one file is not judged here.
 // Inside the project a recursive rm still asks when it empties a whole folder: the working directory itself, or a bare glob (`*`, `./*`,
 // `.*`, `?`, `[a-z]*`) of the working directory, the project root, home or `/`. A glob with a name part (`*.log`) or of a sub-folder does not.
+// A bare glob below a bare glob (`./**/*`, `*/*`) counts as a glob of the folder the first one is in: it empties every sub-folder there.
 // Invariants: pure apart from reading homedir()/tmpdir(); never touches the file system.
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, parse, relative, resolve } from 'node:path';
@@ -158,20 +159,33 @@ function insideProject(rawTarget, cwd, project, vars) {
   return (!isBroadRoot(project) && isUnder(project, abs)) || SAFE_TEMP_ROOTS.some((root) => isUnder(root, abs));
 }
 
+// The folders a target's trailing bare-glob parts list, nearest first: `*` -> [`.`], `/*` -> [`/`], `./**/*` -> [`./**`, `.`], and
+// none for a target that ends in a name (`src`, `*.log`, `*/dist`). Every step is kept, not only the last, so cutting a second glob part
+// off can only add a folder to judge: a target that asked with one part cut off still asks.
+function globbedFolders(target) {
+  const folders = [];
+  let rest = target;
+  for (let cut = rest.lastIndexOf('/'); BARE_GLOB.test(rest.slice(cut + 1).replace(BRACKET_SET, '?')); cut = rest.lastIndexOf('/')) {
+    rest = cut === -1 ? '.' : rest.slice(0, cut).replace(TRAILING_SLASHES, '$1') || '/';
+    folders.push(rest); // `.` and `/` end the loop: neither is a glob
+  }
+  return folders;
+}
+
 /**
- * True when the target is the working directory itself, or a bare glob whose folder is the working directory, the project root, home or a
- * file-system root: removing it empties that whole folder even though every entry is inside the project. Unknown targets return false
- * (insideProject already asks about them).
+ * True when the target is the working directory itself, or a bare glob (also one below other bare globs, globbedFolders) whose folder is
+ * the working directory, the project root, home or a file-system root: removing it empties that whole folder even though every entry is
+ * inside the project. Unknown targets return false (insideProject already asks about them).
  */
 function emptiesWholeFolder(rawTarget, cwd, project, vars) {
+  if (cwd === null) return false;
   const target = expandedTarget(rawTarget, cwd, project, vars).replace(QUOTED_MARK, '').replace(TRAILING_SLASHES, '$1');
-  const cut = target.lastIndexOf('/');
-  const isGlob = BARE_GLOB.test(target.slice(cut + 1).replace(BRACKET_SET, '?'));
-  const folder = !isGlob ? target : cut === -1 ? '.' : target.slice(0, cut) || '/';
-  if (cwd === null || folder.startsWith('~') || folder.includes('$')) return false;
-  const abs = resolve(cwd, nativePath(folder));
-  if (!isGlob) return sameFile(abs, resolve(nativePath(cwd)));
-  return [cwd, project, homedir(), parse(abs).root].some((whole) => sameFile(abs, resolve(nativePath(whole)))) || GIT_BASH_DRIVE_ROOT.test(abs);
+  const absolute = (path) => (path.startsWith('~') || path.includes('$') ? undefined : resolve(cwd, nativePath(path)));
+  const wholeFolders = [cwd, project, homedir()].map((whole) => resolve(nativePath(whole)));
+  const isWhole = (abs) => abs !== undefined && (wholeFolders.some((whole) => sameFile(abs, whole)) || sameFile(abs, parse(abs).root) || GIT_BASH_DRIVE_ROOT.test(abs));
+  const folders = globbedFolders(target);
+  if (folders.length === 0) return absolute(target) !== undefined && sameFile(absolute(target), wholeFolders[0]);
+  return folders.map(absolute).some(isWhole);
 }
 
 /** Drops redirections (`2>&1`, `> file`) so they are not mistaken for rm targets. */
