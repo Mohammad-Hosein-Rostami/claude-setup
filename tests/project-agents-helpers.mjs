@@ -1,5 +1,5 @@
 // Shared fixtures for the project-agents tests (tests/project-agents*.test.mjs).
-// Exports: agent(name, extra), sandbox({ project, personal }), noteOf(parts), NOTE_START, CAP_ADVICE, SHADOW_ADVICE, BOTH_ADVICE, POSIX.
+// Exports: agent(name, extra), sandbox({ project, personal }) -> { home, projectDir, personalDir, agentsDir }, noteOf(parts), NOTE_START, CAP_ADVICE, SHADOW_ADVICE, BOTH_ADVICE, POSIX.
 // Invariants: every folder is a temp folder that removes itself (temp-dir-helpers.mjs); the note texts here are written out a second
 // time on purpose, so a change of the note's wording in home/hooks/lib/project-agents.mjs fails the tests that pin it.
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -34,11 +34,14 @@ export async function sandbox({ project = {}, personal = { runner: '', reviewer:
 }
 
 /**
- * The whole note as the hook must print it: the advice first, then the list of files.
- * @param {{ advice: string, items: string[], more?: number }} parts the advice, the items shown and how many files are counted, not shown
+ * The whole note as the hook must print it: what the hook itself says first (the advice, then the shadowed personal agents, which come
+ * from the personal set), the file names from the repository last.
+ * @param {{ advice?: string, shadowed?: string[], items?: string[], more?: number }} parts the advice, the personal agents shadowed,
+ *   the items shown and how many more files are counted, not shown
  * @returns {string} the note
  */
-export function noteOf({ advice, items, more = 0 }) {
-  const listed = [...items, ...(more ? [`and ${more} more files not shown`] : [])];
-  return `${NOTE_START}${advice}. Files: ${listed.join(', ')}.`;
+export function noteOf({ advice = '', shadowed = [], items = [], more = 0 }) {
+  const listed = [...items, ...(more ? [`${items.length ? 'and ' : ''}${more} more files not shown`] : [])];
+  const sentences = [advice, shadowed.length ? `Shadowed personal agents: ${shadowed.join(', ')}` : '', listed.length ? `Files: ${listed.join(', ')}` : ''];
+  return `${NOTE_START}${sentences.filter(Boolean).join('. ')}.`;
 }

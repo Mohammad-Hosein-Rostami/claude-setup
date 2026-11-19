@@ -152,11 +152,12 @@ test('at most MAX_AGENT_FILES agent files are read; the note keeps whole items w
 test('the advice comes from every file read, also from one the capped note does not show', async () => {
   const { projectDir, personalDir } = await sandbox();
   const agents = join(projectDir, '.claude', 'agents');
-  for (let i = 0; i < MAX_AGENT_FILES - 1; i += 1) await writeFile(join(agents, `a${String(i).padStart(4, '0')}.md`), agent(`a${i}`, 'maxTurns: 3\n'));
-  await writeFile(join(agents, 'z-last.md'), agent('runner'));
+  // The shadowing files are listed first and fill the note, so the one capped file is read but not shown.
+  for (let i = 0; i < MAX_AGENT_FILES - 1; i += 1) await writeFile(join(agents, `a${String(i).padStart(4, '0')}.md`), agent('runner'));
+  await writeFile(join(agents, 'z-last.md'), agent('z-last', 'maxTurns: 3\n'));
   const note = projectAgentNote(projectDir, personalDir);
   assert.doesNotMatch(note, /z-last\.md/);
-  assert.ok(note.includes(`: ${BOTH_ADVICE}. Files: `) && note.endsWith(' more files not shown.'), note);
+  assert.ok(note.includes(`: ${BOTH_ADVICE}. Shadowed personal agents: runner. Files: `) && note.endsWith(' more files not shown.'), note);
   assert.ok(note.length <= NOTE_MAX_CHARS, `note is ${note.length} chars`);
 });
 
@@ -182,7 +183,7 @@ test('worst case with plain names: MAX_AGENT_FILES files with 64-char names give
   const note = projectAgentNote(projectDir, personalDir);
   const shown = note.split(WORST_REASONS).length - 1;
   assert.ok(shown >= 1 && note.length <= NOTE_MAX_CHARS, `note is ${note.length} chars with ${shown} items`);
-  assert.equal(note, noteOf({ advice: BOTH_ADVICE, items: names.slice(0, shown).map((file) => `${file} ${WORST_REASONS}`), more: MAX_AGENT_FILES - shown }));
+  assert.equal(note, noteOf({ advice: BOTH_ADVICE, shadowed: ['reviewer'], items: names.slice(0, shown).map((file) => `${file} ${WORST_REASONS}`), more: MAX_AGENT_FILES - shown }));
   const command = spawnSync(process.execPath, [NOTE_COMMAND, projectDir, personalDir], { encoding: 'utf8' });
   assert.equal(command.stdout, `${note}\n`, 'doctor.sh runs the file as a command and gets the same capped note');
 });
@@ -193,7 +194,7 @@ test('worst case with escaped names: files past MAX_AGENT_FILES give a capped no
   const note = projectAgentNote(projectDir, personalDir);
   const shown = note.split(WORST_REASONS).length - 1;
   assert.ok(shown >= 1 && note.length <= NOTE_MAX_CHARS, `note is ${note.length} chars with ${shown} items`);
-  assert.equal(note, noteOf({ advice: BOTH_ADVICE, items: Array.from({ length: shown }, (_, i) => escapedItem(i)), more: total - shown }));
+  assert.equal(note, noteOf({ advice: BOTH_ADVICE, shadowed: ['reviewer'], items: Array.from({ length: shown }, (_, i) => escapedItem(i)), more: total - shown }));
   assert.doesNotMatch(note, /\\u(?![0-9a-f]{4})/, 'every \\u escape is whole');
 });
 
@@ -203,7 +204,7 @@ test('one worst escaped item is still shown whole, without a count', { skip: !PO
   for (const [file, item] of Object.entries(shownAs)) {
     const { projectDir, personalDir } = await worstSandbox([file]);
     const note = projectAgentNote(projectDir, personalDir);
-    assert.equal(note, noteOf({ advice: BOTH_ADVICE, items: [item] }));
+    assert.equal(note, noteOf({ advice: BOTH_ADVICE, shadowed: ['reviewer'], items: [item] }));
     assert.ok(note.length <= NOTE_MAX_CHARS, `note is ${note.length} chars`);
   }
 });
