@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DELTA_READING } from '../home/tools/review-tier/lib/reviews.mjs';
 import { lane, priorFile } from './review-tier-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -29,16 +30,45 @@ test('delta: every member of a landing set gets the ready delta line naming <rev
   assert.ok(result.reviews.length >= 2, 'a landing of a security change runs several members');
   for (const review of result.reviews) {
     assert.ok(review.brief.includes(`Delta review: ${reviewed}..HEAD only`), review.brief);
-    assert.match(review.brief, /plus callers of changed lines/);
-    assert.match(review.brief, /do not re-review unchanged lines/);
+    assert.ok(review.brief.startsWith(`Review ${reviewed}..HEAD. Delta review: ${reviewed}..HEAD only. Read: the changed lines; the callers and the callees of every changed function;`), review.brief);
+    assert.match(review.brief, /Do not look for new defects in code the fix cannot reach;/);
     assert.match(review.brief, /do not re-run the full suite \(PASS record covers it\)/);
   }
 });
 
-test('delta: the ready line names what to read outside the range: callers, and the readers of shared state, config and data the changed lines write', () => {
+test('delta: the ready line names what to read outside the range: callers and callees, uses of removed names, readers of what the fix starts or stops writing', () => {
   const { json, reviewed } = laneWithFix();
   for (const review of json('--delta', reviewed, '--prior', priorFile(), '--landing').reviews) {
-    assert.match(review.brief, /plus callers of changed lines and the code that reads the shared state, config or data those lines write;/, review.brief);
+    assert.ok(review.brief.includes(DELTA_READING), review.brief);
+    assert.match(review.brief, /the readers of any state, config, default or data the fix starts or stops writing;/, review.brief);
+  }
+});
+
+test('review S2: a fix that renames a function lists the remaining users of the old name as required reading', () => {
+  const { write, json } = lane();
+  write('src/b.mjs', "import { loadConfig } from './a.mjs';\nexport const b = loadConfig();\n");
+  const reviewed = write('src/a.mjs', 'export function loadConfig() {\n  return {};\n}\n');
+  write('src/a.mjs', 'export function readSettings() {\n  return {};\n}\n');
+  const reading = json('--delta', reviewed, '--prior', priorFile()).reviews[0].requiredReading;
+  assert.ok(reading.includes('src/b.mjs:1') && reading.includes('src/b.mjs:2'), `users of the old name: ${reading}`);
+});
+
+test('review S2: a fix that removes a constant other code still reads lists its readers', () => {
+  const { write, json } = lane();
+  write('src/reader.mjs', "import { CACHE_LIMIT } from './config.mjs';\nexport const fits = (n) => n < CACHE_LIMIT;\n");
+  const reviewed = write('src/config.mjs', 'export const CACHE_LIMIT = 10;\nexport const NAME = "x";\n');
+  write('src/config.mjs', 'export const NAME = "x";\n');
+  const reading = json('--delta', reviewed, '--prior', priorFile()).reviews[0].requiredReading;
+  assert.ok(reading.includes('src/reader.mjs:2'), `readers of the removed name: ${reading}`);
+});
+
+test('Read first is never empty: a fix with no caller or callee to name lists its own changed files', () => {
+  const { write, json } = lane();
+  const reviewed = write('src/a.mjs', 'export const a = 1;\n');
+  write('README.md', '# readme\nline two\n');
+  for (const review of json('--delta', reviewed, '--prior', priorFile()).reviews) {
+    assert.deepEqual(review.requiredReading, ['README.md:1']);
+    assert.match(review.brief, /Read first \(callers, callees and users of removed or renamed names; the changed files when none is found\): README\.md:1\./);
   }
 });
 

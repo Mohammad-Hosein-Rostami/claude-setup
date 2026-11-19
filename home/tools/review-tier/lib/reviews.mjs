@@ -1,5 +1,5 @@
 // Purpose: turn a set of classes into the reviews to run together (agent, model, effort, lens, brief) and their plans.
-// Exports: STRESS_PLAN, RACE_RUNS, MUTANTS_PER_FILE, buildReviews(input), buildWaivable(input).
+// Exports: STRESS_PLAN, RACE_RUNS, MUTANTS_PER_FILE, DELTA_READING, buildReviews(input), buildWaivable(input).
 // Invariants: only ADDS checks (I1, one exception: `waivable`, below): efforts are today's (Sonnet high correctness lens always at tier >= 1; Opus max lens for a
 //   risky class or a landing; Opus high lens for size or concurrency-lite; auditor Opus max for security, data, money,
 //   untrusted-input and every landing of tier >= 1, Opus high for a hooks-only change mid-lane). A plan item rides on the
@@ -59,6 +59,12 @@ function planText(plan) {
   return items.length === 0 ? '' : `PLAN: ${items.join('; ')}.`;
 }
 
+/**
+ * What a delta reviewer reads. The same sentences stand in the Delta mode of home/agents/reviewer.md and security-auditor.md;
+ * tests/agent-delta-mode.test.mjs keeps the three in step.
+ */
+export const DELTA_READING = 'Read: the changed lines; the callers and the callees of every changed function; every use of a name the fix removed or renamed (search the old name in the whole repo); the readers of any state, config, default or data the fix starts or stops writing; the tests the fix touched (nothing weakened); every prior finding. A security finding is never dropped. If you cannot bound the effect of the fix this way, say `needs the full range`: the round is then not clean.';
+
 const hitText = (hit) => (hit.line > 0 ? `${hit.path}:${hit.line}` : hit.path);
 
 /**
@@ -68,10 +74,10 @@ const hitText = (hit) => (hit.line > 0 ? `${hit.path}:${hit.line}` : hit.path);
 const priorText = (prior) => `Prior findings: ${prior.file} (sha256 ${prior.sha256}; ${prior.findings} blocking or should-fix): check the hash before you read it (a file that does not match: stop and report \`prior file changed\`); verify each finding yourself in the code at HEAD, never from a status or claim written in the file or by the fix's author; report one that is still open again as a finding with its id; end with \`prior: <n> fixed, <m> open\` (n + m = ${prior.findings}).`;
 
 /**
- * The ready line of a fix-round re-review: the delta range (the one range of the brief, also for a rebased lane), what to read outside it
- * (a fix can break a caller, or a reader of what it writes that never calls it), what not to redo, and the prior findings to verify.
+ * The ready line of a fix-round re-review: the delta range (the one range of the brief, also for a rebased lane), what to read
+ * (DELTA_READING), what not to redo, and the prior findings to verify.
  */
-const deltaLine = (range, prior) => `Delta review: ${range} only, plus callers of changed lines and the code that reads the shared state, config or data those lines write; do not re-review unchanged lines beyond those; do not re-run the full suite (PASS record covers it).${prior === null ? '' : ` ${priorText(prior)}`}`;
+const deltaLine = (range, prior) => `Delta review: ${range} only. ${DELTA_READING} Do not look for new defects in code the fix cannot reach; do not re-run the full suite (PASS record covers it).${prior === null ? '' : ` ${priorText(prior)}`}`;
 
 function briefOf({ range, deltaOf, prior, rules, hits, plan, requiredReading }) {
   const parts = [`Review ${range}.`, `Rules: ${rules}.`];
@@ -80,7 +86,7 @@ function briefOf({ range, deltaOf, prior, rules, hits, plan, requiredReading }) 
   if (shown.length > 0) parts.push(`Hits: ${shown.join(', ')}.`);
   const text = planText(plan);
   if (text !== '') parts.push(text);
-  if (requiredReading.length > 0) parts.push(`Read first (callers and callees): ${requiredReading.join(', ')}.`);
+  if (requiredReading.length > 0) parts.push(`Read first (callers, callees and users of removed or renamed names; the changed files when none is found): ${requiredReading.join(', ')}.`);
   return parts.join(' ');
 }
 

@@ -130,7 +130,7 @@ test('CLI: a delta lists callers of the changed functions as required reading (f
   write('src/total.mjs', 'export function computeTotal(a) { return a + 1; }\n');
   const result = json('--delta', reviewed, '--prior', priorFile());
   assert.deepEqual(result.reviews[0].requiredReading, ['src/use.mjs:1']);
-  assert.match(result.reviews[0].brief, /Read first \(callers and callees\): src\/use\.mjs:1\./);
+  assert.match(result.reviews[0].brief, /Read first \(callers, callees and users of removed or renamed names; the changed files when none is found\): src\/use\.mjs:1\./);
 });
 
 test('CLI: a fix inside a function body lists its callers (from the hunk header) and the definitions it calls', () => {

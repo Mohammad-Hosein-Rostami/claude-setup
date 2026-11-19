@@ -1,6 +1,6 @@
 // Purpose: read the changed files and lines of a range (or of a delta round) from git for review-tier.
 // Exports: MAX_READING, parsePatch(text), baseOf(top, requested), checkRange(top, range), readRange(top, range),
-//   readDelta(top, base, reviewedRef), newFileReader(top, rev), functionNames(files), requiredReadingFor(top, files).
+//   readDelta(top, base, reviewedRef), newFileReader(top, rev), functionNames(files), removedNames(files), requiredReadingFor(top, files).
 // Invariants: git runs through git-tidy's runGit (no shell, no repository from the environment). A range or sha that starts
 //   with `-` is refused, so it can never be read as an option. Only paths and line numbers leave this module through the
 //   report; line texts stay in memory for the class tests.
@@ -17,6 +17,8 @@ const DIFF_FLAGS = ['-c', 'core.quotePath=false', 'diff', '-U0', '--no-color', '
 const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$/;
 const CALL = /(?<![.\w$])([A-Za-z_$][\w$]*)\(/g;
 const NOT_A_FUNCTION = new Set(['if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'typeof', 'await', 'new', 'import', 'require', 'super']);
+// Any name a line defines (a function, a constant, a class, a type): what a fix can remove or rename under its users.
+const NAME_DEFINITION = /\b(?:const|let|var|class|function\s*\*?|def|func|fn|type|interface|enum)\s+([A-Za-z_$][\w$]*)/;
 const FUNCTION_DEFINITION = /\bfunction\s*\*?\s+([A-Za-z_$][\w$]*)|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>|\b(?:def|func|fn)\s+([A-Za-z_$][\w$]*)/;
 
 /** The first of main, master, develop that exists (or the requested base); a UsageError when none does. */
@@ -150,6 +152,13 @@ export function functionNames(files) {
   return [...names];
 }
 
+/** Names the delta removes or renames: defined on a removed line and on no added line. Their remaining users are what such a fix breaks. */
+export function removedNames(files) {
+  const definedOn = (lines) => lines.map(({ text }) => NAME_DEFINITION.exec(text)?.[1]).filter((name) => name !== undefined && name.length >= MIN_NAME_LENGTH);
+  const stillDefined = new Set(files.flatMap((file) => definedOn(file.added)));
+  return [...new Set(files.flatMap((file) => definedOn(file.removed)))].filter((name) => !stillDefined.has(name));
+}
+
 /** Names called (not as a method) on the added lines that are not themselves changed here: the callees to read. */
 function calleeNames(files, changedNames) {
   const names = new Set();
@@ -171,16 +180,24 @@ function placesOf(top, name, onlyDefinitions) {
     .map((m) => `${m[1]}:${m[2]}`);
 }
 
+/** `path:line` of the first changed line of each file (a file with no hunk: its path), at most MAX_READING. */
+const changedPlaces = (files) => files.slice(0, MAX_READING).map((file) => {
+  const line = (file.added[0] ?? file.removed[0])?.line;
+  return line === undefined ? file.path : `${file.path}:${line}`;
+});
+
 /**
- * `file:line` of other uses of the changed functions (callers) and of the definitions of the functions the changed lines
- * call (callees); at most MAX_READING, callers spread over the names, callees keeping up to half the room.
+ * `file:line` of other uses of the changed functions and of the names the delta removes or renames (callers and users), and of the
+ * definitions of the functions the changed lines call (callees); at most MAX_READING, callers spread over the names, callees keeping
+ * up to half the room. Never empty for a delta that changes a file: with no caller or callee to name it lists the changed files.
  */
 export function requiredReadingFor(top, files) {
-  const names = functionNames(files);
+  const names = [...new Set([...functionNames(files), ...removedNames(files)])];
   const callees = calleeNames(files, names).flatMap((name) => placesOf(top, name, true));
   const changed = new Set(files.flatMap((file) => file.added.map((added) => `${file.path}:${added.line}`)));
   const calleePlaces = [...new Set(callees)].filter((place) => !changed.has(place)).slice(0, MAX_READING / 2);
   const perName = Math.max(1, Math.floor((MAX_READING - calleePlaces.length) / Math.max(1, names.length)));
   const callers = names.flatMap((name) => placesOf(top, name, false).filter((place) => !changed.has(place)).slice(0, perName));
-  return [...new Set([...callers, ...calleePlaces])].slice(0, MAX_READING);
+  const reading = [...new Set([...callers, ...calleePlaces])].slice(0, MAX_READING);
+  return reading.length > 0 ? reading : changedPlaces(files);
 }
