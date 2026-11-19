@@ -7,8 +7,8 @@
 // compactions with a model that forces the lead note; the longest stdout over the modes is checked for each stage.
 // Cases: no project agents; 10 project agents named like the personal ones; the two worst project-agents notes (MAX_AGENT_FILES files
 // with the longest plain names, and more files than that with names shown escaped), which the note's own cap NOTE_MAX_CHARS must hold.
-// Assumption: the hook prints the STATUS file path whole and a path has no length limit, so the test fixes one of STATUS_PATH_CHARS
-// (80) characters. A longer path uses up MIN_HEADROOM_CHARS first.
+// The STATUS path: the usual cases fix one of STATUS_PATH_CHARS (80) characters. The hook shows at most STATUS_PATH_SHOWN_CHARS (200)
+// of a path, so the last case runs a path of 1,024 characters: it must cost only the 120 characters more and still fit.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -28,7 +28,11 @@ const MIN_HEADROOM_CHARS = 150; // room for a longer path or note without crossi
 const SIZE_LIMIT_CHARS = MAX_HOOK_OUTPUT_CHARS - MIN_HEADROOM_CHARS;
 const STATUS_PATH_CHARS = 80;
 const STATUS_FILE = '/STATUS.md';
-const STATUS_PATH = `/${'p'.repeat(STATUS_PATH_CHARS - STATUS_FILE.length - 1)}${STATUS_FILE}`;
+const statusPathOf = (chars) => `/${'p'.repeat(chars - STATUS_FILE.length - 1)}${STATUS_FILE}`;
+const STATUS_PATH = statusPathOf(STATUS_PATH_CHARS);
+const LONG_STATUS_PATH_CHARS = 1024;
+const STATUS_PATH_SHOWN_CHARS = 200; // what the compaction note shows of a path at most
+const CUT_MARK = '...';
 const MISMATCHED_MODEL = 'claude-haiku-5-5'; // no mode leads on this model, so the lead note is printed in every mode
 const COMPACTIONS = 3; // the third compaction adds the handoff line
 const TRANSCRIPT = 'transcript.jsonl';
@@ -48,12 +52,12 @@ const worstAgentFile = agentFile('reviewer', 'maxTurns: 999999\n');
 /** `count` worst agent files; `nameOf` gets a three-digit index and returns the file name without .md. */
 const worstFiles = (count, nameOf) => Array.from({ length: count }, (_, i) => [`${nameOf(String(i).padStart(3, '0'))}.md`, worstAgentFile]);
 
-/** A temp HOME with the real mode files and personal agents, and a transcript in which the session wrote STATUS_PATH. */
-async function realHome() {
+/** A temp HOME with the real mode files and personal agents, and a transcript in which the session wrote `statusPath`. */
+async function realHome(statusPath) {
   const home = makeTempDir('start-size-');
   await cp(MODES_DIR, join(home, '.claude', 'modes'), { recursive: true });
   await cp(PERSONAL_AGENTS_DIR, join(home, '.claude', 'agents'), { recursive: true });
-  const write = { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write', input: { file_path: STATUS_PATH } }] } };
+  const write = { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write', input: { file_path: statusPath } }] } };
   await writeFile(join(home, TRANSCRIPT), `${JSON.stringify(write)}\n`);
   return home;
 }
@@ -84,10 +88,11 @@ function stagesOf(home, mode, projectDir) {
 /**
  * Runs every mode's session and keeps the longest output of each stage.
  * @param {string} [projectDir] the session's project folder; none for a session without project agents
+ * @param {string} [statusPath] the STATUS file the session wrote
  * @returns {Promise<{ startup: string, firstCompact: string, lastCompact: string }>} the longest stdout over the modes, per stage
  */
-async function longestOutputs(projectDir) {
-  const home = await realHome();
+async function longestOutputs(projectDir, statusPath = STATUS_PATH) {
+  const home = await realHome(statusPath);
   const perMode = MODES.map((mode) => stagesOf(home, mode, projectDir));
   return Object.fromEntries(Object.keys(perMode[0]).map((stage) => [stage, perMode.map((stages) => stages[stage]).reduce(longer)]));
 }
@@ -142,4 +147,19 @@ test('worst note with escaped names (5 files past MAX_AGENT_FILES, control chara
   const outputs = await longestOutputs(await projectWith(files));
   assertFits(t, outputs);
   assertCappedNote(outputs);
+});
+
+test('a STATUS path of 1,024 characters is shown cut to 200, so a full note and the worst plain note still fit the cap', async (t) => {
+  const longPath = statusPathOf(LONG_STATUS_PATH_CHARS);
+  assert.equal(longPath.length, LONG_STATUS_PATH_CHARS);
+  const withoutAgents = await longestOutputs(undefined, longPath);
+  assertFits(t, withoutAgents);
+  assert.ok(withoutAgents.firstCompact.includes(`Re-read ${CUT_MARK}${longPath.slice(-(STATUS_PATH_SHOWN_CHARS - CUT_MARK.length))} `), 'the path is cut from the left');
+  assert.equal(withoutAgents.lastCompact.includes(longPath), false);
+  const withFullNote = withoutAgents.lastCompact.length + NOTE_SEPARATOR.length + NOTE_MAX_CHARS;
+  assert.ok(withFullNote <= SIZE_LIMIT_CHARS, `with a project-agents note of NOTE_MAX_CHARS the output is ${withFullNote} chars, limit ${SIZE_LIMIT_CHARS}`);
+  const files = worstFiles(MAX_AGENT_FILES, (index) => `${index}${'x'.repeat(LONGEST_PLAIN_NAME_CHARS - index.length)}`);
+  const worst = await longestOutputs(await projectWith(files), longPath);
+  assertFits(t, worst);
+  assertCappedNote(worst);
 });
