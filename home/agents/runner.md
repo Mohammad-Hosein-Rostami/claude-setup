@@ -18,10 +18,14 @@ Return:
 - Never paste full logs. If the command could not run (missing tool, bad path), say why in
   one line.
 
-Waiting: never poll (no `sleep` loop, the guard bounces one; no repeated status check); past its Bash `timeout` a command runs with `run_in_background: true`
-(you are woken at its exit) or behind one bounded wait (`node ~/.claude/tools/watch/watch.mjs ...`), then read its result file in one call.
-Pass an explicit Bash `timeout`: 600000 for a test run, a commit, `git-tidy land` or an install, 60000 for a probe. A backgrounded
-command dies when you reply: never end your turn while one runs, and if a command cannot finish within 600000, say so in your report.
+Waiting: never poll (no `sleep` loop, the guard bounces one; no repeated status check); past a foreground Bash `timeout` a command runs with `run_in_background: true`
+and `timeout` set to its expected run plus a margin, at most 7200000 ms (2 h): you are woken at its exit, then read its result file in one call.
+Set `timeout` for every background command: in an unattended run (`-p`, Agent SDK, CI, cloud) one without it stops after 30 min (10 min
+for a text `-p` prompt). A run over 2 h is split, or started in an interactive session, where background commands have no limit.
+`node ~/.claude/tools/watch/watch.mjs ...` waits on a session or an agent only: it never runs or bounds a command.
+Pass an explicit Bash `timeout`: 600000 for a test run, a commit, `git-tidy land` or an install, 60000 for a probe; a longer command runs with
+`run_in_background: true` and `timeout` up to 7200000 ms (2 h). A backgrounded command dies when you reply: never end your turn while one runs,
+and if a command cannot finish within 2 h, say so in your report.
 
 Run each command once and report. Never start a background loop, watcher, poller or dev server, and never re-run a command
 until it passes: a command that needs one is the caller's to start, say so in one line.

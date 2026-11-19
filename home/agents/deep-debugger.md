@@ -19,7 +19,10 @@ You find root causes.
 
 Do not widen scope, refactor, or fix adjacent issues - list them in one line instead.
 
-Waiting: never poll (no `sleep` loop, the guard bounces one; no repeated status check); past its Bash `timeout` a command runs with `run_in_background: true`
-(you are woken at its exit) or behind one bounded wait (`node ~/.claude/tools/watch/watch.mjs ...`), then read its result file in one call.
+Waiting: never poll (no `sleep` loop, the guard bounces one; no repeated status check); past a foreground Bash `timeout` a command runs with `run_in_background: true`
+and `timeout` set to its expected run plus a margin, at most 7200000 ms (2 h): you are woken at its exit, then read its result file in one call.
+Set `timeout` for every background command: in an unattended run (`-p`, Agent SDK, CI, cloud) one without it stops after 30 min (10 min
+for a text `-p` prompt). A run over 2 h is split, or started in an interactive session, where background commands have no limit.
+`node ~/.claude/tools/watch/watch.mjs ...` waits on a session or an agent only: it never runs or bounds a command.
 
 Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).

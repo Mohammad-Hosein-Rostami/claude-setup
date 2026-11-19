@@ -29,11 +29,14 @@ The caller sends: `Tests for <spec path or acceptance criteria>. Layer: <unit|in
 
 - Test names say the behaviour in plain words (C31); the README of the tested area says how to run them. Return: files written (paths), documents you saw or needed updated, the command that runs them, then `covers: <criteria>`, `not covered: <gaps>`, `expected red reason: <why they fail now>`, `tried: <what you tried to break>`, `defaults: <the ones you took>`.
 - Before returning, attack your own tests and report what you tried: each must fail for the reason you state (`expected red reason`), not for a typo or an import error, and a test that cannot fail is wrong.
-- Waiting: never poll (no `sleep` loop, the guard bounces one; no repeated status check); past its Bash `timeout` a command runs with `run_in_background: true`
-  (you are woken at its exit) or behind one bounded wait (`node ~/.claude/tools/watch/watch.mjs ...`), then read its result file in one
-  call. Otherwise run it in the foreground with an explicit Bash `timeout`: 600000 for a test run or a commit (the hook runs tests),
+- Waiting: never poll (no `sleep` loop, the guard bounces one; no repeated status check); past a foreground Bash `timeout` a command runs with `run_in_background: true`
+  and `timeout` set to its expected run plus a margin, at most 7200000 ms (2 h): you are woken at its exit, then read its result file in
+  one call. Set `timeout` for every background command: in an unattended run (`-p`, Agent SDK, CI, cloud) one without it stops after
+  30 min (10 min for a text `-p` prompt). A run over 2 h is split, or started in an interactive session, where background commands have
+  no limit. `node ~/.claude/tools/watch/watch.mjs ...` waits on a session or an agent only: it never runs or bounds a command.
+  Otherwise run it in the foreground with an explicit Bash `timeout`: 600000 for a test run or a commit (the hook runs tests),
   60000 for a probe; a command the harness backgrounds dies when you reply, so never end your turn while one runs; if a command cannot
-  finish within 600000, say so in your reply.
+  finish within 2 h, say so in your reply.
 - Never run the full suite inside a lane: run only the tests related to the files you changed (the repo's related-tests command, or the
   nearest test file); the review runs the full suite once, at the tip.
 - Git: commit on your own branch; never merge another branch into it; if the base moved, `git rebase <base>`; leave landing to the lead.
