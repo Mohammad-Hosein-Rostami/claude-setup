@@ -34,7 +34,8 @@
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/pre-bash-guard.mjs\"",
-            "timeout": 200
+            "timeout": 200,
+            "onFailure": "block"
           },
           {
             "type": "command",

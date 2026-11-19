@@ -91,3 +91,12 @@ test('base.json raises the Bash default timeout to 5 minutes (300000 ms) so a su
   const base = JSON.parse(readFileSync(fileURLToPath(new URL('../settings/base.json', import.meta.url)), 'utf8'));
   assert.equal(base.env.BASH_DEFAULT_TIMEOUT_MS, '300000');
 });
+
+test('base.json blocks the Bash call when the guard hook dies or times out (onFailure block), and its timeout covers the 2-min dialog', () => {
+  const base = JSON.parse(readFileSync(fileURLToPath(new URL('../settings/base.json', import.meta.url)), 'utf8'));
+  const bash = base.hooks.PreToolUse.filter((group) => group.matcher === 'Bash').flatMap((group) => group.hooks);
+  const guards = bash.filter((hook) => hook.command.includes('hooks/pre-bash-guard.mjs'));
+  assert.equal(guards.length, 1, 'exactly one pre-bash-guard entry');
+  assert.equal(guards[0].onFailure, 'block', 'a crashed or stalled guard must not let the command run');
+  assert.ok(guards[0].timeout > 120, `timeout ${guards[0].timeout}: the timed dialog waits 120 s, and a timeout now blocks`);
+});
