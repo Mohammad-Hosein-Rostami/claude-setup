@@ -89,6 +89,20 @@ const SILENT_BRACKET_FORMS = [
   `${RM} -rf src/[[:alnum:]]*`,
   `${RM} -rf [[:alnum:]]*/dist`,
 ];
+// a `.` part changes nothing: these are `*/*`, `*` and `**/**` written another way
+const ASK_DOT_PARTS = [
+  `${RM} -rf ./*/./*`,
+  `${RM} -rf */./*`,
+  `${RM} -rf "$PWD"/*/./*`,
+  `${RM} -rf */.`,
+  `${RM} -rf */./`,
+  `${RM} -rf .//./*`,
+  `${RM} -rf **/./**`,
+  `${RM} -rf *//.//*`,
+  `${RM} -rf ././*/././.*`,
+  `${RM} -rf ${PROJECT}/./*/./*`,
+];
+const SILENT_DOT_PARTS = [`${RM} -rf src/./*`, `${RM} -rf ./src/./*/./*`, `${RM} -rf */./dist`, `${RM} -rf src/.`, `${RM} -rf ./src/./`];
 const SILENT = [
   `${RM} -rf src/*`,
   `${RM} -rf ./dist/*`,
@@ -133,6 +147,11 @@ test('root, home and the project root keep asking as before', () => {
 test('POSIX classes and every other bracket form count as a bare glob', () => {
   for (const command of ASK_BRACKET_FORMS) assert.ok(asksDestructive(command, atRoot), command);
   for (const command of SILENT_BRACKET_FORMS) assert.deepEqual(decide(command, atRoot), { allow: true }, command);
+});
+
+test('a . part or a doubled slash between bare globs changes nothing: the target is normalised before the check', () => {
+  for (const command of ASK_DOT_PARTS) assert.ok(asksDestructive(command, atRoot), command);
+  for (const command of SILENT_DOT_PARTS) assert.deepEqual(decide(command, atRoot), { allow: true }, command);
 });
 
 test('a glob of a sub-folder, a glob with a name part, named targets and a non-recursive rm stay silent', () => {

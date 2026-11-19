@@ -4,12 +4,13 @@
 // every entry of its folder (or every hidden one), so `rm -r` of it empties the folder. `*.log` and `a*` have a name part and are not bare.
 // Every bracket form of the shell is a set: `[a-z]`, `[!.]`, `[^.]`, a `]` in first place (`[]a]`), and the POSIX classes, equivalence
 // classes and collating symbols inside one (`[[:alnum:]]`, `[[=a=]]`, `[[.hyphen.]]`). A set that never closes is a plain name, as in bash.
-// A bare glob below a bare glob (`./**/*`, `*/*`) lists the folder the first one is in: it empties every sub-folder there. Repeated and
-// trailing slashes are skipped.
+// A bare glob below a bare glob (`./**/*`, `*/*`) lists the folder the first one is in: it empties every sub-folder there. The run is
+// read as the shell normalises it: `.` parts and repeated or trailing slashes are skipped, so `./*/./*` is `*/*`.
 // Invariants: pure, no regular expression. The target is read once, from its end, by index: no copy is made per path part, so the work
 // and the memory are linear in the target's length (a pattern per part once took the hook down on a 32 KB target).
 
 const GLOB_PART = 'glob';
+const DOT_PART = 'dot'; // a lone `.`: the same folder again
 const NAME_PART = 'name';
 
 const CLASS_MARKS = ':=.'; // `[:alnum:]`, `[=a=]`, `[.hyphen.]` inside a bracket set
@@ -36,8 +37,9 @@ function bracketEnd(text, open, end, unclosed) {
   return at < end ? at + 1 : -1;
 }
 
-/** What the path part `text[start, end)` is: GLOB_PART for a bare glob, NAME_PART for anything with a name in it. */
+/** What the path part `text[start, end)` is: GLOB_PART for a bare glob, DOT_PART for `.`, NAME_PART for anything with a name in it (`..` too). */
 function partKind(text, start, end) {
+  if (end - start === 1 && text[start] === '.') return DOT_PART;
   const unclosed = new Set();
   let globs = 0;
   let at = start;
@@ -58,16 +60,19 @@ function partKind(text, start, end) {
  *   (`src`, `*.log`, `dist` under `*`): then it lists no folder
  */
 export function globbedFolder(target) {
-  let cut = target.length; // the trailing bare globs start here
+  let cut = target.length; // the trailing run of bare globs and `.` parts starts here
+  let sawGlob = false;
   let partEnd = cut;
   while (partEnd > 0) {
     while (partEnd > 0 && target[partEnd - 1] === '/') partEnd--;
     let partStart = partEnd;
     while (partStart > 0 && target[partStart - 1] !== '/') partStart--;
-    if (partEnd === 0 || partKind(target, partStart, partEnd) === NAME_PART) break;
+    const kind = partEnd === 0 ? NAME_PART : partKind(target, partStart, partEnd);
+    if (kind === NAME_PART) break;
+    sawGlob ||= kind === GLOB_PART;
     cut = partStart;
     partEnd = partStart;
   }
-  if (cut === target.length) return undefined;
+  if (!sawGlob) return undefined;
   return cut === 0 ? '.' : target.slice(0, cut);
 }
