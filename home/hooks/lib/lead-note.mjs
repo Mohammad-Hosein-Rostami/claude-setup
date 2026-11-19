@@ -1,5 +1,7 @@
 // Lead-model note for the mode hook. Exports: leadNote({ mode, model, previousMode, launchedAs }).
 // Invariants: pure (no I/O); the note only names the `ccm` launch line, because a hook cannot change the lead model or effort.
+// The session model comes from the hook input, so it is printed only as id characters (A-Z a-z 0-9 _ . - [ ]) and at most
+// MODEL_ID_SHOWN_CHARS of them: no line break, tag or long text reaches the SessionStart output through it.
 
 // Modes that set the lead at launch: model alias to look for, display name, default launch effort (CCM_LEAD_EFFORT may override).
 const LEAD_MODES = {
@@ -7,6 +9,14 @@ const LEAD_MODES = {
   'ultra-high': { alias: 'fable', label: 'Fable 5.2', effort: 'high' },
 };
 const BASE_LEAD = 'Opus 5.5 at high';
+const NOT_A_MODEL_ID_CHAR = /[^A-Za-z0-9_.\-[\]]/g;
+const MODEL_ID_SHOWN_CHARS = 64; // a real id is under 40 characters, also with a `[1m]` suffix
+const UNNAMED_MODEL = 'another model';
+
+/** The session model as the note shows it: its id characters only, cut to MODEL_ID_SHOWN_CHARS. */
+function shownModel(model) {
+  return model.replace(NOT_A_MODEL_ID_CHAR, '').slice(0, MODEL_ID_SHOWN_CHARS) || UNNAMED_MODEL;
+}
 
 function launchCommand(mode) {
   return `ccm ${mode} -c`;
@@ -37,7 +47,7 @@ export function leadNote({ mode, model, previousMode, launchedAs }) {
   const left = switched ? LEAD_MODES[previousMode] : undefined;
   if (!left) {
     if (typeof model !== 'string' || model === '' || model.toLowerCase().includes('opus')) return '';
-    return `The lead for ${mode} is ${BASE_LEAD} but this session runs ${model}: tell the user to run \`${launchCommand(mode)}\` (or \`ccm ${mode} --resume <id>\`) to switch it back (avoid \`/model\`: it saves machine-wide).`;
+    return `The lead for ${mode} is ${BASE_LEAD} but this session runs ${shownModel(model)}: tell the user to run \`${launchCommand(mode)}\` (or \`ccm ${mode} --resume <id>\`) to switch it back (avoid \`/model\`: it saves machine-wide).`;
   }
   return `The lead is still ${left.label} at ${left.effort}: tell the user to run \`${launchCommand(mode)}\` to return it to ${BASE_LEAD}.`;
 }
