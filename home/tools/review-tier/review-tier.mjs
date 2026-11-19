@@ -7,20 +7,22 @@
 //   --delta <sha>    a fix round: review only what changed since that reviewed sha (a rebased lane: only patches the reviewed set lacks),
 //                    with the set of the whole lane: the tool reads the lane range (<base>...HEAD) itself and always gives the landing
 //                    set, so the round is never lighter than the lane's review. Needs --prior. An empty delta is exit 2
-//   --prior <file>   with --delta: the findings file of the previous round; every brief tells the reviewer to mark each finding closed or open.
-//                    The path is pasted into every brief and the file is never read; a path that is not plain is refused (exit 2)
+//   --prior <file>   with --delta: the review report of the previous round, as its reviewers wrote it. The tool prints its sha256 and the
+//                    number of blocking and should-fix findings in it; every brief tells the reviewer to check the hash and to verify each
+//                    finding itself. The path is pasted into every brief: one that is not plain, or a file that cannot be read, is exit 2
 //   --lane-classes   the `--json` of the previous round: adds the classes it holds (a class the lead added by hand, a class of a line an
 //                    earlier fix removed); it can only raise the set
 //   --add-class <c>  raise only: adds that class's full set and plan (unknown class: exit 2)
 // Exit codes: 0 printed, 1 git failed, 2 usage (bad range, unknown sha or class, bad flag).
 // Invariants: read-only on the repository; the only write is one line in the log (REVIEW_TIER_LOG overrides its path).
-//   Line texts are never printed or logged (see tiers.mjs).
+//   Line texts are never printed or logged (see tiers.mjs), and neither is the text of the --prior file (lib/prior.mjs).
 import { readFileSync, statSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { UsageError, gitText } from '../git-tidy/lib/git.mjs';
 import { CLASS_TIER, LOCK_TAG, RACE_TAG } from './tiers.mjs';
 import { baseOf, checkRange, newFileReader, readDelta, readRange, requiredReadingFor } from './lib/diff.mjs';
 import { appendLog } from './lib/log.mjs';
+import { readPrior } from './lib/prior.mjs';
 import { buildReport, formatJson, formatText, logRecord } from './lib/report.mjs';
 
 const EXIT_GIT_FAILED = 1;
@@ -32,14 +34,6 @@ const PLAIN_PATH = /^(?:[A-Za-z]:[\\/]|\/)[\w@+=.,~/\\-]+$/;
 const MAX_ECHOED_PATH_CHARS = 120; // a refused path is quoted in the error, cut to this length
 const KNOWN_NAMES = new Set([...Object.keys(CLASS_TIER), LOCK_TAG, RACE_TAG]);
 const USAGE = 'usage: review-tier.mjs [<range>] [--landing] [--delta <sha> --prior <file>] [--lane-classes <file>] [--add-class <c>]... [--base <b>] [--json]';
-
-const isFile = (path) => {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-};
 
 function valueOf(argv, index, flag) {
   const value = argv[index + 1];
@@ -70,7 +64,6 @@ function parseArgs(argv) {
   if (options.prior !== null) {
     if (options.delta === null) throw new UsageError(`--prior belongs to a --delta round. ${USAGE}`);
     if (!PLAIN_PATH.test(options.prior)) throw new UsageError(`--prior must be a plain path (letters, digits and _@+=.,~/- only: no spaces, quotes or newlines), because it is pasted into every brief: ${JSON.stringify(options.prior.slice(0, MAX_ECHOED_PATH_CHARS))}`);
-    if (!isFile(options.prior)) throw new UsageError(`cannot read --prior ${options.prior}: not a file`);
   }
   return options;
 }
@@ -119,7 +112,7 @@ function run(options) {
   const isDelta = options.delta !== null;
   const { endRevision, ...read } = isDelta ? deltaRound(top, options) : wholeRange(top, options);
   const report = buildReport({
-    ...read, readNewFile: newFileReader(top, endRevision), addClasses: options.addClasses, priorFile: options.prior,
+    ...read, readNewFile: newFileReader(top, endRevision), addClasses: options.addClasses, prior: options.prior === null ? null : readPrior(options.prior),
     // A fix round is the last review of its lines before land, and the tool cannot know which flags the lane's first review had: it
     // always gets the landing set, the strongest the lane can have had.
     landing: options.landing || isDelta, laneClasses: earlier?.fileClasses ?? null, earlierClasses: earlier?.classes ?? [],

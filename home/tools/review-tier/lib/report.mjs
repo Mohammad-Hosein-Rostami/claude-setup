@@ -47,10 +47,10 @@ function classesOf(fresh, lane, laneClasses, earlierClasses) {
 /**
  * @param {object} input files (parsed diff of the range or delta), laneFiles (parsed diff of the whole lane range in a delta round, else
  *   null), readNewFile, landing, addClasses, laneClasses (a previous fileClasses map or null), earlierClasses (the class names of that
- *   previous round), range, deltaOf, priorFile, requiredReading
- * @returns {object} the JSON of section 9, plus `kept` (classes of a delta round that come from the lane, not from the fix) and `priorFile`
+ *   previous round), range, deltaOf, prior (lib/prior.mjs readPrior of the `--prior` file, or null), requiredReading
+ * @returns {object} the JSON of section 9, plus `kept` (classes of a delta round that come from the lane, not from the fix), `prior` and `priorFile` (its path)
  */
-export function buildReport({ files, laneFiles = null, readNewFile, landing, addClasses, laneClasses, earlierClasses = [], range, deltaOf, priorFile = null, requiredReading }) {
+export function buildReport({ files, laneFiles = null, readNewFile, landing, addClasses, laneClasses, earlierClasses = [], range, deltaOf, prior = null, requiredReading }) {
   const fresh = classifyFiles(files, readNewFile);
   const { hits, changedLines, triggers } = fresh;
   const { fileClasses, classes, own } = classesOf(fresh, laneFiles === null ? null : classifyFiles(laneFiles, readNewFile), laneClasses, earlierClasses);
@@ -58,7 +58,7 @@ export function buildReport({ files, laneFiles = null, readNewFile, landing, add
   const kept = [...classes].filter((name) => !own.has(name));
   for (const name of addClasses) classes.add(name);
   const hasCode = files.some((file) => isCodeFile(file.path));
-  const reviewInput = { classes, fileClasses, hits, landing, range, deltaOf, priorFile, requiredReading, hasCode, changedLines, fileCount: files.length };
+  const reviewInput = { classes, fileClasses, hits, landing, range, deltaOf, prior, requiredReading, hasCode, changedLines, fileCount: files.length };
   const inOrder = (names) => Object.keys(CLASS_TIER).filter((name) => names.includes(name));
   return {
     tier: tierOf(classes),
@@ -76,7 +76,8 @@ export function buildReport({ files, laneFiles = null, readNewFile, landing, add
     weakened: weakenedChecks(files),
     principles: principlesOf(triggers),
     deltaOf,
-    priorFile,
+    prior,
+    priorFile: prior?.file ?? null,
   };
 }
 
@@ -101,6 +102,7 @@ export function formatText(report) {
   lines.push(report.waivable === null ? 'waivable: no' : `waivable: yes (${report.waivable.reviews.length} review before land, ${report.waivable.audit.length} audit after it)`);
   lines.push(`weakened: ${report.weakened.length === 0 ? 'none' : report.weakened.map((entry) => `${entry.path}:${entry.line} ${entry.kind}`).join(', ')}`);
   lines.push(`principles: ${report.principles.join(', ') || 'none'}`);
+  if (report.prior !== null) lines.push(`prior: ${report.prior.file} sha256 ${report.prior.sha256}, ${report.prior.blocking} blocking, ${report.prior.shouldFix} should-fix`);
   // A class the lead added by hand is known to no later run, so the line repeats it: copied as it is, the fix round loses nothing.
   lines.push(`fix round: ${[FIX_ROUND_COMMAND, ...report.added.map((name) => `--add-class ${name}`)].join(' ')}`);
   return lines.join('\n');

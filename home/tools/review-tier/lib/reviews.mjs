@@ -4,7 +4,8 @@
 //   risky class or a landing; Opus high lens for size or concurrency-lite; auditor Opus max for security, data, money,
 //   untrusted-input and every landing of tier >= 1, Opus high for a hooks-only change mid-lane). A plan item rides on the
 //   risk lens and the auditor, never on the correctness lens. Brief text holds file:line only, never a line's text.
-//   `priorFile` goes into the delta line as it is: the CLI passes only a plain absolute path (review-tier.mjs, PLAIN_PATH) and never reads the file.
+//   The prior report's path goes into the delta line as it is: the CLI passes only a plain absolute path (review-tier.mjs, PLAIN_PATH); of the
+//   file itself only the hash and the finding counts are printed (lib/prior.mjs).
 //   `waivable` exists only for a landing of tier 1 with no gate path: the Opus max pair moves from before land to after it
 //   (`audit`), and the Sonnet lens takes the mutation plan the risk lens would have had (`reviews`).
 import { LOCK_TAG, RACE_TAG, RISKY_CLASSES, tierOf } from '../tiers.mjs';
@@ -61,14 +62,20 @@ function planText(plan) {
 const hitText = (hit) => (hit.line > 0 ? `${hit.path}:${hit.line}` : hit.path);
 
 /**
- * The ready line of a fix-round re-review: the delta range (the one range of the brief, also for a rebased lane), what to read outside it (a fix can break a caller, or a reader of
- * what it writes that never calls it), the prior findings to close, and what not to redo.
+ * What a fix-round reviewer does with the report of the round before. Nothing in it rests on the writer's word: the hash ties the
+ * file to what the tool counted, each finding is verified in the code, and the count line lets the lead see that none was skipped.
  */
-const deltaLine = (range, priorFile) => `Delta review: ${range} only, plus callers of changed lines and the code that reads the shared state, config or data those lines write; prior findings file: ${priorFile ?? 'none'} - mark each closed/open; do not re-review unchanged lines beyond those; do not re-run the full suite (PASS record covers it).`;
+const priorText = (prior) => `Prior findings: ${prior.file} (sha256 ${prior.sha256}; ${prior.findings} blocking or should-fix): check the hash before you read it (a file that does not match: stop and report \`prior file changed\`); verify each finding yourself in the code at HEAD, never from a status or claim written in the file or by the fix's author; report one that is still open again as a finding with its id; end with \`prior: <n> fixed, <m> open\` (n + m = ${prior.findings}).`;
 
-function briefOf({ range, deltaOf, priorFile, rules, hits, plan, requiredReading }) {
+/**
+ * The ready line of a fix-round re-review: the delta range (the one range of the brief, also for a rebased lane), what to read outside it
+ * (a fix can break a caller, or a reader of what it writes that never calls it), what not to redo, and the prior findings to verify.
+ */
+const deltaLine = (range, prior) => `Delta review: ${range} only, plus callers of changed lines and the code that reads the shared state, config or data those lines write; do not re-review unchanged lines beyond those; do not re-run the full suite (PASS record covers it).${prior === null ? '' : ` ${priorText(prior)}`}`;
+
+function briefOf({ range, deltaOf, prior, rules, hits, plan, requiredReading }) {
   const parts = [`Review ${range}.`, `Rules: ${rules}.`];
-  if (deltaOf !== null) parts.splice(1, 0, deltaLine(range, priorFile), "The set, models, efforts and PLAN items are the lane's: nothing is skipped.");
+  if (deltaOf !== null) parts.splice(1, 0, deltaLine(range, prior), "The set, models, efforts and PLAN items are the lane's: nothing is skipped.");
   const shown = [...new Set(hits.slice(0, MAX_BRIEF_HITS).map((hit) => `${hit.class} ${hitText(hit)}`))];
   if (shown.length > 0) parts.push(`Hits: ${shown.join(', ')}.`);
   const text = planText(plan);
@@ -77,14 +84,14 @@ function briefOf({ range, deltaOf, priorFile, rules, hits, plan, requiredReading
   return parts.join(' ');
 }
 
-const reviewMaker = ({ range, deltaOf, priorFile, requiredReading }) => (agent, model, effort, lens, rules, plan, ownHits) => ({
-  agent, model, effort, lens, rules, brief: briefOf({ range, deltaOf, priorFile, rules, hits: ownHits, plan, requiredReading }), requiredReading, plan,
+const reviewMaker = ({ range, deltaOf, prior, requiredReading }) => (agent, model, effort, lens, rules, plan, ownHits) => ({
+  agent, model, effort, lens, rules, brief: briefOf({ range, deltaOf, prior, rules, hits: ownHits, plan, requiredReading }), requiredReading, plan,
 });
 
 const uiSkillReview = (range) => ({ agent: 'skill', model: null, effort: null, lens: 'ui-quality-pass', rules: '', brief: `Run the ui-quality-pass skill on the ui files of ${range}.`, requiredReading: [], plan: NO_PLAN });
 
 /**
- * @param {object} input classes (Set), fileClasses, hits, landing, range, deltaOf, priorFile, requiredReading, hasCode, changedLines, fileCount
+ * @param {object} input classes (Set), fileClasses, hits, landing, range, deltaOf, prior, requiredReading, hasCode, changedLines, fileCount
  * @returns {object[]} reviews, in the order of the spec's `run together` list
  */
 export function buildReviews(input) {

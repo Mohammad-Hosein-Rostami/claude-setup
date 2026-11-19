@@ -1,9 +1,11 @@
 // Tests for the delta brief of review-tier: `--delta <sha>` puts one ready "Delta review" line into every member's brief and
-// `--prior <findings file>` names the earlier findings file in it. Plain-agent re-reviews depend on this line (round 7, rank 1).
-// Class and set cases: review-tier.test.mjs; delta required reading: review-tier-cli.test.mjs.
+// `--prior <findings file>` names the earlier round's report in it, with its sha256 and the number of findings it holds, so no prior
+// finding counts as closed on the writer's word. Plain-agent re-reviews depend on this line (round 7, rank 1).
+// The set of a fix round: review-tier-delta-set.test.mjs; delta required reading: review-tier-cli.test.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lane, priorFile } from './review-tier-helpers.mjs';
@@ -55,12 +57,78 @@ test('delta: without --delta no brief mentions a delta review', () => {
   assert.doesNotMatch(tier().stdout, /Delta review/);
 });
 
-test('delta with --prior: every brief names the findings file and asks to mark each finding closed or open', () => {
+const REPORT = [
+  '# Review of lane x',
+  '**Verdict: not clean.** 2 blocking, 1 should-fix, 2 notes.',
+  '| id | severity | file:line | what is wrong |',
+  '|---|---|---|---|',
+  '| B1 | blocking | src/run.mjs:2 | spawn with a shell; the fix proposed was once marked [should-fix] |',
+  '| B2 | Blocking | src/run.mjs:1 | a key in the source |',
+  '| S1 | should-fix | src/run.mjs:2 | no timeout |',
+  '| N1 | note | src/run.mjs:1 | naming |',
+  '- [optional] N2 src/run.mjs:1 - a nit',
+  '- [should-fix] S2 src/run.mjs:2 - found by the second lens',
+  'A sentence that says blocking and should-fix is no finding.',
+].join('\n');
+
+test('delta with --prior: the tool reads the report and prints its sha256 and how many blocking and should-fix findings it holds', () => {
+  const { json, tier, reviewed } = laneWithFix();
+  const prior = priorFile(REPORT);
+  const sha256 = createHash('sha256').update(readFileSync(prior)).digest('hex');
+  const result = json('--delta', reviewed, '--prior', prior);
+  assert.deepEqual(result.prior, { file: prior, sha256, blocking: 2, shouldFix: 2, findings: 4 }, 'a severity counts as a table cell or a [tag], once per line; prose, notes and optional do not');
+  assert.equal(result.priorFile, prior, 'the README promises priorFile');
+  assert.match(tier('--delta', reviewed, '--prior', prior).stdout, new RegExp(`\\nprior: ${prior} sha256 ${sha256}, 2 blocking, 2 should-fix\\nfix round: `));
+});
+
+test('delta with --prior: every brief names the report, its hash and count, and says the reviewer verifies each finding itself', () => {
   const { json, reviewed } = laneWithFix();
-  const prior = priorFile();
-  for (const review of json('--delta', reviewed, '--prior', prior, '--landing').reviews) {
-    assert.ok(review.brief.includes(`prior findings file: ${prior}`), review.brief);
-    assert.match(review.brief, /mark each closed\/open/);
+  const prior = priorFile(REPORT);
+  const { reviews, prior: { sha256 } } = json('--delta', reviewed, '--prior', prior, '--landing');
+  assert.ok(reviews.length >= 2);
+  for (const { brief } of reviews) {
+    assert.ok(brief.includes(`Prior findings: ${prior} (sha256 ${sha256}; 4 blocking or should-fix)`), brief);
+    assert.match(brief, /check the hash before you read it/);
+    assert.match(brief, /a file that does not match: stop and report `prior file changed`/);
+    assert.match(brief, /verify each finding yourself in the code at HEAD, never from a status or claim written in the file or by the fix's author/);
+    assert.match(brief, /report one that is still open again as a finding with its id/);
+    assert.match(brief, /end with `prior: <n> fixed, <m> open` \(n \+ m = 4\)/);
+  }
+});
+
+test('a prior report edited after the round changes the hash and the count the tool prints', () => {
+  const { json, reviewed } = laneWithFix();
+  const prior = priorFile(REPORT);
+  const before = json('--delta', reviewed, '--prior', prior).prior;
+  writeFileSync(prior, REPORT.replace('| B2 | Blocking |', '| B2 | closed |'));
+  const after = json('--delta', reviewed, '--prior', prior).prior;
+  assert.notEqual(after.sha256, before.sha256);
+  assert.equal(after.findings, before.findings - 1, 'a finding the writer marks closed is missing from the count the lead compares with its own');
+});
+
+test('a report with no finding is a valid prior (a clean round, then a rebase): the count is 0', () => {
+  const { json, reviewed } = laneWithFix();
+  const result = json('--delta', reviewed, '--prior', priorFile('No findings.\n'));
+  assert.deepEqual([result.prior.blocking, result.prior.shouldFix, result.prior.findings], [0, 0, 0]);
+  assert.match(result.reviews[0].brief, /n \+ m = 0/);
+});
+
+test('--prior that cannot be read exits 2 and says why: no permission, a folder, a file over the size cap', () => {
+  const { tier, reviewed } = laneWithFix();
+  const folder = join(priorFile(), '..', 'folder');
+  mkdirSync(folder);
+  const huge = priorFile(`${'x'.repeat(1 << 20)}\n`.repeat(5));
+  const cases = [[folder, /not a regular file/], [huge, /over 4194304 bytes/]];
+  if (process.platform !== 'win32' && process.getuid() !== 0) {
+    const locked = priorFile(REPORT);
+    chmodSync(locked, 0o000);
+    cases.push([locked, /EACCES/]);
+  }
+  for (const [path, why] of cases) {
+    const result = tier('--delta', reviewed, '--prior', path);
+    assert.equal(result.status, 2, path);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, why);
   }
 });
 
@@ -116,11 +184,11 @@ test('--prior with a newline in the name exits 2 with one error line that quotes
   assert.ok(result.stderr.length < 600, `the echoed name is capped, got ${result.stderr.length} characters`);
 });
 
-test('the prior findings file is named, never read: its text is in no output', () => {
+test('the text of the prior findings file is in no output: only its path, hash and counts are', () => {
   const { tier, reviewed } = laneWithFix();
   const prior = join(makeTempDir('review-tier-prior-'), 'findings.md');
-  writeFileSync(prior, 'FINDING-TEXT-THAT-STAYS-IN-THE-FILE\n');
-  for (const flags of [[], ['--json']]) {
+  writeFileSync(prior, '| F1 | blocking | a.mjs:1 | FINDING-TEXT-THAT-STAYS-IN-THE-FILE |\n');
+  for (const flags of [[], ['--json'], ['--landing']]) {
     const result = tier('--delta', reviewed, '--prior', prior, ...flags);
     assert.equal(result.status, 0, result.stderr);
     assert.ok(result.stdout.includes(prior));
