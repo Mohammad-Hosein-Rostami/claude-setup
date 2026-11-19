@@ -30,8 +30,8 @@
 // so the Stop typecheck gate covers them (lib/code-writes.mjs, lib/edit-log.mjs).
 // Everything else (and any input it cannot parse) is allowed. Reading files, `.env` included, is never blocked.
 //
-// This is a safety net against model mistakes, not a sandbox. Invariants: it never executes the command, it fails open on
-// its own errors, and it prefers a missed block over a false block of a normal dev command.
+// This is a safety net against model mistakes, not a sandbox. Invariants: it never executes the command, it never fails open on
+// its own errors (once a command was read, an exception anywhere asks "guard error": decideSafely for the rules, main for everything after them; a hook process that dies or times out blocks the call through `onFailure: "block"` in settings/base.json), and it prefers a missed block over a false block of a normal dev command.
 // Position independence: after the command word, every later word that is a dangerous verb (rm, git, dd, mkfs, gh, publish, ssh,
 // psql, shells ...) is checked as a command too, so unknown wrappers (`ionice -c3 rm -rf /x`) need no list (lib/dangerous-scan.mjs);
 // the scan is skipped after echo/grep/man/git/docker/ssh and similar. `$'\x72m'` ANSI-C words are decoded (lib/ansi-c.mjs); `eval` of a
@@ -86,7 +86,7 @@ import { adviceOnce } from './lib/bounce-once.mjs';
 import { isAdviceReason, splitAdvice } from './lib/reason-classes.mjs';
 import { findLiteralSecret } from './lib/secrets.mjs';
 import { shellHazards } from './lib/shell-hazards.mjs';
-import { askOwner } from './lib/timed-ask.mjs';
+import { logDecision } from './lib/guard-log.mjs';
 import { lex, segments, tokenize } from './lib/shell-words.mjs';
 import { riskyWordInExpansion, unreadableNameReasons } from './lib/raw-risk.mjs';
 import { DESTRUCTIVE_PREFIX, isSecretOnlyReason, MAX_COMMAND_CHARS, secretReason } from './lib/verdict.mjs';
@@ -248,6 +248,29 @@ async function readStdin() {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+/** The hook's answer for one Bash call: '' lets it run, anything else is the ask or deny line for stdout. */
+function answerFor(command, input) {
+  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  const project = process.env.CLAUDE_PROJECT_DIR || cwd;
+  const rules = (text, ctx) => decide(text, { ...ctx, prodHosts: readProdHosts() }); // reading the host list is inside the guard too
+  const r = decideSafely(command, { cwd, project }, rules);
+  const recheck = (text) => decideSafely(text, { cwd, project }, rules);
+  const answer = r.ask ? askUnlessRemembered(r, { command, cwd, input, recheck }) : r.advice ? adviceOnce(r.advice, { command, cwd, input }) : ''; // advice only: never the owner
+  logCodeWrites(command, input, cwd); // harmless when the owner denied: the typecheck gate only reads files that exist
+  return answer;
+}
+
+/**
+ * The answer when the guard itself failed after it read a command: the CLI's own ask, never silence (a hook that prints nothing or exits
+ * non-zero lets the command run). Built here, not through lib/timed-ask.mjs: this path must not depend on the code that just failed.
+ * The log gets the error class and no command text.
+ */
+function failedAnswer(error, input) {
+  const reason = `${GUARD_ERROR_REASON}: ${error instanceof Error ? error.name : typeof error}`;
+  logDecision({ hook: 'pre-bash-guard', tool: 'Bash', decision: 'ask', outcome: 'guard-error', reason, command: '', cwd: input.cwd, session: input.session_id });
+  return `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: reason } })}\n`;
+}
+
 async function main() {
   let input;
   try {
@@ -257,13 +280,13 @@ async function main() {
   }
   const command = input?.tool_input?.command;
   if (typeof command !== 'string') return;
-  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  const project = process.env.CLAUDE_PROJECT_DIR || cwd;
-  const rules = (text, ctx) => decide(text, { ...ctx, prodHosts: readProdHosts() }); // reading the host list is inside the guard too
-  const r = decideSafely(command, { cwd, project }, rules);
-  if (r.ask) process.stdout.write(askUnlessRemembered(r, { command, cwd, input, recheck: (text) => decideSafely(text, { cwd, project }, rules) }));
-  else if (r.advice) process.stdout.write(adviceOnce(r.advice, { command, cwd, input })); // advice only: never the owner
-  logCodeWrites(command, input, cwd); // harmless when the owner denied: the typecheck gate only reads files that exist
+  let answer;
+  try {
+    answer = answerFor(command, input);
+  } catch (error) {
+    answer = failedAnswer(error, input);
+  }
+  process.stdout.write(answer);
 }
 
 // ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.
