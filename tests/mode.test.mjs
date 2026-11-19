@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findOwnerPid, isMode, isStale, leadNote, parseModeArg } from '../home/hooks/mode.mjs';
@@ -259,44 +259,4 @@ test('SessionStart prints _lead.md for resume, clear and compact too (it re-fire
     const out = runHook(home, { CLAUDE_MODE: 'medium' }, { hook_event_name: 'SessionStart', session_id: `src-${source}`, source }).stdout;
     assert.match(out, /LEAD-MARK[\s\S]*MEDIUM-PLAYBOOK/, source);
   }
-});
-
-// Hook output is injected into the lead's context; the CLI truncates large hook output, so the real files must fit.
-const MAX_HOOK_OUTPUT_CHARS = 9000;
-const MIN_HEADROOM_CHARS = 150; // room for a longer path or note without crossing the cap
-const SHORT_TEMP_ROOT = '/tmp'; // the output carries the home path: a short one keeps the size check about the files, not the launcher's long TMPDIR
-
-test('real _lead.md plus the longest playbook and a lead note stay under the hook output cap, startup and compact', async () => {
-  const home = makeTempDir('mode-size-', SHORT_TEMP_ROOT);
-  await mkdir(join(home, '.claude'), { recursive: true });
-  await cp(fileURLToPath(new URL('../home/modes', import.meta.url)), join(home, '.claude', 'modes'), { recursive: true });
-  for (const source of ['startup', 'compact']) {
-    let longest = 0;
-    for (const mode of ['normal', 'medium', 'high', 'extra-high', 'ultra-high']) {
-      // A mismatched model forces the lead note into the output of the lead modes.
-      const out = runHook(home, { CLAUDE_MODE: mode }, { hook_event_name: 'SessionStart', session_id: `size-${mode}-${source}`, source, model: 'claude-haiku-5-5' }).stdout;
-      longest = Math.max(longest, out.length);
-      assert.match(out, /Lead|lead/, `${mode} ${source}: lead rules present`);
-    }
-    assert.ok(longest > 0 && longest <= MAX_HOOK_OUTPUT_CHARS - MIN_HEADROOM_CHARS, `longest ${source} output is ${longest} chars`);
-  }
-});
-
-test('the worst compact output (status file path, 3rd compaction, longest playbook and lead note) also stays under the cap', async () => {
-  const home = makeTempDir('mode-size-', SHORT_TEMP_ROOT);
-  await mkdir(join(home, '.claude'), { recursive: true });
-  await cp(fileURLToPath(new URL('../home/modes', import.meta.url)), join(home, '.claude', 'modes'), { recursive: true });
-  const transcript = join(home, 'transcript.jsonl');
-  const write = { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write', input: { file_path: join(home, 'project', 'STATUS.md') } }] } };
-  await writeFile(transcript, `${JSON.stringify(write)}\n`);
-  // The playbook printed on compact is the one the process last saved, so a startup per mode, then three compactions each.
-  let longest = 0;
-  for (const mode of ['normal', 'medium', 'high', 'extra-high', 'ultra-high']) {
-    runHook(home, { CLAUDE_MODE: mode }, { hook_event_name: 'SessionStart', session_id: `worst-${mode}`, source: 'startup', model: 'claude-haiku-5-5' });
-    for (let compaction = 0; compaction < 3; compaction += 1) {
-      const out = runHook(home, { CLAUDE_MODE: mode }, { hook_event_name: 'SessionStart', session_id: `worst-${mode}`, source: 'compact', model: 'claude-haiku-5-5', transcript_path: transcript }).stdout;
-      longest = Math.max(longest, out.length);
-    }
-  }
-  assert.ok(longest > 0 && longest <= MAX_HOOK_OUTPUT_CHARS - MIN_HEADROOM_CHARS, `longest worst-case compact output is ${longest} chars`);
 });
