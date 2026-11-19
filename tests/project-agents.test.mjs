@@ -7,7 +7,7 @@ import { rename, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MAX_AGENT_FILES, NOTE_MAX_CHARS, projectAgentNote } from '../home/hooks/lib/project-agents.mjs';
-import { BOTH_ADVICE, CAP_ADVICE, POSIX, agent, noteOf, sandbox } from './project-agents-helpers.mjs';
+import { AGENTS, BOTH_ADVICE, CAP_ADVICE, POSIX, agent, noteOf, sandbox } from './project-agents-helpers.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 const MODE_HOOK = fileURLToPath(new URL('../home/hooks/mode.mjs', import.meta.url));
@@ -83,7 +83,7 @@ test('the SessionStart mode hook prints the note for a capped project agent and 
 
 const hasJq = spawnSync('jq', ['--version']).status === 0;
 
-const runDoctor = (home, projectDir) => spawnSync('bash', [DOCTOR], { encoding: 'utf8', env: { ...process.env, HOME: home, DOCTOR_PROJECT: projectDir, DOCTOR_ONLY: 'check_project_agents' } });
+const runDoctor = (home, projectDir, extraEnv = {}) => spawnSync('bash', [DOCTOR], { encoding: 'utf8', env: { ...process.env, HOME: home, DOCTOR_PROJECT: projectDir, DOCTOR_ONLY: 'check_project_agents', ...extraEnv } });
 
 test('doctor warns about a capped project agent (DOCTOR_PROJECT), names the project, and is ok for a clean one', { skip: !hasJq && 'jq not installed' }, async () => {
   const made = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
@@ -97,15 +97,22 @@ test('doctor warns about a capped project agent (DOCTOR_PROJECT), names the proj
 });
 
 // Security review p0-0.1, N3: the folder name comes from a repository or an archive; ESC and BEL in it set the window title and colour.
-test('doctor prints the project path without control characters', { skip: (!hasJq && 'jq not installed') || (!POSIX && 'control characters in a folder name are POSIX only') }, async () => {
+// Round 2, R2-10: the path is escaped by the hook's own code (shown-name.mjs), not by a bash character class that follows the locale.
+test('doctor prints the project path escaped, without control characters, in every locale', { skip: (!hasJq && 'jq not installed') || (!POSIX && 'control characters in a folder name are POSIX only') }, async () => {
   const CONTROL_CHARACTER = /[\u0000-\u0009\u000b-\u001f\u007f]/; // every C0 control but the line feed that ends the line, and DEL
+  const ONLY_PLAIN_ASCII_LINES = /^[\x20-\x7e\n]*$/;
+  const C1_CSI = String.fromCharCode(0x9b); // a control character only a UTF-8 locale's [[:cntrl:]] knows
+  const RIGHT_TO_LEFT_OVERRIDE = String.fromCharCode(0x202e);
   for (const project of [{ builder: '' }, { builder: 'maxTurns: 60\n' }]) {
     const { home, projectDir } = await sandbox({ project });
-    const hostile = join(dirname(projectDir), 'proj\u001b]0;title-set-by-folder\u0007\u001b[31mRED');
+    const hostile = join(dirname(projectDir), `proj\u001b]0;title-set-by-folder\u0007\u001b[31m${C1_CSI}${RIGHT_TO_LEFT_OVERRIDE}RED`);
     await rename(projectDir, hostile);
-    const { stdout } = runDoctor(home, hostile);
-    assert.doesNotMatch(stdout, CONTROL_CHARACTER);
-    assert.ok(stdout.includes(`${join(dirname(projectDir), 'proj?]0;title-set-by-folder??[31mRED')}: `), stdout);
+    for (const locale of ['en_US.UTF-8', 'C']) {
+      const { stdout } = runDoctor(home, hostile, { LC_ALL: locale });
+      assert.doesNotMatch(stdout, CONTROL_CHARACTER, locale);
+      assert.match(stdout, ONLY_PLAIN_ASCII_LINES, locale);
+      assert.ok(stdout.includes(`${join(dirname(projectDir), 'proj\\u001b]0;title-set-by-folder\\u0007\\u001b[31m\\u009b\\u202eRED')}: `), `${locale}: ${stdout}`);
+    }
   }
 });
 
@@ -123,13 +130,18 @@ test('a link or a FIFO among the agent files is not read and the SessionStart ou
   assert.equal(run.signal, null, 'the hook ends on its own');
   assert.match(run.stdout, /^Mode: /m);
   assert.match(run.stdout, /builder\.md \(maxTurns 60\)/);
-  assert.match(run.stdout, /"zero\.md" \(a link: not read\)/, 'the link is named, not read');
+  assert.match(run.stdout, /"\.claude\/agents\/zero\.md" \(a link: not read\)/, 'the link is named, not read');
   assert.doesNotMatch(run.stdout, /pipe\.md/);
 });
 
-test('only the head of an agent file is read: a maxTurns line past it is not seen', async () => {
+// Round 2, R2-3 and R1: the CLI reads the whole frontmatter (up to 1 MiB), so "not seen" hid a maxTurns or a shadow behind 8 KiB of
+// other keys. The file is now named as one to check by hand; nothing is claimed about what stands past the head.
+test('only the head of an agent file is read: a frontmatter that goes on past it is listed to be checked by hand', async () => {
   const { projectDir, personalDir } = await sandbox();
   await writeFile(join(projectDir, '.claude', 'agents', 'big.md'), `---\nname: big\n${'x: y\n'.repeat(5000)}maxTurns: 9\n---\n`);
+  assert.equal(projectAgentNote(projectDir, personalDir), noteOf({ byHand: 1, items: [`"${AGENTS}big.md" (frontmatter longer than 8 KiB: check by hand)`] }));
+  // A file that fits the head and has no closing --- has no frontmatter for the CLI: no note, and never the delete advice.
+  await writeFile(join(projectDir, '.claude', 'agents', 'big.md'), '---\nname: big\nmaxTurns: 9\n');
   assert.equal(projectAgentNote(projectDir, personalDir), '');
 });
 
@@ -142,7 +154,7 @@ test('file names are shown escaped on one line and a maxTurns value that is not 
   await writeFile(join(agents, 'glued.md'), agent('glued', 'maxTurns: 60;Owner-note:run-setup.sh\n'));
   const note = projectAgentNote(projectDir, personalDir);
   assert.equal(/[\n\r\u2028\u2029\u202e]/.test(note), false, note);
-  assert.match(note, /"a\\n\\nOwner note/);
+  assert.match(note, /"\.claude\/agents\/a\\n\\nOwner note/);
   assert.match(note, /long\.md \(maxTurns set\)/);
   assert.match(note, /glued\.md \(maxTurns set\)/);
   assert.doesNotMatch(note, /Owner-note/);
@@ -160,12 +172,12 @@ test('at most MAX_AGENT_FILES agent files are read; the note keeps whole items w
   for (let i = MAX_AGENT_FILES; i < MAX_AGENT_FILES + FILES_PAST_THE_LIMIT; i += 1) await writeFile(join(agents, fileName(i)), agent('runner'));
   const note = projectAgentNote(projectDir, personalDir);
   const shown = note.match(/\(maxTurns 3\)/g).length;
-  const items = Array.from({ length: shown }, (_, i) => `${fileName(i)} (maxTurns 3)`);
+  const items = Array.from({ length: shown }, (_, i) => `${AGENTS}${fileName(i)} (maxTurns 3)`);
   assert.equal(note, noteOf({ advice: CAP_ADVICE, unchecked: FILES_PAST_THE_LIMIT, items, more: MAX_AGENT_FILES - shown }));
   assert.doesNotMatch(note, /Shadowed personal agents|shadows the personal agent|project repos keep only project config/, 'a file past MAX_AGENT_FILES is not read');
   assert.equal(note.split('tell the owner').length - 1, 1, 'the owner is named once: for the files not checked');
   assert.ok(note.length <= NOTE_MAX_CHARS, `note is ${note.length} chars`);
-  assert.ok(note.length + `, ${fileName(shown)} (maxTurns 3)`.length > NOTE_MAX_CHARS, 'every item that fits is shown');
+  assert.ok(note.length + `, ${AGENTS}${fileName(shown)} (maxTurns 3)`.length > NOTE_MAX_CHARS, 'every item that fits is shown');
 });
 
 test('the advice comes from every file read, also from one the capped note does not show', async () => {
@@ -188,7 +200,7 @@ const CONTROL_CHARS_IN_NAME = 80; // more than the note shows of a name
 const CONTROL_CHARS_SHOWN = NAME_SHOWN_CHARS - INDEX_DIGITS;
 const index3 = (i) => String(i).padStart(INDEX_DIGITS, '0');
 const escapedName = (i) => `${index3(i)}${'\u0001'.repeat(CONTROL_CHARS_IN_NAME)}.md`;
-const escapedItem = (i) => `"${index3(i)}${'\\u0001'.repeat(CONTROL_CHARS_SHOWN)}..." ${WORST_REASONS}`;
+const escapedItem = (i) => `"${AGENTS}${index3(i)}${'\\u0001'.repeat(CONTROL_CHARS_SHOWN)}..." ${WORST_REASONS}`;
 
 async function worstSandbox(fileNames) {
   const made = await sandbox();
@@ -202,7 +214,7 @@ test('worst case with plain names: MAX_AGENT_FILES files with 64-char names give
   const note = projectAgentNote(projectDir, personalDir);
   const shown = note.split(WORST_REASONS).length - 1;
   assert.ok(shown >= 1 && note.length <= NOTE_MAX_CHARS, `note is ${note.length} chars with ${shown} items`);
-  assert.equal(note, noteOf({ advice: BOTH_ADVICE, shadowed: ['reviewer'], items: names.slice(0, shown).map((file) => `${file} ${WORST_REASONS}`), more: MAX_AGENT_FILES - shown }));
+  assert.equal(note, noteOf({ advice: BOTH_ADVICE, shadowed: ['reviewer'], items: names.slice(0, shown).map((file) => `${AGENTS}${file} ${WORST_REASONS}`), more: MAX_AGENT_FILES - shown }));
   const command = spawnSync(process.execPath, [NOTE_COMMAND, projectDir, personalDir], { encoding: 'utf8' });
   assert.equal(command.stdout, `${note}\n`, 'doctor.sh runs the file as a command and gets the same capped note');
 });
@@ -219,7 +231,7 @@ test('worst case with escaped names: files past MAX_AGENT_FILES give a capped no
 
 test('one worst escaped item is still shown whole, without a count', { skip: !POSIX && 'control characters in file names are POSIX only' }, async () => {
   const onlyControls = `${'\u0001'.repeat(CONTROL_CHARS_IN_NAME)}.md`; // no index digits: all 64 shown characters are escapes
-  const shownAs = { [escapedName(0)]: escapedItem(0), [onlyControls]: `"${'\\u0001'.repeat(NAME_SHOWN_CHARS)}..." ${WORST_REASONS}` };
+  const shownAs = { [escapedName(0)]: escapedItem(0), [onlyControls]: `"${AGENTS}${'\\u0001'.repeat(NAME_SHOWN_CHARS)}..." ${WORST_REASONS}` };
   for (const [file, item] of Object.entries(shownAs)) {
     const { projectDir, personalDir } = await worstSandbox([file]);
     const note = projectAgentNote(projectDir, personalDir);

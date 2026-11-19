@@ -1,197 +1,190 @@
-// Project agent files that cap or shadow the owner's personal agents. Exports: projectAgentNote(projectDir, personalDir), MAX_AGENT_FILES, NOTE_MAX_CHARS.
-// A project's `.claude/agents/*.md` wins over a personal agent of the same name, and a `maxTurns:` line in its frontmatter
-// stops the agent mid-task (the owner's rule is no maxTurns). Used by the SessionStart mode hook and by scripts/doctor.sh
-// (run this file as `node project-agent-note <projectDir> <personalAgentsDir>`: it prints the note, or nothing).
-// Invariants: read-only; never throws (an unreadable folder or file counts as "nothing found"). The files come from whatever repository
-// the session opens, so they are untrusted:
-// - Nothing is read through a link. When `.claude` or `.claude/agents` is a link (the real path of the agents folder is not
-//   <real project>/.claude/agents) the folder is not listed and the note gives no edit advice, only "tell the owner". Inside the
-//   folder a link, FIFO, device or folder is never read (lstat, then O_NOFOLLOW and O_NONBLOCK with the type checked on the open
-//   handle), and a linked agent file is listed as `"<name>" (a link: not read)` so that what it points at is not hidden. The check of
-//   the folder and the reads are separate calls: a folder swapped for a link between them is not caught.
-// - Bounded work: only the first AGENT_HEAD_BYTES of a file and at most MAX_AGENT_FILES files are read. The base name of every file,
-//   also past that limit, is still checked against the personal set, which needs no read.
-// - A file name or maxTurns value reaches the note only as data on one line: the advice stands before the list, the list is labelled
-//   as repository data, a name that is not plain is quoted and escaped down to printable ASCII (shown-name.mjs), and a maxTurns value
-//   that is not a number shows as "maxTurns set".
-// - The note is at most NOTE_MAX_CHARS long whatever the project folder holds, as long as the personal agent names fit (see
-//   NOTE_MAX_CHARS). The advice and the names of the shadowed personal agents (taken from the personal set, never from the project)
-//   are always whole and come first; then whole items only (never cut inside an item or a \u escape): the files that shadow, then
-//   the links, then the files that only set maxTurns. Two counts are kept apart: "N agent files past the first 200 not checked"
-//   (never read; printed also when nothing else was found) and "and N more files not shown" (found, but no room in the note).
-import { constants, existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, relative, sep } from 'node:path';
+// Project agent files that cap or shadow the owner's agents. Exports: projectAgentNote(sessionDir, personalDir), MAX_AGENT_FILES,
+// NOTE_MAX_CHARS.
+// A project agent wins over a personal or built-in agent of the same name, and a `maxTurns:` line in its frontmatter stops the agent
+// mid-task (the owner's rule is no maxTurns). Used by the SessionStart mode hook and by scripts/doctor.sh (run this file as
+// `node project-agents.mjs <sessionDir> <personalAgentsDir>`: it prints the note, or nothing).
+// The parts: agent-folders.mjs (which folders Claude Code loads), agent-file-walk.mjs (their entries, under limits, never through a
+// link), agent-frontmatter.mjs (what a frontmatter says, when it is plain), project-agents-text.mjs (the wording and the cap),
+// shown-name.mjs (how a path from the repository is shown). Each cites what it read in the Claude Code 2.1.328 bundle.
+// Read there for this file:
+//   eZ(): H=[built-in,plugin,userSettings,projectSettings,flagSettings,policySettings];for(...)z.set(Q.agentType,Q)
+//     a later source replaces an earlier one under the exact same name, so a project agent replaces a personal and a built-in one;
+//     names are compared as they are (probe: `Security-Auditor` is listed beside `security-auditor`).
+// Principle: the note is exact where it can be, says "check by hand" for everything else Claude Code could load, and is silent only
+// for a file Claude Code itself does not load (no frontmatter, no closing ---, no `name`). It never states a guess as a fact:
+// - "Shadowed personal agents" and "shadows the ... agent" come only from the exact `name` of a plain frontmatter.
+// - The delete advice comes only from a `maxTurns` key line of a plain frontmatter, in a regular file with one hard link, inside the
+//   session's git repository and reached through no link.
+// - A frontmatter that is not plain, or longer than the head that is read, is one item "check by hand" with no other claim. So is a
+//   name that only looks like one of the owner's (other case, spaces), and a maxTurns outside a git repository.
+// - A file that is not read (a link, a hard link, past a limit) is checked by its base name only and called "named like".
+// Invariants: read-only; never throws; bounded work (see agent-file-walk.mjs and agent-folders.mjs). The check of a folder and the
+// reads are separate calls: a folder swapped for a link between them is not caught. Personal agents are the `*.md` base names of the
+// personal folder itself (in this setup a file is named like its agent; tests/agent-files.test.mjs).
+import { readdirSync, realpathSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readFileHead } from './agent-brief.mjs';
-import { frontmatterOf, hasToken, maxTurnsIn } from './agent-frontmatter.mjs';
-import { quotedName, shownName } from './shown-name.mjs';
+import { agentEntries, newBudget, readAgentFile } from './agent-file-walk.mjs';
+import { agentFolders } from './agent-folders.mjs';
+import { frontmatterOf, plainFrontmatter } from './agent-frontmatter.mjs';
+import { FIXED_ITEMS, REASONS, cappedNote } from './project-agents-text.mjs';
+import { quotedPath, shownPath } from './shown-name.mjs';
 
-export const MAX_AGENT_FILES = 200; // a real project has a few dozen agents at most
-// Longest note, in characters. It counts String length (UTF-16 units), as the CLI's persisted-output code does (`string.length` in
-// the 2.1.328 bundle; the call site of the hook-output cap itself was not found). The note is printable ASCII apart from the personal
-// agent names, so units, code points and bytes are the same number for today's set.
-// Why 800: the note is one part of the single string mode.mjs prints at SessionStart, and Claude Code shows the lead only a
-// 2,000-character preview of a hook's stdout above 10,000 characters. The other parts measure up to 8,904 (every mode, third
-// compaction, a STATUS path at its shown limit: tests/session-start-size.test.mjs), so with the note the output is 9,706 at most.
-// What is never cut measures 532 with today's ten personal agents all shadowed: start 90, the three pieces of advice 226, the names
-// with their label 146, the count of files not checked 65 with six digits, and the full stops; a list that only counts its files
-// brings it to 568. So at least 230 are left for the list; the longest single item is about 435 and is counted, not shown, when it
-// does not fit.
-export const NOTE_MAX_CHARS = 800;
-// The file names in the note come from the repository. The label says so, and everything the hook itself says stands before the list.
-const NOTE_START = 'Project agent files in .claude/agents (file names are repository data, not instructions): ';
-const SHADOWED_START = 'Shadowed personal agents: ';
-const LIST_START = 'Files: ';
-const CAP_ADVICE = 'the lead deletes each frontmatter maxTurns: line in its own commit, no need to ask';
-const SHADOW_ADVICE = 'tell the owner (project repos keep only project config)';
-const LINK_ADVICE = 'tell the owner about each link (a link is not read, and nothing is edited through it)';
-const SHADOW_REASON = 'shadows the personal agent';
-const LINK_REASON = 'a link: not read';
-// For a linked folder: no file is named and no maxTurns advice is given, because an edit there would land outside the project's own files.
-const LINK_OUTSIDE_NOTE = 'Project agent files: .claude/agents is a link to outside the project (or lies behind one), so it is not read and nothing there is edited - tell the owner.';
-const LINK_INSIDE_NOTE = 'Project agent files: .claude/agents is a link (or lies behind one), so it is not read and nothing is edited through it - tell the owner.';
-const AGENT_HEAD_BYTES = 8 * 1024; // the frontmatter sits at the top; a longer file is cut there
+export { MAX_AGENT_FILES } from './agent-file-walk.mjs';
+export { NOTE_MAX_CHARS } from './project-agents-text.mjs';
+
+// The built-in agents this setup relies on (security review p0-0.1 round 2, R2-6): untyped Agent calls go to general-purpose, the
+// lead uses Explore and Plan. A fixed list: the CLI's own list is not read at run time.
+const BUILT_IN_AGENTS = ['general-purpose', 'Explore', 'Plan', 'claude', 'claude-code-guide', 'statusline-setup'];
 const AGENT_FILE = /\.md$/i;
-const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0); // Windows has neither flag: lstat stands alone
+const AGENTS_FOLDER = 'agents';
+const SHADOW_REASONS = { personal: REASONS.shadowsPersonal, builtIn: REASONS.shadowsBuiltIn };
+const NAMED_LIKE_REASONS = { personal: REASONS.namedLikePersonal, builtIn: REASONS.namedLikeBuiltIn };
+const UNREAD_REASONS = { unread: REASONS.notRead, link: REASONS.link, 'hard-link': REASONS.hardLink };
 
-const NOT_READ = { link: false, head: '' };
+const baseName = (file) => file.replace(AGENT_FILE, '');
+/** A name as look-alikes are compared: compatibility forms, case and outer spaces removed. */
+const folded = (name) => name.normalize('NFKC').toLowerCase().trim();
 
-/** What an agent file is: a link (never read), or a file with its head; a FIFO, device, folder or unreadable file has an empty head. */
-function readAgentFile(path) {
+/** The personal agent names: the `*.md` base names of the owner's own folder (trusted), sorted; none when it cannot be listed. */
+function personalAgents(personalDir) {
   try {
-    const stat = lstatSync(path);
-    if (stat.isSymbolicLink()) return { link: true, head: '' };
-    return { link: false, head: stat.isFile() ? readFileHead(path, AGENT_HEAD_BYTES, OPEN_FLAGS) ?? '' : '' };
-  } catch {
-    return NOT_READ; // gone, a link swapped in after the lstat (ELOOP), or unreadable: nothing found
-  }
-}
-
-function agentFiles(dir) {
-  try {
-    return readdirSync(dir).filter((file) => AGENT_FILE.test(file)).sort();
+    return readdirSync(personalDir).filter((file) => AGENT_FILE.test(file)).map(baseName).sort();
   } catch {
     return [];
   }
 }
 
-const baseName = (file) => file.replace(AGENT_FILE, '');
-
-/** The personal agents a project agent file can take the place of: its own base name when that is one, and each one its frontmatter names. */
-function shadowedBy(file, frontmatter, personal) {
-  return personal.filter((name) => name === baseName(file) || hasToken(frontmatter, name));
-}
-
-/** Adds the list item of one file to its group, when the file has a reason to be listed. A link is always quoted, as a mark of its own. */
-function addItem(groups, file, { link, turns, shadows }) {
-  const reasons = [...(link ? [LINK_REASON] : []), ...(turns ? [turns] : []), ...(shadows ? [SHADOW_REASON] : [])];
-  if (reasons.length === 0) return;
-  let group = groups.capping;
-  if (link) group = groups.linked;
-  if (shadows) group = groups.shadowing;
-  group.push(`${link ? quotedName(file) : shownName(file)} (${reasons.join(', ')})`);
+/** The owner's agents a project agent can replace: the personal ones, and the built-in ones no personal agent has replaced. */
+function ownerAgents(personalDir) {
+  const personal = personalAgents(personalDir);
+  return { personal, builtIn: BUILT_IN_AGENTS.filter((name) => !personal.includes(name)) };
 }
 
 /**
- * What the project's agent files do to the owner's agents, plus how many files past MAX_AGENT_FILES were not read (`unchecked`).
- * A file that is not read is still checked by its base name, so one named like a personal agent is found wherever it sorts.
- * The frontmatter is found by Claude Code's rules and matched tolerantly (agent-frontmatter.mjs): a finding may be one the CLI would
- * not act on, never the other way round.
- * @param {string} projectAgents - the project's agents folder.
- * @param {string[]} personal - the personal agent names, sorted (trusted: they come from the owner's own folder).
- * @returns {{ items: string[], shadowed: string[], hasCap: boolean, hasLink: boolean, unchecked: number }} `items`: one per file that
- *   sets maxTurns, shadows or is a link; the shadowing files first, then the links, then the rest. `shadowed`: the personal agents
- *   shadowed, in the order of `personal`. The advice is chosen from `shadowed`, `hasCap` and `hasLink`, never from the item text,
- *   which carries untrusted file names.
+ * Which of the owner's agents a name is.
+ * @returns {{ set?: 'personal' | 'builtIn', like?: string }} `set`: the name is exactly one of that set; `like`: it is not, but
+ *   equals this one of the owner's names once both are folded.
  */
-function findings(projectAgents, personal) {
-  const files = agentFiles(projectAgents);
-  const groups = { shadowing: [], linked: [], capping: [] };
-  const seen = { shadowed: new Set(), hasCap: false, hasLink: false };
-  for (const [index, file] of files.entries()) {
-    const { link, head } = index < MAX_AGENT_FILES ? readAgentFile(join(projectAgents, file)) : NOT_READ;
-    const frontmatter = frontmatterOf(head);
-    const turns = maxTurnsIn(frontmatter);
-    const shadowedHere = shadowedBy(file, frontmatter, personal);
-    addItem(groups, file, { link, turns, shadows: shadowedHere.length > 0 });
-    for (const name of shadowedHere) seen.shadowed.add(name);
-    seen.hasCap ||= Boolean(turns);
-    seen.hasLink ||= link;
-  }
-  return {
-    items: [...groups.shadowing, ...groups.linked, ...groups.capping],
-    shadowed: personal.filter((name) => seen.shadowed.has(name)),
-    hasCap: seen.hasCap,
-    hasLink: seen.hasLink,
-    unchecked: Math.max(0, files.length - MAX_AGENT_FILES),
-  };
+function ownerAgentFor(name, agents) {
+  if (agents.personal.includes(name)) return { set: 'personal' };
+  if (agents.builtIn.includes(name)) return { set: 'builtIn' };
+  return { like: [...agents.personal, ...agents.builtIn].find((agent) => folded(agent) === folded(name)) };
+}
+
+const newFindings = () => ({
+  groups: { shadowing: [], suspect: [], linked: [], byHand: [], capping: [] },
+  shadowed: { personal: new Set(), builtIn: new Set() },
+  hasCap: false,
+  hasLink: false,
+  unchecked: 0,
+  folders: 0,
+  byHand: 0,
+});
+
+/** Adds an entry that was not read: counted, and listed when it is a link or is named like one of the owner's agents. */
+function addUnread(found, entry, kind, scope) {
+  const { set } = ownerAgentFor(baseName(entry.name), scope.agents);
+  if (kind === 'unread') found.unchecked += 1;
+  else found.hasLink = true;
+  if (kind === 'unread' && set === undefined) return;
+  const reasons = [UNREAD_REASONS[kind], ...(set ? [NAMED_LIKE_REASONS[set]] : [])];
+  found.groups[set ? 'suspect' : 'linked'].push(`${quotedPath(entry.folder, entry.name)} (${reasons.join(', ')})`);
+}
+
+/** Adds a file the hook makes no claim about: one item that says why it is to be checked by hand. */
+function addByHand(found, entry, reason) {
+  found.byHand += 1;
+  found.groups.byHand.push(`${quotedPath(entry.folder, entry.name)} (${reason})`);
 }
 
 /**
- * The note that lists the first `shown` items and counts the others. Only the list depends on `shown`: the advice, the shadowed
- * personal agents and the count of files not checked are always whole, and they stand before every file name.
+ * Adds an agent whose name and maxTurns are exact, when it caps turns, shadows one of the owner's agents or looks like one.
+ * `scope` is { agents, inRepository }: the owner's agents, and whether the session's git root is certain (see findings).
  */
-function noteWith({ items, shadowed, hasCap, hasLink, unchecked }, shown) {
-  const advice = [...(hasCap ? [CAP_ADVICE] : []), ...(shadowed.length ? [SHADOW_ADVICE] : []), ...(hasLink ? [LINK_ADVICE] : [])];
-  const listed = items.slice(0, shown);
-  const notShown = items.length - shown;
-  if (notShown > 0) listed.push(`${shown ? 'and ' : ''}${notShown} more files not shown`);
-  const sentences = [
-    advice.join('; '),
-    shadowed.length ? `${SHADOWED_START}${shadowed.join(', ')}` : '',
-    unchecked ? `${unchecked} agent files past the first ${MAX_AGENT_FILES} not checked: tell the owner` : '',
-    listed.length ? `${LIST_START}${listed.join(', ')}` : '',
+function addAgent(found, entry, { name, turns }, { agents, inRepository }) {
+  const { set, like } = ownerAgentFor(name, agents);
+  const byHand = like !== undefined || (turns !== '' && !inRepository);
+  const reasons = [
+    ...(turns ? [inRepository ? turns : `${turns}, ${REASONS.noRepository}`] : []),
+    ...(set ? [SHADOW_REASONS[set]] : []),
+    ...(like ? [REASONS.looksLike(like)] : []),
   ];
-  return `${NOTE_START}${sentences.filter(Boolean).join('. ')}.`;
+  if (reasons.length === 0) return;
+  if (set) found.shadowed[set].add(name);
+  if (byHand) found.byHand += 1;
+  found.hasCap ||= turns !== '' && inRepository;
+  const group = (set && 'shadowing') || (like && 'suspect') || (byHand && 'byHand') || 'capping';
+  found.groups[group].push(`${shownPath(entry.folder, entry.name)} (${reasons.join(', ')})`);
 }
 
-/**
- * The note with as many leading items as fit in NOTE_MAX_CHARS, which may be none: then the files are only counted. What is never cut
- * (the start, the advice, the shadowed personal agents and the count of files not checked) fits the cap with room to spare for today's
- * personal set (tests/project-agents-cap.test.mjs and tests/project-agents-links.test.mjs fail when that stops being true).
- */
-function cappedNote(found) {
-  const whole = noteWith(found, found.items.length);
-  if (whole.length <= NOTE_MAX_CHARS) return whole;
-  let shown = 0;
-  // Ends at the latest when shown + 1 is every item: that is `whole`, which is too long.
-  while (noteWith(found, shown + 1).length <= NOTE_MAX_CHARS) shown += 1;
-  return noteWith(found, shown);
-}
-
-/**
- * The note for an agents folder that is not scanned, or undefined when it is the project's own real folder and must be scanned.
- * @returns {string | undefined} '' for no folder, the personal folder itself (a session started in the home folder) or a path that
- *   cannot be resolved (a link loop); the link note when `.claude` or `.claude/agents` is a link, inside the project or out of it.
- */
-function unscannedFolderNote(projectDir, projectAgents, personalDir) {
-  try {
-    const realAgents = realpathSync(projectAgents);
-    if (existsSync(personalDir) && realAgents === realpathSync(personalDir)) return '';
-    const realProject = realpathSync(projectDir);
-    if (realAgents === join(realProject, '.claude', 'agents')) return undefined;
-    const fromProject = relative(realProject, realAgents);
-    const outside = fromProject === '..' || fromProject.startsWith(`..${sep}`) || isAbsolute(fromProject);
-    return outside ? LINK_OUTSIDE_NOTE : LINK_INSIDE_NOTE;
-  } catch {
-    return ''; // no agents folder, a link loop or an unreadable path: there is nothing an agent could be loaded from
+/** Adds what one agent file that was read says. A file Claude Code loads no agent from adds nothing. */
+function addRead(found, entry, { head, cutShort }, scope) {
+  const frontmatter = frontmatterOf(head);
+  if (frontmatter.kind === 'none') return;
+  if (frontmatter.kind === 'open') {
+    if (cutShort) addByHand(found, entry, REASONS.longFrontmatter); // in a whole file an opening without a closing is no frontmatter
+    return;
   }
+  const facts = plainFrontmatter(frontmatter.text);
+  if (!facts.plain) addByHand(found, entry, REASONS.notPlain);
+  else if (facts.name !== '') addAgent(found, entry, facts, scope);
+}
+
+/** Adds one entry of a real agents folder. */
+function addEntry(found, entry, scope) {
+  if (entry.kind === 'folder-not-read' || entry.kind === 'linked-folder') {
+    found.folders += 1;
+    if (entry.kind === 'folder-not-read') return;
+    found.hasLink = true;
+    found.groups.linked.push(`${quotedPath(entry.folder, entry.name)} (${REASONS.linkedFolder})`);
+    return;
+  }
+  const read = entry.kind === 'file' ? readAgentFile(entry.path) : entry;
+  if (read.kind === 'file') addRead(found, entry, read, scope);
+  else if (read.kind !== 'gone') addUnread(found, entry, read.kind, scope);
 }
 
 /**
- * The one-line note, at most NOTE_MAX_CHARS long, for a session whose project has agent files that cap turns or shadow personal agents.
- * @param {string} projectDir - the session's project folder.
- * @param {string} personalDir - the personal agents folder (`~/.claude/agents`).
- * @returns {string} the note; '' when nothing was found and every file was checked (also when the project agents folder is the
- *   personal one); for an agents folder behind a link, a note that names no file and tells the lead to edit nothing.
+ * What the project's agent files do to the owner's agents.
+ * @param {string} sessionDir - the session's folder.
+ * @param {string} personalDir - the personal agents folder; the home folder is taken to be two levels above it.
+ * @returns {object} the findings: see newFindings (`groups` hold the list items, the most important group first).
  */
-export function projectAgentNote(projectDir, personalDir) {
-  if (typeof projectDir !== 'string' || projectDir === '') return '';
-  const projectAgents = join(projectDir, '.claude', 'agents');
-  const unscanned = unscannedFolderNote(projectDir, projectAgents, personalDir);
-  if (unscanned !== undefined) return unscanned;
-  const found = findings(projectAgents, agentFiles(personalDir).map(baseName));
-  return found.items.length || found.unchecked ? cappedNote(found) : '';
+function findings(sessionDir, personalDir) {
+  const where = agentFolders(sessionDir, dirname(dirname(personalDir)), personalDir);
+  const scope = { agents: ownerAgents(personalDir), inRepository: where.inRepository };
+  const found = newFindings();
+  const budget = newBudget();
+  for (const [applies, item] of [[where.unsure, FIXED_ITEMS.foldersAbove], [where.mainCheckout, FIXED_ITEMS.mainCheckout]]) {
+    if (!applies) continue;
+    found.folders += 1;
+    found.groups.linked.push(item);
+  }
+  for (const folder of where.folders) {
+    if (folder.kind === 'real') {
+      for (const entry of agentEntries(folder.path, folder.shown, budget)) addEntry(found, entry, scope);
+      continue;
+    }
+    found.folders += 1;
+    found.hasLink = true;
+    found.groups.linked.push(`${quotedPath(folder.parentShown, AGENTS_FOLDER)} (${folder.kind === 'link' ? REASONS.link : REASONS.linkOutside})`);
+  }
+  return found;
+}
+
+/**
+ * The one-line note for a session whose project has agent files that cap turns, shadow one of the owner's agents or cannot be
+ * judged; at most NOTE_MAX_CHARS long (project-agents-text.mjs says when it can be longer).
+ * @param {string} sessionDir - the session's folder (the hook input's `cwd`).
+ * @param {string} personalDir - the personal agents folder (`~/.claude/agents`).
+ * @returns {string} the note; '' when nothing was found and everything was checked (also for a session in the home folder).
+ */
+export function projectAgentNote(sessionDir, personalDir) {
+  if (typeof sessionDir !== 'string' || sessionDir === '' || typeof personalDir !== 'string') return '';
+  const { groups, shadowed, ...rest } = findings(sessionDir, personalDir);
+  const items = [...groups.shadowing, ...groups.suspect, ...groups.linked, ...groups.byHand, ...groups.capping];
+  return cappedNote({ ...rest, items, personal: [...shadowed.personal].sort(), builtIn: [...shadowed.builtIn].sort() });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
