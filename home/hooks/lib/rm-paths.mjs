@@ -1,5 +1,5 @@
 // Path rules for `rm -r` and `cd`: is a target inside the project or a temp dir, and which variables hold what.
-// Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; newScope(cwd, project) -> {vars, assigned};
+// Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; MAX_TARGET_CHARS; newScope(cwd, project) -> {vars, assigned};
 // trackAssignments(scope, tokens, nextTokens); substituteKnownWords(tokens, scope); bashReadings(word, splitWords) (also read by
 // lib/find-delete.mjs); nativePath, isUnder, sameFile, expandHome; RECURSIVE_FLAG; withoutRedirects(args) (also read by lib/git-runs.mjs);
 // DECLARERS (from lib/shell-words.mjs, also read by lib/git-run-values.mjs).
@@ -13,10 +13,12 @@
 // Only a recursive rm asks about an unknown or outside target; `rm -f x` of one file is not judged here.
 // Inside the project a recursive rm still asks when it empties a whole folder: the working directory itself, or a bare glob (`*`, `./*`,
 // `.*`, `?`, `[a-z]*`) of the working directory, the project root, home or `/`. A glob with a name part (`*.log`) or of a sub-folder does not.
-// A bare glob below a bare glob (`./**/*`, `*/*`) counts as a glob of the folder the first one is in: it empties every sub-folder there.
+// A bare glob below a bare glob (`./**/*`, `*/*`) counts as a glob of the folder the first one is in: it empties every sub-folder there
+// (lib/bare-glob.mjs reads the globs). Work budget: a target over MAX_TARGET_CHARS is not read, it asks.
 // Invariants: pure apart from reading homedir()/tmpdir(); never touches the file system.
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, parse, relative, resolve } from 'node:path';
+import { globbedFolder } from './bare-glob.mjs';
 import { expandBraces } from './braces.mjs';
 import { DECLARERS, GIT_TOPLEVEL_WORD, MKTEMP_WORD, QUOTED_MARK, backtickAssignedNames, flagsOf } from './shell-words.mjs';
 import { destructive } from './verdict.mjs';
@@ -35,9 +37,8 @@ const ASSIGNMENT = /^([A-Za-z_]\w*)(\+?)=([\s\S]*)$/;
 const SUBSCRIPT_ASSIGNMENT = /^([A-Za-z_]\w*)\[[^\]]*\]\+?=/; // `X[2]=v`: zsh changes part of a scalar, so its value is no longer known
 const MKTEMP_DIR = 'mktemp-variable';
 const BLANKS = /[ \t\n]+/; // where bash splits an unquoted variable's value into words (the default IFS)
-const BRACKET_SET = /\[[^\]]*\]/g; // `[a-z]`, `[!.]`: one character from a set, as wide as `?`
-const BARE_GLOB = /^[*?.]*[*?][*?.]*$/; // only glob characters and dots: every entry of the folder (or every hidden one)
-const TRAILING_SLASHES = /(.)\/+$/;
+/** Work budget for one rm target: PATH_MAX is 4096 on Linux and 1024 on macOS, so a longer word is no path a real command names. */
+export const MAX_TARGET_CHARS = 4096;
 /** An rm option that deletes recursively: `-r`, `-R`, a cluster holding one (`-rf`, `-fR`), or `--recursive`. */
 export const RECURSIVE_FLAG = /^--recursive$|^-[a-zA-Z]*[rR]/;
 
@@ -159,33 +160,20 @@ function insideProject(rawTarget, cwd, project, vars) {
   return (!isBroadRoot(project) && isUnder(project, abs)) || SAFE_TEMP_ROOTS.some((root) => isUnder(root, abs));
 }
 
-// The folders a target's trailing bare-glob parts list, nearest first: `*` -> [`.`], `/*` -> [`/`], `./**/*` -> [`./**`, `.`], and
-// none for a target that ends in a name (`src`, `*.log`, `*/dist`). Every step is kept, not only the last, so cutting a second glob part
-// off can only add a folder to judge: a target that asked with one part cut off still asks.
-function globbedFolders(target) {
-  const folders = [];
-  let rest = target;
-  for (let cut = rest.lastIndexOf('/'); BARE_GLOB.test(rest.slice(cut + 1).replace(BRACKET_SET, '?')); cut = rest.lastIndexOf('/')) {
-    rest = cut === -1 ? '.' : rest.slice(0, cut).replace(TRAILING_SLASHES, '$1') || '/';
-    folders.push(rest); // `.` and `/` end the loop: neither is a glob
-  }
-  return folders;
-}
-
 /**
- * True when the target is the working directory itself, or a bare glob (also one below other bare globs, globbedFolders) whose folder is
+ * True when the target is the working directory itself, or a bare glob (also one below other bare globs, lib/bare-glob.mjs) whose folder is
  * the working directory, the project root, home or a file-system root: removing it empties that whole folder even though every entry is
  * inside the project. Unknown targets return false (insideProject already asks about them).
  */
 function emptiesWholeFolder(rawTarget, cwd, project, vars) {
   if (cwd === null) return false;
-  const target = expandedTarget(rawTarget, cwd, project, vars).replace(QUOTED_MARK, '').replace(TRAILING_SLASHES, '$1');
-  const absolute = (path) => (path.startsWith('~') || path.includes('$') ? undefined : resolve(cwd, nativePath(path)));
+  const target = expandedTarget(rawTarget, cwd, project, vars).replace(QUOTED_MARK, '');
+  if (target.startsWith('~') || target.includes('$')) return false;
+  const folder = globbedFolder(target);
+  const abs = resolve(cwd, nativePath(folder ?? target));
   const wholeFolders = [cwd, project, homedir()].map((whole) => resolve(nativePath(whole)));
-  const isWhole = (abs) => abs !== undefined && (wholeFolders.some((whole) => sameFile(abs, whole)) || sameFile(abs, parse(abs).root) || GIT_BASH_DRIVE_ROOT.test(abs));
-  const folders = globbedFolders(target);
-  if (folders.length === 0) return absolute(target) !== undefined && sameFile(absolute(target), wholeFolders[0]);
-  return folders.map(absolute).some(isWhole);
+  if (folder === undefined) return sameFile(abs, wholeFolders[0]);
+  return wholeFolders.some((whole) => sameFile(abs, whole)) || sameFile(abs, parse(abs).root) || GIT_BASH_DRIVE_ROOT.test(abs);
 }
 
 /** Drops redirections (`2>&1`, `> file`) so they are not mistaken for rm targets. */
@@ -205,6 +193,8 @@ export function withoutRedirects(args) {
 export function checkRm(args, { cwd, project, vars, splitWords }) {
   if (!flagsOf(args).some((f) => RECURSIVE_FLAG.test(f))) return undefined;
   const words = withoutRedirects(args).filter((a) => !a.startsWith('-')).flatMap((word) => bashReadings(word, splitWords));
+  const long = words.find((word) => word.length > MAX_TARGET_CHARS);
+  if (long !== undefined) return destructive(`rm -r with a target too long to check (${long.length} characters, the guard reads up to ${MAX_TARGET_CHARS})`);
   if (words.some((word) => expandBraces(word) === null)) return destructive('rm -r with a brace expansion that cannot be listed (check the targets by hand)');
   const targets = words.flatMap(expandBraces);
   const outside = targets.find((t) => !insideProject(t, cwd, project, vars));

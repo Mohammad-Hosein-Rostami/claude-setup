@@ -70,6 +70,7 @@ const ASK_CLASS_PATTERNS = [
   ['rm -r on paths read from stdin', /^DESTRUCTIVE: .+ runs rm -r on paths read from stdin/],
   ['find deleting outside the project', /^DESTRUCTIVE: find deleting outside the project \(/],
   ['rm -r with a brace expansion that cannot be listed', /^DESTRUCTIVE: rm -r with a brace expansion that cannot be listed/],
+  ['rm -r with a target too long to check', /^DESTRUCTIVE: rm -r with a target too long to check \(/],
   ['rm -r outside the project', /^DESTRUCTIVE: rm -r outside the project \(/],
   ['HUSKY=0', /^HUSKY=0 skips the git hooks$/],
   ['git -c core.hooksPath', /^git -c core\.hooksPath bypasses the git hooks$/],

@@ -35,6 +35,7 @@ const NEVER_BOUNCED = [
   ['rm -r on paths read from stdin', 'cat list.txt | xargs rm -rf'],
   ['find deleting outside the project', 'find /etc -name x -delete'],
   ['rm -r with a brace expansion that cannot be listed', 'rm -rf build/x{1..300}'],
+  ['rm -r with a target too long to check', `rm -rf build/${'x'.repeat(5000)}`],
   ['rm -r outside the project', 'rm -rf /etc/x'],
   ['HUSKY=0', 'HUSKY=0 git commit -m x'],
   ['git -c core.hooksPath', 'git -c core.hooksPath=/dev/null commit -m x'],

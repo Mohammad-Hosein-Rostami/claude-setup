@@ -15,7 +15,7 @@ Reading a shell command (used by `pre-bash-guard.mjs`; pure functions, they neve
 - `sql.mjs`: tells whether a `psql` or `mysql` statement only reads, and which host it talks to.
 
 Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
-- `command-checks.mjs`, `rm-paths.mjs`, `find-delete.mjs`, `eval-check.mjs`, `shell-hazards.mjs`, `dangerous-scan.mjs`,
+- `command-checks.mjs`, `rm-paths.mjs`, `bare-glob.mjs`, `find-delete.mjs`, `eval-check.mjs`, `shell-hazards.mjs`, `dangerous-scan.mjs`,
   `raw-risk.mjs`, `outward.mjs`, `remote.mjs`, `code-writes.mjs`, `git-runs.mjs`: one file per kind of risky command (`rm -r`,
   `find -delete`, `eval`, hidden execution, push or publish, production hosts, code rewritten from Bash, commands git runs).
 - `merge-commit.mjs`: advice, never an ask: a `git merge` or `git pull` that can create a merge commit (linear history, C37).
