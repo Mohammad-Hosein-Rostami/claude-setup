@@ -11,6 +11,8 @@
 // Brace expansion in targets (`{/,x}`) is expanded first; one that cannot be listed asks.
 // `$(git rev-parse --show-toplevel)` counts as the project root from a directory inside the project (`rm -rf "$(git rev-parse --show-toplevel)/dist"`).
 // Only a recursive rm asks about an unknown or outside target; `rm -f x` of one file is not judged here.
+// Inside the project a recursive rm still asks when it empties a whole folder: the working directory itself, or a bare glob (`*`, `./*`,
+// `.*`, `?`, `[a-z]*`) of the working directory, the project root, home or `/`. A glob with a name part (`*.log`) or of a sub-folder does not.
 // Invariants: pure apart from reading homedir()/tmpdir(); never touches the file system.
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, parse, relative, resolve } from 'node:path';
@@ -32,6 +34,9 @@ const ASSIGNMENT = /^([A-Za-z_]\w*)(\+?)=([\s\S]*)$/;
 const SUBSCRIPT_ASSIGNMENT = /^([A-Za-z_]\w*)\[[^\]]*\]\+?=/; // `X[2]=v`: zsh changes part of a scalar, so its value is no longer known
 const MKTEMP_DIR = 'mktemp-variable';
 const BLANKS = /[ \t\n]+/; // where bash splits an unquoted variable's value into words (the default IFS)
+const BRACKET_SET = /\[[^\]]*\]/g; // `[a-z]`, `[!.]`: one character from a set, as wide as `?`
+const BARE_GLOB = /^[*?.]*[*?][*?.]*$/; // only glob characters and dots: every entry of the folder (or every hidden one)
+const TRAILING_SLASHES = /(.)\/+$/;
 /** An rm option that deletes recursively: `-r`, `-R`, a cluster holding one (`-rf`, `-fR`), or `--recursive`. */
 export const RECURSIVE_FLAG = /^--recursive$|^-[a-zA-Z]*[rR]/;
 
@@ -138,9 +143,12 @@ function expandToplevel(target, cwd, project) {
   return sameFile(here, root) || isUnder(root, here) ? root + target.slice(GIT_TOPLEVEL_WORD.length) : target;
 }
 
+/** A target with `$(git rev-parse --show-toplevel)`, `~`/`$HOME` and the known variables filled in. */
+const expandedTarget = (rawTarget, cwd, project, vars) => expandVars(expandHome(expandToplevel(rawTarget, cwd, project)), vars);
+
 /** `cwd` is null when an earlier `cd` could not be resolved: then only absolute targets can be judged. */
 function insideProject(rawTarget, cwd, project, vars) {
-  const target = expandVars(expandHome(expandToplevel(rawTarget, cwd, project)), vars);
+  const target = expandedTarget(rawTarget, cwd, project, vars);
   if (target.startsWith('~') || target.includes('$')) return false;
   const native = nativePath(target);
   if (cwd === null && !isAbsolute(native)) return false;
@@ -148,6 +156,22 @@ function insideProject(rawTarget, cwd, project, vars) {
   // `$D/..` and `$D/../x` leave the unique directory mktemp made, so they only count as safe while they stay inside it
   if (target.startsWith(mktempDir())) return abs === mktempDir() || isUnder(mktempDir(), abs);
   return (!isBroadRoot(project) && isUnder(project, abs)) || SAFE_TEMP_ROOTS.some((root) => isUnder(root, abs));
+}
+
+/**
+ * True when the target is the working directory itself, or a bare glob whose folder is the working directory, the project root, home or a
+ * file-system root: removing it empties that whole folder even though every entry is inside the project. Unknown targets return false
+ * (insideProject already asks about them).
+ */
+function emptiesWholeFolder(rawTarget, cwd, project, vars) {
+  const target = expandedTarget(rawTarget, cwd, project, vars).replace(QUOTED_MARK, '').replace(TRAILING_SLASHES, '$1');
+  const cut = target.lastIndexOf('/');
+  const isGlob = BARE_GLOB.test(target.slice(cut + 1).replace(BRACKET_SET, '?'));
+  const folder = !isGlob ? target : cut === -1 ? '.' : target.slice(0, cut) || '/';
+  if (cwd === null || folder.startsWith('~') || folder.includes('$')) return false;
+  const abs = resolve(cwd, nativePath(folder));
+  if (!isGlob) return sameFile(abs, resolve(nativePath(cwd)));
+  return [cwd, project, homedir(), parse(abs).root].some((whole) => sameFile(abs, resolve(nativePath(whole)))) || GIT_BASH_DRIVE_ROOT.test(abs);
 }
 
 /** Drops redirections (`2>&1`, `> file`) so they are not mistaken for rm targets. */
@@ -168,6 +192,9 @@ export function checkRm(args, { cwd, project, vars, splitWords }) {
   if (!flagsOf(args).some((f) => RECURSIVE_FLAG.test(f))) return undefined;
   const words = withoutRedirects(args).filter((a) => !a.startsWith('-')).flatMap((word) => bashReadings(word, splitWords));
   if (words.some((word) => expandBraces(word) === null)) return destructive('rm -r with a brace expansion that cannot be listed (check the targets by hand)');
-  const outside = words.flatMap(expandBraces).find((t) => !insideProject(t, cwd, project, vars));
-  return outside === undefined ? undefined : destructive(`rm -r outside the project (${outside.replace(QUOTED_MARK, '')})`);
+  const targets = words.flatMap(expandBraces);
+  const outside = targets.find((t) => !insideProject(t, cwd, project, vars));
+  if (outside !== undefined) return destructive(`rm -r outside the project (${outside.replace(QUOTED_MARK, '')})`);
+  const whole = targets.find((t) => emptiesWholeFolder(t, cwd, project, vars));
+  return whole === undefined ? undefined : destructive(`rm -r that empties a whole folder (${whole.replace(QUOTED_MARK, '')}): the working directory itself, or a bare glob of it, the project root, home or /`);
 }

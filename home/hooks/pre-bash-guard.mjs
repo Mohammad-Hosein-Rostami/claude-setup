@@ -10,7 +10,8 @@
 // above. ADVICE (quality rules: a hand-edited lockfile, a merge that can create a merge commit, a branch moved by update-ref, a copy of an existing lane branch, a fast-forward merge into the base without a suite PASS: lib/git-advice.mjs, a `for|while|until` loop that sleeps 5 s or more or a single sleep of 30 s or more: lib/wait-advice.mjs) never asks: alone,
 // the first send is denied with the fix and the identical retry runs; next to an ask or bounce it is appended (table: lib/bounce-once.mjs) Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
 // Rules. DESTRUCTIVE (the dialog says "DESTRUCTIVE: ..."): force push (incl. -fu clusters and +refspec), `push --mirror`,
-// remote branch delete, rm -r outside the project (temp dirs allowed, `cd` tracked within one command line, `cd` to `~`,
+// remote branch delete, rm -r of a whole folder (the working directory, a bare glob such as `*` of it, the project root, home, `/`:
+// lib/rm-paths.mjs), rm -r outside the project (temp dirs allowed, `cd` tracked within one command line, `cd` to `~`,
 // `$HOME` and `$(git rev-parse --show-toplevel)` (from inside the project only) is resolved, as are leading
 // `~`/`$HOME`/`$TMPDIR`/`$CLAUDE_PROJECT_DIR` and variables assigned earlier in the line (the last assignment wins,
 // `VAR=$(mktemp -d)` is the temp dir, `..` is resolved after substitution; an unknown variable asks for `rm -r` only; lib/rm-paths.mjs;
