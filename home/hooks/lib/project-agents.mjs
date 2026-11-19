@@ -3,18 +3,22 @@
 // stops the agent mid-task (the owner's rule is no maxTurns). Used by the SessionStart mode hook and by scripts/doctor.sh
 // (run this file as `node project-agent-note <projectDir> <personalAgentsDir>`: it prints the note, or nothing).
 // Invariants: read-only; never throws (an unreadable folder or file counts as "nothing found"). The files come from whatever repository
-// the session opens, so they are untrusted. Nothing is read through a link: when `.claude` or `.claude/agents` is a link (the real path
-// of the agents folder is not <real project>/.claude/agents) the folder is not listed and the note gives no edit advice, only "tell the
-// owner"; inside the folder a link, FIFO, device or folder is never read (lstat, then O_NOFOLLOW and O_NONBLOCK with the type checked on
-// the open handle), and a linked agent file is listed as `"<name>" (a link: not read)` so that what it points at is not hidden. The check and the read are separate calls: a folder swapped for a link between them is not caught. Further, only the first AGENT_HEAD_BYTES of a file and at most MAX_AGENT_FILES files are read (the base name
-// of every file, also past that limit, is still checked against the personal set: that needs no read), and a file name or
-// maxTurns value reaches the note only as data on one line: the advice stands before the list, the list is labelled as repository data,
-// a name that is not plain is quoted and escaped down to printable ASCII (shown-name.mjs), and a maxTurns value that is not a number
-// shows as "maxTurns set". The note is at most NOTE_MAX_CHARS long whatever the project folder holds: the advice and the names of the
-// shadowed personal agents (taken from the personal set, never from the project) are always whole and come first; then whole items
-// only (never cut inside an item or a \u escape), the files that shadow before the files that only set maxTurns. Two counts are kept
-// apart: "N agent files past the first 200 not checked" (never read; printed also when nothing else was found) and "and N more files
-// not shown" (found, but no room in the note).
+// the session opens, so they are untrusted:
+// - Nothing is read through a link. When `.claude` or `.claude/agents` is a link (the real path of the agents folder is not
+//   <real project>/.claude/agents) the folder is not listed and the note gives no edit advice, only "tell the owner". Inside the
+//   folder a link, FIFO, device or folder is never read (lstat, then O_NOFOLLOW and O_NONBLOCK with the type checked on the open
+//   handle), and a linked agent file is listed as `"<name>" (a link: not read)` so that what it points at is not hidden. The check of
+//   the folder and the reads are separate calls: a folder swapped for a link between them is not caught.
+// - Bounded work: only the first AGENT_HEAD_BYTES of a file and at most MAX_AGENT_FILES files are read. The base name of every file,
+//   also past that limit, is still checked against the personal set, which needs no read.
+// - A file name or maxTurns value reaches the note only as data on one line: the advice stands before the list, the list is labelled
+//   as repository data, a name that is not plain is quoted and escaped down to printable ASCII (shown-name.mjs), and a maxTurns value
+//   that is not a number shows as "maxTurns set".
+// - The note is at most NOTE_MAX_CHARS long whatever the project folder holds, as long as the personal agent names fit (see
+//   NOTE_MAX_CHARS). The advice and the names of the shadowed personal agents (taken from the personal set, never from the project)
+//   are always whole and come first; then whole items only (never cut inside an item or a \u escape): the files that shadow, then
+//   the links, then the files that only set maxTurns. Two counts are kept apart: "N agent files past the first 200 not checked"
+//   (never read; printed also when nothing else was found) and "and N more files not shown" (found, but no room in the note).
 import { constants, existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -25,9 +29,10 @@ import { quotedName, shownName } from './shown-name.mjs';
 export const MAX_AGENT_FILES = 200; // a real project has a few dozen agents at most
 // Longest note, in characters. It counts String length (UTF-16 units), as the CLI's persisted-output code does (`string.length` in
 // the 2.1.328 bundle; the call site of the hook-output cap itself was not found). The note is printable ASCII apart from the personal
-// agent names, so units, code points and bytes are the same number for today's set. The note is one part of
-// the single string mode.mjs prints at SessionStart, and Claude Code shows the lead only a 2,000-character preview of a hook's stdout
-// above 10,000 characters. The other parts measure up to about 8,800 (tests/session-start-size.test.mjs), which leaves room for 800.
+// agent names, so units, code points and bytes are the same number for today's set.
+// Why 800: the note is one part of the single string mode.mjs prints at SessionStart, and Claude Code shows the lead only a
+// 2,000-character preview of a hook's stdout above 10,000 characters. The other parts measure up to 8,904 (every mode, third
+// compaction, a STATUS path at its shown limit: tests/session-start-size.test.mjs), so with the note the output is 9,706 at most.
 // What is never cut measures 532 with today's ten personal agents all shadowed: start 90, the three pieces of advice 226, the names
 // with their label 146, the count of files not checked 65 with six digits, and the full stops; a list that only counts its files
 // brings it to 568. So at least 230 are left for the list; the longest single item is about 435 and is counted, not shown, when it
