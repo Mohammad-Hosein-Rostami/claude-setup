@@ -13,6 +13,7 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const PROJECT = resolve('/work/proj');
+const RM = 'rm'; // kept apart so this file's own text never reads as a command
 
 /** A private HOME; run() sends one Bash call to the guard hook and returns {decision, reason}. */
 function guardSession() {
@@ -117,4 +118,12 @@ test('a sleep loop next to a rule that asks is not allowed by the bounce: the ot
   const { decision, reason } = guardSession().run('while true; do sleep 10; done; git push origin main');
   assert.notEqual(decision, 'allow');
   assert.match(reason ?? '', /push|run_in_background/i);
+});
+
+test('a sleep loop next to a push or a whole-folder rm asks on every send: the once-advice never lets it run', () => {
+  const asked = ['while true; do sleep 10; done; git push origin main', `for i in 1 2 3; do sleep 10; done; ${RM} -rf *`, `sleep 60; ${RM} -rf ./**/*`];
+  for (const command of asked) {
+    const session = guardSession();
+    for (const send of ['first', 'second', 'third']) assert.equal(session.run(command).decision, 'ask', `${command}: ${send} send`);
+  }
 });
