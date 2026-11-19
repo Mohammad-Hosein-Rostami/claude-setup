@@ -53,7 +53,7 @@ const GH_VALUE_FLAGS = new Set(['-R', '--repo', '--hostname']);
 const DISK_TOOLS = /^(?:mkfs(?:\.\w+)?|newfs(?:_\w+)?|wipefs|blkdiscard|shred|diskutil)$/;
 const RAW_DEVICE = /^\/dev\/(?:r?disk|sd[a-z]|hd[a-z]|nvme|vd[a-z]|xvd|mmcblk)/;
 const REMOTE_TOOLS = new Set(['psql', 'mysql', 'mariadb', 'mysqldump', 'pg_dump', 'pg_restore', 'ssh', 'scp', 'rsync']);
-const RM_FLAG = /^(?:-[a-zA-Z]*[rRf]|--recursive|--force)/;
+const RM_FLAG = /^(?:-[a-zA-Z]*[rRf]|--r|--f|--n)/; // GNU rm takes a prefix of a long option: `--rec`, `--fo`, `--no-pre`
 // a literal root-relative path, `~`, `..` or the home variable; other variable paths are the precise checks' job
 const RISKY_RM_PATH = /^(?:\/|~|\.\.(?:\/|$)|\$\{?HOME\b)/;
 const HEREDOC_OPEN = /<<(-?)[ \t]*(?:'([A-Za-z_]\w*)'|"([A-Za-z_]\w*)"|\\([A-Za-z_]\w*)|([A-Za-z_]\w*))(?![\w'"\\])/;

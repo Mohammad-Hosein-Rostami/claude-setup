@@ -46,8 +46,13 @@ const BLANKS = /[ \t\n]+/; // where bash splits an unquoted variable's value int
 /** Work budget for one rm target: PATH_MAX is 4096 on Linux and 1024 on macOS, so a longer word is no path a real command names. */
 export const MAX_TARGET_CHARS = 4096;
 const MAX_SHOWN_TARGET_CHARS = 120; // how much of a target a reason repeats: the reason goes into the dialog and back to the model
-/** An rm option that deletes recursively: `-r`, `-R`, a cluster holding one (`-rf`, `-fR`), or `--recursive`. */
-export const RECURSIVE_FLAG = /^--recursive$|^-[a-zA-Z]*[rR]/;
+const prefixesOf = (word) => Array.from(word, (_, index) => word.slice(0, index + 1));
+/**
+ * An rm option that deletes recursively: `-r`, `-R`, a cluster holding one (`-rf`, `-fR`), `--recursive`, or a prefix of it (`--rec`, `--r`):
+ * GNU rm (Linux, Git Bash) takes any unambiguous prefix of a long option, and no other long option of rm starts with r. A prefix of
+ * `--no-preserve-root` counts too (no other starts with n): it is only written for a recursive delete.
+ */
+export const RECURSIVE_FLAG = new RegExp(`^--(?:${[...prefixesOf('recursive'), ...prefixesOf('no-preserve-root')].join('|')})$|^-[a-zA-Z]*[rR]`);
 
 /** Git Bash paths (`/c/Users/x`) -> `C:/Users/x` on Windows; unchanged elsewhere. */
 export const nativePath = (p) => (process.platform === 'win32' ? p.replace(/^\/([a-zA-Z])(?=\/|$)/, '$1:') : p);
