@@ -143,8 +143,9 @@ test('at most MAX_AGENT_FILES agent files are read; the note keeps whole items w
   const note = projectAgentNote(projectDir, personalDir);
   const shown = note.match(/\(maxTurns 3\)/g).length;
   const items = Array.from({ length: shown }, (_, i) => `${fileName(i)} (maxTurns 3)`);
-  assert.equal(note, noteOf({ advice: CAP_ADVICE, items, more: MAX_AGENT_FILES + FILES_PAST_THE_LIMIT - shown }));
-  assert.doesNotMatch(note, /tell the owner/, 'a file past MAX_AGENT_FILES is not read');
+  assert.equal(note, noteOf({ advice: CAP_ADVICE, unchecked: FILES_PAST_THE_LIMIT, items, more: MAX_AGENT_FILES - shown }));
+  assert.doesNotMatch(note, /Shadowed personal agents|shadows the personal agent|project repos keep only project config/, 'a file past MAX_AGENT_FILES is not read');
+  assert.equal(note.split('tell the owner').length - 1, 1, 'the owner is named once: for the files not checked');
   assert.ok(note.length <= NOTE_MAX_CHARS, `note is ${note.length} chars`);
   assert.ok(note.length + `, ${fileName(shown)} (maxTurns 3)`.length > NOTE_MAX_CHARS, 'every item that fits is shown');
 });
@@ -194,7 +195,7 @@ test('worst case with escaped names: files past MAX_AGENT_FILES give a capped no
   const note = projectAgentNote(projectDir, personalDir);
   const shown = note.split(WORST_REASONS).length - 1;
   assert.ok(shown >= 1 && note.length <= NOTE_MAX_CHARS, `note is ${note.length} chars with ${shown} items`);
-  assert.equal(note, noteOf({ advice: BOTH_ADVICE, shadowed: ['reviewer'], items: Array.from({ length: shown }, (_, i) => escapedItem(i)), more: total - shown }));
+  assert.equal(note, noteOf({ advice: BOTH_ADVICE, shadowed: ['reviewer'], unchecked: FILES_PAST_THE_LIMIT, items: Array.from({ length: shown }, (_, i) => escapedItem(i)), more: MAX_AGENT_FILES - shown }));
   assert.doesNotMatch(note, /\\u(?![0-9a-f]{4})/, 'every \\u escape is whole');
 });
 

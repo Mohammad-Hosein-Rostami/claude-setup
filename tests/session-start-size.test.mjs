@@ -99,12 +99,12 @@ function assertFits(t, outputs) {
   for (const [stage, length] of lengths) assert.ok(length > 0 && length <= SIZE_LIMIT_CHARS, `longest ${stage} output is ${length} chars, limit ${SIZE_LIMIT_CHARS}`);
 }
 
-/** Fails unless every stage carries a project-agents note that is capped, counts what it left out and keeps both pieces of advice. */
+/** Fails unless every stage carries a project-agents note that is capped, counts what it left out and keeps both pieces of advice and the shadowed agent. */
 function assertCappedNote(outputs) {
   for (const [stage, out] of Object.entries(outputs)) {
     const note = out.split('\n').find((line) => line.startsWith(AGENT_NOTE_START)) ?? '';
     assert.ok(note.length > 0 && note.length <= NOTE_MAX_CHARS, `${stage}: the note is ${note.length} chars, cap ${NOTE_MAX_CHARS}`);
-    assert.match(note, /: the lead deletes each frontmatter maxTurns: line .*; tell the owner .*\. Shadowed personal agents: reviewer\. Files: .*, and \d+ more files not shown\.$/, stage);
+    assert.match(note, /: the lead deletes each frontmatter maxTurns: line .*; tell the owner .*\. Shadowed personal agents: reviewer\. (?:\d+ agent files past the first 200 not checked: tell the owner\. )?Files: .*, and \d+ more files not shown\.$/, stage);
   }
 }
 

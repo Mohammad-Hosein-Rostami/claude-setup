@@ -4,13 +4,15 @@
 // (run this file as `node project-agent-note <projectDir> <personalAgentsDir>`: it prints the note, or nothing).
 // Invariants: read-only; never throws (an unreadable folder or file counts as "nothing found"). The files come from whatever repository
 // the session opens, so they are untrusted: a link, FIFO, device or folder is never read (lstat, then O_NOFOLLOW and O_NONBLOCK with the
-// type checked on the open handle), only the first AGENT_HEAD_BYTES of a file and at most MAX_AGENT_FILES files are read, and a file name or
+// type checked on the open handle), only the first AGENT_HEAD_BYTES of a file and at most MAX_AGENT_FILES files are read (the base name
+// of every file, also past that limit, is still checked against the personal set: that needs no read), and a file name or
 // maxTurns value reaches the note only as data on one line: the advice stands before the list, the list is labelled as repository data,
 // a name that is not plain is quoted and escaped down to printable ASCII (shown-name.mjs), and a maxTurns value that is not a number
 // shows as "maxTurns set". The note is at most NOTE_MAX_CHARS long whatever the project folder holds: the advice and the names of the
 // shadowed personal agents (taken from the personal set, never from the project) are always whole and come first; then whole items
-// only (never cut inside an item or a \u escape), the files that shadow before the files that only set maxTurns; the items left out
-// and the files not read are counted in one "and N more files not shown".
+// only (never cut inside an item or a \u escape), the files that shadow before the files that only set maxTurns. Two counts are kept
+// apart: "N agent files past the first 200 not checked" (never read; printed also when nothing else was found) and "and N more files
+// not shown" (found, but no room in the note).
 import { constants, existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -63,20 +65,21 @@ function shadowedBy(file, frontmatter, personal) {
 }
 
 /**
- * What the project's agent files do to the owner's agents, plus how many files were not read (`unread`).
+ * What the project's agent files do to the owner's agents, plus how many files past MAX_AGENT_FILES were not read (`unchecked`).
+ * A file that is not read is still checked by its base name, so one named like a personal agent is found wherever it sorts.
  * The frontmatter is found by Claude Code's rules and matched tolerantly (agent-frontmatter.mjs): a finding may be one the CLI would
  * not act on, never the other way round.
  * @param {string} projectAgents - the project's agents folder.
  * @param {string[]} personal - the personal agent names, sorted (trusted: they come from the owner's own folder).
- * @returns {{ items: string[], shadowed: string[], hasCap: boolean, unread: number }} `items`: one per file that sets maxTurns or
+ * @returns {{ items: string[], shadowed: string[], hasCap: boolean, unchecked: number }} `items`: one per file that sets maxTurns or
  *   shadows, the shadowing files first; `shadowed`: the personal agents shadowed, in the order of `personal`. The advice is chosen from
  *   `shadowed` and `hasCap`, never from the item text, which carries untrusted file names.
  */
 function findings(projectAgents, personal) {
   const files = agentFiles(projectAgents);
   const found = { shadowing: [], capping: [], shadowed: new Set(), hasCap: false };
-  for (const file of files.slice(0, MAX_AGENT_FILES)) {
-    const frontmatter = frontmatterOf(readAgentHead(join(projectAgents, file)));
+  for (const [index, file] of files.entries()) {
+    const frontmatter = index < MAX_AGENT_FILES ? frontmatterOf(readAgentHead(join(projectAgents, file))) : '';
     const turns = maxTurnsIn(frontmatter);
     const shadows = shadowedBy(file, frontmatter, personal);
     const reasons = [...(turns ? [turns] : []), ...(shadows.length ? ['shadows the personal agent'] : [])];
@@ -88,20 +91,25 @@ function findings(projectAgents, personal) {
     items: [...found.shadowing, ...found.capping],
     shadowed: personal.filter((name) => found.shadowed.has(name)),
     hasCap: found.hasCap,
-    unread: Math.max(0, files.length - MAX_AGENT_FILES),
+    unchecked: Math.max(0, files.length - MAX_AGENT_FILES),
   };
 }
 
 /**
- * The note that lists the first `shown` items; the other items and the unread files become one count. Only the list depends on
- * `shown`: the advice and the shadowed personal agents are always whole, and they stand before every file name.
+ * The note that lists the first `shown` items and counts the others. Only the list depends on `shown`: the advice, the shadowed
+ * personal agents and the count of files not checked are always whole, and they stand before every file name.
  */
-function noteWith({ items, shadowed, hasCap, unread }, shown) {
+function noteWith({ items, shadowed, hasCap, unchecked }, shown) {
   const advice = [...(hasCap ? [CAP_ADVICE] : []), ...(shadowed.length ? [SHADOW_ADVICE] : [])];
   const listed = items.slice(0, shown);
-  const notShown = items.length - shown + unread;
+  const notShown = items.length - shown;
   if (notShown > 0) listed.push(`${shown ? 'and ' : ''}${notShown} more files not shown`);
-  const sentences = [advice.join('; '), shadowed.length ? `${SHADOWED_START}${shadowed.join(', ')}` : '', `${LIST_START}${listed.join(', ')}`];
+  const sentences = [
+    advice.join('; '),
+    shadowed.length ? `${SHADOWED_START}${shadowed.join(', ')}` : '',
+    unchecked ? `${unchecked} agent files past the first ${MAX_AGENT_FILES} not checked: tell the owner` : '',
+    listed.length ? `${LIST_START}${listed.join(', ')}` : '',
+  ];
   return `${NOTE_START}${sentences.filter(Boolean).join('. ')}.`;
 }
 
@@ -123,7 +131,8 @@ function cappedNote(found) {
  * The one-line note, at most NOTE_MAX_CHARS long, for a session whose project has agent files that cap turns or shadow personal agents.
  * @param {string} projectDir - the session's project folder.
  * @param {string} personalDir - the personal agents folder (`~/.claude/agents`).
- * @returns {string} the note, or '' when there is nothing to say (also when the project agents folder is the personal one).
+ * @returns {string} the note, or '' when nothing was found and every file was checked (also when the project agents folder is the
+ *   personal one).
  */
 export function projectAgentNote(projectDir, personalDir) {
   if (typeof projectDir !== 'string' || projectDir === '') return '';
@@ -134,7 +143,7 @@ export function projectAgentNote(projectDir, personalDir) {
     // no project agents folder: findings() returns nothing
   }
   const found = findings(projectAgents, agentFiles(personalDir).map(baseName));
-  return found.items.length ? cappedNote(found) : '';
+  return found.items.length || found.unchecked ? cappedNote(found) : '';
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {

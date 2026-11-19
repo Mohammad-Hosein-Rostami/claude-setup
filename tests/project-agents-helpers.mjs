@@ -36,12 +36,17 @@ export async function sandbox({ project = {}, personal = { runner: '', reviewer:
 /**
  * The whole note as the hook must print it: what the hook itself says first (the advice, then the shadowed personal agents, which come
  * from the personal set), the file names from the repository last.
- * @param {{ advice?: string, shadowed?: string[], items?: string[], more?: number }} parts the advice, the personal agents shadowed,
- *   the items shown and how many more files are counted, not shown
+ * @param {{ advice?: string, shadowed?: string[], unchecked?: number, items?: string[], more?: number }} parts the advice, the personal
+ *   agents shadowed, how many files past the read limit were not checked, the items shown, and how many more items are counted, not shown
  * @returns {string} the note
  */
-export function noteOf({ advice = '', shadowed = [], items = [], more = 0 }) {
+export function noteOf({ advice = '', shadowed = [], unchecked = 0, items = [], more = 0 }) {
   const listed = [...items, ...(more ? [`${items.length ? 'and ' : ''}${more} more files not shown`] : [])];
-  const sentences = [advice, shadowed.length ? `Shadowed personal agents: ${shadowed.join(', ')}` : '', listed.length ? `Files: ${listed.join(', ')}` : ''];
+  const sentences = [
+    advice,
+    shadowed.length ? `Shadowed personal agents: ${shadowed.join(', ')}` : '',
+    unchecked ? `${unchecked} agent files past the first 200 not checked: tell the owner` : '',
+    listed.length ? `Files: ${listed.join(', ')}` : '',
+  ];
   return `${NOTE_START}${sentences.filter(Boolean).join('. ')}.`;
 }
