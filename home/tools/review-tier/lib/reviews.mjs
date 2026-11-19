@@ -4,6 +4,7 @@
 //   risky class or a landing; Opus high lens for size or concurrency-lite; auditor Opus max for security, data, money,
 //   untrusted-input and every landing of tier >= 1, Opus high for a hooks-only change mid-lane). A plan item rides on the
 //   risk lens and the auditor, never on the correctness lens. Brief text holds file:line only, never a line's text.
+//   `priorFile` goes into the delta line as it is: the CLI passes only a plain absolute path (review-tier.mjs, PLAIN_PATH) and never reads the file.
 //   `waivable` exists only for a landing of tier 1 with no gate path: the Opus max pair moves from before land to after it
 //   (`audit`), and the Sonnet lens takes the mutation plan the risk lens would have had (`reviews`).
 import { LOCK_TAG, RACE_TAG, RISKY_CLASSES, tierOf } from '../tiers.mjs';

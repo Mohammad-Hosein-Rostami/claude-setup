@@ -5,7 +5,8 @@
 //   <range>          `a..b` or `a...b`; default `<base>...HEAD`, base the first of main, master, develop
 //   --landing        the last review before the base moves: adds the Opus max lens, the auditor and a mutation plan
 //   --delta <sha>    review only what changed since that reviewed sha (a rebased lane: only patches the reviewed set lacks)
-//   --prior <file>   with --delta: the findings file of the previous round; every brief tells the reviewer to mark each finding closed or open
+//   --prior <file>   with --delta: the findings file of the previous round; every brief tells the reviewer to mark each finding closed or open.
+//                    The path is pasted into every brief and the file is never read; a path that is not plain is refused (exit 2)
 //   --lane-classes   the `--json` of the previous round (its fileClasses): each file keeps the classes it had in the lane
 //   --add-class <c>  raise only: adds that class's full set and plan (unknown class: exit 2)
 // Exit codes: 0 printed, 1 git failed, 2 usage (bad range, unknown sha or class, bad flag).
@@ -22,6 +23,10 @@ import { buildReport, formatJson, formatText, logRecord } from './lib/report.mjs
 const EXIT_GIT_FAILED = 1;
 const EXIT_USAGE = 2;
 const MAX_LANE_FILE_BYTES = 4 << 20;
+// The --prior path is pasted into every brief, so it is agent input: a name with a newline or a sentence in it could give the reviewer orders.
+// Only a plain absolute path passes: the rule of SAFE_PATH in home/workflows, plus `~` for Windows short names (RUNNER~1).
+const PLAIN_PATH = /^(?:[A-Za-z]:[\\/]|\/)[\w@+=.,~/\\-]+$/;
+const MAX_ECHOED_PATH_CHARS = 120; // a refused path is quoted in the error, cut to this length
 const KNOWN_NAMES = new Set([...Object.keys(CLASS_TIER), LOCK_TAG, RACE_TAG]);
 const USAGE = 'usage: review-tier.mjs [<range>] [--landing] [--delta <sha> [--prior <file>]] [--lane-classes <file>] [--add-class <c>]... [--base <b>] [--json]';
 
@@ -60,6 +65,7 @@ function parseArgs(argv) {
   if (options.delta !== null && options.range !== null) throw new UsageError(`--delta names its own range: give a range or --delta, not both. ${USAGE}`);
   if (options.prior !== null) {
     if (options.delta === null) throw new UsageError(`--prior belongs to a --delta round. ${USAGE}`);
+    if (!PLAIN_PATH.test(options.prior)) throw new UsageError(`--prior must be a plain path (letters, digits and _@+=.,~/- only: no spaces, quotes or newlines), because it is pasted into every brief: ${JSON.stringify(options.prior.slice(0, MAX_ECHOED_PATH_CHARS))}`);
     if (!isFile(options.prior)) throw new UsageError(`cannot read --prior ${options.prior}: not a file`);
   }
   return options;
