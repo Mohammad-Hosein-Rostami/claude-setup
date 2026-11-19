@@ -3,30 +3,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLEAN_ENV, git, makeRepo } from './git-tidy-helpers.mjs';
+import { CLEAN_ENV, git } from './git-tidy-helpers.mjs';
+import { CLI, lane, priorFile } from './review-tier-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
-
-const CLI = fileURLToPath(new URL('../home/tools/review-tier/review-tier.mjs', import.meta.url));
-
-/** A repo plus a log file in its own temp folder; `tier(args)` runs the CLI there. */
-function lane() {
-  const dir = makeRepo();
-  const log = join(dir, '..', 'review-tier.jsonl');
-  const tier = (...args) => spawnSync(process.execPath, [CLI, ...args], { cwd: dir, encoding: 'utf8', env: { ...CLEAN_ENV, REVIEW_TIER_LOG: log } });
-  const json = (...args) => JSON.parse(tier(...args, '--json').stdout);
-  const write = (path, text) => {
-    mkdirSync(dirname(join(dir, path)), { recursive: true });
-    writeFileSync(join(dir, path), text);
-    git(dir, 'add', '--', path);
-    git(dir, 'commit', '-q', '-m', `edit ${path}`);
-    return git(dir, 'rev-parse', 'HEAD');
-  };
-  git(dir, 'checkout', '-q', '-b', 'lane');
-  return { dir, log, tier, json, write };
-}
 
 test('CLI: a branch diff is classified; the report names paths and lines, the log holds no path and no line text', () => {
   const key = 'sk-test-PLANTEDFAKEKEY0123456789';
@@ -41,7 +23,7 @@ test('CLI: a branch diff is classified; the report names paths and lines, the lo
   assert.match(text.stdout.split('\n')[0], /^review-tier: tier 2 \(security, logic\), 1 files, 2 changed lines, main\.\.\.HEAD$/);
   assert.match(text.stdout, /\nwhy:\n {2}security src\/run\.mjs:1\n/);
   assert.match(text.stdout, /\nrun together:\n- reviewer sonnet high, lens correctness: /);
-  assert.match(text.stdout.trimEnd().split('\n').at(-1), /^fix round: node ~\/\.claude\/tools\/review-tier\/review-tier\.mjs --delta <reviewed-sha> --lane-classes <previous-round-json> --landing$/);
+  assert.match(text.stdout.trimEnd().split('\n').at(-1), /^fix round: node ~\/\.claude\/tools\/review-tier\/review-tier\.mjs --delta <reviewed-sha> --prior <findings-file>$/);
   assert.ok(!(text.stdout + JSON.stringify(result) + readFileSync(log, 'utf8')).includes(key));
   const logged = JSON.parse(readFileSync(log, 'utf8').split('\n')[0]);
   assert.deepEqual(Object.keys(logged), ['ts', 'repo', 'range', 'tier', 'classes', 'files', 'changedLines', 'landing', 'added']);
@@ -79,15 +61,16 @@ test('CLI: --add-class money on a README-only diff gives the money set; --add-cl
   assert.deepEqual(same.added, [], 'both classes are in the diff already');
 });
 
-test('CLI: a delta keeps the classes a file had earlier in the lane (--lane-classes), and the race plan', () => {
+test('CLI: a delta keeps the classes a file has in the lane, with and without --lane-classes, and the race plan', () => {
   const { dir, write, json } = lane();
   const reviewed = write('src/store.mjs', 'renameSync(tmp, dest);\nconst a = 1;\n');
   const round1 = join(dir, '..', 'round1.json');
   writeFileSync(round1, JSON.stringify(json()));
   write('src/store.mjs', 'renameSync(tmp, dest);\nconst a = 2;\n');
-  const plain = json('--delta', reviewed);
-  assert.ok(!plain.classes.includes('concurrency'), 'without the lane file a trivial change is just logic');
-  const kept = json('--delta', reviewed, '--lane-classes', round1);
+  const plain = json('--delta', reviewed, '--prior', priorFile());
+  assert.ok(plain.classes.includes('concurrency'), 'the tool reads the lane range itself: a trivial change to concurrency code is not just logic');
+  assert.deepEqual(plain.reviews.find((r) => r.model === 'opus' && r.effort === 'max').plan.race, { runs: 200 });
+  const kept = json('--delta', reviewed, '--prior', priorFile(), '--lane-classes', round1);
   assert.ok(kept.classes.includes('concurrency'));
   const lens = kept.reviews.find((r) => r.model === 'opus' && r.effort === 'max');
   assert.deepEqual(lens.plan.race, { runs: 200 });
@@ -102,8 +85,11 @@ test('CLI: --lane-classes with a missing file or no fileClasses exits 2', () => 
   const reviewed = write('src/a.mjs', 'const a = 1;\n');
   write('src/a.mjs', 'const a = 2;\n');
   writeFileSync(join(dir, '..', 'bad.json'), '{"tier": 1}');
-  assert.equal(tier('--delta', reviewed, '--lane-classes', join(dir, '..', 'nope.json')).status, 2);
-  assert.equal(tier('--delta', reviewed, '--lane-classes', join(dir, '..', 'bad.json')).status, 2);
+  for (const name of ['nope.json', 'bad.json']) {
+    const result = tier('--delta', reviewed, '--prior', priorFile(), '--lane-classes', join(dir, '..', name));
+    assert.equal(result.status, 2, name);
+    assert.match(result.stderr, /--lane-classes/, 'the error is about the lane file, not another flag');
+  }
 });
 
 test('CLI: a delta with a rebased (non-ancestor) sha lists only the new patches', () => {
@@ -114,11 +100,12 @@ test('CLI: a delta with a rebased (non-ancestor) sha lists only the new patches'
   write('other.txt', 'main moved\n');
   git(dir, 'checkout', '-q', 'lane');
   git(dir, 'rebase', '-q', 'main');
-  write('src/three.mjs', 'const three = 3;\n');
+  const fix = write('src/three.mjs', 'const three = 3;\n');
   assert.notEqual(git(dir, 'rev-parse', 'HEAD~1'), reviewed);
-  const result = json('--delta', reviewed);
-  assert.deepEqual(Object.keys(result.fileClasses), ['src/three.mjs']);
-  assert.match(result.range, /^patches [0-9a-f]{8} of main\.\.HEAD$/);
+  const result = json('--delta', reviewed, '--prior', priorFile());
+  assert.equal(result.range, `patches ${fix.slice(0, 8)} of main..HEAD`, 'only the commit the reviewed set does not hold');
+  assert.deepEqual([result.files, result.changedLines], [1, 1]);
+  assert.deepEqual(Object.keys(result.fileClasses).sort(), ['src/one.mjs', 'src/three.mjs', 'src/two.mjs'], 'the classes are kept for every file of the lane');
 });
 
 test('CLI: a delta on a rebased lane still sees a gate file renamed away (a rename has no hunk)', () => {
@@ -131,7 +118,7 @@ test('CLI: a delta on a rebased lane still sees a gate file renamed away (a rena
   git(dir, 'mv', 'tsconfig.json', 'tsconfig.json.off');
   git(dir, 'commit', '-q', '-m', 'rename tsconfig away');
   assert.notEqual(git(dir, 'rev-parse', 'HEAD~1'), reviewed);
-  const result = json('--delta', reviewed, '--landing');
+  const result = json('--delta', reviewed, '--prior', priorFile(), '--landing');
   assert.ok(result.tier >= 1, `tier ${result.tier}`);
   assert.ok(Object.keys(result.fileClasses).includes('tsconfig.json'));
 });
@@ -141,7 +128,7 @@ test('CLI: a delta lists callers of the changed functions as required reading (f
   write('src/use.mjs', 'const out = computeTotal(1);\n');
   const reviewed = write('src/total.mjs', 'export function computeTotal(a) { return a; }\n');
   write('src/total.mjs', 'export function computeTotal(a) { return a + 1; }\n');
-  const result = json('--delta', reviewed);
+  const result = json('--delta', reviewed, '--prior', priorFile());
   assert.deepEqual(result.reviews[0].requiredReading, ['src/use.mjs:1']);
   assert.match(result.reviews[0].brief, /Read first \(callers and callees\): src\/use\.mjs:1\./);
 });
@@ -152,7 +139,7 @@ test('CLI: a fix inside a function body lists its callers (from the hunk header)
   write('src/helper.mjs', 'export function parseRow(row) {\n  return row;\n}\n');
   const reviewed = write('src/rows.mjs', 'export function loadRows(a) {\n  const x = 1;\n  return a + x;\n}\n');
   write('src/rows.mjs', 'export function loadRows(a) {\n  const x = 1;\n  return parseRow(a) + x;\n}\n');
-  const reading = json('--delta', reviewed).reviews[0].requiredReading;
+  const reading = json('--delta', reviewed, '--prior', priorFile()).reviews[0].requiredReading;
   assert.ok(reading.includes('src/caller.mjs:1'), `callers: ${reading}`);
   assert.ok(reading.includes('src/helper.mjs:1'), `callees: ${reading}`);
 });
@@ -168,7 +155,9 @@ test('CLI: diff.noprefix and diff.mnemonicPrefix do not cut the paths or lose th
   git(dir, 'config', 'diff.mnemonicPrefix', 'true');
   const reviewed = write('src/other.mjs', 'const a = 1;\n');
   write('src/other.mjs', 'const a = 2;\n');
-  assert.deepEqual(Object.keys(json('--delta', reviewed).fileClasses), ['src/other.mjs']);
+  const delta = json('--delta', reviewed, '--prior', priorFile());
+  assert.equal(delta.files, 1);
+  assert.deepEqual(Object.keys(delta.fileClasses).sort(), ['src/other.mjs', 'src/worker.mjs'], 'no path is cut: the fix and the lane file it keeps');
 });
 
 // ---- reviewer and auditor contracts ----

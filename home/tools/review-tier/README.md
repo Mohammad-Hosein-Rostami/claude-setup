@@ -6,21 +6,21 @@ and mutants; the only thing the plan replaces is a full-suite re-run (the test-p
 `waivable` (below): the Opus max pair of a clean tier-1 landing moves from before land to after it. Node 22, no
 dependencies; it reads git and writes one log line.
 
-Run: `node ~/.claude/tools/review-tier/review-tier.mjs [<range>] [--landing] [--delta <reviewed-sha> [--prior <file>]] [--lane-classes <file>] [--add-class <c>]... [--base <b>] [--json]`
+Run: `node ~/.claude/tools/review-tier/review-tier.mjs [<range>] [--landing] [--delta <reviewed-sha> --prior <file>] [--lane-classes <file>] [--add-class <c>]... [--base <b>] [--json]`
 
 | Argument | Meaning |
 | -------- | ------- |
 | `<range>` | `a..b` or `a...b`. Default `<base>...HEAD`, the base being the first of main, master, develop. |
 | `--landing` | The last review before the base moves: adds the Opus max lens, the auditor at Opus max (tier 1 and up) and a mutation plan for a code diff. |
-| `--delta <sha>` | A fix round: only what changed since the reviewed sha. A sha that is no longer an ancestor (a rebased lane) lists only the lane commits whose patch the reviewed set does not hold. Callers of the changed functions (named on an added line or in the `@@` hunk header, so a fix inside a body counts) and the definitions the changed lines call (at most 20 `file:line` together) go in as required reading. |
+| `--delta <sha>` | A fix round (never a lane's first review, which reads the whole range): only what changed since the reviewed sha, reviewed by the set of the whole lane. The tool reads the lane range (`<base>...HEAD`, the base from `--base`, else the first of main, master, develop) itself for the lane's classes, adds the classes only the fix touches, and always gives the landing set, because it cannot know which flags the lane's first review had: no flag the caller leaves out makes a fix round lighter than the lane's review, and a docs-only fix of a gate lane still gets the Opus max pair. Files, lines, hits and the mutation numbers are the fix's. `waivable` is always null. Needs `--prior` (exit 2 without it). An empty delta is exit 2 (`nothing to review: ... check the range`), never a pass: take the sha from the lead's record of the last round, not from the writer's report. The range names the resolved full sha. A sha that is no longer an ancestor (a rebased lane) lists only the lane commits whose patch the reviewed set does not hold, and that list is the one range of the brief. When HEAD sits on the base branch itself there is no lane range: pass `--base <where the work started>`. Callers of the changed functions (named on an added line or in the `@@` hunk header, so a fix inside a body counts) and the definitions the changed lines call (at most 20 `file:line` together) go in as required reading. |
 | `--prior <file>` | With `--delta` only (otherwise exit 2; an unreadable file is exit 2). The findings file of the previous round: it is named in the briefs, never read. Its path is pasted into every brief, so only a plain path passes (letters, digits and `_@+=.,~/-`); a path with a space, quote, newline or any other character is exit 2. Every review of a delta round starts with one ready line: `Delta review: <sha>..HEAD only, plus callers of changed lines and the code that reads the shared state, config or data those lines write; prior findings file: <abs path or none> - mark each closed/open; do not re-review unchanged lines beyond those; do not re-run the full suite (PASS record covers it).` Paste the brief as it is; the agents' Delta mode section reads it. The JSON has `priorFile`. |
-| `--lane-classes <file>` | The `--json` of the previous round. Each file keeps the classes (and the plan kind) it had in the lane, so a small fix to a file that was concurrency code still gets the stress plan. |
+| `--lane-classes <file>` | The `--json` of the previous round. It only raises. In a delta round it adds what the tool cannot read from the lane range any more: a class the lead added by hand (`--add-class`) and the class of a line an earlier fix removed. Outside a delta round each file of the range keeps the classes (and the plan kind) it had. |
 | `--add-class <c>` | The lead raises the set: adds that class's reviews and plan. It never removes one. An unknown class is exit 2. |
 
 Exit 0 printed, 1 git failed (not a repository, git error), 2 usage (bad range, unknown sha, base or class, bad flag).
 Text output: `review-tier: tier <n> (<classes>), <files> files, <lines> changed lines, <range>`, then `why:` (one
-`<class> <path>:<line>` per class), `run together:` (one line per review) and the command for the next fix round.
-`--json` prints the whole report: `tier`, `classes`, `added`, `landing`, `range`, `files`,
+`<class> <path>:<line>` per class), `run together:` (one line per review) and the command for the next fix round (`fix round:`, the same command `home/CLAUDE.md` names, plus every `--add-class` of this run). A class with no hit says where it comes from: `(added by --add-class)` or `(kept from the lane)`.
+`--json` prints the whole report: `tier`, `classes`, `added`, `kept` (classes that come from the lane or an earlier round, not from this run's own files), `landing`, `range`, `files`,
 `changedLines`, `hits`, `fileClasses`, `reviews` (each with `plan: {stress, race, mutation}` and `requiredReading`), `waivable`,
 `weakened`, `principles`, `deltaOf`. The text output has one line each for `waivable:`, `weakened:` and `principles:`.
 Line texts are matched in memory and never printed or logged. The log is `~/.claude/logs/review-tier.jsonl`
@@ -94,10 +94,11 @@ measurement, not a miss-rate bound.
 - Tests, docs and prose (`.md`) are not scanned by line, and docs carry no risky class by path, so a README that talks about passwords is still tier 0.
 - A pure rename lists both paths (`git diff --name-only --no-renames`): `tsconfig.json` renamed to `tsconfig.json.off` still changes a gate path, so it is `gate` and never waivable.
 - A bare `exec(` counts only in a file that mentions `child_process` or `execa` (a regex `.exec(` is not a shell).
-- A delta unions each file's earlier classes with its new ones (a file never drops a class inside a lane); the diff-level `size` class is computed from the delta's own lines.
+- A delta round is always a landing round. A mid-lane review with `--landing` left out has a lighter set than its own fix rounds; the other way round (a fix round lighter than the landing review it follows) is the defect this rule closes, and the tool has no record of the first review's flags.
+- A delta keeps every class of the lane: a file never drops a class inside a lane, and a file the fix does not touch keeps its lenses and plans in the set. `size` counts when the lane or the delta is over the limit.
 - Hits are capped at 20 per class and file, so a generated file cannot make the JSON huge; the class still applies.
 
 Files: `review-tier.mjs` (CLI), `tiers.mjs` (class rules), `lib/diff.mjs` (git reading, delta, required reading), `lib/reviews.mjs`
 (sets, plans, briefs, waivable), `lib/report.mjs` (report, text, JSON), `lib/weakened.mjs` (weakened checks), `lib/log.mjs`. Tests:
 `tests/review-tier.test.mjs`, `review-tier-cli`, `review-tier-gate` (gate, line rules, principles, items 71 and 73), `review-tier-waivable`,
-`review-tier-weakened`.
+`review-tier-weakened`, `review-tier-delta-set` (a fix round is never lighter than the lane), `review-tier-delta-brief` (the delta line and the prior file).

@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 // CLI of `review-tier`: reads a git range and says which reviews to run together (agent, model, effort, lens, brief, plan).
-// Usage: review-tier.mjs [<range>] [--landing] [--delta <reviewed-sha> [--prior <findings-file>]] [--lane-classes <file>] [--add-class <c>]...
+// Usage: review-tier.mjs [<range>] [--landing] [--delta <reviewed-sha> --prior <findings-file>] [--lane-classes <file>] [--add-class <c>]...
 //                        [--base <b>] [--json]
 //   <range>          `a..b` or `a...b`; default `<base>...HEAD`, base the first of main, master, develop
 //   --landing        the last review before the base moves: adds the Opus max lens, the auditor and a mutation plan
-//   --delta <sha>    review only what changed since that reviewed sha (a rebased lane: only patches the reviewed set lacks)
+//   --delta <sha>    a fix round: review only what changed since that reviewed sha (a rebased lane: only patches the reviewed set lacks),
+//                    with the set of the whole lane: the tool reads the lane range (<base>...HEAD) itself and always gives the landing
+//                    set, so the round is never lighter than the lane's review. Needs --prior. An empty delta is exit 2
 //   --prior <file>   with --delta: the findings file of the previous round; every brief tells the reviewer to mark each finding closed or open.
 //                    The path is pasted into every brief and the file is never read; a path that is not plain is refused (exit 2)
-//   --lane-classes   the `--json` of the previous round (its fileClasses): each file keeps the classes it had in the lane
+//   --lane-classes   the `--json` of the previous round: adds the classes it holds (a class the lead added by hand, a class of a line an
+//                    earlier fix removed); it can only raise the set
 //   --add-class <c>  raise only: adds that class's full set and plan (unknown class: exit 2)
 // Exit codes: 0 printed, 1 git failed, 2 usage (bad range, unknown sha or class, bad flag).
 // Invariants: read-only on the repository; the only write is one line in the log (REVIEW_TIER_LOG overrides its path).
@@ -28,7 +31,7 @@ const MAX_LANE_FILE_BYTES = 4 << 20;
 const PLAIN_PATH = /^(?:[A-Za-z]:[\\/]|\/)[\w@+=.,~/\\-]+$/;
 const MAX_ECHOED_PATH_CHARS = 120; // a refused path is quoted in the error, cut to this length
 const KNOWN_NAMES = new Set([...Object.keys(CLASS_TIER), LOCK_TAG, RACE_TAG]);
-const USAGE = 'usage: review-tier.mjs [<range>] [--landing] [--delta <sha> [--prior <file>]] [--lane-classes <file>] [--add-class <c>]... [--base <b>] [--json]';
+const USAGE = 'usage: review-tier.mjs [<range>] [--landing] [--delta <sha> --prior <file>] [--lane-classes <file>] [--add-class <c>]... [--base <b>] [--json]';
 
 const isFile = (path) => {
   try {
@@ -63,6 +66,7 @@ function parseArgs(argv) {
     if (!(name in CLASS_TIER)) throw new UsageError(`unknown class "${name}" for --add-class (one of: ${Object.keys(CLASS_TIER).join(', ')})`);
   }
   if (options.delta !== null && options.range !== null) throw new UsageError(`--delta names its own range: give a range or --delta, not both. ${USAGE}`);
+  if (options.delta !== null && options.prior === null) throw new UsageError(`--delta needs --prior <findings-file>: a fix round names the review report of the round before (a lane's first review reads the whole range). ${USAGE}`);
   if (options.prior !== null) {
     if (options.delta === null) throw new UsageError(`--prior belongs to a --delta round. ${USAGE}`);
     if (!PLAIN_PATH.test(options.prior)) throw new UsageError(`--prior must be a plain path (letters, digits and _@+=.,~/- only: no spaces, quotes or newlines), because it is pasted into every brief: ${JSON.stringify(options.prior.slice(0, MAX_ECHOED_PATH_CHARS))}`);
@@ -71,7 +75,10 @@ function parseArgs(argv) {
   return options;
 }
 
-/** The `fileClasses` of a previous round's JSON: path -> known class names; anything else in the file is ignored. */
+/**
+ * A previous round's JSON: `fileClasses` (path -> known class names) and `classes` (its class list, which holds what the lead added by
+ * hand); anything else in the file is ignored.
+ */
 function readLaneClasses(file) {
   let parsed;
   try {
@@ -82,32 +89,40 @@ function readLaneClasses(file) {
   }
   const map = parsed?.fileClasses;
   if (map === null || typeof map !== 'object' || Array.isArray(map)) throw new UsageError(`--lane-classes ${file}: no "fileClasses" object (use the --json of the previous round)`);
-  const lane = {};
+  const fileClasses = {};
   for (const [path, names] of Object.entries(map)) {
     if (!Array.isArray(names)) throw new UsageError(`--lane-classes ${file}: fileClasses["${path}"] must be a list`);
-    lane[path] = names.filter((name) => KNOWN_NAMES.has(name));
+    fileClasses[path] = names.filter((name) => KNOWN_NAMES.has(name));
   }
-  return lane;
+  return { fileClasses, classes: Array.isArray(parsed.classes) ? parsed.classes.filter((name) => name in CLASS_TIER) : [] };
+}
+
+/**
+ * What a fix round reads: the delta since the reviewed sha, plus the whole lane range (lane base to HEAD), from which the report works
+ * out the lane's own classes, so no flag the caller leaves out can make the set lighter than the lane's.
+ */
+function deltaRound(top, options) {
+  const base = baseOf(top, options.base);
+  const { range, files, reviewedSha } = readDelta(top, base, options.delta);
+  return { range, files, deltaOf: reviewedSha, laneFiles: readRange(top, `${base}...HEAD`), requiredReading: requiredReadingFor(top, files), endRevision: 'HEAD' };
+}
+
+function wholeRange(top, options) {
+  const range = options.range ?? `${baseOf(top, options.base)}...HEAD`;
+  const endRevision = checkRange(top, range);
+  return { range, files: readRange(top, range), deltaOf: null, laneFiles: null, requiredReading: [], endRevision };
 }
 
 function run(options) {
   const top = gitText(process.cwd(), ['rev-parse', '--show-toplevel']);
-  const laneClasses = options.laneClasses === null ? null : readLaneClasses(options.laneClasses);
-  let range;
-  let files;
-  let requiredReading = [];
-  let endRevision = 'HEAD';
-  if (options.delta !== null) {
-    ({ range, files } = readDelta(top, baseOf(top, options.base), options.delta));
-    requiredReading = requiredReadingFor(top, files);
-  } else {
-    range = options.range ?? `${baseOf(top, options.base)}...HEAD`;
-    endRevision = checkRange(top, range);
-    files = readRange(top, range);
-  }
+  const earlier = options.laneClasses === null ? null : readLaneClasses(options.laneClasses);
+  const isDelta = options.delta !== null;
+  const { endRevision, ...read } = isDelta ? deltaRound(top, options) : wholeRange(top, options);
   const report = buildReport({
-    files, readNewFile: newFileReader(top, endRevision), landing: options.landing, addClasses: options.addClasses,
-    laneClasses, range, deltaOf: options.delta, priorFile: options.prior, requiredReading,
+    ...read, readNewFile: newFileReader(top, endRevision), addClasses: options.addClasses, priorFile: options.prior,
+    // A fix round is the last review of its lines before land, and the tool cannot know which flags the lane's first review had: it
+    // always gets the landing set, the strongest the lane can have had.
+    landing: options.landing || isDelta, laneClasses: earlier?.fileClasses ?? null, earlierClasses: earlier?.classes ?? [],
   });
   console.log(options.json ? formatJson(report) : formatText(report));
   const problem = appendLog(logRecord(report, basename(top), new Date()));

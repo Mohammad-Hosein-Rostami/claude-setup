@@ -1,6 +1,6 @@
 // Purpose: read the changed files and lines of a range (or of a delta round) from git for review-tier.
 // Exports: MAX_READING, parsePatch(text), baseOf(top, requested), checkRange(top, range), readRange(top, range),
-//   readDelta(top, base, reviewedSha), newFileReader(top, rev), functionNames(files), requiredReadingFor(top, files).
+//   readDelta(top, base, reviewedRef), newFileReader(top, rev), functionNames(files), requiredReadingFor(top, files).
 // Invariants: git runs through git-tidy's runGit (no shell, no repository from the environment). A range or sha that starts
 //   with `-` is refused, so it can never be read as an option. Only paths and line numbers leave this module through the
 //   report; line texts stay in memory for the class tests.
@@ -108,22 +108,29 @@ function patchKey(top, commit) {
 
 const commitsOf = (top, range) => gitText(top, ['rev-list', '--reverse', '--no-merges', range]).split('\n').filter((sha) => sha !== '');
 
-/**
- * The delta since `reviewedSha`: its range when the sha is an ancestor of HEAD; otherwise (a rebased lane) only the lane
- * commits whose patch the reviewed set does not hold.
- * @returns {{range: string, files: object[]}}
- */
-export function readDelta(top, base, reviewedSha) {
-  if (reviewedSha.startsWith('-') || !gitFlag(top, ['rev-parse', '--verify', '--quiet', `${reviewedSha}^{commit}`])) throw new UsageError(`unknown sha "${reviewedSha}" for --delta`);
-  if (gitFlag(top, ['merge-base', '--is-ancestor', reviewedSha, 'HEAD'])) {
-    const range = `${reviewedSha}..HEAD`;
-    return { range, files: readRange(top, range) };
-  }
+/** The lane commits whose patch the reviewed set does not hold (a rebased lane, where `reviewedSha` is no ancestor of HEAD). */
+function freshPatches(top, base, reviewedSha) {
   const reviewed = new Set(commitsOf(top, `${base}..${reviewedSha}`).map((commit) => patchKey(top, commit)));
   const fresh = commitsOf(top, `${base}..HEAD`).filter((commit) => !reviewed.has(patchKey(top, commit)));
   const text = fresh.map((commit) => showPatch(top, commit)).join('\n');
   const names = fresh.flatMap((commit) => gitText(top, [...DIFF_FLAGS.slice(0, 2), 'show', '--name-only', '--no-renames', '--format=', commit]).split('\n')).filter((name) => name !== '');
   return { range: `patches ${fresh.map((commit) => commit.slice(0, 8)).join(',') || 'none'} of ${base}..HEAD`, files: withHunklessFiles(names, parsePatch(text)) };
+}
+
+/**
+ * The delta since the reviewed commit: its range when that commit is an ancestor of HEAD; otherwise (a rebased lane) only the lane
+ * commits whose patch the reviewed set does not hold. The range names the resolved full sha, never the text the caller gave.
+ * @param {string} reviewedRef what `--delta` got: any name of the commit the last review read
+ * @returns {{range: string, files: object[], reviewedSha: string}}
+ * @throws {UsageError} for an unknown commit, and for an empty delta: with nothing to read a round would pass unreviewed
+ */
+export function readDelta(top, base, reviewedRef) {
+  if (reviewedRef.startsWith('-') || !gitFlag(top, ['rev-parse', '--verify', '--quiet', `${reviewedRef}^{commit}`])) throw new UsageError(`unknown sha "${reviewedRef}" for --delta`);
+  const reviewedSha = gitText(top, ['rev-parse', '--verify', `${reviewedRef}^{commit}`]);
+  const range = `${reviewedSha}..HEAD`;
+  const delta = gitFlag(top, ['merge-base', '--is-ancestor', reviewedSha, 'HEAD']) ? { range, files: readRange(top, range) } : freshPatches(top, base, reviewedSha);
+  if (delta.files.length === 0) throw new UsageError(`nothing to review: ${delta.range} holds no changed file; check the range (--delta takes the sha the last review read, from the lead's own record)`);
+  return { ...delta, reviewedSha };
 }
 
 const nameDefinedIn = (text) => {

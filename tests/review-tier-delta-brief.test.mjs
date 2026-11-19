@@ -3,47 +3,27 @@
 // Class and set cases: review-tier.test.mjs; delta required reading: review-tier-cli.test.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLEAN_ENV, git, makeRepo } from './git-tidy-helpers.mjs';
+import { lane, priorFile } from './review-tier-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
-const CLI = fileURLToPath(new URL('../home/tools/review-tier/review-tier.mjs', import.meta.url));
 const README = fileURLToPath(new URL('../home/tools/review-tier/README.md', import.meta.url));
 
 /** A lane branch with a reviewed commit and a fix commit on top; `tier(args)` runs the CLI there. */
 function laneWithFix() {
-  const dir = makeRepo();
-  const log = join(dir, '..', 'review-tier.jsonl');
-  const tier = (...args) => spawnSync(process.execPath, [CLI, ...args], { cwd: dir, encoding: 'utf8', env: { ...CLEAN_ENV, REVIEW_TIER_LOG: log } });
-  const json = (...args) => JSON.parse(tier(...args, '--json').stdout);
-  const write = (path, text) => {
-    mkdirSync(dirname(join(dir, path)), { recursive: true });
-    writeFileSync(join(dir, path), text);
-    git(dir, 'add', '--', path);
-    git(dir, 'commit', '-q', '-m', `edit ${path}`);
-    return git(dir, 'rev-parse', 'HEAD');
-  };
-  git(dir, 'checkout', '-q', '-b', 'lane');
+  const { dir, tier, json, write } = lane();
   const reviewed = write('src/run.mjs', 'const apiKey = "abc";\nspawnSync(cmd);\n');
   write('src/run.mjs', 'const apiKey = "abc";\nspawnSync(cmd, { shell: false });\n');
   return { dir, tier, json, reviewed };
-}
-
-/** A findings file from the previous round, in its own temp folder. */
-function priorFile() {
-  const path = join(makeTempDir('review-tier-prior-'), 'findings-round1.md');
-  writeFileSync(path, '1. src/run.mjs:2 spawn without shell option (should-fix)\n');
-  return path;
 }
 
 const memberLines = (stdout) => stdout.split('\n').filter((line) => line.startsWith('- '));
 
 test('delta: every member of a landing set gets the ready delta line naming <reviewed>..HEAD', () => {
   const { json, reviewed } = laneWithFix();
-  const result = json('--delta', reviewed, '--landing');
+  const result = json('--delta', reviewed, '--prior', priorFile(), '--landing');
   assert.ok(result.reviews.length >= 2, 'a landing of a security change runs several members');
   for (const review of result.reviews) {
     assert.ok(review.brief.includes(`Delta review: ${reviewed}..HEAD only`), review.brief);
@@ -55,14 +35,14 @@ test('delta: every member of a landing set gets the ready delta line naming <rev
 
 test('delta: the ready line names what to read outside the range: callers, and the readers of shared state, config and data the changed lines write', () => {
   const { json, reviewed } = laneWithFix();
-  for (const review of json('--delta', reviewed, '--landing').reviews) {
+  for (const review of json('--delta', reviewed, '--prior', priorFile(), '--landing').reviews) {
     assert.match(review.brief, /plus callers of changed lines and the code that reads the shared state, config or data those lines write;/, review.brief);
   }
 });
 
 test('delta: the text output carries the delta line on every "run together" member line', () => {
   const { tier, reviewed } = laneWithFix();
-  const result = tier('--delta', reviewed, '--landing');
+  const result = tier('--delta', reviewed, '--prior', priorFile(), '--landing');
   assert.equal(result.status, 0, result.stderr);
   const members = memberLines(result.stdout);
   assert.ok(members.length >= 2);
@@ -94,9 +74,14 @@ test('delta with --prior: the text output names the findings file on every membe
   for (const line of members) assert.ok(line.includes(prior), line);
 });
 
-test('delta without --prior: no brief names a findings file', () => {
-  const { json, reviewed } = laneWithFix();
-  for (const review of json('--delta', reviewed).reviews) assert.doesNotMatch(review.brief, /findings-round1/);
+test('delta without --prior: exit 2, so no brief exists that names no findings file', () => {
+  const { tier, reviewed } = laneWithFix();
+  for (const flags of [[], ['--json'], ['--landing']]) {
+    const result = tier('--delta', reviewed, ...flags);
+    assert.equal(result.status, 2, flags.join(' '));
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /--delta needs --prior/);
+  }
 });
 
 test('--prior with a file that does not exist exits 2 and prints nothing to stdout', () => {
@@ -150,12 +135,12 @@ test('--prior without a value exits 2', () => {
   assert.doesNotMatch(result.stderr, /unknown|unrecognized|bogus/i, 'the flag is known; only its value is missing');
 });
 
-test('the delta line does not lower the set: the same members run with and without --prior', () => {
+test('the delta line does not lower the set: a fix round runs the members of the lane landing review, with and without --landing', () => {
   const { json, reviewed } = laneWithFix();
-  const plain = json('--delta', reviewed, '--landing');
-  const withPrior = json('--delta', reviewed, '--prior', priorFile(), '--landing');
   const shape = (report) => report.reviews.map(({ agent, model, effort, lens }) => ({ agent, model, effort, lens }));
-  assert.deepEqual(shape(withPrior), shape(plain));
+  const laneLanding = shape(json('--landing'));
+  assert.deepEqual(shape(json('--delta', reviewed, '--prior', priorFile(), '--landing')), laneLanding);
+  assert.deepEqual(shape(json('--delta', reviewed, '--prior', priorFile())), laneLanding);
 });
 
 test('the review-tier README names --prior', () => {

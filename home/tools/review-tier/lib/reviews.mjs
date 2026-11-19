@@ -61,14 +61,14 @@ function planText(plan) {
 const hitText = (hit) => (hit.line > 0 ? `${hit.path}:${hit.line}` : hit.path);
 
 /**
- * The ready line of a fix-round re-review: the delta range, what to read outside it (a fix can break a caller, or a reader of
+ * The ready line of a fix-round re-review: the delta range (the one range of the brief, also for a rebased lane), what to read outside it (a fix can break a caller, or a reader of
  * what it writes that never calls it), the prior findings to close, and what not to redo.
  */
-const deltaLine = (deltaOf, priorFile) => `Delta review: ${deltaOf}..HEAD only, plus callers of changed lines and the code that reads the shared state, config or data those lines write; prior findings file: ${priorFile ?? 'none'} - mark each closed/open; do not re-review unchanged lines beyond those; do not re-run the full suite (PASS record covers it).`;
+const deltaLine = (range, priorFile) => `Delta review: ${range} only, plus callers of changed lines and the code that reads the shared state, config or data those lines write; prior findings file: ${priorFile ?? 'none'} - mark each closed/open; do not re-review unchanged lines beyond those; do not re-run the full suite (PASS record covers it).`;
 
 function briefOf({ range, deltaOf, priorFile, rules, hits, plan, requiredReading }) {
   const parts = [`Review ${range}.`, `Rules: ${rules}.`];
-  if (deltaOf !== null) parts.splice(1, 0, deltaLine(deltaOf, priorFile), "Each file keeps the lane's classes.");
+  if (deltaOf !== null) parts.splice(1, 0, deltaLine(range, priorFile), "The set, models, efforts and PLAN items are the lane's: nothing is skipped.");
   const shown = [...new Set(hits.slice(0, MAX_BRIEF_HITS).map((hit) => `${hit.class} ${hitText(hit)}`))];
   if (shown.length > 0) parts.push(`Hits: ${shown.join(', ')}.`);
   const text = planText(plan);
@@ -119,11 +119,12 @@ const AUDIT_LENSES = ['risk: landing', 'audit: landing'];
 /**
  * The waiver of a landing: `reviews` run before land, `audit` (the Opus max pair) after it and before any sync or push.
  * @param {object} input as buildReviews
- * @returns {{reviews: object[], audit: object[]} | null} null unless the landing is tier 1 and no file is a gate path
+ * @returns {{reviews: object[], audit: object[]} | null} null unless the landing is tier 1, no file is a gate path and the run is no delta round
  */
 export function buildWaivable(input) {
-  const { classes, landing, hits, range } = input;
-  if (!landing || tierOf(classes) !== 1 || classes.has('gate')) return null;
+  const { classes, landing, hits, range, deltaOf } = input;
+  // A fix round is never waived: the waiver belongs to the first review of the whole range, and a delta round runs the lane's whole set.
+  if (deltaOf !== null || !landing || tierOf(classes) !== 1 || classes.has('gate')) return null;
   const reviews = [reviewMaker(input)('reviewer', 'sonnet', 'high', 'correctness', rulesOf(classes), { ...NO_PLAN, mutation: planOf(input).mutation }, hits)];
   if (classes.has('ui')) reviews.push(uiSkillReview(range));
   return { reviews, audit: buildReviews(input).filter((review) => AUDIT_LENSES.includes(review.lens)) };
