@@ -120,7 +120,7 @@ test('the fixed STATUS path is STATUS_PATH_CHARS long', () => {
 test('no project agents: startup, the first compaction with the STATUS line and the third compaction fit the hook output cap', async (t) => {
   const outputs = await longestOutputs();
   assertFits(t, outputs);
-  assert.ok(outputs.firstCompact.includes(`Re-read ${STATUS_PATH} `), 'the STATUS line is in the compaction output');
+  assert.ok(outputs.firstCompact.includes(`Re-read "${STATUS_PATH}" `), 'the STATUS line is in the compaction output');
   assert.match(outputs.lastCompact, new RegExp(`compacted ${COMPACTIONS} times`));
   assert.equal(outputs.lastCompact.includes(AGENT_NOTE_START), false);
   const withFullNote = outputs.lastCompact.length + NOTE_SEPARATOR.length + NOTE_MAX_CHARS;
@@ -154,7 +154,7 @@ test('a STATUS path of 1,024 characters is shown cut to 200, so a full note and 
   assert.equal(longPath.length, LONG_STATUS_PATH_CHARS);
   const withoutAgents = await longestOutputs(undefined, longPath);
   assertFits(t, withoutAgents);
-  assert.ok(withoutAgents.firstCompact.includes(`Re-read ${CUT_MARK}${longPath.slice(-(STATUS_PATH_SHOWN_CHARS - CUT_MARK.length))} `), 'the path is cut from the left');
+  assert.ok(withoutAgents.firstCompact.includes(`Re-read "${CUT_MARK}${longPath.slice(-(STATUS_PATH_SHOWN_CHARS - CUT_MARK.length))}" `), 'the path is cut from the left');
   assert.equal(withoutAgents.lastCompact.includes(longPath), false);
   const withFullNote = withoutAgents.lastCompact.length + NOTE_SEPARATOR.length + NOTE_MAX_CHARS;
   assert.ok(withFullNote <= SIZE_LIMIT_CHARS, `with a project-agents note of NOTE_MAX_CHARS the output is ${withFullNote} chars, limit ${SIZE_LIMIT_CHARS}`);
