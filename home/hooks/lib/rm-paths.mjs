@@ -54,8 +54,11 @@ const prefixesOf = (word) => Array.from(word, (_, index) => word.slice(0, index 
  */
 export const RECURSIVE_FLAG = new RegExp(`^--(?:${[...prefixesOf('recursive'), ...prefixesOf('no-preserve-root')].join('|')})$|^-[a-zA-Z]*[rR]`);
 
-/** Git Bash paths (`/c/Users/x`) -> `C:/Users/x` on Windows; unchanged elsewhere. */
-export const nativePath = (p) => (process.platform === 'win32' ? p.replace(/^\/([a-zA-Z])(?=\/|$)/, '$1:') : p);
+/**
+ * Git Bash paths (`/c/Users/x`) -> `c:/Users/x` on Windows; unchanged elsewhere. A bare drive (`/c`) is the drive ROOT, `c:/`: a plain
+ * `c:` means "the current folder on drive c" to Windows, so `cd /c` would look like a cd that did not move.
+ */
+export const nativePath = (p) => (process.platform === 'win32' ? p.replace(/^\/([a-zA-Z])(?:\/|$)/, '$1:/') : p);
 
 export const isUnder = (root, target) => {
   const rel = relative(root, target);
