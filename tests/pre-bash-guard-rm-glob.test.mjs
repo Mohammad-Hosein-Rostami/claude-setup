@@ -60,6 +60,17 @@ const ASK_GLOB_BELOW_GLOB = [
 ];
 const ASK_GLOB_BELOW_GLOB_IN_SUBFOLDER = [`${RM} -rf **/*`, `${RM} -rf ./**/*`, `${RM} -rf ../**/*`, `${RM} -rf ../*/*`];
 const ASK_UNKNOWN_DIRECTORY = [`cd "$SOMEWHERE" && ${RM} -rf *`, `cd "$SOMEWHERE" && ${RM} -rf ./**/*`, `cd "$SOMEWHERE" && ${RM} -rf ./*`];
+// after a cd the guard cannot follow, an absolute target is still judged against the project root, home and the roots
+const ASK_UNKNOWN_DIRECTORY_ABSOLUTE = [
+  `cd "$SOMEWHERE" && ${RM} -rf ${PROJECT}/*`,
+  `cd "$SOMEWHERE" && ${RM} -rf "$CLAUDE_PROJECT_DIR"/*`,
+  `cd "$SOMEWHERE" && ${RM} -rf ${PROJECT}/**/*`,
+  `cd "$SOMEWHERE"; ${RM} -rf ${PROJECT}/.*`,
+  `cd - && ${RM} -rf ${PROJECT}/*`,
+  `popd; ${RM} -rf ${PROJECT}/*`,
+  `cd "$SOMEWHERE" && ${RM} -rf ${PROJECT}/src ${PROJECT}/./*`,
+];
+const SILENT_UNKNOWN_DIRECTORY = [`cd "$SOMEWHERE" && ${RM} -rf ${PROJECT}/src/*`, `cd "$SOMEWHERE" && ${RM} -rf ${PROJECT}/dist`, `popd; ${RM} -rf /tmp/x/*`];
 const ASK_IN_SUBFOLDER = [`${RM} -rf *`, `${RM} -rf .*`, `${RM} -rf .`, `${RM} -rf ./`, `${RM} -rf "$PWD"`, `${RM} -rf ../*`];
 const ALREADY_ASKED = [`${RM} -rf /`, `${RM} -rf /*`, `${RM} -rf ~`, `${RM} -rf ~/*`, `${RM} -rf .`, `cd ~ && ${RM} -rf *`];
 // every bracket form is a glob: POSIX classes, a `]` in first place, negation, equivalence classes and collating symbols
@@ -138,6 +149,14 @@ test('a bare glob below a bare glob of the working directory or the project root
 
 test('a bare glob after a cd that cannot be resolved still asks, as an unknown target', () => {
   for (const command of ASK_UNKNOWN_DIRECTORY) assert.ok(asksDestructive(command, atRoot), command);
+});
+
+test('after a cd that cannot be resolved an absolute bare glob of the project root still asks, and an absolute sub-folder stays silent', () => {
+  for (const command of ASK_UNKNOWN_DIRECTORY_ABSOLUTE) {
+    const result = decide(command, atRoot);
+    assert.match(result.reasons?.[0] ?? 'allowed', /^DESTRUCTIVE: rm -r that empties a whole folder \(/, command);
+  }
+  for (const command of SILENT_UNKNOWN_DIRECTORY) assert.deepEqual(decide(command, atRoot), { allow: true }, command);
 });
 
 test('root, home and the project root keep asking as before', () => {

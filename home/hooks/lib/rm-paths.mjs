@@ -165,16 +165,18 @@ function insideProject(rawTarget, cwd, project, vars) {
 /**
  * True when the target is the working directory itself, or a bare glob (also one below other bare globs, lib/bare-glob.mjs) whose folder is
  * the working directory, the project root, home or a file-system root: removing it empties that whole folder even though every entry is
- * inside the project. Unknown targets return false (insideProject already asks about them).
+ * inside the project. Unknown targets return false (insideProject already asks about them). After a `cd` the guard could not follow
+ * (`cwd` null) an absolute target is still judged, against the project root, home and the roots; a relative one was asked about already.
  */
 function emptiesWholeFolder(rawTarget, cwd, project, vars) {
-  if (cwd === null) return false;
   const target = expandedTarget(rawTarget, cwd, project, vars).replace(QUOTED_MARK, '');
   if (target.startsWith('~') || target.includes('$')) return false;
   const folder = globbedFolder(target);
-  const abs = resolve(cwd, nativePath(folder ?? target));
-  const wholeFolders = [cwd, project, homedir()].map((whole) => resolve(nativePath(whole)));
-  if (folder === undefined) return sameFile(abs, wholeFolders[0]);
+  const native = nativePath(folder ?? target);
+  if (cwd === null && !isAbsolute(native)) return false;
+  const abs = resolve(cwd ?? native, native);
+  if (folder === undefined) return cwd !== null && sameFile(abs, resolve(nativePath(cwd)));
+  const wholeFolders = [cwd, project, homedir()].filter((whole) => whole !== null).map((whole) => resolve(nativePath(whole)));
   return wholeFolders.some((whole) => sameFile(abs, whole)) || sameFile(abs, parse(abs).root) || GIT_BASH_DRIVE_ROOT.test(abs);
 }
 
