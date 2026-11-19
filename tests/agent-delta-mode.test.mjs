@@ -70,6 +70,12 @@ test('home/CLAUDE.md quality gates send a fix round re-review through the delta 
   assert.match(gates, /full-range review runs once at the reviewed tip before land/);
 });
 
+test('home/CLAUDE.md quality gates: the same review set re-checks the changed lines of a fix until a round is clean, and a security finding is never dropped', () => {
+  const gates = read('home/CLAUDE.md').split(/^## Quality gates/m)[1].split(/^## /m)[0];
+  assert.match(gates, /the same review set \(every lens, at its model and effort\) re-checks the changed lines of the fix until a round is clean/);
+  assert.match(gates, /security findings are never dropped/);
+});
+
 test('docs/catalog.md review-tier line names --prior', () => {
   const line = read('docs/catalog.md').split('\n').find((row) => row.startsWith('| `review-tier` |'));
   assert.ok(line, 'catalog has the review-tier row');
