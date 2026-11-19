@@ -5,6 +5,8 @@
 // the lead rules and the playbook would be lost.
 // How it measures: the real home/modes and home/agents are copied into a temp HOME; every mode runs one startup and then COMPACTIONS
 // compactions with a model that forces the lead note; the longest stdout over the modes is checked for each stage.
+// Cases: no project agents; 10 project agents named like the personal ones; the two worst project-agents notes (MAX_AGENT_FILES files
+// with the longest plain names, and more files than that with names shown escaped), which the note's own cap NOTE_MAX_CHARS must hold.
 // Assumption: the hook prints the STATUS file path whole and a path has no length limit, so the test fixes one of STATUS_PATH_CHARS
 // (80) characters. A longer path uses up MIN_HEADROOM_CHARS first.
 import test from 'node:test';
@@ -14,6 +16,7 @@ import { readdirSync } from 'node:fs';
 import { cp, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { MAX_AGENT_FILES, NOTE_MAX_CHARS } from '../home/hooks/lib/project-agents.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/mode.mjs', import.meta.url));
@@ -31,9 +34,18 @@ const COMPACTIONS = 3; // the third compaction adds the handoff line
 const TRANSCRIPT = 'transcript.jsonl';
 const COPIED_AGENTS = 10;
 const AGENT_NOTE_START = 'Project agent files in .claude/agents: ';
+const NOTE_SEPARATOR = '\n\n'; // what mode.mjs prints between the playbook and the note
+const LONGEST_PLAIN_NAME_CHARS = 64; // the longest file name (without .md) the note shows unquoted
+const CONTROL_CHARS_IN_NAME = 80; // more than the note shows of a name; each one is shown as the six characters \u0001
+const FILES_PAST_THE_LIMIT = 5;
+const POSIX = process.platform !== 'win32';
 
 const agentFile = (name, extra) => `---\nname: ${name}\ndescription: x\n${extra}---\nBody\n`;
 const longer = (a, b) => (b.length > a.length ? b : a);
+// The costliest agent file for the note: the longest maxTurns number it shows, and a name that shadows a personal agent.
+const worstAgentFile = agentFile('reviewer', 'maxTurns: 999999\n');
+/** `count` worst agent files; `nameOf` gets a three-digit index and returns the file name without .md. */
+const worstFiles = (count, nameOf) => Array.from({ length: count }, (_, i) => [`${nameOf(String(i).padStart(3, '0'))}.md`, worstAgentFile]);
 
 /** A temp HOME with the real mode files and personal agents, and a transcript in which the session wrote STATUS_PATH. */
 async function realHome() {
@@ -86,6 +98,15 @@ function assertFits(t, outputs) {
   for (const [stage, length] of lengths) assert.ok(length > 0 && length <= SIZE_LIMIT_CHARS, `longest ${stage} output is ${length} chars, limit ${SIZE_LIMIT_CHARS}`);
 }
 
+/** Fails unless every stage carries a project-agents note that is capped, counts what it left out and keeps both pieces of advice. */
+function assertCappedNote(outputs) {
+  for (const [stage, out] of Object.entries(outputs)) {
+    const note = out.split('\n').find((line) => line.startsWith(AGENT_NOTE_START)) ?? '';
+    assert.ok(note.length > 0 && note.length <= NOTE_MAX_CHARS, `${stage}: the note is ${note.length} chars, cap ${NOTE_MAX_CHARS}`);
+    assert.match(note, /, and \d+ more files not shown - the lead deletes each frontmatter maxTurns: line .*; tell the owner .*\.$/, stage);
+  }
+}
+
 test('the fixed STATUS path is STATUS_PATH_CHARS long', () => {
   assert.equal(STATUS_PATH.length, STATUS_PATH_CHARS);
 });
@@ -96,6 +117,8 @@ test('no project agents: startup, the first compaction with the STATUS line and 
   assert.ok(outputs.firstCompact.includes(`Re-read ${STATUS_PATH} `), 'the STATUS line is in the compaction output');
   assert.match(outputs.lastCompact, new RegExp(`compacted ${COMPACTIONS} times`));
   assert.equal(outputs.lastCompact.includes(AGENT_NOTE_START), false);
+  const withFullNote = outputs.lastCompact.length + NOTE_SEPARATOR.length + NOTE_MAX_CHARS;
+  assert.ok(withFullNote <= SIZE_LIMIT_CHARS, `with a project-agents note of NOTE_MAX_CHARS the output is ${withFullNote} chars, limit ${SIZE_LIMIT_CHARS}`);
 });
 
 test('a project with 10 agents named like the personal ones, each with maxTurns: 60, fits the cap', async (t) => {
@@ -104,4 +127,18 @@ test('a project with 10 agents named like the personal ones, each with maxTurns:
   const outputs = await longestOutputs(await projectWith(personal.map((file) => [file, agentFile(file.replace(/\.md$/, ''), 'maxTurns: 60\n')])));
   assertFits(t, outputs);
   for (const out of Object.values(outputs)) assert.ok(out.includes(`${AGENT_NOTE_START}${personal[0]} (maxTurns 60, shadows the personal agent)`));
+});
+
+test('worst note with plain names (MAX_AGENT_FILES files, 64-char names, maxTurns and shadow) fits the cap', async (t) => {
+  const files = worstFiles(MAX_AGENT_FILES, (index) => `${index}${'x'.repeat(LONGEST_PLAIN_NAME_CHARS - index.length)}`);
+  const outputs = await longestOutputs(await projectWith(files));
+  assertFits(t, outputs);
+  assertCappedNote(outputs);
+});
+
+test('worst note with escaped names (5 files past MAX_AGENT_FILES, control characters in every name) fits the cap', { skip: !POSIX && 'control characters in file names are POSIX only' }, async (t) => {
+  const files = worstFiles(MAX_AGENT_FILES + FILES_PAST_THE_LIMIT, (index) => `${index}${'\u0001'.repeat(CONTROL_CHARS_IN_NAME)}`);
+  const outputs = await longestOutputs(await projectWith(files));
+  assertFits(t, outputs);
+  assertCappedNote(outputs);
 });

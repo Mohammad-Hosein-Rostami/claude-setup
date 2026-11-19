@@ -6,11 +6,12 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MAX_AGENT_FILES, projectAgentNote } from '../home/hooks/lib/project-agents.mjs';
+import { MAX_AGENT_FILES, NOTE_MAX_CHARS, projectAgentNote } from '../home/hooks/lib/project-agents.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 const MODE_HOOK = fileURLToPath(new URL('../home/hooks/mode.mjs', import.meta.url));
+const NOTE_COMMAND = fileURLToPath(new URL('../home/hooks/lib/project-agents.mjs', import.meta.url));
 const agent = (name, extra = '') => `---\nname: ${name}\ndescription: x\n${extra}---\nBody\n`;
 
 async function sandbox({ project = {}, personal = { runner: '', reviewer: '' } } = {}) {
@@ -145,13 +146,83 @@ test('file names are shown escaped on one line and a maxTurns value that is not 
   assert.ok(note.length < 1000, `note is ${note.length} chars`);
 });
 
-test('at most MAX_AGENT_FILES agent files are read; the note says how many more there are', async () => {
+const CAP_ADVICE = 'the lead deletes each frontmatter maxTurns: line in its own commit, no need to ask';
+const BOTH_ADVICE = `${CAP_ADVICE}; tell the owner (project repos keep only project config)`;
+const FILES_PAST_THE_LIMIT = 5;
+/** The whole note for these shown items, `more` files counted but not shown, and this advice. */
+const noteOf = (items, more, advice) => `Project agent files in .claude/agents: ${[...items, ...(more ? [`and ${more} more files not shown`] : [])].join(', ')} - ${advice}.`;
+
+test('at most MAX_AGENT_FILES agent files are read; the note keeps whole items within NOTE_MAX_CHARS and counts the rest', async () => {
   const { projectDir, personalDir } = await sandbox();
   const agents = join(projectDir, '.claude', 'agents');
-  for (let i = 0; i < MAX_AGENT_FILES + 5; i += 1) await writeFile(join(agents, `a${String(i).padStart(4, '0')}.md`), agent(`a${i}`, 'maxTurns: 3\n'));
+  const fileName = (i) => `a${String(i).padStart(4, '0')}.md`;
+  for (let i = 0; i < MAX_AGENT_FILES; i += 1) await writeFile(join(agents, fileName(i)), agent(`a${i}`, 'maxTurns: 3\n'));
+  // Past the limit: files that would add the tell-the-owner advice if they were read.
+  for (let i = MAX_AGENT_FILES; i < MAX_AGENT_FILES + FILES_PAST_THE_LIMIT; i += 1) await writeFile(join(agents, fileName(i)), agent('runner'));
   const note = projectAgentNote(projectDir, personalDir);
-  assert.equal(note.match(/\(maxTurns 3\)/g).length, MAX_AGENT_FILES);
-  assert.match(note, /and 5 more files not read/);
+  const shown = note.match(/\(maxTurns 3\)/g).length;
+  const items = Array.from({ length: shown }, (_, i) => `${fileName(i)} (maxTurns 3)`);
+  assert.equal(note, noteOf(items, MAX_AGENT_FILES + FILES_PAST_THE_LIMIT - shown, CAP_ADVICE));
+  assert.doesNotMatch(note, /tell the owner/, 'a file past MAX_AGENT_FILES is not read');
+  assert.ok(note.length <= NOTE_MAX_CHARS, `note is ${note.length} chars`);
+  assert.ok(note.length + `, ${fileName(shown)} (maxTurns 3)`.length > NOTE_MAX_CHARS, 'every item that fits is shown');
+});
+
+test('the advice comes from every file read, also from one the capped note does not show', async () => {
+  const { projectDir, personalDir } = await sandbox();
+  const agents = join(projectDir, '.claude', 'agents');
+  for (let i = 0; i < MAX_AGENT_FILES - 1; i += 1) await writeFile(join(agents, `a${String(i).padStart(4, '0')}.md`), agent(`a${i}`, 'maxTurns: 3\n'));
+  await writeFile(join(agents, 'z-last.md'), agent('runner'));
+  const note = projectAgentNote(projectDir, personalDir);
+  assert.doesNotMatch(note, /z-last\.md/);
+  assert.ok(note.endsWith(` more files not shown - ${BOTH_ADVICE}.`), note);
+  assert.ok(note.length <= NOTE_MAX_CHARS, `note is ${note.length} chars`);
+});
+
+// The worst files for the note's length: the longest maxTurns number it shows plus a shadowed personal agent, under the longest names.
+const WORST_REASONS = '(maxTurns 999999, shadows the personal agent)';
+const CONTROL_CHARS_IN_NAME = 80; // more than the 64 characters of a name the note shows
+const CONTROL_CHARS_SHOWN = 61; // 64 less the three index digits
+const index3 = (i) => String(i).padStart(3, '0');
+const escapedName = (i) => `${index3(i)}${'\u0001'.repeat(CONTROL_CHARS_IN_NAME)}.md`;
+const escapedItem = (i) => `"${index3(i)}${'\\u0001'.repeat(CONTROL_CHARS_SHOWN)}..." ${WORST_REASONS}`;
+
+async function worstSandbox(fileNames) {
+  const made = await sandbox();
+  for (const file of fileNames) await writeFile(join(made.projectDir, '.claude', 'agents', file), agent('reviewer', 'maxTurns: 999999\n'));
+  return made;
+}
+
+test('worst case with plain names: MAX_AGENT_FILES files with 64-char names give a capped note with the advice and the count', async () => {
+  const names = Array.from({ length: MAX_AGENT_FILES }, (_, i) => `${index3(i)}${'x'.repeat(61)}.md`);
+  const { projectDir, personalDir } = await worstSandbox(names);
+  const note = projectAgentNote(projectDir, personalDir);
+  const shown = note.split(WORST_REASONS).length - 1;
+  assert.ok(shown >= 1 && note.length <= NOTE_MAX_CHARS, `note is ${note.length} chars with ${shown} items`);
+  assert.equal(note, noteOf(names.slice(0, shown).map((file) => `${file} ${WORST_REASONS}`), MAX_AGENT_FILES - shown, BOTH_ADVICE));
+  const command = spawnSync(process.execPath, [NOTE_COMMAND, projectDir, personalDir], { encoding: 'utf8' });
+  assert.equal(command.stdout, `${note}\n`, 'doctor.sh runs the file as a command and gets the same capped note');
+});
+
+test('worst case with escaped names: files past MAX_AGENT_FILES give a capped note that never stops inside a \\u escape', { skip: !POSIX && 'control characters in file names are POSIX only' }, async () => {
+  const total = MAX_AGENT_FILES + FILES_PAST_THE_LIMIT;
+  const { projectDir, personalDir } = await worstSandbox(Array.from({ length: total }, (_, i) => escapedName(i)));
+  const note = projectAgentNote(projectDir, personalDir);
+  const shown = note.split(WORST_REASONS).length - 1;
+  assert.ok(shown >= 1 && note.length <= NOTE_MAX_CHARS, `note is ${note.length} chars with ${shown} items`);
+  assert.equal(note, noteOf(Array.from({ length: shown }, (_, i) => escapedItem(i)), total - shown, BOTH_ADVICE));
+  assert.doesNotMatch(note, /\\u(?![0-9a-f]{4})/, 'every \\u escape is whole');
+});
+
+test('one worst escaped item is still shown whole, without a count', { skip: !POSIX && 'control characters in file names are POSIX only' }, async () => {
+  const onlyControls = `${'\u0001'.repeat(CONTROL_CHARS_IN_NAME)}.md`; // no index digits: all 64 shown characters are escapes
+  const shownAs = { [escapedName(0)]: escapedItem(0), [onlyControls]: `"${'\\u0001'.repeat(64)}..." ${WORST_REASONS}` };
+  for (const [file, item] of Object.entries(shownAs)) {
+    const { projectDir, personalDir } = await worstSandbox([file]);
+    const note = projectAgentNote(projectDir, personalDir);
+    assert.equal(note, noteOf([item], 0, BOTH_ADVICE));
+    assert.ok(note.length <= NOTE_MAX_CHARS, `note is ${note.length} chars`);
+  }
 });
 
 test('the note names the folder relative to the project, so its length does not grow with the path', async () => {
