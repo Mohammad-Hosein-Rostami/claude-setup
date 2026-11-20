@@ -153,6 +153,8 @@ test('each bounce class is bounced the first time, with a backstop-only reason c
     for (const reason of ask.reasons) assert.equal(reasonClass(`${reason} (matched in raw text)`), reasonClass(reason), reason);
   }
   assert.equal(reasonClass(GUARD_ERROR_REASON), 'guard error');
+  assert.equal(reasonClass(`${GUARD_ERROR_REASON}: TypeError`), 'guard error', 'the reason the hook writes after its own failure names the error class');
+  assert.equal(reasonClass(`${GUARD_ERROR_REASON}: not a class name`), undefined);
   const besideWholeFolder = bounceText(decide(`${VARIABLE_COMMAND}; rm -rf *`, ctx).reasons);
   assert.match(besideWholeFolder, /will still ask the owner for: rm -r that empties a whole folder\./);
   assert.doesNotMatch(besideWholeFolder, /another guard rule/);

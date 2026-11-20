@@ -1,12 +1,13 @@
 // Filters guard-log lines (~/.claude/logs/guard.jsonl) down to the ones a watcher should be woken for.
 // Exports: guardAction(rawLine, watched) -> string | undefined, watched = Map<sessionId, label>.
-// Printed: outcome deny, timeout, no-gui or dialog-failed, for a watched session only. A secret-ask that timed out or had no
+// Printed: outcome deny, timeout, no-gui, dialog-failed or guard-error (the Bash guard itself failed and fell back to the plain ask: the
+// owner must look at the guard), for a watched session only. A secret-ask that timed out or had no
 // dialog is skipped (the guard goes ahead as Allow by design); a secret-ask deny is printed.
 // Invariants: never prints the command whole: it is masked (lib/mask.mjs, which starts from the guard's own maskSecrets), flattened and cut to 60 chars;
 // the reason is masked and cut too; control characters become spaces so one record is one notification line.
 import { maskText } from './mask.mjs';
 
-const REPORTED_OUTCOMES = new Set(['deny', 'timeout', 'no-gui', 'dialog-failed']);
+const REPORTED_OUTCOMES = new Set(['deny', 'timeout', 'no-gui', 'dialog-failed', 'guard-error']);
 const SECRET_ASK = 'literal password/token';
 const COMMAND_CHARS = 60;
 const REASON_CHARS = 120;

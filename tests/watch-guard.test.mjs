@@ -19,6 +19,11 @@ test('deny, no-gui and dialog-failed are printed; allow, remembered and unknown 
   for (const outcome of ['allow', 'remembered', 'weird']) assert.equal(guardAction(guardLine({ outcome }), WATCHED), undefined, outcome);
 });
 
+test('a guard-error line is printed: the guard itself failed, and that is the one event where the owner must act', () => {
+  const text = guardAction(guardLine({ outcome: 'guard-error', reason: 'guard error: TypeError', command: '' }), WATCHED);
+  assert.equal(text, 'aaaaaaaa: GUARD guard-error pre-bash-guard: guard error: TypeError | ');
+});
+
 test('another session is skipped, as is a line with no session', () => {
   assert.equal(guardAction(guardLine({ session: OTHER }), WATCHED), undefined);
   assert.equal(guardAction(guardLine({ session: undefined }), WATCHED), undefined);
