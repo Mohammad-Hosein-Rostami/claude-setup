@@ -47,6 +47,8 @@ const BLANKS = /[ \t\n]+/; // where bash splits an unquoted variable's value int
 /** Work budget for one rm target: PATH_MAX is 4096 on Linux and 1024 on macOS, so a longer word is no path a real command names. */
 export const MAX_TARGET_CHARS = 4096;
 const MAX_SHOWN_TARGET_CHARS = 120; // how much of a target a reason repeats: the reason goes into the dialog and back to the model
+const LINE_BREAKS = /[\r\n]+/g;
+const LINE_BREAK_MARK = '⏎'; // a raw line break in a target would split the reason in the CLI prompt and in the text the model reads
 const prefixesOf = (word) => Array.from(word, (_, index) => word.slice(0, index + 1));
 /**
  * An rm option that deletes recursively: `-r`, `-R`, a cluster holding one (`-rf`, `-fR`), `--recursive`, or a prefix of it (`--rec`, `--r`):
@@ -213,7 +215,7 @@ function emptiesWholeFolder(rawTarget, cwd, project, vars) {
 
 /** A target as a reason shows it: without the quote mark, and only its start when it is long (the agent wrote it; it is not ours to repeat in full). */
 function shown(target) {
-  const text = target.replace(QUOTED_MARK, '');
+  const text = target.replace(QUOTED_MARK, '').replace(LINE_BREAKS, LINE_BREAK_MARK);
   return text.length > MAX_SHOWN_TARGET_CHARS ? `${text.slice(0, MAX_SHOWN_TARGET_CHARS)}… (${text.length} characters)` : text;
 }
 
