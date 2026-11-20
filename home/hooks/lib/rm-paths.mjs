@@ -12,7 +12,8 @@
 // other value is unknown. `..` is resolved lexically after substitution, so `$D/..` is outside the mktemp directory.
 // Brace expansion in targets (`{/,x}`) is expanded first; one that cannot be listed asks.
 // `$(git rev-parse --show-toplevel)` counts as the project root from a directory inside the project (`rm -rf "$(git rev-parse --show-toplevel)/dist"`).
-// Only a recursive rm asks about an unknown or outside target; `rm -f x` of one file is not judged here.
+// Only a recursive rm asks about an unknown or outside target; `rm -f x` of one file is not judged here. An rm whose options the guard
+// cannot read counts as recursive (mayBeRecursive): `-$X`, `"$@"`, `"${a[@]}"`, or one variable where the options stand (`rm $F ~`).
 // Inside the project a recursive rm still asks when it empties a whole folder: the working directory itself, or a bare glob (`*`, `./*`,
 // `.*`, `?`, `[a-z]*`) of the working directory, the project root, home, `/` or a temp root (`/tmp/*` empties every session's scratch folder).
 // A glob with a name part (`*.log`) or of a sub-folder does not.
@@ -226,6 +227,22 @@ export function withoutRedirects(args) {
   return out;
 }
 
+const EXPANSION = /[$`]/;
+const MANY_WORDS = /\$[@*]|\[[@*]\]\}/; // `"$@"`, `$*`, `"${a[@]}"`: any number of words, options among them
+const WHOLE_EXPANSION = /^\$(?:\w+|\{[^}]*\})$/; // a word that is one variable and nothing else
+
+/**
+ * True when the rm deletes recursively, or may once the shell has filled in its words: an option word with an expansion in it (`-$X`,
+ * `-${X:-r}f`), a word that stands for any number of words (`"$@"`, `"${a[@]}"`), or a word that is one variable where the options
+ * stand, with more words after it (`rm $F ~` with F=-rf). The guard cannot read these values, so it judges the targets as for `rm -r`.
+ */
+function mayBeRecursive(args) {
+  if (flagsOf(args).some((flag) => RECURSIVE_FLAG.test(flag) || EXPANSION.test(flag))) return true;
+  if (args.some((word) => MANY_WORDS.test(word))) return true;
+  const first = args.findIndex((word) => !word.startsWith('-'));
+  return first !== -1 && first < args.length - 1 && WHOLE_EXPANSION.test(args[first]);
+}
+
 /**
  * @param {string[]} args words after `rm`
  * @param {{cwd: string | null, project: string, vars: Map<string, string>, splitWords?: Set<string>, groupTargets?: string[]}} env the
@@ -233,7 +250,7 @@ export function withoutRedirects(args) {
  * @returns {string | undefined} ask reason when a recursive rm targets something outside the project and the temp dirs (or an unknown variable)
  */
 export function checkRm(args, { cwd, project, vars, splitWords, groupTargets = [] }) {
-  if (!flagsOf(args).some((f) => RECURSIVE_FLAG.test(f))) return undefined;
+  if (!mayBeRecursive(args)) return undefined;
   const words = [...withoutRedirects(args).filter((a) => !a.startsWith('-')), ...groupTargets].flatMap((word) => bashReadings(word, splitWords));
   const long = words.find((word) => word.length > MAX_TARGET_CHARS);
   if (long !== undefined) return destructive(`rm -r with a target too long to check (${long.length} characters, the guard reads up to ${MAX_TARGET_CHARS})`);

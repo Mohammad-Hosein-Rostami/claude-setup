@@ -28,6 +28,29 @@ const NOT_A_GROUP = [
   `${RM} -f (*)`, // not recursive: not judged here
 ];
 
+// R2-89..93: the option that makes the rm recursive comes out of an expansion the guard cannot read
+const OPTIONS_FROM_AN_EXPANSION = [
+  `${RM} -\${X:-r}f ~`,
+  `${RM} -$X ~`,
+  `${RM} -$X /etc/x`,
+  `set -- -rf ~; ${RM} "$@"`,
+  `set -- -rf /etc/x; ${RM} $*`,
+  `a=(-rf ~); ${RM} "\${a[@]}"`,
+  `a=(-rf ~); ${RM} \${a[*]}`,
+  `printf -v F %s -rf; ${RM} $F ~`,
+  `${RM} "$F" /etc/x`,
+  `${RM} -f $F /etc/x`,
+];
+const NOT_JUDGED_AS_RECURSIVE = [`${RM} "$LOG"`, `${RM} -f "$LOG"`, `${RM} -f a.txt "$B"`, `${RM} -f /etc/x`, `${RM} -$X dist`, `${RM} -f "$TMPDIR"/a "$TMPDIR"/b`];
+
+test('an rm whose options come out of an expansion is judged as recursive: a target outside the project asks', () => {
+  for (const command of OPTIONS_FROM_AN_EXPANSION) assert.ok(decide(command, atRoot).reasons?.some((reason) => /^DESTRUCTIVE: rm -r outside the project \(/.test(reason)), command);
+});
+
+test('one variable as the only or the last word of an rm is a file name, and a readable target inside the project stays silent', () => {
+  for (const command of NOT_JUDGED_AS_RECURSIVE) assert.deepEqual(decide(command, atRoot), { allow: true }, command);
+});
+
 test('each branch of a glob group after a recursive rm is judged as a target: a bare glob among them empties the folder', () => {
   for (const command of GROUPS_THAT_EMPTY_THE_FOLDER) assert.match(firstReason(command), WHOLE_FOLDER, command);
 });
