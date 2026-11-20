@@ -118,6 +118,19 @@ test('a cd inside its own && chain is followed as before, and an absolute target
   }
 });
 
+// found by the differential probe against the tip before this round: with the folder unknown these stopped asking
+test('an absolute target that names a folder the line may be in, or a bare glob of it, still asks as a whole folder', () => {
+  const WHOLE_FOLDER = /^DESTRUCTIVE: rm -r that empties a whole folder \(/;
+  const inSrc = { cwd: resolve(PROJECT, 'src'), project: PROJECT };
+  const src = resolve(PROJECT, 'src');
+  const WHERE_A_CD_MAY_HAVE_LED = [`cd src; ${RM} -rf ${src}`, `(cd src); (${RM} -rf -- ${src})`, `cd src\n${RM} -rf ${src}/*`, `true || cd src; ${RM} -rf ${src}/.*`,
+    `(cd src) && ${RM} -rf ${src}/[a-z]*`, `cd src | cat; { ${RM} -R ${src}/*; } | tee log`, `cd +0 && ${RM} -rf ${PROJECT}/*`];
+  for (const command of WHERE_A_CD_MAY_HAVE_LED) assert.match(firstReason(command), WHOLE_FOLDER, command);
+  // a cd in a subshell does not move the line: the folder it started in is held against the target as well
+  for (const command of [`(cd ..); ${RM} -rf ${src}/*`, `cd .. | cat; ${RM} -rf ${src}`]) assert.match(firstReason(command, inSrc), WHOLE_FOLDER, command);
+  assert.deepEqual(decide(`cd src; ${RM} -rf ${src}/gen`, atRoot), { allow: true }, 'a sub-folder of it is an ordinary target');
+});
+
 test('both parsers record the operators in front of each segment, the same way', () => {
   const joins = (parse, line) => parse(line).segs.map((seg) => seg.joinedBy);
   for (const parse of [tokenize, lex]) assert.equal(parse('a b && c d').segs[1].join(' '), 'c d', 'the flag does not hide Array.join on a segment');

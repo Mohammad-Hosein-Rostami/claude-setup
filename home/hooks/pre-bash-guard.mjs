@@ -178,7 +178,7 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
     const parsed = asGitSubcommand(commandOf(words));
     commands.push({ ...parsed, piped: seg.piped === true }); // credential-send follows a pipe into ssh
     enterSegment(folder, seg, parsed, words);
-    const env = { cwd: folder.dir, groupTargets: groupBranches(segs, index), project, vars: scope.vars, splitWords: scope.splitWords, prodHosts, parse, depth: depth + 1, judged, line, work };
+    const env = { cwd: folder.dir, maybeCwds: [folder.followed, folder.start], groupTargets: groupBranches(segs, index), project, vars: scope.vars, splitWords: scope.splitWords, prodHosts, parse, depth: depth + 1, judged, line, work };
     reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript }), ...gitRunValueReasons(words, parsed, env, reasonsOf), ...unreadableNameReasons(parsed.cmd, command, prodHosts));
     if (parsed.cmd !== undefined) {
       reasons.push(...checkCommand({ ...parsed, before: words.slice(0, parsed.at) }, env, segs[index + 1] ?? []));

@@ -216,18 +216,19 @@ function insideProject(rawTarget, cwd, project, vars) {
  * True when the target is the working directory itself, or a bare glob (also one below other bare globs, lib/bare-glob.mjs) whose folder is
  * the working directory, the project root, home, a temp root or a file-system root: removing it empties that whole folder even though every entry is
  * inside the project. Unknown targets return false (insideProject already asks about them). After a `cd` the guard could not follow
- * (`cwd` null) an absolute target is still judged, against the project root, home and the roots; a relative one was asked about already.
+ * (`cwd` null) an absolute target is still judged, against the project root, home, the roots and `heres`, the folders the line may be in (lib/cd-folder.mjs); a relative one was asked about already.
  */
-function emptiesWholeFolder(rawTarget, cwd, project, vars) {
+function emptiesWholeFolder(rawTarget, { cwd, project, heres }, vars) {
   const target = expandedTarget(rawTarget, cwd, project, vars).replace(QUOTED_MARK, '');
   if (target.startsWith('~') || target.includes('$')) return false;
   const folder = globbedFolder(target);
   const native = nativePath(folder ?? target);
   if (cwd === null && !isAbsolute(native)) return false;
   const abs = resolve(cwd ?? native, native);
-  if (folder === undefined) return cwd !== null && sameFile(abs, resolve(nativePath(cwd)));
-  const wholeFolders = [cwd, project, homedir(), ...SAFE_TEMP_ROOTS].filter((whole) => whole !== null).map((whole) => resolve(nativePath(whole)));
-  return wholeFolders.some((whole) => sameFile(abs, whole)) || sameFile(abs, parse(abs).root) || GIT_BASH_DRIVE_ROOT.test(abs);
+  const isHere = heres.some((here) => sameFile(abs, resolve(nativePath(here))));
+  if (folder === undefined) return isHere;
+  const wholeFolders = [project, homedir(), ...SAFE_TEMP_ROOTS].map((whole) => resolve(nativePath(whole)));
+  return isHere || wholeFolders.some((whole) => sameFile(abs, whole)) || sameFile(abs, parse(abs).root) || GIT_BASH_DRIVE_ROOT.test(abs);
 }
 
 /** A target as a reason shows it: without the quote mark, and only its start when it is long (the agent wrote it; it is not ours to repeat in full). */
@@ -282,7 +283,7 @@ function mayBeRecursive(args) {
  *   work is the line's budget (newWork), a fresh one when the caller has none
  * @returns {string | undefined} ask reason when a recursive rm targets something outside the project and the temp dirs (or an unknown variable)
  */
-export function checkRm(args, { cwd, project, vars, splitWords, groupTargets = [], work = newWork() }) {
+export function checkRm(args, { cwd, project, vars, splitWords, groupTargets = [], work = newWork(), maybeCwds = [] }) {
   if (work.spent) return TOO_COMPLEX_REASON;
   if (!mayBeRecursive(args)) return undefined;
   const words = readingsWithin(work, [...withoutRedirects(args).filter((a) => !a.startsWith('-')), ...groupTargets], splitWords);
@@ -293,6 +294,7 @@ export function checkRm(args, { cwd, project, vars, splitWords, groupTargets = [
   const judged = words.flatMap(expandBraces).flatMap((target) => readingsOf(target, cwd, vars).map((reading) => ({ target, reading })));
   const outside = judged.find(({ target, reading }) => !insideProject(target, cwd, project, reading));
   if (outside !== undefined) return destructive(`rm -r outside the project (${shown(outside.target)})`);
-  const whole = judged.find(({ target, reading }) => emptiesWholeFolder(target, cwd, project, reading));
+  const heres = (cwd === null ? maybeCwds : [cwd]).filter((here) => here !== null); // an unknown folder: every folder the line may be in
+  const whole = judged.find(({ target, reading }) => emptiesWholeFolder(target, { cwd, project, heres }, reading));
   return whole === undefined ? undefined : destructive(`rm -r that empties a whole folder (${shown(whole.target)}): the working directory itself, or a bare glob of it, the project root, home, a temp root or /`);
 }
