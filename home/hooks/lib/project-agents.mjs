@@ -113,7 +113,7 @@ function addAgent(found, entry, { name, turns }, { agents, inRepository }) {
   if (reasons.length === 0) return;
   if (set) found.shadowed[set].add(name);
   if (byHand) found.byHand += 1;
-  found.hasCap ||= turns !== '' && inRepository;
+  found.hasCap ||= turns !== '' && !byHand; // "check by hand" means edit nothing, so such a file never brings the delete advice
   const group = (set && 'shadowing') || (like && 'suspect') || (byHand && 'byHand') || 'capping';
   found.groups[group].push(`${shownPath(entry.folder, entry.name)} (${reasons.join(', ')})`);
 }

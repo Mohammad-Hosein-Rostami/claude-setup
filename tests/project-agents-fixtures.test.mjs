@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { projectAgentNote } from '../home/hooks/lib/project-agents.mjs';
 import { FRONTMATTER_ROWS } from './project-agents-frontmatter-rows.mjs';
-import { POSIX, noteOf, sandbox } from './project-agents-helpers.mjs';
+import { DISK_IGNORES_CASE, POSIX, noteOf, sandbox } from './project-agents-helpers.mjs';
 import { PLACE_ROWS } from './project-agents-place-rows.mjs';
 
 const REAL_PERSONAL_AGENTS_DIR = fileURLToPath(new URL('../home/agents', import.meta.url));
@@ -42,14 +42,15 @@ async function noteForRow(row) {
     await writeFile(join(box.agentsDir, path), text);
   }
   const built = await row.build?.(box);
-  return projectAgentNote(built?.cwd ?? box.projectDir, box.personalDir);
+  return projectAgentNote(built?.cwd ?? box.projectDir, built?.personalDir ?? box.personalDir);
 }
 
 test('every fixture of the review rounds lands in its class, with the exact note', async (t) => {
   const rows = [...FRONTMATTER_ROWS, ...PLACE_ROWS];
   assert.ok(Object.keys(CLASS_MARKS).every((name) => rows.some((row) => row.classes.includes(name))), 'every class has a row');
   for (const row of rows) {
-    await t.test(`${row.classes.join(' + ')}: ${row.what} (${row.id})`, { skip: row.posix && !POSIX && 'needs links or names Windows lacks' }, async () => {
+    const skip = (row.posix && !POSIX && 'needs links or names Windows lacks') || (row.ignoresCase && !DISK_IGNORES_CASE && 'this disk is case-sensitive: a folder has no second spelling here');
+    await t.test(`${row.classes.join(' + ')}: ${row.what} (${row.id})`, { skip }, async () => {
       const note = await noteForRow(row);
       assert.equal(note, row.note === '' ? '' : noteOf(row.note), 'the whole note');
       for (const name of row.classes) for (const mark of CLASS_MARKS[name]) assert.match(note, mark, `class ${name}`);
