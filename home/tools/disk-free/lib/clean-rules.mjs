@@ -4,7 +4,11 @@
 // `.removing-<pid>-<name>` (a session may have been resumed since the scan); `where` is the path to look at. A `.removing-*` folder left by a
 // killed run is found by the rules like the folder it was and removed only when the same checks pass for its original name. Rules only
 // look (they remove nothing), stream (nothing holds a whole folder listing) and stop when context.timeUp() says the scan time is over.
-//   session-folders  /private/tmp/claude-<uid>/<project>/<session-id>/ of a session that is not running, whose transcript is idle for 3 days (or missing) and whose folder is idle for 3 days
+//   session-folders  /private/tmp/claude-<uid>/<project>/<session-id>/ of a session that is not running, whose transcript is found in the scanned
+//                    projects folder and idle for 3 days, and whose folder is idle for 3 days. With no transcript found the session is unknown:
+//                    the scratchpad root is shared by every config dir of the user (CLAUDE_CONFIG_DIR), while the transcripts and the registry
+//                    read here are one config dir's, so the folder may be a running session's of another one. It is kept, counted in
+//                    context.keptUnknown, until nothing anywhere in it was modified for 30 days. Found or unknown is decided again on every look.
 //   test-temp        os.tmpdir() folders named by this repo's test prefixes, idle for 1 day
 //   temp-projects    ~/.claude/projects/<slug> folders that Claude Code made for a throwaway temp path, idle for 3 days
 //   hook-state       os.tmpdir()/claude-post-edit and /claude-skill-router: per-session counters and markers of the hooks, idle for 3 days
@@ -21,6 +25,7 @@ import { OLD_TEST_PREFIXES } from './test-temp-prefixes.mjs';
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 export const AGE = {
   sessionFolderMs: 3 * MS_PER_DAY, // the owner's "not modified for 3 days"
+  unknownSessionFolderMs: 30 * MS_PER_DAY, // a session folder with no transcript in the scanned projects folder: maybe another config dir's session, so much longer
   testTempMs: 1 * MS_PER_DAY,
   tempProjectMs: 3 * MS_PER_DAY,
   hookStateMs: 3 * MS_PER_DAY,
@@ -84,7 +89,8 @@ async function transcriptTimes(context) {
   return times;
 }
 
-const newestOf = (files) => Math.max(0, ...files.map((file) => mtimeOf(file) ?? 0));
+/** Modification times (ms) of the files that exist; empty when none does. */
+const mtimesOf = (files) => files.map(mtimeOf).filter((mtimeMs) => mtimeMs !== null);
 
 async function* sessionFolders(context) {
   const trusted = trustedRoot(context, context.claudeTmp);
@@ -105,11 +111,16 @@ async function* sessionFolders(context) {
       if (!SESSION_ID.test(id) || id === context.session || id === newest || ownedFolder(path) === null) continue;
       // The transcript of the same project folder is looked at again: a resumed session may have made it since the scan.
       const transcriptFiles = () => [...(times.get(id)?.files ?? []), join(context.projects, project.name, `${id}.jsonl`)];
-      const isIdle = async (liveNow, where) => {
-        if (liveNow.has(id) || newestOf(transcriptFiles()) >= cutoff) return false;
-        return !(await touchedSince(where, cutoff));
+      // 'idle', 'busy', or 'unknown' for a folder that is kept only because no transcript of its session is found (it may be another config dir's).
+      const stateOf = async (liveNow, where) => {
+        if (liveNow.has(id)) return 'busy';
+        const transcriptMtimes = mtimesOf(transcriptFiles());
+        if (transcriptMtimes.length === 0) return (await touchedSince(where, context.nowMs - AGE.unknownSessionFolderMs)) ? 'unknown' : 'idle';
+        return Math.max(...transcriptMtimes) >= cutoff || (await touchedSince(where, cutoff)) ? 'busy' : 'idle';
       };
-      if (await isIdle(live, path)) yield { path, root, stillRemovable: async (where = path) => isIdle(await liveSessionIds(context.sessions), where) };
+      const state = await stateOf(live, path);
+      if (state === 'unknown') context.keptUnknown = (context.keptUnknown ?? 0) + 1;
+      if (state === 'idle') yield { path, root, stillRemovable: async (where = path) => (await stateOf(await liveSessionIds(context.sessions), where)) === 'idle' };
     }
   }
 }

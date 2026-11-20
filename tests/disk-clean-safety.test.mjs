@@ -64,6 +64,7 @@ test('a running session keeps its throwaway-project folder, also when it has no 
 test('a session folder with a recent file deep inside is kept; the same folder idle goes (touchedSince looks at every entry and every level)', async () => {
   const w = world();
   transcript(w, '-proj', NEWEST, 0);
+  for (const id of [OLD, OTHER]) transcript(w, '-proj', id, 10);
   const deep = sessionFolder(w, OLD, 10);
   const idle = sessionFolder(w, OTHER, 10);
   mkdirSync(join(deep, 'a', 'b'), { recursive: true });
@@ -206,7 +207,8 @@ test('session folders are kept when the transcripts folder or the sessions regis
   for (const missing of [{ projects: join(notAFolder, '..', 'none') }, { sessions: join(notAFolder, '..', 'none') }, { sessions: 'relative/sessions' }, { sessions: 'tests' },  { projects: undefined }, { sessions: undefined }, { sessions: notAFolder }]) {
     const w = world();
     transcript(w, '-proj', NEWEST, 0);
-    const path = sessionFolder(w, OLD, 10);
+    transcript(w, '-proj', OLD, 31); // idle by both rules: with its transcript (the registry cases) and without one (the transcripts folder cases, 30 days)
+    const path = sessionFolder(w, OLD, 31);
     const summary = await runClean({ ...w.options, ...missing });
     assert.deepEqual([existsSync(path), summary.removed, summary.refused.length >= 1], [true, 0, true], JSON.stringify(missing));
   }
@@ -216,6 +218,7 @@ test('an empty or relative home folder makes every rule refuse its root: nothing
   for (const home of ['', 'relative-home']) {
     const w = world();
     transcript(w, '-proj', NEWEST, 0);
+    transcript(w, '-proj', OLD, 10);
     const session = sessionFolder(w, OLD, 10);
     const testTemp = folder(join(w.tmp, 'cs-run-AbCdEf'), { days: 3 });
     const summary = await runClean({ ...w.options, home });
@@ -225,9 +228,10 @@ test('an empty or relative home folder makes every rule refuse its root: nothing
 
 test('CLI: HOME empty or CLAUDE_CONFIG_DIR set means no session folder is removed (the default transcripts and registry are not where Claude Code keeps them)', posix, () => {
   const w = world();
-  transcript(w, '-proj', NEWEST, 0);
+  const defaults = { projects: join(w.home, '.claude', 'projects') }; // the CLI is given no --projects: it reads the default folder of HOME
+  transcript(defaults, '-proj', NEWEST, 0);
+  transcript(defaults, '-proj', OLD, 10);
   const path = sessionFolder(w, OLD, 10);
-  mkdirSync(join(w.home, '.claude', 'projects'), { recursive: true });
   mkdirSync(join(w.home, '.claude', 'sessions'), { recursive: true });
   const args = [TOOL, '--apply', '--claude-tmp', w.claudeTmp, '--tmp', w.tmp];
   const withEnv = (env) => spawnSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: '', HOME: w.home, ...env } });

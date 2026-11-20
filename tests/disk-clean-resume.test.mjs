@@ -75,7 +75,7 @@ test('a test temp folder written to between the scan and the first look is kept'
 test('a session whose transcript appears between the scan and the first look keeps its folder (the transcript of its project is looked at again)', posix, async () => {
   const w = world();
   transcript(w, '-proj', NEWEST, 0);
-  const path = sessionFolder(w, OLD, 10); // no transcript at the scan: the folder alone is idle
+  const path = sessionFolder(w, OLD, 31); // no transcript at the scan: only a folder idle for 30 days is found then
   const summary = await runClean({ ...w.options, beforeRemove: () => transcript(w, '-proj', OLD, 0) });
   assert.deepEqual([existsSync(join(path, 'f.txt')), summary.changed, summary.removed], [true, 1, 0]);
 });

@@ -70,6 +70,7 @@ test('a shared sticky root (like /tmp) counts only when root owns it: then cs-ru
 test('the session folders and throwaway projects rules refuse a shared sticky root: their roots must be the user\'s own', posix, async () => {
   const w = world();
   transcript(w, '-proj', NEWEST, 0);
+  transcript(w, '-proj', OLD, 10);
   const path = sessionFolder(w, OLD, 10);
   chmodSync(w.claudeTmp, 0o1777);
   const summary = await withFakeStat(w.claudeTmp, ROOT_FIELDS, () => runClean(w.options));
@@ -130,6 +131,7 @@ test('removeInside keeps a folder item that others can write to, refuses the roo
 test('an item is kept (listed, left under its aside name) when a folder inside is writable by others; the other items still go', posix, async () => {
   const w = world();
   transcript(w, '-proj', NEWEST, 0);
+  for (const id of [OLD, OTHER]) transcript(w, '-proj', id, 10);
   const unsafeInside = sessionFolder(w, OLD, 10);
   mkdirSync(join(unsafeInside, 'open'));
   writeFileSync(join(unsafeInside, 'open', 'f'), 'x');
@@ -146,6 +148,7 @@ test('every rule yields the real path of its root, also when the configured root
   symlinkSync(w.root, join(w.root, 'via-link'));
   const via = (name) => join(w.root, 'via-link', name);
   transcript(w, '-proj', NEWEST, 0);
+  transcript(w, '-proj', OLD, 10);
   sessionFolder(w, OLD, 10);
   folder(join(w.tmp, 'cs-run-Viaaaa'), { days: 3 });
   folder(join(w.projects, '-tmp-via'), { days: 10 });
@@ -190,6 +193,7 @@ test('removeInside refuses a link as the item, a root that another user owns, an
 test('a rule does not even find a folder that another user owns: not the project folder, the session folder, the throwaway project or the test temp folder', posix, async () => {
   const w = world();
   transcript(w, '-proj', NEWEST, 0);
+  transcript(w, '-proj', OLD, 10);
   const found = { session: sessionFolder(w, OLD, 10), project: folder(join(w.projects, '-tmp-x'), { days: 10 }), testTemp: folder(join(w.tmp, 'cs-run-AbCdEf'), { days: 3 }) };
   const itemsWith = async (path) => (await withFakeStat(path, { uid: OTHER_UID }, () => runClean({ ...w.options, apply: false }))).items;
   const normal = (await runClean({ ...w.options, apply: false })).items;

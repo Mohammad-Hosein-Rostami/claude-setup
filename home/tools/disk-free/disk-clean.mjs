@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // CLI of `disk-clean`: removes what Claude Code and this setup leave on the disk and nothing else. Dry run unless --apply.
 // Usage: disk-clean.mjs [--apply] [--json] [--session <id>] [--claude-tmp <dir>] [--projects <dir>] [--tmp <dir>] [--sessions <dir>] [--now <ms>] [--budget-ms <n>] [--scan-ms <n>]
-// Rules (lib/clean-rules.mjs): old session scratchpad folders, leftover test temp folders, throwaway-project folders in
+// Rules (lib/clean-rules.mjs): old session scratchpad folders (3 days idle; 30 days when the session's transcript is not in the projects folder read,
+//   because it may be a session of another config dir), leftover test temp folders, throwaway-project folders in
 //   ~/.claude/projects, old counters of the hooks in the temp folder. Never the current session (--session, else $CLAUDE_CODE_SESSION_ID
 //   or $CLAUDE_SESSION_ID, and always the session with the newest transcript) and never a running one (~/.claude/sessions/*.json with a live pid).
 //   Never follows a symlink; removes only what is owned by this user in folders closed to others (lib/safe-remove.mjs); refuses an unsafe root.
 //   Everything is looked at again right before it is removed: a session resumed during the run keeps its folder.
 //   A dry run stops looking after --scan-ms (default 30 s, a folder of a million entries is slow to read) and says so: the totals are then
 //   a lower bound. --apply has no scan limit (it runs in the background).
-// Output: what would go (or went) per rule with the item count and bytes; --json prints one line {apply, items, bytes, removed, changed, failed, refused, partial, rules}.
+// Output: what would go (or went) per rule with the item count and bytes; --json prints one line {apply, items, bytes, removed, changed, failed, refused, keptUnknown, partial, rules}.
 //   Measuring sizes stops at --budget-ms (default 20 s): later items are still counted and removed, their bytes are not added up and the totals say "partial".
 // --apply takes a lock file (~/.claude/state/disk-clean.run.lock): a second run at the same time does nothing (it says so and exits 0).
 // Exit codes: 0 ok, 1 something could not be removed, 2 usage error. An error on one item is listed and the run goes on with the next.
@@ -20,7 +21,7 @@ import { pathToFileURL } from 'node:url';
 import { claudeSessionRoot } from './disk-free.mjs';
 import { lstatOrNull, treeBytes } from './lib/clean-scan.mjs';
 import { releaseLock, takeLock } from './lib/lock-file.mjs';
-import { rulesFor } from './lib/clean-rules.mjs';
+import { AGE, rulesFor } from './lib/clean-rules.mjs';
 import { moveAside, moveBack, originalName, removeInside } from './lib/safe-remove.mjs';
 
 const EXIT_FAILED = 1;
@@ -29,6 +30,8 @@ const SAMPLE_PER_RULE = 5; // items listed per rule; the rest are only counted
 const DEFAULT_BUDGET_MS = 20_000;
 const DEFAULT_DRY_RUN_SCAN_MS = 30_000;
 const BYTES_PER_GB = 1024 ** 3;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const UNKNOWN_SESSION_IDLE_DAYS = AGE.unknownSessionFolderMs / MS_PER_DAY;
 const RUN_LOCK_STALE_MS = 6 * 60 * 60 * 1000; // a run takes minutes; a lock this old was left by a killed run
 const USAGE = 'usage: disk-clean.mjs [--apply] [--json] [--session <id>] [--claude-tmp <dir>] [--projects <dir>] [--tmp <dir>] [--sessions <dir>] [--now <ms>] [--budget-ms <n>] [--scan-ms <n>]';
 const VALUE_FLAGS = new Set(['--session', '--claude-tmp', '--projects', '--tmp', '--sessions', '--now', '--budget-ms', '--scan-ms']);
@@ -118,26 +121,28 @@ async function runRule(rule, context, summary) {
 /**
  * Runs the rules; with options.apply also removes what they find.
  * @param {object} options as parseArgs makes them (claudeTmp, projects, tmp, sessions, session, nowMs, budgetMs, scanMs, apply); beforeRemove(path) and afterMoveAside(path) are test hooks called before the first look and after the folder was renamed aside
- * @returns {Promise<{ items: number, bytes: number, removed: number, changed: number, failed: string[], refused: string[], partial: boolean, rules: object[] }>}
+ * @returns {Promise<{ items: number, bytes: number, removed: number, changed: number, failed: string[], refused: string[], keptUnknown: number, partial: boolean, rules: object[] }>}
+ *   keptUnknown counts the session folders kept only because their session's transcript is not in options.projects
  */
 export async function runClean(options) {
   const deadlineMs = Date.now() + options.budgetMs;
   const scanEndsAt = Date.now() + (options.scanMs ?? (options.apply ? Infinity : DEFAULT_DRY_RUN_SCAN_MS));
   let scanCutShort = false;
   const refused = [];
-  const context = { ...options, home: options.home ?? homedir(), refused, deadlineMs, timeUp: () => (scanCutShort ||= Date.now() > scanEndsAt) };
-  const summary = { items: 0, bytes: 0, removed: 0, changed: 0, failed: [], refused, rules: [], partial: false };
+  const context = { ...options, home: options.home ?? homedir(), refused, keptUnknown: 0, deadlineMs, timeUp: () => (scanCutShort ||= Date.now() > scanEndsAt) };
+  const summary = { items: 0, bytes: 0, removed: 0, changed: 0, failed: [], refused, keptUnknown: 0, rules: [], partial: false };
   for (const rule of rulesFor()) {
     await runRule(rule, context, summary);
     if (scanCutShort) break;
   }
+  summary.keptUnknown = context.keptUnknown;
   summary.partial ||= scanCutShort;
   return summary;
 }
 
 const gb = (bytes) => (bytes >= BYTES_PER_GB / 10 ? `${(bytes / BYTES_PER_GB).toFixed(2)} GB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`);
 
-function report(summary, apply) {
+function report(summary, { apply, projects }) {
   const lines = [`disk-clean${apply ? '' : ' (dry run)'}: ${summary.items} items, ${gb(summary.bytes)}${summary.partial ? ' or more' : ''} ${apply ? `found, ${summary.removed} removed` : 'can be removed'}`];
   for (const rule of summary.rules) {
     lines.push(`  ${rule.label}: ${rule.items} items, ${gb(rule.bytes)}`);
@@ -146,6 +151,7 @@ function report(summary, apply) {
   }
   for (const failure of summary.failed) lines.push(`  NOT removed: ${failure}`);
   for (const reason of summary.refused) lines.push(`  SKIPPED: ${reason}`);
+  if (summary.keptUnknown > 0) lines.push(`  ${summary.keptUnknown} session folder(s) kept: no transcript in ${projects} (maybe another config dir); removed after ${UNKNOWN_SESSION_IDLE_DAYS} idle days`);
   if (summary.changed > 0) lines.push(`  ${summary.changed} item(s) changed during the run (a session was resumed) and were kept.`);
   if (summary.partial) lines.push('Some totals are a lower bound: the scan or size-measuring time limit was reached (use --scan-ms and --budget-ms for more).');
   if (!apply && summary.items > 0) lines.push('Run again with --apply to remove them.');
@@ -172,8 +178,8 @@ async function runAndPrint(options) {
   const summary = await runClean(options);
   if (options.json) {
     const rules = Object.fromEntries(summary.rules.map((rule) => [rule.name, { items: rule.items, bytes: rule.bytes }]));
-    console.log(JSON.stringify({ apply: options.apply, items: summary.items, bytes: summary.bytes, removed: summary.removed, changed: summary.changed, failed: summary.failed.length, refused: summary.refused.length, partial: summary.partial, rules }));
-  } else console.log(report(summary, options.apply));
+    console.log(JSON.stringify({ apply: options.apply, items: summary.items, bytes: summary.bytes, removed: summary.removed, changed: summary.changed, failed: summary.failed.length, refused: summary.refused.length, keptUnknown: summary.keptUnknown, partial: summary.partial, rules }));
+  } else console.log(report(summary, options));
   return summary.failed.length > 0 ? EXIT_FAILED : 0;
 }
 

@@ -1,6 +1,7 @@
-// Shared by tests/disk-clean*.test.mjs. Exports: DAY_MS, ids (OLD, RECENT, ...), posix, world, ago, age, folder, sessionFolder, transcript, sessionFile, withFakeStat.
+// Shared by tests/disk-clean*.test.mjs. Exports: DAY_MS, ids (OLD, RECENT, ...), posix, world, cliEnv, ago, age, folder, sessionFolder, transcript, sessionFile, withFakeStat.
 // Every test builds a fake world (claude tmp, projects folder, temp folder, sessions folder) inside makeTempDir and passes those roots in:
-// the real folders are never read or touched. Times are set relative to `now`, so no test depends on the clock.
+// the real folders are never read or touched. A test that starts the CLI gives it cliEnv(w), so the folders the CLI takes from the
+// environment are the world's too. Times are set relative to `now`, so no test depends on the clock.
 import fs, { mkdirSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { join, resolve } from 'node:path';
@@ -26,6 +27,12 @@ export function world() {
   const now = Date.now();
   return { ...dirs, root, home, now, options: { ...dirs, home, nowMs: now, budgetMs: 5000, apply: true, session: undefined } };
 }
+
+/**
+ * The environment of a CLI run in a fake world: the home, the temp folder and the scratchpad root are the world's, never the real ones, and
+ * no other config dir is set. The temp folder is the world's root, so every root of the world lies under it (a root must be under the temp folder).
+ */
+export const cliEnv = (w, extra = {}) => ({ ...process.env, HOME: w.home, USERPROFILE: w.home, TMPDIR: w.root, TMP: w.root, TEMP: w.root, DISK_FREE_CLAUDE_TMP: w.claudeTmp, CLAUDE_CONFIG_DIR: '', ...extra });
 
 export const ago = (days) => new Date(Date.now() - days * DAY_MS);
 export const age = (path, days) => utimesSync(path, ago(days), ago(days));

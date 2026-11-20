@@ -7,7 +7,8 @@
 //   and is replaced by one breaker only). An empty or relative HOME skips the run.
 //   The stamp is written to a new file and renamed over the old one, the lock and the log are opened with O_NOFOLLOW and O_NONBLOCK, and
 //   a stamp or log that is a symlink, a FIFO or any other non-plain file is never read through, written to or waited on.
-//   The child gets a minimal environment (no tokens or other secrets). Test hooks: DISK_CLEAN_TOOL replaces the tool path, HOME the state and log folders.
+//   The child gets a minimal environment (no tokens or other secrets). CLAUDE_CONFIG_DIR is part of it: a hook started in a session of another
+//   config dir then tells the clean-up so, and the clean-up skips the rules that read ~/.claude (it would see none of that session's files). Test hooks: DISK_CLEAN_TOOL replaces the tool path, HOME the state and log folders.
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, realpathSync, renameSync, unlinkSync, writeSync } from 'node:fs';
@@ -21,8 +22,9 @@ const LOCK_STALE_MS = 60 * 1000; // the check and the stamp write take microseco
 const MAX_INPUT_BYTES = 1 << 20;
 const SESSION_ID = /^[\w-]{1,128}$/;
 const TOOL = fileURLToPath(new URL('../tools/disk-free/disk-clean.mjs', import.meta.url));
-// What the clean-up needs to find the folders it works in; anything else (tokens, API keys, secrets) stays behind.
-const CHILD_ENV_NAMES = ['HOME', 'USERPROFILE', 'TMPDIR', 'TMP', 'TEMP', 'SystemRoot', 'LANG', 'DISK_FREE_CLAUDE_TMP'];
+// What the clean-up needs to find the folders it works in, and to know that this session keeps its transcripts and registry in another config
+// dir (CLAUDE_CONFIG_DIR); anything else (tokens, API keys, secrets) stays behind.
+const CHILD_ENV_NAMES = ['HOME', 'USERPROFILE', 'TMPDIR', 'TMP', 'TEMP', 'SystemRoot', 'LANG', 'DISK_FREE_CLAUDE_TMP', 'CLAUDE_CONFIG_DIR'];
 const NO_FOLLOW = constants.O_NOFOLLOW ?? 0; // not defined on Windows
 const NO_BLOCK = constants.O_NONBLOCK ?? 0;
 const PRIVATE_FILE = 0o600;

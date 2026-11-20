@@ -14,7 +14,7 @@ import { age, CURRENT, folder, NEWEST, NO_TRANSCRIPT_OLD, NO_TRANSCRIPT_RECENT, 
 const TOOL = fileURLToPath(new URL('../home/tools/disk-free/disk-clean.mjs', import.meta.url));
 const LIB = fileURLToPath(new URL('../home/tools/disk-free/lib/', import.meta.url));
 
-test('session folders: removed when the transcript is idle for 3 days, or missing and the folder is; kept otherwise', async () => {
+test('session folders: removed when the transcript and the folder are idle for 3 days; kept when either is recent, and when no transcript is known (counted)', async () => {
   const w = world();
   const scratch = (id, days) => folder(join(w.claudeTmp, '-proj', id, 'scratchpad'), { days }) && join(w.claudeTmp, '-proj', id);
   transcript(w, '-proj', OLD, 4);
@@ -24,10 +24,11 @@ test('session folders: removed when the transcript is idle for 3 days, or missin
   for (const path of Object.values(folders)) age(path, path === folders.old || path === folders.noOld ? 4 : 1);
   const summary = await runClean(w.options);
   assert.equal(existsSync(folders.old), false);
-  assert.equal(existsSync(folders.noOld), false);
+  assert.equal(existsSync(folders.noOld), true, 'no transcript here: it may be a session of another config dir, so 4 idle days are not enough');
   assert.equal(existsSync(folders.recent), true);
   assert.equal(existsSync(folders.noRecent), true);
-  assert.equal(summary.rules.find((rule) => rule.name === 'session-folders').items, 2);
+  assert.equal(summary.rules.find((rule) => rule.name === 'session-folders').items, 1);
+  assert.equal(summary.keptUnknown, 2, 'both folders without a transcript are counted as kept');
   assert.ok(summary.bytes > 0);
 });
 

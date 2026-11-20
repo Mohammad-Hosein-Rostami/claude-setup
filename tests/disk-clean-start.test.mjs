@@ -1,6 +1,7 @@
 // Tests for home/hooks/disk-clean-start.mjs: the clean-up starts at most once per 24 h, only for a startup of the main session,
 // the stamp is written before the start, two starts at once run one clean-up, a stamp or log that is a link or a FIFO is not followed or waited
-// on, the child gets no secrets, and the hook exits at once while the clean-up is still running.
+// on, the child gets no secrets, and the hook exits at once while the clean-up is still running. Two tests start the real tool through the
+// hook: a running session of another config dir keeps its scratchpad. Every hook run gets fixture folders only (runHook).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -16,6 +17,9 @@ const posix = { skip: process.platform === 'win32' && 'needs FIFOs and symlinks'
 const STARTUP_RACERS = 16; // enough that some of them read the stamp before the first one has written it: the check under the lock is what stops them
 const RACE_ROUNDS = Number(process.env.DISK_CLEAN_RACE_ROUNDS ?? 10);
 const SESSION = '11111111-2222-4333-8444-555555555555';
+const OTHER_CONFIG_SESSION = '22222222-3333-4444-8555-666666666666';
+const DAY_MS = 24 * HOUR_MS;
+const SUMMARY_LINE = /^disk-clean: \d+ items/m; // the first line of the report, printed when the run has ended
 
 function setup() {
   const home = makeTempDir('dcs-home-');
@@ -125,8 +129,56 @@ test('the clean-up runs in its own process group (detached) and gets no tokens o
   assert.deepEqual([env.TMPDIR, env.TMP, env.TEMP, env.DISK_FREE_CLAUDE_TMP], [tmp, tmp, tmp, claudeTmp], 'a hook test never hands the child a real folder');
 });
 
-test('cleanEnv keeps only the allowed names', () => {
+test('cleanEnv keeps only the allowed names; CLAUDE_CONFIG_DIR is one of them', () => {
   assert.deepEqual(cleanEnv({ HOME: '/h', TMPDIR: '/t', ANTHROPIC_API_KEY: 'x', PATH: '/bin' }), { HOME: '/h', TMPDIR: '/t' });
+  assert.deepEqual(cleanEnv({ HOME: '/h', CLAUDE_CONFIG_DIR: '/h/.claude-plain', CLAUDE_CODE_OAUTH_TOKEN: 'x' }), { HOME: '/h', CLAUDE_CONFIG_DIR: '/h/.claude-plain' });
+});
+
+/**
+ * A fixture home where a session of a second config dir (~/.claude-plain) is running: registered with a live pid and writing its transcript
+ * only there, its scratchpad in the shared root idle for 4 days. The default config dir (~/.claude) has its folders and knows nothing of it.
+ */
+function otherConfigDirWorld() {
+  const home = makeTempDir('dcs-other-');
+  const configDir = join(home, '.claude-plain');
+  const scratchpad = join(fixtureFolders(home).claudeTmp, '-proj', OTHER_CONFIG_SESSION);
+  for (const dir of [join(home, '.claude', 'projects'), join(home, '.claude', 'sessions'), join(configDir, 'projects', '-proj'), join(configDir, 'sessions'), scratchpad]) mkdirSync(dir, { recursive: true });
+  writeFileSync(join(configDir, 'sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: OTHER_CONFIG_SESSION }));
+  writeFileSync(join(configDir, 'projects', '-proj', `${OTHER_CONFIG_SESSION}.jsonl`), '{}\n');
+  writeFileSync(join(scratchpad, 'work.txt'), 'not saved anywhere else');
+  const idle = new Date(Date.now() - 4 * DAY_MS);
+  for (const path of [join(scratchpad, 'work.txt'), scratchpad]) utimesSync(path, idle, idle); // deepest first: writing a file updates its folder's time
+  return { home, configDir, work: join(scratchpad, 'work.txt') };
+}
+
+/** The text of the clean-up log once it holds the report's first line (the run has ended); '' when that never happens. */
+async function finishedLog(home) {
+  const log = join(home, '.claude', 'logs', 'disk-clean.log');
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const text = existsSync(log) ? readFileSync(log, 'utf8') : ''; // the log exists, empty, before the child writes to it
+    if (SUMMARY_LINE.test(text)) return text;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return '';
+}
+
+test('the real clean-up, started by the hook in a session of another config dir, gets CLAUDE_CONFIG_DIR and skips the session rules: the scratchpad stays', async () => {
+  const { home, configDir, work } = otherConfigDirWorld();
+  assert.equal((await runHook(home, { CLAUDE_CONFIG_DIR: configDir })).code, 0);
+  const log = await finishedLog(home);
+  assert.equal(log.match(/^ {2}SKIPPED: /gm)?.length, 2, log);
+  assert.match(log, /found, 0 removed/);
+  assert.equal(existsSync(work), true);
+});
+
+test('the real clean-up, started by the hook in a default session, keeps the scratchpad of a running session of another config dir and says so', async () => {
+  const { home, work } = otherConfigDirWorld();
+  assert.equal((await runHook(home)).code, 0);
+  const log = await finishedLog(home);
+  assert.match(log, /found, 0 removed/);
+  assert.match(log, /1 session folder\(s\) kept: no transcript in /);
+  assert.equal(existsSync(work), true);
 });
 
 test('a state folder that cannot be made does not fail the hook: exit 0 and a line on stderr', async () => {

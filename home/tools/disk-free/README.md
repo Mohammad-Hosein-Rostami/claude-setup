@@ -39,7 +39,7 @@ total measuring limit. Tests: `tests/disk-free.test.mjs`, `tests/doctor-disk.tes
 
 | Rule | What goes | When |
 | ---- | --------- | ---- |
-| session folders | `/private/tmp/claude-<uid>/<project>/<session-id>/` (scratchpads of agent runs, copies of repos) | the session is not running, its transcript (`~/.claude/projects/*/<session-id>.jsonl`) was not modified for 3 days or there is none, and nothing inside the folder was modified for 3 days |
+| session folders | `/private/tmp/claude-<uid>/<project>/<session-id>/` (scratchpads of agent runs, copies of repos) | the session is not running, its transcript (`~/.claude/projects/*/<session-id>.jsonl`) is found and was not modified for 3 days, and nothing inside the folder was modified for 3 days; a folder whose session has no transcript there goes only when nothing anywhere inside it was modified for 30 days (see below) |
 | test temp | folders in `os.tmpdir()` named `cs-test-*` (label plus 6 random characters), `cs-run-*` (6 characters), or an old test prefix plus 6 random characters (`lib/test-temp-prefixes.mjs`, only specific two-word-or-longer prefixes; in a shared `/tmp` only the `cs-` names) | older than 1 day |
 | temp projects | `~/.claude/projects/<slug>` where the slug starts with a temp path (`-private-var-folders-`, `-private-tmp-`, `-tmp-`) | no running session in it and nothing in it modified for 3 days |
 | hook state | files in `os.tmpdir()/claude-post-edit/*` and `claude-skill-router/*` (agent call counters, edit logs, tsbuildinfo, router markers) | older than 3 days |
@@ -52,6 +52,10 @@ it is emptied: a session that resumes during the removal writes to a new folder 
 by then, the folder stays aside and the run says so). A `.removing-*` folder left by a killed run is finished by the next run only when the same checks pass for its original name; it is never renamed back.
 The session-folders rule is skipped (and says `SKIPPED`) unless the transcripts folder (`~/.claude/projects`) and the sessions registry (`~/.claude/sessions`) are absolute, readable folders;
 with `CLAUDE_CONFIG_DIR` set the default ones are not where Claude Code keeps them, so that rule and the temp-projects rule are skipped (give the folders with `--projects` and `--sessions`).
+Sessions of another config dir: the scratchpad root is one per user, shared by every config dir, while a run reads the transcripts and the registry of one config dir only. A session folder with no
+transcript in the projects folder that was read may therefore belong to a running session of another config dir. Such a folder is not judged by the 3-day rule: it is kept until nothing anywhere inside it
+was modified for 30 days (the same whole-tree walk; found or not is decided again on every look), and the report says how many were kept ("N session folder(s) kept: no transcript in ..."; `keptUnknown` in `--json`).
+What is left of the risk: a session of another config dir that writes nothing in its scratchpad folder for 30 days loses the folder, also while it is running (Claude Code makes its temp folders once per process, so a later write there can fail).
 An empty or relative `HOME` makes every rule refuse its root, and the hook does not start the run.
 
 Safety rules (`lib/safe-remove.mjs`): a root must be an absolute path, not a symlink, not the home folder, under the temp folder, `/tmp` or `~/.claude`, and owned
@@ -72,7 +76,7 @@ sizes stop at `--budget-ms` (default 20 s); either makes the totals "partial" (d
 `--apply` takes a run lock (`~/.claude/state/disk-clean.run.lock`, see `lib/lock-file.mjs`; one older than 6 hours is a killed run's): a second run at the same time does nothing and says so.
 The session registry files are read with `O_NOFOLLOW` and `O_NONBLOCK`, at most 64 KiB, and only plain files count.
 
-Where it runs: the SessionStart(startup) hook `home/hooks/disk-clean-start.mjs` starts `--apply` in the background at most once per 24 h (the check and the stamp write hold a lock file made with `O_EXCL`, a stale one is broken by one process only; the stamp, lock and log are opened with `O_NOFOLLOW` and never block on a FIFO; the child gets only `HOME`, `TMPDIR` and a few other names, no tokens), and `doctor.sh`
+Where it runs: the SessionStart(startup) hook `home/hooks/disk-clean-start.mjs` starts `--apply` in the background at most once per 24 h (the check and the stamp write hold a lock file made with `O_EXCL`, a stale one is broken by one process only; the stamp, lock and log are opened with `O_NOFOLLOW` and never block on a FIFO; the child gets only `HOME`, `TMPDIR`, `CLAUDE_CONFIG_DIR` and a few other names, no tokens; with `CLAUDE_CONFIG_DIR` set the child skips the session-folders and temp-projects rules and prints 2 `SKIPPED` lines), and `doctor.sh`
 prints the dry-run total as INFO (WARN above 2 GB).
 
 ## with-run-tmp: a suite run that leaves nothing behind
