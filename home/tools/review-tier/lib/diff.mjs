@@ -134,11 +134,14 @@ function freshPatches(top, base, reviewedSha) {
  * commits whose patch the reviewed set does not hold. The range names the resolved full sha, never the text the caller gave.
  * @param {string} reviewedRef what `--delta` got: any name of the commit the last review read
  * @returns {{range: string, files: object[], reviewedSha: string}}
- * @throws {UsageError} for an unknown commit, and for an empty delta: with nothing to read a round would pass unreviewed
+ * @throws {UsageError} for an unknown commit, a reviewed sha with no lane commit before it (the lane's classes could not be read), and an
+ *   empty delta (with nothing to read a round would pass unreviewed)
  */
 export function readDelta(top, base, reviewedRef) {
   if (reviewedRef.startsWith('-') || !gitFlag(top, ['rev-parse', '--verify', '--quiet', `${reviewedRef}^{commit}`])) throw new UsageError(`unknown sha "${reviewedRef}" for --delta`);
   const reviewedSha = gitText(top, ['rev-parse', '--verify', `${reviewedRef}^{commit}`]);
+  // With no lane commit between the base and the reviewed sha the tool cannot see the lane the fix belongs to: its classes would be lost.
+  if (commitsOf(top, `${base}..${reviewedSha}`).length === 0) throw new UsageError(`no lane commit lies between the base ${asData(base)} and the reviewed sha ${reviewedSha}: a first review reads the whole range, never a delta; for work on the base branch itself pass --base <where the work started>`);
   const range = `${reviewedSha}..HEAD`;
   const delta = gitFlag(top, ['merge-base', '--is-ancestor', reviewedSha, 'HEAD']) ? { range, files: readRange(top, range) } : freshPatches(top, base, reviewedSha);
   if (delta.files.length === 0) throw new UsageError(`nothing to review: ${delta.range} holds no changed file; check the range (--delta takes the sha the last review read, from the lead's own record)`);

@@ -187,3 +187,23 @@ test('security N1: a rewritten lane commit whose added line moved to another pla
   assert.equal(result.range, `patches ${moved.slice(0, 8)},${note.slice(0, 8)} of main..HEAD`, 'the same added line before the checks is a new patch');
   assert.equal(result.files, 2);
 });
+
+test('a base that hides the lane is refused: --base at or past the reviewed sha, or a reviewed sha that is on the base (a first review as a delta)', () => {
+  const { dir, write, tier, json } = lane();
+  const start = git(dir, 'rev-parse', 'main');
+  const reviewed = write('src/lock-store.mjs', 'renameSync(tmp, dest);\n');
+  write('README.md', '# note\n');
+  assert.ok(json('--delta', reviewed, '--prior', priorFile()).classes.includes('concurrency'), 'with the real base the lane keeps its class');
+  for (const args of [['--delta', reviewed, '--base', reviewed], ['--delta', reviewed, '--base', 'HEAD'], ['--delta', 'main'], ['--delta', start]]) {
+    const result = tier(...args, '--prior', priorFile(), '--json');
+    assert.equal(result.status, 2, `${args.join(' ')}: ${result.stdout.slice(0, 200)}`);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /no lane commit lies between the base .* and the reviewed sha/);
+  }
+  git(dir, 'checkout', '-q', 'main');
+  git(dir, 'merge', '-q', '--ff-only', 'lane');
+  const onBase = tier('--delta', reviewed, '--prior', priorFile());
+  assert.equal(onBase.status, 2, 'work on the base branch itself: the tool cannot see where the lane starts');
+  assert.match(onBase.stderr, /pass --base <where the work started>/);
+  assert.ok(json('--delta', reviewed, '--prior', priorFile(), '--base', start).classes.includes('concurrency'), 'with --base it works there too');
+});
