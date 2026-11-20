@@ -338,9 +338,12 @@ test('needs-review at land runs the real review script as a delta round: its len
   const SONNET = { agent: 'reviewer', model: 'sonnet', effort: 'high', lens: 'correctness', rules: 'core', brief: 'brief', requiredReading: [], plan: {} };
   const tip = (n) => `a1b2c3d${n}`.padEnd(40, '0');
   let [tierCalls, landTries] = [0, 0];
+  const [START, BASE_TIP] = ['ba5e0001'.padEnd(40, '0'), 'ba5e0002'.padEnd(40, '0')];
   const replies = [
+    { match: /:disk$/, reply: { ...diskOk.reply, baseTip: BASE_TIP } }, // the base tip this build reads itself, at its start
     ...standard(),
-    { match: /^close-a:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: 'ba5e0001'.padEnd(40, '0'), sha: tip(at + 1), reviewWorktree: `/scratch/close-a-${tip(at + 1).slice(0, 8)}`, tier: { reviews: [SONNET], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },
+    { match: /^close-a:base$/, reply: { exit: 0, tail: `${BASE_TIP}\n` } },
+    { match: /^close-a:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: START, sha: tip(at + 1), reviewWorktree: `/scratch/close-a-${tip(at + 1).slice(0, 8)}`, tier: { reviews: [SONNET], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },
     { match: /^close-a:review:correctness$/, reply: (prompt) => withPriorLine(prompt, { findings: [], verified: 'read it' }) },
     { match: /^close-a:suite$/, reply: { exit: 0, tail: 'ok' } },
     { match: /^close-a:cleanup$/, reply: { exit: 0, tail: '' } },
@@ -353,7 +356,9 @@ test('needs-review at land runs the real review script as a delta round: its len
   assert.equal(reviews.length, 2);
   assert.deepEqual([reviews[1].deltaOf, reviews[1].laneClasses, reviews[1].priorFindings, reviews[1].initialFindings], [tip(1), ['logic'], [], undefined]);
   const [, deltaTier] = run.calls.filter((call) => call.label === 'close-a:tier');
-  assert.match(deltaTier.prompt, new RegExp(`review-tier\\.mjs --delta ${tip(1)} --base <the lane start> --prior <the prior findings file> --prior-sha256 <its sha256> --landing --lane-classes logic --json`));
+  assert.match(deltaTier.prompt, new RegExp(`review-tier\\.mjs --delta ${tip(1)} --base ${START} --rebased-onto ${BASE_TIP} --prior <the prior findings file> --prior-sha256 <its sha256> --landing --lane-classes logic --json`), 'the start the first review recorded, and the one tip this build read itself (D7)');
+  assert.deepEqual([reviews[1].laneStart, reviews[1].baseTips], [START, [BASE_TIP]]);
+  assert.doesNotMatch(deltaTier.prompt, /merge-base|<the lane start>/);
   assert.match(deltaTier.prompt, /with exactly these 0 lines \(an empty file\)/);
   const lenses = run.calls.filter((call) => call.label === 'close-a:review:correctness');
   assert.equal(lenses.length, 2, 'the delta round reaches its lens');

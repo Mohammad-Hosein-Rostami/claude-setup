@@ -1,24 +1,30 @@
 // review: review a lane the way the setup's rules say, as a pipeline, then fix what the reviews confirm and review the fixes again until a round
 // is clean. Lenses come from review-tier (classes, models, efforts, stress and mutation plans); the script adds nothing and removes nothing.
-// Args: { row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, priorFindings?, initialFindings?, waiverAt?, principles?, audit? }
+// Args: { row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, laneStart?, baseTips?, priorFindings?, initialFindings?, waiverAt?, principles?, audit? }
 //   suite: the repo's declared full-suite command (test-pass runs it as `run --suite`, never from this text);
 //   tier: review-tier JSON from the lead to use for round 0 instead of running the tool; laneClasses: the class names of an earlier round (that
 //   result's laneClasses: classes and plan kinds are kept, I4); deltaOf: the full 40-character sha an earlier round reviewed (round 0 reviews only
 //   what changed since); it needs laneClasses and priorFindings: the blocking and should-fix findings of the round that reviewed deltaOf ([] only on
 //   purpose, when that round was clean; at most MAX_PRIOR_FINDINGS), which every lens of round 0 verifies; a run without them is `failed` with the
-//   cause, and `tier` with deltaOf throws. initialFindings: findings that are confirmed already (red tests after a join, a rebase conflict) and go
+//   cause, and `tier` with deltaOf throws. laneStart: with deltaOf, the full sha the lane started from as the earlier run recorded it (that result's
+//   laneStart); baseTips: with laneStart, the base-branch tips the caller recorded itself (build: its start tip and the sha each of its own lands
+//   returned), the only tips the lane start may move to after a rebase. initialFindings: findings that are confirmed already (red tests after a join, a rebase conflict) and go
 //   to the fix queue first; with deltaOf they are fixed BEFORE any review (nothing new to read until then) and are the prior findings of round 1,
 //   so that call needs no priorFindings. fix:false only reports, so initialFindings with fix:false is `failed` (nobody would fix or re-read them).
 //   waiverAt: the sha build.js's join proved by its checkpoints; round 0 then runs only `tier.waivable.reviews` (runner-computed tier, no weakened
 //   check, no deltaOf), and any finding, open item or red suite makes round 1 a whole-range full-set round. principles: {id, question}[] the lens
 //   prompts add to the tier's own. audit: {base, tip} recorded shas: the post-land audit of a waived lane (needs fix:false, landing:false; refuses deltaOf, tier, waiverAt and initialFindings).
-// Returns: { status: 'clean'|'findings'|'incomplete'|'failed', rounds, tip (the reviewed sha: land only that), baseSha (merge-base of the last
-//   round, audit.base in audit mode, null when no tier ran), waived (round 0 was waived and ended clean), worktree (the lane's worktree after the
+// Returns: { status: 'clean'|'findings'|'incomplete'|'failed', rounds, tip (the reviewed sha: land only that), baseSha (where the last round's
+//   tier started the lane, audit.base in audit mode, null when no tier ran), laneStart (the lane start the delta commands name: pass it on with deltaOf), waived (round 0 was waived and ended clean), worktree (the lane's worktree after the
 //   fixes), laneClasses (the class names of the lane, for a later deltaOf run), suite, findings, optional, leadList, text } (a `clean` status means every required lens and verdict of the last round is in,
 //   none confirmed anything, and with `landing` the suite passed at tip).
 // Review set: a runner recomputes it with review-tier every round (with every --add-class and the lane's classes); the fix agent never supplies it.
-//   The script keeps the lane's class names and the lane start (a full sha, resolved once by the first tier runner) in its own state and writes both
-//   into every delta command (--lane-classes a,b --base <sha>): no file and no branch name is handed from round to round.
+//   The script keeps the lane's class names and the lane start (a full sha: the caller's laneStart, else the `base` review-tier's own JSON printed for
+//   the first round) in its own state and writes both into every delta command (--lane-classes a,b --base <sha>): no file and no branch name is handed
+//   from round to round, and no runner runs `git merge-base` in the lane's repository (a commit-graph forged there would move it: security B8).
+//   A fix does not rebase the lane (it is rebased when it lands), except in a run that fixes first (a conflict or a red suite at land): there a `base`
+//   step reads the base tip before the fix and the fix rebases onto that sha. The lane start moves to that tip only when the caller recorded the old
+//   start and that very tip (laneStart, baseTips) and review-tier's three ancestry tests hold (--rebased-onto); otherwise it stays (more is read, never less).
 //   A delta round (review-tier --delta) names the prior findings as a file the runner writes from the script's own list, one line per finding with its
 //   severity and no fixed/open claim; review-tier counts and hashes it, every lens gets every prior finding and returns `prior: <n> fixed, <m> open`,
 //   and the round is clean only when each lens has m = 0 and n + m = that count (else `incomplete`). A count that differs from the list is `failed`.
@@ -51,8 +57,13 @@ checkArgs(args)
 
 const RANGE = args.audit ? `${args.audit.base}..${args.audit.tip}` : args.range // an audit reads recorded shas, never a branch name
 const RUNNER = { agentType: 'runner', model: 'haiku', effort: 'low' }
-// Where the lane starts, as a command a runner runs: the branch by its full ref name (git's short-name lookup takes a tag of that name first).
-const LANE_START = `git merge-base ${isFullSha(args.base) ? args.base : `refs/heads/${args.base}`} HEAD`
+const TIER_TOOL = 'node ~/.claude/tools/review-tier/review-tier.mjs'
+// The tip of the base branch, as a command a runner runs before any fix agent has worked: the branch by its full ref name (git's short-name lookup takes
+// a tag of that name first). Nothing else is asked of the lane's repository about the base: ancestry is review-tier's to check, in its own clean repository.
+const BASE_TIP = `git rev-parse --verify ${isFullSha(args.base) ? args.base : `refs/heads/${args.base}`}`
+// Where a lane starts when no caller recorded it: the `base` review-tier computes itself. `from`: the base branch, or the base tip read before a fix.
+// `to`: HEAD, or in a delta run the reviewed sha: measured against it, a fix that rebased the lane never moves the start (more is read, never less).
+const startFromTool = (from, to = 'HEAD') => `the \`base\` field of the JSON that \`${TIER_TOOL} ${from}...${to} --json\` prints (the full 40-character sha)`
 const FINDINGS_PER_VERIFIER = 5
 const MODEL_RANK = { haiku: 0, sonnet: 1, opus: 2 }
 const EFFORT_RANK = { low: 0, medium: 1, high: 2, xhigh: 3, max: 4 }
@@ -124,28 +135,34 @@ const planText = (plan) => [
 
 // State across rounds. lastFixed: findings fixed in the previous round (their finders re-check them); recheck: findings still open
 // (deferred by a fix agent, or moved by a fix) that the next round's lenses judge again.
-// laneClasses: the class and tag names of every round so far; laneStart: the full sha the lane starts from, resolved once, by the first runner of the
-// run and before any fix agent has worked (the first tier runner, or the `base` step of a run that fixes first), and
-// written into every later delta command, so no branch moved during the run changes what a round reads.
-const run = { round: 0, tip: null, deltaOf: args.deltaOf ?? null, laneClasses: [...(args.laneClasses ?? [])], laneStart: null, worktree: args.worktree, knownTier: args.tier ?? null, fixShas: [], expectedTip: null, baseSha: null, lensNotes: '' }
+// laneClasses: the class and tag names of every round so far; laneStart: the full sha the lane starts from: the caller's record, else the `base` of the
+// first tier JSON; written into every later delta command, so no branch moved during the run changes what a round reads. baseTip: the base branch's
+// tip, read by the `base` step before any fix agent has worked (null when no such step ran).
+const run = { round: 0, tip: null, deltaOf: args.deltaOf ?? null, laneClasses: [...(args.laneClasses ?? [])], laneStart: args.laneStart ?? null, baseTip: null, worktree: args.worktree, knownTier: args.tier ?? null, fixShas: [], expectedTip: null, baseSha: null, lensNotes: '' }
 let lastFixed = []
 let recheck = (args.priorFindings ?? []).map((item) => ({ ...item, status: 'open' })) // the caller's earlier round: every lens of round 0 verifies them
 let blockingFiles = new Set()
 const leadList = []
 const optional = []
-const outcome = (status, text, extra = {}) => ({ status, rounds: run.round + 1, tip: run.tip, baseSha: run.baseSha, waived: false, worktree: run.worktree, laneClasses: run.laneClasses, suite: 'none', findings: [], optional, leadList, text, ...extra })
+// D7, the fourth condition: the start may move to the base tip only when the caller recorded the old start and that very tip itself. A base ref moved
+// to a commit nobody landed is then never a start, whatever its ancestry; review-tier checks the other three (--rebased-onto).
+const ontoOf = () => (run.baseTip !== null && args.laneStart !== undefined && (args.baseTips ?? []).includes(run.baseTip) ? run.baseTip : null)
+// Where a round's tier started the lane: the `base` review-tier printed, else (a tier JSON made by hand) what the runner reported.
+const baseOfRound = ({ baseSha, tier }) => (isFullSha(tier?.base) ? tier.base : baseSha)
+const outcome = (status, text, extra = {}) => ({ status, rounds: run.round + 1, tip: run.tip, baseSha: run.baseSha, laneStart: run.laneStart, waived: false, worktree: run.worktree, laneClasses: run.laneClasses, suite: 'none', findings: [], optional, leadList, text, ...extra })
 
 const tierPrompt = (known, carried) => {
   const priorFile = `\${TMPDIR:-/tmp}/${slug(args.row)}-prior-<sha8>.md`
   const names = run.laneClasses.length > 0 ? run.laneClasses : run.deltaOf ? [NO_CLASS] : []
-  const command = [`node ~/.claude/tools/review-tier/review-tier.mjs ${run.deltaOf ? `--delta ${run.deltaOf} --base ${run.laneStart ?? '<the lane start>'} --prior <the prior findings file> --prior-sha256 <its sha256>` : RANGE}`, args.landing || args.audit ? '--landing' : '',
+  const onto = ontoOf()
+  const command = [`${TIER_TOOL} ${run.deltaOf ? `--delta ${run.deltaOf} --base ${run.laneStart ?? '<the lane start>'}${onto ? ` --rebased-onto ${onto}` : ''} --prior <the prior findings file> --prior-sha256 <its sha256>` : RANGE}`, args.landing || args.audit ? '--landing' : '',
     ...(args.addClasses ?? []).map((name) => `--add-class ${name}`), names.length > 0 ? `--lane-classes ${names.join(',')}` : '', '--json'].filter(Boolean).join(' ')
   return `Work in ${run.worktree} (lane ${args.branch}, base ${args.base}): cd there first, review-tier reads the git repository of its working folder. The reviewed sha is its HEAD (git rev-parse HEAD).\n`
     + `Add a detached review worktree of that sha outside every repo folder: git -C ${args.repo} worktree add --detach <scratch>/${slug(args.row)}-<sha8> <sha> (<sha8> is the first 8 characters of the sha). When that folder already exists, a killed run left it: first git -C ${args.repo} worktree remove --force <it> and git -C ${args.repo} worktree prune.\n`
-    + `${run.deltaOf && !known && run.laneStart === null ? `The lane start is the output of ${LANE_START} (the full 40-character sha): put it into the command below as <the lane start>.\n` : ''}`
+    + `${run.deltaOf && !known && run.laneStart === null ? `The lane start is ${startFromTool(run.baseTip ?? args.base, run.deltaOf)}, run from ${run.worktree} before the command below: put it into that command as <the lane start>.\n` : ''}`
     + `${run.deltaOf && !known ? `First write the prior findings file ${priorFile} (give review-tier its absolute path) with exactly these ${carried.length} lines${carried.length === 0 ? ' (an empty file)' : ''}, nothing added or left out:\n${carried.map((item) => `${priorText(item)}\n`).join('')}Then take the sha256 of the file you wrote (shasum -a 256 <file>, or sha256sum <file>): review-tier needs it as --prior-sha256.\n` : ''}`
     + `${known ? `Use this review-tier JSON as it is (report exit 0): ${JSON.stringify(known)}` : `Run it from ${run.worktree}: ${command}\nReport its exit code as exit and its JSON output as tier; when it exits non-zero, report the line it printed to stderr (it starts \`review-tier:\`) as error.`}\n`
-    + `Also report baseSha: ${args.audit ? args.audit.base : `${LANE_START} (the full 40-character sha)`}. `
+    + `Also report baseSha: ${args.audit ? args.audit.base : !known ? 'the `base` field of that JSON (the full 40-character sha: where review-tier found the lane to start)' : isFullSha(known.base) ? known.base : `${startFromTool(args.base)}, run from ${run.worktree}`}. `
     + 'Return exit, baseSha, sha (full 40 characters), reviewWorktree (the new folder), tier (the JSON).'
 }
 
@@ -163,9 +180,10 @@ const reviewPrompt = (review, sha, reviewWorktree, items, prior) => [
   prior ? `In prior, return the line \`prior: <n> fixed, <m> open\` over those ${prior.findings} findings (m: the ones you return again).` : '',
 ].filter(Boolean).join('\n')
 
-const fixPrompt = (batch, sha, diagnosis) => `Fix these confirmed findings of lane ${args.branch} (base ${args.base}), in this order:\n${batch.map(fixText).join('\n')}\n`
+const fixPrompt = (batch, sha, diagnosis, onto) => `Fix these confirmed findings of lane ${args.branch} (base ${args.base}), in this order:\n${batch.map(fixText).join('\n')}\n`
   + `${diagnosis ? `Root-cause diagnosis (follow it): ${diagnosis}\n` : ''}`
-  + `Setup: your worktree starts on a throwaway branch (git branch --show-current, named worktree-...). Run \`git switch ${args.branch} && git rebase ${args.base}\`, then delete the throwaway branch (\`git branch -d <its name>\`). `
+  + `Setup: your worktree starts on a throwaway branch (git branch --show-current, named worktree-...). Run \`git switch ${args.branch}${onto ? ` && git rebase ${onto}` : ''}\`, then delete the throwaway branch (\`git branch -d <its name>\`). `
+  + (onto ? `Rebase onto exactly that sha (the tip of ${args.base} read before you started), never onto the branch name. ` : `Do not rebase the lane: it is rebased when it lands, and a rebase here would make the next round read other lanes' code as this lane's. `)
   + `If an earlier fix of this round already changed a cited line (git log ${sha}..HEAD -- <file>), do not fix that finding: list its id in deferred. `
   + 'For each fix: read callers and callees of the changed functions first, add a test that fails without it, run related tests only while iterating (quiet reporter), commit after each green step. '
   + `Return IMPLEMENTED: branch (must be ${args.branch}), worktree (your pwd), sha (HEAD), tests, deferred.`
@@ -174,13 +192,18 @@ const refusal = startRefusal()
 if (refusal !== null) return outcome('failed', refusal)
 // A delta run that starts with confirmed findings (build's land loop after a conflict or a red suite) has nothing new to read at deltaOf, so it fixes
 // first and reviews the fix as round 1 on the same deltaOf. No tier exists yet to say the files are not concurrency code: the fix takes the stronger model.
-if (run.deltaOf !== null && args.fix && (args.initialFindings ?? []).length > 0) {
+const fixesFirst = run.deltaOf !== null && args.fix && (args.initialFindings ?? []).length > 0
+// The base tip is read before any fix agent works: afterwards the base branch is a ref the fix's writer could have moved. A run that fixes first rebases
+// onto that sha; a run whose caller recorded the old start and its own base tips (build's land loop, also after a rebase by land) may start the lane there.
+if (fixesFirst || (run.deltaOf !== null && args.laneStart !== undefined && args.baseTips !== undefined)) {
+  phase(fixesFirst ? 'Fix' : 'Tier')
+  const read = await runner('base', fixesFirst ? 'Fix' : 'Tier', `In ${run.worktree} run ${BASE_TIP} and return its exit code and, as tail, only the full 40-character sha it prints.`)
+  if (read === null || read.exit !== 0 || !isFullSha(String(read.tail).trim())) return outcome('failed', `the base tip could not be read (${BASE_TIP} in ${run.worktree}): ${read === null ? 'the runner was stopped' : `exit ${read.exit}, ${oneLine(String(read.tail).slice(0, MAX_ERROR_CHARS))}`}. Check that ${nameText(args.base)} is a local branch or a full sha of that repository.`, { findings: args.initialFindings ?? [] })
+  run.baseTip = String(read.tail).trim()
+}
+if (fixesFirst) {
   phase('Fix')
-  // The lane start is read before the fix agent works: afterwards the base branch is a ref the fix's writer could have moved.
-  const start = await runner('base', 'Fix', `In ${run.worktree} run ${LANE_START} and return its exit code and, as tail, only the full 40-character sha it prints.`)
-  if (start === null || start.exit !== 0 || !isFullSha(String(start.tail).trim())) return outcome('failed', `the lane start could not be read (${LANE_START} in ${run.worktree}): ${start === null ? 'the runner was stopped' : `exit ${start.exit}, ${oneLine(String(start.tail).slice(0, MAX_ERROR_CHARS))}`}. Check that ${nameText(args.base)} is a local branch or a full sha of that repository.`, { findings: args.initialFindings })
-  run.laneStart = String(start.tail).trim()
-  const first = { sha: run.deltaOf, fileClasses: null, fixes: [], failure: null }
+  const first = { sha: run.deltaOf, fileClasses: null, fixes: [], failure: null, rebaseOnto: run.baseTip }
   await fixBatch(args.initialFindings, first).catch((error) => { first.failure = `a fix step threw: ${error.message}` })
   const stopped = first.failure ?? nothingCommitted(first, args.initialFindings)
   if (stopped !== null) return outcome('failed', stopped, { findings: args.initialFindings })
@@ -207,8 +230,9 @@ while (true) {
   if ((args.landing || isDelta) && reviewSet.length === 0 && carried.length === 0) return outcome('failed', `the ${isDelta ? 'delta' : 'landing'} review set of ${sha} is empty: review-tier gives at least one lens for a landing diff and for every fix round, so the tier was lost`)
   run.laneClasses = [...new Set([...run.laneClasses, ...classNamesOf(tier)])]
   run.tip = sha
-  run.baseSha = prepared.baseSha
-  if (!args.audit) run.laneStart ??= prepared.baseSha
+  run.baseSha = baseOfRound(prepared)
+  // A delta round's tier says where it started the lane (the old start, or the base tip when --rebased-onto held): the next round is told that sha.
+  if (!args.audit) run.laneStart = isDelta && isFullSha(tier.base) ? tier.base : run.laneStart ?? run.baseSha
   run.lensNotes = notesOf(tier)
   run.fixShas = []
   const round = { sha, fileClasses: tier.fileClasses ?? {}, fixes: [], failure: null }
@@ -301,7 +325,8 @@ while (true) {
 
 /**
  * One fix in the lane: release the lane worktree, run the fix agent on the lane branch, and record what it fixed (`round.fixes`) and deferred (`recheck`).
- * `round`: { sha (what the findings were judged at), fileClasses (the tier's, or null before any tier), fixes, failure (set instead of throwing) }.
+ * `round`: { sha (what the findings were judged at), fileClasses (the tier's, or null before any tier), fixes, failure (set instead of throwing),
+ * rebaseOnto (only in a run that fixes first: the base tip the fix rebases onto) }.
  */
 async function fixBatch(batch, round) {
   const again = batch.filter((item) => item.severity === 'blocking' && blockingFiles.has(item.file))
@@ -309,7 +334,7 @@ async function fixBatch(batch, round) {
   const released = await runner('release', 'Fix', `Remove the lane worktree ${run.worktree} so the fix agent can switch to the lane branch: git -C ${run.worktree} status --porcelain must be empty (else report exit 1 and the status); then git -C ${args.repo} worktree remove ${run.worktree}.`)
   if (released === null || released.exit !== 0) { round.failure = `release of the lane worktree failed: ${released?.tail ?? 'runner stopped'}`; return }
   const concurrent = round.fileClasses === null || batch.some((item) => (round.fileClasses[item.file] ?? []).some((name) => name.startsWith('concurrency')))
-  const fixed = await agent(fixPrompt(batch, round.sha, diagnosis), { label: `${args.row}:fix`, phase: 'Fix', agentType: 'implementer', model: concurrent ? 'opus' : 'sonnet', effort: 'high', isolation: 'worktree', schema: IMPLEMENTED })
+  const fixed = await agent(fixPrompt(batch, round.sha, diagnosis, round.rebaseOnto ?? null), { label: `${args.row}:fix`, phase: 'Fix', agentType: 'implementer', model: concurrent ? 'opus' : 'sonnet', effort: 'high', isolation: 'worktree', schema: IMPLEMENTED })
   if (fixed === null) { round.failure = 'the fix agent was stopped'; return }
   // The next round reviews the HEAD of the worktree it returns, so it must be the lane branch's own and a plain path and sha (B1, N1).
   if (fixed.branch !== args.branch || !SAFE_PATH.test(fixed.worktree) || !isSha(fixed.sha)) { round.failure = `the fix agent returned branch ${fixed.branch}, worktree ${fixed.worktree}, sha ${fixed.sha}: not the lane ${args.branch}`; return }
@@ -337,6 +362,8 @@ function startRefusal() {
   if (args.deltaOf === undefined) return null
   if (!isFullSha(args.deltaOf)) return `args.deltaOf must be the full 40-character sha the last review read (that result's tip), from the caller's own record: review-tier takes no short sha and no name in a fix round, because git reads those as a ref of that name first. Pass the output of git rev-parse <sha>; got ${quotedText(args.deltaOf.slice(0, 80))}.`
   if (args.laneClasses === undefined) return 'args.deltaOf needs args.laneClasses: the class names of the round that reviewed deltaOf (that result\'s laneClasses, such as ["security", "logic"]). review-tier --delta exits 2 without --lane-classes, so a fix round is never lighter than the lane\'s first review. Pass that result\'s laneClasses, or leave deltaOf out for a whole-range review.'
+  if (args.laneStart !== undefined && !isFullSha(args.laneStart)) return `args.laneStart must be the full 40-character sha the lane started from, as the run that reviewed deltaOf recorded it (that result's laneStart); got ${quotedText(args.laneStart.slice(0, 80))}. Leave it out when no such record exists: the lane start is then read through review-tier.`
+  if (args.baseTips !== undefined && (args.laneStart === undefined || !args.baseTips.every(isFullSha))) return 'args.baseTips must hold full 40-character shas and comes with args.laneStart: the base-branch tips the caller recorded itself (its start tip, the shas its own lands returned), the only tips the lane start may move to. Leave it out when no such record exists: the start then stays args.laneStart.'
   if (!args.laneClasses.every(isClassName)) return 'args.laneClasses must hold class names (lower-case words such as "security" or "lock-free"): they are written into the review-tier command, and no file is read any more. Pass the laneClasses of the result that reviewed deltaOf.'
   const fixesFirst = args.fix && (args.initialFindings ?? []).length > 0
   if (args.priorFindings === undefined && !fixesFirst) return 'args.deltaOf needs args.priorFindings: the blocking and should-fix findings of the round that reviewed deltaOf ({id, severity, file, line, problem} each), so every lens verifies them. Pass [] only when that round ended clean, on purpose; without the list a delta round would close findings nobody checked. Or leave deltaOf out for a whole-range review.'
@@ -348,7 +375,8 @@ function startRefusal() {
  * must be a full sha and the HEAD the last fix returned, and the review worktree must be a plain, fresh path (it goes into a `worktree remove --force`).
  */
 function problemWithTier(prepared) {
-  const { exit, error, baseSha, sha, reviewWorktree, tier } = prepared
+  const { exit, error, sha, reviewWorktree, tier } = prepared
+  const baseSha = baseOfRound(prepared)
   if (exit !== 0 && run.deltaOf !== null && isSha(sha) && sameSha(sha, run.deltaOf)) return `nothing to review: the lane's HEAD ${sha} is deltaOf itself, so nothing was committed since the reviewed sha and review-tier refused the empty delta (exit ${exit}). Pass the sha the last review read, after a fix was committed; for a whole-range review leave deltaOf out.`
   if (exit !== 0) return `review-tier exited ${exit}, so no review set exists for ${run.worktree}${error ? `; it said: ${quotedText(String(error).slice(0, MAX_ERROR_CHARS))}` : ' (the runner reported no error line)'}`
   if (!Array.isArray(tier?.reviews)) return 'the tier JSON has no `reviews` list, so no review set exists'
@@ -356,6 +384,8 @@ function problemWithTier(prepared) {
   if (!isFullSha(sha)) return `the reviewed sha ${sha} is not a full 40-character git sha`
   if (!(args.audit ? isSha(baseSha) : isFullSha(baseSha))) return `the baseSha ${baseSha} is not a full 40-character git sha`
   if (classNamesOf(tier) === null) return 'the tier JSON has no `laneClasses` (or `classes`) list of class names, so a later round could not keep the lane\'s classes'
+  // A delta round starts the lane where the command said: at the lane start, or at the base tip it named as --rebased-onto.
+  if (run.deltaOf !== null && run.laneStart !== null && isFullSha(tier.base) && tier.base !== run.laneStart && tier.base !== ontoOf()) return `the tier JSON starts the lane at ${tier.base}, which is neither the lane start ${run.laneStart} nor a base tip the command named: review-tier was not run as written`
   if (args.audit && !sameSha(sha, args.audit.tip)) return `the reviewed sha ${sha} is not the audit tip ${args.audit.tip}`
   if (args.audit && !sameSha(baseSha, args.audit.base)) return `the baseSha ${baseSha} is not the audit base ${args.audit.base}`
   if (run.expectedTip !== null && !sameSha(sha, run.expectedTip)) return `the lane worktree is at ${sha}, not at ${run.expectedTip}, the HEAD of the last fix`
@@ -439,7 +469,7 @@ function classNamesOf(tier) {
 function checkArgs(given) {
   const name = 'review' // the tool cuts `meta` out of the body, so the script's own name is written here
   const required = { row: 'string', repo: 'string', base: 'string', range: 'string', landing: 'boolean', fix: 'boolean', branch: 'string', worktree: 'string', suite: 'string' }
-  const optional = { tier: 'object', addClasses: 'array', laneClasses: 'array', deltaOf: 'string', priorFindings: 'array', initialFindings: 'array', waiverAt: 'string', principles: 'array', audit: 'object' }
+  const optional = { tier: 'object', addClasses: 'array', laneClasses: 'array', deltaOf: 'string', laneStart: 'string', baseTips: 'array', priorFindings: 'array', initialFindings: 'array', waiverAt: 'string', principles: 'array', audit: 'object' }
   const check = (key, type) => {
     const value = given === undefined || given === null ? undefined : given[key]
     const ok = type === 'array' ? Array.isArray(value) : typeof value === type
@@ -450,6 +480,7 @@ function checkArgs(given) {
   if (given.principles !== undefined && !given.principles.every((entry) => typeof entry?.id === 'string' && typeof entry?.question === 'string')) throw new Error(`${name}: args.principles entries must be {id, question} strings`)
   // A given tier JSON would be a delta round with no prior file, no prior line and no forced lane set: a delta round's set is review-tier's own.
   if (given.tier !== undefined && given.deltaOf !== undefined) throw new Error(`${name}: args.tier cannot be combined with args.deltaOf: a delta round runs review-tier itself (--delta, --prior, --lane-classes); pass one of the two`)
+  for (const key of ['laneStart', 'baseTips']) if (given[key] !== undefined && given.deltaOf === undefined) throw new Error(`${name}: args.${key} belongs to a deltaOf run: a whole-range review finds the lane start itself`)
   if (given.priorFindings !== undefined && given.deltaOf === undefined) throw new Error(`${name}: args.priorFindings belongs to a deltaOf run: they are the findings of the round that reviewed deltaOf; for a whole-range review leave them out`)
   const isFinding = (entry) => typeof entry?.id === 'string' && ['blocking', 'should-fix', 'optional'].includes(entry.severity) && typeof entry.file === 'string' && typeof entry.line === 'number' && typeof entry.problem === 'string'
   if (given.priorFindings !== undefined && !given.priorFindings.every(isFinding)) throw new Error(`${name}: args.priorFindings entries must be {id, severity (blocking|should-fix|optional), file, line (a number), problem}`)

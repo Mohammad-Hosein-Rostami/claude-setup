@@ -51,14 +51,16 @@ test('review N1 (W3): a delta run that starts with a conflict or a red suite fix
     assert.equal(run.result.rounds, 2);
     assert.equal(run.result.tip, sha(2), 'the reviewed tip is the fix');
     assert.deepEqual(run.started.slice(0, 4), ['close:2:base', 'close:2:release', 'close:2:fix', 'close:2:tier'], 'the lane start is read first, then the fix runs before review-tier is asked');
-    assert.ok(callsOf(run, 'close:2:base')[0].prompt.startsWith('In /p-wt/a run git merge-base refs/heads/main HEAD and return its exit code'), 'the branch by its full ref name, before the fix agent has worked');
+    assert.ok(callsOf(run, 'close:2:base')[0].prompt.startsWith('In /p-wt/a run git rev-parse --verify refs/heads/main and return its exit code'), 'the base tip, the branch by its full ref name, before the fix agent has worked (F4: no merge-base in the lane\'s repository)');
     const [fix] = callsOf(run, 'close:2:fix');
     assert.ok(fix.prompt.includes(`] ${initial.id} `), fix.prompt);
     assert.equal(fix.opts.model, 'opus', 'no tier exists yet to say the files are not concurrency code: the stronger model fixes');
     const tiers = callsOf(run, 'close:2:tier');
     assert.equal(tiers.length, 1, 'one review round after the fix');
-    assert.match(tiers[0].prompt, new RegExp(`review-tier\\.mjs --delta ${sha(1)} --base ${'ba5e0001'.padEnd(40, '0')} --prior <the prior findings file> --prior-sha256 <its sha256> --landing --lane-classes logic --json`));
-    assert.doesNotMatch(tiers[0].prompt, /<the lane start>/, 'the sha read before the fix is in the command: the branch is not asked again');
+    assert.ok(fix.prompt.includes(`\`git switch lane/a && git rebase ${'ba5e0001'.padEnd(40, '0')}\``), 'D7: the fix rebases onto the sha read before it started, never onto the branch name');
+    assert.match(tiers[0].prompt, new RegExp(`review-tier\\.mjs --delta ${sha(1)} --base <the lane start> --prior <the prior findings file> --prior-sha256 <its sha256> --landing --lane-classes logic --json`));
+    assert.ok(tiers[0].prompt.includes(`The lane start is the \`base\` field of the JSON that \`node ~/.claude/tools/review-tier/review-tier.mjs ${'ba5e0001'.padEnd(40, '0')}...${sha(1)} --json\` prints (the full 40-character sha), run from `), 'no caller recorded the start: review-tier measures it against the reviewed sha, so the rebase of the fix does not move it');
+    assert.doesNotMatch(tiers[0].prompt, /merge-base|--rebased-onto/, 'the start never moves without the caller\'s own record of the base tips');
     assert.deepEqual(priorLines(tiers[0].prompt).map((line) => line.split(' ').slice(0, 3).join(' ')), [`- [blocking] ${initial.id}`], 'the fixed finding is the prior finding of the round');
     assert.ok(callsOf(run, 'close:2:review:correctness')[0].prompt.includes(`- [fixed] ${initial.id} `), 'the lens verifies the fix agent\'s claim');
   }
@@ -72,11 +74,11 @@ test('review N1: a first fix that committed nothing ends failed with the ids, be
   assert.deepEqual(run.result.findings.map(({ id }) => id), ['conflict-close:2', 'red-close:2'], 'the result still holds what is not fixed');
 });
 
-test('security B7: a run that fixes first and cannot read the lane start ends failed before the fix: a stopped runner, a failed git, a short sha or a name', async () => {
+test('security B7: a run that fixes first and cannot read the base tip ends failed before the fix: a stopped runner, a failed git, a short sha or a name', async () => {
   for (const start of [null, { exit: 128, tail: 'fatal: Not a valid object name refs/heads/main' }, { exit: 0, tail: 'ba5e0001' }, { exit: 0, tail: 'main' }]) {
     const run = await runScript(REVIEW, { ...LAND_LOOP, initialFindings: [CONFLICT] }, { replies: world({ start }) });
     assert.equal(run.result.status, 'failed', JSON.stringify(start));
-    assert.match(run.result.text, /^the lane start could not be read \(git merge-base refs\/heads\/main HEAD in \/p-wt\/a\): .* Check that main is a local branch or a full sha of that repository\./);
+    assert.match(run.result.text, /^the base tip could not be read \(git rev-parse --verify refs\/heads\/main in \/p-wt\/a\): .* Check that main is a local branch or a full sha of that repository\./);
     assert.deepEqual(run.started, ['close:2:base'], 'no fix and no review starts');
     assert.deepEqual(run.result.findings.map(({ id }) => id), ['conflict-close:2']);
   }

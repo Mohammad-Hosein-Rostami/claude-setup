@@ -43,7 +43,12 @@ const AUDIT_PREPARED = shape({ ancestor: bool, changedLines: num, worktree: str,
 const AUDIT_RECORDED = shape({ exit: num, tail: str }, ['exit'])
 const AUDIT_LOG = 'node ~/.claude/tools/review-tier/audit-log.mjs'
 const GIT_SHA = /^[0-9a-f]{7,40}$/ // shas go into runner commands: only hex passes
-const DISK_CHECKED = shape({ exit: num, tail: str }, ['exit', 'tail'])
+const DISK_CHECKED = shape({ exit: num, tail: str, baseTip: str }, ['exit', 'tail'])
+const FULL_SHA = /^[0-9a-f]{40}$/
+// The tips of the base branch this build saw itself: the tip when it started and the sha each of its own lands returned. A review child may move a
+// lane's start only to one of these (review.js, D7): a base ref moved by anyone else names a commit that no review of this build has read.
+const baseTips = []
+const recordBaseTip = (sha) => { if (FULL_SHA.test(sha ?? '') && !baseTips.includes(sha)) baseTips.push(sha) }
 const LANDED_ROW = shape({ landed: bool, sha: str }, ['landed', 'sha'])
 const leadList = []
 // Worktree paths agents return go into later shell commands (a worktree remove, a cherry-pick): only a plain absolute path passes (N1): POSIX or a
@@ -109,6 +114,9 @@ const joinPrompt = (lane, built, written) => {
 const testBranch = (lane) => `${lane.branch}--tests`
 const contractArgs = (lane) => ({ ...(lane.principles ? { principles: lane.principles } : {}), ...(lane.addClasses ? { addClasses: lane.addClasses } : {}) })
 const reviewArgs = (lane, worktree, extra = {}) => ({ row: lane.closeRow, repo: args.repo, base: args.base, range: `${args.base}...${lane.branch}`, landing: true, fix: true, branch: lane.branch, worktree, suite: args.suite, ...contractArgs(lane), ...extra })
+// What a review child of the land loop is told about the lane start: the start the review before it recorded, and this build's own base tips (N21, D7).
+// A result with no recorded start (an older script) gets neither: the child then reads the start through review-tier.
+const startRecord = (reviewed) => (FULL_SHA.test(reviewed.laneStart ?? '') ? { laneStart: reviewed.laneStart, baseTips: [...baseTips] } : {})
 const finding = (id, file, problem, fix) => ({ id, severity: 'blocking', file, line: 0, problem, fix, security: false })
 
 const outcome = (lane, status, sha = '', text = '', extra = {}) => ({ row: lane.row, closeRow: lane.closeRow, status, sha, text, ...extra })
@@ -203,6 +211,7 @@ async function landLane(step) {
   while (true) {
     const landed = await inLandQueue(() => workflow({ scriptPath: `${args.scriptsDir}/land.js` }, { row: lane.closeRow, closeRow: lane.closeRow, statusFile: args.statusFile, repo: args.repo, base: args.base, branch: lane.branch, worktree: reviewed.worktree, suite: args.suite, tip: reviewed.tip }))
     if (landed.status === 'landed') {
+      recordBaseTip(landed.sha)
       if (waived) auditInputs.set(lane.row, { lane, baseSha: reviewed.baseSha, tip: reviewed.tip, landedSha: landed.sha, escalated })
       return outcome(lane, 'landed', landed.sha, '', listsOf(reviewed))
     }
@@ -211,7 +220,7 @@ async function landLane(step) {
     const initialFindings = { conflict: [finding(`conflict-${lane.row}`, landed.tidy, `rebasing ${lane.branch} onto ${args.base} conflicts in ${landed.tidy}`, `resolve the conflicts keeping both intents while rebasing onto ${args.base}`)],
       red: [finding(`red-${lane.row}`, '(suite)', `suite red at the rebased tip: ${landed.tidy}`, `make the full suite pass at the rebased tip of ${lane.branch}`)] }[landed.status]
     escalated = true
-    reviewed = await reviewChild(lane, reviewArgs(lane, reviewed.worktree, { deltaOf: reviewed.tip, laneClasses: reviewed.laneClasses, ...(initialFindings ? { initialFindings } : { priorFindings: [] }) })) // needs-review: the lane's last review was clean, so there is no finding to carry; the empty list is on purpose (review.js refuses deltaOf without it)
+    reviewed = await reviewChild(lane, reviewArgs(lane, reviewed.worktree, { deltaOf: reviewed.tip, laneClasses: reviewed.laneClasses, ...startRecord(reviewed), ...(initialFindings ? { initialFindings } : { priorFindings: [] }) })) // needs-review: the lane's last review was clean, so there is no finding to carry; the empty list is on purpose (review.js refuses deltaOf without it)
     if (reviewed.status !== 'clean') return outcome(lane, `review-${reviewed.status}`, reviewed.tip, reviewed.text, listsOf(reviewed))
     if ((reviewed.leadList ?? []).length > 0) return heldForLead(lane, reviewed)
   }
@@ -270,8 +279,9 @@ async function auditAfterLand(step, { lane, baseSha, tip, landedSha, escalated }
 // (exit 1; a check that could not run, exit 2, also refuses) and every lane's text carries the message that names the caches to clear.
 phase('Build')
 if (args.lanes.length > 0) {
-  const disk = await agent(`Run: node ~/.claude/tools/disk-free/disk-free.mjs check. Do not change anything. Report exit (its exit code) and tail (its one output line, whole).`, { label: `${args.lanes[0].row}:disk`, phase: 'Build', schema: DISK_CHECKED, ...RUNNER })
+  const disk = await agent(`Run: node ~/.claude/tools/disk-free/disk-free.mjs check. Then run: git -C ${args.repo} rev-parse --verify ${FULL_SHA.test(args.base) ? args.base : `refs/heads/${args.base}`}. Do not change anything. Report exit (the first command's exit code), tail (its one output line, whole) and baseTip (the full 40-character sha the second command printed, "" when it failed).`, { label: `${args.lanes[0].row}:disk`, phase: 'Build', schema: DISK_CHECKED, ...RUNNER })
   const refusal = disk === null ? 'the disk check runner was stopped' : disk.exit === 0 ? '' : `disk space check refused the build: ${disk.tail}`
+  recordBaseTip(disk?.baseTip)
   if (refusal !== '') return { lanes: args.lanes.map((lane) => outcome(lane, 'failed', '', `${refusal}. Nothing was built.`)), leadList }
 }
 const lanes = await pipeline(args.lanes, buildLane, joinLane, reviewLane, landLane, auditLane)

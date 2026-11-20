@@ -16,7 +16,7 @@ const OPUS = { agent: 'reviewer', model: 'opus', effort: 'max', lens: 'risk', ru
 const finding = (id, extra = {}) => ({ id, severity: 'blocking', file: 'a.mjs', line: 3, problem: `problem ${id}`, fix: 'fix it', security: false, ...extra });
 const clean = { findings: [], verified: 'read it' };
 const verdict = (id, real, extra = {}) => ({ id, real, why: `because ${id}`, reviewedSha: 'a1b2c31', linesMoved: false, ...extra });
-const BASE_SHA = 'ba5e0001'.padEnd(40, '0') // what `git merge-base <base> HEAD` prints: the tier runner returns it as baseSha
+const BASE_SHA = 'ba5e0001'.padEnd(40, '0') // where the lane starts (the `base` of review-tier's JSON): the tier runner returns it as baseSha
 const sha = (n) => `a1b2c3${n}`.padEnd(40, '0') // a git sha is hex: the script checks the shape before it puts one in a command
 const implemented = (tip, extra = {}) => ({ branch: 'lane/a', worktree: '/p-wt/fix', sha: tip, tests: { cmd: 'npm test', exit: 0 }, deferred: [], ...extra });
 
@@ -89,7 +89,8 @@ test('each fix round uses the --delta set with the lane classes, and a fix agent
   const fix = run.calls.find((call) => call.label === 'close:2:fix');
   assert.equal(run.result.worktree, '/p-wt/fix', 'the result names the lane worktree the fix agent left');
   assert.doesNotMatch(fix.prompt, /review-tier/, 'the fix agent never computes the review set (B2)');
-  assert.match(fix.prompt, /git switch lane\/a && git rebase main/);
+  assert.match(fix.prompt, /Run `git switch lane\/a`, then delete the throwaway branch/);
+  assert.doesNotMatch(fix.prompt, /git rebase/, 'D7: a fix round does not rebase the lane, it is rebased when it lands');
   assert.match(fix.prompt, /throwaway branch/);
   assert.equal(fix.opts.isolation, 'worktree');
   assert.ok(run.started.indexOf('close:2:release') < run.started.indexOf('close:2:fix'), 'release before the fix');
@@ -98,7 +99,7 @@ test('each fix round uses the --delta set with the lane classes, and a fix agent
   // The lane start and the class names are the script's own state: the sha round 0 reported and the names its tier JSON held, written into the command.
   assert.ok(second.prompt.includes(`Run it from /p-wt/fix: node ~/.claude/tools/review-tier/review-tier.mjs --delta ${sha(1)} --base ${BASE_SHA} --prior <the prior findings file> --prior-sha256 <its sha256> --lane-classes logic --json\n`), second.prompt);
   assert.doesNotMatch(second.prompt, /<the lane start>|tier-<sha8>|\.json/, 'no base is looked up again and no tier file is written or read');
-  assert.match(run.calls.find((call) => call.label === 'close:2:tier').prompt, /Also report baseSha: git merge-base refs\/heads\/main HEAD \(the full 40-character sha\)\./);
+  assert.match(run.calls.find((call) => call.label === 'close:2:tier').prompt, /Also report baseSha: the `base` field of that JSON \(the full 40-character sha: where review-tier found the lane to start\)\./);
   assert.deepEqual([...run.result.laneClasses], ['logic'], 'the result hands the names on');
 });
 

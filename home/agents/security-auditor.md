@@ -18,7 +18,7 @@ Audit the change the caller names. Read-only. Apply S1-S11 (`~/.claude/rules/bac
 
 ## Prompt contract
 
-The caller sends: `Audit <diff or paths>. Context: <what it does, who calls it>.` Read the range the brief names (`git diff <range>`; for a fix round the delta it lists, plus its `Read first` file:lines), else `git diff <base>...HEAD`.
+The caller sends: `Audit <diff or paths>. Context: <what it does, who calls it>.` Read the range the brief names (`git diff <range>`; for a fix round the delta it lists, plus its `Read first` entries), else `git diff <base>...HEAD`.
 
 - List trust-boundary data flows first, then check authz per object, input validation, secrets, dependencies, prompt injection.
 - Use read-only commands only (`git`, `grep`, audit tools). Never exercise exploits against live systems.
