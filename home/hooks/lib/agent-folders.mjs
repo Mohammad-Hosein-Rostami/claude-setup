@@ -10,21 +10,29 @@
 //     (probe: a `.git` link to a folder ends the walk there).
 //   Kit(): let g=Cr(r),h=ia(r);if(!g||!h||h===g)return;...if(e.some((H)=>jh(H)===y))return;...e.push(IW(h,".claude",o))
 //     in a linked worktree whose root has no .claude/agents, the main checkout's .claude/agents is loaded (probe: loaded).
+// Re-read in the 2.1.329 bundle (other minified names, the same code): Ioe() is the walk
+//   `while(!0){if(rg(k)===rg(h))break;if(!Gq(k))R.push(J$(k,".claude",e));if(y&&rg(k)===rg(y))break;...}`; rg() only normalises
+//   the path's spelling (and lower-cases it on Windows), so the home folder is matched BY SPELLING ONLY: with HOME spelled through
+//   a link the CLI never meets "home" and loads the agents above the real home folder (review round 3, S2: seen loaded). The
+//   walk here stops the same way. ae() finds the git root with a stat of `<folder>/.git` (O2n(): a folder or a file, or a link to
+//   one), so on a disk that ignores case `.GIT` ends its walk too (probe: yes). int() is the worktree rule, unchanged. New and
+//   not read to the end: a filter Jat() over the folders found.
+// The personal agents folder is told by what it is on disk (device and inode), not by how its path is spelled: a session folder
+// spelled in another case, or through a link, must never turn the owner's own agents into "project" files with delete advice.
 // Not established, so the safe side is taken: c1n() refuses some link targets (its checks Ki and dg were not read), so a `.git`
 // that is a link to a network path, or is neither folder, file nor link, makes the walk "unsure"; the filters PK (automount roots)
 // and vot were not read, so a folder they drop is still looked at. Not covered: the `.claude/agents` of --add-dir folders.
-// Invariants: read-only; never throws; at most MAX_LEVELS_UP + 1 folders looked at. Nothing is read through a link: an agents folder
+// Invariants: read-only; never throws; at most MAX_PARENT_LEVELS + 1 folders looked at (agent-brief.mjs: the same limit finds the git root). Nothing is read through a link: an agents folder
 // whose real path is not <real folder>/.claude/agents is reported as a link, never listed. The personal agents folder is never a
 // project folder, also when a link leads to it.
 import { existsSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { gitDirOf, isInside, nearestGitEntry, sharedGitDir } from './agent-brief.mjs';
+import { MAX_PARENT_LEVELS, gitDirOf, isInside, nearestGitEntry, sharedGitDir } from './agent-brief.mjs';
 
 const CONFIG_FOLDER = '.claude';
 const AGENTS_FOLDER = 'agents';
 const GIT_ENTRY = '.git';
 const UP = '../';
-const MAX_LEVELS_UP = 64; // folders above the session folder looked at: deeper than any real project (agent-brief.mjs uses the same)
 const NETWORK_PATH = /^[\\/]{2}/;
 const IGNORES_CASE = process.platform === 'win32'; // the CLI lower-cases paths there before it compares them (jh)
 
@@ -54,9 +62,10 @@ function isCertainRoot(top, entry) {
  */
 function gitRootOf(sessionDir) {
   try {
-    const found = nearestGitEntry(sessionDir);
+    const found = nearestGitEntry(sessionDir, { otherSpellings: true });
     if (!found) return { certain: found === null }; // null: no repository up to the filesystem root; undefined: the walk gave up
-    return { top: found.top, entry: found.entry, certain: isCertainRoot(found.top, found.entry) };
+    // `.GIT` on a disk that ignores case: the CLI's stat finds it and stops there, git itself does not: the walk ends, uncertain.
+    return { top: found.top, entry: found.entry, certain: found.exact && isCertainRoot(found.top, found.entry) };
   } catch {
     return { certain: false };
   }
@@ -75,17 +84,37 @@ function mainCheckoutHasAgents(top, entry) {
   }
 }
 
+/** What a folder is on disk (device and inode), whatever its path is spelled like; undefined when it cannot be stat'ed. */
+function folderId(path) {
+  try {
+    const stats = statSync(path, { bigint: true }); // bigint: a Windows file id does not fit a double
+    return `${stats.dev}:${stats.ino}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A check for "this real path is the personal agents folder": by the folder's identity, so that a path spelled in another case
+ * or through a link is still that folder, and by the path as well (the only check left when the folder cannot be stat'ed).
+ */
+function personalFolderCheck(personalDir) {
+  const path = realOrSpelled(personalDir);
+  const id = folderId(personalDir);
+  return (real) => real === path || (id !== undefined && folderId(real) === id);
+}
+
 /**
  * What `<dir>/.claude/agents` is.
  * @returns {{ kind: 'none' } | { kind: 'real', path: string } | { kind: 'link' | 'link-outside' }} `none`: no folder there, a path
  *   that cannot be resolved (a link loop: the CLI loads nothing from it) or the personal folder; `real`: the folder's own files can
  *   be listed at `path`; a link leads either to another place inside `boundary` or out of it.
  */
-function agentsFolderAt(dir, personalDir, boundary) {
+function agentsFolderAt(dir, isPersonal, boundary) {
   try {
     const real = realpathSync(join(dir, CONFIG_FOLDER, AGENTS_FOLDER));
     if (!statSync(real).isDirectory()) return { kind: 'none' };
-    if (existsSync(personalDir) && real === realpathSync(personalDir)) return { kind: 'none' };
+    if (isPersonal(real)) return { kind: 'none' };
     if (real === join(realpathSync(dir), CONFIG_FOLDER, AGENTS_FOLDER)) return { kind: 'real', path: real };
     return { kind: isInside(real, realpathSync(boundary)) ? 'link' : 'link-outside' };
   } catch {
@@ -107,16 +136,16 @@ function agentsFolderAt(dir, personalDir, boundary) {
 export function agentFolders(sessionDir, homeDir, personalDir) {
   const root = gitRootOf(sessionDir);
   const boundary = root.top ?? resolve(sessionDir);
-  const home = spelled(realOrSpelled(homeDir));
-  const isHome = (folder) => spelled(folder) === spelled(homeDir) || spelled(realOrSpelled(folder)) === home;
+  const isHome = (folder) => spelled(folder) === spelled(homeDir); // by spelling only, as the CLI does (see the header)
+  const isPersonal = personalFolderCheck(personalDir);
   const folders = [];
   let dir = resolve(sessionDir);
   let ended = false; // the walk reached the home folder, the git root or the filesystem root
   let rootHasAgents = false;
-  for (let up = 0; up <= MAX_LEVELS_UP && !ended; up += 1) {
+  for (let up = 0; up <= MAX_PARENT_LEVELS && !ended; up += 1) {
     ended = isHome(dir);
     if (ended) break;
-    const found = agentsFolderAt(dir, personalDir, boundary);
+    const found = agentsFolderAt(dir, isPersonal, boundary);
     const parentShown = `${UP.repeat(up)}${CONFIG_FOLDER}/`;
     if (found.kind !== 'none') folders.push({ ...found, parentShown, shown: `${parentShown}${AGENTS_FOLDER}/` });
     rootHasAgents ||= dir === root.top && existsSync(join(dir, CONFIG_FOLDER, AGENTS_FOLDER));

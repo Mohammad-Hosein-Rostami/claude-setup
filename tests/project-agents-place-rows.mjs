@@ -3,7 +3,9 @@
 // personalDir, agentsDir }; the project holds a `.git` folder and an empty `.claude/agents`) and may return { cwd } when the session
 // starts elsewhere; `note` is what noteOf() takes, or '' for no note; `posix` marks a row that needs links or names Windows lacks.
 // Where the rows come from: p1-p4 = security review p0-0.1 (its proof scripts), T1-T9 = security review round 2 (a1-hide.mjs),
-// M54 = review round 2 (a surviving mutant), P = this round's own CLI probe (cli-probe5). The personal agents are security-auditor
+// M54 = review round 2 (a surviving mutant), P = fix round 2's own CLI probe (cli-probe5), S1, S2, R3-2, R3-4 and the letter-number
+// ids (D2, D5, D7, D20, D22, N3, N18) = review and security review round 3: a finding or a surviving mutant, one row each.
+// `ignoresCase` marks a row that needs a disk on which a folder is also found under another case of its name. The personal agents are security-auditor
 // and reviewer.
 import { mkdir, link, rm, symlink, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
@@ -14,8 +16,14 @@ const READ_LIMIT = 200; // MAX_AGENT_FILES, written out a second time on purpose
 const ENTRY_LIMIT = 5000; // MAX_WALKED_ENTRIES, written out a second time on purpose
 const LONG_NAME_CHARS = 80; // more than the note shows of a name
 const NAME_CHARS_SHOWN = 64;
+const FOLDER_LEVELS_ENTERED = 32; // MAX_FOLDER_DEPTH, written out a second time on purpose
+const LEVELS_UP = 64; // MAX_PARENT_LEVELS, written out a second time on purpose
+const FILES_PER_FOLDER = 100;
+const CAPPED = agent('capped', 'maxTurns: 7\n');
 const SHADOWING = agent('security-auditor', 'maxTurns: 3\n');
 const UP_TWO = '../../.claude/agents/';
+const DEEP_FOLDERS_SHOWN = 24; // of `.claude/agents/d/d/...` the note shows 64 characters: the folder's 15, 24 `d/` and one `d`
+const UPS_SHOWN = 21; // of 64 `../` the note shows 64 characters: 21 `../` and one `.`
 const indexed = (i) => `a${String(i).padStart(4, '0')}.md`;
 const fixedItems = { mainCheckout: "the main checkout's .claude/agents (Claude Code loads it for this worktree: not read)", foldersAbove: 'the folders above (the git root is not certain: not checked)' };
 
@@ -190,4 +198,24 @@ export const PLACE_ROWS = [
       await linkInstead(box, join(box.projectDir, '.git'), '../real-git');
     },
     note: '' },
+  { id: 'S2', classes: ['check by hand'], what: 'HOME spelled through a link: the CLI compares spellings, so it loads the agents above the real home', posix: true,
+    build: async (box) => {
+      const root = dirname(box.home);
+      await symlink('home', join(root, 'homelink'));
+      await write(root, { '.claude/agents/above.md': agent('above', 'maxTurns: 40\n'), 'home/proj/readme.txt': '' });
+      return { cwd: join(box.home, 'proj'), personalDir: join(root, 'homelink', '.claude', 'agents') };
+    },
+    note: { byHand: 1, items: [`${UP_TWO}above.md (maxTurns 40, no git repository: check by hand)`] } },
+  { id: 'R3-2', classes: ['silent'], what: 'the session folder spelled in another case: the personal agents folder is still no project folder', ignoresCase: true,
+    build: async (box) => {
+      await write(box.home, { '.git/HEAD': '', 'proj/readme.txt': '', '.claude/agents/reviewer.md': agent('reviewer', 'maxTurns: 5\n') });
+      return { cwd: join(dirname(box.home), 'HOME', 'proj') };
+    },
+    note: '' },
+  { id: 'R3-4', classes: ['not checked'], what: '`.GIT` in the session folder: the CLI stops there, so nothing above is claimed', ignoresCase: true,
+    build: async (box) => {
+      await write(box.projectDir, { 'sub/.GIT/HEAD': '', '.claude/agents/sa.md': SHADOWING });
+      return { cwd: join(box.projectDir, 'sub') };
+    },
+    note: { folders: 1, items: [fixedItems.foldersAbove] } },
 ];

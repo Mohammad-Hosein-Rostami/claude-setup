@@ -18,14 +18,14 @@
 // MAX_STATUS_BYTES are read.
 // Exports: withBriefLines(toolInput, cwd) -> input | null, readFileHead(path, maxBytes, flags?) -> text | undefined (the UI brief gate
 // reads its matrix with it too), UNPRINTABLE, MAX_EXCLUDE_BYTES, and for agent-folders.mjs (which finds the same git root) isInside,
-// nearestGitEntry, gitDirOf, sharedGitDir. Invariants: withBriefLines never throws (any failure: null, the brief
+// nearestGitEntry, gitDirOf, sharedGitDir, MAX_PARENT_LEVELS. Invariants: withBriefLines never throws (any failure: null, the brief
 // stays as it is); bounded work (at most MAX_PARENT_LEVELS + 1 folders looked at, two folder listings, four reads of capped size).
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const STATUS_FILE = 'STATUS.md';
 const GIT_ENTRY = '.git';
-const MAX_PARENT_LEVELS = 64; // folders above cwd looked at for a `.git`: deeper than any real project
+export const MAX_PARENT_LEVELS = 64; // folders above cwd looked at for a `.git`: deeper than any real project
 const MAX_STATUS_BYTES = 1024 * 1024; // only the start of a longer STATUS.md is read; the rules section sits near the top
 export const MAX_EXCLUDE_BYTES = 64 * 1024; // only the start of a longer info/exclude is read (a real one is a few lines)
 const MAX_PATH_FILE_BYTES = 4096; // a `.git` file or a `commondir` holds one path line
@@ -110,14 +110,18 @@ function gitFileLines(path, maxBytes) {
 
 /**
  * @param {string} cwd the call's folder
- * @returns {{top: string, entry: import('node:fs').Stats} | null | undefined} the nearest folder at or above cwd holding an entry named
- *   exactly `.git`, with that entry's lstat; null when no folder up to the root has one; undefined when MAX_PARENT_LEVELS comes first
+ * @param {{ otherSpellings?: boolean }} [options] otherSpellings: also stop at a folder where the disk finds `.git` under another
+ *   spelling (`.GIT` on a disk that ignores case). Claude Code finds its git root by a stat, so it stops there too.
+ * @returns {{top: string, entry: import('node:fs').Stats, exact: boolean} | null | undefined} the nearest folder at or above cwd
+ *   holding an entry named exactly `.git` (`exact`; with otherSpellings also one the disk finds under that name, `exact` false),
+ *   with that entry's lstat; null when no folder up to the root has one; undefined when MAX_PARENT_LEVELS comes first
  */
-export function nearestGitEntry(cwd) {
+export function nearestGitEntry(cwd, { otherSpellings = false } = {}) {
   let folder = resolve(cwd);
   for (let level = 0; level <= MAX_PARENT_LEVELS; level += 1) {
     const entry = lstatOrNull(join(folder, GIT_ENTRY));
-    if (entry !== null && listsEntry(folder, GIT_ENTRY)) return { top: folder, entry };
+    const exact = entry !== null && listsEntry(folder, GIT_ENTRY);
+    if (exact || (entry !== null && otherSpellings)) return { top: folder, entry, exact };
     if (dirname(folder) === folder) return null;
     folder = dirname(folder);
   }
