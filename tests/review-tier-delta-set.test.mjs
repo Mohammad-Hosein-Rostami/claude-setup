@@ -184,8 +184,10 @@ test('security N1: a rewritten lane commit whose added line moved to another pla
   const moved = write('src/gate.mjs', 'allowAll();\nconst checks = [];\nchecks.push(isTrusted);\nrunChecks(checks);\nconst verdict = decide();\n');
   const note = write('NOTES.md', 'fix: note\n');
   const result = json('--delta', reviewed, '--prior', priorFile());
-  assert.equal(result.range, `patches ${moved.slice(0, 8)},${note.slice(0, 8)} of ${git(dir, 'rev-parse', 'main')}..HEAD`, 'the same added line before the checks is a new patch');
+  // The reviewed patch is not in the lane any more (the same added line before the checks is another patch), so the whole lane is read.
+  assert.equal(result.range, `${git(dir, 'rev-parse', 'main')}...HEAD (rewritten lane: 1 reviewed patch is gone or changed)`);
   assert.equal(result.files, 2);
+  assert.ok(result.fileClasses['src/gate.mjs'] && result.fileClasses['NOTES.md'], `${moved} and ${note} are both read`);
 });
 
 test('a base that hides the lane is refused: --base at or past the reviewed sha, or a reviewed sha that is on the base (a first review as a delta)', () => {

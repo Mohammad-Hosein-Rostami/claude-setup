@@ -65,7 +65,7 @@ function planText(plan) {
  * What a delta reviewer reads. The same sentences stand in the Delta mode of home/agents/reviewer.md and security-auditor.md;
  * tests/agent-delta-mode.test.mjs keeps the three in step.
  */
-export const DELTA_READING = 'Read: the changed lines; the callers and the callees of every changed function; every use of a name the fix removed or renamed (search the old name in the whole repo); the readers of any state, config, default or data the fix starts or stops writing; the tests the fix touched (nothing weakened); every prior finding. A security finding is never dropped. If you cannot bound the effect of the fix this way, say `needs the full range`: the round is then not clean.';
+export const DELTA_READING = 'Read: the changed lines; the callers and the callees of every changed function; every use of a name the fix removed or renamed (search the old name in the whole repo); the readers of any state, config, default or data the fix starts or stops writing; the tests the fix touched (nothing weakened); on a rewritten lane, what the rewrite dropped or changed (the brief names the `git range-diff` to read); every prior finding. A security finding is never dropped. If you cannot bound the effect of the fix this way, say `needs the full range`: the round is then not clean.';
 
 /** The range as a brief names it: a delta round's is made by the tool (a full sha, or a patch list with the base as data); any other is the caller's text. */
 const rangeText = (range, deltaOf) => (deltaOf === null ? asData(range) : range);

@@ -35,7 +35,7 @@ test('reviewer and security-auditor each have a Delta mode section', () => {
 
 test('what a delta reviewer reads is one text: both agent files hold the sentences the tool prints, word for word', () => {
   for (const part of ['the changed lines', 'the callers and the callees of every changed function', 'every use of a name the fix removed or renamed (search the old name in the whole repo)',
-    'the readers of any state, config, default or data the fix starts or stops writing', 'the tests the fix touched (nothing weakened)', 'every prior finding',
+    'the readers of any state, config, default or data the fix starts or stops writing', 'the tests the fix touched (nothing weakened)', 'on a rewritten lane, what the rewrite dropped or changed (the brief names the `git range-diff` to read)', 'every prior finding',
     'A security finding is never dropped.', 'say `needs the full range`: the round is then not clean']) {
     assert.ok(DELTA_READING.includes(part), `the shared text names: ${part}`);
   }

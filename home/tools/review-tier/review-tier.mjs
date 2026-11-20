@@ -6,7 +6,8 @@
 //                    more than one of main, master, develop exists (exit 2 without it)
 //   <range>          `a..b` or `a...b`; default `<base sha>...HEAD`, the base being the one of main, master, develop that is a local branch
 //   --landing        the last review before the base moves: adds the Opus max lens, the auditor and a mutation plan
-//   --delta <sha>    a fix round: review only what changed since that reviewed sha (a rebased lane: only patches the reviewed set lacks),
+//   --delta <sha>    a fix round: review only what changed since that reviewed sha (a rebased lane: only patches the reviewed set lacks;
+//                    a rewritten lane that dropped or changed a reviewed patch: the whole lane and what the rewrite took out),
 //                    with the set of the whole lane: the tool reads the lane range (<base>...HEAD) itself and always gives the landing
 //                    set, so the round is never lighter than the lane's review. Needs --prior. An empty delta is exit 2
 //   --prior <file>   with --delta: the review report of the previous round, as its reviewers wrote it. The tool prints its sha256 and the
@@ -23,7 +24,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { UsageError, gitText } from '../git-tidy/lib/git.mjs';
 import { CLASS_TIER, LOCK_TAG, RACE_TAG } from './tiers.mjs';
-import { baseOf, checkRange, newFileReader, readDelta, readRange, requiredReadingFor } from './lib/diff.mjs';
+import { MAX_READING, baseOf, checkRange, newFileReader, readDelta, readRange, requiredReadingFor } from './lib/diff.mjs';
 import { appendLog } from './lib/log.mjs';
 import { readPrior } from './lib/prior.mjs';
 import { buildReport, formatJson, formatText, logRecord } from './lib/report.mjs';
@@ -99,8 +100,10 @@ function readLaneClasses(file) {
  */
 function deltaRound(top, options) {
   const base = baseOf(top, options.base);
-  const { range, files, reviewedSha } = readDelta(top, base, options.delta);
-  return { range, files, deltaOf: reviewedSha, laneFiles: readRange(top, `${base}...HEAD`), requiredReading: requiredReadingFor(top, files), endRevision: 'HEAD' };
+  const { range, files, reviewedSha, rangeDiff } = readDelta(top, base, options.delta);
+  // On a rewritten lane that lost reviewed work the first thing to read is what the rewrite dropped or changed.
+  const requiredReading = [...(rangeDiff === null ? [] : [rangeDiff]), ...requiredReadingFor(top, files)].slice(0, MAX_READING);
+  return { range, files, deltaOf: reviewedSha, laneFiles: readRange(top, `${base}...HEAD`), requiredReading, endRevision: 'HEAD' };
 }
 
 function wholeRange(top, options) {
