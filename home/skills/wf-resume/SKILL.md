@@ -23,6 +23,6 @@ changed prompt reruns that agent and every later one). Do these steps; the facts
    `resume: true` and skips lanes whose close row STATUS.md shows landed; `land` and `review` look at the git state themselves. Look at the worktrees and
    branches the list names first: a lane with commits there continues, it is not redone.
 6. Start the STATUS.md rows of the relaunched runs (`status.mjs start`), and tell the owner which runs continued, which could not, and why.
-7. A run the owner gives up: `wf-resume.mjs abandon <runId>`; it hides the run from the notice and touches no git (no worktree, branch or journal is removed).
+7. A run the owner gives up: `wf-resume.mjs abandon <runId>`; only after `/workflows` shows it is not running; it hides the run from the notice and touches no git (no worktree, branch or journal is removed).
 
 Never edit the script before the point where the run stopped, never start a second copy of a run that is still going, and never push.

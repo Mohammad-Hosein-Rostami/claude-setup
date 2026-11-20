@@ -8,8 +8,8 @@
 // one in the same cwd (a new session after an exit, a fork, an account switch); a run id is listed once (its newest record), and a run this
 // session already holds (a resume or an adopted run) is not listed from another session. A run whose summary json says `completed` is finished
 // and not listed; one with another status (failed at a usage limit) is listed as ended early. The run folder is looked up under the projects
-// folder stored in the record (the account that ran it), so an account switch does not hide it. A record with an `abandoned` time (set by
-// `wf-resume.mjs abandon`) is dropped first, whatever its state (stopped, ended with a status, lost); it still counts as held by its session.
+// folder stored in the record (the account that ran it), so an account switch does not hide it. A record with an `abandoned` time (isAbandonMark; set by
+// `wf-resume.mjs abandon`) is dropped first, whatever its state (stopped, ended with a status, lost); a run this session holds only as a marked record is not held (a relaunch elsewhere is listed).
 // Continue: the same session -> Workflow({scriptPath, resumeFromRunId, args}); another session -> `wf-resume.mjs adopt` first (it copies the
 // journal into this session's folder, the only way the Workflow tool finds it), then the same call. Why the args: a resumed run caches an
 // agent only when its prompt is identical, so the args must be the original ones; the notice carries their digest, `wf-resume.mjs call` prints them.
@@ -22,7 +22,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { statusFileOf } from '../../../hooks/lib/status-file-of.mjs';
-import { launchedWithoutArgs, otherSessionRuns, runsOfSession, scriptShaOf } from './registry.mjs';
+import { isAbandonMark, launchedWithoutArgs, otherSessionRuns, runsOfSession, scriptShaOf } from './registry.mjs';
 import { ownedGit } from './owned-git.mjs';
 import { inspectRun } from './run-state.mjs';
 
@@ -51,15 +51,14 @@ const newestFirst = (runs) => [...runs].sort((a, b) => b.started.localeCompare(a
 /** The folder Claude Code keeps the record's session in: under the projects folder the record names (the account that ran it), else `projectsRoot`. */
 export const sessionFolderOf = (record, projectsRoot) => join(record.projectsRoot || projectsRoot, record.projectDir, record.sessionId);
 
-const notAbandoned = (run) => typeof run.abandoned !== 'string';
 
 /** The unfinished runs to show: this session's first, then the other sessions'; each with the journal state read now. */
 function unfinishedEntries(params, deps) {
-  const own = params.sessionId === null ? [] : newestFirst(runsOfSession(deps.registryDir, params.sessionId));
+  const own = params.sessionId === null ? [] : newestFirst(runsOfSession(deps.registryDir, params.sessionId)).filter((run) => !isAbandonMark(run.abandoned));
   const held = new Set(own.map((run) => run.runId));
   const others = params.source === 'compact' ? [] : otherSessionRuns(deps.registryDir, { cwd: params.cwd, exceptSession: params.sessionId }).filter((run) => !held.has(run.runId));
   const toEntry = (record, isOwn) => ({ record, isOwn, state: inspectRun(sessionFolderOf(record, deps.projectsRoot), record, params.nowMs) });
-  return [...own.filter(notAbandoned).slice(0, RUNS_INSPECTED_PER_SESSION).map((run) => toEntry(run, true)), ...others.filter(notAbandoned).slice(0, RUNS_INSPECTED_PER_SESSION).map((run) => toEntry(run, false))]
+  return [...own.slice(0, RUNS_INSPECTED_PER_SESSION).map((run) => toEntry(run, true)), ...others.slice(0, RUNS_INSPECTED_PER_SESSION).map((run) => toEntry(run, false))]
     .filter((entry) => entry.state.state !== 'finished' && entry.state.state !== 'gone');
 }
 

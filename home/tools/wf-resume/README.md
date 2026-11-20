@@ -3,7 +3,7 @@
 Finds the workflow runs that did not finish (a killed process, a usage-limit stop, an account switch) and continues them.
 
 - `wf-resume.mjs list | call <runId> | adopt <runId> --into <session folder> | abandon <runId>`: see the header of the file; exit 0 done, 1 refused, 2 usage.
-- `abandon <runId>` sets `abandoned: <time>` on the run's registry records, so `list` and the start notice stop showing it (also a run that ended with a status). It runs no git, removes no worktree, branch, journal or record, and refuses a run whose journal was written in the last 30 minutes. A relaunch of the run lists it again; there is no undo command.
+- `abandon <runId>` sets `abandoned: <time>` on the run's registry records, so `list` and the start notice stop showing it (also a run that ended with a status). It runs no git, removes no worktree, branch, journal or valid record, and refuses a run with an unfinished copy whose journal was written in the last 30 minutes (a stopped agent that writes nothing for longer looks stopped: check `/workflows` first). Every copy of the run id is marked. A relaunch of the run lists it again; there is no undo command.
 - `lib/registry.mjs`: the per-session record file written by `home/hooks/workflow-register.mjs` (`~/.claude/state/workflow-runs/<session>.json`).
 - `lib/run-state.mjs`: what a run left on disk (finished, ended early, lost, unfinished) from its run folder.
 - `lib/notice.mjs`: the text of the SessionStart notice (`home/hooks/workflow-resume-notice.mjs`) and of `list`.

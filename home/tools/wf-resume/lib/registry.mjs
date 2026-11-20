@@ -1,18 +1,18 @@
 // The workflow registry: one small private file per session listing the workflow runs that session launched, so a later session (after an
 // exit, a usage-limit stop or an account switch) can find the runs that did not finish.
 // Exports: launchRecord(hookInput, nowIso), saveRun(dir, record), runsOfSession(dir, session), otherSessionRuns(dir, {cwd, exceptSession}),
-//   findRun(dir, runId), markAbandoned(dir, runId, nowIso), launchedWithoutArgs(record), scriptShaOf(path), defaultRegistryDir(), RUN_ID,
+//   findRun(dir, runId), runCopies(dir, runId), markAbandoned(dir, runId, nowIso), isAbandonMark(value), launchedWithoutArgs(record), scriptShaOf(path), defaultRegistryDir(), RUN_ID,
 //   MAX_RUNS_PER_SESSION, MAX_ARGS_BYTES, RETENTION_DAYS.
 // File: <dir>/<session>.json holds one JSON record per line (the `.json` name is the session store's, lib/session-store.mjs in the hooks:
 // atomic write, 0600 file in a 0700 folder, never through a link). A record: { sessionId, runId, name, scriptPath, argsDigest, args?, started,
-// lastLaunch, cwd, row, projectDir, projectsRoot, scriptSha, abandoned? }. `abandoned` is an ISO time, set only by markAbandoned (`wf-resume.mjs
+// lastLaunch, cwd, row, projectDir, projectsRoot, scriptSha, abandoned? }. `abandoned` is an ISO time (isAbandonMark: any other value is no mark), set only by markAbandoned (`wf-resume.mjs
 // abandon`): the owner gave the run up, so the notice and `list` skip it. A relaunch (saveRun of the same run id) replaces the record and so clears it. `projectDir` is the folder name under the projects folder of the account that ran it
 // (`projectsRoot`, the config dir's `projects`; an account switch changes it), so the run folder is <projectsRoot>/<projectDir>/<sessionId>/
 // subagents/workflows/<runId>; it is rebuilt from these names, never from a path read out of a run folder. `scriptSha` is the first 16 hex
 // characters of the script file's sha256 at launch (null when unreadable): a resumed run caches an agent only for an identical prompt, so a
 // changed script is flagged.
 // Invariants: a run is recorded only when the tool result names a run id (a refused launch leaves nothing); a resume of the same run id
-// updates its record (first start time kept, mark dropped); a mark keeps its first time; at most MAX_RUNS_PER_SESSION records per file (oldest dropped); args are stored only up to
+// updates its record (first start time kept, mark dropped); a mark keeps its first time; a marked record is skipped before the one-run-per-id pick of otherSessionRuns, so a relaunch of a given-up run is seen; at most MAX_RUNS_PER_SESSION records per file (oldest dropped); args are stored only up to
 // MAX_ARGS_BYTES and never when they hold a secret (a resume then says to take them from the old transcript); the hooks never print them.
 // Retention: a save drops records, and other sessions' files, older than RETENTION_DAYS (the transcripts' own default, so a record never
 // outlives the run folder it points to by much).
@@ -42,10 +42,14 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
 const HAS_CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/; // no g flag: a global regex keeps state between test() calls
 const MAX_PATH_CHARS = 500;
 const MAX_NAME_CHARS = 40;
+const ABANDON_MARK = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/; // the exact form `new Date(...).toISOString()` writes
 const STORE_FILE = /^([A-Za-z0-9_-]{1,100})\.json$/;
 
 /** True when the launch had no args at all (the digest of `null`): then there is nothing to pass again. */
 export const launchedWithoutArgs = (record) => record.argsDigest === digestOf('null');
+
+/** True for the time `markAbandoned` writes; a record's `abandoned` of any other value is data to ignore, never shown, and counts as no mark. */
+export const isAbandonMark = (value) => typeof value === 'string' && ABANDON_MARK.test(value) && !Number.isNaN(Date.parse(value));
 
 export const defaultRegistryDir = () => join(homedir(), '.claude', 'state', 'workflow-runs');
 
@@ -189,13 +193,13 @@ function sessionFiles(dir, limit = MAX_SESSIONS_READ) {
 
 /**
  * The runs of every other session that launched one in this cwd; a run id held by several sessions (adopted and relaunched) appears once, as
- * its newest record. Newest first.
+ * its newest record; a given-up (marked) record is skipped first, so it never hides a relaunch of the run. Newest first.
  * @returns {object[]}
  */
 export function otherSessionRuns(dir, { cwd, exceptSession }) {
   const newestPerRun = new Map();
   for (const file of sessionFiles(dir).filter((entry) => entry.sessionId !== exceptSession)) {
-    for (const run of runsOfSession(dir, file.sessionId).filter((record) => record.cwd === cwd)) {
+    for (const run of runsOfSession(dir, file.sessionId).filter((record) => record.cwd === cwd && !isAbandonMark(record.abandoned))) {
       const held = newestPerRun.get(run.runId);
       if (held === undefined || run.started > held.started) newestPerRun.set(run.runId, run);
     }
@@ -212,13 +216,18 @@ export function findRun(dir, runId) {
   return null;
 }
 
+/** @returns {object[]} every record with this run id in the session files `findRun` searches (an adopted or relaunched run has several), newest file first */
+export function runCopies(dir, runId) {
+  return sessionFiles(dir).flatMap((file) => runsOfSession(dir, file.sessionId).filter((record) => record.runId === runId));
+}
+
 /** Marks the record of `runId` in one session's file; the caller holds that file's lock. @returns {{ marked: number, already: string | null } | undefined} undefined when the write failed */
 function markInFile(dir, session, runId, nowIso) {
   let marked = 0;
   let already = null;
   const next = runsOfSession(dir, session).map((run) => {
     if (run.runId !== runId) return run;
-    if (typeof run.abandoned === 'string') {
+    if (isAbandonMark(run.abandoned)) {
       already ??= run.abandoned;
       return run;
     }
@@ -230,13 +239,13 @@ function markInFile(dir, session, runId, nowIso) {
 }
 
 /**
- * Sets `abandoned: nowIso` on every record of this run id in the session files `findRun` searches (an adopted or relaunched run lives in
+ * Sets `abandoned: nowIso` on every record of this run id in the session files `runCopies` reads (an adopted or relaunched run lives in
  * several), each file under its session lock. A record that already has the mark keeps its first time. Writes nothing when no record needs it.
  * @param {string} dir the registry folder
  * @param {string} runId a run id the caller checked against RUN_ID
  * @param {string} nowIso the clock as an ISO string
- * @returns {{ marked: number, already: string | null } | null} marked: records changed now; already: the first time of a mark that was there before
- *   (null when none); null when a lock could not be taken or a write failed (some files may then be marked)
+ * @returns {{ marked: number, already: string | null, failed: boolean }} marked: records changed now; already: the first time of a mark that was
+ *   there before (null when none); failed: a lock could not be taken or a write failed (files before it may be marked; a second call finishes)
  */
 export function markAbandoned(dir, runId, nowIso) {
   let marked = 0;
@@ -244,9 +253,9 @@ export function markAbandoned(dir, runId, nowIso) {
   for (const { sessionId } of sessionFiles(dir)) {
     if (!runsOfSession(dir, sessionId).some((run) => run.runId === runId)) continue;
     const outcome = withSessionLock(dir, sessionId, () => markInFile(dir, sessionId, runId, nowIso));
-    if (outcome === undefined) return null;
+    if (outcome === undefined) return { marked, already, failed: true };
     marked += outcome.marked;
     already ??= outcome.already;
   }
-  return { marked, already };
+  return { marked, already, failed: false };
 }

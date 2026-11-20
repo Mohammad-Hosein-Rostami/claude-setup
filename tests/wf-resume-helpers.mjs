@@ -1,8 +1,13 @@
 // Shared setup for the wf-resume tests: a temp "world" laid out as Claude Code 2.1.326 writes it (probe, round 5): transcripts and run
 // folders under <projects>/<project>/<session>/, a per-session workflow registry, and the estimator's state folder. Nothing here touches the
-// real ~/.claude. Exports: world(), PostToolUse input builders (launchInput), journal line builders (started, result, LAUNCHED).
-import { mkdirSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
+// real ~/.claude. Exports: world(), PostToolUse input builders (launchInput), journal line builders (started, result, LAUNCHED), and the CLI
+// test kit: cli (spawn with HOME = the world), inProcess (runCli with the clock passed in), seed (one registered run), registryBytes, markOf.
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { runCli } from '../home/tools/wf-resume/wf-resume.mjs';
+import { launchRecord, runsOfSession, saveRun } from '../home/tools/wf-resume/lib/registry.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 export const NOW = Date.parse('2026-11-17T12:00:00Z');
@@ -52,3 +57,26 @@ export async function world() {
   };
   return { ...paths, sessionFolder, addRun };
 }
+
+export const KILLED = [LAUNCHED, started('a1', '4:rebase', 'Rebase'), result('a1'), started('a2', '4:suite', 'Suite')];
+export const CLI = fileURLToPath(new URL('../home/tools/wf-resume/wf-resume.mjs', import.meta.url));
+
+/** The CLI as a child process with HOME (and USERPROFILE) = the world, so it reads and writes only the test's own registry. */
+export const cli = (w, ...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env: { ...process.env, HOME: w.root, USERPROFILE: w.root, CLAUDE_CONFIG_DIR: '' } });
+
+/** The CLI in this process with the clock passed in (a test that depends on a journal's age never reads the wall clock). */
+export const inProcess = (w, argv, nowMs) => runCli(argv, { registryDir: w.registryDir, projectsRoot: w.projectsRoot, estimateStateDir: w.estimateDir, cwd: '/work/proj', nowMs });
+
+/** Registers one run (its run folder and its registry record, started at `at`); `mark` sets the record's `abandoned`. Returns the run folder's files. */
+export function seed(w, { session = 'old-1', runId = 'wf_old', args = { row: '4', branch: 'lane/x' }, run = {}, at = '2026-11-17T10:00:00.000Z', mark } = {}) {
+  const files = w.addRun({ session, runId, lines: KILLED, ...run });
+  const record = launchRecord(launchInput({ session, runId, args, projectsRoot: w.projectsRoot, response: launchResponse(runId, files.scriptPath) }), at);
+  saveRun(w.registryDir, mark === undefined ? record : { ...record, abandoned: mark });
+  return files;
+}
+
+/** Every `.json` file of the registry folder, name and text, in name order. */
+export const registryBytes = (w) => readdirSync(w.registryDir).filter((name) => name.endsWith('.json')).sort().map((name) => `${name}\n${readFileSync(join(w.registryDir, name), 'utf8')}`).join('\n--\n');
+
+/** The `abandoned` field of one session's record of a run (undefined when it has none). */
+export const markOf = (w, session, runId) => runsOfSession(w.registryDir, session).find((record) => record.runId === runId)?.abandoned;
