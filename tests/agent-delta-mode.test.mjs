@@ -113,7 +113,7 @@ test('both agents write a findings file the next round can count: one line per f
 });
 
 test('home/CLAUDE.md names the same fix-round command as the tool, complete, and the tool prints it as its last line', () => {
-  assert.equal(FIX_ROUND_COMMAND, 'node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --prior <findings-file>');
+  assert.equal(FIX_ROUND_COMMAND, 'node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --prior <findings-file> --lane-classes <previous-round-json>');
   assert.ok(gates().includes(`\`${FIX_ROUND_COMMAND}\``), 'the gate sentence holds the whole command');
   const { write, tier } = lane();
   write('src/a.mjs', 'export const a = 1;\n');

@@ -26,7 +26,7 @@ test('security B2, attack 1: a fix that widens the guard of an execSync lane kee
   assert.deepEqual(strength(round0), [['reviewer', 'sonnet', 'high'], ...OPUS_MAX_PAIR], 'the lane review: Sonnet, Opus max risk lens, auditor Opus max');
   write('src/run.mjs', "import { execSync } from 'node:child_process';\nconst SAFE = /^[a-z./ ;$()]+$/;\nexport const run = (cmd) => (SAFE.test(cmd) ? execSync(cmd) : null);\n");
   const delta = json('--delta', reviewed, '--prior', priorFile());
-  assertNotLighter(delta, round0, 'no --lane-classes, no --landing');
+  assertNotLighter(delta, round0, 'an empty --lane-classes, no --landing');
   assert.ok(delta.classes.includes('security'), `classes ${delta.classes}`);
   assert.equal(delta.files, 1, 'the files and lines are still only the fix');
 });
@@ -123,7 +123,7 @@ test('a class the first review got by hand (--add-class) stays: through --lane-c
   const reviewed = write('src/a.mjs', 'export const a = 1;\n');
   const round0 = json('--add-class', 'concurrency');
   assert.deepEqual(round0.added, ['concurrency']);
-  assert.match(tier('--add-class', 'concurrency').stdout.trimEnd().split('\n').at(-1), /^fix round: .* --delta <reviewed-sha> --prior <findings-file> --add-class concurrency$/);
+  assert.match(tier('--add-class', 'concurrency').stdout.trimEnd().split('\n').at(-1), /^fix round: .* --delta <reviewed-sha> --prior <findings-file> --lane-classes <previous-round-json> --add-class concurrency$/);
   write('src/a.mjs', 'export const a = 2;\n');
   const delta = json('--delta', reviewed, '--prior', priorFile(), '--lane-classes', laneJson(round0));
   assert.ok(delta.classes.includes('concurrency'));

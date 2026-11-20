@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // CLI of `review-tier`: reads a git range and says which reviews to run together (agent, model, effort, lens, brief, plan).
-// Usage: review-tier.mjs [<range>] [--landing] [--delta <reviewed-sha> --prior <findings-file>] [--lane-classes <file>] [--add-class <c>]...
-//                        [--base <b>] [--json]
+// Usage: review-tier.mjs [<range>] [--landing] [--delta <reviewed-sha> --prior <findings-file> --lane-classes <previous-round-json>]
+//                        [--add-class <c>]... [--base <b>] [--json]
 //   --base <b>       where the lane starts: a local branch (read as refs/heads/<b>, never a tag of that name) or a full sha. Needed when
 //                    more than one of main, master, develop exists (exit 2 without it)
 //   <range>          `a..b` or `a...b`; default `<base sha>...HEAD`, the base being the one of main, master, develop that is a local branch
@@ -9,12 +9,13 @@
 //   --delta <sha>    a fix round: review only what changed since that reviewed sha (a rebased lane: only patches the reviewed set lacks;
 //                    a rewritten lane that dropped or changed a reviewed patch: the whole lane and what the rewrite took out),
 //                    with the set of the whole lane: the tool reads the lane range (<base>...HEAD) itself and always gives the landing
-//                    set, so the round is never lighter than the lane's review. Needs --prior. An empty delta is exit 2
+//                    set, so the round is never lighter than the lane's review. Needs --prior and --lane-classes. An empty delta is exit 2
 //   --prior <file>   with --delta: the review report of the previous round, as its reviewers wrote it. The tool prints its sha256 and the
 //                    number of blocking and should-fix findings in it; every brief tells the reviewer to check the hash and to verify each
 //                    finding itself. The path is pasted into every brief: one that is not plain, or a file that cannot be read, is exit 2
 //   --lane-classes   the `--json` of the previous round: adds the classes it holds (a class the lead added by hand, a class of a line an
-//                    earlier fix removed); it can only raise the set
+//                    earlier fix removed); it can only raise the set. Required with --delta (exit 2 without it): once a fix has removed
+//                    the lines that gave a class, only the round before still knows it
 //   --add-class <c>  raise only: adds that class's full set and plan (unknown class: exit 2)
 // Exit codes: 0 printed, 1 git failed, 2 usage (bad range, unknown sha or class, bad flag).
 // Invariants: read-only on the repository; the only write is one line in the log (REVIEW_TIER_LOG overrides its path).
@@ -37,7 +38,7 @@ const MAX_LANE_FILE_BYTES = 4 << 20;
 const PLAIN_PATH = /^(?:[A-Za-z]:[\\/]|\/)[\w@+=.,~/\\-]+$/;
 const MAX_ECHOED_PATH_CHARS = 120; // a refused path is quoted in the error, cut to this length
 const KNOWN_NAMES = new Set([...Object.keys(CLASS_TIER), LOCK_TAG, RACE_TAG]);
-const USAGE = 'usage: review-tier.mjs [<range>] [--landing] [--delta <sha> --prior <file>] [--lane-classes <file>] [--add-class <c>]... [--base <b>] [--json]';
+const USAGE = 'usage: review-tier.mjs [<range>] [--landing] [--delta <sha> --prior <file> --lane-classes <previous-round-json>] [--add-class <c>]... [--base <b>] [--json]';
 
 function valueOf(argv, index, flag) {
   const value = argv[index + 1];
@@ -65,6 +66,7 @@ function parseArgs(argv) {
   }
   if (options.delta !== null && options.range !== null) throw new UsageError(`--delta names its own range: give a range or --delta, not both. ${USAGE}`);
   if (options.delta !== null && options.prior === null) throw new UsageError(`--delta needs --prior <findings-file>: a fix round names the review report of the round before (a lane's first review reads the whole range). ${USAGE}`);
+  if (options.delta !== null && options.laneClasses === null) throw new UsageError(`--delta needs --lane-classes <previous-round-json>: the --json output of the round before (the lane's first review, then each fix round), the only record of a class whose lines a fix removed; run every round once with --json and keep the file. ${USAGE}`);
   if (options.prior !== null) {
     if (options.delta === null) throw new UsageError(`--prior belongs to a --delta round. ${USAGE}`);
     if (!PLAIN_PATH.test(options.prior)) throw new UsageError(`--prior must be a plain path (letters, digits and _@+=.,~/- only: no spaces, quotes or newlines; copy the report to a path without them), because it is pasted into every brief: ${JSON.stringify(options.prior.slice(0, MAX_ECHOED_PATH_CHARS))}`);

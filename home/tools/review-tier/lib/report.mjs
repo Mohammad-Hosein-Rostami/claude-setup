@@ -15,8 +15,11 @@ import { buildReviews, buildWaivable } from './reviews.mjs';
 import { weakenedChecks } from './weakened.mjs';
 
 const TAGS = [LOCK_TAG, RACE_TAG];
-/** The whole command of a fix round's re-review; home/CLAUDE.md names the same one (a test keeps them in step). */
-export const FIX_ROUND_COMMAND = 'node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --prior <findings-file>';
+/**
+ * The whole command of a fix round's re-review; home/CLAUDE.md names the same one (a test keeps them in step). Every part is required:
+ * without `--lane-classes` a round after a fix that removed a class's lines would be lighter than the lane's first review.
+ */
+export const FIX_ROUND_COMMAND = 'node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --prior <findings-file> --lane-classes <previous-round-json>';
 const KEPT_FROM_LANE = ' (kept from the lane)';
 
 /** Union of two class lists, in display order (classes first, then tags). */
