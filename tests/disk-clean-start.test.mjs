@@ -76,8 +76,19 @@ writeFileSync(${JSON.stringify(join(home, 'cleaned'))}, 'done');
   return tool;
 }
 
+/**
+ * The folders a hook run gets in place of the real ones, all inside the fixture home: the temp folder and, inside it (a scratchpad root
+ * must lie under the temp folder), the scratchpad root. Without them the child would get the runner's TMPDIR and the real
+ * /private/tmp/claude-<uid>, and a test that starts the real tool would clean real folders.
+ */
+const fixtureFolders = (home) => ({ tmp: join(home, 'tmp'), claudeTmp: join(home, 'tmp', 'claude-tmp') });
+
+/** Runs the hook as Claude Code does, with every folder the clean-up reads or cleans set to a fixture (`env` can replace any of them). */
 const runHook = (home, env) => {
-  const hook = spawn(process.execPath, [HOOK], { env: { ...process.env, HOME: home, USERPROFILE: home, ...env }, stdio: ['pipe', 'ignore', 'pipe'] });
+  const { tmp, claudeTmp } = fixtureFolders(home);
+  mkdirSync(claudeTmp, { recursive: true });
+  const fixtures = { HOME: home, USERPROFILE: home, TMPDIR: tmp, TMP: tmp, TEMP: tmp, DISK_FREE_CLAUDE_TMP: claudeTmp, CLAUDE_CONFIG_DIR: '' };
+  const hook = spawn(process.execPath, [HOOK], { env: { ...process.env, ...fixtures, ...env }, stdio: ['pipe', 'ignore', 'pipe'] });
   let stderr = '';
   hook.stderr.on('data', (chunk) => { stderr += chunk; });
   hook.stdin.end(JSON.stringify(startup));
@@ -110,6 +121,8 @@ test('the clean-up runs in its own process group (detached) and gets no tokens o
   assert.equal(String(pid), pgid, 'a detached child leads its own process group');
   for (const name of Object.keys(secrets)) assert.equal(env[name], undefined, name);
   assert.equal(env.HOME, home);
+  const { tmp, claudeTmp } = fixtureFolders(home);
+  assert.deepEqual([env.TMPDIR, env.TMP, env.TEMP, env.DISK_FREE_CLAUDE_TMP], [tmp, tmp, tmp, claudeTmp], 'a hook test never hands the child a real folder');
 });
 
 test('cleanEnv keeps only the allowed names', () => {
