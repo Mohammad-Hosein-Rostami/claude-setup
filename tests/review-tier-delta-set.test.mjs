@@ -70,6 +70,47 @@ test('review B1, case 2: a docs-only fix of a gate lane gets the lane landing se
   assert.match(text, /\n {2}gate \(kept from the lane\)\n/, 'the text output says why a docs fix gets these lenses');
 });
 
+test('review B1b: a docs-only or tests-only fix keeps the mutation plan of the lane, on a gate lane and on a plain logic lane', () => {
+  for (const [name, lanePath] of [['gate', 'home/workflows/build.js'], ['logic', 'src/total.mjs']]) {
+    for (const [kind, fixPath, fixText] of [['docs', 'README.md', '# fixed a typo\n'], ['tests', 'tests/total.test.mjs', "test('adds', () => {});\n"]]) {
+      const { write, json, tier } = lane();
+      const reviewed = write(lanePath, 'export const total = (a, b) => a + b;\nexport const twice = (n) => total(n, n);\n');
+      const landing0 = json('--landing');
+      const planned = landing0.reviews.filter((review) => review.model === 'opus');
+      assert.equal(planned.length, 2, `${name}: the lane lands with the Opus max pair`);
+      for (const review of planned) assert.deepEqual(review.plan.mutation, { maxMutants: 2 }, `${name}: round 0 asks for mutants`);
+      write(fixPath, fixText);
+      const delta = json('--delta', reviewed, '--prior', priorFile());
+      assertNotLighter(delta, landing0, `${name} lane, ${kind} fix`);
+      assert.deepEqual(delta.reviews.map((review) => review.lens), landing0.reviews.map((review) => review.lens));
+      for (const review of delta.reviews.filter((entry) => entry.model === 'opus')) {
+        assert.deepEqual(review.plan.mutation, { maxMutants: 3 }, `${name} lane, ${kind} fix: ${review.lens} plans by the lane's 3 changed lines, not the fix's 1`);
+        assert.match(review.brief, /PLAN: mutation max \d+ mutants on the changed lines\./, `${name} lane, ${kind} fix`);
+        assert.ok(review.brief.includes("The set, models, efforts and PLAN items are the lane's (a mutation plan counts the lane's changed lines, not only the fix's): nothing is skipped."), 'the brief says what it keeps (mutant R12)');
+      }
+      assert.match(tier('--delta', reviewed, '--prior', priorFile()).stdout, /PLAN: mutation max/);
+      assert.deepEqual([delta.files, delta.changedLines], [1, 1], 'files and lines stay the fix\'s');
+    }
+  }
+});
+
+test('review B1b: a fix that removes the lane\'s only code file still gets a mutation plan sized by the lines it removes', () => {
+  const { dir, write, json } = lane();
+  write('README.md', '# readme\n');
+  const reviewed = write('src/total.mjs', 'export const total = (a, b) => a + b;\nexport const twice = (n) => total(n, n);\nexport const zero = 0;\n');
+  git(dir, 'rm', '-q', 'src/total.mjs');
+  git(dir, 'commit', '-q', '-m', 'drop it');
+  const delta = json('--delta', reviewed, '--prior', priorFile());
+  assert.deepEqual(delta.reviews.find((review) => review.model === 'opus').plan.mutation, { maxMutants: 3 }, 'the lane range now holds one README line only');
+});
+
+test('a docs-only lane with a docs-only fix asks for no mutants: there is no code to mutate', () => {
+  const { write, json } = lane();
+  const reviewed = write('README.md', '# readme\n');
+  write('README.md', '# readme\nfixed\n');
+  for (const review of json('--delta', reviewed, '--prior', priorFile()).reviews) assert.equal(review.plan.mutation, null);
+});
+
 /** A previous round's JSON as a file, for `--lane-classes`. */
 function laneJson(report) {
   const path = priorFile().replace(/findings-round1\.md$/, 'round0.json');

@@ -82,9 +82,12 @@ const priorText = (prior) => `Prior findings: ${prior.file} (sha256 ${prior.sha2
  */
 const deltaLine = (range, prior) => `Delta review: ${range} only. ${DELTA_READING} Do not look for new defects in code the fix cannot reach; do not re-run the full suite (PASS record covers it).${prior === null ? '' : ` ${priorText(prior)}`}`;
 
+/** Stands in every delta brief: what a fix round keeps from the lane's first review. The plan is sized by the lane (lib/report.mjs, planSizeOf). */
+const LANE_SET_LINE = "The set, models, efforts and PLAN items are the lane's (a mutation plan counts the lane's changed lines, not only the fix's): nothing is skipped.";
+
 function briefOf({ range, deltaOf, prior, rules, hits, plan, requiredReading }) {
   const parts = [`Review ${rangeText(range, deltaOf)}.`, `Rules: ${rules}.`];
-  if (deltaOf !== null) parts.splice(1, 0, deltaLine(range, prior), "The set, models, efforts and PLAN items are the lane's: nothing is skipped.");
+  if (deltaOf !== null) parts.splice(1, 0, deltaLine(range, prior), LANE_SET_LINE);
   const shown = [...new Set(hits.slice(0, MAX_BRIEF_HITS).map((hit) => `${hit.class} ${placeText(hit.path, hit.line)}`))];
   if (shown.length > 0) parts.push(`Hits: ${shown.join(', ')}.`);
   const text = planText(plan);
@@ -100,7 +103,8 @@ const reviewMaker = ({ range, deltaOf, prior, requiredReading }) => (agent, mode
 const uiSkillReview = (range, deltaOf) => ({ agent: 'skill', model: null, effort: null, lens: 'ui-quality-pass', rules: '', brief: `Run the ui-quality-pass skill on the ui files of ${rangeText(range, deltaOf)}.`, requiredReading: [], plan: NO_PLAN });
 
 /**
- * @param {object} input classes (Set), fileClasses, hits, landing, range, deltaOf, prior, requiredReading, hasCode, changedLines, fileCount
+ * @param {object} input classes (Set), fileClasses, hits, landing, range, deltaOf, prior, requiredReading, and what sizes the plan:
+ *   hasCode, changedLines, fileCount (in a delta round the lane's, see lib/report.mjs planSizeOf)
  * @returns {object[]} reviews, in the order of the spec's `run together` list
  */
 export function buildReviews(input) {

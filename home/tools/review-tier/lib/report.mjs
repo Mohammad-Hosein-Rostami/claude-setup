@@ -5,7 +5,8 @@
 //   `principles` are the ids the hits ask the brief to carry (sorted by number); `weakened` lists lines that weaken a check;
 //   `waivable` is null unless the landing is tier 1 with no gate path, and always null in a delta round.
 //   A delta round (`laneFiles` given) is never lighter than the lane: its classes are those of the whole lane range, of the earlier
-//   rounds (`--lane-classes`: the files' classes and the classes the lead added) and of the delta; files, lines and hits are the delta's.
+//   rounds (`--lane-classes`: the files' classes and the classes the lead added) and of the delta; files, lines and hits are the delta's,
+//   and the plan is sized by the lane's files and lines, as in the lane's first review (planSizeOf).
 //   Outside a delta round `--lane-classes` keeps each file's highest classes (I4): a file's classes are the union of its earlier and new ones.
 //   `--add-class` only raises: an added class is unioned into the set, never removed.
 import { CLASS_TIER, LOCK_TAG, PRINCIPLES_BY_TRIGGER, RACE_TAG, classifyFiles, isCodeFile, isSizeable, tierOf } from '../tiers.mjs';
@@ -48,6 +49,17 @@ function classesOf(fresh, lane, laneClasses, earlierClasses) {
 }
 
 /**
+ * What the plan is sized by (`hasCode`, `changedLines`, `fileCount`: whether mutants are asked, and how many). In a delta round these
+ * are the lane's, as in its first review: a docs-only or tests-only fix of a code lane keeps the mutation plan, where a rewritten test
+ * must still kill the lane's mutants (review B1b of lane r7-delta). The fix's own numbers count when they are larger (a file the fix
+ * removed altogether is in no lane diff any more).
+ */
+function planSizeOf(files, changedLines, laneFiles, lane) {
+  const all = [...files, ...(laneFiles ?? [])];
+  return { hasCode: all.some((file) => isCodeFile(file.path)), changedLines: Math.max(changedLines, lane?.changedLines ?? 0), fileCount: Math.max(files.length, laneFiles?.length ?? 0) };
+}
+
+/**
  * @param {object} input files (parsed diff of the range or delta), laneFiles (parsed diff of the whole lane range in a delta round, else
  *   null), readNewFile, landing, addClasses, laneClasses (a previous fileClasses map or null), earlierClasses (the class names of that
  *   previous round), range, deltaOf, prior (lib/prior.mjs readPrior of the `--prior` file, or null), requiredReading
@@ -56,12 +68,12 @@ function classesOf(fresh, lane, laneClasses, earlierClasses) {
 export function buildReport({ files, laneFiles = null, readNewFile, landing, addClasses, laneClasses, earlierClasses = [], range, deltaOf, prior = null, requiredReading }) {
   const fresh = classifyFiles(files, readNewFile);
   const { hits, changedLines, triggers } = fresh;
-  const { fileClasses, classes, own } = classesOf(fresh, laneFiles === null ? null : classifyFiles(laneFiles, readNewFile), laneClasses, earlierClasses);
+  const lane = laneFiles === null ? null : classifyFiles(laneFiles, readNewFile);
+  const { fileClasses, classes, own } = classesOf(fresh, lane, laneClasses, earlierClasses);
   const added = addClasses.filter((name) => !classes.has(name));
   const kept = [...classes].filter((name) => !own.has(name));
   for (const name of addClasses) classes.add(name);
-  const hasCode = files.some((file) => isCodeFile(file.path));
-  const reviewInput = { classes, fileClasses, hits, landing, range, deltaOf, prior, requiredReading, hasCode, changedLines, fileCount: files.length };
+  const reviewInput = { classes, fileClasses, hits, landing, range, deltaOf, prior, requiredReading, ...planSizeOf(files, changedLines, laneFiles, lane) };
   const inOrder = (names) => Object.keys(CLASS_TIER).filter((name) => names.includes(name));
   return {
     tier: tierOf(classes),
