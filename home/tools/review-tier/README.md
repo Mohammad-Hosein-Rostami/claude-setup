@@ -126,7 +126,10 @@ measurement, not a miss-rate bound.
   has a token that begins with `error:` or `fatal:` stops the run with exit 1). The temp folder is checked after each import and once
   after the last read (`lib/temp-repository.mjs`): names, file types and the bytes of `HEAD` and `config`; for each imported pack its
   dev, inode, size, mtime and ctime as they were right after `git index-pack`, which must have named the pack the tool wrote; and at the
-  end the `.pack` bytes against the SHA-256 of what the tool wrote. Any difference is exit 2.
+  end the `.pack` bytes against the SHA-256 of what the tool wrote. Any difference is exit 2. Every file the tool itself reads there
+  (`HEAD`, `config`, the `.pack` it hashes, the import pack it hands to git) is opened without following a link and without waiting on
+  a FIFO, and must be a regular file (the noted one, for the `.pack`): a FIFO, socket or link put in its place is exit 2, not a run that
+  blocks (not probed on Windows).
   Those calls take shas only (the word `HEAD` is only printed), no path goes back to git as a pathspec (a diff is read whole with
   `--ignore-submodules=none` and the lane's paths are picked in the tool, by their bytes; a path that is not UTF-8 is exit 2), and the
   callers of a changed function are searched in the commit at `HEAD`, never in the working tree.
@@ -144,7 +147,8 @@ measurement, not a miss-rate bound.
   (both planned for the workflows' guards); the `git` found first on `PATH`; the temp folder, which a process of the same user can
   change and change back between two checks (a pack added and removed), and whose `.idx` or `.rev` is not checked against what git
   wrote (one replaced before the tool notes it is not seen): only a folder the writer's processes cannot write closes that (planned);
-  the import's own hash is plain SHA-1; an object above 1 GiB, a diff above the 256 MiB output cap or a name that is not UTF-8 stops the
+  git's own reads in the temp folder, which can still block on a FIFO put in place of a file git opens (git calls have no time limit;
+  planned); the import's own hash is plain SHA-1; an object above 1 GiB, a diff above the 256 MiB output cap or a name that is not UTF-8 stops the
   run; a SHA-256 repository is refused with exit 2 (`no base branch`, `unknown revision` or `HEAD names no commit`, by the call).
 - A run removes its own temp folder when it ends, on every exit path, from inside: each folder is entered and checked by device and
   inode before anything in it is removed, so a link swapped in during the removal is never followed (what stops a removal is one line

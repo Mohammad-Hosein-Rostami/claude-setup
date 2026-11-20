@@ -1,17 +1,18 @@
 // Tests that a gap in review-tier's import fails closed (lane r7-delta, fix round 5, K1, K7, K8): an object a read needs and the import
 // left out is exit 2 naming it, also where git itself would pass over it in silence (`git grep` skips a blob it cannot read, attributes
 // of a missing `.gitattributes` are empty, a file text reads as "no such file"); a file planted in the tool's own temp repository is
-// exit 2; and a git call that fails, or that says anything on stderr (for grep: an `error:` or `fatal:` line, since git also warns there
+// exit 2 (a FIFO in place of `HEAD` too, which must not block the run); and a git call that fails, or that says anything on stderr (for grep: an `error:` or `fatal:` line, since git also warns there
 // about the start's attributes), is never read as "no", "no match" or "no file".
 // How a gap is made: the recording git (spyGit) prints the listings the import makes on the lane's side with one object's name swapped
 // for another's, so that object is in no import list while the lane's history still needs it. POSIX only (the spy is a `#!` script).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { git } from './git-tidy-helpers.mjs';
 import { commitEntries, objectsOf, spiedRun } from './review-tier-forgery-helpers.mjs';
 import { lane, priorFile, sha256Of } from './review-tier-helpers.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const POSIX_ONLY = { skip: process.platform === 'win32' && 'the recording git is a `#!` script' };
 const PLAIN = 'export function run(x) {\n  return x;\n}\n';
@@ -103,6 +104,45 @@ test('spec check K7, security N27: a file planted in the tool\'s own temp reposi
     assert.deepEqual([...trusted, ...laneSide].map((call) => call.command[0]), ['--version', 'init'], `${file}: nothing ran after init`);
     assert.ok(!existsSync(trusted[0].env.GIT_DIR), 'the temp repository is removed');
   }
+});
+
+test('fix 7 K5, security N37: a FIFO put in place of HEAD right after git init is exit 2 at the first read of the folder, not a run that blocks', POSIX_ONLY, () => {
+  const { spied, rounds } = importLane();
+  const temp = realpathSync(makeTempDir('review-tier-tmpdir-')); // a run killed by the time limit leaves its folder here, not in the real temp folder
+  const { result, trusted } = spied(rounds[0], { TMPDIR: temp, SPY_AFTER_INIT: JSON.stringify({ file: 'HEAD', fifo: true }) });
+  assert.equal(result.error?.code, undefined, `the run ended by itself: ${result.error?.message}`);
+  assert.equal(result.status, 2, result.stderr);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /the tool's own temp repository changed during the run: .*HEAD is not a regular file/);
+  assert.ok(!existsSync(trusted[0].env.GIT_DIR), 'the temp repository is removed, the FIFO with it');
+});
+
+test('fix 7 K5: a FIFO put in place of the import pack while the tool writes it is exit 2 when the tool opens it for git index-pack, not a run that blocks', POSIX_ONLY, () => {
+  const { spied, rounds } = importLane();
+  // the import's last read of the lane's objects before the first `git index-pack`: the tool is writing the pack then
+  const control = spied(rounds[0]);
+  const firstIndex = control.trusted.find((call) => call.command[0] === 'index-pack').at;
+  const nth = control.laneSide.filter((call) => call.command.includes('--batch') && call.at < firstIndex).length;
+  const temp = realpathSync(makeTempDir('review-tier-tmpdir-'));
+  const { result, trusted } = spied(rounds[0], { TMPDIR: temp, SPY_AFTER_BATCH: JSON.stringify({ nth, file: 'import.pack', fifo: true }) });
+  assert.equal(result.error?.code, undefined, `the run ended by itself: ${result.error?.message}`);
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /the tool's own temp repository changed during the run: .*import\.pack is not a regular file/);
+  assert.ok(!existsSync(trusted[0].env.GIT_DIR), 'the temp repository is removed, the FIFO with it');
+});
+
+test('fix 7 K4: what stops the removal of the run\'s own folder (a read-only folder planted in it) is one line on stderr, and the run\'s own refusal still shows', POSIX_ONLY, () => {
+  const { spied, rounds } = importLane();
+  const temp = realpathSync(makeTempDir('review-tier-tmpdir-'));
+  const { result, trusted } = spied(rounds[0], { TMPDIR: temp, SPY_AFTER_INIT: JSON.stringify({ file: 'locked/x', text: 'x', lock: true }) });
+  const left = trusted[0].env.GIT_DIR;
+  chmodSync(join(left, 'locked'), 0o700); // so the test's own clean-up can remove it
+  assert.equal(result.status, 2, result.stderr);
+  const lines = result.stderr.trim().split('\n');
+  // close() runs while the refusal propagates, so its line comes first
+  assert.match(lines[0], new RegExp(`^review-tier: the temp folder ${left} was not removed in full, the rest is left there: EACCES`));
+  assert.match(lines[1], /^review-tier: .*the tool's own temp repository holds locked, which this run did not put there/);
+  assert.equal(lines.length, 2, result.stderr);
 });
 
 test('spec check K7: a file planted in the temp repository after an import (alternates, a loose object, a replace ref, a changed config) is exit 2 before the next git call', POSIX_ONLY, () => {

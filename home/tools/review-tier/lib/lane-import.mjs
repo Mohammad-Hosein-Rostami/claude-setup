@@ -19,11 +19,12 @@
 //   UsageError (exit 2) naming the object. Memory is bounded: objects are read in batches of MAX_BATCH_BYTES and the pack is a file.
 //   Never `git fsck` (`--no-full` and `--connectivity-only` miss a forged pack, `rev-list --verify-objects` exits 0 on a mismatch).
 import { createHash } from 'node:crypto';
-import { closeSync, openSync, rmSync } from 'node:fs';
+import { closeSync, rmSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { checkCommitClosure, checkSnapshotClosure } from './closure-check.mjs';
 import { attributeBlobs, changedBlobs, fileBlobs, listed, treeEntries, untrusted } from './object-listing.mjs';
 import { MAX_OBJECT_BYTES, openPack } from './pack-writer.mjs';
+import { openRegularFile } from './temp-repository.mjs';
 import { spawnGit } from './trusted-git.mjs';
 
 const MAX_BATCH_BYTES = 64 << 20; // objects read in one `cat-file --batch` call; one larger object is a batch of its own
@@ -98,7 +99,7 @@ function importObjects(git, lane, wanted) {
   const file = join(git.gitDir, IMPORT_PACK);
   try {
     const written = writePack(lane, file, wanted);
-    const descriptor = openSync(file, 'r');
+    const descriptor = openRegularFile(file, git.gitDir); // a FIFO or link put in its place is exit 2, not a run that blocks
     try {
       // The pack is git's standard input as a file, so it is never held in memory a second time.
       const indexed = git.run(['index-pack', '--stdin'], { stdinFile: descriptor });

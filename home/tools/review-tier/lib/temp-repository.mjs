@@ -1,6 +1,7 @@
 // Purpose: the folder of review-tier's own repository: make it, check that it holds only what this run put there, and remove it.
-// Exports: TEMP_PREFIX, makeTempFolder() -> { path, dev, ino }, removeTempFolder(made) -> problem, snapshotOf(gitDir) -> snapshot,
-//   checkTempFolder(gitDir, snapshot, packNames), notePackFiles(gitDir, name, written) -> note, checkPackFiles(gitDir, notes, { last }).
+// Exports: TEMP_PREFIX, makeTempFolder() -> { path, dev, ino }, removeTempFolder(made) -> problem, openRegularFile(path, gitDir, noted)
+//   -> descriptor, snapshotOf(gitDir) -> snapshot, checkTempFolder(gitDir, snapshot, packNames), notePackFiles(gitDir, name, written)
+//   -> note, checkPackFiles(gitDir, notes, { last }).
 // Why the check: the folder is in the temp directory of the same OS user as the writer of a fix. A process that writer left running could
 //   add `objects/info/alternates`, a graft file, a ref, config or a pack, or swap a pack's files, and the tool's reads would then see
 //   objects or history it never imported (security N27, N33, S10 of lane r7-delta).
@@ -9,13 +10,16 @@
 //   bytes the tool wrote. It does not check `.idx` or `.rev` against what git wrote. It runs after each import and once after the last
 //   read; every read runs between those two checks. A change that a process of the same user makes and undoes between two checks (a pack
 //   added and removed) is not seen, and neither is an `.idx` replaced before the tool notes it. Only a folder the writer's processes
-//   cannot write closes this (N27/N33, phase 3). The checks narrow the window; they are not a lock.
+//   cannot write closes this (N27/N33, phase 3). The checks narrow the window; they are not a lock. Every file read here (`HEAD`, `config`,
+//   the `.pack` that is hashed, the import pack git reads) is opened by openRegularFile: a FIFO, socket or link swapped in stops the run
+//   with exit 2 instead of blocking it or being read through. git's own reads are not covered: a FIFO swapped in for a file git opens
+//   can still block that git call (spawnGit has no timeout; P1, phase 3).
 // Invariants: the folder is made by mkdtemp (mode 0700, a name nobody can predict) and is the bare repository itself; this module writes
 //   nothing into it and nothing beside it. It removes no folder but the one this run made, from inside: each folder is entered and
 //   checked by device and inode before anything in it is removed, and entries go by their bare names, so a link or another folder swapped
 //   in during the removal is never followed (fix 7, K4). A run that is killed leaves its folder (`review-tier-git-*` in the system temp
 //   folder) behind, and no run of this tool removes it.
-import { closeSync, lstatSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, rmdirSync, unlinkSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, rmdirSync, unlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,6 +31,9 @@ const TOP_ENTRIES = ['HEAD', 'config', 'objects', 'refs']; // all `git init --ba
 const UNCHANGED_FILES = ['HEAD', 'config'];
 const NOTED_STAT = ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs']; // a rename, a rewrite in place and `touch` each move one of them
 const HASH_CHUNK_BYTES = 1 << 20; // a pack can exceed 2 GiB, which readFileSync cannot read: it is hashed in chunks
+// Every read of a file in the folder opens it with these: no link as the last name (ELOOP), and a FIFO opens at once instead of waiting
+// for a writer. Windows has neither flag (both are 0 there); the fstat compare after the open is the guard there (not probed on Windows).
+const SAFE_READ = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
 /**
  * Makes the folder for the tool's repository.
@@ -94,12 +101,50 @@ export function removeTempFolder(made) {
   }
 }
 
+const changed = (gitDir, what) => untrusted(`the tool's own temp repository changed during the run: ${what} (another process is writing into ${gitDir})`);
+/** The NOTED_STAT fields of a (bigint) stat as one string. */
+const factsOf = (stat) => NOTED_STAT.map((field) => stat[field]).join(' ');
+
+/**
+ * Opens a file of the temp repository for reading, the one way every read here starts: with SAFE_READ, then `fstat` on the descriptor,
+ * so what is read is the file that was checked, and a FIFO, a socket or a link put in its place stops the run instead of blocking it.
+ * @param {string} path the file
+ * @param {string} gitDir the temp repository, named in the error
+ * @param {string | null} noted the facts notePackFiles took for this file, which the descriptor must have; null: any regular file
+ * @returns {number} the descriptor, for the caller to close
+ * @throws {UsageError} "the tool's own temp repository changed during the run" when the open fails for any reason, or the descriptor
+ *   is not a regular file or not the noted one
+ */
+export function openRegularFile(path, gitDir, noted = null) {
+  let descriptor;
+  try {
+    descriptor = openSync(path, SAFE_READ);
+  } catch (error) {
+    throw changed(gitDir, `${path} cannot be opened as a regular file (${error.message})`);
+  }
+  const stat = fstatSync(descriptor, { bigint: true });
+  if (stat.isFile() && (noted === null || factsOf(stat) === noted)) return descriptor;
+  closeSync(descriptor);
+  throw changed(gitDir, `${path} ${noted === null ? 'is not a regular file' : 'is gone or is not the file git index-pack wrote'}`);
+}
+
+/** The whole content of a file of the temp repository, read through openRegularFile. */
+function bytesOf(gitDir, name) {
+  const descriptor = openRegularFile(join(gitDir, name), gitDir);
+  try {
+    return readFileSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
 /**
  * The bytes `git init` wrote into the files that must not change during the run.
  * @param {string} gitDir the temp repository, right after `git init`
  * @returns {Map<string, Buffer>} file name -> content
+ * @throws {UsageError} when one of them is not a regular file (openRegularFile)
  */
-export const snapshotOf = (gitDir) => new Map(UNCHANGED_FILES.map((name) => [name, readFileSync(join(gitDir, name))]));
+export const snapshotOf = (gitDir) => new Map(UNCHANGED_FILES.map((name) => [name, bytesOf(gitDir, name)]));
 
 /** The names in `folder`, sorted; every entry must be a real folder or file as `kinds` says (a link is neither); a missing folder is refused. */
 function entriesOf(gitDir, folder, kinds) {
@@ -140,23 +185,22 @@ export function checkTempFolder(gitDir, snapshot, packNames) {
   entriesOf(gitDir, join('refs', 'heads'), () => 'nothing');
   entriesOf(gitDir, join('refs', 'tags'), () => 'nothing');
   for (const [name, bytes] of snapshot) {
-    if (!readFileSync(join(gitDir, name)).equals(bytes)) throw untrusted(`${join(gitDir, name)} of the tool's own temp repository changed during the run (another process is writing into it)`);
+    if (!bytesOf(gitDir, name).equals(bytes)) throw untrusted(`${join(gitDir, name)} of the tool's own temp repository changed during the run (another process is writing into it)`);
   }
 }
 
 const packFile = (gitDir, name, kind) => join(gitDir, 'objects', 'pack', `${name}.${kind}`);
-const changed = (gitDir, what) => untrusted(`the tool's own temp repository changed during the run: ${what} (another process is writing into ${gitDir})`);
 /** The NOTED_STAT fields of a regular file as one string, or null when there is no regular file of that name (a link is none). */
 function statOf(path) {
   const stat = lstatSync(path, { bigint: true, throwIfNoEntry: false });
-  return stat?.isFile() ? NOTED_STAT.map((field) => stat[field]).join(' ') : null;
+  return stat?.isFile() ? factsOf(stat) : null;
 }
 
-/** The SHA-256 of a file, read in chunks of HASH_CHUNK_BYTES. */
-function sha256OfFile(path) {
+/** The SHA-256 of the noted file `path`, opened by openRegularFile (so it is the noted file) and read in chunks of HASH_CHUNK_BYTES. */
+function sha256OfNoted(path, gitDir, noted) {
   const hash = createHash('sha256');
   const chunk = Buffer.alloc(HASH_CHUNK_BYTES);
-  const descriptor = openSync(path, 'r');
+  const descriptor = openRegularFile(path, gitDir, noted);
   try {
     for (let read = readSync(descriptor, chunk); read > 0; read = readSync(descriptor, chunk)) hash.update(chunk.subarray(0, read));
   } finally {
@@ -196,6 +240,6 @@ export function checkPackFiles(gitDir, notes, { last = false } = {}) {
     for (const [kind, stat] of stats) {
       if (statOf(packFile(gitDir, name, kind)) !== stat) throw changed(gitDir, `${packFile(gitDir, name, kind)} is gone or is not the file git index-pack wrote`);
     }
-    if (last && sha256OfFile(packFile(gitDir, name, 'pack')) !== sha256) throw changed(gitDir, `${packFile(gitDir, name, 'pack')} no longer holds the bytes this run wrote`);
+    if (last && sha256OfNoted(packFile(gitDir, name, 'pack'), gitDir, stats.get('pack')) !== sha256) throw changed(gitDir, `${packFile(gitDir, name, 'pack')} no longer holds the bytes this run wrote`);
   }
 }

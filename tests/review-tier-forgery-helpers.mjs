@@ -27,6 +27,7 @@ const FANOUT_ENTRIES = 256;
 const WORD_BYTES = 4;
 const IDX_HEADER_BYTES = 8;
 const IDX_MAGIC = 0xff744f63;
+const SPIED_RUN_TIMEOUT_MS = 120_000; // a run that blocks (a FIFO opened for reading) fails its test instead of blocking the suite
 const OLD_PACK_DATE = new Date('2026-01-01T00:00:00Z'); // git tries packs newest first: an older pack is tried after the honest one
 /** The object folder of the repo `dir` (the one linked worktrees share). */
 export const objectsOf = (dir) => join(realpathSync(join(dir, git(dir, 'rev-parse', '--git-common-dir'))), 'objects');
@@ -175,8 +176,11 @@ function realGit() {
  * SPY_GIT_VERSION: the line `--version` prints (an old git);
  * SPY_AFTER_REFUSALS: a JSON argv the real git runs in the same folder right after the tool's last refusal check
  *   (`rev-parse --is-shallow-repository`): what a process the writer left running could still do;
- * SPY_AFTER_INIT: JSON `{file, text}`: a file written into the new repository right after `git init` made it;
+ * SPY_AFTER_INIT: JSON `{file, text}`: a file written into the new repository right after `git init` made it (`{file, fifo: true}`: a FIFO
+ *   put in place of that name instead; `lock: true`: its folder made read-only after);
  * SPY_AFTER_IMPORT: JSON `{nth, file, text}`: the same right after the nth import (`git index-pack`; 1: the commits, 2: trees and files);
+ * SPY_AFTER_BATCH: JSON `{nth, file, text}` (or `fifo`): the same right after the nth `cat-file --batch` with the lane's objects borrowed
+ *   (the import reading objects while it writes its pack);
  * SPY_SWAP: JSON `{from, to}`: in the listings the import makes on the lane's side (`rev-list`, `ls-tree`, `diff-tree` with the lane's
  *   objects borrowed) every `from` is printed as `to`, so the object `from` is left out of the import list;
  * SPY_FAIL: JSON `{word, status?, stderr}`: a call of the tool's own repository (no objects borrowed) whose arguments hold `word` also
@@ -248,10 +252,17 @@ for (const step of due.filter((one) => one.action !== 'feed')) {
   if (step.action === 'renameBack') { renameSync(file, file + '.aside'); writeFileSync(file, Buffer.alloc(lstatSync(file + '.aside').size, 0x78)); renameSync(file + '.aside', file); }
   note('after');
 }
-const plant = (planted) => { mkdirSync(dirname(join(env.GIT_DIR, planted.file)), { recursive: true }); writeFileSync(join(env.GIT_DIR, planted.file), planted.text); };
+const plant = (planted) => {
+  const path = join(env.GIT_DIR, planted.file);
+  mkdirSync(dirname(path), { recursive: true });
+  if (planted.fifo) { rmSync(path, { force: true }); spawnSync('mkfifo', [path], { stdio: 'inherit' }); } else writeFileSync(path, planted.text);
+  if (planted.lock) chmodSync(dirname(path), 0o500);
+};
 if (switchOf('SPY_AFTER_INIT') && argv.includes('init')) plant(switchOf('SPY_AFTER_INIT'));
 const imports = argv.includes('index-pack') ? readFileSync(${JSON.stringify(log)}, 'utf8').split('\\n').filter((line) => line.includes('"index-pack"')).length : 0;
 if (switchOf('SPY_AFTER_IMPORT') && imports === switchOf('SPY_AFTER_IMPORT').nth) plant(switchOf('SPY_AFTER_IMPORT'));
+const batches = borrows && argv.includes('--batch') ? readFileSync(${JSON.stringify(log)}, 'utf8').split('\\n').filter((line) => line.includes('"--batch"') && line.includes('"GIT_ALTERNATE_OBJECT_DIRECTORIES"')).length : 0;
+if (switchOf('SPY_AFTER_BATCH') && batches === switchOf('SPY_AFTER_BATCH').nth) plant(switchOf('SPY_AFTER_BATCH'));
 if (argv.includes('--is-shallow-repository') && process.env.SPY_AFTER_REFUSALS) spawnSync(${JSON.stringify(realGit())}, JSON.parse(process.env.SPY_AFTER_REFUSALS), { stdio: 'ignore' });
 process.exit(result.status === null ? 1 : result.status);
 `, { mode: 0o755 });
@@ -260,7 +271,8 @@ process.exit(result.status === null ? 1 : result.status);
 }
 
 /**
- * Runs the CLI in `dir` with the recording git first on PATH and sorts its git calls by where they read.
+ * Runs the CLI in `dir` with the recording git first on PATH and sorts its git calls by where they read. A run still going after
+ * SPIED_RUN_TIMEOUT_MS is killed (`result.status` null, `result.error` ETIMEDOUT).
  * @param {string} dir the lane's working folder
  * @param {string} log the path the CLI's own log goes to
  * @param {string[]} args the CLI's arguments
@@ -272,7 +284,7 @@ process.exit(result.status === null ? 1 : result.status);
  */
 export function spiedRun(dir, log, args, more = {}) {
   const spy = spyGit();
-  const result = spawnSync(process.execPath, [CLI, ...args], { cwd: dir, encoding: 'utf8', env: { ...CLEAN_ENV, REVIEW_TIER_LOG: log, ...spy.env, ...more } });
+  const result = spawnSync(process.execPath, [CLI, ...args], { cwd: dir, encoding: 'utf8', env: { ...CLEAN_ENV, REVIEW_TIER_LOG: log, ...spy.env, ...more }, timeout: SPIED_RUN_TIMEOUT_MS });
   const calls = spy.calls().map((call, at) => {
     const words = call.argv.slice(call.env.GIT_DIR === undefined ? 0 : TRUSTED_FLAGS.length);
     const attrSource = /^--attr-source=(.*)$/.exec(words[0] ?? '')?.[1];

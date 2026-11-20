@@ -15,7 +15,9 @@
 // Left outside: `git` is the first one on the caller's PATH (Homebrew, Volta and Git for Windows live in folders the user can write, so
 //   an absolute root-owned git cannot be required): whoever can put a program there is outside what this module can check (security
 //   N26). A process of the same user can still change the temp folder between two of its checks, or replace an `.idx` before the tool
-//   notes it: only a folder the writer's processes cannot write closes that (N27/N33, phase 3).
+//   notes it: only a folder the writer's processes cannot write closes that (N27/N33, phase 3). spawnGit has no time limit, so git
+//   itself can still block on a FIFO put in place of a file it opens in the temp folder (P1, phase 3); the tool's own reads there
+//   cannot (lib/temp-repository.mjs, openRegularFile).
 import { spawnSync } from 'node:child_process';
 import { devNull } from 'node:os';
 import { join } from 'node:path';
