@@ -1,7 +1,8 @@
 // Tests for where review-tier lets a lane start (the base): only the local branch `refs/heads/<name>` or a full sha, resolved once.
 // A ref the fix's writer can make (a tag `main`, `refs/main`, a file `$GIT_DIR/main`, a branch `main` in a master repo) must never move
 // the lane start: it made a fix round lighter than the lane's first review and hid a fix commit (lane r7-delta, security B3).
-// Fixtures: the probes `a-tag-base.sh`, `b-rewrite.sh` 2 and `f-final.sh` ii of the security review, rebuilt in temp repos.
+// A fix round reads no name at all: `--base` and `--delta` are full shas from the lead's record (security B7 of the third review).
+// Fixtures: the probes `a-tag-base.sh`, `b-rewrite.sh` 2, `f-final.sh` ii, p3 (a, c), p4 and p5 of the security reviews, rebuilt in temp repos.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { rmSync, writeFileSync } from 'node:fs';
@@ -51,40 +52,92 @@ test('the default range and the delta range name the resolved base sha, never th
   assert.equal(json('--delta', reviewed, '--prior', prior).range, `${reviewed}..HEAD`);
 });
 
-test('security B3: more than one of main, master, develop as a branch is exit 2 without --base, also for a first review', () => {
+test('security B3: more than one of main, master, develop as a branch is exit 2 without --base for a first review; a fix round reads no branch at all', () => {
   const { dir, write, tier, json } = lane();
   git(dir, 'branch', '-m', 'main', 'master');
+  const start = git(dir, 'rev-parse', 'refs/heads/master');
   const first = write('src/run.mjs', EXEC_LANE);
   const reviewed = write('README.md', '# r\nusage\n');
   const round0 = json('--landing');
   write('README.md', '# r\nusage!\n');
-  const prior = priorFile();
-  assert.equal(lenses(json('--delta', reviewed, '--prior', prior)).length, 3, 'the control run in a master repo');
+  const fixRound = ['--delta', reviewed, '--base', start, '--prior', priorFile()];
+  const control = json(...fixRound);
+  assert.deepEqual(lenses(control), lenses(round0), 'the control fix round in a master repo has the lane landing set');
   git(dir, 'branch', 'main', first); // what the fix's writer adds
-  for (const args of [['--delta', reviewed, '--prior', prior], ['--landing'], []]) {
+  for (const args of [['--landing'], []]) {
     const result = tier(...args, '--json');
     assert.equal(result.status, 2, args.join(' '));
     assert.equal(result.stdout, '');
     assert.match(result.stderr, /more than one base branch exists here \(main, master\): name the base with --base <branch>/);
   }
-  assert.deepEqual(lenses(json('--delta', reviewed, '--prior', prior, '--base', 'master')), lenses(round0), 'with the base named the set is the lane landing set');
+  assert.deepEqual(seen(json(...fixRound)), seen(control), 'the fix round takes its base as a sha: the new branch changes nothing');
   assert.deepEqual(seen(json('--landing', '--base', 'master')), seen(round0));
 });
 
-test('--base takes a local branch or a full sha: a tag, a remote-style name, a short sha and a revision expression are exit 2 with the cause', () => {
-  const { dir, tier, json, first, reviewed, prior } = securityLaneWithDocsFix();
+test('--base of a first review takes a local branch or a full sha: a tag, a remote-style name, a short sha and a revision expression are exit 2 with the cause', () => {
+  const { dir, tier, json, round0 } = securityLaneWithDocsFix();
   const base = git(dir, 'rev-parse', 'refs/heads/main');
   git(dir, 'tag', 'v1', base);
-  for (const name of ['v1', 'origin/main', base.slice(0, 12), 'main~0', 'main^{commit}', 'refs/heads/main', '-main', 'nope']) {
-    const result = tier('--delta', reviewed, '--prior', prior, '--base', name);
+  for (const name of ['v1', 'origin/main', base.slice(0, 12), 'main~0', 'main^{commit}', '-main', 'nope', '0'.repeat(40)]) {
+    const result = tier('--landing', '--base', name);
     assert.equal(result.status, 2, name);
     assert.equal(result.stdout, '');
     assert.match(result.stderr, /unknown base .*--base takes a local branch \(read as refs\/heads\/<name>, never a tag or another ref of that name\) or a full 40-character sha/, name);
   }
-  assert.equal(json('--delta', reviewed, '--prior', prior, '--base', base).range, `${reviewed}..HEAD`, 'a full sha is a base');
-  assert.equal(tier('--delta', reviewed, '--prior', prior, '--base', '0'.repeat(40)).status, 2, 'a full sha that names no commit');
+  assert.deepEqual(seen(json('--landing', '--base', base)), seen(round0), 'a full sha is a base');
+});
+
+test('security B7: in a fix round --base and --delta take only a full sha: a branch, a tag, a short sha, HEAD and an expression are exit 2 with what to pass', () => {
+  const { dir, tier, json, first, reviewed, prior } = securityLaneWithDocsFix();
+  const base = git(dir, 'rev-parse', 'refs/heads/main');
+  git(dir, 'tag', 'v1', base);
+  for (const name of ['main', 'lane', 'v1', 'HEAD', 'HEAD~1', 'main~0', 'refs/heads/main', base.slice(0, 12), reviewed.slice(0, 39), reviewed.toUpperCase(), `${reviewed}^`, '0'.repeat(40)]) {
+    for (const [flag, args] of [['--base', ['--delta', reviewed, '--base', name]], ['--delta', ['--delta', name, '--base', base]]]) {
+      const result = tier(...args, '--prior', prior);
+      assert.equal(result.status, 2, args.join(' '));
+      assert.equal(result.stdout, '');
+      assert.ok(result.stderr.includes(`${flag} takes the full 40-character sha of a commit in a fix round, from the lead's own record: pass the output of \`git rev-parse <sha>\`, never a short sha or a name`), result.stderr);
+    }
+  }
+  assert.equal(json('--delta', reviewed, '--prior', prior, '--base', base).range, `${reviewed}..HEAD`, 'two full shas are a fix round');
   // The caller's own base is the caller's word: a mid-lane sha is accepted, and the lane's classes then come from --lane-classes.
   assert.equal(tier('--delta', reviewed, '--prior', prior, '--base', first).status, 0);
+});
+
+test('security B7 (probe p4): a tag named like the first characters of the reviewed sha moves nothing: the short sha is exit 2, the full sha reads the fix that drops the guard', () => {
+  const { dir, write, tier, json } = lane();
+  git(dir, 'checkout', '-q', 'main');
+  write('src/gate.mjs', "export function decide(cmd) {\n  return 'allow';\n}\n");
+  git(dir, 'checkout', '-q', '-B', 'lane');
+  write('src/gate.mjs', "export function decide(cmd) {\n  if (cmd.includes(';')) return 'deny';\n  return 'allow';\n}\n");
+  const reviewed = write('README.md', '# r\ngate: chained commands are denied\n');
+  const dropsGuard = write('src/gate.mjs', "export function decide(cmd) {\n  return 'allow';\n}\n");
+  write('README.md', '# r\ngate: see src/gate.mjs\n');
+  const [base, prior] = [git(dir, 'rev-parse', 'refs/heads/main'), priorFile()];
+  for (const length of [7, 12]) {
+    const short = reviewed.slice(0, length);
+    git(dir, 'tag', short, dropsGuard); // what the fix's writer adds
+    assert.equal(git(dir, 'rev-parse', '--verify', '--quiet', `${short}^{commit}`), dropsGuard, 'plain git reads the short sha as the tag: the commit after the one that drops the guard would be the start');
+    const result = tier('--delta', short, '--base', base, '--prior', prior);
+    assert.equal(result.status, 2, short);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /--delta takes the full 40-character sha .*pass the output of `git rev-parse <sha>`/);
+  }
+  const result = json('--delta', reviewed, '--base', base, '--prior', prior);
+  assert.equal(result.range, `${reviewed}..HEAD`);
+  assert.deepEqual([result.files, Object.keys(result.fileClasses).includes('src/gate.mjs'), lenses(result).length], [2, true, 3], 'the guard file is read, by three lenses');
+});
+
+test('security B6 (probes p3 a and c): with docs as the only --lane-classes name and the base branch moved into the lane, a docs fix of an execSync lane keeps tier 2, three lenses and the mutation plan', () => {
+  const { dir, json, first, reviewed, round0, prior } = securityLaneWithDocsFix();
+  const fixRound = ['--delta', reviewed, '--base', git(dir, 'rev-parse', 'refs/heads/main'), '--prior', prior, '--lane-classes', 'docs'];
+  const control = json(...fixRound);
+  assert.equal(control.tier, 2, 'the tool reads the lane itself: the names a caller passes only raise');
+  assert.deepEqual(lenses(control), lenses(round0));
+  assert.equal(lenses(control).length, 3);
+  for (const review of control.reviews.filter((entry) => entry.model === 'opus')) assert.ok(review.plan.mutation.maxMutants > 0, `${review.lens} keeps the mutation plan`);
+  git(dir, 'update-ref', 'refs/heads/main', first); // what the fix's writer does: the lane now seems to start after the execSync commit
+  assert.deepEqual(json(...fixRound), control, 'the recorded base sha is read, never the branch');
 });
 
 test('security B3: on a rewritten lane a tag at a fix commit does not take that commit out of the delta', () => {
@@ -102,7 +155,7 @@ test('security B3: on a rewritten lane a tag at a fix commit does not take that 
   write('README.md', '# r\ngate: see src/gate.mjs\n');
   const prior = priorFile();
   const control = json('--delta', reviewed, '--prior', prior);
-  assert.ok(control.range.includes(opensGate.slice(0, 8)), control.range);
+  assert.match(control.range, /^[0-9a-f]{40}\.\.HEAD \(rewritten lane: /, `${opensGate} is read with the whole lane`);
   assert.ok(Object.keys(control.fileClasses).includes('src/gate.mjs'));
   git(dir, 'tag', 'main', opensGate);
   assert.deepEqual(seen(json('--delta', reviewed, '--prior', prior)), seen(control), 'the commit that removes the guard is still read');
@@ -134,7 +187,7 @@ test('a side of a range that is no HEAD, local branch or full sha exits 2 with w
   git(dir, 'tag', 'v1', first);
   git(dir, 'update-ref', 'refs/remotes/origin/main', first);
   git(dir, 'update-ref', 'refs/main2', first);
-  for (const range of ['v1...HEAD', 'main...v1', `${first.slice(0, 12)}..HEAD`, 'origin/main...HEAD', 'main2..HEAD', 'refs/heads/main...HEAD', 'main@{0}...HEAD', 'HEAD@{0}..HEAD', 'v1~0..HEAD', 'main~x..HEAD']) {
+  for (const range of ['v1...HEAD', 'main...v1', `${first.slice(0, 12)}..HEAD`, 'origin/main...HEAD', 'main2..HEAD', 'main@{0}...HEAD', 'HEAD@{0}..HEAD', 'v1~0..HEAD', 'main~x..HEAD']) {
     const result = tier(range, '--landing');
     assert.equal(result.status, 2, range);
     assert.equal(result.stdout, '', range);
@@ -146,4 +199,17 @@ test('a side of a range that is no HEAD, local branch or full sha exits 2 with w
     assert.equal(result.range, printed, range);
     assert.equal(result.files, files, range);
   }
+});
+
+test('security N15 (probe p5): a name that starts with refs/ is exit 2 as a base and as a side of a range, also when the branch refs/heads/refs/heads/main exists', () => {
+  const { dir, tier, json, first } = securityLaneWithDocsFix();
+  const control = seen(json('--landing'));
+  git(dir, 'update-ref', 'refs/heads/refs/heads/main', first); // what the fix's writer adds: a branch whose own name starts with refs/heads/
+  for (const args of [['refs/heads/main...HEAD'], ['refs/heads/main..HEAD'], ['main...refs/heads/lane'], ['--base', 'refs/heads/main'], ['--base', 'refs/tags/v1']]) {
+    const result = tier(...args, '--landing');
+    assert.equal(result.status, 2, args.join(' '));
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /starts with refs\/: a name is read only as the local branch refs\/heads\/<name>.* Pass the branch name alone \(main, not refs\/heads\/main\) or a full 40-character sha/, args.join(' '));
+  }
+  assert.deepEqual(seen(json('--landing')), control, 'the branch name alone still reads the real base');
 });

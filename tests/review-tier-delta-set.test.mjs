@@ -4,10 +4,8 @@
 // The delta line and the prior file: review-tier-delta-brief.test.mjs; class and set cases without git: review-tier.test.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { git } from './git-tidy-helpers.mjs';
-import { lane, priorFile } from './review-tier-helpers.mjs';
+import { lane, laneNamesOf, priorFile } from './review-tier-helpers.mjs';
 
 const OPUS_MAX_PAIR = [['reviewer', 'opus', 'max'], ['security-auditor', 'opus', 'max']];
 const strength = (report) => report.reviews.map(({ agent, model, effort }) => [agent, model, effort]);
@@ -47,7 +45,7 @@ test('review B1, case 1: a fix that touches only a logic file of a security lane
   const round0 = json();
   const landing0 = json('--landing');
   write('src/util.mjs', 'export const twice = (n) => n + n;\n');
-  const delta = json('--delta', reviewed, '--prior', priorFile());
+  const delta = json('--delta', reviewed, '--prior', priorFile(), '--lane-classes', 'logic');
   assertNotLighter(delta, round0, 'against the mid-lane review');
   assert.deepEqual(shape(delta), shape(landing0), 'the same lenses, models, efforts and rules as the lane landing review');
   for (const review of delta.reviews.filter((entry) => entry.model === 'opus')) assert.ok(review.plan.mutation.maxMutants > 0, `${review.lens} keeps a mutation plan`);
@@ -61,7 +59,7 @@ test('review B1, case 2: a docs-only fix of a gate lane gets the lane landing se
   const landing0 = json('--landing');
   for (const member of OPUS_MAX_PAIR) assert.ok(hasMember(landing0, member), 'the gate lane lands with the Opus max pair');
   write('README.md', '# readme\nfixed a typo\n');
-  for (const flags of [[], ['--landing'], ['--lane-classes', laneJson(landing0)]]) {
+  for (const flags of [[], ['--landing'], ['--lane-classes', laneNamesOf(landing0)]]) {
     const delta = json('--delta', reviewed, '--prior', priorFile(), ...flags);
     assert.deepEqual(shape(delta), shape(landing0), `flags: ${flags.join(' ') || 'none'}`);
   }
@@ -111,21 +109,14 @@ test('a docs-only lane with a docs-only fix asks for no mutants: there is no cod
   for (const review of json('--delta', reviewed, '--prior', priorFile()).reviews) assert.equal(review.plan.mutation, null);
 });
 
-/** A previous round's JSON as a file, for `--lane-classes`. */
-function laneJson(report) {
-  const path = priorFile().replace(/findings-round1\.md$/, 'round0.json');
-  writeFileSync(path, JSON.stringify(report));
-  return path;
-}
-
 test('a class the first review got by hand (--add-class) stays: through --lane-classes, and on the fix round line the tool prints', () => {
   const { write, json, tier } = lane();
   const reviewed = write('src/a.mjs', 'export const a = 1;\n');
   const round0 = json('--add-class', 'concurrency');
   assert.deepEqual(round0.added, ['concurrency']);
-  assert.match(tier('--add-class', 'concurrency').stdout.trimEnd().split('\n').at(-1), /^fix round: .* --delta <reviewed-sha> --prior <findings-file> --prior-sha256 <its-sha256> --lane-classes <previous-round-json> --add-class concurrency$/);
+  assert.match(tier('--add-class', 'concurrency').stdout.trimEnd().split('\n').at(-1), /^fix round: .* --prior <findings-file> --prior-sha256 <its-sha256> --lane-classes concurrency,logic$/);
   write('src/a.mjs', 'export const a = 2;\n');
-  const delta = json('--delta', reviewed, '--prior', priorFile(), '--lane-classes', laneJson(round0));
+  const delta = json('--delta', reviewed, '--prior', priorFile(), '--lane-classes', laneNamesOf(round0));
   assert.ok(delta.classes.includes('concurrency'));
   assert.ok(delta.reviews.find((review) => review.model === 'opus' && review.agent === 'reviewer').plan.stress, 'the stress plan of the added class is kept');
 });
@@ -135,17 +126,17 @@ test('two fix rounds: a class the first fix removed from the code stays through 
   const reviewed = write('src/store.mjs', 'renameSync(tmp, dest);\nexport const a = 1;\n');
   const round0 = json('--landing');
   const fixed = write('src/store.mjs', 'export const a = 1;\n');
-  const round1 = json('--delta', reviewed, '--prior', priorFile(), '--lane-classes', laneJson(round0));
+  const round1 = json('--delta', reviewed, '--prior', priorFile(), '--lane-classes', laneNamesOf(round0));
   assert.ok(round1.classes.includes('concurrency'), 'round 1 sees the removed line');
   write('README.md', '# note\n');
-  const round2 = json('--delta', fixed, '--prior', priorFile(), '--lane-classes', laneJson(round1));
+  const round2 = json('--delta', fixed, '--prior', priorFile(), '--lane-classes', laneNamesOf(round1));
   assert.ok(round2.classes.includes('concurrency'), 'round 2 keeps what the lane had');
   const { plan } = round2.reviews.find((review) => review.model === 'opus' && review.agent === 'reviewer');
   assert.deepEqual(plan.race, { runs: 200 });
-  // What the per-file classes of --lane-classes are for (mutant R5): the file's kind (lock-free) rides in them, so the plan stays a race
-  // check. The class list alone would ask for both kinds, and a stale-lock stress run means nothing for a rename.
+  // What the tag among the names is for (mutant R5): the kind of the removed line (lock-free) rides in it, so the plan stays a race
+  // check. The class names alone would ask for both kinds, and a stale-lock stress run means nothing for a rename.
   assert.equal(plan.stress, null);
-  assert.deepEqual(round2.fileClasses['src/store.mjs'], round0.fileClasses['src/store.mjs'], 'the next round can read the file\'s classes from this JSON');
+  for (const report of [round0, round1, round2]) assert.ok(['concurrency', 'lock-free'].every((name) => laneNamesOf(report).split(',').includes(name)), `every round hands the class and its tag on: ${laneNamesOf(report)}`);
 });
 
 test('a fix round is never waivable: the waiver belongs to the first review of the whole range', () => {
@@ -167,27 +158,31 @@ test('security S2: an empty delta is an error, never a pass: exit 2, nothing on 
     const result = tier('--delta', tip, '--prior', priorFile(), ...flags);
     assert.equal(result.status, 2, `flags ${flags}: ${result.stdout}`);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /nothing to review: .*check the range/);
+    assert.match(result.stderr, /nothing to review: [0-9a-f]{40}\.\.HEAD holds no changed file; check the shas/);
   }
 });
 
-test('an empty delta on a rebased lane (every patch already reviewed) is the same error', () => {
-  const { dir, write, tier } = lane();
+test('a rebased lane with no fix on top is no empty delta: the whole lane is read again', () => {
+  const { dir, write, json } = lane();
   const reviewed = write('src/one.mjs', 'const one = 1;\n');
   git(dir, 'checkout', '-q', 'main');
   write('other.txt', 'main moved\n');
   git(dir, 'checkout', '-q', 'lane');
   git(dir, 'rebase', '-q', 'main');
-  const result = tier('--delta', reviewed, '--prior', priorFile());
-  assert.equal(result.status, 2, result.stdout);
-  assert.match(result.stderr, /nothing to review/);
+  // review R3-3: also in a repo whose diff.context is above 3, where the patch-key rule found every patch reviewed and exited 2.
+  for (const context of [null, '5']) {
+    if (context !== null) git(dir, 'config', 'diff.context', context);
+    const result = json('--delta', reviewed, '--prior', priorFile());
+    assert.match(result.range, /^[0-9a-f]{40}\.\.HEAD \(rewritten lane: /, `diff.context ${context}`);
+    assert.deepEqual(Object.keys(result.fileClasses), ['src/one.mjs']);
+  }
 });
 
 test('--delta without --prior exits 2: a fix round always names the report of the round before', () => {
   const { write, tier } = lane();
   const reviewed = write('src/a.mjs', 'export const a = 1;\n');
   write('src/a.mjs', 'export const a = 2;\n');
-  for (const flags of [[], ['--landing'], ['--json'], ['--lane-classes', join(priorFile(), '..', 'none.json')]]) {
+  for (const flags of [[], ['--landing'], ['--json'], ['--lane-classes', 'logic']]) {
     const result = tier('--delta', reviewed, ...flags);
     assert.equal(result.status, 2, flags.join(' '));
     assert.equal(result.stdout, '');
@@ -195,34 +190,24 @@ test('--delta without --prior exits 2: a fix round always names the report of th
   assert.match(tier('--delta', reviewed).stderr, /--delta needs --prior/);
 });
 
-test('review S4: a rebased lane gets one range: the delta line names the patches, never <old tip>..HEAD', () => {
+test('review S4: a rebased lane gets one range: the delta line names the whole lane, never <old tip>..HEAD', () => {
   const { dir, write, json } = lane();
   const reviewed = write('src/two.mjs', 'const two = 2;\n');
   git(dir, 'checkout', '-q', 'main');
   write('other.mjs', 'export const landedByAnotherLane = 1;\n');
   git(dir, 'checkout', '-q', 'lane');
   git(dir, 'rebase', '-q', 'main');
-  const fix = write('src/three.mjs', 'const three = 3;\n');
+  write('src/three.mjs', 'const three = 3;\n');
   const result = json('--delta', reviewed, '--prior', priorFile());
-  assert.equal(result.range, `patches ${fix.slice(0, 8)} of ${git(dir, 'rev-parse', 'main')}..HEAD`);
-  assert.equal(result.files, 1, 'only the fix: not the commit another lane landed, not the reviewed patch');
+  assert.ok(result.range.startsWith(`${git(dir, 'rev-parse', 'main')}..HEAD (rewritten lane: `), result.range);
+  assert.equal(result.files, 2, 'the lane: not the commit another lane landed');
   for (const review of result.reviews) {
     assert.ok(review.brief.startsWith(`Review ${result.range}. Delta review: ${result.range} only`), review.brief);
     assert.ok(!review.brief.includes(`${reviewed}..HEAD`), 'the old tip is no second range');
   }
 });
 
-test('review N12: the brief names the resolved full sha, not the text given to --delta', () => {
-  const { write, json } = lane();
-  const reviewed = write('src/a.mjs', 'export const a = 1;\n');
-  write('src/a.mjs', 'export const a = 2;\n');
-  const result = json('--delta', 'HEAD~1', '--prior', priorFile());
-  assert.equal(result.deltaOf, reviewed);
-  assert.equal(result.range, `${reviewed}..HEAD`);
-  for (const review of result.reviews) assert.doesNotMatch(review.brief, /HEAD~1/);
-});
-
-test('security N1: a rewritten lane commit whose added line moved to another place is not counted as reviewed', () => {
+test('security N1: a rewritten lane commit whose added line moved to another place is read again with the whole lane', () => {
   const { dir, write, json } = lane();
   const before = write('src/gate.mjs', 'const checks = [];\nchecks.push(isTrusted);\nrunChecks(checks);\nconst verdict = decide();\n');
   const reviewed = write('src/gate.mjs', 'const checks = [];\nchecks.push(isTrusted);\nrunChecks(checks);\nallowAll();\nconst verdict = decide();\n');
@@ -230,8 +215,8 @@ test('security N1: a rewritten lane commit whose added line moved to another pla
   const moved = write('src/gate.mjs', 'allowAll();\nconst checks = [];\nchecks.push(isTrusted);\nrunChecks(checks);\nconst verdict = decide();\n');
   const note = write('NOTES.md', 'fix: note\n');
   const result = json('--delta', reviewed, '--prior', priorFile());
-  // The reviewed patch is not in the lane any more (the same added line before the checks is another patch), so the whole lane is read.
-  assert.equal(result.range, `${git(dir, 'rev-parse', 'main')}...HEAD (rewritten lane: 1 reviewed patch is gone or changed)`);
+  // No commit of a rewritten lane counts as reviewed: the whole lane is read, so where the line now stands is in front of the reviewer.
+  assert.equal(result.range, `${git(dir, 'rev-parse', 'main')}..HEAD (rewritten lane: the reviewed commit ${reviewed} is no ancestor of HEAD, so the whole lane is read)`);
   assert.equal(result.files, 2);
   assert.ok(result.fileClasses['src/gate.mjs'] && result.fileClasses['NOTES.md'], `${moved} and ${note} are both read`);
 });
@@ -242,7 +227,7 @@ test('a base that hides the lane is refused: --base at or past the reviewed sha,
   const reviewed = write('src/lock-store.mjs', 'renameSync(tmp, dest);\n');
   write('README.md', '# note\n');
   assert.ok(json('--delta', reviewed, '--prior', priorFile()).classes.includes('concurrency'), 'with the real base the lane keeps its class');
-  for (const args of [['--delta', reviewed, '--base', reviewed], ['--delta', reviewed, '--base', 'lane'], ['--delta', 'main'], ['--delta', start]]) {
+  for (const args of [['--delta', reviewed, '--base', reviewed], ['--delta', reviewed, '--base', git(dir, 'rev-parse', 'HEAD')], ['--delta', start, '--base', start]]) {
     const result = tier(...args, '--prior', priorFile(), '--json');
     assert.equal(result.status, 2, `${args.join(' ')}: ${result.stdout.slice(0, 200)}`);
     assert.equal(result.stdout, '');

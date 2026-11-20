@@ -10,7 +10,7 @@
 //   table whose header names none holds no finding); in a table with no header, the row's first cell that starts with the word. A line counts once. Quoted lines (`>`), fenced blocks and code spans are skipped: they cite a
 //   finding or the contract, they are none. Of a finding only its id leaves this module: a short plain word, or the line number.
 import { createHash } from 'node:crypto';
-import { readFileSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readFileSync } from 'node:fs';
 import { UsageError } from '../../git-tidy/lib/git.mjs';
 
 export const MAX_PRIOR_BYTES = 4 << 20;
@@ -92,16 +92,22 @@ export function countFindings(text) {
  */
 export function readPrior(path, recordedSha256) {
   let bytes;
+  let descriptor = null;
   try {
-    const stats = statSync(path);
+    // One open, then every check and the read on that descriptor: a FIFO or another file put at the path after a check is never read.
+    // O_NONBLOCK: opening a FIFO must not wait for a writer (it is refused right below); it changes nothing for a regular file.
+    descriptor = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+    const stats = fstatSync(descriptor);
     if (!stats.isFile()) throw new Error('not a regular file');
     if (stats.size > MAX_PRIOR_BYTES) throw new Error(`over ${MAX_PRIOR_BYTES} bytes`);
-    bytes = readFileSync(path);
+    bytes = readFileSync(descriptor);
   } catch (error) {
     throw new UsageError(`cannot read --prior ${path}: ${error.message}`);
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
   }
   const sha256 = createHash('sha256').update(bytes).digest('hex');
-  if (sha256 !== recordedSha256) throw new UsageError(`--prior ${path} is not the report that was recorded: its sha256 is ${sha256}, --prior-sha256 says ${recordedSha256}. The file changed after the review: take the report from its reviewer again, never from the fix's writer`);
+  if (sha256 !== recordedSha256) throw new UsageError(`--prior ${path} is not the report that was recorded: its sha256 is ${sha256}, --prior-sha256 says ${recordedSha256}. Either the file changed after the review (take the report from its reviewer again, never from the fix's writer), or the --prior-sha256 values are in another order than the --prior files (each hash comes right after its own file)`);
   return { file: path, sha256, ...countFindings(bytes.toString('utf8')) };
 }
 

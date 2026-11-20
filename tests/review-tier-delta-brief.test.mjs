@@ -4,6 +4,7 @@
 // The set of a fix round: review-tier-delta-set.test.mjs; delta required reading: review-tier-cli.test.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -146,7 +147,7 @@ test('a report with no finding is a valid prior (a clean round, then a rebase): 
   assert.match(result.reviews[0].brief, /n \+ m = 0/);
 });
 
-test('--prior that cannot be read exits 2 and says why: no permission, a folder, a file over the size cap', () => {
+test('--prior that cannot be read exits 2 and says why: no permission, a folder, a FIFO (never waited on), a file over the size cap', () => {
   const { tier, reviewed } = laneWithFix();
   const folder = join(priorFile(), '..', 'folder');
   mkdirSync(folder);
@@ -157,8 +158,15 @@ test('--prior that cannot be read exits 2 and says why: no permission, a folder,
     chmodSync(locked, 0o000);
     cases.push([locked, /EACCES/]);
   }
+  if (process.platform !== 'win32') {
+    // No writer ever opens this FIFO: a read that waits for one would hang the run (the helper's timeout then fails the test).
+    const fifo = join(priorFile(), '..', 'fifo');
+    assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
+    cases.push([fifo, /not a regular file/]);
+  }
   for (const [path, why] of cases) {
-    const result = tier('--delta', reviewed, '--prior', path);
+    // The hash is given here: the helper would read the file to hash it, and reading a FIFO without a writer never returns.
+    const result = tier('--delta', reviewed, '--prior', path, '--prior-sha256', '0'.repeat(64));
     assert.equal(result.status, 2, path);
     assert.equal(result.stdout, '');
     assert.match(result.stderr, why);

@@ -1,11 +1,12 @@
 // Purpose: read the changed files and lines of a range (or of a delta round) from git for review-tier.
 // Exports: MAX_READING, parsePatch(text), readRange(top, range),
-//   readDelta(top, base, reviewedRef), newFileReader(top, rev), functionNames(files), redefinedNames(files), requiredReadingFor(top, files).
+//   readDelta(top, base, reviewedSha), newFileReader(top, rev), functionNames(files), redefinedNames(files), requiredReadingFor(top, files).
 // The base and the sides of a range are resolved in lib/revisions.mjs; this module reads ranges of shas.
-// Invariants: git runs through git-tidy's runGit (no shell, no repository from the environment). A range or sha that starts
-//   with `-` is refused, so it can never be read as an option. Patches are read with fixed flags (PATCH_FLAGS), so the repository's
-//   own diff config and attributes cannot change what is read; the CLI switches replace refs off for every git call. Only paths and line numbers leave this module through the
-//   report; line texts stay in memory for the class tests. Required reading and the patch-list range are written with names as data
+// Invariants: git runs through git-tidy's runGit (no shell, no repository from the environment). Every commit arrives here as a full
+//   sha or HEAD. Only tree diffs between those commits are read: no patch of one commit is compared with another's. Patches are read with
+//   fixed flags (PATCH_FLAGS), so the repository's own diff config and attributes cannot change what is read; the CLI refuses grafts,
+//   replace refs and a shallow history before anything is read. Only paths and line numbers leave this module through the
+//   report; line texts stay in memory for the class tests. Required reading is written with names as data
 //   (lib/brief-data.mjs): they go into briefs as they are.
 import { UsageError, gitFlag, gitText, runGit } from '../../git-tidy/lib/git.mjs';
 import { placeText } from './brief-data.mjs';
@@ -18,9 +19,10 @@ const MIN_NAME_LENGTH = 3;
 // no external diff or textconv runs, and the prefixes are fixed (diff.noprefix and diff.mnemonicPrefix would change the `+++ b/path` lines).
 const PATCH_FLAGS = ['--no-color', '--no-ext-diff', '--no-textconv', '--text', '-M', '--src-prefix=a/', '--dst-prefix=b/'];
 const QUOTE_PATH_OFF = ['-c', 'core.quotePath=false'];
-const DIFF_FLAGS = [...QUOTE_PATH_OFF, 'diff', '-U0', ...PATCH_FLAGS];
-// A patch key is made with three context lines, pinned twice: `diff.context` 0 in the repo config would make a moved line the same patch again.
-const KEY_CONTEXT_LINES = 3;
+// --literal-pathspecs: a lane file named like a pathspec (`*.mjs`, `:(top)x`) is that one file, never a pattern.
+const DIFF_FLAGS = ['--literal-pathspecs', ...QUOTE_PATH_OFF, 'diff', '-U0', ...PATCH_FLAGS];
+const NAME_FLAGS = ['--literal-pathspecs', ...QUOTE_PATH_OFF, 'diff', '--name-only', '-z', '--no-renames'];
+const MAX_REWRITE_PLACES = 8; // places a rewrite changed, named first in a rewritten lane's Read first
 const HEADER_MARK_LENGTH = '+++ '.length;
 const SIDE_PREFIX_LENGTH = 'b/'.length;
 // The escapes git writes in a quoted path (quote.c): a letter, or three octal digits for any other control character.
@@ -88,11 +90,13 @@ function withHunklessFiles(names, files) {
 }
 
 // --no-renames: a pure rename lists both its paths, so a gate file renamed away is still read as changed.
-const rangeNames = (top, range) => namesOf(gitText(top, [...QUOTE_PATH_OFF, 'diff', '--name-only', '-z', '--no-renames', range, '--']));
-const rangePatch = (top, range) => gitText(top, [...DIFF_FLAGS, range, '--']);
+const diffNames = (top, args) => namesOf(gitText(top, [...NAME_FLAGS, ...args]));
+
+/** The changed files of one tree diff. `args`: a range (`a..b`, `a...b`) or two commits, then `--` and, when given, the only paths to read. */
+const readDiff = (top, args) => withHunklessFiles(diffNames(top, args), parsePatch(gitText(top, [...DIFF_FLAGS, ...args])));
 
 /** The changed files of `range` (`a..b` or `a...b`). */
-export const readRange = (top, range) => withHunklessFiles(rangeNames(top, range), parsePatch(rangePatch(top, range)));
+export const readRange = (top, range) => readDiff(top, [range, '--']);
 
 /** The whole text of `path` at `rev` (cut at 1 MiB), or null when it does not exist there. */
 export function newFileReader(top, rev) {
@@ -102,79 +106,56 @@ export function newFileReader(top, rev) {
   };
 }
 
-/** One commit's own patch at -U0; `reversed` prints it undone (its added lines as removed ones, at their place in the file before it). */
-const showPatch = (top, commit, reversed = false) => gitText(top, [...QUOTE_PATH_OFF, 'show', '-U0', '--format=', ...PATCH_FLAGS, ...(reversed ? ['-R'] : []), commit]);
-
-const namesIn = (top, commit) => namesOf(gitText(top, [...QUOTE_PATH_OFF, 'show', '--name-only', '-z', '--no-renames', '--format=', commit]));
-
-/**
- * A fingerprint of one commit's patch: `git patch-id --verbatim` of its diff with context lines (as git-tidy's copy proof), so the same
- * added line at another place in the file is another patch. Line numbers, parents and the message do not count; a rebase that changes
- * the lines around a hunk makes the patch fresh, which only adds to what a delta round reads.
- */
-function patchKey(top, commit) {
-  const patch = gitText(top, [...QUOTE_PATH_OFF, '-c', `diff.context=${KEY_CONTEXT_LINES}`, 'show', `-U${KEY_CONTEXT_LINES}`, '--inter-hunk-context=0', '--format=', ...PATCH_FLAGS, commit]);
-  const { status, stdout, stderr } = runGit(top, ['patch-id', '--verbatim'], `${patch}\n`);
-  if (status !== 0) throw new Error(`git patch-id failed for ${commit}: ${stderr.split('\n')[0]}`);
-  return stdout.split(' ')[0].trim();
+/** Two readings of the same files as one: a path in both keeps every line of each once (a fix line is in the lane diff and in the diff since the review). */
+function mergedFiles(first, second) {
+  const byPath = new Map(first.map((file) => [file.path, { ...file }]));
+  const keyOf = ({ line, text }) => `${line}\0${text}`;
+  const joined = (a, b) => [...a, ...b.filter((entry) => !a.some((known) => keyOf(known) === keyOf(entry)))];
+  for (const file of second) {
+    const known = byPath.get(file.path);
+    byPath.set(file.path, known === undefined ? file : { path: file.path, added: joined(known.added, file.added), removed: joined(known.removed, file.removed), hunkHeads: [...new Set([...known.hunkHeads, ...file.hunkHeads])] });
+  }
+  return [...byPath.values()];
 }
 
-const commitsOf = (top, range) => gitText(top, ['rev-list', '--reverse', '--no-merges', range]).split('\n').filter((sha) => sha !== '');
-
-/** The commits of `range`, oldest first, each with its patch key. */
-const keyedCommits = (top, range) => commitsOf(top, range).map((commit) => ({ commit, key: patchKey(top, commit) }));
-
 /**
- * A rewritten lane that lost reviewed work (security B4 of lane r7-delta: a lane rebuilt without its guard commit showed a docs-only
- * delta). What left the lane is in no diff of the lane any more, so the round reads the whole lane range plus each gone patch undone
- * (the lines the rewrite took out, as removed lines), and the range says why. It never refuses: the land loop's conflict path ends here.
+ * A rewritten lane (the reviewed sha is no ancestor of HEAD: a rebase, an amend, a rebuilt branch) is read whole, always: the tree diff
+ * `<base>..HEAD`, plus what changed since the reviewed commit in the lane's files (the files of the lane now and of the lane as it was
+ * reviewed), so a line the rewrite took out is read as a removed line. No patch is compared with another: a comparison of histories is
+ * something the writer of the rewrite can shape (security B4 and B5 of lane r7-delta). It never refuses: the land loop's conflict path ends here.
  */
-function rewrittenLane(top, base, reviewedSha, gone) {
-  const laneRange = `${base}...HEAD`;
-  const dropped = gone.map((commit) => showPatch(top, commit, true)).join('\n');
-  const names = new Set([...rangeNames(top, laneRange), ...gone.flatMap((commit) => namesIn(top, commit))]);
+function rewrittenLane(top, base, reviewedSha) {
+  const laneRange = `${base}..HEAD`;
+  const lanePaths = [...new Set([...diffNames(top, [laneRange, '--']), ...diffNames(top, [`${base}...${reviewedSha}`, '--'])])];
+  const since = lanePaths.length === 0 ? [] : readDiff(top, [reviewedSha, 'HEAD', '--', ...lanePaths]);
   return {
-    range: `${laneRange} (rewritten lane: ${gone.length} reviewed ${gone.length === 1 ? 'patch is' : 'patches are'} gone or changed)`,
-    files: withHunklessFiles([...names], parsePatch(`${rangePatch(top, laneRange)}\n${dropped}`)),
-    rangeDiff: `the output of \`git range-diff ${base}..${reviewedSha} ${base}..HEAD\` (what the rewrite dropped or changed)`,
+    range: `${laneRange} (rewritten lane: the reviewed commit ${reviewedSha} is no ancestor of HEAD, so the whole lane is read)`,
+    files: mergedFiles(readRange(top, laneRange), since),
+    reading: [
+      `the output of \`git range-diff ${base}..${reviewedSha} ${base}..HEAD\` (what the rewrite changed, commit by commit)`,
+      `the output of \`git diff ${reviewedSha} HEAD\` for the lane's files (what the rewrite changed in them, line by line; the places named next are where each of those files first differs)`,
+      ...changedPlaces(since).slice(0, MAX_REWRITE_PLACES),
+    ],
   };
 }
 
 /**
- * The delta of a rewritten lane (the reviewed sha is no ancestor of HEAD). When every reviewed patch is still in the lane (a plain
- * rebase), it is the lane commits whose patch the reviewed set does not hold. When one is gone or changed, it is the whole lane.
+ * What a fix round reads, from two recorded commits: the tree diff `<reviewed>..HEAD` when the reviewed commit is an ancestor of HEAD
+ * (it holds merge resolutions and reverts by construction), else the whole lane (rewrittenLane).
+ * @param {string} base the full sha the lane starts from (an ancestor of HEAD; the CLI checks both)
+ * @param {string} reviewedSha the full sha the last review read
+ * @returns {{range: string, files: object[], reading: string[]}} `reading`: what to read first on a rewritten lane (ready sentences with
+ *   the commands, then places), else empty
+ * @throws {UsageError} for a reviewed sha with no lane commit before it (the lane's classes could not be read), and for an empty delta
+ *   (with nothing to read a round would pass unreviewed)
  */
-function rewrittenDelta(top, base, reviewedSha) {
-  const reviewed = keyedCommits(top, `${base}..${reviewedSha}`);
-  const lane = keyedCommits(top, `${base}..HEAD`);
-  const [reviewedKeys, laneKeys] = [reviewed, lane].map((commits) => new Set(commits.map(({ key }) => key)));
-  const gone = reviewed.filter(({ key }) => !laneKeys.has(key)).map(({ commit }) => commit);
-  if (gone.length > 0) return rewrittenLane(top, base, reviewedSha, gone);
-  const fresh = lane.filter(({ key }) => !reviewedKeys.has(key)).map(({ commit }) => commit);
-  const text = fresh.map((commit) => showPatch(top, commit)).join('\n');
-  return { range: `patches ${fresh.map((commit) => commit.slice(0, 8)).join(',') || 'none'} of ${base}..HEAD`, files: withHunklessFiles(fresh.flatMap((commit) => namesIn(top, commit)), parsePatch(text)), rangeDiff: null };
-}
-
-/**
- * The delta since the reviewed commit: its range when that commit is an ancestor of HEAD; otherwise (a rewritten lane) the lane
- * commits whose patch the reviewed set does not hold, or the whole lane when a reviewed patch is gone or changed. The range names
- * resolved full shas, never the text the caller gave.
- * @param {string} base the full sha of the lane's base (baseOf)
- * @param {string} reviewedRef what `--delta` got: any name of the commit the last review read
- * @returns {{range: string, files: object[], reviewedSha: string, rangeDiff: string | null}} `rangeDiff`: what to read first on a
- *   rewritten lane that lost reviewed work (a ready sentence with the `git range-diff` command), else null
- * @throws {UsageError} for an unknown commit, a reviewed sha with no lane commit before it (the lane's classes could not be read), and an
- *   empty delta (with nothing to read a round would pass unreviewed)
- */
-export function readDelta(top, base, reviewedRef) {
-  if (reviewedRef.startsWith('-') || !gitFlag(top, ['rev-parse', '--verify', '--quiet', `${reviewedRef}^{commit}`])) throw new UsageError(`unknown sha "${reviewedRef}" for --delta`);
-  const reviewedSha = gitText(top, ['rev-parse', '--verify', `${reviewedRef}^{commit}`]);
+export function readDelta(top, base, reviewedSha) {
   // With no lane commit between the base and the reviewed sha the tool cannot see the lane the fix belongs to: its classes would be lost.
-  if (commitsOf(top, `${base}..${reviewedSha}`).length === 0) throw new UsageError(`no lane commit lies between the base ${base} and the reviewed sha ${reviewedSha}: a first review reads the whole range, never a delta; for work on the base branch itself pass --base <the full sha where the work started>`);
+  if (gitText(top, ['rev-list', '--count', `${base}..${reviewedSha}`]) === '0') throw new UsageError(`no lane commit lies between the base ${base} and the reviewed sha ${reviewedSha}: a first review reads the whole range, never a delta; for work on the base branch itself pass --base <the full sha where the work started>`);
   const range = `${reviewedSha}..HEAD`;
-  const delta = gitFlag(top, ['merge-base', '--is-ancestor', reviewedSha, 'HEAD']) ? { range, files: readRange(top, range), rangeDiff: null } : rewrittenDelta(top, base, reviewedSha);
-  if (delta.files.length === 0) throw new UsageError(`nothing to review: ${delta.range} holds no changed file; check the range (--delta takes the sha the last review read, from the lead's own record)`);
-  return { ...delta, reviewedSha };
+  const delta = gitFlag(top, ['merge-base', '--is-ancestor', reviewedSha, 'HEAD']) ? { range, files: readRange(top, range), reading: [] } : rewrittenLane(top, base, reviewedSha);
+  if (delta.files.length === 0) throw new UsageError(`nothing to review: ${delta.range} holds no changed file; check the shas (--delta takes the commit the last review read, from the lead's own record)`);
+  return delta;
 }
 
 const nameDefinedIn = (text) => {

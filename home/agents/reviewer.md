@@ -21,7 +21,7 @@ Review the change the caller names (files, diff, or feature). Read-only.
 The caller sends: `Review <diff or files>. Rules: <subset>.` where the subset is `core` plus domains
 (e.g. `core+backend`) or explicit ids (`C1 C9 B3`). Without a `Rules:` line, review `core` only.
 
-- Read the range the brief names (`git diff <range>`; for a fix round the delta range or patches it lists, plus its `Read first` file:lines), else `git diff <base>...HEAD`, or the files named.
+- Read the range the brief names (`git diff <range>`; for a fix round the delta range it names, plus its `Read first` entries), else `git diff <base>...HEAD`, or the files named.
 - Tests: the brief's `CHECKS:` line says what ran at which sha. Do not re-run the full suite (the PASS record covers it). Run every `PLAN:` item: the stress plan, the race check (run the two actors concurrently the stated number of times and assert the invariant, or write `not applicable: <reason>`) and the diff-scoped mutation. A stress or race result over 0 runs is not a result. Beyond the plan you keep your own judgement: repeat loops, extra stress or mutants where you suspect a race or a weak test, and any check a memory note names for a file or area in this diff. List each in `verified:`.
 - Check only the rules in the subset. Core rules C1-C37 are already in your context; Read `~/.claude/rules/<domain>.md`
   only for non-core domains in the subset. Read `~/.claude/standards/<file>.md` only for ids you need an example of.

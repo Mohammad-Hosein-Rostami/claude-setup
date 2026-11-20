@@ -1,7 +1,9 @@
-// Tests for a fix round on a rewritten lane (`review-tier --delta` with a reviewed sha that is no ancestor of HEAD): a plain rebase
-// reads only the fresh patches, but a lane that dropped or changed a reviewed patch reads the whole lane and what the rewrite took
-// out, with the lane's set, and says so (lane r7-delta, security B4: a lane rebuilt without its guard commit showed a docs-only delta).
-// Fixture: probe `b-rewrite.sh` 1 of the security review, rebuilt in temp repos. The base and ref tricks: review-tier-base.test.mjs.
+// Tests for a fix round on a rewritten lane (`review-tier --delta` with a reviewed sha that is no ancestor of HEAD): the lane is always
+// read whole, by tree diffs only (`<base>..HEAD`, plus what changed in the lane's files since the reviewed commit), with the lane's
+// set, and the round says so. No commit is matched to a reviewed one: a rebuilt lane that kept every reviewed patch and dropped the
+// guard in a merge, or by replaying fewer of two equal patches, showed a docs-only delta (lane r7-delta, security B4 and B5).
+// Fixtures: probes `b-rewrite.sh` 1, p1 (i) and p2 (ii) of the security reviews, rebuilt in temp repos. Base and ref tricks:
+// review-tier-base.test.mjs; grafts, replace refs and shallow history: review-tier-git-state.test.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { git } from './git-tidy-helpers.mjs';
@@ -10,7 +12,9 @@ import { lane, priorFile } from './review-tier-helpers.mjs';
 
 const GATE_OPEN = "export function decide(cmd) {\n  return 'allow';\n}\n";
 const GATE_GUARDED = "export function decide(cmd) {\n  if (cmd.includes(';')) return 'deny';\n  return 'allow';\n}\n";
+const THREE_LENSES = ['reviewer sonnet high', 'reviewer opus max', 'security-auditor opus max'];
 const lenses = (report) => report.reviews.map(({ agent, model, effort }) => `${agent} ${model} ${effort}`);
+const rewrittenRange = (base, reviewed) => `${base}..HEAD (rewritten lane: the reviewed commit ${reviewed} is no ancestor of HEAD, so the whole lane is read)`;
 
 /** A lane on a base that holds an open gate: commit 1 adds the guard, commit 2 (the reviewed tip) is docs. */
 function guardLane() {
@@ -23,39 +27,84 @@ function guardLane() {
   return { ...made, guard, reviewed, round0: made.json('--landing'), base: git(made.dir, 'rev-parse', 'main') };
 }
 
+/** Asserts a fix round that names the guard file as changed, with the lane's three lenses, and tells every reviewer where to look. */
+function assertGuardIsRead(result, round0, label) {
+  assert.deepEqual(lenses(result), THREE_LENSES, `${label}: never one Sonnet lens for a docs-only look`);
+  assert.deepEqual(lenses(result), lenses(round0), label);
+  assert.deepEqual(result.fileClasses['src/gate.mjs'], ['logic'], `${label}: the guard file is in the round although the lane no longer changes it`);
+  assert.equal(result.files, 2, `${label}: the guard file and the docs`);
+  for (const review of result.reviews) assert.ok(review.requiredReading.filter((entry) => entry === 'src/gate.mjs:1').length === 1, `${label}: Read first names the place the guard was taken from, once`);
+}
+
 test('security B4: a lane rebuilt without its reviewed guard commit names the guard file, keeps the three lenses and says the lane was rewritten', () => {
   const { dir, write, json, tier, reviewed, round0, base } = guardLane();
-  assert.deepEqual(lenses(round0), ['reviewer sonnet high', 'reviewer opus max', 'security-auditor opus max']);
+  assert.deepEqual(lenses(round0), THREE_LENSES);
   git(dir, 'reset', '-q', '--hard', 'main');
   git(dir, 'cherry-pick', reviewed);
   write('README.md', '# r\ngate: chained commands are denied (see src/gate.mjs)\n');
   assert.match(git(dir, 'diff', '--stat', reviewed, 'HEAD'), /src\/gate\.mjs/, 'the rewrite deleted the guard');
   const prior = priorFile();
   const result = json('--delta', reviewed, '--prior', prior);
-  assert.equal(result.range, `${base}...HEAD (rewritten lane: 1 reviewed patch is gone or changed)`);
-  assert.deepEqual(lenses(result), lenses(round0), 'never one Sonnet lens for a docs-only look');
-  assert.deepEqual(result.fileClasses['src/gate.mjs'], ['logic'], 'the guard file is in the round although no lane commit touches it now');
-  assert.equal(result.files, 2);
-  const rangeDiff = `the output of \`git range-diff ${base}..${reviewed} ${base}..HEAD\` (what the rewrite dropped or changed)`;
+  assert.equal(result.range, rewrittenRange(base, reviewed));
+  assertGuardIsRead(result, round0, 'a dropped commit');
+  const rangeDiff = `the output of \`git range-diff ${base}..${reviewed} ${base}..HEAD\` (what the rewrite changed, commit by commit)`;
+  const sinceReviewed = `the output of \`git diff ${reviewed} HEAD\` for the lane's files (what the rewrite changed in them, line by line; the places named next are where each of those files first differs)`;
   for (const review of result.reviews) {
-    assert.equal(review.requiredReading[0], rangeDiff);
+    assert.deepEqual(review.requiredReading.slice(0, 2), [rangeDiff, sinceReviewed]);
     assert.ok(review.brief.startsWith(`Review ${result.range}. Delta review: ${result.range} only. `), review.brief);
-    assert.ok(review.brief.includes(DELTA_READING) && review.brief.includes(rangeDiff), review.brief);
+    assert.ok(review.brief.includes(DELTA_READING) && review.brief.includes(rangeDiff) && review.brief.includes(sinceReviewed), review.brief);
   }
   assert.match(DELTA_READING, /on a rewritten lane, what the rewrite dropped or changed \(the brief names the `git range-diff` to read\)/);
   const text = tier('--delta', reviewed, '--prior', prior).stdout;
-  assert.match(text.split('\n')[0], /rewritten lane: 1 reviewed patch is gone or changed\)$/);
-  assert.match(text, /\(what the rewrite dropped or changed\), src\/gate\.mjs:1\./, 'Read first names the range-diff, then the place the guard was taken out');
+  assert.ok(text.split('\n')[0].endsWith(`, ${rewrittenRange(base, reviewed)}`), text.split('\n')[0]);
 });
 
-test('security B4: a reviewed commit that was changed in the rewrite (amended) is read again with the whole lane, and two gone patches are counted', () => {
-  const { dir, write, json, guard, reviewed, base } = guardLane();
+test('security B5 (probe p1 i): a lane rebuilt with every reviewed patch plus a merge whose resolution drops the guard names the guard file and keeps three lenses', () => {
+  const { dir, write, json, guard, reviewed, round0 } = guardLane();
+  git(dir, 'checkout', '-q', 'main');
+  const base = write('other.txt', 'another lane landed\n'); // the lane is rebuilt on the moved base, so every commit is a new one
+  git(dir, 'checkout', '-q', 'lane');
+  git(dir, 'reset', '-q', '--hard', 'main');
+  git(dir, 'cherry-pick', guard);
+  git(dir, 'cherry-pick', reviewed);
+  git(dir, 'checkout', '-q', '-b', 'side', 'main');
+  write('side.txt', 'a side branch\n');
+  git(dir, 'checkout', '-q', 'lane');
+  git(dir, 'merge', '-q', '--no-ff', '--no-commit', 'side');
+  git(dir, 'rm', '-q', '-f', 'side.txt');
+  write('src/gate.mjs', GATE_OPEN); // the merge commit itself takes the guard out: no commit's own patch shows it
+  write('README.md', '# r\ngate: chained commands are denied (see src/gate.mjs)\n');
+  assert.equal(git(dir, 'rev-list', '--count', '--merges', `${base}..HEAD`), '1');
+  const result = json('--delta', reviewed, '--prior', priorFile());
+  assert.equal(result.range, rewrittenRange(base, reviewed));
+  assertGuardIsRead(result, round0, 'a merge that drops the guard');
+});
+
+test('security B5 (probe p2 ii): a lane that held the guard patch twice and is rebuilt with it once, then reverted, names the guard file and keeps three lenses', () => {
+  const { dir, write, json, guard, round0, base } = guardLane();
+  git(dir, 'reset', '-q', '--hard', guard);
+  git(dir, 'revert', '--no-edit', 'HEAD');
+  const revert = git(dir, 'rev-parse', 'HEAD');
+  write('src/gate.mjs', GATE_GUARDED); // the same patch as the guard commit, a second time
+  const docs = 'README.md';
+  const reviewed = write(docs, '# r\ngate: chained commands are denied\n');
+  git(dir, 'reset', '-q', '--hard', 'main');
+  for (const commit of [guard, revert, reviewed]) git(dir, 'cherry-pick', commit);
+  write(docs, '# r\ngate: chained commands are denied (see src/gate.mjs)\n');
+  const result = json('--delta', reviewed, '--prior', priorFile());
+  assert.equal(result.range, rewrittenRange(base, reviewed));
+  assertGuardIsRead(result, round0, 'one of two equal patches dropped');
+});
+
+test('a reviewed commit that was changed in the rewrite (amended) is read with the whole lane, and so is a file only the old lane had', () => {
+  const { dir, write, json, reviewed, base } = guardLane();
   git(dir, 'reset', '-q', '--hard', 'main');
   write('src/gate.mjs', GATE_GUARDED.replace("';'", "'&&'"));
   write('NOTES.md', 'fix: note\n');
   const result = json('--delta', reviewed, '--prior', priorFile());
-  assert.equal(result.range, `${base}...HEAD (rewritten lane: 2 reviewed patches are gone or changed)`, `${guard} was changed, the docs commit dropped`);
-  assert.deepEqual(Object.keys(result.fileClasses).sort(), ['NOTES.md', 'README.md', 'src/gate.mjs']);
+  assert.equal(result.range, rewrittenRange(base, reviewed));
+  assert.deepEqual(Object.keys(result.fileClasses).sort(), ['NOTES.md', 'README.md', 'src/gate.mjs'], 'README.md was dropped with the docs commit');
+  assert.equal(result.files, 3);
   assert.equal(lenses(result).length, 3);
 });
 
@@ -86,28 +135,18 @@ test('a dropped commit with no hunk (a gate file renamed away) still brings its 
   assert.ok(result.classes.includes('gate'));
 });
 
-test('a plain rebase keeps every reviewed patch: the round reads only the fresh patches and names no rewrite', () => {
-  const { dir, write, json, reviewed, base } = guardLane();
+test('a plain rebase is a rewritten lane too: the whole lane is read, never only the commits that look new, and not what landed on the base', () => {
+  const { dir, write, json, reviewed, round0, base } = guardLane();
   git(dir, 'checkout', '-q', 'main');
   const moved = write('other.txt', 'another lane landed\n');
   git(dir, 'checkout', '-q', 'lane');
   git(dir, 'rebase', '-q', 'main');
-  const fix = write('NOTES.md', 'fix: note\n');
-  const result = json('--delta', reviewed, '--prior', priorFile());
-  assert.notEqual(moved, base);
-  assert.equal(result.range, `patches ${fix.slice(0, 8)} of ${moved}..HEAD`);
-  assert.equal(result.files, 1);
-  assert.ok(result.reviews.every((review) => !review.requiredReading.some((entry) => entry.includes('range-diff'))));
-});
-
-test('review N7 (mutant R8): a reviewed commit amended to change only indentation is a changed patch, so its file is read again', () => {
-  const { dir, write, json } = lane();
-  const reviewed = write('config/deploy.yaml', 'steps:\n  - run: test\n  - run: deploy\n');
-  git(dir, 'reset', '-q', '--hard', 'main');
-  write('config/deploy.yaml', 'steps:\n  - run: test\n    - run: deploy\n');
   write('NOTES.md', 'fix: note\n');
   const result = json('--delta', reviewed, '--prior', priorFile());
-  assert.match(result.range, /rewritten lane: 1 reviewed patch is gone or changed/, 'a patch key is verbatim: whitespace counts');
-  assert.ok(result.fileClasses['config/deploy.yaml'], 'the re-indented file is in the round');
-  assert.equal(result.files, 2);
+  assert.notEqual(moved, base);
+  assert.equal(result.range, rewrittenRange(moved, reviewed));
+  assert.deepEqual(Object.keys(result.fileClasses).sort(), ['NOTES.md', 'README.md', 'src/gate.mjs'], 'other.txt belongs to the base');
+  assert.equal(result.files, 3);
+  assert.deepEqual(lenses(result), lenses(round0));
+  assert.ok(result.reviews.every((review) => review.requiredReading[0].includes(`git range-diff ${moved}..${reviewed} ${moved}..HEAD`)));
 });

@@ -1,8 +1,10 @@
 // Shared fixtures for the review-tier CLI tests: a throw-away lane branch, the CLI run in it, and a prior findings file.
-// Exports: CLI, lane(), priorFile(text), roundFile(report), sha256Of(path), printedFixRound(text, values).
+// Exports: CLI, lane(), priorFile(text), laneNamesOf(report), sha256Of(path), printedFixRound(text, values).
 // Invariants: every repo and file lives in its own temp folder (makeTempDir); the CLI's log goes next to the repo, never to ~/.claude.
-//   `tier` and `json` complete a fix-round call (`--delta`): each `--prior` gets the hash of the file as it is, and a call that names no
-//   `--lane-classes` gets an EMPTY earlier round, so such a test shows what the tool reads from the lane by itself; `raw` runs the arguments exactly as given (the tests of the refusals use it).
+//   `tier` and `json` complete a fix-round call (`--delta`) the way a lead's record would: each `--prior` gets the hash of the file as it
+//   is, a call that names no `--base` gets the sha of the repo's trunk branch (main, else master), and a call that names no
+//   `--lane-classes` gets `docs`, the one name that raises no set (so such a test shows what the tool reads from the lane by itself);
+//   `raw` runs the arguments exactly as given (the tests of the refusals use it).
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -12,6 +14,7 @@ import { CLEAN_ENV, git, makeRepo } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 export const CLI = fileURLToPath(new URL('../home/tools/review-tier/review-tier.mjs', import.meta.url));
+const RUN_TIMEOUT_MS = 120_000; // a run that hangs (a FIFO read, a git prompt) fails its test instead of stopping the suite
 
 /**
  * A repo on a new branch `lane` plus a log file in its own temp folder.
@@ -21,8 +24,8 @@ export const CLI = fileURLToPath(new URL('../home/tools/review-tier/review-tier.
 export function lane() {
   const dir = makeRepo();
   const log = join(dir, '..', 'review-tier.jsonl');
-  const raw = (...args) => spawnSync(process.execPath, [CLI, ...args], { cwd: dir, encoding: 'utf8', env: { ...CLEAN_ENV, REVIEW_TIER_LOG: log } });
-  const tier = (...args) => raw(...asFixRound(args));
+  const raw = (...args) => spawnSync(process.execPath, [CLI, ...args], { cwd: dir, encoding: 'utf8', timeout: RUN_TIMEOUT_MS, env: { ...CLEAN_ENV, REVIEW_TIER_LOG: log } });
+  const tier = (...args) => raw(...asFixRound(dir, args));
   const json = (...args) => JSON.parse(tier(...args, '--json').stdout);
   const write = (path, text) => {
     mkdirSync(dirname(join(dir, path)), { recursive: true });
@@ -35,15 +38,27 @@ export function lane() {
   return { dir, log, raw, tier, json, write };
 }
 
+/** The sha of the repo's trunk branch (main, else master), or null when it has neither. */
+function trunkSha(dir) {
+  for (const name of ['main', 'master']) {
+    const found = spawnSync('git', ['show-ref', '--verify', '--hash', `refs/heads/${name}`], { cwd: dir, encoding: 'utf8', env: CLEAN_ENV });
+    if (found.status === 0) return found.stdout.trim();
+  }
+  return null;
+}
+
 /**
- * A fix-round call as a lead makes it: every `--prior <file>` with no `--prior-sha256` after it gets the hash of the file as it is now
- * (the lead's record; a file that cannot be read gets a hash of zeros, the tool reports the read error first), and a call that
- * names no earlier round gets an empty one (it holds no class, so it adds nothing).
+ * A fix-round call as a lead makes it from its record: every `--prior <file>` with no `--prior-sha256` after it gets the hash of the
+ * file as it is now (a file that cannot be read gets a hash of zeros, the tool reports the read error first); a call with no `--base`
+ * gets the trunk's sha, and one with no `--lane-classes` gets `docs` (see the header).
  */
-function asFixRound(args) {
+function asFixRound(dir, args) {
   if (!args.includes('--delta')) return args;
   const completed = args.flatMap((arg, index) => (args[index - 1] === '--prior' && args[index + 1] !== '--prior-sha256' ? [arg, '--prior-sha256', sha256Of(arg)] : [arg]));
-  return args.includes('--lane-classes') ? completed : [...completed, '--lane-classes', roundFile({ fileClasses: {}, classes: [] })];
+  const base = completed.includes('--base') ? completed[completed.indexOf('--base') + 1] : trunkSha(dir);
+  if (base === null) return completed;
+  const based = completed.includes('--base') ? completed : [...completed, '--base', base];
+  return based.includes('--lane-classes') ? based : [...based, '--lane-classes', 'docs'];
 }
 
 /** The sha256 of a file as a lead records it (lower-case hex); 64 zeros for a path that cannot be read. */
@@ -55,12 +70,8 @@ export function sha256Of(path) {
   }
 }
 
-/** A round's `--json` report as a file in its own temp folder, for `--lane-classes`. */
-export function roundFile(report) {
-  const path = join(realpathSync(makeTempDir('review-tier-round-')), 'round.json');
-  writeFileSync(path, JSON.stringify(report));
-  return path;
-}
+/** What a lead passes as `--lane-classes` after a round: the names that round's report holds (`laneClasses`), comma-separated. */
+export const laneNamesOf = (report) => report.laneClasses.join(',');
 
 /**
  * The arguments of the `fix round:` line a run printed (its last line), with each `<placeholder>` replaced: what a lead who copies the

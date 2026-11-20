@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { countFindings } from '../home/tools/review-tier/lib/prior.mjs';
 import { FIX_ROUND_COMMAND } from '../home/tools/review-tier/lib/report.mjs';
 import { DELTA_READING } from '../home/tools/review-tier/lib/reviews.mjs';
+import { git } from './git-tidy-helpers.mjs';
 import { lane, priorFile } from './review-tier-helpers.mjs';
 
 const read = (path) => readFileSync(fileURLToPath(new URL(`../${path}`, import.meta.url)), 'utf8');
@@ -125,11 +126,13 @@ test('both agents write a findings file the next round can count: one line per f
 });
 
 test('home/CLAUDE.md names the same fix-round command as the tool, complete, and the tool prints it as its last line', () => {
-  assert.equal(FIX_ROUND_COMMAND, 'node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --prior <findings-file> --prior-sha256 <its-sha256> --lane-classes <previous-round-json>');
+  assert.equal(FIX_ROUND_COMMAND, 'node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --base <base-sha> --prior <findings-file> --prior-sha256 <its-sha256> --lane-classes <classes>');
   assert.ok(gates().includes(`\`${FIX_ROUND_COMMAND}\``), 'the gate sentence holds the whole command');
-  const { write, tier } = lane();
-  write('src/a.mjs', 'export const a = 1;\n');
-  assert.equal(tier().stdout.trimEnd().split('\n').at(-1), `fix round: ${FIX_ROUND_COMMAND}`);
+  const { dir, write, tier } = lane();
+  const tip = write('src/a.mjs', 'export const a = 1;\n');
+  // The printed line is the same command with the round's own values in place of three placeholders: the lead fills in the report and its hash.
+  const printed = FIX_ROUND_COMMAND.replace('<reviewed-sha>', tip).replace('<base-sha>', git(dir, 'rev-parse', 'refs/heads/main')).replace('<classes>', 'logic');
+  assert.equal(tier().stdout.trimEnd().split('\n').at(-1), `fix round: ${printed}`);
 });
 
 test('home/CLAUDE.md quality gates: a first review is the whole range, a fix round is the delta brief, and the waived-round exception stands next to it', () => {
@@ -141,10 +144,11 @@ test('home/CLAUDE.md quality gates: a first review is the whole range, a fix rou
 
 test('home/CLAUDE.md quality gates: the lane whole set re-checks the fix until a round is clean, the lead checks sha, report and count itself, and a security finding is never dropped', () => {
   assert.match(gates(), /the lane's whole review set \(every lens, at its model and effort, plus the lenses of any class only the fix touches, never fewer\) re-checks the changed lines of the fix and what they can break until a round is clean/);
-  assert.match(gates(), /the sha is from the lead's own record of the last round, never from the writer's report/);
+  assert.match(gates(), /both shas are full 40-character shas from the lead's own record of the last round, never from the writer's report and never a short sha or a name/);
+  assert.match(gates(), /after a rebase the base is the tip the lane was rebased onto/);
   assert.match(gates(), /each findings file is one review report of that round as its reviewer wrote it, passed with its own `--prior` and `--prior-sha256` \(repeat the pair for the reviewer's and the security report\)/);
   assert.match(gates(), /the lead records each report's sha256 and finding ids the moment the reviewer returns it, the tool refuses a file whose hash differs, and a count or id it prints that differs from that record means the round is not clean/);
-  assert.match(gates(), /the JSON is the `--json` output of the round before, which the lead keeps every round/);
+  assert.match(gates(), /the classes are the names the `fix round:` line of the round before printed, which hold the classes a fix removed from the code/);
   assert.match(gates(), /a round is clean only when every reviewer's report has the line `prior: <n> fixed, 0 open` before its final line, with `n` that count/);
   assert.match(gates(), /security findings are never dropped/);
 });

@@ -32,10 +32,11 @@ function rulesOf(classes) {
 }
 
 /** Which plan items the diff needs: stress (lock-based), race (lock-free), mutation. Null items are not asked. */
-function planOf({ classes, fileClasses, hasCode, landing, changedLines, fileCount }) {
+function planOf({ classes, fileClasses, laneNames = [], hasCode, landing, changedLines, fileCount }) {
   let stress = false;
   let race = false;
-  for (const names of Object.values(fileClasses)) {
+  // The names of an earlier round count as one more file: a lock or race tag it recorded keeps its plan after a fix removed the line.
+  for (const names of [...Object.values(fileClasses), laneNames]) {
     if (!fileHas(names, ...CONCURRENCY_CLASSES)) continue;
     stress ||= fileHas(names, LOCK_TAG);
     race ||= fileHas(names, RACE_TAG);

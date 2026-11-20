@@ -7,17 +7,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
-import { lane, priorFile, roundFile, sha256Of } from './review-tier-helpers.mjs';
+import { git } from './git-tidy-helpers.mjs';
+import { lane, priorFile, sha256Of } from './review-tier-helpers.mjs';
 
 const REVIEW = '| id | severity | what |\n|---|---|---|\n| B1 | blocking | guard missing |\n| S1 | should-fix | cause lost |\n';
 const AUDIT = '- [should-fix] S9 src/run.mjs:2 - no timeout - add one\n';
 
 /** A reviewed lane with a fix on top, the two reports of the round before and its JSON; `fixRound(...args)` runs the CLI as given. */
 function fixRoundFixture() {
-  const { raw, write } = lane();
+  const { dir, raw, write } = lane();
   const reviewed = write('src/run.mjs', 'const apiKey = "abc";\nspawnSync(cmd);\n');
   write('src/run.mjs', 'const apiKey = "abc";\nspawnSync(cmd, { shell: false });\n');
-  const start = ['--delta', reviewed, '--lane-classes', roundFile({ fileClasses: {} })];
+  const start = ['--delta', reviewed, '--base', git(dir, 'rev-parse', 'refs/heads/main'), '--lane-classes', 'docs'];
   return { fixRound: (...args) => raw(...start, ...args), review: priorFile(REVIEW), audit: priorFile(AUDIT) };
 }
 
@@ -51,7 +52,7 @@ test('security S1: a report edited after the review is refused although its coun
   assert.equal(fixRound('--prior', review, '--prior-sha256', recorded).status, 0, 'the report as the reviewer wrote it');
   writeFileSync(review, '| id | severity | what |\n|---|---|---|\n| S1 | should-fix | cause lost |\n| X1 | blocking | a new row in place of B1 |\n');
   const result = fixRound('--prior', review, '--prior-sha256', recorded, '--json');
-  refused(result, /is not the report that was recorded: its sha256 is [0-9a-f]{64}, --prior-sha256 says [0-9a-f]{64}\. The file changed after the review: take the report from its reviewer again, never from the fix's writer/);
+  refused(result, /is not the report that was recorded: its sha256 is [0-9a-f]{64}, --prior-sha256 says [0-9a-f]{64}\. Either the file changed after the review \(take the report from its reviewer again, never from the fix's writer\), or the --prior-sha256 values are in another order than the --prior files/);
   assert.ok(result.stderr.includes(`--prior ${review} `), 'the error names the file');
 });
 
@@ -64,7 +65,7 @@ test('security S1: a --prior with no --prior-sha256 is exit 2 naming the file, f
 
 test('the hashes pair with the reports in order: swapped hashes, a hash that is no sha256 and the same report twice are exit 2', () => {
   const { fixRound, review, audit } = fixRoundFixture();
-  refused(fixRound('--prior', review, '--prior-sha256', sha256Of(audit), '--prior', audit, '--prior-sha256', sha256Of(review)), new RegExp(`--prior ${review} is not the report that was recorded`));
+  refused(fixRound('--prior', review, '--prior-sha256', sha256Of(audit), '--prior', audit, '--prior-sha256', sha256Of(review)), new RegExp(`--prior ${review} is not the report that was recorded: .*or the --prior-sha256 values are in another order than the --prior files \\(each hash comes right after its own file\\)`));
   for (const hash of ['abc123', 'z'.repeat(64), `${sha256Of(review)}00`]) refused(fixRound('--prior', review, '--prior-sha256', hash), new RegExp(`--prior-sha256 for ${review} is not a sha256 \\(64 hex digits\\)`));
   refused(fixRound('--prior', review, '--prior-sha256', sha256Of(review), '--prior', review, '--prior-sha256', sha256Of(review)), /the same --prior file is named twice/);
   assert.equal(fixRound('--prior', review, '--prior-sha256', sha256Of(review).toUpperCase()).status, 0, 'upper-case hex is the same hash');
