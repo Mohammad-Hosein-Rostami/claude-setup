@@ -44,6 +44,21 @@ test('refused roots: empty, relative, the home folder, outside the temp folders,
   assert.equal(existsSync(join(victim, 'f.txt')), true);
 });
 
+test('a root whose path starts with the temp folder\'s path but is not inside it (no separator after it) is refused', posix, (t) => {
+  const w = world();
+  if (['/tmp', '/private/tmp'].filter(existsSync).some((base) => isUnder(w.root, base))) return t.skip('the fake world lies under /tmp, an allowed base by itself');
+  const [base, lookalike] = [folder(join(w.root, 't')), folder(join(w.root, 'tX'))];
+  const runnerTmpdir = process.env.TMPDIR;
+  process.env.TMPDIR = base; // os.tmpdir() reads it at each call: the temp folder is now <world>/t, and <world>/tX only shares its first characters
+  try {
+    assert.deepEqual(inspectRoot(join(base, '.'), w.home), { real: realpathSync(base), shared: false }, 'the temp folder itself is under the temp folder');
+    assert.throws(() => inspectRoot(lookalike, w.home), /is not under the temp folder/);
+  } finally {
+    if (runnerTmpdir === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = runnerTmpdir;
+  }
+});
+
 test('a root reached through a symlinked parent folder is cleaned by its real path', posix, async () => {
   const w = world();
   folder(join(w.tmp, 'cs-run-Linked'), { days: 3 });

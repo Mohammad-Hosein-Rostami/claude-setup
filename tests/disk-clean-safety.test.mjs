@@ -206,11 +206,24 @@ test('session folders are kept when the transcripts folder or the sessions regis
   writeFileSync(notAFolder, 'x');
   for (const missing of [{ projects: join(notAFolder, '..', 'none') }, { sessions: join(notAFolder, '..', 'none') }, { sessions: 'relative/sessions' }, { sessions: 'tests' },  { projects: undefined }, { sessions: undefined }, { sessions: notAFolder }]) {
     const w = world();
-    transcript(w, '-proj', NEWEST, 0);
-    transcript(w, '-proj', OLD, 31); // idle by both rules: with its transcript (the registry cases) and without one (the transcripts folder cases, 30 days)
+    for (const [id, days] of [[NEWEST, 0], [OLD, 31]]) transcript(w, '-proj', id, days); // OLD is idle by both rules: with its transcript (the registry cases) and without one (the transcripts folder cases, 30 days)
     const path = sessionFolder(w, OLD, 31);
     const summary = await runClean({ ...w.options, ...missing });
     assert.deepEqual([existsSync(path), summary.removed, summary.refused.length >= 1], [true, 0, true], JSON.stringify(missing));
+  }
+});
+
+const NOT_ROOT = { skip: posix.skip || (process.getuid?.() === 0 && 'root reads a folder of mode 000') };
+test('session folders are kept when the sessions registry or the transcripts folder exists but cannot be read (mode 000); the reason is listed', NOT_ROOT, async () => {
+  // sessions: the transcript is found and idle, and the live pid that keeps the folder is in the registry nobody can read. projects: no transcript can be found, so 31 days (the 30-day rule).
+  for (const [locked, days, what] of [['sessions', 4, 'the sessions registry'], ['projects', 31, 'the transcripts folder']]) {
+    const w = world();
+    for (const [id, idleDays] of [[NEWEST, 0], [OLD, days]]) transcript(w, '-proj', id, idleDays);
+    const path = sessionFolder(w, OLD, days);
+    if (locked === 'sessions') sessionFile(w, process.pid, OLD);
+    chmodSync(w[locked], 0o000);
+    const summary = await runClean(w.options).finally(() => chmodSync(w[locked], 0o755)); // put back, or the fake world cannot be removed at exit
+    assert.deepEqual([existsSync(path), summary.removed, summary.refused.filter((line) => line.startsWith(`${what} `)).length], [true, 0, 1], `${locked}: ${summary.refused.join(' | ')}`);
   }
 });
 
