@@ -151,6 +151,17 @@ test('a submodule with its own .git file and no exclude line: no line, and the p
   assert.deepEqual(s.send(call, { cwd: join(ui, 'src') }), allowed({ ...call, prompt: `${rulesLine(join(ui, 'STATUS.md'))}\n${PROMPT}` }), 'its own list');
 });
 
+// Review 4 of p0-0.1, R4-6: for the rules line only an entry named exactly `.git` is the git root (git's own rule). On a disk that
+// ignores case a `.GIT` folder is found under that name too; it must not end the walk (mutant C02: other spellings by default).
+test('a `.GIT` folder in the session folder is not the git root: the rules line still comes from the `.git` above', () => {
+  const s = briefSession();
+  writeFileSync(s.status, RULES);
+  const sub = join(s.project, 'sub');
+  mkdirSync(join(sub, '.GIT'), { recursive: true });
+  const call = { prompt: PROMPT, subagent_type: 'implementer' };
+  assert.deepEqual(s.send(call, { cwd: sub }), allowed({ ...call, prompt: `${rulesLine(s.status)}\n${PROMPT}` }));
+});
+
 test('a .git that is a FIFO or a link: no line, and nothing waits', posixOnly, () => {
   const s = briefSession();
   const call = { prompt: PROMPT, subagent_type: 'implementer' };
