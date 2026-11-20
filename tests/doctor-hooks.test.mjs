@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cp, mkdir, writeFile } from 'node:fs/promises';
+import { cp, mkdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -144,4 +144,24 @@ test('check_workflows still fails a skill that names neither a workflow script n
   const run = workflowCheck(await workflowRepo({ skillText: 'no script here\n', resumeTool: true }));
   assert.equal(run.status, 1);
   assert.match(run.stdout, /FAIL\s+wf-x names no workflow script/);
+});
+
+test('check_prod_hosts fails when the prod-hosts file is a link, and passes for a plain file', { skip }, async () => {
+  const home = makeTempDir('doctor-home-');
+  const privateDir = join(home, '.claude', 'private');
+  await mkdir(privateDir, { recursive: true });
+  const real = join(home, 'real-hosts');
+  await writeFile(real, 'db1.example\n');
+  const run = () => spawnSync('bash', [DOCTOR], { encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_prod_hosts' } });
+  await symlink(real, join(privateDir, 'prod-hosts'));
+  const linked = run();
+  assert.equal(linked.status, 1);
+  assert.match(linked.stdout, /^FAIL\s+prod-hosts is a link or not a plain file/m);
+  await writeFile(join(home, 'plain'), 'db1.example\n');
+  const plain = spawnSync('bash', [DOCTOR], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_prod_hosts', CLAUDE_PROD_HOSTS_FILE: join(home, 'plain') },
+  });
+  assert.equal(plain.status, 0);
+  assert.match(plain.stdout, /^ok\s+prod-hosts list: 1 entries/m);
 });
