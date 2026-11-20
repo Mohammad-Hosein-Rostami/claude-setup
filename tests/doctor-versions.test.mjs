@@ -53,3 +53,25 @@ test('doctor fails on a Node older than 22.15 and accepts 22.15 and later', { sk
     assert.deepEqual([status, out.trim()], [0, `ok    node ${version}`], version);
   }
 });
+
+test('the whole doctor run checks Claude Code and fails below its floor', { skip }, () => {
+  // No DOCTOR_ONLY: this pins that check_claude_version is in the run list at all. The repo suite is replaced by `true`, and every
+  // other check reads the temp HOME, so only the claude line is asserted.
+  const bin = makeTempDir('doctor-bin-');
+  const home = makeTempDir('doctor-home-');
+  writeFileSync(join(bin, 'claude'), "#!/bin/sh\necho '2.1.294 (Claude Code)'\n");
+  chmodSync(join(bin, 'claude'), 0o755);
+  const env = {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+    DOCTOR_PROJECT: home,
+    DOCTOR_LOG_DIR: join(home, 'logs'),
+    DOCTOR_TEST_COMMAND: 'true',
+    PATH: `${bin}${delimiter}${process.env.PATH}`,
+  };
+  delete env.DOCTOR_ONLY;
+  const run = spawnSync('bash', [DOCTOR], { encoding: 'utf8', env });
+  assert.equal(run.status, 1);
+  assert.ok(run.stdout.includes('FAIL  claude >= 2.1.295 required (found 2.1.294)'), run.stdout);
+});
