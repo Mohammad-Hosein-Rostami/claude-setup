@@ -54,7 +54,7 @@ export const MAX_LINE_READINGS = 20000;
 /** The other half of the budget: the characters the line's own variables may be filled in with, over both parsers. Every rule reads the
  * filled-in words, so a long value used thousands of times made each rule scan tens of megabytes. Far above any line someone writes. */
 export const MAX_LINE_EXPANDED_CHARS = 4 * MAX_COMMAND_CHARS;
-export const TOO_COMPLEX_REASON = 'command too complex to check (its rm targets expand to more words than the guard reads); read it before allowing';
+export const TOO_COMPLEX_REASON = 'command too complex to check (its rm targets, or its commands after cd in nested scripts, are more than the guard reads); read it before allowing';
 /** @returns {{readings: number, expanded: number, spent: boolean}} a fresh budget for one line; spent once either count ran out: the line then asks */
 export const newWork = () => ({ readings: 0, expanded: 0, spent: false });
 const MAX_SHOWN_TARGET_CHARS = 120; // how much of a target a reason repeats: the reason goes into the dialog and back to the model

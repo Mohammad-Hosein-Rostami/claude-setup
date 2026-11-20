@@ -116,6 +116,7 @@ test('a script nested in scripts, each after cds that leave four folders open, i
   const answer = decide(deep, { ...ctx, work });
   assert.equal(answer.ask, true);
   assert.deepEqual(answer.reasons, [TOO_COMPLEX_REASON]);
+  assert.match(TOO_COMPLEX_REASON, /^command too complex to check \(its rm targets, or its commands after cd in nested scripts, /, 'the reason names this cause too');
   assert.equal(work.readings, 0);
   assert.ok(work.expanded <= MAX_LINE_EXPANDED_CHARS + 4 * MAX_COMMAND_CHARS, `read ${work.expanded} characters more than once`); // the segment that tips it over is counted, not judged again
 });
