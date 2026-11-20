@@ -106,7 +106,7 @@ test('delta with --prior: the tool reads the report and prints its sha256 and ho
   const prior = priorFile(REPORT);
   const sha256 = createHash('sha256').update(readFileSync(prior)).digest('hex');
   const result = json('--delta', reviewed, '--prior', prior);
-  assert.deepEqual(result.prior, { file: prior, sha256, blocking: 2, shouldFix: 2, findings: 4 }, 'a severity counts as a table cell or a [tag], once per line; prose, notes and optional do not');
+  assert.deepEqual(result.prior, { file: prior, sha256, blocking: 2, shouldFix: 2, findings: 4, ids: ['B1', 'B2', 'S1', 'S2'] }, 'a severity counts as a table cell or a [tag], once per line; prose, notes and optional do not');
   assert.equal(result.priorFile, prior, 'the README promises priorFile');
   assert.match(tier('--delta', reviewed, '--prior', prior).stdout, new RegExp(`\\nprior: ${prior} sha256 ${sha256}, 2 blocking, 2 should-fix\\nfix round: `));
 });

@@ -43,7 +43,7 @@ Your notes live in `~/.claude/agent-memory/security-auditor/`. That directory an
 - One finding per line: `ID file:line - problem - exploit path - fix`. Severity ordered; every finding is reported, no cap (a long list goes to the detail file, with the count in the reply).
 - No praise, no recap, no raw logs. Reply in at most 300 words; when the detail is longer, write the full
   findings to a file (in the scratchpad or a path the caller gives) and return its path plus the top findings.
-- With a blocking or should-fix finding always write the findings file and return its path: it is the next round's `--prior` report. Each finding line in it carries its severity as a tag or a table cell (`[blocking]`, `| should-fix |`); `review-tier` counts those marks.
+- With a blocking or should-fix finding always write the findings file and return its path: it is the next round's `--prior` report. Each finding is one line in it that carries its severity as a tag (`[blocking]`) or as a table cell that starts with the word (`| should-fix |`), never inside a quote or a code block; `review-tier` counts those lines and lists their ids.
 - Final line: `exploitable: yes|no|unknown; plan: <items run>; own: <extra checks run>; stress: <double holders>/<lost updates> over <runs> runs, or not asked; race: <violations> over <runs> runs, or not asked; mutants: <killed>/<n>`.
 
 Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).

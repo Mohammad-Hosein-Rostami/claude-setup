@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { countFindings } from '../home/tools/review-tier/lib/prior.mjs';
 import { FIX_ROUND_COMMAND } from '../home/tools/review-tier/lib/report.mjs';
 import { DELTA_READING } from '../home/tools/review-tier/lib/reviews.mjs';
 import { lane, priorFile } from './review-tier-helpers.mjs';
@@ -103,10 +104,12 @@ test('Delta mode does not allow skipping a lens or lowering the model', () => {
   for (const name of AGENTS) assert.match(deltaSection(name), /never lower the model or effort and never skip a lens/, name);
 });
 
-test('both agents write a findings file the next round can count: severity as a tag or a table cell on each finding line', () => {
-  for (const name of AGENTS) {
-    assert.match(read(`home/agents/${name}.md`), /\n- With a blocking or should-fix finding always write the findings file and return its path: it is the next round's `--prior` report\. Each finding line in it carries its severity as a tag or a table cell \(`\[blocking\]`, `\| should-fix \|`\); `review-tier` counts those marks\.\n/, name);
-  }
+test('both agents write a findings file the next round can count: one line per finding, its severity a tag or the first word of a table cell', () => {
+  const bullet = "- With a blocking or should-fix finding always write the findings file and return its path: it is the next round's `--prior` report. Each finding is one line in it that carries its severity as a tag (`[blocking]`) or as a table cell that starts with the word (`| should-fix |`), never inside a quote or a code block; `review-tier` counts those lines and lists their ids.";
+  for (const name of AGENTS) assert.ok(read(`home/agents/${name}.md`).includes(`\n${bullet}\n`), name);
+  // The contract is itself no finding: quoted in a report (as p0-0.3-fix1.md does) or pasted as it is, the tool counts nothing.
+  assert.equal(countFindings(`> ${bullet}\n${bullet}\n`).findings, 0);
+  assert.equal(countFindings('- [blocking] B1 a.mjs:1 - x - y\n| S1 | should-fix (not run on Linux) | a.mjs:2 | x | y |\n').findings, 2, 'the two forms the bullet names');
 });
 
 test('home/CLAUDE.md names the same fix-round command as the tool, complete, and the tool prints it as its last line', () => {
