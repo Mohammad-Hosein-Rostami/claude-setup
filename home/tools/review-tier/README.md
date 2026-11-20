@@ -117,10 +117,16 @@ measurement, not a miss-rate bound.
   global config (`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL` the null device), no attributes from outside (`GIT_ATTR_NOSYSTEM=1`,
   `-c core.attributesFile=<null device>`, `HOME` and `XDG_CONFIG_HOME` the temp folder), replace refs and grafts off, and
   `-c core.commitGraph=false -c core.multiPackIndex=false -c core.precomposeUnicode=false -c core.quotePath=false -c core.ignoreCase=false`
-  on every call. An object the import did not copy is missing there. Git does not always fail on a missing object (`git grep` skips the
+  on every call, and `LC_MESSAGES=C` (git's messages untranslated; every other locale category as the caller had it, so hunk heads do
+  not change). An object the import did not copy is missing there. Git does not always fail on a missing object (`git grep` skips the
   file, attributes are silently empty), so after each phase a **closure check** (`lib/closure-check.mjs`) lists again, from the imported
-  objects, what the reads need and stops with exit 2 (`object <oid> is needed and was not imported`) when one is absent; the file list of
-  the temp folder is checked at the same points (`lib/temp-repository.mjs`: only what `git init --template=` and the imports wrote).
+  objects, what the reads need and stops with exit 2 (`object <oid> is needed and was not imported`) when one is absent. Behind it, a
+  file text fails on anything git writes to stderr, and `git grep` on a line that starts with `error:` or `fatal:` (git only warns about
+  a `.gitattributes` line it ignores; the attribute parser's own lines start with text of that file, so a start whose `.gitattributes`
+  has a token that begins with `error:` or `fatal:` stops the run with exit 1). The temp folder is checked after each import and once
+  after the last read (`lib/temp-repository.mjs`): names, file types and the bytes of `HEAD` and `config`; for each imported pack its
+  dev, inode, size, mtime and ctime as they were right after `git index-pack`, which must have named the pack the tool wrote; and at the
+  end the `.pack` bytes against the SHA-256 of what the tool wrote. Any difference is exit 2.
   Those calls take shas only (the word `HEAD` is only printed), no path goes back to git as a pathspec (a diff is read whole with
   `--ignore-submodules=none` and the lane's paths are picked in the tool, by their bytes; a path that is not UTF-8 is exit 2), and the
   callers of a changed function are searched in the commit at `HEAD`, never in the working tree.
@@ -133,10 +139,15 @@ measurement, not a miss-rate bound.
   `tip` is the commit that was read: the caller compares it with the commit it means to review (`home/workflows/review.js` fails the
   round when they differ).
 - Left outside the tool: land does not repeat the check yet and the lens commands and the review worktree read the lane's own store
-  (both planned for the workflows' guards); a process that writes the temp folder inside one git call, and the `git` found first on
-  `PATH`; the import's own hash is plain SHA-1; an object above 1 GiB, a diff above the 256 MiB output cap or a name that is not UTF-8
-  stops the run; a SHA-256 repository is refused (`HEAD names no commit`). A temp folder a killed run left behind is removed by a later
-  run once it is a day old and its owner (`<folder>.pid`) is gone.
+  (both planned for the workflows' guards); the `git` found first on `PATH`; the temp folder, which a process of the same user can
+  change and change back between two checks (a pack added and removed), and whose `.idx` or `.rev` is not checked against what git
+  wrote (one replaced before the tool notes it is not seen): only a folder the writer's processes cannot write closes that (planned);
+  the import's own hash is plain SHA-1; an object above 1 GiB, a diff above the 256 MiB output cap or a name that is not UTF-8 stops the
+  run; a SHA-256 repository is refused with exit 2 (`no base branch`, `unknown revision` or `HEAD names no commit`, by the call).
+- A temp folder a killed run left behind is removed by a later run once it is a day old, its owner (`<folder>.pid`) is gone and its
+  whole tree, read without following a link, is what a run can leave (`HEAD`, `config`, `import.pack`, `objects/info`, `objects/pack`
+  with `pack-<hash>.{pack,idx,rev}` and git's `tmp_*` files, empty `refs/heads` and `refs/tags`). It is removed file by file and folder
+  by folder by those names, never recursively. Any other folder of that name is left alone and named once on stderr.
 - History that can be altered outside the commits stops the run: a non-empty `info/grafts`, any `refs/replace/*` or a shallow repository
   is exit 2 naming what was found (remove it, or review by hand); the calls to the lane's repository also run with
   `GIT_NO_REPLACE_OBJECTS=1` and a `GIT_GRAFT_FILE` that cannot exist, and `GIT_SHALLOW_FILE` and `GIT_REPLACE_REF_BASE` are not passed on.

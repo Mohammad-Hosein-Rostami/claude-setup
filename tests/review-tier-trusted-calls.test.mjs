@@ -50,10 +50,38 @@ function spiedLane() {
 test('the clean environment keeps no GIT_* variable of the caller and sets its own six, none of them an object folder, with HOME and XDG_CONFIG_HOME in the temp folder', () => {
   const parent = { PATH: '/bin', LANG: 'C', HOME: '/home/u', XDG_CONFIG_HOME: '/home/u/.config', GIT_DIR: '/x', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'a.b', GIT_EXTERNAL_DIFF: 'x', git_work_tree: '/y', GIT_ATTR_SOURCE: 'z', GIT_ALTERNATE_OBJECT_DIRECTORIES: '/repo/.git/objects', GIT_OBJECT_DIRECTORY: '/o', GIT_NO_REPLACE_OBJECTS: '0', GIT_GRAFT_FILE: '/g' };
   assert.deepEqual(trustedEnvironment(parent, '/tmp/t'), {
-    PATH: '/bin', LANG: 'C', GIT_DIR: '/tmp/t', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull,
+    PATH: '/bin', LANG: 'C', LC_MESSAGES: 'C', GIT_DIR: '/tmp/t', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull,
     GIT_ATTR_NOSYSTEM: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: NO_GRAFT_FILE, HOME: '/tmp/t', XDG_CONFIG_HOME: '/tmp/t',
   });
   assert.deepEqual(TRUSTED_FLAGS, ['-c', 'core.commitGraph=false', '-c', 'core.multiPackIndex=false', '-c', 'core.precomposeUnicode=false', '-c', 'core.quotePath=false', '-c', `core.attributesFile=${devNull}`, '-c', 'core.ignoreCase=false']);
+});
+
+test('spec check K1 (fix 6): git\'s messages are never translated, and every other locale category keeps the value the caller gave it', () => {
+  const localeOf = (parent) => Object.fromEntries(Object.entries(trustedEnvironment(parent, '/tmp/t')).filter(([name]) => /^(LANG|LANGUAGE|LC_.*)$/.test(name)));
+  assert.deepEqual(localeOf({ LC_ALL: 'de_DE.UTF-8', LANGUAGE: 'de', LANG: 'en_US.UTF-8', LC_CTYPE: 'fr_FR.UTF-8' }), { LANG: 'de_DE.UTF-8', LC_MESSAGES: 'C' });
+  assert.deepEqual(localeOf({ LANG: 'en_US.UTF-8', LC_MESSAGES: 'de_DE.UTF-8', LC_CTYPE: 'fr_FR.UTF-8' }), { LANG: 'en_US.UTF-8', LC_CTYPE: 'fr_FR.UTF-8', LC_MESSAGES: 'C' });
+  assert.deepEqual(localeOf({ LC_ALL: '', LANG: 'en_US.UTF-8' }), { LANG: 'en_US.UTF-8', LC_MESSAGES: 'C' }, 'an empty LC_ALL sets nothing, as in libc');
+  assert.deepEqual(localeOf({}), { LC_MESSAGES: 'C' });
+});
+
+test('spec check K1 (fix 6): with a translated locale in the caller\'s environment, every call in the tool\'s repository sees LC_MESSAGES=C and the caller\'s character locale', POSIX_ONLY, () => {
+  const { spied, fixRound } = spiedLane();
+  // The machine's own LC_CTYPE and the like stay in the second case (no LC_ALL: each category keeps its value); the first drops them.
+  const cases = [
+    [{ LC_ALL: 'de_DE.UTF-8', LANGUAGE: 'de' }, { LANG: 'de_DE.UTF-8', LC_MESSAGES: 'C' }, true],
+    [{ LANG: 'en_US.UTF-8', LC_MESSAGES: 'de_DE.UTF-8', LC_ALL: '' }, { LANG: 'en_US.UTF-8', LC_MESSAGES: 'C' }, false],
+  ];
+  for (const [parent, expected, onlyMessages] of cases) {
+    const { result, trusted, laneSide } = spied(fixRound, parent);
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(trusted.length > 0 && laneSide.length > 0);
+    for (const { command, env } of [...trusted, ...laneSide]) {
+      const label = `${JSON.stringify(parent)}: ${command.join(' ')}`;
+      const { LANG, LANGUAGE, LC_ALL, LC_MESSAGES } = env;
+      assert.deepEqual(JSON.parse(JSON.stringify({ LANG, LANGUAGE, LC_ALL, LC_MESSAGES })), expected, label);
+      if (onlyMessages) assert.deepEqual(Object.keys(env).filter((name) => name.startsWith('LC_')), ['LC_MESSAGES'], label);
+    }
+  }
 });
 
 test('an object folder whose path holds the path delimiter or starts with a quote is written C-quoted, any other path as it is', () => {

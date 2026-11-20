@@ -8,7 +8,8 @@
 //   from the lane's start (`withAttributeSource`): the built-in diff drivers a landed `.gitattributes` names pick the hunk heads, and
 //   a lane's own attribute edits change nothing. Every commit arrives here as a full sha (the word HEAD is only printed). An object a
 //   read needs and the import did not copy is refused before any call here (lib/closure-check.mjs); as a second layer, the two readers
-//   git lets pass over a missing object (`grep`, and a file text) treat anything git writes to stderr as a failure. Only tree diffs
+//   git lets pass over a missing object fail on what git says: a file text on anything on stderr, `grep` on a line that starts with
+//   `error:` or `fatal:` (it also reads the start's attributes, and git only warns about a line there it ignores). Only tree diffs
 //   between commits are read: no patch of one commit is compared with another's. No path goes back to git as a pathspec: a diff is read
 //   whole and the lane's paths are picked here, by their bytes. Patches are read with fixed flags (PATCH_FLAGS). Only paths and line
 //   numbers leave this module through the report; line texts stay in memory for the class tests. Required reading is written with names
@@ -30,6 +31,7 @@ const NAME_FLAGS = ['diff', '--name-only', '-z', '--no-renames', SUBMODULES_SHOW
 const NUL = 0;
 const GITLINK_ENTRY = /^160000 commit [0-9a-f]{40}\t/; // an `ls-tree` row of a submodule pointer
 const GREP_NO_MATCH = 1; // git grep exits 1 when nothing matches; anything above is a failure
+const GIT_FAILURE_LINE = /^(?:error|fatal):/; // git's error() and die() (untranslated: lib/trusted-git.mjs sets LC_MESSAGES=C)
 const MAX_REWRITE_PLACES = 8; // places a rewrite changed, named first in a rewritten lane's Read first
 const HEADER_MARK_LENGTH = '+++ '.length;
 const SIDE_PREFIX_LENGTH = 'b/'.length;
@@ -248,12 +250,15 @@ function calleeNames(files, changedNames) {
 /**
  * `file:line` of the rows `git grep` finds for `name` (all uses, or only its definitions) in the tree of the commit `head`. The lane's
  * working tree is never searched: an uncommitted edit there could add or hide a caller. Each row starts `<head>:`, which is cut off.
- * @throws {Error} when git grep fails or writes anything to stderr
+ * @throws {Error} when git grep exits above 1 or prints a line that starts with `error:` or `fatal:` (quoted in the message)
  */
 function placesOf(git, head, name, onlyDefinitions) {
   const { status, stdout, stderr } = git.run(['grep', '-n', '-w', '-F', '-I', '-e', name, head, '--']);
-  // git grep skips a blob it cannot read with a message on stderr and exit 0: a caller lost that way must stop the run, not shorten the list.
-  if (status > GREP_NO_MATCH || stderr !== '') throw new Error(`git grep failed: ${stderr.split('\n')[0]}`);
+  // git grep skips a blob it cannot read with an `error:` line and exit 0: a caller lost that way must stop the run, not shorten the
+  // list. Every other line is dropped: git's warnings about the start's attributes, and the attribute parser's lines without a prefix,
+  // which begin with text of that `.gitattributes` (a token there that begins with `error:` therefore fails the run: closed, not open).
+  const failed = stderr.split('\n').find((line) => GIT_FAILURE_LINE.test(line));
+  if (status > GREP_NO_MATCH || failed !== undefined) throw new Error(`git grep failed: ${failed ?? stderr.split('\n')[0]}`);
   const prefix = `${head}:`;
   return stdout.toString('utf8').split('\n').filter((row) => row.startsWith(prefix)).map((row) => /^(.+?):(\d+):(.*)$/.exec(row.slice(prefix.length)))
     .filter((m) => m !== null && (!onlyDefinitions || nameDefinedIn(m[3]) === name))

@@ -1,11 +1,13 @@
 // Purpose: write git objects into one pack file, undeltified, for review-tier's import into its own repository.
-// Exports: MAX_OBJECT_BYTES, entryHeader(type, size), openPack(file, count) -> { add(type, content), finish() }.
+// Exports: MAX_OBJECT_BYTES, entryHeader(type, size), openPack(file, count) -> { add(type, content), finish() -> { trailer, sha256 }, close() }.
 // Why a pack: one file and one `git index-pack` per import phase. Loose objects are one file each (47 s for 70,000 objects in the spec
 //   check's measurement), and `git hash-object` is a process per object. `git index-pack` names every object from its content with git's
 //   own collision-detecting SHA-1, so a name never comes from here.
 // Invariants: format is pack version 2 (gitformat-pack): `PACK`, version, object count, then per object a type-and-size header and the
 //   zlib stream of its content, then the SHA-1 of everything before it. Sizes are written with arithmetic, never 32-bit shifts (they wrap
-//   at 2^31). `count` objects must be added before finish(); the file is the caller's to close and to remove.
+//   at 2^31). `count` objects must be added before finish(); the file is the caller's to close and to remove. Beside the SHA-1 trailer
+//   (which `git index-pack --stdin` prints as the pack's name) the writer keeps a SHA-256 of every byte it wrote, trailer included:
+//   index-pack stores exactly those bytes, so the tool can later tell its own pack from another one under the same name (lib/temp-repository.mjs).
 import { createHash } from 'node:crypto';
 import { closeSync, openSync, writeSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
@@ -43,17 +45,20 @@ export function entryHeader(type, size) {
  * Starts a pack file of `count` objects.
  * @param {string} file the path to create (it must not exist)
  * @param {number} count how many objects will be added
- * @returns {{add: (type: string, content: Buffer) => void, finish: () => void, close: () => void}} `finish()` writes the trailer;
- *   `close()` closes the file, also after a failure (calling it twice is fine)
+ * @returns {{add: (type: string, content: Buffer) => void, finish: () => {trailer: string, sha256: string}, close: () => void}}
+ *   `finish()` writes the trailer and returns it (hex) with the SHA-256 (hex) of the whole file; `close()` closes the file, also after a
+ *   failure (calling it twice is fine)
  * @throws {Error} from finish() when another number of objects was added, and from the file system
  */
 export function openPack(file, count) {
   const descriptor = openSync(file, 'wx', 0o600);
   const digest = createHash('sha1');
+  const whole = createHash('sha256');
   let added = 0;
   let open = true;
   const write = (bytes) => {
     digest.update(bytes);
+    whole.update(bytes);
     writeSync(descriptor, bytes);
   };
   const header = Buffer.alloc(PACK_HEADER_BYTES);
@@ -69,7 +74,9 @@ export function openPack(file, count) {
     },
     finish() {
       if (added !== count) throw new Error(`the import pack holds ${added} objects, ${count} were announced`);
-      writeSync(descriptor, digest.digest());
+      const trailer = digest.digest();
+      writeSync(descriptor, trailer);
+      return { trailer: trailer.toString('hex'), sha256: whole.update(trailer).digest('hex') };
     },
     close() {
       if (open) closeSync(descriptor);

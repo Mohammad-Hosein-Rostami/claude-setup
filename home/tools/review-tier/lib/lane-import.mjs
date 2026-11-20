@@ -11,7 +11,8 @@
 //   question is answered from imported commits. Phase 2, once the merge bases and the lane start are known: the trees of the commits
 //   that are compared, every file of the tip (what lands, unchanged files included), both sides of every changed path, and every
 //   `.gitattributes` of the lane start (attributes are read from it). After each phase the closure check (lib/closure-check.mjs) proves
-//   in the tool's own store that nothing a read needs is missing, and the folder check that nothing else was put there.
+//   in the tool's own store that nothing a read needs is missing, and the folder check that nothing else was put there; the pack git
+//   stored must be the one written here (its name is the writer's trailer, and its bytes are hashed again after the last read).
 // Invariants: the lists of what to copy are made on the lane's side from objects that are not checked yet, so they are hints: a list
 //   with too much costs time, and one with too little leaves an object missing, which the closure check turns into exit 2. A mismatch
 //   between a name and its content, a missing object, an object of another type than what names it, or one above MAX_OBJECT_BYTES is a
@@ -80,12 +81,12 @@ function readBatch(lane, { oids, bytes }, wanted, take) {
   }
 }
 
-/** Writes the objects of `wanted` into the pack `file`, each read from the lane once and checked as readBatch says. */
+/** Writes the objects of `wanted` into the pack `file`, each read from the lane once and checked as readBatch says; gives the pack's hashes. */
 function writePack(lane, file, wanted) {
   const pack = openPack(file, wanted.size);
   try {
     for (const batch of batchesOf(lane, [...wanted.keys()])) readBatch(lane, batch, wanted, pack.add);
-    pack.finish();
+    return pack.finish();
   } finally {
     pack.close();
   }
@@ -96,14 +97,14 @@ function importObjects(git, lane, wanted) {
   if (wanted.size === 0) return;
   const file = join(git.gitDir, IMPORT_PACK);
   try {
-    writePack(lane, file, wanted);
+    const written = writePack(lane, file, wanted);
     const descriptor = openSync(file, 'r');
     try {
       // The pack is git's standard input as a file, so it is never held in memory a second time.
       const indexed = git.run(['index-pack', '--stdin'], { stdinFile: descriptor });
       const [, name] = INDEXED_PACK.exec(indexed.stdout.toString().trim()) ?? [];
       if (indexed.status !== 0 || name === undefined) throw new Error(`git index-pack failed: ${indexed.stderr.split('\n')[0]}`);
-      git.notePack(`pack-${name}`);
+      git.notePack(`pack-${name}`, written);
     } finally {
       closeSync(descriptor);
     }

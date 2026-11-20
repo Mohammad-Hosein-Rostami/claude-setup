@@ -8,17 +8,19 @@
 //   temp folder, the environment is rebuilt, and no call made through this module can see the lane's object store at all. An object the
 //   import did not copy is missing here, which the closure check turns into exit 2 (lib/closure-check.mjs).
 // Invariants: no shell; every call runs in the temp folder with the same flags and environment, and none carries
-//   GIT_ALTERNATE_OBJECT_DIRECTORIES; only shas go in (the temp repository has no ref and an unborn HEAD, so a name fails); the temp
-//   folder holds only what `git init --template=` and the imports wrote (lib/temp-repository.mjs) and is removed by close(), which the
-//   CLI calls in a `finally`.
+//   GIT_ALTERNATE_OBJECT_DIRECTORIES; only shas go in (the temp repository has no ref and an unborn HEAD, so a name fails); git's
+//   messages are never translated (LC_MESSAGES=C), so a reader can tell git's `error:` and `fatal:` lines; the folder is checked after
+//   init, after each import and once after the last read (checkFolder; what that check compares, and what it cannot see, is said in
+//   lib/temp-repository.mjs) and is removed by close(), which the CLI calls in a `finally`.
 // Left outside: `git` is the first one on the caller's PATH (Homebrew, Volta and Git for Windows live in folders the user can write, so
-//   an absolute root-owned git cannot be required): whoever can put a program there, or write the tool's temp folder inside one git
-//   call, is outside what this module can check (security N26, N27).
+//   an absolute root-owned git cannot be required): whoever can put a program there is outside what this module can check (security
+//   N26). A process of the same user can still change the temp folder between two of its checks, or replace an `.idx` before the tool
+//   notes it: only a folder the writer's processes cannot write closes that (N27/N33, phase 3).
 import { spawnSync } from 'node:child_process';
 import { devNull } from 'node:os';
 import { join } from 'node:path';
 import { UsageError } from '../../git-tidy/lib/git.mjs';
-import { checkTempFolder, makeTempFolder, removeTempFolder, snapshotOf } from './temp-repository.mjs';
+import { checkPackFiles, checkTempFolder, makeTempFolder, notePackFiles, removeTempFolder, snapshotOf } from './temp-repository.mjs';
 
 const MAX_OUTPUT_BYTES = 256 << 20;
 /**
@@ -47,15 +49,22 @@ const ATTRIBUTE_READERS = new Set(['diff', 'grep']);
 
 /**
  * The environment of a trusted call: the parent's, without any GIT_* variable, plus the few this module sets itself.
+ * The locale: git's messages are never translated, and no other locale category changes. `LANGUAGE` and `LC_ALL` are dropped; a parent
+ * `LC_ALL` becomes `LANG` and every other parent `LC_*` is dropped, so each category keeps the value it had; then `LC_MESSAGES=C`.
+ * (`LC_ALL=C` would also change `LC_CTYPE`, and with it git's hunk heads for a function line that is not UTF-8: spec check fix 6, K1.)
  * @param {Object<string, string>} parent the tool's own environment
  * @param {string} gitDir the temp repository (also HOME and XDG_CONFIG_HOME: it holds no `.gitconfig` and no `git/` folder)
  * @returns {Object<string, string>} GIT_DIR; no system or global config; no system attributes; replace refs off and a graft file that
  *   cannot exist (a path below the node binary, a file), in case something is written into the temp folder between two checks of it
  */
 export function trustedEnvironment(parent, gitDir) {
-  const kept = Object.entries(parent).filter(([name]) => !/^GIT_/i.test(name));
+  const all = parent.LC_ALL; // an empty LC_ALL sets nothing (libc reads it as unset)
+  const locale = (name) => name === 'LANGUAGE' || name === 'LC_ALL' || (Boolean(all) && name.startsWith('LC_'));
+  const kept = Object.entries(parent).filter(([name]) => !/^GIT_/i.test(name) && !locale(name));
   return {
     ...Object.fromEntries(kept),
+    ...(all ? { LANG: all } : {}),
+    LC_MESSAGES: 'C',
     GIT_DIR: gitDir,
     GIT_CONFIG_NOSYSTEM: '1',
     GIT_CONFIG_GLOBAL: devNull,
@@ -120,19 +129,21 @@ function readerOver(run) {
  *   non-zero exit; `bytes(args)` gives stdout and throws for one; `text(args)` gives trimmed stdout; `flag(args)` is true on exit 0,
  *   false on 1, and throws for anything else or for any stderr text; `withAttributeSource(sha)` gives the same four functions with
  *   every diff and grep reading attributes from the tree of `sha` (`git --attr-source=<sha>`, a global option); `gitDir` and `env`:
- *   the folder and the environment of every call; `notePack(name)`: tells the folder check a pack this run imported;
- *   `checkFolder()`: throws a UsageError unless the folder holds only what this run wrote; `close()` removes the folder
+ *   the folder and the environment of every call; `notePack(name, written)`: tells the folder check a pack this run imported, with
+ *   what the pack writer wrote (a UsageError when git named another pack); `checkFolder({ last })`: throws a UsageError unless the
+ *   folder holds only what this run wrote and every noted pack file is unchanged (`last`: the check after the last read, which also
+ *   hashes each `.pack` again); `close()` removes the folder
  * @throws {UsageError} for a git older than MIN_GIT, and when the new folder already holds something else; {Error} when git cannot run
  */
 export function openTrustedGit() {
   const gitDir = makeTempFolder();
   const env = trustedEnvironment(process.env, gitDir);
-  const packs = new Set();
+  const packs = new Map();
   const run = (args, options) => spawnGit(gitDir, env, args, options);
   const reader = {
     ...readerOver(run), gitDir, env,
     withAttributeSource: (sha) => readerOver((args, options) => run(ATTRIBUTE_READERS.has(args[0]) ? [`--attr-source=${sha}`, ...args] : args, options)),
-    notePack: (name) => packs.add(name),
+    notePack: (name, written) => packs.set(name, notePackFiles(gitDir, name, written)),
     close: () => removeTempFolder(gitDir),
   };
   try {
@@ -140,7 +151,10 @@ export function openTrustedGit() {
     // --template=: nothing is copied from git's template folder (its `config`, `info/attributes` and hooks would become the tool's own).
     reader.bytes(['init', '--quiet', '--bare', '--template=', gitDir]);
     const snapshot = snapshotOf(gitDir);
-    reader.checkFolder = () => checkTempFolder(gitDir, snapshot, packs);
+    reader.checkFolder = ({ last = false } = {}) => {
+      checkTempFolder(gitDir, snapshot, packs.keys());
+      checkPackFiles(gitDir, packs, { last });
+    };
     reader.checkFolder();
   } catch (error) {
     reader.close();

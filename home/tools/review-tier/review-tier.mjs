@@ -35,7 +35,8 @@
 //   repository whose history can be altered, an object that does not hash to its name or that a read needs and the import did not
 //   copy, a git older than 2.41).
 // Invariants: read-only on the repository; the only writes are one line in the log (REVIEW_TIER_LOG overrides its path) and a temp
-//   folder that is removed again (one left by a killed run is removed by a later run once it is a day old). Line texts are never
+//   folder that is removed again (one left by a killed run is removed by a later run once it is a day old, by name, and only when its
+//   whole tree is what a run can leave). Line texts are never
 //   printed or logged (see tiers.mjs), and neither is the text of the --prior file (lib/prior.mjs).
 //   Verified import (lib/lane-import.mjs): every object a read may see is read from the lane once, hashed, and written into the tool's
 //   own temp repository under the name its content gives; a closure check then proves there that nothing a read needs is missing
@@ -49,9 +50,12 @@
 //   They run with GIT_NO_REPLACE_OBJECTS=1 and a GIT_GRAFT_FILE that cannot exist, and without the variables that move the shallow file
 //   or the replace refs. The caller must compare the `tip` printed here with the commit it means to review (the review workflow does).
 //   Left outside the tool: land does not repeat the check yet, and the lens commands and the review worktree read the lane's own
-//   store (both phase 3); the temp folder between two checks of it and the `git` found on PATH (lib/trusted-git.mjs); the import hashes
+//   store (both phase 3); the `git` found on PATH; the temp folder, which a process of the same user can change between two checks of
+//   it (after each import and after the last read: names, `HEAD` and `config`, each pack's file facts, and at the end the `.pack`
+//   bytes against what the tool wrote; an `.idx` replaced before the tool notes it is not seen; N33, phase 3); the import hashes
 //   with plain SHA-1 (git's collision-detecting SHA-1 names every object again in `git index-pack`); an object above 1 GiB, a diff
-//   above the output cap or a name that is not UTF-8 stops the run; a SHA-256 repository is refused (`HEAD names no commit`).
+//   above the output cap or a name that is not UTF-8 stops the run; a SHA-256 repository is refused with exit 2 (its 64-character names
+//   are never read as commits: `no base branch`, `unknown revision` or `HEAD names no commit`, by the call).
 import { basename, join, resolve } from 'node:path';
 import { UsageError, gitText } from '../git-tidy/lib/git.mjs';
 import { CLASS_TIER, LOCK_TAG, RACE_TAG } from './tiers.mjs';
@@ -193,6 +197,8 @@ function run(options) {
   let report;
   try {
     report = reportOf(laneOf(cwd, git, openLaneSource(git, join(commonDir, OBJECTS_FOLDER))), options);
+    // Every read ran inside reportOf: the temp folder is checked once more, the packs' bytes included, before anything is printed.
+    git.checkFolder({ last: true });
   } finally {
     git.close();
   }

@@ -2,12 +2,14 @@
 // never from the lane's own tree and never from a file on the machine. The diff driver an attribute names picks the hunk heads, and
 // those name the changed function: without the start's `*.py diff=python` a changed Python method loses its definition and its callers
 // from the reading list (probe p24 of the security review). A lane cannot take that away, or hide a file, with an attribute of its own.
+// A start line git only warns about changes nothing (review R6-1), and the caller's character locale picks the hunk heads (fix 6, K1).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { git } from './git-tidy-helpers.mjs';
-import { lane, priorFile } from './review-tier-helpers.mjs';
+import { CLEAN_ENV, git } from './git-tidy-helpers.mjs';
+import { CLI, lane, priorFile, sha256Of } from './review-tier-helpers.mjs';
 
 const STORE = 'class Store:\n    def __init__(self):\n        self.items = []\n\n    def save(self, item):\n        if item is None:\n            raise ValueError("no item")\n        self.items.append(item)\n        return True\n';
 const USE_STORE = 'from app import Store\n\n\ndef run():\n    return Store().save(1)\n';
@@ -61,6 +63,34 @@ test('spec check K8 (c): an attribute the lane adds itself changes nothing: *.mj
   for (const laneAttributes of ['*.py diff=python\n*.mjs binary\n', '*.py diff=python\n*.mjs diff=tex\n', '* -text -diff\n*.py diff=tex\n']) {
     assert.deepEqual(readingOf(start, laneAttributes), control, laneAttributes);
   }
+});
+
+test('review R6-1: a line of the start\'s attributes git only warns about (a negative pattern, a macro in a sub-folder, an invalid name) changes nothing: both rounds run and read what they read without it', () => {
+  const start = { '.gitattributes': '*.py diff=python\n' };
+  const control = readingOf(start);
+  for (const [path, line] of [['.gitattributes', '!*.txt diff\n'], ['src/.gitattributes', '[attr]bin -diff -merge -text\n'], ['.gitattributes', '*.md @odd\n']]) {
+    assert.deepEqual(readingOf({ ...start, [path]: `${start[path] ?? ''}${line}` }), control, `${path}: ${line}`);
+  }
+});
+
+test('spec check K1 (fix 6): the trusted calls keep the caller\'s character locale, so a Python function line that is not UTF-8 gives the hunk head git gives the caller', () => {
+  const { dir, log, write } = lane();
+  git(dir, 'checkout', '-q', 'main');
+  write('.gitattributes', '*.py diff=python\n');
+  write('src/use.py', 'from lat import helper_x\n\n\ndef run():\n    return helper_x()\n');
+  const body = (last) => Buffer.from(`def helper_x():  # caf\xe9\n${['a', 'b', 'c', 'd', 'e', 'f'].map((name, at) => `    ${name} = ${at}\n`).join('')}    return ${last}\n`, 'latin1');
+  const start = write('src/lat.py', body('1'));
+  git(dir, 'checkout', '-q', '-B', 'lane');
+  const reviewed = write('src/lat.py', body('2'));
+  const head = write('src/lat.py', body('3'));
+  const parentLocale = { ...Object.fromEntries(Object.entries(CLEAN_ENV).filter(([name]) => !/^(LC_|LANGUAGE$)/.test(name))), LANG: 'en_US.UTF-8' };
+  const heads = spawnSync('git', [`--attr-source=${start}`, 'diff', '-U0', '--no-color', reviewed, head], { cwd: dir, env: parentLocale }).stdout.toString('latin1');
+  const prior = priorFile();
+  const args = ['--delta', reviewed, '--base', start, '--prior', prior, '--prior-sha256', sha256Of(prior), '--lane-classes', 'logic', '--json'];
+  const result = spawnSync(process.execPath, [CLI, ...args], { cwd: dir, encoding: 'utf8', env: { ...parentLocale, REVIEW_TIER_LOG: log } });
+  assert.equal(result.status, 0, result.stderr);
+  const reading = JSON.parse(result.stdout).reviews[0].requiredReading;
+  assert.equal(reading.includes('src/use.py:5'), heads.includes('def helper_x'), `git in the caller's locale: ${heads}; the tool read: ${reading}`);
 });
 
 test('spec check A1: an attribute pattern matches a path by its exact letters on every OS: *.PY does not set the driver of app.py', () => {

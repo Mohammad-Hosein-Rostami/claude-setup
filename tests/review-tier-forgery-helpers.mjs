@@ -169,8 +169,8 @@ function realGit() {
 }
 
 /**
- * A `git` put first on PATH that appends one JSON line per call to a log (cwd, argv, and the GIT_*, HOME and XDG_CONFIG_HOME variables it
- * got) and then runs the real git with the same arguments, input and output. Switches, read from its environment:
+ * A `git` put first on PATH that appends one JSON line per call to a log (cwd, argv, and the GIT_*, HOME, XDG_CONFIG_HOME and locale
+ * variables it got) and then runs the real git with the same arguments, input and output. Switches, read from its environment:
  * SPY_GIT_VERSION: the line `--version` prints (an old git);
  * SPY_AFTER_REFUSALS: a JSON argv the real git runs in the same folder right after the tool's last refusal check
  *   (`rev-parse --is-shallow-repository`): what a process the writer left running could still do;
@@ -179,7 +179,12 @@ function realGit() {
  * SPY_SWAP: JSON `{from, to}`: in the listings the import makes on the lane's side (`rev-list`, `ls-tree`, `diff-tree` with the lane's
  *   objects borrowed) every `from` is printed as `to`, so the object `from` is left out of the import list;
  * SPY_FAIL: JSON `{word, status?, stderr}`: a call of the tool's own repository (no objects borrowed) whose arguments hold `word` also
- *   writes `stderr`, and exits `status` instead of running when one is given.
+ *   writes `stderr`, and exits `status` instead of running when one is given;
+ * SPY_PACK: JSON `{word, nth, action, from?, to?, ext?}`: what a process of the same user does to the tool's packs right after the nth
+ *   call of the tool's own repository whose arguments hold `word` (the target is the pack the last `index-pack` printed): `copy` its
+ *   three files to `to` as `phase.<ext>`; `swap`: rename each file of `from` over the target's file of the same extension; `add` the
+ *   files of `from` under their own names, dated an hour ahead (git tries newer packs first); `remove` its `.<ext>`; `feed`: give that
+ *   call the bytes of the file `from` as its standard input instead of the tool's.
  * POSIX only (the script starts with `#!<node>`).
  * @returns {{env: Object<string, string>, calls: () => {cwd: string, argv: string[], env: Object<string, string>}[]}} `env`: PATH with the spy first
  */
@@ -188,11 +193,11 @@ export function spyGit() {
   const log = join(folder, 'calls.jsonl');
   mkdirSync(join(folder, 'bin'));
   writeFileSync(join(folder, 'bin', 'git'), `#!${process.execPath}
-const { appendFileSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
-const { dirname, join } = require('node:path');
+const { appendFileSync, copyFileSync, readFileSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync, mkdirSync } = require('node:fs');
+const { dirname, extname, join } = require('node:path');
 const { spawnSync } = require('node:child_process');
 const argv = process.argv.slice(2);
-const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => /^(GIT_.*|HOME|XDG_CONFIG_HOME)$/.test(name)));
+const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => /^(GIT_.*|HOME|XDG_CONFIG_HOME|LANG|LANGUAGE|LC_.*)$/.test(name)));
 appendFileSync(${JSON.stringify(log)}, JSON.stringify({ cwd: process.cwd(), argv, env }) + '\\n');
 const switchOf = (name) => (process.env[name] ? JSON.parse(process.env[name]) : null);
 if (argv.includes('--version') && process.env.SPY_GIT_VERSION) { console.log(process.env.SPY_GIT_VERSION); process.exit(0); }
@@ -204,8 +209,29 @@ if (fail && env.GIT_DIR !== undefined && !borrows && argv.includes(fail.word)) {
 }
 const swap = switchOf('SPY_SWAP');
 const swapped = swap && borrows && argv.some((word) => ['rev-list', 'ls-tree', 'diff-tree'].includes(word));
-const result = spawnSync(${JSON.stringify(realGit())}, argv, { stdio: swapped ? ['inherit', 'pipe', 'inherit'] : 'inherit', maxBuffer: 1 << 30 });
+const pack = switchOf('SPY_PACK');
+const packsLog = ${JSON.stringify(join(folder, 'packs.txt'))};
+const toolCalls = (word) => readFileSync(${JSON.stringify(log)}, 'utf8').split('\\n').filter(Boolean).map((line) => JSON.parse(line)).filter((call) => call.env.GIT_DIR !== undefined && call.env.GIT_ALTERNATE_OBJECT_DIRECTORIES === undefined && call.argv.includes(word)).length;
+const due = pack && env.GIT_DIR !== undefined && !borrows && argv.includes(pack.word) && toolCalls(pack.word) === pack.nth;
+const indexing = pack && argv.includes('index-pack');
+const fed = due && pack.action === 'feed';
+const stdio = [fed ? 'pipe' : 'inherit', swapped || indexing ? 'pipe' : 'inherit', 'inherit'];
+const result = spawnSync(${JSON.stringify(realGit())}, argv, { stdio, input: fed ? readFileSync(pack.from) : undefined, maxBuffer: 1 << 30 });
 if (swapped) process.stdout.write(Buffer.from(result.stdout.toString('latin1').split(swap.from).join(swap.to), 'latin1'));
+if (indexing && !swapped) {
+  process.stdout.write(result.stdout);
+  const printed = /^(?:pack|keep)\\t([0-9a-f]{40})$/m.exec(result.stdout.toString());
+  if (printed) appendFileSync(packsLog, 'pack-' + printed[1] + '\\n');
+}
+if (due && !fed) {
+  const packDir = join(env.GIT_DIR, 'objects', 'pack');
+  const target = join(packDir, readFileSync(packsLog, 'utf8').trim().split('\\n').at(-1));
+  const later = new Date(Date.now() + 3600e3);
+  if (pack.action === 'copy') for (const ext of ['pack', 'idx', 'rev']) copyFileSync(target + '.' + ext, join(pack.to, 'phase.' + ext));
+  if (pack.action === 'swap') for (const file of readdirSync(pack.from)) { copyFileSync(join(pack.from, file), target + '.swap'); renameSync(target + '.swap', target + extname(file)); }
+  if (pack.action === 'add') for (const file of readdirSync(pack.from)) { copyFileSync(join(pack.from, file), join(packDir, file)); utimesSync(join(packDir, file), later, later); }
+  if (pack.action === 'remove') rmSync(target + '.' + pack.ext);
+}
 const plant = (planted) => { mkdirSync(dirname(join(env.GIT_DIR, planted.file)), { recursive: true }); writeFileSync(join(env.GIT_DIR, planted.file), planted.text); };
 if (switchOf('SPY_AFTER_INIT') && argv.includes('init')) plant(switchOf('SPY_AFTER_INIT'));
 const imports = argv.includes('index-pack') ? readFileSync(${JSON.stringify(log)}, 'utf8').split('\\n').filter((line) => line.includes('"index-pack"')).length : 0;

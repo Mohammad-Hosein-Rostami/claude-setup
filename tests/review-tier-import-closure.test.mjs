@@ -1,7 +1,8 @@
 // Tests that a gap in review-tier's import fails closed (lane r7-delta, fix round 5, K1, K7, K8): an object a read needs and the import
 // left out is exit 2 naming it, also where git itself would pass over it in silence (`git grep` skips a blob it cannot read, attributes
 // of a missing `.gitattributes` are empty, a file text reads as "no such file"); a file planted in the tool's own temp repository is
-// exit 2; and a git call that fails, or that says anything on stderr, is never read as "no", "no match" or "no file".
+// exit 2; and a git call that fails, or that says anything on stderr (for grep: an `error:` or `fatal:` line, since git also warns there
+// about the start's attributes), is never read as "no", "no match" or "no file".
 // How a gap is made: the recording git (spyGit) prints the listings the import makes on the lane's side with one object's name swapped
 // for another's, so that object is in no import list while the lane's history still needs it. POSIX only (the spy is a `#!` script).
 import test from 'node:test';
@@ -133,6 +134,27 @@ test('review N3 (T8), spec check K1: a git call that fails or writes to stderr i
     [{ word: 'show', stderr: 'error: unable to read 1234' }, /git failed: git show failed: error: unable to read 1234/],
     [{ word: '--verify', status: 128, stderr: 'fatal: boom' }, /git failed: git rev-parse failed: fatal: boom/],
     [{ word: '--verify', status: 1, stderr: 'error: Could not read 1234' }, /git failed: git rev-parse failed: error: Could not read 1234/],
+    // review N6-7 (X29): the merge bases of the start and the reviewed commit, which say what else is imported
+    [{ word: '--all', stderr: 'error: Could not read 1234' }, /git failed: git merge-base failed: error: Could not read 1234/],
+  ];
+  for (const [fail, said] of failures) {
+    const { result } = spied(rounds[0], { SPY_FAIL: JSON.stringify(fail) });
+    assert.equal(result.status, 1, `${JSON.stringify(fail)}: ${result.stderr}`);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, said);
+  }
+});
+
+test('review R6-1, spec check K2 (fix 6): grep fails on a line of its stderr that starts with error: or fatal:, quoting that line, and on no other line; a file text still fails on any stderr', POSIX_ONLY, () => {
+  const { spied, rounds } = importLane();
+  const warnings = "warning: Negative patterns are ignored in git attributes\nUse '\\!' for literal leading exclamation.\n@odd is not a valid attribute name: .gitattributes:2";
+  const { result: warned } = spied(rounds[0], { SPY_FAIL: JSON.stringify({ word: 'grep', stderr: warnings }) });
+  assert.equal(warned.status, 0, warned.stderr);
+  assert.ok(JSON.parse(warned.stdout).reviews[0].requiredReading.includes('src/use.mjs:2'), 'grep still ran and found the caller');
+  const failures = [
+    [{ word: 'grep', stderr: "warning: Negative patterns are ignored in git attributes\nerror: 'x:src/use.mjs': unable to read 1234" }, /git failed: git grep failed: error: 'x:src\/use\.mjs': unable to read 1234/],
+    [{ word: 'grep', status: 0, stderr: 'fatal: x' }, /git failed: git grep failed: fatal: x\n/],
+    [{ word: 'show', stderr: 'warning: x' }, /git failed: git show failed: warning: x/],
   ];
   for (const [fail, said] of failures) {
     const { result } = spied(rounds[0], { SPY_FAIL: JSON.stringify(fail) });
