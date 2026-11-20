@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { WAIT_ADVICE, WAIT_CALL, WAIT_START_FORM } from '../home/hooks/lib/wait-advice.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const PROJECT = resolve('/work/proj');
@@ -157,4 +158,24 @@ test('a background sleep loop next to a push or a whole-folder rm still asks on 
   const merge = guardSession().run('for i in 1 2 3; do sleep 10; done; git merge feature', 'sess-1', IN_BACKGROUND);
   assert.equal(merge.decision, 'deny', 'the merge-commit advice is not a wait: it is still given once');
   assert.doesNotMatch(merge.reason, /run_in_background/);
+});
+
+const FOREGROUND_MAX_MS = 600000; // the longest `timeout` a foreground Bash call takes
+const MS_PER_SECOND = 1000;
+/** A command form of the advice (`<command> > <log> ...`) as an agent would send it. */
+const asSent = (form) => form.replaceAll('<log>', '/tmp/suite.log').replace('<command>', 'node --test tests/*.test.mjs');
+
+test('the way to wait that the advice and the agents name runs at the first send: the background start, then the counted foreground wait call', () => {
+  const session = guardSession();
+  assert.deepEqual(session.run(asSent(WAIT_START_FORM), 'sess-1', IN_BACKGROUND), { decision: 'allow' });
+  assert.deepEqual(session.run(asSent(WAIT_CALL)), { decision: 'allow' });
+  assert.deepEqual(session.run(asSent(WAIT_CALL)), { decision: 'allow' }, 'sent again while the command still runs');
+  assert.ok(WAIT_ADVICE.includes(WAIT_START_FORM), 'the advice names the start form');
+  assert.ok(WAIT_ADVICE.includes(WAIT_CALL), 'the advice names the wait call');
+});
+
+test('the wait call ends by itself before the 10-min foreground maximum, and only its short pause keeps it from the advice', () => {
+  const [, rounds, pause] = /seq (\d+)\).*sleep (\d+);/.exec(WAIT_CALL);
+  assert.ok(Number(rounds) * Number(pause) * MS_PER_SECOND < FOREGROUND_MAX_MS, `${rounds} rounds of ${pause} s`);
+  assert.equal(guardSession().run(asSent(WAIT_CALL).replace(`sleep ${pause};`, 'sleep 5;')).decision, 'deny', 'the same loop with a 5 s sleep is a poll loop');
 });

@@ -5,9 +5,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { WAIT_ADVICE, WAIT_CALL, WAIT_START_FORM } from '../home/hooks/lib/wait-advice.mjs';
 
 const read = (path) => readFileSync(fileURLToPath(new URL(`../${path}`, import.meta.url)), 'utf8');
 const WORKERS = ['implementer', 'ui-implementer', 'runner', 'test-writer', 'deep-debugger'];
+// A background command of a foreground subagent stops when that agent's run ends and nobody is woken (Claude Code tools reference, Bash
+// tool), so no text may tell an agent that it will be woken.
+const WAKE_UP_PROMISE = /you are woken|woken (at|when)|you (are|will be|get) notified|wakes you|reported when it ends/i;
 
 test('each long-running worker agent has a Waiting line naming background runs, a timeout and no polling', () => {
   for (const name of WORKERS) {
@@ -52,6 +56,31 @@ test('each Waiting line names watch.mjs only for waiting on a session or an agen
   }
 });
 
+test('each Waiting line gives the one way to wait that holds for a foreground and a background subagent, with the commands the guard text names', () => {
+  for (const name of WORKERS) {
+    const paragraph = waitingParagraph(name);
+    assert.ok(paragraph.includes(`started as \`${WAIT_START_FORM}\``), `${name}: the start form`);
+    assert.ok(paragraph.includes(`one foreground call (\`timeout\` 600000) that ends by itself: \`${WAIT_CALL}\``), `${name}: the wait call`);
+    assert.match(paragraph, /send it again until `<log>\.exit` is there/, name);
+    assert.match(paragraph, /Never end your turn while the command runs: a background command of a foreground subagent stops when that agent's run ends and nobody is woken; only the main session's or a background subagent's keeps running/, name);
+    assert.match(paragraph, /`<log>\.exit` is still missing once the `timeout` you set has passed, stop waiting: either way return a status to your caller that names the command and what is left\./, name);
+  }
+});
+
+test('no Waiting line and no guard advice promises a wake-up: a foreground subagent never gets one', () => {
+  for (const name of WORKERS) {
+    assert.doesNotMatch(waitingParagraph(name), WAKE_UP_PROMISE, name);
+    assert.doesNotMatch(waitingParagraph(name), /dies when you reply/, `${name}: true for a foreground subagent only`);
+  }
+  assert.doesNotMatch(WAIT_ADVICE, WAKE_UP_PROMISE);
+  assert.match(WAIT_ADVICE, /Never end your turn while the command runs: a background command of a foreground subagent stops when that agent's run ends and nobody is woken/);
+});
+
+test('the runner rule against background loops and re-runs leaves room for the Waiting way', () => {
+  const text = read('home/agents/runner.md').replace(/\s+/g, ' ');
+  assert.match(text, /never re-run a command until it passes: [^.]*\. A long command started in the background and waited for as the Waiting lines say is none of these\./);
+});
+
 test('the runner timeout line sends a longer command to run_in_background with timeout up to the 2-h maximum', () => {
   const line = sentencesOf(waitingParagraph('runner')).find((sentence) => sentence.startsWith('Pass an explicit Bash `timeout`'));
   assert.ok(line, 'runner: no explicit-timeout line');
@@ -77,4 +106,6 @@ test('the catalog rows name timeout with the 2-h maximum, and watch.mjs only for
   }
   assert.match(adviceRow, /unattended run \(`-p`, Agent SDK, CI, cloud\)[^.]*30 min \(10 min for a text `-p` prompt\)/);
   assert.match(adviceRow, /`watch\.mjs` is named only for waiting on a session or an agent/);
+  assert.ok(adviceRow.includes(`\`${WAIT_START_FORM}\``) && adviceRow.includes(`\`${WAIT_CALL}\``), 'the row names the start form and the wait call');
+  assert.match(adviceRow, /`\$\(\.\.\.\)` and backtick bodies are not looked into/);
 });

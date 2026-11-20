@@ -1,26 +1,42 @@
-// Advice for the Bash guard: a command that waits by sleeping. Every poll is a model call that re-reads the whole conversation, so a
+// Advice for the Bash guard: a command that waits by sleeping. A sleep loop holds the turn, and a repeated check costs a model call each time, so a
 // `for|while|until ... sleep N` loop (N >= 5 s) or one long `sleep` (>= 30 s) is bounced once with the better way to wait. A quality rule,
 // not a safety rule: lib/bounce-once.mjs denies the first send with this text and lets the identical retry run, never the owner.
-// Exports: WAIT_ADVICE (the text, classed exactly in lib/reason-classes.mjs), waitAdvice(command) -> [] | [WAIT_ADVICE],
+// Exports: WAIT_ADVICE (the text, classed exactly in lib/reason-classes.mjs), WAIT_START_FORM and WAIT_CALL (the two commands the text and
+// the agents' Waiting lines name, so tests can hold them equal), waitAdvice(command) -> [] | [WAIT_ADVICE],
 // withoutWaitAdvice(verdict) -> verdict (the hook uses it for a call sent with `run_in_background: true`: that wait needs no advice).
-// Reads the command like the other guard rules (lib/shell-words.mjs segments): heredoc bodies are dropped and `$(...)` bodies cut out, a
+// Reads the command like the other guard rules (lib/shell-words.mjs segments): heredoc bodies are dropped, a
 // quoted word (`echo "for i; do sleep 9; done"`) is one word, so text that only mentions sleep never counts. The sleep must be a command
 // (through wrappers such as `timeout 100 sleep 40`); its time is the sum of its literal arguments (`5`, `0.5`, `1m`, `2h`, `infinity`), and
-// a time it cannot read (`sleep $n`) gives no advice. Loops are counted from `for|while|until` to `done`. Not looked into: `bash -c`
-// scripts, eval, aliases. A missed advice costs only a poll; this rule never decides an ask. Pure, no I/O.
+// a time it cannot read (`sleep $n`) gives no advice. Loops are counted from `for|while|until` to `done`. Not looked into: `$(...)` and
+// backtick bodies (cut out, though they run: `x=$(sleep 60; cat out)` sleeps 60 s), `bash -c` scripts, eval, aliases. A missed advice costs only a poll; this rule never decides an ask. Pure, no I/O.
 // The text's facts (Claude Code tools reference, Bash tool; changelog 2.1.285 and 2.1.288): in an unattended run (`-p`, Agent SDK, CI, cloud) a
 // background command stops after 30 min (10 min for a text `-p` prompt) unless `timeout` is passed, and 7200000 ms is the most; an interactive
 // session has no limit. No page says which of the two a workflow agent is, so the advice is "set timeout" for every background command.
+// Same page: a foreground call takes a `timeout` of at most 600000 ms, and a background command of a foreground subagent stops when that
+// agent's run ends, while the main session's or a background subagent's keeps running (only those are told of its exit). No agent is told
+// which it is, so the text names one way to wait that holds for all: start in the background, then wait inside the turn with a call that
+// ends by itself. The wait call's 2 s pause is under this rule's own 5 s loop limit, so the guard lets it run (tests hold that).
 // watch.mjs watches session transcripts: it is named for waiting on a session or an agent, never as a way to run or bound a command.
 import { commandOf, KEYWORDS } from './command-of.mjs';
 import { withoutSubstitutions } from './merge-commit.mjs';
 import { segments, stripHeredocs } from './shell-words.mjs';
 
 const BACKGROUND_TIMEOUT_MAX_MS = 7200000; // 2 h: the longest `timeout` the Bash tool takes for a background command
+const FOREGROUND_TIMEOUT_MAX_MS = 600000; // 10 min: the longest `timeout` a foreground Bash call takes
+const WAIT_ROUNDS = 280; // rounds of one wait call: 280 x 2 s = 560 s, so the call ends by itself before the foreground maximum
+const WAIT_PAUSE_SECONDS = 2; // a pause between two looks at one file, under LOOP_SLEEP_SECONDS
 
-export const WAIT_ADVICE = 'Waiting (speed): do not wait with a sleep loop, every poll is a model call that re-reads the whole conversation. '
-  + `Run the long command with run_in_background: true and set timeout to its expected run plus a margin, at most ${BACKGROUND_TIMEOUT_MAX_MS} ms (2 h): `
-  + 'you are woken when it exits, then read its result file in one call. '
+/** How a command over 10 min is started (with `run_in_background: true` and `timeout`): output to a log, exit code to `<log>.exit`. */
+export const WAIT_START_FORM = '<command> > <log> 2>&1; echo $? > <log>.exit';
+/** The foreground call that waits for that command inside the agent's turn: it ends when `<log>.exit` is there, or after 560 s. */
+export const WAIT_CALL = `for i in $(seq ${WAIT_ROUNDS}); do [ -f <log>.exit ] && break; sleep ${WAIT_PAUSE_SECONDS}; done`;
+
+export const WAIT_ADVICE = 'Waiting (speed): do not wait with a long sleep or a sleep loop: it holds the turn, and a repeated check costs a model call each time. '
+  + 'A command that ends within 10 min runs in the foreground with an explicit timeout. '
+  + `Run a longer one with run_in_background: true and set timeout to its expected run plus a margin, at most ${BACKGROUND_TIMEOUT_MAX_MS} ms (2 h), started as ${WAIT_START_FORM}. `
+  + `Then wait inside your turn with one foreground call (timeout ${FOREGROUND_TIMEOUT_MAX_MS}) that ends by itself: ${WAIT_CALL}; send it again until <log>.exit is there, then read the log in one call. `
+  + "Never end your turn while the command runs: a background command of a foreground subagent stops when that agent's run ends and nobody is woken; "
+  + "only the main session's or a background subagent's keeps running. "
   + 'Set timeout for every background command: in an unattended run (-p, Agent SDK, CI, cloud) one without it stops after 30 min '
   + '(10 min for a text -p prompt). A run over 2 h is split, or started in an interactive session, where background commands have no limit. '
   + 'node ~/.claude/tools/watch/watch.mjs waits on a session or an agent only: it never runs or bounds a command. '

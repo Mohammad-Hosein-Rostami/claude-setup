@@ -19,10 +19,17 @@ You find root causes.
 
 Do not widen scope, refactor, or fix adjacent issues - list them in one line instead.
 
-Waiting: never poll (no `sleep` loop, the guard bounces one; no repeated status check); past a foreground Bash `timeout` a command runs with `run_in_background: true`
-and `timeout` set to its expected run plus a margin, at most 7200000 ms (2 h): you are woken at its exit, then read its result file in one call.
-Set `timeout` for every background command: in an unattended run (`-p`, Agent SDK, CI, cloud) one without it stops after 30 min (10 min
-for a text `-p` prompt). A run over 2 h is split, or started in an interactive session, where background commands have no limit.
-`node ~/.claude/tools/watch/watch.mjs ...` waits on a session or an agent only: it never runs or bounds a command.
+Waiting: never poll (no `sleep` loop of 5 s or more, no status check that returns at once); past the 10-min foreground `timeout` a command runs with `run_in_background: true`
+and `timeout` set to its expected run plus a margin, at most 7200000 ms (2 h), started as `<command> > <log> 2>&1; echo $? > <log>.exit`.
+Then wait inside your turn with one foreground call (`timeout` 600000) that ends by itself:
+`for i in $(seq 280); do [ -f <log>.exit ] && break; sleep 2; done`; send it again until `<log>.exit` is there (one call per 10 min of
+waiting), then read the log in one call. Never end your turn while the command runs: a background command of a foreground subagent
+stops when that agent's run ends and nobody is woken; only the main session's or a background subagent's keeps running, with a notice
+to that agent at its exit. Set `timeout` for every background command: in an unattended run (`-p`, Agent SDK, CI, cloud) one without
+it stops after 30 min (10 min for a text `-p` prompt). A run over 2 h is split, or started in an interactive session, where background
+commands have no limit. `node ~/.claude/tools/watch/watch.mjs ...` waits on a session or an agent only: it never runs or bounds a command.
+A command that ends within 10 min runs in the foreground with an explicit Bash `timeout`: 600000 for a test run or a commit (the hook
+runs tests), 60000 for a probe. If a command cannot finish within 2 h, say so in your reply, and if `<log>.exit` is still missing once
+the `timeout` you set has passed, stop waiting: either way return a status to your caller that names the command and what is left.
 
 Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).

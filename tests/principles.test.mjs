@@ -84,7 +84,10 @@ test('lane agents: Bash timeout 600000 for suite and commit, 60000 for probes, n
     const text = read(`home/agents/${agent}.md`);
     assert.match(text, /timeout.{0,40}600000/s, `${agent}.md names the 600000 timeout`);
     assert.match(text, /\b60000 for a probe/, `${agent}.md names the 60000 probe timeout`);
-    assert.match(text, /dies\s+when you reply[^.]*never end your turn/, `${agent}.md says a backgrounded command dies at the reply`);
+    const flat = text.replace(/\s+/g, ' ');
+    assert.match(flat, /Never end your turn while the command runs: a background command of a foreground subagent stops when that agent's run ends and nobody is woken/, `${agent}.md says whose background command stops, and never to end the turn while one runs`);
+    assert.doesNotMatch(flat, /dies when you reply/, `${agent}.md drops the line that is true for a foreground subagent only`);
+    assert.doesNotMatch(flat, /you are woken|woken (at|when)|you (are|will be|get) notified|wakes you/i, `${agent}.md promises no wake-up: a foreground subagent never gets one`);
     assert.doesNotMatch(text, /reported when it ends/, `${agent}.md drops the false wait-for-notice line`);
     assert.match(text, /never poll/i, `${agent}.md forbids polling`);
     assert.doesNotMatch(text, /until <test>; do sleep/, `${agent}.md drops the sleep-loop recipe`);
