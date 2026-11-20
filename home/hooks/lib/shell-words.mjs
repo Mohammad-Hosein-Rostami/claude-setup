@@ -4,7 +4,7 @@
 // backtickAssignedNames(command); DECLARERS.
 // Unquoted brace expressions are expanded the way bash does (`rm {-rf,x}` is `rm -rf x`), never in an assignment in front of the command;
 // a segment flags the words whose braces cannot be listed (`.unlistedBraces`) and those holding a `$NAME` outside quotes (`.bareWords`),
-// and keeps the operators that came before its first word (`.join`: `&&`, `;`, `(`, `)&&` ...; lib/cd-folder.mjs reads it).
+// and keeps the operators that came before its first word (`.joinedBy`: `&&`, `;`, `(`, `)&&` ...; lib/cd-folder.mjs reads it).
 // Words are unquoted the way a shell does: an unquoted backslash escapes the next character (`pu\sh` is `push`, `\/` is `/`,
 // `\;` is a literal `;` word, a backslash-newline vanishes); inside double quotes a backslash only escapes `\ " $ \``.
 // A quoted word that merely looks like a redirection (`">"`) gets QUOTED_MARK in front, so it stays a plain argument;
@@ -174,7 +174,7 @@ function wordsOfSegment(raws) {
   }
   if (raws.piped === true) markPiped(words);
   if (raws.arrayList === true) markArrayList(words);
-  if (raws.join !== undefined) markJoin(words, raws.join);
+  if (raws.joinedBy !== undefined) markJoin(words, raws.joinedBy);
   if (unlisted.length > 0) Object.defineProperty(words, 'unlistedBraces', { value: unlisted });
   if (bare.size > 0) Object.defineProperty(words, 'bareWords', { value: bare });
   return words;

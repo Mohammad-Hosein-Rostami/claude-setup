@@ -15,7 +15,7 @@
 //   a glob, a bare drive (`C:` is the folder Windows remembers for that drive), and any relative target while CDPATH is set, in the
 //   line or in the environment.
 // Invariants: pure apart from reading process.env.CDPATH; never touches the file system; a segment whose parser recorded no join
-// (`seg.join`, lib/shell-words.mjs) counts as "not `&&`".
+// (`seg.joinedBy`, lib/shell-words.mjs) counts as "not `&&`".
 import { isAbsolute, resolve } from 'node:path';
 import { KEYWORDS } from './command-of.mjs';
 import { PWD_TARGET, expandHome, expandVars, isUnder, nativePath, sameFile } from './rm-paths.mjs';
@@ -28,7 +28,7 @@ const CD_OPTIONS = new Set(['autocd', 'cdablevars']);
 const COMPOUND_COMMANDS = new Set(['for', 'select', 'case', 'function', 'repeat', 'foreach', 'coproc']); // the keywords lib/command-of.mjs does not look through
 const CHAIN_JOIN = /^&&\n*$/; // `&&`, also with the line broken after it
 const START_JOIN = /^[;\n]*$/; // the start of the line, `;` or a newline
-const NO_JOIN = '?'; // stands for a missing `seg.join`: neither a chain nor a start
+const NO_JOIN = '?'; // stands for a missing `seg.joinedBy`: neither a chain nor a start
 const UNKNOWN_CD_TARGET = /^[-+]|[~$`*?[\]{}]/;
 const BARE_DRIVE = /^[a-zA-Z]:$/;
 
@@ -52,19 +52,19 @@ export const newFolder = (cwd) => ({ dir: cwd, moved: false, compound: false });
 /**
  * Call before a segment is judged: after a `cd`, a segment that `&&` does not join runs in an unknown folder.
  * @param {ReturnType<typeof newFolder>} folder the line's state (modified)
- * @param {string[] & {join?: string}} seg the segment as the parser gave it
+ * @param {string[] & {joinedBy?: string}} seg the segment as the parser gave it
  * @param {{cmd?: string, at: number}} parsed its command (lib/command-of.mjs)
  * @param {string[]} words its words, the ones `parsed.at` counts
  */
 export function enterSegment(folder, seg, parsed, words) {
-  if (folder.moved && !CHAIN_JOIN.test(seg.join ?? NO_JOIN)) folder.dir = null;
+  if (folder.moved && !CHAIN_JOIN.test(seg.joinedBy ?? NO_JOIN)) folder.dir = null;
   folder.compound ||= COMPOUND_COMMANDS.has(parsed.cmd) || words.slice(0, parsed.at).some((word) => KEYWORDS.has(word));
 }
 
 /**
  * Call after a segment was judged: applies its `cd`, or makes the folder unknown for a command that hides one.
  * @param {ReturnType<typeof newFolder>} folder the line's state (modified)
- * @param {string[] & {join?: string}} seg the segment as the parser gave it
+ * @param {string[] & {joinedBy?: string}} seg the segment as the parser gave it
  * @param {{cmd?: string, args: string[], assigns?: string[]}} parsed its command
  * @param {{project: string, scope: {vars: Map<string, string>, assigned?: Set<string>}}} line the project root and the line's variables
  */
@@ -72,7 +72,7 @@ export function leaveSegment(folder, seg, parsed, { project, scope }) {
   const { cmd, args } = parsed;
   if (UNREAD_RUNNERS.has(cmd) || (OPTION_SETTERS.has(cmd) && args.some(isCdOption))) folder.dir = null;
   if (!MOVERS.has(cmd)) return;
-  const join = seg.join ?? NO_JOIN;
+  const join = seg.joinedBy ?? NO_JOIN;
   const believed = !folder.compound && (START_JOIN.test(join) || CHAIN_JOIN.test(join));
   folder.dir = believed ? nextCwd(parsed, folder.dir, project, scope) : null;
   folder.moved = true;

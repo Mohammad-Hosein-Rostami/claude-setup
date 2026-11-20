@@ -119,7 +119,8 @@ test('a cd inside its own && chain is followed as before, and an absolute target
 });
 
 test('both parsers record the operators in front of each segment, the same way', () => {
-  const joins = (parse, line) => parse(line).segs.map((seg) => seg.join);
+  const joins = (parse, line) => parse(line).segs.map((seg) => seg.joinedBy);
+  for (const parse of [tokenize, lex]) assert.equal(parse('a b && c d').segs[1].join(' '), 'c d', 'the flag does not hide Array.join on a segment');
   assert.deepEqual(joins(tokenize, '(cd src && make) && x -r ../out; ls |\n wc & y || z'), ['(', '&&', ')&&', ';', '|\n', '&', '||']);
   const LINES = ['a', 'a && b', 'a &&\nb', 'a; b\nc', '(a; b) || c', 'a | b |& c', 'f() { a; }; b', 'a & b', 'x=$(a && b); c', 'echo $(a) b; c', 'a `b` c && d', 'if a; then b; fi && c', 'a <<EOF\nbody\nEOF\nb && c'];
   for (const line of LINES) assert.deepEqual(joins(lex, line), joins(tokenize, line), line);

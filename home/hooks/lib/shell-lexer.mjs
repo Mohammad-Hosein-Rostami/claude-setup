@@ -3,7 +3,7 @@
 // Exports: lexShell(text) -> {rawSegs, nested, stripped}; isSimpleSubstitutionBody; markPiped, markJoin, opensArrayList, markArrayList (also used
 // by the regex tokenizer).
 //   rawSegs   simple commands as lists of RAW words (quotes and escapes intact; `.piped` is true when a `|` fed the segment, `.arrayList`
-//             when the segment is the element list of `NAME=(...)` / `NAME+=(...)`; `.join` holds the operators between the word before
+//             when the segment is the element list of `NAME=(...)` / `NAME+=(...)`; `.joinedBy` holds the operators between the word before
 //             the segment and its first word, as written: '' at the start, `&&`, `;`, `(`, `)&&`, a newline; lib/cd-folder.mjs reads it)
 //   nested    bodies of `$(...)` / backticks found inside double quotes at the top level (the caller lexes them again)
 //   stripped  the text without heredoc bodies and their terminator lines
@@ -55,8 +55,8 @@ export function isSimpleSubstitutionBody(body) {
 
 /** Marks a segment as fed by `|`; non-enumerable, so segments still compare equal to plain word lists. */
 export const markPiped = (seg) => Object.defineProperty(seg, 'piped', { value: true, configurable: true });
-/** Records the operators that came before a segment's first word (`&&`, `;`, `(`, `)&&`, '' at the start); non-enumerable like `.piped`. */
-export const markJoin = (seg, join) => Object.defineProperty(seg, 'join', { value: join, configurable: true });
+/** Records the operators that came before a segment's first word (`&&`, `;`, `(`, `)&&`, '' at the start); non-enumerable like `.piped`. Not named `join`: that would hide the array method. */
+export const markJoin = (seg, join) => Object.defineProperty(seg, 'joinedBy', { value: join, configurable: true });
 // `NAME=(`, `NAME+=(`, `NAME[i]=(`: the list after it holds an array's elements, which are words, not a command
 const ARRAY_ASSIGNMENT = /^[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=$/;
 /** True when the `(` that follows the word `before` opens an array's element list (`files+=("$f")`). */
