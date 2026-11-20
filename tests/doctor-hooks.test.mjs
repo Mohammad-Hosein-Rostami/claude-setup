@@ -147,7 +147,7 @@ test('check_workflows still fails a skill that names neither a workflow script n
   assert.match(run.stdout, /FAIL\s+wf-x names no workflow script/);
 });
 
-test('check_prod_hosts fails when the prod-hosts file is a link, and passes for a plain file', { skip: skipLink },async () => {
+test('check_prod_hosts fails when the prod-hosts file is a link, and passes for a plain file', { skip: skipLink }, async () => {
   const home = makeTempDir('doctor-home-');
   const privateDir = join(home, '.claude', 'private');
   await mkdir(privateDir, { recursive: true });

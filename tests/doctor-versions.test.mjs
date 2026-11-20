@@ -74,7 +74,8 @@ test('the whole doctor run checks Claude Code and fails below its floor', { skip
   };
   delete env.DOCTOR_ONLY;
   delete env.CLAUDE_PROD_HOSTS_FILE; // doctor.sh reads these from the parent environment: the run must use the temp HOME's own state
-  for (const name of Object.keys(env)) if (name.startsWith('RECALL_')) delete env[name];
+  for (const name of Object.keys(env)) if (name.startsWith('RECALL_') || name.startsWith('DISK_')) delete env[name];
+  env.DISK_FREE_CLAUDE_TMP = join(home, 'none'); // a low-disk warning sizes this folder, never the machine's real Claude temp folder
   const run = spawnSync('bash', [DOCTOR], { encoding: 'utf8', env });
   assert.equal(run.status, 1);
   assert.ok(run.stdout.includes('FAIL  claude >= 2.1.295 required (found 2.1.294)'), run.stdout);
