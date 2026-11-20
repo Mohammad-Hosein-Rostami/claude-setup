@@ -248,17 +248,17 @@ async function readStdin() {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+const cwdOf = (input) => (typeof input.cwd === 'string' ? input.cwd : process.cwd());
+
 /** The hook's answer for one Bash call: '' lets it run, anything else is the ask or deny line for stdout. */
 function answerFor(command, input) {
-  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  const cwd = cwdOf(input);
   const project = process.env.CLAUDE_PROJECT_DIR || cwd;
   const rules = (text, ctx) => decide(text, { ...ctx, prodHosts: readProdHosts() }); // reading the host list is inside the guard too
   const decided = decideSafely(command, { cwd, project }, rules);
   const r = input.tool_input.run_in_background === true ? withoutWaitAdvice(decided) : decided; // a wait already in the background needs no advice
   const recheck = (text) => decideSafely(text, { cwd, project }, rules);
-  const answer = r.ask ? askUnlessRemembered(r, { command, cwd, input, recheck }) : r.advice ? adviceOnce(r.advice, { command, cwd, input }) : ''; // advice only: never the owner
-  logCodeWrites(command, input, cwd); // harmless when the owner denied: the typecheck gate only reads files that exist
-  return answer;
+  return r.ask ? askUnlessRemembered(r, { command, cwd, input, recheck }) : r.advice ? adviceOnce(r.advice, { command, cwd, input }) : ''; // advice only: never the owner
 }
 
 /**
@@ -288,6 +288,8 @@ async function main() {
     answer = failedAnswer(error, input);
   }
   process.stdout.write(answer);
+  // after the answer, so nothing at the log path can hold it back; harmless when the owner denied: the typecheck gate only reads files that exist
+  logCodeWrites(command, input, cwdOf(input));
 }
 
 // ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.

@@ -1,16 +1,19 @@
 // Writes to a production host through ssh, scp, rsync, psql or mysql: ask the owner first, even in bypass mode.
 // Exports: remoteAsk(cmd, args, assigns, prodHosts) -> reason | undefined; readProdHosts(file?); isProdHost(host, list);
-// isReadOnlyRemote(text); isReadOnlySql(sql); PROD_HOSTS_FILE.
+// isReadOnlyRemote(text); isReadOnlySql(sql); PROD_HOSTS_FILE; MAX_PROD_HOSTS_BYTES; EVERY_HOST.
 // A host is "production" when its name contains `prod` (always) or matches a line of the private list file
 // (~/.claude/private/prod-hosts, one name or `*` glob per line, `#` comments; never committed, see settings/prod-hosts.example).
 // Read-only remote commands (cat, ls, tail, grep, systemctl status, docker ps/logs, SELECT, ...) are allowed.
+// The list file is read through lib/plain-file.mjs (no waiting, no link followed, a size cap). A file that is there but is not a plain
+// file within the cap (a link, FIFO, device, folder, unreadable) cannot be trusted to be the list: then EVERY host counts as production,
+// so each ssh, scp, rsync, psql and mysql write asks until the owner puts a plain file back. Only a missing file is an empty list.
 // Invariants: pure apart from readProdHosts; a command that cannot be classified as read-only counts as a write (ask,
 // never deny); parsing is a heuristic for model mistakes, not a sandbox (an ssh alias that hides the host is not seen).
-import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { commandOf } from './command-of.mjs';
 import { parseGitArgs } from './git-options.mjs';
+import { readPlainFile } from './plain-file.mjs';
 import { flagsOf, tokenize } from './shell-words.mjs';
 import { isReadOnlySql, sqlHosts, sqlOf } from './sql.mjs';
 
@@ -37,16 +40,23 @@ const DESCRIPTOR_OR_NULL = /^(&\d+|&-|\/dev\/null)$/;
 const REMOTE_SPEC = /^(?:[^@/:\s]+@)?(\[[^\]]+\]|[^/:\s@]{2,}):(?!\/\/)/;
 const RSYNC_URL = /^rsync:\/\/(?:[^@/]*@)?([^/:]+)/;
 
+/** The most the host list may hold: 64 KB is thousands of names, and a larger file is not a list someone keeps by hand. */
+export const MAX_PROD_HOSTS_BYTES = 64 * 1024;
+/** The list that stands in for a file that is there but is not a plain file within the cap: the glob that matches every host. */
+export const EVERY_HOST = Object.freeze(['*']);
+const MISSING_FILE = 'ENOENT';
+
 /**
- * Hosts from the private list file; [] when it is missing or unreadable (the `prod` name rule still applies).
+ * Hosts from the private list file; [] when it is missing (the `prod` name rule still applies); EVERY_HOST when it is there but is a
+ * link, a FIFO, a device, a folder, over MAX_PROD_HOSTS_BYTES or unreadable: the guard fails closed and never waits on it.
  * @param {string} [file] defaults to PROD_HOSTS_FILE, overridable by env CLAUDE_PROD_HOSTS_FILE
- * @returns {string[]} lowercase names or globs
+ * @returns {readonly string[]} lowercase names or globs
  */
 export function readProdHosts(file = process.env.CLAUDE_PROD_HOSTS_FILE || PROD_HOSTS_FILE) {
   try {
-    return readFileSync(file, 'utf8').split(/\r?\n/).map((l) => l.replace(/#.*/, '').trim().toLowerCase()).filter(Boolean);
-  } catch {
-    return [];
+    return readPlainFile(file, MAX_PROD_HOSTS_BYTES).split(/\r?\n/).map((l) => l.replace(/#.*/, '').trim().toLowerCase()).filter(Boolean);
+  } catch (error) {
+    return error?.code === MISSING_FILE ? [] : EVERY_HOST;
   }
 }
 

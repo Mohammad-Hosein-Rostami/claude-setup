@@ -104,7 +104,9 @@ check_agent_hook_files() {
 # Private list of production hosts for pre-bash-guard (ssh/scp/rsync/psql/mysql writes ask). Missing file: only names containing "prod" ask.
 check_prod_hosts() {
   local file="${CLAUDE_PROD_HOSTS_FILE:-$CLAUDE_DIR/private/prod-hosts}" count
-  if [ -f "$file" ]; then
+  if [ -L "$file" ] || { [ -e "$file" ] && [ ! -f "$file" ]; }; then
+    bad "prod-hosts is a link or not a plain file ($file): the guard then asks for every ssh/scp/rsync/psql/mysql write; put a plain file there"
+  elif [ -f "$file" ]; then
     count="$(sed 's/#.*//' "$file" | grep -c '[^[:space:]]' || true)"
     ok "prod-hosts list: $count entries ($file)"
   else
