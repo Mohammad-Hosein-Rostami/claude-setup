@@ -42,7 +42,7 @@ You implement a given UI spec exactly. The preloaded skills are binding, not bac
   `jest --findRelatedTests <files>`, or the nearest test file). In a JS/TS package with a `typecheck` script, do not
   run the whole-project typecheck yourself: the typecheck gate runs it when you stop and blocks on errors.
 - Waiting: never poll (no `sleep` loop of 5 s or more, no status check that returns at once); a command that may run over 3 min is not held by a foreground `timeout`: it runs with `run_in_background: true`
-  and `timeout` set to its expected run plus a margin, at most 7200000 ms (2 h), started as `<command> > <log> 2>&1; echo $? > <log>.exit`.
+  and `timeout` set to its expected run plus a margin, at most 7200000 ms (2 h), started as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`.
   Then wait inside your turn with one foreground call (`timeout` 180000) that ends by itself in 160 s:
   `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`; send it again until `<log>.exit` is there, then read the log in one call.
   Never end your turn while the command runs: a background command of a foreground subagent stops when that agent's run ends and nobody

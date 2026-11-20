@@ -27,8 +27,12 @@ const WAIT_CALL_TIMEOUT_MS = 180000; // 3 min: a background subagent's foregroun
 const WAIT_ROUNDS = 80; // rounds of one wait call: 80 x 2 s = 160 s, so the call ends by itself before it would be moved
 const WAIT_PAUSE_SECONDS = 2; // a pause between two looks at one file, under LOOP_SLEEP_SECONDS
 
-/** How a command over 3 min is started (with `run_in_background: true` and `timeout`): output to a log, exit code to `<log>.exit`. */
-export const WAIT_START_FORM = '<command> > <log> 2>&1; echo $? > <log>.exit';
+/**
+ * How a command over 3 min is started (with `run_in_background: true` and `timeout`): output to a log, exit code to `<log>.exit`. The old
+ * `<log>.exit` is removed first: the wait call only looks whether that file is there, so the exit file of an earlier run with the same log
+ * name would end the wait at once, next to a log the new run has just emptied.
+ */
+export const WAIT_START_FORM = 'rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit';
 /** The foreground call that waits for that command inside the agent's turn: it ends when `<log>.exit` is there, or after 160 s. */
 export const WAIT_CALL = `for i in $(seq ${WAIT_ROUNDS}); do [ -f <log>.exit ] && break; sleep ${WAIT_PAUSE_SECONDS}; done`;
 

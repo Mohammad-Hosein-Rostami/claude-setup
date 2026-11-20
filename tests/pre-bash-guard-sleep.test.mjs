@@ -174,6 +174,12 @@ test('the way to wait that the advice and the agents name runs at the first send
   assert.ok(WAIT_ADVICE.includes(WAIT_CALL), 'the advice names the wait call');
 });
 
+test('the start form removes an old <log>.exit first, so the wait for a second run never ends at once on the first run\'s exit code; the guard lets it run at the first send, foreground and background', () => {
+  assert.ok(WAIT_START_FORM.startsWith('rm -f <log>.exit; '), WAIT_START_FORM);
+  assert.deepEqual(guardSession().run(asSent(WAIT_START_FORM)), { decision: 'allow' }, 'foreground');
+  assert.deepEqual(guardSession().run(asSent(WAIT_START_FORM), 'sess-1', IN_BACKGROUND), { decision: 'allow' }, 'background');
+});
+
 test('the wait call ends by itself before a background subagent\'s foreground command would be moved (3 min), and only its short pause keeps it from the advice', () => {
   const [, rounds, pause] = /seq (\d+)\).*sleep (\d+);/.exec(WAIT_CALL);
   assert.ok(Number(rounds) * Number(pause) * MS_PER_SECOND < MOVED_AFTER_MS, `${rounds} rounds of ${pause} s`);

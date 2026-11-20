@@ -30,7 +30,7 @@ The caller sends: `Tests for <spec path or acceptance criteria>. Layer: <unit|in
 - Test names say the behaviour in plain words (C31); the README of the tested area says how to run them. Return: files written (paths), documents you saw or needed updated, the command that runs them, then `covers: <criteria>`, `not covered: <gaps>`, `expected red reason: <why they fail now>`, `tried: <what you tried to break>`, `defaults: <the ones you took>`.
 - Before returning, attack your own tests and report what you tried: each must fail for the reason you state (`expected red reason`), not for a typo or an import error, and a test that cannot fail is wrong.
 - Waiting: never poll (no `sleep` loop of 5 s or more, no status check that returns at once); a command that may run over 3 min is not held by a foreground `timeout`: it runs with `run_in_background: true`
-  and `timeout` set to its expected run plus a margin, at most 7200000 ms (2 h), started as `<command> > <log> 2>&1; echo $? > <log>.exit`.
+  and `timeout` set to its expected run plus a margin, at most 7200000 ms (2 h), started as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`.
   Then wait inside your turn with one foreground call (`timeout` 180000) that ends by itself in 160 s:
   `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`; send it again until `<log>.exit` is there, then read the log in one call.
   Never end your turn while the command runs: a background command of a foreground subagent stops when that agent's run ends and nobody
