@@ -224,4 +224,50 @@ export const PLACE_ROWS = [
       return { cwd: join(box.projectDir, 'sub') };
     },
     note: { folders: 1, items: [fixedItems.foldersAbove] } },
+  { id: 'D2', classes: ['not checked', 'exact maxTurns'], what: 'a linked worktree with agents only in a subfolder: the main checkout\'s folder is still loaded',
+    build: async (box) => {
+      const main = join(dirname(box.projectDir), 'main');
+      await write(main, { '.claude/agents/helper.md': SHADOWING, '.git/worktrees/proj/commondir': '../..\n', '.git/worktrees/proj/gitdir': `${join(box.projectDir, '.git')}\n` });
+      await rm(join(box.projectDir, '.git'), { recursive: true });
+      await rm(join(box.projectDir, '.claude'), { recursive: true });
+      await write(box.projectDir, { '.git': `gitdir: ${join(main, '.git', 'worktrees', 'proj')}\n`, 'pkg/.claude/agents/capped.md': CAPPED });
+      return { cwd: join(box.projectDir, 'pkg') };
+    },
+    note: { advice: CAP_ADVICE, folders: 1, items: [fixedItems.mainCheckout, `${AGENTS}capped.md (maxTurns 7)`] } },
+  { id: 'D5', classes: ['link not read'], what: 'no git repository: an agents folder linked out of the session folder is "outside"', posix: true,
+    build: async (box) => {
+      await rm(join(box.projectDir, '.git'), { recursive: true });
+      await otherRepository(box);
+      await linkInstead(box, box.agentsDir, '../../other-repo/.claude/agents');
+    },
+    note: { advice: LINK_ADVICE, folders: 1, items: [`"${AGENTS.slice(0, -1)}" (a link to outside: not read)`] } },
+  { id: 'D7', classes: ['exact maxTurns'], what: 'the git root 64 folders above the session folder is still reached',
+    build: async (box) => {
+      await write(box.projectDir, { '.claude/agents/r.md': agent('r', 'maxTurns: 5\n'), [`${'d/'.repeat(LEVELS_UP)}readme.txt`]: '' });
+      return { cwd: join(box.projectDir, ...Array.from({ length: LEVELS_UP }, () => 'd')) };
+    },
+    note: { advice: CAP_ADVICE, items: [`"${'../'.repeat(UPS_SHOWN)}....r.md" (maxTurns 5)`] } },
+  { id: 'D20', classes: ['not checked'], what: 'a link past the entry limit may lead to a folder: it is counted', posix: true,
+    build: async (box) => {
+      for (let i = 0; i < ENTRY_LIMIT; i += 1) await writeFile(join(box.agentsDir, indexed(i).replace('.md', '.txt')), '');
+      await symlink('nowhere', join(box.agentsDir, 'zz-link'));
+    },
+    note: { folders: 1 } },
+  { id: 'N3', classes: ['not checked'], what: 'only a subfolder past the entry limit: the note still says so',
+    build: async (box) => {
+      for (let i = 0; i < ENTRY_LIMIT; i += 1) await writeFile(join(box.agentsDir, indexed(i).replace('.md', '.txt')), '');
+      await write(box.agentsDir, { 'zz-team/helper.md': SHADOWING });
+    },
+    note: { folders: 1 } },
+  { id: 'D22', classes: ['not checked'], what: 'three subfolders of 100 files share one read limit of 200',
+    build: async (box) => {
+      for (const folder of ['a', 'b', 'c']) for (let i = 0; i < FILES_PER_FOLDER; i += 1) await write(box.agentsDir, { [`${folder}/${indexed(i)}`]: agent(`${folder}${i}`) });
+    },
+    note: { unchecked: 3 * FILES_PER_FOLDER - READ_LIMIT } },
+  { id: 'N18', classes: ['link not read'], what: 'a link named like a built-in agent', posix: true,
+    build: async (box) => {
+      await write(box.projectDir, { 'docs/r.md': SHADOWING });
+      await symlink('../../docs/r.md', join(box.agentsDir, 'Explore.md'));
+    },
+    note: { advice: LINK_ADVICE, items: [`"${AGENTS}Explore.md" (a link: not read, named like the built-in agent)`] } },
 ];

@@ -113,4 +113,7 @@ export const FRONTMATTER_ROWS = [
     { byHand: 1, items: [`${FILE} (maxTurns 5, looks like reviewer: check by hand)`] }),
   notPlain('R3-3', 'a no-break space before the name: YAML keeps it, so the agent has another name', `name: ${NO_BREAK_SPACE}security-auditor\ndescription: x\nmaxTurns: 5`),
   notPlain('R3-3', 'an ideographic space before the name', `name: ${IDEOGRAPHIC_SPACE}security-auditor\ndescription: x`),
+  row('F11', ['exact maxTurns'], 'a # glued to the number starts no comment: the value is no number and is not echoed', withFrontmatter('name: x\ndescription: x\nmaxTurns: 5#x'), capped('set')),
+  notPlain('F18', 'a tab in the indent of a deeper line', 'name: security-auditor\ndescription: a\n \tb'),
+  silent('D11', 'an opening with no closing in a file of exactly the head that is read: all of it was seen', `${UNCLOSED}${'x'.repeat(HEAD_BYTES - UNCLOSED.length)}`),
 ];
