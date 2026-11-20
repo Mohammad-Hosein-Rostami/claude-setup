@@ -5,7 +5,8 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findOwnerPid, isMode, isStale, leadNote, parseModeArg } from '../home/hooks/mode.mjs';
+import { HOOK_BUDGET_MS, isMode, isStale, leadNote, parseModeArg } from '../home/hooks/mode.mjs';
+import { MAX_ANCESTOR_DEPTH, PS_TIMEOUT_MS, findOwnerPid } from '../home/hooks/lib/owner-process.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -127,6 +128,26 @@ test('findOwnerPid gives up without a claude ancestor or on lookup failure', () 
   assert.equal(findOwnerPid(30, () => undefined), undefined);
 });
 
+// Spec check K2 (review4 R4-1, security4 R4-3): six lookups of up to 1,000 ms each passed the hook's 5,000 ms timeout.
+test('findOwnerPid gives each lookup min(PS_TIMEOUT_MS, the budget left) and stops when nothing is left', () => {
+  const SLOW_LOOKUP_MS = 900; // a `ps` that answers just inside its timeout and never names `claude`
+  const timeouts = [];
+  let nowMs = 0;
+  const slow = (pid, timeoutMs) => {
+    timeouts.push(timeoutMs);
+    nowMs += Math.min(SLOW_LOOKUP_MS, timeoutMs);
+    return timeoutMs < SLOW_LOOKUP_MS ? undefined : { ppid: pid + 1, command: 'sh' }; // cut by its timeout: no answer
+  };
+  assert.equal(findOwnerPid(30, slow, () => HOOK_BUDGET_MS - nowMs), undefined);
+  const fullLookups = Math.floor(HOOK_BUDGET_MS / SLOW_LOOKUP_MS);
+  assert.deepEqual(timeouts, [...Array(fullLookups).fill(PS_TIMEOUT_MS), HOOK_BUDGET_MS - fullLookups * SLOW_LOOKUP_MS]);
+  assert.ok(nowMs <= HOOK_BUDGET_MS, `the walk ended at ${nowMs} ms`);
+  for (const left of [0, 0.5, -1, Number.NaN]) assert.equal(findOwnerPid(30, () => assert.fail('no lookup without time'), () => left), undefined);
+  timeouts.length = 0;
+  assert.equal(findOwnerPid(30, slow), undefined, 'no budget given: the depth limit alone ends the walk');
+  assert.deepEqual(timeouts, Array(MAX_ANCESTOR_DEPTH).fill(PS_TIMEOUT_MS));
+});
+
 // The process-keyed state needs a `claude` ancestor (true when the suite runs inside Claude Code).
 function hasClaudeAncestor() {
   if (process.platform === 'win32') return false;
@@ -147,9 +168,10 @@ test('a mode set with /mode survives /clear (new session id, same process) but n
   const resumed = runHook(home, env, { hook_event_name: 'UserPromptSubmit', session_id: 'a1' });
   assert.match(afterClear.stdout, /^Mode: high/);
   assert.match(freshProcess.stdout, /^Mode: medium/);
-  assert.match(resumed.stdout, /Mode: high/);
+  // The /mode switch announced high to session a1, so its next prompt prints no mode line (spec check K6); its mode is still high.
+  assert.doesNotMatch(resumed.stdout, /^Mode: /m);
+  assert.equal((await readFile(join(home, '.claude', 'state', 'modes', 'a1'), 'utf8')).trim(), 'high');
 });
-
 
 test('a resumed session keeps its saved mode unless launched with an explicit mode', async () => {
   const home = makeTempDir('mode-home-');

@@ -1,5 +1,6 @@
 // Compaction notes for the mode hook's SessionStart (source `compact`). Exports: compactNotes(dir, sessionId, transcriptPath).
-// Invariants: the count lives in `<dir>/<sessionId>.compacts` (pruned with the mode state files); a failed read or
+// Invariants: the count lives in `<dir>/<sessionId>.compacts` (pruned with the mode state files); for a compaction inside a
+// subagent mode.mjs passes `<session_id>-<agent_id>` as that id, so a subagent never moves the lead's count; a failed read or
 // write counts as the first compaction and reports to stderr; never throws. The STATUS path comes from the transcript (a tool
 // input, and its folder names can come from a repository), so it is shown as data: in double quotes, labelled as a path, escaped
 // down to printable ASCII without " \ < > (shown-name.mjs, as the project-agents note shows a file name) and at most
