@@ -75,6 +75,9 @@ const FOLDER_UNKNOWN = [
   `until false; do cd ..; done; ${RM} -rf proj/x`,
   `function f { cd src; }; ${RM} -rf ../x`,
   `f() { cd ..; }; f; f; ${RM} -rf x`,
+  // one `cd ..` of the body is harmless, but each call of the function moves on from where the last stopped
+  `f() { cd ..; }; f; f; ${RM} -rf proj/x`,
+  `function f { cd ..; }; f; f; ${RM} -rf proj/x`,
   `source ./env.sh; cd ${PROJECT}/src && make; ${RM} -rf gen`, // known inside the chain of the absolute cd only
   // a cd the guard cannot read at all is final: an absolute cd after it does not make the folder known (found by the probe against main)
   `cd "$SOMEWHERE"; cd ${PROJECT}/src && ${RM} -rf ../gen`,
