@@ -4,6 +4,7 @@
 // not verified: no Windows machine), and which account a call may spend. K10: after each test the token is only in the store.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { accountForCall, addAccount, listAccounts, removeAccount, setCreditsOff, setDefault, setPlan } from '../home/tools/account/lib/accounts.mjs';
@@ -19,6 +20,8 @@ const TOKEN_A = fakeToken('StoreA');
 const TOKEN_B = fakeToken('StoreB');
 const HOSTILE_NAMES = ['../x', 'a"b', 'a\nb', '', '-', '-x', 'A', 'a b', 'a/b', 'x'.repeat(33), "a'b", 'a;b', '$(id)'];
 const POSIX = process.platform !== 'win32';
+const FILE_STORE = new URL('../home/tools/account/lib/file-store.mjs', import.meta.url);
+const FIFO_GUARD_MS = 30000; // a read that waits on the FIFO is ended here and fails the test; nothing is measured
 // File modes are a POSIX fact: these tests are defined by platform, as the Keychain tests are.
 const posixTest = POSIX ? test : () => {};
 const modeOf = (path) => statSync(path).mode & 0o777;
@@ -155,6 +158,18 @@ posixTest('the file store: a link in place of the token file, a looser mode on t
   assert.throws(() => store.put('home', TOKEN_B), refuses('unsafe-file'));
   assert.throws(() => store.get('work'), refuses('unsafe-file'));
   chmodSync(box.storeDir, 0o700);
+});
+
+posixTest('the file store: a FIFO in place of a token file is refused at once; the read never waits on it', (t) => {
+  const box = sandbox(t);
+  fileStore(box.storeDir).put('work', TOKEN_A);
+  assert.equal(spawnSync('mkfifo', ['-m', '600', join(box.storeDir, 'pipe.token')]).status, 0);
+  // In a child: a read that waits on a FIFO blocks its whole process, so only another process can see it hang.
+  const script = `import { fileStore } from ${JSON.stringify(FILE_STORE.href)};
+try { fileStore(process.argv[1]).get('pipe'); console.log('read'); } catch (error) { console.log(error.kind); }`;
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', script, box.storeDir], { encoding: 'utf8', timeout: FIFO_GUARD_MS });
+  assert.equal(run.error, undefined, 'the read came back');
+  assert.equal(run.stdout.trim(), 'unsafe-file');
 });
 
 for (const [label, makeStore] of [['file', (box) => fileStore(box.storeDir)], ['keychain', () => keychainStore({ run: fakeSecurity().run })], ['dpapi', (box) => dpapiStore(box.storeDir, { run: () => { throw new Error('the runner must not be reached'); } })]]) {
