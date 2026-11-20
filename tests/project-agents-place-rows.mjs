@@ -198,6 +198,12 @@ export const PLACE_ROWS = [
       await linkInstead(box, join(box.projectDir, '.git'), '../real-git');
     },
     note: '' },
+  { id: 'S1', classes: ['exact shadow', 'exact maxTurns'], what: 'an agent 32 subfolders down is still read',
+    build: (box) => write(box.agentsDir, { [`${'d/'.repeat(FOLDER_LEVELS_ENTERED)}helper.md`]: SHADOWING }),
+    note: { advice: BOTH_ADVICE, shadowed: ['security-auditor'], items: [`"${AGENTS}${'d/'.repeat(DEEP_FOLDERS_SHOWN)}d...helper.md" (maxTurns 3, shadows the personal agent)`] } },
+  { id: 'S1', classes: ['not checked'], what: 'a subfolder 33 levels down is not entered: it is counted',
+    build: (box) => write(box.agentsDir, { [`${'d/'.repeat(FOLDER_LEVELS_ENTERED + 1)}helper.md`]: SHADOWING }),
+    note: { folders: 1 } },
   { id: 'S2', classes: ['check by hand'], what: 'HOME spelled through a link: the CLI compares spellings, so it loads the agents above the real home', posix: true,
     build: async (box) => {
       const root = dirname(box.home);
