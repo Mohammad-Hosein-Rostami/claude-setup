@@ -313,7 +313,9 @@ check_workflows() {
 
 # A project's own .claude/agents files that set maxTurns or shadow a personal agent stop agents mid-task (the owner's rule is no maxTurns).
 check_project_agents() {
-  local project="${DOCTOR_PROJECT:-$PWD}" note shown_project
+  local project note shown_project
+  # The physical folder, as Claude Code hands it to a hook: through a link spelling the note would list files a session never sees.
+  project="$(cd "${DOCTOR_PROJECT:-$PWD}" 2>/dev/null && pwd -P)" || project="${DOCTOR_PROJECT:-$PWD}"
   # The folder name comes from a repository or an archive: it is shown escaped down to printable ASCII by the same code as the note's
   # file names, so no control character (ESC, BEL: window title, colours) reaches the terminal, whatever the locale.
   shown_project="$(node "$REPO/home/hooks/lib/shown-name.mjs" "$project" 2>/dev/null)"

@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { rename, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -90,11 +91,25 @@ test('doctor warns about a capped project agent (DOCTOR_PROJECT), names the proj
   const made = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
   const capped = runDoctor(made.home, made.projectDir);
   assert.match(capped.stdout, /^WARN\s+.*Project agent files .*builder\.md \(maxTurns 60\)/m);
-  assert.ok(capped.stdout.startsWith(`WARN  ${made.projectDir}: Project agent files in .claude/agents `), 'the WARN line says which project it means');
+  assert.ok(capped.stdout.startsWith(`WARN  ${realpathSync(made.projectDir)}: Project agent files in .claude/agents `), 'the WARN line says which project it means');
   assert.equal(capped.status, 0);
   const cleanMade = await sandbox({ project: { builder: '' } });
   const clean = runDoctor(cleanMade.home, cleanMade.projectDir);
   assert.match(clean.stdout, /^ok\s+project agents/m);
+});
+
+// Review 4 of p0-0.1, R4-9: doctor passed the folder as it was spelled, and through a link that showed files a session never sees
+// (Claude Code hands a hook the physical folder). It now checks the physical folder (`pwd -P`) and names that one.
+test('doctor checks the physical folder of a project that is reached through a link', { skip: (!hasJq && 'jq not installed') || (!POSIX && 'making a link needs a privilege on Windows') }, async () => {
+  const made = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
+  const link = join(dirname(made.projectDir), 'proj-link');
+  await symlink(made.projectDir, link);
+  const { stdout, status } = runDoctor(made.home, link);
+  assert.ok(stdout.startsWith(`WARN  ${realpathSync(made.projectDir)}: Project agent files in .claude/agents `), stdout);
+  assert.match(stdout, /builder\.md \(maxTurns 60\)/);
+  assert.equal(status, 0);
+  const missing = runDoctor(made.home, join(made.projectDir, 'not-there')); // a folder that cannot be entered is passed on as given
+  assert.ok(missing.stdout.startsWith(`WARN  ${join(made.projectDir, 'not-there')}: Project agent files in .claude/agents `), missing.stdout);
 });
 
 // Security review p0-0.1, N3: the folder name comes from a repository or an archive; ESC and BEL in it set the window title and colour.
@@ -112,7 +127,7 @@ test('doctor prints the project path escaped, without control characters, in eve
       const { stdout } = runDoctor(home, hostile, { LC_ALL: locale });
       assert.doesNotMatch(stdout, CONTROL_CHARACTER, locale);
       assert.match(stdout, ONLY_PLAIN_ASCII_LINES, locale);
-      assert.ok(stdout.includes(`${join(dirname(projectDir), 'proj\\u001b]0;title-set-by-folder\\u0007\\u001b[31m\\u009b\\u202eRED')}: `), `${locale}: ${stdout}`);
+      assert.ok(stdout.includes(`${join(realpathSync(dirname(projectDir)), 'proj\\u001b]0;title-set-by-folder\\u0007\\u001b[31m\\u009b\\u202eRED')}: `), `${locale}: ${stdout}`);
     }
   }
 });
