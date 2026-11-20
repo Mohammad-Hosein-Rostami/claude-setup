@@ -1,6 +1,6 @@
 // Tests for home/hooks/typecheck-gate.mjs: incremental tsc planning, the Stop/SubagentStop contract (exit codes, loop
 // guard, log clean-up), the shared tsbuildinfo hand-off, the budget, the run log and the fallbacks for a package without a
-// usable typecheck script (the nearest tsconfig.json). Runs the real hooks against fake projects:
+// usable typecheck script (its Nx typecheck target, then the nearest tsconfig.json). Runs the real hooks against fake projects:
 // the binaries are fake node scripts in the fixture's node_modules/.bin, so no TypeScript or Nx is installed and nothing is
 // downloaded. The test process and every hook it starts get a temp home, temp folder and run log; no test asserts elapsed time.
 import test from 'node:test';
@@ -607,4 +607,98 @@ test('on win32 a tsconfig command is skipped when a path cannot go through the u
   assert.deepEqual(tsconfigTypecheck(tsconfig, tsc, '/t/info', 'win32'), { cmd: tsc, args: ['--noEmit', '-p', tsconfig, '--incremental', '--tsBuildInfoFile', '/t/info'] });
   assert.deepEqual(tsconfigTypecheck(tsconfig, tsc, 'C:\\Users\\Jo Doe\\info', 'win32'), { skipped: 'unsafe path on Windows' });
   assert.deepEqual(tsconfigTypecheck(tsconfig, tsc, '/t/100%/info', 'win32'), { skipped: 'unsafe path on Windows' });
+});
+
+// --- The Nx typecheck target ---
+
+const NX_BROAD = { scripts: { typecheck: 'nx run-many -t typecheck' } };
+const NX_ERROR = 'libs/a/src/x.ts(2,1): error TS2322: bad';
+
+// An Nx workspace (nx.json and a fake nx at the git top) with one package, libs/a, whose typecheck script is broad.
+async function nxRepo(packageFiles, { nxOutput = [NX_ERROR], nxStatus = 1 } = {}) {
+  const inPackage = Object.fromEntries(Object.entries({ 'package.json': NX_BROAD, 'src/x.ts': 'export {};\n', ...packageFiles }).map(([path, content]) => [`libs/a/${path}`, content]));
+  const fixture = await fallbackRepo({ 'nx.json': {}, 'package.json': {}, ...inPackage }, { git: true });
+  await installBin(fixture.repo, 'nx', { output: nxOutput, status: nxStatus });
+  fixture.edit('libs/a/src/x.ts');
+  return fixture;
+}
+
+test('an Nx project with a typecheck target: nx runs that one project with the daemon, the cloud and the terminal UI off', posix, async () => {
+  const fixture = await nxRepo({ 'project.json': { name: 'a', targets: { typecheck: {} } } });
+  const r = fixture.stop();
+  assert.equal(r.status, 2);
+  assert.equal(r.stderr, 'libs/a/src/x.ts:2 TS2322 bad\n');
+  const [call, ...rest] = await fixture.calls();
+  assert.deepEqual(rest, []);
+  assert.deepEqual(call.args, ['run', 'a:typecheck', '--skip-nx-cache']);
+  assert.equal(call.bin.endsWith(join('repo', 'node_modules', '.bin', 'nx')), true);
+  assert.equal(call.cwd.endsWith(join('outer', 'repo')), true, 'nx runs at the git top');
+  for (const [name, value] of [['NX_DAEMON', 'false'], ['NX_NO_CLOUD', 'true'], ['NX_TUI', 'false']]) assert.equal(call.nx[name], value, name);
+  assert.deepEqual(await outcomes(fixture), ['ran: nx run a:typecheck --skip-nx-cache']);
+});
+
+test('the Nx target is also read from package.json (nx.targets.typecheck), named by the package', posix, async () => {
+  const fixture = await nxRepo({ 'package.json': { ...NX_BROAD, name: '@org/a', nx: { targets: { typecheck: {} } } } });
+  assert.equal(fixture.stop().status, 2);
+  assert.deepEqual((await fixture.calls()).map((call) => call.args), [['run', '@org/a:typecheck', '--skip-nx-cache']]);
+});
+
+test('order per package: a usable typecheck script, then the Nx target, then the nearest tsconfig, then skipped', posix, async () => {
+  const target = { name: 'a', targets: { typecheck: {} } };
+  const script = await nxRepo({ 'package.json': { scripts: { typecheck: 'node -e 0' } }, 'project.json': target, 'tsconfig.json': {} });
+  await installBin(script.repo, 'tsc');
+  assert.equal(script.stop().status, 0);
+  assert.deepEqual([await script.calls(), await outcomes(script)], [[], ['ran: npm run typecheck']], 'the script wins');
+
+  const nx = await nxRepo({ 'project.json': target, 'tsconfig.json': {} });
+  await installBin(nx.repo, 'tsc');
+  nx.stop();
+  assert.deepEqual((await nx.calls()).map((call) => call.args[0]), ['run'], 'the Nx target wins over the tsconfig');
+
+  const tsconfig = await nxRepo({ 'tsconfig.json': {} });
+  await installBin(tsconfig.repo, 'tsc');
+  tsconfig.stop();
+  assert.deepEqual((await tsconfig.calls()).map((call) => call.args[0]), ['--noEmit'], 'a broad script with no Nx target goes on to the tsconfig');
+
+  const nothing = await nxRepo({});
+  assert.equal(nothing.stop().status, 0);
+  assert.deepEqual([await nothing.calls(), await outcomes(nothing)], [[], ['skipped: broad script, no nx target']]);
+});
+
+test('no Nx run without nx.json at the git top, a typecheck target in the package folder, a plain project name and the top\'s own nx', posix, async () => {
+  const shapes = [
+    { 'project.json': { name: 'a', targets: { build: {} } } },
+    { 'project.json': { name: 'a', targets: { typecheck: 'tsc' } } },
+    { 'project.json': { targets: { typecheck: {} } }, 'package.json': { ...NX_BROAD, name: 7 } },
+    ...['-x', 'a b', 'a;b', 'a:b', '$(x)', ''].map((name) => ({ 'project.json': { name, targets: { typecheck: {} } } })),
+  ];
+  for (const shape of shapes) {
+    const fixture = await nxRepo(shape);
+    assert.equal(fixture.stop().status, 0, JSON.stringify(shape));
+    assert.deepEqual([await fixture.calls(), await outcomes(fixture)], [[], ['skipped: broad script, no nx target']], JSON.stringify(shape));
+  }
+  const noWorkspace = await fallbackRepo({ 'libs/a/package.json': NX_BROAD, 'libs/a/project.json': { name: 'a', targets: { typecheck: {} } }, 'libs/a/src/x.ts': 'export {};\n' }, { git: true });
+  await installBin(noWorkspace.repo, 'nx', { output: [NX_ERROR], status: 1 });
+  noWorkspace.edit('libs/a/src/x.ts');
+  assert.equal(noWorkspace.stop().status, 0);
+  assert.deepEqual(await noWorkspace.calls(), [], 'no nx.json at the git top');
+  const nxBelowTop = await fallbackRepo({ 'nx.json': {}, 'libs/a/package.json': NX_BROAD, 'libs/a/project.json': { name: 'a', targets: { typecheck: {} } }, 'libs/a/src/x.ts': 'export {};\n' }, { git: true });
+  await installBin(join(nxBelowTop.repo, 'libs', 'a'), 'nx', { output: [NX_ERROR], status: 1 });
+  await installBin(join(nxBelowTop.root, 'outer'), 'nx', { output: [NX_ERROR], status: 1 });
+  nxBelowTop.edit('libs/a/src/x.ts');
+  assert.equal(nxBelowTop.stop().status, 0);
+  assert.deepEqual(await nxBelowTop.calls(), [], 'only the nx of the git top runs');
+});
+
+test('on win32 an nx whose path cannot go through the unquoted shell is skipped', async () => {
+  const { nxTypecheck } = await import(PLAN_LIB);
+  const workspace = { 'nx.json': {}, 'package.json': {}, 'project.json': { name: 'a', targets: { typecheck: {} } } };
+  const plain = await fallbackRepo(workspace);
+  await installBin(plain.repo, 'nx');
+  assert.deepEqual(nxTypecheck(plain.repo, [plain.repo], 'linux').args, ['run', 'a:typecheck', '--skip-nx-cache']);
+  const spaced = await fallbackRepo(Object.fromEntries(Object.entries(workspace).map(([path, content]) => [`my app/${path}`, content])));
+  const folder = join(spaced.repo, 'my app');
+  await mkdir(join(folder, 'node_modules', '.bin'), { recursive: true });
+  await writeFile(join(folder, 'node_modules', '.bin', 'nx.cmd'), '');
+  assert.deepEqual(nxTypecheck(folder, [folder], 'win32'), { skipped: 'unsafe path on Windows' });
 });

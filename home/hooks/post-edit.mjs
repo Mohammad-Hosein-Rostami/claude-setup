@@ -148,7 +148,7 @@ function killTree(child) {
  * Spawns one check and resolves (never rejects) to { status, stdout, stderr, error, timedOut }. On the deadline it
  * resolves from the timer itself: a grandchild holding the pipes open must not delay `close`.
  * @param {string} pm package manager, used when `check.cmd` is absent
- * @param {{cmd?: string, args: string[]}} check what to run
+ * @param {{cmd?: string, args: string[], env?: Record<string, string>}} check what to run; `env` is added to this process's environment
  * @param {string} cwd working directory
  * @param {number} timeoutMs kill the process tree after this long
  * @returns {Promise<object> & {kill: () => void}} the promise also carries `kill()` (tree kill, pipes released); it
@@ -159,7 +159,8 @@ export function runCheck(pm, check, cwd, timeoutMs) {
   const cmd = shellCommand(check.cmd ?? pm);
   let kill = () => {};
   const run = new Promise((resolve) => {
-    const child = spawn(cmd, check.args, { cwd, shell: process.platform === 'win32', detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    const env = { ...process.env, ...check.env };
+    const child = spawn(cmd, check.args, { cwd, env, shell: process.platform === 'win32', detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let closed = false;

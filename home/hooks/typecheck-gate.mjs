@@ -1,7 +1,7 @@
 // Stop / SubagentStop: typecheck the files this agent edited, once, instead of after every edit (post-edit.mjs logs them).
 // Per package of a logged file, the first that applies: (1) its `typecheck` / `type-check` script unless it targets the
-// whole repo; (2) the nearest tsconfig.json of each file with the project's own `tsc --noEmit`; (3) else skipped with the
-// reason. lib/typecheck-plan.mjs builds the commands.
+// whole repo; (2) its Nx `typecheck` target when nx.json sits at the git top; (3) the nearest tsconfig.json of each file
+// with the project's own `tsc --noEmit`; (4) else skipped with the reason. lib/typecheck-plan.mjs builds the commands.
 // Exports: incrementalTypecheck, typescriptMajor (from lib/typecheck-plan.mjs), runGate(files, deadline, record),
 // timeoutMessage(unchecked), decideExit(result, logPath, stopHookActive), runLogPath(env), MAX_RUN_LOG_BYTES.
 // Invariants: silent and exit 0 when nothing was logged, when CLAUDE_TYPECHECK_AT=edit or typecheck is skipped; only
@@ -13,7 +13,7 @@
 // `skipped: <reason>`), `exit` (the exit code, `timeout`, `error` when it could not start, null when skipped) and `ms`.
 // A package whose files sit under different tsconfigs gets one line for each. A stop with no logged edits writes nothing;
 // at MAX_RUN_LOG_BYTES no line is written; a log that cannot be written never changes the decision.
-// The gate runs project code (the script, tsc) with the trust the project's typecheck script already had, only in
+// The gate runs project code (the script, nx, tsc) with the trust the project's typecheck script already had, only in
 // packages this agent edited; what reaches the agent on exit 2 is at most 15 lines about logged files.
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,7 +23,7 @@ import { pathToFileURL } from 'node:url';
 import { MAX_LINES, diagnosticsDetailed } from './lib/diagnostics.mjs';
 import { editLogPath, readEdits, tempRoot } from './lib/edit-log.mjs';
 import { appendPlainFile } from './lib/plain-file.mjs';
-import { SKIPPED, incrementalTypecheck, nearestTsconfig, projectBin, projectFolders, readJsonFile, tsconfigTypecheck, typescriptMajor } from './lib/typecheck-plan.mjs';
+import { SKIPPED, incrementalTypecheck, nearestTsconfig, nxTypecheck, projectBin, projectFolders, readJsonFile, tsconfigTypecheck, typescriptMajor } from './lib/typecheck-plan.mjs';
 import { SKIP_ENV, findPackageDir, isBroadScript, packageManager, runCheck, skipFilter, typecheckAtEdit, typecheckScript } from './post-edit.mjs';
 
 export { incrementalTypecheck, typescriptMajor } from './lib/typecheck-plan.mjs';
@@ -64,7 +64,7 @@ function scriptPlan(dir, folders, script) {
   return { cwd: dir, check: { name: 'typecheck', ...incremental }, ...info };
 }
 
-// Step 2: one tsc run per nearest tsconfig.json of the files; files with none are skipped with `noneReason`.
+// Step 3: one tsc run per nearest tsconfig.json of the files; files with none are skipped with `noneReason`.
 function tsconfigPlans(dir, folders, files, noneReason) {
   const byTsconfig = new Map();
   for (const file of files) {
@@ -84,6 +84,8 @@ function packagePlans(dir, files) {
   const folders = projectFolders(dir, GIT_TOP_TIMEOUT_MS);
   const script = typecheckScript(readJsonFile(join(dir, 'package.json'))?.scripts);
   if (script && !isBroadScript(script.text)) return [{ files, ...scriptPlan(dir, folders, script) }];
+  const nx = nxTypecheck(dir, folders);
+  if (nx) return [planFor(files, nx.cwd, nx)];
   return tsconfigPlans(dir, folders, files, script ? SKIPPED.broadScript : SKIPPED.noTsconfig);
 }
 

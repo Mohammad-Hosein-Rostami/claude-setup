@@ -1,10 +1,12 @@
 // The commands the typecheck gate may run for a package and where their binaries may come from; typecheck-gate.mjs puts the
-// steps in order (typecheck script, nearest tsconfig) and runs them.
+// steps in order (typecheck script, Nx target, nearest tsconfig) and runs them.
 // Exports: SKIPPED (the skip reasons), incrementalTypecheck(script, tsMajor, tscPath, buildInfo, platform), typescriptMajor(tscPath),
-// projectFolders(dir, timeoutMs), projectBin(folders, tool, platform), readJsonFile(path),
+// projectFolders(dir, timeoutMs), projectBin(folders, tool, platform), readJsonFile(path), nxTypecheck(dir, folders, platform),
 // nearestTsconfig(file, dir), tsconfigTypecheck(tsconfig, tsc, buildInfo, platform).
 // Invariants: a binary comes only from node_modules/.bin of a folder between the package and the git top, never from above
-// it, never a global one and never through npx or a package manager's exec or dlx (nothing is downloaded). A tsc call for a
+// it, never a global one and never through npx or a package manager's exec or dlx (nothing is downloaded). Nx runs one
+// project's typecheck target, read from the files in the package folder alone (no `nx show`: a target that only a plugin
+// infers is not found), never run-many or affected, with the daemon, Nx Cloud and the terminal UI off. A tsc call for a
 // tsconfig always sends the build info to the given file, so none lands in the project. The JSON files are read through
 // lib/plain-file.mjs (no link followed, no wait on a FIFO, a size cap). A shape that is not understood is a skip with its
 // reason, never a run and never a block. On Windows the shell is on and does not quote arguments: a path it cannot take is a skip.
@@ -19,7 +21,12 @@ const UNSAFE_SHELL = /[&|;<>$`'"]/;
 const WIN_UNSAFE_SCRIPT = /[%^!]/; // cmd.exe expands these even inside a script's flags
 const WIN_SAFE_PATH = /^[\w@+=:,./\\-]+$/; // args are not quoted under the Windows shell: no spaces or metacharacters
 const NON_INCREMENTAL_FLAGS = ['-b', '--build', '-w', '--watch', '--incremental', '--tsBuildInfoFile'];
-const MAX_JSON_BYTES = 1024 * 1024; // 1 MB: a package.json or tsconfig.json is a few KB; a larger file is not read
+const MAX_JSON_BYTES = 1024 * 1024; // 1 MB: a package.json, project.json or tsconfig.json is a few KB; a larger file is not read
+// No daemon left running after the hook, no call to Nx Cloud, plain output instead of the terminal UI
+// (https://nx.dev/docs/reference/environment-variables, "Nx Environment Variables").
+const NX_ENV = Object.freeze({ NX_DAEMON: 'false', NX_NO_CLOUD: 'true', NX_TUI: 'false' });
+// The project name becomes part of a command (through the shell on Windows): no space, metacharacter, colon or leading dash.
+const NX_PROJECT_NAME = /^[\w@][\w@./-]*$/;
 
 /** Why a typecheck did not run; the run log holds it as `skipped: <reason>`. */
 export const SKIPPED = Object.freeze({
@@ -112,7 +119,7 @@ export function projectFolders(dir, timeoutMs) {
 /**
  * `node_modules/.bin/<tool>` of the nearest of `folders` that has one.
  * @param {string[]} folders from {@link projectFolders}
- * @param {string} tool `tsc`
+ * @param {string} tool `tsc` or `nx`
  * @param {string} [platform] defaults to the running platform (Windows has `.cmd` shims)
  * @returns {string | null} null when the project has none: the caller skips, it never looks further
  */
@@ -122,7 +129,7 @@ export function projectBin(folders, tool, platform = process.platform) {
 }
 
 /**
- * The value of a JSON file (package.json).
+ * The value of a JSON file (package.json, project.json).
  * @param {string} path the file
  * @returns {unknown} null when it is missing, not a plain file within 1 MB (a link, a FIFO, a folder), or not JSON
  */
@@ -132,6 +139,32 @@ export function readJsonFile(path) {
   } catch {
     return null; // nothing this hook can read: the caller goes on without it
   }
+}
+
+const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * The Nx call for the typecheck target of the project in `dir`: `<git top>/node_modules/.bin/nx run <project>:typecheck
+ * --skip-nx-cache`, run at the git top with the daemon, Nx Cloud and the terminal UI off. The project and its target are
+ * read from `project.json` in the package folder (`name`, `targets.typecheck`) or the `nx` field of its `package.json`.
+ * @param {string} dir the package folder
+ * @param {string[]} folders from {@link projectFolders}; the last one is the git top
+ * @param {string} [platform] defaults to the running platform
+ * @returns {{cmd: string, args: string[], env: Record<string, string>, cwd: string} | {skipped: string} | null} null when
+ *   this is no Nx project the gate can run: no `nx.json` at the git top, no declared typecheck target, a project name that
+ *   is not a plain name, or no `nx` at the git top; the caller then goes on to the tsconfig
+ */
+export function nxTypecheck(dir, folders, platform = process.platform) {
+  const top = folders.at(-1);
+  if (!existsSync(join(top, 'nx.json'))) return null;
+  const project = readJsonFile(join(dir, 'project.json'));
+  const manifest = readJsonFile(join(dir, 'package.json'));
+  const target = project?.targets?.typecheck ?? manifest?.nx?.targets?.typecheck;
+  const name = project?.name ?? manifest?.nx?.name ?? manifest?.name;
+  const nx = projectBin([top], 'nx', platform);
+  if (!isRecord(target) || typeof name !== 'string' || !NX_PROJECT_NAME.test(name) || !nx) return null;
+  if (platform === 'win32' && !WIN_SAFE_PATH.test(nx)) return { skipped: SKIPPED.unsafeWindowsPath };
+  return { cmd: nx, args: ['run', `${name}:typecheck`, '--skip-nx-cache'], env: NX_ENV, cwd: top };
 }
 
 /**
