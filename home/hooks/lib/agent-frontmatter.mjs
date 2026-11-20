@@ -14,6 +14,12 @@
 //                                                          (probe: `name: x # c` is "x", but "x # c" when another line fails first)
 //   probes: a mapping indented as a whole, or by tabs, loads; a lone CR ends a line; `name : x`, `name:<tab>x` and a value continued
 //   on a deeper line ("a b") load; of two `name` keys the last one wins.
+// Re-read in the 2.1.329 bundle (other minified names, the same code): NM is the same regex and Qd() has the same
+// `e.indexOf("---",3)<0?null:e.match(NM)`; `zd(e,r){return e}`; nTn(): `let{name:k,description:R}=r;if(!k||typeof k!=="string")return
+// null`; cY = Bun.YAML.parse and the same quoting retry. New there: Qd() takes `untrusted` (a frontmatter over 65,536 characters,
+// too nested or with an anchor is not parsed); whether the agent loader passes it was not established. A leading no-break or
+// ideographic space stays in a value (probe on 2.1.328 and 2.1.329: the agent is listed under the longer name), so only space
+// and tab are dropped around a value here.
 // This file does not parse YAML. It reads the subset below exactly, and calls every other frontmatter "not plain", which the note
 // reports as "check by hand" without a claim about its name or maxTurns. The subset: the mapping's indent is that of its first key
 // line; a line at that indent is blank, a # comment or `key:` followed by the end of the line or a space, the key being
@@ -32,6 +38,7 @@ const LINE_END = /\r\n|\n|\r/;
 // C0 controls other than tab and the line ends, DEL, NEL and the Unicode line and paragraph separators: no plain frontmatter has them.
 const UNSAFE_CHARACTER = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0085\u2028\u2029]/;
 const BLANK_OR_COMMENT = /^[ \t]*(?:#.*)?$/;
+const OUTER_BLANKS = /^[ \t]+|[ \t]+$/g; // the only blanks YAML drops around a plain value
 const INDENT = /^[ \t]*/;
 const KEY_LINE = /^([A-Za-z_][A-Za-z0-9_-]*):(?: (.*))?$/;
 const SEQUENCE_ITEM = /^-(?: |$)/; // `- item`: YAML lets a list stand at its key's own indent when the key line has no value
@@ -87,7 +94,7 @@ function keyLines(text) {
     }
     const key = lead.length === indent ? KEY_LINE.exec(line.slice(indent)) : null;
     if (!key) return undefined;
-    const value = (key[2] ?? '').trim();
+    const value = (key[2] ?? '').replace(OUTER_BLANKS, ''); // not trim(): YAML keeps a no-break or an ideographic space in the value
     found.push({ key: key[1], value, continued: false, valueBelow: value === '' || value.startsWith('#') });
   }
   return found;

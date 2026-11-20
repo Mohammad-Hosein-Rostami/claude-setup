@@ -111,4 +111,6 @@ export const FRONTMATTER_ROWS = [
   silent('P', 'maxTurns below another key', withFrontmatter('name: notes\ndescription: x\nlimits:\n  maxTurns: 5\n  name: security-auditor')),
   row('S3r3', ['check by hand'], 'a look-alike name that caps turns: no delete advice, since "check by hand" means edit nothing', withFrontmatter('name: Reviewer\ndescription: x\nmaxTurns: 5'),
     { byHand: 1, items: [`${FILE} (maxTurns 5, looks like reviewer: check by hand)`] }),
+  notPlain('R3-3', 'a no-break space before the name: YAML keeps it, so the agent has another name', `name: ${NO_BREAK_SPACE}security-auditor\ndescription: x\nmaxTurns: 5`),
+  notPlain('R3-3', 'an ideographic space before the name', `name: ${IDEOGRAPHIC_SPACE}security-auditor\ndescription: x`),
 ];

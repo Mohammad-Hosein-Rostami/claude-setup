@@ -45,6 +45,8 @@ test('plainFrontmatter: the name and the maxTurns of plain key lines, exactly', 
   assert.deepEqual(plainFrontmatter('maxTurns: -1\n'), plain('', 'maxTurns set'));
   assert.deepEqual(plainFrontmatter('maxTurns:\n'), plain('', 'maxTurns set'));
   assert.deepEqual(plainFrontmatter('maxTurns: "8" # a cap\n'), plain('', 'maxTurns 8'));
+  assert.deepEqual(plainFrontmatter('maxTurns: 8#x\n'), plain('', 'maxTurns set'), 'a # without a space before it starts no comment');
+  assert.deepEqual(plainFrontmatter('name: \t runner \t\n'), plain('runner'), 'spaces and tabs around a value are dropped');
   assert.deepEqual(plainFrontmatter(''), plain(''));
   assert.deepEqual(plainFrontmatter('# only a comment\n\n'), plain(''));
   assert.deepEqual(plainFrontmatter('name:\ndescription: x'), plain(''), 'a name key without a value: no name');
@@ -79,6 +81,7 @@ test('plainFrontmatter: anything YAML could read another way is not plain', () =
     'name: r\u00fcnner', 'name: "r\u00fcnner"', 'description: "open\nname: runner"', "description: 'open\nname: runner", 'description: "x" y\nname: runner',
     'description: x\u0000\nname: runner', 'description: x\u000cname: runner', `description: x${String.fromCharCode(0x85)}name: runner`, `description: x${String.fromCharCode(0x2029)}name: runner`,
     'plain text', 'key', '%YAML 1.2', '...', 'n\u00e4me: runner', '9name: runner',
+    `name: ${String.fromCharCode(0xa0)}runner`, `name: runner${String.fromCharCode(0x3000)}`, `name: ${String.fromCharCode(0xfeff)}runner`, // blanks YAML keeps (round 3, R3-3)
   ];
   for (const text of notPlain) assert.deepEqual(plainFrontmatter(text), NOT_PLAIN, JSON.stringify(text));
 });
