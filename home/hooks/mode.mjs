@@ -1,7 +1,7 @@
 // Setup-mode hook (normal | medium | high | extra-high | ultra-high). One script, dispatches on `hook_event_name`:
 //   SessionStart         -> prints the active mode, the lead-only rules (modes/_lead.md; nothing when missing) and the
 //                           mode's playbook (plus a lead note when an extra-high / ultra-high session was not launched
-//                           with `ccm <mode>` or its model does not match; a line when the project's agent files set maxTurns, shadow the owner's agents or cannot be judged (lib/project-agents.mjs); on `compact`, lib/compact-notes.mjs lines incl. the Standing rules re-read and backfill, the status file to re-read); prunes state.
+//                           with `ccm <mode>` or its model does not match; a line when the project's agent files set maxTurns, shadow the owner's agents or cannot be judged (lib/project-agents.mjs, run in a child process with a 2 s limit by lib/project-agents-timed.mjs: when it fails the line says "not checked" and everything else is still printed); on `compact`, lib/compact-notes.mjs lines incl. the Standing rules re-read and backfill, the status file to re-read); prunes state.
 //   UserPromptExpansion  -> for `/mode <m>`: records the mode for this session, prints the playbook (plus a lead note
 //                           when the switch moves the lead to or from Opus max / Fable high).
 //   UserPromptSubmit     -> one reminder line when the mode is not medium, plus a once-per-session "/clear or new session" line (lib/big-context.mjs).
@@ -24,7 +24,7 @@ import { pathToFileURL } from 'node:url';
 import { bigContextNote } from './lib/big-context.mjs';
 import { compactNotes } from './lib/compact-notes.mjs';
 import { leadNote } from './lib/lead-note.mjs';
-import { projectAgentNote } from './lib/project-agents.mjs';
+import { timedProjectAgentNote } from './lib/project-agents-timed.mjs';
 
 export { leadNote };
 
@@ -199,14 +199,26 @@ async function startMode(source, sessionId, getProcKey) {
   return (source === 'resume' && (await readStateMode(sessionId))) || DEFAULT_MODE;
 }
 
-async function onSessionStart(input, sessionId, getProcKey) {
+/**
+ * Everything the SessionStart event prints; it also saves the session's mode.
+ * @param {object} input - the hook input (`source`, `model`, `cwd`, `transcript_path`).
+ * @param {string | undefined} sessionId - the checked session id.
+ * @param {() => string | undefined} getProcKey - from lazyProcessKey().
+ * @param {{ script?: string, timeoutMs?: number }} [agentNoteOptions] - for tests: see timedProjectAgentNote.
+ * @returns {Promise<string>} the text for stdout.
+ */
+export async function sessionStartText(input, sessionId, getProcKey, agentNoteOptions) {
   const current = await startMode(input.source, sessionId, getProcKey);
   await saveMode(current, [sessionId, getProcKey()]);
   const launchedAs = process.env.CLAUDE_MODE ?? '';
   const note = leadNote({ mode: current, model: input.model, launchedAs });
   const leadRules = await readLeadRules();
-  const agentNote = projectAgentNote(input.cwd, join(homedir(), '.claude', 'agents'));
-  console.log(`Mode: ${current} (launched as ${isMode(launchedAs) ? launchedAs : 'default'})\n\n${leadRules ? `${leadRules}\n\n` : ''}${await readPlaybook(current)}${note ? `\n\n${note}` : ''}${agentNote ? `\n\n${agentNote}` : ''}${input.source === 'compact' ? `\n\n${await compactNotes(stateDir(), sessionId, input.transcript_path)}` : ''}`);
+  const agentNote = timedProjectAgentNote(input.cwd, join(homedir(), '.claude', 'agents'), agentNoteOptions);
+  return `Mode: ${current} (launched as ${isMode(launchedAs) ? launchedAs : 'default'})\n\n${leadRules ? `${leadRules}\n\n` : ''}${await readPlaybook(current)}${note ? `\n\n${note}` : ''}${agentNote ? `\n\n${agentNote}` : ''}${input.source === 'compact' ? `\n\n${await compactNotes(stateDir(), sessionId, input.transcript_path)}` : ''}`;
+}
+
+async function onSessionStart(input, sessionId, getProcKey) {
+  console.log(await sessionStartText(input, sessionId, getProcKey));
   await pruneState();
 }
 

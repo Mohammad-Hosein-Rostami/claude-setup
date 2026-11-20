@@ -14,7 +14,8 @@
 // Bounded work: at most MAX_WALKED_ENTRIES entries are looked at and at most MAX_AGENT_FILES files read (AGENT_HEAD_BYTES of each),
 // over all the folders that share one budget, and subfolders are entered at most MAX_FOLDER_DEPTH levels down (the walk calls
 // itself once per level). Every entry past a limit is still reported, by name only, as 'unread' or 'folder-not-read', so the note
-// can count it. The listing of one folder itself is not bounded (100,000 names measured 123 ms, 500,000 several seconds).
+// can count it. The listing of one folder itself is not bounded (100,000 names measured 123 ms, 500,000 several seconds): the
+// SessionStart hook therefore runs the whole note in a child process with a timeout (project-agents-timed.mjs).
 import { constants, lstatSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readFileHead } from './agent-brief.mjs';

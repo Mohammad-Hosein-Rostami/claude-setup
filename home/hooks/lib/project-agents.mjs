@@ -10,6 +10,7 @@
 //   eZ(): H=[built-in,plugin,userSettings,projectSettings,flagSettings,policySettings];for(...)z.set(Q.agentType,Q)
 //     a later source replaces an earlier one under the exact same name, so a project agent replaces a personal and a built-in one;
 //     names are compared as they are (probe: `Security-Auditor` is listed beside `security-auditor`).
+//   Re-read in 2.1.329: the same order and `z.set(Q.agentType,Q)`; project agents of additional directories now come first.
 // Principle: the note is exact where it can be, says "check by hand" for everything else Claude Code could load, and is silent only
 // for a file Claude Code itself does not load (no frontmatter, no closing ---, no `name`). It never states a guess as a fact:
 // - "Shadowed personal agents" and "shadows the ... agent" come only from the exact `name` of a plain frontmatter.
@@ -18,6 +19,7 @@
 // - A frontmatter that is not plain, or longer than the head that is read, is one item "check by hand" with no other claim. So is a
 //   name that only looks like one of the owner's (other case, spaces), and a maxTurns outside a git repository.
 // - A file that is not read (a link, a hard link, past a limit) is checked by its base name only and called "named like".
+// The SessionStart hook does not call this file in its own process: project-agents-timed.mjs runs it in a child with a timeout.
 // Invariants: read-only; never throws; bounded work (see agent-file-walk.mjs and agent-folders.mjs). The check of a folder and the
 // reads are separate calls: a folder swapped for a link between them is not caught. Personal agents are the `*.md` base names of the
 // personal folder itself (in this setup a file is named like its agent; tests/agent-files.test.mjs).
