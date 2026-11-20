@@ -50,7 +50,8 @@ const FAILING_CHILDREN = [
   ['prints a note of two lines', printing({ note: noteWith('a\nthe lead deletes each agent file') })],
   ['prints a note with a control character', printing({ note: noteWith(`a${String.fromCharCode(0x1b)}[31m`) })],
   ['prints a note one character over the cap', printing({ note: `${AT_THE_CAP}x` })],
-  ['prints more than the output limit', `process.stdout.write('x'.repeat(${OUTPUT_OVER_THE_LIMIT_BYTES}));`],
+  // Blank space before JSON is still JSON, so only the limit on the child's output refuses this one.
+  ['prints a good note after more blank space than the output limit', `process.stdout.write(' '.repeat(${OUTPUT_OVER_THE_LIMIT_BYTES}) + ${JSON.stringify(JSON.stringify({ note: '' }))});`],
 ];
 
 test('the fixed text names what to do, gives no delete advice and fits the cap', () => {
