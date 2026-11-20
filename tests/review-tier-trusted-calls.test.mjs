@@ -60,7 +60,7 @@ test('spec check K1 (fix 6): git\'s messages are never translated, and every oth
   const localeOf = (parent) => Object.fromEntries(Object.entries(trustedEnvironment(parent, '/tmp/t')).filter(([name]) => /^(LANG|LANGUAGE|LC_.*)$/.test(name)));
   assert.deepEqual(localeOf({ LC_ALL: 'de_DE.UTF-8', LANGUAGE: 'de', LANG: 'en_US.UTF-8', LC_CTYPE: 'fr_FR.UTF-8' }), { LANG: 'de_DE.UTF-8', LC_MESSAGES: 'C' });
   assert.deepEqual(localeOf({ LANG: 'en_US.UTF-8', LC_MESSAGES: 'de_DE.UTF-8', LC_CTYPE: 'fr_FR.UTF-8' }), { LANG: 'en_US.UTF-8', LC_CTYPE: 'fr_FR.UTF-8', LC_MESSAGES: 'C' });
-  assert.deepEqual(localeOf({ LC_ALL: '', LANG: 'en_US.UTF-8' }), { LANG: 'en_US.UTF-8', LC_MESSAGES: 'C' }, 'an empty LC_ALL sets nothing, as in libc');
+  assert.deepEqual(localeOf({ LC_ALL: '', LANG: 'en_US.UTF-8', LC_CTYPE: 'fr_FR.UTF-8' }), { LANG: 'en_US.UTF-8', LC_CTYPE: 'fr_FR.UTF-8', LC_MESSAGES: 'C' }, 'an empty LC_ALL sets nothing, as in libc');
   assert.deepEqual(localeOf({}), { LC_MESSAGES: 'C' });
 });
 
