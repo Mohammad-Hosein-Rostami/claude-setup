@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // CLI of `review-tier`: reads a git range and says which reviews to run together (agent, model, effort, lens, brief, plan).
-// Usage: review-tier.mjs [<range>] [--landing] [--delta <reviewed-sha> --prior <findings-file> --lane-classes <previous-round-json>]
-//                        [--add-class <c>]... [--base <b>] [--json]
+// Usage: review-tier.mjs [<range>] [--landing] [--delta <reviewed-sha> (--prior <findings-file> --prior-sha256 <hex>)...
+//                        --lane-classes <previous-round-json>] [--add-class <c>]... [--base <b>] [--json]
 //   --base <b>       where the lane starts: a local branch (read as refs/heads/<b>, never a tag of that name) or a full sha. Needed when
 //                    more than one of main, master, develop exists (exit 2 without it)
 //   <range>          `a..b` or `a...b`; default `<base sha>...HEAD`, the base being the one of main, master, develop that is a local branch
@@ -10,9 +10,12 @@
 //                    a rewritten lane that dropped or changed a reviewed patch: the whole lane and what the rewrite took out),
 //                    with the set of the whole lane: the tool reads the lane range (<base>...HEAD) itself and always gives the landing
 //                    set, so the round is never lighter than the lane's review. Needs --prior and --lane-classes. An empty delta is exit 2
-//   --prior <file>   with --delta: the review report of the previous round, as its reviewers wrote it. The tool prints its sha256 and the
-//                    number of blocking and should-fix findings in it; every brief tells the reviewer to check the hash and to verify each
-//                    finding itself. The path is pasted into every brief: one that is not plain, or a file that cannot be read, is exit 2
+//   --prior <file>   with --delta: a review report of the previous round, as its reviewer wrote it; repeat it for each report (reviewer,
+//                    security). The tool prints its sha256, the number of blocking and should-fix findings in it and their ids; every
+//                    brief tells the reviewer to check the hash and to verify each finding itself. The path is pasted into every brief:
+//                    one that is not plain, or a file that cannot be read, is exit 2
+//   --prior-sha256   one after each --prior, in the same order: the sha256 the lead recorded when the reviewer returned that report.
+//                    A missing one, or a file whose hash differs (it was edited after the review), is exit 2 naming the file
 //   --lane-classes   the `--json` of the previous round: adds the classes it holds (a class the lead added by hand, a class of a line an
 //                    earlier fix removed); it can only raise the set. Required with --delta (exit 2 without it): once a fix has removed
 //                    the lines that gave a class, only the round before still knows it
@@ -27,7 +30,7 @@ import { UsageError, gitText } from '../git-tidy/lib/git.mjs';
 import { CLASS_TIER, LOCK_TAG, RACE_TAG } from './tiers.mjs';
 import { MAX_READING, baseOf, checkRange, newFileReader, readDelta, readRange, requiredReadingFor } from './lib/diff.mjs';
 import { appendLog } from './lib/log.mjs';
-import { readPrior } from './lib/prior.mjs';
+import { readPriors } from './lib/prior.mjs';
 import { buildReport, formatJson, formatText, logRecord } from './lib/report.mjs';
 
 const EXIT_GIT_FAILED = 1;
@@ -38,7 +41,8 @@ const MAX_LANE_FILE_BYTES = 4 << 20;
 const PLAIN_PATH = /^(?:[A-Za-z]:[\\/]|\/)[\w@+=.,~/\\-]+$/;
 const MAX_ECHOED_PATH_CHARS = 120; // a refused path is quoted in the error, cut to this length
 const KNOWN_NAMES = new Set([...Object.keys(CLASS_TIER), LOCK_TAG, RACE_TAG]);
-const USAGE = 'usage: review-tier.mjs [<range>] [--landing] [--delta <sha> --prior <file> --lane-classes <previous-round-json>] [--add-class <c>]... [--base <b>] [--json]';
+const USAGE = 'usage: review-tier.mjs [<range>] [--landing] [--delta <sha> (--prior <file> --prior-sha256 <hex>)... --lane-classes <previous-round-json>] [--add-class <c>]... [--base <b>] [--json]';
+const SHA256 = /^[0-9a-f]{64}$/;
 
 function valueOf(argv, index, flag) {
   const value = argv[index + 1];
@@ -47,13 +51,14 @@ function valueOf(argv, index, flag) {
 }
 
 function parseArgs(argv) {
-  const options = { range: null, landing: false, json: false, delta: null, prior: null, laneClasses: null, addClasses: [], base: null };
+  const options = { range: null, landing: false, json: false, delta: null, priors: [], priorHashes: [], laneClasses: null, addClasses: [], base: null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--landing') options.landing = true;
     else if (arg === '--json') options.json = true;
     else if (arg === '--delta') options.delta = valueOf(argv, i++, arg);
-    else if (arg === '--prior') options.prior = resolve(valueOf(argv, i++, arg));
+    else if (arg === '--prior') options.priors.push(resolve(valueOf(argv, i++, arg)));
+    else if (arg === '--prior-sha256') options.priorHashes.push(valueOf(argv, i++, arg).toLowerCase());
     else if (arg === '--lane-classes') options.laneClasses = valueOf(argv, i++, arg);
     else if (arg === '--base') options.base = valueOf(argv, i++, arg);
     else if (arg === '--add-class') options.addClasses.push(valueOf(argv, i++, arg));
@@ -64,14 +69,26 @@ function parseArgs(argv) {
   for (const name of options.addClasses) {
     if (!Object.hasOwn(CLASS_TIER, name)) throw new UsageError(`unknown class "${name}" for --add-class (one of: ${Object.keys(CLASS_TIER).join(', ')})`);
   }
-  if (options.delta !== null && options.range !== null) throw new UsageError(`--delta names its own range: give a range or --delta, not both. ${USAGE}`);
-  if (options.delta !== null && options.prior === null) throw new UsageError(`--delta needs --prior <findings-file>: a fix round names the review report of the round before (a lane's first review reads the whole range). ${USAGE}`);
-  if (options.delta !== null && options.laneClasses === null) throw new UsageError(`--delta needs --lane-classes <previous-round-json>: the --json output of the round before (the lane's first review, then each fix round), the only record of a class whose lines a fix removed; run every round once with --json and keep the file. ${USAGE}`);
-  if (options.prior !== null) {
-    if (options.delta === null) throw new UsageError(`--prior belongs to a --delta round. ${USAGE}`);
-    if (!PLAIN_PATH.test(options.prior)) throw new UsageError(`--prior must be a plain path (letters, digits and _@+=.,~/- only: no spaces, quotes or newlines; copy the report to a path without them), because it is pasted into every brief: ${JSON.stringify(options.prior.slice(0, MAX_ECHOED_PATH_CHARS))}`);
-  }
+  checkFixRound(options);
   return options;
+}
+
+/** The contract of a fix round: `--delta` names its own range, the report or reports of the round before with their recorded hashes, and that round's JSON. */
+function checkFixRound({ delta, range, priors, priorHashes, laneClasses }) {
+  if (delta === null) {
+    if (priors.length + priorHashes.length > 0) throw new UsageError(`--prior and --prior-sha256 belong to a --delta round. ${USAGE}`);
+    return;
+  }
+  if (range !== null) throw new UsageError(`--delta names its own range: give a range or --delta, not both. ${USAGE}`);
+  if (priors.length === 0) throw new UsageError(`--delta needs --prior <findings-file>: a fix round names the review report of the round before (a lane's first review reads the whole range). ${USAGE}`);
+  if (laneClasses === null) throw new UsageError(`--delta needs --lane-classes <previous-round-json>: the --json output of the round before (the lane's first review, then each fix round), the only record of a class whose lines a fix removed; run every round once with --json and keep the file. ${USAGE}`);
+  for (const path of priors) {
+    if (!PLAIN_PATH.test(path)) throw new UsageError(`--prior must be a plain path (letters, digits and _@+=.,~/- only: no spaces, quotes or newlines; copy the report to a path without them), because it is pasted into every brief: ${JSON.stringify(path.slice(0, MAX_ECHOED_PATH_CHARS))}`);
+  }
+  if (new Set(priors).size !== priors.length) throw new UsageError('the same --prior file is named twice: name each report of the round before once');
+  // A report with no recorded hash is one nobody can tell from a copy the fix's writer edited (security S1).
+  if (priorHashes.length !== priors.length) throw new UsageError(`each --prior needs its own --prior-sha256 <hex> after it, in the same order (the sha256 the lead recorded when the reviewer returned that report): ${priors.length} --prior, ${priorHashes.length} --prior-sha256${priorHashes.length < priors.length ? `; none for ${priors[priorHashes.length]}` : ''}`);
+  priorHashes.forEach((hash, index) => { if (!SHA256.test(hash)) throw new UsageError(`--prior-sha256 for ${priors[index]} is not a sha256 (64 hex digits)`); });
 }
 
 /**
@@ -120,7 +137,8 @@ function run(options) {
   const isDelta = options.delta !== null;
   const { endRevision, ...read } = isDelta ? deltaRound(top, options) : wholeRange(top, options);
   const report = buildReport({
-    ...read, readNewFile: newFileReader(top, endRevision), addClasses: options.addClasses, prior: options.prior === null ? null : readPrior(options.prior),
+    ...read, readNewFile: newFileReader(top, endRevision), addClasses: options.addClasses,
+    prior: isDelta ? readPriors(options.priors.map((path, index) => ({ path, sha256: options.priorHashes[index] }))) : null,
     // A fix round is the last review of its lines before land, and the tool cannot know which flags the lane's first review had: it
     // always gets the landing set, the strongest the lane can have had.
     landing: options.landing || isDelta, laneClasses: earlier?.fileClasses ?? null, earlierClasses: earlier?.classes ?? [],

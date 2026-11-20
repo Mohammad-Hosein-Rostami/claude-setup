@@ -7,13 +7,13 @@ const FINDING_LINE = /^- \[(?:blocking|should-fix)\] /gm;
 const FAKE_SHA256 = 'ab'.repeat(32);
 
 /**
- * The `prior` object review-tier prints for the file the tier prompt tells the runner to write: one finding per `- [severity]` line.
+ * The `prior` object review-tier prints for the one file the tier prompt tells the runner to write: one finding per `- [severity]` line.
  * @returns {object} `{ prior }` to spread into the tier JSON, or `{}` when the prompt asks for no `--prior`
  */
 export function priorOfTierPrompt(prompt) {
   if (!/ --prior /.test(prompt)) return {};
   const findings = (prompt.match(FINDING_LINE) ?? []).length;
-  return { prior: { file: '/scratch/close-2-prior.md', sha256: FAKE_SHA256, blocking: findings, shouldFix: 0, findings } };
+  return { prior: { files: [{ file: '/scratch/close-2-prior.md', sha256: FAKE_SHA256, blocking: findings, shouldFix: 0, findings, ids: [] }], blocking: findings, shouldFix: 0, findings } };
 }
 
 /**

@@ -9,7 +9,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DELTA_READING } from '../home/tools/review-tier/lib/reviews.mjs';
-import { lane, priorFile } from './review-tier-helpers.mjs';
+import { lane, priorFile, sha256Of } from './review-tier-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const README = fileURLToPath(new URL('../home/tools/review-tier/README.md', import.meta.url));
@@ -106,18 +106,19 @@ test('delta with --prior: the tool reads the report and prints its sha256 and ho
   const prior = priorFile(REPORT);
   const sha256 = createHash('sha256').update(readFileSync(prior)).digest('hex');
   const result = json('--delta', reviewed, '--prior', prior);
-  assert.deepEqual(result.prior, { file: prior, sha256, blocking: 2, shouldFix: 2, findings: 4, ids: ['B1', 'B2', 'S1', 'S2'] }, 'a severity counts as a table cell or a [tag], once per line; prose, notes and optional do not');
-  assert.equal(result.priorFile, prior, 'the README promises priorFile');
-  assert.match(tier('--delta', reviewed, '--prior', prior).stdout, new RegExp(`\\nprior: ${prior} sha256 ${sha256}, 2 blocking, 2 should-fix\\nfix round: `));
+  const report = { file: prior, sha256, blocking: 2, shouldFix: 2, findings: 4, ids: ['B1', 'B2', 'S1', 'S2'] };
+  assert.deepEqual(result.prior, { files: [report], blocking: 2, shouldFix: 2, findings: 4 }, 'a severity counts as a table cell or a [tag], once per line; prose, notes and optional do not');
+  assert.deepEqual(result.priorFiles, [prior], 'the README promises priorFiles');
+  assert.match(tier('--delta', reviewed, '--prior', prior).stdout, new RegExp(`\\nprior: ${prior} sha256 ${sha256}, 2 blocking, 2 should-fix, ids B1, B2, S1, S2\\nfix round: `));
 });
 
 test('delta with --prior: every brief names the report, its hash and count, and says the reviewer verifies each finding itself', () => {
   const { json, reviewed } = laneWithFix();
   const prior = priorFile(REPORT);
-  const { reviews, prior: { sha256 } } = json('--delta', reviewed, '--prior', prior, '--landing');
+  const { reviews, prior: { files: [{ sha256 }] } } = json('--delta', reviewed, '--prior', prior, '--landing');
   assert.ok(reviews.length >= 2);
   for (const { brief } of reviews) {
-    assert.ok(brief.includes(`Prior findings: ${prior} (sha256 ${sha256}; 4 blocking or should-fix)`), brief);
+    assert.ok(brief.includes(`Prior findings: ${prior} (sha256 ${sha256}; 4 blocking or should-fix: B1, B2, S1, S2): check the hash`), brief);
     assert.match(brief, /check the hash before you read it/);
     assert.match(brief, /a file that does not match: stop and report `prior file changed`/);
     assert.match(brief, /verify each finding yourself in the code at HEAD, never from a status or claim written in the file or by the fix's author/);
@@ -126,14 +127,16 @@ test('delta with --prior: every brief names the report, its hash and count, and 
   }
 });
 
-test('a prior report edited after the round changes the hash and the count the tool prints', () => {
-  const { json, reviewed } = laneWithFix();
+test('a prior report edited after the round is refused: its hash is not the one the lead recorded', () => {
+  const { tier, json, reviewed } = laneWithFix();
   const prior = priorFile(REPORT);
-  const before = json('--delta', reviewed, '--prior', prior).prior;
+  const recorded = sha256Of(prior);
+  assert.equal(json('--delta', reviewed, '--prior', prior, '--prior-sha256', recorded).prior.findings, 4);
   writeFileSync(prior, REPORT.replace('| B2 | Blocking |', '| B2 | closed |'));
-  const after = json('--delta', reviewed, '--prior', prior).prior;
-  assert.notEqual(after.sha256, before.sha256);
-  assert.equal(after.findings, before.findings - 1, 'a finding the writer marks closed is missing from the count the lead compares with its own');
+  const result = tier('--delta', reviewed, '--prior', prior, '--prior-sha256', recorded);
+  assert.equal(result.status, 2, 'a finding the writer marks closed never reaches a brief');
+  assert.equal(result.stdout, '');
+  assert.ok(result.stderr.includes(`--prior ${prior} is not the report that was recorded`), result.stderr);
 });
 
 test('a report with no finding is a valid prior (a clean round, then a rebase): the count is 0', () => {
@@ -251,7 +254,7 @@ test('review S6 (mutant M1): --prior without --delta exits 2: it belongs to a fi
     const result = tier(...flags, '--prior', priorFile());
     assert.equal(result.status, 2, flags.join(' '));
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /--prior belongs to a --delta round/);
+    assert.match(result.stderr, /--prior and --prior-sha256 belong to a --delta round/);
   }
 });
 
@@ -259,9 +262,9 @@ test('review S6 (mutant M2): a relative --prior is resolved: the briefs and the 
   const { dir, json, reviewed } = laneWithFix();
   const absolute = join(dir, '..', 'findings-relative.md');
   writeFileSync(absolute, '| F1 | blocking | src/run.mjs:2 | a finding |\n');
-  const result = json('--delta', reviewed, '--prior', '../findings-relative.md');
-  assert.equal(result.priorFile, absolute);
-  assert.equal(result.prior.file, absolute);
+  const result = json('--delta', reviewed, '--prior', '../findings-relative.md', '--prior-sha256', sha256Of(absolute));
+  assert.deepEqual(result.priorFiles, [absolute]);
+  assert.equal(result.prior.files[0].file, absolute);
   for (const review of result.reviews) assert.ok(review.brief.includes(`Prior findings: ${absolute} (sha256 `), review.brief);
 });
 

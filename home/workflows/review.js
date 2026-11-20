@@ -109,12 +109,12 @@ const outcome = (status, text, extra = {}) => ({ status, rounds: run.round + 1, 
 
 const tierPrompt = (known, carried) => {
   const priorFile = `\${TMPDIR:-/tmp}/${slug(args.row)}-prior-<sha8>.md`
-  const command = [`node ~/.claude/tools/review-tier/review-tier.mjs ${run.deltaOf ? `--delta ${run.deltaOf} --prior <the prior findings file>` : RANGE}`, args.landing || args.audit ? '--landing' : '',
+  const command = [`node ~/.claude/tools/review-tier/review-tier.mjs ${run.deltaOf ? `--delta ${run.deltaOf} --prior <the prior findings file> --prior-sha256 <its sha256>` : RANGE}`, args.landing || args.audit ? '--landing' : '',
     ...(args.addClasses ?? []).map((name) => `--add-class ${name}`), run.laneClasses ? `--lane-classes ${run.laneClasses}` : '', '--json'].filter(Boolean).join(' ')
   const tierFile = `\${TMPDIR:-/tmp}/${slug(args.row)}-tier-<sha8>.json`
   return `Work in ${run.worktree} (lane ${args.branch}, base ${args.base}): cd there first, review-tier reads the git repository of its working folder. The reviewed sha is its HEAD (git rev-parse HEAD).\n`
     + `Add a detached review worktree of that sha outside every repo folder: git -C ${args.repo} worktree add --detach <scratch>/${slug(args.row)}-<sha8> <sha> (<sha8> is the first 8 characters of the sha). When that folder already exists, a killed run left it: first git -C ${args.repo} worktree remove --force <it> and git -C ${args.repo} worktree prune.\n`
-    + `${run.deltaOf && !known ? `First write the prior findings file ${priorFile} (give review-tier its absolute path) with exactly these ${carried.length} lines${carried.length === 0 ? ' (an empty file)' : ''}, nothing added or left out:\n${carried.map((item) => `${priorText(item)}\n`).join('')}` : ''}`
+    + `${run.deltaOf && !known ? `First write the prior findings file ${priorFile} (give review-tier its absolute path) with exactly these ${carried.length} lines${carried.length === 0 ? ' (an empty file)' : ''}, nothing added or left out:\n${carried.map((item) => `${priorText(item)}\n`).join('')}Then take the sha256 of the file you wrote (shasum -a 256 <file>, or sha256sum <file>): review-tier needs it as --prior-sha256.\n` : ''}`
     + `${known ? `Use this review-tier JSON as it is (report exit 0): ${JSON.stringify(known)}` : `Run it from ${run.worktree}: ${command}\nReport its exit code as exit and its JSON output as tier.`}\n`
     + `Write the tier JSON (with its fileClasses) to ${tierFile}. Never write over ${run.laneClasses ?? 'an existing file'}: when the name is taken, add -2, -3 until it is free. `
     + `Also report baseSha: ${args.audit ? args.audit.base : `git merge-base ${args.base} HEAD (full sha)`}. `
@@ -231,7 +231,7 @@ while (true) {
   const results = await pipeline(
     reviews,
     // A delta round: every lens verifies every prior finding (the file holds them all). Any other round: a lens re-checks the items it found.
-    (review) => agent(reviewPrompt(review, sha, reviewWorktree, carried.filter((item) => isDelta || sameOrigin(originOf(review), item.origin ?? DEFAULT_ORIGIN)), isDelta ? tier.prior : null), { label: `${args.row}:review:${slug(review.lens)}`, phase: 'Review', agentType: lensAgentTypeOf(review), ...specOf(review), schema: FINDINGS }),
+    (review) => agent(reviewPrompt(review, sha, reviewWorktree, carried.filter((item) => isDelta || sameOrigin(originOf(review), item.origin ?? DEFAULT_ORIGIN)), isDelta ? { ...tier.prior.files[0], findings: tier.prior.findings } : null), { label: `${args.row}:review:${slug(review.lens)}`, phase: 'Review', agentType: lensAgentTypeOf(review), ...specOf(review), schema: FINDINGS }),
     verify,
   )
   if (results.some((entry) => entry === null || entry.dead)) {
@@ -280,10 +280,11 @@ function problemWithTier(prepared) {
   return null
 }
 
-/** Why the `prior` object of a delta round's tier cannot be trusted, or null: review-tier must have counted exactly the findings the script listed (D3). */
+/** Why the `prior` object of a delta round's tier cannot be trusted, or null: review-tier must have read one file and counted exactly the findings the script listed (D3). */
 function problemWithPrior(prior, carriedCount) {
-  if (prior?.findings !== carriedCount) return `the prior findings file holds ${prior?.findings ?? 'no counted'} findings, the round carries ${carriedCount}: the file is not the script's list`
-  if (!SAFE_PATH.test(prior.file ?? '') || !/^[0-9a-f]{64}$/.test(prior.sha256 ?? '')) return `the prior findings file ${prior.file} or its sha256 is not a plain value`
+  const report = Array.isArray(prior?.files) && prior.files.length === 1 ? prior.files[0] : null
+  if (report === null || prior.findings !== carriedCount) return `the prior findings file holds ${report === null ? 'no counted' : prior.findings} findings, the round carries ${carriedCount}: the file is not the script's list`
+  if (!SAFE_PATH.test(report.file ?? '') || !/^[0-9a-f]{64}$/.test(report.sha256 ?? '')) return `the prior findings file ${report.file} or its sha256 is not a plain value`
   return null
 }
 

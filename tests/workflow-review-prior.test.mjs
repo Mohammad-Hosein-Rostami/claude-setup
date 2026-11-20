@@ -44,11 +44,12 @@ test('a delta round hands review-tier the prior findings as a file: one line per
   const run = await deltaRound();
   const [first, second] = callsOf(run, 'close:2:tier');
   assert.doesNotMatch(first.prompt, /--prior/, 'round 0 reads the whole range: no prior file');
-  assert.match(second.prompt, /review-tier\.mjs --delta a1b2c31 --prior <the prior findings file> --lane-classes \/t0\.json --json/);
+  assert.match(second.prompt, /review-tier\.mjs --delta a1b2c31 --prior <the prior findings file> --prior-sha256 <its sha256> --lane-classes \/t0\.json --json/);
   assert.match(second.prompt, /write the prior findings file \$\{TMPDIR:-\/tmp\}\/close-2-prior-<sha8>\.md \(give review-tier its absolute path\) with exactly these 2 lines/);
   assert.ok(second.prompt.includes('- [blocking] O1 a.mjs:3: problem O1\n'), second.prompt);
   assert.ok(second.prompt.includes('- [should-fix] F1 a.mjs:3: first line second line\n'), 'a finding stays one line, so the tool counts it once');
   assert.doesNotMatch(second.prompt, /\[fixed\]|\[open\]/, 'the file holds the findings, not the fix agent\'s claim');
+  assert.match(second.prompt, /Then take the sha256 of the file you wrote \(shasum -a 256 <file>, or sha256sum <file>\): review-tier needs it as --prior-sha256\./);
 });
 
 test('every lens of a delta round gets every prior finding, the file with its hash and count, and is asked for the prior line', async () => {
@@ -98,7 +99,9 @@ test('with fix:false a delta round with an open prior count is not clean either'
 });
 
 test('a tier whose prior count is not the number of findings the round carries ends the run failed before any lens starts', async () => {
-  for (const tierPrior of [{}, { prior: { file: '/scratch/close-2-prior.md', sha256: 'ab'.repeat(32), blocking: 1, shouldFix: 0, findings: 1 } }, { prior: { file: '/scratch/x y.md', sha256: 'ab'.repeat(32), findings: 2 } }, { prior: { file: '/scratch/p.md', sha256: 'nope', findings: 2 } }]) {
+  const reportOf = (file, sha256, findings) => ({ prior: { files: [{ file, sha256, findings }], findings } });
+  const twoFiles = { prior: { files: [{ file: '/scratch/a.md', sha256: 'ab'.repeat(32), findings: 1 }, { file: '/scratch/b.md', sha256: 'ab'.repeat(32), findings: 1 }], findings: 2 } };
+  for (const tierPrior of [{}, { prior: { file: '/scratch/p.md', sha256: 'ab'.repeat(32), findings: 2 } }, twoFiles, reportOf('/scratch/close-2-prior.md', 'ab'.repeat(32), 1), reportOf('/scratch/x y.md', 'ab'.repeat(32), 2), reportOf('/scratch/p.md', 'nope', 2)]) {
     let delta = false;
     const run = await deltaRoundWithTier(tierPrior, () => { delta = true; });
     assert.equal(run.result.status, 'failed', JSON.stringify(tierPrior));

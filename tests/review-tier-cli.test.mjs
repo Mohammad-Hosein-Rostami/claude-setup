@@ -24,7 +24,7 @@ test('CLI: a branch diff is classified; the report names paths and lines, the lo
   assert.equal(text.stdout.split('\n')[0], `review-tier: tier 2 (security, logic), 1 files, 2 changed lines, ${range}`);
   assert.match(text.stdout, /\nwhy:\n {2}security src\/run\.mjs:1\n/);
   assert.match(text.stdout, /\nrun together:\n- reviewer sonnet high, lens correctness: /);
-  assert.equal(text.stdout.trimEnd().split('\n').at(-1), 'fix round: node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --prior <findings-file> --lane-classes <previous-round-json>');
+  assert.equal(text.stdout.trimEnd().split('\n').at(-1), 'fix round: node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --prior <findings-file> --prior-sha256 <its-sha256> --lane-classes <previous-round-json>');
   assert.ok(!(text.stdout + JSON.stringify(result) + readFileSync(log, 'utf8')).includes(key));
   const logged = JSON.parse(readFileSync(log, 'utf8').split('\n')[0]);
   assert.deepEqual(Object.keys(logged), ['ts', 'repo', 'range', 'tier', 'classes', 'files', 'changedLines', 'landing', 'added']);

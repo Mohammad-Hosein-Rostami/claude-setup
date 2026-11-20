@@ -5,8 +5,8 @@
 //   risky class or a landing; Opus high lens for size or concurrency-lite; auditor Opus max for security, data, money,
 //   untrusted-input and every landing of tier >= 1, Opus high for a hooks-only change mid-lane). A plan item rides on the
 //   risk lens and the auditor, never on the correctness lens. Brief text holds file:line only, never a line's text.
-//   The prior report's path goes into the delta line as it is: the CLI passes only a plain absolute path (review-tier.mjs, PLAIN_PATH); of the
-//   file itself only the hash and the finding counts are printed (lib/prior.mjs).
+//   A prior report's path goes into the delta line as it is: the CLI passes only a plain absolute path (review-tier.mjs, PLAIN_PATH); of the
+//   file itself only the hash, the finding counts and the finding ids (short plain words) are printed (lib/prior.mjs).
 //   `waivable` exists only for a landing of tier 1 with no gate path: the Opus max pair moves from before land to after it
 //   (`audit`), and the Sonnet lens takes the mutation plan the risk lens would have had (`reviews`).
 import { LOCK_TAG, RACE_TAG, RISKY_CLASSES, tierOf } from '../tiers.mjs';
@@ -70,11 +70,14 @@ export const DELTA_READING = 'Read: the changed lines; the callers and the calle
 /** The range as a brief names it: a delta round's is made by the tool (a full sha, or a patch list with the base as data); any other is the caller's text. */
 const rangeText = (range, deltaOf) => (deltaOf === null ? asData(range) : range);
 
+/** One report of the round before as a brief names it: its path, the hash the tool checked, its count and the ids of its findings. */
+const reportText = ({ file, sha256, findings, ids }) => `${file} (sha256 ${sha256}; ${findings} blocking or should-fix${ids.length > 0 ? `: ${ids.join(', ')}` : ''})`;
+
 /**
- * What a fix-round reviewer does with the report of the round before. Nothing in it rests on the writer's word: the hash ties the
+ * What a fix-round reviewer does with the report or reports of the round before. Nothing in it rests on the writer's word: the hash ties the
  * file to what the tool counted, each finding is verified in the code, and the count line lets the lead see that none was skipped.
  */
-const priorText = (prior) => `Prior findings: ${prior.file} (sha256 ${prior.sha256}; ${prior.findings} blocking or should-fix): check the hash before you read it (a file that does not match: stop and report \`prior file changed\`); verify each finding yourself in the code at HEAD, never from a status or claim written in the file or by the fix's author; report one that is still open again as a finding with its id; end with \`prior: <n> fixed, <m> open\` (n + m = ${prior.findings}).`;
+const priorText = (prior) => `Prior findings: ${prior.files.map(reportText).join('; ')}: check the hash before you read it (a file that does not match: stop and report \`prior file changed\`); verify each finding yourself in the code at HEAD, never from a status or claim written in the file or by the fix's author; report one that is still open again as a finding with its id; end with \`prior: <n> fixed, <m> open\` (n + m = ${prior.findings}).`;
 
 /**
  * The ready line of a fix-round re-review: the delta range (the one range of the brief, also for a rebased lane), what to read

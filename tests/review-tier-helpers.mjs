@@ -1,11 +1,12 @@
 // Shared fixtures for the review-tier CLI tests: a throw-away lane branch, the CLI run in it, and a prior findings file.
-// Exports: CLI, lane(), priorFile(text), roundFile(report), printedFixRound(text, values).
+// Exports: CLI, lane(), priorFile(text), roundFile(report), sha256Of(path), printedFixRound(text, values).
 // Invariants: every repo and file lives in its own temp folder (makeTempDir); the CLI's log goes next to the repo, never to ~/.claude.
-//   `tier` and `json` complete a fix-round call (`--delta`) that names no `--lane-classes` with an EMPTY earlier round, so such a test
-//   shows what the tool reads from the lane by itself; `raw` runs the arguments exactly as given (the tests of the refusals use it).
+//   `tier` and `json` complete a fix-round call (`--delta`): each `--prior` gets the hash of the file as it is, and a call that names no
+//   `--lane-classes` gets an EMPTY earlier round, so such a test shows what the tool reads from the lane by itself; `raw` runs the arguments exactly as given (the tests of the refusals use it).
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLEAN_ENV, git, makeRepo } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -34,10 +35,24 @@ export function lane() {
   return { dir, log, raw, tier, json, write };
 }
 
-/** A fix-round call as a lead makes it: one that names no earlier round gets an empty one (it holds no class, so it adds nothing). */
+/**
+ * A fix-round call as a lead makes it: every `--prior <file>` with no `--prior-sha256` after it gets the hash of the file as it is now
+ * (the lead's record; a file that cannot be read gets a hash of zeros, the tool reports the read error first), and a call that
+ * names no earlier round gets an empty one (it holds no class, so it adds nothing).
+ */
 function asFixRound(args) {
-  if (!args.includes('--delta') || args.includes('--lane-classes')) return args;
-  return [...args, '--lane-classes', roundFile({ fileClasses: {}, classes: [] })];
+  if (!args.includes('--delta')) return args;
+  const completed = args.flatMap((arg, index) => (args[index - 1] === '--prior' && args[index + 1] !== '--prior-sha256' ? [arg, '--prior-sha256', sha256Of(arg)] : [arg]));
+  return args.includes('--lane-classes') ? completed : [...completed, '--lane-classes', roundFile({ fileClasses: {}, classes: [] })];
+}
+
+/** The sha256 of a file as a lead records it (lower-case hex); 64 zeros for a path that cannot be read. */
+export function sha256Of(path) {
+  try {
+    return createHash('sha256').update(readFileSync(resolve(path))).digest('hex');
+  } catch {
+    return '0'.repeat(64);
+  }
 }
 
 /** A round's `--json` report as a file in its own temp folder, for `--lane-classes`. */

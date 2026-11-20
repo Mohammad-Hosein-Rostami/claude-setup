@@ -1,6 +1,7 @@
-// Purpose: read the review report of the round before a fix round (`--prior`): its sha256 and how many blocking and should-fix
-//   findings it holds, so a reviewer can tell the file was not changed and a lead can tell no finding was taken out.
-// Exports: MAX_PRIOR_BYTES, countFindings(text), readPrior(path).
+// Purpose: read the review reports of the round before a fix round (`--prior`, one per report): each one's sha256, how many blocking
+//   and should-fix findings it holds and their ids, so a file changed after the review is refused (its hash is not the one the lead
+//   recorded, `--prior-sha256`), a reviewer can tell it reads that file, and a lead can tell no finding was taken out.
+// Exports: MAX_PRIOR_BYTES, countFindings(text), readPrior(path, recordedSha256), readPriors(reports).
 // Invariants: the file's text never leaves this module: only its path, hash, counts and finding ids do. Only a regular file is opened (a FIFO,
 //   a device or a folder is refused before any read), and none over MAX_PRIOR_BYTES.
 //   A finding is one line: a table row whose severity cell starts with the word (`| blocking |`, `| **should-fix** (not run on Linux) |`), or
@@ -82,12 +83,14 @@ export function countFindings(text) {
 }
 
 /**
- * Reads the prior findings file of a delta round.
+ * Reads one review report of the round before a fix round and checks it is the file the lead recorded.
  * @param {string} path a plain absolute path (the CLI checks that before it calls)
+ * @param {string} recordedSha256 the hash the lead recorded when the reviewer returned the report (lower-case hex)
  * @returns {{file: string, sha256: string, blocking: number, shouldFix: number, findings: number, ids: string[]}}
- * @throws {UsageError} when the path is no regular file, is over MAX_PRIOR_BYTES or cannot be read (the cause is in the message)
+ * @throws {UsageError} when the path is no regular file, is over MAX_PRIOR_BYTES or cannot be read (the cause is in the message), and
+ *   when its sha256 is not the recorded one: the file changed after the review
  */
-export function readPrior(path) {
+export function readPrior(path, recordedSha256) {
   let bytes;
   try {
     const stats = statSync(path);
@@ -97,5 +100,19 @@ export function readPrior(path) {
   } catch (error) {
     throw new UsageError(`cannot read --prior ${path}: ${error.message}`);
   }
-  return { file: path, sha256: createHash('sha256').update(bytes).digest('hex'), ...countFindings(bytes.toString('utf8')) };
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  if (sha256 !== recordedSha256) throw new UsageError(`--prior ${path} is not the report that was recorded: its sha256 is ${sha256}, --prior-sha256 says ${recordedSha256}. The file changed after the review: take the report from its reviewer again, never from the fix's writer`);
+  return { file: path, sha256, ...countFindings(bytes.toString('utf8')) };
+}
+
+/**
+ * Reads every report of the round before (a landing set writes two: the reviewer's and the security auditor's).
+ * @param {{path: string, sha256: string}[]} reports each path with its recorded hash, in the caller's order
+ * @returns {{files: object[], blocking: number, shouldFix: number, findings: number}} `files`: readPrior of each; the counts are sums
+ * @throws {UsageError} as readPrior, for the first report that fails
+ */
+export function readPriors(reports) {
+  const files = reports.map(({ path, sha256 }) => readPrior(path, sha256));
+  const sum = (key) => files.reduce((total, file) => total + file[key], 0);
+  return { files, blocking: sum('blocking'), shouldFix: sum('shouldFix'), findings: sum('findings') };
 }

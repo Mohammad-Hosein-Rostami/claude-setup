@@ -123,7 +123,7 @@ test('a class the first review got by hand (--add-class) stays: through --lane-c
   const reviewed = write('src/a.mjs', 'export const a = 1;\n');
   const round0 = json('--add-class', 'concurrency');
   assert.deepEqual(round0.added, ['concurrency']);
-  assert.match(tier('--add-class', 'concurrency').stdout.trimEnd().split('\n').at(-1), /^fix round: .* --delta <reviewed-sha> --prior <findings-file> --lane-classes <previous-round-json> --add-class concurrency$/);
+  assert.match(tier('--add-class', 'concurrency').stdout.trimEnd().split('\n').at(-1), /^fix round: .* --delta <reviewed-sha> --prior <findings-file> --prior-sha256 <its-sha256> --lane-classes <previous-round-json> --add-class concurrency$/);
   write('src/a.mjs', 'export const a = 2;\n');
   const delta = json('--delta', reviewed, '--prior', priorFile(), '--lane-classes', laneJson(round0));
   assert.ok(delta.classes.includes('concurrency'));

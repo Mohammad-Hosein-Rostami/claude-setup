@@ -95,7 +95,7 @@ test('each fix round uses the --delta set with the lane classes, and a fix agent
   assert.ok(run.started.indexOf('close:2:release') < run.started.indexOf('close:2:fix'), 'release before the fix');
   const second = run.calls.filter((call) => call.label === 'close:2:tier')[1];
   assert.match(second.prompt, /cd there first/);
-  assert.match(second.prompt, /Run it from \/p-wt\/fix: node .*review-tier\.mjs --delta a1b2c31 --prior <the prior findings file> --lane-classes \/t0\.json --json/);
+  assert.match(second.prompt, /Run it from \/p-wt\/fix: node .*review-tier\.mjs --delta a1b2c31 --prior <the prior findings file> --prior-sha256 <its sha256> --lane-classes \/t0\.json --json/);
   assert.match(second.prompt, /close-2-tier-<sha8>\.json/);
 });
 

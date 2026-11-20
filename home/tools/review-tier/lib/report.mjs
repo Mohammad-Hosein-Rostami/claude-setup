@@ -17,9 +17,10 @@ import { weakenedChecks } from './weakened.mjs';
 const TAGS = [LOCK_TAG, RACE_TAG];
 /**
  * The whole command of a fix round's re-review; home/CLAUDE.md names the same one (a test keeps them in step). Every part is required:
- * without `--lane-classes` a round after a fix that removed a class's lines would be lighter than the lane's first review.
+ * without `--lane-classes` a round after a fix that removed a class's lines would be lighter than the lane's first review, and without
+ * the recorded hash a report edited after the review would pass as the reviewer's. `--prior` and its hash repeat once per report.
  */
-export const FIX_ROUND_COMMAND = 'node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --prior <findings-file> --lane-classes <previous-round-json>';
+export const FIX_ROUND_COMMAND = 'node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --prior <findings-file> --prior-sha256 <its-sha256> --lane-classes <previous-round-json>';
 const KEPT_FROM_LANE = ' (kept from the lane)';
 
 /** Union of two class lists, in display order (classes first, then tags). */
@@ -65,8 +66,8 @@ function planSizeOf(files, changedLines, laneFiles, lane) {
 /**
  * @param {object} input files (parsed diff of the range or delta), laneFiles (parsed diff of the whole lane range in a delta round, else
  *   null), readNewFile, landing, addClasses, laneClasses (a previous fileClasses map or null), earlierClasses (the class names of that
- *   previous round), range, deltaOf, prior (lib/prior.mjs readPrior of the `--prior` file, or null), requiredReading
- * @returns {object} the JSON of section 9, plus `kept` (classes of a delta round that come from the lane, not from the fix), `prior` and `priorFile` (its path)
+ *   previous round), range, deltaOf, prior (lib/prior.mjs readPriors of the `--prior` files, or null), requiredReading
+ * @returns {object} the JSON of section 9, plus `kept` (classes of a delta round that come from the lane, not from the fix), `prior` and `priorFiles` (their paths)
  */
 export function buildReport({ files, laneFiles = null, readNewFile, landing, addClasses, laneClasses, earlierClasses = [], range, deltaOf, prior = null, requiredReading }) {
   const fresh = classifyFiles(files, readNewFile);
@@ -95,7 +96,7 @@ export function buildReport({ files, laneFiles = null, readNewFile, landing, add
     principles: principlesOf(triggers),
     deltaOf,
     prior,
-    priorFile: prior?.file ?? null,
+    priorFiles: prior === null ? [] : prior.files.map((report) => report.file),
   };
 }
 
@@ -118,7 +119,7 @@ export function formatText(report) {
   lines.push(report.waivable === null ? 'waivable: no' : `waivable: yes (${report.waivable.reviews.length} review before land, ${report.waivable.audit.length} audit after it)`);
   lines.push(`weakened: ${report.weakened.length === 0 ? 'none' : report.weakened.map((entry) => `${placeText(entry.path, entry.line)} ${entry.kind}`).join(', ')}`);
   lines.push(`principles: ${report.principles.join(', ') || 'none'}`);
-  if (report.prior !== null) lines.push(`prior: ${report.prior.file} sha256 ${report.prior.sha256}, ${report.prior.blocking} blocking, ${report.prior.shouldFix} should-fix`);
+  for (const file of report.prior?.files ?? []) lines.push(`prior: ${file.file} sha256 ${file.sha256}, ${file.blocking} blocking, ${file.shouldFix} should-fix${file.ids.length > 0 ? `, ids ${file.ids.join(', ')}` : ''}`);
   // A class the lead added by hand is known to no later run, so the line repeats it: copied as it is, the fix round loses nothing.
   lines.push(`fix round: ${[FIX_ROUND_COMMAND, ...report.added.map((name) => `--add-class ${name}`)].join(' ')}`);
   return lines.join('\n');

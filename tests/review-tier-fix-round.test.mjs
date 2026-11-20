@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { git } from './git-tidy-helpers.mjs';
 import { FIX_ROUND_COMMAND } from '../home/tools/review-tier/lib/report.mjs';
-import { lane, printedFixRound, priorFile, roundFile } from './review-tier-helpers.mjs';
+import { lane, printedFixRound, priorFile, roundFile, sha256Of } from './review-tier-helpers.mjs';
 
 const words = (text, separator) => text.split(separator).map((word) => word.trim()).filter(Boolean);
 const planItems = (plan) => Object.keys(plan).filter((item) => plan[item] !== null);
@@ -34,23 +34,28 @@ function round(raw, args) {
 }
 
 /** The next fix round, run from the `fix round:` line the round before printed and that round's own JSON. */
-const nextRound = (raw, before, reviewedSha) => round(raw, printedFixRound(before.text, { 'reviewed-sha': reviewedSha, 'findings-file': priorFile(), 'previous-round-json': roundFile(before.report) }));
+function nextRound(raw, before, reviewedSha) {
+  const prior = priorFile();
+  return round(raw, printedFixRound(before.text, { 'reviewed-sha': reviewedSha, 'findings-file': prior, 'its-sha256': sha256Of(prior), 'previous-round-json': roundFile(before.report) }));
+}
 
 test('the fix round line is the whole command: delta, prior and the round before', () => {
-  assert.equal(FIX_ROUND_COMMAND, 'node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --prior <findings-file> --lane-classes <previous-round-json>');
+  assert.equal(FIX_ROUND_COMMAND, 'node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --prior <findings-file> --prior-sha256 <its-sha256> --lane-classes <previous-round-json>');
 });
 
 test('review B1a: --delta without --lane-classes exits 2 and says what to pass, with every other flag', () => {
   const { raw, write } = lane();
   const reviewed = write('src/a.mjs', 'export const a = 1;\n');
   write('src/a.mjs', 'export const a = 2;\n');
+  const prior = priorFile();
+  const fixRound = ['--delta', reviewed, '--prior', prior, '--prior-sha256', sha256Of(prior)];
   for (const flags of [[], ['--landing'], ['--json'], ['--add-class', 'security'], ['--base', 'main']]) {
-    const result = raw('--delta', reviewed, '--prior', priorFile(), ...flags);
+    const result = raw(...fixRound, ...flags);
     assert.equal(result.status, 2, flags.join(' '));
     assert.equal(result.stdout, '', 'no review set is printed');
     assert.match(result.stderr, /--delta needs --lane-classes <previous-round-json>: the --json output of the round before .* run every round once with --json and keep the file/);
   }
-  assert.equal(raw('--delta', reviewed, '--prior', priorFile(), '--lane-classes', roundFile({ fileClasses: {} })).status, 0, 'with it the round runs');
+  assert.equal(raw(...fixRound, '--lane-classes', roundFile({ fileClasses: {} })).status, 0, 'with it the round runs');
 });
 
 test('E7 through the printed command: a data lane keeps its set after fix 1 removes rmSync and fix 2 only adds a test', () => {
@@ -100,7 +105,7 @@ test('E17 through the printed command: a class added by hand in round 0 stays in
   const { raw, write } = lane();
   const reviewed = write('src/util.mjs', 'export const add = (a, b) => a + b;\n');
   const round0 = round(raw, ['--landing', '--add-class', 'security']);
-  assert.match(round0.text.trimEnd().split('\n').at(-1), / --lane-classes <previous-round-json> --add-class security$/);
+  assert.match(round0.text.trimEnd().split('\n').at(-1), / --prior-sha256 <its-sha256> --lane-classes <previous-round-json> --add-class security$/);
   const fixed = write('src/util.mjs', 'export const add = (a, b) => a + b + 0;\n');
   const round1 = nextRound(raw, round0, reviewed);
   write('src/util.mjs', 'export const add = (a, b) => b + a;\n');
