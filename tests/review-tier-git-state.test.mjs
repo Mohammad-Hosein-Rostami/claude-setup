@@ -24,7 +24,6 @@ test('security S6: `* -diff` in .git/info/attributes does not hide the lines of 
   for (const attributes of ['* -diff\n', '*.mjs binary\n']) {
     writeFileSync(join(dir, '.git', 'info', 'attributes'), attributes);
     assert.deepEqual(read(json('--delta', reviewed, '--prior', prior)), read(before), attributes.trim());
-    assert.deepEqual(read(json()), read(json('main...HEAD')), 'a first review reads the lines too');
     assert.ok(json().classes.includes('security'), attributes.trim());
   }
 });

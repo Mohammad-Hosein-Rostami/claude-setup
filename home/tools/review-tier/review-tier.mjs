@@ -2,7 +2,9 @@
 // CLI of `review-tier`: reads a git range and says which reviews to run together (agent, model, effort, lens, brief, plan).
 // Usage: review-tier.mjs [<range>] [--landing] [--delta <reviewed-sha> --prior <findings-file>] [--lane-classes <file>] [--add-class <c>]...
 //                        [--base <b>] [--json]
-//   <range>          `a..b` or `a...b`; default `<base>...HEAD`, base the first of main, master, develop
+//   --base <b>       where the lane starts: a local branch (read as refs/heads/<b>, never a tag of that name) or a full sha. Needed when
+//                    more than one of main, master, develop exists (exit 2 without it)
+//   <range>          `a..b` or `a...b`; default `<base sha>...HEAD`, the base being the one of main, master, develop that is a local branch
 //   --landing        the last review before the base moves: adds the Opus max lens, the auditor and a mutation plan
 //   --delta <sha>    a fix round: review only what changed since that reviewed sha (a rebased lane: only patches the reviewed set lacks),
 //                    with the set of the whole lane: the tool reads the lane range (<base>...HEAD) itself and always gives the landing

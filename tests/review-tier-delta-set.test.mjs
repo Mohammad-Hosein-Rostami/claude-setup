@@ -158,7 +158,7 @@ test('review S4: a rebased lane gets one range: the delta line names the patches
   git(dir, 'rebase', '-q', 'main');
   const fix = write('src/three.mjs', 'const three = 3;\n');
   const result = json('--delta', reviewed, '--prior', priorFile());
-  assert.equal(result.range, `patches ${fix.slice(0, 8)} of main..HEAD`);
+  assert.equal(result.range, `patches ${fix.slice(0, 8)} of ${git(dir, 'rev-parse', 'main')}..HEAD`);
   assert.equal(result.files, 1, 'only the fix: not the commit another lane landed, not the reviewed patch');
   for (const review of result.reviews) {
     assert.ok(review.brief.startsWith(`Review ${result.range}. Delta review: ${result.range} only`), review.brief);
@@ -184,7 +184,7 @@ test('security N1: a rewritten lane commit whose added line moved to another pla
   const moved = write('src/gate.mjs', 'allowAll();\nconst checks = [];\nchecks.push(isTrusted);\nrunChecks(checks);\nconst verdict = decide();\n');
   const note = write('NOTES.md', 'fix: note\n');
   const result = json('--delta', reviewed, '--prior', priorFile());
-  assert.equal(result.range, `patches ${moved.slice(0, 8)},${note.slice(0, 8)} of main..HEAD`, 'the same added line before the checks is a new patch');
+  assert.equal(result.range, `patches ${moved.slice(0, 8)},${note.slice(0, 8)} of ${git(dir, 'rev-parse', 'main')}..HEAD`, 'the same added line before the checks is a new patch');
   assert.equal(result.files, 2);
 });
 
@@ -194,7 +194,7 @@ test('a base that hides the lane is refused: --base at or past the reviewed sha,
   const reviewed = write('src/lock-store.mjs', 'renameSync(tmp, dest);\n');
   write('README.md', '# note\n');
   assert.ok(json('--delta', reviewed, '--prior', priorFile()).classes.includes('concurrency'), 'with the real base the lane keeps its class');
-  for (const args of [['--delta', reviewed, '--base', reviewed], ['--delta', reviewed, '--base', 'HEAD'], ['--delta', 'main'], ['--delta', start]]) {
+  for (const args of [['--delta', reviewed, '--base', reviewed], ['--delta', reviewed, '--base', 'lane'], ['--delta', 'main'], ['--delta', start]]) {
     const result = tier(...args, '--prior', priorFile(), '--json');
     assert.equal(result.status, 2, `${args.join(' ')}: ${result.stdout.slice(0, 200)}`);
     assert.equal(result.stdout, '');
@@ -204,6 +204,6 @@ test('a base that hides the lane is refused: --base at or past the reviewed sha,
   git(dir, 'merge', '-q', '--ff-only', 'lane');
   const onBase = tier('--delta', reviewed, '--prior', priorFile());
   assert.equal(onBase.status, 2, 'work on the base branch itself: the tool cannot see where the lane starts');
-  assert.match(onBase.stderr, /pass --base <where the work started>/);
+  assert.match(onBase.stderr, /pass --base <the full sha where the work started>/);
   assert.ok(json('--delta', reviewed, '--prior', priorFile(), '--base', start).classes.includes('concurrency'), 'with --base it works there too');
 });

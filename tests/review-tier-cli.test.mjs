@@ -12,15 +12,16 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 
 test('CLI: a branch diff is classified; the report names paths and lines, the log holds no path and no line text', () => {
   const key = 'sk-test-PLANTEDFAKEKEY0123456789';
-  const { log, tier, json, write } = lane();
+  const { dir, log, tier, json, write } = lane();
   write('src/run.mjs', `const apiKey = "${key}";\nspawnSync(cmd);\n`);
   const result = json();
   assert.equal(result.tier, 2);
   assert.deepEqual(result.hits.filter((hit) => hit.class === 'security').map((hit) => hit.line), [1, 2]);
-  assert.equal(result.range, 'main...HEAD');
+  const range = `${git(dir, 'rev-parse', 'refs/heads/main')}...HEAD`;
+  assert.equal(result.range, range, 'the default range names the base branch by its sha');
   const text = tier();
   assert.equal(text.status, 0);
-  assert.match(text.stdout.split('\n')[0], /^review-tier: tier 2 \(security, logic\), 1 files, 2 changed lines, main\.\.\.HEAD$/);
+  assert.equal(text.stdout.split('\n')[0], `review-tier: tier 2 (security, logic), 1 files, 2 changed lines, ${range}`);
   assert.match(text.stdout, /\nwhy:\n {2}security src\/run\.mjs:1\n/);
   assert.match(text.stdout, /\nrun together:\n- reviewer sonnet high, lens correctness: /);
   assert.match(text.stdout.trimEnd().split('\n').at(-1), /^fix round: node ~\/\.claude\/tools\/review-tier\/review-tier\.mjs --delta <reviewed-sha> --prior <findings-file>$/);
@@ -119,7 +120,7 @@ test('CLI: a delta with a rebased (non-ancestor) sha lists only the new patches'
   const fix = write('src/three.mjs', 'const three = 3;\n');
   assert.notEqual(git(dir, 'rev-parse', 'HEAD~1'), reviewed);
   const result = json('--delta', reviewed, '--prior', priorFile());
-  assert.equal(result.range, `patches ${fix.slice(0, 8)} of main..HEAD`, 'only the commit the reviewed set does not hold');
+  assert.equal(result.range, `patches ${fix.slice(0, 8)} of ${git(dir, 'rev-parse', 'main')}..HEAD`, 'only the commit the reviewed set does not hold');
   assert.deepEqual([result.files, result.changedLines], [1, 1]);
   assert.deepEqual(Object.keys(result.fileClasses).sort(), ['src/one.mjs', 'src/three.mjs', 'src/two.mjs'], 'the classes are kept for every file of the lane');
 });
