@@ -135,11 +135,8 @@ function addRead(found, entry, { head, cutShort }, scope) {
 
 /** Adds one entry of a real agents folder. */
 function addEntry(found, entry, scope) {
-  if (entry.kind === 'folder-not-read' || entry.kind === 'linked-folder') {
+  if (entry.kind === 'folder-not-read') {
     found.folders += 1;
-    if (entry.kind === 'folder-not-read') return;
-    found.hasLink = true;
-    found.groups.linked.push(`${quotedPath(entry.folder, entry.name)} (${REASONS.linkedFolder})`);
     return;
   }
   const read = entry.kind === 'file' ? readAgentFile(entry.path) : entry;

@@ -48,7 +48,6 @@ export const REASONS = Object.freeze({
   notRead: 'not read',
   link: 'a link: not read',
   hardLink: 'a hard link: not read',
-  linkedFolder: 'a linked folder: not read',
   linkOutside: 'a link to outside: not read',
 });
 
@@ -87,7 +86,7 @@ function noteWith({ items, personal, builtIn, hasCap, hasLink, unchecked, folder
  * @param {{ items: string[], personal: string[], builtIn: string[], hasCap: boolean, hasLink: boolean, unchecked: number,
  *   folders: number, byHand: number }} found - `items`: one per listed file or folder, the most important first; `personal`,
  *   `builtIn`: the owner's agents that a project agent replaces by its exact name; `hasCap`: the delete advice applies to at least
- *   one file; `hasLink`: a link, hard link or linked folder was found; `unchecked`: agent files past the read limit
+ *   one file; `hasLink`: a link or a hard link was found; `unchecked`: agent files past the read limit
  *   (MAX_AGENT_FILES files, MAX_WALKED_ENTRIES entries: agent-file-walk.mjs); `folders`: folders not looked into; `byHand`: files the hook makes no claim about.
  * @returns {string} the note; '' when there is nothing to say.
  */
