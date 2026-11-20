@@ -60,8 +60,12 @@ test('each Waiting line gives the one way to wait that holds for a foreground an
   for (const name of WORKERS) {
     const paragraph = waitingParagraph(name);
     assert.ok(paragraph.includes(`started as \`${WAIT_START_FORM}\``), `${name}: the start form`);
-    assert.ok(paragraph.includes(`one foreground call (\`timeout\` 600000) that ends by itself: \`${WAIT_CALL}\``), `${name}: the wait call`);
+    assert.ok(paragraph.includes(`one foreground call (\`timeout\` 180000) that ends by itself in 160 s: \`${WAIT_CALL}\``), `${name}: the wait call`);
     assert.match(paragraph, /send it again until `<log>\.exit` is there/, name);
+    assert.match(paragraph, /a command that may run over 3 min is not held by a foreground `timeout`: it runs with `run_in_background: true`/, name);
+    assert.match(paragraph, /a background subagent's limit: its foreground command is moved to the background after 3 min, whatever its `timeout`\./, name);
+    assert.match(paragraph, /moved to the background all the same, return a status that names it instead of starting it again\./, name);
+    assert.doesNotMatch(paragraph, /within 10 min|10-min foreground/, `${name}: a background subagent's foreground command does not run 10 min`);
     assert.match(paragraph, /Never end your turn while the command runs: a background command of a foreground subagent stops when that agent's run ends and nobody is woken; only the main session's or a background subagent's keeps running/, name);
     assert.match(paragraph, /`<log>\.exit` is still missing once the `timeout` you set has passed, stop waiting: either way return a status to your caller that names the command and what is left\./, name);
   }
@@ -73,6 +77,8 @@ test('no Waiting line and no guard advice promises a wake-up: a foreground subag
     assert.doesNotMatch(waitingParagraph(name), /dies when you reply/, `${name}: true for a foreground subagent only`);
   }
   assert.doesNotMatch(WAIT_ADVICE, WAKE_UP_PROMISE);
+  assert.match(WAIT_ADVICE, /A command that ends within 3 min runs in the foreground with an explicit timeout\./);
+  assert.match(WAIT_ADVICE, /one foreground call \(timeout 180000\) that ends by itself in 160 s \(a background subagent's foreground command is moved to the background after 3 min\)/);
   assert.match(WAIT_ADVICE, /Never end your turn while the command runs: a background command of a foreground subagent stops when that agent's run ends and nobody is woken/);
 });
 

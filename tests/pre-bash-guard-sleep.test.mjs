@@ -160,7 +160,7 @@ test('a background sleep loop next to a push or a whole-folder rm still asks on 
   assert.doesNotMatch(merge.reason, /run_in_background/);
 });
 
-const FOREGROUND_MAX_MS = 600000; // the longest `timeout` a foreground Bash call takes
+const MOVED_AFTER_MS = 180000; // a background subagent's foreground command is moved to the background after 3 min
 const MS_PER_SECOND = 1000;
 /** A command form of the advice (`<command> > <log> ...`) as an agent would send it. */
 const asSent = (form) => form.replaceAll('<log>', '/tmp/suite.log').replace('<command>', 'node --test tests/*.test.mjs');
@@ -174,8 +174,8 @@ test('the way to wait that the advice and the agents name runs at the first send
   assert.ok(WAIT_ADVICE.includes(WAIT_CALL), 'the advice names the wait call');
 });
 
-test('the wait call ends by itself before the 10-min foreground maximum, and only its short pause keeps it from the advice', () => {
+test('the wait call ends by itself before a background subagent\'s foreground command would be moved (3 min), and only its short pause keeps it from the advice', () => {
   const [, rounds, pause] = /seq (\d+)\).*sleep (\d+);/.exec(WAIT_CALL);
-  assert.ok(Number(rounds) * Number(pause) * MS_PER_SECOND < FOREGROUND_MAX_MS, `${rounds} rounds of ${pause} s`);
+  assert.ok(Number(rounds) * Number(pause) * MS_PER_SECOND < MOVED_AFTER_MS, `${rounds} rounds of ${pause} s`);
   assert.equal(guardSession().run(asSent(WAIT_CALL).replace(`sleep ${pause};`, 'sleep 5;')).decision, 'deny', 'the same loop with a 5 s sleep is a poll loop');
 });

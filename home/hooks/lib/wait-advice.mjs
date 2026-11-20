@@ -12,29 +12,30 @@
 // The text's facts (Claude Code tools reference, Bash tool; changelog 2.1.285 and 2.1.288): in an unattended run (`-p`, Agent SDK, CI, cloud) a
 // background command stops after 30 min (10 min for a text `-p` prompt) unless `timeout` is passed, and 7200000 ms is the most; an interactive
 // session has no limit. No page says which of the two a workflow agent is, so the advice is "set timeout" for every background command.
-// Same page: a foreground call takes a `timeout` of at most 600000 ms, and a background command of a foreground subagent stops when that
-// agent's run ends, while the main session's or a background subagent's keeps running (only those are told of its exit). No agent is told
-// which it is, so the text names one way to wait that holds for all: start in the background, then wait inside the turn with a call that
-// ends by itself. The wait call's 2 s pause is under this rule's own 5 s loop limit, so the guard lets it run (tests hold that).
+// Same page: a background command of a foreground subagent stops when that agent's run ends, while the main session's or a background
+// subagent's keeps running (only those are told of its exit). Changelog: a background subagent's foreground command is moved to the
+// background after 3 min (seen at 180 s with `timeout` 600000, Claude Code 2.1.329). No agent is told which it is, so the text names one
+// way to wait that holds for all: over 3 min, start in the background, then wait inside the turn with a call that ends by itself in
+// 160 s. The wait call's 2 s pause is under this rule's own 5 s loop limit, so the guard lets it run (tests hold that).
 // watch.mjs watches session transcripts: it is named for waiting on a session or an agent, never as a way to run or bound a command.
 import { commandOf, KEYWORDS } from './command-of.mjs';
 import { withoutSubstitutions } from './merge-commit.mjs';
 import { segments, stripHeredocs } from './shell-words.mjs';
 
 const BACKGROUND_TIMEOUT_MAX_MS = 7200000; // 2 h: the longest `timeout` the Bash tool takes for a background command
-const FOREGROUND_TIMEOUT_MAX_MS = 600000; // 10 min: the longest `timeout` a foreground Bash call takes
-const WAIT_ROUNDS = 280; // rounds of one wait call: 280 x 2 s = 560 s, so the call ends by itself before the foreground maximum
+const WAIT_CALL_TIMEOUT_MS = 180000; // 3 min: a background subagent's foreground command is moved to the background after this long
+const WAIT_ROUNDS = 80; // rounds of one wait call: 80 x 2 s = 160 s, so the call ends by itself before it would be moved
 const WAIT_PAUSE_SECONDS = 2; // a pause between two looks at one file, under LOOP_SLEEP_SECONDS
 
-/** How a command over 10 min is started (with `run_in_background: true` and `timeout`): output to a log, exit code to `<log>.exit`. */
+/** How a command over 3 min is started (with `run_in_background: true` and `timeout`): output to a log, exit code to `<log>.exit`. */
 export const WAIT_START_FORM = '<command> > <log> 2>&1; echo $? > <log>.exit';
-/** The foreground call that waits for that command inside the agent's turn: it ends when `<log>.exit` is there, or after 560 s. */
+/** The foreground call that waits for that command inside the agent's turn: it ends when `<log>.exit` is there, or after 160 s. */
 export const WAIT_CALL = `for i in $(seq ${WAIT_ROUNDS}); do [ -f <log>.exit ] && break; sleep ${WAIT_PAUSE_SECONDS}; done`;
 
 export const WAIT_ADVICE = 'Waiting (speed): do not wait with a long sleep or a sleep loop: it holds the turn, and a repeated check costs a model call each time. '
-  + 'A command that ends within 10 min runs in the foreground with an explicit timeout. '
+  + 'A command that ends within 3 min runs in the foreground with an explicit timeout. '
   + `Run a longer one with run_in_background: true and set timeout to its expected run plus a margin, at most ${BACKGROUND_TIMEOUT_MAX_MS} ms (2 h), started as ${WAIT_START_FORM}. `
-  + `Then wait inside your turn with one foreground call (timeout ${FOREGROUND_TIMEOUT_MAX_MS}) that ends by itself: ${WAIT_CALL}; send it again until <log>.exit is there, then read the log in one call. `
+  + `Then wait inside your turn with one foreground call (timeout ${WAIT_CALL_TIMEOUT_MS}) that ends by itself in ${WAIT_ROUNDS * WAIT_PAUSE_SECONDS} s (a background subagent's foreground command is moved to the background after 3 min): ${WAIT_CALL}; send it again until <log>.exit is there, then read the log in one call. `
   + "Never end your turn while the command runs: a background command of a foreground subagent stops when that agent's run ends and nobody is woken; "
   + "only the main session's or a background subagent's keeps running. "
   + 'Set timeout for every background command: in an unattended run (-p, Agent SDK, CI, cloud) one without it stops after 30 min '

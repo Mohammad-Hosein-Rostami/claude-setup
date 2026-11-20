@@ -29,18 +29,20 @@ The caller sends: `Tests for <spec path or acceptance criteria>. Layer: <unit|in
 
 - Test names say the behaviour in plain words (C31); the README of the tested area says how to run them. Return: files written (paths), documents you saw or needed updated, the command that runs them, then `covers: <criteria>`, `not covered: <gaps>`, `expected red reason: <why they fail now>`, `tried: <what you tried to break>`, `defaults: <the ones you took>`.
 - Before returning, attack your own tests and report what you tried: each must fail for the reason you state (`expected red reason`), not for a typo or an import error, and a test that cannot fail is wrong.
-- Waiting: never poll (no `sleep` loop of 5 s or more, no status check that returns at once); past the 10-min foreground `timeout` a command runs with `run_in_background: true`
+- Waiting: never poll (no `sleep` loop of 5 s or more, no status check that returns at once); a command that may run over 3 min is not held by a foreground `timeout`: it runs with `run_in_background: true`
   and `timeout` set to its expected run plus a margin, at most 7200000 ms (2 h), started as `<command> > <log> 2>&1; echo $? > <log>.exit`.
-  Then wait inside your turn with one foreground call (`timeout` 600000) that ends by itself:
-  `for i in $(seq 280); do [ -f <log>.exit ] && break; sleep 2; done`; send it again until `<log>.exit` is there (one call per 10 min of
-  waiting), then read the log in one call. Never end your turn while the command runs: a background command of a foreground subagent
-  stops when that agent's run ends and nobody is woken; only the main session's or a background subagent's keeps running, with a notice
-  to that agent at its exit. Set `timeout` for every background command: in an unattended run (`-p`, Agent SDK, CI, cloud) one without
-  it stops after 30 min (10 min for a text `-p` prompt). A run over 2 h is split, or started in an interactive session, where background
-  commands have no limit. `node ~/.claude/tools/watch/watch.mjs ...` waits on a session or an agent only: it never runs or bounds a command.
-  A command that ends within 10 min runs in the foreground with an explicit Bash `timeout`: 600000 for a test run or a commit (the hook
-  runs tests), 60000 for a probe. If a command cannot finish within 2 h, say so in your reply, and if `<log>.exit` is still missing once
-  the `timeout` you set has passed, stop waiting: either way return a status to your caller that names the command and what is left.
+  Then wait inside your turn with one foreground call (`timeout` 180000) that ends by itself in 160 s:
+  `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`; send it again until `<log>.exit` is there, then read the log in one call.
+  Never end your turn while the command runs: a background command of a foreground subagent stops when that agent's run ends and nobody
+  is woken; only the main session's or a background subagent's keeps running, with a notice to that agent at its exit. The 3 min are a
+  background subagent's limit: its foreground command is moved to the background after 3 min, whatever its `timeout`. Set `timeout` for
+  every background command: in an unattended run (`-p`, Agent SDK, CI, cloud) one without it stops after 30 min (10 min for a text `-p`
+  prompt). A run over 2 h is split, or started in an interactive session, where background commands have no limit.
+  `node ~/.claude/tools/watch/watch.mjs ...` waits on a session or an agent only: it never runs or bounds a command.
+  A command expected to end within 3 min runs in the foreground with an explicit Bash `timeout`: 600000 for a test run or a commit (the
+  hook runs tests), 60000 for a probe; for one that is moved to the background all the same, return a status that names it instead of
+  starting it again. If a command cannot finish within 2 h, say so in your reply, and if `<log>.exit` is still missing once the `timeout`
+  you set has passed, stop waiting: either way return a status to your caller that names the command and what is left.
 - Never run the full suite inside a lane: run only the tests related to the files you changed (the repo's related-tests command, or the
   nearest test file); the review runs the full suite once, at the tip.
 - Git: commit on your own branch; never merge another branch into it; if the base moved, `git rebase <base>`; leave landing to the lead.
