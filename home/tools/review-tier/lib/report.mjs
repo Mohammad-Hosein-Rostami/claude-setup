@@ -33,6 +33,8 @@ const principlesOf = (triggers) => [...new Set([...triggers].flatMap((trigger) =
  * The classes of a run and where each file's come from.
  * @param {object} fresh the run's own classification (classifyFiles of its files)
  * @param {object | null} lane the classification of the whole lane range, null outside a delta round
+ * @param {object | null} laneClasses path -> classes of an earlier round (`--lane-classes`), or null
+ * @param {string[]} earlierClasses the class list of that earlier round (it holds what the lead added by hand); used in a delta round only
  * @returns {{fileClasses: object, classes: Set<string>, own: Set<string>}} `own`: the classes the run's own files and lines give
  */
 function classesOf(fresh, lane, laneClasses, earlierClasses) {
@@ -42,7 +44,6 @@ function classesOf(fresh, lane, laneClasses, earlierClasses) {
   const own = new Set(Object.values(fresh.fileClasses).flat().filter((name) => name in CLASS_TIER));
   if (isSizeable(fresh.changedLines)) own.add('size');
   const classes = new Set([...own, ...Object.values(fileClasses).flat().filter((name) => name in CLASS_TIER), ...(lane === null ? [] : earlierClasses)]);
-  if (isSizeable(lane?.changedLines ?? 0)) classes.add('size');
   return { fileClasses, classes, own };
 }
 

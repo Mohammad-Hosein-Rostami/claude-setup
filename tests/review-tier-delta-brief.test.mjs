@@ -68,7 +68,7 @@ test('Read first is never empty: a fix with no caller or callee to name lists it
   write('README.md', '# readme\nline two\n');
   for (const review of json('--delta', reviewed, '--prior', priorFile()).reviews) {
     assert.deepEqual(review.requiredReading, ['README.md:1']);
-    assert.match(review.brief, /Read first \(callers, callees and users of removed or renamed names; the changed files when none is found\): README\.md:1\./);
+    assert.match(review.brief, /Read first \(callers, callees and users of names the fix removed, renamed or redefined; the changed files when none is found\): README\.md:1\./);
   }
 });
 
@@ -270,4 +270,13 @@ test('review N7: the refusal of a path that is not plain says what to do about i
   const result = tier('--delta', reviewed, '--prior', join(makeTempDir('review-tier-prior-'), 'Application Support', 'findings.md'));
   assert.equal(result.status, 2);
   assert.match(result.stderr, /copy the report to a path without them/);
+});
+
+test('a fix that changes a default other code reads lists its readers (the value changed, the name stayed)', () => {
+  const { write, json } = lane();
+  write('src/reader.mjs', "import { RETRY_LIMIT } from './config.mjs';\nexport const mayRetry = (n) => n < RETRY_LIMIT;\n");
+  const reviewed = write('src/config.mjs', 'export const RETRY_LIMIT = 3;\n');
+  write('src/config.mjs', 'export const RETRY_LIMIT = 30;\n');
+  const reading = json('--delta', reviewed, '--prior', priorFile()).reviews[0].requiredReading;
+  assert.deepEqual(reading, ['src/reader.mjs:1', 'src/reader.mjs:2']);
 });

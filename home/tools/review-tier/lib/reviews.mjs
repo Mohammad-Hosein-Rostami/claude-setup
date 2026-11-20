@@ -89,7 +89,7 @@ function briefOf({ range, deltaOf, prior, rules, hits, plan, requiredReading }) 
   if (shown.length > 0) parts.push(`Hits: ${shown.join(', ')}.`);
   const text = planText(plan);
   if (text !== '') parts.push(text);
-  if (requiredReading.length > 0) parts.push(`Read first (callers, callees and users of removed or renamed names; the changed files when none is found): ${requiredReading.join(', ')}.`);
+  if (requiredReading.length > 0) parts.push(`Read first (callers, callees and users of names the fix removed, renamed or redefined; the changed files when none is found): ${requiredReading.join(', ')}.`);
   return parts.join(' ');
 }
 
