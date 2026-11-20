@@ -175,6 +175,7 @@ function realGit() {
  * SPY_AFTER_REFUSALS: a JSON argv the real git runs in the same folder right after the tool's last refusal check
  *   (`rev-parse --is-shallow-repository`): what a process the writer left running could still do;
  * SPY_AFTER_INIT: JSON `{file, text}`: a file written into the new repository right after `git init` made it;
+ * SPY_AFTER_IMPORT: JSON `{nth, file, text}`: the same right after the nth import (`git index-pack`; 1: the commits, 2: trees and files);
  * SPY_SWAP: JSON `{from, to}`: in the listings the import makes on the lane's side (`rev-list`, `ls-tree`, `diff-tree` with the lane's
  *   objects borrowed) every `from` is printed as `to`, so the object `from` is left out of the import list;
  * SPY_FAIL: JSON `{word, status?, stderr}`: a call of the tool's own repository (no objects borrowed) whose arguments hold `word` also
@@ -187,7 +188,7 @@ export function spyGit() {
   const log = join(folder, 'calls.jsonl');
   mkdirSync(join(folder, 'bin'));
   writeFileSync(join(folder, 'bin', 'git'), `#!${process.execPath}
-const { appendFileSync, writeFileSync, mkdirSync } = require('node:fs');
+const { appendFileSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
 const { dirname, join } = require('node:path');
 const { spawnSync } = require('node:child_process');
 const argv = process.argv.slice(2);
@@ -205,8 +206,10 @@ const swap = switchOf('SPY_SWAP');
 const swapped = swap && borrows && argv.some((word) => ['rev-list', 'ls-tree', 'diff-tree'].includes(word));
 const result = spawnSync(${JSON.stringify(realGit())}, argv, { stdio: swapped ? ['inherit', 'pipe', 'inherit'] : 'inherit', maxBuffer: 1 << 30 });
 if (swapped) process.stdout.write(Buffer.from(result.stdout.toString('latin1').split(swap.from).join(swap.to), 'latin1'));
-const planted = switchOf('SPY_AFTER_INIT');
-if (planted && argv.includes('init')) { mkdirSync(dirname(join(env.GIT_DIR, planted.file)), { recursive: true }); writeFileSync(join(env.GIT_DIR, planted.file), planted.text); }
+const plant = (planted) => { mkdirSync(dirname(join(env.GIT_DIR, planted.file)), { recursive: true }); writeFileSync(join(env.GIT_DIR, planted.file), planted.text); };
+if (switchOf('SPY_AFTER_INIT') && argv.includes('init')) plant(switchOf('SPY_AFTER_INIT'));
+const imports = argv.includes('index-pack') ? readFileSync(${JSON.stringify(log)}, 'utf8').split('\\n').filter((line) => line.includes('"index-pack"')).length : 0;
+if (switchOf('SPY_AFTER_IMPORT') && imports === switchOf('SPY_AFTER_IMPORT').nth) plant(switchOf('SPY_AFTER_IMPORT'));
 if (argv.includes('--is-shallow-repository') && process.env.SPY_AFTER_REFUSALS) spawnSync(${JSON.stringify(realGit())}, JSON.parse(process.env.SPY_AFTER_REFUSALS), { stdio: 'ignore' });
 process.exit(result.status === null ? 1 : result.status);
 `, { mode: 0o755 });

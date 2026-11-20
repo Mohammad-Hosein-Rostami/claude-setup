@@ -53,7 +53,7 @@ test('the control: through the recording git both rounds run and read the new fi
   }
 });
 
-test('spec check K8 (a): an object left out of the import list is exit 2 naming it, for each kind of object and each reader that would pass over it in silence', POSIX_ONLY, () => {
+test('spec check K8 (a): an object left out of the import list is exit 2 naming it, for each kind of object and each reader that would pass over it in silence or fail without naming it', POSIX_ONLY, () => {
   const { spied, rounds, root, head, oid } = importLane();
   const standIn = oid('HEAD:base.txt');
   const gaps = [
@@ -62,6 +62,7 @@ test('spec check K8 (a): an object left out of the import list is exit 2 naming 
     ['a caller in a file the lane never touches (only grep reads it)', oid('HEAD:src/use.mjs'), standIn, `object ${oid('HEAD:src/use.mjs')} is needed and was not imported`],
     ['the .gitattributes of the lane start (only the attribute lookup reads it)', oid('main:.gitattributes'), standIn, `object ${oid('main:.gitattributes')} is needed and was not imported`],
     ['a new file of the tip (its whole text is read)', oid('HEAD:src/timer.mjs'), standIn, `object ${oid('HEAD:src/timer.mjs')} is needed and was not imported`],
+    ['the start\'s side of a changed file (only a diff reads it)', oid('main:src/p.mjs'), standIn, `object ${oid('main:src/p.mjs')} is needed and was not imported`],
   ];
   for (const [name, from, to, message] of gaps) {
     for (const args of rounds) {
@@ -103,7 +104,26 @@ test('spec check K7, security N27: a file planted in the tool\'s own temp reposi
   }
 });
 
-test('review N3 (T8), spec check K1: a git call that fails or writes to stderr is exit 1, never an answer: an ancestor test, a grep, a file text', POSIX_ONLY, () => {
+test('spec check K7: a file planted in the temp repository after an import (alternates, a loose object, a replace ref, a changed config) is exit 2 before the next git call', POSIX_ONLY, () => {
+  const { dir, spied, rounds } = importLane();
+  const planted = [['objects/info/alternates', `${objectsOf(dir)}\n`], ['objects/ab/cdef', 'x'], ['refs/replace/x', `${'1'.repeat(40)}\n`], ['config', '[core]\n\tbare = true\n[extensions]\n\tpartialClone = x\n'], ['info/grafts', 'x\n']];
+  // Each file once after the commits' import and once after the import of trees and files, in a fix round and in a first review.
+  const cases = planted.flatMap(([file, text], index) => [1, 2].map((nth) => ({ file, text, nth, args: rounds[(index + nth) % rounds.length] })));
+  for (const { file, text, nth, args } of cases) {
+    const { result, trusted, laneSide } = spied(args, { SPY_AFTER_IMPORT: JSON.stringify({ nth, file, text }) });
+    const label = `${file} after import ${nth}, ${args[0]}`;
+    assert.equal(result.status, 2, `${label}: ${result.stderr}`);
+    assert.equal(result.stdout, '', label);
+    assert.match(result.stderr, file === 'config' ? /config of the tool's own temp repository changed during the run/ : /the tool's own temp repository holds .*which this run did not put there/, label);
+    const calls = [...trusted, ...laneSide].sort((a, b) => a.at - b.at);
+    const imports = calls.filter((call) => call.command[0] === 'index-pack');
+    assert.equal(imports.length, nth, `${label}: the run stopped at that import`);
+    assert.equal(calls.at(-1).at, imports.at(-1).at, `${label}: no git call came after it, so nothing was read`);
+    assert.ok(!existsSync(trusted[0].env.GIT_DIR), 'the temp repository is removed');
+  }
+});
+
+test('review N3 (T8), spec check K1: a git call that fails or writes to stderr is exit 1, never an answer: an ancestor test, a grep, a file text, the question whether a file is there', POSIX_ONLY, () => {
   const { spied, rounds } = importLane();
   const failures = [
     [{ word: '--is-ancestor', status: 128, stderr: 'fatal: boom' }, /git failed: git merge-base --is-ancestor failed: fatal: boom/],
@@ -111,6 +131,8 @@ test('review N3 (T8), spec check K1: a git call that fails or writes to stderr i
     [{ word: 'grep', stderr: "error: 'x:src/use.mjs': unable to read 1234" }, /git failed: git grep failed: error: 'x:src\/use\.mjs': unable to read 1234/],
     [{ word: 'show', status: 128, stderr: 'fatal: bad object x:src/timer.mjs' }, /git failed: git show failed: fatal: bad object/],
     [{ word: 'show', stderr: 'error: unable to read 1234' }, /git failed: git show failed: error: unable to read 1234/],
+    [{ word: '--verify', status: 128, stderr: 'fatal: boom' }, /git failed: git rev-parse failed: fatal: boom/],
+    [{ word: '--verify', status: 1, stderr: 'error: Could not read 1234' }, /git failed: git rev-parse failed: error: Could not read 1234/],
   ];
   for (const [fail, said] of failures) {
     const { result } = spied(rounds[0], { SPY_FAIL: JSON.stringify(fail) });
