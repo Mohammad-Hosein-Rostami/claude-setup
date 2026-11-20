@@ -49,7 +49,9 @@ session (a `~/.claude/sessions/<pid>.json` whose process is alive; `--sessions` 
 anything outside the root of its rule. Everything is looked at again right before it is removed, so a session resumed while the run is going keeps its folder.
 A folder is also renamed aside, in its own parent, to `.removing-<pid>-<name>` (one atomic step) and looked at once more under that name (running sessions, transcript, idle time) before
 it is emptied: a session that resumes during the removal writes to a new folder at the old name and the old one is renamed back if the session turns out to be live (if the name is taken
-by then, the folder stays aside and the run says so). A `.removing-*` folder left by a killed run is finished by the next run only when the same checks pass for its original name; it is never renamed back.
+by then, the folder stays aside and the run says so). When the look or the removal fails after the rename (a folder inside is writable by others, a mount point), the folder is renamed back to its own
+name, possibly partly emptied, and the `NOT removed` line names the path it has: its own, or the `.removing-*` one when its name was taken meanwhile. A run handles each path once, so a folder
+that was renamed back is not tried again in the same run. A `.removing-*` folder left by a killed run is finished by the next run only when the same checks pass for its original name; it is never renamed back.
 The session-folders rule is skipped (and says `SKIPPED`) unless the transcripts folder (`~/.claude/projects`) and the sessions registry (`~/.claude/sessions`) are absolute, readable folders;
 with `CLAUDE_CONFIG_DIR` set the default ones are not where Claude Code keeps them, so that rule and the temp-projects rule are skipped (give the folders with `--projects` and `--sessions`).
 Sessions of another config dir: the scratchpad root is one per user, shared by every config dir, while a run reads the transcripts and the registry of one config dir only. A session folder with no

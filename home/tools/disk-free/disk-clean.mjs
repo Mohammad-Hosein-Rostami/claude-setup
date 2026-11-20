@@ -13,6 +13,8 @@
 //   Measuring sizes stops at --budget-ms (default 20 s): later items are still counted and removed, their bytes are not added up and the totals say "partial".
 // --apply takes a lock file (~/.claude/state/disk-clean.run.lock): a second run at the same time does nothing (it says so and exits 0).
 // Exit codes: 0 ok, 1 something could not be removed, 2 usage error. An error on one item is listed and the run goes on with the next.
+//   A folder whose removal fails after it was renamed aside is renamed back; the listed line names the path the folder has then. A run
+//   handles each path once (a folder that was renamed back can be met again by the rule that is still reading its parent).
 // Env: DISK_FREE_CLAUDE_TMP replaces the scratchpad root (as for disk-free). The flags replace the other roots (tests use fake ones).
 import { mkdirSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -63,31 +65,57 @@ function parseArgs(argv, env) {
 }
 
 /**
+ * Renames a folder that was moved aside back to its own name (a rename only: nothing is removed).
+ * @returns {{ back: boolean, where: string }} whether it is back, and a sentence that names the path the folder has now
+ */
+function putBack(item, aside) {
+  try {
+    moveBack(item.root, aside, item.path);
+    return { back: true, where: `the folder was put back at ${item.path}` };
+  } catch (error) {
+    const stays = lstatOrNull(aside) !== null ? `it stays as ${aside}` : `and it is no longer at ${aside}`; // said only after a look: the path named must exist
+    return { back: false, where: `the folder could not be renamed back (${error.message}), ${stays}` };
+  }
+}
+
+/**
  * Removes one item that was just found removable. A folder is first renamed aside (atomic, same parent) and looked at again: a session that
- * resumed after the last look writes to a new folder, and the old one goes back if the session is live after all.
+ * resumed after the last look writes to a new folder, and the old one goes back if the session is live after all. Whatever fails after
+ * the rename (the second look, the removal itself), the folder is renamed back if its name is free, so it is never left under a name
+ * the report does not give.
+ * @throws {Error} with the reason and the path the folder has now
  */
 async function removeItem(item, summary, options) {
   const isFolder = lstatOrNull(item.path)?.isDirectory() === true;
-  const isAside = originalName(basename(item.path)) !== basename(item.path); // left by a killed run: already renamed
-  const target = isFolder && !isAside ? moveAside(item.root, item.path) : item.path;
-  if (target !== item.path) {
-    await options.afterMoveAside?.(target);
-    if (!(await item.stillRemovable(target))) {
-      try {
-        moveBack(item.root, target, item.path);
-      } catch (error) {
-        throw new Error(`a session came back during the removal and the folder could not be renamed back, it stays as ${target}: ${error.message}`);
-      }
-      summary.changed += 1;
+  const isAside = originalName(basename(item.path)) !== basename(item.path); // left by a killed run: already renamed, so removed where it is
+  if (!isFolder || isAside) {
+    removeInside(item.root, item.path);
+    summary.removed += 1;
+    return;
+  }
+  const aside = moveAside(item.root, item.path);
+  let emptying = false;
+  try {
+    await options.afterMoveAside?.(aside);
+    if (await item.stillRemovable(aside)) {
+      emptying = true;
+      removeInside(item.root, aside);
+      summary.removed += 1;
       return;
     }
+  } catch (error) {
+    throw new Error(`${error.message}; ${putBack(item, aside).where}${emptying ? ', possibly partly emptied' : ''}`);
   }
-  removeInside(item.root, target);
-  summary.removed += 1;
+  const { back, where } = putBack(item, aside);
+  if (!back) throw new Error(`a session came back during the removal: ${where}`);
+  summary.changed += 1;
 }
 
 /** Measures one found item and, with options.apply, removes it if it is still removable. An error is listed, never thrown. */
 async function handleItem(item, found, summary, options, deadlineMs) {
+  const originalPath = join(dirname(item.path), originalName(basename(item.path)));
+  if (options.handled.has(originalPath)) return; // met again: a folder this run renamed back, or a leftover and a new folder of one name
+  options.handled.add(originalPath);
   try {
     const { bytes, complete } = await treeBytes(item.path, deadlineMs);
     if (!complete) summary.partial = true;
@@ -129,7 +157,7 @@ export async function runClean(options) {
   const scanEndsAt = Date.now() + (options.scanMs ?? (options.apply ? Infinity : DEFAULT_DRY_RUN_SCAN_MS));
   let scanCutShort = false;
   const refused = [];
-  const context = { ...options, home: options.home ?? homedir(), refused, keptUnknown: 0, deadlineMs, timeUp: () => (scanCutShort ||= Date.now() > scanEndsAt) };
+  const context = { ...options, home: options.home ?? homedir(), refused, keptUnknown: 0, handled: new Set(), deadlineMs, timeUp: () => (scanCutShort ||= Date.now() > scanEndsAt) };
   const summary = { items: 0, bytes: 0, removed: 0, changed: 0, failed: [], refused, keptUnknown: 0, rules: [], partial: false };
   for (const rule of rulesFor()) {
     await runRule(rule, context, summary);

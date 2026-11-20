@@ -1,9 +1,10 @@
 // Tests for the rename-aside of disk-clean: a folder is renamed to `.removing-<pid>-<name>` before it is removed and looked at again, so a
 // session that resumes during the removal keeps its work; a folder left aside by a killed run is finished by the next run only after the same
-// checks. Fake roots only (tests/disk-clean-helpers.mjs).
+// checks; whatever fails after the rename, the folder goes back to its own name when that is free and the failure line names a path that exists.
+// Fake roots only (tests/disk-clean-helpers.mjs).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runClean } from '../home/tools/disk-free/disk-clean.mjs';
 import { age, folder, NEWEST, OLD, OTHER, posix, sessionFile, sessionFolder, transcript, world } from './disk-clean-helpers.mjs';
@@ -45,6 +46,42 @@ test('when the folder cannot be renamed back (the session already wrote there) i
   const summary = await runClean({ ...w.options, afterMoveAside: () => { mkdirSync(path); writeFileSync(join(path, 'new-work.txt'), 'x'); sessionFile(w, process.pid, OLD); } });
   assert.deepEqual([existsSync(join(path, 'new-work.txt')), existsSync(join(asideOf(path), 'f.txt')), summary.failed.length, summary.removed], [true, true, 1, 0]);
   assert.match(summary.failed[0], /stays as .*\.removing-/);
+});
+
+test('an error at the look after the rename puts the folder back whole and is listed with the path the folder has', posix, async () => {
+  const { w, path } = resumeWorld();
+  const summary = await runClean({ ...w.options, afterMoveAside: () => { throw new Error('the look failed'); } });
+  assert.deepEqual([existsSync(join(path, 'f.txt')), existsSync(asideOf(path)), summary.removed, summary.changed, summary.failed.length], [true, false, 0, 0, 1]);
+  assert.ok(summary.failed[0].endsWith(`: the look failed; the folder was put back at ${realpathSync(path)}`), summary.failed[0]);
+});
+
+test('a removal that fails after the rename while the old name was taken: the folder stays aside and the failure names that path, which exists, and both errors', posix, async () => {
+  const { w, path } = resumeWorld();
+  mkdirSync(join(path, 'open'));
+  chmodSync(join(path, 'open'), 0o777); // writable by others: the removal refuses it
+  for (const entry of [join(path, 'open'), path]) age(entry, 10);
+  const summary = await runClean({ ...w.options, afterMoveAside: () => { mkdirSync(path); writeFileSync(join(path, 'new-work.txt'), 'x'); } });
+  assert.deepEqual([existsSync(join(path, 'new-work.txt')), existsSync(join(asideOf(path), 'open')), summary.removed, summary.failed.length], [true, true, 0, 1]);
+  const named = /writable by others.*; the folder could not be renamed back \(.*ENOTEMPTY.*\), it stays as (.+), possibly partly emptied$/.exec(summary.failed[0])?.[1];
+  assert.equal(named, realpathSync(asideOf(path)), summary.failed[0]);
+  chmodSync(join(asideOf(path), 'open'), 0o755);
+});
+
+test('a folder that someone moved away after the rename is not said to stay at a path where it is not', posix, async () => {
+  const { w, path } = resumeWorld();
+  const summary = await runClean({ ...w.options, afterMoveAside: (aside) => renameSync(aside, join(w.root, 'moved-away')) });
+  assert.deepEqual([existsSync(join(w.root, 'moved-away', 'f.txt')), summary.removed, summary.failed.length], [true, 0, 1]);
+  assert.match(summary.failed[0], /could not be renamed back \(.*\), and it is no longer at .*\.removing-/);
+  assert.doesNotMatch(summary.failed[0], /it stays as/);
+});
+
+test('a run handles each original path once: a leftover of a killed run and a new folder of the same name do not both go in one run', posix, async () => {
+  const w = world();
+  const both = [folder(join(w.tmp, '.removing-4242-cs-run-AbCdEf'), { days: 3 }), folder(join(w.tmp, 'cs-run-AbCdEf'), { days: 3 })];
+  const first = await runClean(w.options);
+  assert.deepEqual([first.items, first.removed, both.filter(existsSync).length], [1, 1, 1]);
+  const second = await runClean(w.options);
+  assert.deepEqual([second.removed, both.filter(existsSync).length], [1, 0]);
 });
 
 test('a folder left aside by a killed run is removed by the next run only when the same checks pass for its original name', posix, async () => {

@@ -128,7 +128,7 @@ test('removeInside keeps a folder item that others can write to, refuses the roo
   assert.deepEqual([existsSync(open), existsSync(sibling)], [true, true]);
 });
 
-test('an item is kept (listed, left under its aside name) when a folder inside is writable by others; the other items still go', posix, async () => {
+test('an item whose removal fails after the rename (a folder inside is writable by others) is put back under its own name and listed with that path; the other items still go', posix, async () => {
   const w = world();
   transcript(w, '-proj', NEWEST, 0);
   for (const id of [OLD, OTHER]) transcript(w, '-proj', id, 10);
@@ -139,8 +139,11 @@ test('an item is kept (listed, left under its aside name) when a folder inside i
   for (const path of [join(unsafeInside, 'open', 'f'), join(unsafeInside, 'open'), unsafeInside]) age(path, 10);
   const fine = sessionFolder(w, OTHER, 10);
   const summary = await runClean(w.options);
-  assert.deepEqual([existsSync(join(asideOf(unsafeInside), 'open', 'f')), existsSync(fine), summary.failed.length], [true, false, 1], 'an error on one item does not stop the run');
-  chmodSync(join(asideOf(unsafeInside), 'open'), 0o755);
+  assert.deepEqual([existsSync(join(unsafeInside, 'open', 'f')), existsSync(asideOf(unsafeInside)), existsSync(fine), summary.failed.length], [true, false, false, 1], 'an error on one item does not stop the run');
+  const named = /; the folder was put back at (.+), possibly partly emptied$/.exec(summary.failed[0])?.[1];
+  assert.equal(named, realpathSync(unsafeInside), summary.failed[0]);
+  assert.equal(existsSync(named), true, 'the path the failure line names exists');
+  chmodSync(join(unsafeInside, 'open'), 0o755);
 });
 
 test('every rule yields the real path of its root, also when the configured root is reached through a symlinked parent', posix, async () => {
