@@ -124,7 +124,8 @@ test('an absolute target that names a folder the line may be in, or a bare glob 
   const inSrc = { cwd: resolve(PROJECT, 'src'), project: PROJECT };
   const src = resolve(PROJECT, 'src');
   const WHERE_A_CD_MAY_HAVE_LED = [`cd src; ${RM} -rf ${src}`, `(cd src); (${RM} -rf -- ${src})`, `cd src\n${RM} -rf ${src}/*`, `true || cd src; ${RM} -rf ${src}/.*`,
-    `(cd src) && ${RM} -rf ${src}/[a-z]*`, `cd src | cat; { ${RM} -R ${src}/*; } | tee log`, `cd +0 && ${RM} -rf ${PROJECT}/*`];
+    `(cd src) && ${RM} -rf ${src}/[a-z]*`, `cd src | cat; { ${RM} -R ${src}/*; } | tee log`, `cd +0 && ${RM} -rf ${PROJECT}/*`,
+    `cd src; bash -c '${RM} -fr ${src}'`, `(cd src) && bash -c '${RM} -Rf ${src}/'`, `(cd src); sh -c "bash -c '${RM} -rf ${src}/*'"`]; // a script run by the line may be in the same folders
   for (const command of WHERE_A_CD_MAY_HAVE_LED) assert.match(firstReason(command), WHOLE_FOLDER, command);
   // a cd in a subshell does not move the line: the folder it started in is held against the target as well
   for (const command of [`(cd ..); ${RM} -rf ${src}/*`, `cd .. | cat; ${RM} -rf ${src}`]) assert.match(firstReason(command, inSrc), WHOLE_FOLDER, command);
