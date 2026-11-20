@@ -16,8 +16,9 @@ Setup modes: `normal`, `medium` (default), `high`, `extra-high`, `ultra-high`; s
   `maxTurns` and gives the delete advice, delete that `maxTurns:` frontmatter line in its own commit (why in the
   body), without asking, and say so in one line (owner's standing order; an exception to C18 and C36). Edit only a
   regular file with one hard link whose real path lies in a `.claude/agents` folder of the session's git repository
-  (from the session folder up to the git root, subfolders included), never through a link. For a file the note marks
-  "not read" or "check by hand", or does not list with `maxTurns`, edit nothing and tell the owner.
+  (from the session folder up to the git root, subfolders included), never through a link and never a file in the
+  personal agents folder (`~/.claude/agents`). For a file the note marks "not read", "not checked" or "check by hand",
+  or does not list with `maxTurns`, edit nothing and tell the owner.
 - Report sizes (`≤ N lines`) size the summary, not the work. When the detail matters, write it to a file and return
   the path.
 - At a usage limit: read the reset time from the message, tell the owner that time, and schedule ONE wake a few minutes after it. Never retry before the reset. Subscription only: never `/fast`, `/code-review ultra` or credits.
