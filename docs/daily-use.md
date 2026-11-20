@@ -34,7 +34,8 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
   prints (agents or the `wf-review` workflow, by the rule above) (`reviewer`, plus `security-auditor` and Opus lenses for risky classes and at landing); `ui-quality-pass` for UI;
   then `verify-done`.
 - While a workflow runs you can keep talking to the lead: it answers questions and asks yours without stopping the
-  agents. A command that runs over about 2 minutes goes to the background with a timeout and `watch.mjs`.
+  agents. A command that runs over about 5 minutes goes to the background with its `timeout` set (at most 2 h); `watch.mjs` is for waiting on a
+  session or an agent, not on a command.
 - The final answer says what changed and what was not run. No recap of the process.
 
 ## Long or unattended runs
@@ -47,7 +48,7 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
   and each question's wait is cut to fit when `CLAUDE_PERMISSION_TIMEOUT_S` is higher), but its timer pauses while that terminal window
   is focused, after a keypress, and with Remote Control on. The recommended option is chosen to be safe with nobody
   there, and each default taken is logged.
-- Guard dialogs (`git push`, publish, `rm -rf` outside the project, prod-host writes, literal secrets) default to
+- Guard dialogs (`git push`, publish, `rm -rf` outside the project or of a whole folder such as `rm -rf *`, prod-host writes, literal secrets) default to
   Allow and go ahead after 2 min (`CLAUDE_ASK_TIMEOUT_S`; a secret-only ask `CLAUDE_ASK_SECRET_TIMEOUT_S`, also 2 min).
   Every Claude Code permission prompt (any tool, MCP tools, Agent, plan approval, protected files, any mode, background
   agents and `claude -p`) gets the same dialog and goes ahead after 2 min (`CLAUDE_PERMISSION_TIMEOUT_S`); the dialog
@@ -57,17 +58,18 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
   secret) is first sent back to Claude once with the fix, so no dialog waits; the message also names what will still
   ask after the rewrite (a push, an `rm` outside the project ...), and sent again unchanged, it gets the dialog. A
   secret sent back this way shows you no dialog, so Claude names its kind in the final report: rotate it if needed.
-  A quality rule (a hand-edited lockfile, a `git merge` or plain `git pull` that can create a merge commit) is advice, not
-  a dialog: Claude gets the fix once (let the package manager write the lockfile; rebase or `--ff-only`), and the same
+  A quality rule (a hand-edited lockfile, a `git merge` or plain `git pull` that can create a merge commit, a wait by sleeping: a
+  `sleep` loop or one long `sleep`) is advice, not a dialog: Claude gets the fix once (let the package manager write the lockfile;
+  rebase or `--ff-only`; run the long command in the background with a `timeout`), and the same
   command sent again runs. Every ask and its outcome is in `~/.claude/logs/guard.jsonl`.
 - Watch a run from a second session: `node ~/.claude/tools/watch/watch.mjs <session-id>` under the Monitor tool; it
   prints one line per event that needs action and flags a stall. See its README (`home/tools/watch/README.md`).
   With `--exit-on-event` in a background command it prints the first such event and exits, so a quiet hour costs the
-  lead no turns. A session that only finished its turn and waits for its owner is not a stall: add `idle` to the
+  lead no turns (in an unattended run set the command's `timeout`, at most 2 h: without one it stops after 30 min). A session that only finished its turn and waits for its owner is not a stall: add `idle` to the
   class list (`--exit-on-event owner,idle`) to be told, otherwise it stays quiet. Idle is only told for a session whose process is registered
   (watch by session id, not by file path); in any doubt the silence is still a stall.
 - A run that must survive a dropped connection starts a watch on its own session id with
-  `--exit-on-event api-error,stall,limit`; when the watch exits, the run is woken and carries on.
+  `--exit-on-event api-error,stall,limit`, as a background command with `timeout` 7200000 (an unattended run stops one without it after 30 min); when the watch exits, the run is woken and carries on.
 - Background agents hand decisions to the lead through the ask queue: `node ~/.claude/tools/ask/ask.mjs init` prints
   the queue path, and the lead runs Monitor on `node ~/.claude/tools/ask/ask.mjs watch --queue <path>`. See
   `home/tools/ask/README.md` and the `ask-owner` skill.

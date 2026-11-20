@@ -130,7 +130,9 @@ test('runner.md names the 600000 timeout for land and installs; P10 and the arch
 
 test('home/CLAUDE.md: long-command line says ~5 min, not ~2 min', () => {
   const claude = read('home/CLAUDE.md');
-  assert.match(claude, /A command over ~5 min runs in background with a timeout and `watch\.mjs`/);
+  assert.match(claude, /A command over ~5 min runs with `run_in_background: true` and its `timeout` set \(at most 2 h\); `watch\.mjs` waits on a session or an agent, never on a command\./);
+  assert.doesNotMatch(claude, /with a timeout and `watch\.mjs`/, 'watch.mjs is not a way to run or bound a command');
+  assert.doesNotMatch(read('docs/daily-use.md'), /over about 2 minutes|with a timeout and `watch\.mjs`/, 'the daily-use page says the same as the rule');
   assert.doesNotMatch(claude, /A command over ~2 min/);
 });
 

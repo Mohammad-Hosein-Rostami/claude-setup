@@ -48,11 +48,12 @@ changes), plus `AGENT_RAN type= asked= depth= ran=` per subagent (the old `agent
 ## Wake the lead only for real events (`--exit-on-event`)
 
 Monitor turns every stdout line into a lead turn, and a Monitor ends after at most 30 minutes (the lead re-arms it). A background
-Bash command has no such cap and costs nothing while it prints nothing, so for "tell me when something needs me" run:
+Bash command costs nothing while it prints nothing and, in an interactive session, has no such cap (in an unattended run, `-p`, Agent
+SDK, CI or cloud, it stops after 30 min unless the call sets `timeout`, at most 7200000 ms = 2 h), so for "tell me when something needs me" run:
 
     node ~/.claude/tools/watch/watch.mjs <session-id> --exit-on-event
 
-as a background Bash command (`run_in_background`). The harness re-invokes the lead when it exits: stdout is the one event line,
+as a background Bash command (`run_in_background: true`; in an unattended run with `timeout` set). The harness re-invokes the lead when it exits: stdout is the one event line,
 exit 0 is an event, exit 1 is the watcher's own problem (`WATCH_ERROR`), exit 2 is a usage error. Run it again to keep watching.
 Monitor is still right when every line matters as it arrives (a live feed with `--log`, several sessions at once with all their lines).
 
@@ -67,7 +68,8 @@ Limit window: a `limit` wake means the session stopped until the window resets. 
 session replies again, also when the watcher starts inside the open window.
 
 Self-watch: an unattended run that dies on a connection error or a limit window writes nothing more, so nobody notices. Arm two
-background commands together at the start of the run, on the session's OWN id:
+background commands together at the start of the run, on the session's OWN id, each with `timeout` 7200000 (an unattended run stops a
+background command without one after 30 min; a watch that reaches its 2 h is armed again):
 
     watch.mjs <own id> --exit-on-event api-error,stall,limit --delay-sec 90
     watch.mjs <own id> --exit-on-event api-error,stall --delay-sec 90 --skip 1
