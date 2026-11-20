@@ -3,8 +3,8 @@
 // The start folders decide what can be removed, so they are judged like the targets of `rm -r` (outside the project, or
 // `~`, `$HOME`, an unknown variable, asks). `find . -name node_modules -prune -exec rm -rf {} +` inside the project stays silent.
 // A find that only lists, or runs a non-recursive rm, is not judged here. Invariants: pure; never touches the file system.
-import { RECURSIVE_FLAG, bashReadings, checkRm } from './rm-paths.mjs';
-import { QUOTED_MARK, basenameOf } from './shell-words.mjs';
+import { RECURSIVE_FLAG, bashReadings, checkRm, shown } from './rm-paths.mjs';
+import { basenameOf } from './shell-words.mjs';
 import { destructive } from './verdict.mjs';
 
 const EXEC_PRIMARIES = new Set(['-exec', '-execdir', '-ok', '-okdir']);
@@ -41,5 +41,5 @@ export function checkFind(args, env) {
   if (!deletes(args)) return undefined;
   const folders = startFolders(args).flatMap((folder) => bashReadings(folder, env.splitWords)); // `find $D` splits like `rm -r $D`
   const outside = folders.find((folder) => checkRm(['-r', folder.replace(/\/+$/, '') + PROBE_CHILD], env) !== undefined);
-  return outside === undefined ? undefined : destructive(`find deleting outside the project (${outside.replace(QUOTED_MARK, '')})`);
+  return outside === undefined ? undefined : destructive(`find deleting outside the project (${shown(outside)})`);
 }

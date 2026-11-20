@@ -5,6 +5,7 @@ import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { bounceOnce, bounceText } from '../home/hooks/lib/bounce-once.mjs';
@@ -12,8 +13,9 @@ import {
   ADVICE_CLASS, ADVICE_CLASSES, ASK_CLASSES, BOUNCE_CLASS, BOUNCE_CLASSES, isAdviceReason, reasonClass,
 } from '../home/hooks/lib/reason-classes.mjs';
 import { gitAdvice } from '../home/hooks/lib/git-advice.mjs';
-import { decide, decideSafely, GUARD_ERROR_REASON } from '../home/hooks/pre-bash-guard.mjs';
+import { decide, decideSafely, GUARD_ERROR_REASON, UNREADABLE_INPUT_REASON } from '../home/hooks/pre-bash-guard.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
+import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const PROJECT = resolve('/work/proj');
@@ -69,6 +71,7 @@ const NEVER_BOUNCED = [
   ['command too long', `echo ${'a'.repeat(33 * 1024)}`],
   ['command too complex', `X="${'a '.repeat(2000).trim()}"; rm -rf ${'$X '.repeat(11).trim()}`], // 22,000 target readings
   ['guard error', 'git status'], // run with rules that throw (decideSafely)
+  ['guard input unreadable', 'not hook JSON'], // sent to the real hook as its whole input (hookAsk)
 ];
 
 // One command per bounce class.
@@ -94,7 +97,14 @@ const REPOSITORY_ADVICE = [
   [ADVICE_CLASS.noPass, 'git merge --ff-only lane-x'],
 ];
 
-const askFor = (name, command) => (name === 'guard error' ? decideSafely(command, ctx, throwingRules) : decide(command, ctx));
+const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
+/** What the real hook process answers to input it cannot read, as an ask with its one reason. */
+function hookAsk(input) {
+  const { stdout } = spawnSync(process.execPath, [GUARD], { input, encoding: 'utf8', env: hookEnv({ CLAUDE_PROJECT_DIR: PROJECT }) });
+  const { permissionDecision, permissionDecisionReason } = JSON.parse(stdout).hookSpecificOutput;
+  return { allow: false, ask: permissionDecision === 'ask', reason: permissionDecisionReason };
+}
+const askFor = (name, command) => (name === 'guard error' ? decideSafely(command, ctx, throwingRules) : name === 'guard input unreadable' ? hookAsk(command) : decide(command, ctx));
 const reasonsOf = (ask) => ask.reasons ?? [ask.reason];
 const store = () => {
   const home = makeTempDir('classes-home-');
@@ -156,6 +166,7 @@ test('each bounce class is bounced the first time, with a backstop-only reason c
   assert.equal(reasonClass(GUARD_ERROR_REASON), 'guard error');
   assert.equal(reasonClass(`${GUARD_ERROR_REASON}: TypeError`), 'guard error', 'the reason the hook writes after its own failure names the error class');
   assert.equal(reasonClass(`${GUARD_ERROR_REASON}: not a class name`), undefined);
+  assert.equal(reasonClass(UNREADABLE_INPUT_REASON), 'guard input unreadable');
   const besideWholeFolder = bounceText(decide(`${VARIABLE_COMMAND}; rm -rf *`, ctx).reasons);
   assert.match(besideWholeFolder, /will still ask the owner for: rm -r that empties a whole folder\./);
   assert.doesNotMatch(besideWholeFolder, /another guard rule/);

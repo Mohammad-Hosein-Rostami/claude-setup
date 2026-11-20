@@ -69,10 +69,10 @@ const ASK_CLASS_PATTERNS = [
   ['rm hidden behind a variable', /^DESTRUCTIVE: \S+ with -rf flags hides the command/],
   ['rm -r on paths read from stdin', /^DESTRUCTIVE: .+ runs rm -r on paths read from stdin/],
   ['find deleting outside the project', /^DESTRUCTIVE: find deleting outside the project \(/],
-  ['rm -r with a brace expansion that cannot be listed', /^DESTRUCTIVE: rm -r with a brace expansion that cannot be listed/],
-  ['rm -r with a target too long to check', /^DESTRUCTIVE: rm -r with a target too long to check \(/],
-  ['rm -r outside the project', /^DESTRUCTIVE: rm -r outside the project \(/],
-  ['rm -r that empties a whole folder', /^DESTRUCTIVE: rm -r that empties a whole folder \(/],
+  ['rm -r with a brace expansion that cannot be listed', /^DESTRUCTIVE: rm (?:-r|that may be recursive \([^)]*\)) with a brace expansion that cannot be listed/],
+  ['rm -r with a target too long to check', /^DESTRUCTIVE: rm (?:-r|that may be recursive \([^)]*\)) with a target too long to check \(/],
+  ['rm -r outside the project', /^DESTRUCTIVE: rm (?:-r|that may be recursive \([^)]*\)) outside the project \(/],
+  ['rm -r that empties a whole folder', /^DESTRUCTIVE: rm (?:-r|that may be recursive \([^)]*\)) that empties a whole folder \(/],
   ['HUSKY=0', /^HUSKY=0 skips the git hooks$/],
   ['git -c core.hooksPath', /^git -c core\.hooksPath bypasses the git hooks$/],
   ['git -c alias', /^git -c alias\.\* defines a command for this call/],
@@ -104,6 +104,7 @@ const ASK_CLASS_PATTERNS = [
   ['command too long', /^command too long to check/],
   ['command too complex', /^command too complex to check/],
   ['guard error', /^guard error(?:: \w+)?$/], // the hook's own fallback adds the error class (`guard error: TypeError`)
+  ['guard input unreadable', /^the guard could not read its input /], // written by the hook itself, before any rule ran
 ];
 export const ASK_CLASSES = ASK_CLASS_PATTERNS.map(([name]) => name);
 

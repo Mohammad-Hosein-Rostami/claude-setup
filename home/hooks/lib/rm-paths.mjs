@@ -1,8 +1,6 @@
-// Path rules for `rm -r`: is a target inside the project or a temp dir, and which variables hold what. (Which folder the line is in
-// after a `cd` is lib/cd-folder.mjs.)
+// Path rules for `rm -r`: is a target inside the project or a temp dir, and which variables hold what (the folder after a `cd`: lib/cd-folder.mjs).
 // Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; MAX_TARGET_CHARS; MAX_LINE_READINGS; TOO_COMPLEX_REASON; newWork();
-// PWD_TARGET; expandVars;
-// newScope(cwd, project) -> {vars, assigned};
+// PWD_TARGET; expandVars; shown(target) -> the target as a reason shows it; newScope(cwd, project) -> {vars, assigned};
 // trackAssignments(scope, tokens, nextTokens); substituteKnownWords(tokens, scope); bashReadings(word, splitWords) (also read by
 // lib/find-delete.mjs); nativePath, isUnder, sameFile, expandHome; RECURSIVE_FLAG; withoutRedirects(args) (also read by lib/git-runs.mjs);
 // DECLARERS (from lib/shell-words.mjs, also read by lib/git-run-values.mjs).
@@ -14,7 +12,7 @@
 // Brace expansion in targets (`{/,x}`) is expanded first; one that cannot be listed asks.
 // `$(git rev-parse --show-toplevel)` counts as the project root from a directory inside the project (`rm -rf "$(git rev-parse --show-toplevel)/dist"`).
 // Only a recursive rm asks about an unknown or outside target; `rm -f x` of one file is not judged here. An rm whose options the guard
-// cannot read counts as recursive (mayBeRecursive): `-$X`, `"$@"`, `"${a[@]}"`, or one variable where the options stand (`rm $F ~`).
+// cannot read counts as recursive (rmKind; its reasons say "rm that may be recursive", not "rm -r"): `-$X`, `"$@"`, `"${a[@]}"`, or one variable where the options stand (`rm $F ~`).
 // Inside the project a recursive rm still asks when it empties a whole folder: the working directory itself, or a bare glob (`*`, `./*`,
 // `.*`, `?`, `[a-z]*`) of the working directory, the project root, home, `/` or a temp root (`/tmp/*` empties every session's scratch folder).
 // A glob with a name part (`*.log`) or of a sub-folder does not.
@@ -232,7 +230,7 @@ function emptiesWholeFolder(rawTarget, { cwd, project, heres }, vars) {
 }
 
 /** A target as a reason shows it: without the quote mark, and only its start when it is long (the agent wrote it; it is not ours to repeat in full). */
-function shown(target) {
+export function shown(target) {
   const text = target.replace(QUOTED_MARK, '').replace(LINE_BREAKS, LINE_BREAK_MARK);
   return text.length > MAX_SHOWN_TARGET_CHARS ? `${text.slice(0, MAX_SHOWN_TARGET_CHARS)}… (${text.length} characters)` : text;
 }
@@ -264,16 +262,17 @@ const EXPANSION = /[$`]/;
 const MANY_WORDS = /\$[@*]|\[[@*]\]\}/; // `"$@"`, `$*`, `"${a[@]}"`: any number of words, options among them
 const WHOLE_EXPANSION = /^\$(?:\w+|\{[^}]*\})$/; // a word that is one variable and nothing else
 
+const UNREAD_OPTIONS_RM = 'rm that may be recursive (an expansion can hold its options)'; // how a reason names an rm that is not `-r` as written
 /**
- * True when the rm deletes recursively, or may once the shell has filled in its words: an option word with an expansion in it (`-$X`,
- * `-${X:-r}f`), a word that stands for any number of words (`"$@"`, `"${a[@]}"`), or a word that is one variable where the options
- * stand, with more words after it (`rm $F ~` with F=-rf). The guard cannot read these values, so it judges the targets as for `rm -r`.
+ * How a reason names the rm, undefined when it is not judged: `rm -r` when it deletes recursively as written; UNREAD_OPTIONS_RM when it may
+ * once the shell has filled in its words: an option word with an expansion in it (`-$X`, `-${X:-r}f`), a word that stands for any number of words
+ * (`"$@"`, `"${a[@]}"`), or one variable where the options stand, with more words after it (`rm $F ~` with F=-rf): judged as `rm -r`.
  */
-function mayBeRecursive(args) {
-  if (flagsOf(args).some((flag) => RECURSIVE_FLAG.test(flag) || EXPANSION.test(flag))) return true;
-  if (args.some((word) => MANY_WORDS.test(word))) return true;
+function rmKind(args) {
+  if (flagsOf(args).some((flag) => RECURSIVE_FLAG.test(flag))) return 'rm -r';
   const first = args.findIndex((word) => !word.startsWith('-'));
-  return first !== -1 && first < args.length - 1 && WHOLE_EXPANSION.test(args[first]);
+  const unread = flagsOf(args).some((flag) => EXPANSION.test(flag)) || args.some((word) => MANY_WORDS.test(word)) || (first !== -1 && first < args.length - 1 && WHOLE_EXPANSION.test(args[first]));
+  return unread ? UNREAD_OPTIONS_RM : undefined;
 }
 
 /**
@@ -285,16 +284,17 @@ function mayBeRecursive(args) {
  */
 export function checkRm(args, { cwd, project, vars, splitWords, groupTargets = [], work = newWork(), maybeCwds = [] }) {
   if (work.spent) return TOO_COMPLEX_REASON;
-  if (!mayBeRecursive(args)) return undefined;
+  const rm = rmKind(args);
+  if (rm === undefined) return undefined;
   const words = readingsWithin(work, [...withoutRedirects(args).filter((a) => !a.startsWith('-')), ...groupTargets], splitWords);
   if (words === null) return TOO_COMPLEX_REASON;
   const long = words.find((word) => word.length > MAX_TARGET_CHARS);
-  if (long !== undefined) return destructive(`rm -r with a target too long to check (${long.length} characters, the guard reads up to ${MAX_TARGET_CHARS})`);
-  if (words.some((word) => expandBraces(word) === null)) return destructive('rm -r with a brace expansion that cannot be listed (check the targets by hand)');
+  if (long !== undefined) return destructive(`${rm} with a target too long to check (${long.length} characters, the guard reads up to ${MAX_TARGET_CHARS})`);
+  if (words.some((word) => expandBraces(word) === null)) return destructive(`${rm} with a brace expansion that cannot be listed (check the targets by hand)`);
   const judged = words.flatMap(expandBraces).flatMap((target) => readingsOf(target, cwd, vars).map((reading) => ({ target, reading })));
   const outside = judged.find(({ target, reading }) => !insideProject(target, cwd, project, reading));
-  if (outside !== undefined) return destructive(`rm -r outside the project (${shown(outside.target)})`);
+  if (outside !== undefined) return destructive(`${rm} outside the project (${shown(outside.target)})`);
   const heres = (cwd === null ? maybeCwds : [cwd]).filter((here) => here !== null); // an unknown folder: every folder the line may be in
   const whole = judged.find(({ target, reading }) => emptiesWholeFolder(target, { cwd, project, heres }, reading));
-  return whole === undefined ? undefined : destructive(`rm -r that empties a whole folder (${shown(whole.target)}): the working directory itself, or a bare glob of it, the project root, home, a temp root or /`);
+  return whole === undefined ? undefined : destructive(`${rm} that empties a whole folder (${shown(whole.target)}): the working directory itself, or a bare glob of it, the project root, home, a temp root or /`);
 }

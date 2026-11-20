@@ -6,6 +6,7 @@ import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
+import { reasonClass } from '../home/hooks/lib/reason-classes.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 
 const PROJECT = resolve('/work/proj');
@@ -41,10 +42,23 @@ const OPTIONS_FROM_AN_EXPANSION = [
   `${RM} "$F" /etc/x`,
   `${RM} -f $F /etc/x`,
 ];
+const MAY_BE_RECURSIVE_OUTSIDE = /^DESTRUCTIVE: rm that may be recursive \(an expansion can hold its options\) outside the project \(/;
 const NOT_JUDGED_AS_RECURSIVE = [`${RM} "$LOG"`, `${RM} -f "$LOG"`, `${RM} -f a.txt "$B"`, `${RM} -f /etc/x`, `${RM} -$X dist`, `${RM} -f "$TMPDIR"/a "$TMPDIR"/b`];
 
 test('an rm whose options come out of an expansion is judged as recursive: a target outside the project asks', () => {
-  for (const command of OPTIONS_FROM_AN_EXPANSION) assert.ok(decide(command, atRoot).reasons?.some((reason) => /^DESTRUCTIVE: rm -r outside the project \(/.test(reason)), command);
+  for (const command of OPTIONS_FROM_AN_EXPANSION) assert.ok(decide(command, atRoot).reasons?.some((reason) => MAY_BE_RECURSIVE_OUTSIDE.test(reason)), command);
+});
+
+test('the reason says "rm -r" only for an rm that is recursive as written, and both wordings have the same class', () => {
+  const [written] = decide(`${RM} -rf "$LOG" /etc/x`, atRoot).reasons;
+  const [unread] = decide(`${RM} -f "$TMPFILE" "$LOGFILE"`, atRoot).reasons;
+  assert.match(written, /^DESTRUCTIVE: rm -r outside the project \(/);
+  assert.match(unread, MAY_BE_RECURSIVE_OUTSIDE);
+  assert.doesNotMatch(unread, /rm -r /);
+  assert.deepEqual([reasonClass(written), reasonClass(unread)], ['rm -r outside the project', 'rm -r outside the project']);
+  const [wholeFolder] = decide(`${RM} -$X *`, atRoot).reasons;
+  assert.match(wholeFolder, /^DESTRUCTIVE: rm that may be recursive \(an expansion can hold its options\) that empties a whole folder \(/);
+  assert.equal(reasonClass(wholeFolder), 'rm -r that empties a whole folder');
 });
 
 test('one variable as the only or the last word of an rm is a file name, and a readable target inside the project stays silent', () => {
@@ -56,6 +70,9 @@ test('a line break in a target is shown as a mark: the reason stays one line in 
     const [reason] = decide(`${RM} -rf "${target}"`, atRoot).reasons;
     assert.doesNotMatch(reason, /[\r\n]/, JSON.stringify(target));
     assert.match(reason, /^DESTRUCTIVE: rm -r outside the project \(\/etc\/a⏎/, JSON.stringify(target));
+    const [found] = decide(`find "${target}" -name x -delete`, atRoot).reasons;
+    assert.doesNotMatch(found, /[\r\n]/, JSON.stringify(target));
+    assert.match(found, /^DESTRUCTIVE: find deleting outside the project \(\/etc\/a⏎/, JSON.stringify(target));
   }
 });
 
