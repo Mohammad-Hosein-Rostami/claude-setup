@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CLEAN_ENV, git } from './git-tidy-helpers.mjs';
+import { UsageError } from '../home/tools/git-tidy/lib/git.mjs';
 import { CLI, lane } from './review-tier-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 import { entryHeader, openPack } from '../home/tools/review-tier/lib/pack-writer.mjs';
@@ -120,6 +121,15 @@ test('spec check K7, security N27: the temp folder check passes on what init and
     rmSync(join(folder, inner), { recursive: true });
     assert.throws(() => checkTempFolder(folder, taken, []), (error) => /lost a part of itself/.test(error.message) && /cannot be trusted/.test(error.message), inner);
   }
+});
+
+test('fix 7 K5: a file of the temp repository is read only as itself: HEAD as a link (even to a file with the same bytes) is the refusal "changed during the run", never read through', { skip: !POSIX && 'a symlink needs a privilege on Windows' }, () => {
+  const folder = bareRepository();
+  const elsewhere = join(realpathSync(makeTempDir('review-tier-elsewhere-')), 'HEAD');
+  writeFileSync(elsewhere, readFileSync(join(folder, 'HEAD')));
+  rmSync(join(folder, 'HEAD'));
+  symlinkSync(elsewhere, join(folder, 'HEAD'));
+  assert.throws(() => snapshotOf(folder), (error) => error instanceof UsageError && /changed during the run: .*HEAD cannot be opened as a regular file/.test(error.message));
 });
 
 test('fix 7 G2 (was spec check A2): a run removes no folder but its own: old folders of the tool\'s name, with or without a live owner, of the whole shape a run leaves, all stay, and the run leaves none of its own', { skip: !POSIX && 'the temp folder is set with TMPDIR' }, () => {

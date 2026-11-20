@@ -64,6 +64,28 @@ try {
   }
 });
 
+test('fix 7 K5: HEAD swapped for a FIFO right after the tool opened and checked it is not read again by name: the snapshot reads the descriptor it checked and does not block', POSIX_ONLY, () => {
+  const folder = realpathSync(makeTempDir('review-tier-snapshot-'));
+  for (const [file, text] of [['HEAD', 'ref: refs/heads/main\n'], ['config', '[core]\n']]) writeFileSync(join(folder, file), text);
+  const code = `
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { spawnSync } from 'node:child_process';
+const folder = process.env.CASE;
+const real = fs.fstatSync;
+let swapped = false;
+// the first fstat is the one of HEAD's descriptor: right after it, a FIFO takes HEAD's name
+fs.fstatSync = (...args) => { const info = real(...args); if (!swapped) { swapped = true; fs.unlinkSync(folder + '/HEAD'); spawnSync('mkfifo', [folder + '/HEAD']); } return info; };
+syncBuiltinESMExports();
+const { snapshotOf } = await import(${JSON.stringify(TEMP_REPOSITORY)});
+console.log(snapshotOf(folder).get('HEAD').toString().trim());`;
+  const result = inChild(code, { CASE: folder });
+  assert.equal(result.error?.code, undefined, `the snapshot ended by itself: ${result.error?.message}`);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(lstatSync(join(folder, 'HEAD')).isFIFO(), 'the FIFO was swapped in');
+  assert.equal(result.stdout.trim(), 'ref: refs/heads/main', 'the bytes of the file that was checked');
+});
+
 /**
  * How a same-user process swaps things during the removal of the run's own folder, as code the K4 child runs: `onLstat(path)` after
  * the removal's lstat of `path`, `onReaddir(path)` before a read of the folder `path`, `before()` before the removal starts. `objects`,
