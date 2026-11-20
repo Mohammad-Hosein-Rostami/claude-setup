@@ -152,7 +152,9 @@ test('check_prod_hosts fails when the prod-hosts file is a link, and passes for 
   await mkdir(privateDir, { recursive: true });
   const real = join(home, 'real-hosts');
   await writeFile(real, 'db1.example\n');
-  const run = () => spawnSync('bash', [DOCTOR], { encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_prod_hosts' } });
+  const linkEnv = { ...process.env, HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_prod_hosts' };
+  delete linkEnv.CLAUDE_PROD_HOSTS_FILE; // doctor.sh reads this one first; the link run must look at the temp HOME's own file
+  const run = () => spawnSync('bash', [DOCTOR], { encoding: 'utf8', env: linkEnv });
   await symlink(real, join(privateDir, 'prod-hosts'));
   const linked = run();
   assert.equal(linked.status, 1);

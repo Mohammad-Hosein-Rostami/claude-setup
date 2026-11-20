@@ -68,9 +68,13 @@ test('the whole doctor run checks Claude Code and fails below its floor', { skip
     DOCTOR_PROJECT: home,
     DOCTOR_LOG_DIR: join(home, 'logs'),
     DOCTOR_TEST_COMMAND: 'true',
+    // the disk-clean dry run lists these roots, not the machine's real temp folders (a dry run: no --apply)
+    DOCTOR_DISK_CLEAN_ARGS: `--claude-tmp ${join(home, 'none')} --projects ${join(home, 'projects')} --tmp ${join(home, 'tmp')}`,
     PATH: `${bin}${delimiter}${process.env.PATH}`,
   };
   delete env.DOCTOR_ONLY;
+  delete env.CLAUDE_PROD_HOSTS_FILE; // doctor.sh reads these from the parent environment: the run must use the temp HOME's own state
+  for (const name of Object.keys(env)) if (name.startsWith('RECALL_')) delete env[name];
   const run = spawnSync('bash', [DOCTOR], { encoding: 'utf8', env });
   assert.equal(run.status, 1);
   assert.ok(run.stdout.includes('FAIL  claude >= 2.1.295 required (found 2.1.294)'), run.stdout);
