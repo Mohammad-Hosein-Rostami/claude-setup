@@ -10,6 +10,7 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
 const hasJq = spawnSync('jq', ['--version']).status === 0;
 const skip = !hasJq && 'jq not installed';
+const skipLink = skip || (process.platform === 'win32' && 'needs symlinks'); // the link test makes a symlink, which Windows may refuse (EPERM)
 const MODE_HOOK = 'node "{{HOME}}/hooks/mode.mjs"';
 const ALL_EVENTS = ['SessionStart', 'UserPromptSubmit', 'UserPromptExpansion'];
 
@@ -146,7 +147,7 @@ test('check_workflows still fails a skill that names neither a workflow script n
   assert.match(run.stdout, /FAIL\s+wf-x names no workflow script/);
 });
 
-test('check_prod_hosts fails when the prod-hosts file is a link, and passes for a plain file', { skip }, async () => {
+test('check_prod_hosts fails when the prod-hosts file is a link, and passes for a plain file', { skip: skipLink },async () => {
   const home = makeTempDir('doctor-home-');
   const privateDir = join(home, '.claude', 'private');
   await mkdir(privateDir, { recursive: true });
