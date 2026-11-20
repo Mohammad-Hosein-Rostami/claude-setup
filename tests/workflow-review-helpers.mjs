@@ -1,19 +1,22 @@
-// Shared fixtures for the review.js workflow tests: what a well-behaved tier runner and lens return in a delta round, where the
-//   script asks for the prior findings file and the `prior: <n> fixed, <m> open` line (lane r7-delta, decision D3).
+// Shared fixtures for the review.js workflow tests: what a well-behaved tier runner and lens return, in a delta round also for the
+//   prior findings file the script asks for and the `prior: <n> fixed, <m> open` line (lane r7-delta, decision D3).
 // Exports: priorOfTierPrompt(prompt), withPriorLine(prompt, reply).
-// Invariants: both read only the prompt the script sent, the way the real runner and lens would; outside a delta round they add nothing.
+// Invariants: both read only the prompt the script sent, the way the real runner and lens would; outside a delta round the tier part is
+//   only `laneClasses` (the names review-tier hands to the next round) and the lens reply stays as it is.
 
 const FINDING_LINE = /^- \[(?:blocking|should-fix)\] /gm;
 const FAKE_SHA256 = 'ab'.repeat(32);
 
 /**
- * The `prior` object review-tier prints for the one file the tier prompt tells the runner to write: one finding per `- [severity]` line.
- * @returns {object} `{ prior }` to spread into the tier JSON, or `{}` when the prompt asks for no `--prior`
+ * What review-tier prints for the command of a tier prompt, to spread into the tier JSON: `laneClasses` (the names the command passes
+ * as `--lane-classes`, plus `logic`, the class of the scripted lane) and, when the prompt asks for `--prior`, the `prior` object of the
+ * one file the prompt tells the runner to write: one finding per `- [severity]` line.
  */
 export function priorOfTierPrompt(prompt) {
-  if (!/ --prior /.test(prompt)) return {};
+  const laneClasses = [...new Set([...(/ --lane-classes (\S+)/.exec(prompt)?.[1].split(',') ?? []), 'logic'])];
+  if (!/ --prior /.test(prompt)) return { laneClasses };
   const findings = (prompt.match(FINDING_LINE) ?? []).length;
-  return { prior: { files: [{ file: '/scratch/close-2-prior.md', sha256: FAKE_SHA256, blocking: findings, shouldFix: 0, findings, ids: [] }], blocking: findings, shouldFix: 0, findings } };
+  return { laneClasses, prior: { files: [{ file: '/scratch/close-2-prior.md', sha256: FAKE_SHA256, blocking: findings, shouldFix: 0, findings, ids: [] }], blocking: findings, shouldFix: 0, findings } };
 }
 
 /**

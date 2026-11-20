@@ -16,8 +16,8 @@ const OPUS = { agent: 'reviewer', model: 'opus', effort: 'max', lens: 'risk', ru
 const finding = (id, extra = {}) => ({ id, severity: 'blocking', file: 'a.mjs', line: 3, problem: `problem ${id}`, fix: 'fix it', security: false, ...extra });
 const clean = { findings: [], verified: 'read it' };
 const verdict = (id, real, extra = {}) => ({ id, real, why: `because ${id}`, reviewedSha: 'a1b2c31', linesMoved: false, ...extra });
-const BASE_SHA = 'ba5e0001' // what `git merge-base <base> HEAD` prints: the tier runner returns it as baseSha
-const sha = (n) => `a1b2c3${n}` // a git sha is hex: the script checks the shape before it puts one in a command
+const BASE_SHA = 'ba5e0001'.padEnd(40, '0') // what `git merge-base <base> HEAD` prints: the tier runner returns it as baseSha
+const sha = (n) => `a1b2c3${n}`.padEnd(40, '0') // a git sha is hex: the script checks the shape before it puts one in a command
 const implemented = (tip, extra = {}) => ({ branch: 'lane/a', worktree: '/p-wt/fix', sha: tip, tests: { cmd: 'npm test', exit: 0 }, deferred: [], ...extra });
 
 /** Scripted replies: tiers[i] answers the i-th `:tier` call (round i); lens/verify/judge/fix replies are functions of the round. */
@@ -29,7 +29,7 @@ function world({ tiers, lens = {}, verify = () => ({ verdicts: [] }), judge = ()
     counts: () => ({ tierCalls, fixCalls }),
     replies: [
       // A delta round: the runner reports the `prior` review-tier counted, and a lens that sets none answers with every prior finding fixed.
-      { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: BASE_SHA, sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1)}`, tierFile: `/t${at}.json`, tier: { ...tiers[Math.min(at, tiers.length - 1)], ...priorOfTierPrompt(prompt) } }; } },
+      { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: BASE_SHA, sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1).slice(0, 8)}`, tier: { ...tiers[Math.min(at, tiers.length - 1)], ...priorOfTierPrompt(prompt) } }; } },
       ...Object.entries(lens).map(([name, reply]) => ({ match: new RegExp(`:review:${name}$`), reply: (prompt, ...rest) => withPriorLine(prompt, reply(round(), prompt, ...rest)) })),
       { match: /:verify:/, reply: (prompt, opts, call) => verify(round(), call.label, prompt) },
       { match: /:judge:/, reply: (...rest) => judge(...rest) },
@@ -41,7 +41,7 @@ function world({ tiers, lens = {}, verify = () => ({ verdicts: [] }), judge = ()
     ],
   };
 }
-const tierOf = (...reviews) => ({ reviews, fileClasses: {} });
+const tierOf = (...reviews) => ({ reviews, fileClasses: {}, laneClasses: ['logic'] });
 const labels = (run, pattern) => run.started.filter((label) => pattern.test(label));
 
 test('a clean review: lenses return nothing, one round, no fix, every call well formed', async () => {
@@ -95,8 +95,11 @@ test('each fix round uses the --delta set with the lane classes, and a fix agent
   assert.ok(run.started.indexOf('close:2:release') < run.started.indexOf('close:2:fix'), 'release before the fix');
   const second = run.calls.filter((call) => call.label === 'close:2:tier')[1];
   assert.match(second.prompt, /cd there first/);
-  assert.match(second.prompt, /Run it from \/p-wt\/fix: node .*review-tier\.mjs --delta a1b2c31 --prior <the prior findings file> --prior-sha256 <its sha256> --base main --lane-classes \/t0\.json --json/);
-  assert.match(second.prompt, /close-2-tier-<sha8>\.json/);
+  // The lane start and the class names are the script's own state: the sha round 0 reported and the names its tier JSON held, written into the command.
+  assert.ok(second.prompt.includes(`Run it from /p-wt/fix: node ~/.claude/tools/review-tier/review-tier.mjs --delta ${sha(1)} --base ${BASE_SHA} --prior <the prior findings file> --prior-sha256 <its sha256> --lane-classes logic --json\n`), second.prompt);
+  assert.doesNotMatch(second.prompt, /<the lane start>|tier-<sha8>|\.json/, 'no base is looked up again and no tier file is written or read');
+  assert.match(run.calls.find((call) => call.label === 'close:2:tier').prompt, /Also report baseSha: git merge-base refs\/heads\/main HEAD \(the full 40-character sha\)\./);
+  assert.deepEqual([...run.result.laneClasses], ['logic'], 'the result hands the names on');
 });
 
 test('the review set of a fix round is recomputed by the runner; a tier the fix agent returns is ignored, even an empty one (B2)', async () => {
@@ -123,13 +126,13 @@ test('every round runs review-tier with the lead\'s --add-class and the lane cla
   const tiers = run.calls.filter((call) => call.label === 'close:2:tier');
   assert.equal(tiers.length, 2);
   for (const call of tiers) assert.match(call.prompt, /--landing --add-class concurrency --add-class money/);
-  assert.match(tiers[1].prompt, /--add-class money --lane-classes \/t0\.json --json/);
+  assert.match(tiers[1].prompt, /--add-class money --lane-classes logic --json/);
 });
 
 test('a tier that did not exit 0, or has no reviews list, ends the run failed with no lens started (B1 tier)', async () => {
   for (const [prepared, why] of [[{ exit: 1, tier: {} }, /exited 1/], [{ exit: 0, tier: {} }, /no `reviews` list/], [{ exit: 0, tier: null }, /no `reviews` list/]]) {
     const w = world({ tiers: [tierOf(SONNET)], lens: { correctness: () => clean } });
-    w.replies[0] = { match: /:tier$/, reply: { sha: sha(1), reviewWorktree: `/scratch/close-2-${sha(1)}`, tierFile: '/t0.json', ...prepared } };
+    w.replies[0] = { match: /:tier$/, reply: { sha: sha(1), reviewWorktree: `/scratch/close-2-${sha(1).slice(0, 8)}`, ...prepared } };
     const run = await runScript(REVIEW, ARGS, { replies: w.replies });
     assert.equal(run.result.status, 'failed', JSON.stringify(prepared));
     assert.match(run.result.text, why);
@@ -145,27 +148,29 @@ test('with landing an empty review set is lost, not clean; without landing it is
   assert.equal(plain.result.status, 'clean');
 });
 
-test('Windows drive-letter review worktree and tier file paths are plain paths', async () => {
-  for (const [reviewWorktree, tierFile] of [[`C:/scratch/close-2-${sha(1)}`, 'C:/t0.json'], [`C:\\scratch\\close-2-${sha(1)}`, 'C:\\t0.json']]) {
+test('a Windows drive-letter review worktree is a plain path', async () => {
+  for (const reviewWorktree of [`C:/scratch/close-2-${sha(1).slice(0, 8)}`, `C:\\scratch\\close-2-${sha(1).slice(0, 8)}`]) {
     const w = world({ tiers: [tierOf(SONNET)], lens: { correctness: () => clean } });
-    w.replies[0] = { match: /:tier$/, reply: { exit: 0, baseSha: BASE_SHA, sha: sha(1), reviewWorktree, tierFile, tier: tierOf(SONNET) } };
+    w.replies[0] = { match: /:tier$/, reply: { exit: 0, baseSha: BASE_SHA, sha: sha(1), reviewWorktree, tier: tierOf(SONNET) } };
     const run = await runScript(REVIEW, ARGS, { replies: w.replies });
     assert.equal(run.result.status, 'clean', reviewWorktree);
   }
 });
 
-test('a tier file that would overwrite the lane classes, a review worktree not named for the row and sha, and an unsafe path are refused', async () => {
+test('a review worktree not named for the row and sha, an unsafe path, a sha that is not full and a tier with no class names are refused', async () => {
   const bad = [
-    [{ tierFile: '/t-prev.json' }, /not a new plain path/],
-    [{ tierFile: '/tmp/a b.json' }, /not a new plain path/],
+    [{ sha: sha(1).slice(0, 12), reviewWorktree: `/scratch/close-2-${sha(1).slice(0, 8)}` }, /the reviewed sha a1b2c3100000 is not a full 40-character git sha/],
+    [{ baseSha: BASE_SHA.slice(0, 8) }, /the baseSha ba5e0001 is not a full 40-character git sha/],
+    [{ tier: { reviews: [SONNET], fileClasses: {} } }, /the tier JSON has no `laneClasses` \(or `classes`\) list of class names/],
+    [{ tier: { ...tierOf(SONNET), laneClasses: ['logic', 'x; rm -rf /'] } }, /the tier JSON has no `laneClasses`/],
     [{ reviewWorktree: '/scratch/other' }, /not <scratch>\/close-2-<sha8>/],
-    [{ reviewWorktree: `/scratch/close-2-${sha(1)}; echo x` }, /not <scratch>/],
-    [{ sha: 'not-a-sha' }, /not a git sha/],
+    [{ reviewWorktree: `/scratch/close-2-${sha(1).slice(0, 8)}; echo x` }, /not <scratch>/],
+    [{ sha: 'not-a-sha' }, /not a full 40-character git sha/],
   ];
   for (const [change, why] of bad) {
     const w = world({ tiers: [tierOf(SONNET)], lens: { correctness: () => clean } });
-    w.replies[0] = { match: /:tier$/, reply: { exit: 0, baseSha: BASE_SHA, sha: sha(1), reviewWorktree: `/scratch/close-2-${sha(1)}`, tierFile: '/t0.json', tier: tierOf(SONNET), ...change } };
-    const run = await runScript(REVIEW, { ...ARGS, laneClasses: '/t-prev.json' }, { replies: w.replies });
+    w.replies[0] = { match: /:tier$/, reply: { exit: 0, baseSha: BASE_SHA, sha: sha(1), reviewWorktree: `/scratch/close-2-${sha(1).slice(0, 8)}`, tier: tierOf(SONNET), ...change } };
+    const run = await runScript(REVIEW, { ...ARGS, laneClasses: ['logic'] }, { replies: w.replies });
     assert.equal(run.result.status, 'failed', JSON.stringify(change));
     assert.match(run.result.text, why);
     assert.equal(labels(run, /:review:|:cleanup$/).length, 0);
@@ -323,7 +328,7 @@ test('with landing the suite runs beside the reviews on the tip; a red suite is 
   assert.equal(run.result.rounds, 2);
   assert.equal(run.result.suite, 'pass');
   const fix = run.calls.find((call) => call.label === 'close:2:fix');
-  assert.match(fix.prompt, /the full suite is red at a1b2c31: 2 failing/);
+  assert.ok(fix.prompt.includes(`the full suite is red at ${sha(1)}: 2 failing`), fix.prompt);
   assert.ok(run.started.indexOf('close:2:suite') < run.started.indexOf('close:2:review:correctness') + 1, 'the suite starts with the reviews');
   const first = run.calls.find((call) => call.label === 'close:2:suite');
   assert.match(first.prompt, /test-pass\.mjs run --repo <that folder> --suite \(no command after it/);
@@ -363,7 +368,7 @@ test('the delta round re-runs the lens of a fixed finding even when the delta ti
 });
 
 test('initialFindings go to the fix queue in round 0, and a concurrency file gets an Opus fix agent', async () => {
-  const w = world({ tiers: [{ reviews: [SONNET], fileClasses: { 'a.mjs': ['logic', 'concurrency'] } }], lens: { correctness: () => clean } });
+  const w = world({ tiers: [{ reviews: [SONNET], fileClasses: { 'a.mjs': ['logic', 'concurrency'] }, laneClasses: ['concurrency', 'logic'] }], lens: { correctness: () => clean } });
   const run = await runScript(REVIEW, { ...ARGS, initialFindings: [finding('J1')] }, { replies: w.replies });
   const fix = run.calls.find((call) => call.label === 'close:2:fix');
   assert.match(fix.prompt, /J1/);
@@ -438,7 +443,7 @@ test('a round with only a deferred finding, only an open finding, or only a red 
 });
 
 test('restart: the review worktree a killed run left at the same path is removed before the new one is added', async () => {
-  const w = world({ tiers: [{ reviews: [SONNET], fileClasses: {} }], lens: { correctness: () => clean } });
+  const w = world({ tiers: [{ reviews: [SONNET], fileClasses: {}, laneClasses: ['logic'] }], lens: { correctness: () => clean } });
   const run = await runScript(REVIEW, ARGS, { replies: w.replies });
   const tier = run.calls.find((call) => call.label === 'close:2:tier');
   assert.match(tier.prompt, /already exists, a killed run left it.*worktree remove --force.*worktree prune/s);

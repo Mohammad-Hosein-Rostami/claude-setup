@@ -9,9 +9,9 @@ import { runScript } from './workflow-sandbox.mjs';
 import { priorOfTierPrompt, withPriorLine } from './workflow-review-helpers.mjs';
 
 const REVIEW = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'workflows', 'review.js');
-const BASE_SHA = 'ba5e0001';
-const TIP = 'a1b2c31'; // the sha the first tier call reports
-const sha = (n) => `a1b2c3${n}`;
+const BASE_SHA = 'ba5e0001'.padEnd(40, '0');
+const TIP = 'a1b2c31'.padEnd(40, '0'); // the sha the first tier call reports
+const sha = (n) => `a1b2c3${n}`.padEnd(40, '0');
 const lens = (name, model, effort, agent = 'reviewer') => ({ agent, model, effort, lens: name, rules: 'core', brief: 'brief', requiredReading: [], plan: {} });
 const CORRECTNESS = lens('correctness', 'sonnet', 'high');
 const RISK = lens('risk', 'opus', 'max');
@@ -23,7 +23,7 @@ const AUDIT_ARGS = { ...ARGS, waiverAt: undefined, landing: false, fix: false, r
 
 /** A review-tier JSON of a tier-1 non-gate landing: the full set, and the waiver's two halves. */
 const tierJson = (extra = {}) => ({
-  reviews: [CORRECTNESS, RISK, AUDITOR], fileClasses: {}, changedLines: 12, weakened: [], principles: [],
+  reviews: [CORRECTNESS, RISK, AUDITOR], fileClasses: {}, laneClasses: ['logic'], changedLines: 12, weakened: [], principles: [],
   waivable: { reviews: [CORRECTNESS], audit: [RISK, AUDITOR] }, ...extra,
 });
 
@@ -35,7 +35,7 @@ function world({ tiers, lenses, bases = [BASE_SHA], found = {}, suite = { exit: 
   return {
     counts: () => ({ tierCalls, fixCalls }),
     replies: [
-      { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: bases[Math.min(at, bases.length - 1)], sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1)}`, tierFile: `/t${at}.json`, tier: { ...tiers[Math.min(at, tiers.length - 1)], ...priorOfTierPrompt(prompt) }, ...found }; } },
+      { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: bases[Math.min(at, bases.length - 1)], sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1).slice(0, 8)}`, tier: { ...tiers[Math.min(at, tiers.length - 1)], ...priorOfTierPrompt(prompt) }, ...found }; } },
       ...Object.entries(lenses).map(([name, reply]) => ({ match: new RegExp(`:review:${name}$`), reply: (prompt) => withPriorLine(prompt, reply(round())) })),
       { match: /:verify:/, reply: () => ({ verdicts: [{ id: 'F1', real: true, why: 'yes', reviewedSha: TIP, linesMoved: false }] }) },
       { match: /:release$/, reply: { exit: 0, tail: '' } },
@@ -61,7 +61,7 @@ test('a waived round 0 runs only the waiver lenses, and a clean round 0 returns 
 });
 
 test('without waiverAt, or with a different sha, or after a delta, the full set runs and waived is false', async () => {
-  for (const change of [{ waiverAt: undefined }, { waiverAt: 'deadbee' }, { deltaOf: sha(9), laneClasses: '/lane.json', priorFindings: [] }]) {
+  for (const change of [{ waiverAt: undefined }, { waiverAt: 'deadbee' }, { deltaOf: sha(9), laneClasses: ['logic'], priorFindings: [] }]) {
     const w = world({ tiers: [tierJson()], lenses: everyLens });
     const run = await runScript(REVIEW, { ...ARGS, ...change }, { replies: w.replies });
     assert.deepEqual(lensLabels(run), ['close:2:review:audit', 'close:2:review:correctness', 'close:2:review:risk'], JSON.stringify(change));
@@ -104,7 +104,7 @@ test('a waived round 0 with a confirmed finding makes round 1 a whole-range full
   const tiers = run.calls.filter((call) => call.label === 'close:2:tier');
   assert.equal(tiers.length, 2);
   assert.doesNotMatch(tiers[1].prompt, /--delta/);
-  assert.match(tiers[1].prompt, /review-tier\.mjs main\.\.\.HEAD --landing --lane-classes \/t0\.json --json/);
+  assert.match(tiers[1].prompt, /review-tier\.mjs main\.\.\.HEAD --landing --lane-classes logic --json/);
   assert.deepEqual(labels(run, /:review:/).slice(1).sort(), ['close:2:review:audit', 'close:2:review:correctness', 'close:2:review:risk']);
   assert.equal(run.result.status, 'clean');
   assert.equal(run.result.waived, false, 'the lane was escalated, so it is not waived');
@@ -124,11 +124,11 @@ test('a waived round 0 with a red suite also escalates to the whole range with t
 
 test('baseSha and tip of the last round are returned', async () => {
   const w = world({
-    tiers: [tierJson({ waivable: null })], bases: [BASE_SHA, 'ba5e0002'],
+    tiers: [tierJson({ waivable: null })], bases: [BASE_SHA, 'ba5e0002'.padEnd(40, '0')],
     lenses: { correctness: (round) => (round === 0 ? { findings: [finding('F1')], verified: 'x' } : clean), risk: () => clean, audit: () => clean },
   });
   const run = await runScript(REVIEW, ARGS, { replies: w.replies });
-  assert.equal(run.result.baseSha, 'ba5e0002');
+  assert.equal(run.result.baseSha, 'ba5e0002'.padEnd(40, '0'));
   assert.equal(run.result.tip, sha(2));
   assert.equal(labels(run, /:tier$/).length, 2);
 });
@@ -137,7 +137,7 @@ test('a tier answer whose baseSha is not a git sha fails the run', async () => {
   const w = world({ tiers: [tierJson()], lenses: everyLens, found: { baseSha: 'main; rm -rf /' } });
   const run = await runScript(REVIEW, ARGS, { replies: w.replies });
   assert.equal(run.result.status, 'failed');
-  assert.match(run.result.text, /baseSha .* is not a git sha/);
+  assert.match(run.result.text, /baseSha .* is not a full 40-character git sha/);
   assert.equal(labels(run, /:review:/).length, 0);
 });
 
@@ -197,7 +197,7 @@ test('an audit whose range is no longer tier 1 non-gate (waivable null) runs the
 });
 
 test('audit mode refuses a tier reviewed at another sha or based on another base', async () => {
-  for (const [found, why] of [[{ sha: 'deadbee', reviewWorktree: '/scratch/close-2-deadbee' }, /not the audit tip/], [{ baseSha: 'ba5e0009' }, /not the audit base/]]) {
+  for (const [found, why] of [[{ sha: 'deadbee'.padEnd(40, '0'), reviewWorktree: '/scratch/close-2-deadbee0' }, /not the audit tip/], [{ baseSha: 'ba5e0009' }, /not the audit base/]]) {
     const w = world({ tiers: [tierJson()], lenses: everyLens, found });
     const run = await runScript(REVIEW, AUDIT_ARGS, { replies: w.replies });
     assert.equal(run.result.status, 'failed', JSON.stringify(found));

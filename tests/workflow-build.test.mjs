@@ -14,7 +14,7 @@ const lane = (key, extra = {}) => ({ row: `impl-${key}`, closeRow: `close-${key}
 const ARGS = (lanes, extra = {}) => ({ base: 'main', repo: '/p', suite: 'npm test', writers: 4, statusFile: '/p/STATUS.md', scriptsDir: '/scripts', lanes, ...extra });
 const built = (key) => ({ branch: `lane/${key}`, worktree: `/wt/${key}`, sha: `s-${key}`, tests: { cmd: 't', exit: 0 }, tier: {} });
 const joined = (key, extra = {}) => ({ red: false, tail: 'green', sha: `j-${key}`, worktree: `/wt/${key}`, vacuous: [], outOfScope: [], contractTouched: [], checkpoints: [], ...extra });
-const reviewed = (key) => ({ status: 'clean', rounds: 1, tip: `t-${key}`, worktree: `/wt/${key}`, tierFile: `/t-${key}.json`, suite: 'pass', findings: [], optional: [], leadList: [], text: '' });
+const reviewed = (key) => ({ status: 'clean', rounds: 1, tip: `t-${key}`, worktree: `/wt/${key}`, laneClasses: ['logic'], suite: 'pass', findings: [], optional: [], leadList: [], text: '' });
 const landedOk = (key) => ({ status: 'landed', sha: `m-${key}`, patchesChanged: 0, tidy: 'clean' });
 const key = (label) => label.split(':')[0].replace('impl-', '');
 const diskOk = { match: /:disk$/, reply: { exit: 0, tail: 'ok    disk free 80.0 GB' } };
@@ -134,7 +134,7 @@ test('a conflict goes back through the review child with the conflict as a findi
     assert.equal(run.result.lanes[0].status, 'landed');
     assert.equal(reviews.length, 2);
     assert.equal(reviews[1].deltaOf, 't-a');
-    assert.equal(reviews[1].laneClasses, '/t-a.json');
+    assert.equal(String(reviews[1].laneClasses), 'logic', 'the class names of the reviewed round, inline: no tier file is handed on');
     assert.equal((reviews[1].initialFindings ?? []).length, expectFinding ? 1 : 0);
     assert.equal(JSON.stringify(reviews[1].priorFindings), expectFinding ? undefined : '[]', 'needs-review: the last review was clean, so the empty prior list is given on purpose');
     if (expectFinding) assert.match(reviews[1].initialFindings[0].problem, /a\.mjs/);
@@ -336,11 +336,11 @@ test('resume: a lane whose close row STATUS.md shows landed is not built again; 
 test('needs-review at land runs the real review script as a delta round: its lens is reached with an empty prior list, and the lane lands', async () => {
   const REVIEW = join(dirname(BUILD), 'review.js');
   const SONNET = { agent: 'reviewer', model: 'sonnet', effort: 'high', lens: 'correctness', rules: 'core', brief: 'brief', requiredReading: [], plan: {} };
-  const tip = (n) => `a1b2c3d${n}`;
+  const tip = (n) => `a1b2c3d${n}`.padEnd(40, '0');
   let [tierCalls, landTries] = [0, 0];
   const replies = [
     ...standard(),
-    { match: /^close-a:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: 'ba5e0001', sha: tip(at + 1), reviewWorktree: `/scratch/close-a-${tip(at + 1)}`, tierFile: `/t${at}.json`, tier: { reviews: [SONNET], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },
+    { match: /^close-a:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: 'ba5e0001'.padEnd(40, '0'), sha: tip(at + 1), reviewWorktree: `/scratch/close-a-${tip(at + 1).slice(0, 8)}`, tier: { reviews: [SONNET], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },
     { match: /^close-a:review:correctness$/, reply: (prompt) => withPriorLine(prompt, { findings: [], verified: 'read it' }) },
     { match: /^close-a:suite$/, reply: { exit: 0, tail: 'ok' } },
     { match: /^close-a:cleanup$/, reply: { exit: 0, tail: '' } },
@@ -351,13 +351,13 @@ test('needs-review at land runs the real review script as a delta round: its len
   assert.deepEqual(run.result.lanes.map(({ status, text }) => [status, text]), [['landed', '']], 'not review-failed');
   const reviews = run.calls.filter((call) => call.workflow === 'review').map((call) => call.args);
   assert.equal(reviews.length, 2);
-  assert.deepEqual([reviews[1].deltaOf, reviews[1].laneClasses, reviews[1].priorFindings, reviews[1].initialFindings], [tip(1), '/t0.json', [], undefined]);
+  assert.deepEqual([reviews[1].deltaOf, reviews[1].laneClasses, reviews[1].priorFindings, reviews[1].initialFindings], [tip(1), ['logic'], [], undefined]);
   const [, deltaTier] = run.calls.filter((call) => call.label === 'close-a:tier');
-  assert.match(deltaTier.prompt, /review-tier\.mjs --delta a1b2c3d1 --prior <the prior findings file> --prior-sha256 <its sha256> --base main --landing --lane-classes \/t0\.json --json/);
+  assert.match(deltaTier.prompt, new RegExp(`review-tier\\.mjs --delta ${tip(1)} --base <the lane start> --prior <the prior findings file> --prior-sha256 <its sha256> --landing --lane-classes logic --json`));
   assert.match(deltaTier.prompt, /with exactly these 0 lines \(an empty file\)/);
   const lenses = run.calls.filter((call) => call.label === 'close-a:review:correctness');
   assert.equal(lenses.length, 2, 'the delta round reaches its lens');
-  assert.match(lenses[1].prompt, /the change to review is the delta since a1b2c3d1/);
+  assert.ok(lenses[1].prompt.includes(`the change to review is the delta since ${tip(1)}`), lenses[1].prompt);
   assert.match(lenses[1].prompt, /prior: <n> fixed, <m> open` over those 0 findings/);
   assert.equal(run.calls.filter((call) => call.workflow === 'land').at(-1).args.tip, tip(2), 'land gets the tip the delta round reviewed');
 });

@@ -21,7 +21,7 @@ const ARGS = (lanes, extra = {}) => ({ base: 'main', repo: '/p', suite: 'npm tes
 const built = (name) => ({ branch: `lane/${name}`, worktree: `/wt/${name}`, sha: `s-${name}`, tests: { cmd: 't', exit: 0 }, tier: {} });
 const checkpointResult = (extra = {}) => ({ id: 'c1', baseExit: 1, headExit: 0, tail: '', ...extra });
 const joined = (name, extra = {}) => ({ red: false, tail: 'green', sha: `j-${name}`, worktree: `/wt/${name}`, vacuous: [], outOfScope: [], contractTouched: [], checkpoints: [checkpointResult()], ...extra });
-const reviewedClean = (name, extra = {}) => ({ status: 'clean', rounds: 1, tip: TIP, baseSha: BASE_SHA, waived: true, worktree: `/wt/${name}`, tierFile: `/t-${name}.json`, suite: 'pass', findings: [], optional: [], leadList: [], text: '', ...extra });
+const reviewedClean = (name, extra = {}) => ({ status: 'clean', rounds: 1, tip: TIP, baseSha: BASE_SHA, waived: true, worktree: `/wt/${name}`, laneClasses: ['logic'], suite: 'pass', findings: [], optional: [], leadList: [], text: '', ...extra });
 const landedOk = (extra = {}) => ({ status: 'landed', sha: LANDED, patchesChanged: 0, tidy: 'clean', ...extra });
 const TESTS = { match: /:tests$/, reply: { branch: 'lane/a--tests', worktree: '/wt/a-tests', sha: 'tw1' } };
 const slugOf = (label) => label.split(':')[0];
@@ -38,7 +38,7 @@ const AUDIT_REPLIES = (overrides = {}) => [
   { match: /:audit-prepare$/, reply: (prompt) => ({ ancestor: true, changedLines: 12, worktree: `/scratch/${/named (audit-\S+)/.exec(prompt)[1]}`, tail: '' }) },
   { match: /:audit-(finish|sampled|error)$/, reply: { exit: 0, tail: '' } },
 ];
-const audited = (overrides = {}) => ({ status: 'clean', rounds: 1, tip: TIP, worktree: '/scratch/w', tierFile: '', suite: 'pass', findings: [], optional: [], leadList: [], text: '', ...overrides });
+const audited = (overrides = {}) => ({ status: 'clean', rounds: 1, tip: TIP, worktree: '/scratch/w', laneClasses: [], suite: 'pass', findings: [], optional: [], leadList: [], text: '', ...overrides });
 /** Runs one contract lane to the end; `reviewChild(args)` answers the landing review and the audit review, `land(args, tries)` the land child. */
 const runContract = (laneObject, { join = joined('a'), review, land = () => landedOk(), replies = [] } = {}) => {
   let tries = 0;
