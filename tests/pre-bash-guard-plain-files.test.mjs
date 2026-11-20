@@ -134,18 +134,32 @@ test('a link at the edit log path is not followed: the file it points to is neve
   assert.equal(readFileSync(target, 'utf8'), 'keep\n');
 });
 
-test('the reader of the edit log does not wait on a FIFO or follow a link either: it reads nothing there', { skip: noFifo }, () => {
+test('the reader of the edit log does not wait on a FIFO or follow a link either: it reads nothing there, and says so in the guard log', { skip: noFifo }, () => {
   const { log } = editLogIn();
   makeFifo(log);
+  const guardLog = join(makeTempDir('edit-log-report-'), 'guard.jsonl');
+  const reported = () => (existsSync(guardLog) ? readFileSync(guardLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line)) : []);
   const script = `import { readEdits } from ${JSON.stringify(EDIT_LOG_MODULE)}; console.log(JSON.stringify(readEdits(process.argv[1])));`;
-  const read = spawnSync(process.execPath, ['--input-type=module', '-e', script, log], { encoding: 'utf8', timeout: KILL_AFTER_MS, env: { ...process.env, HOME: PINNED_HOME } });
+  const read = spawnSync(process.execPath, ['--input-type=module', '-e', script, log], { encoding: 'utf8', timeout: KILL_AFTER_MS, env: { ...process.env, HOME: PINNED_HOME, CLAUDE_GUARD_LOG: guardLog } });
   assert.deepEqual([read.status, read.signal, read.stdout.trim()], [0, null, '[]'], read.stderr);
+  assert.deepEqual(reported().map((line) => [line.hook, line.outcome]), [['typecheck-gate', 'edit-log-unreadable']], 'one line for the read of the FIFO');
   const { log: linked } = editLogIn();
   const real = join(makeTempDir('edit-log-real-'), 'edits.txt');
   writeFileSync(real, '/work/proj/a.ts\n');
   symlinkSync(real, linked);
-  assert.deepEqual(readEdits(linked), []);
-  assert.deepEqual(readEdits(real), ['/work/proj/a.ts']);
+  const before = process.env.CLAUDE_GUARD_LOG;
+  process.env.CLAUDE_GUARD_LOG = guardLog; // these reads run in this process: their report must go to the temp log
+  try {
+    assert.deepEqual(readEdits(linked), []);
+    assert.deepEqual(readEdits(real), ['/work/proj/a.ts']);
+    assert.deepEqual(readEdits(join(dirname(real), 'no-log-here')), []);
+  } finally {
+    if (before === undefined) delete process.env.CLAUDE_GUARD_LOG;
+    else process.env.CLAUDE_GUARD_LOG = before;
+  }
+  const lines = reported();
+  assert.equal(lines.length, 2, 'the link is reported; a plain log and a missing one are not');
+  assert.match(lines[1].reason, /^the edit log sess-plain--main is not a plain file within \d+ bytes \(\w+\): its edits are not checked$/);
 });
 
 test('the edit log has one cap for its writer and its reader: a line that would pass it is not written, a log at the cap is read', () => {

@@ -4,10 +4,13 @@
 // block an edit because the temp dir is unwritable); a log holds one absolute path per line and may repeat paths.
 // The log sits in the shared temp dir, so both sides open it through lib/plain-file.mjs: a link, FIFO or device planted at the log path
 // is never followed, written, read or waited on (the Bash guard writes this log too, and a hook that waits is a hook that times out).
+// A log the reader cannot use (anything but a plain file within the cap) is reported in the guard log, one line per read, outcome
+// `edit-log-unreadable`: the typecheck gate checks nothing for that session then, and that must not pass unseen.
 // One size cap for the writer and the reader: a log at the cap takes no more lines, so the reader never meets a larger one it wrote.
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { logDecision } from './guard-log.mjs';
 import { appendPlainFile, readPlainFile } from './plain-file.mjs';
 
 const SAFE_ID = /^[\w-]{1,128}$/;
@@ -41,12 +44,24 @@ export function recordEdit(logPath, file) {
   }
 }
 
-/** Distinct logged paths in first-seen order; [] when there is no log, or when the path holds anything but a plain file within the cap. */
+const MISSING_FILE = 'ENOENT';
+
+/** One guard-log line for a log path that holds something the reader will not open or read (the file name is two validated ids). */
+function reportUnreadable(logPath, error) {
+  const reason = `the edit log ${basename(logPath)} is not a plain file within ${MAX_EDIT_LOG_BYTES} bytes (${error?.code ?? 'unreadable'}): its edits are not checked`;
+  logDecision({ hook: 'typecheck-gate', tool: 'edit-log', decision: 'skip', outcome: 'edit-log-unreadable', reason, command: '' });
+}
+
+/**
+ * Distinct logged paths in first-seen order; [] when there is no log. A path that holds anything but a plain file within the cap (a link,
+ * a FIFO, a folder, a larger file) gives [] as well, and is reported in the guard log.
+ */
 export function readEdits(logPath) {
   let text;
   try {
     text = readPlainFile(logPath, MAX_EDIT_LOG_BYTES);
-  } catch {
+  } catch (error) {
+    if (error?.code !== MISSING_FILE) reportUnreadable(logPath, error);
     return []; // no log, or not a log this hook wrote: nothing was recorded there
   }
   return [...new Set(text.split(/\r?\n/).filter(Boolean))];
