@@ -1,23 +1,25 @@
 // Tests for the wf-resume CLI (home/tools/wf-resume/wf-resume.mjs): `call` prints the exact Workflow call with the stored args, `adopt` copies a
-// run's journal into another session's folder (the only way a new session can resume it, per the round 5 probe), `list` prints the notice.
+// run's journal into another session's folder (the only way a new session can resume it, per the round 5 probe), `list` prints the notice,
+// `abandon` marks a run the owner gave up so `list` and the start notice stop showing it.
 // Hermetic: HOME is a temp folder, so the registry and the projects folder are the test's own.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launchRecord, saveRun } from '../home/tools/wf-resume/lib/registry.mjs';
-import { LAUNCHED, launchInput, launchResponse, result, started, world } from './wf-resume-helpers.mjs';
+import { runCli } from '../home/tools/wf-resume/wf-resume.mjs';
+import { launchRecord, runsOfSession, saveRun } from '../home/tools/wf-resume/lib/registry.mjs';
+import { LAUNCHED, NOW, launchInput, launchResponse, result, started, world } from './wf-resume-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/wf-resume/wf-resume.mjs', import.meta.url));
 const KILLED = [LAUNCHED, started('a1', '4:rebase', 'Rebase'), result('a1'), started('a2', '4:suite', 'Suite')];
 
 const cli = (w, ...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env: { ...process.env, HOME: w.root, USERPROFILE: w.root, CLAUDE_CONFIG_DIR: '' } });
 
-function seed(w, { session = 'old-1', runId = 'wf_old', args = { row: '4', branch: 'lane/x' } } = {}) {
-  const files = w.addRun({ session, runId, lines: KILLED });
-  saveRun(w.registryDir, launchRecord(launchInput({ session, runId, args, projectsRoot: w.projectsRoot, response: launchResponse(runId, files.scriptPath) }), '2026-11-17T10:00:00.000Z'));
+function seed(w, { session = 'old-1', runId = 'wf_old', args = { row: '4', branch: 'lane/x' }, run = {}, at = '2026-11-17T10:00:00.000Z' } = {}) {
+  const files = w.addRun({ session, runId, lines: KILLED, ...run });
+  saveRun(w.registryDir, launchRecord(launchInput({ session, runId, args, projectsRoot: w.projectsRoot, response: launchResponse(runId, files.scriptPath) }), at));
   return files;
 }
 
@@ -126,4 +128,65 @@ test('adopt finds the journal of a run recorded under another account\'s project
   const out = spawnSync(process.execPath, [CLI, 'adopt', 'wf_old', '--into', second], { encoding: 'utf8', env: { ...process.env, HOME: w.root, USERPROFILE: w.root, CLAUDE_CONFIG_DIR: join(w.root, 'other-account') } });
   assert.equal(out.status, 0, out.stderr);
   assert.equal(readFileSync(join(second, 'subagents', 'workflows', 'wf_old', 'journal.jsonl'), 'utf8'), readFileSync(files.journal, 'utf8'));
+});
+
+const FAILED_SUMMARY = '{"status":"failed"}';
+const LIST_ARGS = ['list', '--cwd', '/work/proj', '--session', 'new-1'];
+const registryBytes = (w) => readdirSync(w.registryDir).filter((name) => name.endsWith('.json')).sort().map((name) => `${name}\n${readFileSync(join(w.registryDir, name), 'utf8')}`).join('\n--\n');
+const abandonedOf = (w, session, runId) => runsOfSession(w.registryDir, session).find((record) => record.runId === runId)?.abandoned;
+const inProcess = (w, argv, nowMs) => runCli(argv, { registryDir: w.registryDir, projectsRoot: w.projectsRoot, estimateStateDir: w.estimateDir, cwd: '/work/proj', nowMs });
+
+test('abandon hides a stopped or failed run from list, keeps call, and a relaunch lists it again', async () => {
+  const w = await world();
+  seed(w);
+  seed(w, { session: 'old-2', runId: 'wf_failed', run: { finished: true, summary: FAILED_SUMMARY } });
+  assert.equal(cli(w, 'abandon', 'wf_old').status, 0);
+  const failed = cli(w, 'abandon', 'wf_failed');
+  assert.equal(failed.status, 0, failed.stderr);
+  assert.match(failed.stdout, /^abandoned wf_failed \(1 record\(s\)\); the start notice no longer lists it; relaunching it with Workflow lists it again/);
+  assert.match(cli(w, ...LIST_ARGS).stdout, /No unfinished workflow runs/);
+  assert.equal(cli(w, 'call', 'wf_old').status, 0, 'a given-up run can still be called');
+  const written = registryBytes(w);
+  const again = cli(w, 'abandon', 'wf_old');
+  assert.equal(again.status, 0, again.stderr);
+  assert.match(again.stdout, /^wf_old already abandoned at \d{4}-\d\d-\d\dT/);
+  assert.equal(registryBytes(w), written, 'a repeat writes nothing');
+  // The run was relaunched in another session (a second copy of the run id): abandon marks that copy too and keeps the first copy's time.
+  const firstTime = abandonedOf(w, 'old-1', 'wf_old');
+  seed(w, { session: 'new-2', runId: 'wf_old', at: '2026-11-17T10:30:00.000Z' });
+  const second = inProcess(w, ['abandon', 'wf_old'], Date.parse('2026-11-18T00:00:00Z'));
+  assert.equal(second.code, 0, second.err);
+  assert.equal(abandonedOf(w, 'old-1', 'wf_old'), firstTime, 'a marked record keeps its first time');
+  assert.equal(abandonedOf(w, 'new-2', 'wf_old'), '2026-11-18T00:00:00.000Z');
+  // A relaunch registers the run again without the mark: it is listed again; the other given-up run stays hidden.
+  seed(w, { session: 'new-2', runId: 'wf_old', at: '2026-11-18T01:00:00.000Z' });
+  const listed = cli(w, ...LIST_ARGS).stdout;
+  assert.match(listed, /wf_old/);
+  assert.doesNotMatch(listed, /wf_failed/);
+});
+
+test('abandon refuses bad, unknown and live runs, and a registry it cannot lock', async () => {
+  const w = await world();
+  seed(w);
+  seed(w, { session: 'old-2', runId: 'wf_live', run: { ageMin: 5 } });
+  const refused = (out, code, pattern) => {
+    assert.equal(out.status ?? out.code, code, out.stderr ?? out.err);
+    assert.match(out.stderr ?? out.err, pattern);
+    assert.equal(registryBytes(w), before, 'a refusal writes nothing');
+  };
+  const before = registryBytes(w);
+  const bad = cli(w, 'abandon', '../x');
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /not a run id/);
+  assert.ok(!bad.stderr.includes('../x'), 'a rejected id is never echoed');
+  assert.equal(registryBytes(w), before);
+  refused(cli(w, 'abandon', 'wf_none'), 1, /no run wf_none in the workflow registry/);
+  for (const argv of [['abandon'], ['abandon', 'wf_old', 'wf_live'], ['abandon', 'wf_old', '--force', 'x']]) refused(cli(w, ...argv), 2, /Usage/);
+  const live = inProcess(w, ['abandon', 'wf_live'], NOW);
+  refused(live, 1, /^run wf_live may still be running \(journal written 5 min ago\): check \/workflows/);
+  assert.match(inProcess(w, LIST_ARGS, NOW).out, /wf_live/, 'the live run is still listed');
+  // A lock another process holds (this test's own pid, a fresh lock) stops the write: nothing is marked.
+  const lock = join(w.registryDir, 'old-1.lock');
+  writeFileSync(lock, `${process.pid} ${'0'.repeat(32)}`, { mode: 0o600 });
+  refused(cli(w, 'abandon', 'wf_old'), 1, /^registry not written/);
 });

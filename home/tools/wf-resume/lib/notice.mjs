@@ -1,13 +1,15 @@
 // The text the lead gets at SessionStart (and from `wf-resume.mjs list`): the workflow runs that did not finish, what is done and what is
 // left, the git worktrees and branches they own, and exactly how to continue each one.
-// Exports: resumeNotice(params, deps) -> string ('' when no run is unfinished), continueCall(record), fullCall(record), MAX_RUNS_LISTED.
+// Exports: resumeNotice(params, deps) -> string ('' when no run is unfinished), continueCall(record), fullCall(record), sessionFolderOf(record, projectsRoot),
+//   MAX_RUNS_LISTED, LIVE_WINDOW_MS.
 // params: { sessionId (null when unknown), cwd, sessionFolder (this session's folder, or null), source: 'startup' | 'resume' | 'compact', nowMs }.
 // deps: { registryDir, projectsRoot, estimateStateDir, projectDir (CLAUDE_PROJECT_DIR) }.
 // Which runs: this session's (registry file of the session id) plus, unless source is `compact`, the runs of every other session that launched
 // one in the same cwd (a new session after an exit, a fork, an account switch); a run id is listed once (its newest record), and a run this
 // session already holds (a resume or an adopted run) is not listed from another session. A run whose summary json says `completed` is finished
 // and not listed; one with another status (failed at a usage limit) is listed as ended early. The run folder is looked up under the projects
-// folder stored in the record (the account that ran it), so an account switch does not hide it.
+// folder stored in the record (the account that ran it), so an account switch does not hide it. A record with an `abandoned` time (set by
+// `wf-resume.mjs abandon`) is dropped first, whatever its state (stopped, ended with a status, lost); it still counts as held by its session.
 // Continue: the same session -> Workflow({scriptPath, resumeFromRunId, args}); another session -> `wf-resume.mjs adopt` first (it copies the
 // journal into this session's folder, the only way the Workflow tool finds it), then the same call. Why the args: a resumed run caches an
 // agent only when its prompt is identical, so the args must be the original ones; the notice carries their digest, `wf-resume.mjs call` prints them.
@@ -27,7 +29,7 @@ import { inspectRun } from './run-state.mjs';
 export const MAX_RUNS_LISTED = 5;
 const MAX_NOTICE_CHARS = 4000;
 const RUNS_INSPECTED_PER_SESSION = 10;
-const LIVE_WINDOW_MS = 30 * 60_000;
+export const LIVE_WINDOW_MS = 30 * 60_000;
 const MS_PER_MINUTE = 60_000;
 const TOOL = 'node ~/.claude/tools/wf-resume/wf-resume.mjs';
 const ANGLE_BRACKETS = /[<>]/g;
@@ -46,13 +48,18 @@ export function fullCall(record) {
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 const newestFirst = (runs) => [...runs].sort((a, b) => b.started.localeCompare(a.started));
 
+/** The folder Claude Code keeps the record's session in: under the projects folder the record names (the account that ran it), else `projectsRoot`. */
+export const sessionFolderOf = (record, projectsRoot) => join(record.projectsRoot || projectsRoot, record.projectDir, record.sessionId);
+
+const notAbandoned = (run) => typeof run.abandoned !== 'string';
+
 /** The unfinished runs to show: this session's first, then the other sessions'; each with the journal state read now. */
 function unfinishedEntries(params, deps) {
   const own = params.sessionId === null ? [] : newestFirst(runsOfSession(deps.registryDir, params.sessionId));
   const held = new Set(own.map((run) => run.runId));
   const others = params.source === 'compact' ? [] : otherSessionRuns(deps.registryDir, { cwd: params.cwd, exceptSession: params.sessionId }).filter((run) => !held.has(run.runId));
-  const toEntry = (record, isOwn) => ({ record, isOwn, state: inspectRun(join(record.projectsRoot || deps.projectsRoot, record.projectDir, record.sessionId), record, params.nowMs) });
-  return [...own.slice(0, RUNS_INSPECTED_PER_SESSION).map((run) => toEntry(run, true)), ...others.slice(0, RUNS_INSPECTED_PER_SESSION).map((run) => toEntry(run, false))]
+  const toEntry = (record, isOwn) => ({ record, isOwn, state: inspectRun(sessionFolderOf(record, deps.projectsRoot), record, params.nowMs) });
+  return [...own.filter(notAbandoned).slice(0, RUNS_INSPECTED_PER_SESSION).map((run) => toEntry(run, true)), ...others.filter(notAbandoned).slice(0, RUNS_INSPECTED_PER_SESSION).map((run) => toEntry(run, false))]
     .filter((entry) => entry.state.state !== 'finished' && entry.state.state !== 'gone');
 }
 

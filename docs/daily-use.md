@@ -122,7 +122,7 @@ History stays one straight line (rule C37): no merge commits, no branch merged i
 Workflow runs keep a journal on disk, so an exit, a usage-limit stop or a switch of account loses no finished agent.
 1. Start the session again: `ccm <mode> -c` (or `claude --resume <session id>`) in the same folder. After a switch of account, start it in the same folder with the other account.
 2. The start notice (`<workflow-resume>`) lists every unfinished run of the folder: what finished, what was cut off, the worktrees and branches it owns, the STATUS.md last used. Say "/wf-resume" and the lead continues each run (same script and args; a run of another session gets its journal copied in first).
-3. A run marked "may still be running" is left alone until `/workflows` shows it ended. `node ~/.claude/tools/wf-resume/wf-resume.mjs list` prints the notice again at any time.
+3. A run marked "may still be running" is left alone until `/workflows` shows it ended. `node ~/.claude/tools/wf-resume/wf-resume.mjs list` prints the notice again at any time. A run you give up is hidden with `wf-resume.mjs abandon <runId>` (it touches no git; relaunching the run lists it again).
 Only the session that owns a journal can resume it by itself; the copy step (`wf-resume.mjs adopt`) is what makes a new session able to. Re-check it after a Claude Code upgrade: it relies on the undocumented folder layout.
 
 ## At a usage limit
