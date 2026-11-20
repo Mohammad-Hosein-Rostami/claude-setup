@@ -100,6 +100,14 @@ test('Delta mode keeps the same lens, model and effort', () => {
   for (const name of AGENTS) assert.match(deltaSection(name), /same lens,? same model,? same effort/i, name);
 });
 
+test('review N7 (mutants D4h, D4i): Delta mode starts from the Read first list and keeps every PLAN item, in both agents', () => {
+  for (const name of AGENTS) {
+    const section = deltaSection(name);
+    assert.ok(section.includes("\n\nStart from the brief's `Read first` list. Do not look for new defects in code the fix cannot reach."), name);
+    assert.ok(section.includes('Keep the same lens, same model, same effort and every `PLAN:` item: delta mode narrows the lines, never the checks;'), name);
+  }
+});
+
 test('Delta mode does not allow skipping a lens or lowering the model', () => {
   for (const name of AGENTS) assert.match(deltaSection(name), /never lower the model or effort and never skip a lens/, name);
 });

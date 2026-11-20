@@ -140,7 +140,12 @@ test('two fix rounds: a class the first fix removed from the code stays through 
   write('README.md', '# note\n');
   const round2 = json('--delta', fixed, '--prior', priorFile(), '--lane-classes', laneJson(round1));
   assert.ok(round2.classes.includes('concurrency'), 'round 2 keeps what the lane had');
-  assert.deepEqual(round2.reviews.find((review) => review.model === 'opus' && review.agent === 'reviewer').plan.race, { runs: 200 });
+  const { plan } = round2.reviews.find((review) => review.model === 'opus' && review.agent === 'reviewer');
+  assert.deepEqual(plan.race, { runs: 200 });
+  // What the per-file classes of --lane-classes are for (mutant R5): the file's kind (lock-free) rides in them, so the plan stays a race
+  // check. The class list alone would ask for both kinds, and a stale-lock stress run means nothing for a rename.
+  assert.equal(plan.stress, null);
+  assert.deepEqual(round2.fileClasses['src/store.mjs'], round0.fileClasses['src/store.mjs'], 'the next round can read the file\'s classes from this JSON');
 });
 
 test('a fix round is never waivable: the waiver belongs to the first review of the whole range', () => {
