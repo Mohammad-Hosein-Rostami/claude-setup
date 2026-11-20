@@ -702,3 +702,17 @@ test('on win32 an nx whose path cannot go through the unquoted shell is skipped'
   await writeFile(join(folder, 'node_modules', '.bin', 'nx.cmd'), '');
   assert.deepEqual(nxTypecheck(folder, [folder], 'win32'), { skipped: 'unsafe path on Windows' });
 });
+
+// --- What reaches the agent ---
+
+test('a diagnostic line is cut to MAX_LINE_CHARS before it reaches the agent', posix, async () => {
+  const { MAX_LINE_CHARS } = await import(pathToFileURL(HOOK).href);
+  assert.equal(Number.isInteger(MAX_LINE_CHARS) && MAX_LINE_CHARS >= 200, true);
+  const fixture = await fallbackRepo({ 'package.json': {}, 'tsconfig.json': {} });
+  await installBin(fixture.repo, 'tsc', { output: [`src/a.ts(3,1): error TS2322: ${'y'.repeat(5000)}`], status: 2 });
+  fixture.edit('src/a.ts');
+  const r = fixture.stop();
+  assert.equal(r.status, 2);
+  assert.equal(r.stderr.length, MAX_LINE_CHARS + 1);
+  assert.ok(r.stderr.startsWith('src/a.ts:3 TS2322 yyy'));
+});

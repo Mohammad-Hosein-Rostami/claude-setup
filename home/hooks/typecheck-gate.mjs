@@ -3,7 +3,7 @@
 // whole repo; (2) its Nx `typecheck` target when nx.json sits at the git top; (3) the nearest tsconfig.json of each file
 // with the project's own `tsc --noEmit`; (4) else skipped with the reason. lib/typecheck-plan.mjs builds the commands.
 // Exports: incrementalTypecheck, typescriptMajor (from lib/typecheck-plan.mjs), runGate(files, deadline, record),
-// timeoutMessage(unchecked), decideExit(result, logPath, stopHookActive), runLogPath(env), MAX_RUN_LOG_BYTES.
+// timeoutMessage(unchecked), decideExit(result, logPath, stopHookActive), runLogPath(env), MAX_RUN_LOG_BYTES, MAX_LINE_CHARS.
 // Invariants: silent and exit 0 when nothing was logged, when CLAUDE_TYPECHECK_AT=edit or typecheck is skipped; only
 // real diagnostics about logged files exit 2 (the agent keeps running and fixes them); a timeout, a typecheck that
 // cannot run (no diagnostic parses), a skipped package and a failure the user was already shown never block.
@@ -14,7 +14,7 @@
 // A package whose files sit under different tsconfigs gets one line for each. A stop with no logged edits writes nothing;
 // at MAX_RUN_LOG_BYTES no line is written; a log that cannot be written never changes the decision.
 // The gate runs project code (the script, nx, tsc) with the trust the project's typecheck script already had, only in
-// packages this agent edited; what reaches the agent on exit 2 is at most 15 lines about logged files.
+// packages this agent edited; what reaches the agent on exit 2 is at most 15 lines about logged files, each cut to MAX_LINE_CHARS.
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -31,6 +31,8 @@ export { incrementalTypecheck, typescriptMajor } from './lib/typecheck-plan.mjs'
 const BUDGET_MS = 140_000; // hook timeout is 150 s
 const GIT_TOP_TIMEOUT_MS = 3000; // one `git rev-parse` per package, inside the budget; it normally takes a few ms
 const MAX_NAMED_FILES = 10;
+/** The most characters of one diagnostic line that reach the agent or the user: project text is cut, not trusted. */
+export const MAX_LINE_CHARS = 400;
 /** The most the run log holds: 1 MB is about 4,000 lines; at the cap no line is written, so the log cannot fill the disk. */
 export const MAX_RUN_LOG_BYTES = 1024 * 1024;
 const RUN_LOG_FILE = join(homedir(), '.claude', 'logs', 'typecheck-gate.jsonl');
@@ -151,7 +153,7 @@ function groupByPackage(files) {
   return [...groups].map(([dir, group]) => ({ dir, files: group }));
 }
 
-const cut = (lines) => lines.slice(0, MAX_LINES);
+const cut = (lines) => lines.slice(0, MAX_LINES).map((line) => line.slice(0, MAX_LINE_CHARS));
 
 /**
  * Typechecks every package that has logged files, one after another within the shared budget. Once the budget is gone
