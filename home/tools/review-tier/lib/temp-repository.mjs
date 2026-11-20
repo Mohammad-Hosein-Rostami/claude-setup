@@ -1,7 +1,5 @@
-// Purpose: the folder of review-tier's own repository: make it, check that it holds only what this run put there, remove it, and clear
-//   the folders that killed runs left behind.
-// Exports: TEMP_PREFIX, makeTempFolder() -> path, removeTempFolder(path), removeStaleTempFolders(now) -> problems,
-//   staleFolderShape(folder) -> { files, folders, stray }, removeByName(folder, shape), snapshotOf(gitDir) -> snapshot,
+// Purpose: the folder of review-tier's own repository: make it, check that it holds only what this run put there, and remove it.
+// Exports: TEMP_PREFIX, makeTempFolder() -> { path, dev, ino }, removeTempFolder(made) -> problem, snapshotOf(gitDir) -> snapshot,
 //   checkTempFolder(gitDir, snapshot, packNames), notePackFiles(gitDir, name, written) -> note, checkPackFiles(gitDir, notes, { last }).
 // Why the check: the folder is in the temp directory of the same OS user as the writer of a fix. A process that writer left running could
 //   add `objects/info/alternates`, a graft file, a ref, config or a pack, or swap a pack's files, and the tool's reads would then see
@@ -12,158 +10,88 @@
 //   read; every read runs between those two checks. A change that a process of the same user makes and undoes between two checks (a pack
 //   added and removed) is not seen, and neither is an `.idx` replaced before the tool notes it. Only a folder the writer's processes
 //   cannot write closes this (N27/N33, phase 3). The checks narrow the window; they are not a lock.
-// Invariants: the folder is made by mkdtemp (mode 0700, a name nobody can predict) and is the bare repository itself. A file beside it,
-//   `<folder>.pid`, holds the pid of the run that owns it; nothing is ever written into the repository by this module. An old folder is
-//   removed only when it is named by TEMP_PREFIX plus mkdtemp's six characters, is older than STALE_AFTER_MS, has no live owner and has
-//   the shape a run of this tool can leave (STALE_SHAPE, read with no link followed); it is removed entry by entry, by name, never
-//   recursively, so a folder renamed onto that name in between loses at most files of those names.
-import { closeSync, lstatSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, rmSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
+// Invariants: the folder is made by mkdtemp (mode 0700, a name nobody can predict) and is the bare repository itself; this module writes
+//   nothing into it and nothing beside it. It removes no folder but the one this run made, from inside: each folder is entered and
+//   checked by device and inode before anything in it is removed, and entries go by their bare names, so a link or another folder swapped
+//   in during the removal is never followed (fix 7, K4). A run that is killed leaves its folder (`review-tier-git-*` in the system temp
+//   folder) behind, and no run of this tool removes it.
+import { closeSync, lstatSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, rmdirSync, unlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { untrusted } from './object-listing.mjs';
 
 export const TEMP_PREFIX = 'review-tier-git-';
-const PID_SUFFIX = '.pid';
-const STALE_FOLDER = /^review-tier-git-[A-Za-z0-9]{6}$/;
-const STALE_AFTER_MS = 24 * 60 * 60 * 1000; // a day: no run takes that long, so an older folder belongs to a run that was killed
 const PACK_FILE_KINDS = ['pack', 'idx', 'rev']; // what `git index-pack` writes per pack (`.rev` from git 2.41 on by default)
 const TOP_ENTRIES = ['HEAD', 'config', 'objects', 'refs']; // all `git init --bare --template=` makes at the top
 const UNCHANGED_FILES = ['HEAD', 'config'];
 const NOTED_STAT = ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs']; // a rename, a rewrite in place and `touch` each move one of them
 const HASH_CHUNK_BYTES = 1 << 20; // a pack can exceed 2 GiB, which readFileSync cannot read: it is hashed in chunks
-const IMPORTED_PACK_FILE = /^pack-[0-9a-f]{40}\.(?:pack|idx|rev)$/;
-const KILLED_GIT_WRITE = /^tmp_(?:pack|idx|rev)_[A-Za-z0-9]{6}$/; // what `git index-pack` leaves when it is killed while it writes
-const fileOrFolder = (files, folders) => (name) => (files.includes(name) ? 'file' : folders.includes(name) ? 'folder' : 'nothing');
-/** What a run can leave behind, folder by folder (`import.pack`: a run killed during an import): name -> 'file' | 'folder' | 'nothing'. */
-const STALE_SHAPE = new Map([
-  ['', fileOrFolder(['HEAD', 'config', 'import.pack'], ['objects', 'refs'])],
-  ['objects', fileOrFolder([], ['info', 'pack'])],
-  ['objects/info', () => 'nothing'],
-  ['objects/pack', (name) => (IMPORTED_PACK_FILE.test(name) || KILLED_GIT_WRITE.test(name) ? 'file' : 'nothing')],
-  ['refs', fileOrFolder([], ['heads', 'tags'])],
-  ['refs/heads', () => 'nothing'],
-  ['refs/tags', () => 'nothing'],
-]);
 
-/** Makes the folder for the tool's repository and the pid file beside it. */
+/**
+ * Makes the folder for the tool's repository.
+ * @returns {{path: string, dev: bigint, ino: bigint}} its path, and the device and inode removeTempFolder checks before it removes anything
+ */
 export function makeTempFolder() {
-  const folder = mkdtempSync(join(tmpdir(), TEMP_PREFIX));
-  writeFileSync(`${folder}${PID_SUFFIX}`, `${process.pid}\n`, { flag: 'wx', mode: 0o600 });
-  return folder;
+  const path = mkdtempSync(join(tmpdir(), TEMP_PREFIX));
+  const { dev, ino } = lstatSync(path, { bigint: true });
+  return { path, dev, ino };
+}
+
+/** Throws unless the working directory is the folder `expected` names (same device and inode). */
+function assertHere(expected) {
+  const here = lstatSync('.', { bigint: true });
+  if (here.dev !== expected.dev || here.ino !== expected.ino) throw new Error('a folder in it was replaced while it was being removed');
 }
 
 /**
- * Removes this run's own folder and its pid file; a folder that is already gone is fine. The pid file goes first: a run killed in
- * between leaves a folder with no owner, which a later run clears after a day (review N6-5).
+ * Removes everything in the working directory, which assertHere proved to be `here`: a file, link or other non-folder is unlinked by its
+ * bare name; a folder is entered (chdir follows a link, so it is checked against its own lstat first thing), emptied, left (the parent
+ * checked again) and removed with rmdir. The way of home/tools/disk-free/lib/safe-remove.mjs (removeFolder), without its owner and
+ * mode checks: those refuse an honest group-writable folder made under umask 002, and this folder is the run's own.
  */
-export function removeTempFolder(folder) {
-  rmSync(`${folder}${PID_SUFFIX}`, { force: true });
-  rmSync(folder, { recursive: true, force: true });
-}
-
-/** True when a process with the pid in `pidFile` runs now. A file that is missing or holds no pid has no live owner. */
-function ownerIsAlive(pidFile) {
-  const pid = Number(lstatSync(pidFile, { throwIfNoEntry: false })?.isFile() ? readFileSync(pidFile, 'utf8').trim() : NaN);
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0); // signal 0 sends nothing: it only asks whether the process exists
-    return true;
-  } catch (error) {
-    return error.code === 'EPERM'; // it exists and belongs to another user; ESRCH: no such process
-  }
-}
-
-/** Walks `relative` inside `folder` into `shape`; returns the first entry that does not fit STALE_SHAPE (a link never fits), or null. */
-function strayIn(folder, relative, shape) {
-  for (const entry of readdirSync(join(folder, relative), { withFileTypes: true })) {
-    const path = relative === '' ? entry.name : `${relative}/${entry.name}`;
-    const kind = STALE_SHAPE.get(relative)(entry.name);
-    if (kind === 'file' && entry.isFile()) shape.files.push(path);
-    else if (kind !== 'folder' || !entry.isDirectory()) return path;
-    else {
-      const stray = strayIn(folder, path, shape);
-      if (stray !== null) return stray;
-      shape.folders.push(path); // after everything inside it: the list is deepest first
+function emptyHere(here) {
+  for (const name of readdirSync('.')) {
+    const entry = lstatSync(name, { bigint: true });
+    if (!entry.isDirectory()) {
+      unlinkSync(name);
+      continue;
     }
+    process.chdir(name);
+    assertHere(entry);
+    emptyHere(entry);
+    process.chdir('..');
+    assertHere(here);
+    rmdirSync(name);
   }
-  return null;
 }
 
-/**
- * What an old folder holds, read with no link followed.
- * @param {string} folder a candidate for removal
- * @returns {{files: string[], folders: string[], stray: string | null}} the files and folders (deepest first) inside it, as paths
- *   relative to it; `stray`: the first entry that a run of this tool cannot leave there, or null when the whole folder fits
- */
-export function staleFolderShape(folder) {
-  const shape = { files: [], folders: [] };
-  return { ...shape, stray: strayIn(folder, '', shape) };
-}
-
-/**
- * Removes `folder` by the names `shape` lists, never recursively: each listed file that is still a regular file, then each listed
- * folder, deepest first, then the folder itself.
- * @param {string} folder the folder staleFolderShape read
- * @param {{files: string[], folders: string[]}} shape what staleFolderShape returned for it
- * @throws {Error} from the file system; a folder that holds anything else now is not empty (ENOTEMPTY) and stops the removal there
- */
-export function removeByName(folder, { files, folders }) {
-  for (const file of files) {
-    if (lstatSync(join(folder, file), { throwIfNoEntry: false })?.isFile()) unlinkSync(join(folder, file));
-  }
-  for (const inner of folders) rmdirSync(join(folder, inner));
-  rmdirSync(folder);
-}
-
-/** Removes the pid file beside a removed folder when it is a regular file; returns a problem line for anything else there. */
-function removePidFile(folder) {
-  const pidFile = `${folder}${PID_SUFFIX}`;
-  const stat = lstatSync(pidFile, { throwIfNoEntry: false });
-  if (stat === undefined) return null;
-  if (!stat.isFile()) return `left alone: ${pidFile} is not a regular file (the old temp folder beside it was removed)`;
-  unlinkSync(pidFile);
-  return null;
-}
-
-/** True for a real folder of this user, older than a day, whose owner is gone. */
-function isStale(folder, now) {
-  const stat = lstatSync(folder, { throwIfNoEntry: false });
-  const mine = process.getuid === undefined || stat?.uid === process.getuid();
-  return stat?.isDirectory() === true && mine && now - stat.mtimeMs >= STALE_AFTER_MS && !ownerIsAlive(`${folder}${PID_SUFFIX}`);
-}
-
-/**
- * Removes the temp repositories of runs that were killed before they could (the owner's rule: the setup must not fill the disk).
- * @param {number} now the time to measure age from, in ms
- * @returns {string[]} one line per folder that was left alone, could not be looked at or was not removed; such a problem never stops a
- *   review
- */
-export function removeStaleTempFolders(now = Date.now()) {
-  const problems = [];
-  let names = [];
+/** Empties the folder `made` from inside, puts the working directory `back`, then removes the empty folder (rmdir follows no link). */
+function removeFromInside(made, back) {
+  process.chdir(made.path);
   try {
-    names = readdirSync(tmpdir());
+    assertHere(made);
+    emptyHere(made);
+  } finally {
+    process.chdir(back);
+  }
+  rmdirSync(made.path);
+}
+
+/**
+ * Removes this run's own folder; a folder that is already gone is fine.
+ * @param {{path: string, dev: bigint, ino: bigint}} made what makeTempFolder returned
+ * @returns {string | null} null when the folder is gone; else one line saying what stopped the removal, which then leaves the rest where
+ *   it is. It never throws, so the `finally` that calls it cannot hide the run's own error.
+ */
+export function removeTempFolder(made) {
+  try {
+    removeFromInside(made, process.cwd());
+    return null;
   } catch (error) {
-    return [`old temp folders were not cleared: ${error.message}`];
+    if (error.code === 'ENOENT' && lstatSync(made.path, { throwIfNoEntry: false }) === undefined) return null;
+    return `the temp folder ${made.path} was not removed in full, the rest is left there: ${error.message}`;
   }
-  for (const name of names.filter((entry) => STALE_FOLDER.test(entry))) {
-    const folder = join(tmpdir(), name);
-    try {
-      if (!isStale(folder, now)) continue;
-      const shape = staleFolderShape(folder);
-      if (shape.stray !== null) {
-        problems.push(`left alone: not a review-tier temp repository: ${folder} (it holds ${shape.stray})`);
-        continue;
-      }
-      removeByName(folder, shape);
-      const problem = removePidFile(folder);
-      if (problem !== null) problems.push(problem);
-    } catch (error) {
-      problems.push(`the old temp folder ${folder} was not removed: ${error.message}`);
-    }
-  }
-  return problems;
 }
 
 /**

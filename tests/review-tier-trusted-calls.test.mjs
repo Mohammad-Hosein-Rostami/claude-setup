@@ -164,7 +164,7 @@ test('every other git call runs in the tool\'s own repository with the fixed fla
     assert.ok(firstWalk > names.indexOf('index-pack'), `the commits are imported before a parent is walked: ${names.join(' ')}`);
     assert.equal(names.slice(0, firstDiff).filter((name) => name === 'index-pack').length, 2, `commits, then trees and files, are imported before the first diff: ${names.join(' ')}`);
     assert.ok(names.slice(firstDiff).every((name) => READS.has(name)), `nothing but reads after the first diff: ${names.join(' ')}`);
-    assert.ok(!existsSync(trusted[0].env.GIT_DIR) && !existsSync(`${trusted[0].env.GIT_DIR}.pid`), 'the temp repository and its pid file are removed');
+    assert.ok(!existsSync(trusted[0].env.GIT_DIR), 'the temp repository is removed');
   }
   assert.equal(reviewed.length, 40);
 });

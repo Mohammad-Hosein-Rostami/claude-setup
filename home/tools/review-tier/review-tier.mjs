@@ -35,9 +35,8 @@
 //   repository whose history can be altered, an object that does not hash to its name or that a read needs and the import did not
 //   copy, a git older than 2.41).
 // Invariants: read-only on the repository; the only writes are one line in the log (REVIEW_TIER_LOG overrides its path) and a temp
-//   folder that is removed again (one left by a killed run is removed by a later run once it is a day old, by name, and only when its
-//   whole tree is what a run can leave). Line texts are never
-//   printed or logged (see tiers.mjs), and neither is the text of the --prior file (lib/prior.mjs).
+//   folder that is removed again (a run that is killed leaves it in the system temp folder; no run removes another run's folder). Line
+//   texts are never printed or logged (see tiers.mjs), and neither is the text of the --prior file (lib/prior.mjs).
 //   Verified import (lib/lane-import.mjs): every object a read may see is read from the lane once, hashed, and written into the tool's
 //   own temp repository under the name its content gives; a closure check then proves there that nothing a read needs is missing
 //   (lib/closure-check.mjs). Every read (ancestry, diff, grep, file text) goes through lib/trusted-git.mjs: that repository with a clean
@@ -65,7 +64,6 @@ import { baseOf, checkRange, commonDirOf, headOf, laneOf, mergeBasesOf, recorded
 import { appendLog } from './lib/log.mjs';
 import { readPriors } from './lib/prior.mjs';
 import { buildReport, formatJson, formatText, logRecord } from './lib/report.mjs';
-import { removeStaleTempFolders } from './lib/temp-repository.mjs';
 import { openTrustedGit } from './lib/trusted-git.mjs';
 
 const EXIT_GIT_FAILED = 1;
@@ -192,7 +190,6 @@ function run(options) {
   const repository = basename(gitText(cwd, ['rev-parse', '--show-toplevel']));
   const commonDir = commonDirOf(cwd);
   refuseAlteredHistory(cwd, commonDir);
-  for (const problem of removeStaleTempFolders()) console.error(`review-tier: ${problem}`);
   const git = openTrustedGit();
   let report;
   try {

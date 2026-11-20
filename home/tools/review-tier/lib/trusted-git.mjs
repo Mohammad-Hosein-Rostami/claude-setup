@@ -11,7 +11,7 @@
 //   GIT_ALTERNATE_OBJECT_DIRECTORIES; only shas go in (the temp repository has no ref and an unborn HEAD, so a name fails); git's
 //   messages are never translated (LC_MESSAGES=C), so a reader can tell git's `error:` and `fatal:` lines; the folder is checked after
 //   init, after each import and once after the last read (checkFolder; what that check compares, and what it cannot see, is said in
-//   lib/temp-repository.mjs) and is removed by close(), which the CLI calls in a `finally`.
+//   lib/temp-repository.mjs) and is removed by close(), which the CLI calls in a `finally` (from inside, never through a link).
 // Left outside: `git` is the first one on the caller's PATH (Homebrew, Volta and Git for Windows live in folders the user can write, so
 //   an absolute root-owned git cannot be required): whoever can put a program there is outside what this module can check (security
 //   N26). A process of the same user can still change the temp folder between two of its checks, or replace an `.idx` before the tool
@@ -132,11 +132,12 @@ function readerOver(run) {
  *   the folder and the environment of every call; `notePack(name, written)`: tells the folder check a pack this run imported, with
  *   what the pack writer wrote (a UsageError when git named another pack); `checkFolder({ last })`: throws a UsageError unless the
  *   folder holds only what this run wrote and every noted pack file is unchanged (`last`: the check after the last read, which also
- *   hashes each `.pack` again); `close()` removes the folder
+ *   hashes each `.pack` again); `close()` removes the folder and never throws (what stopped a removal is one line on stderr)
  * @throws {UsageError} for a git older than MIN_GIT, and when the new folder already holds something else; {Error} when git cannot run
  */
 export function openTrustedGit() {
-  const gitDir = makeTempFolder();
+  const folder = makeTempFolder();
+  const gitDir = folder.path;
   const env = trustedEnvironment(process.env, gitDir);
   const packs = new Map();
   const run = (args, options) => spawnGit(gitDir, env, args, options);
@@ -144,7 +145,10 @@ export function openTrustedGit() {
     ...readerOver(run), gitDir, env,
     withAttributeSource: (sha) => readerOver((args, options) => run(ATTRIBUTE_READERS.has(args[0]) ? [`--attr-source=${sha}`, ...args] : args, options)),
     notePack: (name, written) => packs.set(name, notePackFiles(gitDir, name, written)),
-    close: () => removeTempFolder(gitDir),
+    close: () => {
+      const problem = removeTempFolder(folder);
+      if (problem !== null) console.error(`review-tier: ${problem}`);
+    },
   };
   try {
     refuseOldGit(reader.text(['--version']));

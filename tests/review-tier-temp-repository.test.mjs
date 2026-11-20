@@ -1,20 +1,21 @@
 // Tests of the two small parts under review-tier's verified import (lane r7-delta, fix round 5): the pack writer (lib/pack-writer.mjs:
 // git must read back exactly the bytes that went in, for every size) and the tool's own temp folder (lib/temp-repository.mjs: it holds
-// only what this run put there (K7, N27), and the folders of killed runs are cleared after a day and only then (A2), only when their
-// whole tree is what a run can leave, and by name, never recursively (fix 6, K5, K6, security N34)).
+// only what this run put there (K7, N27); the run removes its own folder from inside and no other folder (fix 7, G2, K4)).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CLEAN_ENV, git } from './git-tidy-helpers.mjs';
 import { CLI, lane } from './review-tier-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 import { entryHeader, openPack } from '../home/tools/review-tier/lib/pack-writer.mjs';
-import { TEMP_PREFIX, checkPackFiles, checkTempFolder, notePackFiles, removeByName, snapshotOf, staleFolderShape } from '../home/tools/review-tier/lib/temp-repository.mjs';
+import { TEMP_PREFIX, checkPackFiles, checkTempFolder, makeTempFolder, notePackFiles, removeTempFolder, snapshotOf } from '../home/tools/review-tier/lib/temp-repository.mjs';
 
 const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
+const CHILD_TIMEOUT_MS = 60_000; // a child that blocks is killed: the case fails instead of blocking the test runner
+const TEMP_REPOSITORY = new URL('../home/tools/review-tier/lib/temp-repository.mjs', import.meta.url).href;
 const POSIX = process.platform !== 'win32'; // a symlink needs a privilege on Windows, and os.tmpdir() reads TEMP there
 const oidOf = (type, content) => createHash('sha1').update(`${type} ${content.length}\0`).update(content).digest('hex');
 /** A bare repository as the tool makes its own: no template, nothing but HEAD, config, objects/ and refs/. */
@@ -122,7 +123,7 @@ test('spec check K7, security N27: the temp folder check passes on what init and
   }
 });
 
-test('spec check A2: a run clears the temp folders of killed runs that are older than a day and have no live owner, nothing else, and leaves none of its own', { skip: !POSIX && 'the temp folder is set with TMPDIR' }, () => {
+test('fix 7 G2 (was spec check A2): a run removes no folder but its own: old folders of the tool\'s name, with or without a live owner, of the whole shape a run leaves, all stay, and the run leaves none of its own', { skip: !POSIX && 'the temp folder is set with TMPDIR' }, () => {
   const { dir, log, write } = lane();
   write('src/run.mjs', 'export const run = () => 1;\n');
   const temp = realpathSync(makeTempDir('review-tier-tmpdir-'));
@@ -144,12 +145,17 @@ test('spec check A2: a run clears the temp folders of killed runs that are older
   symlinkSync(join(temp, 'other-tool-aaaaaa'), join(temp, `${TEMP_PREFIX}ffffff`));
   writeFileSync(join(temp, `${TEMP_PREFIX}gggggg`), 'a file, not a folder\n');
   utimesSync(join(temp, `${TEMP_PREFIX}gggggg`), old, old);
-  const kept = [`${TEMP_PREFIX}dddddd`, `${TEMP_PREFIX}dddddd.pid`, `${TEMP_PREFIX}eeeeee`, `${TEMP_PREFIX}ffffff`, `${TEMP_PREFIX}gggggg`, `${TEMP_PREFIX}toolong`, 'other-tool-aaaaaa'].sort();
+  const pack = `pack-${'a'.repeat(40)}`;
+  const whole = filledFolder(join(temp, `${TEMP_PREFIX}hhhhhh`), { 'import.pack': 'PACK', [`objects/pack/${pack}.pack`]: 'x', [`objects/pack/${pack}.idx`]: 'x', 'objects/pack/tmp_pack_ab12CD': 'x' });
+  writeFileSync(`${whole}.pid`, `${deadPid}\n`);
+  utimesSync(whole, old, old);
+  const planted = readdirSync(temp).sort();
   const result = spawnSync(process.execPath, [CLI, 'main...HEAD', '--json'], { cwd: dir, encoding: 'utf8', env: { ...CLEAN_ENV, REVIEW_TIER_LOG: log, TMPDIR: temp } });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stderr, '', 'clearing old folders is silent when it works');
+  assert.equal(result.stderr, '');
   assert.equal(JSON.parse(result.stdout).files, 1);
-  assert.deepEqual(readdirSync(temp).sort(), kept, 'the run removed its own folder and pid file too');
+  assert.deepEqual(readdirSync(temp).sort(), planted, 'every planted entry is still there, and nothing else: the run removed its own folder');
+  assert.deepEqual(readdirSync(join(whole, 'objects', 'pack')).sort(), [`${pack}.idx`, `${pack}.pack`, 'tmp_pack_ab12CD'], 'a folder of the whole shape keeps its files');
 });
 
 /** Fills `folder` (made if missing) as `git init --bare --template=` does, plus `extra` files (relative path -> text). */
@@ -159,52 +165,46 @@ function filledFolder(folder, extra = {}) {
   return folder;
 }
 
-test('spec check K5, K6 (fix 6), security N34: an old folder is cleared only when its whole tree is what a run can leave, and every other one is named once and left alone', { skip: !POSIX && 'the temp folder is set with TMPDIR' }, () => {
-  const { dir, log, write } = lane();
-  write('src/run.mjs', 'export const run = () => 1;\n');
-  const temp = realpathSync(makeTempDir('review-tier-tmpdir-'));
-  const victim = join(realpathSync(makeTempDir('review-tier-victim-')), 'keep.txt');
-  writeFileSync(victim, 'keep\n');
-  const pack = `pack-${'a'.repeat(40)}`;
-  const folders = {
-    goKill: (path) => filledFolder(path, { 'import.pack': 'PACK', 'objects/pack/tmp_pack_ab12CD': 'x' }),
-    goNone: (path) => mkdirSync(path),
-    goFull: (path) => filledFolder(path, { [`objects/pack/${pack}.pack`]: 'x', [`objects/pack/${pack}.idx`]: 'x', [`objects/pack/${pack}.rev`]: 'x' }),
-    goPid1: (path) => { filledFolder(path); mkdirSync(`${path}.pid`); },
-    stTop1: (path) => filledFolder(path, { 'notes.txt': 'x' }),
-    stInfo: (path) => filledFolder(path, { 'objects/info/x': 'x' }),
-    stPack: (path) => filledFolder(path, { 'objects/pack/notes.txt': 'x' }),
-    stRefs: (path) => filledFolder(path, { 'refs/heads/main': `${'1'.repeat(40)}\n` }),
-    stLnk1: (path) => { filledFolder(path); symlinkSync(victim, join(path, 'objects', 'pack', `${pack}.pack`)); },
-    stLnk2: (path) => { mkdirSync(path); symlinkSync(join(victim, '..'), join(path, 'objects')); },
-  };
-  const old = new Date(Date.now() - TWO_DAYS_MS);
-  for (const [name, make] of Object.entries(folders)) {
-    make(join(temp, `${TEMP_PREFIX}${name}`));
-    utimesSync(join(temp, `${TEMP_PREFIX}${name}`), old, old);
-  }
-  const result = spawnSync(process.execPath, [CLI, 'main...HEAD', '--json'], { cwd: dir, encoding: 'utf8', env: { ...CLEAN_ENV, REVIEW_TIER_LOG: log, TMPDIR: temp } });
+test('fix 7 K4: the run\'s own folder is removed from inside: a folder in it swapped for a link during the removal stops the removal, nothing outside it is removed, and the working directory is put back', { skip: !POSIX && 'a symlink needs a privilege on Windows' }, () => {
+  const victim = realpathSync(makeTempDir('review-tier-victim-'));
+  mkdirSync(join(victim, 'inner'));
+  for (const file of ['keep.txt', 'inner/keep.txt']) writeFileSync(join(victim, file), 'keep\n');
+  const code = `
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+const { makeTempFolder, removeTempFolder } = await import(${JSON.stringify(TEMP_REPOSITORY)});
+const made = makeTempFolder();
+fs.mkdirSync(made.path + '/objects/pack', { recursive: true });
+for (const file of ['HEAD', 'objects/pack/pack-x.pack']) fs.writeFileSync(made.path + '/' + file, 'x');
+const objects = made.path + '/objects';
+let swapped = false;
+const swap = () => { if (!swapped) { swapped = true; fs.renameSync(objects, made.path + '/aside'); fs.symlinkSync(process.env.CASE, objects); } };
+const [lstat, readdir] = [fs.lstatSync, fs.readdirSync];
+// The swap comes at the window of the removal under test: right after its lstat of the folder by its bare name (this module), or right
+// before a read of the folder by its path (Node 22's rmSync, which reads a folder again by its path after rmdir found it not empty).
+fs.lstatSync = (path, ...rest) => { const info = lstat(path, ...rest); if (String(path) === 'objects') swap(); return info; };
+fs.readdirSync = (path, ...rest) => { if (String(path) === objects) swap(); return readdir(path, ...rest); };
+syncBuiltinESMExports();
+const cwd = process.cwd();
+const problem = removeTempFolder(made);
+console.log(JSON.stringify({ problem, swapped, back: process.cwd() === cwd, left: fs.existsSync(made.path + '/aside/pack/pack-x.pack') }));`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', env: { ...process.env, TMPDIR: realpathSync(makeTempDir('review-tier-tmpdir-')), CASE: victim }, timeout: CHILD_TIMEOUT_MS });
   assert.equal(result.status, 0, result.stderr);
-  const stays = Object.keys(folders).filter((name) => name.startsWith('st')).map((name) => `${TEMP_PREFIX}${name}`);
-  assert.deepEqual(readdirSync(temp).sort(), [`${TEMP_PREFIX}goPid1.pid`, ...stays].sort(), 'what a run can leave is gone, everything else stays');
-  for (const name of stays) {
-    const said = result.stderr.split('\n').filter((line) => line.includes(`left alone: not a review-tier temp repository: ${join(temp, name)} `));
-    assert.equal(said.length, 1, `${name} is named once: ${result.stderr}`);
-  }
-  assert.match(result.stderr, new RegExp(`left alone: ${join(temp, `${TEMP_PREFIX}goPid1.pid`)} is not a regular file \\(the old temp folder beside it was removed\\)`));
-  assert.equal(readFileSync(victim, 'utf8'), 'keep\n', 'no link was followed');
+  const { problem, swapped, back, left } = JSON.parse(result.stdout);
+  assert.ok(swapped, 'the link was swapped in during the removal');
+  assert.deepEqual(['keep.txt', 'inner/keep.txt'].map((file) => readFileSync(join(victim, file), 'utf8')), ['keep\n', 'keep\n'], 'nothing outside the folder was removed');
+  assert.match(problem ?? '', /^the temp folder .*review-tier-git-.* was not removed in full, the rest is left there: a folder in it was replaced while it was being removed$/);
+  assert.ok(back && left, 'the working directory is put back, and the rest of the folder is left');
 });
 
-test('spec check K6 (fix 6): the removal goes by the names the check listed, never recursively: a file put into a checked folder before the removal stays, with its folder', () => {
-  const folder = filledFolder(join(realpathSync(makeTempDir('review-tier-stale-')), `${TEMP_PREFIX}abc123`), { 'import.pack': 'PACK' });
-  const shape = staleFolderShape(folder);
-  assert.equal(shape.stray, null);
-  assert.deepEqual([shape.files.sort(), shape.folders], [['HEAD', 'config', 'import.pack'], ['objects/info', 'objects/pack', 'objects', 'refs/heads', 'refs/tags', 'refs']]);
-  writeFileSync(join(folder, 'objects', 'pack', 'swapped-in.txt'), 'x');
-  assert.throws(() => removeByName(folder, shape), /ENOTEMPTY|EEXIST/);
-  assert.deepEqual(readdirSync(join(folder, 'objects', 'pack')), ['swapped-in.txt']);
-  assert.ok(['HEAD', 'config', 'import.pack'].every((file) => !readdirSync(folder).includes(file)), 'the listed files went');
-  assert.ok(readdirSync(folder).includes('objects'), 'the folders that hold the new file stayed: the first folder that is not empty stops the removal');
+test('fix 7 K4: removing the run\'s own folder takes every file and folder in it, and a folder that is already gone is fine', () => {
+  const made = makeTempFolder();
+  filledFolder(made.path, { 'objects/pack/pack-x.pack': 'x', 'import.pack': 'x' });
+  const cwd = process.cwd();
+  assert.equal(removeTempFolder(made), null);
+  assert.equal(lstatSync(made.path, { throwIfNoEntry: false }), undefined);
+  assert.equal(process.cwd(), cwd);
+  assert.equal(removeTempFolder(made), null, 'already gone');
 });
 
 test('spec check K3 (fix 6): the last check hashes the whole .pack, past the first chunk: a pack of 3 MiB as written passes, one byte changed after 2 MiB stops the run', () => {
