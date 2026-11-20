@@ -13,7 +13,8 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MAX_AGENT_FILES, NOTE_MAX_CHARS, projectAgentNote } from '../home/hooks/lib/project-agents.mjs';
-import { AGENTS, BOTH_ADVICE, CAP_ADVICE, SHADOW_ADVICE, agent, noteOf, sandbox } from './project-agents-helpers.mjs';
+import { cappedNote } from '../home/hooks/lib/project-agents-text.mjs';
+import { AGENTS, BOTH_ADVICE, CAP_ADVICE, LINK_ADVICE, SHADOW_ADVICE, agent, noteOf, sandbox } from './project-agents-helpers.mjs';
 
 const REAL_PERSONAL_AGENTS_DIR = fileURLToPath(new URL('../home/agents', import.meta.url));
 const BUILT_IN_AGENTS = ['general-purpose', 'Explore', 'Plan', 'claude', 'claude-code-guide', 'statusline-setup']; // the hook's fixed list, written out a second time
@@ -22,7 +23,8 @@ const ESCAPED_CHAR = String.fromCharCode(0xd8); // O with stroke: outside printa
 const ESCAPES_SHOWN = 63; // the 64 characters shown of a name, less its one index digit
 const longCappedName = (index) => `${index}${ESCAPED_CHAR.repeat(LONG_NAME_CHARS)}.md`;
 const longCappedItem = (index) => `"${AGENTS}${index}${'\\u00d8'.repeat(ESCAPES_SHOWN)}..." (maxTurns 1)`;
-const indexed = (i) => `a${String(i).padStart(4, '0')}.md`;
+const FOUR_DIGITS = 4; // index width in a file name, so that names sort like their numbers
+const indexed = (i) => `a${String(i).padStart(FOUR_DIGITS, '0')}.md`;
 
 test('two long capped names that sort first do not hide the file that shadows a personal agent', async () => {
   const { projectDir, personalDir, agentsDir } = await sandbox({ personal: { 'security-auditor': '' } });
@@ -64,11 +66,24 @@ test('with the real personal agents and the built-in ones all shadowed, their na
   assert.ok(copiedNote.startsWith(`${noteOf({ advice: BOTH_ADVICE, shadowed: personal }).slice(0, -1)}. Files: ${AGENTS}${personal[0]}.md (maxTurns 60, shadows the personal agent), `), copiedNote);
 });
 
+// The most the hook itself can say: every piece of advice, every real personal agent and every built-in one shadowed, and all four
+// counts with six digits. None of it is ever cut, so all of it must fit. No file is made, so this runs on every platform (security
+// review round 3, R3-9: the test stood in the links file, which Windows skips).
+test('with the real personal agents, all the advice, the shadowed names and every count of six digits fit NOTE_MAX_CHARS', () => {
+  const SIX_DIGITS = 100_000;
+  const personal = readdirSync(REAL_PERSONAL_AGENTS_DIR).filter((file) => file.endsWith('.md')).map((file) => file.slice(0, -'.md'.length)).sort();
+  const builtIn = [...BUILT_IN_AGENTS].sort();
+  const items = ['x'.repeat(NOTE_MAX_CHARS), ...Array.from({ length: SIX_DIGITS - 1 }, () => 'x')]; // the first item never fits: all are counted
+  const note = cappedNote({ items, personal, builtIn, hasCap: true, hasLink: true, unchecked: SIX_DIGITS, folders: SIX_DIGITS, byHand: SIX_DIGITS });
+  assert.equal(note, noteOf({ advice: `${CAP_ADVICE}; ${SHADOW_ADVICE}; ${LINK_ADVICE}`, shadowed: personal, builtIn, unchecked: SIX_DIGITS, folders: SIX_DIGITS, byHand: SIX_DIGITS, more: SIX_DIGITS }));
+  assert.ok(note.length <= NOTE_MAX_CHARS, `with six-digit counts the note is ${note.length} chars, cap ${NOTE_MAX_CHARS}`);
+});
+
 // Review round 2, R4 (mutant M04: the whole note sliced to NOTE_MAX_CHARS): the names of the shadowed agents are never cut, also when
 // the owner's set is so large that the never-cut part alone is longer than the cap. The note is then longer than NOTE_MAX_CHARS.
 test('a personal set too large for the cap: every shadowed name is still whole and the note ends as a sentence', async () => {
   const OWN_AGENTS = 70;
-  const names = Array.from({ length: OWN_AGENTS }, (_, i) => `personal-agent-${String(i).padStart(2, '0')}`);
+  const names = Array.from({ length: OWN_AGENTS }, (_, i) => `personal-agent-${String(i).padStart(String(OWN_AGENTS).length, '0')}`);
   const { projectDir, personalDir, agentsDir } = await sandbox({ personal: Object.fromEntries(names.map((name) => [name, ''])) });
   for (const name of names) await writeFile(join(agentsDir, `${name}.md`), agent(name));
   const note = projectAgentNote(projectDir, personalDir);

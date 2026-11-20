@@ -83,6 +83,7 @@ test('the SessionStart mode hook prints the note for a capped project agent and 
 
 const hasJq = spawnSync('jq', ['--version']).status === 0;
 
+const FOUR_DIGITS = 4; // index width in a file name, so that names sort like their numbers
 const runDoctor = (home, projectDir, extraEnv = {}) => spawnSync('bash', [DOCTOR], { encoding: 'utf8', env: { ...process.env, HOME: home, DOCTOR_PROJECT: projectDir, DOCTOR_ONLY: 'check_project_agents', ...extraEnv } });
 
 test('doctor warns about a capped project agent (DOCTOR_PROJECT), names the project, and is ok for a clean one', { skip: !hasJq && 'jq not installed' }, async () => {
@@ -137,8 +138,9 @@ test('a link or a FIFO among the agent files is not read and the SessionStart ou
 // Round 2, R2-3 and R1: the CLI reads the whole frontmatter (up to 1 MiB), so "not seen" hid a maxTurns or a shadow behind 8 KiB of
 // other keys. The file is now named as one to check by hand; nothing is claimed about what stands past the head.
 test('only the head of an agent file is read: a frontmatter that goes on past it is listed to be checked by hand', async () => {
+  const LINES_PAST_THE_HEAD = 5000; // 25,000 bytes of key lines: three times the 8 KiB that are read
   const { projectDir, personalDir } = await sandbox();
-  await writeFile(join(projectDir, '.claude', 'agents', 'big.md'), `---\nname: big\n${'x: y\n'.repeat(5000)}maxTurns: 9\n---\n`);
+  await writeFile(join(projectDir, '.claude', 'agents', 'big.md'), `---\nname: big\n${'x: y\n'.repeat(LINES_PAST_THE_HEAD)}maxTurns: 9\n---\n`);
   assert.equal(projectAgentNote(projectDir, personalDir), noteOf({ byHand: 1, items: [`"${AGENTS}big.md" (frontmatter longer than 8 KiB: check by hand)`] }));
   // A file that fits the head and has no closing --- has no frontmatter for the CLI: no note, and never the delete advice.
   await writeFile(join(projectDir, '.claude', 'agents', 'big.md'), '---\nname: big\nmaxTurns: 9\n');
@@ -166,7 +168,7 @@ const FILES_PAST_THE_LIMIT = 5;
 test('at most MAX_AGENT_FILES agent files are read; the note keeps whole items within NOTE_MAX_CHARS and counts the rest', async () => {
   const { projectDir, personalDir } = await sandbox();
   const agents = join(projectDir, '.claude', 'agents');
-  const fileName = (i) => `a${String(i).padStart(4, '0')}.md`;
+  const fileName = (i) => `a${String(i).padStart(FOUR_DIGITS, '0')}.md`;
   for (let i = 0; i < MAX_AGENT_FILES; i += 1) await writeFile(join(agents, fileName(i)), agent(`a${i}`, 'maxTurns: 3\n'));
   // Past the limit: files that would add the tell-the-owner advice if they were read.
   for (let i = MAX_AGENT_FILES; i < MAX_AGENT_FILES + FILES_PAST_THE_LIMIT; i += 1) await writeFile(join(agents, fileName(i)), agent('runner'));
@@ -184,7 +186,7 @@ test('the advice comes from every file read, also from one the capped note does 
   const { projectDir, personalDir } = await sandbox();
   const agents = join(projectDir, '.claude', 'agents');
   // The shadowing files are listed first and fill the note, so the one capped file is read but not shown.
-  for (let i = 0; i < MAX_AGENT_FILES - 1; i += 1) await writeFile(join(agents, `a${String(i).padStart(4, '0')}.md`), agent('runner'));
+  for (let i = 0; i < MAX_AGENT_FILES - 1; i += 1) await writeFile(join(agents, `a${String(i).padStart(FOUR_DIGITS, '0')}.md`), agent('runner'));
   await writeFile(join(agents, 'z-last.md'), agent('z-last', 'maxTurns: 3\n'));
   const note = projectAgentNote(projectDir, personalDir);
   assert.doesNotMatch(note, /z-last\.md/);

@@ -119,13 +119,12 @@ test('fixture D: a link named like a personal agent is listed as a link that is 
   assert.equal(projectAgentNote(projectDir, personalDir), noteOf({ advice: `${CAP_ADVICE}; ${LINK_ADVICE}`, items }));
 });
 
-// The most the hook itself can say: every piece of advice, every real personal agent and every built-in one shadowed, and all four
-// counts with six digits. None of it is ever cut.
-test('with the real personal agents, all the advice, the shadowed names and every count fit NOTE_MAX_CHARS', { skip }, async () => {
+// Every piece of advice at once, with every real personal agent and every built-in one shadowed. That all of it fits the cap with
+// six digits in each count is tested in tests/project-agents-cap.test.mjs, which needs no link and so runs on Windows too.
+test('with the real personal agents, a link, a linked folder and a file to check by hand, the note holds all the advice and every name', { skip }, async () => {
   const personal = readdirSync(REAL_PERSONAL_AGENTS_DIR).filter((file) => file.endsWith('.md')).map((file) => file.slice(0, -'.md'.length)).sort();
   const names = [...personal, ...BUILT_IN_AGENTS];
   const { projectDir, agentsDir } = await projectWithLinkTarget();
-  const SIX_DIGITS = 100_000;
   const worstName = (index) => `${String(index).padStart(3, '0')}${String.fromCharCode(0xd8).repeat(LONG_NAME_CHARS)}.md`;
   for (const [index, name] of names.entries()) await writeFile(join(agentsDir, worstName(index)), agent(name, 'maxTurns: 999999\n'));
   await symlink('../../docs/r.md', join(agentsDir, worstName(names.length)));
@@ -135,6 +134,5 @@ test('with the real personal agents, all the advice, the shadowed names and ever
   const advice = `${CAP_ADVICE}; ${SHADOW_ADVICE}; ${LINK_ADVICE}`;
   const expected = (counts) => noteOf({ advice, shadowed: personal, builtIn: [...BUILT_IN_AGENTS].sort(), ...counts });
   assert.equal(note, expected({ folders: 1, byHand: 1, more: names.length + 3 }));
-  const worst = expected({ unchecked: SIX_DIGITS, folders: SIX_DIGITS, byHand: SIX_DIGITS, more: SIX_DIGITS });
-  assert.ok(worst.length <= NOTE_MAX_CHARS, `with six-digit counts the note is ${worst.length} chars, cap ${NOTE_MAX_CHARS}`);
+  assert.ok(note.length <= NOTE_MAX_CHARS, `the note is ${note.length} chars, cap ${NOTE_MAX_CHARS}`);
 });

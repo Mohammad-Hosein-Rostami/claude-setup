@@ -101,12 +101,17 @@ test('shownPath: plain when the folder and the name are plain, else one quoted t
 });
 
 test('escaped and escapedEnd: printable ASCII only, and a long text keeps its end with whole escapes', () => {
+  const FITS = '/p/STATUS.md'; // 12 characters
+  const ONE_OVER = '/pp/STATUS.md';
+  const ROOM_FOR_ONE_ESCAPE = '...'.length + '\\u0001'.length + '/x.md'.length; // the mark, one whole escape, the plain end
+  const CONTROLS = 5; // more escapes than fit
+  const ROOM_FOR_THE_MARK_AND_ONE = '...'.length + 1;
   assert.equal(escaped('/p/a b<c>"d\\e\u001b\n'), '/p/a b\\u003cc\\u003e\\u0022d\\u005ce\\u001b\\n');
-  assert.equal(escapedEnd('/p/STATUS.md', 12), '/p/STATUS.md', 'a text that fits is whole');
-  assert.equal(escapedEnd('/pp/STATUS.md', 12), '...STATUS.md', 'one character over: cut from the left, with the mark counted');
-  assert.equal(escapedEnd(`${'\u0001'.repeat(5)}/x.md`, 14), '...\\u0001/x.md', 'never a part of an escape');
-  assert.equal(escapedEnd(GRINNING_FACE.repeat(5), 4), '...', 'no room for the next whole escape');
-  assert.equal(escapedEnd(`a${GRINNING_FACE}bcd`, 4), '...d', 'a cut through a surrogate pair leaves no half of it');
+  assert.equal(escapedEnd(FITS, FITS.length), FITS, 'a text that fits is whole');
+  assert.equal(escapedEnd(ONE_OVER, FITS.length), '...STATUS.md', 'one character over: cut from the left, with the mark counted');
+  assert.equal(escapedEnd(`${'\u0001'.repeat(CONTROLS)}/x.md`, ROOM_FOR_ONE_ESCAPE), '...\\u0001/x.md', 'never a part of an escape');
+  assert.equal(escapedEnd(GRINNING_FACE.repeat(CONTROLS), ROOM_FOR_THE_MARK_AND_ONE), '...', 'no room for the next whole escape');
+  assert.equal(escapedEnd(`a${GRINNING_FACE}bcd`, ROOM_FOR_THE_MARK_AND_ONE), '...d', 'a cut through a surrogate pair leaves no half of it');
 });
 
 test('the worst item with astral names is still shown whole within NOTE_MAX_CHARS', async () => {
