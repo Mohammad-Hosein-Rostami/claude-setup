@@ -2,7 +2,8 @@
 // Each rule is an async generator that yields { path, root, stillRemovable } for one thing to remove: `root` is the real path the rule is
 // confined to, `stillRemovable(where)` is asked again right before the removal and once more after the folder was renamed aside to
 // `.removing-<pid>-<name>` (a session may have been resumed since the scan); `where` is the path to look at. A `.removing-*` folder left by a
-// killed run is found by the rules like the folder it was and removed only when the same checks pass for its original name. Rules only
+// killed run is found by the rules like the folder it was and removed only when the same checks pass for its original name; one with this
+// process's own pid is this run's (a folder whose rename back failed) and is skipped, so a run never handles its own renames. Rules only
 // look (they remove nothing), stream (nothing holds a whole folder listing) and stop when context.timeUp() says the scan time is over.
 //   session-folders  /private/tmp/claude-<uid>/<project>/<session-id>/ of a session that is not running, whose transcript is found in the scanned
 //                    projects folder and idle for 3 days, and whose folder is idle for 3 days. With no transcript found the session is unknown:
@@ -19,7 +20,7 @@ import { accessSync, constants, statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { entriesOf, lstatOrNull, mtimeOf, touchedSince } from './clean-scan.mjs';
 import { liveSessionIds } from './live-sessions.mjs';
-import { inspectRoot, originalName, ownedFolder, UnsafeRoot } from './safe-remove.mjs';
+import { inspectRoot, isOwnAside, originalName, ownedFolder, UnsafeRoot } from './safe-remove.mjs';
 import { OLD_TEST_PREFIXES } from './test-temp-prefixes.mjs';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -108,7 +109,7 @@ async function* sessionFolders(context) {
       if (context.timeUp()) return;
       const path = join(projectPath, folder.name);
       const id = originalName(folder.name);
-      if (!SESSION_ID.test(id) || id === context.session || id === newest || ownedFolder(path) === null) continue;
+      if (isOwnAside(folder.name) || !SESSION_ID.test(id) || id === context.session || id === newest || ownedFolder(path) === null) continue;
       // The transcript of the same project folder is looked at again: a resumed session may have made it since the scan.
       const transcriptFiles = () => [...(times.get(id)?.files ?? []), join(context.projects, project.name, `${id}.jsonl`)];
       // 'idle', 'busy', or 'unknown' for a folder that is kept only because no transcript of its session is found (it may be another config dir's).
@@ -134,7 +135,7 @@ async function* testTemp(context) {
     if (context.timeUp()) return;
     // In a shared /tmp only the names this repo makes now: an old prefix plus 6 characters could be anyone's folder.
     const name = originalName(entry.name);
-    if (!(NEW_TEST_NAME.test(name) || (!shared && OLD_TEST_NAME.test(name)))) continue;
+    if (isOwnAside(entry.name) || !(NEW_TEST_NAME.test(name) || (!shared && OLD_TEST_NAME.test(name)))) continue;
     const path = join(root, entry.name);
     const isOld = (where = path) => (ownedFolder(where)?.mtimeMs ?? Infinity) < cutoff;
     if (isOld()) yield { path, root, stillRemovable: isOld };
@@ -151,7 +152,7 @@ async function* tempProjects(context) {
   const sessionsIn = async () => [context.session, ...(await liveSessionIds(context.sessions))].filter((id) => id !== undefined);
   for await (const entry of entriesOf(root)) {
     if (context.timeUp()) return;
-    if (!TEMP_PROJECT_SLUG.test(originalName(entry.name))) continue;
+    if (isOwnAside(entry.name) || !TEMP_PROJECT_SLUG.test(originalName(entry.name))) continue;
     const path = join(root, entry.name);
     const isIdle = async (where = path) => ownedFolder(where) !== null && !holdsSession(where, await sessionsIn()) && !(await touchedSince(where, cutoff));
     if (await isIdle()) yield { path, root, stillRemovable: isIdle };

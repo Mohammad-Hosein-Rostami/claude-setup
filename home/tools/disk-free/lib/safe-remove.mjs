@@ -1,4 +1,4 @@
-// What disk-clean may remove, and the removal itself. Exports: UnsafeRoot, inspectRoot, ownedFolder, removeInside, moveAside, moveBack, originalName.
+// What disk-clean may remove, and the removal itself. Exports: UnsafeRoot, inspectRoot, ownedFolder, removeInside, moveAside, moveBack, originalName, isOwnAside.
 // Why it is written by hand: Node has no unlinkat, so a path-based removal can be redirected when a folder on the way is swapped for a
 // symlink. Three defences close that: (1) every folder from the root down to the item, and every folder inside the item, must be owned by
 // this user, not a symlink and not writable by group or others, so nobody else can swap anything; (2) the removal works from inside the
@@ -39,6 +39,9 @@ const realOrNull = (path) => {
 
 /** The name a folder had before a clean-up renamed it aside (`.removing-<pid>-<name>`); any other name is returned as it is. */
 export const originalName = (name) => ASIDE_NAME.exec(name)?.[1] ?? name;
+
+/** True for the name of a folder this process renamed aside (`.removing-<own pid>-<name>`): the rules skip it, so a run never finds its own renames as new items. */
+export const isOwnAside = (name) => name.startsWith(`${ASIDE_PREFIX}${process.pid}-`);
 
 /** lstat info of a real folder (not a link) owned by this user and closed to group and others, else null. */
 export function ownedFolder(path) {

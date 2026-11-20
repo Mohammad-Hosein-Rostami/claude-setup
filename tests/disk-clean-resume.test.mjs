@@ -75,6 +75,19 @@ test('a folder that someone moved away after the rename is not said to stay at a
   assert.doesNotMatch(summary.failed[0], /it stays as/);
 });
 
+test('a run does not find the folders it renamed aside itself (.removing-<own pid>-*), in any rule; a killed run\'s (another pid) are found', posix, async () => {
+  const w = world();
+  for (const id of [OLD, OTHER]) transcript(w, '-proj', id, 10);
+  transcript(w, '-proj', NEWEST, 0);
+  // one aside folder per folder rule: a session folder, a test temp folder, a throwaway project
+  const asides = (pid, id, tempName, slug) => [folder(join(w.claudeTmp, '-proj', `.removing-${pid}-${id}`), { days: 10 }), folder(join(w.tmp, `.removing-${pid}-${tempName}`), { days: 3 }), folder(join(w.projects, `.removing-${pid}-${slug}`), { days: 10 })];
+  const [own, killed] = [asides(process.pid, OLD, 'cs-run-OwnOwn', '-tmp-own'), asides(4242, OTHER, 'cs-run-Killed', '-tmp-killed')];
+  const summary = await runClean({ ...w.options, apply: false });
+  assert.equal(summary.items, 3, 'only the three of the killed run');
+  await runClean(w.options);
+  assert.deepEqual([own.map(existsSync), killed.map(existsSync)], [[true, true, true], [false, false, false]]);
+});
+
 test('a run handles each original path once: a leftover of a killed run and a new folder of the same name do not both go in one run', posix, async () => {
   const w = world();
   const both = [folder(join(w.tmp, '.removing-4242-cs-run-AbCdEf'), { days: 3 }), folder(join(w.tmp, 'cs-run-AbCdEf'), { days: 3 })];

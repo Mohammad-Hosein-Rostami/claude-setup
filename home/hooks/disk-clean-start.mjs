@@ -1,5 +1,5 @@
-// SessionStart(startup): starts `disk-clean --apply` in the background at most once every 24 hours, so old scratchpads, test leftovers
-// and hook counters never pile up. The stamp file `~/.claude/state/disk-clean.stamp` records the last start (its mtime).
+// SessionStart(startup): starts `disk-clean --apply --all-lines` in the background at most once every 24 hours, so old scratchpads, test leftovers
+// and hook counters never pile up. --all-lines: the log is the one place that keeps every NOT removed and SKIPPED line of the run. The stamp file `~/.claude/state/disk-clean.stamp` records the last start (its mtime).
 // Exports: startIfDue(input, deps) -> 'started' | 'not-due' | 'skipped'; openLogFile, cleanEnv (tests).
 // Invariants: never waits for the clean-up (detached child, stdio to a log file, unref); never fails the session start (an error goes to stderr,
 //   the exit code stays 0); skips subagents and any source other than startup. Two sessions that start together run one clean-up: the check
@@ -110,7 +110,7 @@ export function startIfDue(input, { stampPath, logPath, tool, nowMs, start = spa
   if (input === null || typeof input !== 'object' || input.agent_id || input.source !== 'startup') return 'skipped';
   if (stampAgeMs(stampPath, nowMs) < MIN_INTERVAL_MS || !claimStamp(stampPath, nowMs)) return 'not-due';
   const session = SESSION_ID.test(String(input.session_id ?? '')) ? ['--session', input.session_id] : [];
-  start([tool, '--apply', ...session], logPath);
+  start([tool, '--apply', '--all-lines', ...session], logPath);
   return 'started';
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // CLI of `disk-clean`: removes what Claude Code and this setup leave on the disk and nothing else. Dry run unless --apply.
-// Usage: disk-clean.mjs [--apply] [--json] [--session <id>] [--claude-tmp <dir>] [--projects <dir>] [--tmp <dir>] [--sessions <dir>] [--now <ms>] [--budget-ms <n>] [--scan-ms <n>]
+// Usage: disk-clean.mjs [--apply] [--json] [--all-lines] [--session <id>] [--claude-tmp <dir>] [--projects <dir>] [--tmp <dir>] [--sessions <dir>] [--now <ms>] [--budget-ms <n>] [--scan-ms <n>]
 // Rules (lib/clean-rules.mjs): old session scratchpad folders (3 days idle; 30 days when the session's transcript is not in the projects folder read,
 //   because it may be a session of another config dir), leftover test temp folders, throwaway-project folders in
 //   ~/.claude/projects, old counters of the hooks in the temp folder. Never the current session (--session, else $CLAUDE_CODE_SESSION_ID
@@ -11,6 +11,9 @@
 //   a lower bound. --apply has no scan limit (it runs in the background).
 // Output: what would go (or went) per rule with the item count and bytes; --json prints one line {apply, items, bytes, removed, changed, failed, refused, keptUnknown, partial, rules}.
 //   Measuring sizes stops at --budget-ms (default 20 s): later items are still counted and removed, their bytes are not added up and the totals say "partial".
+//   The text report is read by people and by models, and folder names are anyone's text: every path, failure and reason is printed escaped
+//   (printable ASCII only, hooks/lib/shown-name.mjs), and the NOT removed and SKIPPED lists stop at 10 lines each plus "... and N more".
+//   --all-lines prints both lists whole; the start hook passes it, so the whole list is only in its log (~/.claude/logs/disk-clean.log).
 // --apply takes a lock file (~/.claude/state/disk-clean.run.lock): a second run at the same time does nothing (it says so and exits 0).
 // Exit codes: 0 ok, 1 something could not be removed, 2 usage error. An error on one item is listed and the run goes on with the next.
 //   A folder whose removal fails after it was renamed aside is renamed back; the listed line names the path the folder has then. A run
@@ -20,6 +23,7 @@ import { mkdirSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { escaped } from '../../hooks/lib/shown-name.mjs';
 import { claudeSessionRoot } from './disk-free.mjs';
 import { lstatOrNull, treeBytes } from './lib/clean-scan.mjs';
 import { releaseLock, takeLock } from './lib/lock-file.mjs';
@@ -29,13 +33,14 @@ import { moveAside, moveBack, originalName, removeInside } from './lib/safe-remo
 const EXIT_FAILED = 1;
 const EXIT_USAGE = 2;
 const SAMPLE_PER_RULE = 5; // items listed per rule; the rest are only counted
+const MAX_LISTED_LINES = 10; // NOT removed lines, and SKIPPED lines, in the text report unless --all-lines; the rest are only counted
 const DEFAULT_BUDGET_MS = 20_000;
 const DEFAULT_DRY_RUN_SCAN_MS = 30_000;
 const BYTES_PER_GB = 1024 ** 3;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const UNKNOWN_SESSION_IDLE_DAYS = AGE.unknownSessionFolderMs / MS_PER_DAY;
 const RUN_LOCK_STALE_MS = 6 * 60 * 60 * 1000; // a run takes minutes; a lock this old was left by a killed run
-const USAGE = 'usage: disk-clean.mjs [--apply] [--json] [--session <id>] [--claude-tmp <dir>] [--projects <dir>] [--tmp <dir>] [--sessions <dir>] [--now <ms>] [--budget-ms <n>] [--scan-ms <n>]';
+const USAGE = 'usage: disk-clean.mjs [--apply] [--json] [--all-lines] [--session <id>] [--claude-tmp <dir>] [--projects <dir>] [--tmp <dir>] [--sessions <dir>] [--now <ms>] [--budget-ms <n>] [--scan-ms <n>]';
 const VALUE_FLAGS = new Set(['--session', '--claude-tmp', '--projects', '--tmp', '--sessions', '--now', '--budget-ms', '--scan-ms']);
 const TEXT_OPTION = { '--session': 'session', '--claude-tmp': 'claudeTmp', '--projects': 'projects', '--tmp': 'tmp', '--sessions': 'sessions' };
 const NUMBER_OPTION = { '--now': 'nowMs', '--budget-ms': 'budgetMs', '--scan-ms': 'scanMs' };
@@ -47,13 +52,14 @@ function parseArgs(argv, env) {
   // With CLAUDE_CONFIG_DIR set, Claude Code keeps its transcripts and session registry elsewhere: the default folders would show no sessions at all.
   const claudeDir = isAbsolute(home) && !env.CLAUDE_CONFIG_DIR ? join(home, '.claude') : undefined;
   const options = {
-    apply: false, json: false, session: env.CLAUDE_CODE_SESSION_ID || env.CLAUDE_SESSION_ID || undefined, claudeTmp: claudeSessionRoot(env),
+    apply: false, json: false, allLines: false, session: env.CLAUDE_CODE_SESSION_ID || env.CLAUDE_SESSION_ID || undefined, claudeTmp: claudeSessionRoot(env),
     projects: claudeDir && join(claudeDir, 'projects'), sessions: claudeDir && join(claudeDir, 'sessions'), tmp: tmpdir(), nowMs: Date.now(), budgetMs: DEFAULT_BUDGET_MS, scanMs: undefined,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     if (flag === '--apply') options.apply = true;
     else if (flag === '--json') options.json = true;
+    else if (flag === '--all-lines') options.allLines = true;
     else if (VALUE_FLAGS.has(flag) && argv[i + 1] !== undefined) {
       const value = argv[(i += 1)];
       if (TEXT_OPTION[flag] !== undefined) options[TEXT_OPTION[flag]] = value;
@@ -170,16 +176,29 @@ export async function runClean(options) {
 
 const gb = (bytes) => (bytes >= BYTES_PER_GB / 10 ? `${(bytes / BYTES_PER_GB).toFixed(2)} GB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`);
 
-function report(summary, { apply, projects }) {
+/** One list of the report (failures or refusals): each entry escaped as a whole, at most MAX_LISTED_LINES of them unless `all`, then how many more there are. */
+function listed(label, entries, all) {
+  const shown = all ? entries : entries.slice(0, MAX_LISTED_LINES);
+  const lines = shown.map((entry) => `  ${label}: ${escaped(entry)}`);
+  return entries.length > shown.length ? [...lines, `  ... and ${entries.length - shown.length} more ${label}`] : lines;
+}
+
+/**
+ * The text report of a run. Every string that comes from the file system (paths, failure messages, refusal reasons) is escaped, so a
+ * folder name can never start a line of its own or carry control characters into a terminal or a model's context.
+ * @param {object} summary what runClean returned
+ * @param {{ apply: boolean, projects?: string, allLines?: boolean }} options allLines lists every failure and refusal instead of the first MAX_LISTED_LINES
+ * @returns {string} the lines, joined with newlines
+ */
+export function report(summary, { apply, projects, allLines = false }) {
   const lines = [`disk-clean${apply ? '' : ' (dry run)'}: ${summary.items} items, ${gb(summary.bytes)}${summary.partial ? ' or more' : ''} ${apply ? `found, ${summary.removed} removed` : 'can be removed'}`];
   for (const rule of summary.rules) {
     lines.push(`  ${rule.label}: ${rule.items} items, ${gb(rule.bytes)}`);
-    for (const item of rule.sample) lines.push(`    ${item.path} (${gb(item.bytes)})`);
+    for (const item of rule.sample) lines.push(`    ${escaped(item.path)} (${gb(item.bytes)})`);
     if (rule.items > rule.sample.length) lines.push(`    ... and ${rule.items - rule.sample.length} more`);
   }
-  for (const failure of summary.failed) lines.push(`  NOT removed: ${failure}`);
-  for (const reason of summary.refused) lines.push(`  SKIPPED: ${reason}`);
-  if (summary.keptUnknown > 0) lines.push(`  ${summary.keptUnknown} session folder(s) kept: no transcript in ${projects} (maybe another config dir); removed after ${UNKNOWN_SESSION_IDLE_DAYS} idle days`);
+  lines.push(...listed('NOT removed', summary.failed, allLines), ...listed('SKIPPED', summary.refused, allLines));
+  if (summary.keptUnknown > 0) lines.push(`  ${summary.keptUnknown} session folder(s) kept: no transcript in ${escaped(String(projects))} (maybe another config dir); removed after ${UNKNOWN_SESSION_IDLE_DAYS} idle days`);
   if (summary.changed > 0) lines.push(`  ${summary.changed} item(s) changed during the run (a session was resumed) and were kept.`);
   if (summary.partial) lines.push('Some totals are a lower bound: the scan or size-measuring time limit was reached (use --scan-ms and --budget-ms for more).');
   if (!apply && summary.items > 0) lines.push('Run again with --apply to remove them.');

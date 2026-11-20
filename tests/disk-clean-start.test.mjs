@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cleanEnv, openLogFile, startIfDue } from '../home/hooks/disk-clean-start.mjs';
@@ -29,10 +29,10 @@ function setup() {
 }
 const startup = { hook_event_name: 'SessionStart', source: 'startup', session_id: SESSION };
 
-test('with no stamp it starts disk-clean --apply for this session and writes the stamp first', () => {
+test('with no stamp it starts disk-clean --apply --all-lines for this session and writes the stamp first', () => {
   const { started, deps } = setup();
   assert.equal(startIfDue(startup, { ...deps, start: (args) => { assert.ok(existsSync(deps.stampPath), 'the stamp exists before the start'); started.push(args); } }), 'started');
-  assert.deepEqual(started, [['/the/tool.mjs', '--apply', '--session', SESSION]]);
+  assert.deepEqual(started, [['/the/tool.mjs', '--apply', '--all-lines', '--session', SESSION]]);
 });
 
 test('a stamp younger than 24 h means not due; one older than 24 h starts it again', () => {
@@ -64,7 +64,21 @@ test('resume, compact, a subagent and garbage input start nothing', () => {
 test('an unsafe session id is not passed on', () => {
   const { started, deps } = setup();
   startIfDue({ ...startup, session_id: '../../etc; rm' }, deps);
-  assert.deepEqual(started, [['/the/tool.mjs', '--apply']]);
+  assert.deepEqual(started, [['/the/tool.mjs', '--apply', '--all-lines']]);
+});
+
+test('the real clean-up, started by the hook, writes every NOT removed line to the log: the hook passes --all-lines', posix, async () => {
+  const home = makeTempDir('dcs-lines-');
+  const FAILING = 12; // more than the 10 lines a run by hand prints
+  for (let i = 0; i < FAILING; i += 1) {
+    const item = join(fixtureFolders(home).tmp, `cs-run-Fr${String(i).padStart(4, '0')}`);
+    mkdirSync(join(item, 'open'), { recursive: true });
+    chmodSync(join(item, 'open'), 0o777); // writable by others: the removal refuses the item
+    const old = new Date(Date.now() - 3 * DAY_MS);
+    for (const path of [join(item, 'open'), item]) utimesSync(path, old, old);
+  }
+  assert.equal((await runHook(home)).code, 0);
+  assert.equal((await finishedLog(home)).match(/^ {2}NOT removed: /gm)?.length, FAILING);
 });
 
 /** A fake clean-up tool: records its own start, waits for a `release` file, then records that it finished and what it was given. */
@@ -112,7 +126,7 @@ test('the hook exits while the clean-up it started is still running (it waits fo
   assert.equal(existsSync(join(home, 'cleaned')), false, 'the clean-up is still waiting when the hook has exited');
   writeFileSync(join(home, 'release'), '');
   assert.equal(await waitFor(join(home, 'cleaned')), true);
-  assert.deepEqual(JSON.parse(readFileSync(join(home, 'started'), 'utf8')).args, ['--apply', '--session', SESSION]);
+  assert.deepEqual(JSON.parse(readFileSync(join(home, 'started'), 'utf8')).args, ['--apply', '--all-lines', '--session', SESSION]);
 });
 
 test('the clean-up runs in its own process group (detached) and gets no tokens or keys, only what it needs to find its folders', posix, async () => {

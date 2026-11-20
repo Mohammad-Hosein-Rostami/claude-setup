@@ -35,7 +35,7 @@ total measuring limit. Tests: `tests/disk-free.test.mjs`, `tests/doctor-disk.tes
 
 `disk-free` only reads. `disk-clean.mjs` removes (dry run unless `--apply`):
 
-`node ~/.claude/tools/disk-free/disk-clean.mjs [--apply] [--json] [--session <id>] [--scan-ms <n>]`
+`node ~/.claude/tools/disk-free/disk-clean.mjs [--apply] [--json] [--all-lines] [--session <id>] [--scan-ms <n>]`
 
 | Rule | What goes | When |
 | ---- | --------- | ---- |
@@ -51,7 +51,7 @@ A folder is also renamed aside, in its own parent, to `.removing-<pid>-<name>` (
 it is emptied: a session that resumes during the removal writes to a new folder at the old name and the old one is renamed back if the session turns out to be live (if the name is taken
 by then, the folder stays aside and the run says so). When the look or the removal fails after the rename (a folder inside is writable by others, a mount point), the folder is renamed back to its own
 name, possibly partly emptied, and the `NOT removed` line names the path it has: its own, or the `.removing-*` one when its name was taken meanwhile. A run handles each path once, so a folder
-that was renamed back is not tried again in the same run. A `.removing-*` folder left by a killed run is finished by the next run only when the same checks pass for its original name; it is never renamed back.
+that was renamed back is not tried again in the same run, and a run skips the `.removing-<own pid>-*` folders it made itself. A `.removing-*` folder left by a killed run is finished by the next run only when the same checks pass for its original name; it is never renamed back.
 The session-folders rule is skipped (and says `SKIPPED`) unless the transcripts folder (`~/.claude/projects`) and the sessions registry (`~/.claude/sessions`) are absolute, readable folders;
 with `CLAUDE_CONFIG_DIR` set the default ones are not where Claude Code keeps them, so that rule and the temp-projects rule are skipped (give the folders with `--projects` and `--sessions`).
 Sessions of another config dir: the scratchpad root is one per user, shared by every config dir, while a run reads the transcripts and the registry of one config dir only. A session folder with no
@@ -75,10 +75,14 @@ so a temp folder with a million entries does not fill the memory. A dry run stop
 sizes stop at `--budget-ms` (default 20 s); either makes the totals "partial" (doctor prints "or more"); `--apply` has no scan limit. The flags `--claude-tmp`,
 `--projects`, `--tmp` and `--sessions` replace the roots (tests use fake ones); `DISK_FREE_CLAUDE_TMP` replaces the first. Exit 0 ok, 1 something could not be removed, 2 usage.
 
+The text report: folder and file names are anyone's text, so every path, failure message and `SKIPPED` reason is printed escaped (printable ASCII only; a newline shows as `\n`, a quote as `\u0022`, and on Windows a backslash as `\u005c`),
+and the `NOT removed` and `SKIPPED` lists stop at 10 lines each, followed by "... and N more". `--all-lines` prints both lists whole (still escaped); the start hook passes it, so the whole list is only in
+`~/.claude/logs/disk-clean.log` (mode 0600, the last run only). `--json` carries counts only.
+
 `--apply` takes a run lock (`~/.claude/state/disk-clean.run.lock`, see `lib/lock-file.mjs`; one older than 6 hours is a killed run's): a second run at the same time does nothing and says so.
 The session registry files are read with `O_NOFOLLOW` and `O_NONBLOCK`, at most 64 KiB, and only plain files count.
 
-Where it runs: the SessionStart(startup) hook `home/hooks/disk-clean-start.mjs` starts `--apply` in the background at most once per 24 h (the check and the stamp write hold a lock file made with `O_EXCL`, a stale one is broken by one process only; the stamp, lock and log are opened with `O_NOFOLLOW` and never block on a FIFO; the child gets only `HOME`, `TMPDIR`, `CLAUDE_CONFIG_DIR` and a few other names, no tokens; with `CLAUDE_CONFIG_DIR` set the child skips the session-folders and temp-projects rules and prints 2 `SKIPPED` lines), and `doctor.sh`
+Where it runs: the SessionStart(startup) hook `home/hooks/disk-clean-start.mjs` starts `--apply --all-lines` in the background at most once per 24 h (the check and the stamp write hold a lock file made with `O_EXCL`, a stale one is broken by one process only; the stamp, lock and log are opened with `O_NOFOLLOW` and never block on a FIFO; the child gets only `HOME`, `TMPDIR`, `CLAUDE_CONFIG_DIR` and a few other names, no tokens; with `CLAUDE_CONFIG_DIR` set the child skips the session-folders and temp-projects rules and prints 2 `SKIPPED` lines), and `doctor.sh`
 prints the dry-run total as INFO (WARN above 2 GB).
 
 ## with-run-tmp: a suite run that leaves nothing behind

@@ -3,7 +3,7 @@
 Code of `../disk-clean.mjs` (see `../README.md`).
 
 - `clean-scan.mjs`: read-only helpers that never follow a symlink and read folders with `opendir` (`entriesOf`, `walkTree`, `treeBytes`, `touchedSince`, `mtimeOf`).
-- `safe-remove.mjs`: which roots and folders are safe (owner, mode, links) and the removal itself (`inspectRoot`, `ownedFolder`, `removeInside`, `moveAside`, `moveBack`); the header says what it does and does not defend against.
+- `safe-remove.mjs`: which roots and folders are safe (owner, mode, links) and the removal itself (`inspectRoot`, `ownedFolder`, `removeInside`, `moveAside`, `moveBack`, `isOwnAside`); the header says what it does and does not defend against.
 - `lock-file.mjs`: the lock file of the start hook and of `--apply` (`takeLock`, `releaseLock`); a stale lock is broken by one process only.
 - `live-sessions.mjs`: ids of the sessions whose process is alive, from `~/.claude/sessions/*.json`.
 - `clean-rules.mjs`: the four rules, each an async generator that yields what to remove and how to check it again (`rulesFor`, `AGE`). Change an age limit in `AGE`.
