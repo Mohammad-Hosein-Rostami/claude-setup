@@ -5,8 +5,8 @@
 // Where the rows come from: p1-p4 = security review p0-0.1 (its proof scripts), T1-T9 = security review round 2 (a1-hide.mjs),
 // M54 = review round 2 (a surviving mutant), P = fix round 2's own CLI probe (cli-probe5), S1, S2, R3-2, R3-4 and the letter-number
 // ids (D2, D5, D7, D20, D22, N3, N18) = review and security review round 3: a finding or a surviving mutant, one row each;
-// R4-1 = security review round 4. Round 9 (lane r9-mode-fix): a link is classified from the link itself and never followed, so the
-// T2 and T9 rows name the link whatever it leads to, and the S2 row is built under the real path of the temp root (review 4, R4-4).
+// R4-1 = security review round 4, S1r9 = security review 1 of round 9. Round 9 (lane r9-mode-fix): a link is told from the link itself,
+// never followed (so T2 and T9 name the link whatever it leads to); S2 is built under the real path of the temp root (review 4, R4-4).
 // `ignoresCase` marks a row that needs a disk on which a folder is also found under another case of its name. The personal agents are security-auditor
 // and reviewer.
 import { realpathSync } from 'node:fs';
@@ -157,6 +157,21 @@ export const PLACE_ROWS = [
       return { cwd: join(box.projectDir, 'a-link', 'sub') };
     },
     note: { advice: LINK_ADVICE, folders: 2, items: ['".claude/agents" (a link to outside: not read)', '"../.claude/agents" (a link to outside: not read)'] } },
+  { id: 'S1r9', classes: ['link not read'], what: 'a link whose text spells the personal agents folder through `..` after a link, while the disk leads into the repository', posix: true,
+    build: async (box) => {
+      const project = join(box.home, 'd0', 'P'); // two levels below the home folder, as the text of the link counts them
+      await write(project, { '.git/HEAD': '', '.claude/readme.txt': '', 'a/b/c/d/readme.txt': '', 'a/.claude/agents/security-auditor.md': SHADOWING });
+      await symlink('a/b/c/d', join(project, 'sub-link'));
+      await symlink('../sub-link/../../../.claude/agents', join(project, '.claude', 'agents'));
+      return { cwd: project };
+    },
+    note: linkedAgentsFolder('a link: not read') },
+  { id: 'S1r9', classes: ['link not read'], what: 'the personal agents folder\'s path with a `.` part as the text: only a text without `.` and `..` parts is that folder', posix: true,
+    build: (box) => linkInstead(box, box.agentsDir, `${dirname(box.personalDir)}/./agents`),
+    note: linkedAgentsFolder('a link: not read') },
+  { id: 'S1r9', classes: ['silent'], what: 'a link with the personal agents folder\'s own path as its text is that folder: no project folder', posix: true,
+    build: (box) => linkInstead(box, box.agentsDir, box.personalDir),
+    note: '' },
   { id: 'T7', classes: ['not checked'], what: 'file 201 has a harmless name and shadows by its frontmatter: it is counted',
     build: async (box) => {
       for (let i = 0; i < READ_LIMIT; i += 1) await writeFile(join(box.agentsDir, indexed(i)), agent(`a${i}`));

@@ -110,6 +110,21 @@ test('a link is never followed: one that leads to a path that cannot be read giv
   }
 });
 
+// Review 1 of round 9, R5 (security review 4, R4-1): the link that decides is the outermost one on the session folder's own path,
+// and the session folder counts when it is the link itself. With the innermost link taken, the first case gave delete advice for
+// `other/.claude/agents/x.md`, a file outside the repository.
+test('a session folder behind two links, or itself a link, inside the repository: nothing behind a link is read and no advice is given', { skip }, async () => {
+  const outside = (levels) => noteOf({ advice: LINK_ADVICE, folders: levels, items: Array.from({ length: levels }, (_, up) => `"${'../'.repeat(up)}.claude/agents" (a link to outside: not read)`) });
+  const { projectDir, personalDir, root } = await linkSandbox();
+  await mkdir(join(root, 'other', '.claude', 'agents'), { recursive: true });
+  await writeFile(join(root, 'other', '.claude', 'agents', 'x.md'), agent('x', 'maxTurns: 3\n'));
+  await mkdir(join(root, 'third', 'sub'), { recursive: true });
+  await symlink('../other', join(projectDir, 'a-link'));
+  await symlink('../third', join(root, 'other', 'b-link'));
+  assert.equal(projectAgentNote(join(projectDir, 'a-link', 'b-link', 'sub'), personalDir), outside(['sub', 'b-link', 'a-link'].length));
+  assert.equal(projectAgentNote(join(projectDir, 'a-link'), personalDir), outside(['a-link'].length));
+});
+
 /** A project with a real `.claude/agents` and, outside that folder, a file whose frontmatter shadows reviewer and sets maxTurns. */
 async function projectWithLinkTarget() {
   const paths = await linkSandbox();

@@ -28,7 +28,10 @@
 // from its own text as leading inside or outside (`link`, `link-outside`), whether it leads to a folder, a file or nowhere.
 // Inside a repository the same holds for the session folder's own path below the git root (security review round 4, R4-1): the
 // agents folders at and below a linked folder are reported as links and not looked at, so no advice names a file behind a link.
-// The personal agents folder is never a project folder, also when a link leads to it (told from the link's text then).
+// The personal agents folder is never a project folder, also when a link leads to it: told from the link's text, and only from a
+// text without a `.` or `..` part, which names one place however the disk is linked. With such a part the text can spell the
+// personal folder while the disk leads into the repository (`../sub-link/../../../.claude/agents` behind a link `sub-link`:
+// security review 1 of round 9, S1), so that link is reported as a link and nothing is said about where it leads.
 // Not covered here: the `.git` entry (a link there is still followed to see that it is a folder or a file: isCertainRoot) and
 // the main checkout named by a worktree's `.git` file.
 import { lstatSync, readlinkSync, realpathSync, statSync } from 'node:fs';
@@ -42,6 +45,11 @@ const UP = '../';
 const NETWORK_PATH = /^[\\/]{2}/;
 const NOT_PROJECT_KINDS = ['none', 'personal']; // what agentsFolderAt finds that is no project agents folder
 const ROOT_FOLDER_KINDS = ['real', 'personal']; // a folder that certainly exists at the git root
+const PATH_SEPARATORS = /[\\/]/;
+const DOT_PARTS = ['.', '..'];
+
+/** Whether a link's text has a `.` or `..` part: then where it leads depends on links on the way, which are not followed. */
+const hasDotPart = (linkText) => linkText.split(PATH_SEPARATORS).some((part) => DOT_PARTS.includes(part));
 const IGNORES_CASE = process.platform === 'win32'; // the CLI lower-cases paths there before it compares them (jh)
 
 const spelled = (path) => (IGNORES_CASE ? resolve(path).toLowerCase() : resolve(path));
@@ -140,9 +148,10 @@ function linkBelow(top, dir) {
  * @param {string[]} boundaries - the git root (the session folder outside a repository) as it is spelled and as it resolves.
  * @param {string | undefined} sessionLink - from linkBelow: a link on the session folder's own path inside the repository.
  * @returns {{ kind: 'none' | 'personal' } | { kind: 'real', path: string } | { kind: 'link' | 'link-outside' }} `none`: nothing
- *   there, or no folder; `personal`: the personal agents folder, or a link whose text leads to it; `real`: a folder below a real
- *   `.claude`, whose own files can be listed at `path`; else a link (`dir` lies at or below `sessionLink`, or `.claude` or
- *   `agents` is one) whose text leads to a place inside a boundary or out of it; what is there, if anything, is not looked at.
+ *   there, or no folder; `personal`: the personal agents folder, or a link whose text, free of `.` and `..` parts, is its path;
+ *   `real`: a folder below a real `.claude`, whose own files can be listed at `path`; else a link (`dir` lies at or below
+ *   `sessionLink`, or `.claude` or `agents` is one) whose text leads to a place inside a boundary or out of it, or spells the
+ *   personal folder through a `.` or `..` part (`link`); what is there, if anything, is not looked at.
  */
 function agentsFolderAt(dir, personal, boundaries, sessionLink) {
   const config = join(dir, CONFIG_FOLDER);
@@ -154,8 +163,9 @@ function agentsFolderAt(dir, personal, boundaries, sessionLink) {
       if (!lstatSync(agents).isDirectory()) return { kind: 'none' };
       return personal.isFolder(agents) ? { kind: 'personal' } : { kind: 'real', path: agents };
     }
-    const target = resolve(dirname(link), readlinkSync(link), relative(link, agents));
-    if (personal.isLinkTarget(target)) return { kind: 'personal' };
+    const linkText = readlinkSync(link);
+    const target = resolve(dirname(link), linkText, relative(link, agents));
+    if (personal.isLinkTarget(target)) return { kind: hasDotPart(linkText) ? 'link' : 'personal' };
     return { kind: boundaries.some((boundary) => isInside(target, boundary)) ? 'link' : 'link-outside' };
   } catch {
     return { kind: 'none' }; // no `.claude` or no `agents` in it, or one of them cannot be read
