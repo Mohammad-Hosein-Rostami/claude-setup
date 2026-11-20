@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { bouncedDir } from '../home/hooks/lib/bounce-once.mjs';
+import { commandOf } from '../home/hooks/lib/command-of.mjs';
 import { ADVICE_CLASS, reasonClass } from '../home/hooks/lib/reason-classes.mjs';
 import { WAIT_ADVICE, waitAdvice } from '../home/hooks/lib/wait-advice.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
@@ -88,6 +89,13 @@ test('waitAdvice reads the command only: a loop that ends, nested loops and a sl
   assert.deepEqual(waitAdvice('done; while true; do sleep 6; done'), [WAIT_ADVICE], 'a stray done never takes the count below zero: the loop after it still counts');
   assert.deepEqual(waitAdvice('done; done; for i in 1 2; do sleep 6; done'), [WAIT_ADVICE]);
   assert.deepEqual(waitAdvice('sleep'), []);
+});
+
+test('a command word in another case is read the way the platform runs it: SLEEP is sleep on macOS and Windows', () => {
+  const runsAsSleep = commandOf(['SLEEP', '40']).cmd === 'sleep'; // file names fold case there, so SLEEP starts sleep
+  assert.deepEqual(waitAdvice('SLEEP 40'), runsAsSleep ? [WAIT_ADVICE] : []);
+  assert.deepEqual(waitAdvice('for i in 1 2; do Sleep 10; done'), runsAsSleep ? [WAIT_ADVICE] : []);
+  assert.deepEqual(waitAdvice('echo SLEEP 40'), []);
 });
 
 test('advice never weakens an ask: a push next to a sleep loop still asks, with the advice kept apart', () => {

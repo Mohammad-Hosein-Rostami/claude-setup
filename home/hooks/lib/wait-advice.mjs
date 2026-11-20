@@ -57,7 +57,7 @@ function loopChange(words) {
  * @returns {string[]} [WAIT_ADVICE] when the line sleeps in a loop for 5 s or more, or sleeps 30 s or more at all; else []
  */
 export function waitAdvice(command) {
-  if (!command.includes('sleep')) return [];
+  if (!command.toLowerCase().includes('sleep')) return []; // any case: commandOf folds the command word where the platform does
   let loopDepth = 0;
   for (const words of segments(withoutSubstitutions(stripHeredocs(command)))) {
     loopDepth = Math.max(0, loopDepth + loopChange(words));
