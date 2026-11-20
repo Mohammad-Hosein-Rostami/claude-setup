@@ -35,7 +35,7 @@ function world({ firstSha = 1, tierBase = () => undefined, runnerBase = START, l
   let [tierCalls, lensCalls, fixCalls] = [0, 0, 0];
   const tierOf = (at, prompt) => ({ reviews: [SONNET], fileClasses: {}, ...(tierBase(at) === undefined ? {} : { base: tierBase(at) }), ...priorOfTierPrompt(prompt) });
   return [
-    { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: runnerBase, sha: sha(firstSha + at), reviewWorktree: `/scratch/close-2-${sha(firstSha + at).slice(0, 8)}`, tier: tierOf(at, prompt) }; } },
+    { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: runnerBase, sha: sha(firstSha + at), reviewWorktree: `/scratch/close-2-${sha(firstSha + at).slice(0, 8)}`, tier: { tip: sha(firstSha + at), ...tierOf(at, prompt) } }; } },
     { match: /:review:correctness$/, reply: (prompt) => withPriorLine(prompt, lens(lensCalls++)) },
     { match: /:verify:/, reply: (prompt) => ({ verdicts: [...prompt.matchAll(/^- \[[a-z-]+\] (\S+) /gm)].map(([, id]) => ({ id, real: true, why: 'yes', reviewedSha: 'x', linesMoved: false })) }) },
     { match: /:base$/, reply: { exit: 0, tail: `${TIP}\n` } },

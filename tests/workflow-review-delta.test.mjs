@@ -24,7 +24,7 @@ const priorLines = (prompt) => prompt.match(/^- \[[^\n]*$/gm) ?? [];
  */
 function world({ lens = () => clean, firstSha = 1, tier, fixShas = [sha(2), sha(3)], fix, verdictOf = () => ({}), start = { exit: 0, tail: `${'ba5e0001'.padEnd(40, '0')}\n` } }) {
   let [tierCalls, lensCalls, fixCalls] = [0, 0, 0];
-  const tierAt = (at, prompt) => ({ exit: 0, baseSha: 'ba5e0001'.padEnd(40, '0'), sha: sha(firstSha + at), reviewWorktree: `/scratch/close-2-${sha(firstSha + at).slice(0, 8)}`, tier: { reviews: [SONNET], fileClasses: {}, ...priorOfTierPrompt(prompt) } });
+  const tierAt = (at, prompt) => ({ exit: 0, baseSha: 'ba5e0001'.padEnd(40, '0'), sha: sha(firstSha + at), reviewWorktree: `/scratch/close-2-${sha(firstSha + at).slice(0, 8)}`, tier: { tip: sha(firstSha + at), reviews: [SONNET], fileClasses: {}, ...priorOfTierPrompt(prompt) } });
   return [
     { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return tier === undefined ? tierAt(at, prompt) : tier(at, prompt, tierAt(at, prompt)); } },
     { match: /:review:correctness$/, reply: (prompt) => withPriorLine(prompt, lens(lensCalls++, prompt)) },
@@ -255,7 +255,7 @@ test('review S3: a prior finding one lens left out and another lens returned aga
   let tierCalls = 0;
   const round = () => tierCalls - 1;
   const replies = [
-    { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: 'ba5e0001'.padEnd(40, '0'), sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1).slice(0, 8)}`, tier: { reviews: [SONNET, RISK], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },
+    { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: 'ba5e0001'.padEnd(40, '0'), sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1).slice(0, 8)}`, tier: { tip: sha(at + 1), reviews: [SONNET, RISK], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },
     // Round 1: this lens counts A open and returns nothing; the risk lens returns A again, and that is fixed.
     { match: /:review:correctness$/, reply: (prompt) => withPriorLine(prompt, round() === 0 ? { findings: [finding('A')], verified: 'r0' } : round() === 1 ? { ...clean, prior: 'prior: 0 fixed, 1 open' } : clean) },
     { match: /:review:risk$/, reply: (prompt) => withPriorLine(prompt, round() === 1 ? { findings: [finding('A')], verified: 'r1', prior: 'prior: 0 fixed, 1 open' } : clean) },

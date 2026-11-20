@@ -35,7 +35,7 @@ function world({ tiers, lenses, bases = [BASE_SHA], found = {}, suite = { exit: 
   return {
     counts: () => ({ tierCalls, fixCalls }),
     replies: [
-      { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: bases[Math.min(at, bases.length - 1)], sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1).slice(0, 8)}`, tier: { ...tiers[Math.min(at, tiers.length - 1)], ...priorOfTierPrompt(prompt) }, ...found }; } },
+      { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: bases[Math.min(at, bases.length - 1)], sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1).slice(0, 8)}`, tier: { tip: sha(at + 1), ...tiers[Math.min(at, tiers.length - 1)], ...priorOfTierPrompt(prompt) }, ...found }; } },
       ...Object.entries(lenses).map(([name, reply]) => ({ match: new RegExp(`:review:${name}$`), reply: (prompt) => withPriorLine(prompt, reply(round())) })),
       { match: /:verify:/, reply: () => ({ verdicts: [{ id: 'F1', real: true, why: 'yes', reviewedSha: TIP, linesMoved: false }] }) },
       { match: /:release$/, reply: { exit: 0, tail: '' } },

@@ -372,7 +372,8 @@ function startRefusal() {
 
 /**
  * Why a tier runner's answer cannot be trusted, or null when it can (B1, B2, N1): review-tier must have exited 0 with a `reviews` list, the reviewed sha
- * must be a full sha and the HEAD the last fix returned, and the review worktree must be a plain, fresh path (it goes into a `worktree remove --force`).
+ * must be a full sha and the HEAD the last fix returned, and the review worktree must be a plain, fresh path (it goes into a `worktree remove --force`),
+ * and the `tip` review-tier printed must be that reviewed sha (B14).
  */
 function problemWithTier(prepared) {
   const { exit, error, sha, reviewWorktree, tier } = prepared
@@ -390,6 +391,9 @@ function problemWithTier(prepared) {
   if (args.audit && !sameSha(baseSha, args.audit.base)) return `the baseSha ${baseSha} is not the audit base ${args.audit.base}`
   if (run.expectedTip !== null && !sameSha(sha, run.expectedTip)) return `the lane worktree is at ${sha}, not at ${run.expectedTip}, the HEAD of the last fix`
   if (!SAFE_PATH.test(reviewWorktree) || !reviewWorktree.endsWith(`${slug(args.row)}-${sha.slice(0, 8)}`)) return `the review worktree ${reviewWorktree} is not <scratch>/${slug(args.row)}-<sha8>`
+  // Every round, round 0 and a caller's args.tier included: review-tier must have read the commit the runner found in the lane worktree. A tool
+  // sent to another repository (a core.worktree setting in the lane's config), or a JSON made for another commit, names another tip (security B14).
+  if (!isFullSha(tier.tip) || !sameSha(tier.tip, sha)) return `the tier JSON is for the tip ${quotedText(String(tier.tip).slice(0, MAX_ERROR_CHARS))}, not for the reviewed sha ${sha}: review-tier did not read the commit the lane worktree is at, so its review set is for other code`
   return null
 }
 

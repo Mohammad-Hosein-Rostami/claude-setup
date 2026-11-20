@@ -343,7 +343,7 @@ test('needs-review at land runs the real review script as a delta round: its len
     { match: /:disk$/, reply: { ...diskOk.reply, baseTip: BASE_TIP } }, // the base tip this build reads itself, at its start
     ...standard(),
     { match: /^close-a:base$/, reply: { exit: 0, tail: `${BASE_TIP}\n` } },
-    { match: /^close-a:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: START, sha: tip(at + 1), reviewWorktree: `/scratch/close-a-${tip(at + 1).slice(0, 8)}`, tier: { reviews: [SONNET], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },
+    { match: /^close-a:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: START, sha: tip(at + 1), reviewWorktree: `/scratch/close-a-${tip(at + 1).slice(0, 8)}`, tier: { tip: tip(at + 1), reviews: [SONNET], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },
     { match: /^close-a:review:correctness$/, reply: (prompt) => withPriorLine(prompt, { findings: [], verified: 'read it' }) },
     { match: /^close-a:suite$/, reply: { exit: 0, tail: 'ok' } },
     { match: /^close-a:cleanup$/, reply: { exit: 0, tail: '' } },

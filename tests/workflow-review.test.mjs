@@ -29,7 +29,7 @@ function world({ tiers, lens = {}, verify = () => ({ verdicts: [] }), judge = ()
     counts: () => ({ tierCalls, fixCalls }),
     replies: [
       // A delta round: the runner reports the `prior` review-tier counted, and a lens that sets none answers with every prior finding fixed.
-      { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: BASE_SHA, sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1).slice(0, 8)}`, tier: { ...tiers[Math.min(at, tiers.length - 1)], ...priorOfTierPrompt(prompt) } }; } },
+      { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: BASE_SHA, sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1).slice(0, 8)}`, tier: { tip: sha(at + 1), ...tiers[Math.min(at, tiers.length - 1)], ...priorOfTierPrompt(prompt) } }; } },
       ...Object.entries(lens).map(([name, reply]) => ({ match: new RegExp(`:review:${name}$`), reply: (prompt, ...rest) => withPriorLine(prompt, reply(round(), prompt, ...rest)) })),
       { match: /:verify:/, reply: (prompt, opts, call) => verify(round(), call.label, prompt) },
       { match: /:judge:/, reply: (...rest) => judge(...rest) },
@@ -152,7 +152,7 @@ test('with landing an empty review set is lost, not clean; without landing it is
 test('a Windows drive-letter review worktree is a plain path', async () => {
   for (const reviewWorktree of [`C:/scratch/close-2-${sha(1).slice(0, 8)}`, `C:\\scratch\\close-2-${sha(1).slice(0, 8)}`]) {
     const w = world({ tiers: [tierOf(SONNET)], lens: { correctness: () => clean } });
-    w.replies[0] = { match: /:tier$/, reply: { exit: 0, baseSha: BASE_SHA, sha: sha(1), reviewWorktree, tier: tierOf(SONNET) } };
+    w.replies[0] = { match: /:tier$/, reply: { exit: 0, baseSha: BASE_SHA, sha: sha(1), reviewWorktree, tier: { tip: sha(1), ...tierOf(SONNET) } } };
     const run = await runScript(REVIEW, ARGS, { replies: w.replies });
     assert.equal(run.result.status, 'clean', reviewWorktree);
   }
@@ -170,7 +170,7 @@ test('a review worktree not named for the row and sha, an unsafe path, a sha tha
   ];
   for (const [change, why] of bad) {
     const w = world({ tiers: [tierOf(SONNET)], lens: { correctness: () => clean } });
-    w.replies[0] = { match: /:tier$/, reply: { exit: 0, baseSha: BASE_SHA, sha: sha(1), reviewWorktree: `/scratch/close-2-${sha(1).slice(0, 8)}`, tier: tierOf(SONNET), ...change } };
+    w.replies[0] = { match: /:tier$/, reply: { exit: 0, baseSha: BASE_SHA, sha: sha(1), reviewWorktree: `/scratch/close-2-${sha(1).slice(0, 8)}`, tier: { tip: sha(1), ...tierOf(SONNET) }, ...change } };
     const run = await runScript(REVIEW, { ...ARGS, laneClasses: ['logic'] }, { replies: w.replies });
     assert.equal(run.result.status, 'failed', JSON.stringify(change));
     assert.match(run.result.text, why);

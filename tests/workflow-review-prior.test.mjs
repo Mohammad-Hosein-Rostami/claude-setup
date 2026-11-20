@@ -26,7 +26,7 @@ async function deltaRound({ second = {}, tierPrior, args = {} } = {}) {
   let tierCalls = 0;
   const lensReply = (name, first) => ({ match: new RegExp(`:review:${name}$`), reply: (prompt) => (tierCalls === 1 ? first : second[name] !== undefined ? second[name] : withPriorLine(prompt, clean)) });
   const replies = [
-    { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: 'ba5e0001'.padEnd(40, '0'), sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1).slice(0, 8)}`, tier: { reviews: [SONNET, OPUS], fileClasses: {}, ...(tierPrior === undefined ? priorOfTierPrompt(prompt) : tierPrior) } }; } },
+    { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: 'ba5e0001'.padEnd(40, '0'), sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1).slice(0, 8)}`, tier: { tip: sha(at + 1), reviews: [SONNET, OPUS], fileClasses: {}, ...(tierPrior === undefined ? priorOfTierPrompt(prompt) : tierPrior) } }; } },
     lensReply('correctness', found(finding('F1', { severity: 'should-fix', problem: 'first line\nsecond line' }))),
     lensReply('risk', found(finding('O1'))),
     { match: /:verify:/, reply: (prompt) => ({ verdicts: ['F1', 'O1'].filter((id) => prompt.includes(`] ${id} `)).map((id) => ({ id, real: true, why: 'yes', reviewedSha: sha(1), linesMoved: false })) }) },
@@ -85,7 +85,7 @@ test('a delta round is not clean when a lens returns no prior line, an open coun
 test('with fix:false a delta round with an open prior count is not clean either', async () => {
   let tierCalls = 0;
   const replies = [
-    { match: /:tier$/, reply: (prompt) => { tierCalls += 1; return { exit: 0, baseSha: 'ba5e0001'.padEnd(40, '0'), sha: sha(1), reviewWorktree: `/scratch/close-2-${sha(1).slice(0, 8)}`, tier: { reviews: [SONNET], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },
+    { match: /:tier$/, reply: (prompt) => { tierCalls += 1; return { exit: 0, baseSha: 'ba5e0001'.padEnd(40, '0'), sha: sha(1), reviewWorktree: `/scratch/close-2-${sha(1).slice(0, 8)}`, tier: { tip: sha(1), reviews: [SONNET], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },
     { match: /:review:correctness$/, reply: { ...clean, prior: 'prior: 0 fixed, 0 open' } },
     { match: /:cleanup$/, reply: { exit: 0, tail: '' } },
   ];
@@ -116,7 +116,7 @@ async function deltaRoundWithTier(tierPrior, onDeltaLens) {
   let tierCalls = 0;
   const lens = (name, first) => ({ match: new RegExp(`:review:${name}$`), reply: () => { if (tierCalls > 1) onDeltaLens(); return first; } });
   const replies = [
-    { match: /:tier$/, reply: () => { const at = tierCalls++; return { exit: 0, baseSha: 'ba5e0001'.padEnd(40, '0'), sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1).slice(0, 8)}`, tier: { reviews: [SONNET, OPUS], fileClasses: {}, laneClasses: ['logic'], ...(at === 0 ? {} : tierPrior) } }; } },
+    { match: /:tier$/, reply: () => { const at = tierCalls++; return { exit: 0, baseSha: 'ba5e0001'.padEnd(40, '0'), sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1).slice(0, 8)}`, tier: { tip: sha(at + 1), reviews: [SONNET, OPUS], fileClasses: {}, laneClasses: ['logic'], ...(at === 0 ? {} : tierPrior) } }; } },
     lens('correctness', found(finding('F1'))),
     lens('risk', found(finding('O1'))),
     { match: /:verify:/, reply: (prompt) => ({ verdicts: ['F1', 'O1'].filter((id) => prompt.includes(`] ${id} `)).map((id) => ({ id, real: true, why: 'yes', reviewedSha: sha(1), linesMoved: false })) }) },
@@ -141,7 +141,7 @@ test('the final verdict field still works: a lens returns findings and verified 
 test('a landing delta round whose tier names no lens still re-checks an open item it carries: the empty-set stop counts carried items', async () => {
   let tierCalls = 0;
   const replies = [
-    { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: 'ba5e0001'.padEnd(40, '0'), sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1).slice(0, 8)}`, tier: { reviews: at === 0 ? [SONNET] : [], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },
+    { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: 'ba5e0001'.padEnd(40, '0'), sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1).slice(0, 8)}`, tier: { tip: sha(at + 1), reviews: at === 0 ? [SONNET] : [], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },
     { match: /:review:correctness$/, reply: (prompt) => (tierCalls === 1 ? found(finding('F1'), finding('F2', { file: 'b.mjs' })) : withPriorLine(prompt, clean)) },
     // The verifier confirms both; the fix of F2 moved the lines of F1, so F1 is carried as an open item.
     { match: /:verify:/, reply: { verdicts: [{ id: 'F1', real: true, why: 'yes', reviewedSha: sha(1), linesMoved: true }, { id: 'F2', real: true, why: 'yes', reviewedSha: sha(1), linesMoved: false }] } },
