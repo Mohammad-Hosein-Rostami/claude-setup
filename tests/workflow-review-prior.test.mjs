@@ -133,3 +133,21 @@ test('the final verdict field still works: a lens returns findings and verified 
   assert.equal(first.opts.schema.properties.prior.type, 'string');
   assert.doesNotMatch(first.prompt, /In prior, return the line/);
 });
+
+test('a landing delta round whose tier names no lens still re-checks an open item it carries: the empty-set stop counts carried items', async () => {
+  let tierCalls = 0;
+  const replies = [
+    { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: 'ba5e0001', sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1)}`, tierFile: `/t${at}.json`, tier: { reviews: at === 0 ? [SONNET] : [], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },
+    { match: /:review:correctness$/, reply: (prompt) => (tierCalls === 1 ? found(finding('F1')) : withPriorLine(prompt, clean)) },
+    // The verifier confirms F1 but a fix already moved its lines: it is carried as an open item, and nothing is fixed in round 0.
+    { match: /:verify:/, reply: { verdicts: [{ id: 'F1', real: true, why: 'yes', reviewedSha: sha(1), linesMoved: true }] } },
+    { match: /:suite$/, reply: { exit: 0, tail: 'ok' } },
+    { match: /:cleanup$/, reply: { exit: 0, tail: '' } },
+  ];
+  const run = await runScript(REVIEW, { ...ARGS, landing: true }, { replies });
+  assert.equal(run.error, null);
+  assert.equal(run.result.status, 'clean', run.result.text);
+  const again = callsOf(run, 'close:2:review:correctness')[1];
+  assert.ok(again, 'the lens that found the open item runs again although the delta tier named no lens');
+  assert.match(again.prompt, /\[open\] F1 a\.mjs:3/);
+});
