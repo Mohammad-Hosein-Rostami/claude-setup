@@ -4,7 +4,8 @@
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { bouncedDir } from '../home/hooks/lib/bounce-once.mjs';
@@ -83,7 +84,9 @@ test('waitAdvice reads the command only: a loop that ends, nested loops and a sl
   assert.deepEqual(waitAdvice('for i in 1; do for j in 1; do echo x; done; sleep 6; done'), [WAIT_ADVICE], 'the inner loop ended, the outer still runs');
   assert.deepEqual(waitAdvice('for i in 1; do echo x; done; for j in 1; do sleep 6; done'), [WAIT_ADVICE]);
   assert.deepEqual(waitAdvice('for i in 1; do echo x; done\nsleep 6'), []);
-  assert.deepEqual(waitAdvice('done; sleep 6'), [], 'a stray done never goes below zero');
+  assert.deepEqual(waitAdvice('done; sleep 6'), []);
+  assert.deepEqual(waitAdvice('done; while true; do sleep 6; done'), [WAIT_ADVICE], 'a stray done never takes the count below zero: the loop after it still counts');
+  assert.deepEqual(waitAdvice('done; done; for i in 1 2; do sleep 6; done'), [WAIT_ADVICE]);
   assert.deepEqual(waitAdvice('sleep'), []);
 });
 
@@ -107,9 +110,11 @@ function hookRun(env, command, session = 'sess-wait') {
 test('the hook denies a sleep loop once with the advice, the identical retry runs, a short sleep never bounces', () => {
   const home = makeTempDir('sleep-home-');
   const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: PROJECT });
-  assert.equal(typeof bouncedDir({ HOME: home }), 'string');
+  const store = join(bouncedDir({ HOME: home }), 'sess-wait.json');
   const loop = 'for i in 1 2 3; do sleep 10; done';
+  assert.equal(existsSync(store), false, 'no record before the first send');
   const first = hookRun(env, loop);
+  assert.equal(existsSync(store), true, 'the first send is recorded in the session store, so the retry can run');
   assert.equal(first.decision, 'deny');
   assert.ok(first.reason.includes(WAIT_ADVICE), first.reason);
   assert.deepEqual(hookRun(env, loop), { decision: 'allow' }, 'the identical retry runs');
