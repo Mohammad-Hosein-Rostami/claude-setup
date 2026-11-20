@@ -66,7 +66,7 @@ const FAILING_CHILDREN = [
   ['prints a note with a DEL character', printing({ note: noteWith(`a${String.fromCharCode(0x7f)}`) })], // mutant C24
   ['prints the start of the note after other text', printing({ note: `x${noteWith('1 folders not read: tell the owner.')}` })], // mutant C25
   // The parent is as strict as the child's escaping (security review 4, R4-5): the child prints printable ASCII only.
-  ...[0x85, 0xa0, 0xe9, 0x2028, 0x2029, 0x202e, 0xfeff].map((code) => [`prints a note with U+${code.toString(16)}`, printing({ note: noteWith(`a${String.fromCharCode(code)}b`) })]),
+  ...[0x09, 0x0d, 0x85, 0xa0, 0xe9, 0x2028, 0x2029, 0x202e, 0xfeff].map((code) => [`prints a note with U+${code.toString(16)}`, printing({ note: noteWith(`a${String.fromCharCode(code)}b`) })]),
 ];
 
 /** The timeouts, in ms, of the mode.mjs entries in settings/base.json, as [event, ms]. */
