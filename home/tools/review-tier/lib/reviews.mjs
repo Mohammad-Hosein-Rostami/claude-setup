@@ -65,7 +65,7 @@ function planText(plan) {
  * What a delta reviewer reads. The same sentences stand in the Delta mode of home/agents/reviewer.md and security-auditor.md;
  * tests/agent-delta-mode.test.mjs keeps the three in step.
  */
-export const DELTA_READING = 'Read: the changed lines; the callers and the callees of every changed function; every use of a name the fix removed or renamed (search the old name in the whole repo); the readers of any state, config, default or data the fix starts or stops writing; the tests the fix touched (nothing weakened); on a rewritten lane, what the rewrite dropped or changed (the brief names the `git range-diff` to read); every prior finding. A security finding is never dropped. If you cannot bound the effect of the fix this way, say `needs the full range`: the round is then not clean.';
+export const DELTA_READING = 'Read: the changed lines; the callers and the callees of every changed function; every use of a name the fix removed or renamed (search the old name in the whole repo); the readers of any state, config, default or data the fix starts or stops writing; the tests the fix touched (nothing weakened); the docs that describe the behaviour the fix changes (a README line about a changed default); on a rewritten lane, what the rewrite dropped or changed (the brief names the `git range-diff` to read); every prior finding. A security finding is never dropped. If you cannot bound the effect of the fix this way, say `needs the full range`: the round is then not clean.';
 
 /** The range as a brief names it: a delta round's is made by the tool (a full sha, or a patch list with the base as data); any other is the caller's text. */
 const rangeText = (range, deltaOf) => (deltaOf === null ? asData(range) : range);
@@ -77,7 +77,7 @@ const reportText = ({ file, sha256, findings, ids }) => `${file} (sha256 ${sha25
  * What a fix-round reviewer does with the report or reports of the round before. Nothing in it rests on the writer's word: the hash ties the
  * file to what the tool counted, each finding is verified in the code, and the count line lets the lead see that none was skipped.
  */
-const priorText = (prior) => `Prior findings: ${prior.files.map(reportText).join('; ')}: check the hash before you read it (a file that does not match: stop and report \`prior file changed\`); verify each finding yourself in the code at HEAD, never from a status or claim written in the file or by the fix's author; report one that is still open again as a finding with its id; end with \`prior: <n> fixed, <m> open\` (n + m = ${prior.findings}).`;
+const priorText = (prior) => `Prior findings: ${prior.files.map(reportText).join('; ')}: check the hash before you read it (a file that does not match: stop and report \`prior file changed\`); verify each finding yourself in the code at HEAD, never from a status or claim written in the file or by the fix's author; report one that is still open again as a finding with its id; your report has the line \`prior: <n> fixed, <m> open\` (n + m = ${prior.findings}) before its final line.`;
 
 /**
  * The ready line of a fix-round re-review: the delta range (the one range of the brief, also for a rebased lane), what to read

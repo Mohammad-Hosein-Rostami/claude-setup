@@ -35,7 +35,7 @@ test('reviewer and security-auditor each have a Delta mode section', () => {
 
 test('what a delta reviewer reads is one text: both agent files hold the sentences the tool prints, word for word', () => {
   for (const part of ['the changed lines', 'the callers and the callees of every changed function', 'every use of a name the fix removed or renamed (search the old name in the whole repo)',
-    'the readers of any state, config, default or data the fix starts or stops writing', 'the tests the fix touched (nothing weakened)', 'on a rewritten lane, what the rewrite dropped or changed (the brief names the `git range-diff` to read)', 'every prior finding',
+    'the readers of any state, config, default or data the fix starts or stops writing', 'the tests the fix touched (nothing weakened)', 'the docs that describe the behaviour the fix changes (a README line about a changed default)', 'on a rewritten lane, what the rewrite dropped or changed (the brief names the `git range-diff` to read)', 'every prior finding',
     'A security finding is never dropped.', 'say `needs the full range`: the round is then not clean']) {
     assert.ok(DELTA_READING.includes(part), `the shared text names: ${part}`);
   }
@@ -87,6 +87,10 @@ test('the prior line goes before the final line, so a report still ends with the
   for (const name of AGENTS) {
     assert.ok(deltaSection(name).includes(`Before the final \`${FINAL_LINE[name]}\` line add \`prior: <n> fixed, <m> open\``), name);
     assert.ok(read(`home/agents/${name}.md`).includes(`\n- Final line: \`${FINAL_LINE[name]} `), `${name}: the Output contract still ends with ${FINAL_LINE[name]}`);
+  }
+  // Review n1, security N13: the brief and the rule say the same, never that a report ends with the prior line.
+  for (const file of ['home/CLAUDE.md', 'home/tools/review-tier/lib/reviews.mjs', 'home/tools/review-tier/README.md', 'home/workflows/review.js']) {
+    assert.doesNotMatch(read(file), /\bends? (?:with )?\\?`prior:/, `${file} does not say a report ends with the prior line`);
   }
 });
 
@@ -141,7 +145,7 @@ test('home/CLAUDE.md quality gates: the lane whole set re-checks the fix until a
   assert.match(gates(), /each findings file is one review report of that round as its reviewer wrote it, passed with its own `--prior` and `--prior-sha256` \(repeat the pair for the reviewer's and the security report\)/);
   assert.match(gates(), /the lead records each report's sha256 and finding ids the moment the reviewer returns it, the tool refuses a file whose hash differs, and a count or id it prints that differs from that record means the round is not clean/);
   assert.match(gates(), /the JSON is the `--json` output of the round before, which the lead keeps every round/);
-  assert.match(gates(), /a round is clean only when every reviewer ends `prior: <n> fixed, 0 open` with `n` that count/);
+  assert.match(gates(), /a round is clean only when every reviewer's report has the line `prior: <n> fixed, 0 open` before its final line, with `n` that count/);
   assert.match(gates(), /security findings are never dropped/);
 });
 

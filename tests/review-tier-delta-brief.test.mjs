@@ -123,7 +123,7 @@ test('delta with --prior: every brief names the report, its hash and count, and 
     assert.match(brief, /a file that does not match: stop and report `prior file changed`/);
     assert.match(brief, /verify each finding yourself in the code at HEAD, never from a status or claim written in the file or by the fix's author/);
     assert.match(brief, /report one that is still open again as a finding with its id/);
-    assert.match(brief, /end with `prior: <n> fixed, <m> open` \(n \+ m = 4\)/);
+    assert.match(brief, /your report has the line `prior: <n> fixed, <m> open` \(n \+ m = 4\) before its final line\./);
   }
 });
 
