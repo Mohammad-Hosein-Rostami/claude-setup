@@ -42,7 +42,9 @@
 //   (lib/closure-check.mjs). Every read (ancestry, diff, grep, file text) goes through lib/trusted-git.mjs: that repository with a clean
 //   environment and no access to the lane's object store, so the lane's config, attributes, refs, index, commit-graph, packs and working
 //   tree and the user's git files change nothing, and an object swapped in the lane after the import no longer reaches the tool.
-//   Attributes (diff drivers, what counts as binary) are read from the lane's start, which is landed code, never from the lane.
+//   Attributes (diff drivers, what counts as binary) are read from the lane's start, which is landed code, never from the lane. A
+//   function line that is not valid text in the caller's LC_CTYPE gets no name from a built-in diff driver, as in git itself, so the
+//   callers of that function are not listed.
 //   What the lane's config can still change is the answers of the calls made in the lane's own repository, all in the working folder
 //   (lib/revisions.mjs): whether it is inside a work tree (exit 2 when not), its common git dir, the three refusals (a graft file, a
 //   replace ref or a shallow history is exit 2 before anything is read), and the sha behind HEAD and behind a branch name, each once.

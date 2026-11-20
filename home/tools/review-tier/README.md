@@ -133,6 +133,8 @@ measurement, not a miss-rate bound.
 - Attributes are read from the lane start (`git --attr-source=<start sha>` on every diff and grep): a `.gitattributes` that is landed
   code picks the built-in diff driver (`*.py diff=python` names the method a changed line sits in) and says what is binary for the
   caller search; a lane's own attribute edits and custom drivers (they need config) change nothing. This needs git 2.41 (older: exit 2).
+  A function line that is not valid text in the caller's `LC_CTYPE` (a Latin-1 byte under a UTF-8 locale) gets no name from a built-in
+  diff driver, as in git itself, so the callers of that function are not listed.
 - The lane's own repository is asked a few questions only, all in the working folder (`lib/revisions.mjs`): whether that folder is
   inside its work tree (exit 2 when not: a `core.worktree` setting can point git at another repository; a submodule, which sets it
   itself, passes), its common git dir, the three refusals below, and the sha behind `HEAD` and behind a branch name, each once. The JSON
