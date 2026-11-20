@@ -173,7 +173,7 @@ rules the tests check: `home/workflows/README.md`. Tests: `tests/workflow-*.test
 | Workflow | Skill | Phases | Args (`?` optional) |
 | -------- | ----- | ------ | ------------------- |
 | `build` | `wf-build` | Build, Join, Review, Land, Audit | `base, repo, suite, writers, statusFile, scriptsDir, appendOnly?, resume?, lanes[{row, closeRow, branch, spec, files, acceptanceTests, matrix?, implementer{agentType?, model, effort}, principles?, checkpoints?, addClasses?}]` (`matrix`: required for a `ui-implementer`; `checkpoints` are locked files, `appendOnly` lists files lanes may share; `resume: true` skips a lane whose close row STATUS.md shows landed) |
-| `review` | `wf-review` | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, initialFindings?` |
+| `review` | `wf-review` | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf? (needs laneClasses and priorFindings), priorFindings?, initialFindings?` |
 | `land` | `wf-land` | Rebase, Suite, Land | `row, closeRow, statusFile, repo, base, branch, worktree, suite, tip` |
 | `step` | `wf-step` | Step | `row, agentType, prompt, model, effort, isolation?, alone?, statusFile?` |
 | `bugfix` | `wf-bugfix` | Reproduce, Hypotheses, Fix, Verify | `row, closeRow, statusFile, repo, base, symptom, repro?, suite, scriptsDir` |

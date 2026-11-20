@@ -14,7 +14,7 @@ Args marked `?` are optional. Every script also accepts `scriptsDir` (this folde
 | script | skill | phases | args |
 | --- | --- | --- | --- |
 | `build.js` | `wf-build` | Build, Join, Review, Land, Audit | `base, repo, suite, writers, statusFile, scriptsDir, resume?, lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?, principles?, checkpoints?, addClasses?}], appendOnly?` |
-| `review.js` | `wf-review` | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, initialFindings?, waiverAt?, principles?, audit?` |
+| `review.js` | `wf-review` | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, priorFindings?, initialFindings?, waiverAt?, principles?, audit?` |
 | `land.js` | `wf-land` | Rebase, Suite, Land | `row, closeRow, statusFile, repo, base, branch, worktree, suite, tip` |
 | `step.js` | `wf-step` | Step | `row, agentType, prompt, model, effort, isolation?, alone?, statusFile?` |
 | `bugfix.js` | `wf-bugfix` | Reproduce, Hypotheses, Fix, Verify | `row, closeRow, statusFile, repo, base, symptom, repro?, suite, scriptsDir, branch?` |
@@ -33,11 +33,15 @@ Args marked `?` are optional. Every script also accepts `scriptsDir` (this folde
   calls not real goes to `leadList` with the reason. A finding whose lines a fix already changed becomes an open item of the next round (delta
   round, `review-tier --delta`: the lane's whole set, classes and plans, never a lighter one). In a delta round a runner writes the prior findings (fixed and open ones, one line each with its severity,
   no fixed/open claim) to a file for `--prior`; `review-tier` must count exactly that many (else `failed`), every lens gets all of them with the file's hash and returns `prior: <n> fixed, <m> open`, and the
-  round is clean only when every lens has `m` 0 and `n + m` that count (else `incomplete`). `review-tier` refuses an empty delta, so a `deltaOf` run with nothing new to read is `failed`, also when it
-  only carries `initialFindings` (the re-review `build` starts after a conflict or a red suite at land; open until `build` fixes first). The same file blocking in two rounds in a row calls the `deep-debugger` before the next fix.
+  round is clean only when every lens has `m` 0 and `n + m` that count (else `incomplete`). The prior line is read in every delta round, also one that still has findings to fix: no line, a line with anything after it, counts that do not add up,
+  or a lens that says `needs the full range` end the round `incomplete`; a prior finding a lens counted open without returning it stays `open` in the next round's prior file. A file name, a finding's text and a weakened check's path enter a prompt and the prior file as one quoted string (the rule of `review-tier`'s `lib/brief-data.mjs`, repeated in the script).
+  A run with `deltaOf` needs `laneClasses` (the `tierFile` of the round that reviewed `deltaOf`) and `priorFindings`, the blocking and should-fix findings of that round (`[]` only on purpose, when it was clean), which every lens of round 0 verifies; without them the run is `failed` with the cause, and `tier` with `deltaOf` throws.
+  A `deltaOf` run with `initialFindings` and `fix: true` (the re-review `build` starts after a conflict or a red suite at land) fixes first, on Opus because no tier exists yet, and reviews the fix as round 1 on the same `deltaOf`; those findings are its prior findings, so it needs no `priorFindings`.
+  `review-tier` refuses an empty delta: a `deltaOf` that is the lane's HEAD is `failed` with that cause, and a round whose fixes left HEAD where it was is `failed` ("the fix committed nothing for <ids>") before `review-tier` is asked again. The delta command names the base (`--base <args.base>`, a local branch or a full sha).
+  The same file blocking in two rounds in a row calls the `deep-debugger` before the next fix.
   With `landing`, the full suite runs on each round's tip beside the reviews (`test-pass run --repo <dir> --suite`, never with the command text). Result `clean` is the only landable state.
   A runner recomputes the review set with `review-tier` every round, from the lane's worktree and with every `--add-class`; the fix agent never supplies it. A tier that did not exit 0, has no `reviews` list,
-  or (landing) is empty with nothing carried over ends the run `failed`. A verifier or judge that threw ends the round `incomplete`. The result's `tip` is the reviewed sha.
+  or (landing, or any delta round) is empty with nothing carried over ends the run `failed`. A verifier or judge that threw ends the round `incomplete`. The result's `tip` is the reviewed sha.
 - `land` first checks that the branch is at the reviewed `tip` (else `failed`, nothing lands), runs `git-tidy land --rebase-only`, then a suite PASS at the tip, then `git-tidy land`; results `landed`, `conflict`, `needs-review`, `red`, `failed`.
 - `land` and `build` start with a disk check (`~/.claude/tools/disk-free`, README there): below 5 GB free (`DISK_FAIL_FREE_GB`), or a check that could not run, `land` returns `failed` and `build` marks every lane `failed` before any agent or git step, with the message that names the caches to clear. `WARN` (below 15 GB) does not stop them.
 - `build` runs lanes as a pipeline (implementer and, for `acceptanceTests`, a test-writer, each in a worktree), a Join runner, the `review`
@@ -54,7 +58,7 @@ Checkpoints and a waiver replace the second full review of a lane that a contrac
   round 1 a whole-range, full-set round (`deltaOf` reset). `weakened` entries (a skipped test, a loosened bound, a removed assert) are listed in every lens prompt. `principles` (`{id, question}[]`,
   ids from `home/rules/principles.md`) are added to the tier's own `principles` in every lens prompt: each is answered yes or no with `file:line`, and a no is a finding. The result's `baseSha` (merge-base
   of the last round) and `tip` are the range that was reviewed.
-- `review` audit mode: `audit: {base, tip}` (recorded shas, never a branch name) needs `fix: false` and `landing: false`, else the script throws; it refuses `deltaOf`, `tier`, `waiverAt` and `initialFindings`.
+- `review` audit mode: `audit: {base, tip}` (recorded shas, never a branch name) needs `fix: false` and `landing: false`, else the script throws; it refuses `deltaOf`, `tier`, `waiverAt`, `initialFindings` and `priorFindings`.
   It reviews `tier.waivable.audit`, or the full set when the range is no longer waivable; a missing set gets the full set, but only an empty set, or 0 changed lines, is `failed` ("empty audit"), never clean.
 - `build` contract: each lane may carry `principles`, `checkpoints` (`{id, run, exit, files, kind: 'red-first'|'keeps-working'}`) and `addClasses`; top-level `appendOnly` lists the files lanes may share.
   `checkArgs` throws when two lanes share another file or a checkpoint's `files` overlap its lane's `files`. The implementer never edits locked files (checkpoint files and the test-writer's); it writes `contract-dispute: <file>: <why>` instead.
@@ -66,7 +70,7 @@ Checkpoints and a waiver replace the second full review of a lane that a contrac
   worktree at the reviewed tip T and a `review` child in audit mode on `B..T`; the result is `record --state done --confirmed N`, or `error` when the child did not finish. N above 0 gives the lane status
   `audit-findings` (landed, with the findings); an audit that could not run gives `audit-error`. While a record is `pending`, `error` or has findings with no `resolve`, `audit-log gate` fails, and so do the push hook and the sync-machines verify step.
   One exception: when `record --state pending` itself fails, the gate holds nothing for the lane, and the lane's text says to run the audit by hand.
-- `land`: a suite that exits non-zero at the rebased tip returns `red` (`patchesChanged: 0`, `tidy` holds the failing tests). `build` turns `red` into an `initialFindings` entry of a delta review, and that review's fix agent repairs it (a conflict is handled the same way).
+- `land`: a suite that exits non-zero at the rebased tip returns `red` (`patchesChanged: 0`, `tidy` holds the failing tests). `build` turns `red` into an `initialFindings` entry of a delta review, and that review's fix agent repairs it before the review reads anything (a conflict is handled the same way). `build`'s `needs-review` call passes no `priorFindings` yet, so it ends `review-failed` with that cause until `build` passes `priorFindings: []` (phase 3).
 - `bugfix`: takes no `tier` arg (the review runner computes it); a land `red` goes to a lane fix agent, then the whole range is reviewed again, like a conflict.
 
 ## Restart (after a stop that lost the journal)

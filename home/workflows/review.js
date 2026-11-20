@@ -1,10 +1,13 @@
 // review: review a lane the way the setup's rules say, as a pipeline, then fix what the reviews confirm and review the fixes again until a round
 // is clean. Lenses come from review-tier (classes, models, efforts, stress and mutation plans); the script adds nothing and removes nothing.
-// Args: { row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, initialFindings?, waiverAt?, principles?, audit? }
+// Args: { row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, priorFindings?, initialFindings?, waiverAt?, principles?, audit? }
 //   suite: the repo's declared full-suite command (test-pass runs it as `run --suite`, never from this text);
 //   tier: review-tier JSON from the lead to use for round 0 instead of running the tool; laneClasses: file of an earlier round's tier JSON (classes and
-//   plans are kept, I4); deltaOf: a sha already reviewed (round 0 reviews only what changed since); initialFindings: findings that are
-//   confirmed already (red tests after a join, a rebase conflict) and go to the fix queue first; fix:false only reports.
+//   plans are kept, I4); deltaOf: a sha already reviewed (round 0 reviews only what changed since); it needs laneClasses and priorFindings: the
+//   blocking and should-fix findings of the round that reviewed deltaOf ([] only on purpose, when that round was clean), which every lens of round 0
+//   verifies; a run without them is `failed` with the cause, and `tier` with deltaOf throws. initialFindings: findings that are confirmed already
+//   (red tests after a join, a rebase conflict) and go to the fix queue first; with deltaOf they are fixed BEFORE any review (nothing new to read
+//   until then) and are the prior findings of round 1, so that call needs no priorFindings. fix:false only reports.
 //   waiverAt: the sha build.js's join proved by its checkpoints; round 0 then runs only `tier.waivable.reviews` (runner-computed tier, no weakened
 //   check, no deltaOf), and any finding, open item or red suite makes round 1 a whole-range full-set round. principles: {id, question}[] the lens
 //   prompts add to the tier's own. audit: {base, tip} recorded shas: the post-land audit of a waived lane (needs fix:false, landing:false; refuses deltaOf, tier, waiverAt and initialFindings).
@@ -16,9 +19,12 @@
 //   A delta round (review-tier --delta) names the prior findings as a file the runner writes from the script's own list, one line per finding with its
 //   severity and no fixed/open claim; review-tier counts and hashes it, every lens gets every prior finding and returns `prior: <n> fixed, <m> open`,
 //   and the round is clean only when each lens has m = 0 and n + m = that count (else `incomplete`). A count that differs from the list is `failed`.
-//   review-tier refuses an empty delta (exit 2), so a run whose deltaOf has nothing new to read ends `failed`, also when it only has initialFindings to fix
-//   (build's land loop after a conflict or a red suite: that caller has to fix first; open, see home/workflows/README.md).
-//   A run whose tier did not exit 0, has no `reviews` list, or (with `landing`) has an empty one and nothing carried over is `failed`, never clean.
+//   The prior line is read in every delta round: no line, counts that do not add up, or a lens that says `needs the full range` end the round
+//   `incomplete`; a prior finding a lens counted open without returning it stays open in the next round's prior file.
+//   review-tier refuses an empty delta (exit 2): a run whose deltaOf is the lane's HEAD is `failed` with that cause, and a round whose fixes left
+//   HEAD where it was ends `failed` ("the fix committed nothing for <ids>") before review-tier is asked again.
+//   A run whose tier did not exit 0, has no `reviews` list, or (with `landing` or in a delta round) has an empty one and nothing carried over is `failed`, never clean.
+//   Names as data: a file name, a finding's problem text and a weakened check's path enter a prompt and the prior file as one quoted string (nameText, quotedText).
 //   Audit mode reviews with `tier.waivable.audit`, or the full set when the range is no longer waivable; an empty audit (no lens, 0 changed lines) is `failed`.
 // Rules kept here (spec round 4, I2 and I3): a verifier is as strong as its finder; its `real: false` drops a finding only when it is at least
 // as strong and the finding is not security, else an Opus-max judge rules; a security finding the judge calls not real goes to leadList with
@@ -54,7 +60,7 @@ const FINDING = {
   properties: { id: str, severity: { type: 'string', enum: ['blocking', 'should-fix', 'optional'] }, file: str, line: { type: 'number' }, problem: str, fix: str, security: { type: 'boolean' } },
   required: ['id', 'severity', 'file', 'line', 'problem', 'fix', 'security'],
 }
-// `prior`: the line `prior: <n> fixed, <m> open` of a delta round; the script checks it there (priorGap), so the schema does not require it.
+// `prior`: the line `prior: <n> fixed, <m> open` of a delta round; the script checks it there (priorState), so the schema does not require it.
 const FINDINGS = { type: 'object', properties: { findings: { type: 'array', items: FINDING }, verified: str, prior: str }, required: ['findings', 'verified'] }
 const VERDICT = {
   type: 'object',
@@ -85,12 +91,22 @@ const lensAgentTypeOf = (review) => (review.agent === 'skill' ? SKILL_LENS_AGENT
 const SAFE_PATH = /^(?:[A-Za-z]:[\\/]|\/)[\w@+=.,/\\-]+$/
 const sameSha = (a, b) => a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a))
 const runner = (step, phase, prompt, schema = RUN) => agent(`${prompt}\nDo nothing else; report no secrets.`, { label: `${args.row}:${step}`, phase, schema, ...RUNNER })
-const itemText = (item) => `- [${item.status ?? item.severity}] ${item.id} ${item.file}:${item.line}: ${item.problem}`
+// Names as data: a file name, a finding's text or an id that is not a plain word enters a prompt as ONE quoted string, so nothing in it reads as an
+// instruction. This is the asData rule of home/tools/review-tier/lib/brief-data.mjs, repeated because a script cannot import;
+// tests/workflow-review-names.test.mjs keeps the two in step.
+const PLAIN_NAME = /^[\w@+=.,/~^{}-]+$/
+const PLAIN_ID = /^[\w.:-]+$/
+const quotedText = (text) => JSON.stringify(String(text)).replace(/[<>\u007f-\uffff]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`)
+const nameText = (name) => (PLAIN_NAME.test(name) ? name : quotedText(name))
+const placeOf = (path, line) => (Number(line) > 0 ? `${nameText(String(path))}:${Number(line)}` : nameText(String(path)))
+const findingText = (tag, item) => `- [${tag}] ${PLAIN_ID.test(item.id) ? item.id : quotedText(item.id)} ${nameText(String(item.file))}:${Number(item.line) || 0}: ${quotedText(String(item.problem).replace(/\s+/g, ' '))}`
+const itemText = (item) => findingText(item.status ?? item.severity, item)
 const fixText = (item) => `${itemText(item)}\n  fix: ${item.fix}`
 // A line of the prior findings file: the severity tag review-tier counts, never the fix agent's fixed/open claim, and one line whatever the problem text holds.
-const priorText = (item) => `- [${item.severity}] ${item.id} ${item.file}:${item.line}: ${String(item.problem).replace(/\s+/g, ' ')}`
+const priorText = (item) => findingText(item.severity, item)
 const isCounted = (item) => item.severity === 'blocking' || item.severity === 'should-fix'
-const PRIOR_LINE = /^prior: (\d+) fixed, (\d+) open\b/
+const PRIOR_LINE = /^prior: (\d+) fixed, (\d+) open$/ // the whole line: a remark after it ("0 open (B1 is still open)") is no prior line
+const FULL_RANGE = /needs the full range/i // the agents' Delta mode: a lens that cannot bound the fix says so, and the round is then not clean
 const planText = (plan) => [
   plan?.stress ? `PLAN stress (run it; a full-suite re-run is the one thing not to do): ${JSON.stringify(plan.stress)}` : '',
   plan?.mutation ? `PLAN mutation: at most ${plan.mutation.maxMutants} mutants of changed lines, in a private copy of the worktree.` : '',
@@ -100,7 +116,7 @@ const planText = (plan) => [
 // (deferred by a fix agent, or moved by a fix) that the next round's lenses judge again.
 const run = { round: 0, tip: null, deltaOf: args.deltaOf ?? null, laneClasses: args.laneClasses ?? null, worktree: args.worktree, knownTier: args.tier ?? null, fixShas: [], expectedTip: null, baseSha: null, lensNotes: '' }
 let lastFixed = []
-let recheck = []
+let recheck = (args.priorFindings ?? []).map((item) => ({ ...item, status: 'open' })) // the caller's earlier round: every lens of round 0 verifies them
 let blockingFiles = new Set()
 let tierFile = args.laneClasses ?? null
 const leadList = []
@@ -109,7 +125,7 @@ const outcome = (status, text, extra = {}) => ({ status, rounds: run.round + 1, 
 
 const tierPrompt = (known, carried) => {
   const priorFile = `\${TMPDIR:-/tmp}/${slug(args.row)}-prior-<sha8>.md`
-  const command = [`node ~/.claude/tools/review-tier/review-tier.mjs ${run.deltaOf ? `--delta ${run.deltaOf} --prior <the prior findings file> --prior-sha256 <its sha256>` : RANGE}`, args.landing || args.audit ? '--landing' : '',
+  const command = [`node ~/.claude/tools/review-tier/review-tier.mjs ${run.deltaOf ? `--delta ${run.deltaOf} --prior <the prior findings file> --prior-sha256 <its sha256> --base ${args.base}` : RANGE}`, args.landing || args.audit ? '--landing' : '',
     ...(args.addClasses ?? []).map((name) => `--add-class ${name}`), run.laneClasses ? `--lane-classes ${run.laneClasses}` : '', '--json'].filter(Boolean).join(' ')
   const tierFile = `\${TMPDIR:-/tmp}/${slug(args.row)}-tier-<sha8>.json`
   return `Work in ${run.worktree} (lane ${args.branch}, base ${args.base}): cd there first, review-tier reads the git repository of its working folder. The reviewed sha is its HEAD (git rev-parse HEAD).\n`
@@ -142,6 +158,20 @@ const fixPrompt = (batch, sha, diagnosis) => `Fix these confirmed findings of la
   + 'For each fix: read callers and callees of the changed functions first, add a test that fails without it, run related tests only while iterating (quiet reporter), commit after each green step. '
   + `Return IMPLEMENTED: branch (must be ${args.branch}), worktree (your pwd), sha (HEAD), tests, deferred.`
 
+const refusal = deltaRefusal()
+if (refusal !== null) return outcome('failed', refusal)
+// A delta run that starts with confirmed findings (build's land loop after a conflict or a red suite) has nothing new to read at deltaOf, so it fixes
+// first and reviews the fix as round 1 on the same deltaOf. No tier exists yet to say the files are not concurrency code: the fix takes the stronger model.
+if (run.deltaOf !== null && args.fix && (args.initialFindings ?? []).length > 0) {
+  phase('Fix')
+  const first = { sha: run.deltaOf, fileClasses: null, fixes: [], failure: null }
+  await fixBatch(args.initialFindings, first).catch((error) => { first.failure = `a fix step threw: ${error.message}` })
+  const stopped = first.failure ?? nothingCommitted(first, args.initialFindings)
+  if (stopped !== null) return outcome('failed', stopped, { findings: args.initialFindings })
+  lastFixed = first.fixes
+  run.round = 1
+}
+
 while (true) {
   phase('Tier')
   const knownTier = run.knownTier
@@ -151,44 +181,27 @@ while (true) {
   const prepared = await runner('tier', 'Tier', tierPrompt(knownTier, carried.filter(isCounted)), PREPARED)
   if (prepared === null) return outcome('failed', 'the tier runner was stopped')
   const { sha, reviewWorktree, tier } = prepared
-  const isDelta = run.deltaOf !== null && knownTier === null
+  const isDelta = run.deltaOf !== null // args.tier never comes with deltaOf (deltaRefusal), so a delta round's set is always review-tier's own
   const tierProblem = problemWithTier(prepared) ?? (isDelta ? problemWithPrior(tier.prior, carried.filter(isCounted).length) : null)
   if (tierProblem !== null) return outcome('failed', tierProblem)
   const waiver = run.round === 0 && canWaive(knownTier, sha, tier)
   // An audit uses the waiver's audit half; a range that is no longer waivable (a land-loop fix touched a gate path) gets the full set, never a failure (N3).
   const reviewSet = reviewSetOf(tier, waiver)
   if (args.audit && (reviewSet.length === 0 || !(tier.changedLines > 0))) return outcome('failed', `empty audit: ${RANGE} has ${tier.changedLines} changed lines and ${reviewSet.length} lenses, so nothing was audited`)
-  if (args.landing && reviewSet.length === 0 && carried.length === 0) return outcome('failed', `the landing review set of ${sha} is empty: review-tier gives at least one lens for a landing diff, so the tier was lost`)
+  if ((args.landing || isDelta) && reviewSet.length === 0 && carried.length === 0) return outcome('failed', `the ${isDelta ? 'delta' : 'landing'} review set of ${sha} is empty: review-tier gives at least one lens for a landing diff and for every fix round, so the tier was lost`)
   tierFile = prepared.tierFile
   run.tip = sha
   run.baseSha = prepared.baseSha
   run.lensNotes = notesOf(tier)
   run.fixShas = []
-  const roundFixes = []
-  let fixFailure = null
+  const round = { sha, fileClasses: tier.fileClasses ?? {}, fixes: [], failure: null }
   const suiteRun = args.landing
     ? runner('suite', 'Review', `Run the full suite on the exact tip ${sha} beside the reviews: add a detached worktree of ${sha} outside every repo folder, run node ~/.claude/tools/test-pass/test-pass.mjs run --repo <that folder> --suite (no command after it: test-pass runs the repo's declared suite), remove the worktree. Return the command's exit and its last 5 lines.`)
     : Promise.resolve(null)
 
   // The fix queue: one fix at a time in the lane. A batch enters it as soon as its verdicts are in, while slower lenses still read.
-  const fixBatch = async (batch) => {
-    const again = batch.filter((item) => item.severity === 'blocking' && blockingFiles.has(item.file))
-    const diagnosis = again.length === 0 ? null : await agent(`The same files block two rounds in a row: ${[...new Set(again.map((item) => item.file))].join(', ')}. Diagnose the root cause before anyone fixes again (C22): read those lines and the earlier fix (git -C ${args.repo} log -p ${args.branch} on them) and name the cause in <= 12 lines.\n${again.map(itemText).join('\n')}`, { label: `${args.row}:diagnose`, phase: 'Fix', agentType: 'deep-debugger', model: 'opus', effort: 'high' })
-    const released = await runner('release', 'Fix', `Remove the lane worktree ${run.worktree} so the fix agent can switch to the lane branch: git -C ${run.worktree} status --porcelain must be empty (else report exit 1 and the status); then git -C ${args.repo} worktree remove ${run.worktree}.`)
-    if (released === null || released.exit !== 0) { fixFailure = `release of the lane worktree failed: ${released?.tail ?? 'runner stopped'}`; return }
-    const concurrent = batch.some((item) => (tier.fileClasses?.[item.file] ?? []).some((name) => name.startsWith('concurrency')))
-    const fixed = await agent(fixPrompt(batch, sha, diagnosis), { label: `${args.row}:fix`, phase: 'Fix', agentType: 'implementer', model: concurrent ? 'opus' : 'sonnet', effort: 'high', isolation: 'worktree', schema: IMPLEMENTED })
-    if (fixed === null) { fixFailure = 'the fix agent was stopped'; return }
-    // The next round reviews the HEAD of the worktree it returns, so it must be the lane branch's own and a plain path and sha (B1, N1).
-    if (fixed.branch !== args.branch || !SAFE_PATH.test(fixed.worktree) || !isSha(fixed.sha)) { fixFailure = `the fix agent returned branch ${fixed.branch}, worktree ${fixed.worktree}, sha ${fixed.sha}: not the lane ${args.branch}`; return }
-    run.worktree = fixed.worktree
-    run.expectedTip = fixed.sha
-    run.fixShas.push(fixed.sha)
-    roundFixes.push(...batch.filter((item) => !fixed.deferred.includes(item.id)).map((item) => ({ ...item, status: 'fixed' })))
-    recheck.push(...batch.filter((item) => fixed.deferred.includes(item.id)).map((item) => ({ ...item, status: 'open' })))
-  }
   let fixQueue = Promise.resolve()
-  const enqueueFix = (batch) => { fixQueue = fixQueue.then(() => fixBatch(batch)).catch((error) => { fixFailure = `a fix step threw: ${error.message}` }) }
+  const enqueueFix = (batch) => { fixQueue = fixQueue.then(() => fixBatch(batch, round)).catch((error) => { round.failure = `a fix step threw: ${error.message}` }) }
   if (run.round === 0 && args.fix && (args.initialFindings ?? []).length > 0) enqueueFix(args.initialFindings)
 
   const judge = (item, why) => agent(`A check that is not stronger than the finder called this finding not real, which may not drop it. Rule on it from the code at ${reviewWorktree} (sha ${sha}).\n${fixText(item)}\nThe check's reason: ${why}`, { label: `${args.row}:judge:${slug(item.id)}`, phase: 'Verify', agentType: 'reviewer', model: 'opus', effort: 'max', schema: JUDGED })
@@ -220,7 +233,7 @@ while (true) {
     const ruled = ruledBatches.flat()
     const confirmed = ruled.filter((entry) => entry.real && !entry.moved).map((entry) => entry.item)
     if (args.fix && confirmed.length > 0) enqueueFix(confirmed)
-    return { confirmed, prior: found.prior, lens: review.lens, open: ruled.filter((entry) => entry.real && entry.moved).map((entry) => ({ ...entry.item, status: 'open' })) }
+    return { confirmed, prior: found.prior, said: found.verified, returned: found.findings.map((item) => item.id), lens: review.lens, open: ruled.filter((entry) => entry.real && entry.moved).map((entry) => ({ ...entry.item, status: 'open' })) }
   }
 
   phase('Review')
@@ -241,7 +254,7 @@ while (true) {
   const confirmed = results.flatMap((entry) => entry.confirmed)
   const open = results.flatMap((entry) => entry.open)
   const isClean = confirmed.length + open.length === 0
-  const priorOpen = isDelta ? priorGap(results, tier.prior.findings) : null // only stops a round that would otherwise end clean
+  const prior = isDelta ? priorState(results, tier.prior.findings, carried.filter(isCounted)) : { problem: null, stillOpen: null, leftOut: [] }
   const suite = await suiteRun
   const suiteRed = suite !== null && suite.exit !== 0
   if (suiteRed && args.fix) enqueueFix([{ id: `suite-${run.round}`, severity: 'blocking', file: '(suite)', line: 0, problem: `the full suite is red at ${sha}: ${suite.tail}`, fix: 'make the suite pass', security: false }])
@@ -249,17 +262,62 @@ while (true) {
   await runner('cleanup', 'Fix', `Remove the detached worktree ${reviewWorktree}: git -C ${args.repo} worktree remove --force ${reviewWorktree}.`)
 
   const suiteState = suite === null ? 'none' : suiteRed ? 'red' : 'pass'
-  if (fixFailure !== null) return outcome('failed', fixFailure, { findings: [...confirmed, ...open], suite: suiteState })
-  if (!args.fix && (!isClean || suiteRed)) return outcome('findings', '', { findings: [...confirmed, ...open], suite: suiteState })
-  const settled = !args.fix || (roundFixes.length === 0 && recheck.length === 0 && open.length === 0 && !suiteRed)
-  if (settled && priorOpen !== null) return outcome('incomplete', `the delta round cannot be clean: ${priorOpen}`, { suite: suiteState })
+  const found = { findings: [...confirmed, ...open], suite: suiteState }
+  if (round.failure !== null) return outcome('failed', round.failure, found)
+  if (!args.fix && (!isClean || suiteRed)) return outcome('findings', prior.problem ?? prior.stillOpen ?? '', found)
+  // Checked in every delta round, also one that still has findings to fix: a lens that gave no usable prior line or needs the whole range verified nothing.
+  if (prior.problem !== null) return outcome('incomplete', `the delta round cannot be clean: ${prior.problem}`, found)
+  const settled = !args.fix || (round.fixes.length === 0 && recheck.length === 0 && open.length === 0 && !suiteRed)
+  if (settled && prior.stillOpen !== null) return outcome('incomplete', `the delta round cannot be clean: ${prior.stillOpen}`, { suite: suiteState })
   if (settled) return outcome('clean', '', { suite: suiteState, waived: waiver })
   blockingFiles = new Set(confirmed.filter((item) => item.severity === 'blocking').map((item) => item.file))
   recheck.push(...open)
-  lastFixed = roundFixes
+  // A prior finding a lens counted open without returning it stays open: the next prior file holds it, so it is verified again.
+  const carriedOn = new Set([...round.fixes, ...recheck].map((item) => item.id))
+  recheck.push(...prior.leftOut.filter((item) => !carriedOn.has(item.id)).map((item) => ({ ...item, status: 'open' })))
+  const unmoved = nothingCommitted(round, [...round.fixes, ...recheck])
+  if (unmoved !== null) return outcome('failed', unmoved, found)
+  lastFixed = round.fixes
   run.round += 1
   run.deltaOf = waiver ? null : sha // a waived round 0 that found anything is re-reviewed over the whole range with the full set
   run.laneClasses = tierFile
+}
+
+/**
+ * One fix in the lane: release the lane worktree, run the fix agent on the lane branch, and record what it fixed (`round.fixes`) and deferred (`recheck`).
+ * `round`: { sha (what the findings were judged at), fileClasses (the tier's, or null before any tier), fixes, failure (set instead of throwing) }.
+ */
+async function fixBatch(batch, round) {
+  const again = batch.filter((item) => item.severity === 'blocking' && blockingFiles.has(item.file))
+  const diagnosis = again.length === 0 ? null : await agent(`The same files block two rounds in a row: ${[...new Set(again.map((item) => nameText(String(item.file))))].join(', ')}. Diagnose the root cause before anyone fixes again (C22): read those lines and the earlier fix (git -C ${args.repo} log -p ${args.branch} on them) and name the cause in <= 12 lines.\n${again.map(itemText).join('\n')}`, { label: `${args.row}:diagnose`, phase: 'Fix', agentType: 'deep-debugger', model: 'opus', effort: 'high' })
+  const released = await runner('release', 'Fix', `Remove the lane worktree ${run.worktree} so the fix agent can switch to the lane branch: git -C ${run.worktree} status --porcelain must be empty (else report exit 1 and the status); then git -C ${args.repo} worktree remove ${run.worktree}.`)
+  if (released === null || released.exit !== 0) { round.failure = `release of the lane worktree failed: ${released?.tail ?? 'runner stopped'}`; return }
+  const concurrent = round.fileClasses === null || batch.some((item) => (round.fileClasses[item.file] ?? []).some((name) => name.startsWith('concurrency')))
+  const fixed = await agent(fixPrompt(batch, round.sha, diagnosis), { label: `${args.row}:fix`, phase: 'Fix', agentType: 'implementer', model: concurrent ? 'opus' : 'sonnet', effort: 'high', isolation: 'worktree', schema: IMPLEMENTED })
+  if (fixed === null) { round.failure = 'the fix agent was stopped'; return }
+  // The next round reviews the HEAD of the worktree it returns, so it must be the lane branch's own and a plain path and sha (B1, N1).
+  if (fixed.branch !== args.branch || !SAFE_PATH.test(fixed.worktree) || !isSha(fixed.sha)) { round.failure = `the fix agent returned branch ${fixed.branch}, worktree ${fixed.worktree}, sha ${fixed.sha}: not the lane ${args.branch}`; return }
+  run.worktree = fixed.worktree
+  run.expectedTip = fixed.sha
+  run.fixShas.push(fixed.sha)
+  round.fixes.push(...batch.filter((item) => !fixed.deferred.includes(item.id)).map((item) => ({ ...item, status: 'fixed' })))
+  recheck.push(...batch.filter((item) => fixed.deferred.includes(item.id)).map((item) => ({ ...item, status: 'open' })))
+}
+
+/** Why the fixes of a round changed nothing, or null: the lane must be past `round.sha`, else the next round has no delta and review-tier would only say exit 2. */
+function nothingCommitted(round, items) {
+  const tip = run.fixShas.at(-1)
+  if (tip !== undefined && !sameSha(tip, round.sha)) return null
+  return `the fix committed nothing for ${items.map((item) => (PLAIN_ID.test(item.id) ? item.id : quotedText(item.id))).join(', ')}: the lane is still at ${round.sha}, so there is nothing to review again. Read why the fix agent changed nothing (a flaky suite, a finding it disputes) and decide; nothing was closed.`
+}
+
+/** Why a run with `deltaOf` cannot start, or null. Returned as `failed`, never thrown: build's review child is not caught, and a thrown child would lose the lane. */
+function deltaRefusal() {
+  if (args.deltaOf === undefined) return null
+  if (args.laneClasses === undefined) return 'args.deltaOf needs args.laneClasses: the tierFile of the round that reviewed deltaOf. review-tier --delta exits 2 without --lane-classes, so a fix round is never lighter than the lane\'s first review. Pass that result\'s tierFile, or leave deltaOf out for a whole-range review.'
+  const fixesFirst = args.fix && (args.initialFindings ?? []).length > 0
+  if (args.priorFindings === undefined && !fixesFirst) return 'args.deltaOf needs args.priorFindings: the blocking and should-fix findings of the round that reviewed deltaOf ({id, severity, file, line, problem} each), so every lens verifies them. Pass [] only when that round ended clean, on purpose; without the list a delta round would close findings nobody checked. Or leave deltaOf out for a whole-range review.'
+  return null
 }
 
 /**
@@ -268,6 +326,7 @@ while (true) {
  */
 function problemWithTier(prepared) {
   const { exit, baseSha, sha, reviewWorktree, tierFile: file, tier } = prepared
+  if (exit !== 0 && run.deltaOf !== null && isSha(sha) && sameSha(sha, run.deltaOf)) return `nothing to review: the lane's HEAD ${sha} is deltaOf itself, so nothing was committed since the reviewed sha and review-tier refused the empty delta (exit ${exit}). Pass the sha the last review read, after a fix was committed; for a whole-range review leave deltaOf out.`
   if (exit !== 0) return `review-tier exited ${exit}, so no review set exists for ${run.worktree}`
   if (!Array.isArray(tier?.reviews)) return 'the tier JSON has no `reviews` list, so no review set exists'
   if (!isSha(sha)) return `the reviewed sha ${sha} is not a git sha`
@@ -288,16 +347,26 @@ function problemWithPrior(prior, carriedCount) {
   return null
 }
 
-/** Why the lenses of a delta round do not close its prior findings, or null: each ends `prior: <n> fixed, 0 open` with n the count review-tier printed (D3). */
-function priorGap(results, expected) {
-  for (const { lens, prior } of results) {
+/**
+ * What the lenses of a delta round say about its prior findings (`expected`: the count review-tier printed; `counted`: the items of the prior file).
+ * problem: a lens gave no `prior: <n> fixed, <m> open` line, counts that do not add up, or said it needs the full range (the round is incomplete);
+ * stillOpen: a lens has m > 0 (a round with nothing left to fix is then incomplete); leftOut: the prior findings of a lens whose m is larger than
+ * the number of prior ids it returned again (which ones it meant is unknown, so every one it did not return stays open).
+ */
+function priorState(results, expected, counted) {
+  const state = { problem: null, stillOpen: null, leftOut: [] }
+  for (const { lens, prior, said, returned } of results) {
     const counts = PRIOR_LINE.exec(String(prior ?? '').trim())
-    if (counts === null) return `lens ${lens} returned no \`prior: <n> fixed, <m> open\` line`
-    const [fixed, open] = [Number(counts[1]), Number(counts[2])]
-    if (fixed + open !== expected) return `lens ${lens} counted ${fixed} fixed and ${open} open, the prior findings file holds ${expected}`
-    if (open > 0) return `lens ${lens} still sees ${open} of the ${expected} prior findings open`
+    if (FULL_RANGE.test(`${said}\n${prior}`)) state.problem ??= `lens ${lens} says it needs the full range, so the delta was not enough to judge the fix: run the review again without deltaOf`
+    else if (counts === null) state.problem ??= `lens ${lens} returned no \`prior: <n> fixed, <m> open\` line`
+    else if (Number(counts[1]) + Number(counts[2]) !== expected) state.problem ??= `lens ${lens} counted ${counts[1]} fixed and ${counts[2]} open, the prior findings file holds ${expected}`
+    if (state.problem !== null) return state
+    const open = Number(counts[2])
+    if (open > 0) state.stillOpen ??= `lens ${lens} still sees ${open} of the ${expected} prior findings open`
+    const leftOut = counted.filter((item) => !returned.includes(item.id))
+    if (open > counted.length - leftOut.length) state.leftOut.push(...leftOut.filter((item) => !state.leftOut.includes(item)))
   }
-  return null
+  return state
 }
 
 /** Round 0 is waived only for a runner-computed tier of the sha the join proved, with a waivable part, no weakened check and no delta (I1, spec 6). */
@@ -315,7 +384,7 @@ function reviewSetOf(tier, waiver) {
 
 /** The prompt lines every lens gets: weakened checks the diff adds, and the principle questions (the args' wording first, then the tier's other ids). */
 function notesOf(tier) {
-  const weakened = (tier.weakened ?? []).map(({ path, line, kind }) => `${path}:${line} ${kind}`)
+  const weakened = (tier.weakened ?? []).map(({ path, line, kind }) => `${placeOf(path, line)} ${nameText(String(kind))}`)
   const asked = args.principles ?? []
   const principles = [...asked.map(({ id, question }) => `${id}: ${question}`), ...(tier.principles ?? []).filter((id) => !asked.some((entry) => entry.id === id))]
   return [weakened.length > 0 ? `Weakened checks this diff adds (each is a finding unless the lane spec asks for it): ${weakened.join('; ')}` : '',
@@ -330,7 +399,7 @@ function isSha(text) {
 function checkArgs(given) {
   const name = 'review' // the tool cuts `meta` out of the body, so the script's own name is written here
   const required = { row: 'string', repo: 'string', base: 'string', range: 'string', landing: 'boolean', fix: 'boolean', branch: 'string', worktree: 'string', suite: 'string' }
-  const optional = { tier: 'object', addClasses: 'array', laneClasses: 'string', deltaOf: 'string', initialFindings: 'array', waiverAt: 'string', principles: 'array', audit: 'object' }
+  const optional = { tier: 'object', addClasses: 'array', laneClasses: 'string', deltaOf: 'string', priorFindings: 'array', initialFindings: 'array', waiverAt: 'string', principles: 'array', audit: 'object' }
   const check = (key, type) => {
     const value = given === undefined || given === null ? undefined : given[key]
     const ok = type === 'array' ? Array.isArray(value) : typeof value === type
@@ -339,10 +408,15 @@ function checkArgs(given) {
   for (const [key, type] of Object.entries(required)) check(key, type)
   for (const [key, type] of Object.entries(optional)) if (given[key] !== undefined) check(key, type)
   if (given.principles !== undefined && !given.principles.every((entry) => typeof entry?.id === 'string' && typeof entry?.question === 'string')) throw new Error(`${name}: args.principles entries must be {id, question} strings`)
+  // A given tier JSON would be a delta round with no prior file, no prior line and no forced lane set: a delta round's set is review-tier's own.
+  if (given.tier !== undefined && given.deltaOf !== undefined) throw new Error(`${name}: args.tier cannot be combined with args.deltaOf: a delta round runs review-tier itself (--delta, --prior, --lane-classes); pass one of the two`)
+  if (given.priorFindings !== undefined && given.deltaOf === undefined) throw new Error(`${name}: args.priorFindings belongs to a deltaOf run: they are the findings of the round that reviewed deltaOf; for a whole-range review leave them out`)
+  const isFinding = (entry) => typeof entry?.id === 'string' && ['blocking', 'should-fix', 'optional'].includes(entry.severity) && typeof entry.file === 'string' && typeof entry.line === 'number' && typeof entry.problem === 'string'
+  if (given.priorFindings !== undefined && !given.priorFindings.every(isFinding)) throw new Error(`${name}: args.priorFindings entries must be {id, severity (blocking|should-fix|optional), file, line (a number), problem}`)
   if (given.audit !== undefined) {
     if (given.audit === null || given.fix !== false || given.landing !== false) throw new Error(`${name}: args.audit needs fix:false and landing:false`)
     // Each of these would let a clean audit cover less than, or other than, the recorded base..tip with its own lenses.
-    for (const key of ['deltaOf', 'tier', 'waiverAt', 'initialFindings']) if (given[key] !== undefined) throw new Error(`${name}: args.audit cannot be combined with args.${key}`)
+    for (const key of ['deltaOf', 'tier', 'waiverAt', 'initialFindings', 'priorFindings']) if (given[key] !== undefined) throw new Error(`${name}: args.audit cannot be combined with args.${key}`)
     if (!isSha(given.audit.base) || !isSha(given.audit.tip)) throw new Error(`${name}: args.audit.base and args.audit.tip must be git shas`)
   }
 }

@@ -95,7 +95,7 @@ test('each fix round uses the --delta set with the lane classes, and a fix agent
   assert.ok(run.started.indexOf('close:2:release') < run.started.indexOf('close:2:fix'), 'release before the fix');
   const second = run.calls.filter((call) => call.label === 'close:2:tier')[1];
   assert.match(second.prompt, /cd there first/);
-  assert.match(second.prompt, /Run it from \/p-wt\/fix: node .*review-tier\.mjs --delta a1b2c31 --prior <the prior findings file> --prior-sha256 <its sha256> --lane-classes \/t0\.json --json/);
+  assert.match(second.prompt, /Run it from \/p-wt\/fix: node .*review-tier\.mjs --delta a1b2c31 --prior <the prior findings file> --prior-sha256 <its sha256> --base main --lane-classes \/t0\.json --json/);
   assert.match(second.prompt, /close-2-tier-<sha8>\.json/);
 });
 
@@ -428,12 +428,13 @@ test('a round with only a deferred finding, only an open finding, or only a red 
   assert.equal(first.result.rounds, 2, 'a deferred finding is judged again in the next round');
   const open = world({
     tiers: [tierOf(OPUS)],
-    lens: { risk: (round) => (round === 0 ? { findings: [finding('O1')], verified: 'x' } : clean) },
-    verify: () => ({ verdicts: [verdict('O1', true, { linesMoved: true })] }),
+    lens: { risk: (round) => (round === 0 ? { findings: [finding('O1'), finding('O2', { file: 'b.mjs' })], verified: 'x' } : clean) },
+    verify: () => ({ verdicts: [verdict('O1', true, { linesMoved: true }), verdict('O2', true)] }),
   });
   const second = await runScript(REVIEW, ARGS, { replies: open.replies });
   assert.equal(second.result.rounds, 2, 'an open finding is judged again in the next round');
-  assert.equal(labels(second, /:fix$/).length, 0);
+  assert.equal(labels(second, /:fix$/).length, 1, 'only O2 is fixed: the lines of O1 moved under it');
+  assert.match(second.calls.filter((call) => call.label === 'close:2:review:risk')[1].prompt, /\[open\] O1 a\.mjs:3/);
 });
 
 test('restart: the review worktree a killed run left at the same path is removed before the new one is added', async () => {

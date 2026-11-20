@@ -44,10 +44,10 @@ test('a delta round hands review-tier the prior findings as a file: one line per
   const run = await deltaRound();
   const [first, second] = callsOf(run, 'close:2:tier');
   assert.doesNotMatch(first.prompt, /--prior/, 'round 0 reads the whole range: no prior file');
-  assert.match(second.prompt, /review-tier\.mjs --delta a1b2c31 --prior <the prior findings file> --prior-sha256 <its sha256> --lane-classes \/t0\.json --json/);
+  assert.match(second.prompt, /review-tier\.mjs --delta a1b2c31 --prior <the prior findings file> --prior-sha256 <its sha256> --base main --lane-classes \/t0\.json --json/);
   assert.match(second.prompt, /write the prior findings file \$\{TMPDIR:-\/tmp\}\/close-2-prior-<sha8>\.md \(give review-tier its absolute path\) with exactly these 2 lines/);
-  assert.ok(second.prompt.includes('- [blocking] O1 a.mjs:3: problem O1\n'), second.prompt);
-  assert.ok(second.prompt.includes('- [should-fix] F1 a.mjs:3: first line second line\n'), 'a finding stays one line, so the tool counts it once');
+  assert.ok(second.prompt.includes('- [blocking] O1 a.mjs:3: "problem O1"\n'), second.prompt);
+  assert.ok(second.prompt.includes('- [should-fix] F1 a.mjs:3: "first line second line"\n'), 'a finding stays one line, so the tool counts it once');
   assert.doesNotMatch(second.prompt, /\[fixed\]|\[open\]/, 'the file holds the findings, not the fix agent\'s claim');
   assert.match(second.prompt, /Then take the sha256 of the file you wrote \(shasum -a 256 <file>, or sha256sum <file>\): review-tier needs it as --prior-sha256\./);
 });
@@ -89,11 +89,12 @@ test('with fix:false a delta round with an open prior count is not clean either'
     { match: /:review:correctness$/, reply: { ...clean, prior: 'prior: 0 fixed, 0 open' } },
     { match: /:cleanup$/, reply: { exit: 0, tail: '' } },
   ];
-  const good = await runScript(REVIEW, { ...ARGS, fix: false, deltaOf: sha(0) }, { replies });
+  const delta = { ...ARGS, fix: false, deltaOf: sha(0), laneClasses: '/lane.json', priorFindings: [] };
+  const good = await runScript(REVIEW, delta, { replies });
   assert.equal(good.result.status, 'clean', good.result.text);
   assert.match(good.calls[0].prompt, /with exactly these 0 lines \(an empty file\)/, 'a delta round with nothing carried still names a report: an empty one');
   replies[1] = { match: /:review:correctness$/, reply: clean };
-  const bad = await runScript(REVIEW, { ...ARGS, fix: false, deltaOf: sha(0) }, { replies });
+  const bad = await runScript(REVIEW, delta, { replies });
   assert.equal(bad.result.status, 'incomplete');
   assert.equal(tierCalls, 2);
 });
@@ -141,9 +142,11 @@ test('a landing delta round whose tier names no lens still re-checks an open ite
   let tierCalls = 0;
   const replies = [
     { match: /:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: 'ba5e0001', sha: sha(at + 1), reviewWorktree: `/scratch/close-2-${sha(at + 1)}`, tierFile: `/t${at}.json`, tier: { reviews: at === 0 ? [SONNET] : [], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },
-    { match: /:review:correctness$/, reply: (prompt) => (tierCalls === 1 ? found(finding('F1')) : withPriorLine(prompt, clean)) },
-    // The verifier confirms F1 but a fix already moved its lines: it is carried as an open item, and nothing is fixed in round 0.
-    { match: /:verify:/, reply: { verdicts: [{ id: 'F1', real: true, why: 'yes', reviewedSha: sha(1), linesMoved: true }] } },
+    { match: /:review:correctness$/, reply: (prompt) => (tierCalls === 1 ? found(finding('F1'), finding('F2', { file: 'b.mjs' })) : withPriorLine(prompt, clean)) },
+    // The verifier confirms both; the fix of F2 moved the lines of F1, so F1 is carried as an open item.
+    { match: /:verify:/, reply: { verdicts: [{ id: 'F1', real: true, why: 'yes', reviewedSha: sha(1), linesMoved: true }, { id: 'F2', real: true, why: 'yes', reviewedSha: sha(1), linesMoved: false }] } },
+    { match: /:release$/, reply: { exit: 0, tail: '' } },
+    { match: /:fix$/, reply: { branch: 'lane/a', worktree: '/p-wt/fix', sha: sha(2), tests: {}, deferred: [] } },
     { match: /:suite$/, reply: { exit: 0, tail: 'ok' } },
     { match: /:cleanup$/, reply: { exit: 0, tail: '' } },
   ];

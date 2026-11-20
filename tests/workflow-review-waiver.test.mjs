@@ -61,7 +61,7 @@ test('a waived round 0 runs only the waiver lenses, and a clean round 0 returns 
 });
 
 test('without waiverAt, or with a different sha, or after a delta, the full set runs and waived is false', async () => {
-  for (const change of [{ waiverAt: undefined }, { waiverAt: 'deadbee' }, { deltaOf: sha(9) }]) {
+  for (const change of [{ waiverAt: undefined }, { waiverAt: 'deadbee' }, { deltaOf: sha(9), laneClasses: '/lane.json', priorFindings: [] }]) {
     const w = world({ tiers: [tierJson()], lenses: everyLens });
     const run = await runScript(REVIEW, { ...ARGS, ...change }, { replies: w.replies });
     assert.deepEqual(lensLabels(run), ['close:2:review:audit', 'close:2:review:correctness', 'close:2:review:risk'], JSON.stringify(change));
