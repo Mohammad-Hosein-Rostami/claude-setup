@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertWellFormedCalls, readMeta, runScript } from './workflow-sandbox.mjs';
+import { priorOfTierPrompt, withPriorLine } from './workflow-review-helpers.mjs';
 
 const BUILD = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'workflows', 'build.js');
 const META = readMeta(readFileSync(BUILD, 'utf8')).meta;
@@ -135,6 +136,7 @@ test('a conflict goes back through the review child with the conflict as a findi
     assert.equal(reviews[1].deltaOf, 't-a');
     assert.equal(reviews[1].laneClasses, '/t-a.json');
     assert.equal((reviews[1].initialFindings ?? []).length, expectFinding ? 1 : 0);
+    assert.equal(JSON.stringify(reviews[1].priorFindings), expectFinding ? undefined : '[]', 'needs-review: the last review was clean, so the empty prior list is given on purpose');
     if (expectFinding) assert.match(reviews[1].initialFindings[0].problem, /a\.mjs/);
   }
 });
@@ -329,4 +331,33 @@ test('resume: a lane whose close row STATUS.md shows landed is not built again; 
   assert.ok(!off.started.some((label) => label.endsWith(':resumed')));
   const bad = await runScript(BUILD, ARGS([lane('a')], { resume: 'yes' }), { replies: standard() });
   assert.match(String(bad.error?.message), /args\.resume must be a boolean/);
+});
+
+test('needs-review at land runs the real review script as a delta round: its lens is reached with an empty prior list, and the lane lands', async () => {
+  const REVIEW = join(dirname(BUILD), 'review.js');
+  const SONNET = { agent: 'reviewer', model: 'sonnet', effort: 'high', lens: 'correctness', rules: 'core', brief: 'brief', requiredReading: [], plan: {} };
+  const tip = (n) => `a1b2c3d${n}`;
+  let [tierCalls, landTries] = [0, 0];
+  const replies = [
+    ...standard(),
+    { match: /^close-a:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: 'ba5e0001', sha: tip(at + 1), reviewWorktree: `/scratch/close-a-${tip(at + 1)}`, tierFile: `/t${at}.json`, tier: { reviews: [SONNET], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },
+    { match: /^close-a:review:correctness$/, reply: (prompt) => withPriorLine(prompt, { findings: [], verified: 'read it' }) },
+    { match: /^close-a:suite$/, reply: { exit: 0, tail: 'ok' } },
+    { match: /^close-a:cleanup$/, reply: { exit: 0, tail: '' } },
+  ];
+  const land = () => ((landTries += 1) === 1 ? { status: 'needs-review', sha: 'x', patchesChanged: 2, tidy: '' } : landedOk('a'));
+  const run = await runScript(BUILD, ARGS([lane('a')]), { replies, children: { review: REVIEW, land } });
+  assert.equal(run.error, null);
+  assert.deepEqual(run.result.lanes.map(({ status, text }) => [status, text]), [['landed', '']], 'not review-failed');
+  const reviews = run.calls.filter((call) => call.workflow === 'review').map((call) => call.args);
+  assert.equal(reviews.length, 2);
+  assert.deepEqual([reviews[1].deltaOf, reviews[1].laneClasses, reviews[1].priorFindings, reviews[1].initialFindings], [tip(1), '/t0.json', [], undefined]);
+  const [, deltaTier] = run.calls.filter((call) => call.label === 'close-a:tier');
+  assert.match(deltaTier.prompt, /review-tier\.mjs --delta a1b2c3d1 --prior <the prior findings file> --prior-sha256 <its sha256> --base main --landing --lane-classes \/t0\.json --json/);
+  assert.match(deltaTier.prompt, /with exactly these 0 lines \(an empty file\)/);
+  const lenses = run.calls.filter((call) => call.label === 'close-a:review:correctness');
+  assert.equal(lenses.length, 2, 'the delta round reaches its lens');
+  assert.match(lenses[1].prompt, /the change to review is the delta since a1b2c3d1/);
+  assert.match(lenses[1].prompt, /prior: <n> fixed, <m> open` over those 0 findings/);
+  assert.equal(run.calls.filter((call) => call.workflow === 'land').at(-1).args.tip, tip(2), 'land gets the tip the delta round reviewed');
 });

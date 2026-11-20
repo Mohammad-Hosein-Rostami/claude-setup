@@ -211,7 +211,7 @@ async function landLane(step) {
     const initialFindings = { conflict: [finding(`conflict-${lane.row}`, landed.tidy, `rebasing ${lane.branch} onto ${args.base} conflicts in ${landed.tidy}`, `resolve the conflicts keeping both intents while rebasing onto ${args.base}`)],
       red: [finding(`red-${lane.row}`, '(suite)', `suite red at the rebased tip: ${landed.tidy}`, `make the full suite pass at the rebased tip of ${lane.branch}`)] }[landed.status]
     escalated = true
-    reviewed = await reviewChild(lane, reviewArgs(lane, reviewed.worktree, { deltaOf: reviewed.tip, laneClasses: reviewed.tierFile, ...(initialFindings ? { initialFindings } : {}) }))
+    reviewed = await reviewChild(lane, reviewArgs(lane, reviewed.worktree, { deltaOf: reviewed.tip, laneClasses: reviewed.tierFile, ...(initialFindings ? { initialFindings } : { priorFindings: [] }) })) // needs-review: the lane's last review was clean, so there is no finding to carry; the empty list is on purpose (review.js refuses deltaOf without it)
     if (reviewed.status !== 'clean') return outcome(lane, `review-${reviewed.status}`, reviewed.tip, reviewed.text, listsOf(reviewed))
     if ((reviewed.leadList ?? []).length > 0) return heldForLead(lane, reviewed)
   }
