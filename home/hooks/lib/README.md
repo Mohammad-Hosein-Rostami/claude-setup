@@ -21,7 +21,7 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 - `merge-commit.mjs`: advice, never an ask: a `git merge` or `git pull` that can create a merge commit (linear history, C37).
 - `branch-move.mjs`: advice, never an ask: a branch moved by `update-ref`, `branch -f` or `push|fetch .`, which leaves the folder
   where it is checked out behind (land with `merge --ff-only`, C37).
-- `wait-advice.mjs`: advice, never an ask: a `for|while|until` loop that sleeps 5 s or more, or a single `sleep` of 30 s or more (waiting by polling costs a model call per poll). Pure; a time it cannot read (`sleep $n`) gives no advice.
+- `wait-advice.mjs`: advice, never an ask: a `for|while|until` loop that sleeps 5 s or more, or a single `sleep` of 30 s or more (waiting by polling costs a model call per poll). Pure; a time it cannot read (`sleep $n`) gives no advice, and the hook drops the advice for a call sent with `run_in_background: true`.
 - `git-advice.mjs`: all four git advices in one call (merge commit, branch move, a copy of an existing lane branch, a fast-forward merge into the base with no suite PASS); the last two ask git (one 2 s budget per command line), and any git error or timeout gives no advice.
 - `inert-arguments.mjs`: empties the single-quoted arguments of programs that never run them (echo, printf, grep, rg, jq, sed, git log) before `raw-risk.mjs` looks for dangerous words, only in shapes it can prove harmless.
 - `secrets.mjs`: finds literal secrets in a command and masks them.

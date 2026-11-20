@@ -1,7 +1,8 @@
 // Advice for the Bash guard: a command that waits by sleeping. Every poll is a model call that re-reads the whole conversation, so a
 // `for|while|until ... sleep N` loop (N >= 5 s) or one long `sleep` (>= 30 s) is bounced once with the better way to wait. A quality rule,
 // not a safety rule: lib/bounce-once.mjs denies the first send with this text and lets the identical retry run, never the owner.
-// Exports: WAIT_ADVICE (the text, classed exactly in lib/reason-classes.mjs), waitAdvice(command) -> [] | [WAIT_ADVICE].
+// Exports: WAIT_ADVICE (the text, classed exactly in lib/reason-classes.mjs), waitAdvice(command) -> [] | [WAIT_ADVICE],
+// withoutWaitAdvice(verdict) -> verdict (the hook uses it for a call sent with `run_in_background: true`: that wait needs no advice).
 // Reads the command like the other guard rules (lib/shell-words.mjs segments): heredoc bodies are dropped and `$(...)` bodies cut out, a
 // quoted word (`echo "for i; do sleep 9; done"`) is one word, so text that only mentions sleep never counts. The sleep must be a command
 // (through wrappers such as `timeout 100 sleep 40`); its time is the sum of its literal arguments (`5`, `0.5`, `1m`, `2h`, `infinity`), and
@@ -67,4 +68,16 @@ export function waitAdvice(command) {
     if (seconds !== undefined && (seconds >= LONE_SLEEP_SECONDS || (loopDepth > 0 && seconds >= LOOP_SLEEP_SECONDS))) return [WAIT_ADVICE];
   }
   return [];
+}
+
+/**
+ * The verdict for a call the agent already sends with `run_in_background: true`: a wait in the background holds no turn and costs no
+ * model call while it runs, which is what the advice asks for, so the wait advice is dropped. Every ask and every other advice stays.
+ * @param {{advice?: string[]}} verdict what decide() returned
+ * @returns {object} the same verdict without WAIT_ADVICE, and without an `advice` key when none is left
+ */
+export function withoutWaitAdvice(verdict) {
+  const { advice = [], ...rest } = verdict;
+  const kept = advice.filter((text) => text !== WAIT_ADVICE);
+  return kept.length === 0 ? rest : { ...rest, advice: kept };
 }

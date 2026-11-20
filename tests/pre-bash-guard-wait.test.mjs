@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { bouncedDir } from '../home/hooks/lib/bounce-once.mjs';
 import { commandOf } from '../home/hooks/lib/command-of.mjs';
 import { ADVICE_CLASS, reasonClass } from '../home/hooks/lib/reason-classes.mjs';
-import { WAIT_ADVICE, waitAdvice } from '../home/hooks/lib/wait-advice.mjs';
+import { WAIT_ADVICE, waitAdvice, withoutWaitAdvice } from '../home/hooks/lib/wait-advice.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -96,6 +96,17 @@ test('a command word in another case is read the way the platform runs it: SLEEP
   assert.deepEqual(waitAdvice('SLEEP 40'), runsAsSleep ? [WAIT_ADVICE] : []);
   assert.deepEqual(waitAdvice('for i in 1 2; do Sleep 10; done'), runsAsSleep ? [WAIT_ADVICE] : []);
   assert.deepEqual(waitAdvice('echo SLEEP 40'), []);
+});
+
+test('withoutWaitAdvice drops only the wait advice: asks and other advice stay as they are', () => {
+  assert.deepEqual(withoutWaitAdvice({ allow: true, advice: [WAIT_ADVICE] }), { allow: true });
+  assert.deepEqual(withoutWaitAdvice({ allow: true, advice: ['other', WAIT_ADVICE] }), { allow: true, advice: ['other'] });
+  assert.deepEqual(withoutWaitAdvice({ allow: true }), { allow: true });
+  const ask = decide('git push origin main; for i in 1 2; do sleep 10; done', ctx);
+  const { advice, ...askAlone } = ask;
+  assert.deepEqual(advice, [WAIT_ADVICE]);
+  assert.deepEqual(withoutWaitAdvice(ask), askAlone);
+  assert.equal(withoutWaitAdvice(ask).ask, true);
 });
 
 test('advice never weakens an ask: a push next to a sleep loop still asks, with the advice kept apart', () => {

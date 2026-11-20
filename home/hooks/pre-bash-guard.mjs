@@ -6,7 +6,7 @@
 // bypassPermissions mode (verified on CLI 2.1.323). Bounce once (lib/bounce-once.mjs): when a reason can be fixed by rewriting the
 // command (a variable command word, a risky word inside shell expansion, a literal secret), the first send is denied with the rewrite
 // instead, naming by class (lib/reason-classes.mjs) any other reason that will still ask; the identical command sent again gets the ask
-// above. ADVICE (quality rules: a hand-edited lockfile, a merge that can create a merge commit, a branch moved by update-ref, a copy of an existing lane branch, a fast-forward merge into the base without a suite PASS: lib/git-advice.mjs, a `for|while|until` loop that sleeps 5 s or more or a single sleep of 30 s or more: lib/wait-advice.mjs) never asks: alone,
+// above. ADVICE (quality rules: a hand-edited lockfile, a merge that can create a merge commit, a branch moved by update-ref, a copy of an existing lane branch, a fast-forward merge into the base without a suite PASS: lib/git-advice.mjs, a `for|while|until` loop that sleeps 5 s or more or a single sleep of 30 s or more, unless the call is sent with run_in_background: true: lib/wait-advice.mjs) never asks: alone,
 // the first send is denied with the fix and the identical retry runs; next to an ask or bounce it is appended (table: lib/bounce-once.mjs) Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
 // Rules. DESTRUCTIVE (the dialog says "DESTRUCTIVE: ..."): force push (incl. -fu clusters and +refspec), `push --mirror`,
 // remote branch delete, rm -r of a whole folder (the working directory, a bare glob such as `*` or `./**/*` of it, the project root, home, `/`: lib/rm-paths.mjs),
@@ -77,7 +77,7 @@ import { checkFind } from './lib/find-delete.mjs';
 import { gitRunValueReasons, judgeOnce, lineFacts, valueReasons } from './lib/git-run-values.mjs';
 import { GIT_UNREADABLE_REASON, gitRunReasons } from './lib/git-runs.mjs';
 import { gitAdvice } from './lib/git-advice.mjs';
-import { waitAdvice } from './lib/wait-advice.mjs';
+import { waitAdvice, withoutWaitAdvice } from './lib/wait-advice.mjs';
 import { outwardAsk } from './lib/outward.mjs';
 import { readProdHosts, remoteAsk } from './lib/remote.mjs';
 import { checkRm, newScope, nextCwd, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
@@ -253,7 +253,8 @@ function answerFor(command, input) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   const project = process.env.CLAUDE_PROJECT_DIR || cwd;
   const rules = (text, ctx) => decide(text, { ...ctx, prodHosts: readProdHosts() }); // reading the host list is inside the guard too
-  const r = decideSafely(command, { cwd, project }, rules);
+  const decided = decideSafely(command, { cwd, project }, rules);
+  const r = input.tool_input.run_in_background === true ? withoutWaitAdvice(decided) : decided; // a wait already in the background needs no advice
   const recheck = (text) => decideSafely(text, { cwd, project }, rules);
   const answer = r.ask ? askUnlessRemembered(r, { command, cwd, input, recheck }) : r.advice ? adviceOnce(r.advice, { command, cwd, input }) : ''; // advice only: never the owner
   logCodeWrites(command, input, cwd); // harmless when the owner denied: the typecheck gate only reads files that exist

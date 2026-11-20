@@ -20,8 +20,8 @@ function guardSession() {
   const home = makeTempDir('sleep-home-');
   const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: PROJECT });
   return {
-    run(command, session = 'sess-1') {
-      const input = JSON.stringify({ cwd: PROJECT, session_id: session, tool_input: { command } });
+    run(command, session = 'sess-1', toolInput = {}) {
+      const input = JSON.stringify({ cwd: PROJECT, session_id: session, tool_input: { command, ...toolInput } });
       const { status, stdout, stderr } = spawnSync(process.execPath, [GUARD], { input, encoding: 'utf8', env });
       assert.equal(status, 0, stderr);
       if (stdout === '') return { decision: 'allow' };
@@ -126,4 +126,35 @@ test('a sleep loop next to a push or a whole-folder rm asks on every send: the o
     const session = guardSession();
     for (const send of ['first', 'second', 'third']) assert.equal(session.run(command).decision, 'ask', `${command}: ${send} send`);
   }
+});
+
+const IN_BACKGROUND = { run_in_background: true };
+
+test('a wait the call already sends to the background gets no advice: it runs at the first send', () => {
+  for (const command of ['while ! curl -sf localhost:3000; do sleep 5; done', 'sleep 600', ...BOUNCED]) {
+    const session = guardSession();
+    assert.deepEqual(session.run(command, 'sess-1', IN_BACKGROUND), { decision: 'allow' }, command);
+    assert.equal(session.run(command).decision, 'deny', `${command}: the same command in the foreground still gets the advice once`);
+  }
+});
+
+test('only run_in_background: true counts as a background call', () => {
+  for (const toolInput of [{ run_in_background: false }, { run_in_background: 'true' }, { run_in_background: 1 }, { background: true }, {}]) {
+    assert.equal(guardSession().run('sleep 600', 'sess-1', toolInput).decision, 'deny', JSON.stringify(toolInput));
+  }
+});
+
+test('a background sleep loop next to a push or a whole-folder rm still asks on every send, and other advice is still given', () => {
+  const asked = ['while true; do sleep 10; done; git push origin main', `for i in 1 2 3; do sleep 10; done; ${RM} -rf *`, `sleep 60; ${RM} -rf ./**/*`];
+  for (const command of asked) {
+    const session = guardSession();
+    for (const send of ['first', 'second', 'third']) {
+      const { decision, reason } = session.run(command, 'sess-1', IN_BACKGROUND);
+      assert.equal(decision, 'ask', `${command}: ${send} send`);
+      assert.doesNotMatch(reason, /wait by sleeping/, 'the dropped advice is not named next to the ask');
+    }
+  }
+  const merge = guardSession().run('for i in 1 2 3; do sleep 10; done; git merge feature', 'sess-1', IN_BACKGROUND);
+  assert.equal(merge.decision, 'deny', 'the merge-commit advice is not a wait: it is still given once');
+  assert.doesNotMatch(merge.reason, /run_in_background/);
 });
