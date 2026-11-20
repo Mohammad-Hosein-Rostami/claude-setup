@@ -8,7 +8,7 @@
 // a commit, so they match as a whole text over a fixed charset): being advice is what lets
 // a command run without the owner, so another rule's reason that merely contains advice wording (from command text) stays an ask. Every
 // other class matches the fixed part of its rule's wording, so a reworded rule loses its class.
-// tests/pre-bash-guard-reason-classes.test.mjs checks that every reason the guard gives for the strings in its tests has a class and that
+// tests/pre-bash-guard-reason-classes.test.mjs checks that every reason the guard gives for the strings in its tests (template strings included) has a class and that
 // each class has a test command, so a new rule without a class, or a class without a test, fails the suite.
 // A reason only the backstop parser found (it ends with BACKSTOP_MARK) has the class of the plain reason.
 import { BRANCH_MOVE_ADVICE } from './branch-move.mjs';
@@ -72,6 +72,7 @@ const ASK_CLASS_PATTERNS = [
   ['rm -r with a brace expansion that cannot be listed', /^DESTRUCTIVE: rm -r with a brace expansion that cannot be listed/],
   ['rm -r with a target too long to check', /^DESTRUCTIVE: rm -r with a target too long to check \(/],
   ['rm -r outside the project', /^DESTRUCTIVE: rm -r outside the project \(/],
+  ['rm -r that empties a whole folder', /^DESTRUCTIVE: rm -r that empties a whole folder \(/],
   ['HUSKY=0', /^HUSKY=0 skips the git hooks$/],
   ['git -c core.hooksPath', /^git -c core\.hooksPath bypasses the git hooks$/],
   ['git -c alias', /^git -c alias\.\* defines a command for this call/],

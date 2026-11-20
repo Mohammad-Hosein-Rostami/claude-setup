@@ -37,6 +37,7 @@ const NEVER_BOUNCED = [
   ['rm -r with a brace expansion that cannot be listed', 'rm -rf build/x{1..300}'],
   ['rm -r with a target too long to check', `rm -rf build/${'x'.repeat(5000)}`],
   ['rm -r outside the project', 'rm -rf /etc/x'],
+  ['rm -r that empties a whole folder', 'rm -rf *'],
   ['HUSKY=0', 'HUSKY=0 git commit -m x'],
   ['git -c core.hooksPath', 'git -c core.hooksPath=/dev/null commit -m x'],
   ['git -c alias', 'git -c alias.p=status p'],
@@ -152,19 +153,39 @@ test('each bounce class is bounced the first time, with a backstop-only reason c
     for (const reason of ask.reasons) assert.equal(reasonClass(`${reason} (matched in raw text)`), reasonClass(reason), reason);
   }
   assert.equal(reasonClass(GUARD_ERROR_REASON), 'guard error');
+  const besideWholeFolder = bounceText(decide(`${VARIABLE_COMMAND}; rm -rf *`, ctx).reasons);
+  assert.match(besideWholeFolder, /will still ask the owner for: rm -r that empties a whole folder\./);
+  assert.doesNotMatch(besideWholeFolder, /another guard rule/);
   assert.equal(reasonClass('a reason no rule gives'), undefined);
 });
 
 const TESTS = fileURLToPath(new URL('.', import.meta.url));
-const QUOTED = /'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\$]|\\.|\$(?!\{))*)`/g;
+const QUOTED = /'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g; // template strings with `${...}` too
+const STRING_CONSTANT = /^const (\w+) = '([^'\\\n]*)';/gm; // `const RM = 'rm';`
+const PLACEHOLDER = /\$\{(\w+)\}/g;
 const unescape = (text) => text.replace(/\\(.)/gs, (_, char) => ({ n: '\n', t: '\t', r: '\r' })[char] ?? char);
 
-/** Every quoted string in the guard's test files (escapes undone): a broad set of commands, one or more for every rule. */
+/**
+ * The quoted strings of one test file, escapes undone. A template string's `${NAME}` is filled in from the file's own one-line string
+ * constants (`const RM = 'rm'`) and PROJECT, so a command the file only writes as `${RM} -rf *` is read as the command it tests; any
+ * other placeholder stays as written.
+ */
+function stringsOf(source) {
+  const constants = new Map([['PROJECT', PROJECT], ...[...source.matchAll(STRING_CONSTANT)].map((m) => [m[1], m[2]])]);
+  const filled = (text) => text.replace(PLACEHOLDER, (whole, name) => constants.get(name) ?? whole);
+  return [...source.matchAll(QUOTED)].map((m) => unescape(m[3] === undefined ? (m[1] ?? m[2]) : filled(m[3])));
+}
+
+/** Every quoted string in the guard's test files: a broad set of commands, one or more for every rule. */
 function guardTestStrings() {
   const files = readdirSync(TESTS).filter((name) => name.startsWith('pre-bash-guard') && name.endsWith('.mjs'));
-  const strings = files.flatMap((name) => [...readFileSync(join(TESTS, name), 'utf8').matchAll(QUOTED)].map((m) => unescape(m[1] ?? m[2] ?? m[3])));
-  return [...new Set(strings)];
+  return [...new Set(files.flatMap((name) => stringsOf(readFileSync(join(TESTS, name), 'utf8'))))];
 }
+
+test('the harvest reads a command that a test file writes only as a template string', () => {
+  const strings = guardTestStrings();
+  for (const command of ['rm -rf *', 'rm -rf ./**/*', `rm -rf ${PROJECT}/*`, 'cd src && rm -rf *']) assert.ok(strings.includes(command), command);
+});
 
 test('every reason the guard gives for any string in its tests has a class: a new rule needs a class in lib/reason-classes.mjs', () => {
   const strings = guardTestStrings();
