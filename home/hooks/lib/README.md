@@ -18,6 +18,7 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 - `command-checks.mjs`, `rm-paths.mjs`, `bare-glob.mjs`, `find-delete.mjs`, `eval-check.mjs`, `shell-hazards.mjs`, `dangerous-scan.mjs`,
   `raw-risk.mjs`, `outward.mjs`, `remote.mjs`, `code-writes.mjs`, `git-runs.mjs`: one file per kind of risky command (`rm -r`,
   `find -delete`, `eval`, hidden execution, push or publish, production hosts, code rewritten from Bash, commands git runs).
+- `cd-folder.mjs`: which folders a command may run in after `cd`, `pushd` or `popd` (a set of possible folders, or unknown after a loop, a function body, `eval` or `source`); the `rm -r` rules judge a target from each of them.
 - `merge-commit.mjs`: advice, never an ask: a `git merge` or `git pull` that can create a merge commit (linear history, C37).
 - `branch-move.mjs`: advice, never an ask: a branch moved by `update-ref`, `branch -f` or `push|fetch .`, which leaves the folder
   where it is checked out behind (land with `merge --ff-only`, C37).
