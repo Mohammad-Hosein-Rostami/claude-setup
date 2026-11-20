@@ -1,6 +1,7 @@
-// PostToolUse(Edit|Write|MultiEdit): run the project's own format/lint scripts after a code file changes, and log the
-// file for typecheck-gate.mjs, which typechecks once when the agent stops. CLAUDE_TYPECHECK_AT=edit restores the
-// typecheck after every edit (and turns the gate off). Only scripts that exist in the nearest package.json run.
+// PostToolUse(Edit|Write|MultiEdit): run the project's own format/lint scripts after a code file changes, and log every
+// edited code file of a package for typecheck-gate.mjs, which typechecks once when the agent stops and decides there what
+// runs or is skipped. CLAUDE_TYPECHECK_AT=edit restores the typecheck after every edit (and turns the gate off: nothing is
+// logged). Only scripts that exist in the nearest package.json run.
 // A script that targets the whole repo (`prettier --write .`, `nx run-many`) is replaced by the tool's binary on the
 // edited file, or skipped; CLAUDE_POST_EDIT_SKIP opts out.
 // Format runs first and alone; lint and typecheck (at-edit mode) then run concurrently (sequentially when the lint
@@ -266,17 +267,12 @@ export async function checkFile(file) {
   return runStages(stagesFor(checks, scripts), { pm: packageManager(dir), cwd: dir, rel, deadline: Date.now() + BUDGET_MS });
 }
 
-// Remember the file for the stop gate when its package has a typecheck script the gate can run.
+// Remember every edited code file of a package for the stop gate. The gate, not this hook, decides what runs for it (the
+// typecheck script, the Nx target, the nearest tsconfig) or why it is skipped: a rule here once kept every package without
+// a `typecheck` script out of the log, so the gate never ran. A file with no package.json above it is out of scope.
 function recordTypecheckEdit(file, input) {
   const logPath = editLogPath(input.session_id, input.agent_id);
-  const dir = logPath && isCodeFile(file) && existsSync(file) ? findPackageDir(file) : null;
-  if (!dir) return;
-  try {
-    const typecheck = typecheckScript(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).scripts);
-    if (typecheck && !isBroadScript(typecheck.text)) recordEdit(logPath, file);
-  } catch {
-    // unreadable package.json is reported by checkFile; nothing to gate here
-  }
+  if (logPath && isCodeFile(file) && existsSync(file) && findPackageDir(file)) recordEdit(logPath, file);
 }
 
 async function readStdin() {
