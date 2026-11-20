@@ -1,6 +1,7 @@
 // Tests of what review-tier checks of its own packs (lane r7-delta, fix round 6, security S10, spec check K3): a process of the same user
 // that swaps, adds or removes pack files in the tool's temp repository while the tool runs. Each case is the security review's p37 made
-// deterministic: the recording git (spyGit, SPY_PACK) acts at a fixed call instead of racing the tool. The lane is p37's: the fix turns a
+// deterministic: the recording git (spyGit, SPY_PACK) acts at a fixed call instead of racing the tool; fix round 7 (R7-1, S11) adds the
+// changes that only ctime shows (an in-place rewrite with the mtime put back, a rename aside and back). The lane is p37's: the fix turns a
 // guard into an `execSync` call (security class, tier 2); the forged packs serve the guard's text under the fix's blob name (tier 1).
 // POSIX only (the spy is a `#!` script).
 import test from 'node:test';
@@ -22,6 +23,8 @@ const CHANGED = /the tool's own temp repository changed during the run/;
 const FANOUT_END = 8 + 255 * 4; // a version-2 pack index: magic, version, then 256 counts; the last one is the number of objects
 const OIDS_AT = 8 + 256 * 4;
 const TRAILER_BYTES = 20;
+const WHOLE_SECOND = 1_767_225_600; // 2026-01-01T00:00:00Z: an mtime with no sub-second digits, which utimes puts back to the nanosecond
+const FACTS_PUT_BACK = ['dev', 'ino', 'size', 'mtimeNs'];
 
 /** A reverse index (`.rev`, gitformat-pack) for a version-2 `.idx` with 32-bit offsets: index positions in pack order. */
 function writeReverseIndex(name) {
@@ -48,6 +51,14 @@ function pointIndexEntry(file, oid, other) {
   createHash('sha1').update(index.subarray(0, index.length - TRAILER_BYTES)).digest().copy(index, index.length - TRAILER_BYTES);
   chmodSync(file, 0o644);
   writeFileSync(file, index);
+}
+
+/** From the spy's log: the target file of SPY_PACK step `step` has the same dev, inode, size and mtime after it as before it; only ctime moved. */
+function assertOnlyCtimeMoved(facts, step, label) {
+  const [before, after] = ['before', 'after'].map((when) => facts.find((row) => row.step === step && row.when === when));
+  assert.ok(before?.ino !== undefined && after?.ino !== undefined, `${label}: the step ran on the file: ${JSON.stringify(facts)}`);
+  for (const field of FACTS_PUT_BACK) assert.equal(after[field], before[field], `${label}: ${field} is the same`);
+  assert.notEqual(after.ctimeNs, before.ctimeNs, `${label}: ctime moved`);
 }
 
 /** p37's lane, its fix round and the oids the forgeries need. */
@@ -111,6 +122,34 @@ test('spec check K3 (b): an .idx that points the fix\'s blob at the bytes of ano
   copyFileSync(join(copied, 'phase.idx'), join(from, 'phase.idx'));
   pointIndexEntry(join(from, 'phase.idx'), made.oid(`${made.head}:src/gate.mjs`), made.oid(`${made.head}:a.txt`));
   assertStopped(made.spied({ SPY_PACK: JSON.stringify({ word: '--batch-check', nth: 1, action: 'swap', from }) }), CHANGED, 'swap of the index after the note');
+});
+
+test('review R7-1, security S11: the noted .idx rewritten in place (forged bytes of the same size) with its whole-second mtime put back keeps every noted fact but ctime, and the run is exit 2', POSIX_ONLY, () => {
+  const made = raceLane();
+  const copied = realpathSync(makeTempDir('review-tier-phase-'));
+  const control = made.spied({ SPY_PACK: JSON.stringify({ word: 'index-pack', nth: 2, action: 'copy', to: copied }) });
+  assert.equal(control.result.status, 0, control.result.stderr);
+  const forged = join(realpathSync(makeTempDir('review-tier-forged-')), 'phase.idx');
+  copyFileSync(join(copied, 'phase.idx'), forged);
+  pointIndexEntry(forged, made.oid(`${made.head}:src/gate.mjs`), made.oid(`${made.head}:a.txt`));
+  const steps = [
+    { word: 'index-pack', nth: 2, action: 'mtime', ext: 'idx', mtime: WHOLE_SECOND }, // before the note: the noted mtime has no sub-second digits
+    { word: '--batch-check', nth: 1, action: 'rewrite', ext: 'idx', from: forged, mtime: WHOLE_SECOND },
+  ];
+  const run = made.spied({ SPY_PACK: JSON.stringify(steps) });
+  assertOnlyCtimeMoved(run.facts, 1, 'the .idx rewritten in place');
+  assertStopped(run, /\.idx is gone or is not the file git index-pack wrote/, 'the .idx rewritten in place');
+});
+
+test('security S11 (p48): a noted .idx or .pack renamed aside, another file of its size written under its name and the first one renamed back keeps every noted fact but ctime, and the run is exit 2', POSIX_ONLY, async (t) => {
+  const made = raceLane();
+  for (const ext of ['idx', 'pack']) {
+    await t.test(`.${ext}`, () => {
+      const run = made.spied({ SPY_PACK: JSON.stringify([{ word: '--batch-check', nth: 1, action: 'renameBack', ext }]) });
+      assertOnlyCtimeMoved(run.facts, 0, `.${ext}`);
+      assertStopped(run, new RegExp(`\\.${ext} is gone or is not the file git index-pack wrote`), `.${ext} renamed back`);
+    });
+  }
 });
 
 test('spec check K3 (c): a full forged pack added after the closure check, before any read, is exit 2 at the last check', POSIX_ONLY, () => {

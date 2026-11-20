@@ -3,7 +3,8 @@
 // pack, a tree entry made from bytes, and a `git` on PATH that records every call the tool makes and can misbehave on request.
 // Exports: forgeCommitGraph(dir, edits), objectsOf(dir), looseObjectFile(dir, oid), rewriteLooseObject(dir, oid, type, body),
 //   forgePackedBlob(dir, oid, text), forgePackedCopy(dir, oid, standIn, options), packOf(dir, oids, folder), renameIndexEntry(file, from, to),
-//   commitEntries(dir, entries, message), spyGit() -> { env, calls }, spiedRun(dir, log, args, more) -> { result, real, laneSide, trusted }.
+//   commitEntries(dir, entries, message), spyGit() -> { env, calls, facts }, spiedRun(dir, log, args, more) -> { result, facts, real, laneSide,
+//   trusted }.
 // Sources: the probes of the security reviews and spec checks of lane r7-delta, fix rounds 4 and 5 (`cg-patch.mjs`, p13 C, `forge-idx.mjs`,
 //   `forge-idx2.mjs`, p20, p26).
 // Invariants: every repo is a temp repo of the caller (the `git` helper refuses any other folder); nothing here reads the user's git config.
@@ -180,20 +181,27 @@ function realGit() {
  *   objects borrowed) every `from` is printed as `to`, so the object `from` is left out of the import list;
  * SPY_FAIL: JSON `{word, status?, stderr}`: a call of the tool's own repository (no objects borrowed) whose arguments hold `word` also
  *   writes `stderr`, and exits `status` instead of running when one is given;
- * SPY_PACK: JSON `{word, nth, action, from?, to?, ext?}`: what a process of the same user does to the tool's packs right after the nth
- *   call of the tool's own repository whose arguments hold `word` (the target is the pack the last `index-pack` printed): `copy` its
- *   three files to `to` as `phase.<ext>`; `swap`: rename each file of `from` over the target's file of the same extension; `add` the
- *   files of `from` under their own names, dated an hour ahead (git tries newer packs first); `remove` its `.<ext>`; `feed`: give that
- *   call the bytes of the file `from` as its standard input instead of the tool's.
+ * SPY_PACK: JSON step `{word, nth, action, from?, to?, ext?, mtime?}`, or a list of them: what a process of the same user does to the
+ *   tool's packs right after the nth call of the tool's own repository whose arguments hold `word` (the target is the pack the last
+ *   `index-pack` printed, its file the one of extension `ext`, default `pack`): `copy` its three files to `to` as `phase.<ext>`; `swap`:
+ *   rename each file of `from` over the target's file of the same extension; `add` the files of `from` under their own names, dated an
+ *   hour ahead (git tries newer packs first); `remove` its file; `mtime`: set the file's mtime to `mtime` (seconds); `rewrite`: make it
+ *   writable, write the bytes of `from` into that same file, put its mode back and set its mtime to `mtime`; `renameBack`: rename it
+ *   aside, write another file of its size under its name and rename the first one back; `feed`: give that call the bytes of the file
+ *   `from` as its standard input instead of the tool's. Before and after each step but `feed`, the spy logs the target file's bigint
+ *   `lstat` facts (see `facts`).
  * POSIX only (the script starts with `#!<node>`).
- * @returns {{env: Object<string, string>, calls: () => {cwd: string, argv: string[], env: Object<string, string>}[]}} `env`: PATH with the spy first
+ * @returns {{env: Object<string, string>, calls: () => {cwd: string, argv: string[], env: Object<string, string>}[],
+ *   facts: () => {step: number, when: 'before' | 'after', dev?: string, ino?: string, size?: string, mtimeNs?: string, ctimeNs?: string}[]}}
+ *   `env`: PATH with the spy first; `facts`: one row per SPY_PACK step and moment (`step` is its place in the list; no fields when the
+ *   file is not there)
  */
 export function spyGit() {
   const folder = realpathSync(makeTempDir('review-tier-spy-'));
   const log = join(folder, 'calls.jsonl');
   mkdirSync(join(folder, 'bin'));
   writeFileSync(join(folder, 'bin', 'git'), `#!${process.execPath}
-const { appendFileSync, copyFileSync, readFileSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync, mkdirSync } = require('node:fs');
+const { appendFileSync, chmodSync, copyFileSync, lstatSync, readFileSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync, mkdirSync } = require('node:fs');
 const { dirname, extname, join } = require('node:path');
 const { spawnSync } = require('node:child_process');
 const argv = process.argv.slice(2);
@@ -209,28 +217,36 @@ if (fail && env.GIT_DIR !== undefined && !borrows && argv.includes(fail.word)) {
 }
 const swap = switchOf('SPY_SWAP');
 const swapped = swap && borrows && argv.some((word) => ['rev-list', 'ls-tree', 'diff-tree'].includes(word));
-const pack = switchOf('SPY_PACK');
+const steps = [].concat(switchOf('SPY_PACK') ?? []).map((step, index) => ({ ...step, index }));
 const packsLog = ${JSON.stringify(join(folder, 'packs.txt'))};
 const toolCalls = (word) => readFileSync(${JSON.stringify(log)}, 'utf8').split('\\n').filter(Boolean).map((line) => JSON.parse(line)).filter((call) => call.env.GIT_DIR !== undefined && call.env.GIT_ALTERNATE_OBJECT_DIRECTORIES === undefined && call.argv.includes(word)).length;
-const due = pack && env.GIT_DIR !== undefined && !borrows && argv.includes(pack.word) && toolCalls(pack.word) === pack.nth;
-const indexing = pack && argv.includes('index-pack');
-const fed = due && pack.action === 'feed';
+const due = steps.filter((step) => env.GIT_DIR !== undefined && !borrows && argv.includes(step.word) && toolCalls(step.word) === step.nth);
+const indexing = steps.length > 0 && argv.includes('index-pack');
+const fed = due.find((step) => step.action === 'feed');
 const stdio = [fed ? 'pipe' : 'inherit', swapped || indexing ? 'pipe' : 'inherit', 'inherit'];
-const result = spawnSync(${JSON.stringify(realGit())}, argv, { stdio, input: fed ? readFileSync(pack.from) : undefined, maxBuffer: 1 << 30 });
+const result = spawnSync(${JSON.stringify(realGit())}, argv, { stdio, input: fed ? readFileSync(fed.from) : undefined, maxBuffer: 1 << 30 });
 if (swapped) process.stdout.write(Buffer.from(result.stdout.toString('latin1').split(swap.from).join(swap.to), 'latin1'));
 if (indexing && !swapped) {
   process.stdout.write(result.stdout);
   const printed = /^(?:pack|keep)\\t([0-9a-f]{40})$/m.exec(result.stdout.toString());
   if (printed) appendFileSync(packsLog, 'pack-' + printed[1] + '\\n');
 }
-if (due && !fed) {
+const factsOf = (file) => { const stat = lstatSync(file, { bigint: true, throwIfNoEntry: false }); return stat ? Object.fromEntries(['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs'].map((field) => [field, String(stat[field])])) : {}; };
+for (const step of due.filter((one) => one.action !== 'feed')) {
   const packDir = join(env.GIT_DIR, 'objects', 'pack');
   const target = join(packDir, readFileSync(packsLog, 'utf8').trim().split('\\n').at(-1));
+  const file = target + '.' + (step.ext ?? 'pack');
+  const note = (when) => appendFileSync(${JSON.stringify(join(folder, 'facts.jsonl'))}, JSON.stringify({ step: step.index, when, ...factsOf(file) }) + '\\n');
   const later = new Date(Date.now() + 3600e3);
-  if (pack.action === 'copy') for (const ext of ['pack', 'idx', 'rev']) copyFileSync(target + '.' + ext, join(pack.to, 'phase.' + ext));
-  if (pack.action === 'swap') for (const file of readdirSync(pack.from)) { copyFileSync(join(pack.from, file), target + '.swap'); renameSync(target + '.swap', target + extname(file)); }
-  if (pack.action === 'add') for (const file of readdirSync(pack.from)) { copyFileSync(join(pack.from, file), join(packDir, file)); utimesSync(join(packDir, file), later, later); }
-  if (pack.action === 'remove') rmSync(target + '.' + pack.ext);
+  note('before');
+  if (step.action === 'copy') for (const ext of ['pack', 'idx', 'rev']) copyFileSync(target + '.' + ext, join(step.to, 'phase.' + ext));
+  if (step.action === 'swap') for (const name of readdirSync(step.from)) { copyFileSync(join(step.from, name), target + '.swap'); renameSync(target + '.swap', target + extname(name)); }
+  if (step.action === 'add') for (const name of readdirSync(step.from)) { copyFileSync(join(step.from, name), join(packDir, name)); utimesSync(join(packDir, name), later, later); }
+  if (step.action === 'remove') rmSync(file);
+  if (step.action === 'mtime') utimesSync(file, step.mtime, step.mtime);
+  if (step.action === 'rewrite') { const mode = lstatSync(file).mode & 0o7777; chmodSync(file, mode | 0o200); writeFileSync(file, readFileSync(step.from)); chmodSync(file, mode); utimesSync(file, step.mtime, step.mtime); }
+  if (step.action === 'renameBack') { renameSync(file, file + '.aside'); writeFileSync(file, Buffer.alloc(lstatSync(file + '.aside').size, 0x78)); renameSync(file + '.aside', file); }
+  note('after');
 }
 const plant = (planted) => { mkdirSync(dirname(join(env.GIT_DIR, planted.file)), { recursive: true }); writeFileSync(join(env.GIT_DIR, planted.file), planted.text); };
 if (switchOf('SPY_AFTER_INIT') && argv.includes('init')) plant(switchOf('SPY_AFTER_INIT'));
@@ -239,8 +255,8 @@ if (switchOf('SPY_AFTER_IMPORT') && imports === switchOf('SPY_AFTER_IMPORT').nth
 if (argv.includes('--is-shallow-repository') && process.env.SPY_AFTER_REFUSALS) spawnSync(${JSON.stringify(realGit())}, JSON.parse(process.env.SPY_AFTER_REFUSALS), { stdio: 'ignore' });
 process.exit(result.status === null ? 1 : result.status);
 `, { mode: 0o755 });
-  const calls = () => (statSync(log, { throwIfNoEntry: false }) ? readFileSync(log, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
-  return { env: { PATH: `${join(folder, 'bin')}${delimiter}${process.env.PATH}` }, calls };
+  const linesOf = (file) => (statSync(file, { throwIfNoEntry: false }) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
+  return { env: { PATH: `${join(folder, 'bin')}${delimiter}${process.env.PATH}` }, calls: () => linesOf(log), facts: () => linesOf(join(folder, 'facts.jsonl')) };
 }
 
 /**
@@ -249,7 +265,7 @@ process.exit(result.status === null ? 1 : result.status);
  * @param {string} log the path the CLI's own log goes to
  * @param {string[]} args the CLI's arguments
  * @param {Object<string, string>} more extra environment (the spy's switches, hostile variables)
- * @returns {{result: object, real: object[], laneSide: object[], trusted: object[]}} `real`: calls in the lane's own repository (no
+ * @returns {{result: object, facts: object[], real: object[], laneSide: object[], trusted: object[]}} `facts`: the spy's SPY_PACK log; `real`: calls in the lane's own repository (no
  *   GIT_DIR); `laneSide`: the import's calls, in the tool's repository with the lane's objects borrowed; `trusted`: every other call of
  *   the tool's repository. Each call has `at` (its place among all calls), `command` (its arguments after the fixed flags and the
  *   attribute source) and `attrSource` (the sha of `--attr-source=`, or undefined)
@@ -264,5 +280,5 @@ export function spiedRun(dir, log, args, more = {}) {
   });
   const inTool = calls.filter((call) => call.env.GIT_DIR !== undefined);
   const borrows = (call) => call.env.GIT_ALTERNATE_OBJECT_DIRECTORIES !== undefined;
-  return { result, real: calls.filter((call) => call.env.GIT_DIR === undefined), laneSide: inTool.filter(borrows), trusted: inTool.filter((call) => !borrows(call)) };
+  return { result, facts: spy.facts(), real: calls.filter((call) => call.env.GIT_DIR === undefined), laneSide: inTool.filter(borrows), trusted: inTool.filter((call) => !borrows(call)) };
 }
