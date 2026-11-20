@@ -67,6 +67,7 @@ const NEVER_BOUNCED = [
   ['alias that asks', "alias p='git push'"],
   ['nesting too deep', `echo "${'$(echo "'.repeat(30)}x${'")'.repeat(30)}"`],
   ['command too long', `echo ${'a'.repeat(33 * 1024)}`],
+  ['command too complex', `X="${'a '.repeat(2000).trim()}"; rm -rf ${'$X '.repeat(11).trim()}`], // 22,000 target readings
   ['guard error', 'git status'], // run with rules that throw (decideSafely)
 ];
 

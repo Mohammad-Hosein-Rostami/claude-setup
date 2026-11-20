@@ -31,7 +31,7 @@
 // Everything else (and any command text it cannot parse) is allowed. Reading files, `.env` included, is never blocked.
 //
 // This is a safety net against model mistakes, not a sandbox. Invariants: it never executes the command, it never fails open on
-// its own errors (hook input that is not JSON with a string command asks "the guard could not read its input"; once a command was read, an exception anywhere asks "guard error": decideSafely for the rules, main for everything after them; a hook process that dies or times out blocks the call through `onFailure: "block"` in settings/base.json), and it prefers a missed block over a false block of a normal dev command.
+// its own errors (hook input that is not JSON with a string command asks "the guard could not read its input"; once a command was read, an exception anywhere asks "guard error": decideSafely for the rules, main for everything after them; a hook process that dies or times out blocks the call through `onFailure: "block"` in settings/base.json, which Claude Code honours from 2.1.295: scripts/doctor.sh checks the version), and it prefers a missed block over a false block of a normal dev command.
 // Position independence: after the command word, every later word that is a dangerous verb (rm, git, dd, mkfs, gh, publish, ssh,
 // psql, shells ...) is checked as a command too, so unknown wrappers (`ionice -c3 rm -rf /x`) need no list (lib/dangerous-scan.mjs);
 // the scan is skipped after echo/grep/man/git/docker/ssh and similar. `$'\x72m'` ANSI-C words are decoded (lib/ansi-c.mjs); `eval` of a
@@ -56,7 +56,7 @@
 // `gh pr|issue create|edit|comment` is data (lib/message-text.mjs), also `"$(cat <<'EOF' ... EOF)"`; a top-level heredoc is data only when cat/tee
 // (or `git commit -F -`, `gh --body-file -`) reads it; gh words count by position; watch, parallel, PROMPT_COMMAND=, `script|expect -c`,
 // `perl|python|node|ruby -e|-c|-p`, osascript, tmux, fish/pwsh/npx -c are hidden constructs. An exception inside the rules asks "guard error" (decideSafely; the log keeps the error class, not the command). A command over
-// MAX_COMMAND_CHARS (32 KB) is not parsed at all: it asks "command too long to check"; the log and dialog keep only its first 2 KB, masked.
+// MAX_COMMAND_CHARS (32 KB) is not parsed at all: it asks "command too long to check"; the log and dialog keep only its first 2 KB, masked. One work budget bounds the rest (lib/rm-paths.mjs): a line whose variables fill in more than MAX_LINE_EXPANDED_CHARS, or whose rm targets expand to more than MAX_LINE_READINGS words, asks "command too complex to check".
 // Known limits (not detected): shell aliases and functions defined elsewhere, a variable assigned from another command's output, interpreter
 // code (`node -e`, `python -c`) unless it names a dangerous word, wrappers that take the command as ONE string (busybox), rimraf,
 // stdin paths that xargs hands to anything but rm -r, a credential sent by a tool off the sender list, copied first (`cp -r ~/.ssh /tmp/x`),
@@ -80,7 +80,7 @@ import { gitAdvice } from './lib/git-advice.mjs';
 import { waitAdvice, withoutWaitAdvice } from './lib/wait-advice.mjs';
 import { outwardAsk } from './lib/outward.mjs';
 import { hostVariables, readProdHosts, remoteAsk } from './lib/remote.mjs';
-import { checkRm, newScope, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
+import { TOO_COMPLEX_REASON, checkRm, newScope, newWork, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
 import { groupBranches } from './lib/bare-glob.mjs';
 import { enterSegment, leaveSegment, newFolder } from './lib/cd-folder.mjs';
 import { askUnlessRemembered } from './lib/remembered-ask.mjs';
@@ -164,12 +164,12 @@ function checkCommand(command, env, nextWords) {
  * scanned for a dangerous command behind an unknown wrapper), then nested bodies. Variables assigned earlier in the line are
  * tracked in order, the last assignment wins.
  */
-function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth = 0, judged = new Map(), line = lineFacts(command) }) {
+function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth = 0, judged = new Map(), line = lineFacts(command), work = newWork() }) {
   if (depth > MAX_NESTING) return ['commands are nested too deeply to check (bash -c / eval / $( ) inside each other); write them out flat'];
   const reasons = [];
   const secret = findLiteralSecret(command);
   if (secret !== undefined) reasons.push(secretReason(secret));
-  const scope = newScope(cwd, project, command);
+  const scope = newScope(cwd, project, command, work);
   const { segs, nested } = parse(command);
   const commands = [];
   const folder = newFolder(cwd); // where the line's `cd`s led, null once they cannot be believed (lib/cd-folder.mjs)
@@ -178,7 +178,7 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
     const parsed = asGitSubcommand(commandOf(words));
     commands.push({ ...parsed, piped: seg.piped === true }); // credential-send follows a pipe into ssh
     enterSegment(folder, seg, parsed, words);
-    const env = { cwd: folder.dir, groupTargets: groupBranches(segs, index), project, vars: scope.vars, splitWords: scope.splitWords, prodHosts, parse, depth: depth + 1, judged, line };
+    const env = { cwd: folder.dir, groupTargets: groupBranches(segs, index), project, vars: scope.vars, splitWords: scope.splitWords, prodHosts, parse, depth: depth + 1, judged, line, work };
     reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript }), ...gitRunValueReasons(words, parsed, env, reasonsOf), ...unreadableNameReasons(parsed.cmd, command, prodHosts));
     if (parsed.cmd !== undefined) {
       reasons.push(...checkCommand({ ...parsed, before: words.slice(0, parsed.at) }, env, segs[index + 1] ?? []));
@@ -189,8 +189,8 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
   });
   const credentialSend = checkCredentialSend(commands); // one command line: the file may be read in one command and sent by another
   if (credentialSend !== undefined) reasons.push(credentialSend);
-  for (const inner of nested) reasons.push(...reasonsOf(inner, { cwd, project, prodHosts, parse, depth: depth + 1, judged, line }));
-  return [...new Set(reasons)]; // a value many git commands run gives its reasons once, not once per command (the list stays short)
+  for (const inner of nested) reasons.push(...reasonsOf(inner, { cwd, project, prodHosts, parse, depth: depth + 1, judged, line, work }));
+  return [...new Set(work.spent ? [...reasons, TOO_COMPLEX_REASON] : reasons)]; // a value many git commands run gives its reasons once (the list stays short); a line over its work budget asks, whatever else it holds
 }
 
 /**
@@ -198,14 +198,14 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
  * and a destructive one (force push, rm outside the project, disk wipe) leads the reason. Advice may run git (lib/git-advice.mjs, 2 s for the line).
  * @param {string} command raw command text
  * @param {{cwd?: string|null, project?: string, prodHosts?: string[]}} ctx absolute paths (cwd null means "unknown
- *   directory") and the private production-host list (see lib/remote.mjs)
+ *   directory") and the private production-host list (see lib/remote.mjs); `work` is the line's work budget (lib/rm-paths.mjs newWork), which only a test passes
  * @returns {{allow: true, advice?: string[]} | {allow: false, ask: true, reason: string, reasons: string[], advice?: string[]}} reason
  *   joins every rule hit, destructive first; reasons holds the same hits one by one, in the same order; advice (present only when some
  *   quality rule hit) is never in reason or reasons: it never asks, and the hook shows it once (lib/bounce-once.mjs)
  */
-export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts = [] } = {}) {
+export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts = [], work = newWork() } = {}) {
   if (command.length > MAX_COMMAND_CHARS) return ask(['command too long to check; read it before allowing']);
-  const ctx = { cwd, project, prodHosts };
+  const ctx = { cwd, project, prodHosts, work }; // one budget for both parsers and every re-check of this line
   const primary = reasonsOf(command, ctx);
   // backstop: a second, independent parse (the character-level lexer) feeds the same rules; what only it finds is marked
   const known = new Set(primary);

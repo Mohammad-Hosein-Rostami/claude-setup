@@ -102,6 +102,7 @@ const ASK_CLASS_PATTERNS = [
   ['alias that asks', /^alias defines a command that asks: /],
   ['nesting too deep', /^commands are nested too deeply to check/],
   ['command too long', /^command too long to check/],
+  ['command too complex', /^command too complex to check/],
   ['guard error', /^guard error(?:: \w+)?$/], // the hook's own fallback adds the error class (`guard error: TypeError`)
 ];
 export const ASK_CLASSES = ASK_CLASS_PATTERNS.map(([name]) => name);

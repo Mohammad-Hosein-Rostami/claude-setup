@@ -1,6 +1,7 @@
 // Path rules for `rm -r`: is a target inside the project or a temp dir, and which variables hold what. (Which folder the line is in
 // after a `cd` is lib/cd-folder.mjs.)
-// Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; MAX_TARGET_CHARS; PWD_TARGET; expandVars;
+// Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; MAX_TARGET_CHARS; MAX_LINE_READINGS; TOO_COMPLEX_REASON; newWork();
+// PWD_TARGET; expandVars;
 // newScope(cwd, project) -> {vars, assigned};
 // trackAssignments(scope, tokens, nextTokens); substituteKnownWords(tokens, scope); bashReadings(word, splitWords) (also read by
 // lib/find-delete.mjs); nativePath, isUnder, sameFile, expandHome; RECURSIVE_FLAG; withoutRedirects(args) (also read by lib/git-runs.mjs);
@@ -18,7 +19,10 @@
 // `.*`, `?`, `[a-z]*`) of the working directory, the project root, home, `/` or a temp root (`/tmp/*` empties every session's scratch folder).
 // A glob with a name part (`*.log`) or of a sub-folder does not.
 // A bare glob below a bare glob (`./**/*`, `*/*`) counts as a glob of the folder the first one is in: it empties every sub-folder there
-// (lib/bare-glob.mjs reads the globs). Work budget: a target over MAX_TARGET_CHARS is not read, it asks.
+// (lib/bare-glob.mjs reads the globs). Work budget: a target over MAX_TARGET_CHARS is not read, it asks. One budget for the whole line
+// as well (newWork): MAX_LINE_READINGS target readings over both parsers and every wrapped or nested rm; over it the rm asks
+// "command too complex to check" and no more targets are read on that line. The same budget bounds what the line's variables are filled
+// in with (substituteKnownWords): past MAX_LINE_EXPANDED_CHARS nothing more is filled in and the whole line asks.
 // `$PWD` (also written `${PWD}` or `$(pwd)`) in a target is the folder the line's `cd`s led to, unknown after a `cd` the guard could not follow;
 // the value the line started with or assigned is judged as well (readingsOf), so following the `cd` never drops an ask.
 // Invariants: pure apart from reading homedir()/tmpdir(); never touches the file system.
@@ -27,7 +31,7 @@ import { isAbsolute, join, parse, relative, resolve } from 'node:path';
 import { globbedFolder } from './bare-glob.mjs';
 import { expandBraces } from './braces.mjs';
 import { DECLARERS, GIT_TOPLEVEL_WORD, MKTEMP_WORD, QUOTED_MARK, backtickAssignedNames, flagsOf } from './shell-words.mjs';
-import { destructive } from './verdict.mjs';
+import { MAX_COMMAND_CHARS, destructive } from './verdict.mjs';
 
 export { DECLARERS };
 
@@ -46,6 +50,15 @@ const MKTEMP_DIR = 'mktemp-variable';
 const BLANKS = /[ \t\n]+/; // where bash splits an unquoted variable's value into words (the default IFS)
 /** Work budget for one rm target: PATH_MAX is 4096 on Linux and 1024 on macOS, so a longer word is no path a real command names. */
 export const MAX_TARGET_CHARS = 4096;
+/** Work budget for one command line: the target readings the rm rule judges, over both parsers and every wrapped or nested rm. An unquoted
+ * variable of thousands of words, used thousands of times, has millions: it kept the hook busy past its timeout (an ordinary line has a handful). */
+export const MAX_LINE_READINGS = 20000;
+/** The other half of the budget: the characters the line's own variables may be filled in with, over both parsers. Every rule reads the
+ * filled-in words, so a long value used thousands of times made each rule scan tens of megabytes. Far above any line someone writes. */
+export const MAX_LINE_EXPANDED_CHARS = 4 * MAX_COMMAND_CHARS;
+export const TOO_COMPLEX_REASON = 'command too complex to check (its rm targets expand to more words than the guard reads); read it before allowing';
+/** @returns {{readings: number, expanded: number, spent: boolean}} a fresh budget for one line; spent once either count ran out: the line then asks */
+export const newWork = () => ({ readings: 0, expanded: 0, spent: false });
 const MAX_SHOWN_TARGET_CHARS = 120; // how much of a target a reason repeats: the reason goes into the dialog and back to the model
 const LINE_BREAKS = /[\r\n]+/g;
 const LINE_BREAK_MARK = '⏎'; // a raw line break in a target would split the reason in the CLI prompt and in the text the model reads
@@ -83,10 +96,10 @@ function isBroadRoot(project) {
  * directory is known, then every literal assignment seen so far); `assigned` holds the names assigned in the command itself; `unknown`
  * the names `command` assigns from a backtick, whose value the parsers lose (always unknown).
  */
-export function newScope(cwd, project, command = '') {
+export function newScope(cwd, project, command = '', work = newWork()) {
   const vars = new Map([['TMPDIR', tmpdir()], ['CLAUDE_PROJECT_DIR', project], [MKTEMP_NAME, mktempDir()]]);
   if (cwd !== null) vars.set('PWD', cwd);
-  return { vars, assigned: new Set(), unknown: backtickAssignedNames(command), splitWords: new Set() };
+  return { vars, assigned: new Set(), unknown: backtickAssignedNames(command), splitWords: new Set(), work };
 }
 
 /**
@@ -141,13 +154,17 @@ export function trackAssignments({ vars, assigned, unknown = new Set() }, tokens
  * Replaces `$NAME` / `${NAME}` inside words by the literal value assigned earlier in this command line, so `X=rm; $X -rf /x`
  * reads `rm -rf /x` and `v=r; ${v}m -rf /x` too. Names never assigned here, and mktemp directories, stay as they are.
  * A word with a `$NAME` outside quotes (the segment's `.bareWords`) that gets blanks this way is added to `scope.splitWords` (bashReadings).
+ * Each value filled in is charged to the line's budget (`scope.work`); once that is spent the rest stays as written and the line asks.
  * @param {string[]} tokens words of one segment
  * @param {{vars: Map<string, string>, assigned: Set<string>, splitWords?: Set<string>}} scope
  */
-export function substituteKnownWords(tokens, { vars, assigned, splitWords }) {
+export function substituteKnownWords(tokens, { vars, assigned, splitWords, work = newWork() }) {
   const replace = (whole, braced, plain) => {
     const name = braced ?? plain;
-    return assigned.has(name) && vars.has(name) && !isMktempValue(vars.get(name)) ? vars.get(name) : whole;
+    if (work.spent || !assigned.has(name) || !vars.has(name) || isMktempValue(vars.get(name))) return whole;
+    work.expanded += vars.get(name).length;
+    work.spent = work.expanded > MAX_LINE_EXPANDED_CHARS;
+    return work.spent ? whole : vars.get(name);
   };
   const words = tokens.map((word) => word.replace(ANY_VAR, replace));
   for (const at of tokens.bareWords ?? []) if (words[at] !== tokens[at] && BLANKS.test(words[at])) splitWords?.add(words[at]);
@@ -229,6 +246,19 @@ export function withoutRedirects(args) {
   return out;
 }
 
+/** Every reading of the targets (bashReadings), or null when the line's budget does not cover them: from then on the line is spent. */
+function readingsWithin(work, targets, splitWords) {
+  const words = [];
+  for (const target of targets) {
+    const readings = work.spent ? [] : bashReadings(target, splitWords);
+    work.spent ||= work.readings + readings.length > MAX_LINE_READINGS;
+    if (work.spent) return null;
+    work.readings += readings.length;
+    words.push(...readings);
+  }
+  return words;
+}
+
 const EXPANSION = /[$`]/;
 const MANY_WORDS = /\$[@*]|\[[@*]\]\}/; // `"$@"`, `$*`, `"${a[@]}"`: any number of words, options among them
 const WHOLE_EXPANSION = /^\$(?:\w+|\{[^}]*\})$/; // a word that is one variable and nothing else
@@ -247,13 +277,16 @@ function mayBeRecursive(args) {
 
 /**
  * @param {string[]} args words after `rm`
- * @param {{cwd: string | null, project: string, vars: Map<string, string>, splitWords?: Set<string>, groupTargets?: string[]}} env the
- *   folder and variables of the segment; groupTargets are the branches of a glob group written after the rm (lib/bare-glob.mjs groupBranches)
+ * @param {{cwd: string | null, project: string, vars: Map<string, string>, splitWords?: Set<string>, groupTargets?: string[], work?: {readings: number, spent: boolean}}} env the
+ *   folder and variables of the segment; groupTargets are the branches of a glob group written after the rm (lib/bare-glob.mjs groupBranches);
+ *   work is the line's budget (newWork), a fresh one when the caller has none
  * @returns {string | undefined} ask reason when a recursive rm targets something outside the project and the temp dirs (or an unknown variable)
  */
-export function checkRm(args, { cwd, project, vars, splitWords, groupTargets = [] }) {
+export function checkRm(args, { cwd, project, vars, splitWords, groupTargets = [], work = newWork() }) {
+  if (work.spent) return TOO_COMPLEX_REASON;
   if (!mayBeRecursive(args)) return undefined;
-  const words = [...withoutRedirects(args).filter((a) => !a.startsWith('-')), ...groupTargets].flatMap((word) => bashReadings(word, splitWords));
+  const words = readingsWithin(work, [...withoutRedirects(args).filter((a) => !a.startsWith('-')), ...groupTargets], splitWords);
+  if (words === null) return TOO_COMPLEX_REASON;
   const long = words.find((word) => word.length > MAX_TARGET_CHARS);
   if (long !== undefined) return destructive(`rm -r with a target too long to check (${long.length} characters, the guard reads up to ${MAX_TARGET_CHARS})`);
   if (words.some((word) => expandBraces(word) === null)) return destructive('rm -r with a brace expansion that cannot be listed (check the targets by hand)');
