@@ -31,6 +31,8 @@ const TEST_PATH = /(^|\/)(tests?|__tests__)\/|\.(test|spec)\./;
 const UI_PATH = /\.(tsx|jsx|vue|svelte|css|scss)$/;
 const INFRA_PATH = /(^|\/)(dockerfile|docker-compose[^/]*|\.github\/|k8s\/|terraform\/|helm\/)|\.tf$/;
 const SECURITY_PATH = /auth|login|session|token|secret|credential|passw|crypto|permission|guard|sandbox|sanitiz|upload|webhook|oauth|jwt|cookie|csrf|cors/;
+// The account tool and the shell snippets hold login tokens (spec-accounts): security whatever their lines say.
+const ACCOUNT_TOOL_PATH = /^home\/(tools\/account|shell)\//;
 const DATA_PATH = /(^|\/)(migrations?|prisma)\/|\.sql$|schema\./;
 const MONEY_WORDS = 'payment|invoice|billing|refund|checkout|stripe|wallet|ledger';
 const NOT_SHOP = '(?<!git\\s+|stale-)'; // `git checkout` and git-tidy's `stale-checkout` are not a shop checkout
@@ -41,10 +43,11 @@ const CHECK_CONFIG_SOURCE = String.raw`(^|/)tsconfig[^/]*\.json$|(^|/)(eslint\.c
 /** A path (lower case) holding test, lint or type config. */
 export const CHECK_FILE_PATH = new RegExp(CHECK_CONFIG_SOURCE);
 /**
- * A path (lower case) whose change can weaken a gate: settings, rules, workflows, hooks, CI, package.json, check config and
+ * A path (lower case) whose change can weaken a gate: settings, rules, workflows, hooks, CI, package.json, check config, the
+ * account tool and the shell snippets (they hold login tokens, so an edit there is never waived) and
  * `.gitattributes` (it decides what git shows of a file, to a reviewer as well as to a tool).
  */
-export const GATE_PATH = new RegExp(String.raw`^settings/[^/]+\.json$|(^|/)\.claude/settings[^/]*\.json$|^home/claude\.md$|^home/(modes|agents|rules|workflows)/|^home/skills/(wf-[^/]+|verify-done)/|^home/tools/(review-tier|test-pass|git-tidy)/|^scripts/(affected-tests\.mjs|doctor\.sh)$|(^|/)\.githooks/|(^|/)\.claude/workflows/|(^|/)\.husky/|(^|/)\.github/workflows/|(^|/)(\.gitlab-ci\.yml|\.circleci/|azure-pipelines\.yml|jenkinsfile)|(^|/)package\.json$|(^|/)\.gitattributes$|${CHECK_CONFIG_SOURCE}`);
+export const GATE_PATH = new RegExp(String.raw`^settings/[^/]+\.json$|(^|/)\.claude/settings[^/]*\.json$|^home/claude\.md$|^home/(modes|agents|rules|workflows)/|^home/skills/(wf-[^/]+|verify-done)/|^home/tools/(review-tier|test-pass|git-tidy|account)/|^home/shell/|^scripts/(affected-tests\.mjs|doctor\.sh)$|(^|/)\.githooks/|(^|/)\.claude/workflows/|(^|/)\.husky/|(^|/)\.github/workflows/|(^|/)(\.gitlab-ci\.yml|\.circleci/|azure-pipelines\.yml|jenkinsfile)|(^|/)package\.json$|(^|/)\.gitattributes$|${CHECK_CONFIG_SOURCE}`);
 const LOCK_WORD = /^(un)?lock(s|ed|ing|file)?$/;
 const SIZE_LINES = 400;
 
@@ -164,7 +167,7 @@ export const isCodeFile = (path) => !['docs', 'tests'].includes(baseClass(path))
 function pathClasses(path) {
   const lower = path.toLowerCase();
   const found = [];
-  if (LOCKFILES.has(baseName(path)) || SECURITY_PATH.test(lower)) found.push({ cls: 'security' });
+  if (LOCKFILES.has(baseName(path)) || SECURITY_PATH.test(lower) || ACCOUNT_TOOL_PATH.test(lower)) found.push({ cls: 'security' });
   if (DATA_PATH.test(lower)) found.push({ cls: 'data' });
   if (MONEY_PATH.test(lower)) found.push({ cls: 'money' });
   if (!LOCKFILES.has(baseName(path)) && tokensOf(path).some((token) => LOCK_WORD.test(token))) found.push({ cls: 'concurrency', tag: LOCK_TAG });

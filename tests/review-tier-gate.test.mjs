@@ -50,6 +50,21 @@ test('gate class applies to a docs file too, and lifts it from tier 0 to tier 1'
   assert.equal(result.tier, 1);
 });
 
+// spec-accounts (lane r9-accounts): the account tool and the shell snippets hold login tokens, so a later edit there is
+// never waived (gate) and always gets the security set (an Opus lens), whatever its lines say.
+test('the account tool and the shell snippets are gate and security: never waived, always an Opus lens', () => {
+  for (const path of ['home/tools/account/account.mjs', 'home/tools/account/lib/store.mjs', 'home/shell/claude-as.sh', 'home/shell/claude-as.ps1']) {
+    const result = report([changed(path, ['x'])]);
+    assert.ok(result.classes.includes('gate'), `${path}: ${result.classes}`);
+    assert.ok(result.classes.includes('security'), `${path}: ${result.classes}`);
+    assert.equal(result.tier, 2, path);
+    assert.ok(result.reviews.some((review) => review.model === 'opus'), `${path}: an Opus lens`);
+  }
+  const readme = report([changed('home/tools/account/README.md', ['# title'])]);
+  assert.ok(readme.classes.includes('gate'), 'its README is gate too, so a docs-only edit is not waived');
+  assert.ok(readme.tier >= 1);
+});
+
 test('gate class: other skills, docs and plain source are not gate', () => {
   for (const path of ['home/skills/other/SKILL.md', 'home/skills/wf/SKILL.md', 'docs/x.md', 'src/a.ts', 'home/tools/estimate/estimate.mjs', 'settings/sub/x.json']) {
     assert.ok(!report([changed(path, ['x'])]).classes.includes('gate'), path);
