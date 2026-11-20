@@ -1,7 +1,9 @@
 // Purpose: log every Haiku call of the checkpoint job to usage.jsonl and total it for `recall status`.
 // Exports: logUsage, usageTotals, countedTokens.
-// Invariants: one JSON row per call (ts, session, label, attempt, model, input, cache_creation, cache_read, output,
-// cost_usd_list, ms, is_error); "counted" tokens = input + cache_creation + output (cache reads are logged separately,
+// Invariants: one JSON row per call (ts, session, label, attempt, account, model, input, cache_creation, cache_read, output,
+// cost_usd_list, ms, is_error); `account` is the name of the account the call ran on (null when the terminal's token has
+// no name), never a token; a call that was not made for want of a login is one row with `account: null, error: "auth",
+// is_error: true` and no token fields (claude-call.mjs); "counted" tokens = input + cache_creation + output (cache reads are logged separately,
 // as in the study); a missing or partly unreadable log totals what can be read, it never throws.
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';

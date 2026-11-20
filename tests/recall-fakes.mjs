@@ -7,6 +7,9 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
+// A made-up token (built from parts, so no secret scanner sees a literal): `callHaiku` starts no `claude` without a login.
+const FAKE_LOGIN_TOKEN = ['sk', 'ant', 'oat01', 'MadeUpRecallFakeStackToken0000'].join('-');
+
 const FAKE_CLAUDE = `#!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 let stdin = '';
@@ -79,6 +82,7 @@ export function fakeStack({ claudeMode = 'ok', port = 20000 + Math.floor(Math.ra
     ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, RECALL_DB: dbPath, RECALL_STATE_DIR: join(dir, 'state'),
     RECALL_ROOT: join(dir, 'projects'), RECALL_HOME: dir, RECALL_OLLAMA_URL: 'http://127.0.0.1:9', RECALL_RERANK_MODEL_DIR: models,
     RECALL_RERANK_PORT: String(port), RECALL_RERANK_FOREIGN_CHECK: 'off', FAKE_CLAUDE_LOG: claudeLog, FAKE_CLAUDE_MODE: claudeMode, FAKE_LLAMA_LOG: llamaLog,
+    CLAUDE_CODE_OAUTH_TOKEN: FAKE_LOGIN_TOKEN, // the terminal's login; never the real one of the shell that runs the tests
   };
   const lines = (path) => readFileSync(path, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   return { dir, bin, env, dbPath, claudeCalls: () => lines(claudeLog), llamaStarts: () => lines(llamaLog) };

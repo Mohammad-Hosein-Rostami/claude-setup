@@ -28,4 +28,5 @@ From the repo root:
 - A file that loads `node:sqlite` imports `quiet-sqlite-warning.mjs` first and loads sqlite with `process.getBuiltinModule('node:sqlite')` in its body, never a static `import`: Node loads a static builtin import (and prints its warning) before any module body runs. `tests/quiet-sqlite-warning.test.mjs` checks this for every such file.
 - `checkpoint-state.mjs` is imported by a hook that must return in well under 50 ms. Keep it to Node built-ins.
 - Secrets are redacted when indexing and again on output; keep both.
+- `claude-call.mjs` starts no `claude` without a login: the token of its own environment, else the stored token of the account `CLAUDE_ACCOUNT` names, else of the default account (`home/tools/account/lib/accounts.mjs`; Claude Code removes the token variable from hook processes). With none it writes one `auth` row to `usage.jsonl` and throws `kind: "auth"`, so a login stored in the Keychain is never spent by a hook job. Each row names the account, never a token. The retry in `checkpoint.mjs` still makes a second attempt (and a second row) today.
 - State files are mode 0600 and folders 0700 on purpose.
