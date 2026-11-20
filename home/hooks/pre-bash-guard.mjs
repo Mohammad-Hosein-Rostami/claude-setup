@@ -81,6 +81,7 @@ import { waitAdvice, withoutWaitAdvice } from './lib/wait-advice.mjs';
 import { outwardAsk } from './lib/outward.mjs';
 import { hostVariables, readProdHosts, remoteAsk } from './lib/remote.mjs';
 import { checkRm, newScope, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
+import { groupBranches } from './lib/bare-glob.mjs';
 import { enterSegment, leaveSegment, newFolder } from './lib/cd-folder.mjs';
 import { askUnlessRemembered } from './lib/remembered-ask.mjs';
 import { adviceOnce } from './lib/bounce-once.mjs';
@@ -177,7 +178,7 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
     const parsed = asGitSubcommand(commandOf(words));
     commands.push({ ...parsed, piped: seg.piped === true }); // credential-send follows a pipe into ssh
     enterSegment(folder, seg, parsed, words);
-    const env = { cwd: folder.dir, project, vars: scope.vars, splitWords: scope.splitWords, prodHosts, parse, depth: depth + 1, judged, line };
+    const env = { cwd: folder.dir, groupTargets: groupBranches(segs, index), project, vars: scope.vars, splitWords: scope.splitWords, prodHosts, parse, depth: depth + 1, judged, line };
     reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript }), ...gitRunValueReasons(words, parsed, env, reasonsOf), ...unreadableNameReasons(parsed.cmd, command, prodHosts));
     if (parsed.cmd !== undefined) {
       reasons.push(...checkCommand({ ...parsed, before: words.slice(0, parsed.at) }, env, segs[index + 1] ?? []));
@@ -264,7 +265,6 @@ function answerFor(command, input) {
  * The log gets the error class and no command text.
  */
 const failedAnswer = (error, input) => plainAsk(`${GUARD_ERROR_REASON}: ${error instanceof Error ? error.name : typeof error}`, input);
-
 function plainAsk(reason, input) {
   logDecision({ hook: 'pre-bash-guard', tool: 'Bash', decision: 'ask', outcome: 'guard-error', reason, command: '', cwd: input.cwd, session: input.session_id });
   return `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: reason } })}\n`;

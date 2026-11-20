@@ -228,11 +228,13 @@ export function withoutRedirects(args) {
 
 /**
  * @param {string[]} args words after `rm`
+ * @param {{cwd: string | null, project: string, vars: Map<string, string>, splitWords?: Set<string>, groupTargets?: string[]}} env the
+ *   folder and variables of the segment; groupTargets are the branches of a glob group written after the rm (lib/bare-glob.mjs groupBranches)
  * @returns {string | undefined} ask reason when a recursive rm targets something outside the project and the temp dirs (or an unknown variable)
  */
-export function checkRm(args, { cwd, project, vars, splitWords }) {
+export function checkRm(args, { cwd, project, vars, splitWords, groupTargets = [] }) {
   if (!flagsOf(args).some((f) => RECURSIVE_FLAG.test(f))) return undefined;
-  const words = withoutRedirects(args).filter((a) => !a.startsWith('-')).flatMap((word) => bashReadings(word, splitWords));
+  const words = [...withoutRedirects(args).filter((a) => !a.startsWith('-')), ...groupTargets].flatMap((word) => bashReadings(word, splitWords));
   const long = words.find((word) => word.length > MAX_TARGET_CHARS);
   if (long !== undefined) return destructive(`rm -r with a target too long to check (${long.length} characters, the guard reads up to ${MAX_TARGET_CHARS})`);
   if (words.some((word) => expandBraces(word) === null)) return destructive('rm -r with a brace expansion that cannot be listed (check the targets by hand)');

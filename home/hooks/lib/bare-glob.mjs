@@ -1,12 +1,14 @@
 // Glob syntax of one `rm -r` target: which folder does its trailing run of bare globs list? Read by lib/rm-paths.mjs.
-// Exports: globbedFolder(target) -> folder text | undefined.
+// Exports: globbedFolder(target) -> folder text | undefined; groupBranches(segs, index) -> extra targets.
 // A bare glob is a path part made only of `*`, `?`, dots and bracket sets, with one of the globs among them: it matches
 // every entry of its folder (or every hidden one), so `rm -r` of it empties the folder. `*.log` and `a*` have a name part and are not bare.
 // Every bracket form of the shell is a set: `[a-z]`, `[!.]`, `[^.]`, a `]` in first place (`[]a]`), and the POSIX classes, equivalence
 // classes and collating symbols inside one (`[[:alnum:]]`, `[[=a=]]`, `[[.hyphen.]]`). A set that never closes is a plain name, as in bash.
 // A bare glob below a bare glob (`./**/*`, `*/*`) lists the folder the first one is in: it empties every sub-folder there. The run is
 // read as the shell normalises it: `.` parts and repeated or trailing slashes are skipped, so `./*/./*` is `*/*`.
-// Invariants: pure, no regular expression. The target is read once, from its end, by index: no copy is made per path part, so the work
+// A zsh glob group (`(*|.*)`, `./(*)`) never reaches a target word: both parsers cut a line at `(`, `|` and `)`. groupBranches reads the
+// branches back from the segments that follow the rm, and each one is judged as a target.
+// Invariants: pure, no regular expression in the target reader. The target is read once, from its end, by index: no copy is made per path part, so the work
 // and the memory are linear in the target's length (a pattern per part once took the hook down on a 32 KB target).
 
 const GLOB_PART = 'glob';
@@ -75,4 +77,27 @@ export function globbedFolder(target) {
   }
   if (!sawGlob) return undefined;
   return cut === 0 ? '.' : target.slice(0, cut);
+}
+
+const GROUP_OPENS = /^\(+$/; // the join of a segment that a `(` right after the words before it opened
+const GROUP_BRANCH = '|';
+
+/**
+ * The branches of a zsh glob group written right after the words of segment `index` (`rm -rf (*|.*)`, `rm -rf ./(*)`), as targets.
+ * The group's branches arrive as the next segments: the first joined by `(`, the others by `|`. zsh expands such a group without
+ * EXTENDED_GLOB, and `(*|.*)` lists every entry of the folder, hidden ones too. In bash an unquoted `(` in that place is a syntax
+ * error, so reading the branches as targets adds no ask to a line bash would run. A quoted `'(*)'` is one word and stays a name.
+ * @param {(string[] & {joinedBy?: string})[]} segs the line's segments (lib/shell-words.mjs)
+ * @param {number} index the segment whose words the group follows
+ * @returns {string[]} each branch word, alone and glued to the segment's last word unless that is an option (`./` + `*`); [] without a group
+ */
+export function groupBranches(segs, index) {
+  const branches = [];
+  for (let at = index + 1; at < segs.length; at++) {
+    const join = segs[at].joinedBy ?? '';
+    if (!(at === index + 1 ? GROUP_OPENS.test(join) : join === GROUP_BRANCH)) break;
+    branches.push(...segs[at]);
+  }
+  const last = segs[index].at(-1) ?? '';
+  return branches.flatMap((branch) => (last.startsWith('-') ? [branch] : [branch, last + branch]));
 }
