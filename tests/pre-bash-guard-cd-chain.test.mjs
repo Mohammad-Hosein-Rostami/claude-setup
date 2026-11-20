@@ -69,6 +69,10 @@ const OUTSIDE_FROM_ONE_FOLDER = [
 const FOLDER_UNKNOWN = [
   `for d in a b c; do cd .. && ${RM} -rf x; done`,
   `while true; do make; cd .. && ${RM} -rf x; done`,
+  // the rm comes after the loop: one `cd ..` of the loop is harmless, but the loop may run it again and again
+  `for d in a b; do cd ..; done; ${RM} -rf proj/x`,
+  `while true; do cd ..; done; ${RM} -rf proj/x`,
+  `until false; do cd ..; done; ${RM} -rf proj/x`,
   `function f { cd src; }; ${RM} -rf ../x`,
   `f() { cd ..; }; f; f; ${RM} -rf x`,
   `source ./env.sh; cd ${PROJECT}/src && make; ${RM} -rf gen`, // known inside the chain of the absolute cd only
