@@ -7,7 +7,9 @@
 // hook that passes its timeout. So every lookup gets min(PS_TIMEOUT_MS, what is left of the caller's budget), and with nothing
 // left the walk stops: the owner is unknown and the caller keeps session-id state only, as on Windows, which has no `ps`.
 // Hostile input: `ps` is found through PATH, which a project's settings `env` can set; a planted `ps` gets nothing a project
-// hook in the same trusted settings could not run already. Its output is used only when it is one line `<ppid> <command>`.
+// hook in the same trusted settings could not run already. Its output is used only when it is one line `<ppid> <command>`, so
+// only digits reach a state key; it can still name any pid as the owner, and so pick the process key a mode is saved under.
+// At its timeout a lookup is ended with SIGKILL: a `ps` that ignores SIGTERM held the hook 9 s (security review 1, S3).
 // Invariants: never throws; a lookup that fails or times out ends the walk (reported on stderr); the result is cached.
 import { execFileSync } from 'node:child_process';
 import { basename } from 'node:path';
@@ -44,13 +46,13 @@ export function findOwnerPid(startPid, lookup, timeLeft = NO_LIMIT) {
 /**
  * One `ps` call for a pid.
  * @param {number} pid - the process to look up.
- * @param {number} timeoutMs - `ps` is killed after this long.
+ * @param {number} timeoutMs - `ps` is killed (SIGKILL) after this long.
  * @returns {{ppid: number, command: string} | undefined} its parent and command; undefined when `ps` fails, times out or prints
  *   anything but one line of that form.
  */
 export function psLookup(pid, timeoutMs) {
   try {
-    const line = execFileSync('ps', ['-o', 'ppid=,comm=', '-p', String(pid)], { encoding: 'utf8', timeout: timeoutMs }).trim();
+    const line = execFileSync('ps', ['-o', 'ppid=,comm=', '-p', String(pid)], { encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL' }).trim();
     const match = PS_LINE.exec(line);
     return match ? { ppid: Number(match[1]), command: match[2] } : undefined;
   } catch (error) {
