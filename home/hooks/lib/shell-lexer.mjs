@@ -1,9 +1,10 @@
 // Character-level shell lexer: the second, independent parser behind pre-bash-guard's "matched in raw text" backstop, and the
 // source of truth for heredocs and `$(...)` bodies inside double quotes. Pure, no I/O, never evaluates anything.
-// Exports: lexShell(text) -> {rawSegs, nested, stripped}; isSimpleSubstitutionBody; markPiped, opensArrayList, markArrayList (also used
+// Exports: lexShell(text) -> {rawSegs, nested, stripped}; isSimpleSubstitutionBody; markPiped, markJoin, opensArrayList, markArrayList (also used
 // by the regex tokenizer).
 //   rawSegs   simple commands as lists of RAW words (quotes and escapes intact; `.piped` is true when a `|` fed the segment, `.arrayList`
-//             when the segment is the element list of `NAME=(...)` / `NAME+=(...)`)
+//             when the segment is the element list of `NAME=(...)` / `NAME+=(...)`; `.join` holds the operators between the word before
+//             the segment and its first word, as written: '' at the start, `&&`, `;`, `(`, `)&&`, a newline; lib/cd-folder.mjs reads it)
 //   nested    bodies of `$(...)` / backticks found inside double quotes at the top level (the caller lexes them again)
 //   stripped  the text without heredoc bodies and their terminator lines
 // It follows the real nesting: quotes, `$'..'`, comments, `$((..))` arithmetic, `$(...)` inside double quotes (where quotes nest
@@ -54,6 +55,8 @@ export function isSimpleSubstitutionBody(body) {
 
 /** Marks a segment as fed by `|`; non-enumerable, so segments still compare equal to plain word lists. */
 export const markPiped = (seg) => Object.defineProperty(seg, 'piped', { value: true, configurable: true });
+/** Records the operators that came before a segment's first word (`&&`, `;`, `(`, `)&&`, '' at the start); non-enumerable like `.piped`. */
+export const markJoin = (seg, join) => Object.defineProperty(seg, 'join', { value: join, configurable: true });
 // `NAME=(`, `NAME+=(`, `NAME[i]=(`: the list after it holds an array's elements, which are words, not a command
 const ARRAY_ASSIGNMENT = /^[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=$/;
 /** True when the `(` that follows the word `before` opens an array's element list (`files+=("$f")`). */
@@ -175,15 +178,22 @@ function walk(state, start, closer) {
   let current = segs[0];
   let word = -1;
   let depth = 0;
+  let joined = ''; // the operators since the last word: the join of the segment the next word opens
   const begin = (at) => {
     if (word === -1) word = at;
   };
+  const push = (raw) => {
+    if (current.length === 0) markJoin(current, joined);
+    joined = '';
+    current.push(raw);
+  };
   const endWord = (to) => {
-    if (word !== -1) current.push(text.slice(word, to));
+    if (word !== -1) push(text.slice(word, to));
     word = -1;
   };
-  const split = (at, piped = false) => {
+  const split = (at, operator, piped = false) => {
     endWord(at);
+    joined += operator;
     if (current.length > 0) {
       current = piped ? markPiped([]) : [];
       segs.push(current);
@@ -197,7 +207,7 @@ function walk(state, start, closer) {
       endWord(i);
       i++;
     } else if (c === '\n') {
-      split(i);
+      split(i, c);
       i = skipHeredocBodies(state, i + 1);
     } else if (c === '\\') {
       begin(i);
@@ -219,7 +229,7 @@ function walk(state, start, closer) {
       endWord(i);
       opened.push(text[i - 1] === '$' && text[i - 2] !== '\\' ? { outer: current, at: i } : null);
       const arrayList = text[i - 1] === '=' && opensArrayList(current.at(-1));
-      split(i);
+      split(i, c);
       if (arrayList) markArrayList(current);
       if (closer === ')') depth++;
       i++;
@@ -227,7 +237,7 @@ function walk(state, start, closer) {
       endWord(i);
       return { segs, nested, end: i + 1, closed: true };
     } else if (c === ')') {
-      split(i);
+      split(i, c);
       if (closer === ')') depth--;
       const sub = opened.pop();
       if (sub && isSimpleSubstitutionBody(text.slice(sub.at + 1, i))) current = sub.outer;
@@ -236,18 +246,19 @@ function walk(state, start, closer) {
       endWord(i);
       return { segs, nested, end: i + 1, closed: true };
     } else if (c === '`' || c === ';') {
-      if (c === '`' && word === -1 && current.length === 0) current.push('$'); // `` `cmd` `` as the command word, like `$(cmd)`
-      split(i);
+      if (c === '`' && word === -1 && current.length === 0) push('$'); // `` `cmd` `` as the command word, like `$(cmd)`
+      split(i, c);
       i++;
     } else if (c === '#' && word === -1 && (i === start || COMMENT_PREFIX.test(text[i - 1]))) {
       const newline = text.indexOf('\n', i);
       i = newline === -1 ? text.length : newline;
     } else if (c === '|' && text[i - 1] !== '>') {
       const double = next === '|';
-      split(i, !double);
-      i += double || next === '&' ? 2 : 1;
+      const length = double || next === '&' ? 2 : 1;
+      split(i, text.slice(i, i + length), !double);
+      i += length;
     } else if (c === '&' && text[i - 1] !== '>' && text[i - 1] !== '<' && next !== '>') {
-      split(i);
+      split(i, next === '&' ? '&&' : '&');
       i += next === '&' ? 2 : 1;
     } else if (c === '<' && next === '<') {
       begin(i);

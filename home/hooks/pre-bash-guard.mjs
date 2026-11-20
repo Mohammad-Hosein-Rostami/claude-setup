@@ -10,7 +10,7 @@
 // the first send is denied with the fix and the identical retry runs; next to an ask or bounce it is appended (table: lib/bounce-once.mjs) Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
 // Rules. DESTRUCTIVE (the dialog says "DESTRUCTIVE: ..."): force push (incl. -fu clusters and +refspec), `push --mirror`,
 // remote branch delete, rm -r of a whole folder (the working directory, a bare glob such as `*` or `./**/*` of it, the project root, home, `/`: lib/rm-paths.mjs),
-// rm -r outside the project (temp dirs allowed, `cd` tracked within one command line, `cd` to `~`, `$HOME` and `$(git rev-parse --show-toplevel)` (from inside
+// rm -r outside the project (temp dirs allowed, a `cd` followed only inside its own `&&` chain: lib/cd-folder.mjs, `cd` to `~`, `$HOME` and `$(git rev-parse --show-toplevel)` (from inside
 // the project only) is resolved, as are leading `~`/`$HOME`/`$TMPDIR`/`$CLAUDE_PROJECT_DIR` and variables assigned earlier in the line (the last assignment wins,
 // `VAR=$(mktemp -d)` is the temp dir, `..` is resolved after substitution; an unknown variable asks for `rm -r` only; lib/rm-paths.mjs;
 // $HOME, `/` and a drive root never count as the project), disk wipes (dd of=/dev/x, mkfs, wipefs, shred/blkdiscard on a device), rm -r run
@@ -60,8 +60,8 @@
 // Known limits (not detected): shell aliases and functions defined elsewhere, a variable assigned from another command's output, interpreter
 // code (`node -e`, `python -c`) unless it names a dangerous word, wrappers that take the command as ONE string (busybox), rimraf,
 // stdin paths that xargs hands to anything but rm -r, a credential sent by a tool off the sender list, copied first (`cp -r ~/.ssh /tmp/x`),
-// piped into ssh from a `{ }` group or loop, or passed as an ssh argument (`ssh h "$(cat key)"`), `cd` scoping in subshells (treated as
-// global: extra asks only), an ssh alias that hides a production host, and the PowerShell tool (the hook matcher covers Bash only).
+// piped into ssh from a `{ }` group or loop, or passed as an ssh argument (`ssh h "$(cat key)"`), a function body that runs after a later `cd`, a `cd`
+// behind `env -C`/`sudo --chdir` or an unknown wrapper (a `cd` in a subshell, a pipeline, a job, a compound command or before `;` makes the folder unknown: relative rm -r targets then ask), an ssh alias that hides a production host, and the PowerShell tool (the hook matcher covers Bash only).
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { logCodeWrites } from './lib/code-writes.mjs';
@@ -79,8 +79,9 @@ import { GIT_UNREADABLE_REASON, gitRunReasons } from './lib/git-runs.mjs';
 import { gitAdvice } from './lib/git-advice.mjs';
 import { waitAdvice, withoutWaitAdvice } from './lib/wait-advice.mjs';
 import { outwardAsk } from './lib/outward.mjs';
-import { readProdHosts, remoteAsk } from './lib/remote.mjs';
-import { checkRm, newScope, nextCwd, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
+import { hostVariables, readProdHosts, remoteAsk } from './lib/remote.mjs';
+import { checkRm, newScope, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
+import { enterSegment, leaveSegment, newFolder } from './lib/cd-folder.mjs';
 import { askUnlessRemembered } from './lib/remembered-ask.mjs';
 import { adviceOnce } from './lib/bounce-once.mjs';
 import { isAdviceReason, splitAdvice } from './lib/reason-classes.mjs';
@@ -120,11 +121,6 @@ function shellScript(args) {
   }
   return undefined;
 }
-
-const HOST_VARIABLES = ['PGHOST', 'PGHOSTADDR', 'PGSERVICE', 'MYSQL_HOST'];
-
-/** Host variables set earlier in the same command line (`export PGHOST=prod-db` then `psql`), as `NAME=value` words like a prefix assignment. */
-const hostVariables = (vars = new Map()) => HOST_VARIABLES.filter((name) => vars.has(name)).map((name) => `${name}=${vars.get(name)}`);
 
 /** `alias p='git push -f'`: the alias body is a command line, so it is judged like one; a body with advice only gives that advice. */
 function checkAlias(args, env) {
@@ -175,17 +171,18 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
   const scope = newScope(cwd, project, command);
   const { segs, nested } = parse(command);
   const commands = [];
-  let dir = cwd;
+  const folder = newFolder(cwd); // where the line's `cd`s led, null once they cannot be believed (lib/cd-folder.mjs)
   segs.forEach((seg, index) => {
     const words = substituteKnownWords(seg, scope);
     const parsed = asGitSubcommand(commandOf(words));
     commands.push({ ...parsed, piped: seg.piped === true }); // credential-send follows a pipe into ssh
-    const env = { cwd: dir, project, vars: scope.vars, splitWords: scope.splitWords, prodHosts, parse, depth: depth + 1, judged, line };
+    enterSegment(folder, seg, parsed, words);
+    const env = { cwd: folder.dir, project, vars: scope.vars, splitWords: scope.splitWords, prodHosts, parse, depth: depth + 1, judged, line };
     reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript }), ...gitRunValueReasons(words, parsed, env, reasonsOf), ...unreadableNameReasons(parsed.cmd, command, prodHosts));
     if (parsed.cmd !== undefined) {
       reasons.push(...checkCommand({ ...parsed, before: words.slice(0, parsed.at) }, env, segs[index + 1] ?? []));
       reasons.push(...scanWrapped(words, parsed, (cmd, args, at) => checkCommand({ cmd, args, assigns: [], before: words.slice(0, at) }, env, [])));
-      dir = nextCwd(parsed.cmd, parsed.args, dir, project, scope.vars);
+      leaveSegment(folder, seg, parsed, { project, scope });
     }
     trackAssignments(scope, seg);
   });
@@ -296,8 +293,7 @@ async function main() {
     answer = failedAnswer(error, input);
   }
   process.stdout.write(answer);
-  // after the answer, so nothing at the log path can hold it back; harmless when the owner denied: the typecheck gate only reads files that exist
-  logCodeWrites(command, input, cwdOf(input));
+  logCodeWrites(command, input, cwdOf(input)); // after the answer, so nothing at the log path can hold it back; harmless when the owner denied: the typecheck gate only reads files that exist
 }
 
 // ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.

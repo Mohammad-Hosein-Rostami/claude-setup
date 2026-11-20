@@ -1,0 +1,126 @@
+// Tests that the guard believes a `cd` only inside its own `&&` chain (lib/cd-folder.mjs). It used to follow every `cd` it read, whatever
+// joined it to the next command: `(cd src); rm -rf ../x` was judged from `src`, where `../x` is inside the project, while the shell
+// runs the rm from the project root and deletes its neighbour. After any join but `&&` that follows a `cd`, for a `cd` inside a group
+// or a compound command, after eval/source, and for the targets the shell resolves from state the guard lacks (`+N`, a bare drive,
+// CDPATH, autocd, cdable_vars), the folder is unknown for the rest of the line: a relative `rm -r` target asks, an absolute one is judged.
+// Both parsers must record the same joins. Command strings are only passed to decide(); nothing is executed.
+import './pin-home.mjs';
+import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
+import { test } from 'node:test';
+import { lex, tokenize } from '../home/hooks/lib/shell-words.mjs';
+import { decide } from '../home/hooks/pre-bash-guard.mjs';
+
+const PROJECT = resolve('/work/proj');
+const RM = 'rm'; // kept apart so this file's own text never reads as a command
+const atRoot = { cwd: PROJECT, project: PROJECT };
+const OUTSIDE = /^DESTRUCTIVE: rm -r outside the project \(/;
+
+const firstReason = (command, ctx = atRoot) => decide(command, ctx).reasons?.[0] ?? 'allowed';
+
+// the reviewer's nine forms (R2-20..28): in bash and zsh each runs the rm from the project root, where `../x` is the project's neighbour
+const CD_NOT_IN_THE_CHAIN = [
+  `(cd src); ${RM} -rf ../x`,
+  `(cd src && make) && ${RM} -rf ../out`,
+  `cd src | cat; ${RM} -rf ../x`,
+  `cd src & ${RM} -rf ../x`,
+  `true || cd src; ${RM} -rf ../x`,
+  `false && cd src; ${RM} -rf ../x`,
+  `if false; then cd src; fi; ${RM} -rf ../x`,
+  `cd no-such-dir; ${RM} -rf ../x`,
+  `f() { cd src; }; ${RM} -rf ../x`,
+];
+const OTHER_JOINS = [
+  `cd packages/app; ${RM} -rf ../../node_modules`, // a failed cd: two levels above the project
+  `cd packages/app\n${RM} -rf ../../node_modules`,
+  `cd src; cd .. && ${RM} -rf dist`, // was pinned as allowed in pre-bash-guard.test.mjs: the second cd follows a `;` after a cd
+  `cd src || ${RM} -rf ../x`,
+  `cd src && make || ${RM} -rf ../x`,
+  `cd src && ls | xargs ${RM} -rf ../x`,
+  `{ cd src; }; ${RM} -rf ../x`,
+  `{ cd src && ${RM} -rf ../x; }`,
+  `for d in a b c; do cd .. && ${RM} -rf x; done`,
+  `while true; do make; cd .. && ${RM} -rf x; done`,
+  `case $1 in a) cd src;; esac; ${RM} -rf ../x`,
+  `function f { cd src; }; ${RM} -rf ../x`,
+  `! cd src && ${RM} -rf ../x`,
+  `X=$(cd src && pwd); ${RM} -rf ../x`,
+];
+const UNREAD_TEXT = [`eval cd ..; ${RM} -rf proj`, `eval "cd .." && ${RM} -rf proj`, `source ./env.sh && ${RM} -rf proj`, `. ./env.sh; ${RM} -rf proj`];
+// F5, F8, F9: the shell resolves these from state the guard does not have
+const UNKNOWN_TARGETS = [
+  `pushd ~ && pushd ${PROJECT} && pushd +1 && ${RM} -rf Documents`,
+  `pushd ~ && pushd ${PROJECT} && cd +1 && ${RM} -rf Documents`,
+  `cd C: && ${RM} -rf Users`,
+  `CDPATH=/Users cd pejvak && ${RM} -rf Documents`,
+  `export CDPATH=~; cd Documents && ${RM} -rf Work`,
+  `CDPATH=/etc; cd src && ${RM} -rf gen`,
+  `cdpath=(~ /); cd src && ${RM} -rf gen`,
+  `setopt autocd; ..; ${RM} -rf proj`,
+  `setopt AUTO_CD && src && ${RM} -rf gen`,
+  `shopt -s cdable_vars; X=/; cd X; ${RM} -rf etc`,
+  `shopt -s cdable_vars && cd X && ${RM} -rf etc`,
+];
+const STILL_SILENT = [
+  `cd packages/app && ${RM} -rf ../../node_modules`,
+  `cd src && ${RM} -rf gen && ${RM} -rf gen2`,
+  `make; cd src && ${RM} -rf ../dist`,
+  `make && cd src && ${RM} -rf ../dist`,
+  `cd src &&\n${RM} -rf ../dist`,
+  `cd src; ${RM} -rf ${PROJECT}/dist`, // an absolute target is judged whatever the folder
+  `(cd src); ${RM} -rf /tmp/x/y`,
+  `${RM} -rf dist; cd src`,
+  `${RM} -rf dist && (cd src && make)`,
+  `(cd src); ls`,
+  `cd src; npm test`,
+  `source ./env.sh && npm test`,
+  `cd ./src && ${RM} -rf gen`,
+];
+
+test('a cd that is not joined to the rm by && is not believed: the relative target asks', () => {
+  for (const command of [...CD_NOT_IN_THE_CHAIN, ...OTHER_JOINS]) assert.match(firstReason(command), OUTSIDE, command);
+});
+
+test('after eval, source or `.` the folder is unknown: the text they run may hold a cd', () => {
+  for (const command of UNREAD_TEXT) assert.ok(decide(command, atRoot).reasons?.some((reason) => OUTSIDE.test(reason)), command);
+});
+
+test('a cd target the shell resolves from the folder stack, a drive, CDPATH, autocd or cdable_vars makes the folder unknown', () => {
+  for (const command of UNKNOWN_TARGETS) assert.match(firstReason(command), OUTSIDE, command);
+});
+
+test('CDPATH in the environment makes every relative cd unknown, and only a relative one', () => {
+  const command = `cd src && ${RM} -rf gen`;
+  const absolute = `cd ${PROJECT}/src && ${RM} -rf gen`;
+  const before = process.env.CDPATH;
+  try {
+    delete process.env.CDPATH;
+    assert.equal(firstReason(command), 'allowed');
+    process.env.CDPATH = '/Users';
+    assert.match(firstReason(command), OUTSIDE);
+    assert.equal(firstReason(absolute), 'allowed');
+    assert.equal(firstReason(`cd ../proj/src && ${RM} -rf gen`), firstReason(command), 'the simple rule: any relative target');
+  } finally {
+    if (before === undefined) delete process.env.CDPATH;
+    else process.env.CDPATH = before;
+  }
+});
+
+test('a cd inside its own && chain is followed as before, and an absolute target never needs the folder', () => {
+  const before = process.env.CDPATH;
+  delete process.env.CDPATH;
+  try {
+    for (const command of STILL_SILENT) assert.deepEqual(decide(command, atRoot), { allow: true }, command);
+    assert.match(firstReason(`cd .. && ${RM} -rf x`), OUTSIDE, 'followed: the parent of the project');
+    assert.match(firstReason(`cd src; ${RM} -rf /etc/x`), OUTSIDE);
+  } finally {
+    if (before !== undefined) process.env.CDPATH = before;
+  }
+});
+
+test('both parsers record the operators in front of each segment, the same way', () => {
+  const joins = (parse, line) => parse(line).segs.map((seg) => seg.join);
+  assert.deepEqual(joins(tokenize, '(cd src && make) && x -r ../out; ls |\n wc & y || z'), ['(', '&&', ')&&', ';', '|\n', '&', '||']);
+  const LINES = ['a', 'a && b', 'a &&\nb', 'a; b\nc', '(a; b) || c', 'a | b |& c', 'f() { a; }; b', 'a & b', 'x=$(a && b); c', 'echo $(a) b; c', 'a `b` c && d', 'if a; then b; fi && c', 'a <<EOF\nbody\nEOF\nb && c'];
+  for (const line of LINES) assert.deepEqual(joins(lex, line), joins(tokenize, line), line);
+});

@@ -119,7 +119,7 @@ test('P1: cd to ~, $HOME and the git top-level resolves when that directory is t
     'cd ~/proj && rm -rf node_modules', 'cd $HOME/proj && rm -rf node_modules', 'cd ${HOME}/proj && rm -rf node_modules',
     'cd "$HOME/proj/sub" && rm -rf dist', 'cd "$(git rev-parse --show-toplevel)" && rm -rf dist',
     'cd $(git rev-parse --show-toplevel) && rm -rf dist', 'cd `git rev-parse --show-toplevel` && rm -rf dist',
-    'cd "$(git rev-parse --show-toplevel)/packages/a" && rm -rf dist', 'cd ~/proj/sub; cd .. && rm -rf dist',
+    'cd "$(git rev-parse --show-toplevel)/packages/a" && rm -rf dist', 'cd ~/proj/sub && cd .. && rm -rf dist',
   ]) {
     assert.deepEqual(decide(command, at), { allow: true }, command);
   }

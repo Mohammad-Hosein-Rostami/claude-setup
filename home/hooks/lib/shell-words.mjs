@@ -3,7 +3,8 @@
 // GIT_TOPLEVEL_WORD; MKTEMP_WORD; QUOTED_MARK; lex(command) (same shape as tokenize, from shell-lexer.mjs); unquote, basenameOf, flagsOf;
 // backtickAssignedNames(command); DECLARERS.
 // Unquoted brace expressions are expanded the way bash does (`rm {-rf,x}` is `rm -rf x`), never in an assignment in front of the command;
-// a segment flags the words whose braces cannot be listed (`.unlistedBraces`) and those holding a `$NAME` outside quotes (`.bareWords`).
+// a segment flags the words whose braces cannot be listed (`.unlistedBraces`) and those holding a `$NAME` outside quotes (`.bareWords`),
+// and keeps the operators that came before its first word (`.join`: `&&`, `;`, `(`, `)&&` ...; lib/cd-folder.mjs reads it).
 // Words are unquoted the way a shell does: an unquoted backslash escapes the next character (`pu\sh` is `push`, `\/` is `/`,
 // `\;` is a literal `;` word, a backslash-newline vanishes); inside double quotes a backslash only escapes `\ " $ \``.
 // A quoted word that merely looks like a redirection (`">"`) gets QUOTED_MARK in front, so it stays a plain argument;
@@ -14,7 +15,7 @@
 
 import { ANSI_C_WORD, decodeAnsiC } from './ansi-c.mjs';
 import { expandRawBraces, hasUnquotedReference } from './braces.mjs';
-import { isSimpleSubstitutionBody, lexShell, markArrayList, markPiped, opensArrayList } from './shell-lexer.mjs';
+import { isSimpleSubstitutionBody, lexShell, markArrayList, markJoin, markPiped, opensArrayList } from './shell-lexer.mjs';
 
 // Alternation order matters: `&&`/`||` first, then words (a word may be `&>` or follow `>`), then single separators.
 const WORD = '(?:"(?:\\\\[\\s\\S]|[^"\\\\])*"|' + ANSI_C_WORD + '|\'[^\']*\'|\\\\[\\s\\S]|(?<=[<>])&|(?<=>)\\||&(?=>)|[^\\s;|&()`\\\\])+';
@@ -173,6 +174,7 @@ function wordsOfSegment(raws) {
   }
   if (raws.piped === true) markPiped(words);
   if (raws.arrayList === true) markArrayList(words);
+  if (raws.join !== undefined) markJoin(words, raws.join);
   if (unlisted.length > 0) Object.defineProperty(words, 'unlistedBraces', { value: unlisted });
   if (bare.size > 0) Object.defineProperty(words, 'bareWords', { value: bare });
   return words;
@@ -195,11 +197,16 @@ export function tokenize(command) {
   const segs = [[]];
   const opened = []; // per open `(`: {outer, at} (the segment holding its `$`, and where it is) when it starts a substitution, else null
   let current = segs[0];
+  let joined = ''; // the operators since the last word: the join of the segment the next word opens
   for (const m of stripped.matchAll(TOKEN)) {
     if (m[2] !== undefined) {
-      if (!LINE_CONTINUATION_ONLY.test(m[2])) current.push(m[2]); // raw words; wordsOfSegment unquotes them once the segment is whole
+      if (LINE_CONTINUATION_ONLY.test(m[2])) continue;
+      if (current.length === 0) markJoin(current, joined);
+      joined = '';
+      current.push(m[2]); // raw words; wordsOfSegment unquotes them once the segment is whole
       continue;
     }
+    joined += m[0];
     if (m[3] === '(') opened.push(stripped[m.index - 1] === '$' && stripped[m.index - 2] !== '\\' ? { outer: current, at: m.index } : null);
     const arrayList = m[3] === '(' && stripped[m.index - 1] === '=' && opensArrayList(current.at(-1));
     current = startSegment(segs, current, m[3] === '|');

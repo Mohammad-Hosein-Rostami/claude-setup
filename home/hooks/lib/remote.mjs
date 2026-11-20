@@ -1,6 +1,6 @@
 // Writes to a production host through ssh, scp, rsync, psql or mysql: ask the owner first, even in bypass mode.
 // Exports: remoteAsk(cmd, args, assigns, prodHosts) -> reason | undefined; readProdHosts(file?); isProdHost(host, list);
-// isReadOnlyRemote(text); isReadOnlySql(sql); PROD_HOSTS_FILE; MAX_PROD_HOSTS_BYTES; EVERY_HOST.
+// isReadOnlyRemote(text); isReadOnlySql(sql); PROD_HOSTS_FILE; MAX_PROD_HOSTS_BYTES; EVERY_HOST; hostVariables(vars).
 // A host is "production" when its name contains `prod` (always) or matches a line of the private list file
 // (~/.claude/private/prod-hosts, one name or `*` glob per line, `#` comments; never committed, see settings/prod-hosts.example).
 // Read-only remote commands (cat, ls, tail, grep, systemctl status, docker ps/logs, SELECT, ...) are allowed.
@@ -59,6 +59,11 @@ export function readProdHosts(file = process.env.CLAUDE_PROD_HOSTS_FILE || PROD_
     return error?.code === MISSING_FILE ? [] : EVERY_HOST;
   }
 }
+
+const HOST_VARIABLES = ['PGHOST', 'PGHOSTADDR', 'PGSERVICE', 'MYSQL_HOST'];
+
+/** Host variables set earlier in the same command line (`export PGHOST=prod-db` then `psql`), as `NAME=value` words like a prefix assignment. */
+export const hostVariables = (vars = new Map()) => HOST_VARIABLES.filter((name) => vars.has(name)).map((name) => `${name}=${vars.get(name)}`);
 
 const globToRegExp = (glob) => new RegExp(`^${glob.replace(/[.+^${}()|\\[\]]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`);
 

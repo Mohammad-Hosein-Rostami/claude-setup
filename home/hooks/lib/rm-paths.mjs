@@ -1,5 +1,6 @@
-// Path rules for `rm -r` and `cd`: is a target inside the project or a temp dir, and which variables hold what.
-// Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; MAX_TARGET_CHARS; nextCwd(cmd, args, cwd, project, vars) -> folder | null;
+// Path rules for `rm -r`: is a target inside the project or a temp dir, and which variables hold what. (Which folder the line is in
+// after a `cd` is lib/cd-folder.mjs.)
+// Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; MAX_TARGET_CHARS; PWD_TARGET; expandVars;
 // newScope(cwd, project) -> {vars, assigned};
 // trackAssignments(scope, tokens, nextTokens); substituteKnownWords(tokens, scope); bashReadings(word, splitWords) (also read by
 // lib/find-delete.mjs); nativePath, isUnder, sameFile, expandHome; RECURSIVE_FLAG; withoutRedirects(args) (also read by lib/git-runs.mjs);
@@ -35,13 +36,12 @@ const GIT_BASH_DRIVE_ROOT = /^\/[a-zA-Z]$/;
 const REDIRECT_START = /^(\d*>>?|\d*<|&>>?)/;
 const REDIRECT_OPERATOR_ONLY = /^(\d*>>?|\d*<{1,2}|&>>?)$/;
 const VAR_PREFIX = /^\$\{?(\w+)\}?(?=\/|$)/;
-const PWD_TARGET = /^\$(?:PWD|\{PWD\})(?=\/|$)/; // `$(pwd)` and a backtick pwd reach here as `$PWD` (lib/shell-words.mjs)
+export const PWD_TARGET = /^\$(?:PWD|\{PWD\})(?=\/|$)/; // `$(pwd)` and a backtick pwd reach here as `$PWD` (lib/shell-words.mjs)
 const MKTEMP_NAME = MKTEMP_WORD.slice(1);
 const ANY_VAR = /\$\{(\w+)\}|\$(\w+)/g;
 const ASSIGNMENT = /^([A-Za-z_]\w*)(\+?)=([\s\S]*)$/;
 const SUBSCRIPT_ASSIGNMENT = /^([A-Za-z_]\w*)\[[^\]]*\]\+?=/; // `X[2]=v`: zsh changes part of a scalar, so its value is no longer known
 const MKTEMP_DIR = 'mktemp-variable';
-const UNKNOWN_CD_TARGET = /^-|[~$`*?[\]{}]/;
 const BLANKS = /[ \t\n]+/; // where bash splits an unquoted variable's value into words (the default IFS)
 /** Work budget for one rm target: PATH_MAX is 4096 on Linux and 1024 on macOS, so a longer word is no path a real command names. */
 export const MAX_TARGET_CHARS = 4096;
@@ -208,24 +208,6 @@ function emptiesWholeFolder(rawTarget, cwd, project, vars) {
   if (folder === undefined) return cwd !== null && sameFile(abs, resolve(nativePath(cwd)));
   const wholeFolders = [cwd, project, homedir(), ...SAFE_TEMP_ROOTS].filter((whole) => whole !== null).map((whole) => resolve(nativePath(whole)));
   return wholeFolders.some((whole) => sameFile(abs, whole)) || sameFile(abs, parse(abs).root) || GIT_BASH_DRIVE_ROOT.test(abs);
-}
-
-/** Like expandHome; the git top-level word -> the project, but only from inside it (elsewhere the top-level is unknown). */
-function expandCdTarget(target, cwd, project) {
-  if (target !== GIT_TOPLEVEL_WORD && !target.startsWith(`${GIT_TOPLEVEL_WORD}/`)) return expandHome(target);
-  const root = resolve(nativePath(project));
-  const inside = sameFile(resolve(cwd), root) || isUnder(root, resolve(cwd));
-  return inside ? root + target.slice(GIT_TOPLEVEL_WORD.length) : target;
-}
-
-/** Working directory after `cd`/`pushd`/`popd`: literal targets are resolved, anything else makes it unknown (null). */
-export function nextCwd(cmd, args, cwd, project, vars) {
-  if (cmd === 'popd') return null;
-  if (cmd !== 'cd' && cmd !== 'pushd') return cwd;
-  if (cwd === null || args.length !== 1) return null;
-  if (PWD_TARGET.test(args[0]) && vars.get('PWD') !== cwd) return null; // `cd "$PWD"/x` after the folder moved: not guessed, unknown from here on
-  const target = expandVars(expandCdTarget(args[0], cwd, project), vars); // `cd "$D"` after `D=$(mktemp -d)` is the temp dir
-  return UNKNOWN_CD_TARGET.test(target) ? null : resolve(cwd, nativePath(target));
 }
 
 /** A target as a reason shows it: without the quote mark, and only its start when it is long (the agent wrote it; it is not ours to repeat in full). */
