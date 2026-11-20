@@ -18,11 +18,8 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 - `command-checks.mjs`, `rm-paths.mjs`, `bare-glob.mjs`, `find-delete.mjs`, `eval-check.mjs`, `shell-hazards.mjs`, `dangerous-scan.mjs`,
   `raw-risk.mjs`, `outward.mjs`, `remote.mjs`, `code-writes.mjs`, `git-runs.mjs`: one file per kind of risky command (`rm -r`,
   `find -delete`, `eval`, hidden execution, push or publish, production hosts, code rewritten from Bash, commands git runs).
-- `cd-folder.mjs`: the set of folders a command may run in after `cd`, `pushd` or `popd`; the folder is unknown after a relative
-  `cd` in a loop or a function body, after `eval`, `source`, `.` or `popd`, and for a target the shell resolves from its own state
-  (`cd -`, CDPATH); a later absolute `cd` is believed again inside its chain. The guard judges each `rm -r` target from every folder
-  of the set, except a `$( )` or backtick body, which is judged from the folder the line started in (a known limit,
-  `pre-bash-guard.mjs:192`).
+- `cd-folder.mjs`: the folders the guard follows a line through after `cd`, `pushd` or `popd` (the rules are in the module's
+  header).
 - `merge-commit.mjs`: advice, never an ask: a `git merge` or `git pull` that can create a merge commit (linear history, C37).
 - `branch-move.mjs`: advice, never an ask: a branch moved by `update-ref`, `branch -f` or `push|fetch .`, which leaves the folder
   where it is checked out behind (land with `merge --ff-only`, C37).
