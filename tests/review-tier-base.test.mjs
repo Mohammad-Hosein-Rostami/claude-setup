@@ -107,3 +107,43 @@ test('security B3: on a rewritten lane a tag at a fix commit does not take that 
   git(dir, 'tag', 'main', opensGate);
   assert.deepEqual(seen(json('--delta', reviewed, '--prior', prior)), seen(control), 'the commit that removes the guard is still read');
 });
+
+test('a first review by an explicit range reads a named side only as the local branch: a tag, refs/main or a file $GIT_DIR/main changes nothing', () => {
+  const { dir, json, first } = securityLaneWithDocsFix();
+  const base = git(dir, 'rev-parse', 'refs/heads/main');
+  const tip = git(dir, 'rev-parse', 'refs/heads/lane');
+  const ranges = [['main...HEAD', `${base}...HEAD`], ['main..HEAD', `${base}..HEAD`], ['main...lane', `${base}...${tip}`], ['main..', `${base}..HEAD`]];
+  const control = ranges.map(([range]) => seen(json(range, '--landing')));
+  ranges.forEach(([range, printed], at) => assert.equal(control[at].range, printed, `${range}: the printed range holds the resolved sha`));
+  assert.ok(control[0].classes.includes('security') && control[0].files === 2 && control[0].lenses.length === 3, 'the control reads the whole lane');
+  const tricks = [
+    ['a tag main at a mid-lane commit', () => git(dir, 'tag', 'main', first), () => git(dir, 'tag', '-d', 'main')],
+    ['refs/main', () => git(dir, 'update-ref', 'refs/main', first), () => git(dir, 'update-ref', '-d', 'refs/main')],
+    ['a file $GIT_DIR/main', () => writeFileSync(join(dir, '.git', 'main'), `${first}\n`), () => rmSync(join(dir, '.git', 'main'))],
+    ['a tag lane at the base', () => git(dir, 'tag', 'lane', base), () => git(dir, 'tag', '-d', 'lane')],
+  ];
+  for (const [name, plant, remove] of tricks) {
+    plant();
+    ranges.forEach(([range], at) => assert.deepEqual(seen(json(range, '--landing')), control[at], `${name}: ${range}`));
+    remove();
+  }
+});
+
+test('a side of a range that is no HEAD, local branch or full sha exits 2 with what to pass; an ancestry step on such a side is read', () => {
+  const { dir, tier, json, first, reviewed } = securityLaneWithDocsFix();
+  git(dir, 'tag', 'v1', first);
+  git(dir, 'update-ref', 'refs/remotes/origin/main', first);
+  git(dir, 'update-ref', 'refs/main2', first);
+  for (const range of ['v1...HEAD', 'main...v1', `${first.slice(0, 12)}..HEAD`, 'origin/main...HEAD', 'main2..HEAD', 'refs/heads/main...HEAD', 'main@{0}...HEAD', 'HEAD@{0}..HEAD', 'v1~0..HEAD', 'main~x..HEAD']) {
+    const result = tier(range, '--landing');
+    assert.equal(result.status, 2, range);
+    assert.equal(result.stdout, '', range);
+    assert.match(result.stderr, /unknown revision "[^"]+" in range "[^"]+": a side is HEAD, a local branch \(read as refs\/heads\/<name>, never a tag or another ref of that name\) or a full 40-character sha, each with an optional ~N or \^N; for any other commit pass its full sha \(git rev-parse <name>\)/, range);
+  }
+  const tip = git(dir, 'rev-parse', 'HEAD');
+  for (const [range, printed, files] of [['HEAD~1..HEAD', `${reviewed}..HEAD`, 1], [`${reviewed}^..${reviewed}`, `${first}..${reviewed}`, 1], ['lane~2...lane', `${first}...${tip}`, 1], [`${first}^...HEAD`, `${git(dir, 'rev-parse', 'refs/heads/main')}...HEAD`, 2]]) {
+    const result = json(range);
+    assert.equal(result.range, printed, range);
+    assert.equal(result.files, files, range);
+  }
+});

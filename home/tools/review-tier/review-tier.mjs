@@ -4,7 +4,9 @@
 //                        --lane-classes <previous-round-json>] [--add-class <c>]... [--base <b>] [--json]
 //   --base <b>       where the lane starts: a local branch (read as refs/heads/<b>, never a tag of that name) or a full sha. Needed when
 //                    more than one of main, master, develop exists (exit 2 without it)
-//   <range>          `a..b` or `a...b`; default `<base sha>...HEAD`, the base being the one of main, master, develop that is a local branch
+//   <range>          `a..b` or `a...b`; default `<base sha>...HEAD`, the base being the one of main, master, develop that is a local branch.
+//                    Each side is read like the base: HEAD, a local branch or a full sha (with an optional ~N or ^N), never a tag or
+//                    another ref of that name; any other side is exit 2. The printed range holds the resolved shas
 //   --landing        the last review before the base moves: adds the Opus max lens, the auditor and a mutation plan
 //   --delta <sha>    a fix round: review only what changed since that reviewed sha (a rebased lane: only patches the reviewed set lacks;
 //                    a rewritten lane that dropped or changed a reviewed patch: the whole lane and what the rewrite took out),
@@ -28,7 +30,8 @@ import { readFileSync, statSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { UsageError, gitText } from '../git-tidy/lib/git.mjs';
 import { CLASS_TIER, LOCK_TAG, RACE_TAG } from './tiers.mjs';
-import { MAX_READING, baseOf, checkRange, newFileReader, readDelta, readRange, requiredReadingFor } from './lib/diff.mjs';
+import { MAX_READING, newFileReader, readDelta, readRange, requiredReadingFor } from './lib/diff.mjs';
+import { baseOf, checkRange } from './lib/revisions.mjs';
 import { appendLog } from './lib/log.mjs';
 import { readPriors } from './lib/prior.mjs';
 import { buildReport, formatJson, formatText, logRecord } from './lib/report.mjs';
@@ -126,8 +129,7 @@ function deltaRound(top, options) {
 }
 
 function wholeRange(top, options) {
-  const range = options.range ?? `${baseOf(top, options.base)}...HEAD`;
-  const endRevision = checkRange(top, range);
+  const { range, endRevision } = checkRange(top, options.range ?? `${baseOf(top, options.base)}...HEAD`);
   return { range, files: readRange(top, range), deltaOf: null, laneFiles: null, requiredReading: [], endRevision };
 }
 

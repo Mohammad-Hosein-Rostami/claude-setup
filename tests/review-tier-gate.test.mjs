@@ -177,8 +177,9 @@ test('principles: none for plain logic, and every id in the table has the form P
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const CLI = fileURLToPath(new URL('../home/tools/review-tier/review-tier.mjs', import.meta.url));
 
-for (const [item, commit] of [[71, '9ef7c21'], [73, 'c55d28f']]) {
-  test(`acceptance: replay item ${item} (${commit}) is tier 2 at its fix commit`, () => {
+// Full shas: a side of a range is HEAD, a local branch or a full sha, never a short name another ref could shadow.
+for (const [item, commit] of [[71, '9ef7c21c331d848d7e233853b026b59ccbb86d42'], [73, 'c55d28f467ff3157d699562549ca65b5abe16fd2']]) {
+  test(`acceptance: replay item ${item} (${commit.slice(0, 7)}) is tier 2 at its fix commit`, () => {
     const home = makeTempDir('review-tier-home-');
     const env = { PATH: process.env.PATH, HOME: home, USERPROFILE: home, REVIEW_TIER_LOG: join(home, 'review-tier.jsonl') };
     const run = spawnSync(process.execPath, [CLI, `${commit}^..${commit}`, '--landing', '--json'], { cwd: REPO, encoding: 'utf8', env });

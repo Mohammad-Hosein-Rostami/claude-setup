@@ -67,7 +67,7 @@ test('security S3: the text given to --delta never reaches a brief (the tool pri
   if (result.status === 0) assert.match(JSON.parse(result.stdout).deltaOf, /^[0-9a-f]{40}$/);
 });
 
-test('a base name never reaches the output (the tool prints its sha); a range that is no plain name is quoted; a base with a sentence in it is refused', () => {
+test('a base or branch name never reaches the output, as --base or as a side of a range (the tool prints its sha); a base with a sentence in it is refused', () => {
   const { dir, write, tier, json } = lane();
   const base = 'base;$(order)';
   git(dir, 'branch', base, 'main');
@@ -78,9 +78,11 @@ test('a base name never reaches the output (the tool prints its sha); a range th
   assert.ok(named.stdout.includes(`Review ${git(dir, 'rev-parse', 'main')}...HEAD.`), 'the brief names the resolved base sha');
   const result = tier(`${base}...HEAD`);
   assert.equal(result.status, 0, result.stderr);
-  assert.ok(result.stdout.includes(`Review ${JSON.stringify(`${base}...HEAD`)}.`), result.stdout);
-  assert.ok(result.stdout.split('\n')[0].endsWith(`, ${JSON.stringify(`${base}...HEAD`)}`), 'the summary line too');
-  assert.equal(json(`${base}...HEAD`).range, `${base}...HEAD`, 'the JSON range stays the real one');
+  const resolved = `${git(dir, 'rev-parse', 'main')}...HEAD`;
+  assert.ok(!result.stdout.includes('order'), result.stdout);
+  assert.ok(result.stdout.includes(`Review ${resolved}.`), result.stdout);
+  assert.ok(result.stdout.split('\n')[0].endsWith(`, ${resolved}`), 'the summary line too');
+  assert.equal(json(`${base}...HEAD`).range, resolved, 'the JSON range holds the sha the branch was read as');
   const refused = tier('--base', ORDER);
   assert.equal(refused.status, 2, 'a name with a space in it is no branch');
   assert.equal(refused.stdout, '');

@@ -1,20 +1,18 @@
 // Purpose: read the changed files and lines of a range (or of a delta round) from git for review-tier.
-// Exports: MAX_READING, parsePatch(text), baseOf(top, requested) -> sha, checkRange(top, range), readRange(top, range),
+// Exports: MAX_READING, parsePatch(text), readRange(top, range),
 //   readDelta(top, base, reviewedRef), newFileReader(top, rev), functionNames(files), redefinedNames(files), requiredReadingFor(top, files).
+// The base and the sides of a range are resolved in lib/revisions.mjs; this module reads ranges of shas.
 // Invariants: git runs through git-tidy's runGit (no shell, no repository from the environment). A range or sha that starts
 //   with `-` is refused, so it can never be read as an option. Patches are read with fixed flags (PATCH_FLAGS), so the repository's
 //   own diff config and attributes cannot change what is read; the CLI switches replace refs off for every git call. Only paths and line numbers leave this module through the
 //   report; line texts stay in memory for the class tests. Required reading and the patch-list range are written with names as data
 //   (lib/brief-data.mjs): they go into briefs as they are.
 import { UsageError, gitFlag, gitText, runGit } from '../../git-tidy/lib/git.mjs';
-import { asData, placeText } from './brief-data.mjs';
+import { placeText } from './brief-data.mjs';
 
 export const MAX_READING = 20; // callers and callees listed as required reading
 const MAX_WHOLE_FILE_CHARS = 1 << 20;
 const MIN_NAME_LENGTH = 3;
-const BASE_FALLBACKS = ['main', 'master', 'develop'];
-const BRANCH_REFS = 'refs/heads/';
-const FULL_SHA = /^[0-9a-f]{40}$/;
 // What every patch is printed with, whatever the repository's own config and attributes say (security S6 of lane r7-delta: the fix's writer
 // controls both, and neither shows in a diff): --text reads a file marked `-diff` or `binary` in .git/info/attributes as the text it is,
 // no external diff or textconv runs, and the prefixes are fixed (diff.noprefix and diff.mnemonicPrefix would change the `+++ b/path` lines).
@@ -35,53 +33,6 @@ const NOT_A_FUNCTION = new Set(['if', 'for', 'while', 'switch', 'catch', 'functi
 // Any name a line defines (a function, a constant, a class, a type): what a fix can remove, rename or redefine under its users.
 const NAME_DEFINITION = /\b(?:const|let|var|class|function\s*\*?|def|func|fn|type|interface|enum)\s+([A-Za-z_$][\w$]*)/;
 const FUNCTION_DEFINITION = /\bfunction\s*\*?\s+([A-Za-z_$][\w$]*)|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>|\b(?:def|func|fn)\s+([A-Za-z_$][\w$]*)/;
-
-/**
- * The sha of a base the caller or the fallback list names, or null. A name is read only as the local branch `refs/heads/<name>`, the ref
- * git-tidy lands on: a tag, `refs/<name>` or a file `$GIT_DIR/<name>` of the same name, which git's short-name lookup would take first,
- * is never the base (security B3 of lane r7-delta: one such ref moved the lane start and made a fix round lighter). A full sha is itself.
- */
-function shaOfBase(top, name) {
-  const args = FULL_SHA.test(name) ? ['rev-parse', '--verify', '--quiet', `${name}^{commit}`] : ['show-ref', '--verify', '--hash', `${BRANCH_REFS}${name}`];
-  const { status, stdout } = runGit(top, args);
-  return status === 0 ? stdout.trim() : null;
-}
-
-/**
- * Where the lane starts: `--base` when given, else the one of main, master, develop that exists as a local branch. It is resolved
- * once, and every range of the run is built from the sha, so no ref made later or elsewhere can move it.
- * @param {string} top the repository's top folder
- * @param {string | null} requested what `--base` got: a local branch name or a full 40-character sha
- * @returns {string} the base's full sha
- * @throws {UsageError} for a base that is no local branch and no full sha, for no fallback branch, and for more than one
- */
-export function baseOf(top, requested) {
-  if (requested) {
-    const sha = shaOfBase(top, requested);
-    if (sha === null) throw new UsageError(`unknown base ${asData(requested)}: --base takes a local branch (read as refs/heads/<name>, never a tag or another ref of that name) or a full 40-character sha`);
-    return sha;
-  }
-  const found = BASE_FALLBACKS.filter((name) => shaOfBase(top, name) !== null);
-  if (found.length === 0) throw new UsageError('no base branch (main, master, develop); pass --base <branch>');
-  if (found.length > 1) throw new UsageError(`more than one base branch exists here (${found.join(', ')}): name the base with --base <branch>, the one this lane lands on`);
-  return shaOfBase(top, found[0]);
-}
-
-/** Splits `a..b` or `a...b` into its sides (an empty right side is HEAD); anything else is a UsageError. */
-function sidesOf(range) {
-  const match = /^([^\s.][^\s]*?)\.{2,3}([^\s.]*[^\s]*)?$/.exec(range);
-  if (match === null || /\.{4}/.test(range)) throw new UsageError(`bad range "${range}": use <a>..<b> or <a>...<b>`);
-  return [match[1], match[2] || 'HEAD'];
-}
-
-/** Checks both sides of a range name a commit; returns the right side (the tree the new files are read from). */
-export function checkRange(top, range) {
-  const sides = sidesOf(range);
-  for (const side of sides) {
-    if (side.startsWith('-') || !gitFlag(top, ['rev-parse', '--verify', '--quiet', `${side}^{commit}`])) throw new UsageError(`unknown revision "${side}" in range "${range}"`);
-  }
-  return sides[1];
-}
 
 /**
  * The path of a `+++ b/<path>` or `--- a/<path>` line. Git ends the line with a TAB when the path holds a space: that TAB is no part of the
