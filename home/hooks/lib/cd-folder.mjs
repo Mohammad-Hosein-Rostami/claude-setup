@@ -1,6 +1,6 @@
 // The folders a command line may be in while the Bash guard reads it, as far as the line's `cd`s can be known. Read by pre-bash-guard.mjs.
 // Exports: newFolder(cwd); enterSegment(folder, seg, parsed, words); leaveSegment(folder, parsed, {project, scope});
-// possibleFolders(folder) -> (folder | null)[]; maybeFolders(folder) -> (folder | null)[]; nextCwd(parsed, cwd, project, scope) -> folder | null;
+// possibleFolders(folder, seg, work) -> (folder | null)[]; maybeFolders(folder) -> (folder | null)[]; nextCwd(parsed, cwd, project, scope) -> folder | null;
 // MAX_POSSIBLE_FOLDERS.
 // A shell line does not always say which folder a command runs in: after `cd src; x` the `cd` may have failed, so `x` runs in `src` or in
 // the folder before it. The state is therefore a SET of possible folders (`dirs`), and the guard judges a command once in every member
@@ -21,6 +21,8 @@
 // - A relative `cd` inside a loop or a function body is unknown too: the body may run again, and each run moves on from where the last
 //   one stopped (`cd ..` three times), so "before and after" does not list the folders. A loop ends at its `done`; a function body is
 //   not followed to its end, so the rest of the line counts as inside it.
+// - Judging a segment once more per extra folder is work the line pays for (possibleFolders): a script nested in a script could
+//   multiply it by MAX_POSSIBLE_FOLDERS at every level. A line that has spent its budget is judged with the folder unknown, and asks.
 // - An absolute `cd` is known wherever the line was: inside its chain the folder is that one, also after an unknown one (too many
 //   folders, `eval`, `source`, a loop). One unknown is final all the same: after a `cd`, `pushd` or `popd` whose own target could not be
 //   read (`followed` is null). The guard asked about the rest of such a line before it kept a set, and no rule here may drop an ask.
@@ -28,7 +30,7 @@
 // (`seg.joinedBy`, lib/shell-words.mjs) neither continues a chain nor has its `cd` believed; nothing here ever makes the set smaller
 // than the folders the shell can really be in, short of the limits named in pre-bash-guard.mjs.
 import { isAbsolute, resolve } from 'node:path';
-import { PWD_TARGET, expandHome, expandVars, isUnder, nativePath, sameFile } from './rm-paths.mjs';
+import { MAX_LINE_EXPANDED_CHARS, PWD_TARGET, expandHome, expandVars, isUnder, nativePath, sameFile } from './rm-paths.mjs';
 import { GIT_TOPLEVEL_WORD } from './shell-words.mjs';
 
 /** The most folders a command is judged in. A line whose `cd`s leave more open than this is not worth following: it asks like an unknown one. */
@@ -73,11 +75,20 @@ const cdpathIsSet = (assigns, assigned) => Boolean(process.env.CDPATH) || [...as
 export const newFolder = (cwd) => ({ dirs: cwd === null ? null : [cwd], passed: [], everIn: cwd === null ? [] : [cwd], followed: cwd, believes: false, cdLast: false, loops: 0, inFunction: false });
 
 /**
- * The folders the next command is judged in.
+ * The folders the next command is judged in. Every folder past the first means the segment is read once more; those characters are
+ * charged to the line's budget (lib/rm-paths.mjs newWork, the half that also bounds filled-in variables), so nested scripts cannot
+ * multiply the guard's work without end.
  * @param {ReturnType<typeof newFolder>} folder the line's state
- * @returns {(string | null)[]} every folder it may run in, or one null when that is unknown
+ * @param {string[]} seg the segment about to be judged
+ * @param {{expanded: number, spent: boolean}} work the line's budget (modified)
+ * @returns {(string | null)[]} every folder it may run in, or one null when that is unknown or the budget is spent (the line then asks)
  */
-export const possibleFolders = (folder) => folder.dirs ?? [null];
+export function possibleFolders(folder, seg, work) {
+  if (folder.dirs === null || work.spent) return [null];
+  work.expanded += (folder.dirs.length - 1) * seg.reduce((chars, word) => chars + word.length + 1, 0);
+  work.spent = work.expanded > MAX_LINE_EXPANDED_CHARS;
+  return work.spent ? [null] : folder.dirs;
+}
 
 /**
  * The folders an absolute target is held against when the folder is unknown (lib/rm-paths.mjs checkRm `maybeCwds`).

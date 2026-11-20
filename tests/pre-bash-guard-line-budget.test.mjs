@@ -99,6 +99,26 @@ test('a line exactly at the budget is judged, one reading more asks', () => {
   assert.ok(over.readings <= MAX_LINE_READINGS, `counted ${over.readings} readings`);
 });
 
+/** `text` as one single-quoted shell word. */
+const quoted = (text) => `'${text.replaceAll("'", "'\\''")}'`;
+/** A script that, after two `cd`s that may each have failed (four possible folders), runs itself `levels` deep and then `innermost`. */
+const nestedAfterCds = (levels, innermost) => Array.from({ length: levels }).reduce((script) => `cd a; cd b; sh -c ${quoted(script)}`, innermost);
+
+test('a script nested in scripts, each after cds that leave four folders open, is not judged four times more at every level: it asks', () => {
+  const outside = decide(nestedAfterCds(2, `${RM} -rf /etc/x`), ctx);
+  assert.ok(outside.reasons?.some((reason) => /rm -r outside the project \(\/etc\/x\)/.test(reason)), 'the nested script is read at every level');
+  const shallow = newWork();
+  assert.deepEqual(decide(nestedAfterCds(2, `${RM} -rf x`), { ...ctx, work: shallow }), { allow: true });
+  assert.equal(shallow.spent, false);
+  const deep = nestedAfterCds(7, `${RM} -rf x`);
+  assert.ok(deep.length < MAX_COMMAND_CHARS, `${deep.length} characters`);
+  const work = newWork();
+  const answer = decide(deep, { ...ctx, work });
+  assert.equal(answer.ask, true);
+  assert.ok(answer.reasons.includes(TOO_COMPLEX_REASON), answer.reason.slice(0, 300));
+  assert.ok(work.expanded <= MAX_LINE_EXPANDED_CHARS + 4 * MAX_COMMAND_CHARS, `read ${work.expanded} characters more than once`); // the segment that tips it over is counted, not judged again
+});
+
 test('once the budget is spent no later rm on the line is read, and a fresh line starts with a fresh budget', () => {
   const env = { ...ctx, vars: new Map(), work: { readings: MAX_LINE_READINGS, spent: false } };
   assert.equal(checkRm(['-rf', 'dist'], env), TOO_COMPLEX_REASON);
