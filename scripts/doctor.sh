@@ -75,10 +75,33 @@ check_plugin_parity() {
   if [ -z "$diff" ]; then ok "plugins.json matches base.json enabledPlugins"; else bad "plugin parity: $diff"; fi
 }
 
+# True when version $1 (X.Y.Z) is $2 or later. The parts are compared as numbers: 2.1.99 is older than 2.1.295.
+version_at_least() {
+  local IFS=. i
+  local -a have=($1) want=($2)
+  for i in 0 1 2; do
+    if [ "${have[$i]:-0}" -gt "${want[$i]:-0}" ]; then return 0; fi
+    if [ "${have[$i]:-0}" -lt "${want[$i]:-0}" ]; then return 1; fi
+  done
+  return 0
+}
+
+# Node 22.15 or later: the guard's Windows path tests need module.registerHooks (added in 22.15) and are skipped without it.
 check_node() {
-  local major
-  major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-  if [ "$major" -ge 22 ]; then ok "node $major"; else bad "node >= 22 required (found ${major})"; fi
+  local version
+  version="$(node -p 'process.versions.node' 2>/dev/null | grep -Eo '^[0-9]+\.[0-9]+\.[0-9]+' || true)"
+  if version_at_least "${version:-0.0.0}" 22.15.0; then ok "node $version"
+  else bad "node >= 22.15 required (found ${version:-none}): the guard's Windows path tests need module.registerHooks and are skipped without it"; fi
+}
+
+# Claude Code 2.1.295 or later: the Bash guard's entry in settings/base.json relies on `onFailure: "block"`. An older CLI ignores it,
+# and a guard that dies or times out then lets the command run.
+check_claude_version() {
+  local version
+  version="$(claude --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+  if [ -z "$version" ]; then warn "claude --version gave no version: cannot check that the CLI honours onFailure: block (2.1.295 or later)"
+  elif version_at_least "$version" 2.1.295; then ok "claude $version (honours onFailure: block of the Bash guard)"
+  else bad "claude >= 2.1.295 required (found $version): an older CLI ignores onFailure: block, so a Bash guard that dies or times out lets the command run"; fi
 }
 
 check_hook_files() {
@@ -304,7 +327,7 @@ check_project_agents() {
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_disk_free; check_disk_clean; check_tools; check_lsp; check_ui_check; check_project_agents; check_workflows; check_env_names; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_disk_free; check_disk_clean; check_tools; check_lsp; check_ui_check; check_project_agents; check_workflows; check_env_names; check_repo_tests
 }
 run_checks
 exit "$BAD"
