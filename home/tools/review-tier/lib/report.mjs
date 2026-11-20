@@ -92,7 +92,7 @@ export function buildReport({ files, laneFiles = null, readNewFile, landing, add
     fileClasses: { ...laneClasses, ...fileClasses },
     reviews: buildReviews(reviewInput),
     waivable: buildWaivable(reviewInput),
-    weakened: weakenedChecks(files),
+    weakened: weakenedChecks(files).map((entry) => ({ ...entry, place: placeText(entry.path, entry.line) })),
     principles: principlesOf(triggers),
     deltaOf,
     prior,
@@ -117,7 +117,7 @@ export function formatText(report) {
     }
   }
   lines.push(report.waivable === null ? 'waivable: no' : `waivable: yes (${report.waivable.reviews.length} review before land, ${report.waivable.audit.length} audit after it)`);
-  lines.push(`weakened: ${report.weakened.length === 0 ? 'none' : report.weakened.map((entry) => `${placeText(entry.path, entry.line)} ${entry.kind}`).join(', ')}`);
+  lines.push(`weakened: ${report.weakened.length === 0 ? 'none' : report.weakened.map((entry) => `${entry.place} ${entry.kind}`).join(', ')}`);
   lines.push(`principles: ${report.principles.join(', ') || 'none'}`);
   for (const file of report.prior?.files ?? []) lines.push(`prior: ${file.file} sha256 ${file.sha256}, ${file.blocking} blocking, ${file.shouldFix} should-fix${file.ids.length > 0 ? `, ids ${file.ids.join(', ')}` : ''}`);
   // A class the lead added by hand is known to no later run, so the line repeats it: copied as it is, the fix round loses nothing.

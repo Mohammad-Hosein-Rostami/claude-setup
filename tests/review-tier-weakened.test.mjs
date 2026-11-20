@@ -61,6 +61,6 @@ test('only test files and test, lint and type config are read; source and docs a
 
 test('buildReport carries the list as `weakened`, empty when nothing is weakened', () => {
   const base = { readNewFile: () => null, landing: false, addClasses: [], laneClasses: null, range: 'main...HEAD', deltaOf: null, requiredReading: [] };
-  assert.deepEqual(buildReport({ ...base, files: [changed(TEST_FILE, ["test.only('a', fn);"])] }).weakened, [{ path: TEST_FILE, line: 1, kind: 'only' }]);
+  assert.deepEqual(buildReport({ ...base, files: [changed(TEST_FILE, ["test.only('a', fn);"])] }).weakened, [{ path: TEST_FILE, line: 1, kind: 'only', place: `${TEST_FILE}:1` }]);
   assert.deepEqual(buildReport({ ...base, files: [changed('src/a.mjs', ['const a = 1;'])] }).weakened, []);
 });
