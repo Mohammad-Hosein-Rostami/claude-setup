@@ -110,12 +110,13 @@ test('a script nested in scripts, each after cds that leave four folders open, i
   const shallow = newWork();
   assert.deepEqual(decide(nestedAfterCds(2, `${RM} -rf x`), { ...ctx, work: shallow }), { allow: true });
   assert.equal(shallow.spent, false);
-  const deep = nestedAfterCds(7, `${RM} -rf x`);
+  const deep = nestedAfterCds(7, 'ls -la'); // no rm in it: the budget of rm target readings is never touched, only the charge per extra folder
   assert.ok(deep.length < MAX_COMMAND_CHARS, `${deep.length} characters`);
   const work = newWork();
   const answer = decide(deep, { ...ctx, work });
   assert.equal(answer.ask, true);
-  assert.ok(answer.reasons.includes(TOO_COMPLEX_REASON), answer.reason.slice(0, 300));
+  assert.deepEqual(answer.reasons, [TOO_COMPLEX_REASON]);
+  assert.equal(work.readings, 0);
   assert.ok(work.expanded <= MAX_LINE_EXPANDED_CHARS + 4 * MAX_COMMAND_CHARS, `read ${work.expanded} characters more than once`); // the segment that tips it over is counted, not judged again
 });
 
