@@ -16,6 +16,7 @@
 // Exit codes: 0 printed, 1 git failed, 2 usage (bad range, unknown sha or class, bad flag).
 // Invariants: read-only on the repository; the only write is one line in the log (REVIEW_TIER_LOG overrides its path).
 //   Line texts are never printed or logged (see tiers.mjs), and neither is the text of the --prior file (lib/prior.mjs).
+//   Every git call runs with GIT_NO_REPLACE_OBJECTS=1: the commits and files read are the real ones, never a replace ref's.
 import { readFileSync, statSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { UsageError, gitText } from '../git-tidy/lib/git.mjs';
@@ -57,7 +58,7 @@ function parseArgs(argv) {
     else throw new UsageError(`one range only. ${USAGE}`);
   }
   for (const name of options.addClasses) {
-    if (!(name in CLASS_TIER)) throw new UsageError(`unknown class "${name}" for --add-class (one of: ${Object.keys(CLASS_TIER).join(', ')})`);
+    if (!Object.hasOwn(CLASS_TIER, name)) throw new UsageError(`unknown class "${name}" for --add-class (one of: ${Object.keys(CLASS_TIER).join(', ')})`);
   }
   if (options.delta !== null && options.range !== null) throw new UsageError(`--delta names its own range: give a range or --delta, not both. ${USAGE}`);
   if (options.delta !== null && options.prior === null) throw new UsageError(`--delta needs --prior <findings-file>: a fix round names the review report of the round before (a lane's first review reads the whole range). ${USAGE}`);
@@ -87,7 +88,7 @@ function readLaneClasses(file) {
     if (!Array.isArray(names)) throw new UsageError(`--lane-classes ${file}: fileClasses["${path}"] must be a list`);
     fileClasses[path] = names.filter((name) => KNOWN_NAMES.has(name));
   }
-  return { fileClasses, classes: Array.isArray(parsed.classes) ? parsed.classes.filter((name) => name in CLASS_TIER) : [] };
+  return { fileClasses, classes: Array.isArray(parsed.classes) ? parsed.classes.filter((name) => Object.hasOwn(CLASS_TIER, name)) : [] };
 }
 
 /**
@@ -123,6 +124,8 @@ function run(options) {
 }
 
 function main(argv) {
+  // A replace ref (`git replace <fix commit> <harmless commit>`) shows in no diff and would swap what every git call below reads.
+  process.env.GIT_NO_REPLACE_OBJECTS = '1';
   try {
     run(parseArgs(argv));
     return 0;

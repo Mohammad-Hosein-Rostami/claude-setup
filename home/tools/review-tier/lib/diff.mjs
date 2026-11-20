@@ -2,7 +2,8 @@
 // Exports: MAX_READING, parsePatch(text), baseOf(top, requested), checkRange(top, range), readRange(top, range),
 //   readDelta(top, base, reviewedRef), newFileReader(top, rev), functionNames(files), redefinedNames(files), requiredReadingFor(top, files).
 // Invariants: git runs through git-tidy's runGit (no shell, no repository from the environment). A range or sha that starts
-//   with `-` is refused, so it can never be read as an option. Only paths and line numbers leave this module through the
+//   with `-` is refused, so it can never be read as an option. Patches are read with fixed flags (PATCH_FLAGS), so the repository's
+//   own diff config and attributes cannot change what is read; the CLI switches replace refs off for every git call. Only paths and line numbers leave this module through the
 //   report; line texts stay in memory for the class tests. Required reading and the patch-list range are written with names as data
 //   (lib/brief-data.mjs): they go into briefs as they are.
 import { UsageError, gitFlag, gitText, runGit } from '../../git-tidy/lib/git.mjs';
@@ -12,10 +13,20 @@ export const MAX_READING = 20; // callers and callees listed as required reading
 const MAX_WHOLE_FILE_CHARS = 1 << 20;
 const MIN_NAME_LENGTH = 3;
 const BASE_FALLBACKS = ['main', 'master', 'develop'];
-// Fixed prefixes: diff.noprefix and diff.mnemonicPrefix would change the `+++ b/path` lines parsePatch cuts.
-const PATH_PREFIXES = ['--src-prefix=a/', '--dst-prefix=b/'];
-const DIFF_FLAGS = ['-c', 'core.quotePath=false', 'diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', '-M', ...PATH_PREFIXES];
-const HEADER_PREFIX_LENGTH = '+++ b/'.length;
+// What every patch is printed with, whatever the repository's own config and attributes say (security S6 of lane r7-delta: the fix's writer
+// controls both, and neither shows in a diff): --text reads a file marked `-diff` or `binary` in .git/info/attributes as the text it is,
+// no external diff or textconv runs, and the prefixes are fixed (diff.noprefix and diff.mnemonicPrefix would change the `+++ b/path` lines).
+const PATCH_FLAGS = ['--no-color', '--no-ext-diff', '--no-textconv', '--text', '-M', '--src-prefix=a/', '--dst-prefix=b/'];
+const QUOTE_PATH_OFF = ['-c', 'core.quotePath=false'];
+const DIFF_FLAGS = [...QUOTE_PATH_OFF, 'diff', '-U0', ...PATCH_FLAGS];
+// A patch key is made with three context lines, pinned twice: `diff.context` 0 in the repo config would make a moved line the same patch again.
+const KEY_CONTEXT_LINES = 3;
+const HEADER_MARK_LENGTH = '+++ '.length;
+const SIDE_PREFIX_LENGTH = 'b/'.length;
+// The escapes git writes in a quoted path (quote.c): a letter, or three octal digits for any other control character.
+const C_ESCAPES = { a: '\x07', b: '\b', t: '\t', n: '\n', v: '\v', f: '\f', r: '\r', '"': '"', '\\': '\\' };
+const C_ESCAPE = /\\([0-7]{3}|["\\abtnvfr])/g;
+const OCTAL = 8;
 const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$/;
 const CALL = /(?<![.\w$])([A-Za-z_$][\w$]*)\(/g;
 const NOT_A_FUNCTION = new Set(['if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'typeof', 'await', 'new', 'import', 'require', 'super']);
@@ -47,8 +58,20 @@ export function checkRange(top, range) {
   return sides[1];
 }
 
-/** The path of a `+++ b/<path>` or `--- a/<path>` line. Git ends the line with a TAB when the path holds a space: that TAB is no part of the name. */
-const pathOf = (headerLine) => headerLine.slice(HEADER_PREFIX_LENGTH).replace(/\t$/, '');
+/**
+ * The path of a `+++ b/<path>` or `--- a/<path>` line. Git ends the line with a TAB when the path holds a space: that TAB is no part of the
+ * name. A path with a quote, a backslash or a control character is printed C-quoted (`+++ "b/a\"b.md"`, also with core.quotePath=false):
+ * read as it stands it would be another file than the one `--name-only -z` lists, and a gate file would lose its class (security N12).
+ */
+function pathOf(headerLine) {
+  const side = headerLine.slice(HEADER_MARK_LENGTH);
+  if (!side.startsWith('"')) return side.slice(SIDE_PREFIX_LENGTH).replace(/\t$/, '');
+  const unquoted = side.slice(1, side.lastIndexOf('"')).replace(C_ESCAPE, (_, code) => C_ESCAPES[code] ?? String.fromCharCode(parseInt(code, OCTAL)));
+  return unquoted.slice(SIDE_PREFIX_LENGTH);
+}
+
+/** The paths of a `--name-only -z` listing: NUL-separated, so no path is quoted or cut at a line break. */
+const namesOf = (listing) => listing.split('\0').filter((name) => name !== '');
 
 /**
  * Parses `git diff -U0` text into one entry per path (a path in several patches is merged).
@@ -92,7 +115,7 @@ function withHunklessFiles(names, files) {
 export function readRange(top, range) {
   const args = [range, '--'];
   // --no-renames: a pure rename lists both its paths, so a gate file renamed away is still read as changed.
-  const names = gitText(top, [...DIFF_FLAGS.slice(0, 2), 'diff', '--name-only', '--no-renames', ...args]).split('\n').filter((name) => name !== '');
+  const names = namesOf(gitText(top, [...QUOTE_PATH_OFF, 'diff', '--name-only', '-z', '--no-renames', ...args]));
   return withHunklessFiles(names, parsePatch(gitText(top, [...DIFF_FLAGS, ...args])));
 }
 
@@ -104,7 +127,7 @@ export function newFileReader(top, rev) {
   };
 }
 
-const showPatch = (top, commit) => gitText(top, [...DIFF_FLAGS.slice(0, 2), 'show', '-U0', '--format=', '--no-color', '-M', ...PATH_PREFIXES, commit]);
+const showPatch = (top, commit) => gitText(top, [...QUOTE_PATH_OFF, 'show', '-U0', '--format=', ...PATCH_FLAGS, commit]);
 
 /**
  * A fingerprint of one commit's patch: `git patch-id --verbatim` of its diff with context lines (as git-tidy's copy proof), so the same
@@ -112,7 +135,7 @@ const showPatch = (top, commit) => gitText(top, [...DIFF_FLAGS.slice(0, 2), 'sho
  * the lines around a hunk makes the patch fresh, which only adds to what a delta round reads.
  */
 function patchKey(top, commit) {
-  const patch = gitText(top, [...DIFF_FLAGS.slice(0, 2), 'show', '--format=', '--no-color', '--no-ext-diff', '--no-textconv', '-M', ...PATH_PREFIXES, commit]);
+  const patch = gitText(top, [...QUOTE_PATH_OFF, '-c', `diff.context=${KEY_CONTEXT_LINES}`, 'show', `-U${KEY_CONTEXT_LINES}`, '--inter-hunk-context=0', '--format=', ...PATCH_FLAGS, commit]);
   const { status, stdout, stderr } = runGit(top, ['patch-id', '--verbatim'], `${patch}\n`);
   if (status !== 0) throw new Error(`git patch-id failed for ${commit}: ${stderr.split('\n')[0]}`);
   return stdout.split(' ')[0].trim();
@@ -125,7 +148,7 @@ function freshPatches(top, base, reviewedSha) {
   const reviewed = new Set(commitsOf(top, `${base}..${reviewedSha}`).map((commit) => patchKey(top, commit)));
   const fresh = commitsOf(top, `${base}..HEAD`).filter((commit) => !reviewed.has(patchKey(top, commit)));
   const text = fresh.map((commit) => showPatch(top, commit)).join('\n');
-  const names = fresh.flatMap((commit) => gitText(top, [...DIFF_FLAGS.slice(0, 2), 'show', '--name-only', '--no-renames', '--format=', commit]).split('\n')).filter((name) => name !== '');
+  const names = fresh.flatMap((commit) => namesOf(gitText(top, [...QUOTE_PATH_OFF, 'show', '--name-only', '-z', '--no-renames', '--format=', commit])));
   return { range: `patches ${fresh.map((commit) => commit.slice(0, 8)).join(',') || 'none'} of ${asData(base)}..HEAD`, files: withHunklessFiles(names, parsePatch(text)) };
 }
 

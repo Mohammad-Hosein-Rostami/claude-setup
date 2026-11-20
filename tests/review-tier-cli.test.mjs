@@ -39,6 +39,22 @@ test('CLI: a bad range, an unknown sha or class, a missing flag value exit 2; a 
   assert.equal(spawnSync(process.execPath, [CLI], { cwd: outside, encoding: 'utf8', env: CLEAN_ENV }).status, 1);
 });
 
+test('security N9: a class name is looked up in the table itself: `constructor` and `toString` are unknown, for --add-class and in --lane-classes', () => {
+  const { dir, write, tier, json } = lane();
+  const reviewed = write('src/a.mjs', 'const a = 1;\n');
+  write('src/a.mjs', 'const a = 2;\n');
+  for (const name of ['constructor', 'toString', '__proto__']) {
+    const result = tier('--add-class', name);
+    assert.equal(result.status, 2, name);
+    assert.match(result.stderr, /unknown class/);
+  }
+  const forged = join(dir, '..', 'forged.json');
+  writeFileSync(forged, JSON.stringify({ fileClasses: {}, classes: ['constructor', 'toString', 'logic'] }));
+  const result = json('--delta', reviewed, '--prior', priorFile(), '--lane-classes', forged);
+  assert.equal(result.tier, 1, 'a name from the prototype chain is dropped, so the tier is a number');
+  assert.ok(!result.classes.includes('constructor'));
+});
+
 test('CLI: a range of two commits (the 8bb8d1d shape) is read as given', () => {
   const { write, json, dir } = lane();
   const first = write('src/session-lock.mjs', 'const a = 1;\n');

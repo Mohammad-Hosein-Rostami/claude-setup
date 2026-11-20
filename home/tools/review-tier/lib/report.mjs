@@ -41,9 +41,9 @@ function classesOf(fresh, lane, laneClasses, earlierClasses) {
   const all = mergedClasses(fresh.fileClasses, mergedClasses(lane?.fileClasses ?? {}, laneClasses ?? {}));
   // Outside a delta round only the files of the range count; a delta round keeps every file the lane has or had.
   const fileClasses = lane === null ? Object.fromEntries(Object.keys(fresh.fileClasses).map((path) => [path, all[path]])) : all;
-  const own = new Set(Object.values(fresh.fileClasses).flat().filter((name) => name in CLASS_TIER));
+  const own = new Set(Object.values(fresh.fileClasses).flat().filter((name) => Object.hasOwn(CLASS_TIER, name)));
   if (isSizeable(fresh.changedLines)) own.add('size');
-  const classes = new Set([...own, ...Object.values(fileClasses).flat().filter((name) => name in CLASS_TIER), ...(lane === null ? [] : earlierClasses)]);
+  const classes = new Set([...own, ...Object.values(fileClasses).flat().filter((name) => Object.hasOwn(CLASS_TIER, name)), ...(lane === null ? [] : earlierClasses)]);
   return { fileClasses, classes, own };
 }
 
