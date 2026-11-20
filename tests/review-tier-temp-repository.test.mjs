@@ -1,6 +1,7 @@
 // Tests of the two small parts under review-tier's verified import (lane r7-delta, fix round 5): the pack writer (lib/pack-writer.mjs:
 // git must read back exactly the bytes that went in, for every size) and the tool's own temp folder (lib/temp-repository.mjs: it holds
-// only what this run put there (K7, N27); the run removes its own folder from inside and no other folder (fix 7, G2, K4)).
+// only what this run put there (K7, N27); the run removes its own folder and no other folder (fix 7, G2, K4)). The races against the
+// folder's reads and its removal are in review-tier-temp-folder-races.test.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -14,8 +15,6 @@ import { entryHeader, openPack } from '../home/tools/review-tier/lib/pack-writer
 import { TEMP_PREFIX, checkPackFiles, checkTempFolder, makeTempFolder, notePackFiles, removeTempFolder, snapshotOf } from '../home/tools/review-tier/lib/temp-repository.mjs';
 
 const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
-const CHILD_TIMEOUT_MS = 60_000; // a child that blocks is killed: the case fails instead of blocking the test runner
-const TEMP_REPOSITORY = new URL('../home/tools/review-tier/lib/temp-repository.mjs', import.meta.url).href;
 const POSIX = process.platform !== 'win32'; // a symlink needs a privilege on Windows, and os.tmpdir() reads TEMP there
 const oidOf = (type, content) => createHash('sha1').update(`${type} ${content.length}\0`).update(content).digest('hex');
 /** A bare repository as the tool makes its own: no template, nothing but HEAD, config, objects/ and refs/. */
@@ -164,38 +163,6 @@ function filledFolder(folder, extra = {}) {
   for (const [file, text] of Object.entries({ HEAD: 'ref: refs/heads/main\n', config: '[core]\n\tbare = true\n', ...extra })) writeFileSync(join(folder, file), text);
   return folder;
 }
-
-test('fix 7 K4: the run\'s own folder is removed from inside: a folder in it swapped for a link during the removal stops the removal, nothing outside it is removed, and the working directory is put back', { skip: !POSIX && 'a symlink needs a privilege on Windows' }, () => {
-  const victim = realpathSync(makeTempDir('review-tier-victim-'));
-  mkdirSync(join(victim, 'inner'));
-  for (const file of ['keep.txt', 'inner/keep.txt']) writeFileSync(join(victim, file), 'keep\n');
-  const code = `
-import fs from 'node:fs';
-import { syncBuiltinESMExports } from 'node:module';
-const { makeTempFolder, removeTempFolder } = await import(${JSON.stringify(TEMP_REPOSITORY)});
-const made = makeTempFolder();
-fs.mkdirSync(made.path + '/objects/pack', { recursive: true });
-for (const file of ['HEAD', 'objects/pack/pack-x.pack']) fs.writeFileSync(made.path + '/' + file, 'x');
-const objects = made.path + '/objects';
-let swapped = false;
-const swap = () => { if (!swapped) { swapped = true; fs.renameSync(objects, made.path + '/aside'); fs.symlinkSync(process.env.CASE, objects); } };
-const [lstat, readdir] = [fs.lstatSync, fs.readdirSync];
-// The swap comes at the window of the removal under test: right after its lstat of the folder by its bare name (this module), or right
-// before a read of the folder by its path (Node 22's rmSync, which reads a folder again by its path after rmdir found it not empty).
-fs.lstatSync = (path, ...rest) => { const info = lstat(path, ...rest); if (String(path) === 'objects') swap(); return info; };
-fs.readdirSync = (path, ...rest) => { if (String(path) === objects) swap(); return readdir(path, ...rest); };
-syncBuiltinESMExports();
-const cwd = process.cwd();
-const problem = removeTempFolder(made);
-console.log(JSON.stringify({ problem, swapped, back: process.cwd() === cwd, left: fs.existsSync(made.path + '/aside/pack/pack-x.pack') }));`;
-  const result = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', env: { ...process.env, TMPDIR: realpathSync(makeTempDir('review-tier-tmpdir-')), CASE: victim }, timeout: CHILD_TIMEOUT_MS });
-  assert.equal(result.status, 0, result.stderr);
-  const { problem, swapped, back, left } = JSON.parse(result.stdout);
-  assert.ok(swapped, 'the link was swapped in during the removal');
-  assert.deepEqual(['keep.txt', 'inner/keep.txt'].map((file) => readFileSync(join(victim, file), 'utf8')), ['keep\n', 'keep\n'], 'nothing outside the folder was removed');
-  assert.match(problem ?? '', /^the temp folder .*review-tier-git-.* was not removed in full, the rest is left there: a folder in it was replaced while it was being removed$/);
-  assert.ok(back && left, 'the working directory is put back, and the rest of the folder is left');
-});
 
 test('fix 7 K4: removing the run\'s own folder takes every file and folder in it, and a folder that is already gone is fine', () => {
   const made = makeTempFolder();
