@@ -248,12 +248,21 @@ test('segments keeps redirections together and drops heredoc bodies', () => {
 const runHook = (input, env = {}) =>
   spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: hookEnv({ CLAUDE_PROJECT_DIR: PROJECT, ...env }) });
 
-test('hook contract: bad JSON, empty stdin and missing command exit 0 silently', () => {
-  for (const input of ['not json', '', '{}', JSON.stringify({ tool_input: {} }), JSON.stringify({ tool_input: { command: 5 } })]) {
+// This test pinned a silent exit 0 for these inputs. A hook that exits 0 with no output lets the call run, and `onFailure: "block"` does
+// not cover that case, so unreadable input was the one way left for the guard to fail open.
+test('hook contract: input that is not hook JSON with a string command asks (it used to exit 0 silently, which lets the call run unchecked)', () => {
+  const valid = JSON.stringify({ cwd: PROJECT, tool_input: { command: 'ls' } });
+  const UNREADABLE = ['not json', '', '{}', '[]', 'null', '5', JSON.stringify({ tool_input: {} }), JSON.stringify({ tool_input: { command: 5 } }),
+    JSON.stringify({ tool_input: { command: ['ls'] } }), JSON.stringify({ command: 'ls' }), valid.slice(0, -1), `\uFEFF${valid}`];
+  for (const input of UNREADABLE) {
     const r = runHook(input);
     assert.equal(r.status, 0, input);
-    assert.equal(r.stdout + r.stderr, '', input);
+    assert.equal(r.stderr, '', input);
+    const out = JSON.parse(r.stdout).hookSpecificOutput;
+    assert.deepEqual([out.hookEventName, out.permissionDecision], ['PreToolUse', 'ask'], input);
+    assert.match(out.permissionDecisionReason, /^the guard could not read its input/, input);
   }
+  assert.equal(runHook(valid).stdout, '', 'the same input, whole, is read and allowed');
 });
 
 test('hook contract: an allowed command is silent; a rule hit asks (no GUI: the native ask) and never exits 2', () => {

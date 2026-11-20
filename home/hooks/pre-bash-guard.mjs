@@ -28,10 +28,10 @@
 // the command is also clean with the values neutralised. An ask with any other reason always shows its dialog and remembers nothing.
 // ALLOW + LOG: `sed -i`, heredoc and inline-interpreter writes to code files are allowed; their paths go to the edit log
 // so the Stop typecheck gate covers them (lib/code-writes.mjs, lib/edit-log.mjs).
-// Everything else (and any input it cannot parse) is allowed. Reading files, `.env` included, is never blocked.
+// Everything else (and any command text it cannot parse) is allowed. Reading files, `.env` included, is never blocked.
 //
 // This is a safety net against model mistakes, not a sandbox. Invariants: it never executes the command, it never fails open on
-// its own errors (once a command was read, an exception anywhere asks "guard error": decideSafely for the rules, main for everything after them; a hook process that dies or times out blocks the call through `onFailure: "block"` in settings/base.json), and it prefers a missed block over a false block of a normal dev command.
+// its own errors (hook input that is not JSON with a string command asks "the guard could not read its input"; once a command was read, an exception anywhere asks "guard error": decideSafely for the rules, main for everything after them; a hook process that dies or times out blocks the call through `onFailure: "block"` in settings/base.json), and it prefers a missed block over a false block of a normal dev command.
 // Position independence: after the command word, every later word that is a dangerous verb (rm, git, dd, mkfs, gh, publish, ssh,
 // psql, shells ...) is checked as a command too, so unknown wrappers (`ionice -c3 rm -rf /x`) need no list (lib/dangerous-scan.mjs);
 // the scan is skipped after echo/grep/man/git/docker/ssh and similar. `$'\x72m'` ANSI-C words are decoded (lib/ansi-c.mjs); `eval` of a
@@ -266,21 +266,29 @@ function answerFor(command, input) {
  * non-zero lets the command run). Built here, not through lib/timed-ask.mjs: this path must not depend on the code that just failed.
  * The log gets the error class and no command text.
  */
-function failedAnswer(error, input) {
-  const reason = `${GUARD_ERROR_REASON}: ${error instanceof Error ? error.name : typeof error}`;
+const failedAnswer = (error, input) => plainAsk(`${GUARD_ERROR_REASON}: ${error instanceof Error ? error.name : typeof error}`, input);
+
+function plainAsk(reason, input) {
   logDecision({ hook: 'pre-bash-guard', tool: 'Bash', decision: 'ask', outcome: 'guard-error', reason, command: '', cwd: input.cwd, session: input.session_id });
   return `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: reason } })}\n`;
 }
 
-async function main() {
-  let input;
+export const UNREADABLE_INPUT_REASON = 'the guard could not read its input (not hook JSON with a string command): read the command yourself before allowing';
+
+/** The hook input, or undefined for anything that is not JSON with a string command (truncated or empty text, a BOM, an array, no tool_input). */
+function readInput(text) {
   try {
-    input = JSON.parse(await readStdin());
+    const input = JSON.parse(text);
+    return typeof input?.tool_input?.command === 'string' ? input : undefined;
   } catch {
-    return; // not hook JSON: nothing to guard
+    return undefined; // main asks: exit 0 with no output would let the call run unchecked
   }
-  const command = input?.tool_input?.command;
-  if (typeof command !== 'string') return;
+}
+
+async function main() {
+  const input = readInput(await readStdin());
+  if (input === undefined) return void process.stdout.write(plainAsk(UNREADABLE_INPUT_REASON, {}));
+  const { command } = input.tool_input;
   let answer;
   try {
     answer = answerFor(command, input);
