@@ -193,3 +193,16 @@ test('review R5-2 (C): a nested file the lane never touches (a caller in src/dee
   rewriteLooseObject(nested.dir, tree, 'tree', bytesOf(nested.dir, 'tree', treeWith(nested.dir, tree, 'x.mjs', stored(nested.dir, 'export const x = 1;\n'))));
   for (const args of nested.rounds) assertRefused(nested.tier(...args), tree, `the nested tree, ${args[0]}`);
 });
+
+test('review N6-1 (L10): a fallback base branch whose commit is rewritten in place is exit 2 naming the commit, before the base is chosen', () => {
+  const { dir, raw, write } = lane();
+  write('src/run.mjs', PLAIN);
+  git(dir, 'checkout', '-q', '-b', 'develop', 'main');
+  const develop = write('develop.txt', 'develop\n');
+  git(dir, 'checkout', '-q', 'lane');
+  rewriteLooseObject(dir, develop, 'commit', git(dir, 'cat-file', 'commit', develop).replace('edit develop.txt', 'edit something else'));
+  const result = raw('--json');
+  assert.equal(result.status, 2, result.stderr);
+  assert.equal(result.stdout, '');
+  assert.ok(result.stderr.includes(`object ${develop} does not hash to its name`), result.stderr);
+});

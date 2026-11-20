@@ -25,6 +25,7 @@ const EXPECTED = {
   'a path that is not UTF-8': [NOT_UTF8, NOT_UTF8],
   'the composite lane (merge of main, rename with edit, mode, binary, space, submodule)': [[8, 2], [2, 2]],
   'the composite lane rebuilt on a moved main': [[8, 2], [8, 2], [8, 2]],
+  'a lane rebased onto a main that changed the same file, then a fix': [[2, 1]],
 };
 
 for (const shape of HONEST_SHAPES) {

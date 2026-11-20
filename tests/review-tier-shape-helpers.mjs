@@ -1,7 +1,8 @@
 // Purpose: honest lane histories of every shape review-tier's import has to carry (lane r7-delta, fix round 5, spec check K9): merges
 //   with two and three parents, two merge bases, a start that is the root commit, an empty commit, only deletions, a file that becomes a
 //   link or a folder, a submodule pointer that comes, moves and goes, attributes in a sub-folder, a range whose end is not HEAD, range
-//   sides written with ~ and ^, a path that is not UTF-8, and the composite lane of probe p24 with its rebuilt fix round.
+//   sides written with ~ and ^, a path that is not UTF-8, the composite lane of probe p24 with its rebuilt fix round, and a lane rebased
+//   onto a main that changed the same file.
 // Exports: HONEST_SHAPES: [{ name, build() -> { dir, log, calls: [{ label, args }] } }].
 // Used by: tests/review-tier-honest-shapes.test.mjs (each call's exit code and counts), and by a differential run of two versions of the
 //   tool over the same repositories (the calls are plain argument lists, so any CLI can be run with them in `dir`).
@@ -221,6 +222,31 @@ function compositeRebuilt() {
   return { dir, log: made.log, calls: [first('main...HEAD', '--landing'), fixRound(rebuild.reviewed, rebuild.start, 'security,logic,docs', ['--rebased-onto', tip]), { ...fixRound(rebuild.reviewed, tip, 'security,logic,docs'), label: 'fix round with the new tip as --base' }] };
 }
 
+/**
+ * A lane rebased onto a main that changed the same file (no conflict), then a fix (review R6-2): the start's side of that file is in
+ * no other diff the fix round runs, so only the (start, tip) pair of the import copies it.
+ */
+function rebasedOverSameFile() {
+  const repo = shapeRepo();
+  const { dir, put } = repo;
+  const text = (top, last) => `export const a = ${top};\n${Array.from({ length: 19 }, (_, at) => `// line ${at}`).join('\n')}\n// ${last}\n`;
+  const start = repo.onMain(() => {
+    put('src/a.mjs', text(1, 'base'));
+    put('src/b.mjs', 'export const b = 1;\n');
+    repo.commitAll('start');
+  });
+  put('src/a.mjs', text(1, 'lane'));
+  const reviewed = repo.commitAll('lane: a');
+  git(dir, 'checkout', '-q', 'main');
+  put('src/a.mjs', text(2, 'base'));
+  const onto = repo.commitAll('main changes a too');
+  git(dir, 'checkout', '-q', 'lane');
+  git(dir, 'rebase', '-q', 'main');
+  put('src/b.mjs', 'export const b = 2;\n');
+  repo.commitAll('fix: b');
+  return built(repo, [fixRound(reviewed, start, 'logic', ['--rebased-onto', onto])]);
+}
+
 export const HONEST_SHAPES = [
   { name: 'an octopus merge in the lane; range sides with ~ and ^', build: octopusMerge },
   { name: 'a criss-cross lane with two merge bases', build: crissCross },
@@ -234,4 +260,5 @@ export const HONEST_SHAPES = [
   { name: 'a path that is not UTF-8', build: notUtf8Name },
   { name: 'the composite lane (merge of main, rename with edit, mode, binary, space, submodule)', build: composite },
   { name: 'the composite lane rebuilt on a moved main', build: compositeRebuilt },
+  { name: 'a lane rebased onto a main that changed the same file, then a fix', build: rebasedOverSameFile },
 ];
