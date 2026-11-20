@@ -10,7 +10,7 @@
 // the first send is denied with the fix and the identical retry runs; next to an ask or bounce it is appended (table: lib/bounce-once.mjs) Every ask and its outcome is logged (lib/guard-log.mjs, no secrets).
 // Rules. DESTRUCTIVE (the dialog says "DESTRUCTIVE: ..."): force push (incl. -fu clusters and +refspec), `push --mirror`,
 // remote branch delete, rm -r of a whole folder (the working directory, a bare glob such as `*` or `./**/*` of it, the project root, home, `/`: lib/rm-paths.mjs),
-// rm -r outside the project (temp dirs allowed, a `cd` followed only inside its own `&&` chain: lib/cd-folder.mjs, `cd` to `~`, `$HOME` and `$(git rev-parse --show-toplevel)` (from inside
+// rm -r outside the project (temp dirs allowed, judged from every folder the line's `cd`s may have led to: lib/cd-folder.mjs, `cd` to `~`, `$HOME` and `$(git rev-parse --show-toplevel)` (from inside
 // the project only) is resolved, as are leading `~`/`$HOME`/`$TMPDIR`/`$CLAUDE_PROJECT_DIR` and variables assigned earlier in the line (the last assignment wins,
 // `VAR=$(mktemp -d)` is the temp dir, `..` is resolved after substitution; an unknown variable asks for `rm -r` only; lib/rm-paths.mjs;
 // $HOME, `/` and a drive root never count as the project), disk wipes (dd of=/dev/x, mkfs, wipefs, shred/blkdiscard on a device), rm -r run
@@ -61,7 +61,7 @@
 // code (`node -e`, `python -c`) unless it names a dangerous word, wrappers that take the command as ONE string (busybox), rimraf,
 // stdin paths that xargs hands to anything but rm -r, a credential sent by a tool off the sender list, copied first (`cp -r ~/.ssh /tmp/x`),
 // piped into ssh from a `{ }` group or loop, or passed as an ssh argument (`ssh h "$(cat key)"`), a function body that runs after a later `cd`, a `cd`
-// behind `env -C`/`sudo --chdir` or an unknown wrapper (a `cd` in a subshell, a pipeline, a job, a compound command or before `;` makes the folder unknown: relative rm -r targets then ask), an ssh alias that hides a production host, and the PowerShell tool (the hook matcher covers Bash only).
+// behind `env -C`/`sudo --chdir` or an unknown wrapper, a command of a loop body that runs again after a `cd` later in the body (a `cd` that may not have taken effect is judged from the folder before it and the one after; a relative one in a loop or a function body makes the folder unknown: relative rm -r targets then ask), an ssh alias that hides a production host, and the PowerShell tool (the hook matcher covers Bash only).
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { logCodeWrites } from './lib/code-writes.mjs';
@@ -82,7 +82,7 @@ import { outwardAsk } from './lib/outward.mjs';
 import { hostVariables, readProdHosts, remoteAsk } from './lib/remote.mjs';
 import { TOO_COMPLEX_REASON, checkRm, newScope, newWork, substituteKnownWords, trackAssignments } from './lib/rm-paths.mjs';
 import { groupBranches } from './lib/bare-glob.mjs';
-import { enterSegment, leaveSegment, newFolder } from './lib/cd-folder.mjs';
+import { enterSegment, leaveSegment, maybeFolders, newFolder, possibleFolders } from './lib/cd-folder.mjs';
 import { askUnlessRemembered } from './lib/remembered-ask.mjs';
 import { adviceOnce } from './lib/bounce-once.mjs';
 import { isAdviceReason, splitAdvice } from './lib/reason-classes.mjs';
@@ -172,19 +172,19 @@ function reasonsOf(command, { cwd, project, prodHosts, parse = tokenize, depth =
   const scope = newScope(cwd, project, command, work);
   const { segs, nested } = parse(command);
   const commands = [];
-  const folder = newFolder(cwd); // where the line's `cd`s led, null once they cannot be believed (lib/cd-folder.mjs)
+  const folder = newFolder(cwd); // the folders the line's `cd`s may have led to (lib/cd-folder.mjs)
   segs.forEach((seg, index) => {
     const words = substituteKnownWords(seg, scope);
     const parsed = asGitSubcommand(commandOf(words));
     commands.push({ ...parsed, piped: seg.piped === true }); // credential-send follows a pipe into ssh
     enterSegment(folder, seg, parsed, words);
-    const env = { cwd: folder.dir, maybeCwds: [folder.followed, folder.start, ...maybeCwds], groupTargets: groupBranches(segs, index), project, vars: scope.vars, splitWords: scope.splitWords, prodHosts, parse, depth: depth + 1, judged, line, work };
-    reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript }), ...gitRunValueReasons(words, parsed, env, reasonsOf), ...unreadableNameReasons(parsed.cmd, command, prodHosts));
-    if (parsed.cmd !== undefined) {
-      reasons.push(...checkCommand({ ...parsed, before: words.slice(0, parsed.at) }, env, segs[index + 1] ?? []));
-      reasons.push(...scanWrapped(words, parsed, (cmd, args, at) => checkCommand({ cmd, args, assigns: [], before: words.slice(0, at) }, env, [])));
-      leaveSegment(folder, seg, parsed, { project, scope });
+    for (const dir of possibleFolders(folder)) { // a command that may run in more than one folder is judged in each: it must be fine from all
+      const env = { cwd: dir, maybeCwds: [...maybeFolders(folder), ...maybeCwds], groupTargets: groupBranches(segs, index), project, vars: scope.vars, splitWords: scope.splitWords, prodHosts, parse, depth: depth + 1, judged, line, work };
+      reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript }), ...gitRunValueReasons(words, parsed, env, reasonsOf), ...unreadableNameReasons(parsed.cmd, command, prodHosts));
+      if (parsed.cmd === undefined) continue;
+      reasons.push(...checkCommand({ ...parsed, before: words.slice(0, parsed.at) }, env, segs[index + 1] ?? []), ...scanWrapped(words, parsed, (cmd, args, at) => checkCommand({ cmd, args, assigns: [], before: words.slice(0, at) }, env, [])));
     }
+    if (parsed.cmd !== undefined) leaveSegment(folder, parsed, { project, scope });
     trackAssignments(scope, seg);
   });
   const credentialSend = checkCredentialSend(commands); // one command line: the file may be read in one command and sent by another

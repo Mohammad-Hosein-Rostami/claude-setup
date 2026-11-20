@@ -1,36 +1,52 @@
-// The folder a command line is in while the Bash guard reads it, as far as the line's `cd`s can be believed. Read by pre-bash-guard.mjs.
-// Exports: newFolder(cwd) -> {dir, start, followed, moved, compound}; enterSegment(folder, seg, parsed, words); leaveSegment(folder, seg, parsed, {project, scope});
-// nextCwd(parsed, cwd, project, scope) -> folder | null.
-// `dir` is the folder the next command runs in, or null for "unknown": then a relative `rm -r` target asks and an absolute one is still
-// judged (lib/rm-paths.mjs). Unknown is final for the line: nothing here makes the folder known again.
-// `start` (where the line began) and `followed` (where its `cd`s lead when each is taken at its word, null when one cannot be read) are
-// the folders the line may be in once `dir` is unknown: an absolute target that names one of them, or a bare glob of it, still asks.
-// The rule fails closed: a `cd` (also `pushd`, `popd`) is believed only inside its own `&&` chain.
-// - After a `cd`, the next command is in the new folder only when `&&` joins it. Any other join (`;`, a newline, `||`, `|`, `&`, the end
-//   of a `( )` group) means the `cd` may have failed, or have run in a subshell, in the background or not at all: unknown.
-// - A `cd` is believed only where a chain can start (the start of the line, after `;` or a newline) or continue (`&&`), and only while
-//   the line has shown no compound command (`{ }`, `if`, `case`, a loop, a function body, `!`): in one it may run later, more than once
-//   or not at all. A `cd` right after `(`, `||`, `|` or `&` is not believed either.
-// - `eval`, `source` and `.` run text the guard does not read; `setopt autocd` and `shopt -s cdable_vars` change what a bare word or a
-//   `cd` argument means: unknown from there on.
-// - A target the shell resolves from state the guard does not have is unknown: `-` and `+N` (the folder stack), `~user`, an expansion,
-//   a glob, a bare drive (`C:` is the folder Windows remembers for that drive), and any relative target while CDPATH is set, in the
-//   line or in the environment.
+// The folders a command line may be in while the Bash guard reads it, as far as the line's `cd`s can be known. Read by pre-bash-guard.mjs.
+// Exports: newFolder(cwd); enterSegment(folder, seg, parsed, words); leaveSegment(folder, parsed, {project, scope});
+// possibleFolders(folder) -> (folder | null)[]; maybeFolders(folder) -> (folder | null)[]; nextCwd(parsed, cwd, project, scope) -> folder | null;
+// MAX_POSSIBLE_FOLDERS.
+// A shell line does not always say which folder a command runs in: after `cd src; x` the `cd` may have failed, so `x` runs in `src` or in
+// the folder before it. The state is therefore a SET of possible folders (`dirs`), and the guard judges a command once in every member
+// (possibleFolders): it runs unasked only when it is fine from all of them. null stands for "unknown": then a relative `rm -r` target
+// asks, and an absolute one is judged against every folder the line was ever seen in (maybeFolders).
+// The rules:
+// - Inside its own `&&` chain a `cd` (also `pushd`) is believed: `cd X && rm -r y` judges `y` in X alone, at the top level and inside
+//   `( )`, `{ }`, `if`/`then`/`else` and a `case` branch. A pipeline between two `&&` keeps the chain (`cd X && a | b && c`: `c` runs
+//   only when the `cd` did), unless the pipeline itself holds a `cd`.
+// - When the chain ends (`;`, a newline, `||`, `&`, a pipe after the `cd`, the end of a group), the `cd` may or may not have taken
+//   effect: the set becomes every folder the chain passed through, the one before each `cd` and the one after.
+// - A `cd` that cannot be taken at its word is added to the set at once instead of replacing it: one after `||`, `|` or `!`, and one
+//   behind a word that is not a plain shell prefix (`sudo cd x` changes nothing in this shell).
+// - A set over MAX_POSSIBLE_FOLDERS members is unknown. So is one with a member the guard cannot know: a target the shell resolves
+//   from state the guard lacks (`-`, `+N`, `~user`, an expansion, a glob, a bare drive, any relative target while CDPATH is set), a
+//   `popd`, and anything after `eval`, `source` or `.` (they run text the guard does not read) or after `setopt autocd` /
+//   `shopt -s cdable_vars` (they change what a bare word or a `cd` argument means).
+// - A relative `cd` inside a loop or a function body is unknown too: the body may run again, and each run moves on from where the last
+//   one stopped (`cd ..` three times), so "before and after" does not list the folders. A loop ends at its `done`; a function body is
+//   not followed to its end, so the rest of the line counts as inside it.
+// - An absolute `cd` is known whatever came before: inside its chain the folder is that one, also after an unknown one.
 // Invariants: pure apart from reading process.env.CDPATH; never touches the file system; a segment whose parser recorded no join
-// (`seg.joinedBy`, lib/shell-words.mjs) counts as "not `&&`".
+// (`seg.joinedBy`, lib/shell-words.mjs) neither continues a chain nor has its `cd` believed; nothing here ever makes the set smaller
+// than the folders the shell can really be in, short of the limits named in pre-bash-guard.mjs.
 import { isAbsolute, resolve } from 'node:path';
-import { KEYWORDS } from './command-of.mjs';
 import { PWD_TARGET, expandHome, expandVars, isUnder, nativePath, sameFile } from './rm-paths.mjs';
 import { GIT_TOPLEVEL_WORD } from './shell-words.mjs';
 
+/** The most folders a command is judged in. A line whose `cd`s leave more open than this is not worth following: it asks like an unknown one. */
+export const MAX_POSSIBLE_FOLDERS = 4;
+const MAX_REMEMBERED_FOLDERS = 16; // bounds the work per absolute target of a line with hundreds of `cd`s; the first ones seen are kept
 const MOVERS = new Set(['cd', 'pushd', 'popd']);
 const UNREAD_RUNNERS = new Set(['eval', 'source', '.']);
 const OPTION_SETTERS = new Set(['setopt', 'shopt', 'set']);
 const CD_OPTIONS = new Set(['autocd', 'cdablevars']);
-const COMPOUND_COMMANDS = new Set(['for', 'select', 'case', 'function', 'repeat', 'foreach', 'coproc']); // the keywords lib/command-of.mjs does not look through
+const LOOP_COMMANDS = new Set(['for', 'select', 'repeat', 'foreach']); // the loop words lib/command-of.mjs does not look through
+const LOOP_KEYWORDS = new Set(['while', 'until']);
+const LOOP_END = 'done';
+const FUNCTION_COMMAND = 'function';
+const FUNCTION_JOIN = '()'; // `f() { ...`: the body's first command is joined by the empty parentheses
+// words that may stand in front of a `cd` without changing whether or where it runs in this shell
+const PLAIN_PREFIXES = new Set(['{', 'if', 'then', 'else', 'elif', 'do', 'while', 'until', 'time', 'command', 'builtin']);
+const ASSIGNMENT_WORD = /^[A-Za-z_]\w*\+?=/;
 const CHAIN_JOIN = /^&&\n*$/; // `&&`, also with the line broken after it
-const START_JOIN = /^[;\n]*$/; // the start of the line, `;` or a newline
-const NO_JOIN = '?'; // stands for a missing `seg.joinedBy`: neither a chain nor a start
+const PIPE_JOIN = /^\|&?\n*$/;
+const UNSURE_JOIN = /\|&?\n*$/; // the last operator is `|`, `|&` or `||`: the `cd` runs in a subshell, or only when the command before failed
 const UNKNOWN_CD_TARGET = /^-|[~$`*?[\]{}]/;
 const STACK_OR_BARE_DRIVE = /^\+|^[a-zA-Z]:$/; // `+N` walks the folder stack; `C:` is the folder Windows remembers for that drive
 
@@ -46,45 +62,90 @@ const cdpathIsSet = (assigns, assigned) => Boolean(process.env.CDPATH) || [...as
 /**
  * The folder state at the start of a command line.
  * @param {string | null} cwd the folder the line starts in, null when unknown
- * @returns {{dir: string | null, start: string | null, followed: string | null, moved: boolean, compound: boolean}} dir: where the next
- *   command runs (null: unknown); start: where the line began; followed: where the `cd`s lead when each is taken at its word; moved: a
- *   `cd` was seen; compound: a compound command was seen
+ * @returns {{dirs: string[] | null, passed: string[] | null, everIn: string[], followed: string | null, believes: boolean,
+ *   cdLast: boolean, loops: number, inFunction: boolean}} dirs: the folders the next command may run in (null: unknown); passed: the
+ *   folders the current `&&` chain left behind; everIn: every folder a command of the line may have run in; followed: where the `cd`s
+ *   lead when each is taken at its word; believes: a `cd` in the current segment is believed; cdLast: the segment before was a `cd`;
+ *   loops: open loops; inFunction: a function body was opened
  */
-export const newFolder = (cwd) => ({ dir: cwd, start: cwd, followed: cwd, moved: false, compound: false });
+export const newFolder = (cwd) => ({ dirs: cwd === null ? null : [cwd], passed: [], everIn: cwd === null ? [] : [cwd], followed: cwd, believes: false, cdLast: false, loops: 0, inFunction: false });
 
 /**
- * Call before a segment is judged: after a `cd`, a segment that `&&` does not join runs in an unknown folder.
+ * The folders the next command is judged in.
+ * @param {ReturnType<typeof newFolder>} folder the line's state
+ * @returns {(string | null)[]} every folder it may run in, or one null when that is unknown
+ */
+export const possibleFolders = (folder) => folder.dirs ?? [null];
+
+/**
+ * The folders an absolute target is held against when the folder is unknown (lib/rm-paths.mjs checkRm `maybeCwds`).
+ * @param {ReturnType<typeof newFolder>} folder the line's state
+ * @returns {(string | null)[]} every folder the line was seen in, and where its `cd`s lead when each is taken at its word
+ */
+export const maybeFolders = (folder) => [...folder.everIn, folder.followed];
+
+/** Both sets together; null (unknown) when either is, or when there are more than MAX_POSSIBLE_FOLDERS. */
+function union(some, more) {
+  if (some === null || more === null) return null;
+  const all = [...some];
+  for (const dir of more) if (!all.some((have) => sameFile(have, dir))) all.push(dir);
+  return all.length > MAX_POSSIBLE_FOLDERS ? null : all;
+}
+
+function remember(folder, dirs) {
+  for (const dir of dirs ?? []) if (folder.everIn.length < MAX_REMEMBERED_FOLDERS && !folder.everIn.includes(dir)) folder.everIn.push(dir);
+}
+
+/**
+ * Call before a segment is judged: ends the `&&` chain when the segment is not part of it, and notes what kind of place the segment is.
  * @param {ReturnType<typeof newFolder>} folder the line's state (modified)
  * @param {string[] & {joinedBy?: string}} seg the segment as the parser gave it
  * @param {{cmd?: string, at: number}} parsed its command (lib/command-of.mjs)
  * @param {string[]} words its words, the ones `parsed.at` counts
  */
 export function enterSegment(folder, seg, parsed, words) {
-  if (folder.moved && !CHAIN_JOIN.test(seg.joinedBy ?? NO_JOIN)) folder.dir = null;
-  folder.compound ||= COMPOUND_COMMANDS.has(parsed.cmd) || words.slice(0, parsed.at).some((word) => KEYWORDS.has(word));
+  const join = seg.joinedBy;
+  const before = words.slice(0, parsed.at);
+  const inChain = join !== undefined && (CHAIN_JOIN.test(join) || (PIPE_JOIN.test(join) && !folder.cdLast));
+  if (!inChain) [folder.dirs, folder.passed] = [union(folder.dirs, folder.passed), []]; // every `cd` of the chain may or may not have run
+  folder.cdLast = false;
+  if (LOOP_COMMANDS.has(parsed.cmd) || before.some((word) => LOOP_KEYWORDS.has(word))) folder.loops += 1;
+  else if (words[0] === LOOP_END && folder.loops > 0) folder.loops -= 1;
+  folder.inFunction ||= parsed.cmd === FUNCTION_COMMAND || (join ?? '').includes(FUNCTION_JOIN);
+  folder.believes = join !== undefined && !UNSURE_JOIN.test(join) && before.every((word) => PLAIN_PREFIXES.has(word) || ASSIGNMENT_WORD.test(word));
+}
+
+/** Where a `cd` leads from every folder the line may be in; null when one of them cannot be known. */
+function foldersAfter(folder, parsed, project, scope) {
+  const fixed = nextCwd(parsed, null, project, scope); // not null for an absolute target: the same folder wherever the line was
+  if (folder.dirs === null) return fixed === null ? null : [fixed];
+  if (fixed === null && (folder.loops > 0 || folder.inFunction)) return null; // a relative `cd` that may run again
+  const all = folder.dirs.map((dir) => nextCwd(parsed, dir, project, scope));
+  return all.includes(null) ? null : union([], all);
 }
 
 /**
  * Call after a segment was judged: applies its `cd`, or makes the folder unknown for a command that hides one.
  * @param {ReturnType<typeof newFolder>} folder the line's state (modified)
- * @param {string[] & {joinedBy?: string}} seg the segment as the parser gave it
- * @param {{cmd?: string, args: string[], assigns?: string[]}} parsed its command
+ * @param {{cmd?: string, args: string[], assigns?: string[]}} parsed the segment's command
  * @param {{project: string, scope: {vars: Map<string, string>, assigned?: Set<string>}}} line the project root and the line's variables
  */
-export function leaveSegment(folder, seg, parsed, { project, scope }) {
+export function leaveSegment(folder, parsed, { project, scope }) {
   const { cmd, args } = parsed;
-  if (UNREAD_RUNNERS.has(cmd) || (OPTION_SETTERS.has(cmd) && args.some(isCdOption))) folder.dir = null;
+  const hidesCd = UNREAD_RUNNERS.has(cmd) || (OPTION_SETTERS.has(cmd) && args.some(isCdOption)) || (cmd === FUNCTION_COMMAND && args.some((word) => MOVERS.has(word)));
+  if (hidesCd) folder.dirs = null; // `function f { cd x`: the parsers leave the body's first command among the words of `function`
   if (!MOVERS.has(cmd)) return;
+  folder.cdLast = true;
   folder.followed = nextCwd(parsed, folder.followed, project, scope, false);
-  const join = seg.joinedBy ?? NO_JOIN;
-  const believed = !folder.compound && (START_JOIN.test(join) || CHAIN_JOIN.test(join));
-  folder.dir = believed ? nextCwd(parsed, folder.dir, project, scope) : null;
-  folder.moved = true;
+  const after = foldersAfter(folder, parsed, project, scope);
+  remember(folder, after);
+  if (folder.believes) [folder.passed, folder.dirs] = [union(folder.passed, folder.dirs), after];
+  else folder.dirs = union(folder.dirs, after);
 }
 
 /** Like expandHome; the git top-level word -> the project, but only from inside it (elsewhere the top-level is unknown). */
 function expandCdTarget(target, cwd, project) {
-  if (target !== GIT_TOPLEVEL_WORD && !target.startsWith(`${GIT_TOPLEVEL_WORD}/`)) return expandHome(target);
+  if (cwd === null || (target !== GIT_TOPLEVEL_WORD && !target.startsWith(`${GIT_TOPLEVEL_WORD}/`))) return expandHome(target);
   const root = resolve(nativePath(project));
   const inside = sameFile(resolve(cwd), root) || isUnder(root, resolve(cwd));
   return inside ? root + target.slice(GIT_TOPLEVEL_WORD.length) : target;
@@ -93,17 +154,19 @@ function expandCdTarget(target, cwd, project) {
 /**
  * Working directory after `cd`/`pushd`/`popd`: a literal target is resolved, anything else makes it unknown.
  * @param {{cmd: string, args: string[], assigns?: string[]}} parsed the `cd` command with the `NAME=value` words in front of it
- * @param {string | null} cwd the folder before it
+ * @param {string | null} cwd the folder before it; null (unknown) still gives a folder for an absolute target
  * @param {string} project the project root
  * @param {{vars: Map<string, string>, assigned?: Set<string>}} scope the line's variables (lib/rm-paths.mjs newScope)
  * @param {boolean} [strict] false takes `+N`, a bare drive and a relative target under CDPATH at their word (for `followed`)
  * @returns {string | null} the folder after it, null when unknown
  */
 export function nextCwd({ cmd, args, assigns = [] }, cwd, project, { vars, assigned = new Set() }, strict = true) {
-  if (cmd === 'popd' || cwd === null || args.length !== 1) return null;
-  if (PWD_TARGET.test(args[0]) && vars.get('PWD') !== cwd) return null; // `cd "$PWD"/x` after the folder moved: not guessed, unknown from here on
+  if (cmd === 'popd' || args.length !== 1) return null;
+  if (PWD_TARGET.test(args[0]) && vars.get('PWD') !== cwd) return null; // `cd "$PWD"/x` after the folder moved: not guessed
   const target = expandVars(expandCdTarget(args[0], cwd, project), vars); // `cd "$D"` after `D=$(mktemp -d)` is the temp dir
   if (UNKNOWN_CD_TARGET.test(target)) return null;
-  if (strict && (STACK_OR_BARE_DRIVE.test(target) || (!isAbsolute(nativePath(target)) && cdpathIsSet(assigns, assigned)))) return null;
-  return resolve(cwd, nativePath(target));
+  const isRelative = !isAbsolute(nativePath(target));
+  if (isRelative && cwd === null) return null;
+  if (strict && (STACK_OR_BARE_DRIVE.test(target) || (isRelative && cdpathIsSet(assigns, assigned)))) return null;
+  return cwd === null ? resolve(nativePath(target)) : resolve(cwd, nativePath(target));
 }
