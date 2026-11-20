@@ -8,8 +8,9 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, w
 import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { isSubagentStart } from '../home/hooks/mode.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { HOOK_BUDGET_MS, isSubagentStart } from '../home/hooks/mode.mjs';
+import { NOT_CHECKED_NOTE, NOTE_START } from '../home/hooks/lib/project-agents-text.mjs';
 import { contextTokens, findStatusPath } from '../home/hooks/lib/transcript.mjs';
 import { POSIX, sandbox } from './project-agents-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -17,8 +18,8 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 const HOOK = fileURLToPath(new URL('../home/hooks/mode.mjs', import.meta.url));
 const BIG_PROMPT = 'Please implement the whole new feature across the hooks, tests and docs. '.repeat(4);
 
-function runHook(home, mode, input, extraEnv = {}) {
-  return spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_MODE: mode, ...extraEnv }, encoding: 'utf8' });
+function runHook(home, mode, input, extraEnv = {}, nodeArgs = []) {
+  return spawnSync(process.execPath, [...nodeArgs, HOOK], { input: JSON.stringify(input), env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_MODE: mode, ...extraEnv }, encoding: 'utf8' });
 }
 
 const usageLine = (tokens, extra = {}) => JSON.stringify({ type: 'assistant', isSidechain: false, message: { usage: { input_tokens: 2, cache_read_input_tokens: tokens - 12, cache_creation_input_tokens: 10, output_tokens: 5 } }, ...extra });
@@ -140,6 +141,14 @@ const MS_PER_S = 1000;
 const firstLineOf = (file) => readFileSync(join(REAL_MODES_DIR, file), 'utf8').trim().split('\n')[0];
 const stateDirOf = (home) => join(home, '.claude', 'state', 'modes');
 
+/** Puts a state file into `state` that is older than the 14 days state is kept. */
+function staleStateFile(state) {
+  mkdirSync(state, { recursive: true });
+  writeFileSync(join(state, 'old-session'), 'high\n');
+  const longAgo = (Date.now() - STALE_DAYS * MS_PER_DAY) / MS_PER_S;
+  utimesSync(join(state, 'old-session'), longAgo, longAgo);
+}
+
 /** Copies the real lead rules and playbooks into a temp HOME: a bare HOME prints no lead rules, so the test could not fail. */
 function withRealModes(home) {
   cpSync(REAL_MODES_DIR, join(home, '.claude', 'modes'), { recursive: true });
@@ -176,17 +185,14 @@ test('agent_id counts only as a non-empty string: any other value takes the lead
 test('a subagent SessionStart runs no ps walk and no project-agents child, saves no state and prunes nothing', async () => {
   const made = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
   const state = stateDirOf(withRealModes(made.home));
-  mkdirSync(state, { recursive: true });
-  writeFileSync(join(state, 'old-session'), 'high\n');
-  const longAgo = (Date.now() - STALE_DAYS * MS_PER_DAY) / MS_PER_S;
-  utimesSync(join(state, 'old-session'), longAgo, longAgo);
+  staleStateFile(state);
   const noPs = { PATH: makeTempDir('mode-nobin-') }; // a `ps` lookup would fail here and say so on stderr
   const start = (source, extra) => runHook(made.home, 'high', { hook_event_name: 'SessionStart', session_id: 'sub3', source, cwd: made.projectDir, ...extra }, noPs);
   const subagent = start('compact', { agent_id: 'a1' });
   assert.ok(subagent.stdout.startsWith(COMPACT_NOTE_START));
   assert.doesNotMatch(subagent.stdout, /Project agent files/);
   assert.doesNotMatch(subagent.stderr, /ps failed/);
-  assert.equal(start('startup', { agent_id: 'a1' }).stdout, '', 'any other source: nothing');
+  for (const source of ['startup', 'resume', 'clear', undefined, 'unknown']) assert.equal(start(source, { agent_id: 'a1' }).stdout, '', `source ${source}: nothing`);
   assert.deepEqual(readdirSync(state).sort(), ['old-session', 'sub3-a1.compacts'], 'only the subagent\'s own compaction count is written');
   const lead = start('compact', {}); // control: the lead path does all four
   assert.match(lead.stdout, /Project agent files .*builder\.md \(maxTurns 60\)/);
@@ -204,8 +210,46 @@ test('a subagent\'s compactions are counted under <session_id>-<agent_id> and ne
   assert.equal(count('cnt1.compacts'), '1\n');
   // An agent id that is not safe as a file name is not counted; the note is still printed.
   assert.ok(compact({ agent_id: '../evil' }).startsWith(COMPACT_NOTE_START));
+  assert.equal(count('cnt1.compacts'), '1\n', 'and it is not counted under the lead\'s id either');
+  assert.ok(compact({ agent_id: 'a1', session_id: '../x' }).startsWith(COMPACT_NOTE_START), 'an unsafe session id: not counted');
   assert.deepEqual(readdirSync(stateDirOf(home)).filter((name) => name.endsWith('.compacts')).sort(), ['cnt1-a1.compacts', 'cnt1.compacts']);
   assert.equal(existsSync(join(home, '.claude', 'state', 'evil.compacts')), false);
+});
+
+// Review 1, R3 (the clock replaced by a constant passed every test) and security review 1, S2 (the mode was recorded as announced
+// before anything was printed). Every other budget test injects its clock; here a preload moves the hook process's own clock.
+test('the deadline runs on the hook\'s own clock: started at the end of the budget it runs no ps, no child and no prune, and announces no mode', async () => {
+  const made = await sandbox({ project: { builder: 'maxTurns: 60\n' } });
+  const state = stateDirOf(withRealModes(made.home));
+  staleStateFile(state);
+  const bin = makeTempDir('mode-ps-');
+  const ranPs = join(bin, 'ran');
+  writeFileSync(join(bin, 'ps'), `#!/bin/sh\n[ "$1" = warm ] || : > "${ranPs}"\n`, { mode: 0o755 });
+  if (POSIX) spawnSync(join(bin, 'ps'), ['warm']); // a new script starts slowly the first time (macOS): not inside a ps timeout
+  const start = (session_id, nodeArgs) => runHook(made.home, 'high', { hook_event_name: 'SessionStart', session_id, source: 'startup', cwd: made.projectDir }, { PATH: bin }, nodeArgs).stdout;
+  const late = start('late1', ['--import', `data:text/javascript,performance.now=()=>${HOOK_BUDGET_MS}`]);
+  assert.ok(late.startsWith('Mode: high (launched as high)\n\n') && late.includes(firstLineOf('_lead.md')), late.slice(0, 60));
+  assert.ok(late.endsWith(`\n\n${NOT_CHECKED_NOTE}\n`), 'no time left for the child');
+  assert.equal(existsSync(ranPs), false, 'no ps lookup');
+  assert.deepEqual(readdirSync(state).sort(), ['late1', 'old-session'], 'nothing pruned, and no mode recorded as announced');
+  assert.match(runHook(made.home, 'high', { hook_event_name: 'UserPromptSubmit', session_id: 'late1' }).stdout, MODE_LINE, 'so the next prompt still says the mode');
+  assert.match(start('late2', []), /Project agent files .*builder\.md \(maxTurns 60\)/, 'control: the same start on the untouched clock');
+  if (POSIX) assert.equal(existsSync(ranPs), true, 'control: the planted ps is the one the hook runs');
+  assert.deepEqual(readdirSync(state).sort(), ['late1', 'late1.announced', 'late2', 'late2.announced']);
+});
+
+// Security review 1, S8: the child got its share of the budget before the transcript scan of the compact notes had run.
+test('the compact notes are computed before the project-agents child starts, so the child is the last thing the budget cuts', async () => {
+  const made = await sandbox();
+  const script = join(makeTempDir('mode-child-'), 'child.mjs');
+  const counted = join(stateDirOf(made.home), 'ord1.compacts');
+  writeFileSync(script, `import { existsSync } from 'node:fs';
+    process.stdout.write(JSON.stringify({ note: ${JSON.stringify(NOTE_START)} + (existsSync(${JSON.stringify(counted)}) ? 'the compaction was counted first' : 'the child ran first') }));`);
+  const input = { hook_event_name: 'SessionStart', session_id: 'ord1', source: 'compact', cwd: made.projectDir };
+  const driver = `const { hookText } = await import(${JSON.stringify(pathToFileURL(HOOK).href)});
+    process.stdout.write(await hookText(${JSON.stringify(input)}, { agentNoteOptions: { script: ${JSON.stringify(script)} } }));`;
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', driver], { encoding: 'utf8', env: { ...process.env, HOME: made.home, USERPROFILE: made.home, CLAUDE_MODE: 'high' } });
+  assert.ok(run.stdout.includes(`\n\n${NOTE_START}the compaction was counted first\n\n${COMPACT_NOTE_START}`), run.stdout.slice(-500) + run.stderr);
 });
 
 // Spec check K6: the line was printed on every prompt of a session that is not in medium (2,404 identical lines counted).

@@ -1,13 +1,14 @@
 // Compaction notes for the mode hook's SessionStart (source `compact`). Exports: compactNotes(dir, sessionId, transcriptPath).
 // Invariants: the count lives in `<dir>/<sessionId>.compacts` (pruned with the mode state files); for a compaction inside a
-// subagent mode.mjs passes `<session_id>-<agent_id>` as that id, so a subagent never moves the lead's count; a failed read or
-// write counts as the first compaction and reports to stderr; never throws. The STATUS path comes from the transcript (a tool
+// subagent mode.mjs passes `<session_id>-<agent_id>` as that id, so a subagent never moves the lead's count; the file is read and
+// written as mode-state.mjs does it (never through a link, never waiting on a FIFO); a failed read or write counts as the first
+// compaction and reports to stderr; never throws. The STATUS path comes from the transcript (a tool
 // input, and its folder names can come from a repository), so it is shown as data: in double quotes, labelled as a path, escaped
 // down to printable ASCII without " \ < > (shown-name.mjs, as the project-agents note shows a file name) and at most
 // STATUS_PATH_SHOWN_CHARS of escaped text long, cut from the left: its end names the file, and the whole SessionStart output has to
 // stay under Claude Code's 10,000-character hook output cap.
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { readStateText, writeStateText } from './mode-state.mjs';
 import { escapedEnd } from './shown-name.mjs';
 import { findStatusPath } from './transcript.mjs';
 
@@ -28,15 +29,10 @@ export async function compactNotes(dir, sessionId, transcriptPath) {
   const statusPath = await findStatusPath(transcriptPath);
   let count = 1;
   if (sessionId) {
-    const file = join(dir, `${sessionId}.compacts`);
+    const name = `${sessionId}.compacts`;
+    count = (Number.parseInt(readStateText(join(dir, name), 'compaction count') ?? '', 10) || 0) + 1;
     try {
-      count = (Number.parseInt(await readFile(file, 'utf8'), 10) || 0) + 1;
-    } catch (error) {
-      if (error.code !== 'ENOENT') process.stderr.write(`mode hook: cannot read compaction count: ${error.message}\n`);
-    }
-    try {
-      await mkdir(dir, { recursive: true });
-      await writeFile(file, `${count}\n`);
+      writeStateText(dir, name, `${count}\n`);
     } catch (error) {
       process.stderr.write(`mode hook: cannot save compaction count: ${error.message}\n`);
     }
