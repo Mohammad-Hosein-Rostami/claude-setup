@@ -21,7 +21,9 @@
 // - A relative `cd` inside a loop or a function body is unknown too: the body may run again, and each run moves on from where the last
 //   one stopped (`cd ..` three times), so "before and after" does not list the folders. A loop ends at its `done`; a function body is
 //   not followed to its end, so the rest of the line counts as inside it.
-// - An absolute `cd` is known whatever came before: inside its chain the folder is that one, also after an unknown one.
+// - An absolute `cd` is known wherever the line was: inside its chain the folder is that one, also after an unknown one (too many
+//   folders, `eval`, `source`, a loop). One unknown is final all the same: after a `cd`, `pushd` or `popd` whose own target could not be
+//   read (`followed` is null). The guard asked about the rest of such a line before it kept a set, and no rule here may drop an ask.
 // Invariants: pure apart from reading process.env.CDPATH; never touches the file system; a segment whose parser recorded no join
 // (`seg.joinedBy`, lib/shell-words.mjs) neither continues a chain nor has its `cd` believed; nothing here ever makes the set smaller
 // than the folders the shell can really be in, short of the limits named in pre-bash-guard.mjs.
@@ -65,7 +67,7 @@ const cdpathIsSet = (assigns, assigned) => Boolean(process.env.CDPATH) || [...as
  * @returns {{dirs: string[] | null, passed: string[] | null, everIn: string[], followed: string | null, believes: boolean,
  *   cdLast: boolean, loops: number, inFunction: boolean}} dirs: the folders the next command may run in (null: unknown); passed: the
  *   folders the current `&&` chain left behind; everIn: every folder a command of the line may have run in; followed: where the `cd`s
- *   lead when each is taken at its word; believes: a `cd` in the current segment is believed; cdLast: the segment before was a `cd`;
+ *   lead when each is taken at its word, null for good once one cannot be read; believes: a `cd` in the current segment is believed; cdLast: the segment before was a `cd`;
  *   loops: open loops; inFunction: a function body was opened
  */
 export const newFolder = (cwd) => ({ dirs: cwd === null ? null : [cwd], passed: [], everIn: cwd === null ? [] : [cwd], followed: cwd, believes: false, cdLast: false, loops: 0, inFunction: false });
@@ -117,6 +119,7 @@ export function enterSegment(folder, seg, parsed, words) {
 
 /** Where a `cd` leads from every folder the line may be in; null when one of them cannot be known. */
 function foldersAfter(folder, parsed, project, scope) {
+  if (folder.followed === null) return null; // this `cd` or an earlier one could not be read at all: unknown for the rest of the line
   const fixed = nextCwd(parsed, null, project, scope); // not null for an absolute target: the same folder wherever the line was
   if (folder.dirs === null) return fixed === null ? null : [fixed];
   if (fixed === null && (folder.loops > 0 || folder.inFunction)) return null; // a relative `cd` that may run again
@@ -136,7 +139,7 @@ export function leaveSegment(folder, parsed, { project, scope }) {
   if (hidesCd) folder.dirs = null; // `function f { cd x`: the parsers leave the body's first command among the words of `function`
   if (!MOVERS.has(cmd)) return;
   folder.cdLast = true;
-  folder.followed = nextCwd(parsed, folder.followed, project, scope, false);
+  folder.followed = folder.followed === null ? null : nextCwd(parsed, folder.followed, project, scope, false);
   const after = foldersAfter(folder, parsed, project, scope);
   remember(folder, after);
   if (folder.believes) [folder.passed, folder.dirs] = [union(folder.passed, folder.dirs), after];

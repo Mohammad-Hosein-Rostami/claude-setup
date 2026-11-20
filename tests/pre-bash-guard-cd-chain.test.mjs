@@ -72,6 +72,12 @@ const FOLDER_UNKNOWN = [
   `function f { cd src; }; ${RM} -rf ../x`,
   `f() { cd ..; }; f; f; ${RM} -rf x`,
   `source ./env.sh; cd ${PROJECT}/src && make; ${RM} -rf gen`, // known inside the chain of the absolute cd only
+  // a cd the guard cannot read at all is final: an absolute cd after it does not make the folder known (found by the probe against main)
+  `cd "$SOMEWHERE"; cd ${PROJECT}/src && ${RM} -rf ../gen`,
+  `cd - && cd /tmp && ${RM} -rf build`,
+  `cd ~user && cd ${PROJECT} && ${RM} -rf dist`,
+  `popd; cd ${PROJECT} && ${RM} -rf dist`,
+  `(cd "$X"); cd ${PROJECT} && ${RM} -rf dist`,
 ];
 const UNREAD_TEXT = [`eval cd ..; ${RM} -rf proj`, `eval "cd .." && ${RM} -rf proj`, `source ./env.sh && ${RM} -rf proj`, `. ./env.sh; ${RM} -rf proj`];
 // F5, F8, F9: the shell resolves these from state the guard does not have
@@ -124,7 +130,6 @@ const PIPELINE_IN_THE_CHAIN = [`cd packages/app && npm run build | tail -5 && ${
 const ABSOLUTE_CD = [
   `cd /tmp/x && ${RM} -rf y; cd ${PROJECT} && ${RM} -rf dist`,
   `source ./env.sh; cd ${PROJECT}/src && ${RM} -rf gen`, // a relative target: it asks while the folder is unknown
-  `cd "$SOMEWHERE"; cd ${PROJECT}/src && ${RM} -rf ../gen`,
   `for d in a b; do cd ${PROJECT}/src && ${RM} -rf ../gen; done`,
   `for f in a b; do echo "$f"; done; cd src && ${RM} -rf ../gen`, // the loop ended at its `done`: a relative cd is followed again
 ];
