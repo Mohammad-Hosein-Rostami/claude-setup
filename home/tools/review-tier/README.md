@@ -7,7 +7,7 @@ and mutants; the only thing the plan replaces is a full-suite re-run (the test-p
 dependencies; it reads git and writes one log line.
 
 Run, a first review: `node ~/.claude/tools/review-tier/review-tier.mjs [<range>] [--landing] [--add-class <c>]... [--base <b>] [--json]`
-Run, a fix round: `node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --base <base-sha> (--prior <file> --prior-sha256 <hex>)... --lane-classes <names> [--add-class <c>]... [--json]`
+Run, a fix round: `node ~/.claude/tools/review-tier/review-tier.mjs --delta <reviewed-sha> --base <base-sha> [--rebased-onto <sha>] (--prior <file> --prior-sha256 <hex>)... --lane-classes <names> [--add-class <c>]... [--json]`
 
 | Argument | Meaning |
 | -------- | ------- |
@@ -19,8 +19,9 @@ Run, a fix round: `node ~/.claude/tools/review-tier/review-tier.mjs --delta <rev
 | `--prior-sha256 <hex>` | One after each `--prior`, in the same order: the sha256 the lead recorded when the reviewer returned that report (`shasum -a 256 <file>`; upper or lower case). The tool hashes the file itself and exits 2, naming the file, when the hash differs (`is not the report that was recorded`: it was edited after the review, so take it from its reviewer again), when a `--prior` has none, or when the value is no sha256. Without it the hash the tool prints would only be the hash of the file as it is at the fix round, which pins nothing: a writer who can write the reports folder could delete a finding and keep the count. |
 | `--lane-classes <names>` | The class names of the round before, comma-separated (`--lane-classes security,logic,lock-free`): the `fix round:` line that round printed carries them, and its JSON has them as `laneClasses` (every class of the round, then the kind of its concurrency lines, `lock-based` or `lock-free`, so a later round keeps the right plan, stress or race). No file is read; a path, an unknown name or an empty list is exit 2. They only raise. Required with `--delta` (exit 2 without it; when the names are lost, run a whole-range review instead): there they add what the tool cannot read from the lane any more, a class the lead added by hand (`--add-class`) and the class of a line an earlier fix removed (a fix that deletes the lane's only `execSync` file leaves a docs lane behind; only the round before still knows it was a security lane). |
 | `--add-class <c>` | The lead raises the set: adds that class's reviews and plan. It never removes one. An unknown class is exit 2. |
+| `--rebased-onto <sha>` | With `--delta` only (otherwise exit 2), optional: the full sha of the base tip the fix was told to rebase the lane onto, from the caller's own record (read before the fix ran, never from a branch afterwards). The lane start moves from `--base` to it only when all three hold: `--base` is its ancestor (the base only grew), it is an ancestor of `HEAD` (the fix did rebase onto it), and it is no ancestor of, nor equal to, the `--delta` commit (it is no commit of the lane as it was reviewed). Otherwise the start stays `--base`, which reads more, never less. The start taken is printed: `base` in the JSON and in the `fix round:` line. Without the flag a lane rebased onto a newer base is read from its old start, with everything that landed in between. |
 
-Exit 0 printed, 1 git failed (not a repository, git error), 2 usage (bad range, unknown sha, base or class, bad flag, a repository with a graft file, a replace ref or a shallow history).
+Exit 0 printed, 1 git failed (not a repository, git error), 2 usage (bad range, unknown sha, base or class, bad flag, a repository with a graft file, a replace ref or a shallow history, an object that is missing or does not hash to its name, a changed path that is not UTF-8, a git older than 2.32).
 Text output: `review-tier: tier <n> (<classes>), <files> files, <lines> changed lines, <range>`, then `why:` (one
 `<class> <path>:<line>` per class), `run together:` (one line per review) and the command for the next fix round (`fix round:`, the same command `home/CLAUDE.md` names with this round's own values filled in: `--delta` the commit it read, `--base` the lane start it resolved, `--lane-classes` its classes, one added by hand included; `--prior` and `--prior-sha256` stay placeholders for the lead; run as printed, round after round, it loses no lens, rule domain or plan item). A class with no hit says where it comes from: `(added by --add-class)` or `(kept from the lane)`.
 `--json` prints the whole report: `tier`, `classes`, `added`, `kept` (classes that come from the lane or an earlier round, not from this run's own files), `landing`, `range`, `files`,
@@ -99,16 +100,36 @@ measurement, not a miss-rate bound.
 - A bare `exec(` counts only in a file that mentions `child_process` or `execa` (a regex `.exec(` is not a shell).
 - A delta round is always a landing round. A mid-lane review with `--landing` left out has a lighter set than its own fix rounds; the other way round (a fix round lighter than the landing review it follows) is the defect this rule closes, and the tool has no record of the first review's flags.
 - A delta keeps every class of the lane: a file never drops a class inside a lane, and a file the fix does not touch keeps its lenses and plans in the set. The diff-level `size` class is computed from the delta's own lines (in a delta round it changes no lens: the landing set already holds the Opus max lens).
-- Git state that shows in no diff cannot change what is read: every patch is printed with `--text`, no external diff or textconv and fixed
-  prefixes, so `.git/info/attributes` (`* -diff`, `binary`) and the repo's diff config hide no line. History that can be altered outside the commits
-  stops the run: a non-empty `info/grafts`, any `refs/replace/*` or a shallow repository is exit 2 naming what was found (remove it, or review by
-  hand); every git call also runs with `GIT_NO_REPLACE_OBJECTS=1` and a `GIT_GRAFT_FILE` that cannot exist, and `GIT_SHALLOW_FILE` and
-  `GIT_REPLACE_REF_BASE` are not passed on. The price: a real
-  binary file is read as text, and its "lines" count as changed lines (more review, never less). File names are read NUL-separated and a quoted
-  `+++` path is unquoted, so a name with a quote, backslash or control character is one file with its own classes.
+- Git state that shows in no diff cannot change what is read. The writer of a fix is the same OS user as the tool: it can write the lane's git
+  dir (config, `info/`, refs, the index, a commit-graph, `objects/`), the working tree and the user's own git files, and four review rounds each
+  found one more of those that made a round read less than what lands. So the tool does not read the lane's repository at all, apart from a
+  few questions (`lib/revisions.mjs`): its top folder, its common git dir, the three refusals below, and the sha behind `HEAD` and behind a
+  branch name, each once. Every other git call goes through `lib/trusted-git.mjs`: a fresh bare repository in a temp folder (removed
+  afterwards) that borrows only the lane's `objects` folder (`GIT_ALTERNATE_OBJECT_DIRECTORIES`), with no `GIT_*` variable of the caller, no
+  system or global config (`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL` the null device), no attributes from outside
+  (`GIT_ATTR_NOSYSTEM=1`, `-c core.attributesFile=<null device>`, `HOME` and `XDG_CONFIG_HOME` the temp folder), and with
+  `-c core.commitGraph=false -c core.multiPackIndex=false -c core.precomposeUnicode=false -c core.quotePath=false` on every call. Those calls
+  take shas only (the word `HEAD` is only printed), no path goes back to git as a pathspec (a diff is read whole with
+  `--ignore-submodules=none` and the lane's paths are picked in the tool, by their bytes; a path that is not UTF-8 is exit 2), and the
+  callers of a changed function are searched in the commit at `HEAD`, never in the working tree. It needs git 2.32 (older: exit 2).
+- After that the only input is the content of the object store, and it is checked (`lib/verify-objects.mjs`): before anything is read the
+  tool re-hashes, with `cat-file --batch` and sha1 in Node, every commit reachable from the run's shas, every tree of the commits it
+  compares, every blob of the tree at `HEAD` (what lands, unchanged files included) and every blob that differs between them. An object
+  that is missing or does not hash to its name (rewritten in place, loose or through a forged pack index) is exit 2 naming it. `git fsck`
+  is not used: it checks the whole store (history-sized, and it refuses on damage the lane does not touch), `--no-full` and
+  `--connectivity-only` miss a forged pack, and `rev-list --verify-objects` exits 0 on a mismatch. What stays outside the tool: an object
+  swapped after the check by a process that is still running (land repeats the check on the tip before it fast-forwards).
+- History that can be altered outside the commits stops the run: a non-empty `info/grafts`, any `refs/replace/*` or a shallow repository
+  is exit 2 naming what was found (remove it, or review by hand); the calls to the lane's repository also run with
+  `GIT_NO_REPLACE_OBJECTS=1` and a `GIT_GRAFT_FILE` that cannot exist, and `GIT_SHALLOW_FILE` and `GIT_REPLACE_REF_BASE` are not passed on.
+- Every patch is printed with `--text`, no external diff or textconv and fixed prefixes (the second layer under the clean repository). The
+  price: a real binary file is read as text, and its "lines" count as changed lines (more review, never less). File names are read
+  NUL-separated and a quoted `+++` path is unquoted, so a name with a quote, backslash or control character is one file with its own classes.
+- `--rebased-onto` moves a fix round's start only on three ancestry tests (see the flag); that the sha is a base tip the caller recorded
+  itself is the caller's check (`home/workflows/review.js` takes it only from its build's own record), because the tool reads no ref there.
 - Hits are capped at 20 per class and file, so a generated file cannot make the JSON huge; the class still applies.
 
-Files: `review-tier.mjs` (CLI), `tiers.mjs` (class rules), `lib/revisions.mjs` (the base and the sides of a range as shas), `lib/diff.mjs` (git reading, delta, required reading), `lib/reviews.mjs`
+Files: `review-tier.mjs` (CLI), `tiers.mjs` (class rules), `lib/revisions.mjs` (the base, HEAD and the sides of a range as shas; the refusals; the start after a rebase), `lib/trusted-git.mjs` (the clean temp repository every read goes through), `lib/verify-objects.mjs` (the re-hash before a read), `lib/diff.mjs` (git reading, delta, required reading), `lib/reviews.mjs`
 (sets, plans, briefs, waivable), `lib/report.mjs` (report, text, JSON), `lib/prior.mjs` (hash check, finding counts and ids of the `--prior` reports), `lib/brief-data.mjs` (names as data), `lib/weakened.mjs` (weakened checks), `lib/log.mjs`. Tests:
 `tests/review-tier.test.mjs`, `review-tier-cli`, `review-tier-gate` (gate, line rules, principles, items 71 and 73), `review-tier-waivable`,
-`review-tier-weakened`, `review-tier-delta-set` (a fix round is never lighter than the lane), `review-tier-fix-round` (the printed command over several rounds), `review-tier-delta-brief` (the delta line and the prior file), `review-tier-prior` (which lines of a report are findings), `review-tier-prior-files` (several reports, each with its recorded hash), `review-tier-brief-data` (hostile names), `review-tier-git-state` (attributes, diff config, quoted paths; grafts, replace refs and a shallow history are refused), `review-tier-base` (the base is a local branch or a full sha; a fix round takes only full shas), `review-tier-rewritten-lane` (a rebased or rebuilt lane is read whole).
+`review-tier-weakened`, `review-tier-delta-set` (a fix round is never lighter than the lane), `review-tier-fix-round` (the printed command over several rounds), `review-tier-delta-brief` (the delta line and the prior file), `review-tier-prior` (which lines of a report are findings), `review-tier-prior-files` (several reports, each with its recorded hash), `review-tier-brief-data` (hostile names), `review-tier-git-state` (attributes, diff config, quoted paths; grafts, replace refs and a shallow history are refused), `review-tier-base` (the base is a local branch or a full sha; a fix round takes only full shas), `review-tier-rewritten-lane` (a rebased or rebuilt lane is read whole), `review-tier-outside-state` (the lane's and the user's config and attributes, `GIT_*` variables and the working tree change nothing), `review-tier-object-store` (a forged commit-graph, a hidden submodule pointer, an NFD name, an object rewritten in place), `review-tier-trusted-calls` (which calls go where, with which flags and environment; the git floor), `review-tier-rebased-onto` (the start after a rebase).

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // CLI of `review-tier`: reads a git range and says which reviews to run together (agent, model, effort, lens, brief, plan).
 // Usage: review-tier.mjs [<range>] [--landing] [--add-class <c>]... [--lane-classes <names>] [--base <b>] [--json]      (a first review)
-//        review-tier.mjs --delta <reviewed-sha> --base <base-sha> (--prior <findings-file> --prior-sha256 <hex>)... --lane-classes <names> [--add-class <c>]... [--json]   (a fix round)
+//        review-tier.mjs --delta <reviewed-sha> --base <base-sha> [--rebased-onto <sha>] (--prior <findings-file> --prior-sha256 <hex>)... --lane-classes <names> [--add-class <c>]... [--json]   (a fix round)
 //   <range>          `a..b` or `a...b`; default `<base sha>...HEAD`, the base being the one of main, master, develop that is a local branch.
 //                    Each side is read like the base: HEAD, a local branch or a full sha (with an optional ~N or ^N), never a tag or
 //                    another ref of that name; any other side is exit 2. The printed range holds the resolved shas
@@ -9,7 +9,12 @@
 //                    that starts with refs/ is exit 2) or a full sha; needed when more than one of main, master, develop exists.
 //                    A fix round: required, the full 40-character sha the lane now starts from (an ancestor of HEAD; after a rebase,
 //                    the tip it was rebased onto). No branch is read there, so moving one changes nothing
-//   --landing        the last review before the base moves: adds the Opus max lens, the auditor and a mutation plan
+//   --rebased-onto <sha>  a fix round whose fix rebased the lane: the full sha of the base tip it was told to rebase onto, from the
+//                    caller's own record (never read from a branch after the fix ran). The lane start moves from --base to it only when
+//                    --base is its ancestor, it is an ancestor of HEAD and it is no ancestor of (nor equal to) the --delta commit;
+//                    else the start stays --base, which reads more, never less. The start taken is printed (`base` in the JSON, the
+//                    `fix round:` line)
+//   --landing       the last review before the base moves: adds the Opus max lens, the auditor and a mutation plan
 //   --delta <sha>    a fix round: the full 40-character sha the last review read, from the lead's record (a short sha or a name is
 //                    exit 2). It reads the tree diff <sha>..HEAD; when the sha is no ancestor of HEAD (a rebased or rebuilt lane) it reads
 //                    the whole lane <base>..HEAD and what changed in the lane's files since <sha>. The set is the whole lane's (the tool
@@ -25,19 +30,29 @@
 //                    printed carries them, its JSON has them as laneClasses). They only raise the set: a class the lead added by hand,
 //                    a class of a line an earlier fix removed. No file is read. Required with --delta; an unknown name is exit 2
 //   --add-class <c>  raise only: adds that class's full set and plan (unknown class: exit 2)
-// Exit codes: 0 printed, 1 git failed, 2 usage (bad range, unknown sha or class, bad flag, a repository whose history can be altered).
-// Invariants: read-only on the repository; the only write is one line in the log (REVIEW_TIER_LOG overrides its path).
-//   Line texts are never printed or logged (see tiers.mjs), and neither is the text of the --prior file (lib/prior.mjs).
-//   A repository with a graft file, a replace ref or a shallow history is refused before anything is read (exit 2); git also runs with
-//   GIT_NO_REPLACE_OBJECTS=1 and a GIT_GRAFT_FILE that cannot exist, and without the variables that move the shallow file or the replace refs.
+// Exit codes: 0 printed, 1 git failed, 2 usage (bad range, unknown sha or class, bad flag, a repository whose history can be altered, an
+//   object that does not hash to its name, a git older than 2.32).
+// Invariants: read-only on the repository; the only writes are one line in the log (REVIEW_TIER_LOG overrides its path) and a temp
+//   folder that is removed again. Line texts are never printed or logged (see tiers.mjs), and neither is the text of the --prior file
+//   (lib/prior.mjs).
+//   What the lane's repository is asked: its top folder, its common git dir, the three refusals (a graft file, a replace ref or a shallow
+//   history is exit 2 before anything is read), and the sha behind HEAD and behind a branch name, each once (lib/revisions.mjs). Those
+//   calls run with GIT_NO_REPLACE_OBJECTS=1 and a GIT_GRAFT_FILE that cannot exist, and without the variables that move the shallow file
+//   or the replace refs. Every other git call goes through lib/trusted-git.mjs: an empty repository of the tool's own with a clean
+//   environment, which borrows the lane's objects only, so the lane's config, attributes, refs, index, commit-graph and working tree and
+//   the user's git files change nothing. After that the only input is the content of the object store, and every object the run relies
+//   on is re-hashed before it is read (lib/verify-objects.mjs). What is left outside the tool: an object swapped after that check by a
+//   process still running (land repeats the check on the tip before it fast-forwards).
 import { basename, join, resolve } from 'node:path';
-import { UsageError, gitFlag, gitText } from '../git-tidy/lib/git.mjs';
+import { UsageError, gitText } from '../git-tidy/lib/git.mjs';
 import { CLASS_TIER, LOCK_TAG, RACE_TAG } from './tiers.mjs';
 import { MAX_READING, newFileReader, readDelta, readRange, requiredReadingFor } from './lib/diff.mjs';
-import { baseOf, checkRange, recordedSha, refuseAlteredHistory } from './lib/revisions.mjs';
+import { baseOf, checkRange, commonDirOf, headOf, laneOf, recordedSha, refuseAlteredHistory, startAfterRebase } from './lib/revisions.mjs';
 import { appendLog } from './lib/log.mjs';
 import { readPriors } from './lib/prior.mjs';
 import { buildReport, formatJson, formatText, logRecord } from './lib/report.mjs';
+import { openTrustedGit } from './lib/trusted-git.mjs';
+import { verifyCommits, verifyTrees } from './lib/verify-objects.mjs';
 
 const EXIT_GIT_FAILED = 1;
 const EXIT_USAGE = 2;
@@ -46,10 +61,11 @@ const EXIT_USAGE = 2;
 const PLAIN_PATH = /^(?:[A-Za-z]:[\\/]|\/)[\w@+=.,~/\\-]+$/;
 const MAX_ECHOED_PATH_CHARS = 120; // a refused path is quoted in the error, cut to this length
 const LANE_NAMES = [...Object.keys(CLASS_TIER), LOCK_TAG, RACE_TAG]; // an array: `includes` has no prototype names to match
-const USAGE = 'usage: review-tier.mjs [<range>] [--landing] [--add-class <c>]... [--base <b>] [--json], or for a fix round: review-tier.mjs --delta <reviewed-sha> --base <base-sha> (--prior <file> --prior-sha256 <hex>)... --lane-classes <names> [--add-class <c>]... [--json]';
+const USAGE = 'usage: review-tier.mjs [<range>] [--landing] [--add-class <c>]... [--base <b>] [--json], or for a fix round: review-tier.mjs --delta <reviewed-sha> --base <base-sha> [--rebased-onto <sha>] (--prior <file> --prior-sha256 <hex>)... --lane-classes <names> [--add-class <c>]... [--json]';
 // History the environment could move: git-tidy's runGit already drops the variables that choose the repository and its objects.
 const HISTORY_VARIABLES = ['GIT_SHALLOW_FILE', 'GIT_REPLACE_REF_BASE'];
 const SHA256 = /^[0-9a-f]{64}$/;
+const OBJECTS_FOLDER = 'objects'; // inside the common git dir: the one part of the lane the trusted reader borrows
 
 function valueOf(argv, index, flag) {
   const value = argv[index + 1];
@@ -58,12 +74,13 @@ function valueOf(argv, index, flag) {
 }
 
 function parseArgs(argv) {
-  const options = { range: null, landing: false, json: false, delta: null, priors: [], priorHashes: [], laneClasses: null, addClasses: [], base: null };
+  const options = { range: null, landing: false, json: false, delta: null, priors: [], priorHashes: [], laneClasses: null, addClasses: [], base: null, rebasedOnto: null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--landing') options.landing = true;
     else if (arg === '--json') options.json = true;
     else if (arg === '--delta') options.delta = valueOf(argv, i++, arg);
+    else if (arg === '--rebased-onto') options.rebasedOnto = valueOf(argv, i++, arg);
     else if (arg === '--prior') options.priors.push(resolve(valueOf(argv, i++, arg)));
     else if (arg === '--prior-sha256') options.priorHashes.push(valueOf(argv, i++, arg).toLowerCase());
     else if (arg === '--lane-classes') options.laneClasses = laneNames(valueOf(argv, i++, arg));
@@ -89,9 +106,10 @@ function laneNames(value) {
 }
 
 /** The contract of a fix round: `--delta` names its own range, the lane's start, the report or reports of the round before with their recorded hashes, and that round's classes. */
-function checkFixRound({ delta, range, base, priors, priorHashes, laneClasses }) {
+function checkFixRound({ delta, range, base, priors, priorHashes, laneClasses, rebasedOnto }) {
   if (delta === null) {
     if (priors.length + priorHashes.length > 0) throw new UsageError(`--prior and --prior-sha256 belong to a --delta round. ${USAGE}`);
+    if (rebasedOnto !== null) throw new UsageError(`--rebased-onto belongs to a --delta round: it names the base tip a fix rebased the lane onto. ${USAGE}`);
     return;
   }
   if (range !== null) throw new UsageError(`--delta names its own range: give a range or --delta, not both. ${USAGE}`);
@@ -112,32 +130,51 @@ function checkFixRound({ delta, range, base, priors, priorHashes, laneClasses })
  * the lane's own classes and the size of its plan, so no flag the caller leaves out can make the set lighter than the lane's. Both commits
  * are full shas from the lead's record: nothing is looked up by name, so no ref made or moved since the review changes what is read.
  */
-function deltaRound(top, options) {
-  const [base, reviewed] = [recordedSha(top, options.base, '--base'), recordedSha(top, options.delta, '--delta')];
-  if (!gitFlag(top, ['merge-base', '--is-ancestor', base, 'HEAD'])) throw new UsageError(`--base ${base} is no ancestor of HEAD: pass the commit the lane now starts from (after a rebase, the tip it was rebased onto: \`git merge-base <base branch> HEAD\`)`);
-  const { range, files, reading } = readDelta(top, base, reviewed);
+function deltaRound(lane, options) {
+  const { git } = lane;
+  const head = headOf(lane);
+  const [oldStart, reviewed] = [recordedSha(lane, options.base, '--base'), recordedSha(lane, options.delta, '--delta')];
+  const onto = options.rebasedOnto === null ? null : recordedSha(lane, options.rebasedOnto, '--rebased-onto');
+  // Every commit the ancestor tests below walk is re-hashed first, then the trees the diffs compare.
+  verifyCommits(git, [head, oldStart, reviewed, ...(onto === null ? [] : [onto])]);
+  const base = startAfterRebase(git, { base: oldStart, reviewed, onto, head });
+  if (!git.flag(['merge-base', '--is-ancestor', base, head])) throw new UsageError(`--base ${base} is no ancestor of HEAD: pass the commit the lane now starts from (after a rebase, the tip it was rebased onto: \`git merge-base <base branch> HEAD\`)`);
+  verifyTrees(git, [base, reviewed, head], head);
+  const { range, files, reading } = readDelta(git, { base, reviewed, head });
   // On a rewritten lane the first things to read are what the rewrite changed.
-  const requiredReading = [...new Set([...reading, ...requiredReadingFor(top, files)])].slice(0, MAX_READING);
-  return { range, files, deltaOf: reviewed, laneFiles: readRange(top, `${base}..HEAD`), requiredReading, endRevision: 'HEAD', base, tip: gitText(top, ['rev-parse', '--verify', 'HEAD^{commit}']) };
+  const requiredReading = [...new Set([...reading, ...requiredReadingFor(git, files, head)])].slice(0, MAX_READING);
+  return { range, files, deltaOf: reviewed, laneFiles: readRange(git, `${base}..${head}`), requiredReading, base, tip: head };
 }
 
-function wholeRange(top, options) {
-  const { range, endRevision, base, tip } = checkRange(top, options.range ?? `${baseOf(top, options.base)}...HEAD`);
-  return { range, files: readRange(top, range), deltaOf: null, laneFiles: null, requiredReading: [], endRevision, base, tip };
+function wholeRange(lane, options) {
+  const { range, read, base, tip } = checkRange(lane, options.range ?? `${baseOf(lane, options.base)}...HEAD`);
+  return { range, files: readRange(lane.git, read), deltaOf: null, laneFiles: null, requiredReading: [], base, tip };
 }
 
-function run(options) {
-  const top = gitText(process.cwd(), ['rev-parse', '--show-toplevel']);
-  refuseAlteredHistory(top);
+/** The report of one run. Everything after the three questions to the real repository (top folder, common dir, refusals) and the stems goes through `git`. */
+function reportOf(top, git, options) {
   const isDelta = options.delta !== null;
-  const { endRevision, ...read } = isDelta ? deltaRound(top, options) : wholeRange(top, options);
-  const report = buildReport({
-    ...read, readNewFile: newFileReader(top, endRevision), addClasses: options.addClasses,
+  const read = isDelta ? deltaRound(laneOf(top, git), options) : wholeRange(laneOf(top, git), options);
+  return buildReport({
+    ...read, readNewFile: newFileReader(git, read.tip), addClasses: options.addClasses,
     prior: isDelta ? readPriors(options.priors.map((path, index) => ({ path, sha256: options.priorHashes[index] }))) : null,
     // A fix round is the last review of its lines before land, and the tool cannot know which flags the lane's first review had: it
     // always gets the landing set, the strongest the lane can have had.
     landing: options.landing || isDelta, laneNames: options.laneClasses ?? [],
   });
+}
+
+function run(options) {
+  const top = gitText(process.cwd(), ['rev-parse', '--show-toplevel']);
+  const commonDir = commonDirOf(top);
+  refuseAlteredHistory(top, commonDir);
+  const git = openTrustedGit(join(commonDir, OBJECTS_FOLDER));
+  let report;
+  try {
+    report = reportOf(top, git, options);
+  } finally {
+    git.close();
+  }
   console.log(options.json ? formatJson(report) : formatText(report));
   const problem = appendLog(logRecord(report, basename(top), new Date()));
   if (problem !== null) console.error(`review-tier: ${problem}`);

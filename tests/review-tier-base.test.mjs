@@ -91,12 +91,22 @@ test('security B7: in a fix round --base and --delta take only a full sha: a bra
   const { dir, tier, json, first, reviewed, prior } = securityLaneWithDocsFix();
   const base = git(dir, 'rev-parse', 'refs/heads/main');
   git(dir, 'tag', 'v1', base);
-  for (const name of ['main', 'lane', 'v1', 'HEAD', 'HEAD~1', 'main~0', 'refs/heads/main', base.slice(0, 12), reviewed.slice(0, 39), reviewed.toUpperCase(), `${reviewed}^`, '0'.repeat(40)]) {
+  for (const name of ['main', 'lane', 'v1', 'HEAD', 'HEAD~1', 'main~0', 'refs/heads/main', base.slice(0, 12), reviewed.slice(0, 39), reviewed.toUpperCase(), `${reviewed}^`]) {
     for (const [flag, args] of [['--base', ['--delta', reviewed, '--base', name]], ['--delta', ['--delta', name, '--base', base]]]) {
       const result = tier(...args, '--prior', prior);
       assert.equal(result.status, 2, args.join(' '));
       assert.equal(result.stdout, '');
       assert.ok(result.stderr.includes(`${flag} takes the full 40-character sha of a commit in a fix round, from the lead's own record: pass the output of \`git rev-parse <sha>\`, never a short sha or a name`), result.stderr);
+    }
+  }
+  // Review R4-3: 40 hex digits that name no commit here get their own cause, not the short-sha message. A tree's sha is no commit either.
+  for (const unknown of ['0'.repeat(40), 'f'.repeat(40), git(dir, 'rev-parse', `${reviewed}^{tree}`)]) {
+    for (const [flag, args] of [['--base', ['--delta', reviewed, '--base', unknown]], ['--delta', ['--delta', unknown, '--base', base]], ['--rebased-onto', ['--delta', reviewed, '--base', base, '--rebased-onto', unknown]]]) {
+      const result = tier(...args, '--prior', prior);
+      assert.equal(result.status, 2, args.join(' '));
+      assert.equal(result.stdout, '');
+      assert.ok(result.stderr.includes(`${flag} ${unknown} names no commit of this repository: pass the full sha from the lead's own record of this lane`), result.stderr);
+      assert.ok(!result.stderr.includes('never a short sha or a name'), result.stderr);
     }
   }
   assert.equal(json('--delta', reviewed, '--prior', prior, '--base', base).range, `${reviewed}..HEAD`, 'two full shas are a fix round');
