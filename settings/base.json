@@ -360,5 +360,8 @@
     }
   },
   "promptSuggestionEnabled": false,
-  "awaySummaryEnabled": false
+  "awaySummaryEnabled": false,
+  "worktree": {
+    "baseRef": "head"
+  }
 }

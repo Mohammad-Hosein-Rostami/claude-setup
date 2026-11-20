@@ -212,6 +212,7 @@ Marketplaces: `anthropic-plugin-directory`, `claude-plugins-official`, `gitkrake
 | `statusLine` | command: `statusline.mjs`; `refreshInterval` 30 (seconds) repaints the line while a background workflow waits |
 | `enabledPlugins` | plugin id -> true/false (mirrors `plugins/plugins.json`) |
 | `modelSettings` | effort per model: Opus 5.5 high, Sonnet 5.5 medium, Haiku 5.5 low |
+| `worktree.baseRef` | `"head"`; agent worktrees (Agent `isolation: worktree`, `EnterWorktree`, `--worktree`) start from the local HEAD of the folder the session is in at that moment, not `origin/<default>`, with no `git fetch` (a `--worktree` pull-request checkout still fetches its ref), in every project on the machine that does not set the key itself; the CLI default is `fresh`. Start `build` and `bugfix` from a checkout on the base branch: a session inside a lane worktree or on a feature branch passes that branch's commits to every new agent worktree. This repo's local main often runs far ahead of `origin/main` (it is pushed only when the owner says so) |
 
 OS files: `settings/macos.json` (Notification hook plays a sound), `settings/windows.json` (Notification hook beeps), `settings/linux.json` (empty).
 `settings/local.json` (gitignored, per machine): see `local.json.example` (`skipDangerousModePermissionPrompt`); its `hooks`

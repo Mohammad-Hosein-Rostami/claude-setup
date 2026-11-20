@@ -92,6 +92,19 @@ test('base.json raises the Bash default timeout to 5 minutes (300000 ms) so a su
   assert.equal(base.env.BASH_DEFAULT_TIMEOUT_MS, '300000');
 });
 
+const readSettings = (name) => JSON.parse(readFileSync(fileURLToPath(new URL(`../settings/${name}`, import.meta.url)), 'utf8'));
+
+test('base.json starts agent worktrees from the local HEAD (worktree.baseRef head)', () => {
+  assert.deepEqual(readSettings('base.json').worktree, { baseRef: 'head' });
+});
+
+test('the merged settings of every OS keep worktree.baseRef head', { skip }, async () => {
+  for (const osFile of ['macos.json', 'windows.json', 'linux.json']) {
+    const merged = await merge(readSettings('base.json'), readSettings(osFile), readSettings('local.json.example'));
+    assert.equal(merged.worktree.baseRef, 'head', osFile);
+  }
+});
+
 test('base.json blocks the Bash call when the guard hook dies or times out (onFailure block), and its timeout covers the 2-min dialog', () => {
   const base = JSON.parse(readFileSync(fileURLToPath(new URL('../settings/base.json', import.meta.url)), 'utf8'));
   const bash = base.hooks.PreToolUse.filter((group) => group.matcher === 'Bash').flatMap((group) => group.hooks);
