@@ -5,10 +5,12 @@
 // Round 2 (R2-1, R2-2, R2-5, R7): the CLI looks in every folder from the session folder up to the git root, so a linked folder is one
 // item among the others instead of a note of its own; a link inside the agents folder that leads to a folder is listed too, and so is
 // a hard link; a link that is only named like a personal agent is called that, not "shadows".
+// Round 9 (security review round 3, R3-7): a link is classified from the link itself (lstat) and never followed, so that a link into
+// an automounter cannot stall the check: a link loop, a dangling link and a link to a folder are all "a link: not read".
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readdirSync } from 'node:fs';
@@ -19,6 +21,7 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 const REAL_PERSONAL_AGENTS_DIR = fileURLToPath(new URL('../home/agents', import.meta.url));
 const BUILT_IN_AGENTS = ['general-purpose', 'Explore', 'Plan', 'claude', 'claude-code-guide', 'statusline-setup']; // the hook's fixed list, written out a second time
 const LONG_NAME_CHARS = 80; // more than the note shows of a name
+const THREE_DIGITS = 3; // index width in a file name, so that names sort like their numbers
 const MODE_HOOK = fileURLToPath(new URL('../home/hooks/mode.mjs', import.meta.url));
 const skip = !POSIX && 'making a link needs a privilege on Windows';
 const LINK_OUTSIDE_NOTE = noteOf({ advice: LINK_ADVICE, folders: 1, items: ['".claude/agents" (a link to outside: not read)'] });
@@ -81,14 +84,30 @@ test('the personal agents folder reached through a link (a session started in th
   assert.equal(projectAgentNote(linkedHome, personalDir), '');
 });
 
-test('a link loop or a dangling link as the agents folder gives no note and does not throw', { skip }, async () => {
+test('a link loop or a dangling link as the agents folder is named as a link, is not followed and does not throw', { skip }, async () => {
   const { projectDir, personalDir } = await linkSandbox();
   await mkdir(join(projectDir, '.claude'));
   await symlink('agents', join(projectDir, '.claude', 'agents'));
-  assert.equal(projectAgentNote(projectDir, personalDir), '');
+  assert.equal(projectAgentNote(projectDir, personalDir), LINK_INSIDE_NOTE);
   const dangling = await linkSandbox();
   await symlink('nowhere', join(dangling.projectDir, '.claude'));
-  assert.equal(projectAgentNote(dangling.projectDir, dangling.personalDir), '');
+  assert.equal(projectAgentNote(dangling.projectDir, dangling.personalDir), LINK_INSIDE_NOTE);
+});
+
+test('a link is never followed: one that leads to a path that cannot be read gives the same note as any other link', { skip }, async () => {
+  const { projectDir, personalDir } = await linkSandbox();
+  const agentsDir = join(projectDir, '.claude', 'agents');
+  await mkdir(join(projectDir, 'locked', 'inside'), { recursive: true });
+  await mkdir(agentsDir, { recursive: true });
+  await symlink('../../locked/inside', join(agentsDir, 'team'));
+  await symlink('../../locked/inside/x.md', join(agentsDir, 'x.md'));
+  await chmod(join(projectDir, 'locked'), 0); // a stat of either link's target now fails: only the links themselves can be read
+  try {
+    const items = [`"${AGENTS}team" (a link: not read)`, `"${AGENTS}x.md" (a link: not read)`];
+    assert.equal(projectAgentNote(projectDir, personalDir), noteOf({ advice: LINK_ADVICE, items }));
+  } finally {
+    await chmod(join(projectDir, 'locked'), 0o700); // so the temp folder can be removed
+  }
 });
 
 /** A project with a real `.claude/agents` and, outside that folder, a file whose frontmatter shadows reviewer and sets maxTurns. */
@@ -125,7 +144,7 @@ test('with the real personal agents, a link, a linked folder and a file to check
   const personal = readdirSync(REAL_PERSONAL_AGENTS_DIR).filter((file) => file.endsWith('.md')).map((file) => file.slice(0, -'.md'.length)).sort();
   const names = [...personal, ...BUILT_IN_AGENTS];
   const { projectDir, agentsDir } = await projectWithLinkTarget();
-  const worstName = (index) => `${String(index).padStart(3, '0')}${String.fromCharCode(0xd8).repeat(LONG_NAME_CHARS)}.md`;
+  const worstName = (index) => `${String(index).padStart(THREE_DIGITS, '0')}${String.fromCharCode(0xd8).repeat(LONG_NAME_CHARS)}.md`;
   for (const [index, name] of names.entries()) await writeFile(join(agentsDir, worstName(index)), agent(name, 'maxTurns: 999999\n'));
   await symlink('../../docs/r.md', join(agentsDir, worstName(names.length)));
   await symlink('../../docs', join(agentsDir, 'linked-folder'));
@@ -133,6 +152,6 @@ test('with the real personal agents, a link, a linked folder and a file to check
   const note = projectAgentNote(projectDir, REAL_PERSONAL_AGENTS_DIR);
   const advice = `${CAP_ADVICE}; ${SHADOW_ADVICE}; ${LINK_ADVICE}`;
   const expected = (counts) => noteOf({ advice, shadowed: personal, builtIn: [...BUILT_IN_AGENTS].sort(), ...counts });
-  assert.equal(note, expected({ folders: 1, byHand: 1, more: names.length + 3 }));
+  assert.equal(note, expected({ byHand: 1, more: names.length + 3 })); // the link to a folder is one more link: not followed, so not counted as a folder
   assert.ok(note.length <= NOTE_MAX_CHARS, `the note is ${note.length} chars, cap ${NOTE_MAX_CHARS}`);
 });

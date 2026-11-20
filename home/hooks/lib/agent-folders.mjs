@@ -22,11 +22,17 @@
 // Not established, so the safe side is taken: c1n() refuses some link targets (its checks Ki and dg were not read), so a `.git`
 // that is a link to a network path, or is neither folder, file nor link, makes the walk "unsure"; the filters PK (automount roots)
 // and vot were not read, so a folder they drop is still looked at. Not covered: the `.claude/agents` of --add-dir folders.
-// Invariants: read-only; never throws; at most MAX_PARENT_LEVELS + 1 folders looked at (agent-brief.mjs: the same limit finds the git root). Nothing is read through a link: an agents folder
-// whose real path is not <real folder>/.claude/agents is reported as a link, never listed. The personal agents folder is never a
-// project folder, also when a link leads to it.
-import { existsSync, readlinkSync, realpathSync, statSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+// Invariants: read-only; never throws; at most MAX_PARENT_LEVELS + 1 folders looked at (agent-brief.mjs: the same limit finds the git root). Nothing is read through a link, and no
+// link on the way to an agents folder is followed, not even to see what it leads to (security review round 3, R3-7: a stat of a
+// link into an automounter can stall): `.claude` and `.claude/agents` are told from an lstat, and a link among them is reported
+// from its own text as leading inside or outside (`link`, `link-outside`), whether it leads to a folder, a file or nowhere.
+// Inside a repository the same holds for the session folder's own path below the git root (security review round 4, R4-1): the
+// agents folders at and below a linked folder are reported as links and not looked at, so no advice names a file behind a link.
+// The personal agents folder is never a project folder, also when a link leads to it (told from the link's text then).
+// Not covered here: the `.git` entry (a link there is still followed to see that it is a folder or a file: isCertainRoot) and
+// the main checkout named by a worktree's `.git` file.
+import { lstatSync, readlinkSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { MAX_PARENT_LEVELS, gitDirOf, isInside, nearestGitEntry, sharedGitDir } from './agent-brief.mjs';
 
 const CONFIG_FOLDER = '.claude';
@@ -34,6 +40,8 @@ const AGENTS_FOLDER = 'agents';
 const GIT_ENTRY = '.git';
 const UP = '../';
 const NETWORK_PATH = /^[\\/]{2}/;
+const NOT_PROJECT_KINDS = ['none', 'personal']; // what agentsFolderAt finds that is no project agents folder
+const ROOT_FOLDER_KINDS = ['real', 'personal']; // a folder that certainly exists at the git root
 const IGNORES_CASE = process.platform === 'win32'; // the CLI lower-cases paths there before it compares them (jh)
 
 const spelled = (path) => (IGNORES_CASE ? resolve(path).toLowerCase() : resolve(path));
@@ -95,30 +103,62 @@ function folderId(path) {
 }
 
 /**
- * A check for "this real path is the personal agents folder": by the folder's identity, so that a path spelled in another case
- * or through a link is still that folder, and by the path as well (the only check left when the folder cannot be stat'ed).
+ * The checks for "this is the personal agents folder".
+ * @returns {{ isFolder: (folder: string) => boolean, isLinkTarget: (target: string) => boolean }} `isFolder`: for a folder that is
+ *   no link, by its identity on disk, so that a path spelled in another case is still that folder, and by the path as well (the
+ *   only check left when the folder cannot be stat'ed); `isLinkTarget`: for the place a link leads to, which is never looked at:
+ *   by the path alone, as the personal folder is spelled and as it resolves.
  */
 function personalFolderCheck(personalDir) {
-  const path = realOrSpelled(personalDir);
+  const paths = [spelled(personalDir), spelled(realOrSpelled(personalDir))];
   const id = folderId(personalDir);
-  return (real) => real === path || (id !== undefined && folderId(real) === id);
+  const isLinkTarget = (target) => paths.includes(spelled(target));
+  return { isFolder: (folder) => isLinkTarget(folder) || (id !== undefined && folderId(folder) === id), isLinkTarget };
 }
 
 /**
- * What `<dir>/.claude/agents` is.
- * @returns {{ kind: 'none' } | { kind: 'real', path: string } | { kind: 'link' | 'link-outside' }} `none`: no folder there, a path
- *   that cannot be resolved (a link loop: the CLI loads nothing from it) or the personal folder; `real`: the folder's own files can
- *   be listed at `path`; a link leads either to another place inside `boundary` or out of it.
+ * The outermost link among the folders on the way from `top` down to `dir` (`top` itself left out), found by lstat alone.
+ * @returns {string | undefined} the link's path; undefined when no folder on the way is a link, or one of them cannot be read.
  */
-function agentsFolderAt(dir, isPersonal, boundary) {
+function linkBelow(top, dir) {
   try {
-    const real = realpathSync(join(dir, CONFIG_FOLDER, AGENTS_FOLDER));
-    if (!statSync(real).isDirectory()) return { kind: 'none' };
-    if (isPersonal(real)) return { kind: 'none' };
-    if (real === join(realpathSync(dir), CONFIG_FOLDER, AGENTS_FOLDER)) return { kind: 'real', path: real };
-    return { kind: isInside(real, realpathSync(boundary)) ? 'link' : 'link-outside' };
+    let path = top;
+    for (const part of relative(top, dir).split(sep).filter(Boolean)) {
+      path = join(path, part);
+      if (lstatSync(path).isSymbolicLink()) return path;
+    }
+    return undefined;
   } catch {
-    return { kind: 'none' };
+    return undefined;
+  }
+}
+
+/**
+ * What `<dir>/.claude/agents` is, told without following a link.
+ * @param {string} dir - a folder on the way from the session folder up.
+ * @param {ReturnType<typeof personalFolderCheck>} personal - the checks for the personal agents folder.
+ * @param {string[]} boundaries - the git root (the session folder outside a repository) as it is spelled and as it resolves.
+ * @param {string | undefined} sessionLink - from linkBelow: a link on the session folder's own path inside the repository.
+ * @returns {{ kind: 'none' | 'personal' } | { kind: 'real', path: string } | { kind: 'link' | 'link-outside' }} `none`: nothing
+ *   there, or no folder; `personal`: the personal agents folder, or a link whose text leads to it; `real`: a folder below a real
+ *   `.claude`, whose own files can be listed at `path`; else a link (`dir` lies at or below `sessionLink`, or `.claude` or
+ *   `agents` is one) whose text leads to a place inside a boundary or out of it; what is there, if anything, is not looked at.
+ */
+function agentsFolderAt(dir, personal, boundaries, sessionLink) {
+  const config = join(dir, CONFIG_FOLDER);
+  const agents = join(config, AGENTS_FOLDER);
+  try {
+    const behindSessionLink = sessionLink !== undefined && isInside(dir, sessionLink);
+    const link = behindSessionLink ? sessionLink : [config, agents].find((path) => lstatSync(path).isSymbolicLink());
+    if (link === undefined) {
+      if (!lstatSync(agents).isDirectory()) return { kind: 'none' };
+      return personal.isFolder(agents) ? { kind: 'personal' } : { kind: 'real', path: agents };
+    }
+    const target = resolve(dirname(link), readlinkSync(link), relative(link, agents));
+    if (personal.isLinkTarget(target)) return { kind: 'personal' };
+    return { kind: boundaries.some((boundary) => isInside(target, boundary)) ? 'link' : 'link-outside' };
+  } catch {
+    return { kind: 'none' }; // no `.claude` or no `agents` in it, or one of them cannot be read
   }
 }
 
@@ -136,8 +176,10 @@ function agentsFolderAt(dir, isPersonal, boundary) {
 export function agentFolders(sessionDir, homeDir, personalDir) {
   const root = gitRootOf(sessionDir);
   const boundary = root.top ?? resolve(sessionDir);
+  const boundaries = [boundary, realOrSpelled(boundary)]; // a link's text may spell the place either way
   const isHome = (folder) => spelled(folder) === spelled(homeDir); // by spelling only, as the CLI does (see the header)
-  const isPersonal = personalFolderCheck(personalDir);
+  const personal = personalFolderCheck(personalDir);
+  const sessionLink = root.top === undefined ? undefined : linkBelow(root.top, resolve(sessionDir));
   const folders = [];
   let dir = resolve(sessionDir);
   let ended = false; // the walk reached the home folder, the git root or the filesystem root
@@ -145,10 +187,11 @@ export function agentFolders(sessionDir, homeDir, personalDir) {
   for (let up = 0; up <= MAX_PARENT_LEVELS && !ended; up += 1) {
     ended = isHome(dir);
     if (ended) break;
-    const found = agentsFolderAt(dir, isPersonal, boundary);
+    const found = agentsFolderAt(dir, personal, boundaries, sessionLink);
     const parentShown = `${UP.repeat(up)}${CONFIG_FOLDER}/`;
-    if (found.kind !== 'none') folders.push({ ...found, parentShown, shown: `${parentShown}${AGENTS_FOLDER}/` });
-    rootHasAgents ||= dir === root.top && existsSync(join(dir, CONFIG_FOLDER, AGENTS_FOLDER));
+    if (!NOT_PROJECT_KINDS.includes(found.kind)) folders.push({ ...found, parentShown, shown: `${parentShown}${AGENTS_FOLDER}/` });
+    // A link at the root may lead nowhere, and it is not followed to find out: then the main checkout's folder is named as well.
+    rootHasAgents ||= dir === root.top && ROOT_FOLDER_KINDS.includes(found.kind);
     ended = dir === root.top || dirname(dir) === dir;
     dir = dirname(dir);
   }

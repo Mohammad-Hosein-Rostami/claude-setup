@@ -8,15 +8,17 @@
 // Re-read in the 2.1.329 bundle: RK() passes the same ripgrep arguments, now under `AbortSignal.timeout(3000)`: a scan that takes
 // longer loads nothing from that folder. The 1 MiB read limit was not found again there (not re-read).
 // The files come from whatever repository the session opens, so they are untrusted. Invariants: read-only; never throws (an
-// unreadable folder or file counts as nothing there). Nothing is read through a link: a link is reported by its name, a linked folder
-// is not entered, and a regular file is opened with O_NOFOLLOW and O_NONBLOCK and checked again on the open handle (a FIFO, device or
+// unreadable folder or file counts as nothing there). Nothing is read through a link, and no link is followed even to see what it
+// leads to (security review round 3, R3-7: a stat of a link into an automounter can stall): a link is told from its own entry in
+// the folder listing and reported by its name as 'link', whether it leads to a file, to a folder the CLI would walk into, or
+// nowhere. A regular file is opened with O_NOFOLLOW and O_NONBLOCK and checked again on the open handle (a FIFO, device or
 // folder is never read). A file with more than one hard link is not read either: its other name may lie outside the project.
 // Bounded work: at most MAX_WALKED_ENTRIES entries are looked at and at most MAX_AGENT_FILES files read (AGENT_HEAD_BYTES of each),
 // over all the folders that share one budget, and subfolders are entered at most MAX_FOLDER_DEPTH levels down (the walk calls
 // itself once per level). Every entry past a limit is still reported, by name only, as 'unread' or 'folder-not-read', so the note
 // can count it. The listing of one folder itself is not bounded (100,000 names measured 123 ms, 500,000 several seconds): the
 // SessionStart hook therefore runs the whole note in a child process with a timeout (project-agents-timed.mjs).
-import { constants, lstatSync, readdirSync, statSync } from 'node:fs';
+import { constants, lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { readFileHead } from './agent-brief.mjs';
 
@@ -39,32 +41,21 @@ function sortedEntries(dir) {
   }
 }
 
-/** Whether a link leads to a folder (the CLI would walk into it); false when it leads nowhere. */
-function leadsToFolder(path) {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 /**
  * What the walk does with one entry, taking it from the budget.
- * @returns {'folder' | 'file' | 'unread' | 'link' | 'linked-folder' | 'folder-not-read' | undefined} `folder`: walk into it; `file`:
- *   an agent file to read; `unread`: an agent file past a limit; `link`: a link named like an agent file; `folder-not-read`: a folder,
- *   or a link that may lead to one, past the entry limit; undefined: nothing the CLI would load.
+ * @returns {'folder' | 'file' | 'unread' | 'link' | 'folder-not-read' | undefined} `folder`: walk into it; `file`: an agent file
+ *   to read; `unread`: an agent file past a limit; `link`: a link, whatever its name and whatever it leads to (it is not
+ *   followed); `folder-not-read`: a folder, or a link that may lead to one, past the entry limit; undefined: nothing the CLI
+ *   would load.
  */
-function kindOf(dir, entry, budget) {
+function kindOf(entry, budget) {
   const isAgentFile = AGENT_FILE.test(entry.name);
   budget.entries -= 1;
   if (budget.entries < 0) {
     if (isAgentFile) return 'unread';
     return entry.isDirectory() || entry.isSymbolicLink() ? 'folder-not-read' : undefined;
   }
-  if (entry.isSymbolicLink()) {
-    if (leadsToFolder(join(dir, entry.name))) return 'linked-folder';
-    return isAgentFile ? 'link' : undefined;
-  }
+  if (entry.isSymbolicLink()) return 'link';
   if (entry.isDirectory()) return 'folder';
   if (!entry.isFile() || !isAgentFile) return undefined;
   budget.files -= 1;
@@ -78,11 +69,11 @@ function kindOf(dir, entry, budget) {
  * @param {{ files: number, entries: number }} budget - from newBudget(); shared by all the folders of one session and counted down.
  * @param {number} [depth] - how many levels below the agents folder `dir` lies; a subfolder MAX_FOLDER_DEPTH levels down is
  *   reported as 'folder-not-read' instead of entered.
- * @yields {{ folder: string, name: string, path: string, kind: 'file' | 'unread' | 'link' | 'linked-folder' | 'folder-not-read' }}
+ * @yields {{ folder: string, name: string, path: string, kind: 'file' | 'unread' | 'link' | 'folder-not-read' }}
  */
 export function* agentEntries(dir, shown, budget, depth = 0) {
   for (const entry of sortedEntries(dir)) {
-    const kind = kindOf(dir, entry, budget);
+    const kind = kindOf(entry, budget);
     const path = join(dir, entry.name);
     const tooDeep = kind === 'folder' && depth >= MAX_FOLDER_DEPTH;
     if (kind === 'folder' && !tooDeep) yield* agentEntries(path, `${shown}${entry.name}/`, budget, depth + 1);

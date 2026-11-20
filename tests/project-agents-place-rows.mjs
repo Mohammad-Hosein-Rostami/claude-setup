@@ -4,9 +4,12 @@
 // starts elsewhere; `note` is what noteOf() takes, or '' for no note; `posix` marks a row that needs links or names Windows lacks.
 // Where the rows come from: p1-p4 = security review p0-0.1 (its proof scripts), T1-T9 = security review round 2 (a1-hide.mjs),
 // M54 = review round 2 (a surviving mutant), P = fix round 2's own CLI probe (cli-probe5), S1, S2, R3-2, R3-4 and the letter-number
-// ids (D2, D5, D7, D20, D22, N3, N18) = review and security review round 3: a finding or a surviving mutant, one row each.
+// ids (D2, D5, D7, D20, D22, N3, N18) = review and security review round 3: a finding or a surviving mutant, one row each;
+// R4-1 = security review round 4. Round 9 (lane r9-mode-fix): a link is classified from the link itself and never followed, so the
+// T2 and T9 rows name the link whatever it leads to, and the S2 row is built under the real path of the temp root (review 4, R4-4).
 // `ignoresCase` marks a row that needs a disk on which a folder is also found under another case of its name. The personal agents are security-auditor
 // and reviewer.
+import { realpathSync } from 'node:fs';
 import { mkdir, link, rm, symlink, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
@@ -19,12 +22,14 @@ const NAME_CHARS_SHOWN = 64;
 const FOLDER_LEVELS_ENTERED = 32; // MAX_FOLDER_DEPTH, written out a second time on purpose
 const LEVELS_UP = 64; // MAX_PARENT_LEVELS, written out a second time on purpose
 const FILES_PER_FOLDER = 100;
+const SUBFOLDERS = ['a', 'b', 'c'];
+const FOUR_DIGITS = 4; // index width in a file name, so that names sort like their numbers
 const CAPPED = agent('capped', 'maxTurns: 7\n');
 const SHADOWING = agent('security-auditor', 'maxTurns: 3\n');
 const UP_TWO = '../../.claude/agents/';
 const DEEP_FOLDERS_SHOWN = 24; // of `.claude/agents/d/d/...` the note shows 64 characters: the folder's 15, 24 `d/` and one `d`
 const UPS_SHOWN = 21; // of 64 `../` the note shows 64 characters: 21 `../` and one `.`
-const indexed = (i) => `a${String(i).padStart(4, '0')}.md`;
+const indexed = (i) => `a${String(i).padStart(FOUR_DIGITS, '0')}.md`;
 const fixedItems = { mainCheckout: "the main checkout's .claude/agents (Claude Code loads it for this worktree: not read)", foldersAbove: 'the folders above (the git root is not certain: not checked)' };
 
 /** Writes agent files, given as a map from a path below `dir` to the file text. */
@@ -52,12 +57,12 @@ export const PLACE_ROWS = [
   { id: 'T1', classes: ['exact shadow', 'exact maxTurns'], what: 'an agent in a subfolder of .claude/agents',
     build: (box) => write(box.agentsDir, { 'team/helper.md': SHADOWING }),
     note: { advice: BOTH_ADVICE, shadowed: ['security-auditor'], items: [`${AGENTS}team/helper.md (maxTurns 3, shadows the personal agent)`] } },
-  { id: 'T2', classes: ['link not read'], what: 'a folder link inside .claude/agents', posix: true,
+  { id: 'T2', classes: ['link not read'], what: 'a folder link inside .claude/agents: named as a link, not followed to see what it leads to', posix: true,
     build: async (box) => {
       await write(join(box.projectDir, 'vendor', 'agents'), { 'helper.md': SHADOWING });
       await symlink('../../vendor/agents', join(box.agentsDir, 'vendor'));
     },
-    note: { advice: LINK_ADVICE, folders: 1, items: [`"${AGENTS}vendor" (a linked folder: not read)`] } },
+    note: { advice: LINK_ADVICE, items: [`"${AGENTS}vendor" (a link: not read)`] } },
   { id: 'T3', classes: ['exact shadow', 'exact maxTurns'], what: 'the session starts two folders below the git root',
     build: async (box) => {
       await write(box.agentsDir, { 'security-auditor.md': SHADOWING });
@@ -139,12 +144,19 @@ export const PLACE_ROWS = [
   { id: 'M54', classes: ['link not read'], what: '.claude/agents is a link to the folder above the project', posix: true,
     build: (box) => linkInstead(box, box.agentsDir, '../..'),
     note: linkedAgentsFolder('a link to outside: not read') },
-  { id: 'T9', classes: ['silent'], what: '.claude/agents is a link loop: the CLI loads nothing from it', posix: true,
+  { id: 'T9', classes: ['link not read'], what: '.claude/agents is a link loop: the link is named, never followed (the CLI loads nothing from it)', posix: true,
     build: (box) => linkInstead(box, box.agentsDir, 'agents'),
-    note: '' },
-  { id: 'T9', classes: ['silent'], what: '.claude/agents is a dangling link', posix: true,
+    note: linkedAgentsFolder('a link: not read') },
+  { id: 'T9', classes: ['link not read'], what: '.claude/agents is a dangling link: the link is named, never followed', posix: true,
     build: (box) => linkInstead(box, box.agentsDir, '../not-there'),
-    note: '' },
+    note: linkedAgentsFolder('a link: not read') },
+  { id: 'R4-1', classes: ['link not read'], what: 'a session folder spelled through a link inside the repository: nothing behind the link is read, no advice names a file outside', posix: true,
+    build: async (box) => {
+      await write(join(dirname(box.projectDir), 'other'), { '.claude/agents/x.md': agent('x', 'maxTurns: 3\n'), 'sub/readme.txt': '' });
+      await symlink('../other', join(box.projectDir, 'a-link'));
+      return { cwd: join(box.projectDir, 'a-link', 'sub') };
+    },
+    note: { advice: LINK_ADVICE, folders: 2, items: ['".claude/agents" (a link to outside: not read)', '"../.claude/agents" (a link to outside: not read)'] } },
   { id: 'T7', classes: ['not checked'], what: 'file 201 has a harmless name and shadows by its frontmatter: it is counted',
     build: async (box) => {
       for (let i = 0; i < READ_LIMIT; i += 1) await writeFile(join(box.agentsDir, indexed(i)), agent(`a${i}`));
@@ -159,7 +171,7 @@ export const PLACE_ROWS = [
     note: { unchecked: 2, items: [`"${AGENTS}security-auditor.md" (not read, named like the personal agent)`] } },
   { id: 'R2-1', classes: ['not checked'], what: 'an agent file and a subfolder past the entry limit are counted',
     build: async (box) => {
-      for (let i = 0; i < ENTRY_LIMIT; i += 1) await writeFile(join(box.agentsDir, `a${String(i).padStart(4, '0')}.txt`), '');
+      for (let i = 0; i < ENTRY_LIMIT; i += 1) await writeFile(join(box.agentsDir, indexed(i).replace('.md', '.txt')), '');
       await write(box.agentsDir, { 'z.md': SHADOWING, 'zz-team/helper.md': SHADOWING });
     },
     note: { unchecked: 1, folders: 1 } },
@@ -206,10 +218,10 @@ export const PLACE_ROWS = [
     note: { folders: 1 } },
   { id: 'S2', classes: ['check by hand'], what: 'HOME spelled through a link: the CLI compares spellings, so it loads the agents above the real home', posix: true,
     build: async (box) => {
-      const root = dirname(box.home);
+      const root = realpathSync(dirname(box.home)); // the CLI hands a hook the physical path; os.tmpdir() lies behind a link on macOS
       await symlink('home', join(root, 'homelink'));
       await write(root, { '.claude/agents/above.md': agent('above', 'maxTurns: 40\n'), 'home/proj/readme.txt': '' });
-      return { cwd: join(box.home, 'proj'), personalDir: join(root, 'homelink', '.claude', 'agents') };
+      return { cwd: join(root, 'home', 'proj'), personalDir: join(root, 'homelink', '.claude', 'agents') };
     },
     note: { byHand: 1, items: [`${UP_TWO}above.md (maxTurns 40, no git repository: check by hand)`] } },
   { id: 'R3-2', classes: ['silent'], what: 'the session folder spelled in another case: the personal agents folder is still no project folder', ignoresCase: true,
@@ -261,9 +273,9 @@ export const PLACE_ROWS = [
     note: { folders: 1 } },
   { id: 'D22', classes: ['not checked'], what: 'three subfolders of 100 files share one read limit of 200',
     build: async (box) => {
-      for (const folder of ['a', 'b', 'c']) for (let i = 0; i < FILES_PER_FOLDER; i += 1) await write(box.agentsDir, { [`${folder}/${indexed(i)}`]: agent(`${folder}${i}`) });
+      for (const folder of SUBFOLDERS) for (let i = 0; i < FILES_PER_FOLDER; i += 1) await write(box.agentsDir, { [`${folder}/${indexed(i)}`]: agent(`${folder}${i}`) });
     },
-    note: { unchecked: 3 * FILES_PER_FOLDER - READ_LIMIT } },
+    note: { unchecked: SUBFOLDERS.length * FILES_PER_FOLDER - READ_LIMIT } },
   { id: 'N18', classes: ['link not read'], what: 'a link named like a built-in agent', posix: true,
     build: async (box) => {
       await write(box.projectDir, { 'docs/r.md': SHADOWING });
