@@ -59,7 +59,7 @@ test('review B1a: --delta without --lane-classes exits 2 and says what to pass, 
   assert.equal(raw(...fixRound, '--lane-classes', 'docs').status, 0, 'with it the round runs');
 });
 
-test('security B7: --delta without --base, or with a base that is no ancestor of HEAD, exits 2 and says which commit to pass', () => {
+test('security B7, review R5-4: --delta without --base, or with a base that is no ancestor of HEAD, exits 2 and says which commit to pass: the `base` of the round before, with --rebased-onto after a rebase, never a merge-base run in the lane', () => {
   const { dir, raw, write } = lane();
   const reviewed = write('src/a.mjs', 'export const a = 1;\n');
   write('src/a.mjs', 'export const a = 2;\n');
@@ -68,12 +68,18 @@ test('security B7: --delta without --base, or with a base that is no ancestor of
   git(dir, 'checkout', '-q', 'lane');
   const prior = priorFile();
   const fixRound = ['--delta', reviewed, '--prior', prior, '--prior-sha256', sha256Of(prior), '--lane-classes', 'logic'];
-  for (const [flags, why] of [[[], /--delta needs --base <base-sha>: the full sha the lane now starts from .*after a rebase pass the tip it was rebased onto/], [['--base', elsewhere], new RegExp(`--base ${elsewhere} is no ancestor of HEAD: pass the commit the lane now starts from \\(after a rebase, the tip it was rebased onto`)]]) {
+  const remedy = 'the `base` of the round before \\(its `fix round:` line or its JSON\\)\\. After a rebase onto a base tip you recorded yourself, keep that --base and add --rebased-onto <tip>';
+  const texts = [
+    [[], new RegExp(`--delta needs --base <base-sha>: the full sha the lane starts from, which is ${remedy}\\. No branch is looked up in a fix round`)],
+    [['--base', elsewhere], new RegExp(`--base ${elsewhere} is no ancestor of HEAD: the lane does not start there \\(the record is wrong, or the lane was rebuilt on another start\\)\\. Pass ${remedy}$`, 'm')],
+  ];
+  for (const [flags, why] of texts) {
     for (const more of [[], ['--landing'], ['--json']]) {
       const result = raw(...fixRound, ...flags, ...more);
       assert.equal(result.status, 2, [...flags, ...more].join(' '));
       assert.equal(result.stdout, '', 'no review set is printed');
       assert.match(result.stderr, why);
+      assert.doesNotMatch(result.stderr, /git merge-base|pass the tip it was rebased onto|after a rebase, the tip/, 'no advice to read the lane\'s refs or to pass a rebased-onto tip as --base');
     }
   }
   assert.equal(raw(...fixRound, '--base', git(dir, 'rev-parse', 'refs/heads/main')).status, 0, 'with the lane start the round runs');

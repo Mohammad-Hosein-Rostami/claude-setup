@@ -1,10 +1,14 @@
 // Purpose: turn what a caller names (the base of a lane, the two sides of a range, HEAD) into commits, once, for review-tier.
-// Exports: laneOf(top, git) -> lane, commonDirOf(top), refuseAlteredHistory(top, commonDir), headOf(lane), baseOf(lane, requested) -> sha,
-//   checkRange(lane, range) -> { range, read, base, tip }, recordedSha(lane, value, flag) -> sha, startAfterRebase(git, shas) -> sha.
-// Invariants: the real repository (`lane.top`) is asked only for its common dir, the refusals below, and the sha behind a stem: HEAD, a
-//   local branch `refs/heads/<name>`, each once per run (`lane.stems`). Everything else goes through the trusted reader (`lane.git`,
-//   lib/trusted-git.mjs) and takes shas: that a sha names a commit, an ancestry suffix (`~2`, `^`), a merge base, an ancestor test. The
-//   commits behind the stems are re-hashed (lib/verify-objects.mjs) before anything walks their parents, and the trees before a diff.
+// Exports: laneOf(cwd, git, source) -> lane, refuseOutsideWorkTree(cwd), commonDirOf(cwd), refuseAlteredHistory(cwd, commonDir),
+//   headOf(lane), baseOf(lane, requested) -> sha, checkRange(lane, range) -> { range, read, base, tip }, recordedSha(lane, value, flag)
+//   -> sha, startAfterRebase(git, shas) -> sha, mergeBasesOf(git, a, b) -> shas.
+// Invariants: the real repository is asked only in the working folder (`lane.cwd`, never a folder git names: a `core.worktree` setting
+//   can point `--show-toplevel` at another repository, security B14 of lane r7-delta), and only for: whether that folder is inside a
+//   work tree, its common dir, the refusals below, and the sha behind a stem: HEAD, a local branch `refs/heads/<name>`, each once per
+//   run (`lane.stems`). That a sha names a commit is asked of the lane's objects, one object, hashed (`lane.source`, lib/lane-import.mjs).
+//   Everything else goes through the trusted reader (`lane.git`, lib/trusted-git.mjs) and takes shas: an ancestry suffix (`~2`, `^`),
+//   a merge base, an ancestor test. The commits reachable from the stems are imported before anything walks their parents, and the
+//   trees and files a diff reads before that diff (lib/lane-import.mjs).
 //   A name is read only as the local branch `refs/heads/<name>`; a full 40-character sha is itself. Git's own short-name lookup is never
 //   used for a name: it takes a tag, `refs/<name>` or a file `$GIT_DIR/<name>` first, and the writer of a fix can make each of them
 //   (security B3 of lane r7-delta). A name goes to git only behind `refs/heads/`, so one that starts with `-` is an unknown branch, never
@@ -12,10 +16,10 @@
 //   A fix round takes no name at all: its commits are full shas from the lead's record (recordedSha). History that can be altered
 //   outside the commits (grafts, replace refs, a shallow clone) is refused before anything is read (refuseAlteredHistory).
 import { realpathSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { UsageError, gitText, runGit } from '../../git-tidy/lib/git.mjs';
 import { asData } from './brief-data.mjs';
-import { verifyCommits, verifyTrees } from './verify-objects.mjs';
+import { MIN_GIT } from './trusted-git.mjs';
 
 const BASE_FALLBACKS = ['main', 'master', 'develop'];
 const BRANCH_REFS = 'refs/heads/';
@@ -26,27 +30,40 @@ const SIDE_PARTS = /^([^~^]+)((?:[~^]\d*)*)$/; // a name, then ancestry steps; g
 
 /**
  * What a run reads from.
- * @param {string} top the real repository's top folder: asked for names only
+ * @param {string} cwd the working folder: the real repository is asked there, for names only
  * @param {object} git the trusted reader: asked for everything else, by sha
- * @returns {{top: string, git: object, stems: Map<string, string | null>}} `stems`: the sha each ref was read as, so no ref is read twice
+ * @param {object} source the lane's objects (lib/lane-import.mjs): says whether a sha names a commit, and imports what the reader needs
+ * @returns {{cwd: string, git: object, source: object, stems: Map<string, string | null>}} `stems`: the sha each ref was read as, so no ref is read twice
  */
-export const laneOf = (top, git) => ({ top, git, stems: new Map() });
-
-/** The repository's common git dir (the one linked worktrees share) as an absolute real path; its `objects` folder is what the trusted reader borrows. */
-export const commonDirOf = (top) => realpathSync(resolve(top, gitText(top, ['rev-parse', '--git-common-dir'])));
+export const laneOf = (cwd, git, source) => ({ cwd, git, source, stems: new Map() });
 
 /**
- * True when `sha` names a commit in the lane's objects (a tag object or a tree of that name is none). Only the object's type is asked:
- * whether its content is what its name says is the re-hash's question (lib/verify-objects.mjs), which names the object when it is not.
+ * Stops the run unless the working folder is inside a git work tree. It is in every honest layout (a plain clone, a linked worktree, a
+ * separate git dir, a submodule, whose git dir sets `core.worktree` itself); it is not when the lane's config points `core.worktree`
+ * at another folder, which would make every answer about "the repository of this folder" an answer about that other one (security B14).
+ * @throws {UsageError} for a folder git does not count as inside its work tree; {Error} when the folder is in no repository at all
  */
-const isCommit = (git, sha) => git.run(['cat-file', '-t', sha]).stdout.toString().trim() === 'commit';
+export function refuseOutsideWorkTree(cwd) {
+  if (gitText(cwd, ['rev-parse', '--is-inside-work-tree']) !== 'true') throw new UsageError(`${cwd} is not inside the work tree of its git repository (git rev-parse --is-inside-work-tree does not say true): review-tier reads the lane that is checked out in its working folder. A bare repository or the .git folder has none; in a checked-out lane a core.worktree setting that names another folder does this: remove it (git config --show-origin --get-all core.worktree), or review by hand`);
+}
+
+/**
+ * The repository's common git dir (the one linked worktrees share) as an absolute real path, asked in the working folder; its `objects`
+ * folder is the one part of the lane the import reads.
+ * @throws {UsageError} for a git too old to print an absolute path (it would print the option back)
+ */
+export function commonDirOf(cwd) {
+  const answer = gitText(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+  if (!isAbsolute(answer)) throw new UsageError(`review-tier needs git ${MIN_GIT.join('.')} or newer: this git does not know \`rev-parse --path-format=absolute\`. Update git`);
+  return realpathSync(answer);
+}
 
 /** The commit a ref of the real repository points at, read once per run, or null when the ref does not exist or names no commit. */
 function shaOfRef(lane, args, ref) {
   if (!lane.stems.has(ref)) {
-    const { status, stdout } = runGit(lane.top, [...args, ref]);
+    const { status, stdout } = runGit(lane.cwd, [...args, ref]);
     const sha = stdout.trim();
-    lane.stems.set(ref, status === 0 && FULL_SHA.test(sha) && isCommit(lane.git, sha) ? sha : null);
+    lane.stems.set(ref, status === 0 && FULL_SHA.test(sha) && lane.source.isCommit(sha) ? sha : null);
   }
   return lane.stems.get(ref);
 }
@@ -68,14 +85,14 @@ export function headOf(lane) {
  */
 function shaOfBase(lane, name) {
   if (name.startsWith('refs/')) throw new UsageError(`${asData(name.slice(0, MAX_ECHOED_CHARS))} starts with refs/: a name is read only as the local branch refs/heads/<name>, so this one would be the branch refs/heads/${asData(name.slice(0, MAX_ECHOED_CHARS))}. Pass the branch name alone (main, not refs/heads/main) or a full 40-character sha`);
-  if (FULL_SHA.test(name)) return isCommit(lane.git, name) ? name : null;
+  if (FULL_SHA.test(name)) return lane.source.isCommit(name) ? name : null;
   return shaOfRef(lane, ['show-ref', '--verify', '--hash'], `${BRANCH_REFS}${name}`);
 }
 
 /**
  * Where the lane starts: `--base` when given, else the one of main, master, develop that exists as a local branch. It is resolved
  * once, and every range of the run is built from the sha, so no ref made later or elsewhere can move it.
- * @param {object} lane laneOf(top, git)
+ * @param {object} lane laneOf(cwd, git, source)
  * @param {string | null} requested what `--base` got: a local branch name or a full 40-character sha
  * @returns {string} the base's full sha
  * @throws {UsageError} for a base that is no local branch and no full sha, for no fallback branch, and for more than one
@@ -113,7 +130,7 @@ function stemOfSide(lane, side, range) {
   return { side, stem, suffix };
 }
 
-/** The commit of a side: its ancestry suffix applied to the stem's sha, in the trusted reader (parents come from the checked commit objects). */
+/** The commit of a side: its ancestry suffix applied to the stem's sha, in the trusted reader (parents come from the imported commit objects). */
 function shaOfSide(lane, { side, stem, suffix }, range) {
   const found = lane.git.run(['rev-parse', '--verify', '--quiet', `${stem}${suffix}^{commit}`]);
   if (found.status !== 0) throw unknownSide(side, range);
@@ -121,21 +138,36 @@ function shaOfSide(lane, { side, stem, suffix }, range) {
 }
 
 /**
- * A caller's range with each side resolved once, so every read of the run and the printed range use the same commits. The commits behind
- * both sides are re-hashed before a suffix or the merge base walks them, and the trees that are compared before anything is read.
+ * Every merge base of two commits, best first (the first is the one `git diff a...b` reads from; a criss-cross history has more than one).
+ * @param {object} git the trusted reader; the commits reachable from both are imported
+ * @returns {string[]} full shas; empty for two histories with no common commit
+ */
+export function mergeBasesOf(git, a, b) {
+  const { status, stdout, stderr } = git.run(['merge-base', '--all', a, b]);
+  if (status > 1 || stderr !== '') throw new Error(`git merge-base failed: ${stderr.split('\n')[0]}`);
+  return stdout.toString().split('\n').filter(Boolean);
+}
+
+/**
+ * A caller's range with each side resolved once, so every read of the run and the printed range use the same commits. The commits
+ * reachable from both sides are imported before a suffix or the merge base walks them, and the trees and files that are compared before
+ * anything is read: of the tip (the right side, which need not be HEAD), and of the left side or, for three dots, of every merge base.
  * @returns {{ range: string, read: string, base: string, tip: string }} `range`: what is printed (a side given as HEAD stays the word
  *   HEAD, any other side is its sha); `read`: the same range of shas, the one git gets; `base`: where the range starts (the merge base
- *   of a three-dot range), and `tip`: the commit that was read (the tree new files are read from): the two shas a fix round is given
+ *   of a three-dot range; attributes are read from it), and `tip`: the commit that was read (the tree new files are read from): the two
+ *   shas a fix round is given
  * @throws {UsageError} for a text that is no range and for a side that is no HEAD, local branch or full sha
  */
 export function checkRange(lane, range) {
   const stems = sidesOf(range).map((side) => stemOfSide(lane, side, range));
-  verifyCommits(lane.git, stems.map(({ stem }) => stem));
+  const endpoints = stems.map(({ stem }) => stem);
+  lane.source.importCommits(endpoints);
   const [from, tip] = stems.map((stem) => shaOfSide(lane, stem, range));
   const dots = range.includes('...') ? '...' : '..';
-  const fork = dots === '...' ? lane.git.run(['merge-base', from, tip]) : null;
-  const base = fork?.status === 0 ? fork.stdout.toString().trim() : from;
-  verifyTrees(lane.git, [base, tip], tip);
+  const forks = dots === '...' ? mergeBasesOf(lane.git, from, tip) : [];
+  const starts = forks.length > 0 ? forks : [from];
+  const base = starts[0];
+  lane.source.importSnapshot({ endpoints, tip, treeCommits: [...starts, tip], pairs: starts.map((start) => [start, tip]), attributeSource: base });
   const printed = stems.map(({ side }, at) => (side === HEAD_REF ? side : [from, tip][at]));
   return { range: `${printed[0]}${dots}${printed[1]}`, read: `${from}${dots}${tip}`, base, tip };
 }
@@ -147,7 +179,7 @@ export function checkRange(lane, range) {
  */
 export function recordedSha(lane, value, flag) {
   if (!FULL_SHA.test(value)) throw new UsageError(`${flag} takes the full 40-character sha of a commit in a fix round, from the lead's own record: pass the output of \`git rev-parse <sha>\`, never a short sha or a name (git reads those as a ref of that name first); got ${JSON.stringify(value.slice(0, MAX_ECHOED_CHARS))}`);
-  if (!isCommit(lane.git, value)) throw new UsageError(`${flag} ${value} names no commit of this repository: pass the full sha from the lead's own record of this lane (a sha of another clone, or one whose commit was pruned, cannot be read here)`);
+  if (!lane.source.isCommit(value)) throw new UsageError(`${flag} ${value} names no commit of this repository: pass the full sha from the lead's own record of this lane (a sha of another clone, or one whose commit was pruned, cannot be read here)`);
   return value;
 }
 
@@ -157,7 +189,7 @@ export function recordedSha(lane, value, flag) {
  * (the base only grew); `onto` is an ancestor of HEAD (the fix did rebase onto it); `onto` is no ancestor of, nor equal to, the reviewed
  * commit (it is no commit of the lane as it was reviewed: a start inside the lane would hide the lane's own commits below it).
  * That `onto` is a base tip the caller recorded itself is the caller's to check: no ref is read here.
- * @param {object} git the trusted reader; the four commits are already re-hashed
+ * @param {object} git the trusted reader; the commits reachable from the four are already imported
  * @param {{base: string, reviewed: string, onto: string | null, head: string}} shas full shas
  * @returns {string} the start to read from
  */
@@ -170,16 +202,16 @@ export function startAfterRebase(git, { base, reviewed, onto, head }) {
 /**
  * Stops the run when this repository's history can be altered without changing a commit: a graft file, a replace ref or a shallow
  * clone makes git show other parents or other content than the commits hold, and none of them shows in a diff (security B5, B6).
- * @param {string} top the real repository's top folder
- * @param {string} commonDir commonDirOf(top)
+ * @param {string} cwd the working folder
+ * @param {string} commonDir commonDirOf(cwd)
  * @throws {UsageError} naming what was found and what to do
  */
-export function refuseAlteredHistory(top, commonDir) {
+export function refuseAlteredHistory(cwd, commonDir) {
   const grafts = join(commonDir, 'info', 'grafts');
   const found = [
     statSync(grafts, { throwIfNoEntry: false })?.size > 0 ? `a graft file (${grafts})` : '',
-    gitText(top, ['for-each-ref', '--count=1', '--format=%(refname)', 'refs/replace/']) !== '' ? 'a replace ref (git replace -l lists them)' : '',
-    gitText(top, ['rev-parse', '--is-shallow-repository']) === 'true' ? 'a shallow history (git fetch --unshallow completes it)' : '',
+    gitText(cwd, ['for-each-ref', '--count=1', '--format=%(refname)', 'refs/replace/']) !== '' ? 'a replace ref (git replace -l lists them)' : '',
+    gitText(cwd, ['rev-parse', '--is-shallow-repository']) === 'true' ? 'a shallow history (git fetch --unshallow completes it)' : '',
   ].filter(Boolean);
   if (found.length > 0) throw new UsageError(`this repository has ${found.join(' and ')}: with it git can show other history than the commits hold, so nothing read here could be trusted. Remove it, or review by hand`);
 }

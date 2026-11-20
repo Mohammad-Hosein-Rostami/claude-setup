@@ -2,22 +2,25 @@
 // Exports: MAX_READING, parsePatch(text), readRange(git, range),
 //   readDelta(git, shas), newFileReader(git, sha), functionNames(files), redefinedNames(files), requiredReadingFor(git, files, head).
 // The base, HEAD and the sides of a range are resolved in lib/revisions.mjs; this module reads ranges of shas.
-// Invariants: every git call goes through the trusted reader (`git`, lib/trusted-git.mjs): an empty repository of the tool's own that
-//   borrows the lane's objects, so the lane's config, attributes, refs, index and working tree are never read, and neither are the user's
-//   git files. Every commit arrives here as a full sha (the word HEAD is only printed). The only input left is the content of the object
-//   store, re-hashed before it is read (lib/verify-objects.mjs); what stays outside the tool is an object swapped after that check by a
-//   process still running. Only tree diffs between commits are read: no patch of one commit is compared with another's. No path goes
-//   back to git as a pathspec: a diff is read whole and the lane's paths are picked here, by their bytes. Patches are read with fixed
-//   flags (PATCH_FLAGS). Only paths and line numbers leave this module through the report; line texts stay in memory for the class
-//   tests. Required reading is written with names as data (lib/brief-data.mjs): they go into briefs as they are.
+// Invariants: every git call goes through the trusted reader (`git`, lib/trusted-git.mjs): a repository of the tool's own that holds
+//   only the objects the import copied in under the names their content gives (lib/lane-import.mjs), so the lane's config, attributes,
+//   refs, index, packs and working tree are never read, and neither are the user's git files. The reader passed in here reads attributes
+//   from the lane's start (`withAttributeSource`): the built-in diff drivers a landed `.gitattributes` names pick the hunk heads, and
+//   a lane's own attribute edits change nothing. Every commit arrives here as a full sha (the word HEAD is only printed). An object a
+//   read needs and the import did not copy is refused before any call here (lib/closure-check.mjs); as a second layer, the two readers
+//   git lets pass over a missing object (`grep`, and a file text) treat anything git writes to stderr as a failure. Only tree diffs
+//   between commits are read: no patch of one commit is compared with another's. No path goes back to git as a pathspec: a diff is read
+//   whole and the lane's paths are picked here, by their bytes. Patches are read with fixed flags (PATCH_FLAGS). Only paths and line
+//   numbers leave this module through the report; line texts stay in memory for the class tests. Required reading is written with names
+//   as data (lib/brief-data.mjs): they go into briefs as they are.
 import { UsageError } from '../../git-tidy/lib/git.mjs';
 import { placeText } from './brief-data.mjs';
 
 export const MAX_READING = 20; // callers and callees listed as required reading
 const MAX_WHOLE_FILE_CHARS = 1 << 20;
 const MIN_NAME_LENGTH = 3;
-// What every patch is printed with, whatever config or attributes could say (security S6 of lane r7-delta; the trusted reader has neither,
-// these stay as the second layer): --text reads a file marked `-diff` or `binary` as the text it is, no external diff or textconv runs,
+// What every patch is printed with, whatever config or attributes could say (security S6 of lane r7-delta; the trusted reader has no
+// config and only the start's attributes, these stay as the second layer): --text reads a file marked `-diff` or `binary` as the text it is, no external diff or textconv runs,
 // and the prefixes are fixed (diff.noprefix and diff.mnemonicPrefix would change the `+++ b/path` lines).
 const PATCH_FLAGS = ['--no-color', '--no-ext-diff', '--no-textconv', '--text', '-M', '--src-prefix=a/', '--dst-prefix=b/'];
 // A changed submodule pointer is always listed: `diff.ignoreSubmodules` and `ignore = all` in .gitmodules would hide it (security B9).
@@ -25,6 +28,7 @@ const SUBMODULES_SHOWN = '--ignore-submodules=none';
 const DIFF_FLAGS = ['diff', '-U0', ...PATCH_FLAGS, SUBMODULES_SHOWN];
 const NAME_FLAGS = ['diff', '--name-only', '-z', '--no-renames', SUBMODULES_SHOWN];
 const NUL = 0;
+const GITLINK_ENTRY = /^160000 commit [0-9a-f]{40}\t/; // an `ls-tree` row of a submodule pointer
 const GREP_NO_MATCH = 1; // git grep exits 1 when nothing matches; anything above is a failure
 const MAX_REWRITE_PLACES = 8; // places a rewrite changed, named first in a rewritten lane's Read first
 const HEADER_MARK_LENGTH = '+++ '.length;
@@ -118,11 +122,30 @@ const readDiff = (git, args) => withHunklessFiles(diffNames(git, args), parsePat
 /** The changed files of `range` (`a..b` or `a...b`, both sides full shas). */
 export const readRange = (git, range) => readDiff(git, [range]);
 
-/** The whole text of `path` at the commit `sha` (cut at 1 MiB), or null when it does not exist there. */
+/** True when the tree of `sha` holds `path` as a submodule pointer: its commit is in another repository, so there is no text to read. */
+function isGitlink(git, sha, path) {
+  const slash = path.lastIndexOf('/');
+  const name = Buffer.from(path.slice(slash + 1), 'utf8').toString('latin1');
+  const rows = git.bytes(['ls-tree', '-z', slash < 0 ? sha : `${sha}:${path.slice(0, slash)}`]).toString('latin1').split('\0');
+  return rows.some((row) => GITLINK_ENTRY.test(row) && row.slice(row.indexOf('\t') + 1) === name);
+}
+
+/**
+ * The whole text of `path` at the commit `sha` (cut at 1 MiB), or null when no file of that name exists there (a deleted path, a
+ * submodule pointer). "No file" is what the trees say, never a failed read: `git show` fails the same way for a path that is not
+ * there and for a file whose object is missing, so the path is looked up first (silent, exit 1 when absent) and any failure after
+ * that, or anything on stderr, stops the run.
+ * @throws {Error} when git cannot read an object of `sha`
+ */
 export function newFileReader(git, sha) {
   return (path) => {
-    const { status, stdout } = git.run(['show', `${sha}:${path}`]);
-    return status === 0 ? stdout.toString('utf8').slice(0, MAX_WHOLE_FILE_CHARS) : null;
+    const found = git.run(['rev-parse', '--verify', '--quiet', `${sha}:${path}`]);
+    if (found.status === 1 && found.stdout.length === 0 && found.stderr === '') return null;
+    if (found.status !== 0 || found.stderr !== '') throw new Error(`git rev-parse failed: ${found.stderr.split('\n')[0]}`);
+    const { status, stdout, stderr } = git.run(['show', `${sha}:${path}`]);
+    if (status === 0 && stderr === '') return stdout.toString('utf8').slice(0, MAX_WHOLE_FILE_CHARS);
+    if (isGitlink(git, sha, path)) return null;
+    throw new Error(`git show failed: ${stderr.split('\n')[0]}`);
   };
 }
 
@@ -225,10 +248,12 @@ function calleeNames(files, changedNames) {
 /**
  * `file:line` of the rows `git grep` finds for `name` (all uses, or only its definitions) in the tree of the commit `head`. The lane's
  * working tree is never searched: an uncommitted edit there could add or hide a caller. Each row starts `<head>:`, which is cut off.
+ * @throws {Error} when git grep fails or writes anything to stderr
  */
 function placesOf(git, head, name, onlyDefinitions) {
   const { status, stdout, stderr } = git.run(['grep', '-n', '-w', '-F', '-I', '-e', name, head, '--']);
-  if (status > GREP_NO_MATCH) throw new Error(`git grep failed: ${stderr.split('\n')[0]}`);
+  // git grep skips a blob it cannot read with a message on stderr and exit 0: a caller lost that way must stop the run, not shorten the list.
+  if (status > GREP_NO_MATCH || stderr !== '') throw new Error(`git grep failed: ${stderr.split('\n')[0]}`);
   const prefix = `${head}:`;
   return stdout.toString('utf8').split('\n').filter((row) => row.startsWith(prefix)).map((row) => /^(.+?):(\d+):(.*)$/.exec(row.slice(prefix.length)))
     .filter((m) => m !== null && (!onlyDefinitions || nameDefinedIn(m[3]) === name))
