@@ -14,9 +14,9 @@
 // job, stats }. The repositories (repos.mjs) are only those the setup vouches for: the session folder's, the STATUS.md folder's, the
 // road's `repo`, each agent's `meta.worktreePath` and the writers' launch folders, with the worktrees their own `worktree list`
 // names; agents are matched to those worktrees by the folders of the files they changed or read (owner report 2026-11-21: no git
-// info at all; review SEC-1: git never runs where a tool call points). One refresh at a time per session: a lock file with the
-// refresher's pid, taken over when that process is gone or the lock is LOCK_STALE_MS old (review SEC-2: a hung refresh must not
-// be joined by a new one every IN_FLIGHT_MS).
+// info at all; review SEC-1: git never runs where a tool call points). One refresh at a time per session: an O_EXCL lock file
+// (disk-free/lib/lock-file.mjs, review L1), broken only once it is LOCK_STALE_MS old (review SEC-2: a hung refresh must not be
+// joined by a new one every IN_FLIGHT_MS).
 // After the write, the agent-type pools (pools.mjs) are rebuilt when an hour old, outside the budget.
 // States: `run` (journal written in the last QUIET_MIN), `quiet` (QUIET_MIN to STOPPED_MIN), `stopped?` (longer: a killed run has no
 // summary json, so it would read live for ever); `needs you` is the session's asking marker. `failed` and `done, not landed`
@@ -25,8 +25,8 @@
 // through session-store.mjs (no links, 0600, temp file and rename); git runs only in git-state.mjs, with fixed flags and its own
 // timeouts; `git-tidy check` never runs here; nothing here throws.
 import { spawn } from 'node:child_process';
-import { closeSync, lstatSync, mkdirSync, openSync, readdirSync, rmSync, writeSync } from 'node:fs';
-import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
+import { lstatSync, mkdirSync, readdirSync } from 'node:fs';
+import { releaseLock, takeLock } from '../../disk-free/lib/lock-file.mjs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -151,34 +151,6 @@ export function claimBoardRefresh(session, { env = process.env, nowMs = Date.now
 }
 
 const LOCK_STALE_MS = 2 * 60_000; // a refresh runs well under a second; one this old is stuck and is not waited for
-const MAX_LOCK_BYTES = 64;
-
-/** True when the refresh named in the lock file is alive and its lock younger than LOCK_STALE_MS. */
-function lockHeld(path, nowMs) {
-  try {
-    const [pid, atMs] = readPlainFile(path, MAX_LOCK_BYTES).trim().split(' ').map(Number);
-    if (!Number.isInteger(pid) || !(nowMs - atMs < LOCK_STALE_MS)) return false;
-    process.kill(pid, 0); // throws when the process is gone
-    return true;
-  } catch (error) {
-    return error?.code === 'EPERM'; // alive, owned by someone else: still held
-  }
-}
-
-/** Takes the session's refresh lock (a file holding this pid and the time); null when another live refresh holds it. */
-function takeLock(dir, session, nowMs) {
-  const path = join(dir, `${session}.lock`);
-  try {
-    if (lockHeld(path, nowMs)) return null;
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    rmSync(path, { force: true });
-    const fd = openSync(path, 'wx', 0o600);
-    try { writeSync(fd, `${process.pid} ${nowMs}`); } finally { closeSync(fd); }
-    return path;
-  } catch {
-    return null; // another refresh took it between the check and the open
-  }
-}
 
 /**
  * One refresh of the session's board, when due: claims it, builds it, writes it; over BUDGET_MS the old data stays, marked stale.
@@ -193,12 +165,13 @@ export function refreshBoard(source, { env = process.env, now = Date.now, force 
     const old = readBoard(source.session, env);
     const startMs = now();
     if (!force && !due(old, startMs)) return false;
-    const lock = takeLock(dir, source.session, startMs);
-    if (lock === null) return false;
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const lock = join(dir, `${source.session}.lock`);
+    if (!takeLock(lock, startMs, LOCK_STALE_MS)) return false; // another refresh holds it (O_EXCL, disk-free/lib/lock-file.mjs)
     try {
       return refreshLocked(source, { env, now, dir, old, startMs });
     } finally {
-      rmSync(lock, { force: true });
+      releaseLock(lock);
     }
   } catch {
     return false; // the old board stays; the next refresh tries again
