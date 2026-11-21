@@ -1,6 +1,6 @@
 // The status line's estimate segment: reads a small cache of the estimate's text and, when the cache is missing or out of date,
 // starts a detached refresh. Used by home/statusline.mjs on every render; written by ../statusline-cache.mjs.
-// Exports: estimateSegment({ projectDir, sessionId }, deps) -> { text, progress, numbers } | null; refreshNow(statusPath, sessionId, deps) ->
+// Exports: estimateSegment({ projectDir, sessionId, projectSinceMs }, deps) -> { kind, text, highMs, progress, numbers } | null; refreshNow(statusPath, sessionId, deps) ->
 // boolean (status.mjs after a row edit); readEntry, writeEntry, cacheDir (the cache file store);
 // SEGMENT_KINDS, OVERDUE_TEXT, MAX_CACHE_BYTES, STALE_SHOW_MS, REFRESH_INTERVAL_MS, RECOMPUTE_AFTER_MS.
 // Invariants:
@@ -9,7 +9,8 @@
 //   the table parser or the transcript reader, so it can never read a transcript. The text comes only from the refresh script.
 // - Cache file: ~/.claude/state/estimate-segment/<sha256 of the STATUS.md path, 32 hex>.json, one JSON object
 //   {path, kind, text, highMs, progress, numbers, mtimeMs, size, computedAt, refreshStartedAt}; numbers (job-rows.mjs jobNumbers, or
-//   null) is checked like progress and passed on as `numbers` (the switch of the render to numbers only is r9-statusline's); progress is the job's progress (progress.mjs
+//   null) is checked like progress and passed on as `numbers` (the render makes its text from them; an entry with numbers and no
+//   text is shown); progress is the job's progress (progress.mjs
 //   progressOf, a small object) or null, shown by the status line's second line under the same freshness rules as the text; kind is one of SEGMENT_KINDS and text is what to show
 //   (a finish, a hand-over, the work left of a long job, or `done ? <cause>` after a refusal or an error); highMs (epoch ms) is the
 //   shown clock of a finish, after which OVERDUE_TEXT is shown; null for the other kinds. An entry of another kind (written by the
@@ -92,11 +93,12 @@ const matchesFile = (entry, file) => entry.mtimeMs === file.mtimeMs && entry.siz
  * it was computed; once a finish's clock has passed, OVERDUE_TEXT and the overdue tag.
  */
 function shownEntry(entry, file, now) {
-  if (entry === null || entry.text === null) return null;
+  if (entry === null || (entry.text === null && entry.numbers === null)) return null;
   const current = matchesFile(entry, file) || (entry.kind !== 'handed-over' && now - entry.computedAt < STALE_SHOW_MS);
   if (!current) return null;
-  if (entry.highMs === null || now <= entry.highMs) return { text: entry.text, progress: entry.progress, numbers: entry.numbers };
-  return { text: OVERDUE_TEXT, progress: entry.progress === null ? null : { ...entry.progress, tag: 'overdue' }, numbers: entry.numbers };
+  const shown = { kind: entry.kind, highMs: entry.highMs, numbers: entry.numbers };
+  if (entry.highMs === null || now <= entry.highMs) return { ...shown, text: entry.text, progress: entry.progress };
+  return { ...shown, text: OVERDUE_TEXT, progress: entry.progress === null ? null : { ...entry.progress, tag: 'overdue' } };
 }
 
 /**
@@ -146,28 +148,35 @@ export function refreshNow(statusPath, sessionId, deps = {}) {
   }
 }
 
-/** The session's linked STATUS.md, else the project's; null when neither is known. */
-function statusPathOf(projectDir, sessionId, store) {
+/**
+ * The session's linked STATUS.md, else the project's when it changed at or after `projectSinceMs` (audit case 2: a project's old
+ * STATUS.md, another session's or a finished job, is not this session's job); null when neither.
+ */
+function statusPathOf({ projectDir, sessionId, projectSinceMs }, store) {
   const linked = isSessionId(sessionId) ? linkedStatusPath(store, sessionId) : null;
-  if (linked !== null) return linked;
-  return typeof projectDir === 'string' && projectDir !== '' ? join(projectDir, 'STATUS.md') : null;
+  if (linked !== null) return { path: linked, linked: true };
+  if (typeof projectDir !== 'string' || projectDir === '') return null;
+  return { path: join(projectDir, 'STATUS.md'), linked: false, sinceMs: typeof projectSinceMs === 'number' ? projectSinceMs : -Infinity };
 }
 
 /**
  * The status line's estimate segment for a session.
- * @param {{ projectDir?: string, sessionId?: string }} where the project folder and the session id from the status line's JSON
+ * @param {{ projectDir?: string, sessionId?: string, projectSinceMs?: number }} where the project folder and the session id from the
+ *   status line's JSON; projectSinceMs: the project's STATUS.md counts only when changed at or after it (the session's start; the
+ *   status line passes it, unset means any time)
  * @param {{cacheDir?: string, stateDir?: string, now?: number, spawnRefresh?: (statusPath: string, sessionId?: string) => void}} [deps]
  *   the cache folder, the estimate store (for the session's link), the clock (epoch ms) and the refresh starter; tests replace them
- * @returns {{ text: string, progress: object | null } | null} text e.g. "done by 21:40", "handed over 17:54" or "done ? few rows"; progress
+ * @returns {{ kind: string | null, text: string | null, highMs: number | null, progress: object | null, numbers: object | null } | null} text e.g. "done by 21:40", "handed over 17:54" or "done ? few rows"; progress
  *   as progressOf returns it, or null; null for no segment (no STATUS.md, no cache yet, any error)
  */
-export function estimateSegment({ projectDir, sessionId } = {}, deps = {}) {
+export function estimateSegment({ projectDir, sessionId, projectSinceMs } = {}, deps = {}) {
   try {
     const { cacheDir: dir = cacheDir(), stateDir: store = stateDir(), now = Date.now(), spawnRefresh: start = spawnRefresh } = deps;
-    const statusPath = statusPathOf(projectDir, sessionId, store);
-    if (statusPath === null) return null;
+    const where = statusPathOf({ projectDir, sessionId, projectSinceMs }, store);
+    if (where === null) return null;
+    const statusPath = where.path;
     const file = statSync(statusPath, { throwIfNoEntry: false });
-    if (!file?.isFile()) return null;
+    if (!file?.isFile() || (!where.linked && file.mtimeMs < where.sinceMs)) return null;
     const entry = readEntry(dir, statusPath);
     if (refreshDue(entry, file, now) && claimRefresh(dir, statusPath, entry, now)) start(statusPath, sessionId);
     return shownEntry(entry, file, now);

@@ -1,4 +1,5 @@
-// The status line's second and third lines: the job's progress bar and one line per live workflow run. Used by home/statusline.mjs.
+// The old status line's second and third lines: the job's progress bar and one line per live workflow run. No longer drawn: the
+// rows are home/tools/board/lib/render.mjs now; this file stays until its tests (tests/workflow-runs.test.mjs) move to the render's.
 // Exports: progressLines(progress, runs, { columns, color }) -> string[] (the bar line first when there is progress, then up to
 // MAX_RUN_LINES run lines; [] when there is nothing to show).
 // Look (spec U7): `██████░░░░░░ 54% · 5/9 rows · 30 min left · moved`; 12 cells from BAR_WIDE_COLUMNS columns, 8 from BAR_NARROW_COLUMNS,

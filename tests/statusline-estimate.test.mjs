@@ -195,22 +195,25 @@ test('the status line prints the segment of the session\'s linked STATUS.md from
     env: { ...process.env, HOME: home, USERPROFILE: home },
     encoding: 'utf8',
   }).stdout;
-  assert.match(render({ workspace: { project_dir: projectDir } }), /done by 16:15/);
+  assert.match(render({ workspace: { project_dir: projectDir }, cost: { total_duration_ms: HOUR_MS } }), CLOCK_SHOWN);
   assert.doesNotMatch(render({ workspace: { project_dir: root } }), /done by/);
   noteTable(join(home, '.claude', 'state', 'estimate'), statusPath, { sessionId: SESSION, ids: [], nowMs: Date.now() });
   const linked = realpathSync(statusPath); // the link holds the real path, and the refresh caches under it
   writeEntry(cacheDir, linked, { ...(await matchingEntry(statusPath, { computedAt: Date.now(), refreshStartedAt: Date.now() })), path: linked });
-  assert.match(render({ workspace: { project_dir: root }, session_id: SESSION }), /done by 16:15/);
+  assert.match(render({ workspace: { project_dir: root }, session_id: SESSION }), CLOCK_SHOWN);
 });
 
+// The render draws the finish from the entry's clock (highMs) in its own zone, with the weekday on another day (audit case 12).
+const CLOCK_SHOWN = /done by (\w{3} )?\d\d:\d\d/;
+const withClock = (line) => line.replace(/(\w{3} )?\d\d:\d\d/, '<clock>');
 const PROGRESS = { pct: 54, approx: false, rowsDone: 5, rowsTotal: 9, leftMin: 30, tag: 'moved' };
 
 test('a cache entry carries the job progress and the render returns it with the text; an entry without one gives null', async () => {
   const { statusPath, cacheDir, render } = await setup();
   writeEntry(cacheDir, statusPath, await matchingEntry(statusPath, { progress: PROGRESS }));
-  assert.deepEqual(render(NOW), { text: SEGMENT, progress: PROGRESS, numbers: null });
+  assert.deepEqual(render(NOW), { kind: 'finish', highMs: NOW + 10 * HOUR_MS, text: SEGMENT, progress: PROGRESS, numbers: null });
   writeEntry(cacheDir, statusPath, await matchingEntry(statusPath));
-  assert.deepEqual(render(NOW), { text: SEGMENT, progress: null, numbers: null });
+  assert.deepEqual(render(NOW), { kind: 'finish', highMs: NOW + 10 * HOUR_MS, text: SEGMENT, progress: null, numbers: null });
   assert.ok(JSON.stringify(await matchingEntry(statusPath, { progress: PROGRESS })).length < MAX_CACHE_BYTES / 8);
 });
 
@@ -219,14 +222,14 @@ test('a progress that is not the stored shape is dropped, the entry and its text
   const bad = [{ ...PROGRESS, pct: 101 }, { ...PROGRESS, pct: 'x' }, { ...PROGRESS, tag: 'boom' }, { ...PROGRESS, rowsTotal: -1 }, { ...PROGRESS, leftMin: 'soon' }, 'text', [], { pct: 5 }];
   for (const progress of bad) {
     writeEntry(cacheDir, statusPath, await matchingEntry(statusPath, { progress }));
-    assert.deepEqual(render(NOW), { text: SEGMENT, progress: null, numbers: null }, JSON.stringify(progress));
+    assert.deepEqual(render(NOW), { kind: 'finish', highMs: NOW + 10 * HOUR_MS, text: SEGMENT, progress: null, numbers: null }, JSON.stringify(progress));
   }
 });
 
 test('once the shown clock has passed the render shows the overdue text and the overdue tag, whatever the stored tag', async () => {
   const { statusPath, cacheDir, render } = await setup();
   writeEntry(cacheDir, statusPath, await matchingEntry(statusPath, { progress: { ...PROGRESS, tag: null }, highMs: NOW + 1 }));
-  assert.deepEqual(render(NOW + 2), { text: 'done ? overdue', progress: { ...PROGRESS, tag: 'overdue' }, numbers: null });
+  assert.deepEqual(render(NOW + 2), { kind: 'finish', highMs: NOW + 1, text: 'done ? overdue', progress: { ...PROGRESS, tag: 'overdue' }, numbers: null });
 });
 
 test('the refresh script stores the progress of the job it estimated', async () => {
@@ -250,7 +253,7 @@ test('a CLI run at the real clock stores the same progress in the cache as the F
   assert.deepEqual([progress.pct, progress.rowsDone, progress.rowsTotal], printed.slice(1).map(Number));
 });
 
-test('the status line prints the job bar and the live workflow runs under its first line, fitted to COLUMNS, plain under NO_COLOR', async () => {
+test('the status line prints the work row and the session row, fitted to COLUMNS, without colour under NO_COLOR, ASCII under TERM=dumb', async () => {
   const { root, projectDir, statusPath } = await setup();
   const home = join(root, 'home');
   writeEntry(join(home, '.claude', 'state', 'estimate-segment'), statusPath, await matchingEntry(statusPath, { progress: PROGRESS, computedAt: Date.now(), refreshStartedAt: Date.now() }));
@@ -258,27 +261,27 @@ test('the status line prints the job bar and the live workflow runs under its fi
   await mkdir(journals, { recursive: true });
   await writeFile(join(journals, 'journal.jsonl'), `${['started', 'result'].map((type) => JSON.stringify({ type, agentId: 'a1', label: 'impl-a:review', phase: 'Review' })).join('\n')}\n`);
   const render = (env) => spawnSync(process.execPath, [STATUSLINE], {
-    input: JSON.stringify({ model: { id: 'claude-sonnet-5-5', display_name: 'Sonnet 5.5' }, rate_limits: { five_hour: {} }, workspace: { project_dir: projectDir }, transcript_path: join(root, 'proj', 'sess-1.jsonl') }),
-    env: { ...process.env, HOME: home, USERPROFILE: home, COLUMNS: '', NO_COLOR: '', ...env },
+    input: JSON.stringify({ model: { id: 'claude-sonnet-5-5', display_name: 'Sonnet 5.5' }, rate_limits: { five_hour: {} }, workspace: { project_dir: projectDir }, cost: { total_duration_ms: HOUR_MS }, transcript_path: join(root, 'proj', 'sess-1.jsonl') }),
+    env: { ...process.env, HOME: home, USERPROFILE: home, COLUMNS: '', NO_COLOR: '', CLAUDE_ACCOUNT: '', TERM: 'xterm-256color', ...env },
     encoding: 'utf8',
   }).stdout.trimEnd().split('\n');
   const wide = render({ COLUMNS: '120' });
-  assert.equal(wide.length, 3);
-  assert.match(wide[0], /done by 16:15/);
-  assert.equal(wide[1], '\u001b[33m██████░░░░░░ 54% · 5/9 rows · 30 min left · moved\u001b[0m');
-  assert.equal(wide[2], '\u001b[2mwf workflow impl-a · Review (1/?) · 1/1 agents\u001b[0m');
-  assert.equal(render({ COLUMNS: '80', NO_COLOR: '1' })[1], '####---- 54% · 5/9 rows · moved');
-  assert.doesNotMatch(render({ COLUMNS: '80', NO_COLOR: '1' }).slice(1).join(''), /\u001b|█/);
-  assert.equal(render({ COLUMNS: '60', NO_COLOR: '1' })[1], '54% · 5/9 rows · moved');
-  assert.equal(render({ COLUMNS: 'abc', NO_COLOR: '1' })[1], '####---- 54% · 5/9 rows · moved', 'no usable COLUMNS: 80');
+  assert.equal(wide.length, 2);
+  assert.match(wide[0], CLOCK_SHOWN);
+  assert.equal(withClock(wide[0]), '████████░░░░░░░░  54% of work · 30 min left · done by <clock> · 5/9 rows · \u001b[33mmoved\u001b[0m');
+  assert.equal(wide[1], 'Sonnet 5.5 · ctx ? · \u001b[2m5h ?\u001b[0m · account ?');
+  assert.equal(withClock(render({ COLUMNS: '80', NO_COLOR: '1' })[0]), '█████░░░░░  54% · 30 min left · done by <clock> · 5/9 rows · moved');
+  assert.doesNotMatch(render({ COLUMNS: '80', NO_COLOR: '1', TERM: 'dumb' }).join(''), /\u001b|[^\u0020-\u007e]/);
+  assert.equal(withClock(render({ COLUMNS: '60', NO_COLOR: '1' })[0]), '█████░░░░░  54% · 30 min left · done by <clock> · moved');
+  assert.equal(withClock(render({ COLUMNS: 'abc', NO_COLOR: '1' })[0]), '█████░░░░░  54% · 30 min left · done by <clock> · 5/9 rows · moved', 'no usable COLUMNS: 80');
 });
 
-test('with neither progress nor a live run the status line stays one line', async () => {
+test('with neither progress nor a live run the status line stays at its two rows', async () => {
   const { root, projectDir } = await setup();
   const home = join(root, 'home');
   const out = spawnSync(process.execPath, [STATUSLINE], {
     input: JSON.stringify({ model: { id: 'claude-sonnet-5-5', display_name: 'Sonnet 5.5' }, rate_limits: { five_hour: {} }, workspace: { project_dir: projectDir }, transcript_path: join(root, 'proj', 'none.jsonl') }),
     env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8',
   }).stdout;
-  assert.equal(out.trimEnd().split('\n').length, 1);
+  assert.equal(out.trimEnd().split('\n').length, 2);
 });

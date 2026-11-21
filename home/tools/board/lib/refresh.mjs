@@ -2,7 +2,7 @@
 // (spec-p5 `r9-board`). A detached refresh writes it, one at a time, at most every LIVE_EVERY_MS while a run is live and every
 // IDLE_EVERY_MS when idle; a refresh over BUDGET_MS keeps the old data and marks the board stale.
 // Exports: boardDir(env), readBoard(session, env), runState(run), buildBoard(source, deps), refreshBoard(source, deps) -> boolean,
-// startBoardRefresh(session, deps) -> boolean, findTranscript(session, projectsDir); MAX_BOARD_BYTES.
+// claimBoardRefresh(session, deps) -> boolean, startBoardRefresh(session, deps) -> boolean, findTranscript(session, projectsDir); MAX_BOARD_BYTES.
 // File: ~/.claude/state/board/<session>.json = { session, at, stale, refreshStartedAt, asking, runs: [{ runId, name, phase,
 // phaseIndex, phaseTotal, started, done, lanes, state, quietMin }], git: { branch, ahead, behind, changed } | null } (<= 16 KB).
 // States: `run` (journal written in the last QUIET_MIN), `quiet` (QUIET_MIN to STOPPED_MIN), `stopped?` (longer: a killed run has no
@@ -92,6 +92,25 @@ function due(old, nowMs) {
 }
 
 /**
+ * The status line's claim of a board refresh: when one is due, the board file is marked `refreshStartedAt` now (a stub board when
+ * there is none yet), so the next renders start no second one; the caller then starts the refresh with `force`.
+ * @param {string | undefined} session the session id
+ * @param {{ env?: object, nowMs?: number }} [deps] tests pass both
+ * @returns {boolean} true when the claim was written and a refresh should start
+ */
+export function claimBoardRefresh(session, { env = process.env, nowMs = Date.now() } = {}) {
+  try {
+    if (!isSessionId(session)) return false;
+    const old = readBoard(session, env);
+    if (!due(old, nowMs)) return false;
+    const base = old ?? { session, at: 0, stale: null, refreshStartedAt: null, asking: null, runs: [], git: null };
+    return writeSessionFile(boardDir(env), session, JSON.stringify({ ...base, refreshStartedAt: nowMs }));
+  } catch {
+    return false; // no claim, no spawn: a broken board folder never causes a refresh storm
+  }
+}
+
+/**
  * One refresh of the session's board, when due: claims it, builds it, writes it; over BUDGET_MS the old data stays, marked stale.
  * @param {{ session: string, transcriptPath: string | null, cwd: string }} source see buildBoard
  * @param {{ env?: object, now?: () => number, force?: boolean }} [deps] force skips the interval (not the claim)
@@ -132,13 +151,14 @@ export function findTranscript(session, projectsDir = join(homedir(), '.claude',
 /**
  * Starts a detached `board.mjs refresh` for the session (status.mjs after a row edit); never waits, never throws.
  * @param {string | undefined} session the session id
- * @param {{ cwd?: string, spawnChild?: typeof spawn }} [deps] tests replace spawn
+ * @param {{ cwd?: string, spawnChild?: typeof spawn, force?: boolean }} [deps] tests replace spawn; force: after claimBoardRefresh
  * @returns {boolean} true when a child was started
  */
-export function startBoardRefresh(session, { cwd = process.cwd(), spawnChild = spawn } = {}) {
+export function startBoardRefresh(session, { cwd = process.cwd(), spawnChild = spawn, force = false } = {}) {
   if (!isSessionId(session)) return false;
   try {
-    const child = spawnChild(process.execPath, [BOARD_SCRIPT, 'refresh', '--session', session], { cwd, detached: true, stdio: 'ignore' });
+    const args = [BOARD_SCRIPT, 'refresh', '--session', session, ...(force ? ['--force'] : [])];
+    const child = spawnChild(process.execPath, args, { cwd, detached: true, stdio: 'ignore', windowsHide: true });
     child.on?.('error', () => {}); // a failed start leaves the old board; the next edit or render tries again
     child.unref?.();
     return true;

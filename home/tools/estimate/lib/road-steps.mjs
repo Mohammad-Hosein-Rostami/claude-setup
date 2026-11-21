@@ -8,7 +8,8 @@
 // second kind is named in a Check line, so nothing vanishes). The Total is the forecast's own median of the road-wide sums; each step
 // line is the step's share of it by the mean of its summed draws, rounded so the lines add up to the Total exactly: a step's share
 // is not its own median (step medians added up come out early).
-// Invariants: pure (no I/O, no clock); `progress.road` holds numbers only (R60); text is made by report.mjs and the status line.
+// Invariants: pure (no I/O, no clock); `progress.road` holds numbers only (R60: the road's id, step counts, minutes, the step's
+// likely and 85% clocks in epoch ms, one line per step); text is made by report.mjs, the status line and `/where`.
 export const ROAD_ROW = /^(?:[a-z]+:)?([A-Za-z0-9][\w-]{0,39})\.s(\d{1,3})\.(.+)$/i;
 const CHECK_REST = /^check\b/i;
 const MS_PER_MIN = 60_000;
@@ -102,7 +103,12 @@ export function withRoad(result, road, stepMeans) {
     stepClockMs: result.nowMs + now.leftMin * MS_PER_MIN,
     stepP85Ms: result.nowMs + (now.leftMin + Math.max(0, result.work.p85 - result.work.p50) * share) * MS_PER_MIN,
   };
-  const progressRoad = { step: road.current, steps: road.steps, rowsDone: now.rowsDone, rowsTotal: now.rowsTotal, leftMin: now.leftMin };
+  // The step clocks and every step line ride along as numbers, so the status line and `/where` read the cache alone.
+  const progressRoad = {
+    name: road.road, step: road.current, steps: road.steps, rowsDone: now.rowsDone, rowsTotal: now.rowsTotal, leftMin: now.leftMin,
+    clockMs: roadView.stepClockMs, p85Ms: roadView.stepP85Ms, totalMin: roadView.totalMin,
+    lines: steps.map(({ step, state, leftMin, rowsDone, rowsTotal }) => ({ step, state, leftMin, rowsDone, rowsTotal })),
+  };
   const checks = road.unstepped.length === 0 ? result.checks : [...result.checks, { kind: 'unstepped', ids: road.unstepped, step: road.current }];
   return { ...result, road: roadView, checks, progress: result.progress && { ...result.progress, road: progressRoad } };
 }

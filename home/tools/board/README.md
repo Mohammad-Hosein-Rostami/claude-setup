@@ -22,4 +22,10 @@ transcripts are Claude Code's internal formats: an unreadable part shows nothing
 
 Not yet shown: `failed` and `done, not landed` (they need the launch records of the resume tool) and the tidy-gate verdict.
 
-Files: `board.mjs` (the CLI and the lines), `lib/refresh.mjs` (build, refresh, the board file, the detached start).
+The status line claims a refresh in the file when one is due (`claimBoardRefresh`) and starts it with `--force`, so idle sessions
+get a board too and renders never stack refreshes.
+
+Files: `board.mjs` (the CLI and the lines), `lib/refresh.mjs` (build, refresh, the board file, the claim, the detached start),
+`lib/render.mjs` (the status line rows: alert and session rows; `home/statusline.mjs` only reads and writes), `lib/work-row.mjs`
+(the work row: the job against its estimate and the running work), `lib/cells.mjs` (look, glyphs, bars, durations, clocks, fitting
+a row to a width; shared by every surface).
