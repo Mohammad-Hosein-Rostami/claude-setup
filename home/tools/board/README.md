@@ -81,20 +81,19 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while a ru
   or more is kept for an hour as the trend;
 - the base branch (`lib/repo-stats.mjs`, every 60 s): its tip, the newest test-pass `suite` record of exactly that tip, and the
   commits on its first-parent line since local midnight;
-- git (`lib/repos.mjs`, `lib/trusted-repos.mjs`, `lib/git-state.mjs`) only in trusted repositories: the session folder's, the
-  setup's own (the repository holding the running board code, from this code's real path: `~/.claude/tools` links into it), and
-  those of the folders whose Claude Code folder-trust dialog the owner accepted (`~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json`:
-  `projects[<folder>].hasTrustDialogAccepted`, read-only, at most 8 MB, re-read when it changed and at most every 60 s). Of those,
-  up to 3 with work: the session's own and each one a registered worktree of which holds a live agent's folder (its edited files,
-  its launch worktree, its cwd), else the one holding the STATUS.md folder or the road's `repo`; the STATUS.md folder and the road
-  only order and choose, they never add a repository. Git runs in the trusted folder itself, never in a folder an agent or a file
-  named (git runs a repository's own config), with the worktrees its own `worktree list --porcelain -z` names;
-  `-c core.fsmonitor=false` and one git budget per refresh. With no trusted repository holding the work the git row says
-  `git: no repository`. When git runs out of time (a loaded machine), a repository keeps its last good state for up to 60 s and
-  its row says `stale`. Agents are matched to those worktrees by path prefix: the folder of the file they edited last
-  (Edit, Write, MultiEdit, NotebookEdit, counted only after the call succeeded; a Bash call's cwd says nothing of where it
-  writes), then the worktree they were launched in (`meta.worktreePath` or the launch record), then older edited folders, then
-  their cwd. One refresh per session at a time (an O_EXCL lock file from `tools/disk-free/lib/lock-file.mjs`, broken after 2 min): `worktree list` when the worktree folder changed, one `for-each-ref` with `%(ahead-behind:main)`
+- git (`lib/repos.mjs`, `lib/trusted-repos.mjs`, `lib/git-state.mjs`) only in trusted repositories, worked out again on every
+  refresh (never read back from the cache): the session folder's and the setup's own (the repository holding the running board
+  code, from this code's real path: `~/.claude/tools` links into it). Claude Code's folder-trust record is not used: the owner runs
+  with bypass permissions, so it is unreliable. Of those, up to 3 with work: the session's own and each one a registered worktree
+  of which holds a live agent's folder (its edited files, its launch worktree, its cwd), else the one holding the STATUS.md folder
+  or the road's `repo`; the STATUS.md folder and the road only order and choose, they never add a repository. Git runs in the
+  trusted folder itself, never in a folder an agent or a file named (git runs a repository's own config), and in a worktree its
+  own `worktree list --porcelain -z` names only while that worktree's `.git` still leads back to the same repository (real paths);
+  every call has `-c core.fsmonitor=false -c safe.bareRepository=explicit` and one git budget per refresh. With no trusted
+  repository holding the work the git row says `git: no repository`. When git runs out of time (a loaded machine), a repository
+  keeps its last good state for up to 60 s and its row says `stale`. Agents are matched to those worktrees by path prefix: the folders of the files they edited, newest
+  first (Edit, Write, MultiEdit, NotebookEdit, counted only after the call succeeded; a Bash call's cwd says nothing of where it
+  writes), then the worktree they were launched in (`meta.worktreePath` or the launch record), then their cwd. One refresh per session at a time (an O_EXCL lock file from `tools/disk-free/lib/lock-file.mjs`, broken after 20 s): `worktree list` when the worktree folder changed, one `for-each-ref` with `%(ahead-behind:main)`
   every 15 s, and `--no-optional-locks status --untracked-files=no` per worktree only when its index or HEAD changed (15 s at
   most); 250 ms timeout per call and 250 ms of git per refresh, past which the old values stay with their age.
 

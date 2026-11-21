@@ -2,7 +2,7 @@
 // `suite` proof record of exactly that commit) and the commits landed on it today (count and the newest one's time).
 // Run only by the detached board refresh (refresh.mjs), never by the status line.
 // Exports: repoStats({ repoDir, base, cache, nowMs }) -> { stats, cache }.
-// Commands (fixed flags, `-c core.fsmonitor=false`, GIT_TIMEOUT_MS each, inside the refresh's one git budget `startMs`), at most every
+// Commands (fixed flags, git-state.mjs GIT_SAFETY, GIT_TIMEOUT_MS each, inside the refresh's one git budget `startMs`), at most every
 // STATS_EVERY_MS: `rev-parse --git-common-dir`, `rev-parse --verify --end-of-options <base>^{commit}` and `log --first-parent
 // --format=%ct --since=<local midnight> -n MAX_LANDED --end-of-options <base> --`. `base` comes from git-state.mjs and must pass
 // SAFE_REF (no leading `-`). The proof records are read here, bounded and without a link or a FIFO, from test-pass's file of the
@@ -17,6 +17,7 @@ import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
+import { GIT_SAFETY } from './git-state.mjs';
 
 const GIT_TIMEOUT_MS = 250;
 const STATS_EVERY_MS = 60_000;
@@ -31,7 +32,7 @@ const SHA = /^[0-9a-f]{40,64}$/;
 /** One git call with fixed flags; null on any failure or timeout. */
 function git(args) {
   try {
-    return execFileSync('git', ['-c', 'core.fsmonitor=false', ...args], { encoding: 'utf8', timeout: GIT_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    return execFileSync('git', [...GIT_SAFETY, ...args], { encoding: 'utf8', timeout: GIT_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
   } catch {
     return null;
   }

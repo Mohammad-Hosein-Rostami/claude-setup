@@ -11,12 +11,12 @@
 // repos: the other repositories with work (repos.mjs, same shape without the stats), git: { branch, ahead, behind, changed } | null,
 // road: job-facts.mjs road | null, trend: { deltaMin, atMs } | null }
 // (<= MAX_BOARD_BYTES: done agents go first, then the oldest, until it fits). Cache (cache-file.mjs, <session>.json): { cursors, git,
-// job, stats }. The repositories (repos.mjs) are only trusted ones (trusted-repos.mjs: the session folder's and those of the
-// folders whose Claude Code trust dialog the owner accepted) with active work, else the one holding STATUS.md or the road's `repo`
+// job, stats }. The repositories (repos.mjs) are only trusted ones (trusted-repos.mjs: the session folder's and the setup's
+// own) with active work, else the one holding STATUS.md or the road's `repo`
 // (lead decision, fix round 3), with the worktrees their own `worktree list`
 // names; agents are matched to those worktrees by path prefix (repos.mjs placeAgents; owner report 2026-11-21: no git info at
 // all; review SEC-1: git never runs where a tool call points). One refresh at a time per session: an O_EXCL lock file
-// (disk-free/lib/lock-file.mjs, review L1), broken only once it is LOCK_STALE_MS old (review SEC-2: a hung refresh must not be
+// (disk-free/lib/lock-file.mjs, review L1), broken once it is LOCK_STALE_MS old (review SEC-2: a hung refresh must not be
 // joined by a new one every IN_FLIGHT_MS).
 // After the write, the agent-type pools (pools.mjs) are rebuilt when an hour old, outside the budget.
 // States: `run` (journal written in the last QUIET_MIN), `quiet` (QUIET_MIN to STOPPED_MIN), `stopped?` (longer: a killed run has no
@@ -107,7 +107,7 @@ export function collectBoard({ session, transcriptPath, cwd }, { env = process.e
   const agentDirs = [...(found.launchDirs ?? []), ...found.agents.filter((agent) => agent.state !== 'done')
     .flatMap((agent) => [...(agent.places?.changed ?? []), agent.places?.worktree, agent.places?.cwd])];
   const gitStartMs = Date.now(); // one git budget for the whole refresh (git-state.mjs GIT_BUDGET_MS), repo-stats included
-  const git = sessionRepos({ sessionFolder: cwd, agentDirs, preferred: [statusDir, job.repoDir], env, cache: cache?.git ?? null, nowMs, startMs: gitStartMs });
+  const git = sessionRepos({ sessionFolder: cwd, agentDirs, preferred: [statusDir, job.repoDir], cache: cache?.git ?? null, nowMs, startMs: gitStartMs });
   const placed = placeAgents(found.agents, git.repos);
   const [primary = null, ...others] = placed.repos;
   const mainPath = primary?.worktrees.find((wt) => wt.main)?.path ?? null;
@@ -153,7 +153,7 @@ export function claimBoardRefresh(session, { env = process.env, nowMs = Date.now
   }
 }
 
-const LOCK_STALE_MS = 2 * 60_000; // a refresh runs well under a second; one this old is stuck and is not waited for
+const LOCK_STALE_MS = 20_000; // a refresh with its pools rebuild runs under 5 s; one this old was killed or is stuck (review F3)
 
 /**
  * One refresh of the session's board, when due: claims it, builds it, writes it; over BUDGET_MS the old data stays, marked stale.

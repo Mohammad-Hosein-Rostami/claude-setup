@@ -1,9 +1,9 @@
 // The repositories the session's work is in, for the board's git rows (spec-tui-2 and the owner's report of 2026-11-21: no git info
 // at all while two agents worked in worktrees, because the lead's folder is not in git). Run only by the detached board refresh.
-// Exports: sessionRepos({ sessionFolder, agentDirs, preferred, env, cache, nowMs, startMs }) -> { repos, git, cache };
+// Exports: sessionRepos({ sessionFolder, agentDirs, preferred, cache, nowMs, startMs }) -> { repos, git, cache };
 // placeAgents(agents, repos) -> { agents, repos }; MAX_REPOS.
-// Which (fix round 3, lead decision 2026-11-22): only trusted repositories (trusted-repos.mjs: the session folder's and those of the
-// folders whose Claude Code trust dialog the owner accepted), and of those the ones with active work: the session's own, and each
+// Which (lead decisions of fix rounds 3-5, 2026-11-22): only trusted repositories (trusted-repos.mjs: the session folder's and the
+// setup's own, worked out on every refresh), and of those the ones with active work: the session's own, and each
 // one a registered worktree of which holds a live agent's folder (its edited files, its launch worktree, its cwd; matched by path
 // prefix, so no file in an agent's folder is read). With none, the trusted repository holding the STATUS.md folder, else the
 // road's `repo`. Git runs in the trusted folder of each (never an agent's or the road's folder: git runs a repository's own config,
@@ -11,6 +11,7 @@
 // sharing one git budget (`startMs`); the primary one (its `git` is the board's `git`) is the one holding a `preferred` folder (the
 // STATUS.md folder, the road's `repo`), else the first: a preferred folder only orders, it never adds a repository. When git runs
 // out of time (a loaded machine), a repository keeps its last good state up to STALE_KEEP_MS, marked `stale`, instead of vanishing.
+// The cache holds git results only (a writable file: it never decides where git runs; git-state.mjs checks every worktree path).
 // Invariants: never throws; no git call here (repoState makes them).
 import { basename, dirname, isAbsolute, sep } from 'node:path';
 import { repoState } from './git-state.mjs';
@@ -46,16 +47,16 @@ function preferredFirst(found, preferred) {
 
 /**
  * @param {{ sessionFolder: string | null, agentDirs?: (string | null | undefined)[], preferred?: (string | null | undefined)[],
- *   env: object, cache: object | null, nowMs: number, startMs?: number }} source the session's folder, the folders of the live
- *   agents, the folders whose repository is shown first (STATUS.md folder, road repo), the environment (for the trust record), the
- *   last cache ({ byCommon: { [common]: git cache }, trust }) and when the refresh's git budget started
+ *   cache: object | null, nowMs: number, startMs?: number }} source the session's folder, the folders of the live agents, the
+ *   folders whose repository is shown first (STATUS.md folder, road repo), the last cache ({ byCommon: { [common]: git cache } })
+ *   and when the refresh's git budget started
  * @returns {{ repos: object[], git: object | null, cache: object }} repos = git-state.mjs repo plus `name` (the main worktree's
  *   folder name), primary first; git = the primary repository's own { branch, ahead, behind, changed } or null
  */
-export function sessionRepos({ sessionFolder, agentDirs = [], preferred = [], env, cache, nowMs, startMs = Date.now() }) {
+export function sessionRepos({ sessionFolder, agentDirs = [], preferred = [], cache, nowMs, startMs = Date.now() }) {
   const old = cache !== null && typeof cache === 'object' && cache.byCommon ? cache.byCommon : {};
   try {
-    const trust = trustedRepos({ sessionFolder, env, cache: cache?.trust ?? null, nowMs });
+    const trust = trustedRepos({ sessionFolder });
     const found = [];
     const byCommon = {};
     for (const { common, folder } of chosenRepos(trust, agentDirs, preferred)) {
@@ -67,20 +68,20 @@ export function sessionRepos({ sessionFolder, agentDirs = [], preferred = [], en
       found.push({ repo: { ...shown.repo, name: basename(main?.path ?? dirname(common)) }, git: shown.git });
     }
     const ordered = preferredFirst(found, preferred);
-    return { repos: ordered.map(({ repo }) => repo), git: ordered[0]?.git ?? null, cache: { byCommon, trust: trust.cache } };
+    return { repos: ordered.map(({ repo }) => repo), git: ordered[0]?.git ?? null, cache: { byCommon } };
   } catch {
     return { repos: [], git: null, cache: { byCommon: old } };
   }
 }
 
 /**
- * The worktree of the trusted repositories that holds the agent (review C-1): the folder of the file it edited last, else the
- * worktree it was launched in, else an older edited folder, else its cwd (the lead's folder for most agents, so the last resort).
+ * The worktree of the trusted repositories that holds the agent (reviews C-1 and F1): the folders of the files it edited, newest
+ * first (an agent that edits its lane and then writes a report outside git stays on its lane), else the worktree it was launched in,
+ * else its cwd (the lead's folder for most agents, so the last resort).
  */
 function homeOf(agent, worktrees) {
   const places = agent.places ?? {};
-  const [newest, ...older] = places.changed ?? [];
-  const candidates = [newest, places.worktree, ...older, places.cwd];
+  const candidates = [...(places.changed ?? []), places.worktree, places.cwd];
   for (const dir of candidates) {
     if (typeof dir !== 'string' || !isAbsolute(dir) || REMOTE_PATH.test(dir)) continue;
     const home = worktrees.find((wt) => isInside(dir, wt.path));
