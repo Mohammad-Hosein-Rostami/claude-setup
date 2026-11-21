@@ -102,14 +102,19 @@ function firstTime(env, session, key) {
   return writeSessionFile(blockedDir(env), session, JSON.stringify([...keys, key].slice(-BLOCKED_KEPT)));
 }
 
-/** Count the block in the shared Stop-block counter (phase 1 r9-stop-cap); a counter not installed yet is skipped. */
-async function countBlock(input) {
+/**
+ * Run the stop decision through the shared Stop-block counter (phase 1 r9-stop-cap: countedGate counts a `{block: true}` result and
+ * records a crash); until that module is installed the decision runs uncounted.
+ */
+async function countedDecision(input) {
+  let counter;
   try {
-    const counter = await import('./lib/stop-block-count.mjs');
-    await counter.recordBlock?.({ session: input.session_id, agent: input.agent_id ?? null, hook: 'ui-proof-gate' });
+    counter = await import('./lib/stop-block-count.mjs');
   } catch (error) {
     if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error;
+    return stopDecision(input);
   }
+  return counter.countedGate('ui-proof-gate', input, () => stopDecision(input));
 }
 
 /**
@@ -124,7 +129,6 @@ export async function stopDecision(input, env = process.env) {
   const cwd = input.cwd ?? process.cwd();
   const problem = await proofProblem(cwd, input, event);
   if (!problem || !firstTime(env, `${input.session_id}`, `${input.agent_id ?? 'lead'}:${problem.key}`)) return { block: false };
-  await countBlock(input);
   return { block: true, reason: problem.reason };
 }
 
@@ -137,7 +141,7 @@ async function main() {
     await recordRun(input).catch(() => false); // a run whose output or ledger cannot be read leaves no record: the stop then finds no PASS
     return;
   }
-  const result = await stopDecision(input);
+  const result = await countedDecision(input);
   if (result.block) process.stdout.write(`${JSON.stringify({ decision: 'block', reason: result.reason })}\n`);
 }
 
