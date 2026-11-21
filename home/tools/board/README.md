@@ -5,7 +5,9 @@ progress pane read (`~/.claude/state/board/<session>.json`, at most 16 KB). Node
 
 Run: `node ~/.claude/tools/board/board.mjs [--session <id>] [--columns <n>]` prints the board (session default
 `CLAUDE_CODE_SESSION_ID`, width default 80). `board.mjs refresh --session <id> [--force]` rewrites the file; `status.mjs add|start|done`
-starts it detached after every changed edit.
+starts it detached after every changed edit. `board.mjs where [--columns <n>] [--project <dir>]` prints the `/where` tree
+(`lib/tree.mjs`, display design 6.3): all work, the road and its steps (the current step with its likely and 85% clocks), the
+runs, what waits on the owner, git, one limits line per account, and the session's cost figure from its last-seen file.
 
 | Line | From |
 | ---- | ---- |
@@ -28,4 +30,4 @@ get a board too and renders never stack refreshes.
 Files: `board.mjs` (the CLI and the lines), `lib/refresh.mjs` (build, refresh, the board file, the claim, the detached start),
 `lib/render.mjs` (the status line rows: alert and session rows; `home/statusline.mjs` only reads and writes), `lib/work-row.mjs`
 (the work row: the job against its estimate and the running work), `lib/cells.mjs` (look, glyphs, bars, durations, clocks, fitting
-a row to a width; shared by every surface).
+a row to a width; shared by every surface), `lib/tree.mjs` (the `/where` tree).

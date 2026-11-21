@@ -1,18 +1,30 @@
 // The board CLI (spec-p5 `r9-board`): prints the session's board, one line per item, each cut to the terminal's width, and runs
 // the detached refresh that status.mjs and the status line start.
 // Usage: node board.mjs [--session <id>] [--columns <n>]        print (session default CLAUDE_CODE_SESSION_ID, columns default 80)
+//        node board.mjs where [--session <id>] [--columns <n>] [--project <dir>]   the `/where` tree (lib/tree.mjs; the job of
+//          the session's linked STATUS.md, else <dir>/STATUS.md, dir default CLAUDE_PROJECT_DIR or the current folder)
 //        node board.mjs refresh --session <id> [--force]         refresh the board file (lib/refresh.mjs), print nothing
 // Lines: `needs you: 2 questions · default in 0:45` first when the session waits on the owner; one per run
 // (`api-redo · phase 2/4 Review · 2 Build, 1 Review · run`, `... · stopped? 34 min`); `+1 more run` when rows run out; the git line;
 // one limits row per account from the last-seen limits files (never a switch of account: the board only shows them); `stale 40 s`
 // when the last refresh ran over its budget.
-// Exports: boardLines(board, limits, { columns, nowMs }) -> string[]. Exit 0 always for print (no board: one line says so), 2 usage.
-// Invariants: reads only the board file and the limits files; every shown name was cut and stripped of control characters by its
+// Exports: boardLines(board, limits, { columns, nowMs }) -> string[]. Exit 0 always for print and where (no board: one line says
+// so), 2 usage.
+// Invariants: print reads only the board file and the limits files (where also the estimate cache, the asking marker and the
+// session's last-seen file); every shown name was cut and stripped of control characters by its
 // writer, and is cut again to the width here.
 import { readdirSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { readAsking } from '../../hooks/lib/asking-marker.mjs';
+import { isSessionId, readSessionFile } from '../../hooks/lib/session-store.mjs';
+import { lookOf } from './lib/cells.mjs';
 import { findTranscript, readBoard, refreshBoard } from './lib/refresh.mjs';
+import { whereTree } from './lib/tree.mjs';
 import { latestSample, limitsDir, readLimits } from '../estimate/lib/limits-store.mjs';
+import { systemTimeZone } from '../estimate/lib/local-clock.mjs';
+import { estimateSegment } from '../estimate/lib/segment-cache.mjs';
 
 const DEFAULT_COLUMNS = 80;
 const MAX_RUN_ROWS = 4;
@@ -83,6 +95,30 @@ function flagValue(args, name) {
   return at === -1 ? undefined : args[at + 1];
 }
 
+const MAX_LAST_SEEN_BYTES = 1024;
+
+/** The session's last-seen file the status line writes (`{ session, costUsd, t }`), or null. */
+function lastSeenOf(session) {
+  if (!isSessionId(session)) return null;
+  try {
+    const text = readSessionFile(join(homedir(), '.claude', 'state', 'last-seen'), session, MAX_LAST_SEEN_BYTES);
+    return typeof text === 'string' ? JSON.parse(text) : null;
+  } catch {
+    return null; // a half-written file: no cost shown
+  }
+}
+
+/** The `/where` tree of a session at a width. */
+function whereLines(session, columns, args) {
+  const nowMs = Date.now();
+  const projectDir = flagValue(args, '--project') ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+  const view = {
+    segment: estimateSegment({ projectDir, sessionId: session }), board: readBoard(session), asking: isSessionId(session) ? readAsking(session) : null,
+    limits: allLimits(), lastSeen: lastSeenOf(session), nowMs, timeZone: systemTimeZone(),
+  };
+  return whereTree(view, lookOf(process.env, process.platform, columns));
+}
+
 function main(args) {
   const session = flagValue(args, '--session') ?? process.env.CLAUDE_CODE_SESSION_ID;
   if (args[0] === 'refresh') {
@@ -91,10 +127,11 @@ function main(args) {
   }
   const columns = Number(flagValue(args, '--columns') ?? DEFAULT_COLUMNS);
   if (!Number.isInteger(columns) || columns < 20) {
-    console.error('usage: board.mjs [--session <id>] [--columns <n>=20+] | refresh --session <id> [--force]');
+    console.error('usage: board.mjs [where] [--session <id>] [--columns <n>=20+] [--project <dir>] | refresh --session <id> [--force]');
     return 2;
   }
-  console.log(boardLines(readBoard(session), allLimits(), { columns }).join('\n'));
+  const lines = args[0] === 'where' ? whereLines(session, columns, args) : boardLines(readBoard(session), allLimits(), { columns });
+  console.log(lines.join('\n'));
   return 0;
 }
 
