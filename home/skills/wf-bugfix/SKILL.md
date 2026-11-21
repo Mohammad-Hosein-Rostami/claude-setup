@@ -1,11 +1,12 @@
 ---
 name: wf-bugfix
 description: Fix a bug through the bugfix workflow - reproduce, three parallel hypotheses, fix, verify, then review and land. Fits a bug that needs parallel hypotheses and a landed fix.
-when_to_use: A bug with a symptom to fix. A bugfix job always runs this workflow, whatever the size; a hypothesis set inside a running job is one deep-debugger agent.
+when_to_use: A bug that survived one fix attempt or needs parallel hypotheses and a landed fix. A first fix of a plain bug is inline or one agent; a hypothesis set inside a running job is one deep-debugger agent.
 argument-hint: <symptom, repro command if known>
 ---
 
-A bugfix job always runs this workflow, whatever the size (rule in CLAUDE.md, "Inline, agent or workflow").
+Use this for a bug that survived one fix or needs parallel hypotheses (rule in CLAUDE.md, "Inline, agent or workflow"); once
+loaded, the job runs in this workflow, not in plain agents.
 Add the work row and its `close:` row to STATUS.md first (`status.mjs add`). Then call Workflow with
 `scriptPath` `${CLAUDE_SKILL_DIR}/../../workflows/bugfix.js` and `args`:
 `{row, closeRow, statusFile, repo, base, symptom, repro?, suite, scriptsDir, branch?}` where `symptom` is the user's report ($ARGUMENTS),

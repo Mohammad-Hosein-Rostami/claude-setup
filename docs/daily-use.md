@@ -28,8 +28,9 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
   `review-tier` before it lands). One background agent: one implementer lane, one lane's review set, one research question,
   one debug hypothesis set inside a running job. A workflow: 2+ lanes or writers in parallel (`/wf-build`), review panels with fix rounds across
   lanes (`/wf-review`), research over several sources (`/wf-research`), `/wf-bugfix`, `/wf-land`, `/wf-sync`,
-  `/wf-git-cleanup`, a multi-stage job that must survive an exit, or when you ask (`/wf-step` runs one agent in the progress view). Landing, machine sync, git cleanup and a bugfix job always run their
-  workflow, whatever the size; a hypothesis set inside a running job is an agent, a bugfix job is always `/wf-bugfix`.
+  `/wf-git-cleanup`, a multi-stage job that must survive an exit, or when you ask (`/wf-step` runs one agent in the progress view). Landing and machine sync always run their
+  workflow, whatever the size; `/wf-bugfix` is for a bug that survived one fix or needs parallel hypotheses and
+  `/wf-git-cleanup` for a tangle or several repos; a hypothesis set inside a running job is an agent.
 - Gates: targeted checks once after the last edit (through `runner`); the set `review-tier`
   prints (agents or the `wf-review` workflow, by the rule above) (`reviewer`, plus `security-auditor` and Opus lenses for risky classes and at landing); `ui-quality-pass` for UI;
   then `verify-done`.

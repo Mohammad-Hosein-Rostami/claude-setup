@@ -172,20 +172,29 @@ test('no setup document tells sessions to run every agent or job as a workflow',
 });
 
 // Round 6 review: landing is the one job whose workflow holds a safety check (land.js: the branch is still at the reviewed tip), so a size rule must not send it to an agent.
-const ALWAYS_WORKFLOW = { land: 'wf-land', 'sync-machines': 'wf-sync', 'git-cleanup': 'wf-git-cleanup', bugfix: 'wf-bugfix' };
+// r9-routing-text: only landing and machine sync are always a workflow; bugfix and git cleanup are by the job.
+const ALWAYS_WORKFLOW = { land: 'wf-land', 'sync-machines': 'wf-sync' };
+const BY_THE_JOB = { bugfix: 'wf-bugfix', 'git-cleanup': 'wf-git-cleanup' };
 
-test('landing, machine sync, git cleanup and bugfix always run their workflow, and no wf-land text sends a landing to an agent', () => {
+test('landing and machine sync always run their workflow, bugfix and git cleanup by the job, and no wf-land text sends a landing to an agent', () => {
   const rule = read('home/CLAUDE.md').split('\n').find((line) => line.includes('Always a workflow, whatever the size')) ?? '';
   for (const [workflow, skill] of Object.entries(ALWAYS_WORKFLOW)) {
     assert.ok(rule.includes(`(\`${workflow}\`)`), `the routing rule names the ${workflow} workflow`);
     assert.ok(read(`home/workflows/${workflow}.js`).length > 0 && read(`home/skills/${skill}/SKILL.md`).includes(`${workflow}.js`), `${skill} runs ${workflow}.js`);
   }
   assert.doesNotMatch(read('home/skills/wf-land/SKILL.md'), /background agent instead|one background agent/i, 'wf-land must not offer an agent for a landing');
-  for (const skill of ['wf-land', 'wf-sync', 'wf-git-cleanup', 'wf-bugfix']) {
+  for (const skill of ['wf-land', 'wf-sync']) {
     assert.match(read(`home/skills/${skill}/SKILL.md`), /always runs this workflow/i, `${skill} says its job always runs this workflow`);
   }
+  const byTheJob = read('home/CLAUDE.md').split('\n').find((line) => line.includes('By the job, like everything else')) ?? '';
+  for (const [workflow, skill] of Object.entries(BY_THE_JOB)) {
+    assert.ok(byTheJob.includes(`(\`${workflow}\``), `the by-the-job line names the ${workflow} workflow`);
+    assert.ok(!rule.includes(`(\`${workflow}\`)`), `${workflow} is not in the always-a-workflow line`);
+    assert.doesNotMatch(read(`home/skills/${skill}/SKILL.md`), /always runs this workflow/i, `${skill} no longer says always`);
+  }
   for (const file of ['docs/daily-use.md', 'docs/modes.md']) {
-    assert.match(read(file), /Landing, machine sync, git cleanup and (a )?bugfix( job)? always run their\s+workflow/i, `${file} points at the always-a-workflow tier`);
+    assert.match(read(file), /Landing and machine sync always run their\s+workflow/i, `${file} points at the always-a-workflow tier`);
+    assert.doesNotMatch(read(file), /git cleanup and (a )?bugfix( job)? always/i, `${file} no longer sends every bugfix and cleanup to a workflow`);
   }
   assert.doesNotMatch(read('home/CLAUDE.md').split('\n').find((line) => line.includes('One background agent')) ?? '', /one debug hypothesis set\.$/, 'the agent line limits a hypothesis set to inside a running job');
   assert.match(read('home/modes/_lead.md'), /via the `land` workflow/, '_lead.md lands through the land workflow');

@@ -1,11 +1,12 @@
 ---
 name: wf-git-cleanup
 description: Clean leftover branches, copies (-2, -3), merged worktrees and tangled history in one or more repos through the git-cleanup workflow - Sonnet plan with patch-id proof, apply only proven items. Fits several repos or a plan that must survive an exit.
-when_to_use: The owner asks to clean git, or git-tidy reports findings in a repo, one or several. Git cleanup always runs this workflow, whatever the size.
+when_to_use: The owner asks to clean git, or git-tidy reports findings, and the job is a tangled history or spans several repos. A single merged branch or worktree is `git-tidy prune` inline.
 argument-hint: <repo folders>
 ---
 
-Git cleanup always runs this workflow, whatever the size (rule in CLAUDE.md, "Inline, agent or workflow").
+Use this for a tangle or several repos (rule in CLAUDE.md, "Inline, agent or workflow"); once loaded, the job runs in this
+workflow, not in plain agents.
 Call Workflow with `scriptPath` `${CLAUDE_SKILL_DIR}/../../workflows/git-cleanup.js` and `args` `{row, repos}`
 (`repos` an array of absolute repo folders; `row` the STATUS.md row).
 It removes only what `git-tidy prune` proves merged and the plan clears, after a backup bundle in each repo's `.git/`.
