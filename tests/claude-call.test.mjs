@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { AccountError } from '../home/tools/account/lib/names.mjs';
 import { callHaiku } from '../home/tools/recall/lib/claude-call.mjs';
 import { accountSandbox, assertNoLeak, fakeToken, memoryStore, tokenHash } from './account-helpers.mjs';
 
@@ -147,4 +148,47 @@ test('a child that prints its token and dies: the error that is thrown holds no 
     assert.ok(!error.message.includes(TOKEN_A), 'the token is cut out of the error text');
     return true;
   });
+});
+
+// Review 1 R2 / security S2: the text is cut to its length only after the token is taken out, so a token that crosses
+// the cut leaves no part behind; any other token-shaped text of the child is taken out as well.
+const ERROR_CUT = 200;
+for (const where of ['stderr', 'result']) {
+  for (const at of [150, ERROR_CUT - TOKEN_A.length + 1]) {
+    test(`a child that prints its token after ${at} characters (${where}): the error holds no part of it`, async (t) => {
+      const box = sandbox(t, { claudeMode: 'leak-at' });
+      const env = { ...box.env, CLAUDE_ACCOUNT: 'a', FAKE_LEAK_AT: String(at), FAKE_LEAK_IN: where };
+      await assert.rejects(callHaiku({ ...CALL, env, store: memoryStore({ a: TOKEN_A }) }), (error) => {
+        assert.ok(!error.message.includes('sk-ant-') && !error.message.includes('MadeUp'), error.message.slice(-80));
+        return true;
+      });
+    });
+  }
+}
+
+test("a token-shaped text in the child's output that is not its own token is taken out of the error too", async (t) => {
+  const box = sandbox(t, { claudeMode: 'leak-at' });
+  const env = { ...box.env, CLAUDE_ACCOUNT: 'a', FAKE_LEAK_AT: '10', FAKE_LEAK_TEXT: TOKEN_B };
+  await assert.rejects(callHaiku({ ...CALL, env, store: memoryStore({ a: TOKEN_A }) }), (error) => !error.message.includes('sk-ant-') && !error.message.includes('MadeUp'));
+});
+
+test('a token in the environment with CLAUDE_ACCOUNT set to - or to text that is not a name: the row names no account and holds none of that text', async (t) => {
+  const box = sandbox(t);
+  // A token-shaped name that is not one of the scanned tokens: the fake claude itself logs CLAUDE_ACCOUNT as it got it.
+  for (const named of ['-', 'Not A Name', '../x', fakeToken('AsName')]) {
+    await callHaiku({ ...CALL, env: { ...box.env, CLAUDE_CODE_OAUTH_TOKEN: TOKEN_ENV, CLAUDE_ACCOUNT: named }, store: memoryStore() });
+    const row = usageRows(box).at(-1);
+    assert.equal(row.account, null, named.slice(0, 12));
+    if (named !== '-') assert.ok(!JSON.stringify(row).includes(named), 'the row holds none of the text');
+  }
+});
+
+test('a store that cannot be read (a locked Keychain): no child, one auth row, kind auth, the store\'s reason in the error', async (t) => {
+  const box = sandbox(t);
+  const store = { kind: 'locked', get: () => { throw new AccountError('store', 'the Keychain is locked'); }, put: () => {}, remove: () => false };
+  const env = { ...box.env, CLAUDE_ACCOUNT: 'a' };
+  delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  await assert.rejects(callHaiku({ ...CALL, env, store }), (error) => error.kind === 'auth' && /Keychain is locked/.test(error.message));
+  assert.deepEqual(usageRows(box).map((row) => [row.account, row.error, row.is_error]), [[null, 'auth', true]]);
+  assert.deepEqual(box.claudeCalls(), []);
 });
