@@ -26,8 +26,8 @@
 // A literal-secret ask that the owner allowed (or let time out) is remembered for the rest of the session as sha256 digests
 // (lib/allowed-literals.mjs, lib/remembered-ask.mjs): the same values again run without a dialog (log outcome "remembered") only when
 // the command is also clean with the values neutralised. An ask with any other reason always shows its dialog and remembers nothing.
-// ALLOW + LOG: `sed -i`, heredoc and inline-interpreter writes to code files are allowed; their paths go to the edit log
-// so the Stop typecheck gate covers them (lib/code-writes.mjs, lib/edit-log.mjs).
+// ALLOW: `sed -i`, heredoc and inline-interpreter writes to code files are allowed.
+// hooks/bash-writes.mjs, not this guard, logs for the Stop typecheck gate those a command changed (lib/code-writes.mjs).
 // Everything else (and any command text it cannot parse) is allowed. Reading files, `.env` included, is never blocked.
 //
 // This is a safety net against model mistakes, not a sandbox. Invariants: it never executes the command, it never fails open on
@@ -64,7 +64,6 @@
 // behind `env -C`/`sudo --chdir` or an unknown wrapper, a command of a loop body that runs again after a `cd` later in the body (a `cd` that may not have taken effect is judged from the folder before it and the one after; a relative one in a loop or a function body makes the folder unknown: relative rm -r targets then ask), an ssh alias that hides a production host, and the PowerShell tool (the hook matcher covers Bash only).
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { logCodeWrites } from './lib/code-writes.mjs';
 import {
   checkDiskWipe, checkGhSecret, checkGit, checkHiddenRm, checkKeychainPrint, checkLockfileEdit, checkStdinRm, checkStdinScriptRm,
 } from './lib/command-checks.mjs';
@@ -293,7 +292,6 @@ async function main() {
     answer = failedAnswer(error, input);
   }
   process.stdout.write(answer);
-  logCodeWrites(command, input, cwdOf(input)); // after the answer, so nothing at the log path can hold it back; harmless when the owner denied: the typecheck gate only reads files that exist
 }
 
 // ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.

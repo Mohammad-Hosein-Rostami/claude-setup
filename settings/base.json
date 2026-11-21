@@ -72,6 +72,16 @@
             "timeout": 200
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/bash-writes.mjs\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PermissionRequest": [
@@ -226,6 +236,28 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/checkpoint.mjs\"",
             "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/bash-writes.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/bash-writes.mjs\"",
+            "timeout": 10
           }
         ]
       }

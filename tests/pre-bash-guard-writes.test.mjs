@@ -1,16 +1,17 @@
-// Tests for home/hooks/pre-bash-guard.mjs: Bash writes to code files are allowed and logged for the typecheck gate
-// (lib/code-writes.mjs), the rm false-block fix for mktemp variables (P2a) and reads staying allowed (P2c).
+// Tests for home/hooks/pre-bash-guard.mjs: Bash writes to code files are allowed, and the guard itself logs none of them (the
+// candidates lib/code-writes.mjs names are logged by hooks/bash-writes.mjs after the command ran); the rm false-block fix for mktemp
+// variables (P2a) and reads staying allowed (P2c).
 import './pin-home.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { hookEnv } from './hook-env.mjs';
 import { homedir } from 'node:os';
+import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
 import { bashCodeWrites } from '../home/hooks/lib/code-writes.mjs';
-import { editLogPath, readEdits } from '../home/hooks/lib/edit-log.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
@@ -35,13 +36,19 @@ test('bashCodeWrites finds in-place edits, redirects, tee, cp/mv targets and her
     ['bash -c "sed -i s/a/b/ src/j.ts"', [at('src/j.ts')]],
     ['sed -i s/a/b/ /abs/k.ts', ['/abs/k.ts']],
     ['sed -i s/a/b/ src/a.ts && echo x > src/a.ts', [at('src/a.ts')]],
+    ['git checkout -- src/a.ts', [at('src/a.ts')]],
+    ['git checkout HEAD~1 -- src/a.ts lib/b.tsx', [at('src/a.ts'), at('lib/b.tsx')]],
+    ['git restore src/a.ts', [at('src/a.ts')]],
+    ['git restore --source main --staged src/a.ts', [at('src/a.ts')]],
   ];
   for (const [command, expected] of cases) assert.deepEqual(bashCodeWrites(command, PROJECT), expected, command);
 });
 
 test('bashCodeWrites ignores reads, non-code files and script runs', () => {
   for (const command of ['cat src/a.ts', 'sed -n 1p src/a.ts', 'sed -i s/a/b/ README.md', 'echo x > notes.txt', 'node build.mjs', 'python3 tools/run.py', 'grep -r foo src/a.ts',
-    'cp a.ts b.md', 'echo x > $OUT.ts', 'git status', 'pnpm test']) {
+    'cp a.ts b.md', 'echo x > $OUT.ts', 'git status', 'pnpm test',
+    // their paths are not in the text (as on main): naming them would need a deliberate change
+    'git apply fix.patch', 'git checkout main', 'git checkout -b feature', 'git stash pop', 'git -C sub checkout -- a.ts', 'git log -- src/a.ts']) {
     assert.deepEqual(bashCodeWrites(command, PROJECT), [], command);
   }
 });
@@ -59,22 +66,13 @@ const runHook = (command, env, input = {}) =>
     env: hookEnv({ CLAUDE_PROJECT_DIR: PROJECT, ...env }),
   });
 
-test('hook contract: an allowed code write is recorded in the agent edit log; reads are not, and a command the owner is asked about is still logged', () => {
+test('hook contract: the guard writes no edit log and no before-record, also for a command it asks about', () => {
   const temp = makeTempDir('bash-writes-');
   const env = { TMPDIR: temp, TMP: temp, TEMP: temp };
   assert.equal(runHook('sed -i s/a/b/ src/a.ts', env).status, 0);
-  assert.equal(runHook('cat src/read-only.ts', env).status, 0);
   assert.equal(runHook('sed -i s/a/b/ src/asked.ts && git push --force', env).status, 0);
   assert.equal(runHook('sed -i s/a/b/ src/sub.ts', env, { agent_id: 'agent-1' }).status, 0);
-  const saved = process.env.TMPDIR;
-  process.env.TMPDIR = temp;
-  try {
-    assert.deepEqual(readEdits(editLogPath('writes-test', undefined)), [at('src/a.ts'), at('src/asked.ts')]);
-    assert.deepEqual(readEdits(editLogPath('writes-test', 'agent-1')), [at('src/sub.ts')]);
-  } finally {
-    if (saved === undefined) delete process.env.TMPDIR;
-    else process.env.TMPDIR = saved;
-  }
+  for (const kind of ['edits', 'bash-writes']) assert.equal(existsSync(join(temp, 'claude-post-edit', kind)), false, kind);
 });
 
 test('hook contract: a missing session id logs nothing and still allows', () => {

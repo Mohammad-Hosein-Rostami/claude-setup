@@ -1,12 +1,12 @@
-// Code files a Bash command may rewrite (`sed -i`, `perl -i`, `tee`, `> file`, `cp`/`mv` targets, python/node/ruby/perl
-// inline or heredoc scripts). Exports: bashCodeWrites(command, cwd) -> string[] of absolute paths; logCodeWrites(command, input, cwd).
-// Used by pre-bash-guard to log them for the typecheck gate (lib/edit-log.mjs); it never blocks. Over-logging is
-// harmless (the gate skips files that do not exist or have no typecheck script), missing a write is not.
+// The code files a Bash command may write: the candidates hooks/bash-writes.mjs records before the command and compares after it
+// (`sed -i`, `perl -i`, `tee`, `> file`, `cp`/`mv` targets, `git checkout`/`git restore` paths, python/node/ruby/perl inline or heredoc
+// scripts). Exports: bashCodeWrites(command, cwd) -> string[] of absolute paths. A pure parser: no I/O, it logs nothing.
+// Naming a path the command only reads costs bash-writes.mjs one hash and logs nothing (only a changed file is logged); a write it
+// cannot name (a script run, `git apply`, `git checkout <branch>`, a variable path) is missed, the safe direction.
 // Interpreter scripts are not parsed: every code-looking path word in the command text (heredoc body included) counts.
 import { isAbsolute, resolve } from 'node:path';
 import { CODE_FILE } from './diagnostics.mjs';
 import { commandOf } from './command-of.mjs';
-import { editLogPath, recordEdit } from './edit-log.mjs';
 import { flagsOf, tokenize } from './shell-words.mjs';
 
 const INTERPRETERS = /^(python\d*(\.\d+)?|node|nodejs|deno|bun|ruby|perl|php)$/;
@@ -16,6 +16,7 @@ const OUTPUT_REDIRECT = /^(?:\d*>>?|&>>?|\d*>\|)(.*)$/;
 const UNKNOWN_DIR = /^-|[~$`*?[\]{}]/;
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash']);
 const FILE_WRITERS = new Set(['tee', 'cp', 'mv', 'install', 'truncate', 'dd']);
+const GIT_PATH_WRITERS = new Set(['checkout', 'restore']); // `git checkout -- <path>`, `git restore <path>`: the paths named after them
 
 const INLINE_CODE_FLAGS = new Set(['-c', '-e', '-p', '-pe', '-E', '--eval', '--print', '-']);
 const stripKey = (word) => word.replace(/^of=/, ''); // dd of=file
@@ -33,7 +34,8 @@ function redirectedFiles(tokens) {
 function writtenBy({ cmd, args }, tokens) {
   const inPlace = (cmd === 'sed' || cmd === 'perl') && flagsOf(args).some((f) => IN_PLACE.test(f));
   const positional = args.filter((a) => !a.startsWith('-'));
-  const written = inPlace || cmd === 'tee' ? positional : FILE_WRITERS.has(cmd) ? positional.slice(-1) : [];
+  const gitPaths = cmd === 'git' && GIT_PATH_WRITERS.has(args[0]);
+  const written = inPlace || cmd === 'tee' ? positional : gitPaths ? positional.slice(1) : FILE_WRITERS.has(cmd) ? positional.slice(-1) : [];
   return [...written, ...redirectedFiles(tokens)].map(stripKey);
 }
 
@@ -60,19 +62,4 @@ export function bashCodeWrites(command, cwd) {
     if (parsed.cmd !== undefined && INTERPRETERS.test(parsed.cmd) && inline) add(command.match(CODE_WORD) ?? []);
   }
   return [...files];
-}
-
-/**
- * Code files this command may rewrite go to the edit log, so the Stop typecheck gate covers them. Never throws.
- * @param {string} command raw command text
- * @param {{session_id?: string, agent_id?: string}} input the hook input (names the edit log)
- * @param {string} cwd working directory of the call
- */
-export function logCodeWrites(command, input, cwd) {
-  try {
-    const logPath = editLogPath(input.session_id, input.agent_id);
-    if (logPath) for (const file of bashCodeWrites(command, cwd)) recordEdit(logPath, file);
-  } catch {
-    // logging is best effort: a failure here must never block a command
-  }
 }

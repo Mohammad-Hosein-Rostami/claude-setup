@@ -1,16 +1,18 @@
-// Tests that a file planted where the Bash guard reads or writes cannot make it wait or write somewhere else (principle P1): the private
-// production-host list it reads on every call, and the edit log it writes for the typecheck gate. A FIFO at either path used to hold the
-// hook until its timeout, and a hook that times out answers nothing. Both are now opened through lib/plain-file.mjs.
+// Tests that a file planted where the Bash hooks read or write cannot make them wait or write somewhere else (principle P1): the private
+// production-host list the guard reads on every call, the edit log (written by post-edit.mjs and bash-writes.mjs, read by the typecheck
+// gate) and the before-record of bash-writes.mjs. A FIFO at such a path used to hold the hook until its timeout, and a hook that times
+// out answers nothing. All are opened through lib/plain-file.mjs.
 // A host list that is there but is not a plain file cannot be trusted to be the list: every ssh, psql and mysql host then asks.
 // The hook runs as Claude Code runs it, with a private HOME, TMPDIR and log and no GUI. A hook that hangs is killed by spawnSync and fails
 // its test through the missing answer; no test measures time. Command strings are only sent to the hook; nothing is executed.
 import { PINNED_HOME } from './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { MAX_BEFORE_RECORD_BYTES } from '../home/hooks/bash-writes.mjs';
 import { MAX_EDIT_LOG_BYTES, readEdits, recordEdit } from '../home/hooks/lib/edit-log.mjs';
 import { appendPlainFile, NOT_PLAIN_FILE, readPlainFile } from '../home/hooks/lib/plain-file.mjs';
 import { EVERY_HOST, MAX_PROD_HOSTS_BYTES, readProdHosts } from '../home/hooks/lib/remote.mjs';
@@ -18,6 +20,7 @@ import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
+const BASH_WRITES = fileURLToPath(new URL('../home/hooks/bash-writes.mjs', import.meta.url));
 const EDIT_LOG_MODULE = pathToFileURL(fileURLToPath(new URL('../home/hooks/lib/edit-log.mjs', import.meta.url))).href;
 const PROJECT = resolve('/work/proj');
 const SESSION = 'sess-plain';
@@ -48,11 +51,33 @@ function hostList() {
   return { dir, list };
 }
 
-/** A private temp dir for the hook, and the edit log path the hook derives from it for this session. */
+/** A private temp dir for the hook, the edit log and before-record paths the hook derives from it for this session, and a guard log. */
 function editLogIn(tmp = makeTempDir('edit-log-')) {
   const log = join(tmp, 'claude-post-edit', 'edits', `${SESSION}--main`);
-  mkdirSync(dirname(log), { recursive: true });
-  return { env: { TMPDIR: tmp, TEMP: tmp, TMP: tmp }, log };
+  const record = join(tmp, 'claude-post-edit', 'bash-writes', `${SESSION}--main--t1`);
+  for (const path of [log, record]) mkdirSync(dirname(path), { recursive: true });
+  const guardLog = join(makeTempDir('edit-log-guard-'), 'guard.jsonl');
+  return { env: { TMPDIR: tmp, TEMP: tmp, TMP: tmp, CLAUDE_GUARD_LOG: guardLog }, log, record, guardLog };
+}
+
+const outcomesIn = (guardLog) => (existsSync(guardLog) ? readFileSync(guardLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line).outcome) : []);
+
+/**
+ * One Bash call of `sed -i` on `<project>/x.ts` sent to bash-writes.mjs: the before-step (unless `before` is false), `change(file)`, the
+ * after-step. Each step must answer (exit 0, no signal, nothing printed).
+ */
+function bashWritesCall(env, change = () => {}, { before = true } = {}) {
+  const project = realpathSync(makeTempDir('bash-writes-proj-'));
+  const file = join(project, 'x.ts');
+  const step = (event) => {
+    const input = JSON.stringify({ hook_event_name: event, tool_name: 'Bash', session_id: SESSION, tool_use_id: 't1', cwd: project, tool_input: { command: CODE_WRITE }, tool_response: {} });
+    const run = spawnSync(process.execPath, [BASH_WRITES], { input, encoding: 'utf8', timeout: KILL_AFTER_MS, env: hookEnv({ CLAUDE_PROJECT_DIR: project, ...env }) });
+    assert.deepEqual([run.status, run.signal, run.stdout], [0, null, ''], `${event}: ${run.stderr}`);
+  };
+  if (before) step('PreToolUse');
+  change(file);
+  step('PostToolUse');
+  return file;
 }
 
 test('a plain host list is read as before: a listed host asks, another host does not, and so with no list at all', () => {
@@ -105,33 +130,55 @@ test('the host list is read up to its cap: at the cap it is the list, one byte o
   assert.deepEqual(readProdHosts(file), EVERY_HOST);
 });
 
-test('the edit log is written as before when nothing is planted, after the answer', () => {
+test('the guard writes no edit log; bash-writes.mjs writes it after the command changed the file, when nothing is planted', () => {
   const { env, log } = editLogIn();
   assert.equal(hookAnswer(CODE_WRITE, env).decision, 'allow');
-  assert.deepEqual(readFileSync(log, 'utf8').split('\n').filter(Boolean), [join(PROJECT, 'x.ts')]);
-  const asked = hookAnswer(`${CODE_WRITE}; ${FORCE_PUSH}`, env);
-  assert.deepEqual(answered(asked), [0, null, 'ask']);
+  assert.deepEqual(answered(hookAnswer(`${CODE_WRITE}; ${FORCE_PUSH}`, env)), [0, null, 'ask']);
+  assert.equal(existsSync(log), false, 'the guard logs nothing');
+  const file = bashWritesCall(env, (path) => writeFileSync(path, 'b'));
+  assert.deepEqual(readFileSync(log, 'utf8').split('\n').filter(Boolean), [file]);
 });
 
-test('a FIFO at the edit log path: the hook still answers the ask of the same line', { skip: noFifo }, () => {
+test('a FIFO at the edit log path: bash-writes.mjs still answers both steps', { skip: noFifo }, () => {
   const { env, log } = editLogIn();
   makeFifo(log);
-  const answer = hookAnswer(`${CODE_WRITE}; ${FORCE_PUSH}`, env);
-  assert.deepEqual(answered(answer), [0, null, 'ask'], 'the hook must answer, not wait for a reader on the FIFO');
-  assert.match(answer.reason, /force push/);
-  assert.equal(hookAnswer(CODE_WRITE, env).status, 0);
+  bashWritesCall(env, (path) => writeFileSync(path, 'b'));
+  assert.equal(statSync(log).isFIFO(), true);
 });
 
 test('a link at the edit log path is not followed: the file it points to is never written', { skip: noFifo }, () => {
   const { env, log } = editLogIn();
   const target = join(makeTempDir('edit-log-target-'), 'victim.txt');
   symlinkSync(target, log);
-  const answer = hookAnswer(`${CODE_WRITE}; ${FORCE_PUSH}`, env);
-  assert.deepEqual(answered(answer), [0, null, 'ask']);
+  bashWritesCall(env, (path) => writeFileSync(path, 'b'));
   assert.equal(existsSync(target), false, 'the write went through the link');
   writeFileSync(target, 'keep\n');
-  assert.equal(hookAnswer(CODE_WRITE, env).status, 0);
+  bashWritesCall(env, (path) => writeFileSync(path, 'b'));
   assert.equal(readFileSync(target, 'utf8'), 'keep\n');
+});
+
+test('a FIFO, a link or a folder at the before-record path: nothing waits, nothing is followed or logged, and the doubt is reported', { skip: noFifo }, () => {
+  const target = join(makeTempDir('record-target-'), 'victim.txt');
+  const plants = { fifo: makeFifo, link: (path) => symlinkSync(target, path), folder: (path) => mkdirSync(path) };
+  for (const [kind, plant] of Object.entries(plants)) {
+    const { env, log, record, guardLog } = editLogIn();
+    plant(record);
+    bashWritesCall(env, (path) => writeFileSync(path, 'b'));
+    assert.deepEqual([existsSync(log), existsSync(target)], [false, false], kind);
+    assert.deepEqual(outcomesIn(guardLog), ['bash-writes-error', 'bash-writes-unchecked'], `${kind}: the writer's refusal and the reader's doubt`);
+  }
+});
+
+test('the before-record has one cap for its writer and its reader: a record at the cap is read, one byte more is refused', () => {
+  for (const extra of [0, 1]) {
+    const { env, record, guardLog } = editLogIn();
+    bashWritesCall(env, (file) => {
+      const head = `["${file}","missing`;
+      writeFileSync(record, `${head}${'x'.repeat(MAX_BEFORE_RECORD_BYTES - head.length - 3 + extra)}"]\n`);
+      assert.equal(statSync(record).size, MAX_BEFORE_RECORD_BYTES + extra);
+    }, { before: false });
+    assert.deepEqual(outcomesIn(guardLog), extra ? ['bash-writes-unchecked'] : [], `${extra} byte over the cap`);
+  }
 });
 
 test('the reader of the edit log does not wait on a FIFO or follow a link either: it reads nothing there, and says so in the guard log', { skip: noFifo }, () => {
