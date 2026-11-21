@@ -1,6 +1,7 @@
 // Tests for the regular-file rule (second audit): a file is regular only when every line is blank, a comment or one complete
 // definition. From an irregular file a name is shown only when code or a deploy file names it too. Inputs are the ones from the
-// security re-audit (made-up words with the marker "zqx", any case).
+// security re-audit (made-up words with the marker "zqx_", any case; the underscore keeps the
+// marker out of random temp folder and snapshot names, which hold only letters and digits).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -13,15 +14,15 @@ const lines = (...parts) => `${parts.join('\n')}\n`;
 const HIDDEN_NOTE = 'this file has multi-line or unusual values; only names also found in code or deploy files are listed';
 
 const REAUDIT_INPUTS = {
-  'NEW-1 heredoc then blank line': lines("read -r -d '' APP_CONFIG <<'EOF'", 'zqxuser=admin', '', 'zqxpassword=ZqxPw1', 'ZQXUPPERPASSPHRASE=', 'EOF', 'AFTER=1'),
-  'NEW-1 command substitution heredoc': lines("export CERT_INFO=$(cat <<'EOF'", 'zqxline=1', '', 'zqxinnerkey=ZqxV', 'EOF', ')', 'AFTER=1'),
-  'NEW-1 here-string': lines('export DECODED=$(base64 -d <<< "multi', '', 'zqxk=', '")', 'AFTER=1'),
-  'NEW-1 shell if block': lines('if [ -n "$CI" ]; then', "  read -r -d '' X <<'EOF'", '  zqxa=1', '', 'zqxuser=ZqxU', 'EOF', 'fi', 'AFTER=1'),
-  'NEW-1 unquoted JSON value': lines('GOOGLE_CREDS={', '  "type": "service",', '', 'zqxinner=', '}', 'AFTER=1'),
-  'NEW-1 colon form after a blank line': lines('JUNK words here', '', 'zqxapikey: ZqxV', 'CORRECTZQXHORSEBATTERY=', 'AFTER=1'),
-  'NEW-1 quote not at the start of the value': lines('JAVA_OPTS=-Dpass="multi', '', 'zqxinner=', '"', 'AFTER=1'),
-  'NEW-2 END line inside a quoted value': lines(`TLS_BUNDLE="${PEM_BEGIN}`, 'MIIBabc', PEM_END, 'zqxpassphrase=ZqxPass', 'ZQXHEXKEY0123ABCDEF=', '"', 'AFTER=1'),
-  'NEW-8 lone CR inside a value': 'K=abc\rZQXHALFSECRET=\nAFTER=1\n',
+  'NEW-1 heredoc then blank line': lines("read -r -d '' APP_CONFIG <<'EOF'", 'zqx_user=admin', '', 'zqx_password=Zqx_Pw1', 'ZQX_UPPERPASSPHRASE=', 'EOF', 'AFTER=1'),
+  'NEW-1 command substitution heredoc': lines("export CERT_INFO=$(cat <<'EOF'", 'zqx_line=1', '', 'zqx_innerkey=Zqx_V', 'EOF', ')', 'AFTER=1'),
+  'NEW-1 here-string': lines('export DECODED=$(base64 -d <<< "multi', '', 'zqx_k=', '")', 'AFTER=1'),
+  'NEW-1 shell if block': lines('if [ -n "$CI" ]; then', "  read -r -d '' X <<'EOF'", '  zqx_a=1', '', 'zqx_user=Zqx_U', 'EOF', 'fi', 'AFTER=1'),
+  'NEW-1 unquoted JSON value': lines('GOOGLE_CREDS={', '  "type": "service",', '', 'zqx_inner=', '}', 'AFTER=1'),
+  'NEW-1 colon form after a blank line': lines('JUNK words here', '', 'zqx_apikey: Zqx_V', 'CORRECTZQX_HORSEBATTERY=', 'AFTER=1'),
+  'NEW-1 quote not at the start of the value': lines('JAVA_OPTS=-Dpass="multi', '', 'zqx_inner=', '"', 'AFTER=1'),
+  'NEW-2 END line inside a quoted value': lines(`TLS_BUNDLE="${PEM_BEGIN}`, 'MIIBabc', PEM_END, 'zqx_passphrase=Zqx_Pass', 'ZQX_HEXKEY0123ABCDEF=', '"', 'AFTER=1'),
+  'NEW-8 lone CR inside a value': 'K=abc\rZQX_HALFSECRET=\nAFTER=1\n',
 };
 
 test('re-audit inputs: nothing value-derived is printed anywhere (text, --json, snapshot, diff)', async () => {
@@ -29,7 +30,7 @@ test('re-audit inputs: nothing value-derived is printed anywhere (text, --json, 
     for (const eol of ['\n', '\r\n']) {
       const content = eol === '\n' || env.includes('\r') ? env : env.replace(/\n/g, '\r\n');
       const { text } = await everythingPrinted({ '.env': content });
-      assert.doesNotMatch(text, /zqx/i, `${label} (${JSON.stringify(eol)})`);
+      assert.doesNotMatch(text, /zqx_/i, `${label} (${JSON.stringify(eol)})`);
       assert.match(text, /irregular/, label);
     }
   }
@@ -78,19 +79,19 @@ test('a name a deploy file names (key position) also corroborates an irregular f
 });
 
 test('diff compares hidden names by count only, and notes an irregular flip', async () => {
-  const dir = await makeProject({ '.env': lines('CORR_ONE=1', 'stray line', '', 'zqxa=1', 'zqxb=2', 'zqxc=3'), 'src/a.ts': 'process.env.CORR_ONE;\n' });
+  const dir = await makeProject({ '.env': lines('CORR_ONE=1', 'stray line', '', 'zqx_a=1', 'zqx_b=2', 'zqx_c=3'), 'src/a.ts': 'process.env.CORR_ONE;\n' });
   const snapshot = join(makeTempDir('sibling-'), `hidden-${Math.random().toString(36).slice(2)}.json`);
   assert.equal(run(['list', dir, '--save', snapshot]).status, 0);
   assert.equal(run(['diff', snapshot, dir]).status, 0);
   const saved = JSON.parse(await readFile(snapshot, 'utf8'));
   assert.deepEqual([saved.envFiles[0].irregular, saved.envFiles[0].hiddenNames], [true, 3]);
   const { writeFile } = await import('node:fs/promises');
-  await writeFile(join(dir, '.env'), lines('CORR_ONE=1', 'stray line', '', 'zqxa=1', 'zqxrenamed=2'));
+  await writeFile(join(dir, '.env'), lines('CORR_ONE=1', 'stray line', '', 'zqx_a=1', 'zqx_renamed=2'));
   const changed = run(['diff', snapshot, dir]);
   assert.equal(changed.status, 1);
   assert.match(changed.stdout, /Names not shown changed \(counts only\) \(1\):\n {2}\.env {2}names not shown: 3 -> 2\n/);
-  assert.doesNotMatch(changed.all, /zqx/i);
-  await writeFile(join(dir, '.env'), lines('CORR_ONE=1', 'zqxa=1', 'zqxrenamed=2'));
+  assert.doesNotMatch(changed.all, /zqx_/i);
+  await writeFile(join(dir, '.env'), lines('CORR_ONE=1', 'zqx_a=1', 'zqx_renamed=2'));
   const flipped = run(['diff', snapshot, dir]);
   assert.match(flipped.stdout, /\.env {2}names not shown: 3 -> 0; irregular: yes -> no/);
   assert.doesNotMatch(flipped.stdout, /Names changed in env files/); // names shown under different rules are not compared
@@ -104,9 +105,9 @@ test('fuzz: irregular files never print an uncorroborated name or a zqx word; re
   };
   const triggers = [
     () => "read -r -d '' APP <<'EOF'", () => 'EOF', () => '}', () => '  "k": "v",', () => 'plain prose line', () => 'JAVA=-Dp="multi', () => `TLS="${PEM_BEGIN}`,
-    () => PEM_END, () => 'V=abc\\', (i) => `zqxcolon_${i}: x`, (i) => `K=abc\rZQXHALF_${i}=`, () => 'X=$(cat <<EOF', () => 'B64==',
+    () => PEM_END, () => 'V=abc\\', (i) => `zqx_colon_${i}: x`, (i) => `K=abc\rZQX_HALF_${i}=`, () => 'X=$(cat <<EOF', () => 'B64==',
   ];
-  const definitions = [(i) => `zqxjunk_${i}=x`, (i) => `ZQXUPPER_${i}=`, (i) => `NAME_${i}="MARKER_VALUE"`, (i) => `NAME_${i}=a=b # MARKER_COMMENT`, () => '', () => '# MARKER_COMMENT=x'];
+  const definitions = [(i) => `zqx_junk_${i}=x`, (i) => `ZQX_UPPER_${i}=`, (i) => `NAME_${i}="MARKER_VALUE"`, (i) => `NAME_${i}=a=b # MARKER_COMMENT`, () => '', () => '# MARKER_COMMENT=x'];
   for (let round = 0; round < 40; round += 1) {
     const body = ['CORR_ONE=1']; // first, so no earlier line can swallow it
     let triggered = false;
@@ -116,7 +117,7 @@ test('fuzz: irregular files never print an uncorroborated name or a zqx word; re
       const make = useTrigger ? triggers[next(triggers.length)] : definitions[next(definitions.length)];
       const line = make(`${round}_${i}`);
       triggered ||= useTrigger;
-      const defined = /^(?:zqxjunk_|ZQXUPPER_|NAME_)\w+/.exec(line);
+      const defined = /^(?:zqx_junk_|ZQX_UPPER_|NAME_)\w+/.exec(line);
       if (!useTrigger && defined) planted.add(defined[0]);
       body.push(line);
     }
@@ -127,7 +128,7 @@ test('fuzz: irregular files never print an uncorroborated name or a zqx word; re
     if (triggered) {
       assert.equal(entry.irregular, true, where);
       assert.deepEqual(entry.names, ['CORR_ONE'], where);
-      assert.doesNotMatch(result.all + run(['list', dir]).all, /zqx|MARKER_/i, where);
+      assert.doesNotMatch(result.all + run(['list', dir]).all, /zqx_|MARKER_/i, where);
     } else {
       assert.equal(entry.irregular, undefined, where);
       assert.deepEqual(entry.names, ['CORR_ONE', ...planted].sort(), where);
