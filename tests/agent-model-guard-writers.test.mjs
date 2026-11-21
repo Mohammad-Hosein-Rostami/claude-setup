@@ -177,8 +177,7 @@ test('a launch dated ahead of the clock never counts (clock step back, a planted
 test('a stop ends the launch of its own agent id first', () => {
   const s = writerSession();
   s.launch(writer('implementer', { prompt: 'one' }));
-  s.launch(writer('implementer', { prompt: 'two' })); // denied once
-  s.launch(writer('implementer', { prompt: 'two' })); // the identical retry runs: two plain writers are recorded
+  s.launch(writer('implementer', { prompt: 'two', isolation: 'worktree' }));
   s.start('agent-a', 'implementer');
   s.start('agent-b', 'implementer');
   s.stop('agent-b', 'implementer');
