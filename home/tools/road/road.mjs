@@ -19,6 +19,7 @@ import { parseWorkItems } from '../estimate/lib/items.mjs';
 import { readStatusFile } from '../status/status-file.mjs';
 import { runStatus } from '../status/status.mjs';
 import { MAX_ROW_ID_CHARS, LANE_NAME, readRoad, roadRows } from './lib/road-file.mjs';
+import { isOn } from '../../hooks/lib/checks-on.mjs';
 import { GIT_TIMEOUT_MS, gateStep } from './lib/road-gate.mjs';
 import { buildArgs, isUiLane, landedLine, roadStartTip, stepState } from './lib/road-state.mjs';
 
@@ -163,7 +164,7 @@ function gate(road, ctx, rest, run, isUiPath) {
   const given = flagValue(rest, '--step');
   const step = given === undefined ? stepState(road, items).step : Number(given);
   if (!Number.isInteger(step) || step < 1 || step > road.steps.length) throw new UsageError(`--step must be 1-${road.steps.length}. ${USAGE}`);
-  const result = gateStep(road, items, step, run, { isUiPath });
+  const result = gateStep(road, items, step, run, { isUiPath, checkOn: (category) => isOn(category) }); // $CLAUDE_CODE_SESSION_ID's /check switch
   return { code: result.pass ? 0 : 1, out: [...result.lines, `road ${road.road} step ${step}: ${result.pass ? 'PASS' : 'FAIL'}`].join('\n') };
 }
 

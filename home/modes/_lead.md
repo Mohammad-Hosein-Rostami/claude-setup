@@ -23,7 +23,7 @@ Rules:
 1. Opus writes only a **spec** (decision, files, steps, acceptance checks, ≤ 60 lines)
    to a file for a Sonnet agent, then checks report and diff.
 2. Opus keeps strong-model work and few-line edits.
-3. 2+ independent lanes: one `build` run, writers within lane budget in worktrees; lane >30 min: `step`.
+3. Independent work: 2+ lanes that fit one step are one `build` run, writers within the lane budget, in worktrees; a job of more steps is a road (lead.md "Road of steps").
 
 ## Right-size before building
 
@@ -37,15 +37,15 @@ Rules:
 - Job form: by the job (lead.md "Inline, agent or workflow"); always a workflow: landing, machine sync.
 - No turn without a decision: with work in flight, arm one watch before ending the turn; relays and status 1-2 lines; lanes share a state file.
 - Ops to agents: test/lint/build, ssh/git, logs to `runner`; multi-file edits `implementer`; delegate past ~15 Bash calls.
-- Land each lane when done via the `land` workflow (rebase, ff-only, prune; suite, review, audit only when on); a re-done lane keeps its branch; never update-ref; the base folder holds no edits.
+- Land each lane when done via the `land` workflow (rebase, ff-only, prune; checks only when on); a re-done lane keeps its branch; never update-ref; the base folder holds no edits.
 - Spawn brief: one job per agent with all it needs: acceptance checks, failure classes to self-test, defaults for foreseeable questions,
   "finish everything"; a design brief asks for the Reuse inventory, Contract facts and Unconfirmed lists (project `architect` too). Agents return ≤ 300 words, detail in a file; a worker unfinished at ~120 tool calls or the
   2nd compaction returns a status.
 - Send all review findings in one message within 5 min of the report. A follow-up for an agent idle over 5 min that does
   not need its context goes to a fresh agent with the spec and the diff, not a resume.
 - Watching: background Bash `node ~/.claude/tools/watch/watch.mjs <session-id> --exit-on-event` replaces re-arming
-  Monitor (exits at the first event that needs you; restart it; the ask queue keeps Monitor).
-  Unattended runs first arm one on their own id with `timeout` 7200000 (without it the watch stops after 30 min): `--exit-on-event api-error,stall,limit`.
+  Monitor (exits at the first event for you; restart it; the ask queue keeps Monitor).
+  Unattended runs first arm one on their own id with `timeout` 7200000 (else it stops at 30 min): `--exit-on-event api-error,stall,limit`.
 - Parallel request: first one line on usage-limit risk.
 - Multi-day: `STATUS.md` `## Work items`: list the job's rows first; row edits by `status.mjs` only. Estimates: the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` only.
 - Digests ≤ 3k chars plus paths; `scout` summarises > ~200 lines; no Read > ~20k.
@@ -56,7 +56,7 @@ Rules:
 
 - Owner's call (the Owner decisions line of CLAUDE.md): AskUserQuestion at once. Load `ask-owner` first; at start list decisions, start independent work, ask.
 - Job start: all foreseeable owner decisions in one batch beside the steps and lanes; architect "Questions for the owner" before any lane; numbered decisions in `## Owner decisions`, in every brief.
-- No answer in 60 s (the dialog takes it; the result notes each such answer `UNCONFIRMED`): take the recommended option, say which; mark it `UNCONFIRMED` in STATUS.md `## Owner decisions` and re-ask it in the next reply.
+- No answer in 60 s (the dialog marks each such answer `UNCONFIRMED`): take the recommended option, say which; mark it `UNCONFIRMED` in STATUS.md `## Owner decisions` and re-ask it in the next reply.
 
 ## Delegating UI work
 

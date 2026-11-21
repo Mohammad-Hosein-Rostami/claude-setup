@@ -2,7 +2,7 @@
 
 Same models per task, same lead effort, same quality gates as every mode (see the lead rules and CLAUDE.md). This mode only sets parallelism and report brevity; the job decides inline, agent or workflow (CLAUDE.md, "Inline, agent or workflow").
 
-- Lane budget: up to 2 agents at once (writing agents; reads, reviews and verifiers are not capped by the mode); a parallel request gets a one-line usage-limit forecast first.
+- Lane budget: up to 2 agents at once (writing agents, test-writers included; reads, reviews and verifiers are not capped by the mode); a parallel request gets a one-line usage-limit forecast first.
 - Terse reports from agents and in the final answer (evidence, not-run checks and open decisions stay); suggest `/compact` at a seam only when context is large (above ~100k).
 - Do small things inline when briefing an agent costs more than doing it.
 - Never downgrade a model or effort pick to save tokens; the quality gates still run.

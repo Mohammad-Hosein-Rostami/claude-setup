@@ -1,5 +1,5 @@
 // Purpose: the checkpoint between steps (spec-stages section 5): one PASS, FAIL, WARN or INFO line per check, a FAIL on any line fails it.
-// Exports: gateStep(road, items, step, run, { isUiPath }) -> { lines, pass }, GIT_TIMEOUT_MS, TOOL_TIMEOUT_MS.
+// Exports: gateStep(road, items, step, run, { isUiPath, checkOn }) -> { lines, pass }, GIT_TIMEOUT_MS, TOOL_TIMEOUT_MS.
 // `run(file, argv, timeoutMs)` -> { exit, out } runs one program with argv (no shell); `file` is one of 'git', 'git-tidy', 'test-pass',
 //   'audit-log', 'ui-proof' (the CLI maps them to the tools), so tests inject it. Every git call names shas with fixed flags (P2).
 // Lines: 1 rows done (no lanes landed and none carried = FAIL; an open UI lane = FAIL, never carried; a carried lane a later lane needs =
@@ -9,6 +9,8 @@
 //   sha); 3 `git-tidy check` exit 0; 4 `test-pass check <tip> --suite` exit 0; 5 `audit-log gate --tip <tip>` exit 0; 6 UI: when a range of
 //   the step changes UI files or a lane has a matrix, `ui-proof check --tip <tip> --against-step <road>.s<N>` exit 0 and the step-start
 //   record taken at or before every `<from>`; 7 the measure (INFO).
+// Lines 4 (test), 5 and a steered step's `reviewed` line (review) and 6 (ui) are checks: each runs only when `checkOn(category)` says the
+//   owner turned it on with /check (spec r9-checks-off); off, the line is `INFO <n> <name>: not checked: <category> off`.
 // Invariants: any exit other than the expected ones is FAIL (fail closed, P3); untrusted shas from rows are hex-checked before argv.
 import { rowIds } from './road-file.mjs';
 import { isUiLane, landedLine, reviewedLine, roadStartTip } from './road-state.mjs';
@@ -125,24 +127,25 @@ const exitLine = (n, name, result, okText) => (result.exit === 0 ? pass(`${n} ${
  * @param {object[]} items parseWorkItems(...).items
  * @param {number} step 1-based
  * @param {(file: string, argv: string[], timeoutMs: number) => { exit: number, out: string }} run
- * @param {{ isUiPath: (path: string) => boolean }} options
+ * @param {{ isUiPath: (path: string) => boolean, checkOn?: (category: string) => boolean }} options the UI file test, and the owner's /check switch (default: all off)
  * @returns {{ lines: string[], pass: boolean }}
  */
-export function gateStep(road, items, step, run, { isUiPath }) {
+export function gateStep(road, items, step, run, { isUiPath, checkOn = () => false }) {
+  const notChecked = (n, name, category) => `INFO ${n} ${name}: not checked: ${category} off`
   const rows = new Map(items.map((item) => [item.id.toLowerCase(), item]));
   const start = roadStartTip(road, items);
   const tipRead = git(run, road.repo, ['rev-parse', '--verify', `refs/heads/${road.base}^{commit}`]);
   const tip = tipRead.out.trim();
   if (start === null || tipRead.exit !== 0 || !HEX.test(tip)) return { lines: [fail(`road start tip or base tip unreadable (run rows first; git exit ${tipRead.exit})`)], pass: false };
   const firstParentList = git(run, road.repo, ['rev-list', '--first-parent', `${start}..${tip}`]).out.split('\n').filter(Boolean);
-  const ctx = { repo: road.repo, base: road.base, start, tip, firstParentList, firstParent: new Set(firstParentList), steered: (n) => road.steps[n - 1]?.form === 'agents' };
+  const ctx = { repo: road.repo, base: road.base, start, tip, firstParentList, firstParent: new Set(firstParentList), steered: (n) => checkOn('review') && road.steps[n - 1]?.form === 'agents' };
   const lines = [
     ...rowsLine(road, rows, step, isUiPath),
     ...rangeLines(run, road, rows, ctx),
     exitLine(3, 'one git line', run('git-tidy', ['check', road.repo, '--base', road.base], TOOL_TIMEOUT_MS), 'git-tidy check clean'),
-    exitLine(4, 'suite', run('test-pass', ['check', tip, '--repo', road.repo, '--suite'], TOOL_TIMEOUT_MS), `PASS recorded for ${tip}`),
-    exitLine(5, 'audits', run('audit-log', ['gate', '--repo', road.repo, '--tip', tip], TOOL_TIMEOUT_MS), 'none open'),
-    uiLine(run, road, rows, step, ctx),
+    !checkOn('test') ? notChecked(4, 'suite', 'test') : exitLine(4, 'suite', run('test-pass', ['check', tip, '--repo', road.repo, '--suite'], TOOL_TIMEOUT_MS), `PASS recorded for ${tip}`),
+    !checkOn('review') ? notChecked(5, 'audits', 'review') : exitLine(5, 'audits', run('audit-log', ['gate', '--repo', road.repo, '--tip', tip], TOOL_TIMEOUT_MS), 'none open'),
+    checkOn('ui') ? uiLine(run, road, rows, step, ctx) : notChecked(6, 'ui', 'ui'),
     `INFO 7 measure: ${road.steps[step - 1].measure ?? 'none named'}`,
   ];
   return { lines, pass: !lines.some((line) => line.startsWith('FAIL')) };

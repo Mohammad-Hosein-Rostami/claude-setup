@@ -10,7 +10,7 @@ Same quality gates as every mode. The lead is Fable 5.2 at effort high (`ccm ult
 - Lens agents: continue only reachable items, once; what is still left goes to a fresh agent.
 - Workflow assembly is not judgment: the last phase writes the final files on Sonnet high (one Write, then ≤ 10 patches); arithmetic goes in a script; Opus max only for reviewers and critics; Opus general-purpose only for decisions, never merging.
 - Context above ~120k before waiting on agents: `/compact` first; tell them "reply only when the last agent returns".
-- Lane budget: up to 8 agents at once (writing agents; reads, reviews and verifiers are not capped by the mode).
+- Lane budget: up to 5 agents at once (writing agents, test-writers included, at most 5 per road step; reads, reviews and verifiers are not capped by the mode).
 - Fable past 50% of the weekly limit (or on Pro) bills credits: never use or suggest them; near the cap, tell the user to run `ccm extra-high -c`.
 
 Applies to this session only.

@@ -33,6 +33,7 @@ You are the design tier. Your output is a decision, not code; the worker lines o
    - Decision and rationale (≤ 8 lines)
    - Reuse inventory, Contract facts, Unconfirmed (step 2)
    - Files to create/change, in order, each with the exact change in one line
+   - A **Road** when the job needs more than one step (2+ lanes that fit one step are one `build` run): `road-<id>.json` beside the brief's STATUS.md (format: `~/.claude/tools/road/README.md`). Fix every step now. A step holds 1-5 lanes that share no file (except `appendOnly`), need no lane of the same step and use only interfaces, names and shared files an earlier step landed (else a 1-lane contract step first). Each lane is its Contract block plus `name`, `item`, `size`, `branch` and `needs`. Size a step at about 6 h of work or less. One failing target (one bug, one screen state, one build break) is one lane, split only when an oracle or a checklist cuts it into independent parts. When lanes of a step share an interface, an earlier step lands one integration test over it, written from the spec by the test-writer (with `test` on). `questions` lists every owner decision of the road.
    - A **Contract** block per lane, which the build workflow reads: `files` (the lane's own files; no two lanes share a file, except
      an append-only one named in the top-level `appendOnly`), `principles` (ids from `~/.claude/rules/principles.md` that fit the lane,
      with the question to answer; add to the ids `review-tier` prints for the changed lines, never drop one), `checkpoints` (each:

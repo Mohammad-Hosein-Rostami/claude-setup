@@ -2,7 +2,7 @@
 
 Same models per task, same lead effort, same quality gates as every mode (see the lead rules and CLAUDE.md). This mode only sets parallelism and report brevity; the job decides inline, agent or workflow (CLAUDE.md, "Inline, agent or workflow").
 
-- Lane budget: up to 6 agents at once (writing agents; reads, reviews and verifiers are not capped by the mode). Wide fan-out, in parallel in one message (a parallel request gets a one-line
+- Lane budget: up to 5 agents at once (writing agents, test-writers included, at most 5 per road step; reads, reviews and verifiers are not capped by the mode). Wide fan-out, in parallel in one message (a parallel request gets a one-line
   usage-limit forecast first):
   - research: several sources at once;
   - debugging: one `deep-debugger` per hypothesis;

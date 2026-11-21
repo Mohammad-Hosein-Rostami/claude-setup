@@ -31,7 +31,7 @@ what came back, never more than the result says (details: `home/workflows/README
 
 ## build (`<spec path> [lanes]`)
 
-Args to fill: `base`, `repo`, `suite` (the repo's declared full-suite command), `writers` (the mode's lane budget), `statusFile`, `lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?, principles?, checkpoints?, addClasses?}]` (`matrix` is required for a ui-implementer: a coverage matrix path or `none: <reason>`), and `appendOnly?` (files several lanes may list, such as `docs/catalog.md`).
+Args to fill: `base`, `repo`, `suite` (the repo's declared full-suite command), `writers` (as `road.mjs next --budget <your lane budget>` prints; at most 5 lanes per run), `statusFile`, `lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?, principles?, checkpoints?, addClasses?}]` (`matrix` is required for a ui-implementer: a coverage matrix path or `none: <reason>`), and `appendOnly?` (files several lanes may list, such as `docs/catalog.md`).
 
 The lane contract comes from the spec's Contract block: `principles: [{id, question}]`, `checkpoints: [{id, run, exit, files, kind: 'red-first'|'keeps-working'}]` (ids unique within the lane; each `run` is a command with an expected exit code; the join runs it before and after the change and the script judges the exit codes), `addClasses` (review-tier classes to add). Two lanes may not share a file unless it is in `appendOnly`, and a checkpoint's `files` are locked: a lane that edits them comes back `contract-touched`, not reviewed.
 

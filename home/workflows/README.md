@@ -13,7 +13,7 @@ Args marked `?` are optional. Every script also accepts `scriptsDir` (this folde
 
 | script | skill | phases | args |
 | --- | --- | --- | --- |
-| `build.js` | `workflows` (`build`) | Build, Join, Review, Visual QA, Land, Audit | `base, repo, suite, writers, statusFile, scriptsDir, resume?, probeC?, lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?, principles?, checkpoints?, addClasses?}], appendOnly?` |
+| `build.js` | `workflows` (`build`) | Build, Join, Review, Visual QA, Land, Audit | at most 5 lanes per run (a road step; more throws `build: N lanes in one run`); `base, repo, suite, writers, statusFile, scriptsDir, resume?, probeC?, checks?, lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?, principles?, checkpoints?, addClasses?}], appendOnly?` |
 | `review.js` | `workflows` (`review`) | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, whole?, fixer?, tier?, addClasses?, laneClasses?, deltaOf?, laneStart?, baseTips?, priorFindings?, initialFindings?, waiverAt?, principles?, spec?, checkpoints?, records?, audit?` |
 | `land.js` | `workflows` (`land`) | Rebase, Suite, Land | `row, closeRow, statusFile, repo, base, branch, worktree, suite, tip, auditPending?, auditBase?` |
 | `step.js` | `workflows` (`step`) | Step | `row, agentType, prompt, model, effort, isolation?, alone?, statusFile?` |

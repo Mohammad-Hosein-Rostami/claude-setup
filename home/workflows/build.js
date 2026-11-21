@@ -281,8 +281,11 @@ if (args.lanes.length > 0) {
 const lanes = await pipeline(args.lanes, buildLane, joinLane, reviewLane, landLane, auditLane)
 return { lanes: lanes.map((entry, at) => entry ?? outcome(args.lanes[at], 'failed', '', 'the lane stopped on an error')), leadList }
 
+const MAX_LANES_PER_RUN = 5 // a road step holds at most 5 lanes (spec-stages section 1, road-rules); road-file.mjs and agent-model-guard.mjs hold the same 5
+
 function checkArgs(given) {
   const name = 'build' // the tool cuts `meta` out of the body, so the script's own name is written here
+  if (Array.isArray(given?.lanes) && given.lanes.length > MAX_LANES_PER_RUN) throw new Error(`build: ${given.lanes.length} lanes in one run: a step holds at most ${MAX_LANES_PER_RUN}; split the step`)
   const typeName = (type) => (type === 'array' ? 'an array' : `a ${type}`)
   const check = (holder, path, key, type) => {
     const value = holder === undefined || holder === null ? undefined : holder[key]

@@ -16,7 +16,7 @@ test('every mode has a playbook ending with the session-only line', () => {
   }
 });
 
-const LANE_BUDGETS = { normal: 2, medium: 3, high: 6, 'extra-high': 6, 'ultra-high': 8 };
+const LANE_BUDGETS = { normal: 2, medium: 3, high: 5, 'extra-high': 5, 'ultra-high': 5 };
 
 test('every playbook states its lane budget', () => {
   for (const mode of MODES) {
