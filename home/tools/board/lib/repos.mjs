@@ -2,15 +2,15 @@
 // at all while two agents worked in worktrees, because the lead's folder is not in git). Run only by the detached board refresh.
 // Exports: sessionRepos({ folders, preferred, cache, nowMs, startMs }) -> { repos, git, cache }; placeAgents(agents, repos) -> { agents, repos };
 // MAX_REPOS.
-// Which: only folders the setup vouches for (refresh.mjs: the session folder, each agent's `meta.worktreePath` and the folders
-// writers were launched in), never a folder an agent's tool call named: git runs a repository's
+// Which: only folders the setup vouches for (refresh.mjs: the session folder, the STATUS.md folder the session linked, each agent's
+// `meta.worktreePath` and the folders writers were launched in), never a folder an agent's tool call named: git runs a repository's
 // own config (`core.fsmonitor`, clean filters), so it runs only where the owner put the work (review SEC-1 of 9ac483c3). Each is
 // placed in its repository by the file system alone (the `.git` entry of the folder or a parent; a worktree's `.git` file names its
 // git folder, whose `commondir` names the shared one), so worktrees of one clone are one repository; the worktrees that repository's
 // own `worktree list` names are read with it. The first MAX_REPOS repositories are read with git-state.mjs repoState, sharing one
 // git budget (`startMs`); the primary one (its `git` is the board's `git`) is the one holding a `preferred` folder (the STATUS.md
-// folder, the road's `repo`), else the first. A preferred folder only orders: it never adds a repository, since a STATUS.md or road
-// file may name any folder (review SEC-1 residual).
+// folder, the road's `repo`), else the first. A preferred folder only orders: it never adds a repository, since an agent writes the
+// road file and could name any folder there (review SEC-1 residual).
 // Invariants: never throws; no git call here; `.git` and `commondir` files are read without following a link or waiting on a FIFO,
 // only as regular files of at most MAX_GIT_FILE_BYTES (hooks/lib/plain-file.mjs); a UNC or device path is never touched.
 import { lstatSync } from 'node:fs';

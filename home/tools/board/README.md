@@ -81,10 +81,10 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while a ru
   or more is kept for an hour as the trend;
 - the base branch (`lib/repo-stats.mjs`, every 60 s): its tip, the newest test-pass `suite` record of exactly that tip, and the
   commits on its first-parent line since local midnight;
-- git (`lib/repos.mjs`, `lib/git-state.mjs`) only in repositories the setup vouches for, up to 3: the session's folder, each
-  agent's `meta.worktreePath` and the writers' launch folders, with the worktrees their own `worktree list --porcelain -z` names;
-  the STATUS.md folder and the road's `repo` only choose which of those is shown first (a STATUS.md or road file can name any
-  folder, so it never adds a repository) (git runs a repository's own config, so never where a tool call points); `-c core.fsmonitor=false`
+- git (`lib/repos.mjs`, `lib/git-state.mjs`) only in repositories the setup vouches for, up to 3: the session's folder, the
+  STATUS.md folder the session linked, each agent's `meta.worktreePath` and the writers' launch folders, with the worktrees their
+  own `worktree list --porcelain -z` names; the road's `repo` only chooses which of those is shown first (an agent writes the road
+  file and could name any folder there, so it never adds a repository) (git runs a repository's own config, so never where a tool call points); `-c core.fsmonitor=false`
   and one git budget per refresh. Agents are matched to those worktrees by path prefix: the folder of the file they edited last
   (Edit, Write, MultiEdit, NotebookEdit, counted only after the call succeeded; a Bash call's cwd says nothing of where it
   writes), then the worktree they were launched in (`meta.worktreePath` or the launch record), then older edited folders, then
