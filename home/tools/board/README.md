@@ -79,9 +79,12 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while a ru
   or more is kept for an hour as the trend;
 - the base branch (`lib/repo-stats.mjs`, every 60 s): its tip, the newest test-pass `suite` record of exactly that tip, and the
   commits on its first-parent line since local midnight;
-- git (`lib/repos.mjs`, `lib/git-state.mjs`) in every repository the work is in, up to 3: the session's folder, the road's `repo`,
-  the STATUS.md folder and each live agent's folder (its worktree, else the folder of the files it reads and changes), placed by
-  the file system alone, worktrees of one clone together (the lead's folder is often outside git): `worktree list` when the worktree folder changed, one `for-each-ref` with `%(ahead-behind:main)`
+- git (`lib/repos.mjs`, `lib/git-state.mjs`) only in repositories the setup vouches for, up to 3: the session's folder, the
+  STATUS.md folder, the road's `repo`, each agent's `meta.worktreePath` and the writers' launch folders, with the worktrees their
+  own `worktree list` names (git runs a repository's own config, so never where a tool call points); `-c core.fsmonitor=false`
+  and one git budget per refresh. Agents are matched to those worktrees by path prefix: the newest folder of a file they changed
+  (or a Bash call's cwd), then of one they read, then their cwd, counted only after the call succeeded. One refresh per session
+  at a time (a pid lock, taken over after 2 min or when its process is gone): `worktree list` when the worktree folder changed, one `for-each-ref` with `%(ahead-behind:main)`
   every 15 s, and `--no-optional-locks status --untracked-files=no` per worktree only when its index or HEAD changed (15 s at
   most); 250 ms timeout per call and 250 ms of git per refresh, past which the old values stay with their age.
 
