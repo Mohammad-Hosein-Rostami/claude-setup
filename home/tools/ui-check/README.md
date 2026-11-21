@@ -35,6 +35,7 @@ The browser binary is found by Playwright itself in its cache (`~/Library/Caches
 | `batch` | `--states file.json [--only surface[,surface]] [--jobs 4] [--resume] [--prev RUN] [--out DIR]` | Many states in one run (below). `compare` for a state with `figma`, `responsive` for a state with widths. Writes `ledger.json` beside `results.json`; `--prev RUN` prints the round table (see `run`). |
 | `run` | `--matrix M [--base-url U] [--states S] [--out DIR] [--jobs N] [--only surface,...] [--prev RUN] [--no-worse RUN] [--self-test] [--step <road>.s<N>]` | The one call of a UI round (section `run` below): `ui-coverage scaffold` + `batch` + `ui-coverage check`. |
 | `columns` | `--url U --table SEL [--width 1440] [--no-autofocus]` | Body cells vs header cells: left delta <= 1px, width delta <= 2px. |
+| `figma-diff` | `--states S [--only surface[,surface]] [--decisions D] [--out DIR] [--project DIR]` | Per state with a `figma` part: built parts and texts with no Figma node, Figma texts and drawings with no built part, wording differences; each row classed `fix`, `keep` or `ask the owner` (section `figma-diff` below). |
 
 Output (`--out`, default `<cache>/runs/<timestamp>` for compare, the OS temp dir otherwise): `report.json`,
 `report.md` (<= 40 lines), `actual.png`, `diff.png` (absent on an exact match).
@@ -257,3 +258,41 @@ only), `pulledFrom` (the `--node`, or the export entry) and `source` (`api` or `
   Unconfirmed: this folder format is the setup's choice (the ICE scripts saved the nodes-API answer raw and the PNGs by
   node id). How the PC project's own gate stores its Figma results has not been read yet (the top-level keys of one of
   its result files, `round9` phase-start step); until it is, this format may change to match it.
+
+## `figma-diff` (what the map does not cover)
+
+`ui-check figma-diff --states states.json [--only surface,...] [--decisions decisions.json] [--out DIR] [--project DIR]` opens every
+state that has a `figma` part (same states file, viewport, steps and context as `batch`) and compares what the page shows inside the
+state's `figma.root` with the cached frame (`spec.json`). The pixel gate and the element gate check only mapped nodes; this lists
+what nobody mapped. Rows:
+
+- `extra`: a built text, link, button, label, field text (typed value or placeholder; never a password) or graphic (img, outermost
+  svg, canvas, video, CSS background or mask image) with no Figma counterpart.
+- `missing`: a Figma text or drawing (VECTOR, BOOLEAN_OPERATION, STAR, POLYGON layers merged per icon) with no built counterpart.
+- `wording`: a pair with different text, with the kind: `case`, `punctuation` (also spacing), `spelling` (at most 2 letters) or `words`.
+
+Pairing (texts), strongest first: same wording (letters and digits, case ignored) at the nearest place; a long text (> 40 characters)
+at least 80% alike wherever it moved; one text holding the other in the same place; else the same place, the most alike text. Same
+place: the boxes overlap or their centres are at most 16 px apart (frame px; boxes are relative to the frame and the root). A built
+line split by a link inside it is also judged as its whole block. Graphics pair by place only. Never a row: hidden Figma layers
+(`spec.json` leaves them out), layers whose centre is outside the frame, a phone frame's drawn status bar or home indicator, sample
+data (e-mail addresses, phone-like numbers), texts with no letter or digit (icon fonts, bullets of a masked password), drawings under
+12 px, thinner than 3 px (rules, separators) or at least half the frame's width or height (background decoration).
+
+Classes (default rule, from the ICE `figma-diff` decisions: a difference no decision covers is never passed unseen; and the setup's
+standing rule: an element not in Figma defaults to "match Figma"): `missing` and `extra` are `fix` (match Figma); a `case` or
+`punctuation` wording is `fix` (use Figma's exact text); a `spelling` or `words` wording is `ask the owner` (copy is a product decision,
+and either side may hold the typo). `--decisions` overrides the default for matching rows; each entry needs the owner reference:
+
+```json
+[{ "type": "extra", "build": "Continue registration on another device", "surface": "register", "class": "keep",
+   "owner": "STATUS.md decision 2026-11-14 B15", "reason": "the only entry to the e-mailed link flow" }]
+```
+
+An entry matches on `type` and on each of `figma`, `build` (whitespace-normalised, exact) and `surface` it gives (at least `figma` or
+`build`); `class` is `fix`, `keep` or `ask`. Output: `report.md` / `report.json` in `--out` (default under the OS temp dir; the JSON has
+every row with boxes, node id, selector and reason per state) and one stdout line per row, then `PASS|FAIL figma-diff - ...`. Exit 0 when
+no row is open (none, or only `keep`), 1 when any `fix` or `ask the owner` row exists, 2 for a usage or setup error, also when a state
+could not be compared (missing cache, HTTP error, root not found; the other states still run and the error is in the report).
+`spec.json` keeps the full Figma text (until this change it cut every text at 80 characters): a cache written before that is flagged
+by a warning line (Figma texts of exactly 80 characters); re-pull it with `figma-pull --refresh`.

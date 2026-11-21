@@ -1,7 +1,7 @@
 // Purpose: flatten a Figma REST node tree into a list of boxes relative to the frame root.
-// Exports: flattenSpec, colorToCss. Invariants: pure (no I/O); invisible nodes are dropped; gap prefers the gap
+// Exports: flattenSpec, colorToCss. Invariants: pure (no I/O); invisible nodes are dropped; a TEXT node keeps its full
+// characters (figma-diff compares whole wordings; a cut text would hide a difference after the cut); gap prefers the gap
 // derived from sibling coordinates over Figma's itemSpacing.
-const TEXT_MAX_CHARS = 80;
 const DECIMALS = 100;
 const AUTO_LAYOUTS = new Set(['HORIZONTAL', 'VERTICAL']);
 
@@ -76,7 +76,7 @@ function describe(node, origin) {
     name: node.name,
     type: node.type,
     ...relativeBox(node, origin),
-    ...(isText ? { text: (node.characters ?? '').slice(0, TEXT_MAX_CHARS), style: textStyle(node) } : { style: boxStyle(node, origin) }),
+    ...(isText ? { text: node.characters ?? '', style: textStyle(node) } : { style: boxStyle(node, origin) }),
   };
 }
 

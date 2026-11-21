@@ -9,3 +9,4 @@
 - `figma-refresh.mjs` - `figma-refresh` - re-fetch the frames under a node into a temp folder and print changed / unchanged / new / gone per frame; never writes the cache.
 - `responsive.mjs` - `responsive` - layout invariants at several widths; screenshots go to disk, never to the caller.
 - `run.mjs` - `run` - one call per UI round: ui-coverage scaffold + batch + ui-coverage check; numbers, failing rows with crops, `--prev`, `--no-worse`, `--self-test`, `--step`.
+- `figma-diff.mjs` - `figma-diff` - per state with a `figma` part: built parts and texts not in Figma, Figma texts and drawings not built, wording differences; each row classed fix / keep / ask the owner.
