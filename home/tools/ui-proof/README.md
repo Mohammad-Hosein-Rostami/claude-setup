@@ -2,6 +2,34 @@
 
 This folder holds the UI proof record tool: `node ~/.claude/tools/ui-proof/ui-proof.mjs <command> [flags]`. Node 22, no dependencies.
 
+## Records (F7, P8)
+
+`hooks/ui-proof-gate.mjs` (PostToolUse Bash) writes one record per `ui-check run`, whatever its verdict, into
+`~/.claude/state/ui-proof/<repo>-<hash>.json` (`UI_PROOF_STATE_DIR` overrides the folder; worktrees of one clone share the file;
+the newest 200 records are kept): the hash of the UI files of the working tree, HEAD, the verdict, the rule, the viewing conditions,
+the matrix hash, the `--step` label, the widths and frames, and the batch reference from the run's `ledger.json` (per state the
+capture sha256, pixels, colour-metric pixels, rows and pixel ratio; the comparator and renderer). The agent type is taken from the
+hook input (`agent_type`), never from the command line; a record without one is nobody's. Only a PASS made by visual-qa on the tree
+that lands is the final gate.
+
+UI files (`lib/ui-files.mjs`, the one definition): the skill router's `isUiFile` plus `.ts`/`.js` style scripts under a
+styles/theme/sx folder or named `*.styles.ts`, `*.theme.ts`, `*.sx.ts`, minus folders named `test`, `tests`, `__tests__` or
+`fixtures`; in a repo that has such a file at either sha, also every `package.json`, its lockfile and the files under a
+`locales`, `locale`, `i18n` or `lang` folder.
+
+| Command | Exit |
+| ------- | ---- |
+| `check --tip <sha> [--against <sha> \| --against-step <road>.s<N>] [--repo DIR]` | 0: a visual-qa PASS for the tip's UI tree and, with `--against`, no state worse than the record taken at that sha (with `--against-step`: than the record labelled `<road>.s<N>`); a state with no reference row prints `new` (INFO). 1: no such PASS, a state worse, another comparator or renderer (fail closed), or no record with that sha or label. 2: usage. `git-tidy land` calls it with `--against`, road gate 6 with `--against-step` (phase 3). |
+| `has --step <road>.s<N> [--repo DIR]` | 0 a record with that label exists, 1 none, 2 usage (`road.mjs next` uses it, not `check`). |
+| `changed --from <sha> --to <sha> [--repo DIR]` | Lists the UI files that differ: 0 none, 1 some, 2 usage. |
+
+The stop gate (`hooks/ui-proof-gate.mjs`, Stop and SubagentStop): when the working tree's UI files differ from the merge base with
+the default branch and no PASS matches the tree, it blocks once per state (the lead needs visual-qa's PASS; a ui-implementer or
+visual-qa stop takes its own); a newer run on the same tree that is worse than the PASS's reference blocks too; an unreadable record
+blocks (fail closed). Claude Code overrides a Stop gate after 8 blocks in a row and lets a crashed one through, so no proof rests
+on it alone: `git-tidy land` and road gate 6 are the hard checks. `MATRIX: none:` skips the Figma compare, never the proof:
+visual-qa runs `run` on a matrix without a Figma source.
+
 ## review-page
 
 `ui-proof review-page --results <dir> --out <dir> [--matrix <matrix.json>]` writes `<out>/index.html`, the page the owner

@@ -10,6 +10,7 @@ Iron law: no claim of done without fresh evidence from this turn (C12, C29).
 3. Re-run the original repro or acceptance check; show it now passes.
 4. Grep the diff for `ts-ignore`, `eslint-disable`, `.skip`, `.only`, `console.log`, debug code (C13). Remove or justify.
 5. New logic has a test that fails without it (C11).
+5a. UI files changed (`node ~/.claude/tools/ui-proof/ui-proof.mjs changed --from <base> --to HEAD` exits 1): `node ~/.claude/tools/ui-proof/ui-proof.mjs check --tip HEAD --against <base>` must exit 0, a visual-qa PASS on this tree with no state worse; quote it on a `ui-proof:` line. A ui-implementer's own PASS is not the final gate.
 6. Human-first (C31-C36): `node ~/.claude/tools/readable/readable.mjs check . --changed`: fix what your change added; list anything pre-existing as seen, not fixed. Answer the no-AI test in `standards/readability.md` for what you touched.
 
 Report (max 8 lines; list every `UNCONFIRMED` line of STATUS.md, found with `grep UNCONFIRMED STATUS.md`): `checks: <cmd> -> <exit>` per check; `repro: pass|fail`; `not run: <check> because <reason>`; `not verified: <x>`.

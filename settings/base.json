@@ -258,6 +258,11 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/bash-writes.mjs\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/ui-proof-gate.mjs\"",
+            "timeout": 15
           }
         ]
       }
@@ -326,6 +331,11 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/status-deliver.mjs\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/ui-proof-gate.mjs\"",
+            "timeout": 15
           }
         ]
       }
@@ -363,6 +373,11 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/agent-budget.mjs\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/ui-proof-gate.mjs\"",
+            "timeout": 15
           }
         ]
       }
