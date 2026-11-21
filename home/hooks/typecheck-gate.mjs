@@ -67,7 +67,7 @@ function groupBy(items, keyOf) {
 
 // A command of the plan libs, or its skip, as the plan for `files`. `dir`: the folder its output may be relative to;
 // `key` names the check (for the timeout record); `info`: the build-info files of a tsc run.
-function planFor(files, dir, command, key, info) {
+function planFor(files, dir, command, { key, info }) {
   if (command.skipped && info) closeBuildInfo(info, false);
   if (command.skipped) return skip(files, command.skipped);
   const check = { name: 'typecheck', cmd: command.cmd, args: command.args, env: command.env };
@@ -82,7 +82,7 @@ function scriptPlan(dir, folders, files, script) {
   const info = major === null ? null : planBuildInfo(dir);
   const incremental = info ? incrementalTypecheck(script.text, major, tsc, info.privateInfo) : null;
   if (info && !incremental) closeBuildInfo(info, false);
-  return planFor(files, dir, incremental ?? { args: ['run', script.name] }, dir, incremental ? info : undefined);
+  return planFor(files, dir, incremental ?? { args: ['run', script.name] }, { key: dir, info: incremental ? info : undefined });
 }
 
 // Step 2: one Nx run per Nx project of the files; `rest` are the files of a folder with no typecheck target the gate can run.
@@ -91,7 +91,7 @@ function nxPlans(folders, files) {
   const rest = [];
   for (const [folder, group] of groupBy(files, (file) => nxProjectFolder(file, folders[0], folders.at(-1)))) {
     const nx = nxTypecheck(folder, folders);
-    if (nx) plans.push(planFor(group, folder, nx, `nx:${folder}`));
+    if (nx) plans.push(planFor(group, folder, nx, { key: `nx:${folder}` }));
     else rest.push(...group);
   }
   return { plans, rest };
@@ -103,7 +103,7 @@ function tsconfigPlans(dir, folders, files, noneReason) {
   return [...groupBy(files, (file) => nearestTsconfig(file, dir))].map(([tsconfig, group]) => {
     if (!tsconfig) return skip(group, noneReason);
     const info = planBuildInfo(tsconfig);
-    return info ? planFor(group, dir, tsconfigTypecheck(tsconfig, tsc, info.privateInfo), tsconfig, info) : skip(group, SKIPPED.noTempFolder);
+    return info ? planFor(group, dir, tsconfigTypecheck(tsconfig, tsc, info.privateInfo), { key: tsconfig, info }) : skip(group, SKIPPED.noTempFolder);
   });
 }
 
@@ -123,7 +123,8 @@ function groupByPackage(files) {
 }
 
 // Adds one plan's result to what the stop found; a check that timed out at the last stop too is given up, not kept.
-function collect(found, plan, result, timedOutBefore, record) {
+// `stop`: { timedOutBefore, record } of runGate.
+function collect(found, plan, result, { timedOutBefore, record }) {
   result.entries.forEach(record);
   const twice = result.timeoutId !== undefined && timedOutBefore.has(result.timeoutId);
   if (twice) record({ outcome: GAVE_UP, exit: null, ms: 0 });
@@ -151,7 +152,8 @@ export async function runGate(files, deadline, record = () => {}, timedOutBefore
   const found = { lines: [], unparsed: [], unchecked: [], gaveUp: [], keep: [], timeouts: [] };
   for (const { dir, files: group } of groupByPackage(files)) {
     const plans = deadline > Date.now() ? packagePlans(dir, group) : [skip(group, SKIPPED.budgetSpent)];
-    for (const plan of plans) collect(found, plan, await runPlan(dir, plan, deadline), timedOutBefore, (entry) => record({ dir, ...entry }));
+    const stop = { timedOutBefore, record: (entry) => record({ dir, ...entry }) };
+    for (const plan of plans) collect(found, plan, await runPlan(dir, plan, deadline), stop);
   }
   return { ...found, timedOut: found.unchecked.length + found.gaveUp.length > 0, lines: cut(found.lines), unparsed: cut(found.unparsed) };
 }
