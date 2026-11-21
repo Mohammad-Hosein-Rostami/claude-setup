@@ -3,7 +3,8 @@
 //   and doctor print.
 // Usage: node ledger.mjs stats [--json] [--doctor]
 //        node ledger.mjs truth --change <id> --check <kind> --truth catch|false-alarm|escape|pass [--level <l>] [--source <s>] [--defect <row>]
-//        node ledger.mjs defect --row <status-row-id> --change <id> --check <kind> [--level <l>]   (an owner defect: an escape)
+//        node ledger.mjs defect --row <status-row-id> (--change <id> | --path <repo-relative file>) [--check <kind>] [--level <l>]
+//                    (an owner defect from `status.mjs defect`: an escape of that change; no --check counts in the overall rate only)
 //        node ledger.mjs train            (the weekly retrain of lib/model.mjs; the lead or doctor runs it)
 // Exports: stateDir(), ledgerPath(), appendRows(rows), readRows(), queueSkipped(items), readQueue(), takeQueue(), stats(rows),
 //   recentCatches(rows, nowMs), LEDGER_MAX_BYTES.
@@ -108,6 +109,7 @@ export function stats(rows) {
   }
   for (const row of truths) {
     const kind = (perKind[row.check] ??= { runs: 0, catches: 0, falseAlarms: 0, escapes: 0, seconds: 0, tokens: 0 });
+    kind.labelled = (kind.labelled ?? 0) + 1;
     if (row.truth === 'escape') kind.escapes += 1;
     if (row.truth === 'false-alarm') kind.falseAlarms += 1;
     if (row.truth === 'catch') kind.catches += 1;
@@ -135,6 +137,15 @@ function statsText(summary, doctorLine) {
   return [head, ...lines].join('\n');
 }
 
+/** The newest change whose run rows touched `path` (a repo-relative path), or undefined. */
+function latestChangeOf(rows, path) {
+  return rows.filter((row) => row.type === 'run' && (row.paths ?? []).includes(path)).at(-1)?.change;
+}
+
+/** Alarm lines: an escape of a pinned or security check means a rule review at once (round 2, 11.4). */
+const alarms = (rows) => rows.filter((row) => row.type === 'truth' && row.truth === 'escape' && /^(pinned:|security)/.test(String(row.check)))
+  .map((row) => `ALARM: escape of ${row.check} in change ${row.change}: review its rule now and add the cheapest proxy check`);
+
 /** Reads `--name value` flags. */
 const flagsOf = (args) => Object.fromEntries(args.flatMap((arg, i) => (arg.startsWith('--') ? [[arg.slice(2), args[i + 1]?.startsWith('--') ? true : (args[i + 1] ?? true)]] : [])));
 
@@ -143,11 +154,13 @@ async function main([command, ...args]) {
   const flags = flagsOf(args);
   if (command === 'stats') {
     const summary = stats(readRows());
-    console.log(flags.json ? JSON.stringify(summary) : statsText(summary, flags.doctor));
+    console.log(flags.json ? JSON.stringify(summary) : [statsText(summary, flags.doctor), ...alarms(readRows())].join('\n'));
     return 0;
   }
   if (command === 'truth' || command === 'defect') {
     const truth = command === 'defect' ? 'escape' : flags.truth;
+    if (command === 'defect' && typeof flags.change !== 'string' && typeof flags.path === 'string') flags.change = latestChangeOf(readRows(), flags.path);
+    if (command === 'defect' && typeof flags.check !== 'string') flags.check = 'unknown'; // counts in the overall miss rate only
     if (typeof flags.change !== 'string' || typeof flags.check !== 'string' || !TRUTHS.includes(truth)) {
       console.error('usage: ledger.mjs truth --change <id> --check <kind> --truth catch|false-alarm|escape|pass [--level <l>] [--source <s>] [--defect <row>]');
       return 2;
@@ -160,7 +173,7 @@ async function main([command, ...args]) {
     console.log(trainModels(readRows(), stateDir()));
     return 0;
   }
-  console.error('usage: ledger.mjs stats [--json] [--doctor] | truth ... | defect --row <id> --change <id> --check <kind> | train');
+  console.error('usage: ledger.mjs stats [--json] [--doctor] | truth ... | defect --row <id> (--change <id> | --path <file>) [--check <kind>] | train');
   return 2;
 }
 
