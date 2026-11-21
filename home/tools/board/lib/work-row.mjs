@@ -95,7 +95,7 @@ function finishParts(view, { nowMs, timeZone, roadShown }, look) {
     parts.push({ text: `done by ${clockOf(view.highMs, nowMs, timeZone)}`, state: STATE.dim });
     if (view.p85Ms !== null && view.p85Ms > view.highMs && overMin === 0) parts.push({ text: `85%: ${clockOf(view.p85Ms, nowMs, timeZone)}`, state: STATE.dim, drop: 4 });
   }
-  else if (view.text) parts.push({ text: view.text });
+  else if (view.text) parts.push({ text: cleanText(view.text, look) });
   return { parts, overMin };
 }
 

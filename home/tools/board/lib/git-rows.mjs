@@ -129,6 +129,7 @@ export function repoRows(board, slots, ctx, look) {
   if (board === null || typeof board !== 'object') return [];
   const primary = board.repo !== null && typeof board.repo === 'object' ? board.repo : null;
   const others = (Array.isArray(board.repos) ? board.repos : []).filter((repo) => repo !== null && typeof repo === 'object');
+  if (primary === null && !(board.at > 0)) return [fitParts([{ text: 'git: loading', state: STATE.dim }], look)]; // first refresh running (N4)
   if (primary === null) return [fitParts([{ text: 'git: no repository', state: STATE.dim }, { text: "the session's folder and its agents' are outside git", state: STATE.dim, drop: 1 }], look)];
   const room = Math.max(1, slots);
   const fits = others.length <= room - 1;

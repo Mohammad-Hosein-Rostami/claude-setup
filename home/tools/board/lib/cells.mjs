@@ -18,8 +18,11 @@ const BOLD = '\u001b[1m';
 const RESET = '\u001b[0m';
 const UNICODE = { done: '█', left: '░', over: '▓', now: '▒', sep: ' · ', bar: ' │ ', cut: '…' };
 const ASCII = { done: '#', left: '.', over: '!', now: '>', sep: ' - ', bar: ' | ', cut: '...' };
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
+// C0 and C1 controls, and the invisible format characters (bidi overrides and isolates, zero-width marks, line and paragraph
+// separators) that would reorder or hide neighbouring words of a row (review SEC-4)
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]|\p{Cf}/gu;
 const NOT_ASCII = /[^ -~]/g;
+const WORD_BOUNDARY = /[\s\-/_]/;
 const UTF8_LOCALE = /utf-?8/i;
 const MIN_PER_HOUR = 60;
 const WHOLE_HOURS_FROM_MIN = 10 * MIN_PER_HOUR;
@@ -56,7 +59,8 @@ export function cleanText(text, look) {
 
 /**
  * A text cut to `max` characters at a word boundary, ending with the cut mark (the screenshot's "Write road" and "Land r9-tui, i"
- * were cut mid-word); a first word longer than half of `max` is cut inside the word.
+ * were cut mid-word). A space, `-`, `/` or `_` is a boundary, taken only when at least two thirds of the room stays (so "Step1
+ * impl: faster-slow-tests" keeps the lane name, review S1); with none there the text is cut inside the word.
  * @param {string} text an already cleaned text
  * @param {number} max the most characters kept, the cut mark included
  * @param {ReturnType<typeof lookOf>} look the terminal (its cut mark)
@@ -66,9 +70,9 @@ export function cutWords(text, max, look) {
   const chars = [...String(text ?? '').trim()];
   if (chars.length <= max) return chars.join('');
   const room = Math.max(0, max - [...look.glyph.cut].length);
-  const head = chars.slice(0, room + 1).join('');
-  const space = head.lastIndexOf(' ');
-  const kept = space >= Math.floor(room / 2) ? head.slice(0, space) : chars.slice(0, room).join('');
+  const head = chars.slice(0, room + 1);
+  const boundary = head.findLastIndex((char) => WORD_BOUNDARY.test(char));
+  const kept = (boundary >= Math.ceil((room * 2) / 3) ? head.slice(0, boundary) : chars.slice(0, room)).join('');
   return `${kept.replace(/[\s,;:.\-·]+$/u, '')}${look.glyph.cut}`;
 }
 

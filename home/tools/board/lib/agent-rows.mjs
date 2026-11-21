@@ -121,7 +121,8 @@ function wherePart(agent, ctx, look) {
   const place = `${repoName}${cleanText(agent.branch ?? agent.wt, look)}`;
   const ahead = wt?.ahead > 0 ? ` ${wt.ahead}${marks(look).up}` : '';
   const dirty = wt?.changed > 0 ? ` +${wt.changed} dirty` : '';
-  return { text: `${cutWords(place, wide(look) ? WIDE_PLACE_CHARS : PLACE_CHARS, look)}${ahead}${dirty}`, state: dirty ? STATE.warn : STATE.ok };
+  // dim, not yellow: uncommitted files are a writer's normal state, not a warning (review N2)
+  return { text: `${cutWords(place, wide(look) ? WIDE_PLACE_CHARS : PLACE_CHARS, look)}${ahead}${dirty}`, state: STATE.dim };
 }
 
 /**
