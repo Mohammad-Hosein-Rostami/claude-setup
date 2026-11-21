@@ -1,4 +1,5 @@
 {
+  "smart": { "default": "on", "covers": "the smart check: pinned scans on every change, then each check kind at none, scoped or full by the change (home/tools/smart-check); /check off smart turns it off" },
   "test": { "default": "off", "covers": "targeted tests, full suite, pre-commit tests, test-integrity, test-first, tdd-loop, test-writer, mutants, test-pass" },
   "types": { "default": "off", "covers": "typecheck gate, lint, build" },
   "review": { "default": "off", "covers": "review-tier set, reviewer, security-auditor, Opus lenses, review workflow, post-land audit and audit-log gate, critic rounds" },
