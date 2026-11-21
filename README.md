@@ -15,7 +15,7 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
 | `settings/`, `plugins/` | Settings layers (base, OS, local) and the plugin list |
 | `home/modes`, `home/bin/ccm` | Mode playbooks and the `ccm` launcher (`ccm.cmd` / `ccm.ps1` on Windows) |
 | `tests/`, `tools/`, `.githooks` | Repo tests (`node:test`), Brewfile and Windows tool script, pre-commit (gitleaks, affected tests), pre-push (full suite) |
-| `scripts/` | `install.sh`, `install.ps1`, `doctor.sh`, `lane-new.sh`, `affected-tests.mjs`, `merge-settings.jq` |
+| `scripts/` | `install.sh`, `install.ps1`, `doctor.sh`, `doctor-accounts.mjs`, `lane-new.sh`, `affected-tests.mjs`, `merge-settings.jq` |
 
 ## Quick start
     scripts/install.sh --dry-run     # preview, changes nothing

@@ -200,6 +200,28 @@ function Install-ProjectWorkflows($ProjectRepo) {
   }
 }
 
+# The line that gives every new PowerShell the claude-as function (spec-accounts.md "Start-up line"): it dot-sources
+# home\shell\claude-as.ps1 from this repo and holds no token and no account name. It goes into $PROFILE.CurrentUserAllHosts
+# (Documents\PowerShell\profile.ps1, or Documents\WindowsPowerShell\profile.ps1 on 5.1, where scripts/doctor-accounts.mjs
+# looks) and is found again by its mark, so a second run adds no second line; a marked line that differs is left and named.
+$StartupMark = '# claude-setup: claude-as'
+function Add-StartupLine {
+  $snippet = Join-Path $Repo 'home\shell\claude-as.ps1'
+  if ($snippet.Contains("'")) { Write-Warning 'the repo path holds a quote; no claude-as start-up line written'; return }
+  $profilePath = $PROFILE.CurrentUserAllHosts
+  $line = "if (Test-Path -LiteralPath '$snippet') { . '$snippet' } $StartupMark"
+  $raw = if (Test-Path -LiteralPath $profilePath) { Get-Content -LiteralPath $profilePath -Raw } else { '' }
+  if (-not $raw) { $raw = '' }
+  $lines = $raw -split "\r?\n"
+  if ($lines -contains $line) { Note "ok claude-as start-up line in $profilePath"; return }
+  if ($raw.Contains($StartupMark)) { Write-Warning "$profilePath has a claude-as start-up line for another path; left as it is (replace it with: $line)"; return }
+  if ($DryRun) { Write-Host "[dry-run] would add the claude-as start-up line to $profilePath"; return }
+  New-Item -ItemType Directory -Force (Split-Path -Parent $profilePath) | Out-Null
+  if ($raw -and -not $raw.EndsWith("`n")) { $line = "`r`n$line" } # the file did not end with a newline
+  Add-Content -LiteralPath $profilePath -Value $line
+  Note "added the claude-as start-up line to $profilePath"
+}
+
 function Install-Plugins {
   $claude = Get-Command claude -ErrorAction SilentlyContinue
   if (-not $claude) { Write-Host 'claude CLI not found. Manual: run /plugin and add the items in plugins\plugins.json.'; return }
@@ -230,6 +252,7 @@ try {
   $commands = Join-Path $Repo 'home\commands'
   if ((Test-Path $commands) -and (Get-ChildItem $commands -Force | Select-Object -First 1)) { Link-Item 'commands' }
   Install-Launcher
+  Add-StartupLine
   if ($ProjectWorkflows) { Install-ProjectWorkflows $ProjectWorkflows }
   if (Test-Path (Join-Path $Repo '.git')) {
     if (-not $DryRun) { git -C $Repo config core.hooksPath .githooks }

@@ -107,6 +107,31 @@ link_ccm() {
   case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "WARNING: $HOME/.local/bin is not on PATH; add it to run ccm" >&2 ;; esac
 }
 
+# The line that gives every new terminal the claude-as function (spec-accounts.md "Start-up line"): it sources
+# home/shell/claude-as.sh from this repo and holds no token and no account name. It goes into the rc file of the login shell
+# (zsh: ${ZDOTDIR:-~}/.zshrc; bash and Git Bash: ~/.bashrc; scripts/doctor-accounts.mjs shellStartUpFile follows the same rule)
+# and is found again by its mark, so a second run adds no second line; a marked line that differs (the repo moved) is left as
+# it is and named, never rewritten.
+STARTUP_MARK='# claude-setup: claude-as'
+add_startup_line() {
+  local rc snippet="$REPO/home/shell/claude-as.sh" line
+  case "$(basename "${SHELL:-none}")" in
+    zsh) rc="${ZDOTDIR:-$HOME}/.zshrc" ;;
+    bash) rc="$HOME/.bashrc" ;;
+    *) echo "WARNING: login shell ${SHELL:-none}: no start-up line written; source $snippet from its start-up file by hand" >&2; return ;;
+  esac
+  case "$snippet" in *"'"*) echo "WARNING: the repo path holds a quote; no claude-as start-up line written" >&2; return ;; esac
+  line="if [ -f '$snippet' ]; then . '$snippet'; fi $STARTUP_MARK"
+  if [ -f "$rc" ] && grep -qxF "$line" "$rc"; then note "ok claude-as start-up line in $rc"; return; fi
+  if [ -f "$rc" ] && grep -qF "$STARTUP_MARK" "$rc"; then
+    echo "WARNING: $rc has a claude-as start-up line for another path; left as it is (replace it with: $line)" >&2; return
+  fi
+  if [ "$DRY_RUN" = 1 ]; then echo "[dry-run] would add the claude-as start-up line to $rc"; return; fi
+  if [ -s "$rc" ] && [ -n "$(tail -c 1 "$rc")" ]; then printf '\n' >> "$rc"; fi # the file did not end with a newline
+  printf '%s\n' "$line" >> "$rc"
+  note "added the claude-as start-up line to $rc"
+}
+
 # Optional, default off: make the workflow scripts usable by name (`/<name>`) in one project. A link stays personal (hidden by
 # .git/info/exclude); --copy copies the scripts so the team can commit them, because a link into ~/.claude would break for them.
 project_workflows() {
@@ -210,6 +235,7 @@ enable_hooks() {
 need jq
 link_all
 link_ccm
+add_startup_line
 enable_hooks
 if [ -n "$PROJECT_REPO" ]; then project_workflows "$PROJECT_REPO"; fi
 if [ "$WITH_PLUGINS" = 1 ]; then install_plugins; fi

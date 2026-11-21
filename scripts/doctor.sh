@@ -325,11 +325,28 @@ check_project_agents() {
   if [ -n "$note" ]; then warn "$shown_project: $note"; else ok "project agents in $shown_project: nothing to report (no maxTurns, no shadowed agent, nothing left unchecked)"; fi
 }
 
+# Accounts (spec-accounts.md Safety): a literal token in start-up files or settings env blocks, a pasted token in shell history,
+# the claude-as start-up line, fastMode and a forced Fable model, per account revoked / year end / plan / usage credits, and one
+# tiny login call on the account a hook job would spend. scripts/doctor-accounts.mjs prints the lines and never a token; its
+# stderr is dropped (an error text could name more than a check needs), so a crash shows as its exit code only.
+check_accounts() {
+  local out line rc=0
+  out="$(node "$REPO/scripts/doctor-accounts.mjs" "$CLAUDE_DIR" "$REPO" "${DOCTOR_PROJECT:-$PWD}" 2>/dev/null)" || rc=$?
+  while IFS= read -r line; do
+    case "$line" in
+      "FAIL  "*) bad "${line#FAIL  }" ;;
+      "WARN  "*) warn "${line#WARN  }" ;;
+      "ok    "*) ok "${line#ok    }" ;;
+    esac
+  done <<<"$out"
+  [ "$rc" = 0 ] || bad "account checks could not run (scripts/doctor-accounts.mjs exit $rc)"
+}
+
 # DOCTOR_ONLY="check_a check_b" runs just those checks (used by tests; the full run executes the repo tests).
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_disk_free; check_disk_clean; check_tools; check_lsp; check_ui_check; check_project_agents; check_workflows; check_env_names; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_disk_free; check_disk_clean; check_tools; check_accounts; check_lsp; check_ui_check; check_project_agents; check_workflows; check_env_names; check_repo_tests
 }
 run_checks
 exit "$BAD"
