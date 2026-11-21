@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Purpose: read-only report on links, settings drift, plugins and tools for this Claude Code setup.
-# Usage: scripts/doctor.sh [--live [--waived-lane]]   (exit 1 if any problem found; --live then runs scripts/doctor-live.sh on the
+# Usage: scripts/doctor.sh [--all] [--live [--waived-lane]]   (exit 1 if any problem found; --live then runs scripts/doctor-live.sh on the
 #   real tool: a permission dialog, a guard case, a workflow from a non-git folder, with --waived-lane one waived lane end to end)
+# Output: a summary line first (`doctor (MacBook, Claude Code 2.1.328): 1 FAIL, 1 WARN, 38 ok`), then only the lines that are not
+# ok, each with its fix; `--all` (or DOCTOR_ALL=1) prints every line as before. DOCTOR_ONLY runs keep every line (tests read them).
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -417,8 +419,31 @@ run_checks() {
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
   check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_stop_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows; check_env_names; check_repo_tests
 }
-run_checks
-if [ "${1:-}" = "--live" ]; then
-  "$REPO/scripts/doctor-live.sh" "${2:-}" || BAD=1
+# The machine's name in the summary: the owner's two machines by OS, else the host name; DOCTOR_MACHINE overrides it.
+machine_name() {
+  if [ -n "${DOCTOR_MACHINE:-}" ]; then echo "$DOCTOR_MACHINE"; return; fi
+  case "$(uname -s)" in Darwin) echo MacBook ;; MINGW*|MSYS*|CYGWIN*) echo PC ;; *) uname -n ;; esac
+}
+
+# The full run: every check's lines go to a file (in this shell, so BAD still counts), then the summary and the lines not ok.
+# The counts are of the ok / WARN / FAIL lines; INFO and detail lines (a failing test's output) are shown, never counted.
+print_summary() {
+  local out version fails warns oks
+  out="$(mktemp "${TMPDIR:-/tmp}/doctor.XXXXXX")" || { run_checks; return; }
+  run_checks >"$out"
+  version="$(claude --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+  fails="$(grep -c '^FAIL  ' "$out")"; warns="$(grep -c '^WARN  ' "$out")"; oks="$(grep -c '^ok    ' "$out")"
+  echo "doctor ($(machine_name), Claude Code ${version:-unknown}): $fails FAIL, $warns WARN, $oks ok"
+  grep -v '^ok    ' "$out"
+  rm -f "$out"
+}
+
+want_all=0; want_live=0; waived_lane=""
+for arg in "$@"; do
+  case "$arg" in --all) want_all=1 ;; --live) want_live=1 ;; --waived-lane) waived_lane="--waived-lane" ;; esac
+done
+if [ -n "${DOCTOR_ONLY:-}" ] || [ "${DOCTOR_ALL:-}" = 1 ] || [ "$want_all" = 1 ]; then run_checks; else print_summary; fi
+if [ "$want_live" = 1 ]; then
+  "$REPO/scripts/doctor-live.sh" $waived_lane || BAD=1
 fi
 exit "$BAD"

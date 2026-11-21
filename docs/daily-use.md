@@ -141,7 +141,8 @@ cap means `ccm extra-high -c`, not credits.
 
 ## Another machine
 `git pull`, then `scripts/install.sh` (Windows PowerShell:
-`powershell -ExecutionPolicy Bypass -File scripts\install.ps1`). Run `scripts/doctor.sh` to check.
+`powershell -ExecutionPolicy Bypass -File scripts\install.ps1`). Run `scripts/doctor.sh` to check: it prints one summary line
+(`doctor (MacBook, Claude Code 2.1.328): 1 FAIL, 1 WARN, 38 ok`), then only the lines that need a fix; `--all` prints every line.
 
 On Windows without Developer Mode the installer copies files instead of linking them, so they do not follow later
 edits: re-run the installer after every pull. Not yet tested on Windows: `install.ps1` has not been run there, the
