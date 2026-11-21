@@ -1,13 +1,16 @@
 // The job row of the status line (display design direction B, spec-tui row 1): the session's job against its estimate, and, when
 // the counts row has no room, the running work. `ALL █████░░░░░  36%  3 h 40 left · step 2/3 by 16:05 │ 2 runs · 6 agents` at 80 columns; at 120 `36% of work`, `step 2 of 3`,
 // `total by 18:35`, `10/21 rows` and the lane counts join when they fit.
-// Exports: jobView(segment) -> view | null; workRow({ segment, runs, nowMs, timeZone }, look) -> string; WIDE_COLUMNS.
+// Exports: jobView(segment) -> view | null; workRow({ segment, runs, nowMs, timeZone, trend, roadShown }, look) -> string; WIDE_COLUMNS.
 // Sources (all checked here, never trusted: they are printed): the estimate cache's shown entry (segment-cache.mjs estimateSegment:
 // kind, text, highMs, progress with its numbers-only `road`, numbers) and the board file's runs (board/lib/refresh.mjs).
 // Rules: the percent is work done against all work in minutes (`of work`, never a row count: audit case 8); once the committed
 // clock (highMs) has passed, the time text is `over by N min · M min left (new)` and the over share is drawn ▓, both from highMs at
 // render time (case 7); a refusal or error counts rows and says in words why there is no time (cases 13 and design 4.2); a count
-// never shows 100% while a row is open; no STATUS.md linked: `no job linked`.
+// never shows 100% while a row is open; no STATUS.md linked: `no job linked`. Spec-tui-2: the bar is green while on track and red
+// once over; clocks are dim; the estimate's bare `moved` tag is not shown (it says nothing): the caller passes the finish clock's
+// move as a trend part (stat-rows.mjs trendPart, `↑ +1h10 later`); with the road row shown (`roadShown`) the step parts stay off
+// this row.
 // Invariants: pure (no I/O); every clock in the one zone given (case 12); the row fits look.columns (cells.mjs fitParts).
 import { barText, clockOf, cleanText, durationText, fitParts, STATE } from './cells.mjs';
 
@@ -21,7 +24,7 @@ const PERCENT = 100;
 const MS_PER_MIN = 60_000;
 const CAP_WHILE_OPEN = 99;
 const REFUSAL_WHY = { 'no rows': 'no rows yet', 'few rows': 'too few finished rows', 'rows listed late': 'rows listed late' };
-const TAG_WORDS = { '+rows': 'rows added', moved: 'moved' };
+const TAG_WORDS = { '+rows': 'rows added' };
 
 const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
 const isCount = (value) => Number.isInteger(value) && value >= 0;
@@ -71,33 +74,33 @@ function barPart(view, overShare, look) {
     return { text: `ALL ${barText({ done: share }, cellsFor(look), look)}  ${rowsText(view)}` };
   }
   const label = wide(look) ? `${view.pct}% of work` : `${view.pct}%`;
-  return { text: `ALL ${barText({ done: view.pct / PERCENT, over: overShare }, cellsFor(look), look)}  ${label}` };
+  return { text: `ALL ${barText({ done: view.pct / PERCENT, over: overShare }, cellsFor(look), look)}  ${label}`, state: overShare > 0 ? STATE.block : STATE.done };
 }
 
 /** The time parts of a finish: left or over, the step and its clocks, the total. */
-function finishParts(view, { nowMs, timeZone }, look) {
+function finishParts(view, { nowMs, timeZone, roadShown }, look) {
   const overMin = view.highMs !== null && nowMs > view.highMs ? (nowMs - view.highMs) / MS_PER_MIN : 0;
   const left = view.leftMin === null ? '' : `${durationText(view.leftMin)} left`;
   const time = overMin > 0
     ? { text: `over by ${durationText(overMin)}${left ? `${look.glyph.sep}${left} (new)` : ''}`, state: STATE.block }
     : { text: left };
   const parts = [time];
-  const { road } = view;
+  const road = roadShown ? null : view.road;
   if (road !== null) {
     const step = wide(look) ? `step ${road.step} of ${road.steps}` : `step ${road.step}/${road.steps}`;
     parts.push({ text: road.clockMs === null ? step : `${step} by ${clockOf(road.clockMs, nowMs, timeZone)}` });
     if (road.p85Ms !== null) parts.push({ text: `85%: ${clockOf(road.p85Ms, nowMs, timeZone)}`, drop: 4 });
     if (view.highMs !== null && overMin === 0) parts.push({ text: `total by ${clockOf(view.highMs, nowMs, timeZone)}`, drop: 2 });
   } else if (view.highMs !== null) {
-    parts.push({ text: `done by ${clockOf(view.highMs, nowMs, timeZone)}` });
-    if (view.p85Ms !== null && view.p85Ms > view.highMs && overMin === 0) parts.push({ text: `85%: ${clockOf(view.p85Ms, nowMs, timeZone)}`, drop: 4 });
+    parts.push({ text: `done by ${clockOf(view.highMs, nowMs, timeZone)}`, state: STATE.dim });
+    if (view.p85Ms !== null && view.p85Ms > view.highMs && overMin === 0) parts.push({ text: `85%: ${clockOf(view.p85Ms, nowMs, timeZone)}`, state: STATE.dim, drop: 4 });
   }
   else if (view.text) parts.push({ text: view.text });
   return { parts, overMin };
 }
 
 /** The job parts of row 1 (without the runs). */
-function jobParts(view, clock, look) {
+function jobParts(view, clock, look, trend) {
   if (view === null) return [{ text: 'ALL no job linked' }];
   if (view.kind === 'handed-over') return [{ text: `ALL idle${look.glyph.sep}last job ${cleanText(view.text, look)}` }];
   if (view.pct === PERCENT && view.rowsTotal > 0 && view.rowsDone === view.rowsTotal) {
@@ -114,7 +117,7 @@ function jobParts(view, clock, look) {
   const tag = TAG_WORDS[view.tag];
   return [
     barPart(view, total > 0 ? overMin / total : 0, look), ...parts,
-    ...(view.rowsTotal > 0 ? [{ text: rowsText(view), drop: 2 }] : []),
+    ...(trend ? [trend] : []), ...(view.rowsTotal > 0 ? [{ text: rowsText(view), state: STATE.dim, drop: 2 }] : []),
     ...(tag ? [{ text: tag, state: STATE.warn, drop: 1 }] : []),
   ];
 }
@@ -139,11 +142,12 @@ function runParts(runs, look) {
 }
 
 /**
- * @param {{ segment: object | null, runs: object[] | undefined, nowMs: number, timeZone: string }} view the shown cache entry, the
- *   board's runs, now and the render's one zone
+ * @param {{ segment: object | null, runs: object[] | undefined, nowMs: number, timeZone: string, trend?: object | null,
+ *   roadShown?: boolean }} view the shown cache entry, the board's runs, now and the render's one zone; trend: the finish clock's
+ *   move as a part (stat-rows.mjs trendPart); roadShown: the road row carries the step, so this row does not
  * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal
  * @returns {string} row 1, fitted to look.columns
  */
-export function workRow({ segment, runs, nowMs, timeZone }, look) {
-  return fitParts([...jobParts(jobView(segment), { nowMs, timeZone }, look), ...runParts(runs, look)], look);
+export function workRow({ segment, runs, nowMs, timeZone, trend = null, roadShown = false }, look) {
+  return fitParts([...jobParts(jobView(segment), { nowMs, timeZone, roadShown }, look, trend), ...runParts(runs, look)], look);
 }

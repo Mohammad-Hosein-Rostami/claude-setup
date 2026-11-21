@@ -8,15 +8,22 @@
 // Ctx: { nowMs, timeZone, at (the board's time: left minutes count from it), repo (board.repo, for an agent's worktree), folded }.
 // Rules: a percent only with confidence (`62%` high, `~60%` medium), else `est…` with a moving ▒ cell and the type's usual time;
 // over the type's 85th percentile: `over usual by 9 min` with ▓; `quiet 4 min` from 3 min without a write and no call waiting;
-// a call still waiting shows its minutes. Drop order inside a row (fitParts): calls, row id and range first, then type, branch,
-// doing, finish clock; name, bar, percent and time left are never dropped.
+// a call still waiting shows its minutes. The description is cut at a word (cells.mjs cutWords), and the type stays: a column
+// from 115 columns, a part after the bar below. Colour (spec-tui-2): a running bar cyan, done green, quiet and over usual yellow, each
+// with its word. Drop order inside a row (fitParts): row id, branch first (the git rows have it), then tokens and calls, doing,
+// then type and finish clock;
+// name, bar, percent, state word and time left are never dropped.
 // Invariants: pure (no I/O); every outside text goes through cleanText; every row fits look.columns.
-import { barText, clockOf, cleanText, durationText, fitParts, STATE } from './cells.mjs';
+import { barText, clockOf, cleanText, cutWords, durationText, fitParts, STATE } from './cells.mjs';
 import { WIDE_COLUMNS } from './work-row.mjs';
 
 const FULL_COLUMNS = 150;
 const BAR_CELLS = 8;
 const TYPE_CHARS = 16;
+const NAME_CHARS = 16;
+const WIDE_NAME_CHARS = 22;
+const NARROW_TYPE_CHARS = 12;
+const TOKENS_PER_K = 1000;
 const DOING_CHARS = 24;
 const WIDE_DOING_CHARS = 36;
 const RUN_BAR_CELLS = 10;
@@ -51,22 +58,23 @@ export function urgencyOf(agent) {
   return agent.writer ? URGENCY.writer : URGENCY.reader;
 }
 
-/** The bar and its confidence form: `█████▒░░ ~60%`, `▒░░░░░░░ est…`, over usual with ▓. */
+/** The bar and its confidence form: `█████▒░░ ~60%`, `▒░░░░░░░ est…`, over usual with ▓; cyan while running, green when done. */
 function barPart(agent, ctx, look) {
-  if (agent.state === 'done') return `${barText({ done: 1 }, BAR_CELLS, look)} done`;
+  if (agent.state === 'done') return { text: `${barText({ done: 1 }, BAR_CELLS, look)} done`, state: STATE.done, join: ' ' };
+  const state = agent.state === 'quiet' || agent.overMin > 0 ? STATE.warn : STATE.run;
   if (agent.conf === 'low' && agent.overMin <= 0) {
     const at = Math.floor(ctx.nowMs / SPIN_MS) % BAR_CELLS;
-    return `${look.glyph.left.repeat(at)}${look.glyph.now}${look.glyph.left.repeat(BAR_CELLS - at - 1)} ${marks(look).est}`;
+    return { text: `${look.glyph.left.repeat(at)}${look.glyph.now}${look.glyph.left.repeat(BAR_CELLS - at - 1)} ${marks(look).est}`, state, join: ' ' };
   }
   const done = (agent.pct ?? 0) / PERCENT;
   const over = agent.overMin > 0 && agent.elapsedMin > 0 ? Math.min(done, agent.overMin / agent.elapsedMin) : 0;
   const pct = agent.conf === 'high' ? `${agent.pct}%` : agent.conf === 'medium' ? `~${agent.pct}%` : marks(look).est;
-  return `${barText({ done, over, now: 1 / BAR_CELLS }, BAR_CELLS, look)} ${pct}`;
+  return { text: `${barText({ done, over, now: 1 / BAR_CELLS }, BAR_CELLS, look)} ${pct}`, state, join: ' ' };
 }
 
 /** Time left, or over usual, or minutes in with the usual time while estimating, or how long ago it finished. */
 function timePart(agent, ctx, look) {
-  if (agent.state === 'done') return { text: isNumber(agent.doneMs) ? `${timeText((ctx.nowMs - agent.doneMs) / MS_PER_MIN, look)} ago` : '' };
+  if (agent.state === 'done') return { text: isNumber(agent.doneMs) ? `${timeText((ctx.nowMs - agent.doneMs) / MS_PER_MIN, look)} ago` : '', state: STATE.dim };
   if (agent.state === 'quiet') return { text: `quiet ${timeText(agent.quietMin ?? 0, look)}`, state: STATE.warn };
   if (isNumber(agent.overMin) && agent.overMin > 0) return { text: wide(look) ? `over usual by ${durationText(agent.overMin)}` : `over ${short(agent.overMin)}`, state: STATE.warn };
   if (agent.conf === 'low' || !isNumber(agent.leftMin)) {
@@ -81,18 +89,16 @@ function clockParts(agent, ctx, look) {
   if (agent.state !== 'run' || agent.overMin > 0 || agent.conf === 'low' || !isNumber(agent.leftMin)) return [];
   const at = ctx.at ?? ctx.nowMs;
   const finish = clockOf(at + agent.leftMin * MS_PER_MIN, ctx.nowMs, ctx.timeZone);
-  const parts = [{ text: finish, drop: 1 }];
+  const parts = [{ text: finish, state: STATE.dim, drop: 1 }];
   if (look.columns >= FULL_COLUMNS && isNumber(agent.highLeftMin) && agent.highLeftMin > agent.leftMin) {
-    parts[0] = { text: `${finish}${marks(look).dash}${clockOf(at + agent.highLeftMin * MS_PER_MIN, ctx.nowMs, ctx.timeZone)}`, drop: 1 };
+    parts[0] = { text: `${finish}${marks(look).dash}${clockOf(at + agent.highLeftMin * MS_PER_MIN, ctx.nowMs, ctx.timeZone)}`, state: STATE.dim, drop: 1 };
   }
   return parts;
 }
 
 /** What the agent does now, cut so it keeps its place; quiet or a long-waiting call in words. */
 function doingPart(agent, look) {
-  const max = wide(look) ? WIDE_DOING_CHARS : DOING_CHARS;
-  const full = cleanText(agent.doing ?? '', look);
-  const doing = [...full].length > max ? `${[...full].slice(0, max - 1).join('')}${look.glyph.cut}` : full;
+  const doing = cutWords(cleanText(agent.doing ?? '', look), wide(look) ? WIDE_DOING_CHARS : DOING_CHARS, look);
   if (agent.state === 'quiet') return { text: doing ? `last: ${doing}` : '', state: STATE.warn, drop: 2 };
   if (agent.pendingMin >= 2) return { text: `${doing} (${agent.pendingMin} min)`, drop: 2 };
   return { text: doing, drop: 2 };
@@ -104,7 +110,7 @@ function branchPart(agent, ctx, look) {
   const wt = (Array.isArray(ctx.repo?.worktrees) ? ctx.repo.worktrees : []).find((entry) => entry?.name === agent.wt);
   const ahead = wt?.ahead > 0 ? ` ${marks(look).up}${wt.ahead}` : '';
   const dirty = wt?.changed > 0 ? ` ${marks(look).dirty}${wt.changed}` : '';
-  return { text: `${cleanText(agent.wt, look).slice(0, 24)}${ahead}${dirty}`, drop: 3 };
+  return { text: `${cleanText(agent.wt, look).slice(0, 24)}${ahead}${dirty}`, drop: 5 };
 }
 
 /**
@@ -114,16 +120,26 @@ function branchPart(agent, ctx, look) {
  * @returns {string} the row
  */
 export function agentRow(agent, ctx, look) {
-  const nameWidth = wide(look) ? 14 : 10;
-  const name = cleanText(agent.name, look).slice(0, nameWidth).padEnd(nameWidth);
-  const type = wide(look) ? `${cleanText(agent.type, look).slice(0, TYPE_CHARS).padEnd(TYPE_CHARS)} ` : '';
+  const nameWidth = wide(look) ? WIDE_NAME_CHARS : NAME_CHARS;
+  const name = cutWords(cleanText(agent.name, look), nameWidth, look).padEnd(nameWidth);
+  const type = cleanText(agent.type ?? '?', look);
+  const column = wide(look) ? ` ${cutWords(type, TYPE_CHARS, look).padEnd(TYPE_CHARS)}` : '';
   return fitParts([
-    { text: `${ctx.prefix ?? ' '}${name} ${type}${barPart(agent, ctx, look)}` }, timePart(agent, ctx, look), ...clockParts(agent, ctx, look),
-    agent.state === 'done' ? { text: '' } : doingPart(agent, look), branchPart(agent, ctx, look),
+    { text: `${ctx.prefix ?? ' '}${name}${column}`, bold: look.urgent === `agent:${agent.id}` }, barPart(agent, ctx, look),
+    timePart(agent, ctx, look), ...clockParts(agent, ctx, look),
+    agent.state === 'done' ? { text: '' } : doingPart(agent, look),
+    { text: wide(look) ? '' : cutWords(type, NARROW_TYPE_CHARS, look), state: STATE.dim, drop: 1 }, branchPart(agent, ctx, look),
     ...(agent.tag ? [{ text: agent.tag, state: STATE.warn, drop: 4 }] : []),
-    { text: wide(look) && agent.calls > 0 ? `${agent.calls} calls` : '', drop: 5 },
+    { text: statsText(agent), state: STATE.dim, drop: 4 },
     { text: agent.row && look.columns >= FULL_COLUMNS ? `row ${cleanText(agent.row, look)}` : '', drop: 6 },
   ], look);
+}
+
+/** `45k tok · 23 calls`: the agent's context so far and its tool calls; '' when neither is known. */
+function statsText(agent) {
+  const tokens = isNumber(agent.tokens) && agent.tokens > 0 ? `${Math.max(1, Math.round(agent.tokens / TOKENS_PER_K))}k tok` : '';
+  const calls = Number.isInteger(agent.calls) && agent.calls > 0 ? `${agent.calls} calls` : '';
+  return [tokens, calls].filter(Boolean).join(' ');
 }
 
 /** @returns {string} one cell per agent, its height the progress (`▁▂▃▄▅▆▇█`), `·` while estimating */
@@ -138,7 +154,7 @@ export function sparkText(agents, look) {
 
 /** @returns {string} an agent in a few words for a folded row: `impl-a ~70% 16:03`, `scout est…` */
 export function agentBrief(agent, ctx, look) {
-  const name = cleanText(agent.name, look).slice(0, 12);
+  const name = cutWords(cleanText(agent.name, look), 14, look);
   if (agent.state === 'quiet') return `${name} quiet ${agent.quietMin}m`;
   if (agent.overMin > 0) return `${name} over ${short(agent.overMin)}`;
   if (agent.conf === 'low') return `${name} ${marks(look).est}`;
@@ -159,6 +175,8 @@ export function foldRow(prefix, agents, ctx, look) {
   const [first, ...rest] = agents.map((agent) => agentBrief(agent, ctx, look));
   return fitParts([{ text: `${prefix}+${agents.length} more: ${first ?? ''}` }, ...rest.map((text, index) => ({ text, drop: index + 1 }))], look);
 }
+
+const quietIn = (agents) => agents.some((agent) => agent.state === 'quiet');
 
 /** The run's share done: its finished agents plus the progress of the running ones, over all its agents. */
 function runShare(done, total, agents) {
@@ -186,14 +204,15 @@ export function runHeader(run, agents, ctx, look) {
   const finish = isNumber(run.leftMin) ? clockOf((ctx.at ?? ctx.nowMs) + run.leftMin * MS_PER_MIN, ctx.nowMs, ctx.timeZone) : '';
   return fitParts([
     { text: name }, { text: purpose ? `${wide(look) ? 'for ' : ''}${purpose.slice(0, 32)}` : '', drop: 3 }, { text: phaseText, drop: 1 },
-    { text: `${barText({ done: runShare(done, total, agents) }, wide(look) ? RUN_BAR_CELLS : NARROW_RUN_CELLS, look)} ${done}/${total} done` },
-    { text: ctx.folded && agents.length > 0 ? `${countsText(agents, look)} ${sparkText(agents, look)}` : countsText(agents, look), drop: 2 },
-    stopped ?? { text: left }, { text: stopped ? '' : finish, drop: 1 },
+    { text: `${barText({ done: runShare(done, total, agents) }, wide(look) ? RUN_BAR_CELLS : NARROW_RUN_CELLS, look)} ${done}/${total} done`, state: done >= total && total > 0 ? STATE.done : STATE.run },
+    { text: ctx.folded && agents.length > 0 ? `${countsText(agents, look)} ${sparkText(agents, look)}` : countsText(agents, look), state: quietIn(agents) ? STATE.warn : STATE.ok, drop: 2 },
+    stopped ?? { text: left }, { text: stopped ? '' : finish, state: STATE.dim, drop: 1 },
   ], look);
 }
 
 /** @returns {string} the header of the agents outside workflows: `▸ agents (not in a workflow) · 3 run`, spark when folded */
 export function plainHeader(agents, ctx, look) {
   const title = `${marks(look).head}${wide(look) ? 'agents (not in a workflow)' : 'agents'}`;
-  return fitParts([{ text: title }, { text: ctx.folded ? `${countsText(agents, look)} ${sparkText(agents, look)}` : countsText(agents, look), drop: 1 }], look);
+  const counts = ctx.folded ? `${countsText(agents, look)} ${sparkText(agents, look)}` : countsText(agents, look);
+  return fitParts([{ text: title }, { text: counts, state: quietIn(agents) ? STATE.warn : STATE.run, drop: 1 }], look);
 }

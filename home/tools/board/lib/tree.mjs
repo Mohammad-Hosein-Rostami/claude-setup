@@ -2,12 +2,13 @@
 // its steps, the status line's counts, workflow, agent and git rows unclipped (spec-tui: every item, no row budget), what waits on
 // the owner, the limits per account and the session's cost figure.
 //   ALL  █████░░░░░  36% of work · 3 h 40 left · total by 18:35 · 10/21 rows
-//   road r9p3 · step 2 of 3
+//   road r9p3 · step 2/3 users of the cache · 1/2 lanes · step 1 h 10 left · by 16:05     (stat-rows.mjs roadRow)
 //    1 done   ██████████  4/4 rows
 //    2 now    ███░░░░░░░  3/9 rows · 1 h 10 left · by 16:05 (85%: 16:30)
 //    3 next   ░░░░░░░░░░  0/8 rows · 2 h 30
 // Exports: whereTree(view, look) -> string[].
-// Sources: the estimate cache's shown entry (numbers and progress.road, road-steps.mjs), the board file, the asking marker, the
+// Sources: the estimate cache's shown entry (numbers and progress.road, road-steps.mjs), the board file (with its road, trend,
+// suite and landed-today facts), the asking marker, the session's `/check` switch (the checks line, stat-rows.mjs checksRow), the
 // newest limits sample per account and the session's last-seen file (`{ costUsd, t }`, written by the status line).
 // Invariants: pure (no I/O); every line fits look.columns; every outside text goes through cleanText; the cost is labelled as the
 // API-price equivalent since the last /clear, with its age (it is not what the subscription costs).
@@ -15,6 +16,7 @@ import { barText, clockOf, cleanText, durationText, fitParts, STATE } from './ce
 import { STALE_MARGIN_S } from '../../../hooks/lib/asking-marker.mjs';
 import { gitRows } from './git-rows.mjs';
 import { countsRow, workRows } from './layout.mjs';
+import { checksRow, roadRow, trendPart } from './stat-rows.mjs';
 import { jobView } from './work-row.mjs';
 
 const CELLS = 10;
@@ -29,7 +31,7 @@ const isCount = (value) => Number.isInteger(value) && value >= 0;
 const ago = (t, nowMs) => `${Math.max(0, Math.round((nowMs - t) / MS_PER_MIN))} min ago`;
 
 /** The ALL line: the job's percent of work, time left or over, the total clock, the rows. */
-function allLine(view, { nowMs, timeZone }, look) {
+function allLine(view, { nowMs, timeZone }, look, trend) {
   if (view === null) return fitParts([{ text: 'ALL  no job linked (status.mjs links the STATUS.md this session edits)' }], look);
   if (view.kind === 'handed-over') return fitParts([{ text: `ALL  idle${look.glyph.sep}last job ${cleanText(view.text, look)}` }], look);
   const over = view.highMs !== null && nowMs > view.highMs ? (nowMs - view.highMs) / MS_PER_MIN : 0;
@@ -39,6 +41,7 @@ function allLine(view, { nowMs, timeZone }, look) {
   if (view.leftMin !== null) parts.push({ text: `${durationText(view.leftMin)} left` });
   if (view.highMs !== null && over === 0) parts.push({ text: `total by ${clockOf(view.highMs, nowMs, timeZone)}` });
   else if (view.kind !== 'finish' && view.text) parts.push({ text: cleanText(view.text, look) });
+  if (trend) parts.push(trend);
   parts.push({ text: `${view.rowsDone}/${view.rowsTotal} rows`, drop: 1 });
   return fitParts(parts, look);
 }
@@ -59,19 +62,22 @@ function stepLine(line, road, clock, look) {
 }
 
 /** The road head and one line per step, from progress.road; [] without a road. */
-function roadLines(view, clock, look) {
+function roadLines(view, facts, clock, look) {
   const road = view?.road;
   if (!road) return [];
   const name = typeof road.name === 'string' && ROAD_NAME.test(road.name) ? `road ${road.name}` : 'road';
   const lines = Array.isArray(road.lines) ? road.lines.filter(isStepLine) : [];
-  return [fitParts([{ text: `${name}${look.glyph.sep}step ${road.step} of ${road.steps}` }], look), ...lines.map((line) => stepLine(line, road, clock, look))];
+  const head = roadRow(road, facts, clock, look) ?? fitParts([{ text: `${name}${look.glyph.sep}step ${road.step} of ${road.steps}` }], look);
+  return [head, ...lines.map((line) => stepLine(line, road, clock, look))];
 }
 
 /** The status line's counts, work and git rows, unclipped: every workflow, every agent and every worktree. */
-function workLines(board, asking, clock, look) {
+function workLines(board, asking, checks, clock, look) {
   const ctx = { ...clock, at: board?.at, repo: board?.repo ?? null };
   const marked = asking && typeof asking === 'object' ? { ...asking, marginMs: STALE_MARGIN_S * MS_PER_S } : null;
-  return [countsRow(board, marked, ctx, look), ...workRows(board, Infinity, ctx, look), ...gitRows(board?.repo ?? null, Infinity, ctx, look)];
+  const checksLine = checksRow(checks, board?.repo ?? null, look);
+  return [countsRow(board, marked, ctx, look), ...(checksLine === null ? [] : [checksLine]), ...workRows(board, Infinity, ctx, look),
+    ...gitRows(board?.repo ?? null, Infinity, ctx, look)];
 }
 
 /** The line of what waits on the owner, quiet runs and git. */
@@ -103,15 +109,17 @@ function costLine(lastSeen, nowMs, look) {
 
 /**
  * @param {{ segment: object | null, board: object | null, asking: object | null, limits: { account: string, sample: object }[],
- *   lastSeen: { costUsd?: number, t?: number } | null, nowMs: number, timeZone: string }} view what was read for this session
+ *   lastSeen: { costUsd?: number, t?: number } | null, nowMs: number, timeZone: string, checks?: { on: string[], off: string[] } | null }}
+ *   view what was read for this session
  * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal (80 columns for `/where`)
  * @returns {string[]} the tree, one line each, every one within look.columns
  */
-export function whereTree({ segment, board, asking, limits, lastSeen, nowMs, timeZone }, look) {
+export function whereTree({ segment, board, asking, limits, lastSeen, nowMs, timeZone, checks = null }, look) {
   const clock = { nowMs, timeZone };
   const job = jobView(segment);
   return [
-    allLine(job, clock, look), ...roadLines(job, clock, look), ...workLines(board, asking, clock, look), footLine(board, asking, look),
+    allLine(job, clock, look, trendPart(board?.trend, look)), ...roadLines(job, board?.road ?? null, clock, look),
+    ...workLines(board, asking, checks, clock, look), footLine(board, asking, look),
     ...limitLines(Array.isArray(limits) ? limits : [], clock, look), costLine(lastSeen, nowMs, look),
   ];
 }

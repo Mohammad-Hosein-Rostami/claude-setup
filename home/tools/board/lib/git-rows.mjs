@@ -5,16 +5,21 @@
 // Exports: gitRows(repo, slots, ctx, look) -> string[]; gitCounts(repo, look) -> string (for the counts row).
 // Source: board.repo (git-state.mjs). Rules: a worktree with agents comes first, then by commits ahead; a worktree whose branch is
 // landed (0 ahead) and older than OLD_DAYS reads `old N d ⚠` (git-tidy's prune candidate); a status older than STALE_S shows its age.
+// The main worktree's part (spec-tui-2, the one compact row when nothing is active, never nothing): its branch, ahead/behind its
+// upstream (`origin ↑2↓0`, yellow when behind), changed files, last commit age, and the commits landed on the base today
+// (repo-stats.mjs: `landed today 6, last 12 min ago`).
 // Invariants: pure (no I/O); every name goes through cleanText; every row fits look.columns.
-import { cleanText, durationText, fitParts, STATE } from './cells.mjs';
+import { cleanText, cutWords, durationText, fitParts, STATE } from './cells.mjs';
 import { WIDE_COLUMNS } from './work-row.mjs';
 
 const MS_PER_S = 1000;
+const MS_PER_MIN = 60_000;
 const STALE_S = 60;
 const MIN_PER_DAY = 24 * 60;
 const OLD_DAYS = 2;
-const MAX_NAME_CHARS = 20;
+const MAX_NAME_CHARS = 24;
 const MAX_AGENT_NAMES = 3;
+const AGENT_NAME_CHARS = 16;
 const GLYPH = { up: '↑', down: '↓', dirty: '●', clean: '✓', old: '⚠' };
 const ASCII_GLYPH = { up: '+', down: '-', dirty: '*', clean: 'ok', old: '!' };
 
@@ -33,7 +38,7 @@ function stateText(wt, look) {
 
 const isOld = (wt) => !wt.main && wt.ahead === 0 && isCount(wt.ageMin) && wt.ageMin > OLD_DAYS * MIN_PER_DAY;
 const agentsText = (wt, look) => (Array.isArray(wt.agents) && wt.agents.length > 0
-  ? wt.agents.slice(0, MAX_AGENT_NAMES).map((name) => cleanText(name, look).slice(0, 12)).join(',') + (wt.agents.length > MAX_AGENT_NAMES ? `+${wt.agents.length - MAX_AGENT_NAMES}` : '')
+  ? wt.agents.slice(0, MAX_AGENT_NAMES).map((name) => cutWords(cleanText(name, look), AGENT_NAME_CHARS, look)).join(',') + (wt.agents.length > MAX_AGENT_NAMES ? `+${wt.agents.length - MAX_AGENT_NAMES}` : '')
   : '');
 
 /** The worktrees in the order they are shown: with agents first, then most commits ahead, then newest commit. */
@@ -47,15 +52,35 @@ function ordered(repo) {
 function briefOf(wt, look) {
   const old = isOld(wt) ? ` old ${Math.round(wt.ageMin / MIN_PER_DAY)} d ${glyphs(look).old}` : '';
   const op = wt.op ? ` ${cleanText(wt.op, look)}` : '';
-  return [`${cleanText(wt.name, look).slice(0, MAX_NAME_CHARS)} ${stateText(wt, look)}${op}${old}`, agentsText(wt, look)].filter(Boolean).join(' ');
+  return [`${cutWords(cleanText(wt.name, look), MAX_NAME_CHARS, look)} ${stateText(wt, look)}${op}${old}`, agentsText(wt, look)].filter(Boolean).join(' ');
 }
 
-/** The main worktree's part: `git main ✓ · last 12 min ago`. */
-function mainParts(repo, look) {
+/** Ahead/behind the upstream: `origin ↑2↓0` (yellow when behind, a pull is due); '' without an upstream. */
+function upstreamPart(wt, look) {
+  if (!isCount(wt.upAhead) || !isCount(wt.upBehind)) return { text: '' };
+  const g = glyphs(look);
+  return { text: `origin ${g.up}${wt.upAhead}${g.down}${wt.upBehind}`, state: wt.upBehind > 0 ? STATE.warn : STATE.ok, drop: 7 };
+}
+
+/** The commits landed on the base today: `landed today 6, last 12 min ago`; '' when none or unknown. */
+function landedPart(repo, nowMs, look) {
+  const landed = repo.landed;
+  if (!isCount(landed?.count) || landed.count === 0) return { text: '' };
+  const last = Number.isFinite(landed.lastMs) && Number.isFinite(nowMs) ? `, last ${durationText(Math.max(0, (nowMs - landed.lastMs) / MS_PER_MIN))} ago` : '';
+  return { text: `landed today ${landed.count}${last}`, state: STATE.done, drop: 8 };
+}
+
+/** The main worktree's parts: `git main ✓ · origin ↑0↓0 · last 12 min ago · landed today 6`. */
+function mainParts(repo, look, nowMs) {
   const main = worktreesOf(repo).find((wt) => wt.main);
   if (main === undefined) return [{ text: `git ${cleanText(repo.base ?? '?', look)}` }];
-  const age = isCount(main.ageMin) ? `last ${wide(look) ? 'commit ' : ''}${durationText(main.ageMin)} ago` : '';
-  return [{ text: `git ${cleanText(main.name, look).slice(0, MAX_NAME_CHARS)} ${stateText(main, look)}${main.op ? ` ${cleanText(main.op, look)}` : ''}` }, { text: age, drop: 9 }];
+  // The newest commit of the base is the last one landed: with a landed-today count its age rides on that part, not twice.
+  const landedLast = isCount(repo.landed?.count) && repo.landed.count > 0 && Number.isFinite(repo.landed.lastMs);
+  const age = isCount(main.ageMin) && !landedLast ? `last ${wide(look) ? 'commit ' : ''}${durationText(main.ageMin)} ago` : '';
+  return [
+    { text: `git ${cutWords(cleanText(main.name, look), MAX_NAME_CHARS, look)} ${stateText(main, look)}${main.op ? ` ${cleanText(main.op, look)}` : ''}` },
+    upstreamPart(main, look), { text: age, state: STATE.dim, drop: 9 }, landedPart(repo, nowMs, look),
+  ];
 }
 
 /** One row per worktree (the long form). */
@@ -63,10 +88,10 @@ function worktreeRow(wt, ctx, look) {
   const stale = Number.isFinite(wt.checkedMs) && wt.checkedMs > 0 && ctx.nowMs - wt.checkedMs > STALE_S * MS_PER_S
     ? { text: `(${Math.round((ctx.nowMs - wt.checkedMs) / MS_PER_S)} s old)`, state: STATE.dim, drop: 3 } : { text: '' };
   return fitParts([
-    { text: `git ${cleanText(wt.name, look).slice(0, MAX_NAME_CHARS)}` },
+    { text: `git ${cutWords(cleanText(wt.name, look), MAX_NAME_CHARS, look)}` },
     { text: wt.branch && wt.branch !== wt.name ? cleanText(wt.branch, look).slice(0, 32) : '', drop: 4 },
     { text: stateText(wt, look) }, { text: wt.op ? cleanText(wt.op, look) : '', state: STATE.warn },
-    { text: isCount(wt.ageMin) ? `last commit ${durationText(wt.ageMin)} ago` : '', drop: 2 },
+    { text: isCount(wt.ageMin) ? `last commit ${durationText(wt.ageMin)} ago` : '', state: STATE.dim, drop: 2 },
     { text: agentsText(wt, look), drop: 1 },
     { text: isOld(wt) ? `landed, old ${Math.round(wt.ageMin / MIN_PER_DAY)} d ${glyphs(look).old}` : '', state: STATE.warn, drop: 1 }, stale,
   ], look);
@@ -83,11 +108,11 @@ export function gitRows(repo, slots, ctx, look) {
   if (repo === null || typeof repo !== 'object' || slots < 1) return [];
   const others = ordered(repo);
   if (others.length + 1 <= slots && others.length > 0) {
-    return [fitParts(mainParts(repo, look), look), ...others.map((wt) => worktreeRow(wt, ctx, look))];
+    return [fitParts(mainParts(repo, look, ctx.nowMs), look), ...others.map((wt) => worktreeRow(wt, ctx, look))];
   }
   const parts = others.map((wt, index) => ({ text: briefOf(wt, look), drop: index + 1, bar: index === 0 }));
   if (others.length === 0) parts.push({ text: wide(look) ? 'no worktrees' : 'no wt', drop: 1 });
-  return [fitParts([...mainParts(repo, look), ...parts], look)];
+  return [fitParts([...mainParts(repo, look, ctx.nowMs), ...parts], look)];
 }
 
 /** @returns {string} the git summary of the counts row: `git 7 br · 3 not landed · 2 dirty`; '' without a repo */

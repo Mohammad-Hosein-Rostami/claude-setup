@@ -10,14 +10,15 @@
 // when the last refresh ran over its budget.
 // Exports: boardLines(board, limits, { columns, nowMs }) -> string[]. Exit 0 always for print and where (no board: one line says
 // so), 2 usage.
-// Invariants: print reads only the board file and the limits files (where also the estimate cache, the asking marker and the
-// session's last-seen file); every shown name was cut and stripped of control characters by its
+// Invariants: print reads only the board file and the limits files (where also the estimate cache, the asking marker, the
+// session's `/check` switch and its last-seen file); every shown name was cut and stripped of control characters by its
 // writer, and is cut again to the width here.
 import { readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readAsking } from '../../hooks/lib/asking-marker.mjs';
+import { offCategories, onCategories } from '../../hooks/lib/checks-on.mjs';
 import { isSessionId, readSessionFile } from '../../hooks/lib/session-store.mjs';
 import { lookOf } from './lib/cells.mjs';
 import { findTranscript, readBoard, refreshBoard } from './lib/refresh.mjs';
@@ -115,6 +116,7 @@ function whereLines(session, columns, args) {
   const view = {
     segment: estimateSegment({ projectDir, sessionId: session }), board: readBoard(session), asking: isSessionId(session) ? readAsking(session) : null,
     limits: allLimits(), lastSeen: lastSeenOf(session), nowMs, timeZone: systemTimeZone(),
+    checks: isSessionId(session) ? { on: onCategories(session), off: offCategories(session) } : null,
   };
   return whereTree(view, lookOf(process.env, process.platform, columns));
 }

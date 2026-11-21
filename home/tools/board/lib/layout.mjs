@@ -6,6 +6,7 @@
 // of its agents), the most urgent agents in full under their header, the rest on one `+K more` row; (3) one strip row with every
 // group, the most urgent agents, `+K more`. Urgency: quiet > over its usual time > writer > reader, then the soonest finish. A
 // finished agent shows for DONE_SHOWN_MS, then only the counts row has it. From FULL_COLUMNS two agents share a row.
+// Colour of the counts row (spec-tui-2): running work cyan, any quiet agent yellow, waiting on the owner magenta.
 // Invariants: pure (no I/O); every row fits look.columns; never more rows than `slots`.
 import { cleanText, fitParts, STATE } from './cells.mjs';
 import { agentRow, countsText, foldRow, plainHeader, runHeader, sparkText, treeMark, urgencyOf } from './agent-rows.mjs';
@@ -62,11 +63,11 @@ export function countsRow(board, asking, ctx, look) {
   const runText = runs.length === 0 ? 'no workflows' : wide(look) ? `${plural(runs.length, 'workflow')} (${runs.length - paused} run, ${paused} paused)` : `${runs.length} wf`;
   const live = count('run') + count('quiet');
   const agentText = live + done === 0 ? 'no agents' : `${plural(live, 'agent')} (${count('run')} run${count('quiet') ? `, ${count('quiet')} quiet` : ''}${done ? `, ${done} done${wide(look) ? ' last 10 min' : ''}` : ''})`;
-  const parts = [{ text: runText }, { text: agentText }];
+  const parts = [{ text: runText, state: runs.length > paused ? STATE.run : STATE.ok }, { text: agentText, state: count('quiet') > 0 ? STATE.warn : live > 0 ? STATE.run : STATE.ok }];
   if (over > 0) parts.push({ text: `${over} over usual`, state: STATE.warn, drop: 1 });
   if (asking && typeof asking === 'object') {
     const leftS = Math.max(0, Math.round(((asking.expiresAt ?? 0) - (asking.marginMs ?? 0) - ctx.nowMs) / MS_PER_S));
-    parts.push({ text: `${Number.isInteger(asking.count) && asking.count > 1 ? asking.count : 1} waiting on you ${Math.floor(leftS / S_PER_MIN)}:${String(leftS % S_PER_MIN).padStart(2, '0')}`, state: STATE.block });
+    parts.push({ text: `${Number.isInteger(asking.count) && asking.count > 1 ? asking.count : 1} waiting on you ${Math.floor(leftS / S_PER_MIN)}:${String(leftS % S_PER_MIN).padStart(2, '0')}`, state: STATE.wait });
   }
   parts.push({ text: gitCounts(board?.repo ?? null, look), drop: 2, bar: true });
   return fitParts(parts, look);
