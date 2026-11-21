@@ -2,8 +2,8 @@
 name: visual-qa
 description: Use to run the independent final gate of a UI lane - ui-check run against the Figma baseline at the matrix widths on the tree that lands, plus the owner review page. Read-only, never fixes; returns a short numeric verdict and crop paths, never full-page images.
 model: sonnet
-effort: medium
-disallowedTools: Edit, Write, NotebookEdit, mcp__plugin_playwright_playwright, mcp__plugin_chrome-devtools-mcp_chrome-devtools, mcp__plugin_miro_miro, mcp__easel
+effort: high
+disallowedTools: Edit, Write, NotebookEdit, Artifact, mcp__plugin_playwright_playwright, mcp__plugin_chrome-devtools-mcp_chrome-devtools, mcp__plugin_miro_miro, mcp__easel
 color: purple
 skills:
   - figma-pixel-perfect

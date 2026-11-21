@@ -5,7 +5,7 @@ when_to_use: /quick <task>, "just find where X is", "list all Y", "summarise the
 context: fork
 agent: scout
 model: haiku
-effort: low
+effort: medium
 argument-hint: <simple task>
 ---
 

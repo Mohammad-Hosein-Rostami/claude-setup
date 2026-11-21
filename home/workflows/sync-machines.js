@@ -33,17 +33,22 @@ const HOST = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/
 const { row, repo, base, tag } = args
 
 const TARGET = { type: 'object', properties: { name: { type: 'string' }, ssh: { type: 'string' } }, required: ['name', 'ssh'] }
-const VERIFY_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' }, sha: { type: 'string' }, problems: { type: 'array', items: { type: 'string' } }, targets: { type: 'array', items: TARGET } }, required: ['ok', 'sha', 'problems'] }
+// The runner reports one exit code per check or step; the script reads them (allExitedZero), never the runner's own ok.
+const EXITS = { type: 'array', items: { type: 'number' } }
+const VERIFY_SCHEMA = { type: 'object', properties: { exits: EXITS, sha: { type: 'string' }, problems: { type: 'array', items: { type: 'string' } }, targets: { type: 'array', items: TARGET } }, required: ['exits', 'sha', 'problems'] }
 const CLI_SCHEMA = { type: 'object', properties: { version: { type: 'string' }, channel: { type: 'string' }, pinned: { type: 'boolean' }, pin: { type: 'string' } }, required: ['version', 'channel', 'pinned', 'pin'] }
-const SYNC_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' }, sha: { type: 'string' }, tail: { type: 'string' } }, required: ['ok', 'sha', 'tail'] }
+const SYNC_SCHEMA = { type: 'object', properties: { exits: EXITS, sha: { type: 'string' }, tail: { type: 'string' } }, required: ['exits', 'sha', 'tail'] }
+const VERIFY_CHECKS = 5 // checks (1) to (4) and (6) always run; (5) only when audit-log.mjs exists; (0) only with a tag
+/** True when the reply lists at least `least` exit codes and every one is 0. */
+const allExitedZero = (reply, least = 1) => Array.isArray(reply?.exits) && reply.exits.length >= least && reply.exits.every((exit) => exit === 0)
 const DOCTOR_SCHEMA = { type: 'object', properties: { exit: { type: 'number' }, tail: { type: 'string' } }, required: ['exit', 'tail'] }
 
-const runner = (step, prompt, phaseTitle, schema) => agent(prompt, { label: `${row}:${step}`, phase: phaseTitle, agentType: 'runner', model: 'haiku', effort: 'low', schema })
+const runner = (step, prompt, phaseTitle, schema) => agent(prompt, { label: `${row}:${step}`, phase: phaseTitle, agentType: 'runner', model: 'haiku', effort: 'medium', schema })
 
 phase('Verify')
 const tagCheck = tag ? ` (0) git rev-parse --verify refs/tags/${tag} exits 0 (the target tag exists);` : ''
-const ready = await runner('verify', `In ${repo} check, in this order, and stop at the first failure:${tagCheck} (1) git branch --show-current is ${base}; (2) git status --porcelain --untracked-files=no prints nothing; (3) node ~/.claude/tools/git-tidy/git-tidy.mjs check ${repo} --base ${base} exits 0; (4) with SHA from git rev-parse ${base}: node ~/.claude/tools/test-pass/test-pass.mjs check SHA --repo ${repo} --suite exits 0; (5) when ${repo}/home/tools/review-tier/audit-log.mjs exists, node ${repo}/home/tools/review-tier/audit-log.mjs gate --repo ${repo} --tip SHA exits 0 (a waived lane's audit is still open or found a defect: report its output); (6) node ${repo}/scripts/install/local-settings.mjs targets prints JSON: return its targets array as targets (a failure is a problem line). Change nothing. Return ok, sha, targets and one problem line per failed check.`, 'Verify', VERIFY_SCHEMA)
-if (!ready || !ready.ok) return { status: 'stopped', problems: ready ? ready.problems : ['verify step returned nothing'] }
+const ready = await runner('verify', `In ${repo} check, in this order, and stop at the first failure:${tagCheck} (1) git branch --show-current is ${base}; (2) git status --porcelain --untracked-files=no prints nothing; (3) node ~/.claude/tools/git-tidy/git-tidy.mjs check ${repo} --base ${base} exits 0; (4) with SHA from git rev-parse ${base}: node ~/.claude/tools/test-pass/test-pass.mjs check SHA --repo ${repo} --suite exits 0; (5) when ${repo}/home/tools/review-tier/audit-log.mjs exists, node ${repo}/home/tools/review-tier/audit-log.mjs gate --repo ${repo} --tip SHA exits 0 (a waived lane's audit is still open or found a defect: report its output); (6) node ${repo}/scripts/install/local-settings.mjs targets prints JSON: return its targets array as targets (a failure is a problem line). Change nothing. Return exits (one exit code per check you ran, in order; for (1) and (2) 0 when it holds, else 1), sha, targets and one problem line per failed check.`, 'Verify', VERIFY_SCHEMA)
+if (!allExitedZero(ready, VERIFY_CHECKS + (tag ? 1 : 0))) return { status: 'stopped', problems: ready ? ready.problems : ['verify step returned nothing'] }
 const targets = checkedTargets(ready.targets)
 if (typeof targets === 'string') return { status: 'stopped', problems: [targets] }
 const machines = [LOCAL_MACHINE, ...targets.map((target) => target.name)]
@@ -114,7 +119,7 @@ function targetSteps(machine) {
 }
 
 async function doctorMachine(synced, machine) {
-  if (!synced?.ok) return { machine, synced: false, sha: '', doctorExit: null, diagnosis: await diagnose(machine, synced?.tail ?? 'no result') }
+  if (!allExitedZero(synced)) return { machine, synced: false, sha: '', doctorExit: null, diagnosis: await diagnose(machine, synced?.tail ?? 'no result') }
   const doctor = await runner(`doctor:${machine}`, `Run scripts/doctor.sh ${where(machine)}. It reuses a recorded suite PASS, else runs the whole suite and takes minutes: run it as ONE foreground Bash command with timeout: ${DOCTOR_TIMEOUT_MS}, never in the background and never in a polling loop. Return exit (doctor.sh's exit code) and the FAIL and WARN lines as tail.`, 'Doctor', DOCTOR_SCHEMA)
   const exit = doctor ? doctor.exit : null
   const diagnosis = exit === 0 ? '' : await diagnose(machine, doctor ? doctor.tail : 'doctor returned nothing')

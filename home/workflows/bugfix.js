@@ -40,7 +40,8 @@ const IMPLEMENTED_SCHEMA = { type: 'object', properties: { branch: { type: 'stri
 const RELEASE_SCHEMA = { type: 'object', properties: { exit: { type: 'number' }, tail: { type: 'string' } }, required: ['exit', 'tail'] }
 const VERIFY_SCHEMA = { type: 'object', properties: { reproGreen: { type: 'boolean' }, relatedExit: { type: 'number' }, mutantKilled: { type: 'boolean' }, treeClean: { type: 'boolean' }, tail: { type: 'string' } }, required: ['reproGreen', 'relatedExit', 'mutantKilled', 'treeClean', 'tail'] }
 
-const runner = (step, prompt, phaseTitle, schema) => agent(`Run exactly this and report PASS or FAIL with the one-line reason: ${prompt}`, { label: `${row}:${step}`, phase: phaseTitle, agentType: 'runner', model: 'haiku', effort: 'low', schema })
+// A runner reports the exit code and output tail it saw; this script judges them, never the runner's own PASS or FAIL.
+const runner = (step, prompt, phaseTitle, schema = RELEASE_SCHEMA) => agent(`Run exactly this and report exit (its exit code) and tail (its last 5 output lines): ${prompt}`, { label: `${row}:${step}`, phase: phaseTitle, agentType: 'runner', model: 'haiku', effort: 'medium', schema })
 const statusStep = (command, phaseTitle) => runner('status', `node ~/.claude/tools/status/status.mjs --file ${statusFile} ${command}`, phaseTitle)
 
 phase('Reproduce')
@@ -66,7 +67,7 @@ return reviewAndLand()
 
 function reproduce() {
   if (args.repro) {
-    return agent(`${CONTEXT} Run the repro command in ${repo} and report whether the bug shows. Return reproduces, cmd, exit and the failing tail (at most 15 lines). Change nothing.`, { label: `${row}:reproduce`, phase: 'Reproduce', agentType: 'runner', model: 'haiku', effort: 'low', schema: REPRO_SCHEMA })
+    return agent(`${CONTEXT} Run the repro command in ${repo} and report whether the bug shows. Return reproduces, cmd, exit and the failing tail (at most 15 lines). Change nothing.`, { label: `${row}:reproduce`, phase: 'Reproduce', agentType: 'runner', model: 'haiku', effort: 'medium', schema: REPRO_SCHEMA })
   }
   return agent(`${CONTEXT} Write the smallest failing test that shows this bug, on a new lane branch: rename your worktree branch with git branch -m ${branch}, commit only the test. Run it and return reproduces (true only if it fails for the bug's reason, not a typo), cmd, exit, tail, branch, worktree, sha. ${FINISH}`, { label: `${row}:reproduce`, phase: 'Reproduce', agentType: 'implementer', model: 'sonnet', effort: 'high', isolation: 'worktree', schema: REPRO_SCHEMA })
 }

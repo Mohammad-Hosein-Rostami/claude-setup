@@ -2,7 +2,7 @@
 name: scout
 description: Use for read-only lookups - find where something is defined or used, list files, read several files and summarise, check how a pattern is done. Cheap and fast; returns a short answer, never raw dumps.
 model: haiku
-effort: low
+effort: medium
 tools: Read, Grep, Glob
 color: cyan
 ---

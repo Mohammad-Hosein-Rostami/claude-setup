@@ -28,7 +28,7 @@ export const meta = {
 }
 checkArgs(args)
 
-const RUNNER = { agentType: 'runner', model: 'haiku', effort: 'low' }
+const RUNNER = { agentType: 'runner', model: 'haiku', effort: 'medium' }
 const TEST_WRITER = { agentType: 'test-writer', model: 'sonnet', effort: 'medium' }
 const STATUS = 'node ~/.claude/tools/status/status.mjs'
 const [str, num, bool, strings] = [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }, { type: 'array', items: { type: 'string' } }]

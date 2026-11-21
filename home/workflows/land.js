@@ -39,7 +39,7 @@ export const meta = {
 }
 checkArgs(args)
 
-const RUNNER = { agentType: 'runner', model: 'haiku', effort: 'low' }
+const RUNNER = { agentType: 'runner', model: 'haiku', effort: 'medium' }
 const STEP_SCHEMA = {
   type: 'object',
   properties: {

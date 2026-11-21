@@ -14,19 +14,19 @@ const runScript = (name, args, setup) => runPath(join(WORKFLOWS, `${name}.js`), 
 const gate = () => { let open; const opened = new Promise((resolve) => { open = resolve; }); return { opened, open }; };
 
 const SYNC_ARGS = { row: 's1', repo: '/r', base: 'main' };
-const READY = { ok: true, sha: 'abc123', problems: [], targets: [{ name: 'pc', ssh: 'pc' }] };
+const READY = { exits: [0, 0, 0, 0, 0], sha: 'abc123', problems: [], targets: [{ name: 'pc', ssh: 'pc' }] };
 const PINNED_CLI = { version: '2.1.326', channel: 'latest', pinned: true, pin: '' };
 const syncReplies = (overrides = []) => [
   ...overrides,
   { match: /:verify/, reply: READY },
   { match: /:cli:/, reply: PINNED_CLI },
-  { match: /:sync:/, reply: (_prompt, opts) => ({ ok: true, sha: 'abc123', tail: opts.label }) },
+  { match: /:sync:/, reply: (_prompt, opts) => ({ exits: [0], sha: 'abc123', tail: opts.label }) },
   { match: /:doctor:/, reply: { exit: 0, tail: 'ok' } },
   { match: /:diagnose:/, reply: 'cause' },
 ];
 
 test('sync: a base folder that is not ready stops the run before any machine is touched', async () => {
-  const notReady = { ok: false, sha: 'abc123', problems: ['no suite PASS at abc123'] };
+  const notReady = { exits: [0, 0, 0, 1], sha: 'abc123', problems: ['no suite PASS at abc123'] };
   const run = await runScript('sync-machines', SYNC_ARGS, { replies: syncReplies([{ match: /:verify/, reply: notReady }]) });
   assert.deepEqual(run.result, { status: 'stopped', problems: ['no suite PASS at abc123'] });
   assert.deepEqual(run.started, ['s1:verify']);
@@ -35,7 +35,7 @@ test('sync: a base folder that is not ready stops the run before any machine is 
 test('sync: both machines sync side by side, then each runs doctor; the result has sha and doctor exit per machine', async () => {
   const pcStarted = gate();
   let pcStartedBeforeMacbookEnded = false;
-  const syncOk = { ok: true, sha: 'abc123', tail: '' };
+  const syncOk = { exits: [0], sha: 'abc123', tail: '' };
   const run = await runScript('sync-machines', SYNC_ARGS, { replies: syncReplies([
     { match: /:sync:macbook/, reply: async () => { await pcStarted.opened; pcStartedBeforeMacbookEnded = true; return syncOk; } },
     { match: /:sync:pc/, reply: () => { pcStarted.open(); return syncOk; } },
@@ -49,7 +49,7 @@ test('sync: both machines sync side by side, then each runs doctor; the result h
 });
 
 test('sync: a machine that cannot sync skips its doctor and gets a diagnosis; the other machine goes on', async () => {
-  const failed = { match: /:sync:pc/, reply: { ok: false, sha: '', tail: 'not possible to fast-forward' } };
+  const failed = { match: /:sync:pc/, reply: { exits: [0, 1], sha: '', tail: 'not possible to fast-forward' } };
   const run = await runScript('sync-machines', SYNC_ARGS, { replies: syncReplies([failed]) });
   assert.equal(run.started.includes('s1:doctor:pc'), false);
   assert.equal(run.started.includes('s1:doctor:macbook'), true);

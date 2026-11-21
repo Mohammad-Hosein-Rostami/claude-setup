@@ -75,7 +75,7 @@ never a gate. Extra-high starts the first try of architect, deep-debugger and a 
 | ---- | -------------- | -------- |
 | Plan, design | lead inline; `architect` Opus high | xhigh when hard or security-critical; max as tie-break |
 | Build: implementer, test-writer | Sonnet medium; implementer high for cross-module code; Opus high for lock or transaction code | two failed verify rounds: one rung up |
-| Runner steps (tier, join, suite, rebase, land, status, sync, cleanup) | Haiku low | unclassified failure: Sonnet medium diagnoses |
+| Runner steps (tier, join, suite, rebase, land, status, sync, cleanup) | Haiku medium; the script judges the exit codes | unclassified failure: Sonnet medium diagnoses |
 | Review: correctness lens | `reviewer` Sonnet high | |
 | Review: risk lens (risky class or landing) | `reviewer` Opus max | |
 | Review: extra lens (over 400 lines, concurrency-lite, mid-lane) | `reviewer` Opus high | risky class: max |
@@ -85,7 +85,7 @@ never a gate. Extra-high starts the first try of architect, deep-debugger and a 
 | Bugfix: hypotheses, judge | `deep-debugger` Opus high; judge Opus xhigh | failed fix: xhigh, then max |
 | Research: scope, synthesis, critic | Opus high | |
 | Research: gatherers, re-checks, patches | Sonnet high | |
-| Quick lookup | `/quick` (scout, Haiku low) | needs judgement: `wf-step` with `scout` Sonnet |
+| Quick lookup | `/quick` (scout, Haiku medium) | needs judgement: `wf-step` with `scout` Sonnet |
 | One-step work (architect design, UI build, visual-qa loop) | `wf-step`: the agent file's model and effort | |
 | Git cleanup plan | Sonnet high | owner items go to the lead |
 

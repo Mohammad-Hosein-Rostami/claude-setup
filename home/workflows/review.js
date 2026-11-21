@@ -58,7 +58,7 @@ export const meta = {
 checkArgs(args)
 
 const RANGE = args.audit ? `${args.audit.base}..${args.audit.tip}` : args.range // an audit reads recorded shas, never a branch name
-const RUNNER = { agentType: 'runner', model: 'haiku', effort: 'low' }
+const RUNNER = { agentType: 'runner', model: 'haiku', effort: 'medium' }
 const TIER_TOOL = 'node ~/.claude/tools/review-tier/review-tier.mjs'
 // The tip of the base branch, as a command a runner runs before any fix agent has worked: the branch by its full ref name (git's short-name lookup takes
 // a tag of that name first). Nothing else is asked of the lane's repository about the base: ancestry is review-tier's to check, in its own clean repository.

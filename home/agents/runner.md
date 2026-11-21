@@ -2,7 +2,7 @@
 name: runner
 description: Use to run tests, lint, typecheck, build or any noisy command and get back only the verdict and failures. Keeps verbose output out of the main context. Does not edit files.
 model: haiku
-effort: low
+effort: medium
 tools: Bash, Read, Grep, Glob
 disallowedTools: Write, Edit
 color: yellow

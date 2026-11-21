@@ -38,7 +38,7 @@ function workFolder(repo) {
 }
 
 function inventory(repo) {
-  return agent(`Repo ${repo}. Make the folder ${workFolder(repo)}, then save node ~/.claude/tools/git-tidy/git-tidy.mjs check ${repo} --json to check.json there and node ~/.claude/tools/git-tidy/git-tidy.mjs prune ${repo} --json (a dry run, no --apply) to prune.json there. Change nothing else. Return repo, the two file paths, the number of findings and the number of planned removals.`, { label: `${row}:inventory:${nameOf(repo)}`, phase: 'Inventory', agentType: 'runner', model: 'haiku', effort: 'low', schema: INVENTORY_SCHEMA })
+  return agent(`Repo ${repo}. Make the folder ${workFolder(repo)}, then save node ~/.claude/tools/git-tidy/git-tidy.mjs check ${repo} --json to check.json there and node ~/.claude/tools/git-tidy/git-tidy.mjs prune ${repo} --json (a dry run, no --apply) to prune.json there. Change nothing else. Return repo, the two file paths, the number of findings and the number of planned removals.`, { label: `${row}:inventory:${nameOf(repo)}`, phase: 'Inventory', agentType: 'runner', model: 'haiku', effort: 'medium', schema: INVENTORY_SCHEMA })
 }
 
 async function plan(inventoried, repo) {
@@ -51,7 +51,7 @@ async function apply(planned, repo) {
   if (!planned) return null
   const base = { repo, applied: false, safe: planned.safe, needsLanding: planned.needsLanding, ownerDecisions: planned.ownerDecisions, vetoed: planned.pruneVeto, after: null }
   if (planned.pruneVeto.length > 0) return base
-  const after = await agent(`Repo ${repo}. Run exactly, in order: git -C ${repo} bundle create ${workFolder(repo)}/backup.bundle --all; then node ~/.claude/tools/git-tidy/git-tidy.mjs prune ${repo} --apply; then node ~/.claude/tools/git-tidy/git-tidy.mjs check ${repo}. Stop if the bundle fails. Never push; no other command. Return repo, the exit of prune and of check, and how many check findings remain.`, { label: `${row}:apply:${nameOf(repo)}`, phase: 'Apply', agentType: 'runner', model: 'haiku', effort: 'low', schema: APPLY_SCHEMA })
+  const after = await agent(`Repo ${repo}. Run exactly, in order: git -C ${repo} bundle create ${workFolder(repo)}/backup.bundle --all; then node ~/.claude/tools/git-tidy/git-tidy.mjs prune ${repo} --apply; then node ~/.claude/tools/git-tidy/git-tidy.mjs check ${repo}. Stop if the bundle fails. Never push; no other command. Return repo, the exit of prune and of check, and how many check findings remain.`, { label: `${row}:apply:${nameOf(repo)}`, phase: 'Apply', agentType: 'runner', model: 'haiku', effort: 'medium', schema: APPLY_SCHEMA })
   return { ...base, applied: Boolean(after) && after.pruneExit === 0, after }
 }
 
