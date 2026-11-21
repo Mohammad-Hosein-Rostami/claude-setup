@@ -1,5 +1,6 @@
-// Purpose: the compare gate of `check`: a Figma compare failure may be accepted only with a recorded owner decision.
-// Exports: acceptedChecks(matrix, merged, records, options).
+// Purpose: the compare gate of `check`: a Figma compare failure may be accepted only with a recorded owner decision and a reason.
+// Exports: acceptedChecks(matrix, merged, records, options), pixelAcceptances(matrix, record, options) (the entries `ui-check attribute`
+//   classes pixels with).
 // Invariants: pure apart from the injected `readText`; never throws. A cell is accepted when it fails ONLY through
 //   `part: "compare"` records (no hand-set fail, no responsive fail) and every finding of those records is covered by an
 //   `accepted` entry of the same frame node and cell: an `element` finding by the same element, a `pixel` finding by a `percent`
@@ -8,12 +9,12 @@
 //   `{status: "STATUS.md", line}` (that exact line sits under `## Standing rules` or `## Owner decisions` and names the node).
 //   Only an answer record with no `by` field counts as the owner's (anything marked, `timeout` or otherwise, fails closed);
 //   the question must name the node as a whole token; the queue file must lie directly in the ask queue folder (real path,
-//   no link out of it). Paths resolve from the matrix directory. A covering entry with a bad owner is an `owner-ref` problem and the cell keeps
-//   failing. An entry that names a frame cell the matrix does not map is an `accepted-node` problem.
+//   no link out of it). Paths resolve from the matrix directory. The entry also needs a `reason` of MIN_REASON_CHARS+ characters (why the
+//   owner accepted it). A covering entry with a bad owner or no reason is an `owner-ref` problem and the cell keeps failing. An entry that names a frame cell the matrix does not map is an `accepted-node` problem.
 import { dirname, resolve } from 'node:path';
 import { BY_TIMEOUT, ID_PATTERN, lastAnswer, parse } from '../../ask/lib/queue.mjs';
 import { cellKey, cellLabel } from './cells.mjs';
-import { isText, namesNode, normalizeNode, problem } from './shape.mjs';
+import { MIN_REASON_CHARS, isReason, isText, namesNode, normalizeNode, problem } from './shape.mjs';
 
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 const OWNER_SECTIONS = new Set(['## Standing rules', '## Owner decisions']);
@@ -78,6 +79,15 @@ function ownerWhy(entry, files) {
   return 'no owner field';
 }
 
+const NO_REASON = `no reason (write why the owner accepted it, ${MIN_REASON_CHARS}+ characters)`;
+
+// The owner-ref problem of an involved entry that cannot accept anything (no owner decision, or no reason), or null when it can.
+function refusal(entry, why, cell) {
+  if (why !== null) return problem('owner-ref', `accepted difference on ${cell} (frame ${entry.node}) has no owner decision: ${why}; ask the owner or match Figma`, { cell, cause: `accepted difference has no owner decision: ${why}` });
+  if (!isReason(entry.reason)) return problem('owner-ref', `accepted difference on ${cell} (frame ${entry.node}) has ${NO_REASON}`, { cell, cause: `accepted difference has ${NO_REASON}` });
+  return null;
+}
+
 const refText = ({ owner }) => (owner.ask === undefined ? `${owner.status} line "${owner.line}"` : `ask ${owner.ask}`);
 
 function covers(entry, finding) {
@@ -124,13 +134,33 @@ export function acceptedChecks(matrix, merged, records, { baseDir, readText, que
   for (const [key, { findings }] of compareOnlyFindings(matrix, merged, records)) {
     const cell = cellLabel(merged.cells.find((candidate) => cellKey(candidate) === key));
     const involved = prepared.filter((item) => item.key === key && findings.some((finding) => covers(item.entry, finding)));
-    for (const { entry, why } of involved.filter((item) => item.why !== null)) {
-      problems.push(problem('owner-ref', `accepted difference on ${cell} (frame ${entry.node}) has no owner decision: ${why}; ask the owner or match Figma`, { cell, cause: `accepted difference has no owner decision: ${why}` }));
-    }
-    const owned = involved.filter((item) => item.why === null).map((item) => item.entry);
+    const refused = involved.map((item) => refusal(item.entry, item.why, cell));
+    problems.push(...refused.filter((found) => found !== null));
+    const owned = involved.filter((item, index) => refused[index] === null).map((item) => item.entry);
     if (findings.every((finding) => owned.some((entry) => covers(entry, finding)))) {
       accepted.push({ key, cell, node: owned[0].node, ref: [...new Set(owned.map(refText))].join('; ') });
     }
   }
   return { problems, accepted };
+}
+
+/**
+ * The accepted entries that may class pixels of one failing compare record as accepted (`ui-check attribute`): the same frame node and
+ *   cell, an owner decision, a reason, and a pixel rule whose `maxPercent` is not below the record's pixel `percent`.
+ * @param {object} matrix a structurally sound matrix
+ * @param {object} record a ui-check compare record (surface, state, locale, width, findings)
+ * @param {{baseDir: string, readText: (path: string) => string|null, queueDir?: string|null, realPath?: (path: string) => string|null}} options as acceptedChecks
+ * @returns {{reason: string, nodes: string[]|null, ref: string}[]} `nodes` = the Figma node ids the rule names (its optional `nodes`
+ *   list), null when the rule covers every pixel of the record; empty when nothing applies
+ */
+export function pixelAcceptances(matrix, record, { baseDir, readText, queueDir, realPath }) {
+  const files = { baseDir, readText: readText ?? (() => null), queueDir, realPath: realPath ?? (() => null) };
+  const pixel = (Array.isArray(record.findings) ? record.findings : []).find((finding) => isObject(finding) && finding.check === 'pixel');
+  if (pixel === undefined || typeof pixel.percent !== 'number') return [];
+  const entries = (Array.isArray(matrix.accepted) ? matrix.accepted : []).filter((entry) => isObject(entry) && entryKey(matrix, entry) === cellKey(record));
+  return entries
+    .filter((entry) => ownerWhy(entry, files) === null && isReason(entry.reason))
+    .flatMap((entry) => (Array.isArray(entry.findings) ? entry.findings : [])
+      .filter((own) => isObject(own) && own.check === 'pixel' && pixel.percent <= own.maxPercent)
+      .map((own) => ({ reason: entry.reason.trim(), nodes: Array.isArray(own.nodes) ? own.nodes.map(String) : null, ref: refText(entry) })));
 }

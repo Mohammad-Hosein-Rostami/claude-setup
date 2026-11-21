@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Purpose: entry point for ui-check (figma-pull | figma-frames | compare | responsive | columns | batch | run | figma-refresh | figma-diff).
+// Purpose: entry point for ui-check (figma-pull | figma-frames | compare | responsive | columns | batch | run | figma-refresh | first-paint | figma-diff | attribute).
 // Exports: none. Exit codes: 0 pass, 1 check failed, 2 usage or setup error. Never prints FIGMA_TOKEN.
 import { UsageError } from './lib/errors.mjs';
 
-const COMMANDS = ['figma-pull', 'figma-frames', 'compare', 'responsive', 'columns', 'batch', 'run', 'figma-refresh', 'figma-diff'];
+const COMMANDS = ['figma-pull', 'figma-frames', 'compare', 'responsive', 'columns', 'batch', 'run', 'figma-refresh', 'first-paint', 'figma-diff', 'attribute'];
 const USAGE = `usage: ui-check <${COMMANDS.join('|')}> [flags]   (see README.md)`;
 
 async function main(argv) {

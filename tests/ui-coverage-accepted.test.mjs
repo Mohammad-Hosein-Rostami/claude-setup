@@ -19,7 +19,7 @@ const STANDING = '- 12:40 sign in: keep a.extra-link, owner said yes on 2026-11-
 
 const elementFinding = (element) => ({ check: 'element', element, detail: 'is different' });
 const failRecord = (findings, extra = {}) => ({ ...CELL, width: 1440, status: 'fail', evidence: 'https://x/report', part: 'compare', findings, ...extra });
-const accept = (owner, findings = [{ check: 'element', element: 'a.extra-link' }], extra = {}) => ({ node: '12:40', ...CELL, findings, ...(owner === undefined ? {} : { owner }), ...extra });
+const accept = (owner, findings = [{ check: 'element', element: 'a.extra-link' }], extra = {}) => ({ node: '12:40', ...CELL, findings, reason: 'the owner keeps the extra link on sign in', ...(owner === undefined ? {} : { owner }), ...extra });
 const matrixWith = (accepted) => ({
   locales: [{ tag: 'en', dir: 'ltr' }],
   widths: [1440],
