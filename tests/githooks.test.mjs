@@ -28,7 +28,7 @@ function makeHookRepo({ gitleaksExit = 0 } = {}) {
   const bin = realpathSync(makeTempDir('githooks-bin-'));
   writeFileSync(join(bin, 'gitleaks'), `#!/bin/sh\nexit ${gitleaksExit}\n`);
   chmodSync(join(bin, 'gitleaks'), 0o755);
-  for (const path of ['.githooks', 'scripts/affected-tests.mjs', 'home/tools/test-pass', 'home/tools/disk-free/with-run-tmp.mjs', 'home/hooks/lib/session-store.mjs']) {
+  for (const path of ['.githooks', 'scripts/affected-tests.mjs', 'home/tools/test-pass', 'home/tools/disk-free/with-run-tmp.mjs', 'home/hooks/lib/session-store.mjs', 'scripts/test-integrity.mjs', 'home/tools/review-tier', 'home/tools/git-tidy/lib']) {
     mkdirSync(join(repo, path, '..'), { recursive: true });
     cpSync(join(ROOT, path), join(repo, path), { recursive: true });
   }

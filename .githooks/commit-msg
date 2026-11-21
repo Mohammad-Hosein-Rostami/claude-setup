@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Purpose: a commit that rewords a test or an assertion names its reason in the body (`Test change: <reason>`); see scripts/test-integrity.mjs.
+# The staged diff is still readable here (git runs commit-msg before it writes the commit), so the same index is checked as in pre-commit.
+set -euo pipefail
+node scripts/test-integrity.mjs --commit-msg "$1"

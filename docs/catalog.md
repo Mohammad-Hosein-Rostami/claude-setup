@@ -118,7 +118,7 @@ Rules are one line each (`id | rule | check`) and load when a matching file is i
 | `disk-clean-start.mjs` | SessionStart(startup) | Starts `disk-clean --apply` detached in the background at most once every 24 h (stamp `~/.claude/state/disk-clean.stamp` claimed under an `O_EXCL` lock that one process breaks when stale, an empty or relative HOME skips the run, log `~/.claude/logs/disk-clean.log`; links and FIFOs are never followed; the child gets no tokens); never delays the session start. |
 | `token-audit.mjs` | not a hook; run by the `token-audit` skill | Prints the approximate recurring token cost (bytes / 4) of the config visible from the current directory (`paths:` and `description:` read only from the leading frontmatter; folded `>`/`|` descriptions supported). |
 
-`.githooks/pre-commit` (repo only): `gitleaks protect --staged --redact`; the installers set `core.hooksPath`.
+`.githooks/pre-commit` (repo only): `gitleaks protect --staged --redact`, then `scripts/test-integrity.mjs --staged` (a deleted test or assertion, `.skip`, `.only`, `.todo`, `xit`/`xdescribe`/`.fixme` or an ignore comment in a test or check file blocks the commit; `bound` stays a reviewer finding); `.githooks/commit-msg`: `test-integrity.mjs --commit-msg` refuses a reworded test or assertion without a `Test change: <reason>` body line; the installers set `core.hooksPath`.
 
 ## Modes (`home/modes/`, `home/bin/ccm`)
 
