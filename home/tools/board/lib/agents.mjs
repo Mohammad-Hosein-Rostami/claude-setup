@@ -26,6 +26,7 @@ const MAX_AGENTS = 40;
 const MAX_JOURNAL_BYTES = 256 * 1024;
 const META_BYTES = 4096;
 const MAX_NAME_CHARS = 24;
+const MAX_LABEL_CHARS = 60; // the description whole enough for the render to cut it at a word (cells.mjs cutWords), not mid-word here
 const MAX_PURPOSE_CHARS = 40;
 const TRANSCRIPT = /^agent-([A-Za-z0-9]{1,40})\.jsonl$/;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
@@ -74,7 +75,7 @@ function purposeOf(record) {
 
 /** One agent's board entry from its cursor, meta and run. */
 function agentEntry({ id, cursor, meta, run, journal, rows, pools, env, nowMs }) {
-  const label = clean(run ? (journal.started.get(id)?.label ?? meta.description) : meta.description, MAX_NAME_CHARS * 2);
+  const label = clean(run ? (journal.started.get(id)?.label ?? meta.description) : meta.description, MAX_LABEL_CHARS + MAX_NAME_CHARS);
   const colon = run ? label.indexOf(':') : -1; // a workflow label is `<lane>:<agent>`; a plain agent's description is kept whole
   const type = clean(meta.agentType ?? '?', MAX_NAME_CHARS);
   const done = run ? journal.results.has(id) : cursor.endedMs !== null && !cursor.pending;
@@ -85,11 +86,12 @@ function agentEntry({ id, cursor, meta, run, journal, rows, pools, env, nowMs })
   const state = done ? 'done' : silentMs >= QUIET_MS && !cursor.pending ? 'quiet' : 'run';
   return {
     entry: {
-      id, name: clean(colon > 0 ? label.slice(colon + 1) : label, MAX_NAME_CHARS) || type, lane: colon > 0 ? clean(label.slice(0, colon), MAX_NAME_CHARS) : null,
+      id, name: clean(colon > 0 ? label.slice(colon + 1) : label, MAX_LABEL_CHARS) || type, lane: colon > 0 ? clean(label.slice(0, colon), MAX_NAME_CHARS) : null,
       type, runId: run?.runId ?? null, phase: run ? (journal.started.get(id)?.phase ?? meta.workflowPhase ?? null) : null,
-      dir: typeof meta.worktreePath === 'string' ? meta.worktreePath : cursor.cwd, row: rows.get(id) ?? null, state, writer,
+      dir: typeof meta.worktreePath === 'string' ? meta.worktreePath : (cursor.fileDir ?? cursor.cwd), row: rows.get(id) ?? null, state, writer,
       pct: progress.pct, conf: progress.conf, elapsedMin: tenths(progress.elapsedMin), leftMin: tenths(progress.leftMin),
       highLeftMin: tenths(progress.highLeftMin), overMin: tenths(progress.overMin), usual: progress.usual, tag: progress.tag, doing: cursor.lastTool?.text ?? null, calls: cursor.calls,
+      tokens: Number.isFinite(cursor.tokens) && cursor.tokens > 0 ? cursor.tokens : null,
       quietMin: state === 'quiet' ? minutes(silentMs) : 0, pendingMin: cursor.pending && cursor.lastTool ? minutes(nowMs - cursor.lastTool.atMs) : 0,
       doneMs, startMs: cursor.startMs,
     },

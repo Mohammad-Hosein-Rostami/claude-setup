@@ -2,21 +2,25 @@
 // calls by kind (the milestones of the progress formula), the brief's numbered steps, the last tool call in words ("doing now"),
 // whether a call is still waiting for its result, and whether the agent ended its turn.
 // Exports: advanceCursor(cursor, file) -> cursor | null; emptyCursor(ino).
-// Cursor: { ino, offset, startMs, lastMs, mtimeMs, calls, reads, edits, writes, checks, commits, reports, steps, lastTool:
-// { name, text, atMs } | null, pending, endedMs, lastTextChars, cwd, shownPct, stepsSeen } (shownPct and stepsSeen belong to
+// Cursor: { ino, offset, startMs, lastMs, mtimeMs, calls, reads, edits, writes, checks, commits, reports, steps, tokens, lastTool:
+// { name, text, atMs } | null, pending, endedMs, lastTextChars, cwd, fileDir, shownPct, stepsSeen } (fileDir: the folder of the last
+// file a tool read or changed by absolute path, where the agent really works when its cwd stays in the lead's folder; shownPct and stepsSeen belong to
 // progress.mjs, kept here so they travel with the cursor).
 // Format read (Claude Code 2.1.329, internal, observed): one JSON object per line with `timestamp`, `type` (user | assistant | ...),
-// `cwd`, `message.content` (a string for the brief; blocks `tool_use` {name, input} and `tool_result`; `message.stop_reason`).
+// `cwd`, `message.content` (a string for the brief; blocks `tool_use` {name, input} and `tool_result`; `message.stop_reason`;
+// `message.usage` on assistant lines). Tokens (spec-tui-2 stat 3) = the last assistant call's input, cache-write, cache-read and
+// output tokens: the agent's context so far (a sum over calls would count the re-read context again on every call).
 // Invariants: never throws (a file gone or unreadable returns the old cursor); reads at most MAX_READ_BYTES per call and only whole
 // lines (the offset stops after the last newline, so a line being written is read next time); a line over MAX_PARSE_CHARS is not
 // parsed, only its timestamp is taken; every text kept is stripped of control characters and cut.
 import { closeSync, lstatSync, openSync, readSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, dirname, isAbsolute } from 'node:path';
 
 const MAX_READ_BYTES = 4 * 1024 * 1024;
 const MAX_PARSE_CHARS = 256 * 1024;
 const MAX_TEXT_CHARS = 60;
 const MAX_STEPS = 20;
+const MAX_PATH_CHARS = 1024;
 const NEWLINE = 0x0a;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
 const TIMESTAMP = /"timestamp":"([0-9T:.\-]+Z?)"/;
@@ -31,8 +35,17 @@ const clean = (text) => String(text ?? '').replace(CONTROL_CHARS, ' ').trim().sl
 /** @returns {object} a cursor that has read nothing of the file with this inode */
 export const emptyCursor = (ino) => ({
   ino, offset: 0, startMs: null, lastMs: null, mtimeMs: 0, calls: 0, reads: 0, edits: 0, writes: 0, checks: 0, commits: 0, reports: 0,
-  steps: null, lastTool: null, pending: false, endedMs: null, lastTextChars: 0, cwd: null, shownPct: 0, stepsSeen: 0,
+  steps: null, tokens: 0, lastTool: null, pending: false, endedMs: null, lastTextChars: 0, cwd: null, fileDir: null, shownPct: 0, stepsSeen: 0,
 });
+
+const USAGE_KEYS = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'output_tokens'];
+
+/** @returns {number | null} the tokens of one call's usage, or null when the line has none */
+function tokensOf(usage) {
+  if (usage === null || typeof usage !== 'object') return null;
+  const sum = USAGE_KEYS.reduce((acc, key) => acc + (Number.isFinite(usage[key]) ? usage[key] : 0), 0);
+  return sum > 0 ? sum : null;
+}
 
 /** The brief's steps: the longest run 1..n of numbered lines (`1. ...`, `2) ...`), 0 when it has none. */
 function stepsOf(brief) {
@@ -58,6 +71,7 @@ function toolText(name, input) {
 function countCall(cursor, name, input, atMs) {
   cursor.calls += 1;
   const file = String(input?.file_path ?? '');
+  if (file !== '' && isAbsolute(file) && file.length <= MAX_PATH_CHARS) cursor.fileDir = dirname(file);
   if (name === 'Read') cursor.reads += 1;
   if (EDIT_TOOLS.has(name)) {
     cursor.edits += 1;
@@ -90,6 +104,7 @@ function foldLine(cursor, line) {
     return;
   }
   if (line.type !== 'assistant' || !Array.isArray(content)) return;
+  cursor.tokens = tokensOf(line.message?.usage) ?? cursor.tokens ?? 0;
   const calls = content.filter((block) => block?.type === 'tool_use');
   for (const call of calls) countCall(cursor, String(call.name ?? '?'), call.input, Number.isFinite(atMs) ? atMs : cursor.lastMs);
   const textChars = content.reduce((sum, block) => sum + (block?.type === 'text' ? String(block.text ?? '').length : 0), 0);

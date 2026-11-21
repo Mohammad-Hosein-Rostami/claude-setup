@@ -133,7 +133,7 @@ function listsOf(cwd, common, cache, nowMs) {
  * @param {{ cwd: string, agentDirs: { name: string, dir: string | null }[], cache: object | null, nowMs: number }} source the session
  *   folder, the agents' folders (agents.mjs `dir`) and the last git cache
  * @returns {{ repo: object | null, git: object | null, cache: object }} repo = { base, branches, unlanded, worktrees: [{ name, path,
- *   branch, ahead, behind, changed, ageMin, op, agents, checkedMs, main }] }; git = the session folder's own { branch, ahead, behind,
+ *   branch, ahead, behind, changed, ageMin, op, agents, checkedMs, upAhead, upBehind (vs its upstream, null without one), main }] }; git = the session folder's own { branch, ahead, behind,
  *   changed } (vs its upstream, the shape the old board had); null outside a repository
  */
 export function repoState({ cwd, agentDirs, cache, nowMs }) {
@@ -152,6 +152,7 @@ export function repoState({ cwd, agentDirs, cache, nowMs }) {
         name: index === 0 ? (wt.branch ?? basename(wt.path)) : basename(wt.path), path: wt.path, branch: wt.branch, main: index === 0,
         ahead: ref?.ahead ?? null, behind: ref?.behind ?? null, changed: value?.changed ?? null, op: status[wt.path].op,
         ageMin: ref?.t ? Math.max(0, Math.round((nowMs - ref.t * MS_PER_S) / MS_PER_MIN)) : null, agents: agents.get(wt.path), checkedMs: status[wt.path].at,
+        upAhead: value?.upAhead ?? null, upBehind: value?.upBehind ?? null,
       };
     });
     const names = Object.keys(lists.refs);
