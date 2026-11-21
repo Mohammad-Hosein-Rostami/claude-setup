@@ -8,6 +8,7 @@ import { chmod, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { PLAN_LIB, TS_ERROR, blocked, fallbackRepo, installBin, outcomes, posix } from './typecheck-gate-helpers.mjs';
+import { MAX_LINE_CHARS } from '../home/hooks/typecheck-gate.mjs';
 
 const A_LINE = 'src/a.ts:3 TS2322 x';
 // What the gate adds to `--noEmit -p <tsconfig>` after the build info: plain output, no clash with emitDeclarationOnly, the program's files.
@@ -164,6 +165,19 @@ test('errors in a file of the same name outside the edited file (a sibling packa
     assert.equal(r.stderr, '', line);
     assert.deepEqual((await fixture.runs()).map((entry) => [entry.outcome.split(' -p ')[0], entry.exit]), [['ran: tsc --noEmit', 2]], line);
   }
+});
+
+test('a diagnostic line is cut to MAX_LINE_CHARS before it reaches the agent', posix, async () => {
+  assert.equal(Number.isInteger(MAX_LINE_CHARS) && MAX_LINE_CHARS >= 200, true);
+  const fixture = await fallbackRepo({ 'package.json': {}, 'tsconfig.json': {} });
+  await installBin(fixture.repo, 'tsc', { output: [`src/a.ts(3,1): error TS2322: ${'y'.repeat(5000)}`], status: 2 });
+  fixture.edit('src/a.ts');
+  const r = fixture.stop();
+  assert.equal(r.status, 2);
+  const [, line, ...rest] = r.stderr.split('\n');
+  assert.deepEqual(rest, ['']);
+  assert.equal(line.length, MAX_LINE_CHARS);
+  assert.ok(line.startsWith('src/a.ts:3 TS2322 yyy'));
 });
 
 test('a tsc that rejects the tsconfig options (TS5053) and checks nothing is a message to the user, never silence', posix, async () => {
