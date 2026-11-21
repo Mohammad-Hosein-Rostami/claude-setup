@@ -18,8 +18,8 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 const HOOK = fileURLToPath(new URL('../home/hooks/mode.mjs', import.meta.url));
 const BIG_PROMPT = 'Please implement the whole new feature across the hooks, tests and docs. '.repeat(4);
 
-function runHook(home, mode, input, extraEnv = {}, nodeArgs = []) {
-  return spawnSync(process.execPath, [...nodeArgs, HOOK], { input: JSON.stringify(input), env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_MODE: mode, ...extraEnv }, encoding: 'utf8' });
+function runHook(home, mode, input, { env = {}, nodeArgs = [] } = {}) {
+  return spawnSync(process.execPath, [...nodeArgs, HOOK], { input: JSON.stringify(input), env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_MODE: mode, ...env }, encoding: 'utf8' });
 }
 
 const usageLine = (tokens, extra = {}) => JSON.stringify({ type: 'assistant', isSidechain: false, message: { usage: { input_tokens: 2, cache_read_input_tokens: tokens - 12, cache_creation_input_tokens: 10, output_tokens: 5 } }, ...extra });
@@ -187,7 +187,7 @@ test('a subagent SessionStart runs no ps walk and no project-agents child, saves
   const state = stateDirOf(withRealModes(made.home));
   staleStateFile(state);
   const noPs = { PATH: makeTempDir('mode-nobin-') }; // a `ps` lookup would fail here and say so on stderr
-  const start = (source, extra) => runHook(made.home, 'high', { hook_event_name: 'SessionStart', session_id: 'sub3', source, cwd: made.projectDir, ...extra }, noPs);
+  const start = (source, extra) => runHook(made.home, 'high', { hook_event_name: 'SessionStart', session_id: 'sub3', source, cwd: made.projectDir, ...extra }, { env: noPs });
   const subagent = start('compact', { agent_id: 'a1' });
   assert.ok(subagent.stdout.startsWith(COMPACT_NOTE_START));
   assert.doesNotMatch(subagent.stdout, /Project agent files/);
@@ -226,7 +226,7 @@ test('the deadline runs on the hook\'s own clock: started at the end of the budg
   const ranPs = join(bin, 'ran');
   writeFileSync(join(bin, 'ps'), `#!/bin/sh\n[ "$1" = warm ] || : > "${ranPs}"\n`, { mode: 0o755 });
   if (POSIX) spawnSync(join(bin, 'ps'), ['warm']); // a new script starts slowly the first time (macOS): not inside a ps timeout
-  const start = (session_id, nodeArgs) => runHook(made.home, 'high', { hook_event_name: 'SessionStart', session_id, source: 'startup', cwd: made.projectDir }, { PATH: bin }, nodeArgs).stdout;
+  const start = (session_id, nodeArgs) => runHook(made.home, 'high', { hook_event_name: 'SessionStart', session_id, source: 'startup', cwd: made.projectDir }, { env: { PATH: bin }, nodeArgs }).stdout;
   const late = start('late1', ['--import', `data:text/javascript,performance.now=()=>${HOOK_BUDGET_MS}`]);
   assert.ok(late.startsWith('Mode: high (launched as high)\n\n') && late.includes(firstLineOf('_lead.md')), late.slice(0, 60));
   assert.ok(late.endsWith(`\n\n${NOT_CHECKED_NOTE}\n`), 'no time left for the child');
