@@ -107,7 +107,7 @@ test('the merged settings of every OS keep worktree.baseRef head', { skip }, asy
 
 test('base.json blocks the Bash call when the guard hook dies or times out (onFailure block), and its timeout covers the 2-min dialog', () => {
   const base = JSON.parse(readFileSync(fileURLToPath(new URL('../settings/base.json', import.meta.url)), 'utf8'));
-  const bash = base.hooks.PreToolUse.filter((group) => group.matcher === 'Bash').flatMap((group) => group.hooks);
+  const bash = base.hooks.PreToolUse.filter((group) => (group.matcher ?? '').split('|').includes('Bash')).flatMap((group) => group.hooks);
   const guards = bash.filter((hook) => hook.command.includes('hooks/pre-bash-guard.mjs'));
   assert.equal(guards.length, 1, 'exactly one pre-bash-guard entry');
   assert.equal(guards[0].onFailure, 'block', 'a crashed or stalled guard must not let the command run');

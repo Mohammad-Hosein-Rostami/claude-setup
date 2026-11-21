@@ -47,6 +47,7 @@ const NOTICE_SUFFIX = '.notice'; // marker next to the counter file: the early n
 const SPAWN_PROMPT_BYTES = 512 * 1024;
 const SAFE_ID = /^[\w-]{1,128}$/;
 const ULTRA_HIGH = 'ultra-high';
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell']); // Windows can run the PowerShell tool; both count as shell calls
 const DELEGATING_TOOLS = new Set(['Agent', 'Task', 'Workflow']); // the owner rule: workflows are how agents run, so a Workflow call is a delegation too
 
 const budgetPath = callCounterPath; // its mtime is also the writer gate's sign that the agent still works
@@ -117,7 +118,7 @@ export function leadBashCalls(sessionId, tool) {
     rmSync(path, { force: true });
     return 0;
   }
-  return tool === 'Bash' ? countCall(path) : 0;
+  return SHELL_TOOLS.has(tool) ? countCall(path) : 0;
 }
 
 /**
@@ -146,7 +147,7 @@ async function leadBashNudge(input) {
  */
 export async function leadBashDeny(input, env = process.env) {
   const command = input?.tool_input?.command;
-  if (input.agent_id || input.tool_name !== 'Bash' || !SAFE_ID.test(input.session_id ?? '') || typeof command !== 'string') return '';
+  if (input.agent_id || !SHELL_TOOLS.has(input.tool_name) || !SAFE_ID.test(input.session_id ?? '') || typeof command !== 'string') return '';
   const ignored = ignoredNudges(input.session_id);
   if (ignored < IGNORED_NUDGES_TO_DENY || isReadOnlyCommand(command)) return '';
   const tokens = await contextTokens(input.transcript_path);
@@ -194,7 +195,7 @@ export async function postToolUseContext(input) {
       ? `Budget: ${calls} tool calls used (limit ${CALL_CAP}). Commit what is green, write the hand-over note (the file your brief names, else HANDOFF.md in your worktree, not committed): done, left, next step, don't redo. Then return your report marked "unfinished" with the exact next step; the next agent starts from your commit and that note.`
       : null;
   }
-  if (input.tool_name === 'Bash' || DELEGATING_TOOLS.has(input.tool_name)) return leadBashNudge(input);
+  if (SHELL_TOOLS.has(input.tool_name) || DELEGATING_TOOLS.has(input.tool_name)) return leadBashNudge(input);
   if (input.tool_name !== 'Read' || sessionMode(input.session_id) !== ULTRA_HIGH) return null;
   const chars = readChars(input.tool_response);
   return chars > READ_WARN_CHARS

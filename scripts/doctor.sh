@@ -113,6 +113,21 @@ check_node() {
 # Claude Code 2.1.326 or later (CLAUDE_FLOOR): the floor every phase pins (spec-p0-close.md 0.7). It covers the Bash guard's
 # `onFailure: "block"` (2.1.295: an older CLI ignores it, so a guard that dies or times out lets the command run) and the
 # PC's 2.1.323 and Windows' 2.1.316. The line also names the update channel and whether DISABLE_UPDATES pins the version.
+# Windows (spec-p7 r9-windows; tools-reference): with Git Bash present any Bash deny rule turns the PowerShell tool off unless
+# CLAUDE_CODE_USE_POWERSHELL_TOOL=1, and without Git Bash PowerShell is the only shell. settings/windows.json sets it to 0, and
+# every Bash hook matcher also names PowerShell, so a PowerShell command is either off or guarded. doctor itself runs in Git Bash.
+check_windows_shell() {
+  local live="$CLAUDE_DIR/settings.json" tool unguarded
+  ok "Git Bash ${BASH_VERSION:-?} (${CLAUDE_CODE_GIT_BASH_PATH:-found on PATH})"
+  tool="$(jq -r '.env.CLAUDE_CODE_USE_POWERSHELL_TOOL // ""' "$live" 2>/dev/null)"
+  if [ "$tool" = 0 ]; then ok "PowerShell tool off (CLAUDE_CODE_USE_POWERSHELL_TOOL=0)"
+  elif [ -n "$tool" ]; then warn "PowerShell tool on (CLAUDE_CODE_USE_POWERSHELL_TOOL=$tool): only the Bash|PowerShell hook matchers guard it"
+  else bad "settings.json env lacks CLAUDE_CODE_USE_POWERSHELL_TOOL=0 (settings/windows.json; re-run scripts/install.ps1)"; fi
+  unguarded="$(jq -r '[.hooks[]?[]? | .matcher? // empty | select(test("(^|[|])Bash($|[|])") and (test("PowerShell") | not))] | length' "$live" 2>/dev/null)"
+  if [ "${unguarded:-1}" = 0 ]; then ok "every Bash hook matcher also matches PowerShell"
+  else bad "$unguarded hook matcher(s) name Bash without PowerShell (settings/base.json: use Bash|PowerShell)"; fi
+}
+
 CLAUDE_FLOOR=2.1.326
 check_claude_version() {
   local version live="$CLAUDE_DIR/settings.json" channel pinned
@@ -124,6 +139,7 @@ check_claude_version() {
   if [ -z "$version" ]; then warn "claude --version gave no version: cannot check the floor $CLAUDE_FLOOR ($pinned)"
   elif version_at_least "$version" "$CLAUDE_FLOOR"; then ok "claude $version (floor $CLAUDE_FLOOR; $pinned)"
   else bad "claude >= $CLAUDE_FLOOR required (found $version; $pinned): below it the Bash guard's onFailure: block may be ignored and the phase pin does not hold; run claude update"; fi
+  if is_windows; then check_windows_shell; fi
 }
 
 # These variables override the model and effort every agent file and workflow script names (sub-agents.md:384, model-config.md:655-746;

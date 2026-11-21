@@ -1,7 +1,17 @@
 {
+  "env": {
+    "CLAUDE_CODE_USE_POWERSHELL_TOOL": "0"
+  },
   "hooks": {
     "Notification": [
-      { "hooks": [ { "type": "command", "command": "powershell -NoProfile -Command \"[console]::beep(880,200)\"" } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -Command \"[console]::beep(880,200)\""
+          }
+        ]
+      }
     ]
   }
 }

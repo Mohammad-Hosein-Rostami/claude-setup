@@ -86,8 +86,8 @@ function callIds(input) {
   return root === null ? null : { session: input.session_id, agent: input.agent_id, record: join(root, 'bash-writes', ids.join('--')) };
 }
 
-/** The command of a Bash call this hook handles, or undefined. */
-const bashCommand = (input) => (input?.tool_name === 'Bash' && typeof input.tool_input?.command === 'string' ? input.tool_input.command : undefined);
+/** The command of a Bash or PowerShell call this hook handles, or undefined (settings/base.json matches both shell tools). */
+const bashCommand = (input) => (['Bash', 'PowerShell'].includes(input?.tool_name) && typeof input.tool_input?.command === 'string' ? input.tool_input.command : undefined);
 const cwdOf = (input) => (typeof input.cwd === 'string' ? input.cwd : process.cwd());
 
 /** Before the command: writes the before-record of its candidates. Writes nothing when it names none or cannot be checked. */

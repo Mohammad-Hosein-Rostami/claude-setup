@@ -1,9 +1,11 @@
-// Purpose: the Windows-only install steps: the launcher folder on the user PATH.
-// Exports: powershell, addUserPath.
+// Purpose: the Windows-only install steps: Git Bash must be there, and the launcher folder goes on the user PATH.
+// Exports: powershell, findGitBash, requireGitBash, addUserPath.
 // Invariants: the user PATH is read raw from the registry (no %VAR% expansion) and written back as ExpandString, so existing
 //   %VAR% entries survive; a folder already on it changes nothing. The PowerShell text goes in as -EncodedCommand (no quoting).
+import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { act, note, warn } from './context.mjs';
+import { dirname, join } from 'node:path';
+import { InstallError, act, note, warn } from './context.mjs';
 
 const POWERSHELL_TIMEOUT_MS = 60000;
 
@@ -11,6 +13,30 @@ const POWERSHELL_TIMEOUT_MS = 60000;
 export function powershell(script) {
   const encoded = Buffer.from(script, 'utf16le').toString('base64');
   return spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { encoding: 'utf8', timeout: POWERSHELL_TIMEOUT_MS });
+}
+
+/**
+ * Git Bash's bash.exe: CLAUDE_CODE_GIT_BASH_PATH, the usual install folders, or beside the git on PATH (<Git>\\cmd\\git.exe).
+ * @param {NodeJS.ProcessEnv} env the environment
+ * @returns {string|null} the path, or null when none is there
+ */
+export function findGitBash(env) {
+  const folders = [env.ProgramFiles, env['ProgramFiles(x86)'], env.LOCALAPPDATA && join(env.LOCALAPPDATA, 'Programs')].filter(Boolean);
+  const where = spawnSync('where', ['git'], { encoding: 'utf8' });
+  const besideGit = where.status === 0 ? where.stdout.split(/\r?\n/).filter(Boolean).map((git) => join(dirname(dirname(git.trim())), 'bin', 'bash.exe')) : [];
+  const candidates = [env.CLAUDE_CODE_GIT_BASH_PATH, ...folders.map((folder) => join(folder, 'Git', 'bin', 'bash.exe')), ...besideGit].filter(Boolean);
+  return candidates.find((path) => existsSync(path)) ?? null;
+}
+
+/**
+ * Stops the install without Git Bash: Claude Code on Windows runs its Bash tool, the hooks' shell and the status line
+ * through it; without it the PowerShell tool is the only shell and the guard's Bash rules do not hold.
+ * @throws {InstallError} when Git Bash is not found
+ */
+export function requireGitBash(ctx) {
+  const found = findGitBash(ctx.env);
+  if (!found) throw new InstallError('Git Bash not found (winget install Git.Git, or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe)');
+  note(ctx, `ok Git Bash ${found}`);
 }
 
 /**

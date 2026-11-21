@@ -60,7 +60,7 @@ function recordFile(repoDir, env, suffix = '') {
   const common = git(repoDir, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
   if (common === null) return null;
   const id = createHash('sha256').update(realpathSync(common)).digest('hex').slice(0, ID_LENGTH);
-  const home = env.HOME ?? env.USERPROFILE ?? homedir();
+  const home = env.HOME || env.USERPROFILE || homedir(); // || not ??: an empty HOME (some Windows shells) falls through
   return { dir: join(home, '.claude', 'state', 'test-pass'), path: join(home, '.claude', 'state', 'test-pass', `${id}${suffix}.jsonl`) };
 }
 

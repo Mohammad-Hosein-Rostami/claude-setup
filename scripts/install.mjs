@@ -7,6 +7,8 @@
 //                          dependencies; safe to repeat (a second run changes nothing). --update is the same run, by name.
 //   --update --to <tag>    the same, with the links on a worktree of a phase tag (rollback; scripts/install/pin.mjs); a plain
 //                          --update points them back at this checkout.
+//   --claude-version <v>   install Claude Code <v> (the phase pin, 2.1.326 or newer) and prove it answers, else put the old
+//                          binary back (scripts/install/cli.mjs)
 //   --uninstall            remove what the install record names and put the backed-up files back (scripts/install/uninstall.mjs).
 // Exports: LINKS, TOOLS_WITH_DEPS, main.
 // Invariants: never deletes a file it did not make: anything replaced goes to ~/.claude-backup-<stamp>/ and is named in the
@@ -24,7 +26,8 @@ import { addStartupLines } from './install/startup.mjs';
 import { buildSettings, isNewMachine } from './install/settings.mjs';
 import { tagRoot } from './install/pin.mjs';
 import { uninstall } from './install/uninstall.mjs';
-import { addUserPath } from './install/windows.mjs';
+import { addUserPath, requireGitBash } from './install/windows.mjs';
+import { installClaude } from './install/cli.mjs';
 import * as tools from './install/tools.mjs';
 
 /** The home/ items linked into ~/.claude (doctor.sh checks the same list). */
@@ -41,6 +44,7 @@ function enableGitHooks(ctx) {
 }
 
 function install(ctx, record) {
+  if (ctx.os === 'windows') requireGitBash(ctx);
   ctx.newMachine = isNewMachine(ctx, record);
   ensureDir(ctx, record, ctx.claudeDir);
   ctx.root = ctx.to ? tagRoot(ctx, record) : ctx.repo;
@@ -52,6 +56,7 @@ function install(ctx, record) {
   addStartupLines(ctx, record);
   enableGitHooks(ctx);
   if (ctx.project) projectWorkflows(ctx, record);
+  if (ctx.claudeVersion) installClaude(ctx); // before the plugin commands, which use the new CLI
   if (!ctx.noPlugins) tools.installPlugins(ctx);
   // Settings after plugins; tool dependencies after settings (header).
   buildSettings(ctx, record);
