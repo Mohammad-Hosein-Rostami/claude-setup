@@ -1,15 +1,16 @@
 // Tests that try to break git-tidy: facts that change between the check and the removal, forged candidates, a repo in the
 // middle of an operation, bare and shallow repos, an inherited GIT_DIR, odd histories and many branches.
-// Each test builds its own repo in a temp folder (see git-tidy-helpers.mjs).
-import test from 'node:test';
+// Each test builds its own repo in a temp folder (see git-tidy-helpers.mjs); the 300-branch repo is built once and each test that
+// needs it works on its own copy.
+import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { execFile, spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { findLeftovers } from '../home/tools/git-tidy/lib/leftovers.mjs';
 import { pruneRepo } from '../home/tools/git-tidy/lib/prune.mjs';
 import { openRepo } from '../home/tools/git-tidy/lib/repo.mjs';
-import { CLEAN_ENV, addWorktree, commit, git, lines, makeRepo, tidy } from './git-tidy-helpers.mjs';
+import { CLEAN_ENV, CLI, addWorktree, commit, git, lines, makeRepo, tidy } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const apply = (dir, ...extra) => tidy(['prune', dir, '--apply', '--include-recent', ...extra], { cwd: dir });
@@ -188,10 +189,23 @@ const SMALL_BRANCHES = 30;
 const LARGE_BRANCHES = 300;
 const SIZE_RATIO = LARGE_BRANCHES / SMALL_BRANCHES;
 
+/**
+ * Runs the CLI like `tidy` without blocking the event loop, so the two repos of the counting test are counted side by side.
+ * @returns {Promise<{status: number, stdout: string, stderr: string}>} the exit code and output; a run that cannot start or is killed rejects
+ */
+function tidyInBackground(args, { cwd, env }) {
+  return new Promise((resolve, reject) => {
+    execFile(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: { ...CLEAN_ENV, ...env }, maxBuffer: 64 << 20 }, (error, stdout, stderr) => {
+      if (error && typeof error.code !== 'number') reject(error);
+      else resolve({ status: error ? error.code : 0, stdout, stderr });
+    });
+  });
+}
+
 /** Runs the CLI and returns the result with the number of git processes it started. */
-function tidyCountingGit(args, dir) {
+async function tidyCountingGit(args, dir) {
   const traceFile = join(makeTempDir('git-trace-'), 'trace2.json');
-  const result = tidy(args, { cwd: dir, env: { GIT_TRACE2_EVENT: traceFile } });
+  const result = await tidyInBackground(args, { cwd: dir, env: { GIT_TRACE2_EVENT: traceFile } });
   const gitCalls = readFileSync(traceFile, 'utf8').split('\n').filter((line) => line.includes('"event":"start"')).length;
   return { result, gitCalls };
 }
@@ -218,37 +232,55 @@ function makeRepoWithManyBranches(perKind) {
   return dir;
 }
 
-/** Git processes started by check, the prune plan and prune --apply on a fresh repo with `perKind` branches of each kind. */
-function countGitCalls(perKind) {
-  const dir = makeRepoWithManyBranches(perKind);
-  return {
-    check: tidyCountingGit(['check', dir], dir),
-    plan: tidyCountingGit(['prune', dir], dir),
-    apply: tidyCountingGit(['prune', dir, '--apply', '--include-recent'], dir),
-    dir,
-  };
+let largeRepo; // the repo with LARGE_BRANCHES branches, built once (about 100 git calls); tests work on copies of it
+
+/** The LARGE_BRANCHES repo, built at the first call. */
+const largeRepoOnce = () => (largeRepo ??= makeRepoWithManyBranches(LARGE_BRANCHES / 3));
+
+/** A copy of the repo `dir` in its own temp folder: the same refs, objects and files, so a command sees the same repo. */
+function copyOfRepo(dir) {
+  const copy = join(realpathSync(makeTempDir('git-tidy-copy-')), 'repo');
+  cpSync(dir, copy, { recursive: true });
+  return copy;
 }
 
-test('300 branches: check, the prune plan and apply start a bounded number of git processes, grow linearly, and sort every branch right', () => {
-  const small = countGitCalls(SMALL_BRANCHES / 3);
-  const large = countGitCalls(LARGE_BRANCHES / 3);
-  const { check, plan, apply: applied, dir } = large;
-  const merged = lines(check.result).filter((line) => line.startsWith('merged-branch ')).length;
-  const unmerged = lines(check.result).filter((line) => line.startsWith('unmerged-branch? ')).length;
-  assert.deepEqual([check.result.status, merged, unmerged], [1, 200, 100]);
-  assert.match(lines(plan.result).at(-1), /^git-tidy prune: 200 to remove, 0 kept/);
-  assert.equal(applied.result.status, 0);
-  assert.equal(branches(dir).length, 101, 'main and the 100 branches with their own commit remain');
-  for (const command of ['check', 'plan', 'apply']) {
-    const ceiling = (branchCount) => CALLS_BASE[command] + CALLS_PER_BRANCH[command] * branchCount;
-    assert.ok(large[command].gitCalls <= ceiling(LARGE_BRANCHES), `${command}: ${large[command].gitCalls} git calls for ${LARGE_BRANCHES} branches, limit ${ceiling(LARGE_BRANCHES)}`);
-    assert.ok(small[command].gitCalls <= ceiling(SMALL_BRANCHES), `${command}: ${small[command].gitCalls} git calls for ${SMALL_BRANCHES} branches, limit ${ceiling(SMALL_BRANCHES)}`);
-    const linearLimit = SIZE_RATIO * small[command].gitCalls + CALLS_BASE[command];
-    assert.ok(large[command].gitCalls <= linearLimit, `${command}: ${large[command].gitCalls} calls at ${LARGE_BRANCHES} branches against ${small[command].gitCalls} at ${SMALL_BRANCHES}: growth is not linear`);
-  }
-});
+/**
+ * Git processes started by check, the prune plan and prune --apply on the repo `repo`, all at once, each on its own copy (check and the
+ * plan change nothing, so each still sees the repo apply starts from). `dir` is the copy apply pruned.
+ */
+async function countGitCalls(repo) {
+  const [checkDir, planDir, applyDir] = [copyOfRepo(repo), copyOfRepo(repo), copyOfRepo(repo)];
+  const [check, plan, apply] = await Promise.all([
+    tidyCountingGit(['check', checkDir], checkDir),
+    tidyCountingGit(['prune', planDir], planDir),
+    tidyCountingGit(['prune', applyDir, '--apply', '--include-recent'], applyDir),
+  ]);
+  return { check, plan, apply, dir: applyDir };
+}
 
-test('300 branches: the prune --json plan keeps none of the merged branches', () => {
-  const dir = makeRepoWithManyBranches(LARGE_BRANCHES / 3);
-  assert.deepEqual(actions(JSON.parse(tidy(['prune', dir, '--json'], { cwd: dir }).stdout).items).filter((a) => a.startsWith('keep')), []);
+// Speed (phase 8): the two 300-branch tests run side by side, and the counting test runs its six CLI calls side by side: most of the
+// time is the CLI's own git processes, which do not wait for each other.
+describe('300 branches', { concurrency: true }, () => {
+  test('300 branches: check, the prune plan and apply start a bounded number of git processes, grow linearly, and sort every branch right', async () => {
+    const [small, large] = await Promise.all([countGitCalls(makeRepoWithManyBranches(SMALL_BRANCHES / 3)), countGitCalls(largeRepoOnce())]);
+    const { check, plan, apply: applied, dir } = large;
+    const merged = lines(check.result).filter((line) => line.startsWith('merged-branch ')).length;
+    const unmerged = lines(check.result).filter((line) => line.startsWith('unmerged-branch? ')).length;
+    assert.deepEqual([check.result.status, merged, unmerged], [1, 200, 100]);
+    assert.match(lines(plan.result).at(-1), /^git-tidy prune: 200 to remove, 0 kept/);
+    assert.equal(applied.result.status, 0);
+    assert.equal(branches(dir).length, 101, 'main and the 100 branches with their own commit remain');
+    for (const command of ['check', 'plan', 'apply']) {
+      const ceiling = (branchCount) => CALLS_BASE[command] + CALLS_PER_BRANCH[command] * branchCount;
+      assert.ok(large[command].gitCalls <= ceiling(LARGE_BRANCHES), `${command}: ${large[command].gitCalls} git calls for ${LARGE_BRANCHES} branches, limit ${ceiling(LARGE_BRANCHES)}`);
+      assert.ok(small[command].gitCalls <= ceiling(SMALL_BRANCHES), `${command}: ${small[command].gitCalls} git calls for ${SMALL_BRANCHES} branches, limit ${ceiling(SMALL_BRANCHES)}`);
+      const linearLimit = SIZE_RATIO * small[command].gitCalls + CALLS_BASE[command];
+      assert.ok(large[command].gitCalls <= linearLimit, `${command}: ${large[command].gitCalls} calls at ${LARGE_BRANCHES} branches against ${small[command].gitCalls} at ${SMALL_BRANCHES}: growth is not linear`);
+    }
+  });
+
+  test('300 branches: the prune --json plan keeps none of the merged branches', () => {
+    const dir = copyOfRepo(largeRepoOnce());
+    assert.deepEqual(actions(JSON.parse(tidy(['prune', dir, '--json'], { cwd: dir }).stdout).items).filter((a) => a.startsWith('keep')), []);
+  });
 });
