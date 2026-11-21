@@ -3,7 +3,7 @@
 // merged branch or worktree), while a base branch moved during this session has no full-suite PASS, or while an old unmerged lane is named
 // by no open row of the session's STATUS.md. A SubagentStop is blocked once when the agent left its own empty `worktree-agent-<id>` branch.
 // PreCompact prints one line per open lane so the summary keeps them.
-// Exports: decide(input, env, deps) -> Promise<{block: false} | {block: true, reason}>, openLanes(input, env, deps) -> Promise<string[]>.
+// Exports: decide(input, env, deps) -> Promise<{block: false, info?} | {block: true, reason}>, openLanes(input, env, deps) -> Promise<string[]>.
 //   deps (tests): runCheck(top, timeoutMs, env), checkTimeoutMs, hasPass (null: no test-pass tool), now (ms, for the cache age).
 //   Env: GIT_TIDY_GATE_CHECK_TIMEOUT_MS overrides CHECK_TIMEOUT_MS (a loaded machine, the test suite).
 // Invariants:
@@ -23,97 +23,37 @@
 // - Blocks at most once per state (agent + repo + the problems found); a continued stop (stop_hook_active) gets at most
 //   MAX_CHAINED_BLOCKS blocks in a row (lib/tidy-gate-store.mjs), so the gate can never loop. A state that cannot be stored is not blocked.
 // - Without a transcript timestamp or the test-pass tool the base tip is not judged; without a linked STATUS.md no lane is called unnamed.
+// - A base move another, older session's call-window record claims (lib/base-moves.mjs) does not block: the stop prints one
+//   `systemMessage` info line per sha instead (never with a block, never on PreCompact). Every own move blocks as before.
 // - Any internal error is one stderr line and exit 0: a session is never trapped.
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { editedWorktrees, gatedFolder, gitOut, gitText, namesFilterProgram, readHead, worktreeOf } from './lib/gated-folder.mjs';
+import { baseTipProblem } from './lib/base-moves.mjs';
+import { editedWorktrees, gatedFolder, gitOut, gitText, namesFilterProgram, worktreeOf } from './lib/gated-folder.mjs';
 import { isSessionId } from './lib/session-store.mjs';
 import { statusFileOf } from './lib/status-file-of.mjs';
 import { cachedVerdict, recordOnce, storeVerdict } from './lib/tidy-gate-store.mjs';
+import { MERGE_COMMIT, OPEN_LANE, PRUNE_KINDS, runCheckChild, UNLANDED } from './lib/tidy-check-child.mjs';
 import { parseWorkItems } from '../tools/estimate/lib/items.mjs';
 import { isAgentBranch } from '../tools/git-tidy/lib/copies.mjs';
 import { readStatusFile } from '../tools/status/status-file.mjs';
 
-const GIT_TIDY = fileURLToPath(new URL('../tools/git-tidy/git-tidy.mjs', import.meta.url));
-const TEST_PASS = '../tools/test-pass/test-pass.mjs';
 const PASS = Object.freeze({ block: false });
 const CHECK_TIMEOUT_MS = 4000; // a Stop hook must answer fast; a slower check is finished by the detached refresh
-const MAX_TEXT_CHARS = 200; // of one name, path or commit subject kept from a check, so one odd value cannot flood a reason or the store
 const REFRESH_TIMEOUT_MS = 60_000;
-const MAX_LISTED = 20; // entries of one kind kept in a verdict and shown in a reason
-const TRANSCRIPT_HEAD_BYTES = 4 * 1024 * 1024;
 const AGENT_BRANCH_PREFIX = 'worktree-agent-';
-// findings the gate blocks on; all but merge-commit are removed by `git-tidy prune`
-const MERGE_COMMIT = 'merge-commit';
-const PRUNE_KINDS = new Set(['superseded-copy', 'agent-leftover', 'merged-branch', 'merged-worktree', 'stale-worktree']);
-const COPY_KINDS = new Set(['superseded-copy', 'agent-leftover']);
-const UNLANDED = 'unlanded-lane?';
-const OPEN_LANE = 'unmerged-branch?';
-// command-scope config beats the repository's own: the child's git never starts a program the repository names
-const CHILD_GIT_CONFIG = {
-  GIT_CONFIG_COUNT: '3',
-  GIT_CONFIG_KEY_0: 'core.fsmonitor', GIT_CONFIG_VALUE_0: 'false',
-  GIT_CONFIG_KEY_1: 'safe.bareRepository', GIT_CONFIG_VALUE_1: 'explicit',
-  GIT_CONFIG_KEY_2: 'log.showSignature', GIT_CONFIG_VALUE_2: 'false',
-};
-
 const homeOf = (env) => env.HOME || env.USERPROFILE || homedir();
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
-const short = (hash) => hash.slice(0, 8);
 
 /** A hash of every ref and the worktree list: equal while nothing a check looks at changed; null when git cannot be read. */
 function fingerprintOf(top) {
   const refs = gitOut(top, ['for-each-ref', '--format=%(objectname) %(refname)']);
   const trees = gitOut(top, ['worktree', 'list', '--porcelain']);
   return refs === null || trees === null ? null : sha256(`${refs}\0${trees}`);
-}
-
-const listOf = (items, kinds) => items.filter(({ kind }) => kinds.has(kind)).slice(0, MAX_LISTED);
-const plainText = (text) => String(text).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, MAX_TEXT_CHARS);
-const plainItem = ({ kind, subject, detail }) => ({ kind, subject: plainText(subject), detail: plainText(detail) });
-
-/**
- * Only what the gate reads of a `check --json` report, so a repo with hundreds of branches stays small in the store. `removable` holds the
- * names and paths the prune dry run would remove: of the findings that prune fixes, only those block (prune keeps a fresh worktree).
- * Copies and agent branches are not lanes, so they are left out of the lane hints.
- */
-function slimVerdict({ base, findings, hints }, removable) {
-  const blocking = findings.filter(({ kind, subject }) => kind === MERGE_COMMIT || (PRUNE_KINDS.has(kind) && removable.has(subject)));
-  const notLanes = new Set(findings.filter(({ kind }) => COPY_KINDS.has(kind)).map(({ subject }) => subject));
-  const isLane = ({ subject }) => !notLanes.has(subject) && !isAgentBranch(subject);
-  return {
-    base,
-    findings: blocking.slice(0, MAX_LISTED).map(plainItem),
-    hints: [...listOf(hints, new Set([UNLANDED])).filter(isLane), ...listOf(hints, new Set([OPEN_LANE])).filter(isLane)].map(plainItem),
-  };
-}
-
-/** `git-tidy <args> --json` as a child: its parsed report, 'timeout', or undefined (one stderr line) when it cannot be read. */
-function runTidyChild(args, timeoutMs, env, okStatuses) {
-  const result = spawnSync(process.execPath, [GIT_TIDY, ...args], {
-    encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL', env: { ...env, ...CHILD_GIT_CONFIG }, maxBuffer: 64 << 20,
-  });
-  if (result.error?.code === 'ETIMEDOUT') return 'timeout';
-  if (result.error || !okStatuses.includes(result.status)) {
-    process.stderr.write(`git-tidy-gate: git-tidy ${args[0]} failed: ${result.error?.message ?? result.stderr.split('\n')[0]}\n`);
-    return undefined;
-  }
-  return JSON.parse(result.stdout);
-}
-
-/** The slim verdict of `top` from `git-tidy check` and, when something is prunable, a prune dry run; 'timeout' or undefined as runTidyChild. */
-function runCheckChild(top, timeoutMs, env) {
-  const startedMs = Date.now();
-  const report = runTidyChild(['check', top, '--json'], timeoutMs, env, [0, 1]);
-  if (report === 'timeout' || report === undefined) return report;
-  if (!report.findings.some(({ kind }) => PRUNE_KINDS.has(kind))) return slimVerdict(report, new Set());
-  const plan = runTidyChild(['prune', top, '--include-recent', '--json'], Math.max(timeoutMs - (Date.now() - startedMs), 1), env, [0]);
-  if (plan === 'timeout' || plan === undefined) return plan;
-  return slimVerdict(report, new Set(plan.items.filter(({ action }) => action === 'remove').map(({ subject }) => subject)));
 }
 
 /** One detached run of this file that checks `top` without a time bound worth waiting for and stores the verdict. */
@@ -153,45 +93,6 @@ function verdictFor(env, session, top, deps, timeoutMs) {
   return fresh;
 }
 
-/** Epoch ms of the first transcript line that has a timestamp (the session's start); null when there is none. */
-function sessionStartMs(transcriptPath) {
-  if (typeof transcriptPath !== 'string') return null;
-  for (const line of (readHead(transcriptPath, TRANSCRIPT_HEAD_BYTES) ?? '').split('\n')) {
-    try {
-      const at = Date.parse(JSON.parse(line).timestamp);
-      if (Number.isFinite(at)) return at;
-    } catch {
-      // a line cut at the read cap, or not JSON: look at the next one
-    }
-  }
-  return null;
-}
-
-async function loadHasPass() {
-  try {
-    return (await import(TEST_PASS)).hasPass;
-  } catch {
-    return null; // no test-pass tool here: the base tip cannot be judged
-  }
-}
-
-/** The base branch's tip as {sha, movedMs} from its reflog (when it last moved), or null. */
-function baseTip(top, base) {
-  const entry = gitText(top, ['reflog', 'show', '--date=unix', '--format=%gd %H', '-n', '1', `refs/heads/${base}`]);
-  const found = /@\{(\d+)\} ([0-9a-f]{40,64})$/.exec(entry);
-  return found === null ? null : { sha: found[2], movedMs: Number(found[1]) * 1000 };
-}
-
-/** A problem when the base moved during this session and its tip has no full-suite PASS; null otherwise. */
-async function baseTipProblem(top, base, transcriptPath, deps) {
-  const hasPass = deps.hasPass === undefined ? await loadHasPass() : deps.hasPass;
-  const startedMs = sessionStartMs(transcriptPath);
-  if (hasPass === null || startedMs === null || typeof base !== 'string') return null;
-  const tip = baseTip(top, base);
-  if (tip === null || tip.movedMs <= startedMs || hasPass(top, tip.sha, { suite: true })) return null;
-  return { key: `base-tip:${tip.sha}`, text: `${base} moved to ${short(tip.sha)} during this session and has no full-suite PASS: run \`test-pass run --suite\` at ${short(tip.sha)}` };
-}
-
 /** Open rows of the session's STATUS.md as lower-case text, or null when no STATUS.md is linked. */
 function openRowTexts(input, env) {
   const found = statusFileOf(input, { stateDir: join(homeOf(env), '.claude', 'state', 'estimate'), projectDir: env.CLAUDE_PROJECT_DIR });
@@ -228,12 +129,14 @@ function verdictProblems(verdict, input, env, top) {
   return { problems, pruneLine: prune ? `node ~/.claude/tools/git-tidy/git-tidy.mjs prune ${shellWord(top)} --apply --include-recent` : null };
 }
 
-async function leadReason(input, env, deps, { top, timeoutMs }) {
+/** The hygiene reason for one tree, or null; an info line of a foreign base move goes to `infos` instead (spec 2.3, K9). */
+async function leadReason(input, env, deps, { top, timeoutMs, infos }) {
   const verdict = verdictFor(env, input.session_id, top, deps, timeoutMs);
   if (verdict === null) return null;
   const { problems, pruneLine } = verdictProblems(verdict, input, env, top);
-  const baseProblem = await baseTipProblem(top, verdict.base, input.transcript_path, deps);
-  if (baseProblem !== null) problems.push(baseProblem);
+  const baseProblem = await baseTipProblem(top, verdict.base, input, deps, env);
+  if (baseProblem?.info !== undefined) infos.push(baseProblem);
+  else if (baseProblem !== null) problems.push(baseProblem);
   if (problems.length === 0) return null;
   const lines = problems.map(({ text }) => `- ${text}`);
   const fix = pruneLine === null ? '' : `\nClean up what prune can remove (only proven patch-equal or merged work): ${pruneLine}`;
@@ -289,7 +192,7 @@ async function inspectWithinBudget(input, env, deps, inspect) {
  * @param {object} input the hook JSON (session_id, agent_id?, agent_type?, agent_transcript_path?, transcript_path?, stop_hook_active?)
  * @param {Record<string, string | undefined>} [env] HOME (the state folder), CLAUDE_PROJECT_DIR and the environment the check child gets
  * @param {object} [deps] see the header
- * @returns {Promise<{block: false} | {block: true, reason: string}>}
+ * @returns {Promise<{block: false, info?: string} | {block: true, reason: string}>} info: a foreign base move without a PASS (printed once)
  */
 export async function decide(input, env = process.env, deps = {}) {
   const agent = typeof input?.agent_id === 'string' && input.agent_id !== '' ? input.agent_id : null;
@@ -297,11 +200,18 @@ export async function decide(input, env = process.env, deps = {}) {
     const tree = gatedTree(input, env);
     return tree === null ? PASS : blockOnce(input, env, agent, tree, agentReason(input, tree.top));
   }
+  const infos = [];
   const blocked = await inspectWithinBudget(input, env, deps, async (tree, timeoutMs) => {
-    const result = blockOnce(input, env, agent, tree, await leadReason(input, env, deps, { top: tree.top, timeoutMs }));
+    const result = blockOnce(input, env, agent, tree, await leadReason(input, env, deps, { top: tree.top, timeoutMs, infos }));
     return result.block ? result : undefined;
   });
-  return blocked ?? PASS;
+  return blocked ?? infoOnce(input, env, infos);
+}
+
+/** PASS with the info lines not shown before in this session (once per sha: the agent key `info` of the block store). */
+function infoOnce(input, env, infos) {
+  const fresh = infos.filter(({ key }) => recordOnce(env, input.session_id, { agent: 'info', state: sha256(`info\0${key}`), continued: false }));
+  return fresh.length === 0 ? PASS : { block: false, info: fresh.map(({ info }) => info).join('\n') };
 }
 
 /** The block for `found` (a reason or null) the first time its state is seen in this session, else PASS. */
@@ -352,6 +262,7 @@ async function main() {
   }
   const result = await decide(input);
   if (result.block) process.stdout.write(`${JSON.stringify({ decision: 'block', reason: result.reason })}\n`);
+  else if (result.info !== undefined) process.stdout.write(`${JSON.stringify({ systemMessage: result.info })}\n`);
 }
 
 // ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.
