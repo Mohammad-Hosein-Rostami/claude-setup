@@ -178,6 +178,11 @@ test('post-edit logs every edited code file of a package: the stop gate decides 
     assert.equal(r.status, 0, what);
     assert.equal(await read('main'), `${file}\n`, what);
   }
+  for (const name of ['a.mts', 'a.cts']) {
+    const { r, file, read } = await loggedEdit({ name });
+    assert.equal(r.status, 0, name);
+    assert.equal(await read('main'), `${file}\n`, `${name}: an ES module or CommonJS TypeScript file is code too`);
+  }
 });
 
 test('post-edit logs nothing for a file that is not code, was removed, or has no package.json above it (a tsconfig alone is out of scope)', async () => {

@@ -1,7 +1,7 @@
 // Parses check output (tsc, eslint stylish and unix formats) into `file:line RULE-ID message` lines for post-edit.mjs and
-// typecheck-gate.mjs. Exports: CODE_FILE, MAX_LINES, isSamePath(reported, target), diagnostics(output, file), diagnosticsDetailed(output, file).
+// typecheck-gate.mjs. Exports: CODE_FILE, MAX_LINES, isSamePath(reported, target), diagnostics(output, file), diagnosticsDetailed(output, file, isAbout).
 // Invariants: pure; at most MAX_LINES lines; failures that only concern other files yield [] so they never block.
-export const CODE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
+export const CODE_FILE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 export const MAX_LINES = 15;
 
 const TSC_LINE = /^(.+?)\((\d+),\d+\): (?:error|warning) (TS\d+): (.*)$/;
@@ -41,9 +41,13 @@ function parseDiagnostic(l, header) {
 /**
  * Failure output (tsc, eslint stylish or unix format) -> at most 15 `file:line RULE-ID message` lines about `file`;
  * falls back to the raw tail. Failures that only concern other files yield no lines. Pure.
+ * @param {string} output what the check printed
+ * @param {string} file the file the lines must be about
+ * @param {(reported: string, file: string) => boolean} [isAbout] whether a reported path names `file`; by default
+ *   {@link isSamePath}, which also takes a path that only ends like it (the typecheck gate passes a stricter test)
  * @returns {{lines: string[], parsed: boolean}} `parsed` is false for the raw-tail fallback and for no lines at all
  */
-export function diagnosticsDetailed(output, file) {
+export function diagnosticsDetailed(output, file, isAbout = isSamePath) {
   const lines = output.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const found = [];
   let aboutOtherFiles = false;
@@ -54,7 +58,7 @@ export function diagnosticsDetailed(output, file) {
       if (isStylishHeader(l)) header = l;
       continue;
     }
-    if (isSamePath(d.path, file)) found.push(`${normPath(d.path)}:${d.text}`);
+    if (isAbout(d.path, file)) found.push(`${normPath(d.path)}:${d.text}`);
     else aboutOtherFiles = true;
   }
   if (!found.length && aboutOtherFiles) return { lines: [], parsed: false };
