@@ -21,6 +21,7 @@ const ASCII_GLYPH = { up: '+', down: '-', dirty: '*', clean: 'ok', old: '!' };
 const isCount = (value) => Number.isInteger(value) && value >= 0;
 const wide = (look) => look.columns >= WIDE_COLUMNS;
 const glyphs = (look) => (look.ascii ? ASCII_GLYPH : GLYPH);
+const worktreesOf = (repo) => (Array.isArray(repo?.worktrees) ? repo.worktrees.filter((wt) => wt !== null && typeof wt === 'object') : []);
 
 /** Commits ahead/behind the base and the changed files: `↑2↓1 ●3`, `✓` when clean and level. */
 function stateText(wt, look) {
@@ -37,7 +38,7 @@ const agentsText = (wt, look) => (Array.isArray(wt.agents) && wt.agents.length >
 
 /** The worktrees in the order they are shown: with agents first, then most commits ahead, then newest commit. */
 function ordered(repo) {
-  const rest = (repo?.worktrees ?? []).filter((wt) => !wt.main);
+  const rest = worktreesOf(repo).filter((wt) => !wt.main);
   const weight = (wt) => (wt.agents?.length > 0 ? 2 : 0) + (wt.ahead > 0 ? 1 : 0);
   return rest.sort((a, b) => weight(b) - weight(a) || (b.ahead ?? 0) - (a.ahead ?? 0) || (a.ageMin ?? Infinity) - (b.ageMin ?? Infinity));
 }
@@ -51,7 +52,7 @@ function briefOf(wt, look) {
 
 /** The main worktree's part: `git main ✓ · last 12 min ago`. */
 function mainParts(repo, look) {
-  const main = (repo.worktrees ?? []).find((wt) => wt.main);
+  const main = worktreesOf(repo).find((wt) => wt.main);
   if (main === undefined) return [{ text: `git ${cleanText(repo.base ?? '?', look)}` }];
   const age = isCount(main.ageMin) ? `last ${wide(look) ? 'commit ' : ''}${durationText(main.ageMin)} ago` : '';
   return [{ text: `git ${cleanText(main.name, look).slice(0, MAX_NAME_CHARS)} ${stateText(main, look)}${main.op ? ` ${cleanText(main.op, look)}` : ''}` }, { text: age, drop: 9 }];
@@ -92,7 +93,7 @@ export function gitRows(repo, slots, ctx, look) {
 /** @returns {string} the git summary of the counts row: `git 7 br · 3 not landed · 2 dirty`; '' without a repo */
 export function gitCounts(repo, look) {
   if (repo === null || typeof repo !== 'object') return '';
-  const dirty = (repo.worktrees ?? []).filter((wt) => wt.changed > 0).length;
+  const dirty = worktreesOf(repo).filter((wt) => wt.changed > 0).length;
   const facts = [
     isCount(repo.branches) ? `${repo.branches} ${wide(look) ? 'branches' : 'br'}` : '',
     isCount(repo.unlanded) && repo.unlanded > 0 ? `${repo.unlanded} not landed` : '',

@@ -68,10 +68,10 @@ function barPart(agent, ctx, look) {
 function timePart(agent, ctx, look) {
   if (agent.state === 'done') return { text: isNumber(agent.doneMs) ? `${timeText((ctx.nowMs - agent.doneMs) / MS_PER_MIN, look)} ago` : '' };
   if (agent.state === 'quiet') return { text: `quiet ${timeText(agent.quietMin ?? 0, look)}`, state: STATE.warn };
-  if (agent.overMin > 0) return { text: wide(look) ? `over usual by ${durationText(agent.overMin)}` : `over ${short(agent.overMin)}`, state: STATE.warn };
-  if (agent.conf === 'low' || agent.leftMin === null) {
+  if (isNumber(agent.overMin) && agent.overMin > 0) return { text: wide(look) ? `over usual by ${durationText(agent.overMin)}` : `over ${short(agent.overMin)}`, state: STATE.warn };
+  if (agent.conf === 'low' || !isNumber(agent.leftMin)) {
     const usual = Array.isArray(agent.usual) && wide(look) ? ` (usually ${Math.round(agent.usual[0])}${marks(look).dash}${Math.round(agent.usual[1])} min)` : '';
-    return { text: `${timeText(agent.elapsedMin ?? 0, look)} in${usual}` };
+    return { text: `${timeText(isNumber(agent.elapsedMin) ? agent.elapsedMin : 0, look)} in${usual}` };
   }
   return { text: wide(look) ? `${durationText(agent.leftMin)} left` : short(agent.leftMin) };
 }
@@ -101,7 +101,7 @@ function doingPart(agent, look) {
 /** The agent's worktree with its ahead count and changed files: `r9-a ↑2 ●3`. */
 function branchPart(agent, ctx, look) {
   if (agent.wt === null || agent.wt === undefined) return { text: '' };
-  const wt = (ctx.repo?.worktrees ?? []).find((entry) => entry.name === agent.wt);
+  const wt = (Array.isArray(ctx.repo?.worktrees) ? ctx.repo.worktrees : []).find((entry) => entry?.name === agent.wt);
   const ahead = wt?.ahead > 0 ? ` ${marks(look).up}${wt.ahead}` : '';
   const dirty = wt?.changed > 0 ? ` ${marks(look).dirty}${wt.changed}` : '';
   return { text: `${cleanText(agent.wt, look).slice(0, 24)}${ahead}${dirty}`, drop: 3 };
