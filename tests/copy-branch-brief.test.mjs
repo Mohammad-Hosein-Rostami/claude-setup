@@ -1,13 +1,16 @@
 // Tests for home/hooks/lib/copy-branch-brief.mjs (git-root-cause proposal 2): a writer brief that creates `<lane>-2` while `<lane>` exists,
 // or says "new branch off <existing>", is advised once; the lane's own name, a brief with no branch and a read-only agent are not.
-// The git repos are real temp repos (tests/git-tidy-helpers.mjs).
+// The git repos are real temp repos (tests/git-tidy-helpers.mjs). The deadline tests inject time (a fake performance.now()) and the
+// scan-speed test measures CPU time, so a busy machine cannot fail them (A-owed X4).
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import childProcess, { spawnSync } from 'node:child_process';
 import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { delimiter, join } from 'node:path';
 import { TOTAL_DEADLINE_MS, branchNames, copyBranchBriefAdvice, copyBranchStem } from '../home/hooks/lib/copy-branch-brief.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
+import { fastestCpuMs } from './timing.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const NO_FAKE_GIT = process.platform === 'win32' && 'the fake git is a shell script';
@@ -76,9 +79,9 @@ test('branchNames reads names out of a brief and ignores prose and options', () 
 test('branchNames reads a 260 KB hostile brief in well under a second (quadratic regexes took 7 s)', () => {
   const hostile = ['worktree add '.repeat(20000), `checkout -b ${')'.repeat(120000)}x`, 'git branch '.repeat(20000), 'new branch '.repeat(20000)];
   for (const text of hostile) {
-    const start = performance.now();
-    branchNames(text);
-    assert.ok(performance.now() - start < 500, `${text.slice(0, 20)}: ${Math.round(performance.now() - start)} ms`);
+    // CPU time of one run, not wall time: a busy machine that deschedules the test cannot push it over, a quadratic scan still does
+    const cpuMs = fastestCpuMs(() => branchNames(text), 1);
+    assert.ok(cpuMs < 500, `${text.slice(0, 20)}: ${Math.round(cpuMs)} ms of CPU`);
   }
 });
 
@@ -139,30 +142,45 @@ test('the total deadline is well under the hook timeout in settings/base.json, s
 });
 
 // Round 6 review (L2): 16 candidate names x 1 s per git call ran past the hook's 5 s timeout, and a killed hook skips the later gates and the model pin.
+// Injected time (A-owed X4): the gate reads its clock through performance.now(), so a fake clock that moves on by SLOW_GIT_MS at each git
+// start makes every lookup take that long, whatever the machine's load (a real `sleep 0.5` git took longer on a busy machine).
+const SLOW_GIT_MS = 500;
+const FAKE_CLOCK_START_MS = 5000;
+
 test('with no knob set, a slow git cannot hold the gate past the production deadline: later names are not looked up and the brief passes (fail open)', { skip: NO_FAKE_GIT }, () => {
-  const fake = fakeGit('sleep 0.5', 1);
+  const repo = repoWithLane();
+  const fake = fakeGit('', 1);
+  const clock = mock.method(performance, 'now', () => FAKE_CLOCK_START_MS + SLOW_GIT_MS * fake.starts());
   try {
     const started = performance.now();
-    const advice = withKnobs({}, () => copyBranchBriefAdvice(input(repoWithLane(), sixteenNames()), ENV));
+    const advice = withKnobs({}, () => copyBranchBriefAdvice(input(repo, sixteenNames()), ENV));
     const elapsed = performance.now() - started;
     assert.deepEqual(advice, { deny: false });
-    assert.ok(fake.starts() >= 2 && fake.starts() <= 5, `git started ${fake.starts()} times for 16 names; 2 s of 0.5 s calls allows about 4`);
+    assert.equal(fake.starts(), TOTAL_DEADLINE_MS / SLOW_GIT_MS, `git started ${fake.starts()} times for 16 names; 2 s of 0.5 s calls allows 4`);
     assert.ok(elapsed < HOOK_TIMEOUT_MS, `${Math.round(elapsed)} ms is past the hook timeout`);
   } finally {
+    clock.mock.restore();
     fake.restore();
   }
 });
 
 test('the last lookup is clipped to the time left: a git that hangs ends at the deadline, not after its own 1 s timeout', { skip: NO_FAKE_GIT }, () => {
+  const repo = repoWithLane();
   const fake = fakeGit('exec sleep 5', 0);
+  // Injected time (A-owed X4): a fixed clock leaves exactly 200 ms, and the spy reads the timeout git is given, so no wall time is measured.
+  const clock = mock.method(performance, 'now', () => FAKE_CLOCK_START_MS);
+  const spawns = mock.method(childProcess, 'spawnSync'); // calls the real spawnSync, so the hanging git is really stopped
+  syncBuiltinESMExports(); // the gate's own `import { spawnSync }` now sees the spy
   try {
-    const started = performance.now();
-    const stem = withKnobs({}, () => copyBranchStem('lane/hang-2', repoWithLane(), performance.now() + 200));
-    const elapsed = performance.now() - started;
+    const stem = withKnobs({}, () => copyBranchStem('lane/hang-2', repo, FAKE_CLOCK_START_MS + 200));
+    const lookups = spawns.mock.calls.filter((call) => call.arguments[0] === 'git').map((call) => call.arguments[2].timeout);
     assert.equal(stem, null);
     assert.equal(fake.starts(), 1);
-    assert.ok(elapsed < 700, `${Math.round(elapsed)} ms: the lookup ran past the 200 ms left (the per-call timeout is 1000 ms)`);
+    assert.deepEqual(lookups, [200], 'the lookup ran with the 200 ms left as its timeout, not the per-call timeout of 1000 ms');
   } finally {
+    spawns.mock.restore();
+    syncBuiltinESMExports();
+    clock.mock.restore();
     fake.restore();
   }
 });

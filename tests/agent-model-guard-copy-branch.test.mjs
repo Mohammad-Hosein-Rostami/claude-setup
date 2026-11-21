@@ -50,9 +50,25 @@ test('a plain lead Agent call is never sent back for a workflow: every agent typ
   assert.equal(denied(s.send(call('general-purpose', 'research the best queue for this'))), false, 'a research question too');
 });
 
+const TEST_TIME_KNOBS = { COPY_BRANCH_GIT_TIMEOUT_MS: String(GIT_TIMEOUT_FOR_TESTS_MS), COPY_BRANCH_DEADLINE_MS: String(GIT_TIMEOUT_FOR_TESTS_MS) };
+
+/** Runs `run` (sync or async) with TEST_TIME_KNOBS in process.env, where an in-process gate reads them, then puts the old values back. */
+async function withTestTimeKnobs(run) {
+  const saved = Object.fromEntries(Object.keys(TEST_TIME_KNOBS).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, TEST_TIME_KNOBS);
+  try {
+    return await run();
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
 // The copy-branch gate through the hook: a real temp repo holds the lane branch; the agent's cwd is that repo.
 function repoSession({ envExtra, ...options } = {}) {
-  const s = session({ ...options, envExtra: { COPY_BRANCH_GIT_TIMEOUT_MS: String(GIT_TIMEOUT_FOR_TESTS_MS), COPY_BRANCH_DEADLINE_MS: String(GIT_TIMEOUT_FOR_TESTS_MS), ...envExtra } });
+  const s = session({ ...options, envExtra: { ...TEST_TIME_KNOBS, ...envExtra } });
   const repo = makeRepo();
   git(repo, 'branch', 'lane/x');
   return { ...s, repo, sendIn: s.send, send: (toolInput, extra = {}) => s.send(toolInput, { cwd: repo, ...extra }) };
@@ -130,7 +146,10 @@ test('copyBranchBriefDeny records under the environment it is given, and a failu
   const s = repoSession();
   const env = hookEnv({ HOME: s.home, USERPROFILE: s.home });
   const input = { session_id: 'in-process-session', cwd: s.repo, tool_input: call('implementer', COPY_BRIEF) };
-  assert.ok(JSON.parse(await copyBranchBriefDeny(input, env)).hookSpecificOutput.permissionDecision === 'deny');
+  // The gate reads its time knobs from process.env, not from `env`: without them a git lookup past the 1 s default on a busy machine
+  // let the call run, and JSON.parse('') failed with "Unexpected end of JSON input" (A-owed X4).
+  const verdict = await withTestTimeKnobs(() => copyBranchBriefDeny(input, env));
+  assert.ok(JSON.parse(verdict).hookSpecificOutput.permissionDecision === 'deny');
   assert.equal(readFileSync(env.CLAUDE_GUARD_LOG, 'utf8').trim().split('\n').length, 1, 'the row went to the log of the given env');
   let reads = 0;
   const failing = { get tool_input() { reads += 1; if (reads > 1) throw new Error('boom'); return call('implementer', OTHER_COPY_BRIEF); }, cwd: s.repo };
