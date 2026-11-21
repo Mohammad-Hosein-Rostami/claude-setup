@@ -66,7 +66,7 @@ test('the parent of the item is swapped for another real folder after it was che
   const realChdir = process.chdir;
   let swapped = false;
   process.chdir = (target) => {
-    if (!swapped && target === parent) {
+    if (!swapped && (target === parent || target === 'mid')) { // r9-disk-check N1: the walk enters `mid` by its relative name
       swapped = true;
       renameSync(parent, join(root, 'spare'));
       folder(join(parent, 'item'), { days: 3, files: { 'new.txt': 'not for removal' } });

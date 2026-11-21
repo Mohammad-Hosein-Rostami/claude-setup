@@ -43,6 +43,20 @@ total measuring limit. Tests: `tests/disk-free.test.mjs`, `tests/doctor-disk.tes
 | test temp | folders in `os.tmpdir()` named `cs-test-*` (label plus 6 random characters), `cs-run-*` (6 characters), or an old test prefix plus 6 random characters (`lib/test-temp-prefixes.mjs`, only specific two-word-or-longer prefixes; in a shared `/tmp` only the `cs-` names) | older than 1 day |
 | temp projects | `~/.claude/projects/<slug>` where the slug starts with a temp path (`-private-var-folders-`, `-private-tmp-`, `-tmp-`) | no running session in it and nothing in it modified for 3 days |
 | hook state | files in `os.tmpdir()/claude-post-edit/*` and `claude-skill-router/*` (agent call counters, edit logs, tsbuildinfo, router markers) | older than 3 days |
+| figma pulls | `~/.cache/figma/<file>/<node>` folders that figma-pull (ui-check) fills; `--figma-cache` replaces the root | nothing in the folder modified for 30 days (a pull is reused for one UI job; after a month the design is pulled again) |
+
+The bound of each store this setup or Claude Code fills (2026-11-21):
+
+| Store | Bound | Kept by |
+| ----- | ----- | ------- |
+| scratchpads `/private/tmp/claude-<uid>/...` | 3 days idle (30 for an unknown session; an empty folder 3) | disk-clean `session-folders` |
+| test temp folders | 1 day | disk-clean `test-temp` |
+| hook counters in the temp folder | 3 days | disk-clean `hook-state` |
+| `~/.cache/figma` | 30 days idle | disk-clean `figma-pulls` |
+| `~/.claude/recall/index.db` | 2 GiB of live data, oldest transcripts first (`RECALL_MAX_INDEX_MB`) | recall's checkpoint job (`tools/recall/lib/index-bound.mjs`) |
+| `~/.claude/state/commit-gate` | 7 days | the gate itself (`hooks/lib/session-store.mjs`) |
+| transcripts, tool results, file history | `cleanupPeriodDays` (default 30; doctor prints it, and the `claude purge --all --dry-run` size) | Claude Code itself: disk-clean adds no rule there |
+| lane worktrees | until landed | `git-tidy prune` only (Claude Code's own cleanup keeps unpushed worktrees) |
 
 Never removed: the current session (`--session`, `$CLAUDE_CODE_SESSION_ID`, else `$CLAUDE_SESSION_ID`), the session with the newest transcript, a running
 session (a `~/.claude/sessions/<pid>.json` whose process is alive; `--sessions` replaces that folder), anything that is a symlink (and a symlink's target),
@@ -57,12 +71,16 @@ with `CLAUDE_CONFIG_DIR` set the default ones are not where Claude Code keeps th
 Sessions of another config dir: the scratchpad root is one per user, shared by every config dir, while a run reads the transcripts and the registry of one config dir only. A session folder with no
 transcript in the projects folder that was read may therefore belong to a running session of another config dir. Such a folder is not judged by the 3-day rule: it is kept until nothing anywhere inside it
 was modified for 30 days (the same whole-tree walk; found or not is decided again on every look), and the report says how many were kept ("N session folder(s) kept: no transcript in ..."; `keptUnknown` in `--json`).
+Also left: a second config dir made by copying `~/.claude` (with `projects/`) where a copied session is resumed: the default dir keeps its
+stale transcript while its registry entry is in the other dir, so its folder goes once the scratchpad is idle 3 days (security F2; only a
+liveness signal that does not depend on the config dir would close it). With `CLAUDE_CONFIG_DIR` set the report (and so the log) says the two
+rules were skipped; that day's stamp is still written, so the default dir's folders wait one more day (security F4).
 What is left of the risk: a session of another config dir that writes nothing in its scratchpad folder for 30 days loses the folder, also while it is running (Claude Code makes its temp folders once per process, so a later write there can fail).
 An empty or relative `HOME` makes every rule refuse its root, and the hook does not start the run.
 
 Safety rules (`lib/safe-remove.mjs`): a root must be an absolute path, not a symlink, not the home folder, under the temp folder, `/tmp` or `~/.claude`, and owned
 by this user and closed to group and others (a shared sticky folder like `/tmp` is allowed only when root owns it, because the owner of a sticky folder can rename everyone's entries;
-then only items owned by this user and only `cs-` names are touched, and only the test-temp and hook-state rules accept it); otherwise the rule is skipped and the run says `SKIPPED`. Every folder from the root down to the item, and every folder inside the item, must be owned by this
+then only items owned by this user and only `cs-` names are touched, and only the test-temp and hook-state rules accept it); otherwise the rule is skipped and the run says `SKIPPED`. The walk from the root down goes one relative name at a time: the run enters the root, checks it, and for each folder on the way checks it by lstat, enters it and checks its identity again (device and inode), so a folder swapped by a same-user rename between a check and its use is refused, not followed (security N1). Every folder from the root down to the item, and every folder inside the item, must be owned by this
 user, not a symlink and not writable by group or others, or the item is kept and listed as `NOT removed` (a umask of 002 makes group-writable folders, so
 such items stay: clean them by hand). Folders are removed by an own loop: it changes the working directory into the folder, checks that `.` is the folder that was inspected (device and inode), and unlinks bare names
 only (links are unlinked, never entered; a folder inside must pass the same checks and stay on the same file system, so a mount point is kept); then it goes back out, checks the parent's
@@ -73,7 +91,9 @@ On Windows there is no uid: the owner and mode checks are skipped and a root mus
 Folders are read with `opendir`, one entry at a time, and walks keep one open folder per level (caps: 2 million entries, 64 levels, then the folder counts as busy and is kept),
 so a temp folder with a million entries does not fill the memory. A dry run stops looking after `--scan-ms` (default 30 s, checked inside every rule loop) and
 sizes stop at `--budget-ms` (default 20 s); either makes the totals "partial" (doctor prints "or more"); `--apply` has no scan limit. The flags `--claude-tmp`,
-`--projects`, `--tmp` and `--sessions` replace the roots (tests use fake ones); `DISK_FREE_CLAUDE_TMP` replaces the first. Exit 0 ok, 1 something could not be removed, 2 usage.
+`--projects`, `--tmp`, `--sessions` and `--figma-cache` replace the roots (tests use fake ones); `DISK_FREE_CLAUDE_TMP` replaces the first. `--now` may not be later
+than the clock (a future time would shorten every age). The usage error, the home-folder line and an unexpected error are escaped like the report.
+Exit 0 ok, 1 something could not be removed, 2 usage.
 
 The text report: folder and file names are anyone's text, so every path, failure message and `SKIPPED` reason is printed escaped (printable ASCII only; a newline shows as `\n`, a quote as `\u0022`, and on Windows a backslash as `\u005c`),
 and the `NOT removed` and `SKIPPED` lists stop at 10 lines each, followed by "... and N more". `--all-lines` prints both lists whole (still escaped); the start hook passes it, so the whole list is only in

@@ -1,4 +1,4 @@
-// The four clean-up rules of disk-clean. Exports: AGE, rulesFor.
+// The five clean-up rules of disk-clean. Exports: AGE, rulesFor.
 // Each rule is an async generator that yields { path, root, stillRemovable } for one thing to remove: `root` is the real path the rule is
 // confined to, `stillRemovable(where)` is asked again right before the removal and once more after the folder was renamed aside to
 // `.removing-<pid>-<name>` (a session may have been resumed since the scan); `where` is the path to look at. A `.removing-*` folder left by a
@@ -10,9 +10,12 @@
 //                    the scratchpad root is shared by every config dir of the user (CLAUDE_CONFIG_DIR), while the transcripts and the registry
 //                    read here are one config dir's, so the folder may be a running session's of another one. It is kept, counted in
 //                    context.keptUnknown, until nothing anywhere in it was modified for 30 days. Found or unknown is decided again on every look.
+//                    An empty folder (what a `claude -p` call such as recall's checkpoint leaves) keeps the 3-day rule. Only a regular
+//                    `<id>.jsonl` file counts as a transcript, and ids are compared in lower case (APFS names are case-insensitive).
 //   test-temp        os.tmpdir() folders named by this repo's test prefixes, idle for 1 day
 //   temp-projects    ~/.claude/projects/<slug> folders that Claude Code made for a throwaway temp path, idle for 3 days
 //   hook-state       os.tmpdir()/claude-post-edit and /claude-skill-router: per-session counters and markers of the hooks, idle for 3 days
+//   figma-pulls      ~/.cache/figma/<file>/<node> folders of figma-pull (ui-check), nothing in them modified for 30 days
 // Never yields the current session (--session, the newest transcript) or a running one (~/.claude/sessions/*.json with a live pid).
 // A root that is not safe (see safe-remove.mjs inspectRoot) is refused and noted in context.refused. The session-folders rule also needs the
 // transcripts folder and the sessions registry to be absolute, readable folders: without them every session would look finished.
@@ -30,6 +33,8 @@ export const AGE = {
   testTempMs: 1 * MS_PER_DAY,
   tempProjectMs: 3 * MS_PER_DAY,
   hookStateMs: 3 * MS_PER_DAY,
+  // A pull is reused for the whole UI job (days, not weeks); after a month idle the design has likely moved on and is pulled again.
+  figmaPullMs: 30 * MS_PER_DAY,
 };
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TEMP_PROJECT_SLUG = /^-(?:private-var-folders|private-tmp|tmp)-/;
@@ -79,9 +84,10 @@ async function transcriptTimes(context) {
     if (!project.isDirectory()) continue;
     for await (const file of entriesOf(join(context.projects, project.name))) {
       if (context.timeUp()) return times;
-      const id = TRANSCRIPT_FILE.exec(file.name)?.[1];
+      const id = TRANSCRIPT_FILE.exec(file.name)?.[1]?.toLowerCase();
       const path = join(context.projects, project.name, file.name);
-      const mtimeMs = id !== undefined && SESSION_ID.test(id) ? mtimeOf(path) : null;
+      // Only a regular file is a transcript: a planted link, folder or FIFO of that name does not shorten the 30-day rule (security F1).
+      const mtimeMs = id !== undefined && SESSION_ID.test(id) && file.isFile() ? mtimeOf(path) : null;
       if (mtimeMs === null) continue;
       const known = times.get(id) ?? { mtimeMs: 0, files: [] };
       times.set(id, { mtimeMs: Math.max(known.mtimeMs, mtimeMs), files: [...known.files, path] });
@@ -90,8 +96,16 @@ async function transcriptTimes(context) {
   return times;
 }
 
-/** Modification times (ms) of the files that exist; empty when none does. */
-const mtimesOf = (files) => files.map(mtimeOf).filter((mtimeMs) => mtimeMs !== null);
+/** Modification times (ms) of the regular files that exist; empty when none does. */
+const mtimesOf = (files) => files.map(lstatOrNull).filter((info) => info?.isFile()).map((info) => info.mtimeMs);
+
+/** True when the folder has no entry at all. */
+async function isEmptyFolder(path) {
+  const entries = entriesOf(path);
+  const first = await entries.next();
+  await entries.return();
+  return first.done === true;
+}
 
 async function* sessionFolders(context) {
   const trusted = trustedRoot(context, context.claudeTmp);
@@ -108,14 +122,15 @@ async function* sessionFolders(context) {
     for await (const folder of entriesOf(projectPath)) {
       if (context.timeUp()) return;
       const path = join(projectPath, folder.name);
-      const id = originalName(folder.name);
-      if (isOwnAside(folder.name) || !SESSION_ID.test(id) || id === context.session || id === newest || ownedFolder(path) === null) continue;
+      const id = originalName(folder.name).toLowerCase();
+      if (isOwnAside(folder.name) || !SESSION_ID.test(id) || id === context.session?.toLowerCase() || id === newest || ownedFolder(path) === null) continue;
       // The transcript of the same project folder is looked at again: a resumed session may have made it since the scan.
       const transcriptFiles = () => [...(times.get(id)?.files ?? []), join(context.projects, project.name, `${id}.jsonl`)];
       // 'idle', 'busy', or 'unknown' for a folder that is kept only because no transcript of its session is found (it may be another config dir's).
       const stateOf = async (liveNow, where) => {
-        if (liveNow.has(id)) return 'busy';
+        if (liveNow.has(id) || [...liveNow].some((liveId) => String(liveId).toLowerCase() === id)) return 'busy';
         const transcriptMtimes = mtimesOf(transcriptFiles());
+        if (transcriptMtimes.length === 0 && (await isEmptyFolder(where))) return (await touchedSince(where, cutoff)) ? 'busy' : 'idle';
         if (transcriptMtimes.length === 0) return (await touchedSince(where, context.nowMs - AGE.unknownSessionFolderMs)) ? 'unknown' : 'idle';
         return Math.max(...transcriptMtimes) >= cutoff || (await touchedSince(where, cutoff)) ? 'busy' : 'idle';
       };
@@ -183,10 +198,30 @@ async function* hookState(context) {
   }
 }
 
+async function* figmaPulls(context) {
+  if (context.figmaCache === undefined || lstatOrNull(context.figmaCache) === null) return; // no pull was ever made
+  const trusted = trustedRoot(context, context.figmaCache);
+  if (trusted === null) return;
+  const root = trusted.real;
+  const cutoff = context.nowMs - AGE.figmaPullMs;
+  for await (const file of entriesOf(root)) {
+    const filePath = join(root, file.name);
+    if (isOwnAside(file.name) || ownedFolder(filePath) === null) continue;
+    for await (const node of entriesOf(filePath)) {
+      if (context.timeUp()) return;
+      const path = join(filePath, node.name);
+      if (isOwnAside(node.name)) continue;
+      const isIdle = async (where = path) => ownedFolder(where) !== null && !(await touchedSince(where, cutoff));
+      if (await isIdle()) yield { path, root, stillRemovable: isIdle };
+    }
+  }
+}
+
 /** @returns {{ name: string, label: string, find: (context: object) => AsyncGenerator<{ path: string, root: string, stillRemovable: (where?: string) => Promise<boolean> | boolean }> }[]} */
 export const rulesFor = () => [
   { name: 'session-folders', label: 'finished sessions\' scratchpad folders', find: sessionFolders },
   { name: 'test-temp', label: 'leftover test temp folders', find: testTemp },
   { name: 'temp-projects', label: 'Claude project folders of throwaway temp paths', find: tempProjects },
   { name: 'hook-state', label: 'old hook counters and markers in the temp folder', find: hookState },
+  { name: 'figma-pulls', label: 'Figma pulls not used for 30 days', find: figmaPulls },
 ];

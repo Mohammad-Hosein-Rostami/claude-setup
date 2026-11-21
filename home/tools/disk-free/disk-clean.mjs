@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // CLI of `disk-clean`: removes what Claude Code and this setup leave on the disk and nothing else. Dry run unless --apply.
-// Usage: disk-clean.mjs [--apply] [--json] [--all-lines] [--session <id>] [--claude-tmp <dir>] [--projects <dir>] [--tmp <dir>] [--sessions <dir>] [--now <ms>] [--budget-ms <n>] [--scan-ms <n>]
+// Usage: disk-clean.mjs [--apply] [--json] [--all-lines] [--session <id>] [--claude-tmp <dir>] [--projects <dir>] [--tmp <dir>] [--sessions <dir>] [--figma-cache <dir>] [--now <ms>] [--budget-ms <n>] [--scan-ms <n>]
 // Rules (lib/clean-rules.mjs): old session scratchpad folders (3 days idle; 30 days when the session's transcript is not in the projects folder read,
 //   because it may be a session of another config dir), leftover test temp folders, throwaway-project folders in
-//   ~/.claude/projects, old counters of the hooks in the temp folder. Never the current session (--session, else $CLAUDE_CODE_SESSION_ID
+//   ~/.claude/projects, old counters of the hooks in the temp folder, Figma pulls in ~/.cache/figma idle for 30 days. Never the current session (--session, else $CLAUDE_CODE_SESSION_ID
 //   or $CLAUDE_SESSION_ID, and always the session with the newest transcript) and never a running one (~/.claude/sessions/*.json with a live pid).
 //   Never follows a symlink; removes only what is owned by this user in folders closed to others (lib/safe-remove.mjs); refuses an unsafe root.
 //   Everything is looked at again right before it is removed: a session resumed during the run keeps its folder.
@@ -19,6 +19,8 @@
 //   A folder whose removal fails after it was renamed aside is renamed back; the listed line names the path the folder has then. A run
 //   handles each path once (a folder that was renamed back can be met again by the rule that is still reading its parent).
 // Env: DISK_FREE_CLAUDE_TMP replaces the scratchpad root (as for disk-free). The flags replace the other roots (tests use fake ones).
+//   --now may not be later than the clock (a future time would shorten every age). With CLAUDE_CONFIG_DIR set and no --projects the
+//   two rules that read ~/.claude are skipped, and the report says so. Every line printed, errors included, goes through `escaped`.
 import { mkdirSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
@@ -40,9 +42,9 @@ const BYTES_PER_GB = 1024 ** 3;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const UNKNOWN_SESSION_IDLE_DAYS = AGE.unknownSessionFolderMs / MS_PER_DAY;
 const RUN_LOCK_STALE_MS = 6 * 60 * 60 * 1000; // a run takes minutes; a lock this old was left by a killed run
-const USAGE = 'usage: disk-clean.mjs [--apply] [--json] [--all-lines] [--session <id>] [--claude-tmp <dir>] [--projects <dir>] [--tmp <dir>] [--sessions <dir>] [--now <ms>] [--budget-ms <n>] [--scan-ms <n>]';
-const VALUE_FLAGS = new Set(['--session', '--claude-tmp', '--projects', '--tmp', '--sessions', '--now', '--budget-ms', '--scan-ms']);
-const TEXT_OPTION = { '--session': 'session', '--claude-tmp': 'claudeTmp', '--projects': 'projects', '--tmp': 'tmp', '--sessions': 'sessions' };
+const USAGE = 'usage: disk-clean.mjs [--apply] [--json] [--all-lines] [--session <id>] [--claude-tmp <dir>] [--projects <dir>] [--tmp <dir>] [--sessions <dir>] [--figma-cache <dir>] [--now <ms>] [--budget-ms <n>] [--scan-ms <n>]';
+const VALUE_FLAGS = new Set(['--session', '--claude-tmp', '--projects', '--tmp', '--sessions', '--figma-cache', '--now', '--budget-ms', '--scan-ms']);
+const TEXT_OPTION = { '--session': 'session', '--claude-tmp': 'claudeTmp', '--projects': 'projects', '--tmp': 'tmp', '--sessions': 'sessions', '--figma-cache': 'figmaCache' };
 const NUMBER_OPTION = { '--now': 'nowMs', '--budget-ms': 'budgetMs', '--scan-ms': 'scanMs' };
 
 class UsageError extends Error {}
@@ -54,6 +56,7 @@ function parseArgs(argv, env) {
   const options = {
     apply: false, json: false, allLines: false, session: env.CLAUDE_CODE_SESSION_ID || env.CLAUDE_SESSION_ID || undefined, claudeTmp: claudeSessionRoot(env),
     projects: claudeDir && join(claudeDir, 'projects'), sessions: claudeDir && join(claudeDir, 'sessions'), tmp: tmpdir(), nowMs: Date.now(), budgetMs: DEFAULT_BUDGET_MS, scanMs: undefined,
+    figmaCache: isAbsolute(home) ? join(home, '.cache', 'figma') : undefined, otherConfigDir: Boolean(env.CLAUDE_CONFIG_DIR),
   };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
@@ -67,6 +70,7 @@ function parseArgs(argv, env) {
       else throw new UsageError(`${flag} needs a number, got ${JSON.stringify(value)}`);
     } else throw new UsageError(USAGE);
   }
+  if (options.nowMs > Date.now()) throw new UsageError(`--now ${options.nowMs} is later than the clock: a future time would shorten every age`);
   return options;
 }
 
@@ -190,7 +194,8 @@ function listed(label, entries, all) {
  * @param {{ apply: boolean, projects?: string, allLines?: boolean }} options allLines lists every failure and refusal instead of the first MAX_LISTED_LINES
  * @returns {string} the lines, joined with newlines
  */
-export function report(summary, { apply, projects, allLines = false }) {
+export function report(summary, options) {
+  const { apply, projects, allLines = false } = options;
   const lines = [`disk-clean${apply ? '' : ' (dry run)'}: ${summary.items} items, ${gb(summary.bytes)}${summary.partial ? ' or more' : ''} ${apply ? `found, ${summary.removed} removed` : 'can be removed'}`];
   for (const rule of summary.rules) {
     lines.push(`  ${rule.label}: ${rule.items} items, ${gb(rule.bytes)}`);
@@ -198,6 +203,7 @@ export function report(summary, { apply, projects, allLines = false }) {
     if (rule.items > rule.sample.length) lines.push(`    ... and ${rule.items - rule.sample.length} more`);
   }
   lines.push(...listed('NOT removed', summary.failed, allLines), ...listed('SKIPPED', summary.refused, allLines));
+  if (options.otherConfigDir && options.projects === undefined) lines.push('  CLAUDE_CONFIG_DIR is set: the session-folders and temp-projects rules read ~/.claude and were skipped in this run.');
   if (summary.keptUnknown > 0) lines.push(`  ${summary.keptUnknown} session folder(s) kept: no transcript in ${escaped(String(projects))} (maybe another config dir); removed after ${UNKNOWN_SESSION_IDLE_DAYS} idle days`);
   if (summary.changed > 0) lines.push(`  ${summary.changed} item(s) changed during the run (a session was resumed) and were kept.`);
   if (summary.partial) lines.push('Some totals are a lower bound: the scan or size-measuring time limit was reached (use --scan-ms and --budget-ms for more).');
@@ -209,7 +215,7 @@ export function report(summary, { apply, projects, allLines = false }) {
 function takeRunLock() {
   const home = homedir();
   if (!isAbsolute(home)) {
-    console.log(`disk-clean: nothing done, the home folder ${JSON.stringify(home)} is not an absolute path`);
+    console.log(`disk-clean: nothing done, the home folder ${escaped(JSON.stringify(home))} is not an absolute path`);
     return null;
   }
   const lockPath = join(home, '.claude', 'state', 'disk-clean.run.lock');
@@ -242,9 +248,16 @@ async function main(argv, env) {
     }
   } catch (error) {
     if (!(error instanceof UsageError)) throw error;
-    console.error(error.message);
+    console.error(escaped(error.message));
     return EXIT_USAGE;
   }
 }
 
-if (import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) process.exitCode = await main(process.argv.slice(2), process.env);
+if (import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
+  try {
+    process.exitCode = await main(process.argv.slice(2), process.env);
+  } catch (error) {
+    console.error(`disk-clean: ${escaped(String(error?.stack ?? error))}`); // an unexpected error, escaped like every other line
+    process.exitCode = EXIT_FAILED;
+  }
+}

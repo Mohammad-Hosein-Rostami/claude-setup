@@ -123,31 +123,45 @@ function removeFolder(name, info, parentInfo, depth) {
   rmdirSync(name);
 }
 
-/** Every folder from the root down to the parent of `path` must pass the owner, mode, link and file-system checks. */
-function checkedParent(realRoot, path) {
+/** The names from `realRoot` down to `path` (at least one); throws when `path` is not inside `realRoot`. */
+function namesBelow(realRoot, path) {
   const inside = relative(realRoot, path);
   if (inside === '' || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) throw new Error(`disk-clean: ${path} is not inside ${realRoot}`);
-  const rootInfo = lstatSync(realRoot);
-  if (!rootInfo.isDirectory() || !(isMineAndClosed(rootInfo) || isSharedTemp(rootInfo))) throw new Error(`disk-clean: root ${realRoot} is not a folder owned by you or by root (sticky)`);
-  let parent = { path: realRoot, info: rootInfo };
-  const names = inside.split(sep);
-  for (const folderName of names.slice(0, -1)) {
-    const folder = join(parent.path, folderName);
-    const info = lstatSync(folder);
-    if (!isMineAndClosed(info) || info.dev !== rootInfo.dev) throw new Error(`disk-clean: ${folder} is a symlink, is not owned by you, is writable by others or is another file system`);
-    parent = { path: folder, info };
-  }
-  return { parent, name: names.at(-1), rootInfo };
+  return inside.split(sep);
 }
 
-/** Runs action(name, parentInfo, rootInfo) with the working directory inside the checked parent of `path`; puts the directory back afterwards. */
+/**
+ * Enters the root and checks it; the working directory is then the root (security N1: every later step is relative).
+ * @returns {object} the lstat of the root as it was entered.
+ */
+function enterRoot(realRoot) {
+  const rootInfo = lstatSync(realRoot);
+  if (!rootInfo.isDirectory() || !(isMineAndClosed(rootInfo) || isSharedTemp(rootInfo))) throw new Error(`disk-clean: root ${realRoot} is not a folder owned by you or by root (sticky)`);
+  process.chdir(realRoot);
+  assertHere(rootInfo); // a root swapped between the lstat and the chdir is refused here
+  return rootInfo;
+}
+
+/**
+ * Runs action(name, parentInfo, rootInfo) with the working directory inside the checked parent of `path`; puts the
+ * directory back afterwards. The walk from the root down goes one relative name at a time: each folder passes the owner,
+ * mode, link and file-system checks by lstat, and after the chdir into it its identity (dev, inode) is checked again,
+ * so a folder on the way swapped by a same-user rename after the check is refused instead of followed (security N1).
+ */
 function inParent(realRoot, path, action) {
-  const { parent, name, rootInfo } = checkedParent(realRoot, path);
+  const names = namesBelow(realRoot, path);
   const original = process.cwd();
   try {
-    process.chdir(parent.path);
-    assertHere(parent.info);
-    return action(name, parent.info, rootInfo);
+    const rootInfo = enterRoot(realRoot);
+    let parentInfo = rootInfo;
+    for (const folderName of names.slice(0, -1)) {
+      const info = lstatSync(folderName);
+      if (!isMineAndClosed(info) || info.dev !== rootInfo.dev) throw new Error(`disk-clean: ${join(realRoot, folderName)} on the way to ${path} is a symlink, is not owned by you, is writable by others or is another file system`);
+      process.chdir(folderName);
+      assertHere(info);
+      parentInfo = info;
+    }
+    return action(names.at(-1), parentInfo, rootInfo);
   } finally {
     try {
       process.chdir(original);

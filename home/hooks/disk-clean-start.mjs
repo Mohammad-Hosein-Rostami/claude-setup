@@ -16,6 +16,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { releaseLock, takeLock } from '../tools/disk-free/lib/lock-file.mjs';
+import { escaped } from './lib/shown-name.mjs';
 
 const MIN_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const LOCK_STALE_MS = 60 * 1000; // the check and the stamp write take microseconds; a lock this old was left by a crashed hook
@@ -135,7 +136,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
   try {
     await main();
   } catch (error) {
-    console.error(`disk-clean-start: ${error.message}`);
+    console.error(`disk-clean-start: ${escaped(String(error.message))}`);
   }
   process.exitCode = 0;
 }

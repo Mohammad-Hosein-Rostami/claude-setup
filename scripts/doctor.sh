@@ -295,6 +295,20 @@ check_disk_clean() {
   if [ "$level" = "WARN" ]; then warn "$message"; else echo "INFO  $message"; fi
 }
 
+# What Claude Code sweeps itself (disk-clean adds no rule there): cleanupPeriodDays in effect (default 30 days; recall loses what is
+# swept) and what `claude purge --all --dry-run` lists, summed with du (purge prints no size). INFO lines; nothing is purged.
+check_native_cleanup() {
+  local days out items kb
+  days="$(jq -r '.cleanupPeriodDays // empty' "$CLAUDE_DIR/settings.json" 2>/dev/null | tr -cd '0-9')"
+  if [ -n "$days" ]; then echo "INFO  cleanupPeriodDays: $days (Claude Code deletes older transcripts; recall loses them)"
+  else echo "INFO  cleanupPeriodDays: 30 (default, not set; Claude Code deletes older transcripts; recall loses them)"; fi
+  command -v claude >/dev/null || { echo "INFO  claude purge size: claude not on PATH"; return 0; }
+  if ! out="$(claude purge --all --dry-run 2>/dev/null)"; then echo "INFO  claude purge size: the dry run could not run"; return 0; fi
+  items="$(sed -nE 's/^Dry run: ([0-9]+) item.*/\1/p' <<<"$out")"
+  kb="$(sed -nE 's/^  (dir|file): +//p' <<<"$out" | while IFS= read -r path; do [ -e "$path" ] && du -sk "$path" 2>/dev/null | cut -f1; done | awk '{ s += $1 } END { print s + 0 }')"
+  echo "INFO  claude purge --all would delete ${items:-?} items, $(awk -v k="$kb" 'BEGIN { printf "%.2f", k / 1048576 }') GB (dry run; nothing purged)"
+}
+
 # The wf-* skills call workflow scripts through ~/.claude/workflows (the link to home/workflows); settings must let Workflow read that link path.
 check_workflows() {
   local skill name script live="$CLAUDE_DIR/settings.json" link_path="$CLAUDE_DIR/workflows" missing=0 RESUME_TOOL="tools/wf-resume/wf-resume.mjs"
@@ -365,7 +379,7 @@ check_stop_cap() {
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_stop_cap; check_disk_free; check_disk_clean; check_tools; check_accounts; check_lsp; check_ui_check; check_project_agents; check_workflows; check_env_names; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_stop_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_lsp; check_ui_check; check_project_agents; check_workflows; check_env_names; check_repo_tests
 }
 run_checks
 exit "$BAD"
