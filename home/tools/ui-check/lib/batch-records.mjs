@@ -3,11 +3,13 @@
 // Invariant: a record is { surface, state, locale, width, status: "pass"|"fail", evidence, findings }; another tool
 // (`ui-coverage check --results`) reads these exact field names, so never rename them. evidence is the path of that state's report.
 // part is "compare" or "responsive", added by `withPart` once the part is known (an error record carries the part that threw); a record without it counts as not-compare. A pixel finding carries `percent` (the diff share, a number) unless the image sizes differ. hints is the number of heuristic hints (report.json `hints` at `evidence`): reported, never part of status. width is the viewport width the part ran at (an integer; a compare record carries the Figma frame width). It is null only on an
-// error record whose Figma cache could not be read, so the frame size is unknown.
+// error record whose Figma cache could not be read, so the frame size is unknown. url is the state's URL (the review page links it); a compare
+// record also carries images {baseline, actual, diff}, scale, diffPixels and comparator (read by lib/ledger.mjs and ui-proof).
 import fs from 'node:fs';
 import path from 'node:path';
 import { stateKey } from './batch-schedule.mjs';
 import { isHint } from './bidi.mjs';
+import { COMPARATOR } from './ledger.mjs';
 import { UsageError } from './errors.mjs';
 import { tableRow } from './report.mjs';
 
@@ -15,26 +17,27 @@ const SUMMARY_HEAD = ['surface', 'state', 'locale', 'width', 'status', 'findings
 const NONE = '-';
 
 function record(state, width, findings, evidence, hints = 0) {
-  return { surface: state.surface, state: state.state, locale: state.locale, width, status: findings.every(isHint) ? 'pass' : 'fail', evidence, findings, hints };
+  return { surface: state.surface, state: state.state, locale: state.locale, width, status: findings.every(isHint) ? 'pass' : 'fail', evidence, findings, hints, url: state.url };
 }
 
 /**
  * Records for the compare part of a state (its width is the viewport the compare ran at: the Figma frame width).
  * @param {object} state normalised state
- * @param {{md: string, pixels: object, elementRows: object[]}} result compareOnce result
- * @param {{root: string, maxDiff: number, width: number}} gate selector, pixel tolerance and viewport width used (a positive integer)
- * @returns {object[]} one record; findings are the failing element rows plus a pixel finding when the pixel gate failed
+ * @param {{md: string, pixels: object, elementRows: object[], images?: {baseline: string, actual: string, diff: string}}} result compareOnce result plus the image paths
+ * @param {{root: string, maxDiff: number, width: number, scale?: number}} gate selector, pixel tolerance, viewport width used (a positive integer) and device pixel ratio
+ * @returns {object[]} one record; findings are the failing element rows plus a pixel finding (with the diff `region`) when the pixel gate failed;
+ *   the record also carries `images`, `scale`, `diffPixels` (leftover pixels) and `comparator` for the round ledger (lib/ledger.mjs)
  * @throws {TypeError} when width is not a positive integer (a record without a width can never fill a coverage cell)
  */
-export function compareRecords(state, { md, pixels, elementRows }, { root, maxDiff, width }) {
+export function compareRecords(state, { md, pixels, elementRows, images }, { root, maxDiff, width, scale }) {
   if (!Number.isInteger(width) || width <= 0) throw new TypeError(`compare record width must be a positive integer (the viewport width), got ${JSON.stringify(width)}`);
   const findings = elementRows.map((r) => ({ check: 'element', element: r.element, detail: `${r.prop}: is ${r.is}, should be ${r.should} (delta ${r.delta})` }));
   if (!pixels.pass) {
     const size = pixels.sizeMismatch ? `size mismatch baseline ${pixels.sizeMismatch.baseline.join('x')} vs page ${pixels.sizeMismatch.actual.join('x')}; ` : '';
     const percent = pixels.sizeMismatch ? {} : { percent: pixels.diffPercent }; // a size mismatch is not a small diff: no number to accept against
-    findings.push({ check: 'pixel', element: root, detail: `${size}${pixels.diffPercent.toFixed(3)}% of pixels differ (${pixels.diffCount} px), max ${maxDiff}%`, ...percent });
+    findings.push({ check: 'pixel', element: root, detail: `${size}${pixels.diffPercent.toFixed(3)}% of pixels differ (${pixels.diffCount} px), max ${maxDiff}%`, region: pixels.region, ...percent });
   }
-  return [record(state, width, findings, md)];
+  return [{ ...record(state, width, findings, md), images: images ?? null, scale: scale ?? null, diffPixels: pixels.diffCount, comparator: COMPARATOR }];
 }
 
 /**

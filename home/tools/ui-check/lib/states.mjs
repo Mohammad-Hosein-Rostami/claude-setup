@@ -9,11 +9,12 @@ import { COLOR_SCHEMES, DIRECTIONS, mergeEntries, validateChoice, validateEntrie
 import { UsageError } from './errors.mjs';
 import { loadSteps, validateSteps } from './steps.mjs';
 
-const DEFAULT_KEYS = ['baseUrl', 'locale', 'colorScheme', 'widths', 'storage', 'cookies', 'sameInAllLocales'];
+const DEFAULT_KEYS = ['baseUrl', 'locale', 'colorScheme', 'widths', 'storage', 'cookies', 'sameInAllLocales', 'bypassCSP'];
 const STATE_KEYS = ['surface', 'state', 'locale', 'url', 'steps', 'expectDir', 'storage', 'cookies', 'widths', 'figma', 'sameInAllLocales'];
 const FIGMA_KEYS = ['file', 'node', 'map', 'root'];
 const URL_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
 const DEFAULT_ROOT = 'body';
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -60,7 +61,24 @@ function readDefaults(raw) {
     storage: validateEntries(defaults.storage, 'defaults.storage', 'storage'),
     cookies: validateEntries(defaults.cookies, 'defaults.cookies', 'cookie'),
     sameInAllLocales: readTerms(defaults.sameInAllLocales, 'defaults.sameInAllLocales') ?? [],
+    bypassCSP: readFlag(defaults.bypassCSP, 'defaults.bypassCSP'),
   };
+}
+
+function readFlag(value, label) {
+  if (value === undefined) return false;
+  if (typeof value !== 'boolean') throw new UsageError(`${label}: must be true or false`);
+  return value;
+}
+
+/** A capture-only CSP bypass is for development servers: every state URL must be loopback (localhost, *.localhost, 127.0.0.1, ::1) or file:. */
+function checkBypassHosts(states) {
+  for (const state of states) {
+    const url = new URL(state.url);
+    const host = url.hostname.toLowerCase();
+    const loopback = url.protocol === 'file:' || LOOPBACK_HOSTS.has(host) || host.endsWith('.localhost');
+    if (!loopback) throw new UsageError(`defaults.bypassCSP: states[${state.index}] is on ${host}, not a loopback host (localhost, *.localhost, 127.0.0.1, ::1) or file:; the CSP bypass is for development servers only`);
+  }
 }
 
 function readSteps(value, baseDir, label) {
@@ -95,7 +113,7 @@ function readState(raw, index, defaults, baseDir) {
     index, surface: text(raw.surface, `${label}.surface`), state: text(raw.state, `${label}.state`), locale: locale ?? null,
     url: resolveUrl(raw.url, defaults.baseUrl, `${label}.url`), steps: readSteps(raw.steps, baseDir, `${label}.steps`),
     sameInAllLocales: readTerms(raw.sameInAllLocales, `${label}.sameInAllLocales`) ?? defaults.sameInAllLocales,
-    widths: widths ?? null, figma: readFigma(raw.figma, baseDir, `${label}.figma`),
+    widths: widths ?? null, figma: readFigma(raw.figma, baseDir, `${label}.figma`), bypassCSP: defaults.bypassCSP,
     context: {
       locale, colorScheme: defaults.colorScheme, expectDir,
       storage: mergeEntries(defaults.storage, validateEntries(raw.storage, `${label}.storage`, 'storage')),
@@ -108,9 +126,10 @@ function readState(raw, index, defaults, baseDir) {
 
 /**
  * Validate a parsed states file and resolve it against its folder.
- * @param {unknown} raw parsed JSON: { defaults?: {baseUrl, locale, colorScheme, widths, storage, cookies, sameInAllLocales}, states: [{ surface, state, url, locale?, steps?, expectDir?, storage?, cookies?, widths?, sameInAllLocales?, figma?: {file, node, map?, root?} }] }
+ * @param {unknown} raw parsed JSON: { defaults?: {baseUrl, locale, colorScheme, widths, storage, cookies, sameInAllLocales, bypassCSP}, states: [{ surface, state, url, locale?, steps?, expectDir?, storage?, cookies?, widths?, sameInAllLocales?, figma?: {file, node, map?, root?} }] }
  * @param {string} baseDir folder that relative steps and map paths resolve against
- * @returns {object[]} one normalised state each: { index, surface, state, locale, url, steps, sameInAllLocales, widths, figma, context }; url is absolute, context is the openPage context
+ * @returns {object[]} one normalised state each: { index, surface, state, locale, url, steps, sameInAllLocales, widths, figma, bypassCSP, context }; url is absolute, context is the openPage context;
+ *   bypassCSP (defaults.bypassCSP, capture only) is allowed only when every state URL is loopback or file:
  * @throws {UsageError} naming the state index and field of the first mistake
  */
 export function parseStates(raw, baseDir) {
@@ -118,13 +137,15 @@ export function parseStates(raw, baseDir) {
   if (!Array.isArray(raw.states)) throw new UsageError('states: must be an array');
   const defaults = readDefaults(raw.defaults);
   const seen = new Set();
-  return raw.states.map((entry, index) => {
+  const states = raw.states.map((entry, index) => {
     const state = readState(entry, index, defaults, baseDir);
     const key = JSON.stringify([state.surface, state.state, state.locale]);
     if (seen.has(key)) throw new UsageError(`states[${index}]: duplicate surface/state/locale (${state.surface} / ${state.state} / ${state.locale ?? 'no locale'})`);
     seen.add(key);
     return state;
   });
+  if (defaults.bypassCSP) checkBypassHosts(states);
+  return states;
 }
 
 /** Read, parse and validate a states file. @param {string} file path given to --states @throws {UsageError} on an unreadable file, bad JSON or schema errors */

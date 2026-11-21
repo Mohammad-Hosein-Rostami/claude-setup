@@ -26,10 +26,14 @@ The browser binary is found by Playwright itself in its cache (`~/Library/Caches
 | Command | Flags | What it does |
 | ------- | ----- | ------------ |
 | `figma-pull` | `--file KEY --node ID [--scale 1] [--refresh]` | Needs env `FIGMA_TOKEN`. Writes `baseline.png`, `spec.json`, `meta.json` to `~/.cache/figma/<KEY>/<ID>/` (`:` in IDs becomes `-`). Skips the fetch if cached. |
+| `figma-pull --bulk` | `--bulk --file KEY --node PAGE_OR_SECTION [--scale 1] [--refresh]` | Every frame and component-set variant under the node, one nodes call and one images call, same cache layout (section "Figma bulk, refresh and export" below). |
+| `figma-pull --from-export` | `--from-export DIR --file KEY [--scale 1] [--refresh]` | Cache folders from a local export folder, no network, no token (format below). |
+| `figma-refresh` | `--file KEY --node ID [--scale 1]` | Re-fetches into a temp folder and prints `changed` / `unchanged` / `new` / `gone` per frame; never writes the cache. Exit 0 all unchanged, 1 otherwise. |
 | `figma-frames` | `--file KEY --node ID [--node ID]... --out frames.json` | Needs env `FIGMA_TOKEN`. One REST call per `--node` (nodes endpoint, depth 2); a node id in the URL form `12-40` is sent as `12:40`. A frame is each `FRAME` or `COMPONENT` whose parent is a `--node` or a `SECTION` under it; `width` and `height` are rounded up. Writes `{file, source, frames:[{node, name, page, width, height}]}` (a frame reached from two nodes is listed once; `page` is the name of the `--node` it was found under) and prints the count. This file is the design inventory `ui-coverage` checks the matrix against. Exit 2 without a token or on an API error; the token is never printed. No token: write the same shape by hand from the Figma MCP `get_metadata`. |
 | `compare` | `--url U --root SEL --cache DIR [--map map.json] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--max-diff 0.5] [context flags] [--out DIR]` | Viewport = frame size, DSF = scale. Element gate (box +-1px, font, line-height, letter-spacing, colour, background, radius, padding, gap) then pixel gate (odiff, threshold 0.1, anti-aliasing ignored; size mismatch is reported first and both images are padded). |
 | `responsive` | `--url U [--widths 320,...,1920] [--height 900] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--same-in-all-locales "ICE,Google"] [context flags] [--out DIR]` | Per width, the findings in the table below. Screenshots `w<width>.png` stay on disk. |
-| `batch` | `--states file.json [--only surface[,surface]] [--jobs 4] [--resume] [--out DIR]` | Many states in one run (below). `compare` for a state with `figma`, `responsive` for a state with widths. |
+| `batch` | `--states file.json [--only surface[,surface]] [--jobs 4] [--resume] [--prev RUN] [--out DIR]` | Many states in one run (below). `compare` for a state with `figma`, `responsive` for a state with widths. Writes `ledger.json` beside `results.json`; `--prev RUN` prints the round table (see `run`). |
+| `run` | `--matrix M [--base-url U] [--states S] [--out DIR] [--jobs N] [--only surface,...] [--prev RUN] [--no-worse RUN] [--self-test] [--step <road>.s<N>]` | The one call of a UI round (section `run` below): `ui-coverage scaffold` + `batch` + `ui-coverage check`. |
 | `columns` | `--url U --table SEL [--width 1440] [--no-autofocus]` | Body cells vs header cells: left delta <= 1px, width delta <= 2px. |
 
 Output (`--out`, default `<cache>/runs/<timestamp>` for compare, the OS temp dir otherwise): `report.json`,
@@ -189,3 +193,67 @@ browser smoke test (fixture compare pass/fail and a 500px box at 320), the Chrom
 
 `cli.mjs` dispatch; `commands/*` one file per command (`batch` reuses `compare` and `responsive`); `lib/*` small modules (spec flattening, cache, Figma
 REST, browser setup, in-page measure/audit, element comparison, pixel gate, report).
+
+## `run` (one call per UI round)
+
+`ui-check run --matrix matrix.json --base-url http://localhost:5173` does, in one call:
+1. `ui-coverage scaffold` into the states file (`--states`, default `states.json` beside the matrix): missing entries are added, existing ones kept. `--base-url` is written into its `defaults.baseUrl`. An open entry whose `url` is still empty exits 2 naming it (fill `url` and `steps` once; later rounds reuse the file).
+2. `batch` on that file (`--jobs`, `--only`, `--project` as for `batch`), into `--out` (default a new folder under the OS temp dir).
+3. `ui-coverage check matrix --results <out>/results.json`, whose report is printed.
+
+Output: the counts, then per failing record its first 5 findings and, for a pixel failure, the crop paths of the diff region:
+`crop-<n>.png` beside `actual.png`, at native scale (1:1 device pixels, never resized) and at most 2,576 px on the long edge (a larger
+region is cut into several crops), because a bigger image reaches the model shrunk and loses 1-px detail. No image path is printed
+for a passing state. A crop explains a failing row; PASS and FAIL are the numbers. Last line: `result: PASS|FAIL run - ...`.
+Exit 0 only when every record passes, the matrix check passes, `--no-worse` finds nothing worse and `--self-test` is clean.
+
+Round ledger (`lib/ledger.mjs`, also written by `batch`): `<out>/ledger.json` holds the comparator (name, version, options: today
+odiff, threshold 0.1, anti-aliasing ignored), the renderer (platform, Chromium version), the `--step` label, the commit sha of HEAD,
+and per compare state (diagnostic states excluded) the sha256 of the capture, the leftover pixels, the failing element rows and the
+pixel ratio. Every compare record in `results.json` carries `url`, `images` {baseline, actual, diff}, `scale`, `diffPixels` and `comparator`.
+- `--prev RUN` (the previous round's `--out` folder or its `ledger.json`): per state `identical`, `gain`, `no-gain` (a failing state
+  whose pixels and rows did not go down) or `new`, with the change in pixels and rows; `PLATEAU` after 2 no-gain rounds in a row:
+  change approach (figma-pixel-perfect step 5), never lower the bar.
+- `--no-worse RUN`: against the lane's reference run (a `run` on the base tip at lane start), per state `identical`, `equal` (same
+  counts, other bytes), `better`, `worse`, `new` (INFO: no reference row) or `missing`; any `worse`, `missing` or a different pixel
+  ratio fails (exit 1). Always against the reference, never the previous round, so a state worse in round 2 and unchanged in round 3
+  still fails. A reference made with another comparator (name, version or options) or renderer prints the `different comparator` /
+  `different renderer` line and exits 1: take a new reference on the base tip, never on the lane tip (diff counts do not carry
+  between comparators).
+- `--self-test`: captures every compare state a second time (into `<out>/self-test`); a state whose two captures differ in sha256
+  is a failing `nondeterministic` finding.
+- `--step <road>.s<N>`: stored in the ledger; the baseline `run --step` on the base tip before a road step starts is that step's
+  start record (read by `ui-proof`).
+- Capture-only CSP bypass for development servers: states-file `defaults.bypassCSP: true` (for `batch` and `run`). It exits 2,
+  naming the host, unless every state URL is loopback (`localhost`, `*.localhost`, `127.0.0.1`, `::1`) or `file:`. The flow e2e keeps the CSP on.
+
+## Figma bulk, refresh and export (`figma-pull --bulk`, `figma-refresh`, `figma-pull --from-export`)
+
+What a node holds (the targets): the node itself when it is a `FRAME` or `COMPONENT`; its variants when it is a
+`COMPONENT_SET`; otherwise each `FRAME` or `COMPONENT` that `figma-frames` lists (children of the node and of a `SECTION`
+under it) followed by every `COMPONENT` inside a `COMPONENT_SET` in those places (the variants are the baselines for
+control states: hover, focus, disabled). Hidden targets (`visible: false`) are left out, since Figma renders no image for
+them. Each target gets the usual cache folder (`baseline.png`, `spec.json` from `flattenSpec` on the node's raw
+document, `meta.json`); `meta.json` also holds `kind` (`frame` or `variant`), `set` (the component set's name, variants
+only), `pulledFrom` (the `--node`, or the export entry) and `source` (`api` or `export`).
+
+- `figma-pull --bulk --file KEY --node ID`: one nodes call (the whole subtree of the node) and one images call for the
+  targets not yet cached (none when all are; `--refresh` fetches them all again and overwrites). A node id in the URL
+  form `12-40` is sent as `12:40`. Prints one line: targets, frames, variants, pulled, already cached, hidden. One images
+  call renders every target at once: a very large page can hit Figma's render timeout; pull it section by section.
+- `figma-refresh --file KEY --node ID`: the same two calls for every target, written under a new temp folder
+  (`<os temp>/ui-check-refresh-*/<KEY>/<ID>/`, printed at the end), then per target: `unchanged` (spec.json deep-equal
+  and baseline bytes equal), `changed` (names `spec`, `baseline bytes` or both), `new` (not in the cache), and `gone` (a
+  cache folder whose `meta.json` says an earlier `--bulk` of this node pulled it, no longer under the node or now hidden).
+  The cache is never written; update it with `figma-pull --bulk --refresh`. A cache written before a `flattenSpec`
+  change shows as `changed (spec)`; a re-render can differ in bytes without a design change (`changed (baseline bytes)`
+  with the spec equal). Exit 0 when all are unchanged, 1 otherwise, 2 on an API or usage error.
+- `figma-pull --from-export DIR --file KEY`: no network and no token. `DIR` holds `nodes.json`, the Figma nodes-API
+  answer of the exported nodes (`{"nodes": {"12:40": {"document": {...}}}}`, the shape of
+  `GET /v1/files/KEY/nodes?ids=...` without `depth`, so the whole subtree is in it), and one `<node id, ":" as "-">.png`
+  per target (an entry that is a frame needs its own PNG; an entry that is a page or section needs one per target under
+  it, `12-41.png`). `--scale` says what scale the PNGs were exported at (default 1). A missing PNG, a file that is not a
+  PNG, or a `nodes.json` of another shape exits 2 naming the file. `--node` is refused here.
+  Unconfirmed: this folder format is the setup's choice (the ICE scripts saved the nodes-API answer raw and the PNGs by
+  node id). How the PC project's own gate stores its Figma results has not been read yet (the top-level keys of one of
+  its result files, `round9` phase-start step); until it is, this format may change to match it.

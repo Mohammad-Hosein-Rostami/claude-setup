@@ -1,7 +1,9 @@
 // Purpose: `batch` - many UI states (locale, direction, colour scheme, opened controls) in ONE run: compare for states with `figma`,
-// responsive for states with widths. Exports: options, guarded, runState, run. Invariants: one browser for the whole run, a fresh context per state,
+// responsive for states with widths. Exports: options, guarded, runState, executeBatch, run. Invariants: one browser for the whole run, a fresh context per state,
 // `--jobs N` states at a time (default 4; states with a `figma` part run alone afterwards), a failing state never stops the run, results.json
 // keeps the states-file order, one progress line per finished state on stderr; exit 0 all records pass / 1 any fails / 2 usage or setup error.
+// Also writes <out>/ledger.json (per compare state: capture sha256, pixels, rows; lib/ledger.mjs); `--prev <run>` prints the round table
+// (change, no-gain, PLATEAU). executeBatch is the shared core `run` calls. A capture-only CSP bypass comes from states-file defaults.bypassCSP.
 // Writes <out>/results.json (records are read by `ui-coverage check --results`, see lib/batch-records.mjs) and <out>/summary.md; while it runs
 // <out>/results.partial.json holds the finished states, and `--resume` reuses them and the passing states of an earlier results.json.
 import fs from 'node:fs';
@@ -11,6 +13,7 @@ import { parse, need } from '../lib/args.mjs';
 import { compareRecords, errorRecords, exitCodeFor, readPriorRecords, removePartialResults, responsiveRecords, withCloseFailures, withPart, writeBatchResults, writePartialResults } from '../lib/batch-records.mjs';
 import { parseJobs, partitionStates, progressLine, resumeFilter, runPool } from '../lib/batch-schedule.mjs';
 import { loadChromium, launch } from '../lib/browser.mjs';
+import { buildLedger, compareRounds, formatRounds, readLedger, writeLedger } from '../lib/ledger.mjs';
 import { readCache } from '../lib/cache.mjs';
 import { addSameAsDefaultHints } from '../lib/same-as-default.mjs';
 import { loadStatesFile, selectSurfaces } from '../lib/states.mjs';
@@ -24,6 +27,7 @@ export const options = {
   out: { type: 'string' },
   jobs: { type: 'string' },
   resume: { type: 'boolean', default: false },
+  prev: { type: 'string' }, // the previous round's run folder or ledger.json: per state change, no-gain, PLATEAU (lib/ledger.mjs)
   project: { type: 'string' }, // default: current directory, then UI_CHECK_PROJECT, then the tool's own node_modules (lib/playwright.mjs)
 };
 
@@ -41,14 +45,16 @@ function frameWidth(state) {
 async function compareState(browser, state, dir) {
   const cache = readCache(state.figma.cache);
   const map = state.figma.map ? loadMap(state.figma.map, cache.spec) : null;
-  const pageOpts = pageOptions({ url: state.url, 'bypass-csp': false, 'no-autofocus': false }, cache.meta, state.steps, state.context);
+  const pageOpts = pageOptions({ url: state.url, 'bypass-csp': state.bypassCSP, 'no-autofocus': false }, cache.meta, state.steps, state.context);
   const { root } = state.figma;
-  const result = await compareOnce(browser, { pageOpts, root, cache, map, maxDiff: PIXEL.maxDiffPercent, outDir: path.join(dir, 'compare') });
-  return compareRecords(state, result, { root, maxDiff: PIXEL.maxDiffPercent, width: pageOpts.width });
+  const outDir = path.join(dir, 'compare');
+  const result = await compareOnce(browser, { pageOpts, root, cache, map, maxDiff: PIXEL.maxDiffPercent, outDir });
+  const images = { baseline: cache.baseline, actual: path.join(outDir, 'actual.png'), diff: result.pixels.diffFile };
+  return compareRecords(state, { ...result, images }, { root, maxDiff: PIXEL.maxDiffPercent, width: pageOpts.width, scale: pageOpts.scale });
 }
 
 async function responsiveState(browser, state, dir) {
-  const target = { url: state.url, height: RESPONSIVE.height, steps: state.steps, bypassCSP: false, autofocus: true, sameInAllLocales: state.sameInAllLocales, saveTexts: true, ...state.context };
+  const target = { url: state.url, height: RESPONSIVE.height, steps: state.steps, bypassCSP: state.bypassCSP, autofocus: true, sameInAllLocales: state.sameInAllLocales, saveTexts: true, ...state.context };
   const result = await auditAll(browser, { widths: state.widths, target, outDir: path.join(dir, 'responsive') });
   return responsiveRecords(state, state.widths, result);
 }
@@ -140,18 +146,28 @@ async function runAll(browser, { states, todo, reused, jobs, outDir }) {
   return ordered();
 }
 
-/** Run batch. @param {string[]} argv @returns {Promise<number>} exit code */
-export async function run(argv) {
-  const values = parse(argv, options);
+/** The renderer facts a ledger keeps (a reference from another platform or Chromium is never compared). */
+const rendererOf = (browser) => ({ platform: `${os.platform()}-${os.arch()}`, chromium: browser?.version() ?? 'not launched (every state reused)' });
+
+/**
+ * Run the states of a parsed `batch` flag set and write results.json, summary.md and ledger.json (shared by `batch` and `run`).
+ * @param {Record<string, unknown>} values parsed flags (states, only, out, jobs, resume, project, prev)
+ * @param {{step?: string|null, rule?: string, conditions?: object|null, head?: string|null}} [meta] facts the ledger stores (from `run`)
+ * @returns {Promise<{code: number, records: object[], outDir: string, summary: string|null, ledger: object|null, rounds: object[]|null}>}
+ *   rounds is the `--prev` comparison (null without --prev)
+ * @throws {UsageError} on bad flags, an unreadable states file or an unreadable --prev ledger
+ */
+export async function executeBatch(values, meta = {}) {
   need(values, 'states');
   const jobs = parseJobs(values.jobs);
   const outDir = path.resolve(values.out ?? path.join(os.tmpdir(), 'ui-check', 'batch', new Date().toISOString().replace(/[:.]/g, '-')));
+  const prev = values.prev === undefined ? null : readLedger(path.resolve(values.prev), 'prev');
   fs.mkdirSync(outDir, { recursive: true });
   const prior = values.resume ? readPriorRecords(outDir) : [];
   if (!values.resume) clearStaleResults(outDir);
   const all = loadStatesFile(values.states);
   const states = selectSurfaces(all, values.only);
-  if (states.length === 0) return nothingToRun(outDir, all, values.only);
+  if (states.length === 0) return { code: nothingToRun(outDir, all, values.only), records: [], outDir, summary: null, ledger: null, rounds: null };
   const { todo, reused } = values.resume ? resumeFilter(states, prior) : { todo: states, reused: new Map() };
   if (values.resume) console.error(`resume: ${reused.size} of ${states.length} states already pass and are kept, ${todo.length} to run`);
   const browser = todo.length > 0 ? await launch(loadChromium(values.project)) : null;
@@ -159,10 +175,19 @@ export async function run(argv) {
     const records = addSameAsDefaultHints(await runAll(browser, { states, todo, reused, jobs, outDir }), states);
     const { summary } = writeBatchResults(outDir, records);
     removePartialResults(outDir);
-    const code = exitCodeFor(records);
-    console.log(`${code === 0 ? 'PASS' : 'FAIL'} batch - ${records.length} records - summary: ${summary}`);
-    return code;
+    const ledger = buildLedger(records, { renderer: rendererOf(browser), ...meta });
+    const rounds = prev ? compareRounds(ledger, prev) : null;
+    writeLedger(outDir, ledger);
+    return { code: exitCodeFor(records), records, outDir, summary, ledger, rounds };
   } finally {
     await browser?.close();
   }
+}
+
+/** Run batch. @param {string[]} argv @returns {Promise<number>} exit code */
+export async function run(argv) {
+  const { code, records, summary, rounds } = await executeBatch(parse(argv, options));
+  if (rounds) console.log(['rounds (against --prev):', ...formatRounds(rounds)].join('\n'));
+  if (summary) console.log(`${code === 0 ? 'PASS' : 'FAIL'} batch - ${records.length} records - summary: ${summary}`);
+  return code;
 }
