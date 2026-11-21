@@ -8,6 +8,9 @@
 //                   per state. SubagentStop -> the same for ui-implementer and visual-qa only; an agent's own PASS counts for its own stop.
 // Not the hard check: Claude Code overrides a Stop gate after 8 blocks in a row and lets a crashed or timed-out Stop gate through, so
 // `git-tidy land` and road gate 6 (`ui-proof check`) hold the bar; this gate counts its blocks through hooks/lib/stop-block-count.mjs.
+// Runs only when the owner turned the `ui` check on with /check (lib/checks-on.mjs, spec r9-checks-off): off, every event returns at once.
+// Outside a git work tree (a lead started in ~) there are no UI files to prove: the stop passes (this threw `not a git repository` on
+// every such stop, which stop-block-count recorded as "gate crashed or timed out", 32 records by 2026-11-21).
 // Exports: recordRun, stopDecision. Invariants: never crashes a session: every error on PostToolUse is silent (no record), on Stop an
 // unreadable record blocks once (fail closed) and any other error lets the stop through; one total deadline below the hook timeout;
 // the reason text is fixed text plus hashes, counts and state keys, never tool output.
@@ -16,6 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { isOn, sessionIdOf } from './lib/checks-on.mjs';
 import { readSessionFile, writeSessionFile } from './lib/session-store.mjs';
 
 const DEADLINE_MS = 12_000; // the settings timeout is 15 s
@@ -72,9 +76,19 @@ function baseTree(cwd, { git, uiTreeAt }) {
   return uiTreeAt(cwd, 'HEAD');
 }
 
+/** True when cwd is inside a git work tree (git exits non-zero, which `git` throws on, outside one or in a bare repository). */
+function insideWorkTree(cwd, git) {
+  try {
+    return git(cwd, ['rev-parse', '--is-inside-work-tree']).trim() === 'true';
+  } catch {
+    return false;
+  }
+}
+
 /** The block reason for a tree, or null when its proof stands. */
 async function proofProblem(cwd, input, event) {
   const [{ PROOF_AGENT, findPass, newestForTree, readRecords, storeFile }, files] = await proofLib();
+  if (!insideWorkTree(cwd, files.git)) return null; // no repository, no UI files to prove
   const tree = files.workingUiTree(cwd);
   if (tree === baseTree(cwd, files)) return null;
   let records;
@@ -137,6 +151,7 @@ async function main() {
   let raw = '';
   for await (const chunk of process.stdin) raw += chunk;
   const input = JSON.parse(raw);
+  if (!isOn('ui', sessionIdOf(input))) return; // the `ui` check is off: pass silently
   if (input.hook_event_name === 'PostToolUse') {
     await recordRun(input).catch(() => false); // a run whose output or ledger cannot be read leaves no record: the stop then finds no PASS
     return;

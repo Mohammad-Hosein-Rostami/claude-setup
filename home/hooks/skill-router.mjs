@@ -7,7 +7,9 @@
 // you before") names no skill and shows on every match. The first routed UI prompt of a
 // session (and any prompt that routes a skill not named before) gets the full text; the rest get a one-line form.
 // SessionStart(compact): forgets this session's prompt marker, so the next routed prompt gets the full text again.
-// Every UI text names the proof step (`ui-check run` rounds in the UI lane, then visual-qa's final gate on the tree that lands).
+// Every UI text names the proof step (`ui-check run` rounds in the UI lane, then visual-qa's final gate on the tree that lands), but only
+// when the owner turned the `ui` check on with /check; otherwise withoutUiChecks drops ui-quality-pass and the proof step, and the
+// verify-done route is left out while test, types and ui are all off (lib/checks-on.mjs, spec r9-checks-off).
 // FA Figma words: فیگما, پیکسل, طرح, دیزاین, مطابق, تطابق; a figma.com link inside a `<pasted_content>` block routes too (pastedText).
 // PostToolUse(Edit|Write|MultiEdit) on a UI file (markup, styles, and `.ts`/`.js` style scripts under a styles/theme/sx folder
 // or named *.styles.ts, *.theme.ts, *.sx.ts, as in ui-proof's lib/ui-files.mjs) -> reminds once per session and agent (subagents
@@ -21,6 +23,7 @@ import { mkdirSync, existsSync, readFileSync, realpathSync, rmSync, statSync, wr
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { isOn } from './lib/checks-on.mjs';
 import { GATE_ROUTES } from './lib/gate-routes.mjs';
 import { ownerWords, pastedText } from './lib/owner-words.mjs';
 
@@ -263,6 +266,25 @@ export function isQuiet(cwd, env = process.env) {
   return GRADLE_FILES.some(has) && !has('package.json');
 }
 
+const UI_CHECK_TEXTS = [PROOF_STEP, `; ${PROOF_SHORT}`, ` run \`ui-quality-pass\` before saying done.`, 'ui-quality-pass before done; ',
+  ' Proof: `ui-check run` until every state passes; visual-qa runs the final gate on the tree that lands.'];
+
+/** A route text with the UI checks taken out (the `ui` check is off): no ui-quality-pass, no proof step. */
+export function withoutUiChecks(text) {
+  const cut = UI_CHECK_TEXTS.reduce((rest, part) => rest.split(part).join(''), text);
+  return cut.replace(', and run `ui-quality-pass` before reporting done.', '.').replace(/, ui-quality-pass\b/g, '').replace(/; delegate to ui-implementer\.?$/, '; delegate to ui-implementer.');
+}
+
+/** The route text for one input with the checks the owner left off taken out. */
+function routeChecked(input) {
+  const text = route(input);
+  if (text === null) return null;
+  const uiChecked = isOn('ui', input.session_id) ? text : withoutUiChecks(text).replace(/skills\);(?=\n|$)/, 'skills).');
+  return isOn('test', input.session_id) ? uiChecked : uiChecked.replace('; tdd-loop for the fix itself.', '.'); // tdd-loop is a `test` check
+}
+
+const anyCheckBeforeDone = (sessionId) => ['test', 'types', 'ui'].some((category) => isOn(category, sessionId));
+
 function route(input) {
   if (input.hook_event_name === 'SessionStart') {
     if (input.source === COMPACT_SOURCE) clearPromptMarker(input.session_id);
@@ -273,7 +295,8 @@ function route(input) {
     if (process.env[OFF_ENV] === 'off') return null;
     const ui = isQuiet(input.cwd) ? null : promptContext(prompt, input.session_id);
     // The gate lines share the UI "named skills" marker, so each shows once per session and again after a compact; an `everyTime` route shows on every match.
-    const gates = gatesForPrompt(prompt).filter((gate) => gate.everyTime || !alreadyNamed(input.session_id, [gate.skill])).map((gate) => gate.line);
+    const gates = gatesForPrompt(prompt).filter((gate) => gate.skill !== 'verify-done' || anyCheckBeforeDone(input.session_id))
+      .filter((gate) => gate.everyTime || !alreadyNamed(input.session_id, [gate.skill])).map((gate) => gate.line);
     return [ui, ...gates].filter(Boolean).join('\n') || null;
   }
   if (isQuiet(input.cwd)) return null;
@@ -290,7 +313,7 @@ async function main() {
   } catch {
     return; // not hook JSON: stay silent, never block the user
   }
-  const context = route(input);
+  const context = routeChecked(input);
   if (!context) return;
   const hookSpecificOutput = { hookEventName: input.hook_event_name, additionalContext: context };
   process.stdout.write(JSON.stringify({ hookSpecificOutput }));

@@ -38,6 +38,7 @@ import { SKIPPED, incrementalTypecheck, nearestTsconfig, projectBin, projectFold
 import { firstLine, keepRecords, lastPath, readTimeouts, replaceRecord, runLogWriter, shownPath } from './lib/typecheck-records.mjs';
 import { runPlan } from './lib/typecheck-run.mjs';
 import { countedGate } from './lib/stop-block-count.mjs';
+import { isOn, sessionIdOf } from './lib/checks-on.mjs';
 import { SKIP_ENV, findPackageDir, isBroadScript, skipFilter, typecheckAtEdit, typecheckScript } from './post-edit.mjs';
 
 export { incrementalTypecheck, typescriptMajor } from './lib/typecheck-plan.mjs';
@@ -223,6 +224,7 @@ async function main() {
   } catch {
     return; // not hook JSON: nothing to check
   }
+  if (!isOn('types', sessionIdOf(input))) return; // the `types` check is off unless the owner turned it on with /check (spec r9-checks-off)
   // lib/stop-block-count.mjs: the start mark and the cap record; decideExit blocks by exit code 2
   await countedGate('typecheck-gate', input, async () => {
     await typecheckStop(input);

@@ -1,7 +1,12 @@
 // PreToolUse(Workflow): refuses a hand-written workflow script that runs `phase('Land')` after a `pipeline(...)` call, the shape that made
 // lanes clean at about 62 min land at 134 min (spec-p3 `r9-land-speed`: 45% of landing time was waiting for a land slot). A multi-lane job
 // runs through the `build` workflow, which lands each lane inside its own pipeline.
-// Exports: scriptVerdict(toolInput, { setupDir }) -> { deny: string } | null, landAfterPipeline(text) -> boolean.
+// It also hands the owner's check switch to the setup's own scripts (spec r9-checks-off): `args.checks` is set to the categories on for this
+// session (lib/checks-on.mjs), replacing whatever the caller passed, so only the owner's /check turns a workflow's test, review, ui or
+// probe stages on; the scripts pass it to their children. Changed input goes back as `updatedInput` with "allow" (hooks docs: updatedInput
+// "Combine with \"allow\" to auto-approve"; without a decision auto mode can deny the changed call); only setup scripts get it.
+// Exports: scriptVerdict(toolInput, { setupDir }) -> { deny: string } | null, landAfterPipeline(text) -> boolean,
+//   withChecks(toolInput, on, { setupDir }) -> the changed tool input, or null when nothing changes.
 // Input (probe N13 open): the first call passes the script inline (`script`), later calls pass `scriptPath`; the check reads the inline
 //   text, else the file at `scriptPath`, and denies with a reason when a `scriptPath` is given but cannot be read (fail closed). A call
 //   with neither (a named workflow) and the setup's own scripts (real path inside its workflows folder, next to this hooks folder) pass.
@@ -10,6 +15,7 @@
 import { closeSync, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { onCategories, sessionIdOf } from './lib/checks-on.mjs';
 
 const MAX_INPUT_BYTES = 8 << 20;
 const MAX_SCRIPT_BYTES = 4 << 20;
@@ -79,6 +85,30 @@ export function scriptVerdict(toolInput, { setupDir }) {
   return landAfterPipeline(text) ? { deny: REASON } : null;
 }
 
+/**
+ * The tool input of a setup script with `args.checks` set to the categories on (args given as an object or as JSON text).
+ * @param {object} toolInput the hook's `tool_input`
+ * @param {string[]} on the categories on for this session
+ * @param {{ setupDir: string }} options the setup's workflows folder
+ * @returns {object | null} null when the script is not the setup's, the args cannot be read, or nothing would change
+ */
+export function withChecks(toolInput, on, { setupDir }) {
+  const real = typeof toolInput?.scriptPath === 'string' ? realOrNull(toolInput.scriptPath) : null;
+  const setup = realOrNull(setupDir);
+  if (real === null || setup === null || !isInside(real, setup)) return null;
+  let args = toolInput.args ?? {};
+  const asText = typeof args === 'string';
+  try {
+    if (asText) args = JSON.parse(args);
+  } catch {
+    return null; // the script's own checkArgs reports bad args
+  }
+  if (args === null || typeof args !== 'object' || Array.isArray(args)) return null;
+  if (on.length === 0 && !('checks' in args)) return null;
+  const changed = { ...args, checks: on };
+  return { ...toolInput, args: asText ? JSON.stringify(changed) : changed };
+}
+
 async function main() {
   const chunks = [];
   let size = 0;
@@ -91,7 +121,11 @@ async function main() {
   if (input?.tool_name !== 'Workflow') return;
   const setupDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'workflows');
   const verdict = scriptVerdict(input.tool_input, { setupDir });
-  if (verdict === null) return;
+  if (verdict === null) {
+    const updatedInput = withChecks(input.tool_input, onCategories(sessionIdOf(input)), { setupDir });
+    if (updatedInput !== null) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'the owner\'s /check categories handed to the workflow', updatedInput } }));
+    return;
+  }
   console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: verdict.deny } }));
 }
 

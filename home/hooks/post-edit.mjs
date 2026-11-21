@@ -7,6 +7,8 @@
 // Format runs first and alone; lint and typecheck (at-edit mode) then run concurrently (sequentially when the lint
 // script fixes files); a lint failure about the edited file ends that stage at once and kills the typecheck; a check
 // that outlives the deadline is killed with its whole process tree.
+// Lint and typecheck run only when the owner turned the `types` check on with /check (lib/checks-on.mjs, spec r9-checks-off); format
+// always runs (it is the formatter, C21, not a check), and with `types` off no edit is logged for the typecheck gate.
 // Silent on success; on failure prints at most 15 `file:line RULE-ID message` lines to stderr and exits 2. Never
 // evaluates hook input; on Windows (shell on) the relative path must look safe.
 import { spawn } from 'node:child_process';
@@ -15,6 +17,7 @@ import { dirname, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CODE_FILE, diagnostics } from './lib/diagnostics.mjs';
 import { editLogPath, recordEdit } from './lib/edit-log.mjs';
+import { isOn, sessionIdOf } from './lib/checks-on.mjs';
 
 const SAFE_PATH = /^[\w@+=:,./-]+$/; // no `%`: cmd.exe expands %VAR%
 const BUDGET_MS = 18_000; // hook timeout is 20 s
@@ -291,7 +294,9 @@ async function main() {
   }
   const file = input?.tool_input?.file_path;
   if (typeof file !== 'string') return;
-  if (!typecheckAtEdit()) recordTypecheckEdit(file, input);
+  const typesOn = isOn('types', sessionIdOf(input));
+  if (!typesOn) process.env[SKIP_ENV] = [process.env[SKIP_ENV], 'lint', 'typecheck'].filter(Boolean).join(','); // format only
+  if (typesOn && !typecheckAtEdit()) recordTypecheckEdit(file, input);
   const failures = await checkFile(file);
   if (failures.length) {
     process.stderr.write(failures.join('\n') + '\n');

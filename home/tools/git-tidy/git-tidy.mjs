@@ -28,6 +28,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isOn } from '../../hooks/lib/checks-on.mjs';
 import { landLane } from './lib/land.mjs';
 import { landedRange } from './lib/landed-range.mjs';
 import { pruneRepo } from './lib/prune.mjs';
@@ -122,7 +123,11 @@ function runRange(repo, options) {
 
 async function runLand(repo, options) {
   const briefText = briefTextOf(options.brief);
-  const checks = options.rebaseOnly ? { hasPass: () => false } : { hasPass: await loadHasPass(), uiCheck: await loadUiCheck(), briefText };
+  // The suite PASS and the UI proof are checks: they hold a landing only when the owner turned `test` / `ui` on with /check for the
+  // session that lands ($CLAUDE_CODE_SESSION_ID; hooks/lib/checks-on.mjs, spec r9-checks-off). Rebase, ff-only and prune always run.
+  const hasPass = isOn('test') ? await loadHasPass() : () => true;
+  const uiCheck = isOn('ui') ? await loadUiCheck() : () => null;
+  const checks = options.rebaseOnly ? { hasPass: () => false } : { hasPass, uiCheck, briefText };
   const result = landLane(repo, options.branch, { rebaseOnly: options.rebaseOnly, ...checks });
   console.log(formatLand(result, options.json));
   return landExitCode(result);
