@@ -55,7 +55,7 @@ export function workerTests(fileUrl) {
   }
   return {
     test: isMainThread ? testInWorker : collectIfNamed,
-    suite: isMainThread ? describe : (name, options, body) => body(),
+    suite: isMainThread ? describe : (name, ...optionsAndBody) => optionsAndBody.at(-1)(), // like describe: (name, [options], body)
     runNamedBody,
   };
 }
