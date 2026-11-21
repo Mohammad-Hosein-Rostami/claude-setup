@@ -76,19 +76,44 @@ test('a state file is written under a temp name and renamed: a link or a FIFO in
   assert.deepEqual(readdirSync(dir).sort(), ['fifo', 'folder', 'link', 'plain'], 'no temp file is left, also after a failed write');
 });
 
-test('the prune goes on past an entry it cannot remove, and removes a stale link itself, not what it leads to', posixOnly, () => {
+/** Runs `action` and returns what it wrote to this process's stderr. */
+function stderrOf(action) {
+  const lines = [];
+  const write = process.stderr.write;
+  process.stderr.write = (chunk) => (lines.push(String(chunk)), true);
+  try {
+    action();
+  } finally {
+    process.stderr.write = write;
+  }
+  return lines.join('');
+}
+
+// Review 2, R18 and security review 2, N2: the stderr line was not pinned, and the one folder was listed last on APFS, so a prune
+// that stopped quietly at it passed. Folders and stale files are made in turn: in creation order, in its reverse (tmpfs) and in a
+// hash order (APFS, ext4) stale files are listed after a folder, which the first assertion checks.
+test('the prune goes on past each entry it cannot remove and reports it on stderr, and removes a stale link itself, not what it leads to', posixOnly, () => {
+  const FOLDERS = 5;
+  const FILES_BETWEEN = 8;
   const dir = makeTempDir('mode-state-');
   const longAgo = (Date.now() - STALE_MS) / MS_PER_S;
-  const stale = staleFiles(dir, 4);
-  mkdirSync(join(dir, 'a-folder'));
-  utimesSync(join(dir, 'a-folder'), longAgo, longAgo);
+  const folders = Array.from({ length: FOLDERS }, (_, index) => {
+    staleFiles(dir, FILES_BETWEEN, `old-${index}-`);
+    mkdirSync(join(dir, `a-folder-${index}`));
+    utimesSync(join(dir, `a-folder-${index}`), longAgo, longAgo);
+    return `a-folder-${index}`;
+  });
+  staleFiles(dir, FILES_BETWEEN, 'old-last-');
+  const listed = readdirSync(dir); // the disk's order, as the prune reads it
+  assert.ok(listed.slice(listed.findIndex((name) => name.startsWith('a-folder-'))).some((name) => name.startsWith('old-')), 'a stale file is listed after a folder');
   symlinkSync('nowhere', join(dir, 'a-dangling-link'));
   lutimesSync(join(dir, 'a-dangling-link'), longAgo, longAgo);
   writeFileSync(join(dir, 'fresh'), 'high\n');
   symlinkSync(join(dir, 'fresh'), join(dir, 'a-link-to-fresh'));
   lutimesSync(join(dir, 'a-link-to-fresh'), longAgo, longAgo);
-  pruneState(dir, NO_LIMIT);
-  assert.deepEqual(readdirSync(dir).sort(), ['a-folder', 'fresh'], `${stale.length} stale files and both stale links are gone`);
+  const stderr = stderrOf(() => pruneState(dir, NO_LIMIT));
+  assert.deepEqual(readdirSync(dir).sort(), [...folders, 'fresh'], 'every stale file and both stale links are gone');
+  for (const folder of folders) assert.match(stderr, new RegExp(`^mode hook: prune failed: .*${folder}`, 'm'), `${folder} is reported`);
 });
 
 test('the prune looks at no more than MAX_PRUNED_ENTRIES entries per run and stops when the budget is used up', () => {
