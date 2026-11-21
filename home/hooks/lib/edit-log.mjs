@@ -14,6 +14,7 @@
 // waited on (a hook that waits is a hook that times out). A log the reader cannot use (anything but a plain file within the cap) is
 // reported in the guard log, one line per read, outcome `edit-log-unreadable`: the typecheck gate checks nothing for that session then.
 // One size cap for the writer and the reader: a log at the cap takes no more lines, so the reader never meets a larger one it wrote.
+// The writer reports what it turns away, one guard-log line each: `edit-log-full` at the cap, `edit-log-bad-path` for a line break.
 import { closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -116,11 +117,27 @@ export function editLogPath(sessionId, agentId) {
   return root === null ? null : join(root, 'edits', `${sessionId}--${agent}`);
 }
 
-/** Appends `file` to the log; never throws. */
+const LINE_BREAK = /[\r\n]/;
+
+/** One guard-log line for an edit the log turned away (the file name is two validated ids; the path itself is never logged). */
+function reportRefused(logPath, outcome, why) {
+  const reason = `the edit log ${basename(logPath)} took no line for ${why}: that edit is not checked`;
+  logDecision({ hook: 'edit-log', tool: 'edit-log', decision: 'skip', outcome, reason, command: '' });
+}
+
+/**
+ * Appends `file` to the log; never throws. The log holds one path per line, so a path with a line break is turned away
+ * (`edit-log-bad-path`), as is a line the log cannot take: it would pass MAX_EDIT_LOG_BYTES, or the log is not a plain file
+ * (`edit-log-full`). Each is one guard-log line, so a gate that checks less than was edited does not pass unseen.
+ * @param {string} logPath from editLogPath
+ * @param {string} file absolute path of the edited file
+ */
 export function recordEdit(logPath, file) {
+  if (LINE_BREAK.test(file)) return void reportRefused(logPath, 'edit-log-bad-path', 'a path with a line break');
   try {
     mkdirSync(dirname(logPath), { recursive: true });
-    appendPlainFile(logPath, `${file}\n`, { maxBytes: MAX_EDIT_LOG_BYTES });
+    const written = appendPlainFile(logPath, `${file}\n`, { maxBytes: MAX_EDIT_LOG_BYTES });
+    if (!written) reportRefused(logPath, 'edit-log-full', `a path: it is at its cap of ${MAX_EDIT_LOG_BYTES} bytes or not a plain file`);
   } catch {
     // unwritable temp dir: the gate then has nothing to check, which is better than blocking the edit
   }

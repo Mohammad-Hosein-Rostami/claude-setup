@@ -209,15 +209,38 @@ test('the reader of the edit log does not wait on a FIFO or follow a link either
   assert.match(lines[1].reason, /^the edit log sess-plain--main is not a plain file within \d+ bytes \(\w+\): its edits are not checked$/);
 });
 
-test('the edit log has one cap for its writer and its reader: a line that would pass it is not written, a log at the cap is read', () => {
+/** Runs `body` with the guard log of this process at a temp file; returns the outcomes it wrote. */
+function withGuardLog(body) {
+  const guardLog = join(makeTempDir('edit-log-lines-'), 'guard.jsonl');
+  const before = process.env.CLAUDE_GUARD_LOG;
+  process.env.CLAUDE_GUARD_LOG = guardLog;
+  try {
+    body();
+  } finally {
+    if (before === undefined) delete process.env.CLAUDE_GUARD_LOG;
+    else process.env.CLAUDE_GUARD_LOG = before;
+  }
+  return outcomesIn(guardLog);
+}
+
+test('the edit log has one cap for its writer and its reader: a line that would pass it is not written and says so, a log at the cap is read', () => {
   const log = join(makeTempDir('edit-log-cap-'), 'edits');
   const line = '/work/proj/last.ts';
   writeFileSync(log, `${'x'.repeat(MAX_EDIT_LOG_BYTES - line.length - 2)}\n`); // room for exactly one more line
-  recordEdit(log, line);
-  assert.equal(statSync(log).size, MAX_EDIT_LOG_BYTES, 'the line that reaches the cap exactly is written');
+  assert.deepEqual(withGuardLog(() => recordEdit(log, line)), [], 'the line that reaches the cap exactly is written, silently');
+  assert.equal(statSync(log).size, MAX_EDIT_LOG_BYTES);
   assert.equal(readEdits(log).at(-1), line);
-  recordEdit(log, '/work/proj/over.ts');
-  assert.equal(statSync(log).size, MAX_EDIT_LOG_BYTES, 'one more line would pass the cap');
+  assert.deepEqual(withGuardLog(() => recordEdit(log, '/work/proj/over.ts')), ['edit-log-full'], 'one more line would pass the cap');
+  assert.equal(statSync(log).size, MAX_EDIT_LOG_BYTES);
+});
+
+test('a path with a line break is turned away: the log stays as it was, and one line says so', () => {
+  const log = join(makeTempDir('edit-log-break-'), 'edits');
+  writeFileSync(log, '/work/proj/a.ts\n');
+  for (const path of ['/work/proj/src/a\nb.ts', '/work/proj/src/a\rb.ts', '/work/proj/a.ts\n/etc/x.ts']) {
+    assert.deepEqual(withGuardLog(() => recordEdit(log, path)), ['edit-log-bad-path'], JSON.stringify(path));
+  }
+  assert.equal(readFileSync(log, 'utf8'), '/work/proj/a.ts\n');
 });
 
 test('readPlainFile and appendPlainFile refuse everything but a regular file within the cap', { skip: noFifo }, () => {
