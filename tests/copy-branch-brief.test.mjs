@@ -151,14 +151,19 @@ test('with no knob set, a slow git cannot hold the gate past the production dead
   const repo = repoWithLane();
   const fake = fakeGit('', 1);
   const clock = mock.method(performance, 'now', () => FAKE_CLOCK_START_MS + SLOW_GIT_MS * fake.starts());
+  const spawns = mock.method(childProcess, 'spawnSync'); // calls the real spawnSync; reads the timeout each lookup gets
+  syncBuiltinESMExports();
   try {
-    const started = performance.now();
     const advice = withKnobs({}, () => copyBranchBriefAdvice(input(repo, sixteenNames()), ENV));
-    const elapsed = performance.now() - started;
+    const timeouts = spawns.mock.calls.filter((call) => call.arguments[0] === 'git').map((call) => call.arguments[2].timeout);
     assert.deepEqual(advice, { deny: false });
     assert.equal(fake.starts(), TOTAL_DEADLINE_MS / SLOW_GIT_MS, `git started ${fake.starts()} times for 16 names; 2 s of 0.5 s calls allows 4`);
-    assert.ok(elapsed < HOOK_TIMEOUT_MS, `${Math.round(elapsed)} ms is past the hook timeout`);
+    // each lookup may run only as long as the time left (2000, 1500, 1000, 500 ms) and at most its own 1000 ms, so a real slow git
+    // cannot keep the gate past the deadline, which is well under the hook timeout (the test above)
+    assert.deepEqual(timeouts, [1000, 1000, 1000, 500], `the git timeouts ${timeouts} keep the lookups inside the ${TOTAL_DEADLINE_MS} ms deadline`);
   } finally {
+    spawns.mock.restore();
+    syncBuiltinESMExports();
     clock.mock.restore();
     fake.restore();
   }

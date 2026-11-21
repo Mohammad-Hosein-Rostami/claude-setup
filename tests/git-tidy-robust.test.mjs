@@ -234,7 +234,10 @@ function makeRepoWithManyBranches(perKind) {
 
 let largeRepo; // the repo with LARGE_BRANCHES branches, built once (about 100 git calls); tests work on copies of it
 
-/** The LARGE_BRANCHES repo, built at the first call. */
+/**
+ * The LARGE_BRANCHES repo, built at the first call. The two tests that use it run side by side, so the first call must stay synchronous
+ * and come before any await in its test: an await before it would let the other test build a second repo.
+ */
 const largeRepoOnce = () => (largeRepo ??= makeRepoWithManyBranches(LARGE_BRANCHES / 3));
 
 /** A copy of the repo `dir` in its own temp folder: the same refs, objects and files, so a command sees the same repo. */

@@ -153,5 +153,6 @@ test('copyBranchBriefDeny records under the environment it is given, and a failu
   assert.equal(readFileSync(env.CLAUDE_GUARD_LOG, 'utf8').trim().split('\n').length, 1, 'the row went to the log of the given env');
   let reads = 0;
   const failing = { get tool_input() { reads += 1; if (reads > 1) throw new Error('boom'); return call('implementer', OTHER_COPY_BRIEF); }, cwd: s.repo };
-  assert.equal(await copyBranchBriefDeny(failing, env), '', 'an error after the verdict never rejects');
+  assert.equal(await withTestTimeKnobs(() => copyBranchBriefDeny(failing, env)), '', 'an error after the verdict never rejects');
+  assert.equal(reads, 2, 'the verdict was reached (a deny) before the second read threw, so the catch is what let the call run');
 });
