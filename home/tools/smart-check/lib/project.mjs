@@ -5,7 +5,8 @@
 // Invariants: read-only; every subprocess has a timeout; any failure gives the cautious answer (a check present, no consumers known,
 //   no affected list) so the rules never skip a check because a read failed.
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { readJsonFile } from '../../../hooks/lib/typecheck-plan.mjs';
 
@@ -65,26 +66,26 @@ export function figmaJobOf(top, scope) {
   });
 }
 
-/** The number of test files in tests/ (the suite size scripts/affected-tests.mjs picks from). */
-function suiteSize(top) {
-  try {
-    return readdirSync(join(top, 'tests')).filter((name) => name.endsWith('.test.mjs')).length;
-  } catch {
-    return 0;
-  }
-}
+// A child runs the repo's own buildMap and affected() with onBase false: the smart check scopes one change, so the script's "on main,
+// run everything" landing rule does not apply here (the landing still runs the suite with `test` on). argv[1] is node itself, a real
+// file that is not the script, so the script's own main does not run on import.
+const AFFECTED_CHILD = `const m = await import(process.argv[2]); const map = m.buildMap(process.argv[3]);
+const r = m.affected(JSON.parse(process.argv[4]), map, { onBase: false }); process.stdout.write(JSON.stringify({ ...r, total: map?.tests.length ?? 0 }));`;
 
 /**
- * The affected tests of `paths`, from the repo's own scripts/affected-tests.mjs (`--list`), with the share of the suite they are.
+ * The affected tests of `paths`, from the repo's own scripts/affected-tests.mjs, with the share of the suite they are.
  * @param {string} top the repo top
- * @param {string[]} paths repo-relative changed paths that still exist
- * @returns {{tests: string[], share: number} | null} null when the repo has no such script or it failed
+ * @param {string[]} paths repo-relative changed paths
+ * @returns {{tests: string[], share: number, full: boolean, reason: string} | null} null when the repo has no such script or it failed
  */
 export function affectedOf(top, paths) {
-  if (!existsSync(join(top, AFFECTED_SCRIPT)) || paths.length === 0) return null;
-  const result = spawnSync(process.execPath, [AFFECTED_SCRIPT, ...paths, '--list'], { cwd: top, encoding: 'utf8', timeout: AFFECTED_TIMEOUT_MS, windowsHide: true });
-  if (result.status !== 0) return null;
-  const tests = result.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
-  const total = suiteSize(top);
-  return { tests, share: total ? tests.length / total : 0 };
+  const script = join(top, AFFECTED_SCRIPT);
+  if (!existsSync(script) || paths.length === 0) return null;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', AFFECTED_CHILD, process.execPath, pathToFileURL(script).href, top, JSON.stringify(paths)], { cwd: top, encoding: 'utf8', timeout: AFFECTED_TIMEOUT_MS, windowsHide: true });
+  try {
+    const answer = JSON.parse(result.stdout);
+    return { tests: answer.tests, full: answer.full, reason: answer.reason, share: answer.full ? 1 : answer.total ? answer.tests.length / answer.total : 0 };
+  } catch {
+    return null; // the script failed or printed something else: no list, so the rules fall back to their own levels
+  }
 }

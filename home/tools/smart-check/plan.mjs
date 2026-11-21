@@ -87,7 +87,7 @@ export async function buildPlan({ cwd, base: requested, job, paths: only = null,
   const ledger = readRows();
   const risk = riskScore(facts);
   const context = {
-    project, ownerOn, figmaJob: job === 'ui-pixel' || figmaJobOf(top, scope), affectedShare: affected?.share ?? 0,
+    project, ownerOn, figmaJob: job === 'ui-pixel' || figmaJobOf(top, scope), affectedShare: affected?.share ?? 0, affectedReason: affected?.reason ?? '', affectedCount: affected?.tests.length,
     textReadByTests: (affected?.tests.length ?? 0) > 0, recentCatches: recentCatches(ledger), riskTopDecile: topDecile(risk, ledger),
     proseHasCommands: proseHasCommands(files),
   };

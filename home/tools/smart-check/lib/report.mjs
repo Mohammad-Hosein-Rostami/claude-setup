@@ -35,7 +35,7 @@ export function reportBlock(outcome) {
   const status = mustAct(outcome) ? 'FAIL' : 'PASS';
   const checked = [`pinned ${pinned.length - pinnedFailed.length}/${pinned.length}${pinnedFailed.length ? ` (${pinnedFailed.map((p) => p.name).join(', ')} found)` : ''}`,
     ...ran.map((run) => `${run.check} ${run.level} ${run.result}`)];
-  const notChecked = notRun.map((run) => `${run.check} (${short(run.note ?? run.reason)})`);
+  const notChecked = notRun.map((run) => `${run.check} (${short((run.note ?? run.reason).replace(`${run.check}: `, ''))})`);
   const lines = [
     `smart-check ${status} (${outcome.seconds.toFixed(1)} s, ${outcome.tokens} tokens, change ${outcome.change})`,
     `checked: ${checked.join(', ')}`,

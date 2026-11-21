@@ -25,7 +25,7 @@ const MEDIA = /@media|@container|\bbreakpoints?\b|\b(up|down|between)\(\s*['"]?(
 const TOKENS = /(^|\/)(tokens?|theme|themes|palette|variables|design-system)[^/]*\.|(^|\/)(tokens|theme|themes)\//i;
 const TOKEN_LINE = /^\s*--[\w-]+\s*:|createTheme|ThemeProvider|prefers-color-scheme|data-theme|\bdark\b/;
 const GLOBAL_FILE = /(^|\/)(global|globals|reset|normalize|base|app|index|main|root|styles)\.(css|scss|sass|less)$|(^|\/)\.storybook\/preview|(^|\/)(app|_app|layout|root)\.[jt]sx$/i;
-const GLOBAL_SELECTOR = /^\s*(:root|html|body|\*|[a-z][a-z0-9]*)(\s*[,{:>+~[]|\s+[a-z.#])/;
+const GLOBAL_SELECTOR = /^\s*(:root|html|body|\*|[a-z][a-z0-9]*)\b[^;{}]*[{,]\s*$/; // a selector line (ends with { or ,), not a declaration
 const RTL = /\brtl\b|\bdir\s*=|direction\s*:|-inline(-start|-end)?\b|\b(margin|padding|inset)-(inline|block)|\bi18n\b|\blocale\b|\bt\(\s*['"]/;
 const LOCALE_FILE = /(^|\/)(locales?|i18n|translations?|lang)\//i;
 const STATE_WORD = /\b(isLoading|loading|isEmpty|empty|isError|error|disabled|skeleton|placeholder|status\s*===?)\b/;

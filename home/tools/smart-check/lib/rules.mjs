@@ -54,11 +54,12 @@ function testsRow(facts, project, context) {
   if (!project.tests) return row('tests', 'none', 'no test command in this repo');
   if (triggers.testRunner.length) return row('tests', 'full', `test runner, package.json or lockfile changed: ${list(triggers.testRunner)}`, 'full suite');
   if (stats.truncated) return row('tests', 'full', `change too spread out to trace (${stats.files} files)`, 'full suite');
-  if (context.affectedShare > 0.5) return row('tests', 'full', `affected set is ${Math.round(context.affectedShare * 100)}% of the suite`, 'full suite');
+  if (context.affectedShare > 0.5) return row('tests', 'full', `affected set is ${Math.round(context.affectedShare * 100)}% of the suite${context.affectedReason ? ` (${context.affectedReason})` : ''}`, 'full suite');
   if (noCode(facts) && triggers.tests.length === 0 && !context.textReadByTests) return row('tests', 'none', 'no code or test file changed');
   if (code.astEqual && triggers.tests.length === 0) return row('tests', 'none', 'formatting or comments only');
   const extra = triggers.tests.length ? ` + ${triggers.tests.length} changed test file(s)` : '';
-  return row('tests', 'scoped', `import graph of ${code.files.length} code file(s)${extra}`, 'affected tests + always-include');
+  const reach = typeof context.affectedCount === 'number' ? `${context.affectedCount} test(s) import or read the change` : `import graph of ${code.files.length} code file(s)`;
+  return row('tests', 'scoped', `${reach}${extra}`, 'affected tests + always-include');
 }
 
 /** The deep-review trigger of a change, or '' (round 2, 8.3 review "full" and 8.4). */
@@ -121,7 +122,7 @@ function probesRow(facts) {
  * The plan rows of one change.
  * @param {object} facts from changeFacts
  * @param {{project: {tsconfig: boolean, references: boolean, lint: boolean, build: boolean, tests: boolean}, ownerOn?: string[],
- *   figmaJob?: boolean, affectedShare?: number, textReadByTests?: boolean, recentCatches?: Set<string>, riskTopDecile?: boolean,
+ *   figmaJob?: boolean, affectedShare?: number, affectedReason?: string, textReadByTests?: boolean, recentCatches?: Set<string>, riskTopDecile?: boolean,
  *   proseHasCommands?: boolean}} context what plan.mjs read from the repo, the switch and the ledger
  * @returns {{check: string, level: string, reason: string, how: string, by: string}[]} one row per CHECK_KINDS entry, in order
  */
