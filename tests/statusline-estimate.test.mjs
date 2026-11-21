@@ -208,9 +208,9 @@ const PROGRESS = { pct: 54, approx: false, rowsDone: 5, rowsTotal: 9, leftMin: 3
 test('a cache entry carries the job progress and the render returns it with the text; an entry without one gives null', async () => {
   const { statusPath, cacheDir, render } = await setup();
   writeEntry(cacheDir, statusPath, await matchingEntry(statusPath, { progress: PROGRESS }));
-  assert.deepEqual(render(NOW), { text: SEGMENT, progress: PROGRESS });
+  assert.deepEqual(render(NOW), { text: SEGMENT, progress: PROGRESS, numbers: null });
   writeEntry(cacheDir, statusPath, await matchingEntry(statusPath));
-  assert.deepEqual(render(NOW), { text: SEGMENT, progress: null });
+  assert.deepEqual(render(NOW), { text: SEGMENT, progress: null, numbers: null });
   assert.ok(JSON.stringify(await matchingEntry(statusPath, { progress: PROGRESS })).length < MAX_CACHE_BYTES / 8);
 });
 
@@ -219,14 +219,14 @@ test('a progress that is not the stored shape is dropped, the entry and its text
   const bad = [{ ...PROGRESS, pct: 101 }, { ...PROGRESS, pct: 'x' }, { ...PROGRESS, tag: 'boom' }, { ...PROGRESS, rowsTotal: -1 }, { ...PROGRESS, leftMin: 'soon' }, 'text', [], { pct: 5 }];
   for (const progress of bad) {
     writeEntry(cacheDir, statusPath, await matchingEntry(statusPath, { progress }));
-    assert.deepEqual(render(NOW), { text: SEGMENT, progress: null }, JSON.stringify(progress));
+    assert.deepEqual(render(NOW), { text: SEGMENT, progress: null, numbers: null }, JSON.stringify(progress));
   }
 });
 
 test('once the shown clock has passed the render shows the overdue text and the overdue tag, whatever the stored tag', async () => {
   const { statusPath, cacheDir, render } = await setup();
   writeEntry(cacheDir, statusPath, await matchingEntry(statusPath, { progress: { ...PROGRESS, tag: null }, highMs: NOW + 1 }));
-  assert.deepEqual(render(NOW + 2), { text: 'done ? overdue', progress: { ...PROGRESS, tag: 'overdue' } });
+  assert.deepEqual(render(NOW + 2), { text: 'done ? overdue', progress: { ...PROGRESS, tag: 'overdue' }, numbers: null });
 });
 
 test('the refresh script stores the progress of the job it estimated', async () => {
@@ -244,7 +244,7 @@ test('a CLI run at the real clock stores the same progress in the cache as the F
   const { home, statusPath, env } = await liveHome();
   const cli = spawnSync(process.execPath, [CLI, statusPath, '--session', SESSION], { env, encoding: 'utf8' });
   assert.equal(cli.status, 0, cli.stderr);
-  const printed = cli.stdout.match(/^Progress: (\d+)% \((\d+) of (\d+) rows; median left .+; clock at 85%\)$/m);
+  const printed = cli.stdout.match(/^Progress: (\d+)% \((\d+) of (\d+) rows; median left .+\)$/m);
   assert.ok(printed, cli.stdout);
   const { progress } = readEntry(join(home, '.claude', 'state', 'estimate-segment'), statusPath);
   assert.deepEqual([progress.pct, progress.rowsDone, progress.rowsTotal], printed.slice(1).map(Number));

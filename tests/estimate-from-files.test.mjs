@@ -50,11 +50,11 @@ test('now moved over a silence changes no work number and moves the shown clock 
   assert.equal(m1 % 5, 0);
 });
 
-test('while work runs the committed clock holds; the first run commits p85 of the fresh forecast', async () => {
+test('while work runs the committed clock holds; the first run commits the median of the fresh forecast', async () => {
   const { run, stored } = await setup();
   const first = (await run(1)).result;
-  assert.equal(first.commit.budgetMin, first.work.p85);
-  assert.equal(first.commit.leftMin, first.work.p85);
+  assert.equal(first.commit.budgetMin, first.work.p50);
+  assert.equal(first.commit.leftMin, first.work.p50);
   assert.equal(stored().log.length, 1);
   assert.equal(stored().log[0].first, true);
   const again = (await run(1)).result;
@@ -62,13 +62,14 @@ test('while work runs the committed clock holds; the first run commits p85 of th
   assert.equal(stored().log.length, 1, 'a hold logs nothing');
 });
 
-test('15 minutes of work after the commitment use 15 minutes of its budget and leave the shown clock where it was', async () => {
+test('15 minutes of work after the commitment: the budget is held when the fresh median is within 5 min of it, else it moves to the fresh median', async () => {
   const { run, projectsDir } = await setup();
   const first = (await run(1)).result;
   writeTranscript(projectsDir, SESSION, 1, 1.25);
   const later = (await run(1.25)).result;
-  assert.equal(later.commit.leftMin, first.commit.leftMin - 15);
-  assert.equal(later.finish.clockMs, first.finish.clockMs);
+  const held = Math.abs(first.commit.leftMin - 15 - later.work.p50) <= 5;
+  assert.equal(later.commit.leftMin, held ? first.commit.leftMin - 15 : later.work.p50);
+  if (held) assert.equal(later.finish.clockMs, first.finish.clockMs);
   assert.equal(later.commit.pausedMin, 0);
 });
 
@@ -80,7 +81,7 @@ test('a moved commitment prints its stored cause, and a later run prints the sam
   assert.equal(moved.commit.moved.cause, 'rows-added');
   assert.deepEqual(moved.commit.moved.ids, ['O2', 'O3', 'O4', 'O5', 'O6', 'O7']);
   assert.ok(moved.finish.clockMs > moved.commit.moved.wasClockMs, 'a move is always later');
-  const later = formatEstimate((await run(1.05)).result, { timeZone: 'UTC' }).split('\n')[3];
+  const later = formatEstimate((await run(1.05)).result, { timeZone: 'UTC' }).split('\n').find((line) => line.startsWith('Moved:'));
   assert.match(later, /^Moved: at 01:00 from \d\d:\d\d, /);
   assert.match(later, /, because 6 rows were added \(O2, O3, O4, O5, O6 and 1 more\); unchanged since\.$/);
   assert.equal(stored().log.filter((entry) => entry.first === false).length, 1);
@@ -105,7 +106,7 @@ test('all done without a hand-over says so; the commitment is kept for the hand-
   const { run, stored } = await setup();
   await run(1);
   const { result } = await run(1, statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5, doneH: 1 })]));
-  assert.deepEqual(result, { state: 'all-done', nowMs: Date.parse(iso(1)), rows: 2, progress: { pct: 100, approx: false, rowsDone: 2, rowsTotal: 2, leftMin: 0, tag: null } });
+  assert.deepEqual(result, { state: 'all-done', nowMs: Date.parse(iso(1)), rows: 2, progress: { pct: 100, approx: false, rowsDone: 2, rowsTotal: 2, leftMin: 0, tag: null }, checks: [] });
   assert.notEqual(stored().commit, null);
 });
 
@@ -151,7 +152,7 @@ test('while no row of the job has started, a run replaces the first commitment i
   await run(1);
   const listed = (await run(1.05, unstarted(['O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7']))).result;
   assert.equal(listed.commit.moved, null);
-  assert.equal(listed.commit.budgetMin, listed.work.p85);
+  assert.equal(listed.commit.budgetMin, listed.work.p50);
   assert.deepEqual(stored().log.map((entry) => [entry.first, entry.ids.length]), [[true, 7]]);
   assert.doesNotMatch(formatEstimate(listed, { timeZone: 'UTC' }), /Moved/);
   const more = ['O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8', 'O9', 'O10', 'O11', 'O12', 'O13'].map((id) => row({ id }));

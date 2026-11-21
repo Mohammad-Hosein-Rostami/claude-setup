@@ -29,29 +29,27 @@ test('forecast path: floor(100 x worked / (worked + median left)), with the rows
 
 test('fallback path: weights S 3, M 9, L 40 without a pool median, earned = done weights + open rows capped at 90% of their weight', () => {
   const rows = [row('S', true), row('M', false, 3), row('L', false, 100)];
-  // earned = 3 + 3 + min(36, 100) = 42; total = (3 + 9 + 40) / (1 - 0.416) = 89.04; 42 / 89.04 = 47.2 %
-  assert.deepEqual(fallback({ rows }), { pct: 47, approx: true, rowsDone: 1, rowsTotal: 3, leftMin: null, tag: null });
+  // earned = 3 + 3 + min(36, 100) = 42; total = 3 + 9 + 40 = 52 (growth is no longer in it, model c2b); 42 / 52 = 80.8 %
+  assert.deepEqual(fallback({ rows }), { pct: 80, approx: true, rowsDone: 1, rowsTotal: 3, leftMin: null, tag: null });
 });
 
-test('fallback path: a pool median replaces the default weight of its size; growth below 0.75 replaces 0.416', () => {
+test('fallback path: a pool median replaces the default weight of its size; growth does not change the total', () => {
   const rows = [row('S', true), row('M', false, 3)];
-  // weights S 6, M 9: earned = 6 + 3 = 9; total = 15 / (1 - 0.25) = 20; 9 / 20 = 45 %
-  assert.equal(fallback({ rows, pool: { medians: { S: 6 }, growth: 0.25 } }).pct, 45);
-  // growth 0.75 or more, or unknown, uses 0.416: total = 15 / 0.584 = 25.7; 9 / 25.7 = 35.0 % (floor 35)
-  assert.equal(fallback({ rows, pool: { medians: { S: 6 }, growth: 0.75 } }).pct, 35);
-  assert.equal(fallback({ rows, pool: { medians: { S: 6 }, growth: null } }).pct, 35);
+  // weights S 6, M 9: earned = 6 + 3 = 9; total = 15; 9 / 15 = 60 %, whatever the pool's growth
+  assert.equal(fallback({ rows, pool: { medians: { S: 6 }, growth: 0.25 } }).pct, 60);
+  assert.equal(fallback({ rows, pool: { medians: { S: 6 }, growth: 0.75 } }).pct, 60);
+  assert.equal(fallback({ rows, pool: { medians: { S: 6 }, growth: null } }).pct, 60);
 });
 
-test('the percent never falls: the held percent wins over a lower fresh one and a higher fresh one replaces it', () => {
-  assert.equal(forecast({ heldPct: 80 }).pct, 80);
+test('the percent is this run\'s alone: an old held percent is not read (audit case 8, the percent may fall)', () => {
+  assert.equal(forecast({ heldPct: 80 }).pct, 66);
   assert.equal(forecast({ heldPct: 50 }).pct, 66);
-  assert.equal(fallback({ heldPct: 90, rows: [row('S', false), row('S', false)] }).pct, 90);
+  assert.equal(fallback({ heldPct: 90, rows: [row('S', false), row('S', false)] }).pct, 0);
 });
 
 test('99 until every row is done, 100 only then', () => {
   const nearly = forecast({ workedMin: 1000, p50LeftMin: 0 }); // 100 % by the formula
   assert.equal(nearly.pct, 99);
-  assert.equal(forecast({ heldPct: 100 }).pct, 99);
   const done = forecast({ rows: [row('S', true), row('M', true)], p50LeftMin: null, committedLeftMin: null });
   assert.deepEqual(done, { pct: 100, approx: false, rowsDone: 2, rowsTotal: 2, leftMin: 0, tag: null });
 });
@@ -126,35 +124,33 @@ test('no row at all and a handed-over job show no progress; all rows done shows 
   assert.equal(result.progress ?? null, null);
 });
 
-test('the percent is held per job: rows added cannot lower it, a next job starts again, a run that records nothing reads the hold', async () => {
-  const { run, stored } = await setup();
+test('the percent falls after rows are added, a next job starts again, a run that records nothing gives the same percent', async () => {
+  const { run } = await setup();
   const first = (await run(1)).result.progress;
   const added = statusDoc([tableRow({ id: 'D1', startedH: 0, doneH: 0.5 }), tableRow({ id: 'O1', startedH: 0.5 }), ...['O2', 'O3', 'O4', 'O5', 'O6', 'O7'].map((id) => tableRow({ id }))]);
   const second = (await run(1, added)).result;
-  assert.equal(second.progress.pct, first.pct, 'the fresh percent is lower (more work left), the held one is shown');
+  assert.ok(second.progress.pct < first.pct, 'more work left: the percent falls (audit case 8)');
   assert.equal(second.progress.tag, '+rows');
-  assert.deepEqual(stored().held, { start: new Date(BASE_MS).toISOString(), pct: first.pct });
-  assert.equal((await run(1, undefined, { record: false })).result.progress.pct, first.pct);
+  assert.equal((await run(1, undefined, { record: false })).result.progress.pct, second.progress.pct);
   const nextJob = statusDoc([
     tableRow({ id: 'D1', startedH: 0, doneH: 0.5 }), tableRow({ id: 'O1', startedH: 0.5, doneH: 0.9 }),
     tableRow({ id: 'deliver:1', item: 'report', raw: { done: iso(0.95) }, evidence: '-' }), tableRow({ id: 'N1', startedH: 1.5 }),
   ]);
   const third = (await run(1.6, nextJob)).result;
   assert.equal(third.progress.pct, 0, 'the new job worked nothing yet; the old job\'s percent does not carry over');
-  assert.equal(stored().held.start, new Date(BASE_MS + 1.5 * HOUR_MS).toISOString());
 });
 
 const PROGRESS = { pct: 54, approx: false, rowsDone: 5, rowsTotal: 9, leftMin: 30, tag: null };
 const FINISH = {
-  state: 'finish', nowMs: BASE_MS, finish: { clockMs: BASE_MS + HOUR_MS, likelyMs: BASE_MS + HOUR_MS, lateMs: BASE_MS + 2 * HOUR_MS, ahead: false },
+  state: 'finish', nowMs: BASE_MS, finish: { clockMs: BASE_MS + HOUR_MS, p85Ms: BASE_MS + 1.5 * HOUR_MS, lateMs: BASE_MS + 2 * HOUR_MS },
   commit: { atMs: BASE_MS, budgetMin: 60, leftMin: 60, pausedMin: 0, moved: null }, covers: { open: 4, running: 1, sizes: { S: 4, M: 0, L: 0 }, growth: 0.2 },
   work: { p50: 30, p85: 60, p95: 90 }, record: null, pool: { rows: 10, jobs: 2 }, checks: [],
 };
 
 test('the Finish block and a refusal print one Progress line (after the track record, before the Check lines)', () => {
   const block = formatEstimate({ ...FINISH, progress: PROGRESS, checks: [{ kind: 'untracked', minutes: 45 }] }, { timeZone: 'UTC' }).split('\n');
-  assert.equal(block[5], 'Progress: 54% (5 of 9 rows; median left 30 min; clock at 85%)');
-  assert.match(block[6], /^Check: /);
+  assert.equal(block[6], 'Progress: 54% (5 of 9 rows; median left 30 min)');
+  assert.match(block[7], /^Check: /);
   assert.equal(formatEstimate({ ...FINISH, progress: { ...PROGRESS, rowsDone: 0, rowsTotal: 1 } }, { timeZone: 'UTC' }).includes('(0 of 1 row;'), true);
   assert.equal(formatEstimate(FINISH, { timeZone: 'UTC' }).includes('Progress:'), false, 'a result with no progress prints none');
   const refused = { state: 'refused', refusal: { reason: 'growth', growth: 0.8 }, checks: [], progress: { pct: 31, approx: true, rowsDone: 2, rowsTotal: 4, leftMin: null, tag: null } };

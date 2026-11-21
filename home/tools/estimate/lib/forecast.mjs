@@ -3,7 +3,8 @@
 // forecastWork(openRows, pool, seedText), refusalOf(openRows, pool, work).
 // Model (estimator design 3.5-3.7): the class of a row is its size alone; one run draws, for each open row, a finished cost of its
 // size longer than the row's elapsed share (minus that share), or any cost of its size when the row has run longer than all of them
-// (a stale row); the run's total is divided by (1 - growth). The runs are seeded from the table and its open ids, so the CLI and the
+// (a stale row). Growth (work not listed yet) is not in the total: on 15 replayed jobs it added +92 min of work per job that never
+// came (backtest section 5, model c2b); the report states it on a line of its own. The runs are seeded from the table and its open ids, so the CLI and the
 // status line give the same numbers for the same table state.
 // Invariants: pure (no I/O, no clock). Work is in minutes. Pool costs are sorted ascending per size.
 import { createHash } from 'node:crypto';
@@ -107,7 +108,7 @@ const hasClass = (openRows, pool) => openRows.every((row) => (pool.costs[row.siz
  * @param {{ id: string, size: string, elapsed: number }[]} openRows elapsed = the row's elapsed share in minutes (0 when not started)
  * @param {ReturnType<typeof referencePool>} pool the reference pool
  * @param {string} seedText tableId + '|' + the open ids sorted and joined by ','
- * @returns {{ p50: number, p85: number, p95: number, stale: string[] } | null} minutes, before any widening; stale = rows past every
+ * @returns {{ p50: number, p85: number, p95: number, stale: string[] } | null} minutes of listed work, before any widening; stale = rows past every
  *   finished row of their size, in row order; null when a size has fewer than MIN_CLASS_ROWS rows or growth is at MAX_GROWTH or above
  */
 export function forecastWork(openRows, pool, seedText) {
@@ -118,7 +119,7 @@ export function forecastWork(openRows, pool, seedText) {
     return { id: row.id, values: longer.length > 0 ? longer : sizeCosts, stale: longer.length === 0 };
   });
   const random = mulberry32(seedOf(seedText));
-  const totals = Array.from({ length: RUNS }, () => draws.reduce((sum, draw) => sum + pick(draw.values, random), 0) / (1 - pool.growth));
+  const totals = Array.from({ length: RUNS }, () => draws.reduce((sum, draw) => sum + pick(draw.values, random), 0));
   totals.sort(ascending);
   const percentiles = Object.fromEntries(Object.entries(PERCENTILES).map(([name, share]) => [name, nearestRank(totals, share)]));
   return { ...percentiles, stale: draws.filter((draw) => draw.stale).map((draw) => draw.id) };

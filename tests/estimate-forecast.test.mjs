@@ -90,12 +90,12 @@ test('forecastWork: 400 simulated jobs forecast at the start with no growth are 
   assert.ok(within >= 320 && within <= 360, `within p85: ${within} of 400`);
 });
 
-test('forecastWork gives the same numbers for the same seed text and divides by (1 - growth)', () => {
+test('forecastWork gives the same numbers for the same seed text; growth is not in the total (backtest model c2b)', () => {
   const rows = [{ id: 'a', size: 'S', elapsed: 0 }, { id: 'b', size: 'S', elapsed: 15 }];
   const plain = forecastWork(rows, poolOf({ S: FIVE, M: FIVE, L: FIVE }), 't|a,b');
   assert.deepEqual(forecastWork(rows, poolOf({ S: FIVE, M: FIVE, L: FIVE }), 't|a,b'), plain);
   const grown = forecastWork(rows, poolOf({ S: FIVE, M: FIVE, L: FIVE }, 0.5), 't|a,b');
-  assert.deepEqual([grown.p50, grown.p85, grown.p95], [plain.p50 * 2, plain.p85 * 2, plain.p95 * 2]);
+  assert.deepEqual([grown.p50, grown.p85, grown.p95], [plain.p50, plain.p85, plain.p95]);
 });
 
 test('forecastWork gives no forecast when a size has fewer than 5 pool rows or growth is at the limit', () => {

@@ -7,7 +7,8 @@
 // - Fast: a render reads one small link file, does one stat of STATUS.md and one small cache read. It never imports the forecast,
 //   the table parser or the transcript reader, so it can never read a transcript. The text comes only from the refresh script.
 // - Cache file: ~/.claude/state/estimate-segment/<sha256 of the STATUS.md path, 32 hex>.json, one JSON object
-//   {path, kind, text, highMs, progress, mtimeMs, size, computedAt, refreshStartedAt}; progress is the job's progress (progress.mjs
+//   {path, kind, text, highMs, progress, numbers, mtimeMs, size, computedAt, refreshStartedAt}; numbers (job-rows.mjs jobNumbers, or
+//   null) is checked like progress and passed on as `numbers` (the switch of the render to numbers only is r9-statusline's); progress is the job's progress (progress.mjs
 //   progressOf, a small object) or null, shown by the status line's second line under the same freshness rules as the text; kind is one of SEGMENT_KINDS and text is what to show
 //   (a finish, a hand-over, the work left of a long job, or `done ? <cause>` after a refusal or an error); highMs (epoch ms) is the
 //   shown clock of a finish, after which OVERDUE_TEXT is shown; null for the other kinds. An entry of another kind (written by the
@@ -29,7 +30,7 @@ import { linkedStatusPath, stateDir } from './table-store.mjs';
 // segment-text.mjs, which loads the report: the render must stay light.
 export const SEGMENT_KINDS = ['finish', 'handed-over', 'work-left', 'refused', 'error'];
 export const OVERDUE_TEXT = 'done ? overdue'; // shown in place of a finish whose clock has passed
-export const MAX_CACHE_BYTES = 4096; // an entry is ~200 bytes; a bigger file was not written by the refresh script
+export const MAX_CACHE_BYTES = 16384; // an entry is ~200 bytes plus ~70 per open row in numbers (at most MAX_CACHE_ROWS, 64): ~5 KB
 export const STALE_SHOW_MS = 15 * 60 * 1000; // text of a changed STATUS.md is still shown this long while its refresh runs
 export const REFRESH_INTERVAL_MS = 2 * 60 * 1000; // at most one refresh start per STATUS.md in this time
 // The committed time slides with every pause even when STATUS.md does not change, and the hand-over or a move can come with the
@@ -52,6 +53,14 @@ const isProgress = (value) => value !== null && typeof value === 'object' && !Ar
   && isCount(value.pct) && value.pct <= MAX_PERCENT && typeof value.approx === 'boolean' && isCount(value.rowsDone) && isCount(value.rowsTotal)
   && (value.leftMin === null || isNumber(value.leftMin)) && PROGRESS_TAGS.includes(value.tag);
 
+const isRowNumbers = (row) => row !== null && typeof row === 'object' && typeof row.id === 'string' && isNumber(row.expectMin)
+  && (row.startedMs === null || isNumber(row.startedMs));
+const orNull = (value) => value === null || isNumber(value);
+/** True for the numbers job-rows.mjs jobNumbers returns (checked, never trusted, like progress). */
+const isNumbers = (value) => value !== null && typeof value === 'object' && orNull(value.finishMs) && orNull(value.p85Ms ?? null)
+  && orNull(value.leftMin) && isNumber(value.workedMin) && isCount(value.rowsDone) && isCount(value.rowsTotal)
+  && Array.isArray(value.rows) && value.rows.every(isRowNumbers);
+
 /**
  * @param {string} dir the cache folder
  * @param {string} statusPath absolute path of the STATUS.md the entry is about
@@ -66,7 +75,7 @@ export function readEntry(dir, statusPath) {
     const valid = entry?.path === statusPath && (entry.text === null || typeof entry.text === 'string') && (entry.highMs === null || isNumber(entry.highMs))
       && (entry.kind === null || SEGMENT_KINDS.includes(entry.kind))
       && ['mtimeMs', 'size', 'computedAt', 'refreshStartedAt'].every((field) => isNumber(entry[field]));
-    return valid ? { ...entry, progress: isProgress(entry.progress) ? entry.progress : null } : null;
+    return valid ? { ...entry, progress: isProgress(entry.progress) ? entry.progress : null, numbers: isNumbers(entry.numbers) ? entry.numbers : null } : null;
   } catch {
     return null; // a half-written or foreign file: treated as no cache, the next refresh replaces it
   }
@@ -85,8 +94,8 @@ function shownEntry(entry, file, now) {
   if (entry === null || entry.text === null) return null;
   const current = matchesFile(entry, file) || (entry.kind !== 'handed-over' && now - entry.computedAt < STALE_SHOW_MS);
   if (!current) return null;
-  if (entry.highMs === null || now <= entry.highMs) return { text: entry.text, progress: entry.progress };
-  return { text: OVERDUE_TEXT, progress: entry.progress === null ? null : { ...entry.progress, tag: 'overdue' } };
+  if (entry.highMs === null || now <= entry.highMs) return { text: entry.text, progress: entry.progress, numbers: entry.numbers };
+  return { text: OVERDUE_TEXT, progress: entry.progress === null ? null : { ...entry.progress, tag: 'overdue' }, numbers: entry.numbers };
 }
 
 /**

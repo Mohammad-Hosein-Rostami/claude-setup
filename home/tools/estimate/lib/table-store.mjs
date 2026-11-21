@@ -2,10 +2,10 @@
 // its log), one link per session to the STATUS.md it last edited with status.mjs (only noteTable with a session id writes it), and
 // the seed shipped in the repo.
 // Exports: stateDir(), tableId(statusPath), readAllTables(dir), updateTable(dir, statusPath, change), noteTable(dir, statusPath,
-// { sessionId, ids, nowMs }), linkedStatusPath(dir, sessionId), readSeed(file), heldPercent(table, jobStart), withHeldPercent(table, jobStart, pct).
+// { sessionId, ids, nowMs }), linkedStatusPath(dir, sessionId), readSeed(file).
 // Layout under dir (default ~/.claude/state/estimate): table/<id>.json = { v: 2, path, sessions, added: { rowId: iso }, rows:
-// [{ size, kind, done, cost }], jobs: [{ at, minutes, growthNum, growthDen }], commit, log, held?: { start: iso, pct } }; held is the
-// highest progress percent the current job showed, for the job whose first started time is `start` (absent in old files); session/<session-id>.json =
+// [{ size, kind, done, cost }], jobs: [{ at, minutes, growthNum, growthDen }], commit, log }; an old file's `held` (a
+// progress percent that never fell) is kept as it is and no longer read (the percent may fall now); session/<session-id>.json =
 // { path, at }; activity/ belongs to activity.mjs. All files go through hooks/lib/session-store.mjs (no links followed, private
 // files) and every write passes { sweep: false }: this is history, never expired.
 // Invariants: the table lock is held only for one read-change-write of one table file (the lock is taken as abandoned after 0.5 s,
@@ -181,18 +181,6 @@ export function linkedStatusPath(dir, sessionId) {
   const link = parsedOrUndefined(text);
   return isPlainObject(link) && typeof link.path === 'string' && isAbsolute(link.path) ? link.path : null;
 }
-
-const MAX_HELD_PERCENT = 100;
-
-/** @returns {number | null} the percent held for the job that began at jobStart (ISO), null when none is stored for that job or it is not a percent */
-export function heldPercent(table, jobStart) {
-  const { held } = table;
-  const usable = isPlainObject(held) && held.start === jobStart && Number.isInteger(held.pct) && held.pct >= 0 && held.pct <= MAX_HELD_PERCENT;
-  return usable ? held.pct : null;
-}
-
-/** @returns {object} the table with the held percent of the job that began at jobStart (ISO); the table unchanged when no job has started */
-export const withHeldPercent = (table, jobStart, pct) => (jobStart === null ? table : { ...table, held: { start: jobStart, pct } });
 
 const isStamp = (value) => typeof value === 'string' && Number.isFinite(Date.parse(value));
 const isTableRef = (value) => typeof value === 'string' && /^[0-9a-f]{32}$/.test(value);

@@ -13,6 +13,7 @@ export const IDLE_GAP_MIN = 10;
 const MS_PER_MIN = 60_000;
 
 const toMin = (ms) => ms / MS_PER_MIN;
+const floorToMinuteMs = (ms) => Math.floor(ms / MS_PER_MIN) * MS_PER_MIN;
 const isWorkRow = (item) => item.kind !== 'deliver';
 const isStartedWorkRow = (item) => isWorkRow(item) && item.started !== null;
 const handOverTimes = (items) => items.filter((item) => item.kind === 'deliver' && item.done !== null).map((item) => item.done).sort((a, b) => a - b);
@@ -101,11 +102,13 @@ export function elapsedShares(items, intervals, nowMin) {
 }
 
 /**
- * When a row was added to the table, for growth: its first-seen time when that is at or before its start, else its own start for a
+ * When a row was added to the table, for growth: its first-seen time (floored to the minute) when that is at or before its start, else its own start for a
  * `close:` row and the job's start for any other row (old tables have no first-seen record; design 3.4).
  */
 function addedAt(item, jobStartMs, added) {
-  const seen = added.get(item.id);
+  // A first-seen time keeps its seconds, a started stamp is often whole minutes: a row added and started in the same minute would
+  // compare as seen after its start and count as listed at the job start (growth 0.28 shown, 0.44 true; backtest section 7 item 2).
+  const seen = added.has(item.id) ? floorToMinuteMs(added.get(item.id)) : undefined;
   if (seen !== undefined && seen <= item.started) return seen;
   return item.kind === 'close' ? item.started : jobStartMs;
 }

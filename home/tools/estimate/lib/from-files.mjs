@@ -2,24 +2,26 @@
 // reference pool, forecasts the work left and keeps the job's one committed time. Used by estimate.mjs (the CLI) and by
 // statusline-cache.mjs (the status line), so both show the same time for the same table state.
 // Exports: UsageError, estimateFile(path, options) -> { result, inputs } (finish, refused and all-done results carry `progress`, see
-// progress.mjs; its held percent is stored with the commitment); referenceRows(items, costs), storedJob(job),
+// progress.mjs, and `numbers` for the status line cache, see job-rows.mjs); referenceRows(items, costs), storedJob(job),
 // forecastSeedText(id, openRows), slowRowOf(openRows, pool) (shared with backtest.mjs, so the replay uses the tool's own steps).
 // Invariants: the table file's lock is taken only for the quick read-change-write of the commitment (estimator design 3.8), never
 // around the scan or the simulation; a busy lock means this run shows what it computed from the state it read and records nothing.
 // A run never links a session to the table (table.sessions and the session link are written by status.mjs edits only); the given
 // session's transcripts count for this run alone.
 // Without a stateDir nothing is read from or written to the store. Transcripts are never printed. Work is in minutes; `now` is
-// floored to the minute so that the CLI and the status line, run in the same minute, agree.
+// floored to the minute so that the CLI and the status line, run in the same minute, agree. Rows carried over the last hand-over
+// (job-rows.mjs) are left out of every count and named in a Check line.
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { isSessionId } from '../../../hooks/lib/session-store.mjs';
 import { activeRuns } from './activity.mjs';
-import { nextCommitment, scoreLog, trackRecord, widening } from './commitment.mjs';
+import { band, nextCommitment, scoreLog, trackRecord, widening } from './commitment.mjs';
 import { forecastWork, nearestRank, referencePool, refusalOf } from './forecast.mjs';
 import { INSTANT_FORMAT, parseInstant, parseWorkItems } from './items.mjs';
+import { carriedIds, jobNumbers } from './job-rows.mjs';
 import { classMedians, progressOf } from './progress.mjs';
-import { heldPercent, noteTable, readAllTables, readSeed, tableId, updateTable, withHeldPercent } from './table-store.mjs';
+import { noteTable, readAllTables, readSeed, tableId, updateTable } from './table-store.mjs';
 import { elapsedShares, handedOverJobs, rowCosts, workedMinutes, workingIntervals } from './worked.mjs';
 
 const MS_PER_MIN = 60_000;
@@ -30,7 +32,6 @@ const MAX_LOG_ENTRIES = 200;
 /** Working minutes of the current job with no started row before a Check line asks for starts: 2-3 % of the measured working time was untracked (design 3.2, 3.10). */
 const UNTRACKED_CHECK_MIN = 30;
 const DROPPED = /^dropped:/i;
-
 /** A wrong input (file, cell, flag or folder): the CLI prints its message and exits 2. `problems` = the table problems ({line, reason, id?}), empty for other inputs. */
 export class UsageError extends Error {
   constructor(message, problems = []) {
@@ -116,33 +117,33 @@ function currentJob(items, facts, openRows, nowMin) {
   const starts = rows.filter((item) => item.started !== null).map((item) => item.started);
   const startMs = starts.length > 0 ? Math.min(...starts) : null;
   return {
-    rows: rows.map((item) => ({ id: item.id, size: item.size, done: item.done !== null, elapsedMin: elapsedOf.get(item.id) ?? 0 })),
+    rows: rows.map((item) => ({ id: item.id, size: item.size, done: item.done !== null, elapsedMin: elapsedOf.get(item.id) ?? 0, startedMs: item.started })),
     start: startMs === null ? null : iso(startMs),
     workedMin: startMs === null ? 0 : workedMinutes(facts.intervals, startMs / MS_PER_MIN, nowMin),
     nowMin,
   };
 }
 
-const NO_POOL = { medians: {}, growth: null };
-
+const NO_POOL = { medians: {} };
 /**
- * This run's progress of the job and the table with the job's held percent updated. `commit` is the commitment shown (null on a refusal:
- * it has no clock), `p50LeftMin` the forecast's median (null: weights path).
+ * This run's progress of the job. `commit` is the commitment shown (null on a refusal: it has no clock), `p50LeftMin` the forecast's
+ * median (null: weights path).
  */
-function progressStep(table, job, facts, { p50LeftMin, commit }) {
+function progressStep(job, facts, { p50LeftMin, commit }) {
   const rowsAdded = commit !== null && (commit.moved?.cause === 'rows-added' || job.rows.some((row) => !row.done && !commit.ids.includes(row.id)));
-  const progress = progressOf({
+  return progressOf({
     workedMin: job.workedMin,
     p50LeftMin,
     committedLeftMin: commit === null ? null : commit.budgetMin - workedMinutes(facts.intervals, minuteOf(commit.at), job.nowMin),
     rows: job.rows,
-    pool: { medians: classMedians(facts.pool.costs), growth: facts.pool.growth },
-    heldPct: heldPercent(table, job.start),
+    pool: { medians: classMedians(facts.pool.costs) },
     moved: commit !== null && commit.moved !== null,
     rowsAdded,
   });
-  return { progress, table: withHeldPercent(table, job.start, progress.pct) };
 }
+
+/** The Check line fact of the rows carried over the last hand-over, as a list (empty when none is). */
+const carriedChecks = (facts) => (facts.carried.length === 0 ? [] : [{ kind: 'carried', ids: facts.carried }]);
 
 /** Stale rows (run longer than every finished row of their size), longest first, as Check facts. */
 function staleChecks(stale, openRows, pool) {
@@ -158,7 +159,7 @@ function forecastOpen(items, facts, nowMin) {
   const raw = forecastWork(openRows, facts.pool, forecastSeedText(facts.id, openRows));
   const kappa = widening(scoreLog(facts.stored?.log ?? [], items, facts.intervals));
   const work = raw === null ? null : { p50: raw.p50, raw85: raw.p85, p85: raw.p85 * kappa, p95: raw.p95 * kappa, g: facts.pool.growth, kappa };
-  const checks = [...(raw === null ? [] : staleChecks(raw.stale, openRows, facts.pool)), ...(untrackedMin >= UNTRACKED_CHECK_MIN ? [{ kind: 'untracked', minutes: untrackedMin }] : [])];
+  const checks = [...(raw === null ? [] : staleChecks(raw.stale, openRows, facts.pool)), ...(untrackedMin >= UNTRACKED_CHECK_MIN ? [{ kind: 'untracked', minutes: untrackedMin }] : []), ...carriedChecks(facts)];
   return { openRows, work, checks, refusal: refusalOf(openRows, facts.pool, work), job: currentJob(items, facts, openRows, nowMin) };
 }
 
@@ -184,16 +185,18 @@ function withRefusal(log, refusal, work, nowMin) {
   return capped([...log, { at: iso(nowMin * MS_PER_MIN), refusal: refusal.reason, p50: work?.p50 ?? null, p85: work?.p85 ?? null }]);
 }
 
-/** The finish facts of a committed budget at now: the shown clock, the sharper clocks and the pauses since it was made. */
+/** The finish facts of a committed budget at now: the shown (median) clock, the 85% and 95% clocks and the pauses since it was made. */
 function finishOf(commit, work, facts, nowMin) {
   const atMin = minuteOf(commit.at);
   const workedSince = workedMinutes(facts.intervals, atMin, nowMin);
   const leftMin = commit.budgetMin - workedSince;
   const clockMs = (nowMin + leftMin) * MS_PER_MIN;
-  const lateMs = (nowMin + work.p95) * MS_PER_MIN;
+  // The 85% and 95% clocks keep the committed median's offset, so they never read earlier than the shown clock.
+  const p85Ms = clockMs + Math.max(0, work.p85 - work.p50) * MS_PER_MIN;
+  const lateMs = clockMs + Math.max(0, work.p95 - work.p50) * MS_PER_MIN;
   const moved = commit.moved === null ? null : { atMs: Date.parse(commit.moved.at), wasClockMs: Date.parse(commit.moved.wasClock), cause: commit.moved.cause, ids: commit.moved.ids };
   return {
-    finish: { clockMs, likelyMs: (nowMin + work.p50) * MS_PER_MIN, lateMs, ahead: lateMs < clockMs },
+    finish: { clockMs, p85Ms, lateMs },
     commit: { atMs: Date.parse(commit.at), budgetMin: commit.budgetMin, leftMin, pausedMin: Math.max(0, nowMin - atMin - workedSince), moved },
   };
 }
@@ -212,9 +215,8 @@ function finishResult(items, facts, forecast, options) {
     const log = current !== null && !started ? withoutEntryOf(table.log, current) : table.log;
     const leftMin = commit === null ? null : commit.budgetMin - workedMinutes(facts.intervals, minuteOf(commit.at), nowMin);
     const next = nextCommitment(commit, forecast.work, leftMin, context);
-    const step = progressStep({ ...table, commit: next.commit, log: next.entry === null ? log : capped([...log, next.entry]) }, forecast.job, facts, { p50LeftMin: forecast.work.p50, commit: next.commit });
-    progress = step.progress;
-    return step.table;
+    progress = progressStep(forecast.job, facts, { p50LeftMin: forecast.work.p50, commit: next.commit });
+    return { ...table, commit: next.commit, log: next.entry === null ? log : capped([...log, next.entry]) };
   };
   const { table, recorded } = settle(options.statusPath, items, facts, options, change);
   const sizeOf = new Map(items.map((item) => [item.id, item.size]));
@@ -226,7 +228,8 @@ function finishResult(items, facts, forecast, options) {
       state: 'finish', nowMs: nowMin * MS_PER_MIN, ...shown,
       covers: { open: forecast.openRows.length, running, sizes: sizeCounts(forecast.openRows), growth: facts.pool.growth },
       work: { p50: forecast.work.p50, p85: forecast.work.p85, p95: forecast.work.p95 }, progress,
-      record: trackRecord(table.log), pool: { rows: facts.pool.rowCount, jobs: facts.pool.jobCount }, checks: forecast.checks,
+      numbers: jobNumbers(forecast.job, classMedians(facts.pool.costs), { finishMs: shown.finish.clockMs, p85Ms: shown.finish.p85Ms, leftMin: shown.commit.leftMin }),
+      band: band(table.log), record: trackRecord(table.log), pool: { rows: facts.pool.rowCount, jobs: facts.pool.jobCount }, checks: forecast.checks,
     },
     recorded,
   };
@@ -235,13 +238,11 @@ function finishResult(items, facts, forecast, options) {
 function refusedResult(items, facts, refusal, options, extra = {}) {
   let progress = null;
   const { table, recorded } = settle(options.statusPath, items, facts, options, (base) => {
-    const logged = { ...base, log: withRefusal(base.log, refusal, extra.work ?? null, options.nowMin) };
-    if (extra.job === undefined) return logged;
-    const step = progressStep(logged, extra.job, facts, { p50LeftMin: null, commit: null });
-    progress = step.progress;
-    return step.table;
+    if (extra.job !== undefined) progress = progressStep(extra.job, facts, { p50LeftMin: null, commit: null });
+    return { ...base, log: withRefusal(base.log, refusal, extra.work ?? null, options.nowMin) };
   });
-  return { result: { state: 'refused', nowMs: options.nowMin * MS_PER_MIN, refusal, checks: extra.checks ?? [], progress, record: trackRecord(table.log) }, recorded };
+  const numbers = extra.job === undefined ? null : jobNumbers(extra.job, classMedians(facts.pool.costs), { finishMs: null, leftMin: null });
+  return { result: { state: 'refused', nowMs: options.nowMin * MS_PER_MIN, refusal, checks: extra.checks ?? carriedChecks(facts), progress, numbers, record: trackRecord(table.log) }, recorded };
 }
 
 /** No open row: handed over when the last hand-over is at or after every done time, else all done and not handed over yet. */
@@ -252,13 +253,13 @@ function closedResult(items, facts, options) {
   if (facts.lastHandOver !== null && facts.lastHandOver >= lastDone) {
     const { table, recorded } = settle(options.statusPath, items, facts, options, (base) => ({ ...base, commit: null }));
     const job = facts.jobs.at(-1);
-    return { result: { state: 'handed-over', nowMs, handedOverMs: facts.lastHandOver, rows: job?.ids.length ?? 0, workedMin: job?.minutes ?? 0, progress: null, record: trackRecord(table.log), pool: { rows: facts.pool.rowCount, jobs: facts.pool.jobCount } }, recorded };
+    return { result: { state: 'handed-over', nowMs, handedOverMs: facts.lastHandOver, rows: job?.ids.length ?? 0, workedMin: job?.minutes ?? 0, progress: null, checks: carriedChecks(facts), record: trackRecord(table.log), pool: { rows: facts.pool.rowCount, jobs: facts.pool.jobCount } }, recorded };
   }
   const { recorded } = settle(options.statusPath, items, facts, options, (base) => base);
   const rows = work.filter((item) => facts.lastHandOver === null || item.done > facts.lastHandOver).length;
   const { rows: jobRows } = currentJob(items, facts, [], options.nowMin);
-  const progress = progressOf({ workedMin: 0, p50LeftMin: null, committedLeftMin: null, rows: jobRows, pool: NO_POOL, heldPct: null, moved: false, rowsAdded: false });
-  return { result: { state: 'all-done', nowMs, rows, progress }, recorded };
+  const progress = progressOf({ workedMin: 0, p50LeftMin: null, committedLeftMin: null, rows: jobRows, pool: NO_POOL, moved: false, rowsAdded: false });
+  return { result: { state: 'all-done', nowMs, rows, progress, checks: carriedChecks(facts) }, recorded };
 }
 
 /**
@@ -282,13 +283,16 @@ export function estimateFile(path, { now, stateDir = null, projectsDir = join(ho
   // folder neither counts its transcripts for this table for good nor points its Stop hook here (audit SF1, option a).
   if (recording) noteTable(stateDir, statusPath, { sessionId: undefined, ids: items.map((item) => item.id), nowMs });
   const options = { statusPath, nowMin: Math.floor(nowMs / MS_PER_MIN), stateDir, projectsDir, sessionId, record: recording, seedFile };
-  const facts = measure(statusPath, items, options);
+  const measured = measure(statusPath, items, options);
+  const facts = { ...measured, carried: carriedIds(items, measured.stored?.added ?? {}, measured.lastHandOver) };
+  // A carried row does not count anywhere (forecast, progress, open check, commitment ids); the parse above still checked it.
+  const counted = items.filter((item) => !facts.carried.includes(item.id));
   const run = () => {
-    if (!items.some(isWorkRow)) return refusedResult(items, facts, { reason: 'no-rows' }, options);
-    if (!items.some((item) => isWorkRow(item) && item.done === null)) return closedResult(items, facts, options);
-    const forecast = forecastOpen(items, facts, options.nowMin);
-    if (forecast.refusal !== null) return refusedResult(items, facts, forecast.refusal, options, forecast);
-    return finishResult(items, facts, forecast, options);
+    if (!counted.some(isWorkRow)) return refusedResult(counted, facts, { reason: 'no-rows' }, options);
+    if (!counted.some((item) => isWorkRow(item) && item.done === null)) return closedResult(counted, facts, options);
+    const forecast = forecastOpen(counted, facts, options.nowMin);
+    if (forecast.refusal !== null) return refusedResult(counted, facts, forecast.refusal, options, forecast);
+    return finishResult(counted, facts, forecast, options);
   };
   const { result, recorded } = run();
   return { result, inputs: { path: statusPath, sessions: facts.sessions.length, recorded, busy: recording && !recorded } };

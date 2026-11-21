@@ -12,6 +12,8 @@
 // job's start) and not done; the pool is the other tables' rows and jobs plus this table's rows done by then (costs split among
 // rows done by then) and its jobs handed over by then; no seed, no store, widening 1. The hold rule runs along each job. A table
 // with open rows at --now also gets its state and work left from the same pool. Leave-one-table-out, not a walk through time.
+// Scores (lib/backtest-scores.mjs): the shown (median) time per job against the work to the hand-over, signed bias, 85% hit rate,
+// a naive baseline and the first estimate apart; printed beside the thresholds, never failing the run.
 // Exit codes: 0 every threshold passes (or there is no handed-over job); 1 a threshold fails; 2 usage or table problem.
 // Invariants: writes nothing but the activity index and, when asked, the seed file; prints no row text or transcript content.
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -20,6 +22,7 @@ import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { isSessionId } from '../../hooks/lib/session-store.mjs';
 import { activeRuns } from './lib/activity.mjs';
+import { jobSizeClass, scoreLines } from './lib/backtest-scores.mjs';
 import { nextCommitment } from './lib/commitment.mjs';
 import { forecastWork, nearestRank, referencePool, refusalOf } from './lib/forecast.mjs';
 import { UsageError, forecastSeedText, referenceRows, slowRowOf, storedJob } from './lib/from-files.mjs';
@@ -92,7 +95,7 @@ function loadTable({ statusPath, sessionId }, options) {
   const runs = activeRuns([sessionId], options);
   const intervals = workingIntervals(runs, Math.floor(options.nowMs / MS_PER_MIN));
   const costs = rowCosts(items, intervals);
-  const jobs = handedOverJobs(items, costs, intervals, new Map());
+  const jobs = handedOverJobs(items, costs, intervals, new Map()).map((job) => ({ ...job, size: jobSizeClass(items.filter((item) => job.ids.includes(item.id))) }));
   return { name: basename(statusPath), id: tableId(statusPath), items, runs, intervals, costs, jobs, rows: referenceRows(items, costs) };
 }
 
@@ -121,19 +124,22 @@ function forecastAt(table, others, job, tMs) {
   return { tMin, intervalsAt, openRows, pool, work, refusal: refusalOf(openRows, pool, work), actual };
 }
 
-/** Applies the hold rule to one instant; returns the commitment and, when a time was committed, whether it held the hand-over. */
+/** Applies the hold rule to one instant; returns the commitment, the shown work left (median and 85%) and, when a time was committed, whether it held the hand-over. */
 function commitAt(commit, forecast) {
   const { p50, p85, p95 } = forecast.work;
   const fresh = { p50, raw85: p85, p85, p95, g: forecast.pool.growth, kappa: 1 };
   const leftMin = commit === null ? null : commit.budgetMin - workedMinutes(forecast.intervalsAt, Date.parse(commit.at) / MS_PER_MIN, forecast.tMin);
   const context = { nowMin: forecast.tMin, openIds: forecast.openRows.map((row) => row.id), slowRowId: slowRowOf(forecast.openRows, forecast.pool) };
   const next = nextCommitment(commit, fresh, leftMin, context);
-  return { commit: next.commit, made: next.entry === null ? null : { first: next.entry.first, met: forecast.actual <= p85 } };
+  const shownMin = next.commit.budgetMin - workedMinutes(forecast.intervalsAt, Date.parse(next.commit.at) / MS_PER_MIN, forecast.tMin);
+  const shown = { shownMin, shown85Min: shownMin + Math.max(0, p85 - p50), actual: forecast.actual };
+  return { commit: next.commit, shown, made: next.entry === null ? null : { first: next.entry.first, met: forecast.actual <= p85 } };
 }
 
 function replayJob(table, others, job, previousAt) {
   const instants = [];
   const commitments = [];
+  const shown = [];
   const jobStart = Math.min(...table.items.filter((item) => job.ids.includes(item.id)).map((item) => item.started));
   let commit = null;
   for (let tMs = Math.max(jobStart, previousAt) + FIRST_INSTANT_MIN * MS_PER_MIN; tMs < job.at; tMs += STEP_MIN * MS_PER_MIN) {
@@ -142,15 +148,16 @@ function replayJob(table, others, job, previousAt) {
     if (forecast === null || forecast.refusal !== null) continue;
     const step = commitAt(commit, forecast);
     commit = step.commit;
+    shown.push({ ...step.shown, workedMin: job.minutes - forecast.actual, jobMin: job.minutes });
     if (step.made !== null) commitments.push(step.made);
   }
-  return { instants, commitments };
+  return { instants, commitments, shown };
 }
 
 function replayAll(tables) {
   return tables.flatMap((table) => {
     const others = othersOf(table, tables);
-    return table.jobs.map((job, k) => ({ table: table.name, ...replayJob(table, others, job, k === 0 ? -Infinity : table.jobs[k - 1].at) }));
+    return table.jobs.map((job, k) => ({ table: table.name, job, ...replayJob(table, others, job, k === 0 ? -Infinity : table.jobs[k - 1].at) }));
   });
 }
 
@@ -235,6 +242,8 @@ function main(argv) {
     const checked = thresholdLines(summary);
     failed = checked.failed;
     out.push(`Replay: ${summary.instants} instants over ${summary.jobs} handed-over jobs, as of ${iso(options.nowMs)}`, ...checked.lines);
+    const scoreTables = tables.map((table) => ({ name: table.name, jobs: table.jobs, items: table.items.map((item) => ({ ...item, cost: table.costs.get(item.id) ?? 0 })) }));
+    out.push(...scoreLines(replays.map((replay) => ({ table: replay.table, job: replay.job, instants: replay.shown })), scoreTables));
   }
   const open = openTableLines(tables, options.nowMs);
   if (open.length > 0) out.push('Tables with open rows at now:', ...open);

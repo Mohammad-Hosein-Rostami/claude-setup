@@ -49,34 +49,46 @@ deliver:1 | report to owner | S | | 2026-11-14T10:30Z |
   a seed entry whose table has a file here is skipped, and so is one a table here holds under another id: a row with the same
   size and done time, a job with the same hand-over time, as on the PC, where the same STATUS.md has another path).
 - Forecast: 2000 seeded runs; each open row draws a finished cost of its size longer than its elapsed share (minus that
-  share), or any cost of its size when it has run longer than all of them; the total is divided by (1 - growth). Same table
-  state, same numbers, in the CLI and the status line.
-- Commitment: the first run of a job commits the 85th percentile as a work budget. Later runs hold it while the budget left
-  covers the fresh median, else move it later to the fresh 85th percentile, once, storing the cause (rows added, a slow row,
-  or pace). The shown time is now + budget left, rounded up to 5 minutes: work does not move it, a pause moves it hour for hour.
+  share), or any cost of its size when it has run longer than all of them. Growth is not in the total (it added work that never
+  came, +92 min per job on 15 replayed jobs); it is stated on its own line. Same table state, same numbers, in the CLI and the
+  status line. The changes of round 9 are model `c2b` of the backtest (`certainty/estimate-backtest.md` section 7).
+- Carried rows: an open row first seen before the last hand-over and not started since is left out of every count and named
+  in a `Check:` line (such rows added +89 min per job). Without a first-seen record (no store) no row is carried.
+- Commitment: the first run of a job commits the **median** as a work budget. Later runs hold it while the fresh median is
+  within 5 minutes of the budget left, else move it, earlier or later, to the fresh median, storing the cause (rows added, a
+  slow row, pace, or `ahead`). The shown time is now + budget left, rounded up to 5 minutes; the 85% and 95% clocks keep their
+  offset from it. Work does not move it, a pause moves it hour for hour.
 - Scoring: each first or moved commitment is scored in working minutes at the hand-over that finishes its rows; after 10
-  scored jobs the 85th percentile of actual / committed over the last 20 widens later forecasts (never narrows).
+  scored jobs the 85th percentile of actual / committed-85% over the last 20 widens the 85% and 95% clocks (never narrows).
+  From 20 scored jobs a `Range:` line shows the 10th to 90th percentile of actual / shown median, with its count; below that it
+  says `not yet measured`. Every log entry carries the model id (`c2b`); widening, range and track record count only entries
+  of the current model, so their counts restart at a model change.
+- Long jobs: over 6 h of median work a `Long job:` line says it cannot be predicted closer than half a day and a `Limits:` line
+  names the 5 h and 7 d resets last seen for this terminal's account (`CLAUDE_ACCOUNT`, `lib/limits-store.mjs`).
 
 ## Output (exit 0, stdout)
 
 ```
-Finish: Mon 16 Nov 21:40 (85% sure; likely 20:50, 95% by 23:10; local +03:30, now 19:05)
-Covers: 9 open rows (2 running; 5 S, 3 M, 1 L) and work not listed yet (usually 42% of what is left); 2 h 35 of work left in this time.
+Finish: Mon 16 Nov 20:50 (likely; 85% by 21:40, 95% by 23:10; local +03:30, now 19:05)
+Range: not yet measured (3 of 20 scored jobs).
+Covers: 9 open rows (2 running; 5 S, 3 M, 1 L); 1 h 45 of work left in this time.
+Not in this time: work not listed yet, usually about 40 min more (42% of the work left in past jobs).
 Excludes: pauses (nights, usage limits, waiting for you) move the time hour for hour; rework after hand-over; new requests.
 Held: given Mon 16 Nov 18:10, unchanged since.
-Track record: 9 of the last 10 jobs were done by the first time given.
-Progress: 54% (5 of 9 rows; median left 30 min; clock at 85%)
+Track record: 7 of the last 10 jobs were done by the first 85% time given.
+Progress: 54% (5 of 9 rows; median left 30 min)
 Check: row b12 (M) has taken 3 h 10 of work, longer than every finished M row (2 h 19): finish it, or close it with evidence "dropped: <why>".
 ```
 
-- Line 1 when the fresh 95% time is earlier than the time given: `Finish: Mon 16 Nov 21:40 (likely 20:20, ahead of the time
-  given; local +03:30, now 19:05)`. A `likely` or `95% by` clock on another day than the finish gets its weekday.
+- An `85% by` or `95% by` clock on another day than the finish gets its weekday.
 - Line 4 after a move: `Moved: at 19:40 from 21:05, because 6 rows were added (c7, c8, c9, c10, c11 and 1 more); unchanged
-  since.` (or `because row b12 is taking longer than 85% of M rows`, `because the open rows are taking longer than usual`),
+  since.` (or `because row b12 is taking longer than 85% of M rows`, `because the open rows are taking longer than usual`,
+  `because the open rows are going faster than usual or rows were dropped` for an earlier move),
   then ` Pauses since then: 1 h 20.` when pauses since the commitment reach 5 minutes (also after `Held:`).
 - Line 5 before any score: `Track record: no job scored yet; learned from 146 finished rows and 10 jobs.`
 - `Check:` lines: at most 3 stale rows, longest first, then `Check: and N more.`; and `Check: 45 min of work in this job ran
-  with no started row: start rows with status.mjs start <id>.` from 30 untracked minutes up.
+  with no started row: start rows with status.mjs start <id>.` from 30 untracked minutes up; `Check: 3 rows carried from the last
+  hand-over (a1, a2, a3), not counted: close them or drop them.` (also after a refusal, an all-done or a hand-over block).
 - No open row: `Finish: now (all 12 rows are done; the hand-over is recorded when this turn ends)`; after a `deliver:` row:
   `Finish: handed over Mon 16 Nov 17:54 (12 rows, 3 h 05 of work)` and the track record line.
 - Work is `35 min` under an hour, else `2 h 35`.
@@ -87,15 +99,12 @@ The `Progress:` line (after the track record, before the `Check:` lines) says ho
 rows (the work rows open or done after the last hand-over) and a percent.
 
 - With a forecast: `floor(100 x worked / (worked + median left))`, `worked` being the working minutes since the job's first
-  started row. The percent uses the forecast's **median**; the clock uses the **85% budget**, so the percent can read higher
-  than the clock looks (`clock at 85%` on the line says so).
+  started row. The percent and the clock use the same median.
 - Without a forecast (a refusal): `Progress: ~31% (2 of 4 rows; time n/a: too few finished rows)`. Each row weighs its size's pool
   median (when the size has 5 finished rows), else S 3 / M 9 / L 40 minutes; done rows count fully, an open row counts its
-  elapsed minutes up to 90% of its weight; the total is divided by `1 - growth` (the pool's growth below 0.75, else 0.416). The
-  `~` marks it as approximate. No work row, no progress line.
-- Held: the highest percent of a job is stored in its table file (`held: { start, pct }`, the job's first started time is the
-  key), so rows added or a move never lower it; a new job (after a hand-over) starts again. 99 until every row is done, 100
-  only then (`all rows done`). A hand-over shows no progress.
+  elapsed minutes up to 90% of its weight. The `~` marks it as approximate. No work row, no progress line.
+- The percent is this run's alone and may fall when rows are added (audit case 8; the old held percent is gone, so a figure
+  always matches its own row counts). 99 until every row is done, 100 only then (`all rows done`). A hand-over shows no progress.
 - Tags on the status line's bar: `moved` (the committed time moved), `+rows` (rows were added), `overdue` (the committed
   work budget is used up).
 
@@ -132,6 +141,10 @@ A recorded CLI run at the real clock (no `--now`) also writes the cache entry fr
 or moved is what the status line shows next. A hand-over text is shown only while the file
 is unchanged; any other text for 15 more minutes while a refresh runs.
 
+Numbers in the cache entry (`numbers`, beside the text, which `r9-statusline` drops later): `{ finishMs, p85Ms, leftMin,
+workedMin, rowsDone, rowsTotal, rows: [{ id, expectMin, startedMs }] }`, the open rows (started first, at most 64) with their
+expected minutes (the size's pool median, else S 3 / M 9 / L 40). The render formats clocks from them in its own time zone.
+
 ## Store
 
 `~/.claude/state/estimate/`: `table/<32 hex of sha256 of the real STATUS.md path>.json` (sessions, first-seen time of each
@@ -152,6 +165,11 @@ The old `~/.claude/state/estimate-log/` is no longer read; it can be deleted by 
 thresholds in `backtest.mjs` (exit 1 on a miss). One threshold differs from the design: a time at 58 or more of the 64
 instants, not 60, because the 5-row minimum per size refuses 5 instants honestly (the design's checker had no minimum). `seed.json` was written by it at the cut-over from the setup and
 bill-and-ben tables and two finished tables (147 rows, 10 jobs): size, kind, done time and cost only, keyed by table hash.
+A `Scores` block follows the thresholds (`lib/backtest-scores.mjs`, never failing the run): the per-job median miss of the
+shown (median) time and the jobs within 60 min or 30%, a naive baseline (the median work of the other tables' jobs of the same
+size class, a job's class being its largest row size), the signed bias (median log(shown/actual), all jobs and jobs over 6 h),
+the 85% clock's hit rate, the first estimate of each job apart from the later updates, and review and judge rows by effort when
+the tables have an effort column. No constant is fitted on these before about 40 scored jobs.
 
 ## Layout
 

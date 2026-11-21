@@ -25,17 +25,17 @@ const OPEN = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O
 const TABLE_ERROR = statusDoc([row({ id: 'A17', size: 'XL' })]);
 
 test('a finish is `done by` its committed clock rounded up, with the weekday on another day, and highMs is that clock', () => {
-  assert.deepEqual(resultSegment(finishAt(at(18, 8)), TZ), { kind: 'finish', text: 'done by 21:40', highMs: at(18, 10), progress: null });
-  assert.deepEqual(resultSegment(finishAt(at(20, 46)), TZ), { kind: 'finish', text: 'done by Tue 00:20', highMs: at(20, 50), progress: null });
+  assert.deepEqual(resultSegment(finishAt(at(18, 8)), TZ), { kind: 'finish', text: 'done by 21:40', highMs: at(18, 10), progress: null, numbers: null });
+  assert.deepEqual(resultSegment(finishAt(at(20, 46)), TZ), { kind: 'finish', text: 'done by Tue 00:20', highMs: at(20, 50), progress: null, numbers: null });
   assert.equal(resultSegment(finishAt(at(18, 8)), 'UTC').text, 'done by 18:10');
 });
 
 test('all done, handed over (weekday when not today) and the work left of a long job', () => {
-  assert.deepEqual(resultSegment({ state: 'all-done', nowMs: NOW, rows: 3 }, TZ), { kind: 'finish', text: 'all rows done', highMs: null, progress: null });
-  assert.deepEqual(resultSegment({ state: 'handed-over', nowMs: NOW, handedOverMs: at(14, 24) }, TZ), { kind: 'handed-over', text: 'handed over 17:54', highMs: null, progress: null });
+  assert.deepEqual(resultSegment({ state: 'all-done', nowMs: NOW, rows: 3 }, TZ), { kind: 'finish', text: 'all rows done', highMs: null, progress: null, numbers: null });
+  assert.deepEqual(resultSegment({ state: 'handed-over', nowMs: NOW, handedOverMs: at(14, 24) }, TZ), { kind: 'handed-over', text: 'handed over 17:54', highMs: null, progress: null, numbers: null });
   assert.equal(resultSegment({ state: 'handed-over', nowMs: NOW, handedOverMs: at(14, 24, 15) }, TZ).text, 'handed over Sun 17:54');
   const horizon = refused({ reason: 'horizon', longestJobMin: 355, work: { p50: 5400, p85: 5940, p95: 6300 } });
-  assert.deepEqual(resultSegment(horizon, TZ), { kind: 'work-left', text: 'work left ~99 h', highMs: null, progress: null });
+  assert.deepEqual(resultSegment(horizon, TZ), { kind: 'work-left', text: 'work left ~99 h', highMs: null, progress: null, numbers: null });
 });
 
 test('a refusal shows `done ? <cause>`, the cause one of a fixed list', () => {

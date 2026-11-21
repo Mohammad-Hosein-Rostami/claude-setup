@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // CLI of the finish estimate: reads the `## Work items` table of a STATUS.md and the working time in the session transcripts, and
-// prints the one committed finish time of the job (line 1, `Finish:`), what it covers and excludes, whether it held or moved and why,
-// the track record and any Check lines (paste the block as-is; never quote a number of your own). Clock times use the system time
+// prints the one committed finish time of the job (line 1, `Finish:`, the median; the 85% and 95% clocks beside it), what it covers and excludes, whether it held or moved and why,
+// the track record and any Check lines (paste the block as-is; never quote a number of your own). Beside a job over about 6 h of
+// work it names the limit resets last seen for this terminal's account (CLAUDE_ACCOUNT, lib/limits-store.mjs). Clock times use the system time
 // zone (`TZ` is honoured). The estimator design and the exact lines are in README.md.
 // Usage: estimate.mjs <STATUS.md> [--session <id>] [--now <iso>] [--state-dir <dir>] [--projects <dir>]
 //        --session    the session whose transcripts count, besides the sessions already linked to the table (default
@@ -20,6 +21,7 @@ import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { isSessionId } from '../../hooks/lib/session-store.mjs';
 import { UsageError, estimateFile } from './lib/from-files.mjs';
+import { latestSample, readLimits } from './lib/limits-store.mjs';
 import { formatEstimate, formatRefusal } from './lib/report.mjs';
 import { cacheDir, writeEntry } from './lib/segment-cache.mjs';
 import { resultSegment } from './lib/segment-text.mjs';
@@ -53,8 +55,8 @@ function readOptions(argv) {
  * leaves the old entry, which the next refresh replaces.
  */
 function storeSegment(statusPath, file, result, startedAt) {
-  const { kind, text, highMs, progress } = resultSegment(result);
-  writeEntry(cacheDir(), statusPath, { path: statusPath, kind, text, highMs, progress, mtimeMs: file.mtimeMs, size: file.size, computedAt: Date.now(), refreshStartedAt: startedAt });
+  const { kind, text, highMs, progress, numbers } = resultSegment(result);
+  writeEntry(cacheDir(), statusPath, { path: statusPath, kind, text, highMs, progress, numbers, mtimeMs: file.mtimeMs, size: file.size, computedAt: Date.now(), refreshStartedAt: startedAt });
 }
 
 /** The file's stat, or null when it cannot be read: estimateFile then reports the file as a usage error (exit 2). */
@@ -79,7 +81,9 @@ function main(argv) {
     process.stderr.write(`${formatRefusal(result)}\n`);
     return EXIT_REFUSED;
   }
-  process.stdout.write(`${formatEstimate(result)}\n`);
+  // Only the real clock's run names the limits: a --now run or a probe describes another instant or table.
+  const limits = options.now === undefined && !isProbe ? latestSample(readLimits(process.env.CLAUDE_ACCOUNT)) : null;
+  process.stdout.write(`${formatEstimate(result, { limits })}\n`);
   return 0;
 }
 

@@ -9,8 +9,13 @@ The parts of the `estimate` tool. `../estimate.mjs` (the CLI) and `../statusline
 - `worked.mjs` (pure): working intervals, row costs, open rows' elapsed shares, handed-over jobs and their growth parts.
 - `forecast.mjs` (pure): the reference pool, the seeded runs, the refusal reasons.
 - `progress.mjs` (pure): the job's progress percent (`progressOf`): from the forecast's median, or from row weights when the tool refuses;
-  held per job (never falls), 99 until every row is done.
-- `commitment.mjs` (pure): first, hold or move the committed budget; scoring, widening, track record.
+  this run's alone (it may fall when rows are added), 99 until every row is done; `expectedMinutes` per row.
+- `commitment.mjs` (pure): first, hold or move (earlier or later) the committed median budget; scoring, widening, range, track
+  record, counted per model id.
+- `job-rows.mjs` (pure): the rows carried over the last hand-over and the cache numbers (per open row `expectMin`).
+- `limits-store.mjs`: the last-seen usage limits per account (`~/.claude/state/limits/<account>.json` and its 7-day `.jsonl`);
+  the status line writes them, the estimate, the board and the pane read them.
+- `backtest-scores.mjs` (pure): the backtest's scores (per-job miss, bias, 85% hit rate, naive baseline, first estimate apart).
 - `table-store.mjs`: the store files (table, session link, seed) under a short lock.
 - `from-files.mjs`: `estimateFile`, the one function of the design: parse, activity, costs, pool, state, commitment (it never links a session).
 - `workflow-runs.mjs`: the live workflow runs of a session, read from Claude Code's workflow journals (an undocumented layout: an
