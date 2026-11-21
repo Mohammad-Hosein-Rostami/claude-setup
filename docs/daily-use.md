@@ -42,12 +42,17 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
 ## Long or unattended runs
 - Run long or unattended sessions in a plain terminal app (or tmux), not an editor's built-in terminal: closing or
   reloading the editor window ends every session in it. Resume with `ccm <mode> -c`.
-- A question (AskUserQuestion) gets one timed dialog per question, each with its own wait: with no answer in 60 s
-  (`CLAUDE_QUESTION_TIMEOUT_S`) or on "Use recommended" it takes that question's "(Recommended)" option, else its first;
-  "Answer in terminal" opens the normal question; answering it there, or turning it down there, closes the open dialog.
+- A question (AskUserQuestion) gets one timed dialog per question, one after the other (hook `permission-timed-allow.mjs`; the
+  dialog shows the question, its options with the recommended one first and what happens with no answer), each with its own
+  wait: with no answer in 60 s (`CLAUDE_QUESTION_TIMEOUT_S`; from 5 questions on less, so all popups end before the terminal
+  question auto-continues) or on "Use recommended" it takes that question's "(Recommended)" option, else its first. An answer
+  taken on timeout arrives with the note "No answer in 1 min: this option was taken by default, not chosen by the owner
+  (UNCONFIRMED)"; a click on "Use recommended" arrives with none. Enter on question 1 means "Use recommended"; on questions 2..N
+  Enter means "Answer in terminal", so a keypress meant for the terminal never answers. "Answer in terminal" (or Esc) opens the
+  normal question; answering it there, or turning it down there, closes the open dialog.
   With no GUI (ssh, no display) the terminal question stays and auto-continues after 5 min (`askUserQuestionTimeout`; the CLI
-  takes only 60s, 5m, 10m or never), but never while that terminal window is focused or Remote Control is on. The
-  recommended option is chosen to be safe with nobody there, and each default taken is logged.
+  takes only 60s, 5m, 10m or never), a timer that pauses while that terminal window is focused, after any keypress, and with
+  Remote Control on. The recommended option is chosen to be safe with nobody there, and each default taken is logged.
 - Guard dialogs (`git push`, publish, `rm -rf` outside the project or of a whole folder such as `rm -rf *`, prod-host writes, literal secrets) default to
   Allow and go ahead after 2 min (`CLAUDE_ASK_TIMEOUT_S`; a secret-only ask `CLAUDE_ASK_SECRET_TIMEOUT_S`, also 2 min).
   Every Claude Code permission prompt (any tool, MCP tools, Agent, plan approval, protected files, any mode, background

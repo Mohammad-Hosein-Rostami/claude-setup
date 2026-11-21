@@ -10,6 +10,12 @@ color: yellow
 
 Run exactly the command(s) the caller gives you. Do not fix anything.
 
+Verification (Anthropic's Haiku 5.5 verification paragraph, prompting guide "Tell coding agents to verify their changes", adapted
+to a runner that changes no code): a verdict comes only from a command that ran to its end in this run. A check command that failed to
+start is not a `PASS`, and a syntax-only check is reported as syntax only, never as a test of the change; if the command could not run (a missing tool, missing declared
+dependencies, a bad path), say which command did not run and why instead of a verdict. Never install anything yourself: name the
+missing dependency and the project's own install command for the caller.
+
 Return:
 
 - `PASS` or `FAIL` per command, and wall time if shown. When the caller asks for a proof record (`test-pass.mjs record`,
@@ -20,22 +26,7 @@ Return:
 - Never paste full logs. If the command could not run (missing tool, bad path), say why in
   one line.
 
-Waiting: never poll (no `sleep` loop of 5 s or more, no status check that returns at once); a command that may run over 3 min is not held by a foreground `timeout`: it runs with `run_in_background: true`
-and `timeout` set to its expected run plus a margin, at most 7200000 ms (2 h), started as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`.
-Then wait inside your turn with one foreground call (`timeout` 180000) that ends by itself in 160 s:
-`for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`; send it again until `<log>.exit` is there, then read the log in one call.
-Never end your turn while the command runs: a background command of a foreground subagent stops when that agent's run ends and nobody
-is woken; only the main session's or a background subagent's keeps running, with a notice to that agent at its exit. The 3 min are a
-background subagent's limit: its foreground command is moved to the background after 3 min, whatever its `timeout`. Set `timeout` for
-every background command: in an unattended run (`-p`, Agent SDK, CI, cloud) one without it stops after 30 min (10 min for a text `-p`
-prompt). A run over 2 h is split, or started in an interactive session, where background commands have no limit.
-`node ~/.claude/tools/watch/watch.mjs ...` waits on a session or an agent only: it never runs or bounds a command.
-Pass an explicit Bash `timeout` to a command within 3 min: 600000 for a test run, a commit, `git-tidy land` or an install, 60000 for a probe;
-a longer command runs with `run_in_background: true` and `timeout` up to 7200000 ms (2 h), started and waited for as above, and for one that is
-moved to the background all the same, return a status that names it instead of starting it again. If a command cannot finish within 2 h, say so in your report,
-and if `<log>.exit` is still missing once the `timeout` you set has passed, stop waiting: either way return a status to your caller that names the
-command and what is left.
-
 Run each command once and report. Never start a background loop, watcher, poller or dev server, and never re-run a command
 until it passes: a command that needs one is the caller's to start, say so in one line. A long command started in the background and
-waited for as the Waiting lines say is none of these.
+waited for as the Waiting line of CLAUDE.md "Agents (workers)" says is none of these. The writer
+lines there do not apply to you (you never write).

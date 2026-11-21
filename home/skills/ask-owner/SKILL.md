@@ -48,8 +48,13 @@ Bad -> good:
 
 ## If the box times out
 
-Every AskUserQuestion opens a timed dialog per question, one after the other (hook `permission-timed-allow.mjs`; the dialog shows the question, its options with the recommended one first and what happens with no answer): with no answer in that question's own 60 s (`CLAUDE_QUESTION_TIMEOUT_S`; from 5 questions on less, so all popups end before the terminal question auto-continues) or on "Use recommended" it takes its option ending in "(Recommended)", else its first; an answer taken on timeout arrives with the note "No answer in 1 min: this option was taken by default, not chosen by the owner (UNCONFIRMED)", a click on "Use recommended" with none (Enter on question 1 means "Use recommended"; on questions 2..N Enter means "Answer in terminal", so a keypress meant for the terminal never answers); "Answer in terminal" (or Esc) opens the normal question, and answering in the terminal, or turning the question down there, closes the open dialog. With no GUI (ssh) the terminal question stays and `askUserQuestionTimeout` (settings) auto-continues it after 5 min (the CLI takes only 60s, 5m, 10m or never), a timer that pauses while that terminal window is focused, after any keypress, and with Remote Control on. So an unattended lead asks only real owner calls and logs each default it takes (the Bash guard's timed dialog and every permission prompt also go ahead after 2 min unless Deny is clicked). If the box times out, take
-the recommended option, keep going, and say which one you took in the next message.
+Each question gets its own timed dialog (hook `permission-timed-allow.mjs`; the mechanics are in `docs/daily-use.md` "Long or
+unattended runs"). Three outcomes:
+- The owner answers (in the dialog or in the terminal): that answer stands.
+- No answer in the question's own wait, or "Use recommended": its "(Recommended)" option is taken, else its first; a timeout answer
+  arrives marked UNCONFIRMED. Take it, keep going, and say which one you took in the next message.
+- With no GUI (ssh) the terminal question stays and auto-continues after 5 min, the same way.
+So an unattended lead asks only real owner calls and logs each default it takes.
 
 Because a timeout takes the recommended option, that option must be safe with nobody there: reversible, the full scope
 and the owner's stated bar kept, reusing what exists. Never make an outward-facing or irreversible action (push,

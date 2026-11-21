@@ -12,7 +12,7 @@ string (probe P6-11 owed). An edit needs a session restart. When the modes go (r
 - On a Fable lead: each "never" keeps its scope and reason, since Fable takes it literally; review the diff yourself, since its closing summary can leave out small changes.
 
 ## Briefs and results
-- Brief in the six fields of the worker contract's template: acceptance checks, failure classes to self-test, defaults, "finish everything", the STATUS.md path, `ASK_QUEUE` for work over a few minutes.
+- Brief in six fields: objective and why; inputs; boundaries, with its Constraints first (scope exclusions, owner decisions, file scope); tools and sources; acceptance checks with failure classes to self-test, the defaults to take and "finish everything"; output format (the report's Constraints, Not run and Caveats sections, CLAUDE.md "Agents (workers)"). Add the STATUS.md path, and `ASK_QUEUE` for work over a few minutes.
 - Judge an agent by its diff and the runner's record, not by its report alone. Ask for concrete checks (a command, a test, a separate reviewer), not a general request to check its work.
 - Messaging a workflow agent is not documented: never rely on it; continue with a new stage or a fresh agent.
 

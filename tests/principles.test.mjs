@@ -81,7 +81,9 @@ const LANE_AGENTS = ['implementer', 'test-writer', 'ui-implementer'];
 
 test('lane agents: Bash timeout 600000 for suite and commit, 60000 for probes, no polling, no fixed sleep loop', () => {
   for (const agent of [...LANE_AGENTS, 'runner']) {
-    const text = read(`home/agents/${agent}.md`);
+    // r9-dedupe part 2: the Waiting paragraph lives once in home/CLAUDE.md "Agents (workers)"; each agent points there.
+    assert.match(read(`home/agents/${agent}.md`), /CLAUDE\.md "Agents \(workers\)"/, `${agent}.md points to the worker lines`);
+    const text = read('home/CLAUDE.md');
     assert.match(text, /timeout.{0,40}600000/s, `${agent}.md names the 600000 timeout`);
     assert.match(text, /\b60000 for a probe/, `${agent}.md names the 60000 probe timeout`);
     const flat = text.replace(/\s+/g, ' ');
@@ -96,9 +98,8 @@ test('lane agents: Bash timeout 600000 for suite and commit, 60000 for probes, n
 });
 
 test('lane agents never run the full suite inside a lane', () => {
-  for (const agent of LANE_AGENTS) {
-    assert.match(read(`home/agents/${agent}.md`), /never run the full suite/i, `${agent}.md`);
-  }
+  // r9-dedupe part 2: stated once in home/CLAUDE.md "Agents (workers)", which loads in every lane agent.
+  assert.match(read('home/CLAUDE.md'), /never run the full suite inside a lane/i);
 });
 
 test('implementer: a locked contract file is never edited, the dispute line is written instead', () => {
@@ -121,7 +122,7 @@ test('review-tier steps (review-steps.md) Reviews line: waived lane audit after 
 });
 
 test('runner.md names the 600000 timeout for land and installs; P10 and the architect keep their fixes', () => {
-  assert.match(read('home/agents/runner.md'), /600000 for a test run, a commit, `git-tidy land` or an install/);
+  assert.match(read('home/CLAUDE.md'), /600000 for a test run, a commit \(the\s+hook runs tests\), an install or `git-tidy land`/); // r9-dedupe part 2
   assert.match(read('home/rules/principles.md'), /Enter never acts as a click/);
   assert.doesNotMatch(read('home/rules/principles.md'), /never consent/);
   assert.match(read('home/agents/architect.md'), /ids `review-tier` knows/);

@@ -18,7 +18,7 @@ Load `ui-coverage` (Skill tool). The brief must carry a `MATRIX: <path>` line (o
 Figma source, never no proof). A FAIL compare stays FAIL until the owner accepts the difference (an `accepted` entry with an owner
 reference, see the ui-coverage README); never close it with your own ledger or notes.
 
-Inputs from the caller: the lane tip sha (rebased), the matrix, the base URL of a server built from that tip, the lane's reference
+The worker lines of CLAUDE.md "Agents (workers)" bind you (owner decisions, budget, waiting, report). Inputs from the caller: the lane tip sha (rebased), the matrix, the base URL of a server built from that tip, the lane's reference
 run (the `run` on the base tip at lane start), the project dir, and the owner's viewing conditions (else `ui-coverage conditions`).
 
 1. Check the tree: `git rev-parse HEAD` equals the lane tip the brief names and `git merge-base --is-ancestor <base> HEAD` passes.
@@ -38,5 +38,3 @@ run (the `run` on the base tip at lane start), the project dir, and the owner's 
 Return at most 20 lines: the `result:` and `frames:` lines (quoted), the failing rows (`element | prop | is | should`), the
 `--no-worse` worse or missing states, the review page path, and one line `evidence: <verdict table: state | px | rows | pass/FAIL>;
 crops: <paths>`.
-
-Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).

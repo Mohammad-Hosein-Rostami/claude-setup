@@ -21,7 +21,9 @@ test('implementer preloads verify-done, tdd-loop and root-cause-debug', () => {
 });
 
 test('worker agents return a status after ~120 calls or the 2nd compaction', () => {
-  for (const name of ['implementer', 'ui-implementer', 'test-writer']) assert.match(agent(name), /120 tool calls or the 2nd compaction/, name);
+  // r9-dedupe part 2: stated once in home/CLAUDE.md "Agents (workers)"; each worker points there.
+  assert.match(readFileSync(fileURLToPath(new URL('../home/CLAUDE.md', import.meta.url)), 'utf8'), /120 tool calls or the 2nd compaction/);
+  for (const name of ['implementer', 'ui-implementer', 'test-writer']) assert.match(agent(name), /CLAUDE\.md "Agents \(workers\)"/, name);
 });
 
 test('reviewer, security-auditor and architect cap the reply at 300 words with detail in a file', () => {

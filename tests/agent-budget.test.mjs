@@ -123,7 +123,7 @@ test('the notice marker goes away with the counter when the agent ends', async (
 });
 
 test('the limit in the hook matches the budget the implementer agents and the lead rules state', () => {
-  for (const file of ['home/agents/implementer.md', 'home/agents/ui-implementer.md', 'home/agents/test-writer.md']) {
+  for (const file of ['home/CLAUDE.md', 'home/agents/ui-implementer.md']) { // r9-dedupe part 2: the worker budget line lives in CLAUDE.md
     assert.match(readFileSync(fileURLToPath(new URL(`../${file}`, import.meta.url)), 'utf8'), new RegExp(`about ${CALL_CAP} tool calls`), file);
   }
   assert.match(readFileSync(fileURLToPath(new URL('../home/modes/_lead.md', import.meta.url)), 'utf8'), new RegExp(`~${CALL_CAP} tool calls`));

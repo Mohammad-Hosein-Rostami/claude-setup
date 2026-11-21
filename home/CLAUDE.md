@@ -71,7 +71,7 @@ global setup combines with it.
 - Run checks through `runner` so logs stay out of context; start servers/browsers only when the task needs a
   real-app check. A command over ~5 min runs with `run_in_background: true` and its `timeout` set (at most 2 h); `watch.mjs` waits on a session or an agent, never on a command.
 - Owner decisions (scope, money, irreversible, credentials, a product fact the repo lacks such as length, timer, role, copy, brand
-  name or design system vs local, real trade-offs): the lead asks them (lead rules), an agent posts them as its agent file says.
+  name or design system vs local, real trade-offs): the lead asks them (lead rules), an agent posts them as "Agents (workers)" says.
   Technical choices: pick the default, say so in one line.
 - Final answers: what changed and what was not run. No recap of the process. A command the owner must run is given with the machine (MacBook, PC or server) and the folder it runs in.
 
@@ -92,6 +92,62 @@ global setup combines with it.
   `.git/info/exclude`). No memory or history notes unless asked (the review agents' own `memory: user` notes are the
   exception).
 - An owner-reported defect you could not reproduce is never closed twice: on the second report reproduce it under the owner's conditions (zoom, pixel ratio, OS, theme, data) or hand it to `deep-debugger`; never answer "no defect" to a second report.
+
+## Agents (workers)
+
+This section binds every subagent and workflow agent; the lead follows its lead rules instead. An agent file's own line wins
+over a line here, and an agent file names the lines that do not fit it (`runner` and `scout` never write).
+
+- Owner decisions: you cannot ask the owner. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your
+  environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json
+  '{...}'` and keep working on what does not depend on it. Always list it in the report under `decisions needed:` (question,
+  options, recommended). An owner decision (scope, money, irreversible, credentials, a product fact the repo lacks) is never defaulted.
+- Finish the whole brief: a technical question with a sensible default is not a reason to stop, so take the default and say so in
+  the report. Stop and report the exact question only when the spec is wrong or ambiguous in a way that changes the outcome and no
+  default is sensible.
+- The brief's constraints (scope exclusions, owner decisions, boundaries) bind the whole run; after a compaction re-read them from
+  the brief or your hand-over note before the next edit, because the task message comes back summarised.
+- Writers: read the spec first and do not redesign it; follow the project's CLAUDE.md and AGENTS.md rules (they load
+  automatically); make the smallest diff that satisfies the acceptance checks; edit existing files over creating new ones.
+- Tests in a lane: only those related to the changed files (the repo's related-tests command, `vitest related --run <files>`,
+  `jest --findRelatedTests <files>`, or the nearest test file), with a terse reporter (`node --test --test-reporter=dot`,
+  `vitest --reporter=dot`) so a green run costs one line of context. Never run the full suite inside a lane: the review runs it
+  once, at the tip. In a JS/TS package with a `typecheck` script, do not run the whole-project typecheck yourself: the typecheck
+  gate runs it when you stop and blocks on errors.
+- Git: commit on your own branch; never merge another branch into it; if the base moved, `git rebase <base>`; leave landing to the
+  lead. Commit your own paths after each green step; never return with uncommitted changes (if the brief forbids commits, say why
+  in the report). Checkpoint: after each finished step, commit when the brief allows commits, else append a line to a progress
+  note in the scratchpad, so a dropped connection loses little.
+- Budget: if the brief is still unfinished after about 120 tool calls or the 2nd compaction, stop and return a status (done, left,
+  next step).
+- Before returning, try to break your own work and report what you tried: feed a check or gate inputs that must fail; run a
+  detector on ordinary inputs and count false alarms; for shared code, run its callers' tests (`vitest related` /
+  `jest --findRelatedTests` find them). The independent review still runs; your aim is that it finds little.
+- Claim audit: before the report, check each progress claim against a tool result from this run; a claim with no such result
+  goes under "Not run", never under done.
+- Human-first (C31-C36, `~/.claude/standards/readability.md`): plain names and no single-use abstraction in what you add; leave old
+  code alone and report what you saw; docs as C34 asks.
+- Agents with `memory: user`: your notes live in `~/.claude/agent-memory/<agent>/`; read `MEMORY.md` there first; after the task
+  add only durable, reusable facts, one line each, and remove ones that turned out wrong. Never store secrets or code.
+- Report: at most 300 words with file:line evidence (C24) unless your agent file or the brief sets a smaller cap; longer detail
+  goes to a file (the caller's path, else the scratchpad) and the reply gives its path. Every report carries three sections, never
+  trimmed for length ("none" when empty), before any final line your agent file sets: "Constraints" (the brief's constraints as you
+  kept them), "Not run" (each check you did not run, and why), "Caveats" (what may be wrong or is unproven). When the brief gives a
+  schema, return only that JSON. No praise, no recap, no raw logs.
+- Waiting: never poll (no `sleep` loop of 5 s or more, no status check that returns at once); a command that may run over 3 min is not held by a foreground `timeout`: it runs with `run_in_background: true`
+  and `timeout` set to its expected run plus a margin, at most 7200000 ms (2 h), started as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`.
+  Then wait inside your turn with one foreground call (`timeout` 180000) that ends by itself in 160 s:
+  `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`; send it again until `<log>.exit` is there, then read the log in one call.
+  Never end your turn while the command runs: a background command of a foreground subagent stops when that agent's run ends and nobody
+  is woken; only the main session's or a background subagent's keeps running, with a notice to that agent at its exit. The 3 min are a
+  background subagent's limit: its foreground command is moved to the background after 3 min, whatever its `timeout`. Set `timeout` for
+  every background command: in an unattended run (`-p`, Agent SDK, CI, cloud) one without it stops after 30 min (10 min for a text `-p`
+  prompt). A run over 2 h is split, or started in an interactive session, where background commands have no limit.
+  `node ~/.claude/tools/watch/watch.mjs ...` waits on a session or an agent only: it never runs or bounds a command.
+  A command expected to end within 3 min runs in the foreground with an explicit Bash `timeout`: 600000 for a test run, a commit (the
+  hook runs tests), an install or `git-tidy land`, 60000 for a probe; for one that is moved to the background all the same, return a status that names it instead of
+  starting it again. If a command cannot finish within 2 h, say so in your reply, and if `<log>.exit` is still missing once the `timeout`
+  you set has passed, stop waiting: either way return a status to your caller that names the command and what is left.
 
 ## Compact instructions
 

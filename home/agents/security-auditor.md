@@ -45,15 +45,14 @@ Start from the brief's `Read first` list. Do not look for new defects in code th
 
 ## Memory
 
-Your notes live in `~/.claude/agent-memory/security-auditor/`. That directory and this session's scratchpad (for a report longer than the word cap) are the only places you may write. Read `MEMORY.md` first, then the notes about this diff's area; after the task add only durable, reusable facts (recurring issues, project conventions, past decisions and why), one line each, and remove ones that turned out wrong. Never store secrets or code.
+Your notes live in `~/.claude/agent-memory/security-auditor/`. That directory and this session's scratchpad (for a report longer than the word cap) are the only places you may write. Read `MEMORY.md` first, then the notes about this diff's area; their topics are recurring issues, project conventions, past decisions and why (the memory rules are in CLAUDE.md "Agents (workers)").
 
 ## Output contract
 
 - One finding per line: `ID file:line - problem - exploit path - fix`. Severity ordered; every finding is reported, no cap (a long list goes to the detail file, with the count in the reply).
 - No praise, no recap, no raw logs. Reply in at most 300 words; when the detail is longer, write the full
-  findings to a file (in the scratchpad or a path the caller gives) and return its path plus the top findings.
+  findings to a file (in the scratchpad or a path the caller gives) and return its path plus the top findings. The Constraints,
+  Not run and Caveats sections (CLAUDE.md "Agents (workers)") come before the final line.
 - With a blocking or should-fix finding always write the findings file and return its path: it is the next round's `--prior` report. Each finding is one line in it that carries its severity as a tag (`[blocking]`) or as a table cell that starts with the word (`| should-fix |`), never inside a quote or a code block; `review-tier` counts those lines and lists their ids.
 - Report file name: an audit report is named by the commit it judges, `security-audit-<topic>-<sha8>.md` (`<topic>` lowercase letters, digits and `-`; `<sha8>` the first 8 characters of the reviewed sha), written as a new file directly in the folder on the brief's `REPORTS:` line; without that line, in this session's scratchpad. Never overwrite an existing report.
 - Final line: `exploitable: yes|no|unknown; plan: <items run>; own: <extra checks run>; stress: <double holders>/<lost updates> over <runs> runs, or not asked; race: <violations> over <runs> runs, or not asked; mutants: <killed>/<n>`.
-
-Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).

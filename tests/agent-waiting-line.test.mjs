@@ -13,9 +13,13 @@ const WORKERS = ['implementer', 'ui-implementer', 'runner', 'test-writer', 'deep
 // tool), so no text may tell an agent that it will be woken.
 const WAKE_UP_PROMISE = /you are woken|woken (at|when)|you (are|will be|get) notified|wakes you|reported when it ends/i;
 
+// r9-dedupe part 2: the Waiting paragraph is stated once, in home/CLAUDE.md "Agents (workers)", which loads in every worker.
+const WAITING_HOME = 'home/CLAUDE.md';
+
 test('each long-running worker agent has a Waiting line naming background runs, a timeout and no polling', () => {
   for (const name of WORKERS) {
-    const line = read(`home/agents/${name}.md`).split('\n').find((text) => /waiting/i.test(text) && /run_in_background/.test(text));
+    assert.match(read(`home/agents/${name}.md`), /CLAUDE\.md "Agents \(workers\)"/, `${name}: points to the worker lines`);
+    const line = read(WAITING_HOME).split('\n').find((text) => /waiting/i.test(text) && /run_in_background/.test(text));
     assert.ok(line, `${name}: no Waiting line with run_in_background`);
     assert.match(line, /watch\.mjs|timeout/, name);
     assert.match(line, /poll|sleep/i, name);
@@ -24,7 +28,7 @@ test('each long-running worker agent has a Waiting line naming background runs, 
 
 /** An agent's Waiting paragraph as one line: from the line that opens it to the next bullet or blank line. */
 function waitingParagraph(name) {
-  const lines = read(`home/agents/${name}.md`).split('\n');
+  const lines = read(WAITING_HOME).split('\n');
   const start = lines.findIndex((text) => /^(- )?Waiting:/.test(text));
   assert.notEqual(start, -1, `${name}: no Waiting line`);
   const rest = lines.slice(start + 1);
@@ -84,14 +88,14 @@ test('no Waiting line and no guard advice promises a wake-up: a foreground subag
 
 test('the runner rule against background loops and re-runs leaves room for the Waiting way', () => {
   const text = read('home/agents/runner.md').replace(/\s+/g, ' ');
-  assert.match(text, /never re-run a command until it passes: [^.]*\. A long command started in the background and waited for as the Waiting lines say is none of these\./);
+  assert.match(text, /never re-run a command until it passes: [^.]*\. A long command started in the background and waited for as the Waiting line of CLAUDE\.md "Agents \(workers\)" says is none of these\./);
 });
 
 test('the runner timeout line sends a longer command to run_in_background with timeout up to the 2-h maximum', () => {
-  const line = sentencesOf(waitingParagraph('runner')).find((sentence) => sentence.startsWith('Pass an explicit Bash `timeout`'));
+  const line = sentencesOf(waitingParagraph('runner')).find((sentence) => sentence.startsWith('A command expected to end within 3 min'));
   assert.ok(line, 'runner: no explicit-timeout line');
-  assert.match(line, /a longer command runs with `run_in_background: true` and `timeout` up to 7200000 ms \(2 h\)/);
-  assert.match(waitingParagraph('runner'), /cannot finish within 2 h, say so in your report/);
+  assert.match(waitingParagraph('runner'), /a command that may run over 3 min is not held by a foreground `timeout`: it runs with `run_in_background: true` and `timeout` set to its expected run plus a margin, at most 7200000 ms \(2 h\)/);
+  assert.match(waitingParagraph('runner'), /cannot finish within 2 h, say so in your reply/);
 });
 
 test('the catalog line for pre-bash-guard describes the sleep loop bounce', () => {
