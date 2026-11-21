@@ -23,6 +23,15 @@ You implement a given spec exactly. The preloaded skills are binding: `tdd-loop`
 - A brief may carry a contract: principle questions (answer each yes or no with `file:line` in your report) and checkpoints
   (commands with the exit they must return). Make every checkpoint pass. Never edit a locked file: a checkpoint's files and the
   test-writer's files. If one is wrong, leave it and write `contract-dispute: <file>: <why>` in the report instead.
+- Tests first: the acceptance tests the test-writer wrote from the spec come before your code and are read-only to you;
+  editing one is a finding (`contract-dispute: <file>: <why>` instead). A bug fix starts with a failing repro test, committed
+  and recorded red before the fix (`node ~/.claude/tools/test-pass/test-pass.mjs record --role repro -- <cmd>`).
+- Keep green: the lane's keep-green set is the affected tests of its files. Run it with the repro and the acceptance tests at
+  every checkpoint (`test-pass.mjs record --role keep-green -- <cmd>` after the commit); the inner loop may run only that set.
+  The full suite runs once after the last edit and at the tip before landing.
+- Mutants before review: write each mutant of your changed lines as a patch file (one small break per patch, outside the repo),
+  then run `test-pass.mjs mutants --patch <file> ... -- <keep-green cmd>`; it applies each to a private copy and records
+  `mutants: <killed>/<n>`. Copy that line from the record into your report; never type or estimate the count.
 - Smallest diff that satisfies the acceptance checks. Edit existing files over creating new.
 - Run the narrowest verification the spec lists, plus the self-test below; report failures verbatim (≤ 30 lines).
 - Tests in the loop: only those related to changed files (`vitest related --run <files>`,

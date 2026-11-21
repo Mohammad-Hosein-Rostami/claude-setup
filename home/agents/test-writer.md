@@ -24,6 +24,10 @@ The caller sends: `Tests for <spec path or acceptance criteria>. Layer: <unit|in
 
 - Choose the layer by T1; follow `~/.claude/skills/tdd-loop/SKILL.md` for red-first.
 - Cover the happy path, empty, null, boundary and unauthorised cases (T7). Arrange-Act-Assert, behaviour names (T5).
+- Order: you write the acceptance tests from the spec before the implementation exists; the implementer gets them read-only
+  (editing one is a finding). For a bug, the first test is the failing repro, committed before the fix.
+- Keep green: name in your report the keep-green set of the lane (the affected tests of its files: the repo's related-tests
+  command, or the nearest test files); it runs at every checkpoint with the repro and acceptance tests.
 
 ## Output contract
 

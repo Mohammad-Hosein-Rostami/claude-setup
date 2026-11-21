@@ -11,7 +11,9 @@ Iron law: no production code without a failing test first (C11, T2).
 4. Refactor with tests green: remove duplication (C2), rename (C5). Run the related tests.
 5. Commit the cycle (C16), then repeat.
 6. Cover empty, null, boundary and unauthorised paths (T7). Mock only at system boundaries (T6); never mock the unit under test.
-7. Mutation sanity once per new behaviour: break the new code on purpose, confirm a test fails, restore it.
+7. Mutants before review: write each break of your changed lines as a patch file, run `node ~/.claude/tools/test-pass/test-pass.mjs mutants --patch <file>... -- <keep-green cmd>`, and copy its `mutants: <killed>/<n>` from the record; never type the count. A surviving mutant needs a test (or a reason in the report).
+
+Order and records: acceptance tests from the spec come before the code, and the implementer treats them as read-only. A bug starts with a failing repro, committed and recorded red before the fix (`test-pass.mjs record --role repro -- <cmd>`); after the fix the same command is recorded green. At every checkpoint run the keep-green set (the affected tests of the lane's files) with the repro and acceptance tests (`--role keep-green`); the inner loop may run only that set.
 
 Expected values come from the spec, never from the implementation's current output. Do not edit a test to make it pass without saying why in the commit body. Never add `.skip` or `.only` (C13). Test-after is allowed only for pure glue with no branches; say so.
 
