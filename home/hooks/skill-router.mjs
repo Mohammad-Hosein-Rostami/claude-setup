@@ -266,7 +266,8 @@ export function isQuiet(cwd, env = process.env) {
   return GRADLE_FILES.some(has) && !has('package.json');
 }
 
-const UI_CHECK_TEXTS = [PROOF_STEP, `; ${PROOF_SHORT}`, ` run \`ui-quality-pass\` before saying done.`, 'ui-quality-pass before done; ',
+// Order matters: 'ui-quality-pass before done; ' goes before `; proof: ...`, which would otherwise leave "ui-quality-pass before done." behind.
+const UI_CHECK_TEXTS = ['ui-quality-pass before done; ', PROOF_STEP, `; ${PROOF_SHORT}`, ` run \`ui-quality-pass\` before saying done.`,
   ' Proof: `ui-check run` until every state passes; visual-qa runs the final gate on the tree that lands.'];
 
 /** A route text with the UI checks taken out (the `ui` check is off): no ui-quality-pass, no proof step. */
