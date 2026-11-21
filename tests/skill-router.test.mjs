@@ -121,7 +121,7 @@ async function routerSession() {
 }
 
 const FULL = /this request involves UI/;
-const SHORT = /^Skill router: UI request - invoke .+ \(skip any already loaded\); delegate to ui-implementer; ui-quality-pass before done\.$/;
+const SHORT = /^Skill router: UI request - invoke .+ \(skip any already loaded\); delegate to ui-implementer; ui-quality-pass before done; proof: .+\.$/;
 
 test('first routed prompt gets the full text, a repeat gets the short form', async () => {
   const { prompt } = await routerSession();

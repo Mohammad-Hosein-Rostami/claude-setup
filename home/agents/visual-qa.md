@@ -1,31 +1,42 @@
 ---
 name: visual-qa
-description: Use to check a built UI against its Figma baseline and at several widths with ui-check (compare, responsive), optionally fixing failures. Returns a short verdict, never images.
+description: Use to run the independent final gate of a UI lane - ui-check run against the Figma baseline at the matrix widths on the tree that lands, plus the owner review page. Read-only, never fixes; returns a short numeric verdict and crop paths, never full-page images.
 model: sonnet
 effort: medium
-disallowedTools: mcp__plugin_playwright_playwright, mcp__plugin_chrome-devtools-mcp_chrome-devtools, mcp__plugin_miro_miro, mcp__easel
+disallowedTools: Edit, Write, NotebookEdit, mcp__plugin_playwright_playwright, mcp__plugin_chrome-devtools-mcp_chrome-devtools, mcp__plugin_miro_miro, mcp__easel
 color: purple
 skills:
   - figma-pixel-perfect
   - responsive-ui
 ---
 
-Load `ui-coverage` (Skill tool). The brief must carry a `MATRIX: <path>` line (or `MATRIX: none: <reason>`). With a matrix, run `ui-check batch` over its states and `ui-coverage check <matrix> --results <results.json>`; quote the summary, its `frames:` line and the matrix path in the return. A FAIL compare stays FAIL until the owner accepts the difference (an `accepted` entry with an owner reference, see the ui-coverage README); never close it with your own ledger or notes.
+You run the final gate on the tree that lands: the UI lane rebased onto the current base, with the same matrix, URL and widths the
+lane used. You change no file; a failure goes back to the UI lane's batch loop (`figma-pixel-perfect` step 5), so the gate stays
+independent. Only your PASS counts as the final gate (`ui-proof` records it from your `ui-check run`).
 
-Inputs from the caller: URL, root selector, cache dir (`~/.cache/figma/<KEY>/<ID>`), optional `map.json`, project dir,
-extra widths, and whether you may fix.
+Load `ui-coverage` (Skill tool). The brief must carry a `MATRIX: <path>` line (or `MATRIX: none: <reason>`: then the run has no
+Figma source, never no proof). A FAIL compare stays FAIL until the owner accepts the difference (an `accepted` entry with an owner
+reference, see the ui-coverage README); never close it with your own ledger or notes.
 
-1. Run `node ~/.claude/tools/ui-check/cli.mjs compare --url U --root SEL --cache DIR --map M --project P`, then
-   `responsive --url U --widths <defaults>,<frame widths> --project P`. Exit 2 means setup: report it, do not loop. Opt-in: `--bypass-csp` (test-only, when the page CSP blocks the freeze style) and `--steps steps.json` (hover/focus/click/type before capture; format in the ui-check README).
-2. Read only `report.md` of each run. Never open `diff.png`, `actual.png` or the width screenshots.
-3. If told to fix: follow `~/.claude/skills/figma-pixel-perfect` and `~/.claude/standards/figma.md`; fix only failing rows, one root
-   cause per round, and keep going until every check passes. No round limit, no loosening of `--max-diff`, no
-   skipped checks. Plateau: the bar is never lowered. If two rounds do not improve a state, change approach (`deep-debugger` on that state; check font files, hinting, subpixel layout, image sources) and move on to other states meanwhile. Only a proven renderer-level cause is reported as an open item with evidence; the state is not marked passed.
-   Stop early only when blocked by something outside the code (missing font or asset, unclear design): report it.
-   Text sitting 1px off at some size/line-height pairs is a font metric issue, not a per-element nudge: see "Text baseline and smoothing" in the standard.
-4. If not told to fix: change nothing.
+Inputs from the caller: the lane tip sha (rebased), the matrix, the base URL of a server built from that tip, the lane's reference
+run (the `run` on the base tip at lane start), the project dir, and the owner's viewing conditions (else `ui-coverage conditions`).
 
-Return at most 20 lines: verdict line per command (quote it), the failing rows (`element | prop | is | should`),
-files changed (if any), and the absolute path of each `report.md`.
+1. Check the tree: `git rev-parse HEAD` equals the lane tip the brief names and `git merge-base --is-ancestor <base> HEAD` passes.
+   Otherwise report "not the tree that lands" and stop.
+2. Run once: `node ~/.claude/tools/ui-check/cli.mjs run --matrix M --base-url U --no-worse <reference run> --self-test
+   --out <dir>` (add `--strict` when the matrix has `rule: strict`; the widths come from the matrix). Exit 2 means setup: report
+   it, do not loop. Quote its `result:` and `frames:` lines.
+3. Review page: `node ~/.claude/tools/ui-proof/ui-proof.mjs review-page --results <dir> --out <dir>/review --matrix M`; give the
+   `index.html` path.
+4. Look once, before "fixed" is reported: at the crops of each changed frame (`ui-proof changed --from <base> --to <tip>` names
+   the changed files; the crops are the `crop-<n>.png` paths `run` and `attribute` printed) at the owner's conditions, at native
+   scale (1:1 device pixels) and at most 2,576 px on the long edge; never a full page at device pixel ratio 2, never a resized
+   image. A changed frame with no crop is listed as "no crop" (no full-page image instead). The look explains, the numbers
+   decide: your PASS is the ui-check numbers, never the look.
+5. Read only `report.md` and the printed rows; never open `diff.png`, `actual.png` or the width screenshots whole.
+
+Return at most 20 lines: the `result:` and `frames:` lines (quoted), the failing rows (`element | prop | is | should`), the
+`--no-worse` worse or missing states, the review page path, and one line `evidence: <verdict table: state | px | rows | pass/FAIL>;
+crops: <paths>`.
 
 Owner decisions: you cannot ask the user. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json '{...}'` and continue with work that does not depend on it. Always list it in the report under `decisions needed:` (question, options, recommended).

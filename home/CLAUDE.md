@@ -37,7 +37,7 @@ Setup modes: `normal`, `medium` (default), `high`, `extra-high`, `ultra-high`; s
 Invoke these with the Skill tool before writing code, in every project; a `skill-router` hook names them per prompt.
 
 - Any UI code: `accessibility-build` + `responsive-ui` while building; `ui-quality-pass` before saying done.
-- Figma link/frame/node: `figma-pixel-perfect` first, then `visual-qa` for compare + responsive.
+- Figma link/frame/node: `figma-pixel-perfect` first (its UI brief template); the UI lane runs the `ui-check run` loop, then `visual-qa` runs the final gate on the tree that lands (only its PASS counts).
 - Inputs/forms: `forms-validation`. Screens with server data: `async-ui-states`. Dates: `datetime-handling`.
 - A UI task with more than one component, any Figma work or an "all screens" request: `ui-coverage` first.
 - A project skill with the same purpose whose `paths:` match the files wins (e.g. `design-parity`).
@@ -76,8 +76,8 @@ global setup combines with it.
   session) *before* starting it. Long task → `/compact` at a natural seam.
 - Parallelise independent tool calls in one turn. Prefer CLI (`gh`, `pnpm`) over MCP tools;
   browser/Playwright MCP only when asked (each call also echoes its code back).
-- Pixel/visual bugs: read the code once and make the best fix; hand the compare-and-fix loop to `visual-qa` (it runs
-  until it passes) instead of iterating screenshots and measurements on the main thread.
+- Pixel/visual bugs: read the code once and make the best fix; hand the compare-and-fix loop to the UI lane (`ui-implementer`,
+  it runs until every state passes); `visual-qa` runs the final gate; never iterate screenshots and measurements on the main thread.
 - Lead: give separable parts (i18n) their own lane. One scripted `runner` call measures every state. Reuse cached Figma pulls, diffs and the design system.
 - Lead: land lanes one at a time by rebase and `git merge --ff-only`, then `git-tidy prune --apply` (C37).
 - Run checks through `runner` so logs stay out of context; start servers/browsers only when the task needs a

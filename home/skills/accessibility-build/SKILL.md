@@ -3,7 +3,7 @@ name: accessibility-build
 description: Use while writing or changing UI code (.tsx/.jsx/.vue/.html; MUI components, dialogs, menus, icon buttons, forms) so it is accessible from the start - semantic HTML, keyboard, focus, labels, contrast, motion (WCAG 2.2 AA).
 ---
 
-Rules: U3-U9. Test with axe and, in a browser, the chrome-devtools `a11y-debugging` skill.
+Rules: U3-U9. Test with axe (item 8, in the project's tests) and `ui-check`'s focus and target-size findings (ui-check itself runs no axe); the browser a11y check belongs to `visual-qa` and `ui-quality-pass`, not to a browser MCP here.
 
 1. Use the native element first: `button`, `a`, `nav`, `main`, `label`, `ul`, `table`, `dialog`, `details`. ARIA only when no native element exists. Never `div` with `onClick`.
 2. Everything works by keyboard: visible `:focus-visible` style, logical tab order, no positive `tabindex`, Esc closes dialogs (native `<dialog>.showModal()` gives focus trap and Esc), focus returns on close, route changes move focus to the new heading.

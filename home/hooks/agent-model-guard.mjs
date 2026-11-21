@@ -10,7 +10,8 @@
 // `updatedInput` replaces the whole input object (per the hooks docs), so the full original input is returned.
 // UI brief gate: denies once with advice for UI briefs. A `ui-implementer` or `visual-qa` call is quiet when its prompt has a line that
 // starts (after optional blanks) with `MATRIX: <path>` naming a coverage matrix (a JSON object with a `surfaces` array; a relative path
-// starts at the call's cwd, `~` is the home folder) or with `MATRIX: none: <reason>` (15+ characters). Otherwise it is denied once with
+// starts at the call's cwd, `~` is the home folder) or with `MATRIX: none: <reason>` (15+ characters, and only when the brief outside its
+// MATRIX lines names no Figma, frame, baseline or design export: such a brief needs a matrix, G7). Otherwise it is denied once with
 // the ui-coverage init advice and the identical call sent again runs: lib/bounce-once.mjs adviceOnce keeps the digest of cwd, type and
 // prompt in this session's store and logs "advice", "advice-retry" or "advice-unrecorded" with the subagent type, the digest and a fixed
 // reason class only (no prompt text). The MATRIX lines are checked in order, at most MAX_MATRIX_LINES, and the first usable one ends the
@@ -36,7 +37,7 @@
 // lane's own (lib/copy-branch-brief.mjs) is sent back once with the same-branch steps. Same deny-once mechanics as the gates above, with its own
 // digest (logged class "copy branch brief"). A workflow spawn does not fire this hook (probe P2). There is no gate that sends a plain Agent call
 // to a workflow: the lead picks inline, one agent or a workflow by the job (home/CLAUDE.md, "Inline, agent or workflow").
-// Exports: guardedAgentInput (pure), matrixLines (pure), uiBriefDeny, writerIsolationDeny and copyBranchBriefDeny (the gates), MAX_MATRIX_BYTES.
+// Exports: guardedAgentInput (pure), matrixLines (pure), namesDesignSource (pure), uiBriefDeny, writerIsolationDeny and copyBranchBriefDeny (the gates), MAX_MATRIX_BYTES.
 // Invariants: the routing never blocks or denies; each gate denies an identical call at most once per session.
 import { realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -70,9 +71,23 @@ const INIT_ADVICE = 'Before the first UI lane run `node ~/.claude/tools/ui-cover
   + '--surfaces .. [--frames frames.json]` and add the line `MATRIX: <path>` (or `MATRIX: none: <reason>` for a one-file tweak with no Figma).';
 const SEND_AGAIN = 'Send the same call again unchanged and it runs.';
 const SHORT_REASON = `\`MATRIX: none:\` needs a reason of ${MIN_REASON_CHARS} or more characters.`;
+const NONE_WITH_DESIGN = '`MATRIX: none:` is for a one-file tweak with no Figma: this brief names Figma, a frame, a baseline or an export, '
+  + 'so it needs a coverage matrix.';
+// What makes a brief design work (G7). "export" counts unless it is the JS keyword (`export default`, `export const`, `export {`).
+const DESIGN_SOURCE = /figma|فیگما|\bframes?\b|\bbaselines?\b|\bexport(?:s|ed)?\b(?!\s+(?:default|const|let|var|function|async|class|type|interface|enum|\{|\*))/i;
 // The log names the problems by these fixed classes, never by prompt text
 const NO_MATRIX_LINE = 'no MATRIX line';
-const problemClass = (problem) => (problem === SHORT_REASON ? 'short none reason' : 'not a matrix');
+const PROBLEM_CLASSES = new Map([[SHORT_REASON, 'short none reason'], [NONE_WITH_DESIGN, 'none with a design source']]);
+const problemClass = (problem) => PROBLEM_CLASSES.get(problem) ?? 'not a matrix';
+
+/**
+ * Whether the brief, outside its MATRIX lines (a `none:` reason such as "no Figma frame" says what is absent), names a design source.
+ * @param {string} prompt the Agent call's prompt
+ * @returns {boolean} true when it names Figma, a frame, a baseline or an export
+ */
+export function namesDesignSource(prompt) {
+  return DESIGN_SOURCE.test(prompt.replace(MATRIX_LINE, '\n'));
+}
 
 /**
  * The Agent input with the model this call needs when it names none (the same in every mode).
@@ -123,9 +138,15 @@ function isMatrixFile(path) {
   }
 }
 
-/** @returns {string | undefined} undefined for a usable matrix or a long enough `none:` reason, else the advice line naming the problem */
-function matrixProblem(value, cwd, env) {
-  if (value.startsWith(NONE_PREFIX)) return value.slice(NONE_PREFIX.length).trim().length >= MIN_REASON_CHARS ? undefined : SHORT_REASON;
+/**
+ * @param {boolean} designBrief the brief names a design source (namesDesignSource), so `none:` is refused
+ * @returns {string | undefined} undefined for a usable matrix or an allowed `none:` reason, else the advice line naming the problem
+ */
+function matrixProblem(value, cwd, env, designBrief) {
+  if (value.startsWith(NONE_PREFIX)) {
+    if (value.slice(NONE_PREFIX.length).trim().length < MIN_REASON_CHARS) return SHORT_REASON;
+    return designBrief ? NONE_WITH_DESIGN : undefined;
+  }
   const path = resolve(cwd, value.replace(HOME_PREFIX, () => env.HOME || env.USERPROFILE || homedir()));
   const usable = value.length <= MAX_PATH_CHARS && !NETWORK_PATH.test(value) && isMatrixFile(path);
   return usable ? undefined : `\`${quoted(value)}\` does not exist or is not a matrix.`;
@@ -147,8 +168,9 @@ export async function uiBriefDeny(input, env = process.env) {
     if (!UI_AGENT_TYPES.includes(type) || typeof prompt !== 'string') return '';
     const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
     const problems = [];
+    const designBrief = namesDesignSource(prompt);
     for (const value of matrixLines(prompt)) {
-      const problem = matrixProblem(value, cwd, env);
+      const problem = matrixProblem(value, cwd, env, designBrief);
       if (problem === undefined) return ''; // one usable MATRIX line is enough: the files named after it are never read
       problems.push(problem);
     }
