@@ -205,13 +205,14 @@ export async function writerIsolationDeny(input, env = process.env) {
     const session = input.session_id;
     const flags = { isolated: isolation === WORKTREE_ISOLATION, readOnly: isReadOnlyBrief(prompt) };
     const plain = !flags.isolated && !flags.readOnly;
-    if (recordWriterLaunch(session, type, env, { unlessRunning: plain, ...flags }) !== 'running') return '';
+    const about = { cwd: input.cwd, description: input.tool_input?.description, prompt }; // the open launch record (r9-resume)
+    if (recordWriterLaunch(session, type, env, { unlessRunning: plain, ...flags, about }) !== 'running') return '';
     const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
     const { adviceOnce } = await import('./lib/bounce-once.mjs');
     const call = { command: `${type}: isolation ${String(isolation)}: ${String(prompt)}`, cwd, input, hook: 'agent-model-guard', tool: 'Agent' };
     const recorded = adviceOnce([PARALLEL_WRITER_ADVICE], { ...call, logged: { type, class: 'parallel writer without isolation' } }, env);
     if (recorded !== '') return denyOutput([`Not started: ${PARALLEL_WRITER_ADVICE}`, SEND_AGAIN].join('\n'));
-    recordWriterLaunch(session, type, env); // the identical retry runs: it is a running writer now
+    recordWriterLaunch(session, type, env, { about }); // the identical retry runs: it is a running writer now
     return '';
   } catch {
     return ''; // a quality rule, not a safety rule: any failure lets the call run

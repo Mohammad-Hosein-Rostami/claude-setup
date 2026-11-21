@@ -4,9 +4,12 @@
 // launched in parallel in one message would all see none running.
 // Exports: agentFileWrites(type, env), isWritingAgent(type, env), isReadOnlyBrief(prompt), recordWriterLaunch(session, type, env, options),
 // recordWriterStart(session, agentId, type, env), recordWriterStop(session, agentId, type, env), readOnlyLaunchOpen(session, agentId, type,
-// env), callCounterPath(session, agentId), PENDING_MS, IDLE_MS.
+// env), callCounterPath(session, agentId), openWritersOf(session, env, now), writersDirOf(env), PENDING_MS, IDLE_MS.
 // Store: ~/.claude/state/agent-writers/<session>.json through lib/session-store.mjs (lstat-checked, locked, 0600):
-// {"launches": [{"type", "at", "agent"?, "isolated"?, "readOnly"?}], "stopped": [agent ids], "readOnlyAgents": [agent ids]}. SubagentStart
+// {"launches": [{"type", "at", "agent"?, "isolated"?, "readOnly"?}], "stopped": [agent ids], "readOnlyAgents": [agent ids],
+// "open": [{"type", "at", "agent"?, "cwd"?, "description"?, "row"?, "isolated"?}]}. `open` (spec-p3 r9-resume, lib/open-writers.mjs) is the
+// launch record the resume notice reads: written before the agent starts, closed only at its SubagentStop, never dropped for idleness, so a
+// writer cut off by an exit or a usage-limit stop is still listed in the next session. SubagentStart
 // has the agent id and type but no tool_use_id, so it marks the oldest pending launch of its type started (agent = its id, at = the start;
 // the flags stay); a stop ends the launch of its id, else the oldest of its type; stopped ids are kept so a stop that comes again (another
 // gate blocked it) ends nothing more. readOnlyAgents keeps the ids of started read-only launches after their stop, because commit-gate's
@@ -29,6 +32,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { checkedTempRoot } from './edit-log.mjs';
 import { withSessionLock } from './session-lock.mjs';
+import { addOpen, launchAbout, parseOpen, startOpen, stopOpen } from './open-writers.mjs';
 import { readSessionFile, writeSessionFile } from './session-store.mjs';
 
 export const PENDING_MS = 2 * 60 * 1000;
@@ -141,9 +145,9 @@ function parseRecord(text, now, session) {
     const launches = (Array.isArray(record?.launches) ? record.launches : [])
       .filter((launch) => typeof launch?.type === 'string' && Number.isFinite(launch.at) && isRunning(launch, now, session));
     const ids = (list) => (Array.isArray(list) ? list : []).filter((id) => typeof id === 'string');
-    return { launches, stopped: ids(record?.stopped), readOnlyAgents: ids(record?.readOnlyAgents) };
+    return { launches, stopped: ids(record?.stopped), readOnlyAgents: ids(record?.readOnlyAgents), open: parseOpen(record?.open, now) };
   } catch {
-    return { launches: [], stopped: [], readOnlyAgents: [] };
+    return { launches: [], stopped: [], readOnlyAgents: [], open: [] };
   }
 }
 
@@ -151,6 +155,7 @@ const store = (env, session, record) => writeSessionFile(writersDir(env), sessio
   launches: record.launches.slice(-LAUNCHES_KEPT),
   stopped: record.stopped.slice(-STOPPED_IDS_KEPT),
   readOnlyAgents: record.readOnlyAgents.slice(-STOPPED_IDS_KEPT),
+  open: record.open,
 }));
 
 /** A launch that makes a later plain writer bounce: one with neither flag (a record without the keys counts as neither). */
@@ -166,12 +171,13 @@ const newLaunch = (type, at, { isolated, readOnly }) => ({
  * @param {unknown} session hook input session_id
  * @param {unknown} type tool_input.subagent_type
  * @param {Record<string, string | undefined>} env HOME / USERPROFILE
- * @param {{unlessRunning?: boolean, isolated?: boolean, readOnly?: boolean}} [options] unlessRunning: record nothing when another writer
- *   with neither flag still runs; isolated / readOnly: the flags this launch is recorded with
+ * @param {{unlessRunning?: boolean, isolated?: boolean, readOnly?: boolean, about?: {cwd?: unknown, description?: unknown, prompt?: unknown}}} [options]
+ *   unlessRunning: record nothing when another writer with neither flag still runs; isolated / readOnly: the flags this launch is recorded
+ *   with; about: the call's cwd, description and brief, kept (cwd, description, the row the brief names) in its open launch record
  * @returns {'recorded' | 'running' | undefined} 'running' when unlessRunning found a running plain writer (nothing recorded); undefined
  *   when the store is unusable, still locked or the write failed
  */
-export function recordWriterLaunch(session, type, env, { unlessRunning = false, isolated = false, readOnly = false } = {}) {
+export function recordWriterLaunch(session, type, env, { unlessRunning = false, isolated = false, readOnly = false, about = undefined } = {}) {
   const dir = writersDir(env);
   return withSessionLock(dir, session, () => {
     const now = Date.now();
@@ -180,7 +186,8 @@ export function recordWriterLaunch(session, type, env, { unlessRunning = false, 
     const record = parseRecord(text, now, session);
     if (unlessRunning && record.launches.some(isPlainLaunch)) return 'running';
     const launches = [...record.launches, newLaunch(type, now, { isolated, readOnly })];
-    return store(env, session, { ...record, launches }) ? 'recorded' : undefined;
+    const open = addOpen(record.open, { type: typeOf(type), at: now, ...launchAbout(about), ...(isolated === true ? { isolated: true } : {}) }, now);
+    return store(env, session, { ...record, launches, open }) ? 'recorded' : undefined;
   });
 }
 
@@ -201,10 +208,11 @@ export function recordWriterStart(session, agentId, type, env) {
     const now = Date.now();
     const record = parseRecord(text, now, session);
     const index = record.launches.findIndex((launch) => launch.type === typeOf(type) && typeof launch.agent !== 'string');
-    if (index === -1) return false;
+    const open = startOpen(record.open, agentId, typeOf(type));
+    if (index === -1) return open !== record.open && store(env, session, { ...record, open }) && false;
     const launches = record.launches.map((launch, at) => (at === index ? { ...launch, at: now, agent: agentId } : launch));
     const readOnlyAgents = launches[index].readOnly === true ? [...record.readOnlyAgents, agentId] : record.readOnlyAgents;
-    return store(env, session, { ...record, launches, readOnlyAgents });
+    return store(env, session, { ...record, launches, readOnlyAgents, open });
   }) === true;
 }
 
@@ -225,9 +233,11 @@ export function recordWriterStop(session, agentId, type, env) {
     const record = parseRecord(text, Date.now(), session);
     const own = record.launches.findIndex((launch) => launch.agent === agentId);
     const index = own !== -1 ? own : record.launches.findIndex((launch) => launch.type === typeOf(type));
-    if (record.stopped.includes(agentId) || index === -1) return false;
+    if (record.stopped.includes(agentId)) return false;
+    const open = stopOpen(record.open, agentId, typeOf(type)); // the open record closes even when the running launch aged out
+    if (index === -1) return open !== record.open && store(env, session, { ...record, open, stopped: [...record.stopped, agentId] }) && false;
     const launches = record.launches.filter((_, at) => at !== index);
-    return store(env, session, { ...record, launches, stopped: [...record.stopped, agentId] });
+    return store(env, session, { ...record, launches, open, stopped: [...record.stopped, agentId] });
   }) === true;
 }
 
@@ -247,4 +257,19 @@ export function readOnlyLaunchOpen(session, agentId, type, env) {
   const record = parseRecord(text, Date.now(), session);
   if (record.readOnlyAgents.includes(agentId)) return true;
   return record.launches.some((launch) => launch.readOnly === true && (launch.agent === agentId || launch.type === typeOf(type)));
+}
+
+/** The folder of the writer stores (one `<session>.json` each). */
+export const writersDirOf = (env) => writersDir(env);
+
+/**
+ * The open launch records of a session (no finish recorded yet), oldest first; read without the lock (a read).
+ * @param {unknown} session a session id
+ * @param {Record<string, string | undefined>} env HOME / USERPROFILE
+ * @param {number} now epoch ms
+ * @returns {object[]} [] when the store is missing or unreadable
+ */
+export function openWritersOf(session, env, now) {
+  const text = readSessionFile(writersDir(env), session, MAX_STORE_BYTES);
+  return typeof text === 'string' ? parseRecord(text, now, session).open : [];
 }
