@@ -5,7 +5,8 @@
     "BASH_DEFAULT_TIMEOUT_MS": "300000",
     "CLAUDE_QUESTION_TIMEOUT_S": "60",
     "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-5-5",
-    "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": "8"
+    "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": "8",
+    "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "3"
   },
   "permissions": {
     "allow": [
@@ -142,7 +143,7 @@
         ]
       },
       {
-        "matcher": "compact",
+        "matcher": "compact|resume",
         "hooks": [
           {
             "type": "command",
@@ -157,6 +158,16 @@
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/workflow-resume-notice.mjs\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/git-tidy-gate.mjs\"",
             "timeout": 10
           }
         ]
@@ -283,6 +294,11 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/ui-proof-gate.mjs\"",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/git-tidy-gate.mjs\"",
+            "timeout": 10
           }
         ]
       }
@@ -429,6 +445,11 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/git-tidy-gate.mjs\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/recall-digest.mjs\"",
+            "timeout": 15
           }
         ]
       }
