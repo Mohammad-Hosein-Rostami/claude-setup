@@ -518,7 +518,7 @@
   "statusLine": {
     "type": "command",
     "command": "node \"{{CLAUDE_HOME}}/statusline.mjs\"",
-    "refreshInterval": 30
+    "refreshInterval": 5
   },
   "enabledPlugins": {
     "gitkraken-hooks@gitkraken": false,
