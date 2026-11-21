@@ -31,7 +31,7 @@ import { installClaude } from './install/cli.mjs';
 import * as tools from './install/tools.mjs';
 
 /** The home/ items linked into ~/.claude (doctor.sh checks the same list). */
-export const LINKS = ['CLAUDE.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'modes', 'workflows', 'statusline.mjs'];
+export const LINKS = ['CLAUDE.md', 'lead.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'modes', 'workflows', 'statusline.mjs'];
 // Tools with npm dependencies: ui-check (odiff-bin, pngjs) and env-names (yaml). scripts/lane-new.sh reads this line.
 export const TOOLS_WITH_DEPS = ['ui-check', 'env-names'];
 

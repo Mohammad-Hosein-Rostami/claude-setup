@@ -179,6 +179,15 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/lead-text.mjs\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "UserPromptExpansion": [

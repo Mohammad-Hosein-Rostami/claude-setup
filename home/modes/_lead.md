@@ -9,7 +9,7 @@
 
 ## Model routing
 
-The session leads on **Opus 5.5 `high`** (normal/medium/high): it thinks, decides, delegates. Agents pin model/effort; unpinned general-purpose and Explore get Sonnet 5.5, Plan Opus. Use `scout`, not Explore; `architect`, not Plan; give every Workflow `agent()` a `model`: `haiku` mechanical, `sonnet` work, `opus` judges.
+The session leads on **Opus 5.5 `high`** (normal/medium/high): it thinks, decides, delegates. Agents pin model/effort; unpinned general-purpose gets Sonnet 5.5, Explore and Plan the lead's model. Use `scout`, not Explore; `architect`, not Plan; `implementer`, not general-purpose; give every Workflow `agent()` a `model`: `haiku` mechanical, `sonnet` work, `opus` judges.
 Escalate per call via Agent `model`/`effort`: `implementer`/`test-writer` `effort: "high"` for tricky or cross-module code; `reviewer` and `security-auditor` `model: "opus", effort: "max"` for risky changes and the last review before push; `architect`/`deep-debugger` `effort: "xhigh"` for hard problems, a failed try, no clear design winner or a security-critical decision. Never downgrade a pick to save tokens.
 
 - Planning, architecture/API design, trade-offs, hard-bug root cause, judging results, final call: **Opus 5.5 (the session)**; itself, `architect`, `deep-debugger`, `/escalate`.
@@ -24,8 +24,6 @@ Rules:
    to a file for a Sonnet agent, then checks report and diff.
 2. Opus keeps strong-model work and few-line edits.
 3. 2+ independent lanes: one `build` run, writers within lane budget in worktrees; lane >30 min: `step`.
-4. No pinned agent: start cheaper, escalate on failure.
-5. Deeper thinking: agent `effort`; never raise the lead's effort mid-session (cache miss).
 
 ## Right-size before building
 
@@ -42,8 +40,8 @@ Rules:
 - Land each lane the moment its checks and required review/audit pass via the `land` workflow (rebase, suite PASS at the tip, ff-only, prune); a re-done lane keeps its branch; never update-ref; the base folder holds no edits.
 - Spawn brief: one job per agent with all it needs: acceptance checks, failure classes to self-test, defaults for foreseeable questions,
   "finish everything"; a design brief asks for the Reuse inventory, Contract facts and Unconfirmed lists (project `architect` too). Agents return ≤ 300 words, detail in a file; a worker unfinished at ~120 tool calls or the
-  2nd compaction returns a status; workflow agents take no SendMessage (continue with a new stage), plain agents do.
-- Send all review findings in ONE message within 5 minutes of the report. A follow-up for an agent idle over 5 minutes that does
+  2nd compaction returns a status.
+- Send all review findings in one message within 5 minutes of the report. A follow-up for an agent idle over 5 minutes that does
   not need its context goes to a fresh agent with the spec and the diff, not a resume.
 - Watching: background Bash `node ~/.claude/tools/watch/watch.mjs <session-id> --exit-on-event` replaces re-arming
   Monitor (exits at the first event that needs you; restart it; the ask queue keeps its Monitor).

@@ -27,7 +27,7 @@ is_windows() { case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; *) return
 # On Git Bash install.sh may have copied instead of linking (no symlink permission): a present copy is a warning, not a FAIL.
 check_links() {
   local name target
-  for name in CLAUDE.md rules skills agents standards hooks tools project-notes modes workflows statusline.mjs; do
+  for name in CLAUDE.md lead.md rules skills agents standards hooks tools project-notes modes workflows statusline.mjs; do
     target="$CLAUDE_DIR/$name"
     if [ -L "$target" ] && [ "$(readlink "$target")" = "$LINK_ROOT/home/$name" ]; then ok "link $name"
     elif is_windows && [ -e "$target" ] && [ ! -L "$target" ]; then ok "copy $name (not live-linked; re-run install.sh after repo changes)"

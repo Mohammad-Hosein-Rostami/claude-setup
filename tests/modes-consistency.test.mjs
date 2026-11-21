@@ -26,7 +26,7 @@ test('every playbook states its lane budget', () => {
 
 test('_lead.md carries the lead-discipline rules and stays small', () => {
   const lead = read('home/modes/_lead.md');
-  for (const needle of ['Persian', 'No turn without a decision', 'runner', '2nd compaction', 'usage-limit', 'STATUS.md', '3k chars', 'restart the session', 'No answer in 60 s','≤ 300 words', 'workflow agents take no SendMessage', 'estimate.mjs']) {
+  for (const needle of ['Persian', 'No turn without a decision', 'runner', '2nd compaction', 'usage-limit', 'STATUS.md', '3k chars', 'restart the session', 'No answer in 60 s','≤ 300 words', '`implementer`, not general-purpose', 'estimate.mjs']) {
     assert.ok(lead.includes(needle), `_lead.md must mention ${needle}`);
   }
   assert.ok(lead.split('\n').length <= 100, '_lead.md is injected into every session; keep it <= 100 lines');
