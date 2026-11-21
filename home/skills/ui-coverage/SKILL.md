@@ -3,6 +3,8 @@ name: ui-coverage
 description: Use for any UI task with more than one component, any Figma or pixel-perfect work, any "all screens / all forms / everywhere" request, and any i18n or RTL work - build a coverage matrix of surfaces x states x locales, gate it with ui-coverage check, hand over a live page.
 ---
 
+The matrix (`init`) is planning and always allowed; `ui-coverage check` and every compare run only when the owner turned `ui` on with `/check`. Off: say `not checked: ui`.
+
 Rules: U13, U14, U1, U2. Tool: `node ~/.claude/tools/ui-coverage/ui-coverage.mjs <init|expand|scaffold|check|states>` (README beside it has the matrix.json format; `init matrix.json --locales en:ltr,fa:rtl --widths 320,768,1280 --surfaces a,b` writes the skeleton). The matrix is one file per task; done = `check` exits 0. Before the first UI lane, `init` the matrix (with `--frames frames.json` when there is Figma) and put the line `MATRIX: <path>` in every `ui-implementer` and `visual-qa` brief (`MATRIX: none: <reason>` only for a one-file tweak with no Figma and one locale); a brief without one is sent back once.
 
 1. **Surfaces.** Design frames + app routes + HIDDEN UI: grep the backend and sibling repos for templates (email, mjml, hbs, ejs, pug, jinja, tmpl, html strings, PDF, notifications, server error / redirect / consent pages). Record each search command and its hit count in `searched` (proof it ran, even at 0 hits). Hidden surfaces are RENDERED, not only listed: render templates (email, server pages) with sample variables per locale to static HTML and serve them, or run the project's server; each is a surface in the matrix with its own cells. A frame with no code home is built, listed with a reason, or asked about once; never defaulted.

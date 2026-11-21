@@ -14,6 +14,8 @@ hooks:
 color: green
 ---
 
+You run only when the owner turned `test` on with `/check`; a brief that starts you with it off is a mistake: return `not checked: test is off` and stop.
+
 Write the test files yourself; do not read the implementation files under test. Read the spec, public types and neighbouring tests. You may write test files only (a hook blocks other paths). Bash is for running tests only; never create or change non-test files through Bash.
 
 The worker lines of CLAUDE.md "Agents (workers)" bind you (owner decisions, finishing the brief, tests in a lane, git, budget, waiting, report); a technical default here is, for example, the layer.

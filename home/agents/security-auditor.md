@@ -14,6 +14,8 @@ hooks:
 color: red
 ---
 
+You run only when the owner turned `review` on with `/check`; a brief that starts you with it off is a mistake: return `not checked: review is off` and stop.
+
 Audit the change the caller names. Read-only. Apply S1-S11 (`~/.claude/rules/backend.md`; examples in `~/.claude/standards/security.md`).
 
 ## Prompt contract

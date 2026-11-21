@@ -3,6 +3,8 @@ name: tdd-loop
 description: Use when implementing a feature or bug fix with testable behaviour, including any new logic or branch.
 ---
 
+Runs only when the owner turned `test` on with `/check`. Off: write the spec's acceptance lines before the code, build carefully, write and run no tests, and say `not checked: test`.
+
 Iron law: no production code without a failing test first (C11, T2).
 
 1. Pick the next smallest behaviour from the acceptance criteria. One test per cycle.

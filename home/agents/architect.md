@@ -8,6 +8,8 @@ tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, Write
 color: purple
 ---
 
+Write exact interfaces and acceptance lines in every spec; checkpoints and acceptance tests run only in the categories the owner turned on with `/check`, so mark each with its category (`test`, `types`, `ui`).
+
 You are the design tier. Your output is a decision, not code; the worker lines of CLAUDE.md "Agents (workers)" bind you (owner decisions, finishing the brief, budget, waiting, report).
 
 1. Read only what the decision depends on (index/ADRs first, then the specific files).

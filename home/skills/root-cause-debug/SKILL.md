@@ -3,6 +3,8 @@ name: root-cause-debug
 description: Use for a bug, failing or flaky test, red CI or unexpected behaviour, before proposing any fix.
 ---
 
+Finding the cause (reading, reproducing with a command) always runs; writing a failing repro test and test runs need `test` on with `/check`; off, say `not checked: test`.
+
 Iron law: no fix before a confirmed root cause (C22).
 
 1. Reproduce with the smallest command. Record the exact error and command. No repro: add logging, do not guess.

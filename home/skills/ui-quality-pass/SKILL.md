@@ -3,6 +3,8 @@ name: ui-quality-pass
 description: Use before saying any UI component, page, screen, step or dialog is done or fixed, including small tweaks and work a subagent did - tokens, semantics, keyboard, contrast, responsive, async states, copy.
 ---
 
+Runs only when the owner turned `ui` on with `/check` (a Figma link or "pixel perfect" does not turn it on). Off: build to the UI rules as you write and say `not checked: ui`.
+
 Rules: F7-F9, U1-U12 (`rules/ui.md`; examples in `standards/ui-a11y.md`). Build-time detail lives in `accessibility-build`, `responsive-ui`, `async-ui-states`, `forms-validation`.
 
 1. Tokens only: no raw hex or px; check light and dark (U1). Match the project's design system names.

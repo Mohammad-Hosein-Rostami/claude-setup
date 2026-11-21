@@ -3,6 +3,8 @@ name: safe-refactor
 description: Use when restructuring code without changing behaviour, including renames, extractions and moves.
 ---
 
+Test runs in this skill happen only when the owner turned `test` on with `/check`; off, keep the behaviour by reading every caller, change in small steps and say `not checked: test`.
+
 Rules: R1-R4 (`~/.claude/standards/refactor.md`), C1-C4, C18.
 
 This skill is for code-level refactors. A whole-repository restructure (removing a build tool, merging packages, folder moves with config changes) uses `repo-restructure`.

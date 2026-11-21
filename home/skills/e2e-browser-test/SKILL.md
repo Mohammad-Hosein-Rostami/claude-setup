@@ -3,6 +3,8 @@ name: e2e-browser-test
 description: Use when writing or fixing end-to-end or browser tests, or when verifying a UI in a real browser.
 ---
 
+Writing or running these tests happens only when the owner turned `test` on with `/check` (a real-browser check also needs `ui`). Off: say `not checked: test`.
+
 Rules: T1, T4, T8, U3-U5. Critical journeys only (T1).
 
 1. Name the journey. Write steps as user actions, not implementation.

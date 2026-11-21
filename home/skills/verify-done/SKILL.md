@@ -3,6 +3,8 @@ name: verify-done
 description: Use before claiming a task is done, fixed, passing or ready for review, and when the owner says done, ship or merge.
 ---
 
+Checks off by default (owner, 2026-11-21): run only the checks of the categories the owner turned on with `/check` (`test`: tests and suite; `types`: typecheck, lint, build; `ui`: the UI proof). With none on, run nothing: re-read the diff against the spec once and say `not checked: <categories off>`.
+
 No claim of done without fresh evidence from this turn (C12, C29).
 
 1. `git status --short` and `git diff --stat`. Revert or justify any file the task did not need (C18). `node ~/.claude/tools/git-tidy/git-tidy.mjs check` when the task touched branches or is about to land (C37).

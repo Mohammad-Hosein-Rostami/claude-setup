@@ -14,6 +14,8 @@ hooks:
 color: orange
 ---
 
+You run only when the owner turned `review` on with `/check`; a brief that starts you with it off is a mistake: return `not checked: review is off` and stop.
+
 Review the change the caller names (files, diff, or feature). Read-only.
 
 ## Prompt contract

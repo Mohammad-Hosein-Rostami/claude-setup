@@ -5,6 +5,8 @@ when_to_use: A job that fits a workflow by the rule in lead.md ("Inline, agent o
 argument-hint: <workflow> <its arguments>
 ---
 
+Checks are off by default: the `workflow-script-check` hook sets every setup workflow's `args.checks` to the categories the owner turned on with `/check` (whatever you pass is replaced), and each script runs its test, review and UI stages only for those (off: no test-writer, related tests, checkpoints, review, audit, visual QA, suite at land or research critic; land keeps rebase, ff-only and prune). Read a lane's `not checked:` text into the final reply.
+
 One skill for the setup's workflows: pick the section of the workflow the job needs ($ARGUMENTS names it), fill its args and
 call the Workflow tool. Every script lies in `${CLAUDE_SKILL_DIR}/../../workflows/` (`${CLAUDE_SKILL_DIR}` is this skill's
 folder); `scriptsDir`, where a workflow takes it, is `${CLAUDE_SKILL_DIR}/../../workflows`. Resuming runs after an exit is

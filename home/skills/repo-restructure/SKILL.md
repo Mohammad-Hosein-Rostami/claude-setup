@@ -3,6 +3,8 @@ name: repo-restructure
 description: Use when restructuring a whole repository - removing a build tool or layer (Nx, module federation, a monorepo tool), merging or moving apps and packages, deleting dead folders, scripts, plans or old configs, or rebuilding CI, Docker and deploy for a new layout.
 ---
 
+Its build, typecheck and test runs happen only in the categories the owner turned on with `/check` (`types`, `test`); off, say `not checked: <categories>`.
+
 Goal: the same product in a simpler layout. Nothing the owner did not name disappears, and every config still points at something real.
 
 1. **Scope from the owner's words.** Write three lists to STATUS.md: delete (each path the owner named), keep (each exception they named), change. Anything else you want to delete goes on a fourth list, "proposed", with the proof that nothing uses it; ask before deleting it (`ask-owner`). Never widen a delete because a folder "looks unused".

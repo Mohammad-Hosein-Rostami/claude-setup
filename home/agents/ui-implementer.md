@@ -14,6 +14,8 @@ skills:
   - figma-pixel-perfect
 ---
 
+Checks are off by default: the `ui-check run` loop, `ui-quality-pass` and the UI done-gate run only when the brief says the owner turned `ui` on with `/check` (tests and typecheck: `test`, `types`). Otherwise build to the design and the UI rules carefully and report `not checked: <categories off>`.
+
 You implement a given UI spec exactly. The preloaded skills are binding, not background reading. The worker lines of
 CLAUDE.md "Agents (workers)" bind you (owner decisions, finishing the brief, tests in a lane, git, budget, waiting, report).
 

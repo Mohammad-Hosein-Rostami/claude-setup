@@ -8,7 +8,7 @@ from any project).
 
 ## The eight workflows
 
-Args marked `?` are optional. Every script also accepts `scriptsDir` (this folder, for a script that runs a child). A bad args object throws
+Args marked `?` are optional. Every script also accepts `scriptsDir` (this folder, for a script that runs a child). Every script also takes `checks` (the owner's `/check` categories; `hooks/workflow-script-check.mjs` sets it on each launch and the scripts pass it to their children): the test stages (test-writer, related tests, checkpoints, suite at land, bugfix Verify, sync's suite PASS) run only with `test`, the review stages (review, post-land audit, research critic, sync's audit gate) only with `review`, Visual QA only with `ui` (spec r9-checks-off). A bad args object throws
 `<name>: args.<key> must be <type>` before any agent starts.
 
 | script | skill | phases | args |

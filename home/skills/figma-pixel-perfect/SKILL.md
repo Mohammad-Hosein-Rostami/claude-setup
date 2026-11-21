@@ -3,6 +3,8 @@ name: figma-pixel-perfect
 description: Use whenever a task has a Figma link, frame or node id, or says match the design / pixel perfect - pull the baseline, build, compare with ui-check, fix until it passes, then check responsive.
 ---
 
+Pulling the Figma baseline and building to it always run; the `ui-check run` compare loop, responsive checks and the `visual-qa` gate run only when the owner turned `ui` on with `/check` (a Figma link does not turn it on). Off: say `not checked: ui`.
+
 Rules: U1, U2, F7. Conversion rules, tolerances and false positives: `standards/figma.md` (read it once per task).
 Tools: `node ~/.claude/tools/ui-check/cli.mjs <cmd>`, `ui-coverage/ui-coverage.mjs`, `ui-proof/ui-proof.mjs` (READMEs beside them).
 Never print `FIGMA_TOKEN`. Images: only crops of failing rows, at native scale (1:1 device pixels), each at most 2,576 px on the
