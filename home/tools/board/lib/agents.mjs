@@ -2,8 +2,8 @@
 // with its type, what it is on, its folder (for the git rows), its progress (progress.mjs) and what it does now; and per workflow run
 // its purpose, agents done of all, the bar and the finish.
 // Exports: sessionAgents({ session, sessionFolder, runs, cursors, pools, env, nowMs }) -> { agents, runs, cursors, launchDirs }.
-// An agent's `places` ({ worktree: its meta.worktreePath, changed, read: folders from agent-transcript.mjs, cwd }) only match it to a
-// trusted worktree in refresh.mjs; `launchDirs` are the folders writers were launched in (the launch records), trusted like the
+// An agent's `places` ({ worktree: its meta.worktreePath, else the folder its launch record names; changed: the folders of the files
+// it edited (agent-transcript.mjs); cwd }) only match it to a trusted worktree in refresh.mjs; `launchDirs` are the folders writers were launched in (the launch records), trusted like the
 // session's own folder.
 // Sources (Claude Code internal, observed 2.1.329; every parser fails soft): <session>/subagents/agent-<id>.jsonl and .meta.json
 // (plain agents), <session>/subagents/workflows/<run>/agent-<id>.* and the run's journal.jsonl (`started` label and phase, `result`
@@ -77,7 +77,7 @@ function purposeOf(record) {
 }
 
 /** One agent's board entry from its cursor, meta and run. */
-function agentEntry({ id, cursor, meta, run, journal, rows, pools, env, nowMs }) {
+function agentEntry({ id, cursor, meta, run, journal, launches, pools, env, nowMs }) {
   const label = clean(run ? (journal.started.get(id)?.label ?? meta.description) : meta.description, MAX_LABEL_CHARS + MAX_NAME_CHARS);
   const colon = run ? label.indexOf(':') : -1; // a workflow label is `<lane>:<agent>`; a plain agent's description is kept whole
   const type = clean(meta.agentType ?? '?', MAX_NAME_CHARS);
@@ -91,7 +91,8 @@ function agentEntry({ id, cursor, meta, run, journal, rows, pools, env, nowMs })
     entry: {
       id, name: clean(colon > 0 ? label.slice(colon + 1) : label, MAX_LABEL_CHARS) || type, lane: colon > 0 ? clean(label.slice(0, colon), MAX_NAME_CHARS) : null,
       type, runId: run?.runId ?? null, phase: run ? (journal.started.get(id)?.phase ?? meta.workflowPhase ?? null) : null,
-      places: { worktree: typeof meta.worktreePath === 'string' ? meta.worktreePath : null, changed: cursor.changedDirs ?? [], read: cursor.readDirs ?? [], cwd: cursor.cwd }, row: rows.get(id) ?? null, state, writer,
+      places: { worktree: typeof meta.worktreePath === 'string' ? meta.worktreePath : (launches.get(id)?.cwd ?? null), changed: cursor.changedDirs ?? [], cwd: cursor.cwd },
+      row: launches.get(id)?.row ?? null, state, writer,
       pct: progress.pct, conf: progress.conf, elapsedMin: tenths(progress.elapsedMin), leftMin: tenths(progress.leftMin),
       highLeftMin: tenths(progress.highLeftMin), overMin: tenths(progress.overMin), usual: progress.usual, tag: progress.tag, doing: cursor.lastTool?.text ?? null, calls: cursor.calls,
       tokens: Number.isFinite(cursor.tokens) && cursor.tokens > 0 ? cursor.tokens : null,
@@ -127,7 +128,8 @@ function runSummary(run, journal, entries, record) {
 export function sessionAgents({ session, sessionFolder, runs, cursors, pools, env, nowMs }) {
   try {
     const open = openWritersOf(session, env, nowMs);
-    const rows = new Map(open.filter((entry) => typeof entry?.agent === 'string').map((entry) => [entry.agent, clean(entry.row, MAX_NAME_CHARS) || null]));
+    const launches = new Map(open.filter((entry) => typeof entry?.agent === 'string')
+      .map((entry) => [entry.agent, { row: clean(entry.row, MAX_NAME_CHARS) || null, cwd: typeof entry.cwd === 'string' ? entry.cwd : null }]));
     const launchDirs = [...new Set(open.map((entry) => entry?.cwd).filter((dir) => typeof dir === 'string'))];
     const records = new Map(runsOfSession(defaultRegistryDir(), session).map((record) => [record.runId, record]));
     const groups = [{ run: null, folder: join(sessionFolder, 'subagents'), journal: null },
@@ -138,7 +140,7 @@ export function sessionAgents({ session, sessionFolder, runs, cursors, pools, en
       for (const { id, file, meta } of transcriptsIn(folder, cursors, nowMs)) {
         const cursor = advanceCursor(cursors[id], file);
         if (cursor === null || cursor.startMs === null) continue;
-        const built = agentEntry({ id, cursor, meta: metaOf(meta), run, journal, rows, pools, env, nowMs });
+        const built = agentEntry({ id, cursor, meta: metaOf(meta), run, journal, launches, pools, env, nowMs });
         if (!kept(built.entry, nowMs, cursor.mtimeMs)) continue;
         entries.push(built.entry);
         nextCursors[id] = built.cursor;

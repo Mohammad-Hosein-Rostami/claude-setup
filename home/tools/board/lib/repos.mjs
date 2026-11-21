@@ -86,10 +86,14 @@ export function sessionRepos({ folders, cache, nowMs, startMs = Date.now() }) {
 
 const isInside = (dir, path) => dir === path || dir.startsWith(`${path}${sep}`);
 
-/** The worktree of the trusted repositories that holds the agent: its own worktree, else its newest changed, read, then cwd folder. */
+/**
+ * The worktree of the trusted repositories that holds the agent (review C-1): the folder of the file it edited last, else the
+ * worktree it was launched in, else an older edited folder, else its cwd (the lead's folder for most agents, so the last resort).
+ */
 function homeOf(agent, worktrees) {
   const places = agent.places ?? {};
-  const candidates = [places.worktree, ...(places.changed ?? []), ...(places.read ?? []), places.cwd];
+  const [newest, ...older] = places.changed ?? [];
+  const candidates = [newest, places.worktree, ...older, places.cwd];
   for (const dir of candidates) {
     if (typeof dir !== 'string' || !isAbsolute(dir) || REMOTE_PATH.test(dir)) continue;
     const home = worktrees.find((wt) => isInside(dir, wt.path));

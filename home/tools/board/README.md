@@ -82,9 +82,10 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while a ru
 - git (`lib/repos.mjs`, `lib/git-state.mjs`) only in repositories the setup vouches for, up to 3: the session's folder, the
   STATUS.md folder, the road's `repo`, each agent's `meta.worktreePath` and the writers' launch folders, with the worktrees their
   own `worktree list` names (git runs a repository's own config, so never where a tool call points); `-c core.fsmonitor=false`
-  and one git budget per refresh. Agents are matched to those worktrees by path prefix: the newest folder of a file they changed
-  (or a Bash call's cwd), then of one they read, then their cwd, counted only after the call succeeded. One refresh per session
-  at a time (a pid lock, taken over after 2 min or when its process is gone): `worktree list` when the worktree folder changed, one `for-each-ref` with `%(ahead-behind:main)`
+  and one git budget per refresh. Agents are matched to those worktrees by path prefix: the folder of the file they edited last
+  (Edit, Write, MultiEdit, NotebookEdit, counted only after the call succeeded; a Bash call's cwd says nothing of where it
+  writes), then the worktree they were launched in (`meta.worktreePath` or the launch record), then older edited folders, then
+  their cwd. One refresh per session at a time (an O_EXCL lock file from `tools/disk-free/lib/lock-file.mjs`, broken after 2 min): `worktree list` when the worktree folder changed, one `for-each-ref` with `%(ahead-behind:main)`
   every 15 s, and `--no-optional-locks status --untracked-files=no` per worktree only when its index or HEAD changed (15 s at
   most); 250 ms timeout per call and 250 ms of git per refresh, past which the old values stay with their age.
 
