@@ -31,9 +31,13 @@ const FAKE_ERROR_MODE = "if (mode === 'error')";
 const FAKE_LOGIN_MODES = `if (mode === 'revoked') { reply('Failed to authenticate. API Error: 401 OAuth token has been revoked.', { is_error: true }); process.exit(0); }
 if (mode === 'limit') { reply('You have hit your usage limit. It resets at 3am.', { is_error: true }); process.exit(0); }
 if (mode === 'leak') { console.error('debug: my token is ' + process.env.CLAUDE_CODE_OAUTH_TOKEN); process.exit(1); }
+if (mode === 'slow') { writeFileSync('/dev/tty', 'CHECK-STARTED\\n'); await new Promise((done) => setTimeout(done, 60000)); }
 `;
 
-/** Teaches the fake `claude` of recall-fakes.mjs to log who it ran as and to answer as a revoked or limited account. */
+/**
+ * Teaches the fake `claude` of recall-fakes.mjs to log who it ran as and to answer as a revoked or limited account; `slow`
+ * says CHECK-STARTED on the terminal and then waits a minute (a check to interrupt with Ctrl-C).
+ */
 function patchFakeClaude(path) {
   const original = readFileSync(path, 'utf8');
   const patched = original

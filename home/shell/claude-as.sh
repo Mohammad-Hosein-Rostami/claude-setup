@@ -12,8 +12,9 @@
 # Invariants (tests/account-shell.test.mjs): the token is handled with shell builtins only, so it is never an argument of
 # a program; `set -x` of the caller is switched off inside claude-as and back on after it, so no trace line holds the
 # token; the paste is read from the terminal with echo off, and never without a terminal on stdin (the Bash tool of
-# Claude, `!`, a pipe: the paste would enter a transcript); an argument shaped like a token is refused.
-# Not verified: Ctrl-C at the hidden prompt (echo is restored by a trap; not run by a test).
+# Claude, `!`, a pipe: the paste would enter a transcript); an argument shaped like a token is refused; Ctrl-C at the
+# prompt or during the check ends the call with echo on, nothing stored and no variable holding the paste
+# (tests/account-shell-interrupt.test.mjs).
 
 if [ -n "${ZSH_VERSION:-}" ]; then
   eval '_claude_as_file=${(%):-%x}' # zsh: the file being sourced (eval: bash must not parse this form)
@@ -48,26 +49,27 @@ _claude_as_needs_terminal() {
   return 1
 }
 
-# Reads one line from the terminal into _claude_as_paste. Echo is switched off before the prompt is shown.
+# Reads one line from the terminal into _claude_as_paste, a local of the caller (so no Ctrl-C can leave it set in the
+# shell). `read -s` of bash and zsh hides the input and puts the terminal back itself, also on Ctrl-C, which ends the
+# read and the call (a trap with stty did not: the read went on, with echo on, review 1 R1). The prompt is printed by
+# `read` itself, after it has switched echo off, so a paste that comes the moment the prompt shows is not echoed.
 _claude_as_read_hidden() {
   _claude_as_paste=
   _claude_as_needs_terminal || return 1
-  _claude_as_stty=$(stty -g < /dev/tty) || return 1
-  trap 'stty "$_claude_as_stty" < /dev/tty' INT
-  stty -echo < /dev/tty
-  builtin printf '%s' "$1" > /dev/tty
-  IFS= read -r _claude_as_paste < /dev/tty
-  local rc=$?
-  stty "$_claude_as_stty" < /dev/tty
-  trap - INT
-  unset _claude_as_stty
+  local rc
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    IFS= read -r -s "_claude_as_paste?$1" < /dev/tty 2> /dev/tty
+  else
+    IFS= read -r -s -p "$1" _claude_as_paste < /dev/tty 2> /dev/tty
+  fi
+  rc=$?
   builtin printf '\n' > /dev/tty
   return "$rc"
 }
 
 # Uses the stored account $1 in this shell; a name that is not stored yet is asked for, checked and stored first.
 _claude_as_use() {
-  local _claude_as_token rc
+  local _claude_as_token _claude_as_paste rc
   _claude_as_token=$(claude-account token "$1")
   rc=$?
   if [ "$rc" -eq 3 ]; then
@@ -86,7 +88,7 @@ _claude_as_use() {
 
 # Uses a pasted token in this shell without storing it. CLAUDE_ACCOUNT=- tells hook jobs to spend no stored account.
 _claude_as_once() {
-  local _claude_as_token rc
+  local _claude_as_token _claude_as_paste rc
   _claude_as_read_hidden "Paste the token for this terminal only (input is hidden, nothing is stored): " || return 1
   _claude_as_token=$(builtin printf '%s\n' "$_claude_as_paste" | claude-account once)
   rc=$?

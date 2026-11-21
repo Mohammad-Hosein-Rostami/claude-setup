@@ -70,6 +70,24 @@ for (const [label, shell, flags] of SHELLS) {
     assert.deepEqual(box.claudeCalls(), []);
   });
 
+  test(`${label}: the token shape in an argument starts at sk-ant- and 10 more characters (9 is a name), as in the tool`, (t) => {
+    const box = sandbox(t);
+    const shaped = (count) => run(shell, flags, box, `. "$SNIPPET"\nclaude-as ${['sk', 'ant', ''].join('-')}${'a'.repeat(count)}`);
+    assert.match(shaped(10).stderr, /looks like a token/);
+    assert.doesNotMatch(shaped(9).stderr, /looks like a token/);
+  });
+
+  test(`${label}: a stored account the tool cannot read (exit 1, not 3) is reported and never asked for again`, (t) => {
+    const box = sandbox(t);
+    stored(box, 'work', TOKEN_A);
+    chmodSync(join(box.storeDir, 'work.token'), 0o644);
+    const result = run(shell, flags, box, `. "$SNIPPET"\nclaude-as work\necho "RC=$?"\n${SHOW_ENV}`);
+    assert.match(result.stdout, /RC=1/);
+    assert.match(result.stderr, /readable by other users/);
+    assert.doesNotMatch(result.stderr, /no terminal on stdin/, 'no prompt for a new token');
+    assert.deepEqual(envLine(result.stdout), ['none', 'none']);
+  });
+
   test(`${label}: with no terminal on stdin (the Bash tool, a pipe, \`!\`) a new name is not prompted for, and --once neither`, (t) => {
     const box = sandbox(t);
     for (const args of ['fresh', '--once']) {
@@ -167,4 +185,6 @@ test('the snippet handles the token with builtins only: every line that expands 
   const lines = readFileSync(SNIPPET, 'utf8').split('\n').filter((line) => /\$\{?(_claude_as_token|_claude_as_paste)\b/.test(line));
   assert.ok(lines.length >= 3, 'the lines that touch the token were found');
   for (const line of lines) assert.match(line.trim(), /^(builtin printf|_claude_as_token=\$\(builtin printf|export CLAUDE_CODE_OAUTH_TOKEN=|if \[ -n )/, line.trim().slice(0, 60));
+  // A file redirection on such a line would put the token on disk: they only pipe it to the tool or export it.
+  for (const line of lines) assert.doesNotMatch(line, />/, line.trim().slice(0, 60));
 });
