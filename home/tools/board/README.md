@@ -35,7 +35,8 @@ uncommitted files (`+3 dirty`), from its own worktree (below 115 columns with on
 the repository). An agent known only by its launch folder or cwd (one that works through Bash, or has not edited yet) may be on any
 branch, so its row names no branch: `claude-setup · no edits yet` when that folder is in a trusted repository, else the folder's
 name (`round4 · no edits yet`); `· read-only` for an agent that does not write, `· edits outside git` for one whose edits are all
-outside the trusted worktrees; `no repo` / `read-only` when nothing is known.
+outside the trusted worktrees; `no repo` / `read-only` when nothing is known. When the text does not fit, the folder name is cut
+and the reason stays (`cla… · read-only`); with no room for the folder, the reason alone.
 
 When rows run out (`lib/render.mjs` shares them, `lib/layout.mjs` packs the work rows): the alert, job and session rows always
 show; then one git row (never none: branch, upstream ahead/behind, changed files, landed today; `git: no repository` when the
@@ -92,10 +93,12 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while a ru
   or the road's `repo`; the STATUS.md folder and the road only order and choose, they never add a repository. Git runs only on
   what the trusted repository records itself, read fresh on every refresh and never from the cache: its shared git folder
   (`--git-dir=<common>` for the refs and the base-branch facts) and each worktree it records (the main checkout, and
-  `<common>/worktrees/<name>` whose `gitdir` names `<path>/.git`), as `--git-dir=<that git folder> --work-tree=<path>`, so git
+  `<common>/worktrees/<name>` whose `gitdir` names `<path>/.git` and whose `commondir` leads back to `<common>`; a main `.git`
+  holding a `commondir` file is no main checkout), as `--git-dir=<that git folder> --work-tree=<path>`, so git
   never reads a worktree's own `.git` (a rewritten or racing `.git` cannot point it elsewhere) and `--ignore-submodules=dirty` keeps
   it out of nested repositories. Paths are compared as real paths in the disk's letter case. Every call has
-  `-c core.fsmonitor=false -c safe.bareRepository=explicit` and one git budget per refresh. With no trusted
+  `-c core.fsmonitor=false -c safe.bareRepository=explicit`, no inherited `GIT_*` variable and `GIT_COMMON_DIR=<common>` (git
+  would otherwise follow a git folder's `commondir` file even under `--git-dir=`), and one git budget per refresh. With no trusted
   repository holding the work the git row says `git: no repository`. When git runs out of time (a loaded machine), a repository
   keeps its last good state for up to 60 s and its row says `stale`. Agents are matched to those worktrees by path prefix: the folders of the files they edited, newest
   first (Edit, Write, MultiEdit, NotebookEdit, counted only after the call succeeded; a Bash call's cwd says nothing of where it

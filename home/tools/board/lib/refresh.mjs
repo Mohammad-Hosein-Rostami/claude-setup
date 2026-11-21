@@ -7,14 +7,14 @@
 // boolean, findTranscript(session, projectsDir); MAX_BOARD_BYTES.
 // File: ~/.claude/state/board/<session>.json = { session, at, stale, refreshStartedAt, asking, runs: [{ runId, name, phase,
 // phaseIndex, phaseTotal, started, done, lanes, state, quietMin, purpose, agentsTotal, agentsDone, pct, leftMin, running, quiet }],
-// agents: [agents.mjs entries plus repo (its repository's name), wt, branch], repo: git-state.mjs repo plus { tip, suite, landed } (repo-stats.mjs) | null,
+// agents: [agents.mjs entries plus repo (its repository's name), wt, branch, unplaced (repos.mjs placeAgents)], repo: git-state.mjs repo plus { tip, suite, landed } (repo-stats.mjs) | null,
 // repos: the other repositories with work (repos.mjs, same shape without the stats), git: { branch, ahead, behind, changed } | null,
 // road: job-facts.mjs road | null, trend: { deltaMin, atMs } | null }
 // (<= MAX_BOARD_BYTES: done agents go first, then the oldest, until it fits). Cache (cache-file.mjs, <session>.json): { cursors, git,
 // job, stats }. The repositories (repos.mjs) are only trusted ones (trusted-repos.mjs: the session folder's and the setup's
 // own) with active work, else the one holding STATUS.md or the road's `repo`
-// (lead decision, fix round 3), with the worktrees their own `worktree list`
-// names; agents are matched to those worktrees by path prefix (repos.mjs placeAgents; owner report 2026-11-21: no git info at
+// (lead decision, fix round 3), with the worktrees the repository records (trusted-repos.mjs worktreeRecords, passed to git as
+// `--git-dir=`/`--work-tree=`); agents are matched to those worktrees by path prefix (repos.mjs placeAgents; owner report 2026-11-21: no git info at
 // all; review SEC-1: git never runs where a tool call points). One refresh at a time per session: an O_EXCL lock file
 // (disk-free/lib/lock-file.mjs, review L1), broken once it is LOCK_STALE_MS old (review SEC-2: a hung refresh must not be
 // joined by a new one every IN_FLIGHT_MS).

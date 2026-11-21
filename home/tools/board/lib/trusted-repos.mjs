@@ -60,14 +60,26 @@ const branchOf = (gitDir) => /^ref: refs\/heads\/(.+)$/.exec(firstLine(join(gitD
 const isFolder = (path) => entryOf(path)?.isDirectory() === true;
 
 /**
+ * Whether a linked worktree's git folder names `common` as its shared folder. git follows a git folder's `commondir` file even
+ * under `--git-dir=` (review N-11); git-state.mjs pins GIT_COMMON_DIR as well, and a record pointing elsewhere is not shown.
+ */
+function sharesCommon(gitDir, realCommon) {
+  const named = firstLine(join(gitDir, 'commondir'));
+  return named !== '' && !REMOTE_PATH.test(named) && realOf(resolve(gitDir, named)) === realCommon;
+}
+
+/**
  * The worktrees the repository records itself, the main checkout first: [{ path, gitDir, branch, main }]. Read fresh from `<common>`
- * (never from a cache, never from a worktree's own `.git`); a recorded folder that is gone is left out.
+ * (never from a cache, never from a worktree's own `.git`); a recorded folder that is gone is left out, and so is one whose
+ * `commondir` does not lead back to `common`. A main `.git` holding a `commondir` file is no main checkout (review N-11).
  * @param {string} common the repository's shared git folder
  * @returns {{ path: string, gitDir: string, branch: string | null, main: boolean }[]} at most MAX_WORKTREES_READ
  */
 export function worktreeRecords(common) {
-  const records = basename(common) === '.git' && isFolder(dirname(common))
-    ? [{ path: dirname(common), gitDir: common, branch: branchOf(common), main: true }] : [];
+  const realCommon = realOf(common);
+  if (realCommon === null) return [];
+  const isMain = basename(common) === '.git' && isFolder(dirname(common)) && entryOf(join(common, 'commondir')) === null;
+  const records = isMain ? [{ path: dirname(common), gitDir: common, branch: branchOf(common), main: true }] : [];
   let names = [];
   try {
     names = readdirSync(join(common, 'worktrees')).slice(0, MAX_WORKTREES_READ);
@@ -79,7 +91,7 @@ export function worktreeRecords(common) {
     const gitFile = firstLine(join(gitDir, 'gitdir'));
     // resolve: git writes forward slashes on Windows too, the agents' folders have backslashes (review N-8)
     const path = isLocalFolder(gitFile) && basename(gitFile) === '.git' ? resolve(dirname(gitFile)) : null;
-    if (path !== null && isFolder(path)) records.push({ path, gitDir, branch: branchOf(gitDir), main: false });
+    if (path !== null && isFolder(path) && sharesCommon(gitDir, realCommon)) records.push({ path, gitDir, branch: branchOf(gitDir), main: false });
   }
   return records;
 }

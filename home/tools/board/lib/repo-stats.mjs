@@ -2,7 +2,7 @@
 // `suite` proof record of exactly that commit) and the commits landed on it today (count and the newest one's time).
 // Run only by the detached board refresh (refresh.mjs), never by the status line.
 // Exports: repoStats({ common, base, cache, nowMs, startMs }) -> { stats, cache }.
-// Commands (fixed flags, git-state.mjs GIT_SAFETY, GIT_TIMEOUT_MS each, inside the refresh's one git budget `startMs`), at most every
+// Commands (git-state.mjs gitIn: fixed flags, GIT_COMMON_DIR pinned, a timeout each, inside the refresh's one git budget `startMs`), at most every
 // STATS_EVERY_MS, all on the trusted repository's shared git folder (`--git-dir=<common>`, from trusted-repos.mjs, never a path from
 // the cache: review SEC-10): `rev-parse --verify --end-of-options <base>^{commit}` and `log --first-parent
 // --format=%ct --since=<local midnight> -n MAX_LANDED --end-of-options <base> --`. `base` comes from git-state.mjs and must pass
@@ -12,15 +12,13 @@
 // Landed today = commits on the base's first-parent line with a committer time since local midnight (lands are fast-forward, so a
 // landed commit keeps the time it was committed or rebased).
 // Invariants: never throws (a failure keeps the cached stats); no text from a file reaches a command.
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
-import { GIT_SAFETY } from './git-state.mjs';
+import { gitIn } from './git-state.mjs';
 
-const GIT_TIMEOUT_MS = 250;
 const STATS_EVERY_MS = 60_000;
 const MAX_LANDED = 500;
 const MS_PER_S = 1000;
@@ -30,20 +28,12 @@ const PROOF_ID_HEX = 16; // test-pass/lib/store.mjs ID_LENGTH
 const MAX_PROOF_BYTES = 1024 * 1024; // 200 rows of well under 1 KB
 const SHA = /^[0-9a-f]{40,64}$/;
 
-/** One git call with fixed flags; null on any failure or timeout. */
-function git(args) {
-  try {
-    return execFileSync('git', [...GIT_SAFETY, ...args], { encoding: 'utf8', timeout: GIT_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
-  } catch {
-    return null;
-  }
-}
 
 /** The commits landed on the base since local midnight: { count, lastMs }. */
 function landedToday(common, base, nowMs) {
   const midnight = new Date(nowMs);
   midnight.setHours(0, 0, 0, 0);
-  const text = git([`--git-dir=${common}`, 'log', '--first-parent', '--format=%ct', `--since=${midnight.toISOString()}`, '-n', String(MAX_LANDED), '--end-of-options', base, '--']);
+  const text = gitIn(common, [`--git-dir=${common}`, 'log', '--first-parent', '--format=%ct', `--since=${midnight.toISOString()}`, '-n', String(MAX_LANDED), '--end-of-options', base, '--']);
   if (text === null) return null;
   const times = text.split('\n').map(Number).filter((t) => Number.isInteger(t) && t > 0);
   return { count: times.length, lastMs: times.length > 0 ? Math.max(...times) * MS_PER_S : null };
@@ -78,7 +68,7 @@ export function repoStats({ common, base, cache, nowMs, startMs = Date.now() }) 
     if (typeof common !== 'string' || typeof base !== 'string' || !SAFE_REF.test(base)) return { stats: null, cache: {} };
     const same = old.common === common && old.base === base;
     if (same && (nowMs - (old.at ?? 0) < STATS_EVERY_MS || Date.now() - startMs > GIT_BUDGET_MS)) return { stats: old.stats ?? null, cache: old };
-    const tip = git([`--git-dir=${common}`, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${base}^{commit}`])?.trim() ?? '';
+    const tip = gitIn(common, [`--git-dir=${common}`, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${base}^{commit}`])?.trim() ?? '';
     if (!SHA.test(tip)) return { stats: same ? (old.stats ?? null) : null, cache: same ? old : {} };
     const stats = { tip, suite: suiteAt(common, tip), landed: landedToday(common, base, nowMs) ?? (same ? old.stats?.landed ?? null : null) };
     return { stats, cache: { common, base, at: nowMs, stats } };

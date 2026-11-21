@@ -27,6 +27,10 @@ const NARROW_TYPE_CHARS = 12;
 const TOKENS_PER_K = 1000;
 const PLACE_CHARS = 16;
 const WIDE_PLACE_CHARS = 28;
+/** The separator repos.mjs unplacedText puts between the folder and the reason. */
+const UNPLACED_SEP = ' · ';
+/** Fewer characters than this for the folder name and only the reason is shown. */
+const MIN_FOLDER_CHARS = 4;
 const DOING_CHARS = 24;
 const WIDE_DOING_CHARS = 36;
 const RUN_BAR_CELLS = 10;
@@ -108,6 +112,20 @@ function doingPart(agent, look) {
 }
 
 /**
+ * The `<folder> · <reason>` text of an agent on no sure worktree within `max` characters: the reason always stays and the folder
+ * name is cut (review O1: `claude-setup…` alone said nothing); with no room left for a folder, the reason alone.
+ */
+function unplacedPart(unplaced, max, look) {
+  const at = unplaced.lastIndexOf(UNPLACED_SEP);
+  if (at < 0) return cutWords(cleanText(unplaced, look), max, look);
+  const why = cleanText(unplaced.slice(at + UNPLACED_SEP.length), look);
+  const sep = cleanText(UNPLACED_SEP, look); // ` ? ` in the ASCII look
+  const room = max - [...why].length - [...sep].length;
+  if (room < MIN_FOLDER_CHARS) return cutWords(why, max, look);
+  return `${cutWords(cleanText(unplaced.slice(0, at), look), room, look)}${sep}${why}`;
+}
+
+/**
  * Where the agent works (owner report 2026-11-21: every agent row says it): `claude-setup:lane/x 2↑ +3 dirty` from its own worktree
  * (repos.mjs, never the lead's folder); for an agent on no sure worktree the repository or folder it was launched in and why
  * (`claude-setup · no edits yet`, repos.mjs placeAgents; review F2), else `read-only` / `no repo`.
@@ -115,7 +133,7 @@ function doingPart(agent, look) {
 function wherePart(agent, ctx, look) {
   const repos = Array.isArray(ctx.repos) ? ctx.repos : [ctx.repo].filter(Boolean);
   if (agent.wt === null || agent.wt === undefined) {
-    const text = typeof agent.unplaced === 'string' ? cutWords(cleanText(agent.unplaced, look), wide(look) ? WIDE_PLACE_CHARS : PLACE_CHARS, look) : '';
+    const text = typeof agent.unplaced === 'string' ? unplacedPart(agent.unplaced, wide(look) ? WIDE_PLACE_CHARS : PLACE_CHARS, look) : '';
     return { text: text || (agent.writer ? 'no repo' : 'read-only'), state: STATE.dim };
   }
   const repo = repos.find((entry) => entry?.name === agent.repo) ?? repos[0];

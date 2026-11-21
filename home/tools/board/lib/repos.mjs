@@ -11,7 +11,7 @@
 // sharing one git budget (`startMs`); the primary one (its `git` is the board's `git`) is the one holding a `preferred` folder (the
 // STATUS.md folder, the road's `repo`), else the first: a preferred folder only orders, it never adds a repository. When git runs
 // out of time (a loaded machine), a repository keeps its last good state up to STALE_KEEP_MS, marked `stale`, instead of vanishing.
-// The cache holds git results only (a writable file: it never decides where git runs; git-state.mjs checks every worktree path).
+// The cache holds git results only (a writable file: it never decides where git runs; git runs only in the worktrees the repository records, trusted-repos.mjs worktreeRecords).
 // Invariants: never throws; no git call here (repoState makes them).
 import { basename, dirname, isAbsolute, sep } from 'node:path';
 import { repoState } from './git-state.mjs';
