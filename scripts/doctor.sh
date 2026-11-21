@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Purpose: read-only report on links, settings drift, plugins and tools for this Claude Code setup.
-# Usage: scripts/doctor.sh   (exit 1 if any problem found)
+# Usage: scripts/doctor.sh [--live [--waived-lane]]   (exit 1 if any problem found; --live then runs scripts/doctor-live.sh on the
+#   real tool: a permission dialog, a guard case, a workflow from a non-git folder, with --waived-lane one waived lane end to end)
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -110,17 +111,18 @@ check_claude_version() {
   else bad "claude >= $CLAUDE_FLOOR required (found $version; $pinned): below it the Bash guard's onFailure: block may be ignored and the phase pin does not hold; run claude update"; fi
 }
 
-# An effort variable beats every agent's `effort` frontmatter (sub-agents docs), so no agent runs at the effort its file names.
-# Set in the shell or in the live settings env: FAIL. Phase 4 adds the two model FORCE variables to EFFORT_OVERRIDES.
-EFFORT_OVERRIDES="CLAUDE_CODE_EFFORT_LEVEL"
+# These variables override the model and effort every agent file and workflow script names (sub-agents.md:384, model-config.md:655-746;
+# probe W-model: both model routes override a script's `model: 'sonnet'`), so the review floor would be flattened and no agent runs at
+# the effort its file names. Set in the shell or in the live settings env: FAIL. One check for all three variables.
+EFFORT_OVERRIDES="CLAUDE_CODE_SUBAGENT_MODEL_FORCE CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL CLAUDE_CODE_EFFORT_LEVEL"
 check_effort_env() {
   local live="$CLAUDE_DIR/settings.json" name found=""
   for name in $EFFORT_OVERRIDES; do
     if [ -n "${!name:-}" ]; then found="$found $name (shell)"; fi
     if [ -n "$(jq -r --arg n "$name" '.env[$n] // ""' "$live" 2>/dev/null)" ]; then found="$found $name (settings.json env)"; fi
   done
-  if [ -n "$found" ]; then bad "set:$found: it overrides every agent's effort; unset it"
-  else ok "no effort override variable set ($EFFORT_OVERRIDES)"; fi
+  if [ -n "$found" ]; then bad "set:$found: it overrides the model or effort every agent and workflow picks (the review floor); unset it"
+  else ok "no model or effort override variable set ($EFFORT_OVERRIDES)"; fi
 }
 
 # Projects (scripts/doctor-projects.mjs): a plugin the setup turns off that a project's settings.local.json turns on (WARN; the
@@ -416,4 +418,7 @@ run_checks() {
   check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_stop_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows; check_env_names; check_repo_tests
 }
 run_checks
+if [ "${1:-}" = "--live" ]; then
+  "$REPO/scripts/doctor-live.sh" "${2:-}" || BAD=1
+fi
 exit "$BAD"
