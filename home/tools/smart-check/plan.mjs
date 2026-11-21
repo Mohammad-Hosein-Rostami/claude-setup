@@ -49,12 +49,12 @@ function learnedRows(rows, facts, ledger, random) {
   const raised = rows.map((row) => {
     const reportOnly = noisy.has(row.check) ? { reportOnly: true } : {};
     if (row.by !== 'rule' || row.level === 'full') return { ...row, ...reportOnly };
-    if (overBound.has(row.check)) return { ...row, ...reportOnly, level: raiseLevel(row.level), by: 'ledger', reason: `${row.reason}; miss-rate bound over 1%: one level up` };
-    if (modelRaises(models, row.check, features, guarded)) return { ...row, ...reportOnly, level: raiseLevel(row.level), by: 'model', reason: `${row.reason}; model: likely to find more one level up` };
+    if (overBound.has(row.check)) return { ...row, ...reportOnly, level: raiseLevel(row.level), how: `${raiseLevel(row.level)} level of ${row.check} (raised)`, by: 'ledger', reason: `${row.reason}; miss-rate bound over 1%: one level up` };
+    if (modelRaises(models, row.check, features, guarded)) return { ...row, ...reportOnly, level: raiseLevel(row.level), how: `${raiseLevel(row.level)} level of ${row.check} (raised)`, by: 'model', reason: `${row.reason}; model: likely to find more one level up` };
     return { ...row, ...reportOnly };
   });
   const explore = explorePick(raised, random);
-  return raised.map((row) => (row.check === explore ? { ...row, level: raiseLevel(row.level), by: 'explore', reason: `${row.reason}; exploration (20%): one level up` } : row));
+  return raised.map((row) => (row.check === explore ? { ...row, level: raiseLevel(row.level), how: `${raiseLevel(row.level)} level of ${row.check} (raised)`, by: 'explore', reason: `${row.reason}; exploration (20%): one level up` } : row));
 }
 
 /** The changed paths, kept to `only` when the caller names them. */
