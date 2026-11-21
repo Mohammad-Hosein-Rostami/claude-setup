@@ -22,7 +22,15 @@ const ASCII = { done: '#', left: '.', over: '!', now: '>', sep: ' - ', bar: ' | 
 // zero-width space, word joiner, BOM) that would reorder or hide neighbouring words of a row (review SEC-4); ZWNJ (U+200C) and
 // ZWJ (U+200D) stay, since Persian words and emoji need them and they move nothing (review SEC-9)
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]|[\p{Cf}--[\u200c\u200d]]/gv;
-const NOT_ASCII = /[^ -~]/g;
+const NOT_ASCII = /[^ -~]/gu;
+const COMBINING_MARKS = /\p{M}/gu;
+/** The ASCII stand-ins of the characters the board's own texts use (separators, ellipsis, arrows, dashes, quotes, bar and tree marks). */
+const ASCII_STAND_IN = {
+  '·': '-', '•': '*', '●': '*', '…': '...', '↑': '^', '↓': 'v', '←': '<', '→': '>', '–': '-', '—': '-', '‘': "'", '’': "'", '“': '"',
+  '”': '"', '█': '#', '▓': '#', '▒': '#', '░': '.', '│': '|', '├': '|', '└': '`', '▸': '>', '✓': 'ok', '⚠': '!', '×': 'x',
+};
+/** Any other non-ASCII character (Persian, emoji): `?` would read as a question or an unknown value, so a plain blank mark. */
+const UNKNOWN_CHAR = '_';
 const WORD_BOUNDARY = /[\s\-/_]/;
 const UTF8_LOCALE = /utf-?8/i;
 const MIN_PER_HOUR = 60;
@@ -52,10 +60,14 @@ export function lookOf(env, platform, columns) {
 /** @returns {string} the text in the colour of its state, bold when asked (no codes without colour, for ok, or an unknown state) */
 export const paint = (text, state, look, bold = false) => (look.color && COLOR_CODE[state] ? `${bold ? BOLD : ''}${COLOR_CODE[state]}${text}${RESET}` : text);
 
-/** @returns {string} a text from outside (input, files) with control characters gone and, in ASCII mode, every other byte as `?` */
+/**
+ * @returns {string} a text from outside (input, files) with control characters gone and, in ASCII mode, every non-ASCII character
+ *   as its stand-in: an accent dropped (`café` -> `cafe`), ASCII_STAND_IN, else UNKNOWN_CHAR; never `?` (review, fix round 7)
+ */
 export function cleanText(text, look) {
   const plain = String(text ?? '').replace(CONTROL_CHARS, ' ');
-  return look.ascii ? plain.replace(NOT_ASCII, '?') : plain;
+  if (!look.ascii) return plain;
+  return plain.normalize('NFKD').replace(COMBINING_MARKS, '').replace(NOT_ASCII, (char) => ASCII_STAND_IN[char] ?? UNKNOWN_CHAR);
 }
 
 /**
