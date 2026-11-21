@@ -146,16 +146,17 @@ function listsOf(cwd, common, cache, clock) {
 }
 
 /**
- * @param {{ cwd: string, agentDirs?: { name: string, dir: string | null }[], cache: object | null, nowMs: number, startMs?: number }}
- *   source a trusted folder, the agents' folders, the last git cache, and when the refresh's git budget started
+ * @param {{ cwd: string, common?: string | null, agentDirs?: { name: string, dir: string | null }[], cache: object | null, nowMs: number,
+ *   startMs?: number }} source a trusted folder, its repository's shared git folder when known, the agents' folders, the last git
+ *   cache, and when the refresh's git budget started
  * @returns {{ repo: object | null, git: object | null, cache: object }} repo = { base, branches, unlanded, worktrees: [{ name, path,
  *   branch, ahead, behind, changed, ageMin, op, agents, checkedMs, upAhead, upBehind (vs its upstream, null without one), main }] }; git = the session folder's own { branch, ahead, behind,
  *   changed } (vs its upstream, the shape the old board had); null outside a repository
  */
-export function repoState({ cwd, agentDirs = [], cache, nowMs, startMs = Date.now() }) {
+export function repoState({ cwd, common: knownCommon = null, agentDirs = [], cache, nowMs, startMs = Date.now() }) {
   const old = cache ?? {};
   try {
-    const common = commonOf(cwd, old);
+    const common = knownCommon ?? commonOf(cwd, old); // known from the file system (trusted-repos.mjs): no git call, so no time-out
     if (common === null) return { repo: null, git: null, cache: {} };
     const clock = { nowMs, startMs };
     const lists = listsOf(cwd, common, old, clock);

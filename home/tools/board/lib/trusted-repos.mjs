@@ -1,5 +1,7 @@
-// The repositories the board may run git in (fix round 3, lead decision 2026-11-22): the session folder's, and the one of every
-// folder whose Claude Code folder-trust dialog the owner accepted. Git runs a repository's own config (`core.fsmonitor`, clean
+// The repositories the board may run git in (fix rounds 3 and 4, lead decisions 2026-11-22): the session folder's, the setup's own
+// (the repository holding this running code, found from this module's real path: `~/.claude/tools` links into it, and no agent's
+// text can choose it; the owner runs with bypass permissions, so the trust dialog may never be shown), and the one of every folder
+// whose Claude Code folder-trust dialog the owner accepted. Git runs a repository's own config (`core.fsmonitor`, clean
 // filters), so it never runs in a folder only an agent or a file it wrote named (review SEC-1 of 9ac483c3 and its residual).
 // Exports: trustedRepos({ sessionFolder, env, cache, nowMs }) -> { session, repos: [{ common, folder, roots }], cache };
 // repoOfDir(repos, dir); REMOTE_PATH.
@@ -13,9 +15,10 @@
 // and re-read at most every TRUST_EVERY_MS.
 // Invariants: never throws; no git call here; `.git`, `commondir` and `gitdir` files are read without following a link or waiting on
 // a FIFO, at most MAX_GIT_FILE_BYTES each (hooks/lib/plain-file.mjs); a UNC or device path is never touched.
-import { lstatSync, readdirSync } from 'node:fs';
+import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 
 /** UNC `\\host\share`, `//host/share` and the mixed `/\host`, `\/host` (review SEC-8): a lookup there would reach another host. */
@@ -71,6 +74,8 @@ function rootsOf(common) {
 }
 
 const recordPathOf = (env) => join(env.CLAUDE_CONFIG_DIR || env.HOME || homedir(), '.claude.json');
+/** The folder of this module with every link resolved (inside the setup's repository); null when it cannot be resolved. */
+const codeFolder = () => { try { return dirname(realpathSync(fileURLToPath(import.meta.url))); } catch { return null; } };
 /** The record's size and time, so an unchanged record is not parsed again. */
 const stampOf = (path) => { const info = entryOf(path); return info?.isFile() ? `${info.mtimeMs}:${info.size}` : 'none'; };
 
@@ -100,8 +105,8 @@ function reposOf(folders) {
  * @param {{ sessionFolder: string | null, env: object, cache: object | null, nowMs: number }} source the session's folder, the
  *   environment (HOME, CLAUDE_CONFIG_DIR), the last cache ({ stamp, atMs, repos }) and now
  * @returns {{ session: object | null, repos: { common: string, folder: string, roots: string[] }[], cache: object | null }} the
- *   session folder's repository (also first in repos), then the record's; `folder` is where git may run for that repository (a
- *   trusted folder, never an agent's)
+ *   session folder's repository (also first in repos), then the setup's, then the record's; `folder` is where git may run for that
+ *   repository (a trusted folder, never an agent's)
  */
 export function trustedRepos({ sessionFolder, env, cache, nowMs }) {
   try {
@@ -110,8 +115,9 @@ export function trustedRepos({ sessionFolder, env, cache, nowMs }) {
     const fresh = cache !== null && typeof cache === 'object' && Array.isArray(cache.repos) && cache.stamp === stamp
       && nowMs - cache.atMs < TRUST_EVERY_MS;
     const recordRepos = fresh ? cache.repos : reposOf(recordFolders(path));
-    const [session = null] = reposOf([sessionFolder]);
-    const repos = session === null ? recordRepos : [session, ...recordRepos.filter((repo) => repo.common !== session.common)];
+    const repos = reposOf([sessionFolder, codeFolder()]);
+    const session = repos.find((repo) => repo.folder === sessionFolder) ?? null;
+    repos.push(...recordRepos.filter((repo) => !repos.some((known) => known.common === repo.common)));
     return { session, repos, cache: { stamp, atMs: fresh ? cache.atMs : nowMs, repos: recordRepos } };
   } catch {
     return { session: null, repos: [], cache: null };

@@ -82,6 +82,7 @@ function mainParts(repo, look, nowMs) {
   const age = isCount(main.ageMin) && !landedLast ? `last ${wide(look) ? 'commit ' : ''}${durationText(main.ageMin)} ago` : '';
   return [
     { text: `git ${name}${cutWords(cleanText(main.name, look), MAX_NAME_CHARS, look)} ${stateText(main, look)}${main.op ? ` ${cleanText(main.op, look)}` : ''}` },
+    { text: repo.stale === true ? 'stale' : '', state: STATE.dim }, // git ran out of time: the last good state (repos.mjs)
     upstreamPart(main, look), { text: age, state: STATE.dim, drop: 9 }, landedPart(repo, nowMs, look),
   ];
 }
