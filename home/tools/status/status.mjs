@@ -46,6 +46,8 @@ import { DEFECT_TABLE, WORK_ITEMS, hiddenEndReason, insertRow, isEmpty, oneLine,
 const SIZES = ['S', 'M', 'L'];
 const USAGE = 'usage: status.mjs [--file STATUS.md] add <id> <item> <size S|M|L> [+ <id> <item> <size> ...] | start <id> [<id> ...] | done <id> <evidence> [--model m --effort e ...] [+ <id> <evidence> ...] | deliver "<what>" | deliver --auto | rule "<text>" | decision "<text>" | defect <id> "<conditions>" | show | log "<text>"';
 const READ_COMMANDS = ['show', 'log'];
+// The row rules (they left the always-loaded home/CLAUDE.md, spec-p6 r9-text-procedures): printed with the usage text and after every add.
+export const ROW_RULES = 'rows: every owner request and every owner correction becomes rows before work on it starts; list the whole job first, review, fixes and landing rows (`close:`) included; a correction\'s item starts `rework:`; a step found later is a new row at once; never fold steps into one row, never clear a done cell; `start` when work on a row begins, `done` with its evidence when it ends; a hand-over is recorded by itself when your turn ends with no open row, `deliver "<what>"` records one while rows stay open; the estimate tool keeps one time and says why when it moves.';
 const REFRESH_COMMANDS = ['add', 'start', 'done'];
 const SECTION_FOR = { rule: 'Standing rules', decision: 'Owner decisions' };
 const ID = /^[A-Za-z0-9][\w.:-]{0,39}$/; // `7`, `17a`, `close:5`, `rework:12`, `deliver:3`; a leading `-` would read as a bullet
@@ -235,7 +237,7 @@ export function runStatus(argv, { cwd = process.cwd(), now = new Date(), session
   const args = [...argv];
   const fileFlag = args[0] === '--file' ? args.splice(0, 2)[1] : undefined;
   const [command, ...rest] = args;
-  if (!Object.hasOwn(EDITS, command) && !READ_COMMANDS.includes(command)) return { code: 2, message: USAGE };
+  if (!Object.hasOwn(EDITS, command) && !READ_COMMANDS.includes(command)) return { code: 2, message: `${USAGE}\n${ROW_RULES}` };
   const given = resolve(cwd, fileFlag ?? 'STATUS.md');
   let folder;
   try {
@@ -259,7 +261,8 @@ export function runStatus(argv, { cwd = process.cwd(), now = new Date(), session
   if (result.skip) return { code: 0, message: `${command} --auto: nothing recorded, ${result.skip} (${file})` };
   const notes = [result.note, result.changed ? recordTable(file, result.text, { sessionId, stateDir, now }) : null].filter(Boolean);
   if (result.changed && REFRESH_COMMANDS.includes(command)) afterRowEdit(file, command, groups, { sessionId, stateDir, now, text: result.text });
-  return { code: 0, message: [`${command}: ok (${file})`, ...notes].join('; ') };
+  const message = [`${command}: ok (${file})`, ...notes].join('; ');
+  return { code: 0, message: command === 'add' ? `${message}\n${ROW_RULES}` : message };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {

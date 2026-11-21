@@ -28,7 +28,7 @@ function deltaSection(name) {
   return end < 0 ? rest : rest.slice(0, end);
 }
 
-const gates = () => read('home/CLAUDE.md').split(/^## Quality gates/m)[1].split(/^## /m)[0];
+const gates = () => read('home/tools/review-tier/review-steps.md'); // the review procedure review-tier prints (it left home/CLAUDE.md)
 
 test('reviewer and security-auditor each have a Delta mode section', () => {
   for (const name of AGENTS) assert.ok(deltaSection(name).trim().length > 0, name);

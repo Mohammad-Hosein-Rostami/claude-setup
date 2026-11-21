@@ -13,6 +13,20 @@ import { CLASS_TIER, LOCK_TAG, PRINCIPLES_BY_TRIGGER, RACE_TAG, classifyFiles, i
 import { asData, placeText } from './brief-data.mjs';
 import { buildReviews, buildWaivable } from './reviews.mjs';
 import { weakenedChecks } from './weakened.mjs';
+import { readFileSync } from 'node:fs';
+
+// What the lead does with a set (the review procedure that left the always-loaded home/CLAUDE.md, spec-p6 r9-text-procedures):
+// review-steps.md beside the tool, read once and printed with every text report, before its `prior:` and `fix round:` lines. A missing file prints a line saying so, never throws.
+const STEPS_FILE = new URL('../review-steps.md', import.meta.url);
+const HTML_COMMENT = /<!--[\s\S]*?-->\n?/g;
+const readSteps = () => {
+  try {
+    return readFileSync(STEPS_FILE, 'utf8').replace(HTML_COMMENT, '').trim();
+  } catch (error) {
+    return `(review steps unreadable: ${error.code ?? error.message}; see home/tools/review-tier/review-steps.md)`;
+  }
+};
+const REVIEW_STEPS = readSteps();
 
 const TAGS = [LOCK_TAG, RACE_TAG];
 /**
@@ -129,6 +143,7 @@ export function formatText(report) {
   lines.push(report.waivable === null ? 'waivable: no' : `waivable: yes (${report.waivable.reviews.length} review before land, ${report.waivable.audit.length} audit after it)`);
   lines.push(`weakened: ${report.weakened.length === 0 ? 'none' : report.weakened.map((entry) => `${entry.place} ${entry.kind}`).join(', ')}`);
   lines.push(`principles: ${report.principles.join(', ') || 'none'}`);
+  lines.push(`steps: ${REVIEW_STEPS.replace(/^- Reviews: /, '')}`);
   for (const file of report.prior?.files ?? []) lines.push(`prior: ${file.file} sha256 ${file.sha256}, ${file.blocking} blocking, ${file.shouldFix} should-fix${file.ids.length > 0 ? `, ids ${file.ids.join(', ')}` : ''}`);
   // The line carries the round's own shas and every class it had (one the lead added by hand too): copied as it is, the fix round loses nothing.
   lines.push(`fix round: ${fixRoundCommand(report)}`);

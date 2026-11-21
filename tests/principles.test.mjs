@@ -107,8 +107,8 @@ test('implementer: a locked contract file is never edited, the dispute line is w
   assert.match(text, /never edit/i);
 });
 
-test('home/CLAUDE.md Reviews line: waived lane audit after land, sync and push wait for audit-log gate', () => {
-  const claude = read('home/CLAUDE.md');
+test('review-tier steps (review-steps.md) Reviews line: waived lane audit after land, sync and push wait for audit-log gate', () => {
+  const claude = read('home/tools/review-tier/review-steps.md');
   const line = claude.split('\n').find((candidate) => candidate.startsWith('- Reviews:')) ?? '';
   assert.match(line, /risky, `gate` and hooks[^;.]*Opus max/);
   assert.match(line, /waived lane[^.]*post-land audit/);
