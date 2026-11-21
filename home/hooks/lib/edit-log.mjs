@@ -16,7 +16,7 @@
 // reported in the guard log, one line per read, outcome `edit-log-unreadable`: the typecheck gate checks nothing for that session then.
 // One size cap for the writer and the reader: a log at the cap takes no more lines, so the reader never meets a larger one it wrote.
 // The writer reports what it turns away, one guard-log line each: `edit-log-full` at the cap, `edit-log-bad-path` for a line break.
-import { closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, statSync } from 'node:fs';
+import { closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { logDecision } from './guard-log.mjs';
@@ -132,12 +132,9 @@ export const smartLogOf = (editLog) => (editLog ? join(dirname(dirname(editLog))
 export function smartEditLogs(sessionId, agentId) {
   const own = smartLogOf(editLogPath(sessionId, agentId ?? undefined));
   if (own === null) return [];
-  if (agentId) return existsSync(own) ? [own] : [];
-  try {
-    return readdirSync(dirname(own)).filter((name) => name.startsWith(`${sessionId}--`)).map((name) => join(dirname(own), name));
-  } catch {
-    return []; // no smart edit log yet: nothing was edited
-  }
+  // Each stop checks only its own edits: a subagent's edits are checked at its SubagentStop, so the lead's Stop never
+  // checks a writer's unfinished worktree (defect fix-smart-check-scope, 2026-11-21).
+  return existsSync(own) ? [own] : [];
 }
 
 const LINE_BREAK = /[\r\n]/;

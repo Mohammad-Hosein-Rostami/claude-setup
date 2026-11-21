@@ -25,6 +25,7 @@ export const meta = {
     { title: 'Audit', detail: 'after the land, a waived lane: audit-log record, review child in audit mode on B..T, audit-log done' },
   ],
 }
+const MAX_LANES_PER_RUN = 5 // a road step holds at most 5 lanes (spec-stages section 1, road-rules); road-file.mjs and agent-model-guard.mjs hold the same 5
 checkArgs(args)
 
 // The owner's /check categories (args.checks, set by workflow-script-check; none = every check off, spec r9-checks-off): the test-writer runs
@@ -281,7 +282,6 @@ if (args.lanes.length > 0) {
 const lanes = await pipeline(args.lanes, buildLane, joinLane, reviewLane, landLane, auditLane)
 return { lanes: lanes.map((entry, at) => entry ?? outcome(args.lanes[at], 'failed', '', 'the lane stopped on an error')), leadList }
 
-const MAX_LANES_PER_RUN = 5 // a road step holds at most 5 lanes (spec-stages section 1, road-rules); road-file.mjs and agent-model-guard.mjs hold the same 5
 
 function checkArgs(given) {
   const name = 'build' // the tool cuts `meta` out of the body, so the script's own name is written here
