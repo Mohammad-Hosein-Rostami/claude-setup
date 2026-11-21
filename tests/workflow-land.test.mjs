@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url';
 import { assertWellFormedCalls, readMeta, runScript } from './workflow-sandbox.mjs';
 
 const LAND = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'workflows', 'land.js');
-const ARGS = { row: 'close:4', closeRow: 'close:4', statusFile: '/p/STATUS.md', repo: '/p', base: 'main', branch: 'lane/a', worktree: '/p-wt/a', suite: 'npm test', tip: 'abc1234' };
+// Verify, review and the suite run only for a category the owner turned on with /check (spec-checks-off): these cases test the on path.
+const CHECKS_ON = ['test', 'review', 'ui'];
+const ARGS = { checks: CHECKS_ON, row: 'close:4', closeRow: 'close:4', statusFile: '/p/STATUS.md', repo: '/p', base: 'main', branch: 'lane/a', worktree: '/p-wt/a', suite: 'npm test', tip: 'abc1234' };
 const META = readMeta(readFileSync(LAND, 'utf8')).meta;
 const rebased = (extra = {}) => ({ match: /:rebase$/, reply: { exit: 0, tip: 'abc1234', patchesChanged: 0, files: [], tail: 'tip abc1234', ...extra } });
 const suite = (reply) => ({ match: /:suite$/, reply: { exit: 0, tip: 'abc1234', patchesChanged: 0, files: [], tail: 'PASS', ...reply } });
@@ -186,4 +188,13 @@ test('restart: the branch is gone and the base lacks some of its patches: failed
   assert.equal(run.result.status, 'failed');
   assert.match(run.result.tidy, /branch lane\/a not found/);
   assert.ok(!run.started.includes('close:4:status'));
+});
+
+test('checks off (no args.checks): the suite step is skipped, patches changed by the rebase do not stop the land, and land is not told a check list', async () => {
+  const { checks, ...checksOff } = ARGS;
+  const run = await runScript(LAND, checksOff, { replies: [disk(), atTip(), rebased({ patchesChanged: 2 }), landed({}), status] });
+  assert.equal(run.error, null);
+  assert.equal(run.result.status, 'landed');
+  assert.equal(run.started.includes('close:4:suite'), false);
+  assert.doesNotMatch(run.calls.find((call) => call.label === 'close:4:land').prompt, /--checks/);
 });

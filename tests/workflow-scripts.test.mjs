@@ -59,7 +59,8 @@ for (const path of scripts) {
   });
 
   test(`${file}.js: the statement after meta is checkArgs(args), and there is no dynamic import()`, () => {
-    assert.match(readMeta(source).rest, /^\s*;?\s*checkArgs\(args\)/);
+    // build.js declares its lane cap on the line before: checkArgs reads it, and a const read before its line is a ReferenceError.
+    assert.match(readMeta(source).rest, /^\s*;?\s*(?:const MAX_LANES_PER_RUN = \d+[^\n]*\n\s*)?checkArgs\(args\)/);
     assert.doesNotMatch(source, /\bimport\s*\(/);
     assert.doesNotMatch(source, /\b(require|process|fs)\b\s*[.(]/);
   });

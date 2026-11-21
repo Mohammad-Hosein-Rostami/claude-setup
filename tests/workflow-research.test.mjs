@@ -12,7 +12,9 @@ import { runScript as runPath } from './workflow-sandbox.mjs';
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'workflows', 'research.js');
 const runScript = (args, setup) => runPath(SCRIPT, args, setup);
 
-const ARGS = { row: 'r1', question: 'Which queue fits a 10k jobs/day service?', out: '/o/report.md', depth: 'compare' };
+// The critic and its URL re-checks run only for a category the owner turned on with /check (spec-checks-off): these cases test the on path.
+const CHECKS_ON = ['test', 'review', 'ui'];
+const ARGS = { checks: CHECKS_ON, row: 'r1', question: 'Which queue fits a 10k jobs/day service?', out: '/o/report.md', depth: 'compare' };
 const SCOPE = { questions: [{ id: 'q1', question: 'limits of A' }, { id: 'q2', question: 'limits of B' }, { id: 'q3', question: 'price of B' }] };
 const claim = (text, kind, unverified = false) => ({ claim: text, url: `https://example.org/${text}`, kind, sources: 2, unverified });
 const CRITIC = {
@@ -121,4 +123,14 @@ test('research: a bad args object throws the named error before any agent starts
   const badDepth = await runScript({ ...ARGS, depth: 'huge' }, { replies: replies() });
   assert.equal(badDepth.error.message, 'research: args.depth must be simple, compare or complex');
   assert.equal(noQuestion.calls.length + badDepth.calls.length, 0);
+});
+
+test('checks off (no args.checks): no critic, no re-check and no patch run; the report comes back with its claims unverified', async () => {
+  const { checks, ...checksOff } = ARGS;
+  const run = await runScript(checksOff, { replies: replies() });
+  assert.equal(run.error, null);
+  assert.equal(run.result.path, '/o/report.md');
+  assert.match(run.result.notChecked, /^review:/);
+  assert.equal(run.calls.some((call) => /:(critic|recheck|patch)/.test(call.label)), false);
+  assert.ok(run.result.unverified.length > 0, 'every claim is listed as unverified');
 });

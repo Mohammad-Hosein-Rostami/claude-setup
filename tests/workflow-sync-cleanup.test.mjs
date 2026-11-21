@@ -13,7 +13,8 @@ const WORKFLOWS = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'w
 const runScript = (name, args, setup) => runPath(join(WORKFLOWS, `${name}.js`), args, setup);
 const gate = () => { let open; const opened = new Promise((resolve) => { open = resolve; }); return { opened, open }; };
 
-const SYNC_ARGS = { row: 's1', repo: '/r', base: 'main' };
+// The suite check (4) runs only with `test` on and the audit-log check (5) only with `review` on (spec-checks-off): these cases test the on path.
+const SYNC_ARGS = { row: 's1', repo: '/r', base: 'main', checks: ['test', 'review'] };
 const READY = { exits: [0, 0, 0, 0, 0], sha: 'abc123', problems: [], targets: [{ name: 'pc', ssh: 'pc' }] };
 const PINNED_CLI = { version: '2.1.326', channel: 'latest', pinned: true, pin: '' };
 const syncReplies = (overrides = []) => [
@@ -152,4 +153,15 @@ test('cleanup: a bad args object throws the named error before any agent starts'
   const run = await runScript('git-cleanup', { row: 'g1', repos: '/repo-a' }, { replies: cleanReplies() });
   assert.equal(run.error.message, 'git-cleanup: args.repos must be an array');
   assert.equal(run.calls.length, 0);
+});
+
+test('sync: checks off (no args.checks) skips the suite and audit-log checks, so four exit codes are enough and the machines sync', async () => {
+  const { checks, ...checksOff } = SYNC_ARGS;
+  const verified = { ...READY, exits: [0, 0, 0, 0] };
+  const run = await runScript('sync-machines', checksOff, { replies: syncReplies([{ match: /:verify/, reply: verified }]) });
+  assert.equal(run.result.status, 'synced');
+  const prompt = run.calls.find((call) => call.label === 's1:verify').prompt;
+  assert.match(prompt, /\(4\) skipped \(test check off\)/);
+  assert.match(prompt, /\(5\) skipped \(review check off\)/);
+  assert.doesNotMatch(prompt, /test-pass\.mjs check|audit-log\.mjs gate/);
 });

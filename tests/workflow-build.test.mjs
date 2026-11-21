@@ -11,7 +11,9 @@ import { priorOfTierPrompt, withPriorLine } from './workflow-review-helpers.mjs'
 const BUILD = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'workflows', 'build.js');
 const META = readMeta(readFileSync(BUILD, 'utf8')).meta;
 const lane = (key, extra = {}) => ({ row: `impl-${key}`, closeRow: `close-${key}`, branch: `lane/${key}`, spec: '/spec.md', files: [`${key}.mjs`], acceptanceTests: false, implementer: { model: 'sonnet', effort: 'medium' }, ...extra });
-const ARGS = (lanes, extra = {}) => ({ base: 'main', repo: '/p', suite: 'npm test', writers: 4, statusFile: '/p/STATUS.md', scriptsDir: '/scripts', lanes, ...extra });
+// The test-writer, review and visual-qa stages run only for a category the owner turned on with /check (spec-checks-off): these cases test the on path.
+const CHECKS_ON = ['test', 'review', 'ui'];
+const ARGS = (lanes, extra = {}) => ({ base: 'main', repo: '/p', suite: 'npm test', writers: 4, statusFile: '/p/STATUS.md', scriptsDir: '/scripts', lanes, checks: CHECKS_ON, ...extra });
 const built = (key) => ({ branch: `lane/${key}`, worktree: `/wt/${key}`, sha: `s-${key}`, tests: { cmd: 't', exit: 0 }, tier: {} });
 const joined = (key, extra = {}) => ({ red: false, tail: 'green', sha: `j-${key}`, worktree: `/wt/${key}`, vacuous: [], outOfScope: [], contractTouched: [], checkpoints: [], ...extra });
 const reviewed = (key) => ({ status: 'clean', rounds: 1, tip: `t-${key}`, worktree: `/wt/${key}`, laneClasses: ['logic'], suite: 'pass', findings: [], optional: [], leadList: [], text: '' });
@@ -369,4 +371,23 @@ test('needs-review at land runs the real review script as a delta round: its len
   assert.ok(lenses[1].prompt.includes(`the change to review is the delta since ${tip(1)}`), lenses[1].prompt);
   assert.match(lenses[1].prompt, /prior: <n> fixed, <m> open` over those 0 findings/);
   assert.equal(run.calls.filter((call) => call.workflow === 'land').at(-1).args.tip, tip(2), 'land gets the tip the delta round reviewed');
+});
+
+test('checks off (no args.checks): no test-writer and no review child run; the lane goes build, join, land, and its text says what was not checked', async () => {
+  const seen = [];
+  const run = await runScript(BUILD, ARGS([lane('a', { acceptanceTests: true })], { checks: [] }), {
+    replies: standard(),
+    children: children(() => { seen.push('review'); return reviewed('a'); }, (landArgs) => { seen.push(['land', landArgs.checks, landArgs.tip]); return landedOk('a'); }),
+  });
+  assert.equal(run.error, null);
+  assert.deepEqual(run.result.lanes, [{ row: 'impl-a', closeRow: 'close-a', status: 'landed', sha: 'm-a', text: 'not checked: test, review, ui' }]);
+  assert.deepEqual(seen, [['land', [], 'j-a']], 'the land child is told no category is on and lands the joined tip');
+  assert.equal(run.calls.some((call) => call.label === 'impl-a:tests'), false, 'acceptanceTests needs the test category');
+});
+
+test('checks off: an args object with no checks key is the same as an empty list', async () => {
+  const { checks, ...withoutChecks } = ARGS([lane('a')]);
+  const run = await runScript(BUILD, withoutChecks, { replies: standard(), children: children(() => reviewed('a'), () => landedOk('a')) });
+  assert.equal(run.error, null);
+  assert.equal(run.result.lanes[0].text, 'not checked: test, review, ui');
 });

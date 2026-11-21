@@ -13,8 +13,10 @@ import { assertWellFormedCalls, readMeta, runScript as runPath } from './workflo
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'workflows', 'bugfix.js');
 const runScript = (args, setup) => runPath(SCRIPT, args, setup);
 
+// Verify, review and the suite run only for a category the owner turned on with /check (spec-checks-off): these cases test the on path.
+const CHECKS_ON = ['test', 'review', 'ui'];
 const ARGS = {
-  row: 'b1', closeRow: 'close:b1', statusFile: '/s/STATUS.md', repo: '/r', base: 'main',
+  checks: CHECKS_ON, row: 'b1', closeRow: 'close:b1', statusFile: '/s/STATUS.md', repo: '/r', base: 'main',
   symptom: 'parse() throws on empty input', suite: 'node --test tests/*.test.mjs', scriptsDir: '/w',
 };
 const HYPOTHESES = { hypotheses: ['h1', 'h2', 'h3'].map((id) => ({ id, claim: `claim ${id}`, observation: `look at ${id}` })) };
@@ -284,4 +286,18 @@ test('bugfix: the real land.js accepts what bugfix passes: the reviewed tip goes
   assert.equal(run.result.status, 'landed');
   assert.equal(run.result.sha, 'def5678');
   assert.match(run.calls.find((call) => call.label === 'b1:suite').prompt, new RegExp(`test-pass\\.mjs check ${reviewedTip}`), 'the suite PASS is checked at the reviewed tip');
+});
+
+test('checks off (no args.checks): no verify and no review child; the unverified fix goes to land, which is told no category is on', async () => {
+  const { checks, ...checksOff } = ARGS;
+  let landArgs = null;
+  const run = await runScript(checksOff, {
+    replies: replies(),
+    children: { review: () => { throw new Error('review must not run'); }, land: (given) => { landArgs = given; return LANDED; } },
+  });
+  assert.equal(run.error, null);
+  assert.equal(run.result.status, 'landed');
+  assert.match(run.result.text, /not checked: test, review, ui/);
+  assert.equal(run.calls.some((call) => /:verify/.test(call.label)), false);
+  assert.equal(landArgs.checks.length, 0);
 });

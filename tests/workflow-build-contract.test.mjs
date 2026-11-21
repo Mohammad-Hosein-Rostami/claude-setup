@@ -19,7 +19,9 @@ const LANDED = 'c1c1c1c1';
 const CHECKPOINT = { id: 'c1', run: 'node --test tests/a.test.mjs', exit: 0, files: ['tests/a.test.mjs'], kind: 'red-first' };
 const lane = (name, extra = {}) => ({ row: `impl-${name}`, closeRow: `close-${name}`, branch: `lane/${name}`, spec: '/spec.md', files: [`${name}.mjs`], acceptanceTests: false, implementer: { model: 'sonnet', effort: 'medium' }, ...extra });
 const contractLane = (extra = {}) => lane('a', { acceptanceTests: true, checkpoints: [CHECKPOINT], principles: [{ id: 'P1', question: 'is every read path trusted?' }], addClasses: ['audit'], ...extra });
-const ARGS = (lanes, extra = {}) => ({ base: 'main', repo: '/p', suite: 'npm test', writers: 4, statusFile: '/p/STATUS.md', scriptsDir: '/scripts', lanes, ...extra });
+// The test-writer, review and visual-qa stages run only for a category the owner turned on with /check (spec-checks-off): these cases test the on path.
+const CHECKS_ON = ['test', 'review', 'ui'];
+const ARGS = (lanes, extra = {}) => ({ base: 'main', repo: '/p', suite: 'npm test', writers: 4, statusFile: '/p/STATUS.md', scriptsDir: '/scripts', lanes, checks: CHECKS_ON, ...extra });
 const built = (name) => ({ branch: `lane/${name}`, worktree: `/wt/${name}`, sha: `s-${name}`, tests: { cmd: 't', exit: 0 }, tier: {} });
 const checkpointResult = (extra = {}) => ({ id: 'c1', baseExit: 1, headExit: 0, tail: '', ...extra });
 const joined = (name, extra = {}) => ({ red: false, tail: 'green', sha: `j-${name}`, worktree: `/wt/${name}`, vacuous: [], outOfScope: [], contractTouched: [], checkpoints: [checkpointResult()], ...extra });
@@ -375,4 +377,21 @@ test('the audit review gets the lane\'s principles and added classes, like the l
   const [audit] = auditChildren(run);
   assert.deepEqual(audit.args.principles, [{ id: 'P1', question: 'is every read path trusted?' }]);
   assert.deepEqual(audit.args.addClasses, ['audit']);
+});
+
+// spec-stages section 1 (road-rules): a road step holds at most 5 lanes; the sixth is refused by checkArgs before any agent starts.
+const capLanes = (count) => Array.from({ length: count }, (_unused, at) => lane(String.fromCharCode(97 + at)));
+
+test('lane cap: a run of 6 lanes is refused before any agent starts, a run of 5 starts and lands every lane', async () => {
+  const refused = await runScript(BUILD, ARGS(capLanes(6)), { replies: [] });
+  assert.match(String(refused.error?.message), /^build: 6 lanes in one run: a step holds at most 5; split the step$/);
+  assert.equal(refused.calls.length, 0);
+  assert.deepEqual(refused.started, []);
+  const accepted = await runScript(BUILD, ARGS(capLanes(5)), {
+    replies: buildReplies((prompt, opts, laneCall) => joined(slugOf(laneCall.label).replace('impl-', ''))),
+    children: { ...BUILD_CHILDREN, review: () => reviewedClean('a', { waived: false }), land: () => landedOk() },
+  });
+  assert.equal(accepted.error, null);
+  assert.deepEqual(accepted.result.lanes.map((landed) => landed.status), ['landed', 'landed', 'landed', 'landed', 'landed']);
+  assert.equal(accepted.calls.filter((entry) => entry.workflow === undefined && entry.label.endsWith(':implement')).length, 5);
 });
