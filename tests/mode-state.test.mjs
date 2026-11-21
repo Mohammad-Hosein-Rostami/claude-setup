@@ -10,7 +10,7 @@ import { existsSync, lstatSync, lutimesSync, mkdirSync, readFileSync, readdirSyn
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HOOK_BUDGET_MS } from '../home/hooks/mode.mjs';
-import { MAX_PRUNED_ENTRIES, STATE_FILE_MAX_BYTES, pruneState, readStateText, writeStateText } from '../home/hooks/lib/mode-state.mjs';
+import { MAX_PRUNED_ENTRIES, STATE_FILE_MAX_BYTES, pruneState, readStateText, removeStateFile, writeStateText } from '../home/hooks/lib/mode-state.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/mode.mjs', import.meta.url));
@@ -156,6 +156,18 @@ test('a FIFO or a link planted as a state file never hangs the hook and is never
     assert.ok(isFile(join(state, name)), `${name} was replaced by a regular file`);
     assert.equal(readFileSync(join(state, name), 'utf8'), text);
   }
+});
+
+test('removeStateFile removes the name itself: a missing one is silent, a link goes and its target stays, a folder is reported', posixOnly, () => {
+  const dir = makeTempDir('mode-state-');
+  const victim = join(makeTempDir('mode-victim-'), 'victim.txt');
+  writeFileSync(victim, 'keep\n');
+  symlinkSync(victim, join(dir, 'link'));
+  mkdirSync(join(dir, 'folder'));
+  assert.equal(stderrOf(() => removeStateFile(dir, 'missing') ?? removeStateFile(dir, undefined) ?? removeStateFile(dir, 'link')), '');
+  assert.equal(readFileSync(victim, 'utf8'), 'keep\n', 'the file the link led to is untouched');
+  assert.match(stderrOf(() => removeStateFile(dir, 'folder')), /^mode hook: cannot remove state: .*folder/);
+  assert.deepEqual(readdirSync(dir), ['folder']);
 });
 
 // Security review 2 of lane r9-mode-fix, S2 (the part left open): a later start of the same session id whose output was lost (it
