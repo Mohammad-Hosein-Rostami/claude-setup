@@ -1,8 +1,12 @@
-// The status line rows (display design direction B, spec-p5 `r9-statusline`): 2 rows, 3 when the owner is needed.
+// The status line rows (spec-tui "Layout"; display design direction B for the alert, job and session rows): as many rows as the
+// terminal's height allows (layout.mjs rowBudget, 3 to 12), in this order:
 //   ! 1 needs you: a question, default in 0:40 · 5h out ~16:10 at this pace      (only when something needs him)
-//   █████░░░░░  36%  3 h 40 left · step 2/3 by 16:05 │ 2 runs · 6 agents          (work-row.mjs)
-//   Opus 5.5 high · ctx 99k 25% · 5h 54% left · 7d 69% left · main, clean · acct work
-// Exports: statusRows(view, look) -> string[]; sessionRow(view, look); alertRow(view, look) -> string | null; contextOf(window, env);
+//   ALL █████░░░░░  36%  3 h 40 left · done by 17:45 · 85%: 18:20 · 10/21 rows   (work-row.mjs)
+//   2 wf · 6 agents (4 run, 1 quiet) · 1 waiting on you 0:40 │ git 7 br · 2 dirty (layout.mjs countsRow; dropped first)
+//   ▸ build r9-tui ... /  ├ impl-a ███▒░ ~60% ...                                 (layout.mjs workRows, agent-rows.mjs)
+//   git main ✓ │ r9-a ↑2 ●3 impl-a ...                                             (git-rows.mjs, when rows are left)
+//   Opus 5.5 high · ctx 99k 25% · 5h 54% left · 7d 69% left · acct work
+// Exports: statusRows(view, look) -> string[] (never more than rowBudget(view.env) rows); sessionRow(view, look); alertRow(view, look) -> string | null; contextOf(window, env);
 // paceOf(limitsFile, nowMs).
 // Rules (audit cases of `certainty/statusline-audit.md`, fixes of display design 4.6): context is the input tokens of the last call
 // against the auto-compact window (CLAUDE_CODE_AUTO_COMPACT_WINDOW, else the model's window), never `used_percentage`; `ctx ?` while
@@ -13,6 +17,8 @@
 // the newest when older than 5 min; it never notifies. The account name is the first part dropped, with git.
 // Invariants: pure (no I/O); every outside text goes through cleanText; every row fits look.columns.
 import { clockOf, cleanText, fitParts, STATE } from './cells.mjs';
+import { gitRows } from './git-rows.mjs';
+import { countsRow, rowBudget, workRows } from './layout.mjs';
 import { WIDE_COLUMNS, workRow } from './work-row.mjs';
 
 const TOKENS_PER_K = 1000;
@@ -98,13 +104,13 @@ function gitPart(git, look) {
 }
 
 /**
- * Row 2: model and effort, context, the two limit windows, git, the account.
+ * The last row: model and effort, context, the two limit windows, git (only when no git row has room), the account.
  * @param {{ input: object, board: object | null, limitsFile: object | null, account: string | undefined, env: object, nowMs: number,
  *   timeZone: string }} view the status input and what was read for it
  * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal
  * @returns {string} the row
  */
-export function sessionRow({ input, board, limitsFile, account, env, nowMs, timeZone }, look) {
+export function sessionRow({ input, board, limitsFile, account, env, nowMs, timeZone, gitShown = false }, look) {
   const clock = { nowMs, timeZone };
   const name = cleanText(input.model?.display_name ?? input.model?.id ?? '?', look).slice(0, MAX_NAME_CHARS);
   const effort = typeof input.effort?.level === 'string' ? ` ${cleanText(input.effort.level, look).slice(0, 8)}` : '';
@@ -114,7 +120,7 @@ export function sessionRow({ input, board, limitsFile, account, env, nowMs, time
     ...contextParts(input.context_window, env, look),
     windowPart('5h', limits?.five_hour, clock, look, 0) ?? lastSeenFive(limitsFile, nowMs),
     windowPart('7d', limits?.seven_day, clock, look, 2),
-    gitPart(board?.git ?? null, look),
+    gitShown ? null : gitPart(board?.git ?? null, look),
     { text: account ? `acct ${cleanText(account, look).slice(0, MAX_NAME_CHARS)}` : 'account ?', drop: 6 },
   ];
   return fitParts(parts.filter(Boolean), look);
@@ -183,14 +189,29 @@ export function alertRow({ asking, segment, limitsFile, nowMs, timeZone }, look)
 }
 
 /**
- * All rows of one render.
+ * All rows of one render: the alert row when something needs the owner, the job row, the counts row, the work rows, the git rows
+ * and the session row, within the row budget (the counts row goes first when rows are short; work rows before git rows).
  * @param {{ input: object, segment: object | null, board: object | null, asking: object | null, limitsFile: object | null,
  *   account: string | undefined, env: object, nowMs: number, timeZone: string }} view
  * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal
- * @returns {string[]} 2 rows, 3 when the alert row has something
+ * @returns {string[]} 2 to 12 rows
  */
 export function statusRows(view, look) {
+  const { board, nowMs, timeZone } = view;
   const alert = alertRow(view, look);
-  const work = workRow({ segment: view.segment, runs: view.board?.runs, nowMs: view.nowMs, timeZone: view.timeZone }, look);
-  return [...(alert === null ? [] : [alert]), work, sessionRow(view, look)];
+  const fixed = alert === null ? 2 : 3;
+  const free = rowBudget(view.env) - fixed;
+  const withCounts = free >= 1;
+  const rest = Math.max(0, free - (withCounts ? 1 : 0));
+  const repo = board?.repo ?? null;
+  const ctx = { nowMs, timeZone, at: board?.at, repo };
+  const work = workRows(board, rest - (repo !== null && rest >= 3 ? 1 : 0), ctx, look);
+  const git = gitRows(repo, rest - work.length, ctx, look);
+  const asking = view.asking === null || typeof view.asking !== 'object' ? null : { ...view.asking, marginMs: ASKING_MARGIN_MS };
+  return [
+    ...(alert === null ? [] : [alert]),
+    workRow({ segment: view.segment, runs: withCounts ? [] : board?.runs, nowMs, timeZone }, look),
+    ...(withCounts ? [countsRow(board, asking, ctx, look)] : []), ...work, ...git,
+    sessionRow({ ...view, gitShown: git.length > 0 }, look),
+  ];
 }

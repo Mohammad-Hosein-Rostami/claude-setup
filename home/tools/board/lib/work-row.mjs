@@ -1,5 +1,5 @@
-// Row 1 of the status line (display design direction B): the session's job against its estimate, and the running work.
-// `█████░░░░░  36%  3 h 40 left · step 2/3 by 16:05 │ 2 runs · 6 agents` at 80 columns; at 120 `36% of work`, `step 2 of 3`,
+// The job row of the status line (display design direction B, spec-tui row 1): the session's job against its estimate, and, when
+// the counts row has no room, the running work. `ALL █████░░░░░  36%  3 h 40 left · step 2/3 by 16:05 │ 2 runs · 6 agents` at 80 columns; at 120 `36% of work`, `step 2 of 3`,
 // `total by 18:35`, `10/21 rows` and the lane counts join when they fit.
 // Exports: jobView(segment) -> view | null; workRow({ segment, runs, nowMs, timeZone }, look) -> string; WIDE_COLUMNS.
 // Sources (all checked here, never trusted: they are printed): the estimate cache's shown entry (segment-cache.mjs estimateSegment:
@@ -11,8 +11,8 @@
 // Invariants: pure (no I/O); every clock in the one zone given (case 12); the row fits look.columns (cells.mjs fitParts).
 import { barText, clockOf, cleanText, durationText, fitParts, STATE } from './cells.mjs';
 
-/** From this width the row takes its long form (design scenes at 120). */
-export const WIDE_COLUMNS = 120;
+/** From this usable width the rows take their long form: a 120-column terminal gives 115 (COLUMNS - 5, research-tui 1.1). */
+export const WIDE_COLUMNS = 115;
 const WIDE_CELLS = 16;
 const NARROW_CELLS = 10;
 const TINY_COLUMNS = 60;
@@ -38,7 +38,8 @@ function roadOf(road) {
  * The job as the row needs it, from the cache's numbers when they are there, else from the stored progress.
  * @param {{ kind: string | null, text: string | null, highMs: number | null, progress: object | null, numbers: object | null } | null} segment
  * @returns {null | { kind: string, text: string, pct: number | null, rowsDone: number, rowsTotal: number, leftMin: number | null,
- *   workedMin: number | null, highMs: number | null, tag: string | null, road: object | null }} null when no job is linked
+ *   workedMin: number | null, highMs: number | null, p85Ms: number | null, tag: string | null, road: object | null }} null when no
+ *   job is linked; p85Ms is the job's 85% finish clock (job-rows.mjs numbers)
  */
 export function jobView(segment) {
   if (segment === null || typeof segment !== 'object') return null;
@@ -53,7 +54,8 @@ export function jobView(segment) {
   if (pct !== null && rowsTotal > 0 && rowsDone < rowsTotal) pct = Math.min(CAP_WHILE_OPEN, pct);
   return {
     kind: segment.kind ?? 'finish', text: typeof segment.text === 'string' ? segment.text : '', pct, rowsDone, rowsTotal, leftMin, workedMin,
-    highMs: isNumber(segment.highMs) ? segment.highMs : null, tag: progress?.tag ?? null, road: roadOf(progress?.road),
+    highMs: isNumber(segment.highMs) ? segment.highMs : null, p85Ms: isNumber(numbers?.p85Ms) ? numbers.p85Ms : null,
+    tag: progress?.tag ?? null, road: roadOf(progress?.road),
   };
 }
 
@@ -66,10 +68,10 @@ function barPart(view, overShare, look) {
   if (view.pct === null || view.kind !== 'finish') {
     if (view.rowsTotal === 0) return { text: '' };
     const share = view.rowsTotal > 0 ? view.rowsDone / view.rowsTotal : 0;
-    return { text: `${barText({ done: share }, cellsFor(look), look)}  ${rowsText(view)}` };
+    return { text: `ALL ${barText({ done: share }, cellsFor(look), look)}  ${rowsText(view)}` };
   }
   const label = wide(look) ? `${view.pct}% of work` : `${view.pct}%`;
-  return { text: `${barText({ done: view.pct / PERCENT, over: overShare }, cellsFor(look), look)}  ${label}` };
+  return { text: `ALL ${barText({ done: view.pct / PERCENT, over: overShare }, cellsFor(look), look)}  ${label}` };
 }
 
 /** The time parts of a finish: left or over, the step and its clocks, the total. */
@@ -86,15 +88,18 @@ function finishParts(view, { nowMs, timeZone }, look) {
     parts.push({ text: road.clockMs === null ? step : `${step} by ${clockOf(road.clockMs, nowMs, timeZone)}` });
     if (road.p85Ms !== null) parts.push({ text: `85%: ${clockOf(road.p85Ms, nowMs, timeZone)}`, drop: 4 });
     if (view.highMs !== null && overMin === 0) parts.push({ text: `total by ${clockOf(view.highMs, nowMs, timeZone)}`, drop: 2 });
-  } else if (view.highMs !== null) parts.push({ text: `done by ${clockOf(view.highMs, nowMs, timeZone)}` });
+  } else if (view.highMs !== null) {
+    parts.push({ text: `done by ${clockOf(view.highMs, nowMs, timeZone)}` });
+    if (view.p85Ms !== null && view.p85Ms > view.highMs && overMin === 0) parts.push({ text: `85%: ${clockOf(view.p85Ms, nowMs, timeZone)}`, drop: 4 });
+  }
   else if (view.text) parts.push({ text: view.text });
   return { parts, overMin };
 }
 
 /** The job parts of row 1 (without the runs). */
 function jobParts(view, clock, look) {
-  if (view === null) return [{ text: 'no job linked' }];
-  if (view.kind === 'handed-over') return [{ text: `idle${look.glyph.sep}last job ${cleanText(view.text, look)}` }];
+  if (view === null) return [{ text: 'ALL no job linked' }];
+  if (view.kind === 'handed-over') return [{ text: `ALL idle${look.glyph.sep}last job ${cleanText(view.text, look)}` }];
   if (view.pct === PERCENT && view.rowsTotal > 0 && view.rowsDone === view.rowsTotal) {
     return [barPart(view, 0, look), { text: `all ${view.rowsTotal} rows done` }];
   }

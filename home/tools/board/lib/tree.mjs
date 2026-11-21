@@ -1,5 +1,6 @@
 // The tree `/where` prints (display design 6.3; the progress pane would draw the same, spec-p5 `r9-pane`): all work, the road and
-// its steps, the runs, what waits on the owner, git, the limits per account and the session's cost figure.
+// its steps, the status line's counts, workflow, agent and git rows unclipped (spec-tui: every item, no row budget), what waits on
+// the owner, the limits per account and the session's cost figure.
 //   ALL  █████░░░░░  36% of work · 3 h 40 left · total by 18:35 · 10/21 rows
 //   road r9p3 · step 2 of 3
 //    1 done   ██████████  4/4 rows
@@ -11,6 +12,9 @@
 // Invariants: pure (no I/O); every line fits look.columns; every outside text goes through cleanText; the cost is labelled as the
 // API-price equivalent since the last /clear, with its age (it is not what the subscription costs).
 import { barText, clockOf, cleanText, durationText, fitParts, STATE } from './cells.mjs';
+import { STALE_MARGIN_S } from '../../../hooks/lib/asking-marker.mjs';
+import { gitRows } from './git-rows.mjs';
+import { countsRow, workRows } from './layout.mjs';
 import { jobView } from './work-row.mjs';
 
 const CELLS = 10;
@@ -63,18 +67,11 @@ function roadLines(view, clock, look) {
   return [fitParts([{ text: `${name}${look.glyph.sep}step ${road.step} of ${road.steps}` }], look), ...lines.map((line) => stepLine(line, road, clock, look))];
 }
 
-/** One line per board run: name, phase, lane counts, state. */
-function runLines(board, look) {
-  const runs = Array.isArray(board?.runs) ? board.runs.filter((run) => run !== null && typeof run === 'object') : [];
-  if (runs.length === 0) return [];
-  return ['runs', ...runs.map((run) => {
-    const done = isCount(run.started) && isCount(run.done) && run.started > 0 ? run.done / run.started : 0;
-    const phase = typeof run.phase === 'string' ? `phase ${run.phaseIndex || '?'}/${run.phaseTotal ?? '?'} ${cleanText(run.phase, look)}` : '';
-    const lanes = Object.entries(run.lanes ?? {}).filter(([, count]) => isCount(count)).map(([lane, count]) => `${count} ${cleanText(lane, look)}`).join(', ');
-    const state = run.state === 'run' ? 'run' : `${cleanText(run.state, look)} ${isCount(run.quietMin) ? run.quietMin : '?'} min`;
-    return fitParts([{ text: `  ${cleanText(run.name ?? run.runId ?? '?', look).slice(0, 20).padEnd(10)} ${barText({ done }, CELLS, look)} ${run.done ?? 0}/${run.started ?? 0} agents` },
-      { text: phase, drop: 2 }, { text: lanes, drop: 1 }, { text: state, state: run.state === 'run' ? STATE.ok : STATE.warn }], look);
-  })];
+/** The status line's counts, work and git rows, unclipped: every workflow, every agent and every worktree. */
+function workLines(board, asking, clock, look) {
+  const ctx = { ...clock, at: board?.at, repo: board?.repo ?? null };
+  const marked = asking && typeof asking === 'object' ? { ...asking, marginMs: STALE_MARGIN_S * MS_PER_S } : null;
+  return [countsRow(board, marked, ctx, look), ...workRows(board, Infinity, ctx, look), ...gitRows(board?.repo ?? null, Infinity, ctx, look)];
 }
 
 /** The line of what waits on the owner, quiet runs and git. */
@@ -114,7 +111,7 @@ export function whereTree({ segment, board, asking, limits, lastSeen, nowMs, tim
   const clock = { nowMs, timeZone };
   const job = jobView(segment);
   return [
-    allLine(job, clock, look), ...roadLines(job, clock, look), ...runLines(board, look), footLine(board, asking, look),
+    allLine(job, clock, look), ...roadLines(job, clock, look), ...workLines(board, asking, clock, look), footLine(board, asking, look),
     ...limitLines(Array.isArray(limits) ? limits : [], clock, look), costLine(lastSeen, nowMs, look),
   ];
 }
