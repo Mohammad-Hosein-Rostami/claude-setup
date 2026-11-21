@@ -1,3 +1,19 @@
 {
-  "skipDangerousModePermissionPrompt": true
+  "skipDangerousModePermissionPrompt": true,
+  "env": {
+    "DISABLE_UPDATES": "1"
+  },
+  "claudeSetup": {
+    "machine": "macbook",
+    "cliVersion": "2.1.326",
+    "syncTargets": [
+      {
+        "name": "pc",
+        "ssh": "pc"
+      }
+    ],
+    "shared": [
+      "skipDangerousModePermissionPrompt"
+    ]
+  }
 }

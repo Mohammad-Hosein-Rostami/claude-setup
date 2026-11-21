@@ -14,6 +14,7 @@ find Node and call it. Its flags are in the header of `install.mjs`.
 | `pin.mjs` | `--update --to <tag>`: a detached worktree of the tag at `~/.claude-setup-at/<tag>` |
 | `uninstall.mjs` | `--uninstall`: undo what the record names |
 | `windows.mjs` | Windows only: the user PATH |
+| `local-settings.mjs` | `claudeSetup` of `settings/local.json` for the sync: targets, CLI pin, shared values |
 
 How it behaves:
 - A second run changes nothing: a link that is right stays, an unchanged `settings.json` is not written, the record is

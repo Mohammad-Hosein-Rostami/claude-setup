@@ -189,7 +189,7 @@ rules the tests check: `home/workflows/README.md`. Tests: `tests/workflow-*.test
 | `step` | `wf-step` | Step | `row, agentType, prompt, model, effort, isolation?, alone?, statusFile?` |
 | `bugfix` | `wf-bugfix` | Reproduce, Hypotheses, Fix, Verify | `row, closeRow, statusFile, repo, base, symptom, repro?, suite, scriptsDir` |
 | `research` | `wf-research` | Scope, Gather, Synthesize, Critic | `row, question, out, depth` |
-| `sync-machines` | `wf-sync` | Verify, Sync, Doctor | `row, repo, base` |
+| `sync-machines` | `wf-sync` | Verify, Versions, Sync, Doctor | `row, repo, base, tag?` (targets from `claudeSetup.syncTargets` of the git-ignored local settings, see `settings/local.json.example`; stops when the machines differ in CLI version or channel, one is below 2.1.326 or has no `DISABLE_UPDATES=1`) |
 | `git-cleanup` | `wf-git-cleanup` | Inventory, Plan, Apply | `row, repos` |
 
 `build`, `review`, `land`, `step` and their four skills ship first; `bugfix`, `research`, `sync-machines`, `git-cleanup` follow.

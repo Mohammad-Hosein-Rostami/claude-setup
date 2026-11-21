@@ -14,10 +14,12 @@ const runScript = (name, args, setup) => runPath(join(WORKFLOWS, `${name}.js`), 
 const gate = () => { let open; const opened = new Promise((resolve) => { open = resolve; }); return { opened, open }; };
 
 const SYNC_ARGS = { row: 's1', repo: '/r', base: 'main' };
-const READY = { ok: true, sha: 'abc123', problems: [] };
+const READY = { ok: true, sha: 'abc123', problems: [], targets: [{ name: 'pc', ssh: 'pc' }] };
+const PINNED_CLI = { version: '2.1.326', channel: 'latest', pinned: true, pin: '' };
 const syncReplies = (overrides = []) => [
   ...overrides,
   { match: /:verify/, reply: READY },
+  { match: /:cli:/, reply: PINNED_CLI },
   { match: /:sync:/, reply: (_prompt, opts) => ({ ok: true, sha: 'abc123', tail: opts.label }) },
   { match: /:doctor:/, reply: { exit: 0, tail: 'ok' } },
   { match: /:diagnose:/, reply: 'cause' },

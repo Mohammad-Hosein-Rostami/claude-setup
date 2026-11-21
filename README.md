@@ -15,12 +15,24 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
 | `settings/`, `plugins/` | Settings layers (base, OS, local) and the plugin list |
 | `home/modes`, `home/bin/ccm` | Mode playbooks and the `ccm` launcher (`ccm.cmd` / `ccm.ps1` on Windows) |
 | `tests/`, `tools/`, `.githooks` | Repo tests (`node:test`), Brewfile and Windows tool script, pre-commit (gitleaks, affected tests), pre-push (full suite) |
-| `scripts/` | `install.sh`, `install.ps1`, `doctor.sh`, `doctor-accounts.mjs`, `lane-new.sh`, `affected-tests.mjs`, `merge-settings.jq` |
+| `scripts/` | `install.mjs` (the one installer; `install/`), `install.sh`, `install.ps1`, `doctor.sh`, `doctor-accounts.mjs`, `lane-new.sh`, `affected-tests.mjs`, `merge-settings.jq` |
 
 ## Quick start
-    scripts/install.sh --dry-run     # preview, changes nothing
-    scripts/install.sh               # links, settings.json, ui-check deps, plugins
-    scripts/doctor.sh                # read-only health report
+Install on a new machine (macOS or Linux; needs git, Node 22+ and jq), in the folder you keep repos in:
+
+    git clone <this repo> claude-setup && cd claude-setup
+    scripts/install.sh               # links, start-up line, settings.json (your own kept as the first layer), plugins, tool deps
+    scripts/doctor.sh --quick        # read-only health report without the repo suite (--full runs it)
+
+Update, roll back, remove, sync:
+
+    git pull --ff-only && scripts/install.sh --update   # update (safe to repeat: a second run changes nothing)
+    scripts/install.sh --update --to r9-phase-6         # roll back to a phase tag; plain --update comes back
+    scripts/install.sh --uninstall                      # remove what the installer made, restore the backups
+    /wf-sync                                            # sync the machines in settings/local.json (bundle + ff-only pull, never a push)
+
+`scripts/install.sh --dry-run` previews any of these. The sync targets, the phase's CLI pin and the values the sync copies
+to every machine live in the git-ignored `settings/local.json` under `claudeSetup` (see `settings/local.json.example`).
 
 Day-to-day use (modes, long runs, limits, another machine): [docs/daily-use.md](docs/daily-use.md).
 
@@ -33,7 +45,7 @@ Run tests (the second needs the ui-check deps that `install.sh` installs):
 
 While building, run only the tests a change can affect: `node scripts/affected-tests.mjs <path>... --run`.
 
-Windows: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1`. It also puts `ccm.cmd` and `ccm.ps1` in `~/.claude/bin` and adds that folder to your user PATH. Needs git (Git for Windows).
+Windows: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Update [-To <tag>]] [-Uninstall]` (not verified on Windows yet). It also puts `ccm.cmd` and `ccm.ps1` in `~/.claude/bin` and adds that folder to your user PATH. Needs git (Git for Windows).
 Existing targets are moved to
 `~/.claude-backup-<stamp>/`, never deleted. A gitleaks pre-commit hook guards commits.
 
