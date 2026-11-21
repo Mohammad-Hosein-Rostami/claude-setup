@@ -213,6 +213,16 @@
     ],
     "UserPromptExpansion": [
       {
+        "matcher": "check",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/checks-switch.mjs\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "mode",
         "hooks": [
           {

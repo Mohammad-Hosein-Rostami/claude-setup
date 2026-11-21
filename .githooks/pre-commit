@@ -1,10 +1,22 @@
 #!/usr/bin/env bash
-# Purpose: block commits that contain secrets (gitleaks on staged changes), delete or skip tests (scripts/test-integrity.mjs), or break the tests the commit can affect.
-# The whole suite runs at landing and in pre-push (test-pass), not here: scripts/affected-tests.mjs names the tests that reach the
-# staged files and falls back to every test when it cannot tell (see its header).
+# Purpose: block commits that contain secrets (gitleaks on staged changes, always: the safety floor), and, only when the owner turned the
+# `test` check on for the committing session with /check (home/hooks/lib/checks-on.mjs reads $CLAUDE_CODE_SESSION_ID; no session or no
+# switch = off), commits that delete or skip tests (scripts/test-integrity.mjs) or break the tests the commit can affect.
+# A commit that changes home/hooks/ also gets `node --check` on each staged hook file (safety floor, spec r9-checks-off).
+# The whole suite runs at landing and in pre-push (test-pass) when `test` is on, not here: scripts/affected-tests.mjs names the tests that
+# reach the staged files and falls back to every test when it cannot tell (see its header).
 set -euo pipefail
 command -v gitleaks >/dev/null || { echo "gitleaks not installed; see tools/Brewfile" >&2; exit 1; }
 gitleaks protect --staged --redact
+# Syntax check of the staged hook files (read from the index, so the checked text is the committed one).
+while IFS= read -r hook; do
+  [ -n "$hook" ] || continue
+  git show ":$hook" | node --check --input-type=module || { echo "pre-commit: $hook does not parse" >&2; exit 1; }
+done < <(git diff --cached --name-only --diff-filter=ACMR -- 'home/hooks/*.mjs' 'home/hooks/**/*.mjs')
+if ! node home/hooks/lib/checks-on.mjs is-on test; then
+  echo "pre-commit: gitleaks only (test check off; /check test turns it on)"
+  exit 0
+fi
 # List the tests BEFORE the git variables are cleared below: for `git commit -- <path>` the staged files are only visible through
 # GIT_INDEX_FILE, a temporary index. A failing list (exit 2: a test path with a space) stops the commit through `set -e`.
 affected="$(node scripts/affected-tests.mjs --staged --list)"
