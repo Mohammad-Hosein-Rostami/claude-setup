@@ -18,6 +18,8 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 - `command-checks.mjs`, `rm-paths.mjs`, `bare-glob.mjs`, `find-delete.mjs`, `eval-check.mjs`, `shell-hazards.mjs`, `dangerous-scan.mjs`,
   `raw-risk.mjs`, `outward.mjs`, `remote.mjs`, `code-writes.mjs`, `git-runs.mjs`: one file per kind of risky command (`rm -r`,
   `find -delete`, `eval`, hidden execution, push or publish, production hosts, code rewritten from Bash, commands git runs).
+- `account-reads.mjs`: the one exemption from the stored-secret ask: a Keychain read of the account tool's own service
+  (`claude-setup-account`), which the owner allows (2026-11-19); any other service keeps the ask.
 - `cd-folder.mjs`: the folders the guard follows a line through after `cd`, `pushd` or `popd` (the rules are in the module's
   header).
 - `merge-commit.mjs`: advice, never an ask: a `git merge` or `git pull` that can create a merge commit (linear history, C37).

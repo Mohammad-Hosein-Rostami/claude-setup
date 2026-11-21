@@ -18,7 +18,7 @@
 // Plain ASK: git --no-verify (and unique prefixes), `git -c core.hooksPath`, `HUSKY=0 git`, a literal secret in the
 // command (lib/secrets.mjs; the text never repeats it), `git push` (not --dry-run), `gh release *`, `gh pr merge`, package
 // publish (lib/outward.mjs), ssh/scp/rsync/psql/mysql that write to a production host (lib/remote.mjs; list in
-// ~/.claude/private/prod-hosts), `security find-*-password -w|-g` / `dump-keychain` / `export` and `gh auth token` (print a stored secret),
+// ~/.claude/private/prod-hosts), `security find-*-password -w|-g` (not of the account tool's own service: lib/account-reads.mjs) / `dump-keychain` / `export` and `gh auth token` (print a stored secret),
 // `gh ssh-key add` of a file that is not `*.pub`, and a private credential file (`.ssh/id_*` or any non-public file directly under `.ssh`,
 // `.aws/credentials`, `.netrc`, gh `hosts.yml`, `.kube/config`, `.npmrc`, `.docker/config.json`, `.pypirc`) in one command line with a network sender or cloud upload
 // (`aws s3 cp`, `gsutil cp`, `rclone copy` ...), a whole `~/.ssh` / `.aws` / `.gnupg` folder given to a sender or archived before one, or a

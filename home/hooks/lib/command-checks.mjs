@@ -8,6 +8,7 @@
 // Pure, no I/O. Every rule is an ask (the hook shows a timed dialog); a destructive one starts with "DESTRUCTIVE: ". The one exception is
 // checkLockfileEdit: a quality rule, its text is advice (lib/bounce-once.mjs: denied once with the fix, the identical retry runs).
 // git's own options before the subcommand are read by lib/git-options.mjs; when they can be read more than one way, every reading is checked.
+import { isAccountTokenRead } from './account-reads.mjs';
 import { commandName, commandOf } from './command-of.mjs';
 import { parseGitArgs } from './git-options.mjs';
 import { parsePushArgs, pushAsk } from './outward.mjs';
@@ -230,6 +231,7 @@ function printsPassword(args) {
 /**
  * `security find-generic-password|find-internet-password` with `-w` or `-g`, `security dump-keychain`, `security export`: the stored secret
  * is printed into the transcript (also when a `$(...)` captures it: the guard cannot tell). An attribute-only lookup stays silent.
+ * A read of the account tool's own service (`-s claude-setup-account`, lib/account-reads.mjs) runs with no ask.
  * @param {string} cmd the command name
  * @param {string[]} args its words
  * @returns {string | undefined} the ask reason, or undefined
@@ -240,6 +242,7 @@ export function checkKeychainPrint(cmd, args) {
   while (args[i]?.startsWith('-')) i += args[i] === '-p' ? 2 : 1; // `security -q ...`, `security -p prompt ...`
   const [sub = '', ...rest] = args.slice(i);
   const prints = KEYCHAIN_DUMPS.has(sub) || (KEYCHAIN_PASSWORD_LOOKUP.test(sub) && printsPassword(rest));
+  if (prints && isAccountTokenRead(sub, rest)) return undefined; // the account tool's own service: the owner allows its token reads (lib/account-reads.mjs)
   return prints ? `security ${sub} ${SECRET_PRINT}` : undefined;
 }
 
