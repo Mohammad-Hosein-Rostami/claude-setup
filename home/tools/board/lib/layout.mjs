@@ -6,8 +6,9 @@
 // Exports: rowBudget(env) -> number; countsRow(board, asking, ctx, look); workGroups(board, nowMs); workRows(board, slots, ctx, look).
 // Budget: R = clamp(floor(LINES / 3), 3, 12) (24 lines give 8, 36 and more give 12; LINES missing counts as 24).
 // Folding, in this order, until the rows fit: (1) every header and every listed agent; (2) each workflow folded into its header
-// (spark strip of its agents), the most urgent listed agents in full under their header, the rest on one `+K more` row; (3) one
-// strip row with every group, the most urgent listed agents, `+K more`. Urgency: quiet > over its usual time > writer > reader, then the soonest finish. A
+// (spark strip of its agents), the most urgent listed agents in full under their header, the rest on one `+K more` row; (2b) in the
+// status line, each workflow's row, then the most urgent agents outside workflows without their header, `+K more`; (3) one strip
+// row with every group, the most urgent listed agents, `+K more`. Urgency: quiet > over its usual time > writer > reader, then the soonest finish. A
 // finished agent shows for DONE_SHOWN_MS, then only the counts row has it. From FULL_COLUMNS two agents share a row.
 // Colour of the counts row (spec-tui-2): running work cyan, any quiet agent yellow, waiting on the owner magenta.
 // Invariants: pure (no I/O); every row fits look.columns; never more rows than `slots`.
@@ -116,13 +117,22 @@ function stripRows(groups, slots, ctx, look) {
     const phase = run && Number.isInteger(run.phaseIndex) ? ` ${run.phaseIndex}/${run.phaseTotal ?? '?'}` : '';
     return { text: `${name}${phase} ${countsText(group.agents, { ...look, glyph: { ...look.glyph, sep: ' ' } })} ${sparkText(group.agents, look)}`, drop: index };
   }), look);
-  const all = groups.flatMap(listed).sort(byUrgency);
-  const room = slots - 1;
-  if (room <= 0) return [strip];
-  const shown = all.length <= room ? all : all.slice(0, room - 1);
-  const hidden = all.slice(shown.length);
+  return slots <= 1 ? [strip] : [strip, ...urgentRows(groups.flatMap(listed).sort(byUrgency), slots - 1, ctx, look)];
+}
+
+/** The most urgent agents in `room` rows, without tree marks: one row each, the rest on one `+K more` row. */
+function urgentRows(agents, room, ctx, look) {
+  const shown = agents.length <= room ? agents : agents.slice(0, room - 1);
+  const hidden = agents.slice(shown.length);
   const rows = shown.map((agent) => agentRow(agent, { ...ctx, prefix: ' ' }, look));
-  return [strip, ...rows, ...(hidden.length > 0 ? [hidden.length === 1 ? agentRow(hidden[0], { ...ctx, prefix: ' ' }, look) : foldRow(' ', hidden, ctx, look)] : [])];
+  return [...rows, ...(hidden.length > 0 ? [hidden.length === 1 ? agentRow(hidden[0], { ...ctx, prefix: ' ' }, look) : foldRow(' ', hidden, ctx, look)] : [])];
+}
+
+/** Form 2b (status line): each workflow's one row (it never lists its agents there), then the agents outside workflows. */
+function runFirstRows(groups, slots, ctx, look) {
+  const runs = groups.filter((group) => group.inHeader);
+  const plain = groups.filter((group) => group.run === null).flatMap((group) => group.agents);
+  return [...runs.map((group) => headerOf(group, ctx, look, true)), ...urgentRows(plain, slots - runs.length, ctx, look)];
 }
 
 /**
@@ -140,6 +150,8 @@ export function workRows(board, slots, ctx, look) {
   if (full <= slots) return groups.flatMap((group) => [headerOf(group, ctx, look, false), ...agentLines(listed(group), ctx, look)]);
   const room = slots - groups.length;
   if (room >= 2) return foldedRows(groups, room, ctx, look);
+  const runCount = groups.filter((group) => group.inHeader).length;
+  if (runCount > 0 && runCount === groups.filter((group) => group.run !== null).length && slots > runCount) return runFirstRows(groups, slots, ctx, look);
   return stripRows(groups, slots, ctx, look).slice(0, slots);
 }
 
