@@ -33,6 +33,7 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 
 Asking and remembering:
 - `timed-ask.mjs`: the timed dialog (osascript, PowerShell or zenity).
+- `timed-ask-text.mjs`: the dialog's text for `timed-ask.mjs`: masked, visible values, detail lines, the timeout rule.
 - `timed-ask-async.mjs`: the same dialog as a promise that an abort signal (or `closeLiveDialogs`, run when the hook is stopped) can close; used by the question popups.
 - `question-reply.mjs`: AskUserQuestion for `permission-timed-allow.mjs`, one popup per question with its own wait.
 - `question-answered.mjs`: the mark that the owner answered a question in the terminal (hashes of session, agent and question texts only), so the open popup closes.
