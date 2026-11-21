@@ -1,6 +1,7 @@
 // Per-agent log of edited files, written by post-edit.mjs (Edit, Write) and bash-writes.mjs (Bash), read by typecheck-gate.mjs; and the
 // per-user hook temp root all post-edit state lives in (edit logs, agent and lead Bash counters, Bash before-records, build info).
-// Exports: tempRoot(), checkedTempRoot(), editLogPath(sessionId, agentId), recordEdit(logPath, file), readEdits(logPath), MAX_EDIT_LOG_BYTES.
+// Exports: tempRoot(), checkedTempRoot(), editLogPath(sessionId, agentId), recordEdit(logPath, file), readEdits(logPath), MAX_EDIT_LOG_BYTES,
+//   smartLogOf(editLog), smartEditLogs(sessionId, agentId) (the smart check's own logs: every edited file, never rewritten by a gate).
 // The root: `<os.tmpdir()>/claude-post-edit` when the temp folder is private to this user (owned by the uid, no group or other write bit:
 // macOS's per-user TMPDIR, a test's own temp folder; Windows always, where %TEMP% is per user), else `claude-post-edit-<uid>` (Linux's
 // shared /tmp): two names so the existing folder and the tests that build the old name keep working where the temp folder is private.
@@ -15,7 +16,7 @@
 // reported in the guard log, one line per read, outcome `edit-log-unreadable`: the typecheck gate checks nothing for that session then.
 // One size cap for the writer and the reader: a log at the cap takes no more lines, so the reader never meets a larger one it wrote.
 // The writer reports what it turns away, one guard-log line each: `edit-log-full` at the cap, `edit-log-bad-path` for a line break.
-import { closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, statSync } from 'node:fs';
+import { closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { logDecision } from './guard-log.mjs';
@@ -117,6 +118,28 @@ export function editLogPath(sessionId, agentId) {
   return root === null ? null : join(root, 'edits', `${sessionId}--${agent}`);
 }
 
+const SMART_FOLDER = 'smart-edits';
+
+/** The smart check's log beside an edit log: same (session, agent) name in `smart-edits/` (the typecheck gate rewrites its own log). */
+export const smartLogOf = (editLog) => (editLog ? join(dirname(dirname(editLog)), SMART_FOLDER, basename(editLog)) : null);
+
+/**
+ * The smart check's logs of one session: the agent's own, or (no agent id: the lead's stop) every agent's of that session.
+ * @param {unknown} sessionId hook input `session_id`
+ * @param {unknown} agentId hook input `agent_id`
+ * @returns {string[]} log paths that exist; [] for a bad id or a refused temp root
+ */
+export function smartEditLogs(sessionId, agentId) {
+  const own = smartLogOf(editLogPath(sessionId, agentId ?? undefined));
+  if (own === null) return [];
+  if (agentId) return existsSync(own) ? [own] : [];
+  try {
+    return readdirSync(dirname(own)).filter((name) => name.startsWith(`${sessionId}--`)).map((name) => join(dirname(own), name));
+  } catch {
+    return []; // no smart edit log yet: nothing was edited
+  }
+}
+
 const LINE_BREAK = /[\r\n]/;
 
 /** One guard-log line for an edit the log turned away (the file name is two validated ids; the path itself is never logged). */
@@ -129,10 +152,11 @@ function reportRefused(logPath, outcome, why) {
  * Appends `file` to the log; never throws. The log holds one path per line, so a path with a line break is turned away
  * (`edit-log-bad-path`), as is a line the log cannot take: it would pass MAX_EDIT_LOG_BYTES, or the log is not a plain file
  * (`edit-log-full`). Each is one guard-log line, so a gate that checks less than was edited does not pass unseen.
- * @param {string} logPath from editLogPath
+ * @param {string | null} logPath from editLogPath or smartLogOf (null: nothing is written)
  * @param {string} file absolute path of the edited file
  */
 export function recordEdit(logPath, file) {
+  if (!logPath) return; // no log for this id (a bad id or a refused temp root)
   if (LINE_BREAK.test(file)) return void reportRefused(logPath, 'edit-log-bad-path', 'a path with a line break');
   try {
     mkdirSync(dirname(logPath), { recursive: true });

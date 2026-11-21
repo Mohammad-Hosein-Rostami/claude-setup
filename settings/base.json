@@ -375,6 +375,11 @@
           },
           {
             "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/smart-check.mjs\"",
+            "timeout": 600
+          },
+          {
+            "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/commit-gate.mjs\"",
             "timeout": 10
           },
@@ -429,6 +434,11 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/typecheck-gate.mjs\"",
             "timeout": 150
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/smart-check.mjs\"",
+            "timeout": 600
           },
           {
             "type": "command",

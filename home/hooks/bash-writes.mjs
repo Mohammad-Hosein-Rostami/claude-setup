@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { bashCodeWrites } from './lib/code-writes.mjs';
 import { CODE_FILE } from './lib/diagnostics.mjs';
-import { checkedTempRoot, editLogPath, recordEdit } from './lib/edit-log.mjs';
+import { checkedTempRoot, editLogPath, recordEdit, smartLogOf } from './lib/edit-log.mjs';
 import { logDecision } from './lib/guard-log.mjs';
 import { appendPlainFile, readPlainFile } from './lib/plain-file.mjs';
 import { MAX_COMMAND_CHARS } from './lib/verdict.mjs';
@@ -140,7 +140,9 @@ function logRealPath(path, logPath, counts) {
     counts.unchecked += 1;
     return;
   }
-  if (CODE_FILE.test(real)) recordEdit(logPath, real);
+  if (!CODE_FILE.test(real)) return;
+  recordEdit(logPath, real);
+  recordEdit(smartLogOf(logPath), real); // the smart check's own log (spec r9-smart-check 4)
 }
 
 /** After the command ran (PostToolUse) or failed (PostToolUseFailure): logs the candidates whose content changed. */
