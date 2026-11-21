@@ -170,12 +170,55 @@ const MASK = '[masked]';
 const SECRET_FIELD_NAME = new RegExp(`${PASSWORD_NAME_PART}|${TOKEN_NAME_PART}|AUTHORIZATION|COOKIE|CREDENTIAL|(?<![A-Za-z0-9])AUTH(?![A-Za-z0-9])`, 'i');
 const CAMEL_HUMP = /([a-z0-9])([A-Z])/g;
 
+// Placeholders (F16): a value made WHOLLY of stand-in text is no secret (`.env.example` written through a heredoc). Only a whole value
+// counts, so a real key with "example" or "xxxx" added to it still asks.
+const PLACEHOLDER_VALUE = new RegExp(String.raw`^(?:(.)\1{2,}|\.{3,}|…|<[A-Za-z][\w .-]{0,40}>|`
+  + String.raw`your[-_]?[a-z_-]{0,30}(?:key|token|secret|password|pass|here|id)|changeme|placeholder|redacted|dummy|example)$`, 'i');
+const TOKEN_PREFIX = /^(?:sk-ant-(?:[a-z]+\d+-)?|sk-proj-|gh[pousr]_|github_pat_|glpat-|xox[bp]-|AKIA|ASIA)/;
+const AWS_DOCS_EXAMPLE_ID = 'IOSFODNN7EXAMPLE'; // the access key id AWS's own documentation uses, after its AKIA prefix
+const TOKEN_SCANS = TOKEN_KINDS.map(([pattern]) => ({ scan: new RegExp(pattern.source, `g${pattern.flags}`) }));
+const unquoted = (value) => value.replace(/^(["'])([\s\S]*)\1$/, '$2');
+const blank = (text) => ' '.repeat(text.length); // keeps every other position, so the rules read the rest unchanged
+
+/** A token whose part after its kind's prefix is one character repeated (an all-`x` key), or AWS's documentation example. */
+function isPlaceholderToken(token) {
+  const rest = token.replace(TOKEN_PREFIX, '').replace(/[-_]/g, '');
+  return /^(.)\1*$/.test(rest) || rest === AWS_DOCS_EXAMPLE_ID;
+}
+
+/** The value of a value rule's mask match (group 1 is the prefix), without its quotes. */
+const valueOfMatch = (whole, prefix) => unquoted(whole.slice(prefix.length).trim());
+
+/**
+ * The text with every placeholder value inside a heredoc body blanked out. The rules then run on it unchanged: a placeholder can only take its own text away,
+ * never hide a real value next to it (a value the mask patterns cannot list stays in the text, and still asks).
+ * @param {string} command the text to scan
+ * @returns {string} the same text, each placeholder value replaced by spaces of the same length
+ */
+function withoutPlaceholders(command) {
+  return command.replace(HEREDOC_BODY, (whole, open, _quote, _word, body, close) => open + blankedPlaceholders(body) + close);
+}
+
+// a heredoc: the `<<WORD` line, its body, the line with WORD alone; only bodies are files of placeholders (outside them the strict rule stays)
+const HEREDOC_BODY = /(<<-?[ \t]*(['"]?)(\w+)\2[^\n]*\n)([\s\S]*?)(\n[ \t]*\3[ \t]*(?:\n|$))/g;
+
+/** One heredoc body with its placeholder values blanked out. */
+function blankedPlaceholders(body) {
+  let text = body;
+  for (const { scan } of TOKEN_SCANS) text = text.replace(scan, (token) => (isPlaceholderToken(token) ? blank(token) : token));
+  for (const { mask } of VALUE_KINDS) {
+    const blankPlaceholder = (whole, prefix) => (PLACEHOLDER_VALUE.test(valueOfMatch(whole, prefix)) ? prefix + blank(whole.slice(prefix.length)) : whole);
+    text = text.replace(mask, blankPlaceholder);
+  }
+  return text;
+}
+
 /**
  * @param {string} command raw command text
  * @returns {string | undefined} what kind of secret was found, or undefined; never the value
  */
 export function findLiteralSecret(command) {
-  command = command.slice(0, MAX_SCAN_CHARS);
+  command = withoutPlaceholders(command.slice(0, MAX_SCAN_CHARS));
   for (const [pattern, kind] of TOKEN_KINDS) {
     if (pattern.test(command)) return kind;
   }

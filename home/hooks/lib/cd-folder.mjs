@@ -26,6 +26,10 @@
 // - An absolute `cd` is known wherever the line was: inside its chain the folder is that one, also after an unknown one (too many
 //   folders, `eval`, `source`, a loop). One unknown is final all the same: after a `cd`, `pushd` or `popd` whose own target could not be
 //   read (`followed` is null). The guard asked about the rest of such a line before it kept a set, and no rule here may drop an ask.
+// - Round 9 (r9-guard-deleters): a line that defines `cd`, `pushd` or `popd` as a function or alias (any spelling, also in `eval` text) makes
+//   the folder unknown for good (`followed` null): its later absolute `cd` may run the replacement. A command that may run a `cd` among its
+//   own words (CD_HIDERS: `noglob`, `repeat`, the short `if`, `trap`) makes it unknown too; `env -C` / `sudo --chdir` make it unknown for
+//   that one command. In zsh `command cd x` runs the external `cd`, so `command` is no plain prefix. `~` is unknown once the line assigns HOME.
 // Invariants: pure apart from reading process.env.CDPATH; never touches the file system; a segment whose parser recorded no join
 // (`seg.joinedBy`, lib/shell-words.mjs) neither continues a chain nor has its `cd` believed; nothing here ever makes the set smaller
 // than the folders the shell can really be in, short of the limits named in pre-bash-guard.mjs.
@@ -46,13 +50,25 @@ const LOOP_END = 'done';
 const FUNCTION_COMMAND = 'function';
 const FUNCTION_JOIN = '()'; // `f() { ...`: the body's first command is joined by the empty parentheses
 // words that may stand in front of a `cd` without changing whether or where it runs in this shell
-const PLAIN_PREFIXES = new Set(['{', 'if', 'then', 'else', 'elif', 'do', 'while', 'until', 'time', 'command', 'builtin']);
+// not `command`: in zsh `command cd` runs no builtin
+const PLAIN_PREFIXES = new Set(['{', 'if', 'then', 'else', 'elif', 'do', 'while', 'until', 'time', 'builtin']);
 const ASSIGNMENT_WORD = /^[A-Za-z_]\w*\+?=/;
 const CHAIN_JOIN = /^&&\n*$/; // `&&`, also with the line broken after it
 const PIPE_JOIN = /^\|&?\n*$/;
 const UNSURE_JOIN = /\|&?\n*$/; // the last operator is `|`, `|&` or `||`: the `cd` runs in a subshell, or only when the command before failed
 const UNKNOWN_CD_TARGET = /^-|[~$`*?[\]{}]/;
 const STACK_OR_BARE_DRIVE = /^\+|^[a-zA-Z]:$/; // `+N` walks the folder stack; `C:` is the folder Windows remembers for that drive
+// commands that may run a `cd` among their own words in this shell: zsh `noglob cd x`, `repeat 2 cd ..`, the short `if [[ c ]] cd x`,
+// `trap 'cd ..' DEBUG`, a loop without `do`
+const CD_HIDERS = new Set(['noglob', 'nocorrect', 'repeat', 'trap', '[[', '[', 'test', 'if', 'elif', 'while', 'until', 'for', 'foreach', 'select']);
+const MOVER_WORD = /(?:^|[\s;&|({])\\?(?:cd|pushd|popd)(?=$|[\s;&|)}])/;
+// a function or alias that replaces a folder mover: `function cd {`, `cd() {`, `alias cd=...`, also inside `eval` text
+const MOVER_DEFINITION = new RegExp([
+  String.raw`(?:^|[\s;&|({])(?:function\s+)?\\?['"]?(?:cd|pushd|popd)['"]?\s*\(\s*\)`, // `cd() {`, `function cd () {`
+  String.raw`\bfunction\s+\\?['"]?(?:cd|pushd|popd)\b`, // `function cd {`
+  String.raw`\balias\s+(?:-\w+\s+)*['"]?(?:cd|pushd|popd)=`, // `alias cd=...`
+].join('|'));
+const CHDIR_WRAPPER_OPTION = { env: /^(?:-C|--chdir)(?:=|$)|^-C./, sudo: /^(?:-D|--chdir)(?:=|$)|^-D./ }; // `env -C dir`, `sudo --chdir=dir`
 
 /** zsh reads option names without case and without `_` (`AUTO_CD` is `autocd`); bash spells `cdable_vars`. */
 const isCdOption = (word) => CD_OPTIONS.has(word.toLowerCase().replaceAll('_', ''));
@@ -69,10 +85,15 @@ const cdpathIsSet = (assigns, assigned) => Boolean(process.env.CDPATH) || [...as
  * @returns {{dirs: string[] | null, passed: string[] | null, everIn: string[], followed: string | null, believes: boolean,
  *   cdLast: boolean, loops: number, inFunction: boolean}} dirs: the folders the next command may run in (null: unknown); passed: the
  *   folders the current `&&` chain left behind; everIn: every folder a command of the line may have run in; followed: where the `cd`s
- *   lead when each is taken at its word, null for good once one cannot be read; believes: a `cd` in the current segment is believed; cdLast: the segment before was a `cd`;
- *   loops: open loops; inFunction: a function body was opened
+ * lead when each is taken at its word, null for good once one cannot be read; believes: a `cd` in the current segment is believed; cdLast: the segment before
+ * was a `cd`;
+ *   loops: open loops; inFunction: a function body was opened; elsewhere: the current command runs in a folder a wrapper chose (`env -C`);
+ *   moved: the line has a `cd`, `pushd` or `popd`, or hid one (pre-bash-guard.mjs then judges nested bodies with the folder unknown)
  */
-export const newFolder = (cwd) => ({ dirs: cwd === null ? null : [cwd], passed: [], everIn: cwd === null ? [] : [cwd], followed: cwd, believes: false, cdLast: false, loops: 0, inFunction: false });
+export const newFolder = (cwd) => ({
+  dirs: cwd === null ? null : [cwd], passed: [], everIn: cwd === null ? [] : [cwd], followed: cwd, believes: false, cdLast: false, loops: 0,
+  inFunction: false, elsewhere: false, moved: false,
+});
 
 /**
  * The folders the next command is judged in. Every folder past the first means the segment is read once more; those characters are
@@ -84,7 +105,7 @@ export const newFolder = (cwd) => ({ dirs: cwd === null ? null : [cwd], passed: 
  * @returns {(string | null)[]} every folder it may run in, or one null when that is unknown or the budget is spent (the line then asks)
  */
 export function possibleFolders(folder, seg, work) {
-  if (folder.dirs === null || work.spent) return [null];
+  if (folder.dirs === null || folder.elsewhere || work.spent) return [null];
   work.expanded += (folder.dirs.length - 1) * seg.reduce((chars, word) => chars + word.length + 1, 0);
   work.spent = work.expanded > MAX_LINE_EXPANDED_CHARS;
   return work.spent ? [null] : folder.dirs;
@@ -126,6 +147,24 @@ export function enterSegment(folder, seg, parsed, words) {
   else if (words[0] === LOOP_END && folder.loops > 0) folder.loops -= 1;
   folder.inFunction ||= parsed.cmd === FUNCTION_COMMAND || (join ?? '').includes(FUNCTION_JOIN);
   folder.believes = join !== undefined && !UNSURE_JOIN.test(join) && before.every((word) => PLAIN_PREFIXES.has(word) || ASSIGNMENT_WORD.test(word));
+  folder.elsewhere = changesFolder(before); // this one command runs in a folder the guard does not follow
+}
+
+/** True when a wrapper in front of the command runs it in another folder: `env -C dir`, `sudo -D dir` / `--chdir`. */
+function changesFolder(before) {
+  let wrapper;
+  return before.some((word) => {
+    if (word === 'env' || word === 'sudo') wrapper = word;
+    return wrapper !== undefined && CHDIR_WRAPPER_OPTION[wrapper].test(word);
+  });
+}
+
+/** True when this command defines a folder mover or may run one the line does not show as a `cd` segment (X1, G1). */
+function hidesMover({ cmd, args }) {
+  const text = [cmd, ...args].join(' ');
+  if (MOVER_DEFINITION.test(text)) return true; // also `eval 'cd() { builtin cd ~; }'`
+  if (MOVERS.has(cmd) && (args[0] ?? '').startsWith('(')) return true; // `cd () {`
+  return CD_HIDERS.has(cmd) && args.some((word) => MOVER_WORD.test(word));
 }
 
 /** Where a `cd` leads from every folder the line may be in; null when one of them cannot be known. */
@@ -147,7 +186,10 @@ function foldersAfter(folder, parsed, project, scope) {
 export function leaveSegment(folder, parsed, { project, scope }) {
   const { cmd, args } = parsed;
   const hidesCd = UNREAD_RUNNERS.has(cmd) || (OPTION_SETTERS.has(cmd) && args.some(isCdOption)) || (cmd === FUNCTION_COMMAND && args.some((word) => MOVERS.has(word)));
+  folder.elsewhere = false;
   if (hidesCd) folder.dirs = null; // `function f { cd x`: the parsers leave the body's first command among the words of `function`
+  if (hidesMover(parsed)) [folder.dirs, folder.followed] = [null, null]; // an absolute `cd` may then run the replacement: never known again
+  folder.moved ||= MOVERS.has(cmd) || folder.dirs === null;
   if (!MOVERS.has(cmd)) return;
   folder.cdLast = true;
   folder.followed = folder.followed === null ? null : nextCwd(parsed, folder.followed, project, scope, false);
@@ -157,9 +199,9 @@ export function leaveSegment(folder, parsed, { project, scope }) {
   else folder.dirs = union(folder.dirs, after);
 }
 
-/** Like expandHome; the git top-level word -> the project, but only from inside it (elsewhere the top-level is unknown). */
-function expandCdTarget(target, cwd, project) {
-  if (cwd === null || (target !== GIT_TOPLEVEL_WORD && !target.startsWith(`${GIT_TOPLEVEL_WORD}/`))) return expandHome(target);
+/** Like expandHome (unknown once the line assigned HOME); the git top-level word -> the project, but only from inside it. */
+function expandCdTarget(target, cwd, project, vars) {
+  if (cwd === null || (target !== GIT_TOPLEVEL_WORD && !target.startsWith(`${GIT_TOPLEVEL_WORD}/`))) return expandHome(target, vars);
   const root = resolve(nativePath(project));
   const inside = sameFile(resolve(cwd), root) || isUnder(root, resolve(cwd));
   return inside ? root + target.slice(GIT_TOPLEVEL_WORD.length) : target;
@@ -177,7 +219,7 @@ function expandCdTarget(target, cwd, project) {
 export function nextCwd({ cmd, args, assigns = [] }, cwd, project, { vars, assigned = new Set() }, strict = true) {
   if (cmd === 'popd' || args.length !== 1) return null;
   if (PWD_TARGET.test(args[0]) && vars.get('PWD') !== cwd) return null; // `cd "$PWD"/x` after the folder moved: not guessed
-  const target = expandVars(expandCdTarget(args[0], cwd, project), vars); // `cd "$D"` after `D=$(mktemp -d)` is the temp dir
+  const target = expandVars(expandCdTarget(args[0], cwd, project, vars), vars); // `cd "$D"` after `D=$(mktemp -d)` is the temp dir
   if (UNKNOWN_CD_TARGET.test(target)) return null;
   const isRelative = !isAbsolute(nativePath(target));
   if (isRelative && cwd === null) return null;

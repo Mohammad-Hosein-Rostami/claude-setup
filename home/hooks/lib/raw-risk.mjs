@@ -14,7 +14,8 @@
 // hides what runs, the reason is GIT_UNREADABLE_REASON (an ask: no rewrite helps); so is a git-run variable set from an unquoted backtick,
 // whose value both parsers lose (lib/git-run-values.mjs reads the other forms). `git-<sub>` words read as `git <sub>` (lib/command-of.mjs).
 // Dangerous words (looked up as words of the quote-stripped, ANSI-C-decoded text): git push (by position) / git alias, rm with a recursive or forced flag and (also find -delete / -exec rm with)
-// an absolute, `~`, `$` or `..` path, npm-style publish, gh mutations (judged by position: `gh <group> <verb>`), disk tools and raw device paths,
+// an absolute, `~`, `$` or `..` path (once the line has a `cd`, `pushd` or `popd`, any path of a recursive rm or a deleting find: the
+// hidden text may run in another folder, X3), npm-style publish, gh mutations (judged by position: `gh <group> <verb>`), disk tools and raw device paths,
 // psql/mysql/ssh near a production name. Message text of `git commit` and `gh pr|issue create|edit|comment` is data (message-text.mjs), so
 // `git commit -m "$(cat <<'EOF' ... git push ... EOF)"` is silent; a message with another `$(` or a backtick is still scanned.
 // A single-quoted argument of a program that never runs its arguments (echo, printf, grep, rg, jq, sed, git log) is data too (lib/inert-arguments.mjs).
@@ -24,7 +25,7 @@ import { ANSI_C_WORD, decodeAnsiC } from './ansi-c.mjs';
 import { asGitSubcommand, commandName } from './command-of.mjs';
 import { withoutInertArguments } from './inert-arguments.mjs';
 import { withoutMessageText } from './message-text.mjs';
-import { GIT_TOPLEVEL, GIT_TOPLEVEL_WORD } from './shell-words.mjs';
+import { GIT_TOPLEVEL, GIT_TOPLEVEL_WORD, MKTEMP_WORD } from './shell-words.mjs';
 import { COMMAND_ENV, configKind, GIT_UNREADABLE_REASON } from './git-runs.mjs';
 import { DESTRUCTIVE_PREFIX } from './verdict.mjs';
 
@@ -134,6 +135,33 @@ const FIND_EXEC = /^-(?:exec|execdir|ok|okdir)$/;
 /** True when a `find` deletes what it matches: `-delete`, or `-exec`/`-execdir`/`-ok` running rm (its `{}` path hides the target from the rm check). */
 const findDeletes = (after) => after.includes('-delete') || after.some((w, i) => FIND_EXEC.test(w) && after[i + 1] === 'rm');
 
+// `$(mktemp -d)` only makes a new empty folder: like the git top-level, it hides no command (the rm rules judge where it points)
+const PLAIN_MKTEMP = /\$\(mktemp -d\)/g;
+const MOVERS = new Set(['cd', 'pushd', 'popd']);
+const RECURSIVE_RM_FLAG = /^(?:-[a-zA-Z]*[rR]|--r)/;
+const QUOTED_TEXT = /'([^']*)'|"((?:[^"\\]|\\.)*)"/g;
+const TEXT_WORD_BREAK = /[\s;&|()`]+/;
+
+/**
+ * X3: once the line has a `cd`, `pushd` or `popd`, quoted text another program may run (`trap '...'`, `watch '...'`, `<<< '...'`,
+ * `python3 -c "..."`) may run in a folder the guard did not follow, so a recursive rm or a deleting find in it asks whatever its path.
+ * Only quoted text is read: a plain `cd src && rm -rf build` is judged by the per-command rules.
+ * @param {string} visible the text without data arguments and plain heredocs
+ * @param {string[][]} statements its statements' words
+ * @returns {boolean} true when such a delete is in the quoted text of a line that moves the folder
+ */
+function deletesInMovedText(visible, statements) {
+  if (!statements.some((words) => words.some((word) => MOVERS.has(word)))) return false;
+  return [...visible.matchAll(QUOTED_TEXT)].some(([, single, double]) => {
+    const words = (single ?? double).split(TEXT_WORD_BREAK).filter(Boolean);
+    return words.some((word, i) => {
+      const after = words.slice(i + 1, i + 1 + WINDOW);
+      if (word === 'rm') return after.some((w) => RECURSIVE_RM_FLAG.test(w)) && after.some((w) => !w.startsWith('-'));
+      return word === 'find' && findDeletes(after);
+    });
+  });
+}
+
 /** @returns {string | undefined} the category of the first dangerous word in this statement's words, or undefined */
 function dangerIn(words, prodText, prodNames) {
   for (let i = 0; i < words.length; i++) {
@@ -207,7 +235,7 @@ function runsText(words) {
  */
 export function riskyWordInExpansion(command, prodHosts = []) {
   // `$(git rev-parse --show-toplevel)` is a known, harmless substitution (the per-command rm check judges where it points)
-  const text = joinContinuations(decodeAnsiCWords(command)).replace(GIT_TOPLEVEL, GIT_TOPLEVEL_WORD);
+  const text = joinContinuations(decodeAnsiCWords(command)).replace(GIT_TOPLEVEL, GIT_TOPLEVEL_WORD).replace(PLAIN_MKTEMP, MKTEMP_WORD);
   // a `$'...'` word decodes to text that can hold a quote the shell does not read as one (`$'\x27'`): no data argument is exempted then
   const withoutData = command.includes("$'") ? (kept) => kept : withoutInertArguments;
   const visible = withoutData(withoutPlainHeredocs(withoutMessageText(text)));
@@ -219,6 +247,7 @@ export function riskyWordInExpansion(command, prodHosts = []) {
   const prodNames = prodHosts.map((host) => host.replace(/[*?]/g, '')).filter(Boolean);
   const scanned = gitHidden ? statementsOf(visible, ANY_ASSIGNMENT) : statements;
   const destructive = scanned.map((words) => dangerIn(words, prodText, prodNames));
+  if (otherHidden && deletesInMovedText(visible, scanned)) destructive.push('destructive');
   const found = destructive.find((category) => category !== undefined);
   if (found === undefined) return BACKTICK_RUN_VALUE.test(visible) ? GIT_UNREADABLE_REASON : undefined;
   if (!otherHidden) return GIT_UNREADABLE_REASON;

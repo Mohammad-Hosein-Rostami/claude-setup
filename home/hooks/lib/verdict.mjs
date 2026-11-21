@@ -1,7 +1,9 @@
 // Shared wording for guard reasons: a destructive rule's reason starts with DESTRUCTIVE_PREFIX so its dialog stands out, a literal secret's
 // reason comes from secretReason, and a reason only the backstop parser found ends with BACKSTOP_MARK.
 // Exports: DESTRUCTIVE_PREFIX, destructive(what) -> reason, MAX_COMMAND_CHARS, BACKSTOP_MARK, secretReason(kind), isSecretOnlyReason(reason),
-// secretKindOf(reason) -> kind | undefined.
+// secretKindOf(reason) -> kind | undefined; shown(target) -> a path as a reason repeats it (moved here from lib/rm-paths.mjs, which re-exports it).
+import { QUOTED_MARK } from './shell-words.mjs';
+
 export const DESTRUCTIVE_PREFIX = 'DESTRUCTIVE: ';
 export const destructive = (what) => `${DESTRUCTIVE_PREFIX}${what}`;
 /** A command longer than this skips the fine-grained parsing and asks ("command too long to check"). */
@@ -32,3 +34,18 @@ export const isSecretOnlyReason = (reason) => SECRET_ONLY_REASONS.test(reason);
  * @returns {string | undefined} the secret kind when it is a literal-secret reason (marked or not), else undefined
  */
 export const secretKindOf = (reason) => ONE_SECRET_REASON.exec(reason)?.[1];
+
+const MAX_SHOWN_TARGET_CHARS = 120; // how much of a target a reason repeats: the reason goes into the dialog and back to the model
+const LINE_BREAKS = /[\r\n]+/g;
+const LINE_BREAK_MARK = '⏎'; // a raw line break in a target would split the reason in the CLI prompt and in the text the model reads
+
+/**
+ * A target as a reason shows it: without the quote mark, line breaks made visible, and only its start when it is long (the agent wrote
+ * it; it is not ours to repeat in full).
+ * @param {string} target the path as written
+ * @returns {string} the text a reason may hold
+ */
+export function shown(target) {
+  const text = target.replace(QUOTED_MARK, '').replace(LINE_BREAKS, LINE_BREAK_MARK);
+  return text.length > MAX_SHOWN_TARGET_CHARS ? `${text.slice(0, MAX_SHOWN_TARGET_CHARS)}… (${text.length} characters)` : text;
+}

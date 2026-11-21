@@ -73,6 +73,12 @@ const ASK_CLASS_PATTERNS = [
   ['rm -r with a target too long to check', /^DESTRUCTIVE: rm (?:-r|that may be recursive \([^)]*\)) with a target too long to check \(/],
   ['rm -r outside the project', /^DESTRUCTIVE: rm (?:-r|that may be recursive \([^)]*\)) outside the project \(/],
   ['rm -r that empties a whole folder', /^DESTRUCTIVE: rm (?:-r|that may be recursive \([^)]*\)) that empties a whole folder \(/],
+  // round 9 (lib/other-deleters.mjs, lib/find-delete.mjs, lib/guard-state-write.mjs)
+  ['find deleting a whole folder', /^DESTRUCTIVE: find deleting that empties a whole folder \(/],
+  ['another deleter outside the project or on a whole folder', /^DESTRUCTIVE: (?:rimraf|rsync --delete|\S+ Remove-Item -Recurse|\S+ rd \/s|\S+ code deleting a tree) (?:outside the project|that empties a whole folder|with a target too long|with a brace expansion) /],
+  ['another deleter with targets it cannot read', /^DESTRUCTIVE: (?:\S+ code deletes a folder tree at a path the guard cannot read|.+ with targets the guard cannot read); check/],
+  ['a recursive delete through a link made in the line', /^DESTRUCTIVE: a recursive delete through a link made in the same line \(/],
+  ["a change to the guard's own files", /^changes the guard's own files \(/],
   ['HUSKY=0', /^HUSKY=0 skips the git hooks$/],
   ['git -c core.hooksPath', /^git -c core\.hooksPath bypasses the git hooks$/],
   ['git -c alias', /^git -c alias\.\* defines a command for this call/],

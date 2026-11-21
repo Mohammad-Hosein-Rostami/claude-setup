@@ -71,8 +71,8 @@ const ASK_UNKNOWN_DIRECTORY_ABSOLUTE = [
   `cd "$SOMEWHERE" && ${RM} -rf ${PROJECT}/src ${PROJECT}/./*`,
 ];
 const SILENT_UNKNOWN_DIRECTORY = [`cd "$SOMEWHERE" && ${RM} -rf ${PROJECT}/src/*`, `cd "$SOMEWHERE" && ${RM} -rf ${PROJECT}/dist`, `popd; ${RM} -rf /tmp/x/*`];
-const ASK_IN_SUBFOLDER = [`${RM} -rf *`, `${RM} -rf .*`, `${RM} -rf .`, `${RM} -rf ./`, `${RM} -rf "$PWD"`, `${RM} -rf ../*`];
-const ALREADY_ASKED = [`${RM} -rf /`, `${RM} -rf /*`, `${RM} -rf ~`, `${RM} -rf ~/*`, `${RM} -rf .`, `cd ~ && ${RM} -rf *`];
+const ASK_IN_SUBFOLDER = [`${RM} -rf *`, `${RM} -rf .*`, `${RM} -rf "$PWD"`, `${RM} -rf ../*`];
+const ALREADY_ASKED = [`${RM} -rf /`, `${RM} -rf /*`, `${RM} -rf ~`, `${RM} -rf ~/*`, `cd ~ && ${RM} -rf *`];
 // every bracket form is a glob: POSIX classes, a `]` in first place, negation, equivalence classes and collating symbols
 const ASK_BRACKET_FORMS = [
   `${RM} -rf [[:alnum:]]*`,
@@ -113,7 +113,7 @@ const ASK_DOT_PARTS = [
   `${RM} -rf ././*/././.*`,
   `${RM} -rf ${PROJECT}/./*/./*`,
 ];
-const SILENT_DOT_PARTS = [`${RM} -rf src/./*`, `${RM} -rf ./src/./*/./*`, `${RM} -rf */./dist`, `${RM} -rf src/.`, `${RM} -rf ./src/./`];
+const SILENT_DOT_PARTS = [`${RM} -rf src/./*`, `${RM} -rf ./src/./*/./*`, `${RM} -rf */./dist`, `${RM} -rf src/.`, `${RM} -rf ./src/./`, `${RM} -rf .`, `${RM} -rf ./`]; // `.` and `./`: rm refuses them (r9 F15)
 // the shared temp roots hold other sessions' work (every scratchpad): a bare glob of one empties them all
 const ASK_TEMP_ROOT = [`${RM} -rf /tmp/*`, `${RM} -rf /private/tmp/*`, `${RM} -rf "$TMPDIR"/*`, `${RM} -rf $TMPDIR/.*`, `${RM} -rf /tmp/**/*`, `${RM} -rf /tmp/./*`];
 const SILENT = [

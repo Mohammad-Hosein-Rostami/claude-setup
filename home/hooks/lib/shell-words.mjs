@@ -230,3 +230,20 @@ export function lex(command) {
 export function segments(command) {
   return tokenize(command).segs;
 }
+
+const REDIRECT_START = /^(\d*>>?|\d*<|&>>?)/;
+const REDIRECT_OPERATOR_ONLY = /^(\d*>>?|\d*<{1,2}|&>>?)$/;
+
+/**
+ * Drops redirections (`2>&1`, `> file`) so they are not mistaken for targets (moved here from lib/rm-paths.mjs, which re-exports it).
+ * @param {string[]} args a command's words
+ * @returns {string[]} the words without each redirection and its target
+ */
+export function withoutRedirects(args) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    if (!REDIRECT_START.test(args[i])) out.push(args[i]);
+    else if (REDIRECT_OPERATOR_ONLY.test(args[i])) i++; // the operator stands alone: its target is the next word
+  }
+  return out;
+}
