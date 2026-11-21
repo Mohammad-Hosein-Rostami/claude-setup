@@ -25,7 +25,7 @@ const MAX_GIT_FILE_BYTES = 4096;
 
 const entryOf = (path) => { try { return lstatSync(path, { throwIfNoEntry: false }) ?? null; } catch { return null; } };
 const firstLine = (path) => { try { return readPlainFile(path, MAX_GIT_FILE_BYTES).split('\n')[0].trim(); } catch { return ''; } };
-const REMOTE_PATH = /^(\\\\|\/\/)/; // UNC `\\host\share` or `//host/share`: a lookup there would reach another host
+const REMOTE_PATH = /^[\\/]{2}/; // UNC `\\host\share`, `//host/share` and the mixed `/\host`, `\/host` (review SEC-8): a lookup there would reach another host
 
 /** The shared git folder of the repository holding `folder` (fs only), or null outside a repository. */
 function commonDirOf(folder) {

@@ -18,9 +18,10 @@ const BOLD = '\u001b[1m';
 const RESET = '\u001b[0m';
 const UNICODE = { done: '█', left: '░', over: '▓', now: '▒', sep: ' · ', bar: ' │ ', cut: '…' };
 const ASCII = { done: '#', left: '.', over: '!', now: '>', sep: ' - ', bar: ' | ', cut: '...' };
-// C0 and C1 controls, and the invisible format characters (bidi overrides and isolates, zero-width marks, line and paragraph
-// separators) that would reorder or hide neighbouring words of a row (review SEC-4)
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]|\p{Cf}/gu;
+// C0 and C1 controls, line and paragraph separators, and the invisible format characters (bidi marks, overrides and isolates,
+// zero-width space, word joiner, BOM) that would reorder or hide neighbouring words of a row (review SEC-4); ZWNJ (U+200C) and
+// ZWJ (U+200D) stay, since Persian words and emoji need them and they move nothing (review SEC-9)
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]|[\p{Cf}--[\u200c\u200d]]/gv;
 const NOT_ASCII = /[^ -~]/g;
 const WORD_BOUNDARY = /[\s\-/_]/;
 const UTF8_LOCALE = /utf-?8/i;
