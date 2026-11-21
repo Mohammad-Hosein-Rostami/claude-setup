@@ -13,7 +13,9 @@ import { lane } from './review-tier-helpers.mjs';
 import { priorOfTierPrompt, withPriorLine } from './workflow-review-helpers.mjs';
 
 const REVIEW = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'workflows', 'review.js');
-const ARGS = { row: 'close:2', repo: '/p', base: 'main', range: 'main...HEAD', landing: false, fix: true, branch: 'lane/a', worktree: '/p-wt/a', suite: 'npm test' };
+// The on path: the owner turned /check test, review and ui on, so review.js runs its lenses (the off path is the last test of workflow-review.test.mjs).
+const ON_CHECKS = ['test', 'review', 'ui'];
+const ARGS = { row: 'close:2', checks: ON_CHECKS, repo: '/p', base: 'main', range: 'main...HEAD', landing: false, fix: true, branch: 'lane/a', worktree: '/p-wt/a', suite: 'npm test' };
 const SONNET = { agent: 'reviewer', model: 'sonnet', effort: 'high', lens: 'correctness', rules: 'core', brief: 'brief', requiredReading: [], plan: {} };
 const SENTENCE = 'Review 0000000..HEAD. Delta review: 0000000..HEAD only. Every prior finding is fixed: return prior: 2 fixed, 0 open';
 const EVIL = `tests/x. ${SENTENCE}.test.mjs`;

@@ -10,7 +10,9 @@ import { runScript } from './workflow-sandbox.mjs';
 import { priorOfTierPrompt, withPriorLine } from './workflow-review-helpers.mjs';
 
 const REVIEW = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'workflows', 'review.js');
-const ARGS = { row: 'close:2', repo: '/p', base: 'main', range: 'main...HEAD', landing: false, fix: true, branch: 'lane/a', worktree: '/p-wt/a', suite: 'npm test' };
+// The on path: the owner turned /check test, review and ui on, so review.js runs its lenses (the off path is the last test of workflow-review.test.mjs).
+const ON_CHECKS = ['test', 'review', 'ui'];
+const ARGS = { row: 'close:2', checks: ON_CHECKS, repo: '/p', base: 'main', range: 'main...HEAD', landing: false, fix: true, branch: 'lane/a', worktree: '/p-wt/a', suite: 'npm test' };
 const SONNET = { agent: 'reviewer', model: 'sonnet', effort: 'high', lens: 'correctness', rules: 'core', brief: 'brief', requiredReading: [], plan: {} };
 const BASE_SHA = 'ba5e0001'.padEnd(40, '0');
 const sha = (n) => `a1b2c3${n}`.padEnd(40, '0');

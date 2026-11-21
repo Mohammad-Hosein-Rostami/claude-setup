@@ -18,7 +18,9 @@ const RISK = lens('risk', 'opus', 'max');
 const AUDITOR = lens('audit', 'opus', 'max', 'security-auditor');
 const finding = (id) => ({ id, severity: 'blocking', file: 'a.mjs', line: 3, problem: `problem ${id}`, fix: 'fix it', security: false });
 const clean = { findings: [], verified: 'read it' };
-const ARGS = { row: 'close:2', repo: '/p', base: 'main', range: 'main...HEAD', landing: true, fix: true, branch: 'lane/a', worktree: '/p-wt/a', suite: 'npm test', waiverAt: TIP };
+// The on path: the owner turned /check test, review and ui on, so review.js runs its lenses (the off path is the last test of workflow-review.test.mjs).
+const ON_CHECKS = ['test', 'review', 'ui'];
+const ARGS = { row: 'close:2', checks: ON_CHECKS, repo: '/p', base: 'main', range: 'main...HEAD', landing: true, fix: true, branch: 'lane/a', worktree: '/p-wt/a', suite: 'npm test', waiverAt: TIP };
 const AUDIT_ARGS = { ...ARGS, waiverAt: undefined, landing: false, fix: false, range: 'main...HEAD', worktree: '/scratch/audit-1', audit: { base: BASE_SHA, tip: TIP } };
 
 /** A review-tier JSON of a tier-1 non-gate landing: the full set, and the waiver's two halves. */

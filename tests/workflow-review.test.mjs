@@ -10,7 +10,9 @@ import { priorOfTierPrompt, withPriorLine } from './workflow-review-helpers.mjs'
 
 const REVIEW = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'workflows', 'review.js');
 const META = readMeta(readFileSync(REVIEW, 'utf8')).meta;
-const ARGS = { row: 'close:2', repo: '/p', base: 'main', range: 'main...HEAD', landing: false, fix: true, branch: 'lane/a', worktree: '/p-wt/a', suite: 'npm test' };
+// The on path: the owner turned /check test, review and ui on, so review.js runs its lenses (the off path is the last test of this file).
+const ON_CHECKS = ['test', 'review', 'ui'];
+const ARGS = { row: 'close:2', checks: ON_CHECKS, repo: '/p', base: 'main', range: 'main...HEAD', landing: false, fix: true, branch: 'lane/a', worktree: '/p-wt/a', suite: 'npm test' };
 const SONNET = { agent: 'reviewer', model: 'sonnet', effort: 'high', lens: 'correctness', rules: 'core', brief: 'brief', requiredReading: [], plan: {} };
 const OPUS = { agent: 'reviewer', model: 'opus', effort: 'max', lens: 'risk', rules: 'core', brief: 'brief', requiredReading: [], plan: {} };
 const finding = (id, extra = {}) => ({ id, severity: 'blocking', file: 'a.mjs', line: 3, problem: `problem ${id}`, fix: 'fix it', security: false, ...extra });
@@ -448,4 +450,19 @@ test('restart: the review worktree a killed run left at the same path is removed
   const run = await runScript(REVIEW, ARGS, { replies: w.replies });
   const tier = run.calls.find((call) => call.label === 'close:2:tier');
   assert.match(tier.prompt, /already exists, a killed run left it.*worktree remove --force.*worktree prune/s);
+});
+
+test('off path: without the review check nothing starts and the caller is told "not checked"', async () => {
+  const noChecks = { ...ARGS };
+  delete noChecks.checks;
+  for (const checks of [undefined, [], ['test', 'ui'], 'review']) {
+    const args = checks === undefined ? noChecks : { ...ARGS, checks };
+    const w = world({ tiers: [tierOf(SONNET)], lens: { correctness: () => ({ findings: [finding('X')], verified: 'read it' }) } });
+    const run = await runScript(REVIEW, args, { replies: w.replies });
+    assert.equal(run.error, null);
+    assert.equal(run.result.status, 'not-checked', `checks ${JSON.stringify(checks)}`);
+    assert.match(run.result.text, /^not checked: review is off/);
+    assert.deepEqual(run.started, [], 'no agent starts: no tier, lens, verifier or fix');
+    assert.deepEqual(run.result.findings, []);
+  }
 });

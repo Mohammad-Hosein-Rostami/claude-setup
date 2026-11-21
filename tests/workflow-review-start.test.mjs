@@ -15,7 +15,9 @@ const WORKFLOWS = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'w
 const BUILD_CHILDREN = { implement: join(WORKFLOWS, 'implement.js'), join: join(WORKFLOWS, 'join.js') };
 const [REVIEW, BUILD] = [join(WORKFLOWS, 'review.js'), join(WORKFLOWS, 'build.js')];
 const TOOL = 'node ~/.claude/tools/review-tier/review-tier.mjs';
-const ARGS = { row: 'close:2', repo: '/p', base: 'main', range: 'main...HEAD', landing: false, fix: true, branch: 'lane/a', worktree: '/p-wt/a', suite: 'npm test' };
+// The on path: the owner turned /check test, review and ui on, so review.js runs its lenses (the off path is the last test of workflow-review.test.mjs).
+const ON_CHECKS = ['test', 'review', 'ui'];
+const ARGS = { row: 'close:2', checks: ON_CHECKS, repo: '/p', base: 'main', range: 'main...HEAD', landing: false, fix: true, branch: 'lane/a', worktree: '/p-wt/a', suite: 'npm test' };
 const SONNET = { agent: 'reviewer', model: 'sonnet', effort: 'high', lens: 'correctness', rules: 'core', brief: 'brief', requiredReading: [], plan: {} };
 const hex = (prefix) => prefix.padEnd(40, '0'); // a git sha is hex: the scripts check the shape before one goes into a command
 const sha = (n) => hex(`a1b2c3${n}`);
