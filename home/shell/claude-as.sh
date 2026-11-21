@@ -4,7 +4,7 @@
 #   claude-as          pick from a numbered list
 #   claude-as --once   use a pasted token here without storing it (CLAUDE_ACCOUNT is then "-")
 #   claude-as --off    this terminal has no account
-#   claude-account ... list | remove <name> | check [name] | default <name>|none | plan <name> <plan> | credits-off <name>
+#   claude-account ... list | remove <name> | check [name] | default [<name>|none] | plan <name> <plan> | credits-off <name>
 # Defines: claude-as, claude-account, and helpers named _claude_as_*.
 # How: only the shell can change its own environment, so this is a function. It exports CLAUDE_CODE_OAUTH_TOKEN and the
 # non-secret name CLAUDE_ACCOUNT in this shell; closing the terminal drops both. The token comes from the account tool
@@ -174,18 +174,15 @@ claude-as() {
 }
 
 # At the start of an interactive shell that has no token yet: use the default account when the owner set one
-# (claude-account default <name>), else say how to pick. The default is found in accounts.json by the exact line the
-# account tool writes (`  "default": "<name>",`), so a new terminal does not start node when there is none.
+# (claude-account default <name>), else say how to pick. Only when accounts.json is there is it read, and then by the
+# tool (`claude-account default`), with the tool's own file checks: no link, FIFO, looser mode, huge file or a default
+# that is not a name is followed or waited on (security review 1, S5). With no file, a new terminal starts no node.
 _claude_as_startup() {
   if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || [ -n "${CLAUDECODE:-}" ]; then return 0; fi
-  local line name='' prefix='  "default": "'
+  local name=''
   local file="${CLAUDE_ACCOUNT_DIR:-$HOME/.config/claude-setup/accounts}/accounts.json"
-  if [ -r "$file" ]; then
-    while IFS= read -r line; do
-      case $line in
-        "$prefix"*'",') name=${line#"$prefix"}; name=${name%'",'} ;;
-      esac
-    done < "$file"
+  if [ -e "$file" ] || [ -L "$file" ]; then
+    name=$(claude-account default) || name=''
   fi
   if [ -n "$name" ]; then
     claude-as "$name"

@@ -19,12 +19,19 @@ Source `home/shell/claude-as.sh` from your shell start-up file (zsh or bash; `cl
 | `claude-account list` | per account: used in this terminal or not, date added, days left of its one year, valid / revoked (last check), plan, usage credits |
 | `claude-account check [name]` | one tiny Haiku call per account; says `valid`, `revoked` or `check failed: <class>` |
 | `claude-account remove <name>` | removes the token and the account's fields |
-| `claude-account default <name>\|none` | the account a new terminal starts with (none by default; owner, 2026-11-19: no default) |
+| `claude-account default [<name>\|none]` | the account a new terminal starts with (none by default; owner, 2026-11-19: no default); with no name it prints the default. `none` is reserved, never an account name |
 | `claude-account plan <name> pro\|max\|ultra`, `claude-account credits-off <name>` | record your own answers; no token field names the plan (probe ACC-3) |
 
 Run `claude-as` yourself in a normal terminal, not through Claude (not with `!`, not in chat): a paste typed there would
 enter a transcript. The function refuses to prompt without a terminal, and the tool refuses to print a token inside a
-Claude session.
+Claude session. Two commands print a token, both only to a pipe and never inside a Claude session: `token <name>` and
+`once` (which hands an unsaved paste back to `claude-as --once`).
+
+Adding a name that is stored already says `replaced` (the plan and credits-off answers stay; the added date stays when
+the same token is pasted again). A check that fails for another reason than revoked (a limit, a timeout, no network)
+still stores the token and says `added account <name>, NOT verified (<class>); run claude-account check <name> later`. Ctrl-C at
+the hidden prompt or during the check ends `claude-as` with echo on and nothing stored. Every change of accounts.json
+holds the lock file `accounts.json.lock` in its folder, so two terminals that add at once keep both accounts.
 
 A new terminal has no account unless you set a default; it prints one line, `pick an account: claude-as <name>`.
 
@@ -63,7 +70,8 @@ or a command line, or committing it, is not.
   `CLAUDE_ACCOUNT_STORE=file` forces the file store (the tests use it). Never in the repo, never in `~/.claude`, never
   synced: each machine gets its accounts from you.
 - **Fields that are not secret** (`lib/registry.mjs`): `~/.config/claude-setup/accounts/accounts.json` (0600) on every
-  system: date added, plan, credits-off, last check, the default. `CLAUDE_ACCOUNT_DIR` moves the folder (tests).
+  system: date added, plan, credits-off, last check, the default. `CLAUDE_ACCOUNT_DIR` moves the folder (tests). The
+  shell's start-up reads the default through `claude-account default`, so the tool's file checks apply there too.
 - **Names and tokens** (`lib/names.mjs`). A name matches `^[a-z0-9][a-z0-9_-]{0,31}$`; a token is one line
   `sk-ant-...` with no space, quote or newline. Both are checked before anything reaches the store, a path or the
   `security` command text.
@@ -83,7 +91,13 @@ or a command line, or committing it, is not.
 
 Limits are per account. After a usage limit: switch with `claude-as <name>` and continue the session with
 `claude --resume` (pick it from the list; not `--continue`, which may pick another terminal's session). Accounts share
-one history, so resume, recall and memory keep working.
+one history, so resume, recall and memory keep working. Three conditions (`research3/ALIGN-2.md` A060):
+
+- A login change ends Claude Code's own wait for the limit reset, and the wait does not restart on resume
+  (interactive-mode docs; `research3/changes.md` L1).
+- A workflow paused at a limit stays paused after a login until the earlier login returns (changelog 2.1.327): relaunch
+  it by hand in its own session on the new account, or let it wait for the old one.
+- A workflow relaunches only in the session that owns it (`research3/cli.md` F33).
 
 ## Not verified
 
@@ -94,7 +108,6 @@ one history, so resume, recall and memory keep working.
 - **A locked Keychain** (an ssh session; probe ACC-6): the store then reports "the Keychain is locked" (exit 36, from
   the docs). Not run; the PC is reached at the end of the build.
 - **macOS 15**: `security -i` was probed on macOS 26.6.2 only (ACC-4).
-- **Ctrl-C at the hidden prompt**: a trap restores the terminal's echo; no test sends the signal.
 - **A token on a file descriptor** (`CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, probe ACC-7): `claude` does read a
   token from a descriptor, and hooks do not get it. This tool still exports the variable; moving `claude-as` to a
   `claude` wrapper that passes the token on a descriptor (so children of the terminal no longer inherit it) is a
