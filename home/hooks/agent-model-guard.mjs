@@ -23,6 +23,10 @@
 // Brief lines (lib/agent-brief.mjs), after the gate and on top of the routing: a line naming the project's STATUS.md goes before a brief
 // whose project has `## Standing rules`, and an architect or Plan brief gets the Reuse inventory / Contract facts line after it. Fixed
 // text plus a path only; any failure leaves the brief as it is.
+// Writer cap (road-cap 14b): a writer launch while MAX_RUNNING_WRITERS (5) of this session's writers run is denied every time, also
+// when sent again (the owner's hard cap, an exception to deny-once); an agent file whose disallowedTools names Write and Edit is no writer.
+// The hook counts plain agents only (workflow agent() writers are capped by build.js); whether it fires for an Agent call inside a
+// subagent is probe U10 (not run): until then such a launch may go uncounted.
 // Writer isolation gate (after the UI gate): a writing agent (lib/writer-agents.mjs isWritingAgent: implementer, ui-implementer,
 // test-writer, general-purpose, claude, or an agent file whose tools include Write/Edit; scout, runner, reviewer, security-auditor, Explore,
 // Plan and architect never) launched while another plain writing agent of this session still runs must carry `isolation: "worktree"` or a
@@ -62,6 +66,8 @@ const MIN_REASON_CHARS = 15; // what ui-coverage asks of every reason
 const MAX_PATH_CHARS = 4096; // PATH_MAX on Linux: a longer value is not looked up
 export const MAX_MATRIX_BYTES = 2 * 1024 * 1024; // 2 MB: far above a real matrix (a few KB); bounds the memory and time of one read
 const MAX_QUOTED_CHARS = 200; // how much of a named path the deny text quotes
+const MAX_RUNNING_WRITERS = 5; // the owner's hard cap of writers at once (road-cap 14b): the sixth is denied every time, not once
+const WRITER_CAP_TEXT = `Not started: ${MAX_RUNNING_WRITERS} writer agents of this session are running, the owner's cap. Wait for one to finish (its result arrives as a notification), then launch this one. This is denied every time, not once.`
 const HOME_PREFIX = /^~(?=$|[\\/])/; // `~` and `~/...`; `~user` is left as it is
 // A UNC or device path (\\host\share, //host/share, \\.\pipe\x): on Windows a lookup reaches the network (and may send the user's
 // NTLM credentials) or a pipe, so a value written like that is never looked up
@@ -206,14 +212,16 @@ export async function writerIsolationDeny(input, env = process.env) {
     const flags = { isolated: isolation === WORKTREE_ISOLATION, readOnly: isReadOnlyBrief(prompt) };
     const plain = !flags.isolated && !flags.readOnly;
     const about = { cwd: input.cwd, description: input.tool_input?.description, prompt }; // the open launch record (r9-resume)
-    if (recordWriterLaunch(session, type, env, { unlessRunning: plain, ...flags, about }) !== 'running') return '';
+    const counted = recordWriterLaunch(session, type, env, { unlessRunning: plain, ...flags, about, cap: MAX_RUNNING_WRITERS });
+    if (counted === 'full') return denyOutput(WRITER_CAP_TEXT);
+    if (counted !== 'running') return '';
     const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
     const { adviceOnce } = await import('./lib/bounce-once.mjs');
     const call = { command: `${type}: isolation ${String(isolation)}: ${String(prompt)}`, cwd, input, hook: 'agent-model-guard', tool: 'Agent' };
     const recorded = adviceOnce([PARALLEL_WRITER_ADVICE], { ...call, logged: { type, class: 'parallel writer without isolation' } }, env);
     if (recorded !== '') return denyOutput([`Not started: ${PARALLEL_WRITER_ADVICE}`, SEND_AGAIN].join('\n'));
-    recordWriterLaunch(session, type, env, { about }); // the identical retry runs: it is a running writer now
-    return '';
+    // the identical retry runs: it is a running writer now, unless the cap filled meanwhile
+    return recordWriterLaunch(session, type, env, { about, cap: MAX_RUNNING_WRITERS }) === 'full' ? denyOutput(WRITER_CAP_TEXT) : '';
   } catch {
     return ''; // a quality rule, not a safety rule: any failure lets the call run
   }

@@ -75,7 +75,8 @@ function readHead(path, maxBytes) {
  * @param {unknown} type the agent type
  * @param {Record<string, string | undefined>} env HOME / USERPROFILE and CLAUDE_PROJECT_DIR
  * @returns {boolean | undefined} true when its `tools:` line names Write/Edit/MultiEdit/NotebookEdit or is missing (all tools), false
- *   when it names none of them, undefined when there is no such file or the type is no file name
+ *   when it names none of them or its `disallowedTools:` line names both Write and Edit (road-cap 14a: visual-qa takes no writer slot),
+ *   undefined when there is no such file or the type is no file name
  */
 export function agentFileWrites(type, env) {
   if (typeof type !== 'string' || !AGENT_TYPE.test(type)) return undefined;
@@ -83,6 +84,8 @@ export function agentFileWrites(type, env) {
   const folders = [env.CLAUDE_PROJECT_DIR, home].filter(Boolean).map((root) => join(root, '.claude', 'agents'));
   const text = folders.map((folder) => readHead(join(folder, `${type}.md`), AGENT_FILE_BYTES)).find((found) => found !== null);
   if (text === undefined) return undefined;
+  const denied = text.match(/^disallowedTools:(.*)$/m);
+  if (denied && /\bWrite\b/.test(denied[1]) && /\bEdit\b/.test(denied[1])) return false;
   const tools = text.match(/^tools:(.*)$/m);
   return !tools || WRITING_TOOLS.test(tools[1]);
 }
@@ -174,16 +177,18 @@ const newLaunch = (type, at, { isolated, readOnly }) => ({
  * @param {{unlessRunning?: boolean, isolated?: boolean, readOnly?: boolean, about?: {cwd?: unknown, description?: unknown, prompt?: unknown}}} [options]
  *   unlessRunning: record nothing when another writer with neither flag still runs; isolated / readOnly: the flags this launch is recorded
  *   with; about: the call's cwd, description and brief, kept (cwd, description, the row the brief names) in its open launch record
- * @returns {'recorded' | 'running' | undefined} 'running' when unlessRunning found a running plain writer (nothing recorded); undefined
+ * @returns {'recorded' | 'running' | 'full' | undefined} 'full' when `cap` writers of the session already run (road-cap: nothing recorded);
+ *   'running' when unlessRunning found a running plain writer (nothing recorded); undefined
  *   when the store is unusable, still locked or the write failed
  */
-export function recordWriterLaunch(session, type, env, { unlessRunning = false, isolated = false, readOnly = false, about = undefined } = {}) {
+export function recordWriterLaunch(session, type, env, { unlessRunning = false, isolated = false, readOnly = false, about = undefined, cap = undefined } = {}) {
   const dir = writersDir(env);
   return withSessionLock(dir, session, () => {
     const now = Date.now();
     const text = readSessionFile(dir, session, MAX_STORE_BYTES);
     if (text === undefined) return undefined;
     const record = parseRecord(text, now, session);
+    if (cap !== undefined && record.launches.length >= cap) return 'full';
     if (unlessRunning && record.launches.some(isPlainLaunch)) return 'running';
     const launches = [...record.launches, newLaunch(type, now, { isolated, readOnly })];
     const open = addOpen(record.open, { type: typeOf(type), at: now, ...launchAbout(about), ...(isolated === true ? { isolated: true } : {}) }, now);
