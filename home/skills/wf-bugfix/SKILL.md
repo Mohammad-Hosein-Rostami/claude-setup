@@ -5,7 +5,7 @@ when_to_use: A bug that survived one fix attempt or needs parallel hypotheses an
 argument-hint: <symptom, repro command if known>
 ---
 
-Use this for a bug that survived one fix or needs parallel hypotheses (rule in CLAUDE.md, "Inline, agent or workflow"); once
+Use this for a bug that survived one fix or needs parallel hypotheses (rule in lead.md, "Inline, agent or workflow"); once
 loaded, the job runs in this workflow, not in plain agents.
 Add the work row and its `close:` row to STATUS.md first (`status.mjs add`). Then call Workflow with
 `scriptPath` `${CLAUDE_SKILL_DIR}/../../workflows/bugfix.js` and `args`:

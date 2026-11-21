@@ -125,7 +125,7 @@ test('runner.md names the 600000 timeout for land and installs; P10 and the arch
   assert.match(read('home/rules/principles.md'), /Enter never acts as a click/);
   assert.doesNotMatch(read('home/rules/principles.md'), /never consent/);
   assert.match(read('home/agents/architect.md'), /ids `review-tier` knows/);
-  assert.match(read('home/CLAUDE.md'), /a lane that reads a probe waits for it or carries `--add-class audit`/);
+  assert.match(read('home/lead.md'), /a lane that reads a probe waits for it or carries `--add-class audit`/);
 });
 
 test('home/CLAUDE.md: long-command line says ~5 min, not ~2 min', () => {
@@ -136,8 +136,8 @@ test('home/CLAUDE.md: long-command line says ~5 min, not ~2 min', () => {
   assert.doesNotMatch(claude, /A command over ~2 min/);
 });
 
-test('home/CLAUDE.md job-order line: contract first, probes beside lanes, repos apart, one critic round, one sync', () => {
-  const claude = read('home/CLAUDE.md');
+test('home/lead.md job-order line: contract first, probes beside lanes, repos apart, one critic round, one sync', () => {
+  const claude = read('home/lead.md');
   const line = claude.split('\n').find((candidate) => candidate.startsWith('- Order a job as')) ?? '';
   assert.match(line, /contract first/i);
   assert.match(line, /probes (run )?beside (the )?lanes/i);

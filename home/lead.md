@@ -15,3 +15,36 @@ string (probe P6-11 owed). An edit needs a session restart. When the modes go (r
 - Brief in the six fields of the worker contract's template: acceptance checks, failure classes to self-test, defaults, "finish everything", the STATUS.md path, `ASK_QUEUE` for work over a few minutes.
 - Judge an agent by its diff and the runner's record, not by its report alone. Ask for concrete checks (a command, a test, a separate reviewer), not a general request to check its work.
 - Messaging a workflow agent is not documented: never rely on it; continue with a new stage or a fresh agent.
+
+## Job form and order
+- Inline, agent or workflow: decide by the job (owner, 2026-11-17: "i was wrong to start work flow for everything this must be decided smartly based on the job"). This is the one place the rule is stated; other files point here.
+  - Inline, no agent: lookups (`/quick` for a read-only one), reading code, running one command, a one-file or < ~30-line change. Before it lands that change still runs `review-tier` on its diff and the review set it prints (tier 1: the Sonnet lens; a risky class: its full set).
+  - One background agent (Agent tool): one job whose result is all the lead needs: one implementer lane, the review set of a single lane (`reviewer` and `security-auditor` as parallel agents when `review-tier` names both), one research question, one debug hypothesis set inside a running job, one bug fix that no fix has failed on yet.
+  - Always a workflow, whatever the size: landing (`land`) and machine sync (`sync-machines`). Landing's reviewed-tip check lives only in the `land` workflow.
+  - By the job, like everything else: the bugfix workflow (`bugfix`, `/wf-bugfix`) for a bug that survived one fix or needs parallel hypotheses; the git-cleanup workflow (`git-cleanup`, `/wf-git-cleanup`) for a tangle or several repos. Once a workflow skill is loaded, its job runs in that workflow, not in plain agents.
+  - Workflow (the `wf-*` skills: `/wf-build`, `/wf-review`, `/wf-land`, `/wf-bugfix`, `/wf-research`, `/wf-sync`, `/wf-git-cleanup`, `/wf-step`): 2+ lanes or writers in parallel, review panels with verifiers and fix rounds across lanes, research fan-out over several sources, a multi-stage job that must survive an exit (resume), or when the owner asks.
+  - Quality gates do not change with the form: `review-tier` still picks the review set, and the set runs as agents or as the `wf-review` workflow by this rule.
+- Order a job as: contract first (the architect's `files`, `principles` and `checkpoints` per lane), probes beside lanes (a probe never waits for the lanes; a lane that reads a probe waits for it or carries `--add-class audit`), independent repos as separate workflows, one critic round plus a delta check of the lines its fixes changed, sync once per job.
+- Send a design spec without Reuse inventory, Contract facts and Unconfirmed back to its author before briefing an implementer.
+- Give separable parts (i18n) their own lane. One scripted `runner` call measures every state. Reuse cached Figma pulls, diffs and the design system.
+- Size a delegated job to finish within about 120 tool calls; split a bigger one into stages with a commit between them. An agent that returns without its report is continued once ("commit, then report"), not restarted.
+- One task per session. Unrelated next task → tell the user to `/clear` (or start a new
+  session) *before* starting it. Long task → `/compact` at a natural seam.
+
+## Owner, STATUS and proof
+- Owner decisions (scope, money, irreversible, credentials, a product fact the repo lacks such as length, timer, role, copy, brand name or design system vs local, real trade-offs): ask with AskUserQuestion the moment they
+  come up while other work keeps running (see `ask-owner`). Start the background agent or workflow, then ask: running ones keep working while a question waits; ops that may ask (rm -r, push, ssh) run in a background agent or workflow agent. Technical choices: pick the default, say so in one line.
+- An owner correction, preference or constraint about how the work is done ("always", "keep", "from now on", "as we said", "is important", "remember", "don't", "why did you") goes into STATUS.md under `## Standing rules` the moment it is given, in the owner's words; every brief names that file; re-read it after a compaction or a resume. When STATUS.md is created, a session resumes or after a compaction, backfill it from the owner's own earlier messages (`node ~/.claude/tools/recall/recall.mjs --owner --session current`) before the next brief. Write each rule short, with the owner's key terms: never paste a whole message, and never copy anything that looks like a credential into STATUS.md.
+- Owner proof: every done or fixed claim in a stage update or a final-report row names, on the same line, one proof the owner can check in about 2 minutes (a gallery link, a diff image, the test line red before and green now); its `evidence:` points to it.
+- The no-`maxTurns` rule covers a project's own agent files too: where the SessionStart note lists a file with
+  `maxTurns` and gives the delete advice, delete that `maxTurns:` frontmatter line in its own commit (why in the
+  body), without asking, and say so in one line (owner's standing order; an exception to C18 and C36). Edit only a
+  regular file with one hard link whose real path lies in a `.claude/agents` folder of the session's git repository
+  (from the session folder up to the git root, subfolders included), never through a link and never a file in the
+  personal agents folder (`~/.claude/agents`). For a file the note marks "not read", "not checked" or "check by hand",
+  or does not list with `maxTurns`, edit nothing and tell the owner.
+
+## Reviews and landing
+- Before review: tools green; a bug fix shows its repro red before and green after on the build handed over; UI shows the ui-proof PASS; a behaviour change whose flow needs it ran on the real target (two clients, device, deployed URL). A reviewer, verifier or judge brief carries the spec, the checkpoints, the diff, the repo path and the proof record paths only: no implementer summary, no "tests pass" or "fixed", no other lens's findings in round 0. A brief to a plain `reviewer` or `security-auditor` also carries `REPORTS: <the job's reports folder>`; reports are named by the commit they judge (`review-<topic>-<sha8>.md`, `security-audit-<topic>-<sha8>.md`).
+- Review findings: merge duplicates; re-read the cited lines of each blocking, should-fix or disputed finding and judge it alone before fixing or dismissing it (security findings by a separate check, never dropped); fix blocking and should-fix ones, list the rest; re-check the lines of each blocking fix.
+- Land lanes one at a time by rebase and `git merge --ff-only`, then `git-tidy prune --apply` (C37).

@@ -5,7 +5,7 @@ when_to_use: After a landing on the setup repo, or when the owner asks to sync t
 argument-hint: <repo folder, base branch>
 ---
 
-Machine sync always runs this workflow, whatever the size (rule in CLAUDE.md, "Inline, agent or workflow").
+Machine sync always runs this workflow, whatever the size (rule in lead.md, "Inline, agent or workflow").
 Call Workflow with `scriptPath` `${CLAUDE_SKILL_DIR}/../../workflows/sync-machines.js` and `args` `{row, repo, base}` (add `tag: 'r9-phase-N'` to put the targets on a phase tag)
 (`repo` the setup checkout on this machine, `base` its base branch, usually `main`; `row` the STATUS.md row).
 It stops unless the base folder has no tracked changes, `git-tidy` is clean, the full suite has a PASS at the tip and, when review-tier ships `audit-log`, `audit-log gate` exits 0 for the tip (no open or failed post-land audit).

@@ -5,7 +5,7 @@ when_to_use: Review panels with verifiers and fix rounds across 2+ lanes, or the
 argument-hint: <branch or range>
 ---
 
-Use this when the job fits a workflow by the rule in CLAUDE.md ("Inline, agent or workflow"); a single lane or one review set is one background agent instead. First add and start this job's STATUS.md rows
+Use this when the job fits a workflow by the rule in the lead rules (lead.md, "Inline, agent or workflow"); a single lane or one review set is one background agent instead. First add and start this job's STATUS.md rows
 (`node ~/.claude/tools/status/status.mjs add|start`) so the progress line follows them; the script's agent labels start with the row ids you pass.
 
 Args to fill: `row`, `repo`, `base`, `range`, `landing` (true before a push or landing), `fix`, `branch`, `worktree`, `suite`; optional `tier`, `addClasses`, `laneClasses`, `deltaOf`, `laneStart`, `baseTips`, `priorFindings`, `initialFindings`, `waiverAt`, `principles`, `spec`, `checkpoints`, `records`, `audit`. `spec` (the lane spec's path), `checkpoints` (`{id, run, exit?, kind?}[]`) and `records` (proof record paths) go into every lens, verifier and judge brief as evidence; never pass the implementer's summary or a "tests pass" or "fixed" claim. With `deltaOf`, pass `laneStart` when the earlier result has one (its `laneStart`: the full sha the lane started from); pass `baseTips` only with base-branch tips you recorded yourself (full shas: the tip before the lane was built, the sha each of your own lands returned), never a tip read from the lane's repository now. Without them the lane start is read through `review-tier` and never moves.

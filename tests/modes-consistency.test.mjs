@@ -44,22 +44,22 @@ test('home/CLAUDE.md names Persian replies, the STATUS.md re-read and the Grep t
   assert.match(text, /Persian included/);
   assert.match(text, /`STATUS\.md` path/);
   assert.match(text, /Grep tool or `rg`/);
-  assert.match(text, /Git push[\s\S]*confirm dialog even in bypass mode[\s\S]*auto-allow after 2 min[\s\S]*literal password or token/);
+  assert.match(text, /Git push[\s\S]*confirm dialog even in bypass mode[\s\S]*goes ahead after 2 min unless the owner clicks Deny[\s\S]*literal password or token/);
 });
 
 test('ccm, docs/modes.md, home/CLAUDE.md and home/modes/_lead.md mention all five modes', () => {
   assert.equal(MODES.length, 5);
-  for (const file of ['home/bin/ccm', 'docs/modes.md', 'home/CLAUDE.md', 'home/modes/_lead.md']) {
+  for (const file of ['home/bin/ccm', 'docs/modes.md', 'home/modes/README.md', 'home/modes/_lead.md']) {
     const text = read(file);
     for (const mode of MODES) assert.ok(text.includes(mode), `${file} must mention ${mode}`);
   }
 });
 
-test('home/CLAUDE.md keeps the standing-rules, delegation-size and usage-limit bullets (L22)', () => {
-  const text = read('home/CLAUDE.md');
+test('home/lead.md keeps the standing-rules and delegation-size bullets, home/CLAUDE.md the usage-limit bullet (L22)', () => {
+  const text = read('home/lead.md');
   assert.match(text, /goes into STATUS\.md under `## Standing rules` the moment it is given, in the owner's words; every brief names that file; re-read it after a compaction or a resume\./);
   assert.match(text, /Size a delegated job to finish within about 120 tool calls; split a bigger one into stages with a commit between them\. An agent that returns without its report is continued once \("commit, then report"\), not restarted\./);
-  assert.match(text, /At a usage limit: read the reset time from the message, tell the owner that time, and schedule ONE wake a few minutes after it\. Never retry before the reset\./);
+  assert.match(read('home/CLAUDE.md'), /At a usage limit: read the reset time from the message, tell the owner that time, and never retry before the reset[\s\S]*schedule one wake a few minutes after the reset only where that does not reach/);
 });
 
 test('ui-coverage hand-over step gives ONE link to the visual overview', () => {
@@ -136,7 +136,7 @@ test('every gate is named in home/CLAUDE.md, which every session and agent loads
 
 test('accuracy rules live in the shared files', () => {
   const claude = read('home/CLAUDE.md');
-  assert.match(claude, /re-read the cited lines/);
+  assert.match(read('home/lead.md'), /re-read the cited lines/);
   assert.match(claude, /second independent source/);
   const lead = read('home/modes/_lead.md');
   for (const needle of ['`architect`, not Plan', '`opus` judges', 'never on accuracy', 'security-critical decision', 'with all it needs', '`security-auditor` `model: "opus", effort: "max"` for risky changes and the last review before push']) {
@@ -153,8 +153,8 @@ test('review agents report every blocking and should-fix finding, with no cap', 
 });
 
 // Round 6 (owner, 2026-11-17): the form of a job (inline, one agent, a workflow) is decided by the job, stated once in home/CLAUDE.md.
-test('home/CLAUDE.md states the inline / agent / workflow rule once; _lead.md and the wf-* skills point to it', () => {
-  const claude = read('home/CLAUDE.md');
+test('home/lead.md states the inline / agent / workflow rule once; _lead.md and the wf-* skills point to it', () => {
+  const claude = read('home/lead.md');
   const heading = '- Inline, agent or workflow: decide by the job';
   assert.equal(claude.split(heading).length, 2, 'stated exactly once');
   for (const tier of ['Inline, no agent:', 'One background agent (Agent tool):', 'Workflow (the `wf-*` skills:', 'Quality gates do not change with the form']) {
@@ -177,7 +177,7 @@ const ALWAYS_WORKFLOW = { land: 'wf-land', 'sync-machines': 'wf-sync' };
 const BY_THE_JOB = { bugfix: 'wf-bugfix', 'git-cleanup': 'wf-git-cleanup' };
 
 test('landing and machine sync always run their workflow, bugfix and git cleanup by the job, and no wf-land text sends a landing to an agent', () => {
-  const rule = read('home/CLAUDE.md').split('\n').find((line) => line.includes('Always a workflow, whatever the size')) ?? '';
+  const rule = read('home/lead.md').split('\n').find((line) => line.includes('Always a workflow, whatever the size')) ?? '';
   for (const [workflow, skill] of Object.entries(ALWAYS_WORKFLOW)) {
     assert.ok(rule.includes(`(\`${workflow}\`)`), `the routing rule names the ${workflow} workflow`);
     assert.ok(read(`home/workflows/${workflow}.js`).length > 0 && read(`home/skills/${skill}/SKILL.md`).includes(`${workflow}.js`), `${skill} runs ${workflow}.js`);
@@ -186,7 +186,7 @@ test('landing and machine sync always run their workflow, bugfix and git cleanup
   for (const skill of ['wf-land', 'wf-sync']) {
     assert.match(read(`home/skills/${skill}/SKILL.md`), /always runs this workflow/i, `${skill} says its job always runs this workflow`);
   }
-  const byTheJob = read('home/CLAUDE.md').split('\n').find((line) => line.includes('By the job, like everything else')) ?? '';
+  const byTheJob = read('home/lead.md').split('\n').find((line) => line.includes('By the job, like everything else')) ?? '';
   for (const [workflow, skill] of Object.entries(BY_THE_JOB)) {
     assert.ok(byTheJob.includes(`(\`${workflow}\``), `the by-the-job line names the ${workflow} workflow`);
     assert.ok(!rule.includes(`(\`${workflow}\`)`), `${workflow} is not in the always-a-workflow line`);

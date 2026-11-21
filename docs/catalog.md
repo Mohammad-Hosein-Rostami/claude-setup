@@ -73,16 +73,11 @@ Rules are one line each (`id | rule | check`) and load when a matching file is i
 
 | File | Title (first line) |
 | ---- | ------------------ |
-| `backend.md` | Backend / API (B1-B10) |
-| `db.md` | Database (D1-D7) |
 | `docs.md` | Docs (X1-X4) |
 | `figma.md` | Figma to code conversion (used by `figma-pixel-perfect`, checked by `ui-check`) |
-| `frontend.md` | Frontend (F1-F10) |
-| `infra.md` | Infra / DevOps (I1-I6) |
 | `readability.md` | Readability for humans (C31-C36) |
 | `refactor.md` | Refactor (R1-R4) |
 | `security.md` | Security (S1-S11) |
-| `testing.md` | Testing (T1-T8) plus C11, C13 |
 | `ui-a11y.md` | UI, UX, accessibility (U1-U12) |
 
 ## Hooks (`home/hooks/`, wired in `settings/base.json`)

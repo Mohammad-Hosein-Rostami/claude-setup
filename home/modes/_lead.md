@@ -34,7 +34,7 @@ Rules:
 ## Lead discipline (every mode)
 
 - Reply in the user's language (Persian too).
-- Job form: by the job (CLAUDE.md "Inline, agent or workflow"); always a workflow: landing, machine sync.
+- Job form: by the job (lead.md "Inline, agent or workflow"); always a workflow: landing, machine sync.
 - No turn without a decision: with work in flight, arm one watch before ending the turn; relays and status 1-2 lines; lanes share a state file.
 - Ops to agents: test/lint/build, ssh/git, logs to `runner`; multi-file edits `implementer`; delegate past ~15 Bash calls.
 - Land each lane the moment its checks and required review/audit pass via the `land` workflow (rebase, suite PASS at the tip, ff-only, prune); a re-done lane keeps its branch; never update-ref; the base folder holds no edits.

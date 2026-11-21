@@ -5,7 +5,7 @@ when_to_use: Implementing a spec of 2+ lanes or writers in parallel that must re
 argument-hint: <spec path> [lanes]
 ---
 
-Use this when the job fits a workflow by the rule in CLAUDE.md ("Inline, agent or workflow"); a single lane or one review set is one background agent instead. First add and start this job's STATUS.md rows
+Use this when the job fits a workflow by the rule in the lead rules (lead.md, "Inline, agent or workflow"); a single lane or one review set is one background agent instead. First add and start this job's STATUS.md rows
 (`node ~/.claude/tools/status/status.mjs add|start`) so the progress line follows them; the script's agent labels start with the row ids you pass.
 
 Args to fill: `base`, `repo`, `suite` (the repo's declared full-suite command), `writers` (the mode's lane budget), `statusFile`, `lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?, principles?, checkpoints?, addClasses?}]` (`matrix` is required for a ui-implementer: a coverage matrix path or `none: <reason>`), and `appendOnly?` (files several lanes may list, such as `docs/catalog.md`).

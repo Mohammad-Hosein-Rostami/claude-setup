@@ -5,7 +5,7 @@ when_to_use: The owner asks to clean git, or git-tidy reports findings, and the 
 argument-hint: <repo folders>
 ---
 
-Use this for a tangle or several repos (rule in CLAUDE.md, "Inline, agent or workflow"); once loaded, the job runs in this
+Use this for a tangle or several repos (rule in lead.md, "Inline, agent or workflow"); once loaded, the job runs in this
 workflow, not in plain agents.
 Call Workflow with `scriptPath` `${CLAUDE_SKILL_DIR}/../../workflows/git-cleanup.js` and `args` `{row, repos}`
 (`repos` an array of absolute repo folders; `row` the STATUS.md row).
