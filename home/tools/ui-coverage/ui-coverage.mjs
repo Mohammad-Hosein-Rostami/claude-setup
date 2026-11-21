@@ -9,6 +9,8 @@
 //        `{surface,state,locale,width,status,evidence}` records, or an object with a `results` array)
 //        ui-coverage.mjs scaffold <matrix.json> [--out states.json]     (states skeleton for every open cell; keeps an existing --out's entries)
 //        ui-coverage.mjs states                                         (prints the default states per control class)
+//        ui-coverage.mjs conditions [--project DIR] [--zoom N --pixel-ratio N --theme light|dark --data TEXT [--rtl fa,ar] [--schemes light,dark]]
+//        (records the owner's viewing conditions once per project; without value flags prints them)
 // Exit codes: 0 ok / matrix complete, 1 problems found, 2 usage or setup error (bad flag, unreadable or invalid JSON file).
 // Invariants: logic lives in lib/ (pure); this file only parses arguments, reads and writes files and prints. `check`
 // never writes; it resolves relative evidence and mountedAt paths from the matrix file's directory (or its `root`). `expand` refuses to write a structurally broken matrix (exit 1, problems on stderr).
@@ -18,7 +20,8 @@ import { askDir } from '../ask/lib/store.mjs';
 import { checkMatrix } from './lib/check.mjs';
 import { expandMatrix } from './lib/cells.mjs';
 import { readFramesFile } from './lib/frames.mjs';
-import { initMatrix, parseLocales, parseSurfaces, parseWidths } from './lib/init.mjs';
+import { conditionsFile, describeConditions, parseConditions, readConditions, writeConditions } from './lib/conditions.mjs';
+import { initMatrix, parseBreakpoints, parseLocales, parseRule, parseSchemes, parseSurfaces, parseWidths } from './lib/init.mjs';
 import { formatReport } from './lib/report.mjs';
 import { validateStructure } from './lib/shape.mjs';
 import { scaffoldStates } from './lib/scaffold.mjs';
@@ -28,7 +31,7 @@ const EXIT_PROBLEMS = 1;
 const EXIT_USAGE = 2;
 const JSON_INDENT = 2;
 const DEFAULT_STATES_FILE = 'states.json';
-const USAGE = 'usage: ui-coverage.mjs init <matrix.json> --locales en:ltr,fa:rtl --widths 320,768 --surfaces login,signup [--frames frames.json] | expand <matrix.json> [--out <file>] | scaffold <matrix.json> [--out <states.json>] | check <matrix.json> [--results <file>]... [--verbose] | states';
+const USAGE = 'usage: ui-coverage.mjs init <matrix.json> --locales en:ltr,fa:rtl --widths 320,768 --surfaces login,signup [--frames frames.json] [--rule strict] [--breakpoints 600,900] [--schemes light,dark] | conditions [--project DIR] [--zoom 100 --pixel-ratio 2 --theme light --data TEXT [--rtl fa] [--schemes light,dark]] | expand <matrix.json> [--out <file>] | scaffold <matrix.json> [--out <states.json>] | check <matrix.json> [--results <file>]... [--verbose] | states';
 
 class UsageError extends Error {}
 
@@ -79,14 +82,25 @@ function framesSourceOf(flag, matrixFile) {
   return { path: relative(dirname(resolve(matrixFile)), resolve(flag)), data };
 }
 
+// The optional init values; --widths may be left out when a frames file gives the widths.
+function initOptions(flags, framesSource) {
+  const given = (name) => flags[name][0];
+  return {
+    widths: given('--widths') === undefined && framesSource ? [] : parseWidths(given('--widths')),
+    rule: given('--rule') === undefined ? undefined : parseRule(given('--rule')),
+    breakpoints: given('--breakpoints') === undefined ? undefined : parseBreakpoints(given('--breakpoints')),
+    schemes: given('--schemes') === undefined ? undefined : parseSchemes(given('--schemes')),
+  };
+}
+
 function init(argv) {
-  const { flags, positional } = parseArgs(argv, ['--locales', '--widths', '--surfaces', '--frames']);
+  const { flags, positional } = parseArgs(argv, ['--locales', '--widths', '--surfaces', '--frames', '--rule', '--breakpoints', '--schemes']);
   const path = matrixPath(positional);
   if (existsSync(path)) throw new UsageError(`${path} already exists; init never overwrites a matrix (delete it or pick another name)`);
   const framesSource = framesSourceOf(flags['--frames'][0], path);
   let matrix;
   try {
-    matrix = initMatrix({ locales: parseLocales(flags['--locales'][0]), widths: parseWidths(flags['--widths'][0]), surfaces: parseSurfaces(flags['--surfaces'][0]), framesSource });
+    matrix = initMatrix({ locales: parseLocales(flags['--locales'][0]), surfaces: parseSurfaces(flags['--surfaces'][0]), framesSource, ...initOptions(flags, framesSource) });
   } catch (err) {
     if (err instanceof TypeError) throw new UsageError(err.message);
     throw err;
@@ -94,6 +108,8 @@ function init(argv) {
   writeFileSync(path, `${JSON.stringify(matrix, null, JSON_INDENT)}\n`);
   console.log(`${path}: skeleton with ${matrix.surfaces.length} surfaces and ${matrix.cells.length} todo cells; replace every TODO, list each surface's controls, run expand, then check`);
   console.log(framesSource ? `${framesSource.data.frames.length} frames listed from ${framesSource.path}: map each to cells or mark it notBuilt` : 'no Figma source: frame inventory off');
+  if (matrix.breakpoints) console.log(`widths ${matrix.widths.join(', ')}: breakpoints ${matrix.breakpoints.join(', ')}${flags['--breakpoints'].length === 0 ? ' (R118 default, UNCONFIRMED: pass --breakpoints with the theme breakpoints)' : ''}, each -1 and +0`);
+  console.log(`rule: ${matrix.rule ?? 'default'}`);
   return 0;
 }
 
@@ -173,9 +189,40 @@ function check(argv) {
   const path = matrixPath(positional);
   const matrix = readJson(path);
   const records = flags['--results'].flatMap(recordsFrom);
-  const result = checkMatrix(matrix, records, { baseDir: dirname(path), fileExists: isFile, readText, queueDir: realPath(askDir()), realPath });
+  const result = checkMatrix(matrix, records, { baseDir: dirname(path), fileExists: isFile, readText, queueDir: realPath(askDir()), realPath, conditions: projectConditions(dirname(resolve(path))) });
   console.log(formatReport(result, { verbose: flags['--verbose'].length > 0 }));
   return result.problems.length === 0 ? 0 : EXIT_PROBLEMS;
+}
+
+// The recorded conditions of a project; a broken file is a usage error, never a silent "not recorded".
+function projectConditions(dir) {
+  try {
+    return readConditions(dir);
+  } catch (err) {
+    if (err instanceof TypeError) throw new UsageError(err.message);
+    throw err;
+  }
+}
+
+// `conditions`: with no value flag print the project's recorded conditions; with them, record them (once per project).
+function conditions(argv) {
+  const { flags, positional } = parseArgs(argv, ['--project', '--zoom', '--pixel-ratio', '--theme', '--data', '--rtl', '--schemes']);
+  if (positional.length > 0) throw new UsageError(USAGE);
+  const dir = resolve(flags['--project'][0] ?? '.');
+  const raw = { zoom: flags['--zoom'][0], pixelRatio: flags['--pixel-ratio'][0], theme: flags['--theme'][0], data: flags['--data'][0], rtl: flags['--rtl'][0], schemes: flags['--schemes'][0] };
+  if (Object.values(raw).every((value) => value === undefined)) {
+    console.log(describeConditions(projectConditions(dir)));
+    return 0;
+  }
+  let parsed;
+  try {
+    parsed = parseConditions(raw);
+  } catch (err) {
+    if (err instanceof TypeError) throw new UsageError(err.message);
+    throw err;
+  }
+  console.log(`${writeConditions(dir, parsed)}: ${describeConditions(parsed)}`);
+  return 0;
 }
 
 function states(argv) {
@@ -184,7 +231,7 @@ function states(argv) {
   return 0;
 }
 
-const COMMANDS = { init, expand, scaffold, check, states };
+const COMMANDS = { init, expand, scaffold, check, conditions, states };
 
 const [command, ...rest] = process.argv.slice(2);
 if (!Object.hasOwn(COMMANDS, command ?? '')) fail(USAGE);

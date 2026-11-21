@@ -6,7 +6,8 @@
 //   default-state, state-widths, no-search, deliverable, duplicate-cell, bad-result, unmatched-result, missing-cell,
 //   unknown-cell, cell-status, todo, fail, no-reason, no-evidence, evidence-missing, na-locale, no-rtl-pass, and the Figma
 //   inventory codes of frames.mjs (frame-source, frame-missing, frame-unmapped, frame-cell, no-compare,
-//   figma-section-missing) and of accepted.mjs (owner-ref, accepted-node). A problem
+//   figma-section-missing) and of accepted.mjs (owner-ref, accepted-node), frames-missing, breakpoint-widths
+//   (shape.mjs figmaWidthRules), rtl-locale-missing and dark-scheme-missing (the project's recorded conditions). A problem
 //   about a cell carries `cell` (its label) and `cause` (what `report` groups by). A cell with status fail in the
 //   matrix and no result record is `handSet` (found by eye, listed on its own).
 import { isAbsolute, resolve } from 'node:path';
@@ -74,13 +75,30 @@ function fileProblems(matrix, cells, { baseDir, fileExists }) {
   return [...evidence, ...review];
 }
 
+/**
+ * G5/G6: what the project has (its recorded conditions: RTL locales, colour schemes) the matrix must cover.
+ * @param {object} matrix a structurally sound matrix
+ * @param {object|null} conditions the project's recorded conditions (lib/conditions.mjs); null = not recorded, nothing to demand
+ * @returns {{code:string,message:string}[]} rtl-locale-missing, dark-scheme-missing
+ */
+function projectProblems(matrix, conditions) {
+  if (!conditions) return [];
+  const rtl = new Set(matrix.locales.filter((locale) => locale.dir === 'rtl').map((locale) => locale.tag.toLowerCase()));
+  const missing = (conditions.rtlLocales ?? []).filter((tag) => !rtl.has(String(tag).toLowerCase()));
+  const found = missing.length > 0 ? [problem('rtl-locale-missing', `the project has the rtl locale(s) ${missing.join(', ')} but the matrix does not list them as rtl locales`)] : [];
+  const darkDemanded = (conditions.schemes ?? []).includes('dark');
+  if (darkDemanded && !(matrix.schemes ?? ['light']).includes('dark')) found.push(problem('dark-scheme-missing', 'the project has a dark scheme but the matrix schemes lack "dark": add it to schemes and run the dark states (states-file colorScheme dark)'));
+  return found;
+}
+
 const countBy = (cells, status) => cells.filter((cell) => cell.status === status).length;
 
 /**
  * Checks a matrix against its cells and result records.
  * @param {unknown} matrix the parsed matrix.json
  * @param {unknown[]} [records] ui-check result records `{surface,state,locale,width,status,evidence}`
- * @param {{baseDir?: string, fileExists?: (path: string) => boolean, readText?: (path: string) => string|null, queueDir?: string|null, realPath?: (path: string) => string|null}} [options]
+ * @param {{baseDir?: string, fileExists?: (path: string) => boolean, readText?: (path: string) => string|null, queueDir?: string|null, realPath?: (path: string) => string|null, conditions?: object|null}} [options]
+ *   `conditions` = the project's recorded conditions (lib/conditions.mjs), for the rtl-locale-missing and dark-scheme-missing rules;
  *   where relative paths resolve from (the matrix file's directory), how to test a file and how to read one (null = no
  *   such file); the default accepts every evidence path and skips the mount-site file tests (the CLI passes the real ones); `queueDir` and `realPath` (ask queue folder, real-path lookup) decide which queue files may back an accepted difference
  * @returns {{problems: {code:string,message:string}[], cells: object[], counts: object, notes: object[], handSet: object[], stateWidths: object|null, frames: object|undefined}}
@@ -89,7 +107,9 @@ const countBy = (cells, status) => cells.filter((cell) => cell.status === status
  *   `frames` is the summary of the Figma inventory (see frames.mjs; undefined when the matrix is structurally broken);
  *   `accepted` lists the failing compare cells the owner accepted (accepted.mjs): their `fail` problem is dropped and `counts` has `accepted <n>` and a `fail` without them
  */
-export function checkMatrix(matrix, records = [], options = {}) {
+export function checkMatrix(matrix, allRecords = [], options = {}) {
+  // A diagnostic record (ui-check P3c) proves a cause; it never fills a cell.
+  const records = allRecords.filter((r) => !(r && typeof r === 'object' && r.diagnostic === true));
   const structure = validateStructure(matrix);
   if (structure.length > 0) return { problems: structure, cells: [], counts: {}, notes: [], handSet: [], stateWidths: null };
   const merged = mergeResults(matrix, records);
@@ -103,7 +123,7 @@ export function checkMatrix(matrix, records = [], options = {}) {
   if (owner.accepted.length > 0) counts.accepted = owner.accepted.length;
   counts.fail -= owner.accepted.length;
   return {
-    problems: [...validateRules(matrix), ...reuseProblems(matrix, { baseDir: files.baseDir, readText: options.readText }), ...merged.problems, ...coverage.filter((p) => !(p.code === 'fail' && acceptedLabels.has(p.cell))), ...naLocaleProblems(matrix, merged.cells), ...rtlProblems(matrix, merged.cells), ...fileProblems(matrix, merged.cells, files), ...frames.problems, ...owner.problems],
+    problems: [...validateRules(matrix), ...reuseProblems(matrix, { baseDir: files.baseDir, readText: options.readText }), ...merged.problems, ...coverage.filter((p) => !(p.code === 'fail' && acceptedLabels.has(p.cell))), ...naLocaleProblems(matrix, merged.cells), ...rtlProblems(matrix, merged.cells), ...fileProblems(matrix, merged.cells, files), ...frames.problems, ...owner.problems, ...projectProblems(matrix, options.conditions ?? null)],
     cells: merged.cells,
     counts,
     notes: merged.cells.filter((cell) => cell.status === 'na' || cell.status === 'deferred'),

@@ -1,6 +1,7 @@
 // Purpose: validate a matrix.json with hand-written schema rules (no dependency) and return problems, never throw.
 // Exports: problem(code, message, extra), normalizeNode(node), namesNode(text, node), isText(v), isReason(v), isPlaceholder(v), isValidWidth(v), noneReason(v),
-//   validateStructure(matrix), validateRules(matrix), SURFACE_KINDS, STATUSES, REST_STATE, MIN_REASON_CHARS, controlsOf(surface).
+//   validateStructure(matrix), validateRules(matrix), figmaWidthRules(matrix), SURFACE_KINDS, STATUSES, REST_STATE, MIN_REASON_CHARS, RULES, SCHEMES, controlsOf(surface).
+//   Run keys (optional): rule (default|strict), breakpoints (theme breakpoints), schemes (light|dark), settled (the owner's "do not report again" list).
 // Invariants: validateStructure checks only what the cell logic needs to run (locales, widths, stateWidths, surface and
 //   control ids, control class, cell widths); when it returns problems the caller must stop. validateRules assumes a
 //   sound structure and reports the content rules (component, states, reference, default states, searched, deliverable,
@@ -15,6 +16,8 @@ export const STATUSES = ['pass', 'fail', 'na', 'deferred', 'todo'];
 export const REST_STATE = 'rest';
 export const MIN_REASON_CHARS = 15;
 const NONE_PREFIX = 'none:';
+export const RULES = ['default', 'strict'];
+export const SCHEMES = ['light', 'dark'];
 const DIRECTIONS = ['ltr', 'rtl'];
 
 /** Builds a problem record; `code` is stable (tests and callers match on it), `message` is for people; `extra` may hold `cell` and `cause`. */
@@ -140,6 +143,16 @@ function acceptedStructure(accepted) {
   });
 }
 
+// The run keys of r9-ui-matrix: the pass rule, the theme breakpoints, the colour schemes and the owner's settled list.
+function runKeyStructure(matrix) {
+  const found = [];
+  if (matrix.rule !== undefined && !RULES.includes(matrix.rule)) found.push(problem('shape', `rule must be ${RULES.join(' or ')}`));
+  if (matrix.breakpoints !== undefined && !(Array.isArray(matrix.breakpoints) && matrix.breakpoints.length > 0 && matrix.breakpoints.every((bp) => Number.isInteger(bp) && bp > 1))) found.push(problem('shape', 'breakpoints must be a non-empty list of integers above 1 (the theme breakpoints, e.g. MUI 600, 900, 1200, 1536)'));
+  if (matrix.schemes !== undefined && !(Array.isArray(matrix.schemes) && matrix.schemes.length > 0 && matrix.schemes.every((scheme) => SCHEMES.includes(scheme)))) found.push(problem('shape', `schemes must be a non-empty list of ${SCHEMES.join(', ')}`));
+  if (matrix.settled !== undefined && !(Array.isArray(matrix.settled) && matrix.settled.every((entry) => isObject(entry) && isText(entry.surface) && isText(entry.state) && isText(entry.what) && isText(entry.owner)))) found.push(problem('shape', 'settled must be a list of {surface, state, locale?, what, owner}: what the owner settled and the reference to his decision'));
+  return found;
+}
+
 function figmaStructure(figma) {
   if (figma === undefined) return [];
   return isObject(figma) && isText(figma.file) && isText(figma.framesFile) ? [] : [problem('shape', 'figma must be {file, framesFile}: the Figma file key and the path of the frames file')];
@@ -155,7 +168,7 @@ export function validateStructure(matrix) {
   const common = [...localeProblems(matrix.locales), ...widthProblems(matrix.widths, matrix.stateWidths)];
   if (!Array.isArray(matrix.surfaces) || matrix.surfaces.length === 0) return [problem('shape', 'surfaces must be a non-empty array'), ...common];
   const seenIds = new Set();
-  return [...common, ...matrix.surfaces.flatMap((surface) => surfaceStructure(surface, seenIds)), ...cellStructure(matrix.cells), ...figmaStructure(matrix.figma), ...frameStructure(matrix.frames), ...acceptedStructure(matrix.accepted)];
+  return [...common, ...matrix.surfaces.flatMap((surface) => surfaceStructure(surface, seenIds)), ...cellStructure(matrix.cells), ...figmaStructure(matrix.figma), ...frameStructure(matrix.frames), ...acceptedStructure(matrix.accepted), ...runKeyStructure(matrix)];
 }
 
 const componentOk = (component) => isText(component) || (isObject(component) && isReason(component.new));
@@ -224,5 +237,22 @@ export function validateRules(matrix) {
   if (!isText(deliverable.reviewUrl)) found.push(problem('deliverable', 'deliverable.reviewUrl is empty'));
   if (!isReason(deliverable.mockExcluded)) found.push(problem('deliverable', `deliverable.mockExcluded needs the quoted build/grep proof (${MIN_REASON_CHARS}+ characters)`));
   if (matrix.stateWidths !== undefined && !isReason(matrix.stateWidthsReason)) found.push(problem('state-widths', `stateWidths needs stateWidthsReason (${MIN_REASON_CHARS}+ characters)`));
+  return [...found, ...figmaWidthRules(matrix)];
+}
+
+/**
+ * A matrix with a Figma source compares every frame width (G2: the `frames` inventory is required) and holds each theme
+ * breakpoint -1 and +0 among its widths (R118), where the invariant checks run between the frames.
+ * @param {object} matrix a structurally sound matrix
+ * @returns {{code:string,message:string}[]} frames-missing, breakpoint-widths
+ */
+export function figmaWidthRules(matrix) {
+  if (matrix.figma === undefined) return [];
+  const found = [];
+  if (!Array.isArray(matrix.frames) || matrix.frames.length === 0) found.push(problem('frames-missing', 'the matrix has a Figma source but no frames inventory: run ui-check figma-frames, then ui-coverage expand, so every frame width is compared'));
+  if (matrix.breakpoints === undefined) return found; // init writes them for a Figma matrix (R118 default); a matrix without them demands none
+  const widths = new Set(matrix.widths);
+  const lacking = matrix.breakpoints.flatMap((bp) => [bp - 1, bp]).filter((width) => !widths.has(width));
+  if (lacking.length > 0) found.push(problem('breakpoint-widths', `widths lack ${lacking.join(', ')}: each breakpoint needs its -1 and +0 width (add them to widths, then run expand)`));
   return found;
 }
