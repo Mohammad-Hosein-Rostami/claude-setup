@@ -7,13 +7,14 @@ import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, cpSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
+import { CLEAN_ENV, SWITCH_MODULE_FILES, commit, git, makeRepo, turnChecksOn } from './git-tidy-helpers.mjs';
 import { AUDIT_ONE_IN, CALIBRATION_LANES, decideAudit } from '../home/tools/review-tier/audit-log.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CLI = join(ROOT, 'home/tools/review-tier/audit-log.mjs');
 const { NODE_TEST_CONTEXT: _outerRunner, ...OUTSIDE_A_TEST_RUN } = CLEAN_ENV;
+const HOOK_SESSION_ID = 'audit-log-test-session';
 const skipBash = process.platform === 'win32' && 'bash hooks';
 
 /** A temp folder with its own log file; `run(args)` runs the CLI against it and returns { status, stdout, stderr, json() }. */
@@ -417,11 +418,13 @@ test('the CLI works when started through a symlinked folder (the owner layout of
   assert.deepEqual(JSON.parse(result.stdout), { audit: true, reason: 'calibration', streak: 0 });
 });
 
-/** A hook repo: the real .githooks/pre-push, test-pass and audit-log copied in, a trivial passing suite, HOME and the log in temp. */
+/** A hook repo: the real .githooks/pre-push, test-pass, audit-log and the switch module copied in, a trivial passing suite, HOME and the log in temp. */
 function makeHookRepo() {
   const sandbox = makeSandbox();
   const repo = makeRepo();
-  for (const path of ['.githooks', 'home/tools/test-pass', 'home/tools/disk-free/with-run-tmp.mjs', 'home/tools/review-tier', 'home/tools/git-tidy/lib', 'home/hooks/lib/session-store.mjs']) {
+  Object.assign(sandbox.env, { CLAUDE_CODE_SESSION_ID: HOOK_SESSION_ID }); // the hooks run the test suite and the audit gate only with these on
+  turnChecksOn(sandbox.home, HOOK_SESSION_ID, ['test', 'review']);
+  for (const path of ['.githooks', 'home/tools/test-pass', 'home/tools/disk-free/with-run-tmp.mjs', 'home/tools/review-tier', 'home/tools/git-tidy/lib', 'home/hooks/lib/session-store.mjs', ...SWITCH_MODULE_FILES]) {
     mkdirSync(join(repo, path, '..'), { recursive: true });
     cpSync(join(ROOT, path), join(repo, path), { recursive: true });
   }
