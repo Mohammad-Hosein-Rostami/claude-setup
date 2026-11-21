@@ -3,8 +3,9 @@
 // its purpose, agents done of all, the bar and the finish.
 // Exports: sessionAgents({ session, sessionFolder, runs, cursors, pools, env, nowMs }) -> { agents, runs, cursors, launchDirs }.
 // An agent's `places` ({ worktree: its meta.worktreePath, else the folder its launch record names; changed: the folders of the files
-// it edited (agent-transcript.mjs); cwd }) only match it to a trusted worktree in refresh.mjs; `launchDirs` are the folders writers were launched in (the launch records), trusted like the
-// session's own folder.
+// it edited (agent-transcript.mjs); isolated: whether worktree is meta.worktreePath; cwd }) only match it to a trusted worktree by path
+// prefix (repos.mjs placeAgents); `launchDirs` are the folders writers were launched in (the launch records): they only choose among
+// the trusted repositories, they never make one trusted.
 // Sources (Claude Code internal, observed 2.1.329; every parser fails soft): <session>/subagents/agent-<id>.jsonl and .meta.json
 // (plain agents), <session>/subagents/workflows/<run>/agent-<id>.* and the run's journal.jsonl (`started` label and phase, `result`
 // = done), the writer launch records (hooks/lib/writer-agents.mjs `open[]`: the STATUS row of a writer) and the workflow registry
@@ -91,7 +92,8 @@ function agentEntry({ id, cursor, meta, run, journal, launches, pools, env, nowM
     entry: {
       id, name: clean(colon > 0 ? label.slice(colon + 1) : label, MAX_LABEL_CHARS) || type, lane: colon > 0 ? clean(label.slice(0, colon), MAX_NAME_CHARS) : null,
       type, runId: run?.runId ?? null, phase: run ? (journal.started.get(id)?.phase ?? meta.workflowPhase ?? null) : null,
-      places: { worktree: typeof meta.worktreePath === 'string' ? meta.worktreePath : (launches.get(id)?.cwd ?? null), changed: cursor.changedDirs ?? [], cwd: cursor.cwd },
+      places: { worktree: typeof meta.worktreePath === 'string' ? meta.worktreePath : (launches.get(id)?.cwd ?? null),
+        isolated: typeof meta.worktreePath === 'string', changed: cursor.changedDirs ?? [], cwd: cursor.cwd },
       row: launches.get(id)?.row ?? null, state, writer,
       pct: progress.pct, conf: progress.conf, elapsedMin: tenths(progress.elapsedMin), leftMin: tenths(progress.leftMin),
       highLeftMin: tenths(progress.highLeftMin), overMin: tenths(progress.overMin), usual: progress.usual, tag: progress.tag, doing: cursor.lastTool?.text ?? null, calls: cursor.calls,

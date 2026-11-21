@@ -109,11 +109,15 @@ function doingPart(agent, look) {
 
 /**
  * Where the agent works (owner report 2026-11-21: every agent row says it): `claude-setup:lane/x 2↑ +3 dirty` from its own worktree
- * (repos.mjs, never the lead's folder), `read-only` for an agent that writes nothing outside a repository, else `no repo`.
+ * (repos.mjs, never the lead's folder); for an agent on no sure worktree the repository or folder it was launched in and why
+ * (`claude-setup · no edits yet`, repos.mjs placeAgents; review F2), else `read-only` / `no repo`.
  */
 function wherePart(agent, ctx, look) {
   const repos = Array.isArray(ctx.repos) ? ctx.repos : [ctx.repo].filter(Boolean);
-  if (agent.wt === null || agent.wt === undefined) return { text: agent.writer ? 'no repo' : 'read-only', state: STATE.dim };
+  if (agent.wt === null || agent.wt === undefined) {
+    const text = typeof agent.unplaced === 'string' ? cutWords(cleanText(agent.unplaced, look), wide(look) ? WIDE_PLACE_CHARS : PLACE_CHARS, look) : '';
+    return { text: text || (agent.writer ? 'no repo' : 'read-only'), state: STATE.dim };
+  }
   const repo = repos.find((entry) => entry?.name === agent.repo) ?? repos[0];
   const wt = (Array.isArray(repo?.worktrees) ? repo.worktrees : []).find((entry) => entry?.name === agent.wt);
   // Below 115 columns with one repository the git row names it, so the room goes to the branch.

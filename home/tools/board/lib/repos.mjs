@@ -1,6 +1,6 @@
 // The repositories the session's work is in, for the board's git rows (spec-tui-2 and the owner's report of 2026-11-21: no git info
 // at all while two agents worked in worktrees, because the lead's folder is not in git). Run only by the detached board refresh.
-// Exports: sessionRepos({ sessionFolder, agentDirs, preferred, cache, nowMs, startMs }) -> { repos, git, cache };
+// Exports: sessionRepos({ sessionFolder, agentDirs, preferred, cache, nowMs, startMs }) -> { repos, git, common, cache };
 // placeAgents(agents, repos) -> { agents, repos }; MAX_REPOS.
 // Which (lead decisions of fix rounds 3-5, 2026-11-22): only trusted repositories (trusted-repos.mjs: the session folder's and the
 // setup's own, worked out on every refresh), and of those the ones with active work: the session's own, and each
@@ -21,10 +21,15 @@ import { REMOTE_PATH, repoOfDir, trustedRepos } from './trusted-repos.mjs';
 export const MAX_REPOS = 3;
 const STALE_KEEP_MS = 60_000; // a repository git could not read in time shows its last good state this long, marked stale
 
-/** This refresh's state of a repository, else (git ran out of time under load) its last good one, marked stale, while fresh enough. */
-function stateOrLast(state, last, nowMs) {
+/**
+ * This refresh's state of a repository, else (git ran out of time under load) its last good one, marked stale, while fresh enough.
+ * The last state comes from the writable cache, so it is only shown, and only with the worktrees the repository records now (`roots`):
+ * no path of it ever reaches git (review SEC-10).
+ */
+function stateOrLast(state, last, roots, nowMs) {
   if (state.repo !== null && state.repo.worktrees.length > 0) return { repo: state.repo, git: state.git, last: { repo: state.repo, git: state.git, atMs: nowMs } };
-  if (last !== null && typeof last === 'object' && last.repo && nowMs - last.atMs <= STALE_KEEP_MS) return { repo: { ...last.repo, stale: true }, git: last.git, last };
+  const kept = Array.isArray(last?.repo?.worktrees) && nowMs - last.atMs <= STALE_KEEP_MS ? last.repo.worktrees.filter((wt) => roots.includes(wt?.path)) : [];
+  if (kept.length > 0) return { repo: { ...last.repo, worktrees: kept, stale: true }, git: last.git ?? null, last };
   return { repo: null, git: null, last: null };
 }
 
@@ -50,8 +55,9 @@ function preferredFirst(found, preferred) {
  *   cache: object | null, nowMs: number, startMs?: number }} source the session's folder, the folders of the live agents, the
  *   folders whose repository is shown first (STATUS.md folder, road repo), the last cache ({ byCommon: { [common]: git cache } })
  *   and when the refresh's git budget started
- * @returns {{ repos: object[], git: object | null, cache: object }} repos = git-state.mjs repo plus `name` (the main worktree's
- *   folder name), primary first; git = the primary repository's own { branch, ahead, behind, changed } or null
+ * @returns {{ repos: object[], git: object | null, common: string | null, cache: object }} repos = git-state.mjs repo plus `name`
+ *   (the main worktree's folder name), primary first; git = the primary repository's own { branch, ahead, behind, changed } or null;
+ *   common = the primary repository's shared git folder from the trusted set (never from the cache: repo-stats.mjs runs git on it)
  */
 export function sessionRepos({ sessionFolder, agentDirs = [], preferred = [], cache, nowMs, startMs = Date.now() }) {
   const old = cache !== null && typeof cache === 'object' && cache.byCommon ? cache.byCommon : {};
@@ -59,53 +65,66 @@ export function sessionRepos({ sessionFolder, agentDirs = [], preferred = [], ca
     const trust = trustedRepos({ sessionFolder });
     const found = [];
     const byCommon = {};
-    for (const { common, folder } of chosenRepos(trust, agentDirs, preferred)) {
+    for (const { common, folder, roots } of chosenRepos(trust, agentDirs, preferred)) {
       const state = repoState({ cwd: folder, common, cache: old[common] ?? null, nowMs, startMs });
-      const shown = stateOrLast(state, old[common]?.last ?? null, nowMs);
+      const shown = stateOrLast(state, old[common]?.last ?? null, roots, nowMs);
       byCommon[common] = { ...(state.repo === null ? (old[common] ?? {}) : state.cache), last: shown.last };
       if (shown.repo === null) continue;
       const main = shown.repo.worktrees.find((wt) => wt.main);
-      found.push({ repo: { ...shown.repo, name: basename(main?.path ?? dirname(common)) }, git: shown.git });
+      found.push({ repo: { ...shown.repo, name: basename(main?.path ?? dirname(common)) }, git: shown.git, common });
     }
     const ordered = preferredFirst(found, preferred);
-    return { repos: ordered.map(({ repo }) => repo), git: ordered[0]?.git ?? null, cache: { byCommon } };
+    return { repos: ordered.map(({ repo }) => repo), git: ordered[0]?.git ?? null, common: ordered[0]?.common ?? null, cache: { byCommon } };
   } catch {
-    return { repos: [], git: null, cache: { byCommon: old } };
+    return { repos: [], git: null, common: null, cache: { byCommon: old } };
   }
 }
 
+const isLocal = (dir) => typeof dir === 'string' && isAbsolute(dir) && !REMOTE_PATH.test(dir);
+const worktreeOf = (dir, worktrees) => (isLocal(dir) ? worktrees.find((wt) => isInside(dir, wt.path)) : undefined);
+
 /**
- * The worktree of the trusted repositories that holds the agent (reviews C-1 and F1): the folders of the files it edited, newest
- * first (an agent that edits its lane and then writes a report outside git stays on its lane), else the worktree it was launched in,
- * else its cwd (the lead's folder for most agents, so the last resort).
+ * Where the agent works (reviews C-1 and F1): the worktree holding a folder of a file it edited, newest first, else its isolation
+ * worktree (`meta.worktreePath`); `sure`. Else the worktree its launch folder or cwd is in, which says only the repository: an agent
+ * working through Bash alone may be on any branch of it (review F2, lead decision: never show a branch it may not be on).
+ * @returns {{ home: object | undefined, sure: boolean }}
  */
-function homeOf(agent, worktrees) {
-  const places = agent.places ?? {};
-  const candidates = [...(places.changed ?? []), places.worktree, places.cwd];
-  for (const dir of candidates) {
-    if (typeof dir !== 'string' || !isAbsolute(dir) || REMOTE_PATH.test(dir)) continue;
-    const home = worktrees.find((wt) => isInside(dir, wt.path));
-    if (home !== undefined) return home;
+function homeOf(places, worktrees) {
+  for (const dir of places.changed ?? []) {
+    const home = worktreeOf(dir, worktrees);
+    if (home !== undefined) return { home, sure: true };
   }
-  return undefined;
+  const isolatedHome = places.isolated === true ? worktreeOf(places.worktree, worktrees) : undefined;
+  if (isolatedHome !== undefined) return { home: isolatedHome, sure: true };
+  return { home: worktreeOf(places.worktree, worktrees) ?? worktreeOf(places.cwd, worktrees), sure: false };
+}
+
+/** What an agent row says when the agent is on no known worktree: the repository or folder it was launched in, and why. */
+function unplacedText(places, agent, repoName) {
+  const launch = isLocal(places.worktree) ? places.worktree : isLocal(places.cwd) ? places.cwd : null;
+  const at = repoName ?? (launch === null ? null : basename(launch));
+  const why = (places.changed ?? []).length > 0 ? 'edits outside git' : agent.writer ? 'no edits yet' : 'read-only';
+  return at === null ? null : `${at} · ${why}`;
 }
 
 /**
  * Places each agent on a worktree of the trusted repositories by path prefix only (an agent's folders never open a repository).
  * @param {object[]} agents agents.mjs entries (with `places`)
  * @param {object[]} repos sessionRepos(...).repos
- * @returns {{ agents: object[], repos: object[] }} agents with repo, wt, branch (null when on none) and without places or startMs;
- *   the repositories with each worktree's `agents` (the names of the live agents on it)
+ * @returns {{ agents: object[], repos: object[] }} agents with repo, wt, branch (null when on no sure worktree) and `unplaced` (the
+ *   row's text then: `claude-setup · no edits yet`, `round4 · no edits yet`, or null), without places or startMs; the repositories
+ *   with each worktree's `agents` (the names of the live agents surely on it)
  */
 export function placeAgents(agents, repos) {
   const worktrees = repos.flatMap((repo) => repo.worktrees.map((wt) => ({ repo, wt }))).sort((a, b) => b.wt.path.length - a.wt.path.length);
   const flat = worktrees.map(({ wt }) => wt);
   const names = new Map(flat.map((wt) => [wt, []]));
-  const placed = agents.map(({ places, startMs, ...agent }) => {
-    const home = homeOf({ places }, flat);
-    if (home !== undefined && agent.state !== 'done') names.get(home).push(agent.name);
+  const placed = agents.map(({ places = {}, startMs, ...agent }) => {
+    const { home, sure } = homeOf(places, flat);
     const repo = home === undefined ? undefined : worktrees.find((entry) => entry.wt === home).repo;
-    return { ...agent, repo: repo?.name ?? null, wt: home?.name ?? null, branch: home?.branch ?? null };
+    if (!sure) return { ...agent, repo: repo?.name ?? null, wt: null, branch: null, unplaced: unplacedText(places, agent, repo?.name ?? null) };
+    if (agent.state !== 'done') names.get(home).push(agent.name);
+    return { ...agent, repo: repo.name, wt: home.name, branch: home.branch ?? null, unplaced: null };
   });
   const withNames = repos.map((repo) => ({ ...repo, worktrees: repo.worktrees.map((wt) => ({ ...wt, agents: names.get(wt) ?? [] })) }));
   return { agents: placed, repos: withNames };

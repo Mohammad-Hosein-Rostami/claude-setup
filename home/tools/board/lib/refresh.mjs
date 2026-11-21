@@ -110,8 +110,8 @@ export function collectBoard({ session, transcriptPath, cwd }, { env = process.e
   const git = sessionRepos({ sessionFolder: cwd, agentDirs, preferred: [statusDir, job.repoDir], cache: cache?.git ?? null, nowMs, startMs: gitStartMs });
   const placed = placeAgents(found.agents, git.repos);
   const [primary = null, ...others] = placed.repos;
-  const mainPath = primary?.worktrees.find((wt) => wt.main)?.path ?? null;
-  const stats = repoStats({ repoDir: mainPath, base: primary?.base ?? null, cache: cache?.stats ?? null, nowMs, startMs: gitStartMs });
+  // repo-stats runs on the trusted shared git folder, never on a worktree path a stale cached state shows (review SEC-10)
+  const stats = repoStats({ common: git.common, base: primary?.base ?? null, cache: cache?.stats ?? null, nowMs, startMs: gitStartMs });
   const repo = primary === null ? null : { ...primary, tip: stats.stats?.tip ?? null, suite: stats.stats?.suite ?? null, landed: stats.stats?.landed ?? null };
   const marker = readAsking(session, env, nowMs);
   const asking = marker === null ? null : { kind: marker.kind, count: marker.count, expiresAt: marker.expiresAt };

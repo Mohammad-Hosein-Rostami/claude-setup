@@ -31,8 +31,11 @@ to `COLUMNS - 5` (Claude Code cuts a row there). From top to bottom:
 A workflow is one row: its bar is its agents done of all, then the phase, how many run with a spark of their progress, the time
 left and the finish; its agents get no rows of their own in the status line (owner, 2026-11-22), only in `/where`. Agents outside
 a workflow keep their own rows. Every agent row says where the agent works, never dropped: `repository:branch`, commits ahead of the base (`2↑`) and
-uncommitted files (`+3 dirty`), from its own worktree, or `read-only` / `no repo` (below 115 columns with one repository the
-branch alone, the git row names the repository).
+uncommitted files (`+3 dirty`), from its own worktree (below 115 columns with one repository the branch alone, the git row names
+the repository). An agent known only by its launch folder or cwd (one that works through Bash, or has not edited yet) may be on any
+branch, so its row names no branch: `claude-setup · no edits yet` when that folder is in a trusted repository, else the folder's
+name (`round4 · no edits yet`); `· read-only` for an agent that does not write, `· edits outside git` for one whose edits are all
+outside the trusted worktrees; `no repo` / `read-only` when nothing is known.
 
 When rows run out (`lib/render.mjs` shares them, `lib/layout.mjs` packs the work rows): the alert, job and session rows always
 show; then one git row (never none: branch, upstream ahead/behind, changed files, landed today; `git: no repository` when the
@@ -86,14 +89,17 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while a ru
   code, from this code's real path: `~/.claude/tools` links into it). Claude Code's folder-trust record is not used: the owner runs
   with bypass permissions, so it is unreliable. Of those, up to 3 with work: the session's own and each one a registered worktree
   of which holds a live agent's folder (its edited files, its launch worktree, its cwd), else the one holding the STATUS.md folder
-  or the road's `repo`; the STATUS.md folder and the road only order and choose, they never add a repository. Git runs in the
-  trusted folder itself, never in a folder an agent or a file named (git runs a repository's own config), and in a worktree its
-  own `worktree list --porcelain -z` names only while that worktree's `.git` still leads back to the same repository (real paths);
-  every call has `-c core.fsmonitor=false -c safe.bareRepository=explicit` and one git budget per refresh. With no trusted
+  or the road's `repo`; the STATUS.md folder and the road only order and choose, they never add a repository. Git runs only on
+  what the trusted repository records itself, read fresh on every refresh and never from the cache: its shared git folder
+  (`--git-dir=<common>` for the refs and the base-branch facts) and each worktree it records (the main checkout, and
+  `<common>/worktrees/<name>` whose `gitdir` names `<path>/.git`), as `--git-dir=<that git folder> --work-tree=<path>`, so git
+  never reads a worktree's own `.git` (a rewritten or racing `.git` cannot point it elsewhere) and `--ignore-submodules=dirty` keeps
+  it out of nested repositories. Paths are compared as real paths in the disk's letter case. Every call has
+  `-c core.fsmonitor=false -c safe.bareRepository=explicit` and one git budget per refresh. With no trusted
   repository holding the work the git row says `git: no repository`. When git runs out of time (a loaded machine), a repository
   keeps its last good state for up to 60 s and its row says `stale`. Agents are matched to those worktrees by path prefix: the folders of the files they edited, newest
   first (Edit, Write, MultiEdit, NotebookEdit, counted only after the call succeeded; a Bash call's cwd says nothing of where it
-  writes), then the worktree they were launched in (`meta.worktreePath` or the launch record), then their cwd. One refresh per session at a time (an O_EXCL lock file from `tools/disk-free/lib/lock-file.mjs`, broken after 20 s): `worktree list` when the worktree folder changed, one `for-each-ref` with `%(ahead-behind:main)`
+  writes), then their isolation worktree (`meta.worktreePath`); the launch folder (launch record) and the cwd only say the repository. One refresh per session at a time (an O_EXCL lock file from `tools/disk-free/lib/lock-file.mjs`, broken after 20 s): one `for-each-ref` with `%(ahead-behind:main)`
   every 15 s, and `--no-optional-locks status --untracked-files=no` per worktree only when its index or HEAD changed (15 s at
   most); 250 ms timeout per call and 250 ms of git per refresh, past which the old values stay with their age.
 
