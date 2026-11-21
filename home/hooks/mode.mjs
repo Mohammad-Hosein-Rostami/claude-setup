@@ -2,9 +2,10 @@
 //   SessionStart         -> prints the active mode, the lead-only rules (modes/_lead.md; nothing when missing) and the
 //                           mode's playbook (plus a lead note when an extra-high / ultra-high session was not launched
 //                           with `ccm <mode>` or its model does not match; a line when the project's agent files set maxTurns, shadow the owner's agents or cannot be judged (lib/project-agents.mjs, run in a child process by lib/project-agents-timed.mjs: when it fails or the budget is used up the line says "not checked" and everything else is still printed); on `compact`, lib/compact-notes.mjs lines incl. the Standing rules re-read and backfill, the status file to re-read); prunes state.
-//                           Inside a subagent (isSubagentStart: `agent_id` is a non-empty string, any other value is the lead): only the
-//                           compact notes on `compact` and nothing on any other source; no `ps` walk, no child, no state save, no
-//                           prune; its compactions are counted under `<session_id>-<agent_id>`, never under the lead's id.
+//                           Inside a subagent (isSubagentStart: `agent_id` is a non-empty string, any other value is the lead): only
+//                           SUBAGENT_COMPACT_NOTE on `compact` (no transcript scan: there `transcript_path` is the lead's, probe P1-8)
+//                           and nothing on any other source; no `ps` walk, no child, no state save, no prune; its compactions are
+//                           counted under `<session_id>-<agent_id>`, never under the lead's id.
 //   UserPromptExpansion  -> for `/mode <m>`: records the mode for this session, prints the playbook (plus a lead note
 //                           when the switch moves the lead to or from Opus max / Fable high).
 //   UserPromptSubmit     -> the reminder line when the mode is not medium and differs from the mode last announced to this session
@@ -143,9 +144,10 @@ function startMode(source, sessionId, getProcKey) {
 }
 
 /**
- * What a SessionStart inside a subagent prints: the compact notes after a compaction, nothing otherwise. No lead rules, no
- * playbook, no `ps` walk, no child, no state save and no prune: those belong to the lead session.
- * @param {object} input - the hook input (`source`, `agent_id`, `transcript_path`).
+ * What a SessionStart inside a subagent prints: SUBAGENT_COMPACT_NOTE after a compaction, nothing otherwise. No lead rules, no
+ * playbook, no STATUS path (the input's `transcript_path` is the lead's: probe P1-8), no `ps` walk, no child, no state save and
+ * no prune: those belong to the lead session.
+ * @param {object} input - the hook input (`source`, `agent_id`).
  * @param {string | undefined} sessionId - the checked session id.
  * @returns {Promise<string>} the text for stdout; the compaction is counted under `<session_id>-<agent_id>` when both ids are
  *   safe (else not counted), so it never moves the lead's count.
@@ -153,7 +155,7 @@ function startMode(source, sessionId, getProcKey) {
 async function subagentStartText(input, sessionId) {
   if (input.source !== 'compact') return '';
   const agentId = safeId(input.agent_id);
-  return compactNotes(stateDir(), sessionId && agentId ? `${sessionId}-${agentId}` : undefined, input.transcript_path);
+  return compactNotes(stateDir(), sessionId && agentId ? `${sessionId}-${agentId}` : undefined, undefined, { subagent: true });
 }
 
 /**
