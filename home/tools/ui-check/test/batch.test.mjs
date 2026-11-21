@@ -137,12 +137,12 @@ test('writeBatchResults writes results.json (record fields unchanged) and summar
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'batch-out-'));
   const records = [
     ...responsiveRecords(state, [320, 1024], { findings: [{ width: 320, check: 'hscroll', element: 'html', detail: 'd' }], md: '/o/report.md' }),
-    ...compareRecords(state, { pass: true, md: '/o/c.md', pixels: { pass: true }, elementRows: [] }, { root: 'body', maxDiff: 0, width: 1440 }),
+    ...compareRecords(state, { pass: true, md: '/o/c.md', pixels: { pass: true, diffCount: 0 }, elementRows: [] }, { root: 'body', maxDiff: 0, width: 1440 }),
   ];
   writeBatchResults(dir, records);
   const written = JSON.parse(fs.readFileSync(path.join(dir, 'results.json'), 'utf8'));
   assert.deepEqual(written, records);
-  assert.deepEqual(Object.keys(written[0]), ['surface', 'state', 'locale', 'width', 'status', 'evidence', 'findings', 'hints']);
+  assert.deepEqual(Object.keys(written[0]), ['surface', 'state', 'locale', 'width', 'status', 'evidence', 'findings', 'hints', 'url']);
   const rows = fs.readFileSync(path.join(dir, 'summary.md'), 'utf8').split('\n').filter((line) => line.startsWith('| login'));
   assert.equal(rows.length, 3);
   assert.match(rows[0], /\| login \| rtl-dropdown \| fa-IR \| 320 \| fail \| 1 \| 0 \|/);
@@ -193,7 +193,7 @@ test('zero states: exit 1, a clear message, results.json is [] and a stale one i
     fs.writeFileSync(file, JSON.stringify({ states: [] }));
     assert.equal(await runBatch(['--states', file, '--out', out]), 1);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'results.json'), 'utf8')), []);
-    assert.match(fs.readFileSync(path.join(out, 'summary.md'), 'utf8'), /FAIL[\s\S]*no states ran/);
+    assert.match(fs.readFileSync(path.join(out, 'summary.md'), 'utf8'), /FAIL[\s\S]*no gate states ran/);
     assert.match(errors.mock.calls[0].arguments[0], /no states to run/);
     fs.writeFileSync(file, JSON.stringify(good()));
     fs.writeFileSync(path.join(out, 'results.json'), '[{"status":"pass"}]');

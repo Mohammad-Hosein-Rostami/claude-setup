@@ -100,9 +100,9 @@ test('focus-indicator: a visually hidden control is judged on its label and neig
   assert.match(found[0].detail, /visually hidden/);
 });
 
-test('focus-indicator: only the first 60 focusables count, the findings cap applies', () => {
+test('focus-indicator: every focusable the walk collected is judged (the 60-stop cap is the walk\'s), the findings cap applies', () => {
   const many = Array.from({ length: 80 }, (_, i) => focusable({}, { element: `a#l${i}` }));
-  assert.equal(focusIndicatorFindings({ focusables: many }).length, 60);
+  assert.equal(focusIndicatorFindings({ focusables: many }).length, 80);
   assert.equal(focusIndicatorFindings({ focusables: many }, 5).length, 5);
 });
 

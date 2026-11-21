@@ -13,7 +13,7 @@ const frame = JSON.parse(fs.readFileSync(new URL('./fixtures/frame.json', import
 
 test('flattenSpec makes boxes relative to the root and derives the gap from siblings', () => {
   const spec = flattenSpec(frame);
-  assert.deepEqual(spec.root, { id: '1:1', name: 'Card', w: 300, h: 120 });
+  assert.deepEqual(spec.root, { id: '1:1', name: 'Card', w: 300, h: 120, render: null });
   assert.deepEqual(spec.nodes.map((n) => n.id), ['1:1', '1:2', '1:4']);
   const title = spec.nodes[1];
   assert.deepEqual([title.x, title.y, title.w, title.h], [16, 16, 100, 24]);
@@ -33,7 +33,7 @@ test('colorToCss emits rgba for partial alpha', () => {
 test('compareElements reports only failing props', () => {
   const spec = flattenSpec(frame);
   const css = { fontSize: 20, fontWeight: 600, lineHeight: 24, letterSpacing: -0.2, color: 'rgb(0, 0, 0)',
-    backgroundColor: 'rgb(255, 255, 255)', radius: [8, 8, 8, 8], padding: [16, 16, 16, 20], rowGap: 16, columnGap: 0 };
+    backgroundColor: 'rgb(255, 255, 255)', fontFamily: 'Inter, sans-serif', radius: [8, 8, 8, 8], padding: [16, 16, 16, 20], rowGap: 16, columnGap: 0 };
   const measured = [
     { id: '1:1', found: true, box: { x: 0, y: 0, w: 300, h: 120 }, css },
     { id: '1:2', found: true, box: { x: 16, y: 16, w: 100, h: 24 }, css },
@@ -46,7 +46,7 @@ test('compareElements reports only failing props', () => {
 
 test('compareElements flags a missing element and CSS line-height normal', () => {
   const spec = flattenSpec(frame);
-  const css = { fontSize: 20, fontWeight: 600, lineHeight: 'normal', letterSpacing: -0.2, color: 'rgb(0, 0, 0)' };
+  const css = { fontSize: 20, fontWeight: 600, lineHeight: 'normal', letterSpacing: -0.2, color: 'rgb(0, 0, 0)', fontFamily: 'Inter, sans-serif' };
   const measured = [{ id: '1:2', found: true, box: { x: 16, y: 16, w: 100, h: 24 }, css }, { id: '1:4', found: false }];
   const rows = compareElements(spec.nodes, { '1:2': 'h1', '1:4': 'p' }, measured);
   assert.deepEqual(rows.map((r) => r.prop), ['line-height', 'element']);

@@ -201,6 +201,7 @@ function auditStub(fields) {
     goto: async () => null, waitForLoadState: async () => {}, waitForTimeout: async () => {}, addStyleTag: async () => {}, waitForFunction: async () => {},
     evaluate: async (_fn, arg) => (arg?.mode === 'read' ? 'end' : { findings: [], fields, texts: [], attributeTexts: [], blocks: [], inlineTargets: [] }),
     keyboard: { press: async () => {} }, screenshot: async () => {}, context: () => ({ close: async () => {} }),
+    emulateMedia: async () => {},
   };
   return { newContext: async () => ({ newPage: async () => page }) };
 }

@@ -48,7 +48,7 @@ test('compareElements does not fail a colour it cannot parse', () => {
 
 function withFakeBrowser({ style, rect, pixel }, fn) {
   const calls = [];
-  const el = { getBoundingClientRect: () => rect, matches: () => true, querySelector: () => null };
+  const el = { getBoundingClientRect: () => rect, matches: () => true, querySelector: () => null, querySelectorAll: () => [], tagName: 'DIV' };
   const ctx = {
     clearRect() {}, fillRect() {}, set fillStyle(v) { calls.push(v); },
     getImageData: () => ({ data: pixel }),
