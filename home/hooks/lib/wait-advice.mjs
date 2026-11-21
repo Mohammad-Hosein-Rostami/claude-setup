@@ -18,6 +18,10 @@
 // way to wait that holds for all: over 3 min, start in the background, then wait inside the turn with a call that ends by itself in
 // 160 s. The wait call's 2 s pause is under this rule's own 5 s loop limit, so the guard lets it run (tests hold that).
 // watch.mjs watches session transcripts: it is named for waiting on a session or an agent, never as a way to run or bound a command.
+// Condition loops (spec-p3 `r9-waits-more`): a `while` or `until` loop whose condition polls (`kill -0`, `pgrep`, `grep -q`, `test`, `[`, `[[`)
+// and that sleeps at all is a wait at any sleep length (`while kill -0 $pid; do sleep 2; done`); a `for` loop keeps the 5 s rule, so
+// WAIT_CALL (a bounded `for` over `seq`) still runs. Plain retries (`until npm ci; do sleep 1; done`) stay allowed. A background subagent's
+// result arrives as a notification (sub-agents docs), so the text says not to poll its output file.
 import { commandOf, KEYWORDS } from './command-of.mjs';
 import { withoutSubstitutions } from './merge-commit.mjs';
 import { segments, stripHeredocs } from './shell-words.mjs';
@@ -45,6 +49,7 @@ export const WAIT_ADVICE = 'Waiting (speed): do not wait with a long sleep or a 
   + 'Set timeout for every background command: in an unattended run (-p, Agent SDK, CI, cloud) one without it stops after 30 min '
   + '(10 min for a text -p prompt). A run over 2 h is split, or started in an interactive session, where background commands have no limit. '
   + 'node ~/.claude/tools/watch/watch.mjs waits on a session or an agent only: it never runs or bounds a command. '
+  + "A background subagent's result arrives as a notification (with fork mode on the lead cannot wait on a subagent at all): end your turn or work on, never poll its output file. "
   + 'If a sleep is what you need, send the same command again and it runs.';
 
 const LOOP_SLEEP_SECONDS = 5; // a shorter sleep inside a loop is a pause between steps, not a wait
@@ -52,6 +57,10 @@ const LONE_SLEEP_SECONDS = 30; // a single sleep this long (or longer) is a wait
 const LOOP_OPENERS = new Set(['for', 'while', 'until']);
 const SECONDS_PER_UNIT = { s: 1, m: 60, h: 3600, d: 86400 };
 const SLEEP_TIME = /^(\d+(?:\.\d+)?)([smhd]?)$/;
+const CONDITION_OPENERS = new Set(['while', 'until']);
+// Commands whose exit says whether a thing is there yet: a loop on one of them is a poll, whatever it sleeps.
+const POLL_COMMANDS = new Set(['pgrep', 'test', '[', '[[']);
+const isPollCondition = (cmd, args) => POLL_COMMANDS.has(cmd) || (cmd === 'kill' && args[0] === '-0') || (cmd === 'grep' && args.some((arg) => /^-[a-zA-Z]*q/.test(arg)));
 
 /** @returns {number | undefined} seconds the `sleep` arguments add up to, or undefined when one is not a literal time (`$n`, `$((i*2))`) */
 function sleepSeconds(args) {
@@ -74,19 +83,34 @@ function loopChange(words) {
   return words[0] === 'done' ? -1 : 0;
 }
 
+/** True when the segment opens a `while`/`until` loop whose condition command polls (isPollCondition). */
+function opensPollLoop(words) {
+  const opener = words.findIndex((word) => CONDITION_OPENERS.has(word));
+  if (opener === -1) return false;
+  const rest = words.slice(opener + 1).filter((word) => word !== '!');
+  const { cmd, args } = commandOf(rest);
+  return isPollCondition(cmd, args);
+}
+
 /**
  * @param {string} command raw command text
- * @returns {string[]} [WAIT_ADVICE] when the line sleeps in a loop for 5 s or more, or sleeps 30 s or more at all; else []
+ * @returns {string[]} [WAIT_ADVICE] when the line sleeps in a loop for 5 s or more, sleeps at all inside a polling `while`/`until`
+ *   loop, or sleeps 30 s or more at all; else []
  */
 export function waitAdvice(command) {
   if (!command.toLowerCase().includes('sleep')) return []; // any case: commandOf folds the command word where the platform does
   let loopDepth = 0;
+  let pollDepth = 0; // depth of the innermost open poll loop, 0 when none
   for (const words of segments(withoutSubstitutions(stripHeredocs(command)))) {
-    loopDepth = Math.max(0, loopDepth + loopChange(words));
+    const change = loopChange(words);
+    if (change < 0 && loopDepth === pollDepth) pollDepth = 0;
+    loopDepth = Math.max(0, loopDepth + change);
+    if (change > 0 && opensPollLoop(words)) pollDepth = loopDepth;
     const { cmd, args } = commandOf(words);
     if (cmd !== 'sleep') continue;
     const seconds = sleepSeconds(args);
-    if (seconds !== undefined && (seconds >= LONE_SLEEP_SECONDS || (loopDepth > 0 && seconds >= LOOP_SLEEP_SECONDS))) return [WAIT_ADVICE];
+    if (seconds === undefined) continue;
+    if (seconds >= LONE_SLEEP_SECONDS || (loopDepth > 0 && seconds >= LOOP_SLEEP_SECONDS) || (pollDepth > 0 && seconds > 0)) return [WAIT_ADVICE];
   }
   return [];
 }
