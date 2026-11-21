@@ -413,11 +413,27 @@ check_stop_cap() {
   return 0
 }
 
+# Desktop notes (hooks/notify.mjs): the terminal and the channel a note goes out on. Desktop notes show only in Ghostty, Kitty and
+# iTerm2 (and OSC 9 terminals such as WezTerm and Windows Terminal); Apple Terminal shows none, and tmux passes a note on only with
+# allow-passthrough on.
+check_notify() {
+  local line terminal channel passthrough
+  line="$(node "$REPO/home/hooks/notify.mjs" --channel 2>/dev/null)" || { bad "notify: hooks/notify.mjs --channel failed"; return; }
+  terminal="${line% *}"; channel="${line##* }"
+  if [ "$channel" = notifications_disabled ]; then ok "notify: notes off (preferredNotifChannel notifications_disabled) in $terminal"
+  elif [ "$terminal" = Apple_Terminal ]; then warn "notify: Apple Terminal shows no desktop note (at most a bell): use Ghostty, Kitty or iTerm2 for the needs-you notes"
+  else ok "notify: $terminal, channel $channel"; fi
+  if [ -n "${TMUX:-}" ]; then
+    passthrough="$(tmux show -gv allow-passthrough 2>/dev/null || true)"
+    [ "$passthrough" = on ] || warn "notify: tmux without allow-passthrough drops the desktop notes (tmux set -g allow-passthrough on)"
+  fi
+}
+
 # DOCTOR_ONLY="check_a check_b" runs just those checks (used by tests; the full run executes the repo tests).
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_stop_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows; check_env_names; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_stop_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows; check_env_names; check_repo_tests
 }
 # The machine's name in the summary: the owner's two machines by OS, else the host name; DOCTOR_MACHINE overrides it.
 machine_name() {
