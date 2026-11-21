@@ -13,14 +13,22 @@ Args marked `?` are optional. Every script also accepts `scriptsDir` (this folde
 
 | script | skill | phases | args |
 | --- | --- | --- | --- |
-| `build.js` | `wf-build` | Build, Join, Review, Land, Audit | `base, repo, suite, writers, statusFile, scriptsDir, resume?, lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?, principles?, checkpoints?, addClasses?}], appendOnly?` |
-| `review.js` | `wf-review` | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, laneStart?, baseTips?, priorFindings?, initialFindings?, waiverAt?, principles?, spec?, checkpoints?, records?, audit?` |
+| `build.js` | `wf-build` | Build, Join, Review, Visual QA, Land, Audit | `base, repo, suite, writers, statusFile, scriptsDir, resume?, probeC?, lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?, principles?, checkpoints?, addClasses?}], appendOnly?` |
+| `review.js` | `wf-review` | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, whole?, fixer?, tier?, addClasses?, laneClasses?, deltaOf?, laneStart?, baseTips?, priorFindings?, initialFindings?, waiverAt?, principles?, spec?, checkpoints?, records?, audit?` |
 | `land.js` | `wf-land` | Rebase, Suite, Land | `row, closeRow, statusFile, repo, base, branch, worktree, suite, tip, auditPending?, auditBase?` |
 | `step.js` | `wf-step` | Step | `row, agentType, prompt, model, effort, isolation?, alone?, statusFile?` |
-| `bugfix.js` | `wf-bugfix` | Reproduce, Hypotheses, Fix, Verify | `row, closeRow, statusFile, repo, base, symptom, repro?, suite, scriptsDir, branch?` |
+| `bugfix.js` | `wf-bugfix` | Reproduce, Hypotheses, Fix, Verify, Review, Visual QA, Land | `repo, symptom, scriptsDir, row?, closeRow?, statusFile?, base?, suite?, repro?, branch?, reproAtOwnerConditions?, matrix?, land?, probeC?` |
 | `research.js` | `wf-research` | Scope, Gather, Synthesize, Critic | `row, question, out, depth: 'simple'|'compare'|'complex'` |
 | `sync-machines.js` | `wf-sync` | Verify, Sync, Doctor | `row, repo, base` |
 | `git-cleanup.js` | `wf-git-cleanup` | Inventory, Plan, Apply | `row, repos` |
+
+Children that `build` (and, for `visual-qa`, `bugfix`) runs; they call no workflow themselves (nesting is one level), and the `wf-build` skill names them:
+
+| script | phases | args |
+| --- | --- | --- |
+| `implement.js` | Build | `role (implement or tests), row, branch, base, spec, files, statusFile, acceptanceTests, model, effort, agentType?, matrix?, checkpoints?, principles?` |
+| `join.js` | Join | `row, closeRow, branch, base, files, statusFile, worktree, sha, disputes?, checkpoints?, written?` |
+| `visual-qa.js` | Visual QA | `row, repo, worktree, tip, base, matrix?, uiFiles?` |
 
 `build`, `review`, `land` and `step` are described below. The other four ship in the next lane (round 4, W2) with their own tests.
 
@@ -48,6 +56,17 @@ Args marked `?` are optional. Every script also accepts `scriptsDir` (this folde
 - `build` runs lanes as a pipeline (implementer and, for `acceptanceTests`, a test-writer, each in a worktree), a Join runner, the `review`
   child, then a serial land queue through the `land` child, so lane A lands while lane B is still in review. A conflict, a `red` suite or changed patches go back through `review`.
   A lane whose review is clean but whose `leadList` holds a security finding ruled not real is held (`lead-decision`), never landed. `build` is run from its script file only: its children cannot run from an inline script.
+- `build` hand-over: every writer brief tells the agent to write its constraints into the lane's hand-over note first (`HANDOFF-<row>.md` beside
+  STATUS.md, never committed) and re-read it after a compaction, and, when it must stop, to commit, write done / left / next step / don't redo
+  there and return `unfinished: true`. A stopped or unfinished implementer is handed over to a fresh agent from the branch tip with a six-field
+  brief (objective and why; inputs: spec, diff, last report, note; Constraints; tools and sources; acceptance with defaults; output with "Not run"
+  and "Caveats"); two stops in a row end the lane `implementer-stopped`.
+- Visual QA (`build` and `bugfix`): a change whose UI files differ (ui-proof's one definition: the join's `uiFiles`, bugfix's verify) passes the
+  `visual-qa` child on the tree that lands before each land; a FAIL is a fix round whose fixer is `ui-implementer` (`review`'s `fixer` arg in
+  `build`, the lane agent in `bugfix`), then the gate again; `ui-proof` from `land` runs the gate on the rebased tip, never a review alone, then
+  lands again. With `probeC: 'fail'` (phase 0 Probe C: hooks do not fire in workflow agents) a UI change is refused: UI lanes run as plain agents.
+- `review` refuses a whole-range lane over 400 changed lines or 15 files (`failed`, "split the lane") unless `whole: true`; a delta round or an
+  audit is never refused. A resumed run is served from the journal for the longest unchanged prefix, so relaunch with the same args.
 - `step` runs one agent with the given type, model and effort. A workflow spawn does not fire `agent-model-guard`, so `step` repeats its gates by shape: a UI agent needs a `MATRIX:` line, a writer needs `isolation` or `alone: true`, `statusFile` adds the standing-rules line.
 
 ## Round 5: contracts, waiver and audit

@@ -24,7 +24,9 @@ const standard = (overrides = {}) => [
   { match: /:implement$/, reply: (prompt, opts, call) => built(key(call.label)) },
   { match: /:join$/, reply: (prompt, opts, call) => joined(key(call.label)) },
 ];
-const children = (review, land) => ({ review, land });
+const SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'workflows');
+// build runs its writers and its join as child scripts (split out of build.js, C4); they run in the same sandbox with the same replies.
+const children = (review, land) => ({ review, land, implement: join(SCRIPTS, 'implement.js'), join: join(SCRIPTS, 'join.js') });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('one lane: implement, join, review child (landing, fix), land child; the result lists the landed sha; every call is well formed', async () => {
@@ -156,7 +158,7 @@ test('a review that is not clean stops the lane before it lands; a failed land i
 
 test('an implementer that was stopped ends only its lane', async () => {
   const run = await runScript(BUILD, ARGS([lane('a'), lane('b')]), {
-    replies: [diskOk, { match: /impl-a:implement/, reply: null }, { match: /impl-b:implement/, reply: built('b') }, { match: /:join$/, reply: joined('b') }],
+    replies: [diskOk, { match: /impl-a:implement/, reply: null }, { match: /impl-a:handover/, reply: null }, { match: /impl-b:implement/, reply: built('b') }, { match: /:join$/, reply: joined('b') }],
     children: children(() => reviewed('b'), () => landedOk('b')),
   });
   assert.deepEqual(run.result.lanes.map((entry) => entry.status), ['implementer-stopped', 'landed']);
@@ -349,7 +351,7 @@ test('needs-review at land runs the real review script as a delta round: its len
     { match: /^close-a:cleanup$/, reply: { exit: 0, tail: '' } },
   ];
   const land = () => ((landTries += 1) === 1 ? { status: 'needs-review', sha: 'x', patchesChanged: 2, tidy: '' } : landedOk('a'));
-  const run = await runScript(BUILD, ARGS([lane('a')]), { replies, children: { review: REVIEW, land } });
+  const run = await runScript(BUILD, ARGS([lane('a')]), { replies, children: children(REVIEW, land) });
   assert.equal(run.error, null);
   assert.deepEqual(run.result.lanes.map(({ status, text }) => [status, text]), [['landed', '']], 'not review-failed');
   const reviews = run.calls.filter((call) => call.workflow === 'review').map((call) => call.args);

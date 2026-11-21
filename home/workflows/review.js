@@ -1,6 +1,7 @@
 // review: review a lane the way the setup's rules say, as a pipeline, then fix what the reviews confirm and review the fixes again until a round
 // is clean. Lenses come from review-tier (classes, models, efforts, stress and mutation plans); the script adds nothing and removes nothing.
-// Args: { row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, laneStart?, baseTips?, priorFindings?, initialFindings?, waiverAt?, principles?, spec?, checkpoints?, records?, audit? }
+// Args: { row, repo, base, range, landing, fix, branch, worktree, suite, tier?, addClasses?, laneClasses?, deltaOf?, laneStart?, baseTips?, priorFindings?, initialFindings?, waiverAt?, principles?, spec?, checkpoints?, records?, audit?, fixer?, whole? }
+//   fixer: {agentType, matrix?} of the fix agent (default implementer); whole: true reviews a lane over MAX_LANE_LINES or MAX_LANE_FILES (else `failed`, "split the lane").
 //   suite: the repo's declared full-suite command (test-pass runs it as `run --suite`, never from this text);
 //   tier: review-tier JSON from the lead to use for round 0 instead of running the tool; laneClasses: the class names of an earlier round (that
 //   result's laneClasses: classes and plan kinds are kept, I4); deltaOf: the full 40-character sha an earlier round reviewed (round 0 reviews only
@@ -57,6 +58,8 @@ export const meta = {
 }
 checkArgs(args)
 
+// fixer: the caller's fix agent type (build and bugfix pass ui-implementer for a lane with UI files); the guard does not fire in a workflow, so its MATRIX line rides in the brief.
+const fixerLine = args.fixer?.agentType === 'ui-implementer' ? `MATRIX: ${args.fixer.matrix ?? 'none: the visual-qa gate made the matrix for this lane'}\n` : ''
 const RANGE = args.audit ? `${args.audit.base}..${args.audit.tip}` : args.range // an audit reads recorded shas, never a branch name
 const RUNNER = { agentType: 'runner', model: 'haiku', effort: 'medium' }
 const TIER_TOOL = 'node ~/.claude/tools/review-tier/review-tier.mjs'
@@ -126,6 +129,9 @@ const fixText = (item) => `${itemText(item)}\n  fix: ${oneLine(item.fix)}`
 const priorText = (item) => findingText(item.severity, item)
 const isCounted = (item) => item.severity === 'blocking' || item.severity === 'should-fix'
 const PRIOR_LINE = /^prior: (\d+) fixed, (\d+) open$/ // the whole line: a remark after it ("0 open (B1 is still open)") is no prior line
+// A whole-range lane review over either size is refused with "split the lane" unless args.whole (a 198-file lane drew the top tier and never finished clean).
+const MAX_LANE_LINES = 400
+const MAX_LANE_FILES = 15
 const MAX_PRIOR_FINDINGS = 200 // a runner copies each into the prior file and every lens verifies each: a longer list is not checked reliably
 const MAX_ERROR_CHARS = 400 // of review-tier's own error line, shown quoted in a failure text
 const NO_CLASS = 'docs' // the one class name that raises no set: what a delta round passes when no round before it had a class
@@ -226,6 +232,8 @@ while (true) {
   const isDelta = run.deltaOf !== null // args.tier never comes with deltaOf (deltaRefusal), so a delta round's set is always review-tier's own
   const tierProblem = problemWithTier(prepared) ?? (isDelta ? problemWithPrior(tier.prior, carried.filter(isCounted).length) : null)
   if (tierProblem !== null) return outcome('failed', tierProblem)
+  const oversize = run.round === 0 && !isDelta && !args.audit && args.whole !== true && (tier.changedLines > MAX_LANE_LINES || tier.files > MAX_LANE_FILES)
+  if (oversize) return outcome('failed', `split the lane: ${RANGE} has ${tier.changedLines} changed lines in ${tier.files} files, over ${MAX_LANE_LINES} lines or ${MAX_LANE_FILES} files; run again with whole: true only to review it as one lane`)
   const waiver = run.round === 0 && canWaive(knownTier, sha, tier)
   // An audit uses the waiver's audit half; a range that is no longer waivable (a land-loop fix touched a gate path) gets the full set, never a failure (N3).
   const reviewSet = reviewSetOf(tier, waiver)
@@ -337,7 +345,7 @@ async function fixBatch(batch, round) {
   const released = await runner('release', 'Fix', `Remove the lane worktree ${run.worktree} so the fix agent can switch to the lane branch: git -C ${run.worktree} status --porcelain must be empty (else report exit 1 and the status); then git -C ${args.repo} worktree remove ${run.worktree}.`)
   if (released === null || released.exit !== 0) { round.failure = `release of the lane worktree failed: ${released?.tail ?? 'runner stopped'}`; return }
   const concurrent = round.fileClasses === null || batch.some((item) => (round.fileClasses[item.file] ?? []).some((name) => name.startsWith('concurrency')))
-  const fixed = await agent(fixPrompt(batch, round.sha, diagnosis, round.rebaseOnto ?? null), { label: `${args.row}:fix`, phase: 'Fix', agentType: 'implementer', model: concurrent ? 'opus' : 'sonnet', effort: 'high', isolation: 'worktree', schema: IMPLEMENTED })
+  const fixed = await agent(`${fixerLine}${fixPrompt(batch, round.sha, diagnosis, round.rebaseOnto ?? null)}`, { label: `${args.row}:fix`, phase: 'Fix', agentType: args.fixer?.agentType ?? 'implementer', model: concurrent ? 'opus' : 'sonnet', effort: 'high', isolation: 'worktree', schema: IMPLEMENTED })
   if (fixed === null) { round.failure = 'the fix agent was stopped'; return }
   // The next round reviews the HEAD of the worktree it returns, so it must be the lane branch's own and a plain path and sha (B1, N1).
   if (fixed.branch !== args.branch || !SAFE_PATH.test(fixed.worktree) || !isSha(fixed.sha)) { round.failure = `the fix agent returned branch ${fixed.branch}, worktree ${fixed.worktree}, sha ${fixed.sha}: not the lane ${args.branch}`; return }
@@ -493,7 +501,7 @@ function classNamesOf(tier) {
 function checkArgs(given) {
   const name = 'review' // the tool cuts `meta` out of the body, so the script's own name is written here
   const required = { row: 'string', repo: 'string', base: 'string', range: 'string', landing: 'boolean', fix: 'boolean', branch: 'string', worktree: 'string', suite: 'string' }
-  const optional = { tier: 'object', addClasses: 'array', laneClasses: 'array', deltaOf: 'string', laneStart: 'string', baseTips: 'array', priorFindings: 'array', initialFindings: 'array', waiverAt: 'string', principles: 'array', spec: 'string', checkpoints: 'array', records: 'array', audit: 'object' }
+  const optional = { tier: 'object', addClasses: 'array', laneClasses: 'array', deltaOf: 'string', laneStart: 'string', baseTips: 'array', priorFindings: 'array', initialFindings: 'array', waiverAt: 'string', principles: 'array', spec: 'string', checkpoints: 'array', records: 'array', audit: 'object', fixer: 'object', whole: 'boolean' }
   const check = (key, type) => {
     const value = given === undefined || given === null ? undefined : given[key]
     const ok = type === 'array' ? Array.isArray(value) : typeof value === type
@@ -505,6 +513,7 @@ function checkArgs(given) {
   if (given.checkpoints !== undefined && !given.checkpoints.every((entry) => typeof entry?.id === 'string' && typeof entry?.run === 'string')) throw new Error(`${name}: args.checkpoints entries must be {id, run} strings`)
   if (given.records !== undefined && !given.records.every((entry) => typeof entry === 'string')) throw new Error(`${name}: args.records entries must be path strings`)
   // A given tier JSON would be a delta round with no prior file, no prior line and no forced lane set: a delta round's set is review-tier's own.
+  if (given.fixer !== undefined && typeof given.fixer?.agentType !== 'string') throw new Error(`${name}: args.fixer must be {agentType, matrix?} with agentType a string`)
   if (given.tier !== undefined && given.deltaOf !== undefined) throw new Error(`${name}: args.tier cannot be combined with args.deltaOf: a delta round runs review-tier itself (--delta, --prior, --lane-classes); pass one of the two`)
   for (const key of ['laneStart', 'baseTips']) if (given[key] !== undefined && given.deltaOf === undefined) throw new Error(`${name}: args.${key} belongs to a deltaOf run: a whole-range review finds the lane start itself`)
   if (given.priorFindings !== undefined && given.deltaOf === undefined) throw new Error(`${name}: args.priorFindings belongs to a deltaOf run: they are the findings of the round that reviewed deltaOf; for a whole-range review leave them out`)

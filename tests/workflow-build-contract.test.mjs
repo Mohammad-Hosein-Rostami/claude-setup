@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { assertWellFormedCalls, readMeta, runScript } from './workflow-sandbox.mjs';
 
 const BUILD = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'workflows', 'build.js');
+// build runs its writers and its join as child scripts (split out of build.js, C4), in the same sandbox with the same replies.
+const BUILD_CHILDREN = { implement: join(dirname(BUILD), 'implement.js'), join: join(dirname(BUILD), 'join.js') };
 const META = readMeta(readFileSync(BUILD, 'utf8')).meta;
 const BASE_SHA = 'b1b1b1b1';
 const TIP = 'a1a1a1a1';
@@ -44,10 +46,11 @@ const runContract = (laneObject, { join = joined('a'), review, land = () => land
   let tries = 0;
   return runScript(BUILD, ARGS([laneObject]), {
     replies: [...replies, ...buildReplies(join), ...AUDIT_REPLIES()],
-    children: { review: review ?? ((a) => (a.audit ? audited() : reviewedClean('a'))), land: (a) => land(a, (tries += 1)) },
+    children: { ...BUILD_CHILDREN, review: review ?? ((a) => (a.audit ? audited() : reviewedClean('a'))), land: (a) => land(a, (tries += 1)) },
   });
 };
-const call = (run, suffix) => run.calls.find((entry) => entry.label.endsWith(suffix));
+// An agent call, not the `workflow:implement` / `workflow:join` entry of a child script, whose label ends the same way.
+const call = (run, suffix) => run.calls.find((entry) => entry.workflow === undefined && entry.label.endsWith(suffix));
 
 test('checkArgs: two lanes that share a file throw unless the file is in appendOnly; a checkpoint may not list a file of its lane', async () => {
   const shared = [lane('a', { files: ['x.mjs', 'docs/catalog.md'] }), lane('b', { files: ['y.mjs', 'docs/catalog.md'] })];
@@ -91,7 +94,7 @@ test('the join brief: cherry-pick only git-cherry + commits, vacuous, out of sco
   assert.match(prompt, /c1.*node --test tests\/a\.test\.mjs/s);
   assert.match(prompt, /timeout 600000/);
   assert.ok(prompt.indexOf('baseExit') < prompt.indexOf('delete the helper branch'), 'base-side runs happen before the test-writer worktree is removed');
-  const without = await runScript(BUILD, ARGS([lane('a', { checkpoints: [CHECKPOINT] })]), { replies: buildReplies(joined('a')), children: { review: () => reviewedClean('a', { waived: false }), land: () => landedOk() } });
+  const without = await runScript(BUILD, ARGS([lane('a', { checkpoints: [CHECKPOINT] })]), { replies: buildReplies(joined('a')), children: { ...BUILD_CHILDREN, review: () => reviewedClean('a', { waived: false }), land: () => landedOk() } });
   assert.match(call(without, ':join').prompt, /git merge-base main HEAD/);
 });
 
@@ -269,7 +272,7 @@ const worktreeNameOf = (prompt) => /named (audit-\S+)/.exec(prompt)[1];
 
 test('a lane with no checkpoints and no test-writer locks nothing: no empty-pathspec diff, no base-side run, and a contractTouched the runner lists anyway is ignored', async () => {
   const bare = lane('a');
-  const run = await runScript(BUILD, ARGS([bare]), { replies: buildReplies(joined('a', { checkpoints: [], contractTouched: ['a.mjs', 'b.mjs'] })), children: { review: () => reviewedClean('a', { waived: false }), land: () => landedOk() } });
+  const run = await runScript(BUILD, ARGS([bare]), { replies: buildReplies(joined('a', { checkpoints: [], contractTouched: ['a.mjs', 'b.mjs'] })), children: { ...BUILD_CHILDREN, review: () => reviewedClean('a', { waived: false }), land: () => landedOk() } });
   const { prompt } = call(run, ':join');
   assert.doesNotMatch(prompt, /name-only -- *[`.]/, 'no diff with an empty pathspec');
   assert.doesNotMatch(prompt, /contractTouched = /);
@@ -355,7 +358,7 @@ test('checkArgs: lanes that list the same file written two ways, or a folder and
 
 test('a checkpoint with no locked files still gets its base-side run (no test-writer): the verdict needs baseExit, and contractTouched stays off', async () => {
   const unlocked = lane('a', { checkpoints: [{ ...CHECKPOINT, files: [], kind: 'keeps-working' }] });
-  const run = await runScript(BUILD, ARGS([unlocked]), { replies: buildReplies(joined('a', { checkpoints: [checkpointResult({ baseExit: 0 })] })), children: { review: () => reviewedClean('a', { waived: false }), land: () => landedOk() } });
+  const run = await runScript(BUILD, ARGS([unlocked]), { replies: buildReplies(joined('a', { checkpoints: [checkpointResult({ baseExit: 0 })] })), children: { ...BUILD_CHILDREN, review: () => reviewedClean('a', { waived: false }), land: () => landedOk() } });
   const { prompt } = call(run, ':join');
   assert.match(prompt, /Base-side runs, in a detached worktree at `git merge-base main HEAD`.*c1: node --test tests\/a\.test\.mjs/s);
   assert.doesNotMatch(prompt, /contractTouched = /);

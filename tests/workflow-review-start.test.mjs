@@ -11,6 +11,8 @@ import { runScript } from './workflow-sandbox.mjs';
 import { priorOfTierPrompt, withPriorLine } from './workflow-review-helpers.mjs';
 
 const WORKFLOWS = join(dirname(fileURLToPath(import.meta.url)), '..', 'home', 'workflows');
+// build runs its writers and its join as child scripts (split out of build.js, C4), in the same sandbox with the same replies.
+const BUILD_CHILDREN = { implement: join(WORKFLOWS, 'implement.js'), join: join(WORKFLOWS, 'join.js') };
 const [REVIEW, BUILD] = [join(WORKFLOWS, 'review.js'), join(WORKFLOWS, 'build.js')];
 const TOOL = 'node ~/.claude/tools/review-tier/review-tier.mjs';
 const ARGS = { row: 'close:2', repo: '/p', base: 'main', range: 'main...HEAD', landing: false, fix: true, branch: 'lane/a', worktree: '/p-wt/a', suite: 'npm test' };
@@ -141,7 +143,7 @@ test('build gives a land-loop review the start its first review recorded and its
     let landTries = 0;
     // The first lane lands, the second needs a re-review after land rebased it, then lands.
     const land = () => ((landTries += 1) === 2 ? { status: 'needs-review', sha: 'x', patchesChanged: 2, tidy: '' } : { status: 'landed', sha: landTries === 1 ? LANDED : hex('1a4ded0b'), patchesChanged: 0, tidy: 'clean' });
-    const run = await runScript(BUILD, { base: 'main', repo: '/p', suite: 'npm test', writers: 4, statusFile: '/p/STATUS.md', scriptsDir: '/scripts', lanes: [lane('a'), lane('b')] }, { replies, children: { review, land } });
+    const run = await runScript(BUILD, { base: 'main', repo: '/p', suite: 'npm test', writers: 4, statusFile: '/p/STATUS.md', scriptsDir: '/scripts', lanes: [lane('a'), lane('b')] }, { replies, children: { ...BUILD_CHILDREN, review, land } });
     assert.equal(run.error, null);
     assert.deepEqual(run.result.lanes.map(({ status }) => status), ['landed', 'landed']);
     assert.match(callsOf(run, 'impl-a:disk')[0].prompt, /Then run: git -C \/p rev-parse --verify refs\/heads\/main\./, 'the base tip is read once, before any lane is built');

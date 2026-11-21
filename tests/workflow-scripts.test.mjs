@@ -20,7 +20,10 @@ const REQUIRED_ARGS = {
   land: { row: 'string', closeRow: 'string', statusFile: 'string', repo: 'string', base: 'string', branch: 'string', worktree: 'string', suite: 'string', tip: 'string' },
   build: { base: 'string', repo: 'string', suite: 'string', writers: 'number', statusFile: 'string', scriptsDir: 'string', lanes: 'array' },
   step: { row: 'string', agentType: 'string', prompt: 'string', model: 'string', effort: 'string' },
-  bugfix: { row: 'string', closeRow: 'string', statusFile: 'string', repo: 'string', base: 'string', symptom: 'string', suite: 'string', scriptsDir: 'string' },
+  bugfix: { repo: 'string', symptom: 'string', scriptsDir: 'string' },
+  implement: { role: 'string', row: 'string', branch: 'string', base: 'string', spec: 'string', files: 'array', statusFile: 'string', acceptanceTests: 'boolean', model: 'string', effort: 'string' },
+  join: { row: 'string', closeRow: 'string', branch: 'string', base: 'string', statusFile: 'string', files: 'array', worktree: 'string', sha: 'string' },
+  'visual-qa': { row: 'string', repo: 'string', worktree: 'string', tip: 'string', base: 'string' },
   research: { row: 'string', question: 'string', out: 'string', depth: 'string' },
   'sync-machines': { row: 'string', repo: 'string', base: 'string' },
   'git-cleanup': { row: 'string', repos: 'array' },
@@ -86,7 +89,8 @@ for (const path of scripts) {
     assert.match(text, /\$\{CLAUDE_SKILL_DIR\}\/\.\.\/\.\.\/workflows\//);
     assert.match(text, /scriptsDir/);
     // build runs the child workflows review and land, which an inline script cannot run: its skill says so instead of offering the fallback
-    if (file === 'build') assert.match(text, /no inline fallback/);
+    // build's own children (implement, join, visual-qa) are named by the wf-build skill, which offers no inline fallback either
+    if (['build', 'implement', 'join', 'visual-qa'].includes(file)) assert.match(text, /no inline fallback/);
     else assert.match(text, /script`? ?(input|parameter)|as `script`/i, 'keeps the inline-script sentence (F2)');
   });
 }
