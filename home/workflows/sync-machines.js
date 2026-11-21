@@ -105,7 +105,7 @@ function cliProblems(names, reports) {
 
 function syncMachine(machine) {
   const steps = machine === LOCAL_MACHINE ? `In ${repo} run scripts/install.sh, then report git rev-parse HEAD.` : targetSteps(machine)
-  return runner(`sync:${machine}`, `${steps} After the install run claude --version once (on Windows a CLI install can leave no binary). Never push, never reset or force anything. Return ok (every step exited 0), sha (HEAD afterwards) and the failing step's last 10 lines as tail.`, 'Sync', SYNC_SCHEMA)
+  return runner(`sync:${machine}`, `${steps} After the install run claude --version once (on Windows a CLI install can leave no binary). Never push, never reset or force anything. Return exits (the exit code of each step you ran, in order), sha (HEAD afterwards) and the failing step's last 10 lines as tail.`, 'Sync', SYNC_SCHEMA)
 }
 
 function targetSteps(machine) {
