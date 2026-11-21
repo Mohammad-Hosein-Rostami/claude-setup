@@ -24,10 +24,14 @@
 // text plus a path only; any failure leaves the brief as it is.
 // Writer isolation gate (after the UI gate): a writing agent (lib/writer-agents.mjs isWritingAgent: implementer, ui-implementer,
 // test-writer, general-purpose, claude, or an agent file whose tools include Write/Edit; scout, runner, reviewer, security-auditor, Explore,
-// Plan and architect never) launched while another writing agent of this session still runs must carry `isolation: "worktree"`, else it
-// is denied once with that advice (adviceOnce, as the UI gate) and the identical call sent again runs. "Still runs" comes from the
-// session's own record: every writer launch this hook lets start, marked started on SubagentStart and ended on SubagentStop by
-// agent-budget.mjs; a launch that never started or an agent idle for 30 min stops counting (rules and limits in lib/writer-agents.mjs).
+// Plan and architect never) launched while another plain writing agent of this session still runs must carry `isolation: "worktree"` or a
+// read-only brief, else it is denied once with that advice (adviceOnce, as the UI gate) and the identical call sent again runs. A launch
+// with `isolation: "worktree"` runs and is recorded `isolated`; one whose prompt has a line starting `read-only:` or `scratchpad-only:`
+// (isReadOnlyBrief) runs and is recorded `readOnly`; neither kind makes a later writer bounce ("plain" = neither flag). The read-only brief
+// is held at the agent's stop by commit-gate.mjs. Why the relaxation lets nothing new through: the gate is deny-once and the identical
+// retry runs, and an isolated agent can still write the main checkout by shell (worktrees.md:104-112), so counting it was no protection.
+// "Still runs" comes from the session's own record: every writer launch this hook lets start, marked started on SubagentStart and ended
+// on SubagentStop by agent-budget.mjs; a launch that never started or an agent idle for 30 min stops counting (lib/writer-agents.mjs).
 // Copy-branch brief gate (run first, round 4): a writer brief that creates a copy of an existing branch (`<lane>-2`) instead of continuing the
 // lane's own (lib/copy-branch-brief.mjs) is sent back once with the same-branch steps. Same deny-once mechanics as the gates above, with its own
 // digest (logged class "copy branch brief"). A workflow spawn does not fire this hook (probe P2). There is no gate that sends a plain Agent call
@@ -40,7 +44,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { UNPRINTABLE, readFileHead, withBriefLines } from './lib/agent-brief.mjs';
 import { copyBranchBriefAdvice } from './lib/copy-branch-brief.mjs';
-import { isWritingAgent, recordWriterLaunch } from './lib/writer-agents.mjs';
+import { isReadOnlyBrief, isWritingAgent, recordWriterLaunch } from './lib/writer-agents.mjs';
 
 const FORK_TYPE = 'fork';
 const DEFAULT_MODEL = 'sonnet';
@@ -165,19 +169,21 @@ const PARALLEL_WRITER_ADVICE = 'Another writing agent of this session is still r
   + '`isolation: "worktree"` (parallel writers each get their own worktree), or wait until the running writer has finished.';
 
 /**
- * The writer isolation gate (see the header). Records the launch of every writer it lets start, so a writer launched next sees it.
+ * The writer isolation gate (see the header). Records the launch of every writer it lets start, with its `isolated` and `readOnly`
+ * flags, so a writer launched next sees it.
  * @param {unknown} input the hook input: tool_input {subagent_type, isolation, prompt}, cwd, session_id
  * @param {Record<string, string | undefined>} env process environment (HOME for the stores and agent files, CLAUDE_PROJECT_DIR)
- * @returns {Promise<string>} the deny JSON line on the first send of a writer without isolation while another writer runs; '' otherwise,
- *   on the identical retry, when nothing can be recorded, and on any failure
+ * @returns {Promise<string>} the deny JSON line on the first send of a plain writer (no isolation, no read-only brief) while another plain
+ *   writer runs; '' otherwise, on the identical retry, when nothing can be recorded, and on any failure
  */
 export async function writerIsolationDeny(input, env = process.env) {
   try {
     const { subagent_type: type, isolation, prompt } = input?.tool_input ?? {};
     if (!isWritingAgent(type, env)) return '';
     const session = input.session_id;
-    const isolated = isolation === WORKTREE_ISOLATION;
-    if (recordWriterLaunch(session, type, env, { unlessRunning: !isolated }) !== 'running') return '';
+    const flags = { isolated: isolation === WORKTREE_ISOLATION, readOnly: isReadOnlyBrief(prompt) };
+    const plain = !flags.isolated && !flags.readOnly;
+    if (recordWriterLaunch(session, type, env, { unlessRunning: plain, ...flags }) !== 'running') return '';
     const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
     const { adviceOnce } = await import('./lib/bounce-once.mjs');
     const call = { command: `${type}: isolation ${String(isolation)}: ${String(prompt)}`, cwd, input, hook: 'agent-model-guard', tool: 'Agent' };

@@ -50,7 +50,8 @@
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/agent-model-guard.mjs\"",
-            "timeout": 5
+            "timeout": 5,
+            "onFailure": "block"
           }
         ]
       },
@@ -69,7 +70,8 @@
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/artifact-ask.mjs\"",
-            "timeout": 200
+            "timeout": 200,
+            "onFailure": "block"
           }
         ]
       },

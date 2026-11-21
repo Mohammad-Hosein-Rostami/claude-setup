@@ -25,6 +25,9 @@
 //   can never loop. A state that cannot be stored is not blocked.
 // - A subagent whose definition cannot write files (built-in Explore and Plan, or an agent file whose `tools:` line has no Write or
 //   Edit) is never told to commit: the edits it sees are someone else's.
+// - Read-only hold (lib/read-only-hold.mjs): a subagent whose brief has a `read-only:` or `scratchpad-only:` line (or, brief unreadable,
+//   whose launch was recorded read-only) is blocked once per set of changed files with the read-only reason instead of "commit them":
+//   its recorded files outside the temp and scratchpad roots (committed or not, any folder) plus its own Bash-made files in its worktree.
 // - Passes without a word: not a git worktree, a branch with no commit yet, a rebase/merge/cherry-pick/revert in progress, and
 //   files git ignores (.gitignore, .git/info/exclude: STATUS.md and other work notes).
 // - When the branch was moved under the folder (its index equals an earlier reflog position behind the tip), the staged-only entries
@@ -44,6 +47,7 @@ import { withSessionLock } from './lib/session-lock.mjs';
 import { readSessionFile, writeSessionFile } from './lib/session-store.mjs';
 import { baselineOf, changedSinceBaseline, hasBaseline, saveBaseline } from './lib/dirty-baseline.mjs';
 import { oversizeNewFiles, sizeReason, unlistedFiles } from './lib/new-file-size.mjs';
+import { changedOutsideScratch, isHeldReadOnly, readOnlyReason } from './lib/read-only-hold.mjs';
 import { LEAD, isRecordedEntry, realPathOf, recordEditedFile, recordedPaths, statusEntries } from './lib/own-edits.mjs';
 import { gatedFolder, gitOut, gitSucceeds, gitText, namesFilterProgram, readHead, worktreeOf } from './lib/gated-folder.mjs';
 import { statusFileOf } from './lib/status-file-of.mjs';
@@ -178,11 +182,18 @@ function ownChanges(stop, status) {
   const unrecorded = rest.filter((entry) => !isRecordedEntry(entry, recorded) && !isRecordedEntry(entry, others));
   const bashMade = ownBashEntries(stop.ctx, changedSinceBaseline(env, input.session_id, agent, top, unrecorded));
   const gapChanged = gapEntries.length > 0 && changedSinceBaseline(env, input.session_id, agent, top, gapEntries).length > 0;
-  return { own: [...recordedHere, ...bashMade], gap, gapChanged };
+  return { own: [...recordedHere, ...bashMade], bashMade, gap, gapChanged };
 }
 
 const blockOnce = (stop, state, reason) => (recordOnce(stop.env, stop.input.session_id, { agent: stop.agent, state, continued: stop.continued })
   ? { block: true, reason } : null);
+
+/** The read-only hold: blocks once per set of changed files (recorded outside the scratch roots, own Bash-made ones) with its reason. */
+function holdBlock(stop, bashMade, where) {
+  const files = [...new Set([...changedOutsideScratch(stop.recorded, stop.env), ...bashMade.map(({ path }) => path)])].sort();
+  if (files.length === 0) return PASS;
+  return blockOnce(stop, hashOf(stop.agent, 'read-only', ...files), readOnlyReason(files.length, where)) ?? PASS;
+}
 
 /** 2.4 step 3: today's text for own entries, the sync advice with a gap (also with no own entry, unless the move is foreign). */
 function changeBlock(stop, { own, gap, gapChanged }) {
@@ -220,15 +231,18 @@ export function decide(input, env = process.env) {
   const agent = typeof input.agent_id === 'string' ? input.agent_id : LEAD;
   const recorded = recordedPaths(env, input.session_id, agent);
   if (recorded.size === 0 && !hasBaseline(env, input.session_id, agent)) return PASS; // nothing changed by this session or agent: no git call
+  const held = isHeldReadOnly(input, briefOf(input), env); // before the folder checks: an agent started in ~ has no worktree
+  const base = { input, env, agent, recorded, continued: input.stop_hook_active === true };
   const folder = gatedFolder(input, env);
   const tree = folder === null ? null : worktreeOf(folder);
-  if (tree === null || IN_PROGRESS_MARKERS.some((marker) => existsSync(join(tree.gitDir, marker))) || namesFilterProgram(tree.top)) return PASS;
-  const status = dirtyStatus(tree.top);
-  if (status === null) return PASS;
+  const unusable = tree === null || IN_PROGRESS_MARKERS.some((marker) => existsSync(join(tree.gitDir, marker))) || namesFilterProgram(tree.top);
+  const status = unusable ? null : dirtyStatus(tree.top);
+  if (status === null) return held ? holdBlock(base, [], null) : PASS;
   const top = realPathOf(tree.top);
   const ctx = { ...moveContext(input, env, top, agent === LEAD ? null : agent), takenMs: baselineOf(env, input.session_id, agent)?.takenMs ?? null };
-  const stop = { input, env, agent, tree, top, recorded, ctx, continued: input.stop_hook_active === true };
+  const stop = { ...base, tree, top, ctx };
   const changes = ownChanges(stop, status);
+  if (held) return holdBlock(stop, changes.bashMade, tree.top);
   return changeBlock(stop, changes) ?? sizeBlock(stop, changes.own) ?? PASS;
 }
 

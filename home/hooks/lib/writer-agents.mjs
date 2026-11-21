@@ -2,12 +2,17 @@
 // start (PreToolUse Agent/Task) as pending; agent-budget.mjs marks it started on SubagentStart and ends it on SubagentStop.
 // Why a record of its own: agent-budget's counter file appears only after an agent's first tool call and holds no agent type, so writers
 // launched in parallel in one message would all see none running.
-// Exports: agentFileWrites(type, env), isWritingAgent(type, env), recordWriterLaunch(session, type, env, options), recordWriterStart(session,
-// agentId, type, env), recordWriterStop(session, agentId, type, env), callCounterPath(session, agentId), PENDING_MS, IDLE_MS.
+// Exports: agentFileWrites(type, env), isWritingAgent(type, env), isReadOnlyBrief(prompt), recordWriterLaunch(session, type, env, options),
+// recordWriterStart(session, agentId, type, env), recordWriterStop(session, agentId, type, env), readOnlyLaunchOpen(session, agentId, type,
+// env), callCounterPath(session, agentId), PENDING_MS, IDLE_MS.
 // Store: ~/.claude/state/agent-writers/<session>.json through lib/session-store.mjs (lstat-checked, locked, 0600):
-// {"launches": [{"type", "at", "agent"?}], "stopped": [agent ids]}. SubagentStart has the agent id and type but no tool_use_id, so it
-// marks the oldest pending launch of its type started (agent = its id, at = the start); a stop ends the launch of its id, else the oldest
-// of its type; stopped ids are kept so a stop that comes again (another gate blocked it) ends nothing more.
+// {"launches": [{"type", "at", "agent"?, "isolated"?, "readOnly"?}], "stopped": [agent ids], "readOnlyAgents": [agent ids]}. SubagentStart
+// has the agent id and type but no tool_use_id, so it marks the oldest pending launch of its type started (agent = its id, at = the start;
+// the flags stay); a stop ends the launch of its id, else the oldest of its type; stopped ids are kept so a stop that comes again (another
+// gate blocked it) ends nothing more. readOnlyAgents keeps the ids of started read-only launches after their stop, because commit-gate's
+// read-only hold runs on the same SubagentStop as the stop record (hooks of one event run in parallel).
+// Flags (round 9, r9-writer-gate): `isolated` (launched with isolation "worktree") and `readOnly` (a read-only brief, isReadOnlyBrief). Only
+// a running launch with neither flag makes a later writer without them bounce; a stored launch with neither key counts as a plain writer.
 // When a launch counts as running (Claude Code 2.1.325: a launch the owner or a sibling hook denies, or Esc cuts before it starts, gets no
 // SubagentStart and no SubagentStop, so a launch alone proves nothing):
 //   pending (no SubagentStart yet): for PENDING_MS after the launch: long enough for writers sent in one message to see each other and
@@ -37,6 +42,8 @@ const AGENT_FILE_BYTES = 64 * 1024;
 const AGENT_TYPE = /^[\w-]{1,64}$/; // a name that can be a file name part; plugin agents (`plugin:name`) have no file here
 const WRITING_TOOLS = /\b(?:Write|Edit|MultiEdit|NotebookEdit)\b/;
 const DEFAULT_TYPE = 'general-purpose'; // what an Agent call with no subagent_type runs
+// A brief line that declares the agent read-only; exact case, at the start of a trimmed line (commit-gate holds the agent to it at its stop)
+const READ_ONLY_BRIEF_PREFIXES = ['read-only:', 'scratchpad-only:'];
 const WRITER_TYPES = new Set(['implementer', 'ui-implementer', 'test-writer', 'general-purpose', 'claude']);
 const READ_ONLY_TYPES = new Set(['scout', 'runner', 'reviewer', 'security-auditor', 'Explore', 'Plan', 'architect']);
 
@@ -90,6 +97,17 @@ export function isWritingAgent(type, env) {
 }
 
 /**
+ * Whether a brief declares its agent read-only: one of its lines, split on CR LF or LF and trimmed, starts with `read-only:` or
+ * `scratchpad-only:` in exactly that case. A mention inside a sentence or another case does not count.
+ * @param {unknown} prompt tool_input.prompt (or the brief read back from the agent's transcript)
+ * @returns {boolean} false for anything that is not a string
+ */
+export function isReadOnlyBrief(prompt) {
+  if (typeof prompt !== 'string') return false;
+  return prompt.split(/\r?\n/).some((line) => READ_ONLY_BRIEF_PREFIXES.some((prefix) => line.trim().startsWith(prefix)));
+}
+
+/**
  * The file agent-budget.mjs appends one byte to on each tool call of a subagent (its mtime is the agent's last tool call).
  * @returns {string | null} the path; null when an id is not a safe file name part or the hook temp root is refused (lib/edit-log.mjs)
  */
@@ -122,35 +140,47 @@ function parseRecord(text, now, session) {
     const record = text === null ? {} : JSON.parse(text);
     const launches = (Array.isArray(record?.launches) ? record.launches : [])
       .filter((launch) => typeof launch?.type === 'string' && Number.isFinite(launch.at) && isRunning(launch, now, session));
-    const stopped = (Array.isArray(record?.stopped) ? record.stopped : []).filter((id) => typeof id === 'string');
-    return { launches, stopped };
+    const ids = (list) => (Array.isArray(list) ? list : []).filter((id) => typeof id === 'string');
+    return { launches, stopped: ids(record?.stopped), readOnlyAgents: ids(record?.readOnlyAgents) };
   } catch {
-    return { launches: [], stopped: [] };
+    return { launches: [], stopped: [], readOnlyAgents: [] };
   }
 }
 
 const store = (env, session, record) => writeSessionFile(writersDir(env), session, JSON.stringify({
-  launches: record.launches.slice(-LAUNCHES_KEPT), stopped: record.stopped.slice(-STOPPED_IDS_KEPT),
+  launches: record.launches.slice(-LAUNCHES_KEPT),
+  stopped: record.stopped.slice(-STOPPED_IDS_KEPT),
+  readOnlyAgents: record.readOnlyAgents.slice(-STOPPED_IDS_KEPT),
 }));
+
+/** A launch that makes a later plain writer bounce: one with neither flag (a record without the keys counts as neither). */
+const isPlainLaunch = (launch) => launch.isolated !== true && launch.readOnly !== true;
+
+/** The stored launch for a new writer: its type and time, plus each flag only when set. */
+const newLaunch = (type, at, { isolated, readOnly }) => ({
+  type: typeOf(type), at, ...(isolated === true ? { isolated: true } : {}), ...(readOnly === true ? { readOnly: true } : {}),
+});
 
 /**
  * Records one writer launch, read and written under the session's lock, so writers launched in parallel see each other.
  * @param {unknown} session hook input session_id
  * @param {unknown} type tool_input.subagent_type
  * @param {Record<string, string | undefined>} env HOME / USERPROFILE
- * @param {{unlessRunning?: boolean}} [options] unlessRunning: record nothing when another writer still runs
- * @returns {'recorded' | 'running' | undefined} 'running' when unlessRunning found a running writer (nothing recorded); undefined when
- *   the store is unusable, still locked or the write failed
+ * @param {{unlessRunning?: boolean, isolated?: boolean, readOnly?: boolean}} [options] unlessRunning: record nothing when another writer
+ *   with neither flag still runs; isolated / readOnly: the flags this launch is recorded with
+ * @returns {'recorded' | 'running' | undefined} 'running' when unlessRunning found a running plain writer (nothing recorded); undefined
+ *   when the store is unusable, still locked or the write failed
  */
-export function recordWriterLaunch(session, type, env, { unlessRunning = false } = {}) {
+export function recordWriterLaunch(session, type, env, { unlessRunning = false, isolated = false, readOnly = false } = {}) {
   const dir = writersDir(env);
   return withSessionLock(dir, session, () => {
     const now = Date.now();
     const text = readSessionFile(dir, session, MAX_STORE_BYTES);
     if (text === undefined) return undefined;
     const record = parseRecord(text, now, session);
-    if (unlessRunning && record.launches.length > 0) return 'running';
-    return store(env, session, { ...record, launches: [...record.launches, { type: typeOf(type), at: now }] }) ? 'recorded' : undefined;
+    if (unlessRunning && record.launches.some(isPlainLaunch)) return 'running';
+    const launches = [...record.launches, newLaunch(type, now, { isolated, readOnly })];
+    return store(env, session, { ...record, launches }) ? 'recorded' : undefined;
   });
 }
 
@@ -172,8 +202,9 @@ export function recordWriterStart(session, agentId, type, env) {
     const record = parseRecord(text, now, session);
     const index = record.launches.findIndex((launch) => launch.type === typeOf(type) && typeof launch.agent !== 'string');
     if (index === -1) return false;
-    const launches = record.launches.map((launch, at) => (at === index ? { type: launch.type, at: now, agent: agentId } : launch));
-    return store(env, session, { ...record, launches });
+    const launches = record.launches.map((launch, at) => (at === index ? { ...launch, at: now, agent: agentId } : launch));
+    const readOnlyAgents = launches[index].readOnly === true ? [...record.readOnlyAgents, agentId] : record.readOnlyAgents;
+    return store(env, session, { ...record, launches, readOnlyAgents });
   }) === true;
 }
 
@@ -196,6 +227,24 @@ export function recordWriterStop(session, agentId, type, env) {
     const index = own !== -1 ? own : record.launches.findIndex((launch) => launch.type === typeOf(type));
     if (record.stopped.includes(agentId) || index === -1) return false;
     const launches = record.launches.filter((_, at) => at !== index);
-    return store(env, session, { launches, stopped: [...record.stopped, agentId] });
+    return store(env, session, { ...record, launches, stopped: [...record.stopped, agentId] });
   }) === true;
+}
+
+/**
+ * Whether a stopping agent was launched read-only, for commit-gate's hold when the agent's brief cannot be read: a started read-only
+ * launch with this agent id (kept after its stop), or a read-only launch of its type that has not ended. Read without the lock (a read).
+ * @param {unknown} session hook input session_id
+ * @param {unknown} agentId hook input agent_id
+ * @param {unknown} type hook input agent_type
+ * @param {Record<string, string | undefined>} env HOME / USERPROFILE
+ * @returns {boolean} false when there is no such launch or the store cannot be read
+ */
+export function readOnlyLaunchOpen(session, agentId, type, env) {
+  if (typeof agentId !== 'string' || agentId === '') return false;
+  const text = readSessionFile(writersDir(env), session, MAX_STORE_BYTES);
+  if (typeof text !== 'string') return false;
+  const record = parseRecord(text, Date.now(), session);
+  if (record.readOnlyAgents.includes(agentId)) return true;
+  return record.launches.some((launch) => launch.readOnly === true && (launch.agent === agentId || launch.type === typeOf(type)));
 }

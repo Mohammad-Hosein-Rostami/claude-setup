@@ -67,7 +67,10 @@ Other hooks:
 - `read-only-command.mjs`: whether a Bash command is git or reading only (no writing option, no output to a file), for
   `agent-budget.mjs`'s escalation.
 - `writer-agents.mjs`: which agent types write files (agent files' `tools:` line), and the record of a session's running writers that
-  `agent-model-guard.mjs` writes on launch and `agent-budget.mjs` ends on SubagentStop; `commit-gate.mjs` uses its agent-file check.
+  `agent-model-guard.mjs` writes on launch (with the `isolated` and `readOnly` flags) and `agent-budget.mjs` ends on SubagentStop;
+  `commit-gate.mjs` uses its agent-file check and its read-only brief and launch checks.
+- `read-only-hold.mjs`: whether a stopping subagent is held to its `read-only:` / `scratchpad-only:` brief, which of its recorded files
+  lie outside the temp and scratchpad roots, and the block reason; used by `commit-gate.mjs`.
 - `gate-routes.mjs`: the prompt patterns and lines of the skill router's gate routes (bug, done, restructure, git history, repeated report); used by `skill-router.mjs`.
 - `reply-cap.mjs`: reads a reply-size cap from a prompt; used by `agent-budget.mjs` and `final-reply-cap.mjs`.
 - `transcript.mjs`: reads the session transcript (context size, STATUS file).

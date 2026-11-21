@@ -73,10 +73,10 @@ test('a second writer without isolation while a writer runs is denied once with 
   assert.ok(denied(s.launch(writer('test-writer'))), 'two writers run now: a third one is denied too');
 });
 
-test('a writer with isolation "worktree" runs next to running writers, and counts as running itself', () => {
+test('a writer with isolation "worktree" runs next to running writers, and does not stop a writer without isolation', () => {
   const s = writerSession();
   assert.equal(s.launch(writer('ui-implementer', { isolation: 'worktree', prompt: 'MATRIX: none: one-file tweak, no Figma frame' })), null);
-  assert.ok(denied(s.launch(writer('implementer'))), 'the isolated writer is still a running writer');
+  assert.ok(!denied(s.launch(writer('implementer'))), 'an isolated writer does not stop a non-isolated one');
   assert.equal(s.launch(writer('implementer', { isolation: 'worktree', prompt: 'other job' })), null);
 });
 
@@ -108,7 +108,8 @@ test('an agent file whose tools include Write or Edit is a writer; one without, 
 test('a writer that stopped (SubagentStop) no longer counts; a repeated stop of the same agent ends only one launch', () => {
   const s = writerSession();
   s.launch(writer('implementer', { prompt: 'one' }));
-  s.launch(writer('implementer', { prompt: 'two', isolation: 'worktree' }));
+  s.launch(writer('implementer', { prompt: 'two' })); // denied once
+  s.launch(writer('implementer', { prompt: 'two' })); // the identical retry runs: two plain writers are recorded
   s.stop('agent-1', 'implementer');
   s.stop('agent-1', 'implementer'); // a stop blocked by another gate comes again
   assert.ok(denied(s.launch(writer('implementer', { prompt: 'three' }))), 'one implementer still runs');
@@ -176,7 +177,8 @@ test('a launch dated ahead of the clock never counts (clock step back, a planted
 test('a stop ends the launch of its own agent id first', () => {
   const s = writerSession();
   s.launch(writer('implementer', { prompt: 'one' }));
-  s.launch(writer('implementer', { prompt: 'two', isolation: 'worktree' }));
+  s.launch(writer('implementer', { prompt: 'two' })); // denied once
+  s.launch(writer('implementer', { prompt: 'two' })); // the identical retry runs: two plain writers are recorded
   s.start('agent-a', 'implementer');
   s.start('agent-b', 'implementer');
   s.stop('agent-b', 'implementer');
