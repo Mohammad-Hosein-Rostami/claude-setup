@@ -13,6 +13,8 @@ Iron law: no fix before a confirmed root cause (C22).
 6. Apply the smallest fix. Re-run the repro and the nearest suite.
 7. After two failed fixes, change approach instead of retrying: write findings (repro, hypotheses tried, evidence) to a file, hand them to the `deep-debugger` agent, then apply its fix and continue until the test passes.
 
+Second report of the same defect (the owner says it is still broken): mark the row with `node ~/.claude/tools/status/status.mjs defect <id> "<the owner's conditions>"`. The second mark adds a `rootcause:<id>` row: reproduce it under the owner's conditions (zoom, pixel ratio, OS, theme, data) and hand it to `deep-debugger` before any fix; never answer "no defect" to a second report. The condition joins the UI matrix for good, and every owner-reported defect becomes a regression test.
+
 Flaky tests (pass and fail with no code change):
 - Reproduce: run it 20-50 times alone, then with the suite, then in parallel. Record the failure rate.
 - Classify: shared state or order, clock or timers, randomness, un-awaited async, network, a race in product code, ports/files, colliding test data.

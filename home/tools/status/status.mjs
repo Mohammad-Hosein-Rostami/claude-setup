@@ -7,6 +7,8 @@
 //   deliver --auto           the same, only when no work row is open and one was done after the last hand-over (the Stop hook
 //                            hooks/status-deliver.mjs runs it); otherwise nothing changes and the message says why
 //   rule "<text>" | decision "<text>"   bullet under `## Standing rules` (the owner's words) | `## Owner decisions`, dated
+//   defect <id> "<conditions>"  the owner reported row <id> broken: `[defect <n>]` on its item; the second report adds a
+//                            `rootcause:<id>` row and routes to root-cause first (defect.mjs)
 // Exports: runStatus(argv, { cwd, now, sessionId, stateDir }) -> { code, message }; the CLI prints message (stdout for 0) and exits code.
 // Invariants: touches only the one line it adds or changes; rows are only those of the one table under `## Work items` (header
 // `id | item | size | started | done | evidence`, the contiguous rows below its separator, with or without outer pipes, found and
@@ -25,11 +27,12 @@ import { pathToFileURL } from 'node:url';
 import { BREAKER_SUFFIX, withSessionLock } from '../../hooks/lib/session-lock.mjs';
 import { findSection, isTableRow, parseWorkItems, rowCells } from '../estimate/lib/items.mjs';
 import { noteTable, stateDir as defaultStateDir } from '../estimate/lib/table-store.mjs';
+import { markDefect } from './defect.mjs';
 import { readStatusFile, replaceStatusFile } from './status-file.mjs';
 
 const COLUMNS = ['id', 'item', 'size', 'started', 'done', 'evidence'];
 const SIZES = ['S', 'M', 'L'];
-const USAGE = 'usage: status.mjs [--file STATUS.md] add <id> <item> <size S|M|L> | start <id> | done <id> <evidence> | deliver "<what>" | deliver --auto | rule "<text>" | decision "<text>"';
+const USAGE = 'usage: status.mjs [--file STATUS.md] add <id> <item> <size S|M|L> | start <id> | done <id> <evidence> | deliver "<what>" | deliver --auto | rule "<text>" | decision "<text>" | defect <id> "<conditions>"';
 const SECTION_FOR = { rule: 'Standing rules', decision: 'Owner decisions' };
 const WORK_ITEMS = 'Work items';
 const ID = /^[A-Za-z0-9][\w.:-]{0,39}$/; // `7`, `17a`, `close:5`, `rework:12`, `deliver:3`; a leading `-` would read as a bullet
@@ -210,6 +213,22 @@ function addBullet(lines, kind, text, now) {
   return {};
 }
 
+/** The row helpers defect.mjs uses: any row of the table (a done row too: a defect is reported after delivery). */
+const DEFECT_TABLE = {
+  find: (lines, id) => {
+    const table = workTable(lines);
+    const at = table === null || table.header === -1 ? -1 : rowIndex(lines, table, id);
+    return at === -1 ? { error: `no row with id ${id} in the \`## ${WORK_ITEMS}\` table` } : { at, cells: rowCells(lines[at]), header: lines[table.header] };
+  },
+  write: writeRow,
+  add: (lines, cells) => {
+    const table = tableToEdit(lines);
+    if (table.error) return table;
+    insertRow(lines, table, cells);
+    return {};
+  },
+};
+
 const EDITS = {
   add: addRow,
   start: startRow,
@@ -217,6 +236,7 @@ const EDITS = {
   deliver: deliverRow,
   rule: (lines, [text], at) => addBullet(lines, 'rule', text ?? '', at),
   decision: (lines, [text], at) => addBullet(lines, 'decision', text ?? '', at),
+  defect: (lines, words) => markDefect(lines, words, DEFECT_TABLE),
 };
 
 /**
