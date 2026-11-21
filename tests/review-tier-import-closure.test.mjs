@@ -47,9 +47,12 @@ function importLane() {
 // Speed (phase 8): every test here runs the review tool many times through spawnSync, and node:test runs synchronous bodies one after
 // another even inside a concurrent describe. So on the main thread `test` registers each test and runs its body in a worker thread
 // of its own (this file loaded again with the test's name), and the describe below runs those workers side by side. In a worker,
-// `test` runs only the body it was started for and `suite` only calls its function: nothing is registered with node:test there.
+// `test` only collects the body it was started for and `suite` only calls its function: nothing is registered with node:test there;
+// the worker then runs that body at its top level and fails unless exactly one test had its name (a body never run must not pass).
+// So test names are static and unique, a body gets no test context `t`, and a failure's TAP `location:` is the nodeTest call in
+// testInWorker (the stack still names the body's own line).
 // The tests share nothing: each builds its own repos in its own temp folders (makeTempDir), which the worker removes when it ends.
-const test = isMainThread ? testInWorker : runIfNamed;
+const test = isMainThread ? testInWorker : collectIfNamed;
 const suite = isMainThread ? describe : (name, options, body) => body();
 
 /** Main thread: registers the test `name` with node:test; its body runs in a worker thread that loads this file (see above). */
@@ -62,9 +65,17 @@ function testInWorker(name, ...optionsAndBody) {
   }));
 }
 
-/** Worker thread: runs the body of the one test this worker was started for. */
-function runIfNamed(name, ...optionsAndBody) {
-  if (name === workerData.testName) optionsAndBody.at(-1)();
+const namedBodies = []; // worker thread: the bodies of the tests named like the one this worker was started for
+
+/** Worker thread: collects the body of a test named like the one this worker was started for. */
+function collectIfNamed(name, ...optionsAndBody) {
+  if (name === workerData.testName) namedBodies.push(optionsAndBody.at(-1));
+}
+
+/** Worker thread: runs the one collected body; none or two is an error, so a worker that ran no body fails its test. */
+async function runNamedBody() {
+  if (namedBodies.length !== 1) throw new Error(`the worker for "${workerData.testName}" found ${namedBodies.length} tests of that name, not 1`);
+  await namedBodies[0](); // a body that never settles ends the worker with exit code 13, which fails the test
 }
 
 suite('review-tier: the import fails closed', { concurrency: true }, () => {
@@ -240,3 +251,5 @@ suite('review-tier: the import fails closed', { concurrency: true }, () => {
     assert.ok(!report.classes.includes('concurrency-lite'), 'neither path has a text at the tip, so no rule that needs the whole file fires');
   });
 });
+
+if (!isMainThread) await runNamedBody();
