@@ -3,13 +3,12 @@
 // the lane start: it made a fix round lighter than the lane's first review and hid a fix commit (lane r7-delta, security B3).
 // A fix round reads no name at all: `--base` and `--delta` are full shas from the lead's record (security B7 of the third review).
 // Fixtures: the probes `a-tag-base.sh`, `b-rewrite.sh` 2, `f-final.sh` ii, p3 (a, c), p4 and p5 of the security reviews, rebuilt in temp repos.
-import { describe, test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { isMainThread, Worker, workerData } from 'node:worker_threads';
 import { git } from './git-tidy-helpers.mjs';
 import { lane, priorFile } from './review-tier-helpers.mjs';
+import { workerTests } from './worker-tests.mjs';
 
 const EXEC_LANE = "import { execSync } from 'node:child_process';\nconst SAFE = /^[a-z]+$/;\nexport const run = (name) => (SAFE.test(name) ? execSync(`ls ${name}`) : null);\n";
 const lenses = (report) => report.reviews.map(({ agent, model, effort, lens }) => `${agent} ${model} ${effort} ${lens}`);
@@ -25,39 +24,10 @@ function securityLaneWithDocsFix() {
   return { ...made, first, reviewed, round0, prior: priorFile() };
 }
 
-// Speed (phase 8): every test here runs the review tool many times through spawnSync, and node:test runs synchronous bodies one after
-// another even inside a concurrent describe. So on the main thread `test` registers each test and runs its body in a worker thread
-// of its own (this file loaded again with the test's name), and the describe below runs those workers side by side. In a worker,
-// `test` only collects the body it was started for and `suite` only calls its function: nothing is registered with node:test there;
-// the worker then runs that body at its top level and fails unless exactly one test had its name (a body never run must not pass).
-// So test names are static and unique, a body gets no test context `t`, and a failure's TAP `location:` is the nodeTest call in
-// testInWorker (the stack still names the body's own line).
-// The tests share nothing: each builds its own repos in its own temp folders (makeTempDir), which the worker removes when it ends.
-const test = isMainThread ? testInWorker : collectIfNamed;
-const suite = isMainThread ? describe : (name, options, body) => body();
-
-/** Main thread: registers the test `name` with node:test; its body runs in a worker thread that loads this file (see above). */
-function testInWorker(name, ...optionsAndBody) {
-  const options = optionsAndBody.length > 1 ? optionsAndBody[0] : {};
-  nodeTest(name, options, () => new Promise((resolve, reject) => {
-    const worker = new Worker(new URL(import.meta.url), { workerData: { testName: name } });
-    worker.once('error', reject); // a failed assert in the body arrives here with its message and stack
-    worker.once('exit', (code) => (code === 0 ? resolve() : reject(new Error(`the worker of "${name}" exited with code ${code}`))));
-  }));
-}
-
-const namedBodies = []; // worker thread: the bodies of the tests named like the one this worker was started for
-
-/** Worker thread: collects the body of a test named like the one this worker was started for. */
-function collectIfNamed(name, ...optionsAndBody) {
-  if (name === workerData.testName) namedBodies.push(optionsAndBody.at(-1));
-}
-
-/** Worker thread: runs the one collected body; none or two is an error, so a worker that ran no body fails its test. */
-async function runNamedBody() {
-  if (namedBodies.length !== 1) throw new Error(`the worker for "${workerData.testName}" found ${namedBodies.length} tests of that name, not 1`);
-  await namedBodies[0](); // a body that never settles ends the worker with exit code 13, which fails the test
-}
+// Speed (phase 8): every test here runs the review tool many times through spawnSync, so each test's body runs in a worker thread of
+// its own and the describe below runs them side by side (tests/worker-tests.mjs; the last line of this file runs the body in a
+// worker). The tests share nothing: each builds its own repos in its own temp folders (makeTempDir), which the worker removes when it ends.
+const { test, suite, runNamedBody } = workerTests(import.meta.url);
 
 suite('review-tier: the base of a lane', { concurrency: true }, () => {
   test('security B3: a tag, refs/main or a file $GIT_DIR/main named like the base does not move the lane start of a fix round', () => {
@@ -261,4 +231,4 @@ suite('review-tier: the base of a lane', { concurrency: true }, () => {
   });
 });
 
-if (!isMainThread) await runNamedBody();
+await runNamedBody();

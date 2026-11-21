@@ -5,15 +5,14 @@
 // about the start's attributes), is never read as "no", "no match" or "no file".
 // How a gap is made: the recording git (spyGit) prints the listings the import makes on the lane's side with one object's name swapped
 // for another's, so that object is in no import list while the lane's history still needs it. POSIX only (the spy is a `#!` script).
-import { describe, test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { isMainThread, Worker, workerData } from 'node:worker_threads';
 import { git } from './git-tidy-helpers.mjs';
 import { commitEntries, objectsOf, spiedRun } from './review-tier-forgery-helpers.mjs';
 import { lane, priorFile, sha256Of } from './review-tier-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+import { workerTests } from './worker-tests.mjs';
 
 const POSIX_ONLY = { skip: process.platform === 'win32' && 'the recording git is a `#!` script' };
 const PLAIN = 'export function run(x) {\n  return x;\n}\n';
@@ -44,39 +43,10 @@ function importLane() {
   return { ...made, root, start, reviewed, head, rounds, oid, spied: (args, more = {}) => spiedRun(made.dir, made.log, args, more) };
 }
 
-// Speed (phase 8): every test here runs the review tool many times through spawnSync, and node:test runs synchronous bodies one after
-// another even inside a concurrent describe. So on the main thread `test` registers each test and runs its body in a worker thread
-// of its own (this file loaded again with the test's name), and the describe below runs those workers side by side. In a worker,
-// `test` only collects the body it was started for and `suite` only calls its function: nothing is registered with node:test there;
-// the worker then runs that body at its top level and fails unless exactly one test had its name (a body never run must not pass).
-// So test names are static and unique, a body gets no test context `t`, and a failure's TAP `location:` is the nodeTest call in
-// testInWorker (the stack still names the body's own line).
-// The tests share nothing: each builds its own repos in its own temp folders (makeTempDir), which the worker removes when it ends.
-const test = isMainThread ? testInWorker : collectIfNamed;
-const suite = isMainThread ? describe : (name, options, body) => body();
-
-/** Main thread: registers the test `name` with node:test; its body runs in a worker thread that loads this file (see above). */
-function testInWorker(name, ...optionsAndBody) {
-  const options = optionsAndBody.length > 1 ? optionsAndBody[0] : {};
-  nodeTest(name, options, () => new Promise((resolve, reject) => {
-    const worker = new Worker(new URL(import.meta.url), { workerData: { testName: name } });
-    worker.once('error', reject); // a failed assert in the body arrives here with its message and stack
-    worker.once('exit', (code) => (code === 0 ? resolve() : reject(new Error(`the worker of "${name}" exited with code ${code}`))));
-  }));
-}
-
-const namedBodies = []; // worker thread: the bodies of the tests named like the one this worker was started for
-
-/** Worker thread: collects the body of a test named like the one this worker was started for. */
-function collectIfNamed(name, ...optionsAndBody) {
-  if (name === workerData.testName) namedBodies.push(optionsAndBody.at(-1));
-}
-
-/** Worker thread: runs the one collected body; none or two is an error, so a worker that ran no body fails its test. */
-async function runNamedBody() {
-  if (namedBodies.length !== 1) throw new Error(`the worker for "${workerData.testName}" found ${namedBodies.length} tests of that name, not 1`);
-  await namedBodies[0](); // a body that never settles ends the worker with exit code 13, which fails the test
-}
+// Speed (phase 8): every test here runs the review tool many times through spawnSync, so each test's body runs in a worker thread of
+// its own and the describe below runs them side by side (tests/worker-tests.mjs; the last line of this file runs the body in a
+// worker). The tests share nothing: each builds its own repos in its own temp folders (makeTempDir), which the worker removes when it ends.
+const { test, suite, runNamedBody } = workerTests(import.meta.url);
 
 suite('review-tier: the import fails closed', { concurrency: true }, () => {
   test('the control: through the recording git both rounds run and read the new file whole, and the fix round names the caller of the changed function', POSIX_ONLY, () => {
@@ -252,4 +222,4 @@ suite('review-tier: the import fails closed', { concurrency: true }, () => {
   });
 });
 
-if (!isMainThread) await runNamedBody();
+await runNamedBody();
