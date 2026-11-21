@@ -1,10 +1,19 @@
-# Purpose: gitleaks config for the pre-commit hook; keeps the default rules.
+# Purpose: gitleaks config for the pre-commit hook; keeps the default rules and adds one for Claude login tokens.
 # Why the allowlist: the recall tests ship fake secrets (AWS key, JWT, api-key shapes) as redaction fixtures.
 title = "claude-setup"
 
 [extend]
 # true: keep gitleaks' built-in rules and only add the allowlist below on top of them.
 useDefault = true
+
+# The default rules know the API-key shape (sk-ant-api03-...) but not the login token `claude setup-token` prints
+# (sk-ant-oat01-...), which home/tools/account stores (security review 1, S9; test: tests/account-gitleaks.test.mjs).
+[[rules]]
+id = "claude-token"
+description = "a Claude login token or API key (sk-ant-<kind>-<body>)"
+# Regex: the prefix, a kind of 3 to 8 letters or digits (oat01, api03), then a body of at least 20 token characters.
+regex = '''sk-ant-[A-Za-z0-9]{3,8}-[A-Za-z0-9_-]{20,}'''
+keywords = ["sk-ant-"]
 
 [allowlist]
 # Label shown in gitleaks output; names why these paths are exempt (plain text, no unit).
