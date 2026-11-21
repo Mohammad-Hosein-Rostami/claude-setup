@@ -13,6 +13,7 @@ The parts of the `estimate` tool. `../estimate.mjs` (the CLI) and `../statusline
 - `commitment.mjs` (pure): first, hold or move (earlier or later) the committed median budget; scoring, widening, range, track
   record, counted per model id.
 - `job-rows.mjs` (pure): the rows carried over the last hand-over and the cache numbers (per open row `expectMin`).
+- `road-steps.mjs` (pure): a road's steps from row ids `<road>.s<N>.`, the current step, the step shares of the Total (rounded to add up; a share is not the step's own median) and `result.road` / `progress.road`.
 - `limits-store.mjs`: the last-seen usage limits per account (`~/.claude/state/limits/<account>.json` and its 7-day `.jsonl`);
   the status line writes them, the estimate, the board and the pane read them.
 - `backtest-scores.mjs` (pure): the backtest's scores (per-job miss, bias, 85% hit rate, naive baseline, first estimate apart).

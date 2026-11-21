@@ -93,6 +93,25 @@ Check: row b12 (M) has taken 3 h 10 of work, longer than every finished M row (2
   `Finish: handed over Mon 16 Nov 17:54 (12 rows, 3 h 05 of work)` and the track record line.
 - Work is `35 min` under an hour, else `2 h 35`.
 
+## Roads (estimates per step)
+
+Rows whose ids name a road step, `<road>.s<N>.<rest>` (`close:` or another `word:` prefix allowed; `<road>.s<N>.check` is the
+step's check row), turn the block's head into the step view (display design 7.4):
+
+    Finish: step 2 of 3 by 16:05 (now 14:55; pauses move it hour for hour)
+    Steps:  1 done  4 rows
+            2 now   1 h 10 left, 3 of 9 rows
+            3 next  2 h 30
+    Total:  3 h 40 of work left in 2 steps, by 18:35 if nothing pauses
+
+The current step is the lowest whose check row is not done (no check row: not every row done). The Total is the median of the
+road-wide sums of the same seeded runs; each step line is its share of the Total by the mean of its summed draws, rounded so the
+lines add up to the Total. A step's share is not its own median: step medians added up come out early. One clock per line; the
+`Total:` line gets one only at 6 h of work or less. Road rows are never carried over a hand-over; open rows of a closed step and
+open rows with no step count in the current step (the second kind in a `Check:` line). A row added to the road gives `(road grew)`
+on the `Moved:` line. `progress.road` holds the numbers for the status line; `stepLine` in `lib/report.mjs` gives the `/where`
+line `step 2 by 15:40 (85%: 16:30) · last 10 steps: 7 by the 85% time`.
+
 ## Progress
 
 The `Progress:` line (after the track record, before the `Check:` lines) says how far the job is: the rows done of the job's

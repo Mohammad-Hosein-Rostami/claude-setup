@@ -3,9 +3,11 @@
 // Exports: carriedIds(items, added, lastHandOver) -> string[]; jobNumbers(job, medians, finish) -> numbers; MAX_CACHE_ROWS.
 // Carried (backtest section 7 item 1 (i)): an open work row first seen before the last hand-over that has not started since. Such
 // rows still counted after a hand-over and added +89 min per job on 15 replayed jobs. Without a first-seen record (no store, an old
-// table) a row is never carried: nothing is dropped on a guess.
+// table) a row is never carried: nothing is dropped on a guess. A road row (`<road>.s<N>.`) is never carried: a road lists every
+// step's rows at its start (spec-stages section 7).
 // Invariants: pure (no I/O, no clock). Times are epoch ms, work in minutes.
 import { expectedMinutes } from './progress.mjs';
+import { roadStepOf } from './road-steps.mjs';
 
 /** Open rows kept in the cache numbers, started rows first: a cache entry stays well under its byte cap on a table of hundreds of rows. */
 export const MAX_CACHE_ROWS = 64;
@@ -22,7 +24,7 @@ const floorToMinuteMs = (ms) => Math.floor(ms / MS_PER_MIN) * MS_PER_MIN;
 export function carriedIds(items, added, lastHandOver) {
   if (lastHandOver === null) return [];
   return items.filter((item) => {
-    if (!isOpenWorkRow(item) || !Object.hasOwn(added, item.id)) return false;
+    if (!isOpenWorkRow(item) || !Object.hasOwn(added, item.id) || roadStepOf(item.id) !== null) return false;
     const seenMs = floorToMinuteMs(Date.parse(added[item.id]));
     return seenMs < lastHandOver && (item.started === null || item.started <= lastHandOver);
   }).map((item) => item.id);

@@ -1,12 +1,13 @@
 // Renders an estimate result as the text block the lead pastes as-is (estimator design 4.1) and a refusal as its reason and
 // what to do (4.2). The exact lines are in ../README.md.
-// Exports: formatEstimate(result, inputs) -> string (a finish block ends with the Progress line, before the Check lines; a refusal text
-// too; inputs.limits, the account's newest limits sample (limits-store.mjs), is named beside a long job); formatRefusal(result) -> string; workText(minutes) -> '35 min' |
+// Exports: formatEstimate(result, inputs) -> string (a road's block starts `Finish: step N of M`, `Steps:`, `Total:`; a finish block ends with the Progress line, before the Check lines; a refusal text
+// too; inputs.limits, the account's newest limits sample (limits-store.mjs), is named beside a long job); formatRefusal(result) -> string; stepLine(result, inputs) -> the road step line or null; workText(minutes) -> '35 min' |
 // '2 h 35'; hoursText(minutes) -> '99 h' from 10 hours up, else workText; plural, listed (shared with segment-text.mjs).
 // Invariants: pure apart from reading the system time zone (`Intl`, so `TZ` is honoured) when none is given. Clock times are on
 // the local clock, rounded up to CLOCK_STEP_MS; a refusal text never contains `Finish:` or a clock time. Rows are named by id,
 // never by their text.
 import { clockText, dayText, gridded, localDate, offsetText, systemTimeZone } from './local-clock.mjs';
+import { roadStepOf } from './road-steps.mjs';
 
 const LISTED_ROWS = 5;
 const MAX_CHECK_LINES = 3; // more stale rows than this are counted on one line (design 3.10)
@@ -17,6 +18,8 @@ const PAUSE_SHOWN_MIN = 5; // pauses since the commitment are named from 5 minut
 const PERCENT = 100;
 const SIZES = ['S', 'M', 'L'];
 const SMALLER_SIZE = { L: 'M', M: 'S' };
+const TOTAL_CLOCK_MAX_MIN = 6 * MIN_PER_HOUR; // a road's Total line gets a clock only at 6 h of work or less (spec-stages section 7)
+const STEP_INDENT = ' '.repeat('Steps:  '.length);
 // Why a refusal shows no time, as the Progress line says it (the status line's shorter words are in segment-text.mjs).
 const NO_TIME_CAUSE = { 'no-reference': 'too few finished rows', growth: 'too much unlisted work', horizon: 'job longer than any finished one' };
 /** Over this much median work left a job cannot be predicted closer than half a day (backtest section 7 items 3 and 5). */
@@ -49,6 +52,38 @@ function finishLine(result, timeZone) {
   const clock = up(result.finish.clockMs);
   const where = `local ${offsetText(result.nowMs, timeZone)}, now ${clockText(result.nowMs, timeZone)}`;
   return `Finish: ${day(clock, timeZone)} (likely; 85% by ${clockOn(up(result.finish.p85Ms), clock, timeZone)}, 95% by ${clockOn(up(result.finish.lateMs), clock, timeZone)}; ${where})`;
+}
+
+/** One step line of a road: done with its rows, the current one with its share left and rows, a next one with its share. */
+function stepText({ step, state, leftMin, rowsDone, rowsTotal }) {
+  if (state === 'done') return `${step} done  ${plural(rowsTotal, 'row')}`;
+  if (state === 'now') return `${step} now   ${workText(leftMin)} left, ${rowsDone} of ${rowsTotal} rows`;
+  return `${step} next  ${workText(leftMin)}`;
+}
+
+/** The head of a road's block (display design 7.4): one clock per line; the step lines are shares of the Total, not step medians. */
+function roadLines({ road, nowMs }, timeZone) {
+  const at = (ms) => clockOn(gridded(ms, timeZone, true), nowMs, timeZone);
+  const totalClock = road.totalMin <= TOTAL_CLOCK_MAX_MIN ? `, by ${at(nowMs + road.totalMin * MS_PER_MIN)} if nothing pauses` : '';
+  return [
+    `Finish: step ${road.step} of ${road.steps} by ${at(road.stepClockMs)} (now ${clockText(nowMs, timeZone)}; pauses move it hour for hour)`,
+    ...road.lines.map((line, k) => `${k === 0 ? 'Steps:  ' : STEP_INDENT}${stepText(line)}`),
+    `Total:  ${workText(road.totalMin)} of work left in ${plural(road.stepsLeft, 'step')}${totalClock}`,
+  ];
+}
+
+/**
+ * The step line of `/where` and the per-step update: `step 2 by 15:40 (85%: 16:30) · last 10 steps: 7 by the 85% time`.
+ * @param {object} result a finish result with `road`
+ * @param {{ timeZone?: string }} [inputs] the zone (default the system zone)
+ * @returns {string | null} the line, or null for a result with no road
+ */
+export function stepLine(result, inputs = {}) {
+  if (!result?.road) return null;
+  const timeZone = inputs.timeZone ?? systemTimeZone();
+  const at = (ms) => clockOn(gridded(ms, timeZone, true), result.nowMs, timeZone);
+  const record = result.record ? ` · last ${plural(result.record.of, 'step')}: ${result.record.met} by the 85% time` : '';
+  return `step ${result.road.step} by ${at(result.road.stepClockMs)} (85%: ${at(result.road.stepP85Ms)})${record}`;
 }
 
 /** The range of past jobs around the shown time, from 20 scored jobs of this model; below that it says so with the count. */
@@ -84,20 +119,21 @@ function longJobLines({ work, nowMs }, limits, timeZone) {
   return [...lines, `Limits: 5h resets ${resetText(limits.five_hour, nowMs, timeZone)}, 7d resets ${resetText(limits.seven_day, nowMs, timeZone)} (seen ${age} ago).`];
 }
 
-function causeText(moved) {
-  if (moved.cause === 'rows-added') return `because ${plural(moved.ids.length, 'row')} ${moved.ids.length === 1 ? 'was' : 'were'} added (${listed(moved.ids)})`;
+function causeText(moved, road) {
+  const grew = road && moved.ids.some((id) => roadStepOf(id)?.road === road.name) ? ' (road grew)' : '';
+  if (moved.cause === 'rows-added') return `because ${plural(moved.ids.length, 'row')} ${moved.ids.length === 1 ? 'was' : 'were'} added (${listed(moved.ids)})${grew}`;
   if (moved.cause === 'ahead') return 'because the open rows are going faster than usual or rows were dropped';
   if (moved.cause === 'slow-row') return `because row ${moved.ids[0]} is taking longer than 85% of ${moved.size ?? 'its size\'s'} rows`;
   return 'because the open rows are taking longer than usual';
 }
 
 /** Held or Moved, built from the stored commitment so it reads the same in every run, plus the pauses since it was made. */
-function commitLine({ commit, nowMs }, timeZone) {
+function commitLine({ commit, nowMs, road }, timeZone) {
   const pauses = commit.pausedMin >= PAUSE_SHOWN_MIN ? ` Pauses since then: ${workText(commit.pausedMin)}.` : '';
   if (commit.moved === null) return `Held: given ${day(commit.atMs, timeZone)}, unchanged since.${pauses}`;
   const { moved } = commit;
   const from = clockOn(gridded(moved.wasClockMs, timeZone, true), nowMs, timeZone);
-  return `Moved: at ${clockOn(moved.atMs, nowMs, timeZone)} from ${from}, ${causeText(moved)}; unchanged since.${pauses}`;
+  return `Moved: at ${clockOn(moved.atMs, nowMs, timeZone)} from ${from}, ${causeText(moved, road)}; unchanged since.${pauses}`;
 }
 
 function recordLine(result) {
@@ -128,6 +164,9 @@ function checkLines(checks) {
   for (const check of checks.filter((item) => item.kind === 'carried')) {
     lines.push(`Check: ${plural(check.ids.length, 'row')} carried from the last hand-over (${listed(check.ids)}), not counted: close them or drop them.`);
   }
+  for (const check of checks.filter((item) => item.kind === 'unstepped')) {
+    lines.push(`Check: ${plural(check.ids.length, 'open row')} with no step of the road (${listed(check.ids)}) counted in step ${check.step}: give each a road id.`);
+  }
   return lines;
 }
 
@@ -144,7 +183,7 @@ export function formatEstimate(result, inputs = {}) {
     case 'all-done': return [`Finish: now (all ${plural(result.rows, 'row')} ${result.rows === 1 ? 'is' : 'are'} done; the hand-over is recorded when this turn ends)`, ...checkLines(result.checks ?? [])].join('\n');
     case 'handed-over': return [`Finish: handed over ${day(result.handedOverMs, timeZone)} (${plural(result.rows, 'row')}, ${workText(result.workedMin)} of work)`, recordLine(result), ...checkLines(result.checks ?? [])].join('\n');
     case 'finish': return [
-      finishLine(result, timeZone), ...rangeLine(result, timeZone), ...longJobLines(result, inputs.limits ?? null, timeZone), coversLine(result),
+      ...(result.road ? roadLines(result, timeZone) : [finishLine(result, timeZone)]), ...rangeLine(result, timeZone), ...longJobLines(result, inputs.limits ?? null, timeZone), coversLine(result),
       ...unlistedLine(result), EXCLUDES, commitLine(result, timeZone), recordLine(result), ...progressLine(result.progress), ...checkLines(result.checks),
     ].join('\n');
     default: throw new Error(`no finish block for state ${result.state}`);

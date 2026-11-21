@@ -1,6 +1,7 @@
 // The work-left forecast: a reference pool of finished rows and jobs, seeded runs over the open rows, and why no time can be given.
 // Exports: nearestRank(sortedValues, share), referencePool(tables, seed),
-// forecastWork(openRows, pool, seedText), refusalOf(openRows, pool, work).
+// forecastWork(openRows, pool, seedText, stepOf), refusalOf(openRows, pool, work). With a road (road-steps.mjs) the same runs also
+// sum each step's draws: the Total stays the median of the road-wide sums, and `stepMeans` gives the steps' shares of it.
 // Model (estimator design 3.5-3.7): the class of a row is its size alone; one run draws, for each open row, a finished cost of its
 // size longer than the row's elapsed share (minus that share), or any cost of its size when the row has run longer than all of them
 // (a stale row). Growth (work not listed yet) is not in the total: on 15 replayed jobs it added +92 min of work per job that never
@@ -108,10 +109,11 @@ const hasClass = (openRows, pool) => openRows.every((row) => (pool.costs[row.siz
  * @param {{ id: string, size: string, elapsed: number }[]} openRows elapsed = the row's elapsed share in minutes (0 when not started)
  * @param {ReturnType<typeof referencePool>} pool the reference pool
  * @param {string} seedText tableId + '|' + the open ids sorted and joined by ','
- * @returns {{ p50: number, p85: number, p95: number, stale: string[] } | null} minutes of listed work, before any widening; stale = rows past every
+ * @param {Map<string, number> | null} [stepOf] the step each open row counts in (a road), or null
+ * @returns {{ p50: number, p85: number, p95: number, stale: string[], stepMeans?: Record<number, number> } | null} minutes of listed work, before any widening; stale = rows past every
  *   finished row of their size, in row order; null when a size has fewer than MIN_CLASS_ROWS rows or growth is at MAX_GROWTH or above
  */
-export function forecastWork(openRows, pool, seedText) {
+export function forecastWork(openRows, pool, seedText, stepOf = null) {
   if (!hasClass(openRows, pool) || pool.growth >= MAX_GROWTH) return null;
   const draws = openRows.map((row) => {
     const sizeCosts = pool.costs[row.size];
@@ -119,10 +121,18 @@ export function forecastWork(openRows, pool, seedText) {
     return { id: row.id, values: longer.length > 0 ? longer : sizeCosts, stale: longer.length === 0 };
   });
   const random = mulberry32(seedOf(seedText));
-  const totals = Array.from({ length: RUNS }, () => draws.reduce((sum, draw) => sum + pick(draw.values, random), 0));
+  const stepSums = {};
+  const runOnce = () => draws.reduce((sum, draw) => {
+    const value = pick(draw.values, random);
+    const step = stepOf?.get(draw.id);
+    if (step !== undefined) stepSums[step] = (stepSums[step] ?? 0) + value;
+    return sum + value;
+  }, 0);
+  const totals = Array.from({ length: RUNS }, runOnce);
   totals.sort(ascending);
   const percentiles = Object.fromEntries(Object.entries(PERCENTILES).map(([name, share]) => [name, nearestRank(totals, share)]));
-  return { ...percentiles, stale: draws.filter((draw) => draw.stale).map((draw) => draw.id) };
+  const stepMeans = stepOf ? Object.fromEntries(Object.entries(stepSums).map(([step, sum]) => [step, sum / RUNS])) : undefined;
+  return { ...percentiles, stale: draws.filter((draw) => draw.stale).map((draw) => draw.id), ...(stepMeans && { stepMeans }) };
 }
 
 /**

@@ -10,7 +10,7 @@
 // session's transcripts count for this run alone.
 // Without a stateDir nothing is read from or written to the store. Transcripts are never printed. Work is in minutes; `now` is
 // floored to the minute so that the CLI and the status line, run in the same minute, agree. Rows carried over the last hand-over
-// (job-rows.mjs) are left out of every count and named in a Check line.
+// (job-rows.mjs; never road rows) are left out of every count and named in a Check line. Roads: road-steps.mjs `withRoad`.
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -21,6 +21,7 @@ import { forecastWork, nearestRank, referencePool, refusalOf } from './forecast.
 import { INSTANT_FORMAT, parseInstant, parseWorkItems } from './items.mjs';
 import { carriedIds, jobNumbers } from './job-rows.mjs';
 import { classMedians, progressOf } from './progress.mjs';
+import { roadOf, withRoad } from './road-steps.mjs';
 import { noteTable, readAllTables, readSeed, tableId, updateTable } from './table-store.mjs';
 import { elapsedShares, handedOverJobs, rowCosts, workedMinutes, workingIntervals } from './worked.mjs';
 
@@ -156,11 +157,12 @@ function staleChecks(stale, openRows, pool) {
 function forecastOpen(items, facts, nowMin) {
   const { elapsed, untrackedMin } = elapsedShares(items, facts.intervals, nowMin);
   const openRows = items.filter((item) => isWorkRow(item) && item.done === null).map((item) => ({ id: item.id, size: item.size, elapsed: elapsed.get(item.id) ?? 0 }));
-  const raw = forecastWork(openRows, facts.pool, forecastSeedText(facts.id, openRows));
+  const road = roadOf(items);
+  const raw = forecastWork(openRows, facts.pool, forecastSeedText(facts.id, openRows), road?.stepOf ?? null);
   const kappa = widening(scoreLog(facts.stored?.log ?? [], items, facts.intervals));
   const work = raw === null ? null : { p50: raw.p50, raw85: raw.p85, p85: raw.p85 * kappa, p95: raw.p95 * kappa, g: facts.pool.growth, kappa };
   const checks = [...(raw === null ? [] : staleChecks(raw.stale, openRows, facts.pool)), ...(untrackedMin >= UNTRACKED_CHECK_MIN ? [{ kind: 'untracked', minutes: untrackedMin }] : []), ...carriedChecks(facts)];
-  return { openRows, work, checks, refusal: refusalOf(openRows, facts.pool, work), job: currentJob(items, facts, openRows, nowMin) };
+  return { openRows, work, checks, road, stepMeans: raw?.stepMeans, refusal: refusalOf(openRows, facts.pool, work), job: currentJob(items, facts, openRows, nowMin) };
 }
 
 /** The table file after this run: fresh rows and jobs, the log scored, then the state's own change of the commitment and log. */
@@ -171,12 +173,11 @@ function changedTable(table, items, facts, change) {
 
 /** Runs change on the stored table under its lock when recording; else (or when the lock is busy) on the table as read. */
 function settle(statusPath, items, facts, options, change) {
-  const empty = { commit: null, log: [] };
   if (options.record) {
     const stored = updateTable(options.stateDir, statusPath, (table) => changedTable(table, items, facts, change));
     if (stored !== undefined) return { table: stored, recorded: true };
   }
-  return { table: changedTable(facts.stored ?? empty, items, facts, change), recorded: false };
+  return { table: changedTable(facts.stored ?? { commit: null, log: [] }, items, facts, change), recorded: false };
 }
 
 /** A refusal entry is logged only when its reason differs from the last entry's (design 3.9). */
@@ -224,13 +225,13 @@ function finishResult(items, facts, forecast, options) {
   if (shown.commit.moved !== null) shown.commit.moved.size = sizeOf.get(shown.commit.moved.ids[0]) ?? null;
   const running = forecast.openRows.filter((row) => items.find((item) => item.id === row.id).started !== null).length;
   return {
-    result: {
+    result: withRoad({
       state: 'finish', nowMs: nowMin * MS_PER_MIN, ...shown,
       covers: { open: forecast.openRows.length, running, sizes: sizeCounts(forecast.openRows), growth: facts.pool.growth },
       work: { p50: forecast.work.p50, p85: forecast.work.p85, p95: forecast.work.p95 }, progress,
       numbers: jobNumbers(forecast.job, classMedians(facts.pool.costs), { finishMs: shown.finish.clockMs, p85Ms: shown.finish.p85Ms, leftMin: shown.commit.leftMin }),
       band: band(table.log), record: trackRecord(table.log), pool: { rows: facts.pool.rowCount, jobs: facts.pool.jobCount }, checks: forecast.checks,
-    },
+    }, forecast.road, forecast.stepMeans),
     recorded,
   };
 }
