@@ -94,9 +94,9 @@ const LOWERS_OTHERWISE = [
   /\bnot (fixed|listed|checked|reviewed|verified)\b/i,
   /\b(reviews?|reviewer|verify-done)\b[^.;\n]{0,15}\bonly (for|on|when|if)\b/i,
 ];
-// The final reply names the categories left off with the label `not checked: <categories off>` (spec r9-checks-off): that is the
+// The final reply names the categories left off with the exact label `not checked: <categories off>` (spec r9-checks-off): that is the
 // owner's rule saying what was not run, not a lowered gate, so the label is taken out before a sentence is tested.
-const NOT_CHECKED_LABEL = /`not checked: <[^>`]+>`/g;
+const NOT_CHECKED_LABEL = /`not checked: <categories off>`/g;
 const lowersAGate = (sentence) => {
   const text = sentence.replace(NOT_CHECKED_LABEL, '');
   return LOWERS_A_GATE.test(text) || LOWERS_OTHERWISE.some((pattern) => pattern.test(text));
