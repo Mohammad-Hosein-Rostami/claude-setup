@@ -8,7 +8,7 @@ Run: `node ~/.claude/tools/board/board.mjs [--session <id>] [--columns <n>]` pri
 `CLAUDE_CODE_SESSION_ID`, width default 80). `board.mjs refresh --session <id> [--force]` rewrites the file; `status.mjs add|start|done`
 starts it detached after every changed edit. `board.mjs where [--columns <n>] [--project <dir>]` prints the `/where` tree
 (`lib/tree.mjs`, display design 6.3): all work, the road and its steps (the current step with its likely and 85% clocks), the
-status line's road, counts, checks, workflow, agent and git rows with nothing folded, what waits on the owner, one limits line per account,
+status line's road, counts, checks, workflow, agent and git rows with nothing folded (each workflow's agents listed under it), what waits on the owner, one limits line per account,
 and the session's cost figure from its last-seen file.
 
 ## The status line rows
@@ -23,21 +23,23 @@ to `COLUMNS - 5` (Claude Code cuts a row there). From top to bottom:
 | job | `ALL ████████░░░░░░░░  52% of work · 2 h 10 left · done by 17:45 · 85%: 18:20 · ↑ +1h10 later · 11/21 rows` | the estimate cache, the board's trend |
 | counts, while work runs | `2 workflows (2 run, 0 paused) · 6 agents (6 run) · 1 over usual │ git 4 branches · 2 not landed` | the board |
 | checks | `checks: types review ui probe · off: smart test │ suite 3628 · 222 fail` | the session's `/check` switch, the board's suite (`lib/repo-stats.mjs`) |
-| workflow | `▸ build · for R2 terminal UI · phase 2/4 Build · ████░░░░░░ 0/4 done · 4 run · ~40 min left · 16:35` | the board's runs |
+| workflow, one row each | `▸ build · for R2 terminal UI · phase 2/4 Build · ████░░░░░░ 0/4 done · 4 run ▆▄·· · ~40 min left · 16:35` | the board's runs |
 | agent | ` ├ Write road file for…   architect   █████▒░░ ~70% · 8 min left · 16:03 · claude-setup:lane/road-p8 2↑ +1 dirty` | the board's agents and repositories |
 | git, at least one row | `git claude-setup:main ✓ · origin ↑0↓0 · landed today 6, last 12 min ago │ r9-a ↑2↓0 ●3 impl-a · old-x ✓ old 3 d ⚠` | the board's repo and repos |
 | session | `Opus 5.5 high · ctx 99k of 400k (25%) · 5h 54% left, resets 17:40 · 7d 69% left · acct work` | the status input |
 
-Every agent row says where the agent works, never dropped: `repository:branch`, commits ahead of the base (`2↑`) and
+A workflow is one row: its bar is its agents done of all, then the phase, how many run with a spark of their progress, the time
+left and the finish; its agents get no rows of their own in the status line (owner, 2026-11-22), only in `/where`. Agents outside
+a workflow keep their own rows. Every agent row says where the agent works, never dropped: `repository:branch`, commits ahead of the base (`2↑`) and
 uncommitted files (`+3 dirty`), from its own worktree, or `read-only` / `no repo` (below 115 columns with one repository the
 branch alone, the git row names the repository).
 
 When rows run out (`lib/render.mjs` shares them, `lib/layout.mjs` packs the work rows): the alert, job and session rows always
 show; then one git row (never none: branch, upstream ahead/behind, changed files, landed today; `git: no repository` when the
 work is in none; with no room at all the session row carries the git part), the road row, the checks row
-when the suite fails, the first three work rows, the checks row, the counts row, the rest of the work rows, more git rows. Each
-workflow folds into its header with a spark strip of its agents (`▇▆▄·`), the most urgent agents keep a row (quiet, over their
-usual time, writers, readers, then the soonest finish) and the rest share one `+K more` row; with fewer rows still, one strip
+when the suite fails, the first three work rows, the checks row, the counts row, the rest of the work rows, more git rows. The
+agents outside workflows fold: the most urgent keep a row (quiet, over their usual time, writers, readers, then the soonest
+finish) and the rest share one `+K more` row; with fewer rows still, one strip
 row carries every group. Finished agents show for 30 s, then only the counts row has them (10 min). From 150 columns two agents
 share a row. On an error while drawing, the session row and one `status line error:` line still print. A row or field with
 nothing to say hides: no road, no trend, no 5 h field when the status input has no 5 h window and no current sample.

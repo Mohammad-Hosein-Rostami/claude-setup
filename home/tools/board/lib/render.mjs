@@ -5,7 +5,7 @@
 //   ALL █████░░░░░  36%  3 h 40 left · done by 17:45 · ↑ +1h10 later · 10/21 rows (work-row.mjs)
 //   2 wf · 6 agents (4 run, 1 quiet) · 1 waiting on you 0:40 │ git 7 br · 2 dirty (layout.mjs countsRow; only while work runs)
 //   checks: types review · off: test smart │ suite 3628 · 222 fail               (stat-rows.mjs checksRow)
-//   ▸ build r9-tui ... /  ├ impl-a ███▒░ ~60% ...                                 (layout.mjs workRows, agent-rows.mjs)
+//   ▸ build r9-tui ... 3/8 done · 5 run ▒▒█ / ▸ agents / ├ scout ███▒░ ~60% ...   (layout.mjs workRows: a workflow is one row)
 //   git main ✓ · origin ↑0↓0 · last 12 min ago · landed today 6 │ r9-a ↑2 ●3 ... (git-rows.mjs; one row always kept)
 //   Opus 5.5 high · ctx 99k 25% · 7d 69% left, resets Tue 20:10 · acct work
 // Rows by priority when they are short: alert, job, session; then one git row (never none: without room it rides on the session

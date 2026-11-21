@@ -76,7 +76,7 @@ function workLines(board, asking, checks, clock, look) {
   const ctx = { ...clock, at: board?.at, repo: board?.repo ?? null, repos: [board?.repo, ...(Array.isArray(board?.repos) ? board.repos : [])].filter(Boolean) };
   const marked = asking && typeof asking === 'object' ? { ...asking, marginMs: STALE_MARGIN_S * MS_PER_S } : null;
   const checksLine = checksRow(checks, board?.repo ?? null, look);
-  return [countsRow(board, marked, ctx, look), ...(checksLine === null ? [] : [checksLine]), ...workRows(board, Infinity, ctx, look),
+  return [countsRow(board, marked, ctx, look), ...(checksLine === null ? [] : [checksLine]), ...workRows(board, Infinity, { ...ctx, runAgents: true }, look),
     ...repoRows(board, Infinity, ctx, look)];
 }
 
