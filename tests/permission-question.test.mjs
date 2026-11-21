@@ -56,22 +56,23 @@ const reply = (input, env, ask, extra = {}) => questionReply(input, env, { ask, 
 const WATCHER = question('Where should the watcher run?', ['PC watcher', 'Mac watcher (Recommended)', 'None']);
 const FORMAT = question('Which format?', ['Summary', 'Detailed']);
 const SHIP = question('Ship it?', ['No', 'Yes (Recommended)']);
-const TIMEOUT_NOTE = 'No answer in 2 min: this option was taken by default, not chosen by the owner (UNCONFIRMED)';
+const TIMEOUT_NOTE = 'No answer in 1 min: this option was taken by default, not chosen by the owner (UNCONFIRMED)';
 
 test('"Use recommended": the option marked (Recommended) is taken, the questions echoed back, no note added', async () => {
   const ask = fakeAsk('allow');
   const decision = await reply(askInput([WATCHER]), privateEnv(), ask);
   assert.deepEqual(decision, { behavior: 'allow', updatedInput: { questions: [WATCHER], answers: { 'Where should the watcher run?': 'Mac watcher (Recommended)' } } });
   assert.equal(ask.calls.length, 1);
-  assert.equal(ask.calls[0].timeoutS, 120);
+  assert.equal(ask.calls[0].timeoutS, 60);
   assert.deepEqual(ask.calls[0].buttons, { accept: 'Use recommended', decline: 'Answer in terminal' });
-  assert.deepEqual(ask.calls[0].details, [
-    { label: 'Question', value: '[Where should] Where should the watcher run?' },
-    { label: 'Answer', value: 'Mac watcher (Recommended)', keepStart: true },
+  assert.deepEqual(ask.calls[0].body, [
+    '[Where should] Where should the watcher run?',
+    'Options: 1 Mac watcher (recommended) · 2 PC watcher · 3 None',
+    'No answer in 1 min → "Mac watcher" is taken and asked again in the next report.',
   ]);
 });
 
-test('no answer in 2 min: the same option is taken, but the answer carries a note that nobody chose it (UNCONFIRMED)', async () => {
+test('no answer in 60 s: the same option is taken, but the answer carries a note that nobody chose it (UNCONFIRMED)', async () => {
   const decision = await reply(askInput([WATCHER]), privateEnv(), fakeAsk('timeout'));
   assert.deepEqual(decision.updatedInput.answers, { 'Where should the watcher run?': 'Mac watcher (Recommended)' });
   assert.deepEqual(decision.updatedInput.annotations, { 'Where should the watcher run?': { notes: TIMEOUT_NOTE } });
@@ -80,8 +81,8 @@ test('no answer in 2 min: the same option is taken, but the answer carries a not
 test('no answer: the note joins annotations already in the input and names the wait that passed', async () => {
   const input = askInput([WATCHER, SHIP]);
   input.tool_input.annotations = { 'Ship it?': { preview: 'diff' } };
-  const decision = await reply(input, privateEnv({ CLAUDE_PERMISSION_TIMEOUT_S: '45' }), fakeAsk('timeout'));
-  const notes = TIMEOUT_NOTE.replace('2 min', '45 s');
+  const decision = await reply(input, privateEnv({ CLAUDE_QUESTION_TIMEOUT_S: '45' }), fakeAsk('timeout'));
+  const notes = TIMEOUT_NOTE.replace('1 min', '45 s');
   assert.deepEqual(decision.updatedInput.annotations, { 'Where should the watcher run?': { notes }, 'Ship it?': { preview: 'diff', notes } });
 });
 
@@ -91,18 +92,18 @@ test('no option marked (Recommended): the first option is taken; multiSelect get
   assert.deepEqual(decision.updatedInput.answers, { 'Which format?': 'Summary', 'Which sections?': 'Body (Recommended)' });
 });
 
-test('several questions: one popup per question, one after the other, each with its own wait and only its own two lines', async () => {
+test('several questions: one popup per question, one after the other, each with its own wait and only its own lines', async () => {
   const ask = fakeAsk('timeout');
-  const decision = await reply(askInput([WATCHER, FORMAT, SHIP]), privateEnv({ CLAUDE_PERMISSION_TIMEOUT_S: '12' }), ask);
+  const decision = await reply(askInput([WATCHER, FORMAT, SHIP]), privateEnv({ CLAUDE_QUESTION_TIMEOUT_S: '12' }), ask);
   assert.deepEqual(decision.updatedInput.answers, { 'Where should the watcher run?': 'Mac watcher (Recommended)', 'Which format?': 'Summary', 'Ship it?': 'Yes (Recommended)' });
   assert.equal(ask.calls.length, 3);
   assert.equal(ask.maxOpen, 1, 'never two popups at once');
   assert.deepEqual(ask.calls.map((call) => call.timeoutS), [12, 12, 12], 'a fresh wait for each question, not one wait shared');
-  assert.deepEqual(ask.calls.map((call) => call.title), ['Claude Code: question 1 of 3', 'Claude Code: question 2 of 3', 'Claude Code: question 3 of 3']);
-  assert.deepEqual(ask.calls.map((call) => call.details.map((line) => `${line.label}: ${line.value}`)), [
-    ['Question: [Where should] Where should the watcher run?', 'Answer: Mac watcher (Recommended)'],
-    ['Question: [Which format] Which format?', 'Answer: Summary'],
-    ['Question: [Ship it?] Ship it?', 'Answer: Yes (Recommended)'],
+  assert.deepEqual(ask.calls.map((call) => call.title), ['Claude asks (1 of 3)', 'Claude asks (2 of 3)', 'Claude asks (3 of 3)']);
+  assert.deepEqual(ask.calls.map((call) => call.body.slice(0, 2)), [
+    ['[Where should] Where should the watcher run?', 'Options: 1 Mac watcher (recommended) · 2 PC watcher · 3 None'],
+    ['[Which format] Which format?', 'Options: 1 Summary (recommended) · 2 Detailed'],
+    ['[Ship it?] Ship it?', 'Options: 1 Yes (recommended) · 2 No'],
   ]);
 });
 
@@ -208,19 +209,19 @@ test('the owner turns the question down in the terminal (Chat about this, Esc): 
 test('all popups fit inside the terminal question auto-continue: question 3 and 4 still get their own full wait', async () => {
   const ask = fakeAsk('timeout');
   const four = [WATCHER, FORMAT, SHIP, question('Last one?', ['A', 'B'])];
-  await reply(askInput(four), privateEnv({ CLAUDE_PERMISSION_TIMEOUT_S: '190' }), ask);
+  await reply(askInput(four), privateEnv({ CLAUDE_QUESTION_TIMEOUT_S: '190' }), ask);
   const waits = ask.calls.map((call) => call.timeoutS);
   assert.equal(waits.length, 4);
   assert.ok(waits.every((wait) => wait === waits[0]), 'every question gets the same wait');
   assert.ok(waits.reduce((sum, wait) => sum + wait, 0) < TERMINAL_AUTO_CONTINUE_S, `${waits} must add up to less than ${TERMINAL_AUTO_CONTINUE_S} s`);
 });
 
-test('the default 2 min per question and a single question keep their full wait', async () => {
+test('the default 60 s per question and a single question keep their full wait', async () => {
   const four = fakeAsk('timeout');
   await reply(askInput([WATCHER, FORMAT, SHIP, question('Last one?', ['A', 'B'])]), privateEnv(), four);
-  assert.deepEqual(four.calls.map((call) => call.timeoutS), [120, 120, 120, 120]);
+  assert.deepEqual(four.calls.map((call) => call.timeoutS), [60, 60, 60, 60]);
   const one = fakeAsk('timeout');
-  await reply(askInput([WATCHER]), privateEnv({ CLAUDE_PERMISSION_TIMEOUT_S: '190' }), one);
+  await reply(askInput([WATCHER]), privateEnv({ CLAUDE_QUESTION_TIMEOUT_S: '190' }), one);
   assert.deepEqual(one.calls.map((call) => call.timeoutS), [190]);
 });
 

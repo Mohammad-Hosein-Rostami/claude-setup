@@ -1,9 +1,10 @@
-// PostToolUse(AskUserQuestion): records that a question was answered, so the PermissionRequest hook (permission-timed-allow.mjs) closes
+// PostToolUse and PostToolUseFailure(AskUserQuestion): clears the asking marker (lib/asking-marker.mjs) and records that a question was answered, so the PermissionRequest hook (permission-timed-allow.mjs) closes
 // the popups still open for it. Claude Code runs the terminal question and that hook side by side and tells the hook nothing when the
 // owner answers in the terminal; PostToolUse fires once the tool has run, whoever answered.
 // Exports: markAnswered(input, env) -> void. Prints nothing and always exits 0: it must never change what Claude sees.
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { clearAsking } from './lib/asking-marker.mjs';
 import { markQuestionAnswered, questionTexts } from './lib/question-answered.mjs';
 
 const QUESTION_TOOL = 'AskUserQuestion';
@@ -15,6 +16,7 @@ const QUESTION_TOOL = 'AskUserQuestion';
  */
 export function markAnswered(input, env = process.env) {
   if (input?.tool_name !== QUESTION_TOOL) return;
+  clearAsking(input.session_id, env, 'question');
   const questions = questionTexts(input.tool_input);
   if (questions) markQuestionAnswered({ session: input.session_id, agentId: input.agent_id, questions }, env);
 }

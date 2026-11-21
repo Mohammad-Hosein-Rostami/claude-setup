@@ -445,10 +445,10 @@ test('question header: masked, on one line, cut, and never a line label of its o
     const body = bodyOf(dialog);
     assert.ok(!shownText(dialog).includes(SECRET), 'a secret header never reaches the dialog');
     const lines = body.split('\n');
-    assert.equal(lines.filter((line) => line.startsWith('Why')).length, 1, `only the dialog's own Why line: ${body}`);
+    assert.equal(lines.filter((line) => line.startsWith('Why')).length, 0, `a question dialog has no Why line, and no header can forge one: ${body}`);
     assert.ok(lines.every((line) => line.length <= 260), 'every line is cut');
-    assert.ok(lines.some((line) => line.startsWith(`Question: [${header === SECRET ? '[masked]' : 'Why'}`)), body);
-    assert.ok(body.includes('Answer: B (Recommended)'), body);
+    assert.ok(lines.some((line) => line.startsWith(`[${header === SECRET ? '[masked]' : 'Why'}`)), body);
+    assert.ok(body.includes('No answer in 1 min → "B" is taken'), body);
   }
 });
 
@@ -457,7 +457,7 @@ test('the option that will be taken always shows its start, however long the que
   const longQuestion = { question: `Release: ${'What should happen to the release notes? '.repeat(4)} -> No, keep it (Recommended)`, header: 'Release', options: [{ label: 'No, keep it' }, { label }] };
   const dialog = fakeDialog('allow', { FAKE_DIALOG_BUTTON: 'Use recommended' });
   await questionReply(askQuestions([longQuestion]), dialog.env);
-  const answerLine = bodyOf(dialog).split('\n').find((line) => line.startsWith('Answer: '));
-  assert.ok(answerLine?.startsWith('Answer: Force-push the release branch over main and delete the old tags'), answerLine);
-  assert.ok(answerLine.startsWith(`Answer: ${label.slice(0, 200)} ... [${label.length} chars]`), `the label is cut only at its end: ${answerLine}`);
+  const answerLine = bodyOf(dialog).split('\n').find((line) => line.startsWith('No answer in '));
+  assert.ok(answerLine?.startsWith('No answer in 1 min → "Force-push the release branch over main and delete the old tags'), answerLine);
+  assert.match(answerLine, / \.\.\. \[\d+ chars\]$/, `the line is cut only at its end: ${answerLine}`);
 });

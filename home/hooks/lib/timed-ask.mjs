@@ -24,6 +24,7 @@
 // while the owner types elsewhere); Windows keeps Yes/No and the body says which is which. On macOS the decline button is
 // the cancel button, so Esc declines, never takes the default.
 import { spawnSync } from 'node:child_process';
+import { clearAsking, markAsking } from './asking-marker.mjs';
 import { logDecision } from './guard-log.mjs';
 import { maskSecrets } from './secrets.mjs';
 
@@ -202,8 +203,19 @@ function shownStart(text) {
   return shown.length <= MAX_COMMAND_CHARS ? shown : `${shown.slice(0, MAX_COMMAND_CHARS)} ... [${raw.length} chars]`;
 }
 
-/** @returns {string} the dialog body: tool, why, the labelled target (head and tail), detail lines, directory, session/agent, the timeout rule */
-function dialogText({ tool, reason, command, targetLabel = 'Command', details = [], cwd, sessionId, agentId, buttons = ALLOW_DENY_BUTTONS }, timeoutS, platform) {
+/** @returns {string} a question's body (display design 7.5): its own lines, masked, then the default button; no tool, directory or session line */
+function plainBody(body, buttons, platform) {
+  const yesNo = platform === 'win32' ? ` (Yes = ${buttons.accept}, No = ${buttons.decline})` : '';
+  const defaultLabel = buttons.defaultButton === 'decline' ? buttons.decline : buttons.accept;
+  return [...body.map((line) => shownStart(line)), '', `${defaultLabel} is the default${yesNo}.`].join('\n');
+}
+
+/**
+ * @returns {string} the dialog body: tool, why, the labelled target (head and tail), detail lines, directory, session/agent, the timeout
+ *   rule; a request with `body` (the question popups) shows only those lines and the default button
+ */
+function dialogText({ tool, reason, command, targetLabel = 'Command', details = [], cwd, sessionId, agentId, buttons = ALLOW_DENY_BUTTONS, body }, timeoutS, platform) {
+  if (Array.isArray(body)) return plainBody(body, buttons, platform);
   const target = shownValue(command);
   const who = [sessionId && `session ${visible(String(sessionId).slice(0, 8))}`, agentId && `agent ${visible(String(agentId).slice(0, 8))}`].filter(Boolean).join(', ');
   const lines = [`Tool: ${visible(tool)}`, `Why: ${maskedVisible(reason)}`];
@@ -298,7 +310,10 @@ export function decisionOutput({ decision, reason }) {
  * @returns {string} the hook stdout line for the decision (allow, deny, or the native ask as a fallback)
  */
 export function askOwner(request, env = process.env) {
+  // The asking marker (lib/asking-marker.mjs): the board shows "needs you" while the dialog is open; a dialog that ends clears it.
+  markAsking({ session: request.sessionId, kind: 'permission', tool: request.tool, count: 1, openedAt: Date.now(), waitS: request.timeoutS ?? askTimeoutSeconds(env) }, env);
   const answer = answerAsk(request, env);
+  if (answer.decision !== 'ask') clearAsking(request.sessionId, env, 'permission'); // "ask": Claude Code's own prompt stays open
   logDecision({ hook: request.hook, tool: request.tool, decision: answer.decision, outcome: answer.outcome, reason: request.reason, command: request.omitCommandFromLog ? '' : request.command, cwd: request.cwd, session: request.sessionId }, env);
   request.onAnswer?.(answer);
   return decisionOutput(answer);

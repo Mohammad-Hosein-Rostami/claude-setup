@@ -1,7 +1,11 @@
 // AskUserQuestion for the PermissionRequest hook (permission-timed-allow.mjs): one timed popup per question, one after the other.
-// Exports: questionReply(input, env, {ask, pollMs}) -> Promise<{behavior: 'allow', updatedInput} | undefined>.
+// Exports: questionReply(input, env, {ask, pollMs}) -> Promise<{behavior: 'allow', updatedInput} | undefined>; questionTimeoutSeconds(env);
+// TERMINAL_AUTO_CONTINUE_S.
 // Each question gets its own popup (title "question 2 of 3", that question and the option that will be taken) and its own wait,
-// CLAUDE_PERMISSION_TIMEOUT_S (default 2 min, see lib/timed-ask.mjs; cut so that all popups end before the terminal question auto-continues). "Use recommended" or no answer in the wait takes that question's
+// CLAUDE_QUESTION_TIMEOUT_S (default 60 s, questionTimeoutSeconds; cut so that all popups end before the terminal question
+// auto-continues at 300 s, askUserQuestionTimeout "5m"). The body is display design 7.5: the question, all options with the recommended
+// one first, and what happens with no answer; no tool, directory or session line. While the question is open the asking marker
+// (lib/asking-marker.mjs) is written; question-answered.mjs clears it on PostToolUse or PostToolUseFailure, and it ages out. "Use recommended" or no answer in the wait takes that question's
 // "(Recommended)" option, else its first; a multiSelect question gets that single option. Only a timeout adds `annotations` {question text:
 // {notes}} saying the answer was taken by default, not chosen by the owner (UNCONFIRMED), for that question alone. After the last question
 // the result is an allow with updatedInput = the input plus `answers` {question text: option label} (hooks docs, AskUserQuestion input and
@@ -18,7 +22,8 @@ import { logDecision } from './guard-log.mjs';
 import { wasQuestionAnswered } from './question-answered.mjs';
 import { watchTerminalRejection } from './question-rejected.mjs';
 import { answerAskAsync } from './timed-ask-async.mjs';
-import { formatDuration, permissionTimeoutSeconds } from './timed-ask.mjs';
+import { markAsking } from './asking-marker.mjs';
+import { MAX_ASK_TIMEOUT_S, formatDuration } from './timed-ask.mjs';
 
 const HOOK_NAME = 'permission-timed-allow';
 const QUESTION_TOOL = 'AskUserQuestion';
@@ -26,11 +31,21 @@ const QUESTION_BUTTONS = { accept: 'Use recommended', decline: 'Answer in termin
 // Popups 2..N open minutes after the terminal question appeared, often while the owner types in it: a stray Enter must not pick an answer,
 // so there Enter hits "Answer in terminal" (the safe hand-back). "Use recommended" and the timeout answer stay as they are.
 const LATER_QUESTION_BUTTONS = { ...QUESTION_BUTTONS, defaultButton: 'decline' };
-const QUESTION_TITLE = 'Claude Code: question';
+const QUESTION_TITLE = 'Claude asks';
+// Each question popup's own wait (owner, 2026-11-18: 60 s), apart from the permission wait (CLAUDE_PERMISSION_TIMEOUT_S, 120 s).
+const QUESTION_TIMEOUT_ENV = 'CLAUDE_QUESTION_TIMEOUT_S';
+const DEFAULT_QUESTION_TIMEOUT_S = 60;
+
+/** @returns {number} CLAUDE_QUESTION_TIMEOUT_S when it is a whole positive number (at most MAX_ASK_TIMEOUT_S), else 60 */
+export function questionTimeoutSeconds(env = process.env) {
+  const seconds = Number(env[QUESTION_TIMEOUT_ENV]);
+  return Number.isInteger(seconds) && seconds > 0 ? Math.min(seconds, MAX_ASK_TIMEOUT_S) : DEFAULT_QUESTION_TIMEOUT_S;
+}
 const RECOMMENDED = /\(Recommended\)\s*$/i; // how Claude marks the option it would pick
-// The terminal question runs beside this hook and auto-continues (settings askUserQuestionTimeout "10m") with the answers chosen so far, which
+// The terminal question runs beside this hook and auto-continues (settings askUserQuestionTimeout "5m") with the answers chosen so far, which
 // would end the hook's remaining popups. So all popups together must end before it: the wait of each is cut to fit, with a margin for starting them.
-export const TERMINAL_AUTO_CONTINUE_S = 600;
+// 60 s each fits up to 4 questions: min(60, floor((300 - 30) / N)).
+export const TERMINAL_AUTO_CONTINUE_S = 300;
 const POPUP_MARGIN_S = 30;
 const TERMINAL_POLL_MS = 250; // how often the open popup looks for the terminal answer mark: a closing popup is seen within this
 
@@ -42,16 +57,25 @@ const isQuestionList = (questions) => Array.isArray(questions) && questions.leng
 /** @returns {string} the label of the option marked "(Recommended)", else of the first option */
 const recommendedLabel = (options) => (options.find((option) => RECOMMENDED.test(option.label)) ?? options[0]).label;
 
-/** @returns {object} the popup request for question `index` (0-based) of `count`: that question and the option that will be taken */
+const plainLabel = (label) => label.replace(RECOMMENDED, '').trim();
+
+/** `Options: 1 keep it (recommended) · 2 remove now`, the recommended option first. */
+function optionsLine(options, answer) {
+  const ordered = [...options].sort((a, b) => (b.label === answer) - (a.label === answer));
+  return `Options: ${ordered.map((option, k) => `${k + 1} ${plainLabel(option.label)}${option.label === answer ? ' (recommended)' : ''}`).join(' · ')}`;
+}
+
+/** @returns {object} the popup request for question `index` (0-based) of `count`: display design 7.5's body, the option taken with no answer */
 function popupRequest({ item, index, count, answer, timeoutS, input }) {
   return {
     tool: QUESTION_TOOL,
     reason: `Claude asks question ${index + 1} of ${count}; with no answer it takes the option shown`,
-    title: count > 1 ? `${QUESTION_TITLE} ${index + 1} of ${count}` : QUESTION_TITLE,
+    title: count > 1 ? `${QUESTION_TITLE} (${index + 1} of ${count})` : QUESTION_TITLE,
     buttons: index === 0 ? QUESTION_BUTTONS : LATER_QUESTION_BUTTONS,
-    details: [
-      { label: 'Question', value: item.header ? `[${item.header}] ${item.question}` : item.question },
-      { label: 'Answer', value: answer, keepStart: true },
+    body: [
+      item.header ? `[${item.header}] ${item.question}` : item.question,
+      optionsLine(item.options, answer),
+      `No answer in ${formatDuration(timeoutS)} → "${plainLabel(answer)}" is taken and asked again in the next report.`,
     ],
     timeoutS,
     cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(),
@@ -82,7 +106,8 @@ export async function questionReply(input, env, { ask = answerAskAsync, pollMs =
   const toolInput = input.tool_input;
   if (!isQuestionList(toolInput?.questions)) return undefined;
   const questions = toolInput.questions;
-  const timeoutS = Math.min(permissionTimeoutSeconds(env), Math.floor((TERMINAL_AUTO_CONTINUE_S - POPUP_MARGIN_S) / questions.length));
+  const timeoutS = Math.min(questionTimeoutSeconds(env), Math.floor((TERMINAL_AUTO_CONTINUE_S - POPUP_MARGIN_S) / questions.length));
+  markAsking({ session: input.session_id, kind: 'question', tool: QUESTION_TOOL, count: questions.length, openedAt: Date.now(), waitS: timeoutS }, env);
   const terminalMark = { session: input.session_id, agentId: input.agent_id, questions: questions.map((item) => item.question) };
   const openedAt = Date.now();
   const turnedDownInTerminal = watchTerminalRejection(input.transcript_path);

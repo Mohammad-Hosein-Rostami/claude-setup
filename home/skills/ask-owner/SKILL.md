@@ -6,6 +6,20 @@ description: Use when a decision is the owner's (scope, money, irreversible or o
 Only the main session can call AskUserQuestion; agents and workflows cannot. Ask the moment a decision comes up and
 keep background work running. Never finish with a list of open decisions.
 
+## Ask at the start of a job
+
+When a job starts, list every owner decision you can foresee (scope, money, credentials, irreversible or outward
+actions, product facts, real trade-offs) and ask them in one batch (up to 4 per call, more calls if needed) while the
+first read-only work runs. Beside the questions show the planned steps and lanes, one line each
+(`Steps: 1 <name> (lanes a, b) · 2 <name> (lane c)`). An architect's spec ends with "Questions for the owner": ask them
+before any lane starts. Later questions only for facts that could not be known at the start.
+
+## Decisions block
+
+After the start questions, write every answer and every default taken as one numbered block in STATUS.md
+`## Owner decisions` (`1. <question>: <answer> (owner | UNCONFIRMED, default)`). Every lane brief includes the block; a
+later answer updates the block and the brief is sent again with it.
+
 ## When to ask
 
 Ask: scope or product meaning, money or paid services, outward-facing or irreversible actions, credentials and
@@ -21,6 +35,7 @@ a conventional default; pick one and say it in one line.
 ## Question style
 
 - The question names the thing in plain words, adds one line of context and says what it blocks.
+- 2 to 4 options, each with its effect and cost; the safe option first.
 - No internal ids (D1, lane names) unless the question explains them. Write for someone who has not read the logs.
 - Each option's description says the effect, the cost, and whether it can be undone.
 
@@ -33,7 +48,7 @@ Bad -> good:
 
 ## If the box times out
 
-Every AskUserQuestion opens a timed dialog per question, one after the other (hook `permission-timed-allow.mjs`): with no answer in that question's own 2 min (`CLAUDE_PERMISSION_TIMEOUT_S`) or on "Use recommended" it takes its option ending in "(Recommended)", else its first; an answer taken on timeout arrives with the note "No answer in 2 min: this option was taken by default, not chosen by the owner (UNCONFIRMED)", a click on "Use recommended" with none (Enter on question 1 means "Use recommended"; on questions 2..N Enter means "Answer in terminal", so a keypress meant for the terminal never answers); "Answer in terminal" (or Esc) opens the normal question, and answering in the terminal, or turning the question down there, closes the open dialog. With no GUI (ssh) the terminal question stays and `askUserQuestionTimeout` (settings) auto-continues it after 10 min (the CLI takes only 60s, 5m, 10m or never), a timer that pauses while that terminal window is focused, after any keypress, and with Remote Control on. So an unattended lead asks only real owner calls and logs each default it takes (the Bash guard's timed dialog and every permission prompt also go ahead after 2 min unless Deny is clicked). If the box times out, take
+Every AskUserQuestion opens a timed dialog per question, one after the other (hook `permission-timed-allow.mjs`; the dialog shows the question, its options with the recommended one first and what happens with no answer): with no answer in that question's own 60 s (`CLAUDE_QUESTION_TIMEOUT_S`; from 5 questions on less, so all popups end before the terminal question auto-continues) or on "Use recommended" it takes its option ending in "(Recommended)", else its first; an answer taken on timeout arrives with the note "No answer in 1 min: this option was taken by default, not chosen by the owner (UNCONFIRMED)", a click on "Use recommended" with none (Enter on question 1 means "Use recommended"; on questions 2..N Enter means "Answer in terminal", so a keypress meant for the terminal never answers); "Answer in terminal" (or Esc) opens the normal question, and answering in the terminal, or turning the question down there, closes the open dialog. With no GUI (ssh) the terminal question stays and `askUserQuestionTimeout` (settings) auto-continues it after 5 min (the CLI takes only 60s, 5m, 10m or never), a timer that pauses while that terminal window is focused, after any keypress, and with Remote Control on. So an unattended lead asks only real owner calls and logs each default it takes (the Bash guard's timed dialog and every permission prompt also go ahead after 2 min unless Deny is clicked). If the box times out, take
 the recommended option, keep going, and say which one you took in the next message.
 
 Because a timeout takes the recommended option, that option must be safe with nobody there: reversible, the full scope
