@@ -14,7 +14,7 @@
 // API-price equivalent since the last /clear, with its age (it is not what the subscription costs).
 import { barText, clockOf, cleanText, durationText, fitParts, STATE } from './cells.mjs';
 import { STALE_MARGIN_S } from '../../../hooks/lib/asking-marker.mjs';
-import { gitRows } from './git-rows.mjs';
+import { repoRows } from './git-rows.mjs';
 import { countsRow, workRows } from './layout.mjs';
 import { checksRow, roadRow, trendPart } from './stat-rows.mjs';
 import { jobView } from './work-row.mjs';
@@ -73,11 +73,11 @@ function roadLines(view, facts, clock, look) {
 
 /** The status line's counts, work and git rows, unclipped: every workflow, every agent and every worktree. */
 function workLines(board, asking, checks, clock, look) {
-  const ctx = { ...clock, at: board?.at, repo: board?.repo ?? null };
+  const ctx = { ...clock, at: board?.at, repo: board?.repo ?? null, repos: [board?.repo, ...(Array.isArray(board?.repos) ? board.repos : [])].filter(Boolean) };
   const marked = asking && typeof asking === 'object' ? { ...asking, marginMs: STALE_MARGIN_S * MS_PER_S } : null;
   const checksLine = checksRow(checks, board?.repo ?? null, look);
   return [countsRow(board, marked, ctx, look), ...(checksLine === null ? [] : [checksLine]), ...workRows(board, Infinity, ctx, look),
-    ...gitRows(board?.repo ?? null, Infinity, ctx, look)];
+    ...repoRows(board, Infinity, ctx, look)];
 }
 
 /** The line of what waits on the owner, quiet runs and git. */

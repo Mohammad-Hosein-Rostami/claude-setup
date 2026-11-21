@@ -7,11 +7,12 @@
 // boolean, findTranscript(session, projectsDir); MAX_BOARD_BYTES.
 // File: ~/.claude/state/board/<session>.json = { session, at, stale, refreshStartedAt, asking, runs: [{ runId, name, phase,
 // phaseIndex, phaseTotal, started, done, lanes, state, quietMin, purpose, agentsTotal, agentsDone, pct, leftMin, running, quiet }],
-// agents: [agents.mjs entries plus wt, branch], repo: git-state.mjs repo plus { tip, suite, landed } (repo-stats.mjs) | null,
-// git: { branch, ahead, behind, changed } | null, road: job-facts.mjs road | null, trend: { deltaMin, atMs } | null }
+// agents: [agents.mjs entries plus repo (its repository's name), wt, branch], repo: git-state.mjs repo plus { tip, suite, landed } (repo-stats.mjs) | null,
+// repos: the other repositories with work (repos.mjs, same shape without the stats), git: { branch, ahead, behind, changed } | null,
+// road: job-facts.mjs road | null, trend: { deltaMin, atMs } | null }
 // (<= MAX_BOARD_BYTES: done agents go first, then the oldest, until it fits). Cache (cache-file.mjs, <session>.json): { cursors, git,
-// job, stats }. The repository is the session folder's; when that is not in one (a reports folder), the road's `repo`, else the
-// first live agent's folder that is (spec-tui-2: git rows were missing in the owner's session).
+// job, stats }. The repositories (repos.mjs): the session folder's, the road's `repo`, the STATUS.md folder's and every live agent's,
+// so a lead in a folder outside git still shows where its agents work (owner report 2026-11-21: no git info at all).
 // After the write, the agent-type pools (pools.mjs) are rebuilt when an hour old, outside the budget.
 // States: `run` (journal written in the last QUIET_MIN), `quiet` (QUIET_MIN to STOPPED_MIN), `stopped?` (longer: a killed run has no
 // summary json, so it would read live for ever); `needs you` is the session's asking marker. `failed` and `done, not landed`
@@ -20,7 +21,7 @@
 // through session-store.mjs (no links, 0600, temp file and rename); git runs only in git-state.mjs, with fixed flags and its own
 // timeouts; `git-tidy check` never runs here; nothing here throws.
 import { spawn } from 'node:child_process';
-import { existsSync, lstatSync, readdirSync } from 'node:fs';
+import { lstatSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,9 +30,9 @@ import { isSessionId, readSessionFile, writeSessionFile } from '../../../hooks/l
 import { boardRuns } from '../../estimate/lib/workflow-runs.mjs';
 import { sessionAgents } from './agents.mjs';
 import { readCacheFile, writeCacheFile } from './cache-file.mjs';
-import { repoState } from './git-state.mjs';
 import { jobFacts } from './job-facts.mjs';
 import { repoStats } from './repo-stats.mjs';
+import { sessionRepos } from './repos.mjs';
 import { poolsDue, readPools, rebuildPools } from './pools.mjs';
 
 export const MAX_BOARD_BYTES = 48 * 1024;
@@ -67,12 +68,12 @@ export function runState(run) {
   return { state: quietMin >= QUIET_MIN ? 'quiet' : 'run', quietMin };
 }
 
-/** Each agent's worktree name and branch: the worktree whose path holds the agent's folder (the longest one). */
-function withWorktrees(agents, repo) {
-  const worktrees = [...(repo?.worktrees ?? [])].sort((a, b) => b.path.length - a.path.length);
+/** Each agent's repository, worktree name and branch: the worktree of any repository whose path holds the agent's folder (the longest). */
+function withWorktrees(agents, repos) {
+  const worktrees = repos.flatMap((repo) => repo.worktrees.map((wt) => ({ ...wt, repoName: repo.name }))).sort((a, b) => b.path.length - a.path.length);
   return agents.map(({ dir, startMs, ...agent }) => {
     const home = typeof dir === 'string' ? worktrees.find((wt) => dir === wt.path || dir.startsWith(`${wt.path}${sep}`)) : undefined;
-    return { ...agent, wt: home?.name ?? null, branch: home?.branch ?? null };
+    return { ...agent, repo: home?.repoName ?? null, wt: home?.name ?? null, branch: home?.branch ?? null };
   });
 }
 
@@ -86,23 +87,6 @@ function fitted(board) {
     text = JSON.stringify({ ...board, agents });
   }
   return { ...board, agents };
-}
-
-const MAX_FOLDER_DEPTH = 40;
-
-/** The first folder of the list inside a git working tree (a `.git` entry in it or a parent), or null; no git call. */
-function gitFolderOf(folders) {
-  for (const folder of folders) {
-    if (typeof folder !== 'string' || folder === '') continue;
-    let at = folder;
-    for (let depth = 0; depth < MAX_FOLDER_DEPTH; depth += 1) {
-      if (existsSync(join(at, '.git'))) return folder;
-      const up = dirname(at);
-      if (up === at) break;
-      at = up;
-    }
-  }
-  return null;
 }
 
 /**
@@ -121,15 +105,17 @@ export function collectBoard({ session, transcriptPath, cwd }, { env = process.e
     : sessionAgents({ session, sessionFolder, runs, cursors: cache?.cursors ?? {}, pools, env, nowMs });
   const agentDirs = found.agents.filter((agent) => agent.state !== 'done').map((agent) => ({ name: agent.name, dir: agent.dir }));
   const job = jobFacts({ session, cwd, cache: cache?.job ?? null, nowMs });
-  const gitDir = gitFolderOf([cwd, job.repoDir, ...agentDirs.map((agent) => agent.dir)]) ?? cwd;
-  const git = repoState({ cwd: gitDir, agentDirs, cache: cache?.git ?? null, nowMs });
-  const stats = repoStats({ repoDir: git.repo === null ? null : gitDir, base: git.repo?.base ?? null, cache: cache?.stats ?? null, nowMs });
-  const repo = git.repo === null ? null : { ...git.repo, tip: stats.stats?.tip ?? null, suite: stats.stats?.suite ?? null, landed: stats.stats?.landed ?? null };
+  const statusDir = typeof job.cache?.path === 'string' ? dirname(job.cache.path) : null;
+  const git = sessionRepos({ folders: [cwd, job.repoDir, statusDir, ...agentDirs.map((agent) => agent.dir)], agentDirs, cache: cache?.git ?? null, nowMs });
+  const [primary = null, ...others] = git.repos;
+  const mainPath = primary?.worktrees.find((wt) => wt.main)?.path ?? null;
+  const stats = repoStats({ repoDir: mainPath, base: primary?.base ?? null, cache: cache?.stats ?? null, nowMs });
+  const repo = primary === null ? null : { ...primary, tip: stats.stats?.tip ?? null, suite: stats.stats?.suite ?? null, landed: stats.stats?.landed ?? null };
   const marker = readAsking(session, env, nowMs);
   const asking = marker === null ? null : { kind: marker.kind, count: marker.count, expiresAt: marker.expiresAt };
   const board = {
-    session, at: nowMs, stale: null, refreshStartedAt: null, asking, runs: found.runs, agents: withWorktrees(found.agents, git.repo), repo,
-    git: git.git, road: job.road, trend: job.trend,
+    session, at: nowMs, stale: null, refreshStartedAt: null, asking, runs: found.runs, agents: withWorktrees(found.agents, git.repos), repo,
+    repos: others, git: git.git, road: job.road, trend: job.trend,
   };
   return { board: fitted(board), cache: { cursors: found.cursors, git: git.cache, job: job.cache, stats: stats.cache } };
 }

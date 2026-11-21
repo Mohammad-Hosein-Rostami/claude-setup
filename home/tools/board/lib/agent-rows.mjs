@@ -5,14 +5,15 @@
 //    ├ impl-a  implementer  █████▒░░ ~60% · 12 min left · 16:20 · Edit render.mjs · r9-a ↑2 ●3 · 23 calls
 // Exports: agentRow(agent, ctx, look), runHeader(run, agents, ctx, look), plainHeader(agents, ctx, look), sparkText(agents, look),
 // agentBrief(agent, ctx, look), foldRow(prefix, agents, ctx, look), treeMark(last, look), urgencyOf(agent), countsText(agents, look).
-// Ctx: { nowMs, timeZone, at (the board's time: left minutes count from it), repo (board.repo, for an agent's worktree), folded }.
+// Ctx: { nowMs, timeZone, at (the board's time: left minutes count from it), repo (board.repo), repos (every repository: board.repo
+// and board.repos, for an agent's worktree), folded }.
 // Rules: a percent only with confidence (`62%` high, `~60%` medium), else `est…` with a moving ▒ cell and the type's usual time;
 // over the type's 85th percentile: `over usual by 9 min` with ▓; `quiet 4 min` from 3 min without a write and no call waiting;
 // a call still waiting shows its minutes. The description is cut at a word (cells.mjs cutWords), and the type stays: a column
 // from 115 columns, a part after the bar below. Colour (spec-tui-2): a running bar cyan, done green, quiet and over usual yellow, each
-// with its word. Drop order inside a row (fitParts): row id, branch first (the git rows have it), then tokens and calls, doing,
-// then type and finish clock;
-// name, bar, percent, state word and time left are never dropped.
+// with its word. Where it works (repository:branch, commits ahead of the base, uncommitted files, or `read-only` / `no repo`) is
+// never dropped. Drop order inside a row (fitParts): row id first, then tokens and calls, doing, then type and finish clock;
+// name, bar, percent, state word, time left and place are never dropped.
 // Invariants: pure (no I/O); every outside text goes through cleanText; every row fits look.columns.
 import { barText, clockOf, cleanText, cutWords, durationText, fitParts, STATE } from './cells.mjs';
 import { WIDE_COLUMNS } from './work-row.mjs';
@@ -24,6 +25,8 @@ const NAME_CHARS = 16;
 const WIDE_NAME_CHARS = 22;
 const NARROW_TYPE_CHARS = 12;
 const TOKENS_PER_K = 1000;
+const PLACE_CHARS = 16;
+const WIDE_PLACE_CHARS = 28;
 const DOING_CHARS = 24;
 const WIDE_DOING_CHARS = 36;
 const RUN_BAR_CELLS = 10;
@@ -104,13 +107,21 @@ function doingPart(agent, look) {
   return { text: doing, drop: 2 };
 }
 
-/** The agent's worktree with its ahead count and changed files: `r9-a ↑2 ●3`. */
-function branchPart(agent, ctx, look) {
-  if (agent.wt === null || agent.wt === undefined) return { text: '' };
-  const wt = (Array.isArray(ctx.repo?.worktrees) ? ctx.repo.worktrees : []).find((entry) => entry?.name === agent.wt);
-  const ahead = wt?.ahead > 0 ? ` ${marks(look).up}${wt.ahead}` : '';
-  const dirty = wt?.changed > 0 ? ` ${marks(look).dirty}${wt.changed}` : '';
-  return { text: `${cleanText(agent.wt, look).slice(0, 24)}${ahead}${dirty}`, drop: 5 };
+/**
+ * Where the agent works (owner report 2026-11-21: every agent row says it): `claude-setup:lane/x 2↑ +3 dirty` from its own worktree
+ * (repos.mjs, never the lead's folder), `read-only` for an agent that writes nothing outside a repository, else `no repo`.
+ */
+function wherePart(agent, ctx, look) {
+  const repos = Array.isArray(ctx.repos) ? ctx.repos : [ctx.repo].filter(Boolean);
+  if (agent.wt === null || agent.wt === undefined) return { text: agent.writer ? 'no repo' : 'read-only', state: STATE.dim };
+  const repo = repos.find((entry) => entry?.name === agent.repo) ?? repos[0];
+  const wt = (Array.isArray(repo?.worktrees) ? repo.worktrees : []).find((entry) => entry?.name === agent.wt);
+  // Below 115 columns with one repository the git row names it, so the room goes to the branch.
+  const repoName = agent.repo && (wide(look) || repos.length > 1) ? `${cleanText(agent.repo, look)}:` : '';
+  const place = `${repoName}${cleanText(agent.branch ?? agent.wt, look)}`;
+  const ahead = wt?.ahead > 0 ? ` ${wt.ahead}${marks(look).up}` : '';
+  const dirty = wt?.changed > 0 ? ` +${wt.changed} dirty` : '';
+  return { text: `${cutWords(place, wide(look) ? WIDE_PLACE_CHARS : PLACE_CHARS, look)}${ahead}${dirty}`, state: dirty ? STATE.warn : STATE.ok };
 }
 
 /**
@@ -128,7 +139,7 @@ export function agentRow(agent, ctx, look) {
     { text: `${ctx.prefix ?? ' '}${name}${column}`, bold: look.urgent === `agent:${agent.id}` }, barPart(agent, ctx, look),
     timePart(agent, ctx, look), ...clockParts(agent, ctx, look),
     agent.state === 'done' ? { text: '' } : doingPart(agent, look),
-    { text: wide(look) ? '' : cutWords(type, NARROW_TYPE_CHARS, look), state: STATE.dim, drop: 1 }, branchPart(agent, ctx, look),
+    { text: wide(look) ? '' : cutWords(type, NARROW_TYPE_CHARS, look), state: STATE.dim, drop: 1 }, wherePart(agent, ctx, look),
     ...(agent.tag ? [{ text: agent.tag, state: STATE.warn, drop: 4 }] : []),
     { text: statsText(agent), state: STATE.dim, drop: 4 },
     { text: agent.row && look.columns >= FULL_COLUMNS ? `row ${cleanText(agent.row, look)}` : '', drop: 6 },

@@ -8,7 +8,8 @@
 //   ▸ build r9-tui ... /  ├ impl-a ███▒░ ~60% ...                                 (layout.mjs workRows, agent-rows.mjs)
 //   git main ✓ · origin ↑0↓0 · last 12 min ago · landed today 6 │ r9-a ↑2 ●3 ... (git-rows.mjs; one row always kept)
 //   Opus 5.5 high · ctx 99k 25% · 7d 69% left, resets Tue 20:10 · acct work
-// Rows by priority when they are short: alert, job, session; then road, one git row, the checks row when the suite fails, the
+// Rows by priority when they are short: alert, job, session; then one git row (never none: without room it rides on the session
+// row; with no repository it says so), the road, the checks row when the suite fails, the
 // first three work rows, checks, counts, the rest of the work rows, more git rows. Bold (cells.mjs) marks the one most urgent item: a question waiting, else a failing suite,
 // else context over 80 %, else a limit over 80 % used, else the longest-quiet agent.
 // Exports: statusRows(view, look) -> string[] (never more than rowBudget(view.env) rows); sessionRow(view, look); alertRow(view, look) -> string | null; contextOf(window, env);
@@ -22,7 +23,7 @@
 // the newest when older than 5 min; it never notifies. The account name is the first part dropped, with git.
 // Invariants: pure (no I/O); every outside text goes through cleanText; every row fits look.columns.
 import { clockOf, cleanText, fitParts, STATE } from './cells.mjs';
-import { gitRows } from './git-rows.mjs';
+import { repoRows } from './git-rows.mjs';
 import { countsRow, rowBudget, workRows } from './layout.mjs';
 import { checksRow, roadRow, trendPart } from './stat-rows.mjs';
 import { jobView, WIDE_COLUMNS, workRow } from './work-row.mjs';
@@ -223,8 +224,8 @@ function urgentOf(view) {
 function shareRows(free, wanted) {
   let left = free;
   const take = (want) => { if (want && left >= 1) { left -= 1; return true; } return false; };
+  const gitRow = take(wanted.git); // before the road: git info is never missing (owner report 2026-11-21)
   const road = take(wanted.road);
-  const gitRow = take(wanted.git);
   const firstWork = Math.min(wanted.workNeed, FIRST_WORK_ROWS);
   const checks = wanted.checks && (wanted.suiteFailing || left - firstWork >= 1) && take(true);
   const counts = wanted.workNeed > 0 && left - firstWork >= 1 && take(true);
@@ -244,13 +245,14 @@ export function statusRows(view, plainLook) {
   const { board, nowMs, timeZone } = view;
   const alert = alertRow(view, look);
   const repo = board?.repo ?? null;
-  const ctx = { nowMs, timeZone, at: board?.at, repo };
+  const ctx = { nowMs, timeZone, at: board?.at, repo, repos: [repo, ...(Array.isArray(board?.repos) ? board.repos : [])].filter(Boolean) };
   const road = roadRow(jobView(view.segment)?.road ?? null, board?.road ?? null, { nowMs, timeZone }, look);
   const checks = checksRow(view.checks ?? null, repo, look);
   const workNeed = workRows(board, Infinity, ctx, look).length;
-  const share = shareRows(rowBudget(view.env) - (alert === null ? 2 : 3), { road: road !== null, git: repo !== null, checks: checks !== null, suiteFailing: Boolean(repo?.suite) && repo.suite.verdict !== 'PASS', workNeed });
+  const share = shareRows(rowBudget(view.env) - (alert === null ? 2 : 3), { road: road !== null, git: board !== null && typeof board === 'object', checks: checks !== null, suiteFailing: Boolean(repo?.suite) && repo.suite.verdict !== 'PASS', workNeed });
   const work = workRows(board, share.work, ctx, look);
-  const git = gitRows(repo, (share.gitRow ? 1 : 0) + share.work - work.length, ctx, look);
+  const gitSlots = (share.gitRow ? 1 : 0) + share.work - work.length;
+  const git = gitSlots > 0 ? repoRows(board, gitSlots, ctx, look) : [];
   const asking = view.asking === null || typeof view.asking !== 'object' ? null : { ...view.asking, marginMs: ASKING_MARGIN_MS };
   const job = workRow({ segment: view.segment, runs: workNeed > 0 && !share.counts ? board?.runs : [], nowMs, timeZone, trend: trendPart(board?.trend, look), roadShown: share.road }, look);
   return [

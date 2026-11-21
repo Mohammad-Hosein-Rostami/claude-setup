@@ -2,7 +2,9 @@
 // ahead/behind the base branch, changed files, last commit age, an operation in progress and the agents working there.
 //   git main ✓ · last 12 min ago │ r9-a ↑2 ●3 impl-a · r9-b ↑1 ●3 impl-b · r9-c ✓ old 3 d ⚠          (one row, when rows are few)
 //   git r9-a  lane/r9-a ↑2↓0 ●3 · last commit 12 min ago · impl-a, tests-a                          (one row each, when they fit)
-// Exports: gitRows(repo, slots, ctx, look) -> string[]; gitCounts(repo, look) -> string (for the counts row).
+// Exports: gitRows(repo, slots, ctx, look) -> string[]; repoRows(board, slots, ctx, look) -> string[] (every repository of the
+// board: the primary one first, then one compact row per other repository, `+K more repos` when they do not fit, and a
+// `git: no repository` row when the session's work is in none, so the git info is never simply missing); gitCounts(repo, look).
 // Source: board.repo (git-state.mjs). Rules: a worktree with agents comes first, then by commits ahead; a worktree whose branch is
 // landed (0 ahead) and older than OLD_DAYS reads `old N d ⚠` (git-tidy's prune candidate); a status older than STALE_S shows its age.
 // The main worktree's part (spec-tui-2, the one compact row when nothing is active, never nothing): its branch, ahead/behind its
@@ -73,12 +75,13 @@ function landedPart(repo, nowMs, look) {
 /** The main worktree's parts: `git main ✓ · origin ↑0↓0 · last 12 min ago · landed today 6`. */
 function mainParts(repo, look, nowMs) {
   const main = worktreesOf(repo).find((wt) => wt.main);
-  if (main === undefined) return [{ text: `git ${cleanText(repo.base ?? '?', look)}` }];
+  const name = typeof repo.name === 'string' && repo.name ? `${cutWords(cleanText(repo.name, look), MAX_NAME_CHARS, look)}:` : '';
+  if (main === undefined) return [{ text: `git ${name}${cleanText(repo.base ?? '?', look)}` }];
   // The newest commit of the base is the last one landed: with a landed-today count its age rides on that part, not twice.
   const landedLast = isCount(repo.landed?.count) && repo.landed.count > 0 && Number.isFinite(repo.landed.lastMs);
   const age = isCount(main.ageMin) && !landedLast ? `last ${wide(look) ? 'commit ' : ''}${durationText(main.ageMin)} ago` : '';
   return [
-    { text: `git ${cutWords(cleanText(main.name, look), MAX_NAME_CHARS, look)} ${stateText(main, look)}${main.op ? ` ${cleanText(main.op, look)}` : ''}` },
+    { text: `git ${name}${cutWords(cleanText(main.name, look), MAX_NAME_CHARS, look)} ${stateText(main, look)}${main.op ? ` ${cleanText(main.op, look)}` : ''}` },
     upstreamPart(main, look), { text: age, state: STATE.dim, drop: 9 }, landedPart(repo, nowMs, look),
   ];
 }
@@ -90,7 +93,7 @@ function worktreeRow(wt, ctx, look) {
   return fitParts([
     { text: `git ${cutWords(cleanText(wt.name, look), MAX_NAME_CHARS, look)}` },
     { text: wt.branch && wt.branch !== wt.name ? cleanText(wt.branch, look).slice(0, 32) : '', drop: 4 },
-    { text: stateText(wt, look) }, { text: wt.op ? cleanText(wt.op, look) : '', state: STATE.warn },
+    { text: stateText(wt, look) }, { ...upstreamPart(wt, look), drop: 3 }, { text: wt.op ? cleanText(wt.op, look) : '', state: STATE.warn },
     { text: isCount(wt.ageMin) ? `last commit ${durationText(wt.ageMin)} ago` : '', state: STATE.dim, drop: 2 },
     { text: agentsText(wt, look), drop: 1 },
     { text: isOld(wt) ? `landed, old ${Math.round(wt.ageMin / MIN_PER_DAY)} d ${glyphs(look).old}` : '', state: STATE.warn, drop: 1 }, stale,
@@ -113,6 +116,28 @@ export function gitRows(repo, slots, ctx, look) {
   const parts = others.map((wt, index) => ({ text: briefOf(wt, look), drop: index + 1, bar: index === 0 }));
   if (others.length === 0) parts.push({ text: wide(look) ? 'no worktrees' : 'no wt', drop: 1 });
   return [fitParts([...mainParts(repo, look, ctx.nowMs), ...parts], look)];
+}
+
+/**
+ * @param {object | null} board the session's board (repo: the primary repository with its stats; repos: the others)
+ * @param {number} slots the rows the git rows may take (Infinity for `/where`); at least one row is returned for a board
+ * @param {{ nowMs: number }} ctx the clock
+ * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal
+ * @returns {string[]} the primary repository's rows, then a compact row per other repository; [] without a board
+ */
+export function repoRows(board, slots, ctx, look) {
+  if (board === null || typeof board !== 'object') return [];
+  const primary = board.repo !== null && typeof board.repo === 'object' ? board.repo : null;
+  const others = (Array.isArray(board.repos) ? board.repos : []).filter((repo) => repo !== null && typeof repo === 'object');
+  if (primary === null) return [fitParts([{ text: 'git: no repository', state: STATE.dim }, { text: "the session's folder and its agents' are outside git", state: STATE.dim, drop: 1 }], look)];
+  const room = Math.max(1, slots);
+  const fits = others.length <= room - 1;
+  const shown = others.slice(0, Math.max(0, room - 1 - (fits ? 0 : 1))); // a `+K more` row needs its own place
+  const hidden = others.length - shown.length;
+  const rows = gitRows(primary, room - shown.length, ctx, look);
+  const extra = shown.map((repo) => gitRows(repo, 1, ctx, look)[0]).filter(Boolean);
+  const more = hidden > 0 ? [fitParts([{ text: `+${hidden} more repo${hidden === 1 ? '' : 's'} with work` }], look)] : [];
+  return [...rows, ...extra, ...more].slice(0, Number.isFinite(slots) ? room : undefined);
 }
 
 /** @returns {string} the git summary of the counts row: `git 7 br · 3 not landed · 2 dirty`; '' without a repo */
