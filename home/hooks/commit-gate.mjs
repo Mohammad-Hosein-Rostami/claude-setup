@@ -209,7 +209,8 @@ function changeBlock(stop, { own, gap, gapChanged }) {
 function sizeBlock(stop, own) {
   const { env, input, agent, tree } = stop;
   const baseline = baselineOf(env, input.session_id, agent);
-  const moved = typeof baseline?.head === 'string' && baseline.head !== gitText(tree.top, ['rev-parse', 'HEAD']);
+  // A baseline taken in another worktree says nothing about this branch moving: its HEAD differs whenever the repos do.
+  const moved = baseline?.top === stop.top && typeof baseline.head === 'string' && baseline.head !== gitText(tree.top, ['rev-parse', 'HEAD']);
   const head = moved && !branchForeign(stop, baseline.head) ? baseline.head : null;
   const files = oversizeNewFiles({ top: stop.top, gitTop: tree.top }, { head }, own);
   if (files === null || files.length === 0) return null;
