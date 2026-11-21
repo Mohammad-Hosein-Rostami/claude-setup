@@ -1,6 +1,6 @@
 // The PASS records of test-pass: which git tree passed which test command, kept per clone under ~/.claude/state/test-pass.
 // Exports: declaredSuite(repoDir), treeOf(repoDir, rev), commitOf(repoDir, rev), isCleanTree(repoDir), recordPass(repoDir, row, env), hasPass(repoDir, rev, options),
-// MAX_ROWS.
+// appendRecord(repoDir, row, env, suffix), readRecords(repoDir, env, suffix) (the proof records of lib/proof-store.mjs use a second file, suffix `.proof`), MAX_ROWS.
 // Why: landing a branch should rerun the full suite only when no run already passed on that exact tree (hash of the files, not of
 // the commit: a rebase that changes no file keeps the tree, so its PASS still counts).
 // Invariants: a record is written only for a tree that has no uncommitted change; the file is a private regular file of this user
@@ -55,13 +55,13 @@ export function declaredSuite(repoDir) {
   }
 }
 
-/** The state file of the clone that holds `repoDir`: one per git common dir, so every worktree of a clone shares it. */
-function recordFile(repoDir, env) {
+/** The state file of the clone that holds `repoDir`: one per git common dir, so every worktree of a clone shares it; `suffix` names a second store. */
+function recordFile(repoDir, env, suffix = '') {
   const common = git(repoDir, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
   if (common === null) return null;
   const id = createHash('sha256').update(realpathSync(common)).digest('hex').slice(0, ID_LENGTH);
   const home = env.HOME ?? env.USERPROFILE ?? homedir();
-  return { dir: join(home, '.claude', 'state', 'test-pass'), path: join(home, '.claude', 'state', 'test-pass', `${id}.jsonl`) };
+  return { dir: join(home, '.claude', 'state', 'test-pass'), path: join(home, '.claude', 'state', 'test-pass', `${id}${suffix}.jsonl`) };
 }
 
 /** Parsed rows of the file, oldest first; [] when the file is missing, unsafe or unreadable. */
@@ -111,9 +111,19 @@ function rewrite(path, rows) {
  * @param {{ HOME?: string, USERPROFILE?: string }} env decides the state folder (default: the real home)
  * @returns {boolean} true when stored; false when the clone, the folder or the file is not usable
  */
-export function recordPass(repoDir, row, env = process.env) {
+export const recordPass = (repoDir, row, env = process.env) => appendRecord(repoDir, row, env);
+
+/**
+ * Stores one row in the clone's store named by `suffix` ('' is the PASS store), keeping the newest MAX_ROWS.
+ * @param {string} repoDir folder inside the working tree
+ * @param {object} row a JSON row with a `tree` string
+ * @param {{ HOME?: string, USERPROFILE?: string }} env decides the state folder
+ * @param {string} [suffix] '' for the PASS store, '.proof' for the proof records
+ * @returns {boolean} true when stored; false when the clone, the folder or the file is not usable
+ */
+export function appendRecord(repoDir, row, env = process.env, suffix = '') {
   try {
-    const file = recordFile(repoDir, env);
+    const file = recordFile(repoDir, env, suffix);
     if (file === null || privateFolder(file.dir) === undefined) return false;
     const rows = readRows(file.path);
     if (rows.length < MAX_ROWS) appendLine(file.path, `${JSON.stringify(row)}\n`);
@@ -122,6 +132,12 @@ export function recordPass(repoDir, row, env = process.env) {
   } catch {
     return false;
   }
+}
+
+/** Every row of the clone's store named by `suffix`, oldest first; [] when the clone or the store is not usable. */
+export function readRecords(repoDir, env = process.env, suffix = '') {
+  const file = recordFile(repoDir, env, suffix);
+  return file === null ? [] : readRows(file.path);
 }
 
 /**

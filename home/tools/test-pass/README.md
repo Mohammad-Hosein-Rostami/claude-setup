@@ -33,6 +33,18 @@ file keeps its PASS, and by the clone (hash of the real git common dir), so ever
 link, folder or foreign-owned file at that name makes the store unusable: nothing is read or written (a missing record only
 costs a rerun, never a false PASS). Two runs finishing at the same moment may drop one row for the same reason.
 
+## Proof records
+
+`record`, `mutants` and `proof` keep what a test run at a commit really did, so a hand-over rests on a record, never on a model's words.
+
+| Command | What it does |
+| ------- | ------------ |
+| `record [--repo <dir>] [--role <role>] [--tests <ids>] [--report <file>] [--target <name>] -- <cmd...>` | Runs `<cmd>` (no shell) on a clean tree, prints its last 60 lines, reads the counts from node --test's summary (TAP `# pass N` or spec `ℹ pass N`) or from `--report` (the same, or a JUnit XML file), and stores `{sha, tree, cmd, role, tests, selected, passed, failed, skipped, exit, verdict}`, pass or fail. Roles: `repro` (a bug's failing-first test, recorded red before the fix and green after), `acceptance`, `keep-green` (default), `suite`, `target` (a run on the real target). Exits with the command's code; 2 for a dirty tree. |
+| `mutants [--repo <dir>] --patch <file>... [--timeout-ms <n>] -- <cmd...>` | Copies the working tree (without `.git`) to a temp folder, checks the keep-green command passes there, then applies each patch, runs the command and reverts: `mutants: <killed>/<n>` from the exit codes (a patch that does not apply counts as not killed; a timeout as killed). Stores the count as a `mutants` record of HEAD. |
+| `proof <sha> [--repo <dir>] [--handover <file>] [--real-target]` | Exit 0 when the records of `<sha>` back the hand-over, 1 with one `refused:` line each when: no record for exactly this sha; 0 tests selected or unreadable counts; a stored verdict its exit code contradicts; a skip counted as a pass; a repro not red at an earlier commit; "all pass" over a failing record; a typed test or `mutants:` count no record holds; a flow that needs the real target (`--real-target`, or a `real target: needed` line) with no passing `target` run. The last line is the `verdict:` line a runner copies. |
+
+PASS needs exit 0, readable counts, at least one test passed and none failed. Records sit beside the PASS store (same folder and file rules, newest 200).
+
 ## Use from code
 
 `import { hasPass, declaredSuite } from '.../test-pass/test-pass.mjs'`: `hasPass(repoDir, rev, { suite?, cmd?, env? })` is true
