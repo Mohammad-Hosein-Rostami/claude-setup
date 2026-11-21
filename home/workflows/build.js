@@ -112,7 +112,7 @@ const joinPrompt = (lane, built, written) => {
   ].filter((line) => line !== '').join('\n')
 }
 const testBranch = (lane) => `${lane.branch}--tests`
-const contractArgs = (lane) => ({ ...(lane.principles ? { principles: lane.principles } : {}), ...(lane.addClasses ? { addClasses: lane.addClasses } : {}) })
+const contractArgs = (lane) => ({ spec: lane.spec, ...(lane.checkpoints ? { checkpoints: lane.checkpoints } : {}), ...(lane.principles ? { principles: lane.principles } : {}), ...(lane.addClasses ? { addClasses: lane.addClasses } : {}) })
 const reviewArgs = (lane, worktree, extra = {}) => ({ row: lane.closeRow, repo: args.repo, base: args.base, range: `${args.base}...${lane.branch}`, landing: true, fix: true, branch: lane.branch, worktree, suite: args.suite, ...contractArgs(lane), ...extra })
 // What a review child of the land loop is told about the lane start: the start the review before it recorded, and this build's own base tips (N21, D7).
 // A result with no recorded start (an older script) gets neither: the child then reads the start through review-tier.
