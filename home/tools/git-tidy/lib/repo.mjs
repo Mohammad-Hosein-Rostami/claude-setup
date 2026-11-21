@@ -4,7 +4,7 @@
 //   ignoredFiles, minutesSinceUse.
 // Invariants: branches are always addressed by full ref (`refs/heads/<name>`), so a tag with the same name is never
 //   mistaken for a branch; every git call fails closed, a fact that cannot be read is reported as unknown, not as clean.
-import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { UsageError, gitText, runGit } from './git.mjs';
 
@@ -75,7 +75,26 @@ export function openRepo(dir, requestedBase) {
   return { dir, bare, topLevel, base, baseSource, knownBases, baseRef: `${HEADS}${base}`, upstream: upstreamOf(dir, base) };
 }
 
-/** Worktrees as `{ path, branch, detached, bare, locked, missing, main }`; the first one is the main worktree. */
+const GITDIR_LINE = /^gitdir: (.+)$/m;
+const MAX_GITFILE_BYTES = 4096;
+
+/**
+ * When a linked worktree's lock was taken: the mtime of `locked` in its admin folder (named by the worktree's `.git` file), or null when
+ * the folder is gone, the `.git` file is not a plain small file or the lock file cannot be read (r9-wt-lock: "stale lock?").
+ */
+function lockedAtMs(path) {
+  try {
+    const gitFile = join(path, '.git');
+    const stats = lstatSync(gitFile);
+    if (!stats.isFile() || stats.size > MAX_GITFILE_BYTES) return null;
+    const admin = GITDIR_LINE.exec(readFileSync(gitFile, 'utf8'))?.[1]?.trim();
+    return admin ? statSync(resolve(path, admin, 'locked')).mtimeMs : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Worktrees as `{ path, branch, detached, bare, locked, lockReason, lockedAtMs, missing, main }`; the first one is the main worktree. */
 export function listWorktrees(repo) {
   const entries = [];
   let current = null;
@@ -88,7 +107,7 @@ export function listWorktrees(repo) {
       if (field.startsWith('branch ' + HEADS)) current.branch = field.slice(('branch ' + HEADS).length);
       else if (field === 'detached') current.detached = true;
       else if (field === 'bare') current.bare = true;
-      else if (field === 'locked' || field.startsWith('locked ')) current.locked = true;
+      else if (field === 'locked' || field.startsWith('locked ')) Object.assign(current, { locked: true, lockReason: field.slice('locked '.length).trim(), lockedAtMs: lockedAtMs(current.path) });
     }
   }
   return entries;

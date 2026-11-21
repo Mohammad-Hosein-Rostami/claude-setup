@@ -109,6 +109,8 @@ function fastForward(repo, baseFolder, tip) {
 // Prune everything provable after the landing; a refusal (UsageError) is the answer, never an exit 2 for a base that already moved.
 function cleanUp(atBase, branch) {
   try {
+    // The landed lane's own worktree may be locked by the git-tidy-gate hook (r9-wt-lock): unlock it so prune can remove it; no other lock is touched.
+    for (const tree of listWorktrees(atBase).filter((entry) => entry.locked && !entry.main && entry.branch === branch)) runGit(atBase.dir, ['worktree', 'unlock', '--', tree.path]);
     const items = pruneRepo(atBase, { apply: true, includeRecent: [branch] });
     return { removed: items.filter((entry) => REMOVED_ACTIONS.has(entry.action)).map((entry) => `${entry.kind} ${entry.subject}`), cleanupRefused: null };
   } catch (error) {

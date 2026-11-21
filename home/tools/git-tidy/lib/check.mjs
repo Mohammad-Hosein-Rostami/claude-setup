@@ -67,9 +67,15 @@ function behindBaseHint(repo) {
   return [item('behind-base?', currentBranch(repo) ?? 'HEAD', `behind ${repo.base} by ${behind}`)];
 }
 
-function worktreeHints(worktrees) {
+const STALE_LOCK_MS = 24 * 60 * 60 * 1000; // a lane lock older than a day is shown: its agent or session may be gone (r9-wt-lock)
+const HOUR_MS = 60 * 60 * 1000;
+
+function worktreeHints(worktrees, now) {
   const hints = [];
   for (const tree of worktrees.filter((entry) => !entry.missing && !entry.bare)) {
+    if (tree.locked && tree.lockedAtMs != null && now - tree.lockedAtMs > STALE_LOCK_MS) {
+      hints.push(item('stale-lock?', tree.path, `locked ${Math.floor((now - tree.lockedAtMs) / HOUR_MS)} h ago${tree.lockReason ? ` (${tree.lockReason})` : ''}: git worktree unlock it if no agent or session works there`));
+    }
     const changed = tree.main ? 0 : changedFileCount(tree.path);
     if (changed === null) hints.push(item('dirty-worktree?', tree.path, 'git status failed, treated as dirty'));
     else if (changed > 0) hints.push(item('dirty-worktree?', tree.path, `changed ${changed}`));
@@ -171,7 +177,7 @@ export function runCheck(repo, now = Date.now()) {
   const hints = [
     ...publishedMergeHint(repo), ...unmerged, ...unlandedLaneHints(repo, leftovers.states.filter((b) => b.state === 'unmerged' && !reportedAsCopy.has(b.name)), now), ...unmergedTags,
     ...mergedTags.filter((t) => !isBackupTag(t.name)).map((t) => item('merged-tag?', t.name, `${t.short} ${t.state}`)), ...tangled.hints, ...mergedRemoteHints(repo),
-    ...(repo.bare ? [] : behindBaseHint(repo)), ...worktreeHints(worktrees), ...ignoredFileHints(leftovers.mergedWorktrees), ...shallowHint(repo),
+    ...(repo.bare ? [] : behindBaseHint(repo)), ...worktreeHints(worktrees, now), ...ignoredFileHints(leftovers.mergedWorktrees), ...shallowHint(repo),
   ];
   return { findings, hints };
 }

@@ -58,6 +58,7 @@ The base and the branch checked out in the main worktree are never reported as m
 | `merged-remote-branch?` | an `origin/*` branch fully contained in the base's upstream; deleting it is the owner's call |
 | `behind-base?` | the current branch does not contain the base tip (rebase needed) |
 | `dirty-worktree?` | a linked worktree with uncommitted or untracked files |
+| `stale-lock?` | a linked worktree locked over a day ago (the age is the mtime of its `locked` file; the reason is shown): unlock it with `git worktree unlock` if no agent or session works there. Prune and the in-work check never touch a locked worktree |
 | `in-progress?` | a rebase, merge, cherry-pick, revert or bisect is unfinished in that worktree |
 | `shallow?` | a shallow clone: history is cut, so a branch may look unmerged (never the other way round) |
 
@@ -162,3 +163,10 @@ branch whose reflog holds only-copy commits, and a worktree holding ignored or u
 
 `git-tidy.mjs` (arguments, printing, exit code) over `lib/`; see `lib/README.md`. Tests: `tests/git-tidy-*.test.mjs`. The Stop gate that runs `check --json`
 at the end of a session is `home/hooks/git-tidy-gate.mjs`.
+
+## Worktree locks
+
+A live lane worktree made by Bash or kept by a workflow is locked (`git worktree lock --reason <lane> <session>`), so prune and
+the in-work check leave it alone; agent worktrees are locked by Claude Code itself while the agent runs. `land` unlocks the
+landed lane's own worktree before its cleanup removes it (no other lock is touched). A lock over a day old is the hint
+`stale-lock?`.

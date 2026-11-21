@@ -3,7 +3,8 @@
 // merged branch or worktree), while a base branch moved during this session has no full-suite PASS, or while an old unmerged lane is named
 // by no open row of the session's STATUS.md. A SubagentStop is blocked once when the agent left its own empty `worktree-agent-<id>` branch.
 // PreCompact prints one line per open lane so the summary keeps them. SessionStart (`r9-git-line`) names the lanes of the session's repo
-// not yet landed; PostToolUse(Bash) after a `git worktree add`, `merge` or `branch` reuses the cached check and, above 5
+// not yet landed; PostToolUse(Bash) after a `git worktree add` locks the new lane worktree (lib/lane-lock.mjs), and after `git worktree add`,
+// `merge` or `branch` reuses the cached check and, above 5
 // unlanded lanes or prunable items, says to run `git-tidy prune`; both put `additionalContext` inside `hookSpecificOutput`.
 // Exports: decide(input, env, deps) -> Promise<{block: false, info?} | {block: true, reason}>, openLanes(input, env, deps) -> Promise<string[]>,
 //   contextFor(event, input, env, deps) -> Promise<string> (SessionStart / PostToolUse additionalContext, '' for none).
@@ -41,6 +42,7 @@ import { isSessionId } from './lib/session-store.mjs';
 import { statusFileOf } from './lib/status-file-of.mjs';
 import { cachedVerdict, recordOnce, storeVerdict } from './lib/tidy-gate-store.mjs';
 import { pruneNoteText, unlandedText, wantsPruneNote } from './lib/tidy-gate-notes.mjs';
+import { lockNewLaneWorktrees } from './lib/lane-lock.mjs';
 import { MERGE_COMMIT, OPEN_LANE, PRUNE_KINDS, runCheckChild, UNLANDED } from './lib/tidy-check-child.mjs';
 import { parseWorkItems } from '../tools/estimate/lib/items.mjs';
 import { isAgentBranch } from '../tools/git-tidy/lib/copies.mjs';
@@ -246,6 +248,7 @@ export async function contextFor(event, input, env = process.env, deps = {}) {
   if (event === 'PostToolUse' && !wantsPruneNote(input)) return '';
   const tree = gatedTree(input, env);
   if (tree === null) return '';
+  if (event === 'PostToolUse') lockNewLaneWorktrees(tree.top, input) // a new lane worktree is locked first (r9-wt-lock); land unlocks it
   const verdict = verdictFor(env, input.session_id, tree.top, deps, checkBudgetMs(env, deps));
   return event === 'SessionStart' ? unlandedText(tree.top, verdict) : pruneNoteText(tree.top, verdict);
 }
