@@ -1,6 +1,6 @@
 // Purpose: the change facts the smart check's rules read (round 2, 8.1): change kinds from review-tier's classes, diff stats, symbol
 //   facts from a line-level read of changed JS/TS (no type checker), CSS facts, the global triggers and the job kind.
-// Exports: changeFacts(files, options), LAYOUT_PROPS, PAINT_PROPS, isGlobalTrigger(path), CODE_FILE, STYLE_FILE.
+// Exports: changeFacts(files, options), bareName(specifier), LAYOUT_PROPS, PAINT_PROPS, isGlobalTrigger(path), CODE_FILE, STYLE_FILE.
 // Invariants: pure: reads only what `files` and the given readers return; never throws on odd text (a fact it cannot read is
 //   `unknown`, which the rules treat as the heavier level). Line texts are matched in memory and never stored in the facts.
 import { builtinModules } from 'node:module';

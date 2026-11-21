@@ -491,11 +491,20 @@ check_notify() {
   fi
 }
 
+# The smart check (spec r9-smart-check 9): its ledger's size and the miss rate with its 95% bound; an ALARM line (an escape of a pinned
+# or security check) is a WARN. Retrain weekly with `node ~/.claude/tools/smart-check/smart-check.mjs train`.
+check_smart_check() {
+  local out ledger="${SMART_CHECK_STATE:-$HOME/.claude/state/smart-check}/ledger.jsonl" size=0
+  [ -f "$ledger" ] && size=$(( $(wc -c <"$ledger") / 1024 ))
+  if ! out="$(node "$REPO/home/tools/smart-check/ledger.mjs" stats --doctor 2>&1)"; then bad "smart-check stats could not run: $out"; return; fi
+  if grep -q '^ALARM' <<<"$out"; then warn "$(tr '\n' ' ' <<<"$out")"; else ok "${out%%$'\n'*} (ledger ${size} KB)"; fi
+}
+
 # DOCTOR_ONLY="check_a check_b" runs just those checks (used by tests; the full run executes the repo tests).
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_mode_hook; check_token_budget; check_plugin_session_start; check_recall; check_stop_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows; check_env_names; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_mode_hook; check_token_budget; check_plugin_session_start; check_recall; check_stop_cap; check_disk_free; check_disk_clean; check_smart_check; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows; check_env_names; check_repo_tests
 }
 # The machine's name in the summary: the owner's two machines by OS, else the host name; DOCTOR_MACHINE overrides it.
 machine_name() {

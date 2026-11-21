@@ -1,6 +1,6 @@
 // Purpose: the smart check's rule table (round 2, 8.3 with the UI rule of 9.1-9.2 and the review triggers of 8.4): change facts in,
 //   one row per check kind out, each at none | scoped | full with one reason line.
-// Exports: CHECK_KINDS, LEVELS, CATEGORY_OF, planRows(facts, context), raiseLevel(level), REVIEW_LENS_MAX_LINES.
+// Exports: CHECK_KINDS, LEVELS, CATEGORY_OF, planRows(facts, context), raiseLevel(level), proseHasCommands(files), REVIEW_LENS_MAX_LINES.
 // Invariants: pure and deterministic (exploration and the model are applied by plan.mjs after this, and only ever raise a level).
 //   The first matching rule of a kind wins; a fact the rules cannot read picks the heavier level. Pinned checks are not rows here:
 //   they always run (lib/pinned.mjs). A kind whose category the owner turned on with /check is `full`, by `owner`: its own gate runs it.

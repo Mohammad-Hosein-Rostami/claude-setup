@@ -26,6 +26,12 @@ agent file and the caller's prompt.
   only use them if i specificly ask for it"): `test`, `types`, `review`, `ui`, `probe` (`home/checks/categories.json`). A Figma link
   or "pixel perfect" does not turn `ui` on. Always on, never a category: gitleaks at commit, the Bash guard, `node --check` of
   changed hook files.
+- `smart` is the one category on by default (owner, 2026-11-21: "very selective ... very low token usage ... makes sure we have a
+  perfect resault"): at every stop `home/hooks/smart-check.mjs` runs the pinned checks on the change (parse, imports, new packages,
+  never-weaken, secrets, stubs, size caps, hook load) and each check kind at none, scoped or full by the change
+  (`~/.claude/tools/smart-check/README.md`). A FAIL blocks the stop once: fix it, or start the deep review or `visual-qa` it hands
+  over, or label a wrong finding (`smart-check.mjs truth ... --truth false-alarm`). Its block (`checked:` / `not checked:` /
+  `suggest:`) shows under the final reply. `/check off smart` turns it off for the session; `/check <cat>` still adds a heavy category.
 - `test` / `types` on: after a change, run the checks that cover it through `runner` (targeted tests, typecheck, lint) once, after the
   last edit, not after each step. `verify-done` reuses that run when no file changed after it.
 - `review` on: run the set `review-tier` prints (`reviewer`, plus `security-auditor` and Opus lenses by class) and follow its `steps:`
