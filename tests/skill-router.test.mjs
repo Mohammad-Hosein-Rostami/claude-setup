@@ -87,7 +87,8 @@ test('isQuiet: env off, Gradle without package.json, otherwise loud', async () =
 });
 
 test('hook contract: bad JSON is silent; a UI prompt emits additionalContext; a backend prompt is silent', () => {
-  const run = (input) => spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8' });
+  const home = makeTempDir('router-contract-home-'); // no switch file: the real ~/.claude/state is never read
+  const run = (input) => spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home } });
   for (const input of ['not json', '']) {
     const r = run(input);
     assert.equal(r.status, 0);
@@ -152,14 +153,23 @@ test('with the `ui` check off the full UI route names no ui-quality-pass and no 
   assert.doesNotMatch(full, /ui-quality-pass|[Pp]roof|visual-qa|ui-check/);
 });
 
-// Red on purpose while the product defect stands: withoutUiChecks (skill-router.mjs:269-276) cuts `; proof: ...` before it looks for
-// `ui-quality-pass before done; `, so the short text keeps "ui-quality-pass before done." with `ui` off (spec-checks-off.md:36-38).
+// withoutUiChecks (skill-router.mjs) must cut `ui-quality-pass before done; ` before `; proof: ...`, or the short text keeps
+// "ui-quality-pass before done." with `ui` off (spec-checks-off.md:36-38).
 test('with the `ui` check off the short UI route names no ui-quality-pass and no proof step', async () => {
   const { prompt } = await routerSession({ on: ['test'] });
   prompt('make it responsive');
   const short = prompt('make it responsive on mobile');
   assert.match(short, /^Skill router: UI request - invoke .+ \(skip any already loaded\); delegate to ui-implementer\.$/);
   assert.doesNotMatch(short, /ui-quality-pass|proof|visual-qa|ui-check/);
+});
+
+test('with the `ui` check off the short UI follow-up names no ui-quality-pass and no proof step', async () => {
+  const { prompt } = await routerSession({ on: ['test'] });
+  prompt('make it responsive');
+  const followUp = prompt('now style the settings page header');
+  assert.match(followUp, FOLLOW_UP);
+  assert.match(followUp, /delegate to ui-implementer\.$/);
+  assert.doesNotMatch(followUp, /ui-quality-pass|proof|visual-qa|ui-check/);
 });
 
 test('a newly routed skill gets the full text again, then the short form', async () => {
@@ -343,7 +353,8 @@ test('an unclosed wrapper tag hides the rest of the prompt; an unrelated closing
 
 test('hook: a prompt with nothing left after stripping prints nothing', () => {
   const input = JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: '<cross-session-message from="a">fix the responsive bug</cross-session-message>', session_id: 'cs1' });
-  const r = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8' });
+  const home = makeTempDir('router-stripped-home-');
+  const r = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home } });
   assert.equal(r.status, 0);
   assert.equal(r.stdout, '');
 });
