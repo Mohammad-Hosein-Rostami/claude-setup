@@ -1,5 +1,5 @@
 // bugfix workflow: reproduce a bug, test three hypotheses in parallel, fix the confirmed root cause, verify the fix,
-// then review and land it through the `review` and `land` workflows (run it with the /wf-bugfix skill).
+// then review and land it through the `review` and `land` workflows (run it with the /workflows skill, section bugfix).
 // Args: { repo, symptom, scriptsDir, row?, closeRow?, statusFile?, base?, suite?, repro?, branch?, reproAtOwnerConditions?, matrix?, land?, probeC? }:
 //   it starts from a symptom alone (the skill fills repo and scriptsDir): row 'bugfix', closeRow 'close:<row>', statusFile <repo>/STATUS.md, base
 //   'main', suite the repo's declared full suite (test-pass reads the declaration; the text is only shown). reproAtOwnerConditions: for a UI bug,

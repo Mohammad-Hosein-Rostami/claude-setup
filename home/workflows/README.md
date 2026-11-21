@@ -1,8 +1,8 @@
 # Saved workflows (`home/workflows/`)
 
 Scripts for the Workflow tool, used when the job needs one (2+ lanes in parallel, review panels across lanes, research over several sources, a multi-stage job that must survive an exit; `home/CLAUDE.md`, "Inline, agent or workflow"), so the progress view shows it and each agent's label
-(`<STATUS row>:<step>`) links to a row of STATUS.md. Claude Code resolves workflow names only from a project's `.claude/workflows/`, so the
-setup runs them by path: each `wf-*` skill (`home/skills/wf-*/SKILL.md`) calls `Workflow({scriptPath: "${CLAUDE_SKILL_DIR}/../../workflows/<name>.js", args})`.
+(`<STATUS row>:<step>`) links to a row of STATUS.md. Claude Code resolves a workflow name from the session's own workflow folders (a project's `.claude/workflows/`), never from this folder, so the
+setup runs them by path: the `workflows` skill (`home/skills/workflows/SKILL.md`, one section per workflow with its args, statuses and row steps) calls `Workflow({scriptPath: "${CLAUDE_SKILL_DIR}/../../workflows/<name>.js", args})`; `wf-resume` relaunches stopped runs.
 `~/.claude/workflows` is a link to this folder (the install adds its link path to `permissions.additionalDirectories`, so the path is readable
 from any project).
 
@@ -13,16 +13,16 @@ Args marked `?` are optional. Every script also accepts `scriptsDir` (this folde
 
 | script | skill | phases | args |
 | --- | --- | --- | --- |
-| `build.js` | `wf-build` | Build, Join, Review, Visual QA, Land, Audit | `base, repo, suite, writers, statusFile, scriptsDir, resume?, probeC?, lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?, principles?, checkpoints?, addClasses?}], appendOnly?` |
-| `review.js` | `wf-review` | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, whole?, fixer?, tier?, addClasses?, laneClasses?, deltaOf?, laneStart?, baseTips?, priorFindings?, initialFindings?, waiverAt?, principles?, spec?, checkpoints?, records?, audit?` |
-| `land.js` | `wf-land` | Rebase, Suite, Land | `row, closeRow, statusFile, repo, base, branch, worktree, suite, tip, auditPending?, auditBase?` |
-| `step.js` | `wf-step` | Step | `row, agentType, prompt, model, effort, isolation?, alone?, statusFile?` |
-| `bugfix.js` | `wf-bugfix` | Reproduce, Hypotheses, Fix, Verify, Review, Visual QA, Land | `repo, symptom, scriptsDir, row?, closeRow?, statusFile?, base?, suite?, repro?, branch?, reproAtOwnerConditions?, matrix?, land?, probeC?` |
-| `research.js` | `wf-research` | Scope, Gather, Synthesize, Critic | `row, question, out, depth: 'simple'|'compare'|'complex'` |
-| `sync-machines.js` | `wf-sync` | Verify, Sync, Doctor | `row, repo, base` |
-| `git-cleanup.js` | `wf-git-cleanup` | Inventory, Plan, Apply | `row, repos` |
+| `build.js` | `workflows` (`build`) | Build, Join, Review, Visual QA, Land, Audit | `base, repo, suite, writers, statusFile, scriptsDir, resume?, probeC?, lanes: [{row, closeRow, branch, spec, files, acceptanceTests, implementer: {agentType?, model, effort}, matrix?, principles?, checkpoints?, addClasses?}], appendOnly?` |
+| `review.js` | `workflows` (`review`) | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, whole?, fixer?, tier?, addClasses?, laneClasses?, deltaOf?, laneStart?, baseTips?, priorFindings?, initialFindings?, waiverAt?, principles?, spec?, checkpoints?, records?, audit?` |
+| `land.js` | `workflows` (`land`) | Rebase, Suite, Land | `row, closeRow, statusFile, repo, base, branch, worktree, suite, tip, auditPending?, auditBase?` |
+| `step.js` | `workflows` (`step`) | Step | `row, agentType, prompt, model, effort, isolation?, alone?, statusFile?` |
+| `bugfix.js` | `workflows` (`bugfix`) | Reproduce, Hypotheses, Fix, Verify, Review, Visual QA, Land | `repo, symptom, scriptsDir, row?, closeRow?, statusFile?, base?, suite?, repro?, branch?, reproAtOwnerConditions?, matrix?, land?, probeC?` |
+| `research.js` | `workflows` (`research`) | Scope, Gather, Synthesize, Critic | `row, question, out, depth: 'simple'|'compare'|'complex'` |
+| `sync-machines.js` | `workflows` (`sync-machines`) | Verify, Sync, Doctor | `row, repo, base` |
+| `git-cleanup.js` | `workflows` (`git-cleanup`) | Inventory, Plan, Apply | `row, repos` |
 
-Children that `build` (and, for `visual-qa`, `bugfix`) runs; they call no workflow themselves (nesting is one level), and the `wf-build` skill names them:
+Children that `build` (and, for `visual-qa`, `bugfix`) runs; they call no workflow themselves (nesting is one level), and the `workflows` skill (section build) names them:
 
 | script | phases | args |
 | --- | --- | --- |
@@ -111,6 +111,6 @@ that a runner adds and removes; a runner removes the lane worktree before each f
 ## Rules the tests check (`tests/workflow-scripts.test.mjs`, runtime in `tests/workflow-sandbox.mjs`)
 
 `export const meta` is a pure literal and the first statement; the statement after it is `checkArgs(args)`; phase titles used in the script are
-in `meta.phases`; no `import()`; every agent call has a label starting with its row, a phase, a model and an effort; every script has a `wf-*`
-skill that names it. Scripts cannot import, so `checkArgs` (and the writer limiter in `build.js`) are repeated per script on purpose. The tool cuts `meta` out
+in `meta.phases`; no `import()`; every agent call has a label starting with its row, a phase, a model and an effort; every script is named in
+the `workflows` skill. Scripts cannot import, so `checkArgs` (and the writer limiter in `build.js`) are repeated per script on purpose. The tool cuts `meta` out
 of the script body, so a script writes its own name where it needs it.

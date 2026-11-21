@@ -113,7 +113,7 @@ const workflowCheck = ({ home, repo }) => spawnSync('bash', [join(repo, 'scripts
 test('check_workflows passes when every wf- skill script exists and the link path is allowed', { skip }, async () => {
   const run = workflowCheck(await workflowRepo());
   assert.equal(run.status, 0, run.stdout);
-  assert.match(run.stdout, /ok\s+every wf-\* skill's workflow script exists/);
+  assert.match(run.stdout, /ok\s+every workflow skill's \(workflows, wf-\*\) workflow script exists/);
   assert.match(run.stdout, /ok\s+settings.json lets Workflow read/);
 });
 

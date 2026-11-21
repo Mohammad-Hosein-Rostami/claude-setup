@@ -50,7 +50,7 @@ export const CHECK_FILE_PATH = new RegExp(CHECK_CONFIG_SOURCE);
  * account tool and the shell snippets (they hold login tokens, so an edit there is never waived) and
  * `.gitattributes` (it decides what git shows of a file, to a reviewer as well as to a tool).
  */
-export const GATE_PATH = new RegExp(String.raw`^settings/[^/]+\.json$|(^|/)\.claude/settings[^/]*\.json$|^home/claude\.md$|^home/(modes|agents|rules|workflows)/|^home/skills/(wf-[^/]+|verify-done|road)/|^home/tools/(review-tier|test-pass|git-tidy|road)/|${ACCOUNT_TOKEN_FILES}|^scripts/(affected-tests\.mjs|doctor\.sh)$|(^|/)\.githooks/|(^|/)\.claude/workflows/|(^|/)\.husky/|(^|/)\.github/workflows/|(^|/)(\.gitlab-ci\.yml|\.circleci/|azure-pipelines\.yml|jenkinsfile)|(^|/)package\.json$|(^|/)\.gitattributes$|${CHECK_CONFIG_SOURCE}`);
+export const GATE_PATH = new RegExp(String.raw`^settings/[^/]+\.json$|(^|/)\.claude/settings[^/]*\.json$|^home/claude\.md$|^home/(modes|agents|rules|workflows)/|^home/skills/(wf-[^/]+|workflows|verify-done|road)/|^home/tools/(review-tier|test-pass|git-tidy|road)/|${ACCOUNT_TOKEN_FILES}|^scripts/(affected-tests\.mjs|doctor\.sh)$|(^|/)\.githooks/|(^|/)\.claude/workflows/|(^|/)\.husky/|(^|/)\.github/workflows/|(^|/)(\.gitlab-ci\.yml|\.circleci/|azure-pipelines\.yml|jenkinsfile)|(^|/)package\.json$|(^|/)\.gitattributes$|${CHECK_CONFIG_SOURCE}`);
 const LOCK_WORD = /^(un)?lock(s|ed|ing|file)?$/;
 const SIZE_LINES = 400;
 

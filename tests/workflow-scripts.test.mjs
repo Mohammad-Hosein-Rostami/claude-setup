@@ -81,15 +81,15 @@ for (const path of scripts) {
     }
   });
 
-  test(`${file}.js: a wf-* skill names the script and the scripts folder`, () => {
-    const skills = readdirSync(SKILLS).filter((name) => name.startsWith('wf-') && existsSync(join(SKILLS, name, 'SKILL.md')));
+  test(`${file}.js: the workflows skill names the script and the scripts folder`, () => {
+    const skills = readdirSync(SKILLS).filter((name) => (name === 'workflows' || name.startsWith('wf-')) && existsSync(join(SKILLS, name, 'SKILL.md')));
     const naming = skills.filter((name) => readFileSync(join(SKILLS, name, 'SKILL.md'), 'utf8').includes(`workflows/${file}.js`));
     assert.equal(naming.length, 1, `exactly one skill calls Workflow with workflows/${file}.js (found: ${naming.join(', ') || 'none'})`);
     const text = readFileSync(join(SKILLS, naming[0], 'SKILL.md'), 'utf8');
     assert.match(text, /\$\{CLAUDE_SKILL_DIR\}\/\.\.\/\.\.\/workflows\//);
     assert.match(text, /scriptsDir/);
     // build runs the child workflows review and land, which an inline script cannot run: its skill says so instead of offering the fallback
-    // build's own children (implement, join, visual-qa) are named by the wf-build skill, which offers no inline fallback either
+    // build's own children (implement, join, visual-qa) are named by the build section of the workflows skill, which offers no inline fallback either
     if (['build', 'implement', 'join', 'visual-qa'].includes(file)) assert.match(text, /no inline fallback/);
     else assert.match(text, /script`? ?(input|parameter)|as `script`/i, 'keeps the inline-script sentence (F2)');
   });

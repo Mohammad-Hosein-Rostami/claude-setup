@@ -35,7 +35,7 @@ with `{{CLAUDE_HOME}}` replaced by the real path. Objects merge deeply; `hooks` 
 `local.json` can add machine-only hooks without restating the shared ones. `settings/local.json` is gitignored and per
 machine; copy `settings/local.json.example` to start. Its `claudeSetup` key is for the installer and the sync, never part of
 `settings.json`: `machine` (this machine's name), `cliVersion` (the phase's pinned Claude Code; set with `DISABLE_UPDATES=1` in
-`env`), `syncTargets` (`[{name, ssh}]`: the machines `/wf-sync` brings along; none listed means `pc` over `ssh pc`) and `shared`
+`env`), `syncTargets` (`[{name, ssh}]`: the machines `/workflows sync-machines` brings along; none listed means `pc` over `ssh pc`) and `shared`
 (the top-level keys of `local.json` the sync copies to every target; `env` and `claudeSetup` are never copied). Edits made through `/config` land only in the generated file: copy what you
 want shared into `settings/*.json` and re-run the installer. `doctor.sh` reports drift.
 `env.BASH_DEFAULT_TIMEOUT_MS` is `"300000"` (milliseconds, 5 minutes; the CLI default is 120000): a Bash call that runs longer is moved to the background, and the longest test suite takes about 4 minutes. A call can ask for more with its own `timeout` (at most `BASH_MAX_TIMEOUT_MS`, 600000 by default).

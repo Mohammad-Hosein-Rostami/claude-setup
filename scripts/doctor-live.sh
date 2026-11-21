@@ -104,7 +104,7 @@ step_waived_lane() {
   local repo="$SCRATCH/lane-repo"
   make_lane_repo "$repo" || { bad "the scratch lane repo could not be made"; return; }
   (cd "$repo" && CLAUDE_CONFIG_DIR="$CONFIG" perl -e 'alarm shift; exec @ARGV' "$LANE_TIMEOUT_S" claude -p --model "$MODEL" --output-format json \
-    "Run the build workflow (/wf-build) for the one lane in SPEC.md of this repo, base main, suite 'node --test tests/*.test.mjs', statusFile STATUS.md; report the lane's status, sha and audit.") \
+    "Run the build workflow (/workflows build) for the one lane in SPEC.md of this repo, base main, suite 'node --test tests/*.test.mjs', statusFile STATUS.md; report the lane's status, sha and audit.") \
     > "$SCRATCH/logs/lane.out" 2> "$SCRATCH/logs/lane.err"
   local landed; landed="$(git -C "$repo" rev-parse --verify --quiet refs/heads/main)"
   if jq -e --arg tip "$landed" 'select(.tip == $tip and .state == "pending")' "$REVIEW_AUDIT_LOG" >/dev/null 2>&1 \

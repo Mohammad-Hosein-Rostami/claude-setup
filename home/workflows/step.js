@@ -12,7 +12,7 @@
 export const meta = {
   name: 'step',
   description: 'Run one agent (any agent type, model and effort) as a workflow step with a STATUS.md row label',
-  whenToUse: 'A single agent job that no other workflow covers: architect design, UI build, visual-qa loop, a judgement read',
+  whenToUse: 'A single agent job that no other workflow covers: architect design, UI build, visual-qa final gate, a judgement read',
   phases: [{ title: 'Step', detail: 'one agent, the agent file or the given model and effort' }],
 }
 checkArgs(args)

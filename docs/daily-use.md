@@ -26,13 +26,13 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
 - The lead picks the form by the job (any mode; the rule is in `home/CLAUDE.md`, "Inline, agent or workflow"). Inline, no agent:
   lookups (`/quick` for a read-only one), reading code, one command, a one-file or under-30-line edit (it still runs
   `review-tier` before it lands). One background agent: one implementer lane, one lane's review set, one research question,
-  one debug hypothesis set inside a running job. A workflow: 2+ lanes or writers in parallel (`/wf-build`), review panels with fix rounds across
-  lanes (`/wf-review`), research over several sources (`/wf-research`), `/wf-bugfix`, `/wf-land`, `/wf-sync`,
-  `/wf-git-cleanup`, a multi-stage job that must survive an exit, or when you ask (`/wf-step` runs one agent in the progress view). Landing and machine sync always run their
-  workflow, whatever the size; `/wf-bugfix` is for a bug that survived one fix or needs parallel hypotheses and
-  `/wf-git-cleanup` for a tangle or several repos; a hypothesis set inside a running job is an agent.
+  one debug hypothesis set inside a running job. A workflow: 2+ lanes or writers in parallel (`/workflows build`), review panels with fix rounds across
+  lanes (`/workflows review`), research over several sources (`/workflows research`), `/workflows bugfix`, `land`, `sync-machines`,
+  `git-cleanup`, a multi-stage job that must survive an exit, or when you ask (`/workflows step` runs one agent in the progress view). Landing and machine sync always run their
+  workflow, whatever the size; `/workflows bugfix` is for a bug that survived one fix or needs parallel hypotheses and
+  `/workflows git-cleanup` for a tangle or several repos; a hypothesis set inside a running job is an agent.
 - Gates: targeted checks once after the last edit (through `runner`); the set `review-tier`
-  prints (agents or the `wf-review` workflow, by the rule above) (`reviewer`, plus `security-auditor` and Opus lenses for risky classes and at landing); `ui-quality-pass` for UI;
+  prints (agents or the `review` workflow, by the rule above) (`reviewer`, plus `security-auditor` and Opus lenses for risky classes and at landing); `ui-quality-pass` for UI;
   then `verify-done`.
 - While a workflow runs you can keep talking to the lead: it answers questions and asks yours without stopping the
   agents. A command that runs over about 5 minutes goes to the background with its `timeout` set (at most 2 h); `watch.mjs` is for waiting on a

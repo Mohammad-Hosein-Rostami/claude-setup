@@ -1,5 +1,5 @@
 // Tests for the copy-branch brief gate wired into home/hooks/agent-model-guard.mjs (round 4, lane W1) and the rule that no hook sends a plain
-// Agent call to a workflow any more (round 6: inline, one agent or a workflow is the lead's choice by the job). The private HOME holds the wf-*
+// Agent call to a workflow any more (round 6: inline, one agent or a workflow is the lead's choice by the job). The private HOME holds the workflows
 // skills on purpose: the removed backstop advised exactly when they were installed. Each test has a private HOME.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,7 +14,7 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const SEND_AGAIN = 'Send the same call again unchanged and it runs.';
 const GUARD = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
-const SKILLS = ['wf-build', 'wf-review', 'wf-bugfix', 'wf-research', 'wf-step', 'quick'];
+const SKILLS = ['workflows', 'wf-resume', 'quick'];
 let counter = 0;
 const GIT_TIMEOUT_FOR_TESTS_MS = 60_000; // the suite runs beside other work; the hook's 1 s default would silently skip the advice
 

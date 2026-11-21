@@ -63,7 +63,7 @@ A risky or final review means auth, data or migrations, money, concurrency, secu
 merge or push. In every mode these go to Opus at max (`reviewer`, `security-auditor`).
 
 In every mode the lead picks inline, one background agent or a workflow by the job (`home/CLAUDE.md`, "Inline, agent or
-workflow"); a workflow is started through the `wf-*` skills listed in [workflows](../home/workflows/README.md). Landing and machine sync always run their workflow, whatever the size; bugfix and git cleanup run theirs when the job needs it (a bug that survived one fix, a tangle or several repos). A mode limits only the agents that write at once; reads, reviews and
+workflow"); a workflow is started through the `workflows` skill (one section per workflow) listed in [workflows](../home/workflows/README.md). Landing and machine sync always run their workflow, whatever the size; bugfix and git cleanup run theirs when the job needs it (a bug that survived one fix, a tangle or several repos). A mode limits only the agents that write at once; reads, reviews and
 verifiers are not capped by the mode.
 
 ## Picks per step (same in every mode)
@@ -85,8 +85,8 @@ never a gate. Extra-high starts the first try of architect, deep-debugger and a 
 | Bugfix: hypotheses, judge | `deep-debugger` Opus high; judge Opus xhigh | failed fix: xhigh, then max |
 | Research: scope, synthesis, critic | Opus high | |
 | Research: gatherers, re-checks, patches | Sonnet high | |
-| Quick lookup | `/quick` (scout, Haiku medium) | needs judgement: `wf-step` with `scout` Sonnet |
-| One-step work (architect design, UI build, visual-qa loop) | `wf-step`: the agent file's model and effort | |
+| Quick lookup | `/quick` (scout, Haiku medium) | needs judgement: the `step` workflow with `scout` Sonnet |
+| One-step work (architect design, UI build, visual-qa final gate) | the `step` workflow: the agent file's model and effort | |
 | Git cleanup plan | Sonnet high | owner items go to the lead |
 
 | Mode | Writing agents at once | Lead | First try one rung higher (cost only) |

@@ -5,7 +5,7 @@
 //   add files over the size limit; suite: the repo's declared full-suite command, run by test-pass as
 //   `run --suite` from the repo's own declaration; tip: the sha the review cleared. Land refuses a branch that is not at it, so a branch the
 //   review never read cannot land. auditPending: the lane lands without its Opus-max pair (a waived lane from build.js, or any lane the lead
-//   lands without it: a hand land, wf-land, a land after a usage limit); auditBase: the full sha the reviewed range starts at (B of B..T). Right
+//   lands without it: a hand land, a land by hand, a land after a usage limit); auditBase: the full sha the reviewed range starts at (B of B..T). Right
 //   after the ff-only land a runner records `audit-log record --tip <landed sha> --base B --reviewed <tip> --state pending`, so sync and push
 //   stay closed until the audit records done; a record that fails makes the land `failed` with "audit not recorded: gate holds nothing".)
 // Returns: { status: 'landed'|'conflict'|'red'|'needs-review'|'ui-proof'|'new-file-size'|'failed', sha, from, patchesChanged, tidy: 'clean'|text }

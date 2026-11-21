@@ -1,7 +1,7 @@
 // research workflow: an Opus scope splits a question into sub-questions, Sonnet gatherers research them in parallel and
 // write notes with URLs, an Opus synthesis writes the report from the notes only, an Opus critic checks every claim,
 // Sonnet re-checks fetch the disputed and every version, date and price claim again, and Sonnet applies every patch
-// (run it with the /wf-research skill).
+// (run it with the /workflows skill, section research).
 // Args: { row, question, out, depth: 'simple' | 'compare' | 'complex' }. `out` is the report file; the notes go to `<out>.notes/`.
 // Returns: { path, unverified: { claim, url, why }[], error? } (`error` is set when a step returned nothing).
 // Invariants: a gatherer's tool-call budget (10-15) is a sizing hint, never a stop: claims it could not finish come back

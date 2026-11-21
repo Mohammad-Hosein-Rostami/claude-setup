@@ -387,20 +387,42 @@ check_native_cleanup() {
   echo "INFO  claude purge --all would delete ${items:-?} items, $(awk -v k="$kb" 'BEGIN { printf "%.2f", k / 1048576 }') GB (dry run; nothing purged)"
 }
 
-# The wf-* skills call workflow scripts through ~/.claude/workflows (the link to home/workflows); settings must let Workflow read that link path.
+# Workflow agents at once on this machine: the native per-run cap is min(16, CPUs - 2) (the bundled /workflow-authoring skill;
+# workflows.md:353), so a 6-CPU machine runs 4, below the step cap of 5. DOCTOR_CPU_COUNT fakes the CPU count (tests).
+WORKFLOW_AGENTS_MAX=16 # the native ceiling per run
+STEP_WRITER_CAP=5      # a road step runs at most 5 writers (spec-stages section 4)
+workflow_agents_line() {
+  local cpus agents
+  cpus="${DOCTOR_CPU_COUNT:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 0)}"
+  case "$cpus" in ''|*[!0-9]*) echo "INFO  workflow agents at once: unknown (CPU count not readable)"; return 0 ;; esac
+  agents=$((cpus - 2)); [ "$agents" -gt "$WORKFLOW_AGENTS_MAX" ] && agents=$WORKFLOW_AGENTS_MAX; [ "$agents" -lt 1 ] && agents=1
+  if [ -n "${CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS:-}" ]; then
+    echo "INFO  workflow agents at once: $agents (min(16, $cpus CPUs - 2)); CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS=$CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS is set"
+  elif [ "$agents" -lt "$STEP_WRITER_CAP" ]; then
+    echo "WARN  workflow agents at once: $agents (min(16, $cpus CPUs - 2)), below the step cap of $STEP_WRITER_CAP: set CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS or run fewer lanes per step"
+  else
+    echo "INFO  workflow agents at once: $agents (min(16, $cpus CPUs - 2))"
+  fi
+}
+
+# The workflows skill (and wf-resume, and any older wf-* skill) call workflow scripts through ~/.claude/workflows (the link to
+# home/workflows); settings must let Workflow read that link path. Every script a skill names must exist there.
 check_workflows() {
-  local skill name script live="$CLAUDE_DIR/settings.json" link_path="$CLAUDE_DIR/workflows" missing=0 RESUME_TOOL="tools/wf-resume/wf-resume.mjs"
+  local skill name script scripts live="$CLAUDE_DIR/settings.json" link_path="$CLAUDE_DIR/workflows" missing=0 RESUME_TOOL="tools/wf-resume/wf-resume.mjs"
   case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) link_path="$(cygpath -m "$CLAUDE_DIR" 2>/dev/null || echo "${CLAUDE_DIR//\\//}")/workflows" ;; esac
-  for skill in "$REPO"/home/skills/wf-*/SKILL.md; do
+  for skill in "$REPO"/home/skills/workflows/SKILL.md "$REPO"/home/skills/wf-*/SKILL.md; do
     [ -f "$skill" ] || continue
     name="$(basename "$(dirname "$skill")")"
-    script="$(grep -o 'workflows/[A-Za-z0-9._-]*\.js' "$skill" | head -1)"
+    scripts="$(grep -o 'workflows/[A-Za-z0-9._-]*\.js' "$skill" | sort -u)"
     # wf-resume relaunches each run's stored script through its tool, so it names the tool instead of one script.
-    [ -z "$script" ] && grep -q "$RESUME_TOOL" "$skill" && script="$RESUME_TOOL"
-    if [ -z "$script" ]; then bad "$name names no workflow script"; missing=1
-    elif [ ! -f "$CLAUDE_DIR/$script" ]; then bad "$name: $script missing under $CLAUDE_DIR (re-run scripts/install.sh)"; missing=1; fi
+    [ -z "$scripts" ] && grep -q "$RESUME_TOOL" "$skill" && scripts="$RESUME_TOOL"
+    [ -z "$scripts" ] && { bad "$name names no workflow script"; missing=1; continue; }
+    for script in $scripts; do
+      [ -f "$CLAUDE_DIR/$script" ] || { bad "$name: $script missing under $CLAUDE_DIR (re-run scripts/install.sh)"; missing=1; }
+    done
   done
-  [ "$missing" = 0 ] && ok "every wf-* skill's workflow script exists under $CLAUDE_DIR/workflows"
+  [ "$missing" = 0 ] && ok "every workflow skill's (workflows, wf-*) workflow script exists under $CLAUDE_DIR/workflows"
+  workflow_agents_line
   if jq -e --arg d "$link_path" '(.permissions.additionalDirectories // []) | index($d) != null' "$live" >/dev/null 2>&1; then ok "settings.json lets Workflow read $link_path"
   else bad "settings.json lacks permissions.additionalDirectories $link_path (re-run scripts/install.sh)"; fi
   return 0

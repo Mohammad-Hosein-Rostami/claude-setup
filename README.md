@@ -29,7 +29,7 @@ Update, roll back, remove, sync:
     git pull --ff-only && scripts/install.sh --update   # update (safe to repeat: a second run changes nothing)
     scripts/install.sh --update --to r9-phase-6         # roll back to a phase tag; plain --update comes back
     scripts/install.sh --uninstall                      # remove what the installer made, restore the backups
-    /wf-sync                                            # sync the machines in settings/local.json (bundle + ff-only pull, never a push)
+    /workflows sync-machines                            # sync the machines in settings/local.json (bundle + ff-only pull, never a push)
 
 `scripts/install.sh --dry-run` previews any of these. The sync targets, the phase's CLI pin and the values the sync copies
 to every machine live in the git-ignored `settings/local.json` under `claudeSetup` (see `settings/local.json.example`).

@@ -1,5 +1,5 @@
 // sync-machines workflow: bring this machine and each sync target to the same base tip (or the targets to a phase tag), check
-// that every machine runs the same pinned Claude Code, install the setup and run doctor on each (run it with the /wf-sync skill).
+// that every machine runs the same pinned Claude Code, install the setup and run doctor on each (run it with the /workflows skill, section sync-machines).
 // Args: { row, repo, base, tag? }. `repo` is this machine's checkout; each target's checkout sits at the same path relative to
 // the home folder. The targets come from this machine's git-ignored settings/local.json (`claudeSetup.syncTargets`, read by
 // scripts/install/local-settings.mjs; none listed: `pc` over `ssh pc`). With `tag` (`r9-phase-N`) the targets get that tag and

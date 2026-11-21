@@ -1,5 +1,5 @@
 // git-cleanup workflow: find the old branches, worktrees and copies of each repo, prove which are merged, and remove
-// only those (run it with the /wf-git-cleanup skill).
+// only those (run it with the /workflows skill, section git-cleanup).
 // Args: { row, repos: string[] } (absolute repo folders).
 // Returns: { repos: { repo, applied, safe, needsLanding, ownerDecisions, vetoed, after }[], ownerItems: { repo, ref, question }[] }.
 // Invariants: each repo goes inventory, plan, apply with no barrier between repos. The apply step runs only when the plan

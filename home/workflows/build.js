@@ -3,7 +3,7 @@
 // contract verdict), the `review` child (landing review with fixes), the `visual-qa` child for a lane whose UI files changed (a FAIL goes to a fix
 // round with ui-implementer, then the gate again; also after `land` returns `ui-proof`), then a serial land queue through the `land` child.
 // Args: { base, repo, suite, writers, statusFile, scriptsDir, appendOnly?, resume?, probeC?: 'pass'|'fail', lanes: [{ row, closeRow, branch, spec, files,
-//   acceptanceTests, implementer: { agentType?, model, effort }, matrix?, principles?, checkpoints?, addClasses? }] } (wf-build skill). checkArgs throws,
+//   acceptanceTests, implementer: { agentType?, model, effort }, matrix?, principles?, checkpoints?, addClasses? }] } (workflows skill, section build). checkArgs throws,
 //   naming the key and the shape, on a file two lanes share outside appendOnly, a checkpoint over its own lane's files, a repeated checkpoint id, or a
 //   ui-implementer lane with no matrix. probeC 'fail' (phase 0 Probe C) refuses a lane whose UI files change (UI_REFUSAL).
 // Returns: { lanes: [{ row, closeRow, status, sha, text, findings?, optional?, audit? }], leadList }, status landed | implementer-stopped | wrong-branch |
