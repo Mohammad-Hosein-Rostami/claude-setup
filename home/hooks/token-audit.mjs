@@ -1,8 +1,11 @@
-// Prints approximate recurring token cost of the Claude config visible from cwd.
+// Prints approximate recurring token cost of the Claude config visible from cwd, and each project's MEMORY.md size.
 // ~tokens = bytes / 4. Read-only. A manual CLI (`node ~/.claude/hooks/token-audit.mjs`), not a hook event handler.
+// `--budget` prints only the budget status lines `scripts/doctor.sh` reads: `<ok|warn|fail><TAB><message>`.
+// The per-run use (roles, lanes, cache, waste) is the token view: `node ~/.claude/tools/token-view/token-view.mjs`.
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { leadText } from './lead-text.mjs';
 
 const rows = [];
 const tok = (b) => Math.ceil(b / 4);
@@ -43,6 +46,38 @@ const walk = (dir, filter) => {
   }
   return out;
 };
+
+const SESSION_START_CAP_CHARS = 10_000; // a SessionStart hook string over this reaches Claude as a file path (hooks docs)
+const SESSION_START_WARN_CHARS = 9_000; // warn while there is still room for a few lines
+
+/** The budget status lines: the lead text string against its SessionStart cap, and the always-loaded size. */
+async function budgetLines(alwaysLoadedBytes) {
+  const lead = await leadText({ hook_event_name: 'SessionStart', source: 'startup' }, join(homedir(), '.claude', 'lead.md'));
+  const chars = lead ? lead.length + 1 : 0; // console.log adds the newline the hook prints
+  const level = chars > SESSION_START_CAP_CHARS ? 'fail' : chars > SESSION_START_WARN_CHARS ? 'warn' : 'ok';
+  const leadLine = chars
+    ? `${level}\tlead text SessionStart string ${chars} chars (cap ${SESSION_START_CAP_CHARS}; over it the text becomes a file path)`
+    : 'warn\tlead text missing or empty at ~/.claude/lead.md (scripts/install.sh links it)';
+  return [
+    leadLine,
+    `ok\talways-loaded text ~${tok(alwaysLoadedBytes)} tok (CLAUDE.md files and rules without paths:)`,
+  ];
+}
+
+/** Each project's auto-memory MEMORY.md: size and lines that appear more than once (a trim proposal, never applied here). */
+function memoryRows() {
+  const projects = join(homedir(), '.claude', 'projects');
+  const out = [];
+  for (const name of existsSync(projects) ? readdirSync(projects) : []) {
+    const text = tryRead(join(projects, name, 'memory', 'MEMORY.md'));
+    if (text === null) continue;
+    const seen = new Map();
+    for (const line of text.split('\n').map((l) => l.trim()).filter(Boolean)) seen.set(line, (seen.get(line) ?? 0) + 1);
+    const repeated = [...seen.values()].filter((n) => n > 1).reduce((n, count) => n + count - 1, 0);
+    out.push({ name, chars: text.length, repeated });
+  }
+  return out.sort((a, b) => b.chars - a.chars);
+}
 
 const userRoot = join(homedir(), '.claude');
 const projectRoot = join(process.cwd(), '.claude');
@@ -91,6 +126,10 @@ if (mcp) {
 }
 
 const sum = (k) => rows.filter((r) => r.kind === k).reduce((n, r) => n + r.bytes, 0);
+if (process.argv.includes('--budget')) {
+  for (const line of await budgetLines(sum('always-loaded') + sum('rule(ALWAYS)'))) console.log(line);
+  process.exit(0);
+}
 console.log('Recurring (every session):');
 for (const k of ['always-loaded', 'rule(ALWAYS)', 'skill-listing', 'agent-listing', 'mcp'])
   console.log(`  ${k.padEnd(15)} ~${String(tok(sum(k))).padStart(6)} tok`);
@@ -108,4 +147,9 @@ const flags = rows.filter(
 if (flags.length) {
   console.log('\nFlags:');
   flags.forEach((r) => console.log(`  ! ${r.kind} ${r.path} (${r.lines} lines)`));
+}
+const memories = memoryRows();
+if (memories.length) {
+  console.log('\nProject MEMORY.md (loaded in every session of that project; repeated = lines that appear more than once):');
+  memories.forEach((m) => console.log(`  ${String(m.chars).padStart(6)} chars  repeated ${String(m.repeated).padStart(3)}  ${m.name}`));
 }

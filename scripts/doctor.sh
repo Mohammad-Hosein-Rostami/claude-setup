@@ -284,6 +284,16 @@ check_mode_hook() {
   else ok "mode hook registered for SessionStart, UserPromptSubmit, UserPromptExpansion"; fi
 }
 
+# Token budget (spec-p6 r9-token-view): the lead text's SessionStart string against its 10,000-char cap (over it Claude gets a
+# file path instead of the text) and the always-loaded size; hooks/token-audit.mjs --budget prints `<ok|warn|fail><TAB><message>`.
+check_token_budget() {
+  local audit="$CLAUDE_DIR/hooks/token-audit.mjs" level message
+  [ -f "$audit" ] || { warn "token budget not checked: $audit missing"; return; }
+  while IFS=$'\t' read -r level message; do
+    case "$level" in ok) ok "token budget: $message" ;; warn) warn "token budget: $message" ;; *) bad "token budget: $message" ;; esac
+  done < <(node "$audit" --budget 2>/dev/null || printf 'fail\ttoken-audit.mjs --budget did not run\n')
+}
+
 # A third-party plugin whose SessionStart hook injects EXTREMELY_IMPORTANT text can cost tens of thousands of tokens per session.
 check_plugin_session_start() {
   local live="$CLAUDE_DIR/settings.json" installed="$CLAUDE_DIR/plugins/installed_plugins.json" id path flagged=0
@@ -463,7 +473,7 @@ check_notify() {
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_stop_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows; check_env_names; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_mode_hook; check_token_budget; check_plugin_session_start; check_recall; check_stop_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows; check_env_names; check_repo_tests
 }
 # The machine's name in the summary: the owner's two machines by OS, else the host name; DOCTOR_MACHINE overrides it.
 machine_name() {
