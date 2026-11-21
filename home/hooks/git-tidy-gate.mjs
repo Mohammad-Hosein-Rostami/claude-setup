@@ -2,8 +2,11 @@
 // leftovers `git-tidy check` finds (an unpublished merge commit, an older copy of a re-done lane, a workflow agent's leftover branch, a
 // merged branch or worktree), while a base branch moved during this session has no full-suite PASS, or while an old unmerged lane is named
 // by no open row of the session's STATUS.md. A SubagentStop is blocked once when the agent left its own empty `worktree-agent-<id>` branch.
-// PreCompact prints one line per open lane so the summary keeps them.
-// Exports: decide(input, env, deps) -> Promise<{block: false, info?} | {block: true, reason}>, openLanes(input, env, deps) -> Promise<string[]>.
+// PreCompact prints one line per open lane so the summary keeps them. SessionStart (`r9-git-line`) names the lanes of the session's repo
+// not yet landed; PostToolUse(Bash) after a `git worktree add`, `merge` or `branch` reuses the cached check and, above 5
+// unlanded lanes or prunable items, says to run `git-tidy prune`; both put `additionalContext` inside `hookSpecificOutput`.
+// Exports: decide(input, env, deps) -> Promise<{block: false, info?} | {block: true, reason}>, openLanes(input, env, deps) -> Promise<string[]>,
+//   contextFor(event, input, env, deps) -> Promise<string> (SessionStart / PostToolUse additionalContext, '' for none).
 //   deps (tests): runCheck(top, timeoutMs, env), checkTimeoutMs, hasPass (null: no test-pass tool), now (ms, for the cache age).
 //   Env: GIT_TIDY_GATE_CHECK_TIMEOUT_MS overrides CHECK_TIMEOUT_MS (a loaded machine, the test suite).
 // Invariants:
@@ -37,6 +40,7 @@ import { editedWorktrees, gatedFolder, gitOut, gitText, namesFilterProgram, work
 import { isSessionId } from './lib/session-store.mjs';
 import { statusFileOf } from './lib/status-file-of.mjs';
 import { cachedVerdict, recordOnce, storeVerdict } from './lib/tidy-gate-store.mjs';
+import { pruneNoteText, unlandedText, wantsPruneNote } from './lib/tidy-gate-notes.mjs';
 import { MERGE_COMMIT, OPEN_LANE, PRUNE_KINDS, runCheckChild, UNLANDED } from './lib/tidy-check-child.mjs';
 import { parseWorkItems } from '../tools/estimate/lib/items.mjs';
 import { isAgentBranch } from '../tools/git-tidy/lib/copies.mjs';
@@ -237,6 +241,15 @@ export async function openLanes(input, env = process.env, deps = {}) {
   return lines;
 }
 
+/** SessionStart and PostToolUse(Bash): the additionalContext text of `event` (lib/tidy-gate-notes.mjs), '' when there is none. */
+export async function contextFor(event, input, env = process.env, deps = {}) {
+  if (event === 'PostToolUse' && !wantsPruneNote(input)) return '';
+  const tree = gatedTree(input, env);
+  if (tree === null) return '';
+  const verdict = verdictFor(env, input.session_id, tree.top, deps, checkBudgetMs(env, deps));
+  return event === 'SessionStart' ? unlandedText(tree.top, verdict) : pruneNoteText(tree.top, verdict);
+}
+
 /** The detached job: check `top` for as long as it takes and store the verdict for the next stop. */
 function refresh(top, session, env) {
   const fingerprint = fingerprintOf(top);
@@ -256,6 +269,13 @@ async function main() {
     return;
   }
   const input = JSON.parse(await readStdin());
+  const event = input?.hook_event_name;
+  if (event === 'SessionStart' || event === 'PostToolUse') {
+    const context = await contextFor(event, input);
+    // A top-level additionalContext is dropped (hooks docs, #96193): it goes inside hookSpecificOutput.
+    if (context !== '') process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: context } })}\n`);
+    return;
+  }
   if (input?.hook_event_name === 'PreCompact') {
     const lines = await openLanes(input);
     if (lines.length > 0) process.stdout.write(`${lines.join('\n')}\n`);

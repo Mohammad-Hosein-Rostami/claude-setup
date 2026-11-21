@@ -11,6 +11,8 @@
 //   Before the fast-forward (spec-p3 `r9-land-speed`): a lane whose UI files differ from the base needs `uiCheck` to pass for the rebased
 //   tip (status `ui-proof`), and a file the lane adds over MAX_NEW_FILE_BYTES that its brief does not name stops it (`new-file-size`).
 //   A landing reports `from`, the base tip just before the fast-forward (the reflog's value when another process moved the base between).
+//   Before the suite lookup (`r9-git-line`): the base's upstream is fetched and compared (lib/upstream.mjs); upstream commits the base lacks
+//   stop it (`upstream-moved`), and every result after that point carries `upstream` (published count, WARN of an offline fetch).
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,6 +20,7 @@ import { UsageError, gitText, runGit } from './git.mjs';
 import { patchIdsOf } from './copies.mjs';
 import { landedFrom, oversizeAdded } from './land-checks.mjs';
 import { runCheck } from './check.mjs';
+import { upstreamState } from './upstream.mjs';
 import { pruneRepo, refuseUnsafeApply } from './prune.mjs';
 import { inProgressOperation, listWorktrees, openRepo } from './repo.mjs';
 
@@ -123,7 +126,7 @@ function cleanUp(atBase, branch) {
  *   `rebaseOnly` stops after the rebase; `hasPass` is test-pass's lookup of a suite PASS for a commit; `uiCheck` returns null when the UI
  *   proof holds (or no UI file changed) and else the reason (the CLI always passes one, failing closed when ui-proof cannot be loaded);
  *   `briefText` is the lane's brief, whose named paths may add files over the size limit (null: none)
- * @returns {{ status: 'landed'|'rebased'|'conflict'|'no-pass'|'base-moved'|'ui-proof'|'new-file-size', tip: string, from: string|null,
+ * @returns {{ status: 'landed'|'rebased'|'conflict'|'no-pass'|'base-moved'|'ui-proof'|'new-file-size'|'upstream-moved', tip: string, upstream: object|null, from: string|null,
  *   patchesChanged: number, removed: string[], cleanupRefused: string|null, findings: object[], files: string[], why: string|null }} `tip`
  *   is the lane's tip after the rebase, `from` the base tip before the fast-forward (landed only), `files` the conflicting files (or the
  *   oversize ones), `removed` what cleanup removed (`<kind> <name or path>`), `findings` what `check` still reports on the base afterwards
@@ -135,11 +138,13 @@ export function landLane(repo, branch, { rebaseOnly = false, hasPass, uiCheck = 
   const before = patchIdsOf(repo, `refs/heads/${branch}`);
   const { conflict } = rebaseLane(repo, branch, laneFolder);
   const tip = tipOf(repo, branch); // read before cleanup removes the branch
-  const result = (status, extra = {}) => ({ status, tip, from: null, patchesChanged: 0, removed: [], cleanupRefused: null, findings: [], files: [], why: null, ...extra });
+  const result = (status, extra = {}) => ({ status, tip, from: null, patchesChanged: 0, removed: [], cleanupRefused: null, findings: [], files: [], why: null, upstream: null, ...extra });
   if (conflict !== null) return result('conflict', { files: conflict });
   const patchesChanged = changedPatches(before, patchIdsOf(repo, `refs/heads/${branch}`));
   if (rebaseOnly) return result('rebased', { patchesChanged });
-  if (!hasPass(baseFolder, tip, { suite: true })) return result('no-pass', { patchesChanged });
+  const upstream = upstreamState(repo);
+  if (upstream.moved > 0) return result('upstream-moved', { patchesChanged, upstream, why: `${upstream.upstream} has ${upstream.moved} commit(s) the base lacks` });
+  if (!hasPass(baseFolder, tip, { suite: true })) return result('no-pass', { patchesChanged, upstream });
   const baseSha = gitText(repo.dir, ['rev-parse', repo.baseRef]);
   const big = oversizeAdded(repo, baseSha, tip, briefText);
   if (big.length > 0) return result('new-file-size', { patchesChanged, files: big.map(({ path }) => path), why: big.map(({ path, bytes }) => `${path} (${bytes} bytes)`).join(', ') });
@@ -150,5 +155,5 @@ export function landLane(repo, branch, { rebaseOnly = false, hasPass, uiCheck = 
   const from = landedFrom(repo, readBefore);
   const atBase = openRepo(baseFolder, repo.base);
   const { removed, cleanupRefused } = cleanUp(atBase, branch);
-  return result('landed', { from, patchesChanged, removed, cleanupRefused, findings: runCheck(atBase).findings });
+  return result('landed', { from, patchesChanged, removed, cleanupRefused, findings: runCheck(atBase).findings, upstream });
 }

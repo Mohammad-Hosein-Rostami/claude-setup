@@ -12,6 +12,8 @@
 //   ready, 3 conflict, 4 no suite PASS at the tip, 5 base moved during the landing, 6 ui-proof: the UI files differ from the base and
 //   `ui-proof check --tip <rebased tip>` does not exit 0 (or the ui-proof tool cannot be loaded; no flag turns it off), 7 new-file-size:
 //   the lane adds a file over the commit gate's MAX_NEW_FILE_BYTES that the `--brief` file does not name (no brief names none).
+//   8 upstream-moved: after a fetch of the base's upstream (timeout; offline is a WARN line), the upstream holds commits the base lacks:
+//   `git pull --rebase` first. A landing prints the published count (`published N ...`; JSON `upstream`).
 //   A landing prints `from <sha>`, the base tip before the fast-forward (JSON: `from`).
 // range: the base's reflog step that landed the reviewed sha's patches (lib/landed-range.mjs), printed as `from <sha>` and `to <sha>`
 //   (JSON `{ from, to }`); exit 0 found, 1 not in the reflog, 2 usage.

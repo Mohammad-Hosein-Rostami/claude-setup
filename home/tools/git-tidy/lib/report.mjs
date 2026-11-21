@@ -34,16 +34,25 @@ export function formatPrune({ base, baseSource, apply, items }, json) {
 /** 1 when `--apply` left something it planned to remove (kept or failed; a detached worktree is only listed), else 0. */
 export const pruneExitCode = (items) => (items.some((entry) => NOT_REMOVED.has(entry.action) && entry.kind !== 'detached-worktree') ? 1 : 0);
 
-const LAND_EXIT = { rebased: 0, conflict: 3, 'no-pass': 4, 'base-moved': 5, 'ui-proof': 6, 'new-file-size': 7 };
+const LAND_EXIT = { rebased: 0, conflict: 3, 'no-pass': 4, 'base-moved': 5, 'ui-proof': 6, 'new-file-size': 7, 'upstream-moved': 8 };
 
 /** Exit code of `land`: 0 landed clean (or only rebased), 1 landed with findings left, 3 conflict, 4 no suite PASS at the tip, 5 base moved,
- * 6 no UI proof for the rebased tip, 7 a new file over the size limit that the brief does not name. */
+ * 6 no UI proof for the rebased tip, 7 a new file over the size limit that the brief does not name, 8 the upstream holds commits the base lacks. */
 export const landExitCode = ({ status, findings }) => (status === 'landed' ? (findings.length > 0 ? 1 : 0) : LAND_EXIT[status]);
+
+/** The upstream lines of a landing: the WARN of a fetch that did not happen, and the published count (never amend, rebase or prune those). */
+function upstreamText(upstream) {
+  if (!upstream?.upstream) return [];
+  const warn = upstream.warn ? [`WARN ${upstream.warn}; compared with the last fetched ${upstream.upstream}`] : [];
+  return [...warn, `published ${upstream.published} base commit(s) are on ${upstream.upstream} (${upstream.unpublished} not pushed): fixes go on top, never amend or rebase them (C37)`];
+}
 
 /** `land` result as text (`tip` and `patches-changed` for a rebase; else what happened, what was removed, `check: clean` or the findings) or as JSON. */
 export function formatLand(result, json) {
   if (json) return JSON.stringify(result, null, 2);
-  const { status, tip, from, patchesChanged, removed, cleanupRefused, findings, files, why } = result;
+  const { status, tip, from, patchesChanged, removed, cleanupRefused, findings, files, why, upstream } = result;
+  if (status === 'upstream-moved') return `upstream moved: ${why}: \`git pull --rebase\` first, then land again (the lane stays rebased)`;
+  const upstreamLines = upstreamText(upstream);
   if (status === 'rebased') return `tip ${tip}\npatches-changed ${patchesChanged}`;
   if (status === 'conflict') return [`conflict: the rebase hit conflicts and was aborted, the lane is unchanged`, ...files.map((file) => `conflict ${file}`)].join('\n');
   if (status === 'no-pass') return `no-pass: no full-suite PASS at ${tip.slice(0, 8)}: run \`test-pass run --suite\` on it, then land again`;
@@ -52,5 +61,5 @@ export function formatLand(result, json) {
   if (status === 'base-moved') return 'base-moved: the base moved during the landing: run land again (the lane stays rebased)';
   const outcome = findings.length === 0 ? ['check: clean'] : findings.map(line);
   const refused = cleanupRefused === null ? [] : [`cleanup skipped: ${cleanupRefused}`];
-  return [`landed ${tip}`, ...(from ? [`from ${from}`] : []), ...removed.map((entry) => `removed ${entry}`), ...refused, ...outcome].join('\n');
+  return [`landed ${tip}`, ...(from ? [`from ${from}`] : []), ...upstreamLines, ...removed.map((entry) => `removed ${entry}`), ...refused, ...outcome].join('\n');
 }
