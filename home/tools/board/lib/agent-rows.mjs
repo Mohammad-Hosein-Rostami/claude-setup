@@ -17,6 +17,8 @@ import { WIDE_COLUMNS } from './work-row.mjs';
 const FULL_COLUMNS = 150;
 const BAR_CELLS = 8;
 const TYPE_CHARS = 16;
+const DOING_CHARS = 24;
+const WIDE_DOING_CHARS = 36;
 const RUN_BAR_CELLS = 10;
 const NARROW_RUN_CELLS = 6;
 const MS_PER_MIN = 60_000;
@@ -86,9 +88,11 @@ function clockParts(agent, ctx, look) {
   return parts;
 }
 
-/** What the agent does now; quiet or a long-waiting call in words. */
+/** What the agent does now, cut so it keeps its place; quiet or a long-waiting call in words. */
 function doingPart(agent, look) {
-  const doing = cleanText(agent.doing ?? '', look);
+  const max = wide(look) ? WIDE_DOING_CHARS : DOING_CHARS;
+  const full = cleanText(agent.doing ?? '', look);
+  const doing = [...full].length > max ? `${[...full].slice(0, max - 1).join('')}${look.glyph.cut}` : full;
   if (agent.state === 'quiet') return { text: doing ? `last: ${doing}` : '', state: STATE.warn, drop: 2 };
   if (agent.pendingMin >= 2) return { text: `${doing} (${agent.pendingMin} min)`, drop: 2 };
   return { text: doing, drop: 2 };

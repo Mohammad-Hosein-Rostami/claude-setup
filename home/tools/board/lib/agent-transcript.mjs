@@ -21,7 +21,7 @@ const NEWLINE = 0x0a;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
 const TIMESTAMP = /"timestamp":"([0-9T:.\-]+Z?)"/;
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
-const COMMIT = /\bgit\b[^|;&\n]*\bcommit\b/;
+const COMMIT = /\bgit\b[^|;&\n]*?\bcommit\b/g; // every commit of a chained command counts (writers commit after each step)
 const CHECK = /\b(test|tests|vitest|jest|pytest|tsc|eslint|lint|typecheck|node --check|bash -n)\b/;
 const REPORT_FILE = /report|-build\.md$|handover|handoff/i;
 const NUMBERED_STEP = /^\s{0,3}(\d{1,2})[.)]\s+\S/gm;
@@ -66,7 +66,8 @@ function countCall(cursor, name, input, atMs) {
   }
   if (name === 'Bash') {
     const command = String(input?.command ?? '');
-    if (COMMIT.test(command)) cursor.commits += 1;
+    const commits = command.match(COMMIT)?.length ?? 0;
+    if (commits > 0) cursor.commits += commits;
     else if (CHECK.test(command)) cursor.checks += 1;
   }
   cursor.lastTool = { name: clean(name), text: toolText(name, input), atMs };
