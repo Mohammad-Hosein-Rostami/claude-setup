@@ -37,7 +37,10 @@ You are the design tier. Your output is a decision, not code.
      `id`, `run` as one command, `exit` it must return, `files` it reads and the lane must not edit, `kind` `red-first` when it fails
      on the base and passes after, or `keeps-working` when it passes on both) and `addClasses` (code that is a gate, hook, guard or
      security/data code gets `addClasses`, using ids `review-tier` knows, e.g. `audit`, `security`, `data`; never an invented name). A lane that changes an interface carries a `keeps-working` checkpoint over its callers.
-     Lanes are independent and each fits in about 120 tool calls.
+     Lanes are independent and each fits in about 120 tool calls. Size a lane at about 200 changed lines or 5 files where the work
+     allows (UI: the files the lane owns and the screens they render, split by ownership); guidance, not a refusal.
+     Each lane names a "keep green" test set (the tests that cover its files), run at every checkpoint with its repro and acceptance
+     tests; the inner loop may run only that set; the full suite runs once after the last edit and at the tip before landing.
    - Interfaces/types that must be exact (signatures only, no bodies)
    - Acceptance checks (commands or observable behaviour)
    - Risks and what to do if a step fails

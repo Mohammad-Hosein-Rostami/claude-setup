@@ -68,7 +68,7 @@ test('readChars uses file content, a string, or the serialized response', () => 
 });
 
 const NOTICE_80 = 'Budget: 80 tool calls used. Commit what is green now. If the brief will not be finished by about 120 calls, pick the stopping point and write down the exact next step.';
-const limitText = (calls) => `Budget: ${calls} tool calls used (limit 120). Commit what is green, then return your status report: done, not done with the exact next step, files changed, blockers. Do not end without the report; start no new work.`;
+const limitText = (calls) => `Budget: ${calls} tool calls used (limit 120). Commit what is green, write the hand-over note (the file your brief names, else HANDOFF.md in your worktree, not committed): done, left, next step, don't redo. Then return your report marked "unfinished" with the exact next step; the next agent starts from your commit and that note.`;
 
 // Runs one subagent for `calls` tool calls and returns what the hook printed for each call ('' when silent).
 async function budgetOutputs(calls) {
@@ -92,13 +92,10 @@ test('a subagent is silent up to call 79, gets the commit notice at 80 exactly o
   assert.ok(outputs.slice(EARLY_NOTICE_AT, CALL_CAP - 1).every((o) => o === ''), 'silent at 81-119');
 });
 
-test('a subagent gets the limit text at call 120, silence until 130, then a reminder every 10', async () => {
+test('a subagent gets the limit text once at call 120 and no reminder after it (spec-p3 r9-workflows: one nudge after 120)', async () => {
   const outputs = await budgetOutputs(CALL_CAP + 20);
   assert.equal(contextOf(outputs[CALL_CAP - 1]), limitText(120));
-  assert.ok(outputs.slice(CALL_CAP, CALL_CAP + 9).every((o) => o === ''), 'silent between reminders');
-  assert.equal(contextOf(outputs[CALL_CAP + 9]), limitText(130));
-  assert.ok(outputs.slice(CALL_CAP + 10, CALL_CAP + 19).every((o) => o === ''));
-  assert.equal(contextOf(outputs[CALL_CAP + 19]), limitText(140));
+  assert.ok(outputs.slice(CALL_CAP, CALL_CAP + 20).every((o) => o === ''), 'no reminder after the one nudge');
 });
 
 test('the early notice survives a count that jumps past 80 (parallel calls): one notice, not skipped, not repeated', async () => {
@@ -201,7 +198,7 @@ test('the lead gets one delegate nudge after 15 Bash calls, silent before and af
   assert.ok(outputs.slice(0, 14).every((o) => o === ''));
   const out = JSON.parse(outputs[14]).hookSpecificOutput;
   assert.equal(out.hookEventName, 'PostToolUse');
-  assert.equal(out.additionalContext, '15 Bash calls in a row (context size unknown): delegate the rest to runner/implementer (cost = calls x context).');
+  assert.equal(out.additionalContext, '15 Bash calls in a row (context size unknown): delegate the rest to runner/implementer (a fresh agent keeps the lead turns and context small).');
   assert.ok(outputs.slice(15).every((o) => o === ''), 'one line only until the 30th');
 });
 
@@ -237,7 +234,7 @@ test('the nudge states the context size and comes again every 15 Bash calls of t
   const outputs = [];
   for (let i = 1; i <= 30; i += 1) outputs.push(run(BUDGET, dir, leadBash(sid, transcript)).stdout);
   assert.equal(JSON.parse(outputs[14]).hookSpecificOutput.additionalContext,
-    '15 Bash calls in a row at ~212k context: delegate the rest to runner/implementer (cost = calls x context).');
+    '15 Bash calls in a row at ~212k context: delegate the rest to runner/implementer (a fresh agent keeps the lead turns and context small).');
   assert.match(JSON.parse(outputs[29]).hookSpecificOutput.additionalContext, /^30 Bash calls in a row at ~212k context: .* 1 nudge ignored so far; .*denied once/);
   assert.equal(outputs.filter((o) => o !== '').length, 2);
 });
@@ -252,7 +249,7 @@ test('after 2 ignored nudges at 150k+ context the next lead Bash call that is no
   }
   assert.equal(preDecision(dir, preBash(sid, transcript, 'npm test', { agent_id: uid('a') })), null, 'a subagent is never blocked');
   const reason = preDecision(dir, preBash(sid, transcript, 'npm test'));
-  assert.match(reason, /delegate to runner\/implementer \(C: cost = calls × context\)/);
+  assert.match(reason, /delegate to runner\/implementer \(a fresh agent keeps the lead turns and context small\)/);
   assert.match(reason, /~212k context/);
   assert.equal(preDecision(dir, preBash(sid, transcript, 'npm test')), null, 'the identical retry runs');
   assert.equal(preDecision(dir, preBash(sid, transcript, 'npm run build')), null, 'one deny per escalation: no loop');

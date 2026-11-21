@@ -123,7 +123,7 @@ const outcome = (lane, status, sha = '', text = '', extra = {}) => ({ row: lane.
 // The review's own lists travel with the lane's outcome, so a finding of a failed review or an optional one is never lost.
 const listsOf = (reviewed) => ({ ...(reviewed.findings?.length > 0 ? { findings: reviewed.findings } : {}), ...(reviewed.optional?.length > 0 ? { optional: reviewed.optional } : {}) })
 const heldForLead = (lane, reviewed) => outcome(lane, 'lead-decision', reviewed.tip,
-  `security findings ruled not real by a weaker check, so the lane is held: ${reviewed.leadList.map((item) => `${item.id} ${item.file}:${item.line} (${item.reason})`).join('; ')}. Land with wf-land at tip ${reviewed.tip} only after the lead rules.`, listsOf(reviewed))
+  `security findings ruled not real by a weaker check, so the lane is held: ${reviewed.leadList.map((item) => `${item.id} ${item.file}:${item.line} (${item.reason})`).join('; ')}. Land with the land workflow at tip ${reviewed.tip} only after the lead rules.`, listsOf(reviewed))
 // The verdict on the join's numbers. Passing at head means headExit equals the declared exit; red-first must differ at base, keeps-working must match.
 // waiverAt is only the joined sha when a test-writer ran, a red-first checkpoint exists, nothing below produced a finding and the implementer disputed nothing.
 const judgeContract = (lane, written, built, joined) => {

@@ -23,7 +23,7 @@ Rules:
 1. Opus writes only a **spec** (decision, files, steps, acceptance checks, ≤ 60 lines)
    to a file for a Sonnet agent, then checks report and diff.
 2. Opus keeps strong-model work and few-line edits.
-3. Independent work: 2+ lanes in parallel: one workflow, writers within the lane budget in worktrees.
+3. Independent work: 2+ lanes in parallel are one `build` run, writers within the lane budget in worktrees; a lane over ~30 min: `step`.
 4. No pinned agent: start cheaper, escalate on failure.
 5. Deeper thinking: agent `effort`; never raise the lead's effort mid-session (cache miss).
 

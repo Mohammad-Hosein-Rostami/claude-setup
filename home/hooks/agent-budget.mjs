@@ -1,7 +1,8 @@
 // PostToolUse (all tools), PreToolUse Bash, SubagentStart and SubagentStop: enforces the budgets the prompt only asked for.
 //   PostToolUse in a subagent -> counts its tool calls; the first call that sees 80 or more injects "commit what is green"
-//                   once (a marker file next to the counter), at 120 (and every 10 after) it injects "commit, then
-//                   return your status report". Advisory: it never blocks a call.
+//                   once (a marker file next to the counter), once at 120 it injects "commit, write the
+//                   hand-over note, then report unfinished" (one nudge, not repeated: frequent harness text after tool results reads as
+//                   possible injection, spec-p3 r9-workflows). Advisory: it never blocks a call.
 //   PostToolUse Read in the lead, mode ultra-high -> warns when the result is over ~20k chars (use scout / a small range).
 //   PostToolUse Bash in the lead -> every 15 Bash calls since the last Agent/Task/Workflow call, a nudge to delegate that states the
 //                   context size (lib/transcript.mjs contextTokens); an Agent/Task/Workflow call resets the count. A nudge followed by
@@ -18,7 +19,7 @@
 // Verified against Claude Code 2.1.323: hook input has `agent_id` only inside a subagent (agent_type alongside it);
 // PostToolUse accepts hookSpecificOutput.additionalContext; SubagentStop gets agent_id, agent_type, agent_transcript_path,
 // last_assistant_message and stop_hook_active, and exit 2 sends stderr to the subagent and keeps it running.
-// Exports: CALL_CAP, EARLY_NOTICE_AT, REMIND_EVERY, READ_WARN_CHARS, LEAD_BASH_NUDGE_AT, ESCALATE_AT_TOKENS, countCall, leadBashCalls,
+// Exports: CALL_CAP, EARLY_NOTICE_AT, READ_WARN_CHARS, LEAD_BASH_NUDGE_AT, ESCALATE_AT_TOKENS, countCall, leadBashCalls,
 // leadBashDeny, readChars, postToolUseContext, spawnCap, subagentStopReason.
 // Invariants: fast (one append + one stat per call, nothing else on the main thread except Read); fails open (any error
 // exits 0, silent); output is fixed text plus numbers, never tool input, tool output or paths; unsafe ids write nothing.
@@ -36,10 +37,9 @@ import { callCounterPath, recordWriterStart, recordWriterStop } from './lib/writ
 // The agent files (implementer, ui-implementer, test-writer) and the lead rules say "about 120 tool calls"; a test keeps them equal.
 export const CALL_CAP = 120;
 export const EARLY_NOTICE_AT = 80;
-export const REMIND_EVERY = 10;
 export const READ_WARN_CHARS = 20_000;
 export const LEAD_BASH_NUDGE_AT = 15;
-export const ESCALATE_AT_TOKENS = 150_000; // cost = calls x context: from here one lead call costs what ~10 calls of a fresh agent do
+export const ESCALATE_AT_TOKENS = 150_000; // from here a long lead context costs turns and answer quality: a fresh agent keeps both
 const IGNORED_NUDGES_TO_DENY = 2;
 const IGNORED_SUFFIX = '.ignored'; // next to the lead Bash count: nudges the lead went on past
 const TOKENS_PER_K = 1000;
@@ -131,7 +131,7 @@ async function leadBashNudge(input) {
   if (calls === 0 || calls % LEAD_BASH_NUDGE_AT !== 0) return null;
   const tokens = await contextTokens(input.transcript_path);
   const size = tokens === undefined ? '(context size unknown)' : `at ${kTokens(tokens)} context`;
-  const nudge = `${calls} Bash calls in a row ${size}: delegate the rest to runner/implementer (cost = calls x context).`;
+  const nudge = `${calls} Bash calls in a row ${size}: delegate the rest to runner/implementer (a fresh agent keeps the lead turns and context small).`;
   const ignored = ignoredNudges(input.session_id);
   if (ignored < IGNORED_NUDGES_TO_DENY - 1) return nudge;
   return `${nudge} ${ignored} nudge${ignored === 1 ? '' : 's'} ignored so far; if this one is ignored too, the next lead Bash call that `
@@ -152,7 +152,7 @@ export async function leadBashDeny(input, env = process.env) {
   const tokens = await contextTokens(input.transcript_path);
   if (tokens === undefined || tokens < ESCALATE_AT_TOKENS) return '';
   const advice = `${kTokens(tokens)} context and ${ignored} delegate nudges ignored: delegate to runner/implementer `
-    + '(C: cost = calls × context). git and read-only commands stay with the lead.';
+    + '(a fresh agent keeps the lead turns and context small). git and read-only commands stay with the lead.';
   const { adviceOnce } = await import('./lib/bounce-once.mjs');
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   const store = join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'budget-denied'); // never the guard's: see adviceOnce
@@ -190,9 +190,8 @@ export async function postToolUseContext(input) {
     if (calls >= EARLY_NOTICE_AT && calls < CALL_CAP && claimEarlyNotice(path)) {
       return `Budget: ${EARLY_NOTICE_AT} tool calls used. Commit what is green now. If the brief will not be finished by about ${CALL_CAP} calls, pick the stopping point and write down the exact next step.`;
     }
-    const due = calls === CALL_CAP || (calls > CALL_CAP && calls % REMIND_EVERY === 0);
-    return due
-      ? `Budget: ${calls} tool calls used (limit ${CALL_CAP}). Commit what is green, then return your status report: done, not done with the exact next step, files changed, blockers. Do not end without the report; start no new work.`
+    return calls === CALL_CAP
+      ? `Budget: ${calls} tool calls used (limit ${CALL_CAP}). Commit what is green, write the hand-over note (the file your brief names, else HANDOFF.md in your worktree, not committed): done, left, next step, don't redo. Then return your report marked "unfinished" with the exact next step; the next agent starts from your commit and that note.`
       : null;
   }
   if (input.tool_name === 'Bash' || DELEGATING_TOOLS.has(input.tool_name)) return leadBashNudge(input);

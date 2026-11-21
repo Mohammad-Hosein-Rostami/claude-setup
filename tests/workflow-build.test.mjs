@@ -213,7 +213,7 @@ test('a clean review with a security finding ruled not real holds the lane for t
   const [held] = first.result.lanes;
   assert.equal(held.status, 'lead-decision');
   assert.equal(held.sha, 't-a');
-  assert.match(held.text, /S1 a\.mjs:3 \(not reachable\).*wf-land at tip t-a/);
+  assert.match(held.text, /S1 a\.mjs:3 \(not reachable\).*the land workflow at tip t-a/);
   assert.deepEqual(held.optional, [{ id: 'O1' }]);
   assert.equal(first.result.leadList.length, 1);
 
