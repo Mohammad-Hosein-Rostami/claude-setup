@@ -89,7 +89,7 @@ global setup combines with it.
 ## Working method (quality)
 
 - Understand before editing: read the failing output or the code path in full; do not guess
-  library APIs - check the installed version's docs (docs MCP if configured) when behaviour
+  library APIs - check the installed version's own docs (its README, types or changelog) when behaviour
   is version-sensitive.
 - A fact a decision rests on that is version-, date- or price-sensitive, or disputed, gets a second independent source, even when the first looks sufficient.
 - An owner rule of the form "every/all X gets Y" is applied by a search that lists every X (the count goes in the report), not by fixing the examples seen.

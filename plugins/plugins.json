@@ -16,14 +16,8 @@
   ],
   "enabled": [
     "frontend-design@anthropic-plugin-directory",
-    "code-review-anthropics@anthropic-plugin-directory",
-    "context7@anthropic-plugin-directory",
-    "skill-creator@anthropic-plugin-directory",
-    "code-simplifier@anthropic-plugin-directory",
     "playwright@anthropic-plugin-directory",
-    "claude-md-management@anthropic-plugin-directory",
     "typescript-lsp@claude-plugins-official",
-    "claude-code-setup@anthropic-plugin-directory",
     "figma@claude-plugins-official",
     "chrome-devtools-mcp@claude-plugins-official"
   ],
@@ -35,6 +29,12 @@
     "code-modernization@anthropic-plugin-directory",
     "swift-lsp@claude-plugins-official",
     "clangd-lsp@claude-plugins-official",
+    "code-review-anthropics@anthropic-plugin-directory",
+    "context7@anthropic-plugin-directory",
+    "skill-creator@anthropic-plugin-directory",
+    "code-simplifier@anthropic-plugin-directory",
+    "claude-md-management@anthropic-plugin-directory",
+    "claude-code-setup@anthropic-plugin-directory",
     "superdesign@anthropic-plugin-directory",
     "miro@claude-plugins-official"
   ],

@@ -1,6 +1,6 @@
 ---
 name: tech-research
-description: Use when a design decision depends on external facts you lack - service limits, versions, pricing, standards, known failure modes. Search the web and cite. For library API docs use context7.
+description: Use when a design decision depends on external facts you lack - service limits, versions, pricing, standards, known failure modes. Search the web and cite. For library API docs read the installed package's own docs and types.
 ---
 
 1. Write the questions first (max 5), each answerable by a fact: "max item size of X", "does Y support Z in version N".

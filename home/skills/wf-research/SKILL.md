@@ -1,7 +1,7 @@
 ---
 name: wf-research
 description: Research a question through the research workflow - Opus scope, Sonnet gatherers in parallel, Opus synthesis and critic, URL re-checks. Fits a fan-out over several sources.
-when_to_use: A fan-out over several sources: versions, limits, prices, standards, comparisons or any claim that needs two independent sources. One research question is one background agent; for one library API question use context7; for a one-line lookup use /quick.
+when_to_use: A fan-out over several sources: versions, limits, prices, standards, comparisons or any claim that needs two independent sources. One research question is one background agent; for one library API question read the installed package's own docs; for a one-line lookup use /quick.
 argument-hint: <question>
 ---
 

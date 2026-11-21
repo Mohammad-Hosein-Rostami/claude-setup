@@ -94,14 +94,48 @@ check_node() {
   else bad "node >= 22.15 required (found ${version:-none}): the guard's Windows path tests need module.registerHooks and are skipped without it"; fi
 }
 
-# Claude Code 2.1.295 or later: the Bash guard's entry in settings/base.json relies on `onFailure: "block"`. An older CLI ignores it,
-# and a guard that dies or times out then lets the command run.
+# Claude Code 2.1.326 or later (CLAUDE_FLOOR): the floor every phase pins (spec-p0-close.md 0.7). It covers the Bash guard's
+# `onFailure: "block"` (2.1.295: an older CLI ignores it, so a guard that dies or times out lets the command run) and the
+# PC's 2.1.323 and Windows' 2.1.316. The line also names the update channel and whether DISABLE_UPDATES pins the version.
+CLAUDE_FLOOR=2.1.326
 check_claude_version() {
-  local version
+  local version live="$CLAUDE_DIR/settings.json" channel pinned
   version="$(claude --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-  if [ -z "$version" ]; then warn "claude --version gave no version: cannot check that the CLI honours onFailure: block (2.1.295 or later)"
-  elif version_at_least "$version" 2.1.295; then ok "claude $version (honours onFailure: block of the Bash guard)"
-  else bad "claude >= 2.1.295 required (found $version): an older CLI ignores onFailure: block, so a Bash guard that dies or times out lets the command run"; fi
+  channel="$(jq -r '.autoUpdatesChannel // "latest (default)"' "$live" 2>/dev/null || echo "unknown")"
+  pinned="$(jq -r '.env.DISABLE_UPDATES // ""' "$live" 2>/dev/null || true)"
+  pinned="${DISABLE_UPDATES:-$pinned}"
+  pinned="update channel ${channel:-unknown}, DISABLE_UPDATES ${pinned:-not set}"
+  if [ -z "$version" ]; then warn "claude --version gave no version: cannot check the floor $CLAUDE_FLOOR ($pinned)"
+  elif version_at_least "$version" "$CLAUDE_FLOOR"; then ok "claude $version (floor $CLAUDE_FLOOR; $pinned)"
+  else bad "claude >= $CLAUDE_FLOOR required (found $version; $pinned): below it the Bash guard's onFailure: block may be ignored and the phase pin does not hold; run claude update"; fi
+}
+
+# An effort variable beats every agent's `effort` frontmatter (sub-agents docs), so no agent runs at the effort its file names.
+# Set in the shell or in the live settings env: FAIL. Phase 4 adds the two model FORCE variables to EFFORT_OVERRIDES.
+EFFORT_OVERRIDES="CLAUDE_CODE_EFFORT_LEVEL"
+check_effort_env() {
+  local live="$CLAUDE_DIR/settings.json" name found=""
+  for name in $EFFORT_OVERRIDES; do
+    if [ -n "${!name:-}" ]; then found="$found $name (shell)"; fi
+    if [ -n "$(jq -r --arg n "$name" '.env[$n] // ""' "$live" 2>/dev/null)" ]; then found="$found $name (settings.json env)"; fi
+  done
+  if [ -n "$found" ]; then bad "set:$found: it overrides every agent's effort; unset it"
+  else ok "no effort override variable set ($EFFORT_OVERRIDES)"; fi
+}
+
+# Projects (scripts/doctor-projects.mjs): a plugin the setup turns off that a project's settings.local.json turns on (WARN; the
+# committed settings.json is listed and kept), and a project skill with a personal skill's name (WARN: the personal one wins, the
+# project copy never loads). The projects are the folders Claude Code's global config lists, plus this one.
+check_projects() {
+  local out line rc=0
+  out="$(node "$REPO/scripts/doctor-projects.mjs" "$HOME/.claude.json" "$CLAUDE_DIR" "$REPO" "${DOCTOR_PROJECT:-$PWD}" 2>/dev/null)" || rc=$?
+  while IFS= read -r line; do
+    case "$line" in
+      "WARN  "*) warn "${line#WARN  }" ;;
+      "ok    "*) ok "${line#ok    }" ;;
+    esac
+  done <<<"$out"
+  [ "$rc" = 0 ] || bad "project checks could not run (scripts/doctor-projects.mjs exit $rc)"
 }
 
 check_hook_files() {
@@ -379,7 +413,7 @@ check_stop_cap() {
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_stop_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_lsp; check_ui_check; check_project_agents; check_workflows; check_env_names; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_mode_hook; check_plugin_session_start; check_recall; check_stop_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows; check_env_names; check_repo_tests
 }
 run_checks
 exit "$BAD"
