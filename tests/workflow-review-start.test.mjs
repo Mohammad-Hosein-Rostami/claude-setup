@@ -145,7 +145,7 @@ test('build gives a land-loop review the start its first review recorded and its
     let landTries = 0;
     // The first lane lands, the second needs a re-review after land rebased it, then lands.
     const land = () => ((landTries += 1) === 2 ? { status: 'needs-review', sha: 'x', patchesChanged: 2, tidy: '' } : { status: 'landed', sha: landTries === 1 ? LANDED : hex('1a4ded0b'), patchesChanged: 0, tidy: 'clean' });
-    const run = await runScript(BUILD, { base: 'main', repo: '/p', suite: 'npm test', writers: 4, statusFile: '/p/STATUS.md', scriptsDir: '/scripts', lanes: [lane('a'), lane('b')] }, { replies, children: { ...BUILD_CHILDREN, review, land } });
+    const run = await runScript(BUILD, { checks: ON_CHECKS, base: 'main', repo: '/p', suite: 'npm test', writers: 4, statusFile: '/p/STATUS.md', scriptsDir: '/scripts', lanes: [lane('a'), lane('b')] }, { replies, children: { ...BUILD_CHILDREN, review, land } });
     assert.equal(run.error, null);
     assert.deepEqual(run.result.lanes.map(({ status }) => status), ['landed', 'landed']);
     assert.match(callsOf(run, 'impl-a:disk')[0].prompt, /Then run: git -C \/p rev-parse --verify refs\/heads\/main\./, 'the base tip is read once, before any lane is built');
