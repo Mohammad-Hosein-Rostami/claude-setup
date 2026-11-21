@@ -18,8 +18,9 @@
 // files are overwritten then, so a reused pid never inherits a mode. Otherwise active mode = session file ->
 // process file -> env CLAUDE_MODE -> medium. Stdout of these events is added to the model context. Invariants: never
 // blocks (always exit 0); unreadable input produces no output; a state file name is built only from ids that pass
-// SESSION_ID_PATTERN, and a state file is read and written only as lib/mode-state.mjs does it (never through a link, never
-// waiting on a FIFO, a few bytes, written as a whole by rename). A project's settings `env` can set CLAUDE_MODE (it picks the start mode) and PATH (lib/owner-process.mjs).
+// SESSION_ID_PATTERN; the session's mode, the announced mode and the compaction counts are read and written only as
+// lib/mode-state.mjs does it (never through a link, never waiting on a FIFO, a few bytes, written as a whole by rename); the
+// big-context flag `<session_id>.bigctx` in the same folder is not (lib/big-context.mjs checks it with access and writes it by name). A project's settings `env` can set CLAUDE_MODE (it picks the start mode) and PATH (lib/owner-process.mjs).
 // Time: one deadline, HOOK_BUDGET_MS from the start of this process, on all three events: the `ps` walk (lib/owner-process.mjs,
 // run lazily: only when the session file cannot answer or a mode is saved) and the child share it, the prune stops when it is
 // used up (and reads a bounded number of entries per run), and a SessionStart past it records no mode as announced. Not inside
