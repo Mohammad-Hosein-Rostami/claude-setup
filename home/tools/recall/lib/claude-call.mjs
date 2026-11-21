@@ -16,7 +16,8 @@
 // leave a session behind; the working directory is an empty folder in the state dir and CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 (no CLAUDE.md is loaded);
 // on Windows the npm install is `claude.cmd`, which Node can only start through a shell, so there every argument is quoted and the
 // (free-text) system prompt goes through a file, never through the command line;
-// every attempt, failed or not, is logged to usage.jsonl; an error reply or unreadable output throws.
+// every attempt, failed or not, is logged to usage.jsonl; an error reply or unreadable output throws; the row of an
+// error reply carries its class (`error`: `auth` for a missing, revoked or refused login, else `other`, callErrorClass).
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -132,7 +133,20 @@ export async function callHaiku({ system, prompt, session = null, label = 'check
     session, label, attempt, account: login.name, model: Object.keys(json.modelUsage ?? {})[0] ?? 'haiku',
     input: usage.input_tokens ?? 0, cache_creation: usage.cache_creation_input_tokens ?? 0, cache_read: usage.cache_read_input_tokens ?? 0,
     output: usage.output_tokens ?? 0, cost_usd_list: json.total_cost_usd ?? 0, ms: Date.now() - started, is_error: Boolean(json.is_error),
+    error: json.is_error ? callErrorClass(String(json.result)) : undefined, // JSON.stringify leaves an undefined field out
   }, env);
   if (json.is_error) throw new Error(withoutToken(`claude reported an error: ${String(json.result)}`));
   return { text: String(json.result ?? ''), usage, ms: Date.now() - started };
+}
+
+// The texts `claude` gives for a login it does not have or that was refused (an expired or revoked token, HTTP 401).
+const AUTH_FAILURE = /not logged in|revoked|\b401\b|authentication_error|invalid (?:api key|bearer|oauth)|token has expired|please run \/login/i;
+
+/**
+ * The class of a failed call, from its error text: no attempt is repeated on `auth`, and the class goes into the usage row.
+ * @param {string} text the reply text of an `is_error` reply, or an error message.
+ * @returns {'auth' | 'other'} `auth` when the login is missing, revoked or refused; `other` for anything else.
+ */
+export function callErrorClass(text) {
+  return AUTH_FAILURE.test(String(text ?? '')) ? 'auth' : 'other';
 }

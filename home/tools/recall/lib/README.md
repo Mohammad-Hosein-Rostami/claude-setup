@@ -7,7 +7,7 @@ settings and the fallbacks. Needs Node 22.13 or newer (`node:sqlite`). No npm de
 ## Files by job
 
 - Storing: `store.mjs` (SQLite schema, locking, writes), `private-fs.mjs` (owner-only files), `paths.mjs` (where state lives), `quiet-sqlite-warning.mjs` (hides Node 22's "SQLite is experimental" notice, nothing else).
-- Reading sources: `extract.mjs` (parse transcripts and docs, chunk), `redact.mjs` (replace secrets), `indexer.mjs` (find files, index only what changed).
+- Reading sources: `extract.mjs` (parse transcripts and docs, chunk), `redact.mjs` (replace secrets), `indexer.mjs` (find files, index only what changed), `index-bound.mjs` (drops the oldest transcripts' chunks above the size bound).
 - Searching: `search.mjs` (queries, ranking, output), `rank.mjs` (snippets), `merge.mjs` (join word and vector hits), `pipeline.mjs` (one search from query to final hits).
 - Vectors: `vectors.mjs` (local Ollama embeddings, cosine), `models.mjs` (the embedding models and their query prefixes).
 - Reranking: `rerank.mjs` (client), `rerank-server.mjs` (starts the local `llama-server` on demand), `rerank-watch.mjs` (stops it when idle).

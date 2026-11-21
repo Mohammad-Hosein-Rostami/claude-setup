@@ -231,8 +231,9 @@ check_plugin_session_start() {
   return 0
 }
 
-# recall's final stack: embedding models in Ollama, the two reranker GGUFs, the checkpoint/digest hooks, and the last
-# checkpoint error (a broken `claude` would otherwise silently stop live notes). Missing models/files are warnings
+# recall's final stack: embedding models in Ollama, the two reranker GGUFs, the checkpoint/digest hooks, the last
+# checkpoint error (a broken `claude` would otherwise silently stop live notes), the index age and the last 10 checkpoint
+# calls. Missing models/files are warnings
 # (search falls back), a missing hook registration is a FAIL (long sessions would lose their notes at compaction).
 check_recall() {
   local live="$CLAUDE_DIR/settings.json" url="${RECALL_OLLAMA_URL:-http://127.0.0.1:11434}" models="${RECALL_RERANK_MODEL_DIR:-$HOME/.cache/recall-models}"
@@ -260,6 +261,8 @@ check_recall() {
   done
   errors="$(printf '%s' "$errors" | sed '/^$/d' | tail -1)"
   if [ -n "$errors" ]; then warn "recall: last checkpoint error: $errors"; else ok "recall: no checkpoint errors"; fi
+  # Index freshness and the last 10 checkpoint calls (tools/recall/health.mjs prints ok|WARN lines in this format).
+  node "$REPO/home/tools/recall/health.mjs" 2>&1 | tr -d '\000-\010\013-\037\177' || warn "recall: health check could not run"
 }
 
 # Free disk (tools/disk-free): FAIL below 5 GB, WARN below 15 GB (DISK_FAIL_FREE_GB / DISK_WARN_FREE_GB move them). The tool prints one line,
