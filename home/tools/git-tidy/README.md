@@ -9,7 +9,7 @@ are removed from its environment, so only the folder you give is ever read or ch
 
 Run: `node ~/.claude/tools/git-tidy/git-tidy.mjs check [dir] [--base <branch>] [--json]`
 and `node ~/.claude/tools/git-tidy/git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]`.
-`land <branch> [dir] [--base <branch>] [--rebase-only] [--json]` is described under "land" below.
+`land <branch> [dir] [--base <branch>] [--rebase-only] [--brief <file>] [--json]` and `range <reviewed-sha> [dir] [--base <branch>] [--landed <sha>] [--json]` are described under "land" below.
 `check` and `prune` print `base: <branch> (from --base | from origin/HEAD | fallback)` first.
 `dir` defaults to the current folder (any folder inside a repository, a linked worktree or a bare repository).
 
@@ -100,7 +100,7 @@ A failure of one item does not stop the others; the run ends with exit code 1 if
 
 ## land
 
-`git-tidy land <branch> [dir] [--base <branch>] [--rebase-only] [--json]` puts a lane on the base as one straight line:
+`git-tidy land <branch> [dir] [--base <branch>] [--rebase-only] [--brief <file>] [--json]` puts a lane on the base as one straight line:
 
 1. The base branch must be checked out in a worktree (the base folder) with no tracked changes, else exit 2 naming the files.
    Untracked files there never block and are never touched, except an untracked path the lane would write over: exit 2 naming it, before any change.
@@ -109,10 +109,23 @@ A failure of one item does not stop the others; the run ends with exit code 1 if
    `--rebase-only` stops here and prints `tip <sha>` and `patches-changed <n>`.
 3. The rebased tip needs a full-suite PASS record (`hasPass(base folder, tip, { suite: true })` of `../test-pass/test-pass.mjs`), else exit 4.
    When the tool cannot be loaded no commit has a PASS and the exit is 4 as well.
+   - A file the lane adds (`<base>..<tip>`, renames counted as adds) over the commit gate's `MAX_NEW_FILE_BYTES` (5 MB, imported from
+     `hooks/lib/new-file-size.mjs`) whose path the `--brief <file>` text does not name (the commit gate's `namesPath`) stops it: exit 7
+     (`new-file-size`). No `--brief` names no path; a file already on the base never counts.
+   - When the UI files (the ui-proof tool's one definition, `ui-proof changed`) differ between the base and the rebased tip, `ui-proof check
+     --tip <tip>` must exit 0 (a visual-qa PASS for that tree), else exit 6 (`ui-proof`). No flag turns it off; when the ui-proof tool
+     cannot be loaded every landing exits 6 with that reason.
 4. The base moves with `git merge --ff-only <the tested tip sha>` run in the base folder (the sha, not the lane's branch, so a commit added to the lane after the PASS lookup is never landed untested and stays on the lane). When the base moved since the rebase: exit 5, rerun the landing.
+   The base tip read right before the merge is printed as `from <sha>` (JSON `from`); when the base's reflog entry before the new tip is
+   another commit (another process moved it in between), the reflog's value is printed, so that commit falls in no landed range.
 5. Cleanup is `prune --apply` (all its safeties), with the 60-minute rule lifted for the landed lane's worktree only: the lane worktree and branch, helper branches and older copies whose work is on the base, agent
    leftovers. Another lane's recently used worktree stays. When prune refuses (a rebase, merge or similar is unfinished in some worktree) the base has already moved: the landing
    is reported with `cleanup skipped: <reason>` (JSON `cleanupRefused`) and exit 1. Then `check` runs. Exit 0 when it is clean (`check: clean` is printed), 1 when findings are left (printed).
+
+`git-tidy range <reviewed-sha>` reads the base's reflog (newest 200 entries) for the step `from..to` that holds every patch of the
+reviewed sha not on the base (or, for a reviewed sha on the base, that sha itself); `--landed <sha>` also requires that commit in the
+range. It prints `from <sha>` and `to <sha>` (exit 0) or exits 1. The `land` workflow uses it after a restart, to write
+`landed <to> on <base> from <from>` for a landing a killed run made.
 
 ### What `prune --apply` never touches
 

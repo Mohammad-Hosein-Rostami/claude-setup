@@ -18,6 +18,7 @@ const atTip = (reply = {}) => ({ match: /:tip$/, reply: { exit: 0, tip: 'abc1234
 const baseAt = (tip) => ({ match: /:base$/, reply: { exit: 0, tip, patchesChanged: 0, files: [], tail: tip } });
 const disk = (reply = {}) => ({ match: /:disk$/, reply: { exit: 0, tip: '', patchesChanged: 0, files: [], tail: 'ok    disk free 80.0 GB', ...reply } });
 const onBase = (reply) => ({ match: /:onbase$/, reply: { exit: 0, tip: '', patchesChanged: 0, files: [], tail: '', ...reply } });
+const noRange = { match: /:range$/, reply: { exit: 1, tip: '', patchesChanged: 0, files: [], tail: 'range: not found in the base reflog' } };
 const status = { match: /:status$/, reply: { exit: 0, tip: '', patchesChanged: 0, files: [], tail: 'ok' } };
 
 test('a clean lane: rebase check, suite, land, then the close row is done with the landed sha; every call is well formed', async () => {
@@ -165,12 +166,12 @@ test('disk: a WARN line (exit 0) lands as usual', async () => {
 });
 
 test('restart: the branch is gone but every patch of the reviewed tip is on the base (a killed run had landed): landed with the base tip, the close row recorded, nothing rebased or run again', async () => {
-  const run = await runScript(LAND, ARGS, { replies: [disk(), atTip({ exit: 1, tip: '', tail: 'fatal: Needed a single revision' }), onBase({}), baseAt('b000009'), status] });
+  const run = await runScript(LAND, ARGS, { replies: [disk(), atTip({ exit: 1, tip: '', tail: 'fatal: Needed a single revision' }), onBase({}), baseAt('b000009'), noRange, status] });
   assert.equal(run.error, null);
-  assert.deepEqual(run.result, { status: 'landed', sha: 'b000009', patchesChanged: 0, tidy: 'already on main (found on restart)' });
-  assert.deepEqual(run.started, ['close:4:disk', 'close:4:tip', 'close:4:onbase', 'close:4:base', 'close:4:status']);
+  assert.deepEqual(run.result, { status: 'landed', sha: 'b000009', from: '', patchesChanged: 0, tidy: 'already on main (found on restart)' });
+  assert.deepEqual(run.started, ['close:4:disk', 'close:4:tip', 'close:4:onbase', 'close:4:base', 'close:4:range', 'close:4:status']);
   assert.match(run.calls[2].prompt, /git cherry main abc1234/);
-  assert.match(run.calls[4].prompt, /status\.mjs --file \/p\/STATUS\.md done close:4 .*b000009/);
+  assert.match(run.calls[5].prompt, /status\.mjs --file \/p\/STATUS\.md done close:4 .*b000009/);
 });
 
 test('restart: the branch is gone, its patches are on the base, but the base tip cannot be read: failed as branch not found, no close row recorded', async () => {

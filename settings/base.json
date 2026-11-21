@@ -66,6 +66,16 @@
         ]
       },
       {
+        "matcher": "Workflow",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/workflow-script-check.mjs\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Artifact",
         "hooks": [
           {

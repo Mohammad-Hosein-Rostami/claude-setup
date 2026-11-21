@@ -8,11 +8,15 @@
 //   is true, and the merge names that very commit (not the lane's branch, which may have moved since), so what lands is exactly the tree
 //   the suite passed on. Cleanup is prune's (every safety it has); only the landed lane skips prune's 60-minute rule, and a cleanup
 //   that prune refuses (an unfinished operation somewhere) is reported in `cleanupRefused` since the base has already moved.
+//   Before the fast-forward (spec-p3 `r9-land-speed`): a lane whose UI files differ from the base needs `uiCheck` to pass for the rebased
+//   tip (status `ui-proof`), and a file the lane adds over MAX_NEW_FILE_BYTES that its brief does not name stops it (`new-file-size`).
+//   A landing reports `from`, the base tip just before the fast-forward (the reflog's value when another process moved the base between).
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { UsageError, gitText, runGit } from './git.mjs';
 import { patchIdsOf } from './copies.mjs';
+import { landedFrom, oversizeAdded } from './land-checks.mjs';
 import { runCheck } from './check.mjs';
 import { pruneRepo, refuseUnsafeApply } from './prune.mjs';
 import { inProgressOperation, listWorktrees, openRepo } from './repo.mjs';
@@ -114,26 +118,37 @@ function cleanUp(atBase, branch) {
  * Lands `branch` on the base of `repo` (from openRepo).
  * @param {object} repo the repository (openRepo)
  * @param {string} branch the lane, a local branch other than the base
- * @param {{ rebaseOnly?: boolean, hasPass: (repoDir: string, rev: string, options: { suite: boolean }) => boolean }} options
- *   `rebaseOnly` stops after the rebase; `hasPass` is test-pass's lookup of a suite PASS for a commit
- * @returns {{ status: 'landed'|'rebased'|'conflict'|'no-pass'|'base-moved', tip: string, patchesChanged: number, removed: string[],
- *   cleanupRefused: string|null, findings: object[], files: string[] }} `tip` is the lane's tip after the rebase, `files` the conflicting files, `removed` what
- *   cleanup removed (`<kind> <name or path>`), `findings` what `check` still reports on the base afterwards
+ * @param {{ rebaseOnly?: boolean, hasPass: (repoDir: string, rev: string, options: { suite: boolean }) => boolean,
+ *   uiCheck?: (repoDir: string, baseSha: string, tip: string) => string|null, briefText?: string|null }} options
+ *   `rebaseOnly` stops after the rebase; `hasPass` is test-pass's lookup of a suite PASS for a commit; `uiCheck` returns null when the UI
+ *   proof holds (or no UI file changed) and else the reason (the CLI always passes one, failing closed when ui-proof cannot be loaded);
+ *   `briefText` is the lane's brief, whose named paths may add files over the size limit (null: none)
+ * @returns {{ status: 'landed'|'rebased'|'conflict'|'no-pass'|'base-moved'|'ui-proof'|'new-file-size', tip: string, from: string|null,
+ *   patchesChanged: number, removed: string[], cleanupRefused: string|null, findings: object[], files: string[], why: string|null }} `tip`
+ *   is the lane's tip after the rebase, `from` the base tip before the fast-forward (landed only), `files` the conflicting files (or the
+ *   oversize ones), `removed` what cleanup removed (`<kind> <name or path>`), `findings` what `check` still reports on the base afterwards
  * @throws {UsageError} when the base folder is not ready (not checked out, tracked changes, an untracked path in the way), the lane
  *   is missing or is the base, or a rebase or merge is unfinished somewhere; any other git failure throws an Error
  */
-export function landLane(repo, branch, { rebaseOnly = false, hasPass }) {
+export function landLane(repo, branch, { rebaseOnly = false, hasPass, uiCheck = () => null, briefText = null }) {
   const { baseFolder, laneFolder } = prepare(repo, branch);
   const before = patchIdsOf(repo, `refs/heads/${branch}`);
   const { conflict } = rebaseLane(repo, branch, laneFolder);
   const tip = tipOf(repo, branch); // read before cleanup removes the branch
-  const result = (status, extra = {}) => ({ status, tip, patchesChanged: 0, removed: [], cleanupRefused: null, findings: [], files: [], ...extra });
+  const result = (status, extra = {}) => ({ status, tip, from: null, patchesChanged: 0, removed: [], cleanupRefused: null, findings: [], files: [], why: null, ...extra });
   if (conflict !== null) return result('conflict', { files: conflict });
   const patchesChanged = changedPatches(before, patchIdsOf(repo, `refs/heads/${branch}`));
   if (rebaseOnly) return result('rebased', { patchesChanged });
   if (!hasPass(baseFolder, tip, { suite: true })) return result('no-pass', { patchesChanged });
+  const baseSha = gitText(repo.dir, ['rev-parse', repo.baseRef]);
+  const big = oversizeAdded(repo, baseSha, tip, briefText);
+  if (big.length > 0) return result('new-file-size', { patchesChanged, files: big.map(({ path }) => path), why: big.map(({ path, bytes }) => `${path} (${bytes} bytes)`).join(', ') });
+  const uiWhy = uiCheck(baseFolder, baseSha, tip);
+  if (uiWhy !== null) return result('ui-proof', { patchesChanged, why: uiWhy });
+  const readBefore = gitText(repo.dir, ['rev-parse', repo.baseRef]);
   if (fastForward(repo, baseFolder, tip).moved) return result('base-moved', { patchesChanged });
+  const from = landedFrom(repo, readBefore);
   const atBase = openRepo(baseFolder, repo.base);
   const { removed, cleanupRefused } = cleanUp(atBase, branch);
-  return result('landed', { patchesChanged, removed, cleanupRefused, findings: runCheck(atBase).findings });
+  return result('landed', { from, patchesChanged, removed, cleanupRefused, findings: runCheck(atBase).findings });
 }
