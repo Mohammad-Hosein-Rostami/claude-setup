@@ -1,16 +1,19 @@
-// The commands the typecheck gate may run for a package and where their binaries may come from; typecheck-gate.mjs puts the
-// steps in order (typecheck script, Nx target, nearest tsconfig) and runs them.
-// Exports: SKIPPED (the skip reasons), incrementalTypecheck(script, tsMajor, tscPath, buildInfo, platform), typescriptMajor(tscPath),
-// projectFolders(dir, timeoutMs), projectBin(folders, tool, platform), readJsonFile(path), nxTypecheck(dir, folders, platform),
-// nearestTsconfig(file, dir), tsconfigTypecheck(tsconfig, tsc, buildInfo, platform).
+// The tsc commands the typecheck gate may run for a package and where a project's binaries may come from. typecheck-gate.mjs
+// puts the steps in order (typecheck script, Nx target of lib/typecheck-nx.mjs, nearest tsconfig); lib/typecheck-run.mjs runs them.
+// Exports: SKIPPED (the skip reasons), WIN_SAFE_PATH, incrementalTypecheck(script, tsMajor, tscPath, buildInfo, platform),
+// typescriptMajor(tscPath), projectFolders(dir, timeoutMs), projectBin(folders, tool, platform), readJsonFile(path),
+// nearestTsconfig(file, dir), tsconfigTypecheck(tsconfig, tsc, buildInfo, platform), configSkip(stdout), pathKey(path),
+// splitListedFiles(output).
 // Invariants: a binary comes only from node_modules/.bin of a folder between the package and the git top, never from above
-// it, never a global one and never through npx or a package manager's exec or dlx (nothing is downloaded). Nx runs one
-// project's typecheck target, read from the files in the package folder alone (no `nx show`: a target that only a plugin
-// infers is not found), never run-many or affected, with the daemon, Nx Cloud and the terminal UI off. A tsc call for a
-// tsconfig always sends the build info to the given file, so none lands in the project. The JSON files are read through
-// lib/plain-file.mjs (no link followed, no wait on a FIFO, a size cap). A shape that is not understood is a skip with its
-// reason, never a run and never a block. On Windows the shell is on and does not quote arguments: a path it cannot take is a skip.
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+// it and never a global one; the gate itself calls no npx and no package manager's exec or dlx. A tsc call for a tsconfig
+// always sends the build info to the given file, so none lands in the project, and always asks for plain output
+// (`--pretty false`: a tsconfig's `pretty` colours the lines even on a pipe, and no line parses then). A tsconfig the gate
+// cannot check truthfully is a skip with its reason, never a run and never a block: project references (without `-b` tsc
+// reads the built `.d.ts` of a referenced project, so an unbuilt or stale one gives errors about correct code), a solution
+// file, `generateTrace` (it writes outside the project). Every JSON file is read through lib/plain-file.mjs (no link
+// followed, no wait on a FIFO, a size cap). On Windows the shell is on and does not quote arguments: a path it cannot take
+// is a skip.
+import { existsSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { objectGet, parseJsonc } from '../../tools/refs/lib/jsonc.mjs';
 import { gitOut } from './gated-folder.mjs';
@@ -19,14 +22,13 @@ import { readPlainFile } from './plain-file.mjs';
 const SUPPORTED_TS_MAJORS = [4, 5, 6];
 const UNSAFE_SHELL = /[&|;<>$`'"]/;
 const WIN_UNSAFE_SCRIPT = /[%^!]/; // cmd.exe expands these even inside a script's flags
-const WIN_SAFE_PATH = /^[\w@+=:,./\\-]+$/; // args are not quoted under the Windows shell: no spaces or metacharacters
+/** A path the unquoted Windows shell takes as one argument: no spaces or metacharacters. */
+export const WIN_SAFE_PATH = /^[\w@+=:,./\\-]+$/;
 const NON_INCREMENTAL_FLAGS = ['-b', '--build', '-w', '--watch', '--incremental', '--tsBuildInfoFile'];
+const PLAIN_OUTPUT = ['--pretty', 'false']; // the command line wins over a tsconfig's `pretty`
 const MAX_JSON_BYTES = 1024 * 1024; // 1 MB: a package.json, project.json or tsconfig.json is a few KB; a larger file is not read
-// No daemon left running after the hook, no call to Nx Cloud, plain output instead of the terminal UI
-// (https://nx.dev/docs/reference/environment-variables, "Nx Environment Variables").
-const NX_ENV = Object.freeze({ NX_DAEMON: 'false', NX_NO_CLOUD: 'true', NX_TUI: 'false' });
-// The project name becomes part of a command (through the shell on Windows): no space, metacharacter, colon or leading dash.
-const NX_PROJECT_NAME = /^[\w@][\w@./-]*$/;
+const LOCATED_LINE = /\(\d+,\d+\): |:\d+:\d+/; // a diagnostic names a position; a `--listFiles` line is a bare path
+const FOLDS_CASE = ['darwin', 'win32']; // platforms whose usual file systems treat `A.ts` and `a.ts` as one file
 
 /** Why a typecheck did not run; the run log holds it as `skipped: <reason>`. */
 export const SKIPPED = Object.freeze({
@@ -34,10 +36,16 @@ export const SKIPPED = Object.freeze({
   noProjectTsc: 'no project tsc',
   broadScript: 'broad script, no nx target',
   solutionTsconfig: 'solution tsconfig',
+  projectReferences: 'project references',
   unreadableTsconfig: 'unreadable tsconfig',
+  writesTrace: 'tsconfig writes a trace',
+  notInTsconfig: 'not in tsconfig',
   unsupportedTypescript: 'unsupported typescript version',
+  unsupportedNx: 'unsupported nx version',
   unsafeWindowsPath: 'unsafe path on Windows',
+  noTempFolder: 'no temp folder',
   skipEnv: 'skip env',
+  atEdit: 'at-edit mode',
   budgetSpent: 'budget spent',
 });
 
@@ -56,18 +64,27 @@ export function incrementalTypecheck(script, tsMajor, tscPath, buildInfo, platfo
   if (tool !== 'tsc' || UNSAFE_SHELL.test(script) || !SUPPORTED_TS_MAJORS.includes(tsMajor)) return null;
   if (platform === 'win32' && (WIN_UNSAFE_SCRIPT.test(script) || ![tscPath, buildInfo].every((p) => WIN_SAFE_PATH.test(p)))) return null;
   const conflicts = flags.some((f) => NON_INCREMENTAL_FLAGS.some((bad) => f === bad || f.startsWith(`${bad}=`)));
-  return conflicts ? null : { cmd: tscPath, args: [...flags, '--incremental', '--tsBuildInfoFile', buildInfo] };
+  return conflicts ? null : { cmd: tscPath, args: [...flags, '--incremental', '--tsBuildInfoFile', buildInfo, ...PLAIN_OUTPUT] };
+}
+
+/**
+ * The value of a JSON file (package.json, project.json).
+ * @param {string} path the file
+ * @returns {unknown} null when it is missing, not a plain file within 1 MB (a link, a FIFO, a folder), or not JSON
+ */
+export function readJsonFile(path) {
+  try {
+    return JSON.parse(readPlainFile(path, MAX_JSON_BYTES));
+  } catch {
+    return null; // nothing this hook can read: the caller goes on without it
+  }
 }
 
 // Major of the typescript package at `manifest` (null when unreadable, another package, or without a version).
 function majorAt(manifest) {
-  try {
-    const { name, version } = JSON.parse(readFileSync(manifest, 'utf8'));
-    const major = Number.parseInt(version, 10);
-    return name === 'typescript' && !Number.isNaN(major) ? major : null;
-  } catch {
-    return null; // no such manifest here
-  }
+  const { name, version } = readJsonFile(manifest) ?? {};
+  const major = Number.parseInt(version, 10);
+  return name === 'typescript' && !Number.isNaN(major) ? major : null;
 }
 
 /**
@@ -129,45 +146,6 @@ export function projectBin(folders, tool, platform = process.platform) {
 }
 
 /**
- * The value of a JSON file (package.json, project.json).
- * @param {string} path the file
- * @returns {unknown} null when it is missing, not a plain file within 1 MB (a link, a FIFO, a folder), or not JSON
- */
-export function readJsonFile(path) {
-  try {
-    return JSON.parse(readPlainFile(path, MAX_JSON_BYTES));
-  } catch {
-    return null; // nothing this hook can read: the caller goes on without it
-  }
-}
-
-const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
-
-/**
- * The Nx call for the typecheck target of the project in `dir`: `<git top>/node_modules/.bin/nx run <project>:typecheck
- * --skip-nx-cache`, run at the git top with the daemon, Nx Cloud and the terminal UI off. The project and its target are
- * read from `project.json` in the package folder (`name`, `targets.typecheck`) or the `nx` field of its `package.json`.
- * @param {string} dir the package folder
- * @param {string[]} folders from {@link projectFolders}; the last one is the git top
- * @param {string} [platform] defaults to the running platform
- * @returns {{cmd: string, args: string[], env: Record<string, string>, cwd: string} | {skipped: string} | null} null when
- *   this is no Nx project the gate can run: no `nx.json` at the git top, no declared typecheck target, a project name that
- *   is not a plain name, or no `nx` at the git top; the caller then goes on to the tsconfig
- */
-export function nxTypecheck(dir, folders, platform = process.platform) {
-  const top = folders.at(-1);
-  if (!existsSync(join(top, 'nx.json'))) return null;
-  const project = readJsonFile(join(dir, 'project.json'));
-  const manifest = readJsonFile(join(dir, 'package.json'));
-  const target = project?.targets?.typecheck ?? manifest?.nx?.targets?.typecheck;
-  const name = project?.name ?? manifest?.nx?.name ?? manifest?.name;
-  const nx = projectBin([top], 'nx', platform);
-  if (!isRecord(target) || typeof name !== 'string' || !NX_PROJECT_NAME.test(name) || !nx) return null;
-  if (platform === 'win32' && !WIN_SAFE_PATH.test(nx)) return { skipped: SKIPPED.unsafeWindowsPath };
-  return { cmd: nx, args: ['run', `${name}:typecheck`, '--skip-nx-cache'], env: NX_ENV, cwd: top };
-}
-
-/**
  * The first `tsconfig.json` from the folder of `file` up to its package folder; one above the package folder is never used.
  * @param {string} file an edited file inside `dir`
  * @param {string} dir its package folder
@@ -183,26 +161,29 @@ export function nearestTsconfig(file, dir) {
 
 const isEmptyList = (node) => node?.kind === 'array' && node.items.length === 0;
 
-// A solution-style tsconfig (the Vite template): it only points at other projects, so `tsc -p` on it checks no file and
-// exits 0. `files: []` leaves `include` empty too unless `include` is given.
-function isSolution(root) {
+// Why this tsconfig cannot be checked with `tsc -p`, or null. A solution-style one (the Vite template) only points at other
+// projects, so tsc checks no file and exits 0 (`files: []` leaves `include` empty too unless `include` is given); any other
+// one with references would be checked against the built output of those projects, not their source.
+function referencesSkip(root) {
   const references = objectGet(root, 'references');
+  if (references?.kind !== 'array' || references.items.length === 0) return null;
   const files = objectGet(root, 'files');
   const include = objectGet(root, 'include');
-  const pointsAtProjects = references?.kind === 'array' && references.items.length > 0;
   const ownInputs = include === undefined ? !isEmptyList(files) : !isEmptyList(include) || (files !== undefined && !isEmptyList(files));
-  return pointsAtProjects && !ownInputs;
+  return ownInputs ? SKIPPED.projectReferences : SKIPPED.solutionTsconfig;
 }
 
 /**
- * The tsc call that typechecks one tsconfig without writing in the project: `--noEmit -p <tsconfig>` plus the gate's own
- * `--incremental --tsBuildInfoFile <buildInfo>`, which also redirects the build info of a tsconfig that sets `incremental`,
- * `composite` or its own `tsBuildInfoFile`.
+ * The tsc calls that typecheck one tsconfig without writing in the project: `--noEmit -p <tsconfig>` plus the gate's own
+ * `--incremental --tsBuildInfoFile <buildInfo>` (it also redirects the build info of a tsconfig that sets `incremental`,
+ * `composite` or its own `tsBuildInfoFile`), `--pretty false`, `--emitDeclarationOnly false` (TypeScript 4 and 5 refuse
+ * `emitDeclarationOnly` beside `noEmit` and then check nothing) and `--listFiles` (the files of the program, so an edited
+ * file outside it is seen). `config` is the call to make first: `--showConfig` prints the resolved options and writes nothing.
  * @param {string} tsconfig path of the tsconfig.json
  * @param {string | null} tsc the project's tsc from {@link projectBin}
  * @param {string} buildInfo private tsbuildinfo file for this run, outside the project
  * @param {string} [platform] defaults to the running platform
- * @returns {{cmd: string, args: string[]} | {skipped: string}}
+ * @returns {{cmd: string, args: string[], config: {cmd: string, args: string[]}, listsFiles: true} | {skipped: string}}
  */
 export function tsconfigTypecheck(tsconfig, tsc, buildInfo, platform = process.platform) {
   let root;
@@ -212,9 +193,50 @@ export function tsconfigTypecheck(tsconfig, tsc, buildInfo, platform = process.p
     return { skipped: SKIPPED.unreadableTsconfig }; // not a plain file within the cap, or not JSON with comments
   }
   if (root.kind !== 'object') return { skipped: SKIPPED.unreadableTsconfig };
-  if (isSolution(root)) return { skipped: SKIPPED.solutionTsconfig };
+  const references = referencesSkip(root);
+  if (references) return { skipped: references };
   if (!tsc) return { skipped: SKIPPED.noProjectTsc };
   if (!SUPPORTED_TS_MAJORS.includes(typescriptMajor(tsc))) return { skipped: SKIPPED.unsupportedTypescript };
   if (platform === 'win32' && ![tsc, buildInfo, tsconfig].every((path) => WIN_SAFE_PATH.test(path))) return { skipped: SKIPPED.unsafeWindowsPath };
-  return { cmd: tsc, args: ['--noEmit', '-p', tsconfig, '--incremental', '--tsBuildInfoFile', buildInfo] };
+  const args = ['--noEmit', '-p', tsconfig, '--incremental', '--tsBuildInfoFile', buildInfo, ...PLAIN_OUTPUT, '--emitDeclarationOnly', 'false', '--listFiles'];
+  return { cmd: tsc, args, config: { cmd: tsc, args: ['--showConfig', '-p', tsconfig] }, listsFiles: true };
+}
+
+/**
+ * Why the resolved config that `tsc --showConfig` printed must not be run, or null. `generateTrace`, set in the tsconfig or
+ * in one it extends, makes `tsc --noEmit` write trace files wherever it points, and no command-line flag turns it off.
+ * @param {string} stdout what `--showConfig` printed
+ * @returns {string | null} a {@link SKIPPED} reason
+ */
+export function configSkip(stdout) {
+  let config;
+  try {
+    config = JSON.parse(stdout);
+  } catch {
+    return SKIPPED.unreadableTsconfig; // not the JSON every supported tsc prints
+  }
+  if (typeof config !== 'object' || config === null) return SKIPPED.unreadableTsconfig;
+  return config.compilerOptions?.generateTrace === undefined ? null : SKIPPED.writesTrace;
+}
+
+/** A path as it is compared with the paths tsc lists: forward slashes, and one case where the file system folds it. */
+export function pathKey(path, platform = process.platform) {
+  const slashed = path.replace(/\\/g, '/');
+  return FOLDS_CASE.includes(platform) ? slashed.toLowerCase() : slashed;
+}
+
+/**
+ * Splits what a tsc run with `--listFiles` printed into the files of its program and everything else.
+ * @param {string} output its stdout
+ * @returns {{listed: Set<string>, rest: string}} `listed`: the {@link pathKey} of every listed file (empty when tsc listed
+ *   none, for example after an option error); `rest`: the other lines, for the diagnostics parser
+ */
+export function splitListedFiles(output) {
+  const listed = new Set();
+  const rest = [];
+  for (const line of output.split(/\r?\n/)) {
+    if (isAbsolute(line) && !LOCATED_LINE.test(line)) listed.add(pathKey(line));
+    else rest.push(line);
+  }
+  return { listed, rest: rest.join('\n') };
 }

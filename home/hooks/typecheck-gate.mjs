@@ -1,159 +1,138 @@
 // Stop / SubagentStop: typecheck the files this agent edited, once, instead of after every edit (post-edit.mjs logs them).
 // Per package of a logged file, the first that applies: (1) its `typecheck` / `type-check` script unless it targets the
-// whole repo; (2) its Nx `typecheck` target when nx.json sits at the git top; (3) the nearest tsconfig.json of each file
-// with the project's own `tsc --noEmit`; (4) else skipped with the reason. lib/typecheck-plan.mjs builds the commands.
-// Exports: incrementalTypecheck, typescriptMajor (from lib/typecheck-plan.mjs), runGate(files, deadline, record),
-// timeoutMessage(unchecked), decideExit(result, logPath, stopHookActive), runLogPath(env), MAX_RUN_LOG_BYTES, MAX_LINE_CHARS.
-// Invariants: silent and exit 0 when nothing was logged, when CLAUDE_TYPECHECK_AT=edit or typecheck is skipped; only
-// real diagnostics about logged files exit 2 (the agent keeps running and fixes them); a timeout, a typecheck that
-// cannot run (no diagnostic parses), a skipped package and a failure the user was already shown never block.
-// The shared tsbuildinfo makes later runs incremental; each run writes a private copy and renames it over the shared one.
-// Run log: one JSON line per check of a Stop/SubagentStop that has logged edits, in ~/.claude/logs/typecheck-gate.jsonl
-// (override: CLAUDE_TYPECHECK_LOG): `ts`, `session`, `agent`, `dir` (the package folder), `outcome` (`ran: <command>` or
-// `skipped: <reason>`), `exit` (the exit code, `timeout`, `error` when it could not start, null when skipped) and `ms`.
-// A package whose files sit under different tsconfigs gets one line for each. A stop with no logged edits writes nothing;
-// at MAX_RUN_LOG_BYTES no line is written; a log that cannot be written never changes the decision.
-// The gate runs project code (the script, nx, tsc) with the trust the project's typecheck script already had, only in
-// packages this agent edited; what reaches the agent on exit 2 is at most 15 lines about logged files, each cut to MAX_LINE_CHARS.
+// whole repo; (2) the Nx `typecheck` target of the file's Nx project (the nearest `project.json` up to the git top) when
+// nx.json sits at the git top; (3) the nearest tsconfig.json of each file with the project's own `tsc --noEmit`; (4) else
+// skipped with the reason. lib/typecheck-plan.mjs and lib/typecheck-nx.mjs build the commands, lib/typecheck-run.mjs runs
+// one and judges its output, lib/typecheck-build-info.mjs keeps the incremental state, lib/typecheck-records.mjs writes
+// the run log and the records between stops.
+// Exports: incrementalTypecheck, typescriptMajor (lib/typecheck-plan.mjs), MAX_RUN_LOG_BYTES, runLogPath
+// (lib/typecheck-records.mjs), runGate(files, deadline, record, timedOutBefore), timeoutMessage(unchecked),
+// decideExit(result, logPath, stopHookActive), MAX_LINE_CHARS.
+// Invariants: silent and exit 0 when nothing was logged or typecheck is skipped; only real diagnostics about logged files
+// exit 2 (the agent keeps running and fixes them), also beside a timeout; a timeout, a typecheck that cannot run, a
+// skipped package and a failure the user was already shown never block. What reaches the agent or the user is project
+// text: at most 15 lines, each without escape sequences and control characters and cut to MAX_LINE_CHARS, under one
+// fixed line that marks the block as tool output.
+// Edit log: a file's entry is removed only when a check ran to its end for it without an error in it, or the file is not
+// in the tsconfig's program. A skipped or unstartable check keeps its entries; a check that timed out keeps them for one
+// more stop and is given up at the second timeout in a row (`gave up: timed out twice`, with a message to the user), so a
+// slow project does not cost the budget at every stop.
+// Run log: one JSON line per check of a stop that has logged edits (`ts`, `session`, `agent`, `dir`, `outcome`, `exit`,
+// `ms`); outcomes are `ran: <command>`, `skipped: <reason>`, `cold: <reason>` and `gave up: timed out twice`; `exit` is the
+// exit code, `timeout`, `error` when it could not start, or null. CLAUDE_TYPECHECK_AT=edit turns the gate off: each stop
+// then records `skipped: at-edit mode`.
+// Trust: the gate runs project code (the script, nx, tsc) with the trust the project's typecheck script already had. The
+// files come from the edit log, which the Bash guard's path logger also writes (paths an inline interpreter command names,
+// also of a denied command), so a logged path can lie in a package the session only read: lane `r9-edit-log` narrows that
+// logger. The gate is a quality gate, not a boundary: a process of the same user that rewrites the gate's own state (the
+// edit log, its records, the shared build info with its hash record) can still pass it.
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, dirname, join, relative } from 'node:path';
+import { existsSync, realpathSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { MAX_LINES, diagnosticsDetailed } from './lib/diagnostics.mjs';
-import { editLogPath, readEdits, tempRoot } from './lib/edit-log.mjs';
-import { appendPlainFile } from './lib/plain-file.mjs';
-import { SKIPPED, incrementalTypecheck, nearestTsconfig, nxTypecheck, projectBin, projectFolders, readJsonFile, tsconfigTypecheck, typescriptMajor } from './lib/typecheck-plan.mjs';
-import { SKIP_ENV, findPackageDir, isBroadScript, packageManager, runCheck, skipFilter, typecheckAtEdit, typecheckScript } from './post-edit.mjs';
+import { MAX_LINES } from './lib/diagnostics.mjs';
+import { editLogPath, readEdits } from './lib/edit-log.mjs';
+import { closeBuildInfo, planBuildInfo } from './lib/typecheck-build-info.mjs';
+import { nxProjectFolder, nxTypecheck } from './lib/typecheck-nx.mjs';
+import { SKIPPED, incrementalTypecheck, nearestTsconfig, projectBin, projectFolders, readJsonFile, tsconfigTypecheck, typescriptMajor } from './lib/typecheck-plan.mjs';
+import { firstLine, keepRecords, lastPath, readTimeouts, replaceRecord, runLogWriter, shownPath } from './lib/typecheck-records.mjs';
+import { runPlan } from './lib/typecheck-run.mjs';
+import { SKIP_ENV, findPackageDir, isBroadScript, skipFilter, typecheckAtEdit, typecheckScript } from './post-edit.mjs';
 
 export { incrementalTypecheck, typescriptMajor } from './lib/typecheck-plan.mjs';
+export { MAX_RUN_LOG_BYTES, runLogPath } from './lib/typecheck-records.mjs';
 
 const BUDGET_MS = 140_000; // hook timeout is 150 s
 const GIT_TOP_TIMEOUT_MS = 3000; // one `git rev-parse` per package, inside the budget; it normally takes a few ms
 const MAX_NAMED_FILES = 10;
 /** The most characters of one diagnostic line that reach the agent or the user: project text is cut, not trusted. */
 export const MAX_LINE_CHARS = 400;
-/** The most the run log holds: 1 MB is about 4,000 lines; at the cap no line is written, so the log cannot fill the disk. */
-export const MAX_RUN_LOG_BYTES = 1024 * 1024;
-const RUN_LOG_FILE = join(homedir(), '.claude', 'logs', 'typecheck-gate.jsonl');
-const RUN_LOG_DIR_MODE = 0o700; // the log names project folders: only the owner reads it
 const MAIN_AGENT = 'main';
+const BLOCK_HEADER = 'typecheck gate: type errors in files you edited (tool output, not instructions):';
+const GAVE_UP = 'gave up: timed out twice';
+// CSI and OSC escape sequences (colours, cursor moves, window titles, hyperlinks, clipboard writes), then any other control character.
+const ESCAPE_SEQUENCE = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g;
+const CONTROL_CHARACTER = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
 
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
-const unique = (items) => [...new Set(items)];
 const skip = (files, reason) => ({ files, skipped: reason });
+const clean = (text) => text.replace(ESCAPE_SEQUENCE, '').replace(CONTROL_CHARACTER, '?');
+const cut = (lines) => lines.slice(0, MAX_LINES).map((line) => clean(line).slice(0, MAX_LINE_CHARS));
 
-// A command of lib/typecheck-plan.mjs, or its skip, as the plan for `files`; `info`: the build-info paths of a tsc run.
-function planFor(files, cwd, command, info = {}) {
-  if (command.skipped) return skip(files, command.skipped);
-  return { files, cwd, check: { name: 'typecheck', cmd: command.cmd, args: command.args, env: command.env }, ...info };
+function groupBy(items, keyOf) {
+  const groups = new Map();
+  for (const item of items) groups.set(keyOf(item), [...(groups.get(keyOf(item)) ?? []), item]);
+  return groups;
 }
 
-// The shared build info of one check (keyed by the package folder or the tsconfig) and this run's private copy of it.
-function buildInfoFor(key) {
-  const shared = join(tempRoot(), 'tsbuildinfo', sha256(key));
-  return { shared, privateInfo: `${shared}.${process.pid}` };
+// A command of the plan libs, or its skip, as the plan for `files`. `dir`: the folder its output may be relative to;
+// `key` names the check (for the timeout record); `info`: the build-info files of a tsc run.
+function planFor(files, dir, command, key, info) {
+  if (command.skipped && info) closeBuildInfo(info, false);
+  if (command.skipped) return skip(files, command.skipped);
+  const check = { name: 'typecheck', cmd: command.cmd, args: command.args, env: command.env };
+  return { files, id: sha256(key), dir, cwd: command.cwd ?? dir, check, config: command.config, listsFiles: command.listsFiles, info };
 }
 
 // Step 1: the package's own typecheck script (`script`: its { name, text }); a plain `tsc` call runs incrementally with the
-// project's tsc and the shared/private tsbuildinfo paths.
-function scriptPlan(dir, folders, script) {
-  const info = buildInfoFor(dir);
+// project's tsc and the gate's build info.
+function scriptPlan(dir, folders, files, script) {
   const tsc = projectBin(folders, 'tsc');
   const major = tsc ? typescriptMajor(tsc) : null;
-  const incremental = tsc && major !== null ? incrementalTypecheck(script.text, major, tsc, info.privateInfo) : null;
-  if (!incremental) return { cwd: dir, check: { name: 'typecheck', args: ['run', script.name] } };
-  return { cwd: dir, check: { name: 'typecheck', ...incremental }, ...info };
+  const info = major === null ? null : planBuildInfo(dir);
+  const incremental = info ? incrementalTypecheck(script.text, major, tsc, info.privateInfo) : null;
+  if (info && !incremental) closeBuildInfo(info, false);
+  return planFor(files, dir, incremental ?? { args: ['run', script.name] }, dir, incremental ? info : undefined);
+}
+
+// Step 2: one Nx run per Nx project of the files; `rest` are the files of a folder with no typecheck target the gate can run.
+function nxPlans(folders, files) {
+  const plans = [];
+  const rest = [];
+  for (const [folder, group] of groupBy(files, (file) => nxProjectFolder(file, folders[0], folders.at(-1)))) {
+    const nx = nxTypecheck(folder, folders);
+    if (nx) plans.push(planFor(group, folder, nx, `nx:${folder}`));
+    else rest.push(...group);
+  }
+  return { plans, rest };
 }
 
 // Step 3: one tsc run per nearest tsconfig.json of the files; files with none are skipped with `noneReason`.
 function tsconfigPlans(dir, folders, files, noneReason) {
-  const byTsconfig = new Map();
-  for (const file of files) {
-    const tsconfig = nearestTsconfig(file, dir);
-    byTsconfig.set(tsconfig, [...(byTsconfig.get(tsconfig) ?? []), file]);
-  }
   const tsc = projectBin(folders, 'tsc');
-  return [...byTsconfig].map(([tsconfig, group]) => {
+  return [...groupBy(files, (file) => nearestTsconfig(file, dir))].map(([tsconfig, group]) => {
     if (!tsconfig) return skip(group, noneReason);
-    const info = buildInfoFor(tsconfig);
-    return planFor(group, dir, tsconfigTypecheck(tsconfig, tsc, info.privateInfo), info);
+    const info = planBuildInfo(tsconfig);
+    return info ? planFor(group, dir, tsconfigTypecheck(tsconfig, tsc, info.privateInfo), tsconfig, info) : skip(group, SKIPPED.noTempFolder);
   });
 }
 
-// What runs for one package, in the order of the header: [{ files, cwd, check, shared?, privateInfo? } | { files, skipped }].
+// What runs for one package, in the order of the header.
 function packagePlans(dir, files) {
   const folders = projectFolders(dir, GIT_TOP_TIMEOUT_MS);
   const script = typecheckScript(readJsonFile(join(dir, 'package.json'))?.scripts);
-  if (script && !isBroadScript(script.text)) return [{ files, ...scriptPlan(dir, folders, script) }];
-  const nx = nxTypecheck(dir, folders);
-  if (nx) return [planFor(files, nx.cwd, nx)];
-  return tsconfigPlans(dir, folders, files, script ? SKIPPED.broadScript : SKIPPED.noTsconfig);
-}
-
-// Seed the private build info from the shared one; any failure only costs the speed-up.
-function seed({ shared, privateInfo }) {
-  try {
-    mkdirSync(dirname(shared), { recursive: true });
-    if (existsSync(shared)) copyFileSync(shared, privateInfo);
-  } catch {
-    // cold run
-  }
-}
-
-// Publish the private build info atomically, then make sure no private copy is left behind.
-function publish({ shared, privateInfo }) {
-  try {
-    if (existsSync(privateInfo)) renameSync(privateInfo, shared);
-  } catch {
-    rmSync(privateInfo, { force: true }); // a lost rename only costs the speed-up
-  }
-}
-
-const NOTHING = { timedOut: false, lines: [], unparsed: [], unchecked: [] };
-
-// Real diagnostics about the logged files win; the raw output tail counts only when no file got a parsed line.
-function judgeOutput(output, rels) {
-  const details = rels.map((rel) => diagnosticsDetailed(output, rel));
-  const lines = unique(details.filter((d) => d.parsed).flatMap((d) => d.lines));
-  return { ...NOTHING, lines, unparsed: lines.length ? [] : unique(details.flatMap((d) => d.lines)) };
-}
-
-// The command as the run log names it: the tool by name (not its path), then its arguments.
-const commandText = (pm, check) => [basename(check.cmd ?? pm).replace(/\.cmd$/i, ''), ...check.args].join(' ');
-
-function exitOf(run) {
-  if (run.timedOut) return 'timeout';
-  return run.error ? 'error' : run.status;
-}
-
-/** Result of one plan for its logged files (see {@link runGate}) plus `entry`, its run-log fields. */
-async function runPlan(dir, plan, deadline) {
-  if (plan.skipped) return { ...NOTHING, timedOut: plan.skipped === SKIPPED.budgetSpent, entry: { outcome: `skipped: ${plan.skipped}`, exit: null, ms: 0 } };
-  const left = deadline - Date.now();
-  if (left <= 0) return runPlan(dir, skip(plan.files, SKIPPED.budgetSpent), deadline);
-  const pm = packageManager(dir);
-  if (plan.shared) seed(plan);
-  const r = await runCheck(pm, plan.check, plan.cwd, left);
-  if (plan.shared) r.timedOut ? rmSync(plan.privateInfo, { force: true }) : publish(plan);
-  const entry = { outcome: `ran: ${commandText(pm, plan.check)}`, exit: exitOf(r), ms: left - (deadline - Date.now()) };
-  if (r.timedOut) return { ...NOTHING, timedOut: true, entry };
-  const rels = plan.files.map((f) => relative(dir, f).replace(/\\/g, '/'));
-  if (r.error) return { ...NOTHING, unparsed: [`${rels[0]}:1 HOOK could not run ${plan.check.name}: ${r.error.message}`], entry };
-  return { ...(r.status === 0 ? NOTHING : judgeOutput(`${r.stdout}\n${r.stderr}`, rels)), entry };
+  if (script && !isBroadScript(script.text)) return [scriptPlan(dir, folders, files, script)];
+  const { plans, rest } = nxPlans(folders, files);
+  return [...plans, ...tsconfigPlans(dir, folders, rest, script ? SKIPPED.broadScript : SKIPPED.noTsconfig)];
 }
 
 // Existing logged files grouped by their package dir: [{ dir, files }]. A file with no package.json above it is out of scope.
 function groupByPackage(files) {
-  const groups = new Map();
-  for (const file of files.filter((f) => existsSync(f))) {
-    const dir = findPackageDir(file);
-    if (dir) groups.set(dir, [...(groups.get(dir) ?? []), file]);
-  }
+  const groups = groupBy(files.filter((f) => existsSync(f) && findPackageDir(f)), findPackageDir);
   return [...groups].map(([dir, group]) => ({ dir, files: group }));
 }
 
-const cut = (lines) => lines.slice(0, MAX_LINES).map((line) => line.slice(0, MAX_LINE_CHARS));
+// Adds one plan's result to what the stop found; a check that timed out at the last stop too is given up, not kept.
+function collect(found, plan, result, timedOutBefore, record) {
+  result.entries.forEach(record);
+  const twice = result.timeoutId !== undefined && timedOutBefore.has(result.timeoutId);
+  if (twice) record({ outcome: GAVE_UP, exit: null, ms: 0 });
+  else if (result.timeoutId !== undefined) found.timeouts.push(result.timeoutId);
+  if (result.timedOut) (twice ? found.gaveUp : found.unchecked).push(...plan.files);
+  if (!twice) found.keep.push(...result.keep);
+  found.lines.push(...result.lines);
+  found.unparsed.push(...result.unparsed);
+}
 
 /**
  * Typechecks every package that has logged files, one after another within the shared budget. Once the budget is gone
@@ -161,94 +140,71 @@ const cut = (lines) => lines.slice(0, MAX_LINES).map((line) => line.slice(0, MAX
  * @param {string[]} files absolute paths of edited files
  * @param {number} deadline epoch ms
  * @param {(entry: {dir: string, outcome: string, exit: number | string | null, ms: number}) => void} [record] called once
- *   per check that ran or was skipped (the run log); nothing is recorded by default
- * @returns {Promise<{timedOut: boolean, lines: string[], unparsed: string[], unchecked: string[]}>} `lines`: real
- *   diagnostics about the logged files (at most 15); `unparsed`: output tail or run error when no diagnostic parsed
- *   (typecheck could not run); `unchecked`: files not checked because the budget ran out
+ *   per run-log line; nothing is recorded by default
+ * @param {Set<string>} [timedOutBefore] ids of the checks that timed out at the last stop (`timeouts` of that result)
+ * @returns {Promise<{timedOut: boolean, lines: string[], unparsed: string[], unchecked: string[], gaveUp: string[], keep: string[], timeouts: string[]}>}
+ *   `lines`: real diagnostics about the logged files (at most 15), kept beside a timeout; `unparsed`: output tail or run
+ *   error when no diagnostic parsed (typecheck could not run); `unchecked`: files not checked because the budget ran out;
+ *   `gaveUp`: files of a check that timed out twice in a row; `keep`: files whose edit-log entries stay
  */
-export async function runGate(files, deadline, record = () => {}) {
-  const found = { lines: [], unparsed: [], unchecked: [] };
+export async function runGate(files, deadline, record = () => {}, timedOutBefore = new Set()) {
+  const found = { lines: [], unparsed: [], unchecked: [], gaveUp: [], keep: [], timeouts: [] };
   for (const { dir, files: group } of groupByPackage(files)) {
     const plans = deadline > Date.now() ? packagePlans(dir, group) : [skip(group, SKIPPED.budgetSpent)];
-    for (const plan of plans) {
-      const { entry, ...result } = await runPlan(dir, plan, deadline);
-      record({ dir, ...entry });
-      if (result.timedOut) found.unchecked.push(...plan.files);
-      found.lines.push(...result.lines);
-      found.unparsed.push(...result.unparsed);
-    }
+    for (const plan of plans) collect(found, plan, await runPlan(dir, plan, deadline), timedOutBefore, (entry) => record({ dir, ...entry }));
   }
-  if (found.unchecked.length) return { ...NOTHING, timedOut: true, unchecked: found.unchecked };
-  return { ...NOTHING, lines: cut(found.lines), unparsed: cut(found.unparsed) };
+  return { ...found, timedOut: found.unchecked.length + found.gaveUp.length > 0, lines: cut(found.lines), unparsed: cut(found.unparsed) };
 }
+
+const named = (files) => `${clean(files.slice(0, MAX_NAMED_FILES).join(', '))}${files.length > MAX_NAMED_FILES ? `, +${files.length - MAX_NAMED_FILES} more` : ''}`;
 
 /**
  * User message for a timed-out gate: names the files that were not checked (at most 10) and asks for a runner typecheck.
  * @param {string[]} unchecked absolute paths
  */
 export function timeoutMessage(unchecked) {
-  const more = unchecked.length > MAX_NAMED_FILES ? `, +${unchecked.length - MAX_NAMED_FILES} more` : '';
-  const named = unchecked.slice(0, MAX_NAMED_FILES).join(', ');
-  return `typecheck gate: timed out, not run for: ${named}${more}. Run a typecheck through the runner agent.`;
+  return `typecheck gate: timed out, not run for: ${named(unchecked)}. Run a typecheck through the runner agent.`;
 }
 
-const lastPath = (logPath) => `${logPath}.last`; // hash + lines of the failure that last blocked a stop
-const shownPath = (logPath) => `${logPath}.shown`; // hash of a failure the user was already shown
-
-function readHash(path) {
-  try {
-    return readFileSync(path, 'utf8').split('\n', 1)[0];
-  } catch {
-    return null; // nothing recorded
-  }
+// What is said about the files this stop did not check: the timeout message, and the files given up after a second timeout.
+function uncheckedNote({ unchecked, gaveUp }) {
+  const stopped = gaveUp.length ? `typecheck gate: timed out twice, no longer checked at a stop: ${named(gaveUp)}. Run a typecheck through the runner agent.` : '';
+  return [unchecked.length ? timeoutMessage(unchecked) : '', stopped].filter(Boolean).join('\n');
 }
 
 const say = (systemMessage) => process.stdout.write(`${JSON.stringify({ systemMessage })}\n`);
 
 // Blocks the stop with `lines` (exit 2) unless the user has seen this exact failure or the agent retried without progress.
-function blockOrReport(lines, logPath, stopHookActive) {
+function blockOrReport(lines, logPath, stopHookActive, note) {
   const text = lines.join('\n');
   const hash = sha256(text);
-  const alreadyShown = hash === readHash(shownPath(logPath));
-  const noProgress = stopHookActive && hash === readHash(lastPath(logPath));
+  const alreadyShown = hash === firstLine(shownPath(logPath));
+  const noProgress = stopHookActive && hash === firstLine(lastPath(logPath));
   if (alreadyShown || noProgress) {
-    if (!alreadyShown) writeFileSync(shownPath(logPath), `${hash}\n`);
-    return say(`typecheck gate: unresolved errors\n${text}`);
+    if (!alreadyShown) replaceRecord(shownPath(logPath), `${hash}\n`);
+    return say([`typecheck gate: unresolved errors\n${text}`, note].filter(Boolean).join('\n'));
   }
-  writeFileSync(lastPath(logPath), `${hash}\n${text}\n`);
-  process.stderr.write(`${text}\n`);
+  replaceRecord(lastPath(logPath), `${hash}\n${text}\n`);
+  process.stderr.write(`${[BLOCK_HEADER, text, note].filter(Boolean).join('\n')}\n`);
   process.exitCode = 2;
 }
 
 /**
- * Applies a gate result. Pass, timeout and "typecheck could not run" clear the log (a message goes to the user for the
- * last two); real diagnostics block the stop (exit 2) unless this exact failure was already shown or the agent retried
- * with no progress, in which case the user gets the lines as a message and the hash is remembered as shown.
- * @param {{timedOut: boolean, lines: string[], unparsed: string[], unchecked: string[]}} result from {@link runGate}
+ * Applies a gate result. The edit log keeps only `result.keep`. Real diagnostics block the stop (exit 2), with the timeout
+ * note under them, unless this exact failure was already shown or the agent retried with no progress: then the user gets
+ * the lines as a message and the hash is remembered as shown. Without diagnostics the user is told about a timeout, a
+ * given-up check and a typecheck that could not run, and the failure records are cleared.
+ * @param {object} result from {@link runGate}
  * @param {string} logPath edit log of this agent
  * @param {boolean} stopHookActive input `stop_hook_active`
  */
 export function decideExit(result, logPath, stopHookActive) {
-  if (result.lines.length && !result.timedOut) return blockOrReport(result.lines, logPath, stopHookActive);
-  if (result.timedOut) say(timeoutMessage(result.unchecked));
-  else if (result.unparsed.length) say(`typecheck gate: no diagnostics for the edited files, typecheck may not run\n${result.unparsed.join('\n')}`);
-  for (const file of [logPath, lastPath(logPath), shownPath(logPath)]) rmSync(file, { force: true });
-}
-
-/** @returns {string} where the run log is: CLAUDE_TYPECHECK_LOG or ~/.claude/logs/typecheck-gate.jsonl */
-export const runLogPath = (env = process.env) => env.CLAUDE_TYPECHECK_LOG || RUN_LOG_FILE;
-
-// The `record` of runGate for this session and agent (both already checked as safe ids by editLogPath): appends one line.
-function runLogWriter(session, agent) {
-  return (entry) => {
-    try {
-      const path = runLogPath();
-      mkdirSync(dirname(path), { recursive: true, mode: RUN_LOG_DIR_MODE });
-      appendPlainFile(path, `${JSON.stringify({ ts: new Date().toISOString(), session, agent, ...entry })}\n`, { maxBytes: MAX_RUN_LOG_BYTES });
-    } catch {
-      // the log is best effort: a link, a FIFO or an unwritable folder at its path must never change the gate's decision
-    }
-  };
+  keepRecords(logPath, result);
+  const note = uncheckedNote(result);
+  if (result.lines.length) return blockOrReport(result.lines, logPath, stopHookActive, note);
+  const cannotRun = result.unparsed.length ? `typecheck gate: no diagnostics for the edited files, typecheck may not run\n${result.unparsed.join('\n')}` : '';
+  if (note || cannotRun) say([note, cannotRun].filter(Boolean).join('\n'));
+  for (const file of [lastPath(logPath), shownPath(logPath)]) rmSync(file, { force: true });
 }
 
 async function readStdin() {
@@ -264,16 +220,15 @@ async function main() {
   } catch {
     return; // not hook JSON: nothing to check
   }
-  if (typecheckAtEdit()) return;
   const logPath = editLogPath(input?.session_id, input?.agent_id);
-  const files = logPath ? readEdits(logPath) : [];
+  if (!logPath) return;
+  const write = runLogWriter(input.session_id, input.agent_id ?? MAIN_AGENT);
+  const skipAll = (dirs, reason) => dirs.forEach((dir) => write({ dir, outcome: `skipped: ${reason}`, exit: null, ms: 0 }));
+  if (typecheckAtEdit()) return skipAll([typeof input.cwd === 'string' ? input.cwd : ''], SKIPPED.atEdit); // post-edit logs no edits in this mode
+  const files = readEdits(logPath);
   if (!files.length) return;
-  const record = runLogWriter(input.session_id, input.agent_id ?? MAIN_AGENT);
-  if (!skipFilter(process.env[SKIP_ENV])('typecheck')) {
-    for (const { dir } of groupByPackage(files)) record({ dir, outcome: `skipped: ${SKIPPED.skipEnv}`, exit: null, ms: 0 });
-    return; // opted out: the edit log stays as it is
-  }
-  decideExit(await runGate(files, Date.now() + BUDGET_MS, record), logPath, input.stop_hook_active === true);
+  if (!skipFilter(process.env[SKIP_ENV])('typecheck')) return skipAll(groupByPackage(files).map((group) => group.dir), SKIPPED.skipEnv); // opted out: the edit log stays
+  decideExit(await runGate(files, Date.now() + BUDGET_MS, write, readTimeouts(logPath)), logPath, input.stop_hook_active === true);
 }
 
 // ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.
