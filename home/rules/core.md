@@ -9,9 +9,9 @@ C7 | Depend on interfaces at real boundaries (an external system, a second imple
 C8 | Comments say why, not what; delete dead code | eslint, knip
 C9 | Never swallow errors; no empty catch; fail fast | eslint, grep
 C10 | Validate all external input at the boundary with a schema | grep, rev
-C11 | New logic ships with a test that fails without it; new behaviour gets acceptance tests from the spec before the code; a bug fix starts with a failing repro | rev
-C12 | Before done, run the checks the owner asked for; list the rest as "not run" | rev
-C13 | Never weaken checks: no ts-ignore, eslint-disable, skip, only; a silenced check hides the defect it exists to catch | grep diff
+C11 | With `test` on (/check): new logic ships with a test that fails without it; new behaviour gets acceptance tests from the spec before the code; a bug fix starts with a failing repro. Off: the spec's acceptance lines come first and the reply says "not checked: test" | rev
+C12 | Before done, run the checks the owner asked for: the categories he turned on with /check; list the rest as "not checked: <categories>" | rev
+C13 | Never weaken checks: no ts-ignore, eslint-disable, skip, only; a silenced check hides the defect it exists to catch (a category left off by /check is not run and is named "not checked", never silenced in the code) | grep diff
 C14 | Add no dependency unless needed; verify it exists | audit
 C15 | No secrets in code, logs or commits | gitleaks
 C16 | Small atomic Conventional Commits after every green step; never end a turn or an agent run with uncommitted work (commit-gate blocks it) | commitlint, commit-gate
@@ -27,7 +27,7 @@ C24 | Delegated work returns <=300 words with file:line evidence; a smaller cap 
 C25 | One task per session; compact at a natural seam, never stop a run for context size | usage
 C26 | Every source file you create or substantially edit opens with a header comment (purpose, exports, invariants); a folder of 3+ files has a README | rev
 C27 | Public functions and types you create or substantially edit have doc comments (what, why, args, returns, errors); TODO(ref): reason | rev
-C29 | Done means fresh evidence: verify commands ran; no test deleted, skipped, `.only` or weakened (only a test's wording may change, with the reason in the commit body) | verify-done, pre-commit
+C29 | Done means fresh evidence for the categories on: verify commands ran; no test deleted, skipped, `.only` or weakened (only a test's wording may change, with the reason in the commit body); the categories off are named "not checked" | verify-done, pre-commit (with `test` on)
 C30 | Bash for the guard: write the command word out (no `$VAR` as the command) and secrets via env or file; when the guard bounces a command it gives the fix or the advice: send the fix, follow the advice (an unanswered ask stalls a run up to 2 min) | guard log
 C31 | Human-first: a developer with no AI can find, read, run and change it; of two designs with the same result take the easier to read; never trade away scope, accuracy or a performance target for it | rev
 C32 | New files and folders follow the language or framework's standard layout and are named for what they hold; no new misc/utils/common folders; in an existing repo follow its layout (C17) | readable, rev

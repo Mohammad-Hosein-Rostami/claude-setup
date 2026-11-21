@@ -20,18 +20,27 @@ agent file and the caller's prompt.
   every account (owner, 2026-11-19); a headless run names a non-Fable model, since a `-p` run on Fable would bill them.
 - Work with a `STATUS.md`: every owner request and every owner correction becomes `## Work items` rows before work on it starts. Row edits go through `node ~/.claude/tools/status/status.mjs add|start|done|deliver|rule|decision` only, never a typed time; its help and `add` output give the row rules. Every estimate you give is the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` pasted as-is, never a number or clock time of your own; if it refuses, give its reason, and do its What to do and any `Check:` line first.
 
-## Quality gates (every mode)
+## Quality gates (every mode): off unless the owner turns them on
 
-- After a change, run the checks that cover it through `runner` (targeted tests, typecheck, lint) once, after the last
-  edit, not after each step. `verify-done` reuses that run when no file changed after it.
-- Reviews: run the set `review-tier` prints (`reviewer`, plus `security-auditor` and Opus lenses by class) and follow its `steps:` line (agents or the review workflow, the fix round's delta brief, security findings never dropped). UI: `ui-quality-pass`. Then `verify-done`.
+- Checks run only in the categories the owner turned on with `/check` (owner, 2026-11-21: "make them disable by default and only and
+  only use them if i specificly ask for it"): `test`, `types`, `review`, `ui`, `probe` (`home/checks/categories.json`). A Figma link
+  or "pixel perfect" does not turn `ui` on. Always on, never a category: gitleaks at commit, the Bash guard, `node --check` of
+  changed hook files.
+- `test` / `types` on: after a change, run the checks that cover it through `runner` (targeted tests, typecheck, lint) once, after the
+  last edit, not after each step. `verify-done` reuses that run when no file changed after it.
+- `review` on: run the set `review-tier` prints (`reviewer`, plus `security-auditor` and Opus lenses by class) and follow its `steps:`
+  line (agents or the review workflow, the fix round's delta brief, security findings never dropped). `ui` on: `ui-quality-pass`,
+  then `visual-qa`. Then `verify-done` for the categories on.
+- Off, build carefully: exact interfaces and acceptance lines in the spec before writing; small lanes on one file set; read the code
+  and the installed docs before editing; the writer re-reads its own diff against the spec once; strict types. The final reply
+  says `not checked: <categories off>`.
 
 ## Skill routing (UI)
 
 Invoke these with the Skill tool before writing code, in every project; a `skill-router` hook names them per prompt.
 
-- Any UI code: `accessibility-build` + `responsive-ui` while building; `ui-quality-pass` before saying done.
-- Figma link/frame/node: `figma-pixel-perfect` first (its UI brief template); the UI lane runs the `ui-check run` loop, then `visual-qa` runs the final gate on the tree that lands (only its PASS counts).
+- Any UI code: `accessibility-build` + `responsive-ui` while building; with `ui` on, `ui-quality-pass` before saying done.
+- Figma link/frame/node: `figma-pixel-perfect` first (its UI brief template); with `ui` on, the UI lane runs the `ui-check run` loop, then `visual-qa` runs the final gate on the tree that lands (only its PASS counts).
 - Inputs/forms: `forms-validation`. Screens with server data: `async-ui-states`. Dates: `datetime-handling`.
 - A UI task with more than one component, any Figma work or an "all screens" request: `ui-coverage` first.
 - A project skill with the same purpose whose `paths:` match the files is preferred (e.g. `design-parity`); a personal skill with the
@@ -73,7 +82,7 @@ global setup combines with it.
 - Owner decisions (scope, money, irreversible, credentials, a product fact the repo lacks such as length, timer, role, copy, brand
   name or design system vs local, real trade-offs): the lead asks them (lead rules), an agent posts them as "Agents (workers)" says.
   Technical choices: pick the default, say so in one line.
-- Final answers: what changed and what was not run. No recap of the process. A command the owner must run is given with the machine (MacBook, PC or server) and the folder it runs in.
+- Final answers: what changed, what was not run, and `not checked: <categories off>`. No recap of the process. A command the owner must run is given with the machine (MacBook, PC or server) and the folder it runs in.
 
 ## Working method (quality)
 
@@ -84,8 +93,8 @@ global setup combines with it.
 - An owner rule of the form "every/all X gets Y" is applied by a search that lists every X (the count goes in the report), not by fixing the examples seen.
 - Fix root causes, not symptoms; never silence a check to make it pass.
 - Say "verified" only for what you ran; never imply a check passed that was not run.
-- Smallest change that solves the request: no new modules or refactors beyond the task; new logic still ships with a
-  test (C11). Diagnose by reading code before experimenting.
+- Smallest change that solves the request: no new modules or refactors beyond the task; with `test` on, new logic still
+  ships with a test (C11). Diagnose by reading code before experimenting.
 - Docs as C26, C27 and C34 require, in proportion to the change. Project documents are written for people; only the
   team's own AI config (CLAUDE.md, `.claude/`, see Project config layers) may mention AI.
 - AI work notes (STATUS.md, HANDOFF.md) may sit in a project but are never committed (hide them with
@@ -109,7 +118,7 @@ over a line here, and an agent file names the lines that do not fit it (`runner`
   the brief or your hand-over note before the next edit, because the task message comes back summarised.
 - Writers: read the spec first and do not redesign it; follow the project's CLAUDE.md and AGENTS.md rules (they load
   automatically); make the smallest diff that satisfies the acceptance checks; edit existing files over creating new ones.
-- Tests in a lane: only those related to the changed files (the repo's related-tests command, `vitest related --run <files>`,
+- Tests in a lane (only with `test` on; off, run none and say `not checked: test`): only those related to the changed files (the repo's related-tests command, `vitest related --run <files>`,
   `jest --findRelatedTests <files>`, or the nearest test file), with a terse reporter (`node --test --test-reporter=dot`,
   `vitest --reporter=dot`) so a green run costs one line of context. Never run the full suite inside a lane: the review runs it
   once, at the tip. In a JS/TS package with a `typecheck` script, do not run the whole-project typecheck yourself: the typecheck
@@ -120,9 +129,9 @@ over a line here, and an agent file names the lines that do not fit it (`runner`
   note in the scratchpad, so a dropped connection loses little.
 - Budget: if the brief is still unfinished after about 120 tool calls or the 2nd compaction, stop and return a status (done, left,
   next step).
-- Before returning, try to break your own work and report what you tried: feed a check or gate inputs that must fail; run a
+- Before returning, re-read your diff against the spec once; with a check category on, also try to break your own work and report what you tried: feed a check or gate inputs that must fail; run a
   detector on ordinary inputs and count false alarms; for shared code, run its callers' tests (`vitest related` /
-  `jest --findRelatedTests` find them). The independent review still runs; your aim is that it finds little.
+  `jest --findRelatedTests` find them). With `review` on the independent review still runs; your aim is that it finds little.
 - Claim audit: before the report, check each progress claim against a tool result from this run; a claim with no such result
   goes under "Not run", never under done.
 - Human-first (C31-C36, `~/.claude/standards/readability.md`): plain names and no single-use abstraction in what you add; leave old
