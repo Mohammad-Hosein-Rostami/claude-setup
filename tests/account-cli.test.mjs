@@ -33,7 +33,7 @@ test('add: the pasted export line is accepted, checked with one Haiku call on th
   const run = account(box, ['add', 'work'], { input: `export CLAUDE_CODE_OAUTH_TOKEN="${TOKEN_A}"\n` });
   assert.equal(run.status, EXIT.ok, run.stderr);
   assert.ok(!shown(run).includes(TOKEN_A));
-  assert.match(run.stdout, /stored account work: valid/);
+  assert.match(run.stdout, /added account work: valid/);
   assert.deepEqual(filesHolding(box.dir, TOKEN_A), [join(box.storeDir, 'work.token')]);
   const calls = box.claudeCalls();
   assert.deepEqual([calls.length, calls[0].tokenHash], [1, tokenHash(TOKEN_A)]);
@@ -58,7 +58,7 @@ test('add: a check that fails for another reason (a usage limit) stores the toke
   const box = sandbox(t, { claudeMode: 'limit' });
   const run = account(box, ['add', 'work'], { input: `${TOKEN_A}\n` });
   assert.equal(run.status, EXIT.ok, run.stderr);
-  assert.match(run.stdout, /stored account work: check failed: limit/);
+  assert.match(run.stdout, /^added account work, NOT verified \(limit\); run claude-account check work later$/m);
   assert.equal(box.claudeCalls().length, 1, 'one call, no second attempt');
 });
 
@@ -140,11 +140,12 @@ test('default, plan and credits-off: recorded for a stored account, refused for 
   account(box, ['add', 'work'], { input: `${TOKEN_A}\n` });
   assert.equal(account(box, ['default', 'work']).status, EXIT.ok);
   assert.equal(readRegistry(box.env).default, 'work');
+  assert.equal(account(box, ['default']).stdout, 'work\n', 'with no name it prints the default');
   assert.match(account(box, ['list']).stdout, /default/);
   assert.equal(account(box, ['default', 'none']).status, EXIT.ok);
   assert.equal(readRegistry(box.env).default, null);
   for (const args of [['default', 'nobody'], ['plan', 'nobody', 'max'], ['credits-off', 'nobody']]) assert.equal(account(box, args).status, EXIT.unknown, args.join(' '));
-  for (const args of [['plan', 'work', 'free'], ['plan', 'work'], ['default'], ['nonsense'], []]) assert.equal(account(box, args).status, EXIT.usage, args.join(' '));
+  for (const args of [['plan', 'work', 'free'], ['plan', 'work'], ['default', 'a', 'b'], ['nonsense'], []]) assert.equal(account(box, args).status, EXIT.usage, args.join(' '));
 });
 
 test('check: one Haiku call per account on its own token; a revoked account is reported, recorded and exits 1', (t) => {

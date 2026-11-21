@@ -2,10 +2,12 @@
 // Purpose: the account tool behind the shell functions `claude-account` and `claude-as` (home/shell/claude-as.sh):
 // one login token per account in the system's secure store, names and non-secret fields in accounts.json.
 // Usage: account.mjs list | names | add <name> | once | token <name> | remove <name> | check [name]
-//                    | default <name>|none | plan <name> pro|max|ultra | credits-off <name>
+//                    | default [<name>|none] | plan <name> pro|max|ultra | credits-off <name>
 //   add   reads one pasted line from stdin (the token or the whole export line), checks it with one Haiku call, stores it
 //   once  reads the same from stdin, checks it and prints the token (for `claude-as --once`); stores nothing
 //   token prints the stored token: the only other command that prints one
+//   add   says `added` or `replaced`, and a check that failed for another reason than revoked: stored, NOT verified
+//   default with no name prints the default account (the shell start-up reads it this way, with the file checks here)
 // Invariants: a token is never an argument (one that looks like a token is refused), never in a message, a log or a
 // usage row; `token` and `once` refuse a terminal as output and a session of Claude (CLAUDECODE set: their output
 // would enter a transcript), `add` refuses a terminal as input and a session of Claude.
@@ -19,7 +21,9 @@ import { readRegistry } from './lib/registry.mjs';
 import { openStore } from './lib/store.mjs';
 
 const EXIT = { ok: 0, refused: 1, usage: 2, unknown: 3, wrongPlace: 4 };
-const USAGE = 'usage: claude-account list | add <name> | remove <name> | check [name] | default <name>|none | plan <name> pro|max|ultra | credits-off <name>';
+const USAGE = 'usage: claude-account list | add <name> | remove <name> | check [name] | default [<name>|none] | plan <name> pro|max|ultra | credits-off <name>';
+// The word that clears the default, so it is never an account name (review 1, R22).
+const NO_DEFAULT = 'none';
 const KIND_EXIT = { name: EXIT.usage, usage: EXIT.usage, unknown: EXIT.unknown };
 const STDIN = 0;
 const STDOUT = 1;
@@ -52,6 +56,33 @@ async function checkedPaste(name, env) {
   return { token, result };
 }
 
+/**
+ * The line `add` prints. A check that failed for another reason than revoked (a limit, a timeout, no network) still
+ * stores the token, and says so plainly (lead's decision on review 1, R17).
+ * @param {string} name the account. @param {'added' | 'replaced'} how what `addAccount` did. @param {string} result the check.
+ */
+function storedLine(name, how, result) {
+  if (result === CHECK_VALID) return `${how} account ${name}: valid`;
+  return `${how} account ${name}, NOT verified (${result.replace(/^check failed: /, '')}); run claude-account check ${name} later`;
+}
+
+async function addCommand(name, env) {
+  assertName(name);
+  if (name === NO_DEFAULT) throw new AccountError('name', `"${NO_DEFAULT}" is reserved (claude-account default ${NO_DEFAULT} clears the default); pick another name`);
+  const { token, result } = await checkedPaste(name, env);
+  console.log(storedLine(name, addAccount(name, token, { env, checked: result }), result));
+}
+
+function defaultCommand(name, env) {
+  if (name === undefined) {
+    const current = readRegistry(env).default;
+    if (current) console.log(current);
+    return;
+  }
+  setDefault(name === NO_DEFAULT ? null : name, { env });
+  console.log(name === NO_DEFAULT ? 'no default account' : `default account: ${name}`);
+}
+
 function listLine(row) {
   const where = row.inThisTerminal === 'yes' ? '  [this terminal]' : row.inThisTerminal === 'name only' ? '  [named here, but this shell holds another token]' : '';
   const checked = row.checked ? `${row.checked.result} (checked ${row.checked.at.slice(0, 10)})` : 'not checked';
@@ -77,12 +108,12 @@ async function checkAccounts(name, env) {
 const COMMANDS = {
   list: { args: 0, run: (_, env) => { const rows = listAccounts({ env }); console.log(rows.length ? rows.map(listLine).join('\n') : 'no accounts stored. Add one: claude-as <name>'); } },
   names: { args: 0, run: (_, env) => { process.stdout.write(Object.keys(readRegistry(env).accounts).sort().map((name) => `${name}\n`).join('')); } },
-  add: { args: 1, run: async ([name], env) => { assertName(name); const { token, result } = await checkedPaste(name, env); addAccount(name, token, { env, checked: result }); console.log(`stored account ${name}: ${result}`); } },
+  add: { args: 1, run: ([name], env) => addCommand(name, env) },
   once: { args: 0, run: async (_, env) => { refuseScreen(env); const { token } = await checkedPaste(null, env); process.stdout.write(`${token}\n`); } },
   token: { args: 1, run: ([name], env) => { refuseScreen(env); const token = openStore(env).get(assertName(name)); if (token === null) throw new AccountError('unknown', `no account named ${name}`); process.stdout.write(`${token}\n`); } },
   remove: { args: 1, run: ([name], env) => { if (!removeAccount(name, { env })) throw new AccountError('unknown', `no account named ${name}`); console.log(`removed account ${name}`); } },
   check: { args: [0, 1], run: ([name], env) => checkAccounts(name, env) },
-  default: { args: 1, run: ([name], env) => { setDefault(name === 'none' ? null : name, { env }); console.log(name === 'none' ? 'no default account' : `default account: ${name}`); } },
+  default: { args: [0, 1], run: ([name], env) => defaultCommand(name, env) },
   plan: { args: 2, run: ([name, plan], env) => { setPlan(name, plan, { env }); console.log(`${name}: plan ${plan}`); } },
   'credits-off': { args: 1, run: ([name], env) => { setCreditsOff(name, { env }); console.log(`${name}: usage credits off (owner said)`); } },
 };
