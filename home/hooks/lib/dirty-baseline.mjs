@@ -1,9 +1,11 @@
 // The dirty files of a worktree at the first tool call of a session or agent, for commit-gate.mjs: files a Bash command makes or changes
 // (heredoc, sed -i, codegen, a formatter, git mv) leave no Edit/Write record, so at a stop the gate compares the worktree with this baseline.
-// Exports: hasBaseline(env, session, agent), saveBaseline(env, session, agent, top, entries) -> boolean,
-// changedSinceBaseline(env, session, agent, top, entries) -> entries.
+// Exports: hasBaseline(env, session, agent), saveBaseline(env, session, agent, top, entries, head) -> boolean,
+// changedSinceBaseline(env, session, agent, top, entries) -> entries, baselineOf(env, session, agent) -> {top, head, takenMs} | null.
 // Store: ~/.claude/state/commit-gate/baseline/<session>--<agent or "lead">.json through lib/session-store.mjs (lstat-checked, 0600):
-// {"top": real worktree path or null (no worktree to gate), "files": {path: stamp}} or {"top", "overflow": true} past MAX_ENTRIES.
+// {"top": real worktree path or null (no worktree to gate), "files": {path: stamp}} or {"top", "overflow": true} past MAX_ENTRIES, plus
+// "head" (the HEAD sha then, or null) and "takenMs" (the hook's clock then). A baseline written before round 9 has neither: the gate then
+// treats every Bash-made entry as own and counts no committed file (commit-gate.mjs, lib/change-owner.mjs).
 // A stamp is the sha256 of a regular file's first HASH_MAX_BYTES (read without following a link or blocking on a FIFO), "link:<target>",
 // "dir" for an untracked folder git lists as one entry, "<size>:<mtime>" for anything else, or "gone".
 // Invariants: never throws; the first baseline of a (session, agent) is kept, later calls change nothing; no baseline, another worktree
@@ -52,14 +54,16 @@ export function hasBaseline(env, session, agent) {
 /**
  * Stores the baseline once: the stamps of the dirty entries of worktree `top` (null: no worktree to gate, so nothing to compare).
  * @param {{path: string}[]} entries the dirty entries (real paths) from `git status`
+ * @param {string | null} [head] the HEAD sha of the worktree now (null: none or unknown)
  * @returns {boolean} true when stored now; false when a baseline exists, the id is bad or the store is unusable
  */
-export function saveBaseline(env, session, agent, top, entries) {
+export function saveBaseline(env, session, agent, top, entries, head = null) {
   const id = baselineId(session, agent);
   if (!isSessionId(id) || hasBaseline(env, session, agent)) return false;
+  const stamp = { top, head: typeof head === 'string' && head !== '' ? head : null, takenMs: Date.now() };
   const record = entries.length > MAX_ENTRIES
-    ? { top, overflow: true }
-    : { top, files: Object.fromEntries(entries.map(({ path }) => [path, stampOf(path)])) };
+    ? { ...stamp, overflow: true }
+    : { ...stamp, files: Object.fromEntries(entries.map(({ path }) => [path, stampOf(path)])) };
   return writeSessionFile(baselineDir(env), id, JSON.stringify(record));
 }
 
@@ -77,5 +81,22 @@ export function changedSinceBaseline(env, session, agent, top, entries) {
     return entries.filter(({ path }) => !Object.hasOwn(record.files, path) || record.files[path] !== stampOf(path));
   } catch {
     return []; // a damaged baseline: only recorded files count
+  }
+}
+
+/**
+ * The baseline's worktree, HEAD sha and time, for the size check and the ownership rules of commit-gate.mjs.
+ * @returns {{top: string | null, head: string | null, takenMs: number | null} | null} null with no readable baseline
+ */
+export function baselineOf(env, session, agent) {
+  try {
+    const id = baselineId(session, agent);
+    const text = isSessionId(id) ? readSessionFile(baselineDir(env), id, MAX_STORE_BYTES) : null;
+    const record = typeof text === 'string' ? JSON.parse(text) : null;
+    if (record === null || typeof record !== 'object') return null;
+    const head = typeof record.head === 'string' ? record.head : null;
+    return { top: typeof record.top === 'string' ? record.top : null, head, takenMs: Number.isFinite(record.takenMs) ? record.takenMs : null };
+  } catch {
+    return null;
   }
 }
