@@ -333,6 +333,18 @@ test('no baseline (no tool call seen, or another worktree) keeps the old rule: o
   assert.equal(stop(dir), null);
 });
 
+// The baseline of another worktree has another HEAD whenever the two repos differ (two commits in different seconds differ too), and the
+// size check must not read that HEAD as a move of this worktree's branch: it would ask git for files added since a commit it never saw.
+test('a baseline taken in another worktree with another HEAD is not used (no move, nothing on stderr)', () => {
+  const { stop, toolCall } = gateSession();
+  const dir = makeRepo();
+  const other = makeRepo();
+  commit(other, 'extra.txt', 'a second commit, so this HEAD can never equal the other repo\'s');
+  toolCall(other);
+  writeFileSync(join(dir, 'made-by-bash.txt'), 'x');
+  assert.equal(stop(dir), null);
+});
+
 // Audit of db40977 (M5): on a case-insensitive disk (APFS, NTFS) an Edit through SRC/A.ts kept the typed case and never matched git's src/a.ts.
 test('an edit recorded through a path in another case still counts on a case-insensitive disk', (t) => {
   const { stop, write } = gateSession();
