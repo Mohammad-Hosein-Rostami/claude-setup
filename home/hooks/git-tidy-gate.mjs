@@ -41,6 +41,7 @@ import { MERGE_COMMIT, OPEN_LANE, PRUNE_KINDS, runCheckChild, UNLANDED } from '.
 import { parseWorkItems } from '../tools/estimate/lib/items.mjs';
 import { isAgentBranch } from '../tools/git-tidy/lib/copies.mjs';
 import { readStatusFile } from '../tools/status/status-file.mjs';
+import { countedGate } from './lib/stop-block-count.mjs';
 
 const PASS = Object.freeze({ block: false });
 const CHECK_TIMEOUT_MS = 4000; // a Stop hook must answer fast; a slower check is finished by the detached refresh
@@ -260,7 +261,7 @@ async function main() {
     if (lines.length > 0) process.stdout.write(`${lines.join('\n')}\n`);
     return;
   }
-  const result = await decide(input);
+  const result = await countedGate('git-tidy-gate', input, () => decide(input)); // lib/stop-block-count.mjs: the cap record
   if (result.block) process.stdout.write(`${JSON.stringify({ decision: 'block', reason: result.reason })}\n`);
   else if (result.info !== undefined) process.stdout.write(`${JSON.stringify({ systemMessage: result.info })}\n`);
 }

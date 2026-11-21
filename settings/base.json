@@ -3,7 +3,8 @@
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000",
     "BASH_DEFAULT_TIMEOUT_MS": "300000",
-    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-5-5"
+    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-5-5",
+    "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": "8"
   },
   "permissions": {
     "allow": [

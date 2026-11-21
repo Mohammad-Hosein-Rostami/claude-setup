@@ -48,6 +48,7 @@ import { readSessionFile, writeSessionFile } from './lib/session-store.mjs';
 import { baselineOf, changedSinceBaseline, hasBaseline, saveBaseline } from './lib/dirty-baseline.mjs';
 import { oversizeNewFiles, sizeReason, unlistedFiles } from './lib/new-file-size.mjs';
 import { changedOutsideScratch, isHeldReadOnly, readOnlyReason } from './lib/read-only-hold.mjs';
+import { countedGate } from './lib/stop-block-count.mjs';
 import { LEAD, isRecordedEntry, realPathOf, recordEditedFile, recordedPaths, statusEntries } from './lib/own-edits.mjs';
 import { gatedFolder, gitOut, gitSucceeds, gitText, namesFilterProgram, readHead, worktreeOf } from './lib/gated-folder.mjs';
 import { statusFileOf } from './lib/status-file-of.mjs';
@@ -282,7 +283,7 @@ async function main() {
   recordCallEdge(input); // the call-window log; a Stop or SubagentStop writes its `quiet` line before the decision
   if (event === 'PostToolUse' && FILE_TOOLS.has(input.tool_name)) recordEditedFile(input); // the settings matcher did this until round 9
   if (event !== 'Stop' && event !== 'SubagentStop') return;
-  const result = decide(input);
+  const result = await countedGate('commit-gate', input, () => decide(input)); // lib/stop-block-count.mjs: the cap record
   if (result.block) process.stdout.write(`${JSON.stringify({ decision: 'block', reason: result.reason })}\n`);
 }
 

@@ -7,6 +7,7 @@
 // session is never trapped. Env ASK_GATE_LOG appends one JSON line per run (debug and E2E evidence).
 import { appendFileSync, closeSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { countedGate } from './lib/stop-block-count.mjs';
 
 const MAX_TRANSCRIPT_BYTES = 20 * 1024 * 1024;
 const MIN_ITEMS_ALONE = 3;
@@ -263,6 +264,11 @@ async function readStdin() {
 
 async function main() {
   const input = JSON.parse(await readStdin());
+  await countedGate('ask-gate', input, () => stopDecision(input)); // lib/stop-block-count.mjs: the cap record
+}
+
+/** Reads the transcript, decides, logs and prints the block; true when it blocked. */
+function stopDecision(input) {
   let entries = [];
   if (typeof input?.transcript_path === 'string' && input.transcript_path) {
     try {
@@ -278,6 +284,7 @@ async function main() {
     ...result,
   });
   if (result.block) process.stdout.write(`${JSON.stringify({ decision: 'block', reason: REASON })}\n`);
+  return result.block;
 }
 
 // ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.

@@ -69,6 +69,9 @@ Other hooks:
 - `writer-agents.mjs`: which agent types write files (agent files' `tools:` line), and the record of a session's running writers that
   `agent-model-guard.mjs` writes on launch (with the `isolated` and `readOnly` flags) and `agent-budget.mjs` ends on SubagentStop;
   `commit-gate.mjs` uses its agent-file check and its read-only brief and launch checks.
+- `stop-block-count.mjs`: the stop-block counter every blocking Stop/SubagentStop gate calls once (`countedGate`): counts blocks in a row per
+  session and agent, resets on a tool call (`markToolCall` from `agent-budget.mjs`), records `gate overridden` past the cap and
+  `gate crashed or timed out`; read by `scripts/doctor.sh` and `workflow-resume-notice.mjs`.
 - `read-only-hold.mjs`: whether a stopping subagent is held to its `read-only:` / `scratchpad-only:` brief, which of its recorded files
   lie outside the temp and scratchpad roots, and the block reason; used by `commit-gate.mjs`.
 - `gate-routes.mjs`: the prompt patterns and lines of the skill router's gate routes (bug, done, restructure, git history, repeated report); used by `skill-router.mjs`.

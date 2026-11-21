@@ -1,6 +1,8 @@
 // SessionStart(startup|resume|compact): tells the lead which workflow runs did not finish (a killed process, a usage-limit stop, an account
 // switch) and how to continue each: Workflow({scriptPath, resumeFromRunId}) in the same session, `wf-resume.mjs adopt` first in another one.
 // The registry (workflow-register.mjs) and the run folders hold the facts; tools/wf-resume/lib/notice.mjs builds the text.
+// It also lists the Stop-gate records (`gate overridden`, `gate crashed or timed out`) the last notice did not show
+// (lib/stop-block-count.mjs recordsNotice, which first records gate runs that never returned).
 // Exports: noticeForInput(input, deps) -> string.
 // Invariants: prints nothing for any other source, for a subagent (`agent_id`) or for input that is not a SessionStart JSON; never fails the
 // session start (any error prints nothing, exit 0); output is bounded and carries no prompt text or args.
@@ -9,6 +11,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isSessionId } from './lib/session-store.mjs';
+import { recordsNotice } from './lib/stop-block-count.mjs';
 import { stateDir as estimateStateDir } from '../tools/estimate/lib/table-store.mjs';
 import { resumeNotice } from '../tools/wf-resume/lib/notice.mjs';
 import { defaultRegistryDir } from '../tools/wf-resume/lib/registry.mjs';
@@ -39,10 +42,14 @@ async function main() {
     chunks.push(chunk);
   }
   const projectsRoot = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects');
-  const text = noticeForInput(JSON.parse(Buffer.concat(chunks).toString('utf8')), {
+  const input = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  const text = noticeForInput(input, {
     registryDir: defaultRegistryDir(), projectsRoot, estimateStateDir: estimateStateDir(), projectDir: process.env.CLAUDE_PROJECT_DIR, nowMs: Date.now(),
   });
-  if (text !== '') console.log(text);
+  const leadStart = input !== null && typeof input === 'object' && !input.agent_id && SOURCES.has(input.source);
+  const stops = leadStart ? recordsNotice(process.env) : '';
+  const lines = [text, stops].filter((part) => part !== '');
+  if (lines.length > 0) console.log(lines.join('\n'));
 }
 
 // ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.

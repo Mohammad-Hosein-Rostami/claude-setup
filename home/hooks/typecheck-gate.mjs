@@ -37,6 +37,7 @@ import { nxProjectFolder, nxTypecheck } from './lib/typecheck-nx.mjs';
 import { SKIPPED, incrementalTypecheck, nearestTsconfig, projectBin, projectFolders, readJsonFile, tsconfigTypecheck, typescriptMajor } from './lib/typecheck-plan.mjs';
 import { firstLine, keepRecords, lastPath, readTimeouts, replaceRecord, runLogWriter, shownPath } from './lib/typecheck-records.mjs';
 import { runPlan } from './lib/typecheck-run.mjs';
+import { countedGate } from './lib/stop-block-count.mjs';
 import { SKIP_ENV, findPackageDir, isBroadScript, skipFilter, typecheckAtEdit, typecheckScript } from './post-edit.mjs';
 
 export { incrementalTypecheck, typescriptMajor } from './lib/typecheck-plan.mjs';
@@ -222,6 +223,15 @@ async function main() {
   } catch {
     return; // not hook JSON: nothing to check
   }
+  // lib/stop-block-count.mjs: the start mark and the cap record; decideExit blocks by exit code 2
+  await countedGate('typecheck-gate', input, async () => {
+    await typecheckStop(input);
+    return process.exitCode === 2;
+  });
+}
+
+/** The gate run for one Stop or SubagentStop input (the steps of the header). */
+async function typecheckStop(input) {
   const logPath = editLogPath(input?.session_id, input?.agent_id);
   if (!logPath) return;
   const write = runLogWriter(input.session_id, input.agent_id ?? MAIN_AGENT);

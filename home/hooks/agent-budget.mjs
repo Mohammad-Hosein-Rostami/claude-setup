@@ -30,6 +30,7 @@ import { checkedTempRoot } from './lib/edit-log.mjs';
 import { overCap, parseCap } from './lib/reply-cap.mjs';
 import { isReadOnlyCommand } from './lib/read-only-command.mjs';
 import { contextTokens } from './lib/transcript.mjs';
+import { countedGate, markToolCall } from './lib/stop-block-count.mjs';
 import { callCounterPath, recordWriterStart, recordWriterStop } from './lib/writer-agents.mjs';
 
 // The agent files (implementer, ui-implementer, test-writer) and the lead rules say "about 120 tool calls"; a test keeps them equal.
@@ -260,26 +261,33 @@ async function main() {
   if (input?.hook_event_name === 'PreToolUse') {
     process.stdout.write(await leadBashDeny(input));
   } else if (input?.hook_event_name === 'PostToolUse') {
+    markToolCall(input); // lib/stop-block-count.mjs: a tool call starts Claude Code's stop-block count over
     const additionalContext = await postToolUseContext(input);
     if (additionalContext) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext } }));
   } else if (input?.hook_event_name === 'SubagentStart') {
     recordWriterStart(input.session_id, input.agent_id, input.agent_type, process.env); // agent-model-guard's writer gate: it really runs
   } else if (input?.hook_event_name === 'SubagentStop') {
-    const path = budgetPath(input.session_id, input.agent_id);
-    const reason = subagentStopReason(input);
-    if (reason) {
-      // blocked: the agent keeps running and its calls must keep counting
-      process.stderr.write(`${reason}\n`);
-      process.exitCode = 2;
-    } else {
-      recordWriterStop(input.session_id, input.agent_id, input.agent_type, process.env); // agent-model-guard's writer gate: it finished
-      if (path) {
-        // the agent is ending: its counter and notice marker are done
-        rmSync(path, { force: true });
-        rmSync(`${path}${NOTICE_SUFFIX}`, { force: true });
-      }
-    }
+    await countedGate('agent-budget', input, () => subagentStop(input)); // lib/stop-block-count.mjs: the cap record
   }
+}
+
+/** The SubagentStop step: an over-long report is sent back (exit 2), else the agent's records end; true when it blocked. */
+function subagentStop(input) {
+  const reason = subagentStopReason(input);
+  if (reason) {
+    // blocked: the agent keeps running and its calls must keep counting
+    process.stderr.write(`${reason}\n`);
+    process.exitCode = 2;
+    return true;
+  }
+  recordWriterStop(input.session_id, input.agent_id, input.agent_type, process.env); // agent-model-guard's writer gate: it finished
+  const path = budgetPath(input.session_id, input.agent_id);
+  if (path) {
+    // the agent is ending: its counter and notice marker are done
+    rmSync(path, { force: true });
+    rmSync(`${path}${NOTICE_SUFFIX}`, { force: true });
+  }
+  return false;
 }
 
 // ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.

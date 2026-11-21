@@ -9,6 +9,7 @@ import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { lastAssistantText, lastRealPromptIndex, parseTranscript, promptText, readTranscriptTail } from './ask-gate.mjs';
 import { overCap, parseCap } from './lib/reply-cap.mjs';
+import { countedGate } from './lib/stop-block-count.mjs';
 
 /**
  * Why the final reply must be rewritten, or null.
@@ -34,10 +35,13 @@ async function main() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
   const input = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  let entries = [];
-  if (typeof input?.transcript_path === 'string' && input.transcript_path) entries = parseTranscript(readTranscriptTail(input.transcript_path));
-  const reason = replyCapReason(input, entries);
-  if (reason) process.stdout.write(`${JSON.stringify({ decision: 'block', reason })}\n`);
+  await countedGate('final-reply-cap', input, () => { // lib/stop-block-count.mjs: the cap record
+    let entries = [];
+    if (typeof input?.transcript_path === 'string' && input.transcript_path) entries = parseTranscript(readTranscriptTail(input.transcript_path));
+    const reason = replyCapReason(input, entries);
+    if (reason) process.stdout.write(`${JSON.stringify({ decision: 'block', reason })}\n`);
+    return reason !== null;
+  });
 }
 
 // ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.
