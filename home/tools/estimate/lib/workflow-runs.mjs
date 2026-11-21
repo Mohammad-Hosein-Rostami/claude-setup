@@ -1,7 +1,8 @@
 // The workflow runs that are live in a session, for the status line's run lines. Read from the journals Claude Code writes (observed in
 // 2.1.326, undocumented: a different shape shows nothing, never a wrong number).
 // Exports: liveRuns(transcriptPath, nowMs) -> { runId, name, row, phase, phaseIndex, phaseTotal, started, done }[], newest journal first;
-// readPart and metaOf (also used by tools/wf-resume/lib/run-state.mjs).
+// readPart and metaOf (also used by tools/wf-resume/lib/run-state.mjs); boardRuns(transcriptPath, nowMs) -> the same runs with
+// `quietMs` (since the journal was last written) and `lanes` (lanes per phase), over BOARD_WINDOW_MS, for the board (tools/board).
 // Layout read, next to the transcript <proj>/<session>.jsonl: <session>/subagents/workflows/<runId>/journal.jsonl (one JSON line per
 // agent event: { type: launched | started | result, agentId, ... }: `started` has label and phase, `result` only the agent id, `launched`
 // nothing), <session>/workflows/<runId>.json (written when the run is over: its presence means not live), <session>/workflows/scripts/<name>-<runId>.js (a copy of the script: its `meta` gives the name and
@@ -18,6 +19,8 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 
 const MS_PER_MIN = 60_000;
 const LIVE_WINDOW_MS = 30 * MS_PER_MIN;
+/** The board also lists a run quiet for longer (`stopped? 34 min`), for up to this long after its journal was last written. */
+const BOARD_WINDOW_MS = 6 * 60 * MS_PER_MIN;
 const MAX_JOURNAL_BYTES = 256 * 1024;
 const MAX_SCRIPT_BYTES = 64 * 1024;
 /** Newest journals read per render: the status line shows two runs, and a render must stay fast with many old live-looking runs. */
@@ -136,6 +139,7 @@ function runOf(sessionFolder, runId, journal) {
   const colon = last.label.indexOf(':');
   return {
     runId,
+    lanes: laneCounts(events),
     name: script.name,
     row: colon > 0 ? clean(last.label.slice(0, colon), MAX_ROW_CHARS) || null : null,
     phase: last.phase,
@@ -146,13 +150,25 @@ function runOf(sessionFolder, runId, journal) {
   };
 }
 
-/** The run folders with a journal written in the live window and no summary json, newest first. */
-function liveJournals(sessionFolder, nowMs) {
+/** Lanes per phase: a lane is a label's text before its first `:`; each lane counts in the phase of its newest event. */
+function laneCounts(events) {
+  const phaseOf = new Map();
+  for (const event of events) {
+    const colon = event.label.indexOf(':');
+    if (colon > 0 && event.phase !== null) phaseOf.set(clean(event.label.slice(0, colon), MAX_ROW_CHARS), event.phase);
+  }
+  const counts = {};
+  for (const phase of phaseOf.values()) counts[phase] = (counts[phase] ?? 0) + 1;
+  return counts;
+}
+
+/** The run folders with a journal written in the window and no summary json, newest first. */
+function liveJournals(sessionFolder, nowMs, windowMs = LIVE_WINDOW_MS) {
   const root = join(sessionFolder, 'subagents', 'workflows');
   return namesIn(root).filter((name) => RUN_ID.test(name) && !existsSync(join(sessionFolder, 'workflows', `${name}.json`)))
     .flatMap((runId) => {
       const info = lstatSync(join(root, runId, 'journal.jsonl'), { throwIfNoEntry: false });
-      return info?.isFile() && nowMs - info.mtimeMs < LIVE_WINDOW_MS ? [{ runId, mtimeMs: info.mtimeMs }] : [];
+      return info?.isFile() && nowMs - info.mtimeMs < windowMs ? [{ runId, mtimeMs: info.mtimeMs }] : [];
     })
     .sort((a, b) => b.mtimeMs - a.mtimeMs)
     .slice(0, MAX_RUNS_READ);
@@ -166,13 +182,25 @@ function liveJournals(sessionFolder, nowMs) {
  *   started: number, done: number }[]} newest journal first; [] when there is none or anything is unreadable
  */
 export function liveRuns(transcriptPath, nowMs) {
+  return runsIn(transcriptPath, nowMs, LIVE_WINDOW_MS).map(({ quietMs, lanes, ...run }) => run);
+}
+
+/**
+ * The board's runs: as liveRuns, over BOARD_WINDOW_MS, each with `quietMs` and `lanes` ({ [phase]: lanes }).
+ * @param {unknown} transcriptPath the session transcript's path
+ * @param {number} nowMs the clock, epoch ms
+ * @returns {object[]} newest journal first; [] when there is none or anything is unreadable
+ */
+export const boardRuns = (transcriptPath, nowMs) => runsIn(transcriptPath, nowMs, BOARD_WINDOW_MS);
+
+function runsIn(transcriptPath, nowMs, windowMs) {
   if (typeof transcriptPath !== 'string' || !isAbsolute(transcriptPath) || !transcriptPath.endsWith('.jsonl')) return [];
   const sessionFolder = join(dirname(transcriptPath), basename(transcriptPath, '.jsonl'));
   try {
-    return liveJournals(sessionFolder, nowMs).flatMap(({ runId }) => {
+    return liveJournals(sessionFolder, nowMs, windowMs).flatMap(({ runId, mtimeMs }) => {
       const journal = readPart(join(sessionFolder, 'subagents', 'workflows', runId, 'journal.jsonl'), MAX_JOURNAL_BYTES, true);
       const run = journal === null ? null : runOf(sessionFolder, runId, journal);
-      return run === null ? [] : [run];
+      return run === null ? [] : [{ ...run, quietMs: Math.max(0, nowMs - mtimeMs) }];
     });
   } catch {
     return []; // no folder yet, a file gone while reading, or a permission error: the status line shows no run line

@@ -1,0 +1,25 @@
+# board
+
+What runs in a session, what waits on the owner and the git state, in one small file the status line, `/where` and the
+progress pane read (`~/.claude/state/board/<session>.json`, at most 16 KB). Node 22, no dependencies.
+
+Run: `node ~/.claude/tools/board/board.mjs [--session <id>] [--columns <n>]` prints the board (session default
+`CLAUDE_CODE_SESSION_ID`, width default 80). `board.mjs refresh --session <id> [--force]` rewrites the file; `status.mjs add|start|done`
+starts it detached after every changed edit.
+
+| Line | From |
+| ---- | ---- |
+| `needs you: 2 questions · default in 0:45` | the asking marker (`hooks/lib/asking-marker.mjs`) |
+| `api-redo · phase 2/4 Review · 2 Build, 1 Review · run` | the run's journal (`estimate/lib/workflow-runs.mjs boardRuns`): lanes per phase, named counts |
+| `... · quiet 5 min`, `... · stopped? 34 min` | the journal's last write: quiet from 2 min, `stopped?` from 30 min (a killed run writes no summary) |
+| `+1 more run` | more than 4 runs |
+| `git lane/x +2 -0 · 3 changed` | `git status --porcelain=v2 --branch` (250 ms timeout; `git-tidy check` never runs here) |
+| `limits work: 5h 100% (resets 17:40), 7d 12%, seen 2 min ago` | each account's last-seen limits file (`estimate/lib/limits-store.mjs`); the board only shows them and never moves work to another account |
+| `stale 40 s` | the last refresh ran over its 300 ms budget, so the old data stayed |
+
+A refresh runs one at a time (a claim in the file), at most every 10 s while a run is live and every 60 s when idle. Journals and
+transcripts are Claude Code's internal formats: an unreadable part shows nothing, never a wrong line, and never throws.
+
+Not yet shown: `failed` and `done, not landed` (they need the launch records of the resume tool) and the tidy-gate verdict.
+
+Files: `board.mjs` (the CLI and the lines), `lib/refresh.mjs` (build, refresh, the board file, the detached start).

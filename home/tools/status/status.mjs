@@ -13,7 +13,8 @@
 //   done takes predictor flags (--model, --effort, --files-planned, --suite-s, --review-rounds, --writers; status-predictors.mjs)
 //   show                     where the job stands in at most 5 lines, the finish from the estimate cache (status-show.mjs)
 //   log "<text>"             a dated line in STATUS.log.md beside STATUS.md, hidden from git (status-log.mjs); STATUS.md is not touched
-// After a changed add|start|done the estimate refresh starts at once (segment-cache.mjs refreshNow).
+// After a changed add|start|done the estimate refresh and the board refresh start at once (segment-cache.mjs refreshNow,
+// board/lib/refresh.mjs startBoardRefresh).
 // Exports: runStatus(argv, { cwd, now, sessionId, stateDir }) -> { code, message }; the CLI prints message (stdout for 0) and exits code.
 // Invariants: touches only the one line it adds or changes; rows are only those of the one table under `## Work items` (header
 // `id | item | size | started | done | evidence`, the contiguous rows below its separator, with or without outer pipes, found and
@@ -31,6 +32,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { BREAKER_SUFFIX, withSessionLock } from '../../hooks/lib/session-lock.mjs';
 import { findSection, parseWorkItems, rowCells } from '../estimate/lib/items.mjs';
+import { startBoardRefresh } from '../board/lib/refresh.mjs';
 import { refreshNow } from '../estimate/lib/segment-cache.mjs';
 import { noteTable, stateDir as defaultStateDir } from '../estimate/lib/table-store.mjs';
 import { markDefect } from './defect.mjs';
@@ -200,7 +202,10 @@ function afterRowEdit(file, command, groups, { sessionId, stateDir, now, text })
     }
   }
   // A run against another store (tests, probes) must not start a refresh of the real status line cache (P8).
-  if (stateDir === defaultStateDir()) refreshNow(file, sessionId);
+  if (stateDir === defaultStateDir()) {
+    refreshNow(file, sessionId);
+    startBoardRefresh(sessionId, { cwd: dirname(file) });
+  }
 }
 
 /** The lock path, or its breaker file's, when something other than a regular file sits there (never opened: a FIFO would block); else null. */
