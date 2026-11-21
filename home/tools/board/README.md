@@ -24,12 +24,17 @@ to `COLUMNS - 5` (Claude Code cuts a row there). From top to bottom:
 | counts, while work runs | `2 workflows (2 run, 0 paused) · 6 agents (6 run) · 1 over usual │ git 4 branches · 2 not landed` | the board |
 | checks | `checks: types review ui probe · off: smart test │ suite 3628 · 222 fail` | the session's `/check` switch, the board's suite (`lib/repo-stats.mjs`) |
 | workflow | `▸ build · for R2 terminal UI · phase 2/4 Build · ████░░░░░░ 0/4 done · 4 run · ~40 min left · 16:35` | the board's runs |
-| agent | ` ├ Write road file for…   architect   █████▒░░ ~70% · 8 min left · 16:03 · Edit tree.mjs · 41k tok 31 calls` | the board's agents |
-| git, at least one row | `git main ✓ · origin ↑0↓0 · landed today 6, last 12 min ago │ r9-a ↑2↓0 ●3 impl-a · old-x ✓ old 3 d ⚠` | the board's repo |
+| agent | ` ├ Write road file for…   architect   █████▒░░ ~70% · 8 min left · 16:03 · claude-setup:lane/road-p8 2↑ +1 dirty` | the board's agents and repositories |
+| git, at least one row | `git claude-setup:main ✓ · origin ↑0↓0 · landed today 6, last 12 min ago │ r9-a ↑2↓0 ●3 impl-a · old-x ✓ old 3 d ⚠` | the board's repo and repos |
 | session | `Opus 5.5 high · ctx 99k of 400k (25%) · 5h 54% left, resets 17:40 · 7d 69% left · acct work` | the status input |
 
+Every agent row says where the agent works, never dropped: `repository:branch`, commits ahead of the base (`2↑`) and
+uncommitted files (`+3 dirty`), from its own worktree, or `read-only` / `no repo` (below 115 columns with one repository the
+branch alone, the git row names the repository).
+
 When rows run out (`lib/render.mjs` shares them, `lib/layout.mjs` packs the work rows): the alert, job and session rows always
-show; then the road row, one git row (never none: branch, upstream ahead/behind, changed files, landed today), the checks row
+show; then one git row (never none: branch, upstream ahead/behind, changed files, landed today; `git: no repository` when the
+work is in none; with no room at all the session row carries the git part), the road row, the checks row
 when the suite fails, the first three work rows, the checks row, the counts row, the rest of the work rows, more git rows. Each
 workflow folds into its header with a spark strip of its agents (`▇▆▄·`), the most urgent agents keep a row (quiet, over their
 usual time, writers, readers, then the soonest finish) and the rest share one `+K more` row; with fewer rows still, one strip
@@ -74,7 +79,9 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while a ru
   or more is kept for an hour as the trend;
 - the base branch (`lib/repo-stats.mjs`, every 60 s): its tip, the newest test-pass `suite` record of exactly that tip, and the
   commits on its first-parent line since local midnight;
-- git (`lib/git-state.mjs`), in the session's folder, else the road's `repo`, else the first agent folder inside a repository: `worktree list` when the worktree folder changed, one `for-each-ref` with `%(ahead-behind:main)`
+- git (`lib/repos.mjs`, `lib/git-state.mjs`) in every repository the work is in, up to 3: the session's folder, the road's `repo`,
+  the STATUS.md folder and each live agent's folder (its worktree, else the folder of the files it reads and changes), placed by
+  the file system alone, worktrees of one clone together (the lead's folder is often outside git): `worktree list` when the worktree folder changed, one `for-each-ref` with `%(ahead-behind:main)`
   every 15 s, and `--no-optional-locks status --untracked-files=no` per worktree only when its index or HEAD changed (15 s at
   most); 250 ms timeout per call and 250 ms of git per refresh, past which the old values stay with their age.
 
@@ -88,7 +95,7 @@ marker holds no agent).
 
 Files: `board.mjs` (the CLI and the lines), `lib/refresh.mjs` (build, refresh, the board file, the claim, the detached start),
 `lib/agents.mjs`, `lib/agent-transcript.mjs`, `lib/progress.mjs`, `lib/pools.mjs`, `lib/git-state.mjs`, `lib/job-facts.mjs`,
-`lib/repo-stats.mjs`, `lib/cache-file.mjs` (what the refresh reads), `lib/render.mjs` (the status line rows; `home/statusline.mjs` only reads and writes), `lib/work-row.mjs` (the
+`lib/repo-stats.mjs`, `lib/repos.mjs`, `lib/cache-file.mjs` (what the refresh reads), `lib/render.mjs` (the status line rows; `home/statusline.mjs` only reads and writes), `lib/work-row.mjs` (the
 job row), `lib/layout.mjs` (row budget, counts row, packing), `lib/agent-rows.mjs` (workflow and agent rows), `lib/git-rows.mjs`
 (git rows), `lib/stat-rows.mjs` (road and checks rows, the trend), `lib/cells.mjs` (look, glyphs, bars, durations, clocks, fitting a row to a width; shared by every surface),
 `lib/tree.mjs` (the `/where` tree).
