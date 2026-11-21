@@ -33,7 +33,7 @@ test('settings.json lets Workflow read the link path and runs it without a dialo
   const settings = JSON.parse(readFileSync(join(home, '.claude', 'settings.json'), 'utf8'));
   assert.ok(settings.permissions.allow.includes('Workflow'));
   assert.ok(settings.permissions.additionalDirectories.includes(join(home, '.claude', 'workflows')));
-  assert.equal(settings.statusLine.refreshInterval, 30);
+  assert.equal(settings.statusLine.refreshInterval, 5);
 });
 
 test('--project-workflows links the scripts into <repo>/.claude/workflows and hides the link from git', { skip }, () => {
