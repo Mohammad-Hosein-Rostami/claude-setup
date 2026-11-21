@@ -159,7 +159,7 @@ test('land `red` is handled like a conflict: a finding "suite red at the rebased
 test('a waived lane that landed is audited after the land: record pending with the landed sha, should-audit, then the review child in audit mode on recorded shas B..T, then record done', async () => {
   const run = await runContract(contractLane());
   const decide = call(run, ':audit-decide').prompt;
-  assert.match(decide, new RegExp(`audit-log\\.mjs record --repo /p --tip ${LANDED} --base ${BASE_SHA} --state pending`));
+  assert.match(decide, new RegExp(`audit-log\\.mjs record --repo /p --tip ${LANDED} --base ${BASE_SHA} --reviewed ${TIP} --state pending`));
   assert.match(decide, new RegExp(`should-audit --tip ${LANDED} --json`));
   assert.doesNotMatch(decide, /--escalate/);
   const prepare = call(run, ':audit-prepare').prompt;
@@ -173,7 +173,7 @@ test('a waived lane that landed is audited after the land: record pending with t
   assert.deepEqual([child.landing, child.fix, child.base, child.worktree, child.row], [false, false, BASE_SHA, `/scratch/audit-impl-a-${TIP}`, 'close-a']);
   const finish = call(run, ':audit-finish').prompt;
   assert.match(finish, new RegExp(`worktree remove --force /scratch/audit-impl-a-${TIP}`));
-  assert.match(finish, new RegExp(`record --repo /p --tip ${LANDED} --base ${BASE_SHA} --state done --confirmed 0`));
+  assert.match(finish, new RegExp(`record --repo /p --tip ${LANDED} --base ${BASE_SHA} --reviewed ${TIP} --state done --confirmed 0`));
   assert.deepEqual(run.result.lanes[0].audit, { status: 'clean', findings: [] });
   assert.equal(run.result.lanes[0].status, 'landed');
   assertWellFormedCalls(run.calls, 'impl-a', META);
@@ -222,7 +222,7 @@ test('an unsafe audit worktree path is audit-error and no review runs on it', as
 
 test('should-audit saying sampled-out records sampled-out and runs no audit review; a non-zero should-audit audits (fail closed)', async () => {
   const sampled = await runContract(contractLane(), { replies: [{ match: /:audit-decide$/, reply: { recordExit: 0, shouldExit: 0, audit: false, reason: 'sampled-out', tail: '' } }, { match: /:audit-sampled$/, reply: { exit: 0, tail: '' } }] });
-  assert.match(call(sampled, ':audit-sampled').prompt, new RegExp(`--tip ${LANDED} --base ${BASE_SHA} --state sampled-out`));
+  assert.match(call(sampled, ':audit-sampled').prompt, new RegExp(`--tip ${LANDED} --base ${BASE_SHA} --reviewed ${TIP} --state sampled-out`));
   assert.ok(!sampled.calls.some((entry) => entry.workflow === 'review' && entry.args.audit));
   assert.deepEqual(sampled.result.lanes[0].audit, { status: 'sampled-out', findings: [] });
   assert.equal(sampled.result.lanes[0].status, 'landed');
@@ -244,7 +244,7 @@ test('--escalate when the land loop ran a review; the lane keeps the FIRST revie
   assert.match(call(run, ':audit-decide').prompt, /should-audit --tip c1c1c1c1 --escalate --json/);
   const child = run.calls.find((entry) => entry.workflow === 'review' && entry.args.audit).args;
   assert.deepEqual(child.audit, { base: 'e3e3e3e3', tip: 'd2d2d2d2' });
-  assert.match(call(run, ':audit-decide').prompt, /--tip c1c1c1c1 --base e3e3e3e3 --state pending/);
+  assert.match(call(run, ':audit-decide').prompt, /--tip c1c1c1c1 --base e3e3e3e3 --reviewed d2d2d2d2 --state pending/);
 });
 
 test('a lane whose first review was not waived, or that did not land, is not audited; other lanes go on', async () => {

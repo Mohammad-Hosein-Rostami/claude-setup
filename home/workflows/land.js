@@ -1,10 +1,13 @@
 // land: put one reviewed lane on the base branch: rebase check, a suite PASS at the tip, then a fast-forward land that also removes the lane's
 // worktree, branch and copies (git-tidy land). Every step is a Haiku runner that runs one tool and reports its exit, so a failure is read from
 // the exit code, never guessed.
-// Args: { row, closeRow, statusFile, repo, base, branch, worktree, suite, tip, brief? }  (brief: the lane's brief file, whose named paths may
+// Args: { row, closeRow, statusFile, repo, base, branch, worktree, suite, tip, brief?, auditPending?, auditBase? }  (brief: the lane's brief file, whose named paths may
 //   add files over the size limit; suite: the repo's declared full-suite command, run by test-pass as
 //   `run --suite` from the repo's own declaration; tip: the sha the review cleared. Land refuses a branch that is not at it, so a branch the
-//   review never read cannot land.)
+//   review never read cannot land. auditPending: the lane lands without its Opus-max pair (a waived lane from build.js, or any lane the lead
+//   lands without it: a hand land, wf-land, a land after a usage limit); auditBase: the full sha the reviewed range starts at (B of B..T). Right
+//   after the ff-only land a runner records `audit-log record --tip <landed sha> --base B --reviewed <tip> --state pending`, so sync and push
+//   stay closed until the audit records done; a record that fails makes the land `failed` with "audit not recorded: gate holds nothing".)
 // Returns: { status: 'landed'|'conflict'|'red'|'needs-review'|'ui-proof'|'new-file-size'|'failed', sha, from, patchesChanged, tidy: 'clean'|text }
 //   (spec section 9, LANDED; `from` is the base tip just before the fast-forward, '' when the reflog no longer shows it).
 //   ui-proof: the UI files changed and the rebased tip has no visual-qa PASS (the caller runs visual-qa on it, then land again; never `red`);
@@ -53,6 +56,9 @@ const TIDY = 'node ~/.claude/tools/git-tidy/git-tidy.mjs'
 const TEST_PASS = 'node ~/.claude/tools/test-pass/test-pass.mjs'
 const STATUS = 'node ~/.claude/tools/status/status.mjs'
 const DISK_FREE = 'node ~/.claude/tools/disk-free/disk-free.mjs'
+const AUDIT_LOG = 'node ~/.claude/tools/review-tier/audit-log.mjs'
+const SHA = /^[0-9a-f]{7,40}$/i // what audit-log record takes; anything else never reaches the command line
+const AUDIT_NOT_RECORDED = 'audit not recorded: gate holds nothing' // build.js reads this prefix: the lane landed, its audit must be run and recorded by hand
 const FIELDS = 'Return exit (the command\'s exit code), tip (the sha it printed after `tip`, else ""), patchesChanged (the number after `patches-changed`, else 0), files (file names it listed for a conflict, else []), tail (its last 3 output lines, no secrets), from (the sha after `from` in its output, else "").'
 // The suite step reports failing tests, so it gets its own text: FIELDS would tell it files are for conflicts and tail is the last 3 lines.
 const SUITE_FIELDS = 'Return exit (the command\'s exit code), tip (the sha it printed after `tip`, else ""), patchesChanged (0), files (the failing test files when the suite exits non-zero, else []), tail (each failing file\'s first error line when the suite exits non-zero, else the last 3 lines of output; no secrets), from ("").'
@@ -71,6 +77,19 @@ const rangeOf = async (phase, landedFlag) => {
 }
 const sameSha = (a, b) => a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a))
 
+/**
+ * With auditPending, records the landed sha as `pending` in audit-log, so the gate holds sync and push until the audit ran.
+ * @param {string} landedSha the sha now on the base branch (the gate's key)
+ * @returns {Promise<string | null>} null when recorded (or not asked for), else the failure text of a `failed` land
+ */
+async function recordPendingAudit(landedSha) {
+  if (args.auditPending !== true) return null
+  if (!SHA.test(args.auditBase) || !SHA.test(landedSha)) return `${AUDIT_NOT_RECORDED}: the lane landed at ${landedSha}, but nothing was recorded: the audit base ${JSON.stringify(String(args.auditBase).slice(0, 80))} or the landed sha is not a git sha; record it by hand (audit-log record ... --state pending), then run the audit`
+  const recorded = await runner('audit-pending', 'Land', `In ${args.repo} run: ${AUDIT_LOG} record --repo ${args.repo} --tip ${landedSha} --base ${args.auditBase} --reviewed ${args.tip} --state pending. Report exit and tail.`)
+  if (recorded !== null && recorded.exit === 0) return null
+  return `${AUDIT_NOT_RECORDED}: the lane landed at ${landedSha}, but its pending audit could not be recorded (${recorded === null ? 'the runner was stopped' : `exit ${recorded.exit}: ${recorded.tail}`}); record it by hand (audit-log record ... --state pending), then run the audit`
+}
+
 // A full disk makes every later step fail with ENOSPC and no clear cause, so the first step refuses below the fail threshold (exit 1) and says what to clear.
 phase('Rebase')
 const disk = await runner('disk', 'Rebase', `In ${args.repo} run: ${DISK_FREE} check. Report exit and tail (its one output line, whole).`)
@@ -87,6 +106,9 @@ if (reviewedTip.exit !== 0) {
   if (baseNow === null || baseNow.exit !== 0) return notFound
   const range = await rangeOf('Rebase', '')
   const to = range === null ? baseNow.tip : range.tip
+  // The landed sha is `to` (the base tip when the reflog no longer shows the step); a pending record there keeps the gate closed (fail closed).
+  const notRecordedAfterRestart = await recordPendingAudit(to)
+  if (notRecordedAfterRestart !== null) return failed(to, notRecordedAfterRestart)
   await runner('status', 'Rebase', `Record the landing: ${STATUS} --file ${args.statusFile} done ${args.closeRow} "${evidence(to, range?.from)} (found already on ${args.base} after a restart)".`)
   return { status: 'landed', sha: to, from: range?.from ?? '', patchesChanged: 0, tidy: `already on ${args.base} (found on restart)` }
 }
@@ -94,6 +116,8 @@ if (!sameSha(reviewedTip.tip, args.tip)) {
   // Killed between the fast-forward and the prune: the branch holds the rebased tip, which is on the base with the reviewed patches.
   const range = /^[0-9a-f]{7,40}$/.test(reviewedTip.tip) ? await rangeOf('Rebase', ` --landed ${reviewedTip.tip}`) : null
   if (range === null) return failed(reviewedTip.tip, `branch ${args.branch} is at ${reviewedTip.tip}, not at the reviewed ${args.tip}: nothing was landed`)
+  const notRecordedAfterKill = await recordPendingAudit(range.tip)
+  if (notRecordedAfterKill !== null) return failed(range.tip, notRecordedAfterKill)
   await runner('status', 'Rebase', `Record the landing: ${STATUS} --file ${args.statusFile} done ${args.closeRow} "${evidence(range.tip, range.from)} (found already on ${args.base} after a restart)".`)
   const prune = await runner('prune', 'Land', `In ${args.repo} run: ${TIDY} prune ${args.repo} --base ${args.base} --apply. Report exit and tail.`)
   return { status: 'landed', sha: range.tip, from: range.from, patchesChanged: 0, tidy: prune === null ? 'landed before a restart; the prune runner was stopped' : `landed before a restart; prune: ${prune.tail}` }
@@ -128,6 +152,8 @@ while (true) {
   if (land.exit === 6) return { status: 'ui-proof', sha: land.tip, patchesChanged: 0, tidy: land.tail }
   if (land.exit === 7) return { status: 'new-file-size', sha: land.tip, patchesChanged: 0, tidy: land.files.length > 0 ? land.files.join(', ') : land.tail }
   if (land.exit > 1) return failed(land.tip, `git-tidy land exit ${land.exit}: ${land.tail}`)
+  const notRecorded = await recordPendingAudit(land.tip)
+  if (notRecorded !== null) return failed(land.tip, notRecorded)
 
   await runner('status', 'Land', `Record the landing: ${STATUS} --file ${args.statusFile} done ${args.closeRow} "${evidence(land.tip, land.from)}".`)
   return { status: 'landed', sha: land.tip, from: land.from, patchesChanged: 0, tidy: land.exit === 0 ? 'clean' : land.tail }
@@ -141,4 +167,6 @@ function checkArgs(given) {
     if (typeof value !== type) throw new Error(`${name}: args.${key} must be a ${type}`)
   }
   if (given.brief !== undefined && (typeof given.brief !== 'string' || given.brief === '' || /\s/.test(given.brief))) throw new Error(`${name}: args.brief must be a file path with no spaces`)
+  if (given.auditPending !== undefined && typeof given.auditPending !== 'boolean') throw new Error(`${name}: args.auditPending must be a boolean`)
+  if (given.auditPending === true && typeof given.auditBase !== 'string') throw new Error(`${name}: args.auditPending needs args.auditBase (a string: the sha the reviewed range starts at)`)
 }

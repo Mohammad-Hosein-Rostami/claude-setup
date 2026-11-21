@@ -42,6 +42,7 @@ const AUDIT_DECISION = shape({ recordExit: num, shouldExit: num, audit: bool, re
 const AUDIT_PREPARED = shape({ ancestor: bool, changedLines: num, worktree: str, tail: str }, ['ancestor', 'changedLines', 'worktree'])
 const AUDIT_RECORDED = shape({ exit: num, tail: str }, ['exit'])
 const AUDIT_LOG = 'node ~/.claude/tools/review-tier/audit-log.mjs'
+const AUDIT_NOT_RECORDED = 'audit not recorded: gate holds nothing' // the prefix of land.js's failure text when its pending audit record failed
 const GIT_SHA = /^[0-9a-f]{7,40}$/ // shas go into runner commands: only hex passes
 const DISK_CHECKED = shape({ exit: num, tail: str, baseTip: str }, ['exit', 'tail'])
 const FULL_SHA = /^[0-9a-f]{40}$/
@@ -209,13 +210,17 @@ async function landLane(step) {
   const { lane, waived } = step // waived: the FIRST review's verdict, kept even when land-loop delta reviews follow
   let [reviewed, escalated] = [step.reviewed, false] // escalated: the land loop reviewed again
   while (true) {
-    const landed = await inLandQueue(() => workflow({ scriptPath: `${args.scriptsDir}/land.js` }, { row: lane.closeRow, closeRow: lane.closeRow, statusFile: args.statusFile, repo: args.repo, base: args.base, branch: lane.branch, worktree: reviewed.worktree, suite: args.suite, tip: reviewed.tip }))
+    // A waived lane lands without its Opus pair: land.js records it `pending` right after the ff-only land, so a stopped audit runner cannot leave the gate open.
+    // A base that is not a sha cannot be recorded: land.js then lands and says "audit not recorded" (audit-error below), never silently.
+    const pending = waived ? { auditPending: true, auditBase: String(reviewed.baseSha ?? '') } : {}
+    const landed = await inLandQueue(() => workflow({ scriptPath: `${args.scriptsDir}/land.js` }, { row: lane.closeRow, closeRow: lane.closeRow, statusFile: args.statusFile, repo: args.repo, base: args.base, branch: lane.branch, worktree: reviewed.worktree, suite: args.suite, tip: reviewed.tip, ...pending }))
     if (landed.status === 'landed') {
       recordBaseTip(landed.sha)
       if (waived) auditInputs.set(lane.row, { lane, baseSha: reviewed.baseSha, tip: reviewed.tip, landedSha: landed.sha, escalated })
       return outcome(lane, 'landed', landed.sha, '', listsOf(reviewed))
     }
-    if (landed.status === 'failed') return outcome(lane, 'failed', landed.sha, landed.tidy)
+    // "audit not recorded" (land.js): the lane landed, but the gate holds nothing for it; audit-error with "gate holds nothing" says to audit by hand.
+    if (landed.status === 'failed') return outcome(lane, waived && String(landed.tidy).startsWith(AUDIT_NOT_RECORDED) ? 'audit-error' : 'failed', landed.sha, landed.tidy)
     // conflict: the conflict is a finding the fix agent resolves while rebasing; red: the suite failed at the rebased tip, the fix agent repairs it; needs-review: the rebase changed patches, so review the delta
     const initialFindings = { conflict: [finding(`conflict-${lane.row}`, landed.tidy, `rebasing ${lane.branch} onto ${args.base} conflicts in ${landed.tidy}`, `resolve the conflicts keeping both intents while rebasing onto ${args.base}`)],
       red: [finding(`red-${lane.row}`, '(suite)', `suite red at the rebased tip: ${landed.tidy}`, `make the full suite pass at the rebased tip of ${lane.branch}`)] }[landed.status]
@@ -243,7 +248,7 @@ async function auditAfterLand(step, { lane, baseSha, tip, landedSha, escalated }
   const failedAudit = (text, findings = []) => ({ ...step, status: 'audit-error', text, audit: { status: 'error', findings } })
   if (![baseSha, tip, landedSha].every((sha) => GIT_SHA.test(sha ?? ''))) return failedAudit(`no usable shas to audit (base ${baseSha}, tip ${tip}, landed ${landedSha}): nothing was recorded, so the audit-log gate holds nothing for this lane: run the audit by hand`)
   const auditStep = (name, schema, prompt) => agent(prompt, { label: `${lane.row}:audit-${name}`, phase: 'Audit', schema, ...RUNNER })
-  const record = (state, more = '') => `${AUDIT_LOG} record --repo ${args.repo} --tip ${landedSha} --base ${baseSha} --state ${state}${more}`
+  const record = (state, more = '') => `${AUDIT_LOG} record --repo ${args.repo} --tip ${landedSha} --base ${baseSha} --reviewed ${tip} --state ${state}${more}`
   const decision = await auditStep('decide', AUDIT_DECISION, `In ${args.repo} run: ${record('pending')}. Then run: ${AUDIT_LOG} should-audit --tip ${landedSha}${escalated ? ' --escalate' : ''} --json. Do not change anything else. Report recordExit, shouldExit, audit (the JSON's audit), reason, tail.`)
   // A stopped runner (null) audits: the finish record settles the state either way (fail closed).
   if (decision !== null && decision.recordExit !== 0) return failedAudit(`the audit could not be recorded as pending (${decision.tail}), so the audit-log gate holds nothing for this lane: run the audit by hand`)
@@ -257,8 +262,9 @@ async function auditAfterLand(step, { lane, baseSha, tip, landedSha, escalated }
     + `Only when ancestor is true and changedLines is above 0: git worktree add --detach <a new folder named ${worktreeName} inside the scratchpad directory your instructions name> ${tip}, and report its absolute path as worktree; otherwise worktree is "". Do not change anything else. Report ancestor, changedLines, worktree, tail.`)
   if (prepared === null || !prepared.ancestor || prepared.changedLines < 1 || !SAFE_PATH.test(prepared.worktree) || !prepared.worktree.endsWith(worktreeName)) {
     const refusedWorktree = prepared !== null && SAFE_PATH.test(prepared.worktree) && prepared.worktree.endsWith(worktreeName) ? `git worktree remove --force ${prepared.worktree}. Then run: ` : ''
-    await auditStep('error', AUDIT_RECORDED, `In ${args.repo} run: ${refusedWorktree}${record('error')}. Report exit and tail.`)
-    return failedAudit(`the audit range ${baseSha}..${tip} cannot be audited (${prepared === null ? 'the prepare runner was stopped' : JSON.stringify(prepared)}); recorded as error, an empty range is never clean`)
+    const errorRecord = await auditStep('error', AUDIT_RECORDED, `In ${args.repo} run: ${refusedWorktree}${record('error')}. Report exit and tail.`)
+    const recordedAs = errorRecord !== null && errorRecord.exit === 0 ? 'recorded as error' : 'the error record could not be written, so the record stays pending (land.js wrote it) and sync and push stay closed'
+    return failedAudit(`the audit range ${baseSha}..${tip} cannot be audited (${prepared === null ? 'the prepare runner was stopped' : JSON.stringify(prepared)}); ${recordedAs}, an empty range is never clean`)
   }
   let audited
   try {

@@ -20,6 +20,8 @@
 //   - `resolve` closes only an unresolved `done` record with findings, by a commit after the tip. A pending or error audit is
 //     closed only by an audit record. Known limit: history rewritten after landing gives the commits new shas, and the old
 //     entries then no longer match what is pushed; the audit workflow records right after an ff-only land, so it does not rewrite.
+//   - Who records `pending`: home/workflows/land.js with `auditPending`, right after the ff-only land (build.js passes it for a waived
+//     lane; the lead for any lane landed without its Opus pair), so a stopped audit runner can never leave the gate open.
 //   - Streak = the newest consecutive `done` records with confirmed 0, one per tip (a tip recorded twice counts once); `done` with confirmed > 0 ends it; `pending`, `error` and
 //     `sampled-out` neither count nor end it. A lane is audited while the streak is below CALIBRATION_LANES.
 //   - Sampling after calibration is 1 in AUDIT_ONE_IN, drawn here with crypto.randomInt. AUDIT_ONE_IN stays 1 (every waived lane
