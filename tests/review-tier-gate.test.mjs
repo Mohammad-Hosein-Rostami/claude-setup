@@ -60,6 +60,12 @@ test('the account tool and the shell snippets are gate and security: never waive
     assert.equal(result.tier, 2, path);
     assert.ok(result.reviews.some((review) => review.model === 'opus'), `${path}: an Opus lens`);
   }
+  // Security review 1, S8: the hook child's login and the tests that guard the token are the same class.
+  for (const path of ['home/tools/recall/lib/claude-call.mjs', 'tests/account-keychain.test.mjs', 'tests/account-helpers.mjs', 'tests/claude-call.test.mjs']) {
+    const result = report([changed(path, ['const withoutToken = (text) => text;'])]);
+    assert.ok(result.classes.includes('security') && result.classes.includes('gate'), `${path}: ${result.classes}`);
+    assert.ok(result.reviews.some((review) => review.model === 'opus'), `${path}: an Opus lens`);
+  }
   const readme = report([changed('home/tools/account/README.md', ['# title'])]);
   assert.ok(readme.classes.includes('gate'), 'its README is gate too, so a docs-only edit is not waived');
   assert.ok(readme.tier >= 1);

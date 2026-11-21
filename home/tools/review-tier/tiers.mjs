@@ -31,8 +31,11 @@ const TEST_PATH = /(^|\/)(tests?|__tests__)\/|\.(test|spec)\./;
 const UI_PATH = /\.(tsx|jsx|vue|svelte|css|scss)$/;
 const INFRA_PATH = /(^|\/)(dockerfile|docker-compose[^/]*|\.github\/|k8s\/|terraform\/|helm\/)|\.tf$/;
 const SECURITY_PATH = /auth|login|session|token|secret|credential|passw|crypto|permission|guard|sandbox|sanitiz|upload|webhook|oauth|jwt|cookie|csrf|cors/;
-// The account tool and the shell snippets hold login tokens (spec-accounts): security whatever their lines say.
-const ACCOUNT_TOOL_PATH = /^home\/(tools\/account|shell)\//;
+// The account tool, the shell snippets, the hook child's login (claude-call.mjs) and the tests that guard the token
+// (the real-Keychain test, the leak scan) hold or handle login tokens (spec-accounts; security review 1, S8): security
+// whatever their lines say. The same paths are gate (in GATE_PATH).
+const ACCOUNT_TOKEN_FILES = String.raw`^home/(tools/account|shell)/|^home/tools/recall/lib/claude-call\.mjs$|^tests/(account-[a-z-]+|claude-call)(\.test)?\.mjs$`;
+const ACCOUNT_TOOL_PATH = new RegExp(ACCOUNT_TOKEN_FILES);
 const DATA_PATH = /(^|\/)(migrations?|prisma)\/|\.sql$|schema\./;
 const MONEY_WORDS = 'payment|invoice|billing|refund|checkout|stripe|wallet|ledger';
 const NOT_SHOP = '(?<!git\\s+|stale-)'; // `git checkout` and git-tidy's `stale-checkout` are not a shop checkout
@@ -47,7 +50,7 @@ export const CHECK_FILE_PATH = new RegExp(CHECK_CONFIG_SOURCE);
  * account tool and the shell snippets (they hold login tokens, so an edit there is never waived) and
  * `.gitattributes` (it decides what git shows of a file, to a reviewer as well as to a tool).
  */
-export const GATE_PATH = new RegExp(String.raw`^settings/[^/]+\.json$|(^|/)\.claude/settings[^/]*\.json$|^home/claude\.md$|^home/(modes|agents|rules|workflows)/|^home/skills/(wf-[^/]+|verify-done)/|^home/tools/(review-tier|test-pass|git-tidy|account)/|^home/shell/|^scripts/(affected-tests\.mjs|doctor\.sh)$|(^|/)\.githooks/|(^|/)\.claude/workflows/|(^|/)\.husky/|(^|/)\.github/workflows/|(^|/)(\.gitlab-ci\.yml|\.circleci/|azure-pipelines\.yml|jenkinsfile)|(^|/)package\.json$|(^|/)\.gitattributes$|${CHECK_CONFIG_SOURCE}`);
+export const GATE_PATH = new RegExp(String.raw`^settings/[^/]+\.json$|(^|/)\.claude/settings[^/]*\.json$|^home/claude\.md$|^home/(modes|agents|rules|workflows)/|^home/skills/(wf-[^/]+|verify-done)/|^home/tools/(review-tier|test-pass|git-tidy)/|${ACCOUNT_TOKEN_FILES}|^scripts/(affected-tests\.mjs|doctor\.sh)$|(^|/)\.githooks/|(^|/)\.claude/workflows/|(^|/)\.husky/|(^|/)\.github/workflows/|(^|/)(\.gitlab-ci\.yml|\.circleci/|azure-pipelines\.yml|jenkinsfile)|(^|/)package\.json$|(^|/)\.gitattributes$|${CHECK_CONFIG_SOURCE}`);
 const LOCK_WORD = /^(un)?lock(s|ed|ing|file)?$/;
 const SIZE_LINES = 400;
 
