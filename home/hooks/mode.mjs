@@ -35,7 +35,7 @@ import { pathToFileURL } from 'node:url';
 import { bigContextNote } from './lib/big-context.mjs';
 import { compactNotes } from './lib/compact-notes.mjs';
 import { leadNote } from './lib/lead-note.mjs';
-import { isStale, pruneState, readStateText, writeStateText } from './lib/mode-state.mjs';
+import { isStale, pruneState, readStateText, removeStateFile, writeStateText } from './lib/mode-state.mjs';
 import { lazyProcessKey } from './lib/owner-process.mjs';
 import { timedProjectAgentNote } from './lib/project-agents-timed.mjs';
 
@@ -162,7 +162,9 @@ async function subagentStartText(input, sessionId) {
  * Everything the lead's SessionStart prints; it also saves the session's mode, prunes old state and records the mode as announced.
  * Order (security review 1 of round 9, S8 and S2): the compact notes come before the child, because their transcript scan is not
  * bounded by the budget and the child is, so the child, whose loss is handled, is what a slow scan cuts; the mode is recorded as
- * announced last and only inside the budget, so a start that ran late (its output may be dropped) leaves the per-prompt line on.
+ * announced last and only inside the budget, and the record an earlier start of the same session id left (a compaction or a
+ * resume keeps the id) is removed first (security review 2, S2), so a start that ran late (its output may be dropped) leaves the
+ * per-prompt line on.
  * @param {object} input - the hook input (`source`, `model`, `cwd`, `transcript_path`).
  * @param {string | undefined} sessionId - the checked session id.
  * @param {{ getProcKey: () => string | undefined, timeLeft: () => number, agentNoteOptions?: { script?: string, timeoutMs?: number } }} run -
@@ -170,6 +172,7 @@ async function subagentStartText(input, sessionId) {
  * @returns {Promise<string>} the text for stdout.
  */
 async function leadStartText(input, sessionId, { getProcKey, timeLeft, agentNoteOptions }) {
+  removeStateFile(stateDir(), announcedKey(sessionId));
   const current = startMode(input.source, sessionId, getProcKey);
   saveMode(current, [sessionId, getProcKey()]);
   const launchedAs = process.env.CLAUDE_MODE ?? '';

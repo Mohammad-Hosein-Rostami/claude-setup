@@ -1,7 +1,7 @@
 // The state files of the mode hook in ~/.claude/state/modes: a session's mode, the mode last announced to it, the compaction
 // counts (compact-notes.mjs) and their prune.
-// Exports: readStateText(file, what), writeStateText(dir, name, text), pruneState(dir, timeLeft, nowMs), isStale(mtimeMs, nowMs),
-// STATE_FILE_MAX_BYTES, MAX_PRUNED_ENTRIES. Used by mode.mjs and compact-notes.mjs (moved out of mode.mjs in round 9, lane
+// Exports: readStateText(file, what), writeStateText(dir, name, text), removeStateFile(dir, name), pruneState(dir, timeLeft, nowMs),
+// isStale(mtimeMs, nowMs), STATE_FILE_MAX_BYTES, MAX_PRUNED_ENTRIES. Used by mode.mjs and compact-notes.mjs (moved out of mode.mjs in round 9, lane
 // r9-mode-fix, fix round 1: security review 1, S4 and S5).
 // Why: the files were opened by name. Whoever can write the state folder (the same user, or a program run as that user) could
 // plant a FIFO, which hung the hook until Claude Code dropped its whole output, or a link, which the hook wrote a mode through;
@@ -11,7 +11,8 @@
 // unless the file is just missing. A write goes to a new temp file in the same folder (its name starts with a dot, which no state
 // key does: keys are built from ids of `[\w-]+`; opened with O_EXCL, so never through a link) and is renamed over the name: a
 // link, a FIFO or an old file there is replaced as a whole, never written through, and a reader sees the old text or the new one.
-// A failed write removes its temp file and throws. The prune reads at most MAX_PRUNED_ENTRIES names per run and stops when the
+// A failed write removes its temp file and throws. A removal unlinks the name itself (a link there is removed, never its
+// target). The prune reads at most MAX_PRUNED_ENTRIES names per run and stops when the
 // hook's budget is used up; each entry is judged by itself from an lstat (a stale link is removed, never what it leads to), and
 // one that cannot be removed (a folder) is reported on stderr and does not end the run. Never throws, except writeStateText.
 // Not covered: the folders on the way to the state folder (a link there is followed), and Windows, which has neither open flag.
@@ -72,6 +73,21 @@ export function writeStateText(dir, name, text) {
   } catch (error) {
     rmSync(temp, { force: true });
     throw error;
+  }
+}
+
+/**
+ * Removes one state file, so that nothing reads its old text again.
+ * @param {string} dir - the state folder.
+ * @param {string | undefined} name - the file's name in it; nothing to do without one.
+ * @returns {void} never throws: a missing file is fine, any other failure (a folder in its place) is reported on stderr.
+ */
+export function removeStateFile(dir, name) {
+  if (!name) return;
+  try {
+    unlinkSync(join(dir, name)); // of a link itself, never what it leads to
+  } catch (error) {
+    if (error.code !== 'ENOENT') process.stderr.write(`mode hook: cannot remove state: ${error.message}\n`);
   }
 }
 

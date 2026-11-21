@@ -6,9 +6,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { lstatSync, lutimesSync, mkdirSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, lutimesSync, mkdirSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { HOOK_BUDGET_MS } from '../home/hooks/mode.mjs';
 import { MAX_PRUNED_ENTRIES, STATE_FILE_MAX_BYTES, pruneState, readStateText, writeStateText } from '../home/hooks/lib/mode-state.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -20,6 +21,7 @@ const STALE_MS = 15 * 24 * 60 * 60 * 1000; // one day more than the 14 days a st
 const MS_PER_S = 1000;
 const MODE_LINE = 'Mode: high - follow ~/.claude/modes/high.md\n';
 const NO_LIMIT = () => 1;
+const LATE_CLOCK = ['--import', `data:text/javascript,performance.now=()=>${HOOK_BUDGET_MS}`]; // the hook starts with no budget left
 const isFile = (path) => lstatSync(path).isFile();
 const fifo = (path) => assert.equal(spawnSync('mkfifo', [path]).status, 0, `mkfifo ${path}`);
 
@@ -35,8 +37,8 @@ function staleFiles(dir, count, prefix = 'old-') {
 }
 
 /** One run of the real hook under a temp HOME, cut at HANG_LIMIT_MS; fails the test when the hook did not end by itself. */
-function runHook(home, input) {
-  const run = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), encoding: 'utf8', timeout: HANG_LIMIT_MS, env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_MODE: 'high' } });
+function runHook(home, input, nodeArgs = []) {
+  const run = spawnSync(process.execPath, [...nodeArgs, HOOK], { input: JSON.stringify(input), encoding: 'utf8', timeout: HANG_LIMIT_MS, env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_MODE: 'high' } });
   assert.equal(run.error, undefined, `the hook ended by itself (${input.hook_event_name} ${input.session_id})`);
   return run.stdout;
 }
@@ -128,5 +130,19 @@ test('a FIFO or a link planted as a state file never hangs the hook and is never
   for (const [name, text] of [['f1.announced', 'high\n'], ['f2', 'high\n'], ['f3-a1.compacts', '1\n'], ['f4.announced', 'high\n']]) {
     assert.ok(isFile(join(state, name)), `${name} was replaced by a regular file`);
     assert.equal(readFileSync(join(state, name), 'utf8'), text);
+  }
+});
+
+// Security review 2 of lane r9-mode-fix, S2 (the part left open): a later start of the same session id whose output was lost (it
+// ran past the budget) kept the record the earlier start had left, so no prompt of that session said the mode again.
+test('a later start of a session removes the old announced record first, so one that runs past the budget leaves the mode line on', () => {
+  for (const source of ['compact', 'resume']) {
+    const home = makeTempDir('mode-state-home-');
+    const announced = join(home, '.claude', 'state', 'modes', 's2.announced');
+    runHook(home, { hook_event_name: 'SessionStart', session_id: 's2', source: 'startup' });
+    assert.equal(readFileSync(announced, 'utf8'), 'high\n', 'the first start was announced');
+    runHook(home, { hook_event_name: 'SessionStart', session_id: 's2', source }, LATE_CLOCK);
+    assert.equal(existsSync(announced), false, `the late ${source} start left no record`);
+    assert.equal(runHook(home, { hook_event_name: 'UserPromptSubmit', session_id: 's2' }), MODE_LINE, `after a late ${source} start`);
   }
 });
