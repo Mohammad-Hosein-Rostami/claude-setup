@@ -117,6 +117,7 @@ test('no sentence of _lead.md or a playbook lowers a gate that home/CLAUDE.md re
     'Reviews: only for risky changes.', 'Research: one source is enough.', 'verify-done is optional in this mode.',
     'Leave out the reviewer for one-line fixes.', 'Stop after the first finding that explains the bug.',
     'Say `not checked: <categories off>` and skip the reviewer.', 'The reviewer findings are not checked.',
+    'Say `not checked: <review, test>` and land.',
     'Reviewer findings marked optional are not fixed or listed.', 'Skip review on small diffs.', 'skip responsive',
   ];
   for (const sentence of lowering) assert.ok(lowersAGate(sentence), `detector must flag: ${sentence}`);
