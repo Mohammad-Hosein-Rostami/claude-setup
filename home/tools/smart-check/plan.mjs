@@ -14,8 +14,8 @@ import { changedPaths, gitOf, gitTop, laneBase, MAX_FILES, newFileReader, readCh
 import { changeFacts } from './lib/facts.mjs';
 import { affectedOf, consumerCounter, figmaJobOf, projectFacts } from './lib/project.mjs';
 import { planRows, proseHasCommands, raiseLevel } from './lib/rules.mjs';
-import { explorePick, featuresOf, guardedKinds, loadModels, modelRaises } from './lib/model.mjs';
-import { readRows, recentCatches, stateDir } from './ledger.mjs';
+import { boundRaises, explorePick, featuresOf, guardedKinds, loadModels, modelRaises, noisyKinds } from './lib/model.mjs';
+import { readRows, recentCatches, stateDir, stats } from './ledger.mjs';
 
 /** The pinned checks: every change, never sampled, about 0 tokens (spec 3). */
 export const PINNED = ['parse', 'imports', 'deps', 'never-weaken', 'secrets', 'placeholders', 'size-caps', 'scope', 'hook-load'];
@@ -43,8 +43,16 @@ function learnedRows(rows, facts, ledger, random) {
   const models = loadModels(stateDir());
   const guarded = guardedKinds(ledger);
   const features = featuresOf(facts);
-  const raised = rows.map((row) => (row.by === 'rule' && row.level !== 'full' && modelRaises(models, row.check, features, guarded)
-    ? { ...row, level: raiseLevel(row.level), by: 'model', reason: `${row.reason}; model: likely to find more one level up` } : row));
+  const { perKind } = stats(ledger);
+  const overBound = boundRaises(perKind);
+  const noisy = noisyKinds(perKind);
+  const raised = rows.map((row) => {
+    const reportOnly = noisy.has(row.check) ? { reportOnly: true } : {};
+    if (row.by !== 'rule' || row.level === 'full') return { ...row, ...reportOnly };
+    if (overBound.has(row.check)) return { ...row, ...reportOnly, level: raiseLevel(row.level), by: 'ledger', reason: `${row.reason}; miss-rate bound over 1%: one level up` };
+    if (modelRaises(models, row.check, features, guarded)) return { ...row, ...reportOnly, level: raiseLevel(row.level), by: 'model', reason: `${row.reason}; model: likely to find more one level up` };
+    return { ...row, ...reportOnly };
+  });
   const explore = explorePick(raised, random);
   return raised.map((row) => (row.check === explore ? { ...row, level: raiseLevel(row.level), by: 'explore', reason: `${row.reason}; exploration (20%): one level up` } : row));
 }

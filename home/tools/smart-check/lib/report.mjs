@@ -18,8 +18,8 @@ export function suggestions({ runs }) {
   return [...new Set(cats)];
 }
 
-/** True when the agent must act before it stops: a pinned block, a catch, or a hand-over (deep review, visual-qa). */
-export const mustAct = ({ pinned, runs }) => pinned.some((p) => p.block && p.findings.length) || runs.some((run) => run.result === 'catch' || run.result === 'handoff');
+/** True when the agent must act before it stops: a pinned block, a catch (not of a noisy, report-only kind), or a hand-over. */
+export const mustAct = ({ pinned, runs }) => pinned.some((p) => p.block && p.findings.length) || runs.some((run) => (run.result === 'catch' && !run.reportOnly) || run.result === 'handoff');
 
 /**
  * The report block.

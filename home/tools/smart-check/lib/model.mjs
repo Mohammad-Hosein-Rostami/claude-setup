@@ -1,8 +1,8 @@
 // Purpose: the smart check's learning step (spec r9-smart-check 7; round 2, 11.2-11.4): a readable logistic regression per check kind,
 //   trained on the ledger once a kind has MIN_LABELLED labelled changes, that predicts "the next heavier level finds something the
 //   planned level misses"; plus the 20% exploration pick. The model may only raise a level, never lower one.
-// Exports: featuresOf(facts), trainModels(rows, dir), loadModels(dir), modelRaises(models, kind, features), explorePick(rows, random),
-//   MIN_LABELLED, EXPLORE_SHARE.
+// Exports: featuresOf(facts), trainModels(rows, dir), loadModels(dir), guardedKinds(rows, nowMs), modelRaises(models, kind, features, guarded),
+//   boundRaises(perKind), noisyKinds(perKind), explorePick(rows, random), MIN_LABELLED, EXPLORE_SHARE.
 // Invariants: rules are the floor: modelRaises answers only "raise" or "keep"; pinned checks and security are never in its reach; a kind
 //   with two escapes in 30 days is rule-only until the next training (round 2, 11.4). Training is deterministic (fixed steps, zero
 //   start), reads only the ledger and writes only <dir>/model.json; a bad or missing model file means rules only.
@@ -111,6 +111,18 @@ export function modelRaises(models, kind, features, guarded = new Set()) {
   if (!model || NEVER_MODELLED.has(kind) || guarded.has(kind) || !Array.isArray(model.weights)) return false;
   return score(model, features) >= RAISE_AT;
 }
+
+const BOUND_MIN_LABELLED = 100; // round 2, 11.4: a kind whose bound is over 1% after 100 audited changes is raised by default
+const MISS_TARGET = 0.01;
+const NOISE_MIN_FINDINGS = 20; // round 1, 8.5 noise rule: precision under 90% over 20 findings -> report only
+const NOISE_PRECISION = 0.9;
+
+/** Kinds raised one level by default: the miss-rate bound is over the target after enough audited changes. */
+export const boundRaises = (perKind) => new Set(Object.entries(perKind).filter(([, k]) => (k.labelled ?? 0) >= BOUND_MIN_LABELLED && k.upper > MISS_TARGET).map(([kind]) => kind));
+
+/** Kinds whose findings are report only until fixed: too many false alarms (never security or pinned). */
+export const noisyKinds = (perKind) => new Set(Object.entries(perKind).filter(([kind, k]) => !/^(pinned:|security)/.test(kind)
+  && k.catches + k.falseAlarms >= NOISE_MIN_FINDINGS && k.catches / (k.catches + k.falseAlarms) < NOISE_PRECISION).map(([kind]) => kind));
 
 /**
  * The exploration pick of one change: in EXPLORE_SHARE of changes, one explorable kind (at random) runs one level heavier.
