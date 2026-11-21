@@ -14,8 +14,9 @@ Run: `node ~/.claude/tools/status/status.mjs [--file STATUS.md] <command>`
 | `deliver "<what>"` | A hand-over row: `deliver:N \| deliver: <what> \| S \| - \| <now> \| -`, N one above the highest `deliver:` number in the table. Use it to hand over a part while rows stay open. |
 | `defect <id> "<conditions>"` | The owner reported row `<id>` broken (a done row too): `[defect <n>]` at the end of its item, n one above the last mark. The first report says to reproduce, fix the root cause and add a regression test; the second adds a `rootcause:<id>` row (once): reproduce under the owner's conditions, then `deep-debugger` before any fix (`defect.mjs`). |
 | `deliver --auto` | The same row (item `deliver: turn ended with no open row`), written only when the table reads with no problem, no work row is open (listed or running) and at least one was done after the last `deliver:` row; otherwise nothing changes, exit 0, and the message says why. The Stop hook `hooks/status-deliver.mjs` runs it on the session's linked STATUS.md, so a hand-over is recorded by itself when a turn ends with nothing open. |
-| `rule "<text>"` | Bullet at the end of `## Standing rules`; the same text twice is added once. |
+| `rule "<text>" [--scope job\|project\|always] [--supersedes R<n>]` | Bullet at the end of `## Standing rules`: the owner's words, then `{R<n> <date> <scope>}` (scope default `job`). With `--supersedes R<m>` the new bullet says `supersedes R<m>` and R<m> is marked `superseded by R<n>`, never deleted. The same text as an active rule is added once. A bullet without the tag is an active rule with no id. |
 | `decision "<text>"` | Dated bullet at the end of `## Owner decisions`. |
+| `next <id> "<step>"` | The row's next step as `- <id>: <step>` under `## Next steps`, replaced in place by a newer one for the same row. |
 | `show` | Where the job stands in at most 5 lines: rows done, running and not started, the open ids, and the finish time the estimate cache holds (`status-show.mjs`; it computes no time and writes nothing; a cache that does not match the file says so). |
 | `log "<text>"` | One dated line in `STATUS.log.md` beside `STATUS.md` (`status-log.mjs`); `STATUS.md` is not touched. In a git repo the log file is put into `info/exclude` first; when `STATUS.md` itself is tracked the log is refused with exit 2. |
 
@@ -58,3 +59,9 @@ Files: `status.mjs` (the commands and the lock), `status-table.mjs` (finding and
 `status-file.mjs` (the checked read and the temp-file write), and the four files above.
 
 Not covered: changing a row's size or item, deleting a row.
+
+`status-bullets.mjs` holds the rule, decision and next-step formats (writer and reader). `status-digest.mjs` builds the
+STATUS.md half of the digest that `hooks/recall-digest.mjs --part rules|state` prints on SessionStart (compact, resume) and
+PreCompact: every active rule in full in one string, the open rows with next steps, the "Don't redo" list of the HANDOFF.md
+beside it, the latest decisions and git facts in another, each under 10,000 chars (a rule is never cut). The STATUS.md is the
+one linked to the session, else the project's, else the cwd's.

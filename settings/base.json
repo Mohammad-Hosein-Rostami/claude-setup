@@ -149,6 +149,16 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/recall-digest.mjs\"",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/recall-digest.mjs\" --part rules",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/recall-digest.mjs\" --part state",
+            "timeout": 10
           }
         ]
       },
@@ -448,8 +458,13 @@
           },
           {
             "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/recall-digest.mjs\"",
-            "timeout": 15
+            "command": "node \"{{CLAUDE_HOME}}/hooks/recall-digest.mjs\" --part rules",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/recall-digest.mjs\" --part state",
+            "timeout": 10
           }
         ]
       }

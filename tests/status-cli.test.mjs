@@ -127,7 +127,7 @@ test('rule adds a bullet at the end of Standing rules; the same rule twice is ad
   const { run, read } = await project(PIPED);
   assert.equal(run('rule', '"no maxTurns" (owner, 2026-11-16)').code, 0);
   run('rule', '"no maxTurns" (owner, 2026-11-16)');
-  assert.match(await read(), /## Standing rules\n- keep it short\n- "no maxTurns" \(owner, 2026-11-16\)\n\n## Work items/);
+  assert.match(await read(), /## Standing rules\n- keep it short\n- "no maxTurns" \(owner, 2026-11-16\) \{R1 2026-11-16 job\}\n\n## Work items/);
   assert.equal((await read()).split('no maxTurns').length, 2);
 });
 
@@ -138,7 +138,7 @@ test('decision adds a dated bullet under Owner decisions, and both sections are 
   const bare = await project('# STATUS\n\n## Work items\n\n| id | item | size | started | done | evidence |\n| -- | -- | -- | -- | -- | -- |\n');
   bare.run('rule', 'a rule');
   bare.run('decision', 'a decision');
-  assert.match(await bare.read(), /## Standing rules\n- a rule\n\n## Owner decisions\n- 2026-11-16 a decision\n\n## Work items/);
+  assert.match(await bare.read(), /## Standing rules\n- a rule \{R1 2026-11-16 job\}\n\n## Owner decisions\n- 2026-11-16 a decision\n\n## Work items/);
 });
 
 test('the CLI prints ok and exits 0, prints the refusal on stderr and exits 1, usage exits 2', async () => {
@@ -375,7 +375,7 @@ test('rule and decision skip a fenced heading of the same name', async () => {
   assert.equal(run('decision', 'new decision').code, 0);
   const text = await read();
   assert.ok(text.startsWith('```\n## Standing rules\n## Owner decisions\n```\n'));
-  assert.match(text, /- keep it short\n- new rule\n/);
+  assert.match(text, /- keep it short\n- new rule \{R1 2026-11-16 job\}\n/);
   assert.match(text, /- 2026-11-15 earlier decision\n- 2026-11-16 new decision\n/);
 });
 
@@ -385,7 +385,7 @@ test('rule goes after the last bullet of a section that holds a fenced heading, 
   const text = '# STATUS\n\n## Standing rules\n- one\n```\n## quoted heading\n```\n- two\n\n## Work items\n\n| id | item | size | started | done | evidence |\n| -- | -- | -- | -- | -- | -- |\n| 1 | a | S | - | - | - |\n';
   const { run, read } = await project(text);
   assert.equal(run('rule', 'three').code, 0);
-  assert.equal(await read(), text.replace('- two\n', '- two\n- three\n'));
+  assert.equal(await read(), text.replace('- two\n', '- two\n- three {R1 2026-11-16 job}\n'));
 });
 
 // Audit of 2ca5bb1 (S4): a link, FIFO or folder at the lock's name made every edit in that folder fail with "is busy ... run it again",
@@ -518,7 +518,7 @@ test('an unclosed code fence below the section does not stop a rule from being a
   const text = `# STATUS\n\n## Standing rules\n- one\n\n## Notes\n\`\`\`\nnever closed\n`;
   const { run, read } = await project(text);
   assert.equal(run('rule', 'two').code, 0);
-  assert.match(await read(), /## Standing rules\n- one\n- two\n\n## Notes/);
+  assert.match(await read(), /## Standing rules\n- one\n- two \{R1 2026-11-16 job\}\n\n## Notes/);
 });
 
 // Review of 75af2e9: the same-bullet check looked at every line, so a rule quoted in a code fence was never added to the section.
@@ -526,7 +526,7 @@ test('rule adds a bullet that only appears inside a code fence elsewhere in the 
   const quoted = `\`\`\`\n- keep going\n\`\`\`\n\n${PIPED}`;
   const { run, read } = await project(quoted);
   assert.equal(run('rule', 'keep going').code, 0);
-  assert.match(await read(), /## Standing rules\n- keep it short\n- keep going\n/);
+  assert.match(await read(), /## Standing rules\n- keep it short\n- keep going \{R1 2026-11-16 job\}\n/);
 });
 
 test('add makes a new Work items section after one blank line and ends the file with a newline', async () => {

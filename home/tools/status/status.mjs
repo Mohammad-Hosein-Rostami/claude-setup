@@ -6,7 +6,10 @@
 //   deliver "<what>"         a hand-over row `deliver:N | deliver: <what> | S | - | <now> | -`, N one above the highest
 //   deliver --auto           the same, only when no work row is open and one was done after the last hand-over (the Stop hook
 //                            hooks/status-deliver.mjs runs it); otherwise nothing changes and the message says why
-//   rule "<text>" | decision "<text>"   bullet under `## Standing rules` (the owner's words) | `## Owner decisions`, dated
+//   rule "<text>" [--scope job|project|always] [--supersedes R<n>]   bullet under `## Standing rules`: the owner's words, then
+//                            {R<n> <date> <scope>}; the replaced rule is marked `superseded by R<n>`, never deleted (status-bullets.mjs)
+//   decision "<text>"        dated bullet under `## Owner decisions`
+//   next <id> "<step>"       the row's next step, `- <id>: <step>` under `## Next steps`, replaced in place (the digest prints it)
 //   defect <id> "<conditions>"  the owner reported row <id> broken: `[defect <n>]` on its item; the second report adds a
 //                            `rootcause:<id>` row and routes to root-cause first (defect.mjs)
 //   add|start|done take several rows in one call, split by a lone `+` (`start` also takes plain ids; status-batch.mjs), all or none;
@@ -16,7 +19,7 @@
 // After a changed add|start|done the estimate refresh and the board refresh start at once (segment-cache.mjs refreshNow,
 // board/lib/refresh.mjs startBoardRefresh).
 // Exports: runStatus(argv, { cwd, now, sessionId, stateDir }) -> { code, message }; the CLI prints message (stdout for 0) and exits code.
-// Invariants: touches only the one line it adds or changes; rows are only those of the one table under `## Work items` (header
+// Invariants: touches only the one line it adds or changes (a superseding rule also marks the rule it replaces); rows are only those of the one table under `## Work items` (header
 // `id | item | size | started | done | evidence`, the contiguous rows below its separator, with or without outer pipes, found and
 // read with the estimator's own findSection/rowCells/isTableRow in status-table.mjs, so code fences are skipped the same way), so a work row anywhere
 // else is never edited; a missing section is never made below a code fence left open (it would be hidden: refused); ids and items starting `deliver:` are reserved for hand-overs; times are UTC to the minute, the format the
@@ -31,7 +34,7 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { BREAKER_SUFFIX, withSessionLock } from '../../hooks/lib/session-lock.mjs';
-import { findSection, parseWorkItems, rowCells } from '../estimate/lib/items.mjs';
+import { parseWorkItems, rowCells } from '../estimate/lib/items.mjs';
 import { startBoardRefresh } from '../board/lib/refresh.mjs';
 import { refreshNow } from '../estimate/lib/segment-cache.mjs';
 import { noteTable, stateDir as defaultStateDir } from '../estimate/lib/table-store.mjs';
@@ -41,15 +44,15 @@ import { readStatusFile, replaceStatusFile } from './status-file.mjs';
 import { appendLog } from './status-log.mjs';
 import { recordPredictors, splitPredictorFlags } from './status-predictors.mjs';
 import { showStatus } from './status-show.mjs';
-import { DEFECT_TABLE, WORK_ITEMS, hiddenEndReason, insertRow, isEmpty, oneLine, rowIndex, rowToChange, sectionEnd, stamp, tableToEdit, writeRow } from './status-table.mjs';
+import { DEFECT_TABLE, insertRow, isEmpty, oneLine, rowIndex, rowToChange, stamp, tableToEdit, writeRow } from './status-table.mjs';
+import { BULLET_EDITS } from './status-bullets.mjs';
 
 const SIZES = ['S', 'M', 'L'];
-const USAGE = 'usage: status.mjs [--file STATUS.md] add <id> <item> <size S|M|L> [+ <id> <item> <size> ...] | start <id> [<id> ...] | done <id> <evidence> [--model m --effort e ...] [+ <id> <evidence> ...] | deliver "<what>" | deliver --auto | rule "<text>" | decision "<text>" | defect <id> "<conditions>" | show | log "<text>"';
+const USAGE = 'usage: status.mjs [--file STATUS.md] add <id> <item> <size S|M|L> [+ <id> <item> <size> ...] | start <id> [<id> ...] | done <id> <evidence> [--model m --effort e ...] [+ <id> <evidence> ...] | deliver "<what>" | deliver --auto | rule "<text>" [--scope job|project|always] [--supersedes R<n>] | decision "<text>" | next <id> "<step>" | defect <id> "<conditions>" | show | log "<text>"';
 const READ_COMMANDS = ['show', 'log'];
 // The row rules (they left the always-loaded home/CLAUDE.md, spec-p6 r9-text-procedures): printed with the usage text and after every add.
 export const ROW_RULES = 'rows: every owner request and every owner correction becomes rows before work on it starts; list the whole job first, review, fixes and landing rows (`close:`) included; a correction\'s item starts `rework:`; a step found later is a new row at once; never fold steps into one row, never clear a done cell; `start` when work on a row begins, `done` with its evidence when it ends; a hand-over is recorded by itself when your turn ends with no open row, `deliver "<what>"` records one while rows stay open; the estimate tool keeps one time and says why when it moves.';
 const REFRESH_COMMANDS = ['add', 'start', 'done'];
-const SECTION_FOR = { rule: 'Standing rules', decision: 'Owner decisions' };
 const ID = /^[A-Za-z0-9][\w.:-]{0,39}$/; // `7`, `17a`, `close:5`, `rework:12`, `deliver:3`; a leading `-` would read as a bullet
 const RESERVED_ID = /^deliver:/i; // hand-over rows: only `deliver` writes them, numbered
 const DELIVER_ID = /^deliver:(\d+)$/i;
@@ -129,32 +132,12 @@ function deliverRow(lines, words, now) {
   return appendDeliver(lines, what, now);
 }
 
-function addBullet(lines, kind, text, now) {
-  const body = oneLine(text);
-  if (!body) return { usage: `${kind} needs the text` };
-  const bullet = kind === 'decision' ? `- ${stamp(now).slice(0, 10)} ${body}` : `- ${body}`;
-  const section = findSection(lines, SECTION_FOR[kind]);
-  if (lines.some((line, i) => section.visible[i] && line === bullet)) return {}; // a copy inside a code fence does not count
-  if (section.start === -1) {
-    const workItems = findSection(lines, WORK_ITEMS).start;
-    const hidden = workItems === -1 ? hiddenEndReason(lines) : null;
-    if (hidden !== null) return { error: hidden };
-    lines.splice(workItems === -1 ? lines.length : workItems, 0, `## ${SECTION_FOR[kind]}`, bullet, '');
-  } else if (section.openFence > section.start && section.openFence < section.end) {
-    return { error: `unclosed code fence at line ${section.openFence + 1}, inside the \`## ${SECTION_FOR[kind]}\` section: a bullet added at its end would be hidden in the fence; close the fence first` };
-  } else {
-    lines.splice(sectionEnd(lines, section), 0, bullet);
-  }
-  return {};
-}
-
 const EDITS = {
   add: addRow,
   start: startRow,
   done: finishRow,
   deliver: deliverRow,
-  rule: (lines, [text], at) => addBullet(lines, 'rule', text ?? '', at),
-  decision: (lines, [text], at) => addBullet(lines, 'decision', text ?? '', at),
+  ...BULLET_EDITS,
   defect: (lines, words) => markDefect(lines, words, DEFECT_TABLE),
 };
 

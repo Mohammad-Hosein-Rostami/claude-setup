@@ -5,6 +5,10 @@
 // to RECALL_DIGEST_WAIT_MS (default 8000). The digest names the account the session's last checkpoint call ran on
 // (never a token), and when that call had no login (`error: "auth"` in usage.jsonl) it says so, also with no notes.
 // Prints nothing when there are no notes and no such failure; never fails the session start.
+// With `--part rules` or `--part state` (their own hook entries on SessionStart compact|resume and on PreCompact, so each string has
+// its own 10,000-char cap) it prints that part of the session's STATUS.md digest instead (tools/status/status-digest.mjs: every
+// active standing rule in full; open rows with next steps, "Don't redo", decisions, git facts). PreCompact stdout is advice to the
+// summarizer only; this hook never blocks a compaction (it always exits 0).
 // Exports: digestFor, accountLine.
 // Invariants: the digest is wrapped in <recall-digest> tags and note text cannot contain such a tag (defanged in buildDigest);
 // an account name is shown only when it matches the account tool's name rule; only the last USAGE_TAIL_BYTES of the
@@ -15,6 +19,8 @@ import { pathToFileURL } from 'node:url';
 import { lockHeld } from '../tools/recall/lib/checkpoint-state.mjs';
 import { buildDigest } from '../tools/recall/lib/digest.mjs';
 import { defaultDbPath, usageLogPath } from '../tools/recall/lib/paths.mjs';
+import { stateDir as estimateStateDir } from '../tools/estimate/lib/table-store.mjs';
+import { statusDigestPart } from '../tools/status/status-digest.mjs';
 
 // Loaded here, not with a static import: Node loads a static `node:sqlite` import (and prints its warning) before any
 // module body runs, so the quiet-sqlite-warning import above would be too late.
@@ -101,7 +107,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
   process.stdin.setEncoding('utf8');
   for await (const chunk of process.stdin) raw += chunk;
   try {
-    const digest = await digestFor(JSON.parse(raw));
+    const input = JSON.parse(raw);
+    const partAt = process.argv.indexOf('--part');
+    const digest = partAt === -1 ? await digestFor(input)
+      : statusDigestPart(process.argv[partAt + 1], input, { stateDir: estimateStateDir(), projectDir: process.env.CLAUDE_PROJECT_DIR });
     if (digest) console.log(digest);
   } catch {
     // no digest is better than a broken session start
