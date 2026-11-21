@@ -22,7 +22,7 @@
 import { closeSync, openSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { tempRoot } from './edit-log.mjs';
+import { checkedTempRoot } from './edit-log.mjs';
 import { withSessionLock } from './session-lock.mjs';
 import { readSessionFile, writeSessionFile } from './session-store.mjs';
 
@@ -91,10 +91,13 @@ export function isWritingAgent(type, env) {
 
 /**
  * The file agent-budget.mjs appends one byte to on each tool call of a subagent (its mtime is the agent's last tool call).
- * @returns {string | null} the path; null when an id is not a safe file name part
+ * @returns {string | null} the path; null when an id is not a safe file name part or the hook temp root is refused (lib/edit-log.mjs)
  */
-export const callCounterPath = (session, agentId) =>
-  SAFE_ID.test(session ?? '') && SAFE_ID.test(agentId ?? '') ? join(tempRoot(), 'budget', `${session}--${agentId}`) : null;
+export function callCounterPath(session, agentId) {
+  if (!SAFE_ID.test(session ?? '') || !SAFE_ID.test(agentId ?? '')) return null;
+  const root = checkedTempRoot();
+  return root === null ? null : join(root, 'budget', `${session}--${agentId}`);
+}
 
 /** The time of an agent's last tool call, or 0 when it has made none (or its counter cannot be read). */
 function lastToolCall(session, agentId) {

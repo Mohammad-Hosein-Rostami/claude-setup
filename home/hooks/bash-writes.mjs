@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { bashCodeWrites } from './lib/code-writes.mjs';
 import { CODE_FILE } from './lib/diagnostics.mjs';
-import { editLogPath, recordEdit, tempRoot } from './lib/edit-log.mjs';
+import { checkedTempRoot, editLogPath, recordEdit } from './lib/edit-log.mjs';
 import { logDecision } from './lib/guard-log.mjs';
 import { appendPlainFile, readPlainFile } from './lib/plain-file.mjs';
 import { MAX_COMMAND_CHARS } from './lib/verdict.mjs';
@@ -77,12 +77,13 @@ export function stateOf(path) {
 
 const isFileNow = (state) => state.startsWith('file:') || /^link:[^>]*>file:/.test(state);
 
-/** The ids of one call and its record path, or null when an id is missing or unsafe (an absent agent id is the main session). */
+/** The ids of one call and its record path, or null when an id is missing or unsafe (an absent agent id is the main session) or the temp root is refused. */
 function callIds(input) {
   const agent = input.agent_id ?? MAIN_AGENT;
   const ids = [input.session_id, agent, input.tool_use_id];
   if (!ids.every((id) => typeof id === 'string' && SAFE_ID.test(id))) return null;
-  return { session: input.session_id, agent: input.agent_id, record: join(tempRoot(), 'bash-writes', ids.join('--')) };
+  const root = checkedTempRoot();
+  return root === null ? null : { session: input.session_id, agent: input.agent_id, record: join(root, 'bash-writes', ids.join('--')) };
 }
 
 /** The command of a Bash call this hook handles, or undefined. */
@@ -151,7 +152,7 @@ export function logChanged(input) {
   const call = callIds(input);
   const logPath = call && editLogPath(call.session, call.agent);
   if (named === 0) return;
-  if (!call || !logPath) return void unchecked(input, `${named} code paths named, and the hook input has no usable session, agent or tool use id`);
+  if (!call || !logPath) return void unchecked(input, `${named} code paths named, and the hook input has no usable session, agent or tool use id, or the temp root is refused`);
   let states;
   try {
     states = readRecord(call.record);

@@ -26,7 +26,7 @@ import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync,
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { tempRoot } from './lib/edit-log.mjs';
+import { checkedTempRoot } from './lib/edit-log.mjs';
 import { overCap, parseCap } from './lib/reply-cap.mjs';
 import { isReadOnlyCommand } from './lib/read-only-command.mjs';
 import { contextTokens } from './lib/transcript.mjs';
@@ -79,14 +79,24 @@ function claimEarlyNotice(path) {
   }
 }
 
-const leadBashPath = (sessionId) => join(tempRoot(), 'lead-bash', sessionId);
-const ignoredPath = (sessionId) => `${leadBashPath(sessionId)}${IGNORED_SUFFIX}`;
+/** The lead's Bash counter of a session, or null when the hook temp root is refused (lib/edit-log.mjs checkedTempRoot). */
+function leadBashPath(sessionId) {
+  const root = checkedTempRoot();
+  return root === null ? null : join(root, 'lead-bash', sessionId);
+}
+/** Its ignored-nudge counter next to it, or null when the root is refused. */
+function ignoredPath(sessionId) {
+  const path = leadBashPath(sessionId);
+  return path === null ? null : `${path}${IGNORED_SUFFIX}`;
+}
 const kTokens = (tokens) => `~${Math.round(tokens / TOKENS_PER_K)}k`;
 
 /** Nudges the lead went on past this session (since the last deny); 0 when there is no file. */
 function ignoredNudges(sessionId) {
+  const path = ignoredPath(sessionId);
+  if (path === null) return 0;
   try {
-    return statSync(ignoredPath(sessionId)).size;
+    return statSync(path).size;
   } catch {
     return 0; // no file yet
   }
@@ -96,11 +106,12 @@ function ignoredNudges(sessionId) {
  * Counts one lead Bash call since the last Agent/Task/Workflow call, or resets the count when `tool` delegates.
  * @param {string} sessionId hook input session id
  * @param {string} tool tool name: 'Bash' counts, Agent, Task or Workflow resets, anything else is ignored
- * @returns {number} Bash calls since the last delegation (0 for other tools or an unsafe id)
+ * @returns {number} Bash calls since the last delegation (0 for other tools, an unsafe id or a refused temp root)
  */
 export function leadBashCalls(sessionId, tool) {
   if (!SAFE_ID.test(sessionId ?? '')) return 0;
   const path = leadBashPath(sessionId);
+  if (path === null) return 0;
   if (DELEGATING_TOOLS.has(tool)) {
     rmSync(path, { force: true });
     return 0;
