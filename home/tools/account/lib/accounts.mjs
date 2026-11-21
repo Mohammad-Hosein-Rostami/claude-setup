@@ -5,38 +5,54 @@
 // Invariants: a token lives in the store only (store.mjs); accounts.json and everything returned by `listAccounts`
 // hold names and non-secret fields. `accountForCall` never picks an account by itself: the name in CLAUDE_ACCOUNT,
 // else the default the owner set, else none; a name that is reserved (`-`), not a valid name or not stored gives
-// none, never the default (the setup never switches accounts by itself, owner 2026-11-19).
+// none, never the default (the setup never switches accounts by itself, owner 2026-11-19). Every read-change-write of
+// accounts.json runs under the lock of registry-lock.mjs, so two terminals that add at once both keep their account.
 import { AccountError, NAME_PATTERN, assertName, assertToken } from './names.mjs';
-import { PLANS, readRegistry, writeRegistry } from './registry.mjs';
+import { withRegistryLock } from './registry-lock.mjs';
+import { PLANS, accountsDir, readRegistry, writeRegistry } from './registry.mjs';
 import { openStore } from './store.mjs';
 
 /** A token of `claude setup-token` lasts one year (authentication docs). */
 export const TOKEN_LIFETIME_DAYS = 365;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+const locked = (env, change) => withRegistryLock(accountsDir(env), change);
+
 /** Changes the fields of one stored account; `change` gets its entry and returns the new one. */
 function updateAccount(name, env, change) {
-  const registry = readRegistry(env);
-  if (!registry.accounts[assertName(name)]) throw new AccountError('unknown', `no account named ${name}`);
-  writeRegistry({ ...registry, accounts: { ...registry.accounts, [name]: change(registry.accounts[name]) } }, env);
+  assertName(name);
+  locked(env, () => {
+    const registry = readRegistry(env);
+    if (!registry.accounts[name]) throw new AccountError('unknown', `no account named ${name}`);
+    writeRegistry({ ...registry, accounts: { ...registry.accounts, [name]: change(registry.accounts[name]) } }, env);
+  });
 }
 
 /**
- * Stores a token under a name (replacing an older one) and lists the account.
+ * Stores a token under a name (replacing an older one) and lists the account. The plan and "credits off" of an account
+ * that is replaced are kept, and so is its added date when the same token is pasted again (its year has not restarted).
  * @param {string} name the account name.
  * @param {string} token the token.
  * @param {{env?: object, store?: object, now?: Date, checked?: string | null}} options `checked` is the result of the
  *   validity check the caller made (`valid`, `check failed: <class>`), kept with its time.
- * @throws {AccountError} kind `name` or `token` before anything is written; the store's own errors.
+ * @returns {'added' | 'replaced'} `replaced` when the store held a token under that name.
+ * @throws {AccountError} kind `name` or `token` before anything is written, `locked` (registry-lock.mjs), `registry`
+ *   for an account list this tool did not write (then nothing is stored); the store's own errors.
  */
 export function addAccount(name, token, { env = process.env, store = openStore(env), now = new Date(), checked = null } = {}) {
   assertName(name);
   assertToken(token);
-  const registry = readRegistry(env);
-  store.put(name, token);
-  const at = now.toISOString();
-  const entry = { plan: null, creditsOff: false, ...registry.accounts[name], added: at, checked: checked === null ? null : { at, result: checked } };
-  writeRegistry({ ...registry, accounts: { ...registry.accounts, [name]: entry } }, env);
+  const previous = store.get(name);
+  return locked(env, () => {
+    const registry = readRegistry(env);
+    store.put(name, token);
+    const at = now.toISOString();
+    const old = registry.accounts[name];
+    const added = old && previous === token ? old.added : at;
+    const entry = { plan: null, creditsOff: false, ...old, added, checked: checked === null ? null : { at, result: checked } };
+    writeRegistry({ ...registry, accounts: { ...registry.accounts, [name]: entry } }, env);
+    return previous === null ? 'added' : 'replaced';
+  });
 }
 
 /**
@@ -45,12 +61,14 @@ export function addAccount(name, token, { env = process.env, store = openStore(e
  */
 export function removeAccount(name, { env = process.env, store = openStore(env) } = {}) {
   assertName(name);
-  const registry = readRegistry(env);
-  const hadToken = store.remove(name);
-  if (!registry.accounts[name]) return hadToken;
-  const { [name]: removed, ...accounts } = registry.accounts;
-  writeRegistry({ default: registry.default === name ? null : registry.default, accounts }, env);
-  return true;
+  return locked(env, () => {
+    const registry = readRegistry(env);
+    const hadToken = store.remove(name);
+    if (!registry.accounts[name]) return hadToken;
+    const { [name]: removed, ...accounts } = registry.accounts;
+    writeRegistry({ default: registry.default === name ? null : registry.default, accounts }, env);
+    return true;
+  });
 }
 
 /** Whether this terminal uses the account: its CLAUDE_ACCOUNT names it and its token equals the stored one (compared here, never printed). */
@@ -92,9 +110,12 @@ export function accountForCall(env = process.env, store = null) {
 
 /** Sets the default account (`null` for none). @throws {AccountError} kind `unknown` for a name that is not stored. */
 export function setDefault(name, { env = process.env } = {}) {
-  const registry = readRegistry(env);
-  if (name !== null && !registry.accounts[assertName(name)]) throw new AccountError('unknown', `no account named ${name}`);
-  writeRegistry({ ...registry, default: name }, env);
+  if (name !== null) assertName(name);
+  locked(env, () => {
+    const registry = readRegistry(env);
+    if (name !== null && !registry.accounts[name]) throw new AccountError('unknown', `no account named ${name}`);
+    writeRegistry({ ...registry, default: name }, env);
+  });
 }
 
 /** Records the plan the owner says the account is on. @throws {AccountError} kind `usage` for a plan that is not one of PLANS. */
