@@ -1,7 +1,7 @@
 // land: put one reviewed lane on the base branch: rebase check, a suite PASS at the tip, then a fast-forward land that also removes the lane's
 // worktree, branch and copies (git-tidy land). Every step is a Haiku runner that runs one tool and reports its exit, so a failure is read from
 // the exit code, never guessed.
-// Args: { row, closeRow, statusFile, repo, base, branch, worktree, suite, tip, brief?, auditPending?, auditBase? }  (brief: the lane's brief file, whose named paths may
+// Args: { row, closeRow, statusFile, repo, base, branch, worktree, suite, tip, brief?, auditPending?, auditBase?, checks? }  (brief: the lane's brief file, whose named paths may
 //   add files over the size limit; suite: the repo's declared full-suite command, run by test-pass as
 //   `run --suite` from the repo's own declaration; tip: the sha the review cleared. Land refuses a branch that is not at it, so a branch the
 //   review never read cannot land. auditPending: the lane lands without its Opus-max pair (a waived lane from build.js, or any lane the lead
@@ -91,6 +91,13 @@ async function recordPendingAudit(landedSha) {
 }
 
 // A full disk makes every later step fail with ENOSPC and no clear cause, so the first step refuses below the fail threshold (exit 1) and says what to clear.
+// The owner's /check categories (args.checks, set by workflow-script-check; none = every check off, spec r9-checks-off): the Suite stage
+// runs only with `test` on, a rebase that changed patches goes back to review only with `review` on, and git-tidy land gets the list so its
+// suite PASS and UI proof hold only for categories that are on. Rebase, ff-only land and prune always run.
+const CHECKS = Array.isArray(args.checks) ? args.checks.filter((name) => /^[a-z]+$/.test(name)) : []
+const checkOn = (category) => CHECKS.includes(category)
+const CHECKS_FLAG = CHECKS.length > 0 ? ` --checks ${CHECKS.join(',')}` : ''
+
 phase('Rebase')
 const disk = await runner('disk', 'Rebase', `In ${args.repo} run: ${DISK_FREE} check. Report exit and tail (its one output line, whole).`)
 if (disk === null) return failed('', 'the disk check runner was stopped: nothing was landed')
@@ -131,15 +138,15 @@ while (true) {
   if (rebase === null) return failed('', 'the rebase runner was stopped')
   if (rebase.exit === 3) return { status: 'conflict', sha: rebase.tip, patchesChanged: 0, tidy: rebase.files.join(', ') }
   if (rebase.exit !== 0) return failed(rebase.tip, `rebase check exit ${rebase.exit}: ${rebase.tail}`)
-  if (rebase.patchesChanged > 0) return { status: 'needs-review', sha: rebase.tip, patchesChanged: rebase.patchesChanged, tidy: rebase.tail }
+  if (rebase.patchesChanged > 0 && checkOn('review')) return { status: 'needs-review', sha: rebase.tip, patchesChanged: rebase.patchesChanged, tidy: rebase.tail }
 
   phase('Suite')
-  const suite = await runner('suite', 'Suite', `Check for a full-suite PASS at the tip: ${TEST_PASS} check ${rebase.tip} --repo ${args.repo} --suite. If it exits 0 you are done (report exit 0). Otherwise run the suite on the tip: in ${args.worktree} when its HEAD is ${rebase.tip} and it has no changes, else in a detached worktree of ${rebase.tip} that you remove afterwards: ${TEST_PASS} run --repo <that folder> --suite (no command after it: test-pass runs the repo's declared suite) and report its exit. When the suite exits non-zero, report in files the failing test files and in tail each one's first error line (for node --test, its first "not ok" line and the first error message under it): the last output lines never name the failing test.`, SUITE_FIELDS)
+  const suite = !checkOn('test') ? { exit: 0, files: [], tail: 'not checked: test is off' } : await runner('suite', 'Suite', `Check for a full-suite PASS at the tip: ${TEST_PASS} check ${rebase.tip} --repo ${args.repo} --suite. If it exits 0 you are done (report exit 0). Otherwise run the suite on the tip: in ${args.worktree} when its HEAD is ${rebase.tip} and it has no changes, else in a detached worktree of ${rebase.tip} that you remove afterwards: ${TEST_PASS} run --repo <that folder> --suite (no command after it: test-pass runs the repo's declared suite) and report its exit. When the suite exits non-zero, report in files the failing test files and in tail each one's first error line (for node --test, its first "not ok" line and the first error message under it): the last output lines never name the failing test.`, SUITE_FIELDS)
   if (suite === null) return failed(rebase.tip, 'the suite runner was stopped')
   if (suite.exit !== 0) return { status: 'red', sha: rebase.tip, patchesChanged: 0, tidy: suite.files.length > 0 ? `${suite.files.join(', ')}: ${suite.tail}` : suite.tail }
 
   phase('Land')
-  const land = await runner('land', 'Land', `In ${args.repo} run: ${TIDY} land ${args.branch} ${args.repo} --base ${args.base}${BRIEF} --json`)
+  const land = await runner('land', 'Land', `In ${args.repo} run: ${TIDY} land ${args.branch} ${args.repo} --base ${args.base}${BRIEF}${CHECKS_FLAG} --json`)
   if (land === null) return failed(rebase.tip, 'the land runner was stopped')
   if (land.exit === 5) {
     const base = await runner('base', 'Land', `In ${args.repo} run: git rev-parse --verify refs/heads/${args.base}. Report exit and tip (the full sha it printed).`)

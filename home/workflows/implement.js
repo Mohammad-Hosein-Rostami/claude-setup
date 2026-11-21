@@ -14,6 +14,10 @@ export const meta = {
   phases: [{ title: 'Build', detail: 'implementer (hand-over when it ends early) or test-writer, in its own worktree' }],
 }
 checkArgs(args)
+const CHECKS = Array.isArray(args.checks) ? args.checks.filter((name) => /^[a-z]+$/.test(name)) : [] // the owner's /check categories (spec r9-checks-off)
+const checkOn = (category) => CHECKS.includes(category)
+// The acceptance test-writer (role tests) is a `test` check: off, it writes nothing (build does not start it then).
+if (args.role === 'tests' && !checkOn('test')) return { status: 'not-checked', text: 'not checked: test is off', branch: '', worktree: '', sha: '' }
 
 const TEST_WRITER = { agentType: 'test-writer', model: 'sonnet', effort: 'medium' }
 const [str, bool, strings] = [{ type: 'string' }, { type: 'boolean' }, { type: 'array', items: { type: 'string' } }]
@@ -37,12 +41,14 @@ const implementerPrompt = (lane) => `${matrixLine(lane)}${standingRulesLine}${ba
   + `Your worktree starts on a throwaway branch (git branch --show-current, named worktree-...). Branch ${lane.branch} must hold your work, based on ${args.base}: `
   + `if it does not exist yet, rename the throwaway branch with \`git branch -m ${lane.branch}\` (git rebase ${args.base} if it is not based on it); `
   + `if it already exists (a re-done lane) never make a copy: remove the old worktree that holds it (git worktree list, then git worktree remove <path>), run \`git switch ${lane.branch} && git rebase ${args.base}\`, and delete the throwaway branch (\`git branch -d <its name>\`). `
-  + `Run only the tests related to your changes while iterating (quiet reporter), commit after each green step, never merge, never push. `
+  + (checkOn('test') ? `Run only the tests related to your changes while iterating (quiet reporter), commit after each green step, never merge, never push. `
+    : `Run no tests (the owner left the test check off): build carefully instead (read the code and the installed docs first, re-read your diff against the spec once, strict types); commit after each step, never merge, never push. `)
   + contractText(lane)
-  + `Last run \`node ~/.claude/tools/review-tier/review-tier.mjs ${args.base}...HEAD --landing --json\` and return IMPLEMENTED: branch (must be ${lane.branch}), worktree (your pwd), sha (HEAD), tests {cmd, exit}, tier (that JSON).`
+  + (checkOn('review') ? `Last run \`node ~/.claude/tools/review-tier/review-tier.mjs ${args.base}...HEAD --landing --json\` and return IMPLEMENTED: branch (must be ${lane.branch}), worktree (your pwd), sha (HEAD), tests {cmd, exit}, tier (that JSON).`
+    : `Return IMPLEMENTED: branch (must be ${lane.branch}), worktree (your pwd), sha (HEAD), tests {cmd: "", exit: 0} (not checked: test), tier {}.`)
 // The lane contract in the implementer's brief: checkpoints, principle questions, locked files, and the run rules (never the full suite: the review runs it once).
 const lockedFiles = (lane) => [...new Set((lane.checkpoints ?? []).flatMap((checkpoint) => checkpoint.files))]
-const contractText = (lane) => (lane.checkpoints?.length > 0 ? `Checkpoints (when you are done each \`run\` must exit with its exit code; a red-first one exits differently before your change): ${lane.checkpoints.map((checkpoint) => `${checkpoint.id}: \`${checkpoint.run}\` exit ${checkpoint.exit} (${checkpoint.kind})`).join('; ')}. ` : '')
+const contractText = (lane) => (checkOn('test') && lane.checkpoints?.length > 0 ? `Checkpoints (when you are done each \`run\` must exit with its exit code; a red-first one exits differently before your change): ${lane.checkpoints.map((checkpoint) => `${checkpoint.id}: \`${checkpoint.run}\` exit ${checkpoint.exit} (${checkpoint.kind})`).join('; ')}. ` : '')
   + (lane.principles?.length > 0 ? `Principle questions: answer each yes or no with file:line before you finish, a no is a finding: ${lane.principles.map((principle) => `${principle.id} ${principle.question}`).join(' ')} ` : '')
   + `Locked files (${[...lockedFiles(lane), ...(lane.acceptanceTests ? [`the test files of ${testBranch(lane)}`] : [])].join(', ') || 'none'}): never edit them; if one is wrong write \`contract-dispute: <file>: <why>\` in disputes instead. `
   + `Never run the full suite (the review runs it once at the tip); Bash timeout 600000 for a commit, 60000 for a probe. `

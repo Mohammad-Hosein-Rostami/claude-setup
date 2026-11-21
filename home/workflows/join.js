@@ -25,7 +25,9 @@ const JOINED = shape({ red: bool, tail: str, sha: str, worktree: str, vacuous: s
 const SAFE_PATH = /^(?:[A-Za-z]:[\\/]|\/)[\w@+=.,/\\-]+$/
 const built = { worktree: args.worktree, sha: args.sha, disputes: args.disputes ?? [] }
 const written = args.written ?? null
-const checkpoints = args.checkpoints ?? []
+const CHECKS = Array.isArray(args.checks) ? args.checks.filter((name) => /^[a-z]+$/.test(name)) : [] // the owner's /check categories (spec r9-checks-off)
+const checkOn = (category) => CHECKS.includes(category)
+const checkpoints = checkOn('test') ? (args.checkpoints ?? []) : [] // checkpoint runs and related tests are `test` checks
 const lockedFiles = [...new Set(checkpoints.flatMap((checkpoint) => checkpoint.files))]
 const finding = (id, file, problem, fix) => ({ id, severity: 'blocking', file, line: 0, problem, fix, security: false })
 
@@ -51,8 +53,8 @@ function joinPrompt() {
     checkpoints.length > 0 ? `Head runs, in ${built.worktree} (the joined HEAD): run the same checkpoint commands, keep each exit as headExit and the last 3 output lines as tail (no secrets). Report every checkpoint as {id, baseExit, headExit, tail}.` : '',
     `Lists (file names, empty when none): outOfScope = files in \`git diff --name-only ${args.base}...HEAD\` that are neither inside ${args.files.join(', ')} nor test files of the lane${locked ? `; contractTouched = \`git diff ${written ? written.sha : '<the merge-base sha above>'} HEAD --name-only -- ${lockedPathspec}\`` : ''}; uiFiles = the lines \`${UI_PROOF} changed --from $(git merge-base ${args.base} HEAD) --to HEAD --repo ${built.worktree}\` prints (exit 1 means some, 0 none).`,
     written ? `Then delete the helper branch ${written.branch} and its worktree.` : '',
-    `Run the related tests for the lane's changed files with the repo's own command (e.g. node scripts/affected-tests.mjs --base ${args.base} --run, vitest related --run, jest --findRelatedTests) and report red true when any fail, with the failing lines in tail.`,
-    `Then update the rows: ${STATUS} --file ${args.statusFile} done ${args.row} "implemented ${args.branch}; related tests green or red as you found them" and ${STATUS} --file ${args.statusFile} start ${args.closeRow}. Return red, tail, sha (HEAD of the lane), worktree, vacuous, outOfScope, contractTouched, uiFiles, checkpoints.`,
+    checkOn('test') ? `Run the related tests for the lane's changed files with the repo's own command (e.g. node scripts/affected-tests.mjs --base ${args.base} --run, vitest related --run, jest --findRelatedTests) and report red true when any fail, with the failing lines in tail.` : 'Run no tests (the owner left the test check off): report red false and tail "".',
+    `Then update the rows: ${STATUS} --file ${args.statusFile} done ${args.row} "implemented ${args.branch}; ${checkOn('test') ? 'related tests green or red as you found them' : 'not checked: test'}" and ${STATUS} --file ${args.statusFile} start ${args.closeRow}. Return red, tail, sha (HEAD of the lane), worktree, vacuous, outOfScope, contractTouched, uiFiles, checkpoints.`,
   ].filter((line) => line !== '').join('\n')
 }
 

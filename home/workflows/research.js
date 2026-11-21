@@ -20,6 +20,8 @@ export const meta = {
   ],
 }
 checkArgs(args)
+const CHECKS = Array.isArray(args.checks) ? args.checks.filter((name) => /^[a-z]+$/.test(name)) : [] // the owner's /check categories (spec r9-checks-off)
+const checkOn = (category) => CHECKS.includes(category)
 
 const QUESTION_COUNTS = { simple: [1, 2], compare: [2, 4], complex: [5, 8] }
 const GATHER_TOOL_CALLS = '10-15'
@@ -52,6 +54,8 @@ const report = await agent(`Research question: ${question}\nWrite the report to 
 if (!report) return { path: null, unverified: [], error: 'synthesis step returned nothing' }
 
 phase('Critic')
+// The critic and its URL re-checks are a `review` check: off, the report goes back with every claim listed as unverified.
+if (!checkOn('review')) return { path: report.path, unverified: unverifiedClaims(gathered, [], unanswered), notChecked: 'review: no critic or URL re-check ran (/check review turns them on)' }
 const critic = await agent(`Check every claim of the report ${report.path} against the notes (${notes.join(', ')}): list a claim the notes do not support or contradict as disputed (with the URL), list EVERY version, date and price claim in the report under recheck (with its URL), and list each fix the report needs as a patch (where, change). Read only.`, { label: `${row}:critic`, phase: 'Critic', agentType: 'general-purpose', model: 'opus', effort: 'high', schema: CRITIC_SCHEMA })
 if (!critic) return { path: report.path, unverified: unverifiedClaims(gathered, [], unanswered), error: 'critic step returned nothing' }
 const checks = (await pipeline(claimsToRecheck(critic, gathered), recheck)).filter(Boolean)

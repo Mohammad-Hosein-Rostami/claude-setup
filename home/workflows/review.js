@@ -57,6 +57,10 @@ export const meta = {
   ],
 }
 checkArgs(args)
+const CHECKS = Array.isArray(args.checks) ? args.checks.filter((name) => /^[a-z]+$/.test(name)) : [] // the owner's /check categories (spec r9-checks-off)
+const checkOn = (category) => CHECKS.includes(category)
+// The whole review is the `review` check: off, nothing runs and the caller is told so (build and bugfix do not call it then).
+if (!checkOn('review')) return { status: 'not-checked', text: 'not checked: review is off (the owner turns it on with /check review)', tip: '', worktree: args.worktree, findings: [], optional: [], leadList: [] }
 
 // fixer: the caller's fix agent type (build and bugfix pass ui-implementer for a lane with UI files); the guard does not fire in a workflow, so its MATRIX line rides in the brief.
 const fixerLine = args.fixer?.agentType === 'ui-implementer' ? `MATRIX: ${args.fixer.matrix ?? 'none: the visual-qa gate made the matrix for this lane'}\n` : ''

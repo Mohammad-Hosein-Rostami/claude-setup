@@ -12,6 +12,10 @@ export const meta = {
   phases: [{ title: 'Visual QA', detail: 'visual-qa agent: ui-check run at the matrix widths on the lane tip, owner review page' }],
 }
 checkArgs(args)
+const CHECKS = Array.isArray(args.checks) ? args.checks.filter((name) => /^[a-z]+$/.test(name)) : [] // the owner's /check categories (spec r9-checks-off)
+const checkOn = (category) => CHECKS.includes(category)
+// The gate is the `ui` check: off, nothing runs (build and bugfix do not call it then).
+if (!checkOn('ui')) return { status: 'not-checked', text: 'not checked: ui is off (the owner turns it on with /check ui)', findings: [] }
 
 const COVERAGE = 'node ~/.claude/tools/ui-coverage/ui-coverage.mjs'
 const [str, strings] = [{ type: 'string' }, { type: 'array', items: { type: 'string' } }]

@@ -3,7 +3,7 @@
 // contract verdict), the `review` child (landing review with fixes), the `visual-qa` child for a lane whose UI files changed (a FAIL goes to a fix
 // round with ui-implementer, then the gate again; also after `land` returns `ui-proof`), then a serial land queue through the `land` child.
 // Args: { base, repo, suite, writers, statusFile, scriptsDir, appendOnly?, resume?, probeC?: 'pass'|'fail', lanes: [{ row, closeRow, branch, spec, files,
-//   acceptanceTests, implementer: { agentType?, model, effort }, matrix?, principles?, checkpoints?, addClasses? }] } (workflows skill, section build). checkArgs throws,
+//   acceptanceTests, implementer: { agentType?, model, effort }, matrix?, principles?, checkpoints?, addClasses? }], checks? } (workflows skill, section build). checkArgs throws,
 //   naming the key and the shape, on a file two lanes share outside appendOnly, a checkpoint over its own lane's files, a repeated checkpoint id, or a
 //   ui-implementer lane with no matrix. probeC 'fail' (phase 0 Probe C) refuses a lane whose UI files change (UI_REFUSAL).
 // Returns: { lanes: [{ row, closeRow, status, sha, text, findings?, optional?, audit? }], leadList }, status landed | implementer-stopped | wrong-branch |
@@ -26,6 +26,13 @@ export const meta = {
   ],
 }
 checkArgs(args)
+
+// The owner's /check categories (args.checks, set by workflow-script-check; none = every check off, spec r9-checks-off): the test-writer runs
+// only with `test`, the Review stage and the post-land audit only with `review`, the Visual QA stage only with `ui`; children get the list.
+// Off, a lane goes build -> join -> land (rebase, ff-only, prune) and its text says "not checked: <categories>".
+const CHECKS = Array.isArray(args.checks) ? args.checks.filter((name) => /^[a-z]+$/.test(name)) : []
+const checkOn = (category) => CHECKS.includes(category)
+const NOT_CHECKED = ['test', 'review', 'ui'].filter((category) => !checkOn(category))
 
 const RUNNER = { agentType: 'runner', model: 'haiku', effort: 'medium' }
 const STATUS = 'node ~/.claude/tools/status/status.mjs'
@@ -88,7 +95,7 @@ const reviewStop = (lane, reviewed) => {
   return (reviewed.leadList ?? []).length > 0 ? heldForLead(lane, reviewed) : null
 }
 const reviewChild = async (lane, extra) => {
-  const reviewed = await workflow({ scriptPath: `${args.scriptsDir}/review.js` }, extra)
+  const reviewed = await workflow({ scriptPath: `${args.scriptsDir}/review.js` }, { checks: CHECKS, ...extra })
   leadList.push(...(reviewed.leadList ?? []))
   return reviewed
 }
@@ -101,7 +108,7 @@ const landedBeforeStop = async (lane) => {
 }
 
 // The `implement` child writes one lane's code (with the hand-over to a fresh agent when it ends early) or its acceptance tests: one writer slot each.
-const writerChild = (lane, role) => workflow({ scriptPath: `${args.scriptsDir}/implement.js` }, { role, row: lane.row, branch: lane.branch, base: args.base, spec: lane.spec, files: lane.files, statusFile: args.statusFile,
+const writerChild = (lane, role) => workflow({ scriptPath: `${args.scriptsDir}/implement.js` }, { checks: CHECKS, role, row: lane.row, branch: lane.branch, base: args.base, spec: lane.spec, files: lane.files, statusFile: args.statusFile,
   acceptanceTests: lane.acceptanceTests, model: lane.implementer.model, effort: lane.implementer.effort, ...Object.fromEntries(['matrix', 'checkpoints', 'principles'].filter((key) => lane[key] !== undefined).map((key) => [key, lane[key]])),
   ...(lane.implementer.agentType ? { agentType: lane.implementer.agentType } : {}), ...(baseTips[0] ? { baseSha: baseTips[0] } : {}) })
 
@@ -111,9 +118,10 @@ async function buildLane(lane) {
     if (already !== null) return already
   }
   const implement = limitedWriter(() => writerChild(lane, 'implement'))
-  const tests = lane.acceptanceTests ? limitedWriter(() => writerChild(lane, 'tests')) : Promise.resolve(null)
+  const withTests = lane.acceptanceTests && checkOn('test') // the acceptance test-writer is a `test` check
+  const tests = withTests ? limitedWriter(() => writerChild(lane, 'tests')) : Promise.resolve(null)
   const [built, written] = await parallel([() => implement, () => tests])
-  if (built === null || (lane.acceptanceTests && written === null)) return outcome(lane, 'implementer-stopped', '', 'a build agent was stopped before it returned')
+  if (built === null || (withTests && written === null)) return outcome(lane, 'implementer-stopped', '', 'a build agent was stopped before it returned')
   const wrong = [built, written].find((report) => report?.wrongBase)
   if (wrong) return outcome(lane, 'failed', '', `${wrong.wrongBase}: the agent's worktree started on another commit, so its work is not counted (keep the session on the base checkout for the whole run)`)
   // An agent that stays on another branch would have its work reviewed under one name and landed under another (B1).
@@ -126,7 +134,7 @@ async function buildLane(lane) {
 async function joinLane(step) {
   if (step.status) return step
   const { lane, built, written } = step
-  const result = await workflow({ scriptPath: `${args.scriptsDir}/join.js` }, { row: lane.row, closeRow: lane.closeRow, branch: lane.branch, base: args.base, files: lane.files, statusFile: args.statusFile,
+  const result = await workflow({ scriptPath: `${args.scriptsDir}/join.js` }, { checks: CHECKS, row: lane.row, closeRow: lane.closeRow, branch: lane.branch, base: args.base, files: lane.files, statusFile: args.statusFile,
     worktree: built.worktree, sha: built.sha, disputes: built.disputes ?? [], ...(lane.checkpoints ? { checkpoints: lane.checkpoints } : {}), ...(written ? { written: { branch: written.branch, worktree: written.worktree, sha: written.sha } } : {}) })
   if (result === null || result.status !== 'joined') return outcome(lane, result?.status ?? 'join-failed', result?.sha ?? built.sha, result?.text ?? 'the join child returned nothing')
   return { lane, built, written, joined: result.joined, contract: { findings: result.findings, waiverAt: result.waiverAt } }
@@ -137,10 +145,18 @@ async function reviewLane(step) {
   const { lane, built, joined, contract } = step
   // A dispute asks the lead to rule on a locked file: the fix agent cannot edit it, so it is no finding of the review (the lane's waiver is blocked above).
   leadList.push(...(built.disputes ?? []).map((line, at) => ({ id: `dispute-${lane.row}-${at}`, file: '(contract)', line: 0, reason: `implementer dispute, unresolved: ${line}` })))
+  if (!checkOn('review')) return notReviewed(step)
   const initialFindings = [...(joined.red ? [finding(`join-${lane.row}`, '(tests)', `related tests are red after the join: ${joined.tail}`, 'make the related tests pass')] : []), ...contract.findings]
   const reviewed = await reviewChild(lane, reviewArgs(lane, joined.worktree, { ...(initialFindings.length > 0 ? { initialFindings } : {}), ...(contract.waiverAt ? { waiverAt: contract.waiverAt } : {}) }))
   if (args.probeC === 'fail' && joined.uiFiles.length > 0) return outcome(lane, 'ui-refused', reviewed.tip, UI_REFUSAL)
   return reviewStop(lane, reviewed) ?? { lane, reviewed, uiFiles: joined.uiFiles, waived: reviewed.waived === true && contract.waiverAt !== undefined }
+}
+
+/** The Review stage with `review` off: the joined tip goes on as it is (no waiver, so no audit); the UI gate runs only with `ui` on. */
+function notReviewed({ lane, joined }) {
+  const tip = joined.sha ?? ''
+  if (args.probeC === 'fail' && joined.uiFiles.length > 0 && checkOn('ui')) return outcome(lane, 'ui-refused', tip, UI_REFUSAL)
+  return { lane, reviewed: { status: 'clean', tip, worktree: joined.worktree, baseSha: '', laneClasses: [], findings: [], optional: [], leadList: [] }, uiFiles: checkOn('ui') ? joined.uiFiles : [], waived: false }
 }
 
 // For the audit stage, by lane row: the LAST review's base and tip (the range B..T), the landed sha (the gate key), whether the land loop reviewed again.
@@ -160,12 +176,14 @@ async function landLane(step) {
     // A waived lane lands without its Opus pair: land.js records it `pending` right after the ff-only land, so a stopped audit runner cannot leave the gate open.
     // A base that is not a sha cannot be recorded: land.js then lands and says "audit not recorded" (audit-error below), never silently.
     const pending = waived ? { auditPending: true, auditBase: String(reviewed.baseSha ?? '') } : {}
-    const landed = await inLandQueue(() => workflow({ scriptPath: `${args.scriptsDir}/land.js` }, { row: lane.closeRow, closeRow: lane.closeRow, statusFile: args.statusFile, repo: args.repo, base: args.base, branch: lane.branch, worktree: reviewed.worktree, suite: args.suite, tip: reviewed.tip, ...pending }))
+    const landed = await inLandQueue(() => workflow({ scriptPath: `${args.scriptsDir}/land.js` }, { checks: CHECKS, row: lane.closeRow, closeRow: lane.closeRow, statusFile: args.statusFile, repo: args.repo, base: args.base, branch: lane.branch, worktree: reviewed.worktree, suite: args.suite, tip: reviewed.tip, ...pending }))
     if (landed.status === 'landed') {
       recordBaseTip(landed.sha)
       if (waived) auditInputs.set(lane.row, { lane, baseSha: reviewed.baseSha, tip: reviewed.tip, landedSha: landed.sha, escalated })
-      return outcome(lane, 'landed', landed.sha, '', listsOf(reviewed))
+      return outcome(lane, 'landed', landed.sha, NOT_CHECKED.length > 0 ? `not checked: ${NOT_CHECKED.join(', ')}` : '', listsOf(reviewed))
     }
+    // With `review` off there is no fix round: a conflict or a red suite goes back to the lead as it is.
+    if (!checkOn('review') && ['conflict', 'red', 'needs-review'].includes(landed.status)) return outcome(lane, landed.status, landed.sha, `${landed.tidy} (review is off, so no fix round ran)`)
     // "audit not recorded" (land.js): the lane landed, but the gate holds nothing for it; audit-error with "gate holds nothing" says to audit by hand.
     if (landed.status === 'failed') return outcome(lane, waived && String(landed.tidy).startsWith(AUDIT_NOT_RECORDED) ? 'audit-error' : 'failed', landed.sha, landed.tidy)
     // ui-proof: the rebased tip has no visual-qa PASS: the gate judges that tip, never a review alone, then the lane lands again
@@ -190,7 +208,7 @@ async function visualGate(lane, reviewed, uiFiles) {
   if (args.probeC === 'fail') return { stop: outcome(lane, 'ui-refused', reviewed.tip, UI_REFUSAL) }
   let current = reviewed
   for (;;) {
-    const checked = await workflow({ scriptPath: `${args.scriptsDir}/visual-qa.js` }, { row: lane.row, repo: args.repo, worktree: current.worktree, tip: current.tip, base: args.base, uiFiles, ...(lane.matrix ? { matrix: lane.matrix } : {}) })
+    const checked = await workflow({ scriptPath: `${args.scriptsDir}/visual-qa.js` }, { checks: CHECKS, row: lane.row, repo: args.repo, worktree: current.worktree, tip: current.tip, base: args.base, uiFiles, ...(lane.matrix ? { matrix: lane.matrix } : {}) })
     if (checked?.status === 'pass') return { reviewed: current }
     if (checked?.status !== 'fail') return { stop: outcome(lane, 'visual-qa-failed', current.tip, checked?.text ?? 'the visual-qa child returned nothing', listsOf(current)) }
     const initialFindings = checked.findings.map((item, at) => finding(`vqa-${lane.row}-${at}`, item.file, item.problem, item.fix))

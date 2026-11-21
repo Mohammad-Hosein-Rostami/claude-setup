@@ -3,7 +3,8 @@
 // whose work is already on the base; `prune` removes exactly those, and only when it can prove they are merged.
 // Usage: git-tidy.mjs check [dir] [--base <branch>] [--json]
 //        git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]
-//        git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] [--brief <file>] [--json]
+//        git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] [--brief <file>] [--checks <cat,...>] [--json]
+//   --checks names categories the owner turned on (the land workflow passes its args.checks); it can only add checks, never turn one off.
 //        git-tidy.mjs range <reviewed-sha> [dir] [--base <branch>] [--landed <sha>] [--json]
 //        --include-recent  lifts only the rule that keeps a worktree used in the last 60 minutes, and not for a lane
 //                          with no commit of its own yet (it stays protected for those 60 minutes)
@@ -41,14 +42,14 @@ const EXIT_NOT_FOUND = 1;
 const MAX_BRIEF_BYTES = 1024 * 1024; // a brief is text; the first MB is what the commit gate reads too
 const UI_PROOF_TIMEOUT_MS = 60_000;
 const TOOLS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
-const USAGE = 'usage: git-tidy.mjs check [dir] [--base <branch>] [--json]\n       git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]\n       git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] [--brief <file>] [--json]\n       git-tidy.mjs range <reviewed-sha> [dir] [--base <branch>] [--landed <sha>] [--json]';
+const USAGE = 'usage: git-tidy.mjs check [dir] [--base <branch>] [--json]\n       git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]\n       git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] [--brief <file>] [--checks <cat,...>] [--json]\n       git-tidy.mjs range <reviewed-sha> [dir] [--base <branch>] [--landed <sha>] [--json]';
 const COMMANDS = ['check', 'prune', 'land', 'range'];
-const VALUE_FLAGS = { '--brief': ['land', 'brief'], '--landed': ['range', 'landed'] };
+const VALUE_FLAGS = { '--brief': ['land', 'brief'], '--checks': ['land', 'checks'], '--landed': ['range', 'landed'] };
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
   if (!COMMANDS.includes(command)) throw new UsageError(USAGE);
-  const options = { command, branch: null, dir: null, base: null, json: false, apply: false, includeRecent: false, rebaseOnly: false, brief: null, landed: null };
+  const options = { command, branch: null, dir: null, base: null, json: false, apply: false, includeRecent: false, rebaseOnly: false, brief: null, checks: null, landed: null };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     if (arg === '--json') options.json = true;
@@ -125,8 +126,9 @@ async function runLand(repo, options) {
   const briefText = briefTextOf(options.brief);
   // The suite PASS and the UI proof are checks: they hold a landing only when the owner turned `test` / `ui` on with /check for the
   // session that lands ($CLAUDE_CODE_SESSION_ID; hooks/lib/checks-on.mjs, spec r9-checks-off). Rebase, ff-only and prune always run.
-  const hasPass = isOn('test') ? await loadHasPass() : () => true;
-  const uiCheck = isOn('ui') ? await loadUiCheck() : () => null;
+  const checkOn = (category) => isOn(category) || String(options.checks ?? '').split(',').includes(category); // --checks only adds
+  const hasPass = checkOn('test') ? await loadHasPass() : () => true;
+  const uiCheck = checkOn('ui') ? await loadUiCheck() : () => null;
   const checks = options.rebaseOnly ? { hasPass: () => false } : { hasPass, uiCheck, briefText };
   const result = landLane(repo, options.branch, { rebaseOnly: options.rebaseOnly, ...checks });
   console.log(formatLand(result, options.json));

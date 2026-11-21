@@ -1,6 +1,8 @@
 // bugfix workflow: reproduce a bug, test three hypotheses in parallel, fix the confirmed root cause, verify the fix,
 // then review and land it through the `review` and `land` workflows (run it with the /workflows skill, section bugfix).
-// Args: { repo, symptom, scriptsDir, row?, closeRow?, statusFile?, base?, suite?, repro?, branch?, reproAtOwnerConditions?, matrix?, land?, probeC? }:
+// Args: { repo, symptom, scriptsDir, row?, closeRow?, statusFile?, base?, suite?, repro?, branch?, reproAtOwnerConditions?, matrix?, land?, probeC?, checks? }:
+//   checks: the owner's /check categories (set by workflow-script-check; none = off, spec r9-checks-off): Verify runs only with `test`, Review only
+//   with `review`, Visual QA only with `ui`; Reproduce, Hypotheses, Fix and Land (rebase, ff-only, prune) always run.
 //   it starts from a symptom alone (the skill fills repo and scriptsDir): row 'bugfix', closeRow 'close:<row>', statusFile <repo>/STATUS.md, base
 //   'main', suite the repo's declared full suite (test-pass reads the declaration; the text is only shown). reproAtOwnerConditions: for a UI bug,
 //   the owner's conditions (zoom, pixel ratio, OS, theme, data) the repro must use; it makes the fixer ui-implementer. land: false (a repo that
@@ -31,6 +33,8 @@ export const meta = {
   ],
 }
 checkArgs(args)
+const CHECKS = Array.isArray(args.checks) ? args.checks.filter((name) => /^[a-z]+$/.test(name)) : []
+const checkOn = (category) => CHECKS.includes(category)
 
 const HYPOTHESIS_COUNT = 3
 const SUITE_OUTPUT_CAP = 1500 // characters of suite output passed to the red-fix agent
@@ -47,7 +51,7 @@ const UI_REFUSAL = 'Probe C failed (hooks do not fire in workflow agents), so th
 const ownerConditions = args.reproAtOwnerConditions ? ` Reproduce it under the owner's conditions: ${args.reproAtOwnerConditions} (a second report is never closed as "no defect").` : ''
 const CONTEXT = `Repo ${repo}, base branch ${base}. Bug: ${symptom}. ${args.repro ? `Repro command: ${args.repro}.` : 'No repro command is known yet.'}${ownerConditions}`
 // The UI writer fixes a UI bug and any change whose UI files differ; workflow spawns do not fire agent-model-guard, so its MATRIX line rides in the brief.
-const isUi = () => Boolean(args.reproAtOwnerConditions) || lane.uiFiles.length > 0
+const isUi = () => checkOn('ui') && (Boolean(args.reproAtOwnerConditions) || lane.uiFiles.length > 0)
 const fixer = () => (isUi() ? { agentType: 'ui-implementer', matrix: args.matrix ?? 'none: the visual-qa gate makes the matrix for this bug' } : { agentType: 'implementer' })
 const matrixLine = () => (isUi() ? `MATRIX: ${fixer().matrix}\n` : '')
 const FINISH = `Related tests only while iterating; the full suite (${suite}) is run later by the land step. Commit after each green step on the lane branch ${branch}; no merge commits; never push. Return IMPLEMENTED: branch, worktree (your folder), sha, tests {cmd, exit}.`
@@ -119,6 +123,7 @@ async function tryRound(effort) {
   if (!root) return { note: `no root cause at ${effort}: ${answered.map((p) => `${p.id} not confirmed`).join(', ')}` }
   const fix = early && early.id === root.id ? await early.done : await runLaneAgent('fix:redo', fixTask(root))
   if (!fix) return { note: `fix agent returned nothing for ${root.id}${lane.problem ? `: ${lane.problem}` : ''}` }
+  if (!checkOn('test')) return { fix } // Verify is a `test` check: off, the confirmed fix goes on unverified ("not checked: test")
   const check = await verify(fix)
   const passed = check && check.reproGreen && check.relatedExit === 0 && check.mutantKilled && check.treeClean
   if (passed) lane.uiFiles = check.uiFiles ?? []
@@ -153,7 +158,7 @@ async function runLaneAgent(tag, task) {
   const start = lane.exists ? `First run git switch ${branch} && git rebase ${base}, then delete your own worktree-agent-* branch with git branch -d.` : `First rename your worktree branch with git branch -m ${branch}.`
   const done = await agent(`${baseCheck()}${matrixLine()}${CONTEXT} ${start} ${task} ${FINISH}`, { label: `${row}:${tag}`, phase: 'Fix', agentType: fixer().agentType, model: 'sonnet', effort: 'high', isolation: 'worktree', schema: IMPLEMENTED_SCHEMA })
   if (done?.wrongBase) { lane.problem = `${done.wrongBase}: the fix agent's worktree started on another commit, its fix is not counted`; return null }
-  if (done) { lane.exists = true; lane.worktree = done.worktree }
+  if (done) { lane.exists = true; lane.worktree = done.worktree; lane.tip = done.sha }
   return done
 }
 
@@ -169,10 +174,10 @@ function redTask(output) {
  * with no round cap, except a red fix that commits nothing twice. `ui-proof` from land runs the gate on the rebased tip and lands again. */
 async function reviewAndLand() {
   const leadList = []
-  let [lastRedFixSha, tip, needsReview] = ['', '', true]
+  let [lastRedFixSha, tip, needsReview, rebasedTip] = ['', '', checkOn('review'), ''] // rebasedTip: land's rebased tip after ui-proof, until a fix moves the lane
   for (;;) {
     if (needsReview) {
-      const review = await workflow({ scriptPath: `${scriptsDir}/review.js` }, { row, repo, base, range: `${base}...${branch}`, landing: true, fix: true, branch, worktree: lane.worktree, suite, ...(isUi() ? { fixer: fixer() } : {}) })
+      const review = await workflow({ scriptPath: `${scriptsDir}/review.js` }, { checks: CHECKS, row, repo, base, range: `${base}...${branch}`, landing: true, fix: true, branch, worktree: lane.worktree, suite, ...(isUi() ? { fixer: fixer() } : {}) })
       if (!review) return { status: 'review-failed', text: 'the review workflow returned nothing', leadList }
       leadList.push(...review.leadList)
       if (review.status !== 'clean') return { status: `review-${review.status}`, text: review.text, leadList }
@@ -182,17 +187,19 @@ async function reviewAndLand() {
     if (isUi()) {
       const gate = await visualGate(tip)
       if (gate.stop) return { ...gate.stop, leadList }
-      if (gate.fixed) { needsReview = true; phase('Review'); continue }
+      if (gate.fixed) { needsReview = checkOn('review'); rebasedTip = ''; phase('Review'); continue }
     }
     if (args.land === false) return { status: 'reviewed', tip, worktree: lane.worktree, leadList }
+    if (!checkOn('review')) tip = rebasedTip || lane.tip || tip // no review returned a tip: the lane's last commit is the one to land
     phase('Land')
-    const landed = await workflow({ scriptPath: `${scriptsDir}/land.js` }, { row, closeRow, statusFile, repo, base, branch, worktree: lane.worktree, suite, tip })
-    if (landed?.status === 'landed') return { status: 'landed', sha: landed.sha, tidy: landed.tidy, leadList }
+    const landed = await workflow({ scriptPath: `${scriptsDir}/land.js` }, { checks: CHECKS, row, closeRow, statusFile, repo, base, branch, worktree: lane.worktree, suite, tip })
+    if (landed?.status === 'landed') return { status: 'landed', sha: landed.sha, tidy: landed.tidy, leadList, ...(CHECKS.length < 3 ? { text: `not checked: ${['test', 'review', 'ui'].filter((name) => !checkOn(name)).join(', ')}` } : {}) }
     if (!landed || landed.status === 'failed') return { status: 'failed', landed, leadList }
-    needsReview = landed.status !== 'ui-proof'
-    if (!needsReview) { // land found UI files without a visual-qa PASS for the rebased tip: judge that tip, never a review alone
+    needsReview = landed.status !== 'ui-proof' && checkOn('review')
+    if (landed.status === 'ui-proof') { // land found UI files without a visual-qa PASS for the rebased tip: judge that tip, never a review alone
       if (lane.uiFiles.length === 0) lane.uiFiles = ['(the UI files land found)']
       tip = landed.sha
+      rebasedTip = landed.sha
       continue
     }
     if (landed.status === 'conflict' || landed.status === 'red') {
@@ -200,6 +207,7 @@ async function reviewAndLand() {
         ? `The rebase onto ${base} conflicted. Resolve it keeping the intent of both sides, rerun the related tests, commit.`
         : redTask(landed.tidy)
       const resolved = await runLaneAgent(`fix:${landed.status}`, task)
+      rebasedTip = ''
       if (!resolved) return { status: 'failed', landed, leadList, problem: lane.problem || `the ${landed.status}-fixing agent returned nothing` }
       if (landed.status === 'red') {
         // the agent may change nothing (flaky or red on base): a second round with the same sha would loop forever
@@ -215,7 +223,7 @@ async function reviewAndLand() {
 async function visualGate(tip) {
   if (args.probeC === 'fail') return { stop: { status: 'ui-refused', text: UI_REFUSAL } }
   phase('Visual QA')
-  const checked = await workflow({ scriptPath: `${scriptsDir}/visual-qa.js` }, { row, repo, worktree: lane.worktree, tip, base, uiFiles: lane.uiFiles, ...(args.matrix ? { matrix: args.matrix } : {}) })
+  const checked = await workflow({ scriptPath: `${scriptsDir}/visual-qa.js` }, { checks: CHECKS, row, repo, worktree: lane.worktree, tip, base, uiFiles: lane.uiFiles, ...(args.matrix ? { matrix: args.matrix } : {}) })
   if (checked?.status === 'pass') return { pass: true }
   if (checked?.status !== 'fail') return { stop: { status: 'visual-qa-failed', text: checked?.text ?? 'the visual-qa child returned nothing' } }
   const findings = checked.findings.map((item) => `${JSON.stringify(item.file)}: ${item.problem} (fix: ${item.fix})`).join('; ')
