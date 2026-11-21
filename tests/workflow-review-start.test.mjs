@@ -133,7 +133,7 @@ test('build gives a land-loop review the start its first review recorded and its
   const key = (label) => label.split(':')[0].replace('impl-', '');
   const lane = (name) => ({ row: `impl-${name}`, closeRow: `close-${name}`, branch: `lane/${name}`, spec: '/spec.md', files: [`${name}.mjs`], acceptanceTests: false, implementer: { model: 'sonnet', effort: 'medium' } });
   const replies = [
-    { match: /:disk$/, reply: { exit: 0, tail: 'ok    disk free 80.0 GB', baseTip: TIP } },
+    { match: /:disk$/, reply: { exit: 0, tail: 'ok    disk free 80.0 GB', baseTip: TIP, sessionBranch: 'main', sessionHead: TIP } }, // r9-wf-guards: started from the base checkout
     { match: /:implement$/, reply: (prompt, opts, call) => ({ branch: `lane/${key(call.label)}`, worktree: `/wt/${key(call.label)}`, sha: `s-${key(call.label)}`, tests: { cmd: 't', exit: 0 }, tier: {} }) },
     { match: /:join$/, reply: (prompt, opts, call) => ({ red: false, tail: 'green', sha: `j-${key(call.label)}`, worktree: `/wt/${key(call.label)}`, vacuous: [], outOfScope: [], contractTouched: [], checkpoints: [] }) },
   ];

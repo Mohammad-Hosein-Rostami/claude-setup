@@ -3,7 +3,8 @@
 // stops in a row end it. role 'tests': the test-writer of a lane with acceptanceTests. Each brief carries the lines agent-model-guard would add
 // (the UI matrix, the standing rules), since a workflow spawn does not fire it, and tells the agent to write its constraints into the lane's
 // hand-over note first (beside STATUS.md, never committed) and re-read that note after a compaction.
-// Args: { role: 'implement' | 'tests', row, branch, base, spec, files, statusFile, acceptanceTests, model, effort, agentType?, matrix?, checkpoints?, principles? }
+// Args: { role: 'implement' | 'tests', row, branch, base, spec, files, statusFile, acceptanceTests, model, effort, agentType?, matrix?, checkpoints?, principles?,
+//   baseSha? (the base tip the build started from: each writer's first command compares its HEAD with it, `wrongBase` on a mismatch) }
 // Returns: the agent's report (IMPLEMENTED: branch, worktree, sha, tests, tier, disputes?, unfinished?, notRun?, caveats?; tests: branch, worktree,
 //   sha) or null when the writer was stopped. Called by build.js only, inside its writer limit; it calls no workflow (children nest one level).
 export const meta = {
@@ -17,8 +18,8 @@ checkArgs(args)
 const TEST_WRITER = { agentType: 'test-writer', model: 'sonnet', effort: 'medium' }
 const [str, bool, strings] = [{ type: 'string' }, { type: 'boolean' }, { type: 'array', items: { type: 'string' } }]
 const shape = (properties, required) => ({ type: 'object', properties, required })
-const IMPLEMENTED = shape({ branch: str, worktree: str, sha: str, tests: { type: 'object' }, tier: { type: 'object' }, disputes: strings, unfinished: bool, notRun: strings, caveats: strings }, ['branch', 'worktree', 'sha', 'tests'])
-const TESTS_WRITTEN = shape({ branch: str, worktree: str, sha: str }, ['branch', 'worktree', 'sha'])
+const IMPLEMENTED = shape({ branch: str, worktree: str, sha: str, tests: { type: 'object' }, tier: { type: 'object' }, disputes: strings, unfinished: bool, notRun: strings, caveats: strings, wrongBase: str }, ['branch', 'worktree', 'sha', 'tests'])
+const TESTS_WRITTEN = shape({ branch: str, worktree: str, sha: str, wrongBase: str }, ['branch', 'worktree', 'sha'])
 const lane = { row: args.row, branch: args.branch, spec: args.spec, files: args.files, acceptanceTests: args.acceptanceTests, matrix: args.matrix, checkpoints: args.checkpoints,
   principles: args.principles, implementer: { agentType: args.agentType, model: args.model, effort: args.effort } }
 const testBranch = (of) => `${of.branch}--tests`
@@ -29,7 +30,10 @@ const standingRulesLine = `Read the \`## Standing rules\` of ${args.statusFile} 
 const handoverNote = (lane) => `${args.statusFile.replace(/[\\/][^\\/]*$/, '')}/HANDOFF-${lane.row.replace(/[^A-Za-z0-9._-]+/g, '-')}.md`
 const noteLine = (lane) => `First write this brief's constraints (the standing rules, the files you may touch, the run rules) under "## Constraints" in ${handoverNote(lane)} (never commit it) and re-read that file after any compaction. `
   + 'If you must stop before the lane is done: commit, write in that note what is done, what is left, the next step and what not to redo, then return unfinished true. '
-const implementerPrompt = (lane) => `${matrixLine(lane)}${standingRulesLine}Implement lane ${lane.row} of the spec ${lane.spec}: touch only ${lane.files.join(', ')}. ${noteLine(lane)}`
+// Base check (r9-wf-guards): an isolated worktree starts at the session folder's HEAD (worktree.baseRef head), so a session off the base, or a resumed
+// agent whose worktree was removed, would build on other commits; the agent proves its start first and build.js never counts a wrongBase report.
+const baseCheckLine = args.baseSha ? `First command: git rev-parse HEAD. If it does not print ${args.baseSha} (the tip of ${args.base} the build started from), change nothing and return at once with wrongBase "wrong base <what it printed> != ${args.baseSha}" (other fields empty).\n` : ''
+const implementerPrompt = (lane) => `${matrixLine(lane)}${standingRulesLine}${baseCheckLine}Implement lane ${lane.row} of the spec ${lane.spec}: touch only ${lane.files.join(', ')}. ${noteLine(lane)}`
   + `Your worktree starts on a throwaway branch (git branch --show-current, named worktree-...). Branch ${lane.branch} must hold your work, based on ${args.base}: `
   + `if it does not exist yet, rename the throwaway branch with \`git branch -m ${lane.branch}\` (git rebase ${args.base} if it is not based on it); `
   + `if it already exists (a re-done lane) never make a copy: remove the old worktree that holds it (git worktree list, then git worktree remove <path>), run \`git switch ${lane.branch} && git rebase ${args.base}\`, and delete the throwaway branch (\`git branch -d <its name>\`). `
@@ -43,7 +47,7 @@ const contractText = (lane) => (lane.checkpoints?.length > 0 ? `Checkpoints (whe
   + `Locked files (${[...lockedFiles(lane), ...(lane.acceptanceTests ? [`the test files of ${testBranch(lane)}`] : [])].join(', ') || 'none'}): never edit them; if one is wrong write \`contract-dispute: <file>: <why>\` in disputes instead. `
   + `Never run the full suite (the review runs it once at the tip); Bash timeout 600000 for a commit, 60000 for a probe. `
   + (lane.acceptanceTests ? `If branch ${testBranch(lane)} exists, cherry-pick ${args.base}..${testBranch(lane)} before the last review-tier run. ` : '')
-const testWriterPrompt = (lane) => `${standingRulesLine}Write the acceptance tests of lane ${lane.row} from the spec ${lane.spec} (files: ${lane.files.join(', ')}): test files only, each test fails without the behaviour it checks. `
+const testWriterPrompt = (lane) => `${standingRulesLine}${baseCheckLine}Write the acceptance tests of lane ${lane.row} from the spec ${lane.spec} (files: ${lane.files.join(', ')}): test files only, each test fails without the behaviour it checks. `
   + `Your worktree starts on a throwaway branch (named worktree-...): rename it with \`git branch -m ${testBranch(lane)}\`. Commit; never merge, never push. Return branch, worktree (your pwd), sha (HEAD).`
 // The hand-over brief (six fields; no field is trimmed for length): a fresh agent continues the lane from its branch tip, given spec, diff, report and note.
 const handoverPrompt = (lane, last) => [
@@ -83,7 +87,7 @@ function checkArgs(given) {
     if (!(type === 'array' ? Array.isArray(value) : typeof value === type)) throw new Error(`${name}: args.${key} must be ${type === 'array' ? 'an array' : `a ${type}`}`)
   }
   for (const [key, type] of Object.entries({ role: 'string', row: 'string', branch: 'string', base: 'string', spec: 'string', files: 'array', statusFile: 'string', acceptanceTests: 'boolean', model: 'string', effort: 'string' })) check(key, type)
-  for (const key of ['agentType', 'matrix']) if (given[key] !== undefined) check(key, 'string')
+  for (const key of ['agentType', 'matrix', 'baseSha']) if (given[key] !== undefined) check(key, 'string')
   for (const key of ['checkpoints', 'principles']) if (given[key] !== undefined) check(key, 'array')
   if (given.role !== 'implement' && given.role !== 'tests') throw new Error(`${name}: args.role must be 'implement' or 'tests'`)
 }

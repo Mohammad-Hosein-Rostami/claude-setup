@@ -29,6 +29,8 @@ const YES = (id) => ({ id, confirmed: true, rootCause: `cause ${id}`, evidence: 
 function replies(overrides = []) {
   return [
     ...overrides,
+    // r9-wf-guards: the run starts only from the base checkout (session branch main at the base tip)
+    { match: /:start$/, reply: { baseTip: 'b'.repeat(40), sessionBranch: 'main', sessionHead: 'b'.repeat(40) } },
     { match: /:reproduce/, reply: REPRO },
     { match: /:hypotheses/, reply: HYPOTHESES },
     { match: /:probe:h1/, reply: YES('h1') },

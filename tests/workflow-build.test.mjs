@@ -17,7 +17,9 @@ const joined = (key, extra = {}) => ({ red: false, tail: 'green', sha: `j-${key}
 const reviewed = (key) => ({ status: 'clean', rounds: 1, tip: `t-${key}`, worktree: `/wt/${key}`, laneClasses: ['logic'], suite: 'pass', findings: [], optional: [], leadList: [], text: '' });
 const landedOk = (key) => ({ status: 'landed', sha: `m-${key}`, patchesChanged: 0, tidy: 'clean' });
 const key = (label) => label.split(':')[0].replace('impl-', '');
-const diskOk = { match: /:disk$/, reply: { exit: 0, tail: 'ok    disk free 80.0 GB' } };
+// r9-wf-guards: the build starts only from the base checkout (session branch main at the base tip)
+const ON_BASE = { baseTip: 'b'.repeat(40), sessionBranch: 'main', sessionHead: 'b'.repeat(40) };
+const diskOk = { match: /:disk$/, reply: { exit: 0, tail: 'ok    disk free 80.0 GB', ...ON_BASE } };
 const standard = (overrides = {}) => [
   diskOk,
   ...Object.entries(overrides).map(([name, reply]) => ({ match: new RegExp(`:${name}$`), reply })), // the first matching reply wins
@@ -308,7 +310,7 @@ test('disk: a disk check that could not run (exit 2) or was stopped refuses the 
 
 test('disk: a WARN (exit 0) does not stop the build, and a build with no lanes starts no agent', async () => {
   const run = await runScript(BUILD, ARGS([lane('a')]), {
-    replies: [{ match: /:disk$/, reply: { exit: 0, tail: 'WARN  disk free 10.0 GB is below 15 GB' } }, ...standard()],
+    replies: [{ match: /:disk$/, reply: { exit: 0, tail: 'WARN  disk free 10.0 GB is below 15 GB', ...ON_BASE } }, ...standard()],
     children: children(() => reviewed('a'), () => landedOk('a')),
   });
   assert.equal(run.result.lanes[0].status, 'landed');
@@ -342,7 +344,7 @@ test('needs-review at land runs the real review script as a delta round: its len
   let [tierCalls, landTries] = [0, 0];
   const [START, BASE_TIP] = ['ba5e0001'.padEnd(40, '0'), 'ba5e0002'.padEnd(40, '0')];
   const replies = [
-    { match: /:disk$/, reply: { ...diskOk.reply, baseTip: BASE_TIP } }, // the base tip this build reads itself, at its start
+    { match: /:disk$/, reply: { ...diskOk.reply, baseTip: BASE_TIP, sessionHead: BASE_TIP } }, // the base tip this build reads itself, at its start
     ...standard(),
     { match: /^close-a:base$/, reply: { exit: 0, tail: `${BASE_TIP}\n` } },
     { match: /^close-a:tier$/, reply: (prompt) => { const at = tierCalls++; return { exit: 0, baseSha: START, sha: tip(at + 1), reviewWorktree: `/scratch/close-a-${tip(at + 1).slice(0, 8)}`, tier: { tip: tip(at + 1), reviews: [SONNET], fileClasses: {}, ...priorOfTierPrompt(prompt) } }; } },

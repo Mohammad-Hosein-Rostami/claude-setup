@@ -83,7 +83,8 @@ const FINDING = {
   required: ['id', 'severity', 'file', 'line', 'problem', 'fix', 'security'],
 }
 // `prior`: the line `prior: <n> fixed, <m> open` of a delta round; the script checks it there (priorState), so the schema does not require it.
-const FINDINGS = { type: 'object', properties: { findings: { type: 'array', items: FINDING }, verified: str, prior: str }, required: ['findings', 'verified'] }
+// `wrongBase`: the lens's first command found the review worktree on another commit (`wrong base <got> != <want>`, r9-wf-guards): its verdict never counts.
+const FINDINGS = { type: 'object', properties: { findings: { type: 'array', items: FINDING }, verified: str, prior: str, wrongBase: str }, required: ['findings', 'verified'] }
 const VERDICT = {
   type: 'object',
   properties: { id: str, real: { type: 'boolean' }, why: str, reviewedSha: str, linesMoved: { type: 'boolean' } },
@@ -175,6 +176,7 @@ const tierPrompt = (known, carried) => {
 }
 
 const reviewPrompt = (review, sha, reviewWorktree, items, prior) => [
+  `First command: git -C ${reviewWorktree} rev-parse HEAD. If it does not print ${sha}, review nothing: return findings [], verified "" and wrongBase "wrong base <what it printed> != ${sha}".`,
   `Review lane ${args.branch} of ${args.repo} by reading ONLY the detached review worktree ${reviewWorktree} (at ${sha}); ${run.deltaOf ? `the change to review is the delta since ${run.deltaOf}` : `range ${RANGE}`}. Never edit it; never run the full suite (a recorded PASS covers it).`,
   review.agent === 'skill' ? `Invoke the ${review.lens} skill with the Skill tool first and follow it on the files of the range; it only reads: edit nothing.` : '',
   `Lens: ${review.lens}. Rules: ${review.rules}`,
@@ -193,6 +195,7 @@ const fixPrompt = (batch, sha, diagnosis, onto) => `Fix these confirmed findings
   + `${diagnosis ? `Root-cause diagnosis (follow it): ${diagnosis}\n` : ''}`
   + `Setup: your worktree starts on a throwaway branch (git branch --show-current, named worktree-...). Run \`git switch ${args.branch}${onto ? ` && git rebase ${onto}` : ''}\`, then delete the throwaway branch (\`git branch -d <its name>\`). `
   + (onto ? `Rebase onto exactly that sha (the tip of ${args.base} read before you started), never onto the branch name. ` : `Do not rebase the lane: it is rebased when it lands, and a rebase here would make the next round read other lanes' code as this lane's. `)
+  + 'A confirmed security finding is fixed with a failing-first test that performs the attack (the input, the command or the race) and is red before the fix. '
   + `If an earlier fix of this round already changed a cited line (git log ${sha}..HEAD -- <file>), do not fix that finding: list its id in deferred. `
   + 'For each fix: read callers and callees of the changed functions first, add a test that fails without it, run related tests only while iterating (quiet reporter), commit after each green step. '
   + `Return IMPLEMENTED: branch (must be ${args.branch}), worktree (your pwd), sha (HEAD), tests, deferred.`
@@ -276,6 +279,7 @@ while (true) {
   const unruled = (batches) => batches.some((entries) => entries === null || entries.some((entry) => entry === null))
   const verify = async (found, review) => {
     if (found === null) return { dead: true }
+    if (typeof found.wrongBase === 'string' && found.wrongBase !== '') return { dead: true, wrongBase: found.wrongBase }
     const finder = specOf(review)
     optional.push(...found.findings.filter((item) => item.severity === 'optional'))
     const needing = found.findings.filter((item) => item.severity !== 'optional').map((item) => ({ ...item, origin: originOf(review) }))
@@ -299,6 +303,11 @@ while (true) {
     (review) => agent(reviewPrompt(review, sha, reviewWorktree, carried.filter((item) => isDelta || sameOrigin(originOf(review), item.origin ?? DEFAULT_ORIGIN)), isDelta ? { ...tier.prior.files[0], findings: tier.prior.findings } : null), { label: `${args.row}:review:${slug(review.lens)}`, phase: 'Review', agentType: lensAgentTypeOf(review), ...specOf(review), schema: FINDINGS }),
     verify,
   )
+  const wrongBase = results.find((entry) => entry?.wrongBase)
+  if (wrongBase) {
+    await fixQueue
+    return outcome('failed', `a lens read another commit (${wrongBase.wrongBase}); its verdict is not counted`)
+  }
   if (results.some((entry) => entry === null || entry.dead)) {
     await fixQueue
     return outcome('incomplete', 'a lens stopped before it returned; no verdict can stand for it')
@@ -316,6 +325,7 @@ while (true) {
   const suiteState = suite === null ? 'none' : suiteRed ? 'red' : 'pass'
   const found = { findings: [...confirmed, ...open], suite: suiteState }
   if (round.failure !== null) return outcome('failed', round.failure, found)
+  if (args.landing && suite === null) return outcome('incomplete', `the suite runner was stopped at ${sha}: no landing review is clean without a suite verdict`, found)
   if (!args.fix && (!isClean || suiteRed)) return outcome('findings', prior.problem ?? prior.stillOpen ?? '', found)
   // Checked in every delta round, also one that still has findings to fix: a lens that gave no usable prior line or needs the whole range verified nothing.
   if (prior.problem !== null) return outcome('incomplete', `the delta round cannot be clean: ${prior.problem}`, found)

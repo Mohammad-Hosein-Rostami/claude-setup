@@ -29,7 +29,7 @@ const TESTS = { match: /:tests$/, reply: { branch: 'lane/a--tests', worktree: '/
 const slugOf = (label) => label.split(':')[0];
 const buildReplies = (joinReply, extra = []) => [
   ...extra,
-  { match: /:disk$/, reply: { exit: 0, tail: 'ok    disk free 80.0 GB' } },
+  { match: /:disk$/, reply: { exit: 0, tail: 'ok    disk free 80.0 GB', baseTip: 'b'.repeat(40), sessionBranch: 'main', sessionHead: 'b'.repeat(40) } }, // r9-wf-guards: started from the base checkout
   { match: /:implement$/, reply: (p, o, call) => built(slugOf(call.label).replace('impl-', '')) },
   TESTS,
   { match: /:join$/, reply: joinReply },

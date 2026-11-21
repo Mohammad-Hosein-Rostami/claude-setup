@@ -42,7 +42,7 @@ const statusFile = args.statusFile ?? `${repo}/STATUS.md`
 const base = args.base ?? 'main'
 const suite = args.suite ?? "the repo's declared full suite"
 const branch = args.branch ?? `lane/${row}`
-const lane = { exists: false, worktree: '', reproSha: '', problem: '', uiFiles: [] }
+const lane = { exists: false, worktree: '', reproSha: '', problem: '', uiFiles: [], baseSha: '' }
 const UI_REFUSAL = 'Probe C failed (hooks do not fire in workflow agents), so this change, whose UI files change, is refused: UI lanes run as plain agents (spec-stages section 1)'
 const ownerConditions = args.reproAtOwnerConditions ? ` Reproduce it under the owner's conditions: ${args.reproAtOwnerConditions} (a second report is never closed as "no defect").` : ''
 const CONTEXT = `Repo ${repo}, base branch ${base}. Bug: ${symptom}. ${args.repro ? `Repro command: ${args.repro}.` : 'No repro command is known yet.'}${ownerConditions}`
@@ -52,11 +52,12 @@ const fixer = () => (isUi() ? { agentType: 'ui-implementer', matrix: args.matrix
 const matrixLine = () => (isUi() ? `MATRIX: ${fixer().matrix}\n` : '')
 const FINISH = `Related tests only while iterating; the full suite (${suite}) is run later by the land step. Commit after each green step on the lane branch ${branch}; no merge commits; never push. Return IMPLEMENTED: branch, worktree (your folder), sha, tests {cmd, exit}.`
 
-const REPRO_SCHEMA = { type: 'object', properties: { reproduces: { type: 'boolean' }, cmd: { type: 'string' }, exit: { type: 'number' }, branch: { type: 'string' }, worktree: { type: 'string' }, sha: { type: 'string' }, tail: { type: 'string' } }, required: ['reproduces', 'cmd', 'tail'] }
+const START_SCHEMA = { type: 'object', properties: { baseTip: { type: 'string' }, sessionBranch: { type: 'string' }, sessionHead: { type: 'string' } }, required: ['baseTip', 'sessionBranch', 'sessionHead'] }
+const REPRO_SCHEMA = { type: 'object', properties: { wrongBase: { type: 'string' }, reproduces: { type: 'boolean' }, cmd: { type: 'string' }, exit: { type: 'number' }, branch: { type: 'string' }, worktree: { type: 'string' }, sha: { type: 'string' }, tail: { type: 'string' } }, required: ['reproduces', 'cmd', 'tail'] }
 const HYPOTHESES_SCHEMA = { type: 'object', properties: { hypotheses: { type: 'array', minItems: HYPOTHESIS_COUNT, maxItems: HYPOTHESIS_COUNT, items: { type: 'object', properties: { id: { type: 'string' }, claim: { type: 'string' }, observation: { type: 'string' } }, required: ['id', 'claim', 'observation'] } } }, required: ['hypotheses'] }
 const PROBE_SCHEMA = { type: 'object', properties: { id: { type: 'string' }, confirmed: { type: 'boolean' }, rootCause: { type: 'string' }, evidence: { type: 'string' }, minimalFix: { type: 'string' } }, required: ['id', 'confirmed', 'rootCause', 'evidence', 'minimalFix'] }
 const JUDGE_SCHEMA = { type: 'object', properties: { found: { type: 'boolean' }, hypothesisId: { type: 'string' }, rootCause: { type: 'string' }, minimalFix: { type: 'string' } }, required: ['found', 'hypothesisId', 'rootCause', 'minimalFix'] }
-const IMPLEMENTED_SCHEMA = { type: 'object', properties: { branch: { type: 'string' }, worktree: { type: 'string' }, sha: { type: 'string' }, tests: { type: 'object', properties: { cmd: { type: 'string' }, exit: { type: 'number' } }, required: ['cmd', 'exit'] } }, required: ['branch', 'worktree', 'sha', 'tests'] }
+const IMPLEMENTED_SCHEMA = { type: 'object', properties: { wrongBase: { type: 'string' }, branch: { type: 'string' }, worktree: { type: 'string' }, sha: { type: 'string' }, tests: { type: 'object', properties: { cmd: { type: 'string' }, exit: { type: 'number' } }, required: ['cmd', 'exit'] } }, required: ['branch', 'worktree', 'sha', 'tests'] }
 const RELEASE_SCHEMA = { type: 'object', properties: { exit: { type: 'number' }, tail: { type: 'string' } }, required: ['exit', 'tail'] }
 const VERIFY_SCHEMA = { type: 'object', properties: { reproGreen: { type: 'boolean' }, relatedExit: { type: 'number' }, mutantKilled: { type: 'boolean' }, treeClean: { type: 'boolean' }, uiFiles: { type: 'array', items: { type: 'string' } }, tail: { type: 'string' } }, required: ['reproGreen', 'relatedExit', 'mutantKilled', 'treeClean', 'tail'] }
 
@@ -65,7 +66,16 @@ const runner = (step, prompt, phaseTitle, schema = RELEASE_SCHEMA) => agent(`Run
 const statusStep = (command, phaseTitle) => runner('status', `node ~/.claude/tools/status/status.mjs --file ${statusFile} ${command}`, phaseTitle)
 
 phase('Reproduce')
+// Isolated agents start at the session folder's HEAD (worktree.baseRef head): the run refuses a session off the base, and each isolated agent
+// proves its start first (`wrong base <got> != <want>`, never counted; r9-wf-guards).
+const started = await agent(`Change nothing. Run git -C ${repo} rev-parse --verify refs/heads/${base}, then in your own working folder (the session's checkout) git rev-parse --abbrev-ref HEAD and git rev-parse HEAD. Return baseTip, sessionBranch and sessionHead (each output whole, "" when it failed).`, { label: `${row}:start`, phase: 'Reproduce', agentType: 'runner', model: 'haiku', effort: 'low', schema: START_SCHEMA })
+if (!started || !/^[0-9a-f]{40}$/.test(started.baseTip) || started.sessionBranch !== base || started.sessionHead !== started.baseTip) {
+  return { status: 'failed', text: started ? `the session's checkout is on ${started.sessionBranch || '(no git folder)'} at ${started.sessionHead || '-'}, not on ${base} at ${started.baseTip || '-'}: start bugfix from the base checkout and keep it there for the whole run` : 'the start check runner was stopped', leadList: [] }
+}
+lane.baseSha = started.baseTip
+const baseCheck = () => `First command: git rev-parse HEAD. If it does not print ${lane.baseSha} (the tip of ${base} this run started from), change nothing and return at once with wrongBase "wrong base <what it printed> != ${lane.baseSha}". `
 const repro = await reproduce()
+if (repro?.wrongBase) return { status: 'failed', text: `${repro.wrongBase}: the test writer's worktree started on another commit, so its test is not counted`, leadList: [] }
 if (!repro || !repro.reproduces) return { status: 'not-reproduced', repro }
 lane.exists = Boolean(repro.branch)
 lane.worktree = repro.worktree ?? ''
@@ -89,7 +99,7 @@ function reproduce() {
   if (args.repro) {
     return agent(`${CONTEXT} Run the repro command in ${repo} and report whether the bug shows. Return reproduces, cmd, exit and the failing tail (at most 15 lines). Change nothing.`, { label: `${row}:reproduce`, phase: 'Reproduce', agentType: 'runner', model: 'haiku', effort: 'medium', schema: REPRO_SCHEMA })
   }
-  return agent(`${CONTEXT} Write the smallest failing test that shows this bug, on a new lane branch: rename your worktree branch with git branch -m ${branch}, commit only the test. Run it and return reproduces (true only if it fails for the bug's reason, not a typo), cmd, exit, tail, branch, worktree, sha. ${FINISH}`, { label: `${row}:reproduce`, phase: 'Reproduce', agentType: 'implementer', model: 'sonnet', effort: 'high', isolation: 'worktree', schema: REPRO_SCHEMA })
+  return agent(`${baseCheck()}${CONTEXT} Write the smallest failing test that shows this bug, on a new lane branch: rename your worktree branch with git branch -m ${branch}, commit only the test. Run it and return reproduces (true only if it fails for the bug's reason, not a typo), cmd, exit, tail, branch, worktree, sha. ${FINISH}`, { label: `${row}:reproduce`, phase: 'Reproduce', agentType: 'implementer', model: 'sonnet', effort: 'high', isolation: 'worktree', schema: REPRO_SCHEMA })
 }
 
 /** One round of hypotheses at `effort`; returns { fix } when verified, else { note }. */
@@ -141,7 +151,8 @@ async function runLaneAgent(tag, task) {
     lane.worktree = ''
   }
   const start = lane.exists ? `First run git switch ${branch} && git rebase ${base}, then delete your own worktree-agent-* branch with git branch -d.` : `First rename your worktree branch with git branch -m ${branch}.`
-  const done = await agent(`${matrixLine()}${CONTEXT} ${start} ${task} ${FINISH}`, { label: `${row}:${tag}`, phase: 'Fix', agentType: fixer().agentType, model: 'sonnet', effort: 'high', isolation: 'worktree', schema: IMPLEMENTED_SCHEMA })
+  const done = await agent(`${baseCheck()}${matrixLine()}${CONTEXT} ${start} ${task} ${FINISH}`, { label: `${row}:${tag}`, phase: 'Fix', agentType: fixer().agentType, model: 'sonnet', effort: 'high', isolation: 'worktree', schema: IMPLEMENTED_SCHEMA })
+  if (done?.wrongBase) { lane.problem = `${done.wrongBase}: the fix agent's worktree started on another commit, its fix is not counted`; return null }
   if (done) { lane.exists = true; lane.worktree = done.worktree }
   return done
 }

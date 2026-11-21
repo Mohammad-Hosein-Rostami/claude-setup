@@ -10,7 +10,7 @@
 //   join-failed | contract-touched | review-<status> | lead-decision (a security finding held for the lead) | ui-refused | visual-qa-failed | failed |
 //   audit-findings | audit-error (landed; the audit-log gate keeps sync and push closed, unless the text says "gate holds nothing").
 //   resume: true after a stop that lost the journal: a lane whose close row STATUS.md shows landed is not built again.
-// `writers` bounds the build agents of all lanes. Scripts cannot import, so checkArgs and the limiter are repeated (home/workflows/README.md, which
+// `writers` bounds the build agents of all lanes; the start refuses a session off the base checkout, a writer's wrongBase fails its lane. Scripts cannot import, so checkArgs and the limiter are repeated (home/workflows/README.md, which
 // describes every stage).
 export const meta = {
   name: 'build',
@@ -37,7 +37,7 @@ const AUDIT_RECORDED = shape({ exit: num, tail: str }, ['exit'])
 const AUDIT_LOG = 'node ~/.claude/tools/review-tier/audit-log.mjs'
 const AUDIT_NOT_RECORDED = 'audit not recorded: gate holds nothing' // the prefix of land.js's failure text when its pending audit record failed
 const GIT_SHA = /^[0-9a-f]{7,40}$/ // shas go into runner commands: only hex passes
-const DISK_CHECKED = shape({ exit: num, tail: str, baseTip: str }, ['exit', 'tail'])
+const DISK_CHECKED = shape({ exit: num, tail: str, baseTip: str, sessionBranch: str, sessionHead: str }, ['exit', 'tail', 'sessionBranch', 'sessionHead'])
 const FULL_SHA = /^[0-9a-f]{40}$/
 // The tips of the base branch this build saw itself: the tip when it started and the sha each of its own lands returned. A review child may move a
 // lane's start only to one of these (review.js, D7): a base ref moved by anyone else names a commit that no review of this build has read.
@@ -103,7 +103,7 @@ const landedBeforeStop = async (lane) => {
 // The `implement` child writes one lane's code (with the hand-over to a fresh agent when it ends early) or its acceptance tests: one writer slot each.
 const writerChild = (lane, role) => workflow({ scriptPath: `${args.scriptsDir}/implement.js` }, { role, row: lane.row, branch: lane.branch, base: args.base, spec: lane.spec, files: lane.files, statusFile: args.statusFile,
   acceptanceTests: lane.acceptanceTests, model: lane.implementer.model, effort: lane.implementer.effort, ...Object.fromEntries(['matrix', 'checkpoints', 'principles'].filter((key) => lane[key] !== undefined).map((key) => [key, lane[key]])),
-  ...(lane.implementer.agentType ? { agentType: lane.implementer.agentType } : {}) })
+  ...(lane.implementer.agentType ? { agentType: lane.implementer.agentType } : {}), ...(baseTips[0] ? { baseSha: baseTips[0] } : {}) })
 
 async function buildLane(lane) {
   if (args.resume === true) {
@@ -114,6 +114,8 @@ async function buildLane(lane) {
   const tests = lane.acceptanceTests ? limitedWriter(() => writerChild(lane, 'tests')) : Promise.resolve(null)
   const [built, written] = await parallel([() => implement, () => tests])
   if (built === null || (lane.acceptanceTests && written === null)) return outcome(lane, 'implementer-stopped', '', 'a build agent was stopped before it returned')
+  const wrong = [built, written].find((report) => report?.wrongBase)
+  if (wrong) return outcome(lane, 'failed', '', `${wrong.wrongBase}: the agent's worktree started on another commit, so its work is not counted (keep the session on the base checkout for the whole run)`)
   // An agent that stays on another branch would have its work reviewed under one name and landed under another (B1).
   if (built.branch !== lane.branch) return outcome(lane, 'wrong-branch', built.sha, `the implementer is on branch ${built.branch}, not ${lane.branch}: the lane was not joined or landed`)
   if (!SAFE_PATH.test(built.worktree) || (written !== null && !SAFE_PATH.test(written.worktree))) return outcome(lane, 'failed', built.sha, `a build agent returned a worktree path that is not a plain absolute path: ${built.worktree}${written ? `, ${written.worktree}` : ''}`)
@@ -252,8 +254,9 @@ async function auditAfterLand(step, { lane, baseSha, tip, landedSha, escalated }
 // (exit 1; a check that could not run, exit 2, also refuses) and every lane's text carries the message that names the caches to clear.
 phase('Build')
 if (args.lanes.length > 0) {
-  const disk = await agent(`Run: node ~/.claude/tools/disk-free/disk-free.mjs check. Then run: git -C ${args.repo} rev-parse --verify ${FULL_SHA.test(args.base) ? args.base : `refs/heads/${args.base}`}. Do not change anything. Report exit (the first command's exit code), tail (its one output line, whole) and baseTip (the full 40-character sha the second command printed, "" when it failed).`, { label: `${args.lanes[0].row}:disk`, phase: 'Build', schema: DISK_CHECKED, ...RUNNER })
-  const refusal = disk === null ? 'the disk check runner was stopped' : disk.exit === 0 ? '' : `disk space check refused the build: ${disk.tail}`
+  const disk = await agent(`Run: node ~/.claude/tools/disk-free/disk-free.mjs check. Then run: git -C ${args.repo} rev-parse --verify ${FULL_SHA.test(args.base) ? args.base : `refs/heads/${args.base}`}. Then, in your own working folder (the session's checkout), run git rev-parse --abbrev-ref HEAD and git rev-parse HEAD. Do not change anything. Report exit (the first command's exit code), tail (its one output line, whole), baseTip (the full 40-character sha the second command printed, "" when it failed), sessionBranch and sessionHead (the last two outputs, "" when they failed).`, { label: `${args.lanes[0].row}:disk`, phase: 'Build', schema: DISK_CHECKED, ...RUNNER })
+  const offBase = disk !== null && (disk.sessionHead !== disk.baseTip || (!FULL_SHA.test(args.base) && disk.sessionBranch !== args.base)) // isolated agents start at the session's HEAD
+  const refusal = disk === null ? 'the disk check runner was stopped' : disk.exit !== 0 ? `disk space check refused the build: ${disk.tail}` : offBase ? `the session's checkout is on ${disk.sessionBranch || '(no git folder)'} at ${disk.sessionHead || '-'}, not on ${args.base} at ${disk.baseTip || '-'}: start the build from the base checkout and keep it there for the whole run` : ''
   recordBaseTip(disk?.baseTip)
   if (refusal !== '') return { lanes: args.lanes.map((lane) => outcome(lane, 'failed', '', `${refusal}. Nothing was built.`)), leadList }
 }
