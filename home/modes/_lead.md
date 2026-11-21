@@ -63,6 +63,6 @@ Rules:
 
 ## Delegating UI work
 
-- Steps: `ui-coverage init` + `MATRIX:`; `ui-implementer` loops `ui-check run`; `visual-qa` gates the rebased tree that lands (same matrix/URL/widths), only its PASS counts; paste its `result:`/`frames:`.
-- Brief: all fields of the `figma-pixel-perfect` UI brief template.
+- Steps: `ui-coverage init` + `MATRIX:`; `ui-implementer` loops `ui-check run`; `visual-qa` gates the rebased landing tree (same matrix/URL/widths), only its PASS counts; paste `result:`/`frames:`.
+- Brief: `figma-pixel-perfect` UI brief template, all fields.
 - Review its diff by `ui-quality-pass`; re-run browser/responsive checks only for failed, not-run or risky (auth, payments) items.
