@@ -37,7 +37,7 @@ const sha256Of = (file) => crypto.createHash('sha256').update(fs.readFileSync(fi
 function stateRow(r) {
   if (r.part !== 'compare' || r.diagnostic || !r.images?.actual || !fs.existsSync(r.images.actual)) return null;
   const rows = r.findings.filter((f) => f.check === 'element').length;
-  return { key: keyOf(r), surface: r.surface, state: r.state, locale: r.locale, width: r.width, scale: r.scale ?? null, sha256: sha256Of(r.images.actual), pixels: r.diffPixels ?? 0, rows, status: r.status };
+  return { key: keyOf(r), surface: r.surface, state: r.state, locale: r.locale, width: r.width, scale: r.scale ?? null, sha256: sha256Of(r.images.actual), pixels: r.diffPixels ?? 0, drift: r.driftPixels ?? 0, rows, status: r.status };
 }
 
 /**
@@ -76,8 +76,9 @@ export function readLedger(where, flag) {
   return ledger;
 }
 
-/** Was the round better than the one before: fewer pixels or fewer rows, and neither went up. */
-const gained = (now, before) => (now.pixels < before.pixels || now.rows < before.rows) && now.pixels <= before.pixels && now.rows <= before.rows;
+/** Was the round better than the one before: fewer odiff pixels, colour-metric pixels or rows, and none went up. */
+const COUNTS = ['pixels', 'drift', 'rows'];
+const gained = (now, before) => COUNTS.some((k) => (now[k] ?? 0) < (before[k] ?? 0)) && COUNTS.every((k) => (now[k] ?? 0) <= (before[k] ?? 0));
 
 /**
  * Compare a round with the previous one and annotate its rows (mutates `current.states`: `noGainRounds`, so the next round can see the streak).
@@ -115,8 +116,8 @@ function referenceVerdict(row, ref) {
   if (!ref) return 'new';
   if (ref.scale !== row.scale) return 'different-pixel-ratio';
   if (row.sha256 === ref.sha256) return 'identical';
-  if (row.pixels > ref.pixels || row.rows > ref.rows) return 'worse';
-  if (row.pixels < ref.pixels || row.rows < ref.rows) return 'better';
+  if (COUNTS.some((k) => (row[k] ?? 0) > (ref[k] ?? 0))) return 'worse';
+  if (COUNTS.some((k) => (row[k] ?? 0) < (ref[k] ?? 0))) return 'better';
   return 'equal';
 }
 

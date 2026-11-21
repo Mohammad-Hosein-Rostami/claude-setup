@@ -31,6 +31,25 @@ Read the states from the frame, not from the screen's name: fill and text colour
 | radius (clamped to half the box) | 0.5 px | element |
 | colour | 1 per channel, alpha 0.02 | element |
 | pixel diff | `--max-diff`, default 0.5 % of pixels (odiff threshold 0.1, anti-aliasing ignored) | pixel |
+| colour metric (any channel > 2 levels, anti-aliasing counted) | same limit as the pixel diff; default rule: pixels inside Figma TEXT boxes left out | pixel |
+| strict rule (`run --strict`, or `rule: strict` in the matrix) | `--max-diff 0`, 0 element rows outside accepted ones; a leftover pixel passes only when an accepted entry (owner reference) covers it or attribution classes it as text anti-aliasing; until `ui-check attribute` lands, any leftover pixel fails | pixel + element |
+| stroke colour and width, font-family, image loaded | colour 1 per channel; width 1 px; family exact (case aside); every eager image loaded | element |
+
+The 0.5 % default stays; strict applies when the owner says exact or pixel perfect (پیکسل), and where two rules meet the stricter wins. No gate is loosened.
+
+## Figma to CSS
+| Figma | CSS | Check |
+| ----- | --- | ----- |
+| stroke INSIDE | a border in `box-sizing: border-box` (or an inset box-shadow) | border width and colour per side |
+| stroke OUTSIDE | an `outline` (offset 0) or a box-shadow ring; the box size excludes it | a CSS border fails as a width row |
+| stroke CENTER | an `outline` with `outline-offset: -<weight/2>px` | outline width, offset, colour |
+| letter spacing in % | `em`: `letter-spacing: <percent / 100>em` (px in spec.json is already resolved) | letter-spacing |
+| line height Auto | resolve to px from the font's metrics; when Figma gives no px value, ask (never guess `normal`) | line-height |
+| vertical trim (leading trim) | `text-box: trim-both cap alphabetic` where supported, else adjust padding by the measured half-leading | box y, h |
+| inner shadow | `box-shadow: inset <x> <y> <blur> <spread> <colour>`; Figma's origin is the inner edge of the stroke, CSS the padding edge: shift by the stroke width | pixel |
+| drop shadow / layer blur | CSS blur = Figma radius times a factor per effect type (drop shadow, inner shadow, layer blur, background blur), calibrated on first use against one pulled node and written here | pixel (effect region) |
+
+`spec.json` keeps `absoluteBoundingBox` (x, y, w, h: element rows) and `absoluteRenderBounds` (`render`: the capture of strokes outside, shadows and blur) for every node, and `strokeAlign`, `strokeWeight` and the effect radii in `style`.
 
 Plateau (two rounds, no gain): change approach, never lower the bar; see `agents/visual-qa.md`.
 

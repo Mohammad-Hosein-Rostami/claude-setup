@@ -1,5 +1,6 @@
 // Purpose: compare measured DOM boxes/styles to the flattened Figma spec (the element gate).
-// Exports: compareElements, parseColor. Invariants: pure; only props present in the spec are checked;
+// Exports: compareElements, applySkips, SKIP_PROPS, parseColor, brokenImageRows. Invariants: pure; only props present in the spec are checked (font-family,
+// stroke width and colour by stroke align, image fills: r9-ui-rules G3, G4, M1);
 // a missing element is one failing row; a colour in an unknown format is skipped, not failed.
 import { TOLERANCE } from './tolerances.mjs';
 
@@ -45,11 +46,11 @@ function textRows(label, style, css) {
     style.letterSpacing === undefined ? null : numberRow(label, 'letter-spacing', css.letterSpacing, style.letterSpacing, TOLERANCE.letterSpacing),
     style.color === undefined ? null : colorRow(label, 'color', css.color, style.color),
   ];
-  if (style.lineHeightPx === undefined) return rows;
+  if (style.lineHeightPx === undefined) return [...rows, fontFamilyRow(label, style, css)];
   const lineHeight = css.lineHeight === 'normal'
     ? { element: label, prop: 'line-height', is: 'normal', should: fmt(style.lineHeightPx), delta: 'set explicitly' }
     : numberRow(label, 'line-height', css.lineHeight, style.lineHeightPx, TOLERANCE.lineHeight);
-  return [...rows, lineHeight];
+  return [...rows, lineHeight, fontFamilyRow(label, style, css)];
 }
 
 function radiusRows(label, spec, css) {
@@ -68,9 +69,66 @@ function layoutRows(label, spec, css) {
   return [...rows, numberRow(label, 'gap', is, gap, TOLERANCE.spacing)];
 }
 
+const SIDES = ['top', 'right', 'bottom', 'left'];
+const IMAGE_RATIO_TOLERANCE = 0.02; // 2 % between the image's natural aspect ratio and its box, for object-fit: fill (a stretched or wrong image)
+const firstColor = (text) => /rgba?\([^)]*\)/.exec(text ?? '')?.[0] ?? null;
+const firstFamily = (list) => String(list ?? '').split(',')[0].trim().replace(/^["']|["']$/g, '');
+const weightsOf = (weight) => (Array.isArray(weight) ? weight : Array(SIDES.length).fill(weight));
+
+/** INSIDE stroke = a border in border-box (or an inset box-shadow): width and colour per side. */
+function insideStrokeRows(label, style, css) {
+  const weights = weightsOf(style.strokeWeight);
+  if (/inset/.test(css.boxShadow ?? '') && css.borderWidth.every((w) => w === 0)) return [colorRow(label, 'border-color (inset box-shadow)', firstColor(css.boxShadow), style.stroke)];
+  return weights.flatMap((w, i) => [numberRow(label, `border-${SIDES[i]}-width (INSIDE stroke)`, css.borderWidth[i], w, TOLERANCE.box), w > 0 ? colorRow(label, `border-${SIDES[i]}-color`, css.borderColor[i], style.stroke) : null]);
+}
+
+/** OUTSIDE (outline or box-shadow ring) and CENTER (outline with offset -weight/2) strokes: the box excludes them, so a CSS border is a failing width row. */
+function outerStrokeRows(label, style, css) {
+  const weight = Math.max(...weightsOf(style.strokeWeight));
+  const bordered = css.borderWidth.map((w, i) => (w > 0 ? { element: label, prop: `border-${SIDES[i]}-width (${style.strokeAlign} stroke)`, is: fmt(w), should: '0 (an outline or box-shadow; the box size excludes the stroke)', delta: fmt(w) } : null));
+  if (css.outline.width > 0) {
+    const offset = style.strokeAlign === 'CENTER' ? -weight / 2 : 0;
+    return [...bordered, numberRow(label, 'outline-width', css.outline.width, weight, TOLERANCE.spacing), numberRow(label, 'outline-offset', css.outline.offset, offset, TOLERANCE.spacing), colorRow(label, 'outline-color', css.outline.color, style.stroke)];
+  }
+  const ring = style.strokeAlign === 'OUTSIDE' ? firstColor(css.boxShadow) : null;
+  if (ring) return [...bordered, colorRow(label, 'box-shadow ring colour', ring, style.stroke)];
+  return [...bordered, { element: label, prop: `${style.strokeAlign} stroke`, is: 'none', should: `outline ${fmt(weight)}px ${style.stroke}`, delta: '-' }];
+}
+
+/** M1: the Figma stroke against the built border / outline, with the colour tolerance (standards/figma.md Figma-to-CSS table). */
+function strokeRows(label, style, css) {
+  if (style.stroke === undefined) return [];
+  return style.strokeAlign === 'INSIDE' ? insideStrokeRows(label, style, css) : outerStrokeRows(label, style, css);
+}
+
+/** G4: a node with a Figma IMAGE fill must show a loaded image of the right shape. */
+function imageRows(label, spec, css) {
+  if (!spec.style.image) return [];
+  const img = css.image;
+  if (img.tag !== 'img') return img.background && img.background !== 'none' ? [] : [{ element: label, prop: 'image', is: 'none', should: 'an image (Figma IMAGE fill)', delta: '-' }];
+  if (!img.loaded) return [{ element: label, prop: 'image', is: 'not loaded', should: 'loaded', delta: '-' }];
+  if (img.objectFit !== 'fill' || !(spec.w > 0 && spec.h > 0)) return [];
+  const ratio = img.natural[0] / img.natural[1] / (spec.w / spec.h);
+  return Math.abs(ratio - 1) > IMAGE_RATIO_TOLERANCE ? [{ element: label, prop: 'image aspect', is: `${img.natural.join('x')} natural`, should: `${fmt(spec.w)}x${fmt(spec.h)} box`, delta: fmt(ratio) }] : [];
+}
+
+/** G3: the first family of the computed font-family must be Figma's (case aside). */
+function fontFamilyRow(label, style, css) {
+  if (style.fontFamily === undefined) return null;
+  const is = firstFamily(css.fontFamily);
+  return is.toLowerCase() === style.fontFamily.toLowerCase() ? null : { element: label, prop: 'font-family', is: is || css.fontFamily, should: style.fontFamily, delta: 'family' };
+}
+
+/**
+ * G4: one failing row per broken eager image in the root, mapped or not.
+ * @param {string[]} sources measureInPage `brokenImages`
+ * @returns {{element: string, prop: string, is: string, should: string, delta: string}[]}
+ */
+export const brokenImageRows = (sources = []) => sources.map((src) => ({ element: `img ${src}`, prop: 'image', is: 'broken', should: 'loaded', delta: '-' }));
+
 function boxStyleRows(label, spec, css) {
   const background = spec.style.background === undefined ? null : colorRow(label, 'background', css.backgroundColor, spec.style.background);
-  return [background, ...radiusRows(label, spec, css), ...layoutRows(label, spec, css)];
+  return [background, ...radiusRows(label, spec, css), ...layoutRows(label, spec, css), ...strokeRows(label, spec.style, css), ...imageRows(label, spec, css)];
 }
 
 /**
@@ -91,7 +149,31 @@ export function compareElements(nodes, map, measured) {
       continue;
     }
     const style = spec.type === 'TEXT' ? textRows(label, spec.style, m.css) : boxStyleRows(label, spec, m.css);
-    rows.push(...boxRows(label, spec, m.box), ...style);
+    rows.push(...[...boxRows(label, spec, m.box), ...style].filter(Boolean).map((row) => ({ ...row, id: m.id })));
   }
   return rows.filter(Boolean);
+}
+
+/** Map skip props (P3c) to the element-row props they remove: padding, gap and hug width only. */
+export const SKIP_PROPS = Object.freeze({ padding: (prop) => prop.startsWith('padding-'), gap: (prop) => prop === 'gap', width: (prop) => prop === 'w' });
+
+/**
+ * Apply map skip entries: a skipped row becomes a SKIPPED row (shown, never failing). A `width` skip is honoured only in a strict run;
+ * in a default run the row stays, with its `why` beside it (spec.json holds no Figma sizing, and the 0.5 % pixel rule does not back it).
+ * @param {object[]} rows failing rows of compareElements (each has `id`)
+ * @param {Record<string, {props: string[], why: string}>} skips per Figma node id
+ * @param {boolean} strict the strict rule is in force
+ * @returns {{rows: object[], skipped: object[]}}
+ */
+export function applySkips(rows, skips, strict) {
+  const kept = [];
+  const skipped = [];
+  for (const row of rows) {
+    const skip = skips?.[row.id];
+    const hit = skip?.props.find((name) => SKIP_PROPS[name](row.prop));
+    if (!hit) kept.push(row);
+    else if (hit === 'width' && !strict) kept.push({ ...row, delta: `${row.delta} (width skip honoured only under --strict: ${skip.why})` });
+    else skipped.push({ ...row, delta: `SKIPPED: ${skip.why}` });
+  }
+  return { rows: kept, skipped };
 }

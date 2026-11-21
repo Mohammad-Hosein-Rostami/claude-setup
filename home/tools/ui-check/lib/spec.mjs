@@ -1,7 +1,8 @@
 // Purpose: flatten a Figma REST node tree into a list of boxes relative to the frame root.
 // Exports: flattenSpec, colorToCss. Invariants: pure (no I/O); invisible nodes are dropped; a TEXT node keeps its full
 // characters (figma-diff compares whole wordings; a cut text would hide a difference after the cut); gap prefers the gap
-// derived from sibling coordinates over Figma's itemSpacing.
+// derived from sibling coordinates over Figma's itemSpacing. Each node keeps absoluteBoundingBox (x, y, w, h) and absoluteRenderBounds
+// (`render`), and box nodes their stroke (colour, align, weight), effects (type, radius, spread, offset) and image fill.
 const DECIMALS = 100;
 const AUTO_LAYOUTS = new Set(['HORIZONTAL', 'VERTICAL']);
 
@@ -61,12 +62,39 @@ function layoutStyle(node, origin) {
   };
 }
 
+/** The node's visible stroke: colour, align (INSIDE, OUTSIDE, CENTER) and weight (per side when Figma gives individual weights). */
+function strokeStyle(node) {
+  const color = solidFill(node.strokes);
+  if (color === undefined) return {};
+  const sides = node.individualStrokeWeights;
+  const weight = sides ? [sides.top, sides.right, sides.bottom, sides.left] : node.strokeWeight;
+  return { stroke: color, strokeAlign: node.strokeAlign ?? 'INSIDE', strokeWeight: weight ?? 1 };
+}
+
+/** Visible effects with their radii (blur), spread and offset, so a shadow or blur can be sized in CSS (standards/figma.md). */
+function effectsOf(node) {
+  const effects = (node.effects ?? []).filter((e) => e.visible !== false);
+  if (effects.length === 0) return {};
+  return { effects: effects.map((e) => ({ type: e.type, radius: e.radius ?? 0, spread: e.spread ?? 0, offset: e.offset ?? null, color: e.color ? colorToCss(e.color) : undefined })) };
+}
+
+const hasImageFill = (node) => (node.fills ?? []).some((f) => f.type === 'IMAGE' && f.visible !== false);
+
 function boxStyle(node, origin) {
   return {
     background: solidFill(node.fills),
     radius: node.rectangleCornerRadii ?? node.cornerRadius,
+    ...(hasImageFill(node) ? { image: true } : {}),
+    ...strokeStyle(node),
+    ...effectsOf(node),
     ...layoutStyle(node, origin),
   };
+}
+
+/** The painted area (absoluteRenderBounds: strokes outside, shadows, blur included) relative to the root; null when Figma gives none. */
+function renderBox(node, origin) {
+  const b = node.absoluteRenderBounds;
+  return b ? { x: round(b.x - origin.x), y: round(b.y - origin.y), w: round(b.width), h: round(b.height) } : null;
 }
 
 function describe(node, origin) {
@@ -76,6 +104,7 @@ function describe(node, origin) {
     name: node.name,
     type: node.type,
     ...relativeBox(node, origin),
+    render: renderBox(node, origin),
     ...(isText ? { text: node.characters ?? '', style: textStyle(node) } : { style: boxStyle(node, origin) }),
   };
 }
@@ -89,7 +118,9 @@ function walk(node, origin, out) {
 /**
  * Flatten a Figma node document into root info plus a flat child list.
  * @param {object} document Figma REST node ("document" of /v1/files/:key/nodes)
- * @returns {{root: {id: string, name: string, w: number, h: number}, nodes: object[]}} x/y/w/h are relative to the root
+ * @returns {{root: {id: string, name: string, w: number, h: number, render: object|null}, nodes: object[]}} x/y/w/h (absoluteBoundingBox) are relative
+ *   to the root; `render` keeps absoluteRenderBounds beside it (null when absent); box nodes carry stroke, strokeAlign, strokeWeight, effects
+ *   and image (an IMAGE fill) in `style` when Figma has them
  * @throws {Error} when the node has no absoluteBoundingBox
  */
 export function flattenSpec(document) {
@@ -98,5 +129,5 @@ export function flattenSpec(document) {
   const origin = { x: box.x, y: box.y };
   const nodes = [];
   walk(document, origin, nodes);
-  return { root: { id: document.id, name: document.name, w: round(box.width), h: round(box.height) }, nodes };
+  return { root: { id: document.id, name: document.name, w: round(box.width), h: round(box.height), render: renderBox(document, origin) }, nodes };
 }
