@@ -1,7 +1,7 @@
 // The workflow runs that are live in a session, for the status line's run lines. Read from the journals Claude Code writes (observed in
 // 2.1.326, undocumented: a different shape shows nothing, never a wrong number).
 // Exports: liveRuns(transcriptPath, nowMs) -> { runId, name, row, phase, phaseIndex, phaseTotal, started, done }[], newest journal first;
-// readPart and metaOf (also used by tools/wf-resume/lib/run-state.mjs); boardRuns(transcriptPath, nowMs) -> the same runs with
+// readPart and metaOf (also used by tools/wf-resume/lib/run-state.mjs); eventsOf (the board's per-agent done marks, tools/board/lib/agents.mjs); boardRuns(transcriptPath, nowMs) -> the same runs with
 // `quietMs` (since the journal was last written) and `lanes` (lanes per phase), over BOARD_WINDOW_MS, for the board (tools/board).
 // Layout read, next to the transcript <proj>/<session>.jsonl: <session>/subagents/workflows/<runId>/journal.jsonl (one JSON line per
 // agent event: { type: launched | started | result, agentId, ... }: `started` has label and phase, `result` only the agent id, `launched`
@@ -117,7 +117,7 @@ const parsedEvent = (line) => {
  * The usable events of a journal's tail, oldest first, each with its agent's label and phase (the ones on its `started` line). A line cut by
  * the tail's start is not JSON and is skipped like any other garbage; a result whose `started` line is not in view has no phase and is left out.
  */
-function eventsOf({ text }) {
+export function eventsOf({ text }) {
   const raw = text.split('\n').flatMap(parsedEvent);
   const startedBy = new Map(raw.filter((event) => event.type === 'started').map((event) => [event.agentId, event]));
   return raw.flatMap((event) => {
