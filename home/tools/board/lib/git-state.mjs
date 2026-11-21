@@ -4,7 +4,7 @@
 // Exports: repoState({ cwd, agentDirs, cache, nowMs }) -> { repo, git, cache }.
 // Commands (fixed flags, `-c core.fsmonitor=false`, GIT_TIMEOUT_MS each, at most GIT_BUDGET_MS of git per refresh, shared by every
 // repository through `startMs`; past it the cached values stay with their age). Run only in repositories the board trusts (repos.mjs):
-//   rev-parse --path-format=absolute --git-common-dir (once per folder); worktree list --porcelain (when <common>/worktrees changed, or
+//   rev-parse --path-format=absolute --git-common-dir (once per folder); worktree list --porcelain -z (when <common>/worktrees changed, or
 //   WORKTREES_EVERY_MS); for-each-ref with %(ahead-behind:<base>) (git >= 2.41, one walk; REFS_EVERY_MS); per worktree
 //   `--no-optional-locks status --porcelain=v2 --branch --untracked-files=no` only when its index or HEAD changed, or STATUS_EVERY_MS.
 //   --no-optional-locks: the board never takes index.lock while an agent commits.
@@ -38,12 +38,25 @@ function git(args) {
   }
 }
 
-/** The worktrees of `git worktree list --porcelain`, the main one first. */
+/**
+ * The worktrees of `git worktree list --porcelain -z`, the main one first: each field ends with NUL and a record with an empty field,
+ * so a path holding a newline cannot forge a second record (review SEC-6).
+ */
 function parseWorktrees(text) {
-  return text.split('\n\n').flatMap((block) => {
-    const path = /^worktree (.+)$/m.exec(block)?.[1];
-    if (path === undefined || /^bare$/m.test(block)) return [];
-    const branch = /^branch refs\/heads\/(.+)$/m.exec(block)?.[1] ?? null;
+  const records = [];
+  let fields = [];
+  for (const field of text.split('\0')) {
+    if (field !== '') {
+      fields.push(field);
+      continue;
+    }
+    if (fields.length > 0) records.push(fields);
+    fields = [];
+  }
+  return records.flatMap((record) => {
+    const path = record.find((field) => field.startsWith('worktree '))?.slice('worktree '.length);
+    if (path === undefined || record.includes('bare')) return [];
+    const branch = record.find((field) => field.startsWith('branch refs/heads/'))?.slice('branch refs/heads/'.length) ?? null;
     return [{ path, branch }];
   }).slice(0, MAX_WORKTREES);
 }
@@ -120,7 +133,7 @@ function listsOf(cwd, common, cache, clock) {
   const spent = Date.now() - clock.startMs > GIT_BUDGET_MS; // the refresh's whole git budget is used: the cached lists stay
   const wtMtime = mtimeOf(join(common, 'worktrees'));
   const listFresh = spent || (cache.common === common && cache.wtMtime === wtMtime && nowMs - (cache.wtAt ?? 0) < WORKTREES_EVERY_MS);
-  const listText = listFresh ? null : git(['-C', cwd, 'worktree', 'list', '--porcelain']);
+  const listText = listFresh ? null : git(['-C', cwd, 'worktree', 'list', '--porcelain', '-z']);
   const worktrees = listText === null ? (cache.worktrees ?? []) : parseWorktrees(listText);
   const base = baseOf(common, worktrees);
   const refsFresh = spent || (cache.common === common && cache.base === base && nowMs - (cache.refsAt ?? 0) < REFS_EVERY_MS);
