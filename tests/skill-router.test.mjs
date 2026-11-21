@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gateLinesForPrompt, isQuiet, isUiFile, skillsForPrompt, weakUiPrompt } from '../home/hooks/skill-router.mjs';
@@ -103,10 +103,23 @@ test('hook contract: bad JSON is silent; a UI prompt emits additionalContext; a 
 
 const GATE_LINE = /^Skill router: (bug or failure|done or ship|repository restructure) /;
 
+// The checks the owner turned on, as the router reads them (home/hooks/lib/checks-on.mjs, spec r9-checks-off): the hook is given a
+// temp HOME with one switch file, named by CLAUDE_CODE_SESSION_ID so it counts for every session id a test uses. The UI texts show the
+// `ui` proof step and the verify-done line shows once test, types or ui is on; the default here is all three on.
+const SWITCH_ID = 'owner-switch';
+async function switchHome(on) {
+  const home = makeTempDir('router-home-');
+  if (on.length === 0) return home;
+  await mkdir(join(home, '.claude', 'state', 'checks'), { recursive: true });
+  await writeFile(join(home, '.claude', 'state', 'checks', `${SWITCH_ID}.json`), JSON.stringify({ on, off: [], scope: 'tests', by: 'owner', at: '2026-11-21T00:00:00.000Z' }));
+  return home;
+}
+
 // Each call gets its own temp dir as TMPDIR/TEMP so session markers never leak between tests or into real state.
-async function routerSession() {
+async function routerSession({ on = ['test', 'types', 'ui'] } = {}) {
   const tmp = makeTempDir('router-state-');
-  const env = { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp };
+  const home = await switchHome(on);
+  const env = { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp, HOME: home, USERPROFILE: home, CLAUDE_CODE_SESSION_ID: SWITCH_ID };
   const fire = (event, { keepGates = false } = {}) => {
     const r = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(event), encoding: 'utf8', env });
     assert.equal(r.status, 0);
@@ -130,6 +143,23 @@ test('first routed prompt gets the full text, a repeat gets the short form', asy
   assert.match(again, SHORT);
   assert.match(again, /responsive-ui/);
   assert.equal(prompt('add a REST endpoint for orders'), '');
+});
+
+test('with the `ui` check off the full UI route names no ui-quality-pass and no proof step', async () => {
+  const { prompt } = await routerSession({ on: ['test'] });
+  const full = prompt('make it responsive');
+  assert.match(full, FULL);
+  assert.doesNotMatch(full, /ui-quality-pass|[Pp]roof|visual-qa|ui-check/);
+});
+
+// Red on purpose while the product defect stands: withoutUiChecks (skill-router.mjs:269-276) cuts `; proof: ...` before it looks for
+// `ui-quality-pass before done; `, so the short text keeps "ui-quality-pass before done." with `ui` off (spec-checks-off.md:36-38).
+test('with the `ui` check off the short UI route names no ui-quality-pass and no proof step', async () => {
+  const { prompt } = await routerSession({ on: ['test'] });
+  prompt('make it responsive');
+  const short = prompt('make it responsive on mobile');
+  assert.match(short, /^Skill router: UI request - invoke .+ \(skip any already loaded\); delegate to ui-implementer\.$/);
+  assert.doesNotMatch(short, /ui-quality-pass|proof|visual-qa|ui-check/);
 });
 
 test('a newly routed skill gets the full text again, then the short form', async () => {
@@ -242,6 +272,19 @@ test('hook: gate lines reach additionalContext, also in a Gradle project and nex
   assert.doesNotMatch(ctx, /involves UI/);
   assert.equal(await prompt('<agent-message>fix the bug</agent-message>', 's5', KEEP), '');
   assert.equal(await prompt('the fix version is 2.1', 's6', KEEP), '');
+});
+
+test('hook: the verify-done line shows when any one of test, types or ui is on, and not when all three are off', async () => {
+  const KEEP = { keepGates: true };
+  for (const on of [['test'], ['types'], ['ui']]) {
+    const { prompt } = await routerSession({ on });
+    assert.match(await prompt('we are done, ship it', 's1', KEEP), /verify-done/, on.join());
+  }
+  for (const on of [[], ['review'], ['probe']]) {
+    const { prompt } = await routerSession({ on });
+    assert.equal(await prompt('we are done, ship it', 's1', KEEP), '', `on: ${on.join() || 'nothing'}`);
+    assert.match(await prompt('fix the crash', 's1', KEEP), /root-cause-debug/, 'the bug route does not depend on a check');
+  }
 });
 
 test('hook: each gate line shows once per session, again after a compact, and per session', async () => {

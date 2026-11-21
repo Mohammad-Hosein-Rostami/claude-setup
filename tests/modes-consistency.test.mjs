@@ -26,7 +26,7 @@ test('every playbook states its lane budget', () => {
 
 test('_lead.md carries the lead-discipline rules and stays small', () => {
   const lead = read('home/modes/_lead.md');
-  for (const needle of ['Persian', 'No turn without a decision', 'runner', '2nd compaction', 'usage-limit', 'STATUS.md', '3k chars', 'restart the session', 'No answer in 60 s','≤ 300 words', '`implementer`, not general-purpose', 'estimate.mjs']) {
+  for (const needle of ['Persian', 'No turn without a decision', 'runner', '2nd compaction', 'usage-limit', 'STATUS.md', '3k chars', 'tell the owner to restart', 'No answer in 60 s','≤ 300 words', '`implementer`, not general-purpose', 'estimate.mjs']) {
     assert.ok(lead.includes(needle), `_lead.md must mention ${needle}`);
   }
   assert.ok(lead.split('\n').length <= 100, '_lead.md is injected into every session; keep it <= 100 lines');
@@ -94,7 +94,13 @@ const LOWERS_OTHERWISE = [
   /\bnot (fixed|listed|checked|reviewed|verified)\b/i,
   /\b(reviews?|reviewer|verify-done)\b[^.;\n]{0,15}\bonly (for|on|when|if)\b/i,
 ];
-const lowersAGate = (sentence) => LOWERS_A_GATE.test(sentence) || LOWERS_OTHERWISE.some((pattern) => pattern.test(sentence));
+// The final reply names the categories left off with the label `not checked: <categories off>` (spec r9-checks-off): that is the
+// owner's rule saying what was not run, not a lowered gate, so the label is taken out before a sentence is tested.
+const NOT_CHECKED_LABEL = /`not checked: <[^>`]+>`/g;
+const lowersAGate = (sentence) => {
+  const text = sentence.replace(NOT_CHECKED_LABEL, '');
+  return LOWERS_A_GATE.test(text) || LOWERS_OTHERWISE.some((pattern) => pattern.test(text));
+};
 const SHARED_TEXT_FILES = ['home/modes/_lead.md', ...MODES.map((mode) => `home/modes/${mode}.md`)];
 
 test('every playbook keeps the same gates and none lowers accuracy', () => {
@@ -110,6 +116,7 @@ test('no sentence of _lead.md or a playbook lowers a gate that home/CLAUDE.md re
     'Skip the reviewer on small diffs.', 'Do small work without verify-done.', 'Fewer checks in this mode.', 'No tests for quick fixes.',
     'Reviews: only for risky changes.', 'Research: one source is enough.', 'verify-done is optional in this mode.',
     'Leave out the reviewer for one-line fixes.', 'Stop after the first finding that explains the bug.',
+    'Say `not checked: <categories off>` and skip the reviewer.', 'The reviewer findings are not checked.',
     'Reviewer findings marked optional are not fixed or listed.', 'Skip review on small diffs.', 'skip responsive',
   ];
   for (const sentence of lowering) assert.ok(lowersAGate(sentence), `detector must flag: ${sentence}`);
@@ -117,6 +124,7 @@ test('no sentence of _lead.md or a playbook lowers a gate that home/CLAUDE.md re
     'Never downgrade a model or effort pick to save tokens; the quality gates still run.', 'No duplicate agents on the same question.',
     'Gates to risk: one reviewer pass per batch on changed lines; `security-auditor` only auth/secrets/data/money/hooks/untrusted input.',
     're-run browser/responsive checks only for failed, not-run or risky (auth, payments) items.',
+    'Final reply: obey the line cap; say `not checked: <categories off>`.',
   ];
   for (const sentence of honest) assert.ok(!lowersAGate(sentence), `detector must not flag: ${sentence}`);
   for (const file of SHARED_TEXT_FILES) {

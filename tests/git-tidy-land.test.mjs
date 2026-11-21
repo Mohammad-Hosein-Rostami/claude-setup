@@ -9,6 +9,7 @@ import { addWorktree, commit, git, makeRepo, tidy } from './git-tidy-helpers.mjs
 import { landLane } from '../home/tools/git-tidy/lib/land.mjs';
 import { formatLand, landExitCode } from '../home/tools/git-tidy/lib/report.mjs';
 import { openRepo } from '../home/tools/git-tidy/lib/repo.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const passAlways = () => true;
 const land = (dir, branch, options = {}) => landLane(openRepo(dir, null), branch, { hasPass: passAlways, ...options });
@@ -69,13 +70,27 @@ test('the PASS lookup gets the rebased tip and asks for the suite command', () =
   assert.notEqual(git(dir, 'rev-parse', 'main'), result.tip, 'the base did not move');
 });
 
-test('no PASS record: exit 4 and the base is untouched (CLI)', () => {
+// An empty home and no session id: no switch file is read, so the `test` check is off unless the command line adds it (home/hooks/lib/checks-on.mjs).
+const noSwitchEnv = () => {
+  const home = makeTempDir('git-tidy-land-home-');
+  return { HOME: home, USERPROFILE: home, CLAUDE_CODE_SESSION_ID: '', CLAUDE_SESSION_ID: '' };
+};
+
+test('no PASS record: exit 4 and the base is untouched (CLI, `test` check on)', () => {
   const { dir } = laneWithWorktree();
   const before = git(dir, 'rev-parse', 'main');
-  const result = tidy(['land', 'lane/x', dir], { cwd: dir });
+  const result = tidy(['land', 'lane/x', dir, '--checks', 'test'], { cwd: dir, env: noSwitchEnv() });
   assert.equal(result.status, 4, result.stdout + result.stderr);
   assert.equal(git(dir, 'rev-parse', 'main'), before);
   assert.ok(branchNames(dir).includes('lane/x'));
+});
+
+test('with the `test` check off the CLI lands a lane that has no PASS record (exit 0)', () => {
+  const { dir } = laneWithWorktree();
+  const result = tidy(['land', 'lane/x', dir], { cwd: dir, env: noSwitchEnv() });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.deepEqual(branchNames(dir), ['main'], 'the lane is landed and deleted');
+  assert.equal(git(dir, 'log', '--format=%s', '-1', 'main'), 'add lane.txt');
 });
 
 test('a conflict aborts the rebase, names the file and exits 3', () => {

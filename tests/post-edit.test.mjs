@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,9 @@ for (const name of ['TMPDIR', 'TEMP', 'TMP']) process.env[name] = join(SANDBOX, 
 process.env.CLAUDE_TYPECHECK_LOG = join(SANDBOX, 'run.jsonl');
 process.env.CLAUDE_GUARD_LOG = join(SANDBOX, 'guard.jsonl');
 for (const folder of ['home', 'tmp']) mkdirSync(join(SANDBOX, folder));
+// The owner's switch file for session s1 with `types` on: post-edit logs an edit for the stop gate only then (home/hooks/lib/checks-on.mjs, spec r9-checks-off).
+mkdirSync(join(SANDBOX, 'home', '.claude', 'state', 'checks'), { recursive: true });
+writeFileSync(join(SANDBOX, 'home', '.claude', 'state', 'checks', 's1.json'), JSON.stringify({ on: ['types'], off: [], scope: 'tests', by: 'owner', at: '2026-11-21T00:00:00.000Z' }));
 
 // Real `eslint` default (stylish) output behind a pnpm script banner, two files, as the hook receives it.
 const STYLISH = `
@@ -157,6 +160,13 @@ test('post-edit logs the edited file for the stop gate and runs no typecheck', a
   const { r, file, read } = await loggedEdit({});
   assert.equal(r.status, 0);
   assert.equal(await read('main'), `${file}\n`);
+});
+
+test('post-edit logs no edit while the `types` check is off (a home with no switch file)', async () => {
+  const home = makeTempDir('post-edit-nohome-');
+  const { r, read } = await loggedEdit({ env: { HOME: home, USERPROFILE: home } });
+  assert.equal(r.status, 0);
+  assert.equal(await read('main'), null);
 });
 
 test('post-edit logs per agent id', async () => {

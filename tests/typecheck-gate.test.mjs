@@ -10,7 +10,7 @@ import { readFile, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FAIL_JS, HOOK, TS_ERROR, blocked, captured, gateProject, installBin, posix, sha256 } from './typecheck-gate-helpers.mjs';
+import { FAIL_JS, HOOK, TS_ERROR, blocked, captured, gateProject, homeWithoutSwitch, installBin, posix, sha256 } from './typecheck-gate-helpers.mjs';
 import { decideExit, incrementalTypecheck, runGate, timeoutMessage } from '../home/hooks/typecheck-gate.mjs';
 import { readTimeouts } from '../home/hooks/lib/typecheck-records.mjs';
 
@@ -49,6 +49,16 @@ test('hook contract: bad JSON, empty stdin and no log exit 0 silently', () => {
     assert.equal(r.status, 0);
     assert.equal(r.stdout + r.stderr, '');
   }
+});
+
+test('with the `types` check off (no switch file) the gate passes a logged type error without running anything', async () => {
+  const { run, runs, calls } = await gateProject();
+  assert.equal(run().status, 2, 'the same project blocks with `types` on');
+  const off = run({}, homeWithoutSwitch());
+  assert.equal(off.status, 0);
+  assert.equal(off.stdout + off.stderr, '');
+  assert.equal((await runs()).length, 1, 'only the `types`-on run is logged');
+  assert.deepEqual(await calls(), []);
 });
 
 test('no log for this session is a silent pass and writes no run-log line', async () => {

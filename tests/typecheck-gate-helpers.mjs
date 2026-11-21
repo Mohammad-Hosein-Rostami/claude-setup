@@ -2,14 +2,16 @@
 // stops), typecheck-gate-fallbacks.test.mjs (the tsconfig step, its build info, the run log) and typecheck-gate-nx.test.mjs
 // (the Nx step). Exports: HOOK, POST_EDIT_HOOK, PLAN_LIB, posix, TS_ERROR, FAIL_JS, blocked(...lines), captured(run),
 // runLines(path), sha256(text), installBin(folder, tool, behaviour), sleepingTsc(folder), gateProject(options),
-// fallbackRepo(files, options), outcomes(fixture).
+// fallbackRepo(files, options), outcomes(fixture), homeWithoutSwitch().
+// The sandbox home holds the owner's check switch with `types` on (the gate and post-edit do nothing with it off, spec r9-checks-off);
+// homeWithoutSwitch() is a second home with no switch file, for the cases that run a hook with `types` off (pass it as HOME and USERPROFILE).
 // Importing this file gives the test process, and so every hook it starts, a temp home, temp folder, run log and guard
 // log: nothing in these tests touches the real ones. The binaries are fake node scripts in a fixture's node_modules/.bin,
 // so no TypeScript or Nx is installed and nothing is downloaded.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +30,17 @@ for (const name of ['TMPDIR', 'TEMP', 'TMP']) process.env[name] = join(SANDBOX, 
 process.env.CLAUDE_TYPECHECK_LOG = join(SANDBOX, 'run.jsonl');
 process.env.CLAUDE_GUARD_LOG = join(SANDBOX, 'guard.jsonl');
 for (const folder of ['home', 'tmp']) mkdirSync(join(SANDBOX, folder));
+
+// The owner's switch file for session s1, as the checks-switch hook writes it (home/hooks/lib/checks-on.mjs), with `types` on.
+const switchFolder = (home) => join(home, '.claude', 'state', 'checks');
+mkdirSync(switchFolder(process.env.HOME), { recursive: true });
+writeFileSync(join(switchFolder(process.env.HOME), 's1.json'), JSON.stringify({ on: ['types'], off: [], scope: 'tests', by: 'owner', at: '2026-11-21T00:00:00.000Z' }));
+
+/** A home folder with no switch file: every hook run with it as HOME sees `types` off (its default). */
+export const homeWithoutSwitch = () => {
+  const home = makeTempDir('typecheck-gate-nohome-');
+  return { HOME: home, USERPROFILE: home };
+};
 
 export const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 
