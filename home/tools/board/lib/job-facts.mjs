@@ -8,9 +8,12 @@
 // a lane is landed when its close row `<road>.s<N>.<lane>-land` is done (tools/road road-state.mjs rule).
 // Rules: the road is read again only when the STATUS.md or the road file changed (mtime and size); the trend is the last move of the
 // finish clock (highMs) of at least MOVE_MIN, kept TREND_SHOWN_MS after the move; the first sighting is no move.
-// Invariants: never throws (any failure gives null facts and keeps the cache); reads plain files only (STATUS.md at most
-// MAX_STATUS_BYTES); text from files reaches the terminal only through the render's cleanText.
-import { lstatSync, readFileSync } from 'node:fs';
+// Invariants: never throws (any failure gives null facts and keeps the cache); reads regular files only, without following a link or
+// waiting on a FIFO (STATUS.md through hooks/lib/plain-file.mjs, at most MAX_STATUS_BYTES; the road file only after lstat says it is a
+// regular file); text from files reaches the terminal only through the render's cleanText. The step title loses a leading
+// `step N,` (the road files repeat it: review S2).
+import { lstatSync } from 'node:fs';
+import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 import { dirname, join } from 'node:path';
 import { parseWorkItems } from '../../estimate/lib/items.mjs';
 import { cacheDir, readEntry } from '../../estimate/lib/segment-cache.mjs';
@@ -24,6 +27,7 @@ const MAX_STATUS_BYTES = 1024 * 1024;
 const MAX_TEXT_CHARS = 60;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
 const ROAD_NAME = /^[a-z][a-z0-9-]{0,7}$/;
+const STEP_PREFIX = /^\s*step\s*\d+\s*[,:.)-]?\s*/i;
 
 const clean = (text) => String(text ?? '').replace(CONTROL_CHARS, ' ').trim().slice(0, MAX_TEXT_CHARS);
 const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
@@ -39,14 +43,16 @@ function statusPathOf(session, cwd) {
 
 /** The current step of a road from its file and the STATUS.md rows: title, lanes landed of all; null without a readable road. */
 function roadFacts(statusPath, name, step) {
-  const { road } = readRoad(join(dirname(statusPath), `road-${name}.json`));
+  const roadFile = join(dirname(statusPath), `road-${name}.json`);
+  if (!lstatSync(roadFile, { throwIfNoEntry: false })?.isFile()) return null; // no FIFO or link for readRoad's plain open
+  const { road } = readRoad(roadFile);
   const plan = road?.steps?.[step - 1];
   if (!plan) return null;
-  const text = readFileSync(statusPath, 'utf8').slice(0, MAX_STATUS_BYTES);
+  const text = readPlainFile(statusPath, MAX_STATUS_BYTES);
   const done = new Set(parseWorkItems(text).items.filter((item) => item.done !== null).map((item) => String(item.id).toLowerCase()));
   const lanes = Array.isArray(plan.lanes) ? plan.lanes : [];
   const landed = lanes.filter((lane) => done.has(rowIds(road.road, step, lane.name).close.toLowerCase())).length;
-  return { goal: clean(road.goal), title: clean(plan.goal), lanesDone: landed, lanesTotal: lanes.length, repo: typeof road.repo === 'string' ? road.repo : null };
+  return { goal: clean(road.goal), title: clean(String(plan.goal ?? '').replace(STEP_PREFIX, '')), lanesDone: landed, lanesTotal: lanes.length, repo: typeof road.repo === 'string' ? road.repo : null };
 }
 
 /** The road of the job (cached while the files are unchanged); null when the job walks no road. */

@@ -11,8 +11,12 @@
 // repos: the other repositories with work (repos.mjs, same shape without the stats), git: { branch, ahead, behind, changed } | null,
 // road: job-facts.mjs road | null, trend: { deltaMin, atMs } | null }
 // (<= MAX_BOARD_BYTES: done agents go first, then the oldest, until it fits). Cache (cache-file.mjs, <session>.json): { cursors, git,
-// job, stats }. The repositories (repos.mjs): the session folder's, the road's `repo`, the STATUS.md folder's and every live agent's,
-// so a lead in a folder outside git still shows where its agents work (owner report 2026-11-21: no git info at all).
+// job, stats }. The repositories (repos.mjs) are only those the setup vouches for: the session folder's, the STATUS.md folder's, the
+// road's `repo`, each agent's `meta.worktreePath` and the writers' launch folders, with the worktrees their own `worktree list`
+// names; agents are matched to those worktrees by the folders of the files they changed or read (owner report 2026-11-21: no git
+// info at all; review SEC-1: git never runs where a tool call points). One refresh at a time per session: a lock file with the
+// refresher's pid, taken over when that process is gone or the lock is LOCK_STALE_MS old (review SEC-2: a hung refresh must not
+// be joined by a new one every IN_FLIGHT_MS).
 // After the write, the agent-type pools (pools.mjs) are rebuilt when an hour old, outside the budget.
 // States: `run` (journal written in the last QUIET_MIN), `quiet` (QUIET_MIN to STOPPED_MIN), `stopped?` (longer: a killed run has no
 // summary json, so it would read live for ever); `needs you` is the session's asking marker. `failed` and `done, not landed`
@@ -21,9 +25,10 @@
 // through session-store.mjs (no links, 0600, temp file and rename); git runs only in git-state.mjs, with fixed flags and its own
 // timeouts; `git-tidy check` never runs here; nothing here throws.
 import { spawn } from 'node:child_process';
-import { lstatSync, readdirSync } from 'node:fs';
+import { closeSync, lstatSync, mkdirSync, openSync, readdirSync, rmSync, writeSync } from 'node:fs';
+import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, sep } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readAsking } from '../../../hooks/lib/asking-marker.mjs';
 import { isSessionId, readSessionFile, writeSessionFile } from '../../../hooks/lib/session-store.mjs';
@@ -32,7 +37,7 @@ import { sessionAgents } from './agents.mjs';
 import { readCacheFile, writeCacheFile } from './cache-file.mjs';
 import { jobFacts } from './job-facts.mjs';
 import { repoStats } from './repo-stats.mjs';
-import { sessionRepos } from './repos.mjs';
+import { placeAgents, sessionRepos } from './repos.mjs';
 import { poolsDue, readPools, rebuildPools } from './pools.mjs';
 
 export const MAX_BOARD_BYTES = 48 * 1024;
@@ -68,15 +73,6 @@ export function runState(run) {
   return { state: quietMin >= QUIET_MIN ? 'quiet' : 'run', quietMin };
 }
 
-/** Each agent's repository, worktree name and branch: the worktree of any repository whose path holds the agent's folder (the longest). */
-function withWorktrees(agents, repos) {
-  const worktrees = repos.flatMap((repo) => repo.worktrees.map((wt) => ({ ...wt, repoName: repo.name }))).sort((a, b) => b.path.length - a.path.length);
-  return agents.map(({ dir, startMs, ...agent }) => {
-    const home = typeof dir === 'string' ? worktrees.find((wt) => dir === wt.path || dir.startsWith(`${wt.path}${sep}`)) : undefined;
-    return { ...agent, repo: home?.repoName ?? null, wt: home?.name ?? null, branch: home?.branch ?? null };
-  });
-}
-
 /** The board without its oldest or finished agents until it fits MAX_BOARD_BYTES. */
 function fitted(board) {
   const agents = [...board.agents];
@@ -103,18 +99,21 @@ export function collectBoard({ session, transcriptPath, cwd }, { env = process.e
   const sessionFolder = typeof transcriptPath === 'string' ? join(dirname(transcriptPath), basename(transcriptPath, '.jsonl')) : null;
   const found = sessionFolder === null ? { agents: [], runs, cursors: {} }
     : sessionAgents({ session, sessionFolder, runs, cursors: cache?.cursors ?? {}, pools, env, nowMs });
-  const agentDirs = found.agents.filter((agent) => agent.state !== 'done').map((agent) => ({ name: agent.name, dir: agent.dir }));
   const job = jobFacts({ session, cwd, cache: cache?.job ?? null, nowMs });
   const statusDir = typeof job.cache?.path === 'string' ? dirname(job.cache.path) : null;
-  const git = sessionRepos({ folders: [cwd, job.repoDir, statusDir, ...agentDirs.map((agent) => agent.dir)], agentDirs, cache: cache?.git ?? null, nowMs });
-  const [primary = null, ...others] = git.repos;
+  // Trusted folders only (review SEC-1 of 9ac483c3): where the owner or the setup put the work, never a folder a tool call named.
+  const trusted = [cwd, statusDir, job.repoDir, ...(found.launchDirs ?? []), ...found.agents.map((agent) => agent.places?.worktree)];
+  const gitStartMs = Date.now(); // one git budget for the whole refresh (git-state.mjs GIT_BUDGET_MS), repo-stats included
+  const git = sessionRepos({ folders: trusted, cache: cache?.git ?? null, nowMs, startMs: gitStartMs });
+  const placed = placeAgents(found.agents, git.repos);
+  const [primary = null, ...others] = placed.repos;
   const mainPath = primary?.worktrees.find((wt) => wt.main)?.path ?? null;
-  const stats = repoStats({ repoDir: mainPath, base: primary?.base ?? null, cache: cache?.stats ?? null, nowMs });
+  const stats = repoStats({ repoDir: mainPath, base: primary?.base ?? null, cache: cache?.stats ?? null, nowMs, startMs: gitStartMs });
   const repo = primary === null ? null : { ...primary, tip: stats.stats?.tip ?? null, suite: stats.stats?.suite ?? null, landed: stats.stats?.landed ?? null };
   const marker = readAsking(session, env, nowMs);
   const asking = marker === null ? null : { kind: marker.kind, count: marker.count, expiresAt: marker.expiresAt };
   const board = {
-    session, at: nowMs, stale: null, refreshStartedAt: null, asking, runs: found.runs, agents: withWorktrees(found.agents, git.repos), repo,
+    session, at: nowMs, stale: null, refreshStartedAt: null, asking, runs: found.runs, agents: placed.agents, repo,
     repos: others, git: git.git, road: job.road, trend: job.trend,
   };
   return { board: fitted(board), cache: { cursors: found.cursors, git: git.cache, job: job.cache, stats: stats.cache } };
@@ -151,6 +150,36 @@ export function claimBoardRefresh(session, { env = process.env, nowMs = Date.now
   }
 }
 
+const LOCK_STALE_MS = 2 * 60_000; // a refresh runs well under a second; one this old is stuck and is not waited for
+const MAX_LOCK_BYTES = 64;
+
+/** True when the refresh named in the lock file is alive and its lock younger than LOCK_STALE_MS. */
+function lockHeld(path, nowMs) {
+  try {
+    const [pid, atMs] = readPlainFile(path, MAX_LOCK_BYTES).trim().split(' ').map(Number);
+    if (!Number.isInteger(pid) || !(nowMs - atMs < LOCK_STALE_MS)) return false;
+    process.kill(pid, 0); // throws when the process is gone
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM'; // alive, owned by someone else: still held
+  }
+}
+
+/** Takes the session's refresh lock (a file holding this pid and the time); null when another live refresh holds it. */
+function takeLock(dir, session, nowMs) {
+  const path = join(dir, `${session}.lock`);
+  try {
+    if (lockHeld(path, nowMs)) return null;
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    rmSync(path, { force: true });
+    const fd = openSync(path, 'wx', 0o600);
+    try { writeSync(fd, `${process.pid} ${nowMs}`); } finally { closeSync(fd); }
+    return path;
+  } catch {
+    return null; // another refresh took it between the check and the open
+  }
+}
+
 /**
  * One refresh of the session's board, when due: claims it, builds it, writes it; over BUDGET_MS the old data stays, marked stale.
  * @param {{ session: string, transcriptPath: string | null, cwd: string }} source see buildBoard
@@ -164,19 +193,30 @@ export function refreshBoard(source, { env = process.env, now = Date.now, force 
     const old = readBoard(source.session, env);
     const startMs = now();
     if (!force && !due(old, startMs)) return false;
-    if (old !== null) writeSessionFile(dir, source.session, JSON.stringify({ ...old, refreshStartedAt: startMs }));
-    const pools = readPools(env);
-    const { board: fresh, cache } = collectBoard(source, { env, nowMs: startMs, cache: readCacheFile(source.session, env, MAX_CACHE_BYTES), pools });
-    const tookMs = now() - startMs;
-    writeCacheFile(source.session, cache, env, MAX_CACHE_BYTES); // kept also when over budget: the next refresh reads only new bytes
-    const board = tookMs > BUDGET_MS && old !== null && old.at > 0 ? { ...old, stale: { sinceMs: old.at, tookMs }, refreshStartedAt: null } : fresh;
-    const text = JSON.stringify(board);
-    const written = text.length <= MAX_BOARD_BYTES && writeSessionFile(dir, source.session, text);
-    if (typeof source.transcriptPath === 'string' && poolsDue(pools, startMs)) rebuildPools({ projectsDir: dirname(dirname(source.transcriptPath)), env, nowMs: startMs });
-    return written;
+    const lock = takeLock(dir, source.session, startMs);
+    if (lock === null) return false;
+    try {
+      return refreshLocked(source, { env, now, dir, old, startMs });
+    } finally {
+      rmSync(lock, { force: true });
+    }
   } catch {
     return false; // the old board stays; the next refresh tries again
   }
+}
+
+/** The refresh itself, under the lock. */
+function refreshLocked(source, { env, now, dir, old, startMs }) {
+  if (old !== null) writeSessionFile(dir, source.session, JSON.stringify({ ...old, refreshStartedAt: startMs }));
+  const pools = readPools(env);
+  const { board: fresh, cache } = collectBoard(source, { env, nowMs: startMs, cache: readCacheFile(source.session, env, MAX_CACHE_BYTES), pools });
+  const tookMs = now() - startMs;
+  writeCacheFile(source.session, cache, env, MAX_CACHE_BYTES); // kept also when over budget: the next refresh reads only new bytes
+  const board = tookMs > BUDGET_MS && old !== null && old.at > 0 ? { ...old, stale: { sinceMs: old.at, tookMs }, refreshStartedAt: null } : fresh;
+  const text = JSON.stringify(board);
+  const written = text.length <= MAX_BOARD_BYTES && writeSessionFile(dir, source.session, text);
+  if (typeof source.transcriptPath === 'string' && poolsDue(pools, startMs)) rebuildPools({ projectsDir: dirname(dirname(source.transcriptPath)), env, nowMs: startMs });
+  return written;
 }
 
 /** @returns {string | null} the session's transcript under projectsDir (`<project>/<session>.jsonl`, a plain file), or null */

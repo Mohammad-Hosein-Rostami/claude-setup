@@ -3,8 +3,12 @@
 // whether a call is still waiting for its result, and whether the agent ended its turn.
 // Exports: advanceCursor(cursor, file) -> cursor | null; emptyCursor(ino).
 // Cursor: { ino, offset, startMs, lastMs, mtimeMs, calls, reads, edits, writes, checks, commits, reports, steps, tokens, lastTool:
-// { name, text, atMs } | null, pending, endedMs, lastTextChars, cwd, fileDir, shownPct, stepsSeen } (fileDir: the folder of the last
-// file a tool read or changed by absolute path, where the agent really works when its cwd stays in the lead's folder; shownPct and stepsSeen belong to
+// { name, text, atMs } | null, pending, endedMs, lastTextChars, cwd, changedDirs, readDirs, pendingDirs, shownPct, stepsSeen }.
+// changedDirs / readDirs: the folders (newest first, at most MAX_DIRS) of the files the agent changed (Edit, Write, MultiEdit,
+// NotebookEdit; a Bash call counts its line's `cwd`) or read (Read, Grep, Glob), counted only once the call's result came back
+// without an error (a denied or failed call names nothing); pendingDirs holds them until then. They only MATCH an agent to a
+// worktree of a repository the board already trusts (refresh.mjs); git never runs in them (review SEC-1 of 9ac483c3). A UNC or
+// device path (`\\host`, `//host`) is never kept, so nothing ever touches another host. shownPct and stepsSeen belong to
 // progress.mjs, kept here so they travel with the cursor).
 // Format read (Claude Code 2.1.329, internal, observed): one JSON object per line with `timestamp`, `type` (user | assistant | ...),
 // `cwd`, `message.content` (a string for the brief; blocks `tool_use` {name, input} and `tool_result`; `message.stop_reason`;
@@ -21,6 +25,10 @@ const MAX_PARSE_CHARS = 256 * 1024;
 const MAX_TEXT_CHARS = 60;
 const MAX_STEPS = 20;
 const MAX_PATH_CHARS = 1024;
+const MAX_DIRS = 4;
+const MAX_PENDING = 16;
+const READ_TOOLS = new Set(['Read', 'Grep', 'Glob']);
+const REMOTE_PATH = /^(\\\\|\/\/)/; // UNC `\\host\share` or `//host/share`: never a folder of this machine
 const NEWLINE = 0x0a;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
 const TIMESTAMP = /"timestamp":"([0-9T:.\-]+Z?)"/;
@@ -35,7 +43,8 @@ const clean = (text) => String(text ?? '').replace(CONTROL_CHARS, ' ').trim().sl
 /** @returns {object} a cursor that has read nothing of the file with this inode */
 export const emptyCursor = (ino) => ({
   ino, offset: 0, startMs: null, lastMs: null, mtimeMs: 0, calls: 0, reads: 0, edits: 0, writes: 0, checks: 0, commits: 0, reports: 0,
-  steps: null, tokens: 0, lastTool: null, pending: false, endedMs: null, lastTextChars: 0, cwd: null, fileDir: null, shownPct: 0, stepsSeen: 0,
+  steps: null, tokens: 0, lastTool: null, pending: false, endedMs: null, lastTextChars: 0, cwd: null, changedDirs: [], readDirs: [],
+  pendingDirs: {}, shownPct: 0, stepsSeen: 0,
 });
 
 const USAGE_KEYS = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'output_tokens'];
@@ -71,7 +80,6 @@ function toolText(name, input) {
 function countCall(cursor, name, input, atMs) {
   cursor.calls += 1;
   const file = String(input?.file_path ?? '');
-  if (file !== '' && isAbsolute(file) && file.length <= MAX_PATH_CHARS) cursor.fileDir = dirname(file);
   if (name === 'Read') cursor.reads += 1;
   if (EDIT_TOOLS.has(name)) {
     cursor.edits += 1;
@@ -89,6 +97,33 @@ function countCall(cursor, name, input, atMs) {
   cursor.endedMs = null;
 }
 
+/** @returns {string | null} a local absolute folder (not UNC, not too long), else null */
+const localDir = (path) => (typeof path === 'string' && path.length <= MAX_PATH_CHARS && isAbsolute(path) && !REMOTE_PATH.test(path) ? path : null);
+
+/** The folder a call works in, held until its result: a changed file's folder, a Bash call's cwd, a read file's folder. */
+function holdDir(cursor, call, lineCwd) {
+  const name = String(call.name ?? '');
+  const path = call.input?.file_path ?? call.input?.notebook_path ?? (READ_TOOLS.has(name) ? call.input?.path : undefined);
+  const changed = EDIT_TOOLS.has(name) || name === 'Bash';
+  const dir = name === 'Bash' ? localDir(lineCwd) : localDir(typeof path === 'string' ? (name === 'Grep' || name === 'Glob' ? path : dirname(path)) : null);
+  if (dir === null || typeof call.id !== 'string' || (!changed && !READ_TOOLS.has(name))) return;
+  const ids = Object.keys(cursor.pendingDirs);
+  if (ids.length >= MAX_PENDING) delete cursor.pendingDirs[ids[0]];
+  cursor.pendingDirs[call.id] = { dir, changed };
+}
+
+/** Each result that came back without an error moves its call's folder to the front of its list. */
+function settleDirs(cursor, content) {
+  for (const block of content.filter((item) => item?.type === 'tool_result' && typeof item.tool_use_id === 'string')) {
+    const held = cursor.pendingDirs[block.tool_use_id];
+    if (held === undefined) continue;
+    delete cursor.pendingDirs[block.tool_use_id];
+    if (block.is_error === true) continue;
+    const key = held.changed ? 'changedDirs' : 'readDirs';
+    cursor[key] = [held.dir, ...(cursor[key] ?? []).filter((dir) => dir !== held.dir)].slice(0, MAX_DIRS);
+  }
+}
+
 /** Folds one parsed line into the cursor. */
 function foldLine(cursor, line) {
   const atMs = Date.parse(line.timestamp ?? '');
@@ -100,13 +135,19 @@ function foldLine(cursor, line) {
   const content = line.message?.content;
   if (line.type === 'user') {
     if (typeof content === 'string' && cursor.steps === null) cursor.steps = stepsOf(content);
-    if (Array.isArray(content) && content.some((block) => block?.type === 'tool_result')) cursor.pending = false;
+    if (Array.isArray(content) && content.some((block) => block?.type === 'tool_result')) {
+      cursor.pending = false;
+      settleDirs(cursor, content);
+    }
     return;
   }
   if (line.type !== 'assistant' || !Array.isArray(content)) return;
   cursor.tokens = tokensOf(line.message?.usage) ?? cursor.tokens ?? 0;
   const calls = content.filter((block) => block?.type === 'tool_use');
-  for (const call of calls) countCall(cursor, String(call.name ?? '?'), call.input, Number.isFinite(atMs) ? atMs : cursor.lastMs);
+  for (const call of calls) {
+    countCall(cursor, String(call.name ?? '?'), call.input, Number.isFinite(atMs) ? atMs : cursor.lastMs);
+    holdDir(cursor, call, line.cwd);
+  }
   const textChars = content.reduce((sum, block) => sum + (block?.type === 'text' ? String(block.text ?? '').length : 0), 0);
   if (textChars > 0) cursor.lastTextChars = textChars;
   if (calls.length === 0 && line.message?.stop_reason === 'end_turn') cursor.endedMs = Number.isFinite(atMs) ? atMs : cursor.lastMs;
@@ -151,7 +192,11 @@ export function advanceCursor(cursor, file) {
     const info = lstatSync(file, { throwIfNoEntry: false });
     if (!info?.isFile()) return null;
     const fresh = cursor === undefined || cursor === null || cursor.ino !== info.ino || info.size < cursor.offset;
-    const next = { ...(fresh ? emptyCursor(info.ino) : cursor), lastTool: fresh ? null : cursor.lastTool, mtimeMs: info.mtimeMs };
+    const base = fresh ? emptyCursor(info.ino) : cursor;
+    // copies of the lists, so a cursor read from the cache is never changed in place; old cursors have none
+    const next = { ...base, lastTool: fresh ? null : cursor.lastTool, mtimeMs: info.mtimeMs, changedDirs: [...(base.changedDirs ?? [])],
+      readDirs: [...(base.readDirs ?? [])], pendingDirs: { ...(base.pendingDirs ?? {}) } };
+    delete next.fileDir;
     if (info.size === next.offset) return next;
     const buffer = readFrom(file, next.offset, info.size);
     const end = buffer.lastIndexOf(NEWLINE);

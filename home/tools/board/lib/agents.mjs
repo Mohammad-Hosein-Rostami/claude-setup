@@ -1,7 +1,10 @@
 // The subagents of a session for the board (spec-tui rows 3 and 4): every plain agent and every agent of a live workflow run, each
 // with its type, what it is on, its folder (for the git rows), its progress (progress.mjs) and what it does now; and per workflow run
 // its purpose, agents done of all, the bar and the finish.
-// Exports: sessionAgents({ session, sessionFolder, runs, cursors, pools, env, nowMs }) -> { agents, runs, cursors }.
+// Exports: sessionAgents({ session, sessionFolder, runs, cursors, pools, env, nowMs }) -> { agents, runs, cursors, launchDirs }.
+// An agent's `places` ({ worktree: its meta.worktreePath, changed, read: folders from agent-transcript.mjs, cwd }) only match it to a
+// trusted worktree in refresh.mjs; `launchDirs` are the folders writers were launched in (the launch records), trusted like the
+// session's own folder.
 // Sources (Claude Code internal, observed 2.1.329; every parser fails soft): <session>/subagents/agent-<id>.jsonl and .meta.json
 // (plain agents), <session>/subagents/workflows/<run>/agent-<id>.* and the run's journal.jsonl (`started` label and phase, `result`
 // = done), the writer launch records (hooks/lib/writer-agents.mjs `open[]`: the STATUS row of a writer) and the workflow registry
@@ -88,7 +91,7 @@ function agentEntry({ id, cursor, meta, run, journal, rows, pools, env, nowMs })
     entry: {
       id, name: clean(colon > 0 ? label.slice(colon + 1) : label, MAX_LABEL_CHARS) || type, lane: colon > 0 ? clean(label.slice(0, colon), MAX_NAME_CHARS) : null,
       type, runId: run?.runId ?? null, phase: run ? (journal.started.get(id)?.phase ?? meta.workflowPhase ?? null) : null,
-      dir: typeof meta.worktreePath === 'string' ? meta.worktreePath : (cursor.fileDir ?? cursor.cwd), row: rows.get(id) ?? null, state, writer,
+      places: { worktree: typeof meta.worktreePath === 'string' ? meta.worktreePath : null, changed: cursor.changedDirs ?? [], read: cursor.readDirs ?? [], cwd: cursor.cwd }, row: rows.get(id) ?? null, state, writer,
       pct: progress.pct, conf: progress.conf, elapsedMin: tenths(progress.elapsedMin), leftMin: tenths(progress.leftMin),
       highLeftMin: tenths(progress.highLeftMin), overMin: tenths(progress.overMin), usual: progress.usual, tag: progress.tag, doing: cursor.lastTool?.text ?? null, calls: cursor.calls,
       tokens: Number.isFinite(cursor.tokens) && cursor.tokens > 0 ? cursor.tokens : null,
@@ -123,7 +126,9 @@ function runSummary(run, journal, entries, record) {
  */
 export function sessionAgents({ session, sessionFolder, runs, cursors, pools, env, nowMs }) {
   try {
-    const rows = new Map(openWritersOf(session, env, nowMs).filter((open) => typeof open?.agent === 'string').map((open) => [open.agent, clean(open.row, MAX_NAME_CHARS) || null]));
+    const open = openWritersOf(session, env, nowMs);
+    const rows = new Map(open.filter((entry) => typeof entry?.agent === 'string').map((entry) => [entry.agent, clean(entry.row, MAX_NAME_CHARS) || null]));
+    const launchDirs = [...new Set(open.map((entry) => entry?.cwd).filter((dir) => typeof dir === 'string'))];
     const records = new Map(runsOfSession(defaultRegistryDir(), session).map((record) => [record.runId, record]));
     const groups = [{ run: null, folder: join(sessionFolder, 'subagents'), journal: null },
       ...runs.map((run) => ({ run, folder: join(sessionFolder, 'subagents', 'workflows', run.runId), journal: journalOf(sessionFolder, run.runId) }))];
@@ -141,8 +146,8 @@ export function sessionAgents({ session, sessionFolder, runs, cursors, pools, en
     }
     entries.sort((a, b) => (a.state === 'done') - (b.state === 'done') || b.startMs - a.startMs);
     const summaries = groups.filter((group) => group.run !== null).map(({ run, journal }) => runSummary(run, journal, entries, records.get(run.runId)));
-    return { agents: entries.slice(0, MAX_AGENTS), runs: summaries, cursors: nextCursors };
+    return { agents: entries.slice(0, MAX_AGENTS), runs: summaries, cursors: nextCursors, launchDirs };
   } catch {
-    return { agents: [], runs, cursors }; // an unreadable folder: no agent rows this time, the cursors stay
+    return { agents: [], runs, cursors, launchDirs: [] }; // an unreadable folder: no agent rows this time, the cursors stay
   }
 }

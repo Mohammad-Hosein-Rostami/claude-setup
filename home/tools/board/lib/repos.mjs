@@ -1,13 +1,19 @@
 // The repositories the session's work is in, for the board's git rows (spec-tui-2 and the owner's report of 2026-11-21: no git info
 // at all while two agents worked in worktrees, because the lead's folder is not in git). Run only by the detached board refresh.
-// Exports: sessionRepos({ folders, agentDirs, cache, nowMs }) -> { repos, git, cache }; MAX_REPOS.
-// Which: every folder given (the session folder, the road's `repo`, each live agent's folder, in that order) is placed in its
-// repository by the file system alone (the `.git` entry of the folder or a parent; a worktree's `.git` file names its git folder,
-// whose `commondir` names the shared one), so worktrees of one clone are one repository. The first MAX_REPOS repositories are read
-// with git-state.mjs repoState; the first is the primary one (its `git` is the board's `git`).
-// Invariants: never throws; no git call here (repoState makes them, with its own timeouts and budget, one cache per repository).
-import { lstatSync, readFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+// Exports: sessionRepos({ folders, cache, nowMs, startMs }) -> { repos, git, cache }; placeAgents(agents, repos) -> { agents, repos };
+// MAX_REPOS.
+// Which: only folders the setup vouches for (refresh.mjs: the session folder, the STATUS.md folder, the road's `repo`, each agent's
+// `meta.worktreePath` and the folders writers were launched in), never a folder an agent's tool call named: git runs a repository's
+// own config (`core.fsmonitor`, clean filters), so it runs only where the owner put the work (review SEC-1 of 9ac483c3). Each is
+// placed in its repository by the file system alone (the `.git` entry of the folder or a parent; a worktree's `.git` file names its
+// git folder, whose `commondir` names the shared one), so worktrees of one clone are one repository; the worktrees that repository's
+// own `worktree list` names are read with it. The first MAX_REPOS repositories are read with git-state.mjs repoState, sharing one
+// git budget (`startMs`); the first is the primary one (its `git` is the board's `git`).
+// Invariants: never throws; no git call here; `.git` and `commondir` files are read without following a link or waiting on a FIFO,
+// only as regular files of at most MAX_GIT_FILE_BYTES (hooks/lib/plain-file.mjs); a UNC or device path is never touched.
+import { lstatSync } from 'node:fs';
+import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { repoState } from './git-state.mjs';
 
 /** At most this many repositories are read per refresh (each has its own 250 ms git budget in git-state.mjs). */
@@ -16,7 +22,8 @@ const MAX_FOLDER_DEPTH = 40;
 const MAX_GIT_FILE_BYTES = 4096;
 
 const entryOf = (path) => { try { return lstatSync(path, { throwIfNoEntry: false }) ?? null; } catch { return null; } };
-const firstLine = (path) => { try { return readFileSync(path, 'utf8').slice(0, MAX_GIT_FILE_BYTES).split('\n')[0].trim(); } catch { return ''; } };
+const firstLine = (path) => { try { return readPlainFile(path, MAX_GIT_FILE_BYTES).split('\n')[0].trim(); } catch { return ''; } };
+const REMOTE_PATH = /^(\\\\|\/\/)/; // UNC `\\host\share` or `//host/share`: a lookup there would reach another host
 
 /** The shared git folder of the repository holding `folder` (fs only), or null outside a repository. */
 function commonDirOf(folder) {
@@ -29,6 +36,7 @@ function commonDirOf(folder) {
       const named = /^gitdir: (.+)$/.exec(firstLine(dotGit))?.[1];
       if (!named) return null;
       const gitDir = isAbsolute(named) ? named : resolve(at, named);
+      if (REMOTE_PATH.test(gitDir)) return null;
       const common = firstLine(join(gitDir, 'commondir'));
       return common ? resolve(gitDir, common) : gitDir;
     }
@@ -43,7 +51,7 @@ function commonDirOf(folder) {
 function groupsOf(folders) {
   const groups = new Map();
   for (const folder of folders) {
-    if (typeof folder !== 'string' || folder === '' || !isAbsolute(folder)) continue;
+    if (typeof folder !== 'string' || folder === '' || !isAbsolute(folder) || REMOTE_PATH.test(folder)) continue;
     const common = commonDirOf(folder);
     if (common !== null && !groups.has(common)) groups.set(common, folder);
   }
@@ -51,19 +59,19 @@ function groupsOf(folders) {
 }
 
 /**
- * @param {{ folders: (string | null | undefined)[], agentDirs: { name: string, dir: string | null }[], cache: object | null,
- *   nowMs: number }} source the folders in priority order, the live agents' folders and the last cache ({ [common]: git cache })
+ * @param {{ folders: (string | null | undefined)[], cache: object | null, nowMs: number, startMs?: number }} source the trusted
+ *   folders in priority order, the last cache ({ byCommon: { [common]: git cache } }) and when the refresh's git budget started
  * @returns {{ repos: object[], git: object | null, cache: object }} repos = git-state.mjs repo plus `name` (the main worktree's
  *   folder name), primary first; git = the primary repository's own { branch, ahead, behind, changed } or null
  */
-export function sessionRepos({ folders, agentDirs, cache, nowMs }) {
+export function sessionRepos({ folders, cache, nowMs, startMs = Date.now() }) {
   const old = cache !== null && typeof cache === 'object' && cache.byCommon ? cache.byCommon : {};
   try {
     const repos = [];
     const byCommon = {};
     let git = null;
     for (const { common, folder } of groupsOf(folders)) {
-      const state = repoState({ cwd: folder, agentDirs, cache: old[common] ?? null, nowMs });
+      const state = repoState({ cwd: folder, cache: old[common] ?? null, nowMs, startMs });
       byCommon[common] = state.cache;
       if (state.repo === null) continue;
       const main = state.repo.worktrees.find((wt) => wt.main);
@@ -74,4 +82,39 @@ export function sessionRepos({ folders, agentDirs, cache, nowMs }) {
   } catch {
     return { repos: [], git: null, cache: { byCommon: old } };
   }
+}
+
+const isInside = (dir, path) => dir === path || dir.startsWith(`${path}${sep}`);
+
+/** The worktree of the trusted repositories that holds the agent: its own worktree, else its newest changed, read, then cwd folder. */
+function homeOf(agent, worktrees) {
+  const places = agent.places ?? {};
+  const candidates = [places.worktree, ...(places.changed ?? []), ...(places.read ?? []), places.cwd];
+  for (const dir of candidates) {
+    if (typeof dir !== 'string' || !isAbsolute(dir) || REMOTE_PATH.test(dir)) continue;
+    const home = worktrees.find((wt) => isInside(dir, wt.path));
+    if (home !== undefined) return home;
+  }
+  return undefined;
+}
+
+/**
+ * Places each agent on a worktree of the trusted repositories by path prefix only (an agent's folders never open a repository).
+ * @param {object[]} agents agents.mjs entries (with `places`)
+ * @param {object[]} repos sessionRepos(...).repos
+ * @returns {{ agents: object[], repos: object[] }} agents with repo, wt, branch (null when on none) and without places or startMs;
+ *   the repositories with each worktree's `agents` (the names of the live agents on it)
+ */
+export function placeAgents(agents, repos) {
+  const worktrees = repos.flatMap((repo) => repo.worktrees.map((wt) => ({ repo, wt }))).sort((a, b) => b.wt.path.length - a.wt.path.length);
+  const flat = worktrees.map(({ wt }) => wt);
+  const names = new Map(flat.map((wt) => [wt, []]));
+  const placed = agents.map(({ places, startMs, ...agent }) => {
+    const home = homeOf({ places }, flat);
+    if (home !== undefined && agent.state !== 'done') names.get(home).push(agent.name);
+    const repo = home === undefined ? undefined : worktrees.find((entry) => entry.wt === home).repo;
+    return { ...agent, repo: repo?.name ?? null, wt: home?.name ?? null, branch: home?.branch ?? null };
+  });
+  const withNames = repos.map((repo) => ({ ...repo, worktrees: repo.worktrees.map((wt) => ({ ...wt, agents: names.get(wt) ?? [] })) }));
+  return { agents: placed, repos: withNames };
 }

@@ -2,7 +2,8 @@
 // ahead/behind the base branch, changed files, last commit age, an operation in progress and the agents working there; plus the
 // branch count and how many branches are not landed. Run only by the detached board refresh, never by the status line.
 // Exports: repoState({ cwd, agentDirs, cache, nowMs }) -> { repo, git, cache }.
-// Commands (fixed flags, GIT_TIMEOUT_MS each, at most GIT_BUDGET_MS of git per refresh; past it the cached values stay with their age):
+// Commands (fixed flags, `-c core.fsmonitor=false`, GIT_TIMEOUT_MS each, at most GIT_BUDGET_MS of git per refresh, shared by every
+// repository through `startMs`; past it the cached values stay with their age). Run only in repositories the board trusts (repos.mjs):
 //   rev-parse --path-format=absolute --git-common-dir (once per folder); worktree list --porcelain (when <common>/worktrees changed, or
 //   WORKTREES_EVERY_MS); for-each-ref with %(ahead-behind:<base>) (git >= 2.41, one walk; REFS_EVERY_MS); per worktree
 //   `--no-optional-locks status --porcelain=v2 --branch --untracked-files=no` only when its index or HEAD changed, or STATUS_EVERY_MS.
@@ -22,7 +23,7 @@ const MAX_WORKTREES = 12;
 const MS_PER_MIN = 60_000;
 const MS_PER_S = 1000;
 const BASE_NAMES = ['main', 'master'];
-const SAFE_REF = /^[A-Za-z0-9._/-]{1,200}$/;
+const SAFE_REF = /^[A-Za-z0-9._][A-Za-z0-9._/-]{0,199}$/; // never a leading `-`: a ref is never read as an option
 const OPS = [['rebase-merge', 'rebase'], ['rebase-apply', 'rebase'], ['MERGE_HEAD', 'merge'], ['CHERRY_PICK_HEAD', 'cherry-pick']];
 
 const mtimeOf = (path) => { try { return lstatSync(path, { throwIfNoEntry: false })?.mtimeMs ?? 0; } catch { return 0; } };
@@ -31,7 +32,7 @@ const exists = (path) => mtimeOf(path) > 0;
 /** One git call with fixed flags; null on any failure or timeout. */
 function git(args) {
   try {
-    return execFileSync('git', args, { encoding: 'utf8', timeout: GIT_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    return execFileSync('git', ['-c', 'core.fsmonitor=false', ...args], { encoding: 'utf8', timeout: GIT_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
   } catch {
     return null;
   }
@@ -114,13 +115,15 @@ function commonOf(cwd, cache) {
 }
 
 /** The worktree list and the refs, each reused from the cache while still fresh. */
-function listsOf(cwd, common, cache, nowMs) {
+function listsOf(cwd, common, cache, clock) {
+  const { nowMs } = clock;
+  const spent = Date.now() - clock.startMs > GIT_BUDGET_MS; // the refresh's whole git budget is used: the cached lists stay
   const wtMtime = mtimeOf(join(common, 'worktrees'));
-  const listFresh = cache.common === common && cache.wtMtime === wtMtime && nowMs - (cache.wtAt ?? 0) < WORKTREES_EVERY_MS;
+  const listFresh = spent || (cache.common === common && cache.wtMtime === wtMtime && nowMs - (cache.wtAt ?? 0) < WORKTREES_EVERY_MS);
   const listText = listFresh ? null : git(['-C', cwd, 'worktree', 'list', '--porcelain']);
   const worktrees = listText === null ? (cache.worktrees ?? []) : parseWorktrees(listText);
   const base = baseOf(common, worktrees);
-  const refsFresh = cache.common === common && cache.base === base && nowMs - (cache.refsAt ?? 0) < REFS_EVERY_MS;
+  const refsFresh = spent || (cache.common === common && cache.base === base && nowMs - (cache.refsAt ?? 0) < REFS_EVERY_MS);
   const format = `%(refname:short)%09%(committerdate:unix)${base ? `%09%(ahead-behind:${base})` : ''}`;
   const refsText = refsFresh ? null : git(['-C', cwd, 'for-each-ref', `--format=${format}`, 'refs/heads']);
   return {
@@ -130,19 +133,19 @@ function listsOf(cwd, common, cache, nowMs) {
 }
 
 /**
- * @param {{ cwd: string, agentDirs: { name: string, dir: string | null }[], cache: object | null, nowMs: number }} source the session
- *   folder, the agents' folders (agents.mjs `dir`) and the last git cache
+ * @param {{ cwd: string, agentDirs?: { name: string, dir: string | null }[], cache: object | null, nowMs: number, startMs?: number }}
+ *   source a trusted folder, the agents' folders, the last git cache, and when the refresh's git budget started
  * @returns {{ repo: object | null, git: object | null, cache: object }} repo = { base, branches, unlanded, worktrees: [{ name, path,
  *   branch, ahead, behind, changed, ageMin, op, agents, checkedMs, upAhead, upBehind (vs its upstream, null without one), main }] }; git = the session folder's own { branch, ahead, behind,
  *   changed } (vs its upstream, the shape the old board had); null outside a repository
  */
-export function repoState({ cwd, agentDirs, cache, nowMs }) {
+export function repoState({ cwd, agentDirs = [], cache, nowMs, startMs = Date.now() }) {
   const old = cache ?? {};
   try {
     const common = commonOf(cwd, old);
     if (common === null) return { repo: null, git: null, cache: {} };
-    const lists = listsOf(cwd, common, old, nowMs);
-    const clock = { nowMs, startMs: Date.now() };
+    const clock = { nowMs, startMs };
+    const lists = listsOf(cwd, common, old, clock);
     const status = Object.fromEntries(lists.worktrees.map((wt) => [wt.path, statusOf(wt, common, old.status?.[wt.path], clock)]));
     const agents = agentsIn(lists.worktrees, agentDirs);
     const worktrees = lists.worktrees.map((wt, index) => {
