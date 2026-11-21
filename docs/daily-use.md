@@ -150,4 +150,5 @@ guard tests have not been run there (`tests/pin-home.mjs` and the warm-exec fake
 ## Where things are
 - Reports from agents and audits: `~/Desktop/claude-setup-reports/`.
 - Guard log: `~/.claude/logs/guard.jsonl`.
+- Typecheck gate run log (one line per check at a stop: what ran or why it was skipped): `~/.claude/logs/typecheck-gate.jsonl`.
 - What exists: [catalog.md](catalog.md). Problems: [troubleshooting.md](troubleshooting.md).
