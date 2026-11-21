@@ -11,11 +11,11 @@
 // repos: the other repositories with work (repos.mjs, same shape without the stats), git: { branch, ahead, behind, changed } | null,
 // road: job-facts.mjs road | null, trend: { deltaMin, atMs } | null }
 // (<= MAX_BOARD_BYTES: done agents go first, then the oldest, until it fits). Cache (cache-file.mjs, <session>.json): { cursors, git,
-// job, stats }. The repositories (repos.mjs) are only those the setup vouches for: the session folder's, the linked STATUS.md
-// folder's, each agent's `meta.worktreePath` and the writers' launch folders (the road's `repo` only picks the primary one among
-// them, review SEC-1 residual), with the worktrees their own `worktree list`
-// names; agents are matched to those worktrees by the folders of the files they changed or read (owner report 2026-11-21: no git
-// info at all; review SEC-1: git never runs where a tool call points). One refresh at a time per session: an O_EXCL lock file
+// job, stats }. The repositories (repos.mjs) are only trusted ones (trusted-repos.mjs: the session folder's and those of the
+// folders whose Claude Code trust dialog the owner accepted) with active work, else the one holding STATUS.md or the road's `repo`
+// (lead decision, fix round 3), with the worktrees their own `worktree list`
+// names; agents are matched to those worktrees by path prefix (repos.mjs placeAgents; owner report 2026-11-21: no git info at
+// all; review SEC-1: git never runs where a tool call points). One refresh at a time per session: an O_EXCL lock file
 // (disk-free/lib/lock-file.mjs, review L1), broken only once it is LOCK_STALE_MS old (review SEC-2: a hung refresh must not be
 // joined by a new one every IN_FLIGHT_MS).
 // After the write, the agent-type pools (pools.mjs) are rebuilt when an hour old, outside the budget.
@@ -102,12 +102,12 @@ export function collectBoard({ session, transcriptPath, cwd }, { env = process.e
     : sessionAgents({ session, sessionFolder, runs, cursors: cache?.cursors ?? {}, pools, env, nowMs });
   const job = jobFacts({ session, cwd, cache: cache?.job ?? null, nowMs });
   const statusDir = typeof job.cache?.path === 'string' ? dirname(job.cache.path) : null;
-  // Trusted folders only (review SEC-1 of 9ac483c3): where the owner or the setup put the work, never a folder a tool call named.
-  // The STATUS.md folder is the one the session linked (or its own folder), so it is trusted like the session folder; the road's
-  // `repo` is written by an agent, so it only picks the primary one among the repositories found (review SEC-1 residual).
-  const trusted = [cwd, statusDir, ...(found.launchDirs ?? []), ...found.agents.map((agent) => agent.places?.worktree)];
+  // Git only in trusted repositories (repos.mjs, trusted-repos.mjs); the agents' folders and the STATUS.md and road folders only
+  // choose among them, by path prefix (review SEC-1 and its residual, lead decision of fix round 3).
+  const agentDirs = [...(found.launchDirs ?? []), ...found.agents.filter((agent) => agent.state !== 'done')
+    .flatMap((agent) => [...(agent.places?.changed ?? []), agent.places?.worktree, agent.places?.cwd])];
   const gitStartMs = Date.now(); // one git budget for the whole refresh (git-state.mjs GIT_BUDGET_MS), repo-stats included
-  const git = sessionRepos({ folders: trusted, preferred: [statusDir, job.repoDir], cache: cache?.git ?? null, nowMs, startMs: gitStartMs });
+  const git = sessionRepos({ sessionFolder: cwd, agentDirs, preferred: [statusDir, job.repoDir], env, cache: cache?.git ?? null, nowMs, startMs: gitStartMs });
   const placed = placeAgents(found.agents, git.repos);
   const [primary = null, ...others] = placed.repos;
   const mainPath = primary?.worktrees.find((wt) => wt.main)?.path ?? null;

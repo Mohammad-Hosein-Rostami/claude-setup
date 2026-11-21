@@ -81,11 +81,15 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while a ru
   or more is kept for an hour as the trend;
 - the base branch (`lib/repo-stats.mjs`, every 60 s): its tip, the newest test-pass `suite` record of exactly that tip, and the
   commits on its first-parent line since local midnight;
-- git (`lib/repos.mjs`, `lib/git-state.mjs`) only in repositories the setup vouches for, up to 3: the session's folder, the
-  STATUS.md folder the session linked, each agent's `meta.worktreePath` and the writers' launch folders, with the worktrees their
-  own `worktree list --porcelain -z` names; the road's `repo` only chooses which of those is shown first (an agent writes the road
-  file and could name any folder there, so it never adds a repository) (git runs a repository's own config, so never where a tool call points); `-c core.fsmonitor=false`
-  and one git budget per refresh. Agents are matched to those worktrees by path prefix: the folder of the file they edited last
+- git (`lib/repos.mjs`, `lib/trusted-repos.mjs`, `lib/git-state.mjs`) only in trusted repositories: the session folder's and
+  those of the folders whose Claude Code folder-trust dialog the owner accepted (`~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json`:
+  `projects[<folder>].hasTrustDialogAccepted`, read-only, at most 8 MB, re-read when it changed and at most every 60 s). Of those,
+  up to 3 with work: the session's own and each one a registered worktree of which holds a live agent's folder (its edited files,
+  its launch worktree, its cwd), else the one holding the STATUS.md folder or the road's `repo`; the STATUS.md folder and the road
+  only order and choose, they never add a repository. Git runs in the trusted folder itself, never in a folder an agent or a file
+  named (git runs a repository's own config), with the worktrees its own `worktree list --porcelain -z` names;
+  `-c core.fsmonitor=false` and one git budget per refresh. With no trusted repository holding the work the git row says
+  `git: no repository`. Agents are matched to those worktrees by path prefix: the folder of the file they edited last
   (Edit, Write, MultiEdit, NotebookEdit, counted only after the call succeeded; a Bash call's cwd says nothing of where it
   writes), then the worktree they were launched in (`meta.worktreePath` or the launch record), then older edited folders, then
   their cwd. One refresh per session at a time (an O_EXCL lock file from `tools/disk-free/lib/lock-file.mjs`, broken after 2 min): `worktree list` when the worktree folder changed, one `for-each-ref` with `%(ahead-behind:main)`
@@ -102,7 +106,7 @@ marker holds no agent).
 
 Files: `board.mjs` (the CLI and the lines), `lib/refresh.mjs` (build, refresh, the board file, the claim, the detached start),
 `lib/agents.mjs`, `lib/agent-transcript.mjs`, `lib/progress.mjs`, `lib/pools.mjs`, `lib/git-state.mjs`, `lib/job-facts.mjs`,
-`lib/repo-stats.mjs`, `lib/repos.mjs`, `lib/cache-file.mjs` (what the refresh reads), `lib/render.mjs` (the status line rows; `home/statusline.mjs` only reads and writes), `lib/work-row.mjs` (the
+`lib/repo-stats.mjs`, `lib/repos.mjs`, `lib/trusted-repos.mjs`, `lib/cache-file.mjs` (what the refresh reads), `lib/render.mjs` (the status line rows; `home/statusline.mjs` only reads and writes), `lib/work-row.mjs` (the
 job row), `lib/layout.mjs` (row budget, counts row, packing), `lib/agent-rows.mjs` (workflow and agent rows), `lib/git-rows.mjs`
 (git rows), `lib/stat-rows.mjs` (road and checks rows, the trend), `lib/cells.mjs` (look, glyphs, bars, durations, clocks, fitting a row to a width; shared by every surface),
 `lib/tree.mjs` (the `/where` tree).
