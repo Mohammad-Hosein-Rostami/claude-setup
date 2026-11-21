@@ -5,15 +5,20 @@
 // 2 usage or setup error (an open states entry without a url, a bad flag, an unreadable ledger).
 // Invariants: images are printed only for failures, as crops; PASS and FAIL are the numbers, never a look at an image. `--step
 // <road>.s<N>` and the commit sha of HEAD are stored in ledger.json, so a baseline run on the base tip is that step's start record.
+// The matrix's `rule` and the project's recorded viewing conditions (`ui-coverage conditions`) are stored in every record and the ledger.
+// Under the strict rule (P3f) a compare failing only on its pixel finding is attributed (lib/attribution-records.mjs): it passes only when
+// every leftover pixel is accepted (matrix entry with owner decision and reason) or text anti-aliasing; results.json is rewritten first.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse, need } from '../lib/args.mjs';
+import { attributeStrict } from '../lib/attribution-records.mjs';
 import { writeCrops } from '../lib/crops.mjs';
 import { UsageError } from '../lib/errors.mjs';
 import { compareReference, formatReference, formatRounds, readLedger } from '../lib/ledger.mjs';
+import { describeConditions, readConditions } from '../../ui-coverage/lib/conditions.mjs';
 import { executeBatch } from './batch.mjs';
 
 const COVERAGE_CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'ui-coverage', 'ui-coverage.mjs');
@@ -30,6 +35,7 @@ export const options = {
   prev: { type: 'string' },
   'no-worse': { type: 'string' },
   'self-test': { type: 'boolean', default: false },
+  strict: { type: 'boolean', default: false }, // the strict pass rule (P3f); a matrix with rule: strict makes the run strict without it
   step: { type: 'string' },
   only: { type: 'string' },
   project: { type: 'string' },
@@ -74,7 +80,7 @@ function failingLines(records) {
 
 /** The determinism self-test: a second capture of every compare state must give the same sha256. */
 async function selfTest(values, first) {
-  const second = await executeBatch({ ...values, prev: undefined, out: path.join(first.outDir, 'self-test') });
+  const second = await executeBatch({ ...values, prev: undefined, out: path.join(first.outDir, 'self-test') }, { rule: first.ledger?.rule });
   const shaOf = new Map(second.ledger?.states.map((row) => [row.key, row.sha256]) ?? []);
   const differ = (first.ledger?.states ?? []).filter((row) => shaOf.get(row.key) !== row.sha256).map((row) => row.key);
   const lines = differ.length === 0 ? [`self-test: PASS - ${first.ledger?.states.length ?? 0} captures identical twice`] : [`self-test: FAIL - ${differ.length} nondeterministic: ${differ.join('; ')}`];
@@ -84,6 +90,24 @@ async function selfTest(values, first) {
 function countsLine(records) {
   const fail = records.filter((r) => r.status === 'fail').length;
   return `records: ${records.length}, pass ${records.length - fail}, fail ${fail}`;
+}
+
+/** The matrix facts a run uses: its pass rule (`rule: strict` from `ui-coverage init --rule strict`) and the project's recorded conditions. */
+function matrixFacts(matrix, strictFlag) {
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(matrix, 'utf8'));
+  } catch (error) {
+    throw new UsageError(`--matrix ${matrix}: ${error.message}`);
+  }
+  let conditions;
+  try {
+    conditions = readConditions(path.dirname(matrix));
+  } catch (error) {
+    throw new UsageError(error.message);
+  }
+  // Where two rules meet, the stricter one wins.
+  return { rule: strictFlag || parsed.rule === 'strict' ? 'strict' : 'default', conditions };
 }
 
 /** Validate the flags that need more than parseArgs. */
@@ -100,11 +124,13 @@ export async function run(argv) {
   const matrix = path.resolve(values.matrix);
   const statesFile = path.resolve(values.states ?? path.join(path.dirname(matrix), 'states.json'));
   const reference = values['no-worse'] === undefined ? null : readLedger(path.resolve(values['no-worse']), 'no-worse');
+  const facts = matrixFacts(matrix, values.strict);
   prepareStates(matrix, statesFile, values['base-url']);
   const outDir = path.resolve(values.out ?? path.join(os.tmpdir(), 'ui-check', 'run', new Date().toISOString().replace(/[:.]/g, '-')));
   const batchValues = { states: statesFile, only: values.only, out: outDir, jobs: values.jobs, project: values.project, prev: values.prev };
-  const batch = await executeBatch(batchValues, { step: values.step ?? null, head: headSha() });
-  const lines = [countsLine(batch.records), ...failingLines(batch.records)];
+  const measured = await executeBatch(batchValues, { step: values.step ?? null, head: headSha(), ...facts });
+  const batch = facts.rule === 'strict' ? { ...measured, ...attributeStrict(measured, matrix) } : measured; // P3f class rule
+  const lines = [`rule: ${facts.rule}`, describeConditions(facts.conditions), countsLine(batch.records), ...(batch.lines ?? []), ...failingLines(batch.records)];
   if (batch.rounds) lines.push('rounds (against --prev):', ...formatRounds(batch.rounds));
   const noWorse = reference && batch.ledger ? compareReference(batch.ledger, reference) : null;
   if (noWorse) lines.push(...formatReference(noWorse));

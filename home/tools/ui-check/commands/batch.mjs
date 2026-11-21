@@ -10,11 +10,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parse, need } from '../lib/args.mjs';
-import { compareRecords, errorRecords, exitCodeFor, readPriorRecords, removePartialResults, responsiveRecords, withCloseFailures, withPart, writeBatchResults, writePartialResults } from '../lib/batch-records.mjs';
+import { compareRecords, errorRecords, exitCodeFor, withRunFacts, readPriorRecords, removePartialResults, responsiveRecords, withCloseFailures, withPart, writeBatchResults, writePartialResults } from '../lib/batch-records.mjs';
 import { parseJobs, partitionStates, progressLine, resumeFilter, runPool } from '../lib/batch-schedule.mjs';
 import { loadChromium, launch } from '../lib/browser.mjs';
 import { buildLedger, compareRounds, formatRounds, readLedger, writeLedger } from '../lib/ledger.mjs';
 import { readCache } from '../lib/cache.mjs';
+import { UsageError } from '../lib/errors.mjs';
 import { addSameAsDefaultHints } from '../lib/same-as-default.mjs';
 import { loadStatesFile, selectSurfaces } from '../lib/states.mjs';
 import { PIXEL, RESPONSIVE } from '../lib/tolerances.mjs';
@@ -44,17 +45,20 @@ function frameWidth(state) {
 
 async function compareState(browser, state, dir) {
   const cache = readCache(state.figma.cache);
-  const map = state.figma.map ? loadMap(state.figma.map, cache.spec) : null;
-  const pageOpts = pageOptions({ url: state.url, 'bypass-csp': state.bypassCSP, 'no-autofocus': false }, cache.meta, state.steps, state.context);
+  const { map, skips } = state.figma.map ? loadMap(state.figma.map, cache.spec) : { map: null, skips: {} };
+  const framed = pageOptions({ url: state.url, 'bypass-csp': state.bypassCSP, 'no-autofocus': false }, cache.meta, state.steps, state.context);
+  const pageOpts = state.size ? { ...framed, width: state.size.width, height: state.size.height } : framed; // a frame that is part of a page
   const { root } = state.figma;
   const outDir = path.join(dir, 'compare');
-  const result = await compareOnce(browser, { pageOpts, root, cache, map, maxDiff: PIXEL.maxDiffPercent, outDir });
+  const strict = state.rule === 'strict';
+  const maxDiff = strict ? 0 : PIXEL.maxDiffPercent;
+  const result = await compareOnce(browser, { pageOpts, root, cache, map, skips, maxDiff, outDir, strict, bands: state.ignoreBands });
   const images = { baseline: cache.baseline, actual: path.join(outDir, 'actual.png'), diff: result.pixels.diffFile };
-  return compareRecords(state, { ...result, images }, { root, maxDiff: PIXEL.maxDiffPercent, width: pageOpts.width, scale: pageOpts.scale });
+  return compareRecords(state, { ...result, images }, { root, maxDiff, width: pageOpts.width, scale: pageOpts.scale });
 }
 
 async function responsiveState(browser, state, dir) {
-  const target = { url: state.url, height: RESPONSIVE.height, steps: state.steps, bypassCSP: state.bypassCSP, autofocus: true, sameInAllLocales: state.sameInAllLocales, saveTexts: true, ...state.context };
+  const target = { url: state.url, height: RESPONSIVE.height, steps: state.steps, bypassCSP: state.bypassCSP, maxFocusStops: state.maxFocusStops, autofocus: true, sameInAllLocales: state.sameInAllLocales, saveTexts: true, ...state.context };
   const result = await auditAll(browser, { widths: state.widths, target, outDir: path.join(dir, 'responsive') });
   return responsiveRecords(state, state.widths, result);
 }
@@ -114,6 +118,20 @@ export async function runState(sharedBrowser, state, outRoot) {
   return records;
 }
 
+/**
+ * P3c: a gate state's `size` must equal its Figma node's size (the render bounds when spec.json has them, else meta.json), so a size
+ * never hides a layout difference. @throws {UsageError} naming the state (exit 2, before anything launches)
+ */
+function checkGateSizes(states) {
+  for (const state of states.filter((s) => s.size && s.figma && !s.diagnostic)) {
+    const { spec, meta } = readCache(state.figma.cache);
+    const node = spec.root?.render ?? { w: meta.width, h: meta.height };
+    if (Math.ceil(node.w) !== state.size.width || Math.ceil(node.h) !== state.size.height) {
+      throw new UsageError(`states[${state.index}].size ${state.size.width}x${state.size.height} differs from its Figma node ${Math.ceil(node.w)}x${Math.ceil(node.h)}: a gate state's size must be the node's size`);
+    }
+  }
+}
+
 /** Remove results from an earlier run in the same --out, so a failed or empty run never leaves stale passes for a consumer. */
 function clearStaleResults(outDir) {
   for (const name of ['results.json', 'summary.md', 'results.partial.json']) fs.rmSync(path.join(outDir, name), { force: true });
@@ -166,13 +184,14 @@ export async function executeBatch(values, meta = {}) {
   const prior = values.resume ? readPriorRecords(outDir) : [];
   if (!values.resume) clearStaleResults(outDir);
   const all = loadStatesFile(values.states);
-  const states = selectSurfaces(all, values.only);
+  const states = selectSurfaces(all, values.only).map((state) => ({ ...state, rule: meta.rule ?? 'default' }));
+  checkGateSizes(states);
   if (states.length === 0) return { code: nothingToRun(outDir, all, values.only), records: [], outDir, summary: null, ledger: null, rounds: null };
   const { todo, reused } = values.resume ? resumeFilter(states, prior) : { todo: states, reused: new Map() };
   if (values.resume) console.error(`resume: ${reused.size} of ${states.length} states already pass and are kept, ${todo.length} to run`);
   const browser = todo.length > 0 ? await launch(loadChromium(values.project)) : null;
   try {
-    const records = addSameAsDefaultHints(await runAll(browser, { states, todo, reused, jobs, outDir }), states);
+    const records = withRunFacts(addSameAsDefaultHints(await runAll(browser, { states, todo, reused, jobs, outDir }), states), meta);
     const { summary } = writeBatchResults(outDir, records);
     removePartialResults(outDir);
     const ledger = buildLedger(records, { renderer: rendererOf(browser), ...meta });

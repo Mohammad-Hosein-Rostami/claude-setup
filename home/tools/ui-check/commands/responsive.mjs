@@ -7,8 +7,8 @@ import { parse, need, toNumber } from '../lib/args.mjs';
 import { auditInPage } from '../lib/audit.mjs';
 import { bidiFieldFindings, bidiPlaceholderFindings, isHint } from '../lib/bidi.mjs';
 import { loadChromium, launch, openPage } from '../lib/browser.mjs';
-import { collectFocusables } from '../lib/focus-audit.mjs';
-import { focusIndicatorFindings, rawI18nKeyFindings, rtlPhysicalAlignFindings, targetSizeHints } from '../lib/rendered-checks.mjs';
+import { walkFocus } from '../lib/focus-audit.mjs';
+import { FOCUS_INDICATOR_FAILS, MAX_FOCUS_STOPS, focusIndicatorFindings, rawI18nKeyFindings, rtlPhysicalAlignFindings, targetSizeHints } from '../lib/rendered-checks.mjs';
 import { CONTEXT_OPTIONS, readContextFlags, validateWidths } from '../lib/context.mjs';
 import { loadSteps } from '../lib/steps.mjs';
 import { writeReport } from '../lib/report.mjs';
@@ -31,6 +31,22 @@ export const options = {
 
 function parseWidths(text) {
   return validateWidths(text.split(',').map((w) => Number(w.trim())), '--widths');
+}
+
+/**
+ * P3e and M3: the focus walk, then again with forced colours. Reaching the cap is a failing `focus-cap` finding (never a silent stop) unless the
+ * state raised it with `maxFocusStops` {count, why}; `focus-indicator` fails only once promoted (FOCUS_INDICATOR_FAILS), and the forced-colours
+ * walk is always a hint (a box-shadow ring disappears under forced colours).
+ * @returns {Promise<{findings: object[], hints: object[]}>}
+ */
+async function focusChecks(page, maxFocusStops, max) {
+  const walk = await walkFocus(page, maxFocusStops?.count ?? MAX_FOCUS_STOPS);
+  const indicator = focusIndicatorFindings({ focusables: walk.facts }, max);
+  const cap = walk.capped ? [{ check: 'focus-cap', element: 'page', detail: `the focus walk reached its cap of ${walk.max} stops before focus left the page; the rest is unchecked: raise it with maxFocusStops {count, why} in the state` }] : [];
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.emulateMedia({ forcedColors: 'active' });
+  const forced = focusIndicatorFindings({ focusables: (await walkFocus(page, walk.max)).facts }, max).map((f) => ({ ...f, check: 'focus-indicator (forced colours)' }));
+  return FOCUS_INDICATOR_FAILS ? { findings: [...cap, ...indicator], hints: forced } : { findings: cap, hints: [...indicator, ...forced] };
 }
 
 /**
@@ -57,9 +73,9 @@ export async function auditWidth(browser, target, width, outDir) {
   if (target.saveTexts) writeComparableTexts(outDir, width, texts);
   await page.screenshot({ path: path.join(outDir, `w${width}.png`), fullPage: true, animations: 'disabled', caret: 'hide' });
   // Last, because pressing Tab can fire the page's focus handlers.
-  hints.push(...focusIndicatorFindings({ focusables: await collectFocusables(page) }, audit.max));
+  const focus = await focusChecks(page, target.maxFocusStops, audit.max);
   await page.context().close();
-  return [...findings, ...hints.map((h) => ({ ...h, hint: true }))].map((f) => ({ width, ...f }));
+  return [...findings, ...focus.findings, ...[...hints, ...focus.hints].map((h) => ({ ...h, hint: true }))].map((f) => ({ width, ...f }));
 }
 
 /**

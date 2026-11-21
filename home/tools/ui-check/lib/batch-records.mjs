@@ -1,10 +1,10 @@
 // Purpose: build the `batch` result records and write results.json and summary.md.
-// Exports: compareRecords, responsiveRecords, errorRecords, withCloseFailures, withPart, exitCodeFor, summaryMarkdown, writeBatchResults, writePartialResults, readPriorRecords.
+// Exports: compareRecords, responsiveRecords, errorRecords, withCloseFailures, withPart, withRunFacts, exitCodeFor, summaryMarkdown, writeBatchResults, writePartialResults, readPriorRecords.
 // Invariant: a record is { surface, state, locale, width, status: "pass"|"fail", evidence, findings }; another tool
 // (`ui-coverage check --results`) reads these exact field names, so never rename them. evidence is the path of that state's report.
 // part is "compare" or "responsive", added by `withPart` once the part is known (an error record carries the part that threw); a record without it counts as not-compare. A pixel finding carries `percent` (the diff share, a number) unless the image sizes differ. hints is the number of heuristic hints (report.json `hints` at `evidence`): reported, never part of status. width is the viewport width the part ran at (an integer; a compare record carries the Figma frame width). It is null only on an
 // error record whose Figma cache could not be read, so the frame size is unknown. url is the state's URL (the review page links it); a compare
-// record also carries images {baseline, actual, diff}, scale, diffPixels and comparator (read by lib/ledger.mjs and ui-proof).
+// record also carries images {baseline, actual, diff}, scale, diffPixels (odiff), driftPixels (colour metric) and comparator (read by lib/ledger.mjs and ui-proof).
 import fs from 'node:fs';
 import path from 'node:path';
 import { stateKey } from './batch-schedule.mjs';
@@ -17,7 +17,8 @@ const SUMMARY_HEAD = ['surface', 'state', 'locale', 'width', 'status', 'findings
 const NONE = '-';
 
 function record(state, width, findings, evidence, hints = 0) {
-  return { surface: state.surface, state: state.state, locale: state.locale, width, status: findings.every(isHint) ? 'pass' : 'fail', evidence, findings, hints, url: state.url };
+  const diagnostic = state.diagnostic ? { diagnostic: true, proves: state.proves } : {};
+  return { surface: state.surface, state: state.state, locale: state.locale, width, status: findings.every(isHint) ? 'pass' : 'fail', evidence, findings, hints, url: state.url, ...diagnostic };
 }
 
 /**
@@ -34,10 +35,13 @@ export function compareRecords(state, { md, pixels, elementRows, images }, { roo
   const findings = elementRows.map((r) => ({ check: 'element', element: r.element, detail: `${r.prop}: is ${r.is}, should be ${r.should} (delta ${r.delta})` }));
   if (!pixels.pass) {
     const size = pixels.sizeMismatch ? `size mismatch baseline ${pixels.sizeMismatch.baseline.join('x')} vs page ${pixels.sizeMismatch.actual.join('x')}; ` : '';
-    const percent = pixels.sizeMismatch ? {} : { percent: pixels.diffPercent }; // a size mismatch is not a small diff: no number to accept against
-    findings.push({ check: 'pixel', element: root, detail: `${size}${pixels.diffPercent.toFixed(3)}% of pixels differ (${pixels.diffCount} px), max ${maxDiff}%`, region: pixels.region, ...percent });
+    const drift = pixels.drift ?? { count: 0, percent: 0, scope: 'not measured' };
+    // a size mismatch is not a small diff: no number to accept against; otherwise the larger of the two shares is the one to accept
+    const percent = pixels.sizeMismatch ? {} : { percent: Math.max(pixels.diffPercent, drift.percent) };
+    const detail = `${size}${pixels.diffPercent.toFixed(3)}% of pixels differ (${pixels.diffCount} px), colour metric ${drift.percent.toFixed(3)}% (${drift.count} px, ${drift.scope}), max ${maxDiff}%`;
+    findings.push({ check: 'pixel', element: root, detail, region: pixels.region, ...percent });
   }
-  return [{ ...record(state, width, findings, md), images: images ?? null, scale: scale ?? null, diffPixels: pixels.diffCount, comparator: COMPARATOR }];
+  return [{ ...record(state, width, findings, md), images: images ?? null, scale: scale ?? null, diffPixels: pixels.diffCount, driftPixels: pixels.drift?.count ?? 0, comparator: COMPARATOR }];
 }
 
 /**
@@ -84,8 +88,19 @@ export function withCloseFailures(records, state, messages) {
  */
 export const withPart = (records, part) => records.map((r) => ({ ...r, part }));
 
-/** 1 when any record fails, and also when there are no records at all (nothing ran, so nothing is proved). */
-export const exitCodeFor = (records) => (records.length === 0 || records.some((r) => r.status === 'fail') ? 1 : 0);
+/**
+ * Stamp every record with the run's pass rule and the owner's viewing conditions (G9, P3f), so a verdict says under which rule
+ * and conditions it was made; a PASS under a looser rule than the matrix asks does not count (ui-proof reads `rule`).
+ * @param {object[]} records records of the run
+ * @param {{rule?: string, conditions?: object|null}} facts rule 'default' or 'strict'; conditions from `ui-coverage conditions` (null = not recorded)
+ */
+export const withRunFacts = (records, { rule = 'default', conditions = null }) => records.map((r) => ({ ...r, rule, conditions }));
+
+/** 1 when any gate record fails, and also when there are no gate records at all (nothing ran, so nothing is proved); diagnostic records never count. */
+export const exitCodeFor = (records) => {
+  const gate = records.filter((r) => !r.diagnostic); // diagnostic states (P3c) stay out of the verdict and the exit code
+  return gate.length === 0 || gate.some((r) => r.status === 'fail') ? 1 : 0;
+};
 
 /**
  * The hints of one record, read from the report.json beside its evidence report.md.
@@ -108,13 +123,23 @@ function hintsSection(records) {
   return lines.length === 0 ? [] : ['', '## Hints (heuristics: confirm or dismiss each, they never fail a record)', ...lines];
 }
 
+/** The diagnostic states (P3c) in their own table: they prove a cause and never change the verdict. */
+function diagnosticSection(records) {
+  if (records.length === 0) return [];
+  const head = ['surface', 'state', 'locale', 'width', 'proves', 'status', 'findings', 'evidence'];
+  const rows = records.map((r) => tableRow([r.surface, r.state, r.locale ?? NONE, r.width ?? NONE, `${r.proves.surface} / ${r.proves.state}`, r.status, r.findings.length, r.evidence]));
+  return ['', '## Diagnostic states (not in the verdict)', tableRow(head), tableRow(head.map(() => '---')), ...rows];
+}
+
 /** summary.md content: verdict, counts, one table row per state x width, then the hints per state. */
-export function summaryMarkdown(records) {
-  if (records.length === 0) return '# ui-check batch: FAIL\n- no states ran\n';
+export function summaryMarkdown(all) {
+  const records = all.filter((r) => !r.diagnostic);
+  const diagnostics = all.filter((r) => r.diagnostic);
+  if (records.length === 0) return '# ui-check batch: FAIL\n- no gate states ran\n';
   const failed = records.filter((r) => r.status === 'fail').length;
   const hinted = records.reduce((sum, r) => sum + (r.hints ?? 0), 0);
   const rows = records.map((r) => tableRow([r.surface, r.state, r.locale ?? NONE, r.width ?? NONE, r.status, r.findings.length, r.hints ?? 0, r.evidence]));
-  return [`# ui-check batch: ${failed === 0 ? 'PASS' : 'FAIL'}`, `- records: ${records.length}, failed: ${failed}, hints: ${hinted}`, '', tableRow(SUMMARY_HEAD), tableRow(SUMMARY_HEAD.map(() => '---')), ...rows, ...hintsSection(records), ''].join('\n');
+  return [`# ui-check batch: ${failed === 0 ? 'PASS' : 'FAIL'}`, `- records: ${records.length}, failed: ${failed}, hints: ${hinted}`, '', tableRow(SUMMARY_HEAD), tableRow(SUMMARY_HEAD.map(() => '---')), ...rows, ...hintsSection(records), ...diagnosticSection(diagnostics), ''].join('\n');
 }
 
 /**

@@ -1,16 +1,18 @@
 // Purpose: read and validate the `batch --states` file and select surfaces for `--only`.
 // Exports: loadStatesFile, parseStates, selectSurfaces (an empty states list is valid here; `batch` turns it into exit 1). Invariants: pure apart from reading the file and any steps file it names;
 // every schema error is a UsageError that names the state index and field (`states[2].locale: ...`); unknown fields are rejected;
-// nothing is defaulted silently except what `defaults` states.
+// nothing is defaulted silently except what `defaults` states. Diagnostic states (P3c: diagnostic, proves) alone may use the page-changing
+// steps (hide, remove, replace) and ignoreBands; size is a frame-in-page viewport; maxFocusStops raises the focus-walk cap with a reason.
 import fs from 'node:fs';
 import path from 'node:path';
 import { cacheDir } from './cache.mjs';
 import { COLOR_SCHEMES, DIRECTIONS, mergeEntries, validateChoice, validateEntries, validateLocale, validateWidths } from './context.mjs';
 import { UsageError } from './errors.mjs';
-import { loadSteps, validateSteps } from './steps.mjs';
+import { DIAGNOSTIC_ACTIONS, loadSteps, validateSteps } from './steps.mjs';
 
 const DEFAULT_KEYS = ['baseUrl', 'locale', 'colorScheme', 'widths', 'storage', 'cookies', 'sameInAllLocales', 'bypassCSP'];
-const STATE_KEYS = ['surface', 'state', 'locale', 'url', 'steps', 'expectDir', 'storage', 'cookies', 'widths', 'figma', 'sameInAllLocales'];
+const STATE_KEYS = ['surface', 'state', 'locale', 'url', 'steps', 'expectDir', 'storage', 'cookies', 'widths', 'figma', 'sameInAllLocales', 'diagnostic', 'proves', 'ignoreBands', 'size', 'maxFocusStops'];
+const MIN_WHY_CHARS = 15;
 const FIGMA_KEYS = ['file', 'node', 'map', 'root'];
 const URL_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
 const DEFAULT_ROOT = 'body';
@@ -103,17 +105,52 @@ function readFigma(raw, baseDir, label) {
   };
 }
 
+const positiveInt = (value) => Number.isInteger(value) && value > 0;
+const isWhy = (value) => typeof value === 'string' && value.replace(/\s/g, '').length >= MIN_WHY_CHARS;
+
+/** P3c: a diagnostic state (`diagnostic: true`, `proves: {surface, state}`) may change the page; a gate state may not. */
+function readDiagnostic(raw, steps, label) {
+  if (raw.diagnostic !== undefined && typeof raw.diagnostic !== 'boolean') throw new UsageError(`${label}.diagnostic: must be true or false`);
+  const diagnostic = raw.diagnostic === true;
+  if (diagnostic && !(isObject(raw.proves) && typeof raw.proves.surface === 'string' && typeof raw.proves.state === 'string')) throw new UsageError(`${label}.proves: a diagnostic state names the gate state it proves: {"surface": "...", "state": "..."}`);
+  if (!diagnostic && raw.proves !== undefined) throw new UsageError(`${label}.proves: only a diagnostic state (diagnostic: true) proves another state`);
+  const changes = steps.filter((step) => DIAGNOSTIC_ACTIONS.has(step.action)).map((step) => step.action);
+  if (!diagnostic && (changes.length > 0 || raw.ignoreBands !== undefined)) throw new UsageError(`${label}: ${[...changes, ...(raw.ignoreBands === undefined ? [] : ['ignoreBands'])].join(', ')} change the page: only a diagnostic state may use them`);
+  return diagnostic ? { diagnostic: true, proves: { surface: raw.proves.surface, state: raw.proves.state } } : { diagnostic: false, proves: null };
+}
+
+/** ignoreBands (diagnostic only): horizontal bands {y, h} in CSS px masked in both images; size: the viewport of a frame that is part of a page. */
+function readFrameOptions(raw, label) {
+  const bands = raw.ignoreBands;
+  if (bands !== undefined && !(Array.isArray(bands) && bands.every((b) => isObject(b) && Number.isFinite(b.y) && b.y >= 0 && Number.isFinite(b.h) && b.h > 0))) throw new UsageError(`${label}.ignoreBands: a list of {"y": <px>, "h": <px>}`);
+  const size = raw.size;
+  if (size !== undefined && !(isObject(size) && positiveInt(size.width) && positiveInt(size.height))) throw new UsageError(`${label}.size: {"width": <px>, "height": <px>} (positive integers)`);
+  const stops = raw.maxFocusStops;
+  if (stops !== undefined && !(isObject(stops) && positiveInt(stops.count) && isWhy(stops.why))) throw new UsageError(`${label}.maxFocusStops: {"count": <n>, "why": "<reason of ${MIN_WHY_CHARS}+ characters>"}`);
+  return { ignoreBands: bands ?? [], size: size ?? null, maxFocusStops: stops ?? null };
+}
+
+/** Every `proves` names a gate state (same surface and state) of the file. @throws {UsageError} naming the diagnostic state */
+function checkProves(states) {
+  const gates = new Set(states.filter((s) => !s.diagnostic).map((s) => JSON.stringify([s.surface, s.state])));
+  for (const s of states.filter((x) => x.diagnostic)) {
+    if (!gates.has(JSON.stringify([s.proves.surface, s.proves.state]))) throw new UsageError(`states[${s.index}].proves: names no gate state (${s.proves.surface} / ${s.proves.state})`);
+  }
+}
+
 function readState(raw, index, defaults, baseDir) {
   const label = `states[${index}]`;
   checkKeys(raw, STATE_KEYS, label);
+  const steps = readSteps(raw.steps, baseDir, `${label}.steps`);
   const locale = raw.locale === undefined ? defaults.locale : validateLocale(raw.locale, `${label}.locale`);
   const expectDir = raw.expectDir === undefined ? undefined : validateChoice(raw.expectDir, DIRECTIONS, `${label}.expectDir`);
   const widths = raw.widths === undefined ? defaults.widths : validateWidths(raw.widths, `${label}.widths`);
   const state = {
     index, surface: text(raw.surface, `${label}.surface`), state: text(raw.state, `${label}.state`), locale: locale ?? null,
-    url: resolveUrl(raw.url, defaults.baseUrl, `${label}.url`), steps: readSteps(raw.steps, baseDir, `${label}.steps`),
+    url: resolveUrl(raw.url, defaults.baseUrl, `${label}.url`), steps,
     sameInAllLocales: readTerms(raw.sameInAllLocales, `${label}.sameInAllLocales`) ?? defaults.sameInAllLocales,
     widths: widths ?? null, figma: readFigma(raw.figma, baseDir, `${label}.figma`), bypassCSP: defaults.bypassCSP,
+    ...readDiagnostic(raw, steps, label), ...readFrameOptions(raw, label),
     context: {
       locale, colorScheme: defaults.colorScheme, expectDir,
       storage: mergeEntries(defaults.storage, validateEntries(raw.storage, `${label}.storage`, 'storage')),
@@ -139,12 +176,14 @@ export function parseStates(raw, baseDir) {
   const seen = new Set();
   const states = raw.states.map((entry, index) => {
     const state = readState(entry, index, defaults, baseDir);
-    const key = JSON.stringify([state.surface, state.state, state.locale]);
+    // A diagnostic state may repeat its gate state's names; it is told apart by its index.
+    const key = JSON.stringify([state.surface, state.state, state.locale, state.diagnostic ? index : null]);
     if (seen.has(key)) throw new UsageError(`states[${index}]: duplicate surface/state/locale (${state.surface} / ${state.state} / ${state.locale ?? 'no locale'})`);
     seen.add(key);
     return state;
   });
   if (defaults.bypassCSP) checkBypassHosts(states);
+  checkProves(states);
   return states;
 }
 

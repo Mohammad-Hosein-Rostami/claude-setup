@@ -30,12 +30,14 @@ The browser binary is found by Playwright itself in its cache (`~/Library/Caches
 | `figma-pull --from-export` | `--from-export DIR --file KEY [--scale 1] [--refresh]` | Cache folders from a local export folder, no network, no token (format below). |
 | `figma-refresh` | `--file KEY --node ID [--scale 1]` | Re-fetches into a temp folder and prints `changed` / `unchanged` / `new` / `gone` per frame; never writes the cache. Exit 0 all unchanged, 1 otherwise. |
 | `figma-frames` | `--file KEY --node ID [--node ID]... --out frames.json` | Needs env `FIGMA_TOKEN`. One REST call per `--node` (nodes endpoint, depth 2); a node id in the URL form `12-40` is sent as `12:40`. A frame is each `FRAME` or `COMPONENT` whose parent is a `--node` or a `SECTION` under it; `width` and `height` are rounded up. Writes `{file, source, frames:[{node, name, page, width, height}]}` (a frame reached from two nodes is listed once; `page` is the name of the `--node` it was found under) and prints the count. This file is the design inventory `ui-coverage` checks the matrix against. Exit 2 without a token or on an API error; the token is never printed. No token: write the same shape by hand from the Figma MCP `get_metadata`. |
-| `compare` | `--url U --root SEL --cache DIR [--map map.json] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--max-diff 0.5] [context flags] [--out DIR]` | Viewport = frame size, DSF = scale. Element gate (box +-1px, font, line-height, letter-spacing, colour, background, radius, padding, gap) then pixel gate (odiff, threshold 0.1, anti-aliasing ignored; size mismatch is reported first and both images are padded). |
+| `compare` | `--url U --root SEL --cache DIR [--map map.json] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--max-diff 0.5] [--strict] [context flags] [--out DIR]` | Viewport = frame size, DSF = scale. Element gate (box +-1px, font size and family, line-height, letter-spacing, colour, background, radius, padding, gap, stroke width and colour by `strokeAlign` (INSIDE = border, OUTSIDE = outline or box-shadow ring, CENTER = outline with offset -weight/2; standards/figma.md), image fills loaded and of the right aspect, and every broken eager image in the root even without a map) then pixel gate (odiff, threshold 0.1, anti-aliasing ignored; size mismatch is reported first and both images are padded) plus the colour metric (any channel > 2 levels, anti-aliasing counted; Figma TEXT boxes left out in a default run), which fails above the same limit: odiff's threshold hides a uniform drift of up to about 26 levels. `--strict` = the strict rule: `--max-diff 0` and the colour metric over every pixel (fail closed until `attribute` classes text anti-aliasing). |
 | `responsive` | `--url U [--widths 320,...,1920] [--height 900] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--same-in-all-locales "ICE,Google"] [context flags] [--out DIR]` | Per width, the findings in the table below. Screenshots `w<width>.png` stay on disk. |
 | `batch` | `--states file.json [--only surface[,surface]] [--jobs 4] [--resume] [--prev RUN] [--out DIR]` | Many states in one run (below). `compare` for a state with `figma`, `responsive` for a state with widths. Writes `ledger.json` beside `results.json`; `--prev RUN` prints the round table (see `run`). |
-| `run` | `--matrix M [--base-url U] [--states S] [--out DIR] [--jobs N] [--only surface,...] [--prev RUN] [--no-worse RUN] [--self-test] [--step <road>.s<N>]` | The one call of a UI round (section `run` below): `ui-coverage scaffold` + `batch` + `ui-coverage check`. |
+| `run` | `--matrix M [--strict] [--base-url U] [--states S] [--out DIR] [--jobs N] [--only surface,...] [--prev RUN] [--no-worse RUN] [--self-test] [--step <road>.s<N>]` | The one call of a UI round (section `run` below): `ui-coverage scaffold` + `batch` + `ui-coverage check`. |
 | `columns` | `--url U --table SEL [--width 1440] [--no-autofocus]` | Body cells vs header cells: left delta <= 1px, width delta <= 2px. |
+| `first-paint` | `--states S [--only surface[,surface]] [--out DIR] [--project DIR]` | Per state, cold-loads the URL with every script held, then every font held, and checks the frames in order: blank and/or one neutral loader, then the final screen, nothing in between, no layout shift after the first visible frame (section `first-paint` below). |
 | `figma-diff` | `--states S [--only surface[,surface]] [--decisions D] [--out DIR] [--project DIR]` | Per state with a `figma` part: built parts and texts with no Figma node, Figma texts and drawings with no built part, wording differences; each row classed `fix`, `keep` or `ask the owner` (section `figma-diff` below). |
+| `attribute` | `--results DIR [--accepted matrix.json] [--strict]` | Per compare record of `DIR/results.json`, every leftover colour-metric pixel goes to the topmost Figma node and a class: accepted, text anti-aliasing, flagged text, graphic, other; one row per class per state, crops baseline \| actual \| diff per cluster (section `attribute` below). |
 
 Output (`--out`, default `<cache>/runs/<timestamp>` for compare, the OS temp dir otherwise): `report.json`,
 `report.md` (<= 40 lines), `actual.png`, `diff.png` (absent on an exact match).
@@ -223,6 +225,9 @@ pixel ratio. Every compare record in `results.json` carries `url`, `images` {bas
   between comparators).
 - `--self-test`: captures every compare state a second time (into `<out>/self-test`); a state whose two captures differ in sha256
   is a failing `nondeterministic` finding.
+- Pass rule: `--strict`, or `rule: strict` in the matrix (`ui-coverage init --rule strict`), makes every compare strict (the stricter
+  rule wins); every record and the ledger store `rule` and the project's viewing conditions (`ui-coverage conditions`), and a PASS
+  under a looser rule than the matrix asks does not count.
 - `--step <road>.s<N>`: stored in the ledger; the baseline `run --step` on the base tip before a road step starts is that step's
   start record (read by `ui-proof`).
 - Capture-only CSP bypass for development servers: states-file `defaults.bypassCSP: true` (for `batch` and `run`). It exits 2,
@@ -258,6 +263,42 @@ only), `pulledFrom` (the `--node`, or the export entry) and `source` (`api` or `
   Unconfirmed: this folder format is the setup's choice (the ICE scripts saved the nodes-API answer raw and the PNGs by
   node id). How the PC project's own gate stores its Figma results has not been read yet (the top-level keys of one of
   its result files, `round9` phase-start step); until it is, this format may change to match it.
+
+## `first-paint` (the loader, then the one right screen)
+
+`ui-check first-paint --states states.json [--only surface[,surface]] [--out DIR] [--project DIR]` checks what a visitor sees
+while a page loads (`async-ui-states` items 7-8). Per state it cold-loads the URL twice in a fresh context: first with every
+script held back, then with every font held back (each held 1.5 s after navigation, then released), and records one frame
+each time what is on screen changes, from navigation until the page has settled (no frame change for 1 s and no request in
+flight for 500 ms; the network wait gives up after 5 s for long-polling apps; a page still changing after 15 s fails).
+
+A frame is one of:
+
+| Kind | What is on screen |
+| ---- | ----------------- |
+| `blank` | nothing to read or use: no visible text, form control, link, button, heading or image; only backgrounds and shapes (so a CSS or SVG spinner without a role is blank too) |
+| `loader` | the neutral loader: every visible text, control or image sits inside an element with `role="progressbar"` (MUI `CircularProgress` and `LinearProgress` have it). A "Loading..." text outside such an element is a screen, so give the loader that role |
+| `fallback` | fonts pass only: a screen shown while one of its font faces is still loading (fallback face or invisible text) |
+| `screen` | anything else. Two screens are the same when every visible content element has the same tag, own text (and a field's value and placeholder) and box, rounded to 1 px |
+
+A pass passes when the frames in order are `blank` and/or one `loader`, then the final screen, with nothing in between (a
+second screen, a fallback-font frame, a blank frame after a loader or a screen, a second loader) and no layout shift (the
+browser's layout-shift entries) from the first frame that is not blank. The loader definition is cut from the ICE harness,
+where "empty" was the background only; `role="progressbar"` adds the one loader `async-ui-states` item 7 allows.
+
+- Used from the states file: `url` (http or https only, because files are held through Playwright's request router), the
+  locale, colour scheme, storage, cookies and `expectDir` (checked after the page settles). Viewport: the Figma frame size
+  for a state with `figma`, else its first width x 900. `steps` are not run: first paint is the cold load, steps come
+  after it; the output says `(steps not run)`. States with the same URL, viewport and context are measured once.
+- Nothing is injected into the page but a read-only sampler: no freeze or transition-off style, and reduced motion is not
+  requested, because transitions and late swaps are what this check looks for. On MUI do not use the capture preset for it.
+- Output: one stdout line per state (`PASS|FAIL|ERROR surface state locale - scripts: <screens or reason> | fonts: ...`)
+  and a final `PASS|FAIL first-paint` line; in `--out` (default under the OS temp dir) `report.md`, `report.json` and per
+  state `<index>-<surface>--<state>--<locale>/<hold>.json` with the held files, the frame records and the layout shifts.
+- Exit `0` every pass of every state passes, `1` a pass fails or nothing matched `--only`, `2` a bad flag or states file,
+  or a state that could not be measured (HTTP error, missing Figma cache, a file: URL) while none failed.
+- Not covered: two different loaders shown one after the other look the same (both are `loader`); a skeleton screen with
+  no text counts as `blank`; text inside shadow roots (open or closed) and iframes is not read.
 
 ## `figma-diff` (what the map does not cover)
 
@@ -296,3 +337,58 @@ no row is open (none, or only `keep`), 1 when any `fix` or `ask the owner` row e
 could not be compared (missing cache, HTTP error, root not found; the other states still run and the error is in the report).
 `spec.json` keeps the full Figma text (until this change it cut every text at 80 characters): a cache written before that is flagged
 by a warning line (Figma texts of exactly 80 characters); re-pull it with `figma-pull --refresh`.
+
+## Map skips, diagnostic states, render bounds and the focus gate (r9-ui-states)
+
+- Map skip entries: a `map.json` value may be `{"selector": "...", "skip": ["padding"|"gap"|"width"], "why": "<15+ characters>"}`.
+  Only padding, gap and hug width can be skipped, never colour, font, x or y; another property or a missing `why` exits 2. A skip
+  removes a false positive the Figma data creates (an INSTANCE node reports 0 padding); the element's box, colour and font rows still
+  run, and each skipped row shows as `SKIPPED: <why>`. A `width` skip is honoured only under the strict rule; in a default run the row
+  stays, with its `why` beside it.
+- Diagnostic states (states file): `"diagnostic": true, "proves": {"surface": "...", "state": "..."}` (the gate state it proves; a
+  `proves` that names no gate state exits 2). They stay out of the verdict and exit code, print in their own table of `summary.md`,
+  carry `diagnostic: true` in `results.json`, never fill a `ui-coverage` cell and never enter the ledger or a proof reference. Only a
+  diagnostic state may use the steps `hide` / `remove` / `replace` (`{"action": "replace", "selector": "...", "text": "..."}`) and
+  `ignoreBands: [{"y": <px>, "h": <px>}]` (CSS px, masked in both images); a gate state that uses them exits 2.
+- `size: {"width", "height"}`: the viewport for a frame that is part of a page; a gate state's size must equal its Figma node's size
+  (the render bounds when `spec.json` has them, else `meta.json`), else exit 2. Components outside the frames (open selects, lists,
+  menus): list them in the matrix, pull their Figma nodes, and give each a state with an open step and `size` = its node's size.
+- Render bounds: element rows use `absoluteBoundingBox` and stay strict. When the baseline is a render-bounds export (its size is the
+  node's `absoluteRenderBounds` x scale), the capture takes the render bounds and the area outside the node box (focus ring, outside
+  stroke, shadow) is judged as its own region (`effect region` in the report, same limit). A box-sized baseline prints `effect region:
+  not compared`. Which Figma export holds a drop shadow (`use_absolute_bounds` true or false) is not yet probed (needs `FIGMA_TOKEN`).
+- Focus (`responsive`, P3e): the focus walk fails with `focus-cap` when it reaches its cap (60 stops) before focus leaves the page,
+  never a silent stop, unless the state sets `maxFocusStops: {"count": 80, "why": "<15+ characters>"}`. `focus-indicator` stays a hint
+  until it has proven itself (`FOCUS_INDICATOR_FAILS` in `lib/rendered-checks.mjs`: set it once `results.md` counts 0 false alarms on
+  one real screen per UI project). M3: the walk runs again with forced colours (`focus-indicator (forced colours)`, a hint).
+
+## `attribute` (where the leftover pixels come from)
+
+`ui-check attribute --results <batch or run --out> [--accepted matrix.json] [--strict]` reads `results.json` and, per compare record
+with images, recounts the colour metric (any RGBA channel off by more than 2 levels, anti-aliasing counted; over every pixel for a
+`rule: strict` record, outside the Figma TEXT boxes otherwise) on the image pair the gate compared (its masked or padded copies when the
+capture wrote them). A recount that differs from the record's `driftPixels` exits 2. Each pixel then goes to the topmost Figma node
+whose box holds it (spec.json paint order; TEXT boxes grown by 2 CSS px) and one class:
+- `accepted`: an `accepted` entry of the `--accepted` matrix for the same frame and cell, with an owner decision and a `reason`
+  (ui-coverage `lib/accepted.mjs`), whose pixel rule `{check:"pixel", maxPercent}` is not below the record's share. The rule may name
+  `nodes: ["12:41"]` (Figma node ids): then only the pixels inside those nodes are accepted; without `nodes` every pixel is.
+- `text anti-aliasing`: a TEXT node with under 20 leftover px, or one that is neither displaced (the best shift of up to 2 px is 0, 0)
+  nor of other ink (actual over baseline ink outside 0.97-1.03).
+- `flagged text`: a TEXT node that is displaced or has an ink change.
+- `graphic`: a VECTOR, BOOLEAN_OPERATION, ELLIPSE, LINE, STAR or REGULAR_POLYGON node, or one with an IMAGE fill.
+- `other`: any other node, or no node (outside the frame: padding, the effect region).
+
+Output: per record `attribute <surface> / <state> / <locale> @<width> (rule ...): <n> px, recount matches -> PASS|FAIL (...)`, one
+row per class with pixels (`| class | px | pass\|FAIL | top nodes |`) and the crop paths: the 3 biggest graphic or other clusters and
+the 3 biggest flagged text boxes, each as `<n>-<class>-baseline.png`, `-actual.png` and `-diff.png` (leftover pixels in red) in the
+state's `attribution/` folder, native scale and at most 2,576 px on each edge (`lib/crops.mjs` tiles a bigger region).
+`<results>/attribution.json` holds the same per record. The rule is `--strict` or the record's `rule`: strict fails a record with
+any flagged text, graphic or other pixel; default fails a record whose pixel gate failed unless every leftover pixel is accepted. A
+size mismatch is never accepted. Exit 0 when no record fails, 1 otherwise, 2 for a usage or setup error (no results.json, no compare
+record with images, a missing image or cache, a recount that differs).
+
+`run` under the strict rule (`--strict` or the matrix's `rule: strict`) attributes, after the batch, every failing strict compare
+whose only failing finding is the pixel finding, with the matrix's accepted entries. One that passes the class rule (every leftover
+pixel accepted or text anti-aliasing) becomes a `pass` record without its pixel finding and with `attribution` (px per class);
+`results.json`, `summary.md` and `ledger.json` are rewritten before `ui-coverage check` reads them. The class rows are printed after the
+counts line; a recount that differs exits 2.

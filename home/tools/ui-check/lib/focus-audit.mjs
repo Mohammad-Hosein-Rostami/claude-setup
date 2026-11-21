@@ -1,7 +1,7 @@
 // Purpose: gather the facts behind the `focus-indicator` hint by pressing the real Tab key (so :focus-visible applies, which a bare
 // .focus() call may not trigger) and comparing the computed style of each focused element, its ::before/::after, its wrappers (3 ancestors),
 // its label and neighbours, and the content of an open shadow root, with their unfocused styles.
-// Exports: collectFocusables, focusProbe. Invariants: runs last on a page (focus handlers may change it); focusProbe is serialised into
+// Exports: collectFocusables, walkFocus (the walk with a `capped` flag), focusProbe. Invariants: runs last on a page (focus handlers may change it); focusProbe is serialised into
 // the page, so it is self-contained (no imports or closure variables); the page DOM is not modified, only a `window` property holds the
 // snapshots; the walk follows the deep active element (into open shadow roots), steps over iframe stops (their content is not inspected),
 // and stops after MAX_FOCUS_STOPS focusables, MAX_PRESSES Tab presses, when focus leaves the page, or when it returns to an element already seen.
@@ -97,14 +97,27 @@ export function focusProbe({ mode, fields, maxCandidates }) {
  * @returns {Promise<{element: string, hidden: boolean, own: object[], related: object[]}[]>} input of focusIndicatorFindings
  */
 export async function collectFocusables(page, max = MAX_FOCUS_STOPS) {
+  return (await walkFocus(page, max)).facts;
+}
+
+/**
+ * The focus walk with its end reason (P3e): `capped` is true when the walk stopped at `max` focusables or at the Tab-press limit before focus
+ * left the page or came back, so a caller fails the run naming the cap instead of stopping silently.
+ * @param {object} page Playwright page (already opened and settled)
+ * @param {number} [max] focusables at most (MAX_FOCUS_STOPS unless the state raises it with a reason)
+ * @returns {Promise<{facts: object[], capped: boolean, max: number}>}
+ */
+export async function walkFocus(page, max = MAX_FOCUS_STOPS) {
   const fields = [...INDICATOR_FIELDS, ...RELATED_SIZE_FIELDS];
-  await page.evaluate(focusProbe, { mode: 'snapshot', fields, maxCandidates: MAX_CANDIDATES });
+  const presses = Math.max(MAX_PRESSES, max * 2);
+  await page.evaluate(focusProbe, { mode: 'snapshot', fields, maxCandidates: Math.max(MAX_CANDIDATES, max * 2) });
   const facts = [];
-  for (let presses = 0; presses < MAX_PRESSES && facts.length < max; presses += 1) {
+  for (let press = 0; press < presses; press += 1) {
+    if (facts.length >= max) return { facts, capped: true, max };
     await page.keyboard.press('Tab');
     const read = await page.evaluate(focusProbe, { mode: 'read', fields });
-    if (read === 'end') break;
+    if (read === 'end') return { facts, capped: false, max };
     if (read !== 'skip') facts.push(read);
   }
-  return facts;
+  return { facts, capped: true, max };
 }

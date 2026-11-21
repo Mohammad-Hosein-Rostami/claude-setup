@@ -1,6 +1,6 @@
 // Purpose: pure decision functions for the `responsive` findings that need element facts but no browser: `raw-i18n-key`,
 // `focus-indicator`, `rtl-physical-align`, and the `target-size?` hint.
-// Exports: rawI18nKeyFindings, focusIndicatorFindings, rtlPhysicalAlignFindings, targetSizeHints, MAX_FOCUS_STOPS, RAW_KEY_PATTERN, INDICATOR_FIELDS, RELATED_SIZE_FIELDS.
+// Exports: rawI18nKeyFindings, focusIndicatorFindings, rtlPhysicalAlignFindings, targetSizeHints, MAX_FOCUS_STOPS, FOCUS_INDICATOR_FAILS, RAW_KEY_PATTERN, INDICATOR_FIELDS, RELATED_SIZE_FIELDS.
 // Invariants: pure; each takes plain facts gathered in the page (lib/audit.mjs, lib/focus-audit.mjs), so a unit test needs no browser;
 // a hidden element never produces a finding; every function takes an optional cap on the number of findings.
 
@@ -8,6 +8,11 @@
 export const RAW_KEY_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/;
 /** Keyboard stops examined for `focus-indicator` (Tab presses). */
 export const MAX_FOCUS_STOPS = 60;
+/**
+ * P3e: `focus-indicator` ships as a hint (a new heuristic proves itself first). Set true once results.md shows 0 false alarms on one real
+ * screen per UI project; any false alarm keeps it a hint. While false, a control whose focus changes nothing is a hint, never a failure.
+ */
+export const FOCUS_INDICATOR_FAILS = false;
 /**
  * Computed-style fields that can show keyboard focus on the element itself: outline, box-shadow, border colour/width, background colour or image,
  * text decoration, transform, and `content` (a ::before/::after that only exists on focus). Text colour alone is not counted.
@@ -90,13 +95,12 @@ const differs = (pair, fields) => fields.some((field) => fieldChanged(pair, fiel
  * @param {{focusables: {element: string, hidden: boolean, own: {before: object, after: object}[], related: {before: object, after: object}[]}[]}} facts
  *   before/after = the style fields without and with keyboard focus (Tab, so :focus-visible applies)
  * @param {number} [max] cap on the number of findings
- * @returns {{check: 'focus-indicator', element: string, detail: string}[]} at most the first MAX_FOCUS_STOPS focusables are judged
+ * @returns {{check: 'focus-indicator', element: string, detail: string}[]} every focusable the walk collected is judged (the walk itself is capped, lib/focus-audit.mjs)
  */
 export function focusIndicatorFindings({ focusables }, max = Infinity) {
   const relatedFields = [...INDICATOR_FIELDS, ...RELATED_SIZE_FIELDS];
   const shown = (f) => (f.hidden ? [] : f.own).some((pair) => differs(pair, INDICATOR_FIELDS)) || f.related.some((pair) => differs(pair, relatedFields));
   return focusables
-    .slice(0, MAX_FOCUS_STOPS)
     .filter((f) => !shown(f))
     .map((f) => ({
       check: 'focus-indicator',

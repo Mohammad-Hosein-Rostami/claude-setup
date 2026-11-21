@@ -1,6 +1,6 @@
 // Purpose: opt-in interaction steps (fill, click, hover, focus ...) that run after the page is ready and before
 // the freeze style and the capture, so a state (hover, error, filled form) can be measured.
-// Exports: validateSteps, loadSteps, runSteps. Invariants: the steps file is validated against a fixed
+// Exports: validateSteps, loadSteps, runSteps, DIAGNOSTIC_ACTIONS (hide, remove, replace: diagnostic states only). Invariants: the steps file is validated against a fixed
 // action table (no code or string is ever evaluated); an unknown action, bad field type, or a selector that does not
 // match exactly one element, a Playwright failure (timeout, bad key ...) or an unknown field is a UsageError (exit 2)
 // naming the step number and action. Steps never change tolerances or gates.
@@ -15,7 +15,10 @@ const ACTION_FIELDS = {
   fill: { selector: 'string', value: 'string' }, select: { selector: 'string', value: 'string' }, press: { selector: 'string', key: 'string' },
   click: { selector: 'string' }, check: { selector: 'string' }, uncheck: { selector: 'string' }, focus: { selector: 'string' },
   hover: { selector: 'string' }, waitFor: { selector: 'string' }, blur: {}, wait: { ms: 'number' },
+  hide: { selector: 'string' }, remove: { selector: 'string' }, replace: { selector: 'string', text: 'string' },
 };
+/** Page changes only a diagnostic state may make (lib/states.mjs enforces it): they prove a cause, they never make a gate state pass. */
+export const DIAGNOSTIC_ACTIONS = new Set(['hide', 'remove', 'replace']);
 /** Element actions whose Playwright locator method has the same name and takes only options. */
 const PLAIN_LOCATOR_ACTIONS = new Set(['click', 'check', 'uncheck', 'focus', 'hover']);
 /**
@@ -113,6 +116,9 @@ async function dispatchStep(el, step) {
   else if (step.action === 'press') await el.press(step.key, opt);
   else if (step.action === 'fill') await el.fill(step.value, opt);
   else if (PLAIN_LOCATOR_ACTIONS.has(step.action)) await el[step.action](opt);
+  else if (step.action === 'hide') await el.evaluate((node) => { node.style.setProperty('visibility', 'hidden', 'important'); });
+  else if (step.action === 'remove') await el.evaluate((node) => node.remove());
+  else if (step.action === 'replace') await el.evaluate((node, text) => { node.textContent = text; }, step.text);
   if (step.action === 'focus' && !(await el.evaluate(hasFocus))) {
     throw new Error('the element did not take focus (it is not focusable: use a button, link or input, or add tabindex)');
   }
