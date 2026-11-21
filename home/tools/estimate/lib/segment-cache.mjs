@@ -1,6 +1,7 @@
 // The status line's estimate segment: reads a small cache of the estimate's text and, when the cache is missing or out of date,
 // starts a detached refresh. Used by home/statusline.mjs on every render; written by ../statusline-cache.mjs.
-// Exports: estimateSegment({ projectDir, sessionId }, deps) -> { text, progress } | null; readEntry, writeEntry, cacheDir (the cache file store);
+// Exports: estimateSegment({ projectDir, sessionId }, deps) -> { text, progress, numbers } | null; refreshNow(statusPath, sessionId, deps) ->
+// boolean (status.mjs after a row edit); readEntry, writeEntry, cacheDir (the cache file store);
 // SEGMENT_KINDS, OVERDUE_TEXT, MAX_CACHE_BYTES, STALE_SHOW_MS, REFRESH_INTERVAL_MS, RECOMPUTE_AFTER_MS.
 // Invariants:
 // - The STATUS.md looked at is the one the session last edited with status.mjs (its link in the estimate store), else <projectDir>/STATUS.md.
@@ -119,6 +120,30 @@ function spawnRefresh(statusPath, sessionId) {
 function claimRefresh(dir, statusPath, entry, now) {
   const base = entry ?? { path: statusPath, kind: null, text: null, highMs: null, progress: null, mtimeMs: 0, size: 0, computedAt: 0 };
   return writeEntry(dir, statusPath, { ...base, refreshStartedAt: now });
+}
+
+/** A refresh claimed this long ago that has not written its result yet is taken as still running (one refresh at a time). */
+const IN_FLIGHT_MS = 60 * 1000;
+
+/**
+ * Starts the refresh at once after a row edit (audit case 6: the shown text lagged `status.mjs done` by up to 2.5 min), with the
+ * same claim as a render, so a refresh already running is not doubled. Never throws.
+ * @param {string} statusPath the STATUS.md's real path
+ * @param {string | undefined} sessionId the session whose transcripts count
+ * @param {{ cacheDir?: string, now?: number, spawnRefresh?: (statusPath: string, sessionId?: string) => void }} [deps] tests replace them
+ * @returns {boolean} true when a refresh was started
+ */
+export function refreshNow(statusPath, sessionId, deps = {}) {
+  try {
+    const { cacheDir: dir = cacheDir(), now = Date.now(), spawnRefresh: start = spawnRefresh } = deps;
+    const entry = readEntry(dir, statusPath);
+    const running = entry !== null && entry.refreshStartedAt > entry.computedAt && now - entry.refreshStartedAt < IN_FLIGHT_MS;
+    if (running || !claimRefresh(dir, statusPath, entry, now)) return false;
+    start(statusPath, sessionId);
+    return true;
+  } catch {
+    return false; // the edit stands; the next render starts the refresh
+  }
 }
 
 /** The session's linked STATUS.md, else the project's; null when neither is known. */

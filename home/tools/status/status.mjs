@@ -9,10 +9,15 @@
 //   rule "<text>" | decision "<text>"   bullet under `## Standing rules` (the owner's words) | `## Owner decisions`, dated
 //   defect <id> "<conditions>"  the owner reported row <id> broken: `[defect <n>]` on its item; the second report adds a
 //                            `rootcause:<id>` row and routes to root-cause first (defect.mjs)
+//   add|start|done take several rows in one call, split by a lone `+` (`start` also takes plain ids; status-batch.mjs), all or none;
+//   done takes predictor flags (--model, --effort, --files-planned, --suite-s, --review-rounds, --writers; status-predictors.mjs)
+//   show                     where the job stands in at most 5 lines, the finish from the estimate cache (status-show.mjs)
+//   log "<text>"             a dated line in STATUS.log.md beside STATUS.md, hidden from git (status-log.mjs); STATUS.md is not touched
+// After a changed add|start|done the estimate refresh starts at once (segment-cache.mjs refreshNow).
 // Exports: runStatus(argv, { cwd, now, sessionId, stateDir }) -> { code, message }; the CLI prints message (stdout for 0) and exits code.
 // Invariants: touches only the one line it adds or changes; rows are only those of the one table under `## Work items` (header
 // `id | item | size | started | done | evidence`, the contiguous rows below its separator, with or without outer pipes, found and
-// read with the estimator's own findSection/rowCells/isTableRow, so code fences are skipped the same way), so a work row anywhere
+// read with the estimator's own findSection/rowCells/isTableRow in status-table.mjs, so code fences are skipped the same way), so a work row anywhere
 // else is never edited; a missing section is never made below a code fence left open (it would be hidden: refused); ids and items starting `deliver:` are reserved for hand-overs; times are UTC to the minute, the format the
 // estimate tool reads; exit 1 = refused, 2 = usage. After every edit that changed the file, noteTable records the table and links
 // the session (CLAUDE_CODE_SESSION_ID) for the estimator; when that fails the edit still stands and the message says so.
@@ -25,16 +30,22 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { BREAKER_SUFFIX, withSessionLock } from '../../hooks/lib/session-lock.mjs';
-import { findSection, isTableRow, parseWorkItems, rowCells } from '../estimate/lib/items.mjs';
+import { findSection, parseWorkItems, rowCells } from '../estimate/lib/items.mjs';
+import { refreshNow } from '../estimate/lib/segment-cache.mjs';
 import { noteTable, stateDir as defaultStateDir } from '../estimate/lib/table-store.mjs';
 import { markDefect } from './defect.mjs';
+import { rowGroups, runGroups } from './status-batch.mjs';
 import { readStatusFile, replaceStatusFile } from './status-file.mjs';
+import { appendLog } from './status-log.mjs';
+import { recordPredictors, splitPredictorFlags } from './status-predictors.mjs';
+import { showStatus } from './status-show.mjs';
+import { DEFECT_TABLE, WORK_ITEMS, hiddenEndReason, insertRow, isEmpty, oneLine, rowIndex, rowToChange, sectionEnd, stamp, tableToEdit, writeRow } from './status-table.mjs';
 
-const COLUMNS = ['id', 'item', 'size', 'started', 'done', 'evidence'];
 const SIZES = ['S', 'M', 'L'];
-const USAGE = 'usage: status.mjs [--file STATUS.md] add <id> <item> <size S|M|L> | start <id> | done <id> <evidence> | deliver "<what>" | deliver --auto | rule "<text>" | decision "<text>" | defect <id> "<conditions>"';
+const USAGE = 'usage: status.mjs [--file STATUS.md] add <id> <item> <size S|M|L> [+ <id> <item> <size> ...] | start <id> [<id> ...] | done <id> <evidence> [--model m --effort e ...] [+ <id> <evidence> ...] | deliver "<what>" | deliver --auto | rule "<text>" | decision "<text>" | defect <id> "<conditions>" | show | log "<text>"';
+const READ_COMMANDS = ['show', 'log'];
+const REFRESH_COMMANDS = ['add', 'start', 'done'];
 const SECTION_FOR = { rule: 'Standing rules', decision: 'Owner decisions' };
-const WORK_ITEMS = 'Work items';
 const ID = /^[A-Za-z0-9][\w.:-]{0,39}$/; // `7`, `17a`, `close:5`, `rework:12`, `deliver:3`; a leading `-` would read as a bullet
 const RESERVED_ID = /^deliver:/i; // hand-over rows: only `deliver` writes them, numbered
 const DELIVER_ID = /^deliver:(\d+)$/i;
@@ -42,74 +53,6 @@ const AUTO_DELIVER_WHAT = 'turn ended with no open row';
 const LOCK_NAME_PARTS = /[^A-Za-z0-9_-]/g; // the lock's name part is the file name without .md, in the characters the lock helper takes
 // `.<name>.status-lock`: no other tool uses it (a `<name>.lock` next to uv.md was uv's own lock file, and a stale one was deleted)
 const LOCK_SUFFIX = '.status-lock';
-
-/** The clock as the estimate tool wants it: UTC, minute precision. */
-const stamp = (date) => date.toISOString().slice(0, 16) + 'Z';
-
-const isHeader = (line) => isTableRow(line) && rowCells(line).join('|').toLowerCase() === COLUMNS.join('|');
-const isEmpty = (cell) => cell === '' || cell === '-';
-const oneLine = (text) => text.replace(/\s+/g, ' ').trim();
-const sameId = (line, id) => rowCells(line)[0].toLowerCase() === id.toLowerCase();
-
-/** Index just after the last non-blank line of a section (from findSection). */
-function sectionEnd(lines, { start, end }) {
-  let last = end;
-  while (last > start + 1 && lines[last - 1].trim() === '') last -= 1;
-  return last;
-}
-
-/**
- * The one work table: the header's index (-1 when the section has none) and the indexes of its rows, the contiguous table rows
- * under the separator. null when there is no `## Work items` section. Code fences are skipped as the estimator skips them.
- */
-function workTable(lines) {
-  const { start, end, visible } = findSection(lines, WORK_ITEMS);
-  if (start === -1) return null;
-  const header = lines.findIndex((line, i) => i > start && i < end && visible[i] && isHeader(line));
-  const rows = [];
-  for (let i = header + 2; header !== -1 && i < end && visible[i] && isTableRow(lines[i]); i += 1) rows.push(i);
-  return { header, rows };
-}
-
-/** Why a section made at the end of the file would be hidden (a code fence left open above it), or null. */
-function hiddenEndReason(lines) {
-  const { openFence } = findSection(lines, WORK_ITEMS);
-  if (openFence === -1) return null;
-  return `unclosed code fence at line ${openFence + 1}: everything below it is hidden from the estimate tool, so a section made at the end would be too; close the fence first`;
-}
-
-/**
- * The work table, made at the end of the file when there is no section; `{ error }` when the section has no header or a new one
- * would be hidden in an unclosed code fence.
- */
-function tableToEdit(lines) {
-  const table = workTable(lines);
-  if (table === null) {
-    const hidden = hiddenEndReason(lines);
-    if (hidden !== null) return { error: hidden };
-    while (lines.length > 0 && lines.at(-1).trim() === '') lines.pop(); // one blank line before the new heading, not two
-    if (lines.length > 0) lines.push('');
-    lines.push(`## ${WORK_ITEMS}`, '', `| ${COLUMNS.join(' | ')} |`, `| ${COLUMNS.map(() => '--').join(' | ')} |`, '');
-    return { header: lines.length - 3, rows: [] };
-  }
-  if (table.header === -1) return { error: 'the `## Work items` section has no table header: id | item | size | started | done | evidence' };
-  return table;
-}
-
-/** Index of the table row with this id (any case), or -1. */
-const rowIndex = (lines, table, id) => table.rows.find((i) => sameId(lines[i], id)) ?? -1;
-
-/** Writes one row back in the style of the table's header: outer pipes and `-` for empty cells, or neither. */
-function formatRow(header, cells) {
-  const piped = header.trim().startsWith('|');
-  const shown = cells.map((cell) => (cell === '' && piped ? '-' : cell.replace(/(?<!\\)\|/g, '\\|')));
-  return piped ? `| ${shown.join(' | ')} |` : shown.join(' | ').replace(/ {2,}/g, ' ').trimEnd();
-}
-
-/** Puts a new row after the table's last row (after the separator in an empty table). */
-function insertRow(lines, table, cells) {
-  lines.splice((table.rows.at(-1) ?? table.header + 1) + 1, 0, formatRow(lines[table.header], cells));
-}
 
 function addRow(lines, [id, item, size]) {
   if (!ID.test(id ?? '') || !item || !SIZES.includes(size)) return { usage: `add needs <id> <item> <size ${SIZES.join('|')}> (id: letters, digits, _ . : -)` };
@@ -122,20 +65,6 @@ function addRow(lines, [id, item, size]) {
   return {};
 }
 
-/** The row with this id in the work table that is not done yet ({ at, cells, header }), or `{ error }`. */
-function rowToChange(lines, id) {
-  const table = workTable(lines);
-  const at = table === null || table.header === -1 ? -1 : rowIndex(lines, table, id);
-  if (at === -1) return { error: `no row with id ${id} in the \`## ${WORK_ITEMS}\` table` };
-  const cells = rowCells(lines[at]);
-  if (!isEmpty(cells[4])) return { error: `${id} is already done (${cells[4]}); a done cell is never changed, add a new row for the correction` };
-  return { at, cells, header: lines[table.header] };
-}
-
-function writeRow(lines, { at, cells, header }) {
-  lines[at] = formatRow(header, cells.map((cell) => (isEmpty(cell) ? '' : cell)));
-}
-
 function startRow(lines, [id], now) {
   if (!id) return { usage: 'start needs <id>' };
   const row = rowToChange(lines, id);
@@ -146,7 +75,9 @@ function startRow(lines, [id], now) {
   return {};
 }
 
-function finishRow(lines, [id, ...evidenceWords], now) {
+function finishRow(lines, words, now) {
+  const { words: [id, ...evidenceWords], error } = splitPredictorFlags(words);
+  if (error) return { usage: error };
   const evidence = oneLine(evidenceWords.join(' '));
   if (!id || !evidence) return { usage: 'done needs <id> <evidence>' };
   const row = rowToChange(lines, id);
@@ -213,22 +144,6 @@ function addBullet(lines, kind, text, now) {
   return {};
 }
 
-/** The row helpers defect.mjs uses: any row of the table (a done row too: a defect is reported after delivery). */
-const DEFECT_TABLE = {
-  find: (lines, id) => {
-    const table = workTable(lines);
-    const at = table === null || table.header === -1 ? -1 : rowIndex(lines, table, id);
-    return at === -1 ? { error: `no row with id ${id} in the \`## ${WORK_ITEMS}\` table` } : { at, cells: rowCells(lines[at]), header: lines[table.header] };
-  },
-  write: writeRow,
-  add: (lines, cells) => {
-    const table = tableToEdit(lines);
-    if (table.error) return table;
-    insertRow(lines, table, cells);
-    return {};
-  },
-};
-
 const EDITS = {
   add: addRow,
   start: startRow,
@@ -275,6 +190,19 @@ function recordTable(file, text, { sessionId, stateDir, now }) {
   return `not recorded for the estimate (${failure}); the edit stands, the next estimate run records it`;
 }
 
+/** After a changed row edit: the predictors of each done row, then the estimate refresh at once; neither can fail the edit. */
+function afterRowEdit(file, command, groups, { sessionId, stateDir, now, text }) {
+  if (command === 'done') {
+    const started = new Map(parseWorkItems(text).items.map((item) => [item.id, item.started]));
+    for (const group of groups) {
+      const { words, flags } = splitPredictorFlags(group);
+      recordPredictors({ statusFile: file, folder: dirname(file), id: words[0], startedMs: started.get(words[0]) ?? null, nowMs: now.getTime(), flags }, { stateDir });
+    }
+  }
+  // A run against another store (tests, probes) must not start a refresh of the real status line cache (P8).
+  if (stateDir === defaultStateDir()) refreshNow(file, sessionId);
+}
+
 /** The lock path, or its breaker file's, when something other than a regular file sits there (never opened: a FIFO would block); else null. */
 function notPlainLock(lock) {
   for (const path of [lock, `${lock}${BREAKER_SUFFIX}`]) {
@@ -302,7 +230,7 @@ export function runStatus(argv, { cwd = process.cwd(), now = new Date(), session
   const args = [...argv];
   const fileFlag = args[0] === '--file' ? args.splice(0, 2)[1] : undefined;
   const [command, ...rest] = args;
-  if (!Object.hasOwn(EDITS, command)) return { code: 2, message: USAGE };
+  if (!Object.hasOwn(EDITS, command) && !READ_COMMANDS.includes(command)) return { code: 2, message: USAGE };
   const given = resolve(cwd, fileFlag ?? 'STATUS.md');
   let folder;
   try {
@@ -311,9 +239,12 @@ export function runStatus(argv, { cwd = process.cwd(), now = new Date(), session
     return { code: 1, message: `cannot read ${given}: ${error.code ?? error.message}` };
   }
   const file = join(folder, basename(given));
+  if (command === 'show') return showStatus(file);
+  if (command === 'log') return appendLog(file, rest.join(' '), now);
   const lockName = basename(file).replace(/\.md$/i, '').replace(LOCK_NAME_PARTS, '_').slice(0, 100) || 'STATUS';
   const lockFile = `.${lockName}${LOCK_SUFFIX}`;
-  const result = withSessionLock(folder, lockName, () => editFile(file, (lines) => EDITS[command](lines, rest, now)), { lockFile });
+  const groups = rowGroups(command, rest);
+  const result = withSessionLock(folder, lockName, () => editFile(file, (lines) => runGroups(groups, (words) => EDITS[command](lines, words, now))), { lockFile });
   if (result === undefined) {
     const blocking = notPlainLock(join(folder, lockFile));
     if (blocking !== null) return { code: 1, message: `${blocking} is not a plain lock file (a link, FIFO or folder): remove it` };
@@ -322,6 +253,7 @@ export function runStatus(argv, { cwd = process.cwd(), now = new Date(), session
   if (result.code !== 0) return result;
   if (result.skip) return { code: 0, message: `${command} --auto: nothing recorded, ${result.skip} (${file})` };
   const notes = [result.note, result.changed ? recordTable(file, result.text, { sessionId, stateDir, now }) : null].filter(Boolean);
+  if (result.changed && REFRESH_COMMANDS.includes(command)) afterRowEdit(file, command, groups, { sessionId, stateDir, now, text: result.text });
   return { code: 0, message: [`${command}: ok (${file})`, ...notes].join('; ') };
 }
 
