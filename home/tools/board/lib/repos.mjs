@@ -1,14 +1,16 @@
 // The repositories the session's work is in, for the board's git rows (spec-tui-2 and the owner's report of 2026-11-21: no git info
 // at all while two agents worked in worktrees, because the lead's folder is not in git). Run only by the detached board refresh.
-// Exports: sessionRepos({ folders, cache, nowMs, startMs }) -> { repos, git, cache }; placeAgents(agents, repos) -> { agents, repos };
+// Exports: sessionRepos({ folders, preferred, cache, nowMs, startMs }) -> { repos, git, cache }; placeAgents(agents, repos) -> { agents, repos };
 // MAX_REPOS.
-// Which: only folders the setup vouches for (refresh.mjs: the session folder, the STATUS.md folder, the road's `repo`, each agent's
-// `meta.worktreePath` and the folders writers were launched in), never a folder an agent's tool call named: git runs a repository's
+// Which: only folders the setup vouches for (refresh.mjs: the session folder, each agent's `meta.worktreePath` and the folders
+// writers were launched in), never a folder an agent's tool call named: git runs a repository's
 // own config (`core.fsmonitor`, clean filters), so it runs only where the owner put the work (review SEC-1 of 9ac483c3). Each is
 // placed in its repository by the file system alone (the `.git` entry of the folder or a parent; a worktree's `.git` file names its
 // git folder, whose `commondir` names the shared one), so worktrees of one clone are one repository; the worktrees that repository's
 // own `worktree list` names are read with it. The first MAX_REPOS repositories are read with git-state.mjs repoState, sharing one
-// git budget (`startMs`); the first is the primary one (its `git` is the board's `git`).
+// git budget (`startMs`); the primary one (its `git` is the board's `git`) is the one holding a `preferred` folder (the STATUS.md
+// folder, the road's `repo`), else the first. A preferred folder only orders: it never adds a repository, since a STATUS.md or road
+// file may name any folder (review SEC-1 residual).
 // Invariants: never throws; no git call here; `.git` and `commondir` files are read without following a link or waiting on a FIFO,
 // only as regular files of at most MAX_GIT_FILE_BYTES (hooks/lib/plain-file.mjs); a UNC or device path is never touched.
 import { lstatSync } from 'node:fs';
@@ -58,33 +60,40 @@ function groupsOf(folders) {
   return [...groups].slice(0, MAX_REPOS).map(([common, folder]) => ({ common, folder }));
 }
 
+const isInside = (dir, path) => dir === path || dir.startsWith(`${path}${sep}`);
+
+/** The repositories with the first one holding a preferred folder moved to the front, each with its own `git`. */
+function preferredFirst(found, preferred) {
+  const dirs = preferred.filter((dir) => typeof dir === 'string' && isAbsolute(dir));
+  const at = found.findIndex(({ repo }) => repo.worktrees.some((wt) => dirs.some((dir) => isInside(dir, wt.path))));
+  return at > 0 ? [found[at], ...found.slice(0, at), ...found.slice(at + 1)] : found;
+}
+
 /**
- * @param {{ folders: (string | null | undefined)[], cache: object | null, nowMs: number, startMs?: number }} source the trusted
- *   folders in priority order, the last cache ({ byCommon: { [common]: git cache } }) and when the refresh's git budget started
+ * @param {{ folders: (string | null | undefined)[], preferred?: (string | null | undefined)[], cache: object | null, nowMs: number,
+ *   startMs?: number }} source the trusted folders in priority order, the folders whose repository is shown first when it is one of
+ *   theirs, the last cache ({ byCommon: { [common]: git cache } }) and when the refresh's git budget started
  * @returns {{ repos: object[], git: object | null, cache: object }} repos = git-state.mjs repo plus `name` (the main worktree's
  *   folder name), primary first; git = the primary repository's own { branch, ahead, behind, changed } or null
  */
-export function sessionRepos({ folders, cache, nowMs, startMs = Date.now() }) {
+export function sessionRepos({ folders, preferred = [], cache, nowMs, startMs = Date.now() }) {
   const old = cache !== null && typeof cache === 'object' && cache.byCommon ? cache.byCommon : {};
   try {
-    const repos = [];
+    const found = [];
     const byCommon = {};
-    let git = null;
     for (const { common, folder } of groupsOf(folders)) {
       const state = repoState({ cwd: folder, cache: old[common] ?? null, nowMs, startMs });
       byCommon[common] = state.cache;
       if (state.repo === null) continue;
       const main = state.repo.worktrees.find((wt) => wt.main);
-      repos.push({ ...state.repo, name: basename(main?.path ?? dirname(common)) });
-      git ??= state.git;
+      found.push({ repo: { ...state.repo, name: basename(main?.path ?? dirname(common)) }, git: state.git });
     }
-    return { repos, git, cache: { byCommon } };
+    const ordered = preferredFirst(found, preferred);
+    return { repos: ordered.map(({ repo }) => repo), git: ordered[0]?.git ?? null, cache: { byCommon } };
   } catch {
     return { repos: [], git: null, cache: { byCommon: old } };
   }
 }
-
-const isInside = (dir, path) => dir === path || dir.startsWith(`${path}${sep}`);
 
 /**
  * The worktree of the trusted repositories that holds the agent (review C-1): the folder of the file it edited last, else the
