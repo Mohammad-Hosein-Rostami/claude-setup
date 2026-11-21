@@ -1,4 +1,4 @@
-// Tests for scripts/install.sh: the `workflows` link and the `--project-workflows <repo> [--copy]` option.
+// Tests for scripts/install.sh (which runs scripts/install.mjs): the `workflows` link and the `--project-workflows <repo> [--copy]` option.
 // Exports: none (node:test file). Runs the real installer with HOME set to a temp folder and --no-plugins --no-tools,
 // so nothing outside the temp folder changes (the repo's own git hooksPath is set to the value it already has).
 // Skips with a reason when jq is not installed.

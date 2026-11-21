@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Purpose: read-only report on links, settings drift, plugins and tools for this Claude Code setup.
-# Usage: scripts/doctor.sh [--all] [--live [--waived-lane]]   (exit 1 if any problem found; --live then runs scripts/doctor-live.sh on the
+# Usage: scripts/doctor.sh [--all] [--quick | --full] [--live [--waived-lane]]   (exit 1 if any problem found; --quick skips the repo suite,
+#   for a first check on a new machine; --full, the default, runs every check; --live then runs scripts/doctor-live.sh on the
 #   real tool: a permission dialog, a guard case, a workflow from a non-git folder, with --waived-lane one waived lane end to end)
 # Output: a summary line first (`doctor (MacBook, Claude Code 2.1.328): 1 FAIL, 1 WARN, 38 ok`), then only the lines that are not
 # ok, each with its fix; `--all` (or DOCTOR_ALL=1) prints every line as before. DOCTOR_ONLY runs keep every line (tests read them).
@@ -9,6 +10,14 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 BAD=0
+QUICK=0
+for arg in "$@"; do [ "$arg" = --quick ] && QUICK=1; done
+# The install record (scripts/install/record.mjs) names the checkout the links point at (a tag worktree after
+# `install --update --to <tag>`) and the machine's own settings kept as the first layer; without a record: this repo, no layer.
+INSTALL_RECORD="$CLAUDE_DIR/.claude-setup-install.json"
+LINK_ROOT="$(jq -r '.root // empty' "$INSTALL_RECORD" 2>/dev/null || true)"
+LINK_ROOT="${LINK_ROOT:-$REPO}"
+FIRST_LAYER="$(jq -r '.firstLayer // empty' "$INSTALL_RECORD" 2>/dev/null || true)"
 ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1"; BAD=1; }
 warn() { echo "WARN  $1"; }
@@ -20,12 +29,12 @@ check_links() {
   local name target
   for name in CLAUDE.md rules skills agents standards hooks tools project-notes modes workflows statusline.mjs; do
     target="$CLAUDE_DIR/$name"
-    if [ -L "$target" ] && [ "$(readlink "$target")" = "$REPO/home/$name" ]; then ok "link $name"
+    if [ -L "$target" ] && [ "$(readlink "$target")" = "$LINK_ROOT/home/$name" ]; then ok "link $name"
     elif is_windows && [ -e "$target" ] && [ ! -L "$target" ]; then ok "copy $name (not live-linked; re-run install.sh after repo changes)"
     else bad "link $name (re-run scripts/install.sh)"; fi
   done
   target="$HOME/.local/bin/ccm"
-  if [ -L "$target" ] && [ "$(readlink "$target")" = "$REPO/home/bin/ccm" ]; then ok "link ccm"
+  if [ -L "$target" ] && [ "$(readlink "$target")" = "$LINK_ROOT/home/bin/ccm" ]; then ok "link ccm"
   elif is_windows && [ -f "$target" ] && cmp -s "$REPO/home/bin/ccm" "$target"; then ok "copy ccm"
   else bad "link ccm (re-run scripts/install.sh)"; fi
   if command -v ccm >/dev/null; then ok "ccm on PATH"; else bad "ccm not on PATH (add ~/.local/bin to PATH)"; fi
@@ -33,12 +42,16 @@ check_links() {
 
 # Drift: rebuild the expected settings.json in memory and compare with the live one.
 check_settings() {
-  local os files=("$REPO/settings/base.json") expected home_path="$CLAUDE_DIR"
+  local os files=() expected home_path="$CLAUDE_DIR"
+  if [ -n "$FIRST_LAYER" ]; then
+    if [ -f "$FIRST_LAYER" ]; then files+=("$FIRST_LAYER"); else bad "first settings layer $FIRST_LAYER is gone (named in $INSTALL_RECORD)"; fi
+  fi
+  files+=("$LINK_ROOT/settings/base.json")
   case "$(uname -s)" in Darwin) os=macos ;; Linux) os=linux ;; *) os=windows ;; esac
-  [ -f "$REPO/settings/$os.json" ] && files+=("$REPO/settings/$os.json")
+  [ -f "$LINK_ROOT/settings/$os.json" ] && files+=("$LINK_ROOT/settings/$os.json")
   [ -f "$REPO/settings/local.json" ] && files+=("$REPO/settings/local.json")
   case "$os" in windows) home_path="$(cygpath -m "$CLAUDE_DIR" 2>/dev/null || echo "${CLAUDE_DIR//\\//}")" ;; esac
-  expected="$(jq -S -s -f "$REPO/scripts/merge-settings.jq" "${files[@]}" | sed "s|{{CLAUDE_HOME}}|$home_path|g")"
+  expected="$(jq -S -s -f "$LINK_ROOT/scripts/merge-settings.jq" "${files[@]}" | sed "s|{{CLAUDE_HOME}}|$home_path|g")"
   local live
   if ! live="$(jq -S . "$CLAUDE_DIR/settings.json" 2>/dev/null)"; then bad "settings.json missing or invalid JSON"; return
   elif [ "$expected" = "$live" ]; then ok "settings.json matches repo"
@@ -178,6 +191,7 @@ check_prod_hosts() {
 # The suite output goes to a log file so a failure can be named. DOCTOR_TEST_COMMAND replaces the real suite (used by tests);
 # DOCTOR_LOG_DIR moves the log. On failure: each failing test with its first error line (TAP "not ok" / "error:" lines), else the last log lines.
 check_repo_tests() {
+  if [ "$QUICK" = 1 ]; then warn "repo suite not run (--quick); scripts/doctor.sh --full runs it"; return 0; fi
   local suite="${DOCTOR_TEST_COMMAND:-node --test --test-reporter=tap tests/*.test.mjs}"
   local log_dir="${DOCTOR_LOG_DIR:-$CLAUDE_DIR/logs}" log failing
   # Fallback when the log folder cannot be made: a fresh mktemp file, never a fixed name in a shared /tmp that another user could plant.

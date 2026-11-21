@@ -1,4 +1,4 @@
-// Static check of the installer call order (scripts/install.sh, scripts/install.ps1).
+// Static check of the installer call order (scripts/install.mjs, the one installer that install.sh and install.ps1 call).
 // Exports: none (node:test file).
 // Invariants: settings are written after plugin installs, because `claude plugin install`
 // re-enables plugins in ~/.claude/settings.json and the merged repo settings must win; tool deps
@@ -21,8 +21,7 @@ function callIndex(lines, pattern) {
 }
 
 for (const [file, plugins, settings, tools] of [
-  ['scripts/install.sh', /\binstall_plugins\b/, /^\s*build_settings\s*$/, /\binstall_tool_deps\b/],
-  ['scripts/install.ps1', /\bInstall-Plugins\b/, /^\s*Build-Settings\s*$/, /\bInstall-ToolDeps\b/],
+  ['scripts/install.mjs', /\btools\.installPlugins\b/, /^\s*buildSettings\(ctx, record\);\s*$/, /\btools\.installToolDeps\b/],
 ]) {
   test(`${file}: plugins, then settings, then tool deps`, () => {
     const lines = readFileSync(`${root}${file}`, 'utf8').split(/\r?\n/);
@@ -33,7 +32,7 @@ for (const [file, plugins, settings, tools] of [
   });
 }
 
-for (const file of ['scripts/install.sh', 'scripts/install.ps1', 'scripts/doctor.sh']) {
+for (const file of ['scripts/install.mjs', 'scripts/doctor.sh']) {
   test(`${file}: the workflows link is in the list of linked home items`, () => {
     assert.match(readFileSync(`${root}${file}`, 'utf8'), /project-notes[ ',]+modes[ ',]+workflows[ ',]+statusline\.mjs/);
   });

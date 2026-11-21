@@ -1,6 +1,6 @@
 # Global instructions (all projects)
 
-Owner: Pejvak. Primary OS Windows 10 (PowerShell + Git Bash), also macOS/Linux. Node 22, pnpm. Reply in the language the
+Owner: Pejvak. MacBook and PC on macOS (zsh); a Windows machine (PowerShell + Git Bash) and Linux are tested. Node 22, pnpm. Reply in the language the
 user writes in (Persian included, never default to English); keep prose short and plain. Do not narrate tool calls.
 
 Lead rules (routing, delegation, modes) are injected at session start from ~/.claude/modes/_lead.md. Workers: follow

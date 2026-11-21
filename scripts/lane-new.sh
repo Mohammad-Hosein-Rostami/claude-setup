@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Purpose: start a parallel lane: a new worktree and branch with the tool dependencies already installed.
 # Usage: scripts/lane-new.sh <name> [base]   (creates ../claude-setup-wt/<name> on branch lane/<name>; base defaults to main)
-# Invariants: refuses an existing branch or folder; installs with `npm ci` in each tool listed in install.sh's TOOLS_WITH_DEPS
+# Invariants: refuses an existing branch or folder; installs with `npm ci` in each tool listed in install.mjs's TOOLS_WITH_DEPS
 # that has a package-lock.json (a fresh worktree has no node_modules, so e.g. the env-names tests would fail); prints the path last.
 set -euo pipefail
 
@@ -23,9 +23,9 @@ git -C "$MAIN" rev-parse --verify --quiet "$BASE^{commit}" >/dev/null || { echo 
 
 git -C "$MAIN" worktree add -b "$BRANCH" -- "$LANE_DIR" "$BASE" >&2
 
-# The tool list lives in install.sh (one list; install.ps1 mirrors it and a test keeps the two equal).
-TOOLS="$(sed -n 's/^TOOLS_WITH_DEPS=(\(.*\))$/\1/p' "$REPO/scripts/install.sh")"
-[ -n "$TOOLS" ] || { echo "TOOLS_WITH_DEPS not found in $REPO/scripts/install.sh" >&2; exit 1; }
+# The tool list lives in install.mjs (the one installer; one list): `export const TOOLS_WITH_DEPS = ['a', 'b'];`.
+TOOLS="$(sed -n "s/^export const TOOLS_WITH_DEPS = \[\(.*\)\];$/\1/p" "$REPO/scripts/install.mjs" | tr -d "',")"
+[ -n "$TOOLS" ] || { echo "TOOLS_WITH_DEPS not found in $REPO/scripts/install.mjs" >&2; exit 1; }
 for tool in $TOOLS; do
   [ -f "$LANE_DIR/home/tools/$tool/package-lock.json" ] || continue
   if ! npm ci --prefix "$LANE_DIR/home/tools/$tool" >&2; then

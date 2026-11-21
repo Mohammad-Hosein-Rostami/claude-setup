@@ -1,5 +1,5 @@
-// Tests for scripts/lane-new.sh: worktree + branch next to the main checkout, npm ci in the tools install.sh lists, refusals.
-// A throwaway repo holds copies of the script and a stub install.sh; a stub `npm` on PATH records its calls (no network).
+// Tests for scripts/lane-new.sh: worktree + branch next to the main checkout, npm ci in the tools install.mjs lists, refusals.
+// A throwaway repo holds copies of the script and a stub install.mjs; a stub `npm` on PATH records its calls (no network).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -9,15 +9,15 @@ import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/lane-new.sh', import.meta.url));
-const INSTALL = readFileSync(fileURLToPath(new URL('../scripts/install.sh', import.meta.url)), 'utf8');
+const INSTALL = readFileSync(fileURLToPath(new URL('../scripts/install.mjs', import.meta.url)), 'utf8');
 const INSTALL_PS1 = readFileSync(fileURLToPath(new URL('../scripts/install.ps1', import.meta.url)), 'utf8');
-const TOOLS_LINE = /^TOOLS_WITH_DEPS=\(([a-z-]+(?: [a-z-]+)*)\)$/m;
+const TOOLS_LINE = /^export const TOOLS_WITH_DEPS = \[('[a-z-]+'(?:, '[a-z-]+')*)\];$/m;
 const skip = process.platform === 'win32' && 'bash script';
 const GIT_IDENTITY = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 
 const git = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...GIT_IDENTITY } });
 
-/** A repo `<parent>/claude-setup` on branch main with the script, an install.sh listing two tools, and a lockfile for one. */
+/** A repo `<parent>/claude-setup` on branch main with the script, an install.mjs listing two tools, and a lockfile for one. */
 function makeRepo() {
   const parent = realpathSync(makeTempDir('lane-new-'));
   const repo = join(parent, 'claude-setup');
@@ -25,7 +25,7 @@ function makeRepo() {
   mkdirSync(join(repo, 'home', 'tools', 'with-lock'), { recursive: true });
   mkdirSync(join(repo, 'home', 'tools', 'no-lock'), { recursive: true });
   copyFileSync(SCRIPT, join(repo, 'scripts', 'lane-new.sh'));
-  writeFileSync(join(repo, 'scripts', 'install.sh'), 'TOOLS_WITH_DEPS=(with-lock no-lock)\n');
+  writeFileSync(join(repo, 'scripts', 'install.mjs'), "export const TOOLS_WITH_DEPS = ['with-lock', 'no-lock'];\n");
   writeFileSync(join(repo, 'home', 'tools', 'with-lock', 'package-lock.json'), '{}\n');
   writeFileSync(join(repo, 'home', 'tools', 'no-lock', 'package.json'), '{}\n');
   git(repo, 'init', '-q', '-b', 'main');
@@ -43,14 +43,14 @@ function makeRepo() {
 const lane = ({ repo, bin }, ...args) =>
   spawnSync('bash', [join(repo, 'scripts', 'lane-new.sh'), ...args], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ...GIT_IDENTITY } });
 
-test('install.sh keeps the one list of tools with dependencies that lane-new.sh reads', { skip }, () => {
+test('install.mjs keeps the one list of tools with dependencies that lane-new.sh reads', { skip }, () => {
   assert.match(INSTALL, TOOLS_LINE);
 });
 
-test('install.ps1 installs the same tools, in the same order, as TOOLS_WITH_DEPS in install.sh', () => {
-  const shellTools = INSTALL.match(TOOLS_LINE)[1].split(' ');
-  const powershellTools = [...INSTALL_PS1.matchAll(/^\s*Install-OneToolDeps '([^']+)'/gm)].map((match) => match[1]);
-  assert.deepEqual(powershellTools, shellTools);
+test('install.ps1 keeps no tool list of its own: it calls install.mjs, which holds TOOLS_WITH_DEPS', () => {
+  assert.match(INSTALL.match(TOOLS_LINE)[1], /'ui-check'/);
+  assert.doesNotMatch(INSTALL_PS1, /Install-OneToolDeps|TOOLS_WITH_DEPS/);
+  assert.match(INSTALL_PS1, /scripts\\install\.mjs/);
 });
 
 test('creates ../claude-setup-wt/<name> on lane/<name>, runs npm ci only where a lockfile exists, prints the path last', { skip }, () => {

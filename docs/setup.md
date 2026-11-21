@@ -15,9 +15,13 @@
     scripts/install.sh --project-workflows <repo>         # also link the workflow scripts into <repo>/.claude/workflows (personal: hidden in .git/info/exclude)
     scripts/install.sh --project-workflows <repo> --copy  # copy them instead, for the team to commit
 
-Windows (PowerShell): `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-DryRun] [-NoPlugins] [-NoTools]`.
+    scripts/install.sh --update --to r9-phase-6   # rollback: links on a worktree of that tag; plain --update goes back
+    scripts/install.sh --uninstall      # remove what the installer made, restore the backed-up files
+
+Windows (PowerShell): `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Update [-To <tag>]] [-Uninstall] [-DryRun] [-NoPlugins] [-NoTools]`.
+Both call `scripts/install.mjs`, the one installer (Node 22+, jq); `scripts/install/README.md` explains the install record, the backups and the first settings layer.
 Symlinks need Developer Mode on Windows; otherwise items are copied (a warning is printed) and do not follow later
-edits. `install.ps1` also installs `ccm.cmd` into `~/.claude/bin` (launch with `ccm <mode>`, no execution-policy change needed) and `ccm.ps1` into `~/.claude/bin/ps/` (called by the shim; kept off PATH so PowerShell cannot pick it before the shim), and adds `~/.claude/bin` to the user PATH. `install.ps1` runs on Windows PowerShell 5.1 and 7 (it has not been run on Windows yet).
+edits. `install.ps1` also installs `ccm.cmd` into `~/.claude/bin` (launch with `ccm <mode>`, no execution-policy change needed) and `ccm.ps1` into `~/.claude/bin/ps/` (called by the shim; kept off PATH so PowerShell cannot pick it before the shim), and adds `~/.claude/bin` to the user PATH. `install.ps1` runs on Windows PowerShell 5.1 and 7 (not verified on Windows yet).
 
 The installer links `home/*` (CLAUDE.md, rules, skills, agents, standards, hooks, tools, modes, project-notes, statusline.mjs, and `commands` when it has files) into
 `~/.claude` (macOS/Linux/Git Bash also put `ccm` in `~/.local/bin`; keep it on PATH), builds `~/.claude/settings.json`, installs `home/tools/ui-check` dependencies (lockfile if present,
