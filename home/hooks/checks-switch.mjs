@@ -1,6 +1,6 @@
 // UserPromptExpansion(check): the owner's `/check <categories> [for <scope>]`, `/check off [<categories>]`, `/check default` and `/check`
 // (show) turn categories on or off over their defaults (home/checks/categories.json), reset them, or print this session's switch (lib/checks-on.mjs). The event fires only when a person types the command (hooks docs, UserPromptExpansion: "when
-// a user-typed command expands into a prompt"), and the skill sets `disable-model-invocation: true`, so an agent, a workflow or a tool call
+// a user-typed command expands into a prompt"), and the skill sets `disable-model-invocation: true`, so an agent or a tool call
 // cannot turn a category on; the Bash guard asks for any other write to ~/.claude/state/checks.
 // Exports: switchText(input) -> string (the context line the skill relays).
 // Invariants: never blocks the prompt; any error is one stderr line, exit 0, and the switch stays as it was.

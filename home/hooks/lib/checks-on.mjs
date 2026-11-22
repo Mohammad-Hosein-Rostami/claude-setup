@@ -4,7 +4,7 @@
 // Exports: categories(), checksDir(), parseCheckArgs(text), readChecks(sessionId), onCategories(sessionId), isOn(category, sessionId),
 //   offCategories(sessionId), saveChecks(sessionId, choice, now), clearChecks(sessionId), sessionIdOf(input).
 // CLI: `node checks-on.mjs is-on <category>` exits 0 when it is on for $CLAUDE_CODE_SESSION_ID, else 1 (off, also on any error);
-//   `node checks-on.mjs list` prints the categories that are on, one per line (.githooks/pre-commit and the workflows' runners use these).
+//   `node checks-on.mjs list` prints the categories that are on, one per line (.githooks/pre-commit and the land-lane and join scripts use these).
 // File: ~/.claude/state/checks/<session-id>.json = { on: string[], off: string[], scope: string, by: "owner", at: ISO time }, written only by
 //   the checks-switch hook on the owner's typed `/check` (UserPromptExpansion fires only for a typed command); the Bash guard asks for any
 //   other write there.

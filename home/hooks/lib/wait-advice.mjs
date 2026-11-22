@@ -11,7 +11,7 @@
 // backtick bodies (cut out, though they run: `x=$(sleep 60; cat out)` sleeps 60 s), `bash -c` scripts, eval, aliases. A missed advice costs only a poll; this rule never decides an ask. Pure, no I/O.
 // The text's facts (Claude Code tools reference, Bash tool; changelog 2.1.285 and 2.1.288): in an unattended run (`-p`, Agent SDK, CI, cloud) a
 // background command stops after 30 min (10 min for a text `-p` prompt) unless `timeout` is passed, and 7200000 ms is the most; an interactive
-// session has no limit. No page says which of the two a workflow agent is, so the advice is "set timeout" for every background command.
+// session has no limit. No page says which of the two a background subagent is, so the advice is "set timeout" for every background command.
 // Same page: a background command of a foreground subagent stops when that agent's run ends, while the main session's or a background
 // subagent's keeps running (only those are told of its exit). Changelog: a background subagent's foreground command is moved to the
 // background after 3 min (seen at 180 s with `timeout` 600000, Claude Code 2.1.329). No agent is told which it is, so the text names one
