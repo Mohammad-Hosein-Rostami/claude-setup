@@ -6,19 +6,24 @@
 // usage credits are confirmed off (WARN until the owner says so), then one tiny login call on the account a hook job
 // would spend (home/tools/recall/lib/claude-call.mjs: CLAUDE_ACCOUNT, else the default): FAIL when it is refused, WARN
 // when no account is found; a locked Keychain is a WARN, with a WARN for Claude Code's own ~/.claude/.credentials.json.
+// The Keychain is asked once (`security show-keychain-info`: no item and no token is read), before the account checks, so a
+// locked one is named even when no account is named (CLAUDE_ACCOUNT unset, no default); the login call is then skipped.
 // Usage: node scripts/doctor-accounts.mjs <claude-dir> <repo> <project>
 // Output: one line per finding, `ok    <text>`, `WARN  <text>` or `FAIL  <text>`; doctor.sh prints them and sets its exit.
-// Exports: main, START_UP_MARK, shellStartUpFile (the start-up rule install.sh follows; for the doctor tests).
+// Exports: main (argv, env, {store, run}: a test gives a store and a `security` runner of its own), START_UP_MARK, shellStartUpFile (the start-up rule install.sh follows; for the doctor tests).
 // Exit 0 when the checks ran (findings are in the lines), 1 when this script itself failed.
 // Invariants: a token is never printed: a finding names the file and line numbers only, and every error text is cut free
 // of token-shaped text. The login call gives the token to its child in the child's environment only (callHaiku), never
 // doctor's own shell token. Reads only regular files up to a size cap (no FIFO is opened); writes nothing but the usage
 // row of the one login call. Every store and registry read goes through home/tools/account/lib.
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { userInfo } from 'node:os';
+import { basename, join, resolve } from 'node:path';
 import { accountForCall, listAccounts } from '../home/tools/account/lib/accounts.mjs';
 import { CHECK_REVOKED, CHECK_VALID, checkToken } from '../home/tools/account/lib/check.mjs';
+import { runSecurity } from '../home/tools/account/lib/keychain-store.mjs';
 import { looksLikeToken } from '../home/tools/account/lib/names.mjs';
+import { openStore } from '../home/tools/account/lib/store.mjs';
 
 /** The comment that ends the start-up line install.sh and install.ps1 write; the line is found by it. */
 export const START_UP_MARK = '# claude-setup: claude-as';
@@ -26,6 +31,8 @@ const YEAR_END_WARN_DAYS = 30;
 const READ_MAX_BYTES = 64 * 1024 * 1024; // a shell history file larger than this is not read (one line says so)
 const LINES_SHOWN = 5; // line numbers named per file; the rest are counted
 const LOCKED_TEXT = 'the Keychain is locked'; // the store's message for security exit 36 (keychain-store.mjs)
+const SECURITY_EXIT_LOCKED = 36; // keychain-store.mjs EXIT_LOCKED: "User interaction is not allowed" (an ssh session)
+const KEYCHAIN_PROBE = 'show-keychain-info'; // the default keychain's settings: needs it unlocked, reads no item
 const FORCED_MODEL = 'CLAUDE_CODE_SUBAGENT_MODEL_FORCE';
 const FABLE = /fable/i;
 const TOKEN_SHAPED = /sk-ant-[A-Za-z0-9_-]*/g;
@@ -173,25 +180,47 @@ function checkOneAccount({ name, daysLeft, plan, creditsOff, checked }) {
   else say('WARN', `account ${name}: usage credits: not confirmed off (turn them off in claude.ai Settings > Usage, then claude-account credits-off ${name})`);
 }
 
-function checkStoredAccounts(env) {
+function checkStoredAccounts(env, store) {
   // No CLAUDE_ACCOUNT: the list then reads no token (the store is only read for "used in this terminal").
   const withoutName = { ...env };
   delete withoutName.CLAUDE_ACCOUNT;
-  const accounts = listAccounts({ env: withoutName });
+  const accounts = listAccounts({ env: withoutName, store });
   if (accounts.length === 0) say('WARN', 'no stored account: hook jobs make no model call (add one in a normal terminal: claude-as <name>)');
   for (const account of accounts) checkOneAccount(account);
 }
 
 function lockedKeychain(claudeDir) {
-  say('WARN', 'the Keychain is locked (an ssh session?): no stored account can be read; unlock it or run from a local terminal');
+  say('WARN', 'the Keychain is locked (an ssh session?): no stored token can be read; unlock it or run from a local terminal');
   const credentials = join(claudeDir, '.credentials.json');
   if (statSync(credentials, { throwIfNoEntry: false })) say('WARN', `${credentials} exists: Claude Code wrote a login there because the Keychain refused it`);
 }
 
-async function checkLogin(env, claudeDir) {
+/** True for this user's real HOME outside a test run: the only place the login Keychain may be asked (as the store's own S7 rule). */
+function isRealUserOutsideTests(env) {
+  if (env.NODE_TEST_CONTEXT || process.env.NODE_TEST_CONTEXT) return false;
+  return resolve(env.HOME ?? '') === resolve(userInfo().homedir);
+}
+
+/**
+ * One Keychain call, whatever the accounts: names a locked Keychain (or one that does not answer) once.
+ * @param {{kind: string}} store the account store; only the `keychain` kind is asked.
+ * @param {(line: string) => {status: number | null}} run the `security` runner.
+ * @param {string} claudeDir doctor's ~/.claude folder (for the `.credentials.json` note).
+ * @returns {boolean} true when the Keychain cannot be read now, so the login check (a second call) is skipped.
+ */
+function checkKeychain(store, run, claudeDir) {
+  if (store.kind !== 'keychain') return false;
+  const { status } = run(KEYCHAIN_PROBE);
+  if (status === SECURITY_EXIT_LOCKED) { lockedKeychain(claudeDir); return true; }
+  if (status === null) { say('WARN', 'the Keychain did not answer in time: no stored account can be read; try from a local terminal'); return true; }
+  if (status !== 0) say('WARN', `the Keychain check failed (security exit ${status}); the login check below tries the account itself`);
+  return false;
+}
+
+async function checkLogin(env, claudeDir, store) {
   let account;
   try {
-    account = accountForCall(env);
+    account = accountForCall(env, store);
   } catch (error) {
     if (String(error?.message).includes(LOCKED_TEXT)) return lockedKeychain(claudeDir);
     return say('FAIL', `login check: the account store could not be read: ${error?.message ?? error}`);
@@ -216,19 +245,27 @@ async function guarded(label, check) {
  * Runs every account check and prints the findings.
  * @param {string[]} argv `<claude-dir> <repo> <project>`.
  * @param {object} env the environment (HOME, SHELL, ZDOTDIR, HISTFILE, CLAUDE_ACCOUNT, the account tool's variables).
+ * @param {{store?: object, run?: Function}} options a token store and a `security` runner in place of this machine's (tests).
  * @returns {Promise<number>} 0 when the checks ran, 2 for a usage error.
  */
-export async function main(argv, env = process.env) {
+export async function main(argv, env = process.env, { store: given, run = runSecurity } = {}) {
   const [claudeDir, repo, project] = argv;
   if (!claudeDir || !repo || !project) { console.error('usage: doctor-accounts.mjs <claude-dir> <repo> <project>'); return 2; }
+  findings.length = 0; // main may run more than once in a process (tests)
   let settings = [];
   await guarded('settings read', () => { settings = readSettings(settingsFiles(claudeDir, repo, project)); });
   await guarded('literal token check', () => checkLiteralTokens(env, settings));
   await guarded('shell history check', () => checkHistory(env));
   await guarded('start-up line check', () => checkStartUpLine(env, process.platform));
   await guarded('paid extras check', () => checkPaidExtras(env, settings));
-  await guarded('stored accounts check', () => checkStoredAccounts(env));
-  await guarded('login check', () => checkLogin(env, claudeDir));
+  let store = given;
+  let keychainBlocked = false;
+  await guarded('account store', () => { store ??= openStore(env); });
+  // A given store is a test's own; this machine's Keychain is asked only for the real user's HOME, never in a test run or a temp HOME.
+  const mayAsk = given !== undefined || isRealUserOutsideTests(env);
+  await guarded('Keychain check', () => { if (store && mayAsk) keychainBlocked = checkKeychain(store, run, claudeDir); });
+  await guarded('stored accounts check', () => checkStoredAccounts(env, store));
+  if (!keychainBlocked) await guarded('login check', () => checkLogin(env, claudeDir, store));
   process.stdout.write(findings.map((line) => `${line}\n`).join(''));
   return 0;
 }
