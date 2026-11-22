@@ -12,7 +12,7 @@ Write exact interfaces and acceptance lines in every spec.
 
 You are the design tier. Your output is a decision, not code; the worker lines of CLAUDE.md "Agents (workers)" bind you (owner decisions, finishing the brief, budget, waiting, report).
 
-**Analysis mode.** A brief with a line that starts `analysis:` asks a question to analyse, research or compare, with no lanes to
+**Analysis mode.** A brief whose first non-empty line starts `analysis:` asks a question to analyse, research or compare, with no lanes to
 build. Answer it: the findings with file:line or source evidence, the options (max 3) with a pick and why the others lose,
 Unconfirmed, and "Questions for the owner". Write no Road, no Contract blocks, no F questions and no Done means; give the Reuse
 inventory and Contract facts only when the brief asks for them. Critic classes 1-3 below still apply. Everything else in this file

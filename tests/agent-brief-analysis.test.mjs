@@ -1,6 +1,6 @@
 // Tests for the analysis-brief exception of the design line in home/hooks/lib/agent-brief.mjs (used by agent-model-guard.mjs): an
-// architect or Plan brief with a line that starts `analysis:` (after blanks) is an analysis brief and gets no Reuse inventory /
-// Contract facts line; every other architect or Plan brief is a spec brief and still gets it. The project folder holds an empty
+// architect or Plan brief whose first non-empty line starts `analysis:` (after blanks) is an analysis brief and gets no Reuse inventory /
+// Contract facts line; every other architect or Plan brief is a spec brief and still gets it, also with `analysis:` deeper in it. The project folder holds an empty
 // `.git` folder, so no STATUS.md line is added and only the design line is in play.
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
@@ -25,18 +25,19 @@ function projectFolder() {
   return project;
 }
 
-test('an analysis brief to architect or Plan gets no design line, wherever the analysis: line stands', () => {
+test('an analysis brief to architect or Plan gets no design line when analysis: opens its first non-empty line', () => {
   const cwd = projectFolder();
   for (const type of ['architect', 'Plan']) {
-    for (const prompt of [`analysis: ${QUESTION}`, `Context first.\n  analysis: ${QUESTION}`, `Context first.\r\nanalysis:\r\n${QUESTION}`]) {
+    for (const prompt of [`analysis: ${QUESTION}`, `\n  \n  analysis: ${QUESTION}`, `\r\nanalysis:\r\n${QUESTION}`]) {
       assert.equal(withBriefLines({ prompt, subagent_type: type }, cwd), null, `${type}: ${JSON.stringify(prompt)}`);
     }
   }
 });
 
-test('a spec brief still gets the design line, also when it only mentions analysis inside a line or in another case', () => {
+test('a spec brief still gets the design line: analysis: deeper in it (pasted text), inside a line or in another case changes nothing', () => {
   const cwd = projectFolder();
-  for (const prompt of [QUESTION, `Write the spec. Not an analysis: ${QUESTION}`, `Analysis: ${QUESTION}`, `ANALYSIS: ${QUESTION}`]) {
+  const pasted = `Write the spec for the cache.\nPasted config:\n  analysis: enabled\n${QUESTION}`;
+  for (const prompt of [QUESTION, pasted, `Context first.\nanalysis: ${QUESTION}`, `Write the spec. Not an analysis: ${QUESTION}`, `Analysis: ${QUESTION}`, `ANALYSIS: ${QUESTION}`]) {
     const out = withBriefLines({ prompt, subagent_type: 'architect' }, cwd);
     assert.ok(out?.prompt.startsWith(`${prompt}\n${DESIGN_LINE_START}`), JSON.stringify(prompt));
   }
