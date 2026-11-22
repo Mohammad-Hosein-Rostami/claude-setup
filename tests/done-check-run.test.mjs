@@ -244,3 +244,26 @@ test('sleeps', async () => {
     rmSync(pidFile, { force: true });
   }
 });
+
+// ---- hostile tools: huge output, a crash mid-write ----
+
+test('a tool that prints 50 MB is read capped: tsc output is not run (error), a vitest result file is still read', async (t) => {
+  const repo = project(t, {});
+  const flood = "const line = 'x'.repeat(1023) + '\\n'; for (let i = 0; i < 50 * 1024; i += 1) process.stdout.write(line);";
+  const floodingTsc = { kind: 'types', argv: [process.execPath, '-e', flood], cwd: repo.dir, shell: false, label: 'tsc' };
+  const outputFile = outputPath(repo, 'flood.json');
+  const writeAndFlood = `require('node:fs').writeFileSync(${JSON.stringify(outputFile)}, ${JSON.stringify(vitestJson(repo, [{ title: 'a', status: 'passed' }]))}); ${flood}`;
+  const floodingVitest = { kind: 'tests', argv: [process.execPath, '-e', writeAndFlood, 'vitest'], cwd: repo.dir, shell: false, label: 'vitest', outputFile };
+  const results = await run(repo, [floodingTsc, floodingVitest]);
+  assert.deepEqual([results[0].result, results[0].why], ['not-run', 'error']);
+  assert.deepEqual([results[1].result, results[1].total], ['ok', 1]);
+});
+
+test('a tool killed by a signal while it writes its result file leaves half a file: not run (error), never ok', async (t) => {
+  const repo = project(t, {});
+  const outputFile = outputPath(repo, 'half.json');
+  const crash = `require('node:fs').writeFileSync(${JSON.stringify(outputFile)}, '{"numTotalTests":3,"testResults":[{"name":'); process.kill(process.pid, 'SIGKILL');`;
+  const crashing = { kind: 'tests', argv: [process.execPath, '-e', crash, 'vitest'], cwd: repo.dir, shell: false, label: 'vitest', outputFile };
+  const result = resultOf(await run(repo, [crashing]), 'tests');
+  assert.deepEqual([result.result, result.why], ['not-run', 'error']);
+});
