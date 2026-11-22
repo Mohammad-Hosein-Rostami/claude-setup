@@ -17,8 +17,11 @@ step landed. The STATUS.md rows hold the state; the tool is `node ~/.claude/tool
    writer starts; never mark it done by hand before it has landed.
 
 ## Walk
-1. `road.mjs next <road> --budget 5` names the step and its lanes (at most 5 agents at once; the hook refuses a 6th).
-2. Build batch: one writer per lane, each brief from the lane's contract.
+1. `road.mjs next <road> --budget <free slots>` names the step, its `lanes` and its `early` lanes (at most 5 agents at once; the hook
+   refuses a 6th). Fill to 5 (owner FR2): each launch round starts `lanes`, then `early`; fewer agents only when `early` is empty
+   (`waiting` says why each later lane waits). A step's gate still checks only its own lanes.
+2. Build batch: one writer per lane (an early lane too: `status.mjs start` its row, a worktree on its branch at the base tip), each
+   brief from the lane's contract.
 3. `road.mjs join` per lane (judges the lane's scope; exit 3 gives its findings back to the writer).
 4. `land-lane --close-row <road>.s<N>.<name>` per lane, one at a time: it writes the lane row's `landed <to> on <base> from <from>`
    evidence (old-form roads, with `-land` rows from before one row per lane: their close row).
@@ -38,8 +41,9 @@ only then. After the gate: one update to the owner with the `Finish:` block of `
 - A lane that did not land in its step is carried: `next` lists carried lanes first in the next run of the same step. A
   UI lane is never carried past its visual-qa PASS.
 - A lane that fails `wrong base` ran off the base checkout: keep the session on the base checkout, run again.
-- A step changes only before it starts (the architect edits the road, then `check` again).
+- A step changes only before it starts, and a step one of whose lanes started early has started (the architect edits the road, then
+  `check` again).
 
 ## New session
 Read STATUS.md `## Standing rules`, then `road.mjs next <road> --budget <n>`: landed lanes are skipped, the open step
-and its carried lanes come back.
+and its carried lanes come back, and started early lanes are listed first in `early`.

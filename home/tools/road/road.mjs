@@ -20,6 +20,9 @@
 //   withSessionLock; status.mjs takes its own lock inside it), so a second run at the same time finds the rows and adds 0 (exit 0), and
 //   two roads started at once cannot both open; a lock held past its 1 s wait is exit 1 `busy`. Every subprocess runs without a shell,
 //   with its own timeout (road-gate.mjs).
+// Next: the current step's lanes (stepState) plus `early`, the later-step lanes that can start now to fill up to 5 agents (owner FR2,
+//   lib/road-state.mjs earlyLanes), and `waiting` with the reason for each other later lane; `writers` = min(lanes + early, budget, 5).
+//   It writes nothing and takes no lock.
 //   The main guard compares real paths, so the CLI works through the ~/.claude link.
 import { spawnSync } from 'node:child_process';
 import { realpathSync, writeFileSync } from 'node:fs';
@@ -33,7 +36,7 @@ import { runStatus } from '../status/status.mjs';
 import { MAX_ROW_ID_CHARS, LANE_NAME, readRoad, roadRows, rowIds, uiMatrixProblems } from './lib/road-file.mjs';
 import { GIT_TIMEOUT_MS, gateStep } from './lib/road-gate.mjs';
 import { joinLane } from './lib/road-join.mjs';
-import { isOldFormRoad, isUiLane, landedLine, roadStartTip, stepState } from './lib/road-state.mjs';
+import { earlyLanes, isOldFormRoad, isUiLane, landedLine, roadStartTip, stepState } from './lib/road-state.mjs';
 
 const USAGE = 'usage: road.mjs check <road.json> | rows <road.json> [--base <sha>] [--fix <N> <name>] | next <road.json> --budget <1-5> | gate <road.json> [--step <N>] | join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--json]';
 const TOOLS = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -192,9 +195,11 @@ function next(road, ctx, rest, run, isUiPath) {
   if (items.length === 0) return { code: 1, out: `no rows in ${ctx.statusFile}: run rows first` };
   const state = stepState(road, items);
   const step = road.steps[state.step - 1];
+  // Only the current step's lanes decide the baseline: an early lane is never a UI lane (lib/road-state.mjs earlyLanes).
   const baseline = step.lanes.some((lane) => isUiLane(lane, isUiPath)) ? 'yes' : 'no';
+  const { early, waiting } = earlyLanes(road, items, state, { budget, isUiPath });
   const result = { road: road.road, step: state.step, of: state.of, state: state.state, form: state.form, held: state.held, carried: state.carried,
-    lanes: state.lanes.map(({ lane }) => lane.name), writers: Math.min(state.lanes.length, budget, MAX_BUDGET), baseline };
+    lanes: state.lanes.map(({ lane }) => lane.name), early, waiting, writers: Math.min(state.lanes.length + early.length, budget, MAX_BUDGET), baseline };
   if (state.state === 'build' && baseline === 'yes') {
     const label = `${road.road}.s${state.step}`;
     if (run('ui-proof', ['has', '--step', label, '--repo', road.repo], GIT_TIMEOUT_MS).exit !== 0) return { code: 1, out: `${JSON.stringify(result)}\nbaseline needed: ${label}` };
