@@ -77,16 +77,6 @@
             "onFailure": "block"
           }
         ]
-      },
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/bash-writes.mjs\"",
-            "timeout": 10
-          }
-        ]
       }
     ],
     "PermissionRequest": [
@@ -201,29 +191,7 @@
         ]
       }
     ],
-    "UserPromptExpansion": [
-      {
-        "matcher": "check",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/checks-switch.mjs\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
-      {
-        "matcher": "Agent|Task",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/agent-memory-only.mjs\"",
-            "timeout": 5
-          }
-        ]
-      },
       {
         "matcher": "AskUserQuestion",
         "hooks": [
@@ -277,11 +245,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/bash-writes.mjs\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/ui-proof-gate.mjs\"",
             "timeout": 15
           },
@@ -301,16 +264,6 @@
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/question-answered.mjs\"",
             "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/bash-writes.mjs\"",
-            "timeout": 10
           }
         ]
       },
@@ -338,16 +291,6 @@
     "Stop": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/typecheck-gate.mjs\"",
-            "timeout": 150
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/smart-check.mjs\"",
-            "timeout": 600
-          },
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/commit-gate.mjs\"",
@@ -400,16 +343,6 @@
     "SubagentStop": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/typecheck-gate.mjs\"",
-            "timeout": 150
-          },
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/smart-check.mjs\"",
-            "timeout": 600
-          },
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/commit-gate.mjs\"",
