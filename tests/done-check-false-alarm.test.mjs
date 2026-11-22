@@ -11,10 +11,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeDoneCheckRepo, nodeTestSource } from './done-check-fixture.mjs';
+import { git } from './git-tidy-helpers.mjs';
 
 const CLI = fileURLToPath(new URL('../home/tools/done-check/done-check.mjs', import.meta.url));
 const lib = (name) => import(new URL(`../home/tools/done-check/lib/${name}`, import.meta.url).href);
@@ -32,9 +33,9 @@ const newRepo = (t, options = {}) => {
   return repo;
 };
 
-/** `done-check run --where manual --json` on the change against the repo's base: { status, verdict }. */
-function check(repo) {
-  const result = repo.run(CLI, ['run', '--worktree', repo.dir, '--base', repo.baseSha, '--where', 'manual', '--json']);
+/** `done-check run --json` on the change in `folder` (default the repo) against the repo's base: { status, verdict }. */
+function check(repo, folder = repo.dir, where = 'manual') {
+  const result = repo.run(CLI, ['run', '--worktree', folder, '--base', repo.baseSha, '--where', where, '--json']);
   return { status: result.status, verdict: JSON.parse(result.stdout) };
 }
 
@@ -77,6 +78,34 @@ test('F2: a test file deleted with only a fixture it imports still blocks', asyn
   const { weakenedTests } = await lib('test-diff.mjs');
   const ids = weakenedTests(scopeOf(repo, ['tests/uses.test.mjs', 'tests/helper.mjs'])).map((found) => found.id);
   assert.ok(ids.includes('tests/uses.test.mjs|deleted'), ids.join(', ')); // the helper sits in tests/, so it counts as a test file too
+});
+
+test('R2: a test deleted while its module is renamed with git mv still blocks: the code lives on', async (t) => {
+  const repo = newRepo(t);
+  git(repo.dir, 'mv', 'src/sum.mjs', 'src/add.mjs');
+  repo.remove('tests/sum.test.mjs');
+  const { weakenedTests } = await lib('test-diff.mjs');
+  assert.deepEqual(weakenedTests(scopeOf(repo, ['tests/sum.test.mjs', 'src/sum.mjs', 'src/add.mjs'])).map((found) => found.id), ['tests/sum.test.mjs|deleted']);
+});
+
+test('R2: a test deleted while its module moves to a new untracked path still blocks', async (t) => {
+  const repo = newRepo(t);
+  repo.remove('src/sum.mjs');
+  repo.write('src/add.mjs', SUM_SOURCES['src/sum.mjs']);
+  repo.remove('tests/sum.test.mjs');
+  const { weakenedTests } = await lib('test-diff.mjs');
+  assert.deepEqual(weakenedTests(scopeOf(repo, ['tests/sum.test.mjs', 'src/sum.mjs', 'src/add.mjs'])).map((found) => found.id), ['tests/sum.test.mjs|deleted']);
+});
+
+test('R2: a test deleted with only one of the modules it imports still blocks; with all of them it is removed with its code', async (t) => {
+  const repo = newRepo(t, { files: { ...SUM_SOURCES, 'src/mul.mjs': 'export const mul = (a, b) => a * b;\n', 'tests/both.test.mjs': nodeTestSource({ imports: ['../src/sum.mjs', '../src/mul.mjs'] }) } });
+  repo.remove('tests/both.test.mjs');
+  repo.remove('src/sum.mjs');
+  const { weakenedTests } = await lib('test-diff.mjs');
+  const deleted = (files) => weakenedTests(scopeOf(repo, files)).map((found) => found.id);
+  assert.deepEqual(deleted(['tests/both.test.mjs', 'src/sum.mjs']), ['tests/both.test.mjs|deleted']);
+  repo.remove('src/mul.mjs');
+  assert.deepEqual(deleted(['tests/both.test.mjs', 'src/sum.mjs', 'src/mul.mjs']), []);
 });
 
 test('a run labelled false-alarm does not block again on the same failure, and the line says it was labelled', (t) => {
@@ -131,18 +160,70 @@ test('a stop whose only failure is labelled passes as ok, so the hook ends the b
   assert.equal(verdict.verdict, 'ok', verdict.line);
 });
 
-const runRow = (overrides) => ({ v: 1, id: 'r1', at: new Date().toISOString(), where: 'stop', session: 's', agent: 'a', repo: 'repo-1', base: 'b'.repeat(40), key: 'k1', files: 1, checks: { [WEAKENED]: { result: 'fail', new: 1, old: 0, ms: 1, alarms: ['0123456789abcdef'] } }, verdict: 'block', risk: [], ms: 1, ...overrides });
+const LANE_A = 'aaaaaaaaaaaaaaaa';
+const runRow = (overrides) => ({ v: 1, id: 'r1', at: new Date().toISOString(), where: 'stop', session: 's', agent: 'a', repo: 'repo-1', base: 'b'.repeat(40), key: 'k1', files: 1, checks: { [WEAKENED]: { result: 'fail', new: 1, old: 0, ms: 1, alarms: ['0123456789abcdef'] } }, verdict: 'block', risk: [], ms: 1, lane: LANE_A, ...overrides });
 const labelRow = (overrides) => ({ v: 1, label: 'false-alarm', run: 'r1', check: WEAKENED, at: new Date().toISOString(), note: '', ...overrides });
 
-test('F1: a label applies only to its own repo, base and check kind, and only a false-alarm label lets a failure through', async () => {
+test('F1: a label applies only to its own repo, lane and check kind, and only a false-alarm label lets a failure through', async () => {
   const { labelledAlarmIds } = await lib('false-alarms.mjs');
-  const where = { repo: 'repo-1', base: 'b'.repeat(40) };
+  const where = { repo: 'repo-1', lane: LANE_A };
   assert.deepEqual([...labelledAlarmIds({ runs: [runRow({})], labels: [labelRow({})] }, where).get(WEAKENED)], ['0123456789abcdef']);
   assert.equal(labelledAlarmIds({ runs: [runRow({ repo: 'repo-2' })], labels: [labelRow({})] }, where).size, 0);
-  assert.equal(labelledAlarmIds({ runs: [runRow({ base: 'c'.repeat(40) })], labels: [labelRow({})] }, where).size, 0);
+  assert.equal(labelledAlarmIds({ runs: [runRow({ lane: 'bbbbbbbbbbbbbbbb' })], labels: [labelRow({})] }, where).size, 0);
+  assert.equal(labelledAlarmIds({ runs: [runRow({ lane: undefined })], labels: [labelRow({})] }, where).size, 0); // an old row has no lane
   assert.equal(labelledAlarmIds({ runs: [runRow({})], labels: [labelRow({ check: 'tests' })] }, where).get(WEAKENED), undefined);
   assert.equal(labelledAlarmIds({ runs: [runRow({})], labels: [labelRow({ label: 'missed' })] }, where).size, 0);
-  assert.equal(labelledAlarmIds({ runs: [runRow({ base: null })], labels: [labelRow({})] }, { repo: 'repo-1', base: null }).size, 0);
+  assert.equal(labelledAlarmIds({ runs: [runRow({})], labels: [labelRow({})] }, { repo: 'repo-1', lane: null }).size, 0);
+});
+
+/** Two lane worktrees (branches a and b) of the fixture repo at its base, beside it in the fixture's temp folder (removed with it). */
+function addLanes(repo) {
+  const lanes = { a: join(dirname(repo.dir), 'lane-a'), b: join(dirname(repo.dir), 'lane-b') };
+  for (const [branch, folder] of Object.entries(lanes)) git(repo.dir, 'worktree', 'add', '-q', '-b', branch, folder, repo.baseSha);
+  return lanes;
+}
+
+test('R1: a false-alarm label in one lane never lets the same failure through in another lane of the same repo and base', (t) => {
+  const repo = newRepo(t);
+  const lanes = addLanes(repo);
+  rmSync(join(lanes.a, 'tests/sum.test.mjs'));
+  const first = check(repo, lanes.a);
+  assert.equal(first.status, 1);
+  label(repo, first.verdict.row.id, 'false-alarm');
+  assert.equal(check(repo, lanes.a).status, 0, 'the labelled lane itself passes');
+  rmSync(join(lanes.b, 'tests/sum.test.mjs'));
+  const other = check(repo, lanes.b);
+  assert.equal(other.status, 1, other.verdict.line);
+  assert.equal(other.verdict.row.checks[WEAKENED].labelled, undefined);
+});
+
+test('R1: the land of the labelled lane from its own worktree passes; a land from a temporary detached folder still blocks', (t) => {
+  const repo = newRepo(t);
+  const lanes = addLanes(repo);
+  rmSync(join(lanes.a, 'tests/sum.test.mjs'));
+  label(repo, check(repo, lanes.a).verdict.row.id, 'false-alarm');
+  git(lanes.a, '-c', 'user.name=p', '-c', 'user.email=p@example.invalid', 'commit', '-q', '-am', 'drop the sum test');
+  assert.equal(check(repo, lanes.a, 'land').status, 0);
+  const detached = join(dirname(repo.dir), 'land-tmp');
+  git(repo.dir, 'worktree', 'add', '-q', '--detach', detached, 'a');
+  assert.equal(check(repo, detached, 'land').status, 1);
+});
+
+test('R3: a ledger that cannot be read never passes a change: the checks run without labels and the line says so', (t) => {
+  const repo = newRepo(t);
+  const ledger = join(repo.home, '.claude', 'state', 'done-check', 'ledger.jsonl');
+  writeRows(repo, []);
+  chmodSync(ledger, 0o000); // removing it with the fixture needs only the folder's write right
+  repo.remove('tests/sum.test.mjs');
+  const { status, verdict } = check(repo);
+  assert.equal(status, 1, verdict.line);
+  let unreadable = false; // an owner who is root, or Windows, can still read a mode-000 file: then the ledger reads as usual
+  try {
+    readFileSync(ledger);
+  } catch {
+    unreadable = true;
+  }
+  assert.equal(/ledger unreadable/.test(verdict.line), unreadable, verdict.line);
 });
 
 test('F1: a label row cannot carry alarm ids, and a run row never stores a file name as one', async (t) => {

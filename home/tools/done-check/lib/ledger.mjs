@@ -8,7 +8,7 @@
 //   fields of the design's two row shapes, so a field a caller adds by mistake is not stored. A run row's `model` is a model id of
 //   MODEL_PATTERN, OTHER_MODEL for any other text (so a secret given as the model is never stored) or null; its `effort` is one short
 //   token (EFFORT_PATTERN) or null; rows written before they existed lack them and read as UNKNOWN. A check entry's `alarms` are
-//   hashed failure ids (lib/false-alarms.mjs storedAlarms), `labelled` a count; old rows lack both and read as before.
+//   hashed failure ids (lib/false-alarms.mjs storedAlarms), `labelled` a count, a row's `lane` a hashed id (storedLane); old rows lack them and read as before.
 // - One row is one write (O_APPEND) of at most MAX_ROW_BYTES, so two sessions appending at once never interleave a line.
 // - The writer and the reader share LEDGER_MAX_BYTES (contract.mjs): at the cap the writer refuses (returns false, the file is not
 //   touched) and `ledgerUsage` says so; a file over the cap is read as empty rather than parsed whole. Both go through lib/plain-file.mjs,
@@ -22,7 +22,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { appendPlainFile, NOT_PLAIN_FILE, readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 import { CHECK_KINDS, EFFORT_PATTERN, LEDGER_MAX_BYTES, MODEL_PATTERN, OTHER_MODEL } from './contract.mjs';
-import { latestLabels, storedAlarms } from './false-alarms.mjs';
+import { latestLabels, storedAlarms, storedLane } from './false-alarms.mjs';
 
 /** Most bytes one row may take, line feed included: a row is written with one call, which the OS never splits between two writers. */
 export const MAX_ROW_BYTES = 16 * 1024;
@@ -80,7 +80,7 @@ function cleanRunRow(row) {
   }
   const { v, id, at, where, session, agent, repo, base, key, files, verdict, risk, ms } = row;
   const routing = { ...modelField(row), ...effortField(row) };
-  return { v, id, at, where, session, agent, repo, base, key, files, checks, verdict, risk: [...risk], ms, ...routing };
+  return { v, id, at, where, session, agent, repo, base, key, files, checks, verdict, risk: [...risk], ms, ...routing, ...storedLane(row) };
 }
 
 /** A note cut to MAX_NOTE_CHARS, without a lone half of a surrogate pair at the cut. */

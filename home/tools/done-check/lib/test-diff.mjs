@@ -12,8 +12,8 @@
 //   - a package.json whose `test`, `typecheck`, `type-check` or `lint` script changed or was removed;
 //   - an eslint, vitest or jest config that changed or was deleted (a change of spaces alone is not a change);
 //   - a tsconfig strictness flag that is `false` now and was `true` at the base.
-// Not counted: a test file deleted with its code (it imported, at the base, a non-test module this change deletes too: "removed with
-//   its code"; a test deleted alone or with only a fixture still counts), a new file, a stronger change, a removed skip, a
+// Not counted: a test file deleted with its code (every non-test module it imported at the base is deleted too, not renamed or
+//   moved: "removed with its code"; a test deleted alone, with only a fixture, or with one of its modules kept still counts), a new file, a stronger change, a removed skip, a
 //   suppression that was already there (counts are compared, not lines),
 //   a change in another script, a dependency or a formatting change. A changed `strict` nested in an `extends` needs a deep parse and is not seen.
 // Invariants: no git or no 40-hex base gives []. A file is read from the base with `git cat-file blob` (hardened git) and from the
@@ -32,6 +32,7 @@ const KIND = 'tests-weakened';
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_TEXT_CHARS = 200;
 const COMMIT_HASH = /^[0-9a-f]{40}$/;
+const GIT_TIMEOUT_MS = 10_000; // the rename-detecting diff; a git that takes longer counts nothing as gone (a deleted test keeps blocking)
 const GUARDED_SCRIPTS = ['test', 'typecheck', 'type-check', 'lint'];
 const STRICT_FLAGS = ['strict', 'noImplicitAny', 'strictNullChecks', 'strictFunctionTypes', 'strictBindCallApply', 'strictPropertyInitialization', 'noImplicitThis', 'useUnknownInCatchVariables', 'alwaysStrict'];
 
@@ -161,26 +162,47 @@ function importTargets(file, specifier) {
 }
 
 /**
- * True when the deleted test file imported (at the base) a module that is not itself a test file and that this change deletes too:
- * the test went with the code it tested. A test deleted alone, or with only a fixture, is still a weakening.
+ * True when every module the deleted test file imported from the repo's code (a relative import at the base whose target is not
+ * itself a test file or a fixture in a test folder) is gone with it: the test went with the code it tested. A test deleted alone,
+ * with only a fixture, or while one of its modules still exists (kept, renamed or moved) is still a weakening.
  * @param {string} file the deleted test file
  * @param {string} before its text at the base
- * @param {Set<string>} deleted the files this change deletes
+ * @param {Set<string>} gone the files this change deletes outright (see goneFiles)
  */
-function removedWithItsCode(file, before, deleted) {
-  for (const match of before.matchAll(RELATIVE_IMPORTS)) {
-    if (importTargets(file, match[2]).some((target) => deleted.has(target) && !TEST_FILE.test(target))) return true;
-  }
-  return false;
+function removedWithItsCode(file, before, gone) {
+  const modules = [...before.matchAll(RELATIVE_IMPORTS)].map((match) => importTargets(file, match[2]))
+    .filter((targets) => targets.length > 0 && !TEST_FILE.test(targets[0]));
+  return modules.length > 0 && modules.every((targets) => targets.some((target) => gone.has(target)));
 }
 
-/** What one changed file weakens, given its text at the base (null when new) and now (null when deleted), and the files deleted with it. */
-function weakenedFile(file, before, after, deleted) {
+/**
+ * The files this change deletes outright: gone from the worktree, reported deleted (not renamed) by git's rename detection (`-M`), and
+ * whose base text is not the text of a new file of the change (a move git cannot see, to an untracked path). When git cannot answer,
+ * nothing counts as gone, so a deleted test keeps blocking.
+ * @param {{ top: string, base: string }} scope
+ * @param {{ file: string, before: string|null, after: string|null }[]} texts every scanned file at the base and now
+ * @returns {Set<string>}
+ */
+function goneFiles(scope, texts) {
+  const result = runGit(scope.top, ['diff', '--name-status', '-z', '-M', '--no-color', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', scope.base, '--'], GIT_TIMEOUT_MS);
+  if (result.status !== 0 || result.error) return new Set();
+  const fields = result.stdout.split('\0'); // `<status>\0<path>\0`, a rename or copy `R100\0<old>\0<new>\0`
+  const deletedByGit = new Set();
+  for (let index = 0; index < fields.length - 1; index += /^[RC]/.test(fields[index]) ? 3 : 2) {
+    if (fields[index] === 'D') deletedByGit.add(fields[index + 1]);
+  }
+  const newTexts = new Set(texts.filter(({ before, after }) => before === null && typeof after === 'string' && after !== 'unreadable').map(({ after }) => after));
+  return new Set(texts.filter(({ file, before, after }) => after === null && typeof before === 'string' && before !== 'unreadable'
+    && deletedByGit.has(file) && !newTexts.has(before)).map(({ file }) => file));
+}
+
+/** What one changed file weakens, given its text at the base (null when new) and now (null when deleted), and the files deleted outright. */
+function weakenedFile(file, before, after, gone) {
   const mustRead = TEST_FILE.test(file) || CHECK_CONFIG.test(file) || PACKAGE_JSON.test(file) || TSCONFIG.test(file);
   if (before === 'unreadable' || after === 'unreadable') return mustRead ? [failure(file, 'unreadable', 'cannot be read, so it cannot be compared with the base')] : [];
   if (before === null) return after !== null && CODE_FILE.test(file) && countOf(after, SUPPRESSIONS) > 0 ? [suppressionAdded(file, '', after)] : [];
   if (after === null) {
-    if (TEST_FILE.test(file)) return removedWithItsCode(file, before, deleted) ? [] : [failure(file, 'deleted', 'test file deleted')];
+    if (TEST_FILE.test(file)) return removedWithItsCode(file, before, gone) ? [] : [failure(file, 'deleted', 'test file deleted')];
     return CHECK_CONFIG.test(file) ? [failure(file, 'config-deleted', 'a lint or test config was deleted')] : [];
   }
   const found = [];
@@ -204,6 +226,6 @@ export function weakenedTests(scope) {
   const files = [...new Set([...scope.files, ...scope.wide])].filter(isSafeRelative)
     .sort((a, b) => priority(a) - priority(b)).slice(0, MAX_SCANNED_FILES);
   const texts = files.map((file) => ({ file, before: baseText(scope.top, scope.base, file), after: headText(scope.top, file) }));
-  const deleted = new Set(texts.filter(({ before, after }) => before !== null && before !== 'unreadable' && after === null).map(({ file }) => file));
-  return texts.flatMap(({ file, before, after }) => weakenedFile(file, before, after, deleted));
+  const gone = texts.some(({ file, after }) => after === null && TEST_FILE.test(file)) ? goneFiles(scope, texts) : new Set();
+  return texts.flatMap(({ file, before, after }) => weakenedFile(file, before, after, gone));
 }

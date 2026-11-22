@@ -139,6 +139,8 @@ export const MAX_ALARM_IDS_PER_CHECK = 100;
  * @property {string|null} [model] the model of the stopping agent's last reply (from its transcript), null when not known; absent in rows
  *   written before the field existed (both read as `unknown`)
  * @property {string|null} [effort] the effort level of the stopping turn (hook input `effort.level`), null when not known; absent in old rows
+ * @property {string} [lane] the hashed lane id (lib/false-alarms.mjs laneIdOf: the checked-out branch, else the folder); a label lets
+ *   failures through only in runs of the same lane; absent for a folder that is not git and in old rows
  */
 
 /**

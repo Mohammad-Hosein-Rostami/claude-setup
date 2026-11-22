@@ -8,7 +8,7 @@
 //   test is never shown or stored as ok and never reused as green; a kind that could not run is `not-run` and never blocks and is never
 //   ok. At a stop (`where: 'stop'`) a FAIL with a new failure blocks, except when the same change key was blocked before or the agent was
 //   blocked MAX_BLOCKS_IN_A_ROW times already: then it is `left-open` (the caller, the hook, owns that count and passes it as
-//   `priorBlocks`). A new failure an owner's false-alarm label already names (same repo and base, lib/false-alarms.mjs) is `labelled`:
+//   `priorBlocks`). A new failure an owner's false-alarm label already names (same repo and lane, lib/false-alarms.mjs) is `labelled`:
 //   shown, stored as a count, never blocking. At a land or a manual run a new failure always blocks. Empty scope: verdict `skipped`, no ledger row. DONE_CHECK_SKIP=all: verdict `skipped`, no command runs, one ledger row.
 // Invariants: the change key mixes the plan fingerprint into Scope.key, so a changed set of commands is a new change. The same key in the
 //   ledger after an ok or reused run (with no time or error not-run) is `reused` and runs no command. The risk classes are always computed
@@ -21,7 +21,7 @@ import { worktreeOf } from '../../../hooks/lib/gated-folder.mjs';
 import { compareWithBase, findFlaky } from './base-compare.mjs';
 import { BASE_DEADLINE_MS, CHECK_KINDS, LAND_DEADLINE_MS, MAX_BLOCKS_IN_A_ROW, STOP_DEADLINE_MS } from './contract.mjs';
 import { planChecks } from './detect.mjs';
-import { alarmIdsOf, labelledAlarmIds, passLabelled } from './false-alarms.mjs';
+import { alarmIdsOf, labelledAlarmIds, laneIdOf, passLabelled } from './false-alarms.mjs';
 import { appendRun, ledgerFile, readLedger } from './ledger.mjs';
 import { loadRiskRules, riskClasses } from './risk.mjs';
 import { runPlan } from './run-checks.mjs';
@@ -50,6 +50,19 @@ function earlierGreenRun({ runs }, repo, key) {
   const passedByLabel = (check) => check.labelled > 0;
   return runs.findLast((row) => row.repo === repo && row.key === key && ['ok', 'reused'].includes(row.verdict)
     && !Object.values(row.checks).some((check) => cutShort(check) || passedByLabel(check))) ?? null;
+}
+
+/**
+ * What the ledger says before the checks run: an earlier green run of this change, and the false alarms labelled in this lane. A
+ * ledger that cannot be read gives neither and a note: the checks then run without labels, so an unreadable ledger is never a pass.
+ */
+function ledgerContext(env, { repo, lane, key }) {
+  try {
+    const ledger = readLedger({ env });
+    return { earlier: earlierGreenRun(ledger, repo, key), falseAlarms: labelledAlarmIds(ledger, { repo, lane }), notes: [] };
+  } catch (error) {
+    return { earlier: null, falseAlarms: new Map(), notes: [`ledger unreadable (${error.code ?? error.message}): no reuse, no labels`] };
+  }
 }
 
 /** The packages of the plan as `<folder>: ` prefixes (empty for the project root), in command order. */
@@ -197,15 +210,8 @@ export async function checkChange(scopeOrPromise, options) {
   const noCommand = !plan.packages.some((one) => one.cmds.length > 0);
   if (noCommand && scope.files.length + scope.wide.length === 0) { row.files = 0; return finish('skipped'); } // only text files changed and no test reads them
   row.key = hashOf(`${scope.key}\n${plan.fingerprint}`);
-  let earlier = null;
-  let falseAlarms;
-  try {
-    const ledger = readLedger({ env });
-    earlier = earlierGreenRun(ledger, repo, row.key);
-    falseAlarms = labelledAlarmIds(ledger, { repo, base: scope.base });
-  } catch (error) {
-    return finish('ok', { notes: [`ledger unreadable (${error.code ?? error.message}): no reuse`] });
-  }
+  if (scope.git && scope.top) row.lane = laneIdOf(scope.top);
+  const { earlier, falseAlarms, notes: ledgerNotes } = ledgerContext(env, { repo, lane: row.lane ?? null, key: row.key });
   if (earlier) {
     row.checks = earlier.checks;
     return finish('reused');
@@ -222,6 +228,6 @@ export async function checkChange(scopeOrPromise, options) {
   const failing = summaries.some((summary) => summary.fresh.length > 0);
   const unblamed = summaries.some((summary) => summary.result === 'fail');
   const { verdict, tries } = decide({ failing, unblamed, where, key: row.key, priorBlocks });
-  const notes = [...notesOf(plan, scope, ran.groups), ...(cleaned ? [] : ['result files not removed'])];
+  const notes = [...ledgerNotes, ...notesOf(plan, scope, ran.groups), ...(cleaned ? [] : ['result files not removed'])];
   return finish(verdict, { notes, tries, reason: verdict === 'block' ? reasonOf(summaries, { baseWhy: ran.baseWhy }) : null });
 }

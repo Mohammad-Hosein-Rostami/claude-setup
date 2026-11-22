@@ -43,14 +43,18 @@ anything runs. `DONE_CHECK_SKIP=all` skips every check (one ledger row); a comma
 
 When the owner says a block is wrong (an approved test removal, say), `done-check.mjs label <run-id> --as false-alarm --check <kind>`
 (the id from `done-check.mjs last --json`) makes it stick: each run row stores a short hash of every new failure (kind, id and text;
-never a file name), and a later run of the same repository with the same base commit does not block on a failure whose hash a
-false-alarm label names. Any other new failure still blocks: one more deleted case or skip in the same file changes the text, so it
-is new. The newest label of a (run, check) wins, so a later `real` takes it back. Only a label row can do this, and a label row holds
-no hashes, so neither a note nor a failure text can widen what passes. A label is the owner's verdict: an agent does not label its own
-block.
+never a file name) and a hashed lane id: the branch the worktree has checked out, or the folder when HEAD is detached. A later run of
+the same repository and lane (the lane's next stops, a fix round on its branch, its land from that worktree) does not block on a
+failure whose hash a false-alarm label names. Another lane's failure, a land from a temporary detached folder, and any other new
+failure still block: one more deleted case or skip in the same file changes the text, so it is new. The newest label of a (run,
+check) wins, so a later `real` takes it back. Only a label row can do this, and a label row holds no hashes, so neither a note nor a
+failure text can widen what passes. A label is the owner's verdict: an agent does not label its own block. A ledger that cannot be
+read never passes a change: the checks run without labels or reuse, and the line says `ledger unreadable`.
 
-A test file deleted together with the module it imports (a relative import at the base, of a file that is not itself a test file)
-is removed with its code and is not a weakening at all; a test deleted alone, or with only a fixture, still blocks.
+A test file deleted together with its code is not a weakening at all: every module it imported from the repository's code (a
+relative import at the base of a file that is not itself a test file or a fixture in a test folder) is deleted in the same change,
+not renamed or moved (git's rename detection, and a new file with the same text, both count as a move). A test deleted alone, with
+only a fixture, or while one of its modules still exists still blocks.
 
 ## What counts as a change
 

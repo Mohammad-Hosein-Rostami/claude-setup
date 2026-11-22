@@ -1,18 +1,46 @@
 // False-alarm labels that stick: once the owner labels a check of a run `false-alarm`, the same new failures do not block that change
 // again (friction #6: an owner-approved test removal was blocked three stops in a row).
-// Exports: alarmIdOf(failure) -> string, alarmIdsOf(failures) -> string[], storedAlarms(kind, check) -> { alarms? }, latestLabels(labels) -> Map,
-//   labelledAlarmIds(ledger, { repo, base }) -> Map<kind, Set<id>>, passLabelled(summary, ids) -> summary.
+// Exports: alarmIdOf(failure) -> string, alarmIdsOf(failures) -> string[], storedAlarms(kind, check) -> { alarms? }, laneIdOf(top) -> string,
+//   storedLane(row) -> { lane? }, latestLabels(labels) -> Map, labelledAlarmIds(ledger, { repo, lane }) -> Map<kind, Set<id>>,
+//   passLabelled(summary, ids) -> summary.
 // Invariants:
 // - An alarm id is the first 16 hex characters of a sha256 of the failure's kind, id and text, so the ledger never holds a file name or
 //   a message. The text is part of it: one more deleted case or one more skip in the same file is a new alarm and blocks again.
 // - Only a label row written by `done-check.mjs label` (lib/ledger.mjs appendLabel) can let a failure through, and only through the alarm
 //   ids its run row stored. A label row carries no ids, so neither a label note nor a failure text can widen what passes.
-// - A label applies to runs of the same repository with the same base commit (the same lane at the same start); a run with no base
-//   is never matched. The newest label of a (run, check) wins, so a later `real` takes a `false-alarm` back.
+// - A label applies only to runs of the same repository and the same lane: the branch the worktree has checked out (so the lane's
+//   stops, a fix round on it and its land from that worktree), or the worktree folder when HEAD is detached. Another lane's failure,
+//   a land from a temporary detached folder, and a row with no lane (older rows, a folder that is not git) are never matched.
+//   The newest label of a (run, check) wins, so a later `real` takes a `false-alarm` back.
 import { createHash } from 'node:crypto';
+import { gitOut } from '../../../hooks/lib/gated-folder.mjs';
 import { ALARM_ID_PATTERN, MAX_ALARM_IDS_PER_CHECK } from './contract.mjs';
 
-const ALARM_ID_CHARS = 16;
+const ALARM_ID_CHARS = 16; // also the length of a lane id
+const GIT_TIMEOUT_MS = 10_000;
+const hashId = (text) => createHash('sha256').update(text).digest('hex').slice(0, ALARM_ID_CHARS);
+
+/**
+ * The hashed lane id of a git worktree: its checked-out branch, or the folder itself when HEAD is detached or git cannot answer.
+ * @param {string} top the worktree's top folder (absolute)
+ * @returns {string} 16 hex characters (contract ALARM_ID_PATTERN); never the branch name or the path itself
+ */
+export function laneIdOf(top) {
+  const branch = (gitOut(top, ['symbolic-ref', '-q', 'HEAD'], GIT_TIMEOUT_MS) ?? '').trim();
+  return hashId(branch ? `branch\n${branch}` : `folder\n${top}`);
+}
+
+/**
+ * The `lane` field of a run row the ledger stores: absent or null stays out, else one id of ALARM_ID_PATTERN.
+ * @param {{ lane?: unknown }} row the caller's run row
+ * @returns {{ lane?: string }}
+ * @throws {TypeError} a lane that is not such an id (a bug in the caller)
+ */
+export function storedLane(row) {
+  if (row.lane === undefined || row.lane === null) return {};
+  if (typeof row.lane !== 'string' || !ALARM_ID_PATTERN.test(row.lane)) throw new TypeError('ledger: lane must be an id of 16 hex characters');
+  return { lane: row.lane };
+}
 const FALSE_ALARM = 'false-alarm';
 
 /**
@@ -20,7 +48,7 @@ const FALSE_ALARM = 'false-alarm';
  * @param {import('./contract.mjs').Failure} failure
  * @returns {string} 16 hex characters (contract ALARM_ID_PATTERN)
  */
-export const alarmIdOf = (failure) => createHash('sha256').update(`${failure.kind}\n${failure.id}\n${failure.text}`).digest('hex').slice(0, ALARM_ID_CHARS);
+export const alarmIdOf = (failure) => hashId(`${failure.kind}\n${failure.id}\n${failure.text}`);
 
 /**
  * The ids a run row keeps for its new failures of one kind: unique, at most MAX_ALARM_IDS_PER_CHECK (the rest are not stored, so a
@@ -58,17 +86,17 @@ export function latestLabels(labels) {
 }
 
 /**
- * The alarm ids the owner called false alarms for this repository and base, per check kind.
+ * The alarm ids the owner called false alarms for this repository and lane, per check kind.
  * @param {{ runs: object[], labels: object[] }} ledger what readLedger returned
- * @param {{ repo: string, base: string|null }} where the hashed repo id and the base commit of the run being judged
- * @returns {Map<string, Set<string>>} check kind -> alarm ids; empty for no base or no matching label
+ * @param {{ repo: string, lane: string|null }} where the hashed repo id and lane id (laneIdOf) of the run being judged
+ * @returns {Map<string, Set<string>>} check kind -> alarm ids; empty for no lane or no matching label
  */
-export function labelledAlarmIds({ runs, labels }, { repo, base }) {
+export function labelledAlarmIds({ runs, labels }, { repo, lane }) {
   const ids = new Map();
-  if (typeof base !== 'string' || labels.length === 0) return ids;
+  if (typeof lane !== 'string' || labels.length === 0) return ids;
   const labelOf = latestLabels(labels);
   for (const row of runs) {
-    if (row.repo !== repo || row.base !== base) continue;
+    if (row.repo !== repo || row.lane !== lane) continue;
     for (const [kind, check] of Object.entries(row.checks)) {
       if (!Array.isArray(check.alarms) || labelOf.get(`${row.id}\u0000${kind}`)?.label !== FALSE_ALARM) continue;
       if (!ids.has(kind)) ids.set(kind, new Set());
