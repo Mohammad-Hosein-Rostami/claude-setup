@@ -68,9 +68,12 @@ Other hooks:
 - `dirty-baseline.mjs`: the dirty files of a worktree (path + content hash) at the first tool call of a session or agent, so `commit-gate.mjs` can count files a Bash command made or changed.
 - `read-only-command.mjs`: whether a Bash command is git or reading only (no writing option, no output to a file), for
   `agent-budget.mjs`'s escalation.
-- `writer-agents.mjs`: which agent types write files (agent files' `tools:` line), and the record of a session's running writers that
-  `agent-model-guard.mjs` writes on launch (with the `isolated` and `readOnly` flags) and `agent-budget.mjs` ends on SubagentStop;
-  `commit-gate.mjs` uses its agent-file check and its read-only brief and launch checks.
+- `writer-agents.mjs`: which agent types write files (agent files' `tools:` line); `commit-gate.mjs` uses its agent-file check and its
+  read-only brief and launch checks.
+- `agent-launches.mjs`: the launch record of every agent of a session and the cap of 5 running at once (`MAX_RUNNING_AGENTS`):
+  `agent-model-guard.mjs` records each launch (writers with the `isolated` and `readOnly` flags), `agent-budget.mjs` marks it started and
+  ended on SubagentStart and SubagentStop; a stopped agent that makes a tool call again counts again. The store is
+  `~/.claude/state/agent-writers/<session>.json` (a historic folder name).
 - `stop-block-count.mjs`: the stop-block counter every blocking Stop/SubagentStop gate calls once (`countedGate`): counts blocks in a row per
   session and agent, resets on a tool call (`markToolCall` from `agent-budget.mjs`), records `gate overridden` past the cap and
   `gate crashed or timed out`; read by `scripts/doctor.sh` and `workflow-resume-notice.mjs`.

@@ -23,10 +23,11 @@
 // Brief lines (lib/agent-brief.mjs), after the gate and on top of the routing: a line naming the project's STATUS.md goes before a brief
 // whose project has `## Standing rules`, and an architect or Plan brief gets the Reuse inventory / Contract facts line after it. Fixed
 // text plus a path only; any failure leaves the brief as it is.
-// Writer cap (road-cap 14b): a writer launch while MAX_RUNNING_WRITERS (5) of this session's writers run is denied every time, also
-// when sent again (the owner's hard cap, an exception to deny-once); an agent file whose disallowedTools names Write and Edit is no writer.
-// The hook counts plain agents only (workflow agent() writers are capped by build.js); whether it fires for an Agent call inside a
-// subagent is probe U10 (not run): until then such a launch may go uncounted.
+// Agent cap (plan "no workflows" C7): every Agent or Task call that passes the deny-once gates below is recorded (lib/agent-launches.mjs),
+// and while MAX_RUNNING_AGENTS (5) agents of any kind run in this session the call is denied every time, also when sent again (the
+// owner's hard cap, an exception to deny-once). A launch record that cannot be read or stays locked denies too, naming the file (fail
+// closed); a call with no usable session id is not recorded. Whether this hook fires for an Agent call inside a subagent is probe U6 (not
+// run): until then such a launch may go uncounted, and the env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS (the same number) is the backstop.
 // Writer isolation gate (after the UI gate): a writing agent (lib/writer-agents.mjs isWritingAgent: implementer, ui-implementer,
 // test-writer, general-purpose, claude, or an agent file whose tools include Write/Edit; scout, runner, reviewer, security-auditor, Explore,
 // Plan and architect never) launched while another plain writing agent of this session still runs must carry `isolation: "worktree"` or a
@@ -36,12 +37,12 @@
 // is held at the agent's stop by commit-gate.mjs. Why the relaxation lets nothing new through: the gate is deny-once and the identical
 // retry runs, and an isolated agent can still write the main checkout by shell (worktrees.md:104-112), so counting it was no protection.
 // "Still runs" comes from the session's own record: every writer launch this hook lets start, marked started on SubagentStart and ended
-// on SubagentStop by agent-budget.mjs; a launch that never started or an agent idle for 30 min stops counting (lib/writer-agents.mjs).
+// on SubagentStop by agent-budget.mjs; a launch that never started or an agent idle for 30 min stops counting (lib/agent-launches.mjs).
 // Copy-branch brief gate (run first, round 4): a writer brief that creates a copy of an existing branch (`<lane>-2`) instead of continuing the
 // lane's own (lib/copy-branch-brief.mjs) is sent back once with the same-branch steps. Same deny-once mechanics as the gates above, with its own
 // digest (logged class "copy branch brief"). A workflow spawn does not fire this hook (probe P2). There is no gate that sends a plain Agent call
 // to a workflow: the lead picks inline, one agent or a workflow by the job (home/CLAUDE.md, "Inline, agent or workflow").
-// Exports: guardedAgentInput (pure), matrixLines (pure), namesDesignSource (pure), uiBriefDeny, writerIsolationDeny and copyBranchBriefDeny (the gates), MAX_MATRIX_BYTES.
+// Exports: guardedAgentInput (pure), matrixLines (pure), namesDesignSource (pure), uiBriefDeny, writerIsolationDeny (the writer isolation gate and the agent cap) and copyBranchBriefDeny (the gates), MAX_MATRIX_BYTES.
 // Invariants: the routing never blocks or denies; each gate denies an identical call at most once per session.
 import { realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -49,7 +50,9 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { UNPRINTABLE, readFileHead, withBriefLines } from './lib/agent-brief.mjs';
 import { copyBranchBriefAdvice } from './lib/copy-branch-brief.mjs';
-import { isReadOnlyBrief, isWritingAgent, recordWriterLaunch } from './lib/writer-agents.mjs';
+import { MAX_RUNNING_AGENTS, recordAgentLaunch } from './lib/agent-launches.mjs';
+import { isSessionId } from './lib/session-store.mjs';
+import { isReadOnlyBrief, isWritingAgent } from './lib/writer-agents.mjs';
 
 const FORK_TYPE = 'fork';
 const DEFAULT_MODEL = 'sonnet';
@@ -66,8 +69,7 @@ const MIN_REASON_CHARS = 15; // what ui-coverage asks of every reason
 const MAX_PATH_CHARS = 4096; // PATH_MAX on Linux: a longer value is not looked up
 export const MAX_MATRIX_BYTES = 2 * 1024 * 1024; // 2 MB: far above a real matrix (a few KB); bounds the memory and time of one read
 const MAX_QUOTED_CHARS = 200; // how much of a named path the deny text quotes
-const MAX_RUNNING_WRITERS = 5; // the owner's hard cap of writers at once (road-cap 14b): the sixth is denied every time, not once
-const WRITER_CAP_TEXT = `Not started: ${MAX_RUNNING_WRITERS} writer agents of this session are running, the owner's cap. Wait for one to finish (its result arrives as a notification), then launch this one. This is denied every time, not once.`
+const AGENT_ID_CHARS = 8; // how much of an agent id the cap text shows
 const HOME_PREFIX = /^~(?=$|[\\/])/; // `~` and `~/...`; `~user` is left as it is
 // A UNC or device path (\\host\share, //host/share, \\.\pipe\x): on Windows a lookup reaches the network (and may send the user's
 // NTLM credentials) or a pipe, so a value written like that is never looked up
@@ -197,31 +199,44 @@ const PARALLEL_WRITER_ADVICE = 'Another writing agent of this session is still r
   + '`isolation: "worktree"` (parallel writers each get their own worktree), or wait until the running writer has finished.';
 
 /**
- * The writer isolation gate (see the header). Records the launch of every writer it lets start, with its `isolated` and `readOnly`
- * flags, so a writer launched next sees it.
+ * The deny for a launch the record refused: the cap text with the running agents, or the fail-closed text naming the record.
+ * @param {{state: string, running: Array<{type: string, agent?: string}>, storePath: string}} result recordAgentLaunch's answer
+ * @returns {string} the deny JSON line for `full` and `unusable`; '' for any other state
+ */
+function launchRefusal({ state, running, storePath }) {
+  if (state === 'unusable') return denyOutput(`agent cap: the launch record ${storePath} cannot be read or stays locked; fix or delete it, then launch again`);
+  if (state !== 'full') return '';
+  const listed = running.map(({ type, agent }) => `${quoted(type)} ${agent === undefined ? 'pending' : quoted(agent.slice(0, AGENT_ID_CHARS))}`);
+  return denyOutput(`agent cap: ${MAX_RUNNING_AGENTS} agents of this session run (${listed.join(', ')}); wait for one to return (store: ${storePath})`);
+}
+
+/**
+ * The writer isolation gate and the agent cap (see the header). Records the launch of every agent it lets start, with the `isolated`
+ * and `readOnly` flags of a writer, so the next launch sees it.
  * @param {unknown} input the hook input: tool_input {subagent_type, isolation, prompt}, cwd, session_id
  * @param {Record<string, string | undefined>} env process environment (HOME for the stores and agent files, CLAUDE_PROJECT_DIR)
- * @returns {Promise<string>} the deny JSON line on the first send of a plain writer (no isolation, no read-only brief) while another plain
- *   writer runs; '' otherwise, on the identical retry, when nothing can be recorded, and on any failure
+ * @returns {Promise<string>} the deny JSON line when the cap is full or the record is unusable (every time), or on the first send of a
+ *   plain writer (no isolation, no read-only brief) while another plain writer runs; '' otherwise, on the identical retry, for an input
+ *   with no usable session id, and on any failure
  */
 export async function writerIsolationDeny(input, env = process.env) {
   try {
     const { subagent_type: type, isolation, prompt } = input?.tool_input ?? {};
-    if (!isWritingAgent(type, env)) return '';
     const session = input.session_id;
-    const flags = { isolated: isolation === WORKTREE_ISOLATION, readOnly: isReadOnlyBrief(prompt) };
-    const plain = !flags.isolated && !flags.readOnly;
+    if (!isSessionId(session)) return '';
+    const writer = isWritingAgent(type, env);
+    const flags = { isolated: writer && isolation === WORKTREE_ISOLATION, readOnly: writer && isReadOnlyBrief(prompt) };
+    const plain = writer && !flags.isolated && !flags.readOnly;
     const about = { cwd: input.cwd, description: input.tool_input?.description, prompt }; // the open launch record (r9-resume)
-    const counted = recordWriterLaunch(session, type, env, { unlessRunning: plain, ...flags, about, cap: MAX_RUNNING_WRITERS });
-    if (counted === 'full') return denyOutput(WRITER_CAP_TEXT);
-    if (counted !== 'running') return '';
+    const record = (unlessRunning) => recordAgentLaunch(session, type, env, { writer, unlessRunning, ...flags, about, cap: MAX_RUNNING_AGENTS });
+    const counted = record(plain);
+    if (counted.state !== 'running') return launchRefusal(counted);
     const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
     const { adviceOnce } = await import('./lib/bounce-once.mjs');
     const call = { command: `${type}: isolation ${String(isolation)}: ${String(prompt)}`, cwd, input, hook: 'agent-model-guard', tool: 'Agent' };
     const recorded = adviceOnce([PARALLEL_WRITER_ADVICE], { ...call, logged: { type, class: 'parallel writer without isolation' } }, env);
     if (recorded !== '') return denyOutput([`Not started: ${PARALLEL_WRITER_ADVICE}`, SEND_AGAIN].join('\n'));
-    // the identical retry runs: it is a running writer now, unless the cap filled meanwhile
-    return recordWriterLaunch(session, type, env, { about, cap: MAX_RUNNING_WRITERS }) === 'full' ? denyOutput(WRITER_CAP_TEXT) : '';
+    return launchRefusal(record(false)); // the identical retry runs: it is a running writer now, unless the cap filled meanwhile
   } catch {
     return ''; // a quality rule, not a safety rule: any failure lets the call run
   }

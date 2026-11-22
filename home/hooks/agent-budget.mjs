@@ -14,8 +14,7 @@
 //                   never blocked; an unknown context size never denies.
 //   SubagentStop -> blocks once when the final report is over the cap the spawn prompt states (first user message of the
 //                   agent transcript); no stated cap means no check, so agents that return data are never sent back.
-//                   A stop it lets through also ends the agent's launch in lib/writer-agents.mjs (agent-model-guard's writer gate).
-//   SubagentStart -> marks the agent's pending launch started in lib/writer-agents.mjs (a launch never started stops counting soon).
+//                   A stop it lets through also ends the agent's launch; SubagentStart marks it started (lib/agent-launches.mjs: the agent cap, the writer gate).
 // Verified against Claude Code 2.1.323: hook input has `agent_id` only inside a subagent (agent_type alongside it);
 // PostToolUse accepts hookSpecificOutput.additionalContext; SubagentStop gets agent_id, agent_type, agent_transcript_path,
 // last_assistant_message and stop_hook_active, and exit 2 sends stderr to the subagent and keeps it running.
@@ -32,7 +31,8 @@ import { overCap, parseCap } from './lib/reply-cap.mjs';
 import { isReadOnlyCommand } from './lib/read-only-command.mjs';
 import { contextTokens } from './lib/transcript.mjs';
 import { countedGate, markToolCall } from './lib/stop-block-count.mjs';
-import { callCounterPath, recordWriterStart, recordWriterStop } from './lib/writer-agents.mjs';
+import { recordAgentStart, recordAgentStop } from './lib/agent-launches.mjs';
+import { callCounterPath } from './lib/writer-agents.mjs';
 
 // The agent files (implementer, ui-implementer, test-writer) and the lead rules say "about 120 tool calls"; a test keeps them equal.
 export const CALL_CAP = 120;
@@ -255,7 +255,7 @@ async function main() {
     const additionalContext = await postToolUseContext(input);
     if (additionalContext) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext } }));
   } else if (input?.hook_event_name === 'SubagentStart') {
-    recordWriterStart(input.session_id, input.agent_id, input.agent_type, process.env); // agent-model-guard's writer gate: it really runs
+    recordAgentStart(input.session_id, input.agent_id, input.agent_type, process.env); // agent-model-guard's cap and writer gate: it really runs
   } else if (input?.hook_event_name === 'SubagentStop') {
     await countedGate('agent-budget', input, () => subagentStop(input)); // lib/stop-block-count.mjs: the cap record
   }
@@ -270,7 +270,7 @@ function subagentStop(input) {
     process.exitCode = 2;
     return true;
   }
-  recordWriterStop(input.session_id, input.agent_id, input.agent_type, process.env); // agent-model-guard's writer gate: it finished
+  recordAgentStop(input.session_id, input.agent_id, input.agent_type, process.env); // agent-model-guard's cap and writer gate: it finished
   const path = budgetPath(input.session_id, input.agent_id);
   if (path) {
     // the agent is ending: its counter and notice marker are done

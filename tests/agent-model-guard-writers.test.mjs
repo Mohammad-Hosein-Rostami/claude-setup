@@ -9,7 +9,8 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hookEnv } from './hook-env.mjs';
-import { IDLE_MS, PENDING_MS, callCounterPath } from '../home/hooks/lib/writer-agents.mjs';
+import { IDLE_MS, PENDING_MS } from '../home/hooks/lib/agent-launches.mjs';
+import { callCounterPath } from '../home/hooks/lib/writer-agents.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
@@ -81,18 +82,17 @@ test('a writer with isolation "worktree" runs next to running writers, and does 
 });
 
 test('read-only agents are exempt and never count as running writers; an omitted type is general-purpose (a writer)', () => {
-  const s = writerSession();
-  mkdirSync(join(s.home, '.claude', 'agents'), { recursive: true });
-  writeFileSync(join(s.home, '.claude', 'agents', 'architect.md'), '---\nname: architect\ntools: Read, Grep, Write\n---\n');
-  for (const type of ['scout', 'runner', 'reviewer', 'security-auditor', 'Explore', 'Plan', 'architect']) {
+  const readOnlyTypes = ['scout', 'runner', 'reviewer', 'security-auditor', 'Explore', 'Plan', 'architect'];
+  for (const type of readOnlyTypes) {
+    const s = writerSession(); // one session per type: the agent cap (5 running at once) counts read-only agents too
+    mkdirSync(join(s.home, '.claude', 'agents'), { recursive: true });
+    writeFileSync(join(s.home, '.claude', 'agents', 'architect.md'), '---\nname: architect\ntools: Read, Grep, Write\n---\n');
     assert.ok(!denied(s.launch(writer(type))), `${type} alone`);
     assert.ok(!denied(s.launch(writer(type, { prompt: 'second' }))), `${type} next to ${type}`);
-  }
-  assert.ok(!denied(s.launch({ description: 'x', prompt: 'no type' })), 'the first writer runs although read-only agents ran');
-  for (const type of ['scout', 'runner', 'reviewer', 'security-auditor', 'Explore', 'Plan', 'architect']) {
+    assert.ok(!denied(s.launch({ description: 'x', prompt: 'no type' })), `the first writer runs although ${type} ran`);
     assert.ok(!denied(s.launch(writer(type, { prompt: 'while a writer runs' }))), `${type} while a writer runs`);
+    assert.ok(denied(s.launch({ description: 'y', prompt: 'no type again' })), `a second writer next to the running one (${type} did not count)`);
   }
-  assert.ok(denied(s.launch({ description: 'y', prompt: 'no type again' })));
 });
 
 test('an agent file whose tools include Write or Edit is a writer; one without, a fork and a plugin agent are not', () => {

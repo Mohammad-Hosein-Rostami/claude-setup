@@ -470,6 +470,22 @@ check_stop_cap() {
   return 0
 }
 
+# Agent cap (hooks/lib/agent-launches.mjs MAX_RUNNING_AGENTS): the hook caps the agents of a session; the live settings must also switch
+# workflows off (setting, env and deny rule) and set the CLI's own cap, the backstop, to the same number.
+check_agent_cap() {
+  local live="$CLAUDE_DIR/settings.json" lib="$REPO/home/hooks/lib/agent-launches.mjs" cap expected problems=0
+  if ! jq -e . "$live" >/dev/null 2>&1; then bad "settings.json missing or invalid JSON (agent cap not checked)"; return; fi
+  expected="$(node -e 'import(require("node:url").pathToFileURL(process.argv[1]).href).then((m) => console.log(m.MAX_RUNNING_AGENTS))' "$lib" 2>/dev/null)"
+  if [ "$(jq -r '.disableWorkflows // false' "$live")" != true ]; then bad "settings.json: disableWorkflows is not true (settings/base.json, then scripts/install.sh)"; problems=1; fi
+  if ! jq -e '(.permissions.deny // []) | index("Workflow") != null' "$live" >/dev/null; then bad "settings.json: permissions.deny lacks Workflow"; problems=1; fi
+  if [ "$(jq -r '.env.CLAUDE_CODE_DISABLE_WORKFLOWS // ""' "$live")" != 1 ]; then bad "settings.json: env CLAUDE_CODE_DISABLE_WORKFLOWS is not 1"; problems=1; fi
+  cap="$(jq -r '.env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS // ""' "$live")"
+  if [ -z "$cap" ]; then bad "settings.json: env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS is unset: set it to ${expected:-5} in settings/base.json"; problems=1
+  elif [ "$cap" != "$expected" ]; then bad "settings.json: env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS is $cap, the hook caps at ${expected:-?} (MAX_RUNNING_AGENTS in home/hooks/lib/agent-launches.mjs)"; problems=1; fi
+  [ "$problems" = 0 ] && ok "agent cap: workflows off, deny Workflow, env cap $cap = MAX_RUNNING_AGENTS"
+  return 0
+}
+
 # Desktop notes (hooks/notify.mjs): the terminal and the channel a note goes out on. Desktop notes show only in Ghostty, Kitty and
 # iTerm2 (and OSC 9 terminals such as WezTerm and Windows Terminal); Apple Terminal shows none, and tmux passes a note on only with
 # allow-passthrough on.
@@ -499,7 +515,7 @@ check_smart_check() {
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_session_notes_hook; check_token_budget; check_plugin_session_start; check_recall; check_stop_cap; check_disk_free; check_disk_clean; check_smart_check; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows; check_env_names; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_session_notes_hook; check_token_budget; check_plugin_session_start; check_recall; check_stop_cap; check_agent_cap; check_disk_free; check_disk_clean; check_smart_check; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows; check_env_names; check_repo_tests
 }
 # The machine's name in the summary: the owner's two machines by OS, else the host name; DOCTOR_MACHINE overrides it.
 machine_name() {

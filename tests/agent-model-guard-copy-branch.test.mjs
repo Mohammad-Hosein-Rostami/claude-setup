@@ -43,11 +43,11 @@ const denied = (out) => out?.permissionDecision === 'deny';
 const call = (type, prompt = 'do the job', extra = {}) => ({ description: 'job', prompt, subagent_type: type, model: 'sonnet', isolation: 'worktree', ...extra });
 
 test('a plain lead Agent call is never sent back for a workflow: every agent type runs at once (routing is by the job, not by a hook)', () => {
-  const s = session();
   const types = ['implementer', 'ui-implementer', 'test-writer', 'reviewer', 'security-auditor', 'deep-debugger', 'scout', 'Explore', 'architect', 'runner', 'general-purpose'];
   const brief = 'do the job\nMATRIX: none: not a screen, a hook test'; // the MATRIX line keeps the UI gate quiet
-  for (const type of types) assert.equal(denied(s.send(call(type, brief))), false, type);
-  assert.equal(denied(s.send(call('general-purpose', 'research the best queue for this'))), false, 'a research question too');
+  // one session per call: the agent cap (5 running at once per session) is not what this test is about
+  for (const type of types) assert.equal(denied(session().send(call(type, brief))), false, type);
+  assert.equal(denied(session().send(call('general-purpose', 'research the best queue for this'))), false, 'a research question too');
 });
 
 const TEST_TIME_KNOBS = { COPY_BRANCH_GIT_TIMEOUT_MS: String(GIT_TIMEOUT_FOR_TESTS_MS), COPY_BRANCH_DEADLINE_MS: String(GIT_TIMEOUT_FOR_TESTS_MS) };
