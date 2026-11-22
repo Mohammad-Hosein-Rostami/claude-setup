@@ -1,8 +1,8 @@
 // The work rows of the status line and `/where` (spec-tui rows 3 and 4, research-tui 5): one header per workflow run and one row
 // per agent, each with a bar, its confidence form, time left and finish clock, and what it does now; plus the folded forms (spark
 // strip, `+K more`) the packing in layout.mjs uses when rows run out.
-//   ▸ build r9-tui · for R2 terminal UI · phase 2/4 Build · ███████░░░ 3/4 · 3 run · ~40 min left · 16:35
-//    ├ impl-a  implementer  █████▒░░ ~60% · 12 min left · 16:20 · Edit render.mjs · r9-a ↑2 ●3 · 23 calls
+//   ▸ ● build-r9-tui · on r9-a · for R2 terminal UI · phase 2/4 Build · ███████░░░ 3/4 · 3 run · ~40 min left · 16:35
+//    ├ ● impl-a  implementer  █████▒░░ ~60% · 12 min left · 16:20 · Edit render.mjs · r9-a ↑2 ●3 · 23 calls
 // Exports: agentRow(agent, ctx, look), runHeader(run, agents, ctx, look), plainHeader(agents, ctx, look), sparkText(agents, look),
 // agentBrief(agent, ctx, look), foldRow(prefix, agents, ctx, look), treeMark(last, look), urgencyOf(agent), countsText(agents, look).
 // Ctx: { nowMs, timeZone, at (the board's time: left minutes count from it), repo (board.repo), repos (every repository: board.repo

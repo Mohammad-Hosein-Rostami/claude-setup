@@ -21,11 +21,11 @@ to `COLUMNS - 5` (Claude Code cuts a row there). From top to bottom:
 | alert, only when needed | `! WAITING FOR YOUR ANSWER: a question, recommended taken in 1:39` | the asking marker, an estimate error, the 5 h pace |
 | road, when the job walks one | `road p8 · step 1/12 honest suite · 2/5 lanes · step 40 min left · by 21:10 · 85%: 21:35` | the estimate cache's road numbers, the board's road (`lib/job-facts.mjs`) |
 | job | `ALL ████████░░░░░░░░  52% of work · 2 h 10 left · done by 17:45 · 85%: 18:20 · ↑ +1h10 later · 11/21 rows` | the estimate cache, the board's trend |
-| counts, while work runs | `2 workflows (2 run, 0 paused) · 6 agents (6 run) · 1 over usual │ git 4 branches · 2 not landed` | the board |
+| counts, while work runs | `Σ 2 workflows (2 run, 0 paused) · 6 agents (6 run) · 1 over usual │ git 4 branches · 2 not landed` | the board |
 | checks | `checks: types review ui probe · off: smart test │ suite 3628 · 222 fail` | the session's `/check` switch, the board's suite (`lib/repo-stats.mjs`) |
-| workflow, one row each | `▸ build · for R2 terminal UI · phase 2/4 Build · ████░░░░░░ 0/4 done · 4 run ▆▄·· · ~40 min left · 16:35` | the board's runs |
-| agent | ` ├ Write road file for…   architect   █████▒░░ ~70% · 8 min left · 16:03 · claude-setup:lane/road-p8 2↑ +1 dirty` | the board's agents and repositories |
-| git, at least one row | `git claude-setup:main ✓ · origin ↑0↓0 · landed today 6, last 12 min ago │ r9-a ↑2↓0 ●3 impl-a · old-x ✓ old 3 d ⚠` | the board's repo and repos |
+| workflow, one row each | `▸ ● remove-modes-delta-review · on remove-modes · phase 1/1 Delta review · ██████░░░░ 1/3 done · 2 run ▄▄ · ~13 min left · 09:13` | the board's runs |
+| agent | ` ├ ● Write road file…   architect   █████▒░░ ~70% · 8 min left · 16:03 · claude-setup:lane/road-p8 2↑ +1 dirty` | the board's agents and repositories |
+| git, at least one row | `⎇ claude-setup:main ✓ · origin ↑0↓0 · landed today 6, last 12 min ago │ ● r9-a ↑2↓0 ●3 impl-a · ◆ old-x ✓ old 3 d ⚠`; one row each when they fit: `⎇ ● remove-modes · ↑7↓0 · last commit 10 min ago · implementer:opus` | the board's repo and repos |
 | session | `Opus 5.5 high · ctx 99k of 400k (25%) · 5h 54% left, resets 17:40 · 7d 69% left · acct work` | the status input |
 
 A workflow is one row: its bar is its agents done of all, then the phase, how many run with a spark of their progress, the time
@@ -57,7 +57,23 @@ suite, context or a limit over 80 % used, a passed finish clock); magenta waitin
 counts, `off:` categories). Bold marks only the one most urgent item: a question waiting, else a failing suite, else context over
 80 %, else a limit over 80 %, else the longest-quiet agent. Every state also has its word (`quiet`, `over usual`, `fail`,
 `later`, `waiting`), so `NO_COLOR` (any value) or `TERM=dumb` prints the same words with no escape codes. Descriptions,
-step titles and worktree names are cut at a word with `…`, never mid-word.
+step titles, workflow and worktree names are cut at a word or `-` with `…`, never mid-word; a workflow's name is kept before its
+phase word, which drops first at narrow widths.
+
+### Which is where: identity colours (`lib/identity.mjs`, spec-tui-3)
+
+Each work item, a workflow run, an agent outside workflows or a lane branch, has one hue and one marker shape (`●`, `◆`, `▲`;
+`*`, `+`, `o` in ASCII), kept for its name: a hash of the name picks a home hue, and the names of one board take hues in name
+order, each the first free one from its home whose shape is not taken yet, so up to six items on screen never share a hue and up
+to three never share a shape. A workflow whose agents work in a lane worktree (the board's sure placement, never a guess from a
+folder) takes that branch's hue and its row says `on <branch>`, so the workflow row and the branch's git row match; an agent in a
+lane worktree likewise. The hues are xterm 256-colour indexes 31 blue, 166 orange, 99 violet, 64 green, 197 pink and 133 orchid,
+none a state colour's code. Their contrast is 3.80 to 4.06 to 1 on both a `#1e1e1e` and a `#ffffff` background: no colour
+reaches 4.5:1 on both (the best possible is about 4.09:1), so these are the most even. Each row kind leads with a label: `road`
+blue, `ALL` bold, a dim `Σ` before the counts, the `/check` categories on green (`none` dim), `▸` and the workflow name in its
+hue, `⎇` and the branch in its hue (main in the default colour, bold), the session row's `ctx`, `5h`, `7d` and `acct` labels dim.
+A terminal whose `TERM` and `COLORTERM` name neither 256 nor true colour gets bold, underline or plain in place of the hues (with
+the shape, six different looks); `NO_COLOR` prints no codes and the marker shape tells items apart.
 
 ### An agent's progress (`lib/progress.mjs`)
 
@@ -118,5 +134,5 @@ Files: `board.mjs` (the CLI and the lines), `lib/refresh.mjs` (build, refresh, t
 `lib/agents.mjs`, `lib/agent-transcript.mjs`, `lib/progress.mjs`, `lib/pools.mjs`, `lib/git-state.mjs`, `lib/job-facts.mjs`,
 `lib/repo-stats.mjs`, `lib/repos.mjs`, `lib/trusted-repos.mjs`, `lib/cache-file.mjs` (what the refresh reads), `lib/render.mjs` (the status line rows; `home/statusline.mjs` only reads and writes), `lib/work-row.mjs` (the
 job row), `lib/layout.mjs` (row budget, counts row, packing), `lib/agent-rows.mjs` (workflow and agent rows), `lib/git-rows.mjs`
-(git rows), `lib/stat-rows.mjs` (road and checks rows, the trend), `lib/cells.mjs` (look, glyphs, bars, durations, clocks, fitting a row to a width; shared by every surface),
+(git rows), `lib/stat-rows.mjs` (road and checks rows, the trend), `lib/identity.mjs` (identity hues and markers), `lib/cells.mjs` (look, glyphs, bars, durations, clocks, fitting a row to a width; shared by every surface),
 `lib/tree.mjs` (the `/where` tree).

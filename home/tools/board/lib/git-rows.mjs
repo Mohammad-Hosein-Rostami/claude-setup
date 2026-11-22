@@ -1,7 +1,7 @@
 // The git rows of the status line and `/where` (spec-tui row 5, research-tui 4 and 5): per active branch or worktree its name,
 // ahead/behind the base branch, changed files, last commit age, an operation in progress and the agents working there.
-//   git main ✓ · last 12 min ago │ r9-a ↑2 ●3 impl-a · r9-b ↑1 ●3 impl-b · r9-c ✓ old 3 d ⚠          (one row, when rows are few)
-//   git r9-a  lane/r9-a ↑2↓0 ●3 · last commit 12 min ago · impl-a, tests-a                          (one row each, when they fit)
+//   ⎇ main ✓ · last 12 min ago │ ● r9-a ↑2 ●3 impl-a · ◆ r9-b ↑1 ●3 impl-b · ▲ r9-c ✓ old 3 d ⚠    (one row, when rows are few)
+//   ⎇ ● r9-a  lane/r9-a ↑2↓0 ●3 · last commit 12 min ago · impl-a, tests-a                        (one row each, when they fit)
 // Exports: gitRows(repo, slots, ctx, look) -> string[]; repoRows(board, slots, ctx, look) -> string[] (every repository of the
 // board: the primary one first, then one compact row per other repository, `+K more repos` when they do not fit, and a
 // `git: no repository` row when the session's work is in none, so the git info is never simply missing); gitCounts(repo, look).
