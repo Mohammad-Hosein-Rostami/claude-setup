@@ -90,3 +90,17 @@ test('loop: a refusal of the rebase check ends the loop and nothing after it run
   assert.throws(() => landLoop(OPTIONS, steps), (error) => error instanceof Stop && error.code === 3);
   assert.equal(calls.land.length, 0, 'git-tidy land never ran after a refused rebase');
 });
+
+// the review and accept flags ------------------------------------------------------------------------------------------------------------
+
+test('arguments: --reviewed is a full sha, --skip-review and --accept-open take 1 to 200 characters without control characters, one review answer only', () => {
+  const parsed = parseArgs([...GOOD, '--reviewed', TIP, '--accept-open', 'x'.repeat(200)]);
+  assert.deepEqual([parsed.reviewed, parsed.skipReview, parsed.acceptOpen.length], [TIP, null, 200]);
+  assert.deepEqual([parseArgs(GOOD).reviewed, parseArgs(GOOD).skipReview, parseArgs(GOOD).acceptOpen], [null, null, null]);
+  for (const bad of [TIP.slice(1), 'abc', TIP.toUpperCase()]) assert.throws(() => parseArgs([...GOOD, '--reviewed', bad]), /--reviewed/, bad);
+  for (const flag of ['--skip-review', '--accept-open']) {
+    for (const bad of ['', 'x'.repeat(201), 'a\nb', 'a\u0000b']) assert.throws(() => parseArgs([...GOOD, flag, bad]), new RegExp(flag), `${flag} ${JSON.stringify(bad.slice(0, 8))}`);
+  }
+  assert.throws(() => parseArgs([...GOOD, '--reviewed', TIP, '--skip-review', 'why']), /answer the same question/);
+  assert.throws(() => parseArgs([...GOOD, '--skip-review']), /needs a value/);
+});

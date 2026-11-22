@@ -1,14 +1,18 @@
 #!/usr/bin/env node
-// CLI of `land-lane`: put one lane on the base branch with one command: disk check, the tip check, the rebase check, `git-tidy land` (rebase,
-// UI proof, ff-only, prune) and the STATUS.md close row. It replaces the land workflow. There is no test, review or audit step.
+// CLI of `land-lane`: put one lane on the base branch with one command: disk check, the tip check, the rebase check, the done-check of the
+// rebased tip (run or reused, new failures refused, the one review of a risky lane asked for), `git-tidy land` (rebase, UI proof, ff-only,
+// prune) and the STATUS.md close row. It replaces the land workflow. There is no test run or audit step of its own: the checks are done-check's.
 // Usage: land-lane.mjs --repo <abs base folder> --branch <name> --tip <40-hex> --base <branch> --status-file <abs> --close-row <row id>
-//        [--worktree <abs>] [--brief <file>] [--json]
+//        [--worktree <abs>] [--brief <file>] [--reviewed <40-hex> | --skip-review <reason>] [--accept-open <reason>] [--json]
+//   `--reviewed` is the tip the one review read (the --tip or an ancestor of it, else exit 2); `--skip-review` is a reason of 1 to 200 characters;
+//   `--accept-open` lands a lane whose only open failure is a weakened-test item, with a reason (1 to 200 characters). The answers go into the row.
 //   The removed flags `--audit-base` and `--checks` are refused with exit 2 and a plain message.
-// Output: the first line is `land: <state>`; a landing prints `landed <to> on <base> from <from>`. With --json one object
-//   `{ state, exit, to, from, lines }`.
-// Exit: 0 landed clean, 1 landed with `git-tidy check` findings left, 2 usage, 3 conflict, 5 the base kept moving, 6 ui-proof, 7 new-file-size,
-//   8 upstream-moved, 9 tip-moved, 11 disk below the floor, 13 landed but the row was not closed, 14 a tool failed (nothing landed).
-//   3-9, 11 and 14 land nothing.
+// Output: the first line is `land: <state>`; a landing prints `landed <to> on <base> from <from>` and the `checks:` line of done-check (and a
+//   `review:` line for a risky lane). With --json one object `{ state, exit, to, from, lines }`.
+// Exit: 0 landed clean, 1 landed with `git-tidy check` findings left, 2 usage, 3 conflict, 4 done-check found new failures or an open weakened
+//   item, 5 the base kept moving, 6 ui-proof, 7 new-file-size, 8 upstream-moved, 9 tip-moved, 10 a risky lane without a review answer, 11 disk
+//   below the floor, 13 landed but the row was not closed, 14 a tool failed or the done-check could not run (nothing landed).
+//   3-11 and 14 land nothing; after 4 and 10 the lane stays, rebased onto the base.
 // Restart: a killed run is found again: a branch that is gone, with every patch of --tip already on the base, or a branch at the rebased tip
 //   that `git-tidy range --landed` finds on the base, is a landing already made: the row is written (`already landed`).
 // Exports: landLoop, Stop (for tests).
@@ -17,7 +21,9 @@
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { UsageError, parseArgs } from './lib/args.mjs';
-import { git, tool } from './lib/tools.mjs';
+import { assertReviewedIsAncestor, checkRebasedTip } from './lib/checks-step.mjs';
+import { Stop, stop } from './lib/stop.mjs';
+import { git, parseJson, tool } from './lib/tools.mjs';
 
 const DISK_TIMEOUT_MS = 120_000;
 const TIDY_TIMEOUT_MS = 10 * 60 * 1000; // a landing fetches the upstream, runs prune and `check`
@@ -31,25 +37,10 @@ const REFUSED_BY_TIDY = {
   9: [9, 'tip-moved', 'the branch is not at the given tip'],
 };
 
-export class Stop extends Error {
-  constructor(code, state, lines) {
-    super(lines[0] ?? state);
-    Object.assign(this, { code, state, lines });
-  }
-}
+export { Stop };
 
-const stop = (code, state, ...lines) => { throw new Stop(code, state, lines); };
 const tidy = (args) => tool('git-tidy', 'git-tidy.mjs', args, { timeoutMs: TIDY_TIMEOUT_MS });
 const reason = (run) => (run.err || run.out).split('\n').find((line) => line.trim() !== '') ?? `exit ${run.status}`;
-
-function parseJson(text) {
-  try {
-    const value = JSON.parse(text);
-    return value !== null && typeof value === 'object' ? value : null;
-  } catch {
-    return null;
-  }
-}
 
 function checkDisk() {
   const disk = tool('disk-free', 'disk-free.mjs', ['check'], { timeoutMs: DISK_TIMEOUT_MS });
@@ -92,12 +83,14 @@ function closeRow(options, evidence) {
 /**
  * Steps after a landing: the close row, then the exit.
  * @param {object} options the parsed arguments
- * @param {{ to: string, from: string|null, restart: boolean, findings: string[], notes: string[] }} landing what landed
+ * @param {{ to: string, from: string|null, restart: boolean, findings: string[], notes: string[], evidence?: string[] }} landing what landed;
+ *   `evidence` is what the done-check step adds to the row (an accepted open failure, the review answer)
  */
 function finishLanding(options, landing) {
-  const { to, from, restart, findings, notes } = landing;
+  const { to, from, restart, findings, notes, evidence = [] } = landing;
   const where = `landed ${to} on ${options.base}${from ? ` from ${from}` : ''}`;
-  const row = closeRow(options, restart ? `${where} (found already on ${options.base} after a restart)` : where);
+  const answers = evidence.length > 0 ? ` (${evidence.join('; ')})` : '';
+  const row = closeRow(options, restart ? `${where} (found already on ${options.base} after a restart)` : `${where}${answers}`);
   const lines = [where, ...(from ? [] : ['warning: no `from` sha (the base reflog does not show the step): the road gate will refuse this row']), ...notes, ...findings, ...[row.note, row.problem].filter(Boolean)];
   if (row.problem !== null) return { code: 13, state: 'row-not-closed', lines, to, from };
   if (findings.length > 0) return { code: 1, state: 'landed, check findings left', lines, to, from };
@@ -144,7 +137,14 @@ function landStep(options, rebased) {
   return { moved: false, to: result?.tip ?? baseTip(options), from: result?.from ?? null, findings, notes };
 }
 
-const REAL_STEPS = { rebase: rebaseStep, land: landStep, baseTip };
+/** Step 5 with the done-check before it: the check of the rebased tip, then `git-tidy land` at that same tip. A base that moved is checked again. */
+function checkedLandStep(options, rebased) {
+  const checked = checkRebasedTip(options, rebased);
+  const landed = landStep(options, rebased);
+  return landed.moved ? landed : { ...landed, notes: [...checked.lines, ...landed.notes], evidence: checked.evidence };
+}
+
+const REAL_STEPS = { rebase: rebaseStep, land: checkedLandStep, baseTip };
 
 /**
  * Steps 4-5 as a loop: rebase check, `git-tidy land`; a base that moved during the landing goes back to the rebase check, and the same
@@ -170,6 +170,7 @@ export function landLoop(options, steps) {
 
 /** Steps 1-6; the result is `{ code, state, lines, to, from }`; a refusal is a thrown Stop. */
 function land(options) {
+  assertReviewedIsAncestor(options);
   checkDisk();
   const current = refTip(options);
   if (current !== options.tip) return resumeLanding(options, current);

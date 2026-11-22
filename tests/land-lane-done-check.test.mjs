@@ -249,3 +249,27 @@ test('--skip-review needs a reason of 1 to 200 characters: empty and 201 are exi
   }
   assertLandedAt(world, lane.tip, landLane(world, lane, ['--skip-review', 'x'.repeat(MAX_REASON_CHARS)]));
 });
+
+// Beyond A9 and A10: what --accept-open does not cover, and a lane folder that is not the tip ---------------------------------------------
+
+test('--accept-open covers only a weakened-test item: a new type failure is still exit 4', (t) => {
+  const world = makeWorld(t);
+  const lane = makeLane(world, 'bad', [{ 'src/lib.ts': "export const n: string = '1';\n", 'fake-tools.json': `${JSON.stringify({ tsc: TSC_BROKEN_CALLER })}\n` }]);
+  const before = snapshot(world.dir);
+  const result = landLane(world, lane, ['--accept-open', 'the owner knows']);
+  assert.equal(result.status, 4, result.stdout + result.stderr);
+  assert.match(result.stdout, /checks: .*types FAIL 1 new/);
+  assertNothingLanded(world, before, 'type failure with --accept-open');
+});
+
+test('a lane folder with an untracked file is exit 14 before the check runs: what is checked must be what lands', (t) => {
+  const world = makeWorld(t);
+  const lane = makeLane(world, 'a', [{ 'src/lib.ts': 'export const n: number = 2;\n' }]);
+  writeFileSync(join(lane.dir, 'src', 'stray.ts'), 'export const stray = 1;\n');
+  const before = snapshot(world.dir);
+  const result = landLane(world, lane);
+  assert.equal(result.status, 14, result.stdout + result.stderr);
+  assert.match(result.stdout, /untracked/);
+  assert.deepEqual(world.repo.calls(), [], 'no tool ran on a folder that is not the tip');
+  assertNothingLanded(world, before, 'dirty lane folder');
+});

@@ -1,5 +1,5 @@
 // Purpose: run the one command of a land-lane step: git or a sibling tool, as a subprocess with no shell, a timeout and a clean git environment.
-// Exports: git, tool, firstLine, TOOLS_DIR.
+// Exports: git, tool, firstLine, parseJson, TOOLS_DIR.
 // Invariants: every argument is an argv entry (never joined into a shell line). A command that cannot start or times out has `status` null and
 //   `ok` false, so a caller never reads a missing exit code as success (P3). GIT_* variables of the caller are dropped (a hook's GIT_DIR must not
 //   point a child at another repository); everything else, HOME and the session id included, is passed on so the tools see the caller's session.
@@ -31,6 +31,16 @@ export const git = (cwd, args, timeoutMs = GIT_TIMEOUT_MS) => run('git', args, {
  * @param {{ cwd?: string, timeoutMs: number, stdio?: any }} options `stdio` defaults to pipe (an array may send output to a log file)
  */
 export const tool = (name, script, args, { cwd, timeoutMs, stdio = 'pipe' }) => run(process.execPath, [join(TOOLS_DIR, name, script), ...args], { cwd, timeoutMs, stdio });
+
+/** The object in `text` (a tool's `--json` output), or null when it is not JSON or not an object. */
+export function parseJson(text) {
+  try {
+    const value = JSON.parse(text);
+    return value !== null && typeof value === 'object' ? value : null;
+  } catch {
+    return null;
+  }
+}
 
 /** The first non-empty line of a result's output (stdout, else stderr), for a one-line reason. */
 export const firstLine = (result) => (result.out || result.err).split('\n').find((line) => line.trim() !== '') ?? `exit ${result.status}`;
