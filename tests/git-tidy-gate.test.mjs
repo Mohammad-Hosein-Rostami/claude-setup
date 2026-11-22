@@ -173,7 +173,7 @@ test('an unlanded lane that no open STATUS.md row names blocks once with the lan
   linkStatus(gate, dir, [['wip', 'something else entirely']]);
   const reason = gate.stop(dir);
   assert.match(reason, /unlanded-lane\? lane\/r4-x/);
-  assert.match(reason, /git-tidy\.mjs land lane\/r4-x/);
+  assert.match(reason, /land-lane\.mjs --branch lane\/r4-x/);
   assert.equal(gate.stop(dir), null);
 });
 

@@ -130,7 +130,7 @@ function verdictProblems(verdict, input, env, top) {
     text: kind === MERGE_COMMIT ? `${kind} ${subject} ${JSON.stringify(detail)}: rebase it away (git-linear-history skill), never merge` : `${kind} ${subject}: ${detail}`,
   }));
   for (const { subject } of unnamedLanes(verdict.hints, input, env)) {
-    problems.push({ key: `${UNLANDED}:${subject}`, text: `${UNLANDED} ${subject} is named by no open row of STATUS.md: land it (\`node ~/.claude/tools/git-tidy/git-tidy.mjs land ${shellWord(subject)}\`) or start its row` });
+    problems.push({ key: `${UNLANDED}:${subject}`, text: `${UNLANDED} ${subject} is named by no open row of STATUS.md: land it with land-lane (\`node ~/.claude/tools/land-lane/land-lane.mjs --branch ${shellWord(subject)} ...\`, the other flags are in tools/land-lane/README.md) or start its row` });
   }
   const prune = verdict.findings.some(({ kind }) => PRUNE_KINDS.has(kind));
   return { problems, pruneLine: prune ? `node ~/.claude/tools/git-tidy/git-tidy.mjs prune ${shellWord(top)} --apply --include-recent` : null };

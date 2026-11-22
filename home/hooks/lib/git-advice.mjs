@@ -7,7 +7,7 @@
 //    `-fixes`, `-v<n>` or `-redo` and the branch `<stem>` exists in the folder: a re-done lane continues the same branch. The folder is the
 //    cwd, a `cd <dir> &&` before the command, or `git -C <dir>`.
 //  - No PASS: `git merge --ff-only <ref>` in a folder on main, master or develop, when the test-pass tool has no full-suite PASS for the commit
-//    <ref> names: land with `git-tidy land`, or run the suite in the lane worktree first.
+//    <ref> names: land with `land-lane`, or run the suite in the lane worktree first.
 // Both new advices ask git (a hardened call: no hooks, no fsmonitor, no embedded bare repository, no pager, no prompt) and decide from its answer; ANY
 // git error, timeout, unknown answer or exception gives no advice for that rule, so the command goes through (an advice never blocks what it cannot judge).
 // All git and PASS calls of one command line share ONE time budget (ADVICE_BUDGET_MS): a repository that makes git hang (a FIFO as .git/HEAD) costs a
@@ -43,13 +43,13 @@ const passRetry = 'If this merge is really intended, send the same command again
 const copyBranchAdvice = (stem, name) => `${KEEP_SAME_BRANCH}: branch ${stem} already exists, so switch to it (git switch ${stem}), rebase it onto the base `
   + `and keep committing there instead of creating ${name}. ${copyRetry}`;
 /** Advice text for a fast-forward merge of `sha` into a base branch with no suite PASS. */
-const noPassAdvice = (sha) => `no full-suite PASS at ${sha}: run \`test-pass run --suite\` in the lane worktree, or land with \`git-tidy land\` (C37). ${passRetry}`;
+const noPassAdvice = (sha) => `no full-suite PASS at ${sha}: run \`test-pass run --suite\` in the lane worktree, or land with \`land-lane\` (C37). ${passRetry}`;
 
 const escapeText = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const REF_TEXT = '[A-Za-z0-9][A-Za-z0-9._/-]*';
 export const COPY_BRANCH_ADVICE_PATTERN = new RegExp(`^${escapeText(KEEP_SAME_BRANCH)}: branch (${REF_TEXT}) already exists, so switch to it \\(git switch \\1\\), `
   + `rebase it onto the base and keep committing there instead of creating ${REF_TEXT}\\. ${escapeText(copyRetry)}$`);
-export const NO_PASS_ADVICE_PATTERN = new RegExp(`^no full-suite PASS at [0-9a-f]{${SHORT_SHA}}: ${escapeText('run `test-pass run --suite` in the lane worktree, or land with `git-tidy land` (C37). ')}${escapeText(passRetry)}$`);
+export const NO_PASS_ADVICE_PATTERN = new RegExp(`^no full-suite PASS at [0-9a-f]{${SHORT_SHA}}: ${escapeText('run `test-pass run --suite` in the lane worktree, or land with `land-lane` (C37). ')}${escapeText(passRetry)}$`);
 
 /**
  * Hardened git: no repository hooks or fsmonitor, no embedded bare repository, no pager, no prompt, no GIT_* from the caller.

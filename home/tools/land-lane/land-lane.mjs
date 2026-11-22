@@ -1,0 +1,225 @@
+#!/usr/bin/env node
+// CLI of `land-lane`: put one reviewed lane on the base branch with one command: disk check, the reviewed-tip check, the rebase check, a
+// full-suite PASS at the rebased tip, `git-tidy land`, the pending audit record and the STATUS.md close row. It replaces the land workflow.
+// Usage: land-lane.mjs --repo <abs base folder> --branch <name> --tip <40-hex> --base <branch> --status-file <abs> --close-row <row id>
+//        [--worktree <abs>] [--brief <file>] [--audit-base <40-hex>] [--checks <cat,...>] [--json]
+// Output: the first line is `land: <state>`; a landing prints `landed <to> on <base> from <from>`. With --json one object
+//   `{ state, exit, to, from, lines }`.
+// Exit: 0 landed clean, 1 landed with `git-tidy check` findings left, 2 usage, 3 conflict, 4 suite red or no PASS, 5 the base kept moving,
+//   6 ui-proof, 7 new-file-size, 8 upstream-moved, 9 tip-moved, 10 needs-review (the rebase changed patches, `review` on), 11 disk below the
+//   floor, 12 landed but the audit was not recorded, 13 landed but the row was not closed, 14 a tool failed (nothing landed). 3-11 and 14 land
+//   nothing. When 12 and 13 both happen the exit is 12 (the gate holds nothing) and both lines are printed.
+// Checks (`/check`): the suite runs when `test` is on and a rebase that changed patches stops for review when `review` is on; a category is on
+//   when `isOn(category)` says so or `--checks` names it (it only adds, as git-tidy does). The on categories are passed to `git-tidy land`.
+// Restart: a killed run is found again: a branch that is gone, with every patch of --tip already on the base, or a branch at the rebased tip
+//   that `git-tidy range --landed` finds on the base, is a landing already made: the audit record and the row are written (`already landed`).
+// Exports: landLoop, Stop (for tests).
+// Invariants: every step is a subprocess with no shell and a timeout (lib/tools.mjs); a tool that cannot run is exit 14, never a pass (P3).
+//   The branch must be at --tip before anything runs, and git-tidy checks it again at every rebase and land (`--tip`).
+import { realpathSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { isOn } from '../../hooks/lib/checks-on.mjs';
+import { UsageError, parseArgs } from './lib/args.mjs';
+import { suiteStep } from './lib/suite-step.mjs';
+import { git, tool } from './lib/tools.mjs';
+
+const DISK_TIMEOUT_MS = 120_000;
+const TIDY_TIMEOUT_MS = 10 * 60 * 1000; // a landing fetches the upstream, runs prune and `check`
+const RECORD_TIMEOUT_MS = 30_000;
+const GATED_CATEGORIES = ['test', 'review', 'ui']; // the categories git-tidy land reads
+const ALREADY_DONE = /is already done/;
+const REFUSED_BY_TIDY = {
+  3: [3, 'conflict', 'the rebase hit conflicts and was aborted, the lane is unchanged'],
+  4: [4, 'red', 'git-tidy found no full-suite PASS at the rebased tip'],
+  6: [6, 'ui-proof', 'the UI files changed and the rebased tip has no visual-qa PASS'],
+  7: [7, 'new-file-size', 'the lane adds a file over the size limit that its brief does not name'],
+  8: [8, 'upstream-moved', 'the base\'s upstream holds commits the base lacks: `git pull --rebase` first'],
+  9: [9, 'tip-moved', 'the branch is not at the reviewed tip'],
+};
+
+export class Stop extends Error {
+  constructor(code, state, lines) {
+    super(lines[0] ?? state);
+    Object.assign(this, { code, state, lines });
+  }
+}
+
+const stop = (code, state, ...lines) => { throw new Stop(code, state, lines); };
+const tidy = (args) => tool('git-tidy', 'git-tidy.mjs', args, { timeoutMs: TIDY_TIMEOUT_MS });
+const reason = (run) => (run.err || run.out).split('\n').find((line) => line.trim() !== '') ?? `exit ${run.status}`;
+const checkIsOn = (options, category) => isOn(category) || options.checks.includes(category);
+
+function parseJson(text) {
+  try {
+    const value = JSON.parse(text);
+    return value !== null && typeof value === 'object' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function checkDisk() {
+  const disk = tool('disk-free', 'disk-free.mjs', ['check'], { timeoutMs: DISK_TIMEOUT_MS });
+  if (!disk.ok) stop(11, 'disk-low', `disk space check refused the landing, nothing was landed: ${disk.out || reason(disk)}`);
+}
+
+/** The sha of refs/heads/<name>, or null when the branch does not exist; any other git failure stops the run. */
+function refTip(options) {
+  const read = git(options.repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${options.branch}`]);
+  if (read.ok) return read.out;
+  if (read.status === 1) return null;
+  return stop(14, 'tool-failed', `git could not read branch ${options.branch} in ${options.repo}: ${reason(read)}`);
+}
+
+const baseTip = (options) => {
+  const read = git(options.repo, ['rev-parse', '--verify', `refs/heads/${options.base}`]);
+  return read.ok ? read.out : stop(14, 'tool-failed', `the base ${options.base} could not be read: ${reason(read)}`);
+};
+
+/** The reflog step of the base that holds the reviewed tip (`git-tidy range`), or null. */
+function landedRange(options, extra) {
+  const found = tidy(['range', options.tip, options.repo, '--base', options.base, ...extra, '--json']);
+  const range = found.ok ? parseJson(found.out) : null;
+  return typeof range?.to === 'string' ? { from: range.from ?? null, to: range.to } : null;
+}
+
+/** True when `git cherry` shows no patch of the reviewed tip missing from the base. */
+function patchesAreOnBase(options) {
+  const cherry = git(options.repo, ['cherry', options.base, options.tip]);
+  return cherry.ok && !cherry.out.split('\n').some((line) => line.startsWith('+'));
+}
+
+function recordAudit(options, to) {
+  if (options.auditBase === null) return null;
+  const args = ['record', '--repo', options.repo, '--tip', to, '--base', options.auditBase, '--reviewed', options.tip, '--state', 'pending'];
+  const recorded = tool('review-tier', 'audit-log.mjs', args, { timeoutMs: RECORD_TIMEOUT_MS });
+  if (recorded.ok) return null;
+  return `audit not recorded: gate holds nothing (the lane landed at ${to}; audit-log: ${reason(recorded)}); record it by hand (audit-log record ... --state pending), then run the audit`;
+}
+
+function closeRow(options, evidence) {
+  const done = tool('status', 'status.mjs', ['--file', options.statusFile, 'done', options.closeRow, evidence], { timeoutMs: RECORD_TIMEOUT_MS });
+  if (done.ok) return { problem: null, note: null };
+  if (ALREADY_DONE.test(`${done.out}\n${done.err}`)) return { problem: null, note: `row ${options.closeRow} was already closed` };
+  return { problem: `row ${options.closeRow} not closed: ${reason(done)}; close it by hand with: ${evidence}`, note: null };
+}
+
+/**
+ * Steps 7-9 after a landing: the pending audit record, the close row, then the exit.
+ * @param {object} options the parsed arguments
+ * @param {{ to: string, from: string|null, restart: boolean, findings: string[], notes: string[] }} landing what landed
+ */
+function finishLanding(options, landing) {
+  const { to, from, restart, findings, notes } = landing;
+  const where = `landed ${to} on ${options.base}${from ? ` from ${from}` : ''}`;
+  const auditProblem = recordAudit(options, to);
+  const row = closeRow(options, restart ? `${where} (found already on ${options.base} after a restart)` : where);
+  const lines = [where, ...(from ? [] : ['warning: no `from` sha (the base reflog does not show the step): the road gate will refuse this row']), ...notes, ...findings, ...[row.note, auditProblem, row.problem].filter(Boolean)];
+  if (auditProblem !== null) return { code: 12, state: 'audit-not-recorded', lines, to, from };
+  if (row.problem !== null) return { code: 13, state: 'row-not-closed', lines, to, from };
+  if (findings.length > 0) return { code: 1, state: 'landed, check findings left', lines, to, from };
+  return { code: 0, state: restart ? 'already landed' : 'landed', lines, to, from };
+}
+
+/** The landing a killed run already made: the branch is gone, or it is at a commit the base's reflog holds. */
+function resumeLanding(options, current) {
+  const notes = [];
+  if (current === null) {
+    if (!patchesAreOnBase(options)) stop(14, 'tool-failed', `branch ${options.branch} not found in ${options.repo}, and the base ${options.base} lacks patches of the reviewed ${options.tip}: nothing was landed`);
+    const range = landedRange(options, []);
+    if (range === null) stop(14, 'tool-failed', `branch ${options.branch} is gone and its patches are on ${options.base}, but the base reflog does not show the landing step: record the row by hand`);
+    return finishLanding(options, { ...range, restart: true, findings: [], notes });
+  }
+  const range = landedRange(options, ['--landed', current]);
+  if (range === null) stop(9, 'tip-moved', `branch ${options.branch} is at ${current}, not at the reviewed ${options.tip}: nothing was landed`);
+  const prune = tidy(['prune', options.repo, '--base', options.base, '--apply']);
+  notes.push(prune.ok ? 'landed before a restart; the lane\'s leftovers are pruned' : `landed before a restart; prune did not finish: ${reason(prune)}`);
+  return finishLanding(options, { ...range, restart: true, findings: [], notes });
+}
+
+/** Step 4: rebase onto the base without landing; returns the rebased tip. */
+function rebaseStep(options, expected) {
+  const run = tidy(['land', options.branch, options.repo, '--base', options.base, '--rebase-only', '--tip', expected, '--json']);
+  const result = parseJson(run.out);
+  if (run.status === 3) stop(3, 'conflict', 'the rebase hit conflicts and was aborted, the lane is unchanged', ...(result?.files ?? []).map((file) => `conflict ${file}`));
+  if (run.status === 9) stop(9, 'tip-moved', result?.why ?? `branch ${options.branch} is not at ${expected}`);
+  if (!run.ok || typeof result?.tip !== 'string') stop(14, 'tool-failed', `rebase check failed (git-tidy exit ${run.status}): ${reason(run)}`);
+  if (result.patchesChanged > 0 && checkIsOn(options, 'review')) {
+    stop(10, 'needs-review', `rebased ${result.tip}: review the delta (review-tier --delta ${options.tip} --base ${baseTip(options)})`);
+  }
+  return result.tip;
+}
+
+/** Step 5 (only with `test` on): a suite PASS for the rebased tip. Returns the lines to print. */
+function suiteLines(options, rebased) {
+  if (!checkIsOn(options, 'test')) return ['not checked: test is off, no suite PASS was asked for'];
+  const suite = suiteStep(options, rebased);
+  if (!suite.ok) stop(suite.code, suite.code === 4 ? 'red' : 'tool-failed', ...suite.lines);
+  return [suite.note];
+}
+
+/** Step 6: `git-tidy land` at the rebased tip. `{ moved: true, tip }` when the base moved, else what landed. */
+function landStep(options, rebased) {
+  const categories = GATED_CATEGORIES.filter((category) => checkIsOn(options, category));
+  const optional = [...(options.brief === null ? [] : ['--brief', options.brief]), ...(categories.length === 0 ? [] : ['--checks', categories.join(',')])];
+  const run = tidy(['land', options.branch, options.repo, '--base', options.base, '--tip', rebased, ...optional, '--json']);
+  const result = parseJson(run.out);
+  if (run.status === 5) return { moved: true, tip: result?.tip ?? rebased };
+  const refused = REFUSED_BY_TIDY[run.status];
+  if (refused !== undefined) stop(...refused.slice(0, 2), result?.why ?? refused[2], ...(result?.files ?? []).map((file) => `file ${file}`));
+  if (run.status !== 0 && run.status !== 1) stop(14, 'tool-failed', `git-tidy land failed (exit ${run.status}): ${reason(run)}`);
+  const findings = (result?.findings ?? []).map(({ kind, subject, detail }) => `${kind} ${subject} ${detail}`);
+  const notes = result?.cleanupRefused ? [`cleanup skipped: ${result.cleanupRefused}`] : [];
+  return { moved: false, to: result?.tip ?? baseTip(options), from: result?.from ?? null, findings, notes };
+}
+
+const REAL_STEPS = { rebase: rebaseStep, suite: suiteLines, land: landStep, baseTip };
+
+/**
+ * Steps 4-6 as a loop: rebase check, suite, `git-tidy land`; a base that moved during the landing goes back to the rebase check, and the same
+ * base reported moved twice is exit 5 (the exit was misreported, or something else keeps moving it).
+ * @param {object} options the parsed arguments
+ * @param {{ rebase: Function, suite: Function, land: Function, baseTip: Function }} steps the four steps (a test passes doubles)
+ * @returns {{ to: string, from: string|null, findings: string[], notes: string[] }} what landed
+ * @throws {Stop} any refusal
+ */
+export function landLoop(options, steps) {
+  let expected = options.tip;
+  let baseAtLastMove = null;
+  for (;;) {
+    const rebased = steps.rebase(options, expected);
+    const suite = steps.suite(options, rebased);
+    const landed = steps.land(options, rebased);
+    if (!landed.moved) return { ...landed, notes: [...suite, ...landed.notes] };
+    const base = steps.baseTip(options);
+    if (base === baseAtLastMove) stop(5, 'base-moved', `git-tidy land said the base moved twice but ${options.base} is still at ${base}`);
+    baseAtLastMove = base;
+    expected = landed.tip;
+  }
+}
+
+/** Steps 1-9; the result is `{ code, state, lines, to, from }`; a refusal is a thrown Stop. */
+function land(options) {
+  checkDisk();
+  const current = refTip(options);
+  if (current !== options.tip) return resumeLanding(options, current);
+  return finishLanding(options, { ...landLoop(options, REAL_STEPS), restart: false });
+}
+
+function print(json, { code, state, lines, to = null, from = null }) {
+  console.log(json ? JSON.stringify({ state, exit: code, to, from, lines }) : [`land: ${state}`, ...lines].join('\n'));
+  return code;
+}
+
+function main(argv) {
+  const json = argv.includes('--json');
+  try {
+    return print(json, land(parseArgs(argv)));
+  } catch (error) {
+    if (error instanceof UsageError) return print(json, { code: 2, state: 'usage', lines: [error.message] });
+    if (error instanceof Stop) return print(json, { code: error.code, state: error.state, lines: error.lines });
+    return print(json, { code: 14, state: 'tool-failed', lines: [`unexpected failure: ${error.message}`] });
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) process.exitCode = main(process.argv.slice(2));
