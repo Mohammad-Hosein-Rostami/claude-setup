@@ -1,15 +1,15 @@
 // The asking marker: while a question or permission prompt waits for the owner, a small file says so, so the board and the status
 // line can lead with "needs you" (spec-p5 `r9-ask`, R03; display design 7.10 and 7.11).
 // Exports: askingDir(env), markAsking(entry, env) -> boolean, clearAsking(session, env, kind?) -> boolean, readAsking(session, env, now?) -> marker | null,
-// markerExpiresAt(openedAt, waitS, count) -> epoch ms, cleanHeader(value) -> string, STALE_MARGIN_S, MAX_HEADER_CHARS.
+// markerExpiresAt(openedAt, waitS, count) -> epoch ms, cleanHeader(value) -> string, STALE_MARGIN_S, MAX_HEADER_CHARS, UNSAFE_TEXT.
 // File: ~/.claude/state/asking/<session>.json = { session, kind: 'question'|'permission', tool, count, openedAt, expiresAt, header } (epoch ms;
 // `header` is the first question's short label, '' when there is none; a marker written before it existed has no `header` and reads as '').
 // Cleared by the close event (PostToolUse or PostToolUseFailure of AskUserQuestion, question-answered.mjs), when a permission
 // dialog ends, and by age: a manual deny of a permission prompt fires no hook event outside auto mode (ALIGN-1 A121), so a marker
 // past expiresAt (the question's wait plus STALE_MARGIN_S) reads as none. Probe P5-12 (owed) confirms which events close a prompt.
 // Invariants: no session id, no file; written and read through session-store.mjs (no links, 0600, temp file and rename); holds no
-// question text, only the short header label, which is untrusted too: the writer and readAsking both pass it through cleanHeader (control
-// characters dropped, MAX_HEADER_CHARS), so the status line, notify and board each get the same capped text; nothing here throws.
+// question text, only the short header label, which is untrusted too: the writer and readAsking both pass it through cleanHeader (control, format and
+// line-separator characters and `;` dropped, MAX_HEADER_CHARS), so the status line, notify and board each get the same capped text; nothing here throws.
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isSessionId, readSessionFile, writeSessionFile } from './session-store.mjs';
@@ -21,10 +21,16 @@ const MS_PER_S = 1000;
 const KINDS = ['question', 'permission'];
 /** The longest header kept: AskUserQuestion's header is a short label (12 characters in Claude Code's own form); one cap for the writer and every reader. */
 export const MAX_HEADER_CHARS = 24;
-const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
+/**
+ * Characters no note text may carry: control characters, line and paragraph separators (U+2028/2029), and format characters (the bidi
+ * overrides, isolates and marks that reorder text, zero-width and tag characters), except ZWNJ and ZWJ, which Persian words and emoji
+ * need and which move nothing. One rule for every note text (notify-note.mjs) and the header.
+ */
+export const UNSAFE_TEXT = /[\p{Cc}\p{Zl}\p{Zp}]|(?![\u200c\u200d])\p{Cf}/gu;
+const HEADER_SEPARATOR = /;/g; // the Ghostty note is `777;notify;<title>;<body>`: a `;` in the header would read as a field break
 
-/** @returns {string} `value` as a header: control characters dropped, trimmed, cut at MAX_HEADER_CHARS (whole characters); '' when it is not a string */
-export const cleanHeader = (value) => (typeof value === 'string' ? [...value.replace(CONTROL, '').trim()].slice(0, MAX_HEADER_CHARS).join('') : '');
+/** @returns {string} `value` as a header: unsafe characters (UNSAFE_TEXT) and `;` dropped, trimmed, cut at MAX_HEADER_CHARS (whole characters); '' when it is not a string */
+export const cleanHeader = (value) => (typeof value === 'string' ? [...value.replace(UNSAFE_TEXT, '').replace(HEADER_SEPARATOR, '').trim()].slice(0, MAX_HEADER_CHARS).join('') : '');
 
 /** @returns {string} the folder of the asking markers (HOME from env, so tests run under a temp home) */
 export const askingDir = (env = process.env) => join(env.HOME || homedir(), '.claude', 'state', 'asking');

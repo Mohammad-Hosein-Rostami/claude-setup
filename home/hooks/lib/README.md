@@ -64,7 +64,7 @@ Asking and remembering:
   `.<name>.status-lock`).
 - `guard-log.mjs`: the decision log, one JSON line per decision.
 - `plain-file.mjs`: the one safe open (no waiting, no link followed, regular files only, a size cap) for the host list, the decision logs and the call-window log.
-- `asking-marker.mjs`: the small file `~/.claude/state/asking/<session>.json` that says a question or permission prompt waits for the owner; one writer here, read by the status line, `notify.mjs` and the board. It holds the first question's short header label (`header`, cut and cleaned by `cleanHeader` at `MAX_HEADER_CHARS` by the writer and by `readAsking`; a marker without one reads as empty) and no question text. It expires by age.
+- `asking-marker.mjs`: the small file `~/.claude/state/asking/<session>.json` that says a question or permission prompt waits for the owner; one writer here, read by the status line, `notify.mjs` and the board. It holds the first question's short header label (`header`, cut and cleaned by `cleanHeader` at `MAX_HEADER_CHARS` by the writer and by `readAsking`: control, format (bidi overrides and isolates, zero-width) and line-separator characters and `;` are dropped (`UNSAFE_TEXT`, also used for every note text); a marker without one reads as empty) and no question text. It expires by age.
 
 Other hooks:
 - `diagnostics.mjs`: used by `post-edit.mjs` (parses a failed format run into `file:line RULE-ID message` lines). `edit-log.mjs`: the per-user hook temp root (`tempRoot`, `checkedTempRoot`) that `agent-budget.mjs` and `writer-agents.mjs` keep their records in.
@@ -88,8 +88,9 @@ Other hooks:
   ended on SubagentStart and SubagentStop; a stopped agent that makes a tool call again counts again. The store is
   `~/.claude/state/agent-writers/<session>.json` (a historic folder name).
 - `stop-block-count.mjs`: the stop-block counter every blocking Stop/SubagentStop gate calls once (`countedGate`): counts blocks in a row per
-  session and agent (a hook blocks once per Stop event, so its second block is the next continuation even with an identical reply), resets on a tool call (`markToolCall` from `agent-budget.mjs`), records `gate overridden` past the cap and
+  session and agent (gates of one event are spawned together and count once; a gate started after the chain's last block, or a hook's second block, is the next continuation even with an identical reply and any hook mix; the counts file keeps the newest 100 agents under its own byte cap, rules in `stop-block-entry.mjs`), resets on a tool call (`markToolCall` from `agent-budget.mjs`), records `gate overridden` past the cap and
   `gate crashed or timed out`; read by `scripts/doctor.sh` and `resume-notice.mjs`.
+- `stop-block-entry.mjs`: the chain entry of the stop-block counter: `nextEntry` (does a block join the last event or start the next continuation), the compact stored form and `countsText` (newest 100 agents, cut to `MAX_COUNTS_BYTES`); used only by `stop-block-count.mjs`.
 - `unfinished-work.mjs`: the parts of the session-start notice for work left open: plain writer agents with no recorded finish, open owner questions of recent ask queues, the HANDOFF.md "Don't redo" list (`sessionNotes`); used by `resume-notice.mjs`. Its name avoids `session-notes.mjs`, the lead-rules hook.
 - `read-only-hold.mjs`: whether a stopping subagent is held to its `read-only:` / `scratchpad-only:` brief, which of its recorded files
   lie outside the temp and scratchpad roots, and the block reason; used by `commit-gate.mjs`.

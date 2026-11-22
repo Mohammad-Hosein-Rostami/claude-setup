@@ -6,20 +6,19 @@
 // Channel: `preferredNotifChannel` of Claude Code's global config (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`);
 // `notifications_disabled` gives no note; `auto` (or none) picks by the terminal: Ghostty OSC 777, Kitty OSC 99, Apple Terminal a
 // bell only (it shows no desktop note), else OSC 9 (iTerm2, WezTerm, Windows Terminal).
-// Invariants: a note text has no control character (each is dropped), so no text can end the sequence early or add one; the
+// Invariants: a note text has no control, format (bidi override, isolate, mark) or line-separator character (UNSAFE_TEXT: each is dropped), so no text can end the sequence early, add one, or reorder or split the note; the
 // asking marker holds no question text, so a question note shows at most its short header label (cleanHeader: control characters
 // dropped, the marker's one cap); a reset time is shown only when a limit sample has one, never guessed; nothing here throws (any
 // failure reads as no note).
 import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { cleanHeader, STALE_MARGIN_S } from './asking-marker.mjs';
+import { cleanHeader, STALE_MARGIN_S, UNSAFE_TEXT } from './asking-marker.mjs';
 import { isSessionId, readSessionFile, writeSessionFile } from './session-store.mjs';
 
 export const NOTE_TITLE = 'Claude';
 const ESC = '\u001b';
 const BEL = '\u0007';
-const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
 const MAX_TEXT_CHARS = 160;
 const MAX_CONFIG_BYTES = 16 * 1024 * 1024; // the global config holds every project's history; a bigger file is not read
 const MAX_QUEUE_BYTES = 4096;
@@ -31,7 +30,7 @@ const ELICITATION_TYPES = ['elicitation_dialog', 'elicitation_url_dialog'];
 const WINDOW_LABEL = { five_hour: '5-hour', seven_day: '7-day' };
 const CHANNELS = ['auto', 'iterm2', 'iterm2_with_bell', 'terminal_bell', 'kitty', 'ghostty', 'notifications_disabled'];
 
-const clean = (text) => String(text ?? '').replace(CONTROL, '').slice(0, MAX_TEXT_CHARS);
+const clean = (text) => String(text ?? '').replace(UNSAFE_TEXT, '').slice(0, MAX_TEXT_CHARS);
 const pad2 = (n) => String(n).padStart(2, '0');
 const clock = (epochMs) => { const d = new Date(epochMs); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
 const minSec = (ms) => { const s = Math.max(0, Math.round(ms / MS_PER_S)); return `${Math.floor(s / S_PER_MIN)}:${pad2(s % S_PER_MIN)}`; };

@@ -1,33 +1,35 @@
 // Stop-hook block counter (round 9, r9-stop-cap): Claude Code lets Stop hooks continue a turn STOP_BLOCK_CAP times in a row, then overrides
 // the next block (the 9th) and ends the turn with a warning; nothing is saved (hooks.md, CLAUDE_CODE_STOP_HOOK_BLOCK_CAP). A Stop gate that
-// crashes or times out also lets the turn end (`onFailure` has no effect on Stop). This module leaves a record of both, so no proof rests
-// on a Stop block alone without anyone knowing it was overridden.
+// crashes or times out also lets the turn end (`onFailure` has no effect on Stop). This module leaves a record of both.
 // Exports: STOP_BLOCK_CAP, CAP_ENV, countedGate(hook, input, run, env) (the one call each blocking Stop/SubagentStop gate makes),
-// countBlock(hook, input, env), gateStarted(hook, input, env), gateFinished(mark), recordGateCrash(hook, input, env), markToolCall(input,
-// env), sweepStaleMarks(env, nowMs), readRecords(env, {sinceMs, max}), recordsDir(env), recordsNotice(env, nowMs).
-// Counting: one count per session, and per agent on SubagentStop (key: agent_id, else `lead`), shared by every gate that blocks. A Stop
+// countBlock(hook, input, env, startedAt), gateStarted(hook, input, env), gateFinished(mark), recordGateCrash(hook, input, env),
+// markToolCall(input, env), sweepStaleMarks(env, nowMs), readRecords(env, {sinceMs, max}), recordsDir(env), recordsNotice(env, nowMs).
+// Counting (the rules live in stop-block-entry.mjs): one count per session, and per agent on SubagentStop (key: agent_id, else `lead`), shared by every gate that blocks. A Stop
 // event with stop_hook_active false starts a new chain; a tool call since the chain's last block (the reset marker agent-budget.mjs writes
-// on every PostToolUse) starts one too. Blocks of one event count once: gates of one event run in parallel and Claude Code counts the
-// continuation, not the hooks; a block is of the same event as the chain's last one when it carries the same stop_hook_active and
-// last_assistant_message, comes within SAME_EVENT_MS and is of a hook that has not blocked in that event yet (a hook runs once per
-// event, so its second block is the next continuation even when the reply text is identical; two continuations with identical text
-// that only different hooks block still count once). The block that makes the count STOP_BLOCK_CAP + 1 appends
-// `gate overridden: <hooks of the chain>` once per chain.
+// on every PostToolUse) starts one too. Gates of one event run in parallel and Claude Code counts the continuation, not the hooks, so
+// a block joins the chain's last event (counts once) only when it has the same stop_hook_active and last_assistant_message, comes within
+// SAME_EVENT_MS, is of a hook that has not blocked in that event yet, and its gate process started before the chain's last block: the
+// gates of one event are spawned together and the next continuation starts only after every gate returned, so a later start is the next
+// continuation whatever its hook and reply text. Each continuation counts once (A, B, A on one reply counts 3). countedGate takes the
+// start from the process's own start time; countBlock without one reads as started now. The block that makes the count
+// STOP_BLOCK_CAP + 1 appends `gate overridden: <hooks of the chain>` once per chain.
 // Crashes: each gate run leaves a start mark and removes it when it returns. A mark of the same hook, session and agent found at the next
 // run, or any mark older than STALE_MARK_MS at session start (sweepStaleMarks), appends `gate crashed or timed out: <hook>`; a crash the
 // gate catches itself is appended by countedGate before it is rethrown.
-// Store: ~/.claude/state/stop-blocks/ (0700): counts/<session>.json (lib/session-store.mjs, locked; per agent {n, at, key, hooks, eventHooks, recorded}), runs/<session>--<agent>--<hook>
-// (marks), resets/<session>--<agent> (the reset marker; its mtime is the last tool call), records.jsonl (append-only, at most
-// MAX_RECORDS_BYTES; each line {at, session, agent, text}), records.shown (its mtime: the newest record the session-start notice showed).
+// Store: ~/.claude/state/stop-blocks/ (0700): counts/<session>.json (lib/session-store.mjs, locked; per agent {n, at, key, hooks, eventHooks,
+// recorded}: key is EVENT_KEY_CHARS of a hash, each hook list at most MAX_HOOKS_KEPT names, the newest AGENTS_KEPT agents, and the file is
+// cut to MAX_COUNTS_BYTES by dropping the oldest agents, never the one just counted), runs/<session>--<agent>--<hook> (marks),
+// resets/<session>--<agent> (the reset marker; its mtime is the last tool call), records.jsonl (append-only, at most MAX_RECORDS_BYTES;
+// each line {at, session, agent, text}), records.shown (its mtime: the newest record the session-start notice showed).
 // Invariants: never throws (every export catches; countedGate rethrows only the gate's own error); ids and hook names are checked before
 // they become file names; fixed text plus hook names only, never prompt or reply text.
-import { createHash } from 'node:crypto';
 import { lstatSync, lutimesSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { appendPlainFile, readPlainFile } from './plain-file.mjs';
 import { withSessionLock } from './session-lock.mjs';
 import { isSessionId, readSessionFile, writeSessionFile } from './session-store.mjs';
+import { countsText, entryOf, eventKey, MAX_COUNTS_BYTES, nextEntry, parseCounts } from './stop-block-entry.mjs';
 
 /** The number of blocks in a row Claude Code lets continue the turn; settings/base.json sets CAP_ENV to it and doctor checks both. */
 export const STOP_BLOCK_CAP = 8;
@@ -36,10 +38,7 @@ const LEAD_KEY = 'lead';
 const SAFE_ID = /^[\w-]{1,128}$/;
 const HOOK_NAME = /^[\w-]{1,64}$/;
 const STOP_EVENTS = new Set(['Stop', 'SubagentStop']);
-const SAME_EVENT_MS = 10 * 60 * 1000; // above the longest Stop hook timeout: parallel gates of one event finish within it
 const STALE_MARK_MS = 11 * 60 * 1000; // above the documented 600 s default hook timeout: a mark this old belongs to no running gate
-const MAX_COUNTS_BYTES = 16 * 1024; // one entry per agent of a session
-const AGENTS_KEPT = 100;
 const MAX_RECORDS_BYTES = 256 * 1024; // years of records; past it new ones are dropped (doctor says so)
 const RECORD_LINE_BYTES = 2048;
 const DIR_MODE = 0o700;
@@ -91,52 +90,26 @@ function appendRecord(env, input, text) {
   return Buffer.byteLength(line) <= RECORD_LINE_BYTES && appendPlainFile(join(dir, 'records.jsonl'), line, { maxBytes: MAX_RECORDS_BYTES });
 }
 
-/** The chain entry after one block (pure). */
-function nextEntry(entry, { hook, key, now, resetAt, continued }) {
-  const toolCallSince = resetAt > entry.at;
-  const sameEvent = entry.n > 0 && !toolCallSince && entry.key === key && now - entry.at < SAME_EVENT_MS && !entry.eventHooks.includes(hook);
-  const hooks = [...new Set([...entry.hooks, hook])];
-  if (sameEvent) return { ...entry, at: now, hooks, eventHooks: [...entry.eventHooks, hook] };
-  if (!continued || toolCallSince || entry.n === 0) return { n: 1, at: now, key, hooks: [hook], eventHooks: [hook], recorded: false };
-  return { n: entry.n + 1, at: now, key, hooks, eventHooks: [hook], recorded: entry.recorded };
-}
-
-/** Parses the counts store; a corrupt file reads as empty (a chain may then be undercounted once). */
-function parseCounts(text) {
-  try {
-    const agents = text === null ? {} : JSON.parse(text)?.agents;
-    return agents !== null && typeof agents === 'object' ? agents : {};
-  } catch {
-    return {};
-  }
-}
-
-const emptyEntry = () => ({ n: 0, at: 0, key: '', hooks: [], eventHooks: [], recorded: false });
-// An entry stored before `eventHooks` existed reads as an event no hook has blocked in (the old merge rule, once).
-const entryOf = (value) => (Number.isFinite(value?.n) && Number.isFinite(value?.at) && Array.isArray(value?.hooks)
-  ? { ...value, eventHooks: Array.isArray(value.eventHooks) ? value.eventHooks : [] }
-  : emptyEntry());
-const eventKey = (input) => createHash('sha256').update(`${input.stop_hook_active === true}\0${String(input.last_assistant_message ?? '')}`).digest('hex');
-
 /**
  * Counts one block of a Stop or SubagentStop gate (see the header) and appends `gate overridden` at the first block past the cap.
  * @param {string} hook the gate's name (e.g. `commit-gate`)
  * @param {{session_id?: string, agent_id?: string, stop_hook_active?: boolean, last_assistant_message?: string}} input the hook JSON
  * @param {Record<string, string | undefined>} [env] HOME
+ * @param {number} [startedAt] epoch ms the gate process started (default: now); a gate started before the chain's last block is of the
+ *   same event as it, one started after it is the next continuation
  * @returns {{count: number, overridden: boolean} | null} the chain's count after this block, overridden true when this block is past
  *   STOP_BLOCK_CAP; null when nothing could be counted
  */
-export function countBlock(hook, input, env = process.env) {
+export function countBlock(hook, input, env = process.env, startedAt = Date.now()) {
   try {
     if (!HOOK_NAME.test(hook) || !usableIds(input)) return null;
     const dir = folder(env, 'counts');
     const resetAt = mtimeOf(join(baseDir(env), 'resets', `${input.session_id}--${agentKey(input)}`));
-    const facts = { hook, key: eventKey(input), now: Date.now(), resetAt, continued: input.stop_hook_active === true };
+    const facts = { hook, key: eventKey(input), now: Date.now(), resetAt, continued: input.stop_hook_active === true, startedAt };
     const entry = dir === null ? undefined : withSessionLock(dir, input.session_id, () => {
       const agents = parseCounts(readSessionFile(dir, input.session_id, MAX_COUNTS_BYTES) ?? null);
       const next = nextEntry(entryOf(agents[agentKey(input)]), facts);
-      const kept = Object.fromEntries(Object.entries({ ...agents, [agentKey(input)]: next }).slice(-AGENTS_KEPT));
-      return writeSessionFile(dir, input.session_id, JSON.stringify({ agents: kept })) ? next : undefined;
+      return writeSessionFile(dir, input.session_id, countsText(agents, agentKey(input), next)) ? next : undefined;
     });
     if (entry === undefined) return null;
     const overridden = entry.n > STOP_BLOCK_CAP;
@@ -152,7 +125,7 @@ function markRecorded(dir, input) {
   withSessionLock(dir, input.session_id, () => {
     const agents = parseCounts(readSessionFile(dir, input.session_id, MAX_COUNTS_BYTES) ?? null);
     const entry = entryOf(agents[agentKey(input)]);
-    return writeSessionFile(dir, input.session_id, JSON.stringify({ agents: { ...agents, [agentKey(input)]: { ...entry, recorded: true } } }));
+    return writeSessionFile(dir, input.session_id, countsText(agents, agentKey(input), { ...entry, recorded: true }));
   });
 }
 
@@ -192,6 +165,10 @@ export function recordGateCrash(hook, input, env = process.env) {
   }
 }
 
+const MAX_BOOT_MS = 5000; // a process older than this before the gate ran is not a gate's own boot (a test or a long-lived caller)
+/** @returns {number} epoch ms this gate process was spawned (the gates of one event are spawned together), at most MAX_BOOT_MS ago */
+const processStartMs = () => Math.max(Date.now() - process.uptime() * 1000, Date.now() - MAX_BOOT_MS);
+
 /**
  * Runs one gate decision with the start mark around it and counts it when it blocks; for any other event `run` only runs.
  * @param {string} hook the gate's name
@@ -207,7 +184,7 @@ export async function countedGate(hook, input, run, env = process.env) {
   const mark = gateStarted(hook, input, env);
   try {
     const outcome = await run();
-    if (outcome === true || outcome?.block === true) countBlock(hook, input, env);
+    if (outcome === true || outcome?.block === true) countBlock(hook, input, env, processStartMs());
     return outcome;
   } catch (error) {
     recordGateCrash(hook, input, env);
