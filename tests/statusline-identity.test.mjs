@@ -14,7 +14,8 @@ const ESCAPE = '\u001b';
 
 const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const rowsOf = (board, env, columns) => statusRows(viewOf(board, NOW, env), lookFor(env, columns));
-const rowWith = (rows, lead, name) => rows.find((row) => new RegExp(`${lead} \\S ${escapeRe(name)}`).test(row.replaceAll(/\u001b\[[0-9;]*m/g, '')));
+const plain = (row) => (row ?? '').replaceAll(/\u001b\[[0-9;]*m/g, '');
+const rowWith = (rows, lead, name) => rows.find((row) => new RegExp(`${lead} \\S ${escapeRe(name)}`).test(plain(row)));
 
 /** The identity look of an item on a row: the escape codes before its row glyph, and its marker (`▸ ● name`, `⎇ ◆ name`). */
 function identityOn(row, name) {
@@ -54,6 +55,18 @@ test('a workflow whose agents work in a lane worktree shows `on <branch>` and sh
   assert.notDeepEqual(identityOn(unplaced, 'statusline-identity-colours'), identityOn(rowWith(rows, '⎇', 'sync-remote-path'), 'sync-remote-path'));
 });
 
+test('a worktree whose folder differs from its branch still matches its workflow by the branch, and main is no lane', () => {
+  const board = screenshotBoard();
+  board.repo.worktrees = board.repo.worktrees.map((wt) => (wt.name === 'remove-modes' ? { ...wt, name: 'lane-7', path: '/r/wt/lane-7' } : wt));
+  board.agents = board.agents.map((agent) => (agent.wt === 'remove-modes' ? { ...agent, wt: 'lane-7' } : agent));
+  board.agents.push({ ...board.agents[0], id: 'a5', runId: 'wf_status', wt: 'main', branch: 'main' });
+  const rows = rowsOf(board, TERM_256, 160);
+  const runRow = rowWith(rows, '▸', 'remove-modes-delta-review');
+  assert.ok(runRow.includes('on remove-modes'));
+  assert.equal(identityOn(rowWith(rows, '⎇', 'lane-7'), 'lane-7')?.codes, identityOn(runRow, 'remove-modes-delta-review').codes);
+  assert.doesNotMatch(plain(rowWith(rows, '▸', 'statusline-identity-colours')), / on main/, 'an agent in the main checkout is on no lane');
+});
+
 test('main is bold in the default colour, and the section labels lead their rows', () => {
   const rows = rowsOf(screenshotBoard(), TERM_256, 160);
   assert.ok(rows.some((row) => row.startsWith('\u001b[1m⎇ claude-setup:main')), 'main row: bold ⎇ and name, no hue');
@@ -72,6 +85,9 @@ test('a 16-colour terminal gets no 256-colour codes and tells items apart by bol
   for (const look of looks) assert.match(look?.codes ?? 'none', /^(\u001b\[1m|\u001b\[4m|)$/);
   assert.equal(new Set(looks.map((look) => `${look.codes}|${look.marker}`)).size, names.length);
   assert.deepEqual(identityOn(rowWith(rows, '⎇', 'remove-modes'), 'remove-modes'), looks[0]);
+  const six = rowsOf(boardOfRuns(SAMPLE_NAMES), TERM_16, 160);
+  const sixLooks = SAMPLE_NAMES.map((name) => identityOn(rowWith(six, '▸', name), name)).map((look) => `${look?.codes}|${look?.marker}`);
+  assert.equal(new Set(sixLooks).size, SAMPLE_NAMES.length, 'six items, six looks from style and shape');
 });
 
 test('NO_COLOR prints no escape code and keeps the marker shapes, the same on a workflow row and its branch row', () => {
@@ -97,8 +113,11 @@ test('a workflow name is cut at a `-` boundary with …, and at 80 columns the w
   assert.ok(shown && long.startsWith(`${shown}-`), `cut at a boundary: ${shown}`);
   const whole = rowsOf(screenshotBoard(), NO_COLOR_ENV, 80);
   for (const name of ['remove-modes-delta-review', 'statusline-identity-colours', 'road-gate-landed-row']) {
-    assert.ok(rowWith(whole, '▸', name), `${name} whole at 80 columns`);
+    const row = rowWith(whole, '▸', name);
+    assert.ok(row, `${name} whole at 80 columns`);
+    assert.match(row, /\d\/\d done/, `${name}: the phase word drops before the bar`);
   }
+  assert.match(rowWith(whole, '▸', 'remove-modes-delta-review'), / on remove-modes /, 'where it works is kept before the phase word');
 });
 
 test(`a render from the fixture takes at most ${MAX_MEDIAN_MS} ms (median of ${RENDERS_TIMED})`, () => {
