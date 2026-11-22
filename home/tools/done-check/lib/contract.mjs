@@ -52,6 +52,7 @@ export const LEDGER_MAX_BYTES = 16 * BYTES_PER_MIB;
  * @property {boolean} git true when `top` is a git worktree
  * @property {string|null} base the base commit (40 hex), or null when there is none and no base compare is possible
  * @property {string[]} files changed code files, repo-relative with `/` separators
+ * @property {string[]} named changed non-code files (markdown, json, ...) that a test file names; they only feed the related-test search
  * @property {string[]} wide changed files that widen the check (package.json, lockfiles, tsconfig, test and eslint config), repo-relative
  * @property {string} key the change key: sha256 of the base, the sorted paths with their blob hashes, and the plan fingerprint
  */

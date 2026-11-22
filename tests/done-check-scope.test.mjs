@@ -441,3 +441,49 @@ test('changedLines works for a file name with a space and a quote', async (t) =>
   const { changedLines } = await loadScope();
   assert.deepEqual(await changedLines(repo.dir, repo.baseSha, "src/my file's.ts"), [[4, 4]]);
 });
+
+// ---- non-code files a test names, and .githooks scripts (proof misses R2a, R2e, S12) ----
+
+const NAMING_TEST = "import { readFileSync } from 'node:fs';\nconst text = readFileSync('docs/rules.md', 'utf8');\n";
+
+test('a .githooks script without an extension is a code file', async (t) => {
+  const repo = withRepo(t, { files: BASE_FILES });
+  const input = startAgent(repo);
+  repo.write('.githooks/pre-commit', '#!/bin/sh\nexit 0\n');
+  repo.write('other/.githooks-notes', 'not a hook\n');
+  const { ownChange } = await loadScope();
+  const [scope] = await ownChange(input, envOf(repo));
+  assert.deepEqual(scope.files, ['.githooks/pre-commit']);
+});
+
+test('a markdown file that a test file names is listed as named; a markdown file no test names gives no scope', async (t) => {
+  const repo = withRepo(t, { files: { ...BASE_FILES, 'tests/rules.test.mjs': NAMING_TEST, 'docs/rules.md': 'old\n', 'docs/other.md': 'old\n' } });
+  const input = startAgent(repo);
+  repo.write('docs/other.md', 'new\n');
+  const { ownChange } = await loadScope();
+  assert.deepEqual(await ownChange(input, envOf(repo)), []);
+  repo.write('docs/rules.md', 'new\n');
+  const [scope] = await ownChange(input, envOf(repo));
+  assert.deepEqual(scope.named, ['docs/rules.md']);
+  assert.deepEqual(scope.files, []);
+  assert.match(scope.key, KEY_PATTERN);
+});
+
+test('the key of a change moves with the content of a named file', async (t) => {
+  const repo = withRepo(t, { files: { ...BASE_FILES, 'tests/rules.test.mjs': NAMING_TEST, 'docs/rules.md': 'old\n' } });
+  const { rangeChange } = await loadScope();
+  repo.write('docs/rules.md', 'new\n');
+  const first = (await rangeChange(repo.dir, repo.baseSha)).key;
+  repo.write('docs/rules.md', 'newer\n');
+  assert.notEqual((await rangeChange(repo.dir, repo.baseSha)).key, first);
+});
+
+test('rangeChange lists a named markdown file and leaves out one no test names', async (t) => {
+  const repo = withRepo(t, { files: { ...BASE_FILES, 'tests/rules.test.mjs': NAMING_TEST } });
+  repo.write('docs/rules.md', 'new\n');
+  repo.write('docs/unread.md', 'new\n');
+  const { rangeChange } = await loadScope();
+  const scope = await rangeChange(repo.dir, repo.baseSha);
+  assert.deepEqual(scope.named, ['docs/rules.md']);
+  assert.deepEqual(scope.files, []);
+});

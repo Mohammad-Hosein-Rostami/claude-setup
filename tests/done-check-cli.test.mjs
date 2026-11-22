@@ -322,3 +322,36 @@ test('D2: a new failing test that fails again at head still blocks, and is not c
   assert.equal(verdict.row.checks.tests.flaky, undefined);
   assert.doesNotMatch(verdict.line, /flaky/);
 });
+
+// ---- a text file that a test reads (proof misses R2e and S12: lead rules text read by modes-consistency) ----
+
+const READS_TEXT = "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { readFileSync } from 'node:fs';\ntest('the rule is there', () => assert.ok(readFileSync('docs/rules.md', 'utf8').includes('old rule')));\n";
+const textProject = (t) => newRepo(t, { packageJson: NODE_TEST_PACKAGE, files: { 'tests/rules.test.mjs': READS_TEXT, 'docs/rules.md': 'old rule\n', 'docs/other.md': 'old\n' } });
+
+test('R2e: a markdown change that breaks a test reading it blocks as a new test failure', (t) => {
+  const repo = textProject(t);
+  repo.write('docs/rules.md', 'new rule\n');
+  const { status, verdict } = check(repo);
+  assert.equal(status, 1);
+  assert.equal(verdict.verdict, 'block');
+  assert.equal(verdict.row.checks.tests.new, 1);
+  assert.doesNotMatch(verdict.line, /no code change/);
+});
+
+test('R2e: a markdown change that keeps the test green is checked and ok', (t) => {
+  const repo = textProject(t);
+  repo.write('docs/rules.md', 'old rule, reworded\n');
+  const { status, verdict } = check(repo);
+  assert.equal(status, 0);
+  assert.equal(verdict.row.checks.tests.result, 'ok');
+});
+
+test('R2e: a markdown change no test names stays `no code change`, exit 0 and no ledger row', (t) => {
+  const repo = textProject(t);
+  repo.write('docs/other.md', 'new\n');
+  const { status, verdict } = check(repo);
+  assert.equal(status, 0);
+  assert.equal(verdict.verdict, 'skipped');
+  assert.match(verdict.line, /no code change/);
+  assert.throws(() => readLedgerRows(repo), /ENOENT/);
+});

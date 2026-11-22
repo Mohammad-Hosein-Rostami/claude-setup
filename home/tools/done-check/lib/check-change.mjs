@@ -154,7 +154,7 @@ export async function checkChange(scopeOrPromise, options) {
   if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) throw new RangeError(`checkChange: deadlineMs must be a positive number, got ${deadlineMs}`);
   const startedAt = Date.now();
   const scope = await scopeOrPromise;
-  const files = scope.files.length + scope.wide.length;
+  const files = scope.files.length + scope.wide.length + (scope.named?.length ?? 0);
   const repo = repoIdOf(scope.top ?? '');
   const risk = files === 0 ? { classes: [], warning: undefined } : await riskOf(scope);
   const row = { v: 1, id: randomBytes(RUN_ID_BYTES).toString('hex'), at: new Date().toISOString(), where, session, agent, repo, base: scope.base, key: scope.key, files, checks: {}, verdict: 'ok', risk: risk.classes, ms: 0 };
@@ -162,7 +162,7 @@ export async function checkChange(scopeOrPromise, options) {
     row.verdict = verdict;
     row.ms = Date.now() - startedAt;
     const notes = [...(extra.notes ?? []), ...(risk.warning ? ['risk rules file is bad, built-in rules used'] : [])];
-    if (files > 0 && !appendRun(row, { env })) notes.push('ledger not written');
+    if (row.files > 0 && !appendRun(row, { env })) notes.push('ledger not written');
     return { verdict, line: lineOf(row, { notes, tries: extra.tries ?? 0 }), reason: extra.reason ?? null, risk: risk.classes, row };
   };
   if (files === 0) return finish('skipped');
@@ -171,6 +171,8 @@ export async function checkChange(scopeOrPromise, options) {
     return finish('skipped');
   }
   const plan = planChecks(scope, env);
+  const noCommand = !plan.packages.some((one) => one.cmds.length > 0);
+  if (noCommand && scope.files.length + scope.wide.length === 0) { row.files = 0; return finish('skipped'); } // only text files changed and no test reads them
   row.key = hashOf(`${scope.key}\n${plan.fingerprint}`);
   let earlier = null;
   try {

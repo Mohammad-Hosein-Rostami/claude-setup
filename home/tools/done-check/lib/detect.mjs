@@ -16,7 +16,8 @@ import { MAX_NODE_RELATED } from './contract.mjs';
 import { nodeRelatedTests, testFilesOfGlobs } from './related.mjs';
 import { forwardedFlags, nodeTestGlobs, plainWords, splitScript, tscCommands } from './script-words.mjs';
 
-const CODE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts|vue)$/;
+const SCRIPT_FILE = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts|vue)$/;
+const CODE_FILE = /(\.(ts|tsx|js|jsx|mjs|cjs|mts|cts|vue)|(^|\/)\.githooks\/[^/]+)$/; // a git hook script has no extension
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const E2E_OR_LIVE = /(^|[/._-])(e2e|live)([/._-]|$)/i;
 const ARGV_LIMIT_CHARS = 28_000; // below the 32 767 characters of a Windows command line
@@ -144,12 +145,13 @@ function planTypes(context, pkg) {
 }
 
 function planLint(context, pkg) {
-  if (pkg.codeFiles.length === 0) return { skipped: [], cmds: [] };
+  const lintable = pkg.codeFiles.filter((file) => SCRIPT_FILE.test(file));
+  if (lintable.length === 0) return { skipped: [], cmds: [] };
   const entry = findTool(pkg.root, context.top, 'eslint');
   if (!entry) return skip('lint', 'no-command', 'lint: eslint is not installed');
   if (!hasEslintConfig(pkg, context.top)) return skip('lint', 'no-config', 'lint: no eslint config');
   const build = (files) => [process.execPath, entry, '--format', 'json', '--no-error-on-unmatched-pattern', ...files];
-  return { skipped: [], cmds: commandsFor(context, pkg, { kind: 'lint', label: 'eslint', build, files: pkg.codeFiles.map((file) => argPath(pkg.root, file)) }) };
+  return { skipped: [], cmds: commandsFor(context, pkg, { kind: 'lint', label: 'eslint', build, files: lintable.map((file) => argPath(pkg.root, file)) }) };
 }
 
 function plannedTestRunner(context, pkg, runner, words, label) {
@@ -167,7 +169,7 @@ function plannedTestRunner(context, pkg, runner, words, label) {
 function plannedNodeTests(context, pkg, globs) {
   const used = globs.length > 0 ? globs : DEFAULT_NODE_TEST_GLOBS;
   const label = `node --test ${globs.join(' ')}`.trim();
-  const picked = pkg.wide ? testFilesOfGlobs(pkg.root, used).slice(0, MAX_NODE_RELATED) : nodeRelatedTests(pkg.root, used, pkg.codeFiles.map((file) => withSlashes(relative(pkg.root, file))), MAX_NODE_RELATED);
+  const picked = pkg.wide ? testFilesOfGlobs(pkg.root, used).slice(0, MAX_NODE_RELATED) : nodeRelatedTests(pkg.root, used, [...pkg.codeFiles, ...pkg.namedFiles].map((file) => withSlashes(relative(pkg.root, file))), MAX_NODE_RELATED);
   if (picked.length === 0) return skip('tests', 'no-related', `tests: ${label}: no related test file`);
   const argv = [process.execPath, '--test', '--test-reporter=tap', ...picked.map((file) => argPath(pkg.root, file))];
   return { skipped: [], cmds: [{ kind: 'tests', argv, cwd: pkg.root, shell: false, label }] };
@@ -229,13 +231,17 @@ function groupByPackage(context, scope) {
     const abs = resolve(context.top, file);
     if (!isInside(context.top, abs)) return null; // a path that climbs out of the project is never used
     const root = packageRootOf(context.top, file);
-    if (!groups.has(root)) groups.set(root, { root, codeFiles: [] });
+    if (!groups.has(root)) groups.set(root, { root, codeFiles: [], namedFiles: [] });
     return { abs, root };
   };
   for (const file of scope.wide) { const placed = place(file); if (placed) wideOwners.add(placed.root); }
   for (const file of scope.files) {
     const placed = place(file);
     if (placed && CODE_FILE.test(file) && existsSync(placed.abs) && lstatSync(placed.abs).isFile()) groups.get(placed.root).codeFiles.push(placed.abs);
+  }
+  for (const file of scope.named ?? []) {
+    const placed = place(file);
+    if (placed) groups.get(placed.root).namedFiles.push(placed.abs); // a named file may be gone (deleted): a test that reads it fails
   }
   const widened = (root) => [...wideOwners].some((owner) => root === owner || root.startsWith(owner + sep));
   return [...groups.values()].sort((left, right) => (left.root < right.root ? -1 : 1)).map((group) => ({ ...group, wide: widened(group.root) }));
@@ -269,7 +275,8 @@ export function planChecks(scope, env) {
     if (json.error) { skipped.push(...PLANNED_KINDS.filter((kind) => !skippedByEnv.includes(kind)).map((kind) => ({ kind, why: 'error', label: `${where}${kind}: ${json.error}` }))); continue; }
     const pkg = { ...group, ...json, pm: packageManagerOf(json.packageManager, group.root, scope.top) };
     const cmds = [];
-    for (const kind of PLANNED_KINDS.filter((name) => !skippedByEnv.includes(name))) {
+    const namedOnly = pkg.codeFiles.length === 0 && !pkg.wide; // only text files a test reads changed: no typecheck or lint of them
+    for (const kind of PLANNED_KINDS.filter((name) => !skippedByEnv.includes(name) && (!namedOnly || name === 'tests'))) {
       const planned = KIND_PLANNERS[kind](context, pkg);
       cmds.push(...planned.cmds);
       skipped.push(...planned.skipped.map((entry) => ({ ...entry, label: `${where}${entry.label}` })));

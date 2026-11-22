@@ -1,7 +1,8 @@
 // Picks the node:test files that a change can break: the test files named by the globs of a `node --test` script part that are
 // changed themselves, import a changed file (static import, export-from, require or dynamic import with a literal path, up to 3 hops), or
 // write a changed file's path in their text (a test that spawns a script).
-// Exports: nodeRelatedTests(root, globs, files, max) -> absolute paths; testFilesOfGlobs(root, globs) -> absolute paths.
+// Exports: nodeRelatedTests(root, globs, files, max) -> absolute paths; testFilesOfGlobs(root, globs) -> absolute paths;
+//   pathsNamedByTests(root, paths) -> the repo-relative paths whose file name some test-looking file writes (the scope's first, cheap guess).
 // Invariants: reads only regular files under `root` (a link, FIFO or device is skipped, a file over 1 MiB is not read); never follows
 //   a link; skips node_modules and .git; a glob that is absolute or climbs out with `..` matches nothing; the same input always gives the
 //   same answer (order: changed test first, then direct, then deeper imports, ties by path), so a key built on it is stable.
@@ -14,6 +15,8 @@ const MAX_WALKED_ENTRIES = 100_000; // a walk that grows past this stops: a huge
 const SKIPPED_FOLDERS = new Set(['node_modules', '.git']);
 const CODE_EXTENSIONS = ['.mjs', '.js', '.cjs', '.ts', '.tsx', '.mts', '.cts', '.jsx', '.vue'];
 const SCRIPT_EXTENSION = /\.(mjs|cjs|js)$/;
+const TEST_LOOKING = /(?:^|\/)(?:tests?|__tests__)\/|[._-](?:test|spec)\.[cm]?[jt]sx?$/; // a path a test usually lives at
+const MAX_NAMED_CANDIDATES = 200; // changed non-code files looked up at most; more than this is a bulk edit, not one a test reads
 const IMPORT_FORMS = [
   /\b(?:import|export)\s+(?:[^'"`;]*?\bfrom\s*)?['"]([^'"\n]+)['"]/g,
   /\brequire\(\s*['"]([^'"\n]+)['"]\s*\)/g,
@@ -203,4 +206,27 @@ export function nodeRelatedTests(root, globs, files, max) {
   }
   ranked.sort((left, right) => left.distance - right.distance || (left.testFile < right.testFile ? -1 : 1));
   return ranked.slice(0, max).map((entry) => entry.testFile);
+}
+
+/**
+ * Of changed non-code files, the ones some test file names. The scope uses it to decide whether a markdown or json change is worth a check
+ * (a test that reads `docs/rules.md` can break when it changes); the exact path match is still done by nodeRelatedTests against the real globs.
+ * It is a cheap guess: a test-looking file (a `test`, `tests` or `__tests__` folder, or `.test.` / `.spec.` in the name) that holds the
+ * file's name, so a path written in pieces is found too. Reads each test file once, at most 1 MiB, never follows a link.
+ * @param {string} root absolute folder the paths are relative to
+ * @param {string[]} paths changed files, repo-relative with `/` separators
+ * @returns {string[]} the paths a test names, in the order given (at most MAX_NAMED_CANDIDATES are looked at)
+ */
+export function pathsNamedByTests(root, paths) {
+  const wanted = paths.slice(0, MAX_NAMED_CANDIDATES);
+  if (wanted.length === 0) return [];
+  const found = new Set();
+  walkFiles(root, '', found);
+  const named = new Set();
+  for (const file of [...found].sort().filter((path) => TEST_LOOKING.test(path))) {
+    const text = readText(join(root, file));
+    for (const path of wanted) if (!named.has(path) && text.includes(path.split('/').pop())) named.add(path);
+    if (named.size === wanted.length) break;
+  }
+  return wanted.filter((path) => named.has(path));
 }

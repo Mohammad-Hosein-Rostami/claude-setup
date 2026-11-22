@@ -10,7 +10,9 @@
 //   owns those it recorded (lib/own-edits.mjs) or that changed since its baseline (a Bash command made them). The lead owns only the files
 //   recorded for its session (that set also holds the files its agents recorded, as commit-gate sees it): land-lane moves HEAD, so a landed
 //   lane is not the lead's. A lead started outside a repo gets one Scope per worktree it edited in (`editedWorktrees`).
-// - Code files: ts tsx js jsx mjs cjs mts cts vue. `wide`: package.json, lockfiles, tsconfig*.json, vitest, jest and eslint config; a wide file
+// - Code files: ts tsx js jsx mjs cjs mts cts vue, and the scripts in a `.githooks/` folder (no extension). `named`: any other changed file
+//   (markdown, json, ...) that a test-looking file names (lib/related.mjs `pathsNamedByTests`), so a test that reads a text file is run when
+//   the text changes; a change with no code and nothing named stays no change. `wide`: package.json, lockfiles, tsconfig*.json, vitest, jest and eslint config; a wide file
 //   is never also in `files`. A change with neither gives no Scope (ownChange) and an empty Scope (rangeChange). A deleted file is listed
 //   (a deletion can break its importers), so a consumer checks that a file exists before it hands it to a tool.
 // - Paths are repo-relative with `/`. Scope.key = sha256 of the base and the sorted paths with their worktree content hashes; the caller that
@@ -26,19 +28,22 @@ import { baselineOf, changedSinceBaseline } from '../../../hooks/lib/dirty-basel
 import { editedWorktrees, gatedFolder, gitOut, namesFilterProgram, worktreeOf } from '../../../hooks/lib/gated-folder.mjs';
 import { LEAD, realPathOf, recordedPaths, statusEntries } from '../../../hooks/lib/own-edits.mjs';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
+import { pathsNamedByTests } from './related.mjs';
 
 const GIT_TIMEOUT_MS = 20_000; // one git call; a hung repo must not eat the stop deadline
 const MAX_HASHED_BYTES = 8 * 1024 * 1024; // a code file over this is stamped by size and time instead of content
 const STATUS_PATH_AT = 3; // a porcelain entry is `XY <path>`
 const COMMIT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const CODE_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs|mts|cts|vue)$/i;
+const GIT_HOOK_SCRIPT = /(?:^|\/)\.githooks\/[^/]+$/;
 const WIDE_FILE = /^(?:package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|tsconfig(?:\.[^/]*)?\.json|(?:vitest|jest)\.(?:config|workspace)\.[^/]+|eslint\.config\.[^/]+|\.eslintrc(?:\.[^/]+)?)$/;
 const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm;
 const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--ignore-submodules=all'];
 
 const git = (top, args) => gitOut(top, ['--literal-pathspecs', ...args], GIT_TIMEOUT_MS);
 const isWide = (path) => WIDE_FILE.test(basename(path));
-const isCode = (path) => CODE_FILE.test(path) && !path.split('/').includes('node_modules');
+const isCode = (path) => (CODE_FILE.test(path) || GIT_HOOK_SCRIPT.test(path)) && !path.split('/').includes('node_modules');
+const isOther = (path) => !isWide(path) && !isCode(path) && !path.split('/').includes('node_modules');
 const inside = (parent, path) => path.startsWith(parent.endsWith(sep) ? parent : parent + sep);
 
 function assertCommit(base) {
@@ -61,13 +66,14 @@ function changeKey(base, top, paths) {
   return hash.digest('hex');
 }
 
-/** The Scope of `paths` (repo-relative); null when it holds no code and no wide file and `keepEmpty` is false. */
-function scopeFrom(top, isGit, base, paths, keepEmpty = false) {
+/** The Scope of `paths` (repo-relative); null when it holds no code, no wide file and nothing `named` and `keepEmpty` is false. */
+function scopeFrom(top, isGit, base, paths, { named = [], keepEmpty = false } = {}) {
   const unique = [...new Set(paths)].filter((path) => !path.split('/').includes('node_modules'));
   const wide = unique.filter(isWide).sort();
   const files = unique.filter((path) => !isWide(path) && isCode(path)).sort();
-  if (!keepEmpty && files.length === 0 && wide.length === 0) return null;
-  return { top, git: isGit, base, files, wide, key: changeKey(base, top, [...files, ...wide]) };
+  const namedFiles = unique.filter((path) => isOther(path) && named.includes(path)).sort();
+  if (!keepEmpty && files.length === 0 && wide.length === 0 && namedFiles.length === 0) return null;
+  return { top, git: isGit, base, files, wide, named: namedFiles, key: changeKey(base, top, [...files, ...wide, ...namedFiles]) };
 }
 
 /** Files changed between `base` and the worktree (tracked, staged or not); null when git cannot say (a commit it does not have). */
@@ -115,9 +121,10 @@ function gitScope(ctx, tree) {
     if (committed === null) base = null; // the base commit is gone: no base compare
     else changed = [...committed, ...dirty.filter(({ field }) => field.startsWith('??')).map(({ rel }) => rel)];
   }
-  const relevant = changed.filter((rel) => isCode(rel) || isWide(rel));
+  const named = pathsNamedByTests(top, changed.filter(isOther));
+  const relevant = [...changed.filter((rel) => isCode(rel) || isWide(rel)), ...named];
   if (relevant.length === 0) return null;
-  return scopeFrom(top, true, base, ownedPaths(ctx, top, relevant, dirty));
+  return scopeFrom(top, true, base, ownedPaths(ctx, top, relevant, dirty), { named });
 }
 
 /** The Scope of a folder that is not git: the recorded files under it that still exist (no base, nothing to compare). */
@@ -167,7 +174,9 @@ export async function rangeChange(top, base) {
   const dirty = dirtyEntries(tree.top);
   if (committed === null || dirty === null) throw new Error(`done-check scope: git could not compare ${tree.top} with ${base}`);
   const untracked = dirty.filter(({ field }) => field.startsWith('??')).map(({ rel }) => rel);
-  return scopeFrom(realPathOf(tree.top), true, base, [...committed, ...untracked], true);
+  const realTop = realPathOf(tree.top);
+  const paths = [...committed, ...untracked];
+  return scopeFrom(realTop, true, base, paths, { named: pathsNamedByTests(realTop, paths.filter(isOther)), keepEmpty: true });
 }
 
 /** The line count of an untracked file as one range, [] for an empty one. */

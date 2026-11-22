@@ -371,6 +371,20 @@ test('fewer assertions in a changed test file is weakened', async (t) => {
   assertWeakened(failures, 'src/a.test.ts');
 });
 
+const SOFTENINGS = [
+  ['toBe to toBeDefined', 'expect(1).toBe(1);', 'expect(1).toBeDefined();'],
+  ['toEqual to toBeTruthy', 'expect(2).toEqual(2);', 'expect(2).toBeTruthy();'],
+  ['assert.equal to toBeDefined', 'assert.equal(3, 3);', 'expect(3).toBeDefined();'],
+];
+const softSource = (line) => `import { test, expect } from 'vitest';\ntest('works', () => {\n  ${line}\n  expect(4).toBe(4);\n});\n`;
+for (const [name, strong, weak] of SOFTENINGS) {
+  test(`an assertion softened from ${name} is weakened`, async (t) => {
+    const failures = await weakenedAfter(t, { base: { 'src/a.test.ts': softSource(strong) }, change: (repo) => repo.write('src/a.test.ts', softSource(weak)), files: ['src/a.test.ts'] });
+    assertWeakened(failures, 'src/a.test.ts');
+    assert.ok(failures.some((failure) => failure.id === 'src/a.test.ts|softened-assertion'), JSON.stringify(failures));
+  });
+}
+
 const SKIPS = [
   ['test.skip', "test.skip('later', () => {});"], ['it.skip', "it.skip('later', () => {});"], ['describe.skip', "describe.skip('suite', () => {});"],
   ['test.only', "test.only('only this', () => {});"], ['it.only', "it.only('only this', () => {});"], ['it.todo', "it.todo('later');"],
@@ -452,6 +466,8 @@ const NOT_WEAKENED = [
   ['a removed @ts-ignore', { base: { 'src/a.ts': '// @ts-ignore\nexport const a = 1;\n' }, change: (repo) => repo.write('src/a.ts', 'export const a = 1;\n'), files: ['src/a.ts'] }],
   ['an old skip that is not touched', { base: { 'src/a.test.ts': `${ONE_TEST}test.skip('old', () => {});\n` }, change: (repo) => repo.write('src/a.test.ts', `${ONE_TEST}test.skip('old', () => {});\n// a comment\n`), files: ['src/a.test.ts'] }],
   ['the word skip in a name or a string', { base: { 'src/a.test.ts': ONE_TEST }, change: (repo) => repo.write('src/a.test.ts', `${ONE_TEST}test('handles skipped rows', () => { const note = 'skip this'; });\n`), files: ['src/a.test.ts'] }],
+  ['a toBeDefined added next to the strong checks that stay', { base: { 'src/a.test.ts': softSource('expect(1).toBe(1);') }, change: (repo) => repo.write('src/a.test.ts', softSource('expect(1).toBe(1);\n  expect(5).toBeDefined();')), files: ['src/a.test.ts'] }],
+  ['a toBe changed to a toEqual', { base: { 'src/a.test.ts': softSource('expect(1).toBe(1);') }, change: (repo) => repo.write('src/a.test.ts', softSource('expect(1).toEqual(1);')), files: ['src/a.test.ts'] }],
   ['an ordinary code change', { base: { 'src/a.ts': 'export const a = 1;\n' }, change: (repo) => repo.write('src/a.ts', 'export const a = 2;\nexport const b = 3;\n'), files: ['src/a.ts'] }],
 ];
 for (const [name, options] of NOT_WEAKENED) {

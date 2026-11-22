@@ -21,8 +21,8 @@ function project(t, options) {
   t.after(() => repo.cleanup());
   return repo;
 }
-const scopeOf = (repo, files, wide = []) => ({ top: repo.dir, git: repo.baseSha !== null, base: repo.baseSha, files, wide, key: 'k' });
-const planFor = (repo, files, { wide = [], env = {}, base = repo.baseSha } = {}) => planChecks({ ...scopeOf(repo, files, wide), base }, { ...repo.env, ...env });
+const scopeOf = (repo, files, wide = [], named = []) => ({ top: repo.dir, git: repo.baseSha !== null, base: repo.baseSha, files, wide, named, key: 'k' });
+const planFor = (repo, files, { wide = [], named = [], env = {}, base = repo.baseSha } = {}) => planChecks({ ...scopeOf(repo, files, wide, named), base }, { ...repo.env, ...env });
 const cmdsOf = (plan, kind) => plan.packages.flatMap((entry) => entry.cmds).filter((cmd) => cmd.kind === kind);
 const skippedOf = (plan, kind) => plan.skipped.filter((entry) => entry.kind === kind);
 const isNode = (program) => program === process.execPath || /^node(\.exe)?$/.test(basename(program));
@@ -223,6 +223,32 @@ test('a node --test part whose every glob is e2e or live is still not run as a w
   const plan = planFor(repo, ['src/a.mjs']);
   assert.equal(cmdsOf(plan, 'tests').length, 0);
   assert.deepEqual(skippedOf(plan, 'tests').map((entry) => entry.why), ['e2e-or-live']);
+});
+
+const READS_RULES = "import { readFileSync } from 'node:fs';\nreadFileSync('docs/rules.md', 'utf8');\n";
+
+test('a changed non-code file that a test names picks that test, and plans no typecheck and no lint for it', (t) => {
+  const repo = nodeProject(t, NODE_TEST_SCRIPT, { 'tests/rules.test.mjs': READS_RULES, 'docs/rules.md': 'rules\n', 'tsconfig.json': '{}\n' });
+  const plan = planFor(repo, [], { named: ['docs/rules.md'] });
+  assert.deepEqual(testFilesOf(repo, nodeCmd(plan)), ['tests/rules.test.mjs']);
+  assert.deepEqual(plan.packages.flatMap((entry) => entry.cmds).map((cmd) => cmd.kind), ['tests']);
+});
+
+test('a changed non-code file that no test file names plans no command at all', (t) => {
+  const repo = nodeProject(t, NODE_TEST_SCRIPT, { 'docs/other.md': 'other\n' });
+  const plan = planFor(repo, [], { named: ['docs/other.md'] });
+  assert.equal(plan.packages.flatMap((entry) => entry.cmds).length, 0);
+});
+
+test('a .githooks script is a code file: a test that names its path is picked, and it is not given to eslint', (t) => {
+  const repo = project(t, { packageJson: { scripts: { test: NODE_TEST_SCRIPT } }, tools: ['eslint'], files: {
+    'eslint.config.js': 'export default [];\n',
+    '.githooks/pre-commit': '#!/bin/sh\nexit 0\n',
+    'tests/hooks.test.mjs': "// Tests for .githooks/pre-commit\nimport 'node:fs';\n",
+  } });
+  const plan = planFor(repo, ['.githooks/pre-commit']);
+  assert.deepEqual(testFilesOf(repo, nodeCmd(plan)), ['tests/hooks.test.mjs']);
+  assert.equal(cmdsOf(plan, 'lint').length, 0);
 });
 
 test('a wide change (package.json) runs the full test parts: vitest without "related", every test file of the node globs', (t) => {

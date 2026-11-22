@@ -4,7 +4,8 @@
 // What counts (each one is a Failure with id `<file>|<reason>`, a one-line text, and the file; the text names what was seen, so the agent
 // knows what to undo: `tests/a.test.mjs:5: test.skip added`, `src/x.ts:1: @ts-ignore added (a lint or type suppression)`,
 // `tests/a.test.mjs: case deleted (3 test cases before, 2 now)`):
-//   - a deleted test file; fewer test cases or fewer assertions in a changed test file;
+//   - a deleted test file; fewer test cases or fewer assertions in a changed test file; a softened assertion (the always-true matchers
+//     toBeDefined, toBeTruthy and toBeFalsy went up while the value-checking matchers toBe, toEqual, assert.equal and the like went down);
 //   - more skip, only, todo, `xit`, `xdescribe` or `{ skip: ... }` in a test file than at the base;
 //   - more lint, type or coverage suppression comments than at the base (eslint-disable, ts-ignore, ts-expect-error, ts-nocheck,
 //     istanbul, c8 or v8 ignore) in a code file;
@@ -42,6 +43,10 @@ const PACKAGE_JSON = /(^|\/)package\.json$/;
 // away is not fewer cases. An assertion is `expect(` or `assert(` and its methods.
 const CASES = /(?<![\w.$])(test|it)(?!\.(skip|skipIf|todo|fixme)\b)(\.\w+)*\s*\(/g;
 const ASSERTIONS = /(?<![\w.$])(expect|assert)(\.\w+)*\s*\(/g;
+// A weak matcher passes for almost any value; a strong one checks the value. Only a swap (weak up, strong down) is a softening, so a new
+// test that uses toBeDefined, or a rewrite that keeps its strong matchers, is not flagged.
+const WEAK_MATCHERS = /\.(toBeDefined|toBeTruthy|toBeFalsy)\s*\(/g;
+const STRONG_MATCHERS = /\.(toBe|toEqual|toStrictEqual|toMatch|toMatchObject|toContain|toHaveLength|toBeGreaterThan|toBeLessThan|toThrow|toHaveBeenCalledWith)\s*\(|(?<![\w.$])assert(?:\.strict)?\.(equal|strictEqual|deepEqual|deepStrictEqual|match|throws)\s*\(/g;
 const SKIPS = /(?<![\w.$])(test|it|describe|suite|context)\.(skip|skipIf|only|todo|fixme)\b|(?<![\w.$])x(it|describe|test)\s*\(|\{[^{}]*\b(skip|todo|only)\s*:\s*(true|['"`])/g;
 // A suppression is a directive inside a comment: the comment opener in front keeps this file's own patterns from counting as one.
 const SUPPRESSIONS = /(?:\/\/|\/\*|\*)\s*(eslint-disable|@ts-ignore|@ts-expect-error|@ts-nocheck|istanbul ignore|c8 ignore|v8 ignore)/g;
@@ -131,6 +136,9 @@ function weakenedTestFile(file, before, after) {
   const assertions = [countOf(before, ASSERTIONS), countOf(after, ASSERTIONS)];
   if (cases[1] < cases[0]) found.push(failure(file, 'fewer-cases', `case deleted (${cases[0]} test cases before, ${cases[1]} now)`));
   if (assertions[1] < assertions[0]) found.push(failure(file, 'fewer-assertions', `assertion deleted (${assertions[0]} assertions before, ${assertions[1]} now)`));
+  const weak = [countOf(before, WEAK_MATCHERS), countOf(after, WEAK_MATCHERS)];
+  const strong = [countOf(before, STRONG_MATCHERS), countOf(after, STRONG_MATCHERS)];
+  if (weak[1] > weak[0] && strong[1] < strong[0]) found.push(failure(file, 'softened-assertion', `assertion softened (${strong[0]} value checks before, ${strong[1]} now; ${weak[1] - weak[0]} always-true matcher added)`));
   if (countOf(after, SKIPS) > countOf(before, SKIPS)) found.push(addedFailure(file, 'added-skip', before, after, { pattern: SKIPS, group: 0, fallback: 'a skip, only or todo was added' }));
   return found;
 }
