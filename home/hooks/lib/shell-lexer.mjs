@@ -1,27 +1,26 @@
 // Character-level shell lexer: the second, independent parser behind pre-bash-guard's "matched in raw text" backstop, and the
 // source of truth for heredocs and `$(...)` bodies inside double quotes. Pure, no I/O, never evaluates anything.
-// Exports: lexShell(text) -> {rawSegs, nested, stripped}; isSimpleSubstitutionBody; markPiped, markJoin, opensArrayList, markArrayList (also used
-// by the regex tokenizer).
+// Exports: lexShell(text) -> {rawSegs, nested, stripped, chained}; isSimpleSubstitutionBody; markPiped, markJoin, opensArrayList, markArrayList.
 //   rawSegs   simple commands as lists of RAW words (quotes and escapes intact; `.piped` is true when a `|` fed the segment, `.arrayList`
 //             when the segment is the element list of `NAME=(...)` / `NAME+=(...)`; `.joinedBy` holds the operators between the word before
 //             the segment and its first word, as written: '' at the start, `&&`, `;`, `(`, `)&&`, a newline; lib/cd-folder.mjs reads it)
 //   nested    bodies of `$(...)` / backticks found inside double quotes at the top level (the caller lexes them again)
-//   stripped  the text without heredoc bodies and their terminator lines
-// It follows the real nesting: quotes, `$'..'`, comments, `$((..))` arithmetic, `$(...)` inside double quotes (where quotes nest
-// again) and heredocs wherever they start. So `<<EOF` inside quotes, a comment or `$((1<<X))` is not a heredoc, and a heredoc
-// inside `"$(cat <<'EOF' ... EOF)"` is. A heredoc without a terminator line is left in place (its body is still checked).
-// Outside double quotes `$(`, `(`, `)` and backticks only separate commands (flat), like the regex tokenizer in shell-words.mjs;
-// but the words after the `)` that closes a `$(` go back to the segment that held the `$` (`echo $(a) $(b)` is one echo with two
-// arguments, not a command named `$`), while the bodies stay their own segments so every command inside is still checked.
-// That return happens only for a "simple" body (isSimpleSubstitutionBody): after a `case` pattern `)` or a `)` inside `${...}` the
-// rest of the body is still inside the substitution, so those keep the flat split and the words stay their own commands.
+//   stripped  the text without heredoc bodies and their terminator lines; chained: also without a comment right after `&&`, `||` or `|` (N8)
+// It follows the real nesting: quotes, `$'..'`, comments, `$((..))` arithmetic, `$(...)` inside double quotes (where quotes nest again) and
+// heredocs wherever they start. So `<<EOF` inside quotes, a comment or `$((1<<X))` is not a heredoc, and a heredoc inside `"$(cat <<'EOF' ... EOF)"`
+// is. A heredoc without a terminator line is left in place (its body is still checked).
+// Outside double quotes `$(`, `(`, `)` and backticks only separate commands (flat), like the regex tokenizer in shell-words.mjs; but the words
+// after the `)` that closes a `$(` go back to the segment that held the `$` (`echo $(a) $(b)` is one echo with two arguments, not a command
+// named `$`), while the bodies stay their own segments so every command inside is still checked. That return happens only for a "simple" body
+// (isSimpleSubstitutionBody): after a `case` pattern `)` or a `)` inside `${...}` the rest of the body is still inside the substitution, so
+// those keep the flat split and the words stay their own commands.
 // Invariants: linear in the text length apart from a bounded arithmetic look-ahead; an unclosed quote runs to the end of the text.
 
 const MAX_NESTING = 64; // `"$("$("...` deeper than this is read as plain text, so a hostile command cannot overflow the stack
 const MAX_ARITHMETIC = 4096; // look-ahead for the `))` that closes `((`; a longer one is treated as nested parentheses
 const HEREDOC_START = /<<-?[ \t]*/y;
 const COMMENT_PREFIX = /[\s;&|(]/;
-
+const CHAIN_OPERATOR_END = /(?:&&|\|&?)\n*$/; // the operators since the last word end in `&&`, `||`, `|` or `|&`: the next command follows the comment
 const NON_SIMPLE_BODY = /\bcase\b|\$\{|`|\$'|<<|#|<\(|>\(/; // a case pattern `)`, `${x#)}`, a comment, a heredoc: where a `)` may not end the substitution
 
 /**
@@ -251,6 +250,7 @@ function walk(state, start, closer) {
       i++;
     } else if (c === '#' && word === -1 && (i === start || COMMENT_PREFIX.test(text[i - 1]))) {
       const newline = text.indexOf('\n', i);
+      if (CHAIN_OPERATOR_END.test(joined)) state.comments.push([i, newline === -1 ? text.length : newline]);
       i = newline === -1 ? text.length : newline;
     } else if (c === '|' && text[i - 1] !== '>') {
       const double = next === '|';
@@ -293,7 +293,8 @@ function withoutRanges(text, removed) {
  * @returns {{rawSegs: string[][], nested: string[], stripped: string}} see the file header
  */
 export function lexShell(text) {
-  const state = { text, pending: [], removed: [], missing: new Set(), depth: 0 };
+  const state = { text, pending: [], removed: [], comments: [], missing: new Set(), depth: 0 };
   const { segs, nested } = walk(state, 0, null);
-  return { rawSegs: segs.filter((seg) => seg.length), nested, stripped: withoutRanges(text, state.removed) };
+  const chained = withoutRanges(text, [...state.removed, ...state.comments].sort((x, y) => x[0] - y[0]));
+  return { rawSegs: segs.filter((seg) => seg.length), nested, stripped: withoutRanges(text, state.removed), chained };
 }

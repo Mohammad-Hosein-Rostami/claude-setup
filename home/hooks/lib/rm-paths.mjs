@@ -14,7 +14,7 @@
 // Brace expansion in targets (`{/,x}`) is expanded first; one that cannot be listed asks.
 // `$(git rev-parse --show-toplevel)` counts as the project root from a directory inside the project (`rm -rf "$(git rev-parse --show-toplevel)/dist"`).
 // Only a recursive rm asks about an unknown or outside target; `rm -f x` of one file is not judged here. An rm whose options the guard
-// cannot read counts as recursive (rmKind; its reasons say "rm that may be recursive", not "rm -r"): `-$X`, `"$@"`, `"${a[@]}"`, or one variable where the
+// cannot read counts as recursive (lib/rm-kind.mjs rmKind; its reasons say "rm that may be recursive", not "rm -r"): `-$X`, `"$@"`, `"${a[@]}"`, or one variable where the
 // options stand (`rm $F ~`).
 // Inside the project a recursive rm still asks when it empties a whole folder: the working directory itself, or a bare glob (`*`, `./*`,
 // `.*`, `?`, `[a-z]*`) of the working directory, the project root, home, `/` or a temp root (`/tmp/*` empties every session's scratch folder).
@@ -31,10 +31,11 @@ import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, parse, relative, resolve } from 'node:path';
 import { globbedFolder } from './bare-glob.mjs';
 import { expandBraces } from './braces.mjs';
-import { DECLARERS, GIT_TOPLEVEL_WORD, MKTEMP_WORD, QUOTED_MARK, backtickAssignedNames, flagsOf, withoutRedirects } from './shell-words.mjs';
+import { RECURSIVE_FLAG, rmKind } from './rm-kind.mjs';
+import { DECLARERS, GIT_TOPLEVEL_WORD, MKTEMP_WORD, QUOTED_MARK, backtickAssignedNames, withoutRedirects } from './shell-words.mjs';
 import { MAX_COMMAND_CHARS, destructive, shown } from './verdict.mjs';
 
-export { DECLARERS, shown, withoutRedirects };
+export { DECLARERS, RECURSIVE_FLAG, shown, withoutRedirects };
 const SAFE_TEMP_ROOTS = ['/tmp', '/private/tmp', tmpdir()];
 const HOME_PREFIX = /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/;
 const GIT_BASH_DRIVE_ROOT = /^\/[a-zA-Z]$/;
@@ -58,14 +59,6 @@ export const TOO_COMPLEX_REASON = 'command too complex to check (its rm targets,
   + 'read it before allowing';
 /** @returns {{readings: number, expanded: number, spent: boolean}} a fresh budget for one line; spent once either count ran out: the line then asks */
 export const newWork = () => ({ readings: 0, expanded: 0, spent: false });
-const prefixesOf = (word) => Array.from(word, (_, index) => word.slice(0, index + 1));
-/**
- * An rm option that deletes recursively: `-r`, `-R`, a cluster holding one (`-rf`, `-fR`), `--recursive`, or a prefix of it (`--rec`, `--r`):
- * GNU rm (Linux, Git Bash) takes any unambiguous prefix of a long option, and no other long option of rm starts with r. A prefix of
- * `--no-preserve-root` counts too (no other starts with n): it is only written for a recursive delete.
- */
-export const RECURSIVE_FLAG = new RegExp(`^--(?:${[...prefixesOf('recursive'), ...prefixesOf('no-preserve-root')].join('|')})$|^-[a-zA-Z]*[rR]`);
-
 /**
  * Git Bash paths (`/c/Users/x`) -> `c:/Users/x` on Windows; unchanged elsewhere. A bare drive (`/c`) is the drive ROOT, `c:/`: a plain
  * `c:` means "the current folder on drive c" to Windows, so `cd /c` would look like a cd that did not move.
@@ -248,42 +241,26 @@ function readingsWithin(work, targets, splitWords) {
   return words;
 }
 
-const EXPANSION = /[$`]/;
 const DOT_GLOB_PART = /(^|\/)\.[*?]+(?=\/)/; // `.*/proj`: before bash 5.2 the glob `.*` also matches `..`
 /** A target, and when a folder part is a dot glob also the reading with that part as `..` (G7). */
 const withParentReading = (target) => (DOT_GLOB_PART.test(target) ? [target, target.replace(new RegExp(DOT_GLOB_PART, 'g'), '$1..')] : [target]);
-const MANY_WORDS = /\$[@*]|\[[@*]\]\}/; // `"$@"`, `$*`, `"${a[@]}"`: any number of words, options among them
-const WHOLE_EXPANSION = /^\$(?:\w+|\{[^}]*\})$/; // a word that is one variable and nothing else
-
 const WHOLE_FOLDERS = 'the project root, home, a temp root or /';
-const UNREAD_OPTIONS_RM = 'rm that may be recursive (an expansion can hold its options)'; // how a reason names an rm that is not `-r` as written
-/**
- * How a reason names the rm, undefined when it is not judged: `rm -r` when it deletes recursively as written; UNREAD_OPTIONS_RM when it may
- * once the shell has filled in its words: an option word with an expansion in it (`-$X`, `-${X:-r}f`), a word that stands for any number of words
- * (`"$@"`, `"${a[@]}"`), or one variable where the options stand, with more words after it (`rm $F ~` with F=-rf): judged as `rm -r`.
- */
-function rmKind(args) {
-  if (flagsOf(args).some((flag) => RECURSIVE_FLAG.test(flag))) return 'rm -r';
-  const first = args.findIndex((word) => !word.startsWith('-'));
-  const optionsEnded = args.slice(0, first).includes('--'); // `rm -- $F ~`: no word after `--` is an option
-  const optionHolder = first !== -1 && first < args.length - 1 && !optionsEnded && WHOLE_EXPANSION.test(args[first]);
-  const unread = flagsOf(args).some((flag) => EXPANSION.test(flag)) || args.some((word) => MANY_WORDS.test(word)) || optionHolder;
-  return unread ? UNREAD_OPTIONS_RM : undefined;
-}
-
+const splitAtBlanks = (word) => word.split(BLANKS).filter(Boolean);
 /**
  * @param {string[]} args words after `rm`
- * @param {{cwd: string | null, project: string, vars: Map<string, string>, splitWords?: Set<string>, groupTargets?: string[], work?: {readings: number,
- * spent: boolean}}} env the
- *   folder and variables of the segment; groupTargets are the branches of a glob group written after the rm (lib/bare-glob.mjs groupBranches);
- *   work is the line's budget (newWork), a fresh one when the caller has none
+ * @param {{cwd: string | null, project: string, vars: Map<string, string>, splitWords?: Set<string>, bareWords?: Set<string>, groupTargets?: string[],
+ * work?: {readings: number, spent: boolean}}} env the
+ *   folder and variables of the segment; bareWords are the command's words with a `$NAME` outside quotes; groupTargets are the branches of a
+ *   glob group written after the rm (lib/bare-glob.mjs groupBranches); work is the line's budget (newWork), a fresh one when the caller has none
  * @returns {string | undefined} ask reason when a recursive rm targets something outside the project and the temp dirs (or an unknown variable)
  */
-export function checkRm(args, { cwd, project, vars, splitWords, groupTargets = [], work = newWork(), maybeCwds = [] }) {
+export function checkRm(args, { cwd, project, vars, splitWords, bareWords = new Set(), groupTargets = [], work = newWork(), maybeCwds = [] }) {
   if (work.spent) return TOO_COMPLEX_REASON;
-  const rm = rmKind(args);
+  // bash splits an unquoted variable's value at blanks: `F='-rf /'; rm $F` is `rm -rf /` (N5), so its options are read from the pieces
+  const rm = rmKind(args.flatMap((word) => (splitWords?.has(word) ? splitAtBlanks(word) : [word])), bareWords);
   if (rm === undefined) return undefined;
-  const words = readingsWithin(work, [...withoutRedirects(args).filter((a) => !a.startsWith('-')), ...groupTargets], splitWords);
+  const operand = (word) => (!word.startsWith('-') ? [word] : splitWords?.has(word) ? splitAtBlanks(word).filter((piece) => !piece.startsWith('-')) : []);
+  const words = readingsWithin(work, [...withoutRedirects(args).flatMap(operand), ...groupTargets], splitWords);
   if (words === null) return TOO_COMPLEX_REASON;
   const long = words.find((word) => word.length > MAX_TARGET_CHARS);
   if (long !== undefined) return destructive(`${rm} with a target too long to check (${long.length} characters, the guard reads up to ${MAX_TARGET_CHARS})`);

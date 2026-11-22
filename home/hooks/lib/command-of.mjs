@@ -2,7 +2,7 @@
 // Exports: commandOf(tokens) -> {cmd, args, assigns, at (index of the command word)}; commandName(word); commandCase(name); KEYWORDS;
 // asGitSubcommand(command): git's own programs (`git-push`, `<exec path>/git-rebase`) read as `git <sub>`.
 // Pure, no I/O. Shared by pre-bash-guard and the remote-command classifier (lib/remote.mjs).
-import { basenameOf } from './shell-words.mjs';
+import { basenameOf, redirectLength } from './shell-words.mjs';
 
 export const KEYWORDS = new Set(['{', '}', '!', 'if', 'then', 'do', 'else', 'elif', 'while', 'until']);
 // wrapper -> options that consume the next token as their value (`sudo --user root`, `exec -a name`, `sshpass -p X`); the
@@ -71,8 +71,10 @@ export function commandOf(tokens) {
   while (i < tokens.length) {
     const word = tokens[i];
     const name = commandName(word);
+    const redirect = redirectLength(word);
     if (ASSIGNMENT.test(word)) assigns.push(word);
-    if (KEYWORDS.has(word) || ASSIGNMENT.test(word)) i += 1;
+    if (redirect > 0) i += redirect; // `2>/dev/null cd ..`: a redirection in front of the command is no command word; `cd` still runs (G2)
+    else if (KEYWORDS.has(word) || ASSIGNMENT.test(word)) i += 1;
     else if (name === 'command' && LOOKUP_OPTION.test(tokens[i + 1] ?? '')) return { cmd: name, args: tokens.slice(i + 1), assigns, at: i };
     else if (WRAPPERS.has(name)) i = skipWrapperOptions(tokens, i + 1, WRAPPERS.get(name), name === 'timeout');
     else return { cmd: name, args: tokens.slice(i + 1), assigns, at: i };

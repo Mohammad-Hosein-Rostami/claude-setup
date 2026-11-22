@@ -25,6 +25,7 @@ import { ANSI_C_WORD, decodeAnsiC } from './ansi-c.mjs';
 import { asGitSubcommand, commandName } from './command-of.mjs';
 import { withoutInertArguments } from './inert-arguments.mjs';
 import { withoutMessageText } from './message-text.mjs';
+import { WINDOW, deletesInMovedText, findDeletes } from './moved-text.mjs';
 import { GIT_TOPLEVEL, GIT_TOPLEVEL_WORD, MKTEMP_WORD } from './shell-words.mjs';
 import { COMMAND_ENV, configKind, GIT_UNREADABLE_REASON } from './git-runs.mjs';
 import { DESTRUCTIVE_PREFIX } from './verdict.mjs';
@@ -45,7 +46,6 @@ const ANSI_C = new RegExp(ANSI_C_WORD, 'g');
 const STATEMENT_BREAK = /[;&|\n\r]+/;
 const WORD_BREAK = /[\s<>`]+|\$\(|\(/;
 const WORD_EDGE = /^[$({`]+|[)}`]+$/g; // `$(rm` -> `rm`, `/)` -> `/`; a `$(cmd)/dir` word stays unrecognisable on purpose
-const WINDOW = 12; // words after a verb that still count as its arguments
 const PUBLISHERS = new Set(['npm', 'pnpm', 'yarn', 'bun', 'lerna', 'changeset', 'npx']);
 const GH_VERBS = new Set(['merge', 'delete', 'archive', 'rename', 'transfer']);
 const GH_READ_VERBS = new Set(['list', 'view', 'download']);
@@ -130,37 +130,8 @@ function withoutPlainHeredocs(text) {
 
 const count = (text, pattern) => (text.match(pattern) ?? []).length;
 
-const FIND_EXEC = /^-(?:exec|execdir|ok|okdir)$/;
-
-/** True when a `find` deletes what it matches: `-delete`, or `-exec`/`-execdir`/`-ok` running rm (its `{}` path hides the target from the rm check). */
-const findDeletes = (after) => after.includes('-delete') || after.some((w, i) => FIND_EXEC.test(w) && after[i + 1] === 'rm');
-
 // `$(mktemp -d)` only makes a new empty folder: like the git top-level, it hides no command (the rm rules judge where it points)
 const PLAIN_MKTEMP = /\$\(mktemp -d\)/g;
-const MOVERS = new Set(['cd', 'pushd', 'popd']);
-const RECURSIVE_RM_FLAG = /^(?:-[a-zA-Z]*[rR]|--r)/;
-const QUOTED_TEXT = /'([^']*)'|"((?:[^"\\]|\\.)*)"/g;
-const TEXT_WORD_BREAK = /[\s;&|()`]+/;
-
-/**
- * X3: once the line has a `cd`, `pushd` or `popd`, quoted text another program may run (`trap '...'`, `watch '...'`, `<<< '...'`,
- * `python3 -c "..."`) may run in a folder the guard did not follow, so a recursive rm or a deleting find in it asks whatever its path.
- * Only quoted text is read: a plain `cd src && rm -rf build` is judged by the per-command rules.
- * @param {string} visible the text without data arguments and plain heredocs
- * @param {string[][]} statements its statements' words
- * @returns {boolean} true when such a delete is in the quoted text of a line that moves the folder
- */
-function deletesInMovedText(visible, statements) {
-  if (!statements.some((words) => words.some((word) => MOVERS.has(word)))) return false;
-  return [...visible.matchAll(QUOTED_TEXT)].some(([, single, double]) => {
-    const words = (single ?? double).split(TEXT_WORD_BREAK).filter(Boolean);
-    return words.some((word, i) => {
-      const after = words.slice(i + 1, i + 1 + WINDOW);
-      if (word === 'rm') return after.some((w) => RECURSIVE_RM_FLAG.test(w)) && after.some((w) => !w.startsWith('-'));
-      return word === 'find' && findDeletes(after);
-    });
-  });
-}
 
 /** @returns {string | undefined} the category of the first dangerous word in this statement's words, or undefined */
 function dangerIn(words, prodText, prodNames) {

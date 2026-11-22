@@ -30,6 +30,10 @@
 //   the folder unknown for good (`followed` null): its later absolute `cd` may run the replacement. A command that may run a `cd` among its
 //   own words (CD_HIDERS: `noglob`, `repeat`, the short `if`, `trap`) makes it unknown too; `env -C` / `sudo --chdir` make it unknown for
 //   that one command. In zsh `command cd x` runs the external `cd`, so `command` is no plain prefix. `~` is unknown once the line assigns HOME.
+// - Round 11 (G8): after `cd X || exit [N]` the folder is X for the rest of the line, because the shell ends when the `cd` fails. Only the
+//   plain form counts: a believed `cd`, then `exit` or `exit <digits>` joined by `||`, the next command joined by `;`, a newline, `&&` or `||`
+//   (not a pipe or `&`: `exit` there runs in a subshell), on a line with no group, loop or function open and no function named `exit`. `return`
+//   is not read the same way: at the top level the Bash tool runs it as an error and goes on.
 // Invariants: pure apart from reading process.env.CDPATH; never touches the file system; a segment whose parser recorded no join
 // (`seg.joinedBy`, lib/shell-words.mjs) neither continues a chain nor has its `cd` believed; nothing here ever makes the set smaller
 // than the folders the shell can really be in, short of the limits named in pre-bash-guard.mjs.
@@ -53,6 +57,9 @@ const FUNCTION_JOIN = '()'; // `f() { ...`: the body's first command is joined b
 // not `command`: in zsh `command cd` runs no builtin
 const PLAIN_PREFIXES = new Set(['{', 'if', 'then', 'else', 'elif', 'do', 'while', 'until', 'time', 'builtin']);
 const ASSIGNMENT_WORD = /^[A-Za-z_]\w*\+?=/;
+const EXIT_JOIN = /^\|\|\n*$/; // `cd X || exit 1`: the exit runs only when the cd failed
+const SEQUENCE_JOIN = /^(?:[;\n]|&&|\|\|)+$/; // the next command runs after the exit's own shell would have ended, not beside it
+const EXIT_STATUS = /^\d{1,3}$/;
 const CHAIN_JOIN = /^&&\n*$/; // `&&`, also with the line broken after it
 const PIPE_JOIN = /^\|&?\n*$/;
 const UNSURE_JOIN = /\|&?\n*$/; // the last operator is `|`, `|&` or `||`: the `cd` runs in a subshell, or only when the command before failed
@@ -64,9 +71,9 @@ const CD_HIDERS = new Set(['noglob', 'nocorrect', 'repeat', 'trap', '[[', '[', '
 const MOVER_WORD = /(?:^|[\s;&|({])\\?(?:cd|pushd|popd)(?=$|[\s;&|)}])/;
 // a function or alias that replaces a folder mover: `function cd {`, `cd() {`, `alias cd=...`, also inside `eval` text
 const MOVER_DEFINITION = new RegExp([
-  String.raw`(?:^|[\s;&|({])(?:function\s+)?\\?['"]?(?:cd|pushd|popd)['"]?\s*\(\s*\)`, // `cd() {`, `function cd () {`
-  String.raw`\bfunction\s+\\?['"]?(?:cd|pushd|popd)\b`, // `function cd {`
-  String.raw`\balias\s+(?:-\w+\s+)*['"]?(?:cd|pushd|popd)=`, // `alias cd=...`
+  String.raw`(?:^|[\s;&|({])(?:function\s+)?\\?['"]?(?:cd|pushd|popd|exit)['"]?\s*\(\s*\)`, // `cd() {`, `function cd () {`
+  String.raw`\bfunction\s+\\?['"]?(?:cd|pushd|popd|exit)\b`, // `function cd {`
+  String.raw`\balias\s+(?:-\w+\s+)*['"]?(?:cd|pushd|popd|exit)=`, // `alias cd=...`
 ].join('|'));
 const CHDIR_WRAPPER_OPTION = { env: /^(?:-C|--chdir)(?:=|$)|^-C./, sudo: /^(?:-D|--chdir)(?:=|$)|^-D./ }; // `env -C dir`, `sudo --chdir=dir`
 
@@ -88,11 +95,12 @@ const cdpathIsSet = (assigns, assigned) => Boolean(process.env.CDPATH) || [...as
  * lead when each is taken at its word, null for good once one cannot be read; believes: a `cd` in the current segment is believed; cdLast: the segment before
  * was a `cd`;
  *   loops: open loops; inFunction: a function body was opened; elsewhere: the current command runs in a folder a wrapper chose (`env -C`);
- *   moved: the line has a `cd`, `pushd` or `popd`, or hid one (pre-bash-guard.mjs then judges nested bodies with the folder unknown)
+ *   moved: the line has a `cd`, `pushd` or `popd`, or hid one (pre-bash-guard.mjs then judges nested bodies with the folder unknown);
+ *   afterCd: the folders after the believed `cd` just read (G8); afterExit: those folders once `|| exit` followed it; open: the groups (`(`, `{`) open
  */
 export const newFolder = (cwd) => ({
   dirs: cwd === null ? null : [cwd], passed: [], everIn: cwd === null ? [] : [cwd], followed: cwd, believes: false, cdLast: false, loops: 0,
-  inFunction: false, elsewhere: false, moved: false,
+  inFunction: false, elsewhere: false, moved: false, afterCd: null, afterExit: null, open: 0,
 });
 
 /**
@@ -140,15 +148,27 @@ function remember(folder, dirs) {
 export function enterSegment(folder, seg, parsed, words) {
   const join = seg.joinedBy;
   const before = words.slice(0, parsed.at);
+  const settled = folder.afterExit; // G8: set by the `exit` segment before this one
+  const afterCd = folder.cdLast ? folder.afterCd : null;
   const inChain = join !== undefined && (CHAIN_JOIN.test(join) || (PIPE_JOIN.test(join) && !folder.cdLast));
   if (!inChain) [folder.dirs, folder.passed] = [union(folder.dirs, folder.passed), []]; // every `cd` of the chain may or may not have run
+  if (settled !== null && SEQUENCE_JOIN.test(join ?? '')) [folder.dirs, folder.passed] = [settled, []];
   folder.cdLast = false;
+  folder.afterCd = null;
+  folder.afterExit = null;
+  folder.open += countOf(join ?? '', '(') - countOf(join ?? '', ')') + countOf(before, '{') - countOf(before, '}');
+  if (afterCd !== null && EXIT_JOIN.test(join ?? '') && isPlainExit(parsed, before) && folder.open === 0 && !folder.inFunction) folder.afterExit = afterCd;
   if (LOOP_COMMANDS.has(parsed.cmd) || before.some((word) => LOOP_KEYWORDS.has(word))) folder.loops += 1;
   else if (words[0] === LOOP_END && folder.loops > 0) folder.loops -= 1;
   folder.inFunction ||= parsed.cmd === FUNCTION_COMMAND || (join ?? '').includes(FUNCTION_JOIN);
   folder.believes = join !== undefined && !UNSURE_JOIN.test(join) && before.every((word) => PLAIN_PREFIXES.has(word) || ASSIGNMENT_WORD.test(word));
   folder.elsewhere = changesFolder(before); // this one command runs in a folder the guard does not follow
 }
+
+const countOf = (items, item) => [...items].filter((one) => one === item).length;
+
+/** `exit` or `exit 1` alone (G8): nothing in front of it, at most a numeric status. */
+const isPlainExit = ({ cmd, args }, before) => cmd === 'exit' && before.length === 0 && args.length <= 1 && EXIT_STATUS.test(args[0] ?? '0');
 
 /** True when a wrapper in front of the command runs it in another folder: `env -C dir`, `sudo -D dir` / `--chdir`. */
 function changesFolder(before) {
@@ -193,8 +213,10 @@ export function leaveSegment(folder, parsed, { project, scope }) {
   if (!MOVERS.has(cmd)) return;
   folder.cdLast = true;
   folder.followed = folder.followed === null ? null : nextCwd(parsed, folder.followed, project, scope, false);
+  const knownBefore = folder.dirs !== null;
   const after = foldersAfter(folder, parsed, project, scope);
   remember(folder, after);
+  if (cmd === 'cd' && folder.believes && knownBefore && folder.loops === 0) folder.afterCd = after;
   if (folder.believes) [folder.passed, folder.dirs] = [union(folder.passed, folder.dirs), after];
   else folder.dirs = union(folder.dirs, after);
 }

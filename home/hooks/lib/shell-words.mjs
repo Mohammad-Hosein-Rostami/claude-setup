@@ -1,6 +1,6 @@
 // Pure shell-text parsing for pre-bash-guard: no I/O, never evaluates anything.
 // Exports: tokenize(command) -> {segs, nested}; segments(command) -> string[][]; stripHeredocs(command);
-// GIT_TOPLEVEL_WORD; MKTEMP_WORD; QUOTED_MARK; lex(command) (same shape as tokenize, from shell-lexer.mjs); unquote, basenameOf, flagsOf;
+// redirectLength(word); GIT_TOPLEVEL_WORD; MKTEMP_WORD; QUOTED_MARK; lex(command) (same shape as tokenize, from shell-lexer.mjs); unquote, basenameOf, flagsOf;
 // backtickAssignedNames(command); DECLARERS.
 // Unquoted brace expressions are expanded the way bash does (`rm {-rf,x}` is `rm -rf x`), never in an assignment in front of the command;
 // a segment flags the words whose braces cannot be listed (`.unlistedBraces`) and those holding a `$NAME` outside quotes (`.bareWords`),
@@ -193,12 +193,12 @@ function startSegment(segs, current, piped) {
 /** Command text -> `{ segs, nested }`: segs are lists of unquoted words (`.piped` when a `|` fed it); nested are `$(...)`/backtick bodies found inside double quotes. */
 export function tokenize(command) {
   const prepared = prepare(command);
-  const { stripped, nested } = lexShell(prepared);
+  const { chained, nested } = lexShell(prepared);
   const segs = [[]];
   const opened = []; // per open `(`: {outer, at} (the segment holding its `$`, and where it is) when it starts a substitution, else null
   let current = segs[0];
   let joined = ''; // the operators since the last word: the join of the segment the next word opens
-  for (const m of stripped.matchAll(TOKEN)) {
+  for (const m of chained.matchAll(TOKEN)) {
     if (m[2] !== undefined) {
       if (LINE_CONTINUATION_ONLY.test(m[2])) continue;
       if (current.length === 0) markJoin(current, joined);
@@ -207,14 +207,14 @@ export function tokenize(command) {
       continue;
     }
     joined += m[0];
-    if (m[3] === '(') opened.push(stripped[m.index - 1] === '$' && stripped[m.index - 2] !== '\\' ? { outer: current, at: m.index } : null);
-    const arrayList = m[3] === '(' && stripped[m.index - 1] === '=' && opensArrayList(current.at(-1));
+    if (m[3] === '(') opened.push(chained[m.index - 1] === '$' && chained[m.index - 2] !== '\\' ? { outer: current, at: m.index } : null);
+    const arrayList = m[3] === '(' && chained[m.index - 1] === '=' && opensArrayList(current.at(-1));
     current = startSegment(segs, current, m[3] === '|');
     if (arrayList) markArrayList(current);
     // the words after the `)` closing a simple `$(` belong to the segment that held the `$` (`echo $(a) $(b)`: one echo, not a command `$`)
     if (m[3] === ')') {
       const sub = opened.pop();
-      if (sub && isSimpleSubstitutionBody(stripped.slice(sub.at + 1, m.index))) current = sub.outer;
+      if (sub && isSimpleSubstitutionBody(chained.slice(sub.at + 1, m.index))) current = sub.outer;
     }
   }
   return { segs: segs.filter((s) => s.length).map(wordsOfSegment), nested };
@@ -235,6 +235,12 @@ const REDIRECT_START = /^(\d*>>?|\d*<|&>>?)/;
 const REDIRECT_OPERATOR_ONLY = /^(\d*>>?|\d*<{1,2}|&>>?)$/;
 
 /**
+ * How many words a redirection at the start of `word` takes: 0 when `word` is none, 2 when the operator stands alone (its target is the
+ * next word: `2>`, `>>`), else 1 (`2>/dev/null`, `2>&1`).
+ */
+export const redirectLength = (word) => (!REDIRECT_START.test(word) ? 0 : REDIRECT_OPERATOR_ONLY.test(word) ? 2 : 1);
+
+/**
  * Drops redirections (`2>&1`, `> file`) so they are not mistaken for targets (moved here from lib/rm-paths.mjs, which re-exports it).
  * @param {string[]} args a command's words
  * @returns {string[]} the words without each redirection and its target
@@ -242,8 +248,9 @@ const REDIRECT_OPERATOR_ONLY = /^(\d*>>?|\d*<{1,2}|&>>?)$/;
 export function withoutRedirects(args) {
   const out = [];
   for (let i = 0; i < args.length; i++) {
-    if (!REDIRECT_START.test(args[i])) out.push(args[i]);
-    else if (REDIRECT_OPERATOR_ONLY.test(args[i])) i++; // the operator stands alone: its target is the next word
+    const length = redirectLength(args[i]);
+    if (length === 0) out.push(args[i]);
+    else i += length - 1; // an operator standing alone: its target is the next word
   }
   return out;
 }

@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { commandOf } from './command-of.mjs';
 import { parseGitArgs } from './git-options.mjs';
 import { readPlainFile } from './plain-file.mjs';
-import { flagsOf, tokenize } from './shell-words.mjs';
+import { flagsOf, redirectLength, tokenize } from './shell-words.mjs';
 import { isReadOnlySql, sqlHosts, sqlOf } from './sql.mjs';
 
 export { isReadOnlySql };
@@ -130,7 +130,9 @@ function isReadOnlyCommand({ cmd, args }) {
 export function isReadOnlyRemote(text) {
   const { segs, nested } = tokenize(text);
   if (segs.length === 0) return false;
-  const plain = segs.every((seg) => !writesFile(seg) && isReadOnlyCommand(commandOf(seg)));
+  // a redirection with no command (`ssh host < script.sh` hands the file to the remote shell) is not "an assignment alone": it asks
+  const redirectOnly = (seg) => commandOf(seg).cmd === undefined && seg.some((word) => redirectLength(word) > 0);
+  const plain = segs.every((seg) => !writesFile(seg) && !redirectOnly(seg) && isReadOnlyCommand(commandOf(seg)));
   return plain && nested.every(isReadOnlyRemote);
 }
 

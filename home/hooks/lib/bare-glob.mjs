@@ -81,6 +81,7 @@ export function globbedFolder(target) {
 
 const GROUP_OPENS = /^\(+$/; // the join of a segment that a `(` right after the words before it opened
 const GROUP_BRANCH = '|';
+const QUALIFIER = /^(?!.*\.\.)[./@N]{1,4}$/; // `.` plain files, `/` folders, `@` links, `N` no error without a match: each lists a subset of the glob
 
 /**
  * The branches of a zsh glob group written right after the words of segment `index` (`rm -rf (*|.*)`, `rm -rf ./(*)`), as targets.
@@ -89,9 +90,10 @@ const GROUP_BRANCH = '|';
  * error, so reading the branches as targets adds no ask to a line bash would run. A quoted `'(*)'` is one word and stays a name.
  * @param {(string[] & {joinedBy?: string})[]} segs the line's segments (lib/shell-words.mjs)
  * @param {number} index the segment whose words the group follows
+ * @param {string} [text] the raw command text: a lone qualifier (`*(.)`, `*(/)`) is read only when it stands in it glued to the word before (N6)
  * @returns {string[]} each branch word, alone and glued to the segment's last word unless that is an option (`./` + `*`); [] without a group
  */
-export function groupBranches(segs, index) {
+export function groupBranches(segs, index, text = '') {
   const branches = [];
   for (let at = index + 1; at < segs.length; at++) {
     const join = segs[at].joinedBy ?? '';
@@ -99,5 +101,8 @@ export function groupBranches(segs, index) {
     branches.push(...segs[at]);
   }
   const last = segs[index].at(-1) ?? '';
+  // `src/*(.)`: zsh glob qualifiers that only keep some of what `src/*` lists (plain files, folders, links), so `src/*` is judged and no branch is;
+  // written apart (`src/* (/)`) or with more in the group (`(.|/)`, `(..)`) it is a group of names and stays one
+  if (branches.length === 1 && QUALIFIER.test(branches[0]) && !last.startsWith('-') && text.includes(`${last}(${branches[0]})`)) return [];
   return branches.flatMap((branch) => (last.startsWith('-') ? [branch] : [branch, last + branch]));
 }
