@@ -24,8 +24,8 @@ const WRITING_TOOLS = /\b(?:Write|Edit|MultiEdit|NotebookEdit)\b/;
 const DEFAULT_TYPE = 'general-purpose'; // what an Agent call with no subagent_type runs
 // A brief line that declares the agent read-only; exact case, at the start of a trimmed line (commit-gate holds the agent to it at its stop)
 const READ_ONLY_BRIEF_PREFIXES = ['read-only:', 'scratchpad-only:'];
-const WRITER_TYPES = new Set(['implementer', 'ui-implementer', 'test-writer', 'general-purpose', 'claude']);
-const READ_ONLY_TYPES = new Set(['scout', 'runner', 'reviewer', 'security-auditor', 'Explore', 'Plan', 'architect']);
+const WRITER_TYPES = new Set(['implementer', 'ui-implementer', 'general-purpose', 'claude']);
+const READ_ONLY_TYPES = new Set(['scout', 'runner', 'Explore', 'Plan', 'architect']);
 
 /** The folder of the launch stores (one `<session>.json` each). */
 export function writersDirOf(env) {

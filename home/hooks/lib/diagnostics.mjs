@@ -1,5 +1,5 @@
-// Parses check output (tsc, eslint stylish and unix formats) into `file:line RULE-ID message` lines for post-edit.mjs and
-// typecheck-gate.mjs. Exports: CODE_FILE, MAX_LINES, isSamePath(reported, target), diagnostics(output, file), diagnosticsDetailed(output, file, isAbout).
+// Parses the output of a failed format run (tsc, eslint stylish and unix formats) into `file:line RULE-ID message` lines for post-edit.mjs.
+// Exports: CODE_FILE, MAX_LINES, isSamePath(reported, target), diagnostics(output, file).
 // Invariants: pure; at most MAX_LINES lines; failures that only concern other files yield [] so they never block.
 export const CODE_FILE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 export const MAX_LINES = 15;
@@ -43,11 +43,9 @@ function parseDiagnostic(l, header) {
  * falls back to the raw tail. Failures that only concern other files yield no lines. Pure.
  * @param {string} output what the check printed
  * @param {string} file the file the lines must be about
- * @param {(reported: string, file: string) => boolean} [isAbout] whether a reported path names `file`; by default
- *   {@link isSamePath}, which also takes a path that only ends like it (the typecheck gate passes a stricter test)
- * @returns {{lines: string[], parsed: boolean}} `parsed` is false for the raw-tail fallback and for no lines at all
+ * @returns {string[]} `file:line RULE-ID message` lines, or the raw tail when nothing parses
  */
-export function diagnosticsDetailed(output, file, isAbout = isSamePath) {
+export function diagnostics(output, file) {
   const lines = output.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const found = [];
   let aboutOtherFiles = false;
@@ -58,12 +56,9 @@ export function diagnosticsDetailed(output, file, isAbout = isSamePath) {
       if (isStylishHeader(l)) header = l;
       continue;
     }
-    if (isAbout(d.path, file)) found.push(`${normPath(d.path)}:${d.text}`);
+    if (isSamePath(d.path, file)) found.push(`${normPath(d.path)}:${d.text}`);
     else aboutOtherFiles = true;
   }
-  if (!found.length && aboutOtherFiles) return { lines: [], parsed: false };
-  return { lines: (found.length ? found : lines.slice(-MAX_LINES)).slice(0, MAX_LINES), parsed: found.length > 0 };
+  if (!found.length && aboutOtherFiles) return [];
+  return (found.length ? found : lines.slice(-MAX_LINES)).slice(0, MAX_LINES);
 }
-
-/** The lines of {@link diagnosticsDetailed}: `file:line RULE-ID message`, or the raw tail when nothing parses. Pure. */
-export const diagnostics = (output, file) => diagnosticsDetailed(output, file).lines;

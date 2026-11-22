@@ -29,7 +29,7 @@
 // closed); a call with no usable session id is not recorded. Whether this hook fires for an Agent call inside a subagent is probe U6 (not
 // run): until then such a launch may go uncounted, and the env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS (the same number) is the backstop.
 // Writer isolation gate (after the UI gate): a writing agent (lib/writer-agents.mjs isWritingAgent: implementer, ui-implementer,
-// test-writer, general-purpose, claude, or an agent file whose tools include Write/Edit; scout, runner, reviewer, security-auditor, Explore,
+// general-purpose, claude, or an agent file whose tools include Write/Edit; scout, runner, Explore,
 // Plan and architect never) launched while another plain writing agent of this session still runs must carry `isolation: "worktree"` or a
 // read-only brief, else it is denied once with that advice (adviceOnce, as the UI gate) and the identical call sent again runs. A launch
 // with `isolation: "worktree"` runs and is recorded `isolated`; one whose prompt has a line starting `read-only:` or `scratchpad-only:`

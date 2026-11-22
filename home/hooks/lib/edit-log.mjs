@@ -1,7 +1,5 @@
-// Per-agent log of edited files, written by post-edit.mjs (Edit, Write) and bash-writes.mjs (Bash), read by typecheck-gate.mjs; and the
-// per-user hook temp root all post-edit state lives in (edit logs, agent and lead Bash counters, Bash before-records, build info).
-// Exports: tempRoot(), checkedTempRoot(), editLogPath(sessionId, agentId), recordEdit(logPath, file), readEdits(logPath), MAX_EDIT_LOG_BYTES,
-//   smartLogOf(editLog), smartEditLogs(sessionId, agentId) (the smart check's own logs: every edited file, never rewritten by a gate).
+// The per-user hook temp root that the Bash counters of agent-budget.mjs and the agent records of writer-agents.mjs live in.
+// Exports: tempRoot(), checkedTempRoot().
 // The root: `<os.tmpdir()>/claude-post-edit` when the temp folder is private to this user (owned by the uid, no group or other write bit:
 // macOS's per-user TMPDIR, a test's own temp folder; Windows always, where %TEMP% is per user), else `claude-post-edit-<uid>` (Linux's
 // shared /tmp): two names so the existing folder and the tests that build the old name keep working where the temp folder is private.
@@ -9,23 +7,11 @@
 // when it is a folder owned by this uid with no group or other write bit. One with group or other read or search bits only (0755, what
 // earlier versions made) is tightened to 0700: nobody else could write it, so it holds nothing another user put there. One others may
 // write is refused, not repaired. Refused: nothing is kept there and one guard-log line per process says so (`temp-root-refused`).
-// Invariants: ids are validated before they become part of a path; every write fails silently (a hook must never block an edit because
-// the temp dir is unwritable); a log holds one absolute path per line and may repeat paths.
-// Both sides open the log through lib/plain-file.mjs: a link, FIFO or device planted at the log path is never followed, written, read or
-// waited on (a hook that waits is a hook that times out). A log the reader cannot use (anything but a plain file within the cap) is
-// reported in the guard log, one line per read, outcome `edit-log-unreadable`: the typecheck gate checks nothing for that session then.
-// One size cap for the writer and the reader: a log at the cap takes no more lines, so the reader never meets a larger one it wrote.
-// The writer reports what it turns away, one guard-log line each: `edit-log-full` at the cap, `edit-log-bad-path` for a line break.
-import { closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, statSync } from 'node:fs';
+// Invariants: every write fails silently (a hook must never block a tool call because the temp dir is unwritable).
+import { closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { logDecision } from './guard-log.mjs';
-import { appendPlainFile, readPlainFile } from './plain-file.mjs';
-
-const SAFE_ID = /^[\w-]{1,128}$/;
-const MAIN_AGENT = 'main';
-/** The most an edit log holds, for the writer and the reader alike: 4 MB is about 40,000 paths, far more than one session edits. */
-export const MAX_EDIT_LOG_BYTES = 4 * 1024 * 1024;
 
 const ROOT_NAME = 'claude-post-edit';
 const ROOT_MODE = 0o700;
@@ -102,87 +88,4 @@ export function checkedTempRoot() {
     logDecision({ hook: 'edit-log', tool: 'temp-root', decision: 'skip', outcome: 'temp-root-refused', reason, command: '' });
   }
   return null;
-}
-
-/**
- * Log file for one (session, agent) pair; the main session has no agent id.
- * @param {unknown} sessionId hook input `session_id`
- * @param {unknown} agentId hook input `agent_id` (absent for the main session)
- * @returns {string | null} path, or null when an id is not a safe file name part or the temp root is refused
- */
-export function editLogPath(sessionId, agentId) {
-  const agent = agentId ?? MAIN_AGENT;
-  if (typeof sessionId !== 'string' || typeof agent !== 'string') return null;
-  if (!SAFE_ID.test(sessionId) || !SAFE_ID.test(agent)) return null;
-  const root = checkedTempRoot();
-  return root === null ? null : join(root, 'edits', `${sessionId}--${agent}`);
-}
-
-const SMART_FOLDER = 'smart-edits';
-
-/** The smart check's log beside an edit log: same (session, agent) name in `smart-edits/` (the typecheck gate rewrites its own log). */
-export const smartLogOf = (editLog) => (editLog ? join(dirname(dirname(editLog)), SMART_FOLDER, basename(editLog)) : null);
-
-/**
- * The smart check's logs of one session: the agent's own, or (no agent id: the lead's stop) every agent's of that session.
- * @param {unknown} sessionId hook input `session_id`
- * @param {unknown} agentId hook input `agent_id`
- * @returns {string[]} log paths that exist; [] for a bad id or a refused temp root
- */
-export function smartEditLogs(sessionId, agentId) {
-  const own = smartLogOf(editLogPath(sessionId, agentId ?? undefined));
-  if (own === null) return [];
-  // Each stop checks only its own edits: a subagent's edits are checked at its SubagentStop, so the lead's Stop never
-  // checks a writer's unfinished worktree (defect fix-smart-check-scope, 2026-11-21).
-  return existsSync(own) ? [own] : [];
-}
-
-const LINE_BREAK = /[\r\n]/;
-
-/** One guard-log line for an edit the log turned away (the file name is two validated ids; the path itself is never logged). */
-function reportRefused(logPath, outcome, why) {
-  const reason = `the edit log ${basename(logPath)} took no line for ${why}: that edit is not checked`;
-  logDecision({ hook: 'edit-log', tool: 'edit-log', decision: 'skip', outcome, reason, command: '' });
-}
-
-/**
- * Appends `file` to the log; never throws. The log holds one path per line, so a path with a line break is turned away
- * (`edit-log-bad-path`), as is a line the log cannot take: it would pass MAX_EDIT_LOG_BYTES, or the log is not a plain file
- * (`edit-log-full`). Each is one guard-log line, so a gate that checks less than was edited does not pass unseen.
- * @param {string | null} logPath from editLogPath or smartLogOf (null: nothing is written)
- * @param {string} file absolute path of the edited file
- */
-export function recordEdit(logPath, file) {
-  if (!logPath) return; // no log for this id (a bad id or a refused temp root)
-  if (LINE_BREAK.test(file)) return void reportRefused(logPath, 'edit-log-bad-path', 'a path with a line break');
-  try {
-    mkdirSync(dirname(logPath), { recursive: true });
-    const written = appendPlainFile(logPath, `${file}\n`, { maxBytes: MAX_EDIT_LOG_BYTES });
-    if (!written) reportRefused(logPath, 'edit-log-full', `a path: it is at its cap of ${MAX_EDIT_LOG_BYTES} bytes or not a plain file`);
-  } catch {
-    // unwritable temp dir: the gate then has nothing to check, which is better than blocking the edit
-  }
-}
-
-const MISSING_FILE = 'ENOENT';
-
-/** One guard-log line for a log path that holds something the reader will not open or read (the file name is two validated ids). */
-function reportUnreadable(logPath, error) {
-  const reason = `the edit log ${basename(logPath)} is not a plain file within ${MAX_EDIT_LOG_BYTES} bytes (${error?.code ?? 'unreadable'}): its edits are not checked`;
-  logDecision({ hook: 'typecheck-gate', tool: 'edit-log', decision: 'skip', outcome: 'edit-log-unreadable', reason, command: '' });
-}
-
-/**
- * Distinct logged paths in first-seen order; [] when there is no log. A path that holds anything but a plain file within the cap (a link,
- * a FIFO, a folder, a larger file) gives [] as well, and is reported in the guard log.
- */
-export function readEdits(logPath) {
-  let text;
-  try {
-    text = readPlainFile(logPath, MAX_EDIT_LOG_BYTES);
-  } catch (error) {
-    if (error?.code !== MISSING_FILE) reportUnreadable(logPath, error);
-    return []; // no log, or not a log this hook wrote: nothing was recorded there
-  }
-  return [...new Set(text.split(/\r?\n/).filter(Boolean))];
 }

@@ -3,7 +3,7 @@
 // Exports: appendLog(statusFile, text, now, deps) -> { code, message }; LOG_NAME.
 // Git: in a repo the log file is hidden first: `/<path>/STATUS.log.md` goes into the repo's info/exclude unless git already ignores
 // it; when STATUS.md itself is tracked the log is refused (exit 2), since a log beside a tracked file would be committed or would
-// leave the tree dirty (an untracked, not-ignored file also stops test-pass recording a PASS). Outside a repo it just appends.
+// leave the tree dirty. Outside a repo it just appends.
 // Invariants: STATUS.md is never opened for writing; each git call has its own timeout and fixed flags; a git failure other than
 // "not a repo" refuses the write (exit 1) rather than risk a visible file; the text is one line (line breaks become spaces).
 import { execFileSync } from 'node:child_process';

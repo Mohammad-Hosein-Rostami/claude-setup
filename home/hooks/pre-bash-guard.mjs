@@ -32,8 +32,7 @@
 // `--key`; lib/credential-send.mjs). A literal-secret ask that the owner allowed (or let time out) is remembered for the rest of the session as sha256
 // digests (lib/allowed-literals.mjs, lib/remembered-ask.mjs): the same values again run without a dialog (log outcome "remembered") only when the command is
 // also clean with the values neutralised. An ask with any other reason always shows its dialog and remembers nothing. ALLOW: `sed -i`, heredoc and
-// inline-interpreter writes to code files are allowed. hooks/bash-writes.mjs, not this guard, logs for the Stop typecheck gate those a command changed
-// (lib/code-writes.mjs). Everything else (and any command text it cannot parse) is allowed. Reading files, `.env` included, is never blocked.
+// inline-interpreter writes to code files are allowed. Everything else (and any command text it cannot parse) is allowed. Reading files, `.env` included, is never blocked.
 // This is a safety net against model mistakes, not a sandbox. Invariants: it never executes the command, it never fails open on its own errors (hook input
 // that is not JSON with a string command asks "the guard could not read its input"; once a command was read, an exception anywhere asks "guard error":
 // decideSafely for the rules, main for everything after them; a hook process that dies or times out blocks the call through `onFailure: "block"` in

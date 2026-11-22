@@ -34,7 +34,7 @@ import { countedGate, markToolCall } from './lib/stop-block-count.mjs';
 import { recordAgentStart, recordAgentStop } from './lib/agent-launches.mjs';
 import { callCounterPath } from './lib/writer-agents.mjs';
 
-// The agent files (implementer, ui-implementer, test-writer) and the lead rules say "about 120 tool calls"; a test keeps them equal.
+// The agent files (implementer, ui-implementer) and the lead rules say "about 120 tool calls"; a test keeps them equal.
 export const CALL_CAP = 120;
 export const EARLY_NOTICE_AT = 80;
 export const READ_WARN_CHARS = 20_000;

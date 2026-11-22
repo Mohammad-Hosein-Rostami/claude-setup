@@ -1,4 +1,4 @@
-// Purpose: the UI proof records (F7, P8), like test-pass: one JSON file per repository under ~/.claude/state/ui-proof (override:
+// Purpose: the UI proof records (F7, P8): one JSON file per repository under ~/.claude/state/ui-proof (override:
 // UI_PROOF_STATE_DIR), one record per `ui-check run`, whatever its verdict. Exports: MAX_RECORDS, PROOF_AGENT, storeFile,
 // readRecords, appendRecord, buildRecord, findPass, findLabelled, findAtCommit, newestForTree.
 // A record: {id, createdAt, head, uiTree, verdict, rule, conditions, matrixHash, agentType, step, widths, frames, results,
