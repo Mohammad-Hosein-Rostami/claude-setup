@@ -79,18 +79,55 @@ test('sync: the PC steps are bundle, copy, ff-only pull, install, doctor over ss
   }
 });
 
-test('sync: every prompt that runs commands on a target sets the PATH and wraps ssh in a perl alarm; the local ones do not', async () => {
-  const run = await runScript('sync-machines', SYNC_ARGS, { replies: syncReplies() });
-  const pathExport = 'export PATH="$HOME/.volta/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:$PATH";';
-  for (const label of ['s1:cli:pc', 's1:sync:pc', 's1:doctor:pc']) {
+// A target whose ssh host differs from its name, so a prompt that used the name instead of the host fails.
+const PC_HOST = 'me@pc.local';
+const PC_READY = { ...READY, targets: [{ name: 'pc', ssh: PC_HOST }] };
+const pcReplies = (overrides = []) => syncReplies([{ match: /:verify/, reply: PC_READY }, ...overrides]);
+const PATH_EXPORT = 'export PATH="$HOME/.volta/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:$PATH";';
+// perl's alarm survives exec; `or die` makes a failed exec exit non-zero instead of 0.
+const alarmed = (seconds) => `perl -e 'alarm ${seconds}; exec @ARGV or die "exec: $!"'`;
+
+test('sync: every remote command runs as an alarmed ssh to the checked host with the PATH export inside its quotes; the local ones do not', async () => {
+  const run = await runScript('sync-machines', SYNC_ARGS, { replies: pcReplies() });
+  // seconds per label: a remote check 120; the pull and install 540 (under the 600 s Bash maximum); doctor 660 (over its 600 s Bash timeout)
+  for (const [label, seconds] of [['s1:cli:pc', 120], ['s1:sync:pc', 540], ['s1:doctor:pc', 660]]) {
     const prompt = run.calls.find((c) => c.label === label).prompt;
-    assert.ok(prompt.includes(pathExport), `${label}: PATH export`);
-    assert.match(prompt, /perl -e 'alarm \d+; exec @ARGV' ssh pc/, `${label}: alarm wrapper`);
+    assert.ok(prompt.includes(`${alarmed(seconds)} ssh ${PC_HOST} '${PATH_EXPORT} <command>'`), `${label}: alarmed ssh with the export inside the quotes`);
+    assert.doesNotMatch(prompt, /ssh pc\b/, `${label}: the host, not the name`);
   }
   for (const label of ['s1:cli:macbook', 's1:sync:macbook', 's1:doctor:macbook']) {
     const prompt = run.calls.find((c) => c.label === label).prompt;
     assert.doesNotMatch(prompt, /export PATH|perl -e/, `${label}: local prompt unchanged`);
   }
+});
+
+test('sync: the bundle copy to the target runs under its own alarm, 300 s', async () => {
+  const run = await runScript('sync-machines', SYNC_ARGS, { replies: pcReplies() });
+  const prompt = run.calls.find((c) => c.label === 's1:sync:pc').prompt;
+  assert.ok(prompt.includes(`${alarmed(300)} scp /tmp/s1-sync-pc.bundle /tmp/s1-local-shared.json ${PC_HOST}:/tmp/`), 'scp under the alarm');
+  assert.match(prompt, /ssh and scp as a foreground Bash command with timeout: 600000/, 'the alarms fire inside the Bash tool maximum');
+  assert.equal(prompt.split('scp /tmp/').length - 1, 1, 'one scp command, the alarmed one');
+});
+
+test('sync: the version check after the install runs inside the target step; the local one stays after the install step', async () => {
+  const run = await runScript('sync-machines', SYNC_ARGS, { replies: pcReplies() });
+  const pc = run.calls.find((c) => c.label === 's1:sync:pc').prompt;
+  assert.equal(pc.split('claude --version').length - 1, 1, 'once');
+  assert.ok(pc.indexOf('claude --version') > pc.indexOf('(2) On pc, over ssh'), 'inside step (2), which is over ssh with the export');
+  assert.doesNotMatch(pc, /After the install run claude --version/);
+  const local = run.calls.find((c) => c.label === 's1:sync:macbook').prompt;
+  assert.match(local, /then report git rev-parse HEAD\. After the install run claude --version once/);
+});
+
+test('sync: the diagnose prompt for a target carries the same remote rule (the local one does not)', async () => {
+  const failed = { match: /:sync:pc/, reply: { exits: [1], sha: '', tail: 'boom' } };
+  const run = await runScript('sync-machines', SYNC_ARGS, { replies: pcReplies([failed]) });
+  const pc = run.calls.find((c) => c.label === 's1:diagnose:pc').prompt;
+  assert.ok(pc.includes(`${alarmed(120)} ssh ${PC_HOST} '${PATH_EXPORT} <command>'`), 'alarmed ssh with the export');
+  assert.match(pc, /Read only/);
+  const failedLocal = { match: /:sync:macbook/, reply: { exits: [1], sha: '', tail: 'boom' } };
+  const localRun = await runScript('sync-machines', SYNC_ARGS, { replies: pcReplies([failedLocal]) });
+  assert.doesNotMatch(localRun.calls.find((c) => c.label === 's1:diagnose:macbook').prompt, /export PATH|perl -e/);
 });
 
 test('sync: the doctor runner runs one foreground command with a 10 minute Bash timeout, never in the background and never polling', async () => {

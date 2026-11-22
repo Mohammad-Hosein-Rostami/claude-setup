@@ -34,8 +34,10 @@ const DOCTOR_TIMEOUT_MS = 600000 // the Bash tool's maximum: doctor runs the sui
 // `claude`, `node` and `git` are not found; every remote command starts with this export (harmless in Git Bash on Windows).
 const REMOTE_PATH_EXPORT = 'export PATH="$HOME/.volta/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:$PATH";'
 const SSH_TIMEOUT_SECONDS = 120 // a remote read or check; the MacBook has no `timeout` command, so ssh is wrapped in perl's alarm
-const SYNC_SSH_TIMEOUT_SECONDS = 900 // the remote pull and install
+const SYNC_SSH_TIMEOUT_SECONDS = 540 // the remote pull and install: under the Bash tool's 600 s maximum, so the alarm fires before the tool's own timeout
+const TRANSFER_TIMEOUT_SECONDS = 300 // the scp of the bundle and shared file over a slow link (the PC sits behind a phone relay); under the same 600 s maximum
 const DOCTOR_SSH_TIMEOUT_SECONDS = DOCTOR_TIMEOUT_MS / 1000 + 60 // doctor runs the suite, plus a margin over the Bash timeout
+const VERSION_CHECK = 'claude --version once (on Windows a CLI install can leave no binary)'
 const NAME = /^[a-z0-9][a-z0-9-]{0,31}$/
 const HOST = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/
 const { row, repo, base, tag } = args
@@ -83,9 +85,14 @@ function checkedTargets(given) {
   return bad ? `sync target ${JSON.stringify(bad).slice(0, 120)} is not a plain name and ssh host (or uses the name ${LOCAL_MACHINE})` : given
 }
 
-/** How the runner starts a command on a target: the PATH export first, ssh inside a perl alarm that ends it after `seconds`. */
+/** A perl alarm that ends the command after `seconds` (this Mac has no timeout command); `or die` makes a failed exec exit non-zero, not 0. */
+function alarmed(seconds) {
+  return `perl -e 'alarm ${seconds}; exec @ARGV or die "exec: $!"'`
+}
+
+/** How the runner starts a command on a target: ssh inside an alarm, the PATH export inside the quoted remote command. */
 function remoteRule(machine, seconds) {
-  return `start each remote command with ${REMOTE_PATH_EXPORT} and run ssh as perl -e 'alarm ${seconds}; exec @ARGV' ssh ${hostOf[machine]} '<command>', since this Mac has no timeout command`
+  return `run each remote command as ${alarmed(seconds)} ssh ${hostOf[machine]} '${REMOTE_PATH_EXPORT} <command>', with the export inside the quotes so the target's shell runs it`
 }
 
 function where(machine, seconds = SSH_TIMEOUT_SECONDS) {
@@ -121,8 +128,8 @@ function cliProblems(names, reports) {
 }
 
 function syncMachine(machine) {
-  const steps = machine === LOCAL_MACHINE ? `In ${repo} run scripts/install.sh, then report git rev-parse HEAD.` : targetSteps(machine)
-  return runner(`sync:${machine}`, `${steps} After the install run claude --version once (on Windows a CLI install can leave no binary). Never push, never reset or force anything. Return exits (the exit code of each step you ran, in order), sha (HEAD afterwards) and the failing step's last 10 lines as tail.`, 'Sync', SYNC_SCHEMA)
+  const steps = machine === LOCAL_MACHINE ? `In ${repo} run scripts/install.sh, then report git rev-parse HEAD. After the install run ${VERSION_CHECK}.` : targetSteps(machine)
+  return runner(`sync:${machine}`, `${steps} Never push, never reset or force anything. Return exits (the exit code of each step you ran, in order), sha (HEAD afterwards) and the failing step's last 10 lines as tail.`, 'Sync', SYNC_SCHEMA)
 }
 
 function targetSteps(machine) {
@@ -132,7 +139,7 @@ function targetSteps(machine) {
   const move = tag
     ? `git fetch ${bundle} refs/tags/${tag}:refs/tags/${tag}, then scripts/install.sh --update --to ${tag}`
     : `check git branch --show-current is ${base} and git status --porcelain --untracked-files=no prints nothing, then git pull --ff-only ${bundle} ${base}, then scripts/install.sh`
-  return `Move the ${tag ? `tag ${tag}` : 'tip'} to ${machine}. (1) On this machine: git -C ${repo} bundle create ${bundle} ${tag ? `refs/tags/${tag}` : base}, then node ${repo}/scripts/install/local-settings.mjs shared ${shared}, then scp ${bundle} ${shared} ${host}:/tmp/. (2) On ${machine}, ${where(machine, SYNC_SSH_TIMEOUT_SECONDS)}: node scripts/install/local-settings.mjs merge-shared ${shared}, then ${move}.`
+  return `Move the ${tag ? `tag ${tag}` : 'tip'} to ${machine}. (1) On this machine: git -C ${repo} bundle create ${bundle} ${tag ? `refs/tags/${tag}` : base}, then node ${repo}/scripts/install/local-settings.mjs shared ${shared}, then ${alarmed(TRANSFER_TIMEOUT_SECONDS)} scp ${bundle} ${shared} ${host}:/tmp/. (2) On ${machine}, ${where(machine, SYNC_SSH_TIMEOUT_SECONDS)}: node scripts/install/local-settings.mjs merge-shared ${shared}, then ${move}, then ${VERSION_CHECK} on ${machine}, never on this Mac. Run each ssh and scp as a foreground Bash command with timeout: 600000.`
 }
 
 async function doctorMachine(synced, machine) {
@@ -144,7 +151,8 @@ async function doctorMachine(synced, machine) {
 }
 
 function diagnose(machine, tail) {
-  return agent(`The ${machine} sync of ${repo} failed. Output tail: ${tail}\nName the cause and the one command that fixes it, in 3 lines. Read only; run nothing that changes a machine.`, { label: `${row}:diagnose:${machine}`, phase: 'Doctor', agentType: 'general-purpose', model: 'sonnet', effort: 'medium' })
+  const remote = machine === LOCAL_MACHINE ? '' : ` Run any check on ${machine} ${where(machine)}; a fix command for ${machine} starts with ${REMOTE_PATH_EXPORT}`
+  return agent(`The ${machine} sync of ${repo} failed. Output tail: ${tail}\nName the cause and the one command that fixes it, in 3 lines. Read only; run nothing that changes a machine.${remote}`, { label: `${row}:diagnose:${machine}`, phase: 'Doctor', agentType: 'general-purpose', model: 'sonnet', effort: 'medium' })
 }
 
 function checkArgs(given) {
