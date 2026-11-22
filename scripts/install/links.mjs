@@ -92,7 +92,8 @@ const isInside = (folder, path) => {
  * Removes what an older install made that this one no longer makes, on every platform: a ~/.claude link whose home/ item left
  * `names` (the session modes folder) and anything it put in the launcher folders ~/.local/bin and ~/.claude/bin (the mode launcher
  * and its Windows twins, retired with the modes: sessions start with `claude --model <m> --effort <e>`). Only links and copies the
- * install record names go, and they leave the record; nothing else in those folders is looked at.
+ * install record names are looked at, and they leave the record; nothing else in those folders is. A path is removed only while
+ * it is still a link (never followed); a real file or folder there (a Windows copy, or the owner's own) goes to the backup folder.
  * @param {object} ctx the run context
  * @param {object} record the install record
  * @param {string[]} names the home/ items this install links into ~/.claude
@@ -104,11 +105,16 @@ export function removeRetiredLinks(ctx, record, names) {
     launcherFolders.some((folder) => isInside(folder, path)) || (samePath(dirname(path), ctx.claudeDir) && !kept.has(basename(path)));
   for (const entry of record.made.filter((made) => ['link', 'copy'].includes(made.kind) && isRetired(made.path))) {
     act(ctx, `remove the retired ${entry.path}`, () => {
-      const stat = lstatOrNull(entry.path);
-      if (stat?.isSymbolicLink()) removeLink(entry.path);
-      else if (stat) rmSync(entry.path, { recursive: true, force: true });
+      // Out of the record first, so backup() records a real file or folder as the owner's (--uninstall restores it).
       record.made = record.made.filter((made) => made !== entry);
-      note(ctx, `removed the retired ${entry.path}`);
+      const stat = lstatOrNull(entry.path);
+      if (stat?.isSymbolicLink()) {
+        removeLink(entry.path);
+        note(ctx, `removed the retired ${entry.path}`);
+      } else if (stat) {
+        const saved = backup(ctx, record, entry.path);
+        warn(`${entry.path} is not a link (a copy or the owner's own file); moved it to ${saved} instead of deleting it`);
+      }
     });
   }
 }
