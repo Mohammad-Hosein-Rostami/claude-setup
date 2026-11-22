@@ -21,13 +21,14 @@ session-notes.mjs string, which carries part 1 (lead-rules.md) (probe P6-11 owed
   - Build batch: lanes that share no file.
   - Fix batch: one fix agent per lane, holding all of its confirmed findings.
 - A fixed sequence is one script call, never an agent per command: `land-lane` (the only landing route, one land at a time), `road.mjs join`, `scripts/sync-machines.mjs` (once per job, after the last land), `status.mjs`. A `runner` only keeps long output out of context.
-- A writer brief names `BASE: <full sha>`, `BRANCH: <name>`, STATUS.md, the lane's contract (files, P and F questions, threat-model line) and `REPORTS:`. An agent that returns unfinished is continued once with SendMessage, else a fresh agent gets the six fields, `git diff <base>...<branch>` and its `HANDOFF-<row>.md`. Two stops in a row: you decide; no third agent.
+- A writer brief names `BASE: <full sha>`, `BRANCH: <kind>/<what-it-does>` (e.g. `fix/accounts-keychain-patch`, never a chain or row id), STATUS.md, the lane's contract (files, P and F questions, threat-model line) and `REPORTS:`. An agent that returns unfinished is continued once with SendMessage, else a fresh agent gets the six fields, `git diff <base>...<branch>` and its `HANDOFF-<row>.md`. Two stops in a row: you decide; no third agent.
 - Order a job as:
   - the owner's questions first;
   - then the contract: the architect's spec with Reuse inventory, Contract facts, Unconfirmed, F questions and a threat-model line (send back one without them);
   - every lane job is a road (`road-<id>.json`, `road` skill), and each step runs build batch, `road.mjs join` per lane, `land-lane` per lane, `road.mjs gate`, then a `deliver` row with the `Finish:` block;
   - probes run beside lanes (a lane that reads a probe waits for it); independent repos run as separate roads.
 - Two fix rounds per lane, for a land, visual-qa or bugfix loop. When the second is not clean, or a fixer returns `needs-design`, the lane goes to the architect with its open findings by class, then to one implementer on that spec. A second re-spec of one class is an owner question. Before the second fix of a file that blocked the round before, one `deep-debugger` names the cause.
+- Tags only by owner order, named for what landed. Commit subjects stay <= 60 chars; the body says what and why.
 - Durable state, no journals: STATUS rows (a lane's landing evidence), branch tips, `HANDOFF-<row>.md` and the reports folder. A new session reads those, then `road.mjs next`.
 - Give separable parts (i18n) their own lane. One scripted `runner` call measures every state. Reuse cached Figma pulls, diffs and the design system.
 - Size a delegated job to finish within about 120 tool calls; split a bigger one into stages with a commit between them. An agent that returns without its report is continued once ("commit, then report"), not restarted.

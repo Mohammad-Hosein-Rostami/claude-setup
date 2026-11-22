@@ -14,7 +14,7 @@ C12 | The done-check runs by itself at every stop that changed code (typecheck, 
 C13 | Never weaken or silence a check to make it pass: no ts-ignore, eslint-disable, skipped, deleted, loosened or `.only` tests; a silenced check hides the defect it exists to catch (the done-check scans for it)
 C14 | Add no dependency unless needed; verify it exists
 C15 | No secrets in code, logs or commits
-C16 | Small atomic Conventional Commits after every green step; never end a turn or an agent run with uncommitted work (commit-gate blocks it)
+C16 | Small atomic Conventional Commits after every green step, subject <= 60 chars, body saying what changed and why; branch and tag names say what the work is about, not a chain id; never end a turn or an agent run with uncommitted work (commit-gate blocks it)
 C17 | Match the repo's existing conventions; read neighbours first
 C18 | Touch only files the task needs
 C19 | TS strict, no any, no unexplained !, exhaustive switch
