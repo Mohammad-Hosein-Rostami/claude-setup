@@ -5,7 +5,8 @@
 # Output: a summary line first (`doctor (MacBook, Claude Code 2.1.328): 1 FAIL, 1 WARN, 38 ok`), then only the lines that are not
 # ok, each with its fix; `--all` (or DOCTOR_ALL=1) prints every line as before. DOCTOR_ONLY runs keep every line (tests read them).
 # The checks are functions: the ones about the setup's own files are in scripts/doctor/checks-setup.sh, the ones about this machine in
-# scripts/doctor/checks-machine.sh (sourced below); the helpers, the links, the Claude Code floor and the run order stay here.
+# scripts/doctor/checks-machine.sh (sourced below); the helpers, the links, the Claude Code floor, the re-read version (VERIFIED_ON_CLI)
+# and the run order stay here.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -64,10 +65,31 @@ check_claude_version() {
   pinned="$(jq -r '.env.DISABLE_UPDATES // ""' "$live" 2>/dev/null || true)"
   pinned="${DISABLE_UPDATES:-$pinned}"
   pinned="update channel ${channel:-unknown}, DISABLE_UPDATES ${pinned:-not set}"
-  if [ -z "$version" ]; then warn "claude --version gave no version: cannot check the floor $CLAUDE_FLOOR ($pinned)"
+  if [ -z "$version" ]; then warn "claude --version gave no version: cannot check the floor $CLAUDE_FLOOR or the re-read version $VERIFIED_ON_CLI ($pinned)"
   elif version_at_least "$version" "$CLAUDE_FLOOR"; then ok "claude $version (floor $CLAUDE_FLOOR; $pinned)"
   else bad "claude >= $CLAUDE_FLOOR required (found $version; $pinned): below it the Bash guard's onFailure: block may be ignored and the phase pin does not hold; run claude update"; fi
+  if [ -n "$version" ]; then check_cli_verified "$version"; fi
   if is_windows; then check_windows_shell; fi
+}
+
+# VERIFIED_ON_CLI: the Claude Code version that the files copying its behaviour were last read again against, in its bundle.
+# These files repeat what the CLI does (which agent file it loads, its frontmatter parser, transcript fields, hook output); a
+# new CLI can change that quietly, so on any other version this check names them: read each again against the bundle of the
+# version in use, fix what changed, then set VERIFIED_ON_CLI to that version. The list is the same search the re-read uses
+# (CLI_COPY_PATTERN over home/hooks and home/tools), so the two never disagree. A WARN, never a FAIL: a version not read again is
+# work to do, and a rollback to the version before must keep doctor at 0 FAIL. Read again on 2.1.330: 27 files, 2 changed.
+VERIFIED_ON_CLI=2.1.330
+CLI_COPY_PATTERN='bundle|minified|binary|CLI.s own|undocumented'
+check_cli_verified() {
+  local version="$1" files count=0 file
+  if [ "$version" = "$VERIFIED_ON_CLI" ]; then
+    ok "claude $version is the version the files that copy Claude Code behaviour were read again on (VERIFIED_ON_CLI)"; return
+  fi
+  files="$(cd "$REPO" && grep -rilE --exclude-dir=node_modules "$CLI_COPY_PATTERN" home/hooks home/tools 2>/dev/null | sort)"
+  while IFS= read -r file; do [ -n "$file" ] && count=$((count + 1)); done <<<"$files"
+  warn "claude $version is not $VERIFIED_ON_CLI, the version these $count files that copy Claude Code behaviour were read again on: read each against the $version bundle, fix what changed, then set VERIFIED_ON_CLI=$version in scripts/doctor.sh"
+  while IFS= read -r file; do [ -n "$file" ] && echo "      $file"; done <<<"$files"
+  return 0
 }
 
 check_hook_files() {
