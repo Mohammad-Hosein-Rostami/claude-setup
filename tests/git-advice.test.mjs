@@ -1,7 +1,7 @@
-// Tests for lib/git-advice.mjs: the two new C37 advices next to the merge-commit and branch-move ones.
+// Tests for lib/git-advice.mjs: the copy-branch C37 advice next to the merge-commit and branch-move ones.
 //  - copy branch: `checkout -b`, `switch -c`, `branch`, `worktree add -b` of NAME-<n>|-fix|-fixes|-v<n>|-redo while NAME exists locally.
-//  - no PASS: `git merge --ff-only <ref>` in a folder on main/master/develop when the full suite has no PASS record at that commit.
-// Real temporary repos (tests/git-tidy-helpers.mjs); `hasPass` is injected because the PASS record belongs to the test-pass tool.
+//  - a fast-forward merge into main gives no advice (the no-PASS advice went with the suite PASS records, checks reset S2).
+// Real temporary repos (tests/git-tidy-helpers.mjs).
 import './pin-home.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
-import { COPY_BRANCH_ADVICE_PATTERN, copyBranchStem, gitAdvice, NO_PASS_ADVICE_PATTERN, runGit } from '../home/hooks/lib/git-advice.mjs';
+import { COPY_BRANCH_ADVICE_PATTERN, copyBranchStem, gitAdvice, runGit } from '../home/hooks/lib/git-advice.mjs';
 import { MERGE_COMMIT_ADVICE } from '../home/hooks/lib/merge-commit.mjs';
 import { BRANCH_MOVE_ADVICE } from '../home/hooks/lib/branch-move.mjs';
 import { ADVICE_CLASS, reasonClass } from '../home/hooks/lib/reason-classes.mjs';
@@ -23,8 +23,6 @@ const lane = (repo) => { // a repo on main with a lane branch `lane-x` that exis
   git(repo, 'branch', 'lane-x');
   return repo;
 };
-const noPass = { hasPass: () => false };
-const hasPass = { hasPass: () => true };
 const matches = (advice, pattern) => advice.length === 1 && pattern.test(advice[0]);
 
 test('copyBranchStem: the existing stem for a -<n>, -fix, -fixes, -v<n> or -redo copy, null otherwise', () => {
@@ -40,7 +38,7 @@ test('copy branch: each way to create a branch NAME-<n> while NAME exists gets t
     'git checkout -b lane-x-2', 'git checkout -B lane-x-fix', 'git switch -c lane-x-v2', 'git switch -C lane-x-redo', 'git switch --create lane-x-fixes',
     'git branch lane-x-3', 'git branch lane-x-3 main', 'git worktree add -b lane-x-2 ../wt', 'git worktree add ../wt -b lane-x-redo',
     'git checkout -b lane-x-2 main', 'git -C . checkout -b lane-x-2', 'git --no-pager branch lane-x-2',
-  ]) assert.ok(matches(gitAdvice(command, repo, process.env, noPass), COPY_BRANCH_ADVICE_PATTERN), command);
+  ]) assert.ok(matches(gitAdvice(command, repo, process.env), COPY_BRANCH_ADVICE_PATTERN), command);
   assert.equal(reasonClass(gitAdvice('git checkout -b lane-x-2', repo)[0]), ADVICE_CLASS.copyBranch);
 });
 
@@ -58,34 +56,15 @@ test('copy branch twin: no advice when the stem is missing, nothing is created, 
     'git checkout -b other-2', 'git checkout lane-x-2', 'git switch lane-x-2', 'git branch -d lane-x-2', 'git branch -D lane-x-2', 'git branch -m lane-x lane-x-2',
     'git branch --list lane-x-2', 'git branch', 'git checkout -b lane-y', 'echo "git checkout -b lane-x-2"', 'git log --grep "checkout -b lane-x-2"',
     'git checkout -b "lane x-2"', 'git checkout -b lane-x-2$(date)', 'git checkout -b $NAME',
-  ]) assert.deepEqual(gitAdvice(command, repo, process.env, noPass), [], command);
+  ]) assert.deepEqual(gitAdvice(command, repo, process.env), [], command);
 });
 
-test('no PASS: merge --ff-only on main without a suite PASS at the commit gets the advice with the short sha', () => {
+test('a fast-forward merge into main gets no advice, whatever the commit has: there is no PASS record any more', () => {
   const repo = lane(makeRepo());
   git(repo, 'checkout', '-q', 'lane-x');
-  const tip = commit(repo, 'lane.txt');
+  commit(repo, 'lane.txt');
   git(repo, 'checkout', '-q', 'main');
-  for (const command of ['git merge --ff-only lane-x', 'git -C . merge --ff-only lane-x', 'git merge --ff-only lane-x && echo done']) {
-    const advice = gitAdvice(command, repo, process.env, noPass);
-    assert.ok(matches(advice, NO_PASS_ADVICE_PATTERN), command);
-    assert.ok(advice[0].includes(tip.slice(0, 12)), 'names the commit');
-    assert.equal(reasonClass(advice[0]), ADVICE_CLASS.noPass);
-  }
-});
-
-test('no PASS twin: a PASS record, a lane folder, a plain merge, an unknown ref or a failing check give no PASS advice', () => {
-  const repo = lane(makeRepo());
-  assert.deepEqual(gitAdvice('git merge --ff-only lane-x', repo, process.env, hasPass), [], 'proven');
-  assert.deepEqual(gitAdvice('git merge --ff-only no-such-ref', repo, process.env, noPass), [], 'unknown ref');
-  assert.deepEqual(gitAdvice('git merge --ff-only lane-x', repo, process.env, { hasPass: () => { throw new Error('store unreadable'); } }), [], 'check failed: let it through');
-  assert.deepEqual(gitAdvice('git merge --ff-only lane-x', repo, process.env, { hasPass: () => undefined }), [], 'unknown answer: let it through');
-  assert.deepEqual(gitAdvice('git merge --ff-only --abort', repo, process.env, noPass), [], 'no ref');
-  assert.deepEqual(gitAdvice('git merge --ff-only lane-x', join(repo, 'no-such-folder'), process.env, noPass), [], 'a git error');
-  git(repo, 'checkout', '-q', 'lane-x');
-  assert.deepEqual(gitAdvice('git merge --ff-only main', repo, process.env, noPass), [], 'a lane branch is not a base');
-  git(repo, 'checkout', '-q', 'main');
-  assert.deepEqual(gitAdvice('git merge lane-x', repo, process.env, noPass), [MERGE_COMMIT_ADVICE], 'a plain merge has the C37 advice only');
+  for (const command of ['git merge --ff-only lane-x', 'git -C . merge --ff-only lane-x', 'git merge --ff-only -m message lane-x']) assert.deepEqual(gitAdvice(command, repo), [], command);
 });
 
 test('the merge-commit and branch-move advices are still given, once each, by the same call', () => {
@@ -120,22 +99,18 @@ test('copy branch: after a cd or pushd the guard cannot read, or with an unknown
   const repo = lane(makeRepo());
   const copy = 'git checkout -b lane-x-2';
   for (const command of [`cd "$TARGET" && ${copy}`, `pushd /tmp && ${copy}`, `cd - && ${copy}`, `cd ~someone && ${copy}`, `cd sub/$X && ${copy}`]) {
-    assert.deepEqual(gitAdvice(command, repo, process.env, noPass), [], command);
+    assert.deepEqual(gitAdvice(command, repo, process.env), [], command);
   }
-  assert.deepEqual(gitAdvice(copy, null, process.env, noPass), [], 'start folder unknown');
-  assert.deepEqual(gitAdvice(`git -C "$X" checkout -b lane-x-2`, repo, process.env, noPass), [], 'a -C the guard cannot read');
-  assert.ok(matches(gitAdvice(`cd "$TARGET"; cd ${repo} && ${copy}`, repo, process.env, noPass), COPY_BRANCH_ADVICE_PATTERN), 'a literal cd afterwards knows the folder again');
+  assert.deepEqual(gitAdvice(copy, null, process.env), [], 'start folder unknown');
+  assert.deepEqual(gitAdvice(`git -C "$X" checkout -b lane-x-2`, repo, process.env), [], 'a -C the guard cannot read');
+  assert.ok(matches(gitAdvice(`cd "$TARGET"; cd ${repo} && ${copy}`, repo, process.env), COPY_BRANCH_ADVICE_PATTERN), 'a literal cd afterwards knows the folder again');
 });
 
-test('copy branch: git branch listing options are not creating a branch; merge --ff-only -m text ref reads the ref', () => {
+test('copy branch: git branch listing options are not creating a branch', () => {
   const repo = lane(makeRepo());
   for (const command of ['git branch --merged lane-x-2', 'git branch --contains lane-x-2', 'git branch --no-merged lane-x-2', 'git branch --points-at lane-x-2']) {
-    assert.deepEqual(gitAdvice(command, repo, process.env, noPass), [], command);
+    assert.deepEqual(gitAdvice(command, repo, process.env), [], command);
   }
-  git(repo, 'checkout', '-q', 'lane-x');
-  commit(repo, 'lane.txt');
-  git(repo, 'checkout', '-q', 'main');
-  assert.ok(matches(gitAdvice('git merge --ff-only -m message lane-x', repo, process.env, noPass), NO_PASS_ADVICE_PATTERN));
 });
 
 test('one time budget for all git calls of a command line: a repository that hangs git costs the line a couple of seconds, not 5 s per reading', (t) => {

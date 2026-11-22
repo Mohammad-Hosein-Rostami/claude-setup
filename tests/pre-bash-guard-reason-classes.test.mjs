@@ -95,11 +95,9 @@ const ADVICE = [
   [ADVICE_CLASS.branchMove, 'git update-ref refs/heads/main abc'],
   [ADVICE_CLASS.sleepWait, 'for i in 1 2 3; do sleep 10; done'],
 ];
-// Advice whose text names a branch or a commit depends on the repository, so it is made by gitAdvice in a real temporary repo
-// (the PASS check is replaced: the PASS record belongs to the test-pass tool).
+// Advice whose text names a branch depends on the repository, so it is made by gitAdvice in a real temporary repo.
 const REPOSITORY_ADVICE = [
   [ADVICE_CLASS.copyBranch, 'git checkout -b lane-x-2'],
-  [ADVICE_CLASS.noPass, 'git merge --ff-only lane-x'],
 ];
 
 const GUARD = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
@@ -139,7 +137,7 @@ test('each advice class with a branch or commit in its text is classed by its wh
   const repo = makeRepo();
   git(repo, 'branch', 'lane-x');
   for (const [name, command] of REPOSITORY_ADVICE) {
-    const [text] = gitAdvice(command, repo, process.env, { hasPass: () => false });
+    const [text] = gitAdvice(command, repo, process.env);
     assert.equal(reasonClass(text), name, name);
     assert.equal(isAdviceReason(`${text} (matched in raw text)`), true, name);
     assert.equal(isAdviceReason(`${text} and then some other wording`), false, `${name}: text that only starts like the advice asks`);
