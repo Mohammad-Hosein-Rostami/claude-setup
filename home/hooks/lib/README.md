@@ -94,6 +94,7 @@ Other hooks:
 - `read-only-hold.mjs`: whether a stopping subagent is held to its `read-only:` / `scratchpad-only:` brief, which of its recorded files
   lie outside the temp and scratchpad roots, and the block reason; used by `commit-gate.mjs`.
 - `gate-routes.mjs`: the prompt patterns and lines of the skill router's gate routes (bug, done, restructure, git history, repeated report); used by `skill-router.mjs`.
+- `skill-router-text.mjs`: the texts `skill-router.mjs` adds to a prompt or after a UI-file edit (full, short, follow-up and edit reminder, all naming the proof step); split out to keep that hook under 300 lines.
 - `reply-cap.mjs`: reads a reply-size cap from a prompt; used by `agent-budget.mjs` and `final-reply-cap.mjs`.
 - `transcript.mjs`: reads the session transcript (context size, STATUS file).
 - `state-files.mjs`: the state files in `~/.claude/state/modes` (read without following a link or waiting on a FIFO, written as a whole by rename, pruned within bounds), used by `session-notes.mjs` and `compact-notes.mjs`.

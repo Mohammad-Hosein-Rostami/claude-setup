@@ -1,8 +1,7 @@
 // The call-window log: one append-only record per session of when each tool call of the session (and of its agents) was open, and how
 // big each watched branch reflog was then. commit-gate.mjs writes it on every tool and stop event; the gates read it to tell own changes
-// from changes only another session can have made (lib/change-owner.mjs). Exports: recordCallEdge, watchFolder, addWatch,
-//   readCallWindows(env, session, deadlineMs) -> {usable, missing?, lines, windows, watches, folders, firstAt, postHookMs}, parseLog,
-//   buildWindows, logFolderOf, reflogPathOf, reflogRealPath, lastReflogLine, the caps, EDGE_SLACK_MS, NO_WINDOW_TOOLS, FILE_TOOLS.
+// from changes only another session can have made (lib/change-owner.mjs). Exports: recordCallEdge, watchFolder, addWatch, readCallWindows,
+//   parseLog, buildWindows, logFolderOf, reflogPathOf, reflogRealPath, lastReflogLine, the caps, EDGE_SLACK_MS, NO_WINDOW_TOOLS, FILE_TOOLS.
 // Store: <HOME>/.claude/state/call-windows/<session>.jsonl (open, close, batch, quiet, watch lines: spec-p1-gates-fix 2.2) and
 //   <session>--watch.json ({reflogs: [real path by index k], folders: [folders already resolved]}) under withSessionLock.
 // Invariants: never throws; never runs git (`.git` entries are read); every write goes through appendPlainFile (no link followed, no

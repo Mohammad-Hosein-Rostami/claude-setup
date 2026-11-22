@@ -7,7 +7,7 @@
 // you before") names no skill and shows on every match. The first routed UI prompt of a
 // session (and any prompt that routes a skill not named before) gets the full text; the rest get a one-line form.
 // SessionStart(compact): forgets this session's prompt marker, so the next routed prompt gets the full text again.
-// Every UI text names the proof step (`ui-check run` rounds in the UI lane, then visual-qa's final gate on the tree that lands); it always applies.
+// Every UI text (lib/skill-router-text.mjs) names the proof step (`ui-check run` rounds in the UI lane, then visual-qa's final gate on the tree that lands); it always applies.
 // FA Figma words: فیگما, پیکسل, طرح, دیزاین, مطابق, تطابق; a figma.com link inside a `<pasted_content>` block routes too (pastedText).
 // PostToolUse(Edit|Write|MultiEdit) on a UI file (markup, styles, and `.ts`/`.js` style scripts under a styles/theme/sx folder
 // or named *.styles.ts, *.theme.ts, *.sx.ts, as in ui-proof's lib/ui-files.mjs) -> reminds once per session and agent (subagents
@@ -23,6 +23,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { GATE_ROUTES } from './lib/gate-routes.mjs';
 import { ownerWords, pastedText } from './lib/owner-words.mjs';
+import { EDIT_REMINDER_TEXT, FOLLOW_UP_SHORT_TEXT, fullPromptText, shortPromptText } from './lib/skill-router-text.mjs';
 
 const FIGMA_SKILLS = ['figma-pixel-perfect', 'responsive-ui'];
 // A Figma file link: the one word that still routes from inside a pasted block (a large paste often carries the frame link).
@@ -111,21 +112,6 @@ export function jobFollowUpPrompt(prompt) {
 export const isUiFile = (file) =>
   !NON_UI_FILE.test(file) && (UI_FILE.test(file) || (STYLE_SCRIPT.test(file) && (STYLE_FOLDER.test(file) || STYLE_NAME.test(file))));
 
-const PROOF_STEP = ' Proof before "done" or "fixed": the UI lane runs `ui-check run` rounds until every state passes, then a' +
-  ' `visual-qa` lane runs the final gate on the tree that lands; only its PASS counts.';
-const PROOF_SHORT = 'proof: ui-check run PASS, then the visual-qa final gate';
-
-const fullPromptText = (skills) =>
-  `Skill router: this request involves UI. Before writing UI code, invoke with the Skill tool: ${skills.join(', ')}` +
-  ' (skip any already loaded in this context). A project skill with the same purpose whose paths match wins.' +
-  ' Delegate UI implementation to the `ui-implementer` agent, not `implementer`, and name these skills in the' +
-  ' delegation prompt (a project\'s own `ui-implementer` preloads only project skills);' +
-  ` run \`ui-quality-pass\` before saying done.${PROOF_STEP}`;
-
-const shortPromptText = (skills) =>
-  `Skill router: UI request - invoke ${skills.join(', ')} (skip any already loaded); delegate to ui-implementer; ` +
-  `ui-quality-pass before done; ${PROOF_SHORT}.`;
-
 const promptMarkerPath = (sessionId) =>
   typeof sessionId === 'string' && SAFE_ID.test(sessionId) ? join(PROMPT_STATE_DIR, sessionId) : null;
 
@@ -172,8 +158,7 @@ function followUpContext(sessionId) {
   const marker = promptMarkerPath(sessionId);
   // Marker gone (compact) or never written: the skill text is not in context, so send the full text.
   if (marker && existsSync(marker)) {
-    return 'Skill router: UI follow-up - invoke accessibility-build, responsive-ui (skip any already loaded); ' +
-      `delegate to ui-implementer; ui-quality-pass before done; ${PROOF_SHORT}.`;
+    return FOLLOW_UP_SHORT_TEXT;
   }
   return fullPromptText(FOLLOW_UP_SKILLS);
 }
@@ -246,10 +231,7 @@ function editContext(input) {
   markUiSession(input.session_id);
   if (input.agent_type === UI_IMPLEMENTER && !isProjectUiImplementer(input)) return null;
   if (!firstUiEdit(input.session_id, input.agent_id)) return null;
-  return 'Skill router: you are editing UI code. If not yet loaded in this context, invoke `responsive-ui` and' +
-    ' `accessibility-build` now (also `forms-validation` for forms, `async-ui-states` for server data,' +
-    ' `figma-pixel-perfect` when there is a Figma frame), and run `ui-quality-pass` before reporting done.' +
-    ' Proof: `ui-check run` until every state passes; visual-qa runs the final gate on the tree that lands.';
+  return EDIT_REMINDER_TEXT;
 }
 
 /**
