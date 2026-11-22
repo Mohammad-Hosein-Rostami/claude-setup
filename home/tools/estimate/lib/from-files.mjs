@@ -16,10 +16,10 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { isSessionId } from '../../../hooks/lib/session-store.mjs';
 import { activeRuns } from './activity.mjs';
-import { band, nextCommitment, scoreLog, trackRecord, widening } from './commitment.mjs';
-import { forecastWork, nearestRank, referencePool, refusalOf } from './forecast.mjs';
+import { band, cappedLog, nextCommitment, scoreLog, trackRecord, widening } from './commitment.mjs';
+import { costedRows, forecastWork, nearestRank, paceOf, referencePool, refusalOf } from './forecast.mjs';
 import { INSTANT_FORMAT, parseInstant, parseWorkItems } from './items.mjs';
-import { carriedIds, jobNumbers } from './job-rows.mjs';
+import { carriedIds, jobNumbers, lateFacts } from './job-rows.mjs';
 import { classMedians, progressOf } from './progress.mjs';
 import { roadOf, withRoad } from './road-steps.mjs';
 import { isScratchTable, noteTable, readAllTables, readSeed, tableId, updateTable } from './table-store.mjs';
@@ -28,8 +28,6 @@ import { elapsedShares, handedOverJobs, rowCosts, workedMinutes, workingInterval
 const MS_PER_MIN = 60_000;
 /** A running row whose elapsed share is above this share of its class is a move's cause (design 3.8). */
 const SLOW_ROW_SHARE = 0.85;
-/** Log entries kept per table: the old calibration log's cap, enough for 200 jobs' first commitments. */
-const MAX_LOG_ENTRIES = 200;
 /** Working minutes of the current job with no started row before a Check line asks for starts: 2-3 % of the measured working time was untracked (design 3.2, 3.10). */
 const UNTRACKED_CHECK_MIN = 30;
 const DROPPED = /^dropped:/i;
@@ -74,7 +72,6 @@ function parsedTable(path, nowMs) {
 }
 
 const addedTimes = (added = {}) => new Map(Object.entries(added).map(([id, at]) => [id, Date.parse(at)]));
-const capped = (log) => log.slice(-MAX_LOG_ENTRIES);
 
 /** The facts every state needs: rows, working time, costs, jobs, the pool and the stored table (null without one). */
 function measure(statusPath, items, options) {
@@ -89,7 +86,7 @@ function measure(statusPath, items, options) {
   const own = { id, rows: referenceRows(items, costs), jobs: jobs.map(storedJob) };
   const pool = referencePool([...tables.filter((table) => table.id !== id), own], readSeed(options.seedFile));
   const handOvers = items.filter((item) => item.kind === 'deliver' && item.done !== null).map((item) => item.done).sort((a, b) => a - b);
-  return { id, stored, sessions, intervals, jobs, own, pool, lastHandOver: handOvers.at(-1) ?? null };
+  return { id, stored, sessions, intervals, costs, jobs, own, pool, lastHandOver: handOvers.at(-1) ?? null };
 }
 
 /**
@@ -107,6 +104,9 @@ function currentCommit(commit, lastHandOver, items) {
 /** True when a work row of the current job (open, or done after the last hand-over) has a started stamp. */
 const jobHasStarted = (items, lastHandOver) => items.some((item) => isWorkRow(item) && item.started !== null
   && (item.done === null || lastHandOver === null || item.done > lastHandOver));
+
+/** The current job's pace (forecast.mjs paceOf) from its rows done after the last hand-over. */
+const jobPace = (items, facts) => paceOf(costedRows(items.filter((item) => item.done !== null && (facts.lastHandOver === null || item.done > facts.lastHandOver)), facts.costs), facts.pool);
 
 /** The log with the entry of the replaced commitment (same time, a commitment entry) taken out. */
 const withoutEntryOf = (log, commit) => log.filter((entry) => !(typeof entry.first === 'boolean' && entry.at === commit.at));
@@ -150,16 +150,17 @@ function staleChecks(stale, openRows, pool) {
     .sort((a, b) => b.elapsedMin - a.elapsedMin);
 }
 
-/** The forecast of the open rows, widened by the stored log's kappa, with its refusal (null when a time can be given). */
+/** The forecast of the open rows at the job's pace, widened by the stored log's kappa, with its refusal (null when a time can be given). */
 function forecastOpen(items, facts, nowMin) {
   const { elapsed, untrackedMin } = elapsedShares(items, facts.intervals, nowMin);
   const openRows = items.filter((item) => isWorkRow(item) && item.done === null).map((item) => ({ id: item.id, size: item.size, elapsed: elapsed.get(item.id) ?? 0 }));
   const road = roadOf(items);
-  const raw = forecastWork(openRows, facts.pool, forecastSeedText(facts.id, openRows), road?.stepOf ?? null);
+  const pace = jobPace(items, facts);
+  const raw = forecastWork(openRows, facts.pool, forecastSeedText(facts.id, openRows), road?.stepOf ?? null, pace);
   const kappa = widening(scoreLog(facts.stored?.log ?? [], items, facts.intervals));
   const work = raw === null ? null : { p50: raw.p50, raw85: raw.p85, p85: raw.p85 * kappa, p95: raw.p95 * kappa, g: facts.pool.growth, kappa };
   const checks = [...(raw === null ? [] : staleChecks(raw.stale, openRows, facts.pool)), ...(untrackedMin >= UNTRACKED_CHECK_MIN ? [{ kind: 'untracked', minutes: untrackedMin }] : []), ...carriedChecks(facts)];
-  return { openRows, work, checks, road, stepMeans: raw?.stepMeans, refusal: refusalOf(openRows, facts.pool, work), job: currentJob(items, facts, openRows, nowMin) };
+  return { openRows, work, checks, road, stepMeans: raw?.stepMeans, rowLeft: raw?.rowLeft ?? {}, refusal: refusalOf(openRows, facts.pool, work, pace), job: currentJob(items, facts, openRows, nowMin) };
 }
 
 /** The table file after this run: fresh rows and jobs, the log scored, then the state's own change of the commitment and log. */
@@ -180,7 +181,7 @@ function settle(statusPath, items, facts, options, change) {
 /** A refusal entry is logged only when its reason differs from the last entry's (design 3.9). */
 function withRefusal(log, refusal, work, nowMin) {
   if (log.at(-1)?.refusal === refusal.reason) return log;
-  return capped([...log, { at: iso(nowMin * MS_PER_MIN), refusal: refusal.reason, p50: work?.p50 ?? null, p85: work?.p85 ?? null }]);
+  return cappedLog([...log, { at: iso(nowMin * MS_PER_MIN), refusal: refusal.reason, p50: work?.p50 ?? null, p85: work?.p85 ?? null }]);
 }
 
 /** The finish facts of a committed budget at now: the shown (median) clock, the 85% and 95% clocks and the pauses since it was made. */
@@ -214,7 +215,7 @@ function finishResult(items, facts, forecast, options) {
     const leftMin = commit === null ? null : commit.budgetMin - workedMinutes(facts.intervals, minuteOf(commit.at), nowMin);
     const next = nextCommitment(commit, forecast.work, leftMin, context);
     progress = progressStep(forecast.job, facts, { p50LeftMin: forecast.work.p50, commit: next.commit });
-    return { ...table, commit: next.commit, log: next.entry === null ? log : capped([...log, next.entry]) };
+    return { ...table, commit: next.commit, log: next.entry === null ? log : cappedLog([...log, next.entry]) };
   };
   const { table, recorded } = settle(options.statusPath, items, facts, options, change);
   const sizeOf = new Map(items.map((item) => [item.id, item.size]));
@@ -226,7 +227,7 @@ function finishResult(items, facts, forecast, options) {
       state: 'finish', nowMs: nowMin * MS_PER_MIN, ...shown,
       covers: { open: forecast.openRows.length, running, sizes: sizeCounts(forecast.openRows), growth: facts.pool.growth },
       work: { p50: forecast.work.p50, p85: forecast.work.p85, p95: forecast.work.p95 }, progress,
-      numbers: jobNumbers(forecast.job, classMedians(facts.pool.costs), { finishMs: shown.finish.clockMs, p85Ms: shown.finish.p85Ms, leftMin: shown.commit.leftMin }),
+      numbers: jobNumbers(forecast.job, classMedians(facts.pool.costs), { finishMs: shown.finish.clockMs, p85Ms: shown.finish.p85Ms, leftMin: shown.commit.leftMin, ...lateFacts(table.commit, facts.intervals, nowMin, shown.commit.leftMin) }, forecast.rowLeft),
       band: band(table.log), record: trackRecord(table.log), pool: { rows: facts.pool.rowCount, jobs: facts.pool.jobCount }, checks: forecast.checks,
     }, forecast.road, forecast.stepMeans),
     recorded,

@@ -10,7 +10,8 @@
 // Replay (design 8.2): for every handed-over job, from 10 minutes after its start (not before the previous hand-over) in 20-minute
 // steps until the hand-over, the rows listed are the job's rows added by then (a `close:` row at its start, any other row at the
 // job's start) and not done; the pool is the other tables' rows and jobs plus this table's rows done by then (costs split among
-// rows done by then) and its jobs handed over by then; no seed, no store, widening 1. The hold rule runs along each job. A table
+// rows done by then) and its jobs handed over by then; no seed, no store, widening 1. The job's pace comes from its rows done by
+// then (lib/forecast.mjs paceOf), as in the tool; the horizon is judged on the unpaced work. The hold rule runs along each job. A table
 // with open rows at --now also gets its state and work left from the same pool. Leave-one-table-out, not a walk through time.
 // Scores (lib/backtest-scores.mjs): the shown (median) time per job against the work to the hand-over, signed bias, 85% hit rate,
 // a naive baseline and the first estimate apart; printed beside the thresholds, never failing the run.
@@ -24,7 +25,7 @@ import { isSessionId } from '../../hooks/lib/session-store.mjs';
 import { activeRuns } from './lib/activity.mjs';
 import { jobSizeClass, scoreLines } from './lib/backtest-scores.mjs';
 import { nextCommitment } from './lib/commitment.mjs';
-import { forecastWork, nearestRank, referencePool, refusalOf } from './lib/forecast.mjs';
+import { costedRows, forecastWork, nearestRank, paceOf, referencePool, refusalOf } from './lib/forecast.mjs';
 import { UsageError, forecastSeedText, referenceRows, slowRowOf, storedJob } from './lib/from-files.mjs';
 import { parseInstant, parseWorkItems } from './lib/items.mjs';
 import { stateDir, tableId } from './lib/table-store.mjs';
@@ -115,13 +116,15 @@ function forecastAt(table, others, job, tMs) {
   if (listed.length === 0) return null;
   const view = tableAt(table.items, tMs);
   const intervalsAt = workingIntervals(table.runs, tMin);
-  const own = { id: table.id, rows: referenceRows(view, rowCosts(view, intervalsAt)), jobs: table.jobs.filter((done) => done.at <= tMs).map(storedJob) };
+  const costsAt = rowCosts(view, intervalsAt);
+  const own = { id: table.id, rows: referenceRows(view, costsAt), jobs: table.jobs.filter((done) => done.at <= tMs).map(storedJob) };
   const pool = referencePool([...others, own], NO_SEED);
   const { elapsed } = elapsedShares(view, intervalsAt, tMin);
   const openRows = listed.map((item) => ({ id: item.id, size: item.size, elapsed: elapsed.get(item.id) ?? 0 }));
-  const work = forecastWork(openRows, pool, forecastSeedText(table.id, openRows));
+  const pace = paceOf(costedRows(view.filter((item) => job.ids.includes(item.id)), costsAt), pool);
+  const work = forecastWork(openRows, pool, forecastSeedText(table.id, openRows), null, pace);
   const actual = workedMinutes(table.intervals, tMin, job.at / MS_PER_MIN);
-  return { tMin, intervalsAt, openRows, pool, work, refusal: refusalOf(openRows, pool, work), actual };
+  return { tMin, intervalsAt, openRows, pool, work, refusal: refusalOf(openRows, pool, work, pace), actual };
 }
 
 /** Applies the hold rule to one instant; returns the commitment, the shown work left (median and 85%) and, when a time was committed, whether it held the hand-over. */
@@ -215,8 +218,10 @@ function openTableLines(tables, nowMs) {
     const pool = referencePool([...othersOf(table, tables), own], NO_SEED);
     const { elapsed } = elapsedShares(table.items, table.intervals, Math.floor(nowMs / MS_PER_MIN));
     const openRows = table.items.filter((item) => isWorkRow(item) && item.done === null).map((item) => ({ id: item.id, size: item.size, elapsed: elapsed.get(item.id) }));
-    const work = forecastWork(openRows, pool, forecastSeedText(table.id, openRows));
-    const state = refusalOf(openRows, pool, work)?.reason ?? 'finish';
+    const lastHandOver = table.jobs.at(-1)?.at ?? -Infinity;
+    const pace = paceOf(costedRows(table.items.filter((item) => item.done !== null && item.done > lastHandOver), table.costs), pool);
+    const work = forecastWork(openRows, pool, forecastSeedText(table.id, openRows), null, pace);
+    const state = refusalOf(openRows, pool, work, pace)?.reason ?? 'finish';
     const left = work === null ? '' : `; work left p50 ${hours(work.p50)} h, p85 ${hours(work.p85)} h, p95 ${hours(work.p95)} h`;
     return `  ${table.name}: ${state}; ${openRows.length} open rows; growth ${pool.growth.toFixed(3)}${left}`;
   });

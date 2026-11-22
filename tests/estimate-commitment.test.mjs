@@ -1,8 +1,9 @@
-// Tests for home/tools/estimate/lib/commitment.mjs: the first / hold / move decision with its stored cause, scoring at the
-// hand-over, the widening factor and the track record. Expected values are hand arithmetic on the estimator design 3.8-3.9.
+// Tests for home/tools/estimate/lib/commitment.mjs: the first / hold / move decision with its stored cause, the hold band, the
+// kept first budget and latest later cause, scoring at the hand-over, the widening factor and the track record (current model
+// only). Expected values are hand arithmetic on the estimator design 3.8-3.9 and spec R18 E2.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MODEL_ID, nextCommitment, scoreLog, trackRecord, widening } from '../home/tools/estimate/lib/commitment.mjs';
+import { MODEL_ID, band, firstCommitmentOf, nextCommitment, scoreLog, trackRecord, widening } from '../home/tools/estimate/lib/commitment.mjs';
 
 const BASE_MIN = Date.parse('2026-11-16T10:00Z') / 60_000;
 const isoAt = (minute) => new Date((BASE_MIN + minute) * 60_000).toISOString();
@@ -13,8 +14,8 @@ const held = { at: isoAt(0), budgetMin: 90, ids: ['a', 'b'], moved: null };
 
 test('nextCommitment: with no commitment the first one is the fresh p50 from now, logged as first with the model id', () => {
   const { commit, entry } = nextCommitment(null, FRESH, null, context(['a', 'b']));
-  assert.deepEqual(commit, { at: isoAt(30), budgetMin: 40, ids: ['a', 'b'], moved: null });
-  assert.deepEqual(entry, { at: isoAt(30), ids: ['a', 'b'], p50: 40, raw85: 80, p85: 80, p95: 120, g: 0.4, kappa: 1, first: true, cause: null, model: MODEL_ID });
+  assert.deepEqual(commit, { at: isoAt(30), budgetMin: 40, ids: ['a', 'b'], moved: null, first: { at: isoAt(30), budgetMin: 40 }, laterCause: null });
+  assert.deepEqual(entry, { at: isoAt(30), ids: ['a', 'b'], p50: 40, raw85: 80, p85: 80, p95: 120, g: 0.4, kappa: 1, first: true, cause: null, model: 'c3' });
 });
 
 test('nextCommitment holds while the budget left covers the fresh p50, keeping a stored move', () => {
@@ -24,11 +25,43 @@ test('nextCommitment holds while the budget left covers the fresh p50, keeping a
   assert.equal(result.entry, null);
 });
 
-test('nextCommitment moves later when more than 5 min less is left than the fresh p50; added rows are the cause first', () => {
-  const { commit, entry } = nextCommitment(held, FRESH, 30, context(['a', 'b', 'c', 'd'], 'a'));
-  assert.deepEqual(commit, { at: isoAt(30), budgetMin: 40, ids: ['a', 'b', 'c', 'd'], moved: { at: isoAt(30), wasClock: isoAt(60), cause: 'rows-added', ids: ['c', 'd'] } });
+test('nextCommitment hold band: max(15 min, 25 % of the larger of the fresh p50 and the budget left)', () => {
+  const at = (p50) => ({ ...FRESH, p50 });
+  assert.equal(nextCommitment(held, at(40), 26, context(['a', 'b'])).entry, null, '14 min apart: held');
+  assert.equal(nextCommitment(held, at(40), 25, context(['a', 'b'])).entry, null, '15 min apart: held');
+  assert.equal(nextCommitment(held, at(40), 24, context(['a', 'b'])).entry.first, false, '16 min apart: moved');
+  assert.equal(nextCommitment(held, at(200), 160, context(['a', 'b'])).entry, null, '40 min apart, band 50: held');
+  assert.equal(nextCommitment(held, at(200), 149, context(['a', 'b'])).entry.cause, 'pace', '51 min apart, band 50: moved');
+  assert.equal(nextCommitment(held, at(149), 200, context(['a'])).entry.cause, 'ahead', 'the band is the same for an earlier move');
+});
+
+test('nextCommitment moves later when the budget left falls short by more than the band; added rows are the cause first', () => {
+  const { commit, entry } = nextCommitment(held, FRESH, 20, context(['a', 'b', 'c', 'd'], 'a'));
+  assert.deepEqual(commit, {
+    at: isoAt(30), budgetMin: 40, ids: ['a', 'b', 'c', 'd'], moved: { at: isoAt(30), wasClock: isoAt(50), cause: 'rows-added', ids: ['c', 'd'] },
+    first: { at: isoAt(0), budgetMin: 90 }, laterCause: { cause: 'rows-added', ids: ['c', 'd'] },
+  });
   assert.equal(entry.first, false);
   assert.equal(entry.cause, 'rows-added');
+});
+
+test('a move keeps the first budget; an earlier move keeps the latest later cause', () => {
+  const first = nextCommitment(null, { ...FRESH, p50: 60 }, null, context(['a', 'b'])).commit;
+  const later = nextCommitment(first, { ...FRESH, p50: 100 }, 40, { ...context(['a', 'b', 'c']), nowMin: BASE_MIN + 50 }).commit;
+  assert.deepEqual(later.laterCause, { cause: 'rows-added', ids: ['c'] });
+  const earlier = nextCommitment(later, { ...FRESH, p50: 20 }, 90, { ...context(['c']), nowMin: BASE_MIN + 60 }).commit;
+  assert.equal(earlier.moved.cause, 'ahead');
+  assert.deepEqual(earlier.laterCause, { cause: 'rows-added', ids: ['c'] });
+  assert.deepEqual(earlier.first, { at: isoAt(30), budgetMin: 60 });
+});
+
+test('a commitment stored before c3 (no first, no laterCause): its first budget is itself until it moved, then unknown', () => {
+  assert.deepEqual(firstCommitmentOf(held), { at: isoAt(0), budgetMin: 90 });
+  const movedOld = { ...held, moved: { at: isoAt(0), wasClock: isoAt(20), cause: 'pace', ids: [] } };
+  assert.equal(firstCommitmentOf(movedOld), null);
+  const next = nextCommitment(held, FRESH, -5, context(['a', 'b'])).commit;
+  assert.deepEqual([next.first, next.laterCause], [{ at: isoAt(0), budgetMin: 90 }, { cause: 'pace', ids: [] }]);
+  assert.equal(nextCommitment(movedOld, FRESH, -5, context(['a', 'b'])).commit.first, null);
 });
 
 test('nextCommitment move cause: a slow running row when no row was added, else pace', () => {
@@ -59,7 +92,16 @@ test('scoreLog scores a commitment at the first hand-over by which all its ids s
   assert.equal(log[0].scored, undefined, 'the given log is not changed');
 });
 
-const scoredFirst = (ratio, met = true) => ({ first: true, raw85: 1, model: MODEL_ID, scored: { ratio, met } });
+const scoredFirst = (ratio, met = true, model = MODEL_ID) => ({ first: true, raw85: 1, model, scored: { ratio, met, ratio50: ratio } });
+
+test('entries of the old model c2b are kept in the log but not counted by widening, band or track record', () => {
+  const old = Array.from({ length: 25 }, () => scoredFirst(3, false, 'c2b'));
+  assert.equal(widening(old), 1);
+  assert.equal(trackRecord(old), null);
+  assert.equal(band(old).count, 0);
+  assert.equal(widening([...old, ...Array.from({ length: 10 }, () => scoredFirst(1.5))]), 1.5);
+  assert.deepEqual(scoreLog(old, [], []), old, 'scored entries of any model stay as they are');
+});
 
 test('widening is 1 until 10 first commitments are scored, then the p85 of the last 20 ratios, never below 1', () => {
   assert.equal(widening(Array.from({ length: 9 }, () => scoredFirst(3))), 1);

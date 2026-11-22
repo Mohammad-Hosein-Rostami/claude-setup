@@ -52,17 +52,26 @@ deliver:1 | report to owner | S | | 2026-11-14T10:30Z |
   share), or any cost of its size when it has run longer than all of them. Growth is not in the total (it added work that never
   came, +92 min per job on 15 replayed jobs); it is stated on its own line. Same table state, same numbers, in the CLI and the
   status line. The changes of round 9 are model `c2b` of the backtest (`certainty/estimate-backtest.md` section 7).
+- Pace (model `c3`): once 3 rows of the current job are done (a row that took no working minute counts with 0), every draw is
+  multiplied by their summed cost over the summed middle pool cost of their sizes, kept between 1 and 3 (exactly 1 before 3
+  rows or with an empty pool). On the 14 replayed jobs this raised the hand-over within the 85% clock from 63 to 72 %; a pace
+  below 1 was worse (67 %). The refusal for a job past the horizon is judged on the unpaced work.
+- Per-row time left: each open row's own median of its draw (paced), for the status line's running rows.
 - Carried rows: an open row first seen before the last hand-over and not started since is left out of every count and named
   in a `Check:` line (such rows added +89 min per job). Without a first-seen record (no store) no row is carried.
 - Commitment: the first run of a job commits the **median** as a work budget. Later runs hold it while the fresh median is
-  within 5 minutes of the budget left, else move it, earlier or later, to the fresh median, storing the cause (rows added, a
-  slow row, pace, or `ahead`). The shown time is now + budget left, rounded up to 5 minutes; the 85% and 95% clocks keep their
-  offset from it. Work does not move it, a pause moves it hour for hour.
+  within the hold band of the budget left, max(15 min, 25 % of the larger of the two), else move it, earlier or later, to the
+  fresh median, storing the cause (rows added, a slow row, pace, or `ahead`). The old 5-minute band made 160 commitments for
+  the 14 replayed jobs; this band makes 57 (with the pace) and the per-job median miss of the shown time falls from 32 to 22 min.
+  The commitment also keeps the job's first budget (`first`) and the cause of its latest later move (`laterCause`); one stored
+  before `c3` has neither, and its first budget is known only while it never moved. The shown time is now + budget left,
+  rounded up to 5 minutes; the 85% and 95% clocks keep their offset from it. Work does not move it, a pause moves it hour for hour.
 - Scoring: each first or moved commitment is scored in working minutes at the hand-over that finishes its rows; after 10
   scored jobs the 85th percentile of actual / committed-85% over the last 20 widens the 85% and 95% clocks (never narrows).
   From 20 scored jobs a `Range:` line shows the 10th to 90th percentile of actual / shown median, with its count; below that it
-  says `not yet measured`. Every log entry carries the model id (`c2b`); widening, range and track record count only entries
-  of the current model, so their counts restart at a model change.
+  says `not yet measured`. Every log entry carries the model id (`c3` since the pace and the wider hold band; `c2b` before);
+  widening, range and track record count only entries of the current model, so their counts restart at a model change. Older
+  entries stay in the log, uncounted.
 - Long jobs: over 6 h of median work a `Long job:` line says it cannot be predicted closer than half a day and a `Limits:` line
   names the 5 h and 7 d resets last seen for this terminal's account (`CLAUDE_ACCOUNT`, `lib/limits-store.mjs`).
 
@@ -157,13 +166,19 @@ or moved is what the status line shows next. A hand-over text is shown only whil
 is unchanged; any other text for 15 more minutes while a refresh runs.
 
 Numbers in the cache entry (`numbers`, beside the text, which `r9-statusline` drops later): `{ finishMs, p85Ms, leftMin,
-workedMin, rowsDone, rowsTotal, rows: [{ id, expectMin, startedMs }] }`, the open rows (started first, at most 64) with their
-expected minutes (the size's pool median, else S 3 / M 9 / L 40). The render formats clocks from them in its own time zone.
+workedMin, rowsDone, rowsTotal, firstBudgetMin, lateMin, lateCause, rows: [{ id, expectMin, leftMin, startedMs }] }`, the open
+rows (started first, at most 64) with their expected minutes (the size's pool median, else S 3 / M 9 / L 40) and their own
+median minutes left (in tenths; on a refusal the expected minutes less the elapsed share, at least 0). `firstBudgetMin` is the
+job's first budget (null when unknown or on a refusal); `lateMin` the minutes worked since the first commitment plus the budget
+left minus that first budget, only from 10 minutes (else null); `lateCause` then `{ cause, ids, count }` of the latest later
+move (`rows-added`, `slow-row` or `pace`; at most 64 ids, `count` all of them), else null. The render formats clocks from them
+in its own time zone.
 
 ## Store
 
 `~/.claude/state/estimate/`: `table/<32 hex of sha256 of the real STATUS.md path>.json` (sessions, first-seen time of each
-row id, finished rows and jobs without ids or text, the commitment and its log, at most 200 entries, the held progress percent of the
+row id, finished rows and jobs without ids or text, the commitment and its log: the newest 200 entries plus every older first
+commitment and scored entry, which are never dropped, so widening and the track record keep learning on a day of many moves; the held progress percent of the
 current job), `activity/<session>.json`
 (bytes read per transcript and the active minutes, so each run reads only appended bytes), `session/<session>.json` (the
 STATUS.md the session last edited with `status.mjs`). Written through `hooks/lib/session-store.mjs` and `session-lock.mjs`, never swept. The table file's lock is held
@@ -179,7 +194,8 @@ The old `~/.claude/state/estimate-log/` is no longer read; it can be deleted by 
 ## Backtest and seed
 
 `node backtest.mjs --job <STATUS.md>=<session-id> ... [--now <iso>] [--write-seed <file>]` replays every handed-over job at
-20-minute steps with the tool's own steps (leave-one-table-out pool, no seed, no store) and checks the numbers against the
+20-minute steps with the tool's own steps (leave-one-table-out pool, no seed, no store; the job's pace from its rows done by
+then, as in the tool) and checks the numbers against the
 thresholds in `backtest.mjs` (exit 1 on a miss). One threshold differs from the design: a time at 58 or more of the 64
 instants, not 60, because the 5-row minimum per size refuses 5 instants honestly (the design's checker had no minimum). `seed.json` was written by it at the cut-over from the setup and
 bill-and-ben tables and two finished tables (147 rows, 10 jobs): size, kind, done time and cost only, keyed by table hash.
@@ -188,6 +204,12 @@ shown (median) time and the jobs within 60 min or 30%, a naive baseline (the med
 size class, a job's class being its largest row size), the signed bias (median log(shown/actual), all jobs and jobs over 6 h),
 the 85% clock's hit rate, the first estimate of each job apart from the later updates, and review and judge rows by effort when
 the tables have an effort column. No constant is fitted on these before about 40 scored jobs.
+
+Model `c3` (2026-11-22, the round4 and setup tables, 14 jobs, 263 instants with a time; spec R18 E1-E4) against `c2b`: hand-over
+within the 85% clock 190 (72 %) against 165 (63 %), within 95 % 75 against 68 %, within the median 59 against 48 %; 57 commitments
+against 160; per-job median miss of the shown time 22 against 32 min; bias of the jobs over 6 h -0.47 against -0.74, at the cost
+of the median p85 / actual rising from 1.61 to 1.84. The run still exits 1 on the design's old thresholds. Still missed: the
+27.9 h job stays at 35 of 97 instants within the 85% clock, and the 166-row job is about 3.6 times high; revisit at 40 jobs.
 
 ## Layout
 

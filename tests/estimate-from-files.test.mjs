@@ -1,14 +1,19 @@
 // Tests for estimateFile (home/tools/estimate/lib/from-files.mjs), the one function behind the CLI and the status line: states,
-// the committed time across a pause, a move with its stored cause, the hand-over, and what is recorded. Synthetic tables,
-// transcripts and seeds only; the clock is always passed in.
+// the committed time across a pause, a move with its stored cause, the hand-over, what is recorded, the capped log that keeps every
+// first and scored entry (also with two runs at once), the job's pace, and the status line numbers (late, per-row left, byte size).
+// Synthetic tables, transcripts and seeds only; the clock is always passed in.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { UsageError, estimateFile } from '../home/tools/estimate/lib/from-files.mjs';
 import { formatEstimate } from '../home/tools/estimate/lib/report.mjs';
-import { tableId } from '../home/tools/estimate/lib/table-store.mjs';
+import { MAX_CACHE_BYTES } from '../home/tools/estimate/lib/segment-cache.mjs';
+import { resultSegment } from '../home/tools/estimate/lib/segment-text.mjs';
+import { tableId, updateTable } from '../home/tools/estimate/lib/table-store.mjs';
 import { MIN_MS, SESSION, iso, row, seedRows, statusDoc, writeSeed, writeTranscript } from './estimate-tables.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -62,12 +67,13 @@ test('while work runs the committed clock holds; the first run commits the media
   assert.equal(stored().log.length, 1, 'a hold logs nothing');
 });
 
-test('15 minutes of work after the commitment: the budget is held when the fresh median is within 5 min of it, else it moves to the fresh median', async () => {
+test('15 minutes of work after the commitment: the budget is held when the fresh median is within the hold band of it, else it moves to the fresh median', async () => {
   const { run, projectsDir } = await setup();
   const first = (await run(1)).result;
   writeTranscript(projectsDir, SESSION, 1, 1.25);
   const later = (await run(1.25)).result;
-  const held = Math.abs(first.commit.leftMin - 15 - later.work.p50) <= 5;
+  const left = first.commit.leftMin - 15;
+  const held = Math.abs(left - later.work.p50) <= Math.max(15, 0.25 * Math.max(left, later.work.p50));
   assert.equal(later.commit.leftMin, held ? first.commit.leftMin - 15 : later.work.p50);
   if (held) assert.equal(later.finish.clockMs, first.finish.clockMs);
   assert.equal(later.commit.pausedMin, 0);
@@ -185,4 +191,91 @@ test('rows done before the last hand-over do not count as a started job: listing
   const more = (await run(1.05, listed(['O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8']))).result;
   assert.equal(more.commit.moved, null);
   assert.deepEqual(stored().log.map((entry) => [entry.first, entry.ids.length]), [[true, 8]]);
+});
+
+const FROM_FILES_URL = new URL('../home/tools/estimate/lib/from-files.mjs', import.meta.url).href;
+const runChild = promisify(execFile);
+const MOVES = 250;
+/** 250 logged entries before now: moves, every 10th scored, the first 5 scored first commitments of the old model c2b. */
+const pastLog = () => Array.from({ length: MOVES }, (_, k) => ({
+  at: new Date(Date.parse(iso(-10)) + k * MIN_MS).toISOString(), ids: ['gone'], p50: 10, raw85: 20, p85: 20, p95: 30, g: 0, kappa: 1,
+  first: k < 5, cause: k < 5 ? null : 'pace', model: k < 5 ? 'c2b' : 'c3',
+  ...(k % 10 === 0 ? { scored: { at: iso(-1), actualMin: 15, met: true, ratio: 0.75, ratio50: 1.5 } } : {}),
+}));
+const keptForGood = (log) => log.filter((entry) => entry.first === true || entry.scored !== undefined).map((entry) => entry.at);
+
+test('the capped log: 250 moves then a first commitment keeps that first entry, every scored and every old first entry', async () => {
+  const { statusPath, stateDir, run, stored } = await setup();
+  const before = pastLog();
+  updateTable(stateDir, statusPath, (table) => ({ ...table, log: before }));
+  await run(1);
+  const { log } = stored();
+  assert.equal(log.at(-1).first, true);
+  assert.equal(log.at(-1).model, 'c3');
+  const kept = new Set(log.map((entry) => entry.at));
+  assert.deepEqual(keptForGood(before).filter((at) => !kept.has(at)), [], 'no first or scored entry was dropped');
+  assert.equal(log.length, 200 + keptForGood(before.slice(0, MOVES + 1 - 200)).length, 'the newest 200 plus the older kept ones');
+  assert.equal(kept.has(before[6].at), false, 'an old unscored move still leaves');
+});
+
+test('two refreshes at once: under the table lock no first or scored entry is lost and one first commitment is added', async () => {
+  const { statusPath, stateDir, projectsDir, seedFile, stored } = await setup();
+  const before = pastLog();
+  updateTable(stateDir, statusPath, (table) => ({ ...table, log: before }));
+  const startAt = Date.now() + 300;
+  const script = `
+    import { estimateFile } from ${JSON.stringify(FROM_FILES_URL)};
+    while (Date.now() < ${startAt});
+    const [statusPath, stateDir, projectsDir, seedFile, sessionId, now] = process.argv.slice(1);
+    const { inputs } = estimateFile(statusPath, { stateDir, projectsDir, seedFile, sessionId, now, record: true });
+    process.stdout.write(inputs.busy ? 'busy' : 'recorded');`;
+  const args = ['--input-type=module', '-e', script, statusPath, stateDir, projectsDir, seedFile, SESSION, iso(1)];
+  const runs = await Promise.all([1, 2].map(() => runChild(process.execPath, args)));
+  assert.ok(runs.some((result) => result.stdout === 'recorded'));
+  const { log } = stored();
+  const kept = new Set(log.map((entry) => entry.at));
+  assert.deepEqual(keptForGood(before).filter((at) => !kept.has(at)), []);
+  assert.equal(log.filter((entry) => entry.first === true && entry.model === 'c3').length, 1);
+});
+
+test('the status line numbers: per-row median left, first budget, and late with its cause only once 10 min over the first', async () => {
+  const { run } = await setup();
+  const first = (await run(1)).result;
+  // O1 has run 30 min; the S pool is 20, 30 (D1), 40, 60, 80, 100: it needs 10, 30, 50 or 70 more, median 30.
+  assert.deepEqual(first.numbers.rows, [{ id: 'O1', expectMin: 40, leftMin: 30, startedMs: Date.parse(iso(0.5)) }]);
+  assert.deepEqual([first.numbers.firstBudgetMin, first.numbers.lateMin, first.numbers.lateCause], [first.work.p50, null, null]);
+  const added = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 }), ...['O2', 'O3', 'O4'].map((id) => row({ id }))]);
+  const late = (await run(1, added)).result;
+  assert.equal(late.commit.moved.cause, 'rows-added');
+  assert.equal(late.numbers.firstBudgetMin, first.work.p50);
+  assert.equal(late.numbers.lateMin, late.commit.leftMin - first.work.p50);
+  assert.ok(late.numbers.lateMin >= 10);
+  assert.deepEqual(late.numbers.lateCause, { cause: 'rows-added', ids: ['O2', 'O3', 'O4'], count: 3 });
+});
+
+test('the job\'s pace: 3 done rows slower than the pool scale the work left; rows done before the hand-over do not count', async () => {
+  const done = [row({ id: 'D1', startedH: 0, doneH: 2 }), row({ id: 'D2', startedH: 2, doneH: 4 }), row({ id: 'D3', startedH: 4, doneH: 6 })];
+  const handOver = row({ id: 'deliver:1', item: 'report', raw: { done: iso(6) }, evidence: '-' });
+  const { statusPath, projectsDir, seedFile } = await setup(statusDoc([...done, row({ id: 'O1', startedH: 6 })]));
+  writeTranscript(projectsDir, SESSION, 1, 6.5);
+  const estimate = () => estimateFile(statusPath, { now: iso(6.5), stateDir: null, projectsDir, sessionId: SESSION, seedFile }).result;
+  const paced = estimate();
+  await writeFile(statusPath, statusDoc([...done, handOver, row({ id: 'O1', startedH: 6 })]));
+  const plain = estimate();
+  // Pool S: 20, 40, 60, 80, 100 and three of 120; middle cost 100; pace 360 / 300 = 1.2.
+  for (const name of ['p50', 'p85', 'p95']) assert.ok(Math.abs(paced.work[name] - 1.2 * plain.work[name]) < 1e-9, name);
+  assert.ok(Math.abs(paced.numbers.rows[0].leftMin - 1.2 * plain.numbers.rows[0].leftMin) <= 0.05);
+});
+
+test('a 300-row job with a late cause of 300 added rows stays under the cache byte cap', async () => {
+  const longId = (k) => `row-with-a-rather-long-name-${String(k).padStart(4, '0')}`;
+  const { run, seedFile } = await setup(statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 })]));
+  writeSeed(seedFile, S_COSTS.flatMap((cost) => seedRows('S', 1, cost)), 100_000); // a long past job, so 300 rows are within the horizon
+  await run(1);
+  const many = statusDoc([row({ id: 'D1', startedH: 0, doneH: 0.5 }), row({ id: 'O1', startedH: 0.5 }), ...Array.from({ length: 300 }, (_, k) => row({ id: longId(k) }))]);
+  const { result } = await run(1, many);
+  assert.equal(result.numbers.rows.length, 64);
+  assert.deepEqual([result.numbers.lateCause.count, result.numbers.lateCause.ids.length], [300, 64]);
+  const entry = { path: '/x'.repeat(100), ...resultSegment(result), mtimeMs: Date.now(), size: 1e6, computedAt: Date.now(), refreshStartedAt: Date.now() };
+  assert.ok(Buffer.byteLength(JSON.stringify(entry)) < MAX_CACHE_BYTES, `${Buffer.byteLength(JSON.stringify(entry))} bytes`);
 });

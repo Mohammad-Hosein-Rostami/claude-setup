@@ -1,11 +1,14 @@
 // The one committed time of a job and its record: whether a run keeps it or moves it (earlier or later, with one stored cause) or
 // makes the first one; scoring each logged commitment at the hand-over; the widening factor, the past-jobs band and the track record
 // learned from those scores.
-// Exports: MODEL_ID, nextCommitment(commit, fresh, leftMin, context), scoreLog(log, items, intervals), widening(log), band(log),
-// trackRecord(log).
-// Rules (backtest section 7, model c2b): a commitment is a work budget, { at, budgetMin, ids, moved }, of the forecast MEDIAN (the
-// 85% time is the second clock). It is held while the fresh median is within MOVE_TOLERANCE_MIN of the budget left, else it moves to
-// the fresh median, earlier or later: the old never-earlier hold only ever moved later and was 245 min off per job.
+// Exports: MODEL_ID, nextCommitment(commit, fresh, leftMin, context), firstCommitmentOf(commit), cappedLog(log),
+// scoreLog(log, items, intervals), widening(log), band(log), trackRecord(log).
+// Rules (backtest section 7, model c2b; hold band and pace model c3, spec R18 E2/E4): a commitment is a work budget,
+// { at, budgetMin, ids, moved, first, laterCause }, of the forecast MEDIAN (the 85% time is the second clock). It is held while the
+// fresh median is within the hold band of the budget left (moveToleranceMin), else it moves to the fresh median, earlier or later:
+// the old never-earlier hold only ever moved later and was 245 min off per job. `first` keeps the job's first budget and
+// `laterCause` the cause of its latest later move, so the status line can say how late the job runs against its first time and why.
+// A commitment written before c3 has neither: `first` is taken from it while it never moved, else unknown (null).
 // Every log entry carries the model id; widening, band and track record count only entries of the current model, so their counts
 // restart at a model change (R69).
 // Invariants: pure (no I/O, no clock); returns new objects and never changes its arguments. Times are ISO strings in the stored
@@ -22,19 +25,31 @@ const WIDEN_SHARE = 0.85;
 const TRACK_RECORD_JOBS = 10;
 const MS_PER_MIN = 60_000;
 /** The estimate model of this code; entries of another model are kept but not counted (R69: counts restart at a model change). */
-export const MODEL_ID = 'c2b';
-/** A fresh median this close to the budget left keeps the commitment: the shown clock is rounded to 5 minutes, so a smaller move
- *  would not change it (report.mjs CLOCK_STEP). */
-const MOVE_TOLERANCE_MIN = 5;
+export const MODEL_ID = 'c3';
+/** The hold band: a fresh median within max(MOVE_TOLERANCE_MIN, MOVE_TOLERANCE_SHARE x the larger of it and the budget left) keeps
+ *  the commitment. On the 14 replayed jobs the old 5-minute band made 160 commitments; this band makes 64 (57 with the pace) and
+ *  the per-job median miss of the shown time falls from 32 to 28 min (22 with the pace) (spec R18 E2). */
+const MOVE_TOLERANCE_MIN = 15;
+const MOVE_TOLERANCE_SHARE = 0.25;
 /** Scored first commitments of this model before the past-jobs band is shown (R69, research2/estimate.md P3). */
 const BAND_MIN_JOBS = 20;
 const BAND_LOW_SHARE = 0.1;
 const BAND_HIGH_SHARE = 0.9;
+/** Log entries kept per table besides every first commitment and every scored entry, which are always kept: 200 moves in one day
+ *  once pushed out every first commitment of a table, so widening and the track record never learned (spec R18 E1). */
+const MAX_LOG_ENTRIES = 200;
 
 const isoOfMinute = (minute) => new Date(minute * MS_PER_MIN).toISOString();
 const minuteOfIso = (iso) => Date.parse(iso) / MS_PER_MIN;
 const isCommitmentEntry = (entry) => typeof entry.first === 'boolean';
 const scoredFirsts = (log) => log.filter((entry) => entry.first === true && entry.scored !== undefined && entry.model === MODEL_ID);
+const moveToleranceMin = (leftMin, p50) => Math.max(MOVE_TOLERANCE_MIN, MOVE_TOLERANCE_SHARE * Math.max(leftMin, p50));
+/**
+ * @param {{ at: string, budgetMin: number, moved: object | null, first?: { at: string, budgetMin: number } | null }} commit a stored commitment
+ * @returns {{ at: string, budgetMin: number } | null} the job's first commitment; for one written before c3 (no `first`), itself
+ *   while it never moved, else null (unknown)
+ */
+export const firstCommitmentOf = (commit) => commit.first ?? (commit.moved === null ? { at: commit.at, budgetMin: commit.budgetMin } : null);
 
 /**
  * Why a commitment had to move. Earlier: 'ahead' (rows finished sooner than usual or were dropped). Later, by precedence: rows added
@@ -58,17 +73,35 @@ function moveCause(commit, { openIds, slowRowId }, earlier) {
  * @param {{ nowMin: number, openIds: string[], slowRowId: string | null }} context slowRowId: a running row whose elapsed share is
  *   above its class p85
  * @returns {{ commit: object, entry: object | null }} the commitment to store (the same object on a hold) and the log entry to add
- *   (null on a hold); a move keeps { at, wasClock, cause, ids } so a later run prints the same cause (cause 'ahead' for an earlier move)
+ *   (null on a hold); a move keeps { at, wasClock, cause, ids } so a later run prints the same cause (cause 'ahead' for an earlier
+ *   move), `first` ({ at, budgetMin } of the job's first commitment, null when unknown) and `laterCause` ({ cause, ids } of the
+ *   latest later move, null before one)
  */
 export function nextCommitment(commit, fresh, leftMin, context) {
   const at = isoOfMinute(context.nowMin);
   const { p50, raw85, p85, p95, g, kappa } = fresh;
   const entry = (first, cause) => ({ at, ids: [...context.openIds], p50, raw85, p85, p95, g, kappa, first, cause, model: MODEL_ID });
-  if (commit === null) return { commit: { at, budgetMin: p50, ids: [...context.openIds], moved: null }, entry: entry(true, null) };
-  if (Math.abs(leftMin - p50) <= MOVE_TOLERANCE_MIN) return { commit, entry: null };
-  const { cause, ids } = moveCause(commit, context, p50 < leftMin);
+  if (commit === null) {
+    return { commit: { at, budgetMin: p50, ids: [...context.openIds], moved: null, first: { at, budgetMin: p50 }, laterCause: null }, entry: entry(true, null) };
+  }
+  if (Math.abs(leftMin - p50) <= moveToleranceMin(leftMin, p50)) return { commit, entry: null };
+  const earlier = p50 < leftMin;
+  const { cause, ids } = moveCause(commit, context, earlier);
   const moved = { at, wasClock: isoOfMinute(context.nowMin + leftMin), cause, ids };
-  return { commit: { at, budgetMin: p50, ids: [...context.openIds], moved }, entry: entry(false, cause) };
+  const laterCause = earlier ? commit.laterCause ?? null : { cause, ids };
+  return { commit: { at, budgetMin: p50, ids: [...context.openIds], moved, first: firstCommitmentOf(commit), laterCause }, entry: entry(false, cause) };
+}
+
+const isKeptForGood = (entry) => entry.first === true || entry.scored !== undefined;
+
+/**
+ * The log as stored: its newest MAX_LOG_ENTRIES entries and every older first commitment and scored entry, in order.
+ * @param {object[]} log the table's log entries, oldest first
+ * @returns {object[]} a new list
+ */
+export function cappedLog(log) {
+  const firstNewest = log.length - MAX_LOG_ENTRIES;
+  return log.filter((entry, index) => index >= firstNewest || isKeptForGood(entry));
 }
 
 /** The earliest hand-over (ms) at or after atMs by which every listed id still in the table is done; null when none yet. */

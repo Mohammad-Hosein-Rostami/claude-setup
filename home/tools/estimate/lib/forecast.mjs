@@ -1,12 +1,14 @@
 // The work-left forecast: a reference pool of finished rows and jobs, seeded runs over the open rows, and why no time can be given.
-// Exports: nearestRank(sortedValues, share), referencePool(tables, seed),
-// forecastWork(openRows, pool, seedText, stepOf), refusalOf(openRows, pool, work). With a road (road-steps.mjs) the same runs also
-// sum each step's draws: the Total stays the median of the road-wide sums, and `stepMeans` gives the steps' shares of it.
+// Exports: nearestRank(sortedValues, share), referencePool(tables, seed), costedRows(items, costs), paceOf(doneRows, pool),
+// forecastWork(openRows, pool, seedText, stepOf, pace), refusalOf(openRows, pool, work, pace). With a road (road-steps.mjs) the same
+// runs also sum each step's draws: the Total stays the median of the road-wide sums, and `stepMeans` gives the steps' shares of it.
 // Model (estimator design 3.5-3.7): the class of a row is its size alone; one run draws, for each open row, a finished cost of its
 // size longer than the row's elapsed share (minus that share), or any cost of its size when the row has run longer than all of them
 // (a stale row). Growth (work not listed yet) is not in the total: on 15 replayed jobs it added +92 min of work per job that never
 // came (backtest section 5, model c2b); the report states it on a line of its own. The runs are seeded from the table and its open ids, so the CLI and the
-// status line give the same numbers for the same table state.
+// status line give the same numbers for the same table state. Pace (model c3, spec R18 E4): from 3 done rows in the job, every
+// draw is scaled by their cost over their sizes' middle pool costs, clamped to [1, 3]; on the 14 replayed jobs this raised the
+// hand-over within p85 from 63 to 72 % (a pace below 1 was worse, 67 %). The horizon refusal is judged on the unpaced work.
 // Invariants: pure (no I/O, no clock). Work is in minutes. Pool costs are sorted ascending per size.
 import { createHash } from 'node:crypto';
 
@@ -23,6 +25,14 @@ const GROWTH_WINDOW_MIN = 1200;
 const MAX_GROWTH = 0.75;
 /** A forecast median above this many times the longest finished job is past what the pool has seen (design 3.7). */
 const HORIZON_FACTOR = 2;
+/** Done rows of the job before its pace is used; fewer rows say too little about this job (spec R18 E4, measured at 3). */
+const PACE_MIN_ROWS = 3;
+/** The pace is kept in [1, 3]: a pace below 1 lowered the hand-over within p85 from 72 to 67 % on the replayed jobs (spec R18 E4). */
+const PACE_LOW = 1;
+const PACE_HIGH = 3;
+const MEDIAN_SHARE = 0.5;
+/** A size's usual cost for the pace: its middle cost, the upper middle for an even count (the measured pick of spec R18 E4). */
+const middleCost = (sortedCosts) => sortedCosts[Math.floor(sortedCosts.length / 2)];
 const SIZES = ['S', 'M', 'L'];
 const PERCENTILES = { p50: 0.5, p85: 0.85, p95: 0.95 };
 const UINT32_RANGE = 2 ** 32;
@@ -89,6 +99,25 @@ export function referencePool(tables, seed) {
   };
 }
 
+/** Done work rows with a started stamp as { size, cost } for paceOf, 0-cost rows included: worked.mjs rowCosts holds every such row. */
+export const costedRows = (items, costs) => items.filter((item) => costs.has(item.id)).map((item) => ({ size: item.size, cost: costs.get(item.id) }));
+
+/**
+ * How much slower this job runs than the pool: the summed cost of its done rows over the summed middle pool costs of their sizes.
+ * @param {{ size: string, cost: number }[]} doneRows the job's done rows with their cost in minutes (a row that took no working
+ *   minute counts with 0: it was quick work); rows of a size the pool lacks are left out
+ * @param {{ costs: Record<string, number[]> }} pool the reference pool (costs ascending per size)
+ * @returns {number} the pace in [PACE_LOW, PACE_HIGH]; exactly 1 below PACE_MIN_ROWS usable rows
+ */
+export function paceOf(doneRows, pool) {
+  const usable = doneRows.filter((row) => Number.isFinite(row.cost) && row.cost >= 0 && (pool.costs[row.size]?.length ?? 0) > 0);
+  if (usable.length < PACE_MIN_ROWS) return PACE_LOW;
+  const expected = usable.reduce((sum, row) => sum + middleCost(pool.costs[row.size]), 0);
+  if (!(expected > 0)) return PACE_LOW;
+  const actual = usable.reduce((sum, row) => sum + row.cost, 0);
+  return Math.min(PACE_HIGH, Math.max(PACE_LOW, actual / expected));
+}
+
 /** mulberry32: a small seeded generator of numbers in [0, 1); no seeded generator exists in this repo. */
 function mulberry32(seed) {
   let state = seed;
@@ -110,15 +139,18 @@ const hasClass = (openRows, pool) => openRows.every((row) => (pool.costs[row.siz
  * @param {ReturnType<typeof referencePool>} pool the reference pool
  * @param {string} seedText tableId + '|' + the open ids sorted and joined by ','
  * @param {Map<string, number> | null} [stepOf] the step each open row counts in (a road), or null
- * @returns {{ p50: number, p85: number, p95: number, stale: string[], stepMeans?: Record<number, number> } | null} minutes of listed work, before any widening; stale = rows past every
- *   finished row of their size, in row order; null when a size has fewer than MIN_CLASS_ROWS rows or growth is at MAX_GROWTH or above
+ * @param {number} [pace] paceOf's factor for every draw (1: the pool's own pace)
+ * @returns {{ p50: number, p85: number, p95: number, stale: string[], stepMeans?: Record<number, number>, rowLeft: Record<string, number> } | null}
+ *   minutes of listed work, paced, before any widening; stale = rows past every finished row of their size, in row order; rowLeft =
+ *   each open row's own median minutes left (its conditional draw, paced); null when a size has fewer than MIN_CLASS_ROWS rows or
+ *   growth is at MAX_GROWTH or above
  */
-export function forecastWork(openRows, pool, seedText, stepOf = null) {
+export function forecastWork(openRows, pool, seedText, stepOf = null, pace = 1) {
   if (!hasClass(openRows, pool) || pool.growth >= MAX_GROWTH) return null;
   const draws = openRows.map((row) => {
     const sizeCosts = pool.costs[row.size];
-    const longer = sizeCosts.filter((cost) => cost > row.elapsed).map((cost) => cost - row.elapsed);
-    return { id: row.id, values: longer.length > 0 ? longer : sizeCosts, stale: longer.length === 0 };
+    const longer = sizeCosts.filter((cost) => cost > row.elapsed).map((cost) => (cost - row.elapsed) * pace);
+    return { id: row.id, values: longer.length > 0 ? longer : sizeCosts.map((cost) => cost * pace), stale: longer.length === 0 };
   });
   const random = mulberry32(seedOf(seedText));
   const stepSums = {};
@@ -132,7 +164,8 @@ export function forecastWork(openRows, pool, seedText, stepOf = null) {
   totals.sort(ascending);
   const percentiles = Object.fromEntries(Object.entries(PERCENTILES).map(([name, share]) => [name, nearestRank(totals, share)]));
   const stepMeans = stepOf ? Object.fromEntries(Object.entries(stepSums).map(([step, sum]) => [step, sum / RUNS])) : undefined;
-  return { ...percentiles, stale: draws.filter((draw) => draw.stale).map((draw) => draw.id), ...(stepMeans && { stepMeans }) };
+  const rowLeft = Object.fromEntries(draws.map((draw) => [draw.id, nearestRank(draw.values, MEDIAN_SHARE)]));
+  return { ...percentiles, stale: draws.filter((draw) => draw.stale).map((draw) => draw.id), ...(stepMeans && { stepMeans }), rowLeft };
 }
 
 /**
@@ -140,13 +173,15 @@ export function forecastWork(openRows, pool, seedText, stepOf = null) {
  * @param {{ size: string }[]} openRows the open rows
  * @param {ReturnType<typeof referencePool>} pool the reference pool
  * @param {{ p50: number } | null} work forecastWork's result (null skips the horizon check)
+ * @param {number} [pace] the pace work was drawn with: the horizon is judged on the unpaced median, work.p50 / pace (judged on the
+ *   paced one, the replay refused 25 more instants)
  * @returns {null | { reason: 'no-reference', size: string, rows: number, needed: number } | { reason: 'growth', growth: number }
- *   | { reason: 'horizon', longestJobMin: number, work: object }}
+ *   | { reason: 'horizon', longestJobMin: number, work: object }} work as given (paced)
  */
-export function refusalOf(openRows, pool, work) {
+export function refusalOf(openRows, pool, work, pace = 1) {
   const short = SIZES.find((size) => openRows.some((row) => row.size === size) && (pool.costs[size]?.length ?? 0) < MIN_CLASS_ROWS);
   if (short !== undefined) return { reason: 'no-reference', size: short, rows: pool.costs[short]?.length ?? 0, needed: MIN_CLASS_ROWS };
   if (pool.growth >= MAX_GROWTH) return { reason: 'growth', growth: pool.growth };
-  if (work !== null && work.p50 > HORIZON_FACTOR * pool.longestJobMin) return { reason: 'horizon', longestJobMin: pool.longestJobMin, work };
+  if (work !== null && work.p50 / pace > HORIZON_FACTOR * pool.longestJobMin) return { reason: 'horizon', longestJobMin: pool.longestJobMin, work };
   return null;
 }

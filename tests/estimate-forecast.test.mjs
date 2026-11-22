@@ -1,8 +1,8 @@
 // Tests for home/tools/estimate/lib/forecast.mjs: the reference pool (windows, seed rows, growth), the seeded runs with the
-// conditional draw, and the refusal reasons. The two synthetic cases are those of the estimator design 8.3; no private data is used.
+// conditional draw, each row's own median left, the job's pace, and the refusal reasons (the horizon on the unpaced work). The two synthetic cases are those of the estimator design 8.3; no private data is used.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { forecastWork, nearestRank, referencePool, refusalOf } from '../home/tools/estimate/lib/forecast.mjs';
+import { forecastWork, nearestRank, paceOf, referencePool, refusalOf } from '../home/tools/estimate/lib/forecast.mjs';
 
 const doneAt = (k) => new Date(Date.UTC(2026, 10, 1) + k * 60_000).toISOString();
 const rowsOf = (size, costs, from = 0) => costs.map((cost, k) => ({ size, kind: 'build', done: doneAt(from + k), cost }));
@@ -66,6 +66,39 @@ test('forecastWork: a row that has run 90 minutes in a class of 60, 120 and 180 
   const work = forecastWork([{ id: 'r1', size: 'M', elapsed: 90 }], pool, 'table|r1');
   assert.deepEqual([work.p50, work.p85, work.p95], [30, 90, 90]);
   assert.deepEqual(work.stale, []);
+  assert.deepEqual(work.rowLeft, { r1: 30 }, 'its own median left is the median of its conditional draw, 30 or 90');
+});
+
+test('forecastWork rowLeft: each open row\'s own median left; a not started row\'s is its size median', () => {
+  const pool = poolOf({ S: FIVE, M: [60, 60, 60, 120, 120, 180], L: [] });
+  const work = forecastWork([{ id: 'run', size: 'M', elapsed: 70 }, { id: 'new', size: 'S', elapsed: 0 }], pool, 't|new,run');
+  assert.deepEqual(work.rowLeft, { run: 50, new: 30 }); // run: 50, 50 or 110 more; new: the S median
+});
+
+test('forecastWork with a pace scales every draw: totals, step means and rows left; 1 changes nothing', () => {
+  const rows = [{ id: 'a', size: 'S', elapsed: 0 }, { id: 'b', size: 'S', elapsed: 15 }];
+  const pool = poolOf({ S: FIVE, M: FIVE, L: FIVE });
+  const steps = new Map([['a', 1], ['b', 2]]);
+  const plain = forecastWork(rows, pool, 't|a,b', steps);
+  assert.deepEqual(forecastWork(rows, pool, 't|a,b', steps, 1), plain);
+  const paced = forecastWork(rows, pool, 't|a,b', steps, 2);
+  assert.deepEqual([paced.p50, paced.p85, paced.p95], [plain.p50 * 2, plain.p85 * 2, plain.p95 * 2]);
+  assert.deepEqual(paced.stepMeans, { 1: plain.stepMeans[1] * 2, 2: plain.stepMeans[2] * 2 });
+  assert.deepEqual(paced.rowLeft, { a: plain.rowLeft.a * 2, b: plain.rowLeft.b * 2 });
+});
+
+test('paceOf: exactly 1 with an empty pool, no done row or fewer than 3; else cost over middle pool costs, kept in [1, 3]', () => {
+  const pool = poolOf({ S: [10, 20, 30, 40], M: [60, 60, 90], L: [] });
+  const done = (size, cost) => ({ size, cost });
+  assert.equal(paceOf([done('S', 99), done('S', 99), done('S', 99)], poolOf({ S: [], M: [], L: [] })), 1);
+  assert.equal(paceOf([], pool), 1);
+  assert.equal(paceOf([done('S', 90), done('M', 300)], pool), 1, 'two rows say too little');
+  assert.equal(paceOf([done('S', 30), done('S', 30), done('M', 120)], pool), 180 / 120); // S middle 30 (upper of 4), M 60
+  assert.equal(paceOf([done('S', 30), done('S', 0), done('S', 0)], pool), 1, 'faster than the pool stays 1; 0-cost rows count');
+  assert.equal(paceOf([done('S', 500), done('S', 500), done('S', 500)], pool), 3);
+  assert.equal(paceOf([done('S', 60), done('S', 60), done('L', 900)], pool), 1, 'a size the pool lacks is left out, so 2 rows remain');
+  const big = Array.from({ length: 300 }, () => done('S', 30));
+  assert.equal(paceOf(big, pool), 1);
 });
 
 test('forecastWork: a row past every finished row of its size is stale and draws from the whole class', () => {
@@ -111,4 +144,6 @@ test('refusalOf: no-reference first, then growth, then horizon; null when a time
   const work = { p50: 201, p85: 250, p95: 300, stale: [] };
   assert.deepEqual(refusalOf(rowsS, poolOf({ S: FIVE, M: [], L: [] }, 0.4, 100), work), { reason: 'horizon', longestJobMin: 100, work });
   assert.equal(refusalOf(rowsS, poolOf({ S: FIVE, M: [], L: [] }, 0.4, 100), { ...work, p50: 200 }), null);
+  assert.equal(refusalOf(rowsS, poolOf({ S: FIVE, M: [], L: [] }, 0.4, 100), { ...work, p50: 400 }, 2), null, 'judged on the unpaced 200');
+  assert.equal(refusalOf(rowsS, poolOf({ S: FIVE, M: [], L: [] }, 0.4, 100), { ...work, p50: 404 }, 2).reason, 'horizon');
 });
