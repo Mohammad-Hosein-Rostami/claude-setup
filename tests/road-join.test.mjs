@@ -191,6 +191,35 @@ test('F1: one join at a time per worktree: a live holder refuses at once, a dead
   assert.ok(!existsSync(lock), 'released after a refusal');
 });
 
+/** STATUS.md beside the road file with one landed row of lane a (its evidence names `to`) and the open rows of lane b. */
+function statusWith(root, to, from) {
+  const rows = [`| tr.s1.a | build: a | S | 2026-11-22T10:00Z | 2026-11-22T10:30Z | landed ${to} on main from ${from} |`, '| tr.s1.check | close: step 1 checkpoint | S | - | 2026-11-22T10:40Z | PASS |',
+    '| tr.s2.b | build: b | S | 2026-11-22T10:50Z | - | - |', '| tr.s2.check | close: step 2 checkpoint | S | - | - | - |'];
+  writeFileSync(join(root, 'STATUS.md'), ['# STATUS', '', '## Work items', '', '| id | item | size | started | done | evidence |', '| -- | -- | -- | -- | -- | -- |', ...rows, ''].join('\n'));
+}
+
+test('R4: join refuses a lane whose needed lane has not landed on the base in git (a forged row), and joins once git shows it', async () => {
+  const f = fixture();
+  const landed = commit(f.repo, { 'other/a.txt': 'a\n' }, 'land a');
+  const worktree = join(f.root, 'wt-b');
+  git(f.repo, 'worktree', 'add', '-q', '-b', 'lane/b', worktree, landed);
+  commit(worktree, { 'src/b.txt': 'b\n' });
+  const laneOf = (name, files, extra = {}) => ({ name, item: `build ${name}`, size: 'S', branch: `lane/${name}`, files, implementer: { model: 'opus', effort: 'high' }, checkpoints: ['true: exit 0'], ...extra });
+  const text = JSON.stringify({ road: 'tr', goal: 'g', repo: f.repo, base: 'main', spec: '/spec.md', steps: [{ lanes: [laneOf('a', ['other/'])] }, { lanes: [laneOf('b', ['src/'], { needs: ['a'] })] }] });
+  writeFileSync(f.roadFile, text);
+  const joinB = () => runRoad(['join', f.roadFile, '--road-sha256', createHash('sha256').update(text).digest('hex'), '--lane', 'b', '--worktree', worktree, '--base', landed]);
+  statusWith(f.root, 'e'.repeat(40), f.baseSha);
+  const forged = await joinB();
+  assert.equal(forged.code, 1, forged.out);
+  assert.match(forged.out, /^refused: lane b needs a landed on main first/);
+  rmSync(join(f.root, 'STATUS.md'));
+  assert.equal((await joinB()).code, 1, 'no STATUS.md: no landing is known, so the join is refused');
+  statusWith(f.root, landed, f.baseSha);
+  const real = await joinB();
+  assert.equal(real.code, 0, real.out);
+  assert.match(real.out, /^joined [0-9a-f]{40}$/m);
+});
+
 test('the CLI maps the exits: usage 2, hash mismatch 1, and a usage line on stderr', () => {
   const f = fixture();
   const cli = (...rest) => spawnSync(process.execPath, [ROAD_CLI, 'join', f.roadFile, ...rest], { encoding: 'utf8', env: GIT_ENV });

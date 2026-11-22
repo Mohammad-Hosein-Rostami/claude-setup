@@ -22,7 +22,8 @@ step landed. The STATUS.md rows hold the state; the tool is `node ~/.claude/tool
    (`waiting` says why each later lane waits). A step's gate still checks only its own lanes.
 2. Build batch: one writer per lane (an early lane too: `status.mjs start` its row, a worktree on its branch at the base tip), each
    brief from the lane's contract.
-3. `road.mjs join` per lane (judges the lane's scope; exit 3 gives its findings back to the writer).
+3. `road.mjs join` per lane (judges the lane's scope; exit 3 gives its findings back to the writer; exit 1 also when a lane it needs has
+   not landed on the base in git, which is the needs check before land-lane).
 4. `land-lane --close-row <road>.s<N>.<name>` per lane, one at a time: it writes the lane row's `landed <to> on <base> from <from>`
    evidence (old-form roads, with `-land` rows from before one row per lane: their close row).
 5. `road.mjs gate <road> --step <N>`, then a `deliver` row.

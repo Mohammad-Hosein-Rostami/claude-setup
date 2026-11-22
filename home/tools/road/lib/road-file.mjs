@@ -1,9 +1,11 @@
 // Purpose: read and check a road file `road-<id>.json` (spec-stages section 3): a big job as fixed steps of 1-5 lanes each.
 // Exports: readRoad(path) -> { road, problems, warnings, sha256 }, checkRoad(value) -> { problems, warnings }, roadRows(road, baseTip),
-//   rowIds(road, step, lane), uiMatrixProblems(road, isUiPath), MAX_LANES_PER_STEP, ROAD_ID, LANE_NAME, MAX_ROW_ID_CHARS, pathsOverlap(a, b).
+//   rowIds(road, step, lane), uiMatrixProblems(road, isUiPath), MAX_LANES_PER_STEP, ROAD_ID, LANE_NAME, MAX_ROW_ID_CHARS, pathsOverlap(a, b),
+//   filesShare(a, b).
 // Rules: road id `^[a-z][a-z0-9-]{0,7}$`; repo absolute (POSIX or a drive path); every step holds 1..MAX_LANES_PER_STEP lanes; lane names
 //   `^[a-z0-9][a-z0-9-]{0,23}$`, unique, not `check`, not ending `-land`; every row id at most MAX_ROW_ID_CHARS; no file shared by two lanes
-//   of a step unless the step lists it in `appendOnly` (a folder and a file in it overlap, as build's checkArgs says); `needs` names only
+//   of a step unless the step lists it in `appendOnly` (filesShare, the one overlap rule of `check` and early lanes: a folder and a
+//   file in it overlap, and so do two spellings of one path); `needs` names only
 //   lanes of earlier steps; branches, files and the base pass fixed patterns before they reach build args or argv (P5). A step with
 //   `form: "build"` reads as `agents` with the warning `step <N>: build form retired: runs as agents` (an omitted form is `agents`).
 // Rows (one row per lane): roadRows writes per lane its lane row only (its landing is that row's done evidence) and per step a check
@@ -37,6 +39,24 @@ const PRINCIPLE_ID = /^[PF]\d{1,3}$/;
 export function pathsOverlap(first, second) {
   const [a, b] = [first, second].map((path) => path.replace(/\\/g, '/').replace(/^(\.\/)+/, '').replace(/\/+$/, ''));
   return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+}
+
+// A path that leaves the repo (absolute, a drive, a `..` part) or names the repo root: it overlaps every path (fail closed).
+const OUTSIDE_OR_ROOT = /^(?:[/\\]|[A-Za-z]:)|(?:^|[/\\])\.\.(?:[/\\]|$)|^[./\\]*$/;
+// One spelling per path: `/` parts, no empty or `.` parts, lower case (macOS and Windows file systems ignore case: more lanes share, never fewer).
+const plainPath = (path) => path.replace(/\\/g, '/').toLowerCase().split('/').filter((part) => part !== '' && part !== '.').join('/');
+
+/**
+ * True when two lane files may touch the same file: the same path or a folder holding the other (pathsOverlap), after `\\`, `//`, `./`
+ * parts, a trailing `/` and case are made one; a path that is not a text, leaves the repo or names its root overlaps everything.
+ * The one overlap rule between lanes: `check` (two lanes of a step) and road-state.mjs earlyLanes (a later lane against open lanes).
+ * @param {unknown} first a lane file from the road
+ * @param {unknown} second a lane file from the road
+ * @returns {boolean}
+ */
+export function filesShare(first, second) {
+  if (typeof first !== 'string' || typeof second !== 'string' || OUTSIDE_OR_ROOT.test(first) || OUTSIDE_OR_ROOT.test(second)) return true;
+  return pathsOverlap(plainPath(first), plainPath(second));
 }
 
 /** The lane row, close row (old form only: roads written before one row per lane) and check row ids of a lane in step `step` (1-based). */
@@ -113,7 +133,7 @@ function stepProblems(step, at, roadId, earlier) {
   });
   for (let i = 0; i < step.lanes.length; i++) {
     for (let j = i + 1; j < step.lanes.length; j++) {
-      const shared = (step.lanes[i]?.files ?? []).filter((file) => (step.lanes[j]?.files ?? []).some((other) => pathsOverlap(file, other)) && !appendOnly.includes(file));
+      const shared = (step.lanes[i]?.files ?? []).filter((file) => (step.lanes[j]?.files ?? []).some((other) => filesShare(file, other)) && !appendOnly.includes(file));
       if (shared.length > 0) problems.push(`${where}: lanes ${step.lanes[i].name} and ${step.lanes[j].name} share ${shared.join(', ')}: split them or list it in appendOnly`);
     }
   }

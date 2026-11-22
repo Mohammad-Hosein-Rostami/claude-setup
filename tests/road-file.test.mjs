@@ -79,6 +79,14 @@ test('appendOnly holds repo-relative paths', () => {
   assert.ok(has(problemsOf(value), /appendOnly/));
 });
 
+test('R3: lanes of a step share a file whatever its spelling (case, //, ./ parts, the root): the one rule of early lanes', () => {
+  for (const [first, second] of [['src/X.mjs', 'src//x.mjs'], ['src/./a/b.mjs', 'SRC/a/'], ['.', 'docs/any.md']]) {
+    const value = road([lane('a', { files: [first] }), lane('b', { files: [second] })]);
+    assert.ok(has(problemsOf(value), /lanes a and b share/), `${first} against ${second}`);
+  }
+  assert.deepEqual(problemsOf(road([lane('a', { files: ['src/tools.mjs'] }), lane('b', { files: ['src/tools/x.mjs'] })])), [], 'a name that only starts like another is no share');
+});
+
 test('check: a lane with a UI file needs a matrix (a path, or "none:" and 15+ characters); a ui-implementer needs one too', async () => {
   const isUiPath = (file) => file.endsWith('.tsx');
   const check = (extra, files = ['src/x.tsx']) => runRoad(['check', write(road([lane('a', { files, ...extra })]))], { isUiPath });

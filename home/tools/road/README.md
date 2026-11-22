@@ -16,6 +16,8 @@ only form and the default; `"build"` is retired: it still reads, as `agents`, wi
 `check`, not ending `-land`), `item`, `size` S/M/L, `closeSize?` (read only for roads with old-form rows), `branch` and `needs?` (lanes of earlier steps; omitted =
 every earlier lane; `[]` = none). `needs` lists exactly the lanes whose files or interfaces a lane uses: a lane whose needs have all
 landed can start early, before its step (below), while a lane without a `needs` list always waits for its step.
+`needs: []` means "may start early": the architect lists every real dependency, since a missing one lets a lane start before the work it
+uses has landed (owner FR2: fill to 5 agents, fewer when the next lanes depend on the open ones).
 
 A lane's `checkpoints` are its Done means and are required. The other guidance fields of a lane (owner decision CR7) are optional,
 read for their shape only, never run or judged. An old road file that carries them (and `suite`, `threatModel`, `acceptanceTests`)
@@ -96,12 +98,12 @@ review, test or audit record: a `reviewed <sha> clean` line or a `.reviewed` row
 
 | command | does | exit |
 |---|---|---|
-| `road.mjs check <road.json>` | checks the file: at most 5 lanes per step, no file shared outside `appendOnly`, `needs` only to earlier steps, ids, patterns; a lane with a UI file needs a `matrix`; warns on the retired `form: "build"` | 0 ok, 1 refused |
+| `road.mjs check <road.json>` | checks the file: at most 5 lanes per step, no file shared outside `appendOnly` (the overlap rule of early lanes: case, `//`, `./` and `\` spellings of one path share), `needs` only to earlier steps, ids, patterns; a lane with a UI file needs a `matrix`; warns on the retired `form: "build"` | 0 ok, 1 refused |
 | `road.mjs rows <road.json> [--base <sha>]` | adds every missing row of every step (one per lane, one check row per step) to the STATUS.md beside the road file in one all-or-none `status.mjs add` call, under its own lock `.STATUS.road-rows-lock` (read, open-road check and add; status.mjs's lock inside it); a second run, also one at the same time, adds 0 and exits 0 (exit 1 `busy` only when the lock is held past its 1 s wait); refuses a road id used with other items and a second open road. `--base` writes that sha as the road-start tip (a road started before the tool) | 0, 1 refused, 2 a `--base` that is not an ancestor of the tip or already holds a landed patch |
 | `road.mjs rows <road.json> --fix <N> <name>` | adds the audit-fix row `<road>.s<N>.fix-<name>` of step N (an old-form road: with its `-land` row); refused once step N's check row is done | 0, 1, 2 a fix id that would end in `-land` or equal a lane's row |
 | `road.mjs next <road.json> --budget <1-5>` | JSON `{ road, step, of, state: build\|gate\|done, form, held, carried, lanes, early, waiting, writers, baseline }`: the lowest step with an open check row, landed lanes skipped, held lanes named, carried lanes first, at most 5; `early` the later-step lanes that can start now (below), `waiting` `{ name, why }` for every other later lane not landed; `writers` = the smallest of lanes plus early, the budget and 5. It writes nothing and takes no lock | 0, 1 `baseline needed: <road>.s<N>` (a UI step with no `ui-proof` step-start record) or no rows yet, 2 no or bad `--budget` |
-| `road.mjs join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--json]` | judges the scope of one built lane (below): prints `joined <sha>`, `finding <id>: <text>`, `ui-files: <n>` and its `ui-file` lines | 0 joined clean, 3 joined with findings, 1 refused, 2 usage |
-| `road.mjs gate <road.json> [--step <N>]` | one line per check (spec-stages section 5): 1 rows (every lane of the step landed), 2 landing ranges, 3 `git-tidy check`, 4 UI proof (always runs, when a UI file changed or a lane has a matrix), 5 the measure (INFO). No line runs or asks for a test, a review or an audit | 0 PASS, 1 any FAIL |
+| `road.mjs join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--json]` | judges the scope of one built lane (below): prints `joined <sha>`, `finding <id>: <text>`, `ui-files: <n>` and its `ui-file` lines; first refuses a lane whose needed lanes (its `needs`, omitted = every earlier lane) have not landed on the base in git | 0 joined clean, 3 joined with findings, 1 refused, 2 usage |
+| `road.mjs gate <road.json> [--step <N>]` | one line per check (spec-stages section 5): 1 rows (every lane of the step landed), 2 landing ranges, 3 `git-tidy check` (a finding about the branch or worktree of a lane in flight, a started row not landed of this road or of another road file `road-*.json` beside STATUS.md, is INFO; any other finding, a leftover of a landed lane of this step included, FAILs), 4 UI proof (always runs, when a UI file changed or a lane has a matrix), 5 the measure (INFO). No line runs or asks for a test, a review or an audit | 0 PASS, 1 any FAIL |
 
 Every subprocess runs without a shell and with its own timeout. The UI-file rule is the ui-proof tool's (`ui-proof changed`); without that
 tool installed a markup and style file rule stands in, which counts more lanes as UI, never fewer.
@@ -110,7 +112,9 @@ tool installed a markup and style file rule stands in, which counts more lanes a
 
 `join` is the scope judging of one lane, after its writers stopped. The lead passes the sha256 of the road file (from `shasum -a 256`, taken
 when the road was written); a file that hashes differently, an unknown lane or an unreadable road is refused (exit 1). The lane tip is the
-worktree's HEAD, read with git; `--base` must be its ancestor.
+worktree's HEAD, read with git; `--base` must be its ancestor. A lane one of whose needed lanes has not landed on the base in git is
+refused too (exit 1): the landed `<to>` its row records must be a known commit and an ancestor of the base tip (`needsNotOnBase`).
+land-lane knows no road, so this is the road's needs check before a landing: an early lane goes through join like every lane.
 
 1. One finding per file of `<base>...<tip>` outside the lane `files` and the step's `appendOnly`. Paths are read from git with `-z` and
    compared after `\` becomes `/`; none goes to a shell.
@@ -134,21 +138,26 @@ agents run. A lane is early when all of these hold (`lib/road-state.mjs` `earlyL
 - its step is after the current one, it has not landed, and its lane row is in STATUS.md;
 - it is no UI lane (a `matrix` or a UI file): a UI lane waits for its step and its step-start record, so an early lane never causes
   `baseline needed`;
-- it has a `needs` list (omitted = every earlier lane: it waits), naming only lanes of earlier steps, and every one of them has landed;
+- it has a `needs` list (omitted = every earlier lane: it waits), naming only lanes of earlier steps, and every one of them has landed:
+  by its row and on the base in git (the row's landed `<to>` is a known commit and an ancestor of the base tip; a row alone is never
+  trusted);
 - none of its files overlaps a file or folder of a not-landed lane of a lower step (carried lanes included), of a started lane, or of
   an early lane already chosen. Paths are compared after `\` becomes `/`, `//` and `./` parts and a trailing `/` are dropped and case is
   ignored; a path that leaves the repo or names its root overlaps everything. A step's `appendOnly` exempts a file only between lanes
   of that same step, never against a lower step.
 
 Order: lanes already started (their row has a start time) come first and are never dropped, also when the budget shrinks; the other
-lanes fill `min(budget, 5) - lanes - started early lanes` slots in step and lane order. Each later lane that is not early is in
+lanes fill `min(budget, 5) - lanes - started early lanes` slots in step and lane order. Started early lanes hold their slots against
+the current step too: `lanes` lists at most `5 - started early lanes`, so lanes plus early stay within 5. Each later lane that is not early is in
 `waiting` with its reason (`needs c landed first`, `shares src/x.mjs with open lane a (step 1, not landed)`, `no free slot: ...`).
 Lane files and needs are read from the road file only; a row a writer added or started never skips a check.
 
 Gates keep their meaning: a step's gate line 1 judges only that step's own lanes (a lane that landed early counts when its step's gate
 runs, and a step whose lanes all landed early goes straight to `gate` once it is current); line 2 covers every landing row of the road.
-An early lane landed before its step's start record, but since it is no UI lane, line 4 asks for no record of it; a UI file it
-changed outside its listed files fails line 4. A started early lane makes its step started: the architect changes only steps none of
+An early lane landed before its step's start record: line 4 accepts its range when it ended at or before the record, its lane is no
+UI lane and it changed no UI file (its work is in what the record shows); every other range of the step still needs the record at or
+before its `from`, so a UI file the early lane changed outside its listed files fails line 4. Line 3 shows git-tidy findings about the
+branches and worktrees of lanes still in flight (early lanes, carried lanes, another road's lanes) as INFO, not FAIL. A started early lane makes its step started: the architect changes only steps none of
 whose lanes started.
 
 ## Walking an `agents` step

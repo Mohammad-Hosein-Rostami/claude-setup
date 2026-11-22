@@ -2,7 +2,8 @@
 //   road-start tip and landed ranges written in the rows.
 // Exports: stepState(road, items), roadStartTip(road, items), landedLine(evidence), laneLanded(rows, roadId, step, laneName),
 //   landingRowId(rows, roadId, step, laneName), isOldFormRoad(rows, roadId), correctionRows(rows, id), isReworkRow(row), reviewedLine(evidence),
-//   isUiLane(lane, isUiPath), earlyLanes(road, items, state, { budget, isUiPath }), MAX_LANES_PER_RUN.
+//   isUiLane(lane, isUiPath), earlyLanes(road, items, state, { budget, isUiPath, isOnBase }), needsNotOnBase(road, items, laneName, isOnBase),
+//   inFlightBranches(roads, items), MAX_LANES_PER_RUN.
 // Rules: a row is done when its done cell is set (parseWorkItems). Current step = the lowest step whose check row is not done; none open:
 //   `done`. A road is old form when STATUS.md holds a close row of it (`<road>.s<N>.<name>-land`, not a `rework:` row: roads whose rows
 //   were written before one row per lane); then every lane's landing row is its close row `<lane row>-land`, and a lane without one has not
@@ -11,17 +12,20 @@
 //   (a fix row never lands a lane); in the new form the done cell is not enough (it may have been set when the build ended): the row, or
 //   its `<id>.landed` correction row, must also hold a `landed <to> on <base>` line. A lane is held while a
 //   lane it needs (default: every lane of the earlier steps) is not landed. Carried = lanes of earlier steps (check row done) not landed;
-//   they come first and count toward the 5. State `gate` when every lane of the step has landed and nothing is carried, else `build`.
+//   they come first and count toward the 5, after the started lanes of later steps (started early: their agents run, so they keep
+//   their slots and fewer current lanes are listed). State `gate` when every lane of the step has landed and nothing is carried, else `build`.
 //   `writers` = the smallest of the lane count plus their test lanes, the budget and 5.
 // Early lanes (owner FR2: fill up to 5 agents): a lane of a step after the current one starts early when its row exists, it has not
 //   landed, it is no UI lane, it has a `needs` list (omitted = every earlier lane: it waits) naming only lanes of earlier steps, all
-//   landed, and none of its files overlaps (filesShare) a not-landed lane of a lower step (carried included), a started lane, or an
+//   landed by its row and on the base in git (needsNotOnBase: the landed `<to>` is an ancestor of the base tip, `isOnBase`; a row alone
+//   is never trusted), and none of its files overlaps (road-file.mjs filesShare) a not-landed lane of a lower step (carried included), a started lane, or an
 //   early lane already chosen (`appendOnly` exempts files only between lanes of the same step). Started lanes come first and are never
-//   dropped for the count; the others fill `min(budget, 5) - lanes - started early lanes` slots in step and lane order. Every other
+//   dropped for the count; the others fill `min(budget, 5) - lanes - started early lanes` slots in step and lane order, so lanes plus
+//   early stay within min(budget, 5) whenever the started early lanes fit in it. Every other
 //   not-landed later lane is `waiting` with the reason. Needs and files come only from the road file; a started row never skips a check.
 // Invariants: pure; row ids follow road-file.mjs rowIds; laneLanded is for planning and counting: the gate still checks the landed line
 //   of the landing row against git.
-import { MAX_LANES_PER_STEP, pathsOverlap, rowIds } from './road-file.mjs';
+import { MAX_LANES_PER_STEP, filesShare, rowIds } from './road-file.mjs';
 
 export const MAX_LANES_PER_RUN = MAX_LANES_PER_STEP;
 const LANDED = /\blanded ([0-9a-f]{7,40}) on (\S+?)(?: from ([0-9a-f]{7,40}))?(?=[\s,;)]|$)/;
@@ -122,7 +126,55 @@ function laneEntries(road) {
 }
 
 const isStarted = (rows, entry) => rows.get(entry.ids.lane.toLowerCase())?.started != null || rows.get(entry.ids.close.toLowerCase())?.started != null;
+/**
+ * The lanes in flight of the given roads (roads that share one STATUS.md): a lane row (or close row) started, the lane not landed.
+ * @param {object[]} roads checked roads
+ * @param {object[]} items parseWorkItems(...).items of their STATUS.md
+ * @returns {Map<string, string>} branch -> lane row id
+ */
+export function inFlightBranches(roads, items) {
+  const rows = byId(items);
+  const flying = new Map();
+  for (const road of roads) {
+    for (const entry of laneEntries(road)) if (isStarted(rows, entry) && !laneLanded(rows, road.road, entry.step, entry.lane.name)) flying.set(entry.lane.branch, entry.ids.lane);
+  }
+  return flying;
+}
+
 const landedNames = (rows, road, all) => new Set(all.filter((entry) => laneLanded(rows, road.road, entry.step, entry.lane.name)).map((entry) => entry.lane.name));
+
+/** The `<to>` sha a landed lane's row (or its one correction row) records, or null: not landed, or no landed line. */
+function landedTip(rows, roadId, entry) {
+  if (!laneLanded(rows, roadId, entry.step, entry.lane.name)) return null;
+  const id = landingRowId(rows, roadId, entry.step, entry.lane.name);
+  const own = landedLine(rows.get(id.toLowerCase())?.evidence);
+  if (own !== null) return own.to;
+  const corrections = correctionRows(rows, id);
+  return corrections.length === 1 && corrections[0].done != null ? (landedLine(corrections[0].evidence)?.to ?? null) : null;
+}
+
+/**
+ * The lanes a lane needs (its `needs` list from the road file; omitted = every lane of the earlier steps) that have not landed on the base
+ * in git: no landed row, no landed `<to>` line, or a `<to>` that `isOnBase` does not confirm (a forged or stale row). A lane name the
+ * road does not hold is returned as missing (fail closed).
+ * @param {object} road a checked road
+ * @param {object[]} items parseWorkItems(...).items of the road's STATUS.md
+ * @param {string} laneName the lane whose needs are judged
+ * @param {(sha: string) => boolean} isOnBase true when git shows the sha on the road's base (an ancestor of its tip)
+ * @returns {string[]} the needed lane names not on the base, in road order; [] for a lane that needs nothing
+ */
+export function needsNotOnBase(road, items, laneName, isOnBase) {
+  const rows = byId(items);
+  const all = laneEntries(road);
+  const entry = all.find((candidate) => candidate.lane.name === laneName);
+  if (entry === undefined) return [laneName];
+  const needs = Array.isArray(entry.lane.needs) ? entry.lane.needs : all.filter((other) => other.step < entry.step).map((other) => other.lane.name);
+  return needs.filter((name) => {
+    const needed = all.find((other) => other.lane.name === name && other.step < entry.step);
+    const tip = needed === undefined ? null : landedTip(rows, road.road, needed);
+    return tip === null || isOnBase(tip) !== true;
+  });
+}
 
 /**
  * @param {object} road a checked road
@@ -147,28 +199,13 @@ export function stepState(road, items) {
     if (missing.length > 0) held.push({ name: entry.lane.name, why: `needs ${missing.join(', ')} landed first` });
     else ready.push(entry);
   }
-  const lanes = [...carried, ...ready].slice(0, MAX_LANES_PER_RUN);
+  // Lanes of later steps that started early run already: they keep their slots, so fewer current lanes are listed (owner FR2: at most 5).
+  const startedLater = all.filter((entry) => entry.step > step && !landed.has(entry.lane.name) && isStarted(rows, entry)).length;
+  const lanes = [...carried, ...ready].slice(0, Math.max(0, MAX_LANES_PER_RUN - startedLater));
   const ownRows = all.filter((entry) => entry.step === step).flatMap((entry) => [entry.ids.lane, entry.ids.close]);
   const started = ownRows.some((id) => rows.get(id.toLowerCase())?.started != null);
   const state = carried.length === 0 && ready.length === 0 && held.length === 0 ? 'gate' : 'build';
   return { step, of, state, form: 'agents', lanes, held, carried: carried.map((entry) => entry.lane.name), started };
-}
-
-// A path that leaves the repo (absolute, a drive, a `..` part) or names the repo root: it overlaps every path (fail closed).
-const OUTSIDE_OR_ROOT = /^(?:[/\\]|[A-Za-z]:)|(?:^|[/\\])\.\.(?:[/\\]|$)|^[./\\]*$/;
-// One spelling per path: `/` parts, no empty or `.` parts, lower case (macOS and Windows file systems ignore case: more lanes wait, never fewer).
-const plainPath = (path) => path.replace(/\\/g, '/').toLowerCase().split('/').filter((part) => part !== '' && part !== '.').join('/');
-
-/**
- * True when two lane files may touch the same file: the same path or a folder holding the other (pathsOverlap), after `\\`, `//`, `./`
- * parts, a trailing `/` and case are made one; a path that is not a text, leaves the repo or names its root overlaps everything.
- * @param {unknown} first a lane file from the road
- * @param {unknown} second a lane file from the road
- * @returns {boolean}
- */
-function filesShare(first, second) {
-  if (typeof first !== 'string' || typeof second !== 'string' || OUTSIDE_OR_ROOT.test(first) || OUTSIDE_OR_ROOT.test(second)) return true;
-  return pathsOverlap(plainPath(first), plainPath(second));
 }
 
 /** `{ file, with }` of the first file of the lane shared with one of `others` (files in `appendOnly` skipped for a same-step lane), or null. */
@@ -191,6 +228,8 @@ function earlyBlock(entry, ctx) {
   if (unknown.length > 0) return `needs ${unknown.join(', ')}: not a lane of an earlier step`;
   const missing = lane.needs.filter((name) => !ctx.landed.has(name));
   if (missing.length > 0) return `needs ${missing.join(', ')} landed first`;
+  const notInGit = lane.needs.length === 0 ? [] : needsNotOnBase(ctx.road, ctx.items, lane.name, ctx.isOnBase);
+  if (notInGit.length > 0) return `needs ${notInGit.join(', ')} landed on ${ctx.road.base} in git first: git does not show the landing its row records`;
   if (!Array.isArray(lane.files) || lane.files.length === 0) return 'no files list';
   const blockers = ctx.open.filter((other) => other !== entry && (other.step < entry.step || ctx.started.has(other) || ctx.chosen.includes(other)));
   const shared = sharedWith(entry, blockers, ctx.appendOnly(entry.step));
@@ -206,10 +245,12 @@ function earlyBlock(entry, ctx) {
  * @param {object} road a checked road
  * @param {object[]} items parseWorkItems(...).items of the road's STATUS.md
  * @param {{ step: number, state: string, lanes: object[] }} state stepState(road, items)
- * @param {{ budget: number, isUiPath: (path: string) => boolean }} options budget: the lane budget (1-5); isUiPath: the UI-file rule
+ * @param {{ budget: number, isUiPath: (path: string) => boolean, isOnBase?: (sha: string) => boolean }} options budget: the lane budget
+ *   (1-5); isUiPath: the UI-file rule; isOnBase: true when git shows a sha on the base (needsNotOnBase); without it no lane that needs
+ *   another starts early
  * @returns {{ early: string[], waiting: { name: string, why: string }[] }} early: started lanes first, then step and lane order
  */
-export function earlyLanes(road, items, state, { budget, isUiPath }) {
+export function earlyLanes(road, items, state, { budget, isUiPath, isOnBase = () => false }) {
   if (state.state === 'done') return { early: [], waiting: [] };
   const rows = byId(items);
   const all = laneEntries(road);
@@ -218,15 +259,17 @@ export function earlyLanes(road, items, state, { budget, isUiPath }) {
   const later = open.filter((entry) => entry.step > state.step);
   const started = new Set(open.filter((entry) => isStarted(rows, entry)));
   const appendOnly = (step) => (Array.isArray(road.steps[step - 1].appendOnly) ? road.steps[step - 1].appendOnly : []);
-  const ctx = { rows, all, landed, open, started, chosen: [], isUiPath, appendOnly };
-  let free = Math.min(Number.isInteger(budget) ? budget : 0, MAX_LANES_PER_RUN) - state.lanes.length;
+  const ctx = { road, items, rows, all, landed, open, started, chosen: [], isUiPath, isOnBase, appendOnly };
+  const startedLater = later.filter((entry) => started.has(entry)).length;
+  // Started early lanes hold their slots first (never dropped), so only the rest is offered to new early lanes.
+  let free = Math.min(Number.isInteger(budget) ? budget : 0, MAX_LANES_PER_RUN) - state.lanes.length - startedLater;
   const reasons = new Map();
   for (const entry of [...later.filter((candidate) => started.has(candidate)), ...later.filter((candidate) => !started.has(candidate))]) {
     const why = earlyBlock(entry, ctx) ?? (started.has(entry) || free > 0 ? null : `no free slot: budget ${budget}, ${state.lanes.length} current and ${ctx.chosen.length} early lanes`);
     if (why !== null) reasons.set(entry, why);
     else {
       ctx.chosen.push(entry);
-      free -= 1;
+      if (!started.has(entry)) free -= 1;
     }
   }
   return { early: ctx.chosen.map((entry) => entry.lane.name), waiting: later.filter((entry) => reasons.has(entry)).map((entry) => ({ name: entry.lane.name, why: reasons.get(entry) })) };

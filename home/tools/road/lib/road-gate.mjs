@@ -1,5 +1,6 @@
 // Purpose: the checkpoint between steps (spec-stages section 5): one PASS, FAIL or INFO line per check, a FAIL on any line fails it.
-// Exports: gateStep(road, items, step, run, { isUiPath }) -> { lines, pass }, GIT_TIMEOUT_MS, TOOL_TIMEOUT_MS.
+// Exports: gateStep(road, items, step, run, { isUiPath, otherRoads }) -> { lines, pass }, fullSha(run, repo, text), GIT_TIMEOUT_MS,
+//   TOOL_TIMEOUT_MS.
 // `run(file, argv, timeoutMs)` -> { exit, out } runs one program with argv (no shell); `file` is one of 'git', 'git-tidy', 'ui-proof'
 //   (the CLI maps them to the tools), so tests inject it. Every git call names shas with fixed flags (P2).
 // Close row here means a landing row (road-state.mjs landingRowId): a lane's `<lane row>-land` row in an old-form road, else the lane row
@@ -17,15 +18,18 @@
 //   sha for its work; any `as` part is a FAIL, never ignored). A road lane (any entry) never lands within another row:
 //   lanes land one at a time, each in its own fast-forward, so it needs its own range (its own line or its `.landed` correction) and a
 //   `landed within` row of a lane is a FAIL naming the row; this also leaves no stacked-lane case to prove;
-//   3 `git-tidy check` exit 0; 4 UI: when a range of the step changes UI files or a lane has a matrix, `ui-proof check --tip <tip>
-//   --against-step <road>.s<N>` exit 0 and the step-start record taken at or before every `<from>` (UI checks always run, owner
-//   decision CR5); 5 the measure (INFO). No test, review or audit line: the gate asks that every lane of the step landed, cleanly.
+//   3 `git-tidy check --json` exit 0; on exit 1 a `merged-branch`, `merged-worktree`, `superseded-copy` or `agent-leftover` finding of a
+//   lane in flight (row started, not landed; this road or `otherRoads`, the road files beside STATUS.md) is INFO, any other finding FAIL
+//   (a leftover branch of a landed lane of this step included); 4 UI: when a range of the step changes UI files or a lane has a matrix,
+//   `ui-proof check --tip <tip> --against-step <road>.s<N>` exit 0 and the step-start record taken at or before every `<from>`, except
+//   a range that ended at or before it from a lane that is no UI lane and changed no UI file (landed early: its work is in the record);
+//   UI checks always run (owner decision CR5); 5 the measure (INFO). No test, review or audit line: every lane of the step landed, cleanly.
 // Invariants: any exit other than the expected ones is FAIL (fail closed, P3); untrusted shas from rows are hex-checked before argv, then
 //   resolved once to the full commit sha (`rev-parse --verify --quiet <sha>^{commit}`; unknown or ambiguous = FAIL naming the row, and so is
 //   an answer that does not start with the row's hex, which is what a branch or tag named like hex gives), and only full shas are compared
 //   or passed on afterwards (a row may hold 7-40 hex, rev-list prints 40).
 import { rowIds } from './road-file.mjs';
-import { correctionRows, isReworkRow, isUiLane, landedLine, laneLanded, landingRowId, roadStartTip } from './road-state.mjs';
+import { correctionRows, inFlightBranches, isReworkRow, isUiLane, landedLine, laneLanded, landingRowId, roadStartTip } from './road-state.mjs';
 
 export const GIT_TIMEOUT_MS = 5_000;
 export const TOOL_TIMEOUT_MS = 30_000;
@@ -126,7 +130,7 @@ function closeRanges(road, rows) {
 }
 
 /** The full commit sha of a row's sha text (hex-checked, 7-40 characters), or null when git does not know it, finds it ambiguous, or answers with a commit it does not start with. */
-function fullSha(run, repo, text) {
+export function fullSha(run, repo, text) {
   const found = git(run, repo, ['rev-parse', '--verify', '--quiet', `${text}^{commit}`]);
   const sha = found.out.trim();
   // A branch or tag named like hex wins over a short sha in rev-parse: the answer must still start with what the row wrote.
@@ -216,6 +220,12 @@ function rangeLines(run, ranges, ctx) {
   return fails.length === 0 ? [pass(`2 range: ${ranges.length} close rows, every commit in one range`)] : fails.map(fail);
 }
 
+/** True when the step-start record `at` was taken at or before the range's `from`, or the range (no UI lane, no UI file) ended at or before it. */
+function recordCovers(run, ctx, at, range, uiChanged) {
+  if (isAncestor(run, ctx.repo, at, range.landed.from) === 0) return true;
+  return !uiChanged && !isUiLane(range.entry.lane, ctx.isUiPath) && isAncestor(run, ctx.repo, range.landed.to, at) === 0;
+}
+
 /** Line 4: UI proof for the tip when a range of the step changed UI files or a lane has a matrix. */
 function uiLine(run, road, ranges, step, ctx) {
   const own = ranges.filter((range) => range.entry?.step === step && range.unknown.length === 0 && range.landed?.from);
@@ -227,11 +237,38 @@ function uiLine(run, road, ranges, step, ctx) {
   const proof = run('ui-proof', ['check', '--tip', ctx.tip, '--against-step', label, '--repo', ctx.repo], TOOL_TIMEOUT_MS);
   if (proof.exit !== 0) return fail(`4 ui: ui-proof check --against-step ${label} exited ${proof.exit}`);
   const at = RECORD_AT.exec(run('ui-proof', ['has', '--step', label, '--repo', ctx.repo], TOOL_TIMEOUT_MS).out)?.[1];
-  if (at === undefined || own.some((range) => isAncestor(run, ctx.repo, at, range.landed.from) !== 0)) return fail(`4 ui: the step-start record ${label} was not taken at or before every from`);
+  if (at === undefined || own.some((range, index) => !recordCovers(run, ctx, at, range, changed[index].exit === 1))) return fail(`4 ui: the step-start record ${label} was not taken at or before every from`);
   return pass(`4 ui: visual-qa PASS at ${ctx.tip}, no state worse than ${label}`);
 }
 
-const exitLine = (n, name, result, okText) => (result.exit === 0 ? pass(`${n} ${name}: ${okText}`) : fail(`${n} ${name}: exit ${result.exit}: ${result.out.split('\n').find(Boolean) ?? ''}`.trim()));
+// Findings about one branch: a lane in flight has them while it is built (a fresh branch at the base tip reads as merged).
+const BRANCH_FINDINGS = new Set(['merged-branch', 'superseded-copy', 'agent-leftover']);
+const WORKTREE_BRANCH = /^branch (.+)$/;
+
+/** The branch a git-tidy finding is about, or null for a finding about no one branch (a merge commit, a dirty base folder, ...). */
+function findingBranch(finding) {
+  if (BRANCH_FINDINGS.has(finding.kind)) return String(finding.subject);
+  if (finding.kind === 'merged-worktree') return WORKTREE_BRANCH.exec(String(finding.detail))?.[1] ?? null;
+  return null;
+}
+
+// Unreadable output is null: the caller's FAIL names the exit and the first line.
+const findingsOf = (out) => { try { return JSON.parse(out)?.findings ?? null; } catch { return null; } };
+
+/** Line 3: `git-tidy check`; findings about lanes in flight (any road) are INFO, every other finding is a FAIL. */
+function gitLines(run, road, items, otherRoads) {
+  const result = run('git-tidy', ['check', road.repo, '--base', road.base, '--json'], TOOL_TIMEOUT_MS);
+  if (result.exit === 0) return [pass('3 one git line: git-tidy check clean')];
+  const findings = result.exit === 1 ? findingsOf(result.out) : null;
+  if (!Array.isArray(findings)) return [fail(`3 one git line: exit ${result.exit}: ${result.out.split('\n').find(Boolean) ?? ''}`.trim())];
+  const flying = inFlightBranches([road, ...otherRoads], items);
+  const lines = findings.map((finding) => {
+    const text = `${finding?.kind} ${finding?.subject} ${finding?.detail}`;
+    const branch = finding === null || typeof finding !== 'object' ? null : findingBranch(finding);
+    return branch !== null && flying.has(branch) ? `INFO 3 one git line: in flight (${flying.get(branch)} started): ${text}` : fail(`3 one git line: ${text}`);
+  });
+  return lines.some((line) => line.startsWith('FAIL')) ? lines : [pass('3 one git line: git-tidy check clean but for lanes in flight'), ...lines];
+}
 
 /**
  * Runs the gate for one step.
@@ -239,22 +276,23 @@ const exitLine = (n, name, result, okText) => (result.exit === 0 ? pass(`${n} ${
  * @param {object[]} items parseWorkItems(...).items
  * @param {number} step 1-based
  * @param {(file: string, argv: string[], timeoutMs: number) => { exit: number, out: string }} run
- * @param {{ isUiPath: (path: string) => boolean }} options the UI file test
+ * @param {{ isUiPath: (path: string) => boolean, otherRoads?: object[] }} options the UI file test; the other checked roads of the same
+ *   repo and STATUS.md, whose started lanes are in flight for line 3
  * @returns {{ lines: string[], pass: boolean }}
  */
-export function gateStep(road, items, step, run, { isUiPath }) {
+export function gateStep(road, items, step, run, { isUiPath, otherRoads = [] }) {
   const rows = new Map(items.map((item) => [item.id.toLowerCase(), item]));
   const start = roadStartTip(road, items);
   const tipRead = git(run, road.repo, ['rev-parse', '--verify', `refs/heads/${road.base}^{commit}`]);
   const tip = tipRead.out.trim();
   if (start === null || tipRead.exit !== 0 || !HEX.test(tip)) return { lines: [fail(`road start tip or base tip unreadable (run rows first; git exit ${tipRead.exit})`)], pass: false };
   const firstParentList = git(run, road.repo, ['rev-list', '--first-parent', `${start}..${tip}`]).out.split('\n').filter(Boolean);
-  const ctx = { repo: road.repo, base: road.base, start, tip, firstParentList, firstParent: new Set(firstParentList) };
+  const ctx = { repo: road.repo, base: road.base, start, tip, firstParentList, firstParent: new Set(firstParentList), isUiPath };
   const ranges = closeRanges(road, rows).map((range) => resolveRange(run, ctx, range));
   const lines = [
     ...rowsLine(road, rows, step, isUiPath),
     ...rangeLines(run, ranges, ctx),
-    exitLine(3, 'one git line', run('git-tidy', ['check', road.repo, '--base', road.base], TOOL_TIMEOUT_MS), 'git-tidy check clean'),
+    ...gitLines(run, road, items, otherRoads),
     uiLine(run, road, ranges, step, ctx),
     `INFO 5 measure: ${road.steps[step - 1].measure ?? 'none named'}`,
   ];

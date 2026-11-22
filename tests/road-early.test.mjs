@@ -1,12 +1,14 @@
 // Tests of early lanes (owner FR2: fill up to 5 agents): road-state.mjs earlyLanes picks lanes of later steps that can start now, and
-// `road.mjs next` prints them as `early` and `waiting` with `writers` = min(lanes + early, budget, 5). Rows are built in memory; the CLI
-// case writes a road and a STATUS.md into a cs-test- temp folder and runs road.mjs in a child process with a private HOME.
+// `road.mjs next` prints them as `early` and `waiting` with `writers` = min(lanes + early, budget, 5); and the gate lines an early lane
+// meets (road-gate.mjs line 4 for a lane landed before its step's record, line 3 for lanes in flight). Rows are built in memory and git
+// is a fake `run`; the CLI case writes a road and a STATUS.md into a cs-test- temp folder and runs road.mjs with a private HOME.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { gateStep } from '../home/tools/road/lib/road-gate.mjs';
 import { earlyLanes, stepState } from '../home/tools/road/lib/road-state.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -178,6 +180,76 @@ test('F5: lanes that all landed early leave their step to the gate once it is cu
   assert.deepEqual([result.early.length, result.waiting.length], [0, 35]);
   const half = early(big, bigItems.filter((row) => !/^rd\.s1\.l0-[0-2]$/.test(row.id)).concat(['l0-0', 'l0-1', 'l0-2'].map((name) => landedRow(`rd.s1.${name}`))));
   assert.deepEqual(half.early, ['l1-0', 'l1-1', 'l1-2']);
+});
+
+test('R2: started early lanes keep their slots, so lanes plus early stay at most 5', () => {
+  const road = roadOf([lane('a'), lane('b')], ['c', 'd', 'e', 'f', 'g'].map((name) => free(name)), [free('x'), free('y'), free('z')]);
+  const three = rowsOf(road, { landed: ['a', 'b'], gated: [1], started: ['x', 'y', 'z'] });
+  assert.deepEqual([stepState(road, three).lanes.map((entry) => entry.lane.name), early(road, three).early], [['c', 'd'], ['x', 'y', 'z']]);
+  const one = rowsOf(road, { landed: ['a', 'b'], gated: [1], started: ['x'] });
+  assert.deepEqual([stepState(road, one).lanes.length, early(road, one).early], [4, ['x']]);
+  assert.match(whyOf(early(road, one), 'y'), /^no free slot/);
+});
+
+test('R4 and F1: a forged landed row of a needed lane never makes a lane early; git must show the landing on the base', () => {
+  const road = roadOf([lane('a')], [free('b', { needs: ['a'] })]);
+  const items = rowsOf(road, { landed: ['a'] });
+  const forged = early(road, items);
+  assert.deepEqual(forged.early, []);
+  assert.equal(whyOf(forged, 'b'), 'needs a landed on main in git first: git does not show the landing its row records');
+  const asked = [];
+  const real = earlyLanes(road, items, stepState(road, items), { budget: 5, isUiPath: NO_UI, isOnBase: (sha) => asked.push(sha) > 0 });
+  assert.deepEqual([real.early, asked], [['b'], ['b'.repeat(40)]], 'the sha checked is the one the landing row records');
+});
+
+const sha = (char) => char.repeat(40);
+const ORDER = ['a', 'b', 'c', 'd'].map(sha); // the base's first-parent line: road start, then three landings
+const gateRow = (id, done, evidence = '') => ({ id, item: id.endsWith('s1.check') ? `close: step 1 checkpoint, base ${ORDER[0]}` : id, size: 'S', started: done ?? (evidence === 'started' ? DAY : null), done, evidence: evidence === 'started' ? '' : evidence });
+const landing = (to, from) => `landed ${sha(to)} on main from ${sha(from)}`;
+
+/** A fake git and tools: the base runs a..d, `ui-proof has` names the record `at`, `changed` reports UI files for the ranges in `uiFrom`. */
+function fakeGit({ at = sha('c'), uiFrom = [], tidy = { exit: 0, out: '' } } = {}) {
+  const index = (text) => ORDER.indexOf(text);
+  return (file, argv) => {
+    if (file === 'git-tidy') return tidy;
+    if (file === 'ui-proof') return argv[0] === 'has' ? { exit: 0, out: `record rd.s2 at ${at}\n` } : { exit: argv[0] === 'changed' && uiFrom.includes(argv[2]) ? 1 : 0, out: '' };
+    const [command, ...rest] = argv.slice(2);
+    if (command === 'rev-parse') return { exit: 0, out: `${rest.at(-1).startsWith('refs/heads/') ? ORDER.at(-1) : rest.at(-1).replace('^{commit}', '')}\n` };
+    if (command === 'rev-list') { const [from, to] = rest.at(-1).split('..'); return { exit: 0, out: ORDER.slice(index(from) + 1, index(to) + 1).reverse().join('\n') }; }
+    if (command === 'merge-base') return { exit: index(rest[1]) <= index(rest[2]) ? 0 : 1, out: '' };
+    return { exit: 0, out: '' };
+  };
+}
+
+// Step 1 lane a; step 2 lane e (needs [], landed early, before the record at c) and UI lane u (a matrix, landed after the record).
+const gateRoad = roadOf([lane('a')], [free('e'), lane('u', { needs: ['a'], matrix: 'm.json', files: ['src/u.tsx'] })], [free('l')]);
+const gateItems = (extra = []) => [gateRow('rd.s1.a', DAY, landing('b', 'a')), gateRow('rd.s1.check', DAY, 'PASS'), gateRow('rd.s2.e', DAY, landing('c', 'b')),
+  gateRow('rd.s2.u', DAY, landing('d', 'c')), gateRow('rd.s2.check', null), ...extra];
+const gateOf = (options, items = gateItems(), otherRoads = []) => gateStep(gateRoad, items, 2, fakeGit(options), { isUiPath: IS_UI, otherRoads });
+const lineOf = (result, n) => result.lines.filter((line) => new RegExp(`^[A-Z]+ ${n} `).test(line)).join('\n');
+
+test('R1: a non-UI lane that landed early, before its step\'s record, never fails line 4; a UI file it changed still does', () => {
+  assert.deepEqual([early(gateRoad, [gateRow('rd.s1.a', null), gateRow('rd.s1.check', null), gateRow('rd.s2.e', null), gateRow('rd.s2.u', null)], 5, IS_UI).early], [['e']]);
+  const clean = gateOf({});
+  assert.match(lineOf(clean, 4), /^PASS 4 ui: visual-qa PASS/);
+  assert.equal(clean.pass, true, clean.lines.join('\n'));
+  assert.match(lineOf(gateOf({ uiFrom: [sha('b')] }), 4), /^FAIL 4 ui: the step-start record rd\.s2 was not taken at or before every from/);
+  assert.match(lineOf(gateOf({ at: sha('d') }), 4), /^FAIL 4 ui/, 'the UI lane u still needs the record at or before its from');
+});
+
+const tidyFindings = (...findings) => ({ exit: 1, out: JSON.stringify({ base: 'main', findings, hints: [] }) });
+const finding = (kind, subject, detail = '') => ({ kind, subject, detail });
+
+test('R6: line 3 shows git-tidy findings of lanes in flight (any road) as INFO; this step\'s landed lanes and anything else FAIL', () => {
+  const other = { ...roadOf([lane('o')]), road: 'ot' };
+  const flying = gateItems([gateRow('rd.s3.l', null, 'started'), gateRow('ot.s1.o', null, 'started')]);
+  const info = gateOf({ tidy: tidyFindings(finding('merged-branch', 'lane/l', 'dddddd0 merged'), finding('merged-worktree', '/wt/o', 'branch lane/o')) }, flying, [other]);
+  assert.match(lineOf(info, 3), /^PASS 3 one git line: git-tidy check clean but for lanes in flight\nINFO 3 one git line: in flight \(rd\.s3\.l started\)/);
+  assert.match(lineOf(info, 3), /INFO 3 one git line: in flight \(ot\.s1\.o started\): merged-worktree \/wt\/o branch lane\/o/);
+  assert.equal(info.pass, true, info.lines.join('\n'));
+  const cases = [finding('merged-branch', 'lane/e', 'cccccc0 merged'), finding('merge-commit', 'abc1234', 'Merge x'), finding('merged-branch', 'lane/o', 'x')];
+  for (const one of cases) assert.match(lineOf(gateOf({ tidy: tidyFindings(one) }, flying), 3), /^FAIL 3 one git line: /, `${one.kind} ${one.subject}`);
+  assert.match(lineOf(gateOf({ tidy: { exit: 1, out: 'not json' } }, flying), 3), /^FAIL 3 one git line: exit 1: not json$/);
 });
 
 test('F2 and F3: earlyLanes is pure and stepState keeps its exact return shape', () => {
