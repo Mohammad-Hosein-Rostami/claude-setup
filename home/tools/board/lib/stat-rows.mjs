@@ -8,7 +8,7 @@
 // facts = board.road (job-facts.mjs: goal, the step's title, lanes landed of all, `live`).
 // Stale roads (F7): a road whose facts say `live: false` (no row of its current step started or finished this session) is not on the
 // status line (roadPart null) and reads `idle` in `/where`; facts without `live` (an old board file) count as live.
-// Colour (cells.mjs, RC5): the `road` label dim on the line; the active step cyan in `/where`; a later finish yellow; landed lanes
+// Colour (cells.mjs, RC5): the `road` label dim on the line; the active step cyan (`/where` prints it plain, tree.mjs); a later finish yellow; landed lanes
 // and a sooner finish in the default colour; every state has its word (`later`, `sooner`, `idle`).
 // Invariants: pure (no I/O); every outside text goes through cleanText; every row fits look.columns; a row with nothing to say is null.
 import { clockOf, cleanText, cutWords, durationText, fitParts, STATE } from './cells.mjs';

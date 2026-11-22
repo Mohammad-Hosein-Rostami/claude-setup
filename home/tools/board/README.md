@@ -53,40 +53,26 @@ last row's account, 7 d, then 5 h. The rows drop in this order when the terminal
 session row always prints. On an error while drawing, that row and one `status line error:` line still print.
 
 ### Colour (`lib/cells.mjs`)
+### Colour (`lib/cells.mjs`)
 
 Colour only for a state (RC5), basic ANSI 16 so the terminal theme maps them on dark and light themes: yellow needs a look (a
 quiet agent, one over its usual time, a later finish, a row over its plan, context or a limit 60-80 % used, behind the
 upstream), red error or act now (context or a limit over 80 % used, an estimate error), magenta waiting on the owner (the
-alert, bold label), cyan running now (only in `/where`: running agents' bars, the active road step). Labels, clocks and
-secondary counts are dim; every healthy value is in the default colour, so a line with nothing to look at shows no colour.
-No green, no blue and no identity hue on the status line. Every state also has its word (`quiet`, `over`, `later`, `over plan`,
-`ANSWER NEEDED`, `behind`), so `NO_COLOR` (any value) or `TERM=dumb` prints the same words with no escape codes. Names are cut
-at a word or `-` with `…`, never mid-word.
+alert, bold label). Labels, clocks and secondary counts are dim; every healthy value is in the default colour, so a line with
+nothing to look at shows no colour. No green, no blue, no cyan and no colour for an agent or a branch (the identity hues of
+spec-tui-3 and their saved file `~/.claude/state/board-cache/<session>-hues.json` were removed with RC5; a file left by an
+older release is read by nothing and goes with the board cache's 7-day sweep). Every state also has its word (`quiet`, `over`,
+`later`, `over plan`, `ANSWER NEEDED`, `behind`), so `NO_COLOR` (any value) or `TERM=dumb` prints the same words with no escape
+codes. Names are cut at a word or `-` with `…`, never mid-word.
 
-### Which is where: identity colours in `/where` (`lib/identity.mjs`, spec-tui-3)
+### `/where` is plain text (`lib/tree.mjs`)
 
-Since RC5 only `/where` draws these hues; the status line has none.
-
-Each work item, an agent or a lane branch, has one hue and one marker shape (`●`, `◆`, `▲`;
-`*`, `+`, `o` in ASCII), and keeps them while it stays on the board (an agent tied to a lane takes the lane's colour, so it changes when
-its writer starts or ends). A name's home hue is a hash of it; a name seen for the first time takes
-the first hue from its home that no live item uses (one whose marker shape no live item has first, so `NO_COLOR` still tells
-three items apart), and that choice is remembered in `~/.claude/state/board-cache/<session>-hues.json` (`lib/hue-store.mjs`,
-written by the status line and `/where` when an item joins, leaves or comes back, and every 2 minutes or so to refresh the
-last-seen times, temp file and rename; a missing or bad file starts fresh). So a name's hue never changes when other items
-join or leave. An item that comes back takes its old hue only when no live item has taken it meanwhile, and a newcomer avoids
-the hue of an item gone under 5 minutes while another is free; an item gone for more than 30 minutes is forgotten and gets a
-new hue when it returns. Only what the rows draw holds a hue: a finished agent holds none after 30 seconds. Up to six live items never share a hue; with more than six, the seventh and later keep their home hue and
-so share with an earlier item (and three share a marker shape beyond three). An agent that works in a lane worktree
-(the board's sure placement, never a guess from a folder) takes that branch's hue, so its row and the branch's git row match.
-An agent that places nowhere (a read-only agent) has its own hue, named by its description. The hues are xterm 256-colour indexes 31 blue, 166 orange, 99 violet, 64
-green, 197 pink and 133 orchid, none a state colour's code. Their contrast (dark `#1e1e1e` / white `#ffffff`) is 4.04 / 4.13,
-4.39 / 3.80, 4.06 / 4.11, 3.93 / 4.24, 4.30 / 3.88 and 4.03 / 4.13, so 3.80 to 4.39 to 1: no cube colour reaches 4.5:1 on both
-(the best reaches 4.06), so these are the most even. In `/where` each row kind leads with a label: `road` and `ALL` in the
-default colour, a dim `Σ` before the counts, `▸` and `⎇` and the branch in its hue (main in the default colour, bold). A terminal whose `TERM`
-and `COLORTERM` name neither 256 nor true colour (Windows Terminal, which sets `WT_SESSION` instead, counts as 256) gets bold,
-underline or plain in place of the hues (with the shape, six different looks); `NO_COLOR` prints no codes and the marker shape
-tells items apart. A name that does not fit is cut at a word or `-` with `…` in every row (also the strip row).
+`/where` holds every detail the line leaves out (RC8) and prints it with no colour code at all, whatever `TERM`, `COLORTERM`
+or `NO_COLOR` say: the skill puts the tree into the reply, where an escape code would show raw. Each row kind leads with a
+label: `ALL`, `road`, `Σ` before the counts (`=` in ASCII), `▸ agents`, and `⎇` (`git` in ASCII) before each worktree, main
+first. An agent placed in a lane worktree names its branch on its own row, so its row and the branch's git row match by name.
+Names from outside are cleaned of control characters (an escape code in a branch name prints as plain text) and cut at a word
+or `-` with `…`.
 
 ### An agent's progress (`lib/progress.mjs`)
 
@@ -148,5 +134,5 @@ Files: `board.mjs` (the CLI and the lines), `lib/refresh.mjs` (build, refresh, t
 `lib/agents.mjs`, `lib/read-part.mjs` (a bounded read of a plain file), `lib/agent-transcript.mjs`, `lib/progress.mjs`, `lib/pools.mjs`, `lib/git-state.mjs`, `lib/job-facts.mjs`,
 `lib/repo-stats.mjs`, `lib/repos.mjs`, `lib/trusted-repos.mjs`, `lib/cache-file.mjs` (what the refresh reads), `lib/render.mjs` (the status line rows; `home/statusline.mjs` only reads and writes), `lib/work-row.mjs` (the
 job row, live work), `lib/layout.mjs` (row budget, agents summary row, `/where` counts row and packing), `lib/agent-rows.mjs` (agent rows), `lib/git-rows.mjs`
-(git summary and `/where` git rows), `lib/stat-rows.mjs` (the road part and row, the trend), `lib/identity.mjs` (identity hues and markers), `lib/hue-store.mjs` (the saved hues; read and written by the status line and `/where`), `lib/cells.mjs` (look, glyphs, bars, durations, clocks, fitting a row to a width; shared by every surface),
-`lib/tree.mjs` (the `/where` tree).
+(git summary and `/where` git rows), `lib/stat-rows.mjs` (the road part and row, the trend), `lib/cells.mjs` (look, glyphs, bars, durations, clocks, fitting a row to a width; shared by every surface),
+`lib/tree.mjs` (the `/where` tree, plain text).

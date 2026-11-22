@@ -11,7 +11,7 @@
 // agents), the most urgent agents in full under it, the rest on one `+K more` row; (3) one strip row, the most urgent agents, `+K more`.
 // Urgency: quiet > over its usual time > writer > reader, then the soonest finish. A finished agent shows for DONE_SHOWN_MS, then only
 // the counts row has it. From FULL_COLUMNS two agents share a row.
-// Colour of the counts row (spec-tui-2): running work cyan, any quiet agent yellow, waiting on the owner magenta; it leads with a dim
+// Colour of the counts row (spec-tui-2; `/where` prints it plain, tree.mjs): running work cyan, any quiet agent yellow, waiting on the owner magenta; it leads with a dim
 // `Σ` (`=` in ASCII; spec-tui-3 section labels).
 // Invariants: pure (no I/O); every row fits look.columns; never more rows than `slots`.
 import { cleanText, clockOf, cutWords, DONE_SHOWN_MS, durationText, fitParts, STATE } from './cells.mjs';

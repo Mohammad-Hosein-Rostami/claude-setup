@@ -10,12 +10,12 @@
 // Sources: the estimate cache's shown entry (numbers and progress.road, road-steps.mjs), the board file (with its road, trend,
 // and landed-today facts), the asking marker, the
 // newest limits sample per account and the session's last-seen file (`{ costUsd, t }`, written by the status line).
-// Invariants: pure (no I/O); every line fits look.columns; every outside text goes through cleanText; the cost is labelled as the
-// API-price equivalent since the last /clear, with its age (it is not what the subscription costs).
+// Invariants: pure (no I/O); plain text always (RC8: the skill prints the tree into the reply, where an escape code shows raw), so
+// no ESC byte whatever the terminal's look says; every line fits look.columns; every outside text goes through cleanText; the
+// cost is labelled as the API-price equivalent since the last /clear, with its age (it is not what the subscription costs).
 import { barText, clockOf, cleanText, cutWords, durationText, fitParts, STATE } from './cells.mjs';
 import { STALE_MARGIN_S } from '../../../hooks/lib/asking-marker.mjs';
 import { repoRows } from './git-rows.mjs';
-import { boardIdentity } from './identity.mjs';
 import { countsRow, workRows } from './layout.mjs';
 import { roadRow, trendPart } from './stat-rows.mjs';
 import { jobView } from './work-row.mjs';
@@ -73,10 +73,9 @@ function roadLines(view, facts, clock, look) {
 }
 
 /** The status line's counts, work and git rows, unclipped: every agent and every worktree. */
-function workLines(board, identity, asking, clock, look) {
+function workLines(board, asking, clock, look) {
   const ctx = {
     ...clock, at: board?.at, repo: board?.repo ?? null, repos: [board?.repo, ...(Array.isArray(board?.repos) ? board.repos : [])].filter(Boolean),
-    identity,
   };
   const marked = asking && typeof asking === 'object' ? { ...asking, marginMs: STALE_MARGIN_S * MS_PER_S } : null;
   return [countsRow(board, marked, ctx, look), ...workRows(board, Infinity, ctx, look),
@@ -89,7 +88,7 @@ function footLine(board, asking, look) {
   const quiet = (Array.isArray(board?.agents) ? board.agents : []).filter((agent) => agent?.state === 'quiet').length;
   const git = board?.git ? `git ${cutWords(cleanText(board.git.branch ?? '?', look), 32, look)}, ${isCount(board.git.changed) && board.git.changed > 0 ? `${board.git.changed} changed` : 'clean'}` : 'git ?';
   const stale = isNumber(board?.stale?.sinceMs) ? [{ text: 'board stale', state: STATE.warn }] : [];
-  return fitParts([{ text: `waiting on you: ${waiting}`, state: asking ? STATE.block : STATE.ok }, { text: `quiet agents: ${quiet || 'none'}` }, { text: git }, ...stale], look);
+  return fitParts([{ text: `waiting on you: ${waiting}`, state: asking ? STATE.wait : STATE.ok }, { text: `quiet agents: ${quiet || 'none'}` }, { text: git }, ...stale], look);
 }
 
 /** One line per account: what is left of each window, its reset, and the sample's age. */
@@ -111,18 +110,17 @@ function costLine(lastSeen, nowMs, look) {
 
 /**
  * @param {{ segment: object | null, board: object | null, asking: object | null, limits: { account: string, sample: object }[],
- *   lastSeen: { costUsd?: number, t?: number } | null, nowMs: number, timeZone: string,
- *   identity?: object | null }} identity: the board's hues kept between renders (hue-store.mjs), else worked out here
- *   view what was read for this session
- * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal (80 columns for `/where`)
- * @returns {string[]} the tree, one line each, every one within look.columns
+ *   lastSeen: { costUsd?: number, t?: number } | null, nowMs: number, timeZone: string }} view what was read for this session
+ * @param {ReturnType<import('./cells.mjs').lookOf>} terminal the terminal's width and glyphs (ASCII or not); its colour is ignored
+ * @returns {string[]} the tree, one plain-text line each (no escape code), every one within terminal.columns
  */
-export function whereTree({ segment, board, asking, limits, lastSeen, nowMs, timeZone, identity = null }, look) {
+export function whereTree({ segment, board, asking, limits, lastSeen, nowMs, timeZone }, terminal) {
+  const look = { ...terminal, color: false };
   const clock = { nowMs, timeZone };
   const job = jobView(segment);
   return [
     allLine(job, clock, look, trendPart(board?.trend, look)), ...roadLines(job, board?.road ?? null, clock, look),
-    ...workLines(board, identity ?? boardIdentity(board), asking, clock, look), footLine(board, asking, look),
+    ...workLines(board, asking, clock, look), footLine(board, asking, look),
     ...limitLines(Array.isArray(limits) ? limits : [], clock, look), costLine(lastSeen, nowMs, look),
   ];
 }

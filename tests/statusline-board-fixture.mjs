@@ -1,19 +1,18 @@
 // The board of the owner's 2026-11-22 screenshot (spec-tui-3), as agent rows only (the workflow rows are gone): one implementer, three
-// read-only reviewers, three lane branches and main, for the identity colour tests (statusline-identity*.test.mjs).
+// read-only reviewers, three lane branches and main, for the row, safety and `/where` tests (statusline-rows, statusline-safety).
 // Exports: screenshotBoard(nowMs) -> board; placedWriterBoard(nowMs) -> the same board with writers placed in two lanes;
-// agentNamed(name, fields) -> one agent of the board; viewOf(board, nowMs, env) -> the view statusRows takes; lookFor(env, columns);
-// TERM_256, TERM_16, NO_COLOR_ENV (terminal environments); NOW.
+// viewOf(board, nowMs, env) -> the view statusRows takes; lookFor(env, columns);
+// TERM_256, NO_COLOR_ENV (terminal environments); NOW.
 // `screenshotBoard` is what the live board shows: the reviewers are read-only agents that no sure fact places in a worktree, so no
-// agent row names a lane or shares a branch row's hue (repos.mjs placeAgents; README "Which is where").
-// `placedWriterBoard` is the case that has a tie: two implementers are placed in the lane worktrees `remove-modes` and
-// `road-gate-landed-row`, so their rows say the branch in the branch's hue; `sync-remote-path` is a lane no agent works on.
+// agent row names a lane (repos.mjs placeAgents).
+// `placedWriterBoard` is the case with a tie: two implementers are placed in the lane worktrees `remove-modes` and
+// `road-gate-landed-row`, so their rows name the branch; `sync-remote-path` is a lane no agent works on.
 import { lookOf } from '../home/tools/board/lib/cells.mjs';
 
 export const NOW = Date.UTC(2026, 10, 22, 9, 0);
 const MIN_MS = 60_000;
-/** The environments of a 256-colour terminal, a 16-colour one and one with NO_COLOR set (UTF-8 locale in each). */
+/** The environments of a 256-colour terminal and one with NO_COLOR set (UTF-8 locale in each). */
 export const TERM_256 = { TERM: 'xterm-256color', COLORTERM: 'truecolor', LANG: 'en_US.UTF-8', LINES: '36' };
-export const TERM_16 = { TERM: 'xterm', LANG: 'en_US.UTF-8', LINES: '36' };
 export const NO_COLOR_ENV = { ...TERM_256, NO_COLOR: '1' };
 
 const agent = (fields) => ({
@@ -21,8 +20,6 @@ const agent = (fields) => ({
   highLeftMin: 25, overMin: 0, usual: [10, 30], tag: null, doing: 'Edit render.mjs', calls: 12, tokens: 40_000, quietMin: 0,
   pendingMin: 0, doneMs: null, repo: 'claude-setup', wt: null, branch: null, unplaced: null, ...fields,
 });
-/** One running agent of the board with the given name (a short one: the name column is 16 to 22 characters). */
-export const agentNamed = (name, fields = {}) => agent({ id: name, name, ...fields });
 const reviewer = (fields) => ({ name: 'reviewer:opus', type: 'reviewer', writer: false, unplaced: 'claude-setup · read-only', ...fields });
 const worktree = (name, fields) => ({
   name, path: `/r/wt/${name}`, branch: name, main: false, ahead: 0, behind: 0, changed: 0, op: null, ageMin: 10, agents: [],

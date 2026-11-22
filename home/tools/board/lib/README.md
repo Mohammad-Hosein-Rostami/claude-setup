@@ -17,15 +17,16 @@ Collecting (run only by the detached refresh):
 - `job-facts.mjs`: the session's road (id, goal, current step, lanes landed) and the trend of the job's finish clock.
 - `read-part.mjs`: a bounded read of a plain file (never a link or a folder, never more than a set number of bytes).
 - `cache-file.mjs`: the refresher's own cache files per session (transcript cursors, git cache, agent run times).
-- `hue-store.mjs`: keeps the colour of each work item between renders so it never changes while the item is live.
 
-Drawing (used by the status line and `/where`):
-- `cells.mjs`: the cells every row is drawn with: glyphs, colour, bars, durations, clocks, fitting parts to a width.
-- `identity.mjs`: gives every work item one hue and one marker shape, so an agent row and its branch row read as one item.
-- `layout.mjs`: packs the board into the rows the terminal has room for and folds agent rows by urgency.
-- `render.mjs`: the status line rows, in order, for the width and height of the terminal.
-- `work-row.mjs`: the job row: the session's job against its estimate and step.
-- `agent-rows.mjs`: one row per agent (bar, confidence, time left, doing now) and the folded forms used when rows run out.
-- `git-rows.mjs`: the git rows: branch, ahead/behind, changed files, last commit age and the agents there.
-- `stat-rows.mjs`: the stat rows: the road's current step and the finish clock's trend.
-- `tree.mjs`: the full tree `/where` prints, with every item unclipped, what waits on the owner and the limits per account.
+Drawing: the status line is 2 rows when calm and at most 4 when busy (alert, job, one agents summary, git and session); every
+per-agent and per-worktree detail is in `/where`, which is plain text (no colour codes). Colour marks a state only, never an
+agent or a branch.
+- `cells.mjs`: the cells every row is drawn with: glyphs, state colours, bars, durations, clocks, fitting parts to a width.
+- `render.mjs`: the status line rows, in order: alert, job, agents summary, git and session.
+- `work-row.mjs`: the job row: live work only (the live road's current step, else the started rows).
+- `layout.mjs`: the row budget, the status line's one agents summary row, and for `/where` the counts row and every agent row.
+- `agent-rows.mjs`: one row per agent for `/where` (bar, confidence, time left, doing now, where it works).
+- `git-rows.mjs`: the status line's one git summary, and for `/where` one row per worktree (branch, ahead/behind, changed files,
+  last commit age, the agents there).
+- `stat-rows.mjs`: the road part of the job row, and for `/where` the road row and the finish clock's trend.
+- `tree.mjs`: the plain-text tree `/where` prints, with every item unclipped, what waits on the owner and the limits per account.

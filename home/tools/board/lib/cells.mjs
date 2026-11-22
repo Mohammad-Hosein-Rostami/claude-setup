@@ -2,15 +2,13 @@
 // durations, clocks, and fitting a row of parts to a width. Used by render.mjs (the status line rows) and tree.mjs (`/where`).
 // Exports: lookOf(env, platform, columns) -> look; paint(text, state, look, bold); cleanText(text, look); cutWords(text, max, look);
 // fitParts(parts, look) -> string; barText(shares, cells, look); durationText(minutes); clockOf(ms, nowMs, timeZone); STATE;
-// hueState(hue) -> state; HUE_CODES.
+// DONE_SHOWN_MS.
 // Colour (owner decision RC5, 2026-11-22: colour only for state; basic ANSI 16 so the terminal theme maps them on dark and light
 // themes), one meaning each: run cyan (working), warn yellow (needs a look), block red (error, act now), wait magenta (waiting on the
 // owner), dim (SGR 2, secondary text); `strong` is bold with no colour (the alert's label). `done` and `road` are kept as states
-// for old callers and paint nothing: a healthy value is in the default colour. A part's `bold` makes it bold.
-// Identity hues (spec-tui-3, `/where` only since RC5; the status line draws none): a work item's hue (`hueState(n)`, identity.mjs
-// picks n) is one of HUE_CODES in the 256-colour cube, never a state's code; on a 16-colour terminal (TERM and COLORTERM name no
-// 256 or true colour) the hues cycle bold, underline, plain (WT_SESSION, Windows Terminal, counts as 256-colour); without colour
-// none. A part may carry `spans` (texts in order whose join is its text, each with its own state).
+// for old callers and paint nothing: a healthy value is in the default colour. A part's `bold` makes it bold. No per-item colour
+// (RC5 removed the identity hues of spec-tui-3). A part may carry `spans` (texts in order whose join is its text, each with its
+// own state).
 // Look: ASCII when CLAUDE_STATUS_ASCII=1, TERM=dumb, Windows without WT_SESSION and TERM_PROGRAM (the old console host), or a locale
 // that is set and not UTF-8; colour off when NO_COLOR is set to any non-empty value (no-color.org) or TERM=dumb.
 // Invariants: pure (no I/O); colour only for a state and every state also has a word in the text (colour is never the only signal); in ASCII mode no
@@ -20,19 +18,8 @@ import { clockText, dayText, localDate } from '../../estimate/lib/local-clock.mj
 /** The states a part may carry; ok, done and road have no colour (RC5: a healthy value and a label are in the default colour). */
 export const STATE = { ok: 'ok', done: 'done', run: 'run', warn: 'warn', block: 'block', wait: 'wait', dim: 'dim', road: 'road', strong: 'strong' };
 const COLOR_CODE = { run: '\u001b[36m', warn: '\u001b[33m', block: '\u001b[31m', wait: '\u001b[35m', dim: '\u001b[2m', strong: '\u001b[1m' };
-/**
- * The identity hues, xterm 256-colour indexes chosen for the best contrast on both a #1e1e1e and a #ffffff background. Measured WCAG
- * ratios (dark / white): 31 4.04 / 4.13, 166 4.39 / 3.80, 99 4.06 / 4.11, 64 3.93 / 4.24, 197 4.30 / 3.88, 133 4.03 / 4.13, so 3.80 to
- * 4.39 over both; no colour reaches 4.5:1 on both (the best any cube colour reaches on both is 4.06): blue, orange, violet, green,
- * pink, orchid.
- */
-export const HUE_CODES = [31, 166, 99, 64, 197, 133];
-/** A finished agent keeps its row this long; identity.mjs lets it hold a hue only that long too. */
+/** A finished agent keeps its row this long. */
 export const DONE_SHOWN_MS = 30_000;
-const HUE_STATE = /^hue:(\d+)$/;
-/** The 16-colour stand-ins of the hues, cycled so that with the marker shape (hue % 3) each of the six hues looks different. */
-const HUE_STYLES_16 = ['\u001b[1m', '\u001b[4m', ''];
-const COLOR_TERM = /256|truecolor|24bit|direct/i;
 const BOLD = '\u001b[1m';
 const RESET = '\u001b[0m';
 const UNICODE = { done: '█', left: '░', over: '▓', now: '▒', sep: ' · ', bar: ' │ ', cut: '…' };
@@ -69,27 +56,17 @@ function wantsAscii(env, platform) {
  * @param {Record<string, string | undefined>} env the process environment
  * @param {string} platform process.platform
  * @param {number} columns the width rows are fitted to
- * @returns {{ columns: number, ascii: boolean, color: boolean, colors256: boolean, glyph: typeof UNICODE }} the look of every row
- *   drawn for this terminal; colors256: TERM or COLORTERM names 256 or true colour, or WT_SESSION is set (Windows Terminal, which
- *   sets neither of them); else the hues fall back to bold/underline/plain
+ * @returns {{ columns: number, ascii: boolean, color: boolean, glyph: typeof UNICODE }} the look of every row drawn for this
+ *   terminal
  */
 export function lookOf(env, platform, columns) {
   const ascii = wantsAscii(env, platform);
   const color = !env.NO_COLOR && env.TERM !== 'dumb';
-  return { columns, ascii, color, colors256: color && (Boolean(env.WT_SESSION) || COLOR_TERM.test(`${env.TERM ?? ''} ${env.COLORTERM ?? ''}`)), glyph: ascii ? ASCII : UNICODE };
+  return { columns, ascii, color, glyph: ascii ? ASCII : UNICODE };
 }
-
-/** @returns {string} the state of identity hue `hue` (an index into HUE_CODES) */
-export const hueState = (hue) => `hue:${hue}`;
 
 /** The escape code of a state on this terminal; '' for ok, an unknown state, or no colour. */
-function codeOf(state, look) {
-  if (!look.color) return '';
-  const hue = HUE_STATE.exec(state ?? '');
-  if (hue === null) return COLOR_CODE[state] ?? '';
-  const index = Number(hue[1]) % HUE_CODES.length;
-  return look.colors256 ? `\u001b[38;5;${HUE_CODES[index]}m` : HUE_STYLES_16[(index + Math.floor(index / 3)) % 3];
-}
+const codeOf = (state, look) => (look.color ? COLOR_CODE[state] ?? '' : '');
 
 /** @returns {string} the text in the colour of its state, bold when asked (no codes without colour, for ok, or an unknown state) */
 export function paint(text, state, look, bold = false) {

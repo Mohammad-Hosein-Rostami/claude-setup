@@ -1,14 +1,13 @@
-// Tests for untrusted names on the rows the identity colours rewrote (P5, spec-tui-3 fix round 1): an agent, branch,
+// Tests for untrusted names on the status line and `/where` rows (P5, spec-tui-3 fix round 1, RC8): an agent, branch,
 // worktree, repository, operation or account name holding escape codes, C1 controls, a hyperlink, a bidi override, a line
-// separator or a newline reaches no row as anything but plain text, in every form of the status line and in `/where`; and the
-// branch behind `on <branch>` is cut at its width. Each outside text on those rows goes through cleanText: removing any one of
+// separator or a newline reaches no row as anything but plain text, in every form of the status line and in `/where`, which
+// carries no escape byte at all on any terminal. Each outside text on those rows goes through cleanText: removing any one of
 // those calls puts a raw control character on a row here and fails the test.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { statusRows } from '../home/tools/board/lib/render.mjs';
 import { whereTree } from '../home/tools/board/lib/tree.mjs';
-import { boardIdentity } from '../home/tools/board/lib/identity.mjs';
-import { lookFor, NO_COLOR_ENV, NOW, placedWriterBoard, screenshotBoard, TERM_256, viewOf } from './statusline-identity-fixture.mjs';
+import { lookFor, NO_COLOR_ENV, NOW, screenshotBoard, TERM_256, viewOf } from './statusline-board-fixture.mjs';
 
 const ESC = '\u001b';
 /** A name that opens a hyperlink, a C1 control, a bidi override, a line separator and a newline before its visible letters. */
@@ -40,7 +39,7 @@ function hostileBoard({ noMain = false } = {}) {
   return board;
 }
 
-/** Every row of the status line in every form (rows given by LINES) for one terminal and width, and `/where`. */
+/** Every row of the status line in every form (rows given by LINES) for one terminal and width, and `/where` (marked `where`). */
 function rowsOf(env, columns) {
   return [{}, { noMain: true }].flatMap((variant) => {
     const board = hostileBoard(variant);
@@ -49,7 +48,7 @@ function rowsOf(env, columns) {
       { ...viewOf(board, NOW, { ...env, LINES: lines }), account: hostile('acct'), asking: waiting }, lookFor(env, columns),
     )));
     const where = whereTree({ segment: null, board, asking: null, limits: [], lastSeen: null, nowMs: NOW, timeZone: 'UTC' }, lookFor(env, columns));
-    return [...status, ...where];
+    return [...status.map((row) => ({ row, where: false })), ...where.map((row) => ({ row, where: true }))];
   });
 }
 
@@ -57,12 +56,12 @@ test('hostile names reach no row as a control, format or line-break character, i
   let checked = 0;
   for (const env of [TERM_256, NO_COLOR_ENV, ASCII_ENV]) {
     for (const columns of COLUMNS) {
-      for (const row of rowsOf(env, columns)) {
+      for (const { row, where } of rowsOf(env, columns)) {
         const shown = ownCodes(row);
         assert.doesNotMatch(shown, BAD, JSON.stringify(shown));
         assert.ok([...shown].length <= columns - 5, `${columns}: ${shown}`);
         if (env === ASCII_ENV) assert.doesNotMatch(row, /[^ -~]/, row);
-        if (env !== TERM_256) assert.ok(!row.includes(ESC), 'no escape code without colour');
+        if (env !== TERM_256 || where) assert.ok(!row.includes(ESC), `no escape code without colour or in /where: ${JSON.stringify(row)}`);
         checked += 1;
       }
     }
@@ -71,7 +70,7 @@ test('hostile names reach no row as a control, format or line-break character, i
 });
 
 test('the hostile names do show up (as plain text), so the check above is not passing on empty rows', () => {
-  const rows = rowsOf(NO_COLOR_ENV, 160).map(ownCodes).join('\n');
+  const rows = rowsOf(NO_COLOR_ENV, 160).map(({ row }) => ownCodes(row)).join('\n');
   for (const word of ['agent', 'main-op', 'rebase', 'repo', 'acct']) assert.match(rows, new RegExp(word), word);
 });
 

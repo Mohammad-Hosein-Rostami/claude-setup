@@ -1,19 +1,20 @@
-// Status line (spec-tui; display design direction B): 2 to 12 rows by the terminal's height (LINES), drawn by
-// tools/board/lib/render.mjs and fitted to COLUMNS - 5 (both read on every run). This file only reads and writes; render.mjs holds every rule of what is shown.
+// Status line (owner decisions RC5, RC6, RC8 of 2026-11-22): 2 rows when calm and at most 4 when busy (2 on a terminal under 12
+// LINES), drawn by tools/board/lib/render.mjs and fitted to COLUMNS - 5 (both read on every run); colour only for a state, no
+// per-agent hue; every per-agent and per-worktree detail is in `/where`. This file only reads and writes; render.mjs holds every
+// rule of what is shown.
 // Reads: the status input (stdin JSON), the estimate cache entry of the session's job (tools/estimate/lib/segment-cache.mjs), the
-// session's board file (tools/board/lib/refresh.mjs), its asking marker (hooks/lib/asking-marker.mjs: a question waits 60 s, the
-// board's idle refresh every 60 s would miss it), this account's last-seen limits file (tools/estimate/lib/limits-store.mjs) and the identity
-// hues kept for the board's items (tools/board/lib/hue-store.mjs: a small file in the board cache, so an item's colour holds).
+// session's board file (tools/board/lib/refresh.mjs), its asking marker (hooks/lib/asking-marker.mjs: a question waits 2 minutes
+// (RC3), and the alert row must show at once, not after the board's idle refresh every 60 s) and this account's last-seen limits
+// file (tools/estimate/lib/limits-store.mjs).
 // Writes (spec-p5 `r9-statusline`, last-seen files): this account's limit sample when `rate_limits` changed (CLAUDE_ACCOUNT; none
 // without it, so accounts never mix) and the session's last-seen cost (~/.claude/state/last-seen/<session>.json, the API-price
-// equivalent `/where` shows; `$` is not on the line, audit case 11) and, when the board's items got new hues, that hue file.
+// equivalent `/where` shows; `$` is not on the line, audit case 11).
 // Spawns: only the claimed detached refreshes (the estimate cache's and the board's, one at a time each); no git, no launcher.
 // Never blank: an error while drawing prints the session row and a `status line error: <reason>` line; an error before that (reading
 // the input or the caches) prints the error line alone; exit 0 always (an empty output or a non-zero exit blanks the row).
 import { readAsking } from './hooks/lib/asking-marker.mjs';
 import { isSessionId, writeSessionFile } from './hooks/lib/session-store.mjs';
 import { lookOf } from './tools/board/lib/cells.mjs';
-import { identityOf } from './tools/board/lib/hue-store.mjs';
 import { claimBoardRefresh, readBoard, startBoardRefresh } from './tools/board/lib/refresh.mjs';
 import { sessionRow, statusRows } from './tools/board/lib/render.mjs';
 import { systemTimeZone } from './tools/estimate/lib/local-clock.mjs';
@@ -63,7 +64,7 @@ function render(d) {
   });
   const board = sessionBoard(d, nowMs);
   const view = {
-    input: d, segment, board, identity: identityOf(d.session_id, board, { nowMs }), asking: isSessionId(d.session_id) ? readAsking(d.session_id, process.env, nowMs) : null,
+    input: d, segment, board, asking: isSessionId(d.session_id) ? readAsking(d.session_id, process.env, nowMs) : null,
     limitsFile: readLimits(account), account, env: process.env, nowMs, timeZone: systemTimeZone(),
   };
   const look = lookOf(process.env, process.platform, terminalColumns());

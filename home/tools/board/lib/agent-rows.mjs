@@ -2,23 +2,21 @@
 // confidence form, time left and finish clock, and what it does now; plus the folded forms (spark strip, `+K more`) the packing in
 // layout.mjs uses when rows run out.
 //   ▸ agents · 3 run
-//    ├ ● impl-a  implementer  █████▒░░ ~60% · 12 min left · 16:20 · Edit render.mjs · r9-a ↑2 ●3 · 23 calls
+//    ├ impl-a  implementer  █████▒░░ ~60% · 12 min left · 16:20 · Edit render.mjs · r9-a ↑2 ●3 · 23 calls
 // Exports: agentRow(agent, ctx, look), plainHeader(agents, ctx, look), sparkText(agents, look), agentBrief(agent, ctx, look),
 // foldRow(prefix, agents, ctx, look), treeMark(last, look), urgencyOf(agent), countsText(agents, look).
 // Ctx: { nowMs, timeZone, at (the board's time: left minutes count from it), repo (board.repo), repos (every repository: board.repo
-// and board.repos, for an agent's worktree), folded, identity (identity.mjs boardIdentity: the hues of the board's items) }.
-// Identity (spec-tui-3): an agent row's name carries its marker in its hue (its lane branch's when it works in one); the name is cut
-// at a word or `-`.
+// and board.repos, for an agent's worktree), folded }.
+// The name is cut at a word or `-`, in the default colour (RC5: no per-agent hue).
 // Rules: a percent only with confidence (`62%` high, `~60%` medium), else `est…` with a moving ▒ cell and the type's usual time;
 // over the type's 85th percentile: `over usual by 9 min` with ▓; `quiet 4 min` from 3 min without a write and no call waiting;
 // a call still waiting shows its minutes. The description is cut at a word (cells.mjs cutWords), and the type stays: a column
-// from 115 columns, a part after the bar below. Colour (spec-tui-2): a running bar cyan, done green, quiet and over usual yellow, each
-// with its word. Where it works (repository:branch, commits ahead of the base, uncommitted files, or `read-only` / `no repo`) is
+// from 115 columns, a part after the bar below. Colour (spec-tui-2; `/where` prints it plain, tree.mjs): a running bar cyan, quiet
+// and over usual yellow, each with its word. Where it works (repository:branch, commits ahead of the base, uncommitted files, or `read-only` / `no repo`) is
 // never dropped. Drop order inside a row (fitParts): row id first, then tokens and calls, doing, then type and finish clock;
 // name, bar, percent, state word, time left and place are never dropped.
 // Invariants: pure (no I/O); every outside text goes through cleanText; every row fits look.columns.
-import { barText, clockOf, cleanText, cutWords, durationText, fitParts, hueState, STATE } from './cells.mjs';
-import { agentKey, hueOf, markerOf } from './identity.mjs';
+import { barText, clockOf, cleanText, cutWords, durationText, fitParts, STATE } from './cells.mjs';
 import { WIDE_COLUMNS } from './work-row.mjs';
 
 const FULL_COLUMNS = 150;
@@ -36,7 +34,6 @@ const UNPLACED_SEP = ' · ';
 const MIN_FOLDER_CHARS = 4;
 const DOING_CHARS = 24;
 const WIDE_DOING_CHARS = 36;
-const MARKER_CHARS = 2; // the identity marker and its space before an agent's name
 const MS_PER_MIN = 60_000;
 const MIN_PER_HOUR = 60;
 const SPIN_MS = 5000; // the estimating cell moves one place per refresh
@@ -156,14 +153,13 @@ function wherePart(agent, ctx, look) {
  * @returns {string} the row
  */
 export function agentRow(agent, ctx, look) {
-  const nameWidth = (wide(look) ? WIDE_NAME_CHARS : NAME_CHARS) - MARKER_CHARS;
-  const hue = hueOf(ctx.identity, agentKey(ctx.identity, agent));
-  const name = `${markerOf(hue, look)} ${cutWords(cleanText(agent.name, look), nameWidth, look).padEnd(nameWidth)}`;
+  const nameWidth = wide(look) ? WIDE_NAME_CHARS : NAME_CHARS;
+  const name = cutWords(cleanText(agent.name, look), nameWidth, look).padEnd(nameWidth);
   const type = cleanText(agent.type ?? '?', look);
   const column = wide(look) ? ` ${cutWords(type, TYPE_CHARS, look).padEnd(TYPE_CHARS)}` : '';
   const prefix = ctx.prefix ?? ' ';
   return fitParts([
-    { text: `${prefix}${name}${column}`, spans: [{ text: prefix }, { text: name, state: hueState(hue) }, { text: column }], bold: look.urgent === `agent:${agent.id}` },
+    { text: `${prefix}${name}${column}` },
     barPart(agent, ctx, look),
     timePart(agent, ctx, look), ...clockParts(agent, ctx, look),
     agent.state === 'done' ? { text: '' } : doingPart(agent, look),
