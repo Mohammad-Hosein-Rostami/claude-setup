@@ -80,6 +80,15 @@ test('every file a catalog row names exists', () => {
   assert.deepEqual(missingFiles(readTables(readFileSync(CATALOG, 'utf8')), REPO), []);
 });
 
+test('the settings hooks row names only hook files that exist, and the session-notes hook', () => {
+  const settings = readTables(readFileSync(CATALOG, 'utf8')).find((table) => table.section === 'Settings keys');
+  const hooksRow = settings?.rows.find(([key]) => key === '`hooks`');
+  assert.ok(hooksRow, 'the Settings keys table has a `hooks` row');
+  const scripts = namesOf(hooksRow[1]).filter((name) => name.endsWith('.mjs'));
+  assert.deepEqual(scripts.filter((name) => !existsSync(join(REPO, 'home', 'hooks', name))), [], 'hook files the row names but home/hooks lacks');
+  assert.ok(scripts.includes('session-notes.mjs'), 'the row names session-notes.mjs');
+});
+
 test('the key check finds a row that was added twice, and the path check finds a row whose file is gone', () => {
   const root = makeTempDir('catalog-fixture-');
   mkdirSync(join(root, 'home', 'agents'), { recursive: true });

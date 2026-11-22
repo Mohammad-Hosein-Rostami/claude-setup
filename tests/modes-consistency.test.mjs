@@ -14,6 +14,13 @@ test('lead-rules.md carries the lead-discipline rules and stays small', () => {
   assert.ok(lead.split('\n').length <= 100, 'lead-rules.md is injected into every session; keep it <= 100 lines');
 });
 
+// Was "ultra-high playbook keeps ..." on home/modes/ultra-high.md; two of its rules moved to lead-rules.md with the modes removal.
+test('lead-rules.md keeps the assembly and compact-before-waiting rules', () => {
+  const lead = read('home/lead-rules.md');
+  assert.match(lead, /Workflow assembly is not judgment/);
+  assert.match(lead, /`\/compact` first/);
+});
+
 test('home/CLAUDE.md names Persian replies, the STATUS.md re-read and the Grep tool or rg', () => {
   const text = read('home/CLAUDE.md');
   assert.match(text, /Persian included/);
