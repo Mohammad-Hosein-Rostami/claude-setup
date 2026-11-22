@@ -1,10 +1,11 @@
 // Size tests for the standing-rules digest (home/tools/status/status-digest.mjs rulesText) and its doctor lines
 // (home/tools/status/rules-size.mjs rulesDigestBudget, printed by `token-audit.mjs --budget`): the rules string stays within
-// RULES_CAP, always and project rules are never cut, job rules are shown newest first and the oldest are left out with a closing
-// line that names the file, the replaced rules are one count line, and the doctor warns only when the always and project rules
-// alone pass the bound.
+// RULES_CAP on every path (also when the always and project rules alone pass it), no rule is ever cut mid-text, job rules are shown
+// newest first and the rules left out are named in a true closing line with the file, the replaced rules are one count line, the
+// rules part prints at a fresh start too, and the doctor fails when always or project rules are left out and warns when only job
+// rules are.
 // How: STATUS.md texts are built here; the link store is a temp folder filled with noteTable, passed as the state dir, so no
-// test reads the owner's state; the CLI runs with HOME set to a cs-test- temp folder.
+// test reads the owner's state; the CLI runs with HOME set to a cs-test- temp folder whose store this process filled.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -13,12 +14,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { noteTable } from '../home/tools/estimate/lib/table-store.mjs';
 import { rulesDigestBudget } from '../home/tools/status/rules-size.mjs';
-import { RULES_CAP, STRING_CAP, rulesText, statusDigestPart } from '../home/tools/status/status-digest.mjs';
+import { RULES_CAP, STRING_CAP, rulesDigest, rulesText, statusDigestPart } from '../home/tools/status/status-digest.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const AUDIT = fileURLToPath(new URL('../home/hooks/token-audit.mjs', import.meta.url));
 const SESSION_A = '11111111-1111-4111-8111-111111111111';
 const SESSION_B = '22222222-2222-4222-8222-222222222222';
+const SESSION_C = '33333333-3333-4333-8333-333333333333';
 const WORDS_CHARS = 200; // 60 rules of this length pass RULES_CAP; 20 of them do not
 const NOW_MS = Date.parse('2026-11-22T10:00Z');
 const PATH = '/work/job/STATUS.md';
@@ -84,14 +86,51 @@ test('old readers: an untagged bullet reads as always, replaced rules are one co
   ]);
 });
 
-test('always and project rules alone over the bound: every one printed whole with the full-list line, no job rule', () => {
+/** The always rule numbers a rules string shows, each checked whole (its words exactly as written). */
+function wholeAlwaysShown(out) {
+  const shown = out.split('\n').filter((line) => line.includes('always-')).map((line) => Number(line.match(/always-(\d+) /)[1]));
+  for (const n of shown) assert.ok(out.includes(words(`always-${n}`)), `always rule ${n} is whole`);
+  return shown;
+}
+
+test('always and project rules alone over the bound: within RULES_CAP, the first ones whole in file order, the rest counted', () => {
   const bullets = Array.from({ length: 50 }, (_, i) => `- ${words(`always-${i + 1}`)} {R${i + 1} 2026-11-01 ${i % 2 ? 'always' : 'project'}}`);
   bullets.push(`- ${words('job-1')} {R51 2026-11-02 job}`);
-  const out = rulesText(statusWith(bullets), PATH);
-  assert.ok(out.length > RULES_CAP, 'over the bound by design (the doctor warns)');
-  for (let n = 1; n <= 50; n += 1) assert.ok(out.includes(words(`always-${n}`)), `rule ${n} is whole`);
-  assert.ok(!out.includes('job-1 '));
-  assert.equal(out.split('\n').at(-1), `Full list: ${PATH} (the always and project rules alone pass ${RULES_CAP} chars; 1 job rule not shown: read ${PATH})`);
+  const digest = rulesDigest(statusWith(bullets), PATH);
+  assert.ok(digest.text.length <= RULES_CAP, `the rules string is ${digest.text.length} chars, bound ${RULES_CAP}`);
+  const shown = wholeAlwaysShown(digest.text);
+  assert.deepEqual(shown, Array.from({ length: shown.length }, (_, i) => i + 1), 'the first always rules, in file order');
+  assert.ok(!digest.text.includes('job-1 '));
+  assert.deepEqual([digest.hiddenAlways, digest.hiddenJob], [50 - shown.length, 1]);
+  assert.equal(digest.text.split('\n').at(-1), `${50 - shown.length} always or project rules and 1 job rule not shown (the rules pass the ${RULES_CAP}-char bound): read the full list in ${PATH}`);
+});
+
+test('always rules of 9,950 chars in all: the framed SessionStart string stays under the hook cap, no rule cut', () => {
+  const bullets = Array.from({ length: 45 }, (_, i) => `- ${words(`always-${i + 1}`)} {R${i + 1} 2026-11-01 always}`);
+  const text = statusWith(bullets);
+  assert.ok(text.length > 9950, `the fixture is ${text.length} chars`);
+  const out = rulesText(text, PATH);
+  assert.ok(`<status-digest part="rules">\n${out}\n</status-digest>`.length <= STRING_CAP);
+  assert.ok(out.length <= RULES_CAP, `${out.length} chars`);
+  const shown = wholeAlwaysShown(out);
+  assert.match(out.split('\n').at(-1), new RegExp(`^${45 - shown.length} always or project rules and 0 job rules not shown`));
+});
+
+test('always rules that fit but leave no room for the job closing line: the closing line is true, the total within the bound', () => {
+  const bullets = [];
+  while (rulesText(statusWith(bullets), PATH).length < RULES_CAP - 2 * WORDS_CHARS) bullets.push(`- ${words(`always-${bullets.length + 1}`)} {R${bullets.length + 1} 2026-11-01 always}`);
+  const room = RULES_CAP - rulesText(statusWith(bullets), PATH).length - 1;
+  bullets.push(`- ${`always-${bullets.length + 1} `.padEnd(room - 30, 'q')} {R${bullets.length + 1} 2026-11-01 always}`);
+  const alwaysOnly = rulesText(statusWith(bullets), PATH);
+  assert.ok(alwaysOnly.length <= RULES_CAP && alwaysOnly.length > RULES_CAP - 30, `the always rules alone take ${alwaysOnly.length} chars`);
+  bullets.push(`- ${words('job-1')} {R${bullets.length + 1} 2026-11-02 job}`);
+  const digest = rulesDigest(statusWith(bullets), PATH);
+  assert.ok(digest.text.length <= RULES_CAP, `${digest.text.length} chars`);
+  const shownAlways = digest.text.split('\n').filter((line) => line.includes('always-')).length;
+  assert.equal(shownAlways + digest.hiddenAlways, bullets.length - 1, 'every always rule is either shown or counted');
+  assert.equal(digest.hiddenJob, 1);
+  assert.doesNotMatch(digest.text, /alone pass/, 'the always rules alone do fit: the line must not say they pass');
+  assert.equal(digest.text.split('\n').at(-1), `${digest.hiddenAlways} always or project rule${digest.hiddenAlways === 1 ? '' : 's'} and 1 job rule not shown (the rules pass the ${RULES_CAP}-char bound): read the full list in ${PATH}`);
 });
 
 test('500 job rules in a 180 KB STATUS.md stay within the bound; the file text is framed as data with angle brackets removed', () => {
@@ -116,25 +155,38 @@ test('the SessionStart rules part keeps its frame and stays under the hook strin
   assert.ok(out.length < STRING_CAP, `${out.length} chars`);
 });
 
-test('rulesDigestBudget: one line per linked STATUS.md, warn only over the bound, a gone or foreign path skipped, never silent', () => {
+test('the rules part prints at a fresh start too; the state part waits for a resume or a compaction', () => {
+  const cwd = makeTempDir('digest-size-start-');
+  writeFileSync(join(cwd, 'STATUS.md'), statusWith(['- keep it short {R1 2026-11-01 always}']));
+  const start = { hook_event_name: 'SessionStart', source: 'startup', session_id: SESSION_A, cwd };
+  const deps = { stateDir: makeTempDir('digest-size-start-state-') };
+  assert.match(statusDigestPart('rules', start, deps), /^<status-digest part="rules">\nStanding rules of .*\n- R1 \(always, 2026-11-01\) keep it short\n<\/status-digest>$/);
+  assert.equal(statusDigestPart('state', start, deps), '');
+  assert.equal(statusDigestPart('rules', { ...start, agent_id: 'a1' }, deps), '', 'never inside an agent');
+});
+
+test('rulesDigestBudget: one line per linked STATUS.md, fail for lost always rules, warn for lost job rules, gone or foreign skipped', () => {
   const stateDir = makeTempDir('digest-size-store-');
   assert.deepEqual(rulesDigestBudget(stateDir), ['ok\trules digest: no linked STATUS.md']);
   const small = join(makeTempDir('digest-size-small-'), 'STATUS.md');
+  const short = join(makeTempDir('digest-size-short-'), 'STATUS.md');
   const huge = join(makeTempDir('digest-size-huge-'), 'STATUS.md');
   const gone = join(makeTempDir('digest-size-gone-'), 'STATUS.md');
   writeFileSync(small, sixtyRules());
   writeFileSync(huge, statusWith(Array.from({ length: 50 }, (_, i) => `- ${words(`always-${i}`)} {R${i + 1} 2026-11-01 always}`)));
   writeFileSync(gone, sixtyRules());
-  for (const [path, sessionId] of [[small, SESSION_A], [huge, SESSION_B], [small, SESSION_B], [gone, SESSION_A]]) {
+  writeFileSync(short, statusWith(['- one rule {R1 2026-11-01 always}']));
+  for (const [path, sessionId] of [[small, SESSION_A], [huge, SESSION_B], [small, SESSION_B], [gone, SESSION_A], [short, SESSION_C]]) {
     assert.equal(noteTable(stateDir, path, { sessionId, ids: [], nowMs: NOW_MS }), true);
   }
   rmSync(gone);
   mkdirSync(join(stateDir, 'table'), { recursive: true });
   writeFileSync(join(stateDir, 'table', `${'a'.repeat(32)}.json`), JSON.stringify({ v: 2, path: 'C:\\Users\\me\\job\\STATUS.md', sessions: [], added: {}, rows: [], jobs: [], commit: null, log: [] }));
   const lines = rulesDigestBudget(stateDir).sort();
-  assert.equal(lines.length, 2, lines.join('\n'));
-  assert.match(lines[0], new RegExp(`^ok\\trules digest \\d+ chars \\(bound ${RULES_CAP}\\): .*digest-size-small-`));
-  assert.match(lines[1], new RegExp(`^warn\\trules digest \\d+ chars \\(bound ${RULES_CAP}\\): .*digest-size-huge-`));
+  assert.equal(lines.length, 3, lines.join('\n'));
+  assert.match(lines[0], new RegExp(`^fail\\trules digest \\d+ chars \\(bound ${RULES_CAP}\\): \\d+ always or project rules and 0 job rules not shown .*digest-size-huge-`));
+  assert.match(lines[1], new RegExp(`^ok\\trules digest \\d+ chars \\(bound ${RULES_CAP}\\): .*digest-size-short-`));
+  assert.match(lines[2], new RegExp(`^warn\\trules digest \\d+ chars \\(bound ${RULES_CAP}\\), \\d+ job rules not shown \\(the oldest\\): .*digest-size-small-`));
 });
 
 test('token-audit --budget with no linked STATUS.md says so in one ok line', () => {
@@ -144,4 +196,25 @@ test('token-audit --budget with no linked STATUS.md says so in one ok line', () 
   const run = spawnSync(process.execPath, [AUDIT, '--budget'], { cwd: home, env, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(run.stdout.split('\n').filter((line) => line.includes('rules digest')), ['ok\trules digest: no linked STATUS.md']);
+});
+
+test('token-audit --budget measures a linked STATUS.md in a temp HOME: warn over the bound, ok under it, fail for lost always rules', () => {
+  const home = makeTempDir('digest-size-home-');
+  const tmp = makeTempDir('digest-size-tmp-');
+  const store = join(home, '.claude', 'state', 'estimate'); // the CLI's own store; this process's HOME is another, so noteTable links
+  const files = [['over', sixtyRules(), SESSION_A], ['under', statusWith(['- one rule {R1 2026-11-01 always}']), SESSION_B],
+    ['lost', statusWith(Array.from({ length: 50 }, (_, i) => `- ${words(`always-${i}`)} {R${i + 1} 2026-11-01 always}`)), SESSION_C]];
+  for (const [name, text, sessionId] of files) {
+    const path = join(makeTempDir(`digest-size-${name}-`), 'STATUS.md');
+    writeFileSync(path, text);
+    assert.equal(noteTable(store, path, { sessionId, ids: [], nowMs: NOW_MS }), true);
+  }
+  const env = { ...process.env, HOME: home, USERPROFILE: home, TMPDIR: tmp, TMP: tmp, TEMP: tmp };
+  const run = spawnSync(process.execPath, [AUDIT, '--budget'], { cwd: home, env, encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  const lines = run.stdout.split('\n').filter((line) => line.includes('rules digest')).sort();
+  assert.equal(lines.length, 3, lines.join('\n'));
+  assert.match(lines[0], /^fail\trules digest .*digest-size-lost-/);
+  assert.match(lines[1], /^ok\trules digest .*digest-size-under-/);
+  assert.match(lines[2], /^warn\trules digest .*digest-size-over-/);
 });

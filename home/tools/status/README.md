@@ -65,16 +65,19 @@ Files: `status.mjs` (the commands and the lock), `status-table.mjs` (finding and
 Not covered: changing a row's size or item, deleting a row.
 
 `status-bullets.mjs` holds the rule, decision and next-step formats (writer and reader). `status-digest.mjs` builds the
-STATUS.md half of the digest that `hooks/recall-digest.mjs --part rules|state` prints on SessionStart (compact, resume) and
-PreCompact, in two strings. The rules string stays within `RULES_CAP` (9,000 chars, room for the frame under the hook's
-10,000-char cap): the always and project rules (a bullet without a tag counts as always) in full and in file order, then the job
-rules newest first, then one line counting the replaced rules. When that is too long the oldest job rules are left out and the
-last line says `<n> job rules not shown: read <path>`. An always or project rule is never cut: if they alone pass the bound,
-they are all printed with `Full list: <path>` and doctor warns. The other string holds the open rows with next steps, the
-"Don't redo" list of the HANDOFF.md beside it, the latest decisions and git facts, trimmed to stay under 10,000 chars. The
-STATUS.md is the one linked to the session, else the project's, else the cwd's.
+STATUS.md half of the digest that `hooks/recall-digest.mjs --part rules|state` prints, in two strings: the rules on every
+SessionStart (startup, compact, resume) and on PreCompact, the state on SessionStart (compact, resume) and on PreCompact. The
+rules string never passes `RULES_CAP` (9,000 chars, room for the frame under the hook's 10,000-char cap): the always and project
+rules (a bullet without a tag counts as always) in file order, then the job rules newest first, then one line counting the
+replaced rules. When that is too long, the rules that do not fit are left out from the end of that order and the last line says
+`<n> job rules not shown: read <path>`, or, when always or project rules are left out too,
+`<n> always or project rules and <m> job rules not shown (the rules pass the 9000-char bound): read the full list in <path>`.
+A rule is never cut mid-text. The other string holds the open rows with next steps, the "Don't redo" list of the HANDOFF.md
+beside it, the latest decisions and git facts, trimmed to stay under 10,000 chars. The STATUS.md is the one linked to the
+session, else the project's, else the cwd's.
 
-`rules-size.mjs` (`rulesDigestBudget(stateDir)`) measures that rules string for every STATUS.md in the estimate link store:
-`hooks/token-audit.mjs --budget` prints one `ok` or `warn` line per file (`rules digest <n> chars (bound 9000): <path>`; `warn`
-only over the bound) or `ok\trules digest: no linked STATUS.md`, and `scripts/doctor.sh` shows them under "token budget". A
-STATUS.md that no longer exists is skipped; one in a temp folder is not in the owner's store at all.
+`rules-size.mjs` (`rulesDigestBudget(stateDir)`) measures that rules string for every STATUS.md the estimate store points to
+(each session link and each table): `hooks/token-audit.mjs --budget` prints one line per file, `fail` when always or project
+rules are left out (owner instructions lost), `warn` when only job rules are, else `ok`
+(`rules digest <n> chars (bound 9000)...: <path>`), or `ok\trules digest: no linked STATUS.md`, and `scripts/doctor.sh` shows
+them under "token budget". A STATUS.md that no longer exists is skipped.

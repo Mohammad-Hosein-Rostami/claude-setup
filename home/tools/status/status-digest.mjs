@@ -1,15 +1,17 @@
-// The STATUS.md half of the digest that recall-digest.mjs prints on SessionStart(compact, resume) and PreCompact (spec-p3 `r9-digest`,
-// H4): the standing rules, then the job's state (open rows with their next steps, the latest owner decisions, the
-// "Don't redo" list of the HANDOFF.md beside STATUS.md, and the branch, head and changed files read from git by script).
-// Exports: statusDigestPart(part, input, deps) -> string, rulesText(text, path), stateText(text, path, facts), findStatus(input, deps),
-//   STRING_CAP, RULES_CAP, PARTS.
+// The STATUS.md half of the digest that recall-digest.mjs prints on SessionStart and PreCompact (spec-p3 `r9-digest`, H4): the
+// standing rules (also at a fresh start), then the job's state (after a resume or a compaction only: open rows with their next steps,
+// the latest owner decisions, the "Don't redo" list of the HANDOFF.md beside STATUS.md, and the branch, head and changed files read
+// from git by script).
+// Exports: statusDigestPart(part, input, deps) -> string, rulesDigest(text, path), rulesText(text, path), stateText(text, path, facts),
+//   findStatus(input, deps), STRING_CAP, RULES_CAP, PARTS.
 // Two strings, two hook entries: Claude Code caps hook text at 10,000 chars per string (hooks.md:1091-1095; over it the model gets a
-// file path and a 2,000-char preview), so the rules and the state are separate entries, the rule list first. The rules string stays
-// within RULES_CAP (room for the frame under STRING_CAP): always and project rules (an untagged bullet reads as always) whole in file
-// order, then job rules newest first, then one count line for the replaced rules; over the bound the oldest job rules are left out
-// and the last line names how many and the file. An always or project rule is never cut: when they alone pass RULES_CAP they are all
-// printed with `Full list: <path>` (the size test is red and doctor warns, by design; tools/status/rules-size.mjs). The state string
-// is trimmed (oldest decisions, then the last rows) to stay under STRING_CAP.
+// file path and a 2,000-char preview), so the rules and the state are separate entries, the rule list first. The rules string never
+// passes RULES_CAP (room for the frame under STRING_CAP), on any path: always and project rules (an untagged bullet reads as always)
+// in file order, then job rules newest first, then one count line for the replaced rules. Over the bound the rules that do not fit
+// are left out from the end of that order, never cut mid-text, and the last line names how many always or project rules and job
+// rules are not shown and the file (owner rule: no digest string over the cap, never silent). Doctor fails when always or project
+// rules are left out and warns when only job rules are (tools/status/rules-size.mjs). The state string is trimmed (oldest
+// decisions, then the last rows) to stay under STRING_CAP.
 // Which STATUS.md: the one linked to the session (status-file-of.mjs, the link status.mjs writes), else `STATUS.md` in
 // CLAUDE_PROJECT_DIR, else in the session's cwd; never the one used last anywhere.
 // Invariants: never throws (a failing part is ''); reads only; git runs hardened with a timeout; every text is the file's own words,
@@ -27,6 +29,9 @@ export const STRING_CAP = 10000;
 // The rules string's bound in chars: under STRING_CAP with room for the frame (the SessionStart tag or the PreCompact line, < 100).
 export const RULES_CAP = 9000;
 export const PARTS = ['rules', 'state'];
+// The SessionStart sources each part prints on: the rules also at a fresh start (owner FR1), the job state only when a session goes on.
+const RULES_SOURCES = ['startup', 'compact', 'resume'];
+const STATE_SOURCES = ['compact', 'resume'];
 const MAX_DECISIONS = 10;
 const MAX_FILES = 20;
 const MAX_ITEM_CHARS = 300;
@@ -62,42 +67,58 @@ function newestFirst(jobRules) {
   return placed.map(({ rule }) => rule);
 }
 
-/** How many of the job lines fit after `fixedChars` (the joined fixed lines) with the not-shown line, or -1 when none can. */
-function jobLinesThatFit(fixedChars, jobLines, notShownLine) {
-  const all = jobLines.reduce((sum, line) => sum + 1 + line.length, fixedChars);
-  if (all <= RULES_CAP) return jobLines.length;
-  let used = fixedChars;
-  let shown = -1;
-  for (let count = 0; count <= jobLines.length; count += 1) {
-    if (used + 1 + notShownLine(jobLines.length - count).length > RULES_CAP) break;
-    shown = count;
-    if (count < jobLines.length) used += 1 + jobLines[count].length;
-  }
-  return shown;
+const plural = (count, noun) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+
+/** The closing line when rules are left out: how many of each kind are not shown, and the file that holds them all. */
+function notShownLine(hiddenAlways, hiddenJob, path) {
+  if (hiddenAlways === 0) return `${plural(hiddenJob, 'job rule')} not shown: read ${plain(path)}`;
+  return `${plural(hiddenAlways, 'always or project rule')} and ${plural(hiddenJob, 'job rule')} not shown (the rules pass the ${RULES_CAP}-char bound): read the full list in ${plain(path)}`;
 }
 
 /**
- * The standing rules string, at most RULES_CAP chars unless the always and project rules alone pass it (see the header).
- * @param {string} text the STATUS.md text
- * @param {string} path its path (named in the frame, and in the last line when rules are left out)
- * @returns {string} '' when the file has no rules
+ * How many of `lines` (in show order) fit after `fixedChars` together with the closing line for the rest (0 when none does). The
+ * closing line gets much shorter once every always rule is shown, so a longer prefix can fit where a shorter one did not: every
+ * prefix is tried until the lines alone pass the bound.
  */
-export function rulesText(text, path) {
-  const rules = parseRules(text);
-  if (rules.length === 0) return '';
-  const active = rules.filter((rule) => rule.active);
-  const kept = active.filter((rule) => rule.scope !== 'job').map(ruleLine);
-  const jobLines = newestFirst(active.filter((rule) => rule.scope === 'job')).map(ruleLine);
-  const replaced = rules.length - active.length;
-  const head = [`Standing rules of ${plain(path)} (the owner's words, each shown rule in full; follow them):`, ...kept];
-  const replacedLine = replaced ? [`Replaced rules: ${replaced} (kept in the file, not active)`] : [];
-  const notShown = (count) => `${count} job rule${count === 1 ? '' : 's'} not shown: read ${plain(path)}`;
-  const shown = jobLinesThatFit([...head, ...replacedLine].join('\n').length, jobLines, notShown);
-  if (shown === jobLines.length) return [...head, ...jobLines, ...replacedLine].join('\n');
-  if (shown >= 0) return [...head, ...jobLines.slice(0, shown), ...replacedLine, notShown(jobLines.length - shown)].join('\n');
-  const hidden = jobLines.length ? `; ${notShown(jobLines.length)}` : '';
-  return [...head, ...replacedLine, `Full list: ${plain(path)} (the always and project rules alone pass ${RULES_CAP} chars${hidden})`].join('\n');
+function linesThatFit(fixedChars, lines, closingLine) {
+  let used = fixedChars;
+  let fit = 0;
+  for (let count = 0; count < lines.length && used <= RULES_CAP; count += 1) {
+    if (used + 1 + closingLine(count).length <= RULES_CAP) fit = count;
+    used += 1 + lines[count].length;
+  }
+  return fit;
 }
+
+/**
+ * The standing rules digest of a STATUS.md, always within RULES_CAP (see the header).
+ * @param {string} text the STATUS.md text
+ * @param {string} path its path (named in the first line, and in the closing line when rules are left out)
+ * @returns {{text: string, hiddenAlways: number, hiddenJob: number}} the rules string ('' when the file has no rules) and how many
+ *   always or project rules and job rules it leaves out
+ */
+export function rulesDigest(text, path) {
+  const rules = parseRules(text);
+  if (rules.length === 0) return { text: '', hiddenAlways: 0, hiddenJob: 0 };
+  const active = rules.filter((rule) => rule.active);
+  const alwaysLines = active.filter((rule) => rule.scope !== 'job').map(ruleLine);
+  const jobLines = newestFirst(active.filter((rule) => rule.scope === 'job')).map(ruleLine);
+  const ordered = [...alwaysLines, ...jobLines];
+  const replaced = rules.length - active.length;
+  const head = `Standing rules of ${plain(path)} (the owner's words, each shown rule in full; follow them):`;
+  const replacedLine = replaced ? [`Replaced rules: ${replaced} (kept in the file, not active)`] : [];
+  const whole = [head, ...ordered, ...replacedLine].join('\n');
+  if (whole.length <= RULES_CAP) return { text: whole, hiddenAlways: 0, hiddenJob: 0 };
+  const hiddenOf = (shown) => ({ hiddenAlways: Math.max(0, alwaysLines.length - shown), hiddenJob: Math.min(jobLines.length, ordered.length - shown) });
+  const closing = (shown) => notShownLine(hiddenOf(shown).hiddenAlways, hiddenOf(shown).hiddenJob, path);
+  const shown = linesThatFit([head, ...replacedLine].join('\n').length, ordered, closing);
+  // The slice only acts on a path of thousands of chars (it is in the first and the last line); no rule is ever cut by it.
+  const cut = [head, ...ordered.slice(0, shown), ...replacedLine, closing(shown)].join('\n').slice(0, RULES_CAP);
+  return { text: cut, ...hiddenOf(shown) };
+}
+
+/** The standing rules string of rulesDigest: at most RULES_CAP chars, '' when the file has no rules. */
+export const rulesText = (text, path) => rulesDigest(text, path).text;
 
 /** Lines of `git <args>` in folder, or null on any failure or timeout. */
 function gitLines(folder, args) {
@@ -164,7 +185,8 @@ export function stateText(text, path, { dontRedo, git }) {
 export function statusDigestPart(part, input, deps) {
   try {
     const event = input?.hook_event_name;
-    const wanted = event === 'PreCompact' || (event === 'SessionStart' && ['compact', 'resume'].includes(input.source));
+    const sources = part === 'rules' ? RULES_SOURCES : STATE_SOURCES;
+    const wanted = event === 'PreCompact' || (event === 'SessionStart' && sources.includes(input.source));
     if (!wanted || input.agent_id || !PARTS.includes(part)) return '';
     const path = findStatus(input, deps);
     const read = path === null ? null : readStatusFile(path);

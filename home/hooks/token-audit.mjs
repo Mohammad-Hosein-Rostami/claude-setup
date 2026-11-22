@@ -131,7 +131,7 @@ const NOT_COUNTED = {
     "Claude Code's own system prompt and tool definitions",
     'plugin skills, agents and MCP tools',
     'start hooks that print only when they find something (resume-notice.mjs, git-tidy-gate.mjs, the project-agents note of session-notes.mjs)',
-    'after a resume or compaction: the STATUS.md digest (recall-digest.mjs --part rules, --part state)',
+    'the STATUS.md digest: its rules at every start (recall-digest.mjs --part rules, at most 9,000 chars), its state after a resume or compaction',
   ],
   agent: ["the agent file's own text (start tokens per role: tools/token-view)", 'the brief', "Claude Code's tool definitions", 'plugin skills and MCP tools'],
 };
