@@ -209,6 +209,22 @@ test('test parts whose globs name e2e or live are not run and are named e2e-or-l
   assert.ok(skipped.every((entry) => entry.why === 'e2e-or-live'));
 });
 
+test('one node --test part with an e2e glob and a plain glob drops only the e2e glob (the plain glob still yields related tests)', (t) => {
+  const repo = nodeProject(t, 'node --test "tests/*.test.mjs" "e2e/live/**/*.test.mjs"', { 'e2e/live/x.test.mjs': nodeTestSource({ imports: ['../../src/a.mjs'] }) });
+  const plan = planFor(repo, ['src/a.mjs']);
+  assert.deepEqual(testFilesOf(repo, nodeCmd(plan)), ['tests/a.test.mjs']);
+  const skipped = skippedOf(plan, 'tests');
+  assert.deepEqual(skipped.map((entry) => entry.why), ['e2e-or-live']);
+  assert.ok(skipped[0].label.includes('e2e/live'), `the dropped glob is named: ${skipped[0].label}`);
+});
+
+test('a node --test part whose every glob is e2e or live is still not run as a whole', (t) => {
+  const repo = nodeProject(t, 'node --test e2e/*.test.mjs live/*.test.mjs', { 'e2e/x.test.mjs': nodeTestSource({ imports: ['../src/a.mjs'] }) });
+  const plan = planFor(repo, ['src/a.mjs']);
+  assert.equal(cmdsOf(plan, 'tests').length, 0);
+  assert.deepEqual(skippedOf(plan, 'tests').map((entry) => entry.why), ['e2e-or-live']);
+});
+
 test('a wide change (package.json) runs the full test parts: vitest without "related", every test file of the node globs', (t) => {
   const repo = project(t, { packageJson: { scripts: { test: `vitest run && ${NODE_TEST_SCRIPT}` } }, tools: ['vitest'], files: { 'src/a.mjs': SRC_A, 'tests/a.test.mjs': nodeTestSource({ imports: ['../src/a.mjs'] }), 'tests/b.test.mjs': nodeTestSource({}) } });
   const plan = planFor(repo, ['package.json'], { wide: ['package.json'] });

@@ -180,8 +180,19 @@ function planTestPart(context, pkg, part) {
   const runner = words && (words[0] === 'node' ? 'node' : ['vitest', 'jest'].includes(words[0]) ? words[0] : null);
   const supported = runner && (runner === 'node' ? nodeTestGlobs(words) : !words[1] || words[1].startsWith('-') || words[1] === 'run') ? words : null;
   if (!supported) return skip('tests', 'not-supported', `tests: ${label}`);
+  if (runner === 'node') return plannedNodePart(context, pkg, nodeTestGlobs(words));
   if (words.slice(1).some((word) => E2E_OR_LIVE.test(word))) return skip('tests', 'e2e-or-live', `tests: ${label}`);
-  return runner === 'node' ? plannedNodeTests(context, pkg, nodeTestGlobs(words)) : plannedTestRunner(context, pkg, runner, words, label);
+  return plannedTestRunner(context, pkg, runner, words, label);
+}
+
+/** A `node --test` part: only its e2e or live globs are dropped (and named), the other globs still pick related tests. */
+function plannedNodePart(context, pkg, globs) {
+  const dropped = globs.filter((glob) => E2E_OR_LIVE.test(glob));
+  if (dropped.length === 0) return plannedNodeTests(context, pkg, globs);
+  const dropNote = skip('tests', 'e2e-or-live', `tests: ${shortLabel(`node --test ${dropped.join(' ')}`)}`);
+  if (dropped.length === globs.length) return dropNote;
+  const planned = plannedNodeTests(context, pkg, globs.filter((glob) => !dropped.includes(glob)));
+  return { skipped: [...dropNote.skipped, ...planned.skipped], cmds: planned.cmds };
 }
 
 function planTests(context, pkg) {
