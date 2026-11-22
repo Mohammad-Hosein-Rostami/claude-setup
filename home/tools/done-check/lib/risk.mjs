@@ -1,14 +1,17 @@
 // Which risk classes a change falls in (login/security, stored data, money, locking and parallel runs, the setup's own guards, very large
 // changes: owner decision NC4, design section 3.6). A risky change gets one AI review before it lands; the classes come from the data file
 // home/tools/done-check/risk-rules.json, so tuning is an edit of that file, not of code.
-// Exports: riskClasses(scope, rules, extra) -> { class, file }[]; loadRiskRules(file) -> { rules, warning }; parseRiskRules(text) ->
+// Exports: riskClasses(scope, rules, extra) -> Promise<{ class, file }[]>; loadRiskRules(file) -> { rules, warning }; parseRiskRules(text) ->
 //   rules (throws); DEFAULT_RISK_RULES; RISK_RULES_FILE.
 // Rule file: { version: 1, classes: { <name>: { paths: [<regex source>, ...] } }, large: { lines, files } }. Each regex is matched, case
 //   insensitively, against the repo-relative path with `/` separators and a space put between a lower and an upper case letter
 //   (`sessionLock.ts` is read as `session lock.ts`), so `(^|[^a-z0-9])lock` finds a lock but not `block`. `checkout` and `ledger` are
 //   not money words (`git checkout`, `stale-checkout` and the done-check's own ledger were false alarms of the old review tier).
 // Invariants:
-// - Only paths are read for the path classes: no file text, so nothing a writer wrote in a file can switch a class off.
+// - A path class is matched on the path. A file whose changed lines (scope.mjs `changedLines`) are all comments or blank lines is left
+//   out (a comment edit to billing code is not a money change); any doubt (no git base, a deleted file, a pure deletion, an unreadable
+//   file or git error, a Vue file) keeps the class. The file text is read only for that test, and it can only switch a class off for
+//   changed lines that hold no code at all (lib/code-lines.mjs).
 // - A bad rule file never switches the review off: loadRiskRules returns the built-in defaults and a warning line (P12).
 // - `large` is more than rules.large.lines changed lines or more than rules.large.files changed files. Lines are counted with git against
 //   the base (the worktree compared with it, new files by their line count); without git or a base only the file count applies.
@@ -17,6 +20,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 import { runGit } from '../../../hooks/lib/gated-folder.mjs';
+import { linesWithCode } from './code-lines.mjs';
+import { changedLines } from './scope.mjs';
 
 /** The shipped rule file. */
 export const RISK_RULES_FILE = new URL('../risk-rules.json', import.meta.url);
@@ -30,6 +35,7 @@ const SIZE_CLASS = 'large'; // set by the size rule only
 const COMMIT_HASH = /^[0-9a-f]{40}$/;
 const PATHSPEC_CHUNK = 100; // paths per git call, far below the command line limit
 const MAX_COUNTED_FILE_BYTES = 2 * 1024 * 1024;
+const SCRIPT_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs|mts|cts)$/i; // the languages lib/code-lines.mjs reads; a .vue file also holds markup
 
 /** The same rules as risk-rules.json, for a rule file that is missing or invalid. Keep the two equal when one changes. */
 export const DEFAULT_RISK_RULES = Object.freeze({
@@ -135,20 +141,37 @@ function isLarge(scope, limits) {
   return trackedChangedLines(scope, files) + untrackedLines(scope, files) > limits.lines;
 }
 
+/** True when `file` changed only in comments or blank lines against the base; false whenever that cannot be shown. */
+async function changedOnlyComments(scope, file) {
+  if (!scope.git || !scope.top || !COMMIT_HASH.test(scope.base ?? '') || !isSafeRelative(file) || !SCRIPT_FILE.test(file)) return false;
+  try {
+    const ranges = await changedLines(scope.top, scope.base, file);
+    if (ranges.length === 0) return false; // a deletion, an unchanged file or a file git does not list: the class stays
+    const codeLines = linesWithCode(readPlainFile(join(scope.top, file), MAX_COUNTED_FILE_BYTES));
+    return ranges.every(([start, end]) => Array.from({ length: end - start + 1 }, (_, offset) => start + offset).every((line) => !codeLines.has(line)));
+  } catch {
+    return false; // git or the file could not be read: say nothing about the lines and keep the class (a needless review costs a run, a miss costs a defect)
+  }
+}
+
 /**
  * The risk classes of a change.
  * @param {import('./contract.mjs').Scope} scope the changed files and the base they are compared with
  * @param {{ classes: Record<string, { paths: string[] }>, large: { lines: number, files: number } }} rules from loadRiskRules (already checked)
  * @param {string[]} [extra] class names the lane's spec adds (for example `audit`); each is always in the result
- * @returns {{ class: string, file: string }[]} one entry per class and matching file, in the order of the rule file; `large` and the
- *   extra classes have an empty file (they belong to the whole change); an empty list is an ordinary change
+ * @returns {Promise<{ class: string, file: string }[]>} one entry per class and matching file, in the order of the rule file; a file that
+ *   changed only in comments or blank lines has none; `large` and the extra classes have an empty file (they belong to the whole change);
+ *   an empty list is an ordinary change
  */
-export function riskClasses(scope, rules, extra = []) {
+export async function riskClasses(scope, rules, extra = []) {
   const found = [];
+  const commentOnly = new Map();
   for (const { name, patterns } of compiled(rules)) {
     for (const file of scope.files) {
       const text = readable(file);
-      if (patterns.some((pattern) => pattern.test(text))) found.push({ class: name, file });
+      if (!patterns.some((pattern) => pattern.test(text))) continue;
+      if (!commentOnly.has(file)) commentOnly.set(file, await changedOnlyComments(scope, file));
+      if (!commentOnly.get(file)) found.push({ class: name, file });
     }
   }
   if (isLarge(scope, rules.large)) found.push({ class: SIZE_CLASS, file: '' });

@@ -108,9 +108,9 @@ function tidyResultFiles(plan, env) {
 }
 
 /** The risk classes of the change (names only) and a line part when the rule file was bad (the built-in rules were used). */
-function riskOf(scope) {
+async function riskOf(scope) {
   const { rules, warning } = loadRiskRules();
-  return { classes: [...new Set(riskClasses(scope, rules).map((entry) => entry.class))], warning };
+  return { classes: [...new Set((await riskClasses(scope, rules)).map((entry) => entry.class))], warning };
 }
 
 /** `block`, `left-open` or `ok` for the merged kinds; a stop that was blocked on this key or too often before is left open. */
@@ -150,7 +150,7 @@ export async function checkChange(scopeOrPromise, options) {
   const scope = await scopeOrPromise;
   const files = scope.files.length + scope.wide.length;
   const repo = repoIdOf(scope.top ?? '');
-  const risk = files === 0 ? { classes: [], warning: undefined } : riskOf(scope);
+  const risk = files === 0 ? { classes: [], warning: undefined } : await riskOf(scope);
   const row = { v: 1, id: randomBytes(RUN_ID_BYTES).toString('hex'), at: new Date().toISOString(), where, session, agent, repo, base: scope.base, key: scope.key, files, checks: {}, verdict: 'ok', risk: risk.classes, ms: 0 };
   const finish = (verdict, extra = {}) => {
     row.verdict = verdict;

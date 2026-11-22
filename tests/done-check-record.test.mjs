@@ -516,6 +516,47 @@ test('one file can be in two classes', async () => {
   assert.deepEqual(classes, ['money', 'security']);
 });
 
+// A file in the money class (by its path) whose lines change in different ways: only comments and blank lines leave the class.
+const BILLING_FILE = 'services/bb-billing/src/state.ts';
+const BILLING_SOURCE = ['// Billing state.', '/**', ' * Charges one invoice.', ' */', 'export function charge(amount: number) {', '  return amount * 2;', '}', ''].join('\n');
+async function billingClassesAfter(t, change) {
+  const repo = makeDoneCheckRepo({ files: { [BILLING_FILE]: BILLING_SOURCE } });
+  t.after(() => repo.cleanup());
+  repo.write(BILLING_FILE, change(BILLING_SOURCE));
+  const { riskClasses } = await loadRisk();
+  return (await riskClasses(scopeOf(repo, [BILLING_FILE]), JSON.parse(readFileSync(RULES_FILE, 'utf8')))).map((entry) => entry.class);
+}
+const COMMENT_ONLY_EDITS = {
+  'a reworded line comment': (text) => text.replace('// Billing state.', '// Billing state, reworded.'),
+  'a reworded doc comment line': (text) => text.replace(' * Charges one invoice.', ' * Charges one invoice, once.'),
+  'a new comment line': (text) => text.replace('export function', '// Doubles the amount.\nexport function'),
+  'a prose line without a star inside a block comment': (text) => text.replace(' */', ' prose without a star\n */'),
+  'blank lines': (text) => text.replace('}\n', '}\n\n\n'),
+};
+for (const [name, change] of Object.entries(COMMENT_ONLY_EDITS)) {
+  test(`billing code with ${name} only is not money`, async (t) => {
+    assert.deepEqual(await billingClassesAfter(t, change), []);
+  });
+}
+
+const CODE_EDITS = {
+  'a changed return': (text) => text.replace('amount * 2', 'amount * 3'),
+  'a trailing comment added to a code line': (text) => text.replace('return amount * 2;', 'return amount * 2; // double'),
+  'a code line next to a comment edit': (text) => text.replace('// Billing state.', '// Billing state.\nexport const FEE = 1;'),
+  'a line removed': (text) => text.replace('  return amount * 2;\n', ''),
+};
+for (const [name, change] of Object.entries(CODE_EDITS)) {
+  test(`billing code with ${name} is still money`, async (t) => {
+    assert.deepEqual(await billingClassesAfter(t, change), ['money']);
+  });
+}
+
+test('a billing file the change cannot be read for (no base) keeps its class', async () => {
+  const { riskClasses } = await loadRisk();
+  const scope = { ...scopeOf(quietRepo(), [BILLING_FILE]), git: false, base: null };
+  assert.deepEqual((await riskClasses(scope, JSON.parse(readFileSync(RULES_FILE, 'utf8')))).map((entry) => entry.class), ['money']);
+});
+
 test('a class a lane adds by name is always in the result, also with no matching path', async () => {
   const { classes } = await classesOf(['src/utils/format.ts'], ['security', 'audit']);
   assert.deepEqual(classes, ['audit', 'security']);
