@@ -7,7 +7,8 @@
 // - The ledger holds kinds, counts, ms, a hashed repo id and ids: never a file name, a path, code or a secret. The writer copies only the
 //   fields of the design's two row shapes, so a field a caller adds by mistake is not stored. A run row's `model` is a model id of
 //   MODEL_PATTERN, OTHER_MODEL for any other text (so a secret given as the model is never stored) or null; its `effort` is one short
-//   token (EFFORT_PATTERN) or null; rows written before they existed lack them and read as UNKNOWN.
+//   token (EFFORT_PATTERN) or null; rows written before they existed lack them and read as UNKNOWN. A check entry's `alarms` are
+//   hashed failure ids (lib/false-alarms.mjs storedAlarms), `labelled` a count; old rows lack both and read as before.
 // - One row is one write (O_APPEND) of at most MAX_ROW_BYTES, so two sessions appending at once never interleave a line.
 // - The writer and the reader share LEDGER_MAX_BYTES (contract.mjs): at the cap the writer refuses (returns false, the file is not
 //   touched) and `ledgerUsage` says so; a file over the cap is read as empty rather than parsed whole. Both go through lib/plain-file.mjs,
@@ -21,6 +22,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { appendPlainFile, NOT_PLAIN_FILE, readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 import { CHECK_KINDS, EFFORT_PATTERN, LEDGER_MAX_BYTES, MODEL_PATTERN, OTHER_MODEL } from './contract.mjs';
+import { latestLabels, storedAlarms } from './false-alarms.mjs';
 
 /** Most bytes one row may take, line feed included: a row is written with one call, which the OS never splits between two writers. */
 export const MAX_ROW_BYTES = 16 * 1024;
@@ -62,6 +64,9 @@ function modelField(row) {
   return { model: isText(value) && !MODEL_PATTERN.test(value) ? OTHER_MODEL : value };
 }
 
+/** The counts of a check entry that are stored only when the caller gave them: flaky, unknown and labelled. */
+const optionalCounts = (check) => Object.fromEntries(['flaky', 'unknown', 'labelled'].filter((name) => isCount(check[name])).map((name) => [name, check[name]]));
+
 /** Copies the design's run row field by field; throws a TypeError for a missing or mistyped field. */
 function cleanRunRow(row) {
   const ok = row?.v === ROW_VERSION && ['id', 'at', 'session', 'agent', 'repo', 'key', 'verdict'].every((name) => isText(row[name]))
@@ -71,7 +76,7 @@ function cleanRunRow(row) {
   const checks = {};
   for (const [kind, check] of Object.entries(row.checks)) {
     if (!CHECK_KINDS.includes(kind) || !isText(check?.result) || !CHECK_FIELDS.slice(1).every((name) => isCount(check[name]))) fail(`bad check entry "${kind}"`);
-    checks[kind] = { result: check.result, new: check.new, old: check.old, ms: check.ms, ...(isCount(check.flaky) ? { flaky: check.flaky } : {}), ...(isCount(check.unknown) ? { unknown: check.unknown } : {}), ...(isText(check.why) ? { why: check.why } : {}) };
+    checks[kind] = { result: check.result, new: check.new, old: check.old, ms: check.ms, ...optionalCounts(check), ...storedAlarms(kind, check),...(isText(check.why) ? { why: check.why } : {}) };
   }
   const { v, id, at, where, session, agent, repo, base, key, files, verdict, risk, ms } = row;
   const routing = { ...modelField(row), ...effortField(row) };
@@ -204,13 +209,6 @@ export function ledgerUsage({ env = process.env } = {}) {
 const middleOf = (sorted) => (sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : Math.round((sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2));
 const nearestRank = (sorted, fraction) => sorted[Math.max(0, Math.ceil(fraction * sorted.length) - 1)];
 
-/** The last label per (run, check): a later label replaces an earlier one, so the owner can change their mind. */
-function latestLabels(labels) {
-  const latest = new Map();
-  for (const label of [...labels].sort((a, b) => Date.parse(a.at) - Date.parse(b.at))) latest.set(`${label.run}\u0000${label.check}`, label);
-  return latest;
-}
-
 /** For each run row, the next run of the same repo, session and agent (null for the last one). Rows are in time order. */
 function nextRunOf(runs) {
   const next = new Map();
@@ -227,13 +225,14 @@ function nextRunOf(runs) {
 function statsOfKind(kind, runs, nextOf, labelOf) {
   const rows = runs.filter((row) => row.checks[kind]);
   if (rows.length === 0) return null;
-  const entry = { kind, runs: rows.length, blocks: 0, actedOn: 0, ignored: 0, falseAlarmRate: 0, labels: { falseAlarm: 0, real: 0, missed: 0 }, medianMs: 0, p90Ms: 0, notRun: {} };
+  const entry = { kind, runs: rows.length, blocks: 0, actedOn: 0, ignored: 0, falseAlarmRate: 0, labels: { falseAlarm: 0, real: 0, missed: 0 }, passedByLabel: 0, medianMs: 0, p90Ms: 0, notRun: {} };
   let falseAlarms = 0;
   const times = [];
   for (const row of rows) {
     const check = row.checks[kind];
     if (check.result === 'not-run') entry.notRun[check.why ?? 'unknown'] = (entry.notRun[check.why ?? 'unknown'] ?? 0) + 1;
     else times.push(check.ms);
+    entry.passedByLabel += check.labelled > 0 ? 1 : 0;
     const label = labelOf.get(`${row.id}\u0000${kind}`)?.label;
     if (label) entry.labels[label === 'false-alarm' ? 'falseAlarm' : label] += 1;
     if (row.verdict !== 'block' || !(check.new > 0)) continue;
@@ -241,7 +240,7 @@ function statsOfKind(kind, runs, nextOf, labelOf) {
     const next = nextOf.get(row);
     const ignored = next !== undefined && next.key === row.key;
     const actedOn = next !== undefined && next.key !== row.key && next.checks[kind]?.new === 0 && next.checks[kind]?.result !== 'fail';
-    entry.ignored += ignored ? 1 : 0;
+    entry.ignored += ignored && !label ? 1 : 0; // a labelled block is counted by its label, never twice
     entry.actedOn += actedOn ? 1 : 0;
     if ((ignored || label === 'false-alarm') && label !== 'real') falseAlarms += 1;
   }
@@ -255,11 +254,12 @@ function statsOfKind(kind, runs, nextOf, labelOf) {
  * What the ledger says about each check: how often it blocked, how often the agent acted on that or ignored it, how often the owner
  * called it a false alarm, how long it takes, and why it did not run.
  * A block is a run with verdict `block` whose check of that kind found something new. It is acted on when the agent's next run (same
- * repo, session and agent) has another change key and that kind passes, and ignored when the next run has the same key. The false-alarm
- * rate is the share of blocks that were ignored or labelled false-alarm, minus those labelled real.
+ * repo, session and agent) has another change key and that kind passes, and ignored when the next run has the same key and the block
+ * has no label (labels and ignored blocks are counted apart). The false-alarm rate is the share of blocks that were ignored or labelled
+ * false-alarm, minus those labelled real. `passedByLabel`: runs whose new failures of that kind a false-alarm label let through.
  * @param {{ runs: object[], labels: object[] }} ledger what readLedger returned (a label of a run not in `runs` changes nothing)
- * @returns {{ kind: string, runs: number, blocks: number, actedOn: number, ignored: number, falseAlarmRate: number,
- *   labels: { falseAlarm: number, real: number, missed: number }, medianMs: number, p90Ms: number, notRun: Record<string, number> }[]}
+ * @returns {{ kind: string, runs: number, blocks: number, actedOn: number, ignored: number, falseAlarmRate: number, labels: { falseAlarm:
+ *   number, real: number, missed: number }, passedByLabel: number, medianMs: number, p90Ms: number, notRun: Record<string, number> }[]}
  *   one entry per check kind that has runs, in CHECK_KINDS order; [] for an empty ledger
  */
 export function stats({ runs, labels }) {

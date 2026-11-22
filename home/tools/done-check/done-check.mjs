@@ -3,7 +3,8 @@
 // Usage (full text in README.md):
 //   done-check run --worktree <abs> [--base <40-hex>] [--where land|manual] [--json]
 //   done-check last [--worktree <abs>] [--json]
-//   done-check stats [--days <n>] [--json] [--doctor]   (per check kind, then per model and effort of the agent that stopped)
+//   done-check stats [--days <n>] [--json] [--doctor]   (per check kind: counts, labels and ignored blocks on lines of their own;
+//                                                        then per model and effort of the agent that stopped)
 //   done-check label <run-id> --as false-alarm|real|missed --check <kind> [--note <up to 200 chars>]
 // Exit codes: 0 ok, reused or nothing to check; 1 new failures or weakened tests; 2 usage; 3 internal error (the message is on stdout, as
 //   JSON `{"error": ...}` with --json). Importing this file runs nothing: the hook imports lib/check-change.mjs only.
@@ -85,10 +86,18 @@ function lastCommand({ worktree, json }, env) {
 const percent = (rate) => `${Math.round(rate * 100)}%`;
 const secondsOf = (ms) => `${(ms / 1000).toFixed(1)} s`;
 
-/** One text line per check kind: its counts, false-alarm rate and times. */
-function statsLine(entry) {
+/**
+ * Three text lines per check kind: its counts, false-alarm rate and times; then the owner's labels; then the blocks ignored with no
+ * label. Labels and ignored blocks are on lines of their own so neither reads as the other.
+ */
+function statsLines(entry) {
   const notRun = Object.entries(entry.notRun).map(([why, count]) => `${why} ${count}`).join(', ');
-  return `${entry.kind}: ${entry.runs} runs, ${entry.blocks} blocks (acted on ${entry.actedOn}, ignored ${entry.ignored}), false-alarm rate ${percent(entry.falseAlarmRate)}, median ${secondsOf(entry.medianMs)}, p90 ${secondsOf(entry.p90Ms)}${notRun ? `, not run: ${notRun}` : ''}`;
+  const { falseAlarm, real, missed } = entry.labels;
+  return [
+    `${entry.kind}: ${entry.runs} runs, ${entry.blocks} blocks (acted on ${entry.actedOn}), false-alarm rate ${percent(entry.falseAlarmRate)}, median ${secondsOf(entry.medianMs)}, p90 ${secondsOf(entry.p90Ms)}${notRun ? `, not run: ${notRun}` : ''}`,
+    `  labelled: ${falseAlarm} false-alarm, ${real} real, ${missed} missed; ${entry.passedByLabel} runs passed by a false-alarm label`,
+    `  ignored: ${entry.ignored} blocks stopped again with the same change and no label`,
+  ];
 }
 
 /** One text line per (model, effort) group: its runs, blocks, left-open stops and median run time. */
@@ -111,7 +120,7 @@ function statsCommand({ days = String(DEFAULT_DAYS), json, doctor }, env) {
   if (json) print(JSON.stringify({ days: count, entries, byModel, usage, warnings: doctor ? warnings : undefined }));
   else {
     const modelPart = byModel.length === 0 ? [] : ['by model and effort:', ...byModel.map(modelLine)];
-    print(entries.length === 0 && byModel.length === 0 ? 'no runs yet' : [`last ${count} days:`, ...entries.map(statsLine), ...modelPart].join('\n'));
+    print(entries.length === 0 && byModel.length === 0 ? 'no runs yet' : [`last ${count} days:`, ...entries.flatMap(statsLines),...modelPart].join('\n'));
     if (doctor) for (const warning of warnings) print(warning);
   }
   return EXIT.ok;

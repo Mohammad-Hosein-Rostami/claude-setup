@@ -12,14 +12,16 @@
 //   - a package.json whose `test`, `typecheck`, `type-check` or `lint` script changed or was removed;
 //   - an eslint, vitest or jest config that changed or was deleted (a change of spaces alone is not a change);
 //   - a tsconfig strictness flag that is `false` now and was `true` at the base.
-// Not counted: a new file, a stronger change, a removed skip, a suppression that was already there (counts are compared, not lines),
+// Not counted: a test file deleted with its code (it imported, at the base, a non-test module this change deletes too: "removed with
+//   its code"; a test deleted alone or with only a fixture still counts), a new file, a stronger change, a removed skip, a
+//   suppression that was already there (counts are compared, not lines),
 //   a change in another script, a dependency or a formatting change. A changed `strict` nested in an `extends` needs a deep parse and is not seen.
 // Invariants: no git or no 40-hex base gives []. A file is read from the base with `git cat-file blob` (hardened git) and from the
 //   worktree with lib/plain-file.mjs (never through a link or a FIFO); a path that is absolute or has `..` is skipped. A test, config or
 //   package file that cannot be read is itself reported (fail closed); an ordinary code file that cannot be read is skipped. At most
 //   MAX_SCANNED_FILES files are scanned (tests and configs first), so a huge change cannot outlast the caller's deadline. Failure
 //   texts are one line and cut to MAX_TEXT_CHARS (a file name is untrusted text).
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import { NOT_PLAIN_FILE, readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 import { runGit } from '../../../hooks/lib/gated-folder.mjs';
 
@@ -38,6 +40,11 @@ const CODE_FILE = /\.(m?[jt]sx?|cjs|cts|vue|svelte)$/;
 const CHECK_CONFIG = /(^|\/)(eslint\.config\.[^/]+|\.eslintrc[^/]*|vitest\.(config|workspace)\.[^/]+|jest\.config\.[^/]+)$/;
 const TSCONFIG = /(^|\/)[jt]sconfig[^/]*\.json$/;
 const PACKAGE_JSON = /(^|\/)package\.json$/;
+// A relative module a test file loads: `from './x'`, `import('./x')`, `import './x'` or `require('../x')` (group 2 is the specifier).
+// One `\s*` before the optional `(` and one inside it, so a long run of spaces is never split two ways (linear on hostile text).
+const RELATIVE_IMPORTS = /(?:\bfrom|\bimport|\brequire)\s*(?:\(\s*)?(['"])(\.{1,2}\/[^'"\n]{1,300})\1/g;
+const JS_EXTENSION = /\.(m?[jt]sx?|c[jt]s)$/;
+const IMPORT_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.vue', '.svelte'];
 
 // A test case that runs is `test(`, `it(` or one of their modifiers (`test.each(`), not a skipped one (`it.skip(`, `it.todo(`): taking a skip
 // away is not fewer cases. An assertion is `expect(` or `assert(` and its methods.
@@ -145,13 +152,35 @@ function weakenedTestFile(file, before, after) {
 
 const suppressionAdded = (file, before, after) => addedFailure(file, 'added-suppression', before, after, { pattern: SUPPRESSIONS, group: 1, fallback: 'a lint or type suppression was added', note: ' (a lint or type suppression)' });
 
-/** What one changed file weakens, given its text at the base (null when new) and now (null when deleted). */
-function weakenedFile(file, before, after) {
+/** The repo-relative files a relative import specifier of `file` may name: as written, without a JS extension, with each code extension. */
+function importTargets(file, specifier) {
+  const target = posix.normalize(posix.join(posix.dirname(file), specifier));
+  if (!isSafeRelative(target)) return [];
+  const stem = target.replace(JS_EXTENSION, '');
+  return [target, ...IMPORT_EXTENSIONS.flatMap((extension) => [`${stem}${extension}`, `${stem}/index${extension}`])];
+}
+
+/**
+ * True when the deleted test file imported (at the base) a module that is not itself a test file and that this change deletes too:
+ * the test went with the code it tested. A test deleted alone, or with only a fixture, is still a weakening.
+ * @param {string} file the deleted test file
+ * @param {string} before its text at the base
+ * @param {Set<string>} deleted the files this change deletes
+ */
+function removedWithItsCode(file, before, deleted) {
+  for (const match of before.matchAll(RELATIVE_IMPORTS)) {
+    if (importTargets(file, match[2]).some((target) => deleted.has(target) && !TEST_FILE.test(target))) return true;
+  }
+  return false;
+}
+
+/** What one changed file weakens, given its text at the base (null when new) and now (null when deleted), and the files deleted with it. */
+function weakenedFile(file, before, after, deleted) {
   const mustRead = TEST_FILE.test(file) || CHECK_CONFIG.test(file) || PACKAGE_JSON.test(file) || TSCONFIG.test(file);
   if (before === 'unreadable' || after === 'unreadable') return mustRead ? [failure(file, 'unreadable', 'cannot be read, so it cannot be compared with the base')] : [];
   if (before === null) return after !== null && CODE_FILE.test(file) && countOf(after, SUPPRESSIONS) > 0 ? [suppressionAdded(file, '', after)] : [];
   if (after === null) {
-    if (TEST_FILE.test(file)) return [failure(file, 'deleted', 'test file deleted')];
+    if (TEST_FILE.test(file)) return removedWithItsCode(file, before, deleted) ? [] : [failure(file, 'deleted', 'test file deleted')];
     return CHECK_CONFIG.test(file) ? [failure(file, 'config-deleted', 'a lint or test config was deleted')] : [];
   }
   const found = [];
@@ -174,5 +203,7 @@ export function weakenedTests(scope) {
   if (!scope.git || !scope.top || !COMMIT_HASH.test(scope.base ?? '')) return [];
   const files = [...new Set([...scope.files, ...scope.wide])].filter(isSafeRelative)
     .sort((a, b) => priority(a) - priority(b)).slice(0, MAX_SCANNED_FILES);
-  return files.flatMap((file) => weakenedFile(file, baseText(scope.top, scope.base, file), headText(scope.top, file)));
+  const texts = files.map((file) => ({ file, before: baseText(scope.top, scope.base, file), after: headText(scope.top, file) }));
+  const deleted = new Set(texts.filter(({ before, after }) => before !== null && before !== 'unreadable' && after === null).map(({ file }) => file));
+  return texts.flatMap(({ file, before, after }) => weakenedFile(file, before, after, deleted));
 }

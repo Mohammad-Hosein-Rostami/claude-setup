@@ -17,8 +17,8 @@ node done-check.mjs label <run-id> --as false-alarm|real|missed --check <kind> [
 |---|---|---|
 | `run` | checks every code file changed between `--base` (default: the worktree's HEAD, so uncommitted work) and the worktree; prints the `checks:` line, then the reason when it blocks (`--json`: the Verdict) | 0 ok, reused or nothing to check; 1 new failures or weakened tests; 2 usage; 3 internal error |
 | `last` | prints the line of the newest recorded run of the repository of `--worktree` (any repository without it) | 0 |
-| `stats` | per check kind: runs, blocks, acted on, ignored, false-alarm rate, median and p90 time, why it did not run; then `by model and effort:` one line per model and effort of the agent that stopped (runs, blocks, left open, median run time; `--json`: `byModel`); `--doctor` adds one `WARN` line per kind over 10% false alarms after 10 blocks, and one when the ledger is full | 0 |
-| `label` | records the owner's verdict on one check of one run; a `real` label takes an ignored block out of the false-alarm rate | 0, 2 for an unknown run id or a bad flag |
+| `stats` | per check kind: runs, blocks, acted on, false-alarm rate, median and p90 time, why it did not run; under it a `labelled:` line (false-alarm, real and missed labels, and the runs a false-alarm label let through) and an `ignored:` line (blocks stopped again with the same change and no label), so neither reads as the other; then `by model and effort:` one line per model and effort of the agent that stopped (runs, blocks, left open, median run time; `--json`: `byModel`); `--doctor` adds one `WARN` line per kind over 10% false alarms after 10 blocks, and one when the ledger is full | 0 |
+| `label` | records the owner's verdict on one check of one run; a `false-alarm` label lets the same failures through on later runs (below); a `real` label takes an ignored block out of the false-alarm rate and takes back an earlier `false-alarm` | 0, 2 for an unknown run id or a bad flag |
 
 Usage errors (an unknown flag, a relative `--worktree`, a `--base` that is not 40 hex, a folder that is not a git worktree) exit 2 before
 anything runs. `DONE_CHECK_SKIP=all` skips every check (one ledger row); a comma list of `types`, `lint`, `tests` skips those kinds.
@@ -36,7 +36,21 @@ anything runs. `DONE_CHECK_SKIP=all` skips every check (one ledger row); a comma
   told apart). Its kind shows `FAIL 0 new, n unknown` and the run is `left open` (never `ok`, never reused as green); it does not block.
   A failure in a file the change holds stays `new`. A stop always has a base (below), so only a Scope built by a caller can show it.
 - `review: needed (classes)`: the change is in a risky class (`risk-rules.json`); the lead runs the reviewer. Security words match a whole word of a folder or file name in any case style (`src/auth/`, `useSession.ts`, `session-store.ts`, `JWTService.ts`), never part of a word (`tokenizer.ts`, `author.ts`). A test by its own name (`*.test.ts`, `*.spec.js`) and plain docs (`.md`, `.txt`) put a change in no class and do not count for `large`; a test folder does not hide code, `.mdx` is code, and the texts that steer every run (agent files, `SKILL.md`, `home/CLAUDE.md`, `home/lead*.md`, `home/rules/`, `settings/*.json`) are `gate`. A file whose changed lines are only comments or blank lines is left out; any doubt (no base, a deleted file, a Vue file) keeps the class.
-- `reused (same change) ok`: the same change key was already checked green; no command ran.
+- `reused (same change) ok`: the same change key was already checked green; no command ran. A run a label let through is never reused.
+- `n labelled`: new failures that an owner's `false-alarm` label already names. Shown, never blocking (next section).
+
+## False-alarm labels
+
+When the owner says a block is wrong (an approved test removal, say), `done-check.mjs label <run-id> --as false-alarm --check <kind>`
+(the id from `done-check.mjs last --json`) makes it stick: each run row stores a short hash of every new failure (kind, id and text;
+never a file name), and a later run of the same repository with the same base commit does not block on a failure whose hash a
+false-alarm label names. Any other new failure still blocks: one more deleted case or skip in the same file changes the text, so it
+is new. The newest label of a (run, check) wins, so a later `real` takes it back. Only a label row can do this, and a label row holds
+no hashes, so neither a note nor a failure text can widen what passes. A label is the owner's verdict: an agent does not label its own
+block.
+
+A test file deleted together with the module it imports (a relative import at the base, of a file that is not itself a test file)
+is removed with its code and is not a weakening at all; a test deleted alone, or with only a fixture, still blocks.
 
 ## What counts as a change
 
@@ -58,6 +72,7 @@ Code files (`ts tsx js jsx mjs cjs mts cts vue`) and the scripts in a `.githooks
 | `lib/base-compare.mjs` | reruns failed typechecks and failing test files at the base (caches the answers); reruns new test failures once at head (flaky) |
 | `lib/verdict-text.mjs` | the line and the block reason |
 | `lib/code-lines.mjs` | which lines of a JS or TS text hold code (risk classes skip comment-only edits) |
+| `lib/false-alarms.mjs` | the hashed ids of new failures and which of them a false-alarm label lets through |
 | `lib/*.mjs` (others), `risk-rules.json` | scope, detect, run, parse, base tree, ledger, weakened-test scan, risk classes |
 
 The ledger is `~/.claude/state/done-check/ledger.jsonl` (counts only, no file names). Tests: `node --test tests/done-check-*.test.mjs`.

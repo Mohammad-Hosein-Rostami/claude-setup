@@ -2,7 +2,8 @@
 // run, the time and size caps, and the JSDoc types every lib passes around. It holds data only and imports nothing, so any lib,
 // the CLI, the hook and the tests can load it without side effects.
 // Exports: CHECK_KINDS, RESULTS, NOT_RUN_WHY, STOP_DEADLINE_MS, BASE_DEADLINE_MS, LAND_DEADLINE_MS, MAX_BLOCKS_IN_A_ROW,
-//   MAX_REASON_LINES_PER_CHECK, MAX_NODE_RELATED, POOL_SIZE, LEDGER_MAX_BYTES, MODEL_PATTERN, OTHER_MODEL, EFFORT_PATTERN; types CheckKind,
+//   MAX_REASON_LINES_PER_CHECK, MAX_NODE_RELATED, POOL_SIZE, LEDGER_MAX_BYTES, MODEL_PATTERN, OTHER_MODEL, EFFORT_PATTERN,
+//   ALARM_ID_PATTERN, MAX_ALARM_IDS_PER_CHECK; types CheckKind,
 //   Result, NotRunWhy, Scope, Cmd, Plan, Failure, CheckResult, RunRow, LabelRow, Verdict.
 // Invariants: every name is defined here once and nowhere else; the arrays are frozen, so no lib can add a kind or a reason on its own.
 
@@ -54,6 +55,12 @@ export const OTHER_MODEL = 'other';
 
 /** An effort level the ledger stores (`low` ... `max`): one short lower-case word. */
 export const EFFORT_PATTERN = /^[a-z]{1,16}$/;
+
+/** One stored alarm id: the first 16 hex characters of a sha256 of a new failure (lib/false-alarms.mjs), never its text or file name. */
+export const ALARM_ID_PATTERN = /^[0-9a-f]{16}$/;
+
+/** Most alarm ids a run row keeps per check kind (16 bytes of id plus quotes each, so four kinds stay far under the row cap). */
+export const MAX_ALARM_IDS_PER_CHECK = 100;
 
 /** @typedef {'types'|'lint'|'tests'|'tests-weakened'} CheckKind one of CHECK_KINDS */
 /** @typedef {'ok'|'fail'|'none'|'not-run'} Result one of RESULTS */
@@ -125,7 +132,7 @@ export const EFFORT_PATTERN = /^[a-z]{1,16}$/;
  * @property {string|null} base base commit
  * @property {string} key the change key
  * @property {number} files number of changed files (never their names)
- * @property {Record<string, { result: Result, new: number, old: number, ms: number, flaky?: number, unknown?: number, why?: NotRunWhy }>} checks one entry per check kind (`flaky`: new test failures that passed on a rerun at head; `unknown`: with no base, test failures in files the change does not hold, the kind then `fail` and the run `left-open`; each left out when 0)
+ * @property {Record<string, { result: Result, new: number, old: number, ms: number, flaky?: number, unknown?: number, labelled?: number, alarms?: string[], why?: NotRunWhy }>} checks one entry per check kind (`flaky`: new test failures that passed on a rerun at head; `unknown`: with no base, test failures in files the change does not hold, the kind then `fail` and the run `left-open`; `labelled`: new failures let through because a false-alarm label of an earlier run names them; each left out when 0; `alarms`: the ALARM_ID_PATTERN ids of the `new` failures, at most MAX_ALARM_IDS_PER_CHECK, left out when there are none)
  * @property {Verdict['verdict']} verdict
  * @property {string[]} risk risk classes found
  * @property {number} ms total time

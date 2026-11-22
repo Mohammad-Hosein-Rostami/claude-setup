@@ -8,7 +8,8 @@
 //   test is never shown or stored as ok and never reused as green; a kind that could not run is `not-run` and never blocks and is never
 //   ok. At a stop (`where: 'stop'`) a FAIL with a new failure blocks, except when the same change key was blocked before or the agent was
 //   blocked MAX_BLOCKS_IN_A_ROW times already: then it is `left-open` (the caller, the hook, owns that count and passes it as
-//   `priorBlocks`). At a land or a manual run a new failure always blocks. Empty scope: verdict `skipped`, no ledger row. DONE_CHECK_SKIP=all: verdict `skipped`, no command runs, one ledger row.
+//   `priorBlocks`). A new failure an owner's false-alarm label already names (same repo and base, lib/false-alarms.mjs) is `labelled`:
+//   shown, stored as a count, never blocking. At a land or a manual run a new failure always blocks. Empty scope: verdict `skipped`, no ledger row. DONE_CHECK_SKIP=all: verdict `skipped`, no command runs, one ledger row.
 // Invariants: the change key mixes the plan fingerprint into Scope.key, so a changed set of commands is a new change. The same key in the
 //   ledger after an ok or reused run (with no time or error not-run) is `reused` and runs no command. The risk classes are always computed
 //   fresh. Result files made for the tools are removed after the run (and old ones of a crashed run after a day). The ledger holds counts
@@ -20,6 +21,7 @@ import { worktreeOf } from '../../../hooks/lib/gated-folder.mjs';
 import { compareWithBase, findFlaky } from './base-compare.mjs';
 import { BASE_DEADLINE_MS, CHECK_KINDS, LAND_DEADLINE_MS, MAX_BLOCKS_IN_A_ROW, STOP_DEADLINE_MS } from './contract.mjs';
 import { planChecks } from './detect.mjs';
+import { alarmIdsOf, labelledAlarmIds, passLabelled } from './false-alarms.mjs';
 import { appendRun, ledgerFile, readLedger } from './ledger.mjs';
 import { loadRiskRules, riskClasses } from './risk.mjs';
 import { runPlan } from './run-checks.mjs';
@@ -39,11 +41,15 @@ export function repoIdOf(top) {
   return hashOf(worktreeOf(top)?.commonDir ?? top).slice(0, REPO_ID_CHARS);
 }
 
-/** An earlier run of the same change that can stand in for a new run: ok or reused, and every check it did not run was not cut short. */
-function earlierGreenRun(repo, key, env) {
+/**
+ * An earlier run of the same change that can stand in for a new run: ok or reused, every check it did not run was not cut short, and
+ * no label let a failure through (a label can be taken back, so such a run is checked again against the labels of now).
+ */
+function earlierGreenRun({ runs }, repo, key) {
   const cutShort = (check) => check.result === 'not-run' && WHY_PRIORITY.includes(check.why);
-  return readLedger({ env }).runs.findLast((row) => row.repo === repo && row.key === key && ['ok', 'reused'].includes(row.verdict)
-    && !Object.values(row.checks).some(cutShort)) ?? null;
+  const passedByLabel = (check) => check.labelled > 0;
+  return runs.findLast((row) => row.repo === repo && row.key === key && ['ok', 'reused'].includes(row.verdict)
+    && !Object.values(row.checks).some((check) => cutShort(check) || passedByLabel(check))) ?? null;
 }
 
 /** The packages of the plan as `<folder>: ` prefixes (empty for the project root), in command order. */
@@ -107,7 +113,7 @@ function notesOf(plan, scope, groups) {
   return notes;
 }
 
-const rowCheck = (summary) => ({ result: summary.result, new: summary.fresh.length, old: summary.old.length, ms: summary.ms, ...(summary.flaky > 0 ? { flaky: summary.flaky } : {}), ...(summary.unknown.length > 0 ? { unknown: summary.unknown.length } : {}), ...(summary.why ? { why: summary.why } : {}) });
+const rowCheck = (summary) => ({ result: summary.result, new: summary.fresh.length, old: summary.old.length, ms: summary.ms, ...(summary.flaky > 0 ? { flaky: summary.flaky } : {}), ...(summary.unknown.length > 0 ? { unknown: summary.unknown.length } : {}), ...(summary.labelled > 0 ? { labelled: summary.labelled } : {}), ...(summary.fresh.length > 0 ? { alarms: alarmIdsOf(summary.fresh) } : {}), ...(summary.why ? { why: summary.why } : {}) });
 
 /** Removes the result files of this plan, and result files of a crashed run older than a day; false when a file could not be removed. */
 function tidyResultFiles(plan, env) {
@@ -192,8 +198,11 @@ export async function checkChange(scopeOrPromise, options) {
   if (noCommand && scope.files.length + scope.wide.length === 0) { row.files = 0; return finish('skipped'); } // only text files changed and no test reads them
   row.key = hashOf(`${scope.key}\n${plan.fingerprint}`);
   let earlier = null;
+  let falseAlarms;
   try {
-    earlier = earlierGreenRun(repo, row.key, env);
+    const ledger = readLedger({ env });
+    earlier = earlierGreenRun(ledger, repo, row.key);
+    falseAlarms = labelledAlarmIds(ledger, { repo, base: scope.base });
   } catch (error) {
     return finish('ok', { notes: [`ledger unreadable (${error.code ?? error.message}): no reuse`] });
   }
@@ -208,10 +217,11 @@ export async function checkChange(scopeOrPromise, options) {
   } finally {
     cleaned = tidyResultFiles(plan, env);
   }
-  for (const summary of ran.summaries) row.checks[summary.kind] = rowCheck(summary);
-  const failing = ran.summaries.some((summary) => summary.fresh.length > 0);
-  const unblamed = ran.summaries.some((summary) => summary.result === 'fail');
+  const summaries = ran.summaries.map((summary) => passLabelled(summary, falseAlarms));
+  for (const summary of summaries) row.checks[summary.kind] = rowCheck(summary);
+  const failing = summaries.some((summary) => summary.fresh.length > 0);
+  const unblamed = summaries.some((summary) => summary.result === 'fail');
   const { verdict, tries } = decide({ failing, unblamed, where, key: row.key, priorBlocks });
   const notes = [...notesOf(plan, scope, ran.groups), ...(cleaned ? [] : ['result files not removed'])];
-  return finish(verdict, { notes, tries, reason: verdict === 'block' ? reasonOf(ran.summaries, { baseWhy: ran.baseWhy }) : null });
+  return finish(verdict, { notes, tries, reason: verdict === 'block' ? reasonOf(summaries, { baseWhy: ran.baseWhy }) : null });
 }

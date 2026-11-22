@@ -2,7 +2,8 @@
 // Exports: lineOf(row, options) -> string, reasonOf(summaries, options) -> string, KindSummary (type).
 // Invariants: the line is a function of the ledger row (plus optional extra notes), so `done-check last` prints exactly what the run
 //   printed, minus the notes (details a row does not hold: which package did not run). A kind that did not run is never shown as ok; a
-//   kind with new or unknown failures says FAIL (a failing test is never shown as ok); `tests-weakened` is shown only when it fails. The
+//   kind with new or unknown failures says FAIL (a failing test is never shown as ok); `tests-weakened` is shown only when it fails or a
+//   false-alarm label let a find through (`n labelled`, never silent). The
 //   reason lists at most MAX_REASON_LINES_PER_CHECK failure lines per check and counts the rest; it holds tool text only after the parsers
 //   cut it to one line.
 import { CHECK_KINDS, MAX_REASON_LINES_PER_CHECK } from './contract.mjs';
@@ -24,11 +25,17 @@ const WEAKENED = 'tests-weakened';
  */
 
 const seconds = (ms) => `${(ms / MS_PER_SECOND).toFixed(ms < WHOLE_SECONDS_FROM_MS ? 1 : 0)} s`;
-const oldNote = (check) => `${check.old > 0 ? `, ${check.old} old fail` : ''}${check.unknown > 0 ? `, ${check.unknown} unknown` : ''}${check.flaky > 0 ? `, ${check.flaky} flaky` : ''}`;
+const oldNote = (check) => `${check.old > 0 ? `, ${check.old} old fail` : ''}${check.unknown > 0 ? `, ${check.unknown} unknown` : ''}${check.flaky > 0 ? `, ${check.flaky} flaky` : ''}${check.labelled > 0 ? `, ${check.labelled} labelled` : ''}`;
 
-/** The part of the line for one kind, or null when the kind says nothing worth a part (the weakened-test scan, unless it fails). */
+/** The weakened-test scan's part: shown when it fails or when a false-alarm label let one of its finds through, else null. */
+function weakenedPart(check) {
+  if (check.result === 'fail') return `${WEAKENED} FAIL ${check.new}${check.labelled > 0 ? `, ${check.labelled} labelled` : ''}`;
+  return check.labelled > 0 ? `${WEAKENED} ok, ${check.labelled} labelled` : null;
+}
+
+/** The part of the line for one kind, or null when the kind says nothing worth a part (the weakened-test scan, unless it fails or a label passed a find). */
 function partOf(kind, check, files) {
-  if (kind === WEAKENED) return check.result === 'fail' ? `${kind} FAIL ${check.new}` : null;
+  if (kind === WEAKENED) return weakenedPart(check);
   if (check.result === 'fail') return `${kind} FAIL ${check.new} new${oldNote(check)}`;
   if (check.result === 'none') return `${kind} none related (${files} files)`;
   if (check.result === 'not-run') return `${kind} not run (${check.why ?? 'error'})`;
