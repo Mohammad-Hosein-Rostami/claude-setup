@@ -104,7 +104,9 @@ function runWithAgents(toolInput, prepare = () => {}) {
   mkdirSync(agents, { recursive: true });
   for (const name of ['implementer', 'ui-implementer']) copyFileSync(join(AGENTS, `${name}.md`), join(agents, `${name}.md`));
   prepare(agents);
-  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  const env = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CODE_SUBAGENT_MODEL: 'claude-sonnet-5-5' };
+  delete env.CLAUDE_CONFIG_DIR; // the personal folder is the temp HOME's
+  delete env.CLAUDE_CODE_SUBAGENT_EFFORT;
   return spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ tool_input: toolInput }), encoding: 'utf8', env, cwd: home });
 }
 

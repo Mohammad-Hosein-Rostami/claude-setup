@@ -1,11 +1,11 @@
 // PreToolUse(Agent|Task) guard: an Agent call with no `model` would inherit the lead model (Opus / Fable) and spend it silently. A
 // call to a built-in type that pins no model (general-purpose, no subagent_type, Explore and the other built-ins) gets `sonnet`; a Plan
 // call without one gets `opus`. Forks (subagent_type "fork", they inherit the lead on purpose), plugin agents, an explicit model and
-// unreadable input are not routed. Pin floor (lib/agent-pins.mjs): an agent file's `model` and `effort` are a floor, as a per-call value
-// outranks the file: a call value below the pin (haiku < sonnet < opus, low < medium < high < xhigh < max) is left out of the input so
-// the pin applies; an equal, higher or unknown value (fable, ultra) passes and none is ever added; any failure there leaves the input
-// as it is, with a stderr line. Env: settings/base.json sets CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-5-5 (ranked in docs/catalog.md).
-// Output when it rewrites: permissionDecision "allow" with the full input as `updatedInput` (it replaces the whole input, hooks docs).
+// unreadable input are not routed. Pin floor (lib/agent-pins.mjs): the agent file Claude Code loads (found by its `name`, deepest project
+// folder first) sets a floor, as a per-call value outranks the file; a file with no `model` or `effort` line is floored at
+// CLAUDE_CODE_SUBAGENT_MODEL (settings/base.json: claude-sonnet-5-5) or CLAUDE_CODE_SUBAGENT_EFFORT, the defaults the CLI gives it. A
+// lower call value (haiku < sonnet < opus, by version in a family; low < ... < max) is left out so the floor applies; an equal, higher
+// or unknown value passes, none is added; a failure there leaves the input as is (stderr line). A rewrite: allow + the full updatedInput.
 // UI brief gate: denies once with advice for UI briefs. A `ui-implementer` or `visual-qa` call is quiet when its prompt has a line that
 // starts (after optional blanks) with `MATRIX: <path>` naming a coverage matrix (a JSON object with a `surfaces` array; a relative path
 // starts at the call's cwd, `~` is the home folder) or with `MATRIX: none: <reason>` (15+ characters, and only when the brief outside its
