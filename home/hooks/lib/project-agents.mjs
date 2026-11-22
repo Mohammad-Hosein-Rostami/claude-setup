@@ -1,7 +1,7 @@
 // Project agent files that cap or shadow the owner's agents. Exports: projectAgentNote(sessionDir, personalDir), MAX_AGENT_FILES,
 // NOTE_MAX_CHARS.
 // A project agent wins over a personal or built-in agent of the same name, and a `maxTurns:` line in its frontmatter stops the agent
-// mid-task (the owner's rule is no maxTurns). Used by the SessionStart mode hook and by scripts/doctor.sh (run this file as
+// mid-task (the owner's rule is no maxTurns). Used by the SessionStart session-notes hook and by scripts/doctor.sh (run this file as
 // `node project-agents.mjs <sessionDir> <personalAgentsDir>`: it prints the note, or nothing).
 // The parts: agent-folders.mjs (which folders Claude Code loads), agent-file-walk.mjs (their entries, under limits, never through a
 // link), agent-frontmatter.mjs (what a frontmatter says, when it is plain), project-agents-text.mjs (the wording and the cap),

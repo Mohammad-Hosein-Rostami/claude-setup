@@ -37,7 +37,7 @@ function countCompaction(dir, sessionId) {
   try {
     writeStateText(dir, name, `${count}\n`);
   } catch (error) {
-    process.stderr.write(`mode hook: cannot save compaction count: ${error.message}\n`);
+    process.stderr.write(`session-notes hook: cannot save compaction count: ${error.message}\n`);
   }
   return count;
 }

@@ -18,9 +18,9 @@
 // has none: tests/agent-files.test.mjs). NOTE_MAX_CHARS is the one cap
 // of the writer (cappedNote) and of this reader; a note that is longer because the owner's own set of agents outgrew the cap
 // (project-agents-text.mjs) is replaced by the fixed text too, so the SessionStart output keeps its size.
-// Time: the hook's timeout is 5,000 ms (settings/base.json) and mode.mjs keeps one deadline below it (HOOK_BUDGET_MS, shared
-// with its `ps` lookups). The child is killed (SIGKILL) after min(NOTE_TIMEOUT_MS = 2,000 ms, what is left of that budget); with
-// less than MIN_CHILD_MS left it is not started and the note is NOT_CHECKED_NOTE. The rest of mode.mjs at SessionStart measured
+// Time: the hook's timeout is 5,000 ms (settings/base.json) and session-notes.mjs keeps one deadline below it
+// (HOOK_BUDGET_MS). The child is killed (SIGKILL) after min(NOTE_TIMEOUT_MS = 2,000 ms, what is left of that budget); with
+// less than MIN_CHILD_MS left it is not started and the note is NOT_CHECKED_NOTE. The rest of session-notes.mjs at SessionStart measured
 // about 35 ms. Not covered: a child that cannot be killed because it hangs inside the kernel (a dead network mount).
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
@@ -71,7 +71,7 @@ export function childTimeoutMs(wantedMs, budgetLeftMs) {
  * @param {string} sessionDir - the session's folder (the hook input's `cwd`).
  * @param {string} personalDir - the personal agents folder (`~/.claude/agents`).
  * @param {{ script?: string, timeoutMs?: number, budgetLeftMs?: number }} [options] - `budgetLeftMs`: milliseconds left of the
- *   hook's budget (mode.mjs); for tests: another child script, another limit for the child.
+ *   hook's budget (session-notes.mjs); for tests: another child script, another limit for the child.
  * @returns {string} the child's note ('' when there is nothing to say or no session folder), or NOT_CHECKED_NOTE when the child
  *   failed in any way or the budget left no time to start it.
  */

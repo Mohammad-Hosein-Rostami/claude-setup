@@ -28,7 +28,7 @@ export async function bigContextNote({ prompt, transcriptPath, dir, sessionId })
     await mkdir(dir, { recursive: true });
     await writeFile(flag, '1\n');
   } catch (error) {
-    process.stderr.write(`mode hook: cannot save big-context flag: ${error.message}\n`);
+    process.stderr.write(`session-notes hook: cannot save big-context flag: ${error.message}\n`);
   }
   return `Context is already ~${Math.round(tokens / TOKENS_PER_K)}k tokens and this looks like a new task: before starting, tell the user "/clear or start a new session first" (one task per session; use the \`handoff\` skill if state must carry over).`;
 }

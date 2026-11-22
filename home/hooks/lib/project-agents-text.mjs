@@ -13,7 +13,7 @@ import { AGENT_HEAD_BYTES } from './agent-file-walk.mjs';
 // Longest note, in characters. It counts String length (UTF-16 units), as the CLI's persisted-output code does (`string.length` in
 // the 2.1.328 bundle; the call site of the hook-output cap itself was not found). The note is printable ASCII apart from the personal
 // agent names, so units, code points and bytes are the same number for today's set.
-// Why 800: the note is one part of the single string mode.mjs prints at SessionStart, and Claude Code shows the lead only a
+// Why 800: the note is one part of the single string session-notes.mjs prints at SessionStart, and Claude Code shows the lead only a
 // 2,000-character preview of a hook's stdout above 10,000 characters. The other parts measure up to 8,942 (every mode, third
 // compaction, a STATUS path at its shown limit: tests/session-start-size.test.mjs), so with the note the output is 9,744 there.
 // What is never cut measures 762 with today's ten personal agents and the six built-in ones all shadowed and six digits in each

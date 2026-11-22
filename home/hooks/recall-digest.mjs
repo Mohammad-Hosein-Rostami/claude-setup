@@ -1,7 +1,7 @@
 // SessionStart(compact) hook: after a compaction, print a digest of this session's checkpoint notes (owner instructions,
 // open items, decisions, key numbers, files; newest first, at most 6000 chars) so the model starts from what mattered,
-// plus the `recall "<query>" --session current` line for exact details. Separate from mode.mjs on purpose (the mode
-// output is capped at 9000 chars). If a checkpoint job is still running (PreCompact started one) it waits for it, up
+// plus the `recall "<query>" --session current` line for exact details. Separate from session-notes.mjs on purpose (its
+// output has its own cap). If a checkpoint job is still running (PreCompact started one) it waits for it, up
 // to RECALL_DIGEST_WAIT_MS (default 8000). The digest names the account the session's last checkpoint call ran on
 // (never a token), and when that call had no login (`error: "auth"` in usage.jsonl) it says so, also with no notes.
 // Prints nothing when there are no notes and no such failure; never fails the session start.

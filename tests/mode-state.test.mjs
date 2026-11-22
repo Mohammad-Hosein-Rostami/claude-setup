@@ -110,7 +110,7 @@ test('the prune goes on past each entry it cannot remove and reports it on stder
   lutimesSync(join(dir, 'a-link-to-fresh'), longAgo, longAgo);
   const stderr = stderrOf(() => pruneState(dir, NO_LIMIT));
   assert.deepEqual(readdirSync(dir).sort(), [...folders, 'fresh'], 'every stale file and both stale links are gone');
-  for (const folder of folders) assert.match(stderr, new RegExp(`^mode hook: prune failed: .*${folder}`, 'm'), `${folder} is reported`);
+  for (const folder of folders) assert.match(stderr, new RegExp(`^session-notes hook: prune failed: .*${folder}`, 'm'), `${folder} is reported`);
 });
 
 test('the prune looks at no more than MAX_PRUNED_ENTRIES entries per run and stops when the budget is used up', () => {
@@ -160,6 +160,6 @@ test('removeStateFile removes the name itself: a missing one is silent, a link g
   mkdirSync(join(dir, 'folder'));
   assert.equal(stderrOf(() => removeStateFile(dir, 'missing') ?? removeStateFile(dir, undefined) ?? removeStateFile(dir, 'link')), '');
   assert.equal(readFileSync(victim, 'utf8'), 'keep\n', 'the file the link led to is untouched');
-  assert.match(stderrOf(() => removeStateFile(dir, 'folder')), /^mode hook: cannot remove state: .*folder/);
+  assert.match(stderrOf(() => removeStateFile(dir, 'folder')), /^session-notes hook: cannot remove state: .*folder/);
   assert.deepEqual(readdirSync(dir), ['folder']);
 });

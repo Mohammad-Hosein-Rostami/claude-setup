@@ -3,7 +3,7 @@
 // Exports: readStateText(file, what), writeStateText(dir, name, text), removeStateFile(dir, name), pruneState(dir, timeLeft, nowMs),
 // isStale(mtimeMs, nowMs), STATE_FILE_MAX_BYTES, MAX_PRUNED_ENTRIES. Used by session-notes.mjs, compact-notes.mjs, checks-on.mjs and
 // smart-check/ledger.mjs (moved out of the hook in round 9, lane r9-mode-fix, fix round 1: security review 1, S4 and S5). The stderr
-// lines keep their "mode hook:" prefix, which tests pin.
+// lines start with "session-notes hook:" (tests/mode-state.test.mjs pins it).
 // Why: the files were opened by name. Whoever can write the state folder (the same user, or a program run as that user) could
 // plant a FIFO, which hung the hook until Claude Code dropped its whole output, or a link, which the hook wrote a state through;
 // a large file was read whole; the prune had no bound and ended at the first entry it could not handle.
@@ -52,7 +52,7 @@ export function readStateText(file, what = 'state') {
   try {
     return readPlainFile(file, STATE_FILE_MAX_BYTES);
   } catch (error) {
-    if (error.code !== 'ENOENT') process.stderr.write(`mode hook: cannot read ${what}: ${error.message}\n`);
+    if (error.code !== 'ENOENT') process.stderr.write(`session-notes hook: cannot read ${what}: ${error.message}\n`);
     return undefined;
   }
 }
@@ -88,7 +88,7 @@ export function removeStateFile(dir, name) {
   try {
     unlinkSync(join(dir, name)); // of a link itself, never what it leads to
   } catch (error) {
-    if (error.code !== 'ENOENT') process.stderr.write(`mode hook: cannot remove state: ${error.message}\n`);
+    if (error.code !== 'ENOENT') process.stderr.write(`session-notes hook: cannot remove state: ${error.message}\n`);
   }
 }
 
@@ -100,7 +100,7 @@ function someNames(dir) {
     folder = opendirSync(dir);
     for (let entry = folder.readSync(); entry !== null && names.length < MAX_PRUNED_ENTRIES; entry = folder.readSync()) names.push(entry.name);
   } catch (error) {
-    if (error.code !== 'ENOENT') process.stderr.write(`mode hook: prune failed: ${error.message}\n`);
+    if (error.code !== 'ENOENT') process.stderr.write(`session-notes hook: prune failed: ${error.message}\n`);
   } finally {
     folder?.closeSync();
   }
@@ -113,7 +113,7 @@ function removeIfStale(path, nowMs) {
     const entry = lstatSync(path); // of a link itself: its target is never looked at or removed
     if (isStale(entry.mtimeMs, nowMs)) unlinkSync(path);
   } catch (error) {
-    if (error.code !== 'ENOENT') process.stderr.write(`mode hook: prune failed: ${error.message}\n`);
+    if (error.code !== 'ENOENT') process.stderr.write(`session-notes hook: prune failed: ${error.message}\n`);
   }
 }
 
