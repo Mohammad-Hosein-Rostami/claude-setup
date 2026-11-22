@@ -117,7 +117,8 @@ one history, so resume, recall and memory keep working. One condition (`research
     node --test tests/account-*.test.mjs tests/claude-call.test.mjs
 
 Every test uses made-up tokens, a temp HOME and TMPDIR and the file store, or a fake `security` runner. After each
-test a scan of the sandbox finds the token only in the store. `tests/account-keychain.test.mjs` runs the real
-`/usr/bin/security` against a scratch keychain file (macOS only) and checks that the search list and the login
-keychain are untouched. One trap worth knowing: `security` given a keychain file that does not exist writes to the
-login keychain instead, so the store refuses such a path before running anything.
+test a scan of the sandbox finds the token only in the store. No test starts the real `/usr/bin/security` or reads a
+keychain of yours: `tests/account-keychain.test.mjs` runs a fake `security` program (found on a PATH of its own temp
+folder) against a scratch keychain file, and the real program's behaviour rests on probe ACC-4. One trap worth knowing:
+`security` given a keychain file that does not exist writes to the login keychain instead, so the store refuses such a
+path before running anything, and a file swapped while `security` runs makes the call fail.
