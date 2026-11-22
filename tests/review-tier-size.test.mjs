@@ -48,6 +48,7 @@ test('size F2: a --delta over 400 lines is never refused', () => {
   const delta = tier('--delta', reviewed, '--prior', priorFile());
   assert.equal(delta.status, 0, delta.stderr);
   assert.equal(json('--delta', reviewed, '--prior', priorFile()).changedLines, MAX_LINES + 1);
+  assert.equal(tier('--delta', reviewed, '--prior', priorFile(), '--landing').status, 0, 'also with --landing named by hand');
   assert.equal(git(dir, 'status', '--short'), '', 'read-only');
 });
 
