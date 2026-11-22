@@ -161,6 +161,22 @@ test('F3: a 10 MB report is refused by the size cap (exit 2) before it is read',
   assert.match(result.stderr, /over \d+ bytes/);
 });
 
+test('a hash flag without its file, or a file without its hash, is exit 2', () => {
+  const dir = round().dir;
+  const text = readFileSync(join(dir, 'report-0.md'), 'utf8');
+  const tierText = readFileSync(join(dir, 'tier.json'), 'utf8');
+  const base = ['--tier', join(dir, 'tier.json'), '--tier-sha256', sha256(tierText), '--report', join(dir, 'report-0.md'), '--report-sha256', sha256(text), '--write-prior'];
+  const extra = spawnSync(process.execPath, [CLI, ...base, join(dir, 'x1.md'), '--report-sha256', sha256(text)], { encoding: 'utf8' });
+  assert.equal(extra.status, 2);
+  assert.match(extra.stderr, /each file needs its recorded sha256/);
+});
+
+test('a prior file whose header round and `round:` line differ is no prior file (exit 2)', () => {
+  const result = round({ prior: PRIOR_FILE().replace('round: 0', 'round: 3') });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /no prior file/);
+});
+
 test('F4: --write-prior to a path that exists exits 2 and leaves the file as it was', () => {
   const dir = makeTempDir('verdict-existing-');
   const existing = join(dir, 'prior-x.md');
@@ -192,13 +208,16 @@ test('a report with no final line, a malformed one, or the other kind of final l
 });
 
 test('wrong base, a head that is not the tier tip and a read count that is not the tier\'s files are incomplete', () => {
-  assert.equal(round({ reports: [`wrong base ${OTHER_TIP} != ${TIP}\n`] }).status, 3);
+  const wrong = round({ reports: [`wrong base ${OTHER_TIP} != ${TIP}\n`] });
+  assert.equal(wrong.status, 3);
+  assert.match(lineOf(wrong, 'verdict'), /lens 1: wrong base$/, 'the cause is named, not a missing final line');
   const head = round({ reports: [lens({ final: finalLine({ head: OTHER_TIP }) })] });
   assert.equal(head.status, 3);
   assert.match(lineOf(head, 'verdict'), /head: is not the tier tip/);
   const files = round({ reports: [lens({ final: finalLine({ read: '3/3' }) })] });
   assert.equal(files.status, 3);
   assert.match(lineOf(files, 'verdict'), /does not match the 4 files/);
+  assert.match(lineOf(round({ reports: [lens({ final: finalLine({ read: '3/4' }) })] }), 'verdict'), /not every file was read/);
   assert.equal(round({ reports: [lens({ final: finalLine({ read: '4/4' }) })], tier: { files: 4 } }).status, 0);
 });
 
@@ -244,6 +263,19 @@ test('a field written twice in one finding line is malformed (incomplete), also 
 test('a read count above the tier\'s files (5/5 of 4, or 5/4) is incomplete, not a pass', () => {
   assert.equal(round({ reports: [lens({ final: finalLine({ read: '5/5' }) })] }).status, 3);
   assert.equal(round({ reports: [lens({ final: finalLine({ read: '5/4' }) })] }).status, 3);
+});
+
+test('an unknown field in a finding line, a malformed mutants line and an unknown lens agent are refused', () => {
+  const unknownField = finding('blocking', 'B1').replace('| fix: repair it', '| fix: repair it | severity: low');
+  const field = round({ reports: [lens({ findings: [unknownField] })] });
+  assert.equal(field.status, 3, field.stdout + field.stderr);
+  assert.match(lineOf(field, 'verdict'), /no known field/);
+  const mutant = round({ reports: [lens({ mutants: ['m1 killed'] })] });
+  assert.equal(mutant.status, 3);
+  assert.match(lineOf(mutant, 'verdict'), /mutants block is malformed/);
+  const agent = round({ reviews: [{ agent: 'general-purpose', model: 'sonnet' }] });
+  assert.equal(agent.status, 2);
+  assert.match(agent.stderr, /lens agent/);
 });
 
 test('two findings with one id in a round are incomplete (the id would be ambiguous in `fix` and `--drop`)', () => {
