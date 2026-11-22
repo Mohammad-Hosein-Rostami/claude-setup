@@ -1,20 +1,17 @@
-// Purpose: `git-tidy land`: put a lane on the base as one straight line: rebase it onto the base, require a full-suite PASS on the
-//   rebased tip, fast-forward the base, then remove the lane's worktree and branch and every proven leftover.
+// Purpose: `git-tidy land`: put a lane on the base as one straight line: rebase it onto the base, fast-forward the base, then remove the lane's worktree and branch and every proven leftover.
 // Exports: landLane.
 // Invariants: the base must be checked out in a worktree (the base folder) with no tracked changes; untracked files there are never
 //   touched, and an untracked path the lane would overwrite is refused before anything changes. The rebase runs in the worktree that
 //   holds the lane, or in a temporary one that is removed again; a conflict aborts the rebase and leaves the lane where it was. The
-//   base moves only by `merge --ff-only` run in the base folder, and only when `hasPass(<base folder>, <rebased tip>, { suite: true })`
-//   is true, and the merge names that very commit (not the lane's branch, which may have moved since), so what lands is exactly the tree
-//   the suite passed on. Cleanup is prune's (every safety it has); only the landed lane skips prune's 60-minute rule, and a cleanup
+//   base moves only by `merge --ff-only` run in the base folder, and the merge names that very commit (not the lane's branch, which may have moved since), so what lands is exactly the
+//   rebased tip that was checked (UI proof, file size). Cleanup is prune's (every safety it has); only the landed lane skips prune's 60-minute rule, and a cleanup
 //   that prune refuses (an unfinished operation somewhere) is reported in `cleanupRefused` since the base has already moved.
 //   Before the fast-forward (spec-p3 `r9-land-speed`): a lane whose UI files differ from the base needs `uiCheck` to pass for the rebased
 //   tip (status `ui-proof`), and a file the lane adds over MAX_NEW_FILE_BYTES that its brief does not name stops it (`new-file-size`).
 //   A landing reports `from`, the base tip just before the fast-forward (the reflog's value when another process moved the base between).
-//   Before the suite lookup (`r9-git-line`): the base's upstream is fetched and compared (lib/upstream.mjs); upstream commits the base lacks
+//   Before the size and UI checks (`r9-git-line`): the base's upstream is fetched and compared (lib/upstream.mjs); upstream commits the base lacks
 //   stop it (`upstream-moved`), and every result after that point carries `upstream` (published count, WARN of an offline fetch).
-//   Before anything (`tip`): a branch that is not at the reviewed `tip` sha is refused as `tip-moved` with nothing changed, so a lane the review
-//   never read cannot land by any route.
+//   Before anything (`tip`): a branch that is not at the `tip` sha the caller gave is refused as `tip-moved` with nothing changed.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -96,13 +93,13 @@ function changedPatches(before, after) {
   return before.filter((id) => (left.get(id) > 0 ? (left.set(id, left.get(id) - 1), false) : true)).length;
 }
 
-/** `{ now, why }` when `branch` exists and is not at `reviewedTip`; null when it is there, when no tip is given, or when the branch is missing (prepare says so). */
-function movedBranch(repo, branch, reviewedTip) {
-  if (reviewedTip === null) return null;
+/** `{ now, why }` when `branch` exists and is not at `expectedTip`; null when it is there, when no tip is given, or when the branch is missing (prepare says so). */
+function movedBranch(repo, branch, expectedTip) {
+  if (expectedTip === null) return null;
   const read = runGit(repo.dir, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
   const now = read.stdout.trim();
-  if (read.status !== 0 || now === reviewedTip) return null;
-  return { now, why: `${branch} is at ${now}, not at the reviewed ${reviewedTip}` };
+  if (read.status !== 0 || now === expectedTip) return null;
+  return { now, why: `${branch} is at ${now}, not at the expected ${expectedTip}` };
 }
 
 const tipOf = (repo, branch) => gitText(repo.dir, ['rev-parse', `refs/heads/${branch}`]);
@@ -134,20 +131,20 @@ function cleanUp(atBase, branch) {
  * Lands `branch` on the base of `repo` (from openRepo).
  * @param {object} repo the repository (openRepo)
  * @param {string} branch the lane, a local branch other than the base
- * @param {{ rebaseOnly?: boolean, tip?: string|null, hasPass: (repoDir: string, rev: string, options: { suite: boolean }) => boolean,
+ * @param {{ rebaseOnly?: boolean, tip?: string|null,
  *   uiCheck?: (repoDir: string, baseSha: string, tip: string) => string|null, briefText?: string|null }} options
- *   `rebaseOnly` stops after the rebase; `tip` is the full sha the review cleared (null: not checked, only for a caller that has none); `hasPass` is test-pass's lookup of a suite PASS for a commit; `uiCheck` returns null when the UI
+ *   `rebaseOnly` stops after the rebase; `tip` is the full sha the caller expects the lane to be at (null: not checked, only for a caller that has none); `uiCheck` returns null when the UI
  *   proof holds (or no UI file changed) and else the reason (the CLI always passes one, failing closed when ui-proof cannot be loaded);
  *   `briefText` is the lane's brief, whose named paths may add files over the size limit (null: none)
- * @returns {{ status: 'landed'|'rebased'|'conflict'|'no-pass'|'base-moved'|'ui-proof'|'new-file-size'|'upstream-moved'|'tip-moved', tip: string, upstream: object|null, from: string|null,
+ * @returns {{ status: 'landed'|'rebased'|'conflict'|'base-moved'|'ui-proof'|'new-file-size'|'upstream-moved'|'tip-moved', tip: string, upstream: object|null, from: string|null,
  *   patchesChanged: number, removed: string[], cleanupRefused: string|null, findings: object[], files: string[], why: string|null }} `tip`
  *   is the lane's tip after the rebase, `from` the base tip before the fast-forward (landed only), `files` the conflicting files (or the
  *   oversize ones), `removed` what cleanup removed (`<kind> <name or path>`), `findings` what `check` still reports on the base afterwards
  * @throws {UsageError} when the base folder is not ready (not checked out, tracked changes, an untracked path in the way), the lane
  *   is missing or is the base, or a rebase or merge is unfinished somewhere; any other git failure throws an Error
  */
-export function landLane(repo, branch, { rebaseOnly = false, tip: reviewedTip = null, hasPass, uiCheck = () => null, briefText = null }) {
-  const moved = movedBranch(repo, branch, reviewedTip);
+export function landLane(repo, branch, { rebaseOnly = false, tip: expectedTip = null, uiCheck = () => null, briefText = null }) {
+  const moved = movedBranch(repo, branch, expectedTip);
   if (moved !== null) return { status: 'tip-moved', tip: moved.now, from: null, patchesChanged: 0, removed: [], cleanupRefused: null, findings: [], files: [], why: moved.why, upstream: null };
   const { baseFolder, laneFolder } = prepare(repo, branch);
   const before = patchIdsOf(repo, `refs/heads/${branch}`);
@@ -159,7 +156,6 @@ export function landLane(repo, branch, { rebaseOnly = false, tip: reviewedTip = 
   if (rebaseOnly) return result('rebased', { patchesChanged });
   const upstream = upstreamState(repo);
   if (upstream.moved > 0) return result('upstream-moved', { patchesChanged, upstream, why: `${upstream.upstream} has ${upstream.moved} commit(s) the base lacks` });
-  if (!hasPass(baseFolder, tip, { suite: true })) return result('no-pass', { patchesChanged, upstream });
   const baseSha = gitText(repo.dir, ['rev-parse', repo.baseRef]);
   const big = oversizeAdded(repo, baseSha, tip, briefText);
   if (big.length > 0) return result('new-file-size', { patchesChanged, files: big.map(({ path }) => path), why: big.map(({ path, bytes }) => `${path} (${bytes} bytes)`).join(', ') });

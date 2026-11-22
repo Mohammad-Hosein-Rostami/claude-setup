@@ -2,7 +2,7 @@
 // Exports: git, tool, firstLine, TOOLS_DIR.
 // Invariants: every argument is an argv entry (never joined into a shell line). A command that cannot start or times out has `status` null and
 //   `ok` false, so a caller never reads a missing exit code as success (P3). GIT_* variables of the caller are dropped (a hook's GIT_DIR must not
-//   point a child at another repository); everything else, HOME and the session id included, is passed on so the tools read the same /check state.
+//   point a child at another repository); everything else, HOME and the session id included, is passed on so the tools see the caller's session.
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';

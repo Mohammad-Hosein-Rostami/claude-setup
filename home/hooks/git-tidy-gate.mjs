@@ -1,14 +1,13 @@
 // Stop, SubagentStop and PreCompact: keeps git on one line (C37). A lead's Stop is blocked once per repository state while the repo holds
 // leftovers `git-tidy check` finds (an unpublished merge commit, an older copy of a re-done lane, a workflow agent's leftover branch, a
-// merged branch or worktree), while a base branch moved during this session has no full-suite PASS, or while an old unmerged lane is named
-// by no open row of the session's STATUS.md. A SubagentStop is blocked once when the agent left its own empty `worktree-agent-<id>` branch.
+// merged branch or worktree), or while an old unmerged lane is named by no open row of the session's STATUS.md. It never asks for a test run. A SubagentStop is blocked once when the agent left its own empty `worktree-agent-<id>` branch.
 // PreCompact prints one line per open lane so the summary keeps them. SessionStart (`r9-git-line`) names the lanes of the session's repo
 // not yet landed; PostToolUse(Bash) after a `git worktree add` locks the new lane worktree (lib/lane-lock.mjs), and after `git worktree add`,
 // `merge` or `branch` reuses the cached check and, above 5
 // unlanded lanes or prunable items, says to run `git-tidy prune`; both put `additionalContext` inside `hookSpecificOutput`.
-// Exports: decide(input, env, deps) -> Promise<{block: false, info?} | {block: true, reason}>, openLanes(input, env, deps) -> Promise<string[]>,
+// Exports: decide(input, env, deps) -> Promise<{block: false} | {block: true, reason}>, openLanes(input, env, deps) -> Promise<string[]>,
 //   contextFor(event, input, env, deps) -> Promise<string> (SessionStart / PostToolUse additionalContext, '' for none).
-//   deps (tests): runCheck(top, timeoutMs, env), checkTimeoutMs, hasPass (null: no test-pass tool), now (ms, for the cache age).
+//   deps (tests): runCheck(top, timeoutMs, env), checkTimeoutMs, now (ms, for the cache age).
 //   Env: GIT_TIDY_GATE_CHECK_TIMEOUT_MS overrides CHECK_TIMEOUT_MS (a loaded machine, the test suite).
 // Invariants:
 // - The gated folder is the session's own worktree (lib/gated-folder.mjs). A lead also gates the worktrees of files the session itself
@@ -26,9 +25,7 @@
 //   A miss runs the child with a CHECK_TIMEOUT_MS bound; on a timeout the stop passes and one detached refresh fills the cache.
 // - Blocks at most once per state (agent + repo + the problems found); a continued stop (stop_hook_active) gets at most
 //   MAX_CHAINED_BLOCKS blocks in a row (lib/tidy-gate-store.mjs), so the gate can never loop. A state that cannot be stored is not blocked.
-// - Without a transcript timestamp or the test-pass tool the base tip is not judged; without a linked STATUS.md no lane is called unnamed.
-// - A base move another, older session's call-window record claims (lib/base-moves.mjs) does not block: the stop prints one
-//   `systemMessage` info line per sha instead (never with a block, never on PreCompact). Every own move blocks as before.
+// - Without a linked STATUS.md no lane is called unnamed.
 // - Any internal error is one stderr line and exit 0: a session is never trapped.
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -36,7 +33,6 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { baseTipProblem } from './lib/base-moves.mjs';
 import { editedWorktrees, gatedFolder, gitOut, gitText, namesFilterProgram, worktreeOf } from './lib/gated-folder.mjs';
 import { isSessionId } from './lib/session-store.mjs';
 import { statusFileOf } from './lib/status-file-of.mjs';
@@ -136,14 +132,11 @@ function verdictProblems(verdict, input, env, top) {
   return { problems, pruneLine: prune ? `node ~/.claude/tools/git-tidy/git-tidy.mjs prune ${shellWord(top)} --apply --include-recent` : null };
 }
 
-/** The hygiene reason for one tree, or null; an info line of a foreign base move goes to `infos` instead (spec 2.3, K9). */
-async function leadReason(input, env, deps, { top, timeoutMs, infos }) {
+/** The hygiene reason for one tree, or null. */
+function leadReason(input, env, deps, { top, timeoutMs }) {
   const verdict = verdictFor(env, input.session_id, top, deps, timeoutMs);
   if (verdict === null) return null;
   const { problems, pruneLine } = verdictProblems(verdict, input, env, top);
-  const baseProblem = await baseTipProblem(top, verdict.base, input, deps, env);
-  if (baseProblem?.info !== undefined) infos.push(baseProblem);
-  else if (baseProblem !== null) problems.push(baseProblem);
   if (problems.length === 0) return null;
   const lines = problems.map(({ text }) => `- ${text}`);
   const fix = pruneLine === null ? '' : `\nClean up what prune can remove (only proven patch-equal or merged work): ${pruneLine}`;
@@ -199,7 +192,7 @@ async function inspectWithinBudget(input, env, deps, inspect) {
  * @param {object} input the hook JSON (session_id, agent_id?, agent_type?, agent_transcript_path?, transcript_path?, stop_hook_active?)
  * @param {Record<string, string | undefined>} [env] HOME (the state folder), CLAUDE_PROJECT_DIR and the environment the check child gets
  * @param {object} [deps] see the header
- * @returns {Promise<{block: false, info?: string} | {block: true, reason: string}>} info: a foreign base move without a PASS (printed once)
+ * @returns {Promise<{block: false} | {block: true, reason: string}>}
  */
 export async function decide(input, env = process.env, deps = {}) {
   const agent = typeof input?.agent_id === 'string' && input.agent_id !== '' ? input.agent_id : null;
@@ -207,18 +200,11 @@ export async function decide(input, env = process.env, deps = {}) {
     const tree = gatedTree(input, env);
     return tree === null ? PASS : blockOnce(input, env, agent, tree, agentReason(input, tree.top));
   }
-  const infos = [];
-  const blocked = await inspectWithinBudget(input, env, deps, async (tree, timeoutMs) => {
-    const result = blockOnce(input, env, agent, tree, await leadReason(input, env, deps, { top: tree.top, timeoutMs, infos }));
+  const blocked = await inspectWithinBudget(input, env, deps, (tree, timeoutMs) => {
+    const result = blockOnce(input, env, agent, tree, leadReason(input, env, deps, { top: tree.top, timeoutMs }));
     return result.block ? result : undefined;
   });
-  return blocked ?? infoOnce(input, env, infos);
-}
-
-/** PASS with the info lines not shown before in this session (once per sha: the agent key `info` of the block store). */
-function infoOnce(input, env, infos) {
-  const fresh = infos.filter(({ key }) => recordOnce(env, input.session_id, { agent: 'info', state: sha256(`info\0${key}`), continued: false }));
-  return fresh.length === 0 ? PASS : { block: false, info: fresh.map(({ info }) => info).join('\n') };
+  return blocked ?? PASS;
 }
 
 /** The block for `found` (a reason or null) the first time its state is seen in this session, else PASS. */
@@ -286,7 +272,6 @@ async function main() {
   }
   const result = await countedGate('git-tidy-gate', input, () => decide(input)); // lib/stop-block-count.mjs: the cap record
   if (result.block) process.stdout.write(`${JSON.stringify({ decision: 'block', reason: result.reason })}\n`);
-  else if (result.info !== undefined) process.stdout.write(`${JSON.stringify({ systemMessage: result.info })}\n`);
 }
 
 // ~/.claude/hooks is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.

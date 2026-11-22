@@ -3,23 +3,22 @@
 // whose work is already on the base; `prune` removes exactly those, and only when it can prove they are merged.
 // Usage: git-tidy.mjs check [dir] [--base <branch>] [--json]
 //        git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]
-//        git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>] [--checks <cat,...>] [--json]
-//   --checks names categories the owner turned on (land-lane passes them); it can only add checks, never turn one off.
-//   --tip is the full sha the review cleared: required for a full land (exit 2 without it), optional with --rebase-only; a branch that is
-//   not at it exits 9 before anything changes.
-//        git-tidy.mjs range <reviewed-sha> [dir] [--base <branch>] [--landed <sha>] [--json]
+//        git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>] [--json]
+//   --tip is the full sha the caller expects the lane to be at: required for a full land (exit 2 without it), optional with --rebase-only;
+//   a branch that is not at it exits 9 before anything changes. `--checks` (a removed flag) is refused with exit 2.
+//        git-tidy.mjs range <sha> [dir] [--base <branch>] [--landed <sha>] [--json]
 //        --include-recent  lifts only the rule that keeps a worktree used in the last 60 minutes, and not for a lane
 //                          with no commit of its own yet (it stays protected for those 60 minutes)
-// land: rebases the lane onto the base, needs a full-suite PASS (test-pass tool) on the rebased tip, fast-forwards the base and
-//   cleans up. Exit: 0 landed and check clean (or --rebase-only done), 1 landed with findings left, 2 usage or base folder not
-//   ready, 3 conflict, 4 no suite PASS at the tip, 5 base moved during the landing, 6 ui-proof: the UI files differ from the base and
-//   `ui-proof check --tip <rebased tip>` does not exit 0 (or the ui-proof tool cannot be loaded; no flag turns it off), 7 new-file-size:
+// land: rebases the lane onto the base, fast-forwards the base and cleans up (no test or review step). Exit: 0 landed and check
+//   clean (or --rebase-only done), 1 landed with findings left, 2 usage or base folder not
+//   ready, 3 conflict, 5 base moved during the landing, 6 ui-proof: the UI files differ from the base and
+//   `ui-proof check --tip <rebased tip>` does not exit 0 (or the ui-proof tool cannot be loaded; always on, no flag turns it off), 7 new-file-size:
 //   the lane adds a file over the commit gate's MAX_NEW_FILE_BYTES that the `--brief` file does not name (no brief names none).
 //   8 upstream-moved: after a fetch of the base's upstream (timeout; offline is a WARN line), the upstream holds commits the base lacks:
-//   `git pull --rebase` first. 9 tip-moved: `refs/heads/<branch>` is not the `--tip` sha (changed after the review; nothing was touched).
+//   `git pull --rebase` first. 9 tip-moved: `refs/heads/<branch>` is not the `--tip` sha (changed since the caller read it; nothing was touched).
 //   A landing prints the published count (`published N ...`; JSON `upstream`).
 //   A landing prints `from <sha>`, the base tip before the fast-forward (JSON: `from`).
-// range: the base's reflog step that landed the reviewed sha's patches (lib/landed-range.mjs), printed as `from <sha>` and `to <sha>`
+// range: the base's reflog step that landed the given sha's patches (lib/landed-range.mjs), printed as `from <sha>` and `to <sha>`
 //   (JSON `{ from, to }`); exit 0 found, 1 not in the reflog, 2 usage.
 // Exit codes: check 0 clean, 1 findings; prune 0 (also when there is nothing to do), 1 when --apply could not remove
 // something it planned to (the line says why); both 2 for a usage error, a folder that is not a git repository, a base
@@ -32,7 +31,6 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isOn } from '../../hooks/lib/checks-on.mjs';
 import { landLane } from './lib/land.mjs';
 import { landedRange } from './lib/landed-range.mjs';
 import { pruneRepo } from './lib/prune.mjs';
@@ -45,15 +43,15 @@ const EXIT_NOT_FOUND = 1;
 const MAX_BRIEF_BYTES = 1024 * 1024; // a brief is text; the first MB is what the commit gate reads too
 const UI_PROOF_TIMEOUT_MS = 60_000;
 const TOOLS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
-const USAGE = 'usage: git-tidy.mjs check [dir] [--base <branch>] [--json]\n       git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]\n       git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] [--tip <sha>] [--brief <file>] [--checks <cat,...>] [--json]\n       git-tidy.mjs range <reviewed-sha> [dir] [--base <branch>] [--landed <sha>] [--json]';
+const USAGE = 'usage: git-tidy.mjs check [dir] [--base <branch>] [--json]\n       git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]\n       git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] [--tip <sha>] [--brief <file>] [--json]\n       git-tidy.mjs range <sha> [dir] [--base <branch>] [--landed <sha>] [--json]';
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const COMMANDS = ['check', 'prune', 'land', 'range'];
-const VALUE_FLAGS = { '--brief': ['land', 'brief'], '--checks': ['land', 'checks'], '--tip': ['land', 'tip'], '--landed': ['range', 'landed'] };
+const VALUE_FLAGS = { '--brief': ['land', 'brief'], '--tip': ['land', 'tip'], '--landed': ['range', 'landed'] };
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
   if (!COMMANDS.includes(command)) throw new UsageError(USAGE);
-  const options = { command, branch: null, dir: null, base: null, json: false, apply: false, includeRecent: false, rebaseOnly: false, brief: null, checks: null, tip: null, landed: null };
+  const options = { command, branch: null, dir: null, base: null, json: false, apply: false, includeRecent: false, rebaseOnly: false, brief: null, tip: null, landed: null };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     if (arg === '--json') options.json = true;
@@ -66,15 +64,16 @@ function parseArgs(argv) {
     } else if (arg === '--base') {
       if (rest[i + 1] === undefined || rest[i + 1].startsWith('--')) throw new UsageError(`--base needs a branch name. ${USAGE}`);
       options.base = rest[++i];
-    } else if (arg.startsWith('--')) throw new UsageError(`unknown flag ${arg} for ${command}. ${USAGE}`);
+    } else if (arg === '--checks') throw new UsageError(`--checks was removed: landing has no test or review step, and the UI proof always runs. ${USAGE}`);
+    else if (arg.startsWith('--')) throw new UsageError(`unknown flag ${arg} for ${command}. ${USAGE}`);
     else if ((command === 'land' || command === 'range') && options.branch === null) options.branch = arg;
     else if (options.dir === null) options.dir = arg;
     else throw new UsageError(`one folder only. ${USAGE}`);
   }
   if (command === 'land' && options.branch === null) throw new UsageError(`land needs the lane's branch name. ${USAGE}`);
-  if (command === 'range' && options.branch === null) throw new UsageError(`range needs the reviewed sha. ${USAGE}`);
+  if (command === 'range' && options.branch === null) throw new UsageError(`range needs the sha to look for. ${USAGE}`);
   if (options.tip !== null && !FULL_SHA.test(options.tip)) throw new UsageError(`--tip needs a full 40-character sha, got ${JSON.stringify(options.tip)}. ${USAGE}`);
-  if (command === 'land' && !options.rebaseOnly && options.tip === null) throw new UsageError(`land needs --tip <reviewed full sha>. ${USAGE}`);
+  if (command === 'land' && !options.rebaseOnly && options.tip === null) throw new UsageError(`land needs --tip <full sha of the lane's tip>. ${USAGE}`);
   options.dir ??= process.cwd();
   return options;
 }
@@ -85,17 +84,7 @@ function runPrune(repo, options) {
   return options.apply ? pruneExitCode(items) : 0;
 }
 
-// The suite PASS record belongs to the test-pass tool next to this one; without it nothing can have a PASS, so landing stops at exit 4.
-async function loadHasPass() {
-  try {
-    return (await import('../test-pass/test-pass.mjs')).hasPass;
-  } catch (error) {
-    console.error(`git-tidy: the test-pass tool cannot be loaded (${error.message}); no commit has a recorded PASS`);
-    return () => false;
-  }
-}
-
-// The UI proof belongs to the ui-proof tool next to this one (its one definition of UI files, F7). It cannot be turned off: when the tool
+// The UI proof belongs to the ui-proof tool next to this one (its one definition of UI files, F7). It is always on: when the tool
 // cannot be loaded, every landing is refused with that reason (fail closed), since no one can tell whether UI files changed.
 async function loadUiCheck() {
   let changedUiFiles;
@@ -130,12 +119,8 @@ function runRange(repo, options) {
 
 async function runLand(repo, options) {
   const briefText = briefTextOf(options.brief);
-  // The suite PASS and the UI proof are checks: they hold a landing only when the owner turned `test` / `ui` on with /check for the
-  // session that lands ($CLAUDE_CODE_SESSION_ID; hooks/lib/checks-on.mjs, spec r9-checks-off). Rebase, ff-only and prune always run.
-  const checkOn = (category) => isOn(category) || String(options.checks ?? '').split(',').includes(category); // --checks only adds
-  const hasPass = checkOn('test') ? await loadHasPass() : () => true;
-  const uiCheck = checkOn('ui') ? await loadUiCheck() : () => null;
-  const checks = options.rebaseOnly ? { hasPass: () => false } : { hasPass, uiCheck, briefText };
+  // Rebase, ff-only and prune always run; the UI proof and the new-file size rule hold every full landing.
+  const checks = options.rebaseOnly ? {} : { uiCheck: await loadUiCheck(), briefText };
   const result = landLane(repo, options.branch, { rebaseOnly: options.rebaseOnly, tip: options.tip, ...checks });
   console.log(formatLand(result, options.json));
   return landExitCode(result);

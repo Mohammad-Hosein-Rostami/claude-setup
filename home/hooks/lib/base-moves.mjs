@@ -1,58 +1,22 @@
-// Whether a branch move since this session first saw the reflog is the session's own or only another session's (spec-p1-gates-fix 2.3),
-// and the base-tip rule of git-tidy-gate.mjs built on it. sessionStartMs, loadHasPass and baseTip moved here unchanged from the gate.
+// Whether a branch move since this session first saw the reflog is the session's own or only another session's (spec-p1-gates-fix 2.3);
+// commit-gate.mjs reads it. The base-tip "no full-suite PASS" rule that used to sit here is gone with the test checks.
 // Exports: moveVerdict(reflogPath, tipSha, ctx) -> {verdict: 'unwatched'|'own'|'foreign'|'none', watch?, beforeMs?},
-//   baseTipProblem(top, base, input, deps, env) -> Promise<null | {key, text} | {info, key}>, sessionStartMs, loadHasPass, baseTip,
 //   moveContext(input, env, top, agent).
 // Invariants: the reflog is read as a file (no git; no link followed, no FIFO waited on, one region cap); every doubt is own: an
 //   unusable log, a shorter file than a size this session recorded, a recorded size or the watch size not at a line start, a broken
 //   chain, a line that does not parse, a region over the caps, the deadline, a tool_use id the log lacks. A line is foreign only when no
 //   own window covers its offset and another, older session's closed window claims it (lib/change-owner.mjs).
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
-import { addWatch, readCallWindows, reflogPathOf, reflogRealPath } from './call-windows.mjs';
+import { readCallWindows, reflogRealPath } from './call-windows.mjs';
 import { claimed, missingToolUses, ownsOffset, VERDICT_DEADLINE_MS } from './change-owner.mjs';
-import { gitOut, gitText, readHead } from './gated-folder.mjs';
 import { READ_FLAGS } from './session-store.mjs';
-import { plainText } from './tidy-check-child.mjs';
 
-const TEST_PASS = '../../tools/test-pass/test-pass.mjs';
-const TRANSCRIPT_HEAD_BYTES = 4 * 1024 * 1024;
 const MAX_REFLOG_ENTRIES = 50;
 const MAX_REFLOG_REGION_BYTES = 64 * 1024;
 const BEFORE_ENTRY_BYTES = 4096; // the line before the first sight is read from this much before it
-const REFLOG_GIT_TIMEOUT_MS = 2000;
 const REFLOG_LINE = /^([0-9a-f]{40,64}) ([0-9a-f]{40,64}) /;
 const ENTRY_TIME = /\s(\d{1,12}) [+-]\d{4}(?:\t|$)/;
 const NEWLINE = 0x0a;
-const short = (hash) => hash.slice(0, 8);
-
-/** Epoch ms of the first transcript line that has a timestamp (the session's start); null when there is none. */
-export function sessionStartMs(transcriptPath) {
-  if (typeof transcriptPath !== 'string') return null;
-  for (const line of (readHead(transcriptPath, TRANSCRIPT_HEAD_BYTES) ?? '').split('\n')) {
-    try {
-      const at = Date.parse(JSON.parse(line).timestamp);
-      if (Number.isFinite(at)) return at;
-    } catch {
-      // a line cut at the read cap, or not JSON: look at the next one
-    }
-  }
-  return null;
-}
-
-export async function loadHasPass() {
-  try {
-    return (await import(TEST_PASS)).hasPass;
-  } catch {
-    return null; // no test-pass tool here: the base tip cannot be judged
-  }
-}
-
-/** The base branch's tip as {sha, movedMs} from its reflog (when it last moved), or null. */
-export function baseTip(top, base) {
-  const entry = (gitOut(top, ['reflog', 'show', '--date=unix', '--format=%gd %H', '-n', '1', `refs/heads/${base}`], REFLOG_GIT_TIMEOUT_MS) ?? '').trim();
-  const found = /@\{(\d+)\} ([0-9a-f]{40,64})$/.exec(entry);
-  return found === null ? null : { sha: found[2], movedMs: Number(found[1]) * 1000 };
-}
 
 /** `length` bytes of a plain file from `start`, with its size; null when it is no plain file or cannot be read. */
 function readBytes(path, start, length) {
@@ -149,38 +113,4 @@ export function moveContext(input, env, top, agent = null) {
   const deadlineMs = Date.now() + VERDICT_DEADLINE_MS;
   const transcriptPath = agent === null ? input.transcript_path : input.agent_transcript_path;
   return { env, session: input.session_id, agent, top, transcriptPath, deadlineMs, log: readCallWindows(env, input.session_id, deadlineMs) };
-}
-
-/** After a suite PASS at the tip: a settled watch line (size and tip now), unless the newest one already is. */
-function settle(ctx, reflog, tipSha) {
-  const newest = ctx.log.watches.filter((line) => line.reflog === reflogRealPath(reflog)).at(-1);
-  if (newest?.settled !== true || newest.tip !== tipSha) addWatch(ctx.env, ctx.session, reflog, true);
-}
-
-/** Today's rule (git-tidy-gate before round 9): the newest reflog entry is newer than the session's start. */
-const movedThisSession = (top, base, startedMs) => (baseTip(top, base)?.movedMs ?? -Infinity) > startedMs;
-
-/**
- * The base-tip finding of a lead's stop: a block when the tip has no suite PASS and the move is own (or today's time rule says own for
- * an unwatched reflog or for the entry before an unsettled first sight); the info line when every move since the watch is foreign.
- * @returns {Promise<null | {key: string, text: string} | {info: string, key: string}>}
- */
-export async function baseTipProblem(top, base, input, deps, env) {
-  const hasPass = deps.hasPass === undefined ? await loadHasPass() : deps.hasPass;
-  const startedMs = sessionStartMs(input.transcript_path);
-  if (hasPass === null || startedMs === null || typeof base !== 'string') return null;
-  const tipSha = gitText(top, ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`]);
-  if (!/^[0-9a-f]{40,64}$/.test(tipSha)) return null;
-  const reflog = reflogPathOf(top, base);
-  const ctx = moveContext(input, env, top);
-  if (hasPass(top, tipSha, { suite: true })) {
-    if (reflog !== null) settle(ctx, reflog, tipSha);
-    return null;
-  }
-  const move = reflog === null ? { verdict: 'unwatched' } : moveVerdict(reflog, tipSha, ctx);
-  if (move.verdict === 'unwatched' && reflog !== null) addWatch(env, input.session_id, reflog, false);
-  const beforeOwn = move.watch !== undefined && (move.beforeMs === null || move.beforeMs > startedMs);
-  const own = move.verdict === 'own' || beforeOwn || (move.verdict === 'unwatched' && movedThisSession(top, base, startedMs));
-  if (own) return { key: `base-tip:${tipSha}`, text: `${base} moved to ${short(tipSha)} during this session and has no full-suite PASS: run \`test-pass run --suite\` at ${short(tipSha)}` };
-  return move.verdict === 'foreign' ? { info: `${plainText(base)} moved to ${short(tipSha)} by another session; no suite PASS yet`, key: tipSha } : null;
 }
