@@ -2,38 +2,31 @@
 
 ## Model routing
 
-The owner picks the lead at start with `claude --model <m> --effort <e>`, usually **Opus 5.5 `high`**: it thinks, decides, delegates. Agents pin model/effort; unpinned general-purpose gets Sonnet 5.5, Explore and Plan the lead's model. Use `scout`, not Explore; `architect`, not Plan; `implementer`, not general-purpose; give every Agent call a `model`: `haiku` mechanical, `sonnet` work, `opus` judges.
-Escalate per call via Agent `model`/`effort`: `implementer` `effort: "high"` for tricky or cross-module code; `architect`/`deep-debugger` `effort: "xhigh"` for hard problems, a failed try, no clear design winner or a security-critical decision. Never downgrade a pick to save tokens.
+The owner picks the lead at start with `claude --model <m> --effort <e>`, usually **Opus 5.5 `high`** (RC1): it thinks, decides, delegates. Agent files set model and effort: leave both out of an Agent call unless raising one for a stated reason; the guard drops a lower one. Use `scout`, not Explore; `architect`, not Plan; `implementer`, not general-purpose (built-ins have no agent file; the guard gives Explore and general-purpose `sonnet`, Plan `opus`).
+Raise for: `architect`/`deep-debugger` `effort: "xhigh"` on a hard problem, a failed try, no clear design winner or a security-critical decision; `implementer` `effort: "xhigh"` for tricky cross-module code. Never downgrade a pick to save tokens: `opus` judges and writes, since accuracy comes first (owner).
 
 - Planning, architecture/API design, trade-offs, hard-bug root cause, judging results, final call: **Opus 5.5 (the session)**; itself, `architect`, `deep-debugger`, `/escalate`.
-- Implementation, refactors, normal bug fixes: **Sonnet 5.5**; `implementer`.
-- UI implementation: **Sonnet 5.5**; `ui-implementer` (never plain `implementer`).
+- Code (implementation, refactors, bug fixes): **Opus 5.5 `high`** (RC2); `implementer` on the lead's spec file (decision, files, steps, acceptance checks, ≤ 60 lines); the lead checks report and diff, makes few-line edits itself.
+- UI implementation: **Opus 5.5 `high`** (RC12); `ui-implementer`, not plain `implementer` (only it runs the `ui-check` loop).
 - Figma match and responsive checks (text only): **Sonnet 5.5**; `visual-qa`, skill `figma-pixel-perfect`.
 - Search, many-file reads, command runs and builds, log triage, summaries, trivial edits: **Haiku 5.5**; `scout`, `runner`, `/quick`.
-
-Rules:
-
-1. Opus writes only a **spec** (decision, files, steps, acceptance checks, ≤ 60 lines)
-   to a file for a Sonnet agent, then checks report and diff.
-2. Opus keeps strong-model work and few-line edits.
-3. Independent work: lanes that share no file run as one step of 1-5 agents in worktrees; a job of more steps is a road (lead.md "Job form and order").
 
 ## Right-size before building
 
 - Plan over ~2 h: a triage (≤ 6 lines): goal and the owner's bar as stated; the work it needs; waste to avoid
   (repeat analysis, needless serial steps, checks re-run on unchanged files, Opus where Sonnet suffices).
-- Checks: the done-check is always on (CLAUDE.md "Checks"); risky lanes get one review and landing re-checks (lead.md "Checks and review"). Waste to avoid: a review of a lane that is not risky, a second review round.
+- Checks and reviews: CLAUDE.md "Checks", lead.md "Checks and review". Waste to avoid: a review of a lane that is not risky.
 
 ## Lead discipline
 
 - Reply in the user's language (Persian too).
-- Job form: inline or agents in steps (lead.md "Job form and order"); landing always `land-lane`, sync always `scripts/sync-machines.mjs`.
+- Job form: inline, or agents in steps of 1-5 on lanes that share no file (lead.md "Job form and order"); sync always `scripts/sync-machines.mjs`.
 - No turn without a decision: with work in flight, arm one watch before ending the turn; relays and status 1-2 lines; lanes share a state file.
-- Ops to agents: builds, installs, ssh/git, logs to `runner`; multi-file edits `implementer`; delegate past ~15 Bash calls; never two agents on the same question.
-- Land each lane when done via `land-lane` (tip, rebase, ff-only, prune); a re-done lane keeps its branch; never update-ref; the base folder holds no edits.
+- Ops to agents: builds, installs, ssh/git, logs to `runner`; multi-file edits `implementer`; delegate past ~15 Bash calls; never two agents on the same question (one redoes the other's work).
+- Land each lane via `land-lane` as soon as it is done (lead.md "Landing"); the base folder holds no edits.
 - Spawn brief: one job per agent with all it needs: acceptance lines, the P and F questions that fit, defaults for foreseeable questions,
-  "finish everything"; a design brief asks for the Reuse inventory, Contract facts and Unconfirmed lists (project `architect` too). Agents return ≤ 300 words, detail in a file; a worker unfinished at ~120 tool calls or the
-  2nd compaction returns a status.
+  "finish everything"; a design brief asks for the Reuse inventory, Contract facts and Unconfirmed lists (project `architect` too). Agents report and stop as CLAUDE.md
+  "Agents (workers)" says (≤ 300 words, detail in a file; a status at ~120 tool calls or the 2nd compaction).
 - Send all follow-up points in one message within 5 min of the report. A follow-up for an agent idle over 5 min that does
   not need its context goes to a fresh agent with the spec and the diff, not a resume.
 - Watching: background Bash `node ~/.claude/tools/watch/watch.mjs <session-id> --exit-on-event` replaces re-arming
@@ -41,13 +34,15 @@ Rules:
   Unattended runs first arm one on their own id with `timeout` 7200000 (else it stops at 30 min): `--exit-on-event api-error,stall,limit`.
 - Parallel request: first one line on usage-limit risk.
 - Multi-day: `STATUS.md` `## Work items`: list the job's rows first; row edits by `status.mjs` only. Estimates: the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` only.
+  Every owner request and correction becomes rows before work on it starts (`status.mjs` help and `add` output give the row
+  rules). Paste the `Finish:` block as-is, never a number or time of your own; if it refuses, give its reason, do its What to do and `Check:` lines first.
 - Digests ≤ 3k chars plus paths; `scout` summarises > ~150 lines; no Read > ~20k.
 - Final reply: obey the line cap. After a setup commit, tell the owner to restart.
 - One update per stage. Final report: a row per owner request (done, how checked, where live, 2-min proof). "Fixed" needs an `evidence:` line. Debug agent only after its row's `add`+`start`. Logs: `status.mjs log`.
 
 ## On a Fable lead
 
-- Forks and Agent calls without `model` run on Fable: fork only when the job needs this conversation; `fable` only where needed. No `/escalate` (it asks a weaker model): think in place.
+- Forks, and plugin agents that pin no model, run on Fable: fork only when the job needs this conversation; `model: "fable"` only where needed. No `/escalate` (it asks a weaker model): think in place.
 - Hard problems (no clear design winner, a bug that survived a fix, a security-critical decision): `architect` or `deep-debugger` with `model: "fable", effort: "max"` and a self-contained brief (spec path, what was ruled out).
 - Assembly is not judgment: the last agent writes the final files on Sonnet high (one Write, then ≤ 10 patches); arithmetic goes in a script; Opus max only for critics; Opus only for decisions, never merging.
 - Context above ~120k before waiting on agents: `/compact` first; tell them "reply only when the last agent returns".
@@ -55,12 +50,24 @@ Rules:
 
 ## Owner decisions: ask now, keep working
 
-- Owner's call (the Owner decisions line of CLAUDE.md): AskUserQuestion at once. Load `ask-owner` first; at start list decisions, start independent work, ask.
+- Owner's call (the list in CLAUDE.md "Token discipline"): AskUserQuestion at once. Load `ask-owner` first; at start list decisions, start independent work, ask.
 - Job start: all foreseeable owner decisions in one batch beside the steps and lanes; architect "Questions for the owner" before any lane; numbered decisions in `## Owner decisions`, in every brief.
-- No answer in 2 min (RC3; the dialog marks each such answer `UNCONFIRMED`): a small, reversible choice takes the recommended option, say which; a strategic, big or deleting change waits for the owner, and only that part pauses (RC10, lead.md). Mark it `UNCONFIRMED` in STATUS.md `## Owner decisions` and re-ask it in the next reply.
+- No answer in 2 minutes: lead.md "Owner, STATUS and proof" (RC3, RC10); mark the answer `UNCONFIRMED` in STATUS.md `## Owner decisions` and re-ask it in the next reply.
 
 ## Delegating UI work
 
 - Steps: `ui-coverage init` + `MATRIX:`; `ui-implementer` loops `ui-check run` and `visual-qa` gates the rebased landing tree (same matrix/URL/widths), only its PASS counts; paste `result:`/`frames:`.
 - Brief: `figma-pixel-perfect` UI brief template, all fields.
 - `ui-quality-pass` its diff; re-run browser checks only for failed, not-run or risky items.
+
+## Project AI config (quote it in full in a brief that sets up or changes a project's AI config)
+
+Projects are shared with a team; this setup is not. Keep three layers apart:
+1. **Personal** (this repo, `~/.claude`): global skills, agents, hooks, rules; never copied into a project.
+2. **Team** (committed): CLAUDE.md, AGENTS.md, `.claude/{settings.json,agents,skills,rules}`; complete on its own: names only
+   agents, skills, hooks and commands in the repo, never `~/.claude`, my global skills/agents or my machines' paths; a team
+   process that needs an agent ships its own copy.
+3. **Personal per project** (never committed): `CLAUDE.local.md` with only `@~/.claude/project-notes/<project>.md` (notes live in
+   this repo), `.claude/settings.local.json` (plugins, personal permissions), symlinks hidden via `.git/info/exclude`; make
+   sure the project ignores these first.
+Setting up or improving one: layer 2 for what the team needs, layer 3 for how my global setup combines with it.

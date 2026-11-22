@@ -7,9 +7,9 @@ Limit 9,500 printed (tests/lead-text-size.test.mjs). The maxTurns rule prints wi
 ## Models and effort
 - Start a session on a model with `claude --model <m> --effort <e>` (owner, 2026-11-19). `CLAUDE_CODE_EFFORT_LEVEL` stays unset: it overrides that flag and every agent's effort (doctor fails on it).
 - Keep the lead model all session: a model switch, a classifier fallback too, rebuilds the cache. An effort change keeps the cache on Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1+, so raise effort (`ultrathink` or `/effort`) for one hard turn, then go back to `high`.
-- Every Agent call names a model alias and an `effort`: the CLI default is `medium`, and a per-call model beats the agent file's. Sonnet agents top out at `xhigh`, never `max`; for Opus, `max` stays on the ladder until trial T7 shows `xhigh` equal on recall and false positives.
+- Raising an agent's effort (lead-rules "Model routing"): Sonnet agents top out at `xhigh`, never `max`; for Opus, `max` stays on the ladder until trial T7 shows `xhigh` equal on recall and false positives.
 - Picks stay by lane, with no cheap-first cascade: Haiku and Sonnet at low report done without a check. A `scout` or `runner` that claims a reproduction gives the command, and the writer re-runs it before relying on it.
-- Use `implementer` (or another own agent), not `general-purpose`: the built-in has no agent file, so it starts with every tool schema and an unpinned model. Built-in Explore and Plan ignore `CLAUDE_CODE_SUBAGENT_MODEL` and run on your model (sub-agents docs; probe P6-10 owed).
+- Own agents over built-ins (lead-rules "Model routing"): `general-purpose` has no agent file, so it starts with every tool schema.
 - On a Fable lead: each "never" keeps its scope and reason, since Fable takes it literally; review the diff yourself, since its closing summary can leave out small changes.
 
 ## Briefs and results
@@ -22,7 +22,7 @@ Limit 9,500 printed (tests/lead-text-size.test.mjs). The maxTurns rule prints wi
 - Inline or agents, by the job (owner, 2026-11-22: only subagents, 3-5 agents per step). Inline: lookups, reading code, one command, a one-file or < ~30-line change. Everything else runs as steps.
 - A batch is 1-5 agents launched together; a step runs its batches in order (build, fixes). Every agent counts: writers, runners, scouts, deep-debugger, visual-qa and a SendMessage continuation. The hook refuses a 6th. The next batch starts once every result of this one is handled.
   - Build batch: lanes that share no file.
-  - Fix batch: one fix agent per lane, holding all of its confirmed findings.
+  - Fix batch: one fix agent per lane, holding all of its confirmed findings with their parts and siblings: a fix closes the whole finding and its class.
 - A fixed sequence is one script call, never an agent per command: `land-lane` (the only landing route, one land at a time), `road.mjs join`, `scripts/sync-machines.mjs` (once per job, after the last land), `status.mjs`. A `runner` only keeps long output out of context.
 - A writer brief names `BASE: <full sha>`, `BRANCH: <kind>/<what-it-does>` (e.g. `fix/accounts-keychain-patch`, never a chain or row id), STATUS.md, the lane's contract (files, P and F questions, threat-model line) and `REPORTS:`. An agent that returns unfinished is continued once with SendMessage, else a fresh agent gets the six fields, `git diff <base>...<branch>` and its `HANDOFF-<row>.md`. Two stops in a row: you decide; no third agent.
 - Order a job as:
@@ -39,18 +39,17 @@ Limit 9,500 printed (tests/lead-text-size.test.mjs). The maxTurns rule prints wi
   session) *before* starting it. Long task → `/compact` at a natural seam.
 
 ## Owner, STATUS and proof
-- Owner decisions (scope, money, irreversible, credentials, a product fact the repo lacks such as length, timer, role, copy, brand name or design system vs local, real trade-offs): ask with AskUserQuestion the moment they
+- Owner decisions (the list in CLAUDE.md "Token discipline"): ask with AskUserQuestion the moment they
   come up while other work keeps running (see `ask-owner`). Start the background agent, then ask: running ones keep working while a question waits; ops that may ask (rm -r, push, ssh) run in a background agent. Technical choices: pick the default, say so in one line.
-- No answer in a question's 2-minute wait (owner, RC3, RC10): a small, reversible choice takes the recommended option, marked UNCONFIRMED; a strategic, big or deleting change never does: that part waits for the owner while other work goes on.
+- No answer in a question's 2-minute wait (owner, RC3, RC10; the dialog marks such an answer UNCONFIRMED): a small, reversible choice takes the recommended option, say which; a strategic, big or deleting change never does: that part waits for the owner while other work goes on.
 - An owner correction, preference or constraint about how the work is done ("always", "keep", "from now on", "as we said", "is important", "remember", "don't", "why did you") goes into STATUS.md under `## Standing rules` the moment it is given, in the owner's words; every brief names that file; re-read it after a compaction or a resume. When STATUS.md is created, a session resumes or after a compaction, backfill it from the owner's own earlier messages (`node ~/.claude/tools/recall/recall.mjs --owner --session current`) before the next brief. Write each rule short, with the owner's key terms: never paste a whole message, and never copy anything that looks like a credential into STATUS.md.
 - Owner proof: every done or fixed claim in a stage update or a final-report row names, on the same line, one proof the owner can check in about 2 minutes (a gallery link, a diff image, a command and its output); its `evidence:` points to it.
 
 ## Checks and review
 - The done-check runs by itself at every stop that changed code (CLAUDE.md "Checks"). Read an agent's `checks:` line as tool output: `done-check.mjs last --worktree <abs>` prints a lane's own. `FAIL left open` or `change approach` goes to the architect or `deep-debugger`, not to a third try by the same agent.
-- A lane in a risky class (`review: needed (<classes>)`; its spec's `addClasses` add to the path rules) gets one `reviewer` (read-only, Opus 5.5 high): brief with spec, acceptance lines, the `THREAT:` line, classes, repo, base and tip. One fix agent gets every must-fix finding with its repro and every site. Then run each repro with Bash: all exit 0. Still red: the architect re-specs; never a second review.
-- A finding with no repro command, or one that breaks no acceptance or threat line, is a follow-up row in STATUS, not a block. Write the reviewed tip in STATUS.
+- A risky lane (`review: needed (<classes>)`, plus its spec's `addClasses`) gets the one review and one fix of CLAUDE.md "Checks": brief the `reviewer` (read-only, Opus 5.5 high) with spec, acceptance lines, the `THREAT:` line, classes, repo, base and tip; the fix agent gets every must-fix finding with its repro and every site. Then run each repro with Bash: all exit 0. Still red: the architect re-specs.
+- A finding that breaks no acceptance or threat line is a follow-up row too, not a block. Write the reviewed tip in STATUS.
 
 ## Landing
-- A fix closes the whole finding and its class: one fix agent per lane gets every confirmed finding with its parts and siblings.
 - Before landing: UI shows the ui-proof PASS; a flow that needs it ran on the real target (two clients, device, deployed URL).
-- Land only with `land-lane` and the lane's tip from your own record; never `git merge` by hand (C37). It re-runs the check on the rebased tip. Exit 4 (check failed): fix the lane. Exit 10 (risky, unreviewed): `--reviewed <sha>` with the tip you recorded (or an ancestor of it), or `--skip-review "<reason>"` written in STATUS. `--accept-open` only on the owner's yes.
+- Land only with `land-lane` and the lane's tip from your own record; never `git merge` or `update-ref` by hand (C37), since that skips its checks. It re-runs the check on the rebased tip. Exit 4 (check failed): fix the lane. Exit 10 (risky, unreviewed): `--reviewed <sha>` with the tip you recorded (or an ancestor of it), or `--skip-review "<reason>"` written in STATUS. `--accept-open` only on the owner's yes.

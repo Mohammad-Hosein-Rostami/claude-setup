@@ -7,7 +7,7 @@ C5 | Intent-revealing names; no data/tmp/util/helper
 C6 | No magic numbers or strings; use named constants
 C7 | Depend on interfaces at real boundaries (an external system, a second implementation or a test double); compose over inherit
 C8 | Comments say why, not what; delete dead code
-C9 | Never swallow errors; no empty catch; fail fast
+C9 | Never swallow errors; no empty catch; fail fast, so a failure shows where it starts
 C10 | Validate all external input at the boundary with a schema
 C11 | New behaviour starts from the spec's acceptance lines; a bug fix starts with a failing repro command; the done-check runs the tests related to the change
 C12 | The done-check runs by itself at every stop that changed code (typecheck, lint on changed lines, related tests, weakened-test scan): fix each new failure it names, and the whole class, before you stop
@@ -24,7 +24,7 @@ C22 | Fix the root cause, not the symptom
 C28 | When an approach fails twice, change approach (root-cause-debug, deep-debugger, /escalate) and keep going until done
 C23 | Grep, then read line ranges; no cat of big files; show failing test lines only
 C24 | Delegated work returns <=300 words with file:line evidence; a smaller cap in the agent file or the brief wins
-C25 | One task per session; compact at a natural seam, never stop a run for context size
+C25 | One task per session; compact at a natural seam, never stop a run for context size (compaction carries it on)
 C26 | Every source file you create or substantially edit opens with a header comment (purpose, exports, invariants); a folder of 3+ files has a README
 C27 | Public functions and types you create or substantially edit have doc comments (what, why, args, returns, errors); TODO(ref): reason
 C29 | Done means the last `checks:` line is green, or its `none related`, `not run` and `old fail` are told as they are; say verified only for what you ran
@@ -35,4 +35,4 @@ C33 | No abstraction with a single use: no interface with one implementation, pa
 C34 | Docs in proportion, in the repo's existing places and format: a small fix needs only a clear commit message; a new module or changed behaviour updates the README of its area; a choice others would question gets a decision record where the repo keeps them (else a comment or the commit body); a changelog line only if the repo keeps one
 C35 | Config values you add or change explain themselves: a comment for any non-obvious value, units in the name or comment; do not split one setting across files; local values go in a git-ignored file with an example
 C36 | C31-C35 govern new work and the lines a task changes. Existing code keeps its conventions (C17) and files the task does not need stay untouched (C18): no renames, moves, restructures, added headers or READMEs for old code unless the owner asks; report what you saw instead
-C37 | Git history is one line at all times: rebase onto the base, land with `git merge --ff-only`, `git pull --rebase`, no merge commits; once landed, delete the branch and its worktree (`git-tidy prune`); a re-done lane continues its branch (never -N, -fixes, -vN); never rewrite commits on a shared remote branch without the owner's yes (the guard and the git-tidy gate enforce the rest)
+C37 | Git history is one line at all times: rebase onto the base (again when it moves), never merge another branch into yours, land with `git merge --ff-only` (never `update-ref`), `git pull --rebase`, no merge commits; once landed, delete the branch and its worktree (`git-tidy prune`); a re-done lane continues its branch (never -N, -fixes, -vN); never rewrite commits on a shared remote branch without the owner's yes (the guard and the git-tidy gate enforce the rest)

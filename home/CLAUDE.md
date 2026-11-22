@@ -18,7 +18,7 @@ agent file and the caller's prompt.
   an exit, `-p` and background runs, or once those continuations are spent (a wake over 1 h is a scheduled task, not ScheduleWakeup).
 - Subscription only: never `/fast`, `/code-review ultra` or usage credits, since they bill beyond the plan. Usage credits are off on
   every account (owner, 2026-11-19); a headless run names a non-Fable model, since a `-p` run on Fable would bill them.
-- Work with a `STATUS.md`: every owner request and every owner correction becomes `## Work items` rows before work on it starts. Row edits go through `node ~/.claude/tools/status/status.mjs add|start|done|deliver|rule|decision` only, never a typed time; its help and `add` output give the row rules. Every estimate you give is the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` pasted as-is, never a number or clock time of your own; if it refuses, give its reason, and do its What to do and any `Check:` line first.
+- `STATUS.md` row edits go through `node ~/.claude/tools/status/status.mjs add|start|done|deliver|rule|decision` only, never a typed time (the tool writes it); the lead plans the rows.
 
 ## Checks
 
@@ -39,26 +39,10 @@ Invoke these with the Skill tool before writing code, in every project; a `skill
 - A project skill with the same purpose whose `paths:` match the files is preferred (e.g. `design-parity`); a personal skill with the
   same name always wins over the project one, so a project copy needs its own name.
 
-## Project config layers
-
-Projects are shared with a team; this personal setup is not. Keep three layers apart:
-
-1. **Personal (this repo, `~/.claude`)**: global skills, agents, hooks, rules. Never copied into a project.
-2. **Team (committed in the project)**: CLAUDE.md, AGENTS.md, `.claude/{settings.json,agents,skills,rules}`.
-   Complete on its own: it names only agents, skills, hooks and commands that exist in the repo, and never
-   mentions `~/.claude`, my global skills/agents or paths on my machines. If a team workflow needs an agent,
-   the project ships its own copy.
-3. **Personal per project (never committed)**: `CLAUDE.local.md` containing only
-   `@~/.claude/project-notes/<project>.md` (notes live in this repo), `.claude/settings.local.json` (plugins,
-   personal permissions), symlinks hidden via `.git/info/exclude`. Make sure the project ignores these first.
-
-When asked to set up or improve a project's AI config, edit layer 2 for what the team needs and layer 3 for how my
-global setup combines with it.
-
 ## Token discipline
 
 - Search before reading (Grep tool or `rg`, Glob), read ranges (`offset`/`limit`) not whole files, and
-  never re-read a file you just edited.
+  never re-read a file you just edited (the edit tool already fails when an edit does not apply).
 - Past decisions or history: `recall` before asking.
 - Delegate anything that would dump > ~150 lines (test logs, build output, big greps, docs
   crawling) to a `runner` / `scout` agent and ask for a summary of ≤ 20 lines.
@@ -89,7 +73,7 @@ global setup combines with it.
 - Smallest change that solves the request: no new modules or refactors beyond the task. Diagnose by reading code before
   experimenting.
 - Docs as C26, C27 and C34 require, in proportion to the change. Project documents are written for people; only the
-  team's own AI config (CLAUDE.md, `.claude/`, see Project config layers) may mention AI.
+  team's own AI config (its CLAUDE.md, AGENTS.md and `.claude/`) may mention AI.
 - AI work notes (STATUS.md, HANDOFF.md) may sit in a project but are never committed (hide them with
   `.git/info/exclude`). No memory or history notes unless asked (an agent's own `memory: user` notes are the exception).
 - An owner-reported defect you could not reproduce is never closed twice: on the second report reproduce it under the owner's conditions (zoom, pixel ratio, OS, theme, data) or hand it to `deep-debugger`; never answer "no defect" to a second report.
@@ -102,7 +86,7 @@ over a line here, and an agent file names the lines that do not fit it (`runner`
 - Owner decisions: you cannot ask the owner. If the brief gives a queue path (`ASK_QUEUE`; the variable is not set in your
   environment), post each owner decision at once with `node ~/.claude/tools/ask/ask.mjs post --queue <path from the brief> --json
   '{...}'` and keep working on what does not depend on it. Always list it in the report under `decisions needed:` (question,
-  options, recommended). An owner decision (scope, money, irreversible, credentials, a product fact the repo lacks) is never defaulted.
+  options, recommended). An owner decision (the list in "Token discipline") is never defaulted.
 - Finish the whole brief: a technical question with a sensible default is not a reason to stop, so take the default and say so in
   the report. Stop and report the exact question only when the spec is wrong or ambiguous in a way that changes the outcome and no
   default is sensible.
@@ -110,7 +94,7 @@ over a line here, and an agent file names the lines that do not fit it (`runner`
   the brief or your hand-over note before the next edit, because the task message comes back summarised.
 - Writers: read the spec first and do not redesign it; follow the project's CLAUDE.md and AGENTS.md rules (they load
   automatically); make the smallest diff that satisfies the acceptance checks and closes every instance of the class it fixes; edit existing files over creating new ones.
-- Git: commit on your own branch; never merge another branch into it; if the base moved, `git rebase <base>`; leave landing to the
+- Git: commit on your own branch and keep it one line with the base (C37); leave landing to the
   lead. Commit your own paths after each green step; never return with uncommitted changes (if the brief forbids commits, say why
   in the report). Checkpoint: after each finished step, commit when the brief allows commits, else append a line to a progress
   note in the scratchpad, so a dropped connection loses little.
@@ -161,7 +145,7 @@ exploration dead-ends, full file contents, and tool output already acted on.
 - Git push, publish/release, PR merge, Artifact publish/delete, prod-host writes and deletes, and literal secrets in a command show a
   timed confirm dialog even in bypass mode; it goes ahead after 2 min unless the owner clicks Deny. Every other permission prompt
   gets the same dialog, except a sandbox network prompt (no hook event) and anything a deny rule refuses (no hook can allow it).
-- Each owner question gets its own popup and its own 60 s wait; answering in the terminal closes it. The dialog details are in
+- Each owner question gets its own popup and its own 2-minute wait; answering in the terminal closes it. The dialog details are in
   `docs/daily-use.md` "Long or unattended runs".
 - The guard bounces a command once with the fix when part of it can be rewritten (C30): send the rewrite. A quality rule (a
   hand-edited lockfile, a merge that can create a merge commit, a branch moved without `merge --ff-only`, a wait by sleeping) is

@@ -43,13 +43,19 @@ test('ui-coverage hand-over step gives ONE link to the visual overview', () => {
 // Estimator rebuild stage 3: rows are listed first and edited by status.mjs only, a Stop hook records the hand-over, and every
 // estimate is the Finish block pasted as-is.
 const LEAD_ESTIMATE_RULE = '- Multi-day: `STATUS.md` `## Work items`: list the job\'s rows first; row edits by `status.mjs` only. Estimates: the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` only.';
-const GLOBAL_ESTIMATE_RULE = '- Work with a `STATUS.md`: every owner request and every owner correction becomes `## Work items` rows before work on it starts. Row edits go through `node ~/.claude/tools/status/status.mjs add|start|done|deliver|rule|decision` only, never a typed time; its help and `add` output give the row rules. Every estimate you give is the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` pasted as-is, never a number or clock time of your own; if it refuses, give its reason, and do its What to do and any `Check:` line first.';
+// one-home-rules (R16 item 19): the rest of the STATUS bullet is lead-only and moved to lead-rules.md; home/CLAUDE.md keeps the
+// row-edit line every agent may need.
+const GLOBAL_STATUS_RULE = '- `STATUS.md` row edits go through `node ~/.claude/tools/status/status.mjs add|start|done|deliver|rule|decision` only, never a typed time (the tool writes it); the lead plans the rows.';
+const LEAD_ESTIMATE_DETAIL = 'Paste the `Finish:` block as-is, never a number or time of your own; if it refuses, give its reason, do its What to do and `Check:` lines first.';
 
-test('the estimate rules are verbatim in lead-rules.md and home/CLAUDE.md, and the old bullet is gone', () => {
-  assert.ok(read('home/lead-rules.md').split('\n').includes(LEAD_ESTIMATE_RULE), 'lead-rules.md estimate line');
+test('the estimate rules are verbatim in lead-rules.md, the row-edit rule in home/CLAUDE.md, and the old bullet is gone', () => {
+  const leadRules = read('home/lead-rules.md');
+  assert.ok(leadRules.split('\n').includes(LEAD_ESTIMATE_RULE), 'lead-rules.md estimate line');
   assert.ok(LEAD_ESTIMATE_RULE.length <= 200, 'lead-rules.md is injected into every session: the estimate line stays within 200 characters');
+  assert.ok(leadRules.replace(/\n +/g, ' ').includes(LEAD_ESTIMATE_DETAIL), 'lead-rules.md: the Finish block is pasted as-is');
+  assert.match(leadRules, /Every owner request and correction becomes rows before work on it starts/);
   const global = read('home/CLAUDE.md');
-  assert.ok(global.split('\n').includes(GLOBAL_ESTIMATE_RULE), 'home/CLAUDE.md estimate rule');
+  assert.ok(global.split('\n').includes(GLOBAL_STATUS_RULE), 'home/CLAUDE.md row-edit rule');
   assert.doesNotMatch(global, /end that reply with the new finish estimate/);
   assert.match(read('docs/daily-use.md'), /pastes the `Finish:` block of `node ~\/\.claude\/tools\/estimate\/estimate\.mjs STATUS\.md` as every estimate/);
 });

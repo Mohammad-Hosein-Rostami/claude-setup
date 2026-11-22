@@ -117,14 +117,14 @@ Sessions start with `claude --model <m> --effort <e>` (the owner picks the lead)
 
 | Item | Purpose |
 | ---- | ------- |
-| `lead-rules.md` | Lead rules part 1 (model routing, right-sizing, lead discipline, owner decisions, delegating UI work); printed by `session-notes.mjs` at every main-session SessionStart; a missing file prints nothing |
+| `lead-rules.md` | Lead rules part 1 (model routing, right-sizing, lead discipline with the STATUS row and estimate rules, owner decisions, delegating UI work, the project AI config layers the lead quotes into a brief that sets up a project's AI config); printed by `session-notes.mjs` at every main-session SessionStart; a missing file prints nothing |
 | `lead.md` | Lead rules part 2 (models and effort, briefs in seven fields with "Done means", the commands the lead runs itself before accepting a lane; job form with pilot first and one road per session; owner and STATUS rules, where a timed-out question never decides a strategic, big or deleting change; landing): the lead-only lines that left `CLAUDE.md`; printed by `lead-text.mjs` at every main-session SessionStart as its own hook string (own 10,000-char cap; `tests/lead-text-size.test.mjs` fails above 9,500 printed characters) |
 
 ## Project notes (`home/project-notes/`)
 
 Personal per-project layer, linked to `~/.claude/project-notes`. A project's git-ignored `CLAUDE.local.md` imports
-`@~/.claude/project-notes/<project>.md`; the project's committed config never references it. Policy: "Project config
-layers" in `home/CLAUDE.md`.
+`@~/.claude/project-notes/<project>.md`; the project's committed config never references it. Policy: "Project AI
+config" in `home/lead-rules.md`.
 
 | Note | Project |
 | ---- | ------- |
