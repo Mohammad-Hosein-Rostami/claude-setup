@@ -71,7 +71,7 @@ test('a second writer without isolation while a writer runs is denied once with 
   assert.match(second.permissionDecisionReason, /isolation: "worktree"/);
   assert.match(second.permissionDecisionReason, /another writing agent .* still running/i);
   assert.ok(!denied(s.launch(writer('implementer'))), 'the identical call sent again runs');
-  assert.ok(denied(s.launch(writer('test-writer'))), 'two writers run now: a third one is denied too');
+  assert.ok(denied(s.launch(writer('ui-implementer'))), 'two writers run now: a third one is denied too');
 });
 
 test('a writer with isolation "worktree" runs next to running writers, and does not stop a writer without isolation', () => {
@@ -82,7 +82,7 @@ test('a writer with isolation "worktree" runs next to running writers, and does 
 });
 
 test('read-only agents are exempt and never count as running writers; an omitted type is general-purpose (a writer)', () => {
-  const readOnlyTypes = ['scout', 'runner', 'reviewer', 'security-auditor', 'Explore', 'Plan', 'architect'];
+  const readOnlyTypes = ['scout', 'runner', 'Explore', 'Plan', 'architect'];
   for (const type of readOnlyTypes) {
     const s = writerSession(); // one session per type: the agent cap (5 running at once) counts read-only agents too
     mkdirSync(join(s.home, '.claude', 'agents'), { recursive: true });

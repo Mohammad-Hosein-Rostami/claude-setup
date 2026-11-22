@@ -96,12 +96,12 @@ test('every different copy brief is denied once: the digest holds the prompt, th
   assert.ok(denied(s.send(call('implementer', COPY_BRIEF))));
   assert.ok(denied(s.send(call('implementer', OTHER_COPY_BRIEF))), 'a second, different brief of the same type and folder');
   assert.equal(denied(s.send(call('implementer', OTHER_COPY_BRIEF))), false, 'and its identical resend runs');
-  assert.ok(denied(s.send(call('test-writer', COPY_BRIEF))), 'the same brief from another agent type');
+  assert.ok(denied(s.send(call('ui-implementer', COPY_BRIEF))), 'the same brief from another agent type');
   const otherRepo = makeRepo();
   git(otherRepo, 'branch', 'lane/x');
   assert.ok(denied(s.sendIn(call('implementer', COPY_BRIEF), { cwd: otherRepo })), 'the same brief in another folder');
   const rows = s.log().filter((row) => row.class === 'copy branch brief' && row.outcome === 'advice');
-  assert.deepEqual(rows.map((row) => row.type), ['implementer', 'implementer', 'test-writer', 'implementer'], 'one row per deny, each with its agent type');
+  assert.deepEqual(rows.map((row) => row.type), ['implementer', 'implementer', 'ui-implementer', 'implementer'], 'one row per deny, each with its agent type');
   assert.equal(new Set(rows.map((row) => row.digest)).size, 4, 'four different digests');
 });
 
