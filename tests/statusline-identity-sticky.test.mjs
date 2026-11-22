@@ -74,8 +74,11 @@ test('the seventh live item shares a hue and every item keeps its hue from then 
   const [again, fewer] = walk([...steps, { names, atMin: 10 }, { names: names.slice(0, 6), atMin: 11 }]).slice(-2);
   assert.deepEqual(huesOf(again, names), huesOf(final, names));
   assert.deepEqual(huesOf(fewer, names.slice(0, 6)), huesOf(final, names.slice(0, 6)), 'when the seventh leaves nothing moves');
-  const lastHome = hueOfName(boardIdentity(boardOfNames(['g'])), 'g');
-  assert.equal(hueOfName(final, 'g'), lastHome, 'the seventh takes its home hue');
+  for (const seventh of ['g', 'h', 'i', 'j', 'k', 'l']) {
+    const six = names.slice(0, 6);
+    const joined = walk([...six.map((_, count) => ({ names: six.slice(0, count + 1), atMin: count })), { names: [...six, seventh], atMin: 6 }]).at(-1);
+    assert.equal(hueOfName(joined, seventh), hueOfName(boardIdentity(boardOfNames([seventh])), seventh), `${seventh} takes its home hue`);
+  }
   for (const leaving of names.slice(0, 6)) {
     const rest = names.filter((name) => name !== leaving);
     const after = walk([...steps, ...minutes(names, 7, 10), { names: rest, atMin: 11 }]).at(-1);
