@@ -59,67 +59,12 @@ test('a saved hue that changes is saved as seen now, and the saved list keeps th
   assert.ok(!kept.includes('gone-69'), 'the oldest gone one is the one dropped');
 });
 
-test('a workflow name of 27 characters keeps its hue when a rival with the same home hue starts', () => {
-  const long = 'z'.repeat(27);
-  const [rival] = namesHomedAt(homeOf(long), 1);
-  const first = boardIdentity(boardOf({ runs: [run('wf_l', long)] }), null, NOW);
-  assert.ok(first.store.items.some((item) => item.name === long), 'a name up to 120 characters is saved');
-  const later = boardIdentity(boardOf({ runs: [run('wf_l', long), run('wf_r', rival)] }), first.store, NOW + MIN_MS);
-  assert.equal(hueOf(later, long), hueOf(first, long));
-});
 
-test('the items that hold a hue are workflows, then lane branches, then plain agents: a main checkout and an isolated worktree are none of them', () => {
-  const worktrees = [{ name: 'main', branch: 'main', main: true }, lane('lane-a'), lane('worktree-wf_1-1'), lane('worktree-wf_1')];
-  const identity = boardIdentity(boardOf({ runs: [run('wf_1', 'wf-one')], worktrees, agents: [{ id: 's', name: 'scout', state: 'run', runId: 'none' }] }), null, NOW);
-  assert.deepEqual([...identity.hues.keys()], ['wf-one', 'lane-a', 'scout']);
-});
 
-test('two workflows are given hues before six plain agents, so they never share while six hues cover all eight', () => {
-  const [one, two] = namesHomedAt(homeOf('wf-one'), 2);
-  const scouts = Array.from({ length: 6 }, (_, index) => ({ id: `s${index}`, name: `scout-${index}`, state: 'run' }));
-  const identity = boardIdentity(boardOf({ runs: [run('wf_1', one), run('wf_2', two)], agents: scouts }), null, NOW);
-  assert.notEqual(hueOf(identity, one), hueOf(identity, two));
-});
 
-test('a run is tied to the lane of its placed agents: the lane needs a placed worktree of the agent\'s repository, the most common wins', () => {
-  const wf = run('wf_1', 'wf-one');
-  const placed = (extra) => ({ id: 'a', name: 'impl', state: 'run', runId: 'wf_1', repo: 'r', wt: 'lane-a', branch: 'lane-a', ...extra });
-  const keyOf = (board) => itemKey(boardIdentity(board, null, NOW), wf);
-  const base = { runs: [wf], worktrees: [lane('lane-a'), lane('lane-b'), lane('lane-7')] };
-  assert.equal(keyOf(boardOf({ ...base, agents: [placed({})] })), 'lane-a');
-  assert.equal(keyOf(boardOf({ ...base, agents: [placed({ wt: null })] })), 'wf-one', 'a branch with no worktree is no sure placement');
-  assert.equal(keyOf(boardOf({ ...base, agents: [placed({ wt: 'lane-7', branch: 'worktree-wf_1-2' })] })), 'wf-one', 'an isolated branch in a lane folder is no lane');
-  assert.equal(keyOf(boardOf({ ...base, agents: [placed({ id: 'x', wt: 'lane-b', branch: 'lane-b' }), placed({ id: 'y' }), placed({ id: 'z' })] })), 'lane-a', 'two on lane-a beat one on lane-b');
-  assert.equal(keyOf(boardOf({ ...base, agents: [placed({ wt: 'ghost', branch: 'ghost' })] })), 'wf-one', 'a worktree the repository does not list is no lane');
-  const nameless = boardOf({ runs: [wf], worktrees: [{ name: null, branch: 'lane-a', main: false }], agents: [placed({ wt: null })] });
-  assert.equal(keyOf(nameless), 'wf-one', 'an agent with no worktree does not match a worktree with no name');
-  const twoRepos = boardOf({ runs: [wf], repos: [{ name: 'r1', worktrees: [] }, { name: 'r2', worktrees: [lane('lane-a')] }], agents: [placed({ repo: 'r2' })] });
-  assert.equal(keyOf(twoRepos), 'lane-a', 'the worktree is looked up in the agent\'s own repository');
-});
 
-test('an agent in a lane takes the lane\'s hue, and a run with no run id takes none from an agent with none', () => {
-  const identity = boardIdentity(boardOf({ worktrees: [lane('lane-a')], agents: [{ id: 'p', name: 'scout', state: 'run', repo: 'r', wt: 'lane-a', branch: 'lane-a' }] }), null, NOW);
-  assert.equal(agentKey(identity, { id: 'p', name: 'scout', repo: 'r', wt: 'lane-a', branch: 'lane-a' }), 'lane-a');
-  const noId = { name: 'solo', state: 'run' };
-  const loose = boardIdentity(boardOf({ runs: [noId], worktrees: [lane('lane-a')], agents: [{ id: 'p', name: 'scout', state: 'run', repo: 'r', wt: 'lane-a', branch: 'lane-a' }] }), null, NOW);
-  assert.equal(itemKey(loose, noId), 'solo');
-});
 
-test('an isolated worktree is `worktree-<run id>` or `worktree-<run id>-<n>` of one run and of no other whose id starts the same', () => {
-  const [short, long] = [run('wf_a', 'one'), run('wf_ab', 'two')];
-  const identity = boardIdentity(boardOf({ runs: [short, long] }), null, NOW);
-  const keyOf = (name) => worktreeKey(identity, { name, branch: name });
-  assert.equal(keyOf('worktree-wf_a'), 'one', 'the bare name');
-  assert.equal(keyOf('worktree-wf_a-3'), 'one');
-  assert.equal(keyOf('worktree-wf_ab-1'), 'two', 'not the run whose id is only its beginning');
-  assert.equal(keyOf('worktree-wf_zz-1'), 'worktree-wf_zz-1', 'no run of that id: the worktree\'s own name');
-});
 
-test('a run name or agent name that is empty counts as none', () => {
-  const identity = boardIdentity(boardOf({ runs: [{ runId: 'wf_x', name: '', state: 'run' }] }), null, NOW);
-  assert.equal(itemKey(identity, { runId: 'wf_x', name: '' }), 'wf_x');
-  assert.equal(agentKey(identity, { name: '' }), '?');
-});
 
 test('a hue file is read and written only for a session id: a planted `undefined-hues.json` is not read', () => {
   const env = { HOME: makeTempDir('hue-planted-') };

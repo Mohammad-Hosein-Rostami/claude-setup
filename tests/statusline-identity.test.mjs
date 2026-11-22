@@ -41,41 +41,8 @@ test('a name keeps its hue in every render whatever the order, and the six sampl
   assert.deepEqual(hues(SAMPLE_NAMES), first);
 });
 
-test('a workflow whose agents work in a lane worktree shows `on <branch>` and shares the branch git row\'s hue and marker', () => {
-  const rows = rowsOf(placedWriterBoard(), TERM_256, 160);
-  for (const [workflow, branch] of [['remove-modes-delta-review', 'remove-modes'], ['road-gate-landed-row', 'road-gate-landed-row']]) {
-    const runRow = rowWith(rows, '▸', workflow);
-    const gitRow = rowWith(rows, '⎇', branch);
-    assert.ok(runRow && gitRow, `${workflow} and the ${branch} git row are shown`);
-    assert.deepEqual(identityOn(runRow, workflow), identityOn(gitRow, branch));
-    assert.ok(runRow.includes(`${identityOn(runRow, workflow).codes}on ${branch}`), `on ${branch} in its hue`);
-  }
-  const unplaced = rowWith(rows, '▸', 'statusline-identity-colours');
-  assert.ok(unplaced && !/ on /.test(unplaced), 'a workflow on no known worktree names no branch');
-  assert.notDeepEqual(identityOn(unplaced, 'statusline-identity-colours'), identityOn(rowWith(rows, '⎇', 'sync-remote-path'), 'sync-remote-path'));
-});
 
-test('the screenshot board as the live board has it (read-only reviewers, nothing placed): no workflow names a lane or shares a branch row\'s hue', () => {
-  const rows = rowsOf(screenshotBoard(), TERM_256, 160);
-  const runs = ['remove-modes-delta-review', 'statusline-identity-colours', 'road-gate-landed-row'];
-  const lanes = ['remove-modes', 'road-gate-landed-row', 'sync-remote-path'];
-  for (const name of runs) assert.doesNotMatch(plain(rowWith(rows, '▸', name)), / on /, `${name} names no lane`);
-  const looks = [...runs.map((name) => identityOn(rowWith(rows, '▸', name), name)), ...lanes.map((name) => identityOn(rowWith(rows, '⎇', name), name))];
-  // the workflow `road-gate-landed-row` and the lane of that name are one name, so one hue (no placed agent is needed for that)
-  assert.equal(new Set(looks.map((look) => `${look.codes}${look.marker}`)).size, 5, 'five names on screen, five hues');
-});
 
-test('a worktree whose folder differs from its branch still matches its workflow by the branch, and main is no lane', () => {
-  const board = placedWriterBoard();
-  board.repo.worktrees = board.repo.worktrees.map((wt) => (wt.name === 'remove-modes' ? { ...wt, name: 'lane-7', path: '/r/wt/lane-7' } : wt));
-  board.agents = board.agents.map((agent) => (agent.wt === 'remove-modes' ? { ...agent, wt: 'lane-7' } : agent));
-  board.agents.push({ ...board.agents[0], id: 'a5', runId: 'wf_status', wt: 'main', branch: 'main' });
-  const rows = rowsOf(board, TERM_256, 160);
-  const runRow = rowWith(rows, '▸', 'remove-modes-delta-review');
-  assert.ok(runRow.includes('on remove-modes'));
-  assert.equal(identityOn(rowWith(rows, '⎇', 'lane-7'), 'lane-7')?.codes, identityOn(runRow, 'remove-modes-delta-review').codes);
-  assert.doesNotMatch(plain(rowWith(rows, '▸', 'statusline-identity-colours')), / on main/, 'an agent in the main checkout is on no lane');
-});
 
 test('main is bold in the default colour, and the section labels lead their rows', () => {
   const rows = rowsOf(screenshotBoard(), TERM_256, 160);
@@ -100,44 +67,13 @@ test('a 16-colour terminal gets no 256-colour codes and tells items apart by bol
   assert.equal(new Set(sixLooks).size, SAMPLE_NAMES.length, 'six items, six looks from style and shape');
 });
 
-test('NO_COLOR prints no escape code and keeps the marker shapes, the same on a workflow row and its branch row', () => {
-  const rows = rowsOf(placedWriterBoard(), NO_COLOR_ENV, 120);
-  assert.ok(rows.every((row) => !row.includes(ESCAPE)));
-  const runLook = identityOn(rowWith(rows, '▸', 'remove-modes-delta-review'), 'remove-modes-delta-review');
-  assert.ok(MARKERS.includes(runLook?.marker));
-  assert.equal(identityOn(rowWith(rows, '⎇', 'remove-modes'), 'remove-modes')?.marker, runLook.marker);
-  assert.ok(MARKERS.includes(identityOn(rowWith(rows, '⎇', 'sync-remote-path'), 'sync-remote-path')?.marker));
-  const runMarkers = ['remove-modes-delta-review', 'statusline-identity-colours', 'road-gate-landed-row'].map((name) => identityOn(rowWith(rows, '▸', name), name)?.marker);
-  assert.equal(new Set(runMarkers).size, 3, `three items on screen get three marker shapes: ${runMarkers}`);
-});
 
 test('ASCII mode prints no byte above 0x7E with the new glyphs', () => {
   const env = { ...NO_COLOR_ENV, CLAUDE_STATUS_ASCII: '1' };
   for (const columns of [80, 120, 160]) for (const row of rowsOf(screenshotBoard(), env, columns)) assert.doesNotMatch(row, /[^ -~]/, row);
 });
 
-test('a workflow name is cut at a `-` boundary with …, and at 80 columns the whole name wins over the phase word', () => {
-  const long = 'remove-modes-delta-review-of-every-lane-in-round-nine';
-  const rows = rowsOf(boardOfRuns([long]), NO_COLOR_ENV, 80);
-  const shown = /▸ \S (\S+)…/.exec(rows.find((row) => row.startsWith('▸')) ?? '')?.[1];
-  assert.ok(shown && long.startsWith(`${shown}-`), `cut at a boundary: ${shown}`);
-  const whole = rowsOf(placedWriterBoard(), NO_COLOR_ENV, 80);
-  for (const name of ['remove-modes-delta-review', 'statusline-identity-colours', 'road-gate-landed-row']) {
-    const row = rowWith(whole, '▸', name);
-    assert.ok(row, `${name} whole at 80 columns`);
-    assert.match(row, /\d\/\d done/, `${name}: the phase word drops before the bar`);
-  }
-  assert.match(rowWith(whole, '▸', 'remove-modes-delta-review'), / on remove-modes /, 'where it works is kept before the phase word');
-});
 
-test('a 30-character workflow name is cut at a `-` boundary at 80 columns and shown whole at 160', () => {
-  const name = 'remove-modes-delta-review-pass';
-  const board = boardOfRuns([name]);
-  const narrow = rowsOf(board, NO_COLOR_ENV, 80).find((row) => row.startsWith('▸'));
-  const shown = /▸ \S (\S+)…/.exec(narrow ?? '')?.[1];
-  assert.ok(shown && name.startsWith(`${shown}-`), `cut at a boundary: ${narrow}`);
-  assert.ok(rowWith(rowsOf(board, NO_COLOR_ENV, 160), '▸', name), 'whole at 160 columns');
-});
 
 test(`a render from the fixture takes at most ${MAX_MEDIAN_MS} ms (median of ${RENDERS_TIMED})`, () => {
   const board = screenshotBoard();

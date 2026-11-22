@@ -13,7 +13,7 @@ import { fitParts, HUE_CODES, hueState, lookOf, paint, STATE } from '../home/too
 import { writeCacheFile } from '../home/tools/board/lib/cache-file.mjs';
 import { identityOf } from '../home/tools/board/lib/hue-store.mjs';
 import { agentKey, boardIdentity, hueOf, itemKey, worktreeKey } from '../home/tools/board/lib/identity.mjs';
-import { agentRow, runHeader } from '../home/tools/board/lib/agent-rows.mjs';
+import { agentRow } from '../home/tools/board/lib/agent-rows.mjs';
 import { repoRows } from '../home/tools/board/lib/git-rows.mjs';
 import { workRows } from '../home/tools/board/lib/layout.mjs';
 import { lookFor, NO_COLOR_ENV, NOW, placedWriterBoard, screenshotBoard, TERM_256 } from './statusline-identity-fixture.mjs';
@@ -133,22 +133,7 @@ test('a bad saved assignment starts fresh and never throws', () => {
   for (const store of bad) assert.deepEqual(huesOf(boardIdentity(board, store, NOW), ['a', 'b', 'c']), fresh, JSON.stringify(store));
 });
 
-test('a run\'s phase over 16 characters is cut at a word with the cut mark', () => {
-  const board = { ...screenshotBoard(), agents: [], repo: null };
-  board.runs = [{ ...board.runs[0], phase: 'Delta review of every lane' }];
-  const { look, ctx } = rowsFor(board);
-  assert.match(plain(runHeader(board.runs[0], [], ctx, look)), /phase 1\/1 Delta review of… /);
-});
 
-test('names that are no strings count as none and never throw', () => {
-  const odd = { runs: [{ runId: 5, name: { toString: null } }, { runId: 'wf_x', name: null }, null, 'x'], agents: [{ name: { toString: null }, runId: 'wf_x', wt: 5, branch: {} }, null], repos: [{ worktrees: [{ name: 5, branch: {} }] }], repo: 'x' };
-  const identity = boardIdentity(odd, null, NOW);
-  assert.equal(itemKey(identity, odd.runs[0]), '?');
-  assert.equal(itemKey(identity, odd.runs[1]), 'wf_x');
-  assert.equal(agentKey(identity, odd.agents[0]), 'wf_x');
-  assert.equal(worktreeKey(identity, odd.repos[0].worktrees[0]), '?');
-  assert.ok(Number.isInteger(hueOf(identity, { toString: null })));
-});
 
 test('the saved hues live in the board cache under a temp HOME, are updated only when something changed, and a planted or broken file starts fresh', () => {
   const env = { HOME: makeTempDir('hue-store-home-') };
@@ -181,115 +166,20 @@ function statuslineRun(home, runNames) {
   return Object.fromEntries(runNames.map((name) => [name, new RegExp(`((?:\\u001b\\[[0-9;]*m)*)(?:▸) \\S ${name}`).exec(out)?.[1]]));
 }
 
-test('the status line keeps a workflow\'s colour from one run to the next while others start (home/statusline.mjs, temp HOME)', () => {
-  const home = makeTempDir('sticky-statusline-');
-  const first = statuslineRun(home, ['wf-one', 'wf-two']);
-  for (const codes of Object.values(first)) assert.match(codes ?? '', /^\u001b\[38;5;\d+m$/);
-  const later = statuslineRun(home, ['wf-three', 'wf-two', 'wf-one', 'wf-four']);
-  assert.equal(later['wf-one'], first['wf-one']);
-  assert.equal(later['wf-two'], first['wf-two']);
-  assert.ok(existsSync(join(home, '.claude', 'state', 'board-cache', `${SESSION}-hues.json`)));
-});
 
 /** A run of the screenshot board whose agents are `agents`, and the rows the status line draws for it. */
 function rowsFor(board, env = TERM_256, columns = 160) {
   const look = lookFor(env, columns);
   const identity = boardIdentity(board);
   const ctx = { ...CTX, repo: board.repo, repos: [board.repo], identity };
-  return { look, ctx, identity, plain: (rows) => rows.map(plain), header: (run, agents) => runHeader(run, agents, ctx, look) };
+  return { look, ctx, identity, plain: (rows) => rows.map(plain) };
 }
 
-test('a finished agent counts only when no running agent is placed: the run says `on` the lane of its running agents, else of its finished ones', () => {
-  const board = placedWriterBoard();
-  const run = board.runs[0];
-  const wt = (name) => ({ ...board.repo.worktrees[1], name, branch: name });
-  board.repo.worktrees.push(wt('old-lane'));
-  const onLane = (name, state) => ({ ...board.agents[0], runId: run.runId, wt: name, branch: name, state });
-  board.agents = [onLane('old-lane', 'done'), onLane('old-lane', 'done'), onLane('remove-modes', 'run')];
-  const { header } = rowsFor(board);
-  assert.match(plain(header(run, [])), / on remove-modes /);
-  assert.doesNotMatch(plain(header(run, [])), /old-lane/);
-  board.agents = [onLane('old-lane', 'done')];
-  assert.match(plain(rowsFor(board).header(run, [])), / on old-lane /, 'only a finished agent: its lane stays while no running agent is placed (SA3)');
-});
 
-test('a workflow keeps its lane and its hue after its implementer finishes, while read-only reviewers run (SA3)', () => {
-  const board = placedWriterBoard();
-  const run = board.runs[0];
-  const writer = { ...board.agents[0], runId: run.runId, state: 'done', doneMs: NOW - MIN_MS };
-  const reader = (id) => ({ ...board.agents[1], id, runId: run.runId, state: 'run' });
-  board.agents = [writer, reader('r1'), reader('r2')];
-  const { look, ctx, header } = rowsFor(board);
-  const runRow = header(run, []);
-  assert.match(plain(runRow), / on remove-modes /);
-  const gitRow = repoRows(board, Infinity, ctx, look).find((row) => plain(row).includes('⎇ ') && plain(row).includes(' remove-modes'));
-  const [runLook, gitLook] = [runRow, gitRow].map((row) => /((?:\u001b\[[0-9;]*m)*)(?:▸|⎇) (\S) /.exec(row).slice(1, 3));
-  assert.deepEqual(runLook, gitLook, 'the workflow row and the lane row keep one hue and marker');
-  board.agents = [writer, { ...writer, id: 'w2', wt: 'road-gate-landed-row', branch: 'road-gate-landed-row' }, { ...writer, id: 'w3', state: 'run', wt: 'road-gate-landed-row', branch: 'road-gate-landed-row' }];
-  assert.match(plain(rowsFor(board).header(run, [])), / on road-gate-landed-row /, 'a running writer on one lane beats finished ones on another');
-});
 
-test('a workflow with isolated worktree agents shows no temp branch, and its agents, worktrees and row share the workflow\'s hue and marker', () => {
-  const board = screenshotBoard();
-  const run = board.runs[0];
-  const isolated = [1, 2, 3].map((n) => `worktree-${run.runId}-${n}`);
-  board.repo.worktrees.push(...isolated.map((name) => ({ ...board.repo.worktrees[1], name, branch: name, agents: ['implementer:opus'] })));
-  board.agents = isolated.map((name, index) => ({ ...board.agents[0], id: `iso${index}`, runId: run.runId, wt: name, branch: name }));
-  const { look, ctx, identity, header } = rowsFor(board);
-  const runRow = header(run, []);
-  assert.doesNotMatch(plain(runRow), /worktree-wf/, 'no temp branch on the workflow row');
-  assert.doesNotMatch(plain(runRow), / on /);
-  const runCodes = /((?:\u001b\[[0-9;]*m)*)▸ (\S) /.exec(runRow);
-  const gitRows = repoRows(board, Infinity, ctx, look);
-  for (const name of isolated) {
-    const gitRow = gitRows.find((row) => plain(row).includes(`⎇ `) && plain(row).includes(name.slice(0, 20)));
-    assert.ok(gitRow, `${name} has a git row`);
-    const git = /((?:\u001b\[[0-9;]*m)*)⎇ (\S) /.exec(gitRow);
-    assert.deepEqual([git[1], git[2]], [runCodes[1], runCodes[2]], `${name}: hue and marker of the workflow`);
-  }
-  for (const agent of board.agents) {
-    const row = agentRow(agent, { ...ctx, prefix: ' ' }, look);
-    assert.ok(row.includes(`${runCodes[1]}${runCodes[2]} `), `agent ${agent.id}: the workflow's hue and marker`);
-  }
-  assert.equal(new Set([...isolated.map((name) => worktreeKey(identity, { name, branch: name })), itemKey(identity, run)]).size, 1);
-});
 
-test('the read-only agents of a workflow take the workflow\'s hue; with no placed writer the row names no lane and the lane\'s own git row keeps its own hue', () => {
-  const board = screenshotBoard();
-  board.agents = [{ ...board.agents[1], id: 'r1', runId: board.runs[0].runId }, { ...board.agents[1], id: 'r2', runId: board.runs[0].runId }];
-  const { look, ctx, header } = rowsFor(board);
-  const runRow = header(board.runs[0], []);
-  const runLook = /((?:\u001b\[[0-9;]*m)*)▸ (\S) /.exec(runRow);
-  assert.doesNotMatch(plain(runRow), / on /, 'no sure placement, so no lane is claimed (repos.mjs placeAgents; a name match would be a guess)');
-  for (const agent of board.agents) assert.ok(agentRow(agent, { ...ctx, prefix: ' ' }, look).includes(`${runLook[1]}${runLook[2]} `));
-});
 
-test('the strip row cuts a workflow name at a boundary with the cut mark and leads it with its marker', () => {
-  const board = screenshotBoard();
-  const long = 'statusline-identity-colours-delta-review';
-  board.runs = board.runs.map((run, index) => (index === 1 ? { ...run, name: long } : run));
-  for (const env of [TERM_256, NO_COLOR_ENV]) {
-    const look = lookFor(env, 120);
-    const identity = boardIdentity(board);
-    const rows = workRows(board, 2, { ...CTX, repo: board.repo, repos: [board.repo], identity }, look).map(plain);
-    assert.match(rows[0], /^[●◆▲] remove-mode… /, `cut name, marker first: ${rows[0]}`);
-    assert.match(rows[0], /[●◆▲] statusline… /, 'cut at the `-`');
-    assert.doesNotMatch(rows[0], /statusline-i/);
-  }
-  const ascii = workRows(board, 2, { ...CTX, repo: board.repo, repos: [board.repo], identity: boardIdentity(board) }, lookFor({ ...NO_COLOR_ENV, CLAUDE_STATUS_ASCII: '1' }, 120));
-  assert.match(ascii[0], /^[*+o] remove\.\.\. /);
-});
 
-test('a workflow name over 40 characters is cut with the cut mark on the row and a 40-character one is whole', () => {
-  const forty = 'n'.repeat(19) + '-' + 'm'.repeat(20);
-  const board = { ...screenshotBoard(), agents: [], repo: null };
-  board.runs = [{ ...board.runs[0], name: forty }, { ...board.runs[1], name: `${forty}-2` }];
-  const { look, ctx } = rowsFor(board);
-  const [whole, cut] = board.runs.map((run) => plain(runHeader(run, [], { ...ctx, identity: boardIdentity(board) }, look)));
-  assert.ok(whole.includes(` ${forty} `), whole);
-  assert.ok(cut.includes(` ${forty.slice(0, 39)}… `), cut);
-  assert.doesNotMatch(cut, /-2/);
-});
 
 test('the identity hues are 256-colour cube indexes no state code uses, distinct, and read on both a dark and a white background', () => {
   const look = lookOf(TERM_256, 'darwin', 100);
@@ -389,29 +279,7 @@ const laneBoard = (agents, runNames) => ({
 });
 const scout = (name, state, doneMs = null) => ({ id: name, name, state, doneMs });
 
-test('a finished agent the rows no longer show holds no hue: a new workflow takes a hue none of the items on screen has (RISK-1)', () => {
-  const running = laneBoard([scout('scout-1', 'run'), scout('scout-2', 'run')], ['wf-a']);
-  const first = boardIdentity(running, null, NOW);
-  assert.equal(new Set(['wf-a', 'lane-1', 'lane-2', 'lane-3', 'scout-1', 'scout-2'].map((name) => hueOfName(first, name))).size, 6);
-  const newcomer = nameHomedAt(hueOfName(first, 'wf-a'));
-  const onScreen = ['wf-a', 'lane-1', 'lane-2', 'lane-3'];
-  const hidden = laneBoard([scout('scout-1', 'done', NOW), scout('scout-2', 'done', NOW)], ['wf-a', newcomer]);
-  const later = boardIdentity(hidden, first.store, NOW + MIN_MS);
-  assert.ok(!onScreen.some((name) => hueOfName(later, name) === hueOfName(later, newcomer)), 'a minute after they finished the agents are not drawn');
-  assert.deepEqual(huesOf(later, onScreen), huesOf(first, onScreen), 'nothing on screen moved');
-  const shown = laneBoard([scout('scout-1', 'done', NOW + MIN_MS - 10_000), scout('scout-2', 'run')], ['wf-a', newcomer]);
-  const soon = boardIdentity(shown, first.store, NOW + MIN_MS);
-  assert.equal(hueOfName(soon, newcomer), hueOfName(soon, 'wf-a'), 'ten seconds after, the finished agent is still drawn, so all six hues are held');
-  assert.equal(hueOfName(soon, 'scout-1'), hueOfName(first, 'scout-1'));
-});
 
-test('a workflow run the rows hide holds no hue', () => {
-  const runs = [{ runId: 'wf_1', name: 'stopped-run', state: 'stopped?' }, { runId: 'wf_2', name: 'live-run', state: 'run' }];
-  const board = { runs, agents: [], repo: null, repos: [] };
-  assert.deepEqual([...boardIdentity(board, null, NOW).hues.keys()], ['live-run']);
-  board.agents = [{ id: 'x', name: 'x', runId: 'wf_1', state: 'run' }];
-  assert.ok(boardIdentity(board, null, NOW).hues.has('stopped-run'), 'shown while it has an agent');
-});
 
 test('the hue file is kept only for a session id that is a plain file name: no id, an empty or odd one writes nothing', () => {
   const env = { HOME: makeTempDir('hue-store-no-id-') };

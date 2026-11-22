@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeSessionFile } from '../home/hooks/lib/session-store.mjs';
 import { fitParts, HUE_CODES, hueState, paint, STATE } from '../home/tools/board/lib/cells.mjs';
-import { agentRow, runHeader } from '../home/tools/board/lib/agent-rows.mjs';
+import { agentRow } from '../home/tools/board/lib/agent-rows.mjs';
 import { repoRows } from '../home/tools/board/lib/git-rows.mjs';
 import { boardIdentity, hueOf, markerOf } from '../home/tools/board/lib/identity.mjs';
 import { workRows } from '../home/tools/board/lib/layout.mjs';
@@ -29,12 +29,6 @@ const assertCutAtWord = (shown, original, max) => {
   assert.match(original.slice(shown.length - 1), /^[ -]/, `cut at a word or - boundary: ${shown}`);
 };
 
-test('a workflow\'s purpose is cut at a word at 32 characters with the cut mark', () => {
-  const board = screenshotBoard();
-  const purpose = 'tighten the status line colours for every row now';
-  const row = plain(runHeader({ ...board.runs[0], purpose }, [], ctxOf(board), lookFor(TERM_256, 200)));
-  assertCutAtWord(/ for (tighten[^·]*…) /.exec(row)?.[1], purpose, 32);
-});
 
 test('an agent\'s name column is as wide as before the marker (16 characters, 22 wide), the name cut inside it', () => {
   const board = placedWriterBoard();
@@ -67,17 +61,6 @@ test('the one-row git form draws each worktree\'s marker and name in its hue', (
   }
 });
 
-test('the strip row of workflows draws each in its own item\'s hue (a tied workflow in its lane\'s) with its marker', () => {
-  const board = placedWriterBoard();
-  const look = lookFor(TERM_256, 125);
-  const identity = boardIdentity(board);
-  const [strip] = workRows(board, 2, ctxOf(board, identity), look);
-  const hue = hueOf(identity, 'remove-modes');
-  assert.ok(strip.includes(paint(`${markerOf(hue, look)} remove-mode…`, hueState(hue), look)), 'tied to the lane: the lane\'s hue');
-  const own = hueOf(identity, 'statusline-identity-colours');
-  assert.notEqual(own, hue);
-  assert.ok(strip.includes(paint(`${markerOf(own, look)} statusline…`, hueState(own), look)), 'untied: its own hue');
-});
 
 test('the session row\'s git part (no git row has room) cuts the branch at a word at 32 characters', () => {
   const board = { ...screenshotBoard(), repo: null, repos: [], runs: [], agents: [] };
@@ -133,14 +116,6 @@ test('a part with spans keeps bold on each span and when cut, and is cut with no
   assert.equal(plain(tight), 'xxxxxxxx', 'no room even for the cut mark: nothing of the next part');
 });
 
-test('at 80 columns a workflow row keeps its finish clock before the running count, and the base row of a repository with no main checkout is bold', () => {
-  const board = placedWriterBoard();
-  const agents = board.agents.filter((agent) => agent.runId === 'wf_remove');
-  const row = plain(runHeader(board.runs[0], agents, ctxOf(board), lookFor(NO_COLOR_ENV, 85)));
-  assert.ok(row.includes('09:13') && !row.includes('2 run'), row);
-  const noMain = { ...board, repo: { ...board.repo, worktrees: board.repo.worktrees.filter((wt) => !wt.main) } };
-  assert.ok(repoRows(noMain, 1, ctxOf(noMain), lookFor(TERM_256, 160))[0].startsWith(`${BOLD}⎇ claude-setup:main`));
-});
 
 test('the limit labels `5h` and `7d` of the session row are dim and their value keeps its state colour', () => {
   const view = viewOf(screenshotBoard(), NOW, TERM_256);

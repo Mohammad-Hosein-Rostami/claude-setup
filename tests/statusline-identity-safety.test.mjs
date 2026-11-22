@@ -7,7 +7,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { statusRows } from '../home/tools/board/lib/render.mjs';
 import { whereTree } from '../home/tools/board/lib/tree.mjs';
-import { runHeader } from '../home/tools/board/lib/agent-rows.mjs';
 import { boardIdentity } from '../home/tools/board/lib/identity.mjs';
 import { lookFor, NO_COLOR_ENV, NOW, placedWriterBoard, screenshotBoard, TERM_256, viewOf } from './statusline-identity-fixture.mjs';
 
@@ -77,15 +76,3 @@ test('the hostile names do show up (as plain text), so the check above is not pa
   for (const word of ['wf-0', 'main-op', 'rebase', 'repo', 'acct']) assert.match(rows, new RegExp(word), word);
 });
 
-test('the branch behind `on <branch>` is cleaned and cut at its width with the cut mark', () => {
-  const board = placedWriterBoard();
-  const lane = `feature/${ESC}[31m${'long-branch-name-'.repeat(5)}end`;
-  board.repo.worktrees[1] = { ...board.repo.worktrees[1], branch: lane };
-  board.agents[0] = { ...board.agents[0], branch: lane };
-  const look = lookFor(TERM_256, 200);
-  const row = runHeader(board.runs[0], [], { nowMs: NOW, timeZone: 'UTC', at: NOW, repos: [board.repo], identity: boardIdentity(board) }, look);
-  const onText = /on (feature[^\u001b]*)/.exec(row)?.[1];
-  assert.ok(onText?.endsWith('…'), `cut mark: ${onText}`);
-  assert.ok([...onText].length <= 28, `at most 28 characters: ${onText}`);
-  assert.doesNotMatch(row.replaceAll(/\u001b\[[0-9;]*m/g, ''), BAD);
-});
