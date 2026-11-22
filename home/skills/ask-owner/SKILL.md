@@ -3,7 +3,7 @@ name: ask-owner
 description: Use when a decision is the owner's (scope, money, irreversible or outward-facing actions, credentials, real trade-offs), or when an ASK line arrives from the decision queue - how to word the question and run the queue loop.
 ---
 
-Only the main session can call AskUserQuestion; agents and workflows cannot. Ask the moment a decision comes up and
+Only the main session can call AskUserQuestion; agents cannot. Ask the moment a decision comes up and
 keep background work running. Never finish with a list of open decisions.
 
 ## Ask at the start of a job
@@ -64,9 +64,9 @@ the recommended option is always Match Figma. Mark every answer taken by default
 `## Owner decisions` and ask it again in the next reply to the owner; record a queue question taken by timeout with `ask.mjs answer --queue
 <path> q<n> --default --option <N>` (`--default` marks it `by: timeout`, so `ui-coverage` never counts it as the owner's decision).
 
-## Queue loop (background agents and workflows)
+## Queue loop (background agents)
 
-1. Every background agent or workflow that runs more than a few minutes: `node ~/.claude/tools/ask/ask.mjs init` prints the
+1. Every background agent that runs more than a few minutes: `node ~/.claude/tools/ask/ask.mjs init` prints the
    queue path; put it in the brief as `ASK_QUEUE`; agents do not have that variable, so they pass it as `--queue <path>`.
 2. Arm Monitor on `node ~/.claude/tools/ask/ask.mjs watch --queue <path>` with `timeout_ms: 1800000`. Monitor caps at
    30 minutes: when it expires, arm it again (watch re-prints still-open questions, never answered ones).

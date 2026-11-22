@@ -91,13 +91,10 @@ or a command line, or committing it, is not.
 
 Limits are per account. After a usage limit: switch with `claude-as <name>` and continue the session with
 `claude --resume` (pick it from the list; not `--continue`, which may pick another terminal's session). Accounts share
-one history, so resume, recall and memory keep working. Three conditions (`research3/ALIGN-2.md` A060):
+one history, so resume, recall and memory keep working. One condition (`research3/ALIGN-2.md` A060):
 
 - A login change ends Claude Code's own wait for the limit reset, and the wait does not restart on resume
   (interactive-mode docs; `research3/changes.md` L1).
-- A workflow paused at a limit stays paused after a login until the earlier login returns (changelog 2.1.327): relaunch
-  it by hand in its own session on the new account, or let it wait for the old one.
-- A workflow relaunches only in the session that owns it (`research3/cli.md` F33).
 
 ## Not verified
 

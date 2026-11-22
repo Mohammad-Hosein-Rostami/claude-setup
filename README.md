@@ -9,7 +9,7 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
 | ---- | ---- |
 | `home/CLAUDE.md` | Model routing and token discipline |
 | `home/rules`, `home/standards` | One-line rules (path-scoped) and the longer reference behind them |
-| `home/skills`, `home/agents` | Workflows and subagents (the Opus session plans, decides and delegates; Sonnet implements and reviews; Haiku looks up and runs) |
+| `home/skills`, `home/agents` | Skills and subagents (the Opus session plans, decides and delegates; Sonnet implements and reviews; Haiku looks up and runs) |
 | `home/hooks`, `home/statusline.mjs` | Bash guard, post-edit checks, token audit, status line |
 | `home/tools/ui-check` | Figma baseline pull, visual compare, responsive and column checks |
 | `settings/`, `plugins/` | Settings layers (base, OS, local) and the plugin list |
@@ -29,7 +29,7 @@ Update, roll back, remove, sync:
     git pull --ff-only && scripts/install.sh --update   # update (safe to repeat: a second run changes nothing)
     scripts/install.sh --update --to r9-phase-6         # roll back to a phase tag; plain --update comes back
     scripts/install.sh --uninstall                      # remove what the installer made, restore the backups
-    /workflows sync-machines                            # sync the machines in settings/local.json (bundle + ff-only pull, never a push)
+    node scripts/sync-machines.mjs --repo "$PWD"         # sync the machines in settings/local.json (bundle + ff-only pull, never a push); run it on the MacBook in this folder
 
 `scripts/install.sh --dry-run` previews any of these. The sync targets, the phase's CLI pin and the values the sync copies
 to every machine live in the git-ignored `settings/local.json` under `claudeSetup` (see `settings/local.json.example`).

@@ -13,18 +13,16 @@ Keep extra usage off in claude.ai so nothing can bill credits.
 - One task per session. For an unrelated next task, `/clear` or start a new session first.
 - The lead plans, decides and delegates: `scout` reads, `runner` runs checks, `implementer` writes code, `reviewer`
   and `security-auditor` review. Technical choices are made and stated in one line; owner decisions are asked.
-- The lead picks the form by the job (the rule is in `home/lead.md`, "Inline, agent or workflow"). Inline, no agent:
-  lookups (`/quick` for a read-only one), reading code, one command, a one-file or under-30-line edit (it still runs
-  `review-tier` before it lands). One background agent: one implementer lane, one lane's review set, one research question,
-  one debug hypothesis set inside a running job. A workflow: 2+ lanes or writers in parallel (`/workflows build`), review panels with fix rounds across
-  lanes (`/workflows review`), research over several sources (`/workflows research`), `/workflows bugfix`, `land`, `sync-machines`,
-  `git-cleanup`, a multi-stage job that must survive an exit, or when you ask (`/workflows step` runs one agent in the progress view). Landing and machine sync always run their
-  workflow, whatever the size; `/workflows bugfix` is for a bug that survived one fix or needs parallel hypotheses and
-  `/workflows git-cleanup` for a tangle or several repos; a hypothesis set inside a running job is an agent.
+- The lead picks the form by the job (the rule is in `home/lead.md`, "Job form and order"). Inline, no agent: lookups
+  (`/quick` for a read-only one), reading code, one command, a one-file or under-30-line edit (it still runs
+  `review-tier` before it lands). Everything else runs as steps of at most 5 agents at a time: build batch (lanes that share no
+  file), review batch, fix batch. A job of several steps is a road (`road-<id>.json` beside `STATUS.md`): each step ends
+  with a gate (`road.mjs gate`) and one update to you. Fixed sequences are one script call, not an agent: `land-lane` lands a
+  reviewed lane (the only way to land, one at a time), `scripts/sync-machines.mjs` syncs the machines.
 - Gates: targeted checks once after the last edit (through `runner`); the set `review-tier`
-  prints (agents or the `review` workflow, by the rule above) (`reviewer`, plus `security-auditor` and Opus lenses for risky classes and at landing); `ui-quality-pass` for UI;
-  then `verify-done`.
-- While a workflow runs you can keep talking to the lead: it answers questions and asks yours without stopping the
+  prints (`reviewer`, plus `security-auditor` and Opus lenses for risky classes and at landing; each round is judged with
+  `verdict.mjs`); `ui-quality-pass` for UI; then `verify-done`.
+- While agents run you can keep talking to the lead: it answers questions and asks yours without stopping the
   agents. A command that runs over about 5 minutes goes to the background with its `timeout` set (at most 2 h); `watch.mjs` is for waiting on a
   session or an agent, not on a command.
 - The final answer says what changed and what was not run. No recap of the process.
@@ -65,6 +63,9 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   (watch by session id, not by file path); in any doubt the silence is still a stall.
 - A run that must survive a dropped connection starts a watch on its own session id with
   `--exit-on-event api-error,stall,limit`, as a background command with `timeout` 7200000 (an unattended run stops one without it after 30 min); when the watch exits, the run is woken and carries on.
+- Long jobs run as background agents in steps of at most 5. Landing is `land-lane` (it checks free disk, the reviewed tip and the suite, then
+  fast-forwards). To bring the other machines along after the last landing, run on the MacBook, in the repo folder:
+  `node scripts/sync-machines.mjs --repo "$PWD"` (it never pushes; see `docs/setup.md`).
 - Background agents hand decisions to the lead through the ask queue: `node ~/.claude/tools/ask/ask.mjs init` prints
   the queue path, and the lead runs Monitor on `node ~/.claude/tools/ask/ask.mjs watch --queue <path>`. See
   `home/tools/ask/README.md` and the `ask-owner` skill.
@@ -114,11 +115,11 @@ History stays one straight line (rule C37): no merge commits, no branch merged i
 - Start a fresh session for an unrelated task, or when context is large and the next step is a new phase.
 
 ## Resume after an exit or an account switch
-Workflow runs keep a journal on disk, so an exit, a usage-limit stop or a switch of account loses no finished agent.
+The state of a job is on disk, in files, so an exit, a usage-limit stop or a switch of account loses no finished work:
+the rows of `STATUS.md`, the branch tips, a `HANDOFF-<row>.md` note per lane and the road file.
 1. Start the session again: `claude --model <m> --effort <e> -c` (or `claude --resume <session id>`) in the same folder. After a switch of account, start it in the same folder with the other account.
-2. The start notice (`<workflow-resume>`) lists every unfinished run of the folder: what finished, what was cut off, the worktrees and branches it owns, the STATUS.md last used. Say "/wf-resume" and the lead continues each run (same script and args; a run of another session gets its journal copied in first).
-3. A run marked "may still be running" is left alone until `/workflows` shows it ended. `node ~/.claude/tools/wf-resume/wf-resume.mjs list` prints the notice again at any time. A run you give up is hidden with `wf-resume.mjs abandon <runId>` (it touches no git; relaunching the run lists it again).
-Only the session that owns a journal can resume it by itself; the copy step (`wf-resume.mjs adopt`) is what makes a new session able to. Re-check it after a Claude Code upgrade: it relies on the undocumented folder layout.
+2. The start notice (`resume-notice.mjs`) lists what was left open: writer agents with no recorded finish (their STATUS row, the folder's dirty-file count), open owner questions of the ask queues, and the "Don't redo" list of the `HANDOFF.md`.
+3. The lead reads the `STATUS.md` rows and the notes, then runs `node ~/.claude/tools/road/road.mjs next <road.json> --budget 5` to find the next step. A stopped writer is continued once with SendMessage; if that fails, a fresh agent gets the brief, `git diff <base>...<branch>` and the lane's `HANDOFF-<row>.md`. Say "continue" and the lead does this.
 
 ## At a usage limit
 Wait for the subscription reset. Never turn on credits, `/fast`, or `/code-review ultra`. A Fable cap means a new start

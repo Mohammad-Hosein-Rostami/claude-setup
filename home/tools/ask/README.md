@@ -1,7 +1,7 @@
 # ask
 
 Append-only JSONL queue that lets background agents hand owner decisions to the lead at once. Only the main session can
-call AskUserQuestion; agents and workflows cannot, so they `post` and the lead `watch`es. Node 22, no dependencies.
+call AskUserQuestion; agents cannot, so they `post` and the lead `watch`es. Node 22, no dependencies.
 
 Run: `node ~/.claude/tools/ask/ask.mjs <command>`. `--queue <path>` defaults to env `ASK_QUEUE`.
 

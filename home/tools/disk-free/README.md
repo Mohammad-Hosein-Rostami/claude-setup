@@ -23,7 +23,7 @@ named, with "size not measured in time". The Docker builder cache has no folder,
 ## Where it runs
 
 - `scripts/doctor.sh` (`check_disk_free`): `FAIL` makes doctor exit 1, `WARN` is a warning.
-- The first step of the `land` and `build` workflows (`home/workflows`): below the fail threshold they stop before any git or agent work and
+- The first step of `land-lane`, and the lead's check before a build batch: below the fail threshold they stop before any git or agent work and
   return the line above as the reason. A check that could not run (exit 2) refuses too, so a broken check never lets a build start unseen.
 
 ## Test hooks

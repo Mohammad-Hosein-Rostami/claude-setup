@@ -19,7 +19,6 @@ const CELL_FILES = {
   Rules: (name) => `home/rules/${name}`,
   Hooks: (name) => `home/hooks/${name}`,
   Tools: (name) => `home/tools/${name}`,
-  Workflows: (name) => `home/workflows/${name}.js`,
   Scripts: (name) => `scripts/${name}`,
 };
 const MIN_TABLES = 8; // the catalog has a dozen; a parser that finds fewer has broken

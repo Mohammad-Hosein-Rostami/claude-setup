@@ -8,7 +8,7 @@ argument-hint: test|types|review|ui|probe|all [for <scope>] | off [<categories>]
 The checks-switch hook already recorded `$ARGUMENTS` for this session and printed the result above (a line starting
 "Checks"). Reply in 2 lines or fewer: relay that line, and for categories turned on name the gates that now run:
 `test` (targeted tests, suite, pre-commit tests, test-first, test-writer), `types` (typecheck gate, lint, build),
-`review` (review-tier set, review workflow, audits, critic), `ui` (ui-check, visual-qa, ui-quality-pass, ui-proof gate),
+`review` (review-tier set, verdict.mjs rounds, audits, critic), `ui` (ui-check, visual-qa, ui-quality-pass, ui-proof gate),
 `probe` (live probes, replay, `doctor --live`). Then continue any pending task with those checks; every category that is off
 is named in the final reply under "not checked:".
 
