@@ -41,6 +41,26 @@ test('laneLanded: the close row decides when STATUS.md holds it (old form), else
   assert.equal(laneLanded(new Map(), 'rd', 1, 'a'), false);
 });
 
+test('R2: a new-form lane row done without a landed line has not landed; its .landed correction row can carry the line', () => {
+  assert.equal(laneLanded(byId([row('rd.s1.a', 'built, tests green')]), 'rd', 1, 'a'), false);
+  assert.equal(laneLanded(byId([row('rd.s1.a', 'built'), row('rd.s1.a.landed', landedText(TO))]), 'rd', 1, 'a'), true);
+  assert.equal(laneLanded(byId([row('rd.s1.a', 'built'), row('rd.s1.a-land.landed', landedText(TO))]), 'rd', 1, 'a'), false, 'the -land.landed id is not a new-form row\'s own');
+});
+
+test('R3: in an old-form road (a -land close row in STATUS.md) a lane without its close row has not landed', () => {
+  const rows = byId([row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(TO)), row('rd.s1.b', landedText(OTHER_TO, TO))]);
+  assert.deepEqual([laneLanded(rows, 'rd', 1, 'a'), laneLanded(rows, 'rd', 1, 'b'), landingRowId(rows, 'rd', 1, 'b')], [true, false, 'rd.s1.b-land']);
+});
+
+test('R1: a rework row whose id equals a lane\'s close id never lands that lane', () => {
+  const rows = byId([row('rd.s1.fix', 'x', null), { ...row('rd.s1.fix-land', landedText(TO)), item: 'rework: land' }]);
+  assert.deepEqual([laneLanded(rows, 'rd', 1, 'fix'), landingRowId(rows, 'rd', 1, 'fix')], [false, 'rd.s1.fix']);
+  const road = { ...ROAD, steps: [{ lanes: [lane('fix'), lane('b')] }] };
+  const items = [startRow, row('rd.s1.fix', 'x', null), { ...row('rd.s1.fix-land', landedText(TO)), item: 'rework: land' }, row('rd.s1.b', landedText(OTHER_TO, TO))];
+  const result = gateStep(road, items, 1, fakeRun([TO, OTHER_TO]), { isUiPath: () => false });
+  assert.ok(result.lines.includes('PASS 1 rows: 1 landed') && result.lines.includes('INFO 1 rows: carried: fix'), result.lines.join('\n'));
+});
+
 test('stepState reads both forms alike: landed lanes, carried lanes and the gate state', () => {
   const newForm = [startRow, row('rd.s1.a', landedText(TO)), row('rd.s1.b', landedText(OTHER_TO, TO))];
   assert.equal(stepState(ROAD, newForm).state, 'gate');
@@ -48,7 +68,7 @@ test('stepState reads both forms alike: landed lanes, carried lanes and the gate
   assert.equal(stepState(ROAD, oldForm).state, 'gate');
   const halfOld = [startRow, row('rd.s1.a', 'built'), row('rd.s1.a-land', 'x', null), row('rd.s1.b', landedText(TO))];
   const state = stepState(ROAD, halfOld);
-  assert.deepEqual([state.state, state.lanes.map((entry) => entry.lane.name)], ['build', ['a']], 'old-form a is open, new-form b landed');
+  assert.deepEqual([state.state, state.lanes.map((entry) => entry.lane.name)], ['build', ['a', 'b']], 'an old-form road: b has no close row, so it is open (R3)');
   const carried = stepState(ROAD, [{ ...startRow, done: DAY }, row('rd.s1.a', landedText(TO)), row('rd.s1.b', 'x', null)]);
   assert.deepEqual([carried.step, carried.carried, carried.held.map((held) => held.name)], [2, ['b'], ['c']]);
 });
@@ -82,8 +102,8 @@ test('gate, F1: a landed line typed into a lane row is still resolved and checke
   const typed = gate([row('rd.s1.a', landedText(TO)), row('rd.s1.b', landedText('d'.repeat(40), TO))], [TO]);
   assert.equal(typed.pass, false);
   assert.ok(linesOf(typed, 2).some((line) => /^FAIL 2 range: rd\.s1\.b: .* is not on the base's first-parent line/.test(line)), typed.lines.join('\n'));
-  const oldForm = gate([row('rd.s1.a', landedText(TO)), row('rd.s1.a-land', 'x', null), row('rd.s1.b', landedText(OTHER_TO, TO))]);
-  assert.deepEqual(linesOf(oldForm, 1), ['PASS 1 rows: 1 landed', 'INFO 1 rows: carried: a'], 'an old-form lane row line is never its landing');
+  const oldForm = gate([row('rd.s1.a', landedText(TO)), row('rd.s1.a-land', 'x', null), row('rd.s1.b', landedText(OTHER_TO, TO)), row('rd.s1.b-land', 'x', null)]);
+  assert.deepEqual(linesOf(oldForm, 1), ['FAIL 1 rows: no lane of the step landed'], 'an old-form lane row line is never its landing');
   assert.ok(linesOf(oldForm, 2).some((line) => /lies in no close row's range/.test(line)), oldForm.lines.join('\n'));
 });
 
@@ -112,7 +132,8 @@ test('gate: a new-form fix row lands by its own line; an old-form rework row wit
   const lanes = [row('rd.s1.a', landedText(TO)), row('rd.s1.b', landedText(OTHER_TO, TO))];
   const D = 'd'.repeat(40);
   assert.equal(gate([...lanes, row('rd.s1.fix-x', landedText(D, OTHER_TO))], [TO, OTHER_TO, D]).pass, true);
-  const old = gate([...lanes, row('rd.s1.fix-x', 'rework done'), row('rd.s1.fix-x-land', landedText(D, OTHER_TO))], [TO, OTHER_TO, D]);
+  const oldLanes = [row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(TO)), row('rd.s1.b', 'x'), row('rd.s1.b-land', landedText(OTHER_TO, TO))];
+  const old = gate([...oldLanes, row('rd.s1.fix-x', 'rework done'), row('rd.s1.fix-x-land', landedText(D, OTHER_TO))], [TO, OTHER_TO, D]);
   assert.match(linesOf(old, 2)[0], /^PASS 2 range: 3 close rows/, old.lines.join('\n'));
   const fixLane = { ...ONE_STEP, steps: [{ lanes: [lane('a'), lane('fix-b')] }] };
   const named = gateStep(fixLane, [startRow, row('rd.s1.a', landedText(TO)), row('rd.s1.fix-b', landedText(OTHER_TO, TO))], 1, fakeRun([TO, OTHER_TO]), { isUiPath: () => false });
@@ -162,27 +183,57 @@ test('road.mjs rows --fix adds one rework row; a fix name ending -land is refuse
   assert.equal(rowsRun(world, '--fix', '1', 'tidy-land').status, 2);
 });
 
-test('road.mjs rows, F2: two runs at once write every row once and the second adds none', async () => {
+test('R1: --fix 1 land is refused when a lane is named fix (its id would be that lane\'s close id), and always for the name land', () => {
+  const world = roadWorld({ ...ROAD, steps: [{ lanes: [lane('fix'), lane('b')] }] });
+  rowsRun(world);
+  const refused = rowsRun(world, '--fix', '1', 'land');
+  assert.equal(refused.status, 2, refused.stdout + refused.stderr);
+  assert.ok(!ids(world).includes('rd.s1.fix-land'));
+});
+
+test('R3: rows on an old-form road keeps its form: a missing close row and a fix pair are added the old way', () => {
   const world = roadWorld();
-  const once = () => new Promise((resolve) => {
-    const child = spawn(process.execPath, [ROAD_CLI, 'rows', world.roadFile], { env: world.env });
-    let out = '';
-    child.stdout.on('data', (chunk) => { out += chunk; });
-    child.stderr.on('data', (chunk) => { out += chunk; });
-    child.on('close', (status) => resolve({ status, out }));
-  });
-  const runs = await Promise.all([once(), once()]);
+  writeFileSync(world.statusFile, `${STATUS_HEAD}| rd.s1.a | build: lane a | S | - | - | - |\n| rd.s1.a-land | close: review and land a | M | - | - | - |\n`);
+  assert.equal(rowsRun(world).status, 0);
+  assert.equal(rowsRun(world, '--fix', '1', 'tidy').status, 0);
+  assert.deepEqual(ids(world), ['rd.s1.a', 'rd.s1.a-land', 'rd.s1.b', 'rd.s1.b-land', 'rd.s1.check', 'rd.s2.c', 'rd.s2.c-land', 'rd.s2.check', 'rd.s1.fix-tidy', 'rd.s1.fix-tidy-land']);
+});
+
+/** `road.mjs rows <file>` in a child, started now; resolves to its exit and output. */
+const rowsAsync = (world, file = world.roadFile) => new Promise((resolve) => {
+  const child = spawn(process.execPath, [ROAD_CLI, 'rows', file], { env: world.env });
+  let out = '';
+  child.stdout.on('data', (chunk) => { out += chunk; });
+  child.stderr.on('data', (chunk) => { out += chunk; });
+  child.on('close', (status) => resolve({ status, out }));
+});
+
+test('road.mjs rows, F2 and R4: two runs at once write every row once; the second adds none and exits 0', async () => {
+  const world = roadWorld();
+  const runs = await Promise.all([rowsAsync(world), rowsAsync(world)]);
   const added = runs.map((run) => (run.out.match(/^added /gm) ?? []).length).sort();
   assert.deepEqual(added, [0, 5], runs.map((run) => run.out).join('\n'));
+  assert.deepEqual(runs.map((run) => run.status), [0, 0], runs.map((run) => run.out).join('\n'));
   assert.deepEqual(ids(world), ['rd.s1.a', 'rd.s1.b', 'rd.s1.check', 'rd.s2.c', 'rd.s2.check']);
 });
 
+test('road.mjs rows, R4: two roads started at once in one STATUS.md: only one of them gets rows', async () => {
+  for (let round = 0; round < 3; round += 1) {
+    const world = roadWorld();
+    const other = join(world.folder, 'road-ot.json');
+    writeFileSync(other, readFileSync(world.roadFile, 'utf8').replace('"road":"rd"', '"road":"ot"'));
+    const runs = await Promise.all([rowsAsync(world), rowsAsync(world, other)]);
+    const roads = new Set(ids(world).map((id) => id.split('.')[0]));
+    assert.equal(roads.size, 1, `${[...roads].join(' ')}\n${runs.map((run) => run.out).join('\n')}`);
+  }
+});
+
 const STATUS_HEAD = '# STATUS\n\n## Work items\n\n| id | item | size | started | done | evidence |\n| -- | ---- | ---- | ------- | ---- | -------- |\n';
-const statusLine = (id, done) => `| ${id} | build: ${id} | S | 2026-11-20T10:00Z | ${done ? '2026-11-20T11:00Z' : '-'} | ${done ? 'landed x' : '-'} |`;
+const statusLine = (id, done, evidence = landedText(TO)) => `| ${id} | build: ${id} | S | 2026-11-20T10:00Z | ${done ? '2026-11-20T11:00Z' : '-'} | ${done ? evidence : '-'} |`;
 
 /** jobFacts in a child with the world's HOME, its estimate cache entry pointing at step 1 of the road. */
 function boardLanded(world, rows) {
-  writeFileSync(world.statusFile, `${STATUS_HEAD}${rows.map(([id, done]) => statusLine(id, done)).join('\n')}\n`);
+  writeFileSync(world.statusFile, `${STATUS_HEAD}${rows.map(([id, done, evidence]) => statusLine(id, done, evidence)).join('\n')}\n`);
   const cache = join(world.home, '.claude', 'state', 'estimate-segment');
   mkdirSync(cache, { recursive: true, mode: 0o700 });
   const entry = { path: world.statusFile, text: null, highMs: null, kind: null, mtimeMs: 0, size: 0, computedAt: 0, refreshStartedAt: 0,
@@ -199,5 +250,6 @@ test('the board counts landed lanes in both forms (F8)', () => {
   const world = roadWorld();
   assert.deepEqual(boardLanded(world, [['rd.s1.a', true], ['rd.s1.a-land', false], ['rd.s1.b', false], ['rd.s1.b-land', true]]), [1, 2], 'old form');
   assert.deepEqual(boardLanded(world, [['rd.s1.a', true], ['rd.s1.b', false]]), [1, 2], 'new form');
-  assert.deepEqual(boardLanded(world, [['rd.s1.a', true], ['rd.s1.b', true], ['rd.s1.b-land', false]]), [1, 2], 'mixed');
+  assert.deepEqual(boardLanded(world, [['rd.s1.a', true], ['rd.s1.b', true], ['rd.s1.b-land', false]]), [0, 2], 'an old-form road: a has no close row (R3)');
+  assert.deepEqual(boardLanded(world, [['rd.s1.a', true], ['rd.s1.b', true, 'built, tests green']]), [1, 2], 'a done lane row without a landed line (R2)');
 });

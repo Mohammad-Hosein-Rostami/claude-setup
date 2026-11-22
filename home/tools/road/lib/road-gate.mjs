@@ -2,15 +2,15 @@
 // Exports: gateStep(road, items, step, run, { isUiPath }) -> { lines, pass }, GIT_TIMEOUT_MS, TOOL_TIMEOUT_MS.
 // `run(file, argv, timeoutMs)` -> { exit, out } runs one program with argv (no shell); `file` is one of 'git', 'git-tidy', 'ui-proof'
 //   (the CLI maps them to the tools), so tests inject it. Every git call names shas with fixed flags (P2).
-// Close row here means a landing row (road-state.mjs landingRowId): a lane's `<lane row>-land` row when STATUS.md holds one (old form),
-//   else the lane row itself (new form, one row per lane); a fix's `fix-<name>-land` row when it exists, else its `fix-<name>` row. Line 1
-//   and the ranges read the landed rule of road-state.mjs laneLanded.
+// Close row here means a landing row (road-state.mjs landingRowId): a lane's `<lane row>-land` row in an old-form road, else the lane row
+//   itself (new form, one row per lane); a fix's `fix-<name>-land` row when it exists, else its `fix-<name>` row. A `rework:` row is never
+//   a lane's landing row. Line 1 reads the landed rule of road-state.mjs laneLanded; the correction rows are road-state.mjs correctionRows.
 // Lines: 1 rows done (no lanes landed and none carried = FAIL; an open UI lane = FAIL, never carried; a carried lane a later lane needs =
 //   FAIL); 2 landing ranges of every close row of the road (`landed <to> on <base> from <from>`: `git cherry` empty, `<to>` new in this road,
 //   no repeat, `<from>` the road-start tip or another row's `<to>`, both on the base's first-parent line, ranges disjoint, every commit of
-//   `<start>..<tip>` in exactly one range; a done close row with no landed line of its own takes the line of a done correction row,
-//   `<lane>-land.landed` or `<lane>.landed` (`<lane>` the close row id without `-land`; both present = FAIL), never used when the close
-//   row has its own line or is not done);
+//   `<start>..<tip>` in exactly one range; a done close row with no landed line of its own takes the line of its done correction row
+//   (`<lane>-land.landed` or `<lane>.landed` for an old close row, `<id>.landed` for a new-form row; two = FAIL), never used when the
+//   close row has its own line or is not done);
 //   a FIX row (no road entry) whose done `<close row id>.landed` row says `landed within <other close row id>` (at the start of the evidence
 //   or after "; ") gets no range of its own: the named row must be another close row of the road with a valid range of its own (no self, no
 //   chain), and the coverage check of this line shows no unlanded commit is hidden. The text takes no `as <sha>` (a fix row has no one
@@ -25,7 +25,7 @@
 //   an answer that does not start with the row's hex, which is what a branch or tag named like hex gives), and only full shas are compared
 //   or passed on afterwards (a row may hold 7-40 hex, rev-list prints 40).
 import { rowIds } from './road-file.mjs';
-import { isUiLane, landedLine, laneLanded, landingRowId, roadStartTip } from './road-state.mjs';
+import { correctionRows, isReworkRow, isUiLane, landedLine, laneLanded, landingRowId, roadStartTip } from './road-state.mjs';
 
 export const GIT_TIMEOUT_MS = 5_000;
 export const TOOL_TIMEOUT_MS = 30_000;
@@ -64,17 +64,6 @@ const git = (run, repo, args) => run('git', ['-C', repo, ...args], GIT_TIMEOUT_M
 const isAncestor = (run, repo, a, b) => git(run, repo, ['merge-base', '--is-ancestor', a, b]).exit;
 
 const LAND_SUFFIX = '-land';
-
-/**
- * The correction rows of a close row: `<lane>-land.landed` and `<lane>.landed`, `<lane>` being the id without a `-land` end (row ids are
- * at most 40 characters, so the long form may not fit). A new-form lane row has the same two, so a correction under both ids fails in
- * either form. Both lookups are case-insensitive; the rows found are returned in that order.
- */
-function correctionRows(rows, id) {
-  const low = id.toLowerCase();
-  const lane = low.endsWith(LAND_SUFFIX) ? low.slice(0, -LAND_SUFFIX.length) : low;
-  return [`${lane}${LAND_SUFFIX}.landed`, `${lane}.landed`].map((key) => rows.get(key)).filter((found) => found !== undefined);
-}
 
 /** The one done correction row of a close row, or null: none, not done, or two of them (`ambiguousCorrection` reports that case). */
 function correctionRow(rows, row) {
@@ -120,8 +109,9 @@ const closeRange = (rows, row, entry) => ({ entry, row: row.id, landed: landedOf
  * neither is a row a lane of the road already lands through (a lane may itself be named `fix-...`).
  */
 function fixLandingRows(road, rows, laneIds) {
+  const hasTwin = (row) => { const twin = rows.get(`${row.id.toLowerCase()}${LAND_SUFFIX}`); return twin !== undefined && !isReworkRow(twin); };
   return [...rows.values()].filter((row) => FIX_ROW.test(row.id) && row.id.startsWith(`${road.road}.`) && row.done != null
-    && !rows.has(`${row.id.toLowerCase()}${LAND_SUFFIX}`) && !laneIds.has(row.id.toLowerCase()));
+    && !hasTwin(row) && !laneIds.has(row.id.toLowerCase()));
 }
 
 /** The done close rows of the road, as ranges (`landed` null when the row has no landed line; `within` `{ id, hasAs }` of the named close row or null; `both` the two correction row ids when it has two). */
@@ -130,7 +120,7 @@ function closeRanges(road, rows) {
   const laneIds = new Set(lanes.map(({ id }) => id.toLowerCase()));
   return lanes.flatMap(({ entry, id }) => {
     const row = rows.get(id.toLowerCase());
-    if (row?.done == null) return [];
+    if (row?.done == null || isReworkRow(row)) return [];
     return [closeRange(rows, { ...row, id }, entry)];
   }).concat(fixLandingRows(road, rows, laneIds).map((row) => closeRange(rows, row, null)));
 }

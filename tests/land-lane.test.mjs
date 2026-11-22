@@ -196,6 +196,16 @@ test('restart: branch gone (killed after the land, before the row): the landing 
   assert.equal(readFileSync(world.statusFile, 'utf8').match(/landed [0-9a-f]{40}/g).length, 1, 'the row holds one landing');
 });
 
+test('a row already done without this landing\'s line (a lane row closed when its build ended): exit 13 with the line to record (R2)', () => {
+  const world = makeWorld();
+  const { tip } = laneAt(world, 'lane/x');
+  writeFileSync(world.statusFile, readFileSync(world.statusFile, 'utf8').replace('| close:1 | land the lane | S | 2026-11-22T10:00Z | - | - |', '| close:1 | land the lane | S | 2026-11-22T10:00Z | 2026-11-22T10:30Z | built, tests green |'));
+  const result = landed(world, 'lane/x', tip);
+  assert.equal(result.status, 13, result.stdout + result.stderr);
+  assert.equal(firstLineOf(result), 'land: row-not-closed');
+  assert.match(result.stdout, new RegExp(`close:1\\.landed.*landed ${git(world.dir, 'rev-parse', 'main')} on main from ${SHA}`));
+});
+
 test('restart: the branch gone and a patch missing on the base is exit 14, nothing recorded', () => {
   const world = makeWorld();
   const { tip } = laneAt(world, 'lane/x');

@@ -11,7 +11,9 @@
 //   `review:` line for a risky lane). With --json one object `{ state, exit, to, from, lines }`.
 // Exit: 0 landed clean, 1 landed with `git-tidy check` findings left, 2 usage, 3 conflict, 4 done-check found new failures or an open weakened
 //   item, 5 the base kept moving, 6 ui-proof, 7 new-file-size, 8 upstream-moved, 9 tip-moved, 10 a risky lane without a review answer, 11 disk
-//   below the floor, 12 a `merge=union` file holds a table row key twice after the rebase, 13 landed but the row was not closed, 14 a tool failed or the done-check could not run (nothing landed).
+//   below the floor, 12 a `merge=union` file holds a table row key twice after the rebase, 13 landed but the row was not closed (also a row
+//   already done without this landing's `landed <to>` line: the exit names the `<row>.landed` correction row to record), 14 a tool failed
+//   or the done-check could not run (nothing landed).
 //   3-12 and 14 land nothing; after 4 and 10 the lane stays, rebased onto the base.
 // Restart: a killed run is found again: a branch that is gone, with every patch of --tip already on the base, or a branch at the rebased tip
 //   that `git-tidy range --landed` finds on the base, is a landing already made: the row is written (`already landed`).
@@ -20,6 +22,8 @@
 //   The branch must be at --tip before anything runs, and git-tidy checks it again at every rebase and land (`--tip`).
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { parseWorkItems } from '../estimate/lib/items.mjs';
+import { readStatusFile } from '../status/status-file.mjs';
 import { UsageError, parseArgs } from './lib/args.mjs';
 import { assertReviewedIsAncestor, checkRebasedTip } from './lib/checks-step.mjs';
 import { Stop, stop } from './lib/stop.mjs';
@@ -74,11 +78,28 @@ function patchesAreOnBase(options) {
   return cherry.ok && !cherry.out.split('\n').some((line) => line.startsWith('+'));
 }
 
-function closeRow(options, evidence) {
+/** The evidence of the row `id` in the STATUS.md, or null when it cannot be read or has no such row. */
+function rowEvidence(statusFile, id) {
+  try {
+    const read = readStatusFile(statusFile);
+    if (read.text === undefined) return null;
+    return parseWorkItems(read.text).items.find((item) => item.id.toLowerCase() === id.toLowerCase())?.evidence ?? null;
+  } catch {
+    return null; // unreadable: the caller reports the landing as not recorded (exit 13), never as recorded
+  }
+}
+
+/**
+ * Closes the row with the landed line. A row already done counts only when it holds this landing's `landed <to>` line (a re-run after a
+ * kill); one done without it (a lane row closed when its build ended) is exit 13 naming the `.landed` correction row the road gate reads.
+ */
+function closeRow(options, evidence, to) {
   const done = tool('status', 'status.mjs', ['--file', options.statusFile, 'done', options.closeRow, evidence], { timeoutMs: ROW_TIMEOUT_MS });
   if (done.ok) return { problem: null, note: null };
-  if (ALREADY_DONE.test(`${done.out}\n${done.err}`)) return { problem: null, note: `row ${options.closeRow} was already closed` };
-  return { problem: `row ${options.closeRow} not closed: ${reason(done)}; close it by hand with: ${evidence}`, note: null };
+  if (!ALREADY_DONE.test(`${done.out}\n${done.err}`)) return { problem: `row ${options.closeRow} not closed: ${reason(done)}; close it by hand with: ${evidence}`, note: null };
+  if (rowEvidence(options.statusFile, options.closeRow)?.includes(`landed ${to}`)) return { problem: null, note: `row ${options.closeRow} was already closed` };
+  const correction = `${options.closeRow}.landed`;
+  return { problem: `row ${options.closeRow} was already done without this landing's line: record it in a correction row: status.mjs add ${correction} "close: landing of ${options.closeRow}" S, then status.mjs done ${correction} "${evidence}"`, note: null };
 }
 
 /**
@@ -91,7 +112,7 @@ function finishLanding(options, landing) {
   const { to, from, restart, findings, notes, evidence = [] } = landing;
   const where = `landed ${to} on ${options.base}${from ? ` from ${from}` : ''}`;
   const answers = evidence.length > 0 ? ` (${evidence.join('; ')})` : '';
-  const row = closeRow(options, restart ? `${where} (found already on ${options.base} after a restart)` : `${where}${answers}`);
+  const row = closeRow(options, restart ? `${where} (found already on ${options.base} after a restart)` : `${where}${answers}`, to);
   const lines = [where, ...(from ? [] : ['warning: no `from` sha (the base reflog does not show the step): the road gate will refuse this row']), ...notes, ...findings, ...[row.note, row.problem].filter(Boolean)];
   if (row.problem !== null) return { code: 13, state: 'row-not-closed', lines, to, from };
   if (findings.length > 0) return { code: 1, state: 'landed, check findings left', lines, to, from };
