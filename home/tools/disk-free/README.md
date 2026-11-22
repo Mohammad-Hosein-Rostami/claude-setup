@@ -108,7 +108,7 @@ prints the dry-run total as INFO (WARN above 2 GB).
 ## with-run-tmp: a suite run that leaves nothing behind
 
 `node ~/.claude/tools/disk-free/with-run-tmp.mjs [--shell] -- <command>` runs the command with `TMPDIR`, `TMP` and `TEMP` set to a fresh `cs-run-*` folder
-(children and grandchildren inherit it) and removes the folder when the command passes, fails or gets SIGINT/SIGTERM/SIGHUP. `test-pass run`, `scripts/affected-tests.mjs --run`,
-`.githooks/pre-commit` and doctor's repo-test run all use it. Tests make their own folders with `makeTempDir` from `tests/temp-dir-helpers.mjs` (prefix `cs-test-`,
+(children and grandchildren inherit it) and removes the folder when the command passes, fails or gets SIGINT/SIGTERM/SIGHUP. Nothing calls it automatically any more (the
+check parts that did were removed on 2026-11-22); wrap a test run in it by hand when you want one that leaves nothing behind. Tests make their own folders with `makeTempDir` from `tests/temp-dir-helpers.mjs` (prefix `cs-test-`,
 removed when the test process ends); a guard test fails when a test file calls `mkdtemp` itself. Hard kills (SIGKILL) leave one `cs-run-*` folder that `disk-clean` removes after a day.
 Tests: `tests/disk-clean.test.mjs`, `tests/disk-clean-safety.test.mjs`, `tests/disk-clean-start.test.mjs`, `tests/with-run-tmp.test.mjs`, `tests/temp-dir-helpers.test.mjs`.

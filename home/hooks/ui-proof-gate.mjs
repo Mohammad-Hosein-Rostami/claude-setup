@@ -7,7 +7,7 @@
 //                   visual-qa PASS matches the tree, or a newer run on the same tree is worse than that PASS's reference, blocks once
 //                   per state. SubagentStop -> the same for ui-implementer and visual-qa only; an agent's own PASS counts for its own stop.
 // Not the hard check: Claude Code overrides a Stop gate after 8 blocks in a row and lets a crashed or timed-out Stop gate through, so
-// `git-tidy land` and road gate 6 (`ui-proof check`) hold the bar; this gate counts its blocks through hooks/lib/stop-block-count.mjs.
+// `git-tidy land` and the road gate (`ui-proof check`) hold the bar; this gate counts its blocks through hooks/lib/stop-block-count.mjs.
 // Always on: it runs on every UI change.
 // Outside a git work tree (a lead started in ~) there are no UI files to prove: the stop passes (this threw `not a git repository` on
 // every such stop, which stop-block-count recorded as "gate crashed or timed out", 32 records by 2026-11-21).

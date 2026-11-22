@@ -7,13 +7,14 @@ import { CACHE_TTL_MS } from './transcripts.mjs';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LEAD_ROLE = 'lead';
+// Older transcripts still carry these two roles; the agents were removed on 2026-11-22, so new runs never match.
 const REVIEW_ROLES = new Set(['reviewer', 'security-auditor']);
 /** How a run counts as waste. The transcripts carry no lane verdict, so these read the Agent call's result and description. */
 export const WASTE_RULES = {
   failed: 'the Agent call that started it returned an error (is_error in the parent transcript)',
   early: 'its last message stopped at max_tokens or refusal (a workflow agent ending on its output tool call is normal)',
   rework: 'its description starts with "rework" (a correction row of STATUS.md)',
-  reviewRound: 'a reviewer or security-auditor run whose description names round 2 or later, a delta or a fix round',
+  reviewRound: 'a run of a review role (older transcripts only; the review agents were removed on 2026-11-22) whose description names round 2 or later, a delta or a fix round',
   duplicate: 'the same role and description started again in the same session',
 };
 const EARLY_STOPS = new Set(['max_tokens', 'refusal']);

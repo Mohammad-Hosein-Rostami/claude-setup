@@ -147,7 +147,7 @@ function sweepOldLogs(dir, now) {
 }
 
 /**
- * Watches a reflog: on its first sight, or `settled` (a gate saw a suite PASS at its tip), writes a `watch` line with its size and tip.
+ * Watches a reflog: on its first sight, or `settled` (the caller says the tip needs no further look; no gate passes it now that suite PASS records are gone), writes a `watch` line with its size and tip.
  * @returns {boolean} true when a line was written
  */
 export function addWatch(env, session, reflogPath, settled) {

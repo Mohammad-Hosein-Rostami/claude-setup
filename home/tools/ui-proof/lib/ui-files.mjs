@@ -1,4 +1,4 @@
-// Purpose: the one definition of "UI files" (for the ui-proof stop hook, `ui-proof changed`, `git-tidy land` and road gate 6) and the
+// Purpose: the one definition of "UI files" (for the ui-proof stop hook, `ui-proof changed`, `git-tidy land` and the road gate) and the
 // hash of a tree's UI files, at a commit or in the working tree. Exports: isUiPath, isCoreUiPath, uiEntriesAt, workingUiEntries,
 // uiTreeHash, uiTreeAt, workingUiTree, changedUiFiles, git.
 // Definition: the skill router's isUiFile (markup and style files) plus `.ts`/`.js` style scripts under a styles/style/theme/themes/sx
