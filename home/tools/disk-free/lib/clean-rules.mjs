@@ -15,7 +15,9 @@
 //   session-scratch  in every session folder the rule above keeps (the current one, running ones, ones not idle long enough), the
 //                    entries of <session-id>/scratchpad/ that are a real folder named cs-test-* or a git clone (a folder holding a `.git`
 //                    folder; a linked worktree's `.git` file does not count, its repository lives elsewhere), when nothing anywhere in it
-//                    was modified for 2 days (owner FR5: a session that runs for days keeps only its newest 2 days). The session's
+//                    was modified or created for 2 days (owner FR5: a session that runs for days keeps only its newest 2 days) and it
+//                    holds no git work at any depth (clean-scan.mjs holdsGitWork: no linked worktree or submodule, no repository with
+//                    changes, untracked files, stashes or commits no remote holds; git that fails or a cut walk keeps it). The session's
 //                    liveness does not matter here: the whole-tree age is the test, so a folder a running lane still writes stays. Any
 //                    other name, a link and a session folder the rule above took in this run (listed or removed) are never looked at.
 //                    Crash case: a `.removing-<pid>-<name>` entry a killed run left is judged by its original name, like in the rules below.
@@ -29,7 +31,7 @@
 // transcripts folder and the sessions registry to be absolute, readable folders: without them every session would look finished.
 import { accessSync, constants, statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { entriesOf, lstatOrNull, mtimeOf, touchedSince } from './clean-scan.mjs';
+import { entriesOf, holdsGitWork, lstatOrNull, mtimeOf, touchedSince } from './clean-scan.mjs';
 import { liveSessionIds } from './live-sessions.mjs';
 import { inspectRoot, isOwnAside, originalName, ownedFolder, UnsafeRoot } from './safe-remove.mjs';
 import { OLD_TEST_PREFIXES } from './test-temp-prefixes.mjs';
@@ -168,7 +170,8 @@ async function* scratchLeftovers(context, root, scratchpad, cutoff) {
     if (isOwnAside(entry.name)) continue;
     const name = originalName(entry.name);
     const path = join(scratchpad, entry.name);
-    const isOld = async (where = path) => isScratchLeftover(where, name) && !(await touchedSince(where, cutoff));
+    // touchedSince first: it stops at the first new entry, while holdsGitWork walks the whole folder and runs git
+    const isOld = async (where = path) => isScratchLeftover(where, name) && !(await touchedSince(where, cutoff)) && !(await holdsGitWork(where));
     if (await isOld()) yield { path, root, stillRemovable: isOld };
   }
 }

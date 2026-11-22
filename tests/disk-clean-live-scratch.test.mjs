@@ -4,8 +4,9 @@
 // at once remove each folder once. Fake roots only (disk-clean-helpers.mjs world()): the real HOME and scratchpad root are never read.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { devNull } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runClean } from '../home/tools/disk-free/disk-clean.mjs';
@@ -24,10 +25,35 @@ function liveScratchpad(w) {
   return scratchpad;
 }
 
-/** A folder holding a git repository (a `.git` folder), everything `days` old. */
-function cloneFolder(path, days) {
-  folder(join(path, '.git'), { days, files: { HEAD: 'ref: refs/heads/main\n' } });
-  return folder(path, { days, files: { 'README.md': 'x' } });
+/** git with a fixed identity and branch name, no config of the machine's owner. */
+const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'init.defaultBranch=main', ...args],
+  { cwd, stdio: 'pipe', env: { ...process.env, GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: '1' } });
+
+/** Sets the times of a folder and of everything in it `days` back (a negative number is ahead of the clock). */
+function ageTree(path, days) {
+  for (const entry of readdirSync(path, { recursive: true })) age(join(path, entry), days);
+  age(path, days);
+  return path;
+}
+
+/** A repository with one commit, outside the scratchpad: the remote the clones come from. */
+function originRepo(w) {
+  const origin = join(w.root, 'origin');
+  if (existsSync(origin)) return origin;
+  mkdirSync(origin);
+  git(origin, 'init', '-q');
+  writeFileSync(join(origin, 'README.md'), 'x');
+  git(origin, 'add', 'README.md');
+  git(origin, 'commit', '-qm', 'first');
+  return origin;
+}
+
+/** A clean clone (every commit on its remote), `days` old; `change(path)` may leave work in it before it is aged. */
+function cloneFolder(w, path, days, change = () => {}) {
+  // --no-hardlinks: a local clone shares object files with its origin by hard links, so aging one clone would age the others' objects
+  git(w.root, 'clone', '-q', '--no-hardlinks', originRepo(w), path);
+  change(path);
+  return ageTree(path, days);
 }
 
 /** The live session's fixture: what must go and what must stay. */
@@ -36,9 +62,9 @@ function fixture(w) {
   const outside = folder(join(w.root, 'outside-target'), { days: OLD_DAYS });
   const paths = {
     oldTest: folder(join(scratchpad, 'cs-test-x'), { days: OLD_DAYS }),
-    oldClone: cloneFolder(join(scratchpad, 'clone'), OLD_DAYS),
+    oldClone: cloneFolder(w, join(scratchpad, 'clone'), OLD_DAYS),
     newTest: folder(join(scratchpad, 'cs-test-y'), { days: NEW_DAYS }),
-    newClone: cloneFolder(join(scratchpad, 'fresh-clone'), NEW_DAYS),
+    newClone: cloneFolder(w, join(scratchpad, 'fresh-clone'), NEW_DAYS),
     otherName: folder(join(scratchpad, 'probe-old'), { days: OLD_DAYS }),
     worktree: folder(join(scratchpad, 'wt'), { days: OLD_DAYS, files: { '.git': 'gitdir: /elsewhere/.git/worktrees/wt\n' } }),
     testFile: join(scratchpad, 'cs-test-notes.txt'),
@@ -120,4 +146,35 @@ test('CLI: two --apply runs at once remove each old folder once, keep the rest a
   const removed = runs.map((run) => (run.out.startsWith('{') ? JSON.parse(run.out).removed : 0)).reduce((sum, n) => sum + n, 0);
   assert.equal(removed, 2, runs.map((run) => run.out).join('\n'));
   assert.deepEqual([existsSync(paths.oldTest), existsSync(paths.oldClone), existsSync(paths.newTest), existsSync(paths.otherName)], [false, false, true, true]);
+});
+
+test('git work is never removed: a linked worktree named cs-test-*, a cs-test folder holding a worktree deep inside, and clones with local-only commits, untracked files, changes or a stash stay; a clean clone goes', posix, async () => {
+  const w = world();
+  const scratchpad = liveScratchpad(w);
+  const origin = originRepo(w);
+  const worktree = join(scratchpad, 'cs-test-wt');
+  git(origin, 'worktree', 'add', '-q', worktree);
+  const holder = folder(join(scratchpad, 'cs-test-holder'), { days: OLD_DAYS });
+  git(origin, 'worktree', 'add', '-q', join(holder, 'deep', 'copy'));
+  const kept = [
+    ageTree(worktree, OLD_DAYS),
+    ageTree(holder, OLD_DAYS),
+    cloneFolder(w, join(scratchpad, 'unpushed'), OLD_DAYS, (path) => {
+      writeFileSync(join(path, 'local.txt'), 'local');
+      git(path, 'add', 'local.txt');
+      git(path, 'commit', '-qm', 'local only');
+    }),
+    cloneFolder(w, join(scratchpad, 'untracked'), OLD_DAYS, (path) => writeFileSync(join(path, 'new.txt'), 'never added')),
+    cloneFolder(w, join(scratchpad, 'changed'), OLD_DAYS, (path) => writeFileSync(join(path, 'README.md'), 'edited')),
+    cloneFolder(w, join(scratchpad, 'cs-test-stash'), OLD_DAYS, (path) => {
+      writeFileSync(join(path, 'README.md'), 'stashed');
+      git(path, 'stash', '-q');
+    }),
+  ];
+  const clean = cloneFolder(w, join(scratchpad, 'clean'), OLD_DAYS);
+  const dry = await runClean({ ...w.options, apply: false });
+  assert.deepEqual(listed(dry), real(clean));
+  await runClean(w.options);
+  for (const path of kept) assert.equal(existsSync(path), true, path);
+  assert.equal(existsSync(clean), false);
 });
