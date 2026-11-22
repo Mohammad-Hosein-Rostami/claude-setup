@@ -10,7 +10,7 @@ import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hookEnv } from './hook-env.mjs';
-import { IDLE_MS, PENDING_MS } from '../home/hooks/lib/agent-launches.mjs';
+import { IDLE_MS, MAX_RUNNING_AGENTS, PENDING_MS } from '../home/hooks/lib/agent-launches.mjs';
 import { callCounterPath } from '../home/hooks/lib/writer-agents.mjs';
 import { git, makeRepo } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -20,6 +20,10 @@ const BUDGET = fileURLToPath(new URL('../home/hooks/agent-budget.mjs', import.me
 const HOOK_TIMEOUT_MS = 5000;
 const PARALLEL_LAUNCHES = 6;
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
+// The spans lib/writer-agents.mjs searches for a `worktree:` line (MAX_SCAN_CHARS, BRIEF_FILE_BYTES) and the room left for the line itself
+const PROMPT_SCAN_CHARS = 32 * 1024;
+const BRIEF_FILE_BYTES = 64 * 1024;
+const MAX_PATH_BYTES = 4096;
 let counter = 0;
 
 /**
@@ -194,23 +198,26 @@ test('a stop ends the launch of its own agent id first', () => {
 // agent's own worktree; the identical resend then ran. A `worktree:` line now counts as isolation, but only for a folder git lists.
 const NO_SH_GIT = process.platform === 'win32' && 'the fake git is a shell script';
 
-/** A repo with a linked lane worktree under .claude/worktrees/, as the lead makes one before the launch; real paths. */
-function repoWithLaneWorktree() {
+/** A repo with linked lane worktrees under .claude/worktrees/, as the lead makes them before the launch; `worktree` is the first; real paths. */
+function repoWithLaneWorktree(lanes = ['lane-a']) {
   const repo = makeRepo();
-  const worktree = join(repo, '.claude', 'worktrees', 'lane-a');
-  git(repo, 'worktree', 'add', '-q', '-b', 'fix/lane-a', worktree);
-  return { repo, worktree: realpathSync(worktree) };
+  const worktrees = lanes.map((lane) => {
+    const path = join(repo, '.claude', 'worktrees', lane);
+    git(repo, 'worktree', 'add', '-q', '-b', `fix/${lane}`, path);
+    return realpathSync(path);
+  });
+  return { repo, worktree: worktrees[0], worktrees };
 }
 
 const recordOf = (s) => JSON.parse(readFileSync(join(s.home, '.claude', 'state', 'agent-writers', `${s.session}.json`), 'utf8'));
 const laneBrief = (path) => `Build lane two.\nworktree: ${path}\nBASE: 0000000`;
 
 test('a writer whose brief names its own lane worktree runs next to a running writer, recorded isolated with that folder', () => {
-  const { repo, worktree } = repoWithLaneWorktree();
+  const { repo, worktrees: [worktree, other] } = repoWithLaneWorktree(['lane-a', 'lane-b']);
   const s = writerSession({ cwd: repo });
   assert.ok(!denied(s.launch(writer('implementer', { prompt: 'lane one' }))), 'the first writer runs');
   assert.ok(!denied(s.launch(writer('implementer', { prompt: laneBrief(worktree) }))), 'the lane worktree writer is not refused');
-  assert.ok(!denied(s.launch(writer('implementer', { prompt: `Lane three.\n  worktree: \`${worktree}\`` }))), 'a quoted value counts too');
+  assert.ok(!denied(s.launch(writer('implementer', { prompt: `Lane three.\n  worktree: \`${other}\`` }))), 'a quoted value counts too');
   const { launches, open } = recordOf(s);
   assert.deepEqual(launches.map((launch) => launch.isolated === true), [false, true, true]);
   assert.equal(open[1].cwd, worktree, 'the resume notice looks at the lane worktree');
@@ -226,6 +233,48 @@ test('a `worktree:` line in a brief file the prompt names counts; a brief file n
   s.launch(writer('implementer', { prompt: 'lane one' }));
   assert.ok(!denied(s.launch(writer('implementer', { prompt: `Read ${join(folder, 'lane.md')} and follow it with LANE = lane-a.` }))));
   assert.ok(denied(s.launch(writer('implementer', { prompt: `Read \`${join(folder, 'other.md')}\` and follow it.` }))), 'lane-b was never made');
+});
+
+test('a lane worktree a running writer already holds is no isolation: denied once, the retry runs as a plain writer', () => {
+  const { repo, worktree } = repoWithLaneWorktree();
+  const s = writerSession({ cwd: repo });
+  assert.ok(!denied(s.launch(writer('implementer', { prompt: laneBrief(worktree) }))), 'the first writer of the worktree runs');
+  const second = s.launch(writer('implementer', { prompt: `Lane two.\nworktree: ${worktree}` }));
+  assert.ok(denied(second), 'a second writer naming the same worktree gets the advice');
+  assert.match(second.permissionDecisionReason, /`worktree: <absolute path>`/);
+  assert.ok(!denied(s.launch(writer('implementer', { prompt: `Lane two.\nworktree: ${worktree}` }))), 'the identical resend runs');
+  assert.deepEqual(recordOf(s).launches.map((launch) => launch.isolated === true), [true, false], 'the resend is recorded plain');
+  assert.ok(denied(s.launch(writer('implementer', { prompt: 'lane three' }))), 'a plain writer runs now, so a third one bounces');
+});
+
+test('a held worktree is free again once its writer stops; a read-only brief naming it is never held', () => {
+  const { repo, worktree } = repoWithLaneWorktree();
+  const s = writerSession({ cwd: repo });
+  s.launch(writer('implementer', { prompt: laneBrief(worktree) }));
+  s.start('agent-1', 'implementer');
+  assert.ok(!denied(s.launch(writer('implementer', { prompt: `read-only: check lane one\nworktree: ${worktree}` }))), 'read-only is exempt');
+  s.stop('agent-1', 'implementer');
+  assert.ok(!denied(s.launch(writer('implementer', { prompt: `Lane one again.\nworktree: ${worktree}` }))), 'the folder is free again');
+});
+
+test('writers launched in parallel naming one lane worktree: exactly one runs', async () => {
+  const { repo, worktree } = repoWithLaneWorktree();
+  const s = writerSession({ cwd: repo });
+  const briefs = Array.from({ length: MAX_RUNNING_AGENTS - 1 }, (_, i) => writer('implementer', { prompt: `Lane ${i}.\nworktree: ${worktree}` }));
+  const outs = await Promise.all(briefs.map((brief) => s.launchAsync(brief)));
+  assert.equal(outs.filter((out) => !denied(out)).length, 1, JSON.stringify(outs));
+});
+
+test('the search span: a prompt\'s first 32K characters, all of a brief file\'s first 64 KB', () => {
+  const { repo, worktrees: [first, second] } = repoWithLaneWorktree(['lane-a', 'lane-b']);
+  const folder = makeTempDir('writer-gate-span-');
+  const filler = `${'pasted material line\n'.repeat(Math.ceil(PROMPT_SCAN_CHARS / 21))}`; // just past the prompt span
+  writeFileSync(join(folder, 'long.md'), `${filler}worktree: ${first}\n`);
+  assert.ok(Buffer.byteLength(filler) > PROMPT_SCAN_CHARS && Buffer.byteLength(filler) < BRIEF_FILE_BYTES - MAX_PATH_BYTES);
+  const s = writerSession({ cwd: repo });
+  s.launch(writer('implementer', { prompt: 'lane one' }));
+  assert.ok(!denied(s.launch(writer('implementer', { prompt: `Read ${join(folder, 'long.md')} and follow it.` }))), 'a brief file line past 32K counts');
+  assert.ok(denied(s.launch(writer('implementer', { prompt: `${filler}worktree: ${second}` }))), 'a prompt line past 32K is pasted material');
 });
 
 test('a made-up path, the lead\'s folder, a relative path, a Windows drive path and a plain folder still get the advice, which names roles', () => {

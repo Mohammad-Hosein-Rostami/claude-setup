@@ -21,7 +21,9 @@
 // A SubagentStart that matches no pending launch of its type (a fork, a nested launch, a launch older than PENDING_MS) is recorded as an
 // `unmatched` started launch: it counts for the cap and never for writer isolation (U4: over-count, never under-count).
 // Writer isolation keeps its old rule: only a running launch of a writer with no `isolated` / `readOnly` flag (and not `unmatched`)
-// makes a later plain writer bounce (`unlessRunning`); a stored launch with no `writer` key counts as a writer.
+// makes a later plain writer bounce (`unlessRunning`); a stored launch with no `writer` key counts as a writer. A lane worktree is one
+// writer's folder: a launch that claims `worktree` while an open record (lib/open-writers.mjs, closed only at its SubagentStop) already
+// has that folder as its cwd is `held` and nothing is recorded, checked under the same lock, so parallel launches see each other.
 // Limits: a stop another SubagentStop gate blocks still counts as the finish; one tool call longer than IDLE_MS makes the agent look idle.
 // Invariants: never throws; an unusable store or a lock that stays taken is `unusable` (the guard denies, P3 fail closed), and a failed
 // SubagentStart or SubagentStop record returns false. lib/writer-agents.mjs and this file import each other's functions, only called
@@ -124,15 +126,16 @@ const newLaunch = (type, at, { writer, isolated, readOnly }) => ({
  * @param {unknown} session hook input session_id
  * @param {unknown} type tool_input.subagent_type
  * @param {Record<string, string | undefined>} env HOME / USERPROFILE
- * @param {{writer?: boolean, unlessRunning?: boolean, isolated?: boolean, readOnly?: boolean, about?: {cwd?: unknown, description?: unknown, prompt?: unknown}, cap?: number}} [options]
+ * @param {{writer?: boolean, unlessRunning?: boolean, isolated?: boolean, readOnly?: boolean, worktree?: string | null, about?: {cwd?: unknown, description?: unknown, prompt?: unknown}, cap?: number}} [options]
  *   writer: the agent type writes files (it also gets an open record for the resume notice); unlessRunning: record nothing when a plain
- *   writer still runs; isolated / readOnly: the flags this launch is recorded with; about: the call's cwd, description and brief, kept
- *   (cwd, description, the row the brief names) in the open record; cap: record nothing when this many agents already run
- * @returns {{state: 'recorded' | 'full' | 'running' | 'unusable', running: Array<{type: string, agent?: string, at: number}>, storePath: string}}
- *   `running` lists the agents running (with the new one when recorded; empty when unusable); 'unusable' when the store cannot be
- *   read or written or the lock stays taken
+ *   writer still runs; isolated / readOnly: the flags this launch is recorded with; worktree: the lane worktree this launch is isolated
+ *   by (record nothing when an open record holds it); about: the call's cwd, description and brief, kept (cwd, description, the row the
+ *   brief names) in the open record; cap: record nothing when this many agents already run
+ * @returns {{state: 'recorded' | 'full' | 'held' | 'running' | 'unusable', running: Array<{type: string, agent?: string, at: number}>, storePath: string}}
+ *   `running` lists the agents running (with the new one when recorded; empty when unusable); 'held' when another open record has
+ *   `worktree` as its cwd; 'unusable' when the store cannot be read or written or the lock stays taken
  */
-export function recordAgentLaunch(session, type, env, { writer = false, unlessRunning = false, isolated = false, readOnly = false, about = undefined, cap = undefined } = {}) {
+export function recordAgentLaunch(session, type, env, { writer = false, unlessRunning = false, isolated = false, readOnly = false, worktree = null, about = undefined, cap = undefined } = {}) {
   const dir = writersDirOf(env);
   const done = withSessionLock(dir, session, () => {
     const now = Date.now();
@@ -141,6 +144,9 @@ export function recordAgentLaunch(session, type, env, { writer = false, unlessRu
     const record = parseRecord(text, now, session);
     const running = runningOf(record, session, now);
     if (cap !== undefined && running.length >= cap) return { state: 'full', running };
+    // compared as stored: launchAbout cuts and cleans the cwd, so a long or odd path still matches its own record
+    const heldCwd = typeof worktree === 'string' ? launchAbout({ cwd: worktree }).cwd : undefined;
+    if (heldCwd !== undefined && record.open.some((entry) => entry.cwd === heldCwd)) return { state: 'held', running };
     if (unlessRunning && record.launches.some(isPlainWriter)) return { state: 'running', running };
     const launches = [...record.launches, newLaunch(type, now, { writer, isolated, readOnly })];
     const entry = { type: agentTypeOf(type), at: now, ...launchAbout(about), ...(isolated ? { isolated: true } : {}) };

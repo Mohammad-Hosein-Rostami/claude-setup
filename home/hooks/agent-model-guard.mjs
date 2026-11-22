@@ -14,9 +14,8 @@
 // prompt in this session's store and logs "advice", "advice-retry" or "advice-unrecorded" with the subagent type, the digest and a fixed
 // reason class only (no prompt text). The MATRIX lines are checked in order, at most MAX_MATRIX_LINES, and the first usable one ends the
 // check. A quality hint, not a safety rule: never the owner, and any failure lets the call run. The path comes from the prompt, so it is
-// untrusted: it is stat-ed and read only as a regular
-// file of at most MAX_MATRIX_BYTES, never run, its content never printed, and a UNC or device path (two leading slashes or backslashes)
-// is never looked up; the deny text quotes it without control characters, cut short.
+// untrusted: it is stat-ed and read only as a regular file of at most MAX_MATRIX_BYTES, never run, its content never printed, and a UNC
+// or device path (two leading slashes or backslashes) is never looked up; the deny text quotes it without control characters, cut short.
 // Only these two types load the Bash guard's modules, so the routing never depends on them.
 // Brief lines (lib/agent-brief.mjs), after the gate and on top of the routing: a line naming the project's STATUS.md goes before a brief
 // whose project has `## Standing rules`, and an architect or Plan spec brief gets the Reuse inventory / Contract facts line after it (an
@@ -31,7 +30,8 @@
 // while another plain writer of this session runs must be isolated or read-only, else it is denied once with advice naming the roles and
 // the isolation forms (adviceOnce, as the UI gate) and the identical call sent again runs. Isolated (recorded `isolated`; the open record's
 // cwd is then the lane worktree): `isolation: "worktree"`, or a `worktree: <abs path>` line, in the prompt or a brief file it names, of a
-// linked worktree git lists that is not the lead's folder (laneWorktreeOf: a git that fails or hangs is no isolation). Read-only (recorded
+// linked worktree git lists that is not the lead's folder (laneWorktreeOf: a git that fails or hangs is no isolation) and that no open
+// writer record of the session holds as its cwd (else `held`: denied once, and the retry runs as a plain writer). Read-only (recorded
 // `readOnly`, held at the stop by commit-gate.mjs): a line starting `read-only:` or `scratchpad-only:` (isReadOnlyBrief). Neither makes a
 // later writer bounce ("plain" = neither); the gate is deny-once, and an isolated agent can still write the main checkout by shell
 // (worktrees.md:104-112). "Still runs" = the session's own record: every launch this hook lets start, started on SubagentStart and ended
@@ -213,8 +213,8 @@ function launchRefusal({ state, running, storePath }) {
  * @param {unknown} input the hook input: tool_input {subagent_type, isolation, prompt}, cwd, session_id
  * @param {Record<string, string | undefined>} env process environment (HOME for the stores and agent files, CLAUDE_PROJECT_DIR)
  * @returns {Promise<string>} the deny JSON line when the cap is full or the record is unusable (every time), or on the first send of a
- *   plain writer (no isolation, no read-only brief) while another plain writer runs; '' otherwise, on the identical retry, for an input
- *   with no usable session id, and on any failure
+ *   plain writer (no isolation, no read-only brief) while another plain writer runs, or of a writer whose lane worktree an open record
+ *   holds (it then runs as a plain writer); '' otherwise, on the identical retry, for an input with no usable session id, on any failure
  */
 export async function writerIsolationDeny(input, env = process.env) {
   try {
@@ -223,18 +223,18 @@ export async function writerIsolationDeny(input, env = process.env) {
     if (!isSessionId(session)) return '';
     const writer = isWritingAgent(type, env);
     const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-    const laneWorktree = writer && isolation !== WORKTREE_ISOLATION ? laneWorktreeOf(prompt, cwd, env) : null;
-    const flags = { isolated: writer && (isolation === WORKTREE_ISOLATION || laneWorktree !== null), readOnly: writer && isReadOnlyBrief(prompt) };
-    const plain = writer && !flags.isolated && !flags.readOnly;
+    const readOnly = writer && isReadOnlyBrief(prompt); // never bounces, so it claims no lane worktree (and holds none, `held`)
+    const laneWorktree = writer && !readOnly && isolation !== WORKTREE_ISOLATION ? laneWorktreeOf(prompt, cwd, env) : null;
+    const isolated = writer && (isolation === WORKTREE_ISOLATION || laneWorktree !== null);
     const about = { cwd: laneWorktree ?? input.cwd, description: input.tool_input?.description, prompt }; // the open launch record (r9-resume)
-    const record = (unlessRunning) => recordAgentLaunch(session, type, env, { writer, unlessRunning, ...flags, about, cap: MAX_RUNNING_AGENTS });
-    const counted = record(plain);
-    if (counted.state !== 'running') return launchRefusal(counted);
+    const record = (options) => recordAgentLaunch(session, type, env, { writer, readOnly, about, cap: MAX_RUNNING_AGENTS, ...options });
+    const counted = record({ isolated, unlessRunning: writer && !isolated && !readOnly, worktree: laneWorktree });
+    if (counted.state !== 'running' && counted.state !== 'held') return launchRefusal(counted);
     const { adviceOnce } = await import('./lib/bounce-once.mjs');
     const call = { command: `${type}: isolation ${String(isolation)}: ${String(prompt)}`, cwd, input, hook: 'agent-model-guard', tool: 'Agent' };
     const recorded = adviceOnce([PARALLEL_WRITER_ADVICE], { ...call, logged: { type, class: 'parallel writer without isolation' } }, env);
     if (recorded !== '') return denyOutput([`Not started: ${PARALLEL_WRITER_ADVICE}`, SEND_AGAIN].join('\n'));
-    return launchRefusal(record(false)); // the identical retry runs: it is a running writer now, unless the cap filled meanwhile
+    return launchRefusal(record({ isolated: isolated && counted.state !== 'held' })); // the identical retry runs, unless the cap filled
   } catch {
     return ''; // a quality rule, not a safety rule: any failure lets the call run
   }
