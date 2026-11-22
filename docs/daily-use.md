@@ -72,9 +72,10 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   never answers. "Answer in terminal" (or Esc) opens the normal question; answering it there, or turning it down there, closes
   the open dialog.
   With no GUI (ssh, no display) the terminal question stays and auto-continues after 10 minutes (`askUserQuestionTimeout`
-  "10m"; the CLI takes only 60s, 5m, 10m or never), a timer that pauses while that terminal window is focused, after any
+  "10m"; the CLI also takes one or five minutes, or never), a timer that pauses while that terminal window is focused, after any
   keypress, and with Remote Control on. The recommended option is chosen to be safe with nobody there, and each default taken
-  is logged.
+  is logged. For a big or deleting change the recommended option is "wait for the owner", so a timeout pauses only that part
+  (RC10, skill `ask-owner`).
 - Guard dialogs (`git push`, publish, `rm -rf` outside the project or of a whole folder such as `rm -rf *`, prod-host writes, literal secrets) default to
   Allow and go ahead after 2 min (`CLAUDE_ASK_TIMEOUT_S`; a secret-only ask `CLAUDE_ASK_SECRET_TIMEOUT_S`, also 2 min).
   Every Claude Code permission prompt (any tool, MCP tools, Agent, plan approval, protected files, any mode, background

@@ -15,7 +15,7 @@ You find root causes; the worker lines of CLAUDE.md "Agents (workers)" bind you 
    would falsify it. Probe them yourself (read, grep, targeted command) - do not guess.
 3. Stop at the root cause: the line/contract that is wrong and why the symptom follows. Never propose a fix before the cause is ruled.
 4. Return the ruled cause in 12 lines or fewer: root cause, evidence (file:line + observed output), the command that shows it, then
-   the minimal fix as a short step list. Implementation is for the caller (Sonnet).
+   the minimal fix as a short step list. Implementation is for the caller (`implementer`).
 
 The lead calls you before the second fix of a file that blocked the round before, and when a fix failed at `xhigh` and `max`.
 

@@ -56,7 +56,7 @@ unattended runs"). Three outcomes:
   next message.
 - A strategic, big or deleting change never goes ahead on a timeout (RC10, lead.md): make "wait for the owner" its recommended
   option, so a timeout pauses only that part; every other piece of work goes on.
-- With no GUI (ssh) the terminal question stays and auto-continues after 5 min, the same way.
+- With no GUI (ssh) the terminal question stays and auto-continues after 10 min, the same way.
 So an unattended lead asks only real owner calls and logs each default it takes.
 
 Because a timeout takes the recommended option, that option must be safe with nobody there (for a strategic, big or deleting

@@ -44,7 +44,7 @@ Raise for: `architect`/`deep-debugger` `effort: "xhigh"` on a hard problem, a fa
 
 - Forks, and plugin agents that pin no model, run on Fable: fork only when the job needs this conversation; `model: "fable"` only where needed. No `/escalate` (it asks a weaker model): think in place.
 - Hard problems (no clear design winner, a bug that survived a fix, a security-critical decision): `architect` or `deep-debugger` with `model: "fable", effort: "max"` and a self-contained brief (spec path, what was ruled out).
-- Assembly is not judgment: the last agent writes the final files on Sonnet high (one Write, then ≤ 10 patches); arithmetic goes in a script; Opus max only for critics; Opus only for decisions, never merging.
+- Assembly is not judgment: the last agent writes the final files at its own pin (`implementer`, Opus 5.5 high; one Write, then ≤ 10 patches); arithmetic goes in a script; Opus max only for critics; Opus only for decisions, never merging.
 - Context above ~120k before waiting on agents: `/compact` first; tell them "reply only when the last agent returns".
 - Fable past 50% of the weekly limit (or on Pro) bills usage credits: never use or suggest them; near that point tell the owner to start a new session with `claude --model opus --effort xhigh`.
 

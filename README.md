@@ -7,9 +7,9 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
 ## Contents
 | Path | What |
 | ---- | ---- |
-| `home/CLAUDE.md` | Model routing and token discipline |
+| `home/CLAUDE.md` | Global rules: checks, token discipline, worker rules, safety (model routing is in `home/lead-rules.md`) |
 | `home/rules`, `home/standards` | One-line rules (path-scoped) and the longer reference behind them |
-| `home/skills`, `home/agents` | Skills and subagents (the Opus session plans, decides and delegates; Sonnet implements; Opus reviews risky changes; Haiku looks up and runs) |
+| `home/skills`, `home/agents` | Skills and subagents (the Opus session plans, decides and delegates; Opus 5.5 high implements; Opus reviews risky changes; Sonnet runs the visual check; Haiku looks up and runs) |
 | `home/hooks`, `home/statusline.mjs` | Bash guard, post-edit formatter, token audit, status line |
 | `home/tools/ui-check` | Figma baseline pull, visual compare, responsive and column checks |
 | `settings/`, `plugins/` | Settings layers (base, OS, local) and the plugin list |
