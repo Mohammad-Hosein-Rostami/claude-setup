@@ -14,12 +14,16 @@ import { bigTranscript, fakeStack } from './recall-fakes.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
-// process.argv[1] handed to pathToFileURL or compared with ===, with no realpathSync around it; a bare `process.argv[1] &&` truthiness test is fine.
-const UNRESOLVED_ARGV = /pathToFileURL\(\s*process\.argv\[1\]|[!=]==?\s*process\.argv\[1\]|process\.argv\[1\]\s*[!=]==?/;
+// process.argv[1] handed to pathToFileURL or compared with ==, ===, != or !==, with no realpathSync around it. Fine: a bare
+// `process.argv[1] &&` truthiness test, and a presence test against undefined or null (`process.argv[1] !== undefined`), since neither
+// compares the path. The (?<![!=]) and (?!=) keep a partial operator match (`!=` out of `!==`) from slipping past the undefined/null check.
+const UNRESOLVED_ARGV = /pathToFileURL\(\s*process\.argv\[1\]|(?<!\b(?:undefined|null)\s*)(?<![!=])[!=]==?\s*process\.argv\[1\]|process\.argv\[1\]\s*[!=]==?(?!=)(?!\s*(?:undefined|null)\b)/;
+// The module's own location: as a URL, or as a native path (import.meta.filename, a C:\ drive path on Windows).
+const OWN_LOCATION = /import\.meta\.(?:url|filename|dirname)\b/;
 
-/** True when a file that reads import.meta.url also uses process.argv[1] without realpathSync, in either operand order. */
+/** True when a file that reads its own location also uses process.argv[1] without realpathSync, in either operand order. */
 function hasUnresolvedMainCheck(source) {
-  return source.includes('import.meta.url') && UNRESOLVED_ARGV.test(source);
+  return OWN_LOCATION.test(source) && UNRESOLVED_ARGV.test(source);
 }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -66,9 +70,29 @@ test('the scan flags every spelling of the unresolved check and passes the resol
     'if (import.meta.url === pathToFileURL(process.argv[1]).href) main();',
     'if (pathToFileURL(process.argv[1]).href === import.meta.url) main();',
     'if (fileURLToPath(import.meta.url) === process.argv[1]) main();',
+    'if (import.meta.filename === process.argv[1]) main();',
+    'if (process.argv[1] == fileURLToPath(import.meta.url)) main();',
+    // a presence test first never hides the unresolved compare after it
+    'if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) main();',
+    'if (undefined !== process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();',
+    'if (process.argv[1] != null && process.argv[1] === import.meta.filename) main();',
   ];
   for (const source of flagged) assert.equal(hasUnresolvedMainCheck(source), true, source);
-  assert.equal(hasUnresolvedMainCheck('if (import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) main();'), false);
+  const resolved = [
+    'if (import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) main();',
+    'if (process.argv[1] && import.meta.filename === realpathSync(process.argv[1])) main();',
+    'const isMain = process.argv[1] !== undefined && existsSync(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));',
+    'const isMain = null != process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));',
+  ];
+  for (const source of resolved) assert.equal(hasUnresolvedMainCheck(source), false, source);
+});
+
+test('done-check.mjs with its realpathSync taken off the argv[1] side is reported; the real file is not', () => {
+  const source = readFileSync(join(REPO, 'home', 'tools', 'done-check', 'done-check.mjs'), 'utf8');
+  const resolvedArgv = 'realpathSync(process.argv[1]) ===';
+  assert.ok(source.includes(resolvedArgv), 'the fixture still holds the resolved compare');
+  assert.equal(hasUnresolvedMainCheck(source), false);
+  assert.equal(hasUnresolvedMainCheck(source.replace(resolvedArgv, 'process.argv[1] ===')), true);
 });
 
 test('git-tidy reached through a symlink to home/ still runs: an unknown command exits 2', () => {
@@ -76,6 +100,14 @@ test('git-tidy reached through a symlink to home/ still runs: an unknown command
   const result = spawnSync(process.execPath, [join(link, 'tools', 'git-tidy', 'git-tidy.mjs'), 'bogus'], { encoding: 'utf8' });
   assert.equal(result.status, 2, result.stderr);
   assert.match(result.stderr, /git-tidy: usage/);
+});
+
+test('done-check reached through a symlink to home/ still runs: an unknown command exits 2', () => {
+  const link = linkTo('home', 'claude');
+  const home = realpathSync(makeTempDir('done-check-home-')); // never the real ~/.claude
+  const result = spawnSync(process.execPath, [join(link, 'tools', 'done-check', 'done-check.mjs'), 'bogus'], { encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home } });
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /usage: done-check/);
 });
 
 test('the checkpoint hook reached through a symlink starts its job exactly like the real path', async () => {

@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { GUARD_LOG_FILE, guardLogPath, logDecision } from '../home/hooks/lib/guard-log.mjs';
 import { answerAsk, askTimeoutSeconds, secretAskTimeoutSeconds, formatDuration, decisionOutput, dialogExecutable, dialogInvocation, guiAvailable, parseDialogResult, requestInvocation } from '../home/hooks/lib/timed-ask.mjs';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
-import { questionReply } from '../home/hooks/lib/question-reply.mjs';
+import { questionReply, questionTimeoutSeconds } from '../home/hooks/lib/question-reply.mjs';
 import { tempLogPath } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -419,6 +419,8 @@ test('Esc in the question dialog leaves the question to the terminal: no answer 
   assert.equal(await questionReply(askQuestions([{ question: 'Ship it?', header: 'Ship', options: [{ label: 'No' }, { label: 'Yes (Recommended)' }] }]), dialog.env), undefined);
 });
 
+/** The wait shown on a one-question dialog, read from the code's own default (the 2 min value itself is pinned in permission-question.test.mjs). */
+const noAnswerIn = (env) => `No answer in ${formatDuration(questionTimeoutSeconds(env))}`;
 /** An AskUserQuestion PermissionRequest for the hook. */
 const askQuestions = (questions) => ({ session_id: 's-1', cwd: PROJECT, permission_mode: 'default', hook_event_name: 'PermissionRequest', tool_name: 'AskUserQuestion', tool_input: { questions } });
 
@@ -448,7 +450,7 @@ test('question header: masked, on one line, cut, and never a line label of its o
     assert.equal(lines.filter((line) => line.startsWith('Why')).length, 0, `a question dialog has no Why line, and no header can forge one: ${body}`);
     assert.ok(lines.every((line) => line.length <= 260), 'every line is cut');
     assert.ok(lines.some((line) => line.startsWith(`[${header === SECRET ? '[masked]' : 'Why'}`)), body);
-    assert.ok(body.includes('No answer in 1 min → "B" is taken'), body);
+    assert.ok(body.includes(`${noAnswerIn(dialog.env)} → "B" is taken`), body);
   }
 });
 
@@ -458,6 +460,6 @@ test('the option that will be taken always shows its start, however long the que
   const dialog = fakeDialog('allow', { FAKE_DIALOG_BUTTON: 'Use recommended' });
   await questionReply(askQuestions([longQuestion]), dialog.env);
   const answerLine = bodyOf(dialog).split('\n').find((line) => line.startsWith('No answer in '));
-  assert.ok(answerLine?.startsWith('No answer in 1 min → "Force-push the release branch over main and delete the old tags'), answerLine);
+  assert.ok(answerLine?.startsWith(`${noAnswerIn(dialog.env)} → "Force-push the release branch over main and delete the old tags`), answerLine);
   assert.match(answerLine, / \.\.\. \[\d+ chars\]$/, `the line is cut only at its end: ${answerLine}`);
 });
