@@ -1,7 +1,8 @@
 # Lead rules, part 2 (main session only)
 <!-- Printed by hooks/lead-text.mjs at every SessionStart of the main session (startup, resume, clear, compact), never in a
 subagent, as its own hook string: the 10,000-char cap is per string per hook, so it does not share the room of the
-session-notes.mjs string, which carries part 1 (lead-rules.md) (probe P6-11 owed). An edit needs a session restart. -->
+session-notes.mjs string, which carries part 1 (lead-rules.md) (probe P6-11 owed). An edit needs a session restart.
+Limit 9,500 printed (tests/lead-text-size.test.mjs). The maxTurns rule prints with its note: session-notes.mjs MAX_TURNS_RULE. -->
 
 ## Models and effort
 - Start a session on a model with `claude --model <m> --effort <e>` (owner, 2026-11-19). `CLAUDE_CODE_EFFORT_LEVEL` stays unset: it overrides that flag and every agent's effort (doctor fails on it).
@@ -12,10 +13,12 @@ session-notes.mjs string, which carries part 1 (lead-rules.md) (probe P6-11 owed
 - On a Fable lead: each "never" keeps its scope and reason, since Fable takes it literally; review the diff yourself, since its closing summary can leave out small changes.
 
 ## Briefs and results
-- Brief in six fields: objective and why; inputs; boundaries, with its Constraints first (scope exclusions, owner decisions, file scope); tools and sources; acceptance lines, the defaults to take and "finish everything"; output format (the report's Constraints, Not run and Caveats sections, CLAUDE.md "Agents (workers)"). Add the STATUS.md path, and `ASK_QUEUE` for work over a few minutes.
+- Brief in seven fields: objective and why; inputs; boundaries, with its Constraints first (scope exclusions, owner decisions, file scope); tools and sources; acceptance lines, the defaults to take and "finish everything"; output format (the report's Constraints, Not run and Caveats sections, CLAUDE.md "Agents (workers)"); Done means. Add the STATUS.md path, and `ASK_QUEUE` for work over a few minutes.
+- Done means: the commands you run yourself before accepting the lane, each with the exit it must return: every caller or registration of a changed interface, the install, doctor and docs lines the change makes stale, and the owner-view check (a render at his real width, or his screenshot). Docs and wiring stay in the lane with the code; the writer lists what it left under `Not done:`, never drops it. Accept only when every command passes; an empty list sends the brief back.
 - Judge an agent by its diff and the command output, not by its report alone. Ask for a concrete proof (a command and its output), not a general request to check its work.
 
 ## Job form and order
+- Pilot first (owner, RC9): a new mechanism (a check, gate or removal) or a change of strategy runs on one lane, then is measured on the next 3 real lanes against a bar written down before (tokens per lane, minutes, false alarms, defects caught); roll it out or drop it by that bar.
 - Inline or agents, by the job (owner, 2026-11-22: only subagents, 3-5 agents per step). Inline: lookups, reading code, one command, a one-file or < ~30-line change. Everything else runs as steps.
 - A batch is 1-5 agents launched together; a step runs its batches in order (build, fixes). Every agent counts: writers, runners, scouts, deep-debugger, visual-qa and a SendMessage continuation. The hook refuses a 6th. The next batch starts once every result of this one is handled.
   - Build batch: lanes that share no file.
@@ -32,21 +35,15 @@ session-notes.mjs string, which carries part 1 (lead-rules.md) (probe P6-11 owed
 - Durable state, no journals: STATUS rows (a lane's landing evidence), branch tips, `HANDOFF-<row>.md` and the reports folder. A new session reads those, then `road.mjs next`.
 - Give separable parts (i18n) their own lane. One scripted `runner` call measures every state. Reuse cached Figma pulls, diffs and the design system.
 - Size a delegated job to finish within about 120 tool calls; split a bigger one into stages with a commit between them. An agent that returns without its report is continued once ("commit, then report"), not restarted.
-- One task per session. Unrelated next task → tell the user to `/clear` (or start a new
+- One task, and at most one plan (road), per session (owner, RC11): at the road's end write a `handoff` note and tell the owner to start a fresh session. Unrelated next task → tell the user to `/clear` (or start a new
   session) *before* starting it. Long task → `/compact` at a natural seam.
 
 ## Owner, STATUS and proof
 - Owner decisions (scope, money, irreversible, credentials, a product fact the repo lacks such as length, timer, role, copy, brand name or design system vs local, real trade-offs): ask with AskUserQuestion the moment they
   come up while other work keeps running (see `ask-owner`). Start the background agent, then ask: running ones keep working while a question waits; ops that may ask (rm -r, push, ssh) run in a background agent. Technical choices: pick the default, say so in one line.
+- A question that times out (owner, RC10): a strategic, big or deleting change never takes the default; that lane waits for the owner while the others go on. A small, reversible choice takes the default, marked UNCONFIRMED.
 - An owner correction, preference or constraint about how the work is done ("always", "keep", "from now on", "as we said", "is important", "remember", "don't", "why did you") goes into STATUS.md under `## Standing rules` the moment it is given, in the owner's words; every brief names that file; re-read it after a compaction or a resume. When STATUS.md is created, a session resumes or after a compaction, backfill it from the owner's own earlier messages (`node ~/.claude/tools/recall/recall.mjs --owner --session current`) before the next brief. Write each rule short, with the owner's key terms: never paste a whole message, and never copy anything that looks like a credential into STATUS.md.
 - Owner proof: every done or fixed claim in a stage update or a final-report row names, on the same line, one proof the owner can check in about 2 minutes (a gallery link, a diff image, a command and its output); its `evidence:` points to it.
-- The no-`maxTurns` rule covers a project's own agent files too: where the SessionStart note lists a file with
-  `maxTurns` and gives the delete advice, delete that `maxTurns:` frontmatter line in its own commit (why in the
-  body), without asking, and say so in one line (owner's standing order; an exception to C18 and C36). Edit only a
-  regular file with one hard link whose real path lies in a `.claude/agents` folder of the session's git repository
-  (from the session folder up to the git root, subfolders included), never through a link and never a file in the
-  personal agents folder (`~/.claude/agents`). For a file the note marks "not read", "not checked" or "check by hand",
-  or does not list with `maxTurns`, edit nothing and tell the owner.
 
 ## Checks and review
 - The done-check runs by itself at every stop that changed code (CLAUDE.md "Checks"). Read an agent's `checks:` line as tool output: `done-check.mjs last --worktree <abs>` prints a lane's own. `FAIL left open` or `change approach` goes to the architect or `deep-debugger`, not to a third try by the same agent.

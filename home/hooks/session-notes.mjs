@@ -2,8 +2,9 @@
 //   SessionStart       -> prints the lead rules (~/.claude/lead-rules.md; nothing when missing), a line when the project's agent
 //                         files set maxTurns, shadow the owner's agents or cannot be judged (lib/project-agents.mjs, run in a child
 //                         process by lib/project-agents-timed.mjs: when it fails or the budget is used up the line says "not checked"
-//                         and everything else is still printed), and on `compact` the lib/compact-notes.mjs lines (Standing rules
-//                         re-read and backfill, the status file to re-read); prunes old state.
+//                         and everything else is still printed), headed by MAX_TURNS_RULE (what the lead does with that line; it
+//                         prints only with the line, so it costs no room in lead.md), and on `compact` the lib/compact-notes.mjs lines
+//                         (Standing rules re-read and backfill, the status file to re-read); prunes old state.
 //                         Inside a subagent (isSubagentStart: `agent_id` is a non-empty string, any other value is the lead): only
 //                         SUBAGENT_COMPACT_NOTE on `compact` (no transcript scan: there `transcript_path` is the lead's, probe P1-8)
 //                         and nothing on any other source; no child, no prune; its compactions are counted under
@@ -20,7 +21,7 @@
 // is used up (and reads a bounded number of entries per run). Not inside it: the transcript scans of the compact notes and the
 // big-context line. Claude Code drops the whole output of a hook that passes its timeout, and caps a hook's plain stdout at 10,000
 // characters (hooks docs, "capped at 10,000 characters"; tests/session-start-size.test.mjs keeps this string under it).
-// Exports: HOOK_BUDGET_MS, SESSION_ID_PATTERN, LEAD_RULES_MAX_BYTES, isSubagentStart(input), hookText(input, deps).
+// Exports: HOOK_BUDGET_MS, SESSION_ID_PATTERN, LEAD_RULES_MAX_BYTES, MAX_TURNS_RULE, isSubagentStart(input), hookText(input, deps).
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { realpathSync } from 'node:fs';
@@ -39,6 +40,15 @@ const EVENTS = ['SessionStart', 'UserPromptSubmit'];
 const LEAD_RULES_FILE = 'lead-rules.md';
 // Claude Code keeps at most 10,000 characters of a hook's stdout and a UTF-8 character is at most 4 bytes: a bigger file never fits.
 export const LEAD_RULES_MAX_BYTES = 40_000;
+// The owner's standing order for the project-agents line (moved here from lead.md, where it cost about 900 characters of the lead
+// text's 10,000-character hook cap at every start although it is needed only when the line is printed). It stands before the line,
+// so the hook's own words come ahead of the file names, which are repository data.
+export const MAX_TURNS_RULE = 'The no-`maxTurns` rule covers a project\'s own agent files too: where the line below lists a file with `maxTurns` '
+  + 'and gives the delete advice, delete that `maxTurns:` frontmatter line in its own commit (why in the body), without asking, and say so '
+  + 'in one line (owner\'s standing order; an exception to C18 and C36). Edit only a regular file with one hard link whose real path lies '
+  + 'in a `.claude/agents` folder of the session\'s git repository (from the session folder up to the git root, subfolders included), '
+  + 'never through a link and never a file in the personal agents folder (`~/.claude/agents`). For a file the line marks "not read", '
+  + '"not checked" or "check by hand", or does not list with `maxTurns`, edit nothing and tell the owner.';
 
 const stateDir = () => join(homedir(), '.claude', 'state', 'modes');
 /** A session or agent id that is safe as part of a state file name, else undefined. */
@@ -85,7 +95,7 @@ async function subagentStartText(input, sessionId) {
 }
 
 /**
- * Everything the lead's SessionStart prints; it also prunes old state.
+ * Everything the lead's SessionStart prints (MAX_TURNS_RULE only when a project-agents line follows it); it also prunes old state.
  * Order (security review 1 of round 9, S8): the compact notes come before the child, because their transcript scan is not bounded
  * by the budget and the child is, so the child, whose loss is handled, is what a slow scan cuts.
  * @param {object} input - the hook input (`source`, `cwd`, `transcript_path`).
@@ -99,7 +109,7 @@ async function leadStartText(input, sessionId, { timeLeft, agentNoteOptions }) {
   const compacted = input.source === 'compact' ? await compactNotes(stateDir(), sessionId, input.transcript_path) : '';
   const agentNote = timedProjectAgentNote(input.cwd, join(homedir(), '.claude', 'agents'), { ...agentNoteOptions, budgetLeftMs: timeLeft() });
   pruneState(stateDir(), timeLeft);
-  return [leadRules, agentNote, compacted].filter(Boolean).join('\n\n');
+  return [leadRules, agentNote && MAX_TURNS_RULE, agentNote, compacted].filter(Boolean).join('\n\n');
 }
 
 /**

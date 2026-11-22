@@ -7,7 +7,8 @@ import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isStale } from '../home/hooks/lib/state-files.mjs';
-import { LEAD_RULES_MAX_BYTES } from '../home/hooks/session-notes.mjs';
+import { LEAD_RULES_MAX_BYTES, MAX_TURNS_RULE } from '../home/hooks/session-notes.mjs';
+import { NOTE_START } from '../home/hooks/lib/project-agents-text.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -153,4 +154,24 @@ test('SessionStart prints lead-rules.md for resume, clear and compact too (it re
     const out = runHook(home, {}, { hook_event_name: 'SessionStart', session_id: `src-${source}`, source }).stdout;
     assert.match(out, /^LEAD-MARK/, source);
   }
+});
+
+/** A temp project folder with a `.git` folder (a git root, so the delete advice applies) and the given agent files. */
+async function projectWithAgents(files) {
+  const project = makeTempDir('mode-proj-');
+  await mkdir(join(project, '.git'));
+  await mkdir(join(project, '.claude', 'agents'), { recursive: true });
+  for (const [name, text] of Object.entries(files)) await writeFile(join(project, '.claude', 'agents', name), text);
+  return project;
+}
+
+test('the maxTurns rule (moved out of lead.md) is printed right before a project-agents line, and only with one', async () => {
+  const home = makeTempDir('mode-home-');
+  const start = (cwd) => runHook(home, {}, { hook_event_name: 'SessionStart', session_id: 'mt1', source: 'startup', cwd }).stdout;
+  const capped = start(await projectWithAgents({ 'builder.md': '---\nname: builder\ndescription: x\nmaxTurns: 60\n---\nBody\n' }));
+  assert.ok(capped.includes(`${MAX_TURNS_RULE}\n\n${NOTE_START}`), capped);
+  assert.match(capped, /builder\.md \(maxTurns 60\)/);
+  assert.match(MAX_TURNS_RULE, /delete that `maxTurns:` frontmatter line in its own commit .*without asking/);
+  assert.match(MAX_TURNS_RULE, /"not read", "not checked" or "check by hand".* edit nothing and tell the owner\.$/);
+  assert.equal(start(await projectWithAgents({})).includes(MAX_TURNS_RULE), false, 'no project-agents line: no rule');
 });

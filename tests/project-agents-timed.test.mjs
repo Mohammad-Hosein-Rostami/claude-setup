@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { HOOK_BUDGET_MS, hookText } from '../home/hooks/session-notes.mjs';
+import { HOOK_BUDGET_MS, MAX_TURNS_RULE, hookText } from '../home/hooks/session-notes.mjs';
 import { projectAgentNote } from '../home/hooks/lib/project-agents.mjs';
 import { NOTE_MAX_CHARS, NOT_CHECKED_NOTE } from '../home/hooks/lib/project-agents-text.mjs';
 import { CHILD_ENV_NAMES, MIN_CHILD_MS, NOTE_TIMEOUT_MS, childTimeoutMs, timedProjectAgentNote } from '../home/hooks/lib/project-agents-timed.mjs';
@@ -230,7 +230,7 @@ test('a child that never ends costs the SessionStart output only the note: the l
     const stalled = await start('timed-2', { script: childScript(NEVER_ENDS), timeoutMs: TINY_TIMEOUT_MS });
     assert.ok(usual.startsWith(firstLine), usual.slice(0, 80));
     assert.doesNotMatch(usual, /^Mode: /m);
-    assert.equal(stalled, `${usual}\n\n${NOT_CHECKED_NOTE}`, 'everything else is printed as usual, and the note says it was not checked');
+    assert.equal(stalled, `${usual}\n\n${MAX_TURNS_RULE}\n\n${NOT_CHECKED_NOTE}`, 'everything else is printed as usual, and the note (after the maxTurns rule) says it was not checked');
   });
 });
 
