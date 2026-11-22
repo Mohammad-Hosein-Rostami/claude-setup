@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { accountForCall, addAccount, listAccounts, removeAccount, setCreditsOff, setDefault, setPlan } from '../home/tools/account/lib/accounts.mjs';
 import { dpapiStore } from '../home/tools/account/lib/dpapi-store.mjs';
@@ -13,7 +13,7 @@ import { fileStore } from '../home/tools/account/lib/file-store.mjs';
 import { KEYCHAIN_SERVICE, keychainStore } from '../home/tools/account/lib/keychain-store.mjs';
 import { AccountError, NAME_PATTERN, TOKEN_PATTERN, looksLikeToken, tokenFromPaste } from '../home/tools/account/lib/names.mjs';
 import { REGISTRY_MAX_BYTES, readRegistry, writeRegistry } from '../home/tools/account/lib/registry.mjs';
-import { openStore } from '../home/tools/account/lib/store.mjs';
+import { openStore, storeKind } from '../home/tools/account/lib/store.mjs';
 import { accountSandbox, assertNoLeak, fakeToken, filesHolding, memoryStore } from './account-helpers.mjs';
 
 const TOKEN_A = fakeToken('StoreA');
@@ -127,6 +127,10 @@ posixTest('the account list: a link, a looser mode, a file over the cap or one t
     writeFileSync(file, text, { mode: 0o600 });
     assert.throws(() => readRegistry(box.env), refuses('registry'), text);
   }
+  // R8: the error names the file and the way out (move it aside, add each account again), and holds no token.
+  writeFileSync(file, 'not json', { mode: 0o600 });
+  assert.throws(() => readRegistry(box.env), (error) => refuses('registry')(error) && error.message.includes(file) && error.message.includes(`mv "${file}" "${file}.bad"`) && error.message.includes('claude-as <name>'));
+  assert.throws(() => writeRegistry({ default: '../x', accounts: {} }, box.env), (error) => refuses('registry')(error) && error.message.includes(file));
   const big = { default: null, accounts: Object.fromEntries(Array.from({ length: 2000 }, (_, i) => [`a${i}`, { added: '2026-11-21T10:00:00.000Z', plan: null, creditsOff: false, checked: null }])) };
   assert.throws(() => writeRegistry(big, box.env), refuses('registry'), 'the writer has the same cap as the reader');
 });
@@ -206,6 +210,29 @@ test('the Keychain store: one fixed command line per call on the stdin of `secur
   for (const act of [() => missing.put('work', TOKEN_A), () => missing.get('work'), () => missing.remove('work')]) assert.throws(act, refuses('store'));
 });
 
+posixTest('S6: the Keychain store runs `security` only for an absolute path to a regular file: a bare name, a relative path and a link are refused', (t) => {
+  const box = sandbox(t);
+  const real = join(box.dir, 'real.keychain-db');
+  const link = join(box.dir, 'link.keychain-db');
+  writeFileSync(real, '');
+  symlinkSync(real, link);
+  const mustNotRun = () => { throw new Error('security must not be run for a keychain path that is not an absolute regular file'); };
+  // A bare name would be looked up in ~/Library/Keychains and a file it cannot open falls back to the login keychain.
+  for (const keychain of ['login.keychain-db', './real.keychain-db', join('..', 'real.keychain-db'), link]) {
+    const store = keychainStore({ run: mustNotRun, keychain });
+    for (const act of [() => store.put('work', TOKEN_A), () => store.get('work'), () => store.remove('work')]) assert.throws(act, refuses('store'), keychain);
+  }
+  const fake = fakeSecurity();
+  keychainStore({ run: fake.run, keychain: real }).put('work', TOKEN_A);
+  assert.equal(fake.lines.length, 1, 'the absolute regular file is the one accepted');
+  // The check is made right before each call: a file swapped for a link after the store was built is still refused.
+  const swapped = keychainStore({ run: mustNotRun, keychain: join(box.dir, 'swap.keychain-db') });
+  writeFileSync(join(box.dir, 'swap.keychain-db'), '');
+  rmSync(join(box.dir, 'swap.keychain-db'));
+  symlinkSync(real, join(box.dir, 'swap.keychain-db'));
+  assert.throws(() => swapped.get('work'), refuses('store'));
+});
+
 for (const status of [45, 36, 1, null]) {
   test(`the Keychain store: a failed write or read (security exit ${status}) throws without any part of the token or of the command text`, (t) => {
     sandbox(t);
@@ -243,7 +270,10 @@ test('which store: the Keychain on macOS, the 0600 file on Linux, DPAPI on Windo
   const box = sandbox(t);
   const plain = { ...box.env };
   delete plain.CLAUDE_ACCOUNT_STORE;
-  assert.deepEqual(['darwin', 'linux', 'win32', 'freebsd'].map((platform) => openStore(plain, { platform }).kind), ['keychain', 'file', 'dpapi', 'file']);
+  assert.deepEqual(['darwin', 'linux', 'win32', 'freebsd'].map(storeKind), ['keychain', 'file', 'dpapi', 'file']);
+  assert.deepEqual(['linux', 'win32', 'freebsd'].map((platform) => openStore(plain, { platform }).kind), ['file', 'dpapi', 'file']);
+  // S7: in a test run, or with a HOME that is not the user's, the login Keychain is refused, never opened.
+  assert.throws(() => openStore(plain, { platform: 'darwin' }), refuses('store'));
   assert.equal(openStore(box.env, { platform: 'darwin' }).kind, 'file');
   assert.throws(() => openStore({ ...box.env, CLAUDE_ACCOUNT_STORE: 'memory' }, { platform: 'darwin' }), refuses('store'));
 });

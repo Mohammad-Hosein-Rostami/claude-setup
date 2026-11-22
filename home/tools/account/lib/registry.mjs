@@ -36,13 +36,14 @@ function isAccount(entry) {
   return checked === null || (isRecord(checked) && isDate(checked.at) && typeof checked.result === 'string' && checked.result.length <= CHECK_RESULT_MAX_CHARS);
 }
 
-function parseRegistry(text) {
+function parseRegistry(text, path) {
   let parsed;
   try { parsed = JSON.parse(text); } catch { parsed = null; }
   const names = isRecord(parsed) && isRecord(parsed.accounts) ? Object.keys(parsed.accounts) : null;
   const valid = names !== null && (parsed.default === null || (typeof parsed.default === 'string' && NAME_PATTERN.test(parsed.default)))
     && names.every((name) => NAME_PATTERN.test(name) && isAccount(parsed.accounts[name]));
-  if (!valid) throw new AccountError('registry', `${REGISTRY_FILE} is not the account list this tool writes; not used`);
+  // The way out is named (review 1, R8): the file holds no token, so moving it aside loses only the list.
+  if (!valid) throw new AccountError('registry', `${path} is not the account list this tool writes; not used. Move it aside (it holds no token): mv "${path}" "${path}.bad"; then add each account again: claude-account remove <name>, then claude-as <name>`);
   return { default: parsed.default, accounts: parsed.accounts };
 }
 
@@ -53,8 +54,9 @@ function parseRegistry(text) {
  * @throws {AccountError} kind `unsafe-file` (a link, a looser mode, over the cap) or `registry` (not this shape).
  */
 export function readRegistry(env = process.env) {
-  const text = readPrivateFile(join(accountsDir(env), REGISTRY_FILE), REGISTRY_MAX_BYTES);
-  return text === null ? { default: null, accounts: {} } : parseRegistry(text);
+  const path = join(accountsDir(env), REGISTRY_FILE);
+  const text = readPrivateFile(path, REGISTRY_MAX_BYTES);
+  return text === null ? { default: null, accounts: {} } : parseRegistry(text, path);
 }
 
 /**
@@ -64,9 +66,9 @@ export function readRegistry(env = process.env) {
  * @throws {AccountError} kind `registry` when it is not the shape or over the cap, `unsafe-file` when the folder is open to others.
  */
 export function writeRegistry(registry, env = process.env) {
-  const text = `${JSON.stringify(parseRegistry(JSON.stringify(registry)), null, INDENT_SPACES)}\n`;
-  if (Buffer.byteLength(text) > REGISTRY_MAX_BYTES) throw new AccountError('registry', `${REGISTRY_FILE} would be larger than ${REGISTRY_MAX_BYTES} bytes; not written`);
   const dir = accountsDir(env);
+  const text = `${JSON.stringify(parseRegistry(JSON.stringify(registry), join(dir, REGISTRY_FILE)), null, INDENT_SPACES)}\n`;
+  if (Buffer.byteLength(text) > REGISTRY_MAX_BYTES) throw new AccountError('registry', `${REGISTRY_FILE} would be larger than ${REGISTRY_MAX_BYTES} bytes; not written`);
   ensurePrivateDir(dir);
   assertPrivateDir(dir);
   writeFileAtomic(join(dir, REGISTRY_FILE), text);

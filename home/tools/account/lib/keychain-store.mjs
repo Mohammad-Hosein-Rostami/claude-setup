@@ -9,7 +9,8 @@
 // into the default (login) keychain instead (seen 2026-11-21, macOS 26.6.2), so nothing is run for one. An error names the exit code only: never stderr, never the command text.
 // What it does not defend: any process of the same user can read the item with `security` and no prompt (README).
 import { spawnSync } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { lstatSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { AccountError, assertName, assertToken } from './names.mjs';
 
 const SECURITY = '/usr/bin/security';
@@ -47,7 +48,10 @@ export function keychainStore({ run = runSecurity, keychain = null } = {}) {
   if (keychain !== null && UNSAFE_KEYCHAIN_PATH.test(keychain)) throw new AccountError('store', 'the keychain path holds a quote, a backslash or a newline; not used');
   const target = () => {
     if (keychain === null) return '';
-    if (!statSync(keychain, { throwIfNoEntry: false })?.isFile()) throw new AccountError('store', 'the keychain file does not exist; nothing was run');
+    // Checked right before each call: `security` resolves a bare name in ~/Library/Keychains and falls back to the login
+    // keychain for a file it cannot open, so only an absolute path to a regular file, not a link, is run (security review 1, S6).
+    if (!isAbsolute(keychain)) throw new AccountError('store', 'the keychain path is not absolute; nothing was run');
+    if (!lstatSync(keychain, { throwIfNoEntry: false })?.isFile()) throw new AccountError('store', 'the keychain file does not exist or is not a regular file (a link?); nothing was run');
     return ` "${keychain}"`;
   };
   const item = (name) => `-a ${assertName(name)} -s ${KEYCHAIN_SERVICE}`;
