@@ -25,6 +25,11 @@
 //   An internal error is one guard-log line and a pass; a missing tool folder is silent.
 // Trust: the input crosses the agent boundary: session and agent ids are checked as file names, the folder comes from the hooks' own
 //   records (scope.mjs), never from the input's `cwd`; the line and reason are built by the engine from counts and tool output lines.
+// Model and effort (ledger row fields, for `done-check stats`): Claude Code's own records, never the agent's report. The Stop and
+//   SubagentStop input carries `effort.level` (2.1.329 hook input schema: "Present for hooks that fire within a tool-use context (...
+//   Stop, SubagentStop ...) on a model that supports the effort parameter") but no model field, so the model is the `message.model`
+//   of the stopping agent's newest reply in its transcript (`agent_transcript_path` for a subagent, `transcript_path` for the lead),
+//   which also gives the effort when the input lacks it. A value that is not one short token (contract.mjs patterns) is stored as null.
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -34,6 +39,7 @@ import { logDecision } from './lib/guard-log.mjs';
 import { withSessionLock } from './lib/session-lock.mjs';
 import { isSessionId, readSessionFile, writeSessionFile } from './lib/session-store.mjs';
 import { countedGate } from './lib/stop-block-count.mjs';
+import { lastReplyRouting } from './lib/transcript.mjs';
 
 const HOOK_NAME = 'done-check';
 const HOOK_DEADLINE_MS = 140_000; // the settings entry timeout is 150 s
@@ -106,14 +112,30 @@ function saveBlocks(input, env, { lastKeys, inARow }) {
   return stored === true;
 }
 
+const tokenOr = (value, pattern) => (typeof value === 'string' && pattern.test(value) ? value : null);
+
+/**
+ * The model and effort of the agent that stops, for its ledger rows.
+ * @param {object} input the validated Stop or SubagentStop JSON
+ * @param {{ MODEL_PATTERN: RegExp, EFFORT_PATTERN: RegExp }} constants contract.mjs
+ * @returns {Promise<{ model: string|null, effort: string|null }>} null where Claude Code recorded nothing usable
+ */
+async function routingOf(input, constants) {
+  const subagent = agentOf(input) !== LEAD;
+  const recorded = await lastReplyRouting(subagent ? input.agent_transcript_path : input.transcript_path, { sidechain: subagent });
+  const effort = input.effort?.level ?? recorded.effort;
+  return { model: tokenOr(recorded.model, constants.MODEL_PATTERN), effort: tokenOr(effort, constants.EFFORT_PATTERN) };
+}
+
 /** Checks every changed worktree in turn, each with what is left of the one deadline; returns the verdicts with their worktree. */
 async function checkScopes(scopes, input, env, state, startedAt, { checkChange, constants }) {
+  const routing = await routingOf(input, constants);
   const results = [];
   for (const scope of scopes) {
     const left = HOOK_DEADLINE_MS - (Date.now() - startedAt) - constants.BASE_DEADLINE_MS - BASE_MARGIN_MS;
     const deadlineMs = Math.max(MIN_CHECK_MS, Math.min(constants.STOP_DEADLINE_MS, left));
     const priorBlocks = { lastKey: state.lastKeys[topKey(scope.top)] ?? null, inARow: state.inARow };
-    results.push({ scope, verdict: await checkChange(scope, { where: 'stop', session: input.session_id, agent: input.agent_id ?? '', env, deadlineMs, priorBlocks }) });
+    results.push({ scope, verdict: await checkChange(scope, { where: 'stop', session: input.session_id, agent: input.agent_id ?? '', env, deadlineMs, priorBlocks, ...routing }) });
   }
   return results;
 }

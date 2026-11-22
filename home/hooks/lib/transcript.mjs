@@ -1,13 +1,15 @@
 // Read-only helpers over the session transcript (JSONL at `transcript_path` in hook input).
-// Exports: contextTokens(path), findStatusPath(path), STATUS_FILE_PATTERN.
-// Invariants: never throws (a missing or odd file gives undefined and one stderr line only for unexpected errors);
-// subagent (sidechain) lines never count; reads only the tail for the context size and skips files over the size cap.
+// Exports: contextTokens(path), findStatusPath(path), lastReplyRouting(path, { sidechain }), STATUS_FILE_PATTERN.
+// Invariants: never throws (a missing or odd file gives undefined, or {} for lastReplyRouting, and one stderr line only for unexpected errors);
+// subagent (sidechain) lines never count, except where a reader is asked for them (a subagent's own transcript holds only sidechain
+// lines); reads only the tail for the context size and the last reply's model, and skips files over the size cap.
 import { open, readFile, stat } from 'node:fs/promises';
 
 const TAIL_BYTES = 512 * 1024; // one assistant line with usage is far smaller; the tail always holds the latest
 const MAX_SCAN_BYTES = 200 * 1024 * 1024; // above this the full scan would not fit the 5 s hook timeout
 const WRITE_TOOLS = ['Write', 'Edit', 'MultiEdit'];
 export const STATUS_FILE_PATTERN = /(^|[\\/])STATUS[\w.-]*\.md$/i;
+const PLAIN_MODEL_ID = /^[\w.:[\]-]+$/; // `<synthetic>` (a reply Claude Code made up, no model ran) does not match
 
 function report(what, error) {
   if (error.code !== 'ENOENT') process.stderr.write(`transcript: cannot ${what}: ${error.message}\n`);
@@ -74,4 +76,36 @@ export async function findStatusPath(transcriptPath) {
     report('scan for the status file', error);
     return undefined;
   }
+}
+
+/**
+ * The model and effort Claude Code recorded on the newest assistant reply of a transcript (its `message.model` and `effort` fields).
+ * A reply whose model is not a plain id (Claude Code's `<synthetic>` replies) is passed over for the one before it.
+ * @param {string | undefined} transcriptPath - `transcript_path` (the lead) or `agent_transcript_path` (a subagent) from the hook input.
+ * @param {{ sidechain: boolean }} options - sidechain: read only subagent lines (true, a subagent's transcript) or only main-thread lines.
+ * @returns {Promise<{ model?: string, effort?: string }>} the raw values as recorded, `{}` when the tail holds no such reply or the file
+ *   cannot be read; the caller checks their shape before storing them.
+ */
+export async function lastReplyRouting(transcriptPath, { sidechain }) {
+  if (typeof transcriptPath !== 'string' || transcriptPath === '') return {};
+  let handle;
+  try {
+    handle = await open(transcriptPath, 'r');
+    const { size } = await handle.stat();
+    const length = Math.min(size, TAIL_BYTES);
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, size - length);
+    const lines = buffer.toString('utf8').split('\n');
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      if (!lines[index].includes('"model"')) continue;
+      const entry = parseLine(lines[index]);
+      const model = entry?.type === 'assistant' && Boolean(entry.isSidechain) === sidechain ? entry.message?.model : undefined;
+      if (typeof model === 'string' && PLAIN_MODEL_ID.test(model)) return { model, ...(typeof entry.effort === 'string' ? { effort: entry.effort } : {}) };
+    }
+  } catch (error) {
+    report('read the last reply model', error);
+  } finally {
+    await handle?.close();
+  }
+  return {};
 }

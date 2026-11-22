@@ -50,8 +50,9 @@ Keep extra usage off in claude.ai so nothing can bill credits.
 - **Skip it.** `DONE_CHECK_SKIP=all` in the environment skips every check (the line says so, and one ledger row is written);
   `DONE_CHECK_SKIP=types,lint` (a comma list of `types`, `lint`, `tests`) skips those kinds.
 - **The ledger.** `~/.claude/state/done-check/ledger.jsonl` holds one row per run and per label: kinds, counts, times and a hashed
-  repository id, never a file name, code or a secret. `done-check.mjs stats [--days n]` shows per check the runs, blocks, how many the
-  agent acted on, how many it ignored and the false-alarm rate. `scripts/doctor.sh` runs `stats --doctor` and prints a `WARN` for a
+  repository id, the model and effort of the agent that stopped, never a file name, code or a secret. `done-check.mjs stats [--days n]`
+  shows per check the runs, blocks, how many the agent acted on, how many it ignored and the false-alarm rate, then the runs and blocks
+  per model and effort (older rows show as `unknown`). `scripts/doctor.sh` runs `stats --doctor` and prints a `WARN` for a
   check whose false-alarm rate is over 10% after 10 blocks, or when the ledger is full; with no runs yet it prints only an ok line
   (shown with `--all`). Whether to change `risk-rules.json` or a project's skip list is your decision.
 - **What it does not catch.** Wrong behaviour no test covers, and what only you see on screen. The UI pixel checks and the final

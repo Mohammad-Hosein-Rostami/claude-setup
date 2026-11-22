@@ -3,7 +3,7 @@
 // Usage (full text in README.md):
 //   done-check run --worktree <abs> [--base <40-hex>] [--where land|manual] [--json]
 //   done-check last [--worktree <abs>] [--json]
-//   done-check stats [--days <n>] [--json] [--doctor]
+//   done-check stats [--days <n>] [--json] [--doctor]   (per check kind, then per model and effort of the agent that stopped)
 //   done-check label <run-id> --as false-alarm|real|missed --check <kind> [--note <up to 200 chars>]
 // Exit codes: 0 ok, reused or nothing to check; 1 new failures or weakened tests; 2 usage; 3 internal error (the message is on stdout, as
 //   JSON `{"error": ...}` with --json). Importing this file runs nothing: the hook imports lib/check-change.mjs only.
@@ -15,7 +15,7 @@ import { parseArgs } from 'node:util';
 import { gitOut, worktreeOf } from '../../hooks/lib/gated-folder.mjs';
 import { checkChange, repoIdOf } from './lib/check-change.mjs';
 import { CHECK_KINDS } from './lib/contract.mjs';
-import { appendLabel, ledgerUsage, lastRun, readLedger, stats } from './lib/ledger.mjs';
+import { appendLabel, ledgerUsage, lastRun, readLedger, stats, statsByModel } from './lib/ledger.mjs';
 import { rangeChange } from './lib/scope.mjs';
 import { lineOf } from './lib/verdict-text.mjs';
 
@@ -91,19 +91,27 @@ function statsLine(entry) {
   return `${entry.kind}: ${entry.runs} runs, ${entry.blocks} blocks (acted on ${entry.actedOn}, ignored ${entry.ignored}), false-alarm rate ${percent(entry.falseAlarmRate)}, median ${secondsOf(entry.medianMs)}, p90 ${secondsOf(entry.p90Ms)}${notRun ? `, not run: ${notRun}` : ''}`;
 }
 
+/** One text line per (model, effort) group: its runs, blocks, left-open stops and median run time. */
+function modelLine(group) {
+  return `${group.model} ${group.effort}: ${group.runs} runs, ${group.blocks} blocks, ${group.leftOpen} left open, median ${secondsOf(group.medianMs)}`;
+}
+
 function statsCommand({ days = String(DEFAULT_DAYS), json, doctor }, env) {
   const count = Number(days);
   if (!Number.isInteger(count) || count <= 0) throw new UsageError('done-check stats: --days must be a positive whole number');
-  const entries = stats(readLedger({ sinceMs: Date.now() - count * MS_PER_DAY, env }));
+  const ledger = readLedger({ sinceMs: Date.now() - count * MS_PER_DAY, env });
+  const entries = stats(ledger);
+  const byModel = statsByModel(ledger.runs);
   const usage = ledgerUsage({ env });
   const warnings = [
     ...entries.filter((entry) => entry.blocks >= WARN_MIN_BLOCKS && entry.falseAlarmRate > WARN_RATE)
       .map((entry) => `WARN done-check: ${entry.kind} false-alarm rate ${percent(entry.falseAlarmRate)} over ${entry.blocks} blocks (limit ${percent(WARN_RATE)})`),
     ...(usage.full ? ['WARN done-check: the ledger is full, new runs are not recorded'] : []),
   ];
-  if (json) print(JSON.stringify({ days: count, entries, usage, warnings: doctor ? warnings : undefined }));
+  if (json) print(JSON.stringify({ days: count, entries, byModel, usage, warnings: doctor ? warnings : undefined }));
   else {
-    print(entries.length === 0 ? 'no runs yet' : [`last ${count} days:`, ...entries.map(statsLine)].join('\n'));
+    const modelPart = byModel.length === 0 ? [] : ['by model and effort:', ...byModel.map(modelLine)];
+    print(entries.length === 0 && byModel.length === 0 ? 'no runs yet' : [`last ${count} days:`, ...entries.map(statsLine), ...modelPart].join('\n'));
     if (doctor) for (const warning of warnings) print(warning);
   }
   return EXIT.ok;

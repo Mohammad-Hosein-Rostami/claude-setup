@@ -19,5 +19,5 @@ ledger row, one status line.
 - `test-diff.mjs`: the weakened-test scan (deleted, skipped, `.only` or loosened tests).
 - `code-lines.mjs`: tells which lines of a JS or TS text hold code, so a comment-only change is not treated as a code change.
 - `risk.mjs`: which risk classes a change falls in, from `../risk-rules.json`; a risky change gets one review before it lands.
-- `ledger.mjs`: the append-only record of every run and the owner's labels on it.
+- `ledger.mjs`: the append-only record of every run (with the model and effort of the agent that stopped) and the owner's labels on it.
 - `verdict-text.mjs`: the status line the owner sees and the reason text an agent gets when its stop is blocked.

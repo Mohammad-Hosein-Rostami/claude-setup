@@ -1,11 +1,12 @@
 // The done-check ledger: what each run of the checks did, the owner's labels on it, and the numbers that tell whether a check is worth
 // its noise (design section 3.7). One file, ~/.claude/state/done-check/ledger.jsonl, one JSON row per line, append only.
 // Exports: appendRun(row, options) -> boolean, appendLabel(row, options) -> boolean, readLedger({ sinceMs, env }) -> { runs, labels },
-//   lastRun({ repoId, session, agent, env }) -> row | null, stats({ runs, labels }) -> entry[], ledgerUsage({ env }) -> { bytes,
-//   maxBytes, full }, ledgerFile(env) -> path, MAX_ROW_BYTES, MAX_NOTE_CHARS.
+//   lastRun({ repoId, session, agent, env }) -> row | null, stats({ runs, labels }) -> entry[], statsByModel(runs) -> group[],
+//   ledgerUsage({ env }) -> { bytes, maxBytes, full }, ledgerFile(env) -> path, MAX_ROW_BYTES, MAX_NOTE_CHARS, UNKNOWN.
 // Invariants:
 // - The ledger holds kinds, counts, ms, a hashed repo id and ids: never a file name, a path, code or a secret. The writer copies only the
-//   fields of the design's two row shapes, so a field a caller adds by mistake is not stored.
+//   fields of the design's two row shapes, so a field a caller adds by mistake is not stored. A run row's `model` and `effort` are one
+//   short token each (MODEL_PATTERN, EFFORT_PATTERN) or null; rows written before they existed lack them and read as UNKNOWN.
 // - One row is one write (O_APPEND) of at most MAX_ROW_BYTES, so two sessions appending at once never interleave a line.
 // - The writer and the reader share LEDGER_MAX_BYTES (contract.mjs): at the cap the writer refuses (returns false, the file is not
 //   touched) and `ledgerUsage` says so; a file over the cap is read as empty rather than parsed whole. Both go through lib/plain-file.mjs,
@@ -18,12 +19,14 @@ import { closeSync, constants, fstatSync, mkdirSync, openSync, readSync } from '
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { appendPlainFile, NOT_PLAIN_FILE, readPlainFile } from '../../../hooks/lib/plain-file.mjs';
-import { CHECK_KINDS, LEDGER_MAX_BYTES } from './contract.mjs';
+import { CHECK_KINDS, EFFORT_PATTERN, LEDGER_MAX_BYTES, MODEL_PATTERN } from './contract.mjs';
 
 /** Most bytes one row may take, line feed included: a row is written with one call, which the OS never splits between two writers. */
 export const MAX_ROW_BYTES = 16 * 1024;
 /** Most characters of an owner's note. */
 export const MAX_NOTE_CHARS = 200;
+/** What `statsByModel` calls a model or effort a row does not record (null, or a row older than the fields). */
+export const UNKNOWN = 'unknown';
 
 const ROW_VERSION = 1;
 const LABELS = ['false-alarm', 'real', 'missed'];
@@ -42,6 +45,14 @@ const isText = (value) => typeof value === 'string';
 const isCount = (value) => Number.isFinite(value);
 const fail = (what) => { throw new TypeError(`ledger: ${what}`); };
 
+/** The `model` or `effort` of a run row to store: absent stays absent, null stays null, else one token of `pattern`. */
+function routingField(row, name, pattern) {
+  const value = row[name];
+  if (value === undefined) return {};
+  if (value !== null && !(isText(value) && pattern.test(value))) fail(`${name} must be null or one short token`);
+  return { [name]: value };
+}
+
 /** Copies the design's run row field by field; throws a TypeError for a missing or mistyped field. */
 function cleanRunRow(row) {
   const ok = row?.v === ROW_VERSION && ['id', 'at', 'session', 'agent', 'repo', 'key', 'verdict'].every((name) => isText(row[name]))
@@ -54,7 +65,8 @@ function cleanRunRow(row) {
     checks[kind] = { result: check.result, new: check.new, old: check.old, ms: check.ms, ...(isCount(check.flaky) ? { flaky: check.flaky } : {}), ...(isText(check.why) ? { why: check.why } : {}) };
   }
   const { v, id, at, where, session, agent, repo, base, key, files, verdict, risk, ms } = row;
-  return { v, id, at, where, session, agent, repo, base, key, files, checks, verdict, risk: [...risk], ms };
+  const routing = { ...routingField(row, 'model', MODEL_PATTERN), ...routingField(row, 'effort', EFFORT_PATTERN) };
+  return { v, id, at, where, session, agent, repo, base, key, files, checks, verdict, risk: [...risk], ms, ...routing };
 }
 
 /** A note cut to MAX_NOTE_CHARS, without a lone half of a surrogate pair at the cut. */
@@ -246,4 +258,34 @@ export function stats({ runs, labels }) {
   const nextOf = nextRunOf(inTimeOrder);
   const labelOf = latestLabels(labels);
   return CHECK_KINDS.map((kind) => statsOfKind(kind, inTimeOrder, nextOf, labelOf)).filter((entry) => entry !== null);
+}
+
+const routingOf = (value, pattern) => (isText(value) && pattern.test(value) ? value : UNKNOWN);
+
+/**
+ * Runs grouped by the model and effort of the agent that stopped, so a model or effort choice can be judged by its numbers (trial T7).
+ * A row with no `model` or `effort` (null, a land or manual run, or a row older than the fields) falls in the `unknown` group of that field.
+ * @param {object[]} runs run rows as readLedger returned them
+ * @returns {{ model: string, effort: string, runs: number, blocks: number, leftOpen: number, medianMs: number }[]} one group per
+ *   (model, effort) pair, the most runs first (ties by model, then effort); `blocks` counts verdict `block`, `leftOpen` verdict
+ *   `left-open`, `medianMs` is the median whole-run time; [] for no runs
+ */
+export function statsByModel(runs) {
+  const groups = new Map();
+  for (const row of runs) {
+    const model = routingOf(row.model, MODEL_PATTERN);
+    const effort = routingOf(row.effort, EFFORT_PATTERN);
+    const id = `${model}\u0000${effort}`;
+    if (!groups.has(id)) groups.set(id, { model, effort, runs: 0, blocks: 0, leftOpen: 0, times: [] });
+    const group = groups.get(id);
+    group.runs += 1;
+    group.blocks += row.verdict === 'block' ? 1 : 0;
+    group.leftOpen += row.verdict === 'left-open' ? 1 : 0;
+    if (isCount(row.ms)) group.times.push(row.ms);
+  }
+  const byRunsThenName = (a, b) => b.runs - a.runs || a.model.localeCompare(b.model) || a.effort.localeCompare(b.effort);
+  return [...groups.values()].sort(byRunsThenName).map(({ times, ...group }) => {
+    const sorted = times.sort((a, b) => a - b);
+    return { ...group, medianMs: sorted.length > 0 ? middleOf(sorted) : 0 };
+  });
 }

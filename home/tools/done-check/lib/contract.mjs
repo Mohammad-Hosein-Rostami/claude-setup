@@ -2,8 +2,8 @@
 // run, the time and size caps, and the JSDoc types every lib passes around. It holds data only and imports nothing, so any lib,
 // the CLI, the hook and the tests can load it without side effects.
 // Exports: CHECK_KINDS, RESULTS, NOT_RUN_WHY, STOP_DEADLINE_MS, BASE_DEADLINE_MS, LAND_DEADLINE_MS, MAX_BLOCKS_IN_A_ROW,
-//   MAX_REASON_LINES_PER_CHECK, MAX_NODE_RELATED, POOL_SIZE, LEDGER_MAX_BYTES; types CheckKind, Result, NotRunWhy, Scope, Cmd, Plan,
-//   Failure, CheckResult, RunRow, LabelRow, Verdict.
+//   MAX_REASON_LINES_PER_CHECK, MAX_NODE_RELATED, POOL_SIZE, LEDGER_MAX_BYTES, MODEL_PATTERN, EFFORT_PATTERN; types CheckKind,
+//   Result, NotRunWhy, Scope, Cmd, Plan, Failure, CheckResult, RunRow, LabelRow, Verdict.
 // Invariants: every name is defined here once and nowhere else; the arrays are frozen, so no lib can add a kind or a reason on its own.
 
 const BYTES_PER_MIB = 1024 * 1024;
@@ -40,6 +40,12 @@ export const POOL_SIZE = 4;
 
 /** Size cap of the ledger file, shared by the writer and the reader (bytes). */
 export const LEDGER_MAX_BYTES = 16 * BYTES_PER_MIB;
+
+/** A model id the ledger stores (`claude-opus-5-5`, `claude-opus-5-5[1m]`, a Bedrock id with `.` and `:`): one short token, never free text. */
+export const MODEL_PATTERN = /^[\w.:[\]-]{1,80}$/;
+
+/** An effort level the ledger stores (`low` ... `max`): one short lower-case word. */
+export const EFFORT_PATTERN = /^[a-z]{1,16}$/;
 
 /** @typedef {'types'|'lint'|'tests'|'tests-weakened'} CheckKind one of CHECK_KINDS */
 /** @typedef {'ok'|'fail'|'none'|'not-run'} Result one of RESULTS */
@@ -115,6 +121,9 @@ export const LEDGER_MAX_BYTES = 16 * BYTES_PER_MIB;
  * @property {Verdict['verdict']} verdict
  * @property {string[]} risk risk classes found
  * @property {number} ms total time
+ * @property {string|null} [model] the model of the stopping agent's last reply (from its transcript), null when not known; absent in rows
+ *   written before the field existed (both read as `unknown`)
+ * @property {string|null} [effort] the effort level of the stopping turn (hook input `effort.level`), null when not known; absent in old rows
  */
 
 /**

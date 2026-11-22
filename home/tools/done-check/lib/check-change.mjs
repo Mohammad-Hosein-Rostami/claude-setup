@@ -142,13 +142,14 @@ async function runChecks({ scope, plan, repo, deadlineMs, startedAt, env }) {
  * Checks one change and decides what the stop, land or manual run does with it.
  * @param {import('./contract.mjs').Scope | Promise<import('./contract.mjs').Scope>} scopeOrPromise the change (a Promise is awaited)
  * @param {{ where: 'stop'|'land'|'manual', session?: string, agent?: string, env?: NodeJS.ProcessEnv, deadlineMs?: number,
- *   priorBlocks?: { lastKey: string|null, inARow: number } }} options `deadlineMs` caps the head checks (default: STOP_DEADLINE_MS at a stop,
- *   else LAND_DEADLINE_MS); `priorBlocks` is the caller's block state of this agent: the key it blocked last and how many blocks in a row
+ *   priorBlocks?: { lastKey: string|null, inARow: number }, model?: string|null, effort?: string|null }} options `deadlineMs` caps the
+ *   head checks (default: STOP_DEADLINE_MS at a stop, else LAND_DEADLINE_MS); `priorBlocks` is the caller's block state of this agent: the
+ *   key it blocked last and how many blocks in a row; `model` and `effort` of the stopping agent go on the ledger row (null: not known)
  * @returns {Promise<import('./contract.mjs').Verdict>} the verdict, its line, the reason (for `block`), the risk classes and the ledger row
  * @throws {RangeError} a bad `where` or `deadlineMs`; {Error} when the plan cannot be made (the state folder) or a git call of a lib fails
  */
 export async function checkChange(scopeOrPromise, options) {
-  const { where, session = '', agent = '', env = process.env, priorBlocks = { lastKey: null, inARow: 0 } } = options;
+  const { where, session = '', agent = '', env = process.env, priorBlocks = { lastKey: null, inARow: 0 }, model = null, effort = null } = options;
   const deadlineMs = options.deadlineMs ?? (where === 'stop' ? STOP_DEADLINE_MS : LAND_DEADLINE_MS);
   if (!WHERES.includes(where)) throw new RangeError(`checkChange: where must be one of ${WHERES.join(', ')}, got ${where}`);
   if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) throw new RangeError(`checkChange: deadlineMs must be a positive number, got ${deadlineMs}`);
@@ -157,7 +158,7 @@ export async function checkChange(scopeOrPromise, options) {
   const files = scope.files.length + scope.wide.length + (scope.named?.length ?? 0);
   const repo = repoIdOf(scope.top ?? '');
   const risk = files === 0 ? { classes: [], warning: undefined } : await riskOf(scope);
-  const row = { v: 1, id: randomBytes(RUN_ID_BYTES).toString('hex'), at: new Date().toISOString(), where, session, agent, repo, base: scope.base, key: scope.key, files, checks: {}, verdict: 'ok', risk: risk.classes, ms: 0 };
+  const row = { v: 1, id: randomBytes(RUN_ID_BYTES).toString('hex'), at: new Date().toISOString(), where, session, agent, repo, base: scope.base, key: scope.key, files, checks: {}, verdict: 'ok', risk: risk.classes, ms: 0, model, effort };
   const finish = (verdict, extra = {}) => {
     row.verdict = verdict;
     row.ms = Date.now() - startedAt;

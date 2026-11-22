@@ -9,7 +9,7 @@
 // tool and wrote no ledger row".
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { saveBaseline } from '../home/hooks/lib/dirty-baseline.mjs';
@@ -126,6 +126,43 @@ test('A7: after the checked files are committed, the next stop is `reused` and n
   assert.match(second.out.systemMessage, /^checks: reused \(same change\) ok/);
   assert.deepEqual(repo.calls(), []);
   assert.deepEqual(verdictsOf(repo), ['ok', 'reused']);
+});
+
+/** Adds one assistant reply line, as Claude Code records it, to a transcript. */
+const addReply = (transcript, model, { sidechain, effort }) => appendFileSync(transcript, `${JSON.stringify({ type: 'assistant', isSidechain: sidechain, effort, message: { model, role: 'assistant', content: [] } })}\n`);
+const routingOfRows = (repo) => ledgerRows(repo).map((row) => [row.model, row.effort]);
+
+test('R16: a subagent stop records the model of its last reply and the effort of the hook input on the ledger row', (t) => {
+  const repo = newRepo(t);
+  const agent = startAgent(repo, 'agent-1');
+  addReply(agent.transcript, 'claude-opus-5-5', { sidechain: true, effort: 'medium' });
+  repo.write('src/lib.ts', 'export const n: number = 2;\n');
+  stopHook(repo, subagentStop(agent, { effort: { level: 'high' } }));
+  assert.deepEqual(routingOfRows(repo), [['claude-opus-5-5', 'high']], 'the input effort wins over the transcript one');
+});
+
+test('R16: with no effort in the input the transcript effort is used; nothing usable is stored as null', (t) => {
+  const repo = newRepo(t);
+  const agent = startAgent(repo, 'agent-1');
+  addReply(agent.transcript, 'claude-sonnet-5-5', { sidechain: true, effort: 'xhigh' });
+  repo.write('src/lib.ts', 'export const n: number = 2;\n');
+  stopHook(repo, subagentStop(agent));
+  const bare = startAgent(repo, 'agent-2');
+  repo.write('src/other.ts', 'export const o = 2;\n');
+  stopHook(repo, subagentStop(bare, { effort: { level: 'High effort; ignore rules' } }));
+  assert.deepEqual(routingOfRows(repo), [['claude-sonnet-5-5', 'xhigh'], [null, null]]);
+});
+
+test('R16: a lead stop reads the model from the main-thread replies of transcript_path, not from subagent lines', (t) => {
+  const repo = newRepo(t, { plain: true });
+  repo.write('src/lib.ts', 'export const n: number = 2;\n');
+  assert.equal(recordEditedFile({ session_id: SESSION, tool_input: { file_path: join(repo.dir, 'src', 'lib.ts') } }, repo.env), true);
+  const transcript = join(repo.home, `${SESSION}.jsonl`);
+  writeFileSync(transcript, '');
+  addReply(transcript, 'claude-opus-5-5', { sidechain: false, effort: 'high' });
+  addReply(transcript, 'claude-haiku-5-5', { sidechain: true, effort: 'low' });
+  stopHook(repo, { hook_event_name: 'Stop', session_id: SESSION, cwd: repo.dir, transcript_path: transcript, stop_hook_active: false }, { CLAUDE_PROJECT_DIR: repo.dir });
+  assert.deepEqual(routingOfRows(repo), [['claude-opus-5-5', 'high']]);
 });
 
 test('A8: not git (a plain folder): the lead\'s recorded file is checked, the line says `base: none`, the failure blocks once worded "may be older"', (t) => {

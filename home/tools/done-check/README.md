@@ -17,7 +17,7 @@ node done-check.mjs label <run-id> --as false-alarm|real|missed --check <kind> [
 |---|---|---|
 | `run` | checks every code file changed between `--base` (default: the worktree's HEAD, so uncommitted work) and the worktree; prints the `checks:` line, then the reason when it blocks (`--json`: the Verdict) | 0 ok, reused or nothing to check; 1 new failures or weakened tests; 2 usage; 3 internal error |
 | `last` | prints the line of the newest recorded run of the repository of `--worktree` (any repository without it) | 0 |
-| `stats` | per check kind: runs, blocks, acted on, ignored, false-alarm rate, median and p90 time, why it did not run; `--doctor` adds one `WARN` line per kind over 10% false alarms after 10 blocks, and one when the ledger is full | 0 |
+| `stats` | per check kind: runs, blocks, acted on, ignored, false-alarm rate, median and p90 time, why it did not run; then `by model and effort:` one line per model and effort of the agent that stopped (runs, blocks, left open, median run time; `--json`: `byModel`); `--doctor` adds one `WARN` line per kind over 10% false alarms after 10 blocks, and one when the ledger is full | 0 |
 | `label` | records the owner's verdict on one check of one run; a `real` label takes an ignored block out of the false-alarm rate | 0, 2 for an unknown run id or a bad flag |
 
 Usage errors (an unknown flag, a relative `--worktree`, a `--base` that is not 40 hex, a folder that is not a git worktree) exit 2 before
@@ -51,3 +51,16 @@ Code files (`ts tsx js jsx mjs cjs mts cts vue`) and the scripts in a `.githooks
 | `lib/*.mjs` (others), `risk-rules.json` | scope, detect, run, parse, base tree, ledger, weakened-test scan, risk classes |
 
 The ledger is `~/.claude/state/done-check/ledger.jsonl` (counts only, no file names). Tests: `node --test tests/done-check-*.test.mjs`.
+
+## Model and effort on a row
+
+A stop row records the `model` and `effort` of the agent that stopped, so a model or effort choice can be judged by its numbers
+(`stats`, trial T7). Both come from Claude Code's own records, never from the agent's report:
+
+- `effort`: the hook input's `effort.level` (Claude Code 2.1.329 sends it on Stop and SubagentStop for a model that supports effort);
+  when the input has none, the `effort` Claude Code wrote on the agent's newest reply in its transcript.
+- `model`: the hook input has no model field, so it is the `message.model` of the agent's newest reply in its transcript
+  (`agent_transcript_path` for a subagent, `transcript_path` for the lead; only the last 512 KB are read).
+
+Each is one short token (`MODEL_PATTERN`, `EFFORT_PATTERN` in `lib/contract.mjs`) or `null`. Land and manual runs store `null` (no agent
+stopped). Rows written before the fields existed have neither; `stats` shows both kinds as `unknown`.
