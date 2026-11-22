@@ -55,7 +55,7 @@ test('the estimate rules are verbatim in lead-rules.md and home/CLAUDE.md, and t
 });
 
 // Every accuracy rule lives in home/CLAUDE.md, home/lead.md or home/lead-rules.md, which every session loads.
-const GATES = ['runner', 'reviewer', 'security-auditor', 'verify-done', 'ui-quality-pass', 'visual-qa', 'ui-coverage'];
+const GATES = ['ui-quality-pass', 'visual-qa', 'ui-coverage'];
 // Phrases that drop, skip or lessen a gate or check ("skip the reviewer", "no tests", "verify-done is optional").
 // One sentence is checked at a time; a pattern that would also hit an honest sentence is left out (see the fixtures).
 const LOWERS_A_GATE = /\b(skip|omit|drop|without|no|fewer|less|leave out)\b[^.;\n]{0,40}\b(runner|reviewers?|security-auditor|verify-done|ui-quality-pass|visual-qa|ui-coverage|reviews?|verif(y|ication)|tests?|checks?)\b/i;
@@ -98,11 +98,10 @@ test('no sentence of lead-rules.md lowers a gate that home/CLAUDE.md requires', 
   }
 });
 
-test('every gate is named in home/CLAUDE.md, which every session and agent loads', () => {
+test('every remaining gate (the UI ones) is named in home/CLAUDE.md, which every session and agent loads', () => {
   const claude = read('home/CLAUDE.md');
   const section = (heading) => claude.split(/^## /m).find((part) => part.startsWith(heading)) ?? '';
-  const qualityGates = section('Quality gates');
-  for (const gate of ['runner', 'reviewer', 'security-auditor', 'verify-done', 'ui-quality-pass']) assert.ok(qualityGates.includes(`\`${gate}\``), `Quality gates must name ${gate}`);
+  assert.match(section('Checks'), /removed on 2026-11-22/, 'the Checks section says the old system was removed');
   const uiRouting = section('Skill routing (UI)');
   for (const gate of ['visual-qa', 'ui-coverage']) assert.ok(uiRouting.includes(`\`${gate}\``), `Skill routing (UI) must name ${gate}`);
   for (const gate of GATES) assert.ok(claude.includes(`\`${gate}\``), `home/CLAUDE.md must name ${gate}`);
@@ -110,19 +109,10 @@ test('every gate is named in home/CLAUDE.md, which every session and agent loads
 
 test('accuracy rules live in the shared files', () => {
   const claude = read('home/CLAUDE.md');
-  assert.match(read('home/lead.md'), /re-read the cited lines/);
   assert.match(claude, /second independent source/);
   const lead = read('home/lead-rules.md');
-  for (const needle of ['`architect`, not Plan', '`opus` judges', 'Never downgrade a pick to save tokens', 'security-critical decision', 'with all it needs', 'with `review` on, `reviewer` and `security-auditor` `model: "opus", effort: "max"` for risky changes (auth, data, money, concurrency, security) and the last review before push']) {
+  for (const needle of ['`architect`, not Plan', '`opus` judges', 'Never downgrade a pick to save tokens', 'security-critical decision', 'with all it needs']) {
     assert.ok(lead.includes(needle), `lead-rules.md must mention ${needle}`);
-  }
-});
-
-test('review agents report every blocking and should-fix finding, with no cap', () => {
-  for (const agent of ['reviewer', 'security-auditor']) {
-    const text = read(`home/agents/${agent}.md`);
-    assert.doesNotMatch(text, /\b(at most|max) 12\b/i, `${agent}.md must not cap findings at 12`);
-    assert.match(text, /no cap/i, `${agent}.md must say findings have no cap`);
   }
 });
 
@@ -131,7 +121,7 @@ test('home/lead.md states the inline / agents rule once; lead-rules.md points to
   const claude = read('home/lead.md');
   const heading = '- Inline or agents, by the job';
   assert.equal(claude.split(heading).length, 2, 'stated exactly once');
-  for (const part of ['Inline:', 'A batch is 1-5 agents launched together', 'A fixed sequence is one script call', 'Two fix rounds per lane', 'Quality gates do not change with the form']) {
+  for (const part of ['Inline:', 'A batch is 1-5 agents launched together', 'A fixed sequence is one script call', 'Two fix rounds per lane']) {
     assert.ok(claude.includes(part), `the rule names ${part}`);
   }
   assert.match(read('home/lead-rules.md'), /"Job form and order"/, 'lead-rules.md points to the rule');
@@ -151,16 +141,13 @@ test('lead.md and lead-rules.md send landing to land-lane and machine sync to sc
   assert.match(read('home/lead-rules.md'), /via `land-lane`/, 'lead-rules.md lands through land-lane');
   assert.match(read('home/lead-rules.md'), /sync always `scripts\/sync-machines\.mjs`/);
   assert.match(lead, /`road\.mjs join`/, 'the fixed sequences name road.mjs join');
-  assert.match(lead, /`review-tier` with `verdict\.mjs`/, 'the fixed sequences name review-tier with verdict.mjs');
   assert.match(lead, /The hook refuses a 6th/, 'the batch cap of 5 is stated with its hook');
-  assert.match(lead, /only the five origins \(prior, fix-line, sibling, security, lane-blocking\) can block/, 'a delta round blocks only on the five origins');
-  assert.match(lead, /optional items become follow-up rows and never enter a fix brief/, 'optional items never enter a fix brief');
   assert.match(lead, /goes to the architect with its open findings by class/, 'two fix rounds, then the architect re-plans');
   for (const file of ['home/lead.md', 'home/lead-rules.md', 'home/skills/road/SKILL.md']) {
     assert.doesNotMatch(read(file), /workflow|verifier|not capped/i, `${file} names no workflow`);
   }
   for (const file of ['docs/daily-use.md']) {
-    assert.match(read(file), /Landing and machine sync always run their\s+workflow/i, `${file} points at the always-a-workflow tier`);
+    assert.match(read(file), /Fixed sequences are one script call, not an agent: `land-lane`/, `${file} says landing is one script call`);
     assert.doesNotMatch(read(file), /git cleanup and (a )?bugfix( job)? always/i, `${file} no longer sends every bugfix and cleanup to a workflow`);
   }
   assert.doesNotMatch(read('home/CLAUDE.md').split('\n').find((line) => line.includes('One background agent')) ?? '', /one debug hypothesis set\.$/, 'the agent line limits a hypothesis set to inside a running job');
