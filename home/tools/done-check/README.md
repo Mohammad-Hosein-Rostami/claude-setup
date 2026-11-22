@@ -28,11 +28,16 @@ anything runs. `DONE_CHECK_SKIP=all` skips every check (one ledger row); a comma
 `checks: types ok · lint ok · tests ok, 1 old fail · 12.3 s · review: needed (security)`
 
 - `old fail`: the base has the same failure; listed, never blocking. `FAIL n new`: blocks.
+- `n flaky`: a new test failure that passed when its test file ran once more at head (that file only, inside the base-side time budget). Listed, never blocking. A rerun that fails again, or cannot finish, leaves the failure new.
 - `not run (why)`: the check could not run (`time`, `error`, `no-command`, ...). It never blocks and is never shown as ok. When a kind
   has several packages the line also names each one that did not run.
 - `tests none related (n files)`: no test relates to the change. `base: none`: no git base, so failures block once, worded "may be older".
-- `review: needed (classes)`: the change is in a risky class (`risk-rules.json`); the lead runs the reviewer.
+- `review: needed (classes)`: the change is in a risky class (`risk-rules.json`); the lead runs the reviewer. A file whose changed lines are only comments or blank lines is left out; any doubt (no base, a deleted file, a Vue file) keeps the class.
 - `reused (same change) ok`: the same change key was already checked green; no command ran.
+
+## What counts as a change
+
+Code files (`ts tsx js jsx mjs cjs mts cts vue`) and the scripts in a `.githooks/` folder, plus the wide files (`package.json`, lockfiles, tsconfig, test and lint config). A changed text file (markdown, json, ...) counts too when a test file names it (the file name appears in a test-looking file's text): the related-test search then picks the tests that write its path, and no typecheck or lint runs for it. A text file no test names stays `checks: no code change`. In a `node --test` script part only the e2e or live globs are dropped (and named `e2e-or-live`); the other globs still pick related tests. `tests-weakened` also fails when always-true matchers (`toBeDefined`, `toBeTruthy`, `toBeFalsy`) are added while value-checking matchers go down.
 
 ## Files
 
@@ -40,8 +45,9 @@ anything runs. `DONE_CHECK_SKIP=all` skips every check (one ledger row); a comma
 |---|---|
 | `done-check.mjs` | the command line (importing it runs nothing) |
 | `lib/check-change.mjs` | orchestration: plan, reuse, run, verdict, ledger row; the hook imports this only |
-| `lib/base-compare.mjs` | reruns failed typechecks and failing test files at the base; caches the answers |
+| `lib/base-compare.mjs` | reruns failed typechecks and failing test files at the base (caches the answers); reruns new test failures once at head (flaky) |
 | `lib/verdict-text.mjs` | the line and the block reason |
+| `lib/code-lines.mjs` | which lines of a JS or TS text hold code (risk classes skip comment-only edits) |
 | `lib/*.mjs` (others), `risk-rules.json` | scope, detect, run, parse, base tree, ledger, weakened-test scan, risk classes |
 
 The ledger is `~/.claude/state/done-check/ledger.jsonl` (counts only, no file names). Tests: `node --test tests/done-check-*.test.mjs`.
