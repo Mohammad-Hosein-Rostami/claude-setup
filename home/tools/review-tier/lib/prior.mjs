@@ -5,8 +5,8 @@
 // Invariants: the file's text never leaves this module: only its path, hash, counts and finding ids do. Only a regular file is opened (a FIFO,
 //   a device or a folder is refused before any read), and none over MAX_PRIOR_BYTES.
 //   A finding is one line: a table row whose severity cell starts with the word (`| blocking |`, `| **should-fix** (not run on Linux) |`), or
-//   a line with a severity tag (`[should-fix]`), the two forms the setup's reports use (review reports are tables, the review workflow
-//   lists `- [severity] id file:line`). A row is read by its severity cell alone: the column the table's header names `severity` (a
+//   a line with a severity tag (`[should-fix]`), the two forms the setup's reports use (review reports are tables, or
+//   list `- [severity] id file:line`). A row is read by its severity cell alone: the column the table's header names `severity` (a
 //   table whose header names none holds no finding); in a table with no header, the row's first cell that starts with the word. A line counts once. Quoted lines (`>`), fenced blocks and code spans are skipped: they cite a
 //   finding or the contract, they are none. Of a finding only its id leaves this module: a short plain word, or the line number.
 import { createHash } from 'node:crypto';

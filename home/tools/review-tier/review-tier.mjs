@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // CLI of `review-tier`: reads a git range and says which reviews to run together (agent, model, effort, lens, brief, plan).
-// Usage: review-tier.mjs [<range>] [--landing] [--add-class <c>]... [--lane-classes <names>] [--base <b>] [--json]      (a first review)
+// Usage: review-tier.mjs [<range>] [--landing [--whole]] [--add-class <c>]... [--lane-classes <names>] [--base <b>] [--json]      (a first review)
 //        review-tier.mjs --delta <reviewed-sha> --base <base-sha> [--rebased-onto <sha>] (--prior <findings-file> --prior-sha256 <hex>)... --lane-classes <names> [--add-class <c>]... [--json]   (a fix round)
 //   <range>          `a..b` or `a...b`; default `<base sha>...HEAD`, the base being the one of main, master, develop that is a local branch.
 //                    Each side is read like the base: HEAD, a local branch or a full sha (with an optional ~N or ^N), never a tag or
@@ -15,7 +15,12 @@
 //                    --base is its ancestor, it is an ancestor of HEAD and it is no ancestor of (nor equal to) the --delta commit;
 //                    else the start stays --base, which reads more, never less. The start taken is printed (`base` in the JSON, the
 //                    `fix round:` line)
-//   --landing       the last review before the base moves: adds the Opus max lens, the auditor and a mutation plan
+//   --landing       the last review before the base moves: adds the Opus max lens, the auditor and a mutation plan. A whole-range
+//                    run over 400 changed lines or 15 files is exit 2 `split the lane: <n> changed lines in <m> files (limit 400 / 15);
+//                    --whole reviews it as one` (a 198-file lane drew the top tier and never finished clean); a fix round and a run
+//                    without --landing are never refused
+//   --whole         review a lane over that size as one lane. It lifts only the size rule (and does nothing without --landing): the
+//                    set and the tier stay the lane's
 //   --delta <sha>    a fix round: the full 40-character sha the last review read, from the lead's record (a short sha or a name is
 //                    exit 2). It reads the tree diff <sha>..HEAD; when the sha is no ancestor of HEAD (a rebased or rebuilt lane) it reads
 //                    the whole lane <base>..HEAD and what changed in the lane's files since <sha>. The set is the whole lane's (the tool
@@ -49,7 +54,7 @@
 //   (lib/revisions.mjs): whether it is inside a work tree (exit 2 when not), its common git dir, the three refusals (a graft file, a
 //   replace ref or a shallow history is exit 2 before anything is read), and the sha behind HEAD and behind a branch name, each once.
 //   They run with GIT_NO_REPLACE_OBJECTS=1 and a GIT_GRAFT_FILE that cannot exist, and without the variables that move the shallow file
-//   or the replace refs. The caller must compare the `tip` printed here with the commit it means to review (the review workflow does).
+//   or the replace refs. The caller must compare the `tip` printed here with the commit it means to review (the lead's review round does).
 //   Left outside the tool: land does not repeat the check yet, and the lens commands and the review worktree read the lane's own
 //   store (both phase 3); the `git` found on PATH; the temp folder, which a process of the same user can change between two checks of
 //   it (after each import and after the last read: names, `HEAD` and `config`, each pack's file facts, and at the end the `.pack`
@@ -71,17 +76,19 @@ import { openTrustedGit } from './lib/trusted-git.mjs';
 const EXIT_GIT_FAILED = 1;
 const EXIT_USAGE = 2;
 // The --prior path is pasted into every brief, so it is agent input: a name with a newline or a sentence in it could give the reviewer orders.
-// Only a plain absolute path passes: the rule of SAFE_PATH in home/workflows, plus `~` for Windows short names (RUNNER~1).
+// Only a plain absolute path passes: letters, digits and `_@+=.,~/\-` only (`~` is for Windows short names such as RUNNER~1).
 const PLAIN_PATH = /^(?:[A-Za-z]:[\\/]|\/)[\w@+=.,~/\\-]+$/;
 const MAX_ECHOED_PATH_CHARS = 120; // a refused path is quoted in the error, cut to this length
 const LANE_NAMES = [...Object.keys(CLASS_TIER), LOCK_TAG, RACE_TAG]; // an array: `includes` has no prototype names to match
-const USAGE = 'usage: review-tier.mjs [<range>] [--landing] [--add-class <c>]... [--base <b>] [--json], or for a fix round: review-tier.mjs --delta <reviewed-sha> --base <base-sha> [--rebased-onto <sha>] (--prior <file> --prior-sha256 <hex>)... --lane-classes <names> [--add-class <c>]... [--json]';
+const USAGE = 'usage: review-tier.mjs [<range>] [--landing [--whole]] [--add-class <c>]... [--base <b>] [--json], or for a fix round: review-tier.mjs --delta <reviewed-sha> --base <base-sha> [--rebased-onto <sha>] (--prior <file> --prior-sha256 <hex>)... --lane-classes <names> [--add-class <c>]... [--json]';
 // History the environment could move: git-tidy's runGit already drops the variables that choose the repository and its objects.
 const HISTORY_VARIABLES = ['GIT_SHALLOW_FILE', 'GIT_REPLACE_REF_BASE'];
 const SHA256 = /^[0-9a-f]{64}$/;
 // How a caller names the start of a rebased lane: said by both errors about --base, so neither sends a caller to read the lane's refs.
 const START_AFTER_REBASE = 'After a rebase onto a base tip you recorded yourself, keep that --base and add --rebased-onto <tip>';
 const OBJECTS_FOLDER = 'objects'; // inside the common git dir: the one part of the lane the import reads
+const MAX_LANE_LINES = 400;
+const MAX_LANE_FILES = 15;
 
 function valueOf(argv, index, flag) {
   const value = argv[index + 1];
@@ -90,10 +97,11 @@ function valueOf(argv, index, flag) {
 }
 
 function parseArgs(argv) {
-  const options = { range: null, landing: false, json: false, delta: null, priors: [], priorHashes: [], laneClasses: null, addClasses: [], base: null, rebasedOnto: null };
+  const options = { range: null, landing: false, whole: false, json: false, delta: null, priors: [], priorHashes: [], laneClasses: null, addClasses: [], base: null, rebasedOnto: null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--landing') options.landing = true;
+    else if (arg === '--whole') options.whole = true;
     else if (arg === '--json') options.json = true;
     else if (arg === '--delta') options.delta = valueOf(argv, i++, arg);
     else if (arg === '--rebased-onto') options.rebasedOnto = valueOf(argv, i++, arg);
@@ -185,6 +193,14 @@ function reportOf(lane, options) {
   });
 }
 
+/** A whole-range landing review of a lane over the size limit is refused unless `--whole`; a fix round and a run without `--landing` never are. */
+function refuseOversizeLanding(report, { landing, whole, delta }) {
+  if (!landing || whole || delta !== null) return;
+  if (report.changedLines > MAX_LANE_LINES || report.files > MAX_LANE_FILES) {
+    throw new UsageError(`split the lane: ${report.changedLines} changed lines in ${report.files} files (limit ${MAX_LANE_LINES} / ${MAX_LANE_FILES}); --whole reviews it as one`);
+  }
+}
+
 function run(options) {
   // Every question to the lane's own repository is asked in the working folder. The top folder git names is used for the log line only.
   const cwd = process.cwd();
@@ -201,6 +217,7 @@ function run(options) {
   } finally {
     git.close();
   }
+  refuseOversizeLanding(report, options);
   console.log(options.json ? formatJson(report) : formatText(report));
   const problem = appendLog(logRecord(report, repository, new Date()));
   if (problem !== null) console.error(`review-tier: ${problem}`);
