@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "classes": {
+    "security": {
+      "paths": ["auth", "login", "session", "token", "secret", "credential", "passw", "crypto", "permission", "guard", "sandbox", "sanitiz", "upload", "webhook", "oauth", "jwt", "cookie", "csrf", "cors"]
+    },
+    "data": {
+      "paths": ["(^|/)(migrations?|prisma)/", "\\.sql$", "schema\\."]
+    },
+    "money": {
+      "paths": ["payment", "invoice", "billing", "refund", "stripe", "wallet"]
+    },
+    "concurrency": {
+      "paths": ["(^|[^a-z0-9])(un)?lock(s|ed|ing|file)?([^a-z0-9]|$)", "(^|[^a-z0-9])(mutex|semaphore|queue|worker|flock)(es|s)?([^a-z0-9]|$)"]
+    },
+    "gate": {
+      "paths": ["^home/hooks/", "^home/tools/(land-lane|road|done-check)/"]
+    }
+  },
+  "large": { "lines": 400, "files": 15 }
+}
