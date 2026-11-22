@@ -30,7 +30,7 @@ descriptions are quoted from their frontmatter; those descriptions are what make
 | `tradeoff-analysis` | Use when a design choice has two or more credible options (datastore, queue, sync vs async, build vs buy) - compare them, pick one, record an ADR. | session model |
 | `ui-quality-pass` | Use before saying any UI component, page, screen, step or dialog is done or fixed, including small tweaks and work a subagent did - tokens, semantics, keyboard, contrast, responsive, async states, copy. | session model |
 | `ui-coverage` | Use for any UI task with more than one component and for Figma or pixel-perfect work - build a coverage matrix (surfaces including backend-rendered UI, control reuse, states, locales and direction, reference behaviour, live review page) and gate done on `ui-coverage check`. The matrix is made before the first UI lane and every `ui-implementer` / `visual-qa` brief names it in a `MATRIX: <path>` line (`agent-model-guard.mjs` sends a brief without one back once); a Figma difference is kept only with the owner's own decision as its reference. | session model |
-| `road` | Walk a big job as a road of steps: start line, `road.mjs next --budget`, the build and agents step forms, `road.mjs gate` between steps, one update per step, failure and carry rules, new-session pickup (phase 3, `road-rules`; the rest of that lane is not built yet). | inherit |
+| `road` | Walk a big job as a road of steps - each step one batch of 1-5 agents, a gate between steps, one update per step. Use when a job needs more than one step (lanes that share no file fit one step). | inherit |
 | `where` | Show where this session's work stands: the job against its estimate, the road's steps with their clocks, every agent with its progress, what waits on you, git per worktree, the limits per account and the cost figure (API-price equivalent since the last `/clear`, with its age). Runs `board.mjs where --columns 120`: the status line's rows with nothing folded; works with mods off. (manual only: slash command) | session model |
 
 ## Agents (`home/agents/<name>.md`)
@@ -58,7 +58,7 @@ Routing policy (which tier does what) is in `home/lead-rules.md` (injected into 
 | `backend.md` | `**/server/**`, `**/api/**`, `**/*.service.ts`, `**/routes/**` | S1-S11, B1-B10 |
 | `db.md` | `**/migrations/**`, `**/*.sql`, `**/schema.*`, `**/prisma/**` | D1-D7 |
 | `infra.md` | `Dockerfile*`, `**/.github/**`, `**/*.tf`, `**/*.yml` | I1-I6 |
-| `principles.md` | `**/*.mjs`, `**/*.cjs`, `**/*.sh`, `**/.githooks/**`, `**/workflows/**`, `**/settings/*.json` | P1-P16 (what past review rounds found, each with a yes/no question; a brief can name the ids that fit its files) |
+| `principles.md` | `**/*.mjs`, `**/*.cjs`, `**/*.sh`, `**/.githooks/**`, `**/workflows/**`, `**/settings/*.json` | P1-P16 (what past review rounds found, each with a question to ask yourself; a brief can name the ids that fit its files) |
 
 Rules are one line each and load when a matching file is in play.
 
