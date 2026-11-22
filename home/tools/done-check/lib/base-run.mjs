@@ -1,13 +1,14 @@
 // The base side of the done-check's base compare (design section 3.3 and 6): the base commit's files in a temp folder, so a failing test or
 // typecheck can be run there to find out which failures are old, and the cache of those old failures.
-// Exports: baseTree(top, base, {deadlineMs}) -> Promise<{dir, cleanup} | {unavailable}>, cachedBase(repoId, base, label) -> Promise<Set | null>,
-//   saveBase(repoId, base, label, ids) -> Promise<boolean>.
+// Exports: baseTree(top, base, {deadlineMs}) -> Promise<{dir, cleanup} | {unavailable}>, cachedBase(repoId, base, label, env?) -> Promise<Set | null>,
+//   saveBase(repoId, base, label, ids, env?) -> Promise<boolean>.
 // How the tree is made: `git read-tree <base>` into a temp index (GIT_INDEX_FILE) and `git checkout-index -a --prefix=<dir>/`, so the real index,
 //   worktree list and HEAD never change and no `.git` is written. Each real node_modules folder of the worktree (at the root and next to a package.json
 //   of the base tree) is shadowed by a folder of links to the same targets, except a link into the worktree's own packages, which points at the base copy
 //   (a package that is new in the head is left out); files inside node_modules are skipped (U6: junctions on Windows, probed on the PC).
-// The cache: ~/.claude/state/done-check/base/<sha256 of repo, base and label>.json through lib/session-store.mjs (lstat-checked folder and file,
-//   0600, written by rename so a reader sees the old or the new file, never half; old files go after 7 days). Both ends use MAX_CACHE_BYTES. A
+// The cache: <HOME of env>/.claude/state/done-check/base/<sha256 of repo, base and label>.json through lib/session-store.mjs (lstat-checked folder and file,
+//   0600, written by rename so a reader sees the old or the new file, never half; old files go after 7 days). Both ends use MAX_CACHE_BYTES. `env`
+//   (default process.env) names the HOME, so a caller with its own HOME (checkChange's `env` option, a test) never touches the real state (P8). A
 //   link at the state folder, the base folder or the file is never followed.
 // Invariants: unavailable (a non-empty reason) for a folder that is not a git worktree, a repo or user config that names a filter program (git would
 //   run it on checkout-index; wider than gated-folder's namesFilterProgram, which only sees repository config), a commit git does not have, a failed
@@ -195,15 +196,15 @@ export async function baseTree(top, base, { deadlineMs = BASE_DEADLINE_MS } = {}
   }
 }
 
-const stateFolder = () => join(process.env.HOME || process.env.USERPROFILE || homedir(), '.claude', 'state', 'done-check');
-const cacheFolder = () => join(stateFolder(), 'base');
+const stateFolder = (env) => join(env.HOME || env.USERPROFILE || homedir(), '.claude', 'state', 'done-check');
+const cacheFolder = (env) => join(stateFolder(env), 'base');
 const cacheId = (repoId, base, label) => createHash('sha256').update(JSON.stringify([repoId, base, label])).digest('hex');
 const areStrings = (...values) => values.every((value) => typeof value === 'string');
 
 /** True when the done-check state folder is a real folder of this user (made when missing), never a link. */
-function stateIsPlain() {
+function stateIsPlain(env) {
   try {
-    return privateFolder(stateFolder()) !== undefined;
+    return privateFolder(stateFolder(env)) !== undefined;
   } catch {
     return false;
   }
@@ -214,13 +215,14 @@ function stateIsPlain() {
  * @param {string} repoId the hashed repo id (never a path)
  * @param {string} base the base commit
  * @param {string} label the check label, for example `vitest`
+ * @param {NodeJS.ProcessEnv} [env] where HOME points (default process.env)
  * @returns {Promise<Set<string> | null>} the ids (an empty Set when the base had none); null when nothing is cached or the file is
  *   damaged, belongs to another key, or sits behind a link
  */
-export async function cachedBase(repoId, base, label) {
-  if (!areStrings(repoId, base, label) || !stateIsPlain()) return null;
+export async function cachedBase(repoId, base, label, env = process.env) {
+  if (!areStrings(repoId, base, label) || !stateIsPlain(env)) return null;
   try {
-    const text = readSessionFile(cacheFolder(), cacheId(repoId, base, label), MAX_CACHE_BYTES);
+    const text = readSessionFile(cacheFolder(env), cacheId(repoId, base, label), MAX_CACHE_BYTES);
     const record = typeof text === 'string' ? JSON.parse(text) : null;
     const sameKey = record?.v === CACHE_VERSION && record.repo === repoId && record.base === base && record.label === label;
     return sameKey && Array.isArray(record.ids) && record.ids.every((id) => typeof id === 'string') ? new Set(record.ids) : null;
@@ -235,10 +237,11 @@ export async function cachedBase(repoId, base, label) {
  * @param {string} base the base commit
  * @param {string} label the check label
  * @param {Set<string> | string[]} ids the failure ids found at the base (may be empty)
+ * @param {NodeJS.ProcessEnv} [env] where HOME points (default process.env)
  * @returns {Promise<boolean>} true when stored; false for a bad argument, a set over MAX_CACHE_BYTES, a link in the way or a failed write
  */
-export async function saveBase(repoId, base, label, ids) {
-  if (!areStrings(repoId, base, label) || !stateIsPlain()) return false;
+export async function saveBase(repoId, base, label, ids, env = process.env) {
+  if (!areStrings(repoId, base, label) || !stateIsPlain(env)) return false;
   const text = JSON.stringify({ v: CACHE_VERSION, repo: repoId, base, label, ids: [...ids] });
-  return Buffer.byteLength(text) <= MAX_CACHE_BYTES && writeSessionFile(cacheFolder(), cacheId(repoId, base, label), text);
+  return Buffer.byteLength(text) <= MAX_CACHE_BYTES && writeSessionFile(cacheFolder(env), cacheId(repoId, base, label), text);
 }

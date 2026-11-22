@@ -123,10 +123,10 @@ function decide({ failing, where, key, priorBlocks }) {
 }
 
 /** Runs the weakened-test scan and the planned commands, then the base compare; returns the kinds merged and why the base was not compared. */
-async function runChecks({ scope, plan, repo, deadlineMs, startedAt }) {
+async function runChecks({ scope, plan, repo, deadlineMs, startedAt, env }) {
   const weakened = weakenedMember(scope);
   const results = await runPlan(plan, scope, { deadlineMs: Math.max(1, deadlineMs - (Date.now() - startedAt)) });
-  const answers = await compareWithBase({ scope, plan, results, repoId: repo, budgetMs: Math.min(BASE_DEADLINE_MS, deadlineMs) });
+  const answers = await compareWithBase({ scope, plan, results, repoId: repo, budgetMs: Math.min(BASE_DEADLINE_MS, deadlineMs), env });
   const groups = Map.groupBy([...membersOf({ scope, plan, results, answers }), weakened], (member) => member.kind);
   const summaries = CHECK_KINDS.filter((kind) => groups.has(kind)).map((kind) => summarize(kind, groups.get(kind)));
   return { groups, summaries, baseWhy: [...groups.values()].flat().find((member) => member.baseWhy)?.baseWhy };
@@ -179,7 +179,7 @@ export async function checkChange(scopeOrPromise, options) {
   let ran;
   let cleaned = false;
   try {
-    ran = await runChecks({ scope, plan, repo, deadlineMs, startedAt });
+    ran = await runChecks({ scope, plan, repo, deadlineMs, startedAt, env });
   } finally {
     cleaned = tidyResultFiles(plan, env);
   }

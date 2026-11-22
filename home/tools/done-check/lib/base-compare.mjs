@@ -1,6 +1,6 @@
 // The base compare of one done-check run (design 3.3): for each typecheck or test command that failed on the change, which of its
 // failures does the base commit have too (old, not the agent's) and which does it not (new).
-// Exports: compareWithBase({ scope, plan, results, repoId, budgetMs }) -> Promise<Map<number, BaseAnswer>>.
+// Exports: compareWithBase({ scope, plan, results, repoId, budgetMs, env }) -> Promise<Map<number, BaseAnswer>>.
 // Rules: only `types` and `tests` commands that failed are compared (lint looks at changed lines only). A typecheck runs again at the
 //   base as it is; tests run again at the base for the failing test files only (the command is rebuilt from the head command: a vitest or
 //   jest or node --test file list; a test file the base does not have cannot be an old failure). Answers are cached per (repo, base, package,
@@ -73,7 +73,7 @@ function baseCommandOf(wanted, scope, tree) {
 }
 
 /** Runs the base commands of `wanted` in `tree` within `leftMs`, saves what it reads to the cache, and fills `answers`. */
-async function runAtBase({ wanted, scope, tree, repoId, leftMs, answers }) {
+async function runAtBase({ wanted, scope, tree, repoId, leftMs, answers, env }) {
   const planned = wanted.map((entry) => ({ entry, ...baseCommandOf(entry, scope, tree) }));
   for (const item of planned.filter((one) => one.answer)) answers.set(item.entry.index, item.answer);
   const runnable = planned.filter((item) => item.run);
@@ -85,17 +85,18 @@ async function runAtBase({ wanted, scope, tree, repoId, leftMs, answers }) {
     if (result.result === 'not-run') { answers.set(item.entry.index, { unavailable: `the base run did not finish (${result.why})` }); continue; }
     const oldIds = new Set(result.failures.map((failure) => failure.id));
     answers.set(item.entry.index, { oldIds });
-    await saveBase(repoId, scope.base, item.entry.label, oldIds);
+    await saveBase(repoId, scope.base, item.entry.label, oldIds, env);
   }
 }
 
 /**
  * Finds, for every failed typecheck or test command, which failures the base has too.
- * @param {{ scope: import('./contract.mjs').Scope, plan: import('./contract.mjs').Plan, results: import('./contract.mjs').CheckResult[], repoId: string, budgetMs: number }} input
- *   `results` are the head results in plan order (one per command); `budgetMs` is the most the whole base side may take
+ * @param {{ scope: import('./contract.mjs').Scope, plan: import('./contract.mjs').Plan, results: import('./contract.mjs').CheckResult[], repoId: string, budgetMs: number, env?: NodeJS.ProcessEnv }} input
+ *   `results` are the head results in plan order (one per command); `budgetMs` is the most the whole base side may take;
+ *   `env` names the HOME of the base cache (default process.env)
  * @returns {Promise<Map<number, BaseAnswer>>} per command index (only failed types and tests commands)
  */
-export async function compareWithBase({ scope, plan, results, repoId, budgetMs }) {
+export async function compareWithBase({ scope, plan, results, repoId, budgetMs, env = process.env }) {
   const startedAt = Date.now();
   const wanted = wantedFor(scope, plan.packages.flatMap((one) => one.cmds), results);
   const answers = new Map();
@@ -103,7 +104,7 @@ export async function compareWithBase({ scope, plan, results, repoId, budgetMs }
   if (!scope.git || !scope.base) return new Map(wanted.map((entry) => [entry.index, { unavailable: NO_BASE }]));
   const missing = [];
   for (const entry of wanted) {
-    const cached = await cachedBase(repoId, scope.base, entry.label);
+    const cached = await cachedBase(repoId, scope.base, entry.label, env);
     if (cached) answers.set(entry.index, { oldIds: cached });
     else missing.push(entry);
   }
@@ -114,7 +115,7 @@ export async function compareWithBase({ scope, plan, results, repoId, budgetMs }
     return answers;
   }
   try {
-    await runAtBase({ wanted: missing, scope, tree, repoId, leftMs: budgetMs - (Date.now() - startedAt), answers });
+    await runAtBase({ wanted: missing, scope, tree, repoId, leftMs: budgetMs - (Date.now() - startedAt), answers, env });
   } finally {
     tree.cleanup();
   }

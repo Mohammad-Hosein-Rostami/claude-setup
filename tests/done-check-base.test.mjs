@@ -311,6 +311,18 @@ test('a saved set of old failures reads back as the same set', async (t) => {
   assert.deepEqual(await cachedBase(...CACHE_KEY), new Set(FAILURE_IDS));
 });
 
+test('the cache follows the env passed in, not the process HOME (P8)', async (t) => {
+  cleanState(t);
+  const otherHome = makeTempDir('done-check-base-other-home-');
+  const otherEnv = { HOME: otherHome, USERPROFILE: otherHome };
+  const { cachedBase, saveBase } = await loadBase();
+  assert.equal(await saveBase(...CACHE_KEY, new Set(['kept']), otherEnv), true);
+  assert.deepEqual(filesUnder(join(PINNED_HOME, '.claude')), [], 'the process HOME was written');
+  assert.equal(filesUnder(join(otherHome, '.claude', 'state', 'done-check', 'base')).length, 1);
+  assert.deepEqual(await cachedBase(...CACHE_KEY, otherEnv), new Set(['kept']));
+  assert.equal(await cachedBase(...CACHE_KEY), null, 'the process HOME was read');
+});
+
 test('an unknown key reads as null, never as an empty set', async (t) => {
   cleanState(t);
   const { cachedBase } = await loadBase();

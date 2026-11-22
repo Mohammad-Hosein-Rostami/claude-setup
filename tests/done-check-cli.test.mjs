@@ -136,9 +136,9 @@ test('A2: a related test that passes at base and fails now blocks (the base comp
 });
 
 const WEAKENINGS = [
-  { name: 'a deleted test case', mention: /tests\/a\.test\.mjs/, edit: (repo) => repo.write('tests/a.test.mjs', nodeTestSource({ cases: [{ name: 'one' }] })) },
-  { name: 'an added .skip', mention: /tests\/a\.test\.mjs[^\n]*skip|skip[^\n]*tests\/a\.test\.mjs/i, edit: (repo) => repo.write('tests/a.test.mjs', `${nodeTestSource({ cases: [{ name: 'one' }, { name: 'two' }] })}test.skip('three', () => {});\n`) },
-  { name: 'an added @ts-ignore', mention: /src\/x\.ts[^\n]*suppression/, edit: (repo) => repo.write('src/x.ts', "// @ts-ignore\nexport const x: number = 'a';\n") },
+  { name: 'a deleted test case', mention: /tests\/a\.test\.mjs: case deleted/, edit: (repo) => repo.write('tests/a.test.mjs', nodeTestSource({ cases: [{ name: 'one' }] })) },
+  { name: 'an added .skip', mention: /tests\/a\.test\.mjs:\d+: test\.skip added/, edit: (repo) => repo.write('tests/a.test.mjs', `${nodeTestSource({ cases: [{ name: 'one' }, { name: 'two' }] })}test.skip('three', () => {});\n`) },
+  { name: 'an added @ts-ignore', mention: /src\/x\.ts:1: @ts-ignore added[^\n]*suppression/, edit: (repo) => repo.write('src/x.ts', "// @ts-ignore\nexport const x: number = 'a';\n") },
   { name: 'an edited test script', mention: /package\.json/, edit: (repo) => repo.write('package.json', `${JSON.stringify({ ...NODE_TEST_PACKAGE, scripts: { ...NODE_TEST_PACKAGE.scripts, test: 'echo ok' } })}\n`) },
 ];
 const weakeningProject = (t) => newRepo(t, { packageJson: NODE_TEST_PACKAGE, files: { 'tests/a.test.mjs': nodeTestSource({ cases: [{ name: 'one' }, { name: 'two' }] }), 'src/x.ts': 'export const x: number = 1;\n' } });

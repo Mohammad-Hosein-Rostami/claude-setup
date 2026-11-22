@@ -1,7 +1,9 @@
 // The weakened-test scan: the one check that cannot be fooled by making a gate easier instead of the code better (design section 3.2,
 // kind `tests-weakened`). It compares the base commit with the worktree and reports what makes the other checks weaker.
 // Exports: weakenedTests(scope) -> Failure[] (kind `tests-weakened`), MAX_SCANNED_FILES.
-// What counts (each one is a Failure with id `<file>|<reason>`, a one-line text, and the file):
+// What counts (each one is a Failure with id `<file>|<reason>`, a one-line text, and the file; the text names what was seen, so the agent
+// knows what to undo: `tests/a.test.mjs:5: test.skip added`, `src/x.ts:1: @ts-ignore added (a lint or type suppression)`,
+// `tests/a.test.mjs: case deleted (3 test cases before, 2 now)`):
 //   - a deleted test file; fewer test cases or fewer assertions in a changed test file;
 //   - more skip, only, todo, `xit`, `xdescribe` or `{ skip: ... }` in a test file than at the base;
 //   - more lint, type or coverage suppression comments than at the base (eslint-disable, ts-ignore, ts-expect-error, ts-nocheck,
@@ -49,7 +51,38 @@ const oneLine = (text) => text.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' 
 const withoutSpaces = (text) => text.replace(/\s+/g, '');
 const isSafeRelative = (path) => typeof path === 'string' && path !== '' && !path.startsWith('/') && !/^[a-z]:/i.test(path) && !path.split('/').includes('..');
 
-const failure = (file, reason, text) => ({ kind: KIND, id: `${file}|${reason}`, file, text: oneLine(`${file}: ${text}`) });
+/** One weakening; `line` (1-based, when known) makes the text start `file:line:` like a compiler message. */
+const failure = (file, reason, text, line) => ({ kind: KIND, id: `${file}|${reason}`, file, text: oneLine(`${file}${line ? `:${line}` : ''}: ${text}`) });
+
+/**
+ * The lines of `after` that carry a match of `pattern` and have no equal line with a match in `before` (so a directive that moved is not
+ * new), as `{ directive, line }`. Empty when the count rose only through a match the line scan cannot see (one that spans lines).
+ * @param {string} before text at the base ('' for a new file)
+ * @param {string} after text now
+ * @param {RegExp} pattern a global pattern
+ * @param {number} group which group of a match names the directive (0 = the whole match)
+ */
+function addedDirectives(before, after, pattern, group) {
+  const directiveOf = (line) => { const match = line.matchAll(pattern).next().value; return match ? match[group].replace(/\s*\($/, '').trim() : null; };
+  const known = new Map();
+  for (const line of before.split('\n')) if (directiveOf(line) !== null) known.set(line.trim(), (known.get(line.trim()) ?? 0) + 1);
+  const added = [];
+  after.split('\n').forEach((line, index) => {
+    const directive = directiveOf(line);
+    if (directive === null) return;
+    const left = known.get(line.trim()) ?? 0;
+    if (left > 0) known.set(line.trim(), left - 1);
+    else added.push({ directive, line: index + 1 });
+  });
+  return added;
+}
+
+/** The failure for a directive that was added: names the first one seen with its line, and how many more there are. */
+function addedFailure(file, reason, before, after, { pattern, group, fallback, note = '' }) {
+  const [first, ...more] = addedDirectives(before, after, pattern, group);
+  if (!first) return failure(file, reason, fallback);
+  return failure(file, reason, `${first.directive} added${note}${more.length > 0 ? ` (and ${more.length} more)` : ''}`, first.line);
+}
 
 /** The file at the base: its text, null when the base has no such file, or `unreadable` when git could not answer. */
 function baseText(top, base, file) {
@@ -96,24 +129,26 @@ function weakenedTestFile(file, before, after) {
   const found = [];
   const cases = [countOf(before, CASES), countOf(after, CASES)];
   const assertions = [countOf(before, ASSERTIONS), countOf(after, ASSERTIONS)];
-  if (cases[1] < cases[0]) found.push(failure(file, 'fewer-cases', `${cases[0]} test cases before, ${cases[1]} now`));
-  if (assertions[1] < assertions[0]) found.push(failure(file, 'fewer-assertions', `${assertions[0]} assertions before, ${assertions[1]} now`));
-  if (countOf(after, SKIPS) > countOf(before, SKIPS)) found.push(failure(file, 'added-skip', 'a skip, only or todo was added'));
+  if (cases[1] < cases[0]) found.push(failure(file, 'fewer-cases', `case deleted (${cases[0]} test cases before, ${cases[1]} now)`));
+  if (assertions[1] < assertions[0]) found.push(failure(file, 'fewer-assertions', `assertion deleted (${assertions[0]} assertions before, ${assertions[1]} now)`));
+  if (countOf(after, SKIPS) > countOf(before, SKIPS)) found.push(addedFailure(file, 'added-skip', before, after, { pattern: SKIPS, group: 0, fallback: 'a skip, only or todo was added' }));
   return found;
 }
+
+const suppressionAdded = (file, before, after) => addedFailure(file, 'added-suppression', before, after, { pattern: SUPPRESSIONS, group: 1, fallback: 'a lint or type suppression was added', note: ' (a lint or type suppression)' });
 
 /** What one changed file weakens, given its text at the base (null when new) and now (null when deleted). */
 function weakenedFile(file, before, after) {
   const mustRead = TEST_FILE.test(file) || CHECK_CONFIG.test(file) || PACKAGE_JSON.test(file) || TSCONFIG.test(file);
   if (before === 'unreadable' || after === 'unreadable') return mustRead ? [failure(file, 'unreadable', 'cannot be read, so it cannot be compared with the base')] : [];
-  if (before === null) return after !== null && CODE_FILE.test(file) && countOf(after, SUPPRESSIONS) > 0 ? [failure(file, 'added-suppression', 'a lint or type suppression was added')] : [];
+  if (before === null) return after !== null && CODE_FILE.test(file) && countOf(after, SUPPRESSIONS) > 0 ? [suppressionAdded(file, '', after)] : [];
   if (after === null) {
-    if (TEST_FILE.test(file)) return [failure(file, 'deleted', 'a test file was deleted')];
+    if (TEST_FILE.test(file)) return [failure(file, 'deleted', 'test file deleted')];
     return CHECK_CONFIG.test(file) ? [failure(file, 'config-deleted', 'a lint or test config was deleted')] : [];
   }
   const found = [];
   if (TEST_FILE.test(file)) found.push(...weakenedTestFile(file, before, after));
-  if (CODE_FILE.test(file) && countOf(after, SUPPRESSIONS) > countOf(before, SUPPRESSIONS)) found.push(failure(file, 'added-suppression', 'a lint or type suppression was added'));
+  if (CODE_FILE.test(file) && countOf(after, SUPPRESSIONS) > countOf(before, SUPPRESSIONS)) found.push(suppressionAdded(file, before, after));
   if (PACKAGE_JSON.test(file)) found.push(...weakenedPackage(file, before, after));
   if (CHECK_CONFIG.test(file) && withoutSpaces(before) !== withoutSpaces(after)) found.push(failure(file, 'config-changed', 'a lint or test config was changed'));
   if (TSCONFIG.test(file)) found.push(...weakenedTsconfig(file, before, after));
