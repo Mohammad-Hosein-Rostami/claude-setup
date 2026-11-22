@@ -29,6 +29,9 @@ const hueOfName = (identity, name) => hueOf(identity, name);
 const huesOf = (identity, names) => Object.fromEntries(names.map((name) => [name, hueOfName(identity, name)]));
 const plain = (row) => row.replaceAll(/\u001b\[[0-9;]*m/g, '');
 
+/** One step a minute from minute `from` to `to` (the status line draws every few seconds, so a live item is seen all the time). */
+const minutes = (names, from, to) => Array.from({ length: to - from + 1 }, (_, index) => ({ names, atMin: from + index }));
+
 /** The identity of a board after a series of steps, each `{ names, atMin }`, the saved assignment carried from one to the next. */
 function walk(steps) {
   let store = null;
@@ -71,6 +74,25 @@ test('the seventh live item shares a hue and every item keeps its hue from then 
   const [again, fewer] = walk([...steps, { names, atMin: 10 }, { names: names.slice(0, 6), atMin: 11 }]).slice(-2);
   assert.deepEqual(huesOf(again, names), huesOf(final, names));
   assert.deepEqual(huesOf(fewer, names.slice(0, 6)), huesOf(final, names.slice(0, 6)), 'when the seventh leaves nothing moves');
+  const lastHome = hueOfName(boardIdentity(boardOfNames(['g'])), 'g');
+  assert.equal(hueOfName(final, 'g'), lastHome, 'the seventh takes its home hue');
+  for (const leaving of names.slice(0, 6)) {
+    const rest = names.filter((name) => name !== leaving);
+    const after = walk([...steps, ...minutes(names, 7, 10), { names: rest, atMin: 11 }]).at(-1);
+    assert.deepEqual(huesOf(after, rest), huesOf(final, rest), `${leaving} left: nobody else moved, the shared hue stays shared`);
+  }
+});
+
+test('an item back after more than 5 minutes whose hue a newcomer took meanwhile gets another free hue, and a returning one with a free hue keeps it', () => {
+  const alone = (name) => hueOfName(boardIdentity(boardOfNames([name])), name);
+  const taken = alone('returning');
+  const newcomer = Array.from({ length: 200 }, (_, index) => `new-${index}`).find((name) => alone(name) === taken);
+  assert.ok(newcomer, 'a name whose home hue is the returning one\'s');
+  const [first, away, back] = walk([{ names: ['returning'], atMin: 0 }, ...minutes([newcomer], 10, 19), { names: ['returning', newcomer], atMin: 20 }]).filter((_, index, all) => [0, 1, all.length - 1].includes(index));
+  assert.equal(hueOfName(first, 'returning'), taken);
+  assert.equal(hueOfName(away, newcomer), taken, 'the free hue was taken while it was away');
+  assert.equal(hueOfName(back, newcomer), taken, 'the item that stayed keeps its hue');
+  assert.notEqual(hueOfName(back, 'returning'), taken, 'two live items never share while a hue is free');
 });
 
 test('a new item takes the first hue from its home that no live item uses, and a lone name gets the same hue on every board', () => {
@@ -103,8 +125,15 @@ test('a steady board asks for no new save, a changed one does, and the saved ite
 test('a bad saved assignment starts fresh and never throws', () => {
   const board = boardOfNames(['a', 'b', 'c']);
   const fresh = huesOf(boardIdentity(board), ['a', 'b', 'c']);
-  const bad = [undefined, 'text', 5, [], {}, { v: 2, items: [] }, { v: 1, items: 'x' }, { v: 1, items: [null, 5, 'x', { name: 'a' }, { name: 'a', hue: 99, seenMs: 0, sinceMs: 0 }, { name: 'a', hue: 1.5, seenMs: 0, sinceMs: 0 }, { name: 'b', hue: 1, seenMs: 'x', sinceMs: 0 }] }];
+  const bad = [undefined, 'text', 5, [], {}, { v: 2, items: [] }, { v: 2, items: [{ name: 'a', hue: (fresh.a + 1) % HUE_CODES.length, seenMs: NOW, sinceMs: NOW }] }, { v: 1, items: 'x' }, { v: 1, items: [null, 5, 'x', { name: 'a' }, { name: 'a', hue: 99, seenMs: 0, sinceMs: 0 }, { name: 'a', hue: 1.5, seenMs: 0, sinceMs: 0 }, { name: 'b', hue: 1, seenMs: 'x', sinceMs: 0 }] }];
   for (const store of bad) assert.deepEqual(huesOf(boardIdentity(board, store, NOW), ['a', 'b', 'c']), fresh, JSON.stringify(store));
+});
+
+test('a run\'s phase over 16 characters is cut at a word with the cut mark', () => {
+  const board = { ...screenshotBoard(), agents: [], repo: null };
+  board.runs = [{ ...board.runs[0], phase: 'Delta review of every lane' }];
+  const { look, ctx } = rowsFor(board);
+  assert.match(plain(runHeader(board.runs[0], [], ctx, look)), /phase 1\/1 Delta review of… /);
 });
 
 test('names that are no strings count as none and never throw', () => {
