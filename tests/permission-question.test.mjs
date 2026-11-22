@@ -1,5 +1,5 @@
 // Tests for AskUserQuestion in home/hooks/lib/question-reply.mjs (run by home/hooks/permission-timed-allow.mjs): one timed popup PER question,
-// each with its own CLAUDE_PERMISSION_TIMEOUT_S wait (default 2 min), asked one after the other. No answer in the wait or "Use recommended"
+// each with its own CLAUDE_QUESTION_TIMEOUT_S wait (default 2 min), asked one after the other. No answer in the wait or "Use recommended"
 // takes that question's "(Recommended)" option, else its first option; only a timeout adds a note for that answer (UNCONFIRMED).
 // "Answer in terminal", a failed dialog or no GUI stop the loop and print nothing, so Claude Code's own question UI shows every question.
 // When the owner answers in the terminal (the PostToolUse mark of lib/question-answered.mjs) the open popup is closed and no later one opens.
@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { markQuestionAnswered } from '../home/hooks/lib/question-answered.mjs';
-import { TERMINAL_AUTO_CONTINUE_S, questionReply } from '../home/hooks/lib/question-reply.mjs';
+import { TERMINAL_AUTO_CONTINUE_S, questionReply, questionTimeoutSeconds } from '../home/hooks/lib/question-reply.mjs';
 import { hookEnv, tempLogPath } from './hook-env.mjs';
 import { fakePopup } from './fake-dialog-tool.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -56,23 +56,23 @@ const reply = (input, env, ask, extra = {}) => questionReply(input, env, { ask, 
 const WATCHER = question('Where should the watcher run?', ['PC watcher', 'Mac watcher (Recommended)', 'None']);
 const FORMAT = question('Which format?', ['Summary', 'Detailed']);
 const SHIP = question('Ship it?', ['No', 'Yes (Recommended)']);
-const TIMEOUT_NOTE = 'No answer in 1 min: this option was taken by default, not chosen by the owner (UNCONFIRMED)';
+const TIMEOUT_NOTE = 'No answer in 2 min: this option was taken by default, not chosen by the owner (UNCONFIRMED)';
 
 test('"Use recommended": the option marked (Recommended) is taken, the questions echoed back, no note added', async () => {
   const ask = fakeAsk('allow');
   const decision = await reply(askInput([WATCHER]), privateEnv(), ask);
   assert.deepEqual(decision, { behavior: 'allow', updatedInput: { questions: [WATCHER], answers: { 'Where should the watcher run?': 'Mac watcher (Recommended)' } } });
   assert.equal(ask.calls.length, 1);
-  assert.equal(ask.calls[0].timeoutS, 60);
+  assert.equal(ask.calls[0].timeoutS, 120);
   assert.deepEqual(ask.calls[0].buttons, { accept: 'Use recommended', decline: 'Answer in terminal' });
   assert.deepEqual(ask.calls[0].body, [
     '[Where should] Where should the watcher run?',
     'Options: 1 Mac watcher (recommended) · 2 PC watcher · 3 None',
-    'No answer in 1 min → "Mac watcher" is taken and asked again in the next report.',
+    'No answer in 2 min → "Mac watcher" is taken and asked again in the next report.',
   ]);
 });
 
-test('no answer in 60 s: the same option is taken, but the answer carries a note that nobody chose it (UNCONFIRMED)', async () => {
+test('no answer in 2 min: the same option is taken, but the answer carries a note that nobody chose it (UNCONFIRMED)', async () => {
   const decision = await reply(askInput([WATCHER]), privateEnv(), fakeAsk('timeout'));
   assert.deepEqual(decision.updatedInput.answers, { 'Where should the watcher run?': 'Mac watcher (Recommended)' });
   assert.deepEqual(decision.updatedInput.annotations, { 'Where should the watcher run?': { notes: TIMEOUT_NOTE } });
@@ -82,7 +82,7 @@ test('no answer: the note joins annotations already in the input and names the w
   const input = askInput([WATCHER, SHIP]);
   input.tool_input.annotations = { 'Ship it?': { preview: 'diff' } };
   const decision = await reply(input, privateEnv({ CLAUDE_QUESTION_TIMEOUT_S: '45' }), fakeAsk('timeout'));
-  const notes = TIMEOUT_NOTE.replace('1 min', '45 s');
+  const notes = TIMEOUT_NOTE.replace('2 min', '45 s');
   assert.deepEqual(decision.updatedInput.annotations, { 'Where should the watcher run?': { notes }, 'Ship it?': { preview: 'diff', notes } });
 });
 
@@ -216,10 +216,20 @@ test('all popups fit inside the terminal question auto-continue: question 3 and 
   assert.ok(waits.reduce((sum, wait) => sum + wait, 0) < TERMINAL_AUTO_CONTINUE_S, `${waits} must add up to less than ${TERMINAL_AUTO_CONTINUE_S} s`);
 });
 
-test('the default 60 s per question and a single question keep their full wait', async () => {
+test('the default 2 min per question: 1 and 4 questions keep their full wait, 5 get 114 s and 6 get 95 s (all inside 10 min)', async () => {
+  const single = fakeAsk('timeout');
+  await reply(askInput([WATCHER]), privateEnv(), single);
+  assert.deepEqual(single.calls.map((call) => call.timeoutS), [120]);
+  const lastOne = question('Last one?', ['A', 'B']);
   const four = fakeAsk('timeout');
-  await reply(askInput([WATCHER, FORMAT, SHIP, question('Last one?', ['A', 'B'])]), privateEnv(), four);
-  assert.deepEqual(four.calls.map((call) => call.timeoutS), [60, 60, 60, 60]);
+  await reply(askInput([WATCHER, FORMAT, SHIP, lastOne]), privateEnv(), four);
+  assert.deepEqual(four.calls.map((call) => call.timeoutS), [120, 120, 120, 120]);
+  const five = fakeAsk('timeout');
+  await reply(askInput([WATCHER, FORMAT, SHIP, lastOne, question('Fifth?', ['A', 'B'])]), privateEnv(), five);
+  assert.deepEqual(five.calls.map((call) => call.timeoutS), [114, 114, 114, 114, 114]);
+  const six = fakeAsk('timeout');
+  await reply(askInput([WATCHER, FORMAT, SHIP, lastOne, question('Fifth?', ['A', 'B']), question('Sixth?', ['A', 'B'])]), privateEnv(), six);
+  assert.deepEqual(six.calls.map((call) => call.timeoutS), [95, 95, 95, 95, 95, 95]);
   const one = fakeAsk('timeout');
   await reply(askInput([WATCHER]), privateEnv({ CLAUDE_QUESTION_TIMEOUT_S: '190' }), one);
   assert.deepEqual(one.calls.map((call) => call.timeoutS), [190]);
@@ -228,6 +238,18 @@ test('the default 60 s per question and a single question keep their full wait',
 test('settings/base.json askUserQuestionTimeout is the time the popups are planned inside (it auto-continues the terminal question)', () => {
   const base = JSON.parse(readFileSync(fileURLToPath(new URL('../settings/base.json', import.meta.url)), 'utf8'));
   assert.equal(base.askUserQuestionTimeout, `${TERMINAL_AUTO_CONTINUE_S / 60}m`);
+  assert.equal(base.env.CLAUDE_QUESTION_TIMEOUT_S, String(questionTimeoutSeconds({})), 'the installed wait is the code default (2 min)');
+});
+
+test('CLAUDE_QUESTION_TIMEOUT_S from the environment: too long is cut to 190 s, anything not a whole positive number gives 2 min, never 0', () => {
+  const waits = ['9999', '-1', 'abc', '120.5', '0', '', undefined].map((value) => questionTimeoutSeconds({ CLAUDE_QUESTION_TIMEOUT_S: value }));
+  assert.deepEqual(waits, [190, 120, 120, 120, 120, 120, 120]);
+});
+
+test('no questions: nothing is asked and nothing is divided by zero', async () => {
+  const ask = fakeAsk('timeout');
+  assert.equal(await reply(askInput([]), privateEnv(), ask), undefined);
+  assert.equal(ask.calls.length, 0);
 });
 
 /** Starts the hook as a process with a hanging fake popup; returns the child and what it printed. */

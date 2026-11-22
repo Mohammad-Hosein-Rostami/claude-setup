@@ -3,7 +3,7 @@
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000",
     "BASH_DEFAULT_TIMEOUT_MS": "300000",
-    "CLAUDE_QUESTION_TIMEOUT_S": "60",
+    "CLAUDE_QUESTION_TIMEOUT_S": "120",
     "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-5-5",
     "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": "8",
     "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "3",
@@ -427,7 +427,7 @@
       }
     ]
   },
-  "askUserQuestionTimeout": "5m",
+  "askUserQuestionTimeout": "10m",
   "statusLine": {
     "type": "command",
     "command": "node \"{{CLAUDE_HOME}}/statusline.mjs\"",

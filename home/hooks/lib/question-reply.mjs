@@ -2,8 +2,8 @@
 // Exports: questionReply(input, env, {ask, pollMs}) -> Promise<{behavior: 'allow', updatedInput} | undefined>; questionTimeoutSeconds(env);
 // TERMINAL_AUTO_CONTINUE_S.
 // Each question gets its own popup (title "question 2 of 3", that question and the option that will be taken) and its own wait,
-// CLAUDE_QUESTION_TIMEOUT_S (default 60 s, questionTimeoutSeconds; cut so that all popups end before the terminal question
-// auto-continues at 300 s, askUserQuestionTimeout "5m"). The body is display design 7.5: the question, all options with the recommended
+// CLAUDE_QUESTION_TIMEOUT_S (default 120 s, questionTimeoutSeconds; cut so that all popups end before the terminal question
+// auto-continues at 600 s, askUserQuestionTimeout "10m"). The body is display design 7.5: the question, all options with the recommended
 // one first, and what happens with no answer; no tool, directory or session line. While the question is open the asking marker
 // (lib/asking-marker.mjs, with the first question's `header` label) is written; question-answered.mjs clears it on PostToolUse or PostToolUseFailure, and it ages out. "Use recommended" or no answer in the wait takes that question's
 // "(Recommended)" option, else its first; a multiSelect question gets that single option. Only a timeout adds `annotations` {question text:
@@ -32,20 +32,20 @@ const QUESTION_BUTTONS = { accept: 'Use recommended', decline: 'Answer in termin
 // so there Enter hits "Answer in terminal" (the safe hand-back). "Use recommended" and the timeout answer stay as they are.
 const LATER_QUESTION_BUTTONS = { ...QUESTION_BUTTONS, defaultButton: 'decline' };
 const QUESTION_TITLE = 'Claude asks';
-// Each question popup's own wait (owner, 2026-11-18: 60 s), apart from the permission wait (CLAUDE_PERMISSION_TIMEOUT_S, 120 s).
+// Each question popup's own wait (owner RC3, 2026-11-22: 2 min; was 60 s), apart from the permission wait (CLAUDE_PERMISSION_TIMEOUT_S, 120 s).
 const QUESTION_TIMEOUT_ENV = 'CLAUDE_QUESTION_TIMEOUT_S';
-const DEFAULT_QUESTION_TIMEOUT_S = 60;
+const DEFAULT_QUESTION_TIMEOUT_S = 120;
 
-/** @returns {number} CLAUDE_QUESTION_TIMEOUT_S when it is a whole positive number (at most MAX_ASK_TIMEOUT_S), else 60 */
+/** @returns {number} CLAUDE_QUESTION_TIMEOUT_S when it is a whole positive number (at most MAX_ASK_TIMEOUT_S), else 120 */
 export function questionTimeoutSeconds(env = process.env) {
   const seconds = Number(env[QUESTION_TIMEOUT_ENV]);
   return Number.isInteger(seconds) && seconds > 0 ? Math.min(seconds, MAX_ASK_TIMEOUT_S) : DEFAULT_QUESTION_TIMEOUT_S;
 }
 const RECOMMENDED = /\(Recommended\)\s*$/i; // how Claude marks the option it would pick
-// The terminal question runs beside this hook and auto-continues (settings askUserQuestionTimeout "5m") with the answers chosen so far, which
+// The terminal question runs beside this hook and auto-continues (settings askUserQuestionTimeout "10m") with the answers chosen so far, which
 // would end the hook's remaining popups. So all popups together must end before it: the wait of each is cut to fit, with a margin for starting them.
-// 60 s each fits up to 4 questions: min(60, floor((300 - 30) / N)).
-export const TERMINAL_AUTO_CONTINUE_S = 300;
+// 120 s each fits up to 4 questions: min(120, floor((600 - 30) / N)), so 5 questions get 114 s and 6 get 95 s.
+export const TERMINAL_AUTO_CONTINUE_S = 600;
 const POPUP_MARGIN_S = 30;
 const TERMINAL_POLL_MS = 250; // how often the open popup looks for the terminal answer mark: a closing popup is seen within this
 
