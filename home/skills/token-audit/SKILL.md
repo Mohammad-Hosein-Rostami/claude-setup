@@ -3,17 +3,18 @@ name: token-audit
 description: Audit where tokens go - the setup's always-loaded text, skills, agents, plugins and MCP servers, and from the transcripts the use per account, role and lane, cache, compactions and waste - and propose concrete cuts. Use periodically or when sessions feel expensive.
 disable-model-invocation: true
 context: fork
-model: sonnet
 effort: medium
 allowed-tools: Bash(node *) Bash(claude plugin *) Read Grep Glob
 ---
 
-This runs as a fork (`context: fork`), so the `model: sonnet` above holds for the fork only and the main session keeps its model
-and its prompt cache. Read-only: you change no file; you report and propose.
+This runs as a fork (`context: fork`) on the session's model, so the main session keeps its prompt cache. Read-only: you change
+no file; you report and propose.
 
-1. Setup text: run `node ~/.claude/hooks/token-audit.mjs` from the project root. It prints byte/line sizes (≈ tokens =
-   bytes/4) of every always-loaded file, path-scoped rule, skill description, agent and `.mcp.json` server, and each
-   project's `MEMORY.md` size. `node ~/.claude/hooks/token-audit.mjs --budget` gives the budget status (the lead text against
+1. Setup text: run `node ~/.claude/hooks/token-audit.mjs` from the project root. It first prints two totals, `main session
+   start` and `agent start`, each naming every part counted and every part not counted; the start hooks' text (lead text, lead
+   rules, checkpoint digest) is counted by calling the hooks' own functions, and a total with a hook part missing, failing or
+   past 5 s says "at least". Then it prints byte/line sizes (≈ tokens = bytes/4) of every always-loaded file, path-scoped
+   rule, skill description, agent and `.mcp.json` server, and each project's `MEMORY.md` size. `node ~/.claude/hooks/token-audit.mjs --budget` gives the budget status (the lead text against
    its 10,000-char SessionStart cap); `scripts/doctor.sh` prints the same lines.
 2. Use: run `node ~/.claude/tools/token-view/token-view.mjs` (7 days; `--days N`, `--project <text>`, `--detail`, `--json`). It
    prints (a) the limits against time per account, (b) the use per role (agent type) with each role's start tokens, and per
