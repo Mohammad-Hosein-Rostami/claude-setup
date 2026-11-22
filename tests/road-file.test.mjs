@@ -1,11 +1,12 @@
 // Tests of the road file schema and of `road.mjs check`: every lane needs a non-empty `checkpoints` list (its Done means); the guidance
 // fields (threatModel, principles, keepGreen) are optional notes that only need their plain shape; appendOnly and the UI-lane matrix rule still bind. Roads are written to temp files and read through readRoad / runRoad.
+// roadRows writes one row per lane (no `-land` close row) and one check row per step.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
-import { readRoad } from '../home/tools/road/lib/road-file.mjs';
+import { readRoad, roadRows, rowIds } from '../home/tools/road/lib/road-file.mjs';
 import { runRoad } from '../home/tools/road/road.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -88,4 +89,15 @@ test('check: a lane with a UI file needs a matrix (a path, or "none:" and 15+ ch
   assert.equal((await check({ matrix: '/m/matrix.json' })).code, 0);
   assert.equal((await check({}, ['src/x.mjs'])).code, 0);
   assert.equal((await check({ implementer: { model: 'opus', effort: 'high', agentType: 'ui-implementer' } }, ['src/x.mjs'])).code, 1);
+});
+
+test('roadRows: one row per lane (item build:, the lane size) and one check row per step with the base in step 1; rowIds keeps the old close id', () => {
+  const two = road([lane('a'), lane('b', { size: 'L', closeSize: 'S' })], { steps: [{ lanes: [lane('a'), lane('b', { size: 'L', closeSize: 'S' })] }, { lanes: [lane('c')] }] });
+  const tip = 'f'.repeat(40);
+  assert.deepEqual(roadRows(two, tip), [
+    { id: 'tr.s1.a', item: 'build: build a', size: 'S' }, { id: 'tr.s1.b', item: 'build: build b', size: 'L' },
+    { id: 'tr.s1.check', item: `close: step 1 checkpoint, base ${tip}`, size: 'S' },
+    { id: 'tr.s2.c', item: 'build: build c', size: 'S' }, { id: 'tr.s2.check', item: 'close: step 2 checkpoint', size: 'S' },
+  ]);
+  assert.equal(rowIds('tr', 1, 'a').close, 'tr.s1.a-land', 'the old close id is still named, so old rows read');
 });
