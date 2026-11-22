@@ -147,3 +147,34 @@ test('a within row that is not done counts for nothing', () => {
   assert.equal(result.pass, false);
   assert.match(rangeLine(result), /^FAIL 2 range: rd\.s1\.fix-b-land has no "landed/);
 });
+
+// Row ids are at most 40 characters, so a long close row id `<name>-land` may be corrected under `<name>.landed` instead of `<name>-land.landed`.
+const LONG_CLOSE = 'rd.s1.fix-commit-gate-baseline-land';
+
+test('a close row ending in -land finds its correction row under the short id', () => {
+  const { result, calls } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', 'by hand'), row('rd.s1.a.landed', landedText(TO))]);
+  assert.match(rangeLine(result), /^PASS 2 range: 1 close rows/);
+  assert.equal(cherried(calls, TO), true);
+});
+
+test('a long fix close row id is corrected under the short id (the correction row in capitals too)', () => {
+  const { result } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(TO)), row(LONG_CLOSE, 'by hand'), row('RD.S1.FIX-COMMIT-GATE-BASELINE.LANDED', within('rd.s1.a-land'))]);
+  assert.match(rangeLine(result), /^PASS 2 range: 2 close rows/);
+});
+
+test('a correction row under the long id still works when the short id is absent', () => {
+  const { result } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', 'by hand'), row('rd.s1.a-land.landed', landedText(TO))]);
+  assert.match(rangeLine(result), /^PASS 2 range/);
+});
+
+test('a correction row under both ids is a FAIL naming both rows', () => {
+  const { result, calls } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', 'by hand'), row('rd.s1.a.landed', landedText(TO)), row('rd.s1.a-land.landed', landedText(TO))]);
+  assert.equal(result.pass, false);
+  assert.ok(withinFails(result).some((line) => /rd\.s1\.a\.landed/.test(line) && /rd\.s1\.a-land\.landed/.test(line)), result.lines.join('\n'));
+  assert.equal(cherried(calls, TO), false);
+});
+
+test('a close row id not ending in -land has only the one correction id', () => {
+  const { result } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(TO)), row('rd.s1.fix-b-land', 'by hand'), row('rd.s1.fix.landed', within('rd.s1.a-land'))]);
+  assert.match(rangeLine(result), /^FAIL 2 range: rd\.s1\.fix-b-land has no "landed/);
+});

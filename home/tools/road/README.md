@@ -43,6 +43,9 @@ evidence is `landed <to> on <base> from <from>` (the `land` workflow writes it).
 A done cell is never changed, so a close row marked done without the landed line is corrected by a second done row `<close row id>.landed`
 (e.g. `rd.s1.a-land.landed`) whose evidence holds the line; the gate reads it only when the close row is done and has no landed line of its
 own, and checks it the same way (`<to>` and `<from>` are hex shas, one range per close row).
+Ids stay at most 40 characters, so a close row id ending in `-land` may also be corrected under the id without that suffix (`rd.s1.fix-x-land`
+under `rd.s1.fix-x.landed`). Both lookups ignore case; a correction row under both ids is a FAIL line naming both. The same two ids serve
+the `landed within` row below.
 
 A close row that landed inside the same fast-forward as another close row (so it cannot have a range of its own) is closed by a done
 `<close row id>.landed` row whose evidence says `landed within <other close row id>`. The gate then gives that row no range, and

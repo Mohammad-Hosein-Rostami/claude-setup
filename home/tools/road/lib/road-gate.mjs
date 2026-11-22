@@ -6,7 +6,7 @@
 //   FAIL); 2 landing ranges of every close row of the road (`landed <to> on <base> from <from>`: `git cherry` empty, `<to>` new in this road,
 //   no repeat, `<from>` the road-start tip or another row's `<to>`, both on the base's first-parent line, ranges disjoint, every commit of
 //   `<start>..<tip>` in exactly one range; a done close row with no landed line of its own takes the line of a done `<close row id>.landed`
-//   row, never used when the close row has its own line or is not done; a done `<close row id>.landed` row saying `landed within <other close row id>` gives
+//   row (for an id ending in `-land` also `<id without -land>.landed`; both present = FAIL), never used when the close row has its own line or is not done; a done `<close row id>.landed` row saying `landed within <other close row id>` gives
 //   that close row no range, valid only when the named row is another close row of the road with a valid range of its own (no self, no chain); a steered step's lanes also need `reviewed <sha> clean` with every
 //   commit of their range in that sha); 3 `git-tidy check` exit 0; 4 `test-pass check <tip> --suite` exit 0; 5 `audit-log gate --tip <tip>` exit 0; 6 UI: when a range of
 //   the step changes UI files or a lane has a matrix, `ui-proof check --tip <tip> --against-step <road>.s<N>` exit 0 and the step-start
@@ -49,32 +49,58 @@ function rowsLine(road, rows, step, isUiPath) {
 const git = (run, repo, args) => run('git', ['-C', repo, ...args], GIT_TIMEOUT_MS);
 const isAncestor = (run, repo, a, b) => git(run, repo, ['merge-base', '--is-ancestor', a, b]).exit;
 
+const LAND_SUFFIX = '-land';
+
 /**
- * The landed line of a done close row: its own evidence, else the evidence of a done `<close row id>.landed` row (STATUS done cells are
- * never changed, so a close row marked done without the line is corrected by that row). Both are parsed by landedLine, so the same hex checks apply.
+ * The correction rows of a close row: `<id>.landed`, and for an id ending in `-land` also `<id without -land>.landed` (row ids are at most
+ * 40 characters, so the long form may not fit). Both lookups are case-insensitive; the rows found are returned in that order.
+ */
+function correctionRows(rows, id) {
+  const low = id.toLowerCase();
+  const ids = [`${low}.landed`];
+  if (low.endsWith(LAND_SUFFIX)) ids.push(`${low.slice(0, -LAND_SUFFIX.length)}.landed`);
+  return ids.map((key) => rows.get(key)).filter((found) => found !== undefined);
+}
+
+/** The one done correction row of a close row, or null: none, not done, or two of them (`ambiguousCorrection` reports that case). */
+function correctionRow(rows, row) {
+  const found = correctionRows(rows, row.id);
+  return found.length === 1 && found[0].done != null ? found[0] : null;
+}
+
+/** The ids of both correction rows when a close row without a landed line of its own has one under each id, else null. */
+function ambiguousCorrection(rows, row) {
+  if (landedLine(row.evidence) !== null) return null;
+  const found = correctionRows(rows, row.id);
+  return found.length === 2 ? found.map((correction) => correction.id) : null;
+}
+
+/**
+ * The landed line of a done close row: its own evidence, else the evidence of its done correction row (STATUS done cells are never
+ * changed, so a close row marked done without the line is corrected by that row). Both are parsed by landedLine, so the same hex checks apply.
  */
 function landedOfCloseRow(rows, row) {
   const own = landedLine(row.evidence);
   if (own !== null) return own;
-  const correction = rows.get(`${row.id}.landed`.toLowerCase());
-  return correction?.done == null ? null : landedLine(correction.evidence);
+  const correction = correctionRow(rows, row);
+  return correction === null ? null : landedLine(correction.evidence);
 }
 
 /**
- * The close row named by a done `<close row id>.landed` correction row that says `landed within <close row id>`, or null. It applies only
- * to a done close row with no landed line, and only when the correction row has no landed line either: such a close row landed inside
- * the fast-forward of the named one (one range for both) and carries no range of its own.
+ * The close row named by a done correction row that says `landed within <close row id>`, or null. It applies only to a done close row with
+ * no landed line, and only when the correction row has no landed line either: such a close row landed inside the fast-forward of the
+ * named one (one range for both) and carries no range of its own.
  */
 function withinOfCloseRow(rows, row) {
   if (landedLine(row.evidence) !== null) return null;
-  const correction = rows.get(`${row.id}.landed`.toLowerCase());
-  if (correction?.done == null || landedLine(correction.evidence) !== null) return null;
+  const correction = correctionRow(rows, row);
+  if (correction === null || landedLine(correction.evidence) !== null) return null;
   return WITHIN.exec(String(correction.evidence ?? ''))?.[1] ?? null;
 }
 
-const closeRange = (rows, row, entry, reviewed) => ({ entry, row: row.id, landed: landedOfCloseRow(rows, row), within: withinOfCloseRow(rows, row), reviewed });
+const closeRange = (rows, row, entry, reviewed) => ({ entry, row: row.id, landed: landedOfCloseRow(rows, row), within: withinOfCloseRow(rows, row), both: ambiguousCorrection(rows, row), reviewed });
 
-/** The done close rows of the road, as ranges (`landed` null when the row has no landed line; `within` the named close row or null). */
+/** The done close rows of the road, as ranges (`landed` null when the row has no landed line; `within` the named close row or null; `both` the two correction row ids when it has two). */
 function closeRanges(road, rows) {
   return laneEntries(road).flatMap((entry) => {
     const row = rows.get(entry.ids.close.toLowerCase());
@@ -87,6 +113,7 @@ function closeRanges(road, rows) {
 /** Per-row checks of line 2; returns the FAIL texts. */
 function rangeRowFails(run, ctx, range, seenTo) {
   const { repo, base, start, firstParent } = ctx;
+  if (range.both !== null) return [`2 range: ${range.row} has a correction row under both ids (${range.both.join(' and ')}); keep one`];
   if (range.within !== null) return [];
   const { landed } = range;
   if (landed === null || !HEX.test(landed.to)) return [`2 range: ${range.row} has no "landed <to> on <base> from <from>" evidence`];
