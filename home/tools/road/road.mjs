@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Purpose: CLI of a road of steps (spec-stages; README.md beside this file): check the road file, write its STATUS rows, say what the next
-//   step runs, gate a finished step, and join a lane (the contract judging of a built lane).
+//   step runs, gate a finished step, and join a lane (the scope and UI-file judging of a built lane).
 // Usage: road.mjs check <road.json>
 //        road.mjs rows <road.json> [--base <sha>] [--fix <N> <name>]
 //        road.mjs next <road.json> --budget <1-5>
 //        road.mjs gate <road.json> [--step <N>]
-//        road.mjs join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--tests <abs>] [--dispute] [--checks <cat,...>] [--json]
+//        road.mjs join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--json]
 // Exit: 0 ok / PASS, 1 refused / FAIL (also `next` printing `baseline needed: <road>.s<N>`), 2 usage (also `next` without --budget or
 //   outside 1-5, and a --base sha that is not an ancestor of the base tip or that already holds a landed patch of the road). `join`: 0 joined
 //   clean, 3 joined with findings, 1 refused, 2 usage (lib/road-join.mjs).
@@ -21,14 +21,13 @@ import { parseWorkItems } from '../estimate/lib/items.mjs';
 import { readStatusFile } from '../status/status-file.mjs';
 import { runStatus } from '../status/status.mjs';
 import { MAX_ROW_ID_CHARS, LANE_NAME, readRoad, roadRows, uiMatrixProblems } from './lib/road-file.mjs';
-import { isOn } from '../../hooks/lib/checks-on.mjs';
 import { GIT_TIMEOUT_MS, gateStep } from './lib/road-gate.mjs';
 import { joinLane } from './lib/road-join.mjs';
 import { isUiLane, landedLine, roadStartTip, stepState } from './lib/road-state.mjs';
 
-const USAGE = 'usage: road.mjs check <road.json> | rows <road.json> [--base <sha>] [--fix <N> <name>] | next <road.json> --budget <1-5> | gate <road.json> [--step <N>] | join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--tests <abs>] [--dispute] [--checks <cat,...>] [--json]';
+const USAGE = 'usage: road.mjs check <road.json> | rows <road.json> [--base <sha>] [--fix <N> <name>] | next <road.json> --budget <1-5> | gate <road.json> [--step <N>] | join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--json]';
 const TOOLS = join(dirname(fileURLToPath(import.meta.url)), '..');
-const TOOL_FILES = { 'git-tidy': 'git-tidy/git-tidy.mjs', 'test-pass': 'test-pass/test-pass.mjs', 'audit-log': 'review-tier/audit-log.mjs', 'ui-proof': 'ui-proof/ui-proof.mjs' };
+const TOOL_FILES = { 'git-tidy': 'git-tidy/git-tidy.mjs', 'ui-proof': 'ui-proof/ui-proof.mjs' };
 const HEX = /^[0-9a-f]{7,40}$/;
 const OPEN_CHECK = /^([a-z][a-z0-9-]{0,7})\.s\d+\.check$/i;
 const BASE_TAIL = /, base [0-9a-f]{40}$/;
@@ -153,7 +152,7 @@ function next(road, ctx, rest, run, isUiPath) {
   const step = road.steps[state.step - 1];
   const baseline = step.lanes.some((lane) => isUiLane(lane, isUiPath)) ? 'yes' : 'no';
   const result = { road: road.road, step: state.step, of: state.of, state: state.state, form: state.form, held: state.held, carried: state.carried,
-    lanes: state.lanes.map(({ lane }) => lane.name), writers: Math.min(state.lanes.length + state.lanes.filter(({ lane }) => lane.acceptanceTests).length, budget, MAX_BUDGET), baseline };
+    lanes: state.lanes.map(({ lane }) => lane.name), writers: Math.min(state.lanes.length, budget, MAX_BUDGET), baseline };
   if (state.state === 'build' && baseline === 'yes') {
     const label = `${road.road}.s${state.step}`;
     if (run('ui-proof', ['has', '--step', label, '--repo', road.repo], GIT_TIMEOUT_MS).exit !== 0) return { code: 1, out: `${JSON.stringify(result)}\nbaseline needed: ${label}` };
@@ -166,7 +165,7 @@ function gate(road, ctx, rest, run, isUiPath) {
   const given = flagValue(rest, '--step');
   const step = given === undefined ? stepState(road, items).step : Number(given);
   if (!Number.isInteger(step) || step < 1 || step > road.steps.length) throw new UsageError(`--step must be 1-${road.steps.length}. ${USAGE}`);
-  const result = gateStep(road, items, step, run, { isUiPath, checkOn: (category) => isOn(category) }); // $CLAUDE_CODE_SESSION_ID's /check switch
+  const result = gateStep(road, items, step, run, { isUiPath });
   return { code: result.pass ? 0 : 1, out: [...result.lines, `road ${road.road} step ${step}: ${result.pass ? 'PASS' : 'FAIL'}`].join('\n') };
 }
 
