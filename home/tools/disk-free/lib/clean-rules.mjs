@@ -17,7 +17,9 @@
 //                    folder; a linked worktree's `.git` file does not count, its repository lives elsewhere), when nothing anywhere in it
 //                    was modified or created for 2 days (owner FR5: a session that runs for days keeps only its newest 2 days) and it
 //                    holds no git work at any depth (clean-scan.mjs holdsGitWork: no linked worktree or submodule, no repository with
-//                    changes, untracked files, stashes or commits no remote holds; git that fails or a cut walk keeps it). The session's
+//                    changes, untracked files, stashes or commits no remote holds; git that fails or a cut walk keeps it), and disk-clean
+//                    first saw it over 2 days ago (first-seen.mjs: a `cp -a` copy made today has old mtimes; a folder met for the first
+//                    time is recorded at the clock and counted in context.firstSeenKept, dry runs record too). The session's
 //                    liveness does not matter here: the whole-tree age is the test, so a folder a running lane still writes stays. Any
 //                    other name, a link and a session folder the rule above took in this run (listed or removed) are never looked at.
 //                    Crash case: a `.removing-<pid>-<name>` entry a killed run left is judged by its original name, like in the rules below.
@@ -32,6 +34,7 @@
 import { accessSync, constants, statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { entriesOf, holdsGitWork, lstatOrNull, mtimeOf, touchedSince } from './clean-scan.mjs';
+import { openFirstSeen } from './first-seen.mjs';
 import { liveSessionIds } from './live-sessions.mjs';
 import { inspectRoot, isOwnAside, originalName, ownedFolder, UnsafeRoot } from './safe-remove.mjs';
 import { OLD_TEST_PREFIXES } from './test-temp-prefixes.mjs';
@@ -163,16 +166,23 @@ function isScratchLeftover(path, name) {
 }
 
 /** The cs-test-* and clone folders of one scratchpad in which nothing was modified since `cutoff`. */
-async function* scratchLeftovers(context, root, scratchpad, cutoff) {
+async function* scratchLeftovers(context, seen, root, scratchpad, cutoff) {
   if (ownedFolder(scratchpad) === null) return;
   for await (const entry of entriesOf(scratchpad)) {
     if (context.timeUp()) return;
     if (isOwnAside(entry.name)) continue;
     const name = originalName(entry.name);
     const path = join(scratchpad, entry.name);
-    // touchedSince first: it stops at the first new entry, while holdsGitWork walks the whole folder and runs git
-    const isOld = async (where = path) => isScratchLeftover(where, name) && !(await touchedSince(where, cutoff)) && !(await holdsGitWork(where));
-    if (await isOld()) yield { path, root, stillRemovable: isOld };
+    const keyPath = join(scratchpad, name); // the record's path, also for a folder renamed aside (same inode)
+    const seenBefore = (where) => {
+      const info = ownedFolder(where);
+      return info !== null && (seen.firstSeenMs(keyPath, info) ?? Infinity) < cutoff;
+    };
+    // first seen and touchedSince first: they are cheap, while holdsGitWork walks the whole folder and runs git
+    const isOld = async (where = path) => isScratchLeftover(where, name) && seenBefore(where) && !(await touchedSince(where, cutoff)) && !(await holdsGitWork(where));
+    const old = await isOld();
+    if (isScratchLeftover(path, name) && seen.isNew(keyPath, ownedFolder(path))) context.firstSeenKept = (context.firstSeenKept ?? 0) + 1;
+    if (old) yield { path, root, stillRemovable: isOld };
   }
 }
 
@@ -181,17 +191,22 @@ async function* sessionScratch(context) {
   if (trusted === null) return;
   const root = trusted.real;
   const cutoff = context.nowMs - AGE.sessionScratchMs;
-  for await (const project of entriesOf(root)) {
-    const projectPath = join(root, project.name);
-    if (context.timeUp()) return;
-    if (ownedFolder(projectPath) === null) continue;
-    for await (const session of entriesOf(projectPath)) {
+  const seen = openFirstSeen(context.home);
+  try {
+    for await (const project of entriesOf(root)) {
+      const projectPath = join(root, project.name);
       if (context.timeUp()) return;
-      const sessionPath = join(projectPath, session.name);
-      // A `.removing-*` session folder is the session-folders rule's; one that rule listed or removed in this run is not counted twice.
-      if (!SESSION_ID.test(session.name) || context.handled?.has(sessionPath) || ownedFolder(sessionPath) === null) continue;
-      yield* scratchLeftovers(context, root, join(sessionPath, SCRATCHPAD), cutoff);
+      if (ownedFolder(projectPath) === null) continue;
+      for await (const session of entriesOf(projectPath)) {
+        if (context.timeUp()) return;
+        const sessionPath = join(projectPath, session.name);
+        // A `.removing-*` session folder is the session-folders rule's; one that rule listed or removed in this run is not counted twice.
+        if (!SESSION_ID.test(session.name) || context.handled?.has(sessionPath) || ownedFolder(sessionPath) === null) continue;
+        yield* scratchLeftovers(context, seen, root, join(sessionPath, SCRATCHPAD), cutoff);
+      }
     }
+  } finally {
+    seen.save(); // also after a cut scan: what was met is recorded, and gone folders are dropped
   }
 }
 

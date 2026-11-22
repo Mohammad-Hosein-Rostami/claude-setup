@@ -5,12 +5,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { devNull } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runClean } from '../home/tools/disk-free/disk-clean.mjs';
-import { age, cliEnv, folder, NEWEST, OLD, posix, sessionFile, transcript, world } from './disk-clean-helpers.mjs';
+import { FIRST_SEEN_STORE, recordKey } from '../home/tools/disk-free/lib/first-seen.mjs';
+import { age, cliEnv, DAY_MS, folder, NEWEST, OLD, posix, sessionFile, transcript, world } from './disk-clean-helpers.mjs';
 
 const TOOL = fileURLToPath(new URL('../home/tools/disk-free/disk-clean.mjs', import.meta.url));
 const LIVE = '12345678-0000-4000-8000-00000000000a';
@@ -23,6 +24,23 @@ function liveScratchpad(w) {
   const scratchpad = join(w.claudeTmp, '-proj', LIVE, 'scratchpad');
   mkdirSync(scratchpad, { recursive: true });
   return scratchpad;
+}
+
+/** The first-seen record's file in the world's home (lib/first-seen.mjs). */
+const seenFile = (w) => join(FIRST_SEEN_STORE.folder(w.home), `${FIRST_SEEN_STORE.id}.json`);
+
+/**
+ * Writes the first-seen record as if disk-clean had first seen each folder `days` ago (a test cannot age a ctime, so the record is set
+ * directly). A `.removing-<pid>-<name>` folder is keyed by its original name, as the rule keys it.
+ */
+function seenDaysAgo(w, days, ...paths) {
+  const seen = {};
+  for (const path of paths) {
+    const keyPath = join(realpathSync(dirname(path)), basename(path).replace(/^\.removing-\d+-/, ''));
+    seen[recordKey(keyPath, lstatSync(path))] = Date.now() - days * DAY_MS;
+  }
+  mkdirSync(FIRST_SEEN_STORE.folder(w.home), { recursive: true, mode: 0o700 });
+  writeFileSync(seenFile(w), JSON.stringify({ v: 1, seen }), { mode: 0o600 });
 }
 
 /** git with a fixed identity and branch name, no config of the machine's owner. */
@@ -74,6 +92,7 @@ function fixture(w) {
   writeFileSync(paths.testFile, 'a file, not a folder');
   age(paths.testFile, OLD_DAYS);
   symlinkSync(outside, paths.link);
+  seenDaysAgo(w, OLD_DAYS, paths.oldTest, paths.oldClone, paths.newTest, paths.newClone); // only the mtime tells these apart
   return paths;
 }
 
@@ -100,6 +119,7 @@ test('a folder a lane still writes stays: one new file anywhere inside keeps it,
   const deep = folder(join(scratchpad, 'cs-test-busy', 'repo', 'src'), { days: NEW_DAYS });
   for (const part of [join(scratchpad, 'cs-test-busy', 'repo'), join(scratchpad, 'cs-test-busy')]) age(part, OLD_DAYS);
   const late = folder(join(scratchpad, 'cs-test-late'), { days: OLD_DAYS });
+  seenDaysAgo(w, OLD_DAYS, join(scratchpad, 'cs-test-busy'), late);
   const dry = await runClean({ ...w.options, apply: false });
   assert.deepEqual(listed(dry), real(late), `only the idle one: ${deep} was written a day ago`);
   const summary = await runClean({ ...w.options, beforeRemove: (path) => writeFileSync(join(path, 'written-now'), '.') });
@@ -115,6 +135,7 @@ test('a finished session folder is counted once (by session-folders), and the cu
   age(join(w.claudeTmp, '-proj', OLD), 10);
   const current = '22222222-0000-4000-8000-00000000000b';
   const currentTest = folder(join(w.claudeTmp, '-proj', current, 'scratchpad', 'cs-test-c'), { days: OLD_DAYS });
+  seenDaysAgo(w, OLD_DAYS, currentTest, join(w.claudeTmp, '-proj', OLD, 'scratchpad', 'cs-test-z'));
   const dry = await runClean({ ...w.options, apply: false, session: current });
   assert.equal(dry.rules.find((rule) => rule.name === 'session-folders').items, 1);
   assert.deepEqual(listed(dry), real(currentTest));
@@ -126,6 +147,7 @@ test('crash case: a cs-test folder a killed run left renamed aside is finished; 
   const scratchpad = liveScratchpad(w);
   const leftover = folder(join(scratchpad, '.removing-999999-cs-test-k'), { days: OLD_DAYS });
   const own = folder(join(scratchpad, `.removing-${process.pid}-cs-test-o`), { days: OLD_DAYS });
+  seenDaysAgo(w, OLD_DAYS, leftover, own);
   const leftoverOther = folder(join(scratchpad, '.removing-999999-notes'), { days: OLD_DAYS });
   const summary = await runClean(w.options);
   assert.deepEqual([summary.removed, existsSync(leftover), existsSync(own), existsSync(leftoverOther)], [1, false, true, true]);
@@ -172,9 +194,39 @@ test('git work is never removed: a linked worktree named cs-test-*, a cs-test fo
     }),
   ];
   const clean = cloneFolder(w, join(scratchpad, 'clean'), OLD_DAYS);
+  seenDaysAgo(w, OLD_DAYS, ...kept, clean); // seen long ago: only the git work keeps them
   const dry = await runClean({ ...w.options, apply: false });
   assert.deepEqual(listed(dry), real(clean));
   await runClean(w.options);
   for (const path of kept) assert.equal(existsSync(path), true, path);
   assert.equal(existsSync(clean), false);
+});
+
+test('first seen: a folder with old times that disk-clean meets for the first time (a cp -a copy) is recorded and kept, by the dry run and by --apply alike; seen 2 days ago it goes and its entry is dropped', posix, async () => {
+  const w = world();
+  const scratchpad = liveScratchpad(w);
+  const copy = folder(join(scratchpad, 'cs-test-copy'), { days: 5 }); // times as old as `cp -a` keeps them
+  const dry = await runClean({ ...w.options, apply: false });
+  assert.deepEqual([listed(dry), dry.firstSeenKept], [[], 1]);
+  const recorded = JSON.parse(readFileSync(seenFile(w), 'utf8'));
+  const [seenMs] = Object.values(recorded.seen);
+  assert.ok(Math.abs(seenMs - Date.now()) < 60_000, 'recorded at the clock');
+  const applied = await runClean(w.options);
+  assert.deepEqual([applied.removed, applied.firstSeenKept, existsSync(copy)], [0, 0, true], 'the dry run recorded it: no longer new, still too recent');
+  seenDaysAgo(w, OLD_DAYS, copy);
+  const later = await runClean({ ...w.options, apply: false });
+  assert.deepEqual(listed(later), real(copy));
+  assert.equal((await runClean(w.options)).removed, 1);
+  assert.deepEqual(JSON.parse(readFileSync(seenFile(w), 'utf8')).seen, {}, 'the entry of a folder that is gone is dropped');
+});
+
+test('a record that is not this shape (torn, older, planted) reads as empty: every folder counts as first seen and stays, and the record is written again whole', posix, async () => {
+  const w = world();
+  const scratchpad = liveScratchpad(w);
+  const oldTest = folder(join(scratchpad, 'cs-test-old'), { days: OLD_DAYS });
+  seenDaysAgo(w, OLD_DAYS, oldTest);
+  writeFileSync(seenFile(w), readFileSync(seenFile(w), 'utf8').slice(0, 20)); // cut mid-way
+  const summary = await runClean(w.options);
+  assert.deepEqual([summary.removed, summary.firstSeenKept, existsSync(oldTest)], [0, 1, true]);
+  assert.equal(Object.keys(JSON.parse(readFileSync(seenFile(w), 'utf8')).seen).length, 1);
 });

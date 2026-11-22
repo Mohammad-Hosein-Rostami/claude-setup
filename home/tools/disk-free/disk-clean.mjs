@@ -10,7 +10,7 @@
 //   Everything is looked at again right before it is removed: a session resumed during the run keeps its folder.
 //   A dry run stops looking after --scan-ms (default 30 s, a folder of a million entries is slow to read) and says so: the totals are then
 //   a lower bound. --apply has no scan limit (it runs in the background).
-// Output: what would go (or went) per rule with the item count and bytes; --json prints one line {apply, items, bytes, removed, changed, failed, refused, keptUnknown, partial, rules}.
+// Output: what would go (or went) per rule with the item count and bytes; --json prints one line {apply, items, bytes, removed, changed, failed, refused, keptUnknown, firstSeenKept, partial, rules}.
 //   Measuring sizes stops at --budget-ms (default 20 s): later items are still counted and removed, their bytes are not added up and the totals say "partial".
 //   The text report is read by people and by models, and folder names are anyone's text: every path, failure and reason is printed escaped
 //   (printable ASCII only, hooks/lib/shown-name.mjs), and the NOT removed and SKIPPED lists stop at 10 lines each plus "... and N more".
@@ -42,6 +42,7 @@ const DEFAULT_DRY_RUN_SCAN_MS = 30_000;
 const BYTES_PER_GB = 1024 ** 3;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const UNKNOWN_SESSION_IDLE_DAYS = AGE.unknownSessionFolderMs / MS_PER_DAY;
+const SCRATCH_SEEN_DAYS = AGE.sessionScratchMs / MS_PER_DAY;
 const RUN_LOCK_STALE_MS = 6 * 60 * 60 * 1000; // a run takes minutes; a lock this old was left by a killed run
 const USAGE = 'usage: disk-clean.mjs [--apply] [--json] [--all-lines] [--session <id>] [--claude-tmp <dir>] [--projects <dir>] [--tmp <dir>] [--sessions <dir>] [--figma-cache <dir>] [--now <ms>] [--budget-ms <n>] [--scan-ms <n>]';
 const VALUE_FLAGS = new Set(['--session', '--claude-tmp', '--projects', '--tmp', '--sessions', '--figma-cache', '--now', '--budget-ms', '--scan-ms']);
@@ -161,20 +162,22 @@ async function runRule(rule, context, summary) {
  * Runs the rules; with options.apply also removes what they find.
  * @param {object} options as parseArgs makes them (claudeTmp, projects, tmp, sessions, session, nowMs, budgetMs, scanMs, apply); beforeRemove(path) and afterMoveAside(path) are test hooks called before the first look and after the folder was renamed aside
  * @returns {Promise<{ items: number, bytes: number, removed: number, changed: number, failed: string[], refused: string[], keptUnknown: number, partial: boolean, rules: object[] }>}
- *   keptUnknown counts the session folders kept only because their session's transcript is not in options.projects
+ *   keptUnknown counts the session folders kept only because their session's transcript is not in options.projects; firstSeenKept the
+ *   scratchpad cs-test and clone folders this run met for the first time (lib/first-seen.mjs), kept for now
  */
 export async function runClean(options) {
   const deadlineMs = Date.now() + options.budgetMs;
   const scanEndsAt = Date.now() + (options.scanMs ?? (options.apply ? Infinity : DEFAULT_DRY_RUN_SCAN_MS));
   let scanCutShort = false;
   const refused = [];
-  const context = { ...options, home: options.home ?? homedir(), refused, keptUnknown: 0, handled: new Set(), deadlineMs, timeUp: () => (scanCutShort ||= Date.now() > scanEndsAt) };
-  const summary = { items: 0, bytes: 0, removed: 0, changed: 0, failed: [], refused, keptUnknown: 0, rules: [], partial: false };
+  const context = { ...options, home: options.home ?? homedir(), refused, keptUnknown: 0, firstSeenKept: 0, handled: new Set(), deadlineMs, timeUp: () => (scanCutShort ||= Date.now() > scanEndsAt) };
+  const summary = { items: 0, bytes: 0, removed: 0, changed: 0, failed: [], refused, keptUnknown: 0, firstSeenKept: 0, rules: [], partial: false };
   for (const rule of rulesFor()) {
     await runRule(rule, context, summary);
     if (scanCutShort) break;
   }
   summary.keptUnknown = context.keptUnknown;
+  summary.firstSeenKept = context.firstSeenKept;
   summary.partial ||= scanCutShort;
   return summary;
 }
@@ -206,6 +209,7 @@ export function report(summary, options) {
   lines.push(...listed('NOT removed', summary.failed, allLines), ...listed('SKIPPED', summary.refused, allLines));
   if (options.otherConfigDir && options.projects === undefined) lines.push('  CLAUDE_CONFIG_DIR is set: the session-folders and temp-projects rules read ~/.claude and were skipped in this run.');
   if (summary.keptUnknown > 0) lines.push(`  ${summary.keptUnknown} session folder(s) kept: no transcript in ${escaped(String(projects))} (maybe another config dir); removed after ${UNKNOWN_SESSION_IDLE_DAYS} idle days`);
+  if (summary.firstSeenKept > 0) lines.push(`  ${summary.firstSeenKept} cs-test or clone folder(s) first seen, kept: removed once first seen ${SCRATCH_SEEN_DAYS} days ago and idle as long`);
   if (summary.changed > 0) lines.push(`  ${summary.changed} item(s) changed during the run (a session was resumed) and were kept.`);
   if (summary.partial) lines.push('Some totals are a lower bound: the scan or size-measuring time limit was reached (use --scan-ms and --budget-ms for more).');
   if (!apply && summary.items > 0) lines.push('Run again with --apply to remove them.');
@@ -232,7 +236,7 @@ async function runAndPrint(options) {
   const summary = await runClean(options);
   if (options.json) {
     const rules = Object.fromEntries(summary.rules.map((rule) => [rule.name, { items: rule.items, bytes: rule.bytes }]));
-    console.log(JSON.stringify({ apply: options.apply, items: summary.items, bytes: summary.bytes, removed: summary.removed, changed: summary.changed, failed: summary.failed.length, refused: summary.refused.length, keptUnknown: summary.keptUnknown, partial: summary.partial, rules }));
+    console.log(JSON.stringify({ apply: options.apply, items: summary.items, bytes: summary.bytes, removed: summary.removed, changed: summary.changed, failed: summary.failed.length, refused: summary.refused.length, keptUnknown: summary.keptUnknown, firstSeenKept: summary.firstSeenKept, partial: summary.partial, rules }));
   } else console.log(report(summary, options));
   return summary.failed.length > 0 ? EXIT_FAILED : 0;
 }
