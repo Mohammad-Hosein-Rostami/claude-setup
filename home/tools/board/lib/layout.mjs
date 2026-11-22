@@ -11,10 +11,10 @@
 // row with every group, the most urgent listed agents, `+K more`. Urgency: quiet > over its usual time > writer > reader, then the soonest finish. A
 // finished agent shows for DONE_SHOWN_MS, then only the counts row has it. From FULL_COLUMNS two agents share a row.
 // Colour of the counts row (spec-tui-2): running work cyan, any quiet agent yellow, waiting on the owner magenta; it leads with a dim
-// `Σ` (`=` in ASCII; spec-tui-3 section labels). The strip row's group names are in their identity hue (identity.mjs).
+// `Σ` (`=` in ASCII; spec-tui-3 section labels). The strip row's group names lead with their marker and are in their identity hue (identity.mjs).
 // Invariants: pure (no I/O); every row fits look.columns; never more rows than `slots`.
-import { cleanText, fitParts, hueState, STATE } from './cells.mjs';
-import { hueOf, itemKey } from './identity.mjs';
+import { cleanText, cutWords, fitParts, hueState, STATE } from './cells.mjs';
+import { hueOf, itemKey, markerOf } from './identity.mjs';
 import { agentRow, countsText, foldRow, plainHeader, runHeader, sparkText, treeMark, urgencyOf } from './agent-rows.mjs';
 import { gitCounts } from './git-rows.mjs';
 import { WIDE_COLUMNS } from './work-row.mjs';
@@ -25,6 +25,7 @@ const DEFAULT_LINES = 24;
 const LINES_PER_ROW = 3;
 const FULL_COLUMNS = 150;
 const PAIR_GAP = '  ';
+const STRIP_NAME_CHARS = 12; // a workflow's name on the strip row, cut at a word or `-` with the cut mark
 const DONE_SHOWN_MS = 30_000;
 const DONE_COUNTED_MS = 10 * 60_000;
 const MS_PER_S = 1000;
@@ -116,11 +117,12 @@ function foldedRows(groups, room, ctx, look) {
 /** Form 3: one strip row with every group, then the most urgent agents, then `+K more`. */
 function stripRows(groups, slots, ctx, look) {
   const strip = fitParts(groups.map((group, index) => {
-    const name = group.run === null ? 'agents' : cleanText(group.run.name ?? '?', look).slice(0, 12);
     const run = group.run;
+    const hueIndex = run === null ? null : hueOf(ctx.identity, itemKey(ctx.identity, run));
+    const name = run === null ? 'agents' : `${markerOf(hueIndex, look)} ${cutWords(cleanText(run.name ?? '?', look), STRIP_NAME_CHARS, look)}`;
     const phase = run && Number.isInteger(run.phaseIndex) ? ` ${run.phaseIndex}/${run.phaseTotal ?? '?'}` : '';
     const rest = `${phase} ${countsText(group.agents, { ...look, glyph: { ...look.glyph, sep: ' ' } })} ${sparkText(group.agents, look)}`;
-    const hue = run === null ? STATE.ok : hueState(hueOf(ctx.identity, itemKey(ctx.identity, run)));
+    const hue = run === null ? STATE.ok : hueState(hueIndex);
     return { text: `${name}${rest}`, spans: [{ text: name, state: hue }, { text: rest }], drop: index };
   }), look);
   return slots <= 1 ? [strip] : [strip, ...urgentRows(groups.flatMap(listed).sort(byUrgency), slots - 1, ctx, look)];

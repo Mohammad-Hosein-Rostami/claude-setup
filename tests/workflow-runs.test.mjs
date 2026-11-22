@@ -153,6 +153,26 @@ test('control characters and over-long text in a label, a phase or a script name
   assert.ok(run.row.length <= 24 && run.row.startsWith('ro'), run.row);
 });
 
+const LONG_NAME = 'remove-modes-delta-review-pass'; // 30 characters: the screenshot's names were cut at 16 mid-word
+const WIDEST_READER_NAME = 40; // agent-rows.mjs WIDE_RUN_NAME_CHARS: a stored name over this lets the reader mark its cut
+const MAX_STORED_NAME = 64;
+
+test('a 30-character workflow name is kept whole, from the script meta and from the script file name; one of 41 to 64 is kept whole too (a reader marks its cut); a longer one is cut at 64', async () => {
+  assert.equal(LONG_NAME.length, 30);
+  const s = await session();
+  s.journal('wf_a', REVIEW_LINES);
+  s.script('wf_a', `export const meta = { name: '${LONG_NAME}', phases: [{ title: 'Review' }] };\n`);
+  assert.equal(liveRuns(s.transcriptPath, NOW)[0].name, LONG_NAME);
+  s.script('wf_a', "export const meta = { phases: [{ title: 'Review' }] };\n", LONG_NAME);
+  assert.equal(liveRuns(s.transcriptPath, NOW)[0].name, LONG_NAME);
+  for (const length of [WIDEST_READER_NAME, WIDEST_READER_NAME + 1, MAX_STORED_NAME]) {
+    s.script('wf_a', `export const meta = { name: '${'n'.repeat(length)}' };\n`);
+    assert.equal(liveRuns(s.transcriptPath, NOW)[0].name.length, length);
+  }
+  s.script('wf_a', `export const meta = { name: '${'n'.repeat(100)}' };\n`);
+  assert.equal(liveRuns(s.transcriptPath, NOW)[0].name.length, MAX_STORED_NAME);
+});
+
 test('no or odd transcript path, a missing session folder, a run id that is no plain name: nothing, never a throw', async () => {
   const s = await session();
   for (const path of [undefined, null, 5, '', 'relative/x.jsonl', join(s.dir, 'x.txt'), s.transcriptPath]) assert.deepEqual(liveRuns(path, NOW), [], String(path));

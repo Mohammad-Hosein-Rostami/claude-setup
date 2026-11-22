@@ -10,8 +10,8 @@
 //   Opus 5.5 high · ctx 99k 25% · 7d 69% left, resets Tue 20:10 · acct work
 // Rows by priority when they are short: alert, job, session; then one git row (never none: without room it rides on the session
 // row; with no repository it says so), the road, the checks row when the suite fails, the
-// first three work rows, checks, counts, the rest of the work rows, more git rows. Bold (cells.mjs) marks the one most urgent item: a question waiting, else a failing suite,
-// else context over 80 %, else a limit over 80 % used, else the longest-quiet agent.
+// first three work rows, checks, counts, the rest of the work rows, more git rows. Of the urgency states, bold (cells.mjs) marks the one most urgent item: a question waiting, else a failing suite,
+// else context over 80 %, else a limit over 80 % used, else the longest-quiet agent (`ALL`, main's git row and two 16-colour identity looks are bold too, as labels).
 // Exports: statusRows(view, look) -> string[] (never more than rowBudget(view.env) rows); sessionRow(view, look); alertRow(view, look) -> string | null; contextOf(window, env);
 // paceOf(limitsFile, nowMs).
 // Rules (audit cases of `certainty/statusline-audit.md`, fixes of display design 4.6): context is the input tokens of the last call
@@ -22,9 +22,9 @@
 // the 5 h pace (`out ~16:10 at this pace`) only when it comes before the reset, from two samples of one window, with the age of
 // the newest when older than 5 min; it never notifies. The account name is the first part dropped, with git.
 // Spec-tui-3: the session row's labels (`ctx`, `5h`, `7d`, `acct`) are dim and their values keep their colour; the work and git
-// rows take their identity hues from identity.mjs boardIdentity (ctx.identity), worked out once per render.
+// rows take their identity hues from identity.mjs boardIdentity (view.identity when the caller kept the hues, hue-store.mjs), once per render.
 // Invariants: pure (no I/O); every outside text goes through cleanText; every row fits look.columns.
-import { clockOf, cleanText, fitParts, STATE } from './cells.mjs';
+import { clockOf, cleanText, cutWords, fitParts, STATE } from './cells.mjs';
 import { repoRows } from './git-rows.mjs';
 import { boardIdentity } from './identity.mjs';
 import { countsRow, rowBudget, workRows } from './layout.mjs';
@@ -120,7 +120,7 @@ function lastSeenFive(limitsFile, nowMs) {
 
 function gitPart(git, look) {
   if (git === null || typeof git !== 'object') return null;
-  const branch = cleanText(git.branch ?? '?', look).slice(0, MAX_BRANCH_CHARS);
+  const branch = cutWords(cleanText(git.branch ?? '?', look), MAX_BRANCH_CHARS, look);
   const tree = Number.isInteger(git.changed) && git.changed > 0 ? `${git.changed} changed` : 'clean';
   const ab = wide(look) && Number.isInteger(git.ahead) && Number.isInteger(git.behind) && (git.ahead > 0 || git.behind > 0) ? ` +${git.ahead} -${git.behind}` : '';
   return { text: `${wide(look) ? 'git ' : ''}${branch}${ab}, ${tree}`, drop: 5 };
@@ -251,7 +251,7 @@ export function statusRows(view, plainLook) {
   const alert = alertRow(view, look);
   const repo = board?.repo ?? null;
   const ctx = {
-    nowMs, timeZone, at: board?.at, repo, repos: [repo, ...(Array.isArray(board?.repos) ? board.repos : [])].filter(Boolean), identity: boardIdentity(board),
+    nowMs, timeZone, at: board?.at, repo, repos: [repo, ...(Array.isArray(board?.repos) ? board.repos : [])].filter(Boolean), identity: view.identity ?? boardIdentity(board),
   };
   const road = roadRow(jobView(view.segment)?.road ?? null, board?.road ?? null, { nowMs, timeZone }, look);
   const checks = checksRow(view.checks ?? null, repo, look);

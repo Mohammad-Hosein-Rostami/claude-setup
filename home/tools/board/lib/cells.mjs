@@ -5,10 +5,11 @@
 // hueState(hue) -> state; HUE_CODES.
 // Colour (spec-tui-2, basic ANSI 16 so the terminal theme maps them on dark and light themes), one meaning each: done green (done,
 // passing, on track, ahead), run cyan (running now), warn yellow (attention soon), block red (needs action), wait magenta (waiting on
-// the owner), dim (SGR 2, secondary text); bold only for the one most urgent part of a render (a part's `bold`).
+// the owner), dim (SGR 2, secondary text); a part's `bold` marks the render's one most urgent part, and bold also stands for `ALL`,
+// main's git row and, on a 16-colour terminal, two of the identity hues.
 // Identity and section colours (spec-tui-3, "which is where"): a work item's hue (`hueState(n)`, identity.mjs picks n) is one of
 // HUE_CODES in the 256-colour cube, never a state's code; on a 16-colour terminal (TERM and COLORTERM name no 256 or true colour)
-// the hues cycle bold, underline, plain; without colour none. `road` is basic blue (the road row's label), `strong` bold with no
+// the hues cycle bold, underline, plain (WT_SESSION, Windows Terminal, counts as 256-colour); without colour none. `road` is basic blue (the road row's label), `strong` bold with no
 // colour (`ALL`, main's git row). A part may carry `spans` (texts in order whose join is its text, each with its own state).
 // Look: ASCII when CLAUDE_STATUS_ASCII=1, TERM=dumb, Windows without WT_SESSION and TERM_PROGRAM (the old console host), or a locale
 // that is set and not UTF-8; colour off when NO_COLOR is set to any non-empty value (no-color.org) or TERM=dumb.
@@ -23,8 +24,10 @@ const COLOR_CODE = {
   strong: '\u001b[1m',
 };
 /**
- * The identity hues, xterm 256-colour indexes chosen for the best contrast on both a #1e1e1e and a #ffffff background (WCAG ratio
- * 3.80 to 4.06 on each; no colour reaches 4.5:1 on both, the best possible is about 4.09): blue, orange, violet, green, pink, orchid.
+ * The identity hues, xterm 256-colour indexes chosen for the best contrast on both a #1e1e1e and a #ffffff background. Measured WCAG
+ * ratios (dark / white): 31 4.04 / 4.13, 166 4.39 / 3.80, 99 4.06 / 4.11, 64 3.93 / 4.24, 197 4.30 / 3.88, 133 4.03 / 4.13, so 3.80 to
+ * 4.39 over both; no colour reaches 4.5:1 on both (the best any cube colour reaches on both is 4.06): blue, orange, violet, green,
+ * pink, orchid.
  */
 export const HUE_CODES = [31, 166, 99, 64, 197, 133];
 const HUE_STATE = /^hue:(\d+)$/;
@@ -68,12 +71,13 @@ function wantsAscii(env, platform) {
  * @param {string} platform process.platform
  * @param {number} columns the width rows are fitted to
  * @returns {{ columns: number, ascii: boolean, color: boolean, colors256: boolean, glyph: typeof UNICODE }} the look of every row
- *   drawn for this terminal; colors256: TERM or COLORTERM names 256 or true colour (else the hues fall back to bold/underline/plain)
+ *   drawn for this terminal; colors256: TERM or COLORTERM names 256 or true colour, or WT_SESSION is set (Windows Terminal, which
+ *   sets neither of them); else the hues fall back to bold/underline/plain
  */
 export function lookOf(env, platform, columns) {
   const ascii = wantsAscii(env, platform);
   const color = !env.NO_COLOR && env.TERM !== 'dumb';
-  return { columns, ascii, color, colors256: color && COLOR_TERM.test(`${env.TERM ?? ''} ${env.COLORTERM ?? ''}`), glyph: ascii ? ASCII : UNICODE };
+  return { columns, ascii, color, colors256: color && (Boolean(env.WT_SESSION) || COLOR_TERM.test(`${env.TERM ?? ''} ${env.COLORTERM ?? ''}`)), glyph: ascii ? ASCII : UNICODE };
 }
 
 /** @returns {string} the state of identity hue `hue` (an index into HUE_CODES) */
@@ -132,19 +136,33 @@ const widthOf = (text) => [...text].length;
 /** The text before a part: ` │ ` for `bar`, the part's own `join` (e.g. one space), else ` · `. */
 const sepOf = (part, look) => (part.bar ? look.glyph.bar : part.join ?? look.glyph.sep);
 
-/** The parts joined, each painted; the last one that does not fit is cut and ends with the cut mark. */
+/** The first `keep` characters of a part's spans (the separator before it first), each in its own state. */
+function paintSpansCut(spans, keep, look, bold) {
+  let left = keep;
+  return spans.map((span) => {
+    const text = [...span.text].slice(0, left).join('');
+    left -= widthOf(text);
+    return text === '' ? '' : paint(text, span.state, look, bold);
+  }).join('');
+}
+
+/** The parts joined, each painted; the last one that does not fit is cut and ends with the cut mark (a part with spans keeps its spans' states). */
 function joined(parts, look) {
   let out = '';
   let used = 0;
   for (const [index, part] of parts.entries()) {
-    const piece = `${index === 0 ? '' : sepOf(part, look)}${part.text}`;
+    const sep = index === 0 ? '' : sepOf(part, look);
+    const piece = `${sep}${part.text}`;
     const room = look.columns - used;
     if (widthOf(piece) <= room) {
-      out += `${index === 0 ? '' : sepOf(part, look)}${paintPart(part, look)}`;
+      out += `${sep}${paintPart(part, look)}`;
       used += widthOf(piece);
       continue;
     }
     const keep = Math.max(0, room - widthOf(look.glyph.cut));
+    if (Array.isArray(part.spans) && room >= widthOf(look.glyph.cut)) {
+      return `${out}${paintSpansCut([{ text: sep }, ...part.spans], keep, look, part.bold)}${look.glyph.cut}`;
+    }
     return `${out}${paint(`${[...piece].slice(0, keep).join('')}${look.glyph.cut}`.slice(0, Math.max(0, room)), part.state, look, part.bold)}`;
   }
   return out;

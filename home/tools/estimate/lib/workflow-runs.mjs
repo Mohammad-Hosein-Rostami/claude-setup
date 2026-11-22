@@ -27,8 +27,12 @@ const MAX_SCRIPT_BYTES = 64 * 1024;
 const MAX_RUNS_READ = 8;
 const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const EVENT_TYPES = ['started', 'result']; // `launched` lines name no agent: nothing to read from them
-/** Generous on purpose: this is the stored name, and each reader cuts it for its width (the status line at a `-` or word with `…`, cells.mjs cutWords). 16 here cut names mid-word. */
-const MAX_NAME_CHARS = 40;
+/**
+ * Generous on purpose: this is the stored name, and each reader cuts it for its width (the status line at a `-` or word with `…`,
+ * cells.mjs cutWords). It is the run id's own cap and over the widest reader's 40, so a reader always sees that a name was longer
+ * and marks the cut; at 16 and at 40 a long name arrived cut mid-word and was drawn as if whole.
+ */
+const MAX_NAME_CHARS = 64;
 const MAX_ROW_CHARS = 24;
 const MAX_PHASE_CHARS = 24;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;

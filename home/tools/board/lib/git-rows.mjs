@@ -14,7 +14,7 @@
 // branch (identity.mjs, ctx.identity), the colour its workflow's row uses; the main worktree's `⎇ main` is bold with no hue.
 // Invariants: pure (no I/O); every name goes through cleanText; every row fits look.columns.
 import { cleanText, cutWords, durationText, fitParts, hueState, STATE } from './cells.mjs';
-import { hueOf, markerOf } from './identity.mjs';
+import { hueOf, markerOf, worktreeKey } from './identity.mjs';
 import { WIDE_COLUMNS } from './work-row.mjs';
 
 const MS_PER_S = 1000;
@@ -23,6 +23,7 @@ const STALE_S = 60;
 const MIN_PER_DAY = 24 * 60;
 const OLD_DAYS = 2;
 const MAX_NAME_CHARS = 24;
+const BRANCH_CHARS = 32;
 const MAX_AGENT_NAMES = 3;
 const AGENT_NAME_CHARS = 16;
 const GLYPH = { up: '↑', down: '↓', dirty: '●', clean: '✓', old: '⚠' };
@@ -32,8 +33,8 @@ const isCount = (value) => Number.isInteger(value) && value >= 0;
 const wide = (look) => look.columns >= WIDE_COLUMNS;
 const glyphs = (look) => (look.ascii ? ASCII_GLYPH : GLYPH);
 const gitGlyph = (look) => (look.ascii ? 'git' : '⎇');
-/** A lane worktree's hue: its branch's (the name a workflow on it takes), else its folder name's. */
-const hueOfWorktree = (wt, ctx) => hueOf(ctx?.identity, wt.branch ?? wt.name);
+/** A lane worktree's hue: its branch's (the name a workflow on it takes), else its folder name's; a workflow's isolated worktree takes the workflow's. */
+const hueOfWorktree = (wt, ctx) => hueOf(ctx?.identity, worktreeKey(ctx?.identity, wt));
 const worktreesOf = (repo) => (Array.isArray(repo?.worktrees) ? repo.worktrees.filter((wt) => wt !== null && typeof wt === 'object') : []);
 
 /** Commits ahead/behind the base and the changed files: `↑2↓1 ●3`, `✓` when clean and level. */
@@ -105,7 +106,7 @@ function worktreeRow(wt, ctx, look) {
   const hue = hueOfWorktree(wt, ctx);
   return fitParts([
     { text: `${gitGlyph(look)} ${markerOf(hue, look)} ${cutWords(cleanText(wt.name, look), MAX_NAME_CHARS, look)}`, state: hueState(hue) },
-    { text: wt.branch && wt.branch !== wt.name ? cleanText(wt.branch, look).slice(0, 32) : '', state: hueState(hue), drop: 4 },
+    { text: wt.branch && wt.branch !== wt.name ? cutWords(cleanText(wt.branch, look), BRANCH_CHARS, look) : '', state: hueState(hue), drop: 4 },
     { text: stateText(wt, look) }, { ...upstreamPart(wt, look), drop: 3 }, { text: wt.op ? cleanText(wt.op, look) : '', state: STATE.warn },
     { text: isCount(wt.ageMin) ? `last commit ${durationText(wt.ageMin)} ago` : '', state: STATE.dim, drop: 2 },
     { text: agentsText(wt, look), drop: 1 },

@@ -3,10 +3,11 @@
 // Reads: the status input (stdin JSON), the estimate cache entry of the session's job (tools/estimate/lib/segment-cache.mjs), the
 // session's board file (tools/board/lib/refresh.mjs), its asking marker (hooks/lib/asking-marker.mjs: a question waits 60 s, the
 // board's idle refresh every 60 s would miss it), this account's last-seen limits file (tools/estimate/lib/limits-store.mjs) and
-// the session's `/check` switch (hooks/lib/checks-on.mjs: a file under 4 KB and categories.json, for the checks row).
+// the session's `/check` switch (hooks/lib/checks-on.mjs: a file under 4 KB and categories.json, for the checks row) and the identity
+// hues kept for the board's items (tools/board/lib/hue-store.mjs: a small file in the board cache, so an item's colour holds).
 // Writes (spec-p5 `r9-statusline`, last-seen files): this account's limit sample when `rate_limits` changed (CLAUDE_ACCOUNT; none
 // without it, so accounts never mix) and the session's last-seen cost (~/.claude/state/last-seen/<session>.json, the API-price
-// equivalent `/where` shows; `$` is not on the line, audit case 11).
+// equivalent `/where` shows; `$` is not on the line, audit case 11) and, when the board's items got new hues, that hue file.
 // Spawns: only the claimed detached refreshes (the estimate cache's and the board's, one at a time each); no git, no launcher.
 // Never blank: an error while drawing prints the session row and a `status line error: <reason>` line; an error before that (reading
 // the input or the caches) prints the error line alone; exit 0 always (an empty output or a non-zero exit blanks the row).
@@ -14,6 +15,7 @@ import { readAsking } from './hooks/lib/asking-marker.mjs';
 import { offCategories, onCategories } from './hooks/lib/checks-on.mjs';
 import { isSessionId, writeSessionFile } from './hooks/lib/session-store.mjs';
 import { lookOf } from './tools/board/lib/cells.mjs';
+import { identityOf } from './tools/board/lib/hue-store.mjs';
 import { claimBoardRefresh, readBoard, startBoardRefresh } from './tools/board/lib/refresh.mjs';
 import { sessionRow, statusRows } from './tools/board/lib/render.mjs';
 import { systemTimeZone } from './tools/estimate/lib/local-clock.mjs';
@@ -70,8 +72,9 @@ function render(d) {
     // The project's STATUS.md is this session's job only when it changed during the session (audit case 2).
     projectSinceMs: typeof duration === 'number' ? nowMs - duration : nowMs,
   });
+  const board = sessionBoard(d, nowMs);
   const view = {
-    input: d, segment, board: sessionBoard(d, nowMs), asking: isSessionId(d.session_id) ? readAsking(d.session_id, process.env, nowMs) : null,
+    input: d, segment, board, identity: identityOf(d.session_id, board, { nowMs }), asking: isSessionId(d.session_id) ? readAsking(d.session_id, process.env, nowMs) : null,
     limitsFile: readLimits(account), account, env: process.env, nowMs, timeZone: systemTimeZone(), checks: checksOf(d.session_id),
   };
   const look = lookOf(process.env, process.platform, terminalColumns());

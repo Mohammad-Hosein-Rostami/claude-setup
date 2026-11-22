@@ -1,5 +1,6 @@
 // The board refresher's own cache files (spec-tui "Data and speed"): per session the agent transcript cursors and the git cache,
-// and one `pools` file of agent run times per type. Only the detached refresh reads and writes them; the status line never does.
+// and one `pools` file of agent run times per type. Only the detached refresh reads and writes them; the status line never does,
+// except `<session>-hues.json` (hue-store.mjs: the identity hues kept for the items on the board), which the status line and `/where` use.
 // Exports: cacheDir(env), readCacheFile(name, env, maxBytes) -> object | null, writeCacheFile(name, value, env, maxBytes) -> boolean.
 // File: ~/.claude/state/board-cache/<name>.json, through hooks/lib/session-store.mjs (no links, 0600, temp file and rename; files
 // older than 7 days are swept on write, so a session's cache goes with its board).

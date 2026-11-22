@@ -21,6 +21,7 @@ import { readAsking } from '../../hooks/lib/asking-marker.mjs';
 import { offCategories, onCategories } from '../../hooks/lib/checks-on.mjs';
 import { isSessionId, readSessionFile } from '../../hooks/lib/session-store.mjs';
 import { lookOf } from './lib/cells.mjs';
+import { identityOf } from './lib/hue-store.mjs';
 import { findTranscript, readBoard, refreshBoard } from './lib/refresh.mjs';
 import { whereTree } from './lib/tree.mjs';
 import { latestSample, limitsDir, readLimits } from '../estimate/lib/limits-store.mjs';
@@ -113,8 +114,9 @@ function lastSeenOf(session) {
 function whereLines(session, columns, args) {
   const nowMs = Date.now();
   const projectDir = flagValue(args, '--project') ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+  const board = readBoard(session);
   const view = {
-    segment: estimateSegment({ projectDir, sessionId: session }), board: readBoard(session), asking: isSessionId(session) ? readAsking(session) : null,
+    segment: estimateSegment({ projectDir, sessionId: session }), board, identity: identityOf(session, board, { nowMs }), asking: isSessionId(session) ? readAsking(session) : null,
     limits: allLimits(), lastSeen: lastSeenOf(session), nowMs, timeZone: systemTimeZone(),
     checks: isSessionId(session) ? { on: onCategories(session), off: offCategories(session) } : null,
   };

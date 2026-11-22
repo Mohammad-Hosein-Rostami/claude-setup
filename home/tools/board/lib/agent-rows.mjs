@@ -39,6 +39,8 @@ const DOING_CHARS = 24;
 const WIDE_DOING_CHARS = 36;
 const RUN_NAME_CHARS = 28;
 const WIDE_RUN_NAME_CHARS = 40;
+const PHASE_CHARS = 16;
+const PURPOSE_CHARS = 32;
 const MARKER_CHARS = 2; // the identity marker and its space before an agent's name
 const RUN_BAR_CELLS = 10;
 const NARROW_RUN_CELLS = 6;
@@ -246,14 +248,14 @@ export function runHeader(run, agents, ctx, look) {
   const purpose = run.purpose ? cleanText(run.purpose, look) : run.row ? cleanText(run.row, look) : '';
   const total = Number.isInteger(run.agentsTotal) ? run.agentsTotal : (run.started ?? 0);
   const done = Number.isInteger(run.agentsDone) ? run.agentsDone : (run.done ?? 0);
-  const phase = typeof run.phase === 'string' ? cleanText(run.phase, look).slice(0, 16) : '';
+  const phase = typeof run.phase === 'string' ? cutWords(cleanText(run.phase, look), PHASE_CHARS, look) : '';
   const phaseText = phase ? (wide(look) ? `phase ${run.phaseIndex || '?'}/${run.phaseTotal ?? '?'} ${phase}` : `${phase} ${run.phaseIndex || '?'}/${run.phaseTotal ?? '?'}`) : '';
   const stopped = run.state !== 'run' ? { text: `${cleanText(run.state, look)} ${run.quietMin} min`, state: STATE.warn } : null;
   const left = isNumber(run.leftMin) ? `~${timeText(run.leftMin, look)}${wide(look) ? ' left' : ''}` : '';
   const finish = isNumber(run.leftMin) ? clockOf((ctx.at ?? ctx.nowMs) + run.leftMin * MS_PER_MIN, ctx.nowMs, ctx.timeZone) : '';
   return fitParts([
     { text: name, state: hue }, { text: onBranch, state: hue, drop: 1 },
-    { text: purpose ? `${wide(look) ? 'for ' : ''}${purpose.slice(0, 32)}` : '', drop: 4 }, { text: phaseText, drop: 2 },
+    { text: purpose ? `${wide(look) ? 'for ' : ''}${cutWords(purpose, PURPOSE_CHARS, look)}` : '', drop: 4 }, { text: phaseText, drop: 2 },
     { text: `${barText({ done: runShare(done, total, agents) }, wide(look) ? RUN_BAR_CELLS : NARROW_RUN_CELLS, look)} ${done}/${total} done`, state: done >= total && total > 0 ? STATE.done : STATE.run },
     { text: ctx.folded && agents.length > 0 ? `${countsText(agents, look)} ${sparkText(agents, look)}` : countsText(agents, look), state: quietIn(agents) ? STATE.warn : STATE.ok, drop: 3 },
     stopped ?? { text: left }, { text: stopped ? '' : finish, state: STATE.dim, drop: 2 },
