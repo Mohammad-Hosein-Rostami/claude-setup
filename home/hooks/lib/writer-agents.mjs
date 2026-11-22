@@ -9,8 +9,8 @@
 // stop is still listed in the next session. readOnlyAgents keeps the ids of started read-only launches after their stop, because
 // commit-gate's read-only hold runs on the same SubagentStop as the stop record (hooks of one event run in parallel).
 // Flags (round 9, r9-writer-gate): `isolated` (launched with isolation "worktree", or a brief whose `worktree:` line names a lane worktree
-// laneWorktreeOf accepts and no open record of the session holds, lib/agent-launches.mjs) and `readOnly` (a read-only brief, isReadOnlyBrief). The `worktree:` value is the writer's own text, so it is
-// trusted only after `git worktree list` of that folder lists its real path as a linked worktree that is not the lead's folder; git runs
+// laneWorktreeOf accepts and no open record of the session holds, lib/agent-launches.mjs) and `readOnly` (a read-only brief,
+// isReadOnlyBrief). The `worktree:` value is the writer's own text, so it is trusted only after `git worktree list` of that folder lists its real path as a linked worktree that is not the lead's folder; git runs
 // hardened (lib/gated-folder.mjs runGit) within WORKTREE_DEADLINE_MS, and a git that fails, hangs or is missing means not isolated.
 // Invariants: never throws; the read functions answer false or [] for a store that is missing or unusable. callCounterPath and
 // agentTypeOf are called by lib/agent-launches.mjs, which imports this file (each file calls the other's functions only after loading).
@@ -168,8 +168,8 @@ function linkedWorktree(value, leadFolders, deadline) {
 /**
  * The lane worktree a writer brief names: the first `worktree: <absolute path>` line, in the prompt (its first MAX_SCAN_CHARS) or in a
  * brief file the prompt names (a regular file, all of its first BRIEF_FILE_BYTES; at most MAX_BRIEF_FILES), that linkedWorktree accepts.
- * A worktree another running writer already holds is refused later, under the launch record's lock (lib/agent-launches.mjs `held`). Why: a lead that made a writer's
- * worktree itself (`git worktree add -b <branch> <path> <base>`) gives the writer its own folder as surely as `isolation: "worktree"`.
+ * A worktree another running writer already holds is refused later, under the launch record's lock (lib/agent-launches.mjs `held`).
+ * Why: a lead that made a writer's worktree itself (`git worktree add -b <branch> <path> <base>`) gives the writer its own folder as surely as `isolation: "worktree"`.
  * @param {unknown} prompt tool_input.prompt
  * @param {unknown} cwd the hook input cwd (the lead's folder; else this process's folder)
  * @param {Record<string, string | undefined>} env HOME / USERPROFILE for `~/`, CLAUDE_PROJECT_DIR (also the lead's folder)
