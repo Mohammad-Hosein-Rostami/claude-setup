@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // Purpose: CLI for recall, a local search over past Claude Code sessions, their live checkpoint notes and project
 // notes: lexical + bge-m3 + qwen3-embedding-4b fused, then reranked by qwen3-reranker (0.6b, or 4b with --deep).
-// Commands: `recall "<query>"` (= search), `--owner` (the owner's own messages of a session), index, search, show, stats, embed, eval, status, backfill (see README.md).
+// Commands: `recall "<query>"` (= search), `--owner` (the owner's own messages of one session or all of them, `--full` for each whole message), index, search, show, stats, embed, eval, status, backfill (see README.md).
 // Exports: none. Env: RECALL_DB (index file), RECALL_ROOT (transcripts dir), RECALL_HOME (project-notes/ and
 // recall.json), RECALL_OLLAMA_URL and RECALL_RERANK_URL (loopback only), RECALL_EMBED_MODEL (pins one model, no reranker).
 // Exit codes: 0 ok, 2 usage or runtime error. Never prints stack traces for expected errors. Every stage that is
 // unusable prints one stderr line (`recall: semantic off (<reason>)`, `recall: skipped <stage> (<reason>)`) and the
 // answer comes from the next cheaper stage.
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { indexAll, resolveRoot } from './lib/indexer.mjs';
 import { isBusyError, openStore } from './lib/store.mjs';
@@ -20,9 +20,9 @@ import { cmdBackfill, cmdStatus } from './lib/cli-admin.mjs';
 import { parseLists, runSearch } from './lib/pipeline.mjs';
 import { rerankBase } from './lib/rerank.mjs';
 import { MERGE_MODES } from './lib/merge.mjs';
-import { findSession, isProgramSession, NON_INTERACTIVE_NOTE, OWNER_HEADER, ownerMessages } from './lib/owner-messages.mjs';
+import { findSession, isProgramSession, listSessions, NON_INTERACTIVE_NOTE, OWNER_HEADER, ownerMessages } from './lib/owner-messages.mjs';
 
-const USAGE = 'usage: recall "<query>" [--session current|<id>] [--deep] [--k 8] | recall --owner [--session current|<id>] [--since YYYY-MM-DD] | recall <index [--full] [--model m] | search "<query>" [--project s] [--since YYYY-MM-DD] [--kind k] [--limit N] [--json] | show <id> [--around N] | stats | status | backfill [--min-messages 20] [--yes] | embed [--model m] | eval <questions.jsonl> [--session-file <path>] [--k 1,5,10]>; search/eval also take [--no-semantic] [--merge add|rrf] [--model m] [--lists lex,bge,qwen] [--rerank N] (semantic and the reranker are automatic when Ollama, vectors and the reranker files exist)';
+const USAGE = 'usage: recall "<query>" [--session current|<id>] [--deep] [--k 8] | recall --owner [--session current|all|<id>] [--since YYYY-MM-DD] [--full] | recall <index [--full] [--model m] | search "<query>" [--project s] [--since YYYY-MM-DD] [--kind k] [--limit N] [--json] | show <id> [--around N] | stats | status | backfill [--min-messages 20] [--yes] | embed [--model m] | eval <questions.jsonl> [--session-file <path>] [--k 1,5,10]>; search/eval also take [--no-semantic] [--merge add|rrf] [--model m] [--lists lex,bge,qwen] [--rerank N] (semantic and the reranker are automatic when Ollama, vectors and the reranker files exist)';
 const SEARCH_INDEX_BUDGET_MS = 3000;
 const DEFAULT_LIMIT = 8;
 const DEFAULT_AROUND = 2;
@@ -196,22 +196,47 @@ async function cmdEval(store, { values, positionals }) {
   console.log(formatReport(scoreEval(questions, (q) => hitsById.get(q.id), { sessionFile: resolve(sessionFile), ks })));
 }
 
+const ALL_SESSIONS = 'all';
+const SECTION_NAME_UNSAFE = /[^\w.-]/g;
+
+/** One session's lines: `> <number>\t<time>\t<text>`; `all` puts a `# <session id>` line before each session that has messages. */
+async function printOwnerMessages(file, { since, full, section }) {
+  let printedSection = !section;
+  for await (const { index, time, text } of ownerMessages(file, { since, full })) {
+    if (!printedSection) {
+      const note = await isProgramSession(file) ? ' (non-interactive)' : '';
+      console.log(`# ${basename(file, '.jsonl').replace(SECTION_NAME_UNSAFE, '?')}${note}`);
+      printedSection = true;
+    }
+    console.log(`> ${index}\t${time}\t${text}`);
+  }
+}
+
 /**
- * `recall --owner`: what the owner typed in one session (default: this one), oldest first, masked, quoted. The header
- * line is always the first line printed, also for an empty session and before an error. Needs no index.
+ * `recall --owner`: what the owner typed in one session (default: this one) or in every session (`--session all`,
+ * oldest file first), masked, quoted; `--full` prints each whole message instead of its first 300 characters. The
+ * header line is always the first line printed, also for an empty result and before an error. Needs no index.
  */
 async function cmdOwner({ values }) {
-  let file;
+  const all = values.session === ALL_SESSIONS;
+  let files;
   try {
-    const session = sessionFilter(values.session ?? 'current');
+    const session = all ? undefined : sessionFilter(values.session ?? 'current');
     if (values.since && !DATE_PATTERN.test(values.since)) throw new UsageError('--since must be YYYY-MM-DD');
-    file = findSession(resolveRoot(), session);
+    if (all) {
+      const found = listSessions(resolveRoot());
+      if (found.outside > 0) console.error(`recall: left out ${found.outside} session file(s) that lie outside the transcripts folder`);
+      files = found.files;
+    } else {
+      files = [findSession(resolveRoot(), session)];
+    }
   } catch (error) {
     console.log(OWNER_HEADER);
     throw error instanceof UsageError ? error : new UsageError(error.message);
   }
-  console.log(OWNER_HEADER + (await isProgramSession(file) ? NON_INTERACTIVE_NOTE : ''));
-  for await (const { index, time, text } of ownerMessages(file, { since: values.since })) console.log(`> ${index}\t${time}\t${text}`);
+  const program = !all && await isProgramSession(files[0]);
+  console.log(OWNER_HEADER + (program ? NON_INTERACTIVE_NOTE : ''));
+  for (const file of files) await printOwnerMessages(file, { since: values.since, full: Boolean(values.full), section: all });
 }
 
 const COMMANDS = {

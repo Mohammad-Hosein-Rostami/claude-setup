@@ -59,7 +59,7 @@ node home/tools/recall/recall.mjs search "<query>" [--project <substr>] [--since
                                    [--kind user|assistant|summary|agent|doc|note] [--session current|<id>] [--deep] [--k N] [--limit N=8] [--json]
                                    [--no-semantic] [--merge add|rrf] [--model <ollama model>]
 node home/tools/recall/recall.mjs show <id> [--around N=2]
-node home/tools/recall/recall.mjs --owner [--session current|<id>] [--since YYYY-MM-DD]
+node home/tools/recall/recall.mjs --owner [--session current|all|<id>] [--since YYYY-MM-DD] [--full]
 node home/tools/recall/recall.mjs stats
 node home/tools/recall/recall.mjs embed [--model bge-m3]
 node home/tools/recall/recall.mjs eval <questions.jsonl> [--session-file <main.jsonl>] [--k 1,5,10] [--no-semantic]
@@ -77,7 +77,18 @@ cross-session messages, hook output, unknown wrappers), the text from a hyphenat
 message, compaction summaries, skill text and `!` shell captures. The session file must really lie under the
 transcripts folder (links out are refused).
 
-The first 2,000 characters of a message are masked (`lib/owner-mask.mjs`), then cut to 300. `redact` runs first; then a
+`--full` prints each whole message instead of its first 300 characters (still one line, so a message cannot forge a
+second line). `--session all` lists every session of every project folder (`<root>/<project>/<id>.jsonl`; subagent
+files are not included), oldest file first (by change time), each session that has messages under a `# <session id>`
+line (`(non-interactive)` added for a program-written session); numbers restart at 1 in each session. With `all` the
+header is printed once, a link out of the transcripts folder is left out with one stderr line, and no transcripts (or no
+transcripts folder) gives the header alone and exit 0. A broken JSON line is skipped, and a transcript line over
+8,000,000 characters is skipped, so memory stays bounded by that line, not by the file.
+
+The first 2,000 characters of a message are masked (`lib/owner-mask.mjs`), then cut to 300; with `--full` the whole
+message is masked in pieces of at most 2,000 characters (`maskWholeOwnerText`: one `redact` call over megabytes overflows
+the stack). A label that ends a piece still masks the first line of the next; a line over 2,000 characters that holds a
+credential word is masked whole, and a word over 2,000 characters prints as `[masked]`. `redact` runs first; then a
 strong credential word (password, secret, token, api key, pass, pw, typos and Finglish forms such as `ramz`, `رمز`,
 `پسورد`, `توکن` and their suffixed forms) masks the rest of its line and every digit, mixed-case or symbol token
 before it, and the whole next line when only a separator or filler word follows it; an ambiguous word (key, code, pin, otp, user, login, `کد`, `کلید`, `نام کاربری`) masks the values

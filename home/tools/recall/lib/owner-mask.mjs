@@ -1,12 +1,13 @@
 // Purpose: mask credentials in an owner message for `recall --owner`, with the rule "when in doubt print [masked]".
-// Exports: maskOwnerText, MASKED, MAX_MASK_INPUT_CHARS.
+// Exports: maskOwnerText, maskWholeOwnerText, MASKED, MAX_MASK_INPUT_CHARS.
 // Invariants: pure; works on at most MAX_MASK_INPUT_CHARS characters (a token cut by that limit is dropped whole, so a
 // value never prints in part); the text is normalised first (NFKC, Arabic ي/ك to Persian ی/ک, invisible characters,
 // harakat and tatweel removed, Persian and Arabic-Indic digits to ASCII); then redact() (kept as it was), then three
 // rules: a strong credential word masks the rest of its line (and the next line when nothing follows it) and the
 // value-looking tokens before it, an ambiguous word (key, code, pin, user ...) masks the values after it, and
 // value-looking tokens are masked everywhere. Residual risk: a password that is an ordinary word with no label near
-// it cannot be recognised.
+// it cannot be recognised. maskWholeOwnerText masks a message of any length in pieces of at most MAX_MASK_INPUT_CHARS
+// (redact() overflows the stack on megabytes of dashes, so one call over a whole message is not safe).
 import { redact } from './redact.mjs';
 
 export const MASKED = '[masked]';
@@ -131,4 +132,70 @@ function boundedText(text) {
  */
 export function maskOwnerText(text) {
   return maskValueTokens(maskKeywordLines(redact(normalise(boundedText(String(text))))));
+}
+
+/**
+ * Pieces of a line longer than MAX_MASK_INPUT_CHARS. A line with a credential word anywhere is masked whole (a piece
+ * cannot know what came before it); else it is cut at whitespace, and a word longer than a piece prints as [masked].
+ */
+function splitLongLine(line) {
+  if (STRONG.test(line) || AMBIGUOUS.test(line)) return [MASKED];
+  const pieces = [];
+  const whitespace = /\s/g;
+  let start = 0;
+  while (line.length - start > MAX_MASK_INPUT_CHARS) {
+    const cut = line.slice(start, start + MAX_MASK_INPUT_CHARS).search(/\s\S*$/);
+    if (cut > 0) {
+      pieces.push(line.slice(start, start + cut));
+      start += cut;
+    } else {
+      pieces.push(MASKED);
+      whitespace.lastIndex = start + MAX_MASK_INPUT_CHARS;
+      start = whitespace.exec(line)?.index ?? line.length;
+    }
+  }
+  pieces.push(line.slice(start));
+  return pieces;
+}
+
+/** Whether the last non-empty line names a credential and leaves its value to the next line. */
+function endsWithBareLabel(lines) {
+  const last = lines.findLast((line) => line.trim());
+  const label = last === undefined ? null : STRONG.exec(last);
+  return label !== null && LABEL_ENDS_LINE.test(last.slice(label.index + label[0].length));
+}
+
+/**
+ * A whole message with credentials masked, with the same rules as maskOwnerText: lines are masked in pieces of at
+ * most MAX_MASK_INPUT_CHARS characters, and a label that ends one piece still masks the first line of the next.
+ * A message that fits in one piece gives exactly maskOwnerText's result.
+ * @param {string} text the owner's words, any length.
+ * @returns {string} masked text (line breaks kept).
+ */
+export function maskWholeOwnerText(text) {
+  const masked = [];
+  let piece = [];
+  let pieceChars = 0;
+  let maskNextLine = false;
+  const flush = () => {
+    if (piece.length === 0) return;
+    const first = maskNextLine ? piece.findIndex((line) => line.trim()) : -1;
+    if (first >= 0) {
+      piece[first] = MASKED;
+      maskNextLine = false;
+    }
+    masked.push(maskOwnerText(piece.join('\n')));
+    maskNextLine ||= endsWithBareLabel(piece);
+    piece = [];
+    pieceChars = 0;
+  };
+  for (const line of normalise(text).split('\n')) {
+    for (const part of line.length > MAX_MASK_INPUT_CHARS ? splitLongLine(line) : [line]) {
+      if (pieceChars + part.length + 1 > MAX_MASK_INPUT_CHARS) flush();
+      piece.push(part);
+      pieceChars += part.length + 1;
+    }
+  }
+  flush();
+  return masked.join('\n');
 }
