@@ -83,8 +83,3 @@ A hard algorithm, a concurrency fix, a performance trick or a legal rule can be 
 1. Keep it in one file or function with a clear name.
 2. Explain it where it lives: what it does, why the simple version is not enough, what must stay true.
 3. Test the edge that forced it, and record why if a later developer might "clean it up".
-
-## Checking
-`node ~/.claude/tools/readable/readable.mjs check <dir> --changed` finds what your change added: a new unclear name,
-a new folder with no README, a new file with no header, an uncommented config key. Fix those; list older ones as seen.
-A reviewer judges the rest. In a team repo, keep a personal allow-list in `.claude/readable.local.json`, uncommitted.

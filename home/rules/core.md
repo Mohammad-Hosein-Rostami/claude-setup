@@ -1,38 +1,38 @@
-# Core rules (always on): id | rule | check
-C1 | KISS/YAGNI: build only what the task asks | rev
-C2 | Reuse existing helpers; dedupe at the 3rd use | jscpd, rev
-C3 | One job per function: <=40 lines, <=4 params, depth <=3, so each one is read and tested whole | eslint
-C4 | Files <=300 lines; split by responsibility, so a reader holds one file in mind | eslint
-C5 | Intent-revealing names; no data/tmp/util/helper | eslint, rev
-C6 | No magic numbers or strings; use named constants | eslint
-C7 | Depend on interfaces at real boundaries (an external system, a second implementation or a test double); compose over inherit | rev
-C8 | Comments say why, not what; delete dead code | eslint, knip
-C9 | Never swallow errors; no empty catch; fail fast | eslint, grep
-C10 | Validate all external input at the boundary with a schema | grep, rev
-C11 | With `test` on (/check): new logic ships with a test that fails without it; new behaviour gets acceptance tests from the spec before the code; a bug fix starts with a failing repro. Off: the spec's acceptance lines come first and the reply says "not checked: test" | rev
-C12 | Before done, run the checks the owner asked for: the categories he turned on with /check; list the rest as "not checked: <categories>" | rev
-C13 | Never weaken checks: no ts-ignore, eslint-disable, skip, only; a silenced check hides the defect it exists to catch (a category left off by /check is not run and is named "not checked", never silenced in the code) | grep diff
-C14 | Add no dependency unless needed; verify it exists | audit
-C15 | No secrets in code, logs or commits | gitleaks
-C16 | Small atomic Conventional Commits after every green step; never end a turn or an agent run with uncommitted work (commit-gate blocks it) | commitlint, commit-gate
-C17 | Match the repo's existing conventions; read neighbours first | rev
-C18 | Touch only files the task needs | diff vs file list
-C19 | TS strict, no any, no unexplained !, exhaustive switch | tsc, eslint
-C20 | Immutable and pure by default; side effects at the edges | eslint, rev
-C21 | Leave formatting to the formatter | formatter hook
-C22 | Fix the root cause, not the symptom | rev
-C28 | When an approach fails twice, change approach (root-cause-debug, deep-debugger, /escalate) and keep going until done | rev
-C23 | Grep, then read line ranges; no cat of big files; show failing test lines only | rev
-C24 | Delegated work returns <=300 words with file:line evidence; a smaller cap in the agent file or the brief wins | rev
-C25 | One task per session; compact at a natural seam, never stop a run for context size | usage
-C26 | Every source file you create or substantially edit opens with a header comment (purpose, exports, invariants); a folder of 3+ files has a README | rev
-C27 | Public functions and types you create or substantially edit have doc comments (what, why, args, returns, errors); TODO(ref): reason | rev
-C29 | Done means fresh evidence for the categories on: verify commands ran; no test deleted, skipped, `.only` or weakened (only a test's wording may change, with the reason in the commit body); the categories off are named "not checked" | verify-done, pre-commit (with `test` on)
-C30 | Bash for the guard: write the command word out (no `$VAR` as the command) and secrets via env or file; when the guard bounces a command it gives the fix or the advice: send the fix, follow the advice (an unanswered ask stalls a run up to 2 min) | guard log
-C31 | Human-first: a developer with no AI can find, read, run and change it; of two designs with the same result take the easier to read; never trade away scope, accuracy or a performance target for it | rev
-C32 | New files and folders follow the language or framework's standard layout and are named for what they hold; no new misc/utils/common folders; in an existing repo follow its layout (C17) | readable, rev
-C33 | No abstraction with a single use: no interface with one implementation, pass-through wrapper, factory, generic layer or option "for later"; shared code is extracted per C2 | rev
-C34 | Docs in proportion, in the repo's existing places and format: a small fix needs only a clear commit message; a new module or changed behaviour updates the README of its area; a choice others would question gets a decision record where the repo keeps them (else a comment or the commit body); a changelog line only if the repo keeps one | readable, rev
-C35 | Config values you add or change explain themselves: a comment for any non-obvious value, units in the name or comment; do not split one setting across files; local values go in a git-ignored file with an example | rev
-C36 | C31-C35 govern new work and the lines a task changes. Existing code keeps its conventions (C17) and files the task does not need stay untouched (C18): no renames, moves, restructures, added headers or READMEs for old code unless the owner asks; report what you saw instead | rev
-C37 | Git history is one line at all times: rebase onto the base, land with `git merge --ff-only`, `git pull --rebase`, no merge commits; once landed, delete the branch and its worktree (`git-tidy prune`); a re-done lane continues its branch (never -N, -fixes, -vN); never rewrite commits on a shared remote branch without the owner's yes (the guard and the git-tidy gate enforce the rest) | git-tidy
+# Core rules (always on): id | rule
+C1 | KISS/YAGNI: build only what the task asks
+C2 | Reuse existing helpers; dedupe at the 3rd use
+C3 | One job per function: <=40 lines, <=4 params, depth <=3, so each one is read and tested whole
+C4 | Files <=300 lines; split by responsibility, so a reader holds one file in mind
+C5 | Intent-revealing names; no data/tmp/util/helper
+C6 | No magic numbers or strings; use named constants
+C7 | Depend on interfaces at real boundaries (an external system, a second implementation or a test double); compose over inherit
+C8 | Comments say why, not what; delete dead code
+C9 | Never swallow errors; no empty catch; fail fast
+C10 | Validate all external input at the boundary with a schema
+C11 | (retired 2026-11-22: the test-first gate was removed; the number stays so the other ids keep their meaning)
+C12 | (retired 2026-11-22: the run-the-checks-before-done gate was removed; a new strategy will say what runs)
+C13 | Never weaken or silence a check to make it pass: no ts-ignore, eslint-disable, skipped or `.only` tests; a silenced check hides the defect it exists to catch
+C14 | Add no dependency unless needed; verify it exists
+C15 | No secrets in code, logs or commits
+C16 | Small atomic Conventional Commits after every green step; never end a turn or an agent run with uncommitted work (commit-gate blocks it)
+C17 | Match the repo's existing conventions; read neighbours first
+C18 | Touch only files the task needs
+C19 | TS strict, no any, no unexplained !, exhaustive switch
+C20 | Immutable and pure by default; side effects at the edges
+C21 | Leave formatting to the formatter
+C22 | Fix the root cause, not the symptom
+C28 | When an approach fails twice, change approach (root-cause-debug, deep-debugger, /escalate) and keep going until done
+C23 | Grep, then read line ranges; no cat of big files; show failing test lines only
+C24 | Delegated work returns <=300 words with file:line evidence; a smaller cap in the agent file or the brief wins
+C25 | One task per session; compact at a natural seam, never stop a run for context size
+C26 | Every source file you create or substantially edit opens with a header comment (purpose, exports, invariants); a folder of 3+ files has a README
+C27 | Public functions and types you create or substantially edit have doc comments (what, why, args, returns, errors); TODO(ref): reason
+C29 | (retired 2026-11-22: the done-means-fresh-evidence gate was removed; "say verified only for what you ran" stays in CLAUDE.md)
+C30 | Bash for the guard: write the command word out (no `$VAR` as the command) and secrets via env or file; when the guard bounces a command it gives the fix or the advice: send the fix, follow the advice (an unanswered ask stalls a run up to 2 min)
+C31 | Human-first: a developer with no AI can find, read, run and change it; of two designs with the same result take the easier to read; never trade away scope, accuracy or a performance target for it
+C32 | New files and folders follow the language or framework's standard layout and are named for what they hold; no new misc/utils/common folders; in an existing repo follow its layout (C17)
+C33 | No abstraction with a single use: no interface with one implementation, pass-through wrapper, factory, generic layer or option "for later"; shared code is extracted per C2
+C34 | Docs in proportion, in the repo's existing places and format: a small fix needs only a clear commit message; a new module or changed behaviour updates the README of its area; a choice others would question gets a decision record where the repo keeps them (else a comment or the commit body); a changelog line only if the repo keeps one
+C35 | Config values you add or change explain themselves: a comment for any non-obvious value, units in the name or comment; do not split one setting across files; local values go in a git-ignored file with an example
+C36 | C31-C35 govern new work and the lines a task changes. Existing code keeps its conventions (C17) and files the task does not need stay untouched (C18): no renames, moves, restructures, added headers or READMEs for old code unless the owner asks; report what you saw instead
+C37 | Git history is one line at all times: rebase onto the base, land with `git merge --ff-only`, `git pull --rebase`, no merge commits; once landed, delete the branch and its worktree (`git-tidy prune`); a re-done lane continues its branch (never -N, -fixes, -vN); never rewrite commits on a shared remote branch without the owner's yes (the guard and the git-tidy gate enforce the rest)
