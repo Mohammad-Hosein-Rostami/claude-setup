@@ -54,11 +54,12 @@ function planOf({ classes, fileClasses, laneNames = [], hasCode, landing, change
 
 const NO_PLAN = Object.freeze({ stress: null, race: null, mutation: null });
 
-function planText(plan) {
+function planText(plan, isDelta) {
   const items = [];
   if (plan.stress) items.push(`stress staleLock=${plan.stress.staleLock} killPct=${plan.stress.killPct} waiters=${plan.stress.waiters.join(',')} repeats=${plan.stress.repeats} count=${plan.stress.count.join(',')}`);
   if (plan.race) items.push(`race: run the two actors concurrently ${plan.race.runs} times and assert the invariant, or write "not applicable: <reason>"`);
-  if (plan.mutation) items.push(`mutation max ${plan.mutation.maxMutants} mutants on the changed lines`);
+  if (plan.mutation && isDelta) items.push(`mutants: every id in the prior file's mutants block, plus ${MUTANTS_PER_FILE} over the fix's changed lines`);
+  else if (plan.mutation) items.push(`mutation max ${plan.mutation.maxMutants} mutants on the changed lines`);
   return items.length === 0 ? '' : `PLAN: ${items.join('; ')}.`;
 }
 
@@ -66,7 +67,7 @@ function planText(plan) {
  * What a delta reviewer reads. The same sentences stand in the Delta mode of home/agents/reviewer.md and security-auditor.md;
  * tests/agent-delta-mode.test.mjs keeps the three in step.
  */
-export const DELTA_READING = 'Read: the changed lines; the callers and the callees of every changed function; every use of a name the fix removed or renamed (search the old name in the whole repo); the readers of any state, config, default or data the fix starts or stops writing; the tests the fix touched (nothing weakened); the docs that describe the behaviour the fix changes (a README line about a changed default); on a rewritten lane, what the rewrite dropped or changed (the brief names the `git range-diff` to read); every prior finding. A security finding is never dropped. If you cannot bound the effect of the fix this way, say `needs the full range`: the round is then not clean.';
+export const DELTA_READING = 'Read: the changed lines; the callers and the callees of every changed function; every use of a name the fix removed or renamed (search the old name in the whole repo); the readers of any state, config, default or data the fix starts or stops writing; the tests the fix touched (nothing weakened); the docs that describe the behaviour the fix changes (a README line about a changed default); on a rewritten lane, what the rewrite dropped or changed (the brief names the `git range-diff` to read); every prior finding. A security finding is never dropped. If you cannot bound the effect of the fix this way, say `needs the full range`: the round is then not clean. A delta finding is blocking or should-fix only with `origin:` set to `prior` (a prior finding still open), `fix-line` (a defect in a line the fix changed), `sibling` (the fix missed a site of the same class), `security`, or `lane-blocking` (a blocking defect in the lane that the fix made reachable). Anything else is `optional` with a follow-up note. Delta mutants: re-run every id in the prior file\'s mutants block, plus mutants of the fix\'s own lines. Never take a fresh lane-wide sample.';
 
 /** The range as a brief names it: a delta round's is made by the tool (a full sha, or a patch list with the base as data); any other is the caller's text. */
 const rangeText = (range, deltaOf) => (deltaOf === null ? asData(range) : range);
@@ -87,14 +88,14 @@ const priorText = (prior) => `Prior findings: ${prior.files.map(reportText).join
 const deltaLine = (range, prior) => `Delta review: ${range} only. ${DELTA_READING} Do not look for new defects in code the fix cannot reach; do not re-run the full suite (PASS record covers it).${prior === null ? '' : ` ${priorText(prior)}`}`;
 
 /** Stands in every delta brief: what a fix round keeps from the lane's first review. The plan is sized by the lane (lib/report.mjs, planSizeOf). */
-const LANE_SET_LINE = "The set, models, efforts and PLAN items are the lane's (a mutation plan counts the lane's changed lines, not only the fix's): nothing is skipped.";
+const LANE_SET_LINE = "The set, models, efforts and PLAN items are the lane's. A round-0 mutation plan counts the lane's changed lines; a delta round re-runs the prior mutants block plus mutants of the fix's lines. Nothing else is skipped.";
 
 function briefOf({ range, deltaOf, prior, rules, hits, plan, requiredReading }) {
   const parts = [`Review ${rangeText(range, deltaOf)}.`, `Rules: ${rules}.`];
   if (deltaOf !== null) parts.splice(1, 0, deltaLine(range, prior), LANE_SET_LINE);
   const shown = [...new Set(hits.slice(0, MAX_BRIEF_HITS).map((hit) => `${hit.class} ${placeText(hit.path, hit.line)}`))];
   if (shown.length > 0) parts.push(`Hits: ${shown.join(', ')}.`);
-  const text = planText(plan);
+  const text = planText(plan, deltaOf !== null);
   if (text !== '') parts.push(text);
   if (requiredReading.length > 0) parts.push(`Read first (callers, callees and users of names the fix removed, renamed or redefined; the changed files when none is found): ${requiredReading.join(', ')}.`);
   return parts.join(' ');

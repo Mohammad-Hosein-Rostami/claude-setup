@@ -83,10 +83,10 @@ test('review B1b: a docs-only or tests-only fix keeps the mutation plan of the l
       assert.deepEqual(delta.reviews.map((review) => review.lens), landing0.reviews.map((review) => review.lens));
       for (const review of delta.reviews.filter((entry) => entry.model === 'opus')) {
         assert.deepEqual(review.plan.mutation, { maxMutants: 3 }, `${name} lane, ${kind} fix: ${review.lens} plans by the lane's 3 changed lines, not the fix's 1`);
-        assert.match(review.brief, /PLAN: mutation max \d+ mutants on the changed lines\./, `${name} lane, ${kind} fix`);
-        assert.ok(review.brief.includes("The set, models, efforts and PLAN items are the lane's (a mutation plan counts the lane's changed lines, not only the fix's): nothing is skipped."), 'the brief says what it keeps (mutant R12)');
+        assert.match(review.brief, /PLAN: mutants: every id in the prior file's mutants block, plus \d+ over the fix's changed lines\./, `${name} lane, ${kind} fix`);
+        assert.ok(review.brief.includes("The set, models, efforts and PLAN items are the lane's. A round-0 mutation plan counts the lane's changed lines; a delta round re-runs the prior mutants block plus mutants of the fix's lines. Nothing else is skipped."), 'the brief says what it keeps (mutant R12)');
       }
-      assert.match(tier('--delta', reviewed, '--prior', priorFile()).stdout, /PLAN: mutation max/);
+      assert.match(tier('--delta', reviewed, '--prior', priorFile()).stdout, /PLAN: mutants: every id in the prior file/);
       assert.deepEqual([delta.files, delta.changedLines], [1, 1], 'files and lines stay the fix\'s');
     }
   }
