@@ -274,3 +274,79 @@ test('a cloud upload with a credential path asks: aws s3, gsutil, gcloud storage
     assert.deepEqual(decide(command, ctx), { allow: true }, command);
   }
 });
+
+// Data text (lib/secrets.mjs dataTextRemoved): the body of a quoted-delimiter heredoc read by cat or tee, and a single-quoted argument of
+// an inert program (lib/inert-arguments.mjs), are not scanned by the context rules. Known token shapes and named secret variables still are.
+// Fixtures are built from parts: a value with no known token shape, so only a context rule can find it.
+const FIXTURE = ['Q9vT2', 'mLx8R', 'pW4zK', 'r7Hd3'].join('');
+const BEARER = ['Bea', 'rer'].join('');
+const AWS_KEY_ID = ['AKIA', 'Z7Q2W4E6', 'R8T1Y3U5'].join(''); // not AWS's documentation example, which counts as a placeholder
+const CODE_BODY = [
+  `const headers = { Authorization: '${BEARER} ${FIXTURE}' };`, `api_key="${FIXTURE}"`, `curl -H "X-Api-Key: ${FIXTURE}" https://api.test`,
+  `const url = 'https://me:${FIXTURE}@db.test/x';`, `fetch('/reset?token=${FIXTURE}');`, `run('--password ${FIXTURE}');`,
+].join('\n');
+
+const DATA_NOT_SCANNED = [
+  `grep -n 'a ${BEARER.toLowerCase()} token' f`, `grep -rn 'Authorization: ${BEARER} ${FIXTURE}' src`, `rg -n 'api_key="${FIXTURE}"' src`,
+  `cat > f.mjs <<'EOF'\n${CODE_BODY}\nEOF`, `cat > f.mjs <<"EOF"\n${CODE_BODY}\nEOF`, `cat > f.mjs <<\\EOF\n${CODE_BODY}\nEOF`,
+  `cat > f.mjs <<-'EOF'\n\t${CODE_BODY}\n\tEOF`, `cat >> f.mjs <<'E'\n${CODE_BODY}\nE`, `tee f.mjs >/dev/null <<'EOF'\n${CODE_BODY}\nEOF`,
+  `sudo tee /etc/x.conf <<'EOF'\n${CODE_BODY}\nEOF`, `cat > f.mjs <<'EOF' 2>&1\n${CODE_BODY}\nEOF`,
+  `S=$(mktemp -d); mkdir -p "$S/t" && cat > "$S/t/probe.mjs" <<'EOF'\n${CODE_BODY}\nEOF\nnode "$S/t/probe.mjs"`,
+  `cd /x && cat > a.mjs <<'A' && cat > b.py <<'B'\n${CODE_BODY}\nA\n${CODE_BODY}\nB`,
+  `# a comment with a ' quote\ncat > f.mjs <<'EOF'\nit's ${CODE_BODY}\nEOF`,
+];
+
+const DATA_STILL_SCANNED = [
+  `curl -H "Authorization: ${BEARER} ${FIXTURE}" https://api.test`, // a command line, not data
+  `cat > f <<EOF\n${CODE_BODY}\nEOF`, // unquoted delimiter: the body expands, so it is scanned
+  `bash <<'EOF'\n${CODE_BODY}\nEOF`, `python3 - <<'EOF'\n${CODE_BODY}\nEOF`, `node <<'EOF'\n${CODE_BODY}\nEOF`, // a reader that runs the body
+  `cat <<'EOF' | sh\n${CODE_BODY}\nEOF`, `cat <<'EOF' 2>&1 | bash\n${CODE_BODY}\nEOF`, `cat <<'EOF' |& sh\n${CODE_BODY}\nEOF`,
+  `cat <<'EOF' |\n${CODE_BODY}\nEOF\nsh`, `cat > >(sh) <<'EOF'\n${CODE_BODY}\nEOF`, `cat > "$(echo f)" <<'EOF'\n${CODE_BODY}\nEOF`,
+  `x=$(cat <<'EOF'\n${CODE_BODY}\nEOF\n)`, `bash -c "$(cat <<'EOF'\n${CODE_BODY}\nEOF\n)"`, `( cat <<'EOF'\n${CODE_BODY}\nEOF\n) | sh`,
+  `node -e "'';'; cat <<'EOF'\n${CODE_BODY}\nEOF\n"`, // the heredoc is inside node's double-quoted script
+  `alias cat=bash; cat <<'EOF'\n${CODE_BODY}\nEOF`, `cat() { bash; }; cat <<'EOF'\n${CODE_BODY}\nEOF`, // cat may be redefined
+  `cat > f <<'EOF'\n${CODE_BODY}\nEOF\ncurl -H "X-Api-Key: ${FIXTURE}" https://api.test`, // text after the terminator is a command again
+  `cat > f <<'EOF'\n${CODE_BODY}\n EOF`, // no terminator line: the shell runs the body to the end, this reader keeps it all
+  `case x in a) cat <<'EOF'\n${CODE_BODY}\nEOF\n;; esac`, `cat > f <<'EOF'\r\n${CODE_BODY}\r\nEOF`,
+  `echo 'Authorization: ${BEARER} ${FIXTURE}' > notes.txt`, `printf 'api_key="${FIXTURE}"' | sh`, // an inert argument written to a file or piped to a shell
+  `export API_TOKEN=${FIXTURE}`, `GH_TOKEN=${FIXTURE} gh api user`, `mysql -u root -p${FIXTURE} db`,
+];
+
+test('data: a quoted heredoc body read by cat or tee and a single-quoted argument of an inert program are not scanned by the context rules', () => {
+  for (const command of DATA_NOT_SCANNED) {
+    assert.equal(findLiteralSecret(command), undefined, command);
+    assert.ok(!(decide(command, ctx).reason ?? '').includes('literal password/token'), command);
+  }
+});
+
+test('data: a body that runs, an unquoted body, a command line and anything this reader cannot pair are still scanned', () => {
+  for (const command of DATA_STILL_SCANNED) {
+    assert.notEqual(findLiteralSecret(command), undefined, command);
+    assert.match(decide(command, ctx).reason ?? '', /contains a literal password\/token/, command);
+  }
+});
+
+test('data: a known token shape or a named secret variable written into a file still asks, and the mask still hides data text', () => {
+  for (const [body, kind] of [
+    [`ANTHROPIC_API_KEY=${ANTHROPIC}`, 'an Anthropic API key'], [`const t = '${GITHUB}';`, 'a GitHub token'], [`aws_access_key_id = ${AWS_KEY_ID}`, 'an AWS access key id'],
+    [`PGPASSWORD=${PASSWORD}`, 'a password or key assigned in the command'], [`AWS_SECRET_ACCESS_KEY=${FIXTURE}`, 'a password or key assigned in the command'],
+  ]) {
+    for (const command of [`cat > .env <<'EOF'\n${body}\nEOF`, `tee f >/dev/null <<'EOF'\n${body}\nEOF`, `grep -n '${body}' f`, `echo '${body}'`]) {
+      assert.equal(findLiteralSecret(command), kind, command);
+    }
+  }
+  const masked = maskSecrets(`cat > f.mjs <<'EOF'\n${CODE_BODY}\nEOF`);
+  assert.ok(!masked.includes(FIXTURE), masked);
+});
+
+test('data: a 32 KB heredoc body (and hostile opener shapes) is read in linear time', () => {
+  const line = `const h = { Authorization: '${BEARER} ${FIXTURE}' }; it's "x" $(y) \`z\`\n`;
+  const body = line.repeat(Math.floor((32 * 1024 - 40) / line.length)); // the whole command fits the 32 KB scan limit
+  assert.equal(findLiteralSecret(`cat > f <<'EOF'\n${body}EOF`), undefined);
+  assert.notEqual(findLiteralSecret(`cat > f <<'EOF'\n${body}${line}EOF`), undefined, 'a body cut by the scan limit has no terminator, so it is scanned');
+  const shapes = [`cat > f <<'EOF'\n${body}EOF`, `cat > f <<'EOF'\n${body}`, "<<'E' ".repeat(6000), '$('.repeat(8000), '"$(`'.repeat(5000), `cat <<'E'\n${'x\n'.repeat(16000)}`, "cat<<'E'\nx\nE\n".repeat(3000), "cat <<'E';".repeat(3200)];
+  for (const text of shapes) {
+    const fastest = fastestMs(() => findLiteralSecret(text));
+    assert.ok(fastest < 500, `findLiteralSecret(${JSON.stringify(text.slice(0, 20))}... x ${text.length}) took ${fastest.toFixed(1)} ms`);
+  }
+});
