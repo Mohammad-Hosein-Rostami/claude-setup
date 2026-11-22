@@ -14,11 +14,14 @@
 // `cwd`, `message.content` (a string for the brief; blocks `tool_use` {name, input} and `tool_result`; `message.stop_reason`;
 // `message.usage` on assistant lines). Tokens (spec-tui-2 stat 3) = the last assistant call's input, cache-write, cache-read and
 // output tokens: the agent's context so far (a sum over calls would count the re-read context again on every call).
-// Invariants: never throws (a file gone or unreadable returns the old cursor); reads at most MAX_READ_BYTES per call and only whole
+// Invariants: never throws (a file gone or unreadable returns the old cursor); opens the transcript once, without waiting or
+// following a link, and reads it only when that open file is a plain file (hooks/lib/plain-file.mjs: no FIFO swapped in after a
+// look can block the refresh); reads at most MAX_READ_BYTES per call and only whole
 // lines (the offset stops after the last newline, so a line being written is read next time); a line over MAX_PARSE_CHARS is not
 // parsed, only its timestamp is taken; every text kept is stripped of control characters and cut.
-import { closeSync, lstatSync, openSync, readSync } from 'node:fs';
+import { fstatSync, readSync } from 'node:fs';
 import { basename, dirname, isAbsolute } from 'node:path';
+import { NOT_PLAIN_FILE, readPlainFileWith } from '../../../hooks/lib/plain-file.mjs';
 
 const MAX_READ_BYTES = 4 * 1024 * 1024;
 const MAX_PARSE_CHARS = 256 * 1024;
@@ -27,6 +30,7 @@ const MAX_STEPS = 20;
 const MAX_PATH_CHARS = 1024;
 const MAX_DIRS = 4;
 const MAX_PENDING = 16;
+const NOT_PLAIN_CODES = new Set(['ENOENT', 'ELOOP', 'ENOTDIR', 'EISDIR', NOT_PLAIN_FILE]); // not a plain file: no cursor
 const REMOTE_PATH = /^[\\/]{2}/; // UNC `\\host\share`, `//host/share` and the mixed `/\host`, `\/host` (review SEC-8): never a folder of this machine
 const NEWLINE = 0x0a;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
@@ -165,17 +169,32 @@ function foldRaw(cursor, raw) {
   }
 }
 
-/** The new bytes of the file from `offset`, at most MAX_READ_BYTES. */
-function readFrom(file, offset, size) {
+/** The new bytes of the open file from `offset`, at most MAX_READ_BYTES. */
+function readFrom(fd, offset, size) {
   const length = Math.min(size - offset, MAX_READ_BYTES);
   const buffer = Buffer.alloc(length);
-  const handle = openSync(file, 'r');
-  try {
-    readSync(handle, buffer, 0, length, offset);
-  } finally {
-    closeSync(handle);
+  return buffer.subarray(0, readSync(fd, buffer, 0, length, offset));
+}
+
+/** The cursor after the new whole lines of the open transcript `fd` (a plain file, `info` its fstat). */
+function advanceOpen(cursor, fd, info) {
+  const fresh = cursor === undefined || cursor === null || cursor.ino !== info.ino || info.size < cursor.offset;
+  const base = fresh ? emptyCursor(info.ino) : cursor;
+  // copies of the lists, so a cursor read from the cache is never changed in place; old cursors have none
+  const next = { ...base, lastTool: fresh ? null : cursor.lastTool, mtimeMs: info.mtimeMs, changedDirs: [...(base.changedDirs ?? [])],
+    pendingDirs: { ...(base.pendingDirs ?? {}) } };
+  delete next.fileDir; // fields of older cursor shapes
+  delete next.readDirs;
+  if (info.size === next.offset) return next;
+  const buffer = readFrom(fd, next.offset, info.size);
+  const end = buffer.lastIndexOf(NEWLINE);
+  if (end < 0) {
+    if (buffer.length === MAX_READ_BYTES) next.offset += buffer.length; // one giant line: skip it, its rest is not JSON
+    return next;
   }
-  return buffer;
+  for (const raw of buffer.subarray(0, end).toString('utf8').split('\n')) if (raw) foldRaw(next, raw);
+  next.offset += end + 1;
+  return next;
 }
 
 /**
@@ -186,26 +205,9 @@ function readFrom(file, offset, size) {
  */
 export function advanceCursor(cursor, file) {
   try {
-    const info = lstatSync(file, { throwIfNoEntry: false });
-    if (!info?.isFile()) return null;
-    const fresh = cursor === undefined || cursor === null || cursor.ino !== info.ino || info.size < cursor.offset;
-    const base = fresh ? emptyCursor(info.ino) : cursor;
-    // copies of the lists, so a cursor read from the cache is never changed in place; old cursors have none
-    const next = { ...base, lastTool: fresh ? null : cursor.lastTool, mtimeMs: info.mtimeMs, changedDirs: [...(base.changedDirs ?? [])],
-      pendingDirs: { ...(base.pendingDirs ?? {}) } };
-    delete next.fileDir; // fields of older cursor shapes
-    delete next.readDirs;
-    if (info.size === next.offset) return next;
-    const buffer = readFrom(file, next.offset, info.size);
-    const end = buffer.lastIndexOf(NEWLINE);
-    if (end < 0) {
-      if (buffer.length === MAX_READ_BYTES) next.offset += buffer.length; // one giant line: skip it, its rest is not JSON
-      return next;
-    }
-    for (const raw of buffer.subarray(0, end).toString('utf8').split('\n')) if (raw) foldRaw(next, raw);
-    next.offset += end + 1;
-    return next;
-  } catch {
-    return cursor ?? null; // gone or unreadable while reading: the old facts stay
+    return readPlainFileWith(file, (fd) => advanceOpen(cursor, fd, fstatSync(fd)));
+  } catch (error) {
+    if (NOT_PLAIN_CODES.has(error?.code)) return null; // missing, a link, a FIFO or a folder: no transcript here
+    return cursor ?? null; // unreadable while reading: the old facts stay
   }
 }

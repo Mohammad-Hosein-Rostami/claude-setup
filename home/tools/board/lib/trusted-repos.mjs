@@ -1,8 +1,9 @@
-// The repositories the board may run git in (lead decisions of fix rounds 4 and 5, 2026-11-22): the session folder's and the setup's
-// own (the repository holding this running code, found from this module's real path: `~/.claude/tools` links into it, and no agent's
-// text can choose it). Claude Code's folder-trust record is not a source: the owner runs with bypass permissions, so it is unreliable,
-// and it would widen what can name a folder. Git runs a repository's own config (`core.fsmonitor`, clean filters), so it never runs in a
-// folder only an agent or a file it wrote named (review SEC-1 of 9ac483c3 and its residual).
+// The repository of a folder, for the board: trustedRepos gives the session folder's and the setup's (lead decisions of fix rounds 4
+// and 5, 2026-11-22), and repos.mjs asks it for every folder the session used too (owner decision RC19: git runs in each). The setup's
+// own is the repository holding this running code, found from this module's real path (`~/.claude/tools` links into it, and no
+// agent's text can choose it). Claude Code's folder-trust record is not a source: the owner runs with bypass permissions, so it is unreliable,
+// and it would widen what can name a folder. Git runs a repository's own config (`core.fsmonitor`, clean filters), so what it may run
+// there is bounded by git-state.mjs (GIT_SAFETY, refs only where the config names a filter; review SEC-1 of 9ac483c3 and RC19).
 // Exports: trustedRepos({ sessionFolder }) -> { session, repos: [{ common, folder, roots }] }; repoOfDir(repos, dir);
 // worktreeRecords(common) -> [{ path, gitDir, branch, main }]; REMOTE_PATH.
 // Each trusted folder (real path, disk case: review N-10) is placed in its repository by the file system alone (the `.git` entry of

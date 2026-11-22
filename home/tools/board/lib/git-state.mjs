@@ -3,10 +3,10 @@
 // progress; the repository's stash count; and its active branches (at most MAX_ACTIVE, the rest counted). Run only by the detached
 // board refresh, never by the status line.
 // Exports: repoState({ cwd, sessionFolder, common, liveDirs, cache, nowMs, startMs }) -> { repo, git, cache }; gitIn(common, args);
-// cleanName(text); GIT_SAFETY; OPS.
-// Commands (fixed flags, GIT_SAFETY, GIT_TIMEOUT_MS each, at most GIT_BUDGET_MS of git per refresh, shared by every repository through
-// `startMs`; past it the cached values stay with their age), only in the worktrees the repository records (trusted-repos.mjs
-// worktreeRecords, read fresh, never from the cache):
+// gitBudgetSpent(startMs); cleanName(text); GIT_SAFETY; OPS.
+// Commands (fixed flags, GIT_SAFETY, GIT_TIMEOUT_MS each, GIT_BUDGET_MS of git per refresh, shared by every repository through
+// `startMs` and checked before every call (gitBudgetSpent); past it the cached values stay with their age), only in the worktrees
+// the repository records (trusted-repos.mjs worktreeRecords, read fresh, never from the cache):
 //   `--git-dir=<common> for-each-ref` with the upstream, its track and %(ahead-behind:<base>) (git >= 2.41; REFS_EVERY_MS); per
 //   worktree, when its index or HEAD changed or STATUS_EVERY_MS passed, first `config --list --name-only --show-scope` and then, only
 //   when the repository's own config (local or worktree scope, includes followed) names no filter, `status --porcelain=v2 --branch`
@@ -18,12 +18,16 @@
 // Every call (gitIn) runs without the inherited GIT_* variables and with GIT_COMMON_DIR=<common>, so a git folder's `commondir` file
 // cannot send git elsewhere (review N-11).
 // File-system facts: stash = lines of `<common>/logs/refs/stash`; op = the first of OPS present in the worktree's git folder, with
-// `rebase 2/3` from rebase-merge msgnum/end or rebase-apply next/last, and the branch being rebased from its head-name.
+// `rebase 2/3` from rebase-merge msgnum/end or rebase-apply next/last, and the branch being rebased from its head-name; the base
+// branch from `<common>/refs/heads/` or `<common>/packed-refs`. Each file is read only as a plain file, never waiting on a FIFO and
+// never past its byte cap (read-part.mjs).
+// Current and own: the deepest worktree holding the session folder (a lane in `.claude/worktrees/` lies inside the main checkout, so
+// only the lane is current and counts new files); a live agent's folder makes only its deepest worktree active (rule b).
 // Invariants: never throws; branch and upstream names are stored through cleanName (no control or bidi character) and reach the
 // terminal only through the render's cleanText; no command takes text from a file as a flag (paths only as `-C`, `--git-dir=` and
 // `--work-tree=` values from worktreeRecords, a ref only as the `<base>` inside `--format=`, and only when it passes SAFE_REF).
 import { execFileSync } from 'node:child_process';
-import { lstatSync, readFileSync } from 'node:fs';
+import { lstatSync } from 'node:fs';
 import { devNull } from 'node:os';
 import { basename, join, sep } from 'node:path';
 import { readPart } from './read-part.mjs';
@@ -40,6 +44,7 @@ const MAX_ACTIVE = 4;
 const MAX_NAME_CHARS = 80;
 const MAX_STEP_BYTES = 32;
 const MAX_STASH_LOG_BYTES = 256 * 1024;
+const MAX_PACKED_REFS_BYTES = 256 * 1024; // the head of packed-refs: refs/heads sorts before refs/remotes and refs/tags
 const MS_PER_MIN = 60_000;
 const MS_PER_S = 1000;
 const BASE_NAMES = ['main', 'master'];
@@ -61,6 +66,11 @@ const mtimeOf = (path) => { try { return lstatSync(path, { throwIfNoEntry: false
 const exists = (path) => mtimeOf(path) > 0;
 const textOf = (path, max) => { try { return readPart(path, max, false)?.text ?? null; } catch { return null; } };
 const isInside = (dir, path) => typeof dir === 'string' && (dir === path || dir.startsWith(`${path}${sep}`));
+/** The deepest of `worktrees` holding `dir` (a lane nested in the main checkout, not the main checkout); undefined when none does. */
+const holderOf = (dir, worktrees) => worktrees.filter((wt) => isInside(dir, wt.path)).sort((a, b) => b.path.length - a.path.length)[0];
+
+/** @returns {boolean} whether more than GIT_BUDGET_MS passed since `startMs` (the refresh's git start): asked before every git call */
+export const gitBudgetSpent = (startMs) => Date.now() - startMs > GIT_BUDGET_MS;
 
 /** @returns {string | null} a branch or upstream name as the board stores it: no control or bidi character, at most MAX_NAME_CHARS */
 export const cleanName = (text) => (typeof text === 'string' && text !== '' ? text.replace(UNSHOWN_CHARS, ' ').slice(0, MAX_NAME_CHARS) : null);
@@ -89,7 +99,7 @@ export function gitIn(common, args) {
 
 /** The base branch: main, else master, else the main worktree's branch; null when none is a safe name. */
 function baseOf(common, worktrees) {
-  const packed = (() => { try { return readFileSync(join(common, 'packed-refs'), 'utf8'); } catch { return ''; } })();
+  const packed = textOf(join(common, 'packed-refs'), MAX_PACKED_REFS_BYTES) ?? '';
   const found = BASE_NAMES.find((name) => exists(join(common, 'refs', 'heads', name)) || packed.includes(` refs/heads/${name}\n`));
   const base = found ?? worktrees[0]?.branch ?? null;
   return base !== null && SAFE_REF.test(base) ? base : null;
@@ -148,11 +158,13 @@ function namesFilter(common, wt) {
   });
 }
 
-/** The status call of one worktree, a refusal (`refs`) when its repository's config names a filter, or null (no answer: the cache stays). */
-function freshStatus(wt, common, withUntracked) {
+/** One worktree's status call, `refs` when its repository's config names a filter, or null (no answer or no budget: the cache stays). */
+function freshStatus(wt, common, withUntracked, clock) {
+  if (gitBudgetSpent(clock.startMs)) return null;
   const filter = namesFilter(common, wt);
   if (filter === null) return null; // config unreadable or git out of time: no status runs
   if (filter) return { trust: 'refs', value: null };
+  if (gitBudgetSpent(clock.startMs)) return null; // the config look used the rest of the budget
   const text = gitIn(common, ['-C', wt.path, `--git-dir=${wt.gitDir}`, `--work-tree=${wt.path}`, '--no-optional-locks', 'status', '--porcelain=v2', '--branch',
     `--untracked-files=${withUntracked ? 'normal' : 'no'}`, '--ignore-submodules=dirty']);
   return text === null ? null : { trust: 'full', value: parseStatus(text, withUntracked) };
@@ -169,9 +181,9 @@ function statusOf(wt, common, cached, { clock, own }) {
   const key = `${mtimeOf(join(dir, 'index'))}:${mtimeOf(join(dir, 'HEAD'))}`;
   const kept = { key: '', at: 0, untrackedAt: 0, trust: 'full', value: null, ...(cached ?? {}), ...opOf(dir) };
   const fresh = cached !== undefined && cached.key === key && clock.nowMs - cached.at < STATUS_EVERY_MS;
-  if (fresh || Date.now() - clock.startMs > GIT_BUDGET_MS) return kept;
+  if (fresh) return kept;
   const withUntracked = own && clock.nowMs - (kept.untrackedAt ?? 0) >= UNTRACKED_EVERY_MS;
-  const got = freshStatus(wt, common, withUntracked);
+  const got = freshStatus(wt, common, withUntracked, clock);
   if (got === null) return kept;
   const untracked = withUntracked ? got.value?.untracked ?? null : own ? kept.value?.untracked ?? null : null;
   const value = got.value === null ? null : { ...got.value, untracked };
@@ -180,7 +192,7 @@ function statusOf(wt, common, cached, { clock, own }) {
 
 /** The base branch and every branch's counts, reused from the cache while fresh; git runs on the shared git folder alone. */
 function refsOf(common, worktrees, cache, clock) {
-  const spent = Date.now() - clock.startMs > GIT_BUDGET_MS; // the refresh's whole git budget is used: the cached refs stay
+  const spent = gitBudgetSpent(clock.startMs); // the refresh's whole git budget is used: the cached refs stay
   const base = baseOf(common, worktrees);
   const refsFresh = spent || (cache.common === common && cache.base === base && clock.nowMs - (cache.refsAt ?? 0) < REFS_EVERY_MS);
   const format = `%(refname:short)%09%(committerdate:unix)%09%(upstream:short)%09%(upstream:track,nobracket)${base ? `%09%(ahead-behind:${base})` : ''}`;
@@ -202,8 +214,8 @@ const hasChanges = (wt) => (wt.staged ?? 0) + (wt.changed ?? 0) + (wt.conflicts 
 
 /** Why a branch is active, as a rank (lower shows first), or null: spec rules (a) to (e). */
 function activeRank(name, ref, wt, place) {
-  if (wt !== undefined && isInside(place.sessionFolder, wt.path)) return 0; // (a) checked out in the session folder
-  if (wt !== undefined && place.liveDirs.some((dir) => isInside(dir, wt.path))) return 1; // (b) a live agent works there
+  if (wt !== undefined && wt.path === place.sessionPath) return 0; // (a) checked out in the session folder
+  if (wt !== undefined && place.livePaths.has(wt.path)) return 1; // (b) a live agent works there
   if (wt !== undefined && hasChanges(wt)) return 2; // (c) a worktree with changes
   if ((ref?.ahead ?? 0) > 0 && ref.t !== null && place.nowMs - ref.t * MS_PER_S <= ACTIVE_WINDOW_MS) return 3; // (d) recent work ahead
   if (name === place.base && ((ref?.upAhead ?? 0) > 0 || (ref?.upBehind ?? 0) > 0)) return 4; // (e) the base, not level with upstream
@@ -260,20 +272,22 @@ export function repoState({ cwd, sessionFolder = null, common, liveDirs = [], ca
     const clock = { nowMs, startMs };
     // the worktrees the repository records, read fresh: the only folders git runs in (reviews SEC-6, N-9, SEC-11)
     const records = worktreeRecords(common).slice(0, MAX_WORKTREES);
+    const sessionPath = holderOf(sessionFolder, records)?.path ?? null;
+    const livePaths = new Set(liveDirs.map((dir) => holderOf(dir, records)?.path).filter((path) => path !== undefined));
     const { base, refs, refsAt } = refsOf(common, records, old, clock);
-    const status = Object.fromEntries(records.map((wt) => [wt.path, statusOf(wt, common, old.status?.[wt.path], { clock, own: isInside(sessionFolder, wt.path) })]));
+    const status = Object.fromEntries(records.map((wt) => [wt.path, statusOf(wt, common, old.status?.[wt.path], { clock, own: wt.path === sessionPath })]));
     const worktrees = records.map((wt) => worktreeEntry(wt, refs, status[wt.path], nowMs));
     // for the active branches: the raw branch name (the refs' key) and `changed` as the spec counts it (Y not `.`, not every entry)
     const withRaw = worktrees.map((wt, at) => ({ ...wt, rawBranch: branchOf(records[at], status[wt.path]), changed: status[wt.path].value?.changed ?? null }));
     const names = Object.keys(refs);
-    const own = withRaw.filter((wt) => isInside(cwd, wt.path)).sort((a, b) => b.path.length - a.path.length)[0];
+    const own = holderOf(cwd, withRaw);
     const ownStatus = own === undefined ? null : status[own.path];
     const ownRef = own?.rawBranch ? refs[own.rawBranch] : undefined;
     return {
       repo: {
         base, branches: names.length, unlanded: names.filter((name) => name !== base && (refs[name].ahead ?? 0) > 0).length,
         trust: worktrees.every((wt) => wt.trust === 'full') ? 'full' : 'refs', stash: stashOf(common),
-        ...activeOf(refs, withRaw, { sessionFolder, liveDirs, nowMs, base }), worktrees,
+        ...activeOf(refs, withRaw, { sessionPath, livePaths, nowMs, base }), worktrees,
       },
       git: ownStatus?.value ? { branch: cleanName(ownStatus.value.head), ahead: ownRef?.upAhead ?? null, behind: ownRef?.upBehind ?? null, changed: ownStatus.value.entries } : null,
       cache: { common, base, refs, refsAt, status },

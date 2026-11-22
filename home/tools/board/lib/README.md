@@ -18,7 +18,7 @@ Collecting (run only by the detached refresh):
 - `check-state.mjs`: a repository's last done-check verdict, from the tail of the done-check ledger.
 - `repo-stats.mjs`: the base branch's tip commit and the commits landed on it today.
 - `job-facts.mjs`: the session's road (id, goal, current step, lanes landed) and the trend of the job's finish clock.
-- `read-part.mjs`: a bounded read of a plain file (never a link or a folder, never more than a set number of bytes).
+- `read-part.mjs`: a bounded read of a plain file (never a link, a folder or a FIFO, never more than a set number of bytes), also for a repository's own files.
 - `cache-file.mjs`: the refresher's own cache files per session (transcript cursors, git cache, agent run times).
 
 Drawing: the status line is 2 rows when calm and at most 4 when busy (alert, job, one agents summary, git and session); every
