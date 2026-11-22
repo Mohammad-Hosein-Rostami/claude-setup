@@ -48,8 +48,9 @@ node ~/.claude/tools/land-lane/land-lane.mjs --repo <abs base folder> --branch <
    finds the base moved (exit 5 inside, then a new rebase from step 4).
 7. `status.mjs done <close-row> "landed <to> on <base> from <from>"`. `--close-row` takes any row id: for a road lane it is the lane's own row
    `<road>.s<N>.<name>` (one row per lane: the landing is that row's done evidence; an old-form road names its `-land` close row instead).
-   A failure is exit 13, with the line to type by hand; a row that is already done is not a failure (a re-run after a kill closes the row
-   once: the restart path, `found already on <base>`, writes the same row).
+   A failure is exit 13, with the line to type by hand. A row that is already done is not a failure when it holds this landing's
+   `landed <to>` line (a re-run after a kill closes the row once: the restart path, `found already on <base>`, writes the same row); one
+   done without it (a lane row closed when its build ended) is exit 13 naming the `<row>.landed` correction row to add with the line.
 8. `git-tidy check` findings left after the landing are exit 1 and are printed.
 
 ## Exits

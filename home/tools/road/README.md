@@ -52,23 +52,29 @@ One row per lane: lane `<road>.s<N>.<name>` (item `build: <item>`, the lane's si
 `close: step N checkpoint`; step 1's adds `, base <sha>`, the road-start tip, written once). The lane row is the lane's landing row:
 start it when its writer starts, and `land-lane --close-row <road>.s<N>.<name>` marks it done with the evidence
 `landed <to> on <base> from <from>`, so the row's time runs from the start of the work to the landing (one real duration per lane for
-the estimate). Never mark a lane row done before it has landed: a done lane row counts as landed for `next`, and the gate fails its line 2
-until the landed line is there. An audit fix gets one row `<road>.s<N>.fix-<name>` (item `rework: <name>`; a name ending `-land` is
-refused), landed the same way. Ids stay at most 40 characters; the old-form close id (below) must fit too. The item wording is kept as it
-was so that rows written by an earlier road still match (`rows` refuses a row id that exists with another item).
+the estimate). A lane has landed only when its row is done and holds that line (or its `.landed` correction row does): a done cell alone,
+set when the build ended, is not a landing for `next`, the gate or the board, and land-lane then exits 13 naming the correction row to
+record. An audit fix gets one row `<road>.s<N>.fix-<name>` (item `rework: <name>`), landed the same way; a fix id that would end in `-land`
+(`--fix 1 land` next to a lane `fix`, any name ending `-land`) or equal a lane's row is refused, and a `rework:` row never lands a lane
+whatever its id. Ids stay at most 40 characters; the old-form close id (below) must fit too. The item wording is kept as it was so that
+rows written by an earlier road still match (`rows` refuses a row id that exists with another item).
 
 Old form: roads whose rows were written before one row per lane have a second row per lane, the close row `<road>.s<N>.<name>-land`
-(item `close: review and land <name>`), and a fix has `fix-<name>-land` too. Such a road keeps reading exactly as before: when STATUS.md
-holds a lane's close row, that row decides whether the lane landed and holds its landed line, and the lane row's own done cell and
-evidence are not read for the landing (`lib/road-state.mjs` `landingRowId` and `laneLanded`, the one rule of `next`, the gate and the
-board). A lane without a close row in STATUS.md is new form. A rolled-back tool reading a new-form road finds no close row and never sees
-a lane landed (line 1 FAIL), so it fails closed. The gate's lines still say "close rows" for every landing row, so old output stays the same.
+(item `close: review and land <name>`), and a fix has `fix-<name>-land` too. A road is old form when its STATUS.md holds any such close
+row (not a `rework:` row) and keeps reading exactly as before: every lane's close row decides whether it landed (done, as before) and holds
+its landed line; the lane row's own done cell and evidence are never read for the landing, and a lane whose close row is missing has not
+landed (`lib/road-state.mjs` `isOldFormRoad`, `landingRowId` and `laneLanded`, the one rule of `next`, the gate and the board). `rows` on
+such a road keeps its form: it adds a missing close row after its lane row and a fix as the old pair. A rolled-back tool reading a
+new-form road finds no close row and never sees a lane landed (line 1 FAIL), so it fails closed. The gate's lines still say "close rows"
+for every landing row, so old output stays the same.
 
-A done cell is never changed, so a landing row marked done without the landed line is corrected by a second done row
-`<lane row id>.landed` (e.g. `rd.s1.a.landed`) whose evidence holds the line; the gate reads it only when the landing row is done and has
-no landed line of its own, and checks it the same way (`<to>` and `<from>` are hex shas, one range per landing row). The old-form id
-`<lane row id>-land.landed` (e.g. `rd.s1.a-land.landed`) is read too, in either form. Both lookups ignore case; a correction row under
-both ids is a FAIL line naming both. The same two ids serve the `landed within` row below.
+A done cell is never changed, so a landing row marked done without the landed line is corrected by a second done row `<row id>.landed`
+(e.g. `rd.s1.a.landed`) whose evidence holds the line; the gate reads it only when the landing row is done and has no landed line of its
+own, and checks it the same way (`<to>` and `<from>` are hex shas, one range per landing row). An old-form close row `<lane row>-land` is
+corrected under `<lane row>-land.landed` or, since ids stay at most 40 characters, `<lane row>.landed`. A new-form row owns only
+`<row id>.landed`: `<row id>-land.landed` alone may be another row's (the fix `fix-land` of a lane `fix`) and is not read, and next to the
+own one it makes the pair ambiguous. Lookups ignore case; a correction row under both ids is a FAIL line naming both. The same ids serve
+the `landed within` row below.
 
 A fix row that landed inside the same fast-forward as another landing row (so it cannot have a range of its own) is closed by a done
 `.landed` correction row whose evidence says `landed within <other landing row id>`, at the start of the evidence or after `; ` (so
@@ -90,8 +96,8 @@ review, test or audit record: a `reviewed <sha> clean` line or a `.reviewed` row
 | command | does | exit |
 |---|---|---|
 | `road.mjs check <road.json>` | checks the file: at most 5 lanes per step, no file shared outside `appendOnly`, `needs` only to earlier steps, ids, patterns; a lane with a UI file needs a `matrix`; warns on the retired `form: "build"` | 0 ok, 1 refused |
-| `road.mjs rows <road.json> [--base <sha>]` | adds every missing row of every step (one per lane, one check row per step) to the STATUS.md beside the road file in one all-or-none `status.mjs add` call; a second run, also one at the same time, adds 0; refuses a road id used with other items and a second open road. `--base` writes that sha as the road-start tip (a road started before the tool) | 0, 1 refused, 2 a `--base` that is not an ancestor of the tip or already holds a landed patch |
-| `road.mjs rows <road.json> --fix <N> <name>` | adds the audit-fix row `<road>.s<N>.fix-<name>` of step N; refused once step N's check row is done | 0, 1, 2 a name ending `-land` |
+| `road.mjs rows <road.json> [--base <sha>]` | adds every missing row of every step (one per lane, one check row per step) to the STATUS.md beside the road file in one all-or-none `status.mjs add` call, under its own lock `.STATUS.road-rows-lock` (read, open-road check and add; status.mjs's lock inside it); a second run, also one at the same time, adds 0 and exits 0 (exit 1 `busy` only when the lock is held past its 1 s wait); refuses a road id used with other items and a second open road. `--base` writes that sha as the road-start tip (a road started before the tool) | 0, 1 refused, 2 a `--base` that is not an ancestor of the tip or already holds a landed patch |
+| `road.mjs rows <road.json> --fix <N> <name>` | adds the audit-fix row `<road>.s<N>.fix-<name>` of step N (an old-form road: with its `-land` row); refused once step N's check row is done | 0, 1, 2 a fix id that would end in `-land` or equal a lane's row |
 | `road.mjs next <road.json> --budget <1-5>` | JSON `{ road, step, of, state: build\|gate\|done, form, held, carried, lanes, writers, baseline }`: the lowest step with an open check row, landed lanes skipped, held lanes named, carried lanes first, at most 5; `writers` = the smaller of the lane count and the budget, at most 5 | 0, 1 `baseline needed: <road>.s<N>` (a UI step with no `ui-proof` step-start record) or no rows yet, 2 no or bad `--budget` |
 | `road.mjs join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--json]` | judges the scope of one built lane (below): prints `joined <sha>`, `finding <id>: <text>`, `ui-files: <n>` and its `ui-file` lines | 0 joined clean, 3 joined with findings, 1 refused, 2 usage |
 | `road.mjs gate <road.json> [--step <N>]` | one line per check (spec-stages section 5): 1 rows (every lane of the step landed), 2 landing ranges, 3 `git-tidy check`, 4 UI proof (always runs, when a UI file changed or a lane has a matrix), 5 the measure (INFO). No line runs or asks for a test, a review or an audit | 0 PASS, 1 any FAIL |
