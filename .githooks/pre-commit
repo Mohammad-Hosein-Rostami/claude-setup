@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Purpose: the safety floor of every commit and nothing more: gitleaks on the staged changes (a secret blocks the commit) and
 # `node --check` on each staged hook file under home/hooks/ (a hook that does not parse breaks every Claude Code session).
-# No tests or test-integrity run happens here (owner decision CR1/CR2, 2026-11-22: the setup runs no quality checks).
+# No tests run here: the done-check runs the tests related to a change at a stop and again in `land-lane` (owner decision NC2, 2026-11-22).
 set -euo pipefail
 command -v gitleaks >/dev/null || { echo "gitleaks not installed; see tools/Brewfile" >&2; exit 1; }
 gitleaks protect --staged --redact

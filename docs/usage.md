@@ -1,4 +1,4 @@
-# Daily use
+# Editing the setup
 
 ## Workflow
 Edit in `~/.claude/...` or in `home/...` (the same files, via symlinks) -> `git add` -> `git commit` (Conventional

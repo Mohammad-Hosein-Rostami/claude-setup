@@ -13,7 +13,7 @@
     scripts/install.sh --no-plugins     # skip `claude plugin` calls
     scripts/install.sh --no-tools       # skip tool dependency install (ui-check, env-names)
 
-    scripts/install.sh --update --to r9-phase-6   # rollback: links on a worktree of that tag; plain --update goes back
+    scripts/install.sh --update --to <tag>        # rollback to a git tag (`git tag` lists them): links on a worktree of that tag; plain --update goes back
     scripts/install.sh --uninstall      # remove what the installer made, restore the backed-up files
 
 Windows (PowerShell): `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Update [-To <tag>]] [-Uninstall] [-DryRun] [-NoPlugins] [-NoTools]`.

@@ -22,7 +22,7 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 | `tools/` | System programs to install (`Brewfile`, `windows-tools.ps1`); not the same as `home/tools/`. |
 | `.githooks/` | The pre-commit hook: gitleaks on the staged changes and `node --check` of each staged hook file. It only runs after `scripts/install.sh` sets `core.hooksPath`. |
 | `scripts/` | `install.sh`, `install.ps1` and `doctor.sh`. |
-| `tests/` | The test suite (`node:test`); run by hand, nothing runs it automatically. |
+| `tests/` | The test suite (`node:test`); the done-check runs the tests related to a change, the whole suite is run by hand. |
 | `docs/` | The documents for people. Start with `catalog.md` for a list of everything. |
 
 ## How one prompt flows
@@ -100,8 +100,8 @@ From the repo root:
 
 Never run bare `node --test`. The `ui-check` tool has its own tests: `pnpm --dir home/tools/ui-check test`.
 
-Nothing runs the tests for you: not the pre-commit hook, not landing. Run the suite, or one file
-(`node --test tests/estimate.test.mjs`), when you want to know that a change still works. Tests of parts that were removed may still sit in `tests/` until they are pruned.
+The done-check runs the tests related to a change when an agent or the session stops, and `land-lane` runs it again at landing; the pre-commit
+hook and a push run no tests. Run the whole suite, or one file (`node --test tests/estimate.test.mjs`), when you want to know that everything still works. Tests of parts that were removed may still sit in `tests/` until they are pruned.
 
 ## Install on another machine
 
