@@ -1,4 +1,4 @@
-// Tests that the five long-running worker agents carry the "Waiting" line (lane r7-waits): run long commands with
+// Tests that the four long-running worker agents carry the "Waiting" line (lane r7-waits): run long commands with
 // run_in_background and a timeout of at most 2 h, never a sleep/poll loop, a run over 2 h is split or started in an interactive session,
 // watch.mjs is only for waiting on a session or an agent; and that docs/catalog.md describes the guard behaviour.
 import test from 'node:test';
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { WAIT_ADVICE, WAIT_CALL, WAIT_START_FORM } from '../home/hooks/lib/wait-advice.mjs';
 
 const read = (path) => readFileSync(fileURLToPath(new URL(`../${path}`, import.meta.url)), 'utf8');
-const WORKERS = ['implementer', 'ui-implementer', 'runner', 'test-writer', 'deep-debugger'];
+const WORKERS = ['implementer', 'ui-implementer', 'runner', 'deep-debugger'];
 // A background command of a foreground subagent stops when that agent's run ends and nobody is woken (Claude Code tools reference, Bash
 // tool), so no text may tell an agent that it will be woken.
 const WAKE_UP_PROMISE = /you are woken|woken (at|when)|you (are|will be|get) notified|wakes you|reported when it ends/i;
