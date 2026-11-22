@@ -58,7 +58,7 @@ export function formatLand(result, json) {
   if (status === 'conflict') return [`conflict: the rebase hit conflicts and was aborted, the lane is unchanged`, ...files.map((file) => `conflict ${file}`)].join('\n');
   if (status === 'ui-proof') return `ui-proof: the UI files changed and ${tip.slice(0, 8)} has no visual-qa PASS: ${why} (run visual-qa on the rebased tip, then land again)`;
   if (status === 'new-file-size') return [`new-file-size: the lane adds files over the size limit that its brief does not name: ${why}`, ...files.map((file) => `big ${file}`)].join('\n');
-  if (status === 'base-moved') return 'base-moved: the base moved during the landing: run land again (the lane stays rebased)';
+  if (status === 'base-moved') return `base-moved: ${why ?? 'the base moved during the landing'}: land again with --tip ${tip} (the lane stays rebased, nothing landed)`;
   const outcome = findings.length === 0 ? ['check: clean'] : findings.map(line);
   const refused = cleanupRefused === null ? [] : [`cleanup skipped: ${cleanupRefused}`];
   return [`landed ${tip}`, ...(from ? [`from ${from}`] : []), ...upstreamLines, ...removed.map((entry) => `removed ${entry}`), ...refused, ...outcome].join('\n');

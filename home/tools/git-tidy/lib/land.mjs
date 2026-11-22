@@ -12,6 +12,8 @@
 //   Before the size and UI checks (`r9-git-line`): the base's upstream is fetched and compared (lib/upstream.mjs); upstream commits the base lacks
 //   stop it (`upstream-moved`), and every result after that point carries `upstream` (published count, WARN of an offline fetch).
 //   Before anything (`tip`): a branch that is not at the `tip` sha the caller gave is refused as `tip-moved` with nothing changed.
+//   A full land fast-forwards only the `tip` sha the caller gave (the commit its own checks ran on): when the rebase rewrites it (the base
+//   moved after the caller rebased and checked it), the result is `base-moved` with the new tip, the lane stays rebased and nothing lands.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -133,7 +135,8 @@ function cleanUp(atBase, branch) {
  * @param {string} branch the lane, a local branch other than the base
  * @param {{ rebaseOnly?: boolean, tip?: string|null,
  *   uiCheck?: (repoDir: string, baseSha: string, tip: string) => string|null, briefText?: string|null }} options
- *   `rebaseOnly` stops after the rebase; `tip` is the full sha the caller expects the lane to be at (null: not checked, only for a caller that has none); `uiCheck` returns null when the UI
+ *   `rebaseOnly` stops after the rebase; `tip` is the full sha the caller expects the lane to be at and, for a full land, the only commit that may land
+ *   (a rebase that rewrites it is `base-moved`; null: not checked, only for a caller that has none); `uiCheck` returns null when the UI
  *   proof holds (or no UI file changed) and else the reason (the CLI always passes one, failing closed when ui-proof cannot be loaded);
  *   `briefText` is the lane's brief, whose named paths may add files over the size limit (null: none)
  * @returns {{ status: 'landed'|'rebased'|'conflict'|'base-moved'|'ui-proof'|'new-file-size'|'upstream-moved'|'tip-moved', tip: string, upstream: object|null, from: string|null,
@@ -154,6 +157,7 @@ export function landLane(repo, branch, { rebaseOnly = false, tip: expectedTip = 
   if (conflict !== null) return result('conflict', { files: conflict });
   const patchesChanged = changedPatches(before, patchIdsOf(repo, `refs/heads/${branch}`));
   if (rebaseOnly) return result('rebased', { patchesChanged });
+  if (expectedTip !== null && tip !== expectedTip) return result('base-moved', { patchesChanged, why: `the rebase moved ${branch} from ${expectedTip} to ${tip}: the base moved after that tip was checked` });
   const upstream = upstreamState(repo);
   if (upstream.moved > 0) return result('upstream-moved', { patchesChanged, upstream, why: `${upstream.upstream} has ${upstream.moved} commit(s) the base lacks` });
   const baseSha = gitText(repo.dir, ['rev-parse', repo.baseRef]);

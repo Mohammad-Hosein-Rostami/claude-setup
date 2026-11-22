@@ -57,7 +57,8 @@ test('a lane that no worktree holds is rebased in a temporary worktree that is g
 
 test('the CLI lands a lane without asking for any test record (exit 0)', () => {
   const { dir } = laneWithWorktree();
-  const result = tidy(['land', 'lane/x', dir, '--tip', git(dir, 'rev-parse', 'lane/x')], { cwd: dir });
+  const rebased = JSON.parse(tidy(['land', 'lane/x', dir, '--rebase-only', '--tip', git(dir, 'rev-parse', 'lane/x'), '--json'], { cwd: dir }).stdout).tip;
+  const result = tidy(['land', 'lane/x', dir, '--tip', rebased], { cwd: dir });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.deepEqual(branchNames(dir), ['main'], 'the lane is landed and deleted');
   assert.equal(git(dir, 'log', '--format=%s', '-1', 'main'), 'add lane.txt');
@@ -235,5 +236,21 @@ test('tip: the landLane result for a moved branch is tip-moved with the branch t
   assert.equal(result.tip, moved);
   assert.equal(landExitCode(result), 9);
   assert.equal(JSON.parse(formatLand(result, true)).status, 'tip-moved');
-  assert.equal(land(dir, 'lane/x', { tip: moved }).status, 'landed', 'the same branch at its own tip lands');
+  const rebased = land(dir, 'lane/x', { tip: moved, rebaseOnly: true }).tip;
+  assert.equal(land(dir, 'lane/x', { tip: rebased }).status, 'landed', 'the same branch at its own (rebased) tip lands');
+});
+
+test('tip: a full land lands only the --tip it was given: a rebase that rewrites it (the base moved) is exit 5, nothing lands, then the new tip lands', () => {
+  const { dir } = laneWithWorktree();
+  const checked = JSON.parse(tidy(['land', 'lane/x', dir, '--rebase-only', '--tip', git(dir, 'rev-parse', 'lane/x'), '--json'], { cwd: dir }).stdout).tip;
+  const movedBase = commit(dir, 'landed-meanwhile.txt');
+  const refused = tidy(['land', 'lane/x', dir, '--tip', checked], { cwd: dir });
+  assert.equal(refused.status, 5, refused.stdout + refused.stderr);
+  const rebasedAgain = git(dir, 'rev-parse', 'lane/x');
+  assert.notEqual(rebasedAgain, checked, 'the lane is rebased onto the moved base');
+  assert.match(refused.stdout, new RegExp(`base-moved: .*from ${checked} to ${rebasedAgain}.*land again with --tip ${rebasedAgain}`));
+  assert.equal(git(dir, 'rev-parse', 'main'), movedBase, 'the base did not move: the unchecked rebased tip never landed');
+  const landed = tidy(['land', 'lane/x', dir, '--tip', rebasedAgain], { cwd: dir });
+  assert.equal(landed.status, 0, landed.stdout + landed.stderr);
+  assert.equal(git(dir, 'rev-parse', 'main'), rebasedAgain);
 });

@@ -30,17 +30,20 @@ node ~/.claude/tools/land-lane/land-lane.mjs --repo <abs base folder> --branch <
 3. The branch is not at `--tip`: when `git-tidy range <tip> --landed <branch tip>` finds it on the base (a run killed after the fast-forward), the
    landing is recorded and the leftovers are pruned; else exit 9.
 4. `git-tidy land --rebase-only --tip`: exit 3 conflict.
-5. `lib/union-rows.mjs` on the rebased tip: every object the tip reaches is in the repository (`git rev-list --objects --missing=print`; a missing one is exit 14,
-   `tip-objects-missing`), and each `merge=union` file the lane changed (`git check-attr --source=<tip>`, read from the tip, not a working folder) is read
-   for a table row key (first cell, trimmed, CRLF or LF alike) that appears twice in one table. Union merge keeps both sides' lines, so two lanes that
-   each add the row `dup` rebase "cleanly" into two; that is exit 12 `duplicate-rows`, the keys named (capped at 60 characters, 5 per file), nothing
-   landed, the lane stays rebased. A file git cannot read is exit 14.
+5. `lib/union-rows.mjs` on the rebased tip: the tip commit and every object the lane adds over the base are in the repository (`git cat-file -t`, then
+   `git rev-list --objects --quiet --missing=allow-promisor <tip> --not <base>`: no output to hold, and an object a partial clone's promisor remote holds
+   is not missing; a missing one is exit 14, `tip-objects-missing`). Each file the lane changed that is `merge=union` at the base or at the tip
+   (`git check-attr --source`, so dropping the attribute does not switch the check off) is read from the tip, not a working folder, for a table row key
+   (first cell, trimmed, CRLF or LF alike, indented tables too; an empty first cell is no key) that appears twice in one table. Union merge keeps both
+   sides' lines, so two lanes that each add the row `dup` rebase "cleanly" into two; that is exit 12 `duplicate-rows`, the keys named (capped at 60
+   characters, 5 per file; keys, file names and git's text control-free), nothing landed, the lane stays rebased. A file git cannot read is exit 14.
 6. `done-check run --where land --base <base tip>` on the lane at the rebased tip, then `git-tidy land --tip <rebased>`. The check is reused (no command
    runs) when a green run of the same change, base and commands is in the ledger, else it runs (at most 240 s plus 30 s for the base side) and prints
    its `checks:` line. New failures or an open weakened item: exit 4 (the lane stays, rebased). A risk class (security, data, money, concurrency, gate,
    large) with no `--reviewed` or `--skip-review`: exit 10 and `review: suggested (<classes>)`. A done-check that cannot run, times out or answers
    something unreadable: exit 14. The answers (`reviewed <sha>`, `skipped`, `accepted open`) are added to the close row's evidence. After a moved base the
-   check runs again for the new base. `git-tidy land --tip <rebased>`; its exits 3, 6, 7, 8, 9 are passed on. Exit 5 (base moved) goes back to step 4 once per new base: the same base
+   check runs again for the new base. `git-tidy land --tip <rebased>` lands only that sha: when the base moved after step 4, its rebase rewrites the tip and
+   it exits 5 with nothing landed, so the commit landed is always the commit steps 5 and 6 checked. Its exits 3, 6, 7, 8, 9 are passed on. Exit 5 (base moved) goes back to step 4 (rebase, steps 5 and 6 on the new tip) once per new base: the same base
    twice is exit 5 here. Any other exit is 14. Two landings at once cannot both win: the fast-forward is `git merge --ff-only` at the rebased tip, so the second
    finds the base moved (exit 5 inside, then a new rebase from step 4).
 7. `status.mjs done <close-row> "landed <to> on <base> from <from>"`. A failure is exit 13, with the line to type by hand; a row that is already done

@@ -138,7 +138,10 @@ function landStep(options, rebased) {
   return { moved: false, to: result?.tip ?? baseTip(options), from: result?.from ?? null, findings, notes };
 }
 
-/** Step 5 with the tip and union-row checks, then the done-check before it: the checks of the rebased tip, then `git-tidy land` at that same tip. A base that moved is checked again. */
+/**
+ * Step 5 with the tip and union-row checks and the done-check before it: the checks of the rebased tip, then `git-tidy land --tip` of that same
+ * tip, which lands only that sha (a base that moved since rewrites it: exit 5, and the loop rebases and checks again).
+ */
 function checkedLandStep(options, rebased) {
   checkTipRows(options, rebased);
   const checked = checkRebasedTip(options, rebased);

@@ -5,13 +5,14 @@
 //        git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]
 //        git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>] [--json]
 //   --tip is the full sha the caller expects the lane to be at: required for a full land (exit 2 without it), optional with --rebase-only;
-//   a branch that is not at it exits 9 before anything changes. `--checks` (a removed flag) is refused with exit 2.
+//   a branch that is not at it exits 9 before anything changes; a full land lands only that sha (a rebase that rewrites it is exit 5, the lane
+//   stays rebased: land again with the new tip). `--checks` (a removed flag) is refused with exit 2.
 //        git-tidy.mjs range <sha> [dir] [--base <branch>] [--landed <sha>] [--json]
 //        --include-recent  lifts only the rule that keeps a worktree used in the last 60 minutes, and not for a lane
 //                          with no commit of its own yet (it stays protected for those 60 minutes)
 // land: rebases the lane onto the base, fast-forwards the base and cleans up (no test or review step). Exit: 0 landed and check
 //   clean (or --rebase-only done), 1 landed with findings left, 2 usage or base folder not
-//   ready, 3 conflict, 5 base moved during the landing, 6 ui-proof: the UI files differ from the base and
+//   ready, 3 conflict, 5 base moved (during the landing, or since the `--tip` was rebased), 6 ui-proof: the UI files differ from the base and
 //   `ui-proof check --tip <rebased tip>` does not exit 0 (or the ui-proof tool cannot be loaded; always on, no flag turns it off), 7 new-file-size:
 //   the lane adds a file over the commit gate's MAX_NEW_FILE_BYTES that the `--brief` file does not name (no brief names none).
 //   8 upstream-moved: after a fetch of the base's upstream (timeout; offline is a WARN line), the upstream holds commits the base lacks:

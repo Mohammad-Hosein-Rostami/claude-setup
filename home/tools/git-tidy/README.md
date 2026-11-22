@@ -111,7 +111,9 @@ A failure of one item does not stop the others; the run ends with exit code 1 if
    Untracked files there never block and are never touched, except an untracked path the lane would write over: exit 2 naming it, before any change.
 2. The lane is rebased onto the base in the worktree that holds it, or in a temporary worktree that is removed afterwards. A conflict aborts the rebase,
    leaves the lane where it was and exits 3 naming the files. `patches-changed` counts the lane's commits whose `git patch-id --stable` differs after the rebase.
-   `--rebase-only` stops here and prints `tip <sha>` and `patches-changed <n>`.
+   `--rebase-only` stops here and prints `tip <sha>` and `patches-changed <n>`. A full land lands only the `--tip` sha, the commit the caller checked:
+   when the rebase rewrites it (the base moved after it was rebased), nothing lands and it exits 5 (`base-moved`) with the new tip; land again with
+   `--tip <new tip>` after checking that tip. A lane that is behind the base therefore lands in two runs: `--rebase-only`, then `--tip <rebased tip>`.
 3. Checks on the rebased tip (there is no test run and no review record):
    - A file the lane adds (`<base>..<tip>`, renames counted as adds) over the commit gate's `MAX_NEW_FILE_BYTES` (5 MB, imported from
      `hooks/lib/new-file-size.mjs`) whose path the `--brief <file>` text does not name (the commit gate's `namesPath`) stops it: exit 7
