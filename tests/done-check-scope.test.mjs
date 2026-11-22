@@ -207,18 +207,98 @@ test('a lead started outside any repo gets one scope per worktree it edited in',
   assert.deepEqual(scopes.map((scope) => [scope.top, scope.files]), expected);
 });
 
-test('a plain folder with no git: the recorded files, git false, base none', async (t) => {
+test('a lead whose folder is not git gets no scope for its edits there (no git base, nothing to judge)', async (t) => {
   const repo = withRepo(t, { plain: true, files: BASE_FILES });
   const input = { session_id: SESSION, stop_hook_active: false };
   recordLeadEdits(repo, 'src/a.ts');
   const { ownChange } = await loadScope();
+  assert.deepEqual(await ownChange(input, envOf(repo)), []);
+});
+
+test('a folder that is not git with no recorded file gives no scope', async (t) => {
+  const repo = withRepo(t, { plain: true, files: BASE_FILES });
+  const { ownChange } = await loadScope();
+  assert.deepEqual(await ownChange({ session_id: SESSION, stop_hook_active: false }, envOf(repo)), []);
+});
+
+/** Records Edit/Write calls of subagent `agent` on absolute `files`, the way the PostToolUse hook does. */
+function recordAgentEdits(env, agent, ...files) {
+  for (const file of files) {
+    assert.equal(recordEditedFile({ session_id: SESSION, agent_id: agent, tool_input: { file_path: file } }, env), true, `could not record ${file}`);
+  }
+}
+
+/** A linked worktree of `repo` on a new branch, under `.claude/worktrees/<name>` (git-excluded, as lane worktrees are). */
+function addLaneWorktree(repo, name) {
+  writeFileSync(join(repo.dir, '.git', 'info', 'exclude'), '.claude/worktrees/\n');
+  const lane = join(repo.dir, '.claude', 'worktrees', name);
+  git(repo.dir, 'worktree', 'add', '-q', '-b', `lane-${name}`, lane);
+  return lane;
+}
+
+test('a lead outside any repo is not given the files an agent edited in its lane worktree', async (t) => {
+  const repo = withRepo(t, { files: BASE_FILES });
+  const lane = addLaneWorktree(repo, 'lane-a');
+  const env = { ...repo.env, CLAUDE_PROJECT_DIR: repo.home }; // the lead started in a folder that is not a repo
+  assert.equal(saveBaseline(repo.env, SESSION, '', null, [], null), true);
+  writeFileSync(join(lane, 'src', 'a.ts'), 'export const a = 2;\n'); // half-finished lane work
+  recordAgentEdits(repo.env, AGENT, join(lane, 'src', 'a.ts'));
+  const { ownChange } = await loadScope();
+  assert.deepEqual(await ownChange({ session_id: SESSION, stop_hook_active: false }, env), []);
+});
+
+test('a lead outside any repo keeps its own edit and leaves out an agent edit in another worktree of the same repo', async (t) => {
+  const repo = withRepo(t, { files: BASE_FILES });
+  const lane = addLaneWorktree(repo, 'lane-b');
+  const env = { ...repo.env, CLAUDE_PROJECT_DIR: repo.home };
+  assert.equal(saveBaseline(repo.env, SESSION, '', null, [], null), true);
+  repo.write('src/b.ts', 'export const b = 2;\n');
+  recordLeadEdits(repo, 'src/b.ts');
+  writeFileSync(join(lane, 'src', 'a.ts'), 'export const a = 2;\n');
+  recordAgentEdits(repo.env, AGENT, join(lane, 'src', 'a.ts')); // the newest edit of the session is the agent's
+  const { ownChange } = await loadScope();
+  const scopes = await ownChange({ session_id: SESSION, stop_hook_active: false }, env);
+  assert.deepEqual(scopes.map((scope) => [scope.top, scope.files, scope.base]), [[repo.dir, ['src/b.ts'], null]]);
+});
+
+test('a lead in a main checkout with nothing changed is not given an agent lane worktree with changes', async (t) => {
+  const repo = withRepo(t, { files: BASE_FILES });
+  const lane = addLaneWorktree(repo, 'lane-c');
+  const input = startLead(repo);
+  writeFileSync(join(lane, 'src', 'a.ts'), 'export const a = 2;\n');
+  writeFileSync(join(lane, 'src', 'c.ts'), 'export const c = 1;\n');
+  recordAgentEdits(repo.env, AGENT, join(lane, 'src', 'a.ts'), join(lane, 'src', 'c.ts'));
+  const { ownChange } = await loadScope();
+  assert.deepEqual(await ownChange(input, envOf(repo)), []);
+});
+
+test('an agent whose folder is not git still gets its edits in a git worktree checked (no base)', async (t) => {
+  const repo = withRepo(t, { files: BASE_FILES });
+  const plainFolder = join(dirname(repo.dir), 'reports');
+  mkdirSync(plainFolder);
+  const transcript = join(dirname(repo.dir), 'agent-transcript.jsonl');
+  writeFileSync(transcript, `${JSON.stringify({ cwd: plainFolder })}\n`);
+  assert.equal(saveBaseline(repo.env, SESSION, AGENT, null, [], null), true);
+  writeFileSync(join(plainFolder, 'notes.mjs'), 'export {};\n');
+  repo.write('src/a.ts', 'export const a = 2;\n');
+  recordAgentEdits(repo.env, AGENT, join(plainFolder, 'notes.mjs'), join(repo.dir, 'src', 'a.ts'));
+  const input = { session_id: SESSION, agent_id: AGENT, agent_type: 'general-purpose', agent_transcript_path: transcript, stop_hook_active: false };
+  const { ownChange } = await loadScope();
+  const scopes = await ownChange(input, repo.env);
+  assert.deepEqual(scopes.map((scope) => [scope.top, scope.git, scope.files, scope.base]), [[repo.dir, true, ['src/a.ts'], null]]);
+});
+
+test('an unreadable edit log: a subagent change since its baseline is still checked', async (t) => {
+  const repo = withRepo(t, { files: BASE_FILES });
+  const input = startAgent(repo);
+  repo.write('src/a.ts', 'export const a = 2;\n');
+  repo.commit('agent commit');
+  const editsFolder = join(repo.home, '.claude', 'state', 'commit-gate', 'edits');
+  mkdirSync(editsFolder, { recursive: true });
+  writeFileSync(join(editsFolder, `${SESSION}.json`), '{ this is not json');
+  const { ownChange } = await loadScope();
   const scopes = await ownChange(input, envOf(repo));
-  assert.equal(scopes.length, 1);
-  assert.equal(scopes[0].git, false);
-  assert.equal(scopes[0].base, null);
-  assert.equal(scopes[0].top, repo.dir);
-  assert.deepEqual(scopes[0].files, ['src/a.ts']); // src/b.ts exists but nobody recorded it
-  assert.match(scopes[0].key, KEY_PATTERN);
+  assert.deepEqual(scopes.map((scope) => [scope.files, scope.base]), [[['src/a.ts'], repo.baseSha]]);
 });
 
 test('a baseline without a head gives base none and no error', async (t) => {

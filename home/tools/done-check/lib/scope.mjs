@@ -5,11 +5,16 @@
 // Rules (the tests in tests/done-check-scope.test.mjs fix the ones the design leaves open):
 // - Base = the HEAD the agent or lead had at its first tool call (lib/dirty-baseline.mjs `baselineOf`), only when that baseline was taken in
 //   the same worktree and the commit still exists. No baseline, an old one without head, an unreadable store, a base git cannot find or a
-//   folder that is not git: base null, and only uncommitted and untracked files of this session's own are seen.
+//   baseline taken in another folder: base null, and only uncommitted and untracked files of this session's own are seen.
+// - A folder that is not git gives no Scope of its own (no base, nothing a check could judge; the lead's home folder was 42% of all runs,
+//   each one `review: needed` that nobody could act on). Only git worktrees are checked.
 // - A subagent owns every file changed between base and its worktree (committed or not), plus untracked ones. Of the uncommitted files it
-//   owns those it recorded (lib/own-edits.mjs) or that changed since its baseline (a Bash command made them). The lead owns only the files
-//   recorded for its session (that set also holds the files its agents recorded, as commit-gate sees it): land-lane moves HEAD, so a landed
-//   lane is not the lead's. A lead started outside a repo gets one Scope per worktree it edited in (`editedWorktrees`).
+//   owns those it recorded (lib/own-edits.mjs) or that changed since its baseline (a Bash command made them). In its own worktree the lead
+//   owns the files recorded for its session (that set also holds the files its agents recorded there, as commit-gate sees it): land-lane
+//   moves HEAD, so a landed lane is not the lead's.
+// - Beside its own worktree (the lead always; an agent when its folder is not git) a stopper gets one Scope per worktree holding a file it
+//   recorded itself (`editedWorktrees` over `pathsRecordedBy`), and owns there only those files: the lead is never given an agent's lane
+//   worktree, where half-finished work with no base would block it for failures that are not its own.
 // - Code files: ts tsx js jsx mjs cjs mts cts vue, and the scripts in a `.githooks/` folder (no extension). `named`: any other changed file
 //   (markdown, json, ...) that a test-looking file names (lib/related.mjs `pathsNamedByTests`), so a test that reads a text file is run when
 //   the text changes; a change with no code and nothing named stays no change. `wide`: package.json, lockfiles, tsconfig*.json, vitest, jest and eslint config; a wide file
@@ -22,11 +27,10 @@
 //   a filter program is not asked (git would run it): ownChange gives [], rangeChange throws so a land fails closed. An empty tree costs one
 //   `rev-parse` pair and one `status`, no more. ownChange never throws; rangeChange and changedLines throw on a bad base or a failed git call.
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { basename, join, relative, sep } from 'node:path';
+import { basename, join } from 'node:path';
 import { baselineOf, changedSinceBaseline } from '../../../hooks/lib/dirty-baseline.mjs';
 import { editedWorktrees, gatedFolder, gitOut, namesFilterProgram, worktreeOf } from '../../../hooks/lib/gated-folder.mjs';
-import { LEAD, realPathOf, recordedPaths, statusEntries } from '../../../hooks/lib/own-edits.mjs';
+import { LEAD, pathsRecordedBy, realPathOf, recordedPaths, statusEntries } from '../../../hooks/lib/own-edits.mjs';
 import { readPlainFile } from '../../../hooks/lib/plain-file.mjs';
 import { pathsNamedByTests } from './related.mjs';
 
@@ -44,7 +48,6 @@ const git = (top, args) => gitOut(top, ['--literal-pathspecs', ...args], GIT_TIM
 const isWide = (path) => WIDE_FILE.test(basename(path));
 const isCode = (path) => (CODE_FILE.test(path) || GIT_HOOK_SCRIPT.test(path)) && !path.split('/').includes('node_modules');
 const isOther = (path) => !isWide(path) && !isCode(path) && !path.split('/').includes('node_modules');
-const inside = (parent, path) => path.startsWith(parent.endsWith(sep) ? parent : parent + sep);
 
 function assertCommit(base) {
   if (typeof base !== 'string' || !COMMIT_ID.test(base)) throw new TypeError('done-check scope: base must be a full commit id (40 or 64 hex)');
@@ -127,15 +130,6 @@ function gitScope(ctx, tree) {
   return scopeFrom(top, true, base, ownedPaths(ctx, top, relevant, dirty), { named });
 }
 
-/** The Scope of a folder that is not git: the recorded files under it that still exist (no base, nothing to compare). */
-function plainScope(ctx, folder, skipTops) {
-  const top = realPathOf(folder);
-  const paths = [...ctx.recorded]
-    .filter((path) => inside(top, path) && !skipTops.some((other) => inside(other, path)) && existsSync(path))
-    .map((path) => relative(top, path).split(sep).join('/'));
-  return scopeFrom(top, false, null, paths);
-}
-
 /**
  * The code files this session or agent changed, one Scope per worktree.
  * @param {{session_id?: string, agent_id?: string, agent_type?: string, agent_transcript_path?: string}} input Stop or SubagentStop JSON
@@ -149,9 +143,11 @@ export async function ownChange(input, env) {
     const ctx = { env, session, agent, recorded: recordedPaths(env, session, agent), baseline: baselineOf(env, session, agent) };
     const folder = gatedFolder(input ?? {}, env);
     const primary = folder === null ? null : worktreeOf(folder);
-    const trees = [...(primary === null ? [] : [primary]), ...(agent === LEAD ? editedWorktrees(session, env, { except: primary }) : [])];
-    const scopes = trees.map((tree) => gitScope(ctx, tree));
-    if (primary === null && folder !== null) scopes.push(plainScope(ctx, folder, trees.map((tree) => realPathOf(tree.top))));
+    // Beside its own worktree a stopper is judged only on the files it edited itself: never an agent's lane for the lead.
+    const lookBeside = agent === LEAD || (folder !== null && primary === null);
+    const ownCtx = { ...ctx, recorded: pathsRecordedBy(env, session, agent) };
+    const beside = lookBeside ? editedWorktrees(session, env, { except: primary, files: ownCtx.recorded }) : [];
+    const scopes = [...(primary === null ? [] : [gitScope(ctx, primary)]), ...beside.map((tree) => gitScope(ownCtx, tree))];
     return scopes.filter((scope) => scope !== null);
   } catch {
     return []; // a gate input that cannot be read is no change to check (commit-gate treats it the same way)

@@ -1,6 +1,6 @@
 // The files a session or one of its agents changed with Edit, Write, MultiEdit or NotebookEdit, for commit-gate.mjs: it records them on
 // PostToolUse and at a stop gates only those still dirty. Exports: LEAD, realPathOf(file), recordEditedFile(input, env) -> boolean,
-// recordedPaths(env, session, agent) -> Set, recordedEntries(status, top, recorded) -> string[], statusEntries(status, top), isRecordedEntry.
+// recordedPaths(env, session, agent) -> Set, pathsRecordedBy(env, session, agent) -> Set, recordedEntries(status, top, recorded) -> string[], statusEntries(status, top), isRecordedEntry.
 // Store: ~/.claude/state/commit-gate/edits/<session>.json through lib/session-store.mjs (lstat-checked, locked, 0600):
 // {"edits": [[agent id ('' for the lead), real path], ...]}, the newest EDITS_KEPT pairs within MAX_EDITS_BYTES.
 // What a Bash command changes is never recorded here: lib/dirty-baseline.mjs compares the worktree with its first-call state. Invariants: never throws; a failed record is lost (the
@@ -76,10 +76,24 @@ export function recordEditedFile(input, env = process.env) {
   }) === true;
 }
 
+/** The [agent, path] pairs recorded for the session; an unreadable record reads as none. */
+const sessionEdits = (env, session) => parseEdits(readSessionFile(editsDir(env), session, MAX_EDITS_BYTES) ?? null);
+
 /** The real paths recorded for this stop: the agent's own, or every one of the session for the lead. */
 export function recordedPaths(env, session, agent) {
-  const edits = parseEdits(readSessionFile(editsDir(env), session, MAX_EDITS_BYTES) ?? null);
-  return new Set(edits.filter(([by]) => agent === LEAD || by === agent).map(([, path]) => path));
+  return new Set(sessionEdits(env, session).filter(([by]) => agent === LEAD || by === agent).map(([, path]) => path));
+}
+
+/**
+ * The real paths `agent` itself recorded, oldest first. Unlike recordedPaths, the lead (LEAD) gets only its own edits, not its agents':
+ * the done-check judges the stopper's own change and must not hand the lead an agent's lane worktree.
+ * @param {Record<string, string | undefined>} env HOME (the state folder)
+ * @param {string} session the session id
+ * @param {string} agent the agent id, LEAD for the main session
+ * @returns {Set<string>} empty for an unreadable or missing record
+ */
+export function pathsRecordedBy(env, session, agent) {
+  return new Set(sessionEdits(env, session).filter(([by]) => by === agent).map(([, path]) => path));
 }
 
 /**
