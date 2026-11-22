@@ -362,3 +362,8 @@ test('a fix row closed by within may leave out "as"; a short "as" sha is resolve
   const unknown = gate(rows(`${within('rd.s1.a-land')} as ${SHORT_TO}`));
   assert.ok(unknown.result.lines.some((line) => line.startsWith('FAIL 2 range: rd.s1.fix-b-land') && line.includes(SHORT_TO)), unknown.result.lines.join('\n'));
 });
+
+test('a steered lane that names the road-start tip as reviewed is a FAIL', () => {
+  const { result } = gate(steeredRows(reviewedText(START)), [TO], { steered: true });
+  assert.match(rangeLine(result), /^FAIL 2 range: rd\.s1\.a names the road-start tip as reviewed/);
+});
