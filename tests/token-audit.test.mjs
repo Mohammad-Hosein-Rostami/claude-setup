@@ -2,8 +2,9 @@
 // and that measuring the hook text writes nothing and prints none of it.
 // How: the CLI runs as a child with HOME (and USERPROFILE) set to a cs-test- temp folder holding a lead.md, a lead-rules.md, a
 // MEMORY.md (each with a marker that must never reach the output) and a 20-day-old state file that session-notes' prune would
-// delete; every file under that HOME is compared before and after. hookTextParts and startLines are also called with fake parts
-// for a missing hook file, a throw, a late part and a 6,000-character text.
+// delete; every file under that HOME is compared before and after, and the audit's temp folder must be empty after it.
+// hookTextParts is also run on fake hook scripts (missing, a throw, too slow, 6,000 characters, silent), startLines on a missing
+// part, and FIFOs stand at lead.md, CLAUDE.md and a rule file (a plain read of one waits forever).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -12,13 +13,20 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hookTextParts, startLines } from '../home/hooks/token-audit.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
+// The audit runs these hooks as child processes, which done-check's import graph cannot see; these imports make it select this test
+// when a start hook or what it imports (lib/state-files.mjs, lib/plain-file.mjs) changes. Importing runs no hook: each runs only as a script.
+import '../home/hooks/lead-text.mjs';
+import '../home/hooks/session-notes.mjs';
+import '../home/hooks/recall-digest.mjs';
 
 const AUDIT = fileURLToPath(new URL('../home/hooks/token-audit.mjs', import.meta.url));
 const MARKER = 'cs-test-private-hook-text';
 const STALE_AGE_MS = 20 * 24 * 60 * 60 * 1000; // older than session-notes' 14-day retention
 const HUGE_CHARS = 6000;
-const SHORT_TIMEOUT_MS = 50;
+const TEST_TIMEOUT_MS = 500; // a fake hook needs about 50 ms to start node
 const SLOW_PART_MS = 2000;
+const HANG_LIMIT_MS = 20_000; // a run past this hangs: the hook timeout is 5 s
+const LEAD_TEXT = fileURLToPath(new URL('../home/hooks/lead-text.mjs', import.meta.url));
 
 /** A temp HOME with the start hooks' files; `withLead` false leaves out lead.md and lead-rules.md. */
 function makeHome(withLead = true) {
@@ -49,23 +57,29 @@ function snapshot(dir, out = {}) {
   return out;
 }
 
-function runAudit(home, args = []) {
+/** Runs the audit with `home` as HOME and `tmp` (a fresh folder unless given) as its temp folder. */
+function runAudit(home, args = [], timeout = undefined, tmp = makeTempDir('token-audit-tmp-')) {
   const cwd = makeTempDir('token-audit-cwd-');
   writeFileSync(join(cwd, 'CLAUDE.md'), '# project rules\n');
-  return spawnSync(process.execPath, [AUDIT, ...args], { cwd, env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
+  const env = { ...process.env, HOME: home, USERPROFILE: home, TMPDIR: tmp, TMP: tmp, TEMP: tmp };
+  return spawnSync(process.execPath, [AUDIT, ...args], { cwd, env, encoding: 'utf8', timeout, killSignal: 'SIGKILL' });
 }
 
 test('the report gives both start totals, counts the hook text, prints none of it and changes no file under HOME', () => {
   const home = makeHome();
   const before = snapshot(home);
-  const run = runAudit(home);
+  const tmp = makeTempDir('token-audit-tmp-');
+  const run = runAudit(home, [], undefined, tmp);
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(snapshot(home), before, 'the audit must not create, change or delete a file under HOME');
+  assert.deepEqual(readdirSync(tmp), [], 'the throwaway HOME is removed after the run');
   const lines = run.stdout.split('\n');
   assert.match(lines.find((l) => l.startsWith('main session start: about')) ?? '', /tok$/);
   assert.match(lines.find((l) => l.startsWith('agent start: about')) ?? '', /tok$/);
   assert.match(run.stdout, /lead text \(lead-text\.mjs\) [1-9]/);
-  assert.match(run.stdout, /lead rules and notes \(session-notes\.mjs\) [1-9]/);
+  assert.match(run.stdout, /lead rules \(session-notes\.mjs\) [1-9]/);
+  assert.match(run.stdout, /checkpoint digest \(recall-digest\.mjs, only after a compaction\) 0/);
+  assert.match(run.stdout, /compaction note \(session-notes\.mjs, only after a compaction\) 0/);
   assert.equal(`${run.stdout}${run.stderr}`.includes(MARKER), false, 'hook and memory text is measured, never printed');
 });
 
@@ -86,21 +100,27 @@ test('no lead.md and no lead-rules.md: counted as nothing, no throw', () => {
   assert.match(budget.stdout, /^warn\tlead text missing or empty/m);
 });
 
-test('a missing, throwing or late hook part is not counted and says why; a huge text is counted as is', async () => {
+test('a missing, failing or late hook is not counted and says why; a huge text is counted as is', async () => {
+  const dir = makeTempDir('token-audit-parts-');
+  const script = (name, body) => {
+    const path = join(dir, `${name}.mjs`);
+    writeFileSync(path, body);
+    return { part: name, when: name === 'late' || name === 'empty' ? 'agent' : 'main', script: path, input: () => ({}) };
+  };
   const parts = await hookTextParts(
     [
-      { part: 'gone', when: 'main', file: 'no-such-hook.mjs', measure: () => 'x' },
-      { part: 'throws', when: 'main', file: 'lead-text.mjs', measure: () => { throw new Error('boom'); } },
-      { part: 'late', when: 'agent', file: 'lead-text.mjs', measure: () => new Promise((resolve) => setTimeout(resolve, SLOW_PART_MS, 'x')) },
-      { part: 'huge', when: 'main', file: 'lead-text.mjs', measure: () => 'a'.repeat(HUGE_CHARS) },
-      { part: 'empty', when: 'agent', file: 'lead-text.mjs', measure: () => '' },
+      { part: 'gone', when: 'main', script: join(dir, 'no-such-hook.mjs'), input: () => ({}) },
+      script('throws', "throw new Error('boom');\n"),
+      script('late', `setTimeout(() => console.log('x'), ${SLOW_PART_MS});\n`),
+      script('huge', `console.log('a'.repeat(${HUGE_CHARS}));\n`),
+      script('empty', ''),
     ],
-    SHORT_TIMEOUT_MS,
+    TEST_TIMEOUT_MS,
   );
   assert.deepEqual(parts, [
     { part: 'gone', when: 'main', chars: null, why: 'missing' },
-    { part: 'throws', when: 'main', chars: null, why: 'boom' },
-    { part: 'late', when: 'agent', chars: null, why: `ran past ${SHORT_TIMEOUT_MS / 1000} s` },
+    { part: 'throws', when: 'main', chars: null, why: 'exit 1' },
+    { part: 'late', when: 'agent', chars: null, why: `ran past ${TEST_TIMEOUT_MS / 1000} s` },
     { part: 'huge', when: 'main', chars: HUGE_CHARS + 1 },
     { part: 'empty', when: 'agent', chars: 0 },
   ]);
@@ -115,4 +135,37 @@ test('a total with a part not counted says "at least" and names the part with it
   assert.match(lines[2], /lead text \(lead-text\.mjs\): not counted \(missing\)/);
   assert.match(lines[3], /^agent start: about \d+ tok$/);
   assert.match(lines[4], /agent start note \(session-notes\.mjs\) 10/);
+});
+
+/** Makes a FIFO nobody writes to: a plain read of it waits forever. */
+function makeFifo(path) {
+  assert.equal(spawnSync('mkfifo', [path]).status, 0, `mkfifo ${path}`);
+}
+
+test('FIFOs at lead.md, CLAUDE.md and a rule file: the audit and --budget end, listing nothing of them', () => {
+  const home = makeHome(false);
+  const claude = join(home, '.claude');
+  mkdirSync(join(claude, 'rules'));
+  for (const path of [join(claude, 'lead.md'), join(claude, 'CLAUDE.md'), join(claude, 'rules', 'fifo.md')]) makeFifo(path);
+  const budget = runAudit(home, ['--budget'], HANG_LIMIT_MS);
+  assert.equal(budget.status, 0, `--budget must end: ${budget.error?.message ?? budget.stderr}`);
+  assert.match(budget.stdout, /^warn\tlead text missing or empty/m);
+  const report = runAudit(home, [], HANG_LIMIT_MS);
+  assert.equal(report.status, 0, `the report must end: ${report.error?.message ?? report.stderr}`);
+  assert.match(report.stdout, /lead text \(lead-text\.mjs\) 0/);
+});
+
+test('lead-text.mjs: a FIFO at lead.md prints nothing and ends', () => {
+  const home = makeTempDir('token-audit-lead-fifo-');
+  mkdirSync(join(home, '.claude'));
+  makeFifo(join(home, '.claude', 'lead.md'));
+  const run = spawnSync(process.execPath, [LEAD_TEXT], {
+    input: JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup', session_id: 's' }),
+    env: { ...process.env, HOME: home, USERPROFILE: home },
+    encoding: 'utf8',
+    timeout: HANG_LIMIT_MS,
+    killSignal: 'SIGKILL',
+  });
+  assert.equal(run.status, 0, `lead-text must end: ${run.error?.message ?? run.stderr}`);
+  assert.equal(run.stdout, '');
 });

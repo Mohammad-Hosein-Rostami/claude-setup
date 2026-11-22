@@ -12,10 +12,11 @@ no file; you report and propose.
 
 1. Setup text: run `node ~/.claude/hooks/token-audit.mjs` from the project root. It first prints two totals, `main session
    start` and `agent start`, each naming every part counted and every part not counted; the start hooks' text (lead text, lead
-   rules, checkpoint digest) is counted by calling the hooks' own functions, and a total with a hook part missing, failing or
-   past 5 s says "at least". Then it prints byte/line sizes (≈ tokens = bytes/4) of every always-loaded file, path-scoped
-   rule, skill description, agent and `.mcp.json` server, and each project's `MEMORY.md` size. `node ~/.claude/hooks/token-audit.mjs --budget` gives the budget status (the lead text against
-   its 10,000-char SessionStart cap); `scripts/doctor.sh` prints the same lines.
+   rules) is counted by running the hooks in a throwaway HOME, and a total with a hook missing, failing or past 5 s says
+   "at least"; the checkpoint digest and an agent's compaction note show 0 ("only after a compaction"). Then it prints
+   byte/line sizes (≈ tokens = bytes/4) of every always-loaded file, path-scoped rule, skill description, agent and
+   `.mcp.json` server, and each project's `MEMORY.md` size. `node ~/.claude/hooks/token-audit.mjs --budget` gives the budget
+   status (the lead text against its 10,000-char SessionStart cap); `scripts/doctor.sh` prints the same lines.
 2. Use: run `node ~/.claude/tools/token-view/token-view.mjs` (7 days; `--days N`, `--project <text>`, `--detail`, `--json`). It
    prints (a) the limits against time per account, (b) the use per role (agent type) with each role's start tokens, and per
    lane, (c) cache reads, writes and rebuilds after an idle gap, the context peak and compactions per session against the

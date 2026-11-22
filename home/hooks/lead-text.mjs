@@ -3,15 +3,18 @@
 // run for one event (hooks docs, "capped at 10,000 characters"), and the string of session-notes.mjs (the lead rules) is large; this string has its own room.
 // Exports: leadText(input, file) -> Promise<string>.
 // Invariants: prints nothing inside a subagent (`agent_id` is a non-empty string), for another event or for input that is not hook JSON;
-// a missing lead.md prints nothing, any other read error goes to stderr; never blocks a session (always exit 0).
-import { readFile } from 'node:fs/promises';
+// a missing lead.md prints nothing, any other read error goes to stderr; never blocks a session (always exit 0); lead.md is read only
+// as a regular file of at most LEAD_TEXT_MAX_BYTES, never waiting (lib/plain-file.mjs: a FIFO there used to hang the hook and doctor).
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { readPlainFile } from './lib/plain-file.mjs';
 
 const LEAD_FILE = join(homedir(), '.claude', 'lead.md');
 const HTML_COMMENT = /<!--[\s\S]*?-->\n?/g; // notes for editors, not for the lead
+// The printed text is capped at 10,000 characters (hooks docs) and a UTF-8 character is at most 4 bytes; editor comments come on top.
+const LEAD_TEXT_MAX_BYTES = 40_000;
 
 /**
  * The lead text for one hook input.
@@ -23,7 +26,8 @@ export async function leadText(input, file = LEAD_FILE) {
   if (input?.hook_event_name !== 'SessionStart') return '';
   if (typeof input.agent_id === 'string' && input.agent_id !== '') return '';
   try {
-    return (await readFile(file, 'utf8')).replace(HTML_COMMENT, '').trim();
+    // The install link is followed once (realpath); the open itself follows no link and never waits.
+    return readPlainFile(realpathSync(file), LEAD_TEXT_MAX_BYTES).replace(HTML_COMMENT, '').trim();
   } catch (error) {
     if (error.code !== 'ENOENT') process.stderr.write(`lead-text hook: cannot read ${file}: ${error.message}\n`);
     return '';
