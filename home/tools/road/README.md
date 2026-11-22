@@ -47,14 +47,15 @@ Ids stay at most 40 characters, so a close row id ending in `-land` may also be 
 under `rd.s1.fix-x.landed`). Both lookups ignore case; a correction row under both ids is a FAIL line naming both. The same two ids serve
 the `landed within` row below.
 
-A close row that landed inside the same fast-forward as another close row (so it cannot have a range of its own) is closed by a done
-`<close row id>.landed` row whose evidence says `landed within <other close row id>`. The gate then gives that row no range of its own,
-and fails line 2 unless the named row is a close row (road entry or fix row) of the same road with a valid range of its own (its landed
-line or its `.landed` correction). A row cannot name itself, and the named row cannot itself be a `within` row (no chains). Such a row
-never skips a check. A road lane (an entry of a step) must write `landed within <id> as <sha>`: the named range holds the work of
-several lanes, so only a commit of it (on its first-parent range, `from` excluded) ties this lane to it; any other sha is a FAIL. A steered
-lane's `reviewed <sha> clean` check runs against the named row's range. A fix row has no one sha for its work, so it may leave out
-`as <sha>` (line 2 still fails any commit that lies in no range); with `as <sha>` the same check applies.
+A fix row that landed inside the same fast-forward as another close row (so it cannot have a range of its own) is closed by a done
+`<close row id>.landed` row whose evidence says `landed within <other close row id>`, at the start of the evidence or after `; ` (so
+`never landed within ...` is not read). The gate then gives that row no range of its own, and fails line 2 unless the named row is a
+close row (road entry or fix row) of the same road with a valid range of its own (its landed line or its `.landed` correction). A row
+cannot name itself, and the named row cannot itself be a `within` row (no chains). The text takes no `as <sha>`: a fix row has no one sha
+for its work, and line 2 still fails any commit that lies in no range; an `as` part is a FAIL, never ignored. Only a fix row may use
+`landed within`. A road lane (any entry of a step, steered or not) always has its own range (`landed <to> on <base> from <from>`, in its
+own line or its `.landed` correction): lanes land one at a time, each in its own fast-forward, so a lane row or correction that says
+`landed within` is a FAIL naming the row.
 
 A sha in a row (`<to>`, `<from>`, `reviewed <sha> clean`) may be 7 to 40 hex characters. The gate resolves each one once to its full commit
 sha (`git rev-parse --verify --quiet <sha>^{commit}`) and uses only full shas after that; a sha git does not know, finds ambiguous, or
