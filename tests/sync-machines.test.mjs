@@ -75,7 +75,7 @@ test('every machine synced: exit 0, one row each, alarmed ssh lines with the exp
   assert.equal(result.rows[1].sha, HEAD_SHA);
   assert.ok(result.stdout.includes(`${ALARM(120)} ssh me@pc.local '${PATH_EXPORT} echo "== version"`), 'version read');
   assert.ok(result.stdout.includes(`${ALARM(540)} ssh me@pc.local '${PATH_EXPORT} cd "`), 'pull and install');
-  assert.ok(result.stdout.includes(`${ALARM(660)} ssh me@pc.local '${PATH_EXPORT} cd "`), 'doctor');
+  assert.ok(result.stdout.includes(`${ALARM(300)} ssh me@pc.local '${PATH_EXPORT} cd "`), 'doctor');
   assert.match(result.stdout, /perl -e 'alarm 300; exec @ARGV or die "exec: \$!"' scp \S+\.bundle \S+ me@pc\.local:\/tmp\//);
   assert.match(result.calls, /git pull --ff-only \/tmp\/\S+\.bundle main/);
   assert.doesNotMatch(result.calls, /git push/);
