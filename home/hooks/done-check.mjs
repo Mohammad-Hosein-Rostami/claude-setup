@@ -1,6 +1,6 @@
 // Stop and SubagentStop: the done-check (design sections 3.1, 3.4, 3.5, 6, 12). When the code this agent (or the lead) changed differs
 // from anything checked before, it runs the project's own checks through tools/done-check (lib/check-change.mjs) and answers with one
-// status line for the owner. Not wired into settings yet (road newchk step 6).
+// status line for the owner. Wired on Stop and SubagentStop in settings/base.json.
 // Output (stdout, one JSON line, exit 0 always): {"decision":"block","reason","systemMessage"} | {"systemMessage"} | nothing.
 //   Nothing is printed when no code changed (the idle stop costs one `git status`, no tool, no ledger row), for any input that is not a
 //   Stop or SubagentStop JSON with a safe session id, when the tool folder is missing (rollback), and on any internal error.
