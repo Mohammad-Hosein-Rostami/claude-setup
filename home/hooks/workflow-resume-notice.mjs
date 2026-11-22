@@ -2,7 +2,7 @@
 // switch) and how to continue each: Workflow({scriptPath, resumeFromRunId}) in the same session, `wf-resume.mjs adopt` first in another one.
 // The registry (workflow-register.mjs) and the run folders hold the facts; tools/wf-resume/lib/notice.mjs builds the text.
 // It also lists the Stop-gate records (`gate overridden`, `gate crashed or timed out`) the last notice did not show
-// (lib/stop-block-count.mjs recordsNotice, which first records gate runs that never returned), and (tools/wf-resume/lib/session-notes.mjs,
+// (lib/stop-block-count.mjs recordsNotice, which first records gate runs that never returned), and (lib/unfinished-work.mjs,
 // spec-p3 `r9-resume`) the plain writer agents launched with no recorded finish (their folder's dirty-file count; SendMessage before a fresh
 // agent), the open questions of recent ask queues with the re-arm line, and the "Don't redo" list of the HANDOFF.md beside the STATUS.md.
 // Exports: noticeForInput(input, deps) -> string.
@@ -16,7 +16,7 @@ import { isSessionId } from './lib/session-store.mjs';
 import { recordsNotice } from './lib/stop-block-count.mjs';
 import { stateDir as estimateStateDir } from '../tools/estimate/lib/table-store.mjs';
 import { resumeNotice } from '../tools/wf-resume/lib/notice.mjs';
-import { sessionNotes } from '../tools/wf-resume/lib/session-notes.mjs';
+import { sessionNotes } from './lib/unfinished-work.mjs';
 import { defaultRegistryDir } from '../tools/wf-resume/lib/registry.mjs';
 
 const SOURCES = new Set(['startup', 'resume', 'compact']);

@@ -1,4 +1,4 @@
-// The parts of the session-start notice beside the workflow runs (spec-p3 `r9-resume`): plain writer agents launched with no finish
+// The parts of the session-start notice (hooks/resume-notice.mjs; spec-p3 `r9-resume`, moved here from tools/wf-resume): plain writer agents launched with no finish
 // (H1/H2), the open owner questions of recent ask queues (H6) and the "Don't redo" list of the HANDOFF.md beside the session's STATUS.md (O3).
 // Exports: sessionNotes(params, deps) -> string, writersSection(params, deps), questionsSection(nowMs), dontRedoSection(statusPath),
 //   MAX_WRITERS_LISTED.
@@ -11,12 +11,12 @@
 // angle brackets, and the frame says so; bounded by MAX_* caps; nothing here writes.
 import { readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { openWritersOf, writersDirOf } from '../../../hooks/lib/writer-agents.mjs';
-import { askDir, confineQueue, readQueue } from '../../ask/lib/store.mjs';
-import { openQuestions, sanitize } from '../../ask/lib/queue.mjs';
-import { runGit } from '../../git-tidy/lib/git.mjs';
-import { statusFileOf } from '../../../hooks/lib/status-file-of.mjs';
-import { readHandoffDontRedo } from './handoff-notes.mjs';
+import { openWritersOf, writersDirOf } from './writer-agents.mjs';
+import { askDir, confineQueue, readQueue } from '../../tools/ask/lib/store.mjs';
+import { openQuestions, sanitize } from '../../tools/ask/lib/queue.mjs';
+import { runGit } from '../../tools/git-tidy/lib/git.mjs';
+import { statusFileOf } from './status-file-of.mjs';
+import { readHandoffDontRedo } from '../../tools/status/handoff-notes.mjs';
 
 export const MAX_WRITERS_LISTED = 8;
 const MAX_SESSION_FILES = 30;

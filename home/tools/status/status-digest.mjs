@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { statusFileOf } from '../../hooks/lib/status-file-of.mjs';
 import { parseWorkItems } from '../estimate/lib/items.mjs';
 import { runGit } from '../git-tidy/lib/git.mjs';
-import { readHandoffDontRedo } from '../wf-resume/lib/handoff-notes.mjs';
+import { readHandoffDontRedo } from './handoff-notes.mjs';
 import { readStatusFile } from './status-file.mjs';
 import { parseNextSteps, parseRules } from './status-bullets.mjs';
 

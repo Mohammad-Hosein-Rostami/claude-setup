@@ -76,7 +76,8 @@ Other hooks:
   `~/.claude/state/agent-writers/<session>.json` (a historic folder name).
 - `stop-block-count.mjs`: the stop-block counter every blocking Stop/SubagentStop gate calls once (`countedGate`): counts blocks in a row per
   session and agent, resets on a tool call (`markToolCall` from `agent-budget.mjs`), records `gate overridden` past the cap and
-  `gate crashed or timed out`; read by `scripts/doctor.sh` and `workflow-resume-notice.mjs`.
+  `gate crashed or timed out`; read by `scripts/doctor.sh` and `resume-notice.mjs`.
+- `unfinished-work.mjs`: the parts of the session-start notice for work left open: plain writer agents with no recorded finish, open owner questions of recent ask queues, the HANDOFF.md "Don't redo" list (`sessionNotes`); used by `resume-notice.mjs`. Its name avoids `session-notes.mjs`, the lead-rules hook.
 - `read-only-hold.mjs`: whether a stopping subagent is held to its `read-only:` / `scratchpad-only:` brief, which of its recorded files
   lie outside the temp and scratchpad roots, and the block reason; used by `commit-gate.mjs`.
 - `gate-routes.mjs`: the prompt patterns and lines of the skill router's gate routes (bug, done, restructure, git history, repeated report); used by `skill-router.mjs`.

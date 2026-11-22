@@ -167,7 +167,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/workflow-resume-notice.mjs\"",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/resume-notice.mjs\"",
             "timeout": 10
           }
         ]
