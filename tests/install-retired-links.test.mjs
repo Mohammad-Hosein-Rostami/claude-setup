@@ -1,17 +1,19 @@
 // Tests for removeRetiredLinks (scripts/install/links.mjs): an install removes the links an older install made for the retired
 // session modes (the `modes` folder link, the mode launcher in ~/.local/bin and ~/.claude/bin) and never deletes the owner's files.
 // Exports: none (node:test file). HOME is a temp folder in every case; the last case runs the real installer there (--no-plugins
-// --no-tools; the repo's own git hooksPath is set to the value it already has), which needs jq like every install.
+// --no-tools; the repo's own git hooksPath is set to the value it already has), which needs jq like every install. The read-only
+// folder case needs POSIX file modes and a user they bind (not root).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeContext } from '../scripts/install/context.mjs';
 import { removeRetiredLinks } from '../scripts/install/links.mjs';
 import { RECORD_NAME } from '../scripts/install/record.mjs';
 import { LINKS } from '../scripts/install.mjs';
+import { posix } from './disk-clean-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
@@ -107,6 +109,23 @@ test('a recorded launcher copy (Windows without Developer Mode) is moved to the 
   removeRetiredLinks(ctx, record, LINKS);
   assert.equal(exists(copy), false);
   assert.equal(readFileSync(record.backups[0].backup, 'utf8'), '@echo off\n');
+  assert.equal(record.backups[0].ours, true, 'the installer\'s own copy: --uninstall deletes the backup, never restores it');
+  assert.deepEqual(recordedPaths(record), []);
+});
+
+test('a recorded link the removal cannot delete stays in the record, and a later run retires it', posix, (t) => {
+  const { home, ctx, record } = setup();
+  const bin = join(home, '.local', 'bin');
+  const ccm = join(bin, 'ccm');
+  symlinkSync(join(home, 'no-such-launcher'), ccm, 'file');
+  record.made.push({ kind: 'link', path: ccm });
+  chmodSync(bin, 0o555);
+  t.after(() => chmodSync(bin, 0o755));
+  assert.throws(() => removeRetiredLinks(ctx, record, LINKS), { code: 'EACCES' });
+  assert.deepEqual(recordedPaths(record), [ccm], 'a failed removal keeps its entry');
+  chmodSync(bin, 0o755);
+  removeRetiredLinks(ctx, record, LINKS);
+  assert.equal(exists(ccm), false, 'the next run removes it');
   assert.deepEqual(recordedPaths(record), []);
 });
 
@@ -168,4 +187,27 @@ test('the installer itself retires the recorded modes and launcher links and lea
   const saved = JSON.parse(readFileSync(recordFile, 'utf8'));
   assert.ok(!saved.made.some((entry) => entry.path === modes || entry.path === ccm), 'the saved record no longer names them');
   assert.ok(!readdirSync(home).some((name) => name.startsWith('.claude-backup-')), 'nothing was backed up');
+});
+
+test('install then --uninstall: a recorded launcher copy does not come back, the owner\'s folder does', () => {
+  const { home, ctx } = setup();
+  const bin = join(ctx.claudeDir, 'bin');
+  const copy = join(bin, 'ccm.cmd');
+  const modes = join(ctx.claudeDir, 'modes');
+  mkdirSync(bin);
+  writeFileSync(copy, '@echo off\n');
+  mkdirSync(modes);
+  writeFileSync(join(modes, 'my-playbook.md'), 'owner note\n');
+  const made = [{ kind: 'dir', path: bin }, { kind: 'link', path: modes }, { kind: 'copy', path: copy }];
+  writeFileSync(join(ctx.claudeDir, RECORD_NAME), JSON.stringify({ version: 1, repo: REPO, root: REPO, tag: null, firstLayer: null, made, backups: [] }));
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  const installer = join(REPO, 'scripts', 'install.mjs');
+  const install = spawnSync(process.execPath, [installer, '--no-plugins', '--no-tools'], { env, encoding: 'utf8' });
+  assert.equal(install.status, 0, install.stderr);
+  assert.equal(exists(copy), false);
+  const uninstall = spawnSync(process.execPath, [installer, '--uninstall'], { env, encoding: 'utf8' });
+  assert.equal(uninstall.status, 0, uninstall.stderr);
+  assert.equal(exists(copy), false, 'the installer\'s own copy stays gone');
+  assert.equal(exists(bin), false, 'the folder the installer made is removed once empty');
+  assert.equal(readFileSync(join(modes, 'my-playbook.md'), 'utf8'), 'owner note\n', 'the owner folder is put back');
 });
