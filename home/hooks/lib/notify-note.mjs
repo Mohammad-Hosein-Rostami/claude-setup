@@ -10,6 +10,7 @@
 // asking marker holds no question text, so a question note shows at most its short header label (cleanHeader: control characters
 // dropped, the marker's one cap); a reset time is shown only when a limit sample has one, never guessed; nothing here throws (any
 // failure reads as no note).
+import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readPlainFile } from './plain-file.mjs';
@@ -108,8 +109,9 @@ export function terminalName(env = process.env) {
 function preferredChannel(env) {
   try {
     const file = join(env.CLAUDE_CONFIG_DIR || env.HOME || homedir(), '.claude.json');
-    // no wait and no link: a FIFO in its place, or a file over the cap, throws and reads as unset (lib/plain-file.mjs)
-    const value = JSON.parse(readPlainFile(file, MAX_CONFIG_BYTES))?.preferredNotifChannel;
+    // a link (a dotfiles setup) is followed once by realpath; the read never waits (lib/plain-file.mjs): a FIFO, or a file over the cap,
+    // throws and reads as unset
+    const value = JSON.parse(readPlainFile(realpathSync(file), MAX_CONFIG_BYTES))?.preferredNotifChannel;
     return CHANNELS.includes(value) ? value : 'auto';
   } catch {
     return 'auto'; // no config yet: Claude Code's own default

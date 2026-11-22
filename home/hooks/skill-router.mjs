@@ -215,12 +215,12 @@ function firstUiEdit(sessionId, agentId) {
 }
 
 /**
- * The text of a regular file of at most AGENT_FILE_MAX_BYTES; null when it is missing, a link, bigger or unreadable. Read without
- * waiting (lib/plain-file.mjs), so a FIFO at the path, even one swapped in after a check, never holds the hook.
+ * The text of a regular file of at most AGENT_FILE_MAX_BYTES; null when it is missing, bigger or unreadable. A link is followed once
+ * by realpath; the read follows no link and never waits (lib/plain-file.mjs), so a FIFO at the path or behind a link never holds the hook.
  */
 function agentFileText(path) {
   try {
-    return readPlainFile(path, AGENT_FILE_MAX_BYTES);
+    return readPlainFile(realpathSync(path), AGENT_FILE_MAX_BYTES);
   } catch {
     return null; // no readable file: no answer from it
   }

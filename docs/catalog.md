@@ -76,7 +76,7 @@ Rules are one line each and load when a matching file is in play.
 
 ## Hooks (`home/hooks/`, wired in `settings/base.json`)
 
-A hook reads a path that comes from its input, a session transcript or a state folder through `lib/plain-file.mjs` (or the same open flags: `O_NONBLOCK`, `O_NOFOLLOW`, then `fstat` says regular file): a FIFO, device or link there is refused at once instead of holding the hook until its timeout. `tests/hook-reads-no-wait.test.mjs` plants a FIFO at each such path.
+A hook reads a path that comes from its input, a session transcript or a state folder through `lib/plain-file.mjs` (or the same open flags: `O_NONBLOCK`, `O_NOFOLLOW`, then `fstat` says regular file): a FIFO or device there is refused at once instead of holding the hook until its timeout. Where a link is legitimate (an agent file, `~/.claude.json`, a project's `package.json`, a ui-check run file) the path is resolved once with realpath and the real file read the same way; elsewhere a link is refused. `tests/hook-reads-no-wait.test.mjs` plants a FIFO at each such path.
 
 | File | Event | What it does |
 | ---- | ----- | ------------ |

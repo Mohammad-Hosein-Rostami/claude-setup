@@ -11,7 +11,7 @@
 // Flags (round 9, r9-writer-gate): `isolated` (launched with isolation "worktree") and `readOnly` (a read-only brief, isReadOnlyBrief).
 // Invariants: never throws; the read functions answer false or [] for a store that is missing or unusable. callCounterPath and
 // agentTypeOf are called by lib/agent-launches.mjs, which imports this file (each file calls the other's functions only after loading).
-import { readSync } from 'node:fs';
+import { readSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { checkedTempRoot } from './edit-log.mjs';
@@ -39,12 +39,13 @@ export function agentTypeOf(type) {
 }
 
 /**
- * The first `maxBytes` of a regular file as text; null when it is missing, a link, not a regular file or unreadable. Opened without
- * waiting (lib/plain-file.mjs), so a FIFO at the path, even one swapped in after a check, never holds the hook.
+ * The first `maxBytes` of a regular file as text; null when it is missing, not a regular file or unreadable. A link (an installed or
+ * personal agent file) is followed once by realpath; the open itself follows no link and never waits (lib/plain-file.mjs), so a FIFO
+ * at the path, or behind a link, even one swapped in after a check, never holds the hook.
  */
 function readHead(path, maxBytes) {
   try {
-    return readPlainFileWith(path, (fd) => {
+    return readPlainFileWith(realpathSync(path), (fd) => {
       const buffer = Buffer.alloc(maxBytes);
       return buffer.toString('utf8', 0, readSync(fd, buffer, 0, maxBytes, 0));
     });

@@ -38,8 +38,8 @@ const proofLib = () => Promise.all([import('../tools/ui-proof/lib/records.mjs'),
 /** The text Claude Code gave as the Bash result (a string or {stdout, stderr}). */
 const outputOf = (response) => (typeof response === 'string' ? response : `${response?.stdout ?? ''}\n${response?.stderr ?? ''}`);
 
-/** The text of a run file the command or its output names; read without waiting or following a link (lib/plain-file.mjs). */
-const readRunFile = (file) => readPlainFile(file, RUN_FILE_MAX_BYTES);
+/** The text of a run file the command or its output names: a link is followed once by realpath, the read never waits (lib/plain-file.mjs). */
+const readRunFile = (file) => readPlainFile(fs.realpathSync(file), RUN_FILE_MAX_BYTES);
 
 function matrixHash(command, cwd) {
   const match = MATRIX_FLAG.exec(command);

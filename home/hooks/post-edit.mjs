@@ -179,8 +179,9 @@ export async function checkFile(file) {
   if (process.platform === 'win32' && !SAFE_PATH.test(rel)) return []; // shell is on: refuse metacharacters
   let scripts;
   try {
-    // no wait and no link: a FIFO or device named package.json is reported unreadable instead of holding the hook (lib/plain-file.mjs)
-    scripts = JSON.parse(readPlainFile(join(dir, 'package.json'), PACKAGE_JSON_MAX_BYTES)).scripts;
+    // a linked package.json is followed once by realpath; the read never waits (lib/plain-file.mjs): a FIFO or device is reported
+    // unreadable instead of holding the hook
+    scripts = JSON.parse(readPlainFile(realpathSync(join(dir, 'package.json')), PACKAGE_JSON_MAX_BYTES)).scripts;
   } catch (error) {
     return [`${rel}:1 HOOK unreadable package.json in ${dir}: ${error.message}`];
   }
