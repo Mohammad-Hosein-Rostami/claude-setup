@@ -6,7 +6,8 @@
 //   of a step unless the step lists it in `appendOnly` (a folder and a file in it overlap, as build's checkArgs says); `needs` names only
 //   lanes of earlier steps; branches, files and the base pass fixed patterns before they reach build args or argv (P5). Warning (section 6):
 //   two lanes of a step that name the same earlier lane in `needs`, or share an appendOnly contract file, while no earlier lane has a
-//   checkpoint (the integration test the contract step lands).
+//   checkpoint (the integration test the contract step lands). A step with `form: "build"` reads as `agents` with the warning
+//   `step <N>: build form retired: runs as agents` (an omitted form is `agents`).
 // Contract rules (plan.md C6): `threatModel` is a text of 40+ characters; every lane's `principles` are `{id, question}` with id `P<n>` or
 //   `F<n>` (unique in the lane), a question of 10+ characters, and at least one F; `checkpoints` are `{id, run, exit 0-255, files, kind}`
 //   (files may be empty; ids unique in the whole road; a checkpoint file is never a lane file or inside a lane folder, in either direction,
@@ -16,7 +17,7 @@
 import { createHash } from 'node:crypto';
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 
-export const MAX_LANES_PER_STEP = 5; // the owner's hard cap (spec-stages section 4); build.js and agent-model-guard.mjs hold the same 5
+export const MAX_LANES_PER_STEP = 5; // the owner's hard cap (spec-stages section 4); agent-model-guard.mjs holds the same 5
 export const ROAD_ID = /^[a-z][a-z0-9-]{0,7}$/;
 export const LANE_NAME = /^[a-z0-9][a-z0-9-]{0,23}$/;
 export const MAX_ROW_ID_CHARS = 40;
@@ -118,7 +119,7 @@ function stepProblems(step, at, roadId, earlier, checkpointIds) {
   const where = `step ${at + 1}`;
   if (!Array.isArray(step?.lanes) || step.lanes.length === 0) return [`${where}: a step needs at least one lane`];
   const problems = step.lanes.length > MAX_LANES_PER_STEP ? [`${where}: ${step.lanes.length} lanes; a step holds at most ${MAX_LANES_PER_STEP}: split the step`] : [];
-  if (step.form !== undefined && !FORMS.has(step.form)) problems.push(`${where}: form must be "build" or "agents"`);
+  if (step.form !== undefined && !FORMS.has(step.form)) problems.push(`${where}: form must be "agents" ("build" is retired and still read as agents)`);
   if (step.appendOnly !== undefined && !isPathList(step.appendOnly)) problems.push(`${where}: appendOnly must be a list of repo-relative paths`);
   const appendOnly = Array.isArray(step.appendOnly) ? step.appendOnly : [];
   step.lanes.forEach((lane, index) => {
@@ -133,6 +134,11 @@ function stepProblems(step, at, roadId, earlier, checkpointIds) {
     }
   }
   return problems;
+}
+
+/** `form: "build"` is retired with the Workflow tool: the file still reads, and the step runs as agents. */
+function retiredFormWarnings(road) {
+  return road.steps.flatMap((step, at) => (step.form === 'build' ? [`step ${at + 1}: build form retired: runs as agents`] : []));
 }
 
 /** Section 6: lanes of one step that share an earlier lane or a contract file need an integration test landed by an earlier lane. */
@@ -174,7 +180,7 @@ export function checkRoad(value) {
       seen.add(lane?.name);
     }
   });
-  return { problems, warnings: problems.length === 0 ? contractWarnings(value) : [] };
+  return { problems, warnings: problems.length === 0 ? [...retiredFormWarnings(value), ...contractWarnings(value)] : [] };
 }
 
 /**

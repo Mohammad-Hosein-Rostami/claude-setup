@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Purpose: the lead's per-round review check, as one deterministic command: it reads the review-tier JSON and the lens reports of a round
 //   (each pinned by the sha256 the lead recorded), applies the rules of lib/verdict.mjs, writes the prior file for the next round and
-//   prints the verdict and the one action to take (`next:`). It replaces the checks that lived in home/workflows/review.js.
+//   prints the verdict and the one action to take (`next:`). It replaces the checks of the retired review workflow script.
 // Usage: verdict.mjs --tier <json> --tier-sha256 <hex> (--report <file> --report-sha256 <hex>)... [--prior <file> --prior-sha256 <hex>]
 //        [--road <json> --road-sha256 <hex> --lane <name>] [--waived] [--drop <id>]... [--judged <file> --judged-sha256 <hex>]
 //        --write-prior <file> [--json]

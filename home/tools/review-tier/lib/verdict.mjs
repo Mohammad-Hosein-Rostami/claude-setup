@@ -1,4 +1,4 @@
-// Purpose: the per-round review checks of the lead as rules (they lived in home/workflows/review.js): is a round complete, what must be
+// Purpose: the per-round review checks of the lead as rules (they lived in the retired review workflow script): is a round complete, what must be
 //   fixed, what moves to a follow-up, what the lead does next. The CLI `../verdict.mjs` reads and hashes the files and prints.
 // Exports: decide(input), priorFileText(result, ...), ROUND_LIMIT.
 // Invariants: pure (no file, no clock); inputs are the tier JSON and parsed reports (`parseReport`), never text. Fail closed (P3): a missing or

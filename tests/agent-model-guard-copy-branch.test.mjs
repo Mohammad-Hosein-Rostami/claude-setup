@@ -1,6 +1,6 @@
-// Tests for the copy-branch brief gate wired into home/hooks/agent-model-guard.mjs (round 4, lane W1) and the rule that no hook sends a plain
-// Agent call to a workflow any more (round 6: inline, one agent or a workflow is the lead's choice by the job). The private HOME holds the workflows
-// skills on purpose: the removed backstop advised exactly when they were installed. Each test has a private HOME.
+// Tests for the copy-branch brief gate wired into home/hooks/agent-model-guard.mjs (round 4, lane W1) and the rule that no hook redirects a plain
+// Agent call (the lead picks inline or an agent by the job). The private HOME holds a skill on purpose: a removed backstop advised exactly when
+// skills were installed. Each test has a private HOME.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -14,7 +14,7 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const SEND_AGAIN = 'Send the same call again unchanged and it runs.';
 const GUARD = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
-const SKILLS = ['workflows', 'wf-resume', 'quick'];
+const SKILLS = ['quick'];
 let counter = 0;
 const GIT_TIMEOUT_FOR_TESTS_MS = 60_000; // the suite runs beside other work; the hook's 1 s default would silently skip the advice
 
@@ -42,7 +42,7 @@ const denied = (out) => out?.permissionDecision === 'deny';
 // isolation: "worktree" keeps the writer isolation gate (another gate of the same hook) out of these tests
 const call = (type, prompt = 'do the job', extra = {}) => ({ description: 'job', prompt, subagent_type: type, model: 'sonnet', isolation: 'worktree', ...extra });
 
-test('a plain lead Agent call is never sent back for a workflow: every agent type runs at once (routing is by the job, not by a hook)', () => {
+test('a plain lead Agent call is never redirected: every agent type runs at once (routing is by the job, not by a hook)', () => {
   const types = ['implementer', 'ui-implementer', 'test-writer', 'reviewer', 'security-auditor', 'deep-debugger', 'scout', 'Explore', 'architect', 'runner', 'general-purpose'];
   const brief = 'do the job\nMATRIX: none: not a screen, a hook test'; // the MATRIX line keeps the UI gate quiet
   // one session per call: the agent cap (5 running at once per session) is not what this test is about

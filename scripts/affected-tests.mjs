@@ -35,7 +35,6 @@ const TEXT_FILE_TESTS = [
   ['home/rules/', ['modes-consistency', 'rules-text', 'mode']],
   ['home/agents/', ['agent-files', 'agent-model-guard', 'agent-model-guard-briefs', 'agent-model-guard-matrix', 'agent-model-guard-writers', 'project-agents', 'modes-consistency', 'rules-text']],
   ['home/skills/', ['agent-files', 'modes-consistency', 'mode-context', 'skill-router']],
-  ['home/workflows/', ['workflow-scripts']],
   ['docs/daily-use.md', ['modes-consistency', 'watch-idle-cli']],
 ];
 // Documents no test reads at run time (docs/daily-use.md is read, see above): a change here runs nothing.

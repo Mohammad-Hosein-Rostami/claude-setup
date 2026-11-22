@@ -138,8 +138,7 @@ test('home/lead.md states the inline / agents rule once; lead-rules.md points to
 });
 
 test('no setup document tells sessions to run every agent or job as a workflow', () => {
-  const files = ['home/CLAUDE.md', 'home/lead-rules.md', 'docs/daily-use.md', 'docs/catalog.md', 'home/hooks/README.md', 'home/workflows/README.md',
-    'home/skills/workflows/SKILL.md'];
+  const files = ['home/CLAUDE.md', 'home/lead-rules.md', 'docs/daily-use.md', 'docs/catalog.md', 'home/hooks/README.md'];
   const everythingIsAWorkflow = /Workflows always|everything that runs (is|must be) a workflow|every agent runs (inside a workflow|in one)|instead of single (sub)?agents|not as single agents|every job that runs agents (goes through|shows in)|(parallelism|sets), workflows and report brevity/i;
   for (const file of files) assert.doesNotMatch(read(file), everythingIsAWorkflow, `${file} still says workflows for everything`);
 });

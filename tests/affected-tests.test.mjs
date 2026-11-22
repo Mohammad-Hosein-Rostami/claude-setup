@@ -135,9 +135,6 @@ test('affected: lead rules, rules, agents and skills text runs the tests that re
   const map = smallMap();
   assert.deepEqual(affected(['home/lead-rules.md'], map, { onBase: false }).tests, ['tests/modes-consistency.test.mjs']);
   assert.deepEqual(affected(['home/rules/core.md'], map, { onBase: false }).tests, ['tests/modes-consistency.test.mjs', 'tests/rules-text.test.mjs']);
-  assert.deepEqual(affected(['home/workflows/build.js'], map, { onBase: false }).full, true, 'no workflow-scripts test yet: unmapped');
-  const withWorkflowTest = mapOf({ 'tests/workflow-scripts.test.mjs': PASSING, 'home/workflows/build.js': '// x\n' });
-  assert.deepEqual(affected(['home/workflows/build.js'], withWorkflowTest, { onBase: false }).tests, ['tests/workflow-scripts.test.mjs']);
 });
 
 /** A repo on branch `feat` (so it is not the base) holding a copy of the script, a source file, its test and an unrelated test. */

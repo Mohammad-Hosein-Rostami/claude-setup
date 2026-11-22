@@ -1,4 +1,4 @@
-// Tests for `review-tier/verdict.mjs`, the lead's per-round check (lane verdict; it replaces the checks of home/workflows/review.js, whose
+// Tests for `review-tier/verdict.mjs`, the lead's per-round check (lane verdict; it replaces the checks of the retired review workflow script, whose
 // cases on prior counts, tip match, names as data, waiver set and round start are ported here). Each test builds a tier JSON and lens
 // reports in the format of plan.md C4, pins them by sha256 as the lead does, runs the CLI and reads its exit code and printed lines.
 // Fixtures: `lens()` builds a report, `round()` writes the files and runs the CLI in a temp folder under a temp HOME.

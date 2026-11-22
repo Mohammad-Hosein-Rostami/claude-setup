@@ -90,7 +90,7 @@ test('the prior line goes before the final line, so a report still ends with the
     assert.ok(read(`home/agents/${name}.md`).includes(`\n- Final line: \`${FINAL_LINE[name]} `), `${name}: the Output contract still ends with ${FINAL_LINE[name]}`);
   }
   // Review n1, security N13: the brief and the rule say the same, never that a report ends with the prior line.
-  for (const file of ['home/CLAUDE.md', 'home/tools/review-tier/lib/reviews.mjs', 'home/tools/review-tier/README.md', 'home/workflows/review.js']) {
+  for (const file of ['home/CLAUDE.md', 'home/tools/review-tier/lib/reviews.mjs', 'home/tools/review-tier/README.md']) {
     assert.doesNotMatch(read(file), /\bends? (?:with )?\\?`prior:/, `${file} does not say a report ends with the prior line`);
   }
 });

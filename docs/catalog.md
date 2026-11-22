@@ -34,7 +34,6 @@ descriptions are quoted from their frontmatter; those descriptions are what make
 | `ui-coverage` | Use for any UI task with more than one component and for Figma or pixel-perfect work - build a coverage matrix (surfaces including backend-rendered UI, control reuse, states, locales and direction, reference behaviour, live review page) and gate done on `ui-coverage check`. The matrix is made before the first UI lane and every `ui-implementer` / `visual-qa` brief names it in a `MATRIX: <path>` line (`agent-model-guard.mjs` sends a brief without one back once); a Figma difference is kept only with the owner's own decision as its reference. | session model |
 | `verify-done` | Use before claiming a task is done, fixed, passing or ready for review, and when the owner says done, ship or merge. | session model |
 | `road` | Walk a big job as a road of steps: start line, `road.mjs next --budget`, the build and agents step forms, `road.mjs gate` between steps, one update per step, failure and carry rules, new-session pickup (phase 3, `road-rules`; the rest of that lane is not built yet). | inherit |
-| `workflows` | Run one of the setup's 8 workflows (build, review, land, bugfix, research, sync-machines, git-cleanup, step) through the Workflow tool, one section each with its args, result statuses and STATUS-row steps (merged from the eight `wf-*` wrappers in phase 3, `r9-wf-skill`). | inherit |
 | `wf-resume` | Continue workflow runs that did not finish after an exit, a usage-limit stop or an account switch: list, adopt the journal into this session, relaunch with the same script and args. | session model |
 | `where` | Show where this session's work stands: the job against its estimate, the road's steps with their clocks, the `/check` categories and the suite at the base tip, every agent with its progress, what waits on you, git per worktree, the limits per account and the cost figure (API-price equivalent since the last `/clear`, with its age). Runs `board.mjs where --columns 120`: the status line's rows with nothing folded; works with mods off. (manual only: slash command) | session model |
 | `where` | Show where this session's work stands: the job against its estimate, the road's steps with their clocks, the `/check` categories and the suite at the base tip, every workflow run and agent with its progress, what waits on you, git per worktree, the limits per account and the cost figure (API-price equivalent since the last `/clear`, with its age). Runs `board.mjs where --columns 120`: the status line's rows with nothing folded; works with mods off. (manual only: slash command) | session model |
@@ -182,33 +181,6 @@ layers" in `home/CLAUDE.md`.
 | `status/handoff-notes.mjs` | Reads the "Don't redo" list out of a HANDOFF.md (a heading or label holding "Don't redo", up to 20 items, a file of at most 256 KB; a missing file is `[]`); used by `status-digest.mjs` and `hooks/lib/unfinished-work.mjs`. Moved from the retired workflow resume tool. |
 
 System CLIs (`tools/Brewfile`, `tools/windows-tools.ps1`): jq, ripgrep, gitleaks, gh, volta.
-
-## Workflows (`home/workflows/`, run by the `workflows` skill)
-
-Scripts for the Workflow tool, used when the job needs one (2+ lanes in parallel, review panels, research fan-out, a multi-stage job that must survive an exit; `home/CLAUDE.md`, "Inline, agent or workflow"), so the progress view shows it with `<STATUS row>:<step>` labels. The tool finds named
-workflows only in a project's `.claude/workflows/`, so each skill calls `Workflow({scriptPath: "${CLAUDE_SKILL_DIR}/../../workflows/<name>.js", args})`
-(`~/.claude/workflows` links to the folder; the path must be in `permissions.additionalDirectories`). Details, the worktree protocol and the
-rules the tests check: `home/workflows/README.md`. Tests: `tests/workflow-*.test.mjs` (runtime: `tests/workflow-sandbox.mjs`).
-
-| Workflow | Skill | Phases | Args (`?` optional) |
-| -------- | ----- | ------ | ------------------- |
-| `build` | `workflows` | Build, Join, Review, Visual QA, Land, Audit | `base, repo, suite, writers, statusFile, scriptsDir, appendOnly?, resume?, probeC?, lanes[{row, closeRow, branch, spec, files, acceptanceTests, matrix?, implementer{agentType?, model, effort}, principles?, checkpoints?, addClasses?}]` (`matrix`: required for a `ui-implementer`; `checkpoints` are locked files, `appendOnly` lists files lanes may share; `resume: true` skips a lane whose close row STATUS.md shows landed) | A lane that ends early is handed over to a fresh agent from its branch tip (six-field brief, hand-over note beside STATUS.md); a lane whose UI files changed passes the `visual-qa` child before each land (a FAIL goes to a ui-implementer fix round; `ui-proof` from land runs it on the rebased tip); `probeC: fail` refuses UI lanes.
-| `implement` | (child of `build`) | Build | `role (implement\|tests), row, branch, base, spec, files, statusFile, acceptanceTests, model, effort, agentType?, matrix?, checkpoints?, principles?`; one writer slot; the implementer is handed over to a fresh agent when it stops or returns `unfinished` |
-| `join` | (child of `build`) | Join | `row, closeRow, branch, base, files, statusFile, worktree, sha, disputes?, checkpoints?, written?`; returns `joined` (with `uiFiles`), `join-failed` or `contract-touched`, and the contract verdict |
-| `visual-qa` | (child of `build` and `bugfix`) | Visual QA | `row, repo, worktree, tip, base, matrix?, uiFiles?`; `pass`, `fail` (findings) or `failed`; no matrix: `ui-coverage init` without `--frames` |
-| `review` | `workflows` | Tier, Review, Verify, Fix | `row, repo, base, range, landing, fix, branch, worktree, suite, whole? (a lane over 400 changed lines or 15 files is `failed` "split the lane" without it), fixer? ({agentType, matrix?}: the fix agent, ui-implementer for a lane with UI files), tier?, addClasses?, laneClasses?, deltaOf? (a full sha; needs laneClasses, the class names of that round, and priorFindings), laneStart?, baseTips? (with deltaOf: the lane start that round recorded and the caller's own base tips), priorFindings?, initialFindings? (not with fix:false)` |
-| `land` | `workflows` | Rebase, Suite, Land | `row, closeRow, statusFile, repo, base, branch, worktree, suite, tip, brief?`; statuses `landed`, `conflict`, `red`, `needs-review`, `ui-proof`, `new-file-size`, `failed`; close row `landed <to> on <base> from <from>` |
-| `step` | `workflows` | Step | `row, agentType, prompt, model, effort, isolation?, alone?, statusFile?` |
-| `bugfix` | `workflows` | Reproduce, Hypotheses, Fix, Verify, Review, Visual QA, Land | `repo, symptom, scriptsDir, row?, closeRow?, statusFile?, base?, suite?, repro?, branch?, reproAtOwnerConditions?, matrix?, land?, probeC?` (starts from a symptom alone; a UI change is fixed by ui-implementer and passes the `visual-qa` child before its land; `land: false` returns `reviewed`) |
-| `research` | `workflows` | Scope, Gather, Synthesize, Critic | `row, question, out, depth` |
-| `sync-machines` | `workflows` | Verify, Versions, Sync, Doctor | `row, repo, base, tag?` (targets from `claudeSetup.syncTargets` of the git-ignored local settings, see `settings/local.json.example`; stops when the machines differ in CLI version or channel, one is below 2.1.326 or has no `DISABLE_UPDATES=1`) |
-| `git-cleanup` | `workflows` | Inventory, Plan, Apply | `row, repos` |
-
-`build`, `review`, `land`, `step` and their four skills ship first; `bugfix`, `research`, `sync-machines`, `git-cleanup` follow.
-
-The hook side (`agent-model-guard.mjs`, described in the Hooks section): a writer brief that
-creates a copy of an existing branch is denied once with the same-branch steps. No hook sends a plain Agent call to a workflow: the lead picks inline, one agent or a workflow by the job (`home/CLAUDE.md`). `agent-budget.mjs` counts a `Workflow` call as a delegation, like
-Agent and Task. A workflow's own agents do not fire the Agent hook (probe, Claude Code 2.1.326), so the scripts carry their own checks.
 
 ## Plugins (`plugins/plugins.json`)
 

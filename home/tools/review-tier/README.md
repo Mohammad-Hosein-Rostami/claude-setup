@@ -60,7 +60,7 @@ Every `--landing` of tier 1 or more adds the Opus max lens and the auditor at Op
   any sync or push (the caller decides when, see `audit-log`). Both name the report's `range`.
 - I1 (the rule behind it): review-tier only adds checks; the one exception is `waivable`: a tier-1, non-gate landing whose contract passed
   (`waiverAt`) runs `waivable.reviews` before land and `waivable.audit` after land, before any sync or push, as `audit-log` decides.
-- `weakened`: `{path, line, kind, place}` (`place`: the path and line as they may stand in a prompt, the path as data; `review.js` writes it by the same rule) for added lines of test files and test, lint and type config that weaken a check: `only`
+- `weakened`: `{path, line, kind, place}` (`place`: the path and line as they may stand in a prompt, the path as data) for added lines of test files and test, lint and type config that weaken a check: `only`
   (`.only(`, `only: true`), `skip` (`.skip(`, `skip: <not false>`), `todo`, `ignore` (`ts-ignore`, `ts-nocheck`, `eslint-disable`),
   `bound` (a removed and an added line equal once digits are masked, the numbers differ), `removed-test` and `removed-assert`
   (removed `test(`/`it(`/`describe(` or `assert`/`expect(` lines beyond the added ones). A caller must not waive while it is non-empty.
@@ -129,7 +129,7 @@ Its contract and the report lines it parses (plan.md C3 and C4):
 
 ## The verdict of a round (`verdict.mjs`)
 
-After the lenses return, the lead runs `verdict.mjs` instead of reading the reports by hand (the checks left `home/workflows/review.js`).
+After the lenses return, the lead runs `verdict.mjs` instead of reading the reports by hand (the checks of the retired review workflow script).
 Usage, exits and the printed lines are in the header of `verdict.mjs` and the catalog row. What it decides:
 
 - Every input file is hashed from the bytes read and must equal the sha256 the lead recorded (exit 2 naming the file); a report over

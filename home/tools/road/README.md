@@ -11,8 +11,9 @@ next one starts. The road file holds the plan; the STATUS.md rows hold the state
 Keys: `road`, `goal`, `repo` (absolute, a drive path allowed), `base`, `suite`, `spec` (default spec of every lane), `threatModel`
 (required, a text of 40+ characters: who can do what to this job; every gate input comes from the lead's own record or a tool's output
 and is hash- or ref-checked), `questions[]`
-(`question`, `options[]`, `recommended`, `askAtStep?`), `steps[]` (`goal`, `measure?`, `appendOnly?`, `form?`: `"build"` (default) or
-`"agents"` for a step the owner steers with plain agents, `lanes[]`). A lane is the `build` lane object (`files`, `acceptanceTests`,
+(`question`, `options[]`, `recommended`, `askAtStep?`), `steps[]` (`goal`, `measure?`, `appendOnly?`, `form?`: `"agents"` (the
+only form and the default; `"build"` is retired: it still reads, as `agents`, with the WARN `step <N>: build form retired: runs as agents`),
+`lanes[]`). A lane is an object (`files`, `acceptanceTests`,
 `implementer`, `matrix?`, `principles?`, `checkpoints?`, `addClasses?`, `spec?`) plus `name` (`^[a-z0-9][a-z0-9-]{0,23}$`, unique, not
 `check`, not ending `-land`), `item`, `size` S/M/L, `closeSize?` (default M), `branch` and `needs?` (lanes of earlier steps; omitted =
 every earlier lane; `[]` = none).
@@ -48,7 +49,7 @@ Example (two steps):
 
 Lane `<road>.s<N>.<name>` (item `build: <item>`), close `<road>.s<N>.<name>-land` (item `close: review and land <name>`), check
 `<road>.s<N>.check` (item `close: step N checkpoint`; step 1's adds `, base <sha>`, the road-start tip, written once). Every close row's
-evidence is `landed <to> on <base> from <from>` (the `land` workflow writes it). An audit fix gets `<road>.s<N>.fix-<name>` (item
+evidence is `landed <to> on <base> from <from>` (the lead writes it when `land-lane` has landed the lane). An audit fix gets `<road>.s<N>.fix-<name>` (item
 `rework: <name>`) and its `-land` close row. Ids stay at most 40 characters.
 
 A done cell is never changed, so a close row marked done without the landed line is corrected by a second done row `<close row id>.landed`
@@ -81,7 +82,7 @@ case). The lane row's own line wins; the correction row is not read for a step t
 | `road.mjs check <road.json>` | checks the file: at most 5 lanes per step, no file shared outside `appendOnly`, `needs` only to earlier steps, ids, patterns; warns when lanes of a step share an earlier lane or a contract file and no earlier lane lands an integration test | 0 ok, 1 refused |
 | `road.mjs rows <road.json> [--base <sha>]` | adds every missing row of every step to the STATUS.md beside the road file (through `status.mjs add`); a second run adds 0; refuses a road id used with other items and a second open road. `--base` writes that sha as the road-start tip (a road started before the tool) | 0, 1 refused, 2 a `--base` that is not an ancestor of the tip or already holds a landed patch |
 | `road.mjs rows <road.json> --fix <N> <name>` | adds the audit-fix rows of step N; refused once step N's check row is done | 0, 1 |
-| `road.mjs next <road.json> --budget <1-5>` | JSON `{ road, step, of, state: build\|gate\|done, form, held, carried, lanes, writers, baseline, args? }`: the lowest step with an open check row, landed lanes skipped, held lanes named, carried lanes first, at most 5; `writers` = the smallest of lanes + test lanes, the budget and 5; `args` are the `build` args (add `scriptsDir`), with `resume: true` once a row of the step started | 0, 1 `baseline needed: <road>.s<N>` (a UI step with no `ui-proof` step-start record) or no rows yet, 2 no or bad `--budget` |
+| `road.mjs next <road.json> --budget <1-5>` | JSON `{ road, step, of, state: build\|gate\|done, form, held, carried, lanes, writers, baseline }`: the lowest step with an open check row, landed lanes skipped, held lanes named, carried lanes first, at most 5; `writers` = the smallest of lanes + test lanes, the budget and 5 | 0, 1 `baseline needed: <road>.s<N>` (a UI step with no `ui-proof` step-start record) or no rows yet, 2 no or bad `--budget` |
 | `road.mjs join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--tests <abs worktree>] [--dispute] [--checks <cat,...>] [--json]` | judges one built lane (below): prints `joined <sha>`, `finding <id>: <text>`, `ui-files: <n>`, `checkpoint ...`, `vacuous <id>`, `waiver-at <sha>`, `checkpoints: none` or `checkpoints: not checked (test off)` | 0 joined clean, 3 joined with findings, 1 refused, 2 usage |
 | `road.mjs gate <road.json> [--step <N>]` | one line per check (spec-stages section 5): 1 rows, 2 landing ranges, 3 `git-tidy check`, 4 `test-pass check <tip> --suite`, 5 `audit-log gate`, 6 UI proof, 7 the measure (INFO) | 0 PASS, 1 any FAIL |
 
@@ -121,7 +122,7 @@ files must not depend on them.
 
 ## Walking an `agents` step
 
-The `agents` form (a step the owner steers) is walked with plain agents, no workflow:
+Every step is walked with plain agents:
 
 1. `road.mjs next <road> --budget <n>` names the lanes (at most 5 launches at once) and `writers`.
 2. Per lane: a worktree on the lane branch at the base tip; the test-writer (when `acceptanceTests`) in `<branch>--tests`; the implementer

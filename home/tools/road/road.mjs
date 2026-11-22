@@ -24,7 +24,7 @@ import { MAX_ROW_ID_CHARS, LANE_NAME, readRoad, roadRows, uiMatrixProblems } fro
 import { isOn } from '../../hooks/lib/checks-on.mjs';
 import { GIT_TIMEOUT_MS, gateStep } from './lib/road-gate.mjs';
 import { joinLane } from './lib/road-join.mjs';
-import { buildArgs, isUiLane, landedLine, roadStartTip, stepState } from './lib/road-state.mjs';
+import { isUiLane, landedLine, roadStartTip, stepState } from './lib/road-state.mjs';
 
 const USAGE = 'usage: road.mjs check <road.json> | rows <road.json> [--base <sha>] [--fix <N> <name>] | next <road.json> --budget <1-5> | gate <road.json> [--step <N>] | join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--tests <abs>] [--dispute] [--checks <cat,...>] [--json]';
 const TOOLS = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -158,8 +158,7 @@ function next(road, ctx, rest, run, isUiPath) {
     const label = `${road.road}.s${state.step}`;
     if (run('ui-proof', ['has', '--step', label, '--repo', road.repo], GIT_TIMEOUT_MS).exit !== 0) return { code: 1, out: `${JSON.stringify(result)}\nbaseline needed: ${label}` };
   }
-  const args = state.state === 'build' && state.form === 'build' ? { args: buildArgs(road, state, ctx.statusFile, budget) } : {};
-  return { code: 0, out: JSON.stringify({ ...result, ...args }, null, 2) };
+  return { code: 0, out: JSON.stringify(result, null, 2) };
 }
 
 function gate(road, ctx, rest, run, isUiPath) {
