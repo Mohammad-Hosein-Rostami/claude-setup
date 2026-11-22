@@ -1,6 +1,6 @@
-// Tests for `git-tidy land`: rebase a lane onto the base, require a suite PASS on the rebased tip, fast-forward the base, and clean up.
-// The PASS lookup is the one outside part (test-pass), so in-process tests hand `landLane` a fake `hasPass`; the CLI tests cover the
-// outcomes that never reach it (usage, conflict, no record). Every repo is built in a temp folder (git-tidy-helpers.mjs).
+// Tests for `git-tidy land`: rebase a lane onto the base, run the UI proof and size checks on the rebased tip, fast-forward the base, and
+// clean up (no suite or review step since checks reset S2). In-process tests hand `landLane` a fake `uiCheck` where a test needs a step to
+// run code between the rebase and the fast-forward. Every repo is built in a temp folder (git-tidy-helpers.mjs).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -9,10 +9,8 @@ import { addWorktree, commit, git, makeRepo, snapshot, tidy } from './git-tidy-h
 import { landLane } from '../home/tools/git-tidy/lib/land.mjs';
 import { formatLand, landExitCode } from '../home/tools/git-tidy/lib/report.mjs';
 import { openRepo } from '../home/tools/git-tidy/lib/repo.mjs';
-import { makeTempDir } from './temp-dir-helpers.mjs';
 
-const passAlways = () => true;
-const land = (dir, branch, options = {}) => landLane(openRepo(dir, null), branch, { hasPass: passAlways, ...options });
+const land = (dir, branch, options = {}) => landLane(openRepo(dir, null), branch, options);
 const branchNames = (dir) => git(dir, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').split('\n').sort();
 
 /** A lane with one commit off main, main moved on afterwards; the lane is checked out in its own worktree. */
@@ -57,37 +55,9 @@ test('a lane that no worktree holds is rebased in a temporary worktree that is g
   assert.deepEqual(branchNames(dir), ['main']);
 });
 
-test('the PASS lookup gets the rebased tip and asks for the suite command', () => {
+test('the CLI lands a lane without asking for any test record (exit 0)', () => {
   const { dir } = laneWithWorktree();
-  const calls = [];
-  const hasPass = (repoDir, rev, options) => { calls.push({ rev, options }); return false; };
-  const result = land(dir, 'lane/x', { hasPass });
-  assert.equal(result.status, 'no-pass');
-  assert.equal(landExitCode(result), 4);
-  assert.deepEqual(calls.map((call) => call.options), [{ suite: true }]);
-  assert.equal(calls[0].rev, result.tip);
-  assert.equal(git(dir, 'rev-parse', 'lane/x'), result.tip, 'the lane is rebased onto main');
-  assert.notEqual(git(dir, 'rev-parse', 'main'), result.tip, 'the base did not move');
-});
-
-// An empty home and no session id: no switch file is read, so the `test` check is off unless the command line adds it (home/hooks/lib/checks-on.mjs).
-const noSwitchEnv = () => {
-  const home = makeTempDir('git-tidy-land-home-');
-  return { HOME: home, USERPROFILE: home, CLAUDE_CODE_SESSION_ID: '', CLAUDE_SESSION_ID: '' };
-};
-
-test('no PASS record: exit 4 and the base is untouched (CLI, `test` check on)', () => {
-  const { dir } = laneWithWorktree();
-  const before = git(dir, 'rev-parse', 'main');
-  const result = tidy(['land', 'lane/x', dir, '--checks', 'test', '--tip', git(dir, 'rev-parse', 'lane/x')], { cwd: dir, env: noSwitchEnv() });
-  assert.equal(result.status, 4, result.stdout + result.stderr);
-  assert.equal(git(dir, 'rev-parse', 'main'), before);
-  assert.ok(branchNames(dir).includes('lane/x'));
-});
-
-test('with the `test` check off the CLI lands a lane that has no PASS record (exit 0)', () => {
-  const { dir } = laneWithWorktree();
-  const result = tidy(['land', 'lane/x', dir, '--tip', git(dir, 'rev-parse', 'lane/x')], { cwd: dir, env: noSwitchEnv() });
+  const result = tidy(['land', 'lane/x', dir, '--tip', git(dir, 'rev-parse', 'lane/x')], { cwd: dir });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.deepEqual(branchNames(dir), ['main'], 'the lane is landed and deleted');
   assert.equal(git(dir, 'log', '--format=%s', '-1', 'main'), 'add lane.txt');
@@ -139,10 +109,10 @@ test('an untracked file the merge would overwrite exits 2 naming it, and nothing
   assert.equal(readFileSync(join(dir, 'lane.txt'), 'utf8'), 'untracked and in the way\n');
 });
 
-test('a base that moves between the PASS check and the merge is exit 5', () => {
+test('a base that moves between the UI check and the merge is exit 5', () => {
   const { dir } = laneWithWorktree();
-  const moveBase = () => { commit(dir, 'late.txt'); return true; };
-  const result = land(dir, 'lane/x', { hasPass: moveBase });
+  const moveBase = () => { commit(dir, 'late.txt'); return null; };
+  const result = land(dir, 'lane/x', { uiCheck: moveBase });
   assert.equal(result.status, 'base-moved');
   assert.equal(landExitCode(result), 5);
   assert.ok(branchNames(dir).includes('lane/x'), 'the lane stays so the landing can be rerun');
@@ -188,12 +158,12 @@ test('an unknown lane, and the base itself, are usage errors (exit 2)', () => {
   assert.equal(tidy(['land', 'main', dir, '--tip', git(dir, 'rev-parse', 'main')], { cwd: dir }).status, 2);
 });
 
-test('the base gets the commit the PASS was found for, not a commit added to the lane meanwhile', () => {
+test('the base gets the commit that was checked, not a commit added to the lane meanwhile', () => {
   const { dir, worktree } = laneWithWorktree();
-  const commitDuringLookup = () => { commit(worktree, 'late.txt'); return true; };
-  const result = land(dir, 'lane/x', { hasPass: commitDuringLookup });
-  assert.equal(git(dir, 'rev-parse', 'main'), result.tip, 'main is the tested tip');
-  assert.equal(git(dir, 'ls-tree', '--name-only', 'main', '--', 'late.txt'), '', 'the untested commit is not on main');
+  const commitDuringCheck = () => { commit(worktree, 'late.txt'); return null; };
+  const result = land(dir, 'lane/x', { uiCheck: commitDuringCheck });
+  assert.equal(git(dir, 'rev-parse', 'main'), result.tip, 'main is the checked tip');
+  assert.equal(git(dir, 'ls-tree', '--name-only', 'main', '--', 'late.txt'), '', 'the unchecked commit is not on main');
   assert.ok(branchNames(dir).includes('lane/x'), 'the lane keeps its extra commit');
 });
 
@@ -213,8 +183,8 @@ test('cleanup after a landing keeps another lane\'s recently used worktree (only
 test('a cleanup that must refuse after the fast-forward still reports the landing (exit 1 with the leftovers), not a usage error', () => {
   const { dir, worktree } = laneWithWorktree();
   const unfinishedElsewhere = addWorktree(dir, 'wt-busy', 'busy');
-  const startMerge = () => { writeFileSync(join(git(unfinishedElsewhere, 'rev-parse', '--absolute-git-dir'), 'MERGE_HEAD'), `${git(dir, 'rev-parse', 'main')}\n`); return true; };
-  const result = land(dir, 'lane/x', { hasPass: startMerge });
+  const startMerge = () => { writeFileSync(join(git(unfinishedElsewhere, 'rev-parse', '--absolute-git-dir'), 'MERGE_HEAD'), `${git(dir, 'rev-parse', 'main')}\n`); return null; };
+  const result = land(dir, 'lane/x', { uiCheck: startMerge });
   assert.equal(result.status, 'landed');
   assert.equal(git(dir, 'rev-parse', 'main'), result.tip, 'main moved');
   assert.match(result.cleanupRefused, /merge is not finished/);
@@ -223,14 +193,14 @@ test('a cleanup that must refuse after the fast-forward still reports the landin
   assert.match(formatLand(result, false), /cleanup skipped: .*merge is not finished/);
 });
 
-// --tip: the reviewed tip (spec round 9 `no-workflows`, contract C2). A full land names the sha the review cleared; a branch that moved
-// after the review is never landed, and nothing is changed when it is refused.
-test('tip: a full land without --tip exits 2 "land needs --tip <reviewed full sha>" and changes nothing', () => {
+// --tip: the tip the caller read. A full land names the sha it expects; a branch that moved since is never landed, and nothing is
+// changed when it is refused.
+test('tip: a full land without --tip exits 2 "land needs --tip <full sha of the lane tip>" and changes nothing', () => {
   const { dir } = laneWithWorktree();
   const before = snapshot(dir);
   const result = tidy(['land', 'lane/x', dir], { cwd: dir });
   assert.equal(result.status, 2);
-  assert.match(result.stderr, /land needs --tip <reviewed full sha>/);
+  assert.match(result.stderr, /land needs --tip <full sha of the lane.s tip>/);
   assert.equal(snapshot(dir), before);
 });
 
@@ -243,24 +213,24 @@ test('tip: --tip must be a full 40-hex sha (a short sha, a branch name and an op
   assert.equal(tidy(['land', 'lane/x', dir, '--tip', '--json'], { cwd: dir }).status, 2, '--tip without a value');
 });
 
-test('tip: a branch that moved after the review exits 9 (tip-moved) before anything changes, with or without --rebase-only', () => {
+test('tip: a branch that moved after the tip was read exits 9 (tip-moved) before anything changes, with or without --rebase-only', () => {
   const { dir, worktree } = laneWithWorktree();
-  const reviewed = git(dir, 'rev-parse', 'lane/x');
+  const readTip = git(dir, 'rev-parse', 'lane/x');
   commit(worktree, 'after-review.txt');
   const before = snapshot(dir, worktree);
   for (const extra of [[], ['--rebase-only']]) {
-    const result = tidy(['land', 'lane/x', dir, '--tip', reviewed, ...extra], { cwd: dir, env: noSwitchEnv() });
+    const result = tidy(['land', 'lane/x', dir, '--tip', readTip, ...extra], { cwd: dir });
     assert.equal(result.status, 9, result.stdout + result.stderr);
-    assert.match(result.stdout, /tip-moved: .*lane\/x is at [0-9a-f]{40}, not at the reviewed [0-9a-f]{40}/);
+    assert.match(result.stdout, /tip-moved: .*lane\/x is at [0-9a-f]{40}, not at the expected [0-9a-f]{40}/);
     assert.equal(snapshot(dir, worktree), before, `nothing changed (${extra.join(' ') || 'full land'})`);
   }
 });
 
 test('tip: the landLane result for a moved branch is tip-moved with the branch tip, exit 9, and the JSON names the status', () => {
   const { dir, worktree } = laneWithWorktree();
-  const reviewed = git(dir, 'rev-parse', 'lane/x');
+  const readTip = git(dir, 'rev-parse', 'lane/x');
   const moved = commit(worktree, 'after-review.txt');
-  const result = land(dir, 'lane/x', { tip: reviewed });
+  const result = land(dir, 'lane/x', { tip: readTip });
   assert.equal(result.status, 'tip-moved');
   assert.equal(result.tip, moved);
   assert.equal(landExitCode(result), 9);

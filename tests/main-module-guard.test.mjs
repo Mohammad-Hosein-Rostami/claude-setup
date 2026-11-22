@@ -1,6 +1,6 @@
 // Tests for the "run as a script" check at the bottom of the CLI and hook files: it must still be true when the file is reached through a
-// symlink. The owner's ~/.claude is a symlink to this repo's home/, so a check without realpathSync made test-pass, the checkpoint and
-// recall-digest hooks, the reranker watchdog and affected-tests silently do nothing (exit 0, no output).
+// symlink. The owner's ~/.claude is a symlink to this repo's home/, so a check without realpathSync made git-tidy, the checkpoint and
+// recall-digest hooks and the reranker watchdog silently do nothing (exit 0, no output).
 // Exports: none (node:test file). Every run uses a temp dir for the symlink and for any state; nothing touches the real ~/.claude.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -71,18 +71,11 @@ test('the scan flags every spelling of the unresolved check and passes the resol
   assert.equal(hasUnresolvedMainCheck('if (import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) main();'), false);
 });
 
-test('test-pass reached through a symlink to home/ still runs: an unknown command exits 2', () => {
+test('git-tidy reached through a symlink to home/ still runs: an unknown command exits 2', () => {
   const link = linkTo('home', 'claude');
-  const result = spawnSync(process.execPath, [join(link, 'tools', 'test-pass', 'test-pass.mjs'), 'bogus'], { encoding: 'utf8' });
+  const result = spawnSync(process.execPath, [join(link, 'tools', 'git-tidy', 'git-tidy.mjs'), 'bogus'], { encoding: 'utf8' });
   assert.equal(result.status, 2, result.stderr);
-  assert.match(result.stderr, /test-pass:/);
-});
-
-test('affected-tests reached through a symlink to scripts/ lists the tests of a changed file', () => {
-  const link = linkTo('scripts', 'tools');
-  const result = spawnSync(process.execPath, [join(link, 'affected-tests.mjs'), 'home/tools/test-pass/test-pass.mjs', '--list'], { cwd: REPO, encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /tests\/test-pass\.test\.mjs/);
+  assert.match(result.stderr, /git-tidy: usage/);
 });
 
 test('the checkpoint hook reached through a symlink starts its job exactly like the real path', async () => {

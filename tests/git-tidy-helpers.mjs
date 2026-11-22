@@ -1,11 +1,11 @@
 // Shared fixtures for the git-tidy tests: build throw-away git repos in temp folders and run the CLI on them.
-// Exports: CLI, CLEAN_ENV, SWITCH_MODULE_FILES, turnChecksOn, makeRepo, git, commit, addWorktree, backdate, tidy, lines, snapshot, withOrigin.
+// Exports: CLI, CLEAN_ENV, makeRepo, git, commit, addWorktree, backdate, tidy, lines, snapshot, withOrigin.
 // Invariants: every git call gets an explicit cwd inside the OS temp folder (checked in `git`) and an environment without
 //   GIT_* variables (under the pre-commit hook git sets GIT_DIR, which would point a child git at the real repo) and
 //   without the user's git config, so a test can never read or change the repository the tests run from. HOME is a private empty folder
-//   and no session id is set, so a child process never reads the real session's /check switch (~/.claude/state/checks/<id>.json).
+//   and no session id is set, so a child process never reads the real session's state (~/.claude/state/<tool>/<id>.json).
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
+import { realpathSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +17,7 @@ const TEMP_ROOT = realpathSync(tmpdir());
 const NO_GIT_CONFIG = { GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 const IDENTITY = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const PINNED_HOME = makeTempDir('git-tidy-home-');
-const SESSION_ID_VARIABLES = ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID']; // checks-on.mjs reads both
+const SESSION_ID_VARIABLES = ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID']; // the session-store readers use both
 export const CLEAN_ENV = {
   ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_') && !SESSION_ID_VARIABLES.includes(name))),
   ...NO_GIT_CONFIG,
@@ -25,16 +25,6 @@ export const CLEAN_ENV = {
   HOME: PINNED_HOME,
   USERPROFILE: PINNED_HOME,
 };
-
-/** What a copied .githooks folder needs to ask "is this check on?": the switch module, its two imports and the category list. */
-export const SWITCH_MODULE_FILES = ['home/hooks/lib/checks-on.mjs', 'home/hooks/lib/state-files.mjs', 'home/hooks/lib/plain-file.mjs', 'home/checks/categories.json'];
-
-/** Writes the owner's /check switch for `sessionId` under `home` (a test's private HOME): the categories in `on` are on. */
-export function turnChecksOn(home, sessionId, on) {
-  const folder = join(home, '.claude', 'state', 'checks');
-  mkdirSync(folder, { recursive: true });
-  writeFileSync(join(folder, `${sessionId}.json`), JSON.stringify({ on, off: [], scope: 'test fixture', by: 'owner', at: new Date().toISOString() }));
-}
 
 /** Runs git in `cwd` (must be inside the temp folder) and returns trimmed stdout; fails the test on a non-zero exit. */
 export function git(cwd, ...args) {
