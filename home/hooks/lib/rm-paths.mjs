@@ -112,10 +112,10 @@ export const expandVars = (target, vars) => target.replace(VAR_PREFIX, (whole, n
 const mktempDir = () => join(tmpdir(), MKTEMP_DIR);
 const isMktempValue = (value) => typeof value === 'string' && value.startsWith(mktempDir());
 
-/** The value a `NAME=value` word gives, or undefined when it cannot be known (`$(...)` other than the mktemp stand-in). */
+/** The value a `NAME=value` word gives ($HOME filled in anywhere: `F="-T $HOME/k"`), or undefined when it cannot be known (`$(...)` other than the mktemp stand-in). */
 function valueOf(raw, vars) {
   if (raw === '$' || raw === '`') return undefined; // a bare `$(`/backtick: the value is another command's output
-  const value = expandVars(expandHome(raw, vars), vars);
+  const value = expandVars(expandHome(raw, vars), vars).replace(/\$(?:HOME|\{HOME\})(?!\w)/g, (home) => (vars.has(HOME_ASSIGNED) ? home : homedir()));
   return /[$`]/.test(value) ? undefined : value;
 }
 

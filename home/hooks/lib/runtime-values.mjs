@@ -12,7 +12,8 @@
 //   as data, not as a command word; anything unclear is false, so it judges the command word as before.
 // - readsRuntimeValue: a word fed by `"$@"`, `$*`, `$1`, an array (`"${A[@]}"`, `$A` after `A=(..)`), `${!X}`, or a name `read`,
 //   `mapfile` or `getopts` assigns: its words are known only at run time (`read X <<< "push --force"; git $X`). Only where the line
-//   expands it outside single quotes. (`printf -v X` values are not read here: lib/git-run-values.mjs judges the ones git runs.)
+//   expands it outside single quotes. A name `printf -v` or a `for`/`select` loop assigns counts only unquoted, where bash splits it
+//   (`for X in "push --force"; do git $X`); quoted it is one word (`git add "$f"`), and lib/git-run-values.mjs judges git-run values.
 // Scanning is linear in the line apart from a bounded look-ahead for the `))` (MAX_ARITHMETIC); a body longer than that, an unclosed
 // quote, an unbalanced parenthesis or a `<<` that is not a heredoc makes the line unclear: every `((` then counts, whatever the quoting,
 // and no assignment counts. Pure, no I/O.
@@ -240,16 +241,19 @@ export function arithmeticReasons(line) {
  * @param {string[]} words the words of one command after its command word, as written (quotes removed, `$NAME` kept)
  * @param {string} line the command line they came from
  * @returns {boolean} true when a word is filled in from a positional or list parameter, an array, an indirect `${!X}` or a name read at
- *   run time, and the line expands that name outside single quotes (`sh -c 'echo "$@"'` does not; the script is judged on its own)
+ *   run time, and the line expands that name outside single quotes (`sh -c 'echo "$@"'` does not; the script is judged on its own); or,
+ *   in an unquoted word (bash splits it), a name a `printf -v` or a `for`/`select` loop assigns (`for X in "push --force"; do git $X`)
+ * @param {Set<number>} [unquoted] the indexes in `words` of the words written without quotes
  */
-export function readsRuntimeValue(words, line) {
+export function readsRuntimeValue(words, line, unquoted = new Set()) {
   if (!words.some((word) => word.includes('$'))) return false;
   const scan = scanOf(line);
   const names = runtimeNames(line);
-  const runtime = ([, indirect, braced, subscript, plain]) => {
+  const splitNames = new Set([...namesIn(line, PRINTF_INTO), ...namesIn(line, LOOP_INTO, 2)]);
+  const runtime = (at) => ([, indirect, braced, subscript, plain]) => {
     const name = braced ?? plain;
     const fromRunTime = indirect !== undefined || subscript !== undefined || POSITIONAL_OR_LIST.test(name) || names.has(name);
-    return fromRunTime && (scan.unclear || scan.references.has(name));
+    return (fromRunTime || (unquoted.has(at) && splitNames.has(name))) && (scan.unclear || scan.references.has(name));
   };
-  return words.some((word) => [...word.matchAll(REFERENCE)].some(runtime));
+  return words.some((word, at) => [...word.matchAll(REFERENCE)].some(runtime(at)));
 }

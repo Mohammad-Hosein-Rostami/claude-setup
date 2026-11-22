@@ -112,8 +112,12 @@ const ARITHMETIC_JOIN = '((';// the operators in front of the first word of a `$
 const isArithmeticBody = (seg, line) => (seg.joinedBy ?? '').endsWith(ARITHMETIC_JOIN) && everyDoubleParenIsArithmetic(line);
 
 /** A word after the command word filled in at run time (`read X; git $X`, `git "$@"`, `git "${A[@]}"`) in a command a rule reads. */
-const runtimeValueWord = (seg, raw, parsed, line) =>
-  (rulesRead(seg, raw, parsed) && readsRuntimeValue(seg.slice(raw.at + 1), line) ? RUNTIME_VALUE_REASON : undefined);
+function runtimeValueWord(seg, raw, parsed, line) {
+  if (!rulesRead(seg, raw, parsed)) return undefined;
+  const after = raw.at + 1;
+  const unquoted = new Set([...(seg.bareWords ?? [])].filter((at) => at >= after).map((at) => at - after)); // `$NAME` outside quotes
+  return readsRuntimeValue(seg.slice(after), line, unquoted) ? RUNTIME_VALUE_REASON : undefined;
+}
 
 /**
  * The ways the shell may read one command's words, each with its command: as filled in (zsh keeps an unquoted `$X` as one word), then,
