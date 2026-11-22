@@ -10,8 +10,12 @@
 //   outside 1-5, and a --base sha that is not an ancestor of the base tip or that already holds a landed patch of the road). `join`: 0 joined
 //   clean, 3 joined with findings, 1 refused, 2 usage (lib/road-join.mjs).
 // Exports: runRoad(argv, { run, isUiPath, now }) -> { code, out }.
+// Rows: one row per lane (lib/road-file.mjs roadRows) and one check row per step; `--fix N name` adds one row `<road>.s<N>.fix-<name>`
+//   (item `rework: <name>`). land-lane writes each landing as the done evidence of that row; older roads keep their `-land` rows and
+//   read as before (lib/road-state.mjs landingRowId).
 // Invariants: the road's STATUS.md is the file beside the road file; rows are added only through status.mjs's runStatus and read only with
-//   the estimator's parseWorkItems (no second parser, P12). Every subprocess runs without a shell, with its own timeout (road-gate.mjs).
+//   the estimator's parseWorkItems (no second parser, P12), in one all-or-none `add` call, so a second `rows` run at the same time adds
+//   none (status.mjs refuses a taken id under its lock). Every subprocess runs without a shell, with its own timeout (road-gate.mjs).
 //   The main guard compares real paths, so the CLI works through the ~/.claude link.
 import { spawnSync } from 'node:child_process';
 import { realpathSync, writeFileSync } from 'node:fs';
@@ -19,6 +23,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseWorkItems } from '../estimate/lib/items.mjs';
 import { readStatusFile } from '../status/status-file.mjs';
+import { GROUP_SEPARATOR } from '../status/status-batch.mjs';
 import { runStatus } from '../status/status.mjs';
 import { MAX_ROW_ID_CHARS, LANE_NAME, readRoad, roadRows, uiMatrixProblems } from './lib/road-file.mjs';
 import { GIT_TIMEOUT_MS, gateStep } from './lib/road-gate.mjs';
@@ -110,12 +115,14 @@ const sameItem = (a, b) => a === b || a.replace(BASE_TAIL, '') === b.replace(BAS
 function fixRows(road, items, rest) {
   const at = rest.indexOf('--fix');
   const [n, name] = [Number(rest[at + 1]), rest[at + 2]];
-  if (!Number.isInteger(n) || n < 1 || n > road.steps.length || !LANE_NAME.test(String(name))) throw new UsageError(`--fix needs a step number and a lane name. ${USAGE}`);
+  // A name ending -land would read as an old-form close row (`fix-<x>-land`): refused like a lane name.
+  if (!Number.isInteger(n) || n < 1 || n > road.steps.length || !LANE_NAME.test(String(name)) || name.endsWith('-land')) throw new UsageError(`--fix needs a step number and a lane name (not ending -land). ${USAGE}`);
   const check = items.find((item) => item.id.toLowerCase() === `${road.road}.s${n}.check`);
   if (check?.done != null) return { refused: `step ${n}'s check row is done: a fix after the gate is a new step` };
   const id = `${road.road}.s${n}.fix-${name}`;
+  // The same length rule as a lane name (road-file.mjs): the old-form close id must fit too, so its correction ids stay usable.
   if (`${id}-land`.length > MAX_ROW_ID_CHARS) return { refused: `${id}-land is over ${MAX_ROW_ID_CHARS} chars` };
-  return { rows: [{ id, item: `rework: ${name}`, size: 'S' }, { id: `${id}-land`, item: `close: review and land fix-${name}`, size: 'M' }] };
+  return { rows: [{ id, item: `rework: ${name}`, size: 'S' }] };
 }
 
 function rows(road, ctx, rest, run) {
@@ -134,13 +141,12 @@ function rows(road, ctx, rest, run) {
   const existing = new Map(items.map((item) => [item.id.toLowerCase(), item]));
   const clash = wanted.find((row) => existing.has(row.id.toLowerCase()) && !sameItem(existing.get(row.id.toLowerCase()).item, row.item));
   if (clash) return { code: 1, out: `refused: row ${clash.id} exists with another item; the road id ${road.road} is used by another job` };
-  const added = [];
-  for (const row of wanted.filter((candidate) => !existing.has(candidate.id.toLowerCase()))) {
-    const result = runStatus(['--file', ctx.statusFile, 'add', row.id, row.item, row.size]);
-    if (result.code !== 0) return { code: 1, out: [...added.map((id) => `added ${id}`), `refused at ${row.id}: ${result.message}`].join('\n') };
-    added.push(row.id);
-  }
-  return { code: 0, out: [...added.map((id) => `added ${id}`), `road ${road.road}: ${added.length} rows added`].join('\n') };
+  const missing = wanted.filter((candidate) => !existing.has(candidate.id.toLowerCase()));
+  if (missing.length === 0) return { code: 0, out: `road ${road.road}: 0 rows added` };
+  const words = missing.flatMap((row, at) => [...(at === 0 ? [] : [GROUP_SEPARATOR]), row.id, row.item, row.size]);
+  const result = runStatus(['--file', ctx.statusFile, 'add', ...words]);
+  if (result.code !== 0) return { code: 1, out: `refused: no row added: ${result.message.split('\n')[0]}` };
+  return { code: 0, out: [...missing.map((row) => `added ${row.id}`), `road ${road.road}: ${missing.length} rows added`].join('\n') };
 }
 
 function next(road, ctx, rest, run, isUiPath) {

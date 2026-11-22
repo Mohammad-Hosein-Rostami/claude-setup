@@ -5,7 +5,8 @@
 // Sources: the session's linked STATUS.md (estimate table-store link), else <cwd>/STATUS.md; its estimate cache entry (segment-cache.mjs
 // readEntry: highMs, progress.road with the road id and current step, the same rule the estimate uses); the road file
 // `road-<id>.json` beside the STATUS.md (tools/road road-file.mjs readRoad); the STATUS.md rows (estimate items.mjs parseWorkItems):
-// a lane is landed when its close row `<road>.s<N>.<lane>-land` is done (tools/road road-state.mjs rule).
+// a lane is landed when its landing row is done: the close row `<road>.s<N>.<lane>-land` when STATUS.md holds one (older roads), else
+// the lane row `<road>.s<N>.<lane>` (one row per lane) (tools/road road-state.mjs laneLanded, the rule the road gate uses).
 // Rules: the road is read again only when the STATUS.md or the road file changed (mtime and size); the trend is the last move of the
 // finish clock (highMs) of at least MOVE_MIN, kept TREND_SHOWN_MS after the move; the first sighting is no move.
 // Invariants: never throws (any failure gives null facts and keeps the cache); reads regular files only, without following a link or
@@ -18,7 +19,8 @@ import { dirname, join } from 'node:path';
 import { parseWorkItems } from '../../estimate/lib/items.mjs';
 import { cacheDir, readEntry } from '../../estimate/lib/segment-cache.mjs';
 import { linkedStatusPath, stateDir } from '../../estimate/lib/table-store.mjs';
-import { readRoad, rowIds } from '../../road/lib/road-file.mjs';
+import { readRoad } from '../../road/lib/road-file.mjs';
+import { laneLanded } from '../../road/lib/road-state.mjs';
 
 const MS_PER_MIN = 60_000;
 const MOVE_MIN = 5; // a smaller move is a pause being counted, not news
@@ -49,9 +51,9 @@ function roadFacts(statusPath, name, step) {
   const plan = road?.steps?.[step - 1];
   if (!plan) return null;
   const text = readPlainFile(statusPath, MAX_STATUS_BYTES);
-  const done = new Set(parseWorkItems(text).items.filter((item) => item.done !== null).map((item) => String(item.id).toLowerCase()));
+  const rows = new Map(parseWorkItems(text).items.map((item) => [String(item.id).toLowerCase(), item]));
   const lanes = Array.isArray(plan.lanes) ? plan.lanes : [];
-  const landed = lanes.filter((lane) => done.has(rowIds(road.road, step, lane.name).close.toLowerCase())).length;
+  const landed = lanes.filter((lane) => laneLanded(rows, road.road, step, lane.name)).length;
   return { goal: clean(road.goal), title: clean(String(plan.goal ?? '').replace(STEP_PREFIX, '')), lanesDone: landed, lanesTotal: lanes.length, repo: typeof road.repo === 'string' ? road.repo : null };
 }
 

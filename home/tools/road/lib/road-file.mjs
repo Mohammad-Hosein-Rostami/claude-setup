@@ -6,6 +6,9 @@
 //   of a step unless the step lists it in `appendOnly` (a folder and a file in it overlap, as build's checkArgs says); `needs` names only
 //   lanes of earlier steps; branches, files and the base pass fixed patterns before they reach build args or argv (P5). A step with
 //   `form: "build"` reads as `agents` with the warning `step <N>: build form retired: runs as agents` (an omitted form is `agents`).
+// Rows (one row per lane): roadRows writes per lane its lane row only (its landing is that row's done evidence) and per step a check
+//   row. rowIds still names the `-land` close row so the rows of older roads, which have one, read as before (road-state.mjs
+//   landingRowId); the close id stays within MAX_ROW_ID_CHARS so such a road keeps its ids. `closeSize` is read for those roads only.
 // Done means (lead.md, architect.md): every lane needs a non-empty `checkpoints` list, the commands the lead runs itself before
 //   accepting the lane, each with the exit it must return. No tool runs them; any item shape reads (a text, the old object shape).
 // Guidance fields (owner decision CR7; optional, nothing runs them): `suite`, `threatModel`, a lane's `acceptanceTests`, `principles`,
@@ -36,7 +39,7 @@ export function pathsOverlap(first, second) {
   return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
-/** The lane row, close row and check row ids of a lane in step `step` (1-based). */
+/** The lane row, close row (old form only: roads written before one row per lane) and check row ids of a lane in step `step` (1-based). */
 export const rowIds = (road, step, lane) => ({ lane: `${road}.s${step}.${lane}`, close: `${road}.s${step}.${lane}-land`, check: `${road}.s${step}.check` });
 
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
@@ -176,7 +179,8 @@ export function readRoad(path) {
 }
 
 /**
- * Every row of the road (section 3): per lane its lane and close row, per step its check row; step 1's check item carries the base tip.
+ * Every row of the road (section 3): per lane its lane row (no close row: land-lane writes the landing as the lane row's done evidence),
+ * per step its check row; step 1's check item carries the base tip.
  * @param {object} road a checked road
  * @param {string} baseTip the road-start tip (full sha), written once into step 1's check item
  * @returns {{ id: string, item: string, size: 'S'|'M'|'L' }[]}
@@ -184,10 +188,7 @@ export function readRoad(path) {
 export function roadRows(road, baseTip) {
   return road.steps.flatMap((step, at) => {
     const n = at + 1;
-    const lanes = step.lanes.flatMap((lane) => {
-      const ids = rowIds(road.road, n, lane.name);
-      return [{ id: ids.lane, item: `build: ${lane.item}`, size: lane.size }, { id: ids.close, item: `close: review and land ${lane.name}`, size: lane.closeSize ?? 'M' }];
-    });
+    const lanes = step.lanes.map((lane) => ({ id: rowIds(road.road, n, lane.name).lane, item: `build: ${lane.item}`, size: lane.size }));
     return [...lanes, { id: rowIds(road.road, n, 'x').check, item: `close: step ${n} checkpoint${n === 1 ? `, base ${baseTip}` : ''}`, size: 'S' }];
   });
 }

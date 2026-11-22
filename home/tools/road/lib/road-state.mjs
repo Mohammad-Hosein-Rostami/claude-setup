@@ -1,13 +1,16 @@
 // Purpose: where a road stands, from the STATUS.md rows (spec-stages sections 3-5): the current step, its lanes, held and carried lanes, the
 //   road-start tip and landed ranges written in the rows.
-// Exports: stepState(road, items), roadStartTip(road, items), landedLine(evidence),
-//   reviewedLine(evidence), isUiLane(lane, isUiPath), MAX_LANES_PER_RUN.
+// Exports: stepState(road, items), roadStartTip(road, items), landedLine(evidence), laneLanded(rows, roadId, step, laneName),
+//   landingRowId(rows, roadId, step, laneName), reviewedLine(evidence), isUiLane(lane, isUiPath), MAX_LANES_PER_RUN.
 // Rules: a row is done when its done cell is set (parseWorkItems). Current step = the lowest step whose check row is not done; none open:
-//   `done`. A lane is landed when its close row is done. A lane is held while a lane it needs (default: every lane of the earlier steps) is
-//   not landed. Carried = lanes of earlier steps (check row done) whose close row is open; they come first and count toward the 5. State
-//   `gate` when every lane of the step has landed and nothing is carried, else `build`. `writers` = the smallest of the lane count plus
-//   their test lanes, the budget and 5.
-// Invariants: pure; row ids follow road-file.mjs rowIds.
+//   `done`. A lane's landing row is its close row `<lane row>-land` when that row is in STATUS.md (old form: roads whose rows were written
+//   before one row per lane), else its own lane row (new form: land-lane writes the landing as the lane row's done evidence); a lane is
+//   landed when its landing row is done (laneLanded, the one landed rule of stepState, the gate and the board). A lane is held while a
+//   lane it needs (default: every lane of the earlier steps) is not landed. Carried = lanes of earlier steps (check row done) not landed;
+//   they come first and count toward the 5. State `gate` when every lane of the step has landed and nothing is carried, else `build`.
+//   `writers` = the smallest of the lane count plus their test lanes, the budget and 5.
+// Invariants: pure; row ids follow road-file.mjs rowIds; a done cell alone only counts a lane as landed for planning: the gate still
+//   checks the landed line of the landing row against git.
 import { MAX_LANES_PER_STEP, rowIds } from './road-file.mjs';
 
 export const MAX_LANES_PER_RUN = MAX_LANES_PER_STEP;
@@ -15,7 +18,7 @@ const LANDED = /\blanded ([0-9a-f]{7,40}) on (\S+?)(?: from ([0-9a-f]{7,40}))?(?
 const REVIEWED = /\breviewed ([0-9a-f]{7,40}) clean\b/;
 const START_TIP = /, base ([0-9a-f]{40})\b/;
 
-/** `{ to, base, from }` of a close row's `landed <to> on <base> from <from>` evidence (from: null when missing), or null. */
+/** `{ to, base, from }` of a landing row's `landed <to> on <base> from <from>` evidence (from: null when missing), or null. */
 export function landedLine(evidence) {
   const match = LANDED.exec(String(evidence ?? ''));
   return match === null ? null : { to: match[1], base: match[2], from: match[3] ?? null };
@@ -26,6 +29,29 @@ export const reviewedLine = (evidence) => REVIEWED.exec(String(evidence ?? ''))?
 
 const byId = (items) => new Map(items.map((item) => [item.id.toLowerCase(), item]));
 const isDone = (rows, id) => rows.get(id.toLowerCase())?.done != null;
+
+/**
+ * The id of the row that records a lane's landing: the close row when STATUS.md holds it (old form), else the lane row (new form).
+ * @param {Map<string, { id: string, done: number | string | null, evidence: string }>} rows the STATUS.md rows keyed by lower-case id (done: parseWorkItems ms)
+ * @param {string} roadId the road id
+ * @param {number} step 1-based step of the lane
+ * @param {string} laneName the lane name (also `fix-<name>` for a fix row)
+ * @returns {string} the row id as rowIds writes it
+ */
+export function landingRowId(rows, roadId, step, laneName) {
+  const ids = rowIds(roadId, step, laneName);
+  return rows.has(ids.close.toLowerCase()) ? ids.close : ids.lane;
+}
+
+/**
+ * Whether a lane has landed: its landing row (landingRowId) is done. A missing row is not landed (fail closed).
+ * @param {Map<string, { id: string, done: number | string | null, evidence: string }>} rows the STATUS.md rows keyed by lower-case id (done: parseWorkItems ms)
+ * @param {string} roadId the road id
+ * @param {number} step 1-based step of the lane
+ * @param {string} laneName the lane name
+ * @returns {boolean}
+ */
+export const laneLanded = (rows, roadId, step, laneName) => isDone(rows, landingRowId(rows, roadId, step, laneName));
 
 /** The road-start tip written in step 1's check item, or null. */
 export function roadStartTip(road, items) {
@@ -52,7 +78,7 @@ export function stepState(road, items) {
   if (index === -1) return { step: of, of, state: 'done', form: 'agents', lanes: [], held: [], carried: [], started: false };
   const step = index + 1;
   const all = laneEntries(road);
-  const landed = new Set(all.filter((entry) => isDone(rows, entry.ids.close)).map((entry) => entry.lane.name));
+  const landed = new Set(all.filter((entry) => laneLanded(rows, road.road, entry.step, entry.lane.name)).map((entry) => entry.lane.name));
   const carried = all.filter((entry) => entry.step < step && !landed.has(entry.lane.name));
   const held = [];
   const ready = [];
