@@ -1,5 +1,6 @@
 // Purpose: `figma-pull` - cache Figma baselines (PNG), flattened specs and meta (zero MCP tokens): one node, every frame
-// and component-set variant under a page or section (`--bulk`), or the same from a local export folder (`--from-export`).
+// and component-set variant under a page or section (`--bulk`), or the same from a local export folder (`--from-export`:
+// the nodes-JSON + `<id>.png` folder, or Figma's own PNG export, see lib/native-export.mjs).
 // Exports: options, fetchTargets (one nodes call + one images call, shared with figma-refresh), run.
 // Invariants: a complete cache folder is skipped unless --refresh; every spec.json comes from flattenSpec on the node's raw
 // document; FIGMA_TOKEN is read by lib/figma-api.mjs and never printed; --from-export makes no network call.
@@ -9,6 +10,7 @@ import { parse, need, toNumber } from '../lib/args.mjs';
 import { UsageError } from '../lib/errors.mjs';
 import { cacheDir, isCached, writeCache } from '../lib/cache.mjs';
 import { fetchNode, fetchBaseline, fetchNodes, fetchImages } from '../lib/figma-api.mjs';
+import { applyNativeExport, isNativeExport, planNativeExport } from '../lib/native-export.mjs';
 import { flattenSpec } from '../lib/spec.mjs';
 import { apiNodeId, targetsOf } from './figma-frames.mjs';
 
@@ -145,6 +147,11 @@ function exportEntries(dir, [entryId, document], origin, refresh) {
 function pullFromExport(fileKey, exportDir, scale, refresh) {
   const dir = path.resolve(exportDir);
   if (!fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new UsageError(`--from-export: ${dir} is not a folder`);
+  if (isNativeExport(dir)) {
+    const written = applyNativeExport(planNativeExport(dir, fileKey, scale));
+    console.log(`from-export ${dir}: Figma's own export, wrote ${written} baseline${written === 1 ? '' : 's'} into the cache of ${fileKey}`);
+    return 0;
+  }
   const origin = { fileKey, scale, source: 'export' };
   const entries = readExportNodes(dir).flatMap((pair) => exportEntries(dir, pair, origin, refresh));
   for (const entry of entries) writeCache(cacheDir(fileKey, entry.target.node), entry);

@@ -27,7 +27,7 @@ The browser binary is found by Playwright itself in its cache (`~/Library/Caches
 | ------- | ----- | ------------ |
 | `figma-pull` | `--file KEY --node ID [--scale 1] [--refresh]` | Needs env `FIGMA_TOKEN`. Writes `baseline.png`, `spec.json`, `meta.json` to `~/.cache/figma/<KEY>/<ID>/` (`:` in IDs becomes `-`). Skips the fetch if cached. |
 | `figma-pull --bulk` | `--bulk --file KEY --node PAGE_OR_SECTION [--scale 1] [--refresh]` | Every frame and component-set variant under the node, one nodes call and one images call, same cache layout (section "Figma bulk, refresh and export" below). |
-| `figma-pull --from-export` | `--from-export DIR --file KEY [--scale 1] [--refresh]` | Cache folders from a local export folder, no network, no token (format below). |
+| `figma-pull --from-export` | `--from-export DIR --file KEY [--scale 1] [--refresh]` | Cache folders from a local export folder, no network, no token: a nodes.json folder, or Figma's own PNG export (formats below). |
 | `figma-refresh` | `--file KEY --node ID [--scale 1]` | Re-fetches into a temp folder and prints `changed` / `unchanged` / `new` / `gone` per frame; never writes the cache. Exit 0 all unchanged, 1 otherwise. |
 | `figma-frames` | `--file KEY --node ID [--node ID]... --out frames.json` | Needs env `FIGMA_TOKEN`. One REST call per `--node` (nodes endpoint, depth 2); a node id in the URL form `12-40` is sent as `12:40`. A frame is each `FRAME` or `COMPONENT` whose parent is a `--node` or a `SECTION` under it; `width` and `height` are rounded up. Writes `{file, source, frames:[{node, name, page, width, height}]}` (a frame reached from two nodes is listed once; `page` is the name of the `--node` it was found under) and prints the count. This file is the design inventory `ui-coverage` checks the matrix against. Exit 2 without a token or on an API error; the token is never printed. No token: write the same shape by hand from the Figma MCP `get_metadata`. |
 | `compare` | `--url U --root SEL --cache DIR [--map map.json] [--steps steps.json] [--bypass-csp] [--no-autofocus] [--max-diff 0.5] [--strict] [context flags] [--out DIR]` | Viewport = frame size, DSF = scale. Element gate (box +-1px, font size and family, line-height, letter-spacing, colour, background, radius, padding, gap, stroke width and colour by `strokeAlign` (INSIDE = border, OUTSIDE = outline or box-shadow ring, CENTER = outline with offset -weight/2; standards/figma.md), image fills loaded and of the right aspect, and every broken eager image in the root even without a map) then pixel gate (odiff, threshold 0.1, anti-aliasing ignored; size mismatch is reported first and both images are padded) plus the colour metric (any channel > 2 levels, anti-aliasing counted; Figma TEXT boxes left out in a default run), which fails above the same limit: odiff's threshold hides a uniform drift of up to about 26 levels. `--strict` = the strict rule: `--max-diff 0` and the colour metric over every pixel (fail closed until `attribute` classes text anti-aliasing). |
@@ -263,6 +263,17 @@ only), `pulledFrom` (the `--node`, or the export entry) and `source` (`api` or `
   Unconfirmed: this folder format is the setup's choice (the ICE scripts saved the nodes-API answer raw and the PNGs by
   node id). How the PC project's own gate stores its Figma results has not been read yet (the top-level keys of one of
   its result files, `round9` phase-start step); until it is, this format may change to match it.
+- `figma-pull --from-export DIR --file KEY` with Figma's own export (a folder with **no** `nodes.json`; File > Export, one
+  PNG per layer): the PNGs are matched by layer name to the nodes an earlier `figma-pull --bulk --file KEY --node ...`
+  cached. A file is `<layer name>.png` (1x) or `<layer name>@2x.png` (the `@Nx` suffix is the scale; without it
+  `--scale` applies, default 1); a `/` in a layer name is a subfolder (`Buttons/Primary.png` is the layer `Buttons/Primary`).
+  Each matched cache folder keeps its `spec.json` and gets the exported `baseline.png` and a `meta.json` with that scale
+  and `source: export` (it overwrites without `--refresh`). It exits 2, writing nothing, when: the folder holds no PNG, a
+  PNG is empty (0 bytes) or not a PNG, the file has no cache from `--bulk` (run it first), a PNG matches no layer name, two
+  cached nodes share the layer name, or two PNGs map to one layer; the message lists the names (at most 20, quoted).
+  Limits: 2000 PNGs, 6 folder levels, 200 characters per path, 64 MB per PNG; links are refused. Names are only compared
+  with layer names, never run or used as a write path.
+  Unconfirmed (U1: Figma forum threads only, no official page): how Figma names its export files; check it on the first real export.
 
 ## `first-paint` (the loader, then the one right screen)
 
