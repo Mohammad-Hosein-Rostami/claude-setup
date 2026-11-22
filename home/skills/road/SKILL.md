@@ -14,7 +14,8 @@ step landed. The STATUS.md rows hold the state; the tool is `node ~/.claude/tool
 2. The start line: show the owner the steps and lanes, one line each (`step N: <goal> - <lane>, <lane>`), beside the
    start questions (the road's `questions`, all asked now, each with its recommended option).
 3. `road.mjs rows <road>`: adds one row per lane and one check row per step (a second run adds 0). `status.mjs start` a lane row when its
-   writer starts; never mark it done by hand before it has landed.
+   writer starts; never mark it done by hand before it has landed. A second road may open in the same STATUS.md (FR2) when no lane
+   name, branch or file clashes with the open one (`rows` names the clash); the gate then counts both roads' landings.
 
 ## Walk
 1. `road.mjs next <road> --budget <free slots>` names the step, its `lanes` and its `early` lanes (at most 5 agents at once; the hook
@@ -33,7 +34,10 @@ of the same session is continued with SendMessage.
 
 ## Gate and update
 When every lane of the step landed: `road.mjs gate <road> --step <N>`. Every line must PASS (it checks that every lane landed, and the other lines the road README lists); the next step starts
-only then. After the gate: one update to the owner with the `Finish:` block of `estimate.mjs STATUS.md` pasted as-is, and a
+only then. A terminal UI step (lanes with `matrix: "none: ..."`, no UI file changed: status line, board text) passes line 4 with
+its terminal proof row once the owner approved a real render: `status.mjs add <road>.s<N>.terminal-proof "proof: step N terminal
+render approved by the owner" S`, then `status.mjs done <road>.s<N>.terminal-proof "terminal proof: <abs path> (owner yes <YYYY-MM-DD>)"`.
+Web UI always needs its `ui-proof` record. After the gate: one update to the owner with the `Finish:` block of `estimate.mjs STATUS.md` pasted as-is, and a
 `status.mjs deliver "<step N done>"` row.
 
 ## Failure and carry

@@ -16,17 +16,18 @@
 //   of that row. An old-form road (lib/road-state.mjs isOldFormRoad: its STATUS.md holds `-land` close rows) keeps its form: `rows` adds
 //   the close row of a lane that lacks one and a fix's `fix-<name>-land` row, with the items the old tool wrote.
 // Invariants: the road's STATUS.md is the file beside the road file; rows are added only through status.mjs's runStatus and read only with
-//   the estimator's parseWorkItems (no second parser, P12). `rows` reads the rows again, checks for another open road and adds what is
-//   missing in one all-or-none `add` call, all under its own lock `.STATUS.road-rows-lock` beside STATUS.md (hooks/lib/session-lock.mjs
-//   withSessionLock; status.mjs takes its own lock inside it), so a second run at the same time finds the rows and adds 0 (exit 0), and
-//   two roads started at once cannot both open; a lock held past its 1 s wait is exit 1 `busy`. Every subprocess runs without a shell,
+//   the estimator's parseWorkItems (no second parser, P12). `rows` reads the rows again, checks each other open road (lib/road-file.mjs
+//   roadClash: no readable road file beside STATUS.md, or a lane name, branch or file shared within one repo, is refused naming it) and
+//   adds what is missing in one all-or-none `add` call, all under its own lock `.STATUS.road-rows-lock` beside STATUS.md
+//   (hooks/lib/session-lock.mjs withSessionLock; status.mjs takes its own lock inside it), so a second run at the same time finds the rows
+//   and adds 0 (exit 0), and two clashing roads started at once cannot both open; a lock held past its 1 s wait is exit 1 `busy`. Every subprocess runs without a shell,
 //   with its own timeout (road-gate.mjs).
 // Next: the current step's lanes (stepState) plus `early`, the later-step lanes that can start now to fill up to 5 agents (owner FR2,
 //   lib/road-state.mjs earlyLanes; each need confirmed on the base in git), and `waiting` with the reason for each other later lane;
 //   `writers` = min(lanes + early, budget, 5). It writes nothing and takes no lock.
 // Join and gate: `join` first refuses a lane whose needed lanes have not landed on the base in git (land-lane knows no road, so this is
 //   the road's check before a landing); `gate` reads the other road files `road-*.json` beside STATUS.md of the same repo, so a lane in
-//   flight there is INFO on line 3, not FAIL.
+//   flight there is INFO on line 3, not FAIL, and their landings count on line 2.
 //   The main guard compares real paths, so the CLI works through the ~/.claude link.
 import { spawnSync } from 'node:child_process';
 import { readdirSync, realpathSync, writeFileSync } from 'node:fs';
@@ -37,7 +38,7 @@ import { parseWorkItems } from '../estimate/lib/items.mjs';
 import { readStatusFile } from '../status/status-file.mjs';
 import { GROUP_SEPARATOR } from '../status/status-batch.mjs';
 import { runStatus } from '../status/status.mjs';
-import { MAX_ROW_ID_CHARS, LANE_NAME, readRoad, roadRows, rowIds, uiMatrixProblems } from './lib/road-file.mjs';
+import { MAX_ROW_ID_CHARS, LANE_NAME, readRoad, roadClash, roadRows, rowIds, uiMatrixProblems } from './lib/road-file.mjs';
 import { GIT_TIMEOUT_MS, fullSha, gateStep } from './lib/road-gate.mjs';
 import { joinLane } from './lib/road-join.mjs';
 import { earlyLanes, isOldFormRoad, isUiLane, landedLine, needsNotOnBase, roadStartTip, stepState } from './lib/road-state.mjs';
@@ -110,7 +111,8 @@ function startTip(road, items, given, run) {
   if (sha.exit !== 0) throw new UsageError(`--base ${given} is not a commit`);
   const full = sha.out.trim();
   if (run('git', ['-C', road.repo, 'merge-base', '--is-ancestor', full, tip.out.trim()], GIT_TIMEOUT_MS).exit !== 0) throw new UsageError(`--base ${full} is not an ancestor of ${road.base}`);
-  const holds = items.map((item) => landedLine(item.evidence)).filter(Boolean)
+  // Only this road's rows: another open road of the same STATUS.md may have landed before this road's start.
+  const holds = items.filter((item) => item.id.toLowerCase().startsWith(`${road.road}.`)).map((item) => landedLine(item.evidence)).filter(Boolean)
     .some((landed) => run('git', ['-C', road.repo, 'merge-base', '--is-ancestor', landed.to, full], GIT_TIMEOUT_MS).exit === 0);
   if (holds) throw new UsageError(`--base ${full} already holds a landed patch of the road`);
   return full;
@@ -171,8 +173,14 @@ function rows(road, ctx, rest, run) {
 
 function addRows(road, ctx, fix, tip) {
   const items = itemsOf(ctx.statusFile);
-  const other = items.find((item) => item.done == null && OPEN_CHECK.test(item.id) && OPEN_CHECK.exec(item.id)[1].toLowerCase() !== road.road);
-  if (other) return { code: 1, out: `refused: ${ctx.statusFile} already holds an open road (${other.id}); one open road per STATUS.md` };
+  const open = new Set(items.filter((item) => item.done == null && OPEN_CHECK.test(item.id)).map((item) => OPEN_CHECK.exec(item.id)[1].toLowerCase()));
+  const openOthers = [...open].filter((id) => id !== road.road);
+  const beside = openOthers.length === 0 ? [] : roadsBeside(ctx);
+  for (const id of openOthers) {
+    const other = beside.find((candidate) => candidate.road === id);
+    const clash = other === undefined ? `no readable road file of it beside STATUS.md to check for clashes` : other.repo === road.repo ? roadClash(road, other) : null;
+    if (clash !== null) return { code: 1, out: `refused: ${ctx.statusFile} holds the open road ${id}: ${clash}` };
+  }
   const existing = new Map(items.map((item) => [item.id.toLowerCase(), item]));
   const oldForm = isOldFormRoad(existing, road.road);
   let wanted;
@@ -236,12 +244,15 @@ function gate(road, ctx, rest, run, isUiPath) {
   return { code: result.pass ? 0 : 1, out: [...result.lines, `road ${road.road} step ${step}: ${result.pass ? 'PASS' : 'FAIL'}`].join('\n') };
 }
 
-/** The other checked roads whose files sit beside this road's STATUS.md and name the same repo; an unreadable one is left out (its lanes stay FAIL on gate line 3). */
-function otherRoads(ctx) {
+/** The other checked roads whose files sit beside this road's STATUS.md, any repo; an unreadable one is left out. */
+function roadsBeside(ctx) {
   const folder = dirname(ctx.file);
   return readdirSync(folder).filter((name) => ROAD_FILE.test(name) && join(folder, name) !== ctx.file)
-    .map((name) => readRoad(join(folder, name)).road).filter((other) => other !== null && other.road !== ctx.road.road && other.repo === ctx.road.repo);
+    .map((name) => readRoad(join(folder, name)).road).filter((other) => other !== null && other.road !== ctx.road.road);
 }
+
+/** The other roads beside STATUS.md of the same repo (an unreadable one is left out: its lanes stay FAIL on gate line 3, its commits on line 2). */
+const otherRoads = (ctx) => roadsBeside(ctx).filter((other) => other.repo === ctx.road.repo);
 
 /** `join`, after the needs check: every lane the joined lane needs has landed on the base in git (a lane of the road; others go to joinLane, which refuses them). */
 function joinAfterNeeds(ctx, rest, run) {

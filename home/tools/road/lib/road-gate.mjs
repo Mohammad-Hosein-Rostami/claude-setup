@@ -17,18 +17,20 @@
 //   chain), and the coverage check of this line shows no unlanded commit is hidden. The text takes no `as <sha>` (a fix row has no one
 //   sha for its work; any `as` part is a FAIL, never ignored). A road lane (any entry) never lands within another row:
 //   lanes land one at a time, each in its own fast-forward, so it needs its own range (its own line or its `.landed` correction) and a
-//   `landed within` row of a lane is a FAIL naming the row; this also leaves no stacked-lane case to prove;
+//   `landed within` row of a lane is a FAIL naming the row; this also leaves no stacked-lane case to prove. Two roads in one STATUS.md
+//   (`otherRoads` of the same repo and base) land interleaved: the other roads' close ranges that end after this road's start get the
+//   same per-row checks and count for the cover, the disjointness and the `<from>` rule (otherRanges), so a commit in no road's range
+//   still FAILs;
 //   3 `git-tidy check --json` exit 0; on exit 1 a `merged-branch`, `merged-worktree`, `superseded-copy` or `agent-leftover` finding of a
 //   lane in flight (row started, not landed; this road or `otherRoads`, the road files beside STATUS.md) is INFO, any other finding FAIL
-//   (a leftover branch of a landed lane of this step included); 4 UI: when a range of the step changes UI files or a lane has a matrix,
-//   `ui-proof check --tip <tip> --against-step <road>.s<N>` exit 0 and the step-start record taken at or before every `<from>`, except
-//   a range that ended at or before it from a lane that is no UI lane and changed no UI file (landed early: its work is in the record);
-//   UI checks always run (owner decision CR5); 5 the measure (INFO). No test, review or audit line: every lane of the step landed, cleanly.
+//   (a leftover branch of a landed lane of this step included); 4 UI: road-gate-ui.mjs uiLine (the web ui-proof path, or the terminal
+//   proof row of a terminal UI step); 5 the measure (INFO). No test, review or audit line: every lane of the step landed, cleanly.
 // Invariants: any exit other than the expected ones is FAIL (fail closed, P3); untrusted shas from rows are hex-checked before argv, then
 //   resolved once to the full commit sha (`rev-parse --verify --quiet <sha>^{commit}`; unknown or ambiguous = FAIL naming the row, and so is
 //   an answer that does not start with the row's hex, which is what a branch or tag named like hex gives), and only full shas are compared
 //   or passed on afterwards (a row may hold 7-40 hex, rev-list prints 40).
 import { rowIds } from './road-file.mjs';
+import { uiLine } from './road-gate-ui.mjs';
 import { correctionRows, inFlightBranches, isReworkRow, isUiLane, landedLine, laneLanded, landingRowId, roadStartTip } from './road-state.mjs';
 
 export const GIT_TIMEOUT_MS = 5_000;
@@ -37,7 +39,6 @@ const HEX = /^[0-9a-f]{7,40}$/;
 const FULL_SHA = /^[0-9a-f]{40}$/;
 // Anchored: `never landed within X` or `done, landed within X` is not a within row. `as` is captured only to refuse it.
 const WITHIN = /^(?:.*; )?landed within ([\w.-]*[\w-])(\s+as\b)?/;
-const RECORD_AT = /\bat ([0-9a-f]{7,40})\b/;
 // A fix row of `road.mjs rows --fix`: `fix-<name>` (new form, its own landing row) or `fix-<name>-land` (old form, the close row).
 const FIX_ROW = /\.s\d+\.fix-[a-z0-9-]+$/;
 
@@ -200,12 +201,26 @@ function withinFails(ranges, rowFails) {
   });
 }
 
-/** Line 2: every close row of the road, then the cover of `<start>..<tip>` by the ranges. */
-function rangeLines(run, ranges, ctx) {
+/**
+ * The close ranges of the other roads (same repo and base, the road files beside STATUS.md) that end after this road's start: two roads
+ * land interleaved on one base (owner FR2), so their commits are accounted for here and their `to`s are valid `from`s. A row with no
+ * usable landed line or an unknown sha, a `landed within` row and a range that ended at or before the start add no range (a commit of
+ * theirs in `<start>..<tip>` then lies in no range: FAIL); the ranges kept get the same per-row checks as this road's.
+ */
+function otherRanges(run, ctx, rows, others) {
+  return others.flatMap((other) => closeRanges(other, rows))
+    .filter((range) => range.within === null && range.both === null && HEX.test(range.landed?.to ?? '') && HEX.test(range.landed?.from ?? ''))
+    .map((range) => resolveRange(run, ctx, range))
+    .filter((range) => range.unknown.length === 0 && isAncestor(run, ctx.repo, range.landed.to, ctx.start) !== 0);
+}
+
+/** Line 2: every close row of the road (and the other roads' ranges in its window), then the cover of `<start>..<tip>` by all of them. */
+function rangeLines(run, ranges, others, ctx) {
   const seenTo = new Set();
-  const rowFails = new Map(ranges.map((range) => [range, range.within === null ? rangeRowFails(run, ctx, range, seenTo) : withinRowFails(range)]));
+  const all = ranges.concat(others);
+  const rowFails = new Map(all.map((range) => [range, range.within === null ? rangeRowFails(run, ctx, range, seenTo) : withinRowFails(range)]));
   const fails = [...rowFails.values()].flat().concat(withinFails(ranges, rowFails));
-  const good = ranges.filter((range) => range.unknown.length === 0 && range.landed?.from && HEX.test(range.landed.from));
+  const good = all.filter((range) => range.unknown.length === 0 && range.landed?.from && HEX.test(range.landed.from));
   const tos = new Set(good.map((range) => range.landed.to));
   for (const range of good) if (range.landed.from !== ctx.start && !tos.has(range.landed.from)) fails.push(`2 range: ${range.row}: from ${range.landed.from} is neither the road-start tip nor another row's to`);
   const owner = new Map();
@@ -217,28 +232,8 @@ function rangeLines(run, ranges, ctx) {
     }
   }
   for (const sha of ctx.firstParentList) if (!owner.has(sha)) fails.push(`2 range: commit ${sha} lies in no close row's range`);
-  return fails.length === 0 ? [pass(`2 range: ${ranges.length} close rows, every commit in one range`)] : fails.map(fail);
-}
-
-/** True when the step-start record `at` was taken at or before the range's `from`, or the range (no UI lane, no UI file) ended at or before it. */
-function recordCovers(run, ctx, at, range, uiChanged) {
-  if (isAncestor(run, ctx.repo, at, range.landed.from) === 0) return true;
-  return !uiChanged && !isUiLane(range.entry.lane, ctx.isUiPath) && isAncestor(run, ctx.repo, range.landed.to, at) === 0;
-}
-
-/** Line 4: UI proof for the tip when a range of the step changed UI files or a lane has a matrix. */
-function uiLine(run, road, ranges, step, ctx) {
-  const own = ranges.filter((range) => range.entry?.step === step && range.unknown.length === 0 && range.landed?.from);
-  const matrix = road.steps[step - 1].lanes.some((lane) => typeof lane.matrix === 'string');
-  const changed = own.map((range) => run('ui-proof', ['changed', '--from', range.landed.from, '--to', range.landed.to, '--repo', ctx.repo], TOOL_TIMEOUT_MS));
-  if (changed.some((result) => result.exit !== 0 && result.exit !== 1)) return fail('4 ui: ui-proof changed could not answer');
-  if (!matrix && changed.every((result) => result.exit === 0)) return pass('4 ui: no UI file changed in the step');
-  const label = `${road.road}.s${step}`;
-  const proof = run('ui-proof', ['check', '--tip', ctx.tip, '--against-step', label, '--repo', ctx.repo], TOOL_TIMEOUT_MS);
-  if (proof.exit !== 0) return fail(`4 ui: ui-proof check --against-step ${label} exited ${proof.exit}`);
-  const at = RECORD_AT.exec(run('ui-proof', ['has', '--step', label, '--repo', ctx.repo], TOOL_TIMEOUT_MS).out)?.[1];
-  if (at === undefined || own.some((range, index) => !recordCovers(run, ctx, at, range, changed[index].exit === 1))) return fail(`4 ui: the step-start record ${label} was not taken at or before every from`);
-  return pass(`4 ui: visual-qa PASS at ${ctx.tip}, no state worse than ${label}`);
+  const theirs = others.length === 0 ? '' : ` and ${others.length} of other roads`;
+  return fails.length === 0 ? [pass(`2 range: ${ranges.length} close rows${theirs}, every commit in one range`)] : fails.map(fail);
 }
 
 // Findings about one branch: a lane in flight has them while it is built (a fresh branch at the base tip reads as merged).
@@ -277,7 +272,7 @@ function gitLines(run, road, items, otherRoads) {
  * @param {number} step 1-based
  * @param {(file: string, argv: string[], timeoutMs: number) => { exit: number, out: string }} run
  * @param {{ isUiPath: (path: string) => boolean, otherRoads?: object[] }} options the UI file test; the other checked roads of the same
- *   repo and STATUS.md, whose started lanes are in flight for line 3
+ *   repo and STATUS.md, whose started lanes are in flight for line 3 and whose landing ranges on the same base count for line 2
  * @returns {{ lines: string[], pass: boolean }}
  */
 export function gateStep(road, items, step, run, { isUiPath, otherRoads = [] }) {
@@ -289,11 +284,13 @@ export function gateStep(road, items, step, run, { isUiPath, otherRoads = [] }) 
   const firstParentList = git(run, road.repo, ['rev-list', '--first-parent', `${start}..${tip}`]).out.split('\n').filter(Boolean);
   const ctx = { repo: road.repo, base: road.base, start, tip, firstParentList, firstParent: new Set(firstParentList), isUiPath };
   const ranges = closeRanges(road, rows).map((range) => resolveRange(run, ctx, range));
+  const others = otherRanges(run, ctx, rows, otherRoads.filter((other) => other.repo === road.repo && other.base === road.base));
+  const uiCtx = { ...ctx, uiProof: (argv) => run('ui-proof', argv, TOOL_TIMEOUT_MS), isAncestor: (a, b) => isAncestor(run, road.repo, a, b) };
   const lines = [
     ...rowsLine(road, rows, step, isUiPath),
-    ...rangeLines(run, ranges, ctx),
+    ...rangeLines(run, ranges, others, ctx),
     ...gitLines(run, road, items, otherRoads),
-    uiLine(run, road, ranges, step, ctx),
+    uiLine(road, rows, ranges, step, uiCtx),
     `INFO 5 measure: ${road.steps[step - 1].measure ?? 'none named'}`,
   ];
   return { lines, pass: !lines.some((line) => line.startsWith('FAIL')) };

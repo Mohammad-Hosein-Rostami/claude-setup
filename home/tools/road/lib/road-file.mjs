@@ -1,7 +1,7 @@
 // Purpose: read and check a road file `road-<id>.json` (spec-stages section 3): a big job as fixed steps of 1-5 lanes each.
 // Exports: readRoad(path) -> { road, problems, warnings, sha256 }, checkRoad(value) -> { problems, warnings }, roadRows(road, baseTip),
 //   rowIds(road, step, lane), uiMatrixProblems(road, isUiPath), MAX_LANES_PER_STEP, ROAD_ID, LANE_NAME, MAX_ROW_ID_CHARS, pathsOverlap(a, b),
-//   filesShare(a, b).
+//   filesShare(a, b), roadClash(road, other).
 // Rules: road id `^[a-z][a-z0-9-]{0,7}$`; repo absolute (POSIX or a drive path); every step holds 1..MAX_LANES_PER_STEP lanes; lane names
 //   `^[a-z0-9][a-z0-9-]{0,23}$`, unique, not `check`, not ending `-land`; every row id at most MAX_ROW_ID_CHARS; no file shared by two lanes
 //   of a step unless the step lists it in `appendOnly` (filesShare, the one overlap rule of `check` and early lanes: a folder and a
@@ -57,6 +57,25 @@ const plainPath = (path) => path.replace(/\\/g, '/').toLowerCase().split('/').fi
 export function filesShare(first, second) {
   if (typeof first !== 'string' || typeof second !== 'string' || OUTSIDE_OR_ROOT.test(first) || OUTSIDE_OR_ROOT.test(second)) return true;
   return pathsOverlap(plainPath(first), plainPath(second));
+}
+
+/**
+ * Why two checked roads of one repo cannot both be open in one STATUS.md (`road.mjs rows`), or null when they can: a lane name or branch
+ * in both (their worktrees, branches and agents would mix) or a file or folder both list (filesShare, the overlap rule of `check`).
+ * @param {object} road the road `rows` is adding
+ * @param {object} other an open road of the same STATUS.md and repo
+ * @returns {string | null} the first clash, naming both lanes
+ */
+export function roadClash(road, other) {
+  const lanesOf = (one) => one.steps.flatMap((step) => step.lanes);
+  for (const mine of lanesOf(road)) {
+    for (const theirs of lanesOf(other)) {
+      if (mine.name === theirs.name || mine.branch === theirs.branch) return `lane ${mine.name} (branch ${mine.branch}) and ${other.road} lane ${theirs.name} (branch ${theirs.branch}) share a name or branch`;
+      const file = mine.files.find((path) => theirs.files.some((their) => filesShare(path, their)));
+      if (file !== undefined) return `lane ${mine.name} and ${other.road} lane ${theirs.name} both list ${file}`;
+    }
+  }
+  return null;
 }
 
 /** The lane row, close row (old form only: roads written before one row per lane) and check row ids of a lane in step `step` (1-based). */

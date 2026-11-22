@@ -99,11 +99,11 @@ review, test or audit record: a `reviewed <sha> clean` line or a `.reviewed` row
 | command | does | exit |
 |---|---|---|
 | `road.mjs check <road.json>` | checks the file: at most 5 lanes per step, no file shared outside `appendOnly` (the overlap rule of early lanes: case, `//`, `./` and `\` spellings of one path share), `needs` only to earlier steps, ids, patterns; a lane with a UI file needs a `matrix`; warns on the retired `form: "build"` | 0 ok, 1 refused |
-| `road.mjs rows <road.json> [--base <sha>]` | adds every missing row of every step (one per lane, one check row per step) to the STATUS.md beside the road file in one all-or-none `status.mjs add` call, under its own lock `.STATUS.road-rows-lock` (read, open-road check and add; status.mjs's lock inside it); a second run, also one at the same time, adds 0 and exits 0 (exit 1 `busy` only when the lock is held past its 1 s wait); refuses a road id used with other items and a second open road. `--base` writes that sha as the road-start tip (a road started before the tool) | 0, 1 refused, 2 a `--base` that is not an ancestor of the tip or already holds a landed patch |
+| `road.mjs rows <road.json> [--base <sha>]` | adds every missing row of every step (one per lane, one check row per step) to the STATUS.md beside the road file in one all-or-none `status.mjs add` call, under its own lock `.STATUS.road-rows-lock` (read, open-road check and add; status.mjs's lock inside it); a second run, also one at the same time, adds 0 and exits 0 (exit 1 `busy` only when the lock is held past its 1 s wait); refuses a road id used with other items and a second open road that clashes with this one (below, "Two roads at once"). `--base` writes that sha as the road-start tip (a road started before the tool; only this road's own landings count as "already holds") | 0, 1 refused, 2 a `--base` that is not an ancestor of the tip or already holds a landed patch |
 | `road.mjs rows <road.json> --fix <N> <name>` | adds the audit-fix row `<road>.s<N>.fix-<name>` of step N (an old-form road: with its `-land` row); refused once step N's check row is done | 0, 1, 2 a fix id that would end in `-land` or equal a lane's row |
 | `road.mjs next <road.json> --budget <1-5>` | JSON `{ road, step, of, state: build\|gate\|done, form, held, carried, lanes, early, waiting, writers, baseline }`: the lowest step with an open check row, landed lanes skipped, held lanes named, carried lanes first, at most 5; `early` the later-step lanes that can start now (below), `waiting` `{ name, why }` for every other later lane not landed; `writers` = the smallest of lanes plus early, the budget and 5. It writes nothing and takes no lock | 0, 1 `baseline needed: <road>.s<N>` (a UI step with no `ui-proof` step-start record) or no rows yet, 2 no or bad `--budget` |
 | `road.mjs join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--json]` | judges the scope of one built lane (below): prints `joined <sha>`, `finding <id>: <text>`, `ui-files: <n>` and its `ui-file` lines; first refuses a lane whose needed lanes (its `needs`, omitted = every earlier lane) have not landed on the base in git | 0 joined clean, 3 joined with findings, 1 refused, 2 usage |
-| `road.mjs gate <road.json> [--step <N>]` | one line per check (spec-stages section 5): 1 rows (every lane of the step landed), 2 landing ranges, 3 `git-tidy check` (a finding about the branch or worktree of a lane in flight, a started row not landed of this road or of another road file `road-*.json` beside STATUS.md, is INFO; any other finding, a leftover of a landed lane of this step included, FAILs), 4 UI proof (always runs, when a UI file changed or a lane has a matrix), 5 the measure (INFO). No line runs or asks for a test, a review or an audit | 0 PASS, 1 any FAIL |
+| `road.mjs gate <road.json> [--step <N>]` | one line per check (spec-stages section 5): 1 rows (every lane of the step landed), 2 landing ranges, 3 `git-tidy check` (a finding about the branch or worktree of a lane in flight, a started row not landed of this road or of another road file `road-*.json` beside STATUS.md, is INFO; any other finding, a leftover of a landed lane of this step included, FAILs), 4 UI proof (always runs, when a UI file changed or a lane has a matrix: `ui-proof check` on the web path, the terminal proof row on a terminal UI step, below), 5 the measure (INFO). No line runs or asks for a test, a review or an audit | 0 PASS, 1 any FAIL |
 
 Every subprocess runs without a shell and with its own timeout. The UI-file rule is the ui-proof tool's (`ui-proof changed`); without that
 tool installed a markup and style file rule stands in, which counts more lanes as UI, never fewer.
@@ -159,6 +159,33 @@ UI lane and it changed no UI file (its work is in what the record shows); every 
 before its `from`, so a UI file the early lane changed outside its listed files fails line 4. Line 3 shows git-tidy findings about the
 branches and worktrees of lanes still in flight (early lanes, carried lanes, another road's lanes) as INFO, not FAIL. A started early lane makes its step started: the architect changes only steps none of
 whose lanes started.
+
+## Two roads at once
+
+Filling 5 agents (FR2) may run two roads in one STATUS.md, their lanes landing on one base in turn (roads `r18` and `solid`,
+2026-11-22). `rows` opens a second road while another one's check row is open only when the other road's file `road-<id>.json` is
+beside STATUS.md and, for the same repo, no lane name or branch is in both roads and no file or folder is listed by both
+(`lib/road-file.mjs` `roadClash`, with the overlap rule of `check`); otherwise it refuses and names the clash (or the missing road file).
+
+Gate line 2 then judges the landings of every road beside STATUS.md with the same repo and base: the other roads' landing rows whose
+range ends after this road's start get the same checks as this road's (known shas, `git cherry` empty, on the first-parent line, `from`
+an ancestor of `to`, no `to` cited twice), their commits count for the cover, a `from` may be any road's landed `to` or this road's start,
+and two roads claiming one commit is an overlap FAIL. A commit in no road's range still FAILs; a landing row of another road with no
+usable landed line adds no range, so its commits FAIL here too. The PASS line counts both: `2 close rows and 6 of other roads`.
+
+## Terminal UI proof (gate line 4)
+
+A step whose UI is text in a terminal (the status line and board renderers: `.mjs` files that print rows, no web page) has no screen
+for `ui-proof` and `visual-qa`. Its lanes say `"matrix": "none: <reason>"` and change no UI file; for such a step line 4 asks for a
+terminal proof instead of `ui-proof check`: a done STATUS row `<road>.s<N>.terminal-proof` whose evidence is exactly
+
+`terminal proof: <absolute path of the real-render file> (owner yes <YYYY-MM-DD>)`
+
+and that path a non-empty file (the real renders the owner looked at and approved). The lead writes it once the owner said yes, with
+`status.mjs add <road>.s<N>.terminal-proof "proof: step N terminal render approved by the owner" S` and then
+`status.mjs done <road>.s<N>.terminal-proof "terminal proof: <path> (owner yes <date>)"`. A step in which a range changed any UI file,
+or in which a lane has a coverage matrix path, never takes this path: it needs `ui-proof check --against-step` and the step-start
+record exactly as before (`lib/road-gate-ui.mjs`).
 
 ## Walking an `agents` step
 
