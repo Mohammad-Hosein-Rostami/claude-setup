@@ -1,4 +1,4 @@
-// The five clean-up rules of disk-clean. Exports: AGE, rulesFor.
+// The six clean-up rules of disk-clean. Exports: AGE, rulesFor.
 // Each rule is an async generator that yields { path, root, stillRemovable } for one thing to remove: `root` is the real path the rule is
 // confined to, `stillRemovable(where)` is asked again right before the removal and once more after the folder was renamed aside to
 // `.removing-<pid>-<name>` (a session may have been resumed since the scan); `where` is the path to look at. A `.removing-*` folder left by a
@@ -12,11 +12,19 @@
 //                    context.keptUnknown, until nothing anywhere in it was modified for 30 days. Found or unknown is decided again on every look.
 //                    An empty folder (what a `claude -p` call such as recall's checkpoint leaves) keeps the 3-day rule. Only a regular
 //                    `<id>.jsonl` file counts as a transcript, and ids are compared in lower case (APFS names are case-insensitive).
+//   session-scratch  in every session folder the rule above keeps (the current one, running ones, ones not idle long enough), the
+//                    entries of <session-id>/scratchpad/ that are a real folder named cs-test-* or a git clone (a folder holding a `.git`
+//                    folder; a linked worktree's `.git` file does not count, its repository lives elsewhere), when nothing anywhere in it
+//                    was modified for 2 days (owner FR5: a session that runs for days keeps only its newest 2 days). The session's
+//                    liveness does not matter here: the whole-tree age is the test, so a folder a running lane still writes stays. Any
+//                    other name, a link and a session folder the rule above took in this run (listed or removed) are never looked at.
+//                    Crash case: a `.removing-<pid>-<name>` entry a killed run left is judged by its original name, like in the rules below.
 //   test-temp        os.tmpdir() folders named by this repo's test prefixes, idle for 1 day
 //   temp-projects    ~/.claude/projects/<slug> folders that Claude Code made for a throwaway temp path, idle for 3 days
 //   hook-state       os.tmpdir()/claude-post-edit and /claude-skill-router: per-session counters and markers of the hooks, idle for 3 days
 //   figma-pulls      ~/.cache/figma/<file>/<node> folders of figma-pull (ui-check), nothing in them modified for 30 days
-// Never yields the current session (--session, the newest transcript) or a running one (~/.claude/sessions/*.json with a live pid).
+// Never yields the folder of the current session (--session, the newest transcript) or a running one (~/.claude/sessions/*.json with a
+// live pid); only session-scratch looks inside them, at the old cs-test-* and clone folders.
 // A root that is not safe (see safe-remove.mjs inspectRoot) is refused and noted in context.refused. The session-folders rule also needs the
 // transcripts folder and the sessions registry to be absolute, readable folders: without them every session would look finished.
 import { accessSync, constants, statSync } from 'node:fs';
@@ -30,6 +38,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 export const AGE = {
   sessionFolderMs: 3 * MS_PER_DAY, // the owner's "not modified for 3 days"
   unknownSessionFolderMs: 30 * MS_PER_DAY, // a session folder with no transcript in the scanned projects folder: maybe another config dir's session, so much longer
+  sessionScratchMs: 2 * MS_PER_DAY, // owner FR5 (2026-11-22): a long-running session's cs-test-* and clone folders; the newest 2 days stay
   testTempMs: 1 * MS_PER_DAY,
   tempProjectMs: 3 * MS_PER_DAY,
   hookStateMs: 3 * MS_PER_DAY,
@@ -42,6 +51,9 @@ const RANDOM_SUFFIX_LENGTH = 6; // what mkdtemp appends
 // tests/temp-dir-helpers.mjs makes cs-test-<label><6 characters>, with-run-tmp.mjs makes cs-run-<6 characters>.
 const NEW_TEST_NAME = new RegExp(`^(?:cs-test-[\\w.-]*|cs-run-)[A-Za-z0-9]{${RANDOM_SUFFIX_LENGTH}}$`);
 const HOOK_STATE_FOLDERS = ['claude-post-edit', 'claude-skill-router'];
+const SCRATCHPAD = 'scratchpad'; // Claude Code's temp folder of one session: <claude tmp>/<project>/<session id>/scratchpad
+const SCRATCH_TEST_PREFIX = 'cs-test-'; // the name agents and probes give their throwaway folders (CLAUDE.md "Probes")
+const GIT_FOLDER = '.git';
 const TRANSCRIPT_FILE = /^(.+)\.jsonl$/;
 
 const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -49,16 +61,17 @@ const OLD_TEST_NAME = new RegExp(`^(?:${OLD_TEST_PREFIXES.map(escapeRegex).join(
 
 /**
  * The real path and kind of a rule's root, or null when it is missing or refused (the reason goes to context.refused).
- * @param {{ allowShared?: boolean }} options a root shared with others (/tmp) is refused unless allowShared
+ * @param {{ allowShared?: boolean, saidBefore?: boolean }} options a root shared with others (/tmp) is refused unless allowShared;
+ *   saidBefore: an earlier rule reads the same root, so a reason already in context.refused is not listed a second time
  */
-function trustedRoot(context, folder, { allowShared = false } = {}) {
+function trustedRoot(context, folder, { allowShared = false, saidBefore = false } = {}) {
   try {
     const trusted = inspectRoot(folder, context.home);
     if (trusted?.shared && !allowShared) throw new UnsafeRoot(`root ${folder} is shared with other users; this rule needs a folder of its own`);
     return trusted;
   } catch (error) {
     if (!(error instanceof UnsafeRoot)) throw error;
-    context.refused.push(error.message);
+    if (!(saidBefore && context.refused.includes(error.message))) context.refused.push(error.message);
     return null;
   }
 }
@@ -137,6 +150,44 @@ async function* sessionFolders(context) {
       const state = await stateOf(live, path);
       if (state === 'unknown') context.keptUnknown = (context.keptUnknown ?? 0) + 1;
       if (state === 'idle') yield { path, root, stillRemovable: async (where = path) => (await stateOf(await liveSessionIds(context.sessions), where)) === 'idle' };
+    }
+  }
+}
+
+/** True for a scratchpad entry the session-scratch rule may take: a real folder (never a link) named cs-test-*, or one that holds a `.git` folder. */
+function isScratchLeftover(path, name) {
+  if (ownedFolder(path) === null) return false;
+  return name.startsWith(SCRATCH_TEST_PREFIX) || lstatOrNull(join(path, GIT_FOLDER))?.isDirectory() === true;
+}
+
+/** The cs-test-* and clone folders of one scratchpad in which nothing was modified since `cutoff`. */
+async function* scratchLeftovers(context, root, scratchpad, cutoff) {
+  if (ownedFolder(scratchpad) === null) return;
+  for await (const entry of entriesOf(scratchpad)) {
+    if (context.timeUp()) return;
+    if (isOwnAside(entry.name)) continue;
+    const name = originalName(entry.name);
+    const path = join(scratchpad, entry.name);
+    const isOld = async (where = path) => isScratchLeftover(where, name) && !(await touchedSince(where, cutoff));
+    if (await isOld()) yield { path, root, stillRemovable: isOld };
+  }
+}
+
+async function* sessionScratch(context) {
+  const trusted = trustedRoot(context, context.claudeTmp, { saidBefore: true });
+  if (trusted === null) return;
+  const root = trusted.real;
+  const cutoff = context.nowMs - AGE.sessionScratchMs;
+  for await (const project of entriesOf(root)) {
+    const projectPath = join(root, project.name);
+    if (context.timeUp()) return;
+    if (ownedFolder(projectPath) === null) continue;
+    for await (const session of entriesOf(projectPath)) {
+      if (context.timeUp()) return;
+      const sessionPath = join(projectPath, session.name);
+      // A `.removing-*` session folder is the session-folders rule's; one that rule listed or removed in this run is not counted twice.
+      if (!SESSION_ID.test(session.name) || context.handled?.has(sessionPath) || ownedFolder(sessionPath) === null) continue;
+      yield* scratchLeftovers(context, root, join(sessionPath, SCRATCHPAD), cutoff);
     }
   }
 }
@@ -220,6 +271,7 @@ async function* figmaPulls(context) {
 /** @returns {{ name: string, label: string, find: (context: object) => AsyncGenerator<{ path: string, root: string, stillRemovable: (where?: string) => Promise<boolean> | boolean }> }[]} */
 export const rulesFor = () => [
   { name: 'session-folders', label: 'finished sessions\' scratchpad folders', find: sessionFolders },
+  { name: 'session-scratch', label: 'cs-test and clone folders idle 2 days in kept sessions\' scratchpads', find: sessionScratch },
   { name: 'test-temp', label: 'leftover test temp folders', find: testTemp },
   { name: 'temp-projects', label: 'Claude project folders of throwaway temp paths', find: tempProjects },
   { name: 'hook-state', label: 'old hook counters and markers in the temp folder', find: hookState },

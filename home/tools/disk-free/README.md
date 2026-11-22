@@ -40,6 +40,7 @@ total measuring limit. Tests: `tests/disk-free.test.mjs`, `tests/doctor-disk.tes
 | Rule | What goes | When |
 | ---- | --------- | ---- |
 | session folders | `/private/tmp/claude-<uid>/<project>/<session-id>/` (scratchpads of agent runs, copies of repos) | the session is not running, its transcript (`~/.claude/projects/*/<session-id>.jsonl`) is found and was not modified for 3 days, and nothing inside the folder was modified for 3 days; a folder whose session has no transcript there goes only when nothing anywhere inside it was modified for 30 days (see below) |
+| session scratch | in each session folder the rule above keeps (the current session, a running one, one not idle long enough): the entries of `<session-id>/scratchpad/` that are a real folder named `cs-test-*` or a git clone (a folder holding a `.git` folder; a linked worktree, whose `.git` is a file, is not one) | nothing anywhere in the folder was modified for 2 days (owner, 2026-11-22: a session that runs for days keeps only its newest 2 days); any other name, a file and a link are never touched, and a session folder the rule above lists or removes in the same run is not looked into |
 | test temp | folders in `os.tmpdir()` named `cs-test-*` (label plus 6 random characters), `cs-run-*` (6 characters), or an old test prefix plus 6 random characters (`lib/test-temp-prefixes.mjs`, only specific two-word-or-longer prefixes; in a shared `/tmp` only the `cs-` names) | older than 1 day |
 | temp projects | `~/.claude/projects/<slug>` where the slug starts with a temp path (`-private-var-folders-`, `-private-tmp-`, `-tmp-`) | no running session in it and nothing in it modified for 3 days |
 | hook state | files in `os.tmpdir()/claude-post-edit/*` and `claude-skill-router/*` (agent call counters, edit logs, tsbuildinfo, router markers) | older than 3 days |
@@ -50,6 +51,8 @@ The bound of each store this setup or Claude Code fills (2026-11-21):
 | Store | Bound | Kept by |
 | ----- | ----- | ------- |
 | scratchpads `/private/tmp/claude-<uid>/...` | 3 days idle (30 for an unknown session; an empty folder 3) | disk-clean `session-folders` |
+| `cs-test-*` and clone folders in a kept (running or recent) session's scratchpad | 2 days idle | disk-clean `session-scratch` |
+| `~/.claude/logs/guard.jsonl` | 5 MB, then moved to `guard.1.jsonl` (one old file kept) | the guard's log writer (`hooks/lib/guard-log.mjs`) |
 | test temp folders | 1 day | disk-clean `test-temp` |
 | hook counters in the temp folder | 3 days | disk-clean `hook-state` |
 | `~/.cache/figma` | 30 days idle | disk-clean `figma-pulls` |
@@ -58,8 +61,8 @@ The bound of each store this setup or Claude Code fills (2026-11-21):
 | transcripts, tool results, file history | `cleanupPeriodDays` (default 30; doctor prints it, and the `claude purge --all --dry-run` size) | Claude Code itself: disk-clean adds no rule there |
 | lane worktrees | until landed | `git-tidy prune` only (Claude Code's own cleanup keeps unpushed worktrees) |
 
-Never removed: the current session (`--session`, `$CLAUDE_CODE_SESSION_ID`, else `$CLAUDE_SESSION_ID`), the session with the newest transcript, a running
-session (a `~/.claude/sessions/<pid>.json` whose process is alive; `--sessions` replaces that folder), anything that is a symlink (and a symlink's target),
+Never removed: the folder of the current session (`--session`, `$CLAUDE_CODE_SESSION_ID`, else `$CLAUDE_SESSION_ID`), the session with the newest transcript, a running
+session (a `~/.claude/sessions/<pid>.json` whose process is alive; `--sessions` replaces that folder; only the session-scratch rule looks inside them), anything that is a symlink (and a symlink's target),
 anything outside the root of its rule. Everything is looked at again right before it is removed, so a session resumed while the run is going keeps its folder.
 A folder is also renamed aside, in its own parent, to `.removing-<pid>-<name>` (one atomic step) and looked at once more under that name (running sessions, transcript, idle time) before
 it is emptied: a session that resumes during the removal writes to a new folder at the old name and the old one is renamed back if the session turns out to be live (if the name is taken
@@ -111,4 +114,4 @@ prints the dry-run total as INFO (WARN above 2 GB).
 (children and grandchildren inherit it) and removes the folder when the command passes, fails or gets SIGINT/SIGTERM/SIGHUP. Nothing calls it automatically any more (the
 check parts that did were removed on 2026-11-22); wrap a test run in it by hand when you want one that leaves nothing behind. Tests make their own folders with `makeTempDir` from `tests/temp-dir-helpers.mjs` (prefix `cs-test-`,
 removed when the test process ends); a guard test fails when a test file calls `mkdtemp` itself. Hard kills (SIGKILL) leave one `cs-run-*` folder that `disk-clean` removes after a day.
-Tests: `tests/disk-clean.test.mjs`, `tests/disk-clean-safety.test.mjs`, `tests/disk-clean-start.test.mjs`, `tests/with-run-tmp.test.mjs`, `tests/temp-dir-helpers.test.mjs`.
+Tests: `tests/disk-clean.test.mjs`, `tests/disk-clean-live-scratch.test.mjs`, `tests/disk-clean-safety.test.mjs`, `tests/disk-clean-start.test.mjs`, `tests/with-run-tmp.test.mjs`, `tests/temp-dir-helpers.test.mjs`.
