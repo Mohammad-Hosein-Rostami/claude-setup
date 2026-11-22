@@ -263,26 +263,36 @@ posixTest('F2: a keychain file swapped, linked or removed while `security` runs 
   const dir = realpathSync(box.dir); // /var is a link on macOS: the store refuses a path with a link in it
   const keychain = join(dir, 'k.keychain-db');
   const other = join(dir, 'other.keychain-db');
+  const renamedOver = () => { writeFileSync(other, ''); renameSync(other, keychain); };
   const swaps = {
-    'another regular file renamed over it': () => { writeFileSync(other, ''); renameSync(other, keychain); },
     'a link put in its place': () => { writeFileSync(other, ''); rmSync(keychain); symlinkSync(other, keychain); },
     'removed': () => rmSync(keychain),
   };
-  for (const [label, swap] of Object.entries(swaps)) {
+  const fresh = () => { rmSync(keychain, { force: true }); writeFileSync(keychain, ''); };
+  const swappedError = (label) => [(error) => refuses('store')(error) && /swapped, moved or linked/.test(error.message) && !error.message.includes('MadeUp'), label];
+  // The swap happens inside the call: after the store's check, while `security` would be opening the file by its path.
+  const storeSwapping = (swap) => {
     const fake = fakeSecurity();
     fake.items.set('work', TOKEN_A);
-    // The swap happens inside the call: after the store's check, while `security` would be opening the file by its path.
-    const run = (line) => { swap(); return fake.run(line); };
-    const store = keychainStore({ run, keychain });
+    return keychainStore({ run: (line) => { swap(); return fake.run(line); }, keychain });
+  };
+  for (const [label, swap] of Object.entries(swaps)) {
+    const store = storeSwapping(swap);
     for (const act of [() => store.put('work', TOKEN_A), () => store.get('work'), () => store.remove('work')]) {
-      rmSync(keychain, { force: true });
-      writeFileSync(keychain, '');
-      assert.throws(act, (error) => refuses('store')(error) && /swapped, moved or linked/.test(error.message) && !error.message.includes('MadeUp'), label);
+      fresh();
+      assert.throws(act, ...swappedError(label));
     }
   }
-  // The same calls with no swap pass: the check after the call compares the same file.
-  rmSync(keychain, { force: true });
-  writeFileSync(keychain, '');
+  // A read must find the very same file: another regular file renamed over it is refused and its token not handed on.
+  fresh();
+  assert.throws(() => storeSwapping(renamedOver).get('work'), ...swappedError('a read of a file renamed over'));
+  // A write is not held to the inode: the real `security` replaces the file on add, replace and delete (probe 2026-11-22),
+  // so a write that gives the file a new inode passes, as do the same calls with no swap.
+  for (const act of [(store) => store.put('work', TOKEN_A), (store) => store.remove('work')]) {
+    fresh();
+    assert.doesNotThrow(() => act(storeSwapping(renamedOver)));
+  }
+  fresh();
   const store = keychainStore({ run: fakeSecurity().run, keychain });
   store.put('work', TOKEN_A);
   assert.deepEqual([store.get('work'), store.remove('work')], [TOKEN_A, true]);

@@ -27,8 +27,10 @@ The command is `../account.mjs`; the shell functions are in `home/shell/`. No np
 - `registry.mjs` writes `accounts.json` with two-space indentation; `home/shell/claude-as.sh` finds the default by
   that exact line at shell start.
 - `security` given a keychain file that does not exist writes to the login keychain instead. `keychain-store.mjs` refuses
-  such a path, and compares the file's device and inode before and after each call, so a file swapped while `security`
-  runs fails the call. No test starts the real `/usr/bin/security`: `tests/account-keychain.test.mjs` runs a fake
-  `security` program found on a PATH of its own folder, and the other tests give the store a fake runner. Keep it so
-  when you change the store or try a mutant on it.
+  such a path, and `tests/account-keychain.test.mjs` uses account names of its own per run, checks the login keychain
+  for them afterwards and removes one it finds. Keep both when you change the store or try a mutant on it.
+- The store checks the keychain file again after each `security` call: a read must find the same file (device and
+  inode); a write (add, replace, delete) makes `security` replace the file, so after it only "a regular file with no
+  link, on the same device" is checked. The fake `security` program of `tests/account-keychain.test.mjs` replaces the
+  file on a write too; keep it so, or the swap tests stop matching the real program.
 - `accountForCall` never falls back from a named account to the default. The setup never switches accounts by itself.

@@ -1,11 +1,15 @@
-// Tests for the macOS Keychain store and doctor's Keychain call through a real child process: a fake `security` program
-// (a node script behind a /bin/sh launcher named `security`) in a cs-test- temp folder that is the only folder on the
-// child's PATH, so the real /usr/bin/security is never started and no keychain of the owner is read or changed. The fake
-// speaks the `security -i` dialect the store uses (one command line on stdin; exit 0, 44 = no such item, 45 = duplicate),
-// keeps its items as JSON in the scratch keychain file it is given, and puts an item for a call with no keychain file
-// into its own stand-in default keychain, so a test can see that nothing went there. FAKE_SECURITY_HANG makes it wait
-// like an unlock window. The real program's behaviour rests on probe ACC-4 (home/tools/account/README.md).
-// Defined on POSIX only (the launcher is a shell script). The tokens are made-up ones.
+// Tests for the macOS Keychain store against the real /usr/bin/security (probe ACC-4) and a scratch keychain file, passed
+// as an explicit path: the login keychain is never read or changed, and `security list-keychains` is the same before and
+// after. Defined on macOS only (by platform; other systems have no `security`). The token is a made-up one, the account
+// names are made per run, and each test ends by asking the default search list (attributes only) for them: not found.
+// The tests after those run the store and doctor's Keychain call through a fake `security` program (a node script behind
+// a /bin/sh launcher named `security`) in a cs-test- temp folder that is the only folder on the child's PATH, so they
+// start no real `security`. The fake speaks the `security -i` dialect the store uses (one command line on stdin; exit 0,
+// 44 = no such item, 45 = duplicate), keeps its items as JSON in the scratch keychain file it is given (replaced on each
+// write, as the real program does), and puts an item
+// for a call with no keychain file into its own stand-in default keychain, so a test can see that nothing went there.
+// FAKE_SECURITY_HANG makes it wait like an unlock window (doctor's bound). Those are defined on POSIX only (the launcher
+// is a shell script).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -21,6 +25,66 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 const SECURITY = '/usr/bin/security';
 const TOKEN_A = fakeToken('KeychainA');
 const TOKEN_B = fakeToken('KeychainB');
+const EXIT_NO_SUCH_ITEM = 44;
+// Account names no real account has, new in every run, so the check on the default search list below can only see this test's own item.
+const RUN = Math.random().toString(36).slice(2, 10);
+const WORK = `t-${RUN}-w`;
+const HOME = `t-${RUN}-h`;
+const inDefaultSearchList = (name) => spawnSync(SECURITY, ['find-generic-password', '-a', name, '-s', KEYCHAIN_SERVICE], { encoding: 'utf8' }).status !== EXIT_NO_SUCH_ITEM;
+const searchList = () => spawnSync(SECURITY, ['list-keychains'], { encoding: 'utf8' }).stdout;
+
+/** A scratch keychain file in a temp folder whose name holds a space; removed (the file only) when the test ends. */
+function scratchKeychain(t) {
+  const before = searchList();
+  // realpath: /var is a link on macOS, and the store refuses a path with a link in it.
+  const keychain = join(realpathSync(makeTempDir('account keychain-')), 'scratch.keychain-db');
+  const made = spawnSync(SECURITY, ['create-keychain', '-p', '', keychain], { encoding: 'utf8' });
+  assert.equal(made.status, 0, made.stderr);
+  t.after(() => {
+    spawnSync(SECURITY, ['delete-keychain', keychain], { encoding: 'utf8' });
+    assert.equal(searchList(), before, 'the search list is the same before and after');
+    // A broken store could have written this run's item into the login keychain (see keychain-store.mjs on a missing file):
+    // say so, and take that one item out again. The names are this run's own, so no other item can be meant.
+    const strayed = [WORK, HOME].filter(inDefaultSearchList);
+    for (const name of strayed) spawnSync(SECURITY, ['delete-generic-password', '-a', name, '-s', KEYCHAIN_SERVICE], { encoding: 'utf8' });
+    assert.deepEqual(strayed, [], 'an item of this test was written to the login keychain (it was removed again)');
+  });
+  assert.equal(searchList(), before, 'creating the scratch file does not add it to the search list');
+  return keychain;
+}
+
+test('runSecurity: the only argument of /usr/bin/security is -i; the command line goes to its stdin', () => {
+  const seen = [];
+  const spawnSpy = (command, args, options) => { seen.push({ command, args, input: options.input }); return { status: 0, stdout: '', stderr: '' }; };
+  runSecurity(`add-generic-password -U -a ${WORK} -s ${KEYCHAIN_SERVICE} -w ${TOKEN_A}`, spawnSpy);
+  assert.deepEqual(seen, [{ command: SECURITY, args: ['-i'], input: `add-generic-password -U -a ${WORK} -s ${KEYCHAIN_SERVICE} -w ${TOKEN_A}\n` }]);
+});
+
+if (process.platform === 'darwin') {
+  test('the Keychain store on a scratch keychain file: write, read back, replace, a second account, remove', (t) => {
+    const keychain = scratchKeychain(t);
+    const store = keychainStore({ keychain });
+    store.put(WORK, TOKEN_A);
+    assert.equal(store.get(WORK), TOKEN_A);
+    store.put(WORK, TOKEN_B);
+    assert.equal(store.get(WORK), TOKEN_B, 'a second add replaces the token');
+    store.put(HOME, TOKEN_A);
+    assert.deepEqual([store.get(HOME), store.get('nobody')], [TOKEN_A, null]);
+    assert.deepEqual([store.remove(WORK), store.get(WORK), store.remove(WORK)], [true, null, false]);
+  });
+
+  test('a duplicate add and a failed add print no part of the token, and the error of the store names none', (t) => {
+    const keychain = scratchKeychain(t);
+    const add = `add-generic-password -a ${WORK} -s ${KEYCHAIN_SERVICE} -w ${TOKEN_A} "${keychain}"`;
+    assert.equal(runSecurity(add).status, 0);
+    const duplicate = runSecurity(add);
+    assert.equal(duplicate.status, 45);
+    assert.ok(!`${duplicate.stdout}${duplicate.stderr}`.includes('MadeUp'));
+    const store = keychainStore({ keychain, run: (line) => runSecurity(line.replace(' -U ', ' ')) });
+    assert.throws(() => store.put(WORK, TOKEN_A), (error) => error instanceof AccountError && error.kind === 'store' && /exit 45/.test(error.message) && !error.message.includes('MadeUp'));
+  });
+}
+
 const EXIT_DUPLICATE = 45;
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const posixTest = process.platform !== 'win32' ? test : () => {};
@@ -28,7 +92,7 @@ const HANG_GUARD_MS = 60000; // a doctor run that waits past its bound fails her
 
 // The fake `security -i`. Items: {"<service>/<account>": token}, kept as JSON in the keychain file named last on the line.
 const FAKE_SECURITY = `
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 if (process.argv[2] !== '-i') { console.error('fake security: expected -i only'); process.exit(2); }
 if (process.env.FAKE_SECURITY_HANG) await new Promise((done) => setTimeout(done, 120000));
 const line = readFileSync(0, 'utf8').replace(/\\n$/, '');
@@ -41,7 +105,8 @@ const value = (flag) => words[words.indexOf(flag) + 1];
 const key = value('-s') + '/' + value('-a');
 const text = readFileSync(file, 'utf8');
 const items = text ? JSON.parse(text) : {};
-const save = () => writeFileSync(file, JSON.stringify(items));
+// As the real program does on add and delete (probe 2026-11-22): the file is replaced, so it gets a new inode.
+const save = () => { writeFileSync(file + '.new', JSON.stringify(items)); renameSync(file + '.new', file); };
 if (words[0] === 'add-generic-password') {
   if (key in items && !words.includes('-U')) { console.error('security: SecKeychainItemCreateFromContent (<default>): The specified item already exists in the keychain.'); process.exit(45); }
   items[key] = value('-w');
@@ -76,7 +141,7 @@ function fakeSecurityBox() {
   return { dir, bin, keychain, defaultKeychain, spawn, calls, run: (line) => runSecurity(line, spawn) };
 }
 
-test('runSecurity: the only argument of /usr/bin/security is -i; the command line goes to its stdin; the store\'s timeout by default', () => {
+test('runSecurity: the store\'s timeout by default (doctor gives a shorter one through its spawn)', () => {
   const seen = [];
   const spawnSpy = (command, args, options) => { seen.push({ command, args, input: options.input, timeout: options.timeout }); return { status: 0, stdout: '', stderr: '' }; };
   runSecurity(`add-generic-password -U -a work -s ${KEYCHAIN_SERVICE} -w ${TOKEN_A}`, spawnSpy);
@@ -97,7 +162,7 @@ posixTest('the Keychain store over the fake security program: write, read back, 
   assert.equal(readFileSync(box.defaultKeychain, 'utf8'), '', 'no item went to the default keychain');
 });
 
-posixTest('a duplicate add and a failed add print no part of the token, and the error of the store names none', () => {
+posixTest('the fake security program: a duplicate add and a failed add print no part of the token, and the error of the store names none', () => {
   const box = fakeSecurityBox();
   const add = `add-generic-password -a work -s ${KEYCHAIN_SERVICE} -w ${TOKEN_A} "${box.keychain}"`;
   assert.equal(box.run(add).status, 0);
