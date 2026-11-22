@@ -1,7 +1,7 @@
 // Prints the approximate token cost of a session start and an agent start for the Claude config visible from cwd, the recurring
 // parts one by one, and each project's MEMORY.md size. ~tokens = bytes / 4 (hook text: characters / 4). A manual CLI, not a hook
-// event handler. `--budget` prints only the status lines `scripts/doctor.sh` reads: `<ok|warn|fail><TAB><message>`. The per-run
-// use (roles, lanes, cache, waste) is the token view: `node ~/.claude/tools/token-view/token-view.mjs`.
+// event handler. `--budget` prints only the status lines `scripts/doctor.sh` reads (`<ok|warn|fail><TAB><message>`; the rules digest
+// lines come from tools/status/rules-size.mjs). Per-run use (roles, lanes, cache, waste): `node ~/.claude/tools/token-view/token-view.mjs`.
 // Hook text: each start hook (lead-text.mjs, session-notes.mjs, recall-digest.mjs) runs as Claude Code runs it, a child process given a
 // startup input on stdin, but with HOME set to a throwaway folder holding copies of the files it reads at a start (START_FILES); only
 // the length of its stdout is used (hookTextParts). The throwaway folder is removed after the run.
@@ -17,6 +17,8 @@ import { dirname, join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readPlainFile } from './lib/plain-file.mjs';
+import { stateDir } from '../tools/estimate/lib/table-store.mjs';
+import { rulesDigestBudget } from '../tools/status/rules-size.mjs';
 
 export const PART_TIMEOUT_MS = 5000; // the timeout of the lead-text and session-notes entries in settings/base.json
 const HOOKS_DIR = dirname(fileURLToPath(import.meta.url)); // the resolved folder: ~/.claude/hooks links into the repo
@@ -287,7 +289,8 @@ async function main() {
   const sizeOf = (k) => rows.filter((r) => r.kind === k).reduce((n, r) => n + r.bytes, 0);
   if (process.argv.includes('--budget')) {
     const [lead] = await hookTextParts(HOOK_PARTS.filter((p) => p.part === LEAD_PART));
-    for (const line of budgetLines(sizeOf('always-loaded') + sizeOf('rule(ALWAYS)'), lead)) console.log(line);
+    const lines = [...budgetLines(sizeOf('always-loaded') + sizeOf('rule(ALWAYS)'), lead), ...rulesDigestBudget(stateDir())];
+    for (const line of lines) console.log(line);
   } else {
     printReport(rows, sizeOf, await hookTextParts());
   }
