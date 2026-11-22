@@ -1,13 +1,16 @@
-// Tests for the done-check's risk classes by path segment (home/tools/done-check/lib/risk.mjs and risk-rules.json, road solid lane
-// dc-risk). The old rules matched security words anywhere in a path, so `session-notes`, `token-view` and `main-module-guard.test.mjs`
-// were security and 113 of 141 stops said `review: needed`. Fixed here:
-// - F1: real login and secret paths stay security (a folder, a file name, a word of a name, a Windows path);
-// - F2: the setup's own hooks and gate tools stay `gate`; today's real risky lanes (guard lib, done-check scope, road gate, account store)
-//   stay flagged;
+// Tests for the done-check's risk classes by whole word (home/tools/done-check/lib/risk.mjs and risk-rules.json, road solid lane
+// dc-risk). The old rules matched security words inside other words and tests by their name, so `main-module-guard.test.mjs` was
+// security and 113 of 141 stops said `review: needed`. Fixed here, without letting a writer dodge the flag by naming, file type or folder:
+// - F1: login and secret paths stay security (a folder, a word of a name in any case style or acronym, a Windows path); a word inside
+//   another word (`tokenizer`, `author`) is not one. Setup names with a security word (`session-notes`, `token-view`, `pre-bash-guard`)
+//   stay security: the word is a whole word there (lead's decision in the review round);
+// - F2: the setup's own hooks, gate tools and steering texts (agent files, SKILL.md, rules, settings) are `gate`; today's real risky
+//   lanes (guard lib, done-check scope, road gate, account store) stay flagged;
 // - F3: a version 1 rule file still reads and keeps its old meaning;
-// - tests and docs never put a change in a class, nor count for `large`;
+// - a test by its own name (`*.test.ts`) and plain docs put a change in no class and do not count for `large`; a test folder or `.mdx`
+//   does not hide code;
 // - the replay: the file lists of the first 82 setup-repo ledger rows of 2026-11-22 (tests/fixtures/done-check/ledger-rows-2026-11-22.json,
-//   rebuilt from git as its README says) flag security on at most 5 rows.
+//   rebuilt from git as its README says) ask a review for security alone (security without gate) on at most MAX_SECURITY_ROWS rows.
 // Invariants: path cases use a scope without git (nothing is read, every class is kept); the size cases use a fixture repo in a temp
 // folder; HOME is pinned to a temp folder, so nothing reads or writes the real ~/.claude.
 import test from 'node:test';
@@ -38,6 +41,15 @@ const SECURITY_PATHS = [
   'src/auth/login.ts', 'lib/session.ts', 'token.json', 'C:\\app\\auth\\x.ts', 'src/auth-service.ts', 'src/authMiddleware.ts',
   'app/api/oauth/callback.ts', 'lib/passwords.ts', 'src/csrf-token.ts', 'config/secrets.yaml', 'src/sessions/store.ts',
   'home/tools/account/lib/keychain-store.mjs', 'home/tools/account/lib/store.mjs', 'home/tools/account/lib/registry.mjs',
+  // a word of a camelCase, PascalCase, kebab or snake name (review R1)
+  'src/useSession.ts', 'src/sessionStore.ts', 'src/session-store.ts', 'src/refresh_token.ts', 'src/refreshToken.ts', 'src/secretManager.ts',
+  'src/usePermissions.ts', 'src/RouteGuard.tsx', 'src/fileUpload.ts', 'src/auth.service.ts',
+  // a leading acronym (review R2)
+  'src/JWTService.ts', 'src/CSRFProtection.ts', 'src/CORSConfig.ts', 'src/OAUTHClient.ts', 'src/OAuth2Client.ts',
+  // a test folder, .mdx and a steering text do not hide a word (review R3, R4)
+  'src/test/authServer.ts', 'src/tests/session.ts', 'src/__tests__/session.ts', 'pages/login.mdx', '.claude/agents/auth-reviewer.md',
+  // setup names where the word is a whole word (the lead's decision in the review round)
+  'home/tools/token-view/lib/summary.mjs', 'home/hooks/session-notes.mjs', 'home/hooks/pre-bash-guard.mjs', 'home/hooks/token-audit.mjs',
 ];
 for (const path of SECURITY_PATHS) {
   test(`${path} is security`, async () => {
@@ -45,10 +57,10 @@ for (const path of SECURITY_PATHS) {
   });
 }
 
-// Names in which a security word is only part of a name: an LLM token viewer, Claude session notes, the Bash guard (gate by path).
+// A security word only inside another word, a test by its own name, or plain docs.
 const NOT_SECURITY_PATHS = [
-  'home/tools/token-view/lib/summary.mjs', 'home/hooks/session-notes.mjs', 'home/hooks/pre-bash-guard.mjs', 'home/hooks/token-audit.mjs',
-  'home/hooks/agent-model-guard.mjs', 'home/tools/disk-free/lib/live-sessions.mjs', 'src/author.ts', 'src/tokenizer.ts', 'src/blocked.ts',
+  'src/author.ts', 'src/tokenizer.ts', 'src/blocked.ts', 'src/guardian.ts', 'src/authorship.ts', 'tests/auth.test.mjs', 'src/login.spec.tsx',
+  'docs/session-notes.md', 'home/hooks/README.md',
 ];
 for (const path of NOT_SECURITY_PATHS) {
   test(`${path} is not security`, async () => {
@@ -57,7 +69,9 @@ for (const path of NOT_SECURITY_PATHS) {
 }
 
 for (const path of ['home/hooks/pre-bash-guard.mjs', 'home/hooks/lib/rm-paths.mjs', 'home/hooks/commit-gate.mjs', 'home/tools/done-check/lib/scope.mjs',
-  'home/tools/road/lib/road-gate.mjs', 'home/tools/land-lane/land-lane.mjs', 'home/tools/done-check/risk-rules.json']) {
+  'home/tools/road/lib/road-gate.mjs', 'home/tools/land-lane/land-lane.mjs', 'home/tools/done-check/risk-rules.json', 'home/agents/reviewer.md',
+  '.claude/agents/auth-reviewer.md', 'home/skills/road/SKILL.md', 'home/CLAUDE.md', 'home/lead.md', 'home/lead-rules.md', 'home/rules/core.md',
+  'settings/base.json']) {
   test(`${path} is gate`, async () => {
     assert.ok((await classesOf([path])).includes('gate'));
   });
@@ -65,7 +79,7 @@ for (const path of ['home/hooks/pre-bash-guard.mjs', 'home/hooks/lib/rm-paths.mj
 
 // File lists of lanes that landed on 2026-11-22 (git diff --name-only of each landing, docs and tests included).
 const REAL_RISKY_LANES = {
-  'guard lib (18030d04)': { classes: ['gate'], files: ['home/hooks/lib/README.md', 'home/hooks/lib/bare-glob.mjs', 'home/hooks/lib/guard-state-write.mjs',
+  'guard lib (18030d04)': { classes: ['gate', 'security'], files: ['home/hooks/lib/README.md', 'home/hooks/lib/bare-glob.mjs', 'home/hooks/lib/guard-state-write.mjs',
     'home/hooks/lib/rm-paths.mjs', 'home/hooks/lib/shell-lexer.mjs', 'home/hooks/pre-bash-guard.mjs', 'tests/pre-bash-guard-families.test.mjs'] },
   'done-check scope (9d1e58ee)': { classes: ['gate'], files: ['docs/catalog.md', 'home/hooks/lib/own-edits.mjs', 'home/tools/done-check/README.md',
     'home/tools/done-check/lib/check-change.mjs', 'home/tools/done-check/lib/scope.mjs', 'tests/done-check-scope.test.mjs'] },
@@ -82,8 +96,8 @@ for (const [lane, { classes, files }] of Object.entries(REAL_RISKY_LANES)) {
 
 const QUIET_LANES = {
   'tests-only (931b537b)': ['tests/timed-ask.test.mjs', 'tests/main-module-guard.test.mjs'],
-  'docs-only (b5adcc96)': ['home/agents/reviewer.md', 'home/rules/principles.md', 'home/hooks/lib/README.md', 'docs/token-optimization.md'],
-  'tests named for security words': ['tests/auth.test.mjs', 'src/auth/login.test.ts', 'src/__tests__/session.ts', 'test/token.spec.js'],
+  'plain docs': ['home/project-notes/ice-web-app.md', 'home/hooks/lib/README.md', 'docs/token-optimization.md', 'notes/session.txt'],
+  'tests named for security words': ['tests/auth.test.mjs', 'src/auth/login.test.ts', 'test/token.spec.js', 'src/__tests__/session.test.tsx'],
   'estimate math (77a31375)': ['home/tools/estimate/lib/forecast.mjs', 'home/tools/estimate/lib/commitment.mjs', 'tests/estimate-forecast.test.mjs'],
 };
 for (const [lane, files] of Object.entries(QUIET_LANES)) {
@@ -91,6 +105,11 @@ for (const [lane, files] of Object.entries(QUIET_LANES)) {
     assert.deepEqual(await classesOf(files), []);
   });
 }
+
+test('a change to the rule texts only (b5adcc96: reviewer agent, principles) is gate', async () => {
+  const files = ['home/agents/reviewer.md', 'home/project-notes/ice-web-app.md', 'home/rules/principles.md', 'tests/review-lessons.test.mjs'];
+  assert.deepEqual(await classesOf(files), ['gate']);
+});
 
 test('the built-in defaults equal the shipped rule file', () => {
   assert.deepEqual(JSON.parse(JSON.stringify(DEFAULT_RISK_RULES)), SHIPPED);
@@ -123,6 +142,7 @@ const BAD_RULES = {
   'an unknown class key': { ...SHIPPED, classes: { security: { word: ['auth'] } } },
   'a class with no list': { ...SHIPPED, classes: { security: {} } },
   'a bad leftOut pattern': { ...SHIPPED, leftOut: ['('] },
+  'a bad keep pattern': { ...SHIPPED, keep: ['('] },
   'a bad word pattern': { ...SHIPPED, classes: { security: { words: ['('] } } },
   'a version 1 class without paths': { ...VERSION_1, classes: { security: { words: ['auth'] } } },
 };
@@ -151,6 +171,8 @@ test('more than 400 changed lines of tests or docs are not large; of code they a
   assert.deepEqual(await classesAfter(t, (repo) => repo.write('tests/big.test.mjs', lines(500)), ['tests/big.test.mjs']), []);
   assert.deepEqual(await classesAfter(t, (repo) => repo.write('docs/big.md', lines(500)), ['docs/big.md']), []);
   assert.deepEqual(await classesAfter(t, (repo) => repo.write('src/big.ts', lines(401)), ['src/big.ts']), ['large']);
+  assert.deepEqual(await classesAfter(t, (repo) => repo.write('src/test/helper.ts', lines(401)), ['src/test/helper.ts']), ['large']);
+  assert.deepEqual(await classesAfter(t, (repo) => repo.write('home/rules/core.md', lines(401)), ['home/rules/core.md']), ['gate', 'large']);
 });
 
 test('more than 15 test or docs files are not large; 16 code files are', async () => {
@@ -160,16 +182,20 @@ test('more than 15 test or docs files are not large; 16 code files are', async (
   assert.deepEqual(await classesOf(many((index) => `src/part${index}.ts`)), ['large']);
 });
 
-test(`the 82 ledger rows of 2026-11-22 flag security on at most ${MAX_SECURITY_ROWS}, and keep gate where a gate code file changed`, async (t) => {
+// A row that is gate gets its review anyway, so security on it costs nothing more: the bound is on rows where security alone asks for
+// the review. The Bash guard and the agent guard are hooks with a security word (`pre-bash-guard`), so most security rows are gate rows.
+test(`the 82 ledger rows of 2026-11-22 ask a review for security alone on at most ${MAX_SECURITY_ROWS}, and keep gate`, async (t) => {
   assert.equal(LEDGER_ROWS.length, 82);
   const gateCode = (path) => /^home\/(hooks|tools\/(land-lane|road|done-check))\//.test(path) && !/\.md$/.test(path);
   const security = [];
+  const securityAlone = [];
   for (const row of LEDGER_ROWS) {
     const classes = await classesOf(row.files);
     if (classes.includes('security')) security.push(row.row);
+    if (classes.includes('security') && !classes.includes('gate')) securityAlone.push(row.row);
     if (row.files.some(gateCode)) assert.ok(classes.includes('gate'), `row ${row.row} lost gate`);
   }
   const before = LEDGER_ROWS.filter((row) => row.riskThen.includes('security')).length;
-  t.diagnostic(`security rows: ${security.length} (rows ${security.join(', ') || 'none'}), recorded then: ${before}`);
-  assert.ok(security.length <= MAX_SECURITY_ROWS, `security on ${security.length} rows: ${security.join(', ')}`);
+  t.diagnostic(`security rows: ${security.length}, of them without gate: ${securityAlone.length} (rows ${securityAlone.join(', ') || 'none'}); recorded then: ${before}`);
+  assert.ok(securityAlone.length <= MAX_SECURITY_ROWS, `security without gate on ${securityAlone.length} rows: ${securityAlone.join(', ')}`);
 });

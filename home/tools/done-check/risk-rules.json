@@ -1,10 +1,10 @@
 {
   "version": 2,
-  "leftOut": ["(^|/)(tests?|__tests__)/", "\\.(test|spec)\\.[^/]+$", "\\.(md|mdx|markdown|txt|rst|adoc)$"],
+  "leftOut": ["\\.(test|spec)\\.[cm]?[jt]sx?$", "\\.(md|markdown|txt|rst|adoc)$"],
+  "keep": ["^home/agents/[^/]*\\.md$", "(^|/)\\.claude/agents/[^/]*\\.md$", "^home/skills/.*/skill\\.md$", "^home/claude\\.md$", "^home/lead[^/]*\\.md$", "^home/rules/[^/]*\\.md$", "^settings/[^/]*\\.json$"],
   "classes": {
     "security": {
-      "segments": ["sessions?", "tokens?", "secrets?", "guards?", "permissions?", "sandbox(es)?", "uploads?", "accounts?"],
-      "words": ["auth", "authn", "authz", "authenticat(e|ed|es|ion|or)", "authoriz(e|ed|es|ation|er)", "oauth2?", "login", "logins", "logout", "signin", "jwts?", "csrf", "xsrf", "cors", "credentials?", "passwords?", "passwd", "keychains?", "crypto", "cookies?", "webhooks?", "sanitiz(e|ed|es|er|ers|ing|ation)"]
+      "words": ["auth", "authn", "authz", "authenticat(e|ed|es|ion|or)", "authoriz(e|ed|es|ation|er)", "oauth", "login", "logins", "logout", "signin", "sessions?", "tokens?", "secrets?", "jwts?", "csrf", "xsrf", "cors", "credentials?", "passwords?", "passwd", "keychains?", "crypto", "cookies?", "permissions?", "guards?", "sandbox(es)?", "uploads?", "webhooks?", "accounts?", "sanitiz(e|ed|es|er|ers|ing|ation)"]
     },
     "data": {
       "paths": ["(^|/)(migrations?|prisma)/", "\\.sql$", "schema\\."]
@@ -16,7 +16,7 @@
       "paths": ["(^|[^a-z0-9])(un)?lock(s|ed|ing|file)?([^a-z0-9]|$)", "(^|[^a-z0-9])(mutex|semaphore|queue|worker|flock)(es|s)?([^a-z0-9]|$)"]
     },
     "gate": {
-      "paths": ["^home/hooks/", "^home/tools/(land-lane|road|done-check)/"]
+      "paths": ["^home/hooks/", "^home/tools/(land-lane|road|done-check)/", "^home/agents/[^/]*\\.md$", "(^|/)\\.claude/agents/[^/]*\\.md$", "^home/skills/.*/skill\\.md$", "^home/claude\\.md$", "^home/lead[^/]*\\.md$", "^home/rules/[^/]*\\.md$", "^settings/[^/]*\\.json$"]
     }
   },
   "large": { "lines": 400, "files": 15 }

@@ -3,25 +3,28 @@
 // home/tools/done-check/risk-rules.json, so tuning is an edit of that file, not of code.
 // Exports: riskClasses(scope, rules, extra) -> Promise<{ class, file }[]>; loadRiskRules(file) -> { rules, warning }; parseRiskRules(text) ->
 //   rules (throws); DEFAULT_RISK_RULES; RISK_RULES_FILE.
-// Rule file, version 2: { version: 2, leftOut?: [<regex>], classes: { <name>: { paths?, segments?, words? } }, large: { lines, files } };
-//   each list holds regex sources. A path is read in lower case with `/` separators (a `\` counts as one) and a space put between a
-//   lower and an upper case letter (`sessionLock.ts` is read as `session lock.ts`). Then:
+// Rule file, version 2: { version: 2, leftOut?: [<regex>], keep?: [<regex>], classes: { <name>: { paths?, words? } }, large: { lines,
+//   files } }; each list holds regex sources. A path is read in lower case with `/` separators (a `\` counts as one) and a space put
+//   where a name changes case: `sessionLock.ts` is read as `session lock.ts`, `JWTService.ts` as `jwt service.ts`, `OAuth2Client` as
+//   `o auth 2 client` (a letter before a digit splits too). Then:
 //   - `paths` match anywhere in the whole path (`^home/hooks/` for the setup's own gates, `(^|[^a-z0-9])lock` for a lock but not `block`);
-//   - `segments` match a whole folder or file name, the file name cut at its first dot (`src/auth/`, `lib/session.ts`, `token.json`):
-//     for words that also name harmless things (a Claude session, an LLM token, the Bash guard), so `session-notes.mjs`, `token-view/`
-//     and `agent-model-guard.mjs` are not security (the hooks are `gate` by their path);
-//   - `words` match one word of a folder or file name (a name splits at each character that is not a letter or digit): `auth-service.ts`.
-//   A segment or word pattern matches the whole name or word, never a part of it. `checkout` and `ledger` are not money words (`git
-//   checkout`, `stale-checkout` and the done-check's own ledger were false alarms of the old review tier).
-//   Version 1 ({ version: 1, classes: { <name>: { paths } }, large }) still reads: its `paths` match as above and nothing is left out.
+//   - `words` match one whole word of a folder or file name (a name splits at those spaces and at each character that is not a letter or
+//     digit): `useSession.ts`, `session-store.ts`, `RouteGuard.tsx` and `src/auth/` hold a security word; `tokenizer.ts`, `author.ts`
+//     and `guardian.ts` do not (a word never matches part of a word).
+//   `checkout` and `ledger` are not money words (`git checkout`, `stale-checkout` and the done-check's own ledger were false alarms of
+//   the old review tier). Version 1 ({ version: 1, classes: { <name>: { paths } }, large }) still reads: its `paths` match as above and
+//   nothing is left out.
 // Invariants:
-// - A `leftOut` file (tests, docs) is in no path class and is not counted for `large`: it does not change what runs, and a weakened
-//   test has its own check (lib/test-diff.mjs). Every other file is matched on its path. A file whose changed lines (scope.mjs
-//   `changedLines`) are all comments or blank lines is left out (a comment edit to billing code is not a money change); any doubt (no git base, a deleted file, a pure deletion, an unreadable
-//   file or git error, a Vue file) keeps the class. The file text is read only for that test, and it can only switch a class off for
+// - A `leftOut` file is in no class and is not counted for `large`, unless `keep` names it: a test by its own name (`*.test.ts`, not by
+//   its folder, so `src/test/authServer.ts` is code) and docs (`.md`, `.txt`; `.mdx` is code). They do not change what runs, and a
+//   weakened test has its own check (lib/test-diff.mjs). `keep` holds the texts that steer every run (agent files, SKILL.md, the rules,
+//   settings): they are the setup's own guards (`gate`) and count like code. Every other file is matched on its path.
+// - A file whose changed lines (scope.mjs `changedLines`) are all comments or blank lines is left out (a comment edit to billing code is
+//   not a money change); any doubt (no git base, a deleted file, a pure deletion, an unreadable file or git error, a Vue file) keeps the
+//   class. The file text is read only for that test, and it can only switch a class off for
 //   changed lines that hold no code at all (lib/code-lines.mjs).
 // - A bad rule file never switches the review off: loadRiskRules returns the built-in defaults and a warning line (P12).
-// - `large` is more than rules.large.lines changed lines or more than rules.large.files changed files, both without `leftOut` files.
+// - `large` is more than rules.large.lines changed lines or more than rules.large.files changed files, both without left-out files.
 //   Lines are counted with git against the base (the worktree compared with it, new files by their line count); without git or a base
 //   only the file count applies.
 // - A class a lane adds by name (`extra`) is always in the result, with an empty file.
@@ -42,7 +45,9 @@ const MAX_PATTERN_CHARS = 300;
 const CLASS_NAME = /^[a-z][a-z-]{0,19}$/;
 const SIZE_CLASS = 'large'; // set by the size rule only
 const RULE_VERSIONS = [1, 2];
-const LIST_KEYS = ['paths', 'segments', 'words'];
+const LIST_KEYS = ['paths', 'words'];
+const STEERING_TEXTS = ['^home/agents/[^/]*\\.md$', '(^|/)\\.claude/agents/[^/]*\\.md$', '^home/skills/.*/skill\\.md$', '^home/claude\\.md$', '^home/lead[^/]*\\.md$',
+  '^home/rules/[^/]*\\.md$', '^settings/[^/]*\\.json$']; // never left out, and `gate` (paths are read in lower case)
 const COMMIT_HASH = /^[0-9a-f]{40}$/;
 const PATHSPEC_CHUNK = 100; // paths per git call, far below the command line limit
 const MAX_COUNTED_FILE_BYTES = 2 * 1024 * 1024;
@@ -51,17 +56,18 @@ const SCRIPT_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs|mts|cts)$/i; // the languages li
 /** The same rules as risk-rules.json, for a rule file that is missing or invalid. Keep the two equal when one changes. */
 export const DEFAULT_RISK_RULES = Object.freeze({
   version: 2,
-  leftOut: ['(^|/)(tests?|__tests__)/', '\\.(test|spec)\\.[^/]+$', '\\.(md|mdx|markdown|txt|rst|adoc)$'],
+  leftOut: ['\\.(test|spec)\\.[cm]?[jt]sx?$', '\\.(md|markdown|txt|rst|adoc)$'],
+  keep: STEERING_TEXTS,
   classes: {
     security: {
-      segments: ['sessions?', 'tokens?', 'secrets?', 'guards?', 'permissions?', 'sandbox(es)?', 'uploads?', 'accounts?'],
-      words: ['auth', 'authn', 'authz', 'authenticat(e|ed|es|ion|or)', 'authoriz(e|ed|es|ation|er)', 'oauth2?', 'login', 'logins', 'logout', 'signin', 'jwts?', 'csrf', 'xsrf',
-        'cors', 'credentials?', 'passwords?', 'passwd', 'keychains?', 'crypto', 'cookies?', 'webhooks?', 'sanitiz(e|ed|es|er|ers|ing|ation)'],
+      words: ['auth', 'authn', 'authz', 'authenticat(e|ed|es|ion|or)', 'authoriz(e|ed|es|ation|er)', 'oauth', 'login', 'logins', 'logout', 'signin', 'sessions?', 'tokens?',
+        'secrets?', 'jwts?', 'csrf', 'xsrf', 'cors', 'credentials?', 'passwords?', 'passwd', 'keychains?', 'crypto', 'cookies?', 'permissions?', 'guards?', 'sandbox(es)?',
+        'uploads?', 'webhooks?', 'accounts?', 'sanitiz(e|ed|es|er|ers|ing|ation)'],
     },
     data: { paths: ['(^|/)(migrations?|prisma)/', '\\.sql$', 'schema\\.'] },
     money: { paths: ['payment', 'invoice', 'billing', 'refund', 'stripe', 'wallet'] },
     concurrency: { paths: ['(^|[^a-z0-9])(un)?lock(s|ed|ing|file)?([^a-z0-9]|$)', '(^|[^a-z0-9])(mutex|semaphore|queue|worker|flock)(es|s)?([^a-z0-9]|$)'] },
-    gate: { paths: ['^home/hooks/', '^home/tools/(land-lane|road|done-check)/'] },
+    gate: { paths: ['^home/hooks/', '^home/tools/(land-lane|road|done-check)/', ...STEERING_TEXTS] },
   },
   large: { lines: 400, files: 15 },
 });
@@ -93,7 +99,7 @@ function patternListsOf(version, name, entry) {
  * Checks a parsed rule file (version 1 or 2, see the file header) and returns it. Every pattern must be a short string that compiles as
  * a regular expression.
  * @param {string} text the file text (JSON)
- * @returns {{ version: 1|2, leftOut?: string[], classes: Record<string, { paths?: string[], segments?: string[], words?: string[] }>,
+ * @returns {{ version: 1|2, leftOut?: string[], keep?: string[], classes: Record<string, { paths?: string[], words?: string[] }>,
  *   large: { lines: number, files: number } }} the rules
  * @throws {Error} the text is not JSON or breaks the schema above; the message names the first problem
  */
@@ -106,7 +112,7 @@ export function parseRiskRules(text) {
     if (!CLASS_NAME.test(name) || name === SIZE_CLASS) throw new Error(`risk rules: bad class name "${name}"`);
     for (const key of patternListsOf(rules.version, name, rules.classes[name])) checkPatterns(`${name}.${key}`, rules.classes[name][key]);
   }
-  if (rules.version !== 1 && rules.leftOut !== undefined) checkPatterns('leftOut', rules.leftOut);
+  for (const key of ['leftOut', 'keep']) if (rules.version !== 1 && rules[key] !== undefined) checkPatterns(key, rules[key]);
   if (!isPositiveInteger(rules.large?.lines) || !isPositiveInteger(rules.large?.files)) throw new Error('risk rules: "large.lines" and "large.files" must be positive whole numbers');
   return rules;
 }
@@ -130,33 +136,32 @@ const anywhere = (sources = []) => sources.map((source) => new RegExp(source));
 const whole = (sources = []) => sources.map((source) => new RegExp(`^(?:${source})$`));
 
 const compiledByRules = new WeakMap();
-/** The rules with every pattern compiled once: `leftOut` and, per class, its paths (anywhere), segments and words (whole). */
+/** The rules with every pattern compiled once: `leftOut`, `keep` and, per class, its paths (anywhere) and words (whole). */
 function compiled(rules) {
   if (!compiledByRules.has(rules)) {
     const modern = rules.version !== 1; // a version 1 class has only `paths`, and nothing is left out
     compiledByRules.set(rules, {
       leftOut: modern ? anywhere(rules.leftOut) : [],
-      classes: Object.entries(rules.classes).map(([name, entry]) => ({
-        name,
-        paths: anywhere(entry.paths),
-        segments: modern ? whole(entry.segments) : [],
-        words: modern ? whole(entry.words) : [],
-      })),
+      keep: modern ? anywhere(rules.keep) : [],
+      classes: Object.entries(rules.classes).map(([name, entry]) => ({ name, paths: anywhere(entry.paths), words: modern ? whole(entry.words) : [] })),
     });
   }
   return compiledByRules.get(rules);
 }
 
-const readable = (path) => path.replaceAll('\\', '/').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
+/** The path in the form every pattern reads (see the file header): `/` separators, a space at each change of case, lower case. */
+const readable = (path) => path
+  .replaceAll('\\', '/')
+  .replace(/([a-z0-9])([A-Z])/g, '$1 $2') // sessionLock -> session Lock
+  .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2') // JWTService -> JWT Service
+  .replace(/([a-zA-Z])([0-9])/g, '$1 $2') // OAuth2 -> OAuth 2
+  .toLowerCase();
 
-/** True when the readable path `text` is in the compiled class `riskClass` (see the file header for the three kinds of pattern). */
+/** True when the readable path `text` is in the compiled class `riskClass`: a path pattern matches, or a word of a name is a rule word. */
 function inClass(riskClass, text) {
   if (riskClass.paths.some((pattern) => pattern.test(text))) return true;
-  return text.split('/').some((name) => {
-    const segment = name.replace(/^\.+/, '').split('.')[0];
-    const words = name.split(/[^a-z0-9]+/).filter(Boolean);
-    return riskClass.segments.some((pattern) => pattern.test(segment)) || words.some((word) => riskClass.words.some((pattern) => pattern.test(word)));
-  });
+  const words = text.split(/[^a-z0-9]+/).filter(Boolean); // `/` is not a letter or digit, so this splits the folder and file names too
+  return words.some((word) => riskClass.words.some((pattern) => pattern.test(word)));
 }
 
 const isSafeRelative = (path) => typeof path === 'string' && path !== '' && !path.startsWith('/') && !/^[a-z]:/i.test(path) && !path.split('/').includes('..');
@@ -219,14 +224,15 @@ async function changedOnlyComments(scope, file) {
  * @param {object} rules from loadRiskRules or parseRiskRules (already checked; version 1 or 2)
  * @param {string[]} [extra] class names the lane's spec adds (for example `audit`); each is always in the result
  * @returns {Promise<{ class: string, file: string }[]>} one entry per class and matching file, in the order of the rule file; a file that
- *   changed only in comments or blank lines, or that `leftOut` names, has none; `large` and the extra classes have an empty file (they
+ *   changed only in comments or blank lines, or that `leftOut` names and `keep` does not, has none; `large` and the extra classes have an empty file (they
  *   belong to the whole change); an empty list is an ordinary change
  */
 export async function riskClasses(scope, rules, extra = []) {
   const found = [];
   const commentOnly = new Map();
-  const { leftOut, classes } = compiled(rules);
-  const counted = scope.files.filter((file) => !leftOut.some((pattern) => pattern.test(readable(file))));
+  const { leftOut, keep, classes } = compiled(rules);
+  const isLeftOut = (text) => leftOut.some((pattern) => pattern.test(text)) && !keep.some((pattern) => pattern.test(text));
+  const counted = scope.files.filter((file) => !isLeftOut(readable(file)));
   for (const riskClass of classes) {
     for (const file of counted) {
       if (!inClass(riskClass, readable(file))) continue;
