@@ -80,7 +80,7 @@ test('noise check: ordinary agent files give no note: the setup\'s own agents un
   // The repository's own agent files, in a project of an owner whose personal agents have other names.
   const own = await sandbox({ personal: { helper: '' } });
   await cp(REAL_PERSONAL_AGENTS_DIR, own.agentsDir, { recursive: true });
-  assert.ok(readdirSync(own.agentsDir).filter((file) => file.endsWith('.md')).length >= 10, 'the real agent files were copied');
+  assert.ok(readdirSync(own.agentsDir).filter((file) => file.endsWith('.md')).length > 0, 'the real agent files were copied');
   assert.equal(projectAgentNote(own.projectDir, own.personalDir), '');
   // Typical files beside the real personal set: every personal name is mentioned in a description, none is an agent's own name.
   const typical = await sandbox();

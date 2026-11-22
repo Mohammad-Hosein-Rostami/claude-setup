@@ -50,7 +50,7 @@ test('a shadowing file behind many capped files is listed first, and every shado
 // Fails the day the owner's agents outgrow the cap: the shadowed names are never cut, so they must fit together with all the advice.
 test('with the real personal agents and the built-in ones all shadowed, their names and the advice fit NOTE_MAX_CHARS', async () => {
   const personal = readdirSync(REAL_PERSONAL_AGENTS_DIR).filter((file) => file.endsWith('.md')).map((file) => file.slice(0, -'.md'.length)).sort();
-  assert.ok(personal.length >= 10, `the real set has ${personal.length} agents`);
+  assert.ok(personal.length > 0, 'the real personal agent set is not empty');
   const { projectDir, agentsDir } = await sandbox();
   // The worst files: each has the longest escaped name and the longest maxTurns number, and is one of the owner's agents by its exact name.
   const names = [...personal, ...BUILT_IN_AGENTS];

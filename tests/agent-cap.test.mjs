@@ -328,6 +328,10 @@ const GOOD_LIVE = {
   disableWorkflows: true,
   env: { CLAUDE_CODE_DISABLE_WORKFLOWS: '1', CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '5' },
   permissions: { deny: ['Workflow'] },
+  hooks: {
+    PreToolUse: [{ matcher: 'Agent', hooks: [{ type: 'command', command: 'node "/home/u/.claude/hooks/agent-model-guard.mjs"' }] }],
+    SubagentStart: [{ hooks: [{ type: 'command', command: 'node "/home/u/.claude/hooks/agent-budget.mjs"' }] }],
+  },
 };
 
 function doctorCheck(live) {
@@ -341,7 +345,7 @@ test('check_agent_cap is ok when the live settings match', (t) => {
   if (!hasJq) return t.diagnostic('not run: jq not installed');
   const run = doctorCheck(GOOD_LIVE);
   assert.equal(run.status, 0, run.stdout);
-  assert.match(run.stdout, /^ok\s+agent cap: workflows off, deny Workflow, env cap 5 = MAX_RUNNING_AGENTS/m);
+  assert.match(run.stdout, /^ok\s+agent cap: workflows off, deny Workflow, cap hook wired, env cap 5 = MAX_RUNNING_AGENTS/m);
 });
 
 test('check_agent_cap prints a FAIL line for each drift', (t) => {
@@ -351,6 +355,8 @@ test('check_agent_cap prints a FAIL line for each drift', (t) => {
     [{ ...GOOD_LIVE, disableWorkflows: undefined }, /FAIL\s+settings\.json: disableWorkflows is not true/],
     [{ ...GOOD_LIVE, permissions: { deny: ['Bash(rm *)'] } }, /FAIL\s+settings\.json: permissions\.deny lacks Workflow/],
     [{ ...GOOD_LIVE, env: { CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '5' } }, /FAIL\s+settings\.json: env CLAUDE_CODE_DISABLE_WORKFLOWS is not 1/],
+    [{ ...GOOD_LIVE, hooks: { ...GOOD_LIVE.hooks, PreToolUse: [] } }, /FAIL\s+settings\.json: the agent cap hook \(hooks\/agent-model-guard\.mjs\) is not under hooks\.PreToolUse/],
+    [{ ...GOOD_LIVE, hooks: { ...GOOD_LIVE.hooks, SubagentStart: [] } }, /FAIL\s+settings\.json: the agent launch counter \(hooks\/agent-budget\.mjs\) is not under hooks\.SubagentStart/],
     [{ ...GOOD_LIVE, env: { CLAUDE_CODE_DISABLE_WORKFLOWS: '1' } }, /FAIL\s+settings\.json: env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS is unset/],
     [{ ...GOOD_LIVE, env: { ...GOOD_LIVE.env, CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '20' } }, /FAIL\s+settings\.json: env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS is 20, the hook caps at 5/],
   ];
