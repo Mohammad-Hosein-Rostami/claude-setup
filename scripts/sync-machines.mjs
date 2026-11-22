@@ -12,6 +12,7 @@
 // Exit: 0 every machine synced and doctor exited 0, 1 a machine failed (its row says why), 2 usage, 3 a verify check failed.
 // Invariants: everything that reaches an ssh line (row, base, tag, repo, host) is validated first; every remote command is ONE line,
 //   printed before it runs: perl's alarm (this Mac has no `timeout`), ssh, and the PATH export inside the quotes with the command.
+//   Every ssh and scp call carries SSH_OPTIONS: it never waits for a password or a host-key question, and gives up on a connect after 30 s.
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -53,8 +54,12 @@ function exec(command, args, { cwd, seconds } = {}) {
   });
 }
 
+// ssh_config(5), probed with `man ssh_config` on macOS: BatchMode=yes turns off password prompts and host-key questions (a script has nobody to
+// answer); ConnectTimeout=30 is the seconds allowed to connect and finish the handshake, instead of the system's TCP timeout (the PC sits
+// behind a flaky phone hotspot). scp passes -o on to ssh. The perl alarm of each line stays the outer limit.
+const SSH_OPTIONS = '-o BatchMode=yes -o ConnectTimeout=30';
 const alarmed = (seconds) => `perl -e 'alarm ${seconds}; exec @ARGV or die "exec: $!"'`;
-const remoteLine = (host, seconds, script) => `${alarmed(seconds)} ssh ${host} '${REMOTE_PATH_EXPORT} ${script}'`;
+const remoteLine = (host, seconds, script) => `${alarmed(seconds)} ssh ${SSH_OPTIONS} ${host} '${REMOTE_PATH_EXPORT} ${script}'`;
 const tail = (out) => out.trim().split('\n').slice(-TAIL_LINES).join(' | ');
 
 /** Runs one printed shell line (all its parts were validated): the line the owner sees is the line that runs. */
@@ -158,7 +163,7 @@ async function syncTarget(ctx, target) {
   const remoteShared = `/tmp/${ctx.row}-local-shared.json`;
   const made = await exec('git', ['-C', ctx.localRepo, 'bundle', 'create', bundle, ctx.tag ? `refs/tags/${ctx.tag}` : ctx.base]);
   if (made.status !== 0) return { problem: `git bundle create exit ${made.status}: ${tail(made.out)}` };
-  const copied = await runLine(target.name, `${alarmed(TRANSFER_SECONDS)} scp ${bundle} ${ctx.sharedFile} ${target.ssh}:/tmp/`, TRANSFER_SECONDS);
+  const copied = await runLine(target.name, `${alarmed(TRANSFER_SECONDS)} scp ${SSH_OPTIONS} ${bundle} ${ctx.sharedFile} ${target.ssh}:/tmp/`, TRANSFER_SECONDS);
   if (copied.status !== 0) return { problem: `scp exit ${copied.status}: ${tail(copied.out)}` };
   const merge = `node scripts/install/local-settings.mjs merge-shared ${remoteShared}`;
   const chain = ctx.tag

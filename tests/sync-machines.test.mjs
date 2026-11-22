@@ -15,12 +15,15 @@ const SCRIPT = fileURLToPath(new URL('../scripts/sync-machines.mjs', import.meta
 const FLOOR = '2.1.326';
 const PATH_EXPORT = 'export PATH="$HOME/.volta/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:$PATH";';
 const ALARM = (seconds) => `perl -e 'alarm ${seconds}; exec @ARGV or die "exec: $!"'`;
+const SSH_OPTIONS = '-o BatchMode=yes -o ConnectTimeout=30'; // ssh_config(5): no password or host-key question, 30 s to connect
 const HEAD_SHA = 'a'.repeat(40);
 
 /** The fake ssh answers by the script it is given; FAKE_* variables pick the answer. It logs each call to $FAKE_LOG. */
 const FAKE_SSH = `#!/usr/bin/env node
 const fs = require('node:fs');
-const script = process.argv.slice(3).join(' ');
+const args = process.argv.slice(2);
+while (args[0] === '-o') args.splice(0, 2); // the options before the host
+const script = args.slice(1).join(' ');
 fs.appendFileSync(process.env.FAKE_LOG, 'ssh ' + process.argv.slice(2).join(' ') + '\\n');
 const env = process.env;
 if (script.includes('== pin')) {
@@ -73,12 +76,24 @@ test('every machine synced: exit 0, one row each, alarmed ssh lines with the exp
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.deepEqual(result.rows.map((row) => [row.machine, row.synced, row.doctorExit]), [['macbook', true, 0], ['pc', true, 0]]);
   assert.equal(result.rows[1].sha, HEAD_SHA);
-  assert.ok(result.stdout.includes(`${ALARM(120)} ssh me@pc.local '${PATH_EXPORT} echo "== version"`), 'version read');
-  assert.ok(result.stdout.includes(`${ALARM(540)} ssh me@pc.local '${PATH_EXPORT} cd "`), 'pull and install');
-  assert.ok(result.stdout.includes(`${ALARM(300)} ssh me@pc.local '${PATH_EXPORT} cd "`), 'doctor');
-  assert.match(result.stdout, /perl -e 'alarm 300; exec @ARGV or die "exec: \$!"' scp \S+\.bundle \S+ me@pc\.local:\/tmp\//);
+  assert.ok(result.stdout.includes(`${ALARM(120)} ssh ${SSH_OPTIONS} me@pc.local '${PATH_EXPORT} echo "== version"`), 'version read');
+  assert.ok(result.stdout.includes(`${ALARM(540)} ssh ${SSH_OPTIONS} me@pc.local '${PATH_EXPORT} cd "`), 'pull and install');
+  assert.ok(result.stdout.includes(`${ALARM(300)} ssh ${SSH_OPTIONS} me@pc.local '${PATH_EXPORT} cd "`), 'doctor');
+  assert.match(result.stdout, /perl -e 'alarm 300; exec @ARGV or die "exec: \$!"' scp -o BatchMode=yes -o ConnectTimeout=30 \S+\.bundle \S+ me@pc\.local:\/tmp\//);
   assert.match(result.calls, /git pull --ff-only \/tmp\/\S+\.bundle main/);
   assert.doesNotMatch(result.calls, /git push/);
+});
+
+test('every ssh and scp that runs never waits for a password and times out on connect (the 3 ssh calls and the scp of a target)', () => {
+  const fixture = setup({ targets: [{ name: 'pc', ssh: 'me@pc.local' }] });
+  const result = run(fixture, []);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const calls = result.calls.split('\n').filter((line) => /^(ssh|scp) /.test(line));
+  assert.deepEqual(calls.map((line) => line.split(' ')[0]), ['ssh', 'scp', 'ssh', 'ssh'], 'version read, bundle copy, pull and install, doctor');
+  for (const call of calls) assert.ok(call.includes(SSH_OPTIONS), `missing options: ${call.slice(0, 80)}`);
+  const lines = result.stdout.split('\n').filter((line) => / (ssh|scp) /.test(line));
+  assert.equal(lines.length, calls.length, 'every printed ssh or scp line is a call');
+  for (const line of lines) assert.ok(line.includes(SSH_OPTIONS), `printed line without options: ${line.slice(0, 80)}`);
 });
 
 test('a pin mismatch gives exit 1 and the machine\'s row names the pin', () => {
