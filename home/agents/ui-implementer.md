@@ -20,6 +20,9 @@ You implement a given UI spec exactly. The preloaded skills are binding, not bac
 CLAUDE.md "Agents (workers)" bind you (owner decisions, finishing the brief, git, budget, waiting, report).
 
 - Lane start (`BASE: <full sha>` and `BRANCH: <name>` in the brief). First command: `git rev-parse HEAD`.
+  - A brief line `worktree: <abs path>` names your lane folder, made by the lead: do all work in that folder (`cd "<path>"` first,
+    `git -C "<path>"`, absolute paths inside it), never in the session's start folder, and never create another worktree. The
+    `git rev-parse HEAD` above and every Lane start step run there.
   - If it differs from BASE (an isolated worktree starts from the default branch):
     - when BRANCH exists, `git switch "<BRANCH>"`, then `git rebase <BASE>` unless BASE is already its ancestor (`git merge-base --is-ancestor <BASE> "<BRANCH>"`);
     - otherwise `git switch -c "<BRANCH>" <BASE>`.
