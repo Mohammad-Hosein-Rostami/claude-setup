@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { runRoad } from '../home/tools/road/road.mjs';
@@ -212,7 +212,7 @@ test('ui-files counts the UI files of the range by the ui-proof definition', asy
   assert.ok(lines(result).includes('ui-files: 1'), result.out);
 });
 
-test('tests that do not apply exit 1 "tests do not apply" and leave no cherry-pick running', async () => {
+test('tests that do not apply (one test commit conflicts) exit 1 "tests do not apply" and leave no cherry-pick running', async () => {
   const f = fixture({ withTests: true });
   commit(f.testsTree, { 'shared.txt': 'one\nTWO from tests\nthree\n' }, 'tests touch a shared file');
   commit(f.worktree, { 'shared.txt': 'one\nTWO from lane\nthree\n' });
@@ -220,7 +220,7 @@ test('tests that do not apply exit 1 "tests do not apply" and leave no cherry-pi
   const result = await f.join(ON);
   assert.equal(result.code, 1);
   assert.match(result.out, /tests do not apply/);
-  assert.equal(f.head(), before);
+  assert.equal(git(f.worktree, 'rev-list', '--count', `${before}..HEAD`), '1', 'only the test commit that applied cleanly stays; the conflicting one was aborted');
   assert.equal(git(f.worktree, 'status', '--porcelain'), '');
   assert.doesNotMatch(git(f.worktree, 'status'), /cherry-pick/);
 });
@@ -280,6 +280,28 @@ test('F1: a join refuses a worktree with a cherry-pick running, uncommitted trac
   assert.equal(moved.code, 1);
   assert.match(moved.out, /moved/);
   assert.doesNotMatch(moved.out, /waiver-at/);
+});
+
+test('F1: one join at a time per worktree: a live holder refuses at once, a dead holder\'s lock is removed, and the lock is released after any outcome', async () => {
+  const f = fixture({ lane: { checkpoints: [{ ...KEEPS, files: [], run: 'true' }] } });
+  const lock = resolve(f.worktree, git(f.worktree, 'rev-parse', '--git-path', 'road-join.lock'));
+  const held = (pid) => { mkdirSync(lock); writeFileSync(join(lock, 'pid'), String(pid)); };
+  held(process.pid);
+  const refused = await f.join(ON);
+  assert.equal(refused.code, 1);
+  assert.match(refused.out, /another join runs/);
+  assert.ok(existsSync(lock), 'a refused join leaves the holder\'s lock alone');
+  rmSync(lock, { recursive: true });
+  held(spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout.trim());
+  assert.equal((await f.join(ON)).code, 0);
+  assert.ok(!existsSync(lock), 'released after a clean join');
+  commit(f.worktree, { 'elsewhere/x.txt': 'x\n' });
+  assert.equal((await f.join(ON)).code, 3);
+  assert.ok(!existsSync(lock), 'released after a join with findings');
+  git(f.worktree, 'reset', '--hard', '-q', 'HEAD~1');
+  writeFileSync(join(f.worktree, 'src/a.mjs'), 'dirty\n');
+  assert.equal((await f.join(ON)).code, 1);
+  assert.ok(!existsSync(lock), 'released after a refusal');
 });
 
 /** The pid of a process that has ended, so a leftover folder named with it is a crash's. */

@@ -94,8 +94,8 @@ tool installed a markup and style file rule stands in, which counts more lanes a
 (from `sha256sum`, taken when the road was written); a file that hashes differently, an unknown lane or an unreadable road is refused
 (exit 1), so every checkpoint command comes from the file the lead hashed. The lane tip is the worktree's HEAD, read with git.
 
-1. With `--tests`, the `+` commits of `git cherry <lane tip> <tests HEAD>` are cherry-picked into the lane worktree in one sequence,
-   oldest first. A conflict runs `git cherry-pick --abort` and exits 1 `tests do not apply`.
+1. With `--tests`, the `+` commits of `git cherry <lane tip> <tests HEAD>` are cherry-picked into the lane worktree, oldest first. A
+   conflict runs `git cherry-pick --abort` and exits 1 `tests do not apply`.
 2. When the lane's own commits (`<base>..<tip>`, without the test commits it already holds) touch a checkpoint file or a test-writer
    file, exit 1 `contractTouched` and nothing else is judged.
 3. One finding per file of `<base>...<joined>` outside the lane `files`, the step's `appendOnly` and the test-writer's files. Paths are
@@ -111,8 +111,10 @@ tool installed a markup and style file rule stands in, which counts more lanes a
 6. `waiver-at <joined sha>` (the review may be waived at that sha) is printed only with `--tests`, a `red-first` checkpoint, the
    checkpoints run, no finding and no `--dispute`.
 
-A worktree with a cherry-pick, merge, revert or rebase running, or uncommitted changes to tracked files, is refused at the start, and a
-HEAD that is not the one the join made when it finishes is refused too (two joins on one worktree). The temp worktrees are removed in
+One join runs at a time per lane worktree: an atomic `road-join.lock` folder in the worktree's git dir holds the pid; a second join
+exits 1 at once, and the lock of a process that is gone is removed. A worktree with a cherry-pick, merge, revert or rebase running, or
+uncommitted changes to tracked files, is refused at the start, and a HEAD that is not the one the join made when it finishes is refused
+too. The test commits are picked one at a time; when one conflicts it is aborted and the ones picked before it stay (a re-join skips them). The temp worktrees are removed in
 `finally`; a join that was killed leaves its folder, and the next join removes the `road-join-<pid>-*` worktrees of a process that is
 gone (never those of a live one). A base-side run is a fresh checkout: a checkpoint that needs installed packages or other untracked
 files must not depend on them.

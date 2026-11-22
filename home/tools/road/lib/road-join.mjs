@@ -1,5 +1,5 @@
 // Purpose: `road.mjs join`: the contract judging of one built lane (plan.md C5), the work join.js gave to a runner and to a script. It
-//   cherry-picks the test-writer's commits into the lane worktree, refuses a lane whose own commits edited a locked file, lists files outside
+//   cherry-picks the test-writer's commits into the lane worktree (one pick per commit), refuses a lane whose own commits edited a locked file, lists files outside
 //   the lane, counts UI files (ui-proof's own function, never its CLI: a crashed CLI exits 1, which reads as "some"), runs each checkpoint at the joined head and at the base, and prints the verdict. A model reads no number.
 // Exports: joinLane(road, roadSha256, flags, { run, checkOn }) -> { code, out }.
 // Exit: 0 joined clean, 3 joined with findings, 1 refused (hash, lane, base, a running git operation, contractTouched, tests do not apply, a
@@ -8,13 +8,14 @@
 //   `checkpoint <id>: <kind> base <n> head <n> met|not met`, `vacuous <id>`, `keep-green: pass|fail`, `checkpoints: none | not checked (test
 //   off)`, `waiver-at <sha>`. A line is never made of text a repo or a command printed: names with control characters are quoted and run
 //   output is indented, so no file or checkpoint can write a `waiver-at` line.
-// Invariants: checkpoint commands come only from the hash-checked road file and run as `sh -c` in a worktree, never with a path in them;
+// Invariants: one join at a time per lane worktree (a `road-join.lock` folder in its git dir with the pid; a dead holder's lock is removed);
+//   checkpoint commands come only from the hash-checked road file and run as `sh -c` in a worktree, never with a path in them;
 //   paths from git are read with -z and compared after `\` becomes `/`; git runs without GIT_* variables and with literal pathspecs. Each
 //   base-side run has its own detached worktree under the temp folder, named `road-join-<pid>-...`, removed in `finally`; the next join
 //   removes those of a process that is gone (a killed join), and leaves those of a live one. A worktree that moves under the join (a
 //   running cherry-pick, uncommitted changes at the start, a HEAD that is not the one the join made) is refused.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { isOn } from '../../../hooks/lib/checks-on.mjs';
@@ -34,6 +35,7 @@ const SWITCHES = { '--dispute': 'dispute', '--json': 'json' };
 const REQUIRED = ['sha256', 'lane', 'worktree', 'base'];
 const RUNNING_OPERATIONS = { CHERRY_PICK_HEAD: 'a cherry-pick', MERGE_HEAD: 'a merge', REVERT_HEAD: 'a revert', 'rebase-merge': 'a rebase', 'rebase-apply': 'a rebase' };
 const STALE_FOLDER = /^road-join-(\d+)-/;
+const LOCK_FOLDER = 'road-join.lock'; // in the worktree's own git dir; holds a file `pid`
 const USAGE = 'usage: road.mjs join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--tests <abs>] [--dispute] [--checks <cat,...>] [--json]';
 
 class Refused extends Error {}
@@ -93,6 +95,55 @@ function assertIdle(worktree) {
   if (gitOut(worktree, ['status', '--porcelain', '--untracked-files=no']).trim() !== '') throw new Refused(`${worktree} has uncommitted changes to tracked files: commit them first`);
 }
 
+const isAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+};
+
+const LOCK_START_GRACE_MS = 10_000; // a lock folder with no pid file yet is a holder that is starting; older than this, one that was killed first
+
+const pidOf = (lock) => {
+  try {
+    return Number(readFileSync(join(lock, 'pid'), 'utf8').trim());
+  } catch {
+    return NaN; // no pid file (yet)
+  }
+};
+const lockHolder = (lock) => (Number.isInteger(pidOf(lock)) ? `pid ${pidOf(lock)}` : 'starting');
+function lockIsStale(lock) {
+  if (Number.isInteger(pidOf(lock))) return !isAlive(pidOf(lock));
+  try {
+    return Date.now() - statSync(lock).mtimeMs > LOCK_START_GRACE_MS;
+  } catch {
+    return true; // the lock went away between the two calls: the retry takes it
+  }
+}
+
+/**
+ * One join at a time per lane worktree: an atomic `mkdir` of `<git dir>/road-join.lock` holding the pid. A lock of a process that is gone
+ * (a killed join) is removed once; a live holder refuses this join at once (the existing session lock waits 1 s and steals after 5 s, which
+ * fits a hook's turn, not a join). @returns {() => void} the release @throws {Refused}
+ */
+function takeLock(worktree) {
+  const lock = resolve(worktree, gitOut(worktree, ['rev-parse', '--git-path', LOCK_FOLDER]).trim());
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      if (attempt > 0 || !lockIsStale(lock)) throw new Refused(`another join runs in ${worktree} (${lockHolder(lock)}): run one join at a time`);
+      rmSync(lock, { recursive: true, force: true });
+    }
+  }
+  writeFileSync(join(lock, 'pid'), String(process.pid));
+  return () => rmSync(lock, { recursive: true, force: true });
+}
+
 function assertHead(worktree, expected) {
   if (headOf(worktree) !== expected) throw new Refused(`HEAD of ${worktree} moved during the join (another join or a person is working there)`);
 }
@@ -115,16 +166,25 @@ function ownFiles(options, tip, testsHead) {
   return commits.flatMap((sha) => gitNames(options.worktree, ['diff-tree', '--no-commit-id', '--name-only', '-r', '-z', '--no-renames', '-m', sha]));
 }
 
-/** Cherry-picks the `+` commits of `git cherry <tip> <tests HEAD>`, oldest first, in one sequence; a conflict aborts it and leaves the lane as found. */
+/**
+ * Cherry-picks the `+` commits of `git cherry <tip> <tests HEAD>` into the lane, oldest first, one `git cherry-pick` per commit: a
+ * multi-commit call keeps a sequencer folder that a second join's `--abort` would rewind under the first. HEAD must be the one the join
+ * made before each pick. A failed pick runs `git cherry-pick --abort` only when it left a conflict (CHERRY_PICK_HEAD); picks made before
+ * it stay (a re-join finds them and skips them).
+ */
 function applyTests(options, tip, testsHead) {
   const picks = gitOut(options.worktree, ['cherry', tip, testsHead]).split('\n').filter((line) => line.startsWith('+ ')).map((line) => line.slice(2).trim());
-  if (picks.length === 0) return tip;
-  const result = git(options.worktree, ['cherry-pick', ...picks]);
-  if (result.exit !== 0) {
-    git(options.worktree, ['cherry-pick', '--abort']);
-    throw new Refused(`tests do not apply: ${firstLine(result.out)}`);
+  let head = tip;
+  for (const sha of picks) {
+    assertHead(options.worktree, head);
+    const result = git(options.worktree, ['cherry-pick', sha]);
+    if (result.exit !== 0) {
+      if (git(options.worktree, ['rev-parse', '-q', '--verify', 'CHERRY_PICK_HEAD']).exit === 0) git(options.worktree, ['cherry-pick', '--abort']);
+      throw new Refused(`tests do not apply: ${firstLine(result.out)}`);
+    }
+    head = headOf(options.worktree);
   }
-  return headOf(options.worktree);
+  return head;
 }
 
 const finding = (id, text, tail = []) => ({ id, text, tail });
@@ -134,15 +194,6 @@ function removeBaseWorktree(worktree, path) {
   rmSync(path, { recursive: true, force: true });
   git(worktree, ['worktree', 'prune']);
 }
-
-const isAlive = (pid) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === 'EPERM';
-  }
-};
 
 /** Removes the base-side worktrees of a join that was killed: `road-join-<pid>-*` under the temp folder whose process is gone. */
 function removeStaleWorktrees(worktree) {
@@ -232,8 +283,17 @@ function uiFilesOf(ctx) {
   }
 }
 
-/** The join itself. @returns {object} the verdict; @throws {Refused} */
+/** The join itself, alone in its worktree. @returns {object} the verdict; @throws {Refused} */
 function judge(ctx) {
+  const release = takeLock(ctx.options.worktree);
+  try {
+    return judgeLocked(ctx);
+  } finally {
+    release();
+  }
+}
+
+function judgeLocked(ctx) {
   const { options } = ctx;
   removeStaleWorktrees(options.worktree);
   const { tip, testsHead } = readTips(options);
