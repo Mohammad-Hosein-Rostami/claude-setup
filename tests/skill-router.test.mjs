@@ -102,25 +102,13 @@ test('hook contract: bad JSON is silent; a UI prompt emits additionalContext; a 
   assert.equal(backend.stdout, '');
 });
 
-const GATE_LINE = /^Skill router: (bug or failure|done or ship|repository restructure) /;
-
-// The checks the owner turned on, as the router reads them (home/hooks/lib/checks-on.mjs, spec r9-checks-off): the hook is given a
-// temp HOME with one switch file, named by CLAUDE_CODE_SESSION_ID so it counts for every session id a test uses. The UI texts show the
-// `ui` proof step and the verify-done line shows once test, types or ui is on; the default here is all three on.
-const SWITCH_ID = 'owner-switch';
-async function switchHome(on) {
-  const home = makeTempDir('router-home-');
-  if (on.length === 0) return home;
-  await mkdir(join(home, '.claude', 'state', 'checks'), { recursive: true });
-  await writeFile(join(home, '.claude', 'state', 'checks', `${SWITCH_ID}.json`), JSON.stringify({ on, off: [], scope: 'tests', by: 'owner', at: '2026-11-21T00:00:00.000Z' }));
-  return home;
-}
+const GATE_LINE = /^Skill router: (bug or failure|repository restructure) /;
 
 // Each call gets its own temp dir as TMPDIR/TEMP so session markers never leak between tests or into real state.
-async function routerSession({ on = ['test', 'types', 'ui'] } = {}) {
+async function routerSession() {
   const tmp = makeTempDir('router-state-');
-  const home = await switchHome(on);
-  const env = { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp, HOME: home, USERPROFILE: home, CLAUDE_CODE_SESSION_ID: SWITCH_ID };
+  const home = makeTempDir('router-home-');
+  const env = { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp, HOME: home, USERPROFILE: home };
   const fire = (event, { keepGates = false } = {}) => {
     const r = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(event), encoding: 'utf8', env });
     assert.equal(r.status, 0);
@@ -146,30 +134,14 @@ test('first routed prompt gets the full text, a repeat gets the short form', asy
   assert.equal(prompt('add a REST endpoint for orders'), '');
 });
 
-test('with the `ui` check off the full UI route names no ui-quality-pass and no proof step', async () => {
-  const { prompt } = await routerSession({ on: ['test'] });
+// The UI checks are kept (owner, 2026-11-22): every UI text names ui-quality-pass and the proof step, with no switch to turn them off.
+test('the full, short and follow-up UI texts always name ui-quality-pass and the proof step', async () => {
+  const { prompt } = await routerSession();
   const full = prompt('make it responsive');
-  assert.match(full, FULL);
-  assert.doesNotMatch(full, /ui-quality-pass|[Pp]roof|visual-qa|ui-check/);
-});
-
-// withoutUiChecks (skill-router.mjs) must cut `ui-quality-pass before done; ` before `; proof: ...`, or the short text keeps
-// "ui-quality-pass before done." with `ui` off (spec-checks-off.md:36-38).
-test('with the `ui` check off the short UI route names no ui-quality-pass and no proof step', async () => {
-  const { prompt } = await routerSession({ on: ['test'] });
-  prompt('make it responsive');
-  const short = prompt('make it responsive on mobile');
-  assert.match(short, /^Skill router: UI request - invoke .+ \(skip any already loaded\); delegate to ui-implementer\.$/);
-  assert.doesNotMatch(short, /ui-quality-pass|proof|visual-qa|ui-check/);
-});
-
-test('with the `ui` check off the short UI follow-up names no ui-quality-pass and no proof step', async () => {
-  const { prompt } = await routerSession({ on: ['test'] });
-  prompt('make it responsive');
-  const followUp = prompt('now style the settings page header');
-  assert.match(followUp, FOLLOW_UP);
-  assert.match(followUp, /delegate to ui-implementer\.$/);
-  assert.doesNotMatch(followUp, /ui-quality-pass|proof|visual-qa|ui-check/);
+  assert.match(full, /ui-quality-pass/);
+  assert.match(full, /`ui-check run`[\s\S]*`visual-qa`/);
+  assert.match(prompt('make it responsive on mobile'), /ui-quality-pass before done; proof: ui-check run PASS, then the visual-qa final gate\.$/);
+  assert.match(prompt('now style the settings page header'), /ui-quality-pass before done; proof: /);
 });
 
 test('a newly routed skill gets the full text again, then the short form', async () => {
@@ -254,10 +226,11 @@ test('gateLinesForPrompt: bug and done intents fire', () => {
     'login does not work', 'باگ را رفع کن', 'debug the flaky test']) {
     assert.match(gateLinesForPrompt(prompt).join(), /root-cause-debug/, prompt);
   }
+  // The "done" route named verify-done and went with the removed check system: a done or ship prompt gets no gate line.
   for (const prompt of ['looks good, ship it', 'is it done? ready for review', 'we are done here', 'can we merge', 'ready to merge', 'wrap it up', 'کار تمام شد']) {
-    assert.match(gateLinesForPrompt(prompt).join(), /verify-done/, prompt);
+    assert.deepEqual(gateLinesForPrompt(prompt), [], prompt);
   }
-  assert.equal(gateLinesForPrompt('fix it and ship it').length, 2);
+  assert.equal(gateLinesForPrompt('fix it and ship it').length, 1);
 });
 
 test('gateLinesForPrompt: incidental words do not fire', () => {
@@ -271,7 +244,7 @@ test('hook: gate lines reach additionalContext, also in a Gradle project and nex
   const KEEP = { keepGates: true };
   const { prompt, fire } = await routerSession();
   assert.match(await prompt('fix the crash in the order service', 's1', KEEP), /^Skill router: bug or failure - invoke root-cause-debug/);
-  assert.match(await prompt('we are done, ship it', 's2', KEEP), /verify-done/);
+  assert.equal(await prompt('we are done, ship it', 's2', KEEP), '');
   const both = await prompt('fix the form validation bug', 's3', KEEP);
   assert.match(both, /forms-validation/);
   assert.match(both, /root-cause-debug/);
@@ -284,26 +257,11 @@ test('hook: gate lines reach additionalContext, also in a Gradle project and nex
   assert.equal(await prompt('the fix version is 2.1', 's6', KEEP), '');
 });
 
-test('hook: the verify-done line shows when any one of test, types or ui is on, and not when all three are off', async () => {
-  const KEEP = { keepGates: true };
-  for (const on of [['test'], ['types'], ['ui']]) {
-    const { prompt } = await routerSession({ on });
-    assert.match(await prompt('we are done, ship it', 's1', KEEP), /verify-done/, on.join());
-  }
-  for (const on of [[], ['review'], ['probe']]) {
-    const { prompt } = await routerSession({ on });
-    assert.equal(await prompt('we are done, ship it', 's1', KEEP), '', `on: ${on.join() || 'nothing'}`);
-    assert.match(await prompt('fix the crash', 's1', KEEP), /root-cause-debug/, 'the bug route does not depend on a check');
-  }
-});
-
 test('hook: each gate line shows once per session, again after a compact, and per session', async () => {
   const KEEP = { keepGates: true };
   const { prompt, compact } = await routerSession();
   assert.match(await prompt('fix the crash', 'g1', KEEP), /root-cause-debug/);
   assert.equal(await prompt('fix the other crash', 'g1', KEEP), '');
-  assert.match(await prompt('ship it', 'g1', KEEP), /verify-done/); // a different gate is still new
-  assert.equal(await prompt('ship it again', 'g1', KEEP), '');
   assert.match(await prompt('fix the crash', 'g2', KEEP), /root-cause-debug/); // another session
   compact('g1');
   assert.match(await prompt('fix the crash', 'g1', KEEP), /root-cause-debug/);
