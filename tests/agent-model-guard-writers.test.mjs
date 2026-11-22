@@ -1,16 +1,18 @@
 // Tests for the writer isolation gate of home/hooks/agent-model-guard.mjs and the finish record agent-budget.mjs keeps on SubagentStop
 // (lib/writer-agents.mjs): a writing agent launched while another writing agent of the session still runs must carry
-// `isolation: "worktree"`, else it is denied once with advice and the identical call sent again runs. Read-only agents are exempt.
+// `isolation: "worktree"` or name its own lane worktree on a `worktree:` brief line (checked with git), else it is denied once with
+// advice and the identical call sent again runs. Read-only agents are exempt.
 // Each test gets a private HOME (launch record, advice store, agent files) and its own session id.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hookEnv } from './hook-env.mjs';
 import { IDLE_MS, PENDING_MS } from '../home/hooks/lib/agent-launches.mjs';
 import { callCounterPath } from '../home/hooks/lib/writer-agents.mjs';
+import { git, makeRepo } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const GUARD = fileURLToPath(new URL('../home/hooks/agent-model-guard.mjs', import.meta.url));
@@ -20,12 +22,15 @@ const PARALLEL_LAUNCHES = 6;
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
 let counter = 0;
 
-/** A private HOME; launch(toolInput) sends one Agent call and returns its hookSpecificOutput (null when silent); stop(...) ends one. */
-function writerSession() {
+/**
+ * A private HOME; launch(toolInput) sends one Agent call and returns its hookSpecificOutput (null when silent); stop(...) ends one.
+ * @param {{cwd?: string, env?: Record<string, string>}} [options] the lead's folder (default: a new plain folder) and extra variables
+ */
+function writerSession({ cwd, env: extraEnv = {} } = {}) {
   const home = makeTempDir('writer-gate-home-');
-  const project = makeTempDir('writer-gate-project-');
+  const project = cwd ?? makeTempDir('writer-gate-project-');
   const session = `writers-${process.pid}-${counter++}`;
-  const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: project });
+  const env = hookEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: project, ...extraEnv });
   const input = (toolInput) => JSON.stringify({ hook_event_name: 'PreToolUse', session_id: session, cwd: project, tool_name: 'Agent', tool_input: toolInput });
   const parse = ({ status, stdout, stderr }) => {
     assert.equal(status, 0, stderr);
@@ -183,4 +188,76 @@ test('a stop ends the launch of its own agent id first', () => {
   s.stop('agent-b', 'implementer');
   const { launches } = JSON.parse(readFileSync(join(s.home, '.claude', 'state', 'agent-writers', `${s.session}.json`), 'utf8'));
   assert.deepEqual(launches.map((launch) => launch.agent), ['agent-a']);
+});
+
+// Writer-guard lane (road solid, friction finding 1): 253 launches in 7 days were refused although 109 of 190 lead briefs named the
+// agent's own worktree; the identical resend then ran. A `worktree:` line now counts as isolation, but only for a folder git lists.
+const NO_SH_GIT = process.platform === 'win32' && 'the fake git is a shell script';
+
+/** A repo with a linked lane worktree under .claude/worktrees/, as the lead makes one before the launch; real paths. */
+function repoWithLaneWorktree() {
+  const repo = makeRepo();
+  const worktree = join(repo, '.claude', 'worktrees', 'lane-a');
+  git(repo, 'worktree', 'add', '-q', '-b', 'fix/lane-a', worktree);
+  return { repo, worktree: realpathSync(worktree) };
+}
+
+const recordOf = (s) => JSON.parse(readFileSync(join(s.home, '.claude', 'state', 'agent-writers', `${s.session}.json`), 'utf8'));
+const laneBrief = (path) => `Build lane two.\nworktree: ${path}\nBASE: 0000000`;
+
+test('a writer whose brief names its own lane worktree runs next to a running writer, recorded isolated with that folder', () => {
+  const { repo, worktree } = repoWithLaneWorktree();
+  const s = writerSession({ cwd: repo });
+  assert.ok(!denied(s.launch(writer('implementer', { prompt: 'lane one' }))), 'the first writer runs');
+  assert.ok(!denied(s.launch(writer('implementer', { prompt: laneBrief(worktree) }))), 'the lane worktree writer is not refused');
+  assert.ok(!denied(s.launch(writer('implementer', { prompt: `Lane three.\n  worktree: \`${worktree}\`` }))), 'a quoted value counts too');
+  const { launches, open } = recordOf(s);
+  assert.deepEqual(launches.map((launch) => launch.isolated === true), [false, true, true]);
+  assert.equal(open[1].cwd, worktree, 'the resume notice looks at the lane worktree');
+  assert.ok(denied(s.launch(writer('implementer', { prompt: 'lane four, no worktree line' }))), 'a plain writer still gets the advice');
+});
+
+test('a `worktree:` line in a brief file the prompt names counts; a brief file naming no worktree does not', () => {
+  const { repo, worktree } = repoWithLaneWorktree();
+  const folder = makeTempDir('writer-gate-brief-');
+  writeFileSync(join(folder, 'lane.md'), `Objective: lane two.\nworktree: ${worktree}\n`);
+  writeFileSync(join(folder, 'other.md'), `Objective: lane three.\nworktree: ${join(repo, '.claude', 'worktrees', 'lane-b')}\n`);
+  const s = writerSession({ cwd: repo });
+  s.launch(writer('implementer', { prompt: 'lane one' }));
+  assert.ok(!denied(s.launch(writer('implementer', { prompt: `Read ${join(folder, 'lane.md')} and follow it with LANE = lane-a.` }))));
+  assert.ok(denied(s.launch(writer('implementer', { prompt: `Read \`${join(folder, 'other.md')}\` and follow it.` }))), 'lane-b was never made');
+});
+
+test('a made-up path, the lead\'s folder, a relative path, a Windows drive path and a plain folder still get the advice, which names roles', () => {
+  const { repo, worktree } = repoWithLaneWorktree();
+  const cases = [
+    ['a made-up path', repo, join(repo, '.claude', 'worktrees', 'no-such-lane')],
+    ['the lead\'s folder (the main checkout)', repo, repo],
+    ['the lead\'s folder (the lead works in the lane worktree)', worktree, worktree],
+    ['a relative path', repo, '.claude/worktrees/lane-a'],
+    ['a Windows drive path', repo, 'C:\\Users\\me\\repo\\.claude\\worktrees\\lane-a'],
+    ['a folder that is no worktree', repo, realpathSync(makeTempDir('writer-gate-plain-'))],
+  ];
+  for (const [name, cwd, path] of cases) {
+    const s = writerSession({ cwd });
+    s.launch(writer('implementer', { prompt: 'lane one' }));
+    const second = s.launch({ description: 'build', prompt: laneBrief(path), subagent_type: 'general-purpose' });
+    assert.ok(denied(second), name);
+    assert.match(second.permissionDecisionReason, /`worktree: <absolute path>`/, name);
+    assert.match(second.permissionDecisionReason, /`implementer`.*`scout`, `runner` or `reviewer`/, `${name}: the advice names the roles`);
+    assert.doesNotMatch(second.permissionDecisionReason, /general-purpose/, `${name}: the advice never sends the job to general-purpose`);
+    assert.ok(!denied(s.launch({ description: 'build', prompt: laneBrief(path), subagent_type: 'general-purpose' })), `${name}: the identical resend runs`);
+  }
+});
+
+test('a git that hangs or fails is no isolation: the advice comes, within the hook timeout', { skip: NO_SH_GIT }, () => {
+  const { repo, worktree } = repoWithLaneWorktree();
+  for (const body of ['exec sleep 30', 'exit 128']) {
+    const bin = makeTempDir('writer-gate-fake-git-');
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\n${body}\n`);
+    chmodSync(join(bin, 'git'), 0o755);
+    const s = writerSession({ cwd: repo, env: { PATH: `${bin}${delimiter}${process.env.PATH}` } });
+    s.launch(writer('implementer', { prompt: 'lane one' }));
+    assert.ok(denied(s.launch(writer('implementer', { prompt: laneBrief(worktree) }))), body); // launch fails past HOOK_TIMEOUT_MS
+  }
 });

@@ -1,4 +1,4 @@
-// PreToolUse(Agent|Task) guard: an Agent call with no `model` would inherit the lead model (Opus / Fable) and spend it silently. A
+// PreToolUse(Agent|Task) guard: an Agent call with no `model` runs on the lead's own model (Opus / Fable) and spends it silently. A
 // call to a built-in type that pins no model (general-purpose, no subagent_type, Explore and the other built-ins) gets `sonnet`; a Plan
 // call without one gets `opus`. Forks (subagent_type "fork", they inherit the lead on purpose), plugin agents, an explicit model and
 // unreadable input are not routed. Pin floor (lib/agent-pins.mjs): the agent file Claude Code loads (found by its `name`, deepest project
@@ -27,19 +27,17 @@
 // closed); a call with no usable session id is not recorded. Whether this hook fires for an Agent call inside a subagent is probe U6 (not
 // run): until then such a launch may go uncounted, and the env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS (the same number) is the backstop.
 // Writer isolation gate (after the UI gate): a writing agent (lib/writer-agents.mjs isWritingAgent: implementer, ui-implementer,
-// general-purpose, claude, or an agent file whose tools include Write/Edit; scout, runner, Explore,
-// Plan and architect never) launched while another plain writing agent of this session still runs must carry `isolation: "worktree"` or a
-// read-only brief, else it is denied once with that advice (adviceOnce, as the UI gate) and the identical call sent again runs. A launch
-// with `isolation: "worktree"` runs and is recorded `isolated`; one whose prompt has a line starting `read-only:` or `scratchpad-only:`
-// (isReadOnlyBrief) runs and is recorded `readOnly`; neither kind makes a later writer bounce ("plain" = neither flag). The read-only brief
-// is held at the agent's stop by commit-gate.mjs. Why the relaxation lets nothing new through: the gate is deny-once and the identical
-// retry runs, and an isolated agent can still write the main checkout by shell (worktrees.md:104-112), so counting it was no protection.
-// "Still runs" comes from the session's own record: every writer launch this hook lets start, marked started on SubagentStart and ended
+// general-purpose, claude, or an agent file whose tools include Write/Edit; scout, runner, Explore, Plan and architect never) launched
+// while another plain writer of this session runs must be isolated or read-only, else it is denied once with advice naming the roles and
+// the isolation forms (adviceOnce, as the UI gate) and the identical call sent again runs. Isolated (recorded `isolated`; the open record's
+// cwd is then the lane worktree): `isolation: "worktree"`, or a `worktree: <abs path>` line, in the prompt or a brief file it names, of a
+// linked worktree git lists that is not the lead's folder (laneWorktreeOf: a git that fails or hangs is no isolation). Read-only (recorded
+// `readOnly`, held at the stop by commit-gate.mjs): a line starting `read-only:` or `scratchpad-only:` (isReadOnlyBrief). Neither makes a
+// later writer bounce ("plain" = neither); the gate is deny-once, and an isolated agent can still write the main checkout by shell
+// (worktrees.md:104-112). "Still runs" = the session's own record: every launch this hook lets start, started on SubagentStart and ended
 // on SubagentStop by agent-budget.mjs; a launch that never started or an agent idle for 30 min stops counting (lib/agent-launches.mjs).
 // Copy-branch brief gate (run first, round 4): a writer brief that creates a copy of an existing branch (`<lane>-2`) instead of continuing the
-// lane's own (lib/copy-branch-brief.mjs) is sent back once with the same-branch steps. Same deny-once mechanics as the gates above, with its own
-// digest (logged class "copy branch brief"). A workflow spawn does not fire this hook (probe P2). There is no gate that sends a plain Agent call
-// to a workflow: the lead picks inline, one agent or a workflow by the job (home/CLAUDE.md, "Inline, agent or workflow").
+// lane's own (lib/copy-branch-brief.mjs) is sent back once (deny-once, own digest, class "copy branch brief"). No workflow spawn fires it (P2).
 // Exports: guardedAgentInput (pure), matrixLines (pure), namesDesignSource (pure), uiBriefDeny, writerIsolationDeny (the writer isolation gate and the agent cap) and copyBranchBriefDeny (the gates), MAX_MATRIX_BYTES.
 // Invariants: the routing never blocks or denies; each gate denies an identical call at most once per session.
 import { realpathSync, statSync } from 'node:fs';
@@ -50,7 +48,7 @@ import { UNPRINTABLE, readFileHead, withBriefLines } from './lib/agent-brief.mjs
 import { copyBranchBriefAdvice } from './lib/copy-branch-brief.mjs';
 import { MAX_RUNNING_AGENTS, recordAgentLaunch } from './lib/agent-launches.mjs';
 import { isSessionId } from './lib/session-store.mjs';
-import { isReadOnlyBrief, isWritingAgent } from './lib/writer-agents.mjs';
+import { isReadOnlyBrief, isWritingAgent, laneWorktreeOf } from './lib/writer-agents.mjs';
 
 const FORK_TYPE = 'fork';
 const DEFAULT_MODEL = 'sonnet';
@@ -193,8 +191,9 @@ export async function uiBriefDeny(input, env = process.env) {
 }
 
 const WORKTREE_ISOLATION = 'worktree';
-const PARALLEL_WRITER_ADVICE = 'Another writing agent of this session is still running in the shared folder: launch this one with '
-  + '`isolation: "worktree"` (parallel writers each get their own worktree), or wait until the running writer has finished.';
+const PARALLEL_WRITER_ADVICE = 'Another writing agent of this session is still running in the shared folder: give this one `isolation: "worktree"`, '
+  + 'or make its worktree first (`git worktree add -b <branch> <path> <base>`) and add the brief line `worktree: <absolute path>`, or wait for the '
+  + 'running writer. Roles: `implementer` or `ui-implementer` writes; a reading job goes to `scout`, `runner` or `reviewer` (or starts `read-only:`).';
 
 /**
  * The deny for a launch the record refused: the cap text with the running agents, or the fail-closed text naming the record.
@@ -223,13 +222,14 @@ export async function writerIsolationDeny(input, env = process.env) {
     const session = input.session_id;
     if (!isSessionId(session)) return '';
     const writer = isWritingAgent(type, env);
-    const flags = { isolated: writer && isolation === WORKTREE_ISOLATION, readOnly: writer && isReadOnlyBrief(prompt) };
+    const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+    const laneWorktree = writer && isolation !== WORKTREE_ISOLATION ? laneWorktreeOf(prompt, cwd, env) : null;
+    const flags = { isolated: writer && (isolation === WORKTREE_ISOLATION || laneWorktree !== null), readOnly: writer && isReadOnlyBrief(prompt) };
     const plain = writer && !flags.isolated && !flags.readOnly;
-    const about = { cwd: input.cwd, description: input.tool_input?.description, prompt }; // the open launch record (r9-resume)
+    const about = { cwd: laneWorktree ?? input.cwd, description: input.tool_input?.description, prompt }; // the open launch record (r9-resume)
     const record = (unlessRunning) => recordAgentLaunch(session, type, env, { writer, unlessRunning, ...flags, about, cap: MAX_RUNNING_AGENTS });
     const counted = record(plain);
     if (counted.state !== 'running') return launchRefusal(counted);
-    const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
     const { adviceOnce } = await import('./lib/bounce-once.mjs');
     const call = { command: `${type}: isolation ${String(isolation)}: ${String(prompt)}`, cwd, input, hook: 'agent-model-guard', tool: 'Agent' };
     const recorded = adviceOnce([PARALLEL_WRITER_ADVICE], { ...call, logged: { type, class: 'parallel writer without isolation' } }, env);

@@ -1,21 +1,26 @@
 // Which agent types write files, and the checks that read a session's launch record for a writer. The record itself (every agent's
 // launch, start and stop, and the cap of agents running at once) lives in lib/agent-launches.mjs; this file keeps the questions about
 // writers that commit-gate.mjs, read-only-hold.mjs, copy-branch-brief.mjs, gated-folder.mjs, agent-budget.mjs and the board ask.
-// Exports: agentFileWrites(type, env), isWritingAgent(type, env), isReadOnlyBrief(prompt), agentTypeOf(type), callCounterPath(session,
-// agentId), readOnlyLaunchOpen(session, agentId, type, env), openWritersOf(session, env, now), writersDirOf(env).
+// Exports: agentFileWrites(type, env), isWritingAgent(type, env), isReadOnlyBrief(prompt), laneWorktreeOf(prompt, cwd, env), agentTypeOf(type),
+// callCounterPath(session, agentId), readOnlyLaunchOpen(session, agentId, type, env), openWritersOf(session, env, now), writersDirOf(env).
 // Store: ~/.claude/state/agent-writers/<session>.json (a historic name: it held writer launches only; there is no migration), written
 // through lib/agent-launches.mjs. `open` (spec-p3 r9-resume, lib/open-writers.mjs) is the launch record the resume notice reads: written
 // before the agent starts, closed only at its SubagentStop, never dropped for idleness, so a writer cut off by an exit or a usage-limit
 // stop is still listed in the next session. readOnlyAgents keeps the ids of started read-only launches after their stop, because
 // commit-gate's read-only hold runs on the same SubagentStop as the stop record (hooks of one event run in parallel).
-// Flags (round 9, r9-writer-gate): `isolated` (launched with isolation "worktree") and `readOnly` (a read-only brief, isReadOnlyBrief).
+// Flags (round 9, r9-writer-gate): `isolated` (launched with isolation "worktree", or a brief whose `worktree:` line names a lane worktree
+// laneWorktreeOf accepts) and `readOnly` (a read-only brief, isReadOnlyBrief). The `worktree:` value is the writer's own text, so it is
+// trusted only after `git worktree list` of that folder lists its real path as a linked worktree that is not the lead's folder; git runs
+// hardened (lib/gated-folder.mjs runGit) within WORKTREE_DEADLINE_MS, and a git that fails, hangs or is missing means not isolated.
 // Invariants: never throws; the read functions answer false or [] for a store that is missing or unusable. callCounterPath and
 // agentTypeOf are called by lib/agent-launches.mjs, which imports this file (each file calls the other's functions only after loading).
 import { readSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
+import { isInside } from './agent-brief.mjs';
 import { checkedTempRoot } from './edit-log.mjs';
 import { readLaunchRecord } from './agent-launches.mjs';
+import { runGit } from './gated-folder.mjs';
 import { readPlainFileWith } from './plain-file.mjs';
 
 const SAFE_ID = /^[\w-]{1,128}$/;
@@ -27,6 +32,19 @@ const DEFAULT_TYPE = 'general-purpose'; // what an Agent call with no subagent_t
 const READ_ONLY_BRIEF_PREFIXES = ['read-only:', 'scratchpad-only:'];
 const WRITER_TYPES = new Set(['implementer', 'ui-implementer', 'general-purpose', 'claude']);
 const READ_ONLY_TYPES = new Set(['scout', 'runner', 'Explore', 'Plan', 'architect']);
+// A brief line that names the writer's own lane worktree, as `worktree: <absolute path>` (exact case, at the start of a trimmed line)
+const WORKTREE_PREFIX = 'worktree:';
+const MAX_SCAN_CHARS = 32 * 1024; // a brief is a few KB; text past this is pasted material, not instructions
+const MAX_WORKTREE_LINES = 3; // a brief names one lane worktree; the cap bounds the git calls of one launch
+const MAX_BRIEF_FILES = 3; // brief files a prompt names ("Read <path>.md and follow it"), read for a `worktree:` line
+const BRIEF_FILE_BYTES = 64 * 1024; // the head of a named brief file that is searched (a brief is a few KB)
+const MAX_PATH_CHARS = 4096; // PATH_MAX on Linux: a longer value is not looked up
+const WORKTREE_GIT_MS = 1000; // one `git worktree list` takes a few ms
+const WORKTREE_DEADLINE_MS = 1500; // all lookups of one launch: with the copy-branch gate's 2 s, well under the hook's 5 s timeout
+const HOME_PREFIX = /^~(?=[\\/])/; // `~/...`; `~user` is left as it is (and is then no absolute path)
+const NETWORK_PATH = /^[\\/]{2}/; // UNC or device path: on Windows a lookup reaches the network or a pipe, so it is never looked up
+const SURROUNDING_MARKS = '`\'"()';
+const TRAILING_PUNCTUATION = ',.;:';
 
 /** The folder of the launch stores (one `<session>.json` each). */
 export function writersDirOf(env) {
@@ -96,6 +114,83 @@ export function isWritingAgent(type, env) {
 export function isReadOnlyBrief(prompt) {
   if (typeof prompt !== 'string') return false;
   return prompt.split(/\r?\n/).some((line) => READ_ONLY_BRIEF_PREFIXES.some((prefix) => line.trim().startsWith(prefix)));
+}
+
+/** The word without quotes, backticks and brackets around it and without trailing sentence punctuation (a loop: linear in its length). */
+function unquoted(word) {
+  let start = 0;
+  let end = word.length;
+  while (start < end && SURROUNDING_MARKS.includes(word[start])) start += 1;
+  while (end > start && (SURROUNDING_MARKS + TRAILING_PUNCTUATION).includes(word[end - 1])) end -= 1;
+  return word.slice(start, end);
+}
+
+/** The values of a text's `worktree:` lines, unquoted, in order. */
+function worktreeValues(text) {
+  return text.slice(0, MAX_SCAN_CHARS).split(/\r?\n/).map((line) => line.trim()).filter((line) => line.startsWith(WORKTREE_PREFIX))
+    .map((line) => unquoted(line.slice(WORKTREE_PREFIX.length).trim()));
+}
+
+/** The absolute `.md` paths a prompt names (`~/` is the home folder), at most MAX_BRIEF_FILES; UNC and device paths are left out. */
+function namedBriefFiles(prompt, env) {
+  const home = env.HOME || env.USERPROFILE || homedir();
+  const paths = prompt.slice(0, MAX_SCAN_CHARS).split(/\s+/).map(unquoted)
+    .filter((word) => word.endsWith('.md') && word.length <= MAX_PATH_CHARS).map((word) => word.replace(HOME_PREFIX, home))
+    .filter((path) => isAbsolute(path) && !NETWORK_PATH.test(path));
+  return [...new Set(paths)].slice(0, MAX_BRIEF_FILES);
+}
+
+const realOrNull = (path) => {
+  try {
+    return realpathSync(path);
+  } catch {
+    return null; // a folder that does not exist is no worktree
+  }
+};
+
+/**
+ * The real path of `value` when git lists it as a linked worktree of its repository and it is none of the lead's folders (the folder
+ * or one inside it); null otherwise, for a relative, UNC or missing path, and when git fails or does not answer before `deadline`.
+ */
+function linkedWorktree(value, leadFolders, deadline) {
+  if (value.length > MAX_PATH_CHARS || NETWORK_PATH.test(value) || !isAbsolute(value)) return null;
+  const folder = realOrNull(value);
+  const remaining = Math.ceil(Math.min(deadline - performance.now(), WORKTREE_GIT_MS)); // whole ms: spawnSync rejects a fraction
+  // spawnSync reads a timeout of 0 as "no timeout", so git never starts with nothing left
+  if (folder === null || !(remaining > 0) || leadFolders.some((lead) => isInside(lead, folder))) return null;
+  const listed = runGit(folder, ['worktree', 'list', '--porcelain', '-z'], remaining);
+  if (listed.status !== 0) return null; // also a git killed at the timeout (no status) or one that never started
+  const linked = listed.stdout.split('\0').filter((field) => field.startsWith('worktree ')).slice(1); // the first is the main worktree
+  return linked.some((field) => realOrNull(field.slice('worktree '.length)) === folder) ? folder : null;
+}
+
+/**
+ * The lane worktree a writer brief names: the first `worktree: <absolute path>` line, in the prompt or in a brief file the prompt names
+ * (a regular file, its first BRIEF_FILE_BYTES; at most MAX_BRIEF_FILES), that linkedWorktree accepts. Why: a lead that made a writer's
+ * worktree itself (`git worktree add -b <branch> <path> <base>`) gives the writer its own folder as surely as `isolation: "worktree"`.
+ * @param {unknown} prompt tool_input.prompt
+ * @param {unknown} cwd the hook input cwd (the lead's folder; else this process's folder)
+ * @param {Record<string, string | undefined>} env HOME / USERPROFILE for `~/`, CLAUDE_PROJECT_DIR (also the lead's folder)
+ * @returns {string | null} the worktree's real path; null when no line is accepted, at most MAX_WORKTREE_LINES are checked, within
+ *   WORKTREE_DEADLINE_MS, and on any failure
+ */
+export function laneWorktreeOf(prompt, cwd, env) {
+  try {
+    if (typeof prompt !== 'string') return null;
+    const leadFolder = realOrNull(typeof cwd === 'string' ? cwd : process.cwd());
+    if (leadFolder === null) return null; // without the lead's folder it cannot be told apart
+    const leadFolders = [leadFolder, ...(env.CLAUDE_PROJECT_DIR ? [realOrNull(env.CLAUDE_PROJECT_DIR)] : [])].filter((path) => path !== null);
+    const briefs = namedBriefFiles(prompt, env).map((path) => readHead(path, BRIEF_FILE_BYTES) ?? '');
+    const values = [prompt, ...briefs].flatMap(worktreeValues).slice(0, MAX_WORKTREE_LINES);
+    const deadline = performance.now() + WORKTREE_DEADLINE_MS;
+    for (const value of values) {
+      const folder = linkedWorktree(value, leadFolders, deadline);
+      if (folder !== null) return folder;
+    }
+    return null;
+  } catch {
+    return null; // fail closed: an unchecked line is no isolation
+  }
 }
 
 /**
