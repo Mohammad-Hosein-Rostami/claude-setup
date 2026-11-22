@@ -1,27 +1,18 @@
-// The git rows of the status line (spec R18 "Rows" and "Git facts", owner decisions RC15 and RC18) and of `/where` (spec-tui row 5,
-// research-tui 4 and 5). The status line at 100 columns (95 usable), then `/where` (plain text):
+// The git rows of the status line (spec R18 "Rows" and "Git facts", owner decisions RC15 and RC18; at 100 columns) and of `/where`:
 //   git     claude-setup  main  ↑2 to push · 1 staged · 3 changed · 1 new · stash 1 · check ok      (the session's repository)
 //   lanes   r18-git ↑2 ~3 implementer · r18-est ↑4 ready to land · r17-col ↓5 needs rebase · +2 more  (its other active branches)
 //   git     ice-web-app  feat/auth-i18n  ↑1 to push · ↓2 to pull · rebase 3/7 · changes ?          (outside one, or a 2nd one)
-//   ⎇ main ✓ · last 12 min ago │ r9-a ↑2 ●3 impl-a · r9-b ↑1 ●3 impl-b · r9-c ✓ old 3 d ⚠    (`/where`, when rows are few)
-//   ⎇ r9-a  lane/r9-a ↑2↓0 ●3 · last commit 12 min ago · impl-a, tests-a                  (`/where`, one row each)
-// Exports: gitLineRows(board, slots, look, folder) -> string[] (the status line's 1 or 2 git rows); gitRows(repo, slots, ctx, look)
-// -> string[]; repoRows(board, slots, ctx, look) -> string[] (every repository of the board for `/where`: the primary one first, then
-// one compact row per other repository, `+K more repos`, and `git: no repository` when the work is in none); gitCounts(repo, look).
-// Source: board.repo and board.repos (git-state.mjs, repos.mjs: the session folder's repository first, then the used ones).
-// Status line: in the session's repository its current branch, then a `lanes` row of its other active branches (git-state.mjs rules
-// a to e, at most MAX_LANES_SHOWN, then `+K more`); outside one (no branch is `current`) or with a second repository, one row per
-// repository (at most GIT_LINE_ROWS, then `+K more repos in /where`) with its lanes after ` │ `. A branch shows what to push or
-// pull, conflicts (red), an operation (`rebase 3/7`, yellow), staged, changed and new files (`changes ?` where git-state.mjs had
-// refs only), the stash, the last done-check verdict (`check failed: tests`, red) and its last commit's age. A lane reads `ready to
-// land` (ahead, level, clean, no live agent) or `needs rebase` (behind the base, yellow). Too wide: last commit drops first, then
-// check ok, then stash; never the branch, conflicts, an operation, to pull, needs rebase or check failed. Below LABEL_FROM_COLUMNS
-// the short forms (`↑2 ↓1 +1 ~3 ?1`) and no repository name when only one shows. An old board without `active` draws its worktrees.
-// `/where`: a worktree with agents comes first, then by commits ahead; a landed worktree older than OLD_DAYS reads `old N d ⚠`
-// (git-tidy's prune candidate); a status older than STALE_S shows its age; the main worktree's part has its upstream (`origin
-// ↑2↓0`), changed files, last commit age and the commits landed on the base today (repo-stats.mjs). A row starts with `⎇`.
-// Colour (cells.mjs, RC14): branch names `branch`, repository names bold, labels, ages and separators dim, the rest default but
-// the reserved states. Invariants: pure (no I/O); every name goes through cleanText; every row fits look.columns.
+// Exports: gitLineRows(board, slots, look, folder) (the status line's 1 or 2 git rows); gitRows(repo, slots, ctx, look); repoRows(board,
+// slots, ctx, look) (`/where`: `⎇ main ✓ · last 12 min ago │ r9-a ↑2 ●3 impl-a`, every repository, plain text); gitCounts(repo, look).
+// Status line, from board.repo and board.repos (repos.mjs: the session folder's repository first): in the session's repository its
+// current branch, then a `lanes` row of its other active branches (git-state.mjs rules a to e, at most MAX_LANES_SHOWN, then `+K
+// more`); outside one or with a second repository, one row each (at most GIT_LINE_ROWS, then `+K more repos in /where`), lanes after
+// ` │ `. A branch: to push, to pull (yellow), conflicts (red), an operation (yellow), files (`changes ?` for refs only), stash, last
+// commit age, done-check verdict (`check failed` red); a lane `ready to land` or `needs rebase` (yellow). Too wide: last commit drops
+// first, then check ok, then stash, never the rest. Below LABEL_FROM_COLUMNS short forms (`↑2 +1 ~3 ?1`), no repository name when
+// only one shows; branch names in the `branch` colour, repository names bold. An old board without `active` draws its worktrees.
+// `/where`: agents' worktrees first, a landed one older than OLD_DAYS `old N d ⚠`, a status older than STALE_S its age.
+// Invariants: pure (no I/O); every name goes through cleanText; every row fits look.columns.
 import { cleanText, cutWords, durationText, fitParts, partsWidth, STATE } from './cells.mjs';
 import { labelled, LABEL_FROM_COLUMNS, WIDE_COLUMNS } from './work-row.mjs';
 
@@ -174,7 +165,6 @@ export function gitCounts(repo, look) {
 const MAX_LANES_SHOWN = 4; // spec R18: at most 4 branches per row, then `+K more`
 const GIT_LINE_ROWS = 2;
 const LANE_NAME_CHARS = 24;
-const LINE_AGENT_CHARS = 16;
 const isObject = (value) => value !== null && typeof value === 'object';
 const arrows = (look) => (look.ascii ? { up: '^', down: 'v', clean: 'ok' } : { up: '↑', down: '↓', clean: '✓' });
 const above = (value) => isCount(value) && value > 0;
@@ -182,8 +172,8 @@ const opText = (branch, look) => cleanText(`${branch.op}${branch.opStep ? ` ${br
 
 /** A branch as the line draws it, from a worktree (an old board without `active`, or a main checkout whose branch is not active). */
 const branchOfWorktree = (wt) => ({ name: wt.branch ?? wt.name, upAhead: wt.upAhead ?? null, upBehind: wt.upBehind ?? null,
-  ahead: wt.main ? 0 : wt.ahead ?? null, behind: wt.main ? 0 : wt.behind ?? null, ageMin: wt.ageMin ?? null, agents: wt.agents ?? [],
-  staged: wt.staged ?? null, changed: wt.changed ?? null, untracked: wt.untracked ?? null, conflicts: wt.conflicts ?? null, op: wt.op ?? null, opStep: wt.opStep ?? null });
+  ahead: wt.main ? 0 : wt.ahead ?? null, behind: wt.main ? 0 : wt.behind ?? null, ageMin: wt.ageMin ?? null, agents: wt.agents ?? [], staged: wt.staged ?? null,
+  changed: wt.changed ?? null, untracked: wt.untracked ?? null, conflicts: wt.conflicts ?? null, op: wt.op ?? null, opStep: wt.opStep ?? null });
 
 /** The branch a repository's row leads with (the current one, else the main checkout's), its other active branches, how many more. */
 function branchesOf(repo) {
@@ -248,7 +238,7 @@ function lanePart(lane, base, look, { inline, compact }) {
   if (files.length > 0) add(files.join(' '));
   const agents = Array.isArray(lane.agents) ? lane.agents.filter((name) => typeof name === 'string') : [];
   // an agent's name is `<type>:<model>` or its description: the part before `:` says who works there
-  if (!inline && agents.length > 0) add(agents.map((name) => cutWords(cleanText(name.split(':')[0], look), LINE_AGENT_CHARS, look)).join(','));
+  if (!inline && agents.length > 0) add(agents.map((name) => cutWords(cleanText(name.split(':')[0], look), AGENT_NAME_CHARS, look)).join(','));
   const clean = [lane.staged, lane.changed, lane.conflicts].every((count) => count === 0) && !(lane.untracked > 0) && !lane.op;
   if (!isBase && above(lane.ahead) && lane.behind === 0 && clean && agents.length === 0) add(compact ? 'ready' : 'ready to land');
   return { text: spans.map((span) => span.text).join(''), spans };
@@ -301,8 +291,7 @@ export function gitLineRows(board, slots, look, folder = null) {
   if (first.inRepo && repos.length === 1) {
     const hasLanes = first.lanes.length > 0 || first.more > 0;
     const row = repoLineRow(repos[0], look, { showName: !narrow, inline: false, lanesLeft: hasLanes && slots < 2 });
-    if (!hasLanes || slots < 2) return [row];
-    return [row, fitParts(withLanes([], first, repos[0].base, look, { inline: false, compact: false }), look)];
+    return hasLanes && slots >= 2 ? [row, fitParts(withLanes([], first, repos[0].base, look, { inline: false, compact: false }), look)] : [row];
   }
   const shown = repos.slice(0, Math.min(slots, GIT_LINE_ROWS));
   return shown.map((repo, index) => repoLineRow(repo, look, {
