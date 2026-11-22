@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Purpose: this machine's own values in the git-ignored settings/local.json, for the sync workflow (home/workflows/sync-machines.js):
+// Purpose: this machine's own values in the git-ignored settings/local.json, for the sync script (scripts/sync-machines.mjs):
 //   the sync targets, the phase's CLI pin, and the values that are not machine-specific, which the sync copies to each target.
 // Usage: node scripts/install/local-settings.mjs targets             (prints {machine, cliVersion, targets, defaulted} as JSON)
 //        node scripts/install/local-settings.mjs shared <out.json>   (writes the keys `claudeSetup.shared` names)

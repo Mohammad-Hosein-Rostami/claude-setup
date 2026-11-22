@@ -35,10 +35,21 @@ with `{{CLAUDE_HOME}}` replaced by the real path. Objects merge deeply; `hooks` 
 `local.json` can add machine-only hooks without restating the shared ones. `settings/local.json` is gitignored and per
 machine; copy `settings/local.json.example` to start. Its `claudeSetup` key is for the installer and the sync, never part of
 `settings.json`: `machine` (this machine's name), `cliVersion` (the phase's pinned Claude Code; set with `DISABLE_UPDATES=1` in
-`env`), `syncTargets` (`[{name, ssh}]`: the machines `/workflows sync-machines` brings along; none listed means `pc` over `ssh pc`) and `shared`
+`env`), `syncTargets` (`[{name, ssh}]`: the machines `scripts/sync-machines.mjs` brings along; none listed means `pc` over `ssh pc`) and `shared`
 (the top-level keys of `local.json` the sync copies to every target; `env` and `claudeSetup` are never copied). Edits made through `/config` land only in the generated file: copy what you
 want shared into `settings/*.json` and re-run the installer. `doctor.sh` reports drift.
 `env.BASH_DEFAULT_TIMEOUT_MS` is `"300000"` (milliseconds, 5 minutes; the CLI default is 120000): a Bash call that runs longer is moved to the background, and the longest test suite takes about 4 minutes. A call can ask for more with its own `timeout` (at most `BASH_MAX_TIMEOUT_MS`, 600000 by default).
+
+## Sync the machines
+Run on the MacBook, in the repo folder, once after the last land (the PC is the default target; others come from `claudeSetup.syncTargets`):
+`node scripts/sync-machines.mjs --repo "$PWD"`. Add `--tag <tag>` to move the targets to a phase tag, `--targets <name,...>` to sync only
+some, `--checks test,review` to also require a suite PASS and the audit-log gate, `--json` for one JSON row per machine.
+- First it checks the base branch is checked out, no tracked file changed and `git-tidy check` is clean (exit 3 with `verify: <check> failed: <why>`).
+- Then every machine must run one Claude Code version and channel, at or above the floor in `scripts/doctor.sh`, on the `cliVersion` pin of
+  `settings/local.json`. A machine that does not is skipped and its row says why (a target still on an old checkout is checked again after its install).
+- Each target gets a git bundle (`scp`), a fast-forward pull, the shared local values and `scripts/install.sh`; then `scripts/doctor.sh` runs on each machine.
+  Nothing is pushed and no project repo on a target is touched. Every ssh line is printed before it runs.
+- Exit 0: every machine synced and doctor passed; 1: a machine failed (rows printed); 2: bad arguments or a leftover `/tmp/<row>-sync-*.bundle`; 3: verify failed.
 
 ## FIGMA_TOKEN (for `figma-pull`)
 Create a personal access token in Figma (Settings > Security) with read access to files. Keep it out of the repo,
