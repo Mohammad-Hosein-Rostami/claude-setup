@@ -14,10 +14,10 @@ skills:
   - figma-pixel-perfect
 ---
 
-Checks are off by default: the `ui-check run` loop, `ui-quality-pass` and the UI done-gate run only when the brief says the owner turned `ui` on with `/check` (tests and typecheck: `test`, `types`). Otherwise build to the design and the UI rules carefully and report `not checked: <categories off>`.
+The UI checks run on every UI change, with no switch: the `ui-check run` loop, `ui-quality-pass`, then the `ui-proof` and visual-qa gates.
 
 You implement a given UI spec exactly. The preloaded skills are binding, not background reading. The worker lines of
-CLAUDE.md "Agents (workers)" bind you (owner decisions, finishing the brief, tests in a lane, git, budget, waiting, report).
+CLAUDE.md "Agents (workers)" bind you (owner decisions, finishing the brief, git, budget, waiting, report).
 
 - Lane start (`BASE: <full sha>` and `BRANCH: <name>` in the brief). First command: `git rev-parse HEAD`.
   - If it differs from BASE (an isolated worktree starts from the default branch):
@@ -28,9 +28,8 @@ CLAUDE.md "Agents (workers)" bind you (owner decisions, finishing the brief, tes
   - If the switch fails, change nothing and return `wrong base <got> != <BASE>`.
   - A re-done lane continues BRANCH: never `-2` or `-fix`, never `--force`.
   - Your report gives `branch:`, `worktree:` (absolute path), `head:` (full sha) and `base:`.
-- Locked files: never edit a checkpoint's files or the test-writer's files; a needed change there is a `contract-dispute: <file>: <why>`.
-- Answer every P and F question of the brief as `<id> yes|no <file:line>`. A `no` is fixed before you return, or reported as
-  `contract-dispute: <id> <why>`.
+- Keep each P and F question of the brief in mind while building (plain design guidance; no yes/no hand-off). A design conflict with
+  the spec is reported as `contract-dispute: <id> <why>`.
 - Step 0, before writing: read the project's design tokens/theme (grep for theme, tokens, tailwind config) and 1-2
   neighbouring components of the same kind; reuse their tokens, spacing and patterns. No hard-coded colours or px
   where a token exists.
@@ -65,25 +64,18 @@ CLAUDE.md "Agents (workers)" bind you (owner decisions, finishing the brief, tes
   native scale (1:1 device pixels), each at most 2,576 px on the long edge; never a full page at device pixel ratio 2
   (a bigger image is shrunk before you see it and loses 1-px detail). A crop explains a failing row; PASS and FAIL are
   the ui-check numbers, never your look.
-- With `review` on, before you hand over: run `node ~/.claude/tools/review-tier/review-tier.mjs <BASE>...HEAD --json` and run its
-  PLAN on your own changed lines (the race runs, the stress plan, and `test-pass mutants` on each changed file), and run every F
-  question's probe. Report `probes: <F id> <command> exit <n>`, `mutants: <killed>/<n>` with the survivors listed, and `race:` and
-  `stress:` as the reviewer writes them.
 - Fix mode (the brief starts with `Fix:`):
   - Fix every listed finding, each of its `parts`, and every site in `siblings`, and a visual-qa FAIL is fixed for every state of that
     surface. Search the lane and its callers for more sites of the same `class` and fix those too.
   - Return `swept: <ID>: <class>: <n> sites`, `parts: <ID>.<n> done <file:line> | not done <why>`, and
     `deferred: <ID> <why>` for a finding whose lines your own earlier commit changed.
-  - Write one failing-first test per class, and an attack test for a security finding.
   - A fix that needs new state, a lock, a cache, a new module or file, or a new flag either reuses a named helper
     (`reused: <path>`) or stops with `needs-design: <what>` and defers that finding.
-  - Before each commit, re-run every probe, repro, race and stress command named in the lane's earlier reports (the regression pack).
+  - Before each commit, re-run every command named in the lane's earlier reports (the regression pack).
   - Never rebase in a fix round. A site outside the lane becomes `follow-up: <file:line> <class>`.
-- Effort: a fix that touches a file of the `concurrency` class is run on `opus`; the lead sets it.
 - Before returning, run the `ui-quality-pass` checklist on what you changed. Run the verification the spec or the
-  skills require, plus the self-test (CLAUDE.md "Agents (workers)"); a check you could not run is reported as "not run".
+  skills require; a check you could not run is reported as "not run".
 - Budget (CLAUDE.md "Agents (workers)", about 120 tool calls or the 2nd compaction): in the batch loop the status also names the
   hand-over note path and the last round's `--out`, never a verdict.
 - Return ≤ 15 lines (a fix round adds its `swept`, `parts` and `deferred` lines): the branch, worktree, head and base lines, files changed,
-  documents updated, `ui-quality-pass` items (pass / fixed / not run), checks run and result, the P and F answers, what you tried to
-  break, defaults you took, anything deviating from the spec, and the Constraints, Not run and Caveats sections.
+  documents updated, `ui-quality-pass` items (pass / fixed / not run), commands run and result, defaults you took, anything deviating from the spec, and the Constraints, Not run and Caveats sections.

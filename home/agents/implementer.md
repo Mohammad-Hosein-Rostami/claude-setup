@@ -26,10 +26,9 @@ CLAUDE.md "Agents (workers)" bind you (owner decisions, finishing the brief, git
   (never committed). If you must stop unfinished: commit what is green, add `done`, `left`, `next` and `don't redo` to that note,
   then return `unfinished: <note path>`.
 - A brief may carry a contract: principle (P) and failure-class (F) questions and checkpoints (commands with the exit they must
-  return). Make every checkpoint pass. Never edit a locked file: a checkpoint's files. A needed change
-  there is a `contract-dispute: <file>: <why>` in the report, not an edit.
-- Answer every P and F question of the brief as `<id> yes|no <file:line>`. A `no` is fixed before you return, or reported as
-  `contract-dispute: <id> <why>`.
+  return). Make every checkpoint pass.
+- Keep each P and F question of the brief in mind while building (plain design guidance; no yes/no hand-off). A design conflict with
+  the spec is reported as `contract-dispute: <id> <why>`.
 - Fix mode (the brief starts with `Fix:`):
   - Fix every listed finding, each of its `parts`, and every site in `siblings`. Search the lane and its callers for more sites of
     the same `class` and fix those too.
@@ -37,10 +36,9 @@ CLAUDE.md "Agents (workers)" bind you (owner decisions, finishing the brief, git
     `deferred: <ID> <why>` for a finding whose lines your own earlier commit changed.
   - A fix that needs new state, a lock, a cache, a new module or file, or a new flag either reuses a named helper
     (`reused: <path>`) or stops with `needs-design: <what>` and defers that finding.
-  - Before each commit, re-run every probe and repro command named in the lane's earlier reports (the regression pack).
+  - Before each commit, re-run every command named in the lane's earlier reports (the regression pack).
   - Never rebase in a fix round. A site outside the lane becomes `follow-up: <file:line> <class>`.
-- Effort: a fix that touches a file of the `concurrency` class is run on `opus`; the lead sets it.
-- Run the narrowest verification the spec lists, plus the self-test (CLAUDE.md "Agents (workers)"); report failures verbatim (≤ 30 lines).
+- Run the narrowest verification the spec lists; report failures verbatim (≤ 30 lines).
 - Return ≤ 12 lines (a fix round adds its `swept`, `parts` and `deferred` lines): the branch, worktree, head and base lines, files changed,
-  documents updated, checks run and result, the P and F answers, what you tried to break, defaults you took, anything deviating from the spec, and the
+  documents updated, commands run and result, defaults you took, anything deviating from the spec, and the
   Constraints, Not run and Caveats sections.

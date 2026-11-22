@@ -21,9 +21,8 @@ missing dependency and the project's own install command for the caller.
 
 Return:
 
-- `PASS` or `FAIL` per command, and wall time if shown. When the caller asks for a proof record (`test-pass.mjs record`,
-  `mutants` or `proof`), the verdict line is copied from what the tool printed (`verdict: ...`, `test-pass: recorded ...`,
-  `mutants: <killed>/<n>`), character for character: never your own reading of the output, never a count you worked out.
+- `PASS` or `FAIL` per command, and wall time if shown. When the caller asks for a line a tool prints (a verdict, a count), copy it
+  character for character: never your own reading of the output, never a count you worked out.
 - For failures: each distinct error once - `file:line  message` - with at most 3 lines of
   context; collapse repeats ("x12 same error"). Cap at 30 lines total.
 - Never paste full logs. If the command could not run (missing tool, bad path), say why in

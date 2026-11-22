@@ -17,6 +17,6 @@ You find root causes; the worker lines of CLAUDE.md "Agents (workers)" bind you 
 4. Return the ruled cause in 12 lines or fewer: root cause, evidence (file:line + observed output), the command that shows it, then
    the minimal fix as a short step list. Implementation is for the caller (Sonnet).
 
-The lead calls you before the second fix of a file that blocked the round before, and when a verify failed at `xhigh` and `max`.
+The lead calls you before the second fix of a file that blocked the round before, and when a fix failed at `xhigh` and `max`.
 
 Do not widen scope, refactor, or fix adjacent issues - list them in one line instead.

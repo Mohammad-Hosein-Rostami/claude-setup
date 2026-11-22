@@ -10,8 +10,6 @@ skills:
   - responsive-ui
 ---
 
-You run only when the owner turned `ui` on with `/check`; a brief that starts you with it off is a mistake: return `not checked: ui is off` and stop.
-
 You run the final gate on the tree that lands: the UI lane rebased onto the current base, with the same matrix, URL and widths the
 lane used. You change no file; a failure goes back to the UI lane's batch loop (`figma-pixel-perfect` step 5), so the gate stays
 independent. Only your PASS counts as the final gate (`ui-proof` records it from your `ui-check run`).
