@@ -3,7 +3,7 @@
 // Exports: LAND_LANE, makeWorld (run, runAsync, runTestPass), laneAt, landArgs, readRow.
 // Invariants: no GIT_* or session id reaches a child (CLEAN_ENV); HOME is a private folder; the suite command of the repo is the `suite` option.
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
@@ -33,7 +33,9 @@ export function makeWorld({ suite = PASSING_SUITE, freeGb = 80 } = {}) {
   const dir = makeRepo();
   commit(dir, 'package.json', `${JSON.stringify({ scripts: { test: suite } })}\n`);
   const home = makeTempDir('land-lane-home-');
-  const statusFile = join(makeTempDir('land-lane-status-'), 'STATUS.md');
+  const statusFolder = join(makeTempDir('land-lane-status-'), 'my status'); // a space in a path must reach status.mjs whole
+  mkdirSync(statusFolder);
+  const statusFile = join(statusFolder, 'STATUS.md');
   writeFileSync(statusFile, STATUS_TEXT);
   const auditLog = join(home, 'review-audit.jsonl');
   const { NODE_TEST_CONTEXT, ...cleanEnv } = CLEAN_ENV; // a suite that runs `node --test` must not think it is a child of this test run

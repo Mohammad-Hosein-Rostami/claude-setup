@@ -175,17 +175,19 @@ test('suite reuse: a PASS already recorded for the tree is not run again', () =>
 });
 
 test('worktree: the suite runs in --worktree when its HEAD is the rebased tip and it is clean, else in a temporary worktree', () => {
-  for (const dirty of [false, true]) {
+  for (const kind of ['clean', 'dirty', 'other commit']) {
+    const dirty = kind === 'dirty';
     const marker = join(makeTempDir('land-lane-marker-'), 'cwd.txt');
     const world = makeWorld({ suite: 'node -e "require(\'fs\').writeFileSync(process.env.LL_MARKER, process.cwd())"' });
     const { tip } = laneAt(world, 'lane/x');
-    const worktree = addWorktree(world.dir, 'wt-x', 'lane/x', { create: false });
-    if (dirty) writeFileSync(join(worktree, 'scratch.txt'), 'untracked');
+    const laneWorktree = addWorktree(world.dir, 'wt-x', 'lane/x', { create: false });
+    if (dirty) writeFileSync(join(laneWorktree, 'scratch.txt'), 'untracked');
+    const worktree = kind === 'other commit' ? addWorktree(world.dir, 'wt-other', 'lane/other') : laneWorktree; // a clean folder whose HEAD is not the rebased tip
     const result = landed(world, 'lane/x', tip, ['--checks', 'test', '--worktree', worktree], { LL_MARKER: marker });
-    assert.equal(result.status, dirty ? 1 : 0, result.stdout + result.stderr); // a worktree with an untracked file is kept: check findings stay
+    assert.equal(result.status, kind === 'clean' ? 0 : 1, result.stdout + result.stderr); // a kept worktree (untracked file, or the other lane's) stays a check finding
     const ranIn = readFileSync(marker, 'utf8'); // the folders are gone after the landing, so the text is compared, not resolved
-    if (dirty) assert.notEqual(ranIn, worktree, 'a dirty worktree is not used');
-    else assert.equal(ranIn, worktree, 'a clean worktree at the rebased tip is used');
+    if (kind === 'clean') assert.equal(ranIn, worktree, 'a clean worktree at the rebased tip is used');
+    else assert.notEqual(ranIn, worktree, `${kind}: the given worktree is not used`);
   }
 });
 
