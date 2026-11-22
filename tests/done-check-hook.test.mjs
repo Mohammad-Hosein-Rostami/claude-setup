@@ -153,6 +153,19 @@ test('R16: with no effort in the input the transcript effort is used; nothing us
   assert.deepEqual(routingOfRows(repo), [['claude-sonnet-5-5', 'xhigh'], [null, null]]);
 });
 
+test('R16: a model that is not a model id (a token-shaped value, another vendor\'s model) is stored as `other`, never as recorded', (t) => {
+  const repo = newRepo(t);
+  const tokenShaped = `ghp_${'ab12'.repeat(9)}`; // a token shape (built from a repeat, so no scanner takes it for a real token)
+  for (const [id, model, file] of [['agent-1', tokenShaped, 'src/lib.ts'], ['agent-2', 'gpt-4o', 'src/other.ts']]) {
+    const agent = startAgent(repo, id);
+    addReply(agent.transcript, model, { sidechain: true, effort: 'high' });
+    repo.write(file, 'export const n: number = 2;\n');
+    stopHook(repo, subagentStop(agent));
+  }
+  assert.deepEqual(routingOfRows(repo), [['other', 'high'], ['other', 'high']]);
+  assert.equal(JSON.stringify(ledgerRows(repo)).includes(tokenShaped), false);
+});
+
 test('R16: a lead stop reads the model from the main-thread replies of transcript_path, not from subagent lines', (t) => {
   const repo = newRepo(t, { plain: true });
   repo.write('src/lib.ts', 'export const n: number = 2;\n');

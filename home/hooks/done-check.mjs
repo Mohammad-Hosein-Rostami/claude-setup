@@ -29,7 +29,8 @@
 //   SubagentStop input carries `effort.level` (2.1.329 hook input schema: "Present for hooks that fire within a tool-use context (...
 //   Stop, SubagentStop ...) on a model that supports the effort parameter") but no model field, so the model is the `message.model`
 //   of the stopping agent's newest reply in its transcript (`agent_transcript_path` for a subagent, `transcript_path` for the lead),
-//   which also gives the effort when the input lacks it. A value that is not one short token (contract.mjs patterns) is stored as null.
+//   which also gives the effort when the input lacks it. An effort that is not one short token (contract.mjs EFFORT_PATTERN) is stored
+//   as null; a model that is not a model id (contract.mjs MODEL_PATTERN) is stored as `other` by the ledger (ledger.mjs).
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -117,14 +118,15 @@ const tokenOr = (value, pattern) => (typeof value === 'string' && pattern.test(v
 /**
  * The model and effort of the agent that stops, for its ledger rows.
  * @param {object} input the validated Stop or SubagentStop JSON
- * @param {{ MODEL_PATTERN: RegExp, EFFORT_PATTERN: RegExp }} constants contract.mjs
- * @returns {Promise<{ model: string|null, effort: string|null }>} null where Claude Code recorded nothing usable
+ * @param {{ EFFORT_PATTERN: RegExp }} constants contract.mjs
+ * @returns {Promise<{ model: string|null, effort: string|null }>} null where Claude Code recorded nothing usable; the model as recorded,
+ *   which the ledger stores only when it is a model id (anything else becomes `other` there)
  */
 async function routingOf(input, constants) {
   const subagent = agentOf(input) !== LEAD;
   const recorded = await lastReplyRouting(subagent ? input.agent_transcript_path : input.transcript_path, { sidechain: subagent });
   const effort = input.effort?.level ?? recorded.effort;
-  return { model: tokenOr(recorded.model, constants.MODEL_PATTERN), effort: tokenOr(effort, constants.EFFORT_PATTERN) };
+  return { model: recorded.model ?? null, effort: tokenOr(effort, constants.EFFORT_PATTERN) };
 }
 
 /** Checks every changed worktree in turn, each with what is left of the one deadline; returns the verdicts with their worktree. */

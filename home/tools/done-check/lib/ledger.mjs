@@ -5,8 +5,9 @@
 //   ledgerUsage({ env }) -> { bytes, maxBytes, full }, ledgerFile(env) -> path, MAX_ROW_BYTES, MAX_NOTE_CHARS, UNKNOWN.
 // Invariants:
 // - The ledger holds kinds, counts, ms, a hashed repo id and ids: never a file name, a path, code or a secret. The writer copies only the
-//   fields of the design's two row shapes, so a field a caller adds by mistake is not stored. A run row's `model` and `effort` are one
-//   short token each (MODEL_PATTERN, EFFORT_PATTERN) or null; rows written before they existed lack them and read as UNKNOWN.
+//   fields of the design's two row shapes, so a field a caller adds by mistake is not stored. A run row's `model` is a model id of
+//   MODEL_PATTERN, OTHER_MODEL for any other text (so a secret given as the model is never stored) or null; its `effort` is one short
+//   token (EFFORT_PATTERN) or null; rows written before they existed lack them and read as UNKNOWN.
 // - One row is one write (O_APPEND) of at most MAX_ROW_BYTES, so two sessions appending at once never interleave a line.
 // - The writer and the reader share LEDGER_MAX_BYTES (contract.mjs): at the cap the writer refuses (returns false, the file is not
 //   touched) and `ledgerUsage` says so; a file over the cap is read as empty rather than parsed whole. Both go through lib/plain-file.mjs,
@@ -19,7 +20,7 @@ import { closeSync, constants, fstatSync, mkdirSync, openSync, readSync } from '
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { appendPlainFile, NOT_PLAIN_FILE, readPlainFile } from '../../../hooks/lib/plain-file.mjs';
-import { CHECK_KINDS, EFFORT_PATTERN, LEDGER_MAX_BYTES, MODEL_PATTERN } from './contract.mjs';
+import { CHECK_KINDS, EFFORT_PATTERN, LEDGER_MAX_BYTES, MODEL_PATTERN, OTHER_MODEL } from './contract.mjs';
 
 /** Most bytes one row may take, line feed included: a row is written with one call, which the OS never splits between two writers. */
 export const MAX_ROW_BYTES = 16 * 1024;
@@ -45,12 +46,20 @@ const isText = (value) => typeof value === 'string';
 const isCount = (value) => Number.isFinite(value);
 const fail = (what) => { throw new TypeError(`ledger: ${what}`); };
 
-/** The `model` or `effort` of a run row to store: absent stays absent, null stays null, else one token of `pattern`. */
-function routingField(row, name, pattern) {
-  const value = row[name];
+/** The `effort` of a run row to store: absent stays absent, null stays null, else one token of EFFORT_PATTERN. */
+function effortField(row) {
+  const value = row.effort;
   if (value === undefined) return {};
-  if (value !== null && !(isText(value) && pattern.test(value))) fail(`${name} must be null or one short token`);
-  return { [name]: value };
+  if (value !== null && !(isText(value) && EFFORT_PATTERN.test(value))) fail('effort must be null or one short token');
+  return { effort: value };
+}
+
+/** The `model` of a run row to store: absent stays absent, null stays null, a model id of MODEL_PATTERN as it is, other text OTHER_MODEL. */
+function modelField(row) {
+  const value = row.model;
+  if (value === undefined) return {};
+  if (value !== null && !isText(value)) fail('model must be null or text');
+  return { model: isText(value) && !MODEL_PATTERN.test(value) ? OTHER_MODEL : value };
 }
 
 /** Copies the design's run row field by field; throws a TypeError for a missing or mistyped field. */
@@ -65,7 +74,7 @@ function cleanRunRow(row) {
     checks[kind] = { result: check.result, new: check.new, old: check.old, ms: check.ms, ...(isCount(check.flaky) ? { flaky: check.flaky } : {}), ...(isText(check.why) ? { why: check.why } : {}) };
   }
   const { v, id, at, where, session, agent, repo, base, key, files, verdict, risk, ms } = row;
-  const routing = { ...routingField(row, 'model', MODEL_PATTERN), ...routingField(row, 'effort', EFFORT_PATTERN) };
+  const routing = { ...modelField(row), ...effortField(row) };
   return { v, id, at, where, session, agent, repo, base, key, files, checks, verdict, risk: [...risk], ms, ...routing };
 }
 
@@ -273,7 +282,7 @@ const routingOf = (value, pattern) => (isText(value) && pattern.test(value) ? va
 export function statsByModel(runs) {
   const groups = new Map();
   for (const row of runs) {
-    const model = routingOf(row.model, MODEL_PATTERN);
+    const model = row.model === OTHER_MODEL ? OTHER_MODEL : routingOf(row.model, MODEL_PATTERN);
     const effort = routingOf(row.effort, EFFORT_PATTERN);
     const id = `${model}\u0000${effort}`;
     if (!groups.has(id)) groups.set(id, { model, effort, runs: 0, blocks: 0, leftOpen: 0, times: [] });

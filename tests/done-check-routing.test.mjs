@@ -21,6 +21,7 @@ const KILL_AFTER_MS = 10000; // only so a read that waits on a FIFO ends the tes
 const noFifo = process.platform === 'win32' ? 'Windows has no FIFO and no O_NOFOLLOW' : false;
 const { appendRun, readLedger, statsByModel, UNKNOWN } = await import('../home/tools/done-check/lib/ledger.mjs');
 const { lastReplyRouting } = await import('../home/hooks/lib/transcript.mjs');
+const { OTHER_MODEL } = await import('../home/tools/done-check/lib/contract.mjs');
 const LEDGER_FILE = join(PINNED_HOME, '.claude', 'state', 'done-check', 'ledger.jsonl');
 const OPUS = 'claude-opus-5-5';
 const SONNET = 'claude-sonnet-5-5';
@@ -45,12 +46,24 @@ test('a run row with a model and an effort is stored and read back with them; nu
   assert.deepEqual(readLedger({}).runs, [known, unknown]);
 });
 
-test('a model or effort that is not one short token is a caller bug (TypeError) and nothing is written', (t) => {
+test('a model that is not text or an effort that is not one short token is a caller bug (TypeError) and nothing is written', (t) => {
   resetLedger(t);
-  assert.throws(() => appendRun(runRow({ model: 'fix the login page please' })), TypeError);
   assert.throws(() => appendRun(runRow({ model: 7 })), TypeError);
   assert.throws(() => appendRun(runRow({ effort: 'HIGH effort' })), TypeError);
   assert.deepEqual(readLedger({}).runs, []);
+});
+
+test('model ids are stored as they are; any other model text, a key or token shape above all, is stored as `other`', (t) => {
+  resetLedger(t);
+  const modelIds = ['claude-opus-5-5', 'claude-opus-5-5[1m]', 'claude-3-5-sonnet-20241022', 'claude-sonnet-4-5@20250929',
+    'us.anthropic.claude-opus-4-1-20250805-v1:0', 'opus', 'sonnet[1m]', 'haiku', 'fable'];
+  // Key and token shapes are built from a repeat, so no secret scanner takes this file for one.
+  const notModelIds = [`sk-ant-api03-${'ab12'.repeat(6)}`, `ghp_${'ab12'.repeat(9)}`, 'f0'.repeat(32),
+    'claude-abc123def456', 'gpt-4o', 'fix the login page please', `claude-${'a'.repeat(40)}`, 'Opus'];
+  for (const [index, model] of [...modelIds, ...notModelIds].entries()) assert.equal(appendRun(runRow({ id: `run-${index}`, model })), true);
+  const stored = readLedger({}).runs.map((row) => row.model);
+  assert.deepEqual(stored, [...modelIds, ...notModelIds.map(() => OTHER_MODEL)]);
+  assert.equal(statsByModel(readLedger({}).runs).find((group) => group.model === OTHER_MODEL)?.runs, notModelIds.length);
 });
 
 test('an old row without model and effort still reads, and groups as unknown', (t) => {

@@ -2,7 +2,7 @@
 // run, the time and size caps, and the JSDoc types every lib passes around. It holds data only and imports nothing, so any lib,
 // the CLI, the hook and the tests can load it without side effects.
 // Exports: CHECK_KINDS, RESULTS, NOT_RUN_WHY, STOP_DEADLINE_MS, BASE_DEADLINE_MS, LAND_DEADLINE_MS, MAX_BLOCKS_IN_A_ROW,
-//   MAX_REASON_LINES_PER_CHECK, MAX_NODE_RELATED, POOL_SIZE, LEDGER_MAX_BYTES, MODEL_PATTERN, EFFORT_PATTERN; types CheckKind,
+//   MAX_REASON_LINES_PER_CHECK, MAX_NODE_RELATED, POOL_SIZE, LEDGER_MAX_BYTES, MODEL_PATTERN, OTHER_MODEL, EFFORT_PATTERN; types CheckKind,
 //   Result, NotRunWhy, Scope, Cmd, Plan, Failure, CheckResult, RunRow, LabelRow, Verdict.
 // Invariants: every name is defined here once and nowhere else; the arrays are frozen, so no lib can add a kind or a reason on its own.
 
@@ -41,8 +41,16 @@ export const POOL_SIZE = 4;
 /** Size cap of the ledger file, shared by the writer and the reader (bytes). */
 export const LEDGER_MAX_BYTES = 16 * BYTES_PER_MIB;
 
-/** A model id the ledger stores (`claude-opus-5-5`, `claude-opus-5-5[1m]`, a Bedrock id with `.` and `:`): one short token, never free text. */
-export const MODEL_PATTERN = /^[\w.:[\]-]{1,80}$/;
+/**
+ * The model ids the ledger stores as they are: a `claude-` id (`claude-opus-5-5`, `claude-3-5-sonnet-20241022`), its Bedrock form
+ * (`us.anthropic.claude-opus-4-1-20250805-v1:0`) or Vertex form (`claude-sonnet-4-5@20250929`), or an alias (`opus`, `sonnet`, `haiku`,
+ * `fable`), each with an optional context suffix like `[1m]`. Each dash-separated part is all letters or all digits, so a key or
+ * token (an `sk-ant-` key, a `ghp_` token, a long hex string) never fits; any other value is stored as OTHER_MODEL.
+ */
+export const MODEL_PATTERN = /^(?:(?:(?:[a-z]{2,4}\.)?anthropic\.)?claude(?:-(?:[a-z]{1,12}|\d{1,8})){1,6}(?:-v\d{1,2}(?::\d{1,2})?|@\d{8})?|opus|sonnet|haiku|fable)(?:\[\d{1,2}m\])?$/;
+
+/** What the ledger stores for a model value that is not of MODEL_PATTERN's shapes. */
+export const OTHER_MODEL = 'other';
 
 /** An effort level the ledger stores (`low` ... `max`): one short lower-case word. */
 export const EFFORT_PATTERN = /^[a-z]{1,16}$/;

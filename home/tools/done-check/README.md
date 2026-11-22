@@ -62,5 +62,7 @@ A stop row records the `model` and `effort` of the agent that stopped, so a mode
 - `model`: the hook input has no model field, so it is the `message.model` of the agent's newest reply in its transcript
   (`agent_transcript_path` for a subagent, `transcript_path` for the lead; only the last 512 KB are read).
 
-Each is one short token (`MODEL_PATTERN`, `EFFORT_PATTERN` in `lib/contract.mjs`) or `null`. Land and manual runs store `null` (no agent
+The model is stored only when it is a model id (`MODEL_PATTERN` in `lib/contract.mjs`: a `claude-` id, its Bedrock or Vertex form, or
+`opus`, `sonnet`, `haiku`, `fable`, with an optional `[1m]`-style suffix); any other value is stored as `other`, so a key or token can
+never land in the ledger. The effort is one short token (`EFFORT_PATTERN`) or `null`. Land and manual runs store `null` (no agent
 stopped). Rows written before the fields existed have neither; `stats` shows both kinds as `unknown`.
