@@ -5,8 +5,8 @@
 // Invariants: HOME and USERPROFILE are pinned to a temp folder before any lib loads, so the real ~/.claude ledger is never read or written.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { appendFileSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -16,6 +16,9 @@ process.env.HOME = PINNED_HOME;
 process.env.USERPROFILE = PINNED_HOME;
 
 const CLI = fileURLToPath(new URL('../home/tools/done-check/done-check.mjs', import.meta.url));
+const TRANSCRIPT_LIB = new URL('../home/hooks/lib/transcript.mjs', import.meta.url).href;
+const KILL_AFTER_MS = 10000; // only so a read that waits on a FIFO ends the test; the assertion reads the answer, never the time
+const noFifo = process.platform === 'win32' ? 'Windows has no FIFO and no O_NOFOLLOW' : false;
 const { appendRun, readLedger, statsByModel, UNKNOWN } = await import('../home/tools/done-check/lib/ledger.mjs');
 const { lastReplyRouting } = await import('../home/hooks/lib/transcript.mjs');
 const LEDGER_FILE = join(PINNED_HOME, '.claude', 'state', 'done-check', 'ledger.jsonl');
@@ -121,4 +124,25 @@ test('lastReplyRouting: no reply, a missing file or no path gives {} and never t
   assert.deepEqual(await lastReplyRouting(transcriptOf(t, [{ cwd: '/somewhere' }]), { sidechain: false }), {});
   assert.deepEqual(await lastReplyRouting(join(PINNED_HOME, 'no-such.jsonl'), { sidechain: false }), {});
   assert.deepEqual(await lastReplyRouting(undefined, { sidechain: true }), {});
+});
+
+test('every transcript read answers at once for a FIFO or a link at the path: {} or undefined, no wait (a Stop hook must not hang)', { skip: noFifo }, (t) => {
+  const dir = makeTempDir('done-check-routing-odd-');
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const fifo = join(dir, 'fifo.jsonl');
+  execFileSync('mkfifo', [fifo]);
+  const link = join(dir, 'link.jsonl');
+  symlinkSync(transcriptOf(t, [reply(OPUS)]), link);
+  const script = `
+    import { contextTokens, findStatusPath, lastReplyRouting } from ${JSON.stringify(TRANSCRIPT_LIB)};
+    const answers = [];
+    for (const path of process.argv.slice(1)) {
+      answers.push([await lastReplyRouting(path, { sidechain: false }), await contextTokens(path) ?? null, await findStatusPath(path) ?? null]);
+    }
+    process.stdout.write(JSON.stringify(answers));`;
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', script, fifo, link], { encoding: 'utf8', timeout: KILL_AFTER_MS });
+  assert.equal(run.signal, null, 'a transcript read waited on the FIFO');
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(JSON.parse(run.stdout), [[{}, null, null], [{}, null, null]]);
+  assert.equal(run.stderr, '');
 });

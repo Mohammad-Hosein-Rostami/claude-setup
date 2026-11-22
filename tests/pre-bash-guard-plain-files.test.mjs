@@ -11,7 +11,7 @@ import { statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { appendPlainFile, NOT_PLAIN_FILE, readPlainFile } from '../home/hooks/lib/plain-file.mjs';
+import { appendPlainFile, NOT_PLAIN_FILE, readPlainFile, readPlainFileTail } from '../home/hooks/lib/plain-file.mjs';
 import { EVERY_HOST, MAX_PROD_HOSTS_BYTES, readProdHosts } from '../home/hooks/lib/remote.mjs';
 import { hookEnv } from './hook-env.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -110,4 +110,19 @@ test('readPlainFile and appendPlainFile refuse everything but a regular file wit
   assert.throws(() => readPlainFile(link, 1024), (error) => error.code !== NOT_PLAIN_FILE && error.code !== 'ENOENT');
   assert.throws(() => appendPlainFile(link, 'x'));
   assert.equal(readPlainFile(file, 1024), 'one\n');
+});
+
+test('readPlainFileTail gives the last bytes of a regular file and refuses a FIFO, a folder and a link without waiting', { skip: noFifo }, () => {
+  const dir = makeTempDir('plain-file-tail-');
+  const file = join(dir, 'file');
+  writeFileSync(file, 'one\ntwo\n');
+  assert.equal(readPlainFileTail(file, 4), 'two\n');
+  assert.equal(readPlainFileTail(file, 1024), 'one\ntwo\n');
+  const fifo = join(dir, 'fifo');
+  makeFifo(fifo);
+  assert.throws(() => readPlainFileTail(fifo, 1024), { code: NOT_PLAIN_FILE });
+  assert.throws(() => readPlainFileTail(dir, 1024), { code: NOT_PLAIN_FILE });
+  const link = join(dir, 'link');
+  symlinkSync(file, link);
+  assert.throws(() => readPlainFileTail(link, 1024), (error) => error.code !== NOT_PLAIN_FILE && error.code !== 'ENOENT');
 });

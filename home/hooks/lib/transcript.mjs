@@ -3,7 +3,9 @@
 // Invariants: never throws (a missing or odd file gives undefined, or {} for lastReplyRouting, and one stderr line only for unexpected errors);
 // subagent (sidechain) lines never count, except where a reader is asked for them (a subagent's own transcript holds only sidechain
 // lines); reads only the tail for the context size and the last reply's model, and skips files over the size cap.
-import { open, readFile, stat } from 'node:fs/promises';
+// No read waits or follows a link (lib/plain-file.mjs): a hook must answer before its timeout, and a FIFO planted at the transcript path
+// would otherwise hold the open until then, so the hook would pass without its check. A link, FIFO, device or folder there is an odd file.
+import { NOT_PLAIN_FILE, readPlainFile, readPlainFileTail } from './plain-file.mjs';
 
 const TAIL_BYTES = 512 * 1024; // one assistant line with usage is far smaller; the tail always holds the latest
 const MAX_SCAN_BYTES = 200 * 1024 * 1024; // above this the full scan would not fit the 5 s hook timeout
@@ -11,8 +13,10 @@ const WRITE_TOOLS = ['Write', 'Edit', 'MultiEdit'];
 export const STATUS_FILE_PATTERN = /(^|[\\/])STATUS[\w.-]*\.md$/i;
 const PLAIN_MODEL_ID = /^[\w.:[\]-]+$/; // `<synthetic>` (a reply Claude Code made up, no model ran) does not match
 
+const ODD_FILE_CODES = new Set(['ENOENT', 'ELOOP', NOT_PLAIN_FILE]); // missing, a link, or not a regular file within the cap
+
 function report(what, error) {
-  if (error.code !== 'ENOENT') process.stderr.write(`transcript: cannot ${what}: ${error.message}\n`);
+  if (!ODD_FILE_CODES.has(error.code)) process.stderr.write(`transcript: cannot ${what}: ${error.message}\n`);
 }
 
 function parseLine(line) {
@@ -30,14 +34,8 @@ function parseLine(line) {
  */
 export async function contextTokens(transcriptPath) {
   if (typeof transcriptPath !== 'string' || transcriptPath === '') return undefined;
-  let handle;
   try {
-    handle = await open(transcriptPath, 'r');
-    const { size } = await handle.stat();
-    const length = Math.min(size, TAIL_BYTES);
-    const buffer = Buffer.alloc(length);
-    await handle.read(buffer, 0, length, size - length);
-    const lines = buffer.toString('utf8').split('\n');
+    const lines = readPlainFileTail(transcriptPath, TAIL_BYTES).split('\n');
     for (let index = lines.length - 1; index >= 0; index -= 1) {
       if (!lines[index].includes('"usage"')) continue;
       const entry = parseLine(lines[index]);
@@ -46,8 +44,6 @@ export async function contextTokens(transcriptPath) {
     }
   } catch (error) {
     report('read context size', error);
-  } finally {
-    await handle?.close();
   }
   return undefined;
 }
@@ -60,9 +56,8 @@ export async function contextTokens(transcriptPath) {
 export async function findStatusPath(transcriptPath) {
   if (typeof transcriptPath !== 'string' || transcriptPath === '') return undefined;
   try {
-    if ((await stat(transcriptPath)).size > MAX_SCAN_BYTES) return undefined;
     let found;
-    for (const line of (await readFile(transcriptPath, 'utf8')).split('\n')) {
+    for (const line of readPlainFile(transcriptPath, MAX_SCAN_BYTES).split('\n')) {
       if (!line.includes('STATUS') && !line.includes('status')) continue; // cheap filter before JSON.parse
       const entry = parseLine(line);
       if (entry?.type !== 'assistant' || entry.isSidechain || !Array.isArray(entry.message?.content)) continue;
@@ -88,14 +83,8 @@ export async function findStatusPath(transcriptPath) {
  */
 export async function lastReplyRouting(transcriptPath, { sidechain }) {
   if (typeof transcriptPath !== 'string' || transcriptPath === '') return {};
-  let handle;
   try {
-    handle = await open(transcriptPath, 'r');
-    const { size } = await handle.stat();
-    const length = Math.min(size, TAIL_BYTES);
-    const buffer = Buffer.alloc(length);
-    await handle.read(buffer, 0, length, size - length);
-    const lines = buffer.toString('utf8').split('\n');
+    const lines = readPlainFileTail(transcriptPath, TAIL_BYTES).split('\n');
     for (let index = lines.length - 1; index >= 0; index -= 1) {
       if (!lines[index].includes('"model"')) continue;
       const entry = parseLine(lines[index]);
@@ -104,8 +93,6 @@ export async function lastReplyRouting(transcriptPath, { sidechain }) {
     }
   } catch (error) {
     report('read the last reply model', error);
-  } finally {
-    await handle?.close();
   }
   return {};
 }
