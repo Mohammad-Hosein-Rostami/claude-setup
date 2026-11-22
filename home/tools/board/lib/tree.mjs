@@ -1,5 +1,5 @@
 // The tree `/where` prints (display design 6.3; the progress pane would draw the same, spec-p5 `r9-pane`): all work, the road and
-// its steps, the status line's counts, workflow, agent and git rows unclipped (spec-tui: every item, no row budget), what waits on
+// its steps, the status line's counts, agent and git rows unclipped (spec-tui: every item, no row budget), what waits on
 // the owner, the limits per account and the session's cost figure.
 //   ALL  █████░░░░░  36% of work · 3 h 40 left · total by 18:35 · 10/21 rows
 //   road r9p3 · step 2/3 users of the cache · 1/2 lanes · step 1 h 10 left · by 16:05     (stat-rows.mjs roadRow)
@@ -72,7 +72,7 @@ function roadLines(view, facts, clock, look) {
   return [head, ...lines.map((line) => stepLine(line, road, clock, look))];
 }
 
-/** The status line's counts, work and git rows, unclipped: every workflow, every agent and every worktree. */
+/** The status line's counts, work and git rows, unclipped: every agent and every worktree. */
 function workLines(board, identity, asking, checks, clock, look) {
   const ctx = {
     ...clock, at: board?.at, repo: board?.repo ?? null, repos: [board?.repo, ...(Array.isArray(board?.repos) ? board.repos : [])].filter(Boolean),
@@ -80,18 +80,17 @@ function workLines(board, identity, asking, checks, clock, look) {
   };
   const marked = asking && typeof asking === 'object' ? { ...asking, marginMs: STALE_MARGIN_S * MS_PER_S } : null;
   const checksLine = checksRow(checks, board?.repo ?? null, look);
-  return [countsRow(board, marked, ctx, look), ...(checksLine === null ? [] : [checksLine]), ...workRows(board, Infinity, { ...ctx, runAgents: true }, look),
+  return [countsRow(board, marked, ctx, look), ...(checksLine === null ? [] : [checksLine]), ...workRows(board, Infinity, ctx, look),
     ...repoRows(board, Infinity, ctx, look)];
 }
 
-/** The line of what waits on the owner, quiet runs and git. */
+/** The line of what waits on the owner, quiet agents and git. */
 function footLine(board, asking, look) {
   const waiting = asking ? `${asking.kind === 'question' ? `${isCount(asking.count) && asking.count > 1 ? asking.count : 1} question(s)` : 'a permission prompt'}` : 'none';
-  const runs = Array.isArray(board?.runs) ? board.runs : [];
-  const quiet = runs.filter((run) => run?.state === 'quiet' || run?.state === 'stopped?').length;
+  const quiet = (Array.isArray(board?.agents) ? board.agents : []).filter((agent) => agent?.state === 'quiet').length;
   const git = board?.git ? `git ${cutWords(cleanText(board.git.branch ?? '?', look), 32, look)}, ${isCount(board.git.changed) && board.git.changed > 0 ? `${board.git.changed} changed` : 'clean'}` : 'git ?';
   const stale = isNumber(board?.stale?.sinceMs) ? [{ text: 'board stale', state: STATE.warn }] : [];
-  return fitParts([{ text: `waiting on you: ${waiting}`, state: asking ? STATE.block : STATE.ok }, { text: `quiet runs: ${quiet || 'none'}` }, { text: git }, ...stale], look);
+  return fitParts([{ text: `waiting on you: ${waiting}`, state: asking ? STATE.block : STATE.ok }, { text: `quiet agents: ${quiet || 'none'}` }, { text: git }, ...stale], look);
 }
 
 /** One line per account: what is left of each window, its reset, and the sample's age. */

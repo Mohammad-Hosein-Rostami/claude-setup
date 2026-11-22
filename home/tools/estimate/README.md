@@ -147,11 +147,7 @@ rows (the work rows open or done after the last hand-over) and a percent.
 `rows listed late`, `table`, `row <id>`, `tool error`. At most 28 characters. Under that line (from `COLUMNS`, default 80; plain
 ASCII `#`/`-` and no colour when `NO_COLOR` is set) it prints, when there is something to show, line 2 the job bar from the
 cached progress (`██████░░░░░░ 54% · 5/9 rows · 30 min left · moved`: 12 cells from 100 columns, 8 from 70, text only below;
-green, yellow for `moved` and `+rows`, red for `overdue`) and then one line per live workflow run, at most two
-(`wf build impl-a · Review (3/4) · 5/7 agents`), read from the session's workflow journals under
-`<session>/subagents/workflows/<run>/journal.jsonl` (a journal written in the last 30 minutes, with no
-`<session>/workflows/<run>.json` summary yet; at most 256 KB of its tail; the phase total from the script copy's `meta`).
-Claude Code writes those journals without documenting them: a shape this reads wrongly shows no run line, never a wrong count. The render only reads a small cache
+green, yellow for `moved` and `+rows`, red for `overdue`). The render only reads a small cache
 (`~/.claude/state/estimate-segment/`); when it is missing, no longer matches the file or is 5 minutes old it starts
 `statusline-cache.mjs <STATUS.md> [<session-id>]` detached, at most once per 2 minutes per file. That script runs the CLI's
 own function (recording the commitment like a CLI run), so both show the same committed time. Neither run links the
@@ -194,4 +190,4 @@ the tables have an effort column. No constant is fitted on these before about 40
 
 `estimate.mjs` (CLI) and `statusline-cache.mjs` (status line refresh) call `lib/from-files.mjs` `estimateFile`; see
 `lib/README.md` for the parts. Tests: `tests/estimate*.test.mjs`, `tests/statusline-estimate.test.mjs`,
-`tests/statusline-segment-forms.test.mjs`, `tests/workflow-runs.test.mjs`, with `tests/estimate-tables.mjs` (synthetic tables, transcripts and seeds).
+`tests/statusline-segment-forms.test.mjs`, with `tests/estimate-tables.mjs` (synthetic tables, transcripts and seeds).

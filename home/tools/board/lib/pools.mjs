@@ -4,8 +4,8 @@
 // Exports: readPools(env) -> pools | null, poolsDue(pools, nowMs) -> boolean, rebuildPools({ projectsDir, env, nowMs }) -> pools | null.
 // File: ~/.claude/state/board-cache/pools.json = { at, types: { [agentType]: minutes[] } } (sorted ascending, newest MAX_PER_TYPE
 // runs per type, 0.1 min steps).
-// Source (Claude Code internal, observed 2.1.329): <projects>/<project>/<session>/subagents/agent-<id>.meta.json (`agentType`) and
-// .../subagents/workflows/<run>/agent-<id>.meta.json, each next to its transcript agent-<id>.jsonl. A run's time is its transcript's
+// Source (Claude Code internal, observed 2.1.329): <projects>/<project>/<session>/subagents/agent-<id>.meta.json (`agentType`),
+// next to its transcript agent-<id>.jsonl (an old `subagents/workflows/` folder is not read). A run's time is its transcript's
 // last `"timestamp"` minus its first (wall minutes; the live agent's elapsed time is wall minutes too, so the two compare).
 // Bounds: sessions changed in the last MAX_AGE_DAYS, newest MAX_SESSIONS first, at most MAX_FILES transcripts and SCAN_BUDGET_MS of
 // work; a transcript changed in the last LIVE_MS is skipped (it may still run). Only the first and last HEAD_BYTES / TAIL_BYTES of a
@@ -13,7 +13,7 @@
 // Invariants: never throws; reads plain files only (no links); writes only through cache-file.mjs.
 import { lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { readPart } from '../../estimate/lib/workflow-runs.mjs';
+import { readPart } from './read-part.mjs';
 import { readCacheFile, writeCacheFile } from './cache-file.mjs';
 
 const POOLS_NAME = 'pools';
@@ -60,9 +60,6 @@ function sessionFolders(projectsDir, nowMs) {
   return found.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, MAX_SESSIONS).map((entry) => entry.subagents);
 }
 
-/** Every folder of one session that holds agent files: subagents itself and each workflow run folder. */
-const agentFolders = (subagents) => [subagents, ...namesIn(join(subagents, 'workflows')).map((run) => join(subagents, 'workflows', run))];
-
 /** The wall minutes from a transcript's first to its last timestamp; null when it cannot be told. */
 function runMinutes(transcript) {
   const head = readPart(transcript, HEAD_BYTES, false)?.text ?? '';
@@ -91,15 +88,13 @@ function scanRuns(projectsDir, nowMs) {
   const runs = [];
   let files = 0;
   for (const subagents of sessionFolders(projectsDir, nowMs)) {
-    for (const folder of agentFolders(subagents)) {
-      for (const name of namesIn(folder).filter((entry) => META_FILE.test(entry))) {
-        if ((files += 1) > MAX_FILES || Date.now() - started > SCAN_BUDGET_MS) return runs;
-        try {
-          const run = agentRun(folder, name, nowMs);
-          if (run !== null) runs.push(run);
-        } catch {
-          // a meta file half-written or not JSON: that run is left out
-        }
+    for (const name of namesIn(subagents).filter((entry) => META_FILE.test(entry))) {
+      if ((files += 1) > MAX_FILES || Date.now() - started > SCAN_BUDGET_MS) return runs;
+      try {
+        const run = agentRun(subagents, name, nowMs);
+        if (run !== null) runs.push(run);
+      } catch {
+        // a meta file half-written or not JSON: that run is left out
       }
     }
   }

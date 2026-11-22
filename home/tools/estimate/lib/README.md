@@ -19,18 +19,15 @@ The parts of the `estimate` tool. `../estimate.mjs` (the CLI) and `../statusline
 - `backtest-scores.mjs` (pure): the backtest's scores (per-job miss, bias, 85% hit rate, naive baseline, first estimate apart).
 - `table-store.mjs`: the store files (table, session link, seed) under a short lock.
 - `from-files.mjs`: `estimateFile`, the one function of the design: parse, activity, costs, pool, state, commitment (it never links a session).
-- `workflow-runs.mjs`: the live workflow runs of a session, read from Claude Code's workflow journals (an undocumented layout: an
-  unrecognised shape shows nothing); the board draws them (`tools/board/lib/render.mjs`).
 - `report.mjs`: the printed block and the refusal text. `local-clock.mjs`: local clock text and the 5-minute grid.
 - `segment-text.mjs`: the status line text of a result. `segment-cache.mjs`: the status line's read side (the cache, the
-  session link, the detached refresh); it imports none of the forecast, parser or transcript code, so a render never reads a transcript. The status line itself also reads the session's
-  workflow journals (`workflow-runs.mjs`: at most 256 KB of each of the 8 newest).
+  session link, the detached refresh); it imports none of the forecast, parser or transcript code, so a render never reads a transcript.
 
 ## Test
 
 From the repo root:
 
-    node --test tests/estimate*.test.mjs tests/workflow-runs.test.mjs tests/statusline-estimate.test.mjs tests/statusline-segment-forms.test.mjs
+    node --test tests/estimate*.test.mjs tests/statusline-estimate.test.mjs tests/statusline-segment-forms.test.mjs
 
 `tests/estimate-tables.mjs` builds synthetic tables, transcripts and seeds; no real transcript is used.
 

@@ -199,7 +199,6 @@ export const OLD_TEST_PREFIXES = [
   'watch-tail-',
   'watch-window-',
   'wf-resume-',
-  'workflow-runs-',
   'writer-gate-home-',
   'writer-gate-project-',
 ];

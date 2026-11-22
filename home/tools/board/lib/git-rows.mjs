@@ -11,7 +11,7 @@
 // upstream (`origin ↑2↓0`, yellow when behind), changed files, last commit age, and the commits landed on the base today
 // (repo-stats.mjs: `landed today 6, last 12 min ago`).
 // Identity (spec-tui-3): a row starts with `⎇` (`git` in ASCII); a lane worktree's `⎇ ● name` (and its branch) is in the hue of its
-// branch (identity.mjs, ctx.identity), the colour its workflow's row uses; the main worktree's `⎇ main` is bold with no hue.
+// branch (identity.mjs, ctx.identity), the colour its agent's row uses; the main worktree's `⎇ main` is bold with no hue.
 // Invariants: pure (no I/O); every name goes through cleanText; every row fits look.columns.
 import { cleanText, cutWords, durationText, fitParts, hueState, STATE } from './cells.mjs';
 import { hueOf, markerOf, worktreeKey } from './identity.mjs';
@@ -33,8 +33,8 @@ const isCount = (value) => Number.isInteger(value) && value >= 0;
 const wide = (look) => look.columns >= WIDE_COLUMNS;
 const glyphs = (look) => (look.ascii ? ASCII_GLYPH : GLYPH);
 const gitGlyph = (look) => (look.ascii ? 'git' : '⎇');
-/** A lane worktree's hue: its branch's (the name a workflow on it takes), else its folder name's; a workflow's isolated worktree takes the workflow's. */
-const hueOfWorktree = (wt, ctx) => hueOf(ctx?.identity, worktreeKey(ctx?.identity, wt));
+/** A lane worktree's hue: its branch's (the name an agent on it takes), else its folder name's. */
+const hueOfWorktree = (wt, ctx) => hueOf(ctx?.identity, worktreeKey(wt));
 const worktreesOf = (repo) => (Array.isArray(repo?.worktrees) ? repo.worktrees.filter((wt) => wt !== null && typeof wt === 'object') : []);
 
 /** Commits ahead/behind the base and the changed files: `↑2↓1 ●3`, `✓` when clean and level. */

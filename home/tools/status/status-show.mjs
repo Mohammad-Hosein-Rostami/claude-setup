@@ -51,8 +51,7 @@ function agentsLine(boardFile) {
     if (text.length > MAX_BOARD_BYTES) return [];
     const board = JSON.parse(text);
     const agents = Array.isArray(board?.agents) ? board.agents : [];
-    const runs = Array.isArray(board?.runs) ? board.runs : [];
-    return agents.length + runs.length === 0 ? [] : [`Agents: ${runs.length} runs · ${agents.length} agents${board.stale ? ' (board stale)' : ''}`];
+    return agents.length === 0 ? [] : [`Agents: ${agents.length} agents${board.stale ? ' (board stale)' : ''}`];
   } catch {
     return []; // no board yet, or one being written: the line is left out
   }

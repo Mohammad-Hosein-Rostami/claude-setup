@@ -1,9 +1,9 @@
 // The job row of the status line (display design direction B, spec-tui row 1): the session's job against its estimate, and, when
-// the counts row has no room, the running work. `ALL █████░░░░░  36%  3 h 40 left · step 2/3 by 16:05 │ 2 runs · 6 agents` at 80 columns; at 120 `36% of work`, `step 2 of 3`,
-// `total by 18:35`, `10/21 rows` and the lane counts join when they fit.
-// Exports: jobView(segment) -> view | null; workRow({ segment, runs, nowMs, timeZone, trend, roadShown }, look) -> string; WIDE_COLUMNS.
+// the road row has no room. `ALL █████░░░░░  36%  3 h 40 left · step 2/3 by 16:05` at 80 columns; at 120 `36% of work`, `step 2 of 3`,
+// `total by 18:35` and `10/21 rows` join when they fit.
+// Exports: jobView(segment) -> view | null; workRow({ segment, nowMs, timeZone, trend, roadShown }, look) -> string; WIDE_COLUMNS.
 // Sources (all checked here, never trusted: they are printed): the estimate cache's shown entry (segment-cache.mjs estimateSegment:
-// kind, text, highMs, progress with its numbers-only `road`, numbers) and the board file's runs (board/lib/refresh.mjs).
+// kind, text, highMs, progress with its numbers-only `road`, numbers).
 // Rules: the percent is work done against all work in minutes (`of work`, never a row count: audit case 8); once the committed
 // clock (highMs) has passed, the time text is `over by N min · M min left (new)` and the over share is drawn ▓, both from highMs at
 // render time (case 7); a refusal or error counts rows and says in words why there is no time (cases 13 and design 4.2); a count
@@ -101,7 +101,7 @@ function finishParts(view, { nowMs, timeZone, roadShown }, look) {
   return { parts, overMin };
 }
 
-/** The job parts of row 1 (without the runs). */
+/** The job parts of row 1. */
 function jobParts(view, clock, look, trend) {
   if (view === null) return [{ text: 'ALL no job linked' }];
   if (view.kind === 'handed-over') return [{ text: `ALL idle${look.glyph.sep}last job ${cleanText(view.text, look)}` }];
@@ -124,35 +124,16 @@ function jobParts(view, clock, look, trend) {
   ];
 }
 
-/** The runs part: live runs and running agents, stopped runs in words, the lane counts at 120. */
-function runParts(runs, look) {
-  const valid = (Array.isArray(runs) ? runs : []).filter((run) => run !== null && typeof run === 'object');
-  const live = valid.filter((run) => run.state !== 'stopped?');
-  const stopped = valid.filter((run) => run.state === 'stopped?');
-  if (valid.length === 0) return [];
-  const agents = live.reduce((sum, run) => sum + Math.max(0, (isCount(run.started) ? run.started : 0) - (isCount(run.done) ? run.done : 0)), 0);
-  const parts = [{ text: `${live.length} run${live.length === 1 ? '' : 's'}${look.glyph.sep}${agents} agent${agents === 1 ? '' : 's'}`, bar: true, drop: 1 }];
-  const lanes = {};
-  for (const run of live) for (const [name, count] of Object.entries(run.lanes ?? {})) if (isCount(count)) lanes[name] = (lanes[name] ?? 0) + count;
-  const laneText = Object.entries(lanes).map(([name, count]) => `${count} ${cleanText(name, look).slice(0, 16)}`).join(', ');
-  if (wide(look) && laneText) parts.push({ text: laneText, drop: 3 });
-  if (stopped.length > 0) {
-    const longest = Math.max(...stopped.map((run) => (isCount(run.quietMin) ? run.quietMin : 0)));
-    parts.push({ text: `${stopped.length} stopped? ${longest} min`, state: STATE.warn, drop: 1 });
-  }
-  return parts;
-}
-
 /**
- * @param {{ segment: object | null, runs: object[] | undefined, nowMs: number, timeZone: string, trend?: object | null,
- *   roadShown?: boolean }} view the shown cache entry, the board's runs, now and the render's one zone; trend: the finish clock's
+ * @param {{ segment: object | null, nowMs: number, timeZone: string, trend?: object | null,
+ *   roadShown?: boolean }} view the shown cache entry, now and the render's one zone; trend: the finish clock's
  *   move as a part (stat-rows.mjs trendPart); roadShown: the road row carries the step, so this row does not
  * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal
  * @returns {string} row 1, fitted to look.columns
  */
-export function workRow({ segment, runs, nowMs, timeZone, trend = null, roadShown = false }, look) {
+export function workRow({ segment, nowMs, timeZone, trend = null, roadShown = false }, look) {
   const [first, ...rest] = jobParts(jobView(segment), { nowMs, timeZone, roadShown }, look, trend).filter((part) => part.text !== '');
-  return fitParts([...(first ? [boldAll(first)] : []), ...rest, ...runParts(runs, look)], look);
+  return fitParts([...(first ? [boldAll(first)] : []), ...rest], look);
 }
 
 /** The row's first part with its `ALL` label in bold (spec-tui-3: each row kind leads with its label) and the rest in its state. */

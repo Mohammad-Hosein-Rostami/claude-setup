@@ -1,9 +1,9 @@
 // Identity colours of the status line and `/where` (spec-tui-3, owner 2026-11-22: "we need more colors so that we can know better
-// which is where"): every work item (a workflow run, an agent outside workflows, a lane branch) gets one hue and one marker shape,
-// kept for its name, so a workflow row and the git row of the branch it works on read as one item.
-// Exports: boardIdentity(board, store?, nowMs?) -> identity (hues, branches, repos, runs, and `store`: the new assignment to save,
-// or null when it did not change); hueOf(identity, key) -> number; runBranch(identity, runId) -> string | null; itemKey(identity,
-// run) / agentKey(identity, agent) / worktreeKey(identity, wt) -> the name whose hue an item takes; markerOf(hue, look) -> `●` `◆` `▲`.
+// which is where"): every work item (an agent or a lane branch) gets one hue and one marker shape, kept for its name, so an
+// agent row and the git row of the branch it works on read as one item.
+// Exports: boardIdentity(board, store?, nowMs?) -> identity (hues, repos, and `store`: the new assignment to save, or null when it did
+// not change); hueOf(identity, key) -> number; agentKey(identity, agent) / worktreeKey(wt) -> the name whose hue an item
+// takes; markerOf(hue, look) -> `●` `◆` `▲`.
 // Sticky hues (lead decision, fix round 1; stable per name and distinct on screen at once): a name's home hue is a hash of it into
 // the HUE_CODES palette (cells.mjs). A name seen for the first time takes the first hue from its home that no live item uses (one
 // whose marker shape no live item uses first, so NO_COLOR still tells three items apart); the assignment is kept in `store`
@@ -11,13 +11,10 @@
 // as it is live, so a hue never changes when other items join or leave. An item that was away (`away`) comes back with its hue only
 // when no live item has taken it meanwhile, and a newcomer avoids the hue of an item gone only a moment, so up to six live items
 // never share. An item gone for more than GONE_MS is forgotten. With more than six live items the seventh and later share a hue
-// (their home hue) with an earlier one. Only items the rows draw hold a hue: a finished agent after DONE_SHOWN_MS and a stopped
-// run with no agent shown do not. Without a store the names are given hues in name order, so the same board always looks the same.
-// Ties: a workflow (and an agent) working in a lane worktree, the board's sure placement (repos.mjs placeAgents: `wt` set; never a
-// guess from a folder), takes that branch's name, so it shares the branch's hue; a branch checked out in a main worktree is no lane;
-// a finished agent counts for a lane only when no running agent of the run is placed (the run keeps its lane while read-only
-// reviewers run after its writer finished). A worktree an isolated workflow agent got (`worktree-<runId>-<n>`) and the agents in it
-// belong to that workflow's own hue. The marker shape is the hue's index mod 3.
+// (their home hue) with an earlier one. Only items the rows draw hold a hue: a finished agent after DONE_SHOWN_MS does not. Without a store the names are given hues in name order, so the same board always looks the same.
+// Ties: an agent working in a lane worktree, the board's sure placement (repos.mjs placeAgents: `wt` set; never a guess from a
+// folder), takes that branch's name, so it shares the branch's hue; a branch checked out in a main worktree is no lane. The marker
+// shape is the hue's index mod 3.
 // Invariants: pure (no I/O); never throws on any board shape (a name that is no string counts as none).
 import { DONE_SHOWN_MS, HUE_CODES } from './cells.mjs';
 
@@ -49,34 +46,12 @@ const listOf = (value) => (Array.isArray(value) ? value.filter((item) => item !=
 const reposOf = (board) => [board?.repo, ...listOf(board?.repos)].filter((repo) => repo !== null && typeof repo === 'object');
 const isName = (value) => typeof value === 'string' && value !== '';
 
-/** The run whose isolated worktree (`worktree-<runId>`, `worktree-<runId>-<n>`) this name is; undefined for any other name. */
-const isolatedRunOf = (name, runs) => (isName(name)
-  ? runs.find((run) => isName(run.runId) && (name === `worktree-${run.runId}` || name.startsWith(`worktree-${run.runId}-`)))
-  : undefined);
-
-/** The lane branch an agent works on: its placed worktree's branch when that worktree is a lane (not a main checkout, not a workflow's isolated one). */
-function laneBranchOf(agent, repos, runs) {
+/** The lane branch an agent works on: its placed worktree's branch when that worktree is a lane (not a main checkout). */
+function laneBranchOf(agent, repos) {
   if (!isName(agent.wt) || !isName(agent.branch)) return null;
-  if (isolatedRunOf(agent.wt, runs) !== undefined || isolatedRunOf(agent.branch, runs) !== undefined) return null;
   const repo = repos.find((entry) => entry.name === agent.repo) ?? repos[0];
   const wt = listOf(repo?.worktrees).find((entry) => entry.name === agent.wt);
   return wt !== undefined && wt.main !== true ? agent.branch : null;
-}
-
-/** Each run's lane branch: the branch most of its running agents work on (ties: the first seen); only when none of them is placed, the
- *  branch most of its finished agents worked on, so the run keeps its lane while read-only reviewers run after its writer finished. */
-function runBranches(board, repos, runs) {
-  const running = new Map();
-  const finished = new Map();
-  for (const agent of listOf(board?.agents)) {
-    const branch = laneBranchOf(agent, repos, runs);
-    if (branch === null || !isName(agent.runId)) continue;
-    const counts = agent.state === 'done' ? finished : running;
-    const perRun = counts.get(agent.runId) ?? new Map();
-    counts.set(agent.runId, perRun.set(branch, (perRun.get(branch) ?? 0) + 1));
-  }
-  const mostCommon = (perRun) => [...perRun].sort((a, b) => b[1] - a[1])[0][0];
-  return new Map([...new Set([...finished.keys(), ...running.keys()])].map((runId) => [runId, mostCommon(running.get(runId) ?? finished.get(runId))]));
 }
 
 /** The stored assignment as a map of name -> { hue, seenMs, sinceMs, away? }; entries of a bad shape are left out, a bad store is empty. */
@@ -140,36 +115,30 @@ function nextStore(hues, stored, nowMs) {
   return asText(items) === asText(before) ? null : { v: STORE_VERSION, items };
 }
 
-/** An agent the rows draw: not finished, or finished less than DONE_SHOWN_MS ago (layout.mjs workGroups). */
+/** An agent the rows draw: not finished, or finished less than DONE_SHOWN_MS ago (layout.mjs shownAgents). */
 const isShownAgent = (agent, nowMs) => agent.state !== 'done' || nowMs - agent.doneMs < DONE_SHOWN_MS;
 
 /**
- * The names of the items the rows draw, most important first: workflows, then lane branches, then the agents outside lanes. An agent
- * the rows have dropped and a workflow with no row hold no hue, so a new item never shares with one that is no longer on screen.
+ * The names of the items the rows draw, most important first: lane branches, then the agents outside lanes. An agent the rows have
+ * dropped holds no hue, so a new item never shares with one that is no longer on screen.
  */
 function liveKeys(identity, board, repos, nowMs) {
-  const lanes = repos.flatMap((repo) => listOf(repo.worktrees).filter((wt) => wt.main !== true && isolatedRunOf(wt.branch ?? wt.name, identity.runs) === undefined)
-    .map((wt) => wt.branch ?? wt.name));
+  const lanes = repos.flatMap((repo) => listOf(repo.worktrees).filter((wt) => wt.main !== true).map((wt) => wt.branch ?? wt.name));
   const agents = listOf(board?.agents).filter((agent) => isShownAgent(agent, nowMs));
-  const runs = identity.runs.filter((run) => run.state !== 'stopped?' || agents.some((agent) => agent.runId === run.runId));
   const sorted = (names) => names.filter(isName).sort();
-  return [...new Set([
-    ...sorted(runs.map((run) => itemKey(identity, run))), ...sorted(lanes), ...sorted(agents.map((agent) => agentKey(identity, agent))),
-  ])];
+  return [...new Set([...sorted(lanes), ...sorted(agents.map((agent) => agentKey(identity, agent)))])];
 }
 
 /**
- * @param {object | null} board the session's board (runs, agents, repo, repos)
+ * @param {object | null} board the session's board (agents, repo, repos)
  * @param {object | null} [store] the assignment saved earlier (`identity.store` of a previous call); none starts fresh
  * @param {number} [nowMs] the clock, for forgetting items gone for long
- * @returns {{ hues: Map<string, number>, branches: Map<string, string>, repos: object[], runs: object[], store: object | null }} the
- *   hue of every item name on the board, each run's lane branch, the repositories and runs they were read from, and the assignment
- *   to save (null when it did not change)
+ * @returns {{ hues: Map<string, number>, repos: object[], store: object | null }} the hue of every item name on the board, the
+ *   repositories they were read from, and the assignment to save (null when it did not change)
  */
 export function boardIdentity(board, store = null, nowMs = 0) {
   const repos = reposOf(board);
-  const runs = listOf(board?.runs);
-  const identity = { hues: new Map(), branches: runBranches(board, repos, runs), repos, runs, store: null };
+  const identity = { hues: new Map(), repos, store: null };
   const stored = storedItems(store);
   identity.hues = assignHues(liveKeys(identity, board, repos, nowMs), stored, nowMs);
   identity.store = nextStore(identity.hues, stored, nowMs);
@@ -179,27 +148,11 @@ export function boardIdentity(board, store = null, nowMs = 0) {
 /** @returns {number} the hue of a name: the board's choice, else its home hue (a name the board did not list) */
 export const hueOf = (identity, key) => identity?.hues?.get(key) ?? homeHue(isName(key) ? key : '');
 
-/** @returns {string | null} the lane branch a run's agents work on, or null when none is known */
-export const runBranch = (identity, runId) => identity?.branches?.get(runId) ?? null;
+/** @returns {string} the name whose hue an agent takes: its lane branch, else its own name */
+export const agentKey = (identity, agent) => laneBranchOf(agent ?? {}, identity?.repos ?? []) ?? (isName(agent?.name) ? agent.name : '?');
 
-/** @returns {string} the name whose hue a workflow run takes: its lane branch, else its own name */
-export const itemKey = (identity, run) => runBranch(identity, run?.runId) ?? (isName(run?.name) ? run.name : isName(run?.runId) ? run.runId : '?');
-
-/** @returns {string} the name whose hue an agent takes: its lane branch, else its run's, else its own name */
-export function agentKey(identity, agent) {
-  const runs = listOf(identity?.runs);
-  const branch = laneBranchOf(agent ?? {}, identity?.repos ?? [], runs);
-  if (branch !== null) return branch;
-  const run = runs.find((entry) => entry.runId === agent?.runId);
-  return run ? itemKey(identity, run) : isName(agent?.name) ? agent.name : '?';
-}
-
-/** @returns {string} the name whose hue a worktree takes: its isolated workflow's, else its branch, else its folder name */
-export function worktreeKey(identity, wt) {
-  const run = isolatedRunOf(wt?.branch ?? wt?.name, listOf(identity?.runs));
-  if (run !== undefined) return itemKey(identity, run);
-  return isName(wt?.branch) ? wt.branch : isName(wt?.name) ? wt.name : '?';
-}
+/** @returns {string} the name whose hue a worktree takes: its branch, else its folder name */
+export const worktreeKey = (wt) => (isName(wt?.branch) ? wt.branch : isName(wt?.name) ? wt.name : '?');
 
 /** @returns {string} the marker of a hue: `●`, `◆` or `▲` (ASCII `*`, `+`, `o`) */
 export const markerOf = (hue, look) => (look.ascii ? ASCII_MARKERS : MARKERS)[shapeOf(hue)];

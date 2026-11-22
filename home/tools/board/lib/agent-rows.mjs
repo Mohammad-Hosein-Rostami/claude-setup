@@ -1,15 +1,14 @@
-// The work rows of the status line and `/where` (spec-tui rows 3 and 4, research-tui 5): one header per workflow run and one row
-// per agent, each with a bar, its confidence form, time left and finish clock, and what it does now; plus the folded forms (spark
-// strip, `+K more`) the packing in layout.mjs uses when rows run out.
-//   ▸ ● build-r9-tui · on r9-a · for R2 terminal UI · phase 2/4 Build · ███████░░░ 3/4 · 3 run · ~40 min left · 16:35
+// The work rows of the status line and `/where` (spec-tui rows 3 and 4, research-tui 5): one row per agent, each with a bar, its
+// confidence form, time left and finish clock, and what it does now; plus the folded forms (spark strip, `+K more`) the packing in
+// layout.mjs uses when rows run out.
+//   ▸ agents · 3 run
 //    ├ ● impl-a  implementer  █████▒░░ ~60% · 12 min left · 16:20 · Edit render.mjs · r9-a ↑2 ●3 · 23 calls
-// Exports: agentRow(agent, ctx, look), runHeader(run, agents, ctx, look), plainHeader(agents, ctx, look), sparkText(agents, look),
-// agentBrief(agent, ctx, look), foldRow(prefix, agents, ctx, look), treeMark(last, look), urgencyOf(agent), countsText(agents, look).
+// Exports: agentRow(agent, ctx, look), plainHeader(agents, ctx, look), sparkText(agents, look), agentBrief(agent, ctx, look),
+// foldRow(prefix, agents, ctx, look), treeMark(last, look), urgencyOf(agent), countsText(agents, look).
 // Ctx: { nowMs, timeZone, at (the board's time: left minutes count from it), repo (board.repo), repos (every repository: board.repo
 // and board.repos, for an agent's worktree), folded, identity (identity.mjs boardIdentity: the hues of the board's items) }.
-// Identity (spec-tui-3): a workflow row starts `▸ ● name` in the item's hue (its lane branch's when its agents work in one, then
-// `on <branch>` in that hue too), an agent row's name carries its marker in its hue; the name is cut at a word or `-` and kept
-// before the phase word, which drops first.
+// Identity (spec-tui-3): an agent row's name carries its marker in its hue (its lane branch's when it works in one); the name is cut
+// at a word or `-`.
 // Rules: a percent only with confidence (`62%` high, `~60%` medium), else `est…` with a moving ▒ cell and the type's usual time;
 // over the type's 85th percentile: `over usual by 9 min` with ▓; `quiet 4 min` from 3 min without a write and no call waiting;
 // a call still waiting shows its minutes. The description is cut at a word (cells.mjs cutWords), and the type stays: a column
@@ -19,7 +18,7 @@
 // name, bar, percent, state word, time left and place are never dropped.
 // Invariants: pure (no I/O); every outside text goes through cleanText; every row fits look.columns.
 import { barText, clockOf, cleanText, cutWords, durationText, fitParts, hueState, STATE } from './cells.mjs';
-import { agentKey, hueOf, itemKey, markerOf, runBranch } from './identity.mjs';
+import { agentKey, hueOf, markerOf } from './identity.mjs';
 import { WIDE_COLUMNS } from './work-row.mjs';
 
 const FULL_COLUMNS = 150;
@@ -37,13 +36,7 @@ const UNPLACED_SEP = ' · ';
 const MIN_FOLDER_CHARS = 4;
 const DOING_CHARS = 24;
 const WIDE_DOING_CHARS = 36;
-const RUN_NAME_CHARS = 28;
-const WIDE_RUN_NAME_CHARS = 40;
-const PHASE_CHARS = 16;
-const PURPOSE_CHARS = 32;
 const MARKER_CHARS = 2; // the identity marker and its space before an agent's name
-const RUN_BAR_CELLS = 10;
-const NARROW_RUN_CELLS = 6;
 const MS_PER_MIN = 60_000;
 const MIN_PER_HOUR = 60;
 const SPIN_MS = 5000; // the estimating cell moves one place per refresh
@@ -224,47 +217,9 @@ export function foldRow(prefix, agents, ctx, look) {
 
 const quietIn = (agents) => agents.some((agent) => agent.state === 'quiet');
 
-/** The run's share done: its finished agents plus the progress of the running ones, over all its agents. */
-function runShare(done, total, agents) {
-  if (total <= 0) return 0;
-  const running = agents.filter((agent) => agent.state !== 'done').reduce((sum, agent) => sum + (agent.pct ?? 0) / PERCENT, 0);
-  return Math.min(1, (done + running) / total);
-}
-
-/**
- * @param {object} run a board run (refresh.mjs, with the summary of agents.mjs)
- * @param {object[]} agents its running agents
- * @param {{ nowMs: number, timeZone: string, at?: number, folded?: boolean }} ctx folded adds the spark strip of its agents
- * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal
- * @returns {string} the header row
- */
-export function runHeader(run, agents, ctx, look) {
-  const hueIndex = hueOf(ctx.identity, itemKey(ctx.identity, run));
-  const hue = hueState(hueIndex);
-  const runName = cutWords(cleanText(run.name ?? run.runId ?? '?', look), wide(look) ? WIDE_RUN_NAME_CHARS : RUN_NAME_CHARS, look);
-  const name = `${marks(look).head}${markerOf(hueIndex, look)} ${runName}`;
-  const branch = runBranch(ctx.identity, run.runId);
-  const onBranch = branch !== null ? `on ${cutWords(cleanText(branch, look), WIDE_PLACE_CHARS, look)}` : '';
-  const purpose = run.purpose ? cleanText(run.purpose, look) : run.row ? cleanText(run.row, look) : '';
-  const total = Number.isInteger(run.agentsTotal) ? run.agentsTotal : (run.started ?? 0);
-  const done = Number.isInteger(run.agentsDone) ? run.agentsDone : (run.done ?? 0);
-  const phase = typeof run.phase === 'string' ? cutWords(cleanText(run.phase, look), PHASE_CHARS, look) : '';
-  const phaseText = phase ? (wide(look) ? `phase ${run.phaseIndex || '?'}/${run.phaseTotal ?? '?'} ${phase}` : `${phase} ${run.phaseIndex || '?'}/${run.phaseTotal ?? '?'}`) : '';
-  const stopped = run.state !== 'run' ? { text: `${cleanText(run.state, look)} ${run.quietMin} min`, state: STATE.warn } : null;
-  const left = isNumber(run.leftMin) ? `~${timeText(run.leftMin, look)}${wide(look) ? ' left' : ''}` : '';
-  const finish = isNumber(run.leftMin) ? clockOf((ctx.at ?? ctx.nowMs) + run.leftMin * MS_PER_MIN, ctx.nowMs, ctx.timeZone) : '';
-  return fitParts([
-    { text: name, state: hue }, { text: onBranch, state: hue, drop: 1 },
-    { text: purpose ? `${wide(look) ? 'for ' : ''}${cutWords(purpose, PURPOSE_CHARS, look)}` : '', drop: 4 }, { text: phaseText, drop: 2 },
-    { text: `${barText({ done: runShare(done, total, agents) }, wide(look) ? RUN_BAR_CELLS : NARROW_RUN_CELLS, look)} ${done}/${total} done`, state: done >= total && total > 0 ? STATE.done : STATE.run },
-    { text: ctx.folded && agents.length > 0 ? `${countsText(agents, look)} ${sparkText(agents, look)}` : countsText(agents, look), state: quietIn(agents) ? STATE.warn : STATE.ok, drop: 3 },
-    stopped ?? { text: left }, { text: stopped ? '' : finish, state: STATE.dim, drop: 2 },
-  ], look);
-}
-
-/** @returns {string} the header of the agents outside workflows: `▸ agents (not in a workflow) · 3 run`, spark when folded */
+/** @returns {string} the header of the agents: `▸ agents · 3 run`, spark when folded */
 export function plainHeader(agents, ctx, look) {
-  const title = `${marks(look).head}${wide(look) ? 'agents (not in a workflow)' : 'agents'}`;
+  const title = `${marks(look).head}agents`;
   const counts = ctx.folded ? `${countsText(agents, look)} ${sparkText(agents, look)}` : countsText(agents, look);
   return fitParts([{ text: title }, { text: counts, state: quietIn(agents) ? STATE.warn : STATE.run, drop: 1 }], look);
 }

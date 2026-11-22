@@ -4,8 +4,7 @@
 //        node board.mjs where [--session <id>] [--columns <n>] [--project <dir>]   the `/where` tree (lib/tree.mjs; the job of
 //          the session's linked STATUS.md, else <dir>/STATUS.md, dir default CLAUDE_PROJECT_DIR or the current folder)
 //        node board.mjs refresh --session <id> [--force]         refresh the board file (lib/refresh.mjs), print nothing
-// Lines: `needs you: 2 questions · default in 0:45` first when the session waits on the owner; one per run
-// (`api-redo · phase 2/4 Review · 2 Build, 1 Review · run`, `... · stopped? 34 min`); `+1 more run` when rows run out; the git line;
+// Lines: `needs you: 2 questions · default in 0:45` first when the session waits on the owner; `3 agents running`; the git line;
 // one limits row per account from the last-seen limits files (never a switch of account: the board only shows them); `stale 40 s`
 // when the last refresh ran over its budget.
 // Exports: boardLines(board, limits, { columns, nowMs }) -> string[]. Exit 0 always for print and where (no board: one line says
@@ -30,7 +29,6 @@ import { systemTimeZone } from '../estimate/lib/local-clock.mjs';
 import { estimateSegment } from '../estimate/lib/segment-cache.mjs';
 
 const DEFAULT_COLUMNS = 80;
-const MAX_RUN_ROWS = 4;
 const MS_PER_S = 1000;
 const S_PER_MIN = 60;
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -42,13 +40,6 @@ const STALE_MARGIN_MS = 60 * MS_PER_S; // the asking marker's expiresAt is the d
 function askingLine(asking, nowMs) {
   const what = asking.kind === 'question' ? (asking.count > 1 ? `${asking.count} questions` : 'a question') : 'a permission prompt';
   return `needs you: ${what} · default in ${minSec(asking.expiresAt - STALE_MARGIN_MS - nowMs)}`;
-}
-
-function runLine(run) {
-  const phase = run.phase ? ` · phase ${run.phaseIndex || '?'}/${run.phaseTotal ?? '?'} ${run.phase}` : '';
-  const lanes = Object.entries(run.lanes ?? {}).map(([name, count]) => `${count} ${name}`).join(', ');
-  const state = run.state === 'run' ? 'run' : `${run.state} ${run.quietMin} min`;
-  return `${run.name ?? run.runId}${phase}${lanes ? ` · ${lanes}` : ''} · ${state}`;
 }
 
 function gitLine(git) {
@@ -73,9 +64,9 @@ export function boardLines(board, limits, { columns = DEFAULT_COLUMNS, nowMs = D
   if (board === null) lines.push('board: none yet for this session (it is written after the first status edit or render)');
   else {
     if (board.asking) lines.push(askingLine(board.asking, nowMs));
-    const runs = board.runs ?? [];
-    lines.push(...runs.slice(0, MAX_RUN_ROWS).map(runLine));
-    if (runs.length > MAX_RUN_ROWS) lines.push(`+${runs.length - MAX_RUN_ROWS} more run${runs.length - MAX_RUN_ROWS === 1 ? '' : 's'}`);
+    const agents = board.agents ?? [];
+    const running = agents.filter((agent) => agent.state !== 'done').length;
+    lines.push(`${running} agent${running === 1 ? '' : 's'} running`);
     if (board.git) lines.push(gitLine(board.git));
     if (board.stale) lines.push(`stale ${Math.round((nowMs - board.stale.sinceMs) / MS_PER_S)} s`);
   }

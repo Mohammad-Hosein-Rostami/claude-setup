@@ -3,9 +3,9 @@
 //   ! 1 needs you: a question, default in 0:40 · 5h out ~16:10 at this pace      (only when something needs him)
 //   road p8 · step 1/12 honest suite · 2/5 lanes · step 40 min left · by 21:10   (stat-rows.mjs roadRow, when the job walks a road)
 //   ALL █████░░░░░  36%  3 h 40 left · done by 17:45 · ↑ +1h10 later · 10/21 rows (work-row.mjs)
-//   2 wf · 6 agents (4 run, 1 quiet) · 1 waiting on you 0:40 │ git 7 br · 2 dirty (layout.mjs countsRow; only while work runs)
+//   6 agents (4 run, 1 quiet) · 1 waiting on you 0:40 │ git 7 br · 2 dirty (layout.mjs countsRow; only while work runs)
 //   checks: types review · off: test smart │ suite 3628 · 222 fail               (stat-rows.mjs checksRow)
-//   ▸ build r9-tui ... 3/8 done · 5 run ▒▒█ / ▸ agents / ├ scout ███▒░ ~60% ...   (layout.mjs workRows: a workflow is one row)
+//   ▸ agents · 5 run ▒▒█ / ├ scout ███▒░ ~60% ...   (layout.mjs workRows: the agents header and one row per agent)
 //   git main ✓ · origin ↑0↓0 · last 12 min ago · landed today 6 │ r9-a ↑2 ●3 ... (git-rows.mjs; one row always kept)
 //   Opus 5.5 high · ctx 99k 25% · 7d 69% left, resets Tue 20:10 · acct work
 // Rows by priority when they are short: alert, job, session; then one git row (never none: without room it rides on the session
@@ -261,7 +261,7 @@ export function statusRows(view, plainLook) {
   const gitSlots = (share.gitRow ? 1 : 0) + share.work - work.length;
   const git = gitSlots > 0 ? repoRows(board, gitSlots, ctx, look) : [];
   const asking = view.asking === null || typeof view.asking !== 'object' ? null : { ...view.asking, marginMs: ASKING_MARGIN_MS };
-  const job = workRow({ segment: view.segment, runs: workNeed > 0 && !share.counts ? board?.runs : [], nowMs, timeZone, trend: trendPart(board?.trend, look), roadShown: share.road }, look);
+  const job = workRow({ segment: view.segment, nowMs, timeZone, trend: trendPart(board?.trend, look), roadShown: share.road }, look);
   return [
     ...(alert === null ? [] : [alert]), ...(share.road ? [road] : []), job,
     ...(share.counts ? [countsRow(board, asking, ctx, look)] : []), ...(share.checks ? [checks] : []), ...work, ...git,
