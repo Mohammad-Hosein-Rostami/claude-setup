@@ -127,6 +127,28 @@ Its contract and the report lines it parses (plan.md C3 and C4):
   - security-auditor: `exploitable: yes|no|unknown; plan: ..; own: ..; stress: ..; race: ..; mutants: <k>/<n>; head: <40-hex>; read: <a>/<b>`.
 - A lens that finds HEAD wrong writes only `wrong base <got> != <want>`.
 
+## The verdict of a round (`verdict.mjs`)
+
+After the lenses return, the lead runs `verdict.mjs` instead of reading the reports by hand (the checks left `home/workflows/review.js`).
+Usage, exits and the printed lines are in the header of `verdict.mjs` and the catalog row. What it decides:
+
+- Every input file is hashed from the bytes read and must equal the sha256 the lead recorded (exit 2 naming the file); a report over
+  `MAX_PRIOR_BYTES` is refused; zero reports, or a count other than the tier's lenses, is exit 2: nothing is clean by default.
+- A round is incomplete (exit 3, `next: rerun <lens #>`) when a report has no well-formed final line, says `wrong base`, has a `head:` other
+  than the tier `tip`, did not read every file (`read: a/b`, b is the tier's file count), or has a blocking or should-fix finding that is not a
+  well-formed line with `class:`, `proof:` and `siblings:`. The fields of a finding line are read in a fixed order after the location, each once,
+  so text inside `problem:` cannot fake an `origin:`. The number of findings comes from `countFindings` (`lib/prior.mjs`), the same counter the
+  delta brief uses; a report line it counts but the line reader cannot read makes the round incomplete.
+- With `--road` and `--lane`, every P and F question of the lane needs one checklist line, and `not met` must name a finding of that report.
+- A delta round (the tier has `deltaOf`) also needs one exact `prior: <n> fixed, <m> open` line, n + m equal to the findings of the `--prior`
+  file, every mutant id of the prior file's mutants block run again, and at least `m` findings with `origin: prior`.
+- A delta should-fix without a valid `origin:` is optional (listed under `follow-up:`); a security-auditor finding with `exploitable: no: <why>`
+  is a follow-up (D-RL2); `unknown`, `yes` or no field stays a finding. `--drop` and the judge's `ruling: <id> not-real` (`--judged`) remove a
+  finding of a Sonnet lens, or of an Opus lens only with the ruling; a security-auditor finding is never dropped (exit 4, `owner: <id>`).
+- `--write-prior <file>` writes the next round's prior file (header with lane, round and tip, `round: <n>`, each remaining finding line as
+  written, one `mutants` block) to a new path only. The next round's number is that file's round + 1.
+- Finding ids must be unique in a round: two lenses using `B1` make the round incomplete, because `--drop B1` and `fix B1` would be ambiguous.
+
 ## Choices a reader may question
 
 - `hooks/` is the `audit` class, not security (the spec lists it in both): a hooks file with a real security hit is security.
@@ -199,7 +221,7 @@ Its contract and the report lines it parses (plan.md C3 and C4):
   itself is the caller's check (the reviewing agent and `verdict.mjs` take it only from the lead's own record), because the tool reads no ref there.
 - Hits are capped at 20 per class and file, so a generated file cannot make the JSON huge; the class still applies.
 
-Files: `review-tier.mjs` (CLI), `tiers.mjs` (class rules), `lib/revisions.mjs` (the base, HEAD and the sides of a range as shas; the refusals; the start after a rebase), `lib/trusted-git.mjs` (the clean temp repository every read goes through), `lib/lane-import.mjs` (the verified import, the only reader of the lane's objects), `lib/closure-check.mjs` (nothing a read needs is missing), `lib/pack-writer.mjs` (the import's pack), `lib/object-listing.mjs` (git's object listings), `lib/temp-repository.mjs` (the temp folder: file list, checks, removal), `lib/diff.mjs` (git reading, delta, required reading), `lib/reviews.mjs`
+Files: `review-tier.mjs` (CLI), `verdict.mjs` (the round verdict, with `lib/verdict.mjs` and `lib/report-lines.mjs`; test `tests/review-tier-verdict.test.mjs`), `tiers.mjs` (class rules), `lib/revisions.mjs` (the base, HEAD and the sides of a range as shas; the refusals; the start after a rebase), `lib/trusted-git.mjs` (the clean temp repository every read goes through), `lib/lane-import.mjs` (the verified import, the only reader of the lane's objects), `lib/closure-check.mjs` (nothing a read needs is missing), `lib/pack-writer.mjs` (the import's pack), `lib/object-listing.mjs` (git's object listings), `lib/temp-repository.mjs` (the temp folder: file list, checks, removal), `lib/diff.mjs` (git reading, delta, required reading), `lib/reviews.mjs`
 (sets, plans, briefs, waivable), `lib/report.mjs` (report, text, JSON), `lib/prior.mjs` (hash check, finding counts and ids of the `--prior` reports), `lib/brief-data.mjs` (names as data), `lib/weakened.mjs` (weakened checks), `lib/log.mjs`. Tests:
 `tests/review-tier.test.mjs`, `review-tier-cli`, `review-tier-gate` (gate, line rules, principles, items 71 and 73), `review-tier-waivable`,
 `review-tier-weakened`, `review-tier-delta-set` (a fix round is never lighter than the lane), `review-tier-size` (the size refusal and `--whole`), `review-tier-fix-round` (the printed command over several rounds), `review-tier-delta-brief` (the delta line and the prior file), `review-tier-prior` (which lines of a report are findings), `review-tier-prior-files` (several reports, each with its recorded hash), `review-tier-brief-data` (hostile names), `review-tier-git-state` (attributes, diff config, quoted paths; grafts, replace refs and a shallow history are refused), `review-tier-base` (the base is a local branch or a full sha; a fix round takes only full shas), `review-tier-rewritten-lane` (a rebased or rebuilt lane is read whole), `review-tier-outside-state` (the lane's and the user's config and attributes, `GIT_*` variables and the working tree change nothing), `review-tier-object-store` (a forged commit-graph, a hidden submodule pointer, an NFD name, an object rewritten in place), `review-tier-trusted-calls` (which calls go where, with which flags and environment; the git floor), `review-tier-rebased-onto` (the start after a rebase), `review-tier-verified-import` (forged trees and second copies of an object), `review-tier-import-closure` (a gap in the import fails closed; a file planted in the temp folder after init or after an import; a failed git call is no answer), `review-tier-object-types` (an object is taken only as the type its parent names), `review-tier-working-folder` (the working folder, `core.worktree`, a submodule), `review-tier-attributes` (attributes from the lane start), `review-tier-temp-repository` (the pack writer, the temp folder, its removal), `review-tier-honest-shapes` (merges, two merge bases, a root start, type changes).

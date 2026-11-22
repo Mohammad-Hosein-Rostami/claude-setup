@@ -69,17 +69,17 @@ test('security S3: the text given to --delta never reaches a brief (the tool pri
 
 test('a base or branch name never reaches the output, as --base or as a side of a range (the tool prints its sha); a base with a sentence in it is refused', () => {
   const { dir, write, tier, json } = lane();
-  const base = 'base;$(order)';
+  const base = 'base;$(zzhostile)';
   git(dir, 'branch', base, 'main');
   write('src/a.mjs', 'export const a = 1;\n');
   const named = tier('--base', base);
   assert.equal(named.status, 0, named.stderr);
-  assert.ok(!named.stdout.includes('order'), named.stdout);
+  assert.ok(!named.stdout.includes('zzhostile'), named.stdout);
   assert.ok(named.stdout.includes(`Review ${git(dir, 'rev-parse', 'main')}...HEAD.`), 'the brief names the resolved base sha');
   const result = tier(`${base}...HEAD`);
   assert.equal(result.status, 0, result.stderr);
   const resolved = `${git(dir, 'rev-parse', 'main')}...HEAD`;
-  assert.ok(!result.stdout.includes('order'), result.stdout);
+  assert.ok(!result.stdout.includes('zzhostile'), result.stdout);
   assert.ok(result.stdout.includes(`Review ${resolved}.`), result.stdout);
   assert.ok(result.stdout.split('\n')[0].endsWith(`, ${resolved}`), 'the summary line too');
   assert.equal(json(`${base}...HEAD`).range, resolved, 'the JSON range holds the sha the branch was read as');
