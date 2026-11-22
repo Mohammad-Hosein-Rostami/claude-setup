@@ -69,13 +69,23 @@ function removeEmpty(dir, stop) {
   }
 }
 
+/** Removes an empty folder; one an install filled or removed since the check (the lock was let go before) is left as it is. */
+function removeFolderIfStillEmpty(path) {
+  try {
+    rmdirSync(path);
+  } catch (error) {
+    if (error.code === 'ENOTEMPTY') warn(`${path} is not empty (an install started meanwhile); left as it is`);
+    else if (error.code !== 'ENOENT') throw error;
+  }
+}
+
 /**
  * Undoes the install this context's record describes.
  * @param {object} ctx the run context
- * @param {() => void} [releaseLock] lets go of the install lock; called before the made folders are removed, because the lock
+ * @param {() => void} [release] lets go of the install lock; called before the made folders are removed, because the lock
  *   file sits in ~/.claude and would keep it from being empty
  */
-export function uninstall(ctx, releaseLock = () => {}) {
+export function uninstall(ctx, release = () => {}) {
   const record = loadRecord(ctx);
   if (record.fresh) {
     warn(`no install record at ${recordPath(ctx)}: nothing to undo (an install before the record is undone by hand)`);
@@ -88,10 +98,10 @@ export function uninstall(ctx, releaseLock = () => {}) {
     for (const entry of record.backups) if (existsSync(dirname(entry.backup))) removeEmpty(dirname(entry.backup), entry.backupRoot);
     rmSync(recordPath(ctx), { force: true });
   });
-  releaseLock();
+  release();
   for (const entry of made.filter((item) => item.kind === 'dir')) {
     act(ctx, `remove folder ${entry.path} when empty`, () => {
-      if (existsSync(entry.path) && readdirSync(entry.path).length === 0) rmdirSync(entry.path);
+      if (existsSync(entry.path) && readdirSync(entry.path).length === 0) removeFolderIfStillEmpty(entry.path);
       else if (existsSync(entry.path)) warn(`${entry.path} is not empty (files made after the install); left as it is`);
     });
   }

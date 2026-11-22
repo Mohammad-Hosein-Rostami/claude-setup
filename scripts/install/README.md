@@ -21,7 +21,10 @@ How it behaves:
 - A second run changes nothing: a link that is right stays, an unchanged `settings.json` is not written, the record is
   rewritten only when it changes.
 - One install at a time: `~/.claude/.claude-setup-install.lock` (O_EXCL, with the pid) is held from loading the record to
-  saving it, and around `--uninstall`; a second run exits 1. A lock whose process ended, or older than 30 minutes, is taken over.
+  saving it, and by `--uninstall` until its record is removed; a second run exits 1. A lock whose process ended is taken over
+  at once; one with no pid in it only after 30 minutes. A lock whose process still runs is never taken over, however old:
+  past 30 minutes the refusal names the pid and the lock path (the install may be hung: end that process, or delete the
+  lock file by hand when the pid is not an install).
 - Nothing is deleted that the installer did not make. A file in the way is moved to the backup folder and named in the
   record; `--uninstall` puts it back and removes the rest, so the file list is as before the first install.
 - New machine (no record, its own `settings.json`, `~/.claude/CLAUDE.md` not linked into this repo): that `settings.json`

@@ -8,6 +8,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { releaseLock, takeLock } from '../../home/tools/disk-free/lib/lock-file.mjs';
+import { readRegularFile } from '../../home/tools/env-names/lib/read-regular-file.mjs';
 import { InstallError, act, note, samePath } from './context.mjs';
 
 export const RECORD_NAME = '.claude-setup-install.json';
@@ -17,8 +18,11 @@ const RECORD_VERSION = 1;
 export const recordPath = (ctx) => join(ctx.claudeDir, RECORD_NAME);
 
 export const INSTALL_LOCK_NAME = '.claude-setup-install.lock';
-// An install takes seconds to a few minutes (plugins, npm installs); a lock older than 30 minutes was left by a hung run.
+// An install takes seconds to a few minutes (plugins, npm installs). A lock with no pid in it older than this was left by a crash;
+// a lock whose process still runs is held past it too, and then the refusal says the install may be hung.
 export const INSTALL_LOCK_STALE_MS = 30 * 60 * 1000;
+const NEVER_BY_AGE = Infinity; // takeLock's limit that never breaks a lock for its age alone
+const LOCK_TEXT_MAX_BYTES = 64; // a pid; a bigger file is not ours
 
 /** True while process `pid` runs (EPERM: it runs as another user). */
 function isRunning(pid) {
@@ -30,55 +34,80 @@ function isRunning(pid) {
   }
 }
 
-/** Takes the lock over when the pid written in it names a process that has ended (a killed install); false otherwise. */
-function takeFromEndedOwner(lockPath, readLock) {
+/**
+ * Takes the lock over when its holder is dead (the pid in it names a process that has ended: a killed install, whatever the
+ * lock's age) or the file names no valid pid and is older than INSTALL_LOCK_STALE_MS (an install writes its pid within
+ * milliseconds, so an old pid-less file is a crash). A lock whose holder still runs is never taken, however old.
+ * @returns {{taken: true} | {taken: false, pid: number|null, ageMs: number}} who still holds the lock when it was not taken
+ */
+function takeFromStaleOwner(lockPath, readLock) {
   let seen;
   try {
     seen = lstatSync(lockPath);
   } catch (error) {
-    if (error.code === 'ENOENT') return takeLock(lockPath, Date.now(), INSTALL_LOCK_STALE_MS); // released meanwhile
+    if (error.code === 'ENOENT') return { taken: takeLock(lockPath, Date.now(), NEVER_BY_AGE) }; // released meanwhile
     throw error;
   }
-  if (!seen.isFile()) return false; // a FIFO or link is never read
+  const held = { taken: false, pid: null, ageMs: Date.now() - seen.mtimeMs };
+  if (!seen.isFile()) return held; // a FIFO or link is never read
   let text;
   try {
     text = readLock(lockPath, 'utf8');
   } catch (error) {
-    if (error.code === 'ENOENT') return takeLock(lockPath, Date.now(), INSTALL_LOCK_STALE_MS); // released between the look and the read
+    if (error.code === 'ENOENT') return { taken: takeLock(lockPath, Date.now(), NEVER_BY_AGE) }; // released between the look and the read
     throw error;
   }
   const owner = Number(text);
-  if (!Number.isInteger(owner) || owner <= 0 || isRunning(owner)) return false; // empty: its owner is writing its pid now
+  if (!Number.isInteger(owner) || owner <= 0) return { taken: takeLock(lockPath, Date.now(), INSTALL_LOCK_STALE_MS) }; // young: its owner is writing its pid now
+  if (isRunning(owner)) return { ...held, pid: owner };
   // "Now" is the seen lock's own time and the limit 0, so only that lock counts as stale: a newer one taken meanwhile stays.
-  return takeLock(lockPath, seen.mtimeMs, 0);
+  return { taken: takeLock(lockPath, seen.mtimeMs, 0) };
 }
 
-/** Removes the lock while it still holds this process's pid; a successor's lock (ours was taken over as stale) or none stays. */
+/** Removes the lock while it still holds this process's pid; a successor's lock, a link, a FIFO or no lock stays. */
 function releaseOwnLock(lockPath) {
-  let text;
+  let read;
   try {
-    text = readFileSync(lockPath, 'utf8');
+    read = readRegularFile(lockPath, LOCK_TEXT_MAX_BYTES);
   } catch (error) {
     if (error.code === 'ENOENT') return;
     throw error;
   }
-  if (text === String(process.pid)) releaseLock(lockPath);
+  if (read.bytes?.toString('utf8') === String(process.pid)) releaseLock(lockPath);
+}
+
+/** The refusal for a lock still held: names the holder's pid when known, and how to clear a holder that looks hung. */
+function lockHeldMessage(lockPath, { pid, ageMs }) {
+  if (pid === null) return `another install is running (${lockPath}); wait for it to end, or delete that file if no install runs`;
+  const base = `another install is running (pid ${pid}, ${lockPath})`;
+  if (ageMs < INSTALL_LOCK_STALE_MS) return `${base}; wait for it to end`;
+  return `${base} and has held the lock for over 30 minutes; it may be hung: end process ${pid}, then run again (if ${pid} is not an install, delete ${lockPath} by hand)`;
 }
 
 /**
  * One install at a time: takes ~/.claude/.claude-setup-install.lock (O_EXCL; disk-free/lib/lock-file.mjs) and writes this
- * process's pid in it. A lock whose pid has ended, or older than INSTALL_LOCK_STALE_MS, is taken over.
+ * process's pid in it. Only a lock of a dead holder, or a pid-less one older than INSTALL_LOCK_STALE_MS, is taken over; a holder
+ * that runs keeps it for as long as it runs.
  * @param {object} ctx the run context (~/.claude must exist)
  * @param {typeof readFileSync} [readLock] how the lock's text is read (tests give one that fails the way a release in between does)
  * @returns {() => void} releases the lock, only while the lock is still this process's
- * @throws {InstallError} when another install holds the lock
+ * @throws {InstallError} when another install holds the lock, or ~/.claude is gone (an --uninstall removed it)
  */
 export function lockInstall(ctx, readLock = readFileSync) {
   const lockPath = join(ctx.claudeDir, INSTALL_LOCK_NAME);
-  if (!takeLock(lockPath, Date.now(), INSTALL_LOCK_STALE_MS) && !takeFromEndedOwner(lockPath, readLock)) {
-    throw new InstallError(`another install is running (${lockPath}); wait for it to end, or delete that file if no install runs`);
+  try {
+    // The first take never breaks by age: whether the holder runs is only known after reading its pid.
+    if (!takeLock(lockPath, Date.now(), NEVER_BY_AGE)) {
+      const outcome = takeFromStaleOwner(lockPath, readLock);
+      if (!outcome.taken) throw new InstallError(lockHeldMessage(lockPath, outcome));
+    }
+    writeFileSync(lockPath, String(process.pid));
+  } catch (error) {
+    if (error.code === 'ENOENT' && !existsSync(ctx.claudeDir)) {
+      throw new InstallError(`${ctx.claudeDir} was removed while this install started (an --uninstall is finishing); run again`);
+    }
+    throw error;
   }
-  writeFileSync(lockPath, String(process.pid));
   return () => releaseOwnLock(lockPath);
 }
 

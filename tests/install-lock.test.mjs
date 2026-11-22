@@ -6,10 +6,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { makeContext } from '../scripts/install/context.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { InstallError, makeContext } from '../scripts/install/context.mjs';
+import { uninstall } from '../scripts/install/uninstall.mjs';
 import { INSTALL_LOCK_NAME, INSTALL_LOCK_STALE_MS, RECORD_NAME, lockInstall } from '../scripts/install/record.mjs';
 import { posix } from './disk-clean-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -76,13 +78,61 @@ test('the stale limit is 30 minutes (the docs say so): a lock with no owner writ
   lockInstall(ctx)();
 });
 
-test('a lock of a live owner older than the stale limit is broken (a hung install)', () => {
+test('a lock of a live owner is never taken over, however old: refused, naming the pid and the lock, and left as it is', () => {
   const { ctx, lock } = setup();
   writeFileSync(lock, String(process.pid));
+  ageLock(lock, 31);
+  assert.throws(
+    () => lockInstall(ctx),
+    (error) => error.message.includes('another install is running') && error.message.includes(`pid ${process.pid}`) && error.message.includes(lock) && /hung/.test(error.message),
+  );
+  assert.equal(readFileSync(lock, 'utf8'), String(process.pid));
+});
+
+test('a lock of a live owner under the stale limit is refused with the pid and the lock path, without the hung hint', () => {
+  const { ctx, lock } = setup();
+  writeFileSync(lock, String(process.pid));
+  assert.throws(
+    () => lockInstall(ctx),
+    (error) => error.message.includes(`pid ${process.pid}`) && error.message.includes(lock) && !/hung/.test(error.message),
+  );
+});
+
+test('a lock of a dead owner is taken over whatever its age', () => {
+  const { ctx, lock } = setup();
+  writeFileSync(lock, String(deadPid()));
   ageLock(lock, 31);
   const release = lockInstall(ctx);
   assert.equal(readFileSync(lock, 'utf8'), String(process.pid));
   release();
+});
+
+test('the installer and --uninstall both refuse a live holder older than 30 minutes, and take over a dead one', () => {
+  const { home, ctx, lock } = setup();
+  assert.equal(runInstaller(home).status, 0);
+  const recordText = readFileSync(join(ctx.claudeDir, RECORD_NAME), 'utf8');
+  writeFileSync(lock, String(process.pid));
+  ageLock(lock, 31);
+  for (const args of [['--no-plugins', '--no-tools'], ['--uninstall']]) {
+    const run = runInstaller(home, args);
+    assert.equal(run.status, 1, `${args}: ${run.stderr}`);
+    assert.match(run.stderr, new RegExp(`another install is running \\(pid ${process.pid}`));
+    assert.equal(readFileSync(lock, 'utf8'), String(process.pid), 'the holder\'s lock is not removed');
+    assert.equal(readFileSync(join(ctx.claudeDir, RECORD_NAME), 'utf8'), recordText);
+  }
+  writeFileSync(lock, String(deadPid()));
+  ageLock(lock, 31);
+  assert.equal(runInstaller(home).status, 0);
+  writeFileSync(lock, String(deadPid()));
+  assert.equal(runInstaller(home, ['--uninstall']).status, 0);
+  assert.equal(existsSync(lock), false);
+});
+
+test('a lock of another user\'s live process (pid 1) older than 30 minutes is refused too', posix, () => {
+  const { ctx, lock } = setup();
+  writeFileSync(lock, '1');
+  ageLock(lock, 31);
+  assert.throws(() => lockInstall(ctx), /another install is running \(pid 1/);
 });
 
 test('a lock that vanishes between the look and the read (its owner released) is taken, not a crash', () => {
@@ -97,6 +147,26 @@ test('a lock that vanishes between the look and the read (its owner released) is
   release();
 });
 
+test('a lock that vanishes between the failed take and the look at it (its owner released) is taken, not a crash', () => {
+  const { ctx, lock } = setup();
+  writeFileSync(lock, String(deadPid()));
+  const real = fs.lstatSync;
+  let looks = 0;
+  fs.lstatSync = (path, ...rest) => {
+    if (path === lock && (looks += 1) === 2) unlinkSync(lock); // the second look is lockInstall's own, after takeLock's
+    return real(path, ...rest);
+  };
+  syncBuiltinESMExports();
+  try {
+    const release = lockInstall(ctx);
+    assert.equal(readFileSync(lock, 'utf8'), String(process.pid));
+    release();
+  } finally {
+    fs.lstatSync = real;
+    syncBuiltinESMExports();
+  }
+});
+
 test('a read error of the lock other than ENOENT is not hidden', () => {
   const { ctx, lock } = setup();
   writeFileSync(lock, String(deadPid()));
@@ -104,6 +174,51 @@ test('a read error of the lock other than ENOENT is not hidden', () => {
     throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
   };
   assert.throws(() => lockInstall(ctx, denied), { code: 'EACCES' });
+});
+
+test('a lock that vanishes at the read and is taken by another install meanwhile is refused and left alone', () => {
+  const { ctx, lock } = setup();
+  writeFileSync(lock, String(deadPid()));
+  const retaken = (path) => {
+    unlinkSync(path);
+    writeFileSync(path, String(process.pid), { flag: 'wx' }); // another install took the lock between our look and our read
+    throw Object.assign(new Error(`ENOENT: no such file or directory, open '${path}'`), { code: 'ENOENT' });
+  };
+  assert.throws(() => lockInstall(ctx, retaken), /another install is running/);
+  assert.equal(readFileSync(lock, 'utf8'), String(process.pid));
+});
+
+test('~/.claude removed while the install starts (an --uninstall finishing) is a clear refusal, not a raw ENOENT', () => {
+  const { ctx } = setup();
+  rmSync(ctx.claudeDir, { recursive: true });
+  assert.throws(() => lockInstall(ctx), (error) => error instanceof InstallError && /run again/.test(error.message));
+});
+
+test('release never follows a link at the lock path: the link and its target stay', posix, () => {
+  const { home, ctx, lock } = setup();
+  const release = lockInstall(ctx);
+  unlinkSync(lock);
+  writeFileSync(join(home, 'elsewhere'), String(process.pid));
+  symlinkSync(join(home, 'elsewhere'), lock, 'file');
+  release();
+  assert.equal(lstatSync(lock).isSymbolicLink(), true);
+});
+
+test('release does not wait on a FIFO put at the lock path', posix, () => {
+  const { home, lock } = setup();
+  const code = `
+    import { unlinkSync } from 'node:fs';
+    import { spawnSync } from 'node:child_process';
+    import { makeContext } from ${JSON.stringify(pathToFileURL(join(REPO, 'scripts', 'install', 'context.mjs')).href)};
+    import { lockInstall } from ${JSON.stringify(pathToFileURL(join(REPO, 'scripts', 'install', 'record.mjs')).href)};
+    const ctx = makeContext({}, ${JSON.stringify(REPO)}, { HOME: ${JSON.stringify(home)} });
+    const release = lockInstall(ctx);
+    unlinkSync(${JSON.stringify(lock)});
+    spawnSync('mkfifo', [${JSON.stringify(lock)}]);
+    release();`;
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', timeout: 10 * 1000 });
+  assert.equal(run.status, 0, `release returned (status ${run.status}, signal ${run.signal}) ${run.stderr}`);
+  assert.equal(lstatSync(lock).isFIFO(), true);
 });
 
 test('release removes the lock only while it is still this install\'s: a successor\'s lock stays, a missing lock is no error', () => {
@@ -195,6 +310,55 @@ test('--uninstall releases the lock after a run that worked and after one that f
   unlinkSync(join(ctx.claudeDir, RECORD_NAME));
   assert.equal(runInstaller(home, ['--uninstall']).status, 0);
   assert.equal(existsSync(lock), false);
+});
+
+test('--uninstall on a HOME without ~/.claude warns, exits 0 and makes no ~/.claude (no lock to take)', () => {
+  const home = makeTempDir('install-lock-uninstall-empty-');
+  const run = runInstaller(home, ['--uninstall']);
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(existsSync(join(home, '.claude')), false);
+});
+
+test('--uninstall --dry-run takes no lock and changes nothing, even beside a live install\'s lock', () => {
+  const { home, ctx, lock } = setup();
+  assert.equal(runInstaller(home).status, 0);
+  writeFileSync(lock, String(process.pid));
+  const run = runInstaller(home, ['--uninstall', '--dry-run']);
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(readFileSync(lock, 'utf8'), String(process.pid));
+  unlinkSync(lock);
+  assert.equal(runInstaller(home, ['--uninstall', '--dry-run']).status, 0);
+  assert.equal(existsSync(lock), false, 'a dry run leaves no lock');
+  assert.equal(existsSync(join(ctx.claudeDir, RECORD_NAME)), true);
+});
+
+test('uninstall lets go of the lock only after the settings are restored and the record is removed (an install must not load the old record)', () => {
+  const { home, ctx } = setup();
+  const text = '{"owner": "settings"}\n';
+  writeFileSync(join(ctx.claudeDir, 'settings.json'), text);
+  assert.equal(runInstaller(home).status, 0);
+  const seen = [];
+  uninstall(ctx, () => seen.push({ record: existsSync(join(ctx.claudeDir, RECORD_NAME)), settings: readFileSync(join(ctx.claudeDir, 'settings.json'), 'utf8') }));
+  assert.deepEqual(seen, [{ record: false, settings: text }]);
+});
+
+test('an install that fills a made folder just before --uninstall removes it leaves the folder, with a warning, not a raw ENOTEMPTY', () => {
+  const home = makeTempDir('install-lock-enotempty-');
+  assert.equal(runInstaller(home).status, 0);
+  const ctx = makeContext({}, REPO, { HOME: home });
+  const realRmdir = fs.rmdirSync;
+  fs.rmdirSync = (path, ...rest) => {
+    writeFileSync(join(path, 'made-by-an-install-meanwhile'), '');
+    return realRmdir(path, ...rest);
+  };
+  syncBuiltinESMExports();
+  try {
+    uninstall(ctx);
+  } finally {
+    fs.rmdirSync = realRmdir;
+    syncBuiltinESMExports();
+  }
+  assert.equal(existsSync(join(ctx.claudeDir, 'made-by-an-install-meanwhile')), true);
 });
 
 /** Each place under `home` (own path or a backup folder) that holds `relPath` with the file `name` reading `content`. */

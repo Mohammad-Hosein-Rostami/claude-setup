@@ -15,7 +15,8 @@
 //   install record (~/.claude/.claude-setup-install.json, saved even when a step fails); settings are written after the plugin
 //   installs, because `claude plugin install` re-enables plugins in settings.json and the merged repo settings must win; tool
 //   dependencies come after settings, so a failed dependency install cannot leave settings.json stale; one install at a time
-//   (a lock in ~/.claude from loading the record to saving it, also around --uninstall; a second run exits 1 with a message).
+//   (a lock in ~/.claude from loading the record to saving it, also taken by --uninstall until its record is removed; a second run
+//   exits 1 with a message, and a lock whose process still runs is never taken over).
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
@@ -88,8 +89,8 @@ function lockAndLoad(ctx) {
 }
 
 /**
- * Takes the install lock for --uninstall, so it never runs beside an install (an install would back up again what the
- * uninstall just restored). No ~/.claude, or --dry-run: nothing to undo or change, no lock.
+ * Takes the install lock for --uninstall, so it never runs beside an install that runs (an install would back up again what
+ * the uninstall just restored); the lock is never taken from a live holder, however old. No ~/.claude, or --dry-run: nothing to undo or change, no lock.
  * @param {object} ctx the run context
  * @returns {() => void} the lock's release
  * @throws {InstallError} when an install holds the lock
