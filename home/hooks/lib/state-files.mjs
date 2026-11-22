@@ -3,7 +3,7 @@
 // Exports: readStateText(file, what), writeStateText(dir, name, text), removeStateFile(dir, name), pruneState(dir, timeLeft, nowMs),
 // isStale(mtimeMs, nowMs), STATE_FILE_MAX_BYTES, MAX_PRUNED_ENTRIES. Used by session-notes.mjs, compact-notes.mjs, checks-on.mjs and
 // smart-check/ledger.mjs (moved out of the hook in round 9, lane r9-mode-fix, fix round 1: security review 1, S4 and S5). The stderr
-// lines start with "session-notes hook:" (tests/mode-state.test.mjs pins it).
+// lines start with "session-notes hook:" (pinned by mode-state.test.mjs).
 // Why: the files were opened by name. Whoever can write the state folder (the same user, or a program run as that user) could
 // plant a FIFO, which hung the hook until Claude Code dropped its whole output, or a link, which the hook wrote a state through;
 // a large file was read whole; the prune had no bound and ended at the first entry it could not handle.
