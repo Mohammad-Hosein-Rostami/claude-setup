@@ -1,7 +1,7 @@
 # land-lane
 
 Puts one lane on the base branch with one command: disk check, tip check, rebase check, tip-object and union-row checks, the done-check of the rebased tip, `git-tidy land`,
-STATUS.md close row. Landing needs no workflow and no agent. The code checks are `done-check`'s (run, or reused when the same change was already
+the STATUS.md row of the lane. Landing needs no workflow and no agent. The code checks are `done-check`'s (run, or reused when the same change was already
 checked green); a risky lane needs the one review answered; the UI proof of `git-tidy land` is always on.
 
 ```
@@ -41,13 +41,15 @@ node ~/.claude/tools/land-lane/land-lane.mjs --repo <abs base folder> --branch <
    runs) when a green run of the same change, base and commands is in the ledger, else it runs (at most 240 s plus 30 s for the base side) and prints
    its `checks:` line. New failures or an open weakened item: exit 4 (the lane stays, rebased). A risk class (security, data, money, concurrency, gate,
    large) with no `--reviewed` or `--skip-review`: exit 10 and `review: suggested (<classes>)`. A done-check that cannot run, times out or answers
-   something unreadable: exit 14. The answers (`reviewed <sha>`, `skipped`, `accepted open`) are added to the close row's evidence. After a moved base the
+   something unreadable: exit 14. The answers (`reviewed <sha>`, `skipped`, `accepted open`) are added to the row's evidence. After a moved base the
    check runs again for the new base. `git-tidy land --tip <rebased>` lands only that sha: when the base moved after step 4, its rebase rewrites the tip and
    it exits 5 with nothing landed, so the commit landed is always the commit steps 5 and 6 checked. Its exits 3, 6, 7, 8, 9 are passed on. Exit 5 (base moved) goes back to step 4 (rebase, steps 5 and 6 on the new tip) once per new base: the same base
    twice is exit 5 here. Any other exit is 14. Two landings at once cannot both win: the fast-forward is `git merge --ff-only` at the rebased tip, so the second
    finds the base moved (exit 5 inside, then a new rebase from step 4).
-7. `status.mjs done <close-row> "landed <to> on <base> from <from>"`. A failure is exit 13, with the line to type by hand; a row that is already done
-   is not a failure (a re-run after a kill closes the row once).
+7. `status.mjs done <close-row> "landed <to> on <base> from <from>"`. `--close-row` takes any row id: for a road lane it is the lane's own row
+   `<road>.s<N>.<name>` (one row per lane: the landing is that row's done evidence; an old-form road names its `-land` close row instead).
+   A failure is exit 13, with the line to type by hand; a row that is already done is not a failure (a re-run after a kill closes the row
+   once: the restart path, `found already on <base>`, writes the same row).
 8. `git-tidy check` findings left after the landing are exit 1 and are printed.
 
 ## Exits

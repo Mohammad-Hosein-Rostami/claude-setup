@@ -43,6 +43,10 @@ Exit 0 done, 1 refused (reason on stderr), 2 usage. `--file` goes before the com
 back-dates a row). An id is one word of letters, digits and `_ . : -` that starts with a letter or digit (`7`, `21a`, `close:5`,
 `rework:12`); a leading `-` would make the row read as a bullet.
 
+The usage text and every `add` print the row rules (`ROW_RULES` in `status.mjs`). One of them: a lane of work is one row, and its landing
+is that row's done evidence (`land-lane --close-row <the lane's row>` writes `landed <to> on <base> from <from>`); there is no `close:` twin
+row to land it, so the row's time is the lane's real duration. Review and fix rows (`close:`, `rework:`) stay rows of their own.
+
 After every edit that changed the file it records the table for the estimator (`noteTable` in `home/tools/estimate/lib/table-store.mjs`:
 the rows' first-seen times, and the link from the session in `CLAUDE_CODE_SESSION_ID` to this STATUS.md, under
 `~/.claude/state/estimate/`). When that store is busy or unusable the edit still stands and the message ends with

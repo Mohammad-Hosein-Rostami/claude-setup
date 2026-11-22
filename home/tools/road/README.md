@@ -13,7 +13,7 @@ Keys: `road`, `goal`, `repo` (absolute, a drive path allowed), `base`, `spec` (d
 (`question`, `options[]`, `recommended`, `askAtStep?`), `steps[]` (`goal`, `measure?`, `appendOnly?`, `form?`: `"agents"` (the
 only form and the default; `"build"` is retired: it still reads, as `agents`, with the WARN `step <N>: build form retired: runs as agents`),
 `lanes[]`). A lane is an object (`files`, `implementer`, `acceptanceTests?`, `matrix?`, `principles?`, `checkpoints`, `keepGreen?`, `spec?`) plus `name` (`^[a-z0-9][a-z0-9-]{0,23}$`, unique, not
-`check`, not ending `-land`), `item`, `size` S/M/L, `closeSize?` (default M), `branch` and `needs?` (lanes of earlier steps; omitted =
+`check`, not ending `-land`), `item`, `size` S/M/L, `closeSize?` (read only for roads with old-form rows), `branch` and `needs?` (lanes of earlier steps; omitted =
 every earlier lane; `[]` = none).
 
 A lane's `checkpoints` are its Done means and are required. The other guidance fields of a lane (owner decision CR7) are optional,
@@ -48,27 +48,36 @@ Example (two steps):
 
 ## Rows
 
-Lane `<road>.s<N>.<name>` (item `build: <item>`), close `<road>.s<N>.<name>-land` (item `close: review and land <name>`), check
-`<road>.s<N>.check` (item `close: step N checkpoint`; step 1's adds `, base <sha>`, the road-start tip, written once). Every close row's
-evidence is `landed <to> on <base> from <from>` (the lead writes it when `land-lane` has landed the lane). An audit fix gets `<road>.s<N>.fix-<name>` (item
-`rework: <name>`) and its `-land` close row. Ids stay at most 40 characters. The item wording (`close: review and land ...`, `... checkpoint`) is kept as it was so that rows written by an
-earlier road still match (`rows` refuses a row id that exists with another item); a close row's work no longer includes a review.
+One row per lane: lane `<road>.s<N>.<name>` (item `build: <item>`, the lane's size), and per step a check row `<road>.s<N>.check` (item
+`close: step N checkpoint`; step 1's adds `, base <sha>`, the road-start tip, written once). The lane row is the lane's landing row:
+start it when its writer starts, and `land-lane --close-row <road>.s<N>.<name>` marks it done with the evidence
+`landed <to> on <base> from <from>`, so the row's time runs from the start of the work to the landing (one real duration per lane for
+the estimate). Never mark a lane row done before it has landed: a done lane row counts as landed for `next`, and the gate fails its line 2
+until the landed line is there. An audit fix gets one row `<road>.s<N>.fix-<name>` (item `rework: <name>`; a name ending `-land` is
+refused), landed the same way. Ids stay at most 40 characters; the old-form close id (below) must fit too. The item wording is kept as it
+was so that rows written by an earlier road still match (`rows` refuses a row id that exists with another item).
 
-A done cell is never changed, so a close row marked done without the landed line is corrected by a second done row `<close row id>.landed`
-(e.g. `rd.s1.a-land.landed`) whose evidence holds the line; the gate reads it only when the close row is done and has no landed line of its
-own, and checks it the same way (`<to>` and `<from>` are hex shas, one range per close row).
-Ids stay at most 40 characters, so a close row id ending in `-land` may also be corrected under the id without that suffix (`rd.s1.fix-x-land`
-under `rd.s1.fix-x.landed`). Both lookups ignore case; a correction row under both ids is a FAIL line naming both. The same two ids serve
-the `landed within` row below.
+Old form: roads whose rows were written before one row per lane have a second row per lane, the close row `<road>.s<N>.<name>-land`
+(item `close: review and land <name>`), and a fix has `fix-<name>-land` too. Such a road keeps reading exactly as before: when STATUS.md
+holds a lane's close row, that row decides whether the lane landed and holds its landed line, and the lane row's own done cell and
+evidence are not read for the landing (`lib/road-state.mjs` `landingRowId` and `laneLanded`, the one rule of `next`, the gate and the
+board). A lane without a close row in STATUS.md is new form. A rolled-back tool reading a new-form road finds no close row and never sees
+a lane landed (line 1 FAIL), so it fails closed. The gate's lines still say "close rows" for every landing row, so old output stays the same.
 
-A fix row that landed inside the same fast-forward as another close row (so it cannot have a range of its own) is closed by a done
-`<close row id>.landed` row whose evidence says `landed within <other close row id>`, at the start of the evidence or after `; ` (so
+A done cell is never changed, so a landing row marked done without the landed line is corrected by a second done row
+`<lane row id>.landed` (e.g. `rd.s1.a.landed`) whose evidence holds the line; the gate reads it only when the landing row is done and has
+no landed line of its own, and checks it the same way (`<to>` and `<from>` are hex shas, one range per landing row). The old-form id
+`<lane row id>-land.landed` (e.g. `rd.s1.a-land.landed`) is read too, in either form. Both lookups ignore case; a correction row under
+both ids is a FAIL line naming both. The same two ids serve the `landed within` row below.
+
+A fix row that landed inside the same fast-forward as another landing row (so it cannot have a range of its own) is closed by a done
+`.landed` correction row whose evidence says `landed within <other landing row id>`, at the start of the evidence or after `; ` (so
 `never landed within ...` is not read). The gate then gives that row no range of its own, and fails line 2 unless the named row is a
-close row (road entry or fix row) of the same road with a valid range of its own (its landed line or its `.landed` correction). A row
+landing row (road lane or fix row) of the same road with a valid range of its own (its landed line or its `.landed` correction). A row
 cannot name itself, and the named row cannot itself be a `within` row (no chains). The text takes no `as <sha>`: a fix row has no one sha
 for its work, and line 2 still fails any commit that lies in no range; an `as` part is a FAIL, never ignored. Only a fix row may use
 `landed within`. A road lane (any entry of a step, steered or not) always has its own range (`landed <to> on <base> from <from>`, in its
-own line or its `.landed` correction): lanes land one at a time, each in its own fast-forward, so a lane row or correction that says
+own line or its `.landed` correction): lanes land one at a time, each in its own fast-forward, so a lane's correction that says
 `landed within` is a FAIL naming the row.
 
 A sha in a row (`<to>`, `<from>`) may be 7 to 40 hex characters. The gate resolves each one once to its full commit
@@ -81,8 +90,8 @@ review, test or audit record: a `reviewed <sha> clean` line or a `.reviewed` row
 | command | does | exit |
 |---|---|---|
 | `road.mjs check <road.json>` | checks the file: at most 5 lanes per step, no file shared outside `appendOnly`, `needs` only to earlier steps, ids, patterns; a lane with a UI file needs a `matrix`; warns on the retired `form: "build"` | 0 ok, 1 refused |
-| `road.mjs rows <road.json> [--base <sha>]` | adds every missing row of every step to the STATUS.md beside the road file (through `status.mjs add`); a second run adds 0; refuses a road id used with other items and a second open road. `--base` writes that sha as the road-start tip (a road started before the tool) | 0, 1 refused, 2 a `--base` that is not an ancestor of the tip or already holds a landed patch |
-| `road.mjs rows <road.json> --fix <N> <name>` | adds the audit-fix rows of step N; refused once step N's check row is done | 0, 1 |
+| `road.mjs rows <road.json> [--base <sha>]` | adds every missing row of every step (one per lane, one check row per step) to the STATUS.md beside the road file in one all-or-none `status.mjs add` call; a second run, also one at the same time, adds 0; refuses a road id used with other items and a second open road. `--base` writes that sha as the road-start tip (a road started before the tool) | 0, 1 refused, 2 a `--base` that is not an ancestor of the tip or already holds a landed patch |
+| `road.mjs rows <road.json> --fix <N> <name>` | adds the audit-fix row `<road>.s<N>.fix-<name>` of step N; refused once step N's check row is done | 0, 1, 2 a name ending `-land` |
 | `road.mjs next <road.json> --budget <1-5>` | JSON `{ road, step, of, state: build\|gate\|done, form, held, carried, lanes, writers, baseline }`: the lowest step with an open check row, landed lanes skipped, held lanes named, carried lanes first, at most 5; `writers` = the smaller of the lane count and the budget, at most 5 | 0, 1 `baseline needed: <road>.s<N>` (a UI step with no `ui-proof` step-start record) or no rows yet, 2 no or bad `--budget` |
 | `road.mjs join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--json]` | judges the scope of one built lane (below): prints `joined <sha>`, `finding <id>: <text>`, `ui-files: <n>` and its `ui-file` lines | 0 joined clean, 3 joined with findings, 1 refused, 2 usage |
 | `road.mjs gate <road.json> [--step <N>]` | one line per check (spec-stages section 5): 1 rows (every lane of the step landed), 2 landing ranges, 3 `git-tidy check`, 4 UI proof (always runs, when a UI file changed or a lane has a matrix), 5 the measure (INFO). No line runs or asks for a test, a review or an audit | 0 PASS, 1 any FAIL |
@@ -117,5 +126,6 @@ Every step is walked with plain agents:
 2. Per lane: a worktree on the lane branch at the base tip; the implementer works in it and stops before step 3.
 3. `road.mjs join <road> --road-sha256 <hex> --lane <name> --worktree <abs> --base <sha>`. Exit 1 returns the lane to its writer or the
    owner; exit 3 gives the findings back to the writer; exit 0 goes on.
-4. Land the lanes one at a time (`land-lane`), and write each close row's `landed <to> on <base> from <from>` evidence.
+4. Land the lanes one at a time: `land-lane --close-row <road>.s<N>.<name>` writes the lane row's `landed <to> on <base> from <from>`
+   evidence (an old-form road: its `-land` row).
 5. `road.mjs gate <road> --step <N>` when every lane landed.
