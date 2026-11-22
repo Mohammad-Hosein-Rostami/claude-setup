@@ -36,15 +36,21 @@ function isAccount(entry) {
   return checked === null || (isRecord(checked) && isDate(checked.at) && typeof checked.result === 'string' && checked.result.length <= CHECK_RESULT_MAX_CHARS);
 }
 
-function parseRegistry(text, path) {
-  let parsed;
-  try { parsed = JSON.parse(text); } catch { parsed = null; }
+/** The list in the shape this tool writes (its two fields only), or null when `parsed` is anything else. */
+function registryShape(parsed) {
   const names = isRecord(parsed) && isRecord(parsed.accounts) ? Object.keys(parsed.accounts) : null;
   const valid = names !== null && (parsed.default === null || (typeof parsed.default === 'string' && NAME_PATTERN.test(parsed.default)))
     && names.every((name) => NAME_PATTERN.test(name) && isAccount(parsed.accounts[name]));
+  return valid ? { default: parsed.default, accounts: parsed.accounts } : null;
+}
+
+function parseRegistry(text, path) {
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { parsed = null; }
+  const registry = registryShape(parsed);
   // The way out is named (review 1, R8): the file holds no token, so moving it aside loses only the list.
-  if (!valid) throw new AccountError('registry', `${path} is not the account list this tool writes; not used. Move it aside (it holds no token): mv "${path}" "${path}.bad"; then add each account again: claude-account remove <name>, then claude-as <name>`);
-  return { default: parsed.default, accounts: parsed.accounts };
+  if (registry === null) throw new AccountError('registry', `${path} is not the account list this tool writes; not used. Move it aside (it holds no token): mv "${path}" "${path}.bad"; then add each account again: claude-account remove <name>, then claude-as <name>`);
+  return registry;
 }
 
 /**
@@ -63,11 +69,17 @@ export function readRegistry(env = process.env) {
  * Replaces accounts.json.
  * @param {object} registry what `readRegistry` returns, changed.
  * @param {object} env see `accountsDir`.
- * @throws {AccountError} kind `registry` when it is not the shape or over the cap, `unsafe-file` when the folder is open to others.
+ * @throws {AccountError} kind `registry` when it is not the shape or over the cap (the file on disk is then not changed,
+ *   and the message gives no move-aside advice: the fault is in the caller's list, not in the file), `unsafe-file` when the
+ *   folder is open to others.
  */
 export function writeRegistry(registry, env = process.env) {
   const dir = accountsDir(env);
-  const text = `${JSON.stringify(parseRegistry(JSON.stringify(registry), join(dir, REGISTRY_FILE)), null, INDENT_SPACES)}\n`;
+  const path = join(dir, REGISTRY_FILE);
+  // The JSON round trip drops what JSON cannot hold (undefined fields), as a read of the written file would.
+  const shaped = registryShape(JSON.parse(JSON.stringify(registry ?? null)));
+  if (shaped === null) throw new AccountError('registry', `the account list to write is not the shape this tool writes (a fault in the account tool); ${path} was not changed`);
+  const text = `${JSON.stringify(shaped, null, INDENT_SPACES)}\n`;
   if (Buffer.byteLength(text) > REGISTRY_MAX_BYTES) throw new AccountError('registry', `${REGISTRY_FILE} would be larger than ${REGISTRY_MAX_BYTES} bytes; not written`);
   ensurePrivateDir(dir);
   assertPrivateDir(dir);

@@ -8,9 +8,12 @@
 // when no account is found; a locked Keychain is a WARN, with a WARN for Claude Code's own ~/.claude/.credentials.json.
 // The Keychain is asked once (`security show-keychain-info`: no item and no token is read), before the account checks, so a
 // locked one is named even when no account is named (CLAUDE_ACCOUNT unset, no default); the login call is then skipped.
+// That one call is ended after KEYCHAIN_PROBE_TIMEOUT_MS: a locked login Keychain may wait on an unlock window, and doctor
+// reports no answer as locked instead of waiting the store's 20 s.
 // Usage: node scripts/doctor-accounts.mjs <claude-dir> <repo> <project>
 // Output: one line per finding, `ok    <text>`, `WARN  <text>` or `FAIL  <text>`; doctor.sh prints them and sets its exit.
-// Exports: main (argv, env, {store, run}: a test gives a store and a `security` runner of its own), START_UP_MARK, shellStartUpFile (the start-up rule install.sh follows; for the doctor tests).
+// Exports: main (argv, env, {store, run}: a test gives a store and a `security` runner of its own), START_UP_MARK, shellStartUpFile (the start-up rule install.sh follows; for the doctor tests),
+// keychainProbeRunner and KEYCHAIN_PROBE_TIMEOUT_MS (doctor's bounded `security` runner; a test gives it a fake `security`).
 // Exit 0 when the checks ran (findings are in the lines), 1 when this script itself failed.
 // Invariants: a token is never printed: a finding names the file and line numbers only, and every error text is cut free
 // of token-shaped text. The login call gives the token to its child in the child's environment only (callHaiku), never
@@ -21,6 +24,7 @@ import { userInfo } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { accountForCall, listAccounts } from '../home/tools/account/lib/accounts.mjs';
 import { CHECK_REVOKED, CHECK_VALID, checkToken } from '../home/tools/account/lib/check.mjs';
+import { spawnSync } from 'node:child_process';
 import { runSecurity } from '../home/tools/account/lib/keychain-store.mjs';
 import { looksLikeToken } from '../home/tools/account/lib/names.mjs';
 import { openStore } from '../home/tools/account/lib/store.mjs';
@@ -33,6 +37,8 @@ const LINES_SHOWN = 5; // line numbers named per file; the rest are counted
 const LOCKED_TEXT = 'the Keychain is locked'; // the store's message for security exit 36 (keychain-store.mjs)
 const SECURITY_EXIT_LOCKED = 36; // keychain-store.mjs EXIT_LOCKED: "User interaction is not allowed" (an ssh session)
 const KEYCHAIN_PROBE = 'show-keychain-info'; // the default keychain's settings: needs it unlocked, reads no item
+/** How long doctor waits for its one Keychain call; an open Keychain answers in well under a second (technical default). */
+export const KEYCHAIN_PROBE_TIMEOUT_MS = 3000;
 const FORCED_MODEL = 'CLAUDE_CODE_SUBAGENT_MODEL_FORCE';
 const FABLE = /fable/i;
 const TOKEN_SHAPED = /sk-ant-[A-Za-z0-9_-]*/g;
@@ -189,11 +195,20 @@ function checkStoredAccounts(env, store) {
   for (const account of accounts) checkOneAccount(account);
 }
 
-function lockedKeychain(claudeDir) {
-  say('WARN', 'the Keychain is locked (an ssh session?): no stored token can be read; unlock it or run from a local terminal');
+/** The WARN for a Keychain that cannot be read now; `why` says how doctor knows it is locked. */
+function lockedKeychain(claudeDir, why = 'the Keychain is locked (an ssh session?)') {
+  say('WARN', `${why}: no stored token can be read; unlock it or run from a local terminal`);
   const credentials = join(claudeDir, '.credentials.json');
   if (statSync(credentials, { throwIfNoEntry: false })) say('WARN', `${credentials} exists: Claude Code wrote a login there because the Keychain refused it`);
 }
+
+/**
+ * Doctor's `security` runner: the store's runner ended after KEYCHAIN_PROBE_TIMEOUT_MS, so a Keychain that waits on an
+ * unlock window costs doctor that long, not the store's 20 s.
+ * @param {Function} spawn `spawnSync`, or a test's stand-in that starts a fake `security`.
+ * @returns {(line: string) => {status: number | null, stdout: string, stderr: string}}
+ */
+export const keychainProbeRunner = (spawn = spawnSync) => (line) => runSecurity(line, (command, args, options) => spawn(command, args, { ...options, timeout: KEYCHAIN_PROBE_TIMEOUT_MS }));
 
 /** True for this user's real HOME outside a test run: the only place the login Keychain may be asked (as the store's own S7 rule). */
 function isRealUserOutsideTests(env) {
@@ -212,7 +227,10 @@ function checkKeychain(store, run, claudeDir) {
   if (store.kind !== 'keychain') return false;
   const { status } = run(KEYCHAIN_PROBE);
   if (status === SECURITY_EXIT_LOCKED) { lockedKeychain(claudeDir); return true; }
-  if (status === null) { say('WARN', 'the Keychain did not answer in time: no stored account can be read; try from a local terminal'); return true; }
+  if (status === null) {
+    lockedKeychain(claudeDir, `the Keychain did not answer in ${KEYCHAIN_PROBE_TIMEOUT_MS / 1000} s, so it counts as locked (an unlock window waiting?)`);
+    return true;
+  }
   if (status !== 0) say('WARN', `the Keychain check failed (security exit ${status}); the login check below tries the account itself`);
   return false;
 }
@@ -262,7 +280,7 @@ export async function main(argv, env = process.env, { store: given, run: givenRu
   let keychainBlocked = false;
   await guarded('account store', () => { store ??= openStore(env); });
   // A runner a test gives is a stand-in and always used; the real `security` runner is used only for the real user's HOME outside a test run, whether or not a store is given.
-  const run = givenRun ?? (isRealUserOutsideTests(env) ? runSecurity : undefined);
+  const run = givenRun ?? (isRealUserOutsideTests(env) ? keychainProbeRunner() : undefined);
   await guarded('Keychain check', () => { if (store && run) keychainBlocked = checkKeychain(store, run, claudeDir); });
   await guarded('stored accounts check', () => checkStoredAccounts(env, store));
   if (!keychainBlocked) await guarded('login check', () => checkLogin(env, claudeDir, store));

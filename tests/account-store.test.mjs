@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { accountForCall, addAccount, listAccounts, removeAccount, setCreditsOff, setDefault, setPlan } from '../home/tools/account/lib/accounts.mjs';
 import { dpapiStore } from '../home/tools/account/lib/dpapi-store.mjs';
@@ -135,6 +135,21 @@ posixTest('the account list: a link, a looser mode, a file over the cap or one t
   assert.throws(() => writeRegistry(big, box.env), refuses('registry'), 'the writer has the same cap as the reader');
 });
 
+posixTest('the account list: bad data in memory is refused on write with no move-aside advice, and a good accounts.json stays as it was', (t) => {
+  const box = sandbox(t);
+  const good = { default: 'work', accounts: { work: { added: '2026-11-21T10:00:00.000Z', plan: 'max', creditsOff: true, checked: null } } };
+  writeRegistry(good, box.env);
+  const file = join(box.storeDir, 'accounts.json');
+  const before = readFileSync(file, 'utf8');
+  const bad = [{ default: '../x', accounts: {} }, { ...good, accounts: { work: { ...good.accounts.work, plan: 'free' } } }, { default: null }, null, undefined];
+  for (const registry of bad) {
+    assert.throws(() => writeRegistry(registry, box.env), (error) => refuses('registry')(error)
+      && error.message.includes(`${file} was not changed`) && !error.message.includes('Move it aside') && !error.message.includes('mv "'), JSON.stringify(registry));
+  }
+  assert.equal(readFileSync(file, 'utf8'), before, 'the file on disk is not touched');
+  assert.deepEqual(readRegistry(box.env), good, 'and it still reads as the good list');
+});
+
 posixTest('the file store: folder 0700 and file 0600 from the first write, read back equal, a second account kept apart', (t) => {
   const box = sandbox(t);
   const store = fileStore(box.storeDir);
@@ -241,6 +256,36 @@ posixTest('S6: the Keychain store runs `security` only for an absolute path to a
   for (const act of [() => viaFolder.put('work', TOKEN_A), () => viaFolder.get('work'), () => viaFolder.remove('work')]) assert.throws(act, refuses('store'));
   // The same path through the real folder is accepted.
   keychainStore({ run: fake.run, keychain: join(dir, 'elsewhere', 'o.keychain-db') }).remove('work');
+});
+
+posixTest('F2: a keychain file swapped, linked or removed while `security` runs makes the call fail; a read hands no token on', (t) => {
+  const box = sandbox(t);
+  const dir = realpathSync(box.dir); // /var is a link on macOS: the store refuses a path with a link in it
+  const keychain = join(dir, 'k.keychain-db');
+  const other = join(dir, 'other.keychain-db');
+  const swaps = {
+    'another regular file renamed over it': () => { writeFileSync(other, ''); renameSync(other, keychain); },
+    'a link put in its place': () => { writeFileSync(other, ''); rmSync(keychain); symlinkSync(other, keychain); },
+    'removed': () => rmSync(keychain),
+  };
+  for (const [label, swap] of Object.entries(swaps)) {
+    const fake = fakeSecurity();
+    fake.items.set('work', TOKEN_A);
+    // The swap happens inside the call: after the store's check, while `security` would be opening the file by its path.
+    const run = (line) => { swap(); return fake.run(line); };
+    const store = keychainStore({ run, keychain });
+    for (const act of [() => store.put('work', TOKEN_A), () => store.get('work'), () => store.remove('work')]) {
+      rmSync(keychain, { force: true });
+      writeFileSync(keychain, '');
+      assert.throws(act, (error) => refuses('store')(error) && /swapped, moved or linked/.test(error.message) && !error.message.includes('MadeUp'), label);
+    }
+  }
+  // The same calls with no swap pass: the check after the call compares the same file.
+  rmSync(keychain, { force: true });
+  writeFileSync(keychain, '');
+  const store = keychainStore({ run: fakeSecurity().run, keychain });
+  store.put('work', TOKEN_A);
+  assert.deepEqual([store.get('work'), store.remove('work')], [TOKEN_A, true]);
 });
 
 for (const status of [45, 36, 1, null]) {
