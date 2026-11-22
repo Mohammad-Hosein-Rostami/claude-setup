@@ -44,6 +44,18 @@ The parser test expects the same failure ids from a sample and its Windows varia
 
 `.gitattributes` in this folder turns line-ending conversion off, so the CRLF files stay CRLF on a Windows checkout.
 
+## Ledger rows
+
+`ledger-rows-2026-11-22.json` holds the changed files of the first 82 done-check runs in this repo (2026-11-22, the day the
+done-check was switched on), so `tests/done-check-risk.test.mjs` can replay them through the risk classes. The ledger keeps only
+counts, so the lists were rebuilt from git: for a row with a base, every commit made in the 3 hours before the run (or up to 2 minutes
+after it) that has the base as an ancestor was compared with the base, and the one whose file count is nearest the row's count, then
+nearest in time, was kept (`git-exact`: same count, 59 rows; `git-near`: nearest count, 7 rows). Its list is the whole
+`git diff --name-only`, docs included. The 16 lead runs with no base (`edit-log-superset`) list every file the session's edit log holds
+for the worktrees where the lead edited (20 files), more than any one run saw. `riskThen` is the classes the run recorded. A `git-near`
+list can differ from its run by one to three files (six of the seven hold more files than the run, one holds one fewer); the
+`edit-log-superset` lists can only over-count a class.
+
 ## Making a new sample
 
 Run the tool in a scratch folder (never inside an owner project: no cache, no `node_modules/.vite`), replace machine paths as above,

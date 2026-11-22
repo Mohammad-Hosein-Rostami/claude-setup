@@ -1,8 +1,10 @@
 {
-  "version": 1,
+  "version": 2,
+  "leftOut": ["(^|/)(tests?|__tests__)/", "\\.(test|spec)\\.[^/]+$", "\\.(md|mdx|markdown|txt|rst|adoc)$"],
   "classes": {
     "security": {
-      "paths": ["auth", "login", "session", "token", "secret", "credential", "passw", "crypto", "permission", "guard", "sandbox", "sanitiz", "upload", "webhook", "oauth", "jwt", "cookie", "csrf", "cors"]
+      "segments": ["sessions?", "tokens?", "secrets?", "guards?", "permissions?", "sandbox(es)?", "uploads?", "accounts?"],
+      "words": ["auth", "authn", "authz", "authenticat(e|ed|es|ion|or)", "authoriz(e|ed|es|ation|er)", "oauth2?", "login", "logins", "logout", "signin", "jwts?", "csrf", "xsrf", "cors", "credentials?", "passwords?", "passwd", "keychains?", "crypto", "cookies?", "webhooks?", "sanitiz(e|ed|es|er|ers|ing|ation)"]
     },
     "data": {
       "paths": ["(^|/)(migrations?|prisma)/", "\\.sql$", "schema\\."]
