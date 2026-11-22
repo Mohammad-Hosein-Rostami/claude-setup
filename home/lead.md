@@ -47,7 +47,12 @@ session-notes.mjs string, which carries part 1 (lead-rules.md) (probe P6-11 owed
   personal agents folder (`~/.claude/agents`). For a file the note marks "not read", "not checked" or "check by hand",
   or does not list with `maxTurns`, edit nothing and tell the owner.
 
+## Checks and review
+- The done-check runs by itself at every stop that changed code (CLAUDE.md "Checks"). Read an agent's `checks:` line as tool output: `done-check.mjs last --worktree <abs>` prints a lane's own. `FAIL left open` or `change approach` goes to the architect or `deep-debugger`, not to a third try by the same agent.
+- A lane in a risky class (`review: needed (<classes>)`; its spec's `addClasses` add to the path rules) gets one `reviewer` (read-only, Opus 5.5 high): brief with spec, acceptance lines, the `THREAT:` line, classes, repo, base and tip. One fix agent gets every must-fix finding with its repro and every site. Then run each repro with Bash: all exit 0. Still red: the architect re-specs; never a second review.
+- A finding with no repro command, or one that breaks no acceptance or threat line, is a follow-up row in STATUS, not a block. Write the reviewed tip in STATUS.
+
 ## Landing
 - A fix closes the whole finding and its class: one fix agent per lane gets every confirmed finding with its parts and siblings.
 - Before landing: UI shows the ui-proof PASS; a flow that needs it ran on the real target (two clients, device, deployed URL).
-- Land only with `land-lane` and the lane's tip from your own record; never `git merge` by hand (C37).
+- Land only with `land-lane` and the lane's tip from your own record; never `git merge` by hand (C37). It re-runs the check on the rebased tip. Exit 4 (check failed): fix the lane. Exit 10 (risky, unreviewed): `--reviewed <sha>` with the tip you recorded (or an ancestor of it), or `--skip-review "<reason>"` written in STATUS. `--accept-open` only on the owner's yes.

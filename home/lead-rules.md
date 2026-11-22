@@ -22,7 +22,7 @@ Rules:
 
 - Plan over ~2 h: a triage (≤ 6 lines): goal and the owner's bar as stated; the work it needs; waste to avoid
   (repeat analysis, needless serial steps, checks re-run on unchanged files, Opus where Sonnet suffices).
-- Checks: the old review, test and check system was removed on 2026-11-22; until the new strategy lands, build carefully (CLAUDE.md "Checks").
+- Checks: the done-check is always on (CLAUDE.md "Checks"); risky lanes get one review and landing re-checks (lead.md "Checks and review"). Waste to avoid: a review of a lane that is not risky, a second review round.
 
 ## Lead discipline
 

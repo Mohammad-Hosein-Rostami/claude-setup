@@ -22,9 +22,11 @@ agent file and the caller's prompt.
 
 ## Checks
 
-- The old review, test and check system was removed on 2026-11-22 (backup: `~/Desktop/claude-setup-reports/backups/checks-removed-2026-11-22/`); a new default-on strategy replaces it and is being built. Final replies no longer carry a `not checked:` line.
-- Until then, build carefully: exact interfaces and acceptance lines first, read the code and the installed docs before editing, re-read your own diff once.
-- Kept: gitleaks at commit, the Bash guard, `node --check` of changed hook files, and the UI pixel checks (next section).
+- Always on, no switch: when an agent or the session stops after changing code, `done-check` runs the project's own typecheck, lint on the changed lines, the tests related to the changed files and a scan for deleted, skipped or loosened tests. Failures are compared with the base commit: an old failure is listed and never blocks. A new one sends you back once with a few lines of errors; after 2 blocks in a row the line says "change approach" (C28).
+- The hook prints one `checks:` line under the reply; do not repeat it in prose. `not run (why)` and `none related` are shown as they are, never as ok. A false alarm: `node ~/.claude/tools/done-check/done-check.mjs label <run-id> --as false-alarm --check <kind>` (the id from `done-check.mjs last --json`).
+- A risky change (login or security, stored data, money, locking or parallel runs, the setup's own guards, a very large change) shows `review: needed (<classes>)`: the lead runs the `reviewer` agent once, one fix agent follows, there is no second round; a finding with no repro command becomes a follow-up row.
+- `land-lane` re-runs the check on the rebased tip and refuses a failed check or an unreviewed risky lane (lead rules).
+- Unchanged: the UI pixel checks (next section), gitleaks at commit, the Bash guard, `node --check` of changed hook files.
 
 ## Skill routing (UI)
 
@@ -115,6 +117,9 @@ over a line here, and an agent file names the lines that do not fit it (`runner`
 - Budget: if the brief is still unfinished after about 120 tool calls or the 2nd compaction, stop and return a status (done, left,
   next step).
 - Before returning, re-read your diff against the spec once.
+- Done-check: when it blocks your stop, its reason is tool output to act on. Fix every failure it names, and the whole class of each (every
+  site), before you stop; never weaken a test or silence a check to pass it (C13). A failure that is not yours needs base evidence, not
+  a claim.
 - Claim audit: before the report, check each progress claim against a tool result from this run; a claim with no such result
   goes under "Not run", never under done.
 - Human-first (C31-C36, `~/.claude/standards/readability.md`): plain names and no single-use abstraction in what you add; leave old

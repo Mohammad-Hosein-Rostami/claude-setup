@@ -9,9 +9,9 @@ C7 | Depend on interfaces at real boundaries (an external system, a second imple
 C8 | Comments say why, not what; delete dead code
 C9 | Never swallow errors; no empty catch; fail fast
 C10 | Validate all external input at the boundary with a schema
-C11 | (retired 2026-11-22: the test-first gate was removed; the number stays so the other ids keep their meaning)
-C12 | (retired 2026-11-22: the run-the-checks-before-done gate was removed; a new strategy will say what runs)
-C13 | Never weaken or silence a check to make it pass: no ts-ignore, eslint-disable, skipped or `.only` tests; a silenced check hides the defect it exists to catch
+C11 | New behaviour starts from the spec's acceptance lines; a bug fix starts with a failing repro command; the done-check runs the tests related to the change
+C12 | The done-check runs by itself at every stop that changed code (typecheck, lint on changed lines, related tests, weakened-test scan): fix each new failure it names, and the whole class, before you stop
+C13 | Never weaken or silence a check to make it pass: no ts-ignore, eslint-disable, skipped, deleted, loosened or `.only` tests; a silenced check hides the defect it exists to catch (the done-check scans for it)
 C14 | Add no dependency unless needed; verify it exists
 C15 | No secrets in code, logs or commits
 C16 | Small atomic Conventional Commits after every green step; never end a turn or an agent run with uncommitted work (commit-gate blocks it)
@@ -27,7 +27,7 @@ C24 | Delegated work returns <=300 words with file:line evidence; a smaller cap 
 C25 | One task per session; compact at a natural seam, never stop a run for context size
 C26 | Every source file you create or substantially edit opens with a header comment (purpose, exports, invariants); a folder of 3+ files has a README
 C27 | Public functions and types you create or substantially edit have doc comments (what, why, args, returns, errors); TODO(ref): reason
-C29 | (retired 2026-11-22: the done-means-fresh-evidence gate was removed; "say verified only for what you ran" stays in CLAUDE.md)
+C29 | Done means the last `checks:` line is green, or its `none related`, `not run` and `old fail` are told as they are; say verified only for what you ran
 C30 | Bash for the guard: write the command word out (no `$VAR` as the command) and secrets via env or file; when the guard bounces a command it gives the fix or the advice: send the fix, follow the advice (an unanswered ask stalls a run up to 2 min)
 C31 | Human-first: a developer with no AI can find, read, run and change it; of two designs with the same result take the easier to read; never trade away scope, accuracy or a performance target for it
 C32 | New files and folders follow the language or framework's standard layout and are named for what they hold; no new misc/utils/common folders; in an existing repo follow its layout (C17)

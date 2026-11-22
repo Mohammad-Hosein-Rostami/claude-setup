@@ -101,7 +101,7 @@ test('no sentence of lead-rules.md lowers a gate that home/CLAUDE.md requires', 
 test('every remaining gate (the UI ones) is named in home/CLAUDE.md, which every session and agent loads', () => {
   const claude = read('home/CLAUDE.md');
   const section = (heading) => claude.split(/^## /m).find((part) => part.startsWith(heading)) ?? '';
-  assert.match(section('Checks'), /removed on 2026-11-22/, 'the Checks section says the old system was removed');
+  assert.match(section('Checks'), /`done-check` runs/, 'the Checks section says the done-check runs by itself');
   const uiRouting = section('Skill routing (UI)');
   for (const gate of ['visual-qa', 'ui-coverage']) assert.ok(uiRouting.includes(`\`${gate}\``), `Skill routing (UI) must name ${gate}`);
   for (const gate of GATES) assert.ok(claude.includes(`\`${gate}\``), `home/CLAUDE.md must name ${gate}`);
