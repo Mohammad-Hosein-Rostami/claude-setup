@@ -1,6 +1,6 @@
 # land-lane
 
-Puts one lane on the base branch with one command: disk check, tip check, rebase check, the done-check of the rebased tip, `git-tidy land`,
+Puts one lane on the base branch with one command: disk check, tip check, rebase check, tip-object and union-row checks, the done-check of the rebased tip, `git-tidy land`,
 STATUS.md close row. Landing needs no workflow and no agent. The code checks are `done-check`'s (run, or reused when the same change was already
 checked green); a risky lane needs the one review answered; the UI proof of `git-tidy land` is always on.
 
@@ -30,7 +30,12 @@ node ~/.claude/tools/land-lane/land-lane.mjs --repo <abs base folder> --branch <
 3. The branch is not at `--tip`: when `git-tidy range <tip> --landed <branch tip>` finds it on the base (a run killed after the fast-forward), the
    landing is recorded and the leftovers are pruned; else exit 9.
 4. `git-tidy land --rebase-only --tip`: exit 3 conflict.
-5. `done-check run --where land --base <base tip>` on the lane at the rebased tip, then `git-tidy land --tip <rebased>`. The check is reused (no command
+5. `lib/union-rows.mjs` on the rebased tip: every object the tip reaches is in the repository (`git rev-list --objects --missing=print`; a missing one is exit 14,
+   `tip-objects-missing`), and each `merge=union` file the lane changed (`git check-attr --source=<tip>`, read from the tip, not a working folder) is read
+   for a table row key (first cell, trimmed, CRLF or LF alike) that appears twice in one table. Union merge keeps both sides' lines, so two lanes that
+   each add the row `dup` rebase "cleanly" into two; that is exit 12 `duplicate-rows`, the keys named (capped at 60 characters, 5 per file), nothing
+   landed, the lane stays rebased. A file git cannot read is exit 14.
+6. `done-check run --where land --base <base tip>` on the lane at the rebased tip, then `git-tidy land --tip <rebased>`. The check is reused (no command
    runs) when a green run of the same change, base and commands is in the ledger, else it runs (at most 240 s plus 30 s for the base side) and prints
    its `checks:` line. New failures or an open weakened item: exit 4 (the lane stays, rebased). A risk class (security, data, money, concurrency, gate,
    large) with no `--reviewed` or `--skip-review`: exit 10 and `review: suggested (<classes>)`. A done-check that cannot run, times out or answers
@@ -38,20 +43,20 @@ node ~/.claude/tools/land-lane/land-lane.mjs --repo <abs base folder> --branch <
    check runs again for the new base. `git-tidy land --tip <rebased>`; its exits 3, 6, 7, 8, 9 are passed on. Exit 5 (base moved) goes back to step 4 once per new base: the same base
    twice is exit 5 here. Any other exit is 14. Two landings at once cannot both win: the fast-forward is `git merge --ff-only` at the rebased tip, so the second
    finds the base moved (exit 5 inside, then a new rebase from step 4).
-6. `status.mjs done <close-row> "landed <to> on <base> from <from>"`. A failure is exit 13, with the line to type by hand; a row that is already done
+7. `status.mjs done <close-row> "landed <to> on <base> from <from>"`. A failure is exit 13, with the line to type by hand; a row that is already done
    is not a failure (a re-run after a kill closes the row once).
-7. `git-tidy check` findings left after the landing are exit 1 and are printed.
+8. `git-tidy check` findings left after the landing are exit 1 and are printed.
 
 ## Exits
 
 0 landed clean, 1 landed with findings, 2 usage, 3 conflict, 4 done-check red, 5 base kept moving, 6 ui-proof, 7 new-file-size, 8 upstream-moved,
-9 tip-moved, 10 review needed, 11 disk below the floor, 13 landed but row not closed, 14 a tool failed. 3-11 and 14 land nothing. The first output line is `land: <state>`;
+9 tip-moved, 10 review needed, 11 disk below the floor, 12 duplicate row key in a `merge=union` file, 13 landed but row not closed, 14 a tool failed. 3-12 and 14 land nothing. The first output line is `land: <state>`;
 with `--json` one object `{ state, exit, to, from, lines }`.
 
 ## Layout
 
 `land-lane.mjs` holds the steps and the exit codes; `lib/args.mjs` reads and checks the command line; `lib/checks-step.mjs` is the done-check step
-(lane folder, verdict, exits 4, 10, 14); `lib/stop.mjs` is the refusal; `lib/tools.mjs` runs git and the sibling tools as
+(lane folder, verdict, exits 4, 10, 14); `lib/union-rows.mjs` is the tip-object and union-row step (exit 12); `lib/stop.mjs` is the refusal; `lib/tools.mjs` runs git and the sibling tools as
 subprocesses with no shell and a timeout (a tool that cannot start is `status: null`, never a pass).
-Tests: `tests/land-lane.test.mjs` (real tools on temp repos), `tests/land-lane-done-check.test.mjs` (the done-check step: reuse, exit 4, exit 10),
+Tests: `tests/land-lane.test.mjs` (real tools on temp repos), `tests/land-lane-done-check.test.mjs` (the done-check step: reuse, exit 4, exit 10), `tests/land-lane-union-rows.test.mjs` (exit 12, missing objects),
 `tests/land-lane-units.test.mjs` (arguments, base-moved loop), `tests/git-tidy-land.test.mjs` (`--tip`).

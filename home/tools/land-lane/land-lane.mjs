@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// CLI of `land-lane`: put one lane on the base branch with one command: disk check, the tip check, the rebase check, the done-check of the
+// CLI of `land-lane`: put one lane on the base branch with one command: disk check, the tip check, the rebase check, the tip-object and union-row checks, the done-check of the
 // rebased tip (run or reused, new failures refused, the one review of a risky lane asked for), `git-tidy land` (rebase, UI proof, ff-only,
 // prune) and the STATUS.md close row. It replaces the land workflow. There is no test run or audit step of its own: the checks are done-check's.
 // Usage: land-lane.mjs --repo <abs base folder> --branch <name> --tip <40-hex> --base <branch> --status-file <abs> --close-row <row id>
@@ -11,8 +11,8 @@
 //   `review:` line for a risky lane). With --json one object `{ state, exit, to, from, lines }`.
 // Exit: 0 landed clean, 1 landed with `git-tidy check` findings left, 2 usage, 3 conflict, 4 done-check found new failures or an open weakened
 //   item, 5 the base kept moving, 6 ui-proof, 7 new-file-size, 8 upstream-moved, 9 tip-moved, 10 a risky lane without a review answer, 11 disk
-//   below the floor, 13 landed but the row was not closed, 14 a tool failed or the done-check could not run (nothing landed).
-//   3-11 and 14 land nothing; after 4 and 10 the lane stays, rebased onto the base.
+//   below the floor, 12 a `merge=union` file holds a table row key twice after the rebase, 13 landed but the row was not closed, 14 a tool failed or the done-check could not run (nothing landed).
+//   3-12 and 14 land nothing; after 4 and 10 the lane stays, rebased onto the base.
 // Restart: a killed run is found again: a branch that is gone, with every patch of --tip already on the base, or a branch at the rebased tip
 //   that `git-tidy range --landed` finds on the base, is a landing already made: the row is written (`already landed`).
 // Exports: landLoop, Stop (for tests).
@@ -24,6 +24,7 @@ import { UsageError, parseArgs } from './lib/args.mjs';
 import { assertReviewedIsAncestor, checkRebasedTip } from './lib/checks-step.mjs';
 import { Stop, stop } from './lib/stop.mjs';
 import { git, parseJson, tool } from './lib/tools.mjs';
+import { checkTipRows } from './lib/union-rows.mjs';
 
 const DISK_TIMEOUT_MS = 120_000;
 const TIDY_TIMEOUT_MS = 10 * 60 * 1000; // a landing fetches the upstream, runs prune and `check`
@@ -137,8 +138,9 @@ function landStep(options, rebased) {
   return { moved: false, to: result?.tip ?? baseTip(options), from: result?.from ?? null, findings, notes };
 }
 
-/** Step 5 with the done-check before it: the check of the rebased tip, then `git-tidy land` at that same tip. A base that moved is checked again. */
+/** Step 5 with the tip and union-row checks, then the done-check before it: the checks of the rebased tip, then `git-tidy land` at that same tip. A base that moved is checked again. */
 function checkedLandStep(options, rebased) {
+  checkTipRows(options, rebased);
   const checked = checkRebasedTip(options, rebased);
   const landed = landStep(options, rebased);
   return landed.moved ? landed : { ...landed, notes: [...checked.lines, ...landed.notes], evidence: checked.evidence };
