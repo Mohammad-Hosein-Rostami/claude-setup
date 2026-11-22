@@ -2,9 +2,10 @@
 // CLI of `disk-clean`: removes what Claude Code and this setup leave on the disk and nothing else. Dry run unless --apply.
 // Usage: disk-clean.mjs [--apply] [--json] [--all-lines] [--session <id>] [--claude-tmp <dir>] [--projects <dir>] [--tmp <dir>] [--sessions <dir>] [--figma-cache <dir>] [--now <ms>] [--budget-ms <n>] [--scan-ms <n>]
 // Rules (lib/clean-rules.mjs): old session scratchpad folders (3 days idle; 30 days when the session's transcript is not in the projects folder read,
-//   because it may be a session of another config dir), leftover test temp folders, throwaway-project folders in
-//   ~/.claude/projects, old counters of the hooks in the temp folder, Figma pulls in ~/.cache/figma idle for 30 days. Never the current session (--session, else $CLAUDE_CODE_SESSION_ID
-//   or $CLAUDE_SESSION_ID, and always the session with the newest transcript) and never a running one (~/.claude/sessions/*.json with a live pid).
+//   because it may be a session of another config dir), in a kept session's scratchpad the cs-test-* and clone folders idle 2 days that hold
+//   no git work (a worktree, changes, untracked files, stashes, commits no remote holds), leftover test temp folders, throwaway-project folders in
+//   ~/.claude/projects, old counters of the hooks in the temp folder, Figma pulls in ~/.cache/figma idle for 30 days. Never the folder of the current session (--session, else $CLAUDE_CODE_SESSION_ID
+//   or $CLAUDE_SESSION_ID, and always the session with the newest transcript) and never a running one's (only the scratch rule looks inside them) (~/.claude/sessions/*.json with a live pid).
 //   Never follows a symlink; removes only what is owned by this user in folders closed to others (lib/safe-remove.mjs); refuses an unsafe root.
 //   Everything is looked at again right before it is removed: a session resumed during the run keeps its folder.
 //   A dry run stops looking after --scan-ms (default 30 s, a folder of a million entries is slow to read) and says so: the totals are then

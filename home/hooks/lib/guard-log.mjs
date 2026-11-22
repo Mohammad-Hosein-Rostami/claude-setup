@@ -1,4 +1,5 @@
-// Decision log for the guard hooks. Exports: GUARD_LOG_FILE, GUARD_LOG_MAX_BYTES, guardLogPath(env), rotatedLogPath(path), logDecision(record, env).
+// Decision log for the guard hooks. Exports: GUARD_LOG_FILE, GUARD_LOG_MAX_BYTES, GUARD_ROTATE_LOCK_FILE, guardLogPath(env), rotatedLogPath(path),
+// logDecision(record, env).
 // One JSON line per guarded decision (every ask and its outcome allow / deny / timeout / no-gui / dialog-failed; guard-error when the Bash guard itself failed and fell back to the ask), appended to
 // ~/.claude/logs/guard.jsonl (override: CLAUDE_GUARD_LOG) so a monitor can report them. Fields: ts, hook, tool, decision,
 // outcome, reason, command, cwd, session (a bounce line also has `class` and leaves reason and command empty). Invariants: command and reason are masked with maskSecrets and the command is cut
@@ -22,7 +23,8 @@ import { withSessionLock } from './session-lock.mjs';
 
 export const GUARD_LOG_FILE = join(homedir(), '.claude', 'logs', 'guard.jsonl');
 export const GUARD_LOG_MAX_BYTES = 5 * 1024 * 1024; // 5 MB (final-round plan G2); the log held 612 KB on 2026-11-22
-const ROTATE_LOCK = { name: 'guard', file: '.guard.rotate-lock' }; // in the log's folder, beside the log
+export const GUARD_ROTATE_LOCK_FILE = '.guard.rotate-lock'; // in the log's folder; guard-state-write.mjs asks before a command writes it
+const ROTATE_LOCK = { name: 'guard', file: GUARD_ROTATE_LOCK_FILE };
 const LOG_EXTENSION = '.jsonl';
 const PART_SUFFIX = '.part';
 const NEW_SUFFIX = '.new';

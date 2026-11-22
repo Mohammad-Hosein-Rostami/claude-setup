@@ -6,10 +6,10 @@
 // one in an unknown folder, is not judged. On macOS and Windows the comparison ignores case (APFS and NTFS do).
 // Invariants: pure apart from reading homedir() and the state folder names; never touches the file system; only adds asks.
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { allowedLiteralsDir } from './allowed-literals.mjs';
 import { bouncedDir } from './bounce-once.mjs';
-import { GUARD_LOG_FILE } from './guard-log.mjs';
+import { GUARD_LOG_FILE, GUARD_ROTATE_LOCK_FILE, rotatedLogPath } from './guard-log.mjs';
 import { expandHome, isUnder, nativePath } from './rm-paths.mjs';
 import { OUTPUT_REDIRECT, QUOTED_MARK, flagsOf, withoutRedirects } from './shell-words.mjs';
 import { shown } from './verdict.mjs';
@@ -21,7 +21,8 @@ const IN_PLACE_EDITORS = new Set(['sed', 'perl']);
 const CASELESS_PATHS = process.platform === 'darwin' || process.platform === 'win32'; // APFS and NTFS: `~/.Claude/Private` is the same folder
 
 /** ~/.claude/private (the production-host list) and the guard's own state: what a write there would change in the guard itself. */
-const guardStatePaths = () => [join(homedir(), '.claude', 'private'), allowedLiteralsDir(), bouncedDir(), GUARD_LOG_FILE].map((path) => resolve(path));
+const guardStatePaths = () => [join(homedir(), '.claude', 'private'), allowedLiteralsDir(), bouncedDir(), GUARD_LOG_FILE, rotatedLogPath(GUARD_LOG_FILE),
+  join(dirname(GUARD_LOG_FILE), GUARD_ROTATE_LOCK_FILE)].map((path) => resolve(path));
 
 /** The paths this command writes: redirection targets, and the paths a writer changes. */
 function writtenPaths(cmd, words) {

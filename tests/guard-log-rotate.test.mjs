@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { GUARD_LOG_MAX_BYTES, logDecision, rotatedLogPath } from '../home/hooks/lib/guard-log.mjs';
+import { GUARD_LOG_FILE, GUARD_LOG_MAX_BYTES, GUARD_ROTATE_LOCK_FILE, logDecision, rotatedLogPath } from '../home/hooks/lib/guard-log.mjs';
+import { checkGuardStateWrite } from '../home/hooks/lib/guard-state-write.mjs';
 import { createTail } from '../home/tools/watch/lib/tail.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -112,4 +113,11 @@ test('crash case: temp names a killed rotation left are removed by the next one;
   assert.equal(lstatSync(rotated).isFile(), true, 'guard.1.jsonl is the old log, not the link');
   assert.equal(readFileSync(target, 'utf8'), 'not the log');
   assert.deepEqual([existsSync(`${rotated}.part`), existsSync(`${path}.new`), statSync(path).size], [false, false, 0]);
+});
+
+test('a Bash write to the rotated log or the rotation lock asks, like one to guard.jsonl (guard-state-write.mjs)', () => {
+  const logs = join(GUARD_LOG_FILE, '..');
+  for (const name of ['guard.jsonl', 'guard.1.jsonl', GUARD_ROTATE_LOCK_FILE]) {
+    assert.notEqual(checkGuardStateWrite('rm', ['rm', join(logs, name)], '/'), undefined, name);
+  }
 });
