@@ -5,7 +5,7 @@
 // change saved).
 // File: ~/.claude/state/board-cache/<session>-hues.json (cache-file.mjs: private folder, no links, temp file and rename, so a
 // reader sees the old file or the new one, never half of one) = { v, items: [{ name, hue, seenMs, sinceMs }] }, at most MAX_HUE_BYTES.
-// Invariants: never throws; a missing, unreadable, planted or half-written file starts fresh; written only when the assignment
+// Invariants: never throws; a missing, unreadable, planted or half-written file starts fresh; written only when the saved items
 // changed; a session id that is no plain file name (none, empty, with a slash, too long for the suffix) keeps no file.
 import { isSessionId } from '../../../hooks/lib/session-store.mjs';
 import { readCacheFile, writeCacheFile } from './cache-file.mjs';

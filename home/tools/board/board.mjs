@@ -11,7 +11,8 @@
 // Exports: boardLines(board, limits, { columns, nowMs }) -> string[]. Exit 0 always for print and where (no board: one line says
 // so), 2 usage.
 // Invariants: print reads only the board file and the limits files (where also the estimate cache, the asking marker, the
-// session's `/check` switch and its last-seen file); every shown name was cut and stripped of control characters by its
+// session's `/check` switch and its last-seen file), and `where` keeps the session's identity hue file (hue-store.mjs) up to date, the
+// one file either command writes; every shown name was cut and stripped of control characters by its
 // writer, and is cut again to the width here.
 import { readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';

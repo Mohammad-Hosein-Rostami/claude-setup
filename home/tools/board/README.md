@@ -64,18 +64,24 @@ phase word, which drops first at narrow widths.
 ### Which is where: identity colours (`lib/identity.mjs`, spec-tui-3)
 
 Each work item, a workflow run, an agent outside workflows or a lane branch, has one hue and one marker shape (`●`, `◆`, `▲`;
-`*`, `+`, `o` in ASCII), and keeps them while it is live. A name's home hue is a hash of it; a name seen for the first time takes
+`*`, `+`, `o` in ASCII), and keeps them while it stays on the board (a tied workflow's colour is its lane's, so it changes when its
+writer starts or ends). A name's home hue is a hash of it; a name seen for the first time takes
 the first hue from its home that no live item uses (one whose marker shape no live item has first, so `NO_COLOR` still tells
 three items apart), and that choice is remembered in `~/.claude/state/board-cache/<session>-hues.json` (`lib/hue-store.mjs`,
-written by the status line and `/where` only when it changes, temp file and rename; a missing or bad file starts fresh). So a
-name's hue never changes when other items join or leave; an item gone for more than 30 minutes is forgotten and gets a new
-hue when it returns. Up to six live items never share a hue; with more than six, the seventh and later keep their home hue and
+written by the status line and `/where` when an item joins, leaves or comes back, and every 2 minutes or so to refresh the
+last-seen times, temp file and rename; a missing or bad file starts fresh). So a name's hue never changes when other items
+join or leave. An item that comes back takes its old hue only when no live item has taken it meanwhile, and a newcomer avoids
+the hue of an item gone under 5 minutes while another is free; an item gone for more than 30 minutes is forgotten and gets a
+new hue when it returns. Only what the rows draw holds a hue: a finished agent holds none after 30 seconds, nor a stopped run
+with no agent shown. Up to six live items never share a hue; with more than six, the seventh and later keep their home hue and
 so share with an earlier item (and three share a marker shape beyond three). A workflow whose agents work in a lane worktree
-(the board's sure placement, never a guess from a folder; a finished agent counts for none) takes that branch's hue and its row
+(the board's sure placement, never a guess from a folder; a finished agent counts only while no running agent of the run is
+placed, so the run keeps its lane while read-only reviewers run after its writer finished) takes that branch's hue and its row
 says `on <branch>`, so the workflow row and the branch's git row match; an agent in a lane worktree likewise. A workflow whose
 agents have isolated worktrees (`worktree-<run id>-<n>`) keeps its own hue and says no branch: those worktrees and their agents
 take the workflow's hue. The agents of a workflow that place nowhere (read-only reviewers) take the workflow's hue, but its row
-names no lane, since no sure fact ties it to one. The hues are xterm 256-colour indexes 31 blue, 166 orange, 99 violet, 64
+names no lane, since no sure fact ties it to one; the review workflows on the live board are of this kind, so their rows name no
+lane and have their own hue, apart from the lane rows. The hues are xterm 256-colour indexes 31 blue, 166 orange, 99 violet, 64
 green, 197 pink and 133 orchid, none a state colour's code. Their contrast (dark `#1e1e1e` / white `#ffffff`) is 4.04 / 4.13,
 4.39 / 3.80, 4.06 / 4.11, 3.93 / 4.24, 4.30 / 3.88 and 4.03 / 4.13, so 3.80 to 4.39 to 1: no cube colour reaches 4.5:1 on both
 (the best reaches 4.06), so these are the most even. Each row kind leads with a label: `road` blue, `ALL` bold, a dim `Σ`

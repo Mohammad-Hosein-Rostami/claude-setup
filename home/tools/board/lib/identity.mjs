@@ -28,9 +28,9 @@ const FNV_PRIME = 16_777_619;
 const MS_PER_MIN = 60_000;
 /** An item not seen for this long is forgotten: it takes a fresh hue when it comes back. */
 const GONE_MS = 30 * MS_PER_MIN;
-/** An item seen within this long is still the same live item; one back after longer re-checks that its hue is free. */
+/** An item seen within this long and not away is the same live item; one that was away, or back after longer, re-checks that its hue is free; a hue gone only this long is kept from newcomers. */
 const CONTINUOUS_MS = 5 * MS_PER_MIN;
-/** The last-seen time of a live item is rewritten only when this old, so a steady board writes nothing. */
+/** The last-seen time of a live item is rewritten only when this old, so a steady board saves once per interval, not per render. */
 const SEEN_REFRESH_MS = 2 * MS_PER_MIN;
 const MAX_STORED_ITEMS = 64;
 const MAX_STORED_NAME_CHARS = 120;
@@ -132,7 +132,7 @@ function nextStore(hues, stored, nowMs) {
   });
   const gone = [...stored].filter(([name, item]) => !hues.has(name) && nowMs - item.seenMs <= GONE_MS)
     .map(([name, item]) => ({ name, ...item, away: true }));
-  // Live items first, in key order, so a board of more than MAX_STORED_ITEMS keeps the same ones and a steady board is not rewritten.
+  // Live items first, in key order, so a board of more than MAX_STORED_ITEMS keeps the same ones and a steady board is saved only for the last-seen refresh.
   const newestFirst = (a, b) => b.seenMs - a.seenMs || (a.name < b.name ? -1 : 1);
   const items = [...live, ...gone.sort(newestFirst)].slice(0, MAX_STORED_ITEMS);
   const asText = (list) => JSON.stringify([...list].sort((a, b) => (a.name < b.name ? -1 : 1)));

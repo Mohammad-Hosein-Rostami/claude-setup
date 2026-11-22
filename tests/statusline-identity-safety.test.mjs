@@ -9,7 +9,7 @@ import { statusRows } from '../home/tools/board/lib/render.mjs';
 import { whereTree } from '../home/tools/board/lib/tree.mjs';
 import { runHeader } from '../home/tools/board/lib/agent-rows.mjs';
 import { boardIdentity } from '../home/tools/board/lib/identity.mjs';
-import { lookFor, NO_COLOR_ENV, NOW, screenshotBoard, TERM_256, viewOf } from './statusline-identity-fixture.mjs';
+import { lookFor, NO_COLOR_ENV, NOW, placedWriterBoard, screenshotBoard, TERM_256, viewOf } from './statusline-identity-fixture.mjs';
 
 const ESC = '\u001b';
 /** A name that opens a hyperlink, a C1 control, a bidi override, a line separator and a newline before its visible letters. */
@@ -78,7 +78,7 @@ test('the hostile names do show up (as plain text), so the check above is not pa
 });
 
 test('the branch behind `on <branch>` is cleaned and cut at its width with the cut mark', () => {
-  const board = screenshotBoard();
+  const board = placedWriterBoard();
   const lane = `feature/${ESC}[31m${'long-branch-name-'.repeat(5)}end`;
   board.repo.worktrees[1] = { ...board.repo.worktrees[1], branch: lane };
   board.agents[0] = { ...board.agents[0], branch: lane };

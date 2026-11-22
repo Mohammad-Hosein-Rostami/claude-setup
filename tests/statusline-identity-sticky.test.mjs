@@ -16,7 +16,7 @@ import { agentKey, boardIdentity, hueOf, itemKey, worktreeKey } from '../home/to
 import { agentRow, runHeader } from '../home/tools/board/lib/agent-rows.mjs';
 import { repoRows } from '../home/tools/board/lib/git-rows.mjs';
 import { workRows } from '../home/tools/board/lib/layout.mjs';
-import { lookFor, NO_COLOR_ENV, NOW, screenshotBoard, TERM_256 } from './statusline-identity-fixture.mjs';
+import { lookFor, NO_COLOR_ENV, NOW, placedWriterBoard, screenshotBoard, TERM_256 } from './statusline-identity-fixture.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const STATUSLINE = fileURLToPath(new URL('../home/statusline.mjs', import.meta.url));
@@ -200,7 +200,7 @@ function rowsFor(board, env = TERM_256, columns = 160) {
 }
 
 test('a finished agent counts only when no running agent is placed: the run says `on` the lane of its running agents, else of its finished ones', () => {
-  const board = screenshotBoard();
+  const board = placedWriterBoard();
   const run = board.runs[0];
   const wt = (name) => ({ ...board.repo.worktrees[1], name, branch: name });
   board.repo.worktrees.push(wt('old-lane'));
@@ -214,7 +214,7 @@ test('a finished agent counts only when no running agent is placed: the run says
 });
 
 test('a workflow keeps its lane and its hue after its implementer finishes, while read-only reviewers run (SA3)', () => {
-  const board = screenshotBoard();
+  const board = placedWriterBoard();
   const run = board.runs[0];
   const writer = { ...board.agents[0], runId: run.runId, state: 'done', doneMs: NOW - MIN_MS };
   const reader = (id) => ({ ...board.agents[1], id, runId: run.runId, state: 'run' });

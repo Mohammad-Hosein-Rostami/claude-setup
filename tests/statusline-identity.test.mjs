@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { statusRows } from '../home/tools/board/lib/render.mjs';
-import { lookFor, NO_COLOR_ENV, NOW, screenshotBoard, TERM_16, TERM_256, viewOf } from './statusline-identity-fixture.mjs';
+import { lookFor, NO_COLOR_ENV, NOW, placedWriterBoard, screenshotBoard, TERM_16, TERM_256, viewOf } from './statusline-identity-fixture.mjs';
 
 const MARKERS = ['●', '◆', '▲'];
 const SAMPLE_NAMES = ['remove-modes', 'road-gate-landed-row', 'sync-remote-path', 'statusline-identity-colours', 'build', 'review'];
@@ -42,7 +42,7 @@ test('a name keeps its hue in every render whatever the order, and the six sampl
 });
 
 test('a workflow whose agents work in a lane worktree shows `on <branch>` and shares the branch git row\'s hue and marker', () => {
-  const rows = rowsOf(screenshotBoard(), TERM_256, 160);
+  const rows = rowsOf(placedWriterBoard(), TERM_256, 160);
   for (const [workflow, branch] of [['remove-modes-delta-review', 'remove-modes'], ['road-gate-landed-row', 'road-gate-landed-row']]) {
     const runRow = rowWith(rows, '▸', workflow);
     const gitRow = rowWith(rows, '⎇', branch);
@@ -55,8 +55,18 @@ test('a workflow whose agents work in a lane worktree shows `on <branch>` and sh
   assert.notDeepEqual(identityOn(unplaced, 'statusline-identity-colours'), identityOn(rowWith(rows, '⎇', 'sync-remote-path'), 'sync-remote-path'));
 });
 
+test('the screenshot board as the live board has it (read-only reviewers, nothing placed): no workflow names a lane or shares a branch row\'s hue', () => {
+  const rows = rowsOf(screenshotBoard(), TERM_256, 160);
+  const runs = ['remove-modes-delta-review', 'statusline-identity-colours', 'road-gate-landed-row'];
+  const lanes = ['remove-modes', 'road-gate-landed-row', 'sync-remote-path'];
+  for (const name of runs) assert.doesNotMatch(plain(rowWith(rows, '▸', name)), / on /, `${name} names no lane`);
+  const looks = [...runs.map((name) => identityOn(rowWith(rows, '▸', name), name)), ...lanes.map((name) => identityOn(rowWith(rows, '⎇', name), name))];
+  // the workflow `road-gate-landed-row` and the lane of that name are one name, so one hue (no placed agent is needed for that)
+  assert.equal(new Set(looks.map((look) => `${look.codes}${look.marker}`)).size, 5, 'five names on screen, five hues');
+});
+
 test('a worktree whose folder differs from its branch still matches its workflow by the branch, and main is no lane', () => {
-  const board = screenshotBoard();
+  const board = placedWriterBoard();
   board.repo.worktrees = board.repo.worktrees.map((wt) => (wt.name === 'remove-modes' ? { ...wt, name: 'lane-7', path: '/r/wt/lane-7' } : wt));
   board.agents = board.agents.map((agent) => (agent.wt === 'remove-modes' ? { ...agent, wt: 'lane-7' } : agent));
   board.agents.push({ ...board.agents[0], id: 'a5', runId: 'wf_status', wt: 'main', branch: 'main' });
@@ -78,7 +88,7 @@ test('main is bold in the default colour, and the section labels lead their rows
 });
 
 test('a 16-colour terminal gets no 256-colour codes and tells items apart by bold, underline or plain with the marker', () => {
-  const rows = rowsOf(screenshotBoard(), TERM_16, 160);
+  const rows = rowsOf(placedWriterBoard(), TERM_16, 160);
   assert.ok(rows.every((row) => !row.includes('38;5;')));
   const names = ['remove-modes-delta-review', 'statusline-identity-colours', 'road-gate-landed-row'];
   const looks = names.map((name) => identityOn(rowWith(rows, '▸', name), name));
@@ -91,7 +101,7 @@ test('a 16-colour terminal gets no 256-colour codes and tells items apart by bol
 });
 
 test('NO_COLOR prints no escape code and keeps the marker shapes, the same on a workflow row and its branch row', () => {
-  const rows = rowsOf(screenshotBoard(), NO_COLOR_ENV, 120);
+  const rows = rowsOf(placedWriterBoard(), NO_COLOR_ENV, 120);
   assert.ok(rows.every((row) => !row.includes(ESCAPE)));
   const runLook = identityOn(rowWith(rows, '▸', 'remove-modes-delta-review'), 'remove-modes-delta-review');
   assert.ok(MARKERS.includes(runLook?.marker));
@@ -111,7 +121,7 @@ test('a workflow name is cut at a `-` boundary with …, and at 80 columns the w
   const rows = rowsOf(boardOfRuns([long]), NO_COLOR_ENV, 80);
   const shown = /▸ \S (\S+)…/.exec(rows.find((row) => row.startsWith('▸')) ?? '')?.[1];
   assert.ok(shown && long.startsWith(`${shown}-`), `cut at a boundary: ${shown}`);
-  const whole = rowsOf(screenshotBoard(), NO_COLOR_ENV, 80);
+  const whole = rowsOf(placedWriterBoard(), NO_COLOR_ENV, 80);
   for (const name of ['remove-modes-delta-review', 'statusline-identity-colours', 'road-gate-landed-row']) {
     const row = rowWith(whole, '▸', name);
     assert.ok(row, `${name} whole at 80 columns`);

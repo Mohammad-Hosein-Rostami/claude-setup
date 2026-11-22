@@ -1,10 +1,13 @@
 // The board of the owner's 2026-11-22 screenshot (spec-tui-3): three workflows, three lane branches and main, for the identity
 // colour tests (statusline-identity.test.mjs) and the fixture renders of the lane report.
-// Exports: screenshotBoard(nowMs) -> board; viewOf(board, nowMs, env) -> the view statusRows takes; lookFor(env, columns);
-// TERM_256, TERM_16, NO_COLOR_ENV (terminal environments); NOW.
-// Workflow `remove-modes-delta-review` and `road-gate-landed-row` have agents placed in the lane worktree of the same-named branch
-// (`remove-modes`, `road-gate-landed-row`); `statusline-identity-colours` has an agent on no sure worktree, so its row names no
-// branch; `sync-remote-path` is a lane branch no workflow works on.
+// Exports: screenshotBoard(nowMs) -> board; placedWriterBoard(nowMs) -> the same board with writers placed in two lanes;
+// viewOf(board, nowMs, env) -> the view statusRows takes; lookFor(env, columns); TERM_256, TERM_16, NO_COLOR_ENV (terminal
+// environments); NOW.
+// `screenshotBoard` is what the live board shows: every workflow is a review of read-only agents that no sure fact places in a
+// worktree, so no workflow row names a lane or shares a branch row's hue (repos.mjs placeAgents; README "Which is where").
+// `placedWriterBoard` is the case that has a tie: `remove-modes-delta-review` and `road-gate-landed-row` have an implementer placed
+// in the lane worktree of the same-named branch (`remove-modes`, `road-gate-landed-row`), so their rows say `on <branch>` in the
+// branch's hue; `statusline-identity-colours` has no placed agent, and `sync-remote-path` is a lane no workflow works on.
 import { lookOf } from '../home/tools/board/lib/cells.mjs';
 
 export const NOW = Date.UTC(2026, 10, 22, 9, 0);
@@ -19,6 +22,7 @@ const agent = (fields) => ({
   highLeftMin: 25, overMin: 0, usual: [10, 30], tag: null, doing: 'Edit render.mjs', calls: 12, tokens: 40_000, quietMin: 0,
   pendingMin: 0, doneMs: null, repo: 'claude-setup', wt: null, branch: null, unplaced: null, ...fields,
 });
+const reviewer = (fields) => ({ name: 'reviewer:opus', type: 'reviewer', writer: false, unplaced: 'claude-setup · read-only', ...fields });
 const run = (fields) => ({
   state: 'run', quietMin: 0, phaseIndex: 1, phaseTotal: 1, started: 3, done: 1, lanes: {}, purpose: null, agentsTotal: 3,
   agentsDone: 1, leftMin: 12, ...fields,
@@ -39,22 +43,31 @@ export function screenshotBoard(nowMs = NOW) {
       run({ runId: 'wf_road', name: 'road-gate-landed-row', phase: 'Delta review', leftMin: 7 }),
     ],
     agents: [
-      agent({ id: 'a1', name: 'implementer:opus', runId: 'wf_remove', wt: 'remove-modes', branch: 'remove-modes' }),
-      agent({ id: 'a2', name: 'reviewer:opus', type: 'reviewer', writer: false, runId: 'wf_remove', unplaced: 'claude-setup · read-only' }),
+      agent(reviewer({ id: 'a1', runId: 'wf_remove' })),
+      agent(reviewer({ id: 'a2', runId: 'wf_remove' })),
       agent({ id: 'a3', name: 'implementer:opus', runId: 'wf_status', unplaced: 'claude-setup · no edits yet' }),
-      agent({ id: 'a4', name: 'implementer:opus', runId: 'wf_road', wt: 'road-gate-landed-row', branch: 'road-gate-landed-row' }),
+      agent(reviewer({ id: 'a4', runId: 'wf_road' })),
     ],
     repo: {
       name: 'claude-setup', base: 'main', branches: 6, unlanded: 3, tip: 'a'.repeat(40), suite: null,
       landed: { count: 42, lastMs: nowMs - 20 * MIN_MS },
       worktrees: [
         worktree('main', { path: '/r/main', main: true, ageMin: 340, upAhead: 44, upBehind: 0 }),
-        worktree('remove-modes', { ahead: 7, agents: ['implementer:opus'] }),
-        worktree('road-gate-landed-row', { ahead: 8, changed: 2, agents: ['implementer:opus'] }),
+        worktree('remove-modes', { ahead: 7 }),
+        worktree('road-gate-landed-row', { ahead: 8, changed: 2 }),
         worktree('sync-remote-path', { ahead: 1, ageMin: 2 }),
       ],
     },
   };
+}
+
+/** @returns {object} the screenshot's board where the implementers of two workflows are placed in their lane worktrees (a tie) */
+export function placedWriterBoard(nowMs = NOW) {
+  const board = screenshotBoard(nowMs);
+  const placed = (id, runId, lane) => agent({ id, name: 'implementer:opus', runId, wt: lane, branch: lane });
+  board.agents = [placed('a1', 'wf_remove', 'remove-modes'), board.agents[1], board.agents[2], placed('a4', 'wf_road', 'road-gate-landed-row')];
+  for (const wt of board.repo.worktrees) if (wt.name === 'remove-modes' || wt.name === 'road-gate-landed-row') wt.agents = ['implementer:opus'];
+  return board;
 }
 
 /** @returns {object} the view render.mjs statusRows takes, for a board at a fixed clock (UTC, no estimate, no limits) */
