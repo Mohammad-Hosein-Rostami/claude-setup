@@ -81,3 +81,15 @@ test('a correction row with a bad sha is refused and never reaches git', () => {
     assert.equal(cherried(calls, TO), false, bad);
   }
 });
+
+test('a correction row that is not done counts for nothing', () => {
+  const { result, calls } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', 'merged by hand'), row('rd.s1.a-land.landed', landedText(TO), null)]);
+  assert.equal(result.pass, false);
+  assert.match(rangeLine(result), /^FAIL 2 range: rd\.s1\.a-land has no "landed/);
+  assert.equal(cherried(calls, TO), false);
+});
+
+test('a close row written in capitals finds its correction row', () => {
+  const { result } = gate([row('rd.s1.a', 'x'), row('RD.S1.A-LAND', 'merged by hand'), row('rd.s1.a-land.landed', landedText(TO))]);
+  assert.match(rangeLine(result), /^PASS 2 range/);
+});
