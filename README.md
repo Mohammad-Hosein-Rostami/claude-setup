@@ -10,19 +10,19 @@ repo. `settings.json` is generated from `settings/` (it holds machine paths).
 | `home/CLAUDE.md` | Model routing and token discipline |
 | `home/rules`, `home/standards` | One-line rules (path-scoped) and the longer reference behind them |
 | `home/skills`, `home/agents` | Skills and subagents (the Opus session plans, decides and delegates; Sonnet implements and reviews; Haiku looks up and runs) |
-| `home/hooks`, `home/statusline.mjs` | Bash guard, post-edit checks, token audit, status line |
+| `home/hooks`, `home/statusline.mjs` | Bash guard, post-edit formatter, token audit, status line |
 | `home/tools/ui-check` | Figma baseline pull, visual compare, responsive and column checks |
 | `settings/`, `plugins/` | Settings layers (base, OS, local) and the plugin list |
 | `home/lead-rules.md`, `home/lead.md` | The lead's rules, printed to the main session at start |
-| `tests/`, `tools/`, `.githooks` | Repo tests (`node:test`), Brewfile and Windows tool script, pre-commit (gitleaks, affected tests), pre-push (full suite) |
-| `scripts/` | `install.mjs` (the one installer; `install/`), `install.sh`, `install.ps1`, `doctor.sh`, `doctor-accounts.mjs`, `lane-new.sh`, `affected-tests.mjs`, `merge-settings.jq` |
+| `tests/`, `tools/`, `.githooks` | Repo tests (`node:test`, run by hand), Brewfile and Windows tool script, pre-commit (gitleaks, `node --check` of hook files) |
+| `scripts/` | `install.mjs` (the one installer; `install/`), `install.sh`, `install.ps1`, `doctor.sh`, `doctor-accounts.mjs`, `lane-new.sh`, `merge-settings.jq` |
 
 ## Quick start
 Install on a new machine (macOS or Linux; needs git, Node 22+ and jq), in the folder you keep repos in:
 
     git clone <this repo> claude-setup && cd claude-setup
     scripts/install.sh               # links, start-up line, settings.json (your own kept as the first layer), plugins, tool deps
-    scripts/doctor.sh --quick        # read-only health report without the repo suite (--full runs it)
+    scripts/doctor.sh                # read-only health report (never runs the repo tests)
 
 Update, roll back, remove, sync:
 
@@ -43,7 +43,7 @@ Run tests (the second needs the ui-check deps that `install.sh` installs):
     node --test tests/*.test.mjs
     pnpm --dir home/tools/ui-check test
 
-While building, run only the tests a change can affect: `node scripts/affected-tests.mjs <path>... --run`.
+Nothing runs the tests automatically (not the commit hook, not landing); run them when you want to know a change still works.
 
 Windows: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Update [-To <tag>]] [-Uninstall]` (not verified on Windows yet). Needs git (Git for Windows).
 Existing targets are moved to

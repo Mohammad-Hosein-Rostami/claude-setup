@@ -11,17 +11,17 @@ Keep extra usage off in claude.ai so nothing can bill credits.
 
 ## A normal task
 - One task per session. For an unrelated next task, `/clear` or start a new session first.
-- The lead plans, decides and delegates: `scout` reads, `runner` runs checks, `implementer` writes code, `reviewer`
-  and `security-auditor` review. Technical choices are made and stated in one line; owner decisions are asked.
+- The lead plans, decides and delegates: `scout` reads, `runner` runs commands, `implementer` writes code. Technical
+  choices are made and stated in one line; owner decisions are asked.
 - The lead picks the form by the job (the rule is in `home/lead.md`, "Job form and order"). Inline, no agent: lookups
-  (`/quick` for a read-only one), reading code, one command, a one-file or under-30-line edit (it still runs
-  `review-tier` before it lands). Everything else runs as steps of at most 5 agents at a time: build batch (lanes that share no
-  file), review batch, fix batch. A job of several steps is a road (`road-<id>.json` beside `STATUS.md`): each step ends
+  (`/quick` for a read-only one), reading code, one command, a one-file or under-30-line edit. Everything else runs as steps of at most 5 agents at a time: build batch (lanes that share no
+  file), then a fix batch when the gate finds something. A job of several steps is a road (`road-<id>.json` beside `STATUS.md`): each step ends
   with a gate (`road.mjs gate`) and one update to you. Fixed sequences are one script call, not an agent: `land-lane` lands a
-  reviewed lane (the only way to land, one at a time), `scripts/sync-machines.mjs` syncs the machines.
-- Gates: targeted checks once after the last edit (through `runner`); the set `review-tier`
-  prints (`reviewer`, plus `security-auditor` and Opus lenses for risky classes and at landing; each round is judged with
-  `verdict.mjs`); `ui-quality-pass` for UI; then `verify-done`.
+  lane (the only way to land, one at a time), `scripts/sync-machines.mjs` syncs the machines.
+- UI work always ends with `ui-quality-pass` and the `ui-check` loop, and `visual-qa` runs the final gate.
+  There is no switch for quality checks and no other automatic one: the old check system was removed on 2026-11-22 (backup:
+  `~/Desktop/claude-setup-reports/backups/checks-removed-2026-11-22/`). What stays: the Bash guard, gitleaks and `node --check` of
+  hook files at commit, and the `git-tidy` gate.
 - While agents run you can keep talking to the lead: it answers questions and asks yours without stopping the
   agents. A command that runs over about 5 minutes goes to the background with its `timeout` set (at most 2 h); `watch.mjs` is for waiting on a
   session or an agent, not on a command.
@@ -63,7 +63,7 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   (watch by session id, not by file path); in any doubt the silence is still a stall.
 - A run that must survive a dropped connection starts a watch on its own session id with
   `--exit-on-event api-error,stall,limit`, as a background command with `timeout` 7200000 (an unattended run stops one without it after 30 min); when the watch exits, the run is woken and carries on.
-- Long jobs run as background agents in steps of at most 5. Landing is `land-lane` (it checks free disk, the reviewed tip and the suite, then
+- Long jobs run as background agents in steps of at most 5. Landing is `land-lane` (it checks free disk and the tip, rebases, runs the UI proof when UI files changed, then
   fast-forwards). To bring the other machines along after the last landing, run on the MacBook, in the repo folder:
   `node scripts/sync-machines.mjs --repo "$PWD"` (it never pushes; see `docs/setup.md`).
 - Background agents hand decisions to the lead through the ask queue: `node ~/.claude/tools/ask/ask.mjs init` prints
@@ -71,11 +71,10 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   `home/tools/ask/README.md` and the `ask-owner` skill.
 
 ## What to expect from agents
-- Agents get one full brief (checks, failure cases to test, defaults) and finish it instead of stopping to ask about
+- Agents get one full brief (acceptance lines, failure cases, defaults) and finish it instead of stopping to ask about
   technical details; each default they took is listed in the report. Only your decisions (scope, money, irreversible,
   credentials) reach you. Expect fewer status messages.
-- Before reporting, an agent tries to break its own work and says what it tried. The independent review still runs.
-- Review findings go back in one message. An agent that has been idle over 5 minutes is replaced by a fresh one that
+- Before reporting, an agent re-reads its own diff against the spec. A finding you or the lead raise goes back in one message. An agent that has been idle over 5 minutes is replaced by a fresh one that
   gets the spec and the diff, because resuming bills its old context again.
 - Agents commit what is green at 80 tool calls and must return a status report by 120. An agent that ends without one is
   continued once, not restarted.
@@ -147,5 +146,4 @@ guard tests have not been run there (`tests/pin-home.mjs` and the warm-exec fake
 ## Where things are
 - Reports from agents and audits: `~/Desktop/claude-setup-reports/`.
 - Guard log: `~/.claude/logs/guard.jsonl`.
-- Typecheck gate run log (one line per check at a stop: what ran or why it was skipped): `~/.claude/logs/typecheck-gate.jsonl`.
 - What exists: [catalog.md](catalog.md). Problems: [troubleshooting.md](troubleshooting.md).

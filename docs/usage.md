@@ -2,7 +2,7 @@
 
 ## Workflow
 Edit in `~/.claude/...` or in `home/...` (the same files, via symlinks) -> `git add` -> `git commit` (Conventional
-Commits; the pre-commit hook runs gitleaks on staged changes). Never `git push` unless the owner says so. On another machine: `git pull`, then
+Commits; the pre-commit hook runs gitleaks on staged changes and `node --check` on staged hook files). Never `git push` unless the owner says so. On another machine: `git pull`, then
 `scripts/install.sh` only if `settings/`, `plugins/` or a tool's dependencies changed. Run `scripts/doctor.sh` when
 something looks off.
 
@@ -22,7 +22,7 @@ optional `tools`/`disallowedTools`. State what it returns and a size cap. Add a 
 `home/CLAUDE.md` if it changes who does what. Add it to `docs/catalog.md`. No `maxTurns`: a turn cap stops the agent mid-task; keep it focused through its prompt instead.
 
 ## Add a rule
-`home/rules/<area>.md`: frontmatter `paths: [globs]` (omit for always-on), then one line per rule `ID | rule | check`.
+`home/rules/<area>.md`: frontmatter `paths: [globs]` (omit for always-on), then one line per rule starting with its `ID`.
 Put long examples in `home/standards/<area>.md`. Use a new id prefix or continue the existing numbering.
 
 ## Add a tool

@@ -25,7 +25,7 @@ The installer links `home/*` (CLAUDE.md, lead.md, lead-rules.md, rules, skills, 
 `~/.claude` (and removes the launcher, `modes` and `workflows` links an older install made for the retired session modes and workflows; a copy or the owner's own file at those paths goes to the backup folder instead), builds `~/.claude/settings.json`, installs `home/tools/ui-check` dependencies (lockfile if present,
 otherwise a plain install), sets `core.hooksPath` to `.githooks`, then installs plugins. Anything replaced is moved
 to `~/.claude-backup-<stamp>/`, never deleted. One install runs at a time: a second one started meanwhile stops with a message. Check the result with `scripts/doctor.sh`
-(`DOCTOR_PROJECT=/path/to/app scripts/doctor.sh` also checks Playwright and Chromium from that project). It also reports free disk space (FAIL below 5 GB, WARN below 15 GB; `DISK_FAIL_FREE_GB` and `DISK_WARN_FREE_GB` move the limits) and names the caches to clear. Its last check runs the repo tests, unless a full-suite PASS is already recorded for HEAD (`test-pass`) and the working tree is clean (`git status --porcelain` prints nothing; an edit or a new file since then runs the suite); the full output is kept in `~/.claude/logs/doctor-repo-tests.log` and a failure prints each failing test with its first error line and that path.
+(`DOCTOR_PROJECT=/path/to/app scripts/doctor.sh` also checks Playwright and Chromium from that project). It also reports free disk space (FAIL below 5 GB, WARN below 15 GB; `DISK_FAIL_FREE_GB` and `DISK_WARN_FREE_GB` move the limits) and names the caches to clear. It never runs the repo's tests (an old `--quick` or `--full` is ignored).
 
 ## settings and local.json
 `settings.json` = deep merge of `settings/base.json` + `settings/<macos|linux|windows>.json` + `settings/local.json`,
@@ -41,7 +41,7 @@ want shared into `settings/*.json` and re-run the installer. `doctor.sh` reports
 ## Sync the machines
 Run on the MacBook, in the repo folder, once after the last land (the PC is the default target; others come from `claudeSetup.syncTargets`):
 `node scripts/sync-machines.mjs --repo "$PWD"`. Add `--tag <tag>` to move the targets to a phase tag, `--targets <name,...>` to sync only
-some, `--checks test,review` to also require a suite PASS and the audit-log gate, `--json` for one JSON row per machine.
+some, `--json` for one JSON row per machine (the old `--checks` is refused with exit 2).
 - First it checks the base branch is checked out, no tracked file changed and `git-tidy check` is clean (exit 3 with `verify: <check> failed: <why>`).
 - Then every machine must run one Claude Code version and channel, at or above the floor in `scripts/doctor.sh`, on the `cliVersion` pin of
   `settings/local.json`. A machine that does not is skipped and its row says why (a target still on an old checkout is checked again after its install).

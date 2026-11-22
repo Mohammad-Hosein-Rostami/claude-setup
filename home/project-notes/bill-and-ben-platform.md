@@ -7,6 +7,6 @@ Team setup (CLAUDE.md, `.context/owner-requirements.md`) wins on conflicts. My g
   theme are not `.tsx`, so the skill-router hook will not remind: load the skills by hand.
 - bb-canvas live/board data: + `async-ui-states`. bb-console signup/admin/permission forms: + `forms-validation`.
   bb-web: + `frontend-performance`.
-- Auth, cookies, CSP, OIDC: `frontend-security`; review with `security-auditor`. Billing periods, schedules,
+- Auth, cookies, CSP, OIDC: `frontend-security`. Billing periods, schedules,
   history: `datetime-handling`.
 - Delegate UI to `ui-implementer`, Figma or multi-width checks to `visual-qa`, non-UI to `implementer`.

@@ -3,15 +3,15 @@
 This repo is the owner's personal Claude Code setup. `home/` is symlinked live into `~/.claude`, so an edit there is
 live in every running session at once. A half-written hook breaks Bash everywhere.
 
-- Edit hooks, the guard and tools in a git worktree. While building, run the affected tests (`node scripts/affected-tests.mjs <path>... --run`).
-  To land: rebase onto main, run the full suite on the rebased tip through `node home/tools/test-pass/test-pass.mjs run --suite`, then
-  fast-forward (`git merge --ff-only`). Parallel agents each use their own worktree; never edit the main checkout while others work.
-- Tests: `node --test tests/*.test.mjs` (never bare `node --test`). The pre-commit hook runs the tests the staged files can affect plus
-  gitleaks; the pre-push hook runs this full suite unless that tree already passed it.
+- Edit hooks, the guard and tools in a git worktree (`scripts/lane-new.sh <name>`). To land: rebase onto main, then
+  fast-forward (`git merge --ff-only`), through `land-lane`. Parallel agents each use their own worktree; never edit the main
+  checkout while others work.
+- Tests: `node --test tests/*.test.mjs` (never bare `node --test`). Nothing runs them automatically: no commit, push or landing step
+  runs the suite. Run the tests of what you changed by hand when you want to know it still works.
+- The pre-commit hook runs gitleaks on the staged changes and `node --check` on each staged hook file.
 - Commit only your own paths: `git commit -m "<conventional message>" -- <paths>`. Never `--no-verify`.
 - `~/.claude/settings.json` is a merged copy: change `settings/base.json` (or an OS file) and re-merge with
   `scripts/install.sh`.
-- Guard changes get a security audit before they are kept.
 - Never push unless the owner says so.
 - Add or change a skill, agent, tool or hook: update `docs/catalog.md` in the same commit.
 - Work habits for day-to-day use are in `docs/daily-use.md`; the global rules the sessions load are `home/CLAUDE.md`.

@@ -9,34 +9,33 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 | ------ | ------------- |
 | `home/` | The content that gets linked into `~/.claude`. Editing a file here changes every running session at once. |
 | `home/CLAUDE.md` | The global instructions every session reads (language, quality gates, token habits, safety). |
-| `home/rules/` | One-line rules, `id | rule | check`. `core.md` is always on; the others apply to matching file paths. |
+| `home/rules/` | One-line rules, each with an id. `core.md` is always on; the others apply to matching file paths. |
 | `home/standards/` | The longer reference behind the rules, with examples (for human readability: `readability.md`). |
 | `home/skills/` | Step-by-step workflows (`<name>/SKILL.md`) that Claude loads when the task matches. |
-| `home/agents/` | Helper roles (reviewer, implementer, architect, ...), one file each, with their model and limits. |
+| `home/agents/` | Helper roles (implementer, architect, runner, ...), one file each, with their model and limits. |
 | `home/project-notes/` | One note file per project, read through that project's uncommitted `CLAUDE.local.md`. |
 | `home/hooks/` | Node scripts Claude Code runs on events (before a Bash command, when a session stops, ...). |
 | `home/lead-rules.md`, `home/lead.md` | The lead's rules (model routing, delegation, job form), printed to the main session at start. |
-| `home/tools/` | Command-line tools with their own README (`readable`, `ui-check`, `ui-coverage`, `recall`, ...). |
+| `home/tools/` | Command-line tools with their own README (`ui-check`, `ui-coverage`, `recall`, ...). |
 | `settings/` | `base.json` plus one file per OS. They are merged into `~/.claude/settings.json`. |
 | `plugins/` | The list of plugins to install. |
 | `tools/` | System programs to install (`Brewfile`, `windows-tools.ps1`); not the same as `home/tools/`. |
-| `.githooks/` | The pre-commit hook (gitleaks and the tests the staged files can affect) and the pre-push hook (the full suite, skipped when that tree already passed it). They only run after `scripts/install.sh` sets `core.hooksPath`. |
+| `.githooks/` | The pre-commit hook: gitleaks on the staged changes and `node --check` of each staged hook file. It only runs after `scripts/install.sh` sets `core.hooksPath`. |
 | `scripts/` | `install.sh`, `install.ps1` and `doctor.sh`. |
-| `tests/` | The test suite (`node:test`). |
+| `tests/` | The test suite (`node:test`); run by hand, nothing runs it automatically. |
 | `docs/` | The documents for people. Start with `catalog.md` for a list of everything. |
 
 ## How one prompt flows
 
 1. You start Claude with `claude --model <m> --effort <e>`. The `session-notes.mjs` and `lead-text.mjs` hooks print the lead rules.
-2. `skill-router.mjs` reads your prompt and names the skills that fit (for example `verify-done` for "done").
+2. `skill-router.mjs` reads your prompt and names the skills that fit (for example `ui-quality-pass` for a UI edit).
 3. Claude reads `home/CLAUDE.md` and the rules whose paths match the files it works on.
 4. The lead hands work to agents from `home/agents/`. Each agent file lists its model, tools and size limits.
 5. Before each Bash command, `pre-bash-guard.mjs` checks it. Risky commands (push, `rm -rf`, secrets) open a dialog. When a
    rewrite would remove the question (a `$VAR` command word, `rm`/`push` inside `$(...)` or a heredoc, a literal secret), the
    first send is sent back to Claude with the fix instead; the same command sent again opens the dialog.
-6. After each edit, `post-edit.mjs` runs the project's formatter and lint. When an agent stops, `typecheck-gate.mjs`
-   typechecks what it edited.
-7. At the end the Stop hooks check the reply against any size cap you gave.
+6. After each edit, `post-edit.mjs` runs the project's formatter.
+7. At the end the Stop hooks check the reply against any size cap you gave, and look for uncommitted files and loose branches.
 
 The hook list with exact triggers is in `docs/catalog.md` (section Hooks) and `home/hooks/README.md`.
 
@@ -45,7 +44,7 @@ The hook list with exact triggers is in `docs/catalog.md` (section Hooks) and `h
 | You want to change | Edit | Then |
 | ------------------ | ---- | ---- |
 | A rule every session follows | `home/rules/core.md` (one line, keep the id) | update `docs/catalog.md` if the id range changes |
-| A rule for some file types | `home/rules/<area>.md` (`paths:` in the frontmatter) | run the tests |
+| A rule for some file types | `home/rules/<area>.md` (`paths:` in the frontmatter) | none |
 | The long explanation of a rule | `home/standards/<area>.md` | none |
 | How a helper role behaves | `home/agents/<name>.md` | update its row in `docs/catalog.md` |
 | A workflow | `home/skills/<name>/SKILL.md` | update its row in `docs/catalog.md` |
@@ -59,8 +58,8 @@ own rules) and `docs/usage.md`.
 - One hook, until you re-run the installer: open `~/.claude/settings.json`, find the `command` that names the script
   (for example `pre-bash-guard.mjs`) and delete that entry from its `hooks` list.
 - One hook, for good: delete the same entry from `settings/base.json` and run `scripts/install.sh`.
-- Some hooks have a switch: `CLAUDE_SKILL_ROUTER=off` turns the skill router off; `CLAUDE_POST_EDIT_SKIP=typecheck`
-  (or `all`) skips the typecheck gate.
+- Some hooks have a switch: `CLAUDE_SKILL_ROUTER=off` turns the skill router off; `CLAUDE_POST_EDIT_SKIP=format`
+  (or `all`) skips the formatter.
 
 ## Read the guard log
 
@@ -78,19 +77,8 @@ From the repo root:
 
 Never run bare `node --test`. The `ui-check` tool has its own tests: `pnpm --dir home/tools/ui-check test`.
 
-While you work, run only the tests a change can break: `node scripts/affected-tests.mjs <path>... --run` (or `--staged`, or
-`--base main`). The pre-commit hook does this for the staged files, so a commit with a failing affected test is refused; when
-the script cannot tell which tests a file reaches it names the whole suite. The full suite runs when a branch lands: run
-`node home/tools/test-pass/test-pass.mjs run --suite` on the rebased tip, which records the pass per tree, and the pre-push
-hook then skips a second run on the same tree.
-
-## Check a project for readability
-
-    node ~/.claude/tools/readable/readable.mjs check <project-folder> --changed
-
-With `--changed` it lists only what your change added: a new folder named `utils`, a new file with no header comment, a
-new folder that reached three source files with no README, a new uncommented config key. Without `--changed` it audits
-the whole tree. Its README is `home/tools/readable/README.md`; the reasons are in `home/standards/readability.md`.
+Nothing runs the tests for you: not the pre-commit hook, not landing. Run the suite, or one file
+(`node --test tests/estimate.test.mjs`), when you want to know that a change still works. Tests of parts that were removed may still sit in `tests/` until they are pruned.
 
 ## Install on another machine
 

@@ -1,7 +1,7 @@
 # pejvak-frontend-nx-workspace: personal layer
 
 Team setup (AGENTS.md, CLAUDE.md, `.claude/`) wins on conflicts; its agents shadow my global ones with the same
-name (`architect`, `deep-debugger`, `runner`, `scout`, `implementer`, `ui-implementer`, `reviewer`). My global
+name (`architect`, `deep-debugger`, `runner`, `scout`, `implementer`, `ui-implementer`). My global
 skills add on top:
 
 - cp-portal / cp-website / `libs/shared` UI: + `accessibility-build`, `responsive-ui`, `forms-validation`
