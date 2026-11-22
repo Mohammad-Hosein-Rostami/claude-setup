@@ -62,12 +62,12 @@ test('the one-row git form draws each worktree\'s marker and name in its hue', (
 });
 
 
-test('the session row\'s git part (no git row has room) cuts the branch at a word at 32 characters', () => {
-  const board = { ...screenshotBoard(), repo: null, repos: [], agents: [] };
+test('the last row\'s git part (one summary, RC8) cuts a long main branch at a word at 24 characters', () => {
+  const board = { ...screenshotBoard(), agents: [] };
   const branch = 'feature-long-branch-name-with-many-words-in-it';
-  board.git = { branch, ahead: 0, behind: 0, changed: 0 };
+  board.repo = { ...board.repo, worktrees: board.repo.worktrees.map((wt) => (wt.main ? { ...wt, name: branch, branch } : wt)) };
   const row = plain(sessionRow(viewOf(board, NOW, NO_COLOR_ENV), lookFor(NO_COLOR_ENV, 200)));
-  assertCutAtWord(/git (feature[^·,]*…)/.exec(row)?.[1], branch, 32);
+  assertCutAtWord(/^git +(feature\S*…)/.exec(row)?.[1], branch, 24);
 });
 
 const whereView = (board, identity) => ({ segment: null, board, asking: null, limits: [], lastSeen: null, nowMs: NOW, timeZone: 'UTC', checks: null, identity });
@@ -97,11 +97,11 @@ test('`board.mjs where` draws the hues saved for the session, from a temp HOME',
   assert.ok(out.includes(`\u001b[38;5;${HUE_CODES[3]}m● implementer`), `the saved hue 3 on the implementer row: ${out.slice(0, 400)}`);
 });
 
-test('the road label is blue', () => {
+test('the road label has no colour (RC5: colour only for a state) and the active step is cyan', () => {
   const clock = { nowMs: NOW, timeZone: 'UTC' };
   const look = lookFor(TERM_256, 160);
   const road = roadRow({ name: 'p9', step: 1, steps: 3 }, null, clock, look);
-  assert.ok(road.startsWith(`${STATE.road === 'road' ? '\u001b[34m' : ''}road p9`), road);
+  assert.ok(road.startsWith(`road p9 · ${paint('step 1/3', STATE.run, look)}`), road);
 });
 
 test('a part with spans keeps bold on each span and when cut, and is cut with no span room only as plain text', () => {

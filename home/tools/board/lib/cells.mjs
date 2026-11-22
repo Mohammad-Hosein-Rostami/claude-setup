@@ -3,26 +3,23 @@
 // Exports: lookOf(env, platform, columns) -> look; paint(text, state, look, bold); cleanText(text, look); cutWords(text, max, look);
 // fitParts(parts, look) -> string; barText(shares, cells, look); durationText(minutes); clockOf(ms, nowMs, timeZone); STATE;
 // hueState(hue) -> state; HUE_CODES.
-// Colour (spec-tui-2, basic ANSI 16 so the terminal theme maps them on dark and light themes), one meaning each: done green (done,
-// passing, on track, ahead), run cyan (running now), warn yellow (attention soon), block red (needs action), wait magenta (waiting on
-// the owner), dim (SGR 2, secondary text); a part's `bold` marks the render's one most urgent part, and bold also stands for `ALL`,
-// main's git row and, on a 16-colour terminal, two of the identity hues.
-// Identity and section colours (spec-tui-3, "which is where"): a work item's hue (`hueState(n)`, identity.mjs picks n) is one of
-// HUE_CODES in the 256-colour cube, never a state's code; on a 16-colour terminal (TERM and COLORTERM name no 256 or true colour)
-// the hues cycle bold, underline, plain (WT_SESSION, Windows Terminal, counts as 256-colour); without colour none. `road` is basic blue (the road row's label), `strong` bold with no
-// colour (`ALL`, main's git row). A part may carry `spans` (texts in order whose join is its text, each with its own state).
+// Colour (owner decision RC5, 2026-11-22: colour only for state; basic ANSI 16 so the terminal theme maps them on dark and light
+// themes), one meaning each: run cyan (working), warn yellow (needs a look), block red (error, act now), wait magenta (waiting on the
+// owner), dim (SGR 2, secondary text); `strong` is bold with no colour (the alert's label). `done` and `road` are kept as states
+// for old callers and paint nothing: a healthy value is in the default colour. A part's `bold` makes it bold.
+// Identity hues (spec-tui-3, `/where` only since RC5; the status line draws none): a work item's hue (`hueState(n)`, identity.mjs
+// picks n) is one of HUE_CODES in the 256-colour cube, never a state's code; on a 16-colour terminal (TERM and COLORTERM name no
+// 256 or true colour) the hues cycle bold, underline, plain (WT_SESSION, Windows Terminal, counts as 256-colour); without colour
+// none. A part may carry `spans` (texts in order whose join is its text, each with its own state).
 // Look: ASCII when CLAUDE_STATUS_ASCII=1, TERM=dumb, Windows without WT_SESSION and TERM_PROGRAM (the old console host), or a locale
 // that is set and not UTF-8; colour off when NO_COLOR is set to any non-empty value (no-color.org) or TERM=dumb.
 // Invariants: pure (no I/O); colour only for a state and every state also has a word in the text (colour is never the only signal); in ASCII mode no
 // byte above 0x7E is ever returned, since every outside text goes through cleanText; a fitted row is never wider than `columns`.
 import { clockText, dayText, localDate } from '../../estimate/lib/local-clock.mjs';
 
-/** The states a part may carry; ok has no colour. */
+/** The states a part may carry; ok, done and road have no colour (RC5: a healthy value and a label are in the default colour). */
 export const STATE = { ok: 'ok', done: 'done', run: 'run', warn: 'warn', block: 'block', wait: 'wait', dim: 'dim', road: 'road', strong: 'strong' };
-const COLOR_CODE = {
-  done: '\u001b[32m', run: '\u001b[36m', warn: '\u001b[33m', block: '\u001b[31m', wait: '\u001b[35m', dim: '\u001b[2m', road: '\u001b[34m',
-  strong: '\u001b[1m',
-};
+const COLOR_CODE = { run: '\u001b[36m', warn: '\u001b[33m', block: '\u001b[31m', wait: '\u001b[35m', dim: '\u001b[2m', strong: '\u001b[1m' };
 /**
  * The identity hues, xterm 256-colour indexes chosen for the best contrast on both a #1e1e1e and a #ffffff background. Measured WCAG
  * ratios (dark / white): 31 4.04 / 4.13, 166 4.39 / 3.80, 99 4.06 / 4.11, 64 3.93 / 4.24, 197 4.30 / 3.88, 133 4.03 / 4.13, so 3.80 to
@@ -170,26 +167,53 @@ function joined(parts, look) {
   return out;
 }
 
+/** The fewest blanks between the left parts and the right-aligned block of a row. */
+const RIGHT_GAP = 2;
+/** Below this many columns for the left parts the row is not split: its parts run on and the end is cut. */
+const MIN_LEFT_COLUMNS = 8;
+const ESCAPE_CODES = /\u001b\[[0-9;]*m/g;
+const shownWidth = (text) => widthOf(text.replace(ESCAPE_CODES, ''));
+
+/** The width of parts joined in order (the first one has no separator before it). */
+const joinedWidth = (list, look) => list.reduce((sum, part, index) => sum + widthOf(part.text) + (index === 0 ? 0 : widthOf(sepOf(part, look))), 0);
+
+/** The width of a row: its left parts, and its right block after RIGHT_GAP when it has one. */
+function rowWidth(list, look) {
+  const right = list.filter((part) => part.right);
+  const left = joinedWidth(list.filter((part) => !part.right), look);
+  return right.length === 0 ? left : left + RIGHT_GAP + joinedWidth(right, look);
+}
+
+/** The left parts, blanks, then the right block ending at look.columns; the left parts are cut when the row is too wide. */
+function alignedRight(shown, look) {
+  const right = joined(shown.filter((part) => part.right), look);
+  const leftColumns = look.columns - shownWidth(right) - RIGHT_GAP;
+  if (leftColumns < MIN_LEFT_COLUMNS) return joined(shown, look);
+  const left = joined(shown.filter((part) => !part.right), { ...look, columns: leftColumns });
+  return `${left}${' '.repeat(look.columns - shownWidth(left) - shownWidth(right))}${right}`;
+}
+
 /**
  * One row from its parts, fitted to look.columns: the parts with `drop` 0 always, then each level of `drop` in turn (1 first), a part
  * kept only when it still fits, so a low-priority short part can fill room a longer one left; whatever still overflows is cut.
- * @param {{ text: string, state?: string, drop?: number, bar?: boolean, join?: string, bold?: boolean }[]} parts in display order;
- *   `bar` puts ` │ ` before the part, `join` another text in place of ` · `, `bold` marks the render's one most urgent part
+ * @param {{ text: string, state?: string, drop?: number, bar?: boolean, join?: string, bold?: boolean, right?: true }[]} parts in
+ *   display order; `bar` puts ` │ ` before the part, `join` another text in place of ` · `, `bold` makes it bold; the parts with
+ *   `right` (the last ones) form a block that ends at look.columns, at least RIGHT_GAP blanks after the others
  * @param {ReturnType<typeof lookOf>} look the terminal
  * @returns {string} the row, at most look.columns visible characters
  */
 export function fitParts(parts, look) {
   const present = parts.filter((part) => part.text !== '');
-  const total = (list) => list.reduce((sum, part, index) => sum + widthOf(part.text) + (index === 0 ? 0 : widthOf(sepOf(part, look))), 0);
   const levels = [...new Set(present.map((part) => part.drop ?? 0))].filter((level) => level > 0).sort((a, b) => a - b);
   let kept = new Set(present.filter((part) => (part.drop ?? 0) === 0));
   for (const level of levels) {
     for (const part of present.filter((candidate) => candidate.drop === level)) {
       const trial = new Set([...kept, part]);
-      if (total(present.filter((item) => trial.has(item))) <= look.columns) kept = trial;
+      if (rowWidth(present.filter((item) => trial.has(item)), look) <= look.columns) kept = trial;
     }
   }
-  return joined(present.filter((part) => kept.has(part)), look);
+  const shown = present.filter((part) => kept.has(part));
+  return shown.some((part) => part.right) ? alignedRight(shown, look) : joined(shown, look);
 }
 
 /**

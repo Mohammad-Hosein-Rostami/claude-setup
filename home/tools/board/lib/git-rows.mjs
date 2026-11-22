@@ -4,7 +4,9 @@
 //   ⎇ ● r9-a  lane/r9-a ↑2↓0 ●3 · last commit 12 min ago · impl-a, tests-a                        (one row each, when they fit)
 // Exports: gitRows(repo, slots, ctx, look) -> string[]; repoRows(board, slots, ctx, look) -> string[] (every repository of the
 // board: the primary one first, then one compact row per other repository, `+K more repos` when they do not fit, and a
-// `git: no repository` row when the session's work is in none, so the git info is never simply missing); gitCounts(repo, look).
+// `git: no repository` row when the session's work is in none, so the git info is never simply missing); gitCounts(repo, look);
+// gitSummaryPart(repo, look) -> part | null (the status line's git part, RC5/RC8: one summary in counts, no hues):
+//   main ✓ ↑44 · 3 lanes open · 1 dirty            main ●2 ↓2 behind · rebase · 30 lanes open     (yellow when behind or mid-operation)
 // Source: board.repo (git-state.mjs). Rules: a worktree with agents comes first, then by commits ahead; a worktree whose branch is
 // landed (0 ahead) and older than OLD_DAYS reads `old N d ⚠` (git-tidy's prune candidate); a status older than STALE_S shows its age.
 // The main worktree's part (spec-tui-2, the one compact row when nothing is active, never nothing): its branch, ahead/behind its
@@ -153,6 +155,33 @@ export function repoRows(board, slots, ctx, look) {
   const extra = shown.map((repo) => gitRows(repo, 1, ctx, look)[0]).filter(Boolean);
   const more = hidden > 0 ? [fitParts([{ text: `+${hidden} more repo${hidden === 1 ? '' : 's'} with work` }], look)] : [];
   return [...rows, ...extra, ...more].slice(0, Number.isFinite(slots) ? room : undefined);
+}
+
+/**
+ * The status line's git part: the main checkout's branch and state, its commits ahead of and behind its upstream (only when not
+ * level), an operation in progress, how many lane worktrees are open and how many of them have uncommitted files; one count
+ * whatever the number of worktrees (F5), no identity hue (RC5).
+ * @param {object | null} repo the board's primary repo (git-state.mjs)
+ * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal
+ * @returns {{ text: string, state: string, drop: number } | null} warn when behind the upstream or mid-operation; null without a repo
+ */
+export function gitSummaryPart(repo, look) {
+  if (repo === null || typeof repo !== 'object') return null;
+  const g = glyphs(look);
+  const main = worktreesOf(repo).find((wt) => wt.main);
+  const lanes = worktreesOf(repo).filter((wt) => !wt.main);
+  const dirty = lanes.filter((wt) => wt.changed > 0).length;
+  const name = cutWords(cleanText(main?.name ?? repo.base ?? '?', look), MAX_NAME_CHARS, look);
+  const behind = isCount(main?.upBehind) && main.upBehind > 0;
+  const upstream = [isCount(main?.upAhead) && main.upAhead > 0 ? ` ${g.up}${main.upAhead}` : '', behind ? ` ${g.down}${main.upBehind} behind` : ''].join('');
+  const op = main?.op ? `${look.glyph.sep}${cleanText(main.op, look)}` : '';
+  const counts = [
+    lanes.length > 0 ? `${lanes.length} ${lanes.length === 1 ? 'lane' : 'lanes'}${wide(look) ? ' open' : ''}` : '',
+    dirty > 0 ? `${dirty} dirty` : '',
+    repo.stale === true ? 'stale' : '',
+  ].filter(Boolean).map((text) => `${look.glyph.sep}${text}`).join('');
+  const state = main === undefined ? '' : ` ${stateText(main, look)}`;
+  return { text: `${name}${state}${upstream}${op}${counts}`, state: behind || op ? STATE.warn : STATE.ok, drop: 0 };
 }
 
 /** @returns {string} the git summary of the counts row: `git 7 br · 3 not landed · 2 dirty`; '' without a repo */

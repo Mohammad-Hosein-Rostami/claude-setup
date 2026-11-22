@@ -1,7 +1,12 @@
-// Packing the board into the rows the terminal has room for (spec-tui "Layout", research-tui 2.3): the row budget from LINES, the
-// counts row, and the agent rows folded by urgency when they do not all fit.
-// Exports: rowBudget(env) -> number; countsRow(board, asking, ctx, look); shownAgents(board, nowMs); workRows(board, slots, ctx, look).
-// Budget: R = clamp(floor(LINES / 3), 3, 12) (24 lines give 8, 36 and more give 12; LINES missing counts as 24).
+// Packing the board into rows (spec-tui "Layout", research-tui 2.3): the status line's row budget from LINES and its one agents
+// summary row (owner decision RC8); for `/where` the counts row and the agent rows, folded by urgency when they do not all fit.
+// Exports: rowBudget(env) -> number; agentsSummaryRow(board, ctx, look) -> string | null; countsRow(board, asking, ctx, look);
+// shownAgents(board, nowMs); workRows(board, slots, ctx, look).
+// Budget: 4 rows (alert, job, agents summary, git and session), 2 below SHORT_LINES lines (LINES missing counts as 24).
+// Agents summary: `agents 6 · 5 running · 1 done · ! reviewer quiet 6 min · implementer over 12 min        all by 09:10`: the parts
+// add up to the total (running = run + quiet; done = finished in the last 10 min); only the agents that need a look are named
+// (quiet first, then over their usual time, longest first), in yellow with their word; as many names as fit, then `+K more`;
+// `all by` (dim, right) when every running agent has a time left. Every agent's own row lives in `/where` (RC8).
 // Folding, in this order, until the rows fit: (1) the `agents` header and every agent; (2) the header folded (spark strip of the
 // agents), the most urgent agents in full under it, the rest on one `+K more` row; (3) one strip row, the most urgent agents, `+K more`.
 // Urgency: quiet > over its usual time > writer > reader, then the soonest finish. A finished agent shows for DONE_SHOWN_MS, then only
@@ -9,15 +14,18 @@
 // Colour of the counts row (spec-tui-2): running work cyan, any quiet agent yellow, waiting on the owner magenta; it leads with a dim
 // `Σ` (`=` in ASCII; spec-tui-3 section labels).
 // Invariants: pure (no I/O); every row fits look.columns; never more rows than `slots`.
-import { DONE_SHOWN_MS, fitParts, STATE } from './cells.mjs';
+import { cleanText, clockOf, cutWords, DONE_SHOWN_MS, durationText, fitParts, STATE } from './cells.mjs';
 import { agentRow, countsText, foldRow, plainHeader, sparkText, treeMark, urgencyOf } from './agent-rows.mjs';
 import { gitCounts } from './git-rows.mjs';
-import { WIDE_COLUMNS } from './work-row.mjs';
+import { labelled, WIDE_COLUMNS } from './work-row.mjs';
 
-const MIN_ROWS = 3;
-const MAX_ROWS = 12;
+const MAX_ROWS = 4;
+const SHORT_ROWS = 2;
+/** Below this terminal height the status line keeps only its job and its git and session rows (terminal-ui design, row budget). */
+const SHORT_LINES = 12;
 const DEFAULT_LINES = 24;
-const LINES_PER_ROW = 3;
+const AGENT_NAME_CHARS = 24;
+const MS_PER_MIN = 60_000;
 const FULL_COLUMNS = 150;
 const PAIR_GAP = '  ';
 const DONE_COUNTED_MS = 10 * 60_000;
@@ -29,10 +37,10 @@ const wide = (look) => look.columns >= WIDE_COLUMNS;
 const widthOf = (text) => [...text.replace(ESCAPES, '')].length;
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
-/** @returns {number} the rows the status line may print, from the terminal's height */
+/** @returns {number} the rows the status line may print, from the terminal's height: 4, or 2 below SHORT_LINES lines */
 export function rowBudget(env) {
   const lines = Number.parseInt(env.LINES ?? '', 10);
-  return Math.min(MAX_ROWS, Math.max(MIN_ROWS, Math.floor((lines > 0 ? lines : DEFAULT_LINES) / LINES_PER_ROW)));
+  return (lines > 0 ? lines : DEFAULT_LINES) < SHORT_LINES ? SHORT_ROWS : MAX_ROWS;
 }
 
 const byUrgency = (a, b) => urgencyOf(b) - urgencyOf(a) || (a.leftMin ?? Infinity) - (b.leftMin ?? Infinity);
@@ -48,14 +56,17 @@ export function shownAgents(board, nowMs) {
     .sort(byUrgency);
 }
 
-/** Agents, what waits on the owner and git, in counts. */
+const agentsOf = (board) => (Array.isArray(board?.agents) ? board.agents : []).filter((agent) => agent !== null && typeof agent === 'object');
+const doneLately = (agents, nowMs) => agents.filter((agent) => agent.state === 'done' && nowMs - agent.doneMs < DONE_COUNTED_MS).length;
+
+/** Agents, what waits on the owner and git, in counts (`/where`); the agent total is the sum of its parts. */
 export function countsRow(board, asking, ctx, look) {
-  const agents = (Array.isArray(board?.agents) ? board.agents : []).filter((agent) => agent && typeof agent === 'object');
+  const agents = agentsOf(board);
   const count = (state) => agents.filter((agent) => agent.state === state).length;
-  const done = agents.filter((agent) => agent.state === 'done' && ctx.nowMs - agent.doneMs < DONE_COUNTED_MS).length;
+  const done = doneLately(agents, ctx.nowMs);
   const over = agents.filter((agent) => agent.state !== 'done' && agent.overMin > 0).length;
   const live = count('run') + count('quiet');
-  const agentText = live + done === 0 ? '0 agents' : `${plural(live, 'agent')} (${count('run')} run${count('quiet') ? `, ${count('quiet')} quiet` : ''}${done ? `, ${done} done${wide(look) ? ' last 10 min' : ''}` : ''})`;
+  const agentText = live + done === 0 ? '0 agents' : `${plural(live + done, 'agent')} (${count('run')} run${count('quiet') ? `, ${count('quiet')} quiet` : ''}${done ? `, ${done} done${wide(look) ? ' last 10 min' : ''}` : ''})`;
   const label = `${look.ascii ? '=' : 'Σ'} `;
   const parts = [{ text: `${label}${agentText}`, spans: [{ text: label, state: STATE.dim }, { text: agentText, state: count('quiet') > 0 ? STATE.warn : live > 0 ? STATE.run : STATE.ok }] }];
   if (over > 0) parts.push({ text: `${over} over usual`, state: STATE.warn, drop: 1 });
@@ -65,6 +76,48 @@ export function countsRow(board, asking, ctx, look) {
   }
   parts.push({ text: gitCounts(board?.repo ?? null, look), drop: 2, bar: true });
   return fitParts(parts, look);
+}
+
+const joinedWidth = (texts, look) => texts.reduce((sum, text, index) => sum + widthOf(text) + (index === 0 ? 0 : widthOf(look.glyph.sep)), 0);
+
+/** The words of an agent that needs a look: `reviewer quiet 6 min`, `implementer over 12 min`. */
+function lookText(agent, look) {
+  const name = cutWords(cleanText(agent.name ?? agent.type ?? '?', look), AGENT_NAME_CHARS, look);
+  return agent.state === 'quiet' ? `${name} quiet ${durationText(agent.quietMin ?? 0)}` : `${name} over ${durationText(agent.overMin)}`;
+}
+
+/** The clock all running agents should be done by, when every one of them has a time left; else null. */
+function allByMs(running, at) {
+  if (!running.every((agent) => Number.isFinite(agent.leftMin))) return null;
+  return at + Math.max(...running.map((agent) => agent.leftMin)) * MS_PER_MIN;
+}
+
+/**
+ * The status line's one agents row (RC8): counts, the agents that need a look by name, and when all should be done.
+ * @param {object | null} board the session's board
+ * @param {{ nowMs: number, timeZone: string }} ctx now and the render's one zone
+ * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal
+ * @returns {string | null} the row; null when no agent runs
+ */
+export function agentsSummaryRow(board, ctx, look) {
+  const agents = agentsOf(board);
+  const running = agents.filter((agent) => agent.state === 'run' || agent.state === 'quiet');
+  if (running.length === 0) return null;
+  const done = doneLately(agents, ctx.nowMs);
+  const counts = done > 0 ? `${running.length + done}${look.glyph.sep}${running.length} running${look.glyph.sep}${done} done` : `${running.length} running`;
+  const head = labelled('agents', { text: counts }, look);
+  const needLook = running.filter((agent) => agent.state === 'quiet' || agent.overMin > 0)
+    .sort((a, b) => urgencyOf(b) - urgencyOf(a) || (b.quietMin ?? 0) - (a.quietMin ?? 0) || (b.overMin ?? 0) - (a.overMin ?? 0))
+    .map((agent, index) => `${index === 0 ? '! ' : ''}${lookText(agent, look)}`);
+  // As many names as fit beside the counts, the rest as `+K more`, so the row never cuts a name.
+  let named = needLook.length;
+  const restText = (n) => (n === 0 ? `! ${needLook.length} need a look` : `+${needLook.length - n} more`);
+  const withMore = (n) => [head.text, ...needLook.slice(0, n), ...(n < needLook.length ? [restText(n)] : [])];
+  while (named > 0 && joinedWidth(withMore(named), look) > look.columns) named -= 1;
+  const lookParts = withMore(named).slice(1).map((text) => ({ text, state: STATE.warn }));
+  const byMs = allByMs(running, Number.isFinite(board?.at) ? board.at : ctx.nowMs);
+  const by = byMs === null ? [] : [{ text: `all by ${clockOf(byMs, ctx.nowMs, ctx.timeZone)}`, state: STATE.dim, right: true, drop: 1 }];
+  return fitParts([head, ...lookParts, ...by], look);
 }
 
 /** One row per agent, or two agents per row from FULL_COLUMNS; each row starts with its tree mark. */
