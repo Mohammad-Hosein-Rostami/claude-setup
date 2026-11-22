@@ -1,6 +1,6 @@
 // Purpose: pure decision functions for the `responsive` findings that need element facts but no browser: `raw-i18n-key`,
 // `focus-indicator`, `rtl-physical-align`, and the `target-size?` hint.
-// Exports: rawI18nKeyFindings, focusIndicatorFindings, rtlPhysicalAlignFindings, targetSizeHints, MAX_FOCUS_STOPS, FOCUS_INDICATOR_FAILS, RAW_KEY_PATTERN, INDICATOR_FIELDS, RELATED_SIZE_FIELDS.
+// Exports: rawI18nKeyFindings, focusIndicatorFindings, focusRingWidth, rtlPhysicalAlignFindings, targetSizeHints, MAX_FOCUS_STOPS, FOCUS_INDICATOR_FAILS, RAW_KEY_PATTERN, INDICATOR_FIELDS, RELATED_SIZE_FIELDS.
 // Invariants: pure; each takes plain facts gathered in the page (lib/audit.mjs, lib/focus-audit.mjs), so a unit test needs no browser;
 // a hidden element never produces a finding; every function takes an optional cap on the number of findings.
 
@@ -108,6 +108,49 @@ export function focusIndicatorFindings({ focusables }, max = Infinity) {
       detail: `no visible focus indicator: outline, box-shadow, border, background, underline and transform are unchanged on keyboard focus, on it and on its wrappers, label and neighbours${f.hidden ? ' (it is visually hidden: only its label and neighbours can show focus)' : ''}`,
     }))
     .slice(0, max);
+}
+
+const NO_OUTLINE_STYLES = new Set(['none', 'hidden']);
+const SHADOW_LAYER_SEPARATOR = /,(?![^(]*\))/; // a comma outside rgb( ... )
+const SHADOW_COLOUR = /[a-z-]+\([^)]*\)|#[0-9a-f]+/gi;
+const SHADOW_NUMBERS = /(-?\d*\.?\d+)px/g;
+const SHADOW_INSET = /\binset\b/g;
+
+/** Width in px of the outline in a computed style, 0 when its style is none or hidden. */
+function outlineWidthOf(style) {
+  return NO_OUTLINE_STYLES.has(style.outlineStyle) ? 0 : parseFloat(style.outlineWidth) || 0;
+}
+
+/** Layers of a computed `box-shadow` value (empty for `none`). */
+function shadowLayers(boxShadow) {
+  return boxShadow === undefined || boxShadow === 'none' ? [] : boxShadow.split(SHADOW_LAYER_SEPARATOR).map((layer) => layer.trim());
+}
+
+/** How far a shadow layer reaches past the box as a solid band: its spread plus its largest offset; a blur-only glow is not a ring (0). */
+function shadowReach(layer) {
+  const [x = 0, y = 0, blur = 0, spread = 0] = [...layer.replace(SHADOW_COLOUR, '').replace(SHADOW_INSET, '').matchAll(SHADOW_NUMBERS)].map((match) => Number(match[1]));
+  return blur > 0 && spread <= 0 ? 0 : Math.max(0, spread + Math.max(Math.abs(x), Math.abs(y)));
+}
+
+/** Ring width of one before/after style pair: the outline drawn on focus, or the widest box-shadow layer that was not there before. */
+function ringWidthOfPair({ before, after }) {
+  const drawn = outlineWidthOf(after);
+  const outline = drawn === outlineWidthOf(before) ? 0 : drawn; // an outline that is already there unfocused is not the focus ring
+  const had = new Set(shadowLayers(before.boxShadow));
+  const added = shadowLayers(after.boxShadow).filter((layer) => !had.has(layer)).map(shadowReach);
+  return Math.max(outline, ...added);
+}
+
+/**
+ * Width in px of the focus ring a keyboard stop shows: the largest of the outline drawn and the box-shadow band added on focus (an element with
+ * `outline: none` and a `0 0 0 3px` shadow measures 3, not 0), on the element, its ::before/::after and its related elements. A part that looks the
+ * same unfocused as focused adds nothing, so an always-on shadow is not counted. Report-only: it never decides a finding (FOCUS_INDICATOR_FAILS stays false).
+ * Chromium reports the default `auto` outline by its computed width, which can be less than the pixels it paints.
+ * @param {{hidden: boolean, own: {before: object, after: object}[], related: {before: object, after: object}[]}} facts one keyboard stop, as `focusIndicatorFindings` takes it
+ * @returns {number} px, 0 when nothing ring-like appears on focus
+ */
+export function focusRingWidth({ hidden, own, related }) {
+  return Math.max(0, ...(hidden ? [] : own).map(ringWidthOfPair), ...related.map(ringWidthOfPair));
 }
 
 /**

@@ -1,11 +1,11 @@
 // Purpose: gather the facts behind the `focus-indicator` hint by pressing the real Tab key (so :focus-visible applies, which a bare
 // .focus() call may not trigger) and comparing the computed style of each focused element, its ::before/::after, its wrappers (3 ancestors),
 // its label and neighbours, and the content of an open shadow root, with their unfocused styles.
-// Exports: collectFocusables, walkFocus (the walk with a `capped` flag), focusProbe. Invariants: runs last on a page (focus handlers may change it); focusProbe is serialised into
+// Exports: collectFocusables, walkFocus (the walk with a `capped` flag; each stop carries `ringWidth`), focusProbe. Invariants: runs last on a page (focus handlers may change it); focusProbe is serialised into
 // the page, so it is self-contained (no imports or closure variables); the page DOM is not modified, only a `window` property holds the
 // snapshots; the walk follows the deep active element (into open shadow roots), steps over iframe stops (their content is not inspected),
 // and stops after MAX_FOCUS_STOPS focusables, MAX_PRESSES Tab presses, when focus leaves the page, or when it returns to an element already seen.
-import { INDICATOR_FIELDS, MAX_FOCUS_STOPS, RELATED_SIZE_FIELDS } from './rendered-checks.mjs';
+import { INDICATOR_FIELDS, MAX_FOCUS_STOPS, RELATED_SIZE_FIELDS, focusRingWidth } from './rendered-checks.mjs';
 
 const MAX_PRESSES = MAX_FOCUS_STOPS * 2;
 const MAX_CANDIDATES = MAX_FOCUS_STOPS * 2; // DOM order; their unfocused styles are recorded before the first Tab
@@ -94,7 +94,7 @@ export function focusProbe({ mode, fields, maxCandidates }) {
  * Tab through the page and collect, per keyboard stop, the style with and without focus.
  * @param {object} page Playwright page (already opened and settled)
  * @param {number} [max] focusables at most
- * @returns {Promise<{element: string, hidden: boolean, own: object[], related: object[]}[]>} input of focusIndicatorFindings
+ * @returns {Promise<{element: string, hidden: boolean, own: object[], related: object[], ringWidth: number}[]>} input of focusIndicatorFindings; ringWidth in px
  */
 export async function collectFocusables(page, max = MAX_FOCUS_STOPS) {
   return (await walkFocus(page, max)).facts;
@@ -105,7 +105,7 @@ export async function collectFocusables(page, max = MAX_FOCUS_STOPS) {
  * left the page or came back, so a caller fails the run naming the cap instead of stopping silently.
  * @param {object} page Playwright page (already opened and settled)
  * @param {number} [max] focusables at most (MAX_FOCUS_STOPS unless the state raises it with a reason)
- * @returns {Promise<{facts: object[], capped: boolean, max: number}>}
+ * @returns {Promise<{facts: object[], capped: boolean, max: number}>} each fact also has `ringWidth` (px, from focusRingWidth; reported, never judged)
  */
 export async function walkFocus(page, max = MAX_FOCUS_STOPS) {
   const fields = [...INDICATOR_FIELDS, ...RELATED_SIZE_FIELDS];
@@ -117,7 +117,7 @@ export async function walkFocus(page, max = MAX_FOCUS_STOPS) {
     await page.keyboard.press('Tab');
     const read = await page.evaluate(focusProbe, { mode: 'read', fields });
     if (read === 'end') return { facts, capped: false, max };
-    if (read !== 'skip') facts.push(read);
+    if (read !== 'skip') facts.push({ ...read, ringWidth: focusRingWidth(read) });
   }
   return { facts, capped: true, max };
 }
