@@ -5,7 +5,7 @@
 // CLAUDE_QUESTION_TIMEOUT_S (default 60 s, questionTimeoutSeconds; cut so that all popups end before the terminal question
 // auto-continues at 300 s, askUserQuestionTimeout "5m"). The body is display design 7.5: the question, all options with the recommended
 // one first, and what happens with no answer; no tool, directory or session line. While the question is open the asking marker
-// (lib/asking-marker.mjs) is written; question-answered.mjs clears it on PostToolUse or PostToolUseFailure, and it ages out. "Use recommended" or no answer in the wait takes that question's
+// (lib/asking-marker.mjs, with the first question's `header` label) is written; question-answered.mjs clears it on PostToolUse or PostToolUseFailure, and it ages out. "Use recommended" or no answer in the wait takes that question's
 // "(Recommended)" option, else its first; a multiSelect question gets that single option. Only a timeout adds `annotations` {question text:
 // {notes}} saying the answer was taken by default, not chosen by the owner (UNCONFIRMED), for that question alone. After the last question
 // the result is an allow with updatedInput = the input plus `answers` {question text: option label} (hooks docs, AskUserQuestion input and
@@ -107,7 +107,7 @@ export async function questionReply(input, env, { ask = answerAskAsync, pollMs =
   if (!isQuestionList(toolInput?.questions)) return undefined;
   const questions = toolInput.questions;
   const timeoutS = Math.min(questionTimeoutSeconds(env), Math.floor((TERMINAL_AUTO_CONTINUE_S - POPUP_MARGIN_S) / questions.length));
-  markAsking({ session: input.session_id, kind: 'question', tool: QUESTION_TOOL, count: questions.length, openedAt: Date.now(), waitS: timeoutS }, env);
+  markAsking({ session: input.session_id, kind: 'question', tool: QUESTION_TOOL, count: questions.length, openedAt: Date.now(), waitS: timeoutS, header: questions[0].header }, env);
   const terminalMark = { session: input.session_id, agentId: input.agent_id, questions: questions.map((item) => item.question) };
   const openedAt = Date.now();
   const turnedDownInTerminal = watchTerminalRejection(input.transcript_path);
