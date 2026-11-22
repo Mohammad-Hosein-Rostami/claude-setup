@@ -445,11 +445,23 @@ check_notify() {
   fi
 }
 
+# done-check: its ledger says whether a check raises too many false alarms (tools/done-check, `stats --doctor` prints one `WARN done-check:` line per
+# noisy kind and one when the ledger is full). An empty ledger or a quiet one is an ok line; a machine without the tool yet (not synced) is INFO.
+check_done_check() {
+  local tool="$REPO/home/tools/done-check/done-check.mjs" out line warned=0
+  if [ ! -f "$tool" ]; then echo "INFO  done-check: tool not installed here (sync this machine)"; return; fi
+  if ! out="$(node "$tool" stats --doctor 2>&1)"; then warn "done-check: stats could not run: $(tr -d '\000-\037\177' <<<"$out" | head -c 200)"; return; fi
+  while IFS= read -r line; do
+    case "$line" in "WARN done-check:"*) warn "${line#WARN }"; warned=1 ;; esac
+  done < <(tr -d '\000-\010\013-\037\177' <<<"$out")
+  [ "$warned" = 1 ] || ok "done-check: no check over its false-alarm limit"
+}
+
 # DOCTOR_ONLY="check_a check_b" runs just those checks (used by tests).
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_session_notes_hook; check_token_budget; check_plugin_session_start; check_recall; check_stop_cap; check_agent_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows_gone; check_env_names
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_session_notes_hook; check_token_budget; check_plugin_session_start; check_recall; check_stop_cap; check_agent_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_notify; check_done_check; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows_gone; check_env_names
 }
 # The machine's name in the summary: the owner's two machines by OS, else the host name; DOCTOR_MACHINE overrides it.
 machine_name() {

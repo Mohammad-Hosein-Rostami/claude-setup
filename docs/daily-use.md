@@ -19,13 +19,44 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   with a gate (`road.mjs gate`) and one update to you. Fixed sequences are one script call, not an agent: `land-lane` lands a
   lane (the only way to land, one at a time), `scripts/sync-machines.mjs` syncs the machines.
 - UI work always ends with `ui-quality-pass` and the `ui-check` loop, and `visual-qa` runs the final gate.
-  There is no switch for quality checks and no other automatic one: the old check system was removed on 2026-11-22 (backup:
-  `~/Desktop/claude-setup-reports/backups/checks-removed-2026-11-22/`). What stays: the Bash guard, gitleaks and `node --check` of
-  hook files at commit, and the `git-tidy` gate.
+  The code check described under "The done-check" below runs by itself and has no category switch. The other guards stay: the Bash
+  guard, gitleaks and `node --check` of hook files at commit, and the `git-tidy` gate.
 - While agents run you can keep talking to the lead: it answers questions and asks yours without stopping the
   agents. A command that runs over about 5 minutes goes to the background with its `timeout` set (at most 2 h); `watch.mjs` is for waiting on a
   session or an agent, not on a command.
 - The final answer says what changed and what was not run. No recap of the process.
+
+## The done-check (what runs when an agent says done)
+- **What runs.** When an agent or the main session stops after changing code, the setup runs the project's own type check, lint of
+  the changed lines and only the tests that relate to the changed files, plus a scan for tests that were deleted, skipped or loosened.
+  It costs no model tokens when green and usually takes 10-60 seconds (at most 90). Nothing runs when no code changed, and it never
+  runs a whole test suite at a stop.
+- **The line.** Under the reply you see one line, for example
+  `checks: types ok · lint ok · tests 6 ok, 1 old fail · 41 s · not run: build · review: needed (security)`.
+  `old fail` is a failure the base commit already had: listed, never blocking. `not run (why)` means a check could not run; it is
+  never shown as ok. `FAIL left open` means a failure stayed after the agent was sent back.
+- **When it blocks.** A new failure or a weakened test sends the agent back once, in the same conversation, with a few lines of
+  errors. The same unchanged state passes (and the line says `left open`); after two blocks in a row it says `change approach`.
+  A stop that is blocked is never blocked again for the same state.
+- **Risky changes.** A change in security, stored data, money, locking, the setup's own guards or a very large change adds
+  `review: needed (<classes>)`. The lead then runs the `reviewer` agent once, one fix follows, then the check again; there is no
+  second review round. The classes are data in `home/tools/done-check/risk-rules.json`.
+- **Landing.** `land-lane` runs the same check on the landed tip after its rebase (reused in 0 s when nothing changed), refuses a
+  failed check (exit 4) and a risky lane without `--reviewed <sha>` or `--skip-review "<reason>"` (exit 10). `--accept-open`
+  lands a lane whose failure you accept.
+- **A false alarm.** Get the run id with `node ~/.claude/tools/done-check/done-check.mjs last --json` (the `id` in `row`), then
+  `node ~/.claude/tools/done-check/done-check.mjs label <run-id> --as false-alarm --check <types|lint|tests|tests-weakened>`
+  (`--as real` or `--as missed` for the other two verdicts; `--note "<text>"` is optional). Labels are counted in `stats`.
+- **Skip it.** `DONE_CHECK_SKIP=all` in the environment skips every check (the line says so, and one ledger row is written);
+  `DONE_CHECK_SKIP=types,lint` (a comma list of `types`, `lint`, `tests`) skips those kinds.
+- **The ledger.** `~/.claude/state/done-check/ledger.jsonl` holds one row per run and per label: kinds, counts, times and a hashed
+  repository id, never a file name, code or a secret. `done-check.mjs stats [--days n]` shows per check the runs, blocks, how many the
+  agent acted on, how many it ignored and the false-alarm rate. `scripts/doctor.sh` runs `stats --doctor` and prints a `WARN` for a
+  check whose false-alarm rate is over 10% after 10 blocks, or when the ledger is full; with no runs yet it prints only an ok line
+  (shown with `--all`). Whether to change `risk-rules.json` or a project's skip list is your decision.
+- **What it does not catch.** Wrong behaviour no test covers, and what only you see on screen. The UI pixel checks and the final
+  visual check are separate and unchanged.
+- Tool details: `home/tools/done-check/README.md`.
 
 ## Long or unattended runs
 - Run long or unattended sessions in a plain terminal app (or tmux), not an editor's built-in terminal: closing or

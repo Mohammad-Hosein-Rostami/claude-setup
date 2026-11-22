@@ -8,7 +8,7 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 | Folder | What is in it |
 | ------ | ------------- |
 | `home/` | The content that gets linked into `~/.claude`. Editing a file here changes every running session at once. |
-| `home/CLAUDE.md` | The global instructions every session reads (language, quality gates, token habits, safety). |
+| `home/CLAUDE.md` | The global instructions every session reads (language, checks, token habits, safety). |
 | `home/rules/` | One-line rules, each with an id. `core.md` is always on; the others apply to matching file paths. |
 | `home/standards/` | The longer reference behind the rules, with examples (for human readability: `readability.md`). |
 | `home/skills/` | Step-by-step workflows (`<name>/SKILL.md`) that Claude loads when the task matches. |
@@ -35,9 +35,32 @@ what it does. Everything is plain text and Node scripts. You can read, change an
    rewrite would remove the question (a `$VAR` command word, `rm`/`push` inside `$(...)` or a heredoc, a literal secret), the
    first send is sent back to Claude with the fix instead; the same command sent again opens the dialog.
 6. After each edit, `post-edit.mjs` runs the project's formatter.
-7. At the end the Stop hooks check the reply against any size cap you gave, and look for uncommitted files and loose branches.
+7. When an agent or the session stops, `done-check.mjs` runs the project's own type check, lint and related tests on the code that changed
+   (section below). The other Stop hooks check the reply against any size cap you gave, and look for uncommitted files and loose branches.
 
 The hook list with exact triggers is in `docs/catalog.md` (section Hooks) and `home/hooks/README.md`.
+
+## The done-check
+
+Layer by layer, from the cheapest: the Bash guard and gitleaks (safety, unchanged), the formatter after each edit, the **done-check** at
+every stop, the same check again when a lane is landed, one risk review for risky lanes, and the UI pixel checks.
+
+- **At a stop.** The hook `home/hooks/done-check.mjs` (Stop and SubagentStop) finds the code files the stopping agent changed since its
+  first tool call and, per package (the nearest `package.json`), detects what the project itself offers: a `typecheck` script or
+  `tsc`, eslint, and the `test` script's vitest, jest or `node --test` parts, run only on the tests that relate to the changed files. It
+  also scans the diff for deleted, skipped or loosened tests and silenced lint or type errors. Everything runs through
+  `home/tools/done-check/` (its README has the command line); nothing is installed from the network.
+- **Old failures do not count.** A failure is re-run on the base commit in a temporary copy; one that fails there too is listed as
+  `old` and never blocks.
+- **No loops.** A new failure blocks the stop once for that exact state (the agent fixes it in the same conversation); the same
+  state again passes as `left open`, and the third stop in a row passes with "change approach". A check that cannot run
+  (`not run`) never blocks and is never shown as ok. If the hook itself crashes the stop goes through; the land check is the hard gate.
+- **Landing.** `land-lane` runs the same check on the landed tip, reuses a green result for the same change, and for a lane in a risk
+  class asks for the one `reviewer` run (`home/agents/reviewer.md`) before it lands.
+- **The ledger.** Every run and every label (`done-check.mjs label`) is one row in `~/.claude/state/done-check/ledger.jsonl`, with no
+  code and no file names. `done-check.mjs stats` and a line of `scripts/doctor.sh` show which check raises too many false alarms
+  (over 10% after 10 blocks). Changing a rule is a human decision: edit `home/tools/done-check/risk-rules.json`.
+- **Skip it by hand.** `DONE_CHECK_SKIP=all` (or `types`, `lint`, `tests`, comma separated) in the environment of the session.
 
 ## Where each kind of rule lives, and how to change one
 
@@ -59,7 +82,7 @@ own rules) and `docs/usage.md`.
   (for example `pre-bash-guard.mjs`) and delete that entry from its `hooks` list.
 - One hook, for good: delete the same entry from `settings/base.json` and run `scripts/install.sh`.
 - Some hooks have a switch: `CLAUDE_SKILL_ROUTER=off` turns the skill router off; `CLAUDE_POST_EDIT_SKIP=format`
-  (or `all`) skips the formatter.
+  (or `all`) skips the formatter; `DONE_CHECK_SKIP=all` skips the done-check.
 
 ## Read the guard log
 
