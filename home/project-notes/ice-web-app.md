@@ -9,3 +9,5 @@ Team setup (AGENTS.md, CLAUDE.md, `.claude/`) wins on conflicts. My global skill
 - Done: the project's own `nx-ice-verify` / `eslint-and-verification` skills.
 - The project `ui-implementer` shadows mine and preloads only project skills: when delegating, name
   `accessibility-build`, `responsive-ui`, `ui-quality-pass` (+ `forms-validation` / `async-ui-states`) in the prompt.
+- Checks run on the pinned Node 22.23.2 (`.nvmrc`, `volta`), not the shell's Node 26: put `~/.volta/bin` first on PATH.
+- `pnpm verify` does not run `pnpm docs:ice-calls:verify` (it needs the sibling `ice-mock-api`): run it when ICE Calls docs change.
