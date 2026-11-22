@@ -1,8 +1,8 @@
 // The state files of the session-notes hook in ~/.claude/state/modes (the folder keeps its name from the removed modes): the
-// compaction counts (compact-notes.mjs), the owner's check switch (checks-on.mjs) and their prune.
+// compaction counts (compact-notes.mjs) and their prune.
 // Exports: readStateText(file, what), writeStateText(dir, name, text), removeStateFile(dir, name), pruneState(dir, timeLeft, nowMs),
-// isStale(mtimeMs, nowMs), STATE_FILE_MAX_BYTES, MAX_PRUNED_ENTRIES. Used by session-notes.mjs, compact-notes.mjs, checks-on.mjs and
-// smart-check/ledger.mjs (moved out of the hook in round 9, lane r9-mode-fix, fix round 1: security review 1, S4 and S5). The stderr
+// isStale(mtimeMs, nowMs), STATE_FILE_MAX_BYTES, MAX_PRUNED_ENTRIES. Used by session-notes.mjs and compact-notes.mjs
+// (moved out of the hook in round 9, lane r9-mode-fix, fix round 1: security review 1, S4 and S5). The stderr
 // lines start with "session-notes hook:" (pinned by mode-state.test.mjs).
 // Why: the files were opened by name. Whoever can write the state folder (the same user, or a program run as that user) could
 // plant a FIFO, which hung the hook until Claude Code dropped its whole output, or a link, which the hook wrote a state through;

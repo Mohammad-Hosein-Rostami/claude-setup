@@ -1,6 +1,5 @@
 // The Bash guard's rule for its own files (F13 of round 9): a write, removal, link or FIFO under ~/.claude/private (the production-host
-// list), the guard's own state (its remembered allows, its bounce records, its log) or the owner's check switch (~/.claude/state/checks,
-// lib/checks-on.mjs: only the owner's typed /check turns a check on, spec r9-checks-off) asks, since it would change what the guard knows.
+// list) or the guard's own state (its remembered allows, its bounce records, its log) asks, since it would change what the guard knows.
 // Reading them is allowed. Read by pre-bash-guard.mjs.
 // Exports: checkGuardStateWrite(cmd, words, cwd) -> reason | undefined.
 // Paths are read as written (`~` and `$HOME` expanded, relative ones from the command's folder); a path with another expansion, or a relative
@@ -23,7 +22,7 @@ const REDIRECT_WORD = /^(?:\d*>>?|&>>?|>\|)(.*)$/;
 const CASELESS_PATHS = process.platform === 'darwin' || process.platform === 'win32'; // APFS and NTFS: `~/.Claude/Private` is the same folder
 
 /** ~/.claude/private (the production-host list) and the guard's own state: what a write there would change in the guard itself. */
-const guardStatePaths = () => [join(homedir(), '.claude', 'private'), join(homedir(), '.claude', 'state', 'checks'), allowedLiteralsDir(), bouncedDir(), GUARD_LOG_FILE].map((path) => resolve(path));
+const guardStatePaths = () => [join(homedir(), '.claude', 'private'), allowedLiteralsDir(), bouncedDir(), GUARD_LOG_FILE].map((path) => resolve(path));
 
 /** The paths this command writes: redirection targets, and the paths a writer changes. */
 function writtenPaths(cmd, words) {
@@ -55,5 +54,5 @@ export function checkGuardStateWrite(cmd, words, cwd) {
     const abs = fold(resolve(cwd ?? '/', path));
     return protectedPaths.some((root) => abs === root || isUnder(root, abs));
   });
-  return hit === undefined ? undefined : `changes the guard's own files (${shown(hit)}): ~/.claude/private, the guard's state and the owner's check switch (state/checks) hold its settings; confirm it`;
+  return hit === undefined ? undefined : `changes the guard's own files (${shown(hit)}): ~/.claude/private and the guard's state hold its settings; confirm it`;
 }

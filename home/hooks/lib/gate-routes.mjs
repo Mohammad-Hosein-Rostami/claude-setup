@@ -5,8 +5,7 @@
 // filtered by the caller, not here.
 // Gate routes: workflow skills that are not UI specific, named once per session (and again after a compact); the
 // repeated-report route names no skill and fires on every match (`everyTime`). Triggers
-// are intents, not words: an imperative "fix ..." / a bug, crash or failing test; a "done?", "ship it", "ready to
-// merge" request; a repository-level restructure ("remove Nx", "merge the apps into one project"); git history or
+// are intents, not words: an imperative "fix ..." / a bug, crash or failing test; a repository-level restructure ("remove Nx", "merge the apps into one project"); git history or
 // branch work ("clean up the git tree", "rebase", "delete the merged branches", "merge everything to master"). "fixed",
 // "prefix", "when you are done", "merge conflicts", "restructure this function", "branch coverage" and "merge sort" do not fire.
 const SENTENCE_START = String.raw`(?:^|[.!?:]\s+|\b(?:please|pls|can you|could you|would you|need to|needs to|let'?s|and|then|go)\s+)`;
@@ -45,18 +44,7 @@ export const GATE_ROUTES = [
         String.raw`|باگ|رفع (?:باگ|خطا|مشکل)|کار نمی`,
       'i',
     ),
-    line: 'Skill router: bug or failure - invoke root-cause-debug (skip if already loaded) before proposing a fix; tdd-loop for the fix itself.',
-  },
-  {
-    skill: 'verify-done',
-    test: new RegExp(
-      String.raw`\b(?:(?:is|was) (?:it|this|that) (?:done|finished|ready)|(?:are we|we'?re|we are|i'?m|i am|it'?s|it is|all) (?:all )?(?:done|finished)` +
-        String.raw`|ready (?:to|for) (?:ship|merge|release|review|deploy)|(?:ship|merge|release) (?:it|this|that|the (?:pr|branch|change|changes|work))` +
-        String.raw`|(?:can|should|could) (?:we|i) (?:ship|merge|release)|wrap(?:ping)? (?:it )?up|mark (?:it )?(?:as )?done)\b` +
-        String.raw`|تمام شد|merge کن|آماده merge`,
-      'i',
-    ),
-    line: 'Skill router: done or ship - invoke verify-done (skip if already loaded) before claiming done, fixed or ready.',
+    line: 'Skill router: bug or failure - invoke root-cause-debug (skip if already loaded) before proposing a fix.',
   },
   {
     skill: 'repo-restructure',

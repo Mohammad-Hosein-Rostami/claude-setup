@@ -1,55 +1,41 @@
-// C37 advice for the Bash guard, all four git advices in one call. Exports: gitAdvice(command, cwd, env, deps) -> string[] (the advice texts, in
-// order: merge commit, branch move, copy branch, no PASS), copyBranchStem(name, repoDir) -> stem | null (also used by the workflow `build`),
-// COPY_BRANCH_ADVICE_PATTERN and NO_PASS_ADVICE_PATTERN (what lib/reason-classes.mjs matches: the advice text holds a branch name or a commit,
-// so its class is a full-text pattern over a fixed charset, never "contains the words").
+// C37 advice for the Bash guard, the three git advices in one call. Exports: gitAdvice(command, cwd, env, deps) -> string[] (the advice texts, in
+// order: merge commit, branch move, copy branch), copyBranchStem(name, repoDir) -> stem | null (also used by the workflow `build`),
+// COPY_BRANCH_ADVICE_PATTERN (what lib/reason-classes.mjs matches: the advice text holds a branch name, so its class is a full-text pattern
+// over a fixed charset, never "contains the words").
 //  - Merge commit and branch move: lib/merge-commit.mjs and lib/branch-move.mjs, pure.
 //  - Copy branch: `git checkout -b|-B X`, `git switch -c|-C|--create X`, `git branch X`, `git worktree add -b|-B X` where X is `<stem>-<n>`, `-fix`,
 //    `-fixes`, `-v<n>` or `-redo` and the branch `<stem>` exists in the folder: a re-done lane continues the same branch. The folder is the
 //    cwd, a `cd <dir> &&` before the command, or `git -C <dir>`.
-//  - No PASS: `git merge --ff-only <ref>` in a folder on main, master or develop, when the test-pass tool has no full-suite PASS for the commit
-//    <ref> names: land with `land-lane`, or run the suite in the lane worktree first.
-// Both new advices ask git (a hardened call: no hooks, no fsmonitor, no embedded bare repository, no pager, no prompt) and decide from its answer; ANY
+// The copy-branch advice asks git (a hardened call: no hooks, no fsmonitor, no embedded bare repository, no pager, no prompt) and decides from its answer; ANY
 // git error, timeout, unknown answer or exception gives no advice for that rule, so the command goes through (an advice never blocks what it cannot judge).
-// All git and PASS calls of one command line share ONE time budget (ADVICE_BUDGET_MS): a repository that makes git hang (a FIFO as .git/HEAD) costs a
+// All git calls of one command line share ONE time budget (ADVICE_BUDGET_MS): a repository that makes git hang (a FIFO as .git/HEAD) costs a
 // command at most that long, never one timeout per git reading, so the guard hook cannot run into its own timeout. After a `cd` it cannot read
 // (`cd "$X"`, `pushd`, `cd -`) or with an unknown start folder (cwd null) the folder is unknown and a reading gives no advice.
-// The PASS answer comes from `home/tools/test-pass/test-pass.mjs check <sha> --repo <dir> --suite` (exit 0 PASS, 1 none, else unknown); when that tool
-// is not installed there is no PASS advice. `deps` lets a test replace the git runner and the PASS check.
+// `deps` lets a test replace the git runner.
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { branchMoveAdvice } from './branch-move.mjs';
 import { asGitSubcommand, commandOf } from './command-of.mjs';
 import { parseGitArgs } from './git-options.mjs';
 import { mergeCommitAdvice, withoutSubstitutions } from './merge-commit.mjs';
 import { segments, stripHeredocs } from './shell-words.mjs';
 
-const ADVICE_BUDGET_MS = 2000; // for every git call and PASS check of one command line together
-const BASE_BRANCHES = new Set(['main', 'master', 'develop']);
+const ADVICE_BUDGET_MS = 2000; // for every git call of one command line together
 const COPY_BRANCH_NAME = /^(.+)-(?:\d+|fix|fixes|v\d+|redo)$/;
 const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/; // a branch or ref we are willing to put in advice text and hand to git
 const MAY_NEED_ADVICE = /checkout|switch|branch|worktree|merge/; // cheap first look, after quotes, backslashes and blanks are dropped
 const SPELLING_BREAKS = /["'\\\s]/g;
-const TEST_PASS_TOOL = fileURLToPath(new URL('../../tools/test-pass/test-pass.mjs', import.meta.url));
-const SHORT_SHA = 12;
-const PASS_UNKNOWN = Symbol('unknown');
-
 const KEEP_SAME_BRANCH = 'a re-done lane continues the same branch (C37)';
 const copyRetry = 'If a separate branch is really intended, send the same command again and it runs.';
-const passRetry = 'If this merge is really intended, send the same command again and it runs.';
 /** Advice text for creating `name` while `stem` exists. Both are SAFE_REF text. */
 const copyBranchAdvice = (stem, name) => `${KEEP_SAME_BRANCH}: branch ${stem} already exists, so switch to it (git switch ${stem}), rebase it onto the base `
   + `and keep committing there instead of creating ${name}. ${copyRetry}`;
-/** Advice text for a fast-forward merge of `sha` into a base branch with no suite PASS. */
-const noPassAdvice = (sha) => `no full-suite PASS at ${sha}: run \`test-pass run --suite\` in the lane worktree, or land with \`land-lane\` (C37). ${passRetry}`;
-
 const escapeText = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const REF_TEXT = '[A-Za-z0-9][A-Za-z0-9._/-]*';
 export const COPY_BRANCH_ADVICE_PATTERN = new RegExp(`^${escapeText(KEEP_SAME_BRANCH)}: branch (${REF_TEXT}) already exists, so switch to it \\(git switch \\1\\), `
   + `rebase it onto the base and keep committing there instead of creating ${REF_TEXT}\\. ${escapeText(copyRetry)}$`);
-export const NO_PASS_ADVICE_PATTERN = new RegExp(`^no full-suite PASS at [0-9a-f]{${SHORT_SHA}}: ${escapeText('run `test-pass run --suite` in the lane worktree, or land with `land-lane` (C37). ')}${escapeText(passRetry)}$`);
+
 
 /**
  * Hardened git: no repository hooks or fsmonitor, no embedded bare repository, no pager, no prompt, no GIT_* from the caller.
@@ -69,16 +55,7 @@ export function runGit(dir, args, env = process.env, deadline = Date.now() + ADV
   return result.error === undefined && result.status === 0 ? result.stdout.trim() : null;
 }
 
-/** The PASS tool's answer for `sha` in `dir`: true (exit 0), false (exit 1: no record) or PASS_UNKNOWN (tool missing, deadline passed or any other exit). */
-function suitePassed(dir, sha, deadline) {
-  const timeout = deadline - Date.now();
-  if (!existsSync(TEST_PASS_TOOL) || timeout <= 0) return PASS_UNKNOWN;
-  const result = spawnSync(process.execPath, [TEST_PASS_TOOL, 'check', sha, '--repo', dir, '--suite'], { encoding: 'utf8', timeout });
-  if (result.error !== undefined) return PASS_UNKNOWN;
-  return result.status === 0 ? true : result.status === 1 ? false : PASS_UNKNOWN;
-}
-
-const DEFAULT_DEPS = { git: runGit, hasPass: suitePassed };
+const DEFAULT_DEPS = { git: runGit };
 
 /**
  * @param {string} name a branch about to be created
@@ -109,10 +86,6 @@ function createdBranch({ sub, rest }) {
   return sub === 'worktree' && rest[0] === 'add' ? valueAfter(rest, ['-b', '-B']) : undefined;
 }
 
-const MERGE_VALUE_OPTIONS = new Set(['-m', '--message', '-F', '--file', '-s', '--strategy', '-X', '--strategy-option']);
-/** The ref a merge names: its first word that is neither an option nor the value of one (`merge --ff-only -m text ref`). */
-const mergedRef = (rest) => positionalWords(rest.filter((word, at) => !MERGE_VALUE_OPTIONS.has(rest[at - 1] ?? '')))[0];
-
 /** The folder a `cd` word moves to (literal paths only); null when it is not known: `cd "$X"`, `cd -`, `cd ~user`, or a relative path from an unknown folder. */
 function afterCd(dir, args) {
   const target = args.find((word) => !word.startsWith('-') || word === '-') ?? '~';
@@ -128,27 +101,18 @@ const gitFolder = (dir, options) => options.filter((option) => option[0] === '-C
   return isAbsolute(next) ? next : from === null ? null : resolve(from, next);
 }, dir);
 
-/** Advice for one git command reading: a copy branch or a fast-forward merge into a base without a PASS. `scope` is `{dir, deps, env, deadline}`. */
+/** Advice for one git command reading: a copy branch. `scope` is `{dir, deps, env, deadline}`. */
 function readingAdvice({ sub, rest }, options, scope) {
   const { deps, env, deadline } = scope;
   const folder = gitFolder(scope.dir, options);
   if (folder === null) return [];
   const name = createdBranch({ sub, rest });
-  if (name !== undefined) {
-    const stem = copyBranchStem(name, folder, (where, args) => deps.git(where, args, env, deadline));
-    return stem === null ? [] : [copyBranchAdvice(stem, name)];
-  }
-  if (sub !== 'merge' || !rest.includes('--ff-only')) return [];
-  const ref = mergedRef(rest);
-  if (ref === undefined || !SAFE_REF.test(ref)) return [];
-  const branch = deps.git(folder, ['symbolic-ref', '--short', '-q', 'HEAD'], env, deadline);
-  if (branch === null || !BASE_BRANCHES.has(branch)) return [];
-  const sha = deps.git(folder, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], env, deadline);
-  if (sha === null || deps.hasPass(folder, sha, deadline) !== false) return [];
-  return [noPassAdvice(sha.slice(0, SHORT_SHA))];
+  if (name === undefined) return [];
+  const stem = copyBranchStem(name, folder, (where, args) => deps.git(where, args, env, deadline));
+  return stem === null ? [] : [copyBranchAdvice(stem, name)];
 }
 
-/** The copy-branch and no-PASS advice of the command line; a failure anywhere gives none. `cwd` null is an unknown folder. */
+/** The copy-branch advice of the command line; a failure anywhere gives none. `cwd` null is an unknown folder. */
 function repositoryAdvice(command, cwd, env, deps) {
   if (!MAY_NEED_ADVICE.test(command.replace(SPELLING_BREAKS, ''))) return [];
   const found = [];
@@ -168,7 +132,7 @@ function repositoryAdvice(command, cwd, env, deps) {
  * @param {string} command raw command text
  * @param {string | null} cwd the folder the command starts in; null when unknown (no repository advice)
  * @param {Record<string, string | undefined>} env environment handed to git
- * @param {{git?: typeof runGit, hasPass?: (dir: string, sha: string, deadline: number) => boolean | symbol | undefined}} deps replaceable git runner and PASS check
+ * @param {{git?: typeof runGit}} deps replaceable git runner
  * @returns {string[]} advice texts without repeats; [] when none applies or anything could not be judged
  */
 export function gitAdvice(command, cwd, env = process.env, deps = {}) {
