@@ -7,7 +7,7 @@
 // Sources: numbers = work-row.mjs jobView(...).road (the estimate cache's progress.road: id, step, steps, rows, leftMin, clocks);
 // facts = board.road (job-facts.mjs: goal, the step's title, lanes landed of all); checks = { on, off } from hooks/lib/checks-on.mjs;
 // repo = board.repo (git-state.mjs plus repo-stats.mjs tip, suite).
-// Colour (cells.mjs): the active step cyan, all lanes landed and a passing suite green, a failing suite red, a later finish yellow,
+// Colour (cells.mjs): the `road` label blue and the categories on green, `none` dim (spec-tui-3 section colours); the active step cyan, all lanes landed and a passing suite green, a failing suite red, a later finish yellow,
 // a sooner one green; every state has its word (`fail`, `pass`, `none at tip`, `later`, `sooner`).
 // Invariants: pure (no I/O); every outside text goes through cleanText; every row fits look.columns; a row with nothing to say is null.
 import { clockOf, cleanText, cutWords, durationText, fitParts, STATE } from './cells.mjs';
@@ -83,7 +83,7 @@ export function roadRow(numbers, facts, clock, look) {
   const step = isCount(numbers?.step) ? numbers.step : own?.step;
   if (typeof name !== 'string' || !isCount(step) || step < 1) return null;
   return fitParts([
-    { text: `road ${cleanText(name, look).slice(0, 16)}`, state: STATE.run },
+    { text: `road ${cleanText(name, look).slice(0, 16)}`, state: STATE.road },
     { text: stepText(step, numbers?.steps ?? own?.steps, own?.title, look), state: STATE.run },
     lanesPart(numbers, own), ...stepTimeParts(numbers, clock, look),
     own?.goal && wide(look) ? { text: cutWords(cleanText(own.goal, look), GOAL_CHARS, look), state: STATE.dim, drop: 6 } : null,
@@ -114,7 +114,7 @@ export function checksRow(checks, repo, look) {
   const off = names(checks?.off);
   const parts = [];
   if (checks !== null && typeof checks === 'object') {
-    parts.push({ text: `checks: ${on.length > 0 ? on.join(' ') : 'none'}` });
+    parts.push({ text: `checks: ${on.length > 0 ? on.join(' ') : 'none'}`, state: on.length > 0 ? STATE.done : STATE.dim });
     if (off.length > 0) parts.push({ text: `off: ${off.join(' ')}`, state: STATE.dim, drop: 2 });
   }
   const suite = suitePart(repo, look);

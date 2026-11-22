@@ -1,10 +1,15 @@
 // The cells every progress surface draws with (display design 4.1): the look of the terminal (glyphs, separators, colour), bars,
 // durations, clocks, and fitting a row of parts to a width. Used by render.mjs (the status line rows) and tree.mjs (`/where`).
 // Exports: lookOf(env, platform, columns) -> look; paint(text, state, look, bold); cleanText(text, look); cutWords(text, max, look);
-// fitParts(parts, look) -> string; barText(shares, cells, look); durationText(minutes); clockOf(ms, nowMs, timeZone); STATE.
+// fitParts(parts, look) -> string; barText(shares, cells, look); durationText(minutes); clockOf(ms, nowMs, timeZone); STATE;
+// hueState(hue) -> state; HUE_CODES.
 // Colour (spec-tui-2, basic ANSI 16 so the terminal theme maps them on dark and light themes), one meaning each: done green (done,
 // passing, on track, ahead), run cyan (running now), warn yellow (attention soon), block red (needs action), wait magenta (waiting on
 // the owner), dim (SGR 2, secondary text); bold only for the one most urgent part of a render (a part's `bold`).
+// Identity and section colours (spec-tui-3, "which is where"): a work item's hue (`hueState(n)`, identity.mjs picks n) is one of
+// HUE_CODES in the 256-colour cube, never a state's code; on a 16-colour terminal (TERM and COLORTERM name no 256 or true colour)
+// the hues cycle bold, underline, plain; without colour none. `road` is basic blue (the road row's label), `strong` bold with no
+// colour (`ALL`, main's git row). A part may carry `spans` (texts in order whose join is its text, each with its own state).
 // Look: ASCII when CLAUDE_STATUS_ASCII=1, TERM=dumb, Windows without WT_SESSION and TERM_PROGRAM (the old console host), or a locale
 // that is set and not UTF-8; colour off when NO_COLOR is set to any non-empty value (no-color.org) or TERM=dumb.
 // Invariants: pure (no I/O); colour only for a state and every state also has a word in the text (colour is never the only signal); in ASCII mode no
@@ -12,8 +17,20 @@
 import { clockText, dayText, localDate } from '../../estimate/lib/local-clock.mjs';
 
 /** The states a part may carry; ok has no colour. */
-export const STATE = { ok: 'ok', done: 'done', run: 'run', warn: 'warn', block: 'block', wait: 'wait', dim: 'dim' };
-const COLOR_CODE = { done: '\u001b[32m', run: '\u001b[36m', warn: '\u001b[33m', block: '\u001b[31m', wait: '\u001b[35m', dim: '\u001b[2m' };
+export const STATE = { ok: 'ok', done: 'done', run: 'run', warn: 'warn', block: 'block', wait: 'wait', dim: 'dim', road: 'road', strong: 'strong' };
+const COLOR_CODE = {
+  done: '\u001b[32m', run: '\u001b[36m', warn: '\u001b[33m', block: '\u001b[31m', wait: '\u001b[35m', dim: '\u001b[2m', road: '\u001b[34m',
+  strong: '\u001b[1m',
+};
+/**
+ * The identity hues, xterm 256-colour indexes chosen for the best contrast on both a #1e1e1e and a #ffffff background (WCAG ratio
+ * 3.80 to 4.06 on each; no colour reaches 4.5:1 on both, the best possible is about 4.09): blue, orange, violet, green, pink, orchid.
+ */
+export const HUE_CODES = [31, 166, 99, 64, 197, 133];
+const HUE_STATE = /^hue:(\d+)$/;
+/** The 16-colour stand-ins of the hues, cycled so that with the marker shape (hue % 3) each of the six hues looks different. */
+const HUE_STYLES_16 = ['\u001b[1m', '\u001b[4m', ''];
+const COLOR_TERM = /256|truecolor|24bit|direct/i;
 const BOLD = '\u001b[1m';
 const RESET = '\u001b[0m';
 const UNICODE = { done: '█', left: '░', over: '▓', now: '▒', sep: ' · ', bar: ' │ ', cut: '…' };
@@ -50,15 +67,37 @@ function wantsAscii(env, platform) {
  * @param {Record<string, string | undefined>} env the process environment
  * @param {string} platform process.platform
  * @param {number} columns the width rows are fitted to
- * @returns {{ columns: number, ascii: boolean, color: boolean, glyph: typeof UNICODE }} the look of every row drawn for this terminal
+ * @returns {{ columns: number, ascii: boolean, color: boolean, colors256: boolean, glyph: typeof UNICODE }} the look of every row
+ *   drawn for this terminal; colors256: TERM or COLORTERM names 256 or true colour (else the hues fall back to bold/underline/plain)
  */
 export function lookOf(env, platform, columns) {
   const ascii = wantsAscii(env, platform);
-  return { columns, ascii, color: !env.NO_COLOR && env.TERM !== 'dumb', glyph: ascii ? ASCII : UNICODE };
+  const color = !env.NO_COLOR && env.TERM !== 'dumb';
+  return { columns, ascii, color, colors256: color && COLOR_TERM.test(`${env.TERM ?? ''} ${env.COLORTERM ?? ''}`), glyph: ascii ? ASCII : UNICODE };
+}
+
+/** @returns {string} the state of identity hue `hue` (an index into HUE_CODES) */
+export const hueState = (hue) => `hue:${hue}`;
+
+/** The escape code of a state on this terminal; '' for ok, an unknown state, or no colour. */
+function codeOf(state, look) {
+  if (!look.color) return '';
+  const hue = HUE_STATE.exec(state ?? '');
+  if (hue === null) return COLOR_CODE[state] ?? '';
+  const index = Number(hue[1]) % HUE_CODES.length;
+  return look.colors256 ? `\u001b[38;5;${HUE_CODES[index]}m` : HUE_STYLES_16[(index + Math.floor(index / 3)) % 3];
 }
 
 /** @returns {string} the text in the colour of its state, bold when asked (no codes without colour, for ok, or an unknown state) */
-export const paint = (text, state, look, bold = false) => (look.color && COLOR_CODE[state] ? `${bold ? BOLD : ''}${COLOR_CODE[state]}${text}${RESET}` : text);
+export function paint(text, state, look, bold = false) {
+  const code = codeOf(state, look);
+  return code ? `${bold ? BOLD : ''}${code}${text}${RESET}` : text;
+}
+
+/** A part painted: each of its spans in its own state when it has spans, else the whole text in the part's state. */
+const paintPart = (part, look) => (Array.isArray(part.spans)
+  ? part.spans.map((span) => paint(span.text, span.state, look, part.bold)).join('')
+  : paint(part.text, part.state, look, part.bold));
 
 /**
  * @returns {string} a text from outside (input, files) with control characters gone and, in ASCII mode, every non-ASCII character
@@ -101,7 +140,7 @@ function joined(parts, look) {
     const piece = `${index === 0 ? '' : sepOf(part, look)}${part.text}`;
     const room = look.columns - used;
     if (widthOf(piece) <= room) {
-      out += index === 0 ? paint(part.text, part.state, look, part.bold) : `${sepOf(part, look)}${paint(part.text, part.state, look, part.bold)}`;
+      out += `${index === 0 ? '' : sepOf(part, look)}${paintPart(part, look)}`;
       used += widthOf(piece);
       continue;
     }

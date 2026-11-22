@@ -10,9 +10,11 @@
 // status line, each workflow's row, then the most urgent agents outside workflows without their header, `+K more`; (3) one strip
 // row with every group, the most urgent listed agents, `+K more`. Urgency: quiet > over its usual time > writer > reader, then the soonest finish. A
 // finished agent shows for DONE_SHOWN_MS, then only the counts row has it. From FULL_COLUMNS two agents share a row.
-// Colour of the counts row (spec-tui-2): running work cyan, any quiet agent yellow, waiting on the owner magenta.
+// Colour of the counts row (spec-tui-2): running work cyan, any quiet agent yellow, waiting on the owner magenta; it leads with a dim
+// `Σ` (`=` in ASCII; spec-tui-3 section labels). The strip row's group names are in their identity hue (identity.mjs).
 // Invariants: pure (no I/O); every row fits look.columns; never more rows than `slots`.
-import { cleanText, fitParts, STATE } from './cells.mjs';
+import { cleanText, fitParts, hueState, STATE } from './cells.mjs';
+import { hueOf, itemKey } from './identity.mjs';
 import { agentRow, countsText, foldRow, plainHeader, runHeader, sparkText, treeMark, urgencyOf } from './agent-rows.mjs';
 import { gitCounts } from './git-rows.mjs';
 import { WIDE_COLUMNS } from './work-row.mjs';
@@ -67,7 +69,9 @@ export function countsRow(board, asking, ctx, look) {
   const runText = runs.length === 0 ? 'no workflows' : wide(look) ? `${plural(runs.length, 'workflow')} (${runs.length - paused} run, ${paused} paused)` : `${runs.length} wf`;
   const live = count('run') + count('quiet');
   const agentText = live + done === 0 ? 'no agents' : `${plural(live, 'agent')} (${count('run')} run${count('quiet') ? `, ${count('quiet')} quiet` : ''}${done ? `, ${done} done${wide(look) ? ' last 10 min' : ''}` : ''})`;
-  const parts = [{ text: runText, state: runs.length > paused ? STATE.run : STATE.ok }, { text: agentText, state: count('quiet') > 0 ? STATE.warn : live > 0 ? STATE.run : STATE.ok }];
+  const label = `${look.ascii ? '=' : 'Σ'} `;
+  const runState = runs.length > paused ? STATE.run : STATE.ok;
+  const parts = [{ text: `${label}${runText}`, spans: [{ text: label, state: STATE.dim }, { text: runText, state: runState }] }, { text: agentText, state: count('quiet') > 0 ? STATE.warn : live > 0 ? STATE.run : STATE.ok }];
   if (over > 0) parts.push({ text: `${over} over usual`, state: STATE.warn, drop: 1 });
   if (asking && typeof asking === 'object') {
     const leftS = Math.max(0, Math.round(((asking.expiresAt ?? 0) - (asking.marginMs ?? 0) - ctx.nowMs) / MS_PER_S));
@@ -115,7 +119,9 @@ function stripRows(groups, slots, ctx, look) {
     const name = group.run === null ? 'agents' : cleanText(group.run.name ?? '?', look).slice(0, 12);
     const run = group.run;
     const phase = run && Number.isInteger(run.phaseIndex) ? ` ${run.phaseIndex}/${run.phaseTotal ?? '?'}` : '';
-    return { text: `${name}${phase} ${countsText(group.agents, { ...look, glyph: { ...look.glyph, sep: ' ' } })} ${sparkText(group.agents, look)}`, drop: index };
+    const rest = `${phase} ${countsText(group.agents, { ...look, glyph: { ...look.glyph, sep: ' ' } })} ${sparkText(group.agents, look)}`;
+    const hue = run === null ? STATE.ok : hueState(hueOf(ctx.identity, itemKey(ctx.identity, run)));
+    return { text: `${name}${rest}`, spans: [{ text: name, state: hue }, { text: rest }], drop: index };
   }), look);
   return slots <= 1 ? [strip] : [strip, ...urgentRows(groups.flatMap(listed).sort(byUrgency), slots - 1, ctx, look)];
 }

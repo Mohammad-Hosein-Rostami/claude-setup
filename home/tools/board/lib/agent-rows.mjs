@@ -6,7 +6,10 @@
 // Exports: agentRow(agent, ctx, look), runHeader(run, agents, ctx, look), plainHeader(agents, ctx, look), sparkText(agents, look),
 // agentBrief(agent, ctx, look), foldRow(prefix, agents, ctx, look), treeMark(last, look), urgencyOf(agent), countsText(agents, look).
 // Ctx: { nowMs, timeZone, at (the board's time: left minutes count from it), repo (board.repo), repos (every repository: board.repo
-// and board.repos, for an agent's worktree), folded }.
+// and board.repos, for an agent's worktree), folded, identity (identity.mjs boardIdentity: the hues of the board's items) }.
+// Identity (spec-tui-3): a workflow row starts `▸ ● name` in the item's hue (its lane branch's when its agents work in one, then
+// `on <branch>` in that hue too), an agent row's name carries its marker in its hue; the name is cut at a word or `-` and kept
+// before the phase word, which drops first.
 // Rules: a percent only with confidence (`62%` high, `~60%` medium), else `est…` with a moving ▒ cell and the type's usual time;
 // over the type's 85th percentile: `over usual by 9 min` with ▓; `quiet 4 min` from 3 min without a write and no call waiting;
 // a call still waiting shows its minutes. The description is cut at a word (cells.mjs cutWords), and the type stays: a column
@@ -15,7 +18,8 @@
 // never dropped. Drop order inside a row (fitParts): row id first, then tokens and calls, doing, then type and finish clock;
 // name, bar, percent, state word, time left and place are never dropped.
 // Invariants: pure (no I/O); every outside text goes through cleanText; every row fits look.columns.
-import { barText, clockOf, cleanText, cutWords, durationText, fitParts, STATE } from './cells.mjs';
+import { barText, clockOf, cleanText, cutWords, durationText, fitParts, hueState, STATE } from './cells.mjs';
+import { agentKey, hueOf, itemKey, markerOf, runBranch } from './identity.mjs';
 import { WIDE_COLUMNS } from './work-row.mjs';
 
 const FULL_COLUMNS = 150;
@@ -33,6 +37,9 @@ const UNPLACED_SEP = ' · ';
 const MIN_FOLDER_CHARS = 4;
 const DOING_CHARS = 24;
 const WIDE_DOING_CHARS = 36;
+const RUN_NAME_CHARS = 28;
+const WIDE_RUN_NAME_CHARS = 40;
+const MARKER_CHARS = 2; // the identity marker and its space before an agent's name
 const RUN_BAR_CELLS = 10;
 const NARROW_RUN_CELLS = 6;
 const MS_PER_MIN = 60_000;
@@ -154,12 +161,15 @@ function wherePart(agent, ctx, look) {
  * @returns {string} the row
  */
 export function agentRow(agent, ctx, look) {
-  const nameWidth = wide(look) ? WIDE_NAME_CHARS : NAME_CHARS;
-  const name = cutWords(cleanText(agent.name, look), nameWidth, look).padEnd(nameWidth);
+  const nameWidth = (wide(look) ? WIDE_NAME_CHARS : NAME_CHARS) - MARKER_CHARS;
+  const hue = hueOf(ctx.identity, agentKey(ctx.identity, agent));
+  const name = `${markerOf(hue, look)} ${cutWords(cleanText(agent.name, look), nameWidth, look).padEnd(nameWidth)}`;
   const type = cleanText(agent.type ?? '?', look);
   const column = wide(look) ? ` ${cutWords(type, TYPE_CHARS, look).padEnd(TYPE_CHARS)}` : '';
+  const prefix = ctx.prefix ?? ' ';
   return fitParts([
-    { text: `${ctx.prefix ?? ' '}${name}${column}`, bold: look.urgent === `agent:${agent.id}` }, barPart(agent, ctx, look),
+    { text: `${prefix}${name}${column}`, spans: [{ text: prefix }, { text: name, state: hueState(hue) }, { text: column }], bold: look.urgent === `agent:${agent.id}` },
+    barPart(agent, ctx, look),
     timePart(agent, ctx, look), ...clockParts(agent, ctx, look),
     agent.state === 'done' ? { text: '' } : doingPart(agent, look),
     { text: wide(look) ? '' : cutWords(type, NARROW_TYPE_CHARS, look), state: STATE.dim, drop: 1 }, wherePart(agent, ctx, look),
@@ -227,7 +237,12 @@ function runShare(done, total, agents) {
  * @returns {string} the header row
  */
 export function runHeader(run, agents, ctx, look) {
-  const name = `${marks(look).head}${cleanText(run.name ?? run.runId ?? '?', look).slice(0, 16)}`;
+  const hueIndex = hueOf(ctx.identity, itemKey(ctx.identity, run));
+  const hue = hueState(hueIndex);
+  const runName = cutWords(cleanText(run.name ?? run.runId ?? '?', look), wide(look) ? WIDE_RUN_NAME_CHARS : RUN_NAME_CHARS, look);
+  const name = `${marks(look).head}${markerOf(hueIndex, look)} ${runName}`;
+  const branch = runBranch(ctx.identity, run.runId);
+  const onBranch = branch !== null ? `on ${cutWords(cleanText(branch, look), WIDE_PLACE_CHARS, look)}` : '';
   const purpose = run.purpose ? cleanText(run.purpose, look) : run.row ? cleanText(run.row, look) : '';
   const total = Number.isInteger(run.agentsTotal) ? run.agentsTotal : (run.started ?? 0);
   const done = Number.isInteger(run.agentsDone) ? run.agentsDone : (run.done ?? 0);
@@ -237,10 +252,11 @@ export function runHeader(run, agents, ctx, look) {
   const left = isNumber(run.leftMin) ? `~${timeText(run.leftMin, look)}${wide(look) ? ' left' : ''}` : '';
   const finish = isNumber(run.leftMin) ? clockOf((ctx.at ?? ctx.nowMs) + run.leftMin * MS_PER_MIN, ctx.nowMs, ctx.timeZone) : '';
   return fitParts([
-    { text: name }, { text: purpose ? `${wide(look) ? 'for ' : ''}${purpose.slice(0, 32)}` : '', drop: 3 }, { text: phaseText, drop: 1 },
+    { text: name, state: hue }, { text: onBranch, state: hue, drop: 1 },
+    { text: purpose ? `${wide(look) ? 'for ' : ''}${purpose.slice(0, 32)}` : '', drop: 4 }, { text: phaseText, drop: 2 },
     { text: `${barText({ done: runShare(done, total, agents) }, wide(look) ? RUN_BAR_CELLS : NARROW_RUN_CELLS, look)} ${done}/${total} done`, state: done >= total && total > 0 ? STATE.done : STATE.run },
-    { text: ctx.folded && agents.length > 0 ? `${countsText(agents, look)} ${sparkText(agents, look)}` : countsText(agents, look), state: quietIn(agents) ? STATE.warn : STATE.ok, drop: 2 },
-    stopped ?? { text: left }, { text: stopped ? '' : finish, state: STATE.dim, drop: 1 },
+    { text: ctx.folded && agents.length > 0 ? `${countsText(agents, look)} ${sparkText(agents, look)}` : countsText(agents, look), state: quietIn(agents) ? STATE.warn : STATE.ok, drop: 3 },
+    stopped ?? { text: left }, { text: stopped ? '' : finish, state: STATE.dim, drop: 2 },
   ], look);
 }
 

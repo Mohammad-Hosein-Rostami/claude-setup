@@ -11,6 +11,7 @@
 // once over; clocks are dim; the estimate's bare `moved` tag is not shown (it says nothing): the caller passes the finish clock's
 // move as a trend part (stat-rows.mjs trendPart, `↑ +1h10 later`); with the road row shown (`roadShown`) the step parts stay off
 // this row.
+// Spec-tui-3: the row's `ALL` label is bold.
 // Invariants: pure (no I/O); every clock in the one zone given (case 12); the row fits look.columns (cells.mjs fitParts).
 import { barText, clockOf, cleanText, durationText, fitParts, STATE } from './cells.mjs';
 
@@ -25,6 +26,7 @@ const MS_PER_MIN = 60_000;
 const CAP_WHILE_OPEN = 99;
 const REFUSAL_WHY = { 'no rows': 'no rows yet', 'few rows': 'too few finished rows', 'rows listed late': 'rows listed late' };
 const TAG_WORDS = { '+rows': 'rows added' };
+const ALL_LABEL = 'ALL';
 
 const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
 const isCount = (value) => Number.isInteger(value) && value >= 0;
@@ -149,5 +151,12 @@ function runParts(runs, look) {
  * @returns {string} row 1, fitted to look.columns
  */
 export function workRow({ segment, runs, nowMs, timeZone, trend = null, roadShown = false }, look) {
-  return fitParts([...jobParts(jobView(segment), { nowMs, timeZone, roadShown }, look, trend), ...runParts(runs, look)], look);
+  const [first, ...rest] = jobParts(jobView(segment), { nowMs, timeZone, roadShown }, look, trend).filter((part) => part.text !== '');
+  return fitParts([...(first ? [boldAll(first)] : []), ...rest, ...runParts(runs, look)], look);
+}
+
+/** The row's first part with its `ALL` label in bold (spec-tui-3: each row kind leads with its label) and the rest in its state. */
+function boldAll(part) {
+  if (!part.text.startsWith(ALL_LABEL)) return part;
+  return { ...part, spans: [{ text: ALL_LABEL, state: STATE.strong }, { text: part.text.slice(ALL_LABEL.length), state: part.state }] };
 }

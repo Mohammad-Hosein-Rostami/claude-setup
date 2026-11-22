@@ -268,7 +268,7 @@ test('the status line prints the work row and the session row, fitted to COLUMNS
   const wide = render({ COLUMNS: '120' });
   assert.equal(wide.length, 2);
   assert.match(wide[0], CLOCK_SHOWN);
-  assert.equal(withClock(wide[0]), '\u001b[32mALL ████████░░░░░░░░  54% of work\u001b[0m · 30 min left · \u001b[2mdone by <clock>\u001b[0m · \u001b[2m5/9 rows\u001b[0m');
+  assert.equal(withClock(wide[0]), '\u001b[1mALL\u001b[0m\u001b[32m ████████░░░░░░░░  54% of work\u001b[0m · 30 min left · \u001b[2mdone by <clock>\u001b[0m · \u001b[2m5/9 rows\u001b[0m');
   assert.equal(wide[1], 'Sonnet 5.5 · \u001b[2mctx ?\u001b[0m · account ?');
   assert.equal(withClock(render({ COLUMNS: '80', NO_COLOR: '1' })[0]), 'ALL █████░░░░░  54% · 30 min left · done by <clock> · 5/9 rows');
   assert.doesNotMatch(render({ COLUMNS: '80', NO_COLOR: '1', TERM: 'dumb' }).join(''), /\u001b|[^\u0020-\u007e]/);

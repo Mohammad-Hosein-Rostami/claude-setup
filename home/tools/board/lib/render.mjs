@@ -21,9 +21,12 @@
 // sample with its age, else no 5 h field (spec-tui-2: this account's status input has carried `five_hour: null` in every sample); `$` is not on the line (case 11); a table or tool error sits in the alert row (case 13);
 // the 5 h pace (`out ~16:10 at this pace`) only when it comes before the reset, from two samples of one window, with the age of
 // the newest when older than 5 min; it never notifies. The account name is the first part dropped, with git.
+// Spec-tui-3: the session row's labels (`ctx`, `5h`, `7d`, `acct`) are dim and their values keep their colour; the work and git
+// rows take their identity hues from identity.mjs boardIdentity (ctx.identity), worked out once per render.
 // Invariants: pure (no I/O); every outside text goes through cleanText; every row fits look.columns.
 import { clockOf, cleanText, fitParts, STATE } from './cells.mjs';
 import { repoRows } from './git-rows.mjs';
+import { boardIdentity } from './identity.mjs';
 import { countsRow, rowBudget, workRows } from './layout.mjs';
 import { checksRow, roadRow, trendPart } from './stat-rows.mjs';
 import { jobView, WIDE_COLUMNS, workRow } from './work-row.mjs';
@@ -44,6 +47,8 @@ const MAX_BRANCH_CHARS = 32;
 const ASKING_MARGIN_MS = 60 * MS_PER_S; // asking-marker.mjs STALE_MARGIN_S: expiresAt is the default's time plus this margin
 
 const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
+/** A part whose leading label (`ctx`, `5h`, `7d`, `acct`) is dim and whose value keeps the part's state (spec-tui-3 session row). */
+const dimLabel = (part, label) => ({ ...part, spans: [{ text: label, state: STATE.dim }, { text: part.text.slice(label.length), state: part.state }] });
 const wide = (look) => look.columns >= WIDE_COLUMNS;
 const pad2 = (value) => String(value).padStart(2, '0');
 
@@ -81,7 +86,7 @@ function contextParts(window, env, look) {
   const used = contextPct(window, env);
   const text = wide(look) && limit !== null ? `ctx ${k} of ${Math.round(limit / TOKENS_PER_K)}k (${used}%)` : `ctx ${k}${used === null ? '' : ` ${used}%`}`;
   const byTokens = tokens >= CLEAR_CTX_TOKENS ? STATE.block : tokens >= LONG_CTX_TOKENS ? STATE.warn : STATE.done;
-  const ctxPart = { text, state: used === null ? byTokens : stateOfUsed(used), bold: look.urgent === 'ctx' };
+  const ctxPart = dimLabel({ text, state: used === null ? byTokens : stateOfUsed(used), bold: look.urgent === 'ctx' }, 'ctx');
   if (tokens >= CLEAR_CTX_TOKENS) return [ctxPart, { text: wide(look) ? '/clear before the next task' : '/clear soon', state: STATE.dim, drop: 3 }];
   if (tokens >= LONG_CTX_TOKENS) return [ctxPart, { text: wide(look) ? 'long ctx: batch calls' : 'batch calls', state: STATE.dim, drop: 3 }];
   return [ctxPart];
@@ -99,7 +104,7 @@ function leftText(used) {
 function windowPart(label, win, clock, look, drop) {
   if (!isNumber(win?.used_percentage)) return null;
   const reset = wide(look) && isNumber(win.resets_at) ? `, resets ${clockOf(win.resets_at * MS_PER_S, clock.nowMs, clock.timeZone, true)}` : '';
-  return { text: `${label} ${leftText(win.used_percentage)}${reset}`, state: stateOfUsed(win.used_percentage), drop, bold: look.urgent === `limit ${label}` };
+  return dimLabel({ text: `${label} ${leftText(win.used_percentage)}${reset}`, state: stateOfUsed(win.used_percentage), drop, bold: look.urgent === `limit ${label}` }, label);
 }
 
 /** With no live 5 h window: this account's last sample with its age when its window has not reset since, else null (hidden). */
@@ -139,7 +144,7 @@ export function sessionRow({ input, board, limitsFile, account, env, nowMs, time
     windowPart('5h', limits?.five_hour, clock, look, 0) ?? lastSeenFive(limitsFile, nowMs),  // null: the field hides
     windowPart('7d', limits?.seven_day, clock, look, 2),
     gitShown ? null : gitPart(board?.git ?? null, look),
-    { text: account ? `acct ${cleanText(account, look).slice(0, MAX_NAME_CHARS)}` : 'account ?', drop: 6 },
+    account ? dimLabel({ text: `acct ${cleanText(account, look).slice(0, MAX_NAME_CHARS)}`, drop: 6 }, 'acct') : { text: 'account ?', drop: 6 },
   ];
   return fitParts(parts.filter(Boolean), look);
 }
@@ -245,7 +250,9 @@ export function statusRows(view, plainLook) {
   const { board, nowMs, timeZone } = view;
   const alert = alertRow(view, look);
   const repo = board?.repo ?? null;
-  const ctx = { nowMs, timeZone, at: board?.at, repo, repos: [repo, ...(Array.isArray(board?.repos) ? board.repos : [])].filter(Boolean) };
+  const ctx = {
+    nowMs, timeZone, at: board?.at, repo, repos: [repo, ...(Array.isArray(board?.repos) ? board.repos : [])].filter(Boolean), identity: boardIdentity(board),
+  };
   const road = roadRow(jobView(view.segment)?.road ?? null, board?.road ?? null, { nowMs, timeZone }, look);
   const checks = checksRow(view.checks ?? null, repo, look);
   const workNeed = workRows(board, Infinity, ctx, look).length;

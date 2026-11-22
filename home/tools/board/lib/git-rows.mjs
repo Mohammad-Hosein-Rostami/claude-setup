@@ -10,8 +10,11 @@
 // The main worktree's part (spec-tui-2, the one compact row when nothing is active, never nothing): its branch, ahead/behind its
 // upstream (`origin ↑2↓0`, yellow when behind), changed files, last commit age, and the commits landed on the base today
 // (repo-stats.mjs: `landed today 6, last 12 min ago`).
+// Identity (spec-tui-3): a row starts with `⎇` (`git` in ASCII); a lane worktree's `⎇ ● name` (and its branch) is in the hue of its
+// branch (identity.mjs, ctx.identity), the colour its workflow's row uses; the main worktree's `⎇ main` is bold with no hue.
 // Invariants: pure (no I/O); every name goes through cleanText; every row fits look.columns.
-import { cleanText, cutWords, durationText, fitParts, STATE } from './cells.mjs';
+import { cleanText, cutWords, durationText, fitParts, hueState, STATE } from './cells.mjs';
+import { hueOf, markerOf } from './identity.mjs';
 import { WIDE_COLUMNS } from './work-row.mjs';
 
 const MS_PER_S = 1000;
@@ -28,6 +31,9 @@ const ASCII_GLYPH = { up: '+', down: '-', dirty: '*', clean: 'ok', old: '!' };
 const isCount = (value) => Number.isInteger(value) && value >= 0;
 const wide = (look) => look.columns >= WIDE_COLUMNS;
 const glyphs = (look) => (look.ascii ? ASCII_GLYPH : GLYPH);
+const gitGlyph = (look) => (look.ascii ? 'git' : '⎇');
+/** A lane worktree's hue: its branch's (the name a workflow on it takes), else its folder name's. */
+const hueOfWorktree = (wt, ctx) => hueOf(ctx?.identity, wt.branch ?? wt.name);
 const worktreesOf = (repo) => (Array.isArray(repo?.worktrees) ? repo.worktrees.filter((wt) => wt !== null && typeof wt === 'object') : []);
 
 /** Commits ahead/behind the base and the changed files: `↑2↓1 ●3`, `✓` when clean and level. */
@@ -50,11 +56,14 @@ function ordered(repo) {
   return rest.sort((a, b) => weight(b) - weight(a) || (b.ahead ?? 0) - (a.ahead ?? 0) || (a.ageMin ?? Infinity) - (b.ageMin ?? Infinity));
 }
 
-/** A worktree in a few words for the one-row form: `r9-a ↑2 ●3 impl-a`. */
-function briefOf(wt, look) {
+/** A worktree in a few words for the one-row form, its marker and name in its hue: `● r9-a ↑2 ●3 impl-a`. */
+function briefOf(wt, ctx, look) {
+  const hue = hueOfWorktree(wt, ctx);
   const old = isOld(wt) ? ` old ${Math.round(wt.ageMin / MIN_PER_DAY)} d ${glyphs(look).old}` : '';
   const op = wt.op ? ` ${cleanText(wt.op, look)}` : '';
-  return [`${cutWords(cleanText(wt.name, look), MAX_NAME_CHARS, look)} ${stateText(wt, look)}${op}${old}`, agentsText(wt, look)].filter(Boolean).join(' ');
+  const name = `${markerOf(hue, look)} ${cutWords(cleanText(wt.name, look), MAX_NAME_CHARS, look)}`;
+  const rest = [` ${stateText(wt, look)}${op}${old}`, agentsText(wt, look)].filter(Boolean).join(' ');
+  return { text: `${name}${rest}`, spans: [{ text: name, state: hueState(hue) }, { text: rest }] };
 }
 
 /** Ahead/behind the upstream: `origin ↑2↓0` (yellow when behind, a pull is due); '' without an upstream. */
@@ -76,12 +85,14 @@ function landedPart(repo, nowMs, look) {
 function mainParts(repo, look, nowMs) {
   const main = worktreesOf(repo).find((wt) => wt.main);
   const name = typeof repo.name === 'string' && repo.name ? `${cutWords(cleanText(repo.name, look), MAX_NAME_CHARS, look)}:` : '';
-  if (main === undefined) return [{ text: `git ${name}${cleanText(repo.base ?? '?', look)}` }];
+  if (main === undefined) return [{ text: `${gitGlyph(look)} ${name}${cleanText(repo.base ?? '?', look)}`, state: STATE.strong }];
   // The newest commit of the base is the last one landed: with a landed-today count its age rides on that part, not twice.
   const landedLast = isCount(repo.landed?.count) && repo.landed.count > 0 && Number.isFinite(repo.landed.lastMs);
   const age = isCount(main.ageMin) && !landedLast ? `last ${wide(look) ? 'commit ' : ''}${durationText(main.ageMin)} ago` : '';
+  const head = `${gitGlyph(look)} ${name}${cutWords(cleanText(main.name, look), MAX_NAME_CHARS, look)}`;
+  const tail = ` ${stateText(main, look)}${main.op ? ` ${cleanText(main.op, look)}` : ''}`;
   return [
-    { text: `git ${name}${cutWords(cleanText(main.name, look), MAX_NAME_CHARS, look)} ${stateText(main, look)}${main.op ? ` ${cleanText(main.op, look)}` : ''}` },
+    { text: `${head}${tail}`, spans: [{ text: head, state: STATE.strong }, { text: tail }] },
     { text: repo.stale === true ? 'stale' : '', state: STATE.dim }, // git ran out of time: the last good state (repos.mjs)
     upstreamPart(main, look), { text: age, state: STATE.dim, drop: 9 }, landedPart(repo, nowMs, look),
   ];
@@ -91,9 +102,10 @@ function mainParts(repo, look, nowMs) {
 function worktreeRow(wt, ctx, look) {
   const stale = Number.isFinite(wt.checkedMs) && wt.checkedMs > 0 && ctx.nowMs - wt.checkedMs > STALE_S * MS_PER_S
     ? { text: `(${Math.round((ctx.nowMs - wt.checkedMs) / MS_PER_S)} s old)`, state: STATE.dim, drop: 3 } : { text: '' };
+  const hue = hueOfWorktree(wt, ctx);
   return fitParts([
-    { text: `git ${cutWords(cleanText(wt.name, look), MAX_NAME_CHARS, look)}` },
-    { text: wt.branch && wt.branch !== wt.name ? cleanText(wt.branch, look).slice(0, 32) : '', drop: 4 },
+    { text: `${gitGlyph(look)} ${markerOf(hue, look)} ${cutWords(cleanText(wt.name, look), MAX_NAME_CHARS, look)}`, state: hueState(hue) },
+    { text: wt.branch && wt.branch !== wt.name ? cleanText(wt.branch, look).slice(0, 32) : '', state: hueState(hue), drop: 4 },
     { text: stateText(wt, look) }, { ...upstreamPart(wt, look), drop: 3 }, { text: wt.op ? cleanText(wt.op, look) : '', state: STATE.warn },
     { text: isCount(wt.ageMin) ? `last commit ${durationText(wt.ageMin)} ago` : '', state: STATE.dim, drop: 2 },
     { text: agentsText(wt, look), drop: 1 },
@@ -114,7 +126,7 @@ export function gitRows(repo, slots, ctx, look) {
   if (others.length + 1 <= slots && others.length > 0) {
     return [fitParts(mainParts(repo, look, ctx.nowMs), look), ...others.map((wt) => worktreeRow(wt, ctx, look))];
   }
-  const parts = others.map((wt, index) => ({ text: briefOf(wt, look), drop: index + 1, bar: index === 0 }));
+  const parts = others.map((wt, index) => ({ ...briefOf(wt, ctx, look), drop: index + 1, bar: index === 0 }));
   if (others.length === 0) parts.push({ text: wide(look) ? 'no worktrees' : 'no wt', drop: 1 });
   return [fitParts([...mainParts(repo, look, ctx.nowMs), ...parts], look)];
 }
