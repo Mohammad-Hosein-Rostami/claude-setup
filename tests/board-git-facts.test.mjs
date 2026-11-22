@@ -6,23 +6,22 @@
 // Every repository and HOME is a temp `cs-test-*` folder; git runs with a fixed identity and no global or system config.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { after, test } from 'node:test';
+import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { repoIdOfCommon, latestCheck } from '../home/tools/board/lib/check-state.mjs';
 import { cleanName, repoState } from '../home/tools/board/lib/git-state.mjs';
 import { collectBoard } from '../home/tools/board/lib/refresh.mjs';
 import { repoIdOf } from '../home/tools/done-check/lib/check-change.mjs';
 import { appendRun } from '../home/tools/done-check/lib/ledger.mjs';
+import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const BOARD = fileURLToPath(new URL('../home/tools/board/board.mjs', import.meta.url));
 const SESSION = '11111111-2222-4333-8444-555555555555';
-const ROOT = realpathSync(mkdtempSync(join(tmpdir(), 'cs-test-board-git-')));
+const ROOT = realpathSync(makeTempDir('board-git-')); // removed when the process ends (temp-dir-helpers.mjs)
 const HOME = join(ROOT, 'home');
 mkdirSync(HOME);
-after(() => rmSync(ROOT, { recursive: true, force: true }));
 
 const GIT_ENV = {
   ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))), HOME, GIT_CONFIG_NOSYSTEM: '1',
