@@ -159,6 +159,18 @@ test('a GIT_DIR in the caller\'s environment does not redirect the tools it star
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
 
+test('suite: a temporary folder that cannot be made is exit 14 naming the step, and nothing lands', () => {
+  const world = makeWorld();
+  const { tip } = laneAt(world, 'lane/x');
+  const before = git(world.dir, 'rev-parse', 'main');
+  const worktree = addWorktree(world.dir, 'wt-x', 'lane/x', { create: false }); // git-tidy rebases there, so only the suite step needs a temp folder
+  const result = landed(world, 'lane/x', tip, ['--checks', 'test', '--worktree', worktree], { TMPDIR: join(world.home, 'no-such-temp-folder') });
+  assert.equal(result.status, 14, result.stdout + result.stderr);
+  assert.equal(firstLineOf(result), 'land: tool-failed');
+  assert.match(result.stdout, /could not make its temporary folder or worktree for [0-9a-f]{40}/);
+  assert.equal(git(world.dir, 'rev-parse', 'main'), before);
+});
+
 test('suite reuse: a PASS already recorded for the tree is not run again', () => {
   const world = makeWorld({ suite: 'node -e "process.exit(process.env.LL_FAIL ? 1 : 0)"' });
   const { tip } = laneAt(world, 'lane/x');

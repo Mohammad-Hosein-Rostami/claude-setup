@@ -88,6 +88,11 @@ function runInTemporaryWorktree(repo, sha) {
  */
 export function suiteStep({ repo, worktree }, sha) {
   if (hasPass(repo, sha)) return { ok: true, note: `suite PASS already recorded at ${sha}` };
-  if (worktree !== null && worktreeIsTip(worktree, sha)) return runSuiteIn(worktree, sha);
-  return runInTemporaryWorktree(repo, sha);
+  try {
+    if (worktree !== null && worktreeIsTip(worktree, sha)) return runSuiteIn(worktree, sha);
+    return runInTemporaryWorktree(repo, sha);
+  } catch (error) {
+    // a full or missing temp folder: nothing ran and nothing landed, and the lead must see which step could not start
+    return { ok: false, code: 14, lines: [`the suite step could not make its temporary folder or worktree for ${sha}: ${error.message}`] };
+  }
 }
