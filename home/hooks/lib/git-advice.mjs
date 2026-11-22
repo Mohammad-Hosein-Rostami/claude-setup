@@ -1,5 +1,5 @@
 // C37 advice for the Bash guard, the three git advices in one call. Exports: gitAdvice(command, cwd, env, deps) -> string[] (the advice texts, in
-// order: merge commit, branch move, copy branch), copyBranchStem(name, repoDir) -> stem | null (also used by the workflow `build`),
+// order: merge commit, branch move, copy branch), copyBranchStem(name, repoDir) -> stem | null,
 // COPY_BRANCH_ADVICE_PATTERN (what lib/reason-classes.mjs matches: the advice text holds a branch name, so its class is a full-text pattern
 // over a fixed charset, never "contains the words").
 //  - Merge commit and branch move: lib/merge-commit.mjs and lib/branch-move.mjs, pure.

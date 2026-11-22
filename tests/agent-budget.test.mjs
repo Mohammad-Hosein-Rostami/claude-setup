@@ -92,7 +92,7 @@ test('a subagent is silent up to call 79, gets the commit notice at 80 exactly o
   assert.ok(outputs.slice(EARLY_NOTICE_AT, CALL_CAP - 1).every((o) => o === ''), 'silent at 81-119');
 });
 
-test('a subagent gets the limit text once at call 120 and no reminder after it (spec-p3 r9-workflows: one nudge after 120)', async () => {
+test('a subagent gets the limit text once at call 120 and no reminder after it (one nudge after 120)', async () => {
   const outputs = await budgetOutputs(CALL_CAP + 20);
   assert.equal(contextOf(outputs[CALL_CAP - 1]), limitText(120));
   assert.ok(outputs.slice(CALL_CAP, CALL_CAP + 20).every((o) => o === ''), 'no reminder after the one nudge');
@@ -316,14 +316,6 @@ test('an Agent or Task call resets the lead Bash count; other tools neither coun
   for (let i = 0; i < 14; i += 1) run(BUDGET, dir, bash(sid));
   run(BUDGET, dir, { hook_event_name: 'PostToolUse', session_id: sid, tool_name: 'Edit' });
   assert.match(run(BUDGET, dir, bash(sid)).stdout, /15 Bash calls/, 'Edit does not reset');
-});
-
-test('a Workflow call is not counted: it does not reset the lead Bash count, so the 15th Bash call still nudges', async () => {
-  const dir = await home();
-  const sid = uid('s');
-  for (let i = 0; i < 14; i += 1) run(BUDGET, dir, bash(sid));
-  assert.equal(run(BUDGET, dir, { hook_event_name: 'PostToolUse', session_id: sid, tool_name: 'Workflow' }).stdout, '');
-  assert.match(run(BUDGET, dir, bash(sid)).stdout, /15 Bash calls in a row/, 'the Workflow call did not reset the count');
 });
 
 test('subagent Bash calls never trigger the lead nudge and unsafe session ids are silent', async () => {

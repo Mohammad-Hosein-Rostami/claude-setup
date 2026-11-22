@@ -136,9 +136,7 @@ function toolUseIds(transcript) {
 function agentTranscripts(ctx) {
   const folder = join(ctx.transcriptPath.replace(/\.jsonl$/, ''), 'subagents');
   const listed = (dir) => (lstatOrNull(dir)?.isDirectory() ? readdirSync(dir).map((name) => join(dir, name)) : []);
-  const workflows = join(folder, 'workflows');
-  const candidates = [...listed(folder), ...listed(workflows).flatMap((run) => (lstatOrNull(run)?.isDirectory() ? listed(run) : []))];
-  const recent = candidates.filter((path) => /[\\/]agent-[^\\/]*\.jsonl$/.test(path) && (lstatOrNull(path)?.mtimeMs ?? Infinity) >= ctx.log.firstAt);
+  const recent = listed(folder).filter((path) => /[\\/]agent-[^\\/]*\.jsonl$/.test(path) && (lstatOrNull(path)?.mtimeMs ?? Infinity) >= ctx.log.firstAt);
   return recent.length > MAX_AGENT_TRANSCRIPTS || Date.now() > ctx.deadlineMs ? null : recent;
 }
 

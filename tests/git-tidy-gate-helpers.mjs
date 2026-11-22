@@ -1,5 +1,5 @@
 // Shared fixtures of the git-tidy-gate tests: a private HOME with the real hook process, the repo shapes the gate judges, and an in-process gate.
-// Invariants: every gate gets its own temp HOME, and CLEAN_ENV carries no CLAUDE_CODE_SESSION_ID, so the gate never reads the real session's /check switch.
+// Invariants: every gate gets its own temp HOME, and CLEAN_ENV carries no CLAUDE_CODE_SESSION_ID or CLAUDE_SESSION_ID, so the gate never reads the real session's state.
 // Exports: SESSION, HOUR_MS, CHECK_TIMEOUT_FOR_TESTS_MS, gateSession, billAndGinShape, inProcessGate, oldLane, linkStatus.
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';

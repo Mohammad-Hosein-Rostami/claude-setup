@@ -1,9 +1,9 @@
-// Gate routes of the skill router: workflow prompts that are not UI specific, each with the line the hook injects.
+// Gate routes of the skill router: work-type prompts (fix, restructure, git history), not UI specific, each with the line it injects.
 // Exports: GATE_ROUTES, an array of { skill?, everyTime?, test: RegExp, line: string } in injection order.
 // Invariants: pure data, no I/O. A route with a `skill` is named once per session (and again after a compact) by the
 // caller; a route with `everyTime` (the repeated report, which names no skill) shows on every match. Harness events are
 // filtered by the caller, not here.
-// Gate routes: workflow skills that are not UI specific, named once per session (and again after a compact); the
+// Gate routes: work-type skills that are not UI specific, named once per session (and again after a compact); the
 // repeated-report route names no skill and fires on every match (`everyTime`). Triggers
 // are intents, not words: an imperative "fix ..." / a bug, crash or failing test; a repository-level restructure ("remove Nx", "merge the apps into one project"); git history or
 // branch work ("clean up the git tree", "rebase", "delete the merged branches", "merge everything to master"). "fixed",

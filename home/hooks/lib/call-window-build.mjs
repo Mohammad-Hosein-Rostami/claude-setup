@@ -7,10 +7,11 @@
 //   claim may use).
 // Invariants: pure; every doubt keeps a window open or adds one (a lost line, an unknown task type, a call inside a subagent).
 const EDGE_SLACK_MS = 2000;
-// task types the Stop input documents; any other value is a raw discriminant and closes no background window (K4' b)
-const KNOWN_TASK_TYPES = new Set(['shell', 'subagent', 'monitor', 'workflow', 'teammate', 'cloud session', 'MCP task']);
-const KIND_OF_TOOL = { Bash: 'shell', PowerShell: 'shell', Monitor: 'monitor', Workflow: 'workflow' };
-const MISSED_KINDS = ['shell', 'monitor', 'workflow'];
+// task types the Stop input documents; any other value is a raw discriminant and closes no background window (K4' b). The `workflow`
+// type is left out: workflows are off (settings/base.json), so one would read as unknown, the side that keeps windows open.
+const KNOWN_TASK_TYPES = new Set(['shell', 'subagent', 'monitor', 'teammate', 'cloud session', 'MCP task']);
+const KIND_OF_TOOL = { Bash: 'shell', PowerShell: 'shell', Monitor: 'monitor' };
+const MISSED_KINDS = ['shell', 'monitor'];
 
 function openWindow(line) {
   return {

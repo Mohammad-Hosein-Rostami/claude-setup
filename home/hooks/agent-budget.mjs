@@ -2,7 +2,7 @@
 //   PostToolUse in a subagent -> counts its tool calls; the first call that sees 80 or more injects "commit what is green"
 //                   once (a marker file next to the counter), once at 120 it injects "commit, write the
 //                   hand-over note, then report unfinished" (one nudge, not repeated: frequent harness text after tool results reads as
-//                   possible injection, spec-p3 r9-workflows). Advisory: it never blocks a call.
+//                   possible injection). Advisory: it never blocks a call.
 //   PostToolUse Read in the lead -> warns when the result is over ~20k chars (use scout / a small range; lead rules: no Read > ~20k).
 //   PostToolUse Bash in the lead -> every 15 Bash calls since the last Agent/Task call, a nudge to delegate that states the
 //                   context size (lib/transcript.mjs contextTokens); an Agent/Task call resets the count. A nudge followed by
@@ -48,7 +48,7 @@ const NOTICE_SUFFIX = '.notice'; // marker next to the counter file: the early n
 const SPAWN_PROMPT_BYTES = 512 * 1024;
 const SAFE_ID = /^[\w-]{1,128}$/;
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']); // Windows can run the PowerShell tool; both count as shell calls
-const DELEGATING_TOOLS = new Set(['Agent', 'Task']); // the Workflow tool is off (settings disableWorkflows), so only Agent and Task calls delegate
+const DELEGATING_TOOLS = new Set(['Agent', 'Task']); // the calls that hand work to an agent, so they reset the lead's Bash count
 
 const budgetPath = callCounterPath; // its mtime is also the writer gate's sign that the agent still works
 

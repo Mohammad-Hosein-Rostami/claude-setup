@@ -28,7 +28,7 @@ test('line shapes: open, close, batch and quiet as the spec table; tools that ch
   assert.equal(recordCallEdge(pre({ tool_name: 'Read', tool_use_id: 'r1', tool_input: { file_path: '/x' }, cwd: folder }), env), false);
   recordCallEdge(pre({ tool_name: 'Bash', tool_use_id: 'b1', tool_input: { command: 'x', timeout: 5000 }, cwd: folder }), env);
   recordCallEdge(pre({ tool_name: 'Bash', tool_use_id: 'b2', tool_input: { command: 'x', run_in_background: true }, cwd: folder, agent_id: 'a1' }), env);
-  recordCallEdge(pre({ tool_name: 'Workflow', tool_use_id: 'w1', tool_input: {}, cwd: folder }), env);
+  recordCallEdge(pre({ tool_name: 'Monitor', tool_use_id: 'm1', tool_input: {}, cwd: folder }), env);
   recordCallEdge(pre({ tool_name: 'Write', tool_use_id: 'e1', tool_input: { file_path: join(folder, 'f.txt') }, cwd: folder }), env);
   recordCallEdge(pre({ tool_name: 'Write', tool_use_id: 'e2', tool_input: { file_path: join(folder, '.git', 'config') }, cwd: folder }), env);
   assert.equal(recordCallEdge({ hook_event_name: 'PostToolUse', session_id: SESSION, tool_name: 'Bash', tool_input: {} }, env), false);
@@ -38,10 +38,10 @@ test('line shapes: open, close, batch and quiet as the spec table; tools that ch
   recordCallEdge({ hook_event_name: 'Stop', session_id: SESSION }, env);
   recordCallEdge({ hook_event_name: 'Stop', session_id: SESSION, background_tasks: [{ type: 'shell' }, { type: 7 }] }, env);
   const lines = readLog(home);
-  assert.deepEqual(lines.map(({ t, id }) => `${t}:${id ?? ''}`), ['open:b1', 'open:b2', 'open:w1', 'open:e1', 'open:e2', 'close:b1', 'close:b2', 'batch:', 'quiet:']);
-  const [b1, b2, w1, e1, e2, c1, c2, batch, quiet] = lines;
+  assert.deepEqual(lines.map(({ t, id }) => `${t}:${id ?? ''}`), ['open:b1', 'open:b2', 'open:m1', 'open:e1', 'open:e2', 'close:b1', 'close:b2', 'batch:', 'quiet:']);
+  const [b1, b2, m1, e1, e2, c1, c2, batch, quiet] = lines;
   assert.deepEqual([b1.agent, b1.tool, b1.bg, b1.lim, typeof b1.at, Array.isArray(b1.b)], ['', 'Bash', false, 5000, 'number', true]);
-  assert.deepEqual([b2.agent, b2.bg, w1.bg, e1.path, e2.path], ['a1', true, true, join(folder, 'f.txt'), undefined]);
+  assert.deepEqual([b2.agent, b2.bg, m1.bg, e1.path, e2.path], ['a1', true, true, join(folder, 'f.txt'), undefined]);
   assert.deepEqual([c1.bg, c2.bg, c2.agent, batch.ids, quiet.types], [true, false, 'a1', ['b1'], ['shell', 'unknown']]);
 });
 
