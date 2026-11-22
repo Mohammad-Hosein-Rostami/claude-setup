@@ -1,13 +1,11 @@
-// PreToolUse(Agent|Task) guard: an Agent call with no `model` would inherit the lead model (Opus / Fable) and spend it
-// silently. An unpinned call to a built-in type that pins no model itself (general-purpose, a call with no subagent_type,
-// Explore and the other built-ins) gets `sonnet`; a Plan call without one gets `opus`. The mode plays no part: every mode
-// is as accurate as the high ones. Forks (subagent_type "fork", they inherit the lead on purpose), the repo's own agents (their files
-// pin a model; a per-call model would override it), plugin agents, an explicit model, and unreadable input pass
-// through untouched: no output, exit 0.
-// Env interaction: settings/base.json sets CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-5-5. See docs/catalog.md for how
-// Claude Code ranks that variable against the per-call `model` this hook sets.
-// Output when it rewrites: {hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",updatedInput}}.
-// `updatedInput` replaces the whole input object (per the hooks docs), so the full original input is returned.
+// PreToolUse(Agent|Task) guard: an Agent call with no `model` would inherit the lead model (Opus / Fable) and spend it silently. A
+// call to a built-in type that pins no model (general-purpose, no subagent_type, Explore and the other built-ins) gets `sonnet`; a Plan
+// call without one gets `opus`. Forks (subagent_type "fork", they inherit the lead on purpose), plugin agents, an explicit model and
+// unreadable input are not routed. Pin floor (lib/agent-pins.mjs): an agent file's `model` and `effort` are a floor, as a per-call value
+// outranks the file: a call value below the pin (haiku < sonnet < opus, low < medium < high < xhigh < max) is left out of the input so
+// the pin applies; an equal, higher or unknown value (fable, ultra) passes and none is ever added; any failure there leaves the input
+// as it is, with a stderr line. Env: settings/base.json sets CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-5-5 (ranked in docs/catalog.md).
+// Output when it rewrites: permissionDecision "allow" with the full input as `updatedInput` (it replaces the whole input, hooks docs).
 // UI brief gate: denies once with advice for UI briefs. A `ui-implementer` or `visual-qa` call is quiet when its prompt has a line that
 // starts (after optional blanks) with `MATRIX: <path>` naming a coverage matrix (a JSON object with a `surfaces` array; a relative path
 // starts at the call's cwd, `~` is the home folder) or with `MATRIX: none: <reason>` (15+ characters, and only when the brief outside its
@@ -280,7 +278,14 @@ async function main() {
     return;
   }
   const routed = guardedAgentInput(input?.tool_input);
-  const updatedInput = withBriefLines(routed ?? input?.tool_input, input?.cwd) ?? routed; // the brief lines on top of the model, if any
+  let floored = routed; // the pin floor fails open: a load or read error in lib/agent-pins.mjs leaves the input as it is
+  try {
+    const { flooredAgentInput } = await import('./lib/agent-pins.mjs');
+    floored = flooredAgentInput(routed ?? input?.tool_input, typeof input?.cwd === 'string' ? input.cwd : process.cwd()) ?? routed;
+  } catch (error) {
+    process.stderr.write(`agent-model-guard: pin floor skipped: ${error.message}\n`);
+  }
+  const updatedInput = withBriefLines(floored ?? input?.tool_input, input?.cwd) ?? floored; // the brief lines on top of the model, if any
   if (!updatedInput) return;
   console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput } }));
 }
