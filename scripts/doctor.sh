@@ -22,6 +22,30 @@ ok() { echo "ok    $1"; }
 bad() { echo "FAIL  $1"; BAD=1; }
 warn() { echo "WARN  $1"; }
 
+# The accepted list (owner, FR8 2026-11-22): machine facts the owner has seen and accepted, one id per line, `#` starts a comment.
+# It is read from CLAUDE_DOCTOR_ACCEPTED_FILE, else ~/.claude/private/doctor-accepted, the way the prod-hosts list is; doctor never
+# writes it (settings/doctor-accepted.example). An accepted fact prints as INFO, which the summary does not count. Only the ids in
+# ACCEPTED_IDS can be accepted: the production host list WARN never can (owner, FR8). A list that is a link or not a plain file
+# accepts nothing; check_doctor_accepted reports it, and an unknown id, as one WARN.
+ACCEPTED_IDS="ollama-off apple-terminal-notes"
+accepted_file() { echo "${CLAUDE_DOCTOR_ACCEPTED_FILE:-$CLAUDE_DIR/private/doctor-accepted}"; }
+# The ids listed in the accepted file, one per line (Windows line ends dropped); nothing when it is missing, a link or not plain.
+accepted_ids() {
+  local file
+  file="$(accepted_file)"
+  if [ -L "$file" ] || [ ! -f "$file" ]; then return 0; fi
+  sed 's/#.*//' "$file" 2>/dev/null | tr -s ' \t\r' '\n\n\n' | sed '/^$/d'
+}
+# True when id $1 is one doctor can accept and the accepted file lists it.
+is_accepted() {
+  case " $ACCEPTED_IDS " in *" $1 "*) ;; *) return 1 ;; esac
+  accepted_ids | grep -qxF -- "$1"
+}
+# A WARN, or an INFO naming the id and the file when the owner accepted it.
+warn_unless_accepted() {
+  if is_accepted "$1"; then echo "INFO  $2 (accepted: $1 in $(accepted_file))"; else warn "$2"; fi
+}
+
 is_windows() { case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; *) return 1 ;; esac; }
 
 # The check groups sit beside this script (scripts/doctor/) and are found from this script's folder, never the working folder. They only
@@ -55,9 +79,11 @@ version_at_least() {
 }
 
 # Claude Code 2.1.326 or later (CLAUDE_FLOOR): the floor every phase pins (spec-p0-close.md 0.7). It covers the Bash guard's
-# `onFailure: "block"` (2.1.295: an older CLI ignores it, so a guard that dies or times out lets the command run) and the
-# PC's 2.1.323 and Windows' 2.1.316. The line also names the update channel and whether DISABLE_UPDATES pins the version.
+# `onFailure: "block"` (2.1.295: an older CLI ignores it, so a guard that dies or times out lets the command run) and replaces the
+# PC's 2.1.323 and Windows' 2.1.316, which are below it and fail here. npm's stable channel gives 2.1.323, below the floor, so the
+# FAIL text says not to use it. The line also names the update channel and whether DISABLE_UPDATES pins the version.
 CLAUDE_FLOOR=2.1.326
+CLAUDE_STABLE_CHANNEL_VERSION=2.1.323 # what `stable` gives (npm dist-tag, 2026-11-22); named in the FAIL text only
 check_claude_version() {
   local version live="$CLAUDE_DIR/settings.json" channel pinned
   version="$(claude --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
@@ -67,7 +93,7 @@ check_claude_version() {
   pinned="update channel ${channel:-unknown}, DISABLE_UPDATES ${pinned:-not set}"
   if [ -z "$version" ]; then warn "claude --version gave no version: cannot check the floor $CLAUDE_FLOOR or the re-read version $VERIFIED_ON_CLI ($pinned)"
   elif version_at_least "$version" "$CLAUDE_FLOOR"; then ok "claude $version (floor $CLAUDE_FLOOR; $pinned)"
-  else bad "claude >= $CLAUDE_FLOOR required (found $version; $pinned): below it the Bash guard's onFailure: block may be ignored and the phase pin does not hold; run claude update"; fi
+  else bad "claude >= $CLAUDE_FLOOR required (found $version; $pinned): below it the Bash guard's onFailure: block may be ignored and the phase pin does not hold; run claude update, and do not use the stable channel ($CLAUDE_STABLE_CHANNEL_VERSION)"; fi
   if [ -n "$version" ]; then check_cli_verified "$version"; fi
   if is_windows; then check_windows_shell; fi
 }
@@ -117,7 +143,7 @@ run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
   if [ -n "$MISSING_GROUPS" ]; then bad "check files missing from scripts/doctor/:$MISSING_GROUPS (restore them: git checkout -- scripts/doctor)"; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_session_notes_hook; check_token_budget; check_plugin_session_start; check_recall; check_stop_cap; check_agent_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_notify; check_done_check; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows_gone; check_env_names
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_doctor_accepted; check_session_notes_hook; check_token_budget; check_plugin_session_start; check_recall; check_stop_cap; check_agent_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_notify; check_done_check; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows_gone; check_env_names
 }
 # The machine's name in the summary: the owner's two machines by OS, else the host name; DOCTOR_MACHINE overrides it.
 machine_name() {

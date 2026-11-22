@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The setup's own checks: its settings, plugins, hooks, token budget, accounts, caps and notes (sourced by scripts/doctor.sh, which
-# holds the helpers ok, bad and warn, the variables REPO, CLAUDE_DIR, LINK_ROOT and BAD, and the run order in run_checks).
+# holds the helpers ok, bad, warn and warn_unless_accepted, the variables REPO, CLAUDE_DIR, LINK_ROOT and BAD, and the run order in run_checks).
 # Defines functions only; nothing runs when this file is sourced, so no output comes from it. Exports: check_settings, check_deny_rules, check_plugins, check_plugin_parity, check_effort_env, check_projects, check_env_names, check_session_notes_hook, check_token_budget, check_plugin_session_start, check_workflows_gone, check_project_agents, check_accounts, check_stop_cap, check_agent_cap, check_notify, check_done_check.
 # Invariants: read-only, as doctor.sh is; every line is `ok`, `WARN`, `FAIL` or `INFO` text on stdout; a check that fails calls bad (BAD=1).
 
@@ -203,13 +203,13 @@ check_agent_cap() {
 
 # Desktop notes (hooks/notify.mjs): the terminal and the channel a note goes out on. Desktop notes show only in Ghostty, Kitty and
 # iTerm2 (and OSC 9 terminals such as WezTerm and Windows Terminal); Apple Terminal shows none, and tmux passes a note on only with
-# allow-passthrough on.
+# allow-passthrough on. Apple Terminal is INFO when the owner accepted it (`apple-terminal-notes` in the doctor accepted list).
 check_notify() {
   local line terminal channel passthrough
   line="$(node "$REPO/home/hooks/notify.mjs" --channel 2>/dev/null)" || { bad "notify: hooks/notify.mjs --channel failed"; return; }
   terminal="${line% *}"; channel="${line##* }"
   if [ "$channel" = notifications_disabled ]; then ok "notify: notes off (preferredNotifChannel notifications_disabled) in $terminal"
-  elif [ "$terminal" = Apple_Terminal ]; then warn "notify: Apple Terminal shows no desktop note (at most a bell): use Ghostty, Kitty or iTerm2 for the needs-you notes"
+  elif [ "$terminal" = Apple_Terminal ]; then warn_unless_accepted apple-terminal-notes "notify: Apple Terminal shows no desktop note (at most a bell): use Ghostty, Kitty or iTerm2 for the needs-you notes"
   else ok "notify: $terminal, channel $channel"; fi
   if [ -n "${TMUX:-}" ]; then
     passthrough="$(tmux show -gv allow-passthrough 2>/dev/null || true)"

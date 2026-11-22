@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# This machine's checks: Node, the shell on Windows, tools on PATH, the production-host list, ui-check dependencies, the LSP server, recall,
-# free disk, disk-clean and Claude Code's own sweep (sourced by scripts/doctor.sh, which holds the helpers ok, bad and warn, the
+# This machine's checks: Node, the shell on Windows, tools on PATH, the production-host list, the doctor accepted list, ui-check dependencies, the LSP server, recall,
+# free disk, disk-clean and Claude Code's own sweep (sourced by scripts/doctor.sh, which holds the helpers ok, bad, warn and warn_unless_accepted, the
 # variables REPO and CLAUDE_DIR, and the run order in run_checks). Defines functions only; nothing runs when this file is sourced.
-# Exports: check_node, check_windows_shell, check_tools, check_prod_hosts, check_ui_check, check_lsp, check_recall, check_disk_free, check_disk_clean, check_native_cleanup.
+# Exports: check_node, check_windows_shell, check_tools, check_prod_hosts, check_doctor_accepted, check_ui_check, check_lsp, check_recall,
+# check_recall_checkpoint_error, check_disk_free, check_disk_clean, check_native_cleanup.
 # Invariants: read-only, as doctor.sh is; every line is `ok`, `WARN`, `FAIL` or `INFO` text on stdout; a check that fails calls bad (BAD=1).
 
 # Node 22.15 or later: the guard's Windows path tests need module.registerHooks (added in 22.15) and are skipped without it.
@@ -39,6 +40,23 @@ check_prod_hosts() {
   else
     warn "no prod-hosts list: ssh/scp/psql writes ask only for hosts named *prod* (copy settings/prod-hosts.example to $file)"
   fi
+}
+
+# The accepted list (doctor.sh accepted_file, ACCEPTED_IDS). Absent is normal: every WARN stays a WARN, as on a teammate's machine.
+# A link or a file that is not plain accepts nothing; that, and an id doctor cannot accept (a typo, or the production host list,
+# which stays a WARN), is one WARN for the file. An empty file is an ok line with 0 ids.
+check_doctor_accepted() {
+  local file id count=0 unknown=""
+  file="$(accepted_file)"
+  if [ -L "$file" ] || { [ -e "$file" ] && [ ! -f "$file" ]; }; then
+    warn "doctor accepted list is a link or not a plain file ($file): nothing is accepted; put a plain file there (settings/doctor-accepted.example)"; return 0
+  fi
+  if [ ! -f "$file" ]; then ok "no doctor accepted list ($file): every machine WARN is shown as a WARN"; return 0; fi
+  while IFS= read -r id; do
+    case " $ACCEPTED_IDS " in *" $id "*) count=$((count + 1)) ;; *) unknown="$unknown $(tr -cd '[:alnum:]._-' <<<"$id" | head -c 40)" ;; esac
+  done < <(accepted_ids)
+  if [ -n "$unknown" ]; then warn "doctor accepted list ($file) holds ids doctor cannot accept:$unknown (known: $ACCEPTED_IDS; the production host list WARN is never accepted)"
+  else ok "doctor accepted list: $count ids ($file)"; fi
 }
 
 check_tools() {
@@ -80,14 +98,14 @@ check_lsp() {
 }
 
 # recall's final stack: embedding models in Ollama, the two reranker GGUFs, the checkpoint/digest hooks, the last
-# checkpoint error (a broken `claude` would otherwise silently stop live notes), the index age and the last 10 checkpoint
+# checkpoint error (a broken `claude` would otherwise silently stop live notes; no WARN once a later checkpoint succeeded), the index age and the last 10 checkpoint
 # calls. Missing models/files are warnings
 # (search falls back), a missing hook registration is a FAIL (long sessions would lose their notes at compaction).
 check_recall() {
   local live="$CLAUDE_DIR/settings.json" url="${RECALL_OLLAMA_URL:-http://127.0.0.1:11434}" models="${RECALL_RERANK_MODEL_DIR:-$HOME/.cache/recall-models}"
-  local state="${RECALL_STATE_DIR:-$(dirname "${RECALL_DB:-$HOME/.claude/recall/index.db}")}" tags name file missing="" f errors
+  local state="${RECALL_STATE_DIR:-$(dirname "${RECALL_DB:-$HOME/.claude/recall/index.db}")}" tags name file missing=""
   tags="$(curl -s --max-time 2 "$url/api/tags" 2>/dev/null)"
-  if [ -z "$tags" ]; then warn "recall: Ollama not reachable at $url (search is lexical only; start it with: ollama serve)"
+  if [ -z "$tags" ]; then warn_unless_accepted ollama-off "recall: Ollama not reachable at $url (search is lexical only; start it with: ollama serve)"
   else
     for name in bge-m3 hf.co/Qwen/Qwen3-Embedding-4B-GGUF; do printf '%s' "$tags" | grep -qF "\"$name" || missing="$missing $name"; done
     if [ -n "$missing" ]; then warn "recall: Ollama models not pulled:$missing"; else ok "recall: Ollama has bge-m3 and qwen3-embedding-4b"; fi
@@ -102,15 +120,31 @@ check_recall() {
   done
   jq -e '[.hooks.SessionStart[]?.hooks[]?.command // empty | select(test("hooks/recall-digest\\.mjs"))] | length > 0' "$live" >/dev/null 2>&1 || missing="$missing SessionStart(recall-digest)"
   if [ -n "$missing" ]; then bad "recall: checkpoint hooks not registered in settings.json for:$missing"; else ok "recall: checkpoint hook registered for PostToolUse and PreCompact, digest for SessionStart"; fi
-  errors=""
-  for f in "$state"/checkpoints/*.json; do
-    [ -f "$f" ] || continue
-    errors="$errors$(jq -r 'select(.error) | "\(.session[0:8]): \(.error.message) (\(.error.ts))"' "$f" 2>/dev/null | tr -d '\000-\037\177')"$'\n'
-  done
-  errors="$(printf '%s' "$errors" | sed '/^$/d' | tail -1)"
-  if [ -n "$errors" ]; then warn "recall: last checkpoint error: $errors"; else ok "recall: no checkpoint errors"; fi
+  check_recall_checkpoint_error "$state"
   # Index freshness and the last 10 checkpoint calls (tools/recall/health.mjs prints ok|WARN lines in this format).
   node "$REPO/home/tools/recall/health.mjs" 2>&1 | tr -d '\000-\010\013-\037\177' || warn "recall: health check could not run"
+}
+
+# The newest checkpoint error of any session (state files read by recall's own listCheckpoints): a WARN, unless a checkpoint of any
+# session succeeded after it (its `ts`; an error write keeps the session's older `ts`), which shows the job works again: then an ok line
+# that still names the old error. Stored text is shown without control characters (no terminal escapes). $1: recall's state folder.
+check_recall_checkpoint_error() {
+  local lib="$REPO/home/tools/recall/lib/checkpoint-state.mjs" level message
+  while IFS=$'\t' read -r level message; do
+    if [ "$level" = WARN ]; then warn "recall: $message"; else ok "recall: $message"; fi
+  done < <(RECALL_STATE_DIR="$1" node --input-type=module -e '
+    import { pathToFileURL } from "node:url";
+    const { listCheckpoints } = await import(pathToFileURL(process.argv[1]).href);
+    const shown = (text) => String(text).replace(/[\u0000-\u001f\u007f]/g, "");
+    const time = (ts) => { const ms = Date.parse(ts); return Number.isNaN(ms) ? -Infinity : ms; };
+    const states = listCheckpoints();
+    const lastSuccess = states.reduce((latest, state) => Math.max(latest, time(state.ts)), -Infinity);
+    const failed = states.filter((state) => state.error).reduce((newest, state) => (!newest || time(state.error.ts) > time(newest.error.ts) ? state : newest), null);
+    if (!failed) { console.log("ok\tno checkpoint errors"); process.exit(0); }
+    const error = `${shown(String(failed.session).slice(0, 8))}: ${shown(failed.error.message)} (${shown(failed.error.ts)})`;
+    if (time(failed.error.ts) < lastSuccess) console.log(`ok\tthe last checkpoint error (${error}) came before a later successful checkpoint (${new Date(lastSuccess).toISOString()})`);
+    else console.log(`WARN\tlast checkpoint error: ${error}`);
+  ' "$lib" 2>/dev/null || printf 'WARN\tthe checkpoint errors could not be read (%s)\n' "$lib")
 }
 
 # Free disk (tools/disk-free): FAIL below 5 GB, WARN below 15 GB (DISK_FAIL_FREE_GB / DISK_WARN_FREE_GB move them). The tool prints one line,

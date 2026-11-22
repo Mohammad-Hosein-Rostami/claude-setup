@@ -1,5 +1,6 @@
 // Tests for the doctor checks check_node and check_claude_version (scripts/doctor.sh, DOCTOR_ONLY mode), and the re-read tie
 // (VERIFIED_ON_CLI): on that version an ok line, on any other a WARN that lists the files copying Claude Code behaviour, never a FAIL.
+// The floor text says it replaces the older versions and not to use the stable channel (2.1.323), in doctor and the installer.
 // The Bash guard's settings entry relies on `onFailure: "block"`, which Claude Code honours from 2.1.295, and the phase pin's floor is 2.1.326; the guard's Windows path tests
 // need module.registerHooks, which Node has from 22.15 (without it they are skipped). Doctor must fail on anything older, and must
 // compare the parts as numbers: 2.1.99 is older than 2.1.295. The tools are fakes on PATH; HOME is a temp folder.
@@ -8,10 +9,11 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const DOCTOR = fileURLToPath(new URL('../scripts/doctor.sh', import.meta.url));
+const INSTALL_CLI = fileURLToPath(new URL('../scripts/install/cli.mjs', import.meta.url));
 const skip = process.platform === 'win32' ? 'the fake tools are sh scripts' : false;
 const VERIFIED_ON_CLI = /^VERIFIED_ON_CLI=(\d+\.\d+\.\d+)$/m.exec(readFileSync(DOCTOR, 'utf8'))?.[1];
 
@@ -32,7 +34,19 @@ test('doctor fails on a Claude Code older than the floor 2.1.326 and says what b
     assert.equal(status, 1, version);
     assert.ok(out.includes(`FAIL  claude >= 2.1.326 required (found ${version};`), out);
     assert.match(out, /onFailure: block/);
+    assert.match(out, /run claude update, and do not use the stable channel \(2\.1\.323\)$/m);
   }
+});
+
+test('the floor replaces the older versions: doctor and the installer say so, and refuse the stable channel 2.1.323', { skip }, async () => {
+  const floorComment = /^# Claude Code 2\.1\.326[\s\S]*?^CLAUDE_FLOOR=/m.exec(readFileSync(DOCTOR, 'utf8'))?.[0] ?? '';
+  assert.match(floorComment, /replaces the\s+# PC's 2\.1\.323 and Windows' 2\.1\.316, which are below it/);
+  assert.doesNotMatch(floorComment, /covers.*2\.1\.3(23|16)/);
+  const installer = readFileSync(INSTALL_CLI, 'utf8');
+  assert.match(installer, /2\.1\.326: it replaces Windows' 2\.1\.316 and the stable channel's 2\.1\.323/);
+  const { installClaude } = await import(pathToFileURL(INSTALL_CLI).href);
+  assert.throws(() => installClaude({ claudeVersion: '2.1.323' }), (error) => error.exitCode === 2
+    && error.message === '--claude-version 2.1.323 is below the floor 2.1.326; do not use the stable channel (2.1.323)');
 });
 
 test('doctor accepts Claude Code 2.1.326 and later, and only warns when the CLI gives no version', { skip }, () => {
