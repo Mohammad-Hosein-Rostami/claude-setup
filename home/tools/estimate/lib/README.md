@@ -17,7 +17,7 @@ The parts of the `estimate` tool. `../estimate.mjs` (the CLI) and `../statusline
 - `limits-store.mjs`: the last-seen usage limits per account (`~/.claude/state/limits/<account>.json` and its 7-day `.jsonl`);
   the status line writes them, the estimate, the board and the pane read them.
 - `backtest-scores.mjs` (pure): the backtest's scores (per-job miss, bias, 85% hit rate, naive baseline, first estimate apart).
-- `table-store.mjs`: the store files (table, session link, seed) under a short lock.
+- `table-store.mjs`: the store files (table, session link, seed) under a short lock; `isScratchStatusPath` keeps temp and scratchpad STATUS.md files out of the owner's store.
 - `from-files.mjs`: `estimateFile`, the one function of the design: parse, activity, costs, pool, state, commitment (it never links a session).
 - `report.mjs`: the printed block and the refusal text. `local-clock.mjs`: local clock text and the 5-minute grid.
 - `segment-text.mjs`: the status line text of a result. `segment-cache.mjs`: the status line's read side (the cache, the

@@ -7,7 +7,7 @@
 // Invariants: the table file's lock is taken only for the quick read-change-write of the commitment (estimator design 3.8), never
 // around the scan or the simulation; a busy lock means this run shows what it computed from the state it read and records nothing.
 // A run never links a session to the table (table.sessions and the session link are written by status.mjs edits only); the given
-// session's transcripts count for this run alone.
+// session's transcripts count for this run alone. A scratch STATUS.md (table-store.mjs) is not stored; its run counts as recorded.
 // Without a stateDir nothing is read from or written to the store. Transcripts are never printed. Work is in minutes; `now` is
 // floored to the minute so that the CLI and the status line, run in the same minute, agree. Rows carried over the last hand-over
 // (job-rows.mjs; never road rows) are left out of every count and named in a Check line. Roads: road-steps.mjs `withRoad`.
@@ -22,7 +22,7 @@ import { INSTANT_FORMAT, parseInstant, parseWorkItems } from './items.mjs';
 import { carriedIds, jobNumbers } from './job-rows.mjs';
 import { classMedians, progressOf } from './progress.mjs';
 import { roadOf, withRoad } from './road-steps.mjs';
-import { noteTable, readAllTables, readSeed, tableId, updateTable } from './table-store.mjs';
+import { isScratchTable, noteTable, readAllTables, readSeed, tableId, updateTable } from './table-store.mjs';
 import { elapsedShares, handedOverJobs, rowCosts, workedMinutes, workingIntervals } from './worked.mjs';
 
 const MS_PER_MIN = 60_000;
@@ -126,10 +126,7 @@ function currentJob(items, facts, openRows, nowMin) {
 }
 
 const NO_POOL = { medians: {} };
-/**
- * This run's progress of the job. `commit` is the commitment shown (null on a refusal: it has no clock), `p50LeftMin` the forecast's
- * median (null: weights path).
- */
+/** This run's progress of the job. `commit` is the commitment shown (null on a refusal: no clock), `p50LeftMin` the forecast's median (null: weights path). */
 function progressStep(job, facts, { p50LeftMin, commit }) {
   const rowsAdded = commit !== null && (commit.moved?.cause === 'rows-added' || job.rows.some((row) => !row.done && !commit.ids.includes(row.id)));
   return progressOf({
@@ -271,7 +268,7 @@ function closedResult(items, facts, options) {
  *   projects folder (default ~/.claude/projects); sessionId: a session whose transcripts count for this run (never linked); record:
  *   write first-seen times, rows, jobs, commitment and log; seedFile: the seed (default seed.json beside the tool, for tests)
  * @returns {{ result: object, inputs: { path: string, sessions: number, recorded: boolean, busy: boolean } }} result as in design
- *   section 15; busy: recording was asked but the table file stayed locked, so nothing was recorded
+ *   section 15; busy: recording was asked but the table file stayed locked, so nothing was recorded; recorded is also true for a scratch table
  * @throws {UsageError} when the file, a table cell or `now` cannot be used (problems carry the table's problem lines)
  */
 export function estimateFile(path, { now, stateDir = null, projectsDir = join(homedir(), '.claude', 'projects'), sessionId, record = false, seedFile } = {}) {
@@ -279,9 +276,10 @@ export function estimateFile(path, { now, stateDir = null, projectsDir = join(ho
   if (nowMs === null) throw new UsageError(`--now "${now}" is not a real ISO 8601 instant; accepted: ${INSTANT_FORMAT}`);
   const statusPath = resolve(path);
   const items = parsedTable(statusPath, nowMs);
-  const recording = record && stateDir !== null;
-  // First-seen times only: a run never links a session (only status.mjs edits do), so a refresh from another session in the
-  // folder neither counts its transcripts for this table for good nor points its Stop hook here (audit SF1, option a).
+  const scratch = record && stateDir !== null && isScratchTable(stateDir, statusPath);
+  const recording = record && stateDir !== null && !scratch;
+  // First-seen times only: a run never links a session (only status.mjs edits do), so another session's refresh neither counts its
+  // transcripts for this table for good nor points its Stop hook here (audit SF1, option a).
   if (recording) noteTable(stateDir, statusPath, { sessionId: undefined, ids: items.map((item) => item.id), nowMs });
   const options = { statusPath, nowMin: Math.floor(nowMs / MS_PER_MIN), stateDir, projectsDir, sessionId, record: recording, seedFile };
   const measured = measure(statusPath, items, options);
@@ -296,5 +294,5 @@ export function estimateFile(path, { now, stateDir = null, projectsDir = join(ho
     return finishResult(counted, facts, forecast, options);
   };
   const { result, recorded } = run();
-  return { result, inputs: { path: statusPath, sessions: facts.sessions.length, recorded, busy: recording && !recorded } };
+  return { result, inputs: { path: statusPath, sessions: facts.sessions.length, recorded: recorded || scratch, busy: recording && !recorded } };
 }

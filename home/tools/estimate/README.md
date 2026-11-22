@@ -171,6 +171,9 @@ only for its read-change-write; a busy lock or an unusable file records nothing 
 was busy or a store file could not be used)`). Table and activity files are capped at 16 MiB (the largest real ones are
 about 120 KB and 234 KB); the tool never writes a bigger one, and a bigger file is kept as it is, not used, and named in one
 stderr line.
+Scratch STATUS.md files (a temp folder: `os.tmpdir()`, `/tmp`, `/private/var/folders`, Windows `AppData/Local/Temp`; or any folder named exactly
+`scratchpad`) are neither written to nor pooled from this store (`isScratchStatusPath` in `lib/table-store.mjs`), so probe jobs never skew a forecast; the
+run still prints its estimate and counts as recorded. A folder like `scratchpad-notes` is a real job. Another store (`--state-dir`) keeps whatever it is given.
 The old `~/.claude/state/estimate-log/` is no longer read; it can be deleted by hand.
 
 ## Backtest and seed

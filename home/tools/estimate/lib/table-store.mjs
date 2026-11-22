@@ -1,19 +1,21 @@
 // The estimator's stored state: one file per STATUS.md (its sessions, first-seen times, finished rows and jobs, the commitment and
 // its log), one link per session to the STATUS.md it last edited with status.mjs (only noteTable with a session id writes it), and
 // the seed shipped in the repo.
-// Exports: stateDir(), tableId(statusPath), readAllTables(dir), updateTable(dir, statusPath, change), noteTable(dir, statusPath,
-// { sessionId, ids, nowMs }), linkedStatusPath(dir, sessionId), readSeed(file).
+// Exports: stateDir(), tableId(statusPath), isScratchStatusPath(path), isScratchTable(dir, statusPath), readAllTables(dir),
+// updateTable(dir, statusPath, change), noteTable(dir, statusPath, { sessionId, ids, nowMs }), linkedStatusPath(dir, sessionId), readSeed(file).
 // Layout under dir (default ~/.claude/state/estimate): table/<id>.json = { v: 2, path, sessions, added: { rowId: iso }, rows:
 // [{ size, kind, done, cost }], jobs: [{ at, minutes, growthNum, growthDen }], commit, log }; an old file's `held` (a
 // progress percent that never fell) is kept as it is and no longer read (the percent may fall now); session/<session-id>.json =
 // { path, at }; activity/ belongs to activity.mjs. All files go through hooks/lib/session-store.mjs (no links followed, private
 // files) and every write passes { sweep: false }: this is history, never expired.
+// A scratch STATUS.md (a temp folder, a `/scratchpad/` folder: probes and throw-away jobs) is neither written nor pooled in the owner's
+// store (stateDir()), so its fake jobs never skew the forecasts. Any other store (`--state-dir`, a test's, a probe's) keeps what it is given.
 // Invariants: the table lock is held only for one read-change-write of one table file (the lock is taken as abandoned after 0.5 s,
 // so no scan or simulation may run inside it); a busy or unusable store records nothing and returns undefined or false. A file that
 // is not a table is skipped, never trusted.
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { withSessionLock } from '../../../hooks/lib/session-lock.mjs';
@@ -52,6 +54,25 @@ function realStatusPath(statusPath) {
  *   matched to another machine's tables by row and job times instead (forecast.mjs referencePool)
  */
 export const tableId = (statusPath) => createHash('sha256').update(realStatusPath(statusPath)).digest('hex').slice(0, TABLE_ID_HEX);
+
+const SCRATCH_ROOTS = ['/tmp', '/private/tmp', '/private/var/folders']; // macOS and Linux temp roots, beside the os.tmpdir() of this machine
+const SCRATCH_SEGMENT = 'scratchpad'; // a whole folder name: `scratchpad-notes` is a real job folder
+const WINDOWS_TEMP = ['appdata', 'local', 'temp']; // C:\\Users\\<name>\\AppData\\Local\\Temp, whichever machine reads the path
+
+/** A path as lower-case segments with `/` (a Windows path read on any machine; APFS and NTFS ignore case). */
+const segmentsOf = (path) => path.replace(/\\/g, '/').toLowerCase().split('/').filter((part) => part !== '');
+const startsWithSegments = (segments, root) => root.length <= segments.length && root.every((part, at) => segments[at] === part);
+const hasSegmentRun = (segments, run) => segments.some((_, at) => startsWithSegments(segments.slice(at), run));
+
+/** True for a STATUS.md in a throw-away place: under the temp folders, in a `scratchpad` folder or in a Windows `AppData/Local/Temp`. */
+export function isScratchStatusPath(path) {
+  const segments = segmentsOf(path);
+  const roots = [...SCRATCH_ROOTS, realStatusPath(tmpdir()), tmpdir()].map(segmentsOf);
+  return roots.some((root) => startsWithSegments(segments, root)) || segments.includes(SCRATCH_SEGMENT) || hasSegmentRun(segments, WINDOWS_TEMP);
+}
+
+/** True when `dir` is the owner's store (stateDir()) and `statusPath` is a scratch STATUS.md: such a table is neither written nor pooled. */
+export const isScratchTable = (dir, statusPath) => realStatusPath(dir) === realStatusPath(stateDir()) && isScratchStatusPath(realStatusPath(statusPath));
 
 const emptyTable = (statusPath) => ({ v: TABLE_VERSION, path: realStatusPath(statusPath), sessions: [], added: {}, rows: [], jobs: [], commit: null, log: [] });
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -116,7 +137,7 @@ export function readAllTables(dir) {
   return names.flatMap((name) => {
     const id = TABLE_FILE.exec(name)?.[1];
     const table = id === undefined ? null : readTable(folder, id);
-    return table ? [{ ...table, id }] : [];
+    return table && !isScratchTable(dir, table.path) ? [{ ...table, id }] : [];
   });
 }
 
@@ -126,10 +147,11 @@ export function readAllTables(dir) {
  * @param {string} statusPath the STATUS.md
  * @param {(table: object) => object} change gets the stored table (an empty one when there is none) and returns the table to
  *   store; it must be quick (no scan, no simulation)
- * @returns {object | undefined} the stored table; undefined when the lock stayed busy, the store is unusable, the stored or the new
+ * @returns {object | undefined} the stored table; undefined for a scratch table (never written), when the lock stayed busy, the store is unusable, the stored or the new
  *   table is over MAX_TABLE_BYTES (one stderr line names the file; nothing is replaced) or the write failed
  */
 export function updateTable(dir, statusPath, change) {
+  if (isScratchTable(dir, statusPath)) return undefined;
   const folder = join(dir, TABLE_FOLDER);
   const id = tableId(statusPath);
   return withSessionLock(folder, id, () => {
@@ -158,6 +180,7 @@ const firstSeen = (added, ids, nowIso) => Object.fromEntries(ids.map((id) => [id
  * @returns {boolean} true when everything was recorded
  */
 export function noteTable(dir, statusPath, { sessionId, ids, nowMs }) {
+  if (isScratchTable(dir, statusPath)) return true; // nothing is recorded for a scratch table, by design
   const nowIso = new Date(nowMs).toISOString();
   const linked = isSessionId(sessionId);
   const stored = updateTable(dir, statusPath, (table) => ({
