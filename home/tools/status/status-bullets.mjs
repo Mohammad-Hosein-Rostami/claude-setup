@@ -4,7 +4,8 @@
 //   SCOPES, RULE_TAG.
 // Rule bullet (spec-p3 `r9-digest`, research2/state.md P1): `- <owner words> {R<n> <YYYY-MM-DD> <scope>[; supersedes R<m>][; superseded by R<k>]}`.
 //   The owner's words come first and stay whole; a rule that a newer one replaces is marked `superseded by`, never deleted. A bullet
-//   without the tag (written before ids) is an active rule with no id.
+//   without the tag (written before ids) is an active rule with no id. A rule added without `--scope` is `always` (OD-7); tags `job`
+//   and `project` written earlier still read.
 // Next step bullet: `- <row id>: <step>` under `## Next steps`, one per row, replaced in place by a newer `next` for the same row.
 // Invariants: an edit touches only the lines it adds or changes (a `rule --supersedes` changes the new and the replaced bullet);
 //   sections and fences are found with the estimator's findSection, so a fenced example is never edited or read; dates are UTC.
@@ -13,7 +14,7 @@ import { WORK_ITEMS, hiddenEndReason, oneLine, sectionEnd } from './status-table
 
 export const SCOPES = ['job', 'project', 'always'];
 export const RULE_TAG = /\s\{(R\d+) (\d{4}-\d{2}-\d{2}) (job|project|always)((?:; (?:supersedes|superseded by) R\d+)*)\}\s*$/;
-const DEFAULT_SCOPE = 'job'; // a STATUS.md belongs to one job; `project` and `always` are said by the owner (UNCONFIRMED default)
+const DEFAULT_SCOPE = 'always'; // owner decision OD-7 (2026-11-21): a rule without `--scope` holds for every job; `job` and `project` are said on purpose
 const SECTION_FOR = { rule: 'Standing rules', decision: 'Owner decisions', next: 'Next steps' };
 const BULLET = /^\s*[-*+]\s+(.*)$/;
 const NEXT_BULLET = /^- ([A-Za-z0-9][\w.:-]{0,39}): (.*)$/;
