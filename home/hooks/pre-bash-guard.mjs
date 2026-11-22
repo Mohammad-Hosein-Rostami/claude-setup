@@ -195,13 +195,14 @@ function reasonsOf(command, context) {
  * Pure decision for one Bash command line. Never a deny: a rule hit is an ask (the hook shows a timed dialog or bounces it once),
  * and a destructive one (force push, rm outside the project, disk wipe) leads the reason. Advice may run git (lib/git-advice.mjs, 2 s for the line).
  * @param {string} command raw command text
- * @param {{cwd?: string|null, project?: string, prodHosts?: string[]}} ctx absolute paths (cwd null means "unknown directory") and the private
- *   production-host list (see lib/remote.mjs); `work` is the line's work budget (lib/rm-paths.mjs newWork), which only a test passes
+ * @param {{cwd?: string|null, project?: string, prodHosts?: string[], sessionId?: unknown}} ctx absolute paths (cwd null means "unknown directory"),
+ *   the private production-host list (see lib/remote.mjs) and the hook input's session_id (its own scratch folder, lib/scratch-area.mjs);
+ *   `work` is the line's work budget (lib/rm-paths.mjs newWork), which only a test passes
  * @returns {{allow: true, advice?: string[]} | {allow: false, ask: true, reason: string, reasons: string[], advice?: string[]}} reason
  *   joins every rule hit, destructive first; reasons holds the same hits one by one, in the same order; advice (present only when some
  *   quality rule hit) is never in reason or reasons: it never asks, and the hook shows it once (lib/bounce-once.mjs)
  */
-export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts = [], work = newWork() } = {}) {
+export function decide(command, { cwd = process.cwd(), project = cwd, prodHosts = [], sessionId, work = newWork(sessionId) } = {}) {
   if (command.length > MAX_COMMAND_CHARS) return ask(['command too long to check; read it before allowing']);
   const ctx = { cwd, project, prodHosts, work }; // one budget for both parsers and every re-check of this line
   const primary = reasonsOf(command, ctx);
@@ -251,9 +252,9 @@ function answerFor(command, input) {
   const cwd = cwdOf(input);
   const project = process.env.CLAUDE_PROJECT_DIR || cwd;
   const rules = (text, ctx) => decide(text, { ...ctx, prodHosts: readProdHosts() }); // reading the host list is inside the guard too
-  const decided = decideSafely(command, { cwd, project }, rules);
+  const decided = decideSafely(command, { cwd, project, sessionId: input.session_id }, rules);
   const r = input.tool_input.run_in_background === true ? withoutWaitAdvice(decided) : decided; // a wait already in the background needs no advice
-  const recheck = (text) => decideSafely(text, { cwd, project }, rules);
+  const recheck = (text) => decideSafely(text, { cwd, project, sessionId: input.session_id }, rules);
   if (r.ask) return askUnlessRemembered(r, { command, cwd, input, recheck });
   return r.advice ? adviceOnce(r.advice, { command, cwd, input }) : ''; // advice only: never the owner
 }

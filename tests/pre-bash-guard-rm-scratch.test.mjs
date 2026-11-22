@@ -108,6 +108,18 @@ test('R3: a cs-test folder that holds home asks also when HOME is written throug
   quiet(`${RM} -rf ~/cs-test-a/x`);
 });
 
+test('R4: the hook input\'s session_id names the free session folder, before the environment\'s id', (t) => {
+  t.after(() => { process.env.CLAUDE_CODE_SESSION_ID = SESSION_ID; });
+  delete process.env.CLAUDE_CODE_SESSION_ID;
+  const other = join(TEMP, 'claude-501', '-Users-owner-proj', '11111111-2222-3333-4444-555555555555', 'scratchpad');
+  const withInput = { ...ctx, sessionId: SESSION_ID };
+  assert.deepEqual(decide(`${RM} -rf ${S}/x`, withInput), { allow: true });
+  assert.ok(decide(`${RM} -rf ${other}/x`, withInput).ask);
+  process.env.CLAUDE_CODE_SESSION_ID = '11111111-2222-3333-4444-555555555555'; // the input wins over the environment
+  assert.deepEqual(decide(`${RM} -rf ${S}/x`, withInput), { allow: true });
+  assert.ok(decide(`${RM} -rf ${other}/x`, withInput).ask);
+});
+
 test('R4: only this session\'s own folder is free: another session, any other temp folder and no session id ask', (t) => {
   const other = join(TEMP, 'claude-501', '-Users-owner-proj', '11111111-2222-3333-4444-555555555555', 'scratchpad');
   [`${RM} -rf ${other}`, `${RM} -rf ${other}/x`, `${RM} -rf /private/tmp/claude-501/-Users-x-proj/11111111-2222-3333-4444-555555555555/scratchpad`,

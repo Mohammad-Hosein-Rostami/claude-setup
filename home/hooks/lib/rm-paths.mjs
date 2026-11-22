@@ -1,6 +1,5 @@
 // Path rules for `rm -r`: is a target inside the project or a scratch area, and which variables hold what (the folder after a `cd`: lib/cd-folder.mjs).
-// Scratch areas (owner FR6: this session's own temp folder and `cs-test-*` folders, judged by the path rm really deletes) are read in
-// lib/scratch-area.mjs; a line that holds a command that may make links gets no scratch exemption.
+// Scratch areas (owner FR6: own session temp folder, `cs-test-*` folders; no exemption on a line that may make links): lib/scratch-area.mjs.
 // Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; MAX_TARGET_CHARS; MAX_LINE_READINGS; TOO_COMPLEX_REASON; newWork();
 // PWD_TARGET; expandVars; shown(target) -> the target as a reason shows it; newScope(cwd, project) -> {vars, assigned};
 // trackAssignments(scope, tokens, nextTokens); substituteKnownWords(tokens, scope); bashReadings(word, splitWords) (also read by
@@ -64,12 +63,11 @@ export const MAX_LINE_EXPANDED_CHARS = 4 * MAX_COMMAND_CHARS;
 export const TOO_COMPLEX_REASON = 'command too complex to check (its rm targets, or its commands after cd in nested scripts, are more than the guard reads); '
   + 'read it before allowing';
 /**
- * @returns {{readings: number, expanded: number, spent: boolean, realPaths: Map<string, string | null>, linkStates?: Map<unknown, object>}}
- *   a fresh budget for one line; spent once either count ran out: the line then asks. realPaths caches the real paths deletedPath read, so
- *   a folder is looked up once per line; linkStates (added by lib/scratch-area.mjs linkState) holds per reading of the line which command
- *   may make links and which scratch delete was let run.
+ * @param {unknown} [sessionId] the hook input's session_id: whose scratch folder is free (lib/scratch-area.mjs validates it)
+ * @returns {{readings: number, expanded: number, spent: boolean, realPaths: Map<string, string | null>, sessionId: unknown}} a fresh budget for
+ *   one line, spent once either count ran out (the line then asks); realPaths caches deletedPath's reads, linkStates (lib/scratch-area.mjs) the links.
  */
-export const newWork = () => ({ readings: 0, expanded: 0, spent: false, realPaths: new Map() });
+export const newWork = (sessionId) => ({ readings: 0, expanded: 0, spent: false, realPaths: new Map(), sessionId });
 /**
  * Git Bash paths (`/c/Users/x`) -> `c:/Users/x` on Windows; unchanged elsewhere. A bare drive (`/c`) is the drive ROOT, `c:/`: a plain
  * `c:` means "the current folder on drive c" to Windows, so `cd /c` would look like a cd that did not move.
@@ -203,9 +201,9 @@ const expandedTarget = (rawTarget, cwd, project, vars) => expandVars(expandHome(
 /**
  * True when the target is inside the project (as written) or in a scratch area (as deleted: deletedPath, inScratchArea). `cwd` is null when
  * an earlier `cd` could not be resolved: then only absolute targets can be judged. `known` is the line's real-path cache (newWork),
- * `links` what this reading of the line may make links with (lib/scratch-area.mjs linkState).
+ * `links` what this reading of the line may make links with (lib/scratch-area.mjs linkState), `sessionId` the hook input's session_id.
  */
-function insideProject(rawTarget, { cwd, project, known, links }, vars) {
+function insideProject(rawTarget, { cwd, project, known, links, sessionId }, vars) {
   const target = expandedTarget(rawTarget, cwd, project, vars);
   if (target.startsWith('~') || target.includes('$')) return false;
   const native = nativePath(target);
@@ -220,7 +218,7 @@ function insideProject(rawTarget, { cwd, project, known, links }, vars) {
   }
   if (!isBroadRoot(project) && isUnder(project, abs)) return true;
   const deleted = deletedPath(written, known);
-  return deleted !== null && inScratchArea(deleted) && claimScratchDelete(links, target);
+  return deleted !== null && inScratchArea(deleted, sessionId) && claimScratchDelete(links, target);
 }
 
 /**
@@ -292,7 +290,7 @@ export function checkRm(args, { cwd, project, vars, splitWords, bareWords = new 
   if (words.some((word) => expandBraces(word) === null)) return destructive(`${rm} with a brace expansion that cannot be listed (check the targets by hand)`);
   const targets = words.flatMap(expandBraces).flatMap(withParentReading);
   const judged = targets.flatMap((target) => readingsOf(target, cwd, vars).map((reading) => ({ target, reading })));
-  const place = { cwd, project, known: work.realPaths ?? new Map(), links: linkState(work, parse) };
+  const place = { cwd, project, known: work.realPaths ?? new Map(), links: linkState(work, parse), sessionId: work.sessionId };
   const outside = judged.find(({ target, reading }) => !insideProject(target, place, reading));
   if (outside !== undefined) return destructive(`${rm} outside the project (${shown(outside.target)})`);
   const heres = (cwd === null ? maybeCwds : [cwd]).filter((here) => here !== null); // an unknown folder: every folder the line may be in

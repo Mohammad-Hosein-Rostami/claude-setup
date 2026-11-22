@@ -3,7 +3,7 @@
 // A target outside the project runs unasked only when the path rm really deletes (deletedPath: links followed as the kernel follows
 // them, `/tmp` read as `/private/tmp`, `$TMPDIR` as `/private/var/folders/...`) is
 // - below this session's own folder `<temp root>/claude-<uid>/<project>/<session id>/` (the scratchpad and its neighbours), where the
-//   session id is the hook's `CLAUDE_CODE_SESSION_ID` (Claude Code sets it for the hooks it runs); the session folder itself, the
+//   session id is the hook input's `session_id`, else the environment's `CLAUDE_CODE_SESSION_ID`; the session folder itself, the
 //   folders above it, another session's folder and any other temp folder ask; with no usable session id every temp folder asks; or
 // - in or under a folder named `cs-test-*` (the deepest one in the path) that is not home and does not hold home, both compared as
 //   real paths.
@@ -13,7 +13,7 @@
 // `cp -a`, `tar -x`, `git clone`, a script: anything but the short list of commands that cannot make one) is not there yet. Once the
 // line holds such a command, no scratch exemption is given on that line, whether the command comes before the delete (claimScratchDelete
 // refuses) or after it (linkMakerReason asks: a loop, a pipe or `&` may run it first).
-// Exports: deletedPath(written, known) -> real path | null; inScratchArea(path); linkState(work, pass); claimScratchDelete(links, target);
+// Exports: deletedPath(written, known) -> real path | null; inScratchArea(path, sessionId); linkState(work, pass); claimScratchDelete(links, target);
 // linkMakerReason(cmd, args, links, deletedBefore) -> reason | undefined; followsNoFolderBelow(rest); isUnder(root, target);
 // sameFile(a, b) (both re-exported by lib/rm-paths.mjs).
 // Invariants: reads the file system only through realpath, lstat and a folder listing (cached per line in work.realPaths); writes
@@ -102,15 +102,18 @@ const WRITTEN_TEMP_ROOTS = ['/tmp', '/private/tmp', tmpdir()];
 /** The temp roots as written and as real paths: on macOS `/tmp` is `/private/tmp` and `$TMPDIR` lies under `/private/var/folders`. */
 const TEMP_ROOTS = [...new Set([...WRITTEN_TEMP_ROOTS, ...WRITTEN_TEMP_ROOTS.map(readReal)].filter((root) => root !== null))];
 
-/** This session's id from the hook's environment, or undefined when there is none that can name a folder. */
-function ownSessionId() {
-  const id = process.env.CLAUDE_CODE_SESSION_ID;
+/**
+ * This session's id: the hook input's session_id when it is a string (documented for every hook event), else the environment's
+ * CLAUDE_CODE_SESSION_ID; undefined when the one used cannot name a folder.
+ */
+function ownSessionId(fromInput) {
+  const id = typeof fromInput === 'string' ? fromInput : process.env.CLAUDE_CODE_SESSION_ID;
   return typeof id === 'string' && SESSION_ID.test(id) ? id : undefined;
 }
 
 /** The parts below a temp root lie below this session's own folder `claude-<uid>/<project>/<session id>/`, with no glob above it. */
-function inOwnSession(parts) {
-  const session = ownSessionId();
+function inOwnSession(parts, sessionId) {
+  const session = ownSessionId(sessionId);
   if (session === undefined || parts.length <= SESSION_DEPTH) return false;
   const [tree, projectFolder, sessionFolder] = parts;
   return CLAUDE_TREE_FOLDER.test(tree) && !GLOB_CHAR.test(projectFolder) && sessionFolder === session;
@@ -143,10 +146,11 @@ function claudeTreeParts(path) {
  * a `cs-test-*` folder that is not home and does not hold it. Inside Claude Code's tree a `cs-test-*` folder counts only below a session
  * folder, so one that holds the tree (a test's temp root) never frees another session's folder.
  * @param {string} path the result of deletedPath
+ * @param {unknown} [sessionId] the hook input's session_id (ownSessionId: the environment's id is the fallback)
  */
-export function inScratchArea(path) {
+export function inScratchArea(path, sessionId) {
   const tree = claudeTreeParts(path);
-  if (tree !== undefined && inOwnSession(tree)) return true;
+  if (tree !== undefined && inOwnSession(tree, sessionId)) return true;
   const parts = path.split(PATH_SEPARATORS);
   const firstFree = tree === undefined ? 0 : parts.length - tree.length + SESSION_DEPTH; // the first part below a session folder
   const at = parts.findLastIndex((part) => CS_TEST_FOLDER.test(part));
