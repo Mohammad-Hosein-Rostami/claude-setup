@@ -8,54 +8,64 @@ Run: `node ~/.claude/tools/board/board.mjs [--session <id>] [--columns <n>]` pri
 `CLAUDE_CODE_SESSION_ID`, width default 80). `board.mjs refresh --session <id> [--force]` rewrites the file; `status.mjs add|start|done`
 starts it detached after every changed edit. `board.mjs where [--columns <n>] [--project <dir>]` prints the `/where` tree
 (`lib/tree.mjs`, display design 6.3): all work, the road and its steps (the current step with its likely and 85% clocks), the
-status line's road, counts, agent and git rows with nothing folded, what waits on the owner, one limits line per account,
+road (`idle` when nobody moved it this session), the counts, every agent and git row with nothing folded, what waits on the owner, one limits line per account,
 and the session's cost figure from its last-seen file.
 
 ## The status line rows
 
-`home/statusline.mjs` prints between 2 and 12 rows: `clamp(floor(LINES / 3), 3, 12)` (a 24-line terminal gives 8), each fitted
-to `COLUMNS - 5` (Claude Code cuts a row there). From top to bottom:
+`home/statusline.mjs` prints 2 rows when nothing waits and no agent runs, and at most 4 when busy (owner decisions RC5, RC6 and
+RC8 of 2026-11-22); on a terminal of fewer than 12 lines only 2. Each row is fitted to `COLUMNS - 5` (Claude Code cuts a row
+there); from 115 usable columns each row leads with a 6-character dim label column (`ALL`, `agents`, `git`). From top to bottom:
 
 | Row | Example (120 columns) | From |
 | --- | --- | --- |
-| alert, only when needed | `! WAITING FOR YOUR ANSWER: a question, recommended taken in 1:39` | the asking marker, an estimate error, the 5 h pace |
-| road, when the job walks one | `road p8 · step 1/12 unhook settings · 2/5 lanes · step 40 min left · by 21:10 · 85%: 21:35` | the estimate cache's road numbers, the board's road (`lib/job-facts.mjs`) |
-| job | `ALL ████████░░░░░░░░  52% of work · 2 h 10 left · done by 17:45 · 85%: 18:20 · ↑ +1h10 later · 11/21 rows` | the estimate cache, the board's trend |
-| counts, while work runs | `Σ 6 agents (6 run) · 1 over usual │ git 4 branches · 2 not landed` | the board |
-| agents header | `▸ agents · 2 run ▄▄` | the board's agents |
-| agent | ` ├ ● Write road file…   architect   █████▒░░ ~70% · 8 min left · 16:03 · claude-setup:lane/road-p8 2↑ +1 dirty` | the board's agents and repositories |
-| git, at least one row | `⎇ claude-setup:main ✓ · origin ↑0↓0 · landed today 6, last 12 min ago │ ● r9-a ↑2↓0 ●3 impl-a · ◆ old-x ✓ old 3 d ⚠`; one row each when they fit: `⎇ ● remove-modes · ↑7↓0 · last commit 10 min ago · implementer:opus` | the board's repo and repos |
-| session | `Opus 5.5 high · ctx 99k of 400k (25%) · 5h 54% left, resets 17:40 · 7d 69% left · acct work` | the status input |
+| alert, only while something waits on the owner | `? ANSWER NEEDED · 1 question · recommended answer taken in 1:40` | the asking marker |
+| job | `ALL    ██████░░░░░░░░░░  40 min left · by 09:40 · 85% 10:05 · ↑ +1h10 later        road final 2/4 · 2/5 lanes` | the estimate cache, the board's road and trend (`lib/work-row.mjs`, `lib/stat-rows.mjs`) |
+| agents, only while an agent runs | `agents 6 · 5 running · 1 done · ! reviewer quiet 6 min · implementer over 12 min        all by 09:10` | the board's agents (`lib/layout.mjs`) |
+| git and session | `git    main ✓ ↑44 · 3 lanes open · 1 dirty        Opus 5.5 high · ctx 25% · 5h 54% left · 7d 69% left · acct work` | the board's repo (`lib/git-rows.mjs`), the status input |
 
-Every agent has its own row. Every agent row says where the agent works, never dropped: `repository:branch`, commits ahead of the base (`2↑`) and
-uncommitted files (`+3 dirty`), from its own worktree (below 115 columns with one repository the branch alone, the git row names
-the repository). An agent known only by its launch folder or cwd (one that works through Bash, or has not edited yet) may be on any
-branch, so its row names no branch: `claude-setup · no edits yet` when that folder is in a trusted repository, else the folder's
-name (`round4 · no edits yet`); `· read-only` for an agent that does not write, `· edits outside git` for one whose edits are all
-outside the trusted worktrees; `no repo` / `read-only` when nothing is known. When the text does not fit, the folder name is cut
-and the reason stays (`cla… · read-only`); with no room for the folder, the reason alone.
+The job row counts live work only (RC6): the live road's current step (its rows done of all as the bar, its time left and
+clocks; no percent, since a row count is not work done), else the started open rows (the share of their expected minutes
+earned, each row earning its elapsed minutes up to 90 % of its expected minutes, the estimate's own rule; the minutes left, the
+clock they end at, `N min over plan` in yellow past a row's expected minutes), else `nothing started · N rows open`. A refusal,
+an estimate error (`estimate: table error at row A17`, red), a hand-over, a long job and `all N rows done` keep their words;
+`no job linked` unless the session linked a STATUS.md or the project's changed during the session. The whole job (all open rows,
+the committed finish clock, the steps of the road) is in `/where`. A road is on the line only while it is live: a row of its
+current step was started or finished since the session's first board refresh (`lib/job-facts.mjs`); a road nobody moved this
+session (a stale one) is hidden on the line and reads `idle` in `/where`. A board file written before this rule (no `live`)
+counts as live.
 
-When rows run out (`lib/render.mjs` shares them, `lib/layout.mjs` packs the work rows): the alert, job and session rows always
-show; then one git row (never none: branch, upstream ahead/behind, changed files, landed today; `git: no repository` when the
-work is in none; with no room at all the session row carries the git part), the road row, the first three work rows, the counts row, the rest of the work rows, more git rows. The
-agents fold: the most urgent keep a row (quiet, over their usual time, writers, readers, then the soonest
-finish) and the rest share one `+K more` row; with fewer rows still, one strip
-row carries the agents. Finished agents show for 30 s, then only the counts row has them (10 min). From 150 columns two agents
-share a row. On an error while drawing, the session row and one `status line error:` line still print. A row or field with
-nothing to say hides: no road, no trend, no 5 h field when the status input has no 5 h window and no current sample.
+The agents row (RC8) is one summary whatever the number of agents: the parts add up to the total (running counts the quiet ones;
+done is finished in the last 10 min), only the agents that need a look are named (quiet first, then over their usual time),
+as many as fit and then `+K more`, and `all by` when every running agent has a time left. Every agent's own row (bar, time left,
+task, where it works, tokens) is in `/where`, and Claude Code's own agent panel lists them too. The git part is one summary
+whatever the number of worktrees: the main checkout's branch and state, its commits ahead of and behind its upstream when not
+level (`↓2 behind` turns it yellow, as does an operation in progress), how many lane worktrees are open and how many have
+uncommitted files; `git: loading` before the board's first refresh, `git: no repository` when the work is in none. The session
+block: model and effort, context against the auto-compact window (`ctx 25%`, `ctx ?` after /compact until the next call,
+`/clear` from 150k tokens), 5 h and 7 d left (`<1% left`; from 60 % used the reset clock, rounded up, weekday when not today;
+with no live 5 h window this account's last sample with its age), the 5 h pace `5h out ~16:10` when it comes before the reset,
+and the account (`CLAUDE_ACCOUNT`).
+
+When a row does not fit, its parts drop by priority, never a value cut mid-token where a whole part can go: the job row's 85 %
+clock and rows count first, then the road part, the trend; the agents row's `all by`, then names (counted in `+K more`); the
+last row's account, 7 d, then 5 h. The rows drop in this order when the terminal is short: agents, job, alert; the git and
+session row always prints. On an error while drawing, that row and one `status line error:` line still print.
 
 ### Colour (`lib/cells.mjs`)
 
-Basic ANSI 16 colours, so the terminal theme maps them on dark and light themes; one meaning each: green done, passing, on track,
-a sooner finish, landed today; cyan running now (bars of running agents, the active road step); yellow attention soon (a quiet
-agent, over its usual time, a later finish, context or a limit 60-80 % used, behind the upstream); red needs action (context or a limit over 80 % used, a passed finish clock); magenta waiting on the owner; dim for secondary text (clocks,
-counts). Of the states, bold marks only the one most urgent item: a question waiting, else context over
-80 %, else a limit over 80 %, else the longest-quiet agent (bold is also a plain label: `ALL`, main's git row, and two of the
-16-colour identity looks). Every state also has its word (`quiet`, `over usual`,
-`later`, `waiting`), so `NO_COLOR` (any value) or `TERM=dumb` prints the same words with no escape codes. Descriptions,
-step titles, agent and worktree names are cut at a word or `-` with `…`, never mid-word.
+Colour only for a state (RC5), basic ANSI 16 so the terminal theme maps them on dark and light themes: yellow needs a look (a
+quiet agent, one over its usual time, a later finish, a row over its plan, context or a limit 60-80 % used, behind the
+upstream), red error or act now (context or a limit over 80 % used, an estimate error), magenta waiting on the owner (the
+alert, bold label), cyan running now (only in `/where`: running agents' bars, the active road step). Labels, clocks and
+secondary counts are dim; every healthy value is in the default colour, so a line with nothing to look at shows no colour.
+No green, no blue and no identity hue on the status line. Every state also has its word (`quiet`, `over`, `later`, `over plan`,
+`ANSWER NEEDED`, `behind`), so `NO_COLOR` (any value) or `TERM=dumb` prints the same words with no escape codes. Names are cut
+at a word or `-` with `…`, never mid-word.
 
-### Which is where: identity colours (`lib/identity.mjs`, spec-tui-3)
+### Which is where: identity colours in `/where` (`lib/identity.mjs`, spec-tui-3)
+
+Since RC5 only `/where` draws these hues; the status line has none.
 
 Each work item, an agent or a lane branch, has one hue and one marker shape (`●`, `◆`, `▲`;
 `*`, `+`, `o` in ASCII), and keeps them while it stays on the board (an agent tied to a lane takes the lane's colour, so it changes when
@@ -72,9 +82,8 @@ so share with an earlier item (and three share a marker shape beyond three). An 
 An agent that places nowhere (a read-only agent) has its own hue, named by its description. The hues are xterm 256-colour indexes 31 blue, 166 orange, 99 violet, 64
 green, 197 pink and 133 orchid, none a state colour's code. Their contrast (dark `#1e1e1e` / white `#ffffff`) is 4.04 / 4.13,
 4.39 / 3.80, 4.06 / 4.11, 3.93 / 4.24, 4.30 / 3.88 and 4.03 / 4.13, so 3.80 to 4.39 to 1: no cube colour reaches 4.5:1 on both
-(the best reaches 4.06), so these are the most even. Each row kind leads with a label: `road` blue, `ALL` bold, a dim `Σ`
-before the counts, `▸` and `⎇` and the branch in
-its hue (main in the default colour, bold), the session row's `ctx`, `5h`, `7d` and `acct` labels dim. A terminal whose `TERM`
+(the best reaches 4.06), so these are the most even. In `/where` each row kind leads with a label: `road` and `ALL` in the
+default colour, a dim `Σ` before the counts, `▸` and `⎇` and the branch in its hue (main in the default colour, bold). A terminal whose `TERM`
 and `COLORTERM` name neither 256 nor true colour (Windows Terminal, which sets `WT_SESSION` instead, counts as 256) gets bold,
 underline or plain in place of the hues (with the shape, six different looks); `NO_COLOR` prints no codes and the marker shape
 tells items apart. A name that does not fit is cut at a word or `-` with `…` in every row (also the strip row).
@@ -100,8 +109,10 @@ A refresh runs one at a time (a claim in the file), at most every 5 s while an a
 - each agent's tokens (the last call's usage: its context so far) and the folder of the last file it read or changed, which
   places it in a worktree when its own folder is the lead's;
 - the job (`lib/job-facts.mjs`): the session's linked STATUS.md (else the one in its folder), its estimate cache entry, and,
-  when the job walks a road, `road-<id>.json` beside it and the close rows (lanes landed); the finish clock's last move of 5 min
-  or more is kept for an hour as the trend;
+  when the job walks a road, `road-<id>.json` beside it and the rows that land its lanes (the lane row `<road>.s<N>.<lane>`, one
+  row per lane; an older road's close row `<road>.s<N>.<lane>-land` when STATUS.md holds one), and whether a row of the current
+  step was started or finished since the session's first refresh (`live`); the finish clock's last move of 5 min or more is kept
+  for an hour as the trend;
 - the base branch (`lib/repo-stats.mjs`, every 60 s): its tip and the
   commits on its first-parent line since local midnight;
 - git (`lib/repos.mjs`, `lib/trusted-repos.mjs`, `lib/git-state.mjs`) only in trusted repositories, worked out again on every
@@ -136,6 +147,6 @@ marker holds no agent).
 Files: `board.mjs` (the CLI and the lines), `lib/refresh.mjs` (build, refresh, the board file, the claim, the detached start),
 `lib/agents.mjs`, `lib/read-part.mjs` (a bounded read of a plain file), `lib/agent-transcript.mjs`, `lib/progress.mjs`, `lib/pools.mjs`, `lib/git-state.mjs`, `lib/job-facts.mjs`,
 `lib/repo-stats.mjs`, `lib/repos.mjs`, `lib/trusted-repos.mjs`, `lib/cache-file.mjs` (what the refresh reads), `lib/render.mjs` (the status line rows; `home/statusline.mjs` only reads and writes), `lib/work-row.mjs` (the
-job row), `lib/layout.mjs` (row budget, counts row, packing), `lib/agent-rows.mjs` (agent rows), `lib/git-rows.mjs`
-(git rows), `lib/stat-rows.mjs` (the road row, the trend), `lib/identity.mjs` (identity hues and markers), `lib/hue-store.mjs` (the saved hues; read and written by the status line and `/where`), `lib/cells.mjs` (look, glyphs, bars, durations, clocks, fitting a row to a width; shared by every surface),
+job row, live work), `lib/layout.mjs` (row budget, agents summary row, `/where` counts row and packing), `lib/agent-rows.mjs` (agent rows), `lib/git-rows.mjs`
+(git summary and `/where` git rows), `lib/stat-rows.mjs` (the road part and row, the trend), `lib/identity.mjs` (identity hues and markers), `lib/hue-store.mjs` (the saved hues; read and written by the status line and `/where`), `lib/cells.mjs` (look, glyphs, bars, durations, clocks, fitting a row to a width; shared by every surface),
 `lib/tree.mjs` (the `/where` tree).
