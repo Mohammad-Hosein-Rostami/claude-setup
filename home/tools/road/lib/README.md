@@ -13,6 +13,7 @@ The parts of the `road` tool, which walks a big job as fixed steps of 1 to 5 lan
   rule of `check` and early lanes.
 - `road-gate.mjs`: the checkpoint between steps; one PASS, FAIL or INFO line per check, and any FAIL fails the gate. Line 2 also counts
   the landings of the other roads beside STATUS.md (two roads at once).
-- `road-gate-ui.mjs`: gate line 4, the UI proof: `ui-proof check` for web UI, or the owner-approved terminal proof row of a terminal UI
-  step.
+- `road-gate-ui.mjs`: gate line 4, the UI proof: `ui-proof check` for web UI (any landing of the step, fix rows included), or the
+  owner-approved terminal proof row of a terminal UI step (render in the job folder or the reports tree, dated, on record under
+  `## Owner decisions`).
 - `road-join.mjs`: judges one built lane's scope for `road.mjs join`: files outside the lane and the count of its UI files.

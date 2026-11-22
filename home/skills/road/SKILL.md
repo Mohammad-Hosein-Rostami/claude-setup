@@ -34,10 +34,12 @@ of the same session is continued with SendMessage.
 
 ## Gate and update
 When every lane of the step landed: `road.mjs gate <road> --step <N>`. Every line must PASS (it checks that every lane landed, and the other lines the road README lists); the next step starts
-only then. A terminal UI step (lanes with `matrix: "none: ..."`, no UI file changed: status line, board text) passes line 4 with
-its terminal proof row once the owner approved a real render: `status.mjs add <road>.s<N>.terminal-proof "proof: step N terminal
-render approved by the owner" S`, then `status.mjs done <road>.s<N>.terminal-proof "terminal proof: <abs path> (owner yes <YYYY-MM-DD>)"`.
-Web UI always needs its `ui-proof` record. After the gate: one update to the owner with the `Finish:` block of `estimate.mjs STATUS.md` pasted as-is, and a
+only then. A terminal UI step (lanes with `matrix: "none: ..."`, no UI file changed by any landing, fix rows included: status line,
+board text) passes line 4 with its terminal proof once the owner approved a real render (in the job folder or
+`~/Desktop/claude-setup-reports/`, written after the step started) in an AskUserQuestion answer: `status.mjs decision "terminal proof
+<road>.s<N>: owner yes on <abs path> (AskUserQuestion answer)"`, then `status.mjs add <road>.s<N>.terminal-proof "proof: step N
+terminal render approved by the owner" S`, `start`, and `status.mjs done <road>.s<N>.terminal-proof "terminal proof: <abs path> (owner
+yes <the decision's date>)"` (road README, "Terminal UI proof"). Web UI always needs its `ui-proof` record. After the gate: one update to the owner with the `Finish:` block of `estimate.mjs STATUS.md` pasted as-is, and a
 `status.mjs deliver "<step N done>"` row.
 
 ## Failure and carry

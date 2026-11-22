@@ -176,16 +176,34 @@ usable landed line adds no range, so its commits FAIL here too. The PASS line co
 ## Terminal UI proof (gate line 4)
 
 A step whose UI is text in a terminal (the status line and board renderers: `.mjs` files that print rows, no web page) has no screen
-for `ui-proof` and `visual-qa`. Its lanes say `"matrix": "none: <reason>"` and change no UI file; for such a step line 4 asks for a
-terminal proof instead of `ui-proof check`: a done STATUS row `<road>.s<N>.terminal-proof` whose evidence is exactly
+for `ui-proof` and `visual-qa`. Its lanes say `"matrix": "none: <reason>"` and no landing of the step changes a UI file; for such a
+step line 4 asks for a terminal proof instead of `ui-proof check`: a done STATUS row `<road>.s<N>.terminal-proof` whose evidence is
+exactly
 
 `terminal proof: <absolute path of the real-render file> (owner yes <YYYY-MM-DD>)`
 
-and that path a non-empty file (the real renders the owner looked at and approved). The lead writes it once the owner said yes, with
-`status.mjs add <road>.s<N>.terminal-proof "proof: step N terminal render approved by the owner" S` and then
-`status.mjs done <road>.s<N>.terminal-proof "terminal proof: <path> (owner yes <date>)"`. A step in which a range changed any UI file,
-or in which a lane has a coverage matrix path, never takes this path: it needs `ui-proof check --against-step` and the step-start
-record exactly as before (`lib/road-gate-ui.mjs`).
+where the file (the real render the owner looked at and approved):
+
+- lies, by its real path (a link that leads out does not count), in the job's folder beside STATUS.md or in the setup reports tree
+  `~/Desktop/claude-setup-reports/`;
+- is a non-empty file written at or after the start of the step's first landing row;
+- has a date that is a real day and not after today (UTC);
+- has the owner's yes on record: the lead asks the owner with AskUserQuestion and records the answer with `status.mjs decision`, so
+  `## Owner decisions` holds `- <same date> terminal proof <road>.s<N>: owner yes on <same path> (AskUserQuestion answer)`. The tool
+  writes that date, so the row's date is checked against it; a timeout default (`UNCONFIRMED ...`) is not the owner's yes.
+
+The lead writes, in this order, after the owner said yes:
+
+```
+status.mjs decision "terminal proof <road>.s<N>: owner yes on <path> (AskUserQuestion answer)"
+status.mjs add <road>.s<N>.terminal-proof "proof: step N terminal render approved by the owner" S
+status.mjs start <road>.s<N>.terminal-proof
+status.mjs done <road>.s<N>.terminal-proof "terminal proof: <path> (owner yes <the decision's date>)"
+```
+
+A step in which any landing range changed a UI file (a lane's or a fix row's `<road>.s<N>.fix-<name>`), or in which a lane has a
+coverage matrix path, never takes this path: it needs `ui-proof check --against-step` and the step-start record exactly as before
+(`lib/road-gate-ui.mjs`).
 
 ## Walking an `agents` step
 

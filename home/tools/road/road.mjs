@@ -18,17 +18,17 @@
 // Invariants: the road's STATUS.md is the file beside the road file; rows are added only through status.mjs's runStatus and read only with
 //   the estimator's parseWorkItems (no second parser, P12). `rows` reads the rows again, checks each other open road (lib/road-file.mjs
 //   roadClash: no readable road file beside STATUS.md, or a lane name, branch or file shared within one repo, is refused naming it) and
-//   adds what is missing in one all-or-none `add` call, all under its own lock `.STATUS.road-rows-lock` beside STATUS.md
-//   (hooks/lib/session-lock.mjs withSessionLock; status.mjs takes its own lock inside it), so a second run at the same time finds the rows
-//   and adds 0 (exit 0), and two clashing roads started at once cannot both open; a lock held past its 1 s wait is exit 1 `busy`. Every subprocess runs without a shell,
-//   with its own timeout (road-gate.mjs).
+//   adds what is missing in one all-or-none `add` call, all under its own lock `.STATUS.road-rows-lock` beside STATUS.md (hooks/lib/
+//   session-lock.mjs withSessionLock; status.mjs takes its own lock inside it), so a second run at the same time finds the rows and adds 0
+//   (exit 0), and two clashing roads started at once cannot both open; a lock held past its 1 s wait is exit 1 `busy`. Every subprocess
+//   runs without a shell, with its own timeout (road-gate.mjs).
 // Next: the current step's lanes (stepState) plus `early`, the later-step lanes that can start now to fill up to 5 agents (owner FR2,
 //   lib/road-state.mjs earlyLanes; each need confirmed on the base in git), and `waiting` with the reason for each other later lane;
 //   `writers` = min(lanes + early, budget, 5). It writes nothing and takes no lock.
 // Join and gate: `join` first refuses a lane whose needed lanes have not landed on the base in git (land-lane knows no road, so this is
 //   the road's check before a landing); `gate` reads the other road files `road-*.json` beside STATUS.md of the same repo, so a lane in
-//   flight there is INFO on line 3, not FAIL, and their landings count on line 2.
-//   The main guard compares real paths, so the CLI works through the ~/.claude link.
+//   flight there is INFO on line 3, not FAIL, and their landings count on line 2; it hands the gate the STATUS.md path and text (line 4's
+//   terminal proof: the job folder and the owner decisions). The main guard compares real paths, so the CLI works through the ~/.claude link.
 import { spawnSync } from 'node:child_process';
 import { readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { withSessionLock } from '../../hooks/lib/session-lock.mjs';
@@ -82,18 +82,19 @@ function loadRoad(path) {
   return { file, statusFile: join(dirname(file), 'STATUS.md'), ...read };
 }
 
-/** The rows of the road's STATUS.md; [] when it does not exist yet (rows makes it through runStatus). */
-function itemsOf(statusFile) {
+/** The text of the road's STATUS.md, '' when it does not exist yet (rows makes it through runStatus); itemsOf: its rows. */
+function statusTextOf(statusFile) {
   let read;
   try {
     read = readStatusFile(statusFile);
   } catch (error) {
-    if (error.code === 'ENOENT') return [];
+    if (error.code === 'ENOENT') return '';
     throw error;
   }
   if (read.text === undefined) throw new Error(`${statusFile} ${read.refused ?? 'cannot be read'}`);
-  return parseWorkItems(read.text).items;
+  return read.text;
 }
+const itemsOf = (statusFile) => parseWorkItems(statusTextOf(statusFile)).items;
 
 function flagValue(rest, name) {
   const at = rest.indexOf(name);
@@ -236,11 +237,12 @@ function next(road, ctx, rest, run, isUiPath) {
 }
 
 function gate(road, ctx, rest, run, isUiPath) {
-  const items = itemsOf(ctx.statusFile);
+  const statusText = statusTextOf(ctx.statusFile);
+  const items = parseWorkItems(statusText).items;
   const given = flagValue(rest, '--step');
   const step = given === undefined ? stepState(road, items).step : Number(given);
   if (!Number.isInteger(step) || step < 1 || step > road.steps.length) throw new UsageError(`--step must be 1-${road.steps.length}. ${USAGE}`);
-  const result = gateStep(road, items, step, run, { isUiPath, otherRoads: otherRoads(ctx) });
+  const result = gateStep(road, items, step, run, { isUiPath, otherRoads: otherRoads(ctx), statusFile: ctx.statusFile, statusText });
   return { code: result.pass ? 0 : 1, out: [...result.lines, `road ${road.road} step ${step}: ${result.pass ? 'PASS' : 'FAIL'}`].join('\n') };
 }
 
@@ -250,7 +252,6 @@ function roadsBeside(ctx) {
   return readdirSync(folder).filter((name) => ROAD_FILE.test(name) && join(folder, name) !== ctx.file)
     .map((name) => readRoad(join(folder, name)).road).filter((other) => other !== null && other.road !== ctx.road.road);
 }
-
 /** The other roads beside STATUS.md of the same repo (an unreadable one is left out: its lanes stay FAIL on gate line 3, its commits on line 2). */
 const otherRoads = (ctx) => roadsBeside(ctx).filter((other) => other.repo === ctx.road.repo);
 

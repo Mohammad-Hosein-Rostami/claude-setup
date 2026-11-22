@@ -1,11 +1,12 @@
 // Tests of two roads in one STATUS.md and of the terminal UI proof: gate line 2 counts the other roads' landings (road-gate.mjs
-// otherRanges), line 4 takes a terminal proof row for a terminal UI step and keeps the web ui-proof path (road-gate-ui.mjs), and
+// otherRanges), line 4 takes a terminal proof row for a terminal UI step (an owner-approved render in the job's folder, dated, on record
+// under `## Owner decisions`) and keeps the web ui-proof path for every UI landing, a fix row's included (road-gate-ui.mjs), and
 // `road.mjs rows` opens a second road only when no lane name, branch or file clashes (road-file.mjs roadClash). Git is faked as a
 // straight first-parent line for the gate; `rows` runs in a child process with a private HOME.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { parseWorkItems } from '../home/tools/estimate/lib/items.mjs';
@@ -23,14 +24,15 @@ const landing = (to, from) => `landed ${sha(to)} on main from ${sha(from)}`;
 
 /**
  * A fake git and tools on the base line `order` (the road start first): rev-list lists the commits of `from..to` on that line, merge-base
- * answers by position, a sha off the line is unknown; `ui` sets the ui-proof exits by subcommand and `calls` records the ui-proof argv.
+ * answers by position, a sha off the line is unknown; `ui` sets the ui-proof exits by subcommand (a number, or a function of the argv)
+ * and `calls` records the ui-proof argv.
  */
 function fakeRun(order, ui = {}) {
   const calls = [];
   const at = (text) => order.indexOf(text);
   const run = (file, argv) => {
     if (file === 'git-tidy') return { exit: 0, out: '' };
-    if (file === 'ui-proof') { calls.push(argv); return { exit: ui[argv[0]] ?? 0, out: argv[0] === 'has' ? `record at ${order[0]}\n` : '' }; }
+    if (file === 'ui-proof') { calls.push(argv); const exit = ui[argv[0]]; return { exit: (typeof exit === 'function' ? exit(argv) : exit) ?? 0, out: argv[0] === 'has' ? `record at ${order[0]}\n` : '' }; }
     const [command, ...rest] = argv.slice(2);
     const last = rest.at(-1);
     if (command === 'rev-parse') { const text = last.replace('^{commit}', ''); return text.startsWith('refs/heads/') ? { exit: 0, out: `${order.at(-1)}\n` } : at(text) === -1 ? { exit: 1, out: '' } : { exit: 0, out: `${text}\n` }; }
@@ -46,9 +48,9 @@ const RD = roadOf('rd', [lane('x'), lane('y')]);
 const OT = roadOf('ot', [lane('p'), lane('q')]);
 const LINE = ['a', 'b', 'c', 'd', 'e'].map(sha);
 const ITEMS = [row('rd.s1.check', '', null), row('rd.s1.x', landing('b', 'a')), row('rd.s1.y', landing('e', 'd')), row('ot.s1.p', landing('c', 'b')), row('ot.s1.q', landing('d', 'c'))];
-const gate = ({ road = RD, items = ITEMS, order = LINE, others = [OT], ui = {} } = {}) => {
+const gate = ({ road = RD, items = ITEMS, order = LINE, others = [OT], ui = {}, status = {} } = {}) => {
   const { run, calls } = fakeRun(order, ui);
-  return { result: gateStep(road, items, 1, run, { isUiPath: (file) => file.endsWith('.html'), otherRoads: others }), calls };
+  return { result: gateStep(road, items, 1, run, { isUiPath: (file) => file.endsWith('.html'), otherRoads: others, ...status }), calls };
 };
 const lineOf = (result, n) => result.lines.filter((line) => new RegExp(`^[A-Z]+ ${n} `).test(line)).join('\n');
 
@@ -85,15 +87,25 @@ test('line 2: a road of another base adds no range; another road\'s landings bef
 // ---- line 4: the terminal proof of a terminal UI step, and the web path unchanged ----
 
 const TERMINAL = { matrix: 'none: terminal status line text rows, no browser screen' };
-const render = () => { const file = join(makeTempDir('road-render-'), 'index.html'); writeFileSync(file, '<pre>rows</pre>\n'); return file; };
+const HOUR_MS = 3_600_000;
+/** A real-render file in a fresh job folder, written an hour after the step's rows started (or at `writtenMs`). */
+const render = (folder = makeTempDir('road-render-'), writtenMs = DAY + HOUR_MS) => {
+  const file = join(folder, 'index.html');
+  writeFileSync(file, '<pre>rows</pre>\n');
+  utimesSync(file, new Date(writtenMs), new Date(writtenMs));
+  return file;
+};
 const proofRow = (evidence) => row('rd.s1.terminal-proof', evidence);
-const terminalGate = (extra = [], { matrix = TERMINAL, ui = {} } = {}) => gate({ road: roadOf('rd', [lane('x', matrix), lane('y')]), items: [...ITEMS, ...extra], ui });
+const decision = (file, date = '2026-11-22') => `- ${date} terminal proof rd.s1: owner yes on ${file} (AskUserQuestion answer)`;
+/** The STATUS.md beside the render (its job folder) with the owner's recorded yes, or the `decisions` given. */
+const approved = (file, decisions = [decision(file)]) => ({ statusFile: join(dirname(file), 'STATUS.md'), statusText: `# STATUS\n\n## Owner decisions\n${decisions.join('\n')}\n` });
+const terminalGate = (extra = [], { matrix = TERMINAL, ui = {}, status = {} } = {}) => gate({ road: roadOf('rd', [lane('x', matrix), lane('y')]), items: [...ITEMS, ...extra], ui, status });
 
 test('line 4: a terminal UI step needs its terminal proof row and never asks ui-proof check', () => {
   const missing = terminalGate();
   assert.match(lineOf(missing.result, 4), /^FAIL 4 ui: terminal UI step: no owner-approved terminal proof; the record is a done row rd\.s1\.terminal-proof with the evidence "terminal proof: <absolute path of the real render> \(owner yes <YYYY-MM-DD>\)"$/);
   const file = render();
-  const proved = terminalGate([proofRow(`terminal proof: ${file} (owner yes 2026-11-22)`)]);
+  const proved = terminalGate([proofRow(`terminal proof: ${file} (owner yes 2026-11-22)`)], { status: approved(file) });
   assert.equal(lineOf(proved.result, 4), `PASS 4 ui: terminal UI step: real render ${file} approved by the owner on 2026-11-22`);
   assert.equal(proved.result.pass, true, proved.result.lines.join('\n'));
   assert.deepEqual(proved.calls.map((argv) => argv[0]), ['changed', 'changed'], 'only ui-proof changed runs on the terminal path');
@@ -117,6 +129,93 @@ test('line 4: a changed UI file or a matrix path keeps the web ui-proof path, te
   assert.match(lineOf(matrixPath.result, 4), /^FAIL 4 ui: ui-proof check --against-step rd\.s1 exited 1$/);
   assert.match(lineOf(terminalGate([], { matrix: { matrix: 'coverage/matrix.json' } }).result, 4), /^PASS 4 ui: visual-qa PASS at e{40}/);
   assert.match(lineOf(gate().result, 4), /^PASS 4 ui: no UI file changed in the step$/);
+});
+
+// A fix row of the step (no road entry) lands b..c between the lanes x (a..b) and y (c..d); only the fix changes a UI file.
+const FIX_ITEMS = [row('rd.s1.check', '', null), row('rd.s1.x', landing('b', 'a')), row('rd.s1.fix-web', landing('c', 'b')), row('rd.s1.y', landing('d', 'c'))];
+const fixChangesUi = (argv) => (argv[2] === sha('b') ? 1 : 0);
+const fixGate = (lanes, ui, extra = [], status = {}) => gate({ road: roadOf('rd', lanes), items: [...FIX_ITEMS, ...extra], order: LINE.slice(0, 4), others: [], ui, status });
+
+test('line 4: a fix row that lands a UI file needs ui-proof check; a terminal proof row never stands in, with or without a matrix', () => {
+  const file = render();
+  const terminal = fixGate([lane('x', TERMINAL), lane('y', TERMINAL)], { changed: fixChangesUi, check: 1 }, [proofRow(`terminal proof: ${file} (owner yes 2026-11-22)`)], approved(file));
+  assert.match(lineOf(terminal.result, 4), /^FAIL 4 ui: ui-proof check --against-step rd\.s1 exited 1$/);
+  assert.match(lineOf(fixGate([lane('x'), lane('y')], { changed: fixChangesUi, check: 1 }).result, 4), /^FAIL 4 ui: ui-proof check --against-step rd\.s1 exited 1$/);
+  const checked = fixGate([lane('x'), lane('y')], { changed: fixChangesUi });
+  assert.match(lineOf(checked.result, 4), /^PASS 4 ui: visual-qa PASS at d{40}/);
+  assert.deepEqual(checked.calls.filter((argv) => argv[0] === 'changed').map((argv) => argv[2]), [sha('a'), sha('c'), sha('b')], 'the fix range is asked too');
+});
+
+const proofLine = (file, date = '2026-11-22') => proofRow(`terminal proof: ${file} (owner yes ${date})`);
+const proofFail = (file, status, date) => lineOf(terminalGate([proofLine(file, date)], { status }).result, 4);
+
+test('line 4: a terminal proof outside the job folder and the setup reports tree FAILs, through a link too', () => {
+  const file = render();
+  const outside = /^FAIL 4 ui: rd\.s1\.terminal-proof names .*, which lies outside the job's folder and ~\/Desktop\/claude-setup-reports$/;
+  assert.match(proofFail(file, { ...approved(file), statusFile: join(makeTempDir('road-job-'), 'STATUS.md') }), outside);
+  const link = join(makeTempDir('road-job-'), 'render.html');
+  symlinkSync(file, link);
+  assert.match(proofFail(link, approved(link)), outside);
+  assert.match(proofFail('/etc/hosts', {}), /^FAIL 4 ui: rd\.s1\.terminal-proof names \/etc\/hosts, which (lies outside|is not a non-empty file)/);
+});
+
+test('line 4: a terminal proof in the setup reports tree under HOME passes from another job folder', () => {
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  const home = makeTempDir('road-home-');
+  const reports = join(home, 'Desktop', 'claude-setup-reports', 'round');
+  mkdirSync(reports, { recursive: true });
+  const file = render(reports);
+  try {
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    assert.match(proofFail(file, { ...approved(file), statusFile: join(makeTempDir('road-job-'), 'STATUS.md') }), /^PASS 4 ui: terminal UI step: real render /);
+  } finally {
+    for (const [name, value] of Object.entries(saved)) if (value === undefined) delete process.env[name]; else process.env[name] = value;
+  }
+});
+
+test('line 4: a terminal proof dated wrong, in the future or written before the step started FAILs', () => {
+  const file = render();
+  assert.match(proofFail(file, approved(file), '2026-02-30'), /^FAIL 4 ui: rd\.s1\.terminal-proof says owner yes 2026-02-30, which is not a real date$/);
+  assert.match(proofFail(file, approved(file), '9999-12-31'), /^FAIL 4 ui: rd\.s1\.terminal-proof says owner yes 9999-12-31, a date after today$/);
+  const early = render(makeTempDir('road-render-'), DAY - HOUR_MS);
+  assert.match(proofFail(early, approved(early)), /^FAIL 4 ui: rd\.s1\.terminal-proof names .*, written before the step's first landing row started \(2026-11-22T10:00:00\.000Z\)$/);
+});
+
+test('line 4: a terminal proof with no matching owner decision line FAILs', () => {
+  const file = render();
+  const missing = /^FAIL 4 ui: rd\.s1\.terminal-proof has no owner decision on record: `## Owner decisions` needs "- 2026-11-22 terminal proof rd\.s1: owner yes on .* \(AskUserQuestion answer\)" \(status\.mjs decision\)$/;
+  const cases = [
+    [],
+    [`- 2026-11-22 UNCONFIRMED (timeout default): terminal proof rd.s1: owner yes on ${file} (AskUserQuestion answer)`],
+    [decision(file, '2026-11-21')],
+    [decision(`${file}.other`)],
+    [decision(file).replace('rd.s1:', 'rd.s2:')],
+    ['```', decision(file), '```'],
+  ];
+  for (const decisions of cases) assert.match(proofFail(file, approved(file, decisions)), missing, decisions.join(' / '));
+  const elsewhere = { ...approved(file), statusText: `# STATUS\n\n## Standing rules\n${decision(file)}\n\n## Owner decisions\n` };
+  assert.match(proofFail(file, elsewhere), missing);
+});
+
+test('gate CLI: the terminal proof reads the road\'s STATUS.md folder and its owner decisions', () => {
+  const world = roadsWorld([roadOf('rd', [lane('x', TERMINAL)])]);
+  const start = git(world.repo, 'rev-parse', 'HEAD');
+  assert.equal(rowsRun(world, world.files[0]).status, 0);
+  const landed = commit(world.repo, 'x.mjs');
+  const file = render(dirname(world.statusFile));
+  const table = readFileSync(world.statusFile, 'utf8')
+    .replace(/^\| rd\.s1\.x \|(.*)\| - \| - \| - \|$/m, `| rd.s1.x |$1| 2026-11-22T10:00Z | 2026-11-22T10:10Z | landed ${landed} on main from ${start} |`)
+    .trimEnd().concat(`\n| rd.s1.terminal-proof | proof: step 1 terminal render | S | 2026-11-22T10:20Z | 2026-11-22T10:30Z | terminal proof: ${file} (owner yes 2026-11-22) |\n`);
+  const gateRun = () => spawnSync(process.execPath, [ROAD_CLI, 'gate', world.files[0], '--step', '1'], { encoding: 'utf8', env: world.env });
+  writeFileSync(world.statusFile, table);
+  const unrecorded = gateRun();
+  assert.equal(unrecorded.status, 1, unrecorded.stdout + unrecorded.stderr);
+  assert.match(unrecorded.stderr, /^FAIL 4 ui: rd\.s1\.terminal-proof has no owner decision on record/m, 'a FAIL gate prints on stderr');
+  writeFileSync(world.statusFile, table.replace('## Work items', `## Owner decisions\n${decision(file)}\n\n## Work items`));
+  const recorded = gateRun();
+  assert.equal(recorded.status, 0, recorded.stdout + recorded.stderr);
+  assert.match(recorded.stdout, new RegExp(`^PASS 4 ui: terminal UI step: real render ${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} approved by the owner on 2026-11-22$`, 'm'), recorded.stdout + recorded.stderr);
 });
 
 // ---- road.mjs rows: two open roads in one STATUS.md ----

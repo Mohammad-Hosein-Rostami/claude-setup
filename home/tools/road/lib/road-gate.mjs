@@ -1,5 +1,5 @@
 // Purpose: the checkpoint between steps (spec-stages section 5): one PASS, FAIL or INFO line per check, a FAIL on any line fails it.
-// Exports: gateStep(road, items, step, run, { isUiPath, otherRoads }) -> { lines, pass }, fullSha(run, repo, text), GIT_TIMEOUT_MS,
+// Exports: gateStep(road, items, step, run, { isUiPath, otherRoads, statusFile, statusText }) -> { lines, pass }, fullSha(run, repo, text), GIT_TIMEOUT_MS,
 //   TOOL_TIMEOUT_MS.
 // `run(file, argv, timeoutMs)` -> { exit, out } runs one program with argv (no shell); `file` is one of 'git', 'git-tidy', 'ui-proof'
 //   (the CLI maps them to the tools), so tests inject it. Every git call names shas with fixed flags (P2).
@@ -40,7 +40,7 @@ const FULL_SHA = /^[0-9a-f]{40}$/;
 // Anchored: `never landed within X` or `done, landed within X` is not a within row. `as` is captured only to refuse it.
 const WITHIN = /^(?:.*; )?landed within ([\w.-]*[\w-])(\s+as\b)?/;
 // A fix row of `road.mjs rows --fix`: `fix-<name>` (new form, its own landing row) or `fix-<name>-land` (old form, the close row).
-const FIX_ROW = /\.s\d+\.fix-[a-z0-9-]+$/;
+const FIX_ROW = /\.s(\d+)\.fix-[a-z0-9-]+$/; // group 1: the step the fix belongs to
 
 const pass = (text) => `PASS ${text}`;
 const fail = (text) => `FAIL ${text}`;
@@ -107,7 +107,8 @@ function withinOfCloseRow(rows, row) {
   return match === null ? null : { id: match[1], hasAs: match[2] !== undefined };
 }
 
-const closeRange = (rows, row, entry) => ({ entry, row: row.id, landed: landedOfCloseRow(rows, row), within: withinOfCloseRow(rows, row), both: ambiguousCorrection(rows, row), unknown: [] });
+// `step`: the lane's step, or a fix row's step from its id, so line 4 asks the UI proof for every landing of the step (fix rows included).
+const closeRange = (rows, row, entry) => ({ entry, step: entry?.step ?? Number(FIX_ROW.exec(row.id)?.[1]), row: row.id, landed: landedOfCloseRow(rows, row), within: withinOfCloseRow(rows, row), both: ambiguousCorrection(rows, row), unknown: [] });
 
 /**
  * The done fix rows of the road that record a landing: a `fix-<name>` row whose `-land` twin is in STATUS.md is not one (old form), and
@@ -271,11 +272,13 @@ function gitLines(run, road, items, otherRoads) {
  * @param {object[]} items parseWorkItems(...).items
  * @param {number} step 1-based
  * @param {(file: string, argv: string[], timeoutMs: number) => { exit: number, out: string }} run
- * @param {{ isUiPath: (path: string) => boolean, otherRoads?: object[] }} options the UI file test; the other checked roads of the same
- *   repo and STATUS.md, whose started lanes are in flight for line 3 and whose landing ranges on the same base count for line 2
+ * @param {{ isUiPath: (path: string) => boolean, otherRoads?: object[], statusFile?: string, statusText?: string }} options the UI file
+ *   test; the other checked roads of the same repo and STATUS.md, whose started lanes are in flight for line 3 and whose landing ranges
+ *   on the same base count for line 2; the road's STATUS.md path and text, which line 4's terminal proof reads (its folder, its owner
+ *   decisions)
  * @returns {{ lines: string[], pass: boolean }}
  */
-export function gateStep(road, items, step, run, { isUiPath, otherRoads = [] }) {
+export function gateStep(road, items, step, run, { isUiPath, otherRoads = [], statusFile, statusText = '' }) {
   const rows = new Map(items.map((item) => [item.id.toLowerCase(), item]));
   const start = roadStartTip(road, items);
   const tipRead = git(run, road.repo, ['rev-parse', '--verify', `refs/heads/${road.base}^{commit}`]);
@@ -285,7 +288,7 @@ export function gateStep(road, items, step, run, { isUiPath, otherRoads = [] }) 
   const ctx = { repo: road.repo, base: road.base, start, tip, firstParentList, firstParent: new Set(firstParentList), isUiPath };
   const ranges = closeRanges(road, rows).map((range) => resolveRange(run, ctx, range));
   const others = otherRanges(run, ctx, rows, otherRoads.filter((other) => other.repo === road.repo && other.base === road.base));
-  const uiCtx = { ...ctx, uiProof: (argv) => run('ui-proof', argv, TOOL_TIMEOUT_MS), isAncestor: (a, b) => isAncestor(run, road.repo, a, b) };
+  const uiCtx = { ...ctx, statusFile, statusText, uiProof: (argv) => run('ui-proof', argv, TOOL_TIMEOUT_MS), isAncestor: (a, b) => isAncestor(run, road.repo, a, b) };
   const lines = [
     ...rowsLine(road, rows, step, isUiPath),
     ...rangeLines(run, ranges, others, ctx),
