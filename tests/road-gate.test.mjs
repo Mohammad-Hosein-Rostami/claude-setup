@@ -15,14 +15,17 @@ const row = (id, evidence, done = DAY) => ({ id, item: `close: ${id}`, started: 
 const checkRow = row('rd.s1.check', 'x', null);
 const startRow = { ...checkRow, item: `close: step 1 checkpoint, base ${START}` };
 
-/** A fake run: every `to` in `onBase` is a clean, new, first-parent commit of the base; other shas fail the first-parent check. */
-function fakeRun(onBase) {
+/**
+ * A fake run: every `to` in `onBase` is a clean, new, first-parent commit of the base; other shas fail the first-parent check.
+ * `rev-parse <sha>^{commit}` answers a full sha with itself, a key of `aliases` with its value (null = ambiguous), anything else is unknown.
+ */
+function fakeRun(onBase, aliases = {}) {
   const calls = [];
   const run = (file, argv) => {
     if (file !== 'git') return { exit: 0, out: '' };
     calls.push(argv.slice(2));
     const [command, ...rest] = argv.slice(2);
-    if (command === 'rev-parse') return { exit: 0, out: `${onBase.at(-1)}\n` };
+    if (command === 'rev-parse') return resolveSha(rest.at(-1), onBase, aliases);
     if (command === 'rev-list') return { exit: 0, out: rest.at(-1).endsWith(`..${onBase.at(-1)}`) && rest.at(-1).startsWith(START) ? onBase.join('\n') : `${rest.at(-1).split('..')[1]}\n` };
     if (command === 'cherry') return { exit: 0, out: '' };
     if (command === 'merge-base') return { exit: rest[1] === START && rest[2] === undefined ? 1 : rest[2] === START ? 1 : 0, out: '' };
@@ -31,10 +34,19 @@ function fakeRun(onBase) {
   return { run, calls };
 }
 
+function resolveSha(arg, onBase, aliases) {
+  if (arg.startsWith('refs/heads/')) return { exit: 0, out: `${onBase.at(-1)}\n` };
+  const text = arg.replace('^{commit}', '');
+  if (text in aliases) return aliases[text] === null ? { exit: 1, out: '' } : { exit: 0, out: `${aliases[text]}\n` };
+  return text.length === 40 ? { exit: 0, out: `${text}\n` } : { exit: 1, out: '' };
+}
+
 const rangeLine = (result) => result.lines.find((line) => / 2 range/.test(line));
-const gate = (items, onBase = [TO]) => {
-  const { run, calls } = fakeRun(onBase);
-  return { result: gateStep(ROAD, [startRow, ...items], 1, run, { isUiPath: () => false }), calls };
+const STEERED_ROAD = { ...ROAD, steps: [{ form: 'agents', lanes: ROAD.steps[0].lanes }] };
+const gate = (items, onBase = [TO], { aliases = {}, steered = false } = {}) => {
+  const { run, calls } = fakeRun(onBase, aliases);
+  const road = steered ? STEERED_ROAD : ROAD;
+  return { result: gateStep(road, [startRow, ...items], 1, run, { isUiPath: () => false, checkOn: (category) => steered && category === 'review' }), calls };
 };
 const cherried = (calls, sha) => calls.some((call) => call[0] === 'cherry' && call.includes(sha));
 
@@ -177,4 +189,85 @@ test('a correction row under both ids is a FAIL naming both rows', () => {
 test('a close row id not ending in -land has only the one correction id', () => {
   const { result } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(TO)), row('rd.s1.fix-b-land', 'by hand'), row('rd.s1.fix.landed', within('rd.s1.a-land'))]);
   assert.match(rangeLine(result), /^FAIL 2 range: rd\.s1\.fix-b-land has no "landed/);
+});
+
+// Shas in rows may be 7-40 hex; the gate resolves each one to its full sha once and compares only full shas.
+const SHORT_TO = TO.slice(0, 8);
+const SHORT_START = START.slice(0, 7);
+// True when a git argument is `text` itself or one end of a `x..y` range (a prefix of a full sha does not count).
+const usedAsText = (calls, text) => calls.some((call) => call[0] !== 'rev-parse' && call.some((arg) => arg.split('..').includes(text)));
+
+test('a short to and from are resolved to full shas and accepted', () => {
+  const { result, calls } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(SHORT_TO, SHORT_START))], [TO], { aliases: { [SHORT_TO]: TO, [SHORT_START]: START } });
+  assert.match(rangeLine(result), /^PASS 2 range: 1 close rows/, result.lines.join('\n'));
+  assert.equal(cherried(calls, TO), true);
+  assert.equal(usedAsText(calls, SHORT_TO), false, 'a short sha reached a git command other than rev-parse');
+  assert.equal(usedAsText(calls, SHORT_START), false);
+});
+
+test('a short sha is resolved once per row sha, through rev-parse --verify --quiet with ^{commit}', () => {
+  const { calls } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(SHORT_TO))], [TO], { aliases: { [SHORT_TO]: TO } });
+  assert.deepEqual(calls.filter((call) => call[0] === 'rev-parse' && call.includes(`${SHORT_TO}^{commit}`)), [['rev-parse', '--verify', '--quiet', `${SHORT_TO}^{commit}`]]);
+});
+
+test('an unknown sha in a row is a FAIL naming the row, and never reaches another git command', () => {
+  const { result, calls } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(SHORT_TO))], [TO]);
+  assert.equal(result.pass, false);
+  assert.match(rangeLine(result), new RegExp(`^FAIL 2 range: rd\\.s1\\.a-land .*${SHORT_TO}`), result.lines.join('\n'));
+  assert.equal(usedAsText(calls, SHORT_TO), false);
+});
+
+test('an ambiguous sha in a row is a FAIL naming the row', () => {
+  const { result } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(TO, SHORT_START))], [TO], { aliases: { [SHORT_START]: null } });
+  assert.equal(result.pass, false);
+  assert.ok(result.lines.some((line) => line.startsWith('FAIL 2 range: rd.s1.a-land') && line.includes(SHORT_START)), result.lines.join('\n'));
+});
+
+// A steered (agents-form) step needs "reviewed <sha> clean" on the lane row; a done `<lane row id>.reviewed` row may hold it instead.
+const reviewedText = (sha) => `reviewed ${sha} clean`;
+const steeredRows = (laneEvidence, ...extra) => [row('rd.s1.a', laneEvidence), row('rd.s1.a-land', landedText(TO)), ...extra];
+const reviewCherries = (calls) => calls.filter((call) => call[0] === 'cherry' && call.length === 4);
+
+test('a steered lane without a reviewed line is a FAIL', () => {
+  const { result } = gate(steeredRows('x'), [TO], { steered: true });
+  assert.match(rangeLine(result), /^FAIL 2 range: rd\.s1\.a has no "reviewed <sha> clean" line/);
+});
+
+test('a steered lane takes the reviewed line of its .reviewed correction row', () => {
+  const { result, calls } = gate(steeredRows('x', row('rd.s1.a.reviewed', reviewedText(TO))), [TO], { steered: true });
+  assert.match(rangeLine(result), /^PASS 2 range: 1 close rows/, result.lines.join('\n'));
+  assert.deepEqual(reviewCherries(calls).map((call) => call[1]), [TO]);
+});
+
+test('the .reviewed row id is matched case-insensitively', () => {
+  const { result } = gate(steeredRows('x', row('RD.S1.A.REVIEWED', reviewedText(TO))), [TO], { steered: true });
+  assert.match(rangeLine(result), /^PASS 2 range/);
+});
+
+test('the lane row own reviewed line wins over its .reviewed row', () => {
+  const { result, calls } = gate(steeredRows(reviewedText(TO), row('rd.s1.a.reviewed', reviewedText(OTHER_TO))), [TO], { steered: true });
+  assert.match(rangeLine(result), /^PASS 2 range/);
+  assert.deepEqual(reviewCherries(calls).map((call) => call[1]), [TO]);
+  assert.equal(usedAsText(calls, OTHER_TO), false);
+});
+
+test('a .reviewed row that is not done counts for nothing', () => {
+  const { result, calls } = gate(steeredRows('x', row('rd.s1.a.reviewed', reviewedText(TO), null)), [TO], { steered: true });
+  assert.match(rangeLine(result), /^FAIL 2 range: rd\.s1\.a has no "reviewed/);
+  assert.equal(reviewCherries(calls).length, 0);
+});
+
+test('a .reviewed row is not read when the step is not steered', () => {
+  const { result, calls } = gate(steeredRows('x', row('rd.s1.a.reviewed', reviewedText(OTHER_TO))), [TO]);
+  assert.match(rangeLine(result), /^PASS 2 range/);
+  assert.equal(usedAsText(calls, OTHER_TO), false);
+});
+
+test('a short reviewed sha is resolved to its full sha; an unknown one is a FAIL naming the lane row', () => {
+  const short = gate(steeredRows('x', row('rd.s1.a.reviewed', reviewedText(SHORT_TO))), [TO], { steered: true, aliases: { [SHORT_TO]: TO } });
+  assert.match(rangeLine(short.result), /^PASS 2 range/, short.result.lines.join('\n'));
+  assert.deepEqual(reviewCherries(short.calls).map((call) => call[1]), [TO]);
+  const unknown = gate(steeredRows(reviewedText(SHORT_TO)), [TO], { steered: true });
+  assert.equal(unknown.result.pass, false);
+  assert.ok(unknown.result.lines.some((line) => line.startsWith('FAIL 2 range: rd.s1.a ') && line.includes(SHORT_TO)), unknown.result.lines.join('\n'));
 });

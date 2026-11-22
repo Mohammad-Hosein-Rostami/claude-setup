@@ -8,18 +8,21 @@
 //   `<start>..<tip>` in exactly one range; a done close row with no landed line of its own takes the line of a done `<close row id>.landed`
 //   row (for an id ending in `-land` also `<id without -land>.landed`; both present = FAIL), never used when the close row has its own line or is not done; a done `<close row id>.landed` row saying `landed within <other close row id>` gives
 //   that close row no range, valid only when the named row is another close row of the road with a valid range of its own (no self, no chain); a steered step's lanes also need `reviewed <sha> clean` with every
-//   commit of their range in that sha); 3 `git-tidy check` exit 0; 4 `test-pass check <tip> --suite` exit 0; 5 `audit-log gate --tip <tip>` exit 0; 6 UI: when a range of
+//   commit of their range in that sha, from the lane row's own line, else from a done `<lane row id>.reviewed` row); 3 `git-tidy check` exit 0; 4 `test-pass check <tip> --suite` exit 0; 5 `audit-log gate --tip <tip>` exit 0; 6 UI: when a range of
 //   the step changes UI files or a lane has a matrix, `ui-proof check --tip <tip> --against-step <road>.s<N>` exit 0 and the step-start
 //   record taken at or before every `<from>`; 7 the measure (INFO).
 // Lines 4 (test), 5 and a steered step's `reviewed` line (review) and 6 (ui) are checks: each runs only when `checkOn(category)` says the
 //   owner turned it on with /check (spec r9-checks-off); off, the line is `INFO <n> <name>: not checked: <category> off`.
-// Invariants: any exit other than the expected ones is FAIL (fail closed, P3); untrusted shas from rows are hex-checked before argv.
+// Invariants: any exit other than the expected ones is FAIL (fail closed, P3); untrusted shas from rows are hex-checked before argv, then
+//   resolved once to the full commit sha (`rev-parse --verify --quiet <sha>^{commit}`; unknown or ambiguous = FAIL naming the row), and only
+//   full shas are compared or passed on afterwards (a row may hold 7-40 hex, rev-list prints 40).
 import { rowIds } from './road-file.mjs';
 import { isUiLane, landedLine, reviewedLine, roadStartTip } from './road-state.mjs';
 
 export const GIT_TIMEOUT_MS = 5_000;
 export const TOOL_TIMEOUT_MS = 30_000;
 const HEX = /^[0-9a-f]{7,40}$/;
+const FULL_SHA = /^[0-9a-f]{40}$/;
 const WITHIN = /\blanded within ([\w.-]*[\w-])/;
 const RECORD_AT = /\bat ([0-9a-f]{7,40})\b/;
 
@@ -52,26 +55,27 @@ const isAncestor = (run, repo, a, b) => git(run, repo, ['merge-base', '--is-ance
 const LAND_SUFFIX = '-land';
 
 /**
- * The correction rows of a close row: `<id>.landed`, and for an id ending in `-land` also `<id without -land>.landed` (row ids are at most
- * 40 characters, so the long form may not fit). Both lookups are case-insensitive; the rows found are returned in that order.
+ * The correction rows of a row: `<id><kind>` (kind `.landed` for a close row, `.reviewed` for a lane row), and for an id ending in `-land`
+ * also `<id without -land><kind>` (row ids are at most 40 characters, so the long form may not fit). Both lookups are case-insensitive; the
+ * rows found are returned in that order.
  */
-function correctionRows(rows, id) {
+function correctionRows(rows, id, kind) {
   const low = id.toLowerCase();
-  const ids = [`${low}.landed`];
-  if (low.endsWith(LAND_SUFFIX)) ids.push(`${low.slice(0, -LAND_SUFFIX.length)}.landed`);
+  const ids = [`${low}${kind}`];
+  if (low.endsWith(LAND_SUFFIX)) ids.push(`${low.slice(0, -LAND_SUFFIX.length)}${kind}`);
   return ids.map((key) => rows.get(key)).filter((found) => found !== undefined);
 }
 
-/** The one done correction row of a close row, or null: none, not done, or two of them (`ambiguousCorrection` reports that case). */
-function correctionRow(rows, row) {
-  const found = correctionRows(rows, row.id);
+/** The one done correction row of a row, or null: none, not done, or two of them (`ambiguousCorrection` reports that case for close rows). */
+function correctionRow(rows, row, kind = '.landed') {
+  const found = correctionRows(rows, row.id, kind);
   return found.length === 1 && found[0].done != null ? found[0] : null;
 }
 
 /** The ids of both correction rows when a close row without a landed line of its own has one under each id, else null. */
 function ambiguousCorrection(rows, row) {
   if (landedLine(row.evidence) !== null) return null;
-  const found = correctionRows(rows, row.id);
+  const found = correctionRows(rows, row.id, '.landed');
   return found.length === 2 ? found.map((correction) => correction.id) : null;
 }
 
@@ -98,16 +102,50 @@ function withinOfCloseRow(rows, row) {
   return WITHIN.exec(String(correction.evidence ?? ''))?.[1] ?? null;
 }
 
-const closeRange = (rows, row, entry, reviewed) => ({ entry, row: row.id, landed: landedOfCloseRow(rows, row), within: withinOfCloseRow(rows, row), both: ambiguousCorrection(rows, row), reviewed });
+/**
+ * The `reviewed <sha> clean` sha of a lane row: its own evidence, else the evidence of its done `<lane row id>.reviewed` row (a done cell is
+ * never changed, so a lane row finished without the line is corrected by that row). The lane row's own line wins.
+ */
+function reviewedOfLaneRow(rows, laneId) {
+  const own = reviewedLine(rows.get(laneId.toLowerCase())?.evidence);
+  if (own !== null) return own;
+  return reviewedLine(correctionRow(rows, { id: laneId }, '.reviewed')?.evidence);
+}
+
+const closeRange = (rows, row, entry, reviewed) => ({ entry, row: row.id, landed: landedOfCloseRow(rows, row), within: withinOfCloseRow(rows, row), both: ambiguousCorrection(rows, row), reviewed, unknown: [] });
 
 /** The done close rows of the road, as ranges (`landed` null when the row has no landed line; `within` the named close row or null; `both` the two correction row ids when it has two). */
 function closeRanges(road, rows) {
   return laneEntries(road).flatMap((entry) => {
     const row = rows.get(entry.ids.close.toLowerCase());
     if (row?.done == null) return [];
-    return [closeRange(rows, { ...row, id: entry.ids.close }, entry, reviewedLine(rows.get(entry.ids.lane.toLowerCase())?.evidence))];
+    return [closeRange(rows, { ...row, id: entry.ids.close }, entry, reviewedOfLaneRow(rows, entry.ids.lane))];
   }).concat([...rows.values()].filter((row) => /\.s\d+\.fix-[a-z0-9-]+-land$/.test(row.id) && row.done != null && row.id.startsWith(`${road.road}.`))
     .map((row) => closeRange(rows, row, null, null)));
+}
+
+/** The full commit sha of a row's sha text (hex-checked, 7-40 characters), or null when git does not know it or finds it ambiguous. */
+function fullSha(run, repo, text) {
+  const found = git(run, repo, ['rev-parse', '--verify', '--quiet', `${text}^{commit}`]);
+  const sha = found.out.trim();
+  return found.exit === 0 && FULL_SHA.test(sha) ? sha : null;
+}
+
+/**
+ * The range with every sha taken from its rows (`to`, `from`, and `reviewed` of a steered lane) resolved to its full sha, once. A sha git
+ * cannot resolve stays as written and adds a FAIL text to `unknown`, naming the row; a text that is not hex is left for rangeRowFails.
+ */
+function resolveRange(run, ctx, range) {
+  const unknown = [];
+  const resolve = (text, owner, what) => {
+    if (text === null || !HEX.test(text)) return text;
+    const sha = fullSha(run, ctx.repo, text);
+    if (sha === null) unknown.push(`2 range: ${owner} cites ${text} as ${what}, which is not one known commit of the repo (unknown or ambiguous)`);
+    return sha ?? text;
+  };
+  const landed = range.landed === null ? null : { ...range.landed, to: resolve(range.landed.to, range.row, 'to'), from: resolve(range.landed.from, range.row, 'from') };
+  const reviewed = range.entry !== null && ctx.steered(range.entry.step) ? resolve(range.reviewed, range.entry.ids.lane, 'reviewed') : range.reviewed;
+  return { ...range, landed, reviewed, unknown };
 }
 
 /** Per-row checks of line 2; returns the FAIL texts. */
@@ -115,6 +153,7 @@ function rangeRowFails(run, ctx, range, seenTo) {
   const { repo, base, start, firstParent } = ctx;
   if (range.both !== null) return [`2 range: ${range.row} has a correction row under both ids (${range.both.join(' and ')}); keep one`];
   if (range.within !== null) return [];
+  if (range.unknown.length > 0) return range.unknown;
   const { landed } = range;
   if (landed === null || !HEX.test(landed.to)) return [`2 range: ${range.row} has no "landed <to> on <base> from <from>" evidence`];
   if (landed.from === null || !HEX.test(landed.from)) return [`2 range: ${range.row} has no from`];
@@ -154,12 +193,11 @@ function withinFails(ranges, rowFails) {
 }
 
 /** Line 2: every close row of the road, then the cover of `<start>..<tip>` by the ranges. */
-function rangeLines(run, road, rows, ctx) {
-  const ranges = closeRanges(road, rows);
+function rangeLines(run, ranges, ctx) {
   const seenTo = new Set();
   const rowFails = new Map(ranges.map((range) => [range, rangeRowFails(run, ctx, range, seenTo)]));
   const fails = [...rowFails.values()].flat().concat(withinFails(ranges, rowFails));
-  const good = ranges.filter((range) => range.landed?.from && HEX.test(range.landed.from));
+  const good = ranges.filter((range) => range.unknown.length === 0 && range.landed?.from && HEX.test(range.landed.from));
   const tos = new Set(good.map((range) => range.landed.to));
   for (const range of good) if (range.landed.from !== ctx.start && !tos.has(range.landed.from)) fails.push(`2 range: ${range.row}: from ${range.landed.from} is neither the road-start tip nor another row's to`);
   const owner = new Map();
@@ -175,8 +213,8 @@ function rangeLines(run, road, rows, ctx) {
 }
 
 /** Line 6: UI proof for the tip when a range of the step changed UI files or a lane has a matrix. */
-function uiLine(run, road, rows, step, ctx) {
-  const own = closeRanges(road, rows).filter((range) => range.entry?.step === step && range.landed?.from);
+function uiLine(run, road, ranges, step, ctx) {
+  const own = ranges.filter((range) => range.entry?.step === step && range.unknown.length === 0 && range.landed?.from);
   const matrix = road.steps[step - 1].lanes.some((lane) => typeof lane.matrix === 'string');
   const changed = own.map((range) => run('ui-proof', ['changed', '--from', range.landed.from, '--to', range.landed.to, '--repo', ctx.repo], TOOL_TIMEOUT_MS));
   if (changed.some((result) => result.exit !== 0 && result.exit !== 1)) return fail('6 ui: ui-proof changed could not answer');
@@ -209,13 +247,14 @@ export function gateStep(road, items, step, run, { isUiPath, checkOn = () => fal
   if (start === null || tipRead.exit !== 0 || !HEX.test(tip)) return { lines: [fail(`road start tip or base tip unreadable (run rows first; git exit ${tipRead.exit})`)], pass: false };
   const firstParentList = git(run, road.repo, ['rev-list', '--first-parent', `${start}..${tip}`]).out.split('\n').filter(Boolean);
   const ctx = { repo: road.repo, base: road.base, start, tip, firstParentList, firstParent: new Set(firstParentList), steered: (n) => checkOn('review') && road.steps[n - 1]?.form === 'agents' };
+  const ranges = closeRanges(road, rows).map((range) => resolveRange(run, ctx, range));
   const lines = [
     ...rowsLine(road, rows, step, isUiPath),
-    ...rangeLines(run, road, rows, ctx),
+    ...rangeLines(run, ranges, ctx),
     exitLine(3, 'one git line', run('git-tidy', ['check', road.repo, '--base', road.base], TOOL_TIMEOUT_MS), 'git-tidy check clean'),
     !checkOn('test') ? notChecked(4, 'suite', 'test') : exitLine(4, 'suite', run('test-pass', ['check', tip, '--repo', road.repo, '--suite'], TOOL_TIMEOUT_MS), `PASS recorded for ${tip}`),
     !checkOn('review') ? notChecked(5, 'audits', 'review') : exitLine(5, 'audits', run('audit-log', ['gate', '--repo', road.repo, '--tip', tip], TOOL_TIMEOUT_MS), 'none open'),
-    checkOn('ui') ? uiLine(run, road, rows, step, ctx) : notChecked(6, 'ui', 'ui'),
+    checkOn('ui') ? uiLine(run, road, ranges, step, ctx) : notChecked(6, 'ui', 'ui'),
     `INFO 7 measure: ${road.steps[step - 1].measure ?? 'none named'}`,
   ];
   return { lines, pass: !lines.some((line) => line.startsWith('FAIL')) };

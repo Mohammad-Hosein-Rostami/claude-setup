@@ -52,6 +52,12 @@ A close row that landed inside the same fast-forward as another close row (so it
 fails line 2 unless the named row is a close row (road entry or fix row) of the same road with a valid range of its own (its landed
 line or its `.landed` correction). A row cannot name itself, and the named row cannot itself be a `within` row (no chains).
 
+A sha in a row (`<to>`, `<from>`, `reviewed <sha> clean`) may be 7 to 40 hex characters. The gate resolves each one once to its full commit
+sha (`git rev-parse --verify --quiet <sha>^{commit}`) and uses only full shas after that; a sha git does not know, or finds ambiguous, is a
+FAIL line naming the row. A steered (`agents`) step needs `reviewed <sha> clean` on each lane row; a done cell never changes, so when the lane
+row's own evidence has no such line the gate takes it from a done correction row `<lane row id>.reviewed` (looked up like `.landed`, ignoring
+case). The lane row's own line wins; the correction row is not read for a step that is not steered.
+
 ## Commands
 
 | command | does | exit |
