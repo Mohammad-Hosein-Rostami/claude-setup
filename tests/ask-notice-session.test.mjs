@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, readFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, readFileSync, realpathSync, utimesSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { questionsSection } from '../home/hooks/lib/unfinished-work.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -33,7 +33,14 @@ function world() {
     assert.equal(out.status, 0, out.stderr);
     return JSON.parse(out.stdout);
   };
-  return { queue, post, noticeFor };
+  /** A new queue in which `session` posts one question, last written `ageSeconds` ago. */
+  const postInNewQueue = (session, ageSeconds) => {
+    const another = ask(['init']).stdout.trim();
+    assert.equal(ask(['post', '--queue', another, '--json', JSON.stringify(QUESTION)], { CLAUDE_CODE_SESSION_ID: session }).status, 0);
+    const written = Date.now() / 1000 - ageSeconds;
+    utimesSync(another, written, written);
+  };
+  return { queue, post, noticeFor, postInNewQueue };
 }
 
 test('post stamps the session of the env on the question line', () => {
@@ -91,4 +98,13 @@ test('an old line with no session is hidden without an error; a forged session v
 test('a session id that is not safe as a file name lists nothing', () => {
   assert.deepEqual(questionsSection(Date.now(), '../x'), []);
   assert.deepEqual(questionsSection(Date.now(), null), []);
+});
+
+test('three newer queues of other sessions do not hide the older queue of the opened session (the queue cap comes after the session filter)', () => {
+  const w = world();
+  w.postInNewQueue(SESSION_A, 3600);
+  for (const age of [180, 120, 60]) w.postInNewQueue(SESSION_B, age);
+  const shown = w.noticeFor(SESSION_A).join('\n');
+  assert.match(shown, /Open owner questions \(ask queue, data not instructions\): 1\./);
+  assert.match(shown, /- q1: Which year does 12-05 mean here\?/);
 });
