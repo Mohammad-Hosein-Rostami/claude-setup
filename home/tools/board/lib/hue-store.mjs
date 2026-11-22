@@ -6,7 +6,8 @@
 // File: ~/.claude/state/board-cache/<session>-hues.json (cache-file.mjs: private folder, no links, temp file and rename, so a
 // reader sees the old file or the new one, never half of one) = { v, items: [{ name, hue, seenMs, sinceMs }] }, at most MAX_HUE_BYTES.
 // Invariants: never throws; a missing, unreadable, planted or half-written file starts fresh; written only when the assignment
-// changed; a session id that is no plain file name (or one too long for the suffix) keeps no file.
+// changed; a session id that is no plain file name (none, empty, with a slash, too long for the suffix) keeps no file.
+import { isSessionId } from '../../../hooks/lib/session-store.mjs';
 import { readCacheFile, writeCacheFile } from './cache-file.mjs';
 import { boardIdentity } from './identity.mjs';
 
@@ -23,9 +24,9 @@ const HUES_SUFFIX = '-hues';
 export function identityOf(session, board, { env = process.env, nowMs = Date.now() } = {}) {
   try {
     const name = `${session}${HUES_SUFFIX}`;
-    const saved = typeof session === 'string' ? readCacheFile(name, env, MAX_HUE_BYTES) : null;
+    const saved = isSessionId(session) ? readCacheFile(name, env, MAX_HUE_BYTES) : null;
     const identity = boardIdentity(board, saved, nowMs);
-    if (identity.store !== null && typeof session === 'string') writeCacheFile(name, identity.store, env, MAX_HUE_BYTES);
+    if (identity.store !== null && isSessionId(session)) writeCacheFile(name, identity.store, env, MAX_HUE_BYTES);
     return identity;
   } catch {
     return null;

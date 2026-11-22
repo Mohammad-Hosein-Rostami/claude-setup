@@ -5,11 +5,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeSessionFile } from '../home/hooks/lib/session-store.mjs';
 import { fitParts, HUE_CODES, hueState, lookOf, paint, STATE } from '../home/tools/board/lib/cells.mjs';
+import { writeCacheFile } from '../home/tools/board/lib/cache-file.mjs';
 import { identityOf } from '../home/tools/board/lib/hue-store.mjs';
 import { agentKey, boardIdentity, hueOf, itemKey, worktreeKey } from '../home/tools/board/lib/identity.mjs';
 import { agentRow, runHeader } from '../home/tools/board/lib/agent-rows.mjs';
@@ -410,4 +411,39 @@ test('a workflow run the rows hide holds no hue', () => {
   assert.deepEqual([...boardIdentity(board, null, NOW).hues.keys()], ['live-run']);
   board.agents = [{ id: 'x', name: 'x', runId: 'wf_1', state: 'run' }];
   assert.ok(boardIdentity(board, null, NOW).hues.has('stopped-run'), 'shown while it has an agent');
+});
+
+test('the hue file is kept only for a session id that is a plain file name: no id, an empty or odd one writes nothing', () => {
+  const env = { HOME: makeTempDir('hue-store-no-id-') };
+  const folder = join(env.HOME, '.claude', 'state', 'board-cache');
+  const listing = () => (existsSync(folder) ? readdirSync(folder) : []);
+  for (const session of [undefined, null, 5, '', 'a/b', '../x', 'x'.repeat(101)]) {
+    assert.ok(identityOf(session, boardOfNames(['a', 'b']), { env, nowMs: NOW }) !== null);
+    assert.deepEqual(listing(), [], `session ${JSON.stringify(session)} keeps no file`);
+  }
+  writeFileSync(join(env.HOME, 'planted'), 'x');
+  identityOf(SESSION, boardOfNames(['a']), { env, nowMs: NOW });
+  assert.deepEqual(listing(), [`${SESSION}-hues.json`]);
+});
+
+test('a cache file is capped in bytes, not in characters: a value of 2-byte characters over the cap is not written', () => {
+  const env = { HOME: makeTempDir('cache-bytes-') };
+  const file = join(env.HOME, '.claude', 'state', 'board-cache', 'bytes-1.json');
+  assert.equal(writeCacheFile('bytes-1', { text: 'é'.repeat(600) }, env, 1024), false, '1200 bytes, 612 characters');
+  assert.equal(existsSync(file), false);
+  assert.equal(writeCacheFile('bytes-1', { text: 'e'.repeat(600) }, env, 1024), true);
+  assert.equal(existsSync(file), true);
+});
+
+test('more than 64 live items: the stored ones are always the same most important 64, so a steady board is not rewritten (SA12)', () => {
+  const names = Array.from({ length: 70 }, (_, index) => `item-${String(index).padStart(2, '0')}`);
+  let store = null;
+  const saves = [];
+  for (let minute = 0; minute <= 2; minute += 1) {
+    const identity = boardIdentity(boardOfNames(names), store, NOW + minute * MIN_MS);
+    saves.push(identity.store !== null);
+    store = identity.store ?? store;
+  }
+  assert.deepEqual(saves, [true, false, false]);
+  assert.equal(store.items.length, 64);
 });

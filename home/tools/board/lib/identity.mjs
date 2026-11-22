@@ -132,7 +132,9 @@ function nextStore(hues, stored, nowMs) {
   });
   const gone = [...stored].filter(([name, item]) => !hues.has(name) && nowMs - item.seenMs <= GONE_MS)
     .map(([name, item]) => ({ name, ...item, away: true }));
-  const items = [...live, ...gone].sort((a, b) => b.seenMs - a.seenMs || (a.name < b.name ? -1 : 1)).slice(0, MAX_STORED_ITEMS);
+  // Live items first, in key order, so a board of more than MAX_STORED_ITEMS keeps the same ones and a steady board is not rewritten.
+  const newestFirst = (a, b) => b.seenMs - a.seenMs || (a.name < b.name ? -1 : 1);
+  const items = [...live, ...gone.sort(newestFirst)].slice(0, MAX_STORED_ITEMS);
   const asText = (list) => JSON.stringify([...list].sort((a, b) => (a.name < b.name ? -1 : 1)));
   const before = [...stored].map(([name, item]) => ({ name, ...item }));
   return asText(items) === asText(before) ? null : { v: STORE_VERSION, items };

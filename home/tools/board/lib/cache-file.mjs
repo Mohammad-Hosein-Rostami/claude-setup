@@ -38,7 +38,7 @@ export function readCacheFile(name, env, maxBytes) {
 export function writeCacheFile(name, value, env, maxBytes) {
   try {
     const text = JSON.stringify(value);
-    return text.length <= maxBytes && writeSessionFile(cacheDir(env), name, text);
+    return Buffer.byteLength(text) <= maxBytes && writeSessionFile(cacheDir(env), name, text);
   } catch {
     return false;
   }
