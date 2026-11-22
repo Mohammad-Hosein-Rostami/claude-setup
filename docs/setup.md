@@ -12,8 +12,6 @@
     scripts/install.sh                  # macOS, Linux, Git Bash
     scripts/install.sh --no-plugins     # skip `claude plugin` calls
     scripts/install.sh --no-tools       # skip tool dependency install (ui-check, env-names)
-    scripts/install.sh --project-workflows <repo>         # also link the workflow scripts into <repo>/.claude/workflows (personal: hidden in .git/info/exclude)
-    scripts/install.sh --project-workflows <repo> --copy  # copy them instead, for the team to commit
 
     scripts/install.sh --update --to r9-phase-6   # rollback: links on a worktree of that tag; plain --update goes back
     scripts/install.sh --uninstall      # remove what the installer made, restore the backed-up files
@@ -23,8 +21,8 @@ Both call `scripts/install.mjs`, the one installer (Node 22+, jq); `scripts/inst
 Symlinks need Developer Mode on Windows; otherwise items are copied (a warning is printed) and do not follow later
 edits. `install.ps1` runs on Windows PowerShell 5.1 and 7 (not verified on Windows yet). On Windows the installer stops without Git Bash; `settings/windows.json` turns the PowerShell tool off (`CLAUDE_CODE_USE_POWERSHELL_TOOL=0`) and every Bash hook matches `Bash|PowerShell`, so a PowerShell command is off or guarded; doctor checks both. `install.ps1 -ClaudeVersion <x.y.z>` installs that Claude Code, runs `claude --version` right after, and puts the old binary back when the version is not the one asked for.
 
-The installer links `home/*` (CLAUDE.md, lead.md, lead-rules.md, rules, skills, agents, standards, hooks, tools, project-notes, workflows, statusline.mjs, and `commands` when it has files) into
-`~/.claude` (and removes the launcher and `modes` links an older install made for the retired session modes; a copy or the owner's own file at those paths goes to the backup folder instead), builds `~/.claude/settings.json`, installs `home/tools/ui-check` dependencies (lockfile if present,
+The installer links `home/*` (CLAUDE.md, lead.md, lead-rules.md, rules, skills, agents, standards, hooks, tools, project-notes, statusline.mjs, and `commands` when it has files) into
+`~/.claude` (and removes the launcher, `modes` and `workflows` links an older install made for the retired session modes and workflows; a copy or the owner's own file at those paths goes to the backup folder instead), builds `~/.claude/settings.json`, installs `home/tools/ui-check` dependencies (lockfile if present,
 otherwise a plain install), sets `core.hooksPath` to `.githooks`, then installs plugins. Anything replaced is moved
 to `~/.claude-backup-<stamp>/`, never deleted. One install runs at a time: a second one started meanwhile stops with a message. Check the result with `scripts/doctor.sh`
 (`DOCTOR_PROJECT=/path/to/app scripts/doctor.sh` also checks Playwright and Chromium from that project). It also reports free disk space (FAIL below 5 GB, WARN below 15 GB; `DISK_FAIL_FREE_GB` and `DISK_WARN_FREE_GB` move the limits) and names the caches to clear. Its last check runs the repo tests, unless a full-suite PASS is already recorded for HEAD (`test-pass`) and the working tree is clean (`git status --porcelain` prints nothing; an edit or a new file since then runs the suite); the full output is kept in `~/.claude/logs/doctor-repo-tests.log` and a failure prints each failing test with its first error line and that path.

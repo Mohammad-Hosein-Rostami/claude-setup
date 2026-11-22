@@ -6,17 +6,18 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 export const USAGE =
-  'install [--update [--to <tag>]] [--uninstall] [--dry-run] [--no-plugins] [--no-tools] [--project-workflows <repo> [--copy]] ' +
+  'install [--update [--to <tag>]] [--uninstall] [--dry-run] [--no-plugins] [--no-tools] ' +
   '[--ps-profile <path>] [--claude-version <x.y.z>]';
 
 /** The settings layer and file names per operating system (settings/<name>.json). */
 export const OS_NAME = { darwin: 'macos', linux: 'linux', win32: 'windows' }[process.platform] ?? 'linux';
 
-const SWITCHES = { '--update': 'update', '--uninstall': 'uninstall', '--dry-run': 'dryRun', '--no-plugins': 'noPlugins', '--no-tools': 'noTools', '--copy': 'copy' };
-const VALUED = { '--to': 'to', '--project-workflows': 'project', '--ps-profile': 'psProfile', '--claude-version': 'claudeVersion' };
+const SWITCHES = { '--update': 'update', '--uninstall': 'uninstall', '--dry-run': 'dryRun', '--no-plugins': 'noPlugins', '--no-tools': 'noTools' };
+const VALUED = { '--to': 'to', '--ps-profile': 'psProfile', '--claude-version': 'claudeVersion' };
 const VERSION_SHAPE = /^\d+\.\d+\.\d+$/;
 const TAG_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/; // a tag name that is also a safe folder name
 const USAGE_EXIT = 2;
+const REMOVED_FLAGS = ['--project-workflows', '--copy']; // workflows are gone (2026-11-22)
 
 /** An expected failure: its message is shown as it is and the run exits with `exitCode` (2: bad usage, 1: a step failed). */
 export class InstallError extends Error {
@@ -37,6 +38,7 @@ export function parseArgs(argv) {
   const flags = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    if (REMOVED_FLAGS.includes(arg)) throw new InstallError(`${arg} was removed: workflows are gone (2026-11-22)`, USAGE_EXIT);
     if (SWITCHES[arg]) flags[SWITCHES[arg]] = true;
     else if (VALUED[arg]) {
       if (index + 1 >= argv.length) throw new InstallError(`${arg} needs a value`, USAGE_EXIT);
@@ -48,10 +50,9 @@ export function parseArgs(argv) {
 }
 
 function checkCombinations(flags) {
-  if (flags.copy && !flags.project) throw new InstallError('--copy needs --project-workflows <repo>', USAGE_EXIT);
   if (flags.to && !flags.update) throw new InstallError('--to needs --update (install --update --to <tag>)', USAGE_EXIT);
   if (flags.to && !TAG_SHAPE.test(flags.to)) throw new InstallError(`--to ${flags.to}: not a tag name`, USAGE_EXIT);
-  if (flags.uninstall && (flags.update || flags.project)) throw new InstallError('--uninstall takes no --update or --project-workflows', USAGE_EXIT);
+  if (flags.uninstall && flags.update) throw new InstallError('--uninstall takes no --update', USAGE_EXIT);
   if (flags.claudeVersion && !VERSION_SHAPE.test(flags.claudeVersion)) throw new InstallError('--claude-version needs x.y.z', USAGE_EXIT);
 }
 

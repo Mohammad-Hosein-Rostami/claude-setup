@@ -2,8 +2,8 @@
 // Purpose: the one installer of the Claude Code setup, on macOS, Linux and Windows. scripts/install.sh and scripts/install.ps1
 //   only find Node and call this file.
 // Usage: node scripts/install.mjs [--update [--to <tag>]] [--uninstall] [--dry-run] [--no-plugins] [--no-tools]
-//          [--project-workflows <repo> [--copy]] [--ps-profile <path>] [--claude-version <x.y.z>]
-//   (no flag) / --update   link home/ into ~/.claude (and remove the retired mode launcher links), the claude-as start-up line, settings.json, plugins, tool
+//          [--ps-profile <path>] [--claude-version <x.y.z>]
+//   (no flag) / --update   link home/ into ~/.claude (and remove the links of the retired modes and workflows), the claude-as start-up line, settings.json, plugins, tool
 //                          dependencies; safe to repeat (a second run changes nothing). --update is the same run, by name.
 //   --update --to <tag>    the same, with the links on a worktree of a phase tag (rollback; scripts/install/pin.mjs); a plain
 //                          --update points them back at this checkout.
@@ -23,7 +23,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { InstallError, makeContext, note, parseArgs, samePath } from './install/context.mjs';
 import { ensureDir, loadRecord, lockInstall, saveRecord } from './install/record.mjs';
-import { linkHomeItems, projectWorkflows, removeRetiredLinks } from './install/links.mjs';
+import { linkHomeItems, removeRetiredLinks } from './install/links.mjs';
 import { addStartupLines } from './install/startup.mjs';
 import { buildSettings, isNewMachine } from './install/settings.mjs';
 import { tagRoot } from './install/pin.mjs';
@@ -33,7 +33,7 @@ import { installClaude } from './install/cli.mjs';
 import * as tools from './install/tools.mjs';
 
 /** The home/ items linked into ~/.claude (doctor.sh checks the same list). */
-export const LINKS = ['CLAUDE.md', 'lead.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'lead-rules.md', 'workflows', 'statusline.mjs'];
+export const LINKS = ['CLAUDE.md', 'lead.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'lead-rules.md', 'statusline.mjs'];
 // Tools with npm dependencies: ui-check (odiff-bin, pngjs) and env-names (yaml). scripts/lane-new.sh reads this line.
 export const TOOLS_WITH_DEPS = ['ui-check', 'env-names'];
 
@@ -55,7 +55,6 @@ function install(ctx, record) {
   removeRetiredLinks(ctx, record, LINKS);
   addStartupLines(ctx, record);
   enableGitHooks(ctx);
-  if (ctx.project) projectWorkflows(ctx, record);
   if (ctx.claudeVersion) installClaude(ctx); // before the plugin commands, which use the new CLI
   if (!ctx.noPlugins) tools.installPlugins(ctx);
   // Settings after plugins; tool dependencies after settings (header).

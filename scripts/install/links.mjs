@@ -1,14 +1,13 @@
 // Purpose: the links of an install: each home/ item into ~/.claude, the removal of links an older install made for the retired
-//   session modes (the launcher and the modes folder), and (optional) the workflow scripts into one project.
-// Exports: linkHomeItems, removeRetiredLinks, projectWorkflows, removeLink.
+//   session modes (the launcher and the modes folder) and the workflows (the ~/.claude/workflows link).
+// Exports: linkHomeItems, removeRetiredLinks, removeLink.
 // Invariants: a link that already points at the right place is left as it is (a second run changes nothing); a link or copy
 //   the installer made, or an older install's link into this repo, is replaced without a backup; anything else is moved to the
 //   backup folder first. On Windows a folder becomes a junction (no Developer Mode needed); a file link that is not allowed
 //   falls back to a copy and says so.
-import { cpSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmdirSync, rmSync, statSync, symlinkSync, appendFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { cpSync, existsSync, lstatSync, readdirSync, readlinkSync, rmdirSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { InstallError, act, note, samePath, warn } from './context.mjs';
+import { act, note, samePath, warn } from './context.mjs';
 import { backup, ensureDir, isMade, remember } from './record.mjs';
 
 const lstatOrNull = (path) => {
@@ -90,7 +89,7 @@ const isInside = (folder, path) => {
 
 /**
  * Removes what an older install made that this one no longer makes, on every platform: a ~/.claude link whose home/ item left
- * `names` (the session modes folder) and anything it put in the launcher folders ~/.local/bin and ~/.claude/bin (the mode launcher
+ * `names` (the session modes folder, the workflows folder) and anything it put in the launcher folders ~/.local/bin and ~/.claude/bin (the mode launcher
  * and its Windows twins, retired with the modes: sessions start with `claude --model <m> --effort <e>`). Only links and copies the
  * install record names are looked at, and they leave the record once removed (an entry whose removal fails stays for the next
  * run); nothing else in those folders is. A path is removed only while it is still a link (never followed); a recorded copy (a
@@ -126,45 +125,4 @@ export function removeRetiredLinks(ctx, record, names) {
       dropEntry();
     });
   }
-}
-
-/**
- * Optional, default off: the workflow scripts usable by name (`/<name>`) in one project. A link stays personal (hidden by
- * .git/info/exclude); --copy copies the scripts so the team can commit them (a link into ~/.claude would break for them).
- * Copies are project files from then on: --uninstall leaves them.
- * @throws {InstallError} exit 2 when the folder is not a git repository
- */
-export function projectWorkflows(ctx, record) {
-  const repo = resolve(ctx.project);
-  if (!existsSync(join(repo, '.git'))) throw new InstallError(`${repo} is not a git repository`, 2);
-  const target = join(repo, '.claude', 'workflows');
-  const src = join(ctx.root, 'home', 'workflows');
-  if (!ctx.copy) {
-    linkOne(ctx, record, src, target, 'project workflows link');
-    hideFromGit(ctx, record, repo);
-    return;
-  }
-  const stat = lstatOrNull(target);
-  if (stat?.isSymbolicLink()) backup(ctx, record, target); // a link made earlier; a real folder keeps its other files
-  ensureDir(ctx, record, target);
-  act(ctx, `copy the workflow scripts into ${target}`, () => {
-    for (const file of readdirSync(src).filter((name) => name.endsWith('.js'))) cpSync(join(src, file), join(target, file));
-    note(ctx, `copied workflows into ${target}`);
-  });
-}
-
-function hideFromGit(ctx, record, repo) {
-  const line = '.claude/workflows';
-  const asked = spawnSync('git', ['-C', repo, 'rev-parse', '--git-path', 'info/exclude'], { encoding: 'utf8' });
-  if (asked.status !== 0) throw new InstallError(`git rev-parse in ${repo} failed: ${asked.stderr.trim()}`);
-  const raw = asked.stdout.trim();
-  const exclude = isAbsolute(raw) ? raw : join(repo, raw);
-  const text = existsSync(exclude) ? readFileSync(exclude, 'utf8') : null;
-  if (text?.split(/\r?\n/).includes(line)) return;
-  ensureDir(ctx, record, dirname(exclude));
-  act(ctx, `hide ${line} in ${exclude}`, () => {
-    appendFileSync(exclude, `${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`);
-    remember(record, { kind: 'line', path: exclude, line, createdFile: text === null });
-    note(ctx, `hid ${line} in ${exclude}`);
-  });
 }

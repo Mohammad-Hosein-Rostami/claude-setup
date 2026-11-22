@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Purpose: install, update or remove the Claude Code setup on macOS, Linux and Git Bash: find Node and run scripts/install.mjs,
 #   the one installer logic (its header lists the flags).
-# Usage: scripts/install.sh [--update [--to <tag>]] [--uninstall] [--dry-run] [--no-plugins] [--no-tools] [--project-workflows <repo> [--copy]]
+# Usage: scripts/install.sh [--update [--to <tag>]] [--uninstall] [--dry-run] [--no-plugins] [--no-tools]
 # Invariants: holds no install step of its own; the exit code is install.mjs's (0 done, 1 a step failed, 2 bad usage).
 set -euo pipefail
 
