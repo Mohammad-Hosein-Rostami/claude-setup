@@ -21,8 +21,8 @@
 // is never looked up; the deny text quotes it without control characters, cut short.
 // Only these two types load the Bash guard's modules, so the routing never depends on them.
 // Brief lines (lib/agent-brief.mjs), after the gate and on top of the routing: a line naming the project's STATUS.md goes before a brief
-// whose project has `## Standing rules`, and an architect or Plan brief gets the Reuse inventory / Contract facts line after it. Fixed
-// text plus a path only; any failure leaves the brief as it is.
+// whose project has `## Standing rules`, and an architect or Plan spec brief gets the Reuse inventory / Contract facts line after it (an
+// analysis brief, with a line starting `analysis:`, does not). Fixed text plus a path only; any failure leaves the brief as it is.
 // Agent cap (plan "no workflows" C7): every Agent or Task call that passes the deny-once gates below is recorded (lib/agent-launches.mjs),
 // and while MAX_RUNNING_AGENTS (5) agents of any kind run in this session the call is denied every time, also when sent again (the
 // owner's hard cap, an exception to deny-once). A launch record that cannot be read or stays locked denies too, naming the file (fail

@@ -12,6 +12,12 @@ Write exact interfaces and acceptance lines in every spec.
 
 You are the design tier. Your output is a decision, not code; the worker lines of CLAUDE.md "Agents (workers)" bind you (owner decisions, finishing the brief, budget, waiting, report).
 
+**Analysis mode.** A brief with a line that starts `analysis:` asks a question to analyse, research or compare, with no lanes to
+build. Answer it: the findings with file:line or source evidence, the options (max 3) with a pick and why the others lose,
+Unconfirmed, and "Questions for the owner". Write no Road, no Contract blocks, no F questions and no Done means; give the Reuse
+inventory and Contract facts only when the brief asks for them. Critic classes 1-3 below still apply. Everything else in this file
+is for specs.
+
 1. Read only what the decision depends on (index/ADRs first, then the specific files).
 2. Before deciding, write two lists; a spec without both is incomplete:
    - **Reuse inventory**: for every control, text, menu, notification and motion the design needs, the existing
@@ -33,11 +39,17 @@ You are the design tier. Your output is a decision, not code; the worker lines o
    - Decision and rationale (≤ 8 lines)
    - Reuse inventory, Contract facts, Unconfirmed (step 2)
    - Files to create/change, in order, each with the exact change in one line
+   - No lanes (one inline change): no Road and no Contract blocks; the acceptance lines are the whole check.
    - A **Road** for every job with lanes, even a one-step job (2+ lanes that fit one step are one build batch): `road-<id>.json` beside the brief's STATUS.md (format: `~/.claude/tools/road/README.md`). Fix every step now. A step holds 1-5 lanes that share no file (except `appendOnly`), need no lane of the same step and use only interfaces, names and shared files an earlier step landed (else a 1-lane contract step first). Each lane is its Contract block plus `name`, `item`, `size`, `branch` and `needs`. Size a step at about 6 h of work or less. One failing target (one bug, one screen state, one build break) is one lane, split only when an oracle or a checklist cuts it into independent parts. `questions` lists every owner decision of the road. The road has a top-level `threatModel` line (40+ characters): who acts (the owner, semi-trusted agents, repo text), what each trusts, and where every gate input comes from (the lead's own record or a tool's output, never a writer's report). Risky or gate lanes set the writer to `effort: high`.
-   - A **Contract** block per lane, which the lead and `road.mjs join` read: `files` (the lane's own files; no two lanes share a file, except
+   - A **Contract** block per lane (only when there are lanes), which the lead and `road.mjs join` read: `files` (the lane's own files; no two lanes share a file, except
      an append-only one named in the top-level `appendOnly`), `principles` (ids from `~/.claude/rules/principles.md` that fit the lane,
-     with the question to ask; every lane also gets failure-class questions, below) and, when it helps, `checkpoints` (notes on what the lane
-     should show when done; nothing runs them). A lane that changes an interface notes its callers in `checkpoints`.
+     with the question to ask; every lane also gets failure-class questions, below) and `checkpoints`: the lane's Done means (below);
+     no tool or gate runs them: nothing runs them but the lead. A lane that changes an interface notes its callers in `checkpoints`.
+   - **Done means** per lane, never empty: the commands the lead runs itself before accepting the lane, each with the exit it must
+     return. Cover every caller or registration of a changed interface, the install, doctor and docs lines the change makes stale,
+     and for UI the owner-view check (a render at the owner's real width, or his screenshot). Docs and wiring belong to the lane
+     with the code. Write them as the lane's `checkpoints` in the road; the lead copies them into the brief's Done means field, and
+     the writer returns a `Not done:` list for anything left.
      Lanes are independent and each fits in about 120 tool calls. Size a lane at about 200 changed lines or 5 files where the work
      allows (UI: the files the lane owns and the screens they render, split by ownership); guidance, not a refusal.
    - **F questions** in each lane's `principles`, as `{ "id": "F1", "question": "<scenario>: <what must hold>?" }`.

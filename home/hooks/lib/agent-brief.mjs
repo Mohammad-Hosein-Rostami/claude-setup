@@ -8,8 +8,9 @@
 //   counts. A folder that only looks like a git folder (HEAD, objects, refs) is no repository. When the nearest `.git` does not list
 //   STATUS.md there is no line: no folder further up is used. With no `.git` up to the filesystem root the project is cwd itself; a
 //   walk that stops at MAX_PARENT_LEVELS gives no line. The agent reads the file itself.
-// - Design lists (architect and Plan): a brief without "Reuse inventory" gets one line after it asking for the Reuse inventory and
-//   Contract facts lists, with unstated product facts under "Unconfirmed".
+// - Design lists (architect and Plan): a spec brief without "Reuse inventory" gets one line after it asking for the Reuse inventory
+//   and Contract facts lists, with unstated product facts under "Unconfirmed". An analysis brief (one of its lines, trimmed, starts
+//   with `analysis:`: a question to analyse or compare, no lanes to build; architect.md "Analysis mode") gets no such line.
 // Each line holds the text that suppresses it, so a brief is never extended twice. No program ever runs: a `.git` folder is the git
 // folder; a `.git` file is followed to its `gitdir:` (and a linked worktree's `commondir`) only to read info/exclude; a `.git` link,
 // FIFO or device, or a UNC or device path in a git file, gives no line. Git files are read only as regular files (never through a link,
@@ -37,12 +38,16 @@ const RULES_HEADING = '## Standing rules';
 const SECTION_END = /^#{1,2}[ \t]/; // the next heading of level 1 or 2 ends the section
 const DESIGN_TYPES = ['architect', 'Plan'];
 const REUSE_WORDS = 'Reuse inventory';
+const ANALYSIS_BRIEF_PREFIX = 'analysis:'; // exact case, like the `read-only:` brief line of writer-agents.mjs
 const DESIGN_LISTS = 'Your spec must include "Reuse inventory" (the existing component, string or helper for each need, or none: <search used>) '
   + 'and "Contract facts" (every default, fallback, limit and enum the API schema states, and what the design does about each); '
   + 'list product facts the repo does not state under "Unconfirmed".';
 export const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu; // control and format characters (bidi marks included) and line separators
 const READ_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0); // a FIFO swapped in after a stat never blocks (POSIX only)
 const NO_FOLLOW = constants.O_NOFOLLOW ?? 0; // POSIX only; on Windows the lstat check before the open stands alone
+
+/** @returns {boolean} true when a line of the brief, trimmed, starts with `analysis:` (an analysis brief, not a spec brief) */
+const isAnalysisBrief = (prompt) => prompt.split(/\r?\n/).some((line) => line.trim().startsWith(ANALYSIS_BRIEF_PREFIX));
 
 const rulesLine = (path) => `Read "## Standing rules" in ${path.replace(UNPRINTABLE, '')} first; where they differ from this brief, follow them.`;
 
@@ -175,7 +180,7 @@ export function withBriefLines(toolInput, cwd) {
     const prompt = toolInput?.prompt;
     if (typeof prompt !== 'string') return null;
     const rules = prompt.includes(STATUS_FILE) ? undefined : standingRulesFile(typeof cwd === 'string' ? cwd : process.cwd());
-    const design = DESIGN_TYPES.includes(toolInput.subagent_type) && !prompt.includes(REUSE_WORDS);
+    const design = DESIGN_TYPES.includes(toolInput.subagent_type) && !prompt.includes(REUSE_WORDS) && !isAnalysisBrief(prompt);
     if (rules === undefined && !design) return null;
     const lines = [...(rules === undefined ? [] : [rulesLine(rules)]), prompt, ...(design ? [DESIGN_LISTS] : [])];
     return { ...toolInput, prompt: lines.join('\n') };
