@@ -31,5 +31,5 @@ agent or a branch.
 - `agent-rows.mjs`: one row per agent for `/where` (bar, confidence, time left, doing now, where it works).
 - `git-rows.mjs`: the status line's one git summary, and for `/where` one row per worktree (branch, ahead/behind, changed files,
   last commit age, the agents there).
-- `stat-rows.mjs`: the road part of the job row, and for `/where` the road row and the finish clock's trend.
+- `stat-rows.mjs`: for `/where` the road row and the finish clock's trend.
 - `tree.mjs`: the plain-text tree `/where` prints, with every item unclipped, what waits on the owner and the limits per account.

@@ -19,7 +19,7 @@ Keep every file valid at each commit: the files are live in every Claude session
 ## Add an agent
 `home/agents/<name>.md` with frontmatter `name`, `description` ("Use to ..."), `model` (alias `haiku`, `sonnet` or `opus`, or a full id such as `claude-opus-5-5`), `effort`,
 optional `tools`/`disallowedTools`. State what it returns and a size cap. Add a routing line to
-`home/CLAUDE.md` if it changes who does what. Add it to `docs/catalog.md`. No `maxTurns`: a turn cap stops the agent mid-task; keep it focused through its prompt instead.
+`home/CLAUDE.md` if it changes who does what. Add it to `docs/catalog.md`. No `maxTurns`: at the cap the agent stops and returns a partial result that has to be resumed; keep it focused through its prompt instead.
 
 ## Add a rule
 `home/rules/<area>.md`: frontmatter `paths: [globs]` (omit for always-on), then one line per rule starting with its `ID`.

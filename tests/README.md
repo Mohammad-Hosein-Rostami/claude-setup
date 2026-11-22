@@ -7,8 +7,9 @@ in `home/` or `scripts/`; the other `.mjs` files are shared helpers and are not 
 
     node --test tests/*.test.mjs
 
-Never run a bare `node --test`. Nothing runs the suite for you: the pre-commit hook (`.githooks/pre-commit`) only runs gitleaks and
-`node --check` on staged hook files, and landing runs no tests. One area: `node --test tests/watch*.test.mjs`. One file: `node --test tests/estimate.test.mjs`.
+Never run a bare `node --test`. Nothing runs the whole suite for you: the pre-commit hook (`.githooks/pre-commit`) only runs gitleaks and
+`node --check` on staged hook files; the done-check runs only the tests related to a change, when an agent or the session stops and
+again when `land-lane` lands a lane. One area: `node --test tests/watch*.test.mjs`. One file: `node --test tests/estimate.test.mjs`.
 The `ui-check` tool has its own tests: `pnpm --dir home/tools/ui-check test`.
 
 ## Areas (by file name prefix)
@@ -18,11 +19,11 @@ The `ui-check` tool has its own tests: `pnpm --dir home/tools/ui-check test`.
 - `ask-queue*`: the `ask` tool's decision queue.
 - `mode*`, `skill-router*`, `statusline`: the session-notes hook (lead rules, compaction notes), the skill router and the status line.
 - `install-order`, `lane-new`, `merge-settings`, `doctor-*`: the install scripts, the new-lane script, settings merge and health check.
-- `env-names*`, `estimate*`, `readable*`, `recall-*`, `ui-coverage*`, `watch-*`: one group per tool in `home/tools/`.
+- `env-names*`, `estimate*`, `recall-*`, `ui-coverage*`, `watch-*`: one group per tool in `home/tools/`.
 
 ## Shared helpers (not tests)
 
-`hook-env.mjs`, `pin-home.mjs`, `warm-exec.mjs`, `env-names-fixtures.mjs`, `estimate-tables.mjs`, `readable-helpers.mjs`, `recall-helpers.mjs`,
+`hook-env.mjs`, `pin-home.mjs`, `warm-exec.mjs`, `env-names-fixtures.mjs`, `estimate-tables.mjs`, `recall-helpers.mjs`,
 `recall-fakes.mjs`, `timing.mjs`, `pre-bash-guard-final-cases.mjs`, `worker-tests.mjs`. Each starts with a comment saying what it gives you.
 
 ## Watch out for

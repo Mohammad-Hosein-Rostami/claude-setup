@@ -72,8 +72,9 @@ Keep extra usage off in claude.ai so nothing can bill credits.
   never answers. "Answer in terminal" (or Esc) opens the normal question; answering it there, or turning it down there, closes
   the open dialog.
   With no GUI (ssh, no display) the terminal question stays and auto-continues after 10 minutes (`askUserQuestionTimeout`
-  "10m"; the CLI also takes one or five minutes, or never), a timer that pauses while that terminal window is focused, after any
-  keypress, and with Remote Control on. The recommended option is chosen to be safe with nobody there, and each default taken
+  "10m"; the CLI also takes one or five minutes, or never), a timer that does not count down while that terminal window is
+  focused and starts again after any keypress; it never starts in a background session, in screen reader mode or while the
+  session is connected to Remote Control (those questions wait for an answer). The recommended option is chosen to be safe with nobody there, and each default taken
   is logged. For a big or deleting change the recommended option is "wait for the owner", so a timeout pauses only that part
   (RC10, skill `ask-owner`).
 - Guard dialogs (`git push`, publish, `rm -rf` outside the project or of a whole folder such as `rm -rf *`, prod-host writes, literal secrets) default to

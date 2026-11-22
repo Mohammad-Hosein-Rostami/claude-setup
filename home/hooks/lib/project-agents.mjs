@@ -11,6 +11,9 @@
 //     a later source replaces an earlier one under the exact same name, so a project agent replaces a personal and a built-in one;
 //     names are compared as they are (for example `Scout` and `scout` are two names).
 //   Re-read in 2.1.329: the same order and `z.set(Q.agentType,Q)`; project agents of additional directories now come first.
+//   Re-read in 2.1.330: the same order, plus `flagSettings` agents that carry `isEnabled` come first
+//     (`z=[e.filter((Q)=>Q.source==="flagSettings"&&Q.isEnabled!==void 0),o,r,g,y,R,k]`); a project agent still replaces a
+//     personal and a built-in one.
 // Principle: the note is exact where it can be, says "check by hand" for everything else Claude Code could load, and is silent only
 // for a file Claude Code itself does not load (no frontmatter, no closing ---, no `name`). It never states a guess as a fact:
 // - "Shadowed personal agents" and "shadows the ... agent" come only from the exact `name` of a plain frontmatter.

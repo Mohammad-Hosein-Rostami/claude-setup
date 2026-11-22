@@ -1,14 +1,12 @@
-// The road and trend parts of the status line and `/where` (spec-tui-2 stats 1, 2 and 4, and the trend of "Seen in the screenshot"):
+// The road row and the trend part of `/where` (spec-tui-2 stats 1, 2 and 4, and the trend of "Seen in the screenshot"):
 //   road p8 · step 1/12 unhook settings · 2/5 lanes · step 40 min left · by 21:10          (roadRow: `/where`'s road row)
-//   road final 2/4 · 2/5 lanes                                                           (roadPart: the status line's job row, right)
 //   ↑ +1h10 later / ↓ -20m sooner                                                       (trendPart: the finish clock's last move)
-// Exports: roadRow(numbers, facts, clock, look) -> string | null; roadPart(numbers, facts, clock, look) -> part | null;
-// trendPart(trend, look) -> part | null; shortDuration(minutes).
+// Exports: roadRow(numbers, facts, clock, look) -> string | null; trendPart(trend, look) -> part | null; shortDuration(minutes).
 // Sources: numbers = work-row.mjs jobView(...).road (the estimate cache's progress.road: id, step, steps, rows, leftMin, clocks);
 // facts = board.road (job-facts.mjs: goal, the step's title, lanes landed of all, `live`).
-// Stale roads (F7): a road whose facts say `live: false` (no row of its current step started or finished this session) is not on the
-// status line (roadPart null) and reads `idle` in `/where`; facts without `live` (an old board file) count as live.
-// Colour (cells.mjs, RC5): the `road` label dim on the line; the active step cyan (`/where` prints it plain, tree.mjs); a later finish yellow; landed lanes
+// Stale roads (F7): a road whose facts say `live: false` (no row of its current step started or finished this session) reads `idle`
+// in `/where` (the status line hides it: work-row.mjs idleRoad); facts without `live` (an old board file) count as live.
+// Colour (cells.mjs, RC5): the active step cyan (`/where` prints it plain, tree.mjs); a later finish yellow; landed lanes
 // and a sooner finish in the default colour; every state has its word (`later`, `sooner`, `idle`).
 // Invariants: pure (no I/O); every outside text goes through cleanText; every row fits look.columns; a row with nothing to say is null.
 import { clockOf, cleanText, cutWords, durationText, fitParts, STATE } from './cells.mjs';
@@ -72,26 +70,6 @@ function stepTimeParts(numbers, clock, look) {
 
 /** The facts of the road the numbers name (facts naming another road are not this road's), or null. */
 const factsOf = (numbers, facts) => (facts !== null && typeof facts === 'object' && (numbers === null || numbers?.name === undefined || facts.name === numbers.name) ? facts : null);
-
-/**
- * The compact road part of the status line's job row: `road final 2/4 · 2/5 lanes`, right-aligned, the label dim.
- * @param {object | null} numbers jobView(segment).road (the estimate's numbers), or null
- * @param {object | null} facts board.road (job-facts.mjs), or null
- * @param {{ nowMs: number, timeZone: string }} clock now and the render's one zone (unused: the job row carries the clocks)
- * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal
- * @returns {{ text: string, spans: object[], right: true, drop: number } | null} null without a road or for an idle one
- */
-export function roadPart(numbers, facts, clock, look) {
-  const own = factsOf(numbers, facts);
-  if (own?.live === false) return null;
-  const name = typeof numbers?.name === 'string' ? numbers.name : own?.name;
-  const step = isCount(numbers?.step) ? numbers.step : own?.step;
-  if (typeof name !== 'string' || !isCount(step) || step < 1) return null;
-  const steps = numbers?.steps ?? own?.steps;
-  const lanes = lanesPart(numbers, own);
-  const rest = ` ${cleanText(name, look).slice(0, ROAD_NAME_CHARS)} ${step}${isCount(steps) && steps > 0 ? `/${steps}` : ''}${lanes ? `${look.glyph.sep}${lanes.text}` : ''}`;
-  return { text: `road${rest}`, spans: [{ text: 'road', state: STATE.dim }, { text: rest }], right: true, drop: 3 };
-}
 
 /**
  * The road row: the road, its current step with its title, lanes landed of all, the step's time left and finish clock.

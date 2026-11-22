@@ -6,7 +6,7 @@
 //     folder is walked recursively, hidden entries included, links to folders and to files followed, names ending in .md taken.
 //   rE(...,k,JKt) with JKt=1048576: only a regular file of at most 1 MiB is read.
 // Re-read in the 2.1.329 bundle: RK() passes the same ripgrep arguments, now under `AbortSignal.timeout(3000)`: a scan that takes
-// longer loads nothing from that folder. The 1 MiB read limit was not found again there (not re-read).
+// longer loads nothing from that folder. The 1 MiB read limit was found again in 2.1.329 (`e8t=1048576`) and 2.1.330 (`eQt=1048576`).
 // The files come from whatever repository the session opens, so they are untrusted. Invariants: read-only; never throws (an
 // unreadable folder or file counts as nothing there). Nothing is read through a link, and no link is followed even to see what it
 // leads to (security review round 3, R3-7: a stat of a link into an automounter can stall): a link is told from its own entry in

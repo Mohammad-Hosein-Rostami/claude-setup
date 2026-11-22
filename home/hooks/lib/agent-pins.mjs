@@ -2,11 +2,12 @@
 // Exports: readPin(agentType, cwd, env), floorDrops(call, pin), flooredAgentInput(toolInput, cwd, env).
 // Why: Claude Code ranks the Agent call's `model` above the agent file's frontmatter, so a lower per-call value silently
 // undoes the pin (recommendations item 2). agent-model-guard.mjs drops such a value from the call; it never adds one.
-// Which file: the one Claude Code loads. Read from the Claude Code 2.1.329 bundle (minified names):
+// Which file: the one Claude Code loads. Read from the Claude Code 2.1.329 bundle (minified names), re-read in 2.1.330:
 //   dkr(): the personal folder is jl()/agents (jl: the config folder, CLAUDE_CONFIG_DIR or ~/.claude); the project folders are
 //     Ioe(): every <folder>/.claude/agents from the session folder up, stopping before the home folder and after the git root
 //     (lib/agent-folders.mjs walks the same way), plus int(): the main checkout's .claude/agents for a linked worktree whose root
-//     has none. RK()/ukr(): every `*.md` file below a folder, at any depth, links followed.
+//     has none. RK()/ukr(): every `*.md` file below a folder, at any depth, links followed. 2.1.330 uV() reads them in sorted
+//     path order (`h.toSorted().map(`), so of two files of one type in one folder the last in code-unit order of its path is loaded.
 //   nTn()/R5r(): a file is an agent only with a string `name` and a string `description`; its type is `name`, never the file name.
 //   Oee(): a Map by type filled in the order personal, then project folders sorted by tPe() (fewer path separators first), so
 //     the deepest project folder wins, and any project agent beats the personal one.
@@ -14,7 +15,8 @@
 //     `effort` gets CLAUDE_CODE_SUBAGENT_EFFORT when set. So a file that pins nothing is floored at those defaults.
 // Safe side: a file whose frontmatter is not in the plain subset (lib/agent-frontmatter.mjs), a folder reached through a link the
 // walk does not follow, a walk that may miss folders further up, or two files of one type with different pins: no floor, since
-// the loaded pin is not known. A file Claude Code skips (no name or description, no closed frontmatter, over 1 MB,
+// the loaded pin is not known (for two files: the loaded one is the last in sorted path order, which this walk does not reproduce,
+// as agentFiles() lists breadth-first in readdir order). A file Claude Code skips (no name or description, no closed frontmatter, over 1 MB,
 // not a `.md` file) is skipped here too; a frontmatter still open after the first 64 KB read is unsure.
 // The type comes from the call, so it is untrusted: it must match TYPE_PATTERN before any path is joined.
 // Order: model family haiku < sonnet < opus (by substring), then, inside a family, the version of a full id (claude-opus-4-1 <
@@ -114,7 +116,7 @@ function folderVerdict(folder, agentType) {
   }
   if (pins.length === 0) return NOT_FOUND;
   const same = pins.every(({ model, effort }) => model === pins[0].model && effort === pins[0].effort);
-  return same ? { state: 'found', pin: pins[0] } : UNSURE; // which of two files the CLI keeps is not known
+  return same ? { state: 'found', pin: pins[0] } : UNSURE; // the CLI keeps the last in sorted path order, which this readdir-order walk does not reproduce
 }
 
 /** @returns {string | undefined} the main checkout's agents folder of the linked worktree the session folder is in */

@@ -5,9 +5,10 @@
 // to RECALL_DIGEST_WAIT_MS (default 8000). The digest names the account the session's last checkpoint call ran on
 // (never a token), and when that call had no login (`error: "auth"` in usage.jsonl) it says so, also with no notes.
 // Prints nothing when there are no notes and no such failure; never fails the session start.
-// With `--part rules` or `--part state` (their own hook entries on SessionStart compact|resume and on PreCompact, so each string has
-// its own 10,000-char cap) it prints that part of the session's STATUS.md digest instead (tools/status/status-digest.mjs: every
-// active standing rule in full; open rows with next steps, "Don't redo", decisions, git facts). PreCompact stdout is advice to the
+// With `--part rules` or `--part state` (their own hook entries on PreCompact and on SessionStart: the rules on
+// startup|compact|resume, the state on compact|resume; so each string has its own 10,000-char cap) it prints that part of the
+// session's STATUS.md digest instead (tools/status/status-digest.mjs: the standing rules within RULES_CAP, those left out counted on
+// the last line; open rows with next steps, "Don't redo", decisions, git facts). PreCompact stdout is advice to the
 // summarizer only; this hook never blocks a compaction (it always exits 0).
 // Exports: digestFor, accountLine.
 // Invariants: the digest is wrapped in <recall-digest> tags and note text cannot contain such a tag (defanged in buildDigest);
