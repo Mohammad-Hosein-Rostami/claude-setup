@@ -132,3 +132,19 @@ test('a part with spans keeps bold on each span and when cut, and is cut with no
   const tight = fitParts([{ text: 'xxxxxxxx', state: STATE.dim }, { text: 'abcdef', spans: [{ text: 'abcdef', state: hueState(0) }], join: '' }], lookFor(TERM_256, 13));
   assert.equal(plain(tight), 'xxxxxxxx', 'no room even for the cut mark: nothing of the next part');
 });
+
+test('at 80 columns a workflow row keeps its finish clock before the running count, and the base row of a repository with no main checkout is bold', () => {
+  const board = placedWriterBoard();
+  const agents = board.agents.filter((agent) => agent.runId === 'wf_remove');
+  const row = plain(runHeader(board.runs[0], agents, ctxOf(board), lookFor(NO_COLOR_ENV, 85)));
+  assert.ok(row.includes('09:13') && !row.includes('2 run'), row);
+  const noMain = { ...board, repo: { ...board.repo, worktrees: board.repo.worktrees.filter((wt) => !wt.main) } };
+  assert.ok(repoRows(noMain, 1, ctxOf(noMain), lookFor(TERM_256, 160))[0].startsWith(`${BOLD}⎇ claude-setup:main`));
+});
+
+test('the limit labels `5h` and `7d` of the session row are dim and their value keeps its state colour', () => {
+  const view = viewOf(screenshotBoard(), NOW, TERM_256);
+  view.input = { ...view.input, rate_limits: { five_hour: { used_percentage: 40, resets_at: NOW / 1000 + 3600 }, seven_day: { used_percentage: 10, resets_at: NOW / 1000 + 86_400 } } };
+  const row = sessionRow(view, lookFor(TERM_256, 200));
+  assert.ok(row.includes('\u001b[2m5h\u001b[0m') && row.includes('\u001b[2m7d\u001b[0m'), row);
+});

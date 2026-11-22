@@ -90,6 +90,7 @@ test('a run is tied to the lane of its placed agents: the lane needs a placed wo
   assert.equal(keyOf(boardOf({ ...base, agents: [placed({ wt: null })] })), 'wf-one', 'a branch with no worktree is no sure placement');
   assert.equal(keyOf(boardOf({ ...base, agents: [placed({ wt: 'lane-7', branch: 'worktree-wf_1-2' })] })), 'wf-one', 'an isolated branch in a lane folder is no lane');
   assert.equal(keyOf(boardOf({ ...base, agents: [placed({ id: 'x', wt: 'lane-b', branch: 'lane-b' }), placed({ id: 'y' }), placed({ id: 'z' })] })), 'lane-a', 'two on lane-a beat one on lane-b');
+  assert.equal(keyOf(boardOf({ ...base, agents: [placed({ wt: 'ghost', branch: 'ghost' })] })), 'wf-one', 'a worktree the repository does not list is no lane');
   const nameless = boardOf({ runs: [wf], worktrees: [{ name: null, branch: 'lane-a', main: false }], agents: [placed({ wt: null })] });
   assert.equal(keyOf(nameless), 'wf-one', 'an agent with no worktree does not match a worktree with no name');
   const twoRepos = boardOf({ runs: [wf], repos: [{ name: 'r1', worktrees: [] }, { name: 'r2', worktrees: [lane('lane-a')] }], agents: [placed({ repo: 'r2' })] });
