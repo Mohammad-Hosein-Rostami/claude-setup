@@ -9,7 +9,7 @@
 // a copy of an existing lane branch, a fast-forward merge into the base without a suite PASS: lib/git-advice.mjs, a `for|while|until` loop that sleeps 5 s or
 // more or a single sleep of 30 s or more, unless the call is sent with run_in_background: true or is a Monitor call: lib/wait-advice.mjs) never asks:
 // alone, the first send is denied with the fix and the identical retry runs; next to an ask or bounce it is appended (table: lib/bounce-once.mjs). Every
-// ask and its outcome is logged (lib/guard-log.mjs, no secrets). Monitor calls reach this hook too (seen in transcripts). `$((..))` has no command word.
+// ask and its outcome is logged (lib/guard-log.mjs, no secrets). Monitor calls reach this hook with tool_name "Monitor" (call-window log, transcripts).
 // Rules. DESTRUCTIVE (the dialog says "DESTRUCTIVE: ..."): force push (incl. -fu clusters and +refspec), `push --mirror`, remote branch delete, rm -r of a
 // whole folder (the working directory, a bare glob such as `*` or `./**/*` of it, the project root, home, `/`: lib/rm-paths.mjs), rm -r outside the project
 // (temp dirs allowed, judged from every folder the line's `cd`s may have led to: lib/cd-folder.mjs, `cd` to `~`, `$HOME` and `$(git rev-parse
@@ -55,6 +55,7 @@
 // /dev/disk*`, `cp|mv|tee ... /dev/disk*|sd*|nvme*`, an `alias` whose body would ask ask. PGHOST/PGSERVICE/MYSQL_HOST set earlier in the line count as the
 // host of a later psql/mysql. Prod SQL with a `$tag$` quote, a backslash escape or `;` followed by more text is not read-only. Nesting deeper than
 // MAX_NESTING asks. An unquoted `$X` with blanks is judged by every rule as zsh (one word) and as bash (split) reads it (`X="push -f"; git $X`).
+// Arithmetic on anything but numbers asks, as does a word filled in at run time (`read X; git $X`, `"$@"`) in a checked command (lib/runtime-values.mjs).
 // Fail to ask (Round 4, lib/raw-risk.mjs): the two parsers are not a security boundary. A command that has ANY hidden-execution construct (`$(`, backtick,
 // `<<`, `<(`, eval, trap, case, `\r`, a pipe into a shell ...) and a dangerous word anywhere in its raw text, quoted or not, asks with "risky word inside
 // shell expansion" when nothing else asked. Round 5: the quoted message of `git commit` and `gh pr|issue create|edit|comment` is data (lib/message-text.mjs),
@@ -62,16 +63,14 @@
 // position; watch, parallel, PROMPT_COMMAND=, `script|expect -c`, `perl|python|node|ruby -e|-c|-p`, osascript, tmux, fish/pwsh/npx -c are hidden constructs.
 // An exception inside the rules asks "guard error" (decideSafely; the log keeps the error class, not the command). A command over MAX_COMMAND_CHARS (32 KB)
 // is not parsed at all: it asks "command too long to check"; the log and dialog keep only its first 2 KB, masked. One work budget bounds the rest
-// (lib/rm-paths.mjs): a line whose variables fill in more than MAX_LINE_EXPANDED_CHARS, or whose rm targets expand to more than MAX_LINE_READINGS words, asks
-// "command too complex to check".
+// (lib/rm-paths.mjs): a line whose variables fill in more than MAX_LINE_EXPANDED_CHARS, or whose rm targets expand to more than MAX_LINE_READINGS words, asks "command too complex to check".
 // Known limits (not detected): shell aliases and functions defined elsewhere (also in a file `source` reads), a variable assigned from another command's
 // output, interpreter code read from a file or stdin or whose delete call is not one the deleter rules list (lib/other-deleters.mjs), PowerShell
 // -EncodedCommand and -File, cmd `^` escapes and `%VAR%` paths, wrappers that take the command as ONE string (busybox), stdin paths that xargs hands to
 // anything but rm -r, a credential sent by a tool off the sender list, copied first (`cp -r ~/.ssh /tmp/x`), piped into ssh from a `{ }` group or loop, or
 // passed as an ssh argument (`ssh h "$(cat key)"`), a function body that runs after a later `cd`, a `cd` behind an unknown wrapper, a command of a loop body
 // that runs again after a `cd` later in the body (a `cd` that may not have taken effect is judged from the folder before it and the one after; a relative one
-// in a loop or a function body makes the folder unknown: relative rm -r targets then ask), an ssh alias that hides a production host, a link made by an
-// earlier command line, and the PowerShell tool (the hook matcher covers Bash only).
+// in a loop or a function body makes the folder unknown: relative rm -r targets then ask), an ssh alias that hides a production host, a link made by an earlier command line, and the PowerShell tool (the hook matcher covers Bash only).
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import {
@@ -99,6 +98,7 @@ import { adviceOnce } from './lib/bounce-once.mjs';
 import { isAdviceReason, splitAdvice } from './lib/reason-classes.mjs';
 import { findLiteralSecret } from './lib/secrets.mjs';
 import { commandReadings, shellHazards } from './lib/shell-hazards.mjs';
+import { arithmeticReasons } from './lib/runtime-values.mjs';
 import { logDecision } from './lib/guard-log.mjs';
 import { lex, segments, tokenize } from './lib/shell-words.mjs';
 import { riskyWordInExpansion, unreadableNameReasons } from './lib/raw-risk.mjs';
@@ -184,7 +184,7 @@ function reasonsOf(command, context) {
     trackAssignments(scope, seg);
   });
   // one command line: the file may be read in one command and sent by another; a link made in one command may be deleted through in another
-  reasons.push(...[checkCredentialSend(commands), checkLinkedDelete(commands)].filter((reason) => reason !== undefined));
+  reasons.push(...[checkCredentialSend(commands), checkLinkedDelete(commands)].filter((reason) => reason !== undefined), ...arithmeticReasons(command));
   // a nested body (`$(...)`, backticks) may run after any of the line's `cd`s: once the line has one, its folder is unknown there
   const nestedCwd = folder.moved ? { cwd: null, maybeCwds: [...maybeFolders(folder), ...maybeCwds] } : { cwd, maybeCwds };
   for (const inner of nested) reasons.push(...reasonsOf(inner, { ...nestedCwd, project, prodHosts, parse, depth: depth + 1, judged, line, work }));

@@ -21,6 +21,9 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
   `find -delete`, `eval`, hidden execution, push or publish, production hosts, commands git runs).
 - `rm-kind.mjs`: is an `rm` recursive as far as its option words can be read (an unquoted `$F` where the options stand counts); `moved-text.mjs`: after a `cd`, a recursive `rm` or deleting `find` in quoted text or in the body of a heredoc a program runs asks.
 - `other-deleters.mjs`: deleters other than `rm` (rimraf, `rsync --delete`, PowerShell and `cmd` delete text), judged on the same targets as `rm -r`.
+- `runtime-values.mjs`: values a line gets only when it runs: arithmetic on them asks (bash runs `a[$(cmd)]` inside `$(( ))`), and so
+  does a word filled in from `read`, an array or `"$@"` in a command a rule reads; it also tells `shell-hazards.mjs` which `((` bash
+  reads as arithmetic.
 - `credential-send.mjs`: asks when a private credential file (`~/.ssh/id_*`, `.aws/credentials`, `.netrc` ...) and a network sender (curl, scp, nc, a cloud upload) are in one command line.
 - `git-run-values.mjs`: the values git runs from a variable or config entry (`GIT_EDITOR`, `GIT_SSH_COMMAND` ...); asks when the guard cannot read what would run. Used by `git-runs.mjs`.
 - `guard-state-write.mjs`: asks before a write, removal, link or FIFO under `~/.claude/private` or the guard's own state (remembered allows, bounce records, log); reading is allowed.

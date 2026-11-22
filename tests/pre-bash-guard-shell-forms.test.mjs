@@ -8,6 +8,8 @@ import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
+import { ARITHMETIC_REASON, RUNTIME_VALUE_REASON } from '../home/hooks/lib/runtime-values.mjs';
+import { VARIABLE_COMMAND_REASON } from '../home/hooks/lib/shell-hazards.mjs';
 
 const PROJECT = resolve('/work/proj');
 const ctx = { cwd: PROJECT, project: PROJECT, prodHosts: [] };
@@ -147,10 +149,39 @@ test('a quoted variable is one word, and a split value that runs nothing risky s
   }
 });
 
-test('an arithmetic body has no command word: `$(( $(cat a) - $(cat b) ))` and `(( $N > 2 ))` stay quiet', () => {
-  for (const line of ['echo dur $(( $(cat a) - $(cat b) ))s', 'echo $(( 1 + 2 ))', 'echo $(($(cat a)-1))', '(( $N > 2 )) && echo big',
-    'x=$(( $CMD ))', 'a; (( $X + 1 )) && b', 'echo $(( $(echo rm) ))', 'echo $(( (1 + 2) * $N ))']) {
+test('arithmetic on numbers only stays quiet: literals, variables set to a number earlier on the line, specials, lengths, numeric loops', () => {
+  for (const line of ['echo $(( 3 + 4 ))', 'N=5; echo $(( N * 2 ))', 'N=5; echo "took $(( $N - 1 ))s"', 'echo $(( (1 + 2) * 0x10 ))',
+    'for ((i=0; i<3; i++)); do echo $i; done', 'for i in 1 2 {3..5}; do echo $(( i * 10 )); done', 'echo $(( $# + $? + ${#files[@]} ))',
+    'export N=2 M=3; (( N < M )) && echo less', 'echo \'$(( $C ))\'', 'cat <<\'EOF\'\n$(( $C ))\nEOF']) {
     for (const platform of PLATFORMS) quietOn(platform, line);
+  }
+});
+
+test('arithmetic on text read at run time asks with that reason, never as a variable command word: bash runs a[$(cmd)] inside it', () => {
+  const lines = ['echo dur $(( $(cat a) - $(cat b) ))s', 'C=$(cat f); echo $(( $C ))', 'echo $(($(cat a)-1))', '(( $N > 2 )) && echo big',
+    'x=$(( $CMD ))', 'a; (( $X + 1 )) && b', 'echo $(( (1 + 2) * $N ))', 'N=5; N=$(cat f); echo $(( N ))', 'N=5; read N; echo $(( N ))',
+    'N=5 true; echo $(( N ))', "echo 'N=5'; echo $(( N ))", '(N=5); echo $(( N ))', 'echo $(( N )); N=5', 'echo $(( a[1] + 1 ))',
+    'for i in $(seq 3); do echo $(( i * 2 )); done', 'cat <<EOF\nit\'s $(( $C ))\nEOF', 'echo "$(( $C ))"'];
+  for (const platform of PLATFORMS) {
+    for (const line of lines) assert.deepEqual(reasonsOn(platform, line), [ARITHMETIC_REASON], `${platform}: ${line}`);
+  }
+});
+
+test('a `((` bash does not read as arithmetic keeps the command-word rule: escaped or quoted parentheses are not counted', () => {
+  for (const platform of PLATFORMS) {
+    for (const line of ['C=$(cat f); echo \\( $(($C \\)) )', 'C=$(cat f); echo \')\' $(($C) )', 'C=$(cat f); echo "(" $(($C) )']) {
+      assert.ok(reasonsOn(platform, line).includes(VARIABLE_COMMAND_REASON), `${platform}: ${line}`);
+    }
+  }
+});
+
+test('a word filled in at run time asks in a command a rule reads: read, an array, set --, "$@", ${!X}; quoted in a script it does not', () => {
+  const lines = ['A=(push --force); git "${A[@]}" origin main', 'A=(push --force); git $A origin main', 'set -- push --force; git "$@" origin main',
+    'read X <<< "push --force"; git $X origin main', 'mapfile -t X < f; git "${X[0]}" origin', 'Y=X; git ${!Y} origin', 'git $1 origin'];
+  for (const platform of PLATFORMS) {
+    for (const line of lines) assert.ok(reasonsOn(platform, line).includes(RUNTIME_VALUE_REASON), `${platform}: ${line}`);
+    assert.ok(reasonsOn(platform, 'set -- rm -rf /; "$@"').includes(VARIABLE_COMMAND_REASON), platform);
+    for (const line of ["ls | xargs sh -c 'echo \"$@\"' _", 'read X; echo "$X"', 'git log "${#A[@]}"', 'A=(a b); ls "${A[@]}"']) quietOn(platform, line);
   }
 });
 
