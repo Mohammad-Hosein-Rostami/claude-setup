@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { addWorktree, commit, git, makeRepo, tidy } from './git-tidy-helpers.mjs';
+import { addWorktree, commit, git, makeRepo, snapshot, tidy } from './git-tidy-helpers.mjs';
 import { landLane } from '../home/tools/git-tidy/lib/land.mjs';
 import { formatLand, landExitCode } from '../home/tools/git-tidy/lib/report.mjs';
 import { openRepo } from '../home/tools/git-tidy/lib/repo.mjs';
@@ -79,7 +79,7 @@ const noSwitchEnv = () => {
 test('no PASS record: exit 4 and the base is untouched (CLI, `test` check on)', () => {
   const { dir } = laneWithWorktree();
   const before = git(dir, 'rev-parse', 'main');
-  const result = tidy(['land', 'lane/x', dir, '--checks', 'test'], { cwd: dir, env: noSwitchEnv() });
+  const result = tidy(['land', 'lane/x', dir, '--checks', 'test', '--tip', git(dir, 'rev-parse', 'lane/x')], { cwd: dir, env: noSwitchEnv() });
   assert.equal(result.status, 4, result.stdout + result.stderr);
   assert.equal(git(dir, 'rev-parse', 'main'), before);
   assert.ok(branchNames(dir).includes('lane/x'));
@@ -87,7 +87,7 @@ test('no PASS record: exit 4 and the base is untouched (CLI, `test` check on)', 
 
 test('with the `test` check off the CLI lands a lane that has no PASS record (exit 0)', () => {
   const { dir } = laneWithWorktree();
-  const result = tidy(['land', 'lane/x', dir], { cwd: dir, env: noSwitchEnv() });
+  const result = tidy(['land', 'lane/x', dir, '--tip', git(dir, 'rev-parse', 'lane/x')], { cwd: dir, env: noSwitchEnv() });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.deepEqual(branchNames(dir), ['main'], 'the lane is landed and deleted');
   assert.equal(git(dir, 'log', '--format=%s', '-1', 'main'), 'add lane.txt');
@@ -100,7 +100,7 @@ test('a conflict aborts the rebase, names the file and exits 3', () => {
   git(dir, 'checkout', '-q', 'main');
   commit(dir, 'same.txt', 'main version\n');
   const laneTip = git(dir, 'rev-parse', 'lane/c');
-  const result = tidy(['land', 'lane/c', dir], { cwd: dir });
+  const result = tidy(['land', 'lane/c', dir, '--tip', laneTip], { cwd: dir });
   assert.equal(result.status, 3, result.stdout + result.stderr);
   assert.match(result.stdout, /same\.txt/);
   assert.equal(git(dir, 'rev-parse', 'lane/c'), laneTip, 'the lane is where it was');
@@ -112,7 +112,7 @@ test('a tracked change in the base folder exits 2 naming the file, before any ch
   const { dir } = laneWithWorktree();
   writeFileSync(join(dir, 'base.txt'), 'edited');
   const laneTip = git(dir, 'rev-parse', 'lane/x');
-  const result = tidy(['land', 'lane/x', dir], { cwd: dir });
+  const result = tidy(['land', 'lane/x', dir, '--tip', laneTip], { cwd: dir });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /base\.txt/);
   assert.equal(git(dir, 'rev-parse', 'lane/x'), laneTip, 'the lane was not rebased');
@@ -132,7 +132,7 @@ test('an untracked file the merge would overwrite exits 2 naming it, and nothing
   const { dir } = laneWithWorktree();
   writeFileSync(join(dir, 'lane.txt'), 'untracked and in the way\n');
   const [mainTip, laneTip] = [git(dir, 'rev-parse', 'main'), git(dir, 'rev-parse', 'lane/x')];
-  const result = tidy(['land', 'lane/x', dir], { cwd: dir });
+  const result = tidy(['land', 'lane/x', dir, '--tip', laneTip], { cwd: dir });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /lane\.txt/);
   assert.deepEqual([git(dir, 'rev-parse', 'main'), git(dir, 'rev-parse', 'lane/x')], [mainTip, laneTip]);
@@ -156,7 +156,7 @@ test('--rebase-only rebases, prints the tip and the number of changed patches, a
   git(dir, 'checkout', '-q', 'main');
   commit(dir, 'f.txt', 'l1\nl2\nMAIN\nl4\nl5\nl6\nl7\nl8\nl9\n');
   const mainTip = git(dir, 'rev-parse', 'main');
-  const result = tidy(['land', 'lane/p', dir, '--rebase-only'], { cwd: dir });
+  const result = tidy(['land', 'lane/p', dir, '--rebase-only', '--tip', git(dir, 'rev-parse', 'lane/p')], { cwd: dir });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.deepEqual(result.stdout.trim().split('\n'), [`tip ${git(dir, 'rev-parse', 'lane/p')}`, 'patches-changed 1']);
   assert.equal(git(dir, 'rev-parse', 'main'), mainTip);
@@ -164,7 +164,7 @@ test('--rebase-only rebases, prints the tip and the number of changed patches, a
 
 test('--rebase-only of a lane that rebases without any context change reports 0 changed patches', () => {
   const { dir } = laneWithWorktree();
-  const result = tidy(['land', 'lane/x', dir, '--rebase-only'], { cwd: dir });
+  const result = tidy(['land', 'lane/x', dir, '--rebase-only', '--tip', git(dir, 'rev-parse', 'lane/x')], { cwd: dir });
   assert.match(result.stdout, /patches-changed 0/);
 });
 
@@ -184,8 +184,8 @@ test('findings left after landing give exit 1 and are printed', () => {
 
 test('an unknown lane, and the base itself, are usage errors (exit 2)', () => {
   const { dir } = laneWithWorktree();
-  assert.equal(tidy(['land', 'no-such-lane', dir], { cwd: dir }).status, 2);
-  assert.equal(tidy(['land', 'main', dir], { cwd: dir }).status, 2);
+  assert.equal(tidy(['land', 'no-such-lane', dir, '--tip', git(dir, 'rev-parse', 'main')], { cwd: dir }).status, 2);
+  assert.equal(tidy(['land', 'main', dir, '--tip', git(dir, 'rev-parse', 'main')], { cwd: dir }).status, 2);
 });
 
 test('the base gets the commit the PASS was found for, not a commit added to the lane meanwhile', () => {
@@ -221,4 +221,49 @@ test('a cleanup that must refuse after the fast-forward still reports the landin
   assert.ok(existsSync(worktree), 'nothing was removed');
   assert.equal(landExitCode(result), 1);
   assert.match(formatLand(result, false), /cleanup skipped: .*merge is not finished/);
+});
+
+// --tip: the reviewed tip (spec round 9 `no-workflows`, contract C2). A full land names the sha the review cleared; a branch that moved
+// after the review is never landed, and nothing is changed when it is refused.
+test('tip: a full land without --tip exits 2 "land needs --tip <reviewed full sha>" and changes nothing', () => {
+  const { dir } = laneWithWorktree();
+  const before = snapshot(dir);
+  const result = tidy(['land', 'lane/x', dir], { cwd: dir });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /land needs --tip <reviewed full sha>/);
+  assert.equal(snapshot(dir), before);
+});
+
+test('tip: --tip must be a full 40-hex sha (a short sha, a branch name and an option are exit 2)', () => {
+  const { dir } = laneWithWorktree();
+  const full = git(dir, 'rev-parse', 'lane/x');
+  for (const bad of [full.slice(0, 12), 'lane/x', full.toUpperCase(), `${full}0`, '']) {
+    assert.equal(tidy(['land', 'lane/x', dir, '--tip', bad], { cwd: dir }).status, 2, JSON.stringify(bad));
+  }
+  assert.equal(tidy(['land', 'lane/x', dir, '--tip', '--json'], { cwd: dir }).status, 2, '--tip without a value');
+});
+
+test('tip: a branch that moved after the review exits 9 (tip-moved) before anything changes, with or without --rebase-only', () => {
+  const { dir, worktree } = laneWithWorktree();
+  const reviewed = git(dir, 'rev-parse', 'lane/x');
+  commit(worktree, 'after-review.txt');
+  const before = snapshot(dir, worktree);
+  for (const extra of [[], ['--rebase-only']]) {
+    const result = tidy(['land', 'lane/x', dir, '--tip', reviewed, ...extra], { cwd: dir, env: noSwitchEnv() });
+    assert.equal(result.status, 9, result.stdout + result.stderr);
+    assert.match(result.stdout, /tip-moved: .*lane\/x is at [0-9a-f]{40}, not at the reviewed [0-9a-f]{40}/);
+    assert.equal(snapshot(dir, worktree), before, `nothing changed (${extra.join(' ') || 'full land'})`);
+  }
+});
+
+test('tip: the landLane result for a moved branch is tip-moved with the branch tip, exit 9, and the JSON names the status', () => {
+  const { dir, worktree } = laneWithWorktree();
+  const reviewed = git(dir, 'rev-parse', 'lane/x');
+  const moved = commit(worktree, 'after-review.txt');
+  const result = land(dir, 'lane/x', { tip: reviewed });
+  assert.equal(result.status, 'tip-moved');
+  assert.equal(result.tip, moved);
+  assert.equal(landExitCode(result), 9);
+  assert.equal(JSON.parse(formatLand(result, true)).status, 'tip-moved');
+  assert.equal(land(dir, 'lane/x', { tip: moved }).status, 'landed', 'the same branch at its own tip lands');
 });

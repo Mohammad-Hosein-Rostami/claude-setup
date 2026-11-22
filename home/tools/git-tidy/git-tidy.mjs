@@ -3,8 +3,10 @@
 // whose work is already on the base; `prune` removes exactly those, and only when it can prove they are merged.
 // Usage: git-tidy.mjs check [dir] [--base <branch>] [--json]
 //        git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]
-//        git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] [--brief <file>] [--checks <cat,...>] [--json]
-//   --checks names categories the owner turned on (the land workflow passes its args.checks); it can only add checks, never turn one off.
+//        git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>] [--checks <cat,...>] [--json]
+//   --checks names categories the owner turned on (land-lane passes them); it can only add checks, never turn one off.
+//   --tip is the full sha the review cleared: required for a full land (exit 2 without it), optional with --rebase-only; a branch that is
+//   not at it exits 9 before anything changes.
 //        git-tidy.mjs range <reviewed-sha> [dir] [--base <branch>] [--landed <sha>] [--json]
 //        --include-recent  lifts only the rule that keeps a worktree used in the last 60 minutes, and not for a lane
 //                          with no commit of its own yet (it stays protected for those 60 minutes)
@@ -14,7 +16,8 @@
 //   `ui-proof check --tip <rebased tip>` does not exit 0 (or the ui-proof tool cannot be loaded; no flag turns it off), 7 new-file-size:
 //   the lane adds a file over the commit gate's MAX_NEW_FILE_BYTES that the `--brief` file does not name (no brief names none).
 //   8 upstream-moved: after a fetch of the base's upstream (timeout; offline is a WARN line), the upstream holds commits the base lacks:
-//   `git pull --rebase` first. A landing prints the published count (`published N ...`; JSON `upstream`).
+//   `git pull --rebase` first. 9 tip-moved: `refs/heads/<branch>` is not the `--tip` sha (changed after the review; nothing was touched).
+//   A landing prints the published count (`published N ...`; JSON `upstream`).
 //   A landing prints `from <sha>`, the base tip before the fast-forward (JSON: `from`).
 // range: the base's reflog step that landed the reviewed sha's patches (lib/landed-range.mjs), printed as `from <sha>` and `to <sha>`
 //   (JSON `{ from, to }`); exit 0 found, 1 not in the reflog, 2 usage.
@@ -42,14 +45,15 @@ const EXIT_NOT_FOUND = 1;
 const MAX_BRIEF_BYTES = 1024 * 1024; // a brief is text; the first MB is what the commit gate reads too
 const UI_PROOF_TIMEOUT_MS = 60_000;
 const TOOLS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
-const USAGE = 'usage: git-tidy.mjs check [dir] [--base <branch>] [--json]\n       git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]\n       git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] [--brief <file>] [--checks <cat,...>] [--json]\n       git-tidy.mjs range <reviewed-sha> [dir] [--base <branch>] [--landed <sha>] [--json]';
+const USAGE = 'usage: git-tidy.mjs check [dir] [--base <branch>] [--json]\n       git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]\n       git-tidy.mjs land <branch> [dir] [--base <branch>] [--rebase-only] [--tip <sha>] [--brief <file>] [--checks <cat,...>] [--json]\n       git-tidy.mjs range <reviewed-sha> [dir] [--base <branch>] [--landed <sha>] [--json]';
+const FULL_SHA = /^[0-9a-f]{40}$/;
 const COMMANDS = ['check', 'prune', 'land', 'range'];
-const VALUE_FLAGS = { '--brief': ['land', 'brief'], '--checks': ['land', 'checks'], '--landed': ['range', 'landed'] };
+const VALUE_FLAGS = { '--brief': ['land', 'brief'], '--checks': ['land', 'checks'], '--tip': ['land', 'tip'], '--landed': ['range', 'landed'] };
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
   if (!COMMANDS.includes(command)) throw new UsageError(USAGE);
-  const options = { command, branch: null, dir: null, base: null, json: false, apply: false, includeRecent: false, rebaseOnly: false, brief: null, checks: null, landed: null };
+  const options = { command, branch: null, dir: null, base: null, json: false, apply: false, includeRecent: false, rebaseOnly: false, brief: null, checks: null, tip: null, landed: null };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     if (arg === '--json') options.json = true;
@@ -69,6 +73,8 @@ function parseArgs(argv) {
   }
   if (command === 'land' && options.branch === null) throw new UsageError(`land needs the lane's branch name. ${USAGE}`);
   if (command === 'range' && options.branch === null) throw new UsageError(`range needs the reviewed sha. ${USAGE}`);
+  if (options.tip !== null && !FULL_SHA.test(options.tip)) throw new UsageError(`--tip needs a full 40-character sha, got ${JSON.stringify(options.tip)}. ${USAGE}`);
+  if (command === 'land' && !options.rebaseOnly && options.tip === null) throw new UsageError(`land needs --tip <reviewed full sha>. ${USAGE}`);
   options.dir ??= process.cwd();
   return options;
 }
@@ -130,7 +136,7 @@ async function runLand(repo, options) {
   const hasPass = checkOn('test') ? await loadHasPass() : () => true;
   const uiCheck = checkOn('ui') ? await loadUiCheck() : () => null;
   const checks = options.rebaseOnly ? { hasPass: () => false } : { hasPass, uiCheck, briefText };
-  const result = landLane(repo, options.branch, { rebaseOnly: options.rebaseOnly, ...checks });
+  const result = landLane(repo, options.branch, { rebaseOnly: options.rebaseOnly, tip: options.tip, ...checks });
   console.log(formatLand(result, options.json));
   return landExitCode(result);
 }

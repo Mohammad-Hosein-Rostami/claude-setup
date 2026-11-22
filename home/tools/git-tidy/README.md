@@ -9,7 +9,7 @@ are removed from its environment, so only the folder you give is ever read or ch
 
 Run: `node ~/.claude/tools/git-tidy/git-tidy.mjs check [dir] [--base <branch>] [--json]`
 and `node ~/.claude/tools/git-tidy/git-tidy.mjs prune [dir] [--base <branch>] [--apply] [--include-recent] [--json]`.
-`land <branch> [dir] [--base <branch>] [--rebase-only] [--brief <file>] [--json]` and `range <reviewed-sha> [dir] [--base <branch>] [--landed <sha>] [--json]` are described under "land" below.
+`land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>] [--json]` and `range <reviewed-sha> [dir] [--base <branch>] [--landed <sha>] [--json]` are described under "land" below.
 `check` and `prune` print `base: <branch> (from --base | from origin/HEAD | fallback)` first.
 `dir` defaults to the current folder (any folder inside a repository, a linked worktree or a bare repository).
 
@@ -18,7 +18,7 @@ It must be a local branch; when none is found the exit code is 2 and the message
 exits 2, deleting nothing, when the base was not given with `--base` and more than one of `main`, `master`, `develop`
 exists here: a wrong base would call work "merged" that is not on the branch you work against.
 
-`land` has its own codes (0 landed and clean, 1 landed with findings, 2 not ready, 3 conflict, 4 no suite PASS, 5 base moved).
+`land` has its own codes (0 landed and clean, 1 landed with findings, 2 not ready or no `--tip`, 3 conflict, 4 no suite PASS, 5 base moved, 6 ui-proof, 7 new-file-size, 8 upstream-moved, 9 tip-moved). Land through `land-lane` (`tools/land-lane/README.md`): it adds the disk check, the suite run, the audit record and the row close around this command.
 
 | Code | `check` | `prune` |
 | ---- | ------- | ------- |
@@ -101,7 +101,11 @@ A failure of one item does not stop the others; the run ends with exit code 1 if
 
 ## land
 
-`git-tidy land <branch> [dir] [--base <branch>] [--rebase-only] [--brief <file>] [--json]` puts a lane on the base as one straight line:
+`git-tidy land <branch> [dir] [--base <branch>] [--rebase-only] --tip <sha> [--brief <file>] [--json]` puts a lane on the base as one straight line:
+
+0. `--tip <full 40-hex sha>` is the sha the review cleared. A full land without it exits 2 (`land needs --tip <reviewed full sha>`), `--rebase-only`
+   takes it as an option. Before anything else `refs/heads/<branch>` is compared with it; a branch that is anywhere else exits 9 (`tip-moved`,
+   JSON `status`) and nothing is changed, so a lane the review never read cannot land by any route. A missing branch is the usual exit 2.
 
 1. The base branch must be checked out in a worktree (the base folder) with no tracked changes, else exit 2 naming the files.
    Untracked files there never block and are never touched, except an untracked path the lane would write over: exit 2 naming it, before any change.
@@ -125,7 +129,7 @@ A failure of one item does not stop the others; the run ends with exit code 1 if
 
 `git-tidy range <reviewed-sha>` reads the base's reflog (newest 200 entries) for the step `from..to` that holds every patch of the
 reviewed sha not on the base (or, for a reviewed sha on the base, that sha itself); `--landed <sha>` also requires that commit in the
-range. It prints `from <sha>` and `to <sha>` (exit 0) or exits 1. The `land` workflow uses it after a restart, to write
+range. It prints `from <sha>` and `to <sha>` (exit 0) or exits 1. `land-lane` uses it after a restart, to write
 `landed <to> on <base> from <from>` for a landing a killed run made.
 
 ### What `prune --apply` never touches
