@@ -40,6 +40,10 @@ Lane `<road>.s<N>.<name>` (item `build: <item>`), close `<road>.s<N>.<name>-land
 evidence is `landed <to> on <base> from <from>` (the `land` workflow writes it). An audit fix gets `<road>.s<N>.fix-<name>` (item
 `rework: <name>`) and its `-land` close row. Ids stay at most 40 characters.
 
+A done cell is never changed, so a close row marked done without the landed line is corrected by a second done row `<close row id>.landed`
+(e.g. `rd.s1.a-land.landed`) whose evidence holds the line; the gate reads it only when the close row is done and has no landed line of its
+own, and checks it the same way (`<to>` and `<from>` are hex shas, one range per close row).
+
 ## Commands
 
 | command | does | exit |

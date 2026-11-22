@@ -5,8 +5,9 @@
 // Lines: 1 rows done (no lanes landed and none carried = FAIL; an open UI lane = FAIL, never carried; a carried lane a later lane needs =
 //   FAIL); 2 landing ranges of every close row of the road (`landed <to> on <base> from <from>`: `git cherry` empty, `<to>` new in this road,
 //   no repeat, `<from>` the road-start tip or another row's `<to>`, both on the base's first-parent line, ranges disjoint, every commit of
-//   `<start>..<tip>` in exactly one range; a steered step's lanes also need `reviewed <sha> clean` with every commit of their range in that
-//   sha); 3 `git-tidy check` exit 0; 4 `test-pass check <tip> --suite` exit 0; 5 `audit-log gate --tip <tip>` exit 0; 6 UI: when a range of
+//   `<start>..<tip>` in exactly one range; a done close row with no landed line of its own takes the line of a done `<close row id>.landed`
+//   row, never used when the close row has its own line or is not done; a steered step's lanes also need `reviewed <sha> clean` with every
+//   commit of their range in that sha); 3 `git-tidy check` exit 0; 4 `test-pass check <tip> --suite` exit 0; 5 `audit-log gate --tip <tip>` exit 0; 6 UI: when a range of
 //   the step changes UI files or a lane has a matrix, `ui-proof check --tip <tip> --against-step <road>.s<N>` exit 0 and the step-start
 //   record taken at or before every `<from>`; 7 the measure (INFO).
 // Lines 4 (test), 5 and a steered step's `reviewed` line (review) and 6 (ui) are checks: each runs only when `checkOn(category)` says the
@@ -46,14 +47,25 @@ function rowsLine(road, rows, step, isUiPath) {
 const git = (run, repo, args) => run('git', ['-C', repo, ...args], GIT_TIMEOUT_MS);
 const isAncestor = (run, repo, a, b) => git(run, repo, ['merge-base', '--is-ancestor', a, b]).exit;
 
+/**
+ * The landed line of a done close row: its own evidence, else the evidence of a done `<close row id>.landed` row (STATUS done cells are
+ * never changed, so a close row marked done without the line is corrected by that row). Both are parsed by landedLine, so the same hex checks apply.
+ */
+function landedOfCloseRow(rows, row) {
+  const own = landedLine(row.evidence);
+  if (own !== null) return own;
+  const correction = rows.get(`${row.id}.landed`.toLowerCase());
+  return correction?.done == null ? null : landedLine(correction.evidence);
+}
+
 /** The close rows of the road with a landed line, as ranges. */
 function closeRanges(road, rows) {
   return laneEntries(road).flatMap((entry) => {
     const row = rows.get(entry.ids.close.toLowerCase());
     if (row?.done == null) return [];
-    return [{ entry, row: entry.ids.close, landed: landedLine(row.evidence), reviewed: reviewedLine(rows.get(entry.ids.lane.toLowerCase())?.evidence) }];
+    return [{ entry, row: entry.ids.close, landed: landedOfCloseRow(rows, row), reviewed: reviewedLine(rows.get(entry.ids.lane.toLowerCase())?.evidence) }];
   }).concat([...rows.values()].filter((row) => /\.s\d+\.fix-[a-z0-9-]+-land$/.test(row.id) && row.done != null && row.id.startsWith(`${road.road}.`))
-    .map((row) => ({ entry: null, row: row.id, landed: landedLine(row.evidence), reviewed: null })));
+    .map((row) => ({ entry: null, row: row.id, landed: landedOfCloseRow(rows, row), reviewed: null })));
 }
 
 /** Per-row checks of line 2; returns the FAIL texts. */
