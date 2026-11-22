@@ -1,5 +1,5 @@
-// Tests of the road file schema and of `road.mjs check`: the guidance fields (threatModel, principles, checkpoints, keepGreen) are optional
-// notes that only need their plain shape; appendOnly and the UI-lane matrix rule still bind. Roads are written to temp files and read through readRoad / runRoad.
+// Tests of the road file schema and of `road.mjs check`: every lane needs a non-empty `checkpoints` list (its Done means); the guidance
+// fields (threatModel, principles, keepGreen) are optional notes that only need their plain shape; appendOnly and the UI-lane matrix rule still bind. Roads are written to temp files and read through readRoad / runRoad.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -13,7 +13,7 @@ const THREAT = 'single owner on his own machines; agents are semi-trusted; every
 const PRINCIPLES = [{ id: 'P3', question: 'does a missing input fail closed?' }, { id: 'F1', question: 'do two runs on one folder clash?' }];
 const CHECKPOINT = { id: 'c1', run: 'node --test tests/a.test.mjs', exit: 0, files: ['tests/a.test.mjs'], kind: 'red-first' };
 const lane = (name, extra = {}) => ({ name, item: `build ${name}`, size: 'S', branch: `lane/${name}`, files: [`src/${name}.mjs`], acceptanceTests: false,
-  implementer: { model: 'opus', effort: 'high' }, principles: PRINCIPLES, ...extra });
+  implementer: { model: 'opus', effort: 'high' }, principles: PRINCIPLES, checkpoints: [CHECKPOINT], ...extra });
 const road = (lanes = [lane('a')], extra = {}) => ({ road: 'tr', goal: 'g', repo: '/repo', base: 'main', suite: 'npm test', spec: '/spec.md', threatModel: THREAT,
   steps: [{ goal: 's1', lanes }], ...extra });
 const dir = makeTempDir('road-file-');
@@ -40,7 +40,7 @@ test('threatModel is optional plain text: missing is accepted, a non-text value 
   assert.ok(has(problemsOf(road([lane('a')], { threatModel: '' })), /threatModel/));
 });
 
-test('road.mjs check accepts a road without threatModel, principles or checkpoints (the shape of road-p8.json)', async () => {
+test('road.mjs check accepts a road without threatModel or principles (the shape of road-p8.json)', async () => {
   const { threatModel, ...without } = road([lane('a', { principles: undefined })]);
   const result = await runRoad(['check', write(without)]);
   assert.equal(result.code, 0);
@@ -56,13 +56,15 @@ test('principles are optional notes: ids are P<n> or F<n>, a question has 10+ ch
   assert.deepEqual(problemsOf(road([lane('a', { principles: [{ id: 'F12', question: 'ten chars!' }] })])), []);
 });
 
-test('checkpoints are notes: any list reads (the old object shape too), a non-list is refused, and nothing checks their ids or files', () => {
+test('checkpoints are the Done means: any non-empty list reads (the old object shape too), a missing, empty or non-list one is refused', async () => {
   const withCheckpoints = (checkpoints) => problemsOf(road([lane('a', { checkpoints })]));
+  for (const checkpoints of [undefined, []]) assert.ok(has(withCheckpoints(checkpoints), /checkpoints must be a non-empty list/), JSON.stringify(checkpoints));
+  assert.equal((await runRoad(['check', write(road([lane('a', { checkpoints: undefined })]))])).code, 1, 'road.mjs check refuses a lane without Done means');
   assert.deepEqual(withCheckpoints([CHECKPOINT]), []);
   assert.deepEqual(withCheckpoints(['the join prints joined']), []);
   assert.deepEqual(withCheckpoints([CHECKPOINT, CHECKPOINT]), []);
   assert.deepEqual(problemsOf(road([lane('a', { files: ['src/'], checkpoints: [{ ...CHECKPOINT, files: ['src/a.mjs'] }] })])), []);
-  for (const checkpoints of ['text', 7, { id: 'c1' }]) assert.ok(has(withCheckpoints(checkpoints), /checkpoints must be a list/), JSON.stringify(checkpoints));
+  for (const checkpoints of ['text', 7, { id: 'c1' }]) assert.ok(has(withCheckpoints(checkpoints), /checkpoints must be a non-empty list/), JSON.stringify(checkpoints));
 });
 
 test('keepGreen is an optional text note: a text reads, an empty or non-text value is refused', () => {

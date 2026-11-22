@@ -6,10 +6,11 @@
 //   of a step unless the step lists it in `appendOnly` (a folder and a file in it overlap, as build's checkArgs says); `needs` names only
 //   lanes of earlier steps; branches, files and the base pass fixed patterns before they reach build args or argv (P5). A step with
 //   `form: "build"` reads as `agents` with the warning `step <N>: build form retired: runs as agents` (an omitted form is `agents`).
-// Guidance fields (owner decision CR7; all optional, nothing runs them): `suite`, `threatModel`, a lane's `acceptanceTests`, `principles`,
-//   `checkpoints`, `keepGreen`. When present they only need their plain shape: texts, a list of `{id, question}` (id `P<n>` or `F<n>`,
-//   unique in the lane, a question of 10+ characters), lists. An old road file that carries them still reads. `appendOnly` holds
-//   repo-relative paths.
+// Done means (lead.md, architect.md): every lane needs a non-empty `checkpoints` list, the commands the lead runs itself before
+//   accepting the lane, each with the exit it must return. No tool runs them; any item shape reads (a text, the old object shape).
+// Guidance fields (owner decision CR7; optional, nothing runs them): `suite`, `threatModel`, a lane's `acceptanceTests`, `principles`,
+//   `keepGreen`. When present they only need their plain shape: texts, a list of `{id, question}` (id `P<n>` or `F<n>`,
+//   unique in the lane, a question of 10+ characters). `appendOnly` holds repo-relative paths.
 // Invariants: pure except readRoad's one bounded read; never throws for bad input (a problem line instead). readRoad hashes the very bytes
 //   it parsed, so `road.mjs join --road-sha256` judges the file the lead hashed, not a file changed between two reads.
 import { createHash } from 'node:crypto';
@@ -71,10 +72,12 @@ function principleProblems(lane, where) {
   return problems;
 }
 
-/** The optional guidance part of a lane (principles, checkpoints, keepGreen: notes nothing runs) and the matrix shape. */
+/** The contract part of a lane: its Done means (`checkpoints`, required), the optional principles and keepGreen, and the matrix shape. */
 function contractProblems(lane, where) {
   const problems = principleProblems(lane, where);
-  if (lane?.checkpoints !== undefined && !Array.isArray(lane.checkpoints)) problems.push(`${where}: checkpoints must be a list`);
+  if (!Array.isArray(lane?.checkpoints) || lane.checkpoints.length === 0) {
+    problems.push(`${where}: checkpoints must be a non-empty list: the lane's Done means, the commands the lead runs before accepting it`);
+  }
   if (lane?.keepGreen !== undefined && !isText(lane.keepGreen)) problems.push(`${where}: keepGreen must be a text`);
   if (lane?.matrix !== undefined && !isText(lane.matrix)) problems.push(`${where}: matrix must be a path or "none: <reason>"`);
   return problems;

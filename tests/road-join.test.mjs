@@ -40,7 +40,7 @@ function fixture({ lane = {} } = {}) {
   const baseSha = commit(repo, { 'README.md': 'base\n', 'shared.txt': 'one\ntwo\nthree\n', 'src/a.mjs': 'a\n' }, 'base');
   const worktree = join(root, 'wt');
   git(repo, 'worktree', 'add', '-q', '-b', 'lane/a', worktree, baseSha);
-  const laneObject = { name: 'a', item: 'build a', size: 'S', branch: 'lane/a', files: ['src/'], implementer: { model: 'opus', effort: 'high' }, ...lane };
+  const laneObject = { name: 'a', item: 'build a', size: 'S', branch: 'lane/a', files: ['src/'], implementer: { model: 'opus', effort: 'high' }, checkpoints: ['node --test: exit 0'], ...lane };
   const road = { road: 'tr', goal: 'g', repo, base: 'main', spec: '/spec.md', steps: [{ goal: 's1', appendOnly: ['docs/catalog.md'], lanes: [laneObject] }] };
   const roadFile = join(root, 'road-tr.json');
   const text = JSON.stringify(road);

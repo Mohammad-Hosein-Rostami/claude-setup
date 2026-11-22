@@ -12,17 +12,18 @@ Keys: `road`, `goal`, `repo` (absolute, a drive path allowed), `base`, `spec` (d
 (plain notes, optional: the suite command and who can do what to this job; nothing runs or judges them), `questions[]`
 (`question`, `options[]`, `recommended`, `askAtStep?`), `steps[]` (`goal`, `measure?`, `appendOnly?`, `form?`: `"agents"` (the
 only form and the default; `"build"` is retired: it still reads, as `agents`, with the WARN `step <N>: build form retired: runs as agents`),
-`lanes[]`). A lane is an object (`files`, `implementer`, `acceptanceTests?`, `matrix?`, `principles?`, `checkpoints?`, `keepGreen?`, `spec?`) plus `name` (`^[a-z0-9][a-z0-9-]{0,23}$`, unique, not
+`lanes[]`). A lane is an object (`files`, `implementer`, `acceptanceTests?`, `matrix?`, `principles?`, `checkpoints`, `keepGreen?`, `spec?`) plus `name` (`^[a-z0-9][a-z0-9-]{0,23}$`, unique, not
 `check`, not ending `-land`), `item`, `size` S/M/L, `closeSize?` (default M), `branch` and `needs?` (lanes of earlier steps; omitted =
 every earlier lane; `[]` = none).
 
-Guidance fields of a lane (owner decision CR7): all optional, read for their shape only, never run or judged. An old road file that
-carries them (and `suite`, `threatModel`, `acceptanceTests`) still reads.
+A lane's `checkpoints` are its Done means and are required. The other guidance fields of a lane (owner decision CR7) are optional,
+read for their shape only, never run or judged. An old road file that carries them (and `suite`, `threatModel`, `acceptanceTests`)
+still reads.
 
 | field | rule |
 |---|---|
 | `principles[]` | `{id, question}`, id `P<n>` (a design principle) or `F<n>` (a failure class to think about: two runs, a crash, hostile names, an empty input, Windows paths), unique in the lane, a question of 10+ characters |
-| `checkpoints[]` | a list of notes on what the lane should show when done; any shape; nothing runs them |
+| `checkpoints[]` | required, non-empty: the lane's Done means, the commands the lead runs itself before accepting the lane, each with the exit it must return (a text such as `node --test tests/x.test.mjs: exit 0`, or the object shape `{id, run, exit}`); `check` refuses a lane without them; no tool runs them |
 | `keepGreen` | optional text, a note; nothing runs it |
 | `matrix` | a lane with a UI file (the ui-proof definition) or a `ui-implementer` needs a coverage matrix path, or `none: <reason of 15+ characters>`; `check` refuses it otherwise |
 
@@ -36,12 +37,13 @@ Example (two steps):
       { "name": "cache-api", "item": "cache interface + integration test", "size": "S", "branch": "lane/cache-api",
         "files": ["src/cache/api.ts", "test/cache-api.test.ts"],
         "implementer": { "model": "sonnet", "effort": "high" },
-        "principles": [{ "id": "F1", "question": "what happens on a second run with the cache already filled?" }] } ] },
+        "principles": [{ "id": "F1", "question": "what happens on a second run with the cache already filled?" }],
+        "checkpoints": ["npm test -- test/cache-api.test.ts: exit 0"] } ] },
     { "goal": "users of the cache", "appendOnly": ["docs/catalog.md"], "lanes": [
       { "name": "users", "item": "cache in users", "size": "M", "branch": "lane/users", "files": ["src/users/"],
-        "implementer": { "model": "sonnet", "effort": "high" } },
+        "implementer": { "model": "sonnet", "effort": "high" }, "checkpoints": ["npm test -- test/users: exit 0"] },
       { "name": "orders", "item": "cache in orders", "size": "M", "branch": "lane/orders", "files": ["src/orders/"],
-        "implementer": { "model": "sonnet", "effort": "high" } } ] } ] }
+        "implementer": { "model": "sonnet", "effort": "high" }, "checkpoints": ["npm test -- test/orders: exit 0"] } ] } ] }
 ```
 
 ## Rows
@@ -99,7 +101,8 @@ worktree's HEAD, read with git; `--base` must be its ancestor.
 2. `ui-files: <n>`: the UI files of the range, by the one definition of `ui-proof changed` (`ui-proof/lib/ui-files.mjs`). A lane with
    any goes to `visual-qa`.
 
-Nothing else is judged: a lane's `checkpoints`, `keepGreen` and `principles` are notes that join does not run. The old flags `--tests`,
+Nothing else is judged: join does not run a lane's `checkpoints` (its Done means: the lead runs those commands itself and checks each
+exit before accepting the lane), `keepGreen` or `principles`. The old flags `--tests`,
 `--dispute` and `--checks` are gone (an unknown flag is a usage error, exit 2).
 
 One join runs at a time per lane worktree: an atomic `road-join.lock` folder in the worktree's git dir holds the pid; a second join
