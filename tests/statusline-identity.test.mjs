@@ -120,6 +120,15 @@ test('a workflow name is cut at a `-` boundary with …, and at 80 columns the w
   assert.match(rowWith(whole, '▸', 'remove-modes-delta-review'), / on remove-modes /, 'where it works is kept before the phase word');
 });
 
+test('a 30-character workflow name is cut at a `-` boundary at 80 columns and shown whole at 160', () => {
+  const name = 'remove-modes-delta-review-pass';
+  const board = boardOfRuns([name]);
+  const narrow = rowsOf(board, NO_COLOR_ENV, 80).find((row) => row.startsWith('▸'));
+  const shown = /▸ \S (\S+)…/.exec(narrow ?? '')?.[1];
+  assert.ok(shown && name.startsWith(`${shown}-`), `cut at a boundary: ${narrow}`);
+  assert.ok(rowWith(rowsOf(board, NO_COLOR_ENV, 160), '▸', name), 'whole at 160 columns');
+});
+
 test(`a render from the fixture takes at most ${MAX_MEDIAN_MS} ms (median of ${RENDERS_TIMED})`, () => {
   const board = screenshotBoard();
   const times = Array.from({ length: RENDERS_TIMED }, () => {
