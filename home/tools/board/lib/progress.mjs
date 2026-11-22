@@ -31,7 +31,7 @@ const WRITER_MILESTONES = [['reads', 0.05], ['edits', 0.25], ['checks', 0.15], [
 // Reader milestones: calls past the type's usual first quarter, a file written, a long answer with no call after it.
 const READER_WEIGHTS = { calls: 0.3, writes: 0.5, answer: 0.2 };
 // Tool calls at the 25th percentile per type, measured on this machine (research-tui 3.3); other types use DEFAULT_CALLS_P25.
-const CALLS_P25 = { implementer: 12, 'general-purpose': 4, reviewer: 4, 'security-auditor': 11, 'workflow-subagent': 5, architect: 24, 'deep-debugger': 27, runner: 2 };
+const CALLS_P25 = { implementer: 12, 'general-purpose': 4, 'workflow-subagent': 5, architect: 24, 'deep-debugger': 27, runner: 2 };
 const DEFAULT_CALLS_P25 = 5;
 
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));

@@ -2,8 +2,7 @@
 // tools/board/lib/render.mjs and fitted to COLUMNS - 5 (both read on every run). This file only reads and writes; render.mjs holds every rule of what is shown.
 // Reads: the status input (stdin JSON), the estimate cache entry of the session's job (tools/estimate/lib/segment-cache.mjs), the
 // session's board file (tools/board/lib/refresh.mjs), its asking marker (hooks/lib/asking-marker.mjs: a question waits 60 s, the
-// board's idle refresh every 60 s would miss it), this account's last-seen limits file (tools/estimate/lib/limits-store.mjs) and
-// the session's `/check` switch (hooks/lib/checks-on.mjs: a file under 4 KB and categories.json, for the checks row) and the identity
+// board's idle refresh every 60 s would miss it), this account's last-seen limits file (tools/estimate/lib/limits-store.mjs) and the identity
 // hues kept for the board's items (tools/board/lib/hue-store.mjs: a small file in the board cache, so an item's colour holds).
 // Writes (spec-p5 `r9-statusline`, last-seen files): this account's limit sample when `rate_limits` changed (CLAUDE_ACCOUNT; none
 // without it, so accounts never mix) and the session's last-seen cost (~/.claude/state/last-seen/<session>.json, the API-price
@@ -12,7 +11,6 @@
 // Never blank: an error while drawing prints the session row and a `status line error: <reason>` line; an error before that (reading
 // the input or the caches) prints the error line alone; exit 0 always (an empty output or a non-zero exit blanks the row).
 import { readAsking } from './hooks/lib/asking-marker.mjs';
-import { offCategories, onCategories } from './hooks/lib/checks-on.mjs';
 import { isSessionId, writeSessionFile } from './hooks/lib/session-store.mjs';
 import { lookOf } from './tools/board/lib/cells.mjs';
 import { identityOf } from './tools/board/lib/hue-store.mjs';
@@ -50,15 +48,6 @@ function sessionBoard(d, nowMs) {
   return readBoard(d.session_id);
 }
 
-/** The session's `/check` switch: the categories on and off; null when it cannot be read (the checks row then shows only the suite). */
-function checksOf(session) {
-  try {
-    return isSessionId(session) ? { on: onCategories(session), off: offCategories(session) } : null;
-  } catch {
-    return null;
-  }
-}
-
 /** The rows for one status input. */
 function render(d) {
   const nowMs = Date.now();
@@ -75,7 +64,7 @@ function render(d) {
   const board = sessionBoard(d, nowMs);
   const view = {
     input: d, segment, board, identity: identityOf(d.session_id, board, { nowMs }), asking: isSessionId(d.session_id) ? readAsking(d.session_id, process.env, nowMs) : null,
-    limitsFile: readLimits(account), account, env: process.env, nowMs, timeZone: systemTimeZone(), checks: checksOf(d.session_id),
+    limitsFile: readLimits(account), account, env: process.env, nowMs, timeZone: systemTimeZone(),
   };
   const look = lookOf(process.env, process.platform, terminalColumns());
   try {

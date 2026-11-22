@@ -1,14 +1,11 @@
 // The stat rows of the status line and `/where` (spec-tui-2 stats 1, 2 and 4, and the trend of "Seen in the screenshot"):
-//   road p8 · step 1/12 honest suite · 2/5 lanes · step 40 min left · by 21:10          (roadRow: the job's current road step)
-//   checks: types review ui probe · off: test smart │ suite 3628 · 222 fail            (checksRow: /check switch, suite at the tip)
+//   road p8 · step 1/12 unhook settings · 2/5 lanes · step 40 min left · by 21:10          (roadRow: the job's current road step)
 //   ↑ +1h10 later / ↓ -20m sooner                                                       (trendPart: the finish clock's last move)
-// Exports: roadRow(numbers, facts, clock, look) -> string | null; checksRow(checks, repo, look) -> string | null;
-// trendPart(trend, look) -> part | null; shortDuration(minutes).
+// Exports: roadRow(numbers, facts, clock, look) -> string | null; trendPart(trend, look) -> part | null; shortDuration(minutes).
 // Sources: numbers = work-row.mjs jobView(...).road (the estimate cache's progress.road: id, step, steps, rows, leftMin, clocks);
-// facts = board.road (job-facts.mjs: goal, the step's title, lanes landed of all); checks = { on, off } from hooks/lib/checks-on.mjs;
-// repo = board.repo (git-state.mjs plus repo-stats.mjs tip, suite).
-// Colour (cells.mjs): the `road` label blue and the categories on green, `none` dim (spec-tui-3 section colours); the active step cyan, all lanes landed and a passing suite green, a failing suite red, a later finish yellow,
-// a sooner one green; every state has its word (`fail`, `pass`, `none at tip`, `later`, `sooner`).
+// facts = board.road (job-facts.mjs: goal, the step's title, lanes landed of all).
+// Colour (cells.mjs): the `road` label blue (spec-tui-3 section colours); the active step cyan, all lanes landed green, a later finish yellow,
+// a sooner one green; every state has its word (`later`, `sooner`).
 // Invariants: pure (no I/O); every outside text goes through cleanText; every row fits look.columns; a row with nothing to say is null.
 import { clockOf, cleanText, cutWords, durationText, fitParts, STATE } from './cells.mjs';
 import { WIDE_COLUMNS } from './work-row.mjs';
@@ -17,7 +14,6 @@ const MIN_PER_HOUR = 60;
 const TITLE_CHARS = 24;
 const WIDE_TITLE_CHARS = 40;
 const GOAL_CHARS = 40;
-const NAMES = /^[a-z]{1,16}$/;
 const ARROWS = { later: '↑', sooner: '↓' };
 const ASCII_ARROWS = { later: '^', sooner: 'v' };
 
@@ -44,7 +40,7 @@ export function trendPart(trend, look) {
   return { text: `${later ? arrows.later : arrows.sooner} ${amount} ${later ? 'later' : 'sooner'}`, state: later ? STATE.warn : STATE.done, drop: 1 };
 }
 
-/** The step part: `step 1/12 honest suite`. */
+/** The step part: `step 1/12 unhook settings`. */
 function stepText(step, steps, title, look) {
   const of = isCount(steps) && steps > 0 ? `/${steps}` : '';
   const named = title ? ` ${cutWords(cleanText(title, look), wide(look) ? WIDE_TITLE_CHARS : TITLE_CHARS, look)}` : '';
@@ -88,36 +84,4 @@ export function roadRow(numbers, facts, clock, look) {
     lanesPart(numbers, own), ...stepTimeParts(numbers, clock, look),
     own?.goal && wide(look) ? { text: cutWords(cleanText(own.goal, look), GOAL_CHARS, look), state: STATE.dim, drop: 6 } : null,
   ].filter(Boolean), look);
-}
-
-/** The suite at the base's tip: `suite 3628 · 222 fail` red, `suite 3628 pass` green, `suite none at tip` dim; null without a tip. */
-function suitePart(repo, look) {
-  if (typeof repo?.tip !== 'string') return null;
-  const suite = repo.suite;
-  if (suite === null || typeof suite !== 'object') return { text: 'suite none at tip', state: STATE.dim, bar: true, drop: 1 };
-  const tests = isCount(suite.tests) ? `${suite.tests} ` : '';
-  if (suite.verdict === 'PASS') return { text: `suite ${tests}pass`, state: STATE.done, bar: true };
-  const failed = isCount(suite.failed) && suite.failed > 0 ? `${suite.failed} fail` : 'fail';
-  return { text: `suite ${tests ? `${tests.trim()}${look.glyph.sep}` : ''}${failed}`, state: STATE.block, bar: true, bold: look.urgent === 'suite' };
-}
-
-/**
- * The checks row: the `/check` categories on and off for this session, and the suite state at the base's tip.
- * @param {{ on: string[], off: string[] } | null} checks the session's switch (checks-on.mjs onCategories / offCategories)
- * @param {object | null} repo board.repo
- * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal (look.urgent names the render's most urgent item)
- * @returns {string | null} the row, or null when there is nothing to say
- */
-export function checksRow(checks, repo, look) {
-  const names = (list) => (Array.isArray(list) ? list.filter((name) => typeof name === 'string' && NAMES.test(name)) : []);
-  const on = names(checks?.on);
-  const off = names(checks?.off);
-  const parts = [];
-  if (checks !== null && typeof checks === 'object') {
-    parts.push({ text: `checks: ${on.length > 0 ? on.join(' ') : 'none'}`, state: on.length > 0 ? STATE.done : STATE.dim });
-    if (off.length > 0) parts.push({ text: `off: ${off.join(' ')}`, state: STATE.dim, drop: 2 });
-  }
-  const suite = suitePart(repo, look);
-  if (suite !== null) parts.push(parts.length === 0 ? { ...suite, bar: false } : suite);
-  return parts.length === 0 ? null : fitParts(parts, look);
 }

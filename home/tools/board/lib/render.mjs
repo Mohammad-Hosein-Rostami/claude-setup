@@ -1,16 +1,15 @@
 // The status line rows (spec-tui "Layout" and spec-tui-2; display design direction B for the alert, job and session rows): as many
 // rows as the terminal's height allows (layout.mjs rowBudget, 3 to 12), in this order:
 //   ! 1 needs you: a question, default in 0:40 · 5h out ~16:10 at this pace      (only when something needs him)
-//   road p8 · step 1/12 honest suite · 2/5 lanes · step 40 min left · by 21:10   (stat-rows.mjs roadRow, when the job walks a road)
+//   road p8 · step 1/12 unhook settings · 2/5 lanes · step 40 min left · by 21:10   (stat-rows.mjs roadRow, when the job walks a road)
 //   ALL █████░░░░░  36%  3 h 40 left · done by 17:45 · ↑ +1h10 later · 10/21 rows (work-row.mjs)
 //   6 agents (4 run, 1 quiet) · 1 waiting on you 0:40 │ git 7 br · 2 dirty (layout.mjs countsRow; only while work runs)
-//   checks: types review · off: test smart │ suite 3628 · 222 fail               (stat-rows.mjs checksRow)
 //   ▸ agents · 5 run ▒▒█ / ├ scout ███▒░ ~60% ...   (layout.mjs workRows: the agents header and one row per agent)
 //   git main ✓ · origin ↑0↓0 · last 12 min ago · landed today 6 │ r9-a ↑2 ●3 ... (git-rows.mjs; one row always kept)
 //   Opus 5.5 high · ctx 99k 25% · 7d 69% left, resets Tue 20:10 · acct work
 // Rows by priority when they are short: alert, job, session; then one git row (never none: without room it rides on the session
-// row; with no repository it says so), the road, the checks row when the suite fails, the
-// first three work rows, checks, counts, the rest of the work rows, more git rows. Of the urgency states, bold (cells.mjs) marks the one most urgent item: a question waiting, else a failing suite,
+// row; with no repository it says so), the road, the
+// first three work rows, counts, the rest of the work rows, more git rows. Of the urgency states, bold (cells.mjs) marks the one most urgent item: a question waiting,
 // else context over 80 %, else a limit over 80 % used, else the longest-quiet agent (`ALL`, main's git row and two 16-colour identity looks are bold too, as labels).
 // Exports: statusRows(view, look) -> string[] (never more than rowBudget(view.env) rows); sessionRow(view, look); alertRow(view, look) -> string | null; contextOf(window, env);
 // paceOf(limitsFile, nowMs).
@@ -28,7 +27,7 @@ import { clockOf, cleanText, cutWords, fitParts, STATE } from './cells.mjs';
 import { repoRows } from './git-rows.mjs';
 import { boardIdentity } from './identity.mjs';
 import { countsRow, rowBudget, workRows } from './layout.mjs';
-import { checksRow, roadRow, trendPart } from './stat-rows.mjs';
+import { roadRow, trendPart } from './stat-rows.mjs';
 import { jobView, WIDE_COLUMNS, workRow } from './work-row.mjs';
 
 const TOKENS_PER_K = 1000;
@@ -40,7 +39,7 @@ const LONG_CTX_TOKENS = 60_000; // every tool call re-reads the context: from he
 const CLEAR_CTX_TOKENS = 150_000; // from here /clear before the next task
 const WARN_USED_PCT = 60; // spec-tui-2: context or a limit 60-80 % used is yellow, over 80 % red, below 60 % green
 const BLOCK_USED_PCT = 80;
-const FIRST_WORK_ROWS = 3; // the work rows kept before the checks and counts rows get a row (a failing suite's row comes first)
+const FIRST_WORK_ROWS = 3; // the work rows kept before the counts row gets a row
 const SAMPLE_AGE_SHOWN_MIN = 5;
 const MAX_NAME_CHARS = 24;
 const MAX_BRANCH_CHARS = 32;
@@ -211,11 +210,9 @@ export function alertRow({ asking, segment, limitsFile, nowMs, timeZone }, look)
   return fitParts([{ ...first, text: `! ${first.text}`, drop: 0 }, ...rest], look);
 }
 
-/** The one most urgent item of a render (bold): `asking`, `suite`, `ctx`, `limit 5h` / `limit 7d`, `agent:<id>`, or null. */
+/** The one most urgent item of a render (bold): `asking`, `ctx`, `limit 5h` / `limit 7d`, `agent:<id>`, or null. */
 function urgentOf(view) {
   if (view.asking !== null && typeof view.asking === 'object') return 'asking';
-  const repo = view.board?.repo;
-  if (typeof repo?.tip === 'string' && repo.suite && repo.suite.verdict !== 'PASS') return 'suite';
   const used = contextPct(view.input?.context_window, view.env);
   if (used !== null && used > BLOCK_USED_PCT) return 'ctx';
   const limits = view.input?.rate_limits;
@@ -232,16 +229,15 @@ function shareRows(free, wanted) {
   const gitRow = take(wanted.git); // before the road: git info is never missing (owner report 2026-11-21)
   const road = take(wanted.road);
   const firstWork = Math.min(wanted.workNeed, FIRST_WORK_ROWS);
-  const checks = wanted.checks && (wanted.suiteFailing || left - firstWork >= 1) && take(true);
   const counts = wanted.workNeed > 0 && left - firstWork >= 1 && take(true);
-  return { road, checks, counts, work: left, gitRow };
+  return { road, counts, work: left, gitRow };
 }
 
 /**
- * All rows of one render: the alert row when something needs the owner, the road row, the job row, the counts and checks rows, the
+ * All rows of one render: the alert row when something needs the owner, the road row, the job row, the counts row, the
  * work rows, the git rows and the session row, within the row budget (shareRows: the most useful rows first when rows are short).
  * @param {{ input: object, segment: object | null, board: object | null, asking: object | null, limitsFile: object | null,
- *   account: string | undefined, env: object, nowMs: number, timeZone: string, checks?: { on: string[], off: string[] } | null }} view
+ *   account: string | undefined, env: object, nowMs: number, timeZone: string }} view
  * @param {ReturnType<import('./cells.mjs').lookOf>} plainLook the terminal
  * @returns {string[]} 2 to 12 rows
  */
@@ -254,9 +250,8 @@ export function statusRows(view, plainLook) {
     nowMs, timeZone, at: board?.at, repo, repos: [repo, ...(Array.isArray(board?.repos) ? board.repos : [])].filter(Boolean), identity: view.identity ?? boardIdentity(board),
   };
   const road = roadRow(jobView(view.segment)?.road ?? null, board?.road ?? null, { nowMs, timeZone }, look);
-  const checks = checksRow(view.checks ?? null, repo, look);
   const workNeed = workRows(board, Infinity, ctx, look).length;
-  const share = shareRows(rowBudget(view.env) - (alert === null ? 2 : 3), { road: road !== null, git: board !== null && typeof board === 'object', checks: checks !== null, suiteFailing: Boolean(repo?.suite) && repo.suite.verdict !== 'PASS', workNeed });
+  const share = shareRows(rowBudget(view.env) - (alert === null ? 2 : 3), { road: road !== null, git: board !== null && typeof board === 'object', workNeed });
   const work = workRows(board, share.work, ctx, look);
   const gitSlots = (share.gitRow ? 1 : 0) + share.work - work.length;
   const git = gitSlots > 0 ? repoRows(board, gitSlots, ctx, look) : [];
@@ -264,7 +259,7 @@ export function statusRows(view, plainLook) {
   const job = workRow({ segment: view.segment, nowMs, timeZone, trend: trendPart(board?.trend, look), roadShown: share.road }, look);
   return [
     ...(alert === null ? [] : [alert]), ...(share.road ? [road] : []), job,
-    ...(share.counts ? [countsRow(board, asking, ctx, look)] : []), ...(share.checks ? [checks] : []), ...work, ...git,
+    ...(share.counts ? [countsRow(board, asking, ctx, look)] : []), ...work, ...git,
     sessionRow({ ...view, gitShown: git.length > 0 }, look),
   ];
 }

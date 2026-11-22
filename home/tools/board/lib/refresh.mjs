@@ -6,7 +6,7 @@
 // cache }, refreshBoard(source, deps) -> boolean, claimBoardRefresh(session, deps) -> boolean, startBoardRefresh(session, deps) ->
 // boolean, findTranscript(session, projectsDir); MAX_BOARD_BYTES.
 // File: ~/.claude/state/board/<session>.json = { session, at, stale, refreshStartedAt, asking,
-// agents: [agents.mjs entries plus repo (its repository's name), wt, branch, unplaced (repos.mjs placeAgents)], repo: git-state.mjs repo plus { tip, suite, landed } (repo-stats.mjs) | null,
+// agents: [agents.mjs entries plus repo (its repository's name), wt, branch, unplaced (repos.mjs placeAgents)], repo: git-state.mjs repo plus { tip, landed } (repo-stats.mjs) | null,
 // repos: the other repositories with work (repos.mjs, same shape without the stats), git: { branch, ahead, behind, changed } | null,
 // road: job-facts.mjs road | null, trend: { deltaMin, atMs } | null }
 // (<= MAX_BOARD_BYTES: done agents go first, then the oldest, until it fits). Cache (cache-file.mjs, <session>.json): { cursors, git,
@@ -93,7 +93,7 @@ export function collectBoard({ session, transcriptPath, cwd }, { env = process.e
   const [primary = null, ...others] = placed.repos;
   // repo-stats runs on the trusted shared git folder, never on a worktree path a stale cached state shows (review SEC-10)
   const stats = repoStats({ common: git.common, base: primary?.base ?? null, cache: cache?.stats ?? null, nowMs, startMs: gitStartMs });
-  const repo = primary === null ? null : { ...primary, tip: stats.stats?.tip ?? null, suite: stats.stats?.suite ?? null, landed: stats.stats?.landed ?? null };
+  const repo = primary === null ? null : { ...primary, tip: stats.stats?.tip ?? null, landed: stats.stats?.landed ?? null };
   const marker = readAsking(session, env, nowMs);
   const asking = marker === null ? null : { kind: marker.kind, count: marker.count, expiresAt: marker.expiresAt };
   const board = {
