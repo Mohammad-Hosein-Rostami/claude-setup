@@ -1,7 +1,7 @@
 // Tests for home/hooks/git-tidy-gate.mjs: at the end of a turn (Stop), of a subagent (SubagentStop) and before a compaction (PreCompact)
-// the setup's git hygiene is checked, so leftovers of a re-done lane, an unlanded lane and an untested base never pile up unseen (C37).
+// the setup's git hygiene is checked, so leftovers of a re-done lane and an unlanded lane never pile up unseen (C37).
 // Every repo is built in a temp folder (git-tidy-helpers.mjs); the hook runs as the real process with a private HOME, except the tests
-// that need an outside part (the suite PASS lookup, the check child, a clock): those call `decide` with fakes for just that part.
+// that need an outside part (the check child, a clock): those call `decide` with fakes for just that part.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -133,35 +133,11 @@ function transcriptStartedAt(startMs) {
   return path;
 }
 
-test('a base tip that moved during the session without a suite PASS blocks once and names the command', async () => {
+test('a base tip that moved during the session is not judged: no suite PASS is asked for, so the stop passes (checks reset S2)', async () => {
   const dir = makeRepo();
-  const tip = git(dir, 'rev-parse', 'main');
   const { stop } = inProcessGate(dir);
-  const asked = [];
-  const noPass = (repo, rev, options) => {
-    asked.push({ rev, options });
-    return false;
-  };
-  const input = { transcript_path: transcriptStartedAt(Date.now() - HOUR_MS) };
-  const result = await stop(input, { hasPass: noPass });
-  assert.equal(result.block, true);
-  assert.match(result.reason, new RegExp(`test-pass run --suite.* at ${tip.slice(0, 8)}`));
-  assert.deepEqual(asked[0], { rev: tip, options: { suite: true } });
-  assert.deepEqual(await stop(input, { hasPass: noPass }), { block: false }, 'second stop of the same state passes');
-});
-
-test('a base tip with a suite PASS, or one that moved before the session began, passes', async () => {
-  const dir = makeRepo();
-  const withPass = await inProcessGate(dir).stop({ transcript_path: transcriptStartedAt(Date.now() - HOUR_MS) }, { hasPass: () => true });
-  assert.deepEqual(withPass, { block: false });
-  const before = await inProcessGate(dir).stop({ transcript_path: transcriptStartedAt(Date.now() + HOUR_MS) }, { hasPass: () => false });
-  assert.deepEqual(before, { block: false }, 'the tip moved before this session started');
-});
-
-test('without a test-pass tool or a transcript the base tip is not judged', async () => {
-  const dir = makeRepo();
-  assert.deepEqual(await inProcessGate(dir).stop({}, { hasPass: () => false }), { block: false }, 'no transcript: the session start is unknown');
-  assert.deepEqual(await inProcessGate(dir).stop({ transcript_path: transcriptStartedAt(Date.now() - HOUR_MS) }, { hasPass: null }), { block: false });
+  assert.deepEqual(await stop({ transcript_path: transcriptStartedAt(Date.now() - HOUR_MS) }), { block: false });
+  assert.deepEqual(await stop({}), { block: false });
 });
 
 // unlanded lanes --------------------------------------------------------------------------------------------------------------
