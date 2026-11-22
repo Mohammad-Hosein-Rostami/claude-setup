@@ -6,18 +6,18 @@
     "CLAUDE_QUESTION_TIMEOUT_S": "60",
     "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-5-5",
     "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": "8",
-    "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "3"
+    "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "3",
+    "CLAUDE_CODE_DISABLE_WORKFLOWS": "1",
+    "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "5"
   },
+  "disableWorkflows": true,
   "permissions": {
     "allow": [
       "WebSearch",
-      "WebFetch",
-      "Workflow"
-    ],
-    "additionalDirectories": [
-      "{{CLAUDE_HOME}}/workflows"
+      "WebFetch"
     ],
     "deny": [
+      "Workflow",
       "Bash(cat *credentials*)",
       "Bash(type *credentials*)",
       "Read(**/.credentials.json)",

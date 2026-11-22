@@ -28,11 +28,12 @@ test('install links home/workflows as ~/.claude/workflows', { skip }, () => {
   assert.equal(readlinkSync(join(home, '.claude', 'workflows')), join(REPO, 'home', 'workflows'));
 });
 
-test('settings.json lets Workflow read the link path and runs it without a dialog', { skip }, () => {
+test('settings.json turns Workflow off (deny rule, no allow, no extra folder) and keeps the status line refresh', { skip }, () => {
   const { home } = install(() => []);
   const settings = JSON.parse(readFileSync(join(home, '.claude', 'settings.json'), 'utf8'));
-  assert.ok(settings.permissions.allow.includes('Workflow'));
-  assert.ok(settings.permissions.additionalDirectories.includes(join(home, '.claude', 'workflows')));
+  assert.ok(settings.permissions.deny.includes('Workflow'));
+  assert.ok(!settings.permissions.allow.includes('Workflow'));
+  assert.ok(!(settings.permissions.additionalDirectories ?? []).includes(join(home, '.claude', 'workflows')));
   assert.equal(settings.statusLine.refreshInterval, 5);
 });
 

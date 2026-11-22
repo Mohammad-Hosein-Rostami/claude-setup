@@ -309,6 +309,21 @@ test('a stop stores stoppedAt for the agent id', () => {
 
 // ---- settings and doctor ----
 
+const base = JSON.parse(readFileSync(join(REPO, 'settings', 'base.json'), 'utf8'));
+
+test('settings/base.json turns workflows off by setting, env and deny rule, and sets the backstop cap', () => {
+  assert.equal(base.disableWorkflows, true);
+  assert.equal(base.env.CLAUDE_CODE_DISABLE_WORKFLOWS, '1');
+  assert.equal(base.env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS, '5');
+  assert.ok(base.permissions.deny.includes('Workflow'));
+  assert.ok(!base.permissions.allow.includes('Workflow'));
+  assert.ok(!(base.permissions.additionalDirectories ?? []).some((dir) => dir.endsWith('/workflows')));
+});
+
+test('the env backstop equals the hook cap', () => {
+  assert.equal(Number(base.env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS), MAX_RUNNING_AGENTS);
+});
+
 const GOOD_LIVE = {
   disableWorkflows: true,
   env: { CLAUDE_CODE_DISABLE_WORKFLOWS: '1', CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '5' },
