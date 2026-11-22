@@ -1,13 +1,12 @@
-// The board of the owner's 2026-11-22 screenshot (spec-tui-3): three workflows, three lane branches and main, for the identity
-// colour tests (statusline-identity.test.mjs) and the fixture renders of the lane report.
+// The board of the owner's 2026-11-22 screenshot (spec-tui-3), as agent rows only (the workflow rows are gone): one implementer, three
+// read-only reviewers, three lane branches and main, for the identity colour tests (statusline-identity*.test.mjs).
 // Exports: screenshotBoard(nowMs) -> board; placedWriterBoard(nowMs) -> the same board with writers placed in two lanes;
-// viewOf(board, nowMs, env) -> the view statusRows takes; lookFor(env, columns); TERM_256, TERM_16, NO_COLOR_ENV (terminal
-// environments); NOW.
-// `screenshotBoard` is what the live board shows: every workflow is a review of read-only agents that no sure fact places in a
-// worktree, so no workflow row names a lane or shares a branch row's hue (repos.mjs placeAgents; README "Which is where").
-// `placedWriterBoard` is the case that has a tie: `remove-modes-delta-review` and `road-gate-landed-row` have an implementer placed
-// in the lane worktree of the same-named branch (`remove-modes`, `road-gate-landed-row`), so their rows say `on <branch>` in the
-// branch's hue; `statusline-identity-colours` has no placed agent, and `sync-remote-path` is a lane no workflow works on.
+// agentNamed(name, fields) -> one agent of the board; viewOf(board, nowMs, env) -> the view statusRows takes; lookFor(env, columns);
+// TERM_256, TERM_16, NO_COLOR_ENV (terminal environments); NOW.
+// `screenshotBoard` is what the live board shows: the reviewers are read-only agents that no sure fact places in a worktree, so no
+// agent row names a lane or shares a branch row's hue (repos.mjs placeAgents; README "Which is where").
+// `placedWriterBoard` is the case that has a tie: two implementers are placed in the lane worktrees `remove-modes` and
+// `road-gate-landed-row`, so their rows say the branch in the branch's hue; `sync-remote-path` is a lane no agent works on.
 import { lookOf } from '../home/tools/board/lib/cells.mjs';
 
 export const NOW = Date.UTC(2026, 10, 22, 9, 0);
@@ -22,31 +21,24 @@ const agent = (fields) => ({
   highLeftMin: 25, overMin: 0, usual: [10, 30], tag: null, doing: 'Edit render.mjs', calls: 12, tokens: 40_000, quietMin: 0,
   pendingMin: 0, doneMs: null, repo: 'claude-setup', wt: null, branch: null, unplaced: null, ...fields,
 });
+/** One running agent of the board with the given name (a short one: the name column is 16 to 22 characters). */
+export const agentNamed = (name, fields = {}) => agent({ id: name, name, ...fields });
 const reviewer = (fields) => ({ name: 'reviewer:opus', type: 'reviewer', writer: false, unplaced: 'claude-setup · read-only', ...fields });
-const run = (fields) => ({
-  state: 'run', quietMin: 0, phaseIndex: 1, phaseTotal: 1, started: 3, done: 1, lanes: {}, purpose: null, agentsTotal: 3,
-  agentsDone: 1, leftMin: 12, ...fields,
-});
 const worktree = (name, fields) => ({
   name, path: `/r/wt/${name}`, branch: name, main: false, ahead: 0, behind: 0, changed: 0, op: null, ageMin: 10, agents: [],
   checkedMs: NOW - 2000, upAhead: null, upBehind: null, ...fields,
 });
 
-/** @returns {object} the screenshot's board: 3 workflows, 3 lane worktrees and main, nothing waiting on the owner */
+/** @returns {object} the screenshot's board: 4 agents, 3 lane worktrees and main, nothing waiting on the owner */
 export function screenshotBoard(nowMs = NOW) {
   return {
     session: 'fixture', at: nowMs, stale: false, asking: null, road: null, trend: null, repos: [],
     git: { branch: 'main', ahead: 44, behind: 0, changed: 0 },
-    runs: [
-      run({ runId: 'wf_remove', name: 'remove-modes-delta-review', phase: 'Delta review', leftMin: 13 }),
-      run({ runId: 'wf_status', name: 'statusline-identity-colours', phase: 'Build', started: 1, done: 0, agentsTotal: 1, agentsDone: 0, leftMin: 8 }),
-      run({ runId: 'wf_road', name: 'road-gate-landed-row', phase: 'Delta review', leftMin: 7 }),
-    ],
     agents: [
-      agent(reviewer({ id: 'a1', runId: 'wf_remove' })),
-      agent(reviewer({ id: 'a2', runId: 'wf_remove' })),
-      agent({ id: 'a3', name: 'implementer:opus', runId: 'wf_status', unplaced: 'claude-setup · no edits yet' }),
-      agent(reviewer({ id: 'a4', runId: 'wf_road' })),
+      agent(reviewer({ id: 'a1' })),
+      agent(reviewer({ id: 'a2' })),
+      agent({ id: 'a3', name: 'implementer:opus', unplaced: 'claude-setup · no edits yet' }),
+      agent(reviewer({ id: 'a4' })),
     ],
     repo: {
       name: 'claude-setup', base: 'main', branches: 6, unlanded: 3, tip: 'a'.repeat(40), suite: null,
@@ -61,11 +53,11 @@ export function screenshotBoard(nowMs = NOW) {
   };
 }
 
-/** @returns {object} the screenshot's board where the implementers of two workflows are placed in their lane worktrees (a tie) */
+/** @returns {object} the screenshot's board where two implementers are placed in their lane worktrees (a tie) */
 export function placedWriterBoard(nowMs = NOW) {
   const board = screenshotBoard(nowMs);
-  const placed = (id, runId, lane) => agent({ id, name: 'implementer:opus', runId, wt: lane, branch: lane });
-  board.agents = [placed('a1', 'wf_remove', 'remove-modes'), board.agents[1], board.agents[2], placed('a4', 'wf_road', 'road-gate-landed-row')];
+  const placed = (id, lane) => agent({ id, name: 'implementer:opus', wt: lane, branch: lane });
+  board.agents = [placed('a1', 'remove-modes'), board.agents[1], board.agents[2], placed('a4', 'road-gate-landed-row')];
   for (const wt of board.repo.worktrees) if (wt.name === 'remove-modes' || wt.name === 'road-gate-landed-row') wt.agents = ['implementer:opus'];
   return board;
 }
@@ -74,7 +66,7 @@ export function placedWriterBoard(nowMs = NOW) {
 export function viewOf(board, nowMs = NOW, env = TERM_256) {
   return {
     input: { model: { display_name: 'Opus 5.5' }, effort: { level: 'high' }, context_window: { context_window_size: 400_000, current_usage: { input_tokens: 99_000 } } },
-    segment: null, board, asking: null, limitsFile: null, account: 'work', env, nowMs, timeZone: 'UTC', checks: { on: ['test', 'types'], off: ['ui'] },
+    segment: null, board, asking: null, limitsFile: null, account: 'work', env, nowMs, timeZone: 'UTC',
   };
 }
 

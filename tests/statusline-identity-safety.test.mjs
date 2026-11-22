@@ -1,4 +1,4 @@
-// Tests for untrusted names on the rows the identity colours rewrote (P5, spec-tui-3 fix round 1): a workflow, agent, branch,
+// Tests for untrusted names on the rows the identity colours rewrote (P5, spec-tui-3 fix round 1): an agent, branch,
 // worktree, repository, operation or account name holding escape codes, C1 controls, a hyperlink, a bidi override, a line
 // separator or a newline reaches no row as anything but plain text, in every form of the status line and in `/where`; and the
 // branch behind `on <branch>` is cut at its width. Each outside text on those rows goes through cleanText: removing any one of
@@ -24,11 +24,10 @@ function hostileBoard({ noMain = false } = {}) {
   const board = screenshotBoard();
   board.git = { branch: hostile('git-branch'), ahead: 0, behind: 0, changed: 0 };
   const wtName = hostile('lane-a');
-  board.runs = board.runs.map((run, index) => ({ ...run, name: hostile(`wf-${index}`), purpose: hostile('purpose'), phase: hostile('phase'), row: hostile('row') }));
   board.agents = [
-    { ...board.agents[0], name: hostile('agent-a'), type: hostile('type'), wt: wtName, branch: hostile('branch-a'), doing: hostile('doing') },
+    { ...board.agents[0], name: hostile('agent-a'), type: hostile('type'), phase: hostile('phase'), row: hostile('row'), wt: wtName, branch: hostile('branch-a'), doing: hostile('doing') },
     { ...board.agents[1], name: hostile('agent-b'), unplaced: `${hostile('folder')} · ${hostile('why')}` },
-    { ...board.agents[2], id: 'plain', name: hostile('plain'), runId: null, branch: null, wt: null, unplaced: null, doing: hostile('doing-plain') },
+    { ...board.agents[2], id: 'plain', name: hostile('plain'), branch: null, wt: null, unplaced: null, doing: hostile('doing-plain') },
   ];
   board.repo = {
     ...board.repo, name: hostile('repo'), base: hostile('base'),
@@ -73,6 +72,6 @@ test('hostile names reach no row as a control, format or line-break character, i
 
 test('the hostile names do show up (as plain text), so the check above is not passing on empty rows', () => {
   const rows = rowsOf(NO_COLOR_ENV, 160).map(ownCodes).join('\n');
-  for (const word of ['wf-0', 'main-op', 'rebase', 'repo', 'acct']) assert.match(rows, new RegExp(word), word);
+  for (const word of ['agent', 'main-op', 'rebase', 'repo', 'acct']) assert.match(rows, new RegExp(word), word);
 });
 

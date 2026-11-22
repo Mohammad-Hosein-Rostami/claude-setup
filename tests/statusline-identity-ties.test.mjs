@@ -6,15 +6,15 @@ import assert from 'node:assert/strict';
 import { HUE_CODES } from '../home/tools/board/lib/cells.mjs';
 import { writeCacheFile } from '../home/tools/board/lib/cache-file.mjs';
 import { identityOf } from '../home/tools/board/lib/hue-store.mjs';
-import { agentKey, boardIdentity, hueOf, itemKey, worktreeKey } from '../home/tools/board/lib/identity.mjs';
+import { agentKey, boardIdentity, hueOf, worktreeKey } from '../home/tools/board/lib/identity.mjs';
 import { NOW } from './statusline-identity-fixture.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const MIN_MS = 60_000;
-const run = (runId, name) => ({ runId, name, state: 'run' });
+const run = (id, name) => ({ id, name, state: 'run' }); // a running agent: the live item of these cases
 const lane = (name, extra = {}) => ({ name, branch: name, main: false, ...extra });
-const boardOf = ({ runs = [], agents = [], worktrees = [], repos = null } = {}) => ({ runs, agents, repo: null, repos: repos ?? [{ name: 'r', worktrees }] });
-const homeOf = (name) => hueOf(boardIdentity({ runs: [run('wf_home', name)], agents: [], repos: [] }), name);
+const boardOf = ({ runs = [], agents = [], worktrees = [], repos = null } = {}) => ({ agents: [...runs, ...agents], repo: null, repos: repos ?? [{ name: 'r', worktrees }] });
+const homeOf = (name) => hueOf(boardIdentity({ agents: [run('wf_home', name)], repos: [] }), name);
 const withHome = (hue) => (name) => homeOf(name) === hue;
 const namesHomedAt = (hue, count) => Array.from({ length: 400 }, (_, index) => `new-${index}`).filter(withHome(hue)).slice(0, count);
 const stored = (name, hue, seenAgoMin, extra = {}) => ({ name, hue, seenMs: NOW - seenAgoMin * MIN_MS, sinceMs: NOW - (seenAgoMin + 10) * MIN_MS, ...extra });

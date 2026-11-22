@@ -12,7 +12,7 @@ import { writeSessionFile } from '../home/hooks/lib/session-store.mjs';
 import { fitParts, HUE_CODES, hueState, lookOf, paint, STATE } from '../home/tools/board/lib/cells.mjs';
 import { writeCacheFile } from '../home/tools/board/lib/cache-file.mjs';
 import { identityOf } from '../home/tools/board/lib/hue-store.mjs';
-import { agentKey, boardIdentity, hueOf, itemKey, worktreeKey } from '../home/tools/board/lib/identity.mjs';
+import { agentKey, boardIdentity, hueOf, worktreeKey } from '../home/tools/board/lib/identity.mjs';
 import { agentRow } from '../home/tools/board/lib/agent-rows.mjs';
 import { repoRows } from '../home/tools/board/lib/git-rows.mjs';
 import { workRows } from '../home/tools/board/lib/layout.mjs';
@@ -24,8 +24,8 @@ const MIN_MS = 60_000;
 const SESSION = 'sticky-session-1';
 const CTX = { nowMs: NOW, timeZone: 'UTC', at: NOW };
 
-const runsOf = (names) => names.map((name, index) => ({ runId: `wf_${index}_${name}`, name, state: 'run' }));
-const boardOfNames = (names) => ({ runs: runsOf(names), agents: [], repo: null, repos: [] });
+const runsOf = (names) => names.map((name, index) => ({ id: `ag_${index}_${name}`, name, state: 'run' })); // running agents: the live items
+const boardOfNames = (names) => ({ agents: runsOf(names), repo: null, repos: [] });
 const hueOfName = (identity, name) => hueOf(identity, name);
 const huesOf = (identity, names) => Object.fromEntries(names.map((name) => [name, hueOfName(identity, name)]));
 const plain = (row) => row.replaceAll(/\u001b\[[0-9;]*m/g, '');
