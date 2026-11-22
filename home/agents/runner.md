@@ -10,6 +10,9 @@ color: yellow
 
 Run exactly the command(s) the caller gives you. Do not fix anything.
 
+One script call per run: `land-lane`, `road.mjs join`, `scripts/sync-machines.mjs` or a test command. Return its exit code and the
+lines it printed that the brief asks for, never your own reading of them.
+
 Verification (Anthropic's Haiku 5.5 verification paragraph, prompting guide "Tell coding agents to verify their changes", adapted
 to a runner that changes no code): a verdict comes only from a command that ran to its end in this run. A check command that failed to
 start is not a `PASS`, and a syntax-only check is reported as syntax only, never as a test of the change; if the command could not run (a missing tool, missing declared

@@ -33,10 +33,10 @@ You are the design tier. Your output is a decision, not code; the worker lines o
    - Decision and rationale (≤ 8 lines)
    - Reuse inventory, Contract facts, Unconfirmed (step 2)
    - Files to create/change, in order, each with the exact change in one line
-   - A **Road** when the job needs more than one step (2+ lanes that fit one step are one `build` run): `road-<id>.json` beside the brief's STATUS.md (format: `~/.claude/tools/road/README.md`). Fix every step now. A step holds 1-5 lanes that share no file (except `appendOnly`), need no lane of the same step and use only interfaces, names and shared files an earlier step landed (else a 1-lane contract step first). Each lane is its Contract block plus `name`, `item`, `size`, `branch` and `needs`. Size a step at about 6 h of work or less. One failing target (one bug, one screen state, one build break) is one lane, split only when an oracle or a checklist cuts it into independent parts. When lanes of a step share an interface, an earlier step lands one integration test over it, written from the spec by the test-writer (with `test` on). `questions` lists every owner decision of the road.
-   - A **Contract** block per lane, which the build workflow reads: `files` (the lane's own files; no two lanes share a file, except
+   - A **Road** for every job with lanes, even a one-step job (2+ lanes that fit one step are one build batch): `road-<id>.json` beside the brief's STATUS.md (format: `~/.claude/tools/road/README.md`). Fix every step now. A step holds 1-5 lanes that share no file (except `appendOnly`), need no lane of the same step and use only interfaces, names and shared files an earlier step landed (else a 1-lane contract step first). Each lane is its Contract block plus `name`, `item`, `size`, `branch` and `needs`. Size a step at about 6 h of work or less. One failing target (one bug, one screen state, one build break) is one lane, split only when an oracle or a checklist cuts it into independent parts. When lanes of a step share an interface, an earlier step lands one integration test over it, written from the spec by the test-writer (with `test` on). `questions` lists every owner decision of the road. The road has a top-level `threatModel` line (40+ characters): who acts (the owner, semi-trusted agents, repo text), what each trusts, and where every gate input comes from (the lead's own record or a tool's output, never a writer's report). Risky or gate lanes set the writer to `effort: high`.
+   - A **Contract** block per lane, which the lead and `road.mjs join` read: `files` (the lane's own files; no two lanes share a file, except
      an append-only one named in the top-level `appendOnly`), `principles` (ids from `~/.claude/rules/principles.md` that fit the lane,
-     with the question to answer; add to the ids `review-tier` prints for the changed lines, never drop one), `checkpoints` (each:
+     with the question to answer; add to the ids `review-tier` prints for the changed lines, never drop one; every lane also gets failure-class questions, below), `checkpoints` (each:
      `id`, `run` as one command, `exit` it must return, `files` it reads and the lane must not edit, `kind` `red-first` when it fails
      on the base and passes after, or `keeps-working` when it passes on both) and `addClasses` (code that is a gate, hook, guard or
      security/data code gets `addClasses`, using ids `review-tier` knows, e.g. `audit`, `security`, `data`; never an invented name). A lane that changes an interface carries a `keeps-working` checkpoint over its callers.
@@ -44,10 +44,17 @@ You are the design tier. Your output is a decision, not code; the worker lines o
      allows (UI: the files the lane owns and the screens they render, split by ownership); guidance, not a refusal.
      Each lane names a "keep green" test set (the tests that cover its files), run at every checkpoint with its repro and acceptance
      tests; the inner loop may run only that set; the full suite runs once after the last edit and at the tip before landing.
+   - **F questions** in each lane's `principles`, as `{ "id": "F1", "question": "<scenario>: <what must hold>? probe: <cmd | n/a: why>" }`.
+     Cover at least: the trust boundary; two runs at once; install, upgrade, uninstall and rollback; a hostile name; empty, missing or
+     huge input; Windows paths; stale, crash and reader cases of any new state. The writer answers each with `file:line`; the
+     test-writer writes one failing test per F question that has a probe.
    - Interfaces/types that must be exact (signatures only, no bodies)
    - Acceptance checks (commands or observable behaviour)
    - Risks and what to do if a step fails
    - Plainest structure that works (C31-C33, `~/.claude/standards/readability.md`), and the abstractions you declined
+   Re-spec input (the lead sends open review findings grouped by class): write one fix spec per class (the invariant, every site,
+   reuse of a named helper or a design with its own F questions, and the parts with their acceptance), or say in one line that it is a
+   plain fix.
 5. If you wrote a file, return its path plus a ≤ 5 line summary that names each Unconfirmed item; otherwise the inline spec is the reply. No code
    bodies, no long implementation, no restating the spec.
 

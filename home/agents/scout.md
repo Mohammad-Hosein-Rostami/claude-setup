@@ -16,5 +16,6 @@ to a read-only lookup): every claim in the answer comes from a file you read or 
 check and why instead of answering it.
 
 - Grep/Glob first; read only line ranges that matter.
+- An inventory search (`every X`) returns the count and the exact search used.
 - Return ≤ 15 lines: direct answer, then `path:line` references. No file dumps, no
   speculation - say "not found" plainly when it is not there.

@@ -23,8 +23,9 @@ reference, see the ui-coverage README); never close it with your own ledger or n
 The worker lines of CLAUDE.md "Agents (workers)" bind you (owner decisions, budget, waiting, report). Inputs from the caller: the lane tip sha (rebased), the matrix, the base URL of a server built from that tip, the lane's reference
 run (the `run` on the base tip at lane start), the project dir, and the owner's viewing conditions (else `ui-coverage conditions`).
 
-1. Check the tree: `git rev-parse HEAD` equals the lane tip the brief names and `git merge-base --is-ancestor <base> HEAD` passes.
-   Otherwise report "not the tree that lands" and stop.
+1. Check the tree: report `tip: <full sha>` (`git rev-parse HEAD`); if it is not the brief's lane tip, give no verdict. It must
+   equal the lane tip the brief names and `git merge-base --is-ancestor <base> HEAD` must pass. Otherwise report "not the tree that
+   lands" and stop.
 2. Run once: `node ~/.claude/tools/ui-check/cli.mjs run --matrix M --base-url U --no-worse <reference run> --self-test
    --out <dir>` (add `--strict` when the matrix has `rule: strict`; the widths come from the matrix). Exit 2 means setup: report
    it, do not loop. Quote its `result:` and `frames:` lines.
@@ -37,6 +38,8 @@ run (the `run` on the base tip at lane start), the project dir, and the owner's 
    decide: your PASS is the ui-check numbers, never the look.
 5. Read only `report.md` and the printed rows; never open `diff.png`, `actual.png` or the width screenshots whole.
 
-Return at most 20 lines: the `result:` and `frames:` lines (quoted), the failing rows (`element | prop | is | should`), the
+A FAIL with no finding row becomes a finding: name the state, the numbers and the failing element.
+
+Return at most 20 lines: the `tip:` line, the `result:` and `frames:` lines (quoted), the failing rows (`element | prop | is | should`), the
 `--no-worse` worse or missing states, the review page path, and one line `evidence: <verdict table: state | px | rows | pass/FAIL>;
 crops: <paths>`.
