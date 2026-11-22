@@ -1,13 +1,12 @@
-// Tests for home/hooks/post-edit.mjs: output parsing, path matching, check planning, Windows quoting, typecheck at edit vs at stop, edit log, hook contract (staging lives in post-edit-stages.test.mjs).
+// Tests for home/hooks/post-edit.mjs: output parsing, path matching, format planning, Windows quoting and the hook contract (running lives in post-edit-stages.test.mjs).
 // The test process and every hook it starts get a temp home, temp folder and run log, so nothing here touches the real ones.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { diagnostics, isBroadScript, isCodeFile, isSamePath, plannedChecks, shellCommand, skipFilter, typecheckAtEdit } from '../home/hooks/post-edit.mjs';
+import { diagnostics, isBroadScript, isCodeFile, isSamePath, plannedChecks, shellCommand, skipFilter } from '../home/hooks/post-edit.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/post-edit.mjs', import.meta.url));
@@ -15,13 +14,8 @@ const HOOK = fileURLToPath(new URL('../home/hooks/post-edit.mjs', import.meta.ur
 const SANDBOX = makeTempDir('post-edit-log-');
 for (const name of ['HOME', 'USERPROFILE']) process.env[name] = join(SANDBOX, 'home');
 for (const name of ['TMPDIR', 'TEMP', 'TMP']) process.env[name] = join(SANDBOX, 'tmp');
-process.env.CLAUDE_TYPECHECK_LOG = join(SANDBOX, 'run.jsonl');
 process.env.CLAUDE_GUARD_LOG = join(SANDBOX, 'guard.jsonl');
 for (const folder of ['home', 'tmp']) mkdirSync(join(SANDBOX, folder));
-// The owner's switch file for session s1 with `types` on: post-edit logs an edit for the stop gate only then (home/hooks/lib/checks-on.mjs, spec r9-checks-off).
-mkdirSync(join(SANDBOX, 'home', '.claude', 'state', 'checks'), { recursive: true });
-writeFileSync(join(SANDBOX, 'home', '.claude', 'state', 'checks', 's1.json'), JSON.stringify({ on: ['types'], off: [], scope: 'tests', by: 'owner', at: '2026-11-21T00:00:00.000Z' }));
-
 // Real `eslint` default (stylish) output behind a pnpm script banner, two files, as the hook receives it.
 const STYLISH = `
 > proj@1.0.0 lint /abs/proj
@@ -98,32 +92,21 @@ test('isCodeFile and isBroadScript', () => {
 
 test('skipFilter honours "all" and named checks', () => {
   assert.equal(skipFilter('all')('lint'), false);
-  assert.equal(skipFilter('lint, typecheck')('lint'), false);
+  assert.equal(skipFilter('format, lint')('format'), false);
   assert.equal(skipFilter('lint')('format'), true);
   assert.equal(skipFilter()('lint'), true);
 });
 
-test('plannedChecks plans no typecheck by default: the stop gate runs it', () => {
-  const scripts = { lint: 'eslint', typecheck: 'tsc --noEmit' };
-  assert.deepEqual(plannedChecks(scripts, 'src/a.ts'), [{ name: 'lint', args: ['run', 'lint', '--', 'src/a.ts'] }]);
-  assert.equal(typecheckAtEdit({}), false);
-  assert.equal(typecheckAtEdit({ CLAUDE_TYPECHECK_AT: 'edit' }), true);
-  assert.equal(typecheckAtEdit({ CLAUDE_TYPECHECK_AT: 'stop' }), false);
-});
-
-test('plannedChecks runs file scripts with the file and project scripts whole at edit time', () => {
+test('plannedChecks plans the format script only, and runs it with the file after `--`', () => {
   const scripts = { format: 'prettier --write', lint: 'eslint', typecheck: 'tsc --noEmit' };
-  assert.deepEqual(plannedChecks(scripts, 'src/a.ts', () => null, true), [
-    { name: 'format', args: ['run', 'format', '--', 'src/a.ts'] },
-    { name: 'lint', args: ['run', 'lint', '--', 'src/a.ts'] },
-    { name: 'typecheck', args: ['run', 'typecheck'] },
-  ]);
+  assert.deepEqual(plannedChecks(scripts, 'src/a.ts'), [{ name: 'format', args: ['run', 'format', '--', 'src/a.ts'] }]);
+  assert.deepEqual(plannedChecks({ lint: 'eslint', typecheck: 'tsc --noEmit' }, 'src/a.ts'), []);
 });
 
-test('plannedChecks swaps broad scripts for the tool binary, or skips them', () => {
-  const scripts = { lint: 'eslint .', typecheck: 'nx run-many -t typecheck' };
-  assert.deepEqual(plannedChecks(scripts, 'src/a.ts', (tool) => `/bin/${tool}`, true), [{ name: 'lint', cmd: '/bin/eslint', args: ['src/a.ts'] }]);
-  assert.deepEqual(plannedChecks(scripts, 'src/a.ts', () => null, true), []);
+test('plannedChecks swaps a broad format script for the tool binary, or skips it', () => {
+  const scripts = { format: 'prettier --write .' };
+  assert.deepEqual(plannedChecks(scripts, 'src/a.ts', (tool) => `/bin/${tool}`), [{ name: 'format', cmd: '/bin/prettier', args: ['--write', 'src/a.ts'] }]);
+  assert.deepEqual(plannedChecks(scripts, 'src/a.ts', () => null), []);
   assert.deepEqual(plannedChecks(undefined, 'src/a.ts'), []);
 });
 
@@ -133,74 +116,4 @@ test('hook contract: bad JSON, empty stdin and non-code files exit 0 silently', 
     assert.equal(r.status, 0);
     assert.equal(r.stdout + r.stderr, '');
   }
-});
-
-
-// Hook contract for the edit log: run the real hook against a fake project, with the temp dir redirected.
-// `manifest` is the text of the package.json (default: one with the `typecheck` script); null leaves the project without one.
-async function loggedEdit({ env = {}, input = {}, typecheck = 'tsc --noEmit', manifest = JSON.stringify({ scripts: { typecheck } }), name = 'a.ts' }) {
-  const root = makeTempDir('post-edit-log-');
-  const proj = join(root, 'proj');
-  await mkdir(join(proj, 'src'), { recursive: true });
-  if (manifest !== null) await writeFile(join(proj, 'package.json'), manifest);
-  await writeFile(join(proj, 'tsconfig.json'), '{}');
-  const file = join(proj, 'src', name);
-  await writeFile(file, 'export {};\n');
-  const tmp = join(root, 'tmp');
-  await mkdir(tmp);
-  const stdin = JSON.stringify({ session_id: 's1', tool_input: { file_path: file }, ...input });
-  const cleanEnv = { ...process.env, CLAUDE_TYPECHECK_AT: '', TMPDIR: tmp, TEMP: tmp, TMP: tmp, ...env };
-  const again = () => spawnSync(process.execPath, [HOOK], { input: stdin, encoding: 'utf8', env: cleanEnv });
-  const r = again();
-  const logFile = (agent) => join(tmp, 'claude-post-edit', 'edits', `s1--${agent}`);
-  return { r, file, logFile, again, read: (agent) => readFile(logFile(agent), 'utf8').catch(() => null) };
-}
-
-test('post-edit logs the edited file for the stop gate and runs no typecheck', async () => {
-  const { r, file, read } = await loggedEdit({});
-  assert.equal(r.status, 0);
-  assert.equal(await read('main'), `${file}\n`);
-});
-
-test('post-edit logs no edit while the `types` check is off (a home with no switch file)', async () => {
-  const home = makeTempDir('post-edit-nohome-');
-  const { r, read } = await loggedEdit({ env: { HOME: home, USERPROFILE: home } });
-  assert.equal(r.status, 0);
-  assert.equal(await read('main'), null);
-});
-
-test('post-edit logs per agent id', async () => {
-  const { read, file } = await loggedEdit({ input: { agent_id: 'agent-7' } });
-  assert.equal(await read('agent-7'), `${file}\n`);
-  assert.equal(await read('main'), null);
-});
-
-test('post-edit skips the log for unsafe ids and CLAUDE_TYPECHECK_AT=edit', async () => {
-  assert.equal(await (await loggedEdit({ input: { session_id: '../x' } })).read('main'), null);
-  assert.equal(await (await loggedEdit({ input: { agent_id: 'a/b' } })).read('a/b'), null);
-  assert.equal(await (await loggedEdit({ env: { CLAUDE_TYPECHECK_AT: 'edit' } })).read('main'), null);
-});
-
-test('post-edit logs every edited code file of a package: the stop gate decides what runs, whatever the scripts are', async () => {
-  const manifests = { 'no scripts': '{}', 'no typecheck script': JSON.stringify({ scripts: { build: 'x' } }), 'a broad typecheck script': JSON.stringify({ scripts: { typecheck: 'nx run-many -t typecheck' } }) };
-  for (const [what, manifest] of Object.entries(manifests)) {
-    const { r, file, read } = await loggedEdit({ manifest });
-    assert.equal(r.status, 0, what);
-    assert.equal(await read('main'), `${file}\n`, what);
-  }
-  for (const name of ['a.mts', 'a.cts']) {
-    const { r, file, read } = await loggedEdit({ name });
-    assert.equal(r.status, 0, name);
-    assert.equal(await read('main'), `${file}\n`, `${name}: an ES module or CommonJS TypeScript file is code too`);
-  }
-});
-
-test('post-edit logs nothing for a file that is not code, was removed, or has no package.json above it (a tsconfig alone is out of scope)', async () => {
-  assert.equal(await (await loggedEdit({ name: 'notes.md' })).read('main'), null);
-  assert.equal(await (await loggedEdit({ manifest: null })).read('main'), null);
-  const removed = await loggedEdit({});
-  await rm(removed.logFile('main'));
-  await rm(removed.file);
-  removed.again();
-  assert.equal(await removed.read('main'), null);
 });
