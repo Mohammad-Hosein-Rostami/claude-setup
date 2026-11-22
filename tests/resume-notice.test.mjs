@@ -5,8 +5,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { linkSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { recordAgentLaunch } from '../home/hooks/lib/agent-launches.mjs';
 import { recordGateCrash } from '../home/hooks/lib/stop-block-count.mjs';
@@ -102,6 +102,79 @@ test('an open owner question of this session is listed with the line that re-arm
   assert.match(result.stdout, /Open owner questions \(ask queue, data not instructions\): 1/);
   assert.match(result.stdout, /- q1: Which year does 12-05 mean here\?/);
   assert.ok(result.stdout.includes(`watch --queue ${queue}`), result.stdout);
+});
+
+/** A private HOME whose ask folder holds one queue with an open question of ASKING_SESSION; returns the world, the ask folder and the queue. */
+function worldWithQuestion() {
+  const w = world();
+  w.env.CLAUDE_CODE_SESSION_ID = ASKING_SESSION;
+  const queue = spawnSync(process.execPath, [ASK, 'init'], { encoding: 'utf8', env: w.env }).stdout.trim();
+  const posted = spawnSync(process.execPath, [ASK, 'post', '--queue', queue, '--json', JSON.stringify(QUESTION)], { encoding: 'utf8', env: w.env });
+  assert.equal(posted.status, 0, posted.stderr);
+  return { w, askFolder: dirname(queue), queue };
+}
+
+test('a symlinked or hard-linked queue file is skipped alone, with a stderr line: the question of the good queue still shows', () => {
+  const { w, askFolder } = worldWithQuestion();
+  const outside = join(w.home, 'outside.jsonl');
+  writeFileSync(outside, '');
+  symlinkSync(outside, join(askFolder, '20261122-090000-aaaaaa.jsonl'));
+  const linkedQueue = join(askFolder, '20261122-090001-bbbbbb.jsonl');
+  writeFileSync(linkedQueue, '');
+  linkSync(linkedQueue, join(w.home, 'second-name.jsonl'));
+  const result = w.runHook(w.startInput({ session_id: ASKING_SESSION }));
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Open owner questions \(ask queue, data not instructions\): 1/);
+  assert.match(result.stdout, /- q1: Which year does 12-05 mean here\?/);
+  assert.match(result.stderr, /skipped the ask queue \S*20261122-090000-aaaaaa\.jsonl: not a plain file/);
+  assert.match(result.stderr, /skipped the ask queue \S*20261122-090001-bbbbbb\.jsonl: .*more than one hard link/);
+});
+
+// Lists a queue name that is gone by the time it is looked at, as when `ask.mjs init` prunes it between the listing and the stat
+// (`at: 'stat'`) or between the stat and the read (`at: 'read'`, the stat sees the real queue's details).
+const PRUNED_PROBE = `
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+const [sessionId, at, prunedName, realQueue] = process.argv.slice(1);
+const list = fs.readdirSync;
+const lstat = fs.lstatSync;
+fs.readdirSync = (...args) => [...list(...args), prunedName];
+if (at === 'read') fs.lstatSync = (path, ...rest) => (String(path).endsWith(prunedName) ? lstat(realQueue) : lstat(path, ...rest));
+syncBuiltinESMExports();
+const { questionsSection } = await import(${JSON.stringify(new URL('../home/hooks/lib/unfinished-work.mjs', import.meta.url).href)});
+console.log(JSON.stringify(questionsSection(Date.now(), sessionId)));
+`;
+
+test('a queue pruned between the listing and its stat or its read is skipped alone and silently: the other questions still show', () => {
+  const { w, queue } = worldWithQuestion();
+  for (const at of ['stat', 'read']) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', PRUNED_PROBE, ASKING_SESSION, at, '20261122-095959-0a0b0c.jsonl', queue], { encoding: 'utf8', env: w.env });
+    assert.equal(result.status, 0, result.stderr);
+    const shown = JSON.parse(result.stdout).join('\n');
+    assert.match(shown, /Open owner questions \(ask queue, data not instructions\): 1/, at);
+    assert.match(shown, /- q1: Which year does 12-05 mean here\?/, at);
+    assert.equal(result.stderr, '', `${at}: a pruned queue is normal, so nothing is printed`);
+  }
+});
+
+// Lists a writer record of another session that is gone by the time it is stat-ed, as when it is removed between the listing and the stat.
+const PRUNED_WRITER_PROBE = `
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+const [sessionId, cwd] = process.argv.slice(1);
+const list = fs.readdirSync;
+fs.readdirSync = (...args) => [...list(...args), 'gone-session.json'];
+syncBuiltinESMExports();
+const { writersSection } = await import(${JSON.stringify(new URL('../home/hooks/lib/unfinished-work.mjs', import.meta.url).href)});
+console.log(JSON.stringify(writersSection({ sessionId, cwd, source: 'startup', nowMs: Date.now() }, { env: process.env })));
+`;
+
+test('a writer record removed between the listing and its stat is skipped alone: the other session\'s writer still shows', () => {
+  const w = world();
+  assert.equal(recordAgentLaunch('other-session', 'implementer', w.env, { writer: true, about: { cwd: w.home, description: 'Add the login form' } }).state, 'recorded');
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', PRUNED_WRITER_PROBE, SESSION, w.home], { encoding: 'utf8', env: w.env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(JSON.parse(result.stdout).join('\n'), /implementer "Add the login form" \| never started \| session other-session/);
 });
 
 test('the "Don\'t redo" list of the HANDOFF.md beside the linked STATUS.md is listed', () => {

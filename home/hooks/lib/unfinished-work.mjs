@@ -7,13 +7,14 @@
 // Which writers: this session's open launch records, plus (unless source is `compact`) other sessions' records launched from the same cwd
 // in the last OPEN_MAX_AGE_MS. Each shows its type, description, agent id, STATUS row, folder and that folder's dirty-file count (an isolated
 // agent's folder is the worktree of its `worktree-agent-<id>` branch; git runs hardened with a timeout, as owned-git.mjs does).
-// Questions: only those the opened session posted (`session` field of the q record; a line without one is hidden).
+// Questions: only those the opened session posted (`session` field of the q record; a line without one is hidden). One queue file that is
+// refused (a symlink, a folder, a hard link) or pruned between the listing and the read is skipped alone; every other queue still shows.
 // Invariants: never throws (a failing part is left out, an unexpected failure of the questions part is logged to stderr); every text is data from a record or from git, cleaned of control characters and
 // angle brackets, and the frame says so; bounded by MAX_* caps; nothing here writes.
-import { readdirSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { openWritersOf, writersDirOf } from './writer-agents.mjs';
-import { askDir, confineQueue, readQueue } from '../../tools/ask/lib/store.mjs';
+import { QUEUE_NAME, askDir, confineQueue, readQueue } from '../../tools/ask/lib/store.mjs';
 import { openQuestions, sanitize } from '../../tools/ask/lib/queue.mjs';
 import { runGit } from '../../tools/git-tidy/lib/git.mjs';
 import { statusFileOf } from './status-file-of.mjs';
@@ -63,7 +64,9 @@ function sessionsToRead(params, deps) {
     try {
       const dir = writersDirOf(deps.env);
       return readdirSync(dir).map((name) => STORE_FILE.exec(name)?.[1]).filter((id) => id !== undefined && id !== params.sessionId)
-        .map((id) => ({ id, mtime: statSync(join(dir, `${id}.json`)).mtimeMs })).sort((a, b) => b.mtime - a.mtime).slice(0, MAX_SESSION_FILES).map(({ id }) => id);
+        // A record removed between the listing and its stat is skipped alone (no entry: undefined), so it cannot hide the others.
+        .map((id) => ({ id, mtime: statSync(join(dir, `${id}.json`), { throwIfNoEntry: false })?.mtimeMs })).filter(({ mtime }) => mtime !== undefined)
+        .sort((a, b) => b.mtime - a.mtime).slice(0, MAX_SESSION_FILES).map(({ id }) => id);
     } catch {
       return [];
     }
@@ -89,6 +92,50 @@ export function writersSection(params, deps) {
   ];
 }
 
+/** One stderr line for an ask queue left out of the notice, so a refused or unreadable file is seen, not hidden. */
+function reportSkipped(path, reason) {
+  process.stderr.write(`resume-notice: skipped the ask queue ${plain(path)}: ${sanitize(reason)}\n`);
+}
+
+/** Leaves one ask queue out after `err`: silently when it is gone (`ask.mjs init` pruned it after the listing, which is normal), else with a line. */
+function skipFailedQueue(path, err) {
+  if (existsSync(path)) reportSkipped(path, err?.message);
+}
+
+/**
+ * The queue files of `dir` last written within QUEUE_RECENT_MS of `nowMs`, newest first. Names are checked against the `init` pattern
+ * before any stat, and a file that is not a plain file (lstat: a symlink or a folder) or cannot be stat-ed is skipped alone.
+ * @returns {{ path: string, mtime: number }[]}
+ * @throws when the folder itself cannot be listed (ENOENT: there is no ask folder)
+ */
+function recentQueues(dir, nowMs) {
+  return readdirSync(dir).filter((name) => QUEUE_NAME.test(name)).flatMap((name) => {
+    const path = join(dir, name);
+    let info;
+    try {
+      info = lstatSync(path);
+    } catch (err) {
+      skipFailedQueue(path, err);
+      return [];
+    }
+    if (!info.isFile()) {
+      reportSkipped(path, 'not a plain file (a symlink or a folder)');
+      return [];
+    }
+    return nowMs - info.mtimeMs < QUEUE_RECENT_MS ? [{ path, mtime: info.mtimeMs }] : [];
+  }).sort((a, b) => b.mtime - a.mtime);
+}
+
+/** The open questions `sessionId` posted in the queue at `path`; [] when the queue is refused or gone (it is skipped alone). */
+function ownOpenQuestions(path, sessionId) {
+  try {
+    return openQuestions(readQueue(confineQueue(path))).filter((question) => question.session === sessionId);
+  } catch (err) {
+    skipFailedQueue(path, err);
+    return [];
+  }
+}
+
 /**
  * Open owner questions of the ask queues written in the last QUEUE_RECENT_MS (the newest MAX_QUEUES that hold one), with the re-arm line. Only the questions the opened
  * session posted (their `session` equals `sessionId`; a resume keeps the id, so they show again); a line with no session is hidden.
@@ -99,15 +146,13 @@ export function writersSection(params, deps) {
 export function questionsSection(nowMs, sessionId) {
   if (!isSessionId(sessionId)) return [];
   try {
-    const dir = askDir();
-    const recent = readdirSync(dir).filter((name) => name.endsWith('.jsonl')).map((name) => ({ path: join(dir, name), mtime: statSync(join(dir, name)).mtimeMs }))
-      .filter(({ mtime }) => nowMs - mtime < QUEUE_RECENT_MS).sort((a, b) => b.mtime - a.mtime);
+    const recent = recentQueues(askDir(), nowMs);
     // The queue cap counts only queues holding this session's open questions: capping before the session filter let newer queues of other sessions hide them.
     const open = [];
     let queuesWithOpen = 0;
     for (const { path } of recent) {
       if (queuesWithOpen === MAX_QUEUES) break;
-      const own = openQuestions(readQueue(confineQueue(path))).filter((question) => question.session === sessionId);
+      const own = ownOpenQuestions(path, sessionId);
       if (own.length === 0) continue;
       queuesWithOpen += 1;
       open.push(...own.map((question) => ({ path, question })));
