@@ -78,7 +78,7 @@ function releaseOwnLock(lockPath) {
 
 /** The refusal for a lock still held: names the holder's pid when known, and how to clear a holder that looks hung. */
 function lockHeldMessage(lockPath, { pid, ageMs }) {
-  if (pid === null) return `another install is running (${lockPath}); wait for it to end, or delete that file if no install runs`;
+  if (pid == null) return `another install is running (${lockPath}); wait for it to end, or delete that file if no install runs`;
   const base = `another install is running (pid ${pid}, ${lockPath})`;
   if (ageMs < INSTALL_LOCK_STALE_MS) return `${base}; wait for it to end`;
   return `${base} and has held the lock for over 30 minutes; it may be hung: end process ${pid}, then run again (if ${pid} is not an install, delete ${lockPath} by hand)`;
