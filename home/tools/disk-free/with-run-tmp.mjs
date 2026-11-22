@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // with-run-tmp: runs a command with TMPDIR, TMP and TEMP pointing at a fresh folder and removes that folder afterwards, whether the
-// command passed, failed or was interrupted. Every test launcher uses it, so a test run cannot leave temp folders behind.
+// command passed, failed or was interrupted. It is a hand CLI: nothing starts it by itself, so run a suite through it to leave no temp folders behind.
 // Usage: with-run-tmp.mjs [--shell] -- <command> [args...]    (--shell: the words are joined and run through the shell)
 // Exit codes: the command's own code (128 + signal number when a signal ended it); 2 for a usage error or when the folder cannot be made.
 // Invariants: the folder is made under os.tmpdir() with the prefix `cs-run-` (disk-clean removes one a killed run left behind);

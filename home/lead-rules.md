@@ -41,7 +41,7 @@ Rules:
   Unattended runs first arm one on their own id with `timeout` 7200000 (else it stops at 30 min): `--exit-on-event api-error,stall,limit`.
 - Parallel request: first one line on usage-limit risk.
 - Multi-day: `STATUS.md` `## Work items`: list the job's rows first; row edits by `status.mjs` only. Estimates: the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` only.
-- Digests ≤ 3k chars plus paths; `scout` summarises > ~200 lines; no Read > ~20k.
+- Digests ≤ 3k chars plus paths; `scout` summarises > ~150 lines; no Read > ~20k.
 - Final reply: obey the line cap. After a setup commit, tell the owner to restart.
 - One update per stage. Final report: a row per owner request (done, how checked, where live, 2-min proof). "Fixed" needs an `evidence:` line. Debug agent only after its row's `add`+`start`. Logs: `status.mjs log`.
 

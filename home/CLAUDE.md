@@ -1,6 +1,6 @@
 # Global instructions (all projects)
 
-Owner: Pejvak. MacBook and PC on macOS (zsh); a Windows machine (PowerShell + Git Bash) and Linux are tested. Node 22, pnpm. Reply in the language the
+Owner: Pejvak. MacBook and PC on macOS (zsh); a Windows machine (PowerShell + Git Bash) and Linux are tested. Node 22 or newer, pnpm. Reply in the language the
 user writes in (Persian included, never default to English); keep prose short and plain. Do not narrate tool calls.
 
 The main session also gets the lead rules at session start (`~/.claude/lead-rules.md` and `~/.claude/lead.md`). Workers: follow your
@@ -114,6 +114,7 @@ over a line here, and an agent file names the lines that do not fit it (`runner`
   lead. Commit your own paths after each green step; never return with uncommitted changes (if the brief forbids commits, say why
   in the report). Checkpoint: after each finished step, commit when the brief allows commits, else append a line to a progress
   note in the scratchpad, so a dropped connection loses little.
+- Probes: make probe temp folders with the prefix `cs-test-` (`disk-clean` removes old ones; other names pile up).
 - Budget: if the brief is still unfinished after about 120 tool calls or the 2nd compaction, stop and return a status (done, left,
   next step).
 - Before returning, re-read your diff against the spec once.

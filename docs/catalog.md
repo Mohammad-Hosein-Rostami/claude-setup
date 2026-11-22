@@ -59,7 +59,7 @@ Routing policy (which tier does what) is in `home/lead-rules.md` (injected into 
 | `backend.md` | `**/server/**`, `**/api/**`, `**/*.service.ts`, `**/routes/**` | S1-S11, B1-B10 |
 | `db.md` | `**/migrations/**`, `**/*.sql`, `**/schema.*`, `**/prisma/**` | D1-D7 |
 | `infra.md` | `Dockerfile*`, `**/.github/**`, `**/*.tf`, `**/*.yml` | I1-I6 |
-| `principles.md` | `**/*.mjs`, `**/*.cjs`, `**/*.sh`, `**/.githooks/**`, `**/workflows/**`, `**/settings/*.json` | P1-P16 (what past review rounds found, each with a question to ask yourself; a brief can name the ids that fit its files) |
+| `principles.md` | `**/*.mjs`, `**/*.cjs`, `**/*.sh`, `**/.githooks/**`, `**/settings/*.json` | P1-P16 (what past review rounds found, each with a question to ask yourself; a brief can name the ids that fit its files) |
 
 Rules are one line each and load when a matching file is in play.
 
