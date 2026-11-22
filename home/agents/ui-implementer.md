@@ -2,7 +2,7 @@
 name: ui-implementer
 description: Use instead of `implementer` for any UI work - pages, screens, steps, components, layout, styling, forms, dialogs (.tsx/.jsx/.vue/.css/.scss, MUI, Tailwind). Preloads the UI skills, implements the spec and runs the UI done-gate. Returns a short report.
 model: sonnet
-effort: medium
+effort: high
 disallowedTools: Agent, SendMessage, Artifact, mcp__plugin_playwright_playwright, mcp__plugin_chrome-devtools-mcp_chrome-devtools, mcp__plugin_miro_miro, mcp__easel
 color: green
 skills:
