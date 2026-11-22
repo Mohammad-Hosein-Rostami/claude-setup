@@ -1,6 +1,6 @@
 // Pure shell-text parsing for pre-bash-guard: no I/O, never evaluates anything.
 // Exports: tokenize(command) -> {segs, nested}; segments(command) -> string[][]; stripHeredocs(command);
-// redirectLength(word); GIT_TOPLEVEL_WORD; MKTEMP_WORD; QUOTED_MARK; lex(command) (same shape as tokenize, from shell-lexer.mjs); unquote, basenameOf, flagsOf;
+// redirectLength(word); OUTPUT_REDIRECT; GIT_TOPLEVEL_WORD; MKTEMP_WORD; QUOTED_MARK; lex(command) (same shape as tokenize, from shell-lexer.mjs); unquote, basenameOf, flagsOf;
 // backtickAssignedNames(command); DECLARERS.
 // Unquoted brace expressions are expanded the way bash does (`rm {-rf,x}` is `rm -rf x`), never in an assignment in front of the command;
 // a segment flags the words whose braces cannot be listed (`.unlistedBraces`) and those holding a `$NAME` outside quotes (`.bareWords`),
@@ -15,7 +15,8 @@
 
 import { ANSI_C_WORD, decodeAnsiC } from './ansi-c.mjs';
 import { expandRawBraces, hasUnquotedReference } from './braces.mjs';
-import { isSimpleSubstitutionBody, lexShell, markArrayList, markJoin, markPiped, opensArrayList } from './shell-lexer.mjs';
+import { markArrayList, markGlued, markJoin, markPiped, opensArrayList } from './segment-marks.mjs';
+import { isSimpleSubstitutionBody, lexShell } from './shell-lexer.mjs';
 
 // Alternation order matters: `&&`/`||` first, then words (a word may be `&>` or follow `>`), then single separators.
 const WORD = '(?:"(?:\\\\[\\s\\S]|[^"\\\\])*"|' + ANSI_C_WORD + '|\'[^\']*\'|\\\\[\\s\\S]|(?<=[<>])&|(?<=>)\\||&(?=>)|[^\\s;|&()`\\\\])+';
@@ -25,7 +26,9 @@ const DOUBLE_QUOTE_ESCAPABLE = '\\"$`';
 // `$(git rev-parse --show-toplevel)` and its backtick form: the project root, replaced by one word so `cd` can follow it
 export const GIT_TOPLEVEL = /\$\(\s*git\s+rev-parse\s+--show-toplevel\s*\)|`\s*git\s+rev-parse\s+--show-toplevel\s*`/g;
 
-const REDIRECT_LIKE = /^(?:\d*[<>]|&>)/;
+// the file descriptor a redirection may name in front of its operator: a number (`2>`) or a variable bash assigns a free one to (`{fd}>f`)
+const DESCRIPTOR = String.raw`(?:\d*|\{[A-Za-z_]\w*\})`;
+const REDIRECT_LIKE = new RegExp(String.raw`^(?:${DESCRIPTOR}[<>]|&>)`);
 /** Prefix for a quoted word that only looks like a redirection (`">"`, `"2>"`): bash passes it on as a plain argument. */
 export const QUOTED_MARK = '\u0001';
 
@@ -91,7 +94,8 @@ const wordOf = (raw) => {
   return REDIRECT_LIKE.test(word) && !REDIRECT_LIKE.test(raw) ? QUOTED_MARK + word : word;
 };
 
-/** `.env>out` -> [`.env`, `>out`], `cat<.env` -> [`cat`, `<.env`]; an operator at the start (or after a file descriptor number) stays put. */
+const DESCRIPTOR_ONLY = new RegExp(`^${DESCRIPTOR}$`);
+/** `.env>out` -> [`.env`, `>out`], `cat<.env` -> [`cat`, `<.env`]; an operator at the start (or after a descriptor: `2>`, `{fd}>`) stays put. */
 function splitAttachedRedirect(raw) {
   let quote = '';
   for (let i = 0; i < raw.length; i++) {
@@ -104,7 +108,7 @@ function splitAttachedRedirect(raw) {
     } else if (c === '"' || c === "'") quote = c;
     else if (c === '<' || c === '>') {
       const at = c === '>' && raw[i - 1] === '&' ? i - 1 : i; // `&>` is one operator
-      return /^\d*$/.test(raw.slice(0, at)) ? [raw] : [raw.slice(0, at), raw.slice(at)];
+      return DESCRIPTOR_ONLY.test(raw.slice(0, at)) ? [raw] : [raw.slice(0, at), raw.slice(at)];
     }
   }
   return [raw];
@@ -175,6 +179,7 @@ function wordsOfSegment(raws) {
   if (raws.piped === true) markPiped(words);
   if (raws.arrayList === true) markArrayList(words);
   if (raws.joinedBy !== undefined) markJoin(words, raws.joinedBy);
+  if (raws.gluedTo !== undefined) markGlued(words, raws.gluedTo);
   if (unlisted.length > 0) Object.defineProperty(words, 'unlistedBraces', { value: unlisted });
   if (bare.size > 0) Object.defineProperty(words, 'bareWords', { value: bare });
   return words;
@@ -198,19 +203,23 @@ export function tokenize(command) {
   const opened = []; // per open `(`: {outer, at} (the segment holding its `$`, and where it is) when it starts a substitution, else null
   let current = segs[0];
   let joined = ''; // the operators since the last word: the join of the segment the next word opens
+  let wordEnd = -1; // where the last word ended: a `(` there touches it (`src/*(.)`)
   for (const m of chained.matchAll(TOKEN)) {
     if (m[2] !== undefined) {
       if (LINE_CONTINUATION_ONLY.test(m[2])) continue;
       if (current.length === 0) markJoin(current, joined);
       joined = '';
       current.push(m[2]); // raw words; wordsOfSegment unquotes them once the segment is whole
+      wordEnd = m.index + m[0].length;
       continue;
     }
+    const touched = m[3] === '(' && m.index === wordEnd ? current.at(-1) : undefined;
     joined += m[0];
     if (m[3] === '(') opened.push(chained[m.index - 1] === '$' && chained[m.index - 2] !== '\\' ? { outer: current, at: m.index } : null);
     const arrayList = m[3] === '(' && chained[m.index - 1] === '=' && opensArrayList(current.at(-1));
     current = startSegment(segs, current, m[3] === '|');
     if (arrayList) markArrayList(current);
+    if (touched !== undefined) markGlued(current, touched);
     // the words after the `)` closing a simple `$(` belong to the segment that held the `$` (`echo $(a) $(b)`: one echo, not a command `$`)
     if (m[3] === ')') {
       const sub = opened.pop();
@@ -231,14 +240,21 @@ export function segments(command) {
   return tokenize(command).segs;
 }
 
-const REDIRECT_START = /^(\d*>>?|\d*<|&>>?)/;
-const REDIRECT_OPERATOR_ONLY = /^(\d*>>?|\d*<{1,2}|&>>?)$/;
+// every operator of bash and zsh, standing alone with its target in the next word: `<`, `<<`, `<<-`, `<<<`, `<>`, `<&`, `>`, `>>`, `>&`, `>>&`,
+// `&>`, `&>>`, and zsh's clobbering `>|`, `>!`, `>>|`, `&>|` ... (G2: a leading `<<< x` or `>| f` must not make its target the command word)
+const REDIRECT_OPERATOR_ONLY = new RegExp(String.raw`^(?:${DESCRIPTOR}(?:<<<|<<-?|<>|<&|<|>>?&?[|!]?)|&>>?[|!]?)$`);
 
 /**
  * How many words a redirection at the start of `word` takes: 0 when `word` is none, 2 when the operator stands alone (its target is the
- * next word: `2>`, `>>`), else 1 (`2>/dev/null`, `2>&1`).
+ * next word: `2>`, `>>`, `<<<`, `>|`, `{fd}>`), else 1 (`2>/dev/null`, `2>&1`, `{fd}>f`).
  */
-export const redirectLength = (word) => (!REDIRECT_START.test(word) ? 0 : REDIRECT_OPERATOR_ONLY.test(word) ? 2 : 1);
+export const redirectLength = (word) => (!REDIRECT_LIKE.test(word) ? 0 : REDIRECT_OPERATOR_ONLY.test(word) ? 2 : 1);
+
+/**
+ * A word that sends output somewhere: group 1 the operator, group 2 the target glued to it ('' when the target is the next word). Every output
+ * operator counts (`>`, `>>`, `&>`, `&>>`, `>&f`, `{fd}>`, zsh's `>|`, `>!`, `>>|`); a copy of a descriptor keeps its `&` in the target (`2>&1` -> `&1`).
+ */
+export const OUTPUT_REDIRECT = new RegExp(String.raw`^(${DESCRIPTOR}>>?(?:&(?![\d-]))?[|!]?|&>>?[|!]?)([\s\S]*)$`);
 
 /**
  * Drops redirections (`2>&1`, `> file`) so they are not mistaken for targets (moved here from lib/rm-paths.mjs, which re-exports it).

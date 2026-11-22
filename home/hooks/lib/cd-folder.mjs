@@ -33,7 +33,8 @@
 // - Round 11 (G8): after `cd X || exit [N]` the folder is X for the rest of the line, because the shell ends when the `cd` fails. Only the
 //   plain form counts: a believed `cd`, then `exit` or `exit <digits>` joined by `||`, the next command joined by `;`, a newline, `&&` or `||`
 //   (not a pipe or `&`: `exit` there runs in a subshell), on a line with no group, loop or function open and no function named `exit`. `return`
-//   is not read the same way: at the top level the Bash tool runs it as an error and goes on.
+//   is not read the same way: at the top level the Bash tool runs it as an error and goes on. The `cd` itself must surely run: it starts the
+//   line or follows `;` or a newline, outside every `if`, `case`, loop and group, with no keyword in front (`then cd X || exit` may never run).
 // Invariants: pure apart from reading process.env.CDPATH; never touches the file system; a segment whose parser recorded no join
 // (`seg.joinedBy`, lib/shell-words.mjs) neither continues a chain nor has its `cd` believed; nothing here ever makes the set smaller
 // than the folders the shell can really be in, short of the limits named in pre-bash-guard.mjs.
@@ -60,6 +61,9 @@ const ASSIGNMENT_WORD = /^[A-Za-z_]\w*\+?=/;
 const EXIT_JOIN = /^\|\|\n*$/; // `cd X || exit 1`: the exit runs only when the cd failed
 const SEQUENCE_JOIN = /^(?:[;\n]|&&|\|\|)+$/; // the next command runs after the exit's own shell would have ended, not beside it
 const EXIT_STATUS = /^\d{1,3}$/;
+const SURE_JOIN = /^[;\n]*$/; // the start of the line, `;` or a newline: the command after it runs whatever came before (not `&&`, `||`, `&`)
+const COMPOUND_OPENS = new Set(['if', 'case']); // their `cd` may not run; loops are counted in `loops`, groups in `open`
+const COMPOUND_ENDS = new Set(['fi', 'esac']);
 const CHAIN_JOIN = /^&&\n*$/; // `&&`, also with the line broken after it
 const PIPE_JOIN = /^\|&?\n*$/;
 const UNSURE_JOIN = /\|&?\n*$/; // the last operator is `|`, `|&` or `||`: the `cd` runs in a subshell, or only when the command before failed
@@ -96,11 +100,12 @@ const cdpathIsSet = (assigns, assigned) => Boolean(process.env.CDPATH) || [...as
  * was a `cd`;
  *   loops: open loops; inFunction: a function body was opened; elsewhere: the current command runs in a folder a wrapper chose (`env -C`);
  *   moved: the line has a `cd`, `pushd` or `popd`, or hid one (pre-bash-guard.mjs then judges nested bodies with the folder unknown);
- *   afterCd: the folders after the believed `cd` just read (G8); afterExit: those folders once `|| exit` followed it; open: the groups (`(`, `{`) open
+ *   afterCd: the folders after the believed `cd` just read (G8); afterExit: those folders once `|| exit` followed it; open: the groups (`(`, `{`) open;
+ *   compounds: the `if` and `case` compounds open; sureRun: the current command surely runs (top level, after line start, `;` or a newline)
  */
 export const newFolder = (cwd) => ({
   dirs: cwd === null ? null : [cwd], passed: [], everIn: cwd === null ? [] : [cwd], followed: cwd, believes: false, cdLast: false, loops: 0,
-  inFunction: false, elsewhere: false, moved: false, afterCd: null, afterExit: null, open: 0,
+  inFunction: false, elsewhere: false, moved: false, afterCd: null, afterExit: null, open: 0, compounds: 0, sureRun: false,
 });
 
 /**
@@ -157,6 +162,9 @@ export function enterSegment(folder, seg, parsed, words) {
   folder.afterCd = null;
   folder.afterExit = null;
   folder.open += countOf(join ?? '', '(') - countOf(join ?? '', ')') + countOf(before, '{') - countOf(before, '}');
+  folder.compounds += compoundChange(parsed, before, words);
+  // G8 needs a `cd` that surely runs: at the top level, after nothing that may skip it
+  folder.sureRun = SURE_JOIN.test(join ?? '') && before.every((word) => ASSIGNMENT_WORD.test(word)) && folder.open === 0 && folder.compounds === 0;
   if (afterCd !== null && EXIT_JOIN.test(join ?? '') && isPlainExit(parsed, before) && folder.open === 0 && !folder.inFunction) folder.afterExit = afterCd;
   if (LOOP_COMMANDS.has(parsed.cmd) || before.some((word) => LOOP_KEYWORDS.has(word))) folder.loops += 1;
   else if (words[0] === LOOP_END && folder.loops > 0) folder.loops -= 1;
@@ -166,6 +174,10 @@ export function enterSegment(folder, seg, parsed, words) {
 }
 
 const countOf = (items, item) => [...items].filter((one) => one === item).length;
+
+/** The change in open `if` and `case` compounds a segment makes: `if` in front of its command, a `case` command, a closing `fi` or `esac`. */
+const compoundChange = (parsed, before, words) => before.filter((word) => COMPOUND_OPENS.has(word)).length + (COMPOUND_OPENS.has(parsed.cmd ?? '') ? 1 : 0)
+  - (COMPOUND_ENDS.has(words[0]) ? 1 : 0);
 
 /** `exit` or `exit 1` alone (G8): nothing in front of it, at most a numeric status. */
 const isPlainExit = ({ cmd, args }, before) => cmd === 'exit' && before.length === 0 && args.length <= 1 && EXIT_STATUS.test(args[0] ?? '0');
@@ -216,7 +228,7 @@ export function leaveSegment(folder, parsed, { project, scope }) {
   const knownBefore = folder.dirs !== null;
   const after = foldersAfter(folder, parsed, project, scope);
   remember(folder, after);
-  if (cmd === 'cd' && folder.believes && knownBefore && folder.loops === 0) folder.afterCd = after;
+  if (cmd === 'cd' && folder.believes && folder.sureRun && knownBefore && folder.loops === 0 && !folder.inFunction) folder.afterCd = after;
   if (folder.believes) [folder.passed, folder.dirs] = [union(folder.passed, folder.dirs), after];
   else folder.dirs = union(folder.dirs, after);
 }

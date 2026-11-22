@@ -88,12 +88,12 @@ const QUALIFIER = /^(?!.*\.\.)[./@N]{1,4}$/; // `.` plain files, `/` folders, `@
  * The group's branches arrive as the next segments: the first joined by `(`, the others by `|`. zsh expands such a group without
  * EXTENDED_GLOB, and `(*|.*)` lists every entry of the folder, hidden ones too. In bash an unquoted `(` in that place is a syntax
  * error, so reading the branches as targets adds no ask to a line bash would run. A quoted `'(*)'` is one word and stays a name.
- * @param {(string[] & {joinedBy?: string})[]} segs the line's segments (lib/shell-words.mjs)
+ * @param {(string[] & {joinedBy?: string, gluedTo?: string})[]} segs the line's segments (lib/shell-words.mjs); `.gluedTo` on the group's first
+ *   segment is the raw word its `(` touched: a lone qualifier (`*(.)`, `*(/)`) is read only when the `(` touches the rm's own last word, unquoted (N6)
  * @param {number} index the segment whose words the group follows
- * @param {string} [text] the raw command text: a lone qualifier (`*(.)`, `*(/)`) is read only when it stands in it glued to the word before (N6)
  * @returns {string[]} each branch word, alone and glued to the segment's last word unless that is an option (`./` + `*`); [] without a group
  */
-export function groupBranches(segs, index, text = '') {
+export function groupBranches(segs, index) {
   const branches = [];
   for (let at = index + 1; at < segs.length; at++) {
     const join = segs[at].joinedBy ?? '';
@@ -102,7 +102,8 @@ export function groupBranches(segs, index, text = '') {
   }
   const last = segs[index].at(-1) ?? '';
   // `src/*(.)`: zsh glob qualifiers that only keep some of what `src/*` lists (plain files, folders, links), so `src/*` is judged and no branch is;
-  // written apart (`src/* (/)`) or with more in the group (`(.|/)`, `(..)`) it is a group of names and stays one
-  if (branches.length === 1 && QUALIFIER.test(branches[0]) && !last.startsWith('-') && text.includes(`${last}(${branches[0]})`)) return [];
+  // written apart (`src/* (/)`, even with `src/*(/)` elsewhere on the line) or with more in the group (`(.|/)`, `(..)`) it is a group of names and stays one
+  const glued = segs[index + 1]?.gluedTo === last; // the raw word equals the read one: no quote or escape in it (`'src/*'(.)` is not a glob)
+  if (branches.length === 1 && QUALIFIER.test(branches[0]) && !last.startsWith('-') && glued) return [];
   return branches.flatMap((branch) => (last.startsWith('-') ? [branch] : [branch, last + branch]));
 }

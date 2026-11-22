@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { commandOf } from './command-of.mjs';
 import { parseGitArgs } from './git-options.mjs';
 import { readPlainFile } from './plain-file.mjs';
-import { flagsOf, redirectLength, tokenize } from './shell-words.mjs';
+import { OUTPUT_REDIRECT, flagsOf, redirectLength, tokenize } from './shell-words.mjs';
 import { isReadOnlySql, sqlHosts, sqlOf } from './sql.mjs';
 
 export { isReadOnlySql };
@@ -35,7 +35,6 @@ const COMPOSE_READ = new Set(['ps', 'logs', 'config', 'top', 'images', 'ls']);
 const KUBECTL_READ = new Set(['get', 'describe', 'logs', 'top']);
 const GIT_READ = new Set(['log', 'status', 'diff', 'show', 'rev-parse', 'branch', 'remote']);
 const FIND_WRITE_FLAGS = /^-(delete|exec|execdir|ok|okdir|fprint0?|fprintf|fls)$/;
-const OUTPUT_REDIRECT = /^(\d*>>?|&>>?|\d*>\|)(.*)$/;
 const DESCRIPTOR_OR_NULL = /^(&\d+|&-|\/dev\/null)$/;
 const REMOTE_SPEC = /^(?:[^@/:\s]+@)?(\[[^\]]+\]|[^/:\s@]{2,}):(?!\/\/)/;
 const RSYNC_URL = /^rsync:\/\/(?:[^@/]*@)?([^/:]+)/;

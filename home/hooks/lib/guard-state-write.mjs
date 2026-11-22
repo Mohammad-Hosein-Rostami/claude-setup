@@ -11,14 +11,13 @@ import { allowedLiteralsDir } from './allowed-literals.mjs';
 import { bouncedDir } from './bounce-once.mjs';
 import { GUARD_LOG_FILE } from './guard-log.mjs';
 import { expandHome, isUnder, nativePath } from './rm-paths.mjs';
-import { QUOTED_MARK, flagsOf, withoutRedirects } from './shell-words.mjs';
+import { OUTPUT_REDIRECT, QUOTED_MARK, flagsOf, withoutRedirects } from './shell-words.mjs';
 import { shown } from './verdict.mjs';
 
 // commands that change the files they are given; for these only the last path is written (the others are read)
 const WRITERS = new Set(['rm', 'rmdir', 'unlink', 'mv', 'ln', 'mkfifo', 'mknod', 'tee', 'touch', 'truncate', 'chmod', 'chown', 'chflags', 'shred', 'mkdir']);
 const LAST_PATH_WRITERS = new Set(['cp', 'install', 'rsync']);
 const IN_PLACE_EDITORS = new Set(['sed', 'perl']);
-const REDIRECT_WORD = /^(?:\d*>>?|&>>?|>\|)(.*)$/;
 const CASELESS_PATHS = process.platform === 'darwin' || process.platform === 'win32'; // APFS and NTFS: `~/.Claude/Private` is the same folder
 
 /** ~/.claude/private (the production-host list) and the guard's own state: what a write there would change in the guard itself. */
@@ -27,8 +26,8 @@ const guardStatePaths = () => [join(homedir(), '.claude', 'private'), allowedLit
 /** The paths this command writes: redirection targets, and the paths a writer changes. */
 function writtenPaths(cmd, words) {
   const redirected = words.flatMap((word, i) => {
-    const match = REDIRECT_WORD.exec(word);
-    return match === null ? [] : [match[1] || (words[i + 1] ?? '')];
+    const match = OUTPUT_REDIRECT.exec(word);
+    return match === null ? [] : [match[2] || (words[i + 1] ?? '')];
   });
   const paths = withoutRedirects(words).filter((word) => !word.startsWith('-') && word !== cmd);
   const changed = WRITERS.has(cmd) ? paths : LAST_PATH_WRITERS.has(cmd) ? paths.slice(-1) : [];

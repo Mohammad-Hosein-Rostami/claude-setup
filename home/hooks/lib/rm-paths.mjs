@@ -47,6 +47,8 @@ const ASSIGNMENT = /^([A-Za-z_]\w*)(\+?)=([\s\S]*)$/;
 const SUBSCRIPT_ASSIGNMENT = /^([A-Za-z_]\w*)\[[^\]]*\]\+?=/; // `X[2]=v`: zsh changes part of a scalar, so its value is no longer known
 const MKTEMP_DIR = 'mktemp-variable';
 const BLANKS = /[ \t\n]+/; // where bash splits an unquoted variable's value into words (the default IFS)
+// `-rf`, `--recursive`: what an option word from a variable may hold and still be read (N5); one still holding `$` is judged by lib/rm-kind.mjs
+const PLAIN_OR_UNREAD_OPTION = /^-{1,2}[A-Za-z][A-Za-z-]*$|[$`]/;
 /** Work budget for one rm target: PATH_MAX is 4096 on Linux and 1024 on macOS, so a longer word is no path a real command names. */
 export const MAX_TARGET_CHARS = 4096;
 /** Work budget for one command line: the target readings the rm rule judges, over both parsers and every wrapped or nested rm. An unquoted
@@ -247,6 +249,12 @@ const withParentReading = (target) => (DOT_GLOB_PART.test(target) ? [target, tar
 const WHOLE_FOLDERS = 'the project root, home, a temp root or /';
 const splitAtBlanks = (word) => word.split(BLANKS).filter(Boolean);
 /**
+ * The first option word an unquoted variable gave the rm that holds more than option letters (`F=-rf,/x; rm $F`), or undefined. Another IFS
+ * would split it into options and targets (`IFS=,`), so it is not read as one option: the rm asks (N5; lib/shell-hazards.mjs asks for IFS itself).
+ */
+const unreadOption = (args, bareWords, splitWords) => args.filter((word) => bareWords.has(word))
+  .flatMap((word) => (splitWords?.has(word) ? splitAtBlanks(word) : [word])).find((piece) => piece.startsWith('-') && !PLAIN_OR_UNREAD_OPTION.test(piece));
+/**
  * @param {string[]} args words after `rm`
  * @param {{cwd: string | null, project: string, vars: Map<string, string>, splitWords?: Set<string>, bareWords?: Set<string>, groupTargets?: string[],
  * work?: {readings: number, spent: boolean}}} env the
@@ -256,6 +264,8 @@ const splitAtBlanks = (word) => word.split(BLANKS).filter(Boolean);
  */
 export function checkRm(args, { cwd, project, vars, splitWords, bareWords = new Set(), groupTargets = [], work = newWork(), maybeCwds = [] }) {
   if (work.spent) return TOO_COMPLEX_REASON;
+  const odd = unreadOption(args, bareWords, splitWords);
+  if (odd !== undefined) return destructive(`rm with an option word from a variable that holds more than option letters (${shown(odd)}), with targets the guard cannot read; check them by hand`);
   // bash splits an unquoted variable's value at blanks: `F='-rf /'; rm $F` is `rm -rf /` (N5), so its options are read from the pieces
   const rm = rmKind(args.flatMap((word) => (splitWords?.has(word) ? splitAtBlanks(word) : [word])), bareWords);
   if (rm === undefined) return undefined;

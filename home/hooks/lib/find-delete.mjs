@@ -42,7 +42,7 @@ function deletes(args) {
  * @returns {string | undefined} ask reason when a deleting find starts outside the project
  */
 export function checkFind(args, env) {
-  if (!deletes(args)) return undefined;
+  if (!deletes(args.flatMap((word) => bashReadings(word, env.splitWords)))) return undefined; // `D='/ -delete'; find $D`: bash splits it (N5)
   const folders = startFolders(args).flatMap((folder) => bashReadings(folder, env.splitWords)); // `find $D` splits like `rm -r $D`
   if (!args.some((word) => NAME_TESTS.has(word))) { // no name test: everything below the start folder goes, as with `rm -r <folder>/*`
     for (const folder of folders) {

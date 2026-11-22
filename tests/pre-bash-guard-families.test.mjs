@@ -147,3 +147,68 @@ test('F1 to F3: hostile names, empty and huge text are asked or silent without a
   assert.equal(decision.ask, true, 'a line over the size cap asks');
   assert.ok(asks(`F="${'x'.repeat(100000)}"; ${RM} $F`));
 });
+
+// Fix round (R1 to R4): each case below was let through by the first build of these forms.
+test('R1 G8: cd X || exit counts only when the cd surely runs, at the top level after the line start, ; or a newline', () => {
+  assertAllAsk([
+    `if false; then cd src || exit 1; fi; ${RM} -rf ../gen`,
+    `if [ -d nope ]; then cd src||exit 1; fi\n${RM} -rf ../gen`,
+    `if true; then :; else cd src||exit 1; fi; ${RM} -rf ../gen`,
+    `false && if true; then cd src||exit 1; fi; ${RM} -rf ../gen`,
+    `if true; then :; elif true; then cd src || exit 1; fi; ${RM} -rf ../gen`,
+    `true && cd src || exit 1; ${RM} -rf ../gen`, // a conditional join before the cd
+    `while true; do cd src || exit 1; break; done; ${RM} -rf ../gen`,
+    `f() { cd src || exit 1; }; ${RM} -rf ../gen`, // a function body may never be called
+  ]);
+  assertAllSilent([`if true; then :; fi; cd src || exit 1; ${RM} -rf ../gen`]); // after `fi` the cd is at the top level again
+});
+
+test('R2 N6: a qualifier counts as glued only at the rm word itself, not where the same text stands elsewhere on the line', () => {
+  assertAllAsk([
+    `cd .. && ${RM} -rf proj/gen/* (N) # proj/gen/*(N)`,
+    `${RM} -rf src/* (/); echo src/*(/)`,
+    `${RM} -rf src/\\* (/); echo src/*(/)`,
+  ]);
+  assertAllSilent([`${RM} -rf src/*(.) # src/* (.)`]);
+  for (const parse of [tokenize, lex]) {
+    assert.deepEqual(parse(`${RM} -rf src/*(.) x`).segs.map((seg) => seg.gluedTo ?? null), [null, 'src/*', null]);
+    assert.deepEqual(parse(`${RM} -rf src/* (.)`).segs.map((seg) => seg.gluedTo ?? null), [null, null]);
+  }
+});
+
+test('R3 G2: every redirection operator in front of cd is skipped, in both parsers', () => {
+  const operators = ['<<< x', '<<<x', '<> f', '>& f', '>| f', '>! f', '>>| f', '&>| f', '<& 0', '{fd}>f', '2>&1', '2>&-', '&>f', '&>>f'];
+  assertAllAsk(operators.map((operator) => `${operator} cd .. && ${RM} -rf proj`));
+  for (const parse of [tokenize, lex]) {
+    for (const operator of ['<<< x', '>| f', '{fd}>f', '<> f']) assert.equal(commandOf(parse(`${operator} cd ..`).segs[0]).cmd, 'cd', operator);
+  }
+  assertAllAsk([`${RM} -rf '{fd}>x/../../..'`]); // quoted: a name, not a redirection
+  assertAllSilent([`>| out.log cd src && ${RM} -rf gen`]);
+});
+
+test('R4 N5: a line that changes IFS, or an option word from a variable holding more than option letters, asks', () => {
+  assertAllAsk([
+    `IFS=,; F=-rf,/Users; ${RM} $F`,
+    `export IFS=,; F=-rf,/Users; ${RM} $F`,
+    `read IFS <<< ,; F=-rf,/Users; ${RM} $F`,
+    `IFS=,; D=/,-delete; find $D`,
+    `IFS=,; X=push,--force; git $X`,
+    `F=-rf,/Users; ${RM} $F`,
+    `F="-rf,/Users x"; ${RM} $F`,
+    `D="/ -delete"; find $D`, // bash splits it at the blank: -delete is an option of find
+    `D="/ -exec ${RM} -rf {} +"; find $D`,
+  ]);
+  assertAllSilent([`IFS=, read -r a b <<< "$x"; echo "$a"`, `IFS=,; ${RM} -rf dist`, `F=-rf; ${RM} $F dist`]);
+});
+
+test('R3 sibling: every output operator is read as a write where the guard reads redirection targets', () => {
+  assertAllAsk([
+    'echo x >| /dev/disk2',
+    'echo x >! /dev/disk2',
+    'echo x >&/dev/disk2',
+    'echo x {fd}>/dev/disk2',
+    'gh ssh-key add >| x.pub ~/.ssh/id_rsa', // the key file is the private key, not the redirection target
+    'echo x >| ~/.claude/private/prod-hosts',
+  ]);
+  assertAllSilent(['echo hi 2>&1', 'echo hi >/dev/null', 'echo hi >&2']);
+});

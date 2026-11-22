@@ -1,20 +1,19 @@
 // Whether a Bash command only reads, for agent-budget.mjs: the lead keeps git and reading commands at any context size.
 // Exports: isReadOnlyCommand(command). Pure, no I/O; the shell text is split by lib/shell-words.mjs, never run.
 import { commandOf } from './command-of.mjs';
-import { segments } from './shell-words.mjs';
+import { OUTPUT_REDIRECT, segments } from './shell-words.mjs';
 
 // Commands the lead may keep running at any context size (git: every subcommand). sed and find count only without their writing options.
 const READ_ONLY_COMMANDS = new Set(['git', 'ls', 'cat', 'head', 'tail', 'grep', 'rg', 'wc', 'pwd', 'echo', 'printf', 'which', 'type', 'stat',
   'file', 'diff', 'date', 'du', 'df', 'tree', 'jq', 'sort', 'uniq', 'cut', 'basename', 'dirname', 'realpath', 'cd', 'true', 'sed', 'find']);
 const WRITING_OPTION = { sed: /^(?:-[^-]*i|--in-place)/, find: /^-(?:delete|exec|execdir|ok|okdir|fprint|fprintf|fls)$/ };
-const REDIRECT = /^(?:\d*|&)>>?\|?(.*)$/; // a word that sends output somewhere: `>f`, `2>>f`, `&>f`, or `>` with the target next
 const HARMLESS_TARGET = /^(?:&\d|\/dev\/null)$/;
 
 /** True when a word of the segment sends output to a file (`> f`, `2>>f`, `&>f`); `2>&1` and `>/dev/null` do not count. */
 function redirectsToFile(words) {
   return words.some((word, index) => {
-    const match = REDIRECT.exec(word);
-    return match !== null && !HARMLESS_TARGET.test(match[1] || (words[index + 1] ?? ''));
+    const match = OUTPUT_REDIRECT.exec(word); // `>f`, `2>>f`, `&>f`, `>| f`, or `>` with the target next
+    return match !== null && !HARMLESS_TARGET.test(match[2] || (words[index + 1] ?? ''));
   });
 }
 

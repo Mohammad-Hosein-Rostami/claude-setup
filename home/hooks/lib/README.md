@@ -9,6 +9,7 @@ dependencies. Each file starts with a comment that lists its exports.
 Reading a shell command (used by `pre-bash-guard.mjs`; pure functions, they never run anything):
 - `shell-words.mjs`, `shell-lexer.mjs`, `ansi-c.mjs`, `braces.mjs`, `message-text.mjs`: split a command into words and
   decode quoting, brace lists and `$'...'`. `shell-words.mjs` is the entry point; `shell-lexer.mjs` is a second, separate parser.
+  `segment-marks.mjs` holds the flags both parsers put on a segment (`.piped`, `.joinedBy`, `.gluedTo`, `.arrayList`), so they give one shape.
 - `command-of.mjs`: finds the real command behind `sudo`, `env`, `VAR=x` and keywords.
 - `git-options.mjs`: reads git's own options before the subcommand (`git -C dir -c k=v push`); an option it does not know is
   read both ways (a flag, or taking the next word), so an option value never hides the subcommand.

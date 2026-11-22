@@ -171,9 +171,9 @@ function reasonsOf(command, context) {
     enterSegment(folder, seg, parsed, words);
     const bareWords = new Set([...(seg.bareWords ?? [])].map((at) => words[at])); // `$NAME` outside quotes: bash splits its value into words
     for (const dir of possibleFolders(folder, seg, work)) { // a command that may run in more than one folder is judged in each
-      const env = { cwd: dir, maybeCwds: [...maybeFolders(folder), ...maybeCwds], groupTargets: groupBranches(segs, index, command), project, vars: scope.vars,
+      const env = { cwd: dir, maybeCwds: [...maybeFolders(folder), ...maybeCwds], groupTargets: groupBranches(segs, index), project, vars: scope.vars,
         splitWords: scope.splitWords, bareWords, prodHosts, parse, depth: depth + 1, judged, line, work };
-      reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript }), ...gitRunValueReasons(words, parsed, env, reasonsOf),
+      reasons.push(...shellHazards({ seg, raw: commandOf(seg), parsed, shellScript, line: command }), ...gitRunValueReasons(words, parsed, env, reasonsOf),
         ...unreadableNameReasons(parsed.cmd, command, prodHosts));
       if (parsed.cmd === undefined) continue;
       const wrapped = (cmd, args, at) => checkCommand({ cmd, args, assigns: [], before: words.slice(0, at) }, env, []);

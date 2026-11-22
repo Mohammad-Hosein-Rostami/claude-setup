@@ -1,5 +1,5 @@
 // Rules for commands whose real command is hidden from the guard: it runs from a variable, from stdin, or from one string.
-// Exports: shellHazards({seg, raw, parsed, shellScript}) -> string[] ask reasons; VARIABLE_COMMAND_REASON, SPLIT_VARIABLE_REASON (the two
+// Exports: shellHazards({seg, raw, parsed, shellScript, line}) -> string[] ask reasons; IFS_SPLIT_REASON; VARIABLE_COMMAND_REASON, SPLIT_VARIABLE_REASON (the two
 // variable-command reasons, which lib/bounce-once.mjs sends back once for a rewrite); CONVENTIONAL_COMMAND_VARS (the names that
 // conventionally hold an editor, pager or compiler; lib/git-runs.mjs reads them too). Pure, no I/O.
 // - the command word is a variable or `$(...)` (`$X`, `X="git push"; $X`): the guard cannot see what runs. Names that conventionally hold
@@ -9,6 +9,9 @@
 // - `env -S "cmd"` and `su -c "cmd"` take the command as ONE string.
 // - a brace word the guard cannot list (`{-c,"$X"}`, more than 64 words; lib/braces.mjs) at or before the command word, or in a command
 //   whose words a rule reads (UNLISTED_BRACES_REASON); `echo {$a,b}` stays quiet.
+// - a line that names IFS (`IFS=,`, `read IFS`, `export IFS=...`) and an unquoted expansion (`$F`, `$(...)`) in a command whose words a
+//   rule reads (IFS_SPLIT_REASON): bash splits the value at the new IFS characters, so `IFS=,; F=-rf,/x; rm $F` is `rm -rf /x`, which the
+//   guard, splitting at blanks only, would read as one option word (N5).
 // A false positive only costs a dialog, so each rule is as narrow as the bypass it closes.
 import { commandName } from './command-of.mjs';
 import { SCAN_STOP, SCAN_VERBS } from './dangerous-scan.mjs';
@@ -53,14 +56,15 @@ function oneStringCommand(seg, raw, parsed) {
 }
 
 /**
- * @param {{seg: string[], raw: {cmd?: string, at: number}, parsed: {cmd?: string, args: string[]}, shellScript: (args: string[]) => string | undefined}} input
- *   seg: the segment's words as written (`.piped` when a `|` fed it); raw: commandOf(seg); parsed: commandOf of the words after variable substitution
+ * @param {{seg: string[], raw: {cmd?: string, at: number}, parsed: {cmd?: string, args: string[]}, shellScript: (args: string[]) => string | undefined,
+ *   line?: string}} input seg: the segment's words as written (`.piped` when a `|` fed it); raw: commandOf(seg); parsed: commandOf of the words
+ *   after variable substitution; line: the command text the segment came from
  * @returns {string[]} ask reasons
  */
-export function shellHazards({ seg, raw, parsed, shellScript }) {
+export function shellHazards({ seg, raw, parsed, shellScript, line = '' }) {
   const commandWord = seg.arrayList === true ? undefined : hiddenCommandWord(raw, parsed); // `files+=("$f")`: its elements are words
-  return [commandWord, shellFromStdin(seg, parsed, shellScript), oneStringCommand(seg, raw, parsed), unlistedBraces(seg, raw, parsed)]
-    .filter((reason) => reason !== undefined);
+  return [commandWord, shellFromStdin(seg, parsed, shellScript), oneStringCommand(seg, raw, parsed), unlistedBraces(seg, raw, parsed),
+    ifsSplit(seg, raw, parsed, line)].filter((reason) => reason !== undefined);
 }
 
 export const UNLISTED_BRACES_REASON = 'a brace expansion this guard cannot list (an alternative with $ or a backtick, too many words or '
@@ -68,9 +72,23 @@ export const UNLISTED_BRACES_REASON = 'a brace expansion this guard cannot list 
 // the commands whose words a rule reads (flags, targets, options), beyond the verbs the position-independent scan tries
 const RULE_COMMANDS = new Set([...SCAN_VERBS, 'find', 'eval', 'su', 'env', 'xargs', 'parallel', 'security', 'alias', 'cp', 'mv', 'tee']);
 
+/** True when a rule reads this command's words: a rule command, or a verb the position-independent scan tries among its words. */
+const rulesRead = (seg, raw, parsed) => RULE_COMMANDS.has(parsed.cmd) || (!SCAN_STOP.has(parsed.cmd) && seg.some((word, i) => i > raw.at && SCAN_VERBS.has(commandName(word))));
+
 /** A brace word the tokenizer could not list (`.unlistedBraces`) asks where it may hide what runs: at or before the command word, or in a command a rule reads. */
 function unlistedBraces(seg, raw, parsed) {
   const at = seg.unlistedBraces ?? [];
-  const rulesRead = RULE_COMMANDS.has(parsed.cmd) || (!SCAN_STOP.has(parsed.cmd) && seg.some((word, i) => i > raw.at && SCAN_VERBS.has(commandName(word))));
-  return at.length > 0 && (at.some((i) => i <= raw.at) || rulesRead) ? UNLISTED_BRACES_REASON : undefined;
+  return at.length > 0 && (at.some((i) => i <= raw.at) || rulesRead(seg, raw, parsed)) ? UNLISTED_BRACES_REASON : undefined;
+}
+
+export const IFS_SPLIT_REASON = 'command too complex to check: an unquoted variable or substitution on a line that changes IFS, so the guard cannot '
+  + 'tell how the shell splits it into options and targets; quote it, or write the words out';
+const NAMES_IFS = /\bIFS\b/; // any mention: an assignment can take many forms (`IFS=`, `read IFS`, `printf -v IFS`, `${IFS:=,}`)
+const SUBSTITUTION_WORD = '$'; // what an unquoted `$(...)` or backtick leaves in the segment (lib/shell-words.mjs)
+
+/** An unquoted expansion (`.bareWords`, or an unquoted `$(...)`) in a command a rule reads, on a line that names IFS (N5). */
+function ifsSplit(seg, raw, parsed, line) {
+  if (!NAMES_IFS.test(line)) return undefined;
+  const expands = (seg.bareWords?.size ?? 0) > 0 || seg.includes(SUBSTITUTION_WORD);
+  return expands && rulesRead(seg, raw, parsed) ? IFS_SPLIT_REASON : undefined;
 }

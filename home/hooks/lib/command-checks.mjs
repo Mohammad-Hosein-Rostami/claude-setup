@@ -13,14 +13,13 @@ import { commandName, commandOf } from './command-of.mjs';
 import { parseGitArgs } from './git-options.mjs';
 import { parsePushArgs, pushAsk } from './outward.mjs';
 import { RECURSIVE_FLAG } from './rm-paths.mjs';
-import { basenameOf, flagsOf, segments } from './shell-words.mjs';
+import { OUTPUT_REDIRECT, basenameOf, flagsOf, segments } from './shell-words.mjs';
 import { DESTRUCTIVE_PREFIX, destructive } from './verdict.mjs';
 
 export const LOCKFILES = new Set(['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lockb']);
 // rm is allowed on lockfiles (delete and reinstall is a normal fix); cp only writes its last argument.
 const FILE_WRITERS = new Set(['mv', 'cp', 'tee', 'truncate']);
 const CONFIG_ENV_ATTACHED = '--config-env=';
-const REDIRECT = /^(\d?>>?|&>>?)/;
 const NO_VERIFY = '--no-verify';
 const MIN_NO_VERIFY_PREFIX = 8; // `--no-ver`: git accepts any unique prefix of a long option
 const DISK_DEVICE = /^\/dev\/(?!null$|zero$|tty|std|fd\/|pts\/)/;
@@ -94,7 +93,7 @@ function diskutilWipes(args) {
 
 /** `cp x /dev/disk2`, `mv x /dev/sda`: the destination (last word) is a raw device; `tee` writes every file word. */
 function deviceDestination(cmd, args) {
-  const files = args.filter((a) => !a.startsWith('-') && !REDIRECT.test(a));
+  const files = args.filter((a) => !a.startsWith('-') && !OUTPUT_REDIRECT.test(a));
   return (cmd === 'tee' ? files : files.slice(-1)).some((f) => RAW_DEVICE_TARGET.test(f));
 }
 
@@ -112,8 +111,9 @@ export function checkDiskWipe(cmd, args) {
 function redirectTargets(tokens) {
   const out = [];
   tokens.forEach((t, i) => {
-    if (!REDIRECT.test(t)) return;
-    const target = t.replace(REDIRECT, '') || tokens[i + 1];
+    const redirect = OUTPUT_REDIRECT.exec(t); // `>| /dev/disk2`, `>&/dev/disk2` too
+    if (redirect === null) return;
+    const target = redirect[2] || tokens[i + 1];
     if (target) out.push(target);
   });
   return out;
@@ -248,16 +248,15 @@ export function checkKeychainPrint(cmd, args) {
 
 const GH_KEY_VALUE_OPTIONS = new Set(['-t', '--title', '--type']); // `gh ssh-key add` options that take the next word
 const STDIN_FROM = /^0?<$/; // `gh ssh-key add < key`: the key comes on stdin from the next word
-const BARE_OUTPUT = /^(?:\d*|&)>{1,2}$/; // `>`, `2>>`, `&>`: the target is the next word
-const OUTPUT_REDIRECTION = /^(?:\d*|&)>/; // `2>&1`, `>out`, `&>log`
 
 /** The key file of `gh ssh-key add [flags] <path>` (or `< path`): the first word after `add` that is no option, option value or output redirection. */
 function keyFileOf(args) {
   for (let i = 2; i < args.length; i++) {
     const word = args[i];
     if (STDIN_FROM.test(word)) return args[i + 1];
-    if (GH_KEY_VALUE_OPTIONS.has(word) || BARE_OUTPUT.test(word)) i++;
-    else if (!word.startsWith('-') && !OUTPUT_REDIRECTION.test(word)) return word.replace(/^0?</, '');
+    const output = OUTPUT_REDIRECT.exec(word); // `> f`, `>| f`: the target is the next word; `2>&1`, `>out`: this one
+    if (GH_KEY_VALUE_OPTIONS.has(word) || output?.[2] === '') i++;
+    else if (!word.startsWith('-') && output === null) return word.replace(/^0?</, '');
   }
   return undefined;
 }

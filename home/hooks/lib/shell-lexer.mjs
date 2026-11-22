@@ -1,9 +1,10 @@
 // Character-level shell lexer: the second, independent parser behind pre-bash-guard's "matched in raw text" backstop, and the
 // source of truth for heredocs and `$(...)` bodies inside double quotes. Pure, no I/O, never evaluates anything.
-// Exports: lexShell(text) -> {rawSegs, nested, stripped, chained}; isSimpleSubstitutionBody; markPiped, markJoin, opensArrayList, markArrayList.
+// Exports: lexShell(text) -> {rawSegs, nested, stripped, chained}; isSimpleSubstitutionBody. The segment flags are set through segment-marks.mjs.
 //   rawSegs   simple commands as lists of RAW words (quotes and escapes intact; `.piped` is true when a `|` fed the segment, `.arrayList`
 //             when the segment is the element list of `NAME=(...)` / `NAME+=(...)`; `.joinedBy` holds the operators between the word before
-//             the segment and its first word, as written: '' at the start, `&&`, `;`, `(`, `)&&`, a newline; lib/cd-folder.mjs reads it)
+//             the segment and its first word, as written: '' at the start, `&&`, `;`, `(`, `)&&`, a newline; lib/cd-folder.mjs reads it;
+//             `.gluedTo` the raw word a `(` opening the segment touched, `src/*(.)`; lib/bare-glob.mjs reads it)
 //   nested    bodies of `$(...)` / backticks found inside double quotes at the top level (the caller lexes them again)
 //   stripped  the text without heredoc bodies and their terminator lines; chained: also without a comment right after `&&`, `||` or `|` (N8)
 // It follows the real nesting: quotes, `$'..'`, comments, `$((..))` arithmetic, `$(...)` inside double quotes (where quotes nest again) and
@@ -15,6 +16,8 @@
 // (isSimpleSubstitutionBody): after a `case` pattern `)` or a `)` inside `${...}` the rest of the body is still inside the substitution, so
 // those keep the flat split and the words stay their own commands.
 // Invariants: linear in the text length apart from a bounded arithmetic look-ahead; an unclosed quote runs to the end of the text.
+
+import { markArrayList, markGlued, markJoin, markPiped, opensArrayList } from './segment-marks.mjs';
 
 const MAX_NESTING = 64; // `"$("$("...` deeper than this is read as plain text, so a hostile command cannot overflow the stack
 const MAX_ARITHMETIC = 4096; // look-ahead for the `))` that closes `((`; a longer one is treated as nested parentheses
@@ -51,17 +54,6 @@ export function isSimpleSubstitutionBody(body) {
   }
   return depth === 0;
 }
-
-/** Marks a segment as fed by `|`; non-enumerable, so segments still compare equal to plain word lists. */
-export const markPiped = (seg) => Object.defineProperty(seg, 'piped', { value: true, configurable: true });
-/** Records the operators that came before a segment's first word (`&&`, `;`, `(`, `)&&`, '' at the start); non-enumerable like `.piped`. Not named `join`: that would hide the array method. */
-export const markJoin = (seg, join) => Object.defineProperty(seg, 'joinedBy', { value: join, configurable: true });
-// `NAME=(`, `NAME+=(`, `NAME[i]=(`: the list after it holds an array's elements, which are words, not a command
-const ARRAY_ASSIGNMENT = /^[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=$/;
-/** True when the `(` that follows the word `before` opens an array's element list (`files+=("$f")`). */
-export const opensArrayList = (before) => ARRAY_ASSIGNMENT.test(before ?? '');
-/** Marks a segment as an array's element list: the guard reads its words, but its first word is not a command word. */
-export const markArrayList = (seg) => Object.defineProperty(seg, 'arrayList', { value: true, configurable: true });
 
 /** The delimiter word after the `<<` at `at`, with quotes and backslashes removed from the WHOLE word (`"E"OF`, `E\\OF`, `'E'OF` all mean EOF), or undefined. */
 function heredocDelimiter(text, at) {
@@ -225,11 +217,13 @@ function walk(state, start, closer) {
       if (text[i - 1] !== '$') endWord(i); // `((expr))` is a command that runs nothing; `$((expr))` stays part of its word
       i = arithmeticEnd(text, i + 2);
     } else if (c === '(') {
+      const touches = word !== -1; // no blank between the word and the `(` (`src/*(.)`)
       endWord(i);
       opened.push(text[i - 1] === '$' && text[i - 2] !== '\\' ? { outer: current, at: i } : null);
-      const arrayList = text[i - 1] === '=' && opensArrayList(current.at(-1));
+      const [arrayList, touched] = [text[i - 1] === '=' && opensArrayList(current.at(-1)), current.at(-1)];
       split(i, c);
       if (arrayList) markArrayList(current);
+      if (touches) markGlued(current, touched);
       if (closer === ')') depth++;
       i++;
     } else if (c === ')' && closer === ')' && depth === 0) {
