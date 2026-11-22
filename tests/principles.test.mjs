@@ -1,4 +1,4 @@
-// Round 5 lane A text checks: the principle table P1-P13, the architect's contract block and self-attack list, the
+// Round 5 lane A text checks: the principle table P1-P16, the architect's contract block and self-attack list, the
 // agent timeout / no-poll / no-full-suite lines, and the home/CLAUDE.md gate, long-command and workflow lines.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const read = (path) => readFileSync(fileURLToPath(new URL(`../${path}`, import.meta.url)), 'utf8');
 
-const PRINCIPLE_IDS = Array.from({ length: 13 }, (_, index) => `P${index + 1}`);
+const PRINCIPLE_IDS = Array.from({ length: 16 }, (_, index) => `P${index + 1}`);
 
 /** Rows of the principle table: `id | areas | principle | yes/no question | mechanical check`. */
 function principleRows() {
@@ -17,7 +17,7 @@ function principleRows() {
     .map((line) => line.split(' | ').map((cell) => cell.trim()));
 }
 
-test('principles.md has one row per principle P1-P13, in order, with all five cells filled', () => {
+test('principles.md has one row per principle P1-P16, in order, with all five cells filled', () => {
   const rows = principleRows();
   assert.deepEqual(rows.map((row) => row[0]), PRINCIPLE_IDS);
   for (const row of rows) {
@@ -46,9 +46,12 @@ test('each principle keeps the words of the replay it was written from', () => {
     P8: /--state-dir/,
     P9: /back off/i,
     P10: /UNCONFIRMED/,
-    P11: /worktree-wf_/,
+    P11: /worktree-agent-/,
     P12: /wall-clock/i,
     P13: /--add-class audit/,
+    P14: /trust boundary[\s\S]*unvalidated/i,
+    P15: /uninstall[\s\S]*every exit path/i,
+    P16: /stale, crash and old-reader/i,
   };
   for (const [id, pattern] of Object.entries(expected)) assert.match(byId[id], pattern, `${id} text`);
 });

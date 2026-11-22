@@ -24,7 +24,7 @@ test('every id in PRINCIPLES_BY_TRIGGER has a row in principles.md', () => {
 
 test('the check reads real data: the table has rows and a missing id is caught', () => {
   const known = tableIds();
-  assert.ok(known.size >= 13);
+  assert.ok(known.size >= 16);
   assert.ok(!known.has('P999'));
 });
 

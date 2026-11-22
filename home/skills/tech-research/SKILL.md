@@ -8,4 +8,5 @@ description: Use when a design decision depends on external facts you lack - ser
 3. Check date and version of every source. A fact from before the current major version is a lead, not an answer.
 4. Cross-check anything that decides the design with a second source or a small local experiment.
 5. Write findings as: fact, source URL, date read, confidence (verified / reported / assumption). Put them under "Sources" in the ADR or the PR; never leave a decision resting on memory.
-6. Stop when the questions are answered.
+6. Re-fetch every version, date and price claim yourself from two independent sources, one claim at a time; a claim you cannot finish is kept and marked unverified, never dropped; list the open sub-questions.
+7. Stop when the questions are answered.

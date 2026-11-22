@@ -12,8 +12,10 @@ Iron law: no fix before a confirmed root cause (C22).
 3. Write 1-3 ranked hypotheses. Test each with one cheap observation (log, assertion, bisect). Discard on evidence.
 4. Trace backwards from the symptom to the first wrong value; fix at that origin.
 5. Write a regression test that fails before the fix and passes after (C11, T2).
-6. Apply the smallest fix. Re-run the repro and the nearest suite.
+6. Fix the cause at every site of its class (search the repo and name the count); one branch for all attempts, reverting a wrong earlier fix. Apply the smallest fix per site. Re-run the repro and the nearest suite.
 7. After two failed fixes, change approach instead of retrying: write findings (repro, hypotheses tried, evidence) to a file, hand them to the `deep-debugger` agent, then apply its fix and continue until the test passes.
+
+Ladder: a failed verify goes once to `xhigh`, then once to `max`, then back to the architect for a re-plan; a UI repro uses the owner's conditions.
 
 Second report of the same defect (the owner says it is still broken): mark the row with `node ~/.claude/tools/status/status.mjs defect <id> "<the owner's conditions>"`. The second mark adds a `rootcause:<id>` row: reproduce it under the owner's conditions (zoom, pixel ratio, OS, theme, data) and hand it to `deep-debugger` before any fix; never answer "no defect" to a second report. The condition joins the UI matrix for good, and every owner-reported defect becomes a regression test.
 
