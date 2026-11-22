@@ -19,7 +19,7 @@ const startRow = { ...checkRow, item: `close: step 1 checkpoint, base ${START}` 
  * A fake run: every `to` in `onBase` is a clean, new, first-parent commit of the base; other shas fail the first-parent check.
  * `rev-parse <sha>^{commit}` answers a full sha with itself, a key of `aliases` with its value (null = ambiguous), anything else is unknown.
  */
-function fakeRun(onBase, aliases = {}, unreviewed = '', reviewExit = 0) {
+function fakeRun(onBase, aliases = {}) {
   const calls = [];
   const run = (file, argv) => {
     if (file !== 'git') return { exit: 0, out: '' };
@@ -27,7 +27,6 @@ function fakeRun(onBase, aliases = {}, unreviewed = '', reviewExit = 0) {
     const [command, ...rest] = argv.slice(2);
     if (command === 'rev-parse') return resolveSha(rest.at(-1), onBase, aliases);
     if (command === 'rev-list') return { exit: 0, out: rest.at(-1).endsWith(`..${onBase.at(-1)}`) && rest.at(-1).startsWith(START) ? onBase.join('\n') : `${rest.at(-1).split('..')[1]}\n` };
-    if (command === 'cherry') return rest.length === 3 ? { exit: reviewExit, out: unreviewed } : { exit: 0, out: '' };
     if (command === 'merge-base') return { exit: rest[1] === START && rest[2] === undefined ? 1 : rest[2] === START ? 1 : 0, out: '' };
     return { exit: 0, out: '' };
   };
@@ -42,10 +41,9 @@ function resolveSha(arg, onBase, aliases) {
 }
 
 const rangeLine = (result) => result.lines.find((line) => / 2 range/.test(line));
-const STEERED_ROAD = { ...ROAD, steps: [{ form: 'agents', lanes: ROAD.steps[0].lanes }] };
-const gate = (items, onBase = [TO], { aliases = {}, steered = false, unreviewed = '', reviewExit = 0, road = steered ? STEERED_ROAD : ROAD } = {}) => {
-  const { run, calls } = fakeRun(onBase, aliases, unreviewed, reviewExit);
-  return { result: gateStep(road, [startRow, ...items], 1, run, { isUiPath: () => false, checkOn: (category) => category === 'review' && road.steps[0].form === 'agents' }), calls };
+const gate = (items, onBase = [TO], { aliases = {}, road = ROAD } = {}) => {
+  const { run, calls } = fakeRun(onBase, aliases);
+  return { result: gateStep(road, [startRow, ...items], 1, run, { isUiPath: () => false }), calls };
 };
 const cherried = (calls, sha) => calls.some((call) => call[0] === 'cherry' && call.includes(sha));
 
@@ -222,59 +220,18 @@ test('an ambiguous sha in a row is a FAIL naming the row', () => {
   assert.ok(result.lines.some((line) => line.startsWith('FAIL 2 range: rd.s1.a-land') && line.includes(SHORT_START)), result.lines.join('\n'));
 });
 
-// A steered (agents-form) step needs "reviewed <sha> clean" on the lane row; a done `<lane row id>.reviewed` row may hold it instead.
+// The gate reads no review record (road README, "Rows"): a `reviewed <sha> clean` line or a `<lane row id>.reviewed` row changes nothing.
 const reviewedText = (sha) => `reviewed ${sha} clean`;
-const steeredRows = (laneEvidence, ...extra) => [row('rd.s1.a', laneEvidence), row('rd.s1.a-land', landedText(TO)), ...extra];
-const reviewCherries = (calls) => calls.filter((call) => call[0] === 'cherry' && call.length === 4);
+const agentsRoad = { ...ROAD, steps: [{ form: 'agents', lanes: ROAD.steps[0].lanes }] };
 
-test('a steered lane without a reviewed line is a FAIL', () => {
-  const { result } = gate(steeredRows('x'), [TO], { steered: true });
-  assert.match(rangeLine(result), /^FAIL 2 range: rd\.s1\.a has no "reviewed <sha> clean" line/);
-});
-
-test('a steered lane takes the reviewed line of its .reviewed correction row', () => {
-  const { result, calls } = gate(steeredRows('x', row('rd.s1.a.reviewed', reviewedText(TO))), [TO], { steered: true });
-  assert.match(rangeLine(result), /^PASS 2 range: 1 close rows/, result.lines.join('\n'));
-  assert.deepEqual(reviewCherries(calls).map((call) => call[1]), [TO]);
-});
-
-test('the .reviewed row id is matched case-insensitively', () => {
-  const { result } = gate(steeredRows('x', row('RD.S1.A.REVIEWED', reviewedText(TO))), [TO], { steered: true });
-  assert.match(rangeLine(result), /^PASS 2 range/);
-});
-
-test('the lane row own reviewed line wins over its .reviewed row', () => {
-  const { result, calls } = gate(steeredRows(reviewedText(TO), row('rd.s1.a.reviewed', reviewedText(OTHER_TO))), [TO], { steered: true });
-  assert.match(rangeLine(result), /^PASS 2 range/);
-  assert.deepEqual(reviewCherries(calls).map((call) => call[1]), [TO]);
-  assert.equal(usedAsText(calls, OTHER_TO), false);
-});
-
-test('a .reviewed row that is not done counts for nothing', () => {
-  const { result, calls } = gate(steeredRows('x', row('rd.s1.a.reviewed', reviewedText(TO), null)), [TO], { steered: true });
-  assert.match(rangeLine(result), /^FAIL 2 range: rd\.s1\.a has no "reviewed/);
-  assert.equal(reviewCherries(calls).length, 0);
-});
-
-test('a .reviewed row is not read when the step is not steered', () => {
-  const { result, calls } = gate(steeredRows('x', row('rd.s1.a.reviewed', reviewedText(OTHER_TO))), [TO]);
-  assert.match(rangeLine(result), /^PASS 2 range/);
-  assert.equal(usedAsText(calls, OTHER_TO), false);
-});
-
-test('a short reviewed sha is resolved to its full sha; an unknown one is a FAIL naming the lane row', () => {
-  const short = gate(steeredRows('x', row('rd.s1.a.reviewed', reviewedText(SHORT_TO))), [TO], { steered: true, aliases: { [SHORT_TO]: TO } });
-  assert.match(rangeLine(short.result), /^PASS 2 range/, short.result.lines.join('\n'));
-  assert.deepEqual(reviewCherries(short.calls).map((call) => call[1]), [TO]);
-  const unknown = gate(steeredRows(reviewedText(SHORT_TO)), [TO], { steered: true });
-  assert.equal(unknown.result.pass, false);
-  assert.ok(unknown.result.lines.some((line) => line.startsWith('FAIL 2 range: rd.s1.a ') && line.includes(SHORT_TO)), unknown.result.lines.join('\n'));
-});
-
-test('a reviewed sha git does not know is not looked up when the step is not steered', () => {
-  const { result, calls } = gate(steeredRows(reviewedText(SHORT_TO)), [TO]);
-  assert.match(rangeLine(result), /^PASS 2 range/, result.lines.join('\n'));
-  assert.equal(calls.some((call) => call.includes(`${SHORT_TO}^{commit}`)), false);
+test('a lane of an agents step needs no reviewed line, and a .reviewed row or a reviewed sha is never read or looked up', () => {
+  const rows = [row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(TO))];
+  assert.match(rangeLine(gate(rows, [TO], { road: agentsRoad }).result), /^PASS 2 range: 1 close rows/);
+  const withReviewed = gate([row('rd.s1.a', reviewedText(SHORT_TO)), row('rd.s1.a-land', landedText(TO)), row('rd.s1.a.reviewed', reviewedText(OTHER_TO))], [TO], { road: agentsRoad });
+  assert.match(rangeLine(withReviewed.result), /^PASS 2 range: 1 close rows/, withReviewed.result.lines.join('\n'));
+  assert.equal(usedAsText(withReviewed.calls, OTHER_TO), false);
+  assert.equal(withReviewed.calls.some((call) => call.includes(`${SHORT_TO}^{commit}`)), false);
+  assert.equal(withReviewed.calls.filter((call) => call[0] === 'cherry').length, 1, 'only the base cherry of the close row runs');
 });
 
 // Own-line guards: a close row with its own landed line never reads its correction rows.
@@ -293,29 +250,19 @@ test('a correction row holding a landed line and a within text is read as its la
   assert.match(rangeLine(result), /^PASS 2 range: 1 close rows/, result.lines.join('\n'));
 });
 
-test('two done .reviewed rows for one lane row are a FAIL, never silently the first', () => {
-  const road = { ...ROAD, steps: [{ form: 'agents', lanes: [{ name: 'x-land', files: ['x.mjs'] }] }] };
-  const { result } = gate([row('rd.s1.x-land', 'x'), row('rd.s1.x-land-land', landedText(TO)), row('rd.s1.x-land.reviewed', reviewedText(TO)), row('rd.s1.x.reviewed', reviewedText(TO))], [TO], { road });
-  assert.match(rangeLine(result), /^FAIL 2 range: rd\.s1\.x-land has no "reviewed/, result.lines.join('\n'));
-});
-
 // A sha that git resolves through a ref (a branch or tag named like hex) is not the commit the row names.
 test('a row sha that resolves to a commit with another prefix is a FAIL naming the row', () => {
   const landed = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(SHORT_TO))], [TO, OTHER_TO], { aliases: { [SHORT_TO]: OTHER_TO } });
   assert.equal(landed.result.pass, false);
   assert.ok(landed.result.lines.some((line) => line.startsWith('FAIL 2 range: rd.s1.a-land') && line.includes(SHORT_TO)), landed.result.lines.join('\n'));
-  const reviewed = gate(steeredRows(reviewedText(SHORT_TO)), [TO], { steered: true, aliases: { [SHORT_TO]: OTHER_TO } });
-  assert.ok(reviewed.result.lines.some((line) => line.startsWith('FAIL 2 range: rd.s1.a ') && line.includes(SHORT_TO)), reviewed.result.lines.join('\n'));
-  assert.equal(usedAsText(reviewed.calls, OTHER_TO), false);
 });
 
 // "landed within <id>" is for fix rows only: a road lane (an entry of the road) lands alone, so it always has its own range.
-const TWO_STEERED = { ...ROAD, steps: [{ form: 'agents', lanes: [{ name: 'a', files: ['x.mjs'] }, { name: 'g', files: ['y.mjs'] }] }] };
-const TWO_PLAIN = { ...ROAD, steps: [{ lanes: TWO_STEERED.steps[0].lanes }] };
+const TWO_PLAIN = { ...ROAD, steps: [{ lanes: [{ name: 'a', files: ['x.mjs'] }, { name: 'g', files: ['y.mjs'] }] }] };
 const D = 'd'.repeat(40);
 const lineFor = (result, pattern) => result.lines.find((line) => pattern.test(line));
 const NEEDS_OWN_RANGE = /^FAIL 2 range: rd\.s1\.g-land .*a road lane needs its own range; lanes land one at a time/;
-const laneWithin = (correction, laneEvidence = 'x') => [row('rd.s1.a', reviewedText(TO)), row('rd.s1.a-land', landedText(TO)), row('rd.s1.g', laneEvidence), row('rd.s1.g-land', 'by hand'), row('rd.s1.g-land.landed', correction)];
+const laneWithin = (correction, laneEvidence = 'x') => [row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(TO)), row('rd.s1.g', laneEvidence), row('rd.s1.g-land', 'by hand'), row('rd.s1.g-land.landed', correction)];
 const fixWithin = (correction) => [row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(TO)), row('rd.s1.fix-b-land', 'by hand'), row('rd.s1.fix-b-land.landed', correction)];
 
 const roadLaneWithinFails = (text) => () => {
@@ -326,18 +273,10 @@ const roadLaneWithinFails = (text) => () => {
 test('a road lane whose correction row says "landed within" is a FAIL naming the row', roadLaneWithinFails(within('rd.s1.a-land')));
 test('a road lane whose correction row says "landed within ... as <sha>" is a FAIL naming the row', roadLaneWithinFails(`${within('rd.s1.a-land')} as ${TO}`));
 
-test('an unlanded stacked steered lane cannot hide behind the named row (reviewer probe)', () => {
-  const { result } = gate(laneWithin(`${within('rd.s1.a-land')} as ${TO}`, reviewedText(D)), [TO], { road: TWO_STEERED });
+test('a ghost lane that never landed cannot be closed by "landed within" (reviewer probe)', () => {
+  const { result } = gate(laneWithin(`${within('rd.s1.a-land')} as ${TO}`), [TO], { road: TWO_PLAIN });
   assert.equal(result.pass, false);
   assert.match(lineFor(result, /^FAIL 2 range: rd\.s1\.g-land /), NEEDS_OWN_RANGE);
-});
-
-test('a ghost lane that never landed cannot be closed by "landed within" (reviewer probe)', () => {
-  for (const road of [TWO_PLAIN, TWO_STEERED]) {
-    const { result } = gate(laneWithin(`${within('rd.s1.a-land')} as ${TO}`, reviewedText(TO)), [TO], { road });
-    assert.equal(result.pass, false);
-    assert.match(lineFor(result, /^FAIL 2 range: rd\.s1\.g-land /), NEEDS_OWN_RANGE);
-  }
 });
 
 test('a road lane within row under the short id is a FAIL too, and a lane with its own range still passes', () => {
@@ -371,21 +310,6 @@ test('a fix row closed by within takes no "as" part: valid or malformed, it is a
   }
 });
 
-// The review check ties a steered lane's own range to its reviewed sha: `git cherry <reviewed> <to> <from>`, a `+` line is a commit not reviewed.
-test('a steered lane whose own range holds a commit missing from the reviewed sha is a FAIL naming it, and cherry gets reviewed, to, from', () => {
-  const REVIEWED = 'e'.repeat(40);
-  const { result, calls } = gate(steeredRows(reviewedText(REVIEWED)), [TO], { steered: true, unreviewed: `- ${TO}\n+ ${D}\n` });
-  assert.equal(result.pass, false, result.lines.join('\n'));
-  assert.ok(result.lines.includes(`FAIL 2 range: a: commit ${D} is not in the reviewed ${REVIEWED}`), result.lines.join('\n'));
-  assert.deepEqual(reviewCherries(calls), [['cherry', REVIEWED, TO, START]]);
-});
-
-test('a steered lane whose own range holds only reviewed commits passes with a reviewed sha other than its to', () => {
-  const REVIEWED = 'e'.repeat(40);
-  const { result } = gate(steeredRows(reviewedText(REVIEWED)), [TO], { steered: true, unreviewed: `- ${TO}\n` });
-  assert.match(rangeLine(result), /^PASS 2 range: 1 close rows/, result.lines.join('\n'));
-});
-
 // One "landed within" is read: the last one of the evidence (the match is greedy up to it). An earlier one is ignored, never checked.
 test('with two "landed within" claims in one evidence the last is the one read', () => {
   const nope = within('rd.s1.nope-land');
@@ -399,16 +323,4 @@ test('with two "landed within" claims in one evidence the last is the one read',
 // The gate gets rows as parsed; it trims the evidence itself, so a padded cell still anchors at its start.
 test('spaces around the evidence of a within row do not hide it', () => {
   assert.match(rangeLine(gate(fixWithin(`  ${within('rd.s1.a-land')}  `)).result), /^PASS 2 range: 2 close rows/);
-});
-
-// Fail closed (P3): the review check of a steered lane with its own range must FAIL when git cherry itself fails, not only on a `+` line.
-test('a steered lane whose reviewed git cherry exits non-zero without output is a FAIL', () => {
-  const { result } = gate(steeredRows(reviewedText(TO)), [TO], { steered: true, reviewExit: 127 });
-  assert.equal(result.pass, false);
-  assert.match(rangeLine(result), /^FAIL 2 range: a: git cherry exited 127/);
-});
-
-test('a steered lane that names the road-start tip as reviewed is a FAIL', () => {
-  const { result } = gate(steeredRows(reviewedText(START)), [TO], { steered: true });
-  assert.match(rangeLine(result), /^FAIL 2 range: rd\.s1\.a names the road-start tip as reviewed/);
 });
