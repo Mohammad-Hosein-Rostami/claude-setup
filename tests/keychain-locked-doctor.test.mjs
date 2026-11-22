@@ -112,3 +112,43 @@ test('the Keychain is locked and Claude Code left its own login file: both are n
   assert.equal(lockLines(lines).length, 1);
   assert.ok(lines.some((line) => line.includes('.credentials.json exists')), lines.join('\n'));
 });
+
+// A module-loader hook that swaps the body of the real `runSecurity` for a recorder, so a test can see whether doctor
+// would ask the real `security` program without starting it.
+const RECORDER_HOOK = `
+export async function load(url, context, nextLoad) {
+  const result = await nextLoad(url, context);
+  if (!url.endsWith('/home/tools/account/lib/keychain-store.mjs')) return result;
+  const head = 'export function runSecurity(line, spawn = spawnSync) {';
+  const source = String(result.source);
+  if (!source.includes(head)) throw new Error('runSecurity not found');
+  const recorded = source.replace(head, head + " (globalThis.realSecurityCalls ??= []).push(line); return { status: 0, stdout: '', stderr: '' };");
+  return { ...result, source: recorded + '\\nexport const RECORDING = true;\\n', shortCircuit: true };
+}
+`;
+const RECORDER_REGISTER = `import { register } from 'node:module'; register('./recorder-hook.mjs', import.meta.url);`;
+const STORE_ONLY_DRIVER = `
+import { writeFileSync } from 'node:fs';
+import { RECORDING } from '${KEYCHAIN_STORE_URL}';
+import { main } from '${DOCTOR_URL}';
+if (RECORDING !== true) { console.error('recorder not applied'); process.exit(3); }
+const store = { kind: 'keychain', get: () => null, put() {}, remove: () => false };
+await main(process.argv.slice(2), process.env, { store });
+writeFileSync(process.env.RECORDED_CALLS, JSON.stringify(globalThis.realSecurityCalls ?? []));
+`;
+
+test('a store given with no runner never reaches the real security runner in a test run with a temp HOME', () => {
+  const dir = makeTempDir('keychain-doctor-');
+  const home = join(dir, 'home');
+  const claudeDir = join(home, '.claude');
+  const project = join(dir, 'project');
+  for (const path of [home, claudeDir, project]) mkdirSync(path);
+  writeFileSync(join(dir, 'recorder-hook.mjs'), RECORDER_HOOK);
+  writeFileSync(join(dir, 'recorder-register.mjs'), RECORDER_REGISTER);
+  writeFileSync(join(dir, 'store-only-driver.mjs'), STORE_ONLY_DRIVER);
+  const recordedCalls = join(dir, 'recorded-calls.json');
+  const env = { PATH: process.env.PATH, HOME: home, USERPROFILE: home, SHELL: '/bin/zsh', NODE_TEST_CONTEXT: 'child-v8', RECORDED_CALLS: recordedCalls, CLAUDE_ACCOUNT_DIR: join(home, 'accounts'), CLAUDE_ACCOUNT_STORE: 'file' };
+  const done = spawnSync(process.execPath, ['--import', join(dir, 'recorder-register.mjs'), join(dir, 'store-only-driver.mjs'), claudeDir, REPO, project], { env, encoding: 'utf8' });
+  assert.equal(done.status, 0, done.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(recordedCalls, 'utf8')), [], 'the real security runner was called');
+});

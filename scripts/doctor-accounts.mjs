@@ -245,10 +245,10 @@ async function guarded(label, check) {
  * Runs every account check and prints the findings.
  * @param {string[]} argv `<claude-dir> <repo> <project>`.
  * @param {object} env the environment (HOME, SHELL, ZDOTDIR, HISTFILE, CLAUDE_ACCOUNT, the account tool's variables).
- * @param {{store?: object, run?: Function}} options a token store and a `security` runner in place of this machine's (tests).
+ * @param {{store?: object, run?: Function}} options a token store and a `security` runner in place of this machine's (tests); without a runner, the real one runs only for the real HOME outside a test run.
  * @returns {Promise<number>} 0 when the checks ran, 2 for a usage error.
  */
-export async function main(argv, env = process.env, { store: given, run = runSecurity } = {}) {
+export async function main(argv, env = process.env, { store: given, run: givenRun } = {}) {
   const [claudeDir, repo, project] = argv;
   if (!claudeDir || !repo || !project) { console.error('usage: doctor-accounts.mjs <claude-dir> <repo> <project>'); return 2; }
   findings.length = 0; // main may run more than once in a process (tests)
@@ -261,9 +261,9 @@ export async function main(argv, env = process.env, { store: given, run = runSec
   let store = given;
   let keychainBlocked = false;
   await guarded('account store', () => { store ??= openStore(env); });
-  // A given store is a test's own; this machine's Keychain is asked only for the real user's HOME, never in a test run or a temp HOME.
-  const mayAsk = given !== undefined || isRealUserOutsideTests(env);
-  await guarded('Keychain check', () => { if (store && mayAsk) keychainBlocked = checkKeychain(store, run, claudeDir); });
+  // A runner a test gives is a stand-in and always used; the real `security` runner is used only for the real user's HOME outside a test run, whether or not a store is given.
+  const run = givenRun ?? (isRealUserOutsideTests(env) ? runSecurity : undefined);
+  await guarded('Keychain check', () => { if (store && run) keychainBlocked = checkKeychain(store, run, claudeDir); });
   await guarded('stored accounts check', () => checkStoredAccounts(env, store));
   if (!keychainBlocked) await guarded('login check', () => checkLogin(env, claudeDir, store));
   process.stdout.write(findings.map((line) => `${line}\n`).join(''));
