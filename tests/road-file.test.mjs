@@ -1,5 +1,5 @@
-// Tests of the road file schema (plan.md C6) and of `road.mjs check`: threat model, F ids, the checkpoint schema, unique ids, locked
-// checkpoint files, keepGreen and the UI-lane matrix rule. Roads are written to temp files and read through readRoad / runRoad.
+// Tests of the road file schema and of `road.mjs check`: the guidance fields (threatModel, principles, checkpoints, keepGreen) are optional
+// notes that only need their plain shape; appendOnly and the UI-lane matrix rule still bind. Roads are written to temp files and read through readRoad / runRoad.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -33,55 +33,42 @@ test('a complete road is accepted and readRoad returns the sha256 of the bytes i
   assert.equal(read.sha256, createHash('sha256').update(readFileSync(file)).digest('hex'));
 });
 
-test('threatModel is required and needs 40 or more characters', () => {
+test('threatModel is optional plain text: missing is accepted, a non-text value is refused', () => {
   const { threatModel, ...without } = road();
-  assert.ok(has(problemsOf(without), /threatModel missing/));
-  assert.ok(has(problemsOf(road([lane('a')], { threatModel: 'x'.repeat(39) })), /threatModel/));
-  assert.deepEqual(problemsOf(road([lane('a')], { threatModel: 'x'.repeat(40) })), []);
+  assert.deepEqual(problemsOf(without), []);
+  assert.ok(has(problemsOf(road([lane('a')], { threatModel: 7 })), /threatModel/));
+  assert.ok(has(problemsOf(road([lane('a')], { threatModel: '' })), /threatModel/));
 });
 
-test('road.mjs check refuses a road without threatModel with "threatModel missing" (the shape of road-p8.json)', async () => {
+test('road.mjs check accepts a road without threatModel, principles or checkpoints (the shape of road-p8.json)', async () => {
   const { threatModel, ...without } = road([lane('a', { principles: undefined })]);
   const result = await runRoad(['check', write(without)]);
-  assert.equal(result.code, 1);
-  assert.match(result.out, /threatModel missing/);
+  assert.equal(result.code, 0);
 });
 
-test('principles: ids are P<n> or F<n>, a question has 10+ characters, ids are unique, and every lane has one F', () => {
-  assert.ok(has(problemsOf(road([lane('a', { principles: [{ id: 'P1', question: 'a long enough question' }] })])), /at least one F/));
-  assert.ok(has(problemsOf(road([lane('a', { principles: undefined })])), /principles/));
+test('principles are optional notes: ids are P<n> or F<n>, a question has 10+ characters, ids are unique, and no F is required', () => {
+  assert.deepEqual(problemsOf(road([lane('a', { principles: [{ id: 'P1', question: 'a long enough question' }] })])), []);
+  assert.deepEqual(problemsOf(road([lane('a', { principles: undefined })])), []);
+  assert.ok(has(problemsOf(road([lane('a', { principles: 'not a list' })])), /principles must be a list/));
   assert.ok(has(problemsOf(road([lane('a', { principles: [...PRINCIPLES, { id: 'X1', question: 'a long enough question' }] })])), /X1/));
   assert.ok(has(problemsOf(road([lane('a', { principles: [{ id: 'F1', question: 'too short' }] })])), /10/));
   assert.ok(has(problemsOf(road([lane('a', { principles: [...PRINCIPLES, PRINCIPLES[1]] })])), /F1.*twice|twice.*F1/));
   assert.deepEqual(problemsOf(road([lane('a', { principles: [{ id: 'F12', question: 'ten chars!' }] })])), []);
 });
 
-test('a checkpoint is {id, run, exit 0-255, files (may be empty), kind}', () => {
-  const bad = (change) => problemsOf(road([lane('a', { checkpoints: [{ ...CHECKPOINT, ...change }] })]));
-  for (const change of [{ kind: 'sometimes' }, { exit: 256 }, { exit: -1 }, { exit: 1.5 }, { exit: '0' }, { run: '' }, { run: 'a\nb' }, { id: 'bad id' }, { files: 'x' }, { files: ['../x'] }]) {
-    assert.ok(bad(change).length > 0, JSON.stringify(change));
-  }
-  assert.deepEqual(bad({ files: [], exit: 255, kind: 'keeps-working' }), []);
+test('checkpoints are notes: any list reads (the old object shape too), a non-list is refused, and nothing checks their ids or files', () => {
+  const withCheckpoints = (checkpoints) => problemsOf(road([lane('a', { checkpoints })]));
+  assert.deepEqual(withCheckpoints([CHECKPOINT]), []);
+  assert.deepEqual(withCheckpoints(['the join prints joined']), []);
+  assert.deepEqual(withCheckpoints([CHECKPOINT, CHECKPOINT]), []);
+  assert.deepEqual(problemsOf(road([lane('a', { files: ['src/'], checkpoints: [{ ...CHECKPOINT, files: ['src/a.mjs'] }] })])), []);
+  for (const checkpoints of ['text', 7, { id: 'c1' }]) assert.ok(has(withCheckpoints(checkpoints), /checkpoints must be a list/), JSON.stringify(checkpoints));
 });
 
-test('checkpoint ids are unique in the whole road, not only in a lane', () => {
-  const twice = road([lane('a', { checkpoints: [CHECKPOINT] }), lane('b', { files: ['src/b.mjs'], checkpoints: [CHECKPOINT] })]);
-  assert.ok(has(problemsOf(twice), /c1.*twice|twice.*c1/));
-  const inLane = road([lane('a', { checkpoints: [CHECKPOINT, CHECKPOINT] })]);
-  assert.ok(has(problemsOf(inLane), /c1.*twice|twice.*c1/));
-});
-
-test('checkpoint files are locked: none is a lane file or inside a lane folder, in either direction', () => {
-  for (const [files, locked] of [[['src/a.mjs'], 'src/a.mjs'], [['src/'], 'src/a.mjs'], [['src/a.mjs'], 'src/']]) {
-    const problems = problemsOf(road([lane('a', { files, checkpoints: [{ ...CHECKPOINT, files: [locked] }] })]));
-    assert.ok(has(problems, /locked|lane file/), `${files} vs ${locked}`);
-  }
-  assert.ok(has(problemsOf(road([lane('a', { files: ['tests\\'], checkpoints: [{ ...CHECKPOINT, files: ['tests/a.test.mjs'] }] })])), /locked|lane file/));
-});
-
-test('keepGreen is optional and holds one command', () => {
+test('keepGreen is an optional text note: a text reads, an empty or non-text value is refused', () => {
   assert.deepEqual(problemsOf(road([lane('a', { keepGreen: 'node --test tests/road*.test.mjs' })])), []);
-  for (const keepGreen of ['', 'a\nb', 7, ['x']]) assert.ok(has(problemsOf(road([lane('a', { keepGreen })])), /keepGreen/), JSON.stringify(keepGreen));
+  assert.deepEqual(problemsOf(road([lane('a', { keepGreen: undefined })])), []);
+  for (const keepGreen of ['', 7, ['x']]) assert.ok(has(problemsOf(road([lane('a', { keepGreen })])), /keepGreen/), JSON.stringify(keepGreen));
 });
 
 test('appendOnly holds repo-relative paths', () => {
