@@ -6,7 +6,7 @@
 // LIMIT lines, Stop hook feedback, MODEL MISMATCH of subagents, GUARD deny/timeout outcomes of the watched sessions, STALL
 // (nothing written to the transcript or a subagent transcript for --stall-min minutes) then RESUMED, SESSION_END. When that silence is a
 // session that finished its turn and waits for its owner, the line is IDLE instead of STALL (class `idle`, opt-in for --exit-on-event).
-// --log <dir> also appends the full verbose stream (TOOL, AGENT, WORKFLOW, SKILL, USAGE, INPUT_MODE, ...) to <dir>/<label>.events.log.
+// --log <dir> also appends the full verbose stream (TOOL, AGENT, SKILL, USAGE, INPUT_MODE, ...) to <dir>/<label>.events.log.
 // --exit-on-event [classes] prints only the first event of a listed class (default: owner, error, limit, api-error, guard, stall,
 // watch-error, session-end; opt-in: compact, stop-hook, model-mismatch, limit-reset, idle) and exits 0, or 1 for a WATCH_ERROR: for a
 // background command that wakes its starter once. --delay-sec N holds an api-error or stall for N seconds and drops it when the

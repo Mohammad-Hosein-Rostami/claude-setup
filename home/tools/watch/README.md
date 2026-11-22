@@ -42,7 +42,7 @@ A gap of more than 2 minutes between two polls (laptop sleep) restarts the stall
 (new inode or birth time, even a larger one) is re-read from its start. Subagent files are listed each poll but only stat-ed when new or recently changed
 (dormant ones every 20th poll) and read only until their model is decided; the decision is cached.
 
-`--log` adds every other event in the `live-watch.sh` format: `TOOL`, `AGENT`, `WORKFLOW`, `SKILL`, `USAGE`, `INPUT_MODE` (only
+`--log` adds every other event in the `live-watch.sh` format: `TOOL`, `AGENT`, `SKILL`, `USAGE`, `INPUT_MODE` (only
 changes), plus `AGENT_RAN type= asked= depth= ran=` per subagent (the old `agents.log`) and `STALL`/`RESUMED`/`SESSION_END`.
 
 ## Wake the lead only for real events (`--exit-on-event`)

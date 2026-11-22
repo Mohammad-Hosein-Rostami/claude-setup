@@ -75,9 +75,11 @@ test('a classifier that throws on one line yields one WATCH_ERROR, rate-limited,
   assert.equal(emitted.at(-1), 'abababab: OWNER still alive');
 });
 
-test('a Workflow tool_use with a non-string script does not throw', () => {
-  const events = feed({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Workflow', input: { script: 5 } }] } });
-  assert.match(events[0].line, /WORKFLOW agents=0 script_chars=0/);
+test('an old transcript\'s Workflow tool_use, odd input included, is a plain TOOL event', () => {
+  for (const input of [{ script: 5 }, { script: 'agent(a)', scriptPath: 'w.js' }, null, undefined]) {
+    const events = feed({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Workflow', input }] } });
+    assert.deepEqual(events.map((event) => event.line), [`${STAMP} TOOL Workflow`], JSON.stringify(input));
+  }
 });
 
 test('a fatal error prints WATCH_ERROR on stdout and exits non-zero', async (t) => {

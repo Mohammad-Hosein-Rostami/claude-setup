@@ -71,7 +71,7 @@ test('Stop hook feedback is its own class and wins over OWNER', () => {
   assert.match(action.text, /^2026-11-14T10:00:00.000Z PROMPT Stop hook feedback/);
 });
 
-test('verbose events: tools, agents, workflows, skills, usage', () => {
+test('verbose events: tools, agents, skills, usage', () => {
   const entry = {
     type: 'assistant', timestamp: T,
     message: {
@@ -91,7 +91,7 @@ test('verbose events: tools, agents, workflows, skills, usage', () => {
     `${T} TOOL Bash`,
     `${T} AGENT type=reviewer model=sonnet effort=- bg=false desc=check it`,
     `${T} AGENT type=general-purpose model=- effort=- bg=false desc=`,
-    `${T} WORKFLOW agents=2 script_chars=18 path=w.js`,
+    `${T} TOOL Workflow`,
     `${T} SKILL verify-done`,
     `${T} USAGE model=claude-opus-5-5 ctx=240 create=30 out=5`,
   ]);

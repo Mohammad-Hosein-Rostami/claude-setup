@@ -1,7 +1,8 @@
 // Watches a session's subagent transcripts (<session dir>/subagents/**/agent-*.jsonl with a sibling .meta.json).
 // Exports: createSubagentWatcher(dir, { judgeExisting, io }) -> { poll() -> { mtimeMs, agents }, anyUnfinished(fromMs, toMs) }, isModelMismatch(asked, ran), agentLine(agent).
-// Why: workflow agents never reach the main transcript, so their newest write is part of the stall check and the model they
-// actually ran on (first assistant message) is compared with the model that was asked for in the meta file.
+// Why: a subagent's own turns never reach the main transcript, so their newest write is part of the stall check and the model they
+// actually ran on (first assistant message) is compared with the model that was asked for in the meta file. Subagents write flat
+// into subagents/; the walk below it also covers the run folders of older sessions (subagents/workflows/<run>/).
 // Mismatch: a model was asked for and the one that ran does not contain it, or none was asked for and a Fable or Opus ran.
 // Cost control (a session can have 1000+ agents): each poll only lists the directories; a file is stat-ed when it is new or was
 // changed recently, and a dormant one (unchanged for DORMANT_POLLS polls) only every RECHECK_POLLS-th poll. A file is read only

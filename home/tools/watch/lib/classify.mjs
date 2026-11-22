@@ -1,6 +1,7 @@
 // Turns one transcript JSONL line into verbose events, in the line format of the old live-watch.sh jq filter.
 // Exports: createClassifier() -> { feed(text) -> Event[], seed(text, sinceMs) -> Event[], assistantEntries, turnEndedAt, resetTurn() }, endsInFinishedReply(text), Event = { kind, line, owner?, promptText? }.
-// Kinds: PROMPT, COMPACT, AGENT, WORKFLOW, SKILL, TOOL, USAGE, ERR, INPUT_MODE, API_ERROR, LIMIT, LIMIT_RESET.
+// Kinds: PROMPT, COMPACT, AGENT, SKILL, TOOL, USAGE, ERR, INPUT_MODE, API_ERROR, LIMIT, LIMIT_RESET.
+// A Workflow tool_use (only in transcripts from before the setup turned that tool off) is a plain TOOL event.
 // API_ERROR / LIMIT: an entry with isApiErrorMessage true. Only its error class is printed (rate_limit is a LIMIT, anything else
 // an API_ERROR), never the message text. LIMIT_RESET: the first real assistant reply after a LIMIT, with the minutes it lasted.
 // Sidechain entries (a subagent's own turns) are not the session's: their API errors are no event and their replies do not end a limit window.
@@ -26,7 +27,6 @@
 const PROMPT_CHARS = 200;
 const ERROR_CHARS = 160;
 const AGENT_TOOLS = new Set(['Agent', 'Task']);
-const AGENT_CALL = /agent\(/g;
 const ERROR_CLASS = /^[A-Za-z0-9_.-]{1,40}$/;
 const LIMIT_ERROR_CLASS = 'rate_limit';
 const MS_PER_MINUTE = 60_000;
@@ -81,11 +81,6 @@ function toolEvent(block, stamp) {
     const agentType = orElse(input.subagent_type, 'general-purpose');
     const description = orElse(input.description, '');
     return { kind: 'AGENT', line: `${stamp} AGENT type=${agentType} model=${orElse(input.model, '-')} effort=${orElse(input.effort, '-')} bg=${orElse(input.run_in_background, false)} desc=${description}` };
-  }
-  if (block.name === 'Workflow') {
-    const script = typeof input.script === 'string' ? input.script : '';
-    const agents = (script.match(AGENT_CALL) ?? []).length;
-    return { kind: 'WORKFLOW', line: `${stamp} WORKFLOW agents=${agents} script_chars=${Array.from(script).length} path=${orElse(input.scriptPath, '-')}` };
   }
   if (block.name === 'Skill') return { kind: 'SKILL', line: `${stamp} SKILL ${show(input.skill)}` };
   return { kind: 'TOOL', line: `${stamp} TOOL ${block.name}` };
