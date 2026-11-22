@@ -9,9 +9,9 @@ C7 | Depend on interfaces at real boundaries (an external system, a second imple
 C8 | Comments say why, not what; delete dead code
 C9 | Never swallow errors; no empty catch; fail fast, so a failure shows where it starts
 C10 | Validate all external input at the boundary with a schema
-C11 | New behaviour starts from the spec's acceptance lines; a bug fix starts with a failing repro command; the done-check runs the tests related to the change
-C12 | The done-check runs by itself at every stop that changed code (typecheck, lint on changed lines, related tests, weakened-test scan): fix each new failure it names, and the whole class, before you stop
-C13 | Never weaken or silence a check to make it pass: no ts-ignore, eslint-disable, skipped, deleted, loosened or `.only` tests; a silenced check hides the defect it exists to catch (the done-check scans for it)
+C11 | New behaviour starts from the spec's acceptance lines; a bug fix starts with a failing repro command
+C12 | Act on the done-check (CLAUDE.md "Checks"): fix each new failure it names, and the whole class, before you stop
+C13 | Never weaken or silence a check to make it pass: no ts-ignore, eslint-disable, skipped, deleted, loosened or `.only` tests; a silenced check hides the defect it exists to catch
 C14 | Add no dependency unless needed; verify it exists
 C15 | No secrets in code, logs or commits
 C16 | Small atomic Conventional Commits after every green step, subject <= 60 chars, body saying what changed and why; branch and tag names say what the work is about, not a chain id; never end a turn or an agent run with uncommitted work (commit-gate blocks it)
@@ -21,14 +21,14 @@ C19 | TS strict, no any, no unexplained !, exhaustive switch
 C20 | Immutable and pure by default; side effects at the edges
 C21 | Leave formatting to the formatter
 C22 | Fix the root cause, not the symptom
-C28 | When an approach fails twice, change approach (root-cause-debug, deep-debugger, /escalate) and keep going until done
-C23 | Grep, then read line ranges; no cat of big files; show failing test lines only
+C23 | Show failing test lines only
 C24 | Delegated work returns <=300 words with file:line evidence; a smaller cap in the agent file or the brief wins
-C25 | One task per session; compact at a natural seam, never stop a run for context size (compaction carries it on)
+C25 | Compact at a natural seam; never stop a run for context size (compaction carries it on)
 C26 | Every source file you create or substantially edit opens with a header comment (purpose, exports, invariants); a folder of 3+ files has a README
 C27 | Public functions and types you create or substantially edit have doc comments (what, why, args, returns, errors); TODO(ref): reason
+C28 | When an approach fails twice, change approach (root-cause-debug, deep-debugger, /escalate) and keep going until done
 C29 | Done means the last `checks:` line is green, or its `none related`, `not run` and `old fail` are told as they are; say verified only for what you ran
-C30 | Bash for the guard: write the command word out (no `$VAR` as the command) and secrets via env or file; when the guard bounces a command it gives the fix or the advice: send the fix, follow the advice (an unanswered ask stalls a run up to 2 min)
+C30 | Bash for the guard: write the command word out (no `$VAR` as the command) and secrets via env or file; answer a bounce as CLAUDE.md "Safety" says (an unanswered ask stalls a run up to 2 min)
 C31 | Human-first: a developer with no AI can find, read, run and change it; of two designs with the same result take the easier to read; never trade away scope, accuracy or a performance target for it
 C32 | New files and folders follow the language or framework's standard layout and are named for what they hold; no new misc/utils/common folders; in an existing repo follow its layout (C17)
 C33 | No abstraction with a single use: no interface with one implementation, pass-through wrapper, factory, generic layer or option "for later"; shared code is extracted per C2

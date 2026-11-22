@@ -5,12 +5,10 @@ session-notes.mjs string, which carries part 1 (lead-rules.md) (probe P6-11 owed
 Limit 9,500 printed (tests/lead-text-size.test.mjs). The maxTurns rule prints with its note: session-notes.mjs MAX_TURNS_RULE. -->
 
 ## Models and effort
-- Start a session on a model with `claude --model <m> --effort <e>` (owner, 2026-11-19). `CLAUDE_CODE_EFFORT_LEVEL` stays unset: it overrides that flag and every agent's effort (doctor fails on it).
+- `CLAUDE_CODE_EFFORT_LEVEL` stays unset: it overrides the start flag `--effort` (lead-rules "Model routing") and every agent's effort (doctor fails on it).
 - Keep the lead model all session: a model switch, a classifier fallback too, rebuilds the cache. An effort change keeps the cache on Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1+, so raise effort (`ultrathink` or `/effort`) for one hard turn, then go back to `high`.
-- Raising an agent's effort (lead-rules "Model routing"): Sonnet agents top out at `xhigh`, never `max`; for Opus, `max` stays on the ladder until trial T7 shows `xhigh` equal on recall and false positives.
+- Raising an agent's effort (lead-rules "Model routing"): Sonnet 5.5 and Opus 5.5 both take `low` to `max`; `max` stays on the ladder until a measured trial shows `xhigh` equal on recall and false positives.
 - Picks stay by lane, with no cheap-first cascade: Haiku and Sonnet at low report done without a check. A `scout` or `runner` that claims a reproduction gives the command, and the writer re-runs it before relying on it.
-- Own agents over built-ins (lead-rules "Model routing"): `general-purpose` has no agent file, so it starts with every tool schema.
-- On a Fable lead: each "never" keeps its scope and reason, since Fable takes it literally; review the diff yourself, since its closing summary can leave out small changes.
 
 ## Briefs and results
 - Brief in seven fields: objective and why; inputs; boundaries, with its Constraints first (scope exclusions, owner decisions, file scope); tools and sources; acceptance lines, the defaults to take and "finish everything"; output format (the report's Constraints, Not run and Caveats sections, CLAUDE.md "Agents (workers)"); Done means. Add the STATUS.md path, and `ASK_QUEUE` for work over a few minutes.
@@ -19,34 +17,34 @@ Limit 9,500 printed (tests/lead-text-size.test.mjs). The maxTurns rule prints wi
 
 ## Job form and order
 - Pilot first (owner, RC9): a new mechanism (a check, gate or removal) or a change of strategy runs on one lane, then is measured on the next 3 real lanes against a bar written down before (tokens per lane, minutes, false alarms, defects caught); roll it out or drop it by that bar.
-- Inline or agents, by the job (owner, 2026-11-22: only subagents, 3-5 agents per step). Inline: lookups, reading code, one command, a one-file or < ~30-line change. Everything else runs as steps.
+- Inline or agents, by the job (owner, 2026-11-22: only subagents). Inline: lookups, reading code, one command, a one-file or < ~30-line change. Everything else runs as steps.
 - A batch is 1-5 agents launched together; a step runs its batches in order (build, fixes). Every agent counts: writers, runners, scouts, deep-debugger, visual-qa and a SendMessage continuation. The hook refuses a 6th. The next batch starts once every result of this one is handled.
+- Fill to 5 (owner FR2): each launch round runs `road.mjs next --budget <free slots>` and starts `lanes`, then `early`; fewer agents only when `early` is empty. A step's gate still checks only its own lanes.
   - Build batch: lanes that share no file.
   - Fix batch: one fix agent per lane, holding all of its confirmed findings with their parts and siblings: a fix closes the whole finding and its class.
-- A fixed sequence is one script call, never an agent per command: `land-lane` (the only landing route, one land at a time), `road.mjs join`, `scripts/sync-machines.mjs` (once per job, after the last land), `status.mjs`. A `runner` only keeps long output out of context.
+- A fixed sequence is one script call, never an agent per command: `land-lane` (the only landing route, one land at a time), `road.mjs join`, the setup repo's `scripts/sync-machines.mjs` (once per job, after the last land), `status.mjs`. A `runner` only keeps long output out of context.
 - A writer brief names `BASE: <full sha>`, `BRANCH: <kind>/<what-it-does>` (e.g. `fix/accounts-keychain-patch`, never a chain or row id), STATUS.md, the lane's contract (files, P and F questions, threat-model line) and `REPORTS:`. An agent that returns unfinished is continued once with SendMessage, else a fresh agent gets the six fields, `git diff <base>...<branch>` and its `HANDOFF-<row>.md`. Two stops in a row: you decide; no third agent.
 - Order a job as:
   - the owner's questions first;
   - then the contract: the architect's spec with Reuse inventory, Contract facts, Unconfirmed, F questions and a threat-model line (send back one without them);
   - every lane job is a road (`road-<id>.json`, `road` skill), and each step runs build batch, `road.mjs join` per lane, `land-lane` per lane, `road.mjs gate`, then a `deliver` row with the `Finish:` block;
   - probes run beside lanes (a lane that reads a probe waits for it); independent repos run as separate roads.
-- Two fix rounds per lane, for a land, visual-qa or bugfix loop. When the second is not clean, or a fixer returns `needs-design`, the lane goes to the architect with its open findings by class, then to one implementer on that spec. A second re-spec of one class is an owner question. Before the second fix of a file that blocked the round before, one `deep-debugger` names the cause.
-- Tags only by owner order, named for what landed. Commit subjects stay <= 60 chars; the body says what and why.
+- Two fix rounds per lane, for a land, visual-qa or bugfix loop (a risky review has one fix round). When the second is not clean, or a fixer returns `needs-design`, the lane goes to the architect with its open findings by class, then to one implementer on that spec. A second re-spec of one class is an owner question. Before the second fix of a file that blocked the round before, one `deep-debugger` names the cause.
+- Tags only by owner order (names and commits: C16).
 - Durable state, no journals: STATUS rows (a lane's landing evidence), branch tips, `HANDOFF-<row>.md` and the reports folder. A new session reads those, then `road.mjs next`.
-- Give separable parts (i18n) their own lane. One scripted `runner` call measures every state. Reuse cached Figma pulls, diffs and the design system.
 - Size a delegated job to finish within about 120 tool calls; split a bigger one into stages with a commit between them. An agent that returns without its report is continued once ("commit, then report"), not restarted.
 - One task, and at most one plan (road), per session (owner, RC11): at the road's end write a `handoff` note and tell the owner to start a fresh session. Unrelated next task → tell the user to `/clear` (or start a new
-  session) *before* starting it. Long task → `/compact` at a natural seam.
+  session) *before* starting it.
 
 ## Owner, STATUS and proof
 - Owner decisions (the list in CLAUDE.md "Token discipline"): ask with AskUserQuestion the moment they
-  come up while other work keeps running (see `ask-owner`). Start the background agent, then ask: running ones keep working while a question waits; ops that may ask (rm -r, push, ssh) run in a background agent. Technical choices: pick the default, say so in one line.
-- No answer in a question's 2-minute wait (owner, RC3, RC10; the dialog marks such an answer UNCONFIRMED): a small, reversible choice takes the recommended option, say which; a strategic, big or deleting change never does: that part waits for the owner while other work goes on.
+  come up while other work keeps running (load `ask-owner` first). Start the background agent, then ask: running ones keep working while a question waits; ops that may ask (rm -r, push, ssh) run in a background agent.
+- No answer in a question's 2-minute wait (owner, RC3, RC10): record it `UNCONFIRMED` in STATUS.md `## Owner decisions` and re-ask it in the next reply; a small, reversible choice takes the recommended option, say which; a strategic, big or deleting change never does: that part waits for the owner while other work goes on.
 - An owner correction, preference or constraint about how the work is done ("always", "keep", "from now on", "as we said", "is important", "remember", "don't", "why did you") goes into STATUS.md under `## Standing rules` the moment it is given, in the owner's words; every brief names that file; re-read it after a compaction or a resume. When STATUS.md is created, a session resumes or after a compaction, backfill it from the owner's own earlier messages (`node ~/.claude/tools/recall/recall.mjs --owner --session current`) before the next brief. Write each rule short, with the owner's key terms: never paste a whole message, and never copy anything that looks like a credential into STATUS.md.
 - Owner proof: every done or fixed claim in a stage update or a final-report row names, on the same line, one proof the owner can check in about 2 minutes (a gallery link, a diff image, a command and its output); its `evidence:` points to it.
 
 ## Checks and review
-- The done-check runs by itself at every stop that changed code (CLAUDE.md "Checks"). Read an agent's `checks:` line as tool output: `done-check.mjs last --worktree <abs>` prints a lane's own. `FAIL left open` or `change approach` goes to the architect or `deep-debugger`, not to a third try by the same agent.
+- Read an agent's `checks:` line as tool output: `done-check.mjs last --worktree <abs>` prints a lane's own. `FAIL left open` or `change approach` goes to the architect or `deep-debugger`, not to a third try by the same agent.
 - A risky lane (`review: needed (<classes>)`, plus its spec's `addClasses`) gets the one review and one fix of CLAUDE.md "Checks": brief the `reviewer` (read-only, Opus 5.5 high) with spec, acceptance lines, the `THREAT:` line, classes, repo, base and tip; the fix agent gets every must-fix finding with its repro and every site. Then run each repro with Bash: all exit 0. Still red: the architect re-specs.
 - A finding that breaks no acceptance or threat line is a follow-up row too, not a block. Write the reviewed tip in STATUS.
 

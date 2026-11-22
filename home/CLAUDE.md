@@ -24,8 +24,7 @@ agent file and the caller's prompt.
 
 - Always on, no switch: when an agent or the session stops after changing code, `done-check` runs the project's own typecheck, lint on the changed lines, the tests related to the changed files and a scan for deleted, skipped or loosened tests. Failures are compared with the base commit: an old failure is listed and never blocks. A new one sends you back once with a few lines of errors; after 2 blocks in a row the line says "change approach" (C28).
 - The hook prints one `checks:` line under the reply; do not repeat it in prose. `not run (why)` and `none related` are shown as they are, never as ok. A false alarm: `node ~/.claude/tools/done-check/done-check.mjs label <run-id> --as false-alarm --check <kind>` (the id from `done-check.mjs last --json`).
-- A risky change (login or security, stored data, money, locking or parallel runs, the setup's own guards, a very large change) shows `review: needed (<classes>)`: the lead runs the `reviewer` agent once, one fix agent follows, there is no second round; a finding with no repro command becomes a follow-up row.
-- `land-lane` re-runs the check on the rebased tip and refuses a failed check or an unreviewed risky lane (lead rules).
+- A risky change (login or security, stored data, money, locking or parallel runs, the setup's own guards, a very large change) shows `review: needed (<classes>)`: the lead runs the `reviewer` agent once, one fix agent follows, there is no second review round; a finding with no repro command becomes a follow-up row.
 - Unchanged: the UI pixel checks (next section), gitleaks at commit, the Bash guard, `node --check` of changed hook files.
 
 ## Skill routing (UI)
@@ -63,20 +62,25 @@ Invoke these with the Skill tool before writing code, in every project; a `skill
 
 ## Working method (quality)
 
-- Understand before editing: read the failing output or the code path in full; do not guess
+- Understand before editing or experimenting: read the failing output or the code path in full; do not guess
   library APIs - check the installed version's own docs (its README, types or changelog) when behaviour
   is version-sensitive.
 - A fact a decision rests on that is version-, date- or price-sensitive, or disputed, gets a second independent source, even when the first looks sufficient.
 - An owner rule of the form "every/all X gets Y" is applied by a search that lists every X (the count goes in the report), not by fixing the examples seen.
-- Fix root causes, not symptoms; never silence a check to make it pass.
-- Say "verified" only for what you ran; never imply a check passed that was not run.
-- Smallest change that solves the request: no new modules or refactors beyond the task. Diagnose by reading code before
-  experimenting.
-- Docs as C26, C27 and C34 require, in proportion to the change. Project documents are written for people; only the
-  team's own AI config (its CLAUDE.md, AGENTS.md and `.claude/`) may mention AI.
+- Project documents are written for people; only the team's own AI config (its CLAUDE.md, AGENTS.md and `.claude/`) may mention AI.
 - AI work notes (STATUS.md, HANDOFF.md) may sit in a project but are never committed (hide them with
   `.git/info/exclude`). No memory or history notes unless asked (an agent's own `memory: user` notes are the exception).
 - An owner-reported defect you could not reproduce is never closed twice: on the second report reproduce it under the owner's conditions (zoom, pixel ratio, OS, theme, data) or hand it to `deep-debugger`; never answer "no defect" to a second report.
+
+## Owner standards (every job)
+
+- Accuracy first: never lose accuracy; speed only from smarter strategies, never from fewer or weaker checks; tokens are managed, not cut at any cost; smart work over hard work.
+- 'for pixel perfect we dont do no sacrofice': nothing cuts the accuracy, checks, models or effort of the pixel-perfect UI path.
+- Complete work: what is reviewed, tested or checked is checked on everything it needs; a fix or build is the complete job, not a partial one; search through everything, forget nothing.
+- Remove only with a reason: do not remove things greedily; good things stay; double-check every removal.
+- Certainty before building: research more and analyse better first; align with Claude Code and the models as Anthropic documents them; never plan what the tool cannot do.
+- Other projects: leave other projects and their gits alone; a job changes, cleans or runs nothing in another project's repo or another session unless the owner asks.
+- No push unless the owner asks; confirm every outward-facing action.
 
 ## Agents (workers)
 
@@ -93,7 +97,8 @@ over a line here, and an agent file names the lines that do not fit it (`runner`
 - The brief's constraints (scope exclusions, owner decisions, boundaries) bind the whole run; after a compaction re-read them from
   the brief or your hand-over note before the next edit, because the task message comes back summarised.
 - Writers: read the spec first and do not redesign it; follow the project's CLAUDE.md and AGENTS.md rules (they load
-  automatically); make the smallest diff that satisfies the acceptance checks and closes every instance of the class it fixes; edit existing files over creating new ones.
+  automatically); make the smallest diff that satisfies the acceptance checks and closes every instance of the class it fixes; edit existing files over creating new ones. Edit files with the Edit or Write tool, never
+  a python or node heredoc or `-e` script (the guard bounces those).
 - Git: commit on your own branch and keep it one line with the base (C37); leave landing to the
   lead. Commit your own paths after each green step; never return with uncommitted changes (if the brief forbids commits, say why
   in the report). Checkpoint: after each finished step, commit when the brief allows commits, else append a line to a progress
@@ -107,8 +112,7 @@ over a line here, and an agent file names the lines that do not fit it (`runner`
   a claim.
 - Claim audit: before the report, check each progress claim against a tool result from this run; a claim with no such result
   goes under "Not run", never under done.
-- Human-first (C31-C36, `~/.claude/standards/readability.md`): plain names and no single-use abstraction in what you add; leave old
-  code alone and report what you saw; docs as C34 asks.
+- Human-first: C31-C36 and `~/.claude/standards/readability.md`.
 - Agents with `memory: user`: your notes live in `~/.claude/agent-memory/<agent>/`; read `MEMORY.md` there first; after the task
   add only durable, reusable facts, one line each, and remove ones that turned out wrong. Never store secrets or code.
 - Report: at most 300 words with file:line evidence (C24) unless your agent file or the brief sets a smaller cap; longer detail
@@ -116,7 +120,7 @@ over a line here, and an agent file names the lines that do not fit it (`runner`
   trimmed for length ("none" when empty), before any final line your agent file sets: "Constraints" (the brief's constraints as you
   kept them), "Not run" (each check you did not run, and why), "Caveats" (what may be wrong or is unproven). When the brief gives a
   schema, return only that JSON. No praise, no recap, no raw logs.
-- Waiting: never poll (no `sleep` loop of 5 s or more, no status check that returns at once); a command that may run over 3 min is not held by a foreground `timeout`: it runs with `run_in_background: true`
+- Waiting: never poll (no wait but the loop below: no `sleep` loop of 5 s or more, no status check that returns at once); a command that may run over 3 min is not held by a foreground `timeout`: it runs with `run_in_background: true`
   and `timeout` set to its expected run plus a margin, at most 7200000 ms (2 h), started as `rm -f <log>.exit; <command> > <log> 2>&1; echo $? > <log>.exit`.
   Then wait inside your turn with one foreground call (`timeout` 180000) that ends by itself in 160 s:
   `for i in $(seq 80); do [ -f <log>.exit ] && break; sleep 2; done`; send it again until `<log>.exit` is there, then read the log in one call.
@@ -140,13 +144,12 @@ exploration dead-ends, full file contents, and tool output already acted on.
 
 ## Safety
 
-- Look before deleting or overwriting. Confirm before outward-facing or hard-to-reverse actions (push, publish, delete, send), with
-  any tool.
+- Look before deleting or overwriting; confirm a hard-to-reverse action (delete, overwrite) with any tool.
 - Git push, publish/release, PR merge, Artifact publish/delete, prod-host writes and deletes, and literal secrets in a command show a
   timed confirm dialog even in bypass mode; it goes ahead after 2 min unless the owner clicks Deny. Every other permission prompt
   gets the same dialog, except a sandbox network prompt (no hook event) and anything a deny rule refuses (no hook can allow it).
 - Each owner question gets its own popup and its own 2-minute wait; answering in the terminal closes it. The dialog details are in
-  `docs/daily-use.md` "Long or unattended runs".
+  the setup repo's `docs/daily-use.md` "Long or unattended runs".
 - The guard bounces a command once with the fix when part of it can be rewritten (C30): send the rewrite. A quality rule (a
   hand-edited lockfile, a merge that can create a merge commit, a branch moved without `merge --ff-only`, a wait by sleeping) is
   denied once with advice: follow it. Report a bounced secret's kind to the owner.
