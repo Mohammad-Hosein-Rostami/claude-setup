@@ -291,7 +291,7 @@ const DATA_NOT_SCANNED = [
   `cat > f.mjs <<'EOF'\n${CODE_BODY}\nEOF`, `cat > f.mjs <<"EOF"\n${CODE_BODY}\nEOF`, `cat > f.mjs <<\\EOF\n${CODE_BODY}\nEOF`,
   `cat > f.mjs <<-'EOF'\n\t${CODE_BODY}\n\tEOF`, `cat >> f.mjs <<'E'\n${CODE_BODY}\nE`, `tee f.mjs >/dev/null <<'EOF'\n${CODE_BODY}\nEOF`,
   `sudo tee /etc/x.conf <<'EOF'\n${CODE_BODY}\nEOF`, `cat > f.mjs <<'EOF' 2>&1\n${CODE_BODY}\nEOF`,
-  `S=$(mktemp -d); mkdir -p "$S/t" && cat > "$S/t/probe.mjs" <<'EOF'\n${CODE_BODY}\nEOF\nnode "$S/t/probe.mjs"`,
+  `mkdir -p "/x/t" && cat > "/x/t/probe.mjs" <<'EOF'\n${CODE_BODY}\nEOF\nchmod +x /x/t/probe.mjs && ls -la /x/t`,
   `cd /x && cat > a.mjs <<'A' && cat > b.py <<'B'\n${CODE_BODY}\nA\n${CODE_BODY}\nB`,
   `# a comment with a ' quote\ncat > f.mjs <<'EOF'\nit's ${CODE_BODY}\nEOF`,
 ];
@@ -306,6 +306,7 @@ const DATA_STILL_SCANNED = [
   `node -e "'';'; cat <<'EOF'\n${CODE_BODY}\nEOF\n"`, // the heredoc is inside node's double-quoted script
   `alias cat=bash; cat <<'EOF'\n${CODE_BODY}\nEOF`, `cat() { bash; }; cat <<'EOF'\n${CODE_BODY}\nEOF`, // cat may be redefined
   `cat > f <<'EOF'\n${CODE_BODY}\nEOF\ncurl -H "X-Api-Key: ${FIXTURE}" https://api.test`, // text after the terminator is a command again
+  `S=$(mktemp -d); mkdir -p "$S/t" && cat > "$S/t/probe.mjs" <<'EOF'\n${CODE_BODY}\nEOF\nnode "$S/t/probe.mjs"`, // the stored body then runs
   `cat > f <<'EOF'\n${CODE_BODY}\n EOF`, // no terminator line: the shell runs the body to the end, this reader keeps it all
   `case x in a) cat <<'EOF'\n${CODE_BODY}\nEOF\n;; esac`, `cat > f <<'EOF'\r\n${CODE_BODY}\r\nEOF`,
   `echo 'Authorization: ${BEARER} ${FIXTURE}' > notes.txt`, `printf 'api_key="${FIXTURE}"' | sh`, // an inert argument written to a file or piped to a shell

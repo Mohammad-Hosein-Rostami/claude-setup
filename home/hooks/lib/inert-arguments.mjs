@@ -1,5 +1,6 @@
 // Data is not a command: a dangerous word inside a SINGLE-QUOTED argument of a program that never runs its arguments does not make the raw-text
-// rule (raw-risk.mjs) ask. Exports: withoutInertArguments(text) -> text with those quoted arguments emptied (`'rm -rf /x'` -> `''`).
+// rule (raw-risk.mjs) ask. Exports: withoutInertArguments(text) -> text with those quoted arguments emptied (`'rm -rf /x'` -> `''`);
+// CHANGES_WHAT_RUNS (a regex for a word that assigns a variable that changes which program runs; data-text.mjs reuses it).
 // Allowlist (each entry has a test in tests/risky-word-data.test.mjs): echo, printf (not with -v, which fills a variable), grep, rg (not with --pre / --hostname-bin, which run a
 // command), jq, sed whose script only substitutes or prints (no e or w, see sedScriptIsPlain; no -i), `git log` (not with --output). `git commit -m` is already data
 // through lib/message-text.mjs. Everything else stays as written, among them shells, interpreters, eval, ssh, xargs, env, sudo, watch, flock,
@@ -25,7 +26,7 @@ const BAIL_OUT = /<<|<\(|>\(|\r|\$'/;
 // words that define or run what a later word means: a function or alias named `echo`, a sourced file, a case pattern that ends a `$(` early, `hash` / `enable` that point a name at another program
 const BAIL_WORDS = new Set(['case', 'esac', 'eval', 'source', '.', 'alias', 'function', 'trap', 'coproc', 'hash', 'enable', 'command_not_found_handle']);
 // a variable that changes which program or library runs (`PATH=./bin:$PATH grep ...`)
-const CHANGES_WHAT_RUNS = /^(?:PATH|BASH_ENV|ENV|IFS|PAGER|LD_\w+|DYLD_\w+|GIT_\w+)\+?=/;
+export const CHANGES_WHAT_RUNS = /^(?:PATH|BASH_ENV|ENV|IFS|PAGER|LD_\w+|DYLD_\w+|GIT_\w+)\+?=/;
 const CLOSERS = new Set(['}', 'done', 'fi', 'esac']); // a group or loop piped onward: its statements are not told apart, so the line is left alone
 const ASSIGNMENT = /^[A-Za-z_]\w*=/;
 const LONG_FLAG_VALUE = /^--[\w-]+=$/;

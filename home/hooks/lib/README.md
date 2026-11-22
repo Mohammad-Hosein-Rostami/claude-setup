@@ -36,6 +36,7 @@ Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 - `git-advice.mjs`: all three git advices in one call (merge commit, branch move, a copy of an existing lane branch); the copy-branch advice asks git (one 2 s budget per command line), and any git error or timeout gives no advice.
 - `inert-arguments.mjs`: empties the single-quoted arguments of programs that never run them (echo, printf, grep, rg, jq, sed, git log) before `raw-risk.mjs` looks for dangerous words, only in shapes it can prove harmless.
 - `secrets.mjs`: finds literal secrets in a command and masks them.
+- `data-text.mjs`: the parts of a command that `secrets.mjs` treats as data (a stored quoted heredoc body nothing else in the command can run or read, an inert program's quoted argument).
 - `verdict.mjs`: shared wording of the reasons.
 
 Asking and remembering:
