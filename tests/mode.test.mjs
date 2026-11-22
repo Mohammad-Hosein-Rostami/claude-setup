@@ -3,10 +3,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isStale } from '../home/hooks/lib/state-files.mjs';
+import { LEAD_RULES_MAX_BYTES } from '../home/hooks/session-notes.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -84,6 +85,45 @@ test('SessionStart without lead-rules.md prints no lead text and does not fail',
   assert.equal(result.status, 0);
   assert.doesNotMatch(result.stdout, /Lead rules|LEAD-MARK|^Mode: /m);
   assert.doesNotMatch(result.stderr, /lead-rules\.md/);
+});
+
+// SA3 (P1): a FIFO at lead-rules.md held the hook past its 5 s timeout, so Claude Code dropped the whole SessionStart output.
+const FIFO_WAIT_MS = 3000; // well under the hook's 5,000 ms timeout; a hook that waits on the FIFO is killed here
+
+test('a FIFO at lead-rules.md, or a link to one, is not read: the hook ends at once and prints no lead text', async () => {
+  const home = await homeWithLeadRules(undefined);
+  const fifo = join(home, 'pipe');
+  assert.equal(spawnSync('mkfifo', [fifo]).status, 0, 'mkfifo made the FIFO');
+  for (const plant of ['fifo', 'link']) {
+    const rules = join(home, '.claude', 'lead-rules.md');
+    await rm(rules, { force: true });
+    if (plant === 'fifo') assert.equal(spawnSync('mkfifo', [rules]).status, 0);
+    else await symlink(fifo, rules);
+    const result = spawnSync(process.execPath, [HOOK], {
+      input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: `fifo-${plant}`, source: 'compact' }),
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      encoding: 'utf8',
+      timeout: FIFO_WAIT_MS,
+    });
+    assert.equal(result.signal, null, `${plant}: the hook did not wait on the FIFO`);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /recall/, `${plant}: the compact notes still print`);
+    assert.match(result.stderr, /lead-rules\.md/, `${plant}: the refused file is reported on stderr`);
+  }
+});
+
+test('lead-rules.md as an install link to a regular file prints it; a file over the cap prints no lead text', async () => {
+  const home = await homeWithLeadRules(undefined);
+  const repoFile = join(home, 'repo-lead-rules.md');
+  await writeFile(repoFile, 'LINKED-LEAD-MARK\n');
+  await symlink(repoFile, join(home, '.claude', 'lead-rules.md'));
+  const linked = runHook(home, {}, { hook_event_name: 'SessionStart', session_id: 'l-link', source: 'startup' });
+  assert.match(linked.stdout, /^LINKED-LEAD-MARK/);
+  await writeFile(repoFile, `HUGE-MARK\n${'x'.repeat(LEAD_RULES_MAX_BYTES)}`);
+  const huge = runHook(home, {}, { hook_event_name: 'SessionStart', session_id: 'l-huge', source: 'startup' });
+  assert.equal(huge.status, 0);
+  assert.doesNotMatch(huge.stdout, /HUGE-MARK/);
+  assert.match(huge.stderr, /lead-rules\.md/);
 });
 
 test('mode.mjs stays within the 300-line file limit', async () => {

@@ -14,20 +14,21 @@
 // on a FIFO, written as a whole by rename) and the big-context flag `<session_id>.bigctx` (lib/big-context.mjs checks it with
 // access and writes it by name). The hook never writes settings files. Stdout of these events is added to the model context.
 // Invariants: never blocks (always exit 0); unreadable input produces no output; a state file name is built only from ids that pass
-// SESSION_ID_PATTERN; a missing lead-rules.md prints nothing and is not reported (any other read error goes to stderr).
+// SESSION_ID_PATTERN; a missing lead-rules.md prints nothing and is not reported; a FIFO, device, folder or oversized file there
+// is not read (lib/plain-file.mjs) and is reported on stderr like any other read error.
 // Time: one deadline, HOOK_BUDGET_MS from the start of this process: the child gets what is left of it and the prune stops when it
 // is used up (and reads a bounded number of entries per run). Not inside it: the transcript scans of the compact notes and the
 // big-context line. Claude Code drops the whole output of a hook that passes its timeout, and caps a hook's plain stdout at 10,000
 // characters (hooks docs, "capped at 10,000 characters"; tests/session-start-size.test.mjs keeps this string under it).
-// Exports: HOOK_BUDGET_MS, SESSION_ID_PATTERN, isSubagentStart(input), hookText(input, deps).
+// Exports: HOOK_BUDGET_MS, SESSION_ID_PATTERN, LEAD_RULES_MAX_BYTES, isSubagentStart(input), hookText(input, deps).
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { realpathSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { bigContextNote } from './lib/big-context.mjs';
 import { compactNotes } from './lib/compact-notes.mjs';
 import { pruneState } from './lib/state-files.mjs';
+import { readPlainFile } from './lib/plain-file.mjs';
 import { timedProjectAgentNote } from './lib/project-agents-timed.mjs';
 
 export const SESSION_ID_PATTERN = /^[\w-]+$/;
@@ -36,6 +37,8 @@ export const SESSION_ID_PATTERN = /^[\w-]+$/;
 export const HOOK_BUDGET_MS = 4000;
 const EVENTS = ['SessionStart', 'UserPromptSubmit'];
 const LEAD_RULES_FILE = 'lead-rules.md';
+// Claude Code keeps at most 10,000 characters of a hook's stdout and a UTF-8 character is at most 4 bytes: a bigger file never fits.
+export const LEAD_RULES_MAX_BYTES = 40_000;
 
 const stateDir = () => join(homedir(), '.claude', 'state', 'modes');
 /** A session or agent id that is safe as part of a state file name, else undefined. */
@@ -53,11 +56,14 @@ export function isSubagentStart(input) {
 
 /**
  * The lead-only rules (`~/.claude/lead-rules.md`). SessionStart output reaches only the lead session, so workers never see it.
- * @returns {Promise<string>} the text, or '' when the file is missing or unreadable (never throws; only a missing file is silent).
+ * @returns {Promise<string>} the text, or '' when the file is missing, unreadable, not a regular file (a FIFO, a device, a
+ *   folder) or larger than LEAD_RULES_MAX_BYTES (never throws, never waits; only a missing file is silent).
  */
 async function readLeadRules() {
   try {
-    return (await readFile(join(homedir(), '.claude', LEAD_RULES_FILE), 'utf8')).trim();
+    // The install link is followed once (realpath); the open itself follows no link, never waits on a FIFO and reads only a
+    // regular file of at most LEAD_RULES_MAX_BYTES (security review SA3: a FIFO here held the hook past its timeout).
+    return readPlainFile(realpathSync(join(homedir(), '.claude', LEAD_RULES_FILE)), LEAD_RULES_MAX_BYTES).trim();
   } catch (error) {
     if (error.code !== 'ENOENT') process.stderr.write(`session-notes hook: cannot read ${LEAD_RULES_FILE}: ${error.message}\n`);
     return '';
