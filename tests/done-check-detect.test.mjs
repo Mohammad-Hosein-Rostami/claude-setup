@@ -288,6 +288,20 @@ test('DONE_CHECK_SKIP=all plans no command', (t) => {
   assert.ok(plan.skipped.every((entry) => NOT_RUN_WHY.includes(entry.why)));
 });
 
+test('a project with no package.json, tsconfig or runner (the setup repo today) plans no command and names every kind not run', (t) => {
+  const repo = project(t, { files: { 'src/a.mjs': SRC_A } });
+  const plan = planFor(repo, ['src/a.mjs']);
+  assert.equal(plan.packages.flatMap((entry) => entry.cmds).length, 0);
+  assert.deepEqual(plan.skipped.map((entry) => [entry.kind, entry.why]), [['types', 'no-command'], ['lint', 'no-command'], ['tests', 'no-command']]);
+});
+
+test('two lockfiles and no packageManager: one package manager is picked (pnpm, yarn, bun, npm) and named in the command label', (t) => {
+  const repo = project(t, { packageJson: { scripts: { typecheck: 'node check.mjs' } }, files: { 'src/a.ts': SRC_A, 'package-lock.json': '{}\n', 'yarn.lock': '\n', 'pnpm-lock.yaml': '\n' } });
+  const [entry] = planFor(repo, ['src/a.ts']).packages;
+  assert.equal(entry.pm, 'pnpm');
+  assert.equal(entry.cmds[0].label, 'pnpm run typecheck');
+});
+
 // ---- nodeRelatedTests ----
 
 const relatedIn = (repo, globs, files, max = MAX_NODE_RELATED) => nodeRelatedTests(repo.dir, globs, files, max).map((file) => relPath(repo, file)).sort();
