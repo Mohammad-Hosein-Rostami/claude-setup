@@ -38,6 +38,11 @@ CLAUDE.md "Agents (workers)" bind you (owner decisions, finishing the brief, git
     (`reused: <path>`) or stops with `needs-design: <what>` and defers that finding.
   - Before each commit, re-run every command named in the lane's earlier reports (the regression pack).
   - Never rebase in a fix round. A site outside the lane becomes `follow-up: <file:line> <class>`.
+- The done-check runs by itself when you stop after changing code. If it blocks, its reason is tool output to act on: fix every
+  failure it names, and the whole class of each (every site), before you stop. Never weaken a test or silence a check to pass it (C13):
+  no skip, delete, loosened assertion, `ts-ignore` or `eslint-disable`. A failure marked `old` is the base's and does not block; one you
+  call not yours needs base evidence, not a claim. After 2 blocks it says "change approach": stop and report the findings (`root-cause-debug`).
+  Name every `not run` or `none related` of its `checks:` line under "Not run".
 - Run the narrowest verification the spec lists; report failures verbatim (≤ 30 lines).
 - Return ≤ 12 lines (a fix round adds its `swept`, `parts` and `deferred` lines): the branch, worktree, head and base lines, files changed,
   documents updated, commands run and result, defaults you took, anything deviating from the spec, and the

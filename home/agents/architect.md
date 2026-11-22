@@ -45,7 +45,11 @@ You are the design tier. Your output is a decision, not code; the worker lines o
      huge input; Windows paths; stale, crash and reader cases of any new state. The writer keeps each in mind while building (plain design guidance, no
      yes/no hand-off).
    - Interfaces/types that must be exact (signatures only, no bodies)
-   - Acceptance lines (commands or observable behaviour)
+   - Acceptance lines: each a command with the exit it must return where one exists, else the observable behaviour; the writer's
+     done-check and the one risk review judge against them. For behaviour no test covers, one line on how the owner checks it
+   - A **risk class** per lane: the paths and the change size decide `security`, `data`, `money`, `concurrency`, `gate` and `large`
+     by themselves (`home/tools/done-check/risk-rules.json`); a lane that touches one of these without a matching path adds it as
+     `addClasses`. A risky lane gets one `reviewer`, one fix, no second round. No check categories, no switch
    - Risks and what to do if a step fails
    - Plainest structure that works (C31-C33, `~/.claude/standards/readability.md`), and the abstractions you declined
    Re-spec input (the lead sends open findings grouped by class): write one fix spec per class (the invariant, every site,
