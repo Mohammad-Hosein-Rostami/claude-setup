@@ -31,7 +31,7 @@ function isRunning(pid) {
 }
 
 /** Takes the lock over when the pid written in it names a process that has ended (a killed install); false otherwise. */
-function takeFromEndedOwner(lockPath) {
+function takeFromEndedOwner(lockPath, readLock) {
   let seen;
   try {
     seen = lstatSync(lockPath);
@@ -40,26 +40,46 @@ function takeFromEndedOwner(lockPath) {
     throw error;
   }
   if (!seen.isFile()) return false; // a FIFO or link is never read
-  const owner = Number(readFileSync(lockPath, 'utf8'));
+  let text;
+  try {
+    text = readLock(lockPath, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return takeLock(lockPath, Date.now(), INSTALL_LOCK_STALE_MS); // released between the look and the read
+    throw error;
+  }
+  const owner = Number(text);
   if (!Number.isInteger(owner) || owner <= 0 || isRunning(owner)) return false; // empty: its owner is writing its pid now
   // "Now" is the seen lock's own time and the limit 0, so only that lock counts as stale: a newer one taken meanwhile stays.
   return takeLock(lockPath, seen.mtimeMs, 0);
+}
+
+/** Removes the lock while it still holds this process's pid; a successor's lock (ours was taken over as stale) or none stays. */
+function releaseOwnLock(lockPath) {
+  let text;
+  try {
+    text = readFileSync(lockPath, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return;
+    throw error;
+  }
+  if (text === String(process.pid)) releaseLock(lockPath);
 }
 
 /**
  * One install at a time: takes ~/.claude/.claude-setup-install.lock (O_EXCL; disk-free/lib/lock-file.mjs) and writes this
  * process's pid in it. A lock whose pid has ended, or older than INSTALL_LOCK_STALE_MS, is taken over.
  * @param {object} ctx the run context (~/.claude must exist)
- * @returns {() => void} releases the lock
+ * @param {typeof readFileSync} [readLock] how the lock's text is read (tests give one that fails the way a release in between does)
+ * @returns {() => void} releases the lock, only while the lock is still this process's
  * @throws {InstallError} when another install holds the lock
  */
-export function lockInstall(ctx) {
+export function lockInstall(ctx, readLock = readFileSync) {
   const lockPath = join(ctx.claudeDir, INSTALL_LOCK_NAME);
-  if (!takeLock(lockPath, Date.now(), INSTALL_LOCK_STALE_MS) && !takeFromEndedOwner(lockPath)) {
+  if (!takeLock(lockPath, Date.now(), INSTALL_LOCK_STALE_MS) && !takeFromEndedOwner(lockPath, readLock)) {
     throw new InstallError(`another install is running (${lockPath}); wait for it to end, or delete that file if no install runs`);
   }
   writeFileSync(lockPath, String(process.pid));
-  return () => releaseLock(lockPath);
+  return () => releaseOwnLock(lockPath);
 }
 
 /**

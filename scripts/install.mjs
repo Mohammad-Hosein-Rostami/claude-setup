@@ -15,8 +15,8 @@
 //   install record (~/.claude/.claude-setup-install.json, saved even when a step fails); settings are written after the plugin
 //   installs, because `claude plugin install` re-enables plugins in settings.json and the merged repo settings must win; tool
 //   dependencies come after settings, so a failed dependency install cannot leave settings.json stale; one install at a time
-//   (a lock in ~/.claude from loading the record to saving it; a second install exits 1 with a message).
-import { mkdirSync, realpathSync } from 'node:fs';
+//   (a lock in ~/.claude from loading the record to saving it, also around --uninstall; a second run exits 1 with a message).
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -87,6 +87,18 @@ function lockAndLoad(ctx) {
   }
 }
 
+/**
+ * Takes the install lock for --uninstall, so it never runs beside an install (an install would back up again what the
+ * uninstall just restored). No ~/.claude, or --dry-run: nothing to undo or change, no lock.
+ * @param {object} ctx the run context
+ * @returns {() => void} the lock's release
+ * @throws {InstallError} when an install holds the lock
+ */
+function lockForUninstall(ctx) {
+  if (ctx.dryRun || !existsSync(ctx.claudeDir)) return () => {};
+  return lockInstall(ctx);
+}
+
 function printSummary(ctx, write) {
   write('');
   write('Completed so far:');
@@ -105,8 +117,10 @@ export function main(argv, env = process.env) {
   let release;
   try {
     ctx = makeContext(parseArgs(argv), REPO, env);
-    if (ctx.uninstall) uninstall(ctx);
-    else {
+    if (ctx.uninstall) {
+      release = lockForUninstall(ctx);
+      uninstall(ctx, release);
+    } else {
       ({ record, release } = lockAndLoad(ctx));
       install(ctx, record);
     }

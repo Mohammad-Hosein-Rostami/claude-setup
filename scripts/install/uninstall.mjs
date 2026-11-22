@@ -72,8 +72,10 @@ function removeEmpty(dir, stop) {
 /**
  * Undoes the install this context's record describes.
  * @param {object} ctx the run context
+ * @param {() => void} [releaseLock] lets go of the install lock; called before the made folders are removed, because the lock
+ *   file sits in ~/.claude and would keep it from being empty
  */
-export function uninstall(ctx) {
+export function uninstall(ctx, releaseLock = () => {}) {
   const record = loadRecord(ctx);
   if (record.fresh) {
     warn(`no install record at ${recordPath(ctx)}: nothing to undo (an install before the record is undone by hand)`);
@@ -86,6 +88,7 @@ export function uninstall(ctx) {
     for (const entry of record.backups) if (existsSync(dirname(entry.backup))) removeEmpty(dirname(entry.backup), entry.backupRoot);
     rmSync(recordPath(ctx), { force: true });
   });
+  releaseLock();
   for (const entry of made.filter((item) => item.kind === 'dir')) {
     act(ctx, `remove folder ${entry.path} when empty`, () => {
       if (existsSync(entry.path) && readdirSync(entry.path).length === 0) rmdirSync(entry.path);
