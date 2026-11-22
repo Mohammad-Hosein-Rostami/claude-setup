@@ -1,6 +1,6 @@
 // Purpose: ~/.claude/settings.json, merged from the layers: the machine's own settings.json from before the first install
 //   (the first layer, on a new machine only), settings/base.json, settings/<os>.json, then the git-ignored settings/local.json.
-// Exports: buildSettings, mergedSettings, isNewMachine.
+// Exports: buildSettings, mergedSettings, settingsLayersLine, isNewMachine.
 // Invariants: the merge is scripts/merge-settings.jq, the same program doctor.sh rebuilds the expected file with; an
 //   unchanged result writes nothing; a changed file is moved to the backup folder before the new one is written.
 import { existsSync, lstatSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
@@ -28,6 +28,27 @@ export function isNewMachine(ctx, record) {
   }
 }
 
+/** The layer files that exist, in merge order: [{file, name}], `name` as the dry-run line shows it. */
+function settingsLayers(ctx, firstLayer) {
+  const layers = [
+    { file: firstLayer, name: "the machine's own settings.json" },
+    { file: join(ctx.root, 'settings', 'base.json'), name: 'settings/base.json' },
+    { file: join(ctx.root, 'settings', `${ctx.os}.json`), name: `settings/${ctx.os}.json` },
+    { file: join(ctx.repo, 'settings', 'local.json'), name: 'settings/local.json' },
+  ];
+  return layers.filter(({ file }) => file && existsSync(file));
+}
+
+/**
+ * The dry-run line naming the layers the merge would read, only those that exist (local.json is git-ignored and often absent).
+ * @param {object} ctx the run context (root, repo, os)
+ * @param {string|null} firstLayer the machine's own settings from before the first install, or null
+ * @returns {string} `settings layers: settings/base.json + settings/<os>.json[ + settings/local.json]`
+ */
+export function settingsLayersLine(ctx, firstLayer) {
+  return `settings layers: ${settingsLayers(ctx, firstLayer).map(({ name }) => name).join(' + ')}`;
+}
+
 /**
  * The merged settings object, `{{CLAUDE_HOME}}` replaced by ~/.claude with forward slashes (a Windows path too).
  * @param {object} ctx the run context (root: base and OS layers; repo: the git-ignored local.json)
@@ -36,9 +57,7 @@ export function isNewMachine(ctx, record) {
  * @throws {InstallError} when jq is missing or a layer is not valid JSON
  */
 export function mergedSettings(ctx, firstLayer) {
-  const osLayer = join(ctx.root, 'settings', `${ctx.os}.json`);
-  const local = join(ctx.repo, 'settings', 'local.json');
-  const files = [firstLayer, join(ctx.root, 'settings', 'base.json'), osLayer, local].filter((file) => file && existsSync(file));
+  const files = settingsLayers(ctx, firstLayer).map(({ file }) => file);
   const run = spawnSync('jq', ['-s', '-f', join(ctx.root, 'scripts', 'merge-settings.jq'), ...files], { encoding: 'utf8' });
   if (run.error?.code === 'ENOENT') throw new InstallError(`jq is not installed (${JQ_HINT[ctx.os]})`);
   if (run.status !== 0) throw new InstallError(`jq could not merge ${files.join(', ')}: ${(run.stderr || '').trim()}`);
@@ -74,6 +93,7 @@ export function buildSettings(ctx, record) {
     record.firstLayer = ctx.dryRun ? out : saved;
     note(ctx, `kept the machine's own settings.json as the first layer (${record.firstLayer})`);
   }
+  if (ctx.dryRun) console.log(settingsLayersLine(ctx, record.firstLayer));
   const merged = mergedSettings(ctx, record.firstLayer);
   const current = readSettings(out);
   if (current && JSON.stringify(canonical(current)) === JSON.stringify(canonical(merged))) {

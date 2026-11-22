@@ -9,6 +9,8 @@
 //                          --update points them back at this checkout.
 //   --claude-version <v>   install Claude Code <v> (the phase pin, 2.1.326 or newer) and prove it answers, else put the old
 //                          binary back (scripts/install/cli.mjs)
+//   --dry-run              print each change instead of making it, plus the git hooksPath it would set and the settings layers it
+//                          would merge; changes nothing (no file, no git config, no lock).
 //   --uninstall            remove what the install record names and put the backed-up files back (scripts/install/uninstall.mjs).
 // Exports: LINKS, TOOLS_WITH_DEPS, main.
 // Invariants: never deletes a file it did not make: anything replaced goes to ~/.claude-backup-<stamp>/ and is named in the
@@ -40,7 +42,10 @@ export const TOOLS_WITH_DEPS = ['ui-check', 'env-names'];
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 function enableGitHooks(ctx) {
-  if (ctx.dryRun) return;
+  if (ctx.dryRun) {
+    console.log('would set: git config core.hooksPath .githooks');
+    return;
+  }
   const run = spawnSync('git', ['-C', ctx.repo, 'config', 'core.hooksPath', '.githooks'], { encoding: 'utf8' });
   if (run.status === 0) note(ctx, 'git hooksPath = .githooks');
 }
