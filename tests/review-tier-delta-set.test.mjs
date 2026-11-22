@@ -69,7 +69,7 @@ test('review B1, case 2: a docs-only fix of a gate lane gets the lane landing se
 });
 
 test('review B1b: a docs-only or tests-only fix keeps the mutation plan of the lane, on a gate lane and on a plain logic lane', () => {
-  for (const [name, lanePath] of [['gate', 'home/workflows/build.js'], ['logic', 'src/total.mjs']]) {
+  for (const [name, lanePath] of [['gate', 'home/tools/test-pass/lib.mjs'], ['logic', 'src/total.mjs']]) {
     for (const [kind, fixPath, fixText] of [['docs', 'README.md', '# fixed a typo\n'], ['tests', 'tests/total.test.mjs', "test('adds', () => {});\n"]]) {
       const { write, json, tier } = lane();
       const reviewed = write(lanePath, 'export const total = (a, b) => a + b;\nexport const twice = (n) => total(n, n);\n');

@@ -39,7 +39,11 @@ const ACCOUNT_TOOL_PATH = new RegExp(ACCOUNT_TOKEN_FILES);
 const DATA_PATH = /(^|\/)(migrations?|prisma)\/|\.sql$|schema\./;
 const MONEY_WORDS = 'payment|invoice|billing|refund|checkout|stripe|wallet|ledger';
 const NOT_SHOP = '(?<!git\\s+|stale-)'; // `git checkout` and git-tidy's `stale-checkout` are not a shop checkout
+const MONEY_WORD = new RegExp(`${NOT_SHOP}\\b(${MONEY_WORDS})s?\\b`, 'i');
 const MONEY_PATH = new RegExp(`${NOT_SHOP}(${MONEY_WORDS})`);
+// Git's own config files (an alias `co = checkout`) and comment lines (a remark about a payment) hold money words without handling money.
+const GIT_CONFIG_FILE = /(^|\/)(\.git(config|attributes|ignore|modules)|\.git\/config)$/;
+const COMMENT_LINE = /^\s*(\/\/|\/\*|\*|#|<!--)/;
 const HOOKS_PATH = /(^|\/)hooks\//;
 // Test, lint and type config: the files whose lines `weakenedChecks` reads (with the test paths), and part of GATE_PATH.
 const CHECK_CONFIG_SOURCE = String.raw`(^|/)tsconfig[^/]*\.json$|(^|/)(eslint\.config\.[^/]+|\.eslintrc[^/]*|vitest\.(config|workspace)\.[^/]+|jest\.config\.[^/]+|playwright\.config\.[^/]+)$`;
@@ -111,7 +115,7 @@ const isLiteral = (part) => LITERAL_ARGUMENT.test(part);
 const words = (list) => new RegExp(`\\b(${list})s?\\b`, 'i');
 
 /**
- * Line rules. `test` gets one changed line; `alsoInFile` must match the whole new file; `tag` marks concurrency hits; `trigger`
+ * Line rules. `test` gets one changed line; `alsoInFile` must match the whole new file; `exceptPath` skips the rule for a matching path (lower case); `tag` marks concurrency hits; `trigger`
  * names what the hit asks of the brief (PRINCIPLES_BY_TRIGGER); a rule without `cls` only sets its trigger.
  */
 const LINE_RULES = [
@@ -133,7 +137,7 @@ const LINE_RULES = [
   { cls: 'data', trigger: 'write', test: STATE_DIR_WORD },
   { cls: 'data', trigger: 'delete', test: DELETE_CALL },
   { cls: 'data', trigger: 'delete', test: DELETE_COMMAND },
-  { cls: 'money', test: new RegExp(`${NOT_SHOP}\\b(${MONEY_WORDS})s?\\b`, 'i') },
+  { cls: 'money', exceptPath: GIT_CONFIG_FILE, test: (line) => !COMMENT_LINE.test(line) && MONEY_WORD.test(line) },
   { cls: 'untrusted-input', test: /\breq\.(body|query|params|headers)|\brequest\.(body|query|params|json\()|JSON\.parse\(|process\.stdin|readFileSync\(\s*(0|['"]\/dev\/stdin['"])/ },
   { cls: 'untrusted-input', trigger: 'read', test: hasUntrustedArgument(READ_CALL, false) },
   { cls: 'untrusted-input', test: hasUntrustedArgument(/\bfetch\(/, false) },
@@ -172,7 +176,7 @@ function pathClasses(path) {
   const found = [];
   if (LOCKFILES.has(baseName(path)) || SECURITY_PATH.test(lower) || ACCOUNT_TOOL_PATH.test(lower)) found.push({ cls: 'security' });
   if (DATA_PATH.test(lower)) found.push({ cls: 'data' });
-  if (MONEY_PATH.test(lower)) found.push({ cls: 'money' });
+  if (MONEY_PATH.test(lower) && !GIT_CONFIG_FILE.test(lower)) found.push({ cls: 'money' });
   if (!LOCKFILES.has(baseName(path)) && tokensOf(path).some((token) => LOCK_WORD.test(token))) found.push({ cls: 'concurrency', tag: LOCK_TAG });
   if (HOOKS_PATH.test(lower)) found.push({ cls: 'audit' });
   return found;
@@ -201,6 +205,7 @@ function classifyFile(file, readNewFile) {
     const wholeFile = () => (whole ??= readNewFile(file.path) ?? '');
     for (const { line, text } of [...file.added, ...file.removed]) {
       for (const rule of LINE_RULES) {
+        if (rule.exceptPath?.test(file.path.toLowerCase())) continue;
         const matched = typeof rule.test === 'function' ? rule.test(text) : rule.test.test(text);
         if (!matched || (rule.alsoInFile !== undefined && !rule.alsoInFile.test(wholeFile()))) continue;
         if (rule.trigger) triggers.add(rule.trigger);

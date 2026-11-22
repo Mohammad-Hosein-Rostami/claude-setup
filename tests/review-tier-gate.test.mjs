@@ -27,7 +27,7 @@ const codeLine = (text) => report([changed('home/tools/x/x.mjs', [text])]);
 // One path per alternative of GATE_PATH (spec section 7), upper case kept where a real file has it.
 const GATE_PATHS = [
   'settings/base.json', 'proj/.claude/settings.local.json', 'home/CLAUDE.md', 'home/lead-rules.md', 'home/agents/reviewer.md',
-  'home/rules/core.md', 'home/workflows/review.js', 'home/skills/workflows/SKILL.md', 'home/skills/verify-done/SKILL.md',
+  'home/rules/core.md', 'home/workflows/example.js', 'home/skills/workflows/SKILL.md', 'home/skills/verify-done/SKILL.md',
   'home/tools/review-tier/tiers.mjs', 'home/tools/test-pass/test-pass.mjs', 'home/tools/git-tidy/lib/git.mjs',
   'scripts/affected-tests.mjs', 'scripts/doctor.sh', '.githooks/pre-push', 'app/.githooks/pre-commit', 'proj/.claude/workflows/x.js',
   '.husky/pre-commit', '.github/workflows/ci.yml', '.gitlab-ci.yml', '.circleci/config.yml', 'azure-pipelines.yml', 'Jenkinsfile',
@@ -208,3 +208,23 @@ for (const [item, commit] of [[71, '9ef7c21c331d848d7e233853b026b59ccbb86d42'], 
     assert.equal(JSON.parse(run.stdout).tier, 2);
   });
 }
+
+const moneyOf = (path, lines) => report([changed(path, lines)]).classes.includes('money');
+
+test('money rule: a comment line with a money word raises nothing (C8), the same word in code does', () => {
+  for (const line of ['// the payment is refunded here', '  # billing runs nightly', ' * invoice numbers are unique', '/* ledger rows */', '<!-- stripe -->']) {
+    assert.equal(moneyOf('src/total.mjs', [line]), false, line);
+  }
+  for (const line of ['await stripe.checkout.sessions.create(x);', 'checkout(cart);', 'refund(order); // done', 'const payment = 1;']) {
+    assert.equal(moneyOf('src/total.mjs', [line]), true, line);
+  }
+});
+
+test('money rule: a git config file raises no money (an alias `co = checkout`), a gate or security word in it still raises its class', () => {
+  for (const path of ['.gitconfig', 'home/git/.gitattributes', 'a/.gitmodules', '.gitignore', 'checkout/.gitconfig', 'repo/.git/config']) {
+    assert.equal(moneyOf(path, ['\tco = checkout', '[alias] pay = payment']), false, path);
+  }
+  assert.equal(moneyOf('src/checkout.mjs', ['export const x = 1;']), true, 'a checkout source path is still money');
+  assert.ok(report([changed('.gitconfig', ['credential.helper = store'])]).classes.includes('security'), 'security still reads a git config file');
+  assert.ok(report([changed('.gitattributes', ['* text=auto'])]).classes.includes('gate'), 'the gate path class stays');
+});
