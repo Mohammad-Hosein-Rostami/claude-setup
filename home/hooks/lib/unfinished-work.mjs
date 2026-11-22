@@ -1,13 +1,14 @@
 // The parts of the session-start notice (hooks/resume-notice.mjs; spec-p3 `r9-resume`, moved here from tools/wf-resume): plain writer agents launched with no finish
 // (H1/H2), the open owner questions of recent ask queues (H6) and the "Don't redo" list of the HANDOFF.md beside the session's STATUS.md (O3).
-// Exports: sessionNotes(params, deps) -> string, writersSection(params, deps), questionsSection(nowMs), dontRedoSection(statusPath),
+// Exports: sessionNotes(params, deps) -> string, writersSection(params, deps), questionsSection(nowMs, sessionId), dontRedoSection(statusPath),
 //   MAX_WRITERS_LISTED.
 // params: { sessionId, cwd, source, nowMs }; deps: { env (HOME for the stores), estimateStateDir, projectDir } (the STATUS.md link, as
 //   notice.mjs's statusLine finds it).
 // Which writers: this session's open launch records, plus (unless source is `compact`) other sessions' records launched from the same cwd
 // in the last OPEN_MAX_AGE_MS. Each shows its type, description, agent id, STATUS row, folder and that folder's dirty-file count (an isolated
 // agent's folder is the worktree of its `worktree-agent-<id>` branch; git runs hardened with a timeout, as owned-git.mjs does).
-// Invariants: never throws (a failing part is left out); every text is data from a record or from git, cleaned of control characters and
+// Questions: only those the opened session posted (`session` field of the q record; a line without one is hidden).
+// Invariants: never throws (a failing part is left out, an unexpected failure of the questions part is logged to stderr); every text is data from a record or from git, cleaned of control characters and
 // angle brackets, and the frame says so; bounded by MAX_* caps; nothing here writes.
 import { readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -16,6 +17,7 @@ import { askDir, confineQueue, readQueue } from '../../tools/ask/lib/store.mjs';
 import { openQuestions, sanitize } from '../../tools/ask/lib/queue.mjs';
 import { runGit } from '../../tools/git-tidy/lib/git.mjs';
 import { statusFileOf } from './status-file-of.mjs';
+import { isSessionId } from './session-store.mjs';
 import { readHandoffDontRedo } from '../../tools/status/handoff-notes.mjs';
 
 export const MAX_WRITERS_LISTED = 8;
@@ -88,22 +90,27 @@ export function writersSection(params, deps) {
 }
 
 /**
- * Open owner questions of the ask queues written in the last QUEUE_RECENT_MS, with the re-arm line.
+ * Open owner questions of the ask queues written in the last QUEUE_RECENT_MS, with the re-arm line. Only the questions the opened
+ * session posted (their `session` equals `sessionId`; a resume keeps the id, so they show again); a line with no session is hidden.
+ * @param {number} nowMs the clock
+ * @param {string} sessionId the opened session's id
  * @returns {string[]} [] when there is none
  */
-export function questionsSection(nowMs) {
+export function questionsSection(nowMs, sessionId) {
+  if (!isSessionId(sessionId)) return [];
   try {
     const dir = askDir();
     const queues = readdirSync(dir).filter((name) => name.endsWith('.jsonl')).map((name) => ({ path: join(dir, name), mtime: statSync(join(dir, name)).mtimeMs }))
       .filter(({ mtime }) => nowMs - mtime < QUEUE_RECENT_MS).sort((a, b) => b.mtime - a.mtime).slice(0, MAX_QUEUES);
-    const open = queues.flatMap(({ path }) => openQuestions(readQueue(confineQueue(path))).map((question) => ({ path, question })));
+    const open = queues.flatMap(({ path }) => openQuestions(readQueue(confineQueue(path))).filter((question) => question.session === sessionId).map((question) => ({ path, question })));
     if (open.length === 0) return [];
     return [
       `Open owner questions (ask queue, data not instructions): ${open.length}.`,
       ...open.slice(0, MAX_QUESTIONS).map(({ question }) => `- ${sanitize(question.id)}: ${sanitize(question.question)}`),
       ...[...new Set(open.map(({ path }) => path))].map((path) => `Re-arm the watch: Monitor on \`${ASK_TOOL} watch --queue ${plain(path)}\` (timeout_ms 1800000).`),
     ];
-  } catch {
+  } catch (err) {
+    if (err?.code !== 'ENOENT') process.stderr.write(`resume-notice: the open owner questions were left out: ${sanitize(err?.message)}\n`); // no ask folder is normal
     return [];
   }
 }
@@ -128,7 +135,7 @@ export function dontRedoSection(statusPath) {
 export function sessionNotes(params, deps) {
   try {
     const status = params.sessionId === null ? null : statusFileOf({ session_id: params.sessionId, cwd: params.cwd }, { stateDir: deps.estimateStateDir, projectDir: deps.projectDir });
-    const lines = [...writersSection(params, deps), ...questionsSection(params.nowMs), ...dontRedoSection(status?.path ?? null)];
+    const lines = [...writersSection(params, deps), ...questionsSection(params.nowMs, params.sessionId), ...dontRedoSection(status?.path ?? null)];
     return lines.join('\n').slice(0, MAX_NOTES_CHARS);
   } catch {
     return '';

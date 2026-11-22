@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// CLI of the owner-decision queue: agents `post` questions, the lead `watch`es, asks the owner, then `answer`s.
+// CLI of the owner-decision queue: agents `post` questions (stamped with the session of env CLAUDE_CODE_SESSION_ID when it is a UUID), the lead `watch`es, asks the owner, then `answer`s.
 // Usage: ask.mjs init | post [--queue P] --json OBJ | answer --queue P ID [--force] [--default] (--option N | --text-stdin | TEXT) | get --queue P ID
 //        | show --queue P ID
 //        | list --queue P [--open] | watch --queue P [--interval-ms 1000]    (--queue defaults to env ASK_QUEUE)
@@ -11,7 +11,7 @@
 // when the owner did not answer, which a reader (ui-coverage) must not count as the owner's decision.
 import { readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
-import { BY_TIMEOUT, ID_PATTERN, QUEUE_FULL, answerFor, formatLine, formatShow, formatWatchLine, nextId, openQuestions, parseLine, sanitize, validate } from './lib/queue.mjs';
+import { BY_TIMEOUT, ID_PATTERN, QUEUE_FULL, SESSION_UUID, answerFor, formatLine, formatShow, formatWatchLine, nextId, openQuestions, parseLine, sanitize, validate } from './lib/queue.mjs';
 import { UsageError, appendRecord, confineQueue, createQueue, readNew, readQueue, withLock } from './lib/store.mjs';
 
 const EXIT_USAGE = 2;
@@ -80,7 +80,8 @@ function post(flags) {
       if (err instanceof RangeError) throw new UsageError(`${QUEUE_FULL}: no free question id left`);
       throw err;
     }
-    appendRecord(real, { type: 'q', id: next, ...result.value });
+    const session = process.env.CLAUDE_CODE_SESSION_ID ?? '';
+    appendRecord(real, { type: 'q', id: next, ...result.value, ...(SESSION_UUID.test(session) ? { session } : {}) });
     if (!readQueue(real).some((r) => r.type === 'q' && r.id === next)) throw new UsageError(`${next} was written but cannot be read back`);
     return next;
   });

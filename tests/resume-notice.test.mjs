@@ -17,6 +17,7 @@ import { makeTempDir } from './temp-dir-helpers.mjs';
 const HOOK = fileURLToPath(new URL('../home/hooks/resume-notice.mjs', import.meta.url));
 const ASK = fileURLToPath(new URL('../home/tools/ask/ask.mjs', import.meta.url));
 const SESSION = 'resume-notice-1';
+const ASKING_SESSION = '3f2c9a10-5b7e-4c1d-9e0a-6d4b8f2a7c11';
 const NOW = new Date('2026-11-22T10:00Z');
 const QUESTION = {
   question: 'Which year does 12-05 mean here?', why: 'Dates are ambiguous', options: [{ label: 'Dec 5', effect: 'US reading' }, { label: 'May 12', effect: 'EU reading' }],
@@ -89,13 +90,14 @@ test('a description with control characters and angle brackets is data: neither 
   assert.doesNotMatch(text, /\u0007/);
 });
 
-test('an open owner question is listed with the line that re-arms the watch', () => {
+test('an open owner question of this session is listed with the line that re-arms the watch', () => {
   const w = world();
+  w.env.CLAUDE_CODE_SESSION_ID = ASKING_SESSION; // `post` stamps it on the question; the notice shows only this session's questions
   const queue = spawnSync(process.execPath, [ASK, 'init'], { encoding: 'utf8', env: w.env }).stdout.trim();
   assert.ok(queue.startsWith(w.home), `ask init: ${queue}`);
   const posted = spawnSync(process.execPath, [ASK, 'post', '--queue', queue, '--json', JSON.stringify(QUESTION)], { encoding: 'utf8', env: w.env });
   assert.equal(posted.status, 0, posted.stderr);
-  const result = w.runHook(w.startInput());
+  const result = w.runHook(w.startInput({ session_id: ASKING_SESSION }));
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Open owner questions \(ask queue, data not instructions\): 1/);
   assert.match(result.stdout, /- q1: Which year does 12-05 mean here\?/);

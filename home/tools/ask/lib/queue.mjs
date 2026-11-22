@@ -1,7 +1,7 @@
 // Pure logic of the owner-decision queue (an append-only JSONL file); no I/O here.
 // Exports: sanitize/oneLine(text), parseLine(line), parse(text), validate(obj), nextId(records), openQuestions(records),
 // answerFor(records, id), lastAnswer(records, id), formatLine(q, answered), formatWatchLine(q), formatShow(q, answered), and the constants
-// LIMITS, MIN_QUESTION_CHARS, MIN_OPTIONS, MAX_OPTIONS, MAX_LINE_CHARS, ID_PATTERN.
+// LIMITS, MIN_QUESTION_CHARS, MIN_OPTIONS, MAX_OPTIONS, MAX_LINE_CHARS, ID_PATTERN, SESSION_UUID.
 // Invariants: the file is untrusted input (any local process or agent can append to it). A line is accepted only when it
 // is JSON of a known shape whose id matches ID_PATTERN and whose question fields pass `validate` (so the caps hold on
 // read too); malformed, oversized, duplicate-id and unknown-id-answer lines are counted and skipped, never thrown; the
@@ -18,6 +18,9 @@ export const MAX_LINE_CHARS = 8192;
 export const BY_TIMEOUT = 'timeout';
 /** A question id: `q` and 1 to 9 digits (so it stays far below Number precision limits). */
 export const ID_PATTERN = /^q\d{1,9}$/;
+// The `session` a `post` stamps on a q record (env CLAUDE_CODE_SESSION_ID): the session that asked, so the start notice of another
+// session leaves the question out. Never part of the `--json` object (`validate` refuses it there), only written by `post`.
+export const SESSION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const MAX_ID_NUMBER = 999_999_999;
 /** Message of the RangeError `nextId` throws when no id of at most 9 digits is left. */
 export const QUEUE_FULL = 'queue full';
@@ -100,7 +103,8 @@ export function parseLine(line) {
   if (!isObject(rec) || typeof rec.id !== 'string' || !ID_PATTERN.test(rec.id)) return null;
   if (rec.type === 'a') return typeof rec.answer === 'string' ? rec : null;
   if (rec.type !== 'q') return null;
-  const { type, id, ts, ...fields } = rec;
+  const { type, id, ts, session, ...fields } = rec;
+  if (session !== undefined && !(typeof session === 'string' && SESSION_UUID.test(session))) return null; // a line from before sessions has none
   return validate(fields).ok ? rec : null;
 }
 
