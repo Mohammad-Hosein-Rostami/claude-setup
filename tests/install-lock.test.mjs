@@ -1,7 +1,8 @@
 // Tests for the install lock (lockInstall in scripts/install/record.mjs): one install at a time, so two installs started together
 // cannot both load the install record and the later save drop the other's backup entries (review RM1-3).
 // Exports: none (node:test file). HOME is a temp folder in every case; the installer runs there with --no-plugins --no-tools,
-// which needs jq like every install. INSTALL_RACE_ROUNDS sets the rounds of the two-installs race (default 10).
+// which needs jq like every install. INSTALL_RACE_ROUNDS sets the rounds of the two-installs race (default 10). The pid 1 and
+// link cases need POSIX (pid 1 is a root process another user may not signal; plain symlinks).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -10,6 +11,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeContext } from '../scripts/install/context.mjs';
 import { INSTALL_LOCK_NAME, INSTALL_LOCK_STALE_MS, RECORD_NAME, lockInstall } from '../scripts/install/record.mjs';
+import { posix } from './disk-clean-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
@@ -65,6 +67,26 @@ test('a lock of a live owner older than the stale limit is broken (a hung instal
   const release = lockInstall(ctx);
   assert.equal(readFileSync(lock, 'utf8'), String(process.pid));
   release();
+});
+
+test('a lock held by another user\'s live process (pid 1) is refused', posix, () => {
+  const { ctx, lock } = setup();
+  writeFileSync(lock, '1');
+  assert.throws(() => lockInstall(ctx), /another install is running/);
+});
+
+test('a link at the lock path is never followed: refused even when it points at an ended pid', posix, () => {
+  const { home, ctx, lock } = setup();
+  writeFileSync(join(home, 'elsewhere'), String(deadPid()));
+  symlinkSync(join(home, 'elsewhere'), lock, 'file');
+  assert.throws(() => lockInstall(ctx), /another install is running/);
+});
+
+test('--dry-run on a HOME without ~/.claude makes no ~/.claude and takes no lock', () => {
+  const home = makeTempDir('install-lock-dry-');
+  const run = runInstaller(home, ['--dry-run', '--no-plugins', '--no-tools']);
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(existsSync(join(home, '.claude')), false);
 });
 
 test('the installer refuses to run while another install holds the lock and leaves the record and the lock alone', () => {
