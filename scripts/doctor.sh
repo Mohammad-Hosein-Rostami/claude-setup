@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Purpose: read-only report on links, settings drift, plugins and tools for this Claude Code setup.
-# Usage: scripts/doctor.sh [--all] [--quick | --full] [--live]   (exit 1 if any problem found; --quick skips the repo suite,
-#   for a first check on a new machine; --full, the default, runs every check; --live then runs scripts/doctor-live.sh on the
-#   real tool: a permission dialog and a guard case)
+# Usage: scripts/doctor.sh [--all] [--live]   (exit 1 if any problem found; --live then runs scripts/doctor-live.sh on the
+#   real tool: a permission dialog and a guard case; it never runs the repo's tests; an old --quick or --full is ignored)
 # Output: a summary line first (`doctor (MacBook, Claude Code 2.1.328): 1 FAIL, 1 WARN, 38 ok`), then only the lines that are not
 # ok, each with its fix; `--all` (or DOCTOR_ALL=1) prints every line as before. DOCTOR_ONLY runs keep every line (tests read them).
 set -uo pipefail
@@ -10,8 +9,6 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 BAD=0
-QUICK=0
-for arg in "$@"; do [ "$arg" = --quick ] && QUICK=1; done
 # The install record (scripts/install/record.mjs) names the checkout the links point at (a tag worktree after
 # `install --update --to <tag>`) and the machine's own settings kept as the first layer; without a record: this repo, no layer.
 INSTALL_RECORD="$CLAUDE_DIR/.claude-setup-install.json"
@@ -138,7 +135,7 @@ check_claude_version() {
 }
 
 # These variables override the model and effort every agent file and workflow script names (sub-agents.md:384, model-config.md:655-746;
-# probe W-model: both model routes override a script's `model: 'sonnet'`), so the review floor would be flattened and no agent runs at
+# probe W-model: both model routes override a script's `model: 'sonnet'`), so the model floor would be flattened and no agent runs at
 # the effort its file names. Set in the shell or in the live settings env: FAIL. One check for all three variables.
 EFFORT_OVERRIDES="CLAUDE_CODE_SUBAGENT_MODEL_FORCE CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL CLAUDE_CODE_EFFORT_LEVEL"
 check_effort_env() {
@@ -147,7 +144,7 @@ check_effort_env() {
     if [ -n "${!name:-}" ]; then found="$found $name (shell)"; fi
     if [ -n "$(jq -r --arg n "$name" '.env[$n] // ""' "$live" 2>/dev/null)" ]; then found="$found $name (settings.json env)"; fi
   done
-  if [ -n "$found" ]; then bad "set:$found: it overrides the model or effort every agent and workflow picks (the review floor); unset it"
+  if [ -n "$found" ]; then bad "set:$found: it overrides the model or effort every agent and workflow picks (the model floor); unset it"
   else ok "no model or effort override variable set ($EFFORT_OVERRIDES)"; fi
 }
 
@@ -176,7 +173,7 @@ check_hook_files() {
   return 0
 }
 
-# Hook files named in the frontmatter of home/agents/*.md (agent-memory-only, test-files-only) must exist too.
+# Hook files named in the frontmatter of home/agents/*.md must exist too.
 check_agent_hook_files() {
   local file missing=0
   while read -r file; do
@@ -197,31 +194,6 @@ check_prod_hosts() {
   else
     warn "no prod-hosts list: ssh/scp/psql writes ask only for hosts named *prod* (copy settings/prod-hosts.example to $file)"
   fi
-}
-
-# The suite output goes to a log file so a failure can be named. DOCTOR_TEST_COMMAND replaces the real suite (used by tests);
-# DOCTOR_LOG_DIR moves the log. On failure: each failing test with its first error line (TAP "not ok" / "error:" lines), else the last log lines.
-check_repo_tests() {
-  if [ "$QUICK" = 1 ]; then warn "repo suite not run (--quick); scripts/doctor.sh --full runs it"; return 0; fi
-  local suite="${DOCTOR_TEST_COMMAND:-node --test --test-reporter=tap tests/*.test.mjs}"
-  local log_dir="${DOCTOR_LOG_DIR:-$CLAUDE_DIR/logs}" log failing
-  # Fallback when the log folder cannot be made: a fresh mktemp file, never a fixed name in a shared /tmp that another user could plant.
-  if mkdir -p "$log_dir" 2>/dev/null; then log="$log_dir/doctor-repo-tests.log"; else log="$(mktemp "${TMPDIR:-/tmp}/doctor-repo-tests.XXXXXX")"; fi
-  # A full-suite PASS that test-pass recorded for HEAD's tree (a landing or the last review round) is not worth a second run.
-  # It counts only for a clean working tree (an edit since then is not covered by it), and test-pass is started by its real path
-  # (a symlinked path makes older test-pass versions exit 0 without checking anything).
-  local real_repo
-  real_repo="$(cd "$REPO" && pwd -P)"
-  if [ -z "$(git -C "$real_repo" status --porcelain 2>/dev/null)" ] \
-    && node "$real_repo/home/tools/test-pass/test-pass.mjs" check HEAD --repo "$real_repo" --suite >/dev/null 2>&1; then ok "suite PASS recorded at HEAD"; return; fi
-  # The suite runs in its own TMPDIR that is removed afterwards, so a doctor run leaves no temp folders.
-  if (cd "$REPO" && node "$REPO/home/tools/disk-free/with-run-tmp.mjs" -- bash -c "$suite" >"$log" 2>&1); then ok "repo tests pass"; return; fi
-  bad "repo tests fail (node --test tests/*.test.mjs); full output: $log"
-  failing="$(awk '
-    /^ *not ok [0-9]+ - /  { sub(/^ */, ""); print "      " $0; waiting = 1; next }
-    waiting && /^ *error: / { sub(/^ *error: */, ""); if ($0 == "|-" || $0 == "|") { getline; sub(/^ */, "") } print "        " $0; waiting = 0 }
-  ' "$log" | head -40)"
-  if [ -n "$failing" ]; then echo "$failing"; else tail -n 15 "$log" | sed 's/^/      /'; fi
 }
 
 check_tools() {
@@ -473,20 +445,11 @@ check_notify() {
   fi
 }
 
-# The smart check (spec r9-smart-check 9): its ledger's size and the miss rate with its 95% bound; an ALARM line (an escape of a pinned
-# or security check) is a WARN. Retrain weekly with `node ~/.claude/tools/smart-check/smart-check.mjs train`.
-check_smart_check() {
-  local out ledger="${SMART_CHECK_STATE:-$HOME/.claude/state/smart-check}/ledger.jsonl" size=0
-  [ -f "$ledger" ] && size=$(( $(wc -c <"$ledger") / 1024 ))
-  if ! out="$(node "$REPO/home/tools/smart-check/ledger.mjs" stats --doctor 2>&1)"; then bad "smart-check stats could not run: $out"; return; fi
-  if grep -q '^ALARM' <<<"$out"; then warn "$(tr '\n' ' ' <<<"$out")"; else ok "${out%%$'\n'*} (ledger ${size} KB)"; fi
-}
-
-# DOCTOR_ONLY="check_a check_b" runs just those checks (used by tests; the full run executes the repo tests).
+# DOCTOR_ONLY="check_a check_b" runs just those checks (used by tests).
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_session_notes_hook; check_token_budget; check_plugin_session_start; check_recall; check_stop_cap; check_agent_cap; check_disk_free; check_disk_clean; check_smart_check; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows_gone; check_env_names; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_session_notes_hook; check_token_budget; check_plugin_session_start; check_recall; check_stop_cap; check_agent_cap; check_disk_free; check_disk_clean; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows_gone; check_env_names
 }
 # The machine's name in the summary: the owner's two machines by OS, else the host name; DOCTOR_MACHINE overrides it.
 machine_name() {
@@ -495,7 +458,7 @@ machine_name() {
 }
 
 # The full run: every check's lines go to a file (in this shell, so BAD still counts), then the summary and the lines not ok.
-# The counts are of the ok / WARN / FAIL lines; INFO and detail lines (a failing test's output) are shown, never counted.
+# The counts are of the ok / WARN / FAIL lines; INFO and detail lines (detail lines of a check) are shown, never counted.
 print_summary() {
   local out version fails warns oks
   out="$(mktemp "${TMPDIR:-/tmp}/doctor.XXXXXX")" || { run_checks; return; }

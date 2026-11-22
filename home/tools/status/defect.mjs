@@ -12,14 +12,12 @@ const ROOT_CAUSE_SIZE = 'M';
 const MAX_ID_LENGTH = 40; // the status ID pattern's limit
 
 const oneLine = (text) => text.replace(/\s+/g, ' ').trim();
-// The smart check's ledger counts an owner defect as an escape of the change that made it (spec r9-smart-check 6).
-const LEDGER_NOTE = (id) => `; then label it for the smart check: node ~/.claude/tools/smart-check/ledger.mjs defect --row ${id} --path <the file at fault>`;
 
 /** The note for the n-th report of a row. */
 function routeNote(id, count, rootCauseId) {
-  if (count < 2) return `defect 1 on ${id}: reproduce it under the owner's conditions, fix the root cause, and add a regression test that fails without the fix${LEDGER_NOTE(id)}`;
+  if (count < 2) return `defect 1 on ${id}: reproduce it under the owner's conditions, fix the root cause, and add a regression test that fails without the fix`;
   return `defect ${count} on ${id}: a second report: root-cause first (row ${rootCauseId}): reproduce it under the owner's conditions (zoom, pixel ratio, OS, theme, data), `
-    + `then a root-cause agent (deep-debugger, root-cause-debug skill) before any fix; the condition joins the UI matrix for good and the defect gets a regression test${LEDGER_NOTE(id)}`;
+    + `then a root-cause agent (deep-debugger, root-cause-debug skill) before any fix; the condition joins the UI matrix for good and the defect gets a regression test`;
 }
 
 /**

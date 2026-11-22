@@ -5,8 +5,7 @@
 #   Needs a headless login (the setup-token exported, `claude-as <name>`). Setup and hook lanes run it before landing counts as done.
 # Exit codes: 0 every step passed, 1 a step failed (its FAIL line says which), 2 not runnable here (no claude, no login).
 # Invariants: everything runs in a fresh scratch folder (mktemp -d) under a scratch CLAUDE_CONFIG_DIR that holds a copy of the
-#   live settings plus the probe hooks; no real project, no other session and the real audit log are never touched
-#   (REVIEW_AUDIT_LOG points into the scratch folder); every `claude -p` names a non-Fable --model (usage credits are not
+#   live settings plus the probe hooks; no real project and no other session are ever touched; every `claude -p` names a non-Fable --model (usage credits are not
 #   confirmed off) and has its own timeout. The scratch folder is kept on a failure and its path printed.
 # Unconfirmed: probe P4-1 (can a scripted -p run raise a real dialog the hook sees?) has not run. This script is the scripted form;
 #   if P4-1 says no, step 1 must drive an interactive session through a terminal driver instead, and its FAIL here says so.
@@ -25,7 +24,6 @@ SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/doctor-live.XXXXXX")" || exit 2
 CONFIG="$SCRATCH/config"
 mkdir -p "$CONFIG" "$SCRATCH/work" "$SCRATCH/logs"
 cp "$HOME/.claude/settings.json" "$CONFIG/settings.json" 2>/dev/null || echo '{}' > "$CONFIG/settings.json"
-export REVIEW_AUDIT_LOG="$SCRATCH/logs/review-audit.jsonl"
 
 # One scripted run in the scratch folder; stdout to <name>.out. The timeout is `perl -e alarm` (macOS has no `timeout`).
 scripted() {

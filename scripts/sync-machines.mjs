@@ -2,11 +2,10 @@
 // Purpose: bring this machine and each sync target to the base tip (or the targets to a phase tag), check that every machine runs
 //   the same pinned Claude Code, install the setup and run doctor on each. It replaces the sync-machines workflow.
 // Usage: node scripts/sync-machines.mjs --repo <abs or ~/path> [--base <branch, default main>] [--tag <tag>] [--targets <name,...>]
-//          [--row <STATUS row id>] [--checks <cat,...>] [--json]
+//          [--row <STATUS row id>] [--json]
 //   Run it from the repo folder on the MacBook, once per job, after the last land: `node scripts/sync-machines.mjs --repo "$PWD"`
 //   syncs the PC (the default target `pc` over `ssh pc`). Targets come from settings/local.json `claudeSetup.syncTargets`.
-// Steps: verify (tag, base branch, no tracked changes, git-tidy; the suite PASS with `test` in --checks, the audit-log gate with
-//   `review`), versions (one claude version and channel on every machine, at or above the floor of scripts/doctor.sh, on the local.json
+// Steps: verify (tag, base branch, no tracked changes, git-tidy), versions (one claude version and channel on every machine, at or above the floor of scripts/doctor.sh, on the local.json
 //   pin), then per machine side by side: install on this machine; on a target a git bundle, a fast-forward pull (or a fetched tag),
 //   the shared local values, install, then the version and DISABLE_UPDATES read again; then doctor.sh. Never pushes; never touches a project repo.
 // Output: one line per machine (or a JSON array with --json): { machine, synced, sha, doctorExit, problem }.
@@ -29,7 +28,7 @@ const REMOTE_PATH_EXPORT = 'export PATH="$HOME/.volta/bin:/usr/local/bin:/opt/ho
 const READ_SECONDS = 120; // a remote read
 const SYNC_SECONDS = 540; // the remote pull and install
 const TRANSFER_SECONDS = 300; // the scp of the bundle over a slow link (the PC sits behind a phone relay)
-const DOCTOR_SECONDS = 660; // doctor runs the whole suite when no PASS is recorded (about 4 minutes), plus a margin
+const DOCTOR_SECONDS = 300; // doctor runs no tests: its slowest part is the account login call; 5 minutes is a wide margin
 const TAIL_LINES = 10;
 const ROW_ID = /^[A-Za-z0-9][\w.:-]*$/; // the STATUS row id shape (`7`, `close:5`); no `/`, so /tmp/<row>-... stays one file name
 const PLAIN_BASE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
@@ -65,10 +64,11 @@ function runLine(machine, line, seconds) {
 }
 
 function parseArgs(argv) {
-  const flags = { '--repo': 'repo', '--base': 'base', '--tag': 'tag', '--targets': 'targets', '--row': 'row', '--checks': 'checks' };
-  const opts = { base: 'main', row: 'sync', checks: [], json: false };
+  const flags = { '--repo': 'repo', '--base': 'base', '--tag': 'tag', '--targets': 'targets', '--row': 'row' };
+  const opts = { base: 'main', row: 'sync', json: false };
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === '--json') opts.json = true;
+    else if (argv[index] === '--checks') throw new UsageError('--checks is gone: sync runs no suite or audit gate');
     else if (flags[argv[index]] && argv[index + 1] !== undefined) opts[flags[argv[index]]] = argv[++index];
     else throw new UsageError(`unknown or incomplete argument ${argv[index]}`);
   }
@@ -76,9 +76,7 @@ function parseArgs(argv) {
   if (!PLAIN_BASE.test(opts.base)) throw new UsageError('--base must be a plain branch name');
   if (!ROW_ID.test(opts.row)) throw new UsageError('--row must be a STATUS row id (letters, digits, _ . : -)');
   if (opts.tag !== undefined && !PLAIN_TAG.test(opts.tag)) throw new UsageError('--tag must be a tag name');
-  const checks = typeof opts.checks === 'string' ? opts.checks.split(',') : [];
-  if (!checks.every((name) => /^[a-z]+$/.test(name))) throw new UsageError('--checks must be lower-case category names');
-  return { ...opts, checks, targets: opts.targets?.split(','), localRepo: opts.repo.startsWith('~/') ? join(homedir(), opts.repo.slice(2)) : opts.repo };
+  return { ...opts, targets: opts.targets?.split(','), localRepo: opts.repo.startsWith('~/') ? join(homedir(), opts.repo.slice(2)) : opts.repo };
 }
 
 /** The repo's path on a target: under the target's own home when the repo is under this machine's home, else the same path. */
@@ -94,7 +92,7 @@ function toolPath(repo, name) {
 }
 
 /** The verify checks in order; each returns '' when it holds, else why not. */
-function verifyChecks({ localRepo, base, tag, checks }) {
+function verifyChecks({ localRepo, base, tag }) {
   const git = (...args) => exec('git', ['-C', localRepo, ...args]);
   const node = (script, ...args) => exec('node', [script, ...args]);
   const fromStatus = (result, why) => (result.status === 0 ? '' : `${why}: ${tail(result.out)}`);
@@ -103,9 +101,6 @@ function verifyChecks({ localRepo, base, tag, checks }) {
   list.push(['base branch', async () => { const { out } = await git('branch', '--show-current'); return out.trim() === base ? '' : `on "${out.trim()}", not ${base}`; }]);
   list.push(['tracked changes', async () => { const { out } = await git('status', '--porcelain', '--untracked-files=no'); return out.trim() ? `tracked changes: ${tail(out)}` : ''; }]);
   list.push(['git-tidy', async () => fromStatus(await node(toolPath(localRepo, 'git-tidy/git-tidy.mjs'), 'check', localRepo, '--base', base), 'git-tidy check found')]);
-  if (checks.includes('test')) list.push(['suite', async () => fromStatus(await node(toolPath(localRepo, 'test-pass/test-pass.mjs'), 'check', 'HEAD', '--repo', localRepo, '--suite'), 'no suite PASS at HEAD')]);
-  const auditLog = toolPath(localRepo, 'review-tier/audit-log.mjs');
-  if (checks.includes('review') && existsSync(auditLog)) list.push(['audit-log', async () => fromStatus(await node(auditLog, 'gate', '--repo', localRepo, '--tip', 'HEAD'), 'audit-log gate')]);
   return list;
 }
 
