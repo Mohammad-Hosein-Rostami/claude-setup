@@ -6,7 +6,8 @@
 //   FAIL); 2 landing ranges of every close row of the road (`landed <to> on <base> from <from>`: `git cherry` empty, `<to>` new in this road,
 //   no repeat, `<from>` the road-start tip or another row's `<to>`, both on the base's first-parent line, ranges disjoint, every commit of
 //   `<start>..<tip>` in exactly one range; a done close row with no landed line of its own takes the line of a done `<close row id>.landed`
-//   row, never used when the close row has its own line or is not done; a steered step's lanes also need `reviewed <sha> clean` with every
+//   row, never used when the close row has its own line or is not done; a done `<close row id>.landed` row saying `landed within <other close row id>` gives
+//   that close row no range, valid only when the named row is another close row of the road with a valid range of its own (no self, no chain); a steered step's lanes also need `reviewed <sha> clean` with every
 //   commit of their range in that sha); 3 `git-tidy check` exit 0; 4 `test-pass check <tip> --suite` exit 0; 5 `audit-log gate --tip <tip>` exit 0; 6 UI: when a range of
 //   the step changes UI files or a lane has a matrix, `ui-proof check --tip <tip> --against-step <road>.s<N>` exit 0 and the step-start
 //   record taken at or before every `<from>`; 7 the measure (INFO).
@@ -19,6 +20,7 @@ import { isUiLane, landedLine, reviewedLine, roadStartTip } from './road-state.m
 export const GIT_TIMEOUT_MS = 5_000;
 export const TOOL_TIMEOUT_MS = 30_000;
 const HEX = /^[0-9a-f]{7,40}$/;
+const WITHIN = /\blanded within ([\w.-]*[\w-])/;
 const RECORD_AT = /\bat ([0-9a-f]{7,40})\b/;
 
 const pass = (text) => `PASS ${text}`;
@@ -58,19 +60,34 @@ function landedOfCloseRow(rows, row) {
   return correction?.done == null ? null : landedLine(correction.evidence);
 }
 
-/** The close rows of the road with a landed line, as ranges. */
+/**
+ * The close row named by a done `<close row id>.landed` correction row that says `landed within <close row id>`, or null. It applies only
+ * to a done close row with no landed line, and only when the correction row has no landed line either: such a close row landed inside
+ * the fast-forward of the named one (one range for both) and carries no range of its own.
+ */
+function withinOfCloseRow(rows, row) {
+  if (landedLine(row.evidence) !== null) return null;
+  const correction = rows.get(`${row.id}.landed`.toLowerCase());
+  if (correction?.done == null || landedLine(correction.evidence) !== null) return null;
+  return WITHIN.exec(String(correction.evidence ?? ''))?.[1] ?? null;
+}
+
+const closeRange = (rows, row, entry, reviewed) => ({ entry, row: row.id, landed: landedOfCloseRow(rows, row), within: withinOfCloseRow(rows, row), reviewed });
+
+/** The done close rows of the road, as ranges (`landed` null when the row has no landed line; `within` the named close row or null). */
 function closeRanges(road, rows) {
   return laneEntries(road).flatMap((entry) => {
     const row = rows.get(entry.ids.close.toLowerCase());
     if (row?.done == null) return [];
-    return [{ entry, row: entry.ids.close, landed: landedOfCloseRow(rows, row), reviewed: reviewedLine(rows.get(entry.ids.lane.toLowerCase())?.evidence) }];
+    return [closeRange(rows, { ...row, id: entry.ids.close }, entry, reviewedLine(rows.get(entry.ids.lane.toLowerCase())?.evidence))];
   }).concat([...rows.values()].filter((row) => /\.s\d+\.fix-[a-z0-9-]+-land$/.test(row.id) && row.done != null && row.id.startsWith(`${road.road}.`))
-    .map((row) => ({ entry: null, row: row.id, landed: landedOfCloseRow(rows, row), reviewed: null })));
+    .map((row) => closeRange(rows, row, null, null)));
 }
 
 /** Per-row checks of line 2; returns the FAIL texts. */
 function rangeRowFails(run, ctx, range, seenTo) {
   const { repo, base, start, firstParent } = ctx;
+  if (range.within !== null) return [];
   const { landed } = range;
   if (landed === null || !HEX.test(landed.to)) return [`2 range: ${range.row} has no "landed <to> on <base> from <from>" evidence`];
   if (landed.from === null || !HEX.test(landed.from)) return [`2 range: ${range.row} has no from`];
@@ -96,11 +113,25 @@ function rangeRowFails(run, ctx, range, seenTo) {
   return fails;
 }
 
+/** The FAIL texts of the `landed within` rows: the named row is another close row of the road with a valid range of its own, never a chain. */
+function withinFails(ranges, rowFails) {
+  return ranges.filter((range) => range.within !== null).flatMap((range) => {
+    const said = `2 range: ${range.row} says "landed within ${range.within}"`;
+    const named = ranges.find((other) => other.row.toLowerCase() === range.within.toLowerCase());
+    if (range.within.toLowerCase() === range.row.toLowerCase()) return [`${said}: a row cannot name itself`];
+    if (named === undefined) return [`${said}, but ${range.within} is not a done close row of this road`];
+    if (named.within !== null) return [`${said}, but ${named.row} itself landed within ${named.within} (no chains)`];
+    if (named.landed === null || rowFails.get(named).length > 0) return [`${said}, but ${named.row} has no valid range of its own`];
+    return [];
+  });
+}
+
 /** Line 2: every close row of the road, then the cover of `<start>..<tip>` by the ranges. */
 function rangeLines(run, road, rows, ctx) {
   const ranges = closeRanges(road, rows);
   const seenTo = new Set();
-  const fails = ranges.flatMap((range) => rangeRowFails(run, ctx, range, seenTo));
+  const rowFails = new Map(ranges.map((range) => [range, rangeRowFails(run, ctx, range, seenTo)]));
+  const fails = [...rowFails.values()].flat().concat(withinFails(ranges, rowFails));
   const good = ranges.filter((range) => range.landed?.from && HEX.test(range.landed.from));
   const tos = new Set(good.map((range) => range.landed.to));
   for (const range of good) if (range.landed.from !== ctx.start && !tos.has(range.landed.from)) fails.push(`2 range: ${range.row}: from ${range.landed.from} is neither the road-start tip nor another row's to`);

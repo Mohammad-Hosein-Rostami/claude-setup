@@ -44,6 +44,11 @@ A done cell is never changed, so a close row marked done without the landed line
 (e.g. `rd.s1.a-land.landed`) whose evidence holds the line; the gate reads it only when the close row is done and has no landed line of its
 own, and checks it the same way (`<to>` and `<from>` are hex shas, one range per close row).
 
+A close row that landed inside the same fast-forward as another close row (so it cannot have a range of its own) is closed by a done
+`<close row id>.landed` row whose evidence says `landed within <other close row id>`. The gate then gives that row no range, and
+fails line 2 unless the named row is a close row (road entry or fix row) of the same road with a valid range of its own (its landed
+line or its `.landed` correction). A row cannot name itself, and the named row cannot itself be a `within` row (no chains).
+
 ## Commands
 
 | command | does | exit |

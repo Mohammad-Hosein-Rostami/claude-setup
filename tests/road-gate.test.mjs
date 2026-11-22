@@ -93,3 +93,57 @@ test('a close row written in capitals finds its correction row', () => {
   const { result } = gate([row('rd.s1.a', 'x'), row('RD.S1.A-LAND', 'merged by hand'), row('rd.s1.a-land.landed', landedText(TO))]);
   assert.match(rangeLine(result), /^PASS 2 range/);
 });
+
+// "landed within <close row id>": a fix row that landed inside the fast-forward of another close row has no range of its own.
+const within = (target) => `landed within ${target}`;
+const withinFails = (result) => result.lines.filter((line) => /^FAIL 2 range/.test(line));
+
+test('a fix row that landed within a close row with a range carries no range of its own', () => {
+  const { result } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(TO)), row('rd.s1.fix-b', 'x'), row('rd.s1.fix-b-land', 'by hand'), row('rd.s1.fix-b-land.landed', within('rd.s1.a-land'))]);
+  assert.match(rangeLine(result), /^PASS 2 range: 2 close rows, every commit in one range/);
+  assert.equal(result.pass, true);
+});
+
+test('the named close row may get its range from its own .landed correction row', () => {
+  const { result } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', 'by hand'), row('rd.s1.a-land.landed', landedText(TO)), row('rd.s1.fix-b-land', 'by hand'), row('rd.s1.fix-b-land.landed', `done, ${within('RD.S1.A-LAND')}.`)]);
+  assert.match(rangeLine(result), /^PASS 2 range: 2 close rows/);
+});
+
+test('a within row whose named close row has no range is a FAIL naming both rows', () => {
+  const { result } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', 'by hand'), row('rd.s1.fix-b-land', 'by hand'), row('rd.s1.fix-b-land.landed', within('rd.s1.a-land'))]);
+  assert.equal(result.pass, false);
+  assert.ok(withinFails(result).some((line) => /rd\.s1\.fix-b-land/.test(line) && /rd\.s1\.a-land/.test(line)), result.lines.join('\n'));
+});
+
+test('a row that names itself is a FAIL', () => {
+  const { result } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(TO)), row('rd.s1.fix-b-land', 'by hand'), row('rd.s1.fix-b-land.landed', within('rd.s1.fix-b-land'))]);
+  assert.equal(result.pass, false);
+  assert.ok(withinFails(result).some((line) => /rd\.s1\.fix-b-land.*itself/.test(line)), result.lines.join('\n'));
+});
+
+test('a chain of within rows is a FAIL naming the row and the one it names', () => {
+  const { result } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(TO)),
+    row('rd.s1.fix-b-land', 'by hand'), row('rd.s1.fix-b-land.landed', within('rd.s1.a-land')),
+    row('rd.s1.fix-c-land', 'by hand'), row('rd.s1.fix-c-land.landed', within('rd.s1.fix-b-land'))]);
+  assert.equal(result.pass, false);
+  assert.ok(withinFails(result).some((line) => /rd\.s1\.fix-c-land/.test(line) && /rd\.s1\.fix-b-land/.test(line)), result.lines.join('\n'));
+  assert.ok(!withinFails(result).some((line) => line.startsWith('FAIL 2 range: rd.s1.fix-b-land ')), 'the first link is fine');
+});
+
+test('a within row naming an unknown id is a FAIL naming both rows', () => {
+  const { result } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(TO)), row('rd.s1.fix-b-land', 'by hand'), row('rd.s1.fix-b-land.landed', within('rd.s1.nope-land'))]);
+  assert.equal(result.pass, false);
+  assert.ok(withinFails(result).some((line) => /rd\.s1\.fix-b-land/.test(line) && /rd\.s1\.nope-land/.test(line)), result.lines.join('\n'));
+});
+
+test('a within row naming a row that is not a close row is a FAIL', () => {
+  const { result } = gate([row('rd.s1.a', landedText(TO)), row('rd.s1.a-land', landedText(TO)), row('rd.s1.fix-b-land', 'by hand'), row('rd.s1.fix-b-land.landed', within('rd.s1.a'))]);
+  assert.equal(result.pass, false);
+  assert.ok(withinFails(result).some((line) => /rd\.s1\.fix-b-land/.test(line) && /rd\.s1\.a\b/.test(line)), result.lines.join('\n'));
+});
+
+test('a within row that is not done counts for nothing', () => {
+  const { result } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', landedText(TO)), row('rd.s1.fix-b-land', 'by hand'), row('rd.s1.fix-b-land.landed', within('rd.s1.a-land'), null)]);
+  assert.equal(result.pass, false);
+  assert.match(rangeLine(result), /^FAIL 2 range: rd\.s1\.fix-b-land has no "landed/);
+});
