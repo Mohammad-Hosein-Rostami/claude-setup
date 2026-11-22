@@ -349,7 +349,7 @@ test('a road lane within row under the short id is a FAIL too, and a lane with i
 
 test('"landed within" at the start of the evidence or after "; " is read', () => {
   const named = within('rd.s1.a-land');
-  for (const text of [named, `${named}; evidence: reflog`, `evidence: reflog; ${named}`]) {
+  for (const text of [named, `${named}; evidence: reflog`, `evidence: reflog; ${named}`, `${named} assured by the reflog`]) {
     assert.match(rangeLine(gate(fixWithin(text)).result), /^PASS 2 range: 2 close rows/, text);
   }
 });
