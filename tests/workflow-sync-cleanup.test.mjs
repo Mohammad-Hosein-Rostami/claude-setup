@@ -125,6 +125,7 @@ test('sync: the diagnose prompt for a target carries the same remote rule (the l
   const pc = run.calls.find((c) => c.label === 's1:diagnose:pc').prompt;
   assert.ok(pc.includes(`${alarmed(120)} ssh ${PC_HOST} '${PATH_EXPORT} <command>'`), 'alarmed ssh with the export');
   assert.match(pc, /Read only/);
+  assert.ok(pc.includes(`a fix command for pc starts with ${PATH_EXPORT}`), 'the fix command carries the export');
   const failedLocal = { match: /:sync:macbook/, reply: { exits: [1], sha: '', tail: 'boom' } };
   const localRun = await runScript('sync-machines', SYNC_ARGS, { replies: pcReplies([failedLocal]) });
   assert.doesNotMatch(localRun.calls.find((c) => c.label === 's1:diagnose:macbook').prompt, /export PATH|perl -e/);
