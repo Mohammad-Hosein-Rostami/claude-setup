@@ -119,11 +119,28 @@ test('lead-rules.md as an install link to a regular file prints it; a file over 
   await symlink(repoFile, join(home, '.claude', 'lead-rules.md'));
   const linked = runHook(home, {}, { hook_event_name: 'SessionStart', session_id: 'l-link', source: 'startup' });
   assert.match(linked.stdout, /^LINKED-LEAD-MARK/);
-  await writeFile(repoFile, `HUGE-MARK\n${'x'.repeat(LEAD_RULES_MAX_BYTES)}`);
+  const atCap = 'CAP-MARK\n'.padEnd(LEAD_RULES_MAX_BYTES, 'x');
+  await writeFile(repoFile, atCap);
+  assert.match(runHook(home, {}, { hook_event_name: 'SessionStart', session_id: 'l-cap', source: 'startup' }).stdout, /^CAP-MARK/, 'a file at the cap prints');
+  // 10,000 output characters (the hook output cap) of at most 4 UTF-8 bytes each: one byte more can never fit.
+  await writeFile(repoFile, 'HUGE-MARK\n'.padEnd(4 * 10_000 + 1, 'x'));
   const huge = runHook(home, {}, { hook_event_name: 'SessionStart', session_id: 'l-huge', source: 'startup' });
   assert.equal(huge.status, 0);
   assert.doesNotMatch(huge.stdout, /HUGE-MARK/);
   assert.match(huge.stderr, /lead-rules\.md/);
+});
+
+test('a state folder that cannot be written reports the compaction count and the big-context flag as session-notes hook', async () => {
+  const home = await homeWithLeadRules(undefined);
+  await writeFile(join(home, '.claude', 'state'), 'a file where the state folder goes\n');
+  const transcript = join(home, 'transcript.jsonl');
+  const usage = { input_tokens: 90_000 };
+  await writeFile(transcript, `${JSON.stringify({ type: 'assistant', message: { usage } })}\n`);
+  const compact = runHook(home, {}, { hook_event_name: 'SessionStart', session_id: 'w-fail', source: 'compact' });
+  assert.match(compact.stderr, /^session-notes hook: cannot save compaction count: /m);
+  const prompt = runHook(home, {}, { hook_event_name: 'UserPromptSubmit', session_id: 'w-fail', transcript_path: transcript, prompt: 'Build a new report page. '.repeat(20) });
+  assert.match(prompt.stderr, /^session-notes hook: cannot save big-context flag: /m);
+  assert.match(compact.stderr, /^session-notes hook: prune failed: /m, 'the state folder that is a file is reported by the prune');
 });
 
 test('mode.mjs stays within the 300-line file limit', async () => {
