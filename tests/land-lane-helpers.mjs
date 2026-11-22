@@ -1,6 +1,6 @@
 // Shared fixtures for the land-lane tests: a throw-away repo with a declared suite, a STATUS.md with one open `close:1` row, and a private HOME,
-// audit log and df text, so the real tools (git-tidy, test-pass, disk-free, audit-log, status) run on nothing of the owner's.
-// Exports: LAND_LANE, makeWorld (run, runAsync, runTestPass), laneAt, landArgs, readRow.
+// and df text, so the real tools (git-tidy, disk-free, status) run on nothing of the owner's.
+// Exports: LAND_LANE, makeWorld (run, runAsync), laneAt, landArgs, readRow.
 // Invariants: no GIT_* or session id reaches a child (CLEAN_ENV); HOME is a private folder; the suite command of the repo is the `suite` option.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -10,7 +10,6 @@ import { CLEAN_ENV, commit, git, makeRepo } from './git-tidy-helpers.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 export const LAND_LANE = fileURLToPath(new URL('../home/tools/land-lane/land-lane.mjs', import.meta.url));
-const TEST_PASS = fileURLToPath(new URL('../home/tools/test-pass/test-pass.mjs', import.meta.url));
 const KB_PER_GB = 1024 * 1024;
 const PASSING_SUITE = 'node -e "process.exit(0)"';
 const STATUS_TEXT = `# STATUS
@@ -37,9 +36,8 @@ export function makeWorld({ suite = PASSING_SUITE, freeGb = 80 } = {}) {
   mkdirSync(statusFolder);
   const statusFile = join(statusFolder, 'STATUS.md');
   writeFileSync(statusFile, STATUS_TEXT);
-  const auditLog = join(home, 'review-audit.jsonl');
   const { NODE_TEST_CONTEXT, ...cleanEnv } = CLEAN_ENV; // a suite that runs `node --test` must not think it is a child of this test run
-  const env = { ...cleanEnv, HOME: home, USERPROFILE: home, DISK_FREE_DF_OUTPUT: dfWithFreeGb(freeGb), DISK_FREE_CLAUDE_TMP: join(home, 'no-claude-tmp'), REVIEW_AUDIT_LOG: auditLog };
+  const env = { ...cleanEnv, HOME: home, USERPROFILE: home, DISK_FREE_DF_OUTPUT: dfWithFreeGb(freeGb), DISK_FREE_CLAUDE_TMP: join(home, 'no-claude-tmp') };
   const run = (args, extraEnv = {}) => spawnSync(process.execPath, [LAND_LANE, ...args], { cwd: dir, encoding: 'utf8', env: { ...env, ...extraEnv } });
   const runAsync = (args) => new Promise((resolve) => {
     const child = spawn(process.execPath, [LAND_LANE, ...args], { cwd: dir, env });
@@ -47,8 +45,7 @@ export function makeWorld({ suite = PASSING_SUITE, freeGb = 80 } = {}) {
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.on('close', (status) => resolve({ status, stdout }));
   });
-  const runTestPass = (args) => spawnSync(process.execPath, [TEST_PASS, ...args], { cwd: dir, encoding: 'utf8', env });
-  return { dir, home, statusFile, auditLog, env, run, runAsync, runTestPass };
+  return { dir, home, statusFile, env, run, runAsync };
 }
 
 /** A lane `name` with one commit adding `<file>` off main, then main moved on by one commit; returns { tip } (the reviewed tip). */

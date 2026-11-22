@@ -1,11 +1,10 @@
-// Tests for home/tools/land-lane/land-lane.mjs: the one script that lands a reviewed lane (it replaced the land workflow). The real git-tidy,
-// test-pass, disk-free, audit-log and status tools run on throw-away repos with a private HOME (tests/land-lane-helpers.mjs); the arguments,
+// Tests for home/tools/land-lane/land-lane.mjs: the one script that lands a lane (it replaced the land workflow; it has no suite, review or
+// audit step since checks reset S2). The real git-tidy, disk-free and status tools run on throw-away repos with a private HOME (tests/land-lane-helpers.mjs); the arguments,
 // the pure helpers and the base-moved loop are in land-lane-units.test.mjs.
 // Cases ported from tests/workflow-land.test.mjs, by name: a clean lane (clean lane lands); a landed lane with findings (findings left: exit 1);
-//   a conflict (conflict); patches changed (needs-review); a red suite with the failing file and first error line (red suite); the suite reused
-//   or run in the worktree (suite reuse / worktree); a base that moved (base-moved loop, in the units file); disk refusal (disk low: 3 GB, an
+//   a conflict (conflict); a base that moved (base-moved loop, in the units file); disk refusal (disk low: 3 GB, an
 //   unreadable df); the tip check, an old branch of a re-done lane (tip moved, the branch is not at --tip); restart detection, the branch gone
-//   or at the rebased tip (restart: branch gone / branch at the landed tip); audit not recorded (audit); `from` in the row (the row evidence).
+//   or at the rebased tip (restart: branch gone / branch at the landed tip); `from` in the row (the row evidence).
 // Failure classes (spec lane-land-lane): F1 two runs at once, F2 a crash before the row, F3 a hostile branch name; F4 is in the units file.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,7 +31,6 @@ test('clean lane lands: exit 0, `land: landed`, the landed line, a linear base, 
   assert.equal(git(world.dir, 'rev-list', '--merges', '--count', 'main'), '0');
   assert.deepEqual(branches(world.dir), ['main']);
   assert.match(readRow(world), new RegExp(`landed ${now} on main from ${before}`), 'the row evidence names the sha and from');
-  assert.match(result.stdout, /not checked: test is off/);
 });
 
 test('--json prints one object with the state, the exit and the landed sha', () => {
@@ -73,26 +71,6 @@ test('conflict: exit 3 names the file, the lane stays where it was, nothing land
   assert.doesNotMatch(readRow(world), /landed/);
 });
 
-test('needs-review: a rebase that changes patches is exit 10 with `review` on and lands with it off', () => {
-  const world = makeWorld();
-  commit(world.dir, 'f.txt', 'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\n');
-  git(world.dir, 'checkout', '-q', '-b', 'lane/p');
-  const tip = commit(world.dir, 'f.txt', 'l1\nl2\nl3\nl4\nLANE\nl6\nl7\nl8\nl9\n');
-  git(world.dir, 'checkout', '-q', 'main');
-  commit(world.dir, 'f.txt', 'l1\nl2\nMAIN\nl4\nl5\nl6\nl7\nl8\nl9\n');
-  const result = landed(world, 'lane/p', tip, ['--checks', 'review']);
-  assert.equal(result.status, 10, result.stdout + result.stderr);
-  assert.match(result.stdout, new RegExp(`rebased ${SHA}: review the delta \\(review-tier --delta ${tip} --base ${git(world.dir, 'rev-parse', 'main')}\\)`));
-  assert.notEqual(git(world.dir, 'rev-parse', 'lane/p'), tip, 'the lane was rebased');
-  assert.doesNotMatch(readRow(world), /landed/);
-  const reviewedAgain = git(world.dir, 'rev-parse', 'lane/p');
-  const again = landed(world, 'lane/p', reviewedAgain);
-  // exit 1, not 0: the replaced pre-rebase commit has a patch the base lacks and lives only in the reflog, so prune keeps the lane branch (git-tidy's rule)
-  assert.equal(again.status, 1, `with review off the rebased lane lands: ${again.stdout}`);
-  assert.match(again.stdout, /landed [0-9a-f]{40} on main from/);
-  assert.match(again.stdout, /merged-branch lane\/p/);
-});
-
 test('tip moved: a branch that is not at --tip exits 9 and nothing changes (the old branch of a re-done lane)', () => {
   const world = makeWorld();
   const { tip } = laneAt(world, 'lane/x');
@@ -103,7 +81,7 @@ test('tip moved: a branch that is not at --tip exits 9 and nothing changes (the 
   const result = landed(world, 'lane/x', tip);
   assert.equal(result.status, 9, result.stdout + result.stderr);
   assert.equal(firstLineOf(result), 'land: tip-moved');
-  assert.match(result.stdout, new RegExp(`branch lane/x is at ${SHA}, not at the reviewed ${tip}`));
+  assert.match(result.stdout, new RegExp(`branch lane/x is at ${SHA}, not at ${tip}`));
   assert.equal(snapshot(world.dir), before);
   assert.doesNotMatch(readRow(world), /landed/);
 });
@@ -129,98 +107,13 @@ test('a repo folder that cannot be used is exit 14 (a tool that cannot run is ne
   assert.equal(firstLineOf(result), 'land: tool-failed');
 });
 
-// suite ------------------------------------------------------------------------------------------------------------------------------
-
-test('suite: with `test` on the suite runs in a temporary worktree that is gone afterwards, and the PASS is recorded for the rebased tip', () => {
-  const world = makeWorld();
-  const { tip } = laneAt(world, 'lane/x');
-  const result = landed(world, 'lane/x', tip, ['--checks', 'test,review']); // patches are unchanged by this rebase, so `review` on does not stop it
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /suite PASS recorded at [0-9a-f]{40}/);
-  assert.equal(git(world.dir, 'worktree', 'list').split('\n').length, 1, 'no temporary worktree is left');
-});
-
-test('suite: an exit 0 that leaves no recorded PASS (an unusable state folder) is exit 4, never a landing', () => {
-  const world = makeWorld();
-  const { tip } = laneAt(world, 'lane/x');
-  const brokenHome = makeTempDir('land-lane-broken-home-');
-  writeFileSync(join(brokenHome, '.claude'), 'a file where the state folder should be');
-  const before = git(world.dir, 'rev-parse', 'main');
-  const result = landed(world, 'lane/x', tip, ['--checks', 'test'], { HOME: brokenHome, USERPROFILE: brokenHome });
-  assert.equal(result.status, 4, result.stdout + result.stderr);
-  assert.match(result.stdout, /exited 0 at [0-9a-f]{40} but no PASS is recorded/);
-  assert.equal(git(world.dir, 'rev-parse', 'main'), before);
-});
+// ui proof and removed flags ------------------------------------------------------------------------------------------------------------------------------
 
 test('a GIT_DIR in the caller\'s environment does not redirect the tools it starts', () => {
   const world = makeWorld();
   const { tip } = laneAt(world, 'lane/x');
-  const result = landed(world, 'lane/x', tip, ['--checks', 'test'], { GIT_DIR: join(world.home, 'not-a-repo'), GIT_WORK_TREE: world.home });
+  const result = landed(world, 'lane/x', tip, [], { GIT_DIR: join(world.home, 'not-a-repo'), GIT_WORK_TREE: world.home });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-});
-
-test('suite: a temporary folder that cannot be made is exit 14 naming the step, and nothing lands', () => {
-  const world = makeWorld();
-  const { tip } = laneAt(world, 'lane/x');
-  const before = git(world.dir, 'rev-parse', 'main');
-  const worktree = addWorktree(world.dir, 'wt-x', 'lane/x', { create: false }); // git-tidy rebases there, so only the suite step needs a temp folder
-  const result = landed(world, 'lane/x', tip, ['--checks', 'test', '--worktree', worktree], { TMPDIR: join(world.home, 'no-such-temp-folder') });
-  assert.equal(result.status, 14, result.stdout + result.stderr);
-  assert.equal(firstLineOf(result), 'land: tool-failed');
-  assert.match(result.stdout, /could not make its temporary folder or worktree for [0-9a-f]{40}/);
-  assert.equal(git(world.dir, 'rev-parse', 'main'), before);
-});
-
-test('suite reuse: a PASS already recorded for the tree is not run again', () => {
-  const world = makeWorld({ suite: 'node -e "process.exit(process.env.LL_FAIL ? 1 : 0)"' });
-  const { tip } = laneAt(world, 'lane/x');
-  git(world.dir, 'checkout', '-q', 'lane/x');
-  git(world.dir, 'rebase', '-q', 'main');
-  const rebased = git(world.dir, 'rev-parse', 'HEAD');
-  const preRun = world.runTestPass(['run', '--suite', '--repo', world.dir]);
-  assert.equal(preRun.status, 0, preRun.stdout + preRun.stderr);
-  git(world.dir, 'checkout', '-q', 'main');
-  const result = landed(world, 'lane/x', rebased, ['--checks', 'test'], { LL_FAIL: '1' });
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /suite PASS already recorded/);
-  assert.notEqual(tip, rebased);
-});
-
-test('worktree: the suite runs in --worktree when its HEAD is the rebased tip and it is clean, else in a temporary worktree', () => {
-  for (const kind of ['clean', 'dirty', 'other commit']) {
-    const dirty = kind === 'dirty';
-    const marker = join(makeTempDir('land-lane-marker-'), 'cwd.txt');
-    const world = makeWorld({ suite: 'node -e "require(\'fs\').writeFileSync(process.env.LL_MARKER, process.cwd())"' });
-    const { tip } = laneAt(world, 'lane/x');
-    const laneWorktree = addWorktree(world.dir, 'wt-x', 'lane/x', { create: false });
-    if (dirty) writeFileSync(join(laneWorktree, 'scratch.txt'), 'untracked');
-    const worktree = kind === 'other commit' ? addWorktree(world.dir, 'wt-other', 'lane/other') : laneWorktree; // a clean folder whose HEAD is not the rebased tip
-    const result = landed(world, 'lane/x', tip, ['--checks', 'test', '--worktree', worktree], { LL_MARKER: marker });
-    assert.equal(result.status, kind === 'clean' ? 0 : 1, result.stdout + result.stderr); // a kept worktree (untracked file, or the other lane's) stays a check finding
-    const ranIn = readFileSync(marker, 'utf8'); // the folders are gone after the landing, so the text is compared, not resolved
-    if (kind === 'clean') assert.equal(ranIn, worktree, 'a clean worktree at the rebased tip is used');
-    else assert.notEqual(ranIn, worktree, `${kind}: the given worktree is not used`);
-  }
-});
-
-test('red suite: exit 4 names each failing file with its first error line and the log path; nothing lands and the temporary worktree is gone', () => {
-  const world = makeWorld({ suite: 'node --test tests/*.test.mjs' });
-  git(world.dir, 'checkout', '-q', '-b', 'lane/r');
-  mkdirSync(join(world.dir, 'tests'));
-  commit(world.dir, 'tests/a.test.mjs', "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('parses', () => assert.equal(3, 2));\n");
-  const tip = git(world.dir, 'rev-parse', 'HEAD');
-  git(world.dir, 'checkout', '-q', 'main');
-  commit(world.dir, 'moved.txt');
-  const mainBefore = git(world.dir, 'rev-parse', 'main');
-  const result = landed(world, 'lane/r', tip, ['--checks', 'test']);
-  assert.equal(result.status, 4, result.stdout + result.stderr);
-  assert.equal(firstLineOf(result), 'land: red');
-  assert.match(result.stdout, /tests\/a\.test\.mjs: parses: .*Expected values to be strictly equal/);
-  const logPath = /log: (\S+)/.exec(result.stdout)?.[1];
-  assert.ok(logPath && existsSync(logPath), 'the log path is printed and the log exists');
-  assert.equal(git(world.dir, 'rev-parse', 'main'), mainBefore);
-  assert.equal(git(world.dir, 'worktree', 'list').split('\n').length, 1);
-  assert.doesNotMatch(readRow(world), /landed/);
 });
 
 // the refusals git-tidy makes -----------------------------------------------------------------------------------------------------------
@@ -238,12 +131,12 @@ test('new-file-size: a 5 MB file the brief does not name is exit 7; a brief that
   assert.equal(landed(world, 'lane/big', tip, ['--brief', brief]).status, 0);
 });
 
-test('ui-proof: with `ui` on, a changed UI file with no visual-qa PASS is exit 6 and nothing lands', () => {
+test('ui-proof: a changed UI file (the proof is always on) with no visual-qa PASS is exit 6 and nothing lands', () => {
   const world = makeWorld();
   git(world.dir, 'checkout', '-q', '-b', 'lane/ui');
   const tip = commit(world.dir, 'page.css', 'body { color: red; }\n');
   git(world.dir, 'checkout', '-q', 'main');
-  const result = landed(world, 'lane/ui', tip, ['--checks', 'ui']);
+  const result = landed(world, 'lane/ui', tip);
   assert.equal(result.status, 6, result.stdout + result.stderr);
   assert.equal(firstLineOf(result), 'land: ui-proof');
   assert.ok(branches(world.dir).includes('lane/ui'));
@@ -264,30 +157,7 @@ test('upstream-moved: commits on the base\'s upstream that the base lacks are ex
   assert.equal(firstLineOf(result), 'land: upstream-moved');
 });
 
-// after the landing: audit, row, restart -------------------------------------------------------------------------------------------------
-
-test('audit: --audit-base records a pending audit for the landed sha before the row is closed', () => {
-  const world = makeWorld();
-  const auditBase = git(world.dir, 'rev-parse', 'main');
-  const { tip } = laneAt(world, 'lane/x');
-  const result = landed(world, 'lane/x', tip, ['--audit-base', auditBase]);
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-  const record = JSON.parse(readFileSync(world.auditLog, 'utf8').trim().split('\n').at(-1));
-  assert.equal(record.state, 'pending');
-  assert.equal(record.tip, git(world.dir, 'rev-parse', 'main'));
-});
-
-test('audit: a record that fails is exit 12 "audit not recorded: gate holds nothing", the lane is landed and the row is closed', () => {
-  const world = makeWorld();
-  const auditBase = git(world.dir, 'rev-parse', 'main');
-  const { tip } = laneAt(world, 'lane/x');
-  const result = landed(world, 'lane/x', tip, ['--audit-base', auditBase], { REVIEW_AUDIT_LOG: join(world.statusFile, 'no', 'audit.jsonl') });
-  assert.equal(result.status, 12, result.stdout + result.stderr);
-  assert.equal(firstLineOf(result), 'land: audit-not-recorded');
-  assert.match(result.stdout, /audit not recorded: gate holds nothing/);
-  assert.match(readRow(world), /landed [0-9a-f]{40} on main from/);
-  assert.deepEqual(branches(world.dir), ['main']);
-});
+// after the landing: row, restart -------------------------------------------------------------------------------------------------
 
 test('row not closed: a status file that cannot be written is exit 13 after the landing, with the evidence to type by hand', () => {
   const world = makeWorld();
@@ -311,12 +181,11 @@ function landByHand(world, name, { deleteBranch }) {
 
 test('restart: branch gone (killed after the land, before the row): the landing is found, the row is closed once, a re-run is clean (F2)', () => {
   const world = makeWorld();
-  const auditBase = git(world.dir, 'rev-parse', 'main');
   const { tip } = laneAt(world, 'lane/x');
   const before = git(world.dir, 'rev-parse', 'main');
   landByHand(world, 'lane/x', { deleteBranch: true });
   const now = git(world.dir, 'rev-parse', 'main');
-  const result = landed(world, 'lane/x', tip, ['--audit-base', auditBase]);
+  const result = landed(world, 'lane/x', tip);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(firstLineOf(result), 'land: already landed');
   assert.match(readRow(world), new RegExp(`landed ${now} on main from ${before} \\(found already on main after a restart\\)`));
@@ -377,4 +246,15 @@ test('F3 hostile names: a branch named like an option or a shell line is exit 2 
   assert.equal(existsSync(sentinel), false, 'no shell line ran');
   assert.equal(snapshot(world.dir), before);
   assert.doesNotMatch(readRow(world), /landed/);
+});
+
+test('the removed flags --checks and --audit-base are refused with exit 2 and nothing changes', () => {
+  const world = makeWorld();
+  const { tip } = laneAt(world, 'lane/x');
+  const before = snapshot(world.dir);
+  for (const flags of [['--checks', 'test'], ['--audit-base', 'main']]) {
+    const result = landed(world, 'lane/x', tip, flags);
+    assert.equal(result.status, 2, `${flags[0]}: ${result.stdout}${result.stderr}`);
+  }
+  assert.equal(snapshot(world.dir), before);
 });
