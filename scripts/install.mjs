@@ -14,13 +14,14 @@
 // Invariants: never deletes a file it did not make: anything replaced goes to ~/.claude-backup-<stamp>/ and is named in the
 //   install record (~/.claude/.claude-setup-install.json, saved even when a step fails); settings are written after the plugin
 //   installs, because `claude plugin install` re-enables plugins in settings.json and the merged repo settings must win; tool
-//   dependencies come after settings, so a failed dependency install cannot leave settings.json stale.
-import { realpathSync } from 'node:fs';
+//   dependencies come after settings, so a failed dependency install cannot leave settings.json stale; one install at a time
+//   (a lock in ~/.claude from loading the record to saving it; a second install exits 1 with a message).
+import { mkdirSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { InstallError, makeContext, note, parseArgs } from './install/context.mjs';
-import { ensureDir, loadRecord, saveRecord } from './install/record.mjs';
+import { InstallError, makeContext, note, parseArgs, samePath } from './install/context.mjs';
+import { ensureDir, loadRecord, lockInstall, saveRecord } from './install/record.mjs';
 import { linkHomeItems, projectWorkflows, removeRetiredLinks } from './install/links.mjs';
 import { addStartupLines } from './install/startup.mjs';
 import { buildSettings, isNewMachine } from './install/settings.mjs';
@@ -61,6 +62,31 @@ function install(ctx, record) {
   if (!ctx.noTools) tools.installToolDeps(ctx, TOOLS_WITH_DEPS);
 }
 
+/**
+ * Makes ~/.claude when missing (the lock lives there), takes the install lock, then loads the record. Folders this run made
+ * go first in the record, where ensureDir would have put them, so --uninstall removes them last. --dry-run takes no lock.
+ * @param {object} ctx the run context
+ * @returns {{record: object, release: () => void}} the record and the lock's release
+ * @throws {InstallError} when another install holds the lock, or the record is not one this installer wrote
+ */
+function lockAndLoad(ctx) {
+  if (ctx.dryRun) return { record: loadRecord(ctx), release: () => {} };
+  const firstMade = mkdirSync(ctx.claudeDir, { recursive: true }); // the top folder it made; undefined when ~/.claude was there
+  const release = lockInstall(ctx);
+  try {
+    const record = loadRecord(ctx);
+    if (firstMade) {
+      const made = [ctx.claudeDir];
+      while (!samePath(made[0], firstMade)) made.unshift(dirname(made[0]));
+      record.made.unshift(...made.map((path) => ({ kind: 'dir', path })));
+    }
+    return { record, release };
+  } catch (error) {
+    release();
+    throw error;
+  }
+}
+
 function printSummary(ctx, write) {
   write('');
   write('Completed so far:');
@@ -76,11 +102,12 @@ function printSummary(ctx, write) {
 export function main(argv, env = process.env) {
   let ctx;
   let record;
+  let release;
   try {
     ctx = makeContext(parseArgs(argv), REPO, env);
     if (ctx.uninstall) uninstall(ctx);
     else {
-      record = loadRecord(ctx);
+      ({ record, release } = lockAndLoad(ctx));
       install(ctx, record);
     }
   } catch (error) {
@@ -88,7 +115,11 @@ export function main(argv, env = process.env) {
     printSummary(ctx, console.error);
     return error instanceof InstallError ? error.exitCode : 1;
   } finally {
-    if (ctx && record) saveRecord(ctx, record);
+    try {
+      if (ctx && record) saveRecord(ctx, record);
+    } finally {
+      release?.();
+    }
   }
   if (ctx.dryRun) console.log('(dry-run: nothing changed)');
   printSummary(ctx, console.log);

@@ -1,10 +1,13 @@
 // Purpose: the install record, ~/.claude/.claude-setup-install.json: what this installer made, what it moved aside, and where
 //   the links point. A second run reads it to change nothing; --uninstall reads it to undo exactly that and no more.
-// Exports: RECORD_NAME, recordPath, loadRecord, saveRecord, remember, isMade, backup, ensureDir.
+// Exports: RECORD_NAME, INSTALL_LOCK_NAME, INSTALL_LOCK_STALE_MS, recordPath, lockInstall, loadRecord, saveRecord, remember,
+//   isMade, backup, ensureDir.
 // Invariants: the record is written only when its content changes (a second identical run leaves it as it is); a file the
-//   installer did not make is never removed, only moved into the backup folder (~/.claude-backup-<stamp>/) and named here.
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+//   installer did not make is never removed, only moved into the backup folder (~/.claude-backup-<stamp>/) and named here;
+//   one install at a time holds the lock from loading the record to saving it, so two runs never overwrite each other's entries.
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
+import { releaseLock, takeLock } from '../../home/tools/disk-free/lib/lock-file.mjs';
 import { InstallError, act, note, samePath } from './context.mjs';
 
 export const RECORD_NAME = '.claude-setup-install.json';
@@ -12,6 +15,52 @@ const RECORD_VERSION = 1;
 
 /** Where the record of this context's install lives. */
 export const recordPath = (ctx) => join(ctx.claudeDir, RECORD_NAME);
+
+export const INSTALL_LOCK_NAME = '.claude-setup-install.lock';
+// An install takes seconds to a few minutes (plugins, npm installs); a lock older than 30 minutes was left by a hung run.
+export const INSTALL_LOCK_STALE_MS = 30 * 60 * 1000;
+
+/** True while process `pid` runs (EPERM: it runs as another user). */
+function isRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+}
+
+/** Takes the lock over when the pid written in it names a process that has ended (a killed install); false otherwise. */
+function takeFromEndedOwner(lockPath) {
+  let seen;
+  try {
+    seen = lstatSync(lockPath);
+  } catch (error) {
+    if (error.code === 'ENOENT') return takeLock(lockPath, Date.now(), INSTALL_LOCK_STALE_MS); // released meanwhile
+    throw error;
+  }
+  if (!seen.isFile()) return false; // a FIFO or link is never read
+  const owner = Number(readFileSync(lockPath, 'utf8'));
+  if (!Number.isInteger(owner) || owner <= 0 || isRunning(owner)) return false; // empty: its owner is writing its pid now
+  // "Now" is the seen lock's own time and the limit 0, so only that lock counts as stale: a newer one taken meanwhile stays.
+  return takeLock(lockPath, seen.mtimeMs, 0);
+}
+
+/**
+ * One install at a time: takes ~/.claude/.claude-setup-install.lock (O_EXCL; disk-free/lib/lock-file.mjs) and writes this
+ * process's pid in it. A lock whose pid has ended, or older than INSTALL_LOCK_STALE_MS, is taken over.
+ * @param {object} ctx the run context (~/.claude must exist)
+ * @returns {() => void} releases the lock
+ * @throws {InstallError} when another install holds the lock
+ */
+export function lockInstall(ctx) {
+  const lockPath = join(ctx.claudeDir, INSTALL_LOCK_NAME);
+  if (!takeLock(lockPath, Date.now(), INSTALL_LOCK_STALE_MS) && !takeFromEndedOwner(lockPath)) {
+    throw new InstallError(`another install is running (${lockPath}); wait for it to end, or delete that file if no install runs`);
+  }
+  writeFileSync(lockPath, String(process.pid));
+  return () => releaseLock(lockPath);
+}
 
 /**
  * The record of an earlier run, or a fresh one (`fresh: true`, never saved with that key).

@@ -6,8 +6,8 @@ find Node and call it. Its flags are in the header of `install.mjs`.
 | file | what it does |
 |---|---|
 | `context.mjs` | flags, paths, the dry-run switch (`act`), the run log |
-| `record.mjs` | the install record `~/.claude/.claude-setup-install.json`, backups into `~/.claude-backup-<stamp>/` |
-| `links.mjs` | `home/*` into `~/.claude`, removal of the retired mode launcher and `modes` links, the project workflow link |
+| `record.mjs` | the install record `~/.claude/.claude-setup-install.json`, backups into `~/.claude-backup-<stamp>/`, the install lock |
+| `links.mjs` | `home/*` into `~/.claude`, removal of the retired mode launcher and `modes` links (a copy or the owner's own file there goes to the backup folder), the project workflow link |
 | `startup.mjs` | the one `claude-as` start-up line (zsh, bash, PowerShell profile) |
 | `settings.mjs` | `settings.json` from the layers, through `scripts/merge-settings.jq` |
 | `tools.mjs` | plugins and tool dependencies |
@@ -20,6 +20,8 @@ find Node and call it. Its flags are in the header of `install.mjs`.
 How it behaves:
 - A second run changes nothing: a link that is right stays, an unchanged `settings.json` is not written, the record is
   rewritten only when it changes.
+- One install at a time: `~/.claude/.claude-setup-install.lock` (O_EXCL, with the pid) is held from loading the record to
+  saving it; a second install exits 1. A lock whose process ended, or older than 30 minutes, is taken over.
 - Nothing is deleted that the installer did not make. A file in the way is moved to the backup folder and named in the
   record; `--uninstall` puts it back and removes the rest, so the file list is as before the first install.
 - New machine (no record, its own `settings.json`, `~/.claude/CLAUDE.md` not linked into this repo): that `settings.json`
