@@ -271,3 +271,9 @@ test('a short reviewed sha is resolved to its full sha; an unknown one is a FAIL
   assert.equal(unknown.result.pass, false);
   assert.ok(unknown.result.lines.some((line) => line.startsWith('FAIL 2 range: rd.s1.a ') && line.includes(SHORT_TO)), unknown.result.lines.join('\n'));
 });
+
+test('a reviewed sha git does not know is not looked up when the step is not steered', () => {
+  const { result, calls } = gate(steeredRows(reviewedText(SHORT_TO)), [TO]);
+  assert.match(rangeLine(result), /^PASS 2 range/, result.lines.join('\n'));
+  assert.equal(calls.some((call) => call.includes(`${SHORT_TO}^{commit}`)), false);
+});
