@@ -16,7 +16,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { removeStateFile, writeStateText } from './mode-state.mjs';
+import { removeStateFile, writeStateText } from './state-files.mjs';
 import { readPlainFile } from './plain-file.mjs';
 
 const CATEGORIES_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'checks', 'categories.json');

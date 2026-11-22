@@ -125,7 +125,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/mode.mjs\"",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/session-notes.mjs\"",
             "timeout": 5
           }
         ]
@@ -196,7 +196,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/mode.mjs\"",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/session-notes.mjs\"",
             "timeout": 5
           }
         ]
@@ -218,16 +218,6 @@
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/checks-switch.mjs\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "mode",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/mode.mjs\"",
             "timeout": 5
           }
         ]

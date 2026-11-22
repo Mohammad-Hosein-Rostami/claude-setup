@@ -3,7 +3,7 @@
 Owner: Pejvak. MacBook and PC on macOS (zsh); a Windows machine (PowerShell + Git Bash) and Linux are tested. Node 22, pnpm. Reply in the language the
 user writes in (Persian included, never default to English); keep prose short and plain. Do not narrate tool calls.
 
-The main session also gets the lead rules at session start (`~/.claude/modes/_lead.md` and `~/.claude/lead.md`). Workers: follow your
+The main session also gets the lead rules at session start (`~/.claude/lead-rules.md` and `~/.claude/lead.md`). Workers: follow your
 agent file and the caller's prompt.
 
 ## Finish the run (no hard limits)
@@ -20,7 +20,7 @@ agent file and the caller's prompt.
   every account (owner, 2026-11-19); a headless run names a non-Fable model, since a `-p` run on Fable would bill them.
 - Work with a `STATUS.md`: every owner request and every owner correction becomes `## Work items` rows before work on it starts. Row edits go through `node ~/.claude/tools/status/status.mjs add|start|done|deliver|rule|decision` only, never a typed time; its help and `add` output give the row rules. Every estimate you give is the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` pasted as-is, never a number or clock time of your own; if it refuses, give its reason, and do its What to do and any `Check:` line first.
 
-## Quality gates (every mode): off unless the owner turns them on
+## Quality gates: off unless the owner turns them on
 
 - Checks run only in the categories the owner turned on with `/check` (owner, 2026-11-21: "make them disable by default and only and
   only use them if i specificly ask for it"): `test`, `types`, `review`, `ui`, `probe` (`home/checks/categories.json`). A Figma link
@@ -160,7 +160,7 @@ over a line here, and an agent file names the lines that do not fit it (`runner`
   prompt). A run over 2 h is split, or started in an interactive session, where background commands have no limit.
   `node ~/.claude/tools/watch/watch.mjs ...` waits on a session or an agent only: it never runs or bounds a command.
   A command expected to end within 3 min runs in the foreground with an explicit Bash `timeout`: 600000 for a test run, a commit (the
-  hook runs tests), an install or `git-tidy land`, 60000 for a probe; for one that is moved to the background all the same, return a status that names it instead of
+  hook runs tests when `test` is on), an install or `git-tidy land`, 60000 for a probe; for one that is moved to the background all the same, return a status that names it instead of
   starting it again. If a command cannot finish within 2 h, say so in your reply, and if `<log>.exit` is still missing once the `timeout`
   you set has passed, stop waiting: either way return a status to your caller that names the command and what is left.
 

@@ -19,7 +19,7 @@ const PARSE_TIMEOUT_MS = 5_000;
 const MAX_PARSED_FILES = 40;
 const FILE_MAX_LINES = 300; // C4
 const FUNCTION_MAX_LINES = 40; // C3
-const MODE_TEXT_MAX = 9_850; // tests/session-start-size.test.mjs: 10,000 less 150 headroom
+const NOTES_TEXT_MAX = 9_850; // tests/session-start-size.test.mjs: 10,000 less 150 headroom
 const LEAD_TEXT_MAX = 10_000; // Claude Code's cap on one hook string
 // Built from parts so this file does not match its own scan.
 export const CONFLICT_MARKER = new RegExp(`^(${'<'.repeat(7)}|${'='.repeat(7)}|${'>'.repeat(7)})( |$)`);
@@ -121,18 +121,18 @@ function sizeFindings(plan, readNew) {
   return findings;
 }
 
-/** The session-start caps of this setup (mode.mjs string, lead text), measured when their text changed. */
+/** The session-start caps of this setup (session-notes.mjs string, lead text), measured when their text changed. */
 function sessionCapFindings(plan) {
-  const modeHook = join(plan.top, 'home', 'hooks', 'mode.mjs');
-  if (!existsSync(modeHook) || !plan.facts.paths.some((p) => /^home\/(modes\/|lead\.md$|agents\/|hooks\/(mode|lead-text)\.mjs$)/.test(p))) return [];
+  const notesHook = join(plan.top, 'home', 'hooks', 'session-notes.mjs');
+  if (!existsSync(notesHook) || !plan.facts.paths.some((p) => /^home\/(lead-rules\.md$|lead\.md$|agents\/|hooks\/(session-notes|lead-text)\.mjs$)/.test(p))) return [];
   const home = mkdtempSync(join(tmpdir(), 'smart-check-caps-'));
   mkdirSync(join(home, '.claude'));
-  for (const name of ['modes', 'agents']) symlinkSync(join(plan.top, 'home', name), join(home, '.claude', name));
-  const input = JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'smart-check-caps', source: 'startup', model: 'claude-haiku-5-5', cwd: home });
-  const env = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_MODE: 'ultra-high' };
+  for (const name of ['lead-rules.md', 'agents']) symlinkSync(join(plan.top, 'home', name), join(home, '.claude', name));
+  const input = JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'smart-check-caps', source: 'startup', cwd: home });
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
   const findings = [];
-  const mode = run(process.execPath, [modeHook], { input, env });
-  if (mode.stdout && mode.stdout.length > MODE_TEXT_MAX) findings.push(`home/hooks/mode.mjs prints ${mode.stdout.length} characters at start (cap ${MODE_TEXT_MAX})`);
+  const notes = run(process.execPath, [notesHook], { input, env });
+  if (notes.stdout && notes.stdout.length > NOTES_TEXT_MAX) findings.push(`home/hooks/session-notes.mjs prints ${notes.stdout.length} characters at start (cap ${NOTES_TEXT_MAX})`);
   const lead = run(process.execPath, ['--input-type=module', '-e', `const m = await import(${JSON.stringify(pathToFileURL(join(plan.top, 'home', 'hooks', 'lead-text.mjs')).href)}); process.stdout.write(await m.leadText({ hook_event_name: 'SessionStart' }, ${JSON.stringify(join(plan.top, 'home', 'lead.md'))}))`], { env });
   if (lead.stdout && lead.stdout.length > LEAD_TEXT_MAX) findings.push(`home/lead.md prints ${lead.stdout.length} characters (cap ${LEAD_TEXT_MAX})`);
   return findings;

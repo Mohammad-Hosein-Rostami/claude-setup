@@ -27,7 +27,7 @@ export const CLEAN_ENV = {
 };
 
 /** What a copied .githooks folder needs to ask "is this check on?": the switch module, its two imports and the category list. */
-export const SWITCH_MODULE_FILES = ['home/hooks/lib/checks-on.mjs', 'home/hooks/lib/mode-state.mjs', 'home/hooks/lib/plain-file.mjs', 'home/checks/categories.json'];
+export const SWITCH_MODULE_FILES = ['home/hooks/lib/checks-on.mjs', 'home/hooks/lib/state-files.mjs', 'home/hooks/lib/plain-file.mjs', 'home/checks/categories.json'];
 
 /** Writes the owner's /check switch for `sessionId` under `home` (a test's private HOME): the categories in `on` are on. */
 export function turnChecksOn(home, sessionId, on) {

@@ -1,9 +1,7 @@
-# Line endings that must survive a Windows checkout (core.autocrlf=true): Git Bash scripts need LF, cmd needs CRLF.
+# Line endings that must survive a Windows checkout (core.autocrlf=true): Git Bash scripts need LF.
 *.sh            text eol=lf
 *.jq            text eol=lf
 .githooks/*     text eol=lf
-home/bin/ccm    text eol=lf
-*.cmd           text eol=crlf
 # Lanes build in parallel and each appends rows to the catalog: keep both sides' lines instead of a conflict on every land.
 # tests/catalog.test.mjs catches a duplicated key or a row whose file is gone.
 docs/catalog.md merge=union

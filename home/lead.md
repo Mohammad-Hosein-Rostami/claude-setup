@@ -1,7 +1,7 @@
 # Lead rules, part 2 (main session only)
 <!-- Printed by hooks/lead-text.mjs at every SessionStart of the main session (startup, resume, clear, compact), never in a
-subagent, as its own hook string: the 10,000-char cap is per string per hook, so it does not share the room of the mode.mjs
-string (probe P6-11 owed). An edit needs a session restart. When the modes go (r9-one-mode, owed), modes/_lead.md merges in. -->
+subagent, as its own hook string: the 10,000-char cap is per string per hook, so it does not share the room of the
+session-notes.mjs string, which carries part 1 (lead-rules.md) (probe P6-11 owed). An edit needs a session restart. -->
 
 ## Models and effort
 - Start a session on a model with `claude --model <m> --effort <e>` (owner, 2026-11-19). `CLAUDE_CODE_EFFORT_LEVEL` stays unset: it overrides that flag and every agent's effort (doctor fails on it).

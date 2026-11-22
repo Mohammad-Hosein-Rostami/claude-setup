@@ -126,7 +126,7 @@ test('the limit in the hook matches the budget the implementer agents and the le
   for (const file of ['home/CLAUDE.md', 'home/agents/ui-implementer.md']) { // r9-dedupe part 2: the worker budget line lives in CLAUDE.md
     assert.match(readFileSync(fileURLToPath(new URL(`../${file}`, import.meta.url)), 'utf8'), new RegExp(`about ${CALL_CAP} tool calls`), file);
   }
-  assert.match(readFileSync(fileURLToPath(new URL('../home/modes/_lead.md', import.meta.url)), 'utf8'), new RegExp(`~${CALL_CAP} tool calls`));
+  assert.match(readFileSync(fileURLToPath(new URL('../home/lead-rules.md', import.meta.url)), 'utf8'), new RegExp(`~${CALL_CAP} tool calls`));
 });
 
 test('the main thread is never counted; unsafe ids write nothing and stay silent', async () => {
@@ -139,16 +139,14 @@ test('the main thread is never counted; unsafe ids write nothing and stay silent
   assert.equal(unsafe.stdout, '');
 });
 
-test('a big Read warns the lead only in ultra-high', async () => {
+test('a big Read warns every lead session (lead rules: no Read > ~20k)', async () => {
   const dir = await home();
   const sid = uid('s');
   const big = { hook_event_name: 'PostToolUse', session_id: sid, tool_name: 'Read', tool_response: { file: { content: 'x'.repeat(READ_WARN_CHARS + 1) } } };
-  assert.equal(run(BUDGET, dir, big).stdout, '', 'no saved mode and no env: silent');
-  await writeFile(join(dir, '.claude', 'state', 'modes', sid), 'high\n');
-  assert.equal(run(BUDGET, dir, big).stdout, '');
-  await writeFile(join(dir, '.claude', 'state', 'modes', sid), 'ultra-high\n');
   const out = JSON.parse(run(BUDGET, dir, big).stdout).hookSpecificOutput;
   assert.match(out.additionalContext, /about 20k chars.*scout/);
+  await writeFile(join(dir, '.claude', 'state', 'modes', sid), 'high\n'); // a mode file an older setup left: read by nothing
+  assert.match(run(BUDGET, dir, big).stdout, /about 20k chars/);
   const small = { ...big, tool_response: { file: { content: 'x'.repeat(READ_WARN_CHARS) } } };
   assert.equal(run(BUDGET, dir, small).stdout, '', 'at the limit is fine');
   assert.equal(run(BUDGET, dir, { ...big, tool_name: 'Grep' }).stdout, '', 'only Read');

@@ -13,10 +13,9 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 | `home/standards/` | The longer reference behind the rules, with examples (for human readability: `readability.md`). |
 | `home/skills/` | Step-by-step workflows (`<name>/SKILL.md`) that Claude loads when the task matches. |
 | `home/agents/` | Helper roles (reviewer, implementer, architect, ...), one file each, with their model and limits. |
-| `home/bin/` | `ccm`, the launcher that starts Claude in a mode (`ccm.cmd` and `ccm.ps1` for Windows). |
 | `home/project-notes/` | One note file per project, read through that project's uncommitted `CLAUDE.local.md`. |
 | `home/hooks/` | Node scripts Claude Code runs on events (before a Bash command, when a session stops, ...). |
-| `home/modes/` | Playbooks for the five modes (`normal` to `ultra-high`) and `_lead.md`, the lead's routing rules. |
+| `home/lead-rules.md`, `home/lead.md` | The lead's rules (model routing, delegation, job form), printed to the main session at start. |
 | `home/tools/` | Command-line tools with their own README (`readable`, `ui-check`, `ui-coverage`, `recall`, ...). |
 | `settings/` | `base.json` plus one file per OS. They are merged into `~/.claude/settings.json`. |
 | `plugins/` | The list of plugins to install. |
@@ -28,7 +27,7 @@ what it does. Everything is plain text and Node scripts. You can read, change an
 
 ## How one prompt flows
 
-1. You start Claude with `ccm <mode>`. The `mode.mjs` hook prints the mode's playbook and the lead rules.
+1. You start Claude with `claude --model <m> --effort <e>`. The `session-notes.mjs` and `lead-text.mjs` hooks print the lead rules.
 2. `skill-router.mjs` reads your prompt and names the skills that fit (for example `verify-done` for "done").
 3. Claude reads `home/CLAUDE.md` and the rules whose paths match the files it works on.
 4. The lead hands work to agents from `home/agents/`. Each agent file lists its model, tools and size limits.

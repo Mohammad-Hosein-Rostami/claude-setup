@@ -1,10 +1,11 @@
-// The state files of the mode hook in ~/.claude/state/modes: a session's mode, the mode last announced to it, the compaction
-// counts (compact-notes.mjs) and their prune.
+// The state files of the session-notes hook in ~/.claude/state/modes (the folder keeps its name from the removed modes): the
+// compaction counts (compact-notes.mjs), the owner's check switch (checks-on.mjs) and their prune.
 // Exports: readStateText(file, what), writeStateText(dir, name, text), removeStateFile(dir, name), pruneState(dir, timeLeft, nowMs),
-// isStale(mtimeMs, nowMs), STATE_FILE_MAX_BYTES, MAX_PRUNED_ENTRIES. Used by mode.mjs and compact-notes.mjs (moved out of mode.mjs in round 9, lane
-// r9-mode-fix, fix round 1: security review 1, S4 and S5).
+// isStale(mtimeMs, nowMs), STATE_FILE_MAX_BYTES, MAX_PRUNED_ENTRIES. Used by session-notes.mjs, compact-notes.mjs, checks-on.mjs and
+// smart-check/ledger.mjs (moved out of the hook in round 9, lane r9-mode-fix, fix round 1: security review 1, S4 and S5). The stderr
+// lines keep their "mode hook:" prefix, which tests pin.
 // Why: the files were opened by name. Whoever can write the state folder (the same user, or a program run as that user) could
-// plant a FIFO, which hung the hook until Claude Code dropped its whole output, or a link, which the hook wrote a mode through;
+// plant a FIFO, which hung the hook until Claude Code dropped its whole output, or a link, which the hook wrote a state through;
 // a large file was read whole; the prune had no bound and ended at the first entry it could not handle.
 // Invariants: no call waits and none follows a link at the file's own name. A read (lib/plain-file.mjs: O_NOFOLLOW, O_NONBLOCK,
 // fstat) returns text only from a regular file of at most STATE_FILE_MAX_BYTES; anything else is "no state", reported on stderr
@@ -21,7 +22,7 @@ import { lstatSync, mkdirSync, opendirSync, renameSync, rmSync, unlinkSync, writ
 import { join } from 'node:path';
 import { readPlainFile } from './plain-file.mjs';
 
-export const STATE_FILE_MAX_BYTES = 64; // a mode word or a count and a line feed; a longer file is not one of the hook's own
+export const STATE_FILE_MAX_BYTES = 64; // a count and a line feed; a longer file is not one of the hook's own
 // Names read per prune run. The folder holds a few files per session of the last 14 days (267 entries seen); a folder with more
 // is worked off over the next runs: stale entries among the names read are removed, so later runs read further ones.
 export const MAX_PRUNED_ENTRIES = 2000;

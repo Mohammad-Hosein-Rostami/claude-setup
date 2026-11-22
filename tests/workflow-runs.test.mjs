@@ -1,12 +1,11 @@
-// Tests for the status line's workflow lines: home/tools/estimate/lib/workflow-runs.mjs (live runs read from the session's workflow
-// journals) and lib/progress-line.mjs (the job bar and the run lines). Journals are synthetic files in a temp session folder laid out as
+// Tests for the live workflow runs: home/tools/estimate/lib/workflow-runs.mjs (live runs read from the session's workflow
+// journals). Journals are synthetic files in a temp session folder laid out as
 // Claude Code 2.1.326 writes them (probe P3): <session>/subagents/workflows/<runId>/journal.jsonl, <session>/workflows/<runId>.json
 // for a finished run, <session>/workflows/scripts/<name>-<runId>.js for the script copy.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { progressLines } from '../home/tools/estimate/lib/progress-line.mjs';
 import { liveRuns } from '../home/tools/estimate/lib/workflow-runs.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
@@ -184,46 +183,4 @@ test('a 10 MB journal is read in under 100 ms of CPU time (p95 of 20 reads; CPU 
   }).sort((a, b) => a - b);
   assert.ok(times[18] < 100, `p95 ${times[18]} ms`);
   assert.equal(liveRuns(s.transcriptPath, NOW)[0].started, 10);
-});
-
-const BAR_PROGRESS = { pct: 54, approx: false, rowsDone: 5, rowsTotal: 9, leftMin: 30, tag: null };
-const RUN = { runId: 'wf_a', name: 'build', row: 'impl-a', phase: 'Review', phaseIndex: 3, phaseTotal: 4, started: 7, done: 5 };
-const lines = (progress, runs, columns, color = false) => progressLines(progress, runs, { columns, color });
-
-test('the job bar: 12 cells from 100 columns, 8 from 70, text only below; the percent, rows and tag follow', () => {
-  assert.deepEqual(lines(BAR_PROGRESS, [], 120), ['######------ 54% · 5/9 rows · 30 min left']);
-  assert.deepEqual(lines(BAR_PROGRESS, [], 80), ['####---- 54% · 5/9 rows']);
-  assert.deepEqual(lines(BAR_PROGRESS, [], 60), ['54% · 5/9 rows']);
-  assert.deepEqual(lines({ ...BAR_PROGRESS, approx: true, leftMin: null, tag: 'overdue' }, [], 120), ['######------ ~54% · 5/9 rows · overdue']);
-  assert.deepEqual(lines({ ...BAR_PROGRESS, tag: '+rows' }, [], 60), ['54% · 5/9 rows · +rows']);
-  assert.deepEqual(lines({ ...BAR_PROGRESS, pct: 100, rowsDone: 9, leftMin: 0 }, [], 120), ['############ 100% · 9/9 rows']);
-  assert.deepEqual(lines({ ...BAR_PROGRESS, pct: 0, rowsDone: 0 }, [], 80), ['-------- 0% · 0/9 rows']);
-  assert.equal(lines({ ...BAR_PROGRESS, pct: 99, leftMin: 1 }, [], 120)[0].slice(0, 12), '###########-', 'a full bar means 100%');
-});
-
-test('with color the glyphs are blocks and the line is green, yellow when moved or rows were added, red when overdue', () => {
-  assert.equal(lines(BAR_PROGRESS, [], 120, true)[0], '\u001b[32m██████░░░░░░ 54% · 5/9 rows · 30 min left\u001b[0m');
-  assert.match(lines({ ...BAR_PROGRESS, tag: 'moved' }, [], 120, true)[0], /^\u001b\[33m/);
-  assert.match(lines({ ...BAR_PROGRESS, tag: '+rows' }, [], 120, true)[0], /^\u001b\[33m/);
-  assert.match(lines({ ...BAR_PROGRESS, tag: 'overdue' }, [], 120, true)[0], /^\u001b\[31m/);
-  assert.doesNotMatch(lines(BAR_PROGRESS, [], 120)[0], /[█░\u001b]/, 'no color: ASCII only');
-});
-
-test('a run line: workflow, row, phase with its place, agents done of agents seen; at most two runs, one line each', () => {
-  assert.deepEqual(lines(null, [RUN], 120), ['wf build impl-a · Review (3/4) · 5/7 agents']);
-  assert.deepEqual(lines(null, [{ ...RUN, row: null, phaseTotal: null, phaseIndex: 2 }], 120), ['wf build · Review (2/?) · 5/7 agents']);
-  assert.deepEqual(lines(null, [{ ...RUN, phase: null, phaseIndex: 0 }], 120), ['wf build impl-a · 5/7 agents']);
-  assert.deepEqual(lines(BAR_PROGRESS, [RUN, { ...RUN, runId: 'wf_b', name: 'review' }, { ...RUN, runId: 'wf_c', name: 'land' }], 120).slice(1), [
-    'wf build impl-a · Review (3/4) · 5/7 agents', 'wf review impl-a · Review (3/4) · 5/7 agents',
-  ]);
-  assert.deepEqual(lines(null, [], 120), []);
-});
-
-test('no line is wider than the terminal at 120, 80 and 60 columns, with the longest texts', () => {
-  const long = { ...RUN, name: 'x'.repeat(16), row: 'y'.repeat(24), phase: 'z'.repeat(24), phaseIndex: 12, phaseTotal: 12, started: 1000, done: 999 };
-  const widest = { pct: 99, approx: true, rowsDone: 229, rowsTotal: 230, leftMin: 12_345, tag: '+rows' };
-  for (const columns of [120, 80, 60, 20]) {
-    for (const line of lines(widest, [long, long], columns)) assert.ok([...line].length <= columns, `${columns}: ${line}`);
-    for (const line of lines(widest, [long, long], columns, true)) assert.ok([...line.replace(/\u001b\[\d+m/g, '')].length <= columns, `${columns} color: ${line}`);
-  }
 });

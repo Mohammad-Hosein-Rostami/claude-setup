@@ -21,10 +21,10 @@
 Windows (PowerShell): `powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Update [-To <tag>]] [-Uninstall] [-DryRun] [-NoPlugins] [-NoTools]`.
 Both call `scripts/install.mjs`, the one installer (Node 22+, jq); `scripts/install/README.md` explains the install record, the backups and the first settings layer.
 Symlinks need Developer Mode on Windows; otherwise items are copied (a warning is printed) and do not follow later
-edits. `install.ps1` also installs `ccm.cmd` into `~/.claude/bin` (launch with `ccm <mode>`, no execution-policy change needed) and `ccm.ps1` into `~/.claude/bin/ps/` (called by the shim; kept off PATH so PowerShell cannot pick it before the shim), and adds `~/.claude/bin` to the user PATH. `install.ps1` runs on Windows PowerShell 5.1 and 7 (not verified on Windows yet). On Windows the installer stops without Git Bash; `settings/windows.json` turns the PowerShell tool off (`CLAUDE_CODE_USE_POWERSHELL_TOOL=0`) and every Bash hook matches `Bash|PowerShell`, so a PowerShell command is off or guarded; doctor checks both. `install.ps1 -ClaudeVersion <x.y.z>` installs that Claude Code, runs `claude --version` right after, and puts the old binary back when the version is not the one asked for.
+edits. `install.ps1` runs on Windows PowerShell 5.1 and 7 (not verified on Windows yet). On Windows the installer stops without Git Bash; `settings/windows.json` turns the PowerShell tool off (`CLAUDE_CODE_USE_POWERSHELL_TOOL=0`) and every Bash hook matches `Bash|PowerShell`, so a PowerShell command is off or guarded; doctor checks both. `install.ps1 -ClaudeVersion <x.y.z>` installs that Claude Code, runs `claude --version` right after, and puts the old binary back when the version is not the one asked for.
 
-The installer links `home/*` (CLAUDE.md, rules, skills, agents, standards, hooks, tools, modes, project-notes, statusline.mjs, and `commands` when it has files) into
-`~/.claude` (macOS/Linux/Git Bash also put `ccm` in `~/.local/bin`; keep it on PATH), builds `~/.claude/settings.json`, installs `home/tools/ui-check` dependencies (lockfile if present,
+The installer links `home/*` (CLAUDE.md, lead.md, lead-rules.md, rules, skills, agents, standards, hooks, tools, project-notes, workflows, statusline.mjs, and `commands` when it has files) into
+`~/.claude` (and removes the launcher and `modes` links an older install made for the retired session modes), builds `~/.claude/settings.json`, installs `home/tools/ui-check` dependencies (lockfile if present,
 otherwise a plain install), sets `core.hooksPath` to `.githooks`, then installs plugins. Anything replaced is moved
 to `~/.claude-backup-<stamp>/`, never deleted. Check the result with `scripts/doctor.sh`
 (`DOCTOR_PROJECT=/path/to/app scripts/doctor.sh` also checks Playwright and Chromium from that project). It also reports free disk space (FAIL below 5 GB, WARN below 15 GB; `DISK_FAIL_FREE_GB` and `DISK_WARN_FREE_GB` move the limits) and names the caches to clear. Its last check runs the repo tests, unless a full-suite PASS is already recorded for HEAD (`test-pass`) and the working tree is clean (`git status --porcelain` prints nothing; an edit or a new file since then runs the suite); the full output is kept in `~/.claude/logs/doctor-repo-tests.log` and a failure prints each failing test with its first error line and that path.
@@ -54,7 +54,7 @@ add` and `claude plugin install`. If the CLI lacks those subcommands, use `/plug
 file lists. `gitkraken` is installed by the GitKraken app.
 
 ## Updating
-`git pull`. Linked content (skills, agents, rules, standards, hooks, tools, modes) is live on disk. Re-run `scripts/install.sh`
+`git pull`. Linked content (skills, agents, rules, standards, hooks, tools, lead rules) is live on disk. Re-run `scripts/install.sh`
 when `settings/`, `plugins/` or a tool's `package.json` changed.
 
 A running Claude Code session reads settings, hooks config, CLAUDE.md, agents and plugins only at start: after any change,

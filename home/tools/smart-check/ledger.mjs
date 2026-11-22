@@ -17,7 +17,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { appendPlainFile, readPlainFile } from '../../hooks/lib/plain-file.mjs';
-import { removeStateFile } from '../../hooks/lib/mode-state.mjs';
+import { removeStateFile } from '../../hooks/lib/state-files.mjs';
 
 export const LEDGER_MAX_BYTES = 32 * 1024 * 1024; // about 100k rows: years of this setup's volume
 const QUEUE_MAX_BYTES = 256 * 1024;

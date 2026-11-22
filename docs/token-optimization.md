@@ -4,7 +4,7 @@ Cost is tool calls x context size: every call re-reads the whole conversation. T
 
 | Lever | Where | Effect |
 | ----- | ----- | ------ |
-| Model routing | `home/modes/_lead.md` (printed to the lead at SessionStart), `settings/base.json` (`model`) | The Opus session plans, decides and delegates; Sonnet agents implement and review; Haiku looks things up and runs commands. Unpinned `general-purpose` runs on Sonnet via `CLAUDE_CODE_SUBAGENT_MODEL`; the built-in `Explore` and `Plan` agents use the lead's model |
+| Model routing | `home/lead-rules.md` (printed to the lead at SessionStart), `settings/base.json` (`model`) | The Opus session plans, decides and delegates; Sonnet agents implement and review; Haiku looks things up and runs commands. Unpinned `general-purpose` runs on Sonnet via `CLAUDE_CODE_SUBAGENT_MODEL`; the built-in `Explore` and `Plan` agents use the lead's model |
 | Effort per model | `settings/base.json` `modelSettings` | Opus high, Sonnet medium, Haiku medium (low stops early and skips checks). Opus 5.5 at `medium` already beats Opus 5 at `high`; `xhigh`/`max` only for a measured gain |
 | Compaction | `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` (400000) | Opus 5.5 / Fable 5.2 have 1M; 400K keeps ~4x more work between compactions at ~1.9x per-turn read cost (owner choice, 2026-11-14) |
 | Short skill descriptions | `home/skills/*/SKILL.md` | Descriptions are loaded every session; bodies only when triggered |

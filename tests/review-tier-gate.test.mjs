@@ -26,7 +26,7 @@ const codeLine = (text) => report([changed('home/tools/x/x.mjs', [text])]);
 
 // One path per alternative of GATE_PATH (spec section 7), upper case kept where a real file has it.
 const GATE_PATHS = [
-  'settings/base.json', 'proj/.claude/settings.local.json', 'home/CLAUDE.md', 'home/modes/_lead.md', 'home/agents/reviewer.md',
+  'settings/base.json', 'proj/.claude/settings.local.json', 'home/CLAUDE.md', 'home/lead-rules.md', 'home/agents/reviewer.md',
   'home/rules/core.md', 'home/workflows/review.js', 'home/skills/workflows/SKILL.md', 'home/skills/verify-done/SKILL.md',
   'home/tools/review-tier/tiers.mjs', 'home/tools/test-pass/test-pass.mjs', 'home/tools/git-tidy/lib/git.mjs',
   'scripts/affected-tests.mjs', 'scripts/doctor.sh', '.githooks/pre-push', 'app/.githooks/pre-commit', 'proj/.claude/workflows/x.js',

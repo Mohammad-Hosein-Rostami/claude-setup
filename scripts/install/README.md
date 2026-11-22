@@ -7,7 +7,7 @@ find Node and call it. Its flags are in the header of `install.mjs`.
 |---|---|
 | `context.mjs` | flags, paths, the dry-run switch (`act`), the run log |
 | `record.mjs` | the install record `~/.claude/.claude-setup-install.json`, backups into `~/.claude-backup-<stamp>/` |
-| `links.mjs` | `home/*` into `~/.claude`, `ccm` onto PATH, the project workflow link |
+| `links.mjs` | `home/*` into `~/.claude`, removal of the retired mode launcher and `modes` links, the project workflow link |
 | `startup.mjs` | the one `claude-as` start-up line (zsh, bash, PowerShell profile) |
 | `settings.mjs` | `settings.json` from the layers, through `scripts/merge-settings.jq` |
 | `tools.mjs` | plugins and tool dependencies |

@@ -24,7 +24,7 @@ export const MAX_HITS_PER_CLASS_FILE = 20; // a huge generated file must not mak
 
 const LOCKFILES = new Set(['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'cargo.lock', 'poetry.lock', 'go.sum']);
 const PROSE = /\.(md|mdx|txt|rst)$/;
-const BEHAVIOUR_PATH = /(^|\/)(claude|agents)\.md$|(^|\/)\.claude\/|^home\/(claude\.md|(modes|rules|agents|skills|standards|workflows)\/)/;
+const BEHAVIOUR_PATH = /(^|\/)(claude|agents)\.md$|(^|\/)\.claude\/|^home\/(claude\.md|lead-rules\.md|(rules|agents|skills|standards|workflows)\/)/;
 // README, CHANGELOG and LICENSE are docs only with a prose or image extension (or none): changelog.mjs is code.
 const DOC_PATH = /(^|\/)(readme|changelog|license)([^/]*\.(md|mdx|txt|rst|png|jpg)|[^/.]*)$|(^|\/)docs\/|\.(md|txt|png|jpg)$/;
 const TEST_PATH = /(^|\/)(tests?|__tests__)\/|\.(test|spec)\./;
@@ -50,7 +50,7 @@ export const CHECK_FILE_PATH = new RegExp(CHECK_CONFIG_SOURCE);
  * account tool and the shell snippets (they hold login tokens, so an edit there is never waived) and
  * `.gitattributes` (it decides what git shows of a file, to a reviewer as well as to a tool).
  */
-export const GATE_PATH = new RegExp(String.raw`^settings/[^/]+\.json$|(^|/)\.claude/settings[^/]*\.json$|^home/claude\.md$|^home/(modes|agents|rules|workflows)/|^home/skills/(wf-[^/]+|workflows|verify-done|road)/|^home/tools/(review-tier|test-pass|git-tidy|road)/|${ACCOUNT_TOKEN_FILES}|^scripts/(affected-tests\.mjs|doctor\.sh)$|(^|/)\.githooks/|(^|/)\.claude/workflows/|(^|/)\.husky/|(^|/)\.github/workflows/|(^|/)(\.gitlab-ci\.yml|\.circleci/|azure-pipelines\.yml|jenkinsfile)|(^|/)package\.json$|(^|/)\.gitattributes$|${CHECK_CONFIG_SOURCE}`);
+export const GATE_PATH = new RegExp(String.raw`^settings/[^/]+\.json$|(^|/)\.claude/settings[^/]*\.json$|^home/(claude|lead-rules)\.md$|^home/(agents|rules|workflows)/|^home/skills/(wf-[^/]+|workflows|verify-done|road)/|^home/tools/(review-tier|test-pass|git-tidy|road)/|${ACCOUNT_TOKEN_FILES}|^scripts/(affected-tests\.mjs|doctor\.sh)$|(^|/)\.githooks/|(^|/)\.claude/workflows/|(^|/)\.husky/|(^|/)\.github/workflows/|(^|/)(\.gitlab-ci\.yml|\.circleci/|azure-pipelines\.yml|jenkinsfile)|(^|/)package\.json$|(^|/)\.gitattributes$|${CHECK_CONFIG_SOURCE}`);
 const LOCK_WORD = /^(un)?lock(s|ed|ing|file)?$/;
 const SIZE_LINES = 400;
 

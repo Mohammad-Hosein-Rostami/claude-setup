@@ -3,7 +3,7 @@
 //                   once (a marker file next to the counter), once at 120 it injects "commit, write the
 //                   hand-over note, then report unfinished" (one nudge, not repeated: frequent harness text after tool results reads as
 //                   possible injection, spec-p3 r9-workflows). Advisory: it never blocks a call.
-//   PostToolUse Read in the lead, mode ultra-high -> warns when the result is over ~20k chars (use scout / a small range).
+//   PostToolUse Read in the lead -> warns when the result is over ~20k chars (use scout / a small range; lead rules: no Read > ~20k).
 //   PostToolUse Bash in the lead -> every 15 Bash calls since the last Agent/Task/Workflow call, a nudge to delegate that states the
 //                   context size (lib/transcript.mjs contextTokens); an Agent/Task/Workflow call resets the count. A nudge followed by
 //                   another Bash call (no Agent/Task call between) counts as ignored, in a per-session file next to the count.
@@ -23,7 +23,7 @@
 // leadBashDeny, readChars, postToolUseContext, spawnCap, subagentStopReason.
 // Invariants: fast (one append + one stat per call, nothing else on the main thread except Read); fails open (any error
 // exits 0, silent); output is fixed text plus numbers, never tool input, tool output or paths; unsafe ids write nothing.
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { appendFileSync, closeSync, mkdirSync, openSync, readSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -46,7 +46,6 @@ const TOKENS_PER_K = 1000;
 const NOTICE_SUFFIX = '.notice'; // marker next to the counter file: the early notice was given
 const SPAWN_PROMPT_BYTES = 512 * 1024;
 const SAFE_ID = /^[\w-]{1,128}$/;
-const ULTRA_HIGH = 'ultra-high';
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']); // Windows can run the PowerShell tool; both count as shell calls
 const DELEGATING_TOOLS = new Set(['Agent', 'Task', 'Workflow']); // the owner rule: workflows are how agents run, so a Workflow call is a delegation too
 
@@ -169,15 +168,6 @@ export function readChars(response) {
   return typeof content === 'string' ? content.length : JSON.stringify(response ?? '').length;
 }
 
-const sessionMode = (sessionId) => {
-  if (!/^[\w-]+$/.test(sessionId ?? '')) return process.env.CLAUDE_MODE;
-  try {
-    return readFileSync(join(homedir(), '.claude', 'state', 'modes', sessionId), 'utf8').trim();
-  } catch {
-    return process.env.CLAUDE_MODE; // no saved state: the launch env is the next best source
-  }
-};
-
 /**
  * Context to inject after a tool call, or null.
  * @param {object} input PostToolUse hook JSON
@@ -196,10 +186,10 @@ export async function postToolUseContext(input) {
       : null;
   }
   if (SHELL_TOOLS.has(input.tool_name) || DELEGATING_TOOLS.has(input.tool_name)) return leadBashNudge(input);
-  if (input.tool_name !== 'Read' || sessionMode(input.session_id) !== ULTRA_HIGH) return null;
+  if (input.tool_name !== 'Read') return null;
   const chars = readChars(input.tool_response);
   return chars > READ_WARN_CHARS
-    ? `That Read returned about ${Math.round(chars / 1000)}k chars (warn at ${READ_WARN_CHARS / 1000}k). In ultra-high the lead does not read bulk files: have scout return a digest of at most 3k chars plus the file path, or read a small range with offset and limit.`
+    ? `That Read returned about ${Math.round(chars / 1000)}k chars (warn at ${READ_WARN_CHARS / 1000}k). The lead does not read bulk files: have scout return a digest of at most 3k chars plus the file path, or read a small range with offset and limit.`
     : null;
 }
 

@@ -27,17 +27,12 @@ is_windows() { case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; *) return
 # On Git Bash install.sh may have copied instead of linking (no symlink permission): a present copy is a warning, not a FAIL.
 check_links() {
   local name target
-  for name in CLAUDE.md lead.md rules skills agents standards hooks tools project-notes modes workflows statusline.mjs; do
+  for name in CLAUDE.md lead.md rules skills agents standards hooks tools project-notes lead-rules.md workflows statusline.mjs; do
     target="$CLAUDE_DIR/$name"
     if [ -L "$target" ] && [ "$(readlink "$target")" = "$LINK_ROOT/home/$name" ]; then ok "link $name"
     elif is_windows && [ -e "$target" ] && [ ! -L "$target" ]; then ok "copy $name (not live-linked; re-run install.sh after repo changes)"
     else bad "link $name (re-run scripts/install.sh)"; fi
   done
-  target="$HOME/.local/bin/ccm"
-  if [ -L "$target" ] && [ "$(readlink "$target")" = "$LINK_ROOT/home/bin/ccm" ]; then ok "link ccm"
-  elif is_windows && [ -f "$target" ] && cmp -s "$REPO/home/bin/ccm" "$target"; then ok "copy ccm"
-  else bad "link ccm (re-run scripts/install.sh)"; fi
-  if command -v ccm >/dev/null; then ok "ccm on PATH"; else bad "ccm not on PATH (add ~/.local/bin to PATH)"; fi
 }
 
 # Drift: rebuild the expected settings.json in memory and compare with the live one.
@@ -272,16 +267,16 @@ check_lsp() {
   else warn "LSP tool inactive: brew install typescript-language-server (Windows: npm i -g typescript-language-server typescript)"; fi
 }
 
-# The mode hook feeds _lead.md and the playbook to the lead; if it is not registered live, sessions silently run without rules.
-check_mode_hook() {
+# The session-notes hook feeds lead-rules.md to the lead; if it is not registered live, sessions silently run without those rules.
+check_session_notes_hook() {
   local live="$CLAUDE_DIR/settings.json" event missing=""
-  for event in SessionStart UserPromptSubmit UserPromptExpansion; do
-    jq -e --arg e "$event" '[.hooks[$e][]?.hooks[]?.command // empty | select(test("hooks/mode\\.mjs"))] | length > 0' "$live" >/dev/null 2>&1 || missing="$missing $event"
+  for event in SessionStart UserPromptSubmit; do
+    jq -e --arg e "$event" '[.hooks[$e][]?.hooks[]?.command // empty | select(test("hooks/session-notes\\.mjs"))] | length > 0' "$live" >/dev/null 2>&1 || missing="$missing $event"
   done
-  if [ -n "$missing" ]; then bad "mode hook not registered in settings.json for:$missing (SessionStart context will not reach sessions)"
-  elif [ ! -f "$CLAUDE_DIR/hooks/mode.mjs" ]; then bad "mode hook file missing: $CLAUDE_DIR/hooks/mode.mjs"
-  elif [ ! -s "$CLAUDE_DIR/modes/_lead.md" ]; then bad "modes/_lead.md missing or empty (lead rules are not injected)"
-  else ok "mode hook registered for SessionStart, UserPromptSubmit, UserPromptExpansion"; fi
+  if [ -n "$missing" ]; then bad "session-notes hook not registered in settings.json for:$missing (SessionStart context will not reach sessions)"
+  elif [ ! -f "$CLAUDE_DIR/hooks/session-notes.mjs" ]; then bad "session-notes hook file missing: $CLAUDE_DIR/hooks/session-notes.mjs"
+  elif [ ! -s "$CLAUDE_DIR/lead-rules.md" ]; then bad "lead-rules.md missing or empty (lead rules are not injected)"
+  else ok "session-notes hook registered for SessionStart, UserPromptSubmit"; fi
 }
 
 # Token budget (spec-p6 r9-token-view): the lead text's SessionStart string against its 10,000-char cap (over it Claude gets a
@@ -504,7 +499,7 @@ check_smart_check() {
 run_checks() {
   local check
   if [ -n "${DOCTOR_ONLY:-}" ]; then for check in $DOCTOR_ONLY; do "$check"; done; return; fi
-  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_mode_hook; check_token_budget; check_plugin_session_start; check_recall; check_stop_cap; check_disk_free; check_disk_clean; check_smart_check; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows; check_env_names; check_repo_tests
+  check_links; check_settings; check_plugins; check_plugin_parity; check_node; check_claude_version; check_effort_env; check_hook_files; check_prod_hosts; check_session_notes_hook; check_token_budget; check_plugin_session_start; check_recall; check_stop_cap; check_disk_free; check_disk_clean; check_smart_check; check_native_cleanup; check_tools; check_accounts; check_notify; check_lsp; check_ui_check; check_project_agents; check_projects; check_workflows; check_env_names; check_repo_tests
 }
 # The machine's name in the summary: the owner's two machines by OS, else the host name; DOCTOR_MACHINE overrides it.
 machine_name() {

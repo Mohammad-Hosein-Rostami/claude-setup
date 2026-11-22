@@ -81,9 +81,8 @@ test('affected: a change that only touches documents runs no test', () => {
   assert.deepEqual(result, { full: false, reason: 'no code or text file that a test reads changed', tests: [] });
 });
 
-test('affected: the two documents a test reads run that test, any other document still runs nothing', () => {
+test('affected: the document a test reads runs that test, any other document still runs nothing', () => {
   const map = mapOf({ 'tests/modes-consistency.test.mjs': PASSING, 'tests/watch-idle-cli.test.mjs': PASSING, 'tests/b.test.mjs': PASSING });
-  assert.deepEqual(affected(['docs/modes.md'], map, { onBase: false }).tests, ['tests/modes-consistency.test.mjs']);
   assert.deepEqual(affected(['docs/daily-use.md'], map, { onBase: false }).tests, ['tests/modes-consistency.test.mjs', 'tests/watch-idle-cli.test.mjs']);
   assert.deepEqual(affected(['docs/catalog.md'], map, { onBase: false }).tests, []);
 });
@@ -132,9 +131,9 @@ test('affected: a map that could not be built runs the whole suite', () => {
   assert.deepEqual(result, { full: true, reason: 'the test map could not be built', tests: [] });
 });
 
-test('affected: modes, rules, agents and skills text runs the tests that read it, as far as they exist', () => {
+test('affected: lead rules, rules, agents and skills text runs the tests that read it, as far as they exist', () => {
   const map = smallMap();
-  assert.deepEqual(affected(['home/modes/_lead.md'], map, { onBase: false }).tests, ['tests/modes-consistency.test.mjs']);
+  assert.deepEqual(affected(['home/lead-rules.md'], map, { onBase: false }).tests, ['tests/modes-consistency.test.mjs']);
   assert.deepEqual(affected(['home/rules/core.md'], map, { onBase: false }).tests, ['tests/modes-consistency.test.mjs', 'tests/rules-text.test.mjs']);
   assert.deepEqual(affected(['home/workflows/build.js'], map, { onBase: false }).full, true, 'no workflow-scripts test yet: unmapped');
   const withWorkflowTest = mapOf({ 'tests/workflow-scripts.test.mjs': PASSING, 'home/workflows/build.js': '// x\n' });

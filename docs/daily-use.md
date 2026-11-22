@@ -4,26 +4,16 @@ How to work with this setup day to day. Editing the repo itself is in [usage.md]
 [setup.md](setup.md); every file is listed in [catalog.md](catalog.md).
 
 ## Start
-Run `ccm <mode>` (`ccm` alone is medium). Switch inside a session with `/mode <mode>`. Extra args go to claude:
-`ccm high -c`. Full flags are in [modes.md](modes.md).
-
-| Mode | Lead model | Pick it when | Cost note |
-| ---- | ---------- | ------------ | --------- |
-| `normal` | Opus 5.5, effort high | Small or routine work; you want the week to last | Up to 2 agents at once, terse reports |
-| `medium` | Opus 5.5, effort high | Default for most tasks | Up to 3 writing agents at once |
-| `high` | Opus 5.5, effort high | Wide, multi-part tasks where speed matters | Up to 6 writing agents at once; more usage |
-| `extra-high` | Opus 5.5, effort max | Architecture, hard bugs, risky code, key decisions | Max effort on the lead and important agents |
-| `ultra-high` | Fable 5.2, effort high | The hardest work; Fable decides, others do the work | Fable is capped at 50% of the weekly limit |
-
-Fable cap: when `ultra-high` reports the limit, exit and run `ccm extra-high -c` to continue the same conversation on
-Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the hardest work only:
-`CCM_LEAD_EFFORT=xhigh ccm ultra-high`.
+Start a session with `claude --model <m> --effort <e>`, for example `claude --model opus --effort high` (the usual lead);
+add `-c` to continue this folder's last conversation. With several accounts, run `claude-as <name>` in the terminal first.
+Keep the lead model all session (a model switch rebuilds the cache); raise the effort for one hard turn with `/effort`.
+Keep extra usage off in claude.ai so nothing can bill credits.
 
 ## A normal task
 - One task per session. For an unrelated next task, `/clear` or start a new session first.
 - The lead plans, decides and delegates: `scout` reads, `runner` runs checks, `implementer` writes code, `reviewer`
   and `security-auditor` review. Technical choices are made and stated in one line; owner decisions are asked.
-- The lead picks the form by the job (any mode; the rule is in `home/CLAUDE.md`, "Inline, agent or workflow"). Inline, no agent:
+- The lead picks the form by the job (the rule is in `home/lead.md`, "Inline, agent or workflow"). Inline, no agent:
   lookups (`/quick` for a read-only one), reading code, one command, a one-file or under-30-line edit (it still runs
   `review-tier` before it lands). One background agent: one implementer lane, one lane's review set, one research question,
   one debug hypothesis set inside a running job. A workflow: 2+ lanes or writers in parallel (`/workflows build`), review panels with fix rounds across
@@ -41,7 +31,7 @@ Opus. Keep extra usage off in claude.ai so nothing can bill credits. For the har
 
 ## Long or unattended runs
 - Run long or unattended sessions in a plain terminal app (or tmux), not an editor's built-in terminal: closing or
-  reloading the editor window ends every session in it. Resume with `ccm <mode> -c`.
+  reloading the editor window ends every session in it. Resume with `claude --model <m> --effort <e> -c`.
 - A question (AskUserQuestion) gets one timed dialog per question, one after the other (hook `permission-timed-allow.mjs`; the
   dialog shows the question, its options with the recommended one first and what happens with no answer), each with its own
   wait: with no answer in 60 s (`CLAUDE_QUESTION_TIMEOUT_S`; from 5 questions on less, so all popups end before the terminal
@@ -125,17 +115,17 @@ History stays one straight line (rule C37): no merge commits, no branch merged i
 
 ## Resume after an exit or an account switch
 Workflow runs keep a journal on disk, so an exit, a usage-limit stop or a switch of account loses no finished agent.
-1. Start the session again: `ccm <mode> -c` (or `claude --resume <session id>`) in the same folder. After a switch of account, start it in the same folder with the other account.
+1. Start the session again: `claude --model <m> --effort <e> -c` (or `claude --resume <session id>`) in the same folder. After a switch of account, start it in the same folder with the other account.
 2. The start notice (`<workflow-resume>`) lists every unfinished run of the folder: what finished, what was cut off, the worktrees and branches it owns, the STATUS.md last used. Say "/wf-resume" and the lead continues each run (same script and args; a run of another session gets its journal copied in first).
 3. A run marked "may still be running" is left alone until `/workflows` shows it ended. `node ~/.claude/tools/wf-resume/wf-resume.mjs list` prints the notice again at any time. A run you give up is hidden with `wf-resume.mjs abandon <runId>` (it touches no git; relaunching the run lists it again).
 Only the session that owns a journal can resume it by itself; the copy step (`wf-resume.mjs adopt`) is what makes a new session able to. Re-check it after a Claude Code upgrade: it relies on the undocumented folder layout.
 
 ## At a usage limit
-Wait for the subscription reset. Never turn on credits, `/fast`, or `/code-review ultra`. In `ultra-high`, a Fable
-cap means `ccm extra-high -c`, not credits.
+Wait for the subscription reset. Never turn on credits, `/fast`, or `/code-review ultra`. A Fable cap means a new start
+on Opus (`claude --model opus --effort high -c`), not credits.
 
 ## After changing the setup
-- Skills, agents, rules, standards, hooks, tools and modes are live through symlinks: new edits apply at once, and
+- Skills, agents, rules, standards, hooks, tools and the lead rules are live through symlinks: new edits apply at once, and
   hook scripts run fresh on each call.
 - Settings, hooks config, CLAUDE.md, agents and plugins are read when a session starts, and the lead rules load at
   start: restart open sessions (`/exit`, then `claude -c`).

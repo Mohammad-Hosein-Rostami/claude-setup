@@ -1,17 +1,17 @@
-// Compaction notes for the mode hook's SessionStart (source `compact`). Exports: compactNotes(dir, sessionId, transcriptPath,
+// Compaction notes for the session-notes hook's SessionStart (source `compact`). Exports: compactNotes(dir, sessionId, transcriptPath,
 // { subagent }), SUBAGENT_COMPACT_NOTE.
-// Invariants: the count lives in `<dir>/<sessionId>.compacts` (pruned with the mode state files); for a compaction inside a
-// subagent mode.mjs passes `<session_id>-<agent_id>` as that id, so a subagent never moves the lead's count, and asks for the
+// Invariants: the count lives in `<dir>/<sessionId>.compacts` (pruned with the other state files); for a compaction inside a
+// subagent session-notes.mjs passes `<session_id>-<agent_id>` as that id, so a subagent never moves the lead's count, and asks for the
 // subagent's text: SUBAGENT_COMPACT_NOTE alone, with no transcript scan (probe P1-8 of round 9: there `transcript_path` is the
 // LEAD's transcript, so its STATUS file is the lead's) and none of the lead's orders (backfill, tool reload, handoff); the file is read and
-// written as mode-state.mjs does it (never through a link, never waiting on a FIFO); a failed read or write counts as the first
+// written as state-files.mjs does it (never through a link, never waiting on a FIFO); a failed read or write counts as the first
 // compaction and reports to stderr; never throws. The STATUS path comes from the transcript (a tool
 // input, and its folder names can come from a repository), so it is shown as data: in double quotes, labelled as a path, escaped
 // down to printable ASCII without " \ < > (shown-name.mjs, as the project-agents note shows a file name) and at most
 // STATUS_PATH_SHOWN_CHARS of escaped text long, cut from the left: its end names the file, and the whole SessionStart output has to
 // stay under Claude Code's 10,000-character hook output cap.
 import { join } from 'node:path';
-import { readStateText, writeStateText } from './mode-state.mjs';
+import { readStateText, writeStateText } from './state-files.mjs';
 import { escapedEnd } from './shown-name.mjs';
 import { findStatusPath } from './transcript.mjs';
 

@@ -8,7 +8,7 @@
 | A change does not show in a session | The session started before it. Restart it (`/exit`, `claude -c`); after a `settings/` change re-run the installer first. |
 | A hook never fires | Test it as Claude runs it: `echo '{"hook_event_name":"UserPromptSubmit","cwd":"/tmp","prompt":"fix the button layout"}' \| node ~/.claude/hooks/skill-router.mjs`. No output means the script did not run `main()`: the entry check must compare `realpathSync(process.argv[1])`, because `~/.claude/hooks` is a symlink and `import.meta.url` is the resolved path. |
 | skill-router names skills for a non-UI prompt | A keyword is too broad. Narrow it in `PROMPT_ROUTES` and check with `skillsForPrompt()`. |
-| Sessions ended when the editor window closed or reloaded | They ran in the editor's built-in terminal, which stops with the window. Run long or unattended sessions in a plain terminal app or tmux; resume with `ccm <mode> -c`. |
+| Sessions ended when the editor window closed or reloaded | They ran in the editor's built-in terminal, which stops with the window. Run long or unattended sessions in a plain terminal app or tmux; resume with `claude --model <m> --effort <e> -c`. |
 | Windows: items copied, edits do not follow | Symlinks need Developer Mode. Enable it and re-run `install.ps1`. |
 | Plugin install skipped | `claude plugin` subcommands missing. Use `/plugin` and the list in `plugins/plugins.json`. |
 | Commit rejected, gitleaks | A staged change looks like a secret. Remove it; do not bypass the hook. |

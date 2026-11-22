@@ -1,42 +1,17 @@
-// Consistency checks between the mode list in mode.mjs, the playbooks, ccm, docs/modes.md, home/CLAUDE.md and home/modes/_lead.md
-// (node:test, no dependencies). A mode added to MODES must show up everywhere or one of these tests fails.
+// Consistency checks of the always-loaded text: home/CLAUDE.md, home/lead.md and home/lead-rules.md (the lead rules that were
+// home/modes/_lead.md until the setup modes were removed; this test file keeps its old name) (node:test, no dependencies).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { MODES } from '../home/hooks/mode.mjs';
 
 const read = (relative) => readFileSync(fileURLToPath(new URL(`../${relative}`, import.meta.url)), 'utf8');
-const SESSION_ONLY_ENDING = 'Applies to this session only.';
-
-test('every mode has a playbook ending with the session-only line', () => {
-  for (const mode of MODES) {
-    const playbook = read(`home/modes/${mode}.md`).trimEnd();
-    assert.ok(playbook.endsWith(SESSION_ONLY_ENDING), `${mode}.md must end with "${SESSION_ONLY_ENDING}"`);
-  }
-});
-
-const LANE_BUDGETS = { normal: 2, medium: 3, high: 5, 'extra-high': 5, 'ultra-high': 5 };
-
-test('every playbook states its lane budget', () => {
-  for (const mode of MODES) {
-    assert.match(read(`home/modes/${mode}.md`), new RegExp(`Lane budget: (up to )?${LANE_BUDGETS[mode]} agents? at`), `${mode}.md lane budget`);
-  }
-});
-
-test('_lead.md carries the lead-discipline rules and stays small', () => {
-  const lead = read('home/modes/_lead.md');
+test('lead-rules.md carries the lead-discipline rules and stays small', () => {
+  const lead = read('home/lead-rules.md');
   for (const needle of ['Persian', 'No turn without a decision', 'runner', '2nd compaction', 'usage-limit', 'STATUS.md', '3k chars', 'tell the owner to restart', 'No answer in 60 s','≤ 300 words', '`implementer`, not general-purpose', 'estimate.mjs']) {
-    assert.ok(lead.includes(needle), `_lead.md must mention ${needle}`);
+    assert.ok(lead.includes(needle), `lead-rules.md must mention ${needle}`);
   }
-  assert.ok(lead.split('\n').length <= 100, '_lead.md is injected into every session; keep it <= 100 lines');
-});
-
-test('ultra-high playbook keeps the assembly and compact-before-waiting rules', () => {
-  const playbook = read('home/modes/ultra-high.md');
-  assert.match(playbook, /Workflow assembly is not judgment/);
-  assert.match(playbook, /continue only reachable items, once; what is still left goes to a fresh agent/);
-  assert.match(playbook, /`\/compact` first/);
+  assert.ok(lead.split('\n').length <= 100, 'lead-rules.md is injected into every session; keep it <= 100 lines');
 });
 
 test('home/CLAUDE.md names Persian replies, the STATUS.md re-read and the Grep tool or rg', () => {
@@ -45,14 +20,6 @@ test('home/CLAUDE.md names Persian replies, the STATUS.md re-read and the Grep t
   assert.match(text, /`STATUS\.md` path/);
   assert.match(text, /Grep tool or `rg`/);
   assert.match(text, /Git push[\s\S]*confirm dialog even in bypass mode[\s\S]*goes ahead after 2 min unless the owner clicks Deny[\s\S]*literal password or token/);
-});
-
-test('ccm, docs/modes.md, home/CLAUDE.md and home/modes/_lead.md mention all five modes', () => {
-  assert.equal(MODES.length, 5);
-  for (const file of ['home/bin/ccm', 'docs/modes.md', 'home/modes/README.md', 'home/modes/_lead.md']) {
-    const text = read(file);
-    for (const mode of MODES) assert.ok(text.includes(mode), `${file} must mention ${mode}`);
-  }
 });
 
 test('home/lead.md keeps the standing-rules and delegation-size bullets, home/CLAUDE.md the usage-limit bullet (L22)', () => {
@@ -71,18 +38,17 @@ test('ui-coverage hand-over step gives ONE link to the visual overview', () => {
 const LEAD_ESTIMATE_RULE = '- Multi-day: `STATUS.md` `## Work items`: list the job\'s rows first; row edits by `status.mjs` only. Estimates: the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` only.';
 const GLOBAL_ESTIMATE_RULE = '- Work with a `STATUS.md`: every owner request and every owner correction becomes `## Work items` rows before work on it starts. Row edits go through `node ~/.claude/tools/status/status.mjs add|start|done|deliver|rule|decision` only, never a typed time; its help and `add` output give the row rules. Every estimate you give is the `Finish:` block of `node ~/.claude/tools/estimate/estimate.mjs STATUS.md` pasted as-is, never a number or clock time of your own; if it refuses, give its reason, and do its What to do and any `Check:` line first.';
 
-test('the estimate rules are verbatim in _lead.md and home/CLAUDE.md, and the old bullet is gone', () => {
-  assert.ok(read('home/modes/_lead.md').split('\n').includes(LEAD_ESTIMATE_RULE), '_lead.md estimate line');
-  assert.ok(LEAD_ESTIMATE_RULE.length <= 200, '_lead.md is injected into every session: the estimate line stays within 200 characters');
+test('the estimate rules are verbatim in lead-rules.md and home/CLAUDE.md, and the old bullet is gone', () => {
+  assert.ok(read('home/lead-rules.md').split('\n').includes(LEAD_ESTIMATE_RULE), 'lead-rules.md estimate line');
+  assert.ok(LEAD_ESTIMATE_RULE.length <= 200, 'lead-rules.md is injected into every session: the estimate line stays within 200 characters');
   const global = read('home/CLAUDE.md');
   assert.ok(global.split('\n').includes(GLOBAL_ESTIMATE_RULE), 'home/CLAUDE.md estimate rule');
   assert.doesNotMatch(global, /end that reply with the new finish estimate/);
   assert.match(read('docs/daily-use.md'), /pastes the `Finish:` block of `node ~\/\.claude\/tools\/estimate\/estimate\.mjs STATUS\.md` as every estimate/);
 });
 
-// Modes differ in cost and speed only: every accuracy rule lives in home/CLAUDE.md or _lead.md, which every mode loads.
+// Every accuracy rule lives in home/CLAUDE.md, home/lead.md or home/lead-rules.md, which every session loads.
 const GATES = ['runner', 'reviewer', 'security-auditor', 'verify-done', 'ui-quality-pass', 'visual-qa', 'ui-coverage'];
-const LESS_ACCURACY = [/thrift/i, /\bskip\b/i, /nice-to-have/i, /fewer (checks|reviews|tests)/i, /\bno (review|verify|tests?)\b/i];
 // Phrases that drop, skip or lessen a gate or check ("skip the reviewer", "no tests", "verify-done is optional").
 // One sentence is checked at a time; a pattern that would also hit an honest sentence is left out (see the fixtures).
 const LOWERS_A_GATE = /\b(skip|omit|drop|without|no|fewer|less|leave out)\b[^.;\n]{0,40}\b(runner|reviewers?|security-auditor|verify-done|ui-quality-pass|visual-qa|ui-coverage|reviews?|verif(y|ication)|tests?|checks?)\b/i;
@@ -101,17 +67,9 @@ const lowersAGate = (sentence) => {
   const text = sentence.replace(NOT_CHECKED_LABEL, '');
   return LOWERS_A_GATE.test(text) || LOWERS_OTHERWISE.some((pattern) => pattern.test(text));
 };
-const SHARED_TEXT_FILES = ['home/modes/_lead.md', ...MODES.map((mode) => `home/modes/${mode}.md`)];
+const SHARED_TEXT_FILES = ['home/lead-rules.md'];
 
-test('every playbook keeps the same gates and none lowers accuracy', () => {
-  for (const mode of MODES) {
-    const playbook = read(`home/modes/${mode}.md`);
-    assert.match(playbook, /same quality gates as every mode/i, `${mode}.md must state the shared gates`);
-    for (const pattern of LESS_ACCURACY) assert.doesNotMatch(playbook, pattern, `${mode}.md lowers accuracy: ${pattern}`);
-  }
-});
-
-test('no sentence of _lead.md or a playbook lowers a gate that home/CLAUDE.md requires', () => {
+test('no sentence of lead-rules.md lowers a gate that home/CLAUDE.md requires', () => {
   const lowering = [
     'Skip the reviewer on small diffs.', 'Do small work without verify-done.', 'Fewer checks in this mode.', 'No tests for quick fixes.',
     'Reviews: only for risky changes.', 'Research: one source is enough.', 'verify-done is optional in this mode.',
@@ -147,9 +105,9 @@ test('accuracy rules live in the shared files', () => {
   const claude = read('home/CLAUDE.md');
   assert.match(read('home/lead.md'), /re-read the cited lines/);
   assert.match(claude, /second independent source/);
-  const lead = read('home/modes/_lead.md');
-  for (const needle of ['`architect`, not Plan', '`opus` judges', 'never on accuracy', 'security-critical decision', 'with all it needs', '`security-auditor` `model: "opus", effort: "max"` for risky changes and the last review before push']) {
-    assert.ok(lead.includes(needle), `_lead.md must mention ${needle}`);
+  const lead = read('home/lead-rules.md');
+  for (const needle of ['`architect`, not Plan', '`opus` judges', 'Never downgrade a pick to save tokens', 'security-critical decision', 'with all it needs', 'with `review` on, `reviewer` and `security-auditor` `model: "opus", effort: "max"` for risky changes (auth, data, money, concurrency, security) and the last review before push']) {
+    assert.ok(lead.includes(needle), `lead-rules.md must mention ${needle}`);
   }
 });
 
@@ -162,19 +120,19 @@ test('review agents report every blocking and should-fix finding, with no cap', 
 });
 
 // Round 6 (owner, 2026-11-17): the form of a job (inline, one agent, a workflow) is decided by the job, stated once in home/CLAUDE.md.
-test('home/lead.md states the inline / agent / workflow rule once; _lead.md and the workflows skill point to it', () => {
+test('home/lead.md states the inline / agent / workflow rule once; lead-rules.md and the workflows skill point to it', () => {
   const claude = read('home/lead.md');
   const heading = '- Inline, agent or workflow: decide by the job';
   assert.equal(claude.split(heading).length, 2, 'stated exactly once');
   for (const tier of ['Inline, no agent:', 'One background agent (Agent tool):', 'Workflow (the `workflows` skill:', 'Quality gates do not change with the form']) {
     assert.ok(claude.includes(tier), `the rule names ${tier}`);
   }
-  assert.match(read('home/modes/_lead.md'), /"Inline, agent or workflow"/, '_lead.md points to the rule');
+  assert.match(read('home/lead-rules.md'), /"Inline, agent or workflow"/, 'lead-rules.md points to the rule');
   assert.match(read('home/skills/workflows/SKILL.md'), /"Inline, agent or workflow"/, 'the workflows skill points to the rule');
 });
 
 test('no setup document tells sessions to run every agent or job as a workflow', () => {
-  const files = ['home/CLAUDE.md', 'home/modes/_lead.md', ...MODES.map((mode) => `home/modes/${mode}.md`), 'docs/daily-use.md', 'docs/modes.md', 'docs/catalog.md', 'home/hooks/README.md', 'home/workflows/README.md',
+  const files = ['home/CLAUDE.md', 'home/lead-rules.md', 'docs/daily-use.md', 'docs/catalog.md', 'home/hooks/README.md', 'home/workflows/README.md',
     'home/skills/workflows/SKILL.md'];
   const everythingIsAWorkflow = /Workflows always|everything that runs (is|must be) a workflow|every agent runs (inside a workflow|in one)|instead of single (sub)?agents|not as single agents|every job that runs agents (goes through|shows in)|(parallelism|sets), workflows and report brevity/i;
   for (const file of files) assert.doesNotMatch(read(file), everythingIsAWorkflow, `${file} still says workflows for everything`);
@@ -203,10 +161,10 @@ test('landing and machine sync always run their workflow, bugfix and git cleanup
     assert.ok(!rule.includes(`(\`${workflow}\`)`), `${workflow} is not in the always-a-workflow line`);
     assert.doesNotMatch(section(skill), /always runs this workflow/i, `${skill} no longer says always`);
   }
-  for (const file of ['docs/daily-use.md', 'docs/modes.md']) {
+  for (const file of ['docs/daily-use.md']) {
     assert.match(read(file), /Landing and machine sync always run their\s+workflow/i, `${file} points at the always-a-workflow tier`);
     assert.doesNotMatch(read(file), /git cleanup and (a )?bugfix( job)? always/i, `${file} no longer sends every bugfix and cleanup to a workflow`);
   }
   assert.doesNotMatch(read('home/CLAUDE.md').split('\n').find((line) => line.includes('One background agent')) ?? '', /one debug hypothesis set\.$/, 'the agent line limits a hypothesis set to inside a running job');
-  assert.match(read('home/modes/_lead.md'), /via the `land` workflow/, '_lead.md lands through the land workflow');
+  assert.match(read('home/lead-rules.md'), /via the `land` workflow/, 'lead-rules.md lands through the land workflow');
 });

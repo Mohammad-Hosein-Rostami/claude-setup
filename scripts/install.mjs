@@ -3,7 +3,7 @@
 //   only find Node and call this file.
 // Usage: node scripts/install.mjs [--update [--to <tag>]] [--uninstall] [--dry-run] [--no-plugins] [--no-tools]
 //          [--project-workflows <repo> [--copy]] [--ps-profile <path>] [--claude-version <x.y.z>]
-//   (no flag) / --update   link home/ into ~/.claude, ccm onto PATH, the claude-as start-up line, settings.json, plugins, tool
+//   (no flag) / --update   link home/ into ~/.claude (and remove the retired mode launcher links), the claude-as start-up line, settings.json, plugins, tool
 //                          dependencies; safe to repeat (a second run changes nothing). --update is the same run, by name.
 //   --update --to <tag>    the same, with the links on a worktree of a phase tag (rollback; scripts/install/pin.mjs); a plain
 //                          --update points them back at this checkout.
@@ -21,17 +21,17 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { InstallError, makeContext, note, parseArgs } from './install/context.mjs';
 import { ensureDir, loadRecord, saveRecord } from './install/record.mjs';
-import { checkPath, linkHomeItems, linkLaunchers, projectWorkflows } from './install/links.mjs';
+import { linkHomeItems, projectWorkflows, removeRetiredLinks } from './install/links.mjs';
 import { addStartupLines } from './install/startup.mjs';
 import { buildSettings, isNewMachine } from './install/settings.mjs';
 import { tagRoot } from './install/pin.mjs';
 import { uninstall } from './install/uninstall.mjs';
-import { addUserPath, requireGitBash } from './install/windows.mjs';
+import { requireGitBash } from './install/windows.mjs';
 import { installClaude } from './install/cli.mjs';
 import * as tools from './install/tools.mjs';
 
 /** The home/ items linked into ~/.claude (doctor.sh checks the same list). */
-export const LINKS = ['CLAUDE.md', 'lead.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'modes', 'workflows', 'statusline.mjs'];
+export const LINKS = ['CLAUDE.md', 'lead.md', 'rules', 'skills', 'agents', 'standards', 'hooks', 'tools', 'project-notes', 'lead-rules.md', 'workflows', 'statusline.mjs'];
 // Tools with npm dependencies: ui-check (odiff-bin, pngjs) and env-names (yaml). scripts/lane-new.sh reads this line.
 export const TOOLS_WITH_DEPS = ['ui-check', 'env-names'];
 
@@ -50,9 +50,7 @@ function install(ctx, record) {
   ctx.root = ctx.to ? tagRoot(ctx, record) : ctx.repo;
   Object.assign(record, { repo: ctx.repo, root: ctx.root, tag: ctx.to ?? null });
   linkHomeItems(ctx, record, LINKS);
-  const pathFolders = linkLaunchers(ctx, record);
-  if (ctx.os === 'windows') for (const folder of pathFolders.slice(1)) addUserPath(ctx, folder);
-  else checkPath(ctx, pathFolders);
+  removeRetiredLinks(ctx, record, LINKS);
   addStartupLines(ctx, record);
   enableGitHooks(ctx);
   if (ctx.project) projectWorkflows(ctx, record);

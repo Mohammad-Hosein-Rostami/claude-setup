@@ -30,16 +30,15 @@ const ACTIONS = ['--list', '--run'];
 
 // Text that tests read but never import: a changed file under the prefix runs these tests (only those that exist).
 const TEXT_FILE_TESTS = [
-  ['home/modes/', ['modes-consistency', 'mode', 'mode-context', 'ccm']],
+  ['home/lead-rules.md', ['modes-consistency', 'mode', 'mode-context', 'agent-budget', 'session-start-size']],
   ['home/CLAUDE.md', ['modes-consistency', 'rules-text', 'mode-context']],
   ['home/rules/', ['modes-consistency', 'rules-text', 'mode']],
   ['home/agents/', ['agent-files', 'agent-model-guard', 'agent-model-guard-briefs', 'agent-model-guard-matrix', 'agent-model-guard-writers', 'project-agents', 'modes-consistency', 'rules-text']],
   ['home/skills/', ['agent-files', 'modes-consistency', 'mode-context', 'skill-router']],
   ['home/workflows/', ['workflow-scripts']],
-  ['docs/modes.md', ['modes-consistency']],
   ['docs/daily-use.md', ['modes-consistency', 'watch-idle-cli']],
 ];
-// Documents no test reads at run time (docs/modes.md and docs/daily-use.md are read, see above): a change here runs nothing.
+// Documents no test reads at run time (docs/daily-use.md is read, see above): a change here runs nothing.
 const DOCUMENT_PREFIXES = ['docs/', 'home/standards/', 'home/project-notes/'];
 
 const posix = (path) => path.split(sep).join('/');
@@ -100,7 +99,7 @@ function reachable(start, references) {
   return seen;
 }
 
-/** Files grouped by their last path part, so a quoted `'ccm'` or `'x.mjs'` finds the file it names. */
+/** Files grouped by their last path part, so a quoted `'launcher'` or `'x.mjs'` finds the file it names. */
 function groupByName(files) {
   const byName = new Map();
   for (const file of files) {

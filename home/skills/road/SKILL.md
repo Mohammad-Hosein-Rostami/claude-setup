@@ -16,8 +16,7 @@ contracts an earlier step landed. The STATUS.md rows hold the state; the tool is
 3. `road.mjs rows <road>`: adds every row of every step (a second run adds 0).
 
 ## Walk
-Run `road.mjs next <road> --budget <n>`: n is your mode's lane budget (normal 2, medium 3, the others 5); after
-phase 6 removes modes, 5. It prints the step to run (`state: build`), that the gate is due (`state: gate`) or
+Run `road.mjs next <road> --budget 5` (the lane budget: at most 5 writers at once, test-writers included). It prints the step to run (`state: build`), that the gate is due (`state: gate`) or
 `done`. Never more than 5 lanes in one run (`build` refuses 6).
 
 Two step forms (the step's `form`):

@@ -1,13 +1,13 @@
-// Purpose: the links of an install: each home/ item into ~/.claude, the ccm launcher onto PATH, and (optional) the workflow
-//   scripts into one project.
-// Exports: linkHomeItems, linkLaunchers, projectWorkflows, removeLink.
+// Purpose: the links of an install: each home/ item into ~/.claude, the removal of links an older install made for the retired
+//   session modes (the launcher and the modes folder), and (optional) the workflow scripts into one project.
+// Exports: linkHomeItems, removeRetiredLinks, projectWorkflows, removeLink.
 // Invariants: a link that already points at the right place is left as it is (a second run changes nothing); a link or copy
 //   the installer made, or an older install's link into this repo, is replaced without a backup; anything else is moved to the
 //   backup folder first. On Windows a folder becomes a junction (no Developer Mode needed); a file link that is not allowed
 //   falls back to a copy and says so.
 import { cpSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmdirSync, rmSync, statSync, symlinkSync, appendFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { InstallError, act, note, samePath, warn } from './context.mjs';
 import { backup, ensureDir, isMade, remember } from './record.mjs';
 
@@ -82,27 +82,34 @@ export function linkHomeItems(ctx, record, names) {
   for (const name of all) linkOne(ctx, record, join(home, name), join(ctx.claudeDir, name), name);
 }
 
-/**
- * The ccm launcher: home/bin/ccm into ~/.local/bin (macOS, Linux and Git Bash); on Windows also ccm.cmd into ~/.claude/bin
- * and the ccm.ps1 it calls into ~/.claude/bin/ps (PowerShell would resolve a ccm.ps1 beside the shim first).
- * @returns {string[]} the folders that must be on PATH
- */
-export function linkLaunchers(ctx, record) {
-  const bin = join(ctx.root, 'home', 'bin');
-  const localBin = join(ctx.home, '.local', 'bin');
-  linkOne(ctx, record, join(bin, 'ccm'), join(localBin, 'ccm'), 'ccm');
-  if (ctx.os !== 'windows') return [localBin];
-  const claudeBin = join(ctx.claudeDir, 'bin');
-  linkOne(ctx, record, join(bin, 'ccm.ps1'), join(claudeBin, 'ps', 'ccm.ps1'), 'ccm.ps1');
-  linkOne(ctx, record, join(bin, 'ccm.cmd'), join(claudeBin, 'ccm.cmd'), 'ccm.cmd');
-  return [localBin, claudeBin];
-}
+/** True when `path` lies inside `folder` (or is it). */
+const isInside = (folder, path) => {
+  const rel = relative(folder, path);
+  return !rel.startsWith('..') && !isAbsolute(rel);
+};
 
-/** Warns for each folder that is not on this process's PATH (Windows: install.ps1 adds them to the user PATH). */
-export function checkPath(ctx, folders) {
-  const entries = (ctx.env.PATH || ctx.env.Path || '').split(delimiter);
-  for (const folder of folders) {
-    if (!entries.some((entry) => entry && samePath(entry, folder))) warn(`${folder} is not on PATH; add it to run ccm`);
+/**
+ * Removes what an older install made that this one no longer makes, on every platform: a ~/.claude link whose home/ item left
+ * `names` (the session modes folder) and anything it put in the launcher folders ~/.local/bin and ~/.claude/bin (the mode launcher
+ * and its Windows twins, retired with the modes: sessions start with `claude --model <m> --effort <e>`). Only links and copies the
+ * install record names go, and they leave the record; nothing else in those folders is looked at.
+ * @param {object} ctx the run context
+ * @param {object} record the install record
+ * @param {string[]} names the home/ items this install links into ~/.claude
+ */
+export function removeRetiredLinks(ctx, record, names) {
+  const launcherFolders = [join(ctx.home, '.local', 'bin'), join(ctx.claudeDir, 'bin')];
+  const kept = new Set([...names, 'commands']);
+  const isRetired = (path) =>
+    launcherFolders.some((folder) => isInside(folder, path)) || (samePath(dirname(path), ctx.claudeDir) && !kept.has(basename(path)));
+  for (const entry of record.made.filter((made) => ['link', 'copy'].includes(made.kind) && isRetired(made.path))) {
+    act(ctx, `remove the retired ${entry.path}`, () => {
+      const stat = lstatOrNull(entry.path);
+      if (stat?.isSymbolicLink()) removeLink(entry.path);
+      else if (stat) rmSync(entry.path, { recursive: true, force: true });
+      record.made = record.made.filter((made) => made !== entry);
+      note(ctx, `removed the retired ${entry.path}`);
+    });
   }
 }
 

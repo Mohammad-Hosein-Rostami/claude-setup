@@ -122,7 +122,7 @@ test('review-tier steps (review-steps.md) Reviews line: waived lane audit after 
 });
 
 test('runner.md names the 600000 timeout for land and installs; P10 and the architect keep their fixes', () => {
-  assert.match(read('home/CLAUDE.md'), /600000 for a test run, a commit \(the\s+hook runs tests\), an install or `git-tidy land`/); // r9-dedupe part 2
+  assert.match(read('home/CLAUDE.md'), /600000 for a test run, a commit \(the\s+hook runs tests when `test` is on\), an install or `git-tidy land`/); // r9-dedupe part 2
   assert.match(read('home/rules/principles.md'), /Enter never acts as a click/);
   assert.doesNotMatch(read('home/rules/principles.md'), /never consent/);
   assert.match(read('home/agents/architect.md'), /ids `review-tier` knows/);
