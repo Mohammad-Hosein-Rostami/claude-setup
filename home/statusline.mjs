@@ -1,7 +1,8 @@
-// Status line (owner decisions RC5, RC6, RC8 of 2026-11-22): 2 rows when calm and at most 4 when busy (2 on a terminal under 12
-// LINES), drawn by tools/board/lib/render.mjs and fitted to COLUMNS - 5 (both read on every run); colour only for a state, no
-// per-agent hue; every per-agent and per-worktree detail is in `/where`. This file only reads and writes; render.mjs holds every
-// rule of what is shown.
+// Status line (spec R18, owner decisions RC14 to RC20 of 2026-11-22): 2 rows when idle (git and session) and at most 6 when busy
+// (alert, job, now, agents, 1 or 2 git rows, session; 4 from 12 LINES, 2 below), drawn by tools/board/lib/render.mjs and fitted to
+// COLUMNS - 5 (both read on every run); colour by kind (branch, bar, time, session values) with yellow, red and magenta kept for
+// needs a look, a problem and needs you; a light palette when the terminal says it is light or CLAUDE_STATUS_THEME=light. Every
+// per-agent and per-worktree detail is in `/where`. This file only reads and writes; render.mjs holds every rule of what is shown.
 // Reads: the status input (stdin JSON), the estimate cache entry of the session's job (tools/estimate/lib/segment-cache.mjs), the
 // session's board file (tools/board/lib/refresh.mjs), its asking marker (hooks/lib/asking-marker.mjs: a question waits 2 minutes
 // (RC3), and the alert row must show at once, not after the board's idle refresh every 60 s) and this account's last-seen limits

@@ -1,8 +1,10 @@
-// Tests for the calm status line (terminal-ui design A; owner decisions RC5, RC6 and RC8 of 2026-11-22): 2 rows when calm and at
-// most 4 when busy, colour only for a state, the bar and time left from live work only, one agents summary row, no stale road; and
-// the lane's F questions (hostile names, a render from files only, old board files, empty and huge input, Windows Terminal and
-// ASCII, a stale road, a failed draw). Rows come from home/tools/board/lib/render.mjs statusRows (pure), `/where` from tree.mjs
-// whereTree, and the road's `live` from job-facts.mjs run in a child with a temp HOME.
+// Tests for the status line's rows on busy and idle sessions (spec R18; owner decisions RC14 to RC18 of 2026-11-22): 6 rows when busy
+// and 2 when idle, colour by kind, the job row for the whole job and the now row for the running rows, one agents summary row, no
+// stale road; and the lane's F questions: F1 NO_COLOR, TERM=dumb, ASCII mode and a Windows console print the same words with no
+// escape code (and no byte above 0x7E in ASCII); F2 an old board or cache file without the R18 fields still draws every row; F3
+// COLUMNS 40 to 120 and LINES 10 to 24 keep every row within COLUMNS - 5 and the rows within the budget 2, 4 or 6; and hostile
+// names, a render from files only, huge input, a stale road, a failed draw. Rows come from home/tools/board/lib/render.mjs
+// statusRows (pure), `/where` from tree.mjs whereTree, and the road's `live` from job-facts.mjs run in a child with a temp HOME.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -20,7 +22,9 @@ const MIN_MS = 60_000;
 const COLUMNS = [80, 100, 120];
 const CUT_MARGIN = 5; // statusline.mjs fits rows to COLUMNS - 5
 const ESC = '\u001b';
-const ALLOWED_SGR = new Set(['0', '1', '2', '31', '33', '35', '36']); // reset, bold, dim, red, yellow, magenta, cyan
+// reset, bold, dim, the reserved red, yellow and magenta, and the 16-colour kinds: branch green, bar cyan, time blue, session white
+const BASIC_SGR = new Set(['0', '1', '2', '31', '33', '35', '32', '36', '34', '37']);
+const RESERVED_SGR = new Set(['31', '33', '35']);
 const TERM_256 = { TERM: 'xterm-256color', COLORTERM: 'truecolor', LANG: 'en_US.UTF-8', LINES: '36' };
 const NO_COLOR_ENV = { ...TERM_256, NO_COLOR: '1' };
 const ASCII_ENV = { ...NO_COLOR_ENV, CLAUDE_STATUS_ASCII: '1' };
@@ -82,56 +86,76 @@ function busyView(env) {
 const rowsAt = (view, env, columns, platform) => statusRows(view(env), lookFor(env, columns, platform));
 const whereAt = (view, columns) => whereTree({ ...view, limits: [], lastSeen: null }, lookFor(view.env, columns));
 
-test('busy with a question: 4 rows at 80, 100 and 120 columns; calm: 2 rows; every row within COLUMNS - 5', () => {
+/** Idle: no job, no agent, main only. */
+const idleView = (env) => viewOf(env, { board: boardOf() });
+
+test('busy with a question: 6 rows at 80, 100 and 120 columns (the lanes row left out); idle: 2 rows; every row within COLUMNS - 5', () => {
   for (const columns of COLUMNS) {
     const busy = rowsAt(busyView, TERM_256, columns);
-    const calm = rowsAt(calmView, TERM_256, columns);
-    assert.equal(busy.length, 4, busy.map(plain).join('\n'));
-    assert.equal(calm.length, 2, calm.map(plain).join('\n'));
-    assert.match(plain(busy[0]), /^\? ANSWER NEEDED · 1 question/);
-    assert.match(plain(busy[2]), /^agents /, 'one agents summary row (RC8)');
-    for (const row of [...busy, ...calm]) assert.ok([...plain(row)].length <= columns - CUT_MARGIN, `${columns}: ${plain(row)}`);
+    const idle = rowsAt(idleView, TERM_256, columns);
+    assert.equal(busy.length, 6, busy.map(plain).join('\n'));
+    assert.equal(idle.length, 2, idle.map(plain).join('\n'));
+    assert.deepEqual(busy.map((row) => plain(row).split(' ')[0]), ['?', 'job', 'now', 'agents', 'git', 'session'], busy.map(plain).join('\n'));
+    assert.deepEqual(idle.map((row) => plain(row).split(' ')[0]), ['git', 'session']);
+    for (const row of [...busy, ...idle]) assert.ok([...plain(row)].length <= columns - CUT_MARGIN, `${columns}: ${plain(row)}`);
   }
 });
 
-test('colour only for a state (RC5): codes within {0,1,2,31,33,35,36}; nothing but dim while nothing needs a look', () => {
+test('colour by kind (RC14): idle prints no yellow, red or magenta; busy shows the question in magenta and the quiet agent in yellow', () => {
   for (const columns of COLUMNS) {
     const busy = sgrCodes(rowsAt(busyView, TERM_256, columns));
-    for (const code of busy) assert.ok(ALLOWED_SGR.has(code), `${columns}: SGR ${code}`);
     assert.ok(busy.has('35') && busy.has('33'), 'the question in magenta, the quiet agent in yellow');
-    assert.deepEqual([...sgrCodes(rowsAt(calmView, TERM_256, columns))].sort(), ['0', '2'], `${columns}: calm is plain and dim`);
+    const idle = sgrCodes(rowsAt(idleView, TERM_256, columns));
+    assert.deepEqual([...idle].filter((code) => RESERVED_SGR.has(code)), [], `${columns}: idle has nothing to look at`);
+    assert.ok(idle.has('38;5;35') && idle.has('38;5;103'), `${columns}: the branch and the session values in their kind colour`);
   }
 });
 
-test('NO_COLOR prints no escape code and every state keeps its word', () => {
-  const rows = COLUMNS.flatMap((columns) => rowsAt(busyView, NO_COLOR_ENV, columns));
-  assert.ok(rows.every((row) => !row.includes(ESC)));
+test('F1: NO_COLOR and TERM=dumb print no escape code and every state keeps its word', () => {
+  for (const env of [NO_COLOR_ENV, { ...TERM_256, TERM: 'dumb' }]) {
+    const rows = COLUMNS.flatMap((columns) => rowsAt(busyView, env, columns));
+    assert.ok(rows.every((row) => !row.includes(ESC)), env.TERM);
+  }
   const wide = rowsAt(busyView, NO_COLOR_ENV, 120).join('\n');
-  for (const word of ['ANSWER NEEDED', 'quiet 6 min', 'over 12 min', 'later']) assert.ok(wide.includes(word), word);
+  for (const word of ['ANSWER NEEDED', 'quiet 6 min', 'over 12 min', '2 of 5 lanes landed']) assert.ok(wide.includes(word), word);
 });
 
-test('RC6: 30 unstarted and 2 started rows, no live road: the time left is the started rows\' expected minutes; /where counts all 32', () => {
+test('RC16: 30 unstarted and 2 started rows, no live road: the job row is the whole job, the now row the 2 started rows; /where counts all 32', () => {
   const unstarted = Array.from({ length: 30 }, (_, index) => ({ id: `o${index}`, expectMin: 40, startedMs: null }));
   const started = [{ id: 's1', expectMin: 40, startedMs: NOW }, { id: 's2', expectMin: 9, startedMs: NOW }];
   const segment = { ...segmentOf({ rows: [...started, ...unstarted] }), numbers: { ...segmentOf().numbers, rowsDone: 0, rowsTotal: 32, leftMin: 1209, rows: [...started, ...unstarted] } };
   const view = viewOf(NO_COLOR_ENV, { segment, board: boardOf() });
-  const job = plain(statusRows(view, lookFor(NO_COLOR_ENV, 120))[0]);
-  assert.match(job, /^ALL +\S+ +0% +49 min left · by 09:49 · 2 rows started$/, job);
+  const [job, now] = statusRows(view, lookFor(NO_COLOR_ENV, 100)).map(plain);
+  assert.equal(job, 'job     ░░░░░░░░ 0/32 rows done · 20 h work left · done by 11:10');
+  assert.equal(now, 'now     2 rows running: s1, s2 · 49 min work left · by 09:49', 'an old cache row without leftMin: its expected minutes less the elapsed ones');
   assert.match(plain(whereAt(view, 120)[0]), /20 h left .* 0\/32 rows$/, '/where: the whole job');
 });
 
-test('a started row past its expected minutes says how far over its plan, in yellow', () => {
-  const segment = segmentOf({ rows: [{ id: 's1', expectMin: 30, startedMs: NOW - 50 * MIN_MS }] });
-  const row = statusRows(viewOf(TERM_256, { segment, board: boardOf() }), lookFor(TERM_256, 120))[0];
-  assert.match(plain(row), /3 min left · by 09:03 · 20 min over plan/, plain(row));
-  assert.ok(row.includes('\u001b[33m20 min over plan'), row);
+test('E3: a started row\'s time left is its own median, and past its size\'s median it is `over usual`, in yellow', () => {
+  const segment = segmentOf({ rows: [{ id: 's1', expectMin: 30, leftMin: 12, startedMs: NOW - 50 * MIN_MS }] });
+  const row = statusRows(viewOf(TERM_256, { segment, board: boardOf() }), lookFor(TERM_256, 100))[1];
+  assert.equal(plain(row), 'now     1 row running: s1 · 12 min work left · by 09:12 · s1 20 min over usual');
+  assert.ok(row.includes('\u001b[33ms1 20 min over usual'), row);
 });
 
-test('the agent counts add up: the summary row and /where give the total as the sum of its parts', () => {
+test('the agents row: running and done counts, `all done ~` with its clock only while no job or now row shows a clock; /where adds up', () => {
   const board = boardOf({ agents: [...['a', 'b', 'c', 'd', 'e'].map((id) => agent(id)), agent('f', { state: 'done', doneMs: NOW - MIN_MS })] });
   const view = viewOf(NO_COLOR_ENV, { board });
-  assert.match(plain(statusRows(view, lookFor(NO_COLOR_ENV, 120))[1]), /^agents +6 · 5 running · 1 done +all by 09:10$/);
+  assert.equal(plain(statusRows(view, lookFor(NO_COLOR_ENV, 100))[0]), 'agents  5 running · 1 done · all done ~09:10');
+  const busy = viewOf(NO_COLOR_ENV, { board, segment: segmentOf({ road: ROAD_FINAL }) });
+  assert.equal(plain(statusRows(busy, lookFor(NO_COLOR_ENV, 100))[2]), 'agents  5 running · 1 done', 'the job and now rows carry the clocks');
   assert.ok(whereAt(view, 120).some((line) => line.includes('6 agents (5 run, 1 done last 10 min)')), whereAt(view, 120).join('\n'));
+});
+
+test('a late job says by how much and why on the job row: yellow within the 85 % margin, red past it; an old entry without lateMin is not late', () => {
+  const late = (lateMin, p85Min) => ({ ...segmentOf({ road: ROAD_FINAL }), numbers: { ...segmentOf().numbers, p85Ms: NOW + p85Min * MIN_MS, lateMin, lateCause: { cause: 'rows-added', ids: ['x', 'y'], count: 2 } } });
+  const jobAt = (segment, columns) => statusRows(viewOf(TERM_256, { segment, board: boardOf() }), lookFor(TERM_256, columns))[0];
+  assert.equal(plain(jobAt(late(25, 165), 100)), 'job     ████░░░░ 11/21 rows done · 2 h 10 work left · done by 11:10, 25 min late: 2 rows added');
+  assert.ok(jobAt(late(25, 165), 100).includes('\u001b[33m, 25 min late'), 'margin 35 min: yellow');
+  assert.ok(jobAt(late(40, 165), 100).includes('\u001b[31m, 40 min late'), 'past the 35 min margin: red');
+  assert.equal(plain(jobAt(late(25, 165), 130)), 'job     ████████░░░░░░░░  11 of 21 rows done · about 2 h 10 of work left · done by 11:10 · late by 25 min (2 rows added)');
+  assert.match(plain(jobAt(late(25, 165), 120)), / · late by 25 min$/, 'a full row drops the cause first, never the late amount');
+  assert.doesNotMatch(plain(jobAt(segmentOf({ road: ROAD_FINAL }), 100)), /late/);
 });
 
 test('F7: a road with live false is not on the line and its rows are not counted; /where shows it idle; an old board road shows', () => {
@@ -139,12 +163,12 @@ test('F7: a road with live false is not on the line and its rows are not counted
   stale.board = { ...stale.board, road: { ...stale.board.road, live: false } };
   stale.segment = segmentOf({ road: ROAD_FINAL, rows: [{ id: 'final.s2.a', expectMin: 40, startedMs: NOW - 9 * 24 * 60 * MIN_MS }] });
   const line = statusRows(stale, lookFor(NO_COLOR_ENV, 120)).join('\n');
-  assert.doesNotMatch(line, /road|final/, line);
-  assert.match(line, /ALL +nothing started · 10 rows open/, 'the stale road\'s old started row is not live work');
+  assert.doesNotMatch(line, /final|step|^job|^now/m, 'no live work: neither the job nor the now row');
   assert.ok(whereAt(stale, 120).some((row) => /^road final · idle · step 2\/4/.test(plain(row))), whereAt(stale, 120).join('\n'));
   const old = busyView(NO_COLOR_ENV);
   delete old.board.road.live; // a board file written before `live` existed
-  assert.match(statusRows(old, lookFor(NO_COLOR_ENV, 120))[1], /road final 2\/4 · 2\/5 lanes$/);
+  assert.equal(statusRows(old, lookFor(NO_COLOR_ENV, 100))[2], 'now     step 2 of 4 · ██░░░░ 2/5 lanes landed · 40 min work left · step done by 09:40', 'the title drops first');
+  assert.equal(plain(statusRows(old, lookFor(NO_COLOR_ENV, 120))[2]), 'now     step 2 of 4 calm palette · ██░░░░ 2 of 5 lanes landed · about 40 min of work left · step done by 09:40');
 });
 
 test('F1: hostile agent and branch names (escape codes, bidi marks, 300 characters) are cleaned and the rows stay within COLUMNS - 5', () => {
@@ -152,7 +176,9 @@ test('F1: hostile agent and branch names (escape codes, bidi marks, 300 characte
   const view = (env) => {
     const busy = busyView(env);
     busy.board.agents = busy.board.agents.map((entry) => ({ ...entry, name: hostile(entry.id) }));
-    busy.board.repo.worktrees = busy.board.repo.worktrees.map((wt) => ({ ...wt, name: hostile(wt.name), op: wt.main ? hostile('rebase') : null }));
+    busy.board.repo.worktrees = busy.board.repo.worktrees.map((wt) => ({ ...wt, name: hostile(wt.name), branch: hostile(wt.name), op: wt.main ? hostile('rebase') : null }));
+    busy.board.repo.active = [{ name: hostile('main'), current: true, agents: [hostile('agent')], op: hostile('merge'), opStep: hostile('1/2') }];
+    busy.board.repos = [{ ...busy.board.repo, name: hostile('repo'), active: [{ name: hostile('other') }] }];
     return busy;
   };
   for (const env of [TERM_256, NO_COLOR_ENV, ASCII_ENV]) {
@@ -167,40 +193,54 @@ test('F1: hostile agent and branch names (escape codes, bidi marks, 300 characte
   }
 });
 
-test('F4: no board, no segment, no rate_limits and current_usage null still give 2 rows with `ctx ?` and `git: loading`', () => {
+test('F4: no board, no segment, no rate_limits and current_usage null still give 2 rows with `context ?` and `git loading`', () => {
   const view = { input: { model: { display_name: 'Opus 5.5' }, context_window: { current_usage: null } }, segment: null, board: null, asking: null, limitsFile: null, account: undefined, env: {}, nowMs: NOW, timeZone: 'UTC' };
-  const rows = statusRows(view, lookFor(NO_COLOR_ENV, 80)).map(plain);
-  assert.equal(rows.length, 2);
-  assert.equal(rows[0], 'ALL no job linked');
-  assert.match(rows[1], /^git: loading +Opus 5\.5 · ctx \? · account \?$/);
+  assert.deepEqual(statusRows(view, lookFor(NO_COLOR_ENV, 80)).map(plain), ['git loading', 'session Opus 5.5 · context ? · acct ?']);
 });
 
-test('F5: 40 agents, 30 worktrees and 300 open rows give one agents row and one git count', () => {
+test('F5: 40 agents, 30 worktrees and 300 open rows give one agents row and one lanes row, every agent and lane named or counted', () => {
   const agents = Array.from({ length: 40 }, (_, index) => agent(`agent-${index}`, index % 10 === 0 ? { state: 'quiet', quietMin: 4 } : {}));
   const lanes = Array.from({ length: 30 }, (_, index) => worktree(`lane-${index}`, { changed: index % 2 }));
   const rows = Array.from({ length: 300 }, (_, index) => ({ id: `r${index}`, expectMin: 9, startedMs: index < 3 ? NOW : null }));
   const view = viewOf(NO_COLOR_ENV, { board: boardOf({ agents, repo: repoOf(lanes) }), segment: segmentOf({ rows }) });
   for (const columns of COLUMNS) {
     const shown = statusRows(view, lookFor(NO_COLOR_ENV, columns)).map(plain);
-    assert.equal(shown.length, 3, shown.join('\n'));
-    assert.match(shown[1], /^agents +40 running · ! agent-0 quiet 4 min/);
-    const named = shown[1].match(/quiet 4 min/g)?.length ?? 0;
-    const more = Number(/\+(\d+) more/.exec(shown[1])?.[1] ?? 0);
-    assert.equal(named + more, 4, `every quiet agent named or counted: ${shown[1]}`);
-    assert.match(shown[2], /^git +main ✓ · 30 lanes( open)? · 15 dirty/);
+    assert.deepEqual(shown.map((row) => row.split(' ')[0]), ['job', 'now', 'agents', 'git', 'lanes', 'session'], shown.join('\n'));
+    assert.match(shown[2], /^agents +40 running · ! agent-0 quiet 4 min/);
+    const named = shown[2].match(/quiet 4 min/g)?.length ?? 0;
+    const more = Number(/\+(\d+) more/.exec(shown[2])?.[1] ?? 0);
+    assert.equal(named + more, 4, `every quiet agent named or counted: ${shown[2]}`);
+    const lanesNamed = shown[4].match(/lane-\d+/g)?.length ?? 0;
+    assert.equal(lanesNamed + Number(/\+(\d+) more$/.exec(shown[4])?.[1] ?? 0), 30, `every lane named or counted: ${shown[4]}`);
   }
 });
 
-test('F6: Windows Terminal (WT_SESSION, no 256-colour TERM) gets only the basic codes; ASCII mode prints no byte above 0x7E', () => {
+test('F1: a Windows console (WT_SESSION, no 256-colour TERM) gets the 16-colour codes only; ASCII mode prints no byte above 0x7E', () => {
   for (const columns of COLUMNS) {
-    for (const code of sgrCodes(rowsAt(busyView, WINDOWS_TERMINAL_ENV, columns, 'win32'))) assert.ok(ALLOWED_SGR.has(code), `SGR ${code}`);
+    for (const code of sgrCodes(rowsAt(busyView, WINDOWS_TERMINAL_ENV, columns, 'win32'))) assert.ok(BASIC_SGR.has(code), `SGR ${code}`);
     for (const row of rowsAt(busyView, ASCII_ENV, columns)) assert.doesNotMatch(row, /[^ -~]/, row);
+    for (const row of rowsAt(busyView, { LINES: '36' }, columns, 'win32')) assert.doesNotMatch(row, /[^ -~]/, `the old console host: ASCII, no escape code: ${row}`);
   }
 });
 
-test('F8: the last row draws with no board (statusline.mjs prints it alone when drawing fails)', () => {
+test('F3: COLUMNS 40 to 120 and LINES 10 to 24 (and none): every row within COLUMNS - 5, never more rows than the budget 2, 4 or 6', () => {
+  const budget = { 10: 2, 15: 4, 24: 6, '': 6 };
+  for (const [lines, rows] of Object.entries(budget)) {
+    for (const columns of [40, ...COLUMNS]) {
+      const env = { ...TERM_256, LINES: lines };
+      const shown = statusRows(busyView(env), lookFor(env, columns));
+      assert.equal(shown.length, rows, `LINES ${lines}: ${shown.map(plain).join(' | ')}`);
+      for (const row of shown) assert.ok([...plain(row)].length <= columns - CUT_MARGIN, `${columns}: ${plain(row)}`);
+      assert.match(plain(shown.at(-1)), /^session /, 'the session row always');
+    }
+  }
+  const short = statusRows(busyView({ ...TERM_256, LINES: '15' }), lookFor(TERM_256, 100)).map((row) => plain(row).split(' ')[0]);
+  assert.deepEqual(short, ['?', 'job', 'git', 'session'], 'kept in order: session, git, alert, job');
+});
+
+test('F8: the session row draws with no board (statusline.mjs prints it alone when drawing fails)', () => {
   const row = plain(sessionRow(viewOf(NO_COLOR_ENV, { board: null }), lookFor(NO_COLOR_ENV, 100)));
-  assert.match(row, /^git: loading +Opus 5\.5 high · ctx 25% · 5h 54% left · 7d 69% left · acct work$/);
+  assert.equal(row, 'session Opus 5.5 high · context 25% · 5h 54% left · 7d 69% left · acct work');
 });
 
 test('F2: the row modules read no file, start nothing and keep no clock of their own (a render is drawn from the files statusline.mjs read)', () => {
@@ -210,13 +250,17 @@ test('F2: the row modules read no file, start nothing and keep no clock of their
   }
 });
 
-test('F3: an old board file (identity hue fields, the old counts, no road.live) draws without an error line', () => {
+test('F2: an old board file (identity hues, no active, trust, stash or check, no road.live) and an old cache entry (no lateMin, no row leftMin) draw every row', () => {
   const old = busyView(TERM_256);
   old.board = { ...old.board, hues: { 'impl-a': 3 }, identity: { items: [] }, git: { branch: 'main', ahead: 0, behind: 0, changed: 0 } };
   delete old.board.road.live;
   const rows = statusRows(old, lookFor(TERM_256, 120));
-  assert.equal(rows.length, 4);
-  assert.ok(rows.every((row) => !row.includes('error')));
+  assert.equal(rows.length, 6);
+  assert.ok(rows.every((row) => plain(row).trim() !== '' && !row.includes('error')), rows.map(plain).join('\n'));
+  const entry = { kind: 'finish', text: 'done by 11:10', highMs: NOW + 130 * MIN_MS, numbers: null, progress: { pct: 51, approx: false, rowsDone: 11, rowsTotal: 21, leftMin: 130, tag: null, road: ROAD_FINAL } };
+  const fromOld = statusRows(viewOf(NO_COLOR_ENV, { segment: entry, board: boardOf({ road: { name: 'final', step: 2, steps: 4 } }) }), lookFor(NO_COLOR_ENV, 100)).map(plain);
+  assert.equal(fromOld[0], 'job     ████░░░░ 11/21 rows done · 2 h 10 work left · done by 11:10', 'the progress counts and the highMs clock');
+  assert.equal(fromOld[1], 'now     step 2 of 4 · ██░░░░ 2/5 rows done · 40 min work left · step done by 09:40', 'no lane facts: the step\'s rows');
 });
 
 /** jobFacts in a child with a temp HOME: STATUS.md rows of road `rd`, the estimate cache at step 1, the session started at sinceMs. */

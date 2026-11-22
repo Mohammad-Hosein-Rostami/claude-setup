@@ -1,23 +1,40 @@
 // The cells every progress surface draws with (display design 4.1): the look of the terminal (glyphs, separators, colour), bars,
 // durations, clocks, and fitting a row of parts to a width. Used by render.mjs (the status line rows) and tree.mjs (`/where`).
 // Exports: lookOf(env, platform, columns) -> look; paint(text, state, look, bold); cleanText(text, look); cutWords(text, max, look);
-// fitParts(parts, look) -> string; barText(shares, cells, look); durationText(minutes); clockOf(ms, nowMs, timeZone); STATE;
-// DONE_SHOWN_MS.
-// Colour (owner decision RC5, 2026-11-22: colour only for state; basic ANSI 16 so the terminal theme maps them on dark and light
-// themes), one meaning each: run cyan (working), warn yellow (needs a look), block red (error, act now), wait magenta (waiting on the
-// owner), dim (SGR 2, secondary text); `strong` is bold with no colour (the alert's label). `done` and `road` are kept as states
-// for old callers and paint nothing: a healthy value is in the default colour. A part's `bold` makes it bold. No per-item colour
-// (RC5 removed the identity hues of spec-tui-3). A part may carry `spans` (texts in order whose join is its text, each with its
-// own state).
+// fitParts(parts, look) -> string; partsWidth(parts, look); barText(shares, cells, look); durationText(minutes);
+// clockOf(ms, nowMs, timeZone); STATE; DONE_SHOWN_MS.
+// Colour by kind (owner decision RC14, 2026-11-22: "dont over do"; spec R18 colour table): four kinds have their own colour, each
+// meaning that kind only: `branch` (a git branch name), `bar` (a progress bar and its count), `time` (work left, finish and reset
+// clocks), `session` (model, effort, context, limit values). Three states are reserved and basic ANSI so the terminal theme maps
+// them: `warn` yellow (needs a look), `block` red (a problem), `wait` magenta (needs you). `dim` (SGR 2) is for labels, ages and
+// the ` · ` between parts; `strong` is bold with no colour (a repository name). `run` (working, `/where` callers only) takes the
+// bar's colour; `ok`, `done` and `road` paint nothing: counts and words are in the default colour. A part's `bold` makes it bold.
+// A part may carry `spans` (texts in order whose join is its text, each with its own state).
+// Palette (lookOf): `none` without colour; 256 colours (`dark`, or `light` when CLAUDE_STATUS_THEME=light or COLORFGBG's last
+// field is 7 or 15; CLAUDE_STATUS_THEME=dark forces dark) when TERM has `256color` or COLORTERM is `truecolor` or `24bit`; else
+// `16`, the basic codes of the same kinds (owner decision RC20).
 // Look: ASCII when CLAUDE_STATUS_ASCII=1, TERM=dumb, Windows without WT_SESSION and TERM_PROGRAM (the old console host), or a locale
-// that is set and not UTF-8; colour off when NO_COLOR is set to any non-empty value (no-color.org) or TERM=dumb.
-// Invariants: pure (no I/O); colour only for a state and every state also has a word in the text (colour is never the only signal); in ASCII mode no
-// byte above 0x7E is ever returned, since every outside text goes through cleanText; a fitted row is never wider than `columns`.
+// that is set and not UTF-8; colour off when NO_COLOR is set to any non-empty value (no-color.org), TERM=dumb or on that old console.
+// Invariants: pure (no I/O); every state also has a word in the text (colour is never the only signal); in ASCII mode no byte
+// above 0x7E is ever returned, since every outside text goes through cleanText; a fitted row is never wider than `columns`.
 import { clockText, dayText, localDate } from '../../estimate/lib/local-clock.mjs';
 
-/** The states a part may carry; ok, done and road have no colour (RC5: a healthy value and a label are in the default colour). */
-export const STATE = { ok: 'ok', done: 'done', run: 'run', warn: 'warn', block: 'block', wait: 'wait', dim: 'dim', road: 'road', strong: 'strong' };
-const COLOR_CODE = { run: '\u001b[36m', warn: '\u001b[33m', block: '\u001b[31m', wait: '\u001b[35m', dim: '\u001b[2m', strong: '\u001b[1m' };
+/** The kinds and states a part may carry: four kinds with their own colour, three reserved states, dim and strong, and the plain ones. */
+export const STATE = {
+  ok: 'ok', done: 'done', run: 'run', warn: 'warn', block: 'block', wait: 'wait', dim: 'dim', road: 'road', strong: 'strong',
+  branch: 'branch', bar: 'bar', time: 'time', session: 'session',
+};
+/** The SGR codes of the four kinds per palette (spec R18 colour table: contrast 4.36 to 6.45 on #1e1e1e and #fff). */
+const KIND_CODES = {
+  dark: { branch: '38;5;35', bar: '38;5;37', time: '38;5;33', session: '38;5;103' },
+  light: { branch: '38;5;28', bar: '38;5;30', time: '38;5;25', session: '38;5;60' },
+  16: { branch: '32', bar: '36', time: '34', session: '37' },
+};
+/** The reserved states, the same on every palette: the terminal theme maps them on dark and light backgrounds. */
+const RESERVED_CODES = { warn: '33', block: '31', wait: '35', dim: '2', strong: '1' };
+const PALETTE = { dark: 'dark', light: 'light', basic: '16', none: 'none' };
+const TRUE_COLOR = /^(truecolor|24bit)$/i;
+const LIGHT_BACKGROUNDS = new Set(['7', '15']); // COLORFGBG's background field of a light theme (rxvt, Konsole, iTerm2)
 /** A finished agent keeps its row this long. */
 export const DONE_SHOWN_MS = 30_000;
 const BOLD = '\u001b[1m';
@@ -41,32 +58,51 @@ const WORD_BOUNDARY = /[\s\-/_]/;
 const UTF8_LOCALE = /utf-?8/i;
 const MIN_PER_HOUR = 60;
 const WHOLE_HOURS_FROM_MIN = 10 * MIN_PER_HOUR;
-const HOURS_FROM_MIN = 2 * MIN_PER_HOUR;
+const HOURS_FROM_MIN = MIN_PER_HOUR; // spec R18 mockups: `1 h 30 work left`, `1 h 10 late`, not `90 min`
 const MS_PER_MIN = 60_000;
+
+/** True on the old Windows console host (no Windows Terminal, no other terminal program): plain ASCII, no escape codes (R18 F1). */
+const oldWindowsConsole = (env, platform) => platform === 'win32' && !env.WT_SESSION && !env.TERM_PROGRAM;
 
 /** True when the terminal cannot be trusted with the Unicode cells (design 4.1). */
 function wantsAscii(env, platform) {
   if (env.CLAUDE_STATUS_ASCII === '1' || env.TERM === 'dumb') return true;
-  if (platform === 'win32' && !env.WT_SESSION && !env.TERM_PROGRAM) return true;
+  if (oldWindowsConsole(env, platform)) return true;
   const locale = env.LC_ALL || env.LC_CTYPE || env.LANG;
   return Boolean(locale) && !UTF8_LOCALE.test(locale);
+}
+
+/** The palette of a colour terminal: 256 colours (dark or light background) when it says so, else the basic 16. */
+function paletteOf(env) {
+  const has256 = String(env.TERM ?? '').includes('256color') || TRUE_COLOR.test(String(env.COLORTERM ?? ''));
+  if (!has256) return PALETTE.basic;
+  const theme = String(env.CLAUDE_STATUS_THEME ?? '').toLowerCase();
+  if (theme === PALETTE.light || theme === PALETTE.dark) return theme;
+  return LIGHT_BACKGROUNDS.has(String(env.COLORFGBG ?? '').split(';').at(-1)) ? PALETTE.light : PALETTE.dark;
 }
 
 /**
  * @param {Record<string, string | undefined>} env the process environment
  * @param {string} platform process.platform
  * @param {number} columns the width rows are fitted to
- * @returns {{ columns: number, ascii: boolean, color: boolean, glyph: typeof UNICODE }} the look of every row drawn for this
- *   terminal
+ * @returns {{ columns: number, ascii: boolean, color: boolean, glyph: typeof UNICODE, palette: 'dark' | 'light' | '16' | 'none' }}
+ *   the look of every row drawn for this terminal
  */
 export function lookOf(env, platform, columns) {
   const ascii = wantsAscii(env, platform);
-  const color = !env.NO_COLOR && env.TERM !== 'dumb';
-  return { columns, ascii, color, glyph: ascii ? ASCII : UNICODE };
+  const color = !env.NO_COLOR && env.TERM !== 'dumb' && !oldWindowsConsole(env, platform);
+  return { columns, ascii, color, glyph: ascii ? ASCII : UNICODE, palette: color ? paletteOf(env) : PALETTE.none };
+}
+
+/** The SGR code of a state on this terminal's palette ('16' for a look made without one); '' for a plain state or no colour. */
+function sgrOf(state, look) {
+  if (!look.color) return '';
+  const kinds = KIND_CODES[look.palette] ?? KIND_CODES[PALETTE.basic];
+  return RESERVED_CODES[state] ?? kinds[state === STATE.run ? STATE.bar : state] ?? '';
 }
 
 /** The escape code of a state on this terminal; '' for ok, an unknown state, or no colour. */
-const codeOf = (state, look) => (look.color ? COLOR_CODE[state] ?? '' : '');
+const codeOf = (state, look) => { const sgr = sgrOf(state, look); return sgr ? `\u001b[${sgr}m` : ''; };
 
 /** @returns {string} the text in the colour of its state, bold when asked (no codes without colour, for ok, or an unknown state) */
 export function paint(text, state, look, bold = false) {
@@ -112,6 +148,9 @@ const widthOf = (text) => [...text].length;
 /** The text before a part: ` │ ` for `bar`, the part's own `join` (e.g. one space), else ` · `. */
 const sepOf = (part, look) => (part.bar ? look.glyph.bar : part.join ?? look.glyph.sep);
 
+/** The state of the text before a part: dim for the ` · ` and ` │ ` marks (spec R18: separators are secondary), plain for a `join`. */
+const sepState = (sep, look) => (sep === look.glyph.sep || sep === look.glyph.bar ? STATE.dim : STATE.ok);
+
 /** The first `keep` characters of a part's spans (the separator before it first), each in its own state. */
 function paintSpansCut(spans, keep, look, bold) {
   let left = keep;
@@ -131,13 +170,13 @@ function joined(parts, look) {
     const piece = `${sep}${part.text}`;
     const room = look.columns - used;
     if (widthOf(piece) <= room) {
-      out += `${sep}${paintPart(part, look)}`;
+      out += `${paint(sep, sepState(sep, look), look)}${paintPart(part, look)}`;
       used += widthOf(piece);
       continue;
     }
     const keep = Math.max(0, room - widthOf(look.glyph.cut));
     if (Array.isArray(part.spans) && room >= widthOf(look.glyph.cut)) {
-      return `${out}${paintSpansCut([{ text: sep }, ...part.spans], keep, look, part.bold)}${look.glyph.cut}`;
+      return `${out}${paintSpansCut([{ text: sep, state: sepState(sep, look) }, ...part.spans], keep, look, part.bold)}${look.glyph.cut}`;
     }
     return `${out}${paint(`${[...piece].slice(0, keep).join('')}${look.glyph.cut}`.slice(0, Math.max(0, room)), part.state, look, part.bold)}`;
   }
@@ -153,6 +192,13 @@ const shownWidth = (text) => widthOf(text.replace(ESCAPE_CODES, ''));
 
 /** The width of parts joined in order (the first one has no separator before it). */
 const joinedWidth = (list, look) => list.reduce((sum, part, index) => sum + widthOf(part.text) + (index === 0 ? 0 : widthOf(sepOf(part, look))), 0);
+
+/**
+ * @param {{ text: string, bar?: boolean, join?: string }[]} parts the parts of a row, all shown, in order
+ * @param {ReturnType<typeof lookOf>} look the terminal (its separators)
+ * @returns {number} the visible width of the parts joined (the first one has no separator before it)
+ */
+export const partsWidth = (parts, look) => joinedWidth(parts.filter((part) => part.text !== ''), look);
 
 /** The width of a row: its left parts, and its right block after RIGHT_GAP when it has one. */
 function rowWidth(list, look) {
@@ -209,7 +255,7 @@ export function barText({ done, over = 0, now = 0 }, cells, look) {
   return glyph.done.repeat(full - overCells) + glyph.over.repeat(overCells) + glyph.now.repeat(nowCells) + glyph.left.repeat(cells - full - nowCells);
 }
 
-/** @returns {string} `40 min` below 2 h, `2 h 05` below 10 h, then `14 h` (design 4.1) */
+/** @returns {string} `40 min` below 1 h, `2 h 05` below 10 h, then `14 h` (design 4.1, spec R18) */
 export function durationText(minutes) {
   const min = Math.max(0, Math.round(minutes));
   if (min < HOURS_FROM_MIN) return `${min} min`;

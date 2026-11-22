@@ -1,8 +1,9 @@
-// Tests that pin the rows' cuts and colours (C11-1 of the delta-1 review, then RC5 and RC8 of 2026-11-22): the agent and git rows
-// `/where` draws (name column, branch cut, the one-row git form) with no colour for an agent or a branch, the status line's dim
-// labels, ASCII mode, spans, the render time, and `/where` as plain text whatever the terminal: from whereTree (pure) and from
-// home/tools/board/board.mjs under a temp HOME (F1 a 256-colour TERM, F3 a left-over hue file, F4 no board, F5 a hostile branch,
-// F6 a Windows worktree path).
+// Tests that pin the rows' cuts and colours (C11-1 of the delta-1 review, RC8, then R18's RC14 and RC18 of 2026-11-22): every state
+// of the approved mockups (final-round/statusline/mockups.html) gives the mockup's text at 80, 100 and 120 columns; the status
+// line's kind colours (branch, bar, time, session) on the dark, light and 16-colour palettes; the agent and git rows `/where` draws
+// (name column, branch cut, the one-row git form) with no colour for an agent or a branch, ASCII mode, spans, the render time, and
+// `/where` as plain text whatever the terminal: from whereTree (pure) and from home/tools/board/board.mjs under a temp HOME (F1 a
+// 256-colour TERM, F3 a left-over hue file, F4 no board, F5 a hostile branch, F6 a Windows worktree path).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -16,7 +17,8 @@ import { repoRows } from '../home/tools/board/lib/git-rows.mjs';
 import { sessionRow, statusRows } from '../home/tools/board/lib/render.mjs';
 import { roadRow } from '../home/tools/board/lib/stat-rows.mjs';
 import { whereTree } from '../home/tools/board/lib/tree.mjs';
-import { lookFor, NO_COLOR_ENV, NOW, placedWriterBoard, screenshotBoard, TERM_256, viewOf } from './statusline-board-fixture.mjs';
+import { lookOf } from '../home/tools/board/lib/cells.mjs';
+import { lookFor, mockupStates, MOCKUP_HOME, NO_COLOR_ENV, NOW, placedWriterBoard, screenshotBoard, TERM_256, viewOf } from './statusline-board-fixture.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const BOARD_CLI = fileURLToPath(new URL('../home/tools/board/board.mjs', import.meta.url));
@@ -58,23 +60,24 @@ test('a worktree row cuts its branch (when it differs from the folder) at a word
   const row = repoRows(board, Infinity, ctxOf(board), lookFor(TERM_256, 200)).find((entry) => plain(entry).includes(' remove-modes'));
   const shown = /remove-modes · (feature[^·]*…) /.exec(plain(row))?.[1];
   assertCutAtWord(shown, LONG_BRANCH, 32);
-  assert.ok(row.startsWith(`⎇ remove-modes · ${shown} `), `no colour code on the name or the branch: ${JSON.stringify(row)}`);
+  const sep = paint(' · ', STATE.dim, lookFor(TERM_256, 200)); // R18: the separators are dim
+  assert.ok(row.startsWith(`⎇ remove-modes${sep}${shown}${sep}`), `no colour code on the name or the branch: ${JSON.stringify(row)}`);
 });
 
 test('the one-row git form names each worktree in the default colour, with no marker', () => {
   const board = placedWriterBoard();
   const [row] = repoRows(board, 1, ctxOf(board), lookFor(TERM_256, 200));
   for (const name of ['remove-modes', 'road-gate-landed-row', 'sync-remote-path']) {
-    assert.match(row, new RegExp(`[│·] ${name} `), `${name}: plain, right after its separator`);
+    assert.match(row, new RegExp(`[│·] \u001b\\[0m${name} `), `${name}: plain, right after its dim separator`);
   }
   assert.doesNotMatch(plain(row), /[●◆▲] (remove|road|sync)/);
 });
 
-test('the last row\'s git part (one summary, RC8) cuts a long main branch at a word at 24 characters', () => {
+test('the git row cuts a long branch at a word at 24 characters, its repository name kept', () => {
   const board = { ...screenshotBoard(), agents: [] };
   board.repo = { ...board.repo, worktrees: board.repo.worktrees.map((wt) => (wt.main ? { ...wt, name: LONG_BRANCH, branch: LONG_BRANCH } : wt)) };
-  const row = plain(sessionRow(viewOf(board, NOW, NO_COLOR_ENV), lookFor(NO_COLOR_ENV, 200)));
-  assertCutAtWord(/^git +(feature\S*…)/.exec(row)?.[1], LONG_BRANCH, 24);
+  const row = rowsOf(board, NO_COLOR_ENV, 200).map(plain).find((entry) => entry.startsWith('git '));
+  assertCutAtWord(/^git +claude-setup {2}(feature\S*…)/.exec(row)?.[1], LONG_BRANCH, 24);
 });
 
 test('`/where` is plain text on a 256-colour terminal (RC8), names each placed agent\'s lane, and cuts its foot line\'s branch at a word', () => {
@@ -88,13 +91,13 @@ test('`/where` is plain text on a 256-colour terminal (RC8), names each placed a
   assertCutAtWord(/git (feature[^,]*…),/.exec(foot)?.[1], LONG_BRANCH, 32);
 });
 
-test('the status line: dim labels, healthy values in the default colour', () => {
+test('the status line: dim labels, counts in the default colour, the repository bold, the branch and session values in their kind colour', () => {
   const rows = rowsOf(screenshotBoard(), TERM_256, 160);
-  assert.ok(rows.some((row) => row.startsWith('\u001b[2mALL    \u001b[0m')), 'job row: a dim ALL label column');
-  assert.ok(rows.some((row) => row.startsWith('\u001b[2magents \u001b[0m4 running')), 'agents row: a dim label, the count plain');
-  assert.ok(rows.at(-1).startsWith('\u001b[2mgit    \u001b[0mmain ✓'), 'last row: a dim git label');
-  assert.ok(rows.at(-1).includes('\u001b[2mctx\u001b[0m 25%'), 'session block: a dim ctx label, a healthy value in the default colour');
-  assert.ok(rows.at(-1).includes('\u001b[2macct\u001b[0m work'), 'session block: a dim acct label');
+  assert.ok(rows.some((row) => row.startsWith('\u001b[2magents  \u001b[0m4 running')), 'agents row: a dim label, the count plain');
+  assert.ok(rows.some((row) => row.startsWith('\u001b[2mgit     \u001b[0m\u001b[1mclaude-setup\u001b[0m  \u001b[38;5;35mmain\u001b[0m')), 'git row: dim label, bold repository, green branch');
+  assert.ok(rows.at(-1).startsWith('\u001b[2msession \u001b[0m\u001b[38;5;103mOpus 5.5 high\u001b[0m'), 'session row: a dim label, the model in the session colour');
+  assert.ok(rows.at(-1).includes('\u001b[2mcontext\u001b[0m\u001b[38;5;103m 25%'), 'a dim context label, a calm value in the session colour');
+  assert.ok(rows.at(-1).includes('\u001b[2macct\u001b[0m\u001b[38;5;103m work'), 'a dim acct label');
 });
 
 test('ASCII mode prints no byte above 0x7E, on the status line and in `/where`', () => {
@@ -105,11 +108,11 @@ test('ASCII mode prints no byte above 0x7E, on the status line and in `/where`',
   }
 });
 
-test('the road label has no colour (RC5: colour only for a state) and the active step is cyan', () => {
+test('the road label has no colour and the active step is in the bar colour (`run` is progress, R18)', () => {
   const clock = { nowMs: NOW, timeZone: 'UTC' };
   const look = lookFor(TERM_256, 160);
   const road = roadRow({ name: 'p9', step: 1, steps: 3 }, null, clock, look);
-  assert.ok(road.startsWith(`road p9 · ${paint('step 1/3', STATE.run, look)}`), road);
+  assert.ok(road.startsWith(`road p9${paint(' · ', STATE.dim, look)}\u001b[38;5;37mstep 1/3`), road);
 });
 
 test('a part with spans keeps bold on each span and when cut, and is cut with no span room only as plain text', () => {
@@ -183,4 +186,86 @@ test('F5 F6: a branch named `\\u001b[31mmain` prints cleaned, not coloured; a Wi
   const shown = /⎇ lane-x · (windows\/[^·]*…) /.exec(run.stdout)?.[1];
   assertCutAtWord(shown, `windows/${LONG_BRANCH}`, 32);
   assert.equal(run.stdout.includes('C:\\'), false, 'the row names the worktree, not its path');
+});
+
+/** The rows of a mockup state on a terminal with this environment, `columns` wide. */
+const mockupRows = (state, env, columns) => {
+  const full = { ...TERM_256, HOME: MOCKUP_HOME, ...state.env, ...env };
+  return statusRows({ ...state.view, env: full }, lookOf(full, 'darwin', columns - 5));
+};
+
+test('RC18: every mockup state gives the mockup\'s exact text at each width it shows, and fits COLUMNS - 5 at 80, 100 and 120', () => {
+  let compared = 0;
+  for (const state of mockupStates()) {
+    for (const columns of [80, 100, 120]) {
+      const rows = mockupRows(state, {}, columns).map(plain);
+      if (state.expected[columns]) {
+        assert.deepEqual(rows, state.expected[columns], `${state.name} at ${columns}`);
+        compared += 1;
+      }
+      for (const row of rows) assert.ok([...row].length <= columns - 5, `${state.name} ${columns}: ${row}`);
+    }
+  }
+  assert.equal(compared, 13, 'every mockup copy (11 at 100 columns, one at 80, one at 120) is compared');
+});
+
+/** Each coloured text of a row with its SGR code (bold dropped): [code, text]. */
+function colouredTexts(row) {
+  const found = [];
+  for (const match of row.matchAll(/\u001b\[([0-9;]+)m((?:\u001b\[[0-9;]+m)*)([^\u001b]*)/g)) {
+    const code = [match[1], ...[...match[2].matchAll(/\u001b\[([0-9;]+)m/g)].map((inner) => inner[1])].filter((sgr) => sgr !== '1' && sgr !== '0').at(-1);
+    if (code !== undefined && match[3] !== '') found.push([code, match[3]]);
+  }
+  return found;
+}
+
+// P1: each kind's colour is on that kind of text only (branch names, bars and their counts, durations and clocks, session values).
+const KIND_TEXT = {
+  branch: /^(main|r1[78]-[a-z]+|feat\/auth-i18n)$/,
+  bar: /^([█░]+|\d+(\/| of )\d+ (rows done|lanes landed|lanes))$/,
+  time: /^(\d+ min|\d+ h \d\d|\d\d:\d\d)$/,
+  session: /^(Opus 5\.5 high| \d+%| \d+% left| mine)$/,
+};
+const PALETTE_CODES = {
+  dark: { branch: '38;5;35', bar: '38;5;37', time: '38;5;33', session: '38;5;103' },
+  light: { branch: '38;5;28', bar: '38;5;30', time: '38;5;25', session: '38;5;60' },
+  16: { branch: '32', bar: '36', time: '34', session: '37' },
+};
+const PALETTE_ENV = { dark: {}, light: { CLAUDE_STATUS_THEME: '', COLORFGBG: '0;15' }, 16: { TERM: 'xterm', COLORTERM: '' } };
+
+test('P1 RC14 RC20: one colour per kind on the dark, light (COLORFGBG) and 16-colour palettes; yellow, red, magenta and dim only as reserved', () => {
+  for (const [palette, codes] of Object.entries(PALETTE_CODES)) {
+    const kindOf = new Map(Object.entries(codes).map(([kind, code]) => [code, kind]));
+    const seen = new Set();
+    for (const state of mockupStates().filter((entry) => !entry.env.CLAUDE_STATUS_THEME)) {
+      for (const row of mockupRows(state, PALETTE_ENV[palette], 100)) {
+        for (const [code, text] of colouredTexts(row)) {
+          const kind = kindOf.get(code);
+          if (kind === undefined) {
+            assert.ok(['2', '31', '33', '35'].includes(code), `${palette} ${state.name}: SGR ${code} on ${JSON.stringify(text)}`);
+            continue;
+          }
+          assert.match(text, KIND_TEXT[kind], `${palette} ${state.name}: ${kind} colour on ${JSON.stringify(text)}`);
+          seen.add(kind);
+        }
+      }
+    }
+    assert.deepEqual([...seen].sort(), Object.keys(codes).sort(), `${palette}: every kind is drawn`);
+  }
+  const light = mockupStates().find((entry) => entry.name === 'job-running-light');
+  assert.ok(mockupRows(light, {}, 100).join('').includes('\u001b[38;5;28mmain'), 'CLAUDE_STATUS_THEME=light gives the light palette');
+});
+
+test('the reserved states: late yellow, past the 85 % margin red, a failed check red, to pull and needs rebase yellow, the question magenta', () => {
+  const byName = Object.fromEntries(mockupStates().map((state) => [state.name, state]));
+  const has = (name, text) => assert.ok(mockupRows(byName[name], {}, 100).join('\n').includes(text), `${name}: ${JSON.stringify(text)}`);
+  has('job-late', '\u001b[33m, 25 min late\u001b[0m\u001b[33m: 3 rows added');
+  has('past-p85', '\u001b[31m, 1 h 10 late\u001b[0m\u001b[31m: R18.git slow');
+  has('past-p85', '\u001b[31mcheck failed: tests');
+  has('job-late', '\u001b[33m↓1 to pull');
+  has('idle-lanes', '\u001b[33m ↓5 needs rebase');
+  has('several-repos', '\u001b[33mrebase 3/7');
+  has('question', '\u001b[1m\u001b[35m? ANSWER NEEDED');
+  const idleReserved = mockupRows(byName['idle-in-repo'], {}, 100).flatMap(colouredTexts).filter(([code]) => ['31', '33', '35'].includes(code));
+  assert.deepEqual(idleReserved, [['33', ', empty ~22:32']], 'idle: the only reserved colour is the 5 h pace');
 });

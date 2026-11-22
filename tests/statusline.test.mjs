@@ -1,4 +1,4 @@
-// Tests for home/statusline.mjs: the model name leads the session block of the last row, after the git part (node:test, no dependencies).
+// Tests for home/statusline.mjs: the model name leads the session row, the last row, after its label (node:test, no dependencies).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -13,8 +13,8 @@ async function render(model) {
   return spawnSync(process.execPath, [STATUSLINE], { input, env: { ...process.env, HOME: home, USERPROFILE: home, NO_COLOR: '1' }, encoding: 'utf8' }).stdout;
 }
 
-// The last row is `git: loading` (no board without a session) and then, right-aligned, the session block led by the model's name.
-const LEAD = (name) => new RegExp(`^git: loading +${name} · `, 'm');
+// Without a session there is no board: `git     loading`, then the session row led by its label and the model's name (spec R18).
+const LEAD = (name) => new RegExp(`^git +loading\nsession +${name} · `, 'm');
 
 test('the session block leads with the model\'s own name and no guessed tier label (direction B: `Opus 5.5 high`)', async () => {
   assert.match(await render({ id: 'claude-fable-5-2', display_name: 'Fable 5.2' }), LEAD('Fable 5\\.2'));

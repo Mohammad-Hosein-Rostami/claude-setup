@@ -1,42 +1,48 @@
-// The job row of the status line (owner decision RC6, 2026-11-22: the bar and the time left count live work only): the live road's
-// current step, else the started rows, with the whole backlog left to `/where`.
-//   ALL    ███░░░░░░░  40 min left · by 11:10 · +1h10 later                       road final 2/4 · 2/5 lanes   (a live road)
-//   ALL    ██░░░░░░░░  18%  1 h 26 left · by 11:10 · 2 rows started                                          (started rows)
-//   ALL    nothing started · 30 rows open                                                                     (no live work)
-// Exports: jobView(segment) -> view | null; liveWork(view, numbers, facts, nowMs) -> live | null; workRow({ segment, facts, nowMs,
-// timeZone, trend, road }, look) -> string; WIDE_COLUMNS.
+// The job and now rows of the status line (spec R18, owner decisions RC16 and RC18 of 2026-11-22: one row for the whole job, one
+// for the current step or the running rows; every number says what it is for), at 100 columns (95 usable):
+//   job     ████░░░░ 6/10 rows done · 2 h 10 work left · done by 21:40, 25 min late: 3 rows added
+//   now     step 2 of 4 git rows · ██░░░░ 1/3 lanes landed · 40 min work left · step done by 19:55      (a live road)
+//   now     2 rows running · 25 min work left · by 20:05 · R18.git 25 min over usual                      (no live road)
+// From 115 usable columns the long words (`6 of 10 rows done · about 2 h 10 of work left · done by 21:40 · late by 25 min (3 rows
+// added)`), below 90 the short ones (`2 h 10 left`, `step 2/4`, `1/3 lanes`, `step by`) and no label column.
+// Exports: jobView(segment) -> view | null; jobRow(view, look) -> string | null; nowRow(view, look) -> string | null;
+// labelled(label, part, look); WIDE_COLUMNS, LABEL_FROM_COLUMNS, LABEL_COLUMNS.
 // Sources (all checked here, never trusted: they are printed): the estimate cache's shown entry (segment-cache.mjs estimateSegment:
-// kind, text, highMs, progress with its numbers-only `road`, numbers with the open rows' expected minutes and starts) and the
-// board's road facts (job-facts.mjs: `live` false when no row of the current step started or finished this session).
-// Rules: a live road gives the step's rows done of all, its time left and clocks (no percent: a row count is not work done, audit
-// case 8); else the started open rows (a hidden road's rows left out) give the share of their expected minutes earned (elapsed, at
-// most RUNNING_CREDIT of each, the estimate's progress.mjs rule), the minutes left and `N min over plan` (yellow) past a row's
-// expected minutes; else `nothing started` and the open rows as a dim count. A refusal, an error, a hand-over, a long job and all
-// rows done keep their words (an error in red). The bar is in the default colour (RC5: colour only for a state); the `ALL` label
-// and the clocks are dim; the finish clock's move (stat-rows.mjs trendPart) is yellow when later. No STATUS.md linked: `no job linked`.
-// Invariants: pure (no I/O); every clock in the one zone given (case 12); the row fits look.columns (cells.mjs fitParts).
-import { barText, clockOf, cleanText, durationText, fitParts, STATE } from './cells.mjs';
+// kind, text, highMs, progress with its numbers-only `road`, numbers: rowsDone, rowsTotal, leftMin, finishMs, p85Ms, lateMin,
+// lateCause and the open rows with expectMin, leftMin and startedMs) and the board's road facts (job-facts.mjs: title, lanes landed
+// of all, `live` false when no row of the current step started or finished this session).
+// Rules (spec R18 "Estimate semantics"): the job row shows only with live work (a started row or a live road), an estimate error or
+// a refusal; `nothing started` and the open rows are `/where`'s. Its bar is the job's rows done of all, its time the median work
+// left on the open rows (not clock time), its clock the committed finish. `late` only from numbers.lateMin (10 min or more over
+// the first budget) with the latest later cause; red once the overrun is past the job's 85 % margin (the minutes between the
+// median finish and the 85 % one), else yellow. The now row is the live road's current step (its lanes landed of all, else its
+// rows, its work left and clock), else the started rows (each row's own median minutes left, E3; a row past its size's median is
+// `over usual`, yellow). A road whose facts say `live: false` is hidden and its rows are not counted; an old board without `live`
+// counts as live. Old cache entries without the R18 fields still draw (finish from highMs, a row's left from its expected minutes).
+// Colour (cells.mjs, RC14): bars and their counts `bar`, durations and clocks `time`, labels and separators dim, words default.
+// Invariants: pure (no I/O); every clock in the one zone given (case 12); every row fits look.columns (cells.mjs fitParts).
+import { barText, clockOf, cleanText, cutWords, durationText, fitParts, STATE } from './cells.mjs';
 import { ROAD_ROW } from '../../estimate/lib/road-steps.mjs';
 
-/** From this usable width the rows take their long form: a 120-column terminal gives 115 (COLUMNS - 5, research-tui 1.1). */
+/** From this usable width the rows take their long words: a 120-column terminal gives 115 (COLUMNS - 5, research-tui 1.1). */
 export const WIDE_COLUMNS = 115;
-const WIDE_CELLS = 16;
-const NARROW_CELLS = 10;
-const TINY_COLUMNS = 60;
-const TINY_CELLS = 6;
-const PERCENT = 100;
+/** From this usable width every row leads with a LABEL_COLUMNS-wide dim label (100 columns give 95); below it the label and a blank. */
+export const LABEL_FROM_COLUMNS = 90;
+export const LABEL_COLUMNS = 8;
+const JOB_CELLS = { wide: 16, normal: 8, narrow: 6 };
+const STEP_CELLS = { wide: 6, normal: 6, narrow: 3 };
+const TITLE_CHARS = { wide: 40, normal: 24, narrow: 16 };
+const ROW_ID_CHARS = 16;
+const NAMES_SHOWN = 2;
 const MS_PER_MIN = 60_000;
-const CAP_WHILE_OPEN = 99;
+const OVER_SHOWN_MIN = 1;
 const REFUSAL_WHY = { 'no rows': 'no rows yet', 'few rows': 'too few finished rows', 'rows listed late': 'rows listed late' };
-/** The label column every status line row starts with (`ALL`, `agents`, `git`) on a wide row, so the values line up; a narrower row
- * keeps the room for its values (the label and one blank). */
-export const LABEL_COLUMNS = 6;
-const ALL_LABEL = 'ALL';
-/** An open row earns at most this share of its expected minutes (tools/estimate/lib/progress.mjs RUNNING_CREDIT, not exported there). */
-const RUNNING_CREDIT = 0.9;
 
 const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
 const isCount = (value) => Number.isInteger(value) && value >= 0;
+const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+/** @returns {'wide' | 'normal' | 'narrow'} the word form of a row at this width */
+const tierOf = (look) => (look.columns >= WIDE_COLUMNS ? 'wide' : look.columns >= LABEL_FROM_COLUMNS ? 'normal' : 'narrow');
 
 /** The road numbers of progress.road (road-steps.mjs withRoad), or null when absent or not that shape. */
 function roadOf(road) {
@@ -46,12 +52,16 @@ function roadOf(road) {
   return { ...road, clockMs: isNumber(road.clockMs) ? road.clockMs : null, p85Ms: isNumber(road.p85Ms) ? road.p85Ms : null };
 }
 
+/** The late cause as the cache stores it ({ cause, ids, count }), or null when absent or not that shape. */
+const causeOf = (cause) => (cause !== null && typeof cause === 'object' && typeof cause.cause === 'string' && Array.isArray(cause.ids) ? cause : null);
+
 /**
- * The job as the row needs it, from the cache's numbers when they are there, else from the stored progress.
+ * The job as the rows need it, from the cache's numbers when they are there, else from the stored progress.
  * @param {{ kind: string | null, text: string | null, highMs: number | null, progress: object | null, numbers: object | null } | null} segment
  * @returns {null | { kind: string, text: string, pct: number | null, rowsDone: number, rowsTotal: number, leftMin: number | null,
- *   workedMin: number | null, highMs: number | null, p85Ms: number | null, tag: string | null, road: object | null }} null when no
- *   job is linked; p85Ms is the job's 85% finish clock (job-rows.mjs numbers)
+ *   workedMin: number | null, highMs: number | null, finishMs: number | null, p85Ms: number | null, lateMin: number | null,
+ *   lateCause: object | null, tag: string | null, road: object | null }} null when no job is linked; finishMs the committed finish
+ *   (numbers.finishMs, else the entry's highMs), p85Ms the job's 85 % finish clock (job-rows.mjs numbers)
  */
 export function jobView(segment) {
   if (segment === null || typeof segment !== 'object') return null;
@@ -62,127 +72,195 @@ export function jobView(segment) {
   const leftMin = isNumber(numbers?.leftMin) ? numbers.leftMin : isNumber(progress?.leftMin) ? progress.leftMin : null;
   const workedMin = isNumber(numbers?.workedMin) ? numbers.workedMin : null;
   let pct = isCount(progress?.pct) ? progress.pct : null;
-  if (workedMin !== null && leftMin !== null && workedMin + leftMin > 0) pct = Math.floor((PERCENT * workedMin) / (workedMin + leftMin));
-  if (pct !== null && rowsTotal > 0 && rowsDone < rowsTotal) pct = Math.min(CAP_WHILE_OPEN, pct);
+  if (workedMin !== null && leftMin !== null && workedMin + leftMin > 0) pct = Math.floor((100 * workedMin) / (workedMin + leftMin));
+  if (pct !== null && rowsTotal > 0 && rowsDone < rowsTotal) pct = Math.min(99, pct);
+  const highMs = isNumber(segment.highMs) ? segment.highMs : null;
   return {
     kind: segment.kind ?? 'finish', text: typeof segment.text === 'string' ? segment.text : '', pct, rowsDone, rowsTotal, leftMin, workedMin,
-    highMs: isNumber(segment.highMs) ? segment.highMs : null, p85Ms: isNumber(numbers?.p85Ms) ? numbers.p85Ms : null,
+    highMs, finishMs: isNumber(numbers?.finishMs) ? numbers.finishMs : highMs, p85Ms: isNumber(numbers?.p85Ms) ? numbers.p85Ms : null,
+    lateMin: isNumber(numbers?.lateMin) ? numbers.lateMin : null, lateCause: causeOf(numbers?.lateCause ?? null),
     tag: progress?.tag ?? null, road: roadOf(progress?.road),
   };
 }
 
-const cellsFor = (look) => (look.columns >= WIDE_COLUMNS ? WIDE_CELLS : look.columns >= TINY_COLUMNS ? NARROW_CELLS : TINY_CELLS);
-const wide = (look) => look.columns >= WIDE_COLUMNS;
-const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
-
 /** True when the board's facts say the road is idle this session (an old board without `live` counts as live). */
 const idleRoad = (facts, name) => facts !== null && typeof facts === 'object' && facts.live === false && (name === undefined || facts.name === name);
 
-/** The started open rows' share earned, minutes left and minutes over their expected time; null when none is started. */
-function startedWork(numbers, hiddenRoad, nowMs) {
-  const rows = (Array.isArray(numbers?.rows) ? numbers.rows : []).filter((row) => isNumber(row?.startedMs) && isNumber(row.expectMin)
-    && row.expectMin > 0 && (hiddenRoad === null || ROAD_ROW.exec(String(row.id))?.[1]?.toLowerCase() !== hiddenRoad));
-  if (rows.length === 0) return null;
-  let expect = 0;
-  let earned = 0;
-  let overMin = 0;
-  for (const row of rows) {
-    const elapsed = Math.max(0, (nowMs - row.startedMs) / MS_PER_MIN);
-    expect += row.expectMin;
-    earned += Math.min(RUNNING_CREDIT * row.expectMin, elapsed);
-    overMin += Math.max(0, elapsed - row.expectMin);
-  }
-  return { kind: 'started', count: rows.length, share: earned / expect, leftMin: expect - earned, overMin, clockMs: nowMs + (expect - earned) * MS_PER_MIN };
+/** The started open rows (a hidden road's rows left out), each with its median minutes left and its minutes past its size's median. */
+function startedRows(numbers, hiddenRoad, nowMs) {
+  return (Array.isArray(numbers?.rows) ? numbers.rows : []).filter((row) => isNumber(row?.startedMs) && isNumber(row.expectMin)
+    && row.expectMin > 0 && (hiddenRoad === null || ROAD_ROW.exec(String(row.id))?.[1]?.toLowerCase() !== hiddenRoad))
+    .map((row) => {
+      const elapsed = Math.max(0, (nowMs - row.startedMs) / MS_PER_MIN);
+      // an old cache entry has no leftMin per row: its expected minutes less the elapsed ones
+      const leftMin = isNumber(row.leftMin) && row.leftMin >= 0 ? row.leftMin : Math.max(0, row.expectMin - elapsed);
+      return { id: String(row.id ?? '?'), leftMin, overMin: Math.max(0, elapsed - row.expectMin) };
+    });
 }
 
 /**
- * The live work the row counts (RC6).
- * @param {ReturnType<typeof jobView>} view the job
- * @param {object | null} numbers the cache entry's numbers (open rows with expectMin and startedMs)
- * @param {object | null} facts board.road (job-facts.mjs), or null
- * @param {number} nowMs now
- * @returns {null | { kind: 'road', share: number, rowsDone: number, rowsTotal: number, leftMin: number | null, clockMs: number | null,
- *   p85Ms: number | null } | { kind: 'started', count: number, share: number, leftMin: number, overMin: number, clockMs: number }}
- *   the live road's step, else the started rows, else null
+ * The live work of the job: the live road's current step, else the started rows, else null.
+ * @returns {null | { kind: 'road', road: object } | { kind: 'started', rows: { id: string, leftMin: number, overMin: number }[] }}
  */
-export function liveWork(view, numbers, facts, nowMs) {
-  const road = view?.road ?? null;
+function liveWork(job, numbers, facts, nowMs) {
+  const road = job.road;
   const hidden = road !== null && idleRoad(facts, road.name);
-  if (road !== null && !hidden && road.rowsTotal > 0) {
-    return { kind: 'road', share: road.rowsDone / road.rowsTotal, rowsDone: road.rowsDone, rowsTotal: road.rowsTotal, leftMin: isNumber(road.leftMin) ? road.leftMin : null, clockMs: road.clockMs, p85Ms: road.p85Ms };
+  if (road !== null && !hidden && road.rowsTotal > 0) return { kind: 'road', road };
+  const rows = startedRows(numbers, hidden ? String(road.name).toLowerCase() : null, nowMs);
+  return rows.length > 0 ? { kind: 'started', rows } : null;
+}
+
+/** A part of a duration and its words: `2 h 10` in the time colour, then ` work left` (or the tier's words) in the default colour. */
+function leftPart(minutes, tier) {
+  const amount = durationText(minutes);
+  const before = tier === 'wide' ? 'about ' : '';
+  const after = { wide: ' of work left', normal: ' work left', narrow: ' left' }[tier];
+  return { text: `${before}${amount}${after}`, spans: [{ text: before }, { text: amount, state: STATE.time }, { text: after }] };
+}
+
+/** A clock with its words before it: `done by ` then `21:40` in the time colour. */
+const clockPart = (words, ms, clock, state = STATE.ok) => {
+  const at = clockOf(ms, clock.nowMs, clock.timeZone);
+  return { text: `${words}${at}`, spans: [{ text: words, state }, { text: at, state: state === STATE.ok ? STATE.time : state }] };
+};
+
+/** A bar and its count, both in the bar colour, with the tier's gap between them. */
+const barPart = (share, cells, count, look, gap = ' ') => {
+  const bar = barText({ done: share }, cells, look);
+  return { text: `${bar}${gap}${count}`, spans: [{ text: bar, state: STATE.bar }, { text: gap }, { text: count, state: STATE.bar }] };
+};
+
+/** The words of the late cause: `3 rows added`, `R18.git slow`, `slower pace`; '' when unknown. */
+function causeText(cause, look) {
+  if (cause === null) return '';
+  const count = isCount(cause.count) ? cause.count : cause.ids.length;
+  if (cause.cause === 'rows-added') return `${plural(count, 'row')} added`;
+  if (cause.cause === 'slow-row' && cause.ids.length > 0) return `${cutWords(cleanText(cause.ids[0], look), ROW_ID_CHARS, look)} slow`;
+  return cause.cause === 'pace' ? 'slower pace' : '';
+}
+
+/** The late parts: `, 25 min late` and `: 3 rows added` (wide: ` · late by 25 min (3 rows added)`); red past the 85 % margin. */
+function lateParts(job, clock, tier, look) {
+  if (job.lateMin === null || job.lateMin <= 0) return [];
+  const marginMin = job.p85Ms !== null && job.leftMin !== null ? (job.p85Ms - clock.nowMs) / MS_PER_MIN - job.leftMin : null;
+  const state = marginMin !== null && job.lateMin > marginMin ? STATE.block : STATE.warn;
+  const late = durationText(job.lateMin);
+  const why = causeText(job.lateCause, look);
+  if (tier === 'wide') {
+    return [{ text: `late by ${late}`, state }, ...(why ? [{ text: `(${why})`, state, join: ' ', drop: 1 }] : [])];
   }
-  return startedWork(numbers, hidden ? String(road.name).toLowerCase() : null, nowMs);
+  return [{ text: `, ${late} late`, state, join: '' }, ...(why ? [{ text: `: ${why}`, state, join: '', drop: 1 }] : [])];
 }
 
-/** The bar of the live work: in the default colour, red over its plan. */
-const barOf = (share, look) => barText({ done: share }, cellsFor(look), look);
-
-/** The parts of a live road step: its bar, its time left and clocks. */
-function roadStepParts(live, clock, look) {
-  const parts = [{ text: barOf(live.share, look) }];
-  if (live.leftMin !== null) parts.push({ text: `${durationText(live.leftMin)} left`, join: '  ' });
-  if (live.clockMs !== null) parts.push({ text: `by ${clockOf(live.clockMs, clock.nowMs, clock.timeZone)}`, state: STATE.dim });
-  if (live.p85Ms !== null) parts.push({ text: `85% ${clockOf(live.p85Ms, clock.nowMs, clock.timeZone)}`, state: STATE.dim, drop: 5 });
-  return parts;
-}
-
-/** The parts of the started rows: bar and percent of their expected minutes, time left, clock, over plan, how many. */
-function startedParts(live, clock, look) {
-  const pct = Math.min(CAP_WHILE_OPEN, Math.floor(PERCENT * live.share));
-  return [
-    { text: `${barOf(live.share, look)}  ${pct}%` }, { text: `${durationText(live.leftMin)} left`, join: '  ' },
-    { text: `by ${clockOf(live.clockMs, clock.nowMs, clock.timeZone)}`, state: STATE.dim },
-    ...(live.overMin >= 1 ? [{ text: `${durationText(live.overMin)} over plan`, state: STATE.warn, drop: 1 }] : []),
-    { text: `${plural(live.count, 'row')} started`, state: STATE.dim, drop: 2 },
-  ];
-}
-
-/** The words of an estimate error: `estimate: table error at row A17` (segment-text.mjs errorSegment), never a finish. */
-function errorWords(cause, look) {
-  const words = cause.startsWith('row ') ? `table error at ${cause}` : cause === 'table' ? 'table error' : cause || 'error';
-  return { text: `estimate: ${cleanText(words, look)}`, state: STATE.block };
-}
-
-/** The job's own words when it has no live work to count, or a state that says more (an error, a refusal, all done). */
-function jobWords(view, look) {
-  if (view === null) return [{ text: 'no job linked' }];
-  if (view.kind === 'handed-over') return [{ text: `idle${look.glyph.sep}last job ${cleanText(view.text, look)}` }];
-  const cause = view.text.replace(/^done \? /, '');
-  if (view.kind === 'error') return [errorWords(cause, look)];
-  if (view.rowsTotal > 0 && view.rowsDone === view.rowsTotal) return [{ text: `all ${view.rowsTotal} rows done` }];
-  if (view.kind === 'refused') return [{ text: `no time: ${REFUSAL_WHY[cause] ?? cleanText(cause, look)}` }];
-  if (view.kind === 'work-left') return [{ text: `long job: ${cleanText(view.text, look)}` }];
+/** The job's own words for an error or a refusal; null for any other kind. */
+function jobWords(job, look) {
+  const cause = job.text.replace(/^done \? /, '');
+  if (job.kind === 'error') {
+    const words = cause.startsWith('row ') ? `table error at ${cause}` : cause === 'table' ? 'table error' : cause || 'error';
+    return { text: `estimate: ${cleanText(words, look)}`, state: STATE.block };
+  }
+  if (job.kind === 'refused') return { text: `no time: ${REFUSAL_WHY[cause] ?? cleanText(cause, look)}` };
+  if (job.kind === 'work-left') return { text: `long job, ${cleanText(job.text, look)}` };
   return null;
 }
 
-/**
- * @param {{ segment: object | null, facts?: object | null, nowMs: number, timeZone: string, trend?: object | null,
- *   road?: object | null }} input the shown cache entry, the board's road facts, now and the render's one zone; trend: the finish
- *   clock's move as a part (stat-rows.mjs trendPart); road: the compact road part (stat-rows.mjs roadPart), right-aligned
- * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal
- * @returns {string} the job row, fitted to look.columns
- */
-export function workRow({ segment, facts = null, nowMs, timeZone, trend = null, road = null }, look) {
-  const view = jobView(segment);
-  const clock = { nowMs, timeZone };
-  const live = view === null ? null : liveWork(view, segment?.numbers ?? null, facts, nowMs);
-  const words = jobWords(view, look);
-  let body;
-  if (words !== null) body = words;
-  else if (live?.kind === 'road') body = [...roadStepParts(live, clock, look), ...(trend ? [trend] : [])];
-  else if (live?.kind === 'started') body = [...startedParts(live, clock, look), ...(trend ? [trend] : [])];
-  else body = [{ text: 'nothing started' }, ...(view.rowsTotal > view.rowsDone ? [{ text: `${view.rowsTotal - view.rowsDone} rows open`, state: STATE.dim, drop: 2 }] : [])];
-  const [first, ...rest] = body;
-  return fitParts([labelled(ALL_LABEL, first, look), ...rest, ...(road ? [road] : [])], look);
+/** The parts of the job row with a finish: the bar and rows done, the work left, the committed clock and how late. */
+function finishParts(job, clock, tier, look) {
+  const count = tier === 'wide' ? `${job.rowsDone} of ${job.rowsTotal} rows done` : `${job.rowsDone}/${job.rowsTotal} rows done`;
+  const parts = [barPart(job.rowsTotal > 0 ? job.rowsDone / job.rowsTotal : 0, JOB_CELLS[tier], count, look, tier === 'wide' ? '  ' : ' ')];
+  if (job.leftMin !== null) parts.push(leftPart(job.leftMin, tier));
+  if (job.finishMs !== null) {
+    parts.push(job.finishMs < clock.nowMs ? clockPart('was due ', job.finishMs, clock, STATE.block) : clockPart('done by ', job.finishMs, clock));
+  }
+  return [...parts, ...lateParts(job, clock, tier, look)];
 }
 
 /**
- * @param {string} label `ALL`, `agents` or `git`
- * @param {{ text: string, state?: string, drop?: number }} part the row's first value
- * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal (the label column only on a wide row)
- * @returns {object} the part with the dim label before it (LABEL_COLUMNS wide on a wide row, then a blank), its value in its own state
+ * The job row: the whole job's rows done, work left and committed finish, and how late it runs and why.
+ * @param {{ segment: object | null, board?: object | null, nowMs: number, timeZone: string }} view the shown cache entry, the
+ *   board (its road facts), now and the render's one zone
+ * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal
+ * @returns {string | null} the row; null without live work, an error or a refusal (the open rows are `/where`'s)
+ */
+export function jobRow({ segment, board = null, nowMs, timeZone }, look) {
+  const job = jobView(segment);
+  if (job === null) return null;
+  const clock = { nowMs, timeZone };
+  const tier = tierOf(look);
+  const words = jobWords(job, look);
+  if (job.kind === 'error') return fitParts([labelled('job', words, look)], look);
+  if (words !== null) {
+    const count = `${job.rowsDone}/${job.rowsTotal} rows done`;
+    return fitParts([labelled('job', barPart(job.rowsTotal > 0 ? job.rowsDone / job.rowsTotal : 0, JOB_CELLS[tier], count, look), look), words], look);
+  }
+  if (liveWork(job, segment?.numbers ?? null, board?.road ?? null, nowMs) === null) return null;
+  const [first, ...rest] = finishParts(job, clock, tier, look);
+  return fitParts([labelled('job', first, look), ...rest], look);
+}
+
+/** The facts of the road the numbers name, or null. */
+const factsOf = (road, facts) => (facts !== null && typeof facts === 'object' && (facts.name === undefined || facts.name === road.name) ? facts : null);
+
+/** The now row of a live road: the step and its title, lanes landed (else rows done) of the step, its work left and clock. */
+function stepParts(road, facts, clock, tier, look) {
+  const own = factsOf(road, facts);
+  const step = tier === 'narrow' ? `step ${road.step}/${road.steps}` : `step ${road.step} of ${road.steps}`;
+  const title = own?.title ? cutWords(cleanText(own.title, look), TITLE_CHARS[tier], look) : '';
+  const lanes = isCount(own?.lanesTotal) && own.lanesTotal > 0 && isCount(own.lanesDone);
+  const [done, total, what] = lanes ? [own.lanesDone, own.lanesTotal, 'lanes'] : [road.rowsDone, road.rowsTotal, 'rows'];
+  const verb = lanes ? 'landed' : 'done';
+  const count = tier === 'wide' ? `${done} of ${total} ${what} ${verb}` : tier === 'normal' ? `${done}/${total} ${what} ${verb}` : `${done}/${total} ${what}`;
+  return [
+    { text: step }, { text: title, join: ' ', drop: 3 }, barPart(total > 0 ? done / total : 0, STEP_CELLS[tier], count, look),
+    isNumber(road.leftMin) ? leftPart(road.leftMin, tier) : { text: '' },
+    road.clockMs !== null ? clockPart(tier === 'narrow' ? 'step by ' : 'step done by ', road.clockMs, clock) : { text: '' },
+  ];
+}
+
+/** The now row of the started rows: how many (names when room), their work left, the clock it ends at, the row most over usual. */
+function runningParts(rows, clock, tier, look) {
+  const leftMin = rows.reduce((sum, row) => sum + row.leftMin, 0);
+  const names = rows.slice(0, NAMES_SHOWN).map((row) => cutWords(cleanText(row.id, look), ROW_ID_CHARS, look));
+  const more = rows.length > NAMES_SHOWN ? `, +${rows.length - NAMES_SHOWN}` : '';
+  const over = rows.filter((row) => row.overMin >= OVER_SHOWN_MIN).sort((a, b) => b.overMin - a.overMin);
+  const worst = over[0];
+  return [
+    { text: `${plural(rows.length, 'row')} running` }, { text: `: ${names.join(', ')}${more}`, join: '', drop: 2 },
+    leftPart(leftMin, tier), clockPart('by ', clock.nowMs + leftMin * MS_PER_MIN, clock),
+    ...(worst ? [{ text: `${cutWords(cleanText(worst.id, look), ROW_ID_CHARS, look)} ${durationText(worst.overMin)} over usual`, state: STATE.warn }] : []),
+    ...(over.length > 1 ? [{ text: `+${over.length - 1} more over usual`, state: STATE.warn, drop: 1 }] : []),
+  ];
+}
+
+/**
+ * The now row: the live road's current step, else the started rows.
+ * @param {{ segment: object | null, board?: object | null, nowMs: number, timeZone: string }} view as jobRow takes it
+ * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal
+ * @returns {string | null} the row; null without live work
+ */
+export function nowRow({ segment, board = null, nowMs, timeZone }, look) {
+  const job = jobView(segment);
+  if (job === null || job.kind === 'error') return null;
+  const live = liveWork(job, segment?.numbers ?? null, board?.road ?? null, nowMs);
+  if (live === null) return null;
+  // every open row running and none over usual: the job row already says it all (spec R18 mockup `outside a repo`)
+  const sameAsJob = live.kind === 'started' && live.rows.length === job.rowsTotal - job.rowsDone && live.rows.every((row) => row.overMin < OVER_SHOWN_MIN);
+  if (sameAsJob) return null;
+  const clock = { nowMs, timeZone };
+  const tier = tierOf(look);
+  const [first, ...rest] = live.kind === 'road' ? stepParts(live.road, board?.road ?? null, clock, tier, look) : runningParts(live.rows, clock, tier, look);
+  return fitParts([labelled('now', first, look), ...rest], look);
+}
+
+/**
+ * @param {string} label `job`, `now`, `agents`, `git`, `lanes` or `session`
+ * @param {{ text: string, state?: string, drop?: number, spans?: object[] }} part the row's first value
+ * @param {ReturnType<import('./cells.mjs').lookOf>} look the terminal (the label column from LABEL_FROM_COLUMNS)
+ * @returns {object} the part with the dim label before it (LABEL_COLUMNS wide from LABEL_FROM_COLUMNS, else the label and a blank),
+ *   its value keeping its own spans or state
  */
 export function labelled(label, part, look) {
-  const head = `${wide(look) ? label.padEnd(LABEL_COLUMNS) : label} `;
-  return { ...part, text: `${head}${part.text}`, spans: [{ text: head, state: STATE.dim }, { text: part.text, state: part.state }] };
+  const head = look.columns >= LABEL_FROM_COLUMNS ? label.padEnd(LABEL_COLUMNS) : `${label} `;
+  const value = Array.isArray(part.spans) ? part.spans : [{ text: part.text, state: part.state }];
+  return { ...part, text: `${head}${part.text}`, spans: [{ text: head, state: STATE.dim }, ...value] };
 }

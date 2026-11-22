@@ -197,7 +197,9 @@ test('the status line prints the job of the session\'s linked STATUS.md from a f
     encoding: 'utf8',
   }).stdout;
   assert.match(render({ workspace: { project_dir: projectDir }, cost: { total_duration_ms: HOUR_MS } }), LIVE_SHOWN);
-  assert.match(render({ workspace: { project_dir: root } }), /^ALL no job linked$/m);
+  const unlinked = render({ workspace: { project_dir: root } });
+  assert.doesNotMatch(unlinked, /^(job|now) /m, 'no job linked: no job row (spec R18: the line shows live work only)');
+  assert.match(unlinked, /^git +loading\nsession /m);
   noteTable(join(home, '.claude', 'state', 'estimate'), statusPath, { sessionId: SESSION, ids: [], nowMs: Date.now() });
   const linked = realpathSync(statusPath); // the link holds the real path, and the refresh caches under it
   writeEntry(cacheDir, linked, await fresh(linked));
@@ -208,9 +210,9 @@ test('the status line prints the job of the session\'s linked STATUS.md from a f
 const CLOCK_SHOWN = /done by (\w{3} )?\d\d:\d\d/;
 const withClock = (line) => line.replace(/((Mon|Tue|Wed|Thu|Fri|Sat|Sun) )?\d\d:\d\d/, '<clock>');
 const PROGRESS = { pct: 54, approx: false, rowsDone: 5, rowsTotal: 9, leftMin: 30, tag: 'moved' };
-// The status line's job row counts live work only (owner decision RC6): one open row of 40 expected minutes started 10 minutes ago
-// earns 10 of them, so 25% and 30 min left; the clock is when those 30 minutes end.
-const LIVE_SHOWN = /^ALL .*30 min left · by (\w{3} )?\d\d:\d\d/m;
+// The now row counts the running rows (spec R18): one open row of 40 expected minutes started 10 minutes ago, from an entry without
+// the row's own median (an old cache), has 30 min left; the clock is when those 30 minutes end.
+const LIVE_SHOWN = /^now .*30 min (work )?left · by (\w{3} )?\d\d:\d\d/m;
 const startedNumbers = () => ({ finishMs: null, p85Ms: null, leftMin: 30, workedMin: 35, rowsDone: 5, rowsTotal: 9,
   rows: [{ id: 'O1', expectMin: 40, startedMs: Date.now() - 10 * MIN_MS }, { id: 'O2', expectMin: 9, startedMs: null }] });
 
@@ -259,7 +261,7 @@ test('a CLI run at the real clock stores the same progress in the cache as the F
   assert.deepEqual([progress.pct, progress.rowsDone, progress.rowsTotal], printed.slice(1).map(Number));
 });
 
-test('the status line prints the job row and the git and session row, fitted to COLUMNS, without colour under NO_COLOR, ASCII under TERM=dumb', async () => {
+test('the status line prints the job, now, git and session rows, fitted to COLUMNS, without colour under NO_COLOR, ASCII under TERM=dumb', async () => {
   const { root, projectDir, statusPath } = await setup();
   const home = join(root, 'home');
   writeEntry(join(home, '.claude', 'state', 'estimate-segment'), statusPath, await matchingEntry(statusPath, { progress: PROGRESS, numbers: startedNumbers(), computedAt: Date.now(), refreshStartedAt: Date.now() }));
@@ -272,18 +274,21 @@ test('the status line prints the job row and the git and session row, fitted to 
     encoding: 'utf8',
   }).stdout.trimEnd().split('\n');
   const wide = render({ COLUMNS: '120' });
-  assert.equal(wide.length, 2);
-  assert.match(wide[0], /by (\w{3} )?\d\d:\d\d/);
-  assert.equal(withClock(wide[0]), '\u001b[2mALL    \u001b[0m████░░░░░░░░░░░░  25%  30 min left · \u001b[2mby <clock>\u001b[0m · \u001b[2m1 row started\u001b[0m');
-  const session = 'Sonnet 5.5 · \u001b[2mctx ?\u001b[0m · account ?';
-  assert.equal(wide[1], `\u001b[2mgit: loading\u001b[0m${' '.repeat(115 - 'git: loading'.length - 'Sonnet 5.5 · ctx ? · account ?'.length)}${session}`, 'git left, the session block ending at COLUMNS - 5');
-  assert.equal(withClock(render({ COLUMNS: '80', NO_COLOR: '1' })[0]), 'ALL ██░░░░░░░░  25%  30 min left · by <clock> · 1 row started');
+  assert.equal(wide.length, 4);
+  assert.match(wide[0].replaceAll(/\u001b\[[0-9;]*m/g, ''), /by (\w{3} )?\d\d:\d\d/);
+  const dot = '\u001b[2m · \u001b[0m';
+  assert.equal(withClock(wide[0]), `\u001b[2mjob     \u001b[0m\u001b[38;5;37m████████░░░░░░░░\u001b[0m  \u001b[38;5;37m5 of 9 rows done\u001b[0m${dot}about \u001b[38;5;33m30 min\u001b[0m of work left${dot}done by \u001b[38;5;33m<clock>\u001b[0m`);
+  assert.equal(withClock(wide[1]), `\u001b[2mnow     \u001b[0m1 row running: O1${dot}about \u001b[38;5;33m30 min\u001b[0m of work left${dot}by \u001b[38;5;33m<clock>\u001b[0m`);
+  assert.equal(wide[2], '\u001b[2mgit     \u001b[0m\u001b[2mloading\u001b[0m', 'no session id: no board yet');
+  assert.equal(wide[3], `\u001b[2msession \u001b[0m\u001b[38;5;103mSonnet 5.5\u001b[0m${dot}\u001b[2mcontext ?\u001b[0m${dot}\u001b[2macct ?\u001b[0m`);
+  const narrow = ['job ██████ 5/9 rows done · 30 min left · done by <clock>', 'now 1 row running: O1 · 30 min left · by <clock>'];
+  assert.deepEqual(render({ COLUMNS: '80', NO_COLOR: '1' }).slice(0, 2).map(withClock), [narrow[0].replace('██████', '███░░░'), narrow[1]]);
   assert.doesNotMatch(render({ COLUMNS: '80', NO_COLOR: '1', TERM: 'dumb' }).join(''), /\u001b|[^\u0020-\u007e]/);
-  assert.equal(withClock(render({ COLUMNS: '50', NO_COLOR: '1' })[0]), 'ALL █░░░░░  25%  30 min left · by <clock>');
-  assert.equal(withClock(render({ COLUMNS: 'abc', NO_COLOR: '1' })[0]), 'ALL ██░░░░░░░░  25%  30 min left · by <clock> · 1 row started', 'no usable COLUMNS: 80');
+  assert.equal(withClock(render({ COLUMNS: '50', NO_COLOR: '1' })[0]), 'job ███░░░ 5/9 rows done · 30 min left · don…', 'cut at COLUMNS - 5');
+  assert.equal(withClock(render({ COLUMNS: 'abc', NO_COLOR: '1' })[0]), 'job ███░░░ 5/9 rows done · 30 min left · done by <clock>', 'no usable COLUMNS: 80');
 });
 
-test('with neither progress nor a live run the status line stays at its two rows', async () => {
+test('with neither progress nor a live run the status line stays at its two rows (git and session)', async () => {
   const { root, projectDir } = await setup();
   const home = join(root, 'home');
   const out = spawnSync(process.execPath, [STATUSLINE], {
