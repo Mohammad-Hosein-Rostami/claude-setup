@@ -7,12 +7,13 @@
 // `notifications_disabled` gives no note; `auto` (or none) picks by the terminal: Ghostty OSC 777, Kitty OSC 99, Apple Terminal a
 // bell only (it shows no desktop note), else OSC 9 (iTerm2, WezTerm, Windows Terminal).
 // Invariants: a note text has no control character (each is dropped), so no text can end the sequence early or add one; the
-// asking marker holds no question text, so a question note names no header; a reset time is shown only when a limit sample has
-// one, never guessed; nothing here throws (any failure reads as no note).
+// asking marker holds no question text, so a question note shows at most its short header label (cleanHeader: control characters
+// dropped, the marker's one cap); a reset time is shown only when a limit sample has one, never guessed; nothing here throws (any
+// failure reads as no note).
 import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { STALE_MARGIN_S } from './asking-marker.mjs';
+import { cleanHeader, STALE_MARGIN_S } from './asking-marker.mjs';
 import { isSessionId, readSessionFile, writeSessionFile } from './session-store.mjs';
 
 export const NOTE_TITLE = 'Claude';
@@ -37,7 +38,7 @@ const minSec = (ms) => { const s = Math.max(0, Math.round(ms / MS_PER_S)); retur
 
 /**
  * @param {string} type the Notification hook's notification_type
- * @param {{ kind: string, tool: string, count: number, expiresAt: number } | null} marker the session's asking marker (readAsking)
+ * @param {{ kind: string, tool: string, count: number, expiresAt: number, header?: string } | null} marker the session's asking marker (readAsking)
  * @param {number} now epoch ms
  * @returns {string | null} `Needs you: ...`, or null for a type that is not a wait on the owner
  */
@@ -46,8 +47,10 @@ export function needsYouText(type, marker, now) {
   if (!isPrompt) return null;
   if (marker) {
     const left = minSec(marker.expiresAt - STALE_MARGIN_S * MS_PER_S - now);
+    const header = cleanHeader(marker.header);
+    const scope = header === '' ? '' : ` (${header})`;
     const what = marker.kind === 'question'
-      ? (marker.count > 1 ? `question 1 of ${marker.count}` : 'a question')
+      ? (marker.count > 1 ? `question 1 of ${marker.count}${scope}` : `a question${scope}`)
       : `permission for ${clean(marker.tool)}`;
     return `Needs you: ${what} · default in ${left}`;
   }

@@ -9,12 +9,14 @@
 // event with stop_hook_active false starts a new chain; a tool call since the chain's last block (the reset marker agent-budget.mjs writes
 // on every PostToolUse) starts one too. Blocks of one event count once: gates of one event run in parallel and Claude Code counts the
 // continuation, not the hooks; a block is of the same event as the chain's last one when it carries the same stop_hook_active and
-// last_assistant_message and comes within SAME_EVENT_MS. The block that makes the count STOP_BLOCK_CAP + 1 appends
+// last_assistant_message, comes within SAME_EVENT_MS and is of a hook that has not blocked in that event yet (a hook runs once per
+// event, so its second block is the next continuation even when the reply text is identical; two continuations with identical text
+// that only different hooks block still count once). The block that makes the count STOP_BLOCK_CAP + 1 appends
 // `gate overridden: <hooks of the chain>` once per chain.
 // Crashes: each gate run leaves a start mark and removes it when it returns. A mark of the same hook, session and agent found at the next
 // run, or any mark older than STALE_MARK_MS at session start (sweepStaleMarks), appends `gate crashed or timed out: <hook>`; a crash the
 // gate catches itself is appended by countedGate before it is rethrown.
-// Store: ~/.claude/state/stop-blocks/ (0700): counts/<session>.json (lib/session-store.mjs, locked), runs/<session>--<agent>--<hook>
+// Store: ~/.claude/state/stop-blocks/ (0700): counts/<session>.json (lib/session-store.mjs, locked; per agent {n, at, key, hooks, eventHooks, recorded}), runs/<session>--<agent>--<hook>
 // (marks), resets/<session>--<agent> (the reset marker; its mtime is the last tool call), records.jsonl (append-only, at most
 // MAX_RECORDS_BYTES; each line {at, session, agent, text}), records.shown (its mtime: the newest record the session-start notice showed).
 // Invariants: never throws (every export catches; countedGate rethrows only the gate's own error); ids and hook names are checked before
@@ -92,11 +94,11 @@ function appendRecord(env, input, text) {
 /** The chain entry after one block (pure). */
 function nextEntry(entry, { hook, key, now, resetAt, continued }) {
   const toolCallSince = resetAt > entry.at;
-  const sameEvent = entry.n > 0 && !toolCallSince && entry.key === key && now - entry.at < SAME_EVENT_MS;
+  const sameEvent = entry.n > 0 && !toolCallSince && entry.key === key && now - entry.at < SAME_EVENT_MS && !entry.eventHooks.includes(hook);
   const hooks = [...new Set([...entry.hooks, hook])];
-  if (sameEvent) return { ...entry, at: now, hooks };
-  if (!continued || toolCallSince || entry.n === 0) return { n: 1, at: now, key, hooks: [hook], recorded: false };
-  return { n: entry.n + 1, at: now, key, hooks, recorded: entry.recorded };
+  if (sameEvent) return { ...entry, at: now, hooks, eventHooks: [...entry.eventHooks, hook] };
+  if (!continued || toolCallSince || entry.n === 0) return { n: 1, at: now, key, hooks: [hook], eventHooks: [hook], recorded: false };
+  return { n: entry.n + 1, at: now, key, hooks, eventHooks: [hook], recorded: entry.recorded };
 }
 
 /** Parses the counts store; a corrupt file reads as empty (a chain may then be undercounted once). */
@@ -109,8 +111,11 @@ function parseCounts(text) {
   }
 }
 
-const emptyEntry = () => ({ n: 0, at: 0, key: '', hooks: [], recorded: false });
-const entryOf = (value) => (Number.isFinite(value?.n) && Number.isFinite(value?.at) && Array.isArray(value?.hooks) ? value : emptyEntry());
+const emptyEntry = () => ({ n: 0, at: 0, key: '', hooks: [], eventHooks: [], recorded: false });
+// An entry stored before `eventHooks` existed reads as an event no hook has blocked in (the old merge rule, once).
+const entryOf = (value) => (Number.isFinite(value?.n) && Number.isFinite(value?.at) && Array.isArray(value?.hooks)
+  ? { ...value, eventHooks: Array.isArray(value.eventHooks) ? value.eventHooks : [] }
+  : emptyEntry());
 const eventKey = (input) => createHash('sha256').update(`${input.stop_hook_active === true}\0${String(input.last_assistant_message ?? '')}`).digest('hex');
 
 /**
