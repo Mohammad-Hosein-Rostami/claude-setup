@@ -1,6 +1,6 @@
 // SessionStart (every source: startup, resume, clear, compact): prints the lead text `~/.claude/lead.md` to the main session as its own
 // hook string. Why a hook of its own: Claude Code caps each hook's plain stdout at 10,000 characters per string, also when several hooks
-// run for one event (hooks docs, "capped at 10,000 characters"), and the string of mode.mjs is at its cap; this string has its own room.
+// run for one event (hooks docs, "capped at 10,000 characters"), and the string of session-notes.mjs (the lead rules) is large; this string has its own room.
 // Exports: leadText(input, file) -> Promise<string>.
 // Invariants: prints nothing inside a subagent (`agent_id` is a non-empty string), for another event or for input that is not hook JSON;
 // a missing lead.md prints nothing, any other read error goes to stderr; never blocks a session (always exit 0).

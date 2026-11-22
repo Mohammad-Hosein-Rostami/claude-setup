@@ -7,7 +7,8 @@ import { CACHE_TTL_MS } from './transcripts.mjs';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LEAD_ROLE = 'lead';
-// Older transcripts still carry these two roles; the agents were removed on 2026-11-22, so new runs never match.
+// `reviewer` is the live one-run-per-risky-lane agent. `security-auditor` was removed on 2026-11-22 but older transcripts still carry it,
+// so it stays in this set; new runs never match it.
 const REVIEW_ROLES = new Set(['reviewer', 'security-auditor']);
 /** How a run counts as waste. The transcripts carry no lane verdict, so these read the Agent call's result and description. */
 export const WASTE_RULES = {

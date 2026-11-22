@@ -16,8 +16,13 @@ Reading a shell command (used by `pre-bash-guard.mjs`; pure functions, they neve
 
 Rules that decide whether to ask the owner (used by `pre-bash-guard.mjs`):
 - `command-checks.mjs`, `rm-paths.mjs`, `bare-glob.mjs`, `find-delete.mjs`, `eval-check.mjs`, `shell-hazards.mjs`, `dangerous-scan.mjs`,
-  `raw-risk.mjs`, `outward.mjs`, `remote.mjs`, `code-writes.mjs`, `git-runs.mjs`: one file per kind of risky command (`rm -r`,
-  `find -delete`, `eval`, hidden execution, push or publish, production hosts, code rewritten from Bash, commands git runs).
+  `raw-risk.mjs`, `outward.mjs`, `remote.mjs`, `git-runs.mjs`: one file per kind of risky command (`rm -r`,
+  `find -delete`, `eval`, hidden execution, push or publish, production hosts, commands git runs).
+- `other-deleters.mjs`: deleters other than `rm` (rimraf, `rsync --delete`, PowerShell and `cmd` delete text), judged on the same targets as `rm -r`.
+- `credential-send.mjs`: asks when a private credential file (`~/.ssh/id_*`, `.aws/credentials`, `.netrc` ...) and a network sender (curl, scp, nc, a cloud upload) are in one command line.
+- `git-run-values.mjs`: the values git runs from a variable or config entry (`GIT_EDITOR`, `GIT_SSH_COMMAND` ...); asks when the guard cannot read what would run. Used by `git-runs.mjs`.
+- `guard-state-write.mjs`: asks before a write, removal, link or FIFO under `~/.claude/private` or the guard's own state (remembered allows, bounce records, log); reading is allowed.
+- `captured-read.mjs`: drops the "prints a stored secret" ask of a line that only captures the read in a variable (`X=$(security find-generic-password -s gh -w)`); a read that is printed, piped or redirected still asks.
 - `account-reads.mjs`: the one exemption from the stored-secret ask: a Keychain read of the account tool's own service
   (`claude-setup-account`), which the owner allows (2026-11-19); any other service keeps the ask.
 - `cd-folder.mjs`: the folders the guard follows a line through after `cd`, `pushd` or `popd` (the rules are in the module's
@@ -58,11 +63,20 @@ Asking and remembering:
   is not guaranteed to survive a take-over. A caller may name the lock file (`lockFile`, as `status.mjs` does with
   `.<name>.status-lock`).
 - `guard-log.mjs`: the decision log, one JSON line per decision.
+- `plain-file.mjs`: the one safe open (no waiting, no link followed, regular files only, a size cap) for the host list, the decision logs and the call-window log.
+- `asking-marker.mjs`: the small file `~/.claude/state/asking/<session>.json` that says a question or permission prompt waits for the owner; one writer here, read by the status line, `notify.mjs` and the board. It expires by age.
 
 Other hooks:
 - `diagnostics.mjs`: used by `post-edit.mjs` (parses a failed format run into `file:line RULE-ID message` lines). `edit-log.mjs`: the per-user hook temp root (`tempRoot`, `checkedTempRoot`) that `agent-budget.mjs` and `writer-agents.mjs` keep their records in.
 - `own-edits.mjs`: the files a session or agent changed with Edit/Write/MultiEdit/NotebookEdit, recorded and read by `commit-gate.mjs`.
-- `gated-folder.mjs`: the folder a Stop or SubagentStop gate looks at (the session's own worktree, never a folder it only cd'd into; for a lead also one worktree per repository of the files the session edited, `editedWorktrees`) and the hardened git calls that read it, the discovery ones time-bound; used by `commit-gate.mjs` and `git-tidy-gate.mjs` (also `namesFilterProgram`, `readHead`), and its `gitOut` by `typecheck-plan.mjs` (the git top).
+- `gated-folder.mjs`: the folder a Stop or SubagentStop gate looks at (the session's own worktree, never a folder it only cd'd into; for a lead also one worktree per repository of the files the session edited, `editedWorktrees`) and the hardened git calls that read it, the discovery ones time-bound; used by `commit-gate.mjs` and `git-tidy-gate.mjs` (also `namesFilterProgram`, `readHead`).
+- `call-windows.mjs`, `call-window-build.mjs`: the call-window log (when each tool call of a session was open, and how big each watched branch reflog was then) that `commit-gate.mjs` writes on every tool and stop event, and the code that builds the windows from its lines (split to keep each file under 300 lines).
+- `change-owner.mjs`, `base-moves.mjs`: whether a change or a branch move is this session's own or only another session's, read from the call-window logs; any doubt means own. Used by `commit-gate.mjs`.
+- `new-file-size.mjs`: new files over the size limit (a build output or binary an agent adds), for `commit-gate.mjs`.
+- `status-file-of.mjs`: the STATUS.md a session last edited with `status.mjs`, after the safety checks; used by `status-deliver.mjs`, `git-tidy-gate.mjs` and `commit-gate.mjs`.
+- `tidy-check-child.mjs`, `tidy-gate-notes.mjs`, `lane-lock.mjs`: for `git-tidy-gate.mjs`: the `git-tidy check` child and its slim verdict, the in-work texts (unlanded lanes, the prune note), and the lock on a lane worktree right after it is made.
+- `agent-brief.mjs`, `copy-branch-brief.mjs`: for `agent-model-guard.mjs`: the fixed lines it adds to an Agent brief (the Standing rules line), and the gate that sends back a brief telling the agent to make a copy of an existing lane branch (`<lane>-2`, `-fix`, `-redo`).
+- `open-writers.mjs`: the open launch records of plain writer agents (closed only at their SubagentStop), so a writer that died with its session is listed in the next session's notice; used by `writer-agents.mjs` and `agent-launches.mjs`.
 - `tidy-gate-store.mjs`: the per-session state file of `git-tidy-gate.mjs` (check verdict per repo and fingerprint, states already blocked, chain length).
 - `dirty-baseline.mjs`: the dirty files of a worktree (path + content hash) at the first tool call of a session or agent, so `commit-gate.mjs` can count files a Bash command made or changed.
 - `read-only-command.mjs`: whether a Bash command is git or reading only (no writing option, no output to a file), for
