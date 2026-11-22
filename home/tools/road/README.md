@@ -48,13 +48,17 @@ under `rd.s1.fix-x.landed`). Both lookups ignore case; a correction row under bo
 the `landed within` row below.
 
 A close row that landed inside the same fast-forward as another close row (so it cannot have a range of its own) is closed by a done
-`<close row id>.landed` row whose evidence says `landed within <other close row id>`. The gate then gives that row no range, and
-fails line 2 unless the named row is a close row (road entry or fix row) of the same road with a valid range of its own (its landed
-line or its `.landed` correction). A row cannot name itself, and the named row cannot itself be a `within` row (no chains).
+`<close row id>.landed` row whose evidence says `landed within <other close row id>`. The gate then gives that row no range of its own,
+and fails line 2 unless the named row is a close row (road entry or fix row) of the same road with a valid range of its own (its landed
+line or its `.landed` correction). A row cannot name itself, and the named row cannot itself be a `within` row (no chains). Such a row
+never skips a check. A road lane (an entry of a step) must write `landed within <id> as <sha>`: the named range holds the work of
+several lanes, so only a commit of it (on its first-parent range, `from` excluded) ties this lane to it; any other sha is a FAIL. A steered
+lane's `reviewed <sha> clean` check runs against the named row's range. A fix row has no one sha for its work, so it may leave out
+`as <sha>` (line 2 still fails any commit that lies in no range); with `as <sha>` the same check applies.
 
 A sha in a row (`<to>`, `<from>`, `reviewed <sha> clean`) may be 7 to 40 hex characters. The gate resolves each one once to its full commit
-sha (`git rev-parse --verify --quiet <sha>^{commit}`) and uses only full shas after that; a sha git does not know, or finds ambiguous, is a
-FAIL line naming the row. A steered (`agents`) step needs `reviewed <sha> clean` on each lane row; a done cell never changes, so when the lane
+sha (`git rev-parse --verify --quiet <sha>^{commit}`) and uses only full shas after that; a sha git does not know, finds ambiguous, or
+answers with a commit that does not start with it (a branch or tag named like hex), is a FAIL line naming the row. A steered (`agents`) step needs `reviewed <sha> clean` on each lane row; a done cell never changes, so when the lane
 row's own evidence has no such line the gate takes it from a done correction row `<lane row id>.reviewed` (looked up like `.landed`, ignoring
 case). The lane row's own line wins; the correction row is not read for a step that is not steered.
 

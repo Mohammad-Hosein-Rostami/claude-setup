@@ -6,16 +6,24 @@
 //   FAIL); 2 landing ranges of every close row of the road (`landed <to> on <base> from <from>`: `git cherry` empty, `<to>` new in this road,
 //   no repeat, `<from>` the road-start tip or another row's `<to>`, both on the base's first-parent line, ranges disjoint, every commit of
 //   `<start>..<tip>` in exactly one range; a done close row with no landed line of its own takes the line of a done `<close row id>.landed`
-//   row (for an id ending in `-land` also `<id without -land>.landed`; both present = FAIL), never used when the close row has its own line or is not done; a done `<close row id>.landed` row saying `landed within <other close row id>` gives
-//   that close row no range, valid only when the named row is another close row of the road with a valid range of its own (no self, no chain); a steered step's lanes also need `reviewed <sha> clean` with every
-//   commit of their range in that sha, from the lane row's own line, else from a done `<lane row id>.reviewed` row); 3 `git-tidy check` exit 0; 4 `test-pass check <tip> --suite` exit 0; 5 `audit-log gate --tip <tip>` exit 0; 6 UI: when a range of
-//   the step changes UI files or a lane has a matrix, `ui-proof check --tip <tip> --against-step <road>.s<N>` exit 0 and the step-start
-//   record taken at or before every `<from>`; 7 the measure (INFO).
+//   row (for an id ending in `-land` also `<id without -land>.landed`; both present = FAIL), never used when the close row has its own line
+//   or is not done; a steered step's lanes also need `reviewed <sha> clean` with every commit of their range in that sha, from the lane
+//   row's own line, else from a done `<lane row id>.reviewed` row);
+//   a done `<close row id>.landed` row saying `landed within <other close row id> [as <sha>]` gives that close row no range of its own and
+//   never skips a check: the named row must be another close row of the road with a valid range of its own (no self, no chain); a road
+//   lane (an entry) must say `as <sha>`, a commit on the named row's first-parent range (from..to], because the named range holds the work
+//   of several lanes and only a sha ties this lane to it; a fix row has no one sha for its work, so `as` is optional for it (the coverage
+//   check already shows that no unlanded commit is hidden), but a given sha gets the same membership check; a steered lane's `reviewed`
+//   check and every sha of the row run against the named row's range;
+//   3 `git-tidy check` exit 0; 4 `test-pass check <tip> --suite` exit 0; 5 `audit-log gate --tip <tip>` exit 0;
+//   6 UI: when a range of the step changes UI files or a lane has a matrix, `ui-proof check --tip <tip> --against-step <road>.s<N>` exit 0
+//   and the step-start record taken at or before every `<from>`; 7 the measure (INFO).
 // Lines 4 (test), 5 and a steered step's `reviewed` line (review) and 6 (ui) are checks: each runs only when `checkOn(category)` says the
 //   owner turned it on with /check (spec r9-checks-off); off, the line is `INFO <n> <name>: not checked: <category> off`.
 // Invariants: any exit other than the expected ones is FAIL (fail closed, P3); untrusted shas from rows are hex-checked before argv, then
-//   resolved once to the full commit sha (`rev-parse --verify --quiet <sha>^{commit}`; unknown or ambiguous = FAIL naming the row), and only
-//   full shas are compared or passed on afterwards (a row may hold 7-40 hex, rev-list prints 40).
+//   resolved once to the full commit sha (`rev-parse --verify --quiet <sha>^{commit}`; unknown or ambiguous = FAIL naming the row, and so is
+//   an answer that does not start with the row's hex, which is what a branch or tag named like hex gives), and only full shas are compared
+//   or passed on afterwards (a row may hold 7-40 hex, rev-list prints 40).
 import { rowIds } from './road-file.mjs';
 import { isUiLane, landedLine, reviewedLine, roadStartTip } from './road-state.mjs';
 
@@ -23,7 +31,7 @@ export const GIT_TIMEOUT_MS = 5_000;
 export const TOOL_TIMEOUT_MS = 30_000;
 const HEX = /^[0-9a-f]{7,40}$/;
 const FULL_SHA = /^[0-9a-f]{40}$/;
-const WITHIN = /\blanded within ([\w.-]*[\w-])/;
+const WITHIN = /\blanded within ([\w.-]*[\w-])(?: as ([0-9a-f]{7,40})\b)?/;
 const RECORD_AT = /\bat ([0-9a-f]{7,40})\b/;
 
 const pass = (text) => `PASS ${text}`;
@@ -91,15 +99,16 @@ function landedOfCloseRow(rows, row) {
 }
 
 /**
- * The close row named by a done correction row that says `landed within <close row id>`, or null. It applies only to a done close row with
- * no landed line, and only when the correction row has no landed line either: such a close row landed inside the fast-forward of the
- * named one (one range for both) and carries no range of its own.
+ * `{ id, sha }` of a done correction row that says `landed within <close row id> [as <sha>]` (`sha` null without `as`), or null. It applies
+ * only to a done close row with no landed line, and only when the correction row has no landed line either: such a close row landed inside
+ * the fast-forward of the named one (one range for both) and carries no range of its own.
  */
 function withinOfCloseRow(rows, row) {
   if (landedLine(row.evidence) !== null) return null;
   const correction = correctionRow(rows, row);
   if (correction === null || landedLine(correction.evidence) !== null) return null;
-  return WITHIN.exec(String(correction.evidence ?? ''))?.[1] ?? null;
+  const said = WITHIN.exec(String(correction.evidence ?? ''));
+  return said === null ? null : { id: said[1], sha: said[2] ?? null };
 }
 
 /**
@@ -114,7 +123,7 @@ function reviewedOfLaneRow(rows, laneId) {
 
 const closeRange = (rows, row, entry, reviewed) => ({ entry, row: row.id, landed: landedOfCloseRow(rows, row), within: withinOfCloseRow(rows, row), both: ambiguousCorrection(rows, row), reviewed, unknown: [] });
 
-/** The done close rows of the road, as ranges (`landed` null when the row has no landed line; `within` the named close row or null; `both` the two correction row ids when it has two). */
+/** The done close rows of the road, as ranges (`landed` null when the row has no landed line; `within` `{ id, sha }` of the named close row or null; `both` the two correction row ids when it has two). */
 function closeRanges(road, rows) {
   return laneEntries(road).flatMap((entry) => {
     const row = rows.get(entry.ids.close.toLowerCase());
@@ -124,15 +133,16 @@ function closeRanges(road, rows) {
     .map((row) => closeRange(rows, row, null, null)));
 }
 
-/** The full commit sha of a row's sha text (hex-checked, 7-40 characters), or null when git does not know it or finds it ambiguous. */
+/** The full commit sha of a row's sha text (hex-checked, 7-40 characters), or null when git does not know it, finds it ambiguous, or answers with a commit it does not start with. */
 function fullSha(run, repo, text) {
   const found = git(run, repo, ['rev-parse', '--verify', '--quiet', `${text}^{commit}`]);
   const sha = found.out.trim();
-  return found.exit === 0 && FULL_SHA.test(sha) ? sha : null;
+  // A branch or tag named like hex wins over a short sha in rev-parse: the answer must still start with what the row wrote.
+  return found.exit === 0 && FULL_SHA.test(sha) && sha.startsWith(text.toLowerCase()) ? sha : null;
 }
 
 /**
- * The range with every sha taken from its rows (`to`, `from`, and `reviewed` of a steered lane) resolved to its full sha, once. A sha git
+ * The range with every sha taken from its rows (`to`, `from`, the `as` sha of a within row, and `reviewed` of a steered lane) resolved to its full sha, once. A sha git
  * cannot resolve stays as written and adds a FAIL text to `unknown`, naming the row; a text that is not hex is left for rangeRowFails.
  */
 function resolveRange(run, ctx, range) {
@@ -145,14 +155,24 @@ function resolveRange(run, ctx, range) {
   };
   const landed = range.landed === null ? null : { ...range.landed, to: resolve(range.landed.to, range.row, 'to'), from: resolve(range.landed.from, range.row, 'from') };
   const reviewed = range.entry !== null && ctx.steered(range.entry.step) ? resolve(range.reviewed, range.entry.ids.lane, 'reviewed') : range.reviewed;
-  return { ...range, landed, reviewed, unknown };
+  const within = range.within === null ? null : { ...range.within, sha: resolve(range.within.sha, range.row, 'the "as" sha') };
+  return { ...range, landed, within, reviewed, unknown };
 }
 
-/** Per-row checks of line 2; returns the FAIL texts. */
+/** The FAIL texts of a steered lane's `reviewed <sha> clean` line against the landed range `landed` (its own, or the named row's for a within row). */
+function reviewedFails(run, ctx, range, landed) {
+  if (range.reviewed === null) return [`2 range: ${range.entry.ids.lane} has no "reviewed <sha> clean" line`];
+  if (range.reviewed === ctx.start) return [`2 range: ${range.entry.ids.lane} names the road-start tip as reviewed`];
+  const unreviewed = git(run, ctx.repo, ['cherry', range.reviewed, landed.to, landed.from]);
+  const extra = unreviewed.out.split('\n').filter((line) => line.startsWith('+')).map((line) => line.slice(2));
+  if (unreviewed.exit === 0 && extra.length === 0) return [];
+  return [`2 range: ${range.entry.lane.name}: ${extra.length > 0 ? `commit ${extra.join(', ')} is not in the reviewed ${range.reviewed}` : `git cherry exited ${unreviewed.exit}`}`];
+}
+
+/** Per-row checks of line 2 of a row with its own range; returns the FAIL texts. */
 function rangeRowFails(run, ctx, range, seenTo) {
   const { repo, base, start, firstParent } = ctx;
   if (range.both !== null) return [`2 range: ${range.row} has a correction row under both ids (${range.both.join(' and ')}); keep one`];
-  if (range.within !== null) return [];
   if (range.unknown.length > 0) return range.unknown;
   const { landed } = range;
   if (landed === null || !HEX.test(landed.to)) return [`2 range: ${range.row} has no "landed <to> on <base> from <from>" evidence`];
@@ -167,26 +187,41 @@ function rangeRowFails(run, ctx, range, seenTo) {
   if (newHere !== 1) fails.push(newHere === 0 ? `2 range: ${range.row}: ${landed.to} is an old base sha (at or before the road start)` : `2 range: ${range.row}: git exited ${newHere}`);
   if (!firstParent.has(landed.to) || (landed.from !== start && !firstParent.has(landed.from))) fails.push(`2 range: ${range.row}: ${landed.from}..${landed.to} is not on the base's first-parent line`);
   if (isAncestor(run, repo, landed.from, landed.to) !== 0) fails.push(`2 range: ${range.row}: ${landed.from} is not an ancestor of ${landed.to}`);
-  if (range.entry !== null && ctx.steered(range.entry.step)) {
-    if (range.reviewed === null) fails.push(`2 range: ${range.entry.ids.lane} has no "reviewed <sha> clean" line`);
-    else if (range.reviewed === start) fails.push(`2 range: ${range.entry.ids.lane} names the road-start tip as reviewed`);
-    else {
-      const unreviewed = git(run, repo, ['cherry', range.reviewed, landed.to, landed.from]);
-      const extra = unreviewed.out.split('\n').filter((line) => line.startsWith('+')).map((line) => line.slice(2));
-      if (unreviewed.exit !== 0 || extra.length > 0) fails.push(`2 range: ${range.entry.lane.name}: ${extra.length > 0 ? `commit ${extra.join(', ')} is not in the reviewed ${range.reviewed}` : `git cherry exited ${unreviewed.exit}`}`);
-    }
+  if (range.entry !== null && ctx.steered(range.entry.step)) fails.push(...reviewedFails(run, ctx, range, landed));
+  return fails;
+}
+
+const namedRange = (ranges, range) => ranges.find((other) => other.row.toLowerCase() === range.within.id.toLowerCase());
+
+/**
+ * The checks of a `landed within` row that the named row's own checks do not cover. A road lane (an entry) must name the commit it landed
+ * with `as <sha>`, since the named row's range holds the work of several lanes; a fix row has no one sha for its work, so `as` is optional
+ * for it (the coverage check of line 2 already shows no unlanded commit is hidden). A given sha must be on the named row's first-parent
+ * range (from..to]. A steered lane's `reviewed` check runs against the named row's range, as for a row with its own range.
+ */
+function withinRowFails(run, ctx, range, ranges) {
+  if (range.unknown.length > 0) return range.unknown;
+  const named = namedRange(ranges, range);
+  if (named === undefined || named === range || named.within !== null || named.landed === null || named.unknown.length > 0 || !HEX.test(named.landed.from ?? '')) return [];
+  const fails = [];
+  const said = `2 range: ${range.row} says "landed within ${range.within.id}"`;
+  if (range.within.sha === null && range.entry !== null) fails.push(`${said} without "as <sha>": a lane names the commit it landed with`);
+  if (range.within.sha !== null) {
+    const listed = git(run, ctx.repo, ['rev-list', '--first-parent', `${named.landed.from}..${named.landed.to}`]);
+    if (listed.exit !== 0 || !listed.out.split('\n').includes(range.within.sha)) fails.push(`${said} as ${range.within.sha}, which is not in the range of ${named.row}`);
   }
+  if (range.entry !== null && ctx.steered(range.entry.step)) fails.push(...reviewedFails(run, ctx, range, named.landed));
   return fails;
 }
 
 /** The FAIL texts of the `landed within` rows: the named row is another close row of the road with a valid range of its own, never a chain. */
 function withinFails(ranges, rowFails) {
   return ranges.filter((range) => range.within !== null).flatMap((range) => {
-    const said = `2 range: ${range.row} says "landed within ${range.within}"`;
-    const named = ranges.find((other) => other.row.toLowerCase() === range.within.toLowerCase());
-    if (range.within.toLowerCase() === range.row.toLowerCase()) return [`${said}: a row cannot name itself`];
-    if (named === undefined) return [`${said}, but ${range.within} is not a done close row of this road`];
-    if (named.within !== null) return [`${said}, but ${named.row} itself landed within ${named.within} (no chains)`];
+    const said = `2 range: ${range.row} says "landed within ${range.within.id}"`;
+    const named = namedRange(ranges, range);
+    if (range.within.id.toLowerCase() === range.row.toLowerCase()) return [`${said}: a row cannot name itself`];
+    if (named === undefined) return [`${said}, but ${range.within.id} is not a done close row of this road`];
+    if (named.within !== null) return [`${said}, but ${named.row} itself landed within ${named.within.id} (no chains)`];
     if (named.landed === null || rowFails.get(named).length > 0) return [`${said}, but ${named.row} has no valid range of its own`];
     return [];
   });
@@ -195,7 +230,7 @@ function withinFails(ranges, rowFails) {
 /** Line 2: every close row of the road, then the cover of `<start>..<tip>` by the ranges. */
 function rangeLines(run, ranges, ctx) {
   const seenTo = new Set();
-  const rowFails = new Map(ranges.map((range) => [range, rangeRowFails(run, ctx, range, seenTo)]));
+  const rowFails = new Map(ranges.map((range) => [range, range.within === null ? rangeRowFails(run, ctx, range, seenTo) : withinRowFails(run, ctx, range, ranges)]));
   const fails = [...rowFails.values()].flat().concat(withinFails(ranges, rowFails));
   const good = ranges.filter((range) => range.unknown.length === 0 && range.landed?.from && HEX.test(range.landed.from));
   const tos = new Set(good.map((range) => range.landed.to));
