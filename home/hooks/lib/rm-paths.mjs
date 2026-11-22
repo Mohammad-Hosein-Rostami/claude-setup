@@ -1,4 +1,11 @@
-// Path rules for `rm -r`: is a target inside the project or a temp dir, and which variables hold what (the folder after a `cd`: lib/cd-folder.mjs).
+// Path rules for `rm -r`: is a target inside the project or a scratch area, and which variables hold what (the folder after a `cd`: lib/cd-folder.mjs).
+// Scratch areas (owner FR6, 2026-11-22: no popup for deletes in the session's temp area and `cs-test-*` folders, elsewhere it asks): a target
+// outside the project runs unasked when the path rm really deletes (deletedPath: links followed as the kernel follows them, `/tmp` read as
+// `/private/tmp`, `$TMPDIR` as `/private/var/folders/...`) is inside a temp root, or in or under a folder named `cs-test-*` that does not
+// hold home. Never one of Claude Code's own folders down to a session folder (`<temp>/claude-<uid>/<project>/<session>`: `$S/..` of a
+// scratchpad S is the session folder with its task output, `$S/../..` holds every session of the project), nor a bare glob of a temp root.
+// A glob folder part over a folder that holds a link, a link that leads nowhere yet, a link loop or an unreadable folder is not followed:
+// the rm asks. Paths split at `/` only, and also at `\` on Windows (on macOS and Linux a `\` is part of a name).
 // Exports: checkRm(args, {cwd, project, vars}) -> reason | undefined; MAX_TARGET_CHARS; MAX_LINE_READINGS; TOO_COMPLEX_REASON; newWork();
 // PWD_TARGET; expandVars; shown(target) -> the target as a reason shows it; newScope(cwd, project) -> {vars, assigned};
 // trackAssignments(scope, tokens, nextTokens); substituteKnownWords(tokens, scope); bashReadings(word, splitWords) (also read by
@@ -26,9 +33,11 @@
 // in with (substituteKnownWords): past MAX_LINE_EXPANDED_CHARS nothing more is filled in and the whole line asks.
 // `$PWD` (also written `${PWD}` or `$(pwd)`) in a target is the folder the line's `cd`s led to, unknown after a `cd` the guard could not follow;
 // the value the line started with or assigned is judged as well (readingsOf), so following the `cd` never drops an ask.
-// Invariants: pure apart from reading homedir()/tmpdir(); never touches the file system.
+// Invariants: pure apart from reading homedir()/tmpdir() and, for a target outside the project, the real paths of its folders
+// (realpath, lstat and a folder listing only, cached per line in the work budget; nothing is ever written).
+import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { isAbsolute, join, parse, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { globbedFolder } from './bare-glob.mjs';
 import { expandBraces } from './braces.mjs';
 import { RECURSIVE_FLAG, rmKind } from './rm-kind.mjs';
@@ -59,8 +68,11 @@ export const MAX_LINE_READINGS = 20000;
 export const MAX_LINE_EXPANDED_CHARS = 4 * MAX_COMMAND_CHARS;
 export const TOO_COMPLEX_REASON = 'command too complex to check (its rm targets, or its commands after cd in nested scripts, are more than the guard reads); '
   + 'read it before allowing';
-/** @returns {{readings: number, expanded: number, spent: boolean}} a fresh budget for one line; spent once either count ran out: the line then asks */
-export const newWork = () => ({ readings: 0, expanded: 0, spent: false });
+/**
+ * @returns {{readings: number, expanded: number, spent: boolean, realPaths: Map<string, string | null>}} a fresh budget for one line; spent once
+ *   either count ran out: the line then asks. realPaths caches the real paths deletedPath read, so a folder is looked up once per line.
+ */
+export const newWork = () => ({ readings: 0, expanded: 0, spent: false, realPaths: new Map() });
 /**
  * Git Bash paths (`/c/Users/x`) -> `c:/Users/x` on Windows; unchanged elsewhere. A bare drive (`/c`) is the drive ROOT, `c:/`: a plain
  * `c:` means "the current folder on drive c" to Windows, so `cd /c` would look like a cd that did not move.
@@ -80,6 +92,107 @@ export const HOME_ASSIGNED = '~';
  * (`HOME=/srv; cd ~`): the shell then reads `~` from the new value, so the word stays unknown (X4).
  */
 export const expandHome = (target, vars) => (vars?.has(HOME_ASSIGNED) ? target : target.replace(HOME_PREFIX, homedir()));
+
+const CS_TEST_FOLDER = /^cs-test-/; // the probe folders the setup's rules name (home/CLAUDE.md "Probes")
+const CLAUDE_TREE = 'claude-'; // Claude Code keeps `<temp>/claude-<uid>/<project>/<session>/`: the scratchpad and the task output
+const CLAUDE_TREE_FOLDER = /^claude-\d+$/;
+const SESSION_DEPTH = 3; // claude-<uid>, its project folder, the session folder: a target there or above holds a whole session area
+const GLOB_CHAR = /[*?[]|[@!+]\(/; // where a glob starts: such a part is a pattern, not one folder
+const PATH_SEPARATORS = process.platform === 'win32' ? /[\\/]+/ : /\/+/;
+const ENDS_AS_FOLDER = process.platform === 'win32' ? /[\\/]\.?$/ : /\/\.?$/; // `x/` and `x/.`: rm goes through a link x to what it leads to
+
+/** The real path, the path itself when it is not there, or null when where it leads is unknown. */
+function readReal(path) {
+  try {
+    return realpathSync.native(path);
+  } catch (error) {
+    if (error.code === 'ENOTDIR') return path; // a folder part is a file: rm fails there and deletes nothing
+    if (error.code !== 'ENOENT') return null; // a link loop, no access, a NUL byte: not followed, so the rm asks
+  }
+  // not there, or a link whose target is not there yet (a later command of the line may make it): only a plain miss is read as written
+  return lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink() ? null : path;
+}
+
+const realOf = (path, known) => {
+  if (!known.has(path)) known.set(path, readReal(path));
+  return known.get(path);
+};
+
+const LINK_FREE_KEY = '\u0000links'; // a NUL never occurs in a path, so this cache key cannot meet a real path
+
+/** True when no entry of the folder is a link, or the folder is not there: a glob part there then leads to no other place. */
+function holdsNoLinks(folder, known) {
+  const key = folder + LINK_FREE_KEY;
+  if (!known.has(key)) known.set(key, readLinkFree(folder) ? folder : null);
+  return known.get(key) !== null;
+}
+
+function readLinkFree(folder) {
+  try {
+    return !readdirSync(folder, { withFileTypes: true }).some((entry) => entry.isSymbolicLink());
+  } catch (error) {
+    return error.code === 'ENOENT' || error.code === 'ENOTDIR'; // nothing there for the glob to match; no access: unknown
+  }
+}
+
+/**
+ * The path a recursive rm of `written` really deletes. Each folder part is followed as the kernel follows it, `..` included (`$S/link/..` is
+ * the parent of the link's target); the last part only when the target ends in `/` or `/.` (rm removes a link itself, not what it leads to).
+ * A glob folder part (`/tmp/x/**` + `/*`) is read only in a folder that holds no link, and nothing below it is followed again.
+ * @param {string} written an absolute target as the line names it, not normalised: its `..` parts are read here
+ * @param {Map<string, string | null>} known the real paths read so far on this line (modified)
+ * @returns {string | null} the physical path, or null when a folder part cannot be followed (the rm then asks)
+ */
+function deletedPath(written, known) {
+  const { root } = parse(written);
+  const parts = written.slice(root.length).split(PATH_SEPARATORS).filter((part) => part !== '' && part !== '.');
+  const followsLast = ENDS_AS_FOLDER.test(written);
+  let [here, belowGlob] = [realOf(root, known), false];
+  for (const [at, part] of parts.entries()) {
+    const follows = at < parts.length - 1 || followsLast;
+    if (here === null) return null;
+    if (part === '..' || !follows) here = part === '..' ? dirname(here) : join(here, part);
+    else if (belowGlob) return null; // `*/x/`: the x of every match would have to be read
+    else if (GLOB_CHAR.test(part)) [here, belowGlob] = holdsNoLinks(here, known) ? [join(here, part), true] : [null, false];
+    else here = realOf(join(here, part), known);
+  }
+  return here;
+}
+
+/** The temp roots as written and as real paths: on macOS `/tmp` is `/private/tmp` and `$TMPDIR` lies under `/private/var/folders`. */
+const TEMP_ROOTS = [...new Set([...SAFE_TEMP_ROOTS, ...SAFE_TEMP_ROOTS.map(readReal)].filter((root) => root !== null))];
+
+/** True when a path part is, or as a glob may match, a `claude-<uid>` folder: a glob's literal start fits `claude-`. */
+function mayBeClaudeTree(part) {
+  if (!GLOB_CHAR.test(part)) return CLAUDE_TREE_FOLDER.test(part);
+  const literal = part.split(GLOB_CHAR, 1)[0];
+  return CLAUDE_TREE.startsWith(literal) || literal.startsWith(CLAUDE_TREE);
+}
+
+/** The parts below a temp root stop at or above one Claude Code session folder, or a glob there names several sessions. */
+const holdsSessionArea = (parts) => mayBeClaudeTree(parts[0])
+  && (parts.length <= SESSION_DEPTH || parts.slice(1, SESSION_DEPTH).some((part) => GLOB_CHAR.test(part)));
+
+const isBareGlobOf = (root, path) => {
+  const folder = globbedFolder(path);
+  return folder !== undefined && sameFile(resolve(folder), resolve(root));
+};
+
+/**
+ * True when the physical path an rm deletes is in a scratch area (FR6, see the header): inside a temp root but not Claude Code's tree down
+ * to a session folder nor a bare glob of the root, or in or under a `cs-test-*` folder that is not home and does not hold it.
+ * @param {string} path the result of deletedPath
+ */
+function inScratchArea(path) {
+  const roots = TEMP_ROOTS.filter((root) => isUnder(root, path));
+  if (roots.length > 0) return !roots.some((root) => holdsSessionArea(relative(root, path).split(PATH_SEPARATORS)) || isBareGlobOf(root, path));
+  const parts = path.split(PATH_SEPARATORS);
+  const at = parts.findIndex((part) => CS_TEST_FOLDER.test(part));
+  if (at === -1) return false;
+  const folder = resolve(parts.slice(0, at + 1).join(sep));
+  const home = resolve(homedir());
+  return !sameFile(folder, home) && !isUnder(folder, home);
+}
 
 /** $HOME, `/`, a drive root (`C:\`, `/c/`) are never "the project": a session started there would allow rm -r anywhere. */
 function isBroadRoot(project) {
@@ -197,8 +310,11 @@ function readingsOf(target, cwd, vars) {
 /** A target with `$(git rev-parse --show-toplevel)`, `~`/`$HOME` and the known variables filled in. */
 const expandedTarget = (rawTarget, cwd, project, vars) => expandVars(expandHome(expandToplevel(rawTarget, cwd, project), vars), vars);
 
-/** `cwd` is null when an earlier `cd` could not be resolved: then only absolute targets can be judged. */
-function insideProject(rawTarget, cwd, project, vars) {
+/**
+ * True when the target is inside the project (as written) or in a scratch area (as deleted: deletedPath, inScratchArea). `cwd` is null when
+ * an earlier `cd` could not be resolved: then only absolute targets can be judged. `known` is the line's real-path cache (newWork).
+ */
+function insideProject(rawTarget, { cwd, project, known }, vars) {
   const target = expandedTarget(rawTarget, cwd, project, vars);
   if (target.startsWith('~') || target.includes('$')) return false;
   const native = nativePath(target);
@@ -206,7 +322,9 @@ function insideProject(rawTarget, cwd, project, vars) {
   const abs = resolve(cwd ?? project, native);
   // `$D/..` and `$D/../x` leave the unique directory mktemp made, so they only count as safe while they stay inside it
   if (target.startsWith(mktempDir())) return abs === mktempDir() || isUnder(mktempDir(), abs);
-  return (!isBroadRoot(project) && isUnder(project, abs)) || SAFE_TEMP_ROOTS.some((root) => isUnder(root, abs));
+  if (!isBroadRoot(project) && isUnder(project, abs)) return true;
+  const deleted = deletedPath(isAbsolute(native) ? native : `${cwd ?? project}${sep}${native}`, known);
+  return deleted !== null && inScratchArea(deleted);
 }
 
 /**
@@ -257,7 +375,7 @@ const unreadOption = (args, bareWords, splitWords) => args.filter((word) => bare
 /**
  * @param {string[]} args words after `rm`
  * @param {{cwd: string | null, project: string, vars: Map<string, string>, splitWords?: Set<string>, bareWords?: Set<string>, groupTargets?: string[],
- * work?: {readings: number, spent: boolean}}} env the
+ * work?: {readings: number, spent: boolean, realPaths?: Map<string, string | null>}}} env the
  *   folder and variables of the segment; bareWords are the command's words with a `$NAME` outside quotes; groupTargets are the branches of a
  *   glob group written after the rm (lib/bare-glob.mjs groupBranches); work is the line's budget (newWork), a fresh one when the caller has none
  * @returns {string | undefined} ask reason when a recursive rm targets something outside the project and the temp dirs (or an unknown variable)
@@ -277,7 +395,8 @@ export function checkRm(args, { cwd, project, vars, splitWords, bareWords = new 
   if (words.some((word) => expandBraces(word) === null)) return destructive(`${rm} with a brace expansion that cannot be listed (check the targets by hand)`);
   const targets = words.flatMap(expandBraces).flatMap(withParentReading);
   const judged = targets.flatMap((target) => readingsOf(target, cwd, vars).map((reading) => ({ target, reading })));
-  const outside = judged.find(({ target, reading }) => !insideProject(target, cwd, project, reading));
+  const place = { cwd, project, known: work.realPaths ?? new Map() };
+  const outside = judged.find(({ target, reading }) => !insideProject(target, place, reading));
   if (outside !== undefined) return destructive(`${rm} outside the project (${shown(outside.target)})`);
   const heres = (cwd === null ? maybeCwds : [cwd]).filter((here) => here !== null); // an unknown folder: every folder the line may be in
   const whole = judged.find(({ target, reading }) => emptiesWholeFolder(target, { cwd, project, heres }, reading));
