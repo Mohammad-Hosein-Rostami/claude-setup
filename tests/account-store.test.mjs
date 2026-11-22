@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { accountForCall, addAccount, listAccounts, removeAccount, setCreditsOff, setDefault, setPlan } from '../home/tools/account/lib/accounts.mjs';
 import { dpapiStore } from '../home/tools/account/lib/dpapi-store.mjs';
@@ -193,8 +193,9 @@ for (const [label, makeStore] of [['file', (box) => fileStore(box.storeDir)], ['
 test('the Keychain store: one fixed command line per call on the stdin of `security -i`, service claude-setup-account, the account name as the account attribute', (t) => {
   const box = sandbox(t);
   const fake = fakeSecurity();
-  const keychain = join(box.dir, 'scratch dir', 'x.keychain-db');
-  mkdirSync(join(box.dir, 'scratch dir'));
+  const dir = realpathSync(box.dir); // /var is a link on macOS: the store refuses a path with a link in it
+  const keychain = join(dir, 'scratch dir', 'x.keychain-db');
+  mkdirSync(join(dir, 'scratch dir'));
   writeFileSync(keychain, '');
   const store = keychainStore({ run: fake.run, keychain });
   store.put('work', TOKEN_A);
@@ -206,14 +207,15 @@ test('the Keychain store: one fixed command line per call on the stdin of `secur
   assert.ok(fake.lines.every((line) => !line.includes('\n')), 'never a second command on the same stdin');
   assert.throws(() => keychainStore({ run: fake.run, keychain: '/tmp/a"b' }), refuses('store'));
   // `security` given a keychain file that does not exist writes to the login keychain instead: nothing may be run for one.
-  const missing = keychainStore({ run: () => { throw new Error('security must not be run for a keychain file that does not exist'); }, keychain: join(box.dir, 'no-such.keychain-db') });
+  const missing = keychainStore({ run: () => { throw new Error('security must not be run for a keychain file that does not exist'); }, keychain: join(dir, 'no-such.keychain-db') });
   for (const act of [() => missing.put('work', TOKEN_A), () => missing.get('work'), () => missing.remove('work')]) assert.throws(act, refuses('store'));
 });
 
 posixTest('S6: the Keychain store runs `security` only for an absolute path to a regular file: a bare name, a relative path and a link are refused', (t) => {
   const box = sandbox(t);
-  const real = join(box.dir, 'real.keychain-db');
-  const link = join(box.dir, 'link.keychain-db');
+  const dir = realpathSync(box.dir); // /var is a link on macOS: the store refuses a path with a link in it
+  const real = join(dir, 'real.keychain-db');
+  const link = join(dir, 'link.keychain-db');
   writeFileSync(real, '');
   symlinkSync(real, link);
   const mustNotRun = () => { throw new Error('security must not be run for a keychain path that is not an absolute regular file'); };
@@ -226,11 +228,19 @@ posixTest('S6: the Keychain store runs `security` only for an absolute path to a
   keychainStore({ run: fake.run, keychain: real }).put('work', TOKEN_A);
   assert.equal(fake.lines.length, 1, 'the absolute regular file is the one accepted');
   // The check is made right before each call: a file swapped for a link after the store was built is still refused.
-  const swapped = keychainStore({ run: mustNotRun, keychain: join(box.dir, 'swap.keychain-db') });
-  writeFileSync(join(box.dir, 'swap.keychain-db'), '');
-  rmSync(join(box.dir, 'swap.keychain-db'));
-  symlinkSync(real, join(box.dir, 'swap.keychain-db'));
+  const swapped = keychainStore({ run: mustNotRun, keychain: join(dir, 'swap.keychain-db') });
+  writeFileSync(join(dir, 'swap.keychain-db'), '');
+  rmSync(join(dir, 'swap.keychain-db'));
+  symlinkSync(real, join(dir, 'swap.keychain-db'));
   assert.throws(() => swapped.get('work'), refuses('store'));
+  // A link in an earlier part of the path (a folder that is a link) is refused too: `lstat` of the last part alone passes it.
+  mkdirSync(join(dir, 'elsewhere'));
+  writeFileSync(join(dir, 'elsewhere', 'o.keychain-db'), '');
+  symlinkSync(join(dir, 'elsewhere'), join(dir, 'linked-folder'));
+  const viaFolder = keychainStore({ run: mustNotRun, keychain: join(dir, 'linked-folder', 'o.keychain-db') });
+  for (const act of [() => viaFolder.put('work', TOKEN_A), () => viaFolder.get('work'), () => viaFolder.remove('work')]) assert.throws(act, refuses('store'));
+  // The same path through the real folder is accepted.
+  keychainStore({ run: fake.run, keychain: join(dir, 'elsewhere', 'o.keychain-db') }).remove('work');
 });
 
 for (const status of [45, 36, 1, null]) {

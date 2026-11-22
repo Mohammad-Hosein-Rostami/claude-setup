@@ -5,11 +5,11 @@
 // from stdin, so a token is never a command argument (probe ACC-4, macOS 26.6.2: exit 0, 44 = no such item, 45 =
 // duplicate; with two lines on stdin the exit code is the last line's). One call sends one line: name and token are
 // checked against their patterns first (no space, quote or newline), and a keychain path is quoted, may hold no
-// quote, backslash or newline, and must be an existing file: given a path that does not exist, `security` wrote the item
+// quote, backslash or newline, and must be an existing regular file with no link in any part of its path: given a path that does not exist, `security` wrote the item
 // into the default (login) keychain instead (seen 2026-11-21, macOS 26.6.2), so nothing is run for one. An error names the exit code only: never stderr, never the command text.
 // What it does not defend: any process of the same user can read the item with `security` and no prompt (README).
 import { spawnSync } from 'node:child_process';
-import { lstatSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { AccountError, assertName, assertToken } from './names.mjs';
 
@@ -49,9 +49,11 @@ export function keychainStore({ run = runSecurity, keychain = null } = {}) {
   const target = () => {
     if (keychain === null) return '';
     // Checked right before each call: `security` resolves a bare name in ~/Library/Keychains and falls back to the login
-    // keychain for a file it cannot open, so only an absolute path to a regular file, not a link, is run (security review 1, S6).
+    // keychain for a file it cannot open, so only an absolute path to a regular file is run, with no link in any part of the
+    // path (`lstat` sees only the last part; the real path of the file must be the path itself) (security review 1, S6).
     if (!isAbsolute(keychain)) throw new AccountError('store', 'the keychain path is not absolute; nothing was run');
     if (!lstatSync(keychain, { throwIfNoEntry: false })?.isFile()) throw new AccountError('store', 'the keychain file does not exist or is not a regular file (a link?); nothing was run');
+    if (realpathSync(keychain) !== keychain) throw new AccountError('store', 'the keychain path has a link or a relative part in it; nothing was run');
     return ` "${keychain}"`;
   };
   const item = (name) => `-a ${assertName(name)} -s ${KEYCHAIN_SERVICE}`;

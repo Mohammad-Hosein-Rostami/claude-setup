@@ -5,6 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { KEYCHAIN_SERVICE, keychainStore, runSecurity } from '../home/tools/account/lib/keychain-store.mjs';
 import { AccountError } from '../home/tools/account/lib/names.mjs';
@@ -25,7 +26,8 @@ const searchList = () => spawnSync(SECURITY, ['list-keychains'], { encoding: 'ut
 /** A scratch keychain file in a temp folder whose name holds a space; removed (the file only) when the test ends. */
 function scratchKeychain(t) {
   const before = searchList();
-  const keychain = join(makeTempDir('account keychain-'), 'scratch.keychain-db');
+  // realpath: /var is a link on macOS, and the store refuses a path with a link in it.
+  const keychain = join(realpathSync(makeTempDir('account keychain-')), 'scratch.keychain-db');
   const made = spawnSync(SECURITY, ['create-keychain', '-p', '', keychain], { encoding: 'utf8' });
   assert.equal(made.status, 0, made.stderr);
   t.after(() => {
