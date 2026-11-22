@@ -109,7 +109,7 @@ test('S3: $HOME, / and a drive root never count as the project', () => {
   }
   assert.equal(decide('rm -rf dist', { cwd: `${home}/work/p`, project: home }).allow, false);
   assert.equal(decide('rm -rf dist', { cwd: `${home}/work/p`, project: `${home}/work/p` }).allow, true);
-  assert.equal(decide('rm -rf /tmp/x', { cwd: home, project: home }).allow, true);
+  assert.equal(decide('rm -rf /tmp/cs-test-x', { cwd: home, project: home }).allow, true);
 });
 
 test('P1: cd to ~, $HOME and the git top-level resolves when that directory is the project', () => {

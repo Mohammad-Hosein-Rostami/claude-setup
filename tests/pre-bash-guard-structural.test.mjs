@@ -36,7 +36,7 @@ const allows = (commands) => {
 
 test('harmless everyday commands stay silent (false positives cost a dialog)', () => {
   allows([
-    'git status', 'git diff --stat', 'git log --oneline -5', 'rm -rf node_modules', 'rm -rf dist build .next', 'rm -rf "$TMPDIR/x"', 'rm -f "$FILE"',
+    'git status', 'git diff --stat', 'git log --oneline -5', 'rm -rf node_modules', 'rm -rf dist build .next', 'rm -rf "$TMPDIR/cs-test-x"', 'rm -f "$FILE"',
     "psql -h localhost -c 'select 1'", "psql -h db.staging.example.com -c 'delete from t'", "psql -c 'select 1'", 'pnpm test', 'pnpm install',
     'ls -la', 'echo rm -rf /', 'grep -r "rm -rf" docs', 'man rm', 'git rm -r --cached build', 'pnpm rm -r lodash', 'docker run --rm alpine rm -rf /data',
     'ssh devhost rm -rf /var/tmp/x', '$EDITOR file.txt', 'caffeinate -i pnpm test', 'ionice -c3 tar czf out.tgz src', 'nice -n 5 make build',
@@ -90,7 +90,7 @@ test('item 2: variables are tracked in order; the last assignment wins', () => {
     'D=$(mktemp -d); unset D; rm -rf $D', 'D=$(mktemp -d); read D; rm -rf $D', 'D=$(mktemp -d) D=/etc; rm -rf $D', 'rm -rf "$UNKNOWN"', 'rm -rf $BUILD_DIR/out',
     'D=$(mktemp -d --tmpdir=/etc); rm -rf $D', 'D=$(mktemp -d -p /etc); rm -rf $D'], rmOutside);
   allows(['D=/etc; D=$(mktemp -d); rm -rf "$D"', 'D=$(mktemp -d); rm -rf $D', 'D=$(mktemp -d); rm -rf "$D/a" "$D/b"', 'D=$(mktemp -d); D=$D/sub; rm -rf $D',
-    'D=/etc; D=./build; rm -rf $D', 'export D=$(mktemp -d); rm -rf "$D"', 'D=$PWD/dist; rm -rf $D', 'D=/tmp/x; rm -rf $D', 'rm -f "$UNKNOWN"', 'rm "$UNKNOWN"']);
+    'D=/etc; D=./build; rm -rf $D', 'export D=$(mktemp -d); rm -rf "$D"', 'D=$PWD/dist; rm -rf $D', 'D=/tmp/cs-test-x; rm -rf $D', 'rm -f "$UNKNOWN"', 'rm "$UNKNOWN"']);
 });
 
 test('item 2: a variable that holds a command name is resolved', () => {

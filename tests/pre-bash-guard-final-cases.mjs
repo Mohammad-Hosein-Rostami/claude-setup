@@ -81,7 +81,7 @@ export const AUDIT_HARMLESS = [
   "git log -1 --pretty=%B | grep -q \"release\" && echo yes",
   "psql -h localhost -U postgres -c \"select 1\"",
   "cat <<EOF | kubectl apply -f -\napiVersion: v1\nEOF",
-  "rm -rf $TMPDIR/vite-*",
+  "rm -rf $TMPDIR/cs-test-vite-*",
   "gh pr create --title \"fix: delete stale sessions\" --body \"$(cat <<'EOF'\nok\nEOF\n)\"",
   "gh pr create --title \"feat: edit profile page\" --body \"$(cat <<'EOF'\nok\nEOF\n)\"",
   "gh pr create --title \"chore: release 1.2.0\" --body \"$(cat <<'EOF'\nok\nEOF\n)\"",

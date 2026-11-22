@@ -26,8 +26,8 @@ test('G2: a redirection in front of cd does not hide the cd', () => {
     `2>&1 cd .. && ${RM} -rf proj`,
     `X=1 >/dev/null cd .. && ${RM} -rf proj`,
   ]);
-  // from every folder the line may be in the target is inside the project or a temp folder: no ask, the same as without the redirection
-  assertAllSilent([`>/dev/null cd src && ${RM} -rf gen`, `>/dev/null cd /tmp && ${RM} -rf proj`]);
+  // from every folder the line may be in the target is inside the project or a cs-test folder: no ask, the same as without the redirection
+  assertAllSilent([`>/dev/null cd src && ${RM} -rf gen`, `>/dev/null cd /tmp/cs-test-x && ${RM} -rf proj`]);
   assert.ok(asks(`>/dev/null git push --force`), 'a redirection in front of another command still reads that command');
 });
 

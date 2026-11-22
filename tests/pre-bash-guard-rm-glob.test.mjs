@@ -70,7 +70,7 @@ const ASK_UNKNOWN_DIRECTORY_ABSOLUTE = [
   `popd; ${RM} -rf ${PROJECT}/*`,
   `cd "$SOMEWHERE" && ${RM} -rf ${PROJECT}/src ${PROJECT}/./*`,
 ];
-const SILENT_UNKNOWN_DIRECTORY = [`cd "$SOMEWHERE" && ${RM} -rf ${PROJECT}/src/*`, `cd "$SOMEWHERE" && ${RM} -rf ${PROJECT}/dist`, `popd; ${RM} -rf /tmp/x/*`];
+const SILENT_UNKNOWN_DIRECTORY = [`cd "$SOMEWHERE" && ${RM} -rf ${PROJECT}/src/*`, `cd "$SOMEWHERE" && ${RM} -rf ${PROJECT}/dist`, `popd; ${RM} -rf /tmp/cs-test-x/*`];
 const ASK_IN_SUBFOLDER = [`${RM} -rf *`, `${RM} -rf .*`, `${RM} -rf "$PWD"`, `${RM} -rf ../*`];
 const ALREADY_ASKED = [`${RM} -rf /`, `${RM} -rf /*`, `${RM} -rf ~`, `${RM} -rf ~/*`, `cd ~ && ${RM} -rf *`];
 // every bracket form is a glob: POSIX classes, a `]` in first place, negation, equivalence classes and collating symbols
@@ -123,7 +123,7 @@ const SILENT = [
   `${RM} -rf {a,b}*`,
   `${RM} -rf node_modules`,
   `${RM} -rf dist build`,
-  `${RM} -rf /tmp/x/*`,
+  `${RM} -rf /tmp/cs-test-x/*`,
   `D=$(mktemp -d) && ${RM} -rf $D/*`,
   `${RM} -f *`,
   `${RM} -rf src/**/*`,
@@ -132,7 +132,7 @@ const SILENT = [
   `${RM} -rf */dist`,
   `${RM} -rf **/*.log`,
   `${RM} -rf */*.log`,
-  `${RM} -rf /tmp/x/**/*`,
+  `${RM} -rf /tmp/cs-test-x/**/*`,
   `${RM} -f **/*`,
 ];
 
@@ -175,9 +175,9 @@ test('a . part or a doubled slash between bare globs changes nothing: the target
   for (const command of SILENT_DOT_PARTS) assert.deepEqual(decide(command, atRoot), { allow: true }, command);
 });
 
-test('a bare glob of a temp root asks; a folder inside one stays silent', () => {
+test('a bare glob of a temp root asks; a cs-test folder inside one stays silent', () => {
   for (const command of ASK_TEMP_ROOT) assert.ok(asksDestructive(command, atRoot), command);
-  for (const command of [`${RM} -rf /tmp/x/*`, `${RM} -rf "$TMPDIR"/build/*`, `${RM} -rf /tmp/x`]) assert.deepEqual(decide(command, atRoot), { allow: true }, command);
+  for (const command of [`${RM} -rf /tmp/cs-test-x/*`, `${RM} -rf "$TMPDIR"/cs-test-build/*`, `${RM} -rf /tmp/cs-test-x`]) assert.deepEqual(decide(command, atRoot), { allow: true }, command);
 });
 
 test('a glob of a sub-folder, a glob with a name part, named targets and a non-recursive rm stay silent', () => {

@@ -76,6 +76,10 @@ const ASK_CLASS_PATTERNS = [
   ['another deleter outside the project or on a whole folder', /^DESTRUCTIVE: (?:rimraf|rsync --delete|\S+ Remove-Item -Recurse|\S+ rd \/s|\S+ code deleting a tree) (?:outside the project|that empties a whole folder|with a target too long|with a brace expansion) /],
   ['another deleter with targets it cannot read', /^DESTRUCTIVE: (?:\S+ code deletes a folder tree at a path the guard cannot read|.+ with targets the guard cannot read); check/],
   ['a recursive delete through a link made in the line', /^DESTRUCTIVE: a recursive delete through a link made in the same line \(/],
+  // owner FR6 scratch areas (lib/scratch-area.mjs, lib/find-delete.mjs, lib/other-deleters.mjs)
+  ['a scratch delete on a line that may make links', /^DESTRUCTIVE: a delete in a scratch area \(.+\) on a line whose .+ may make a link/],
+  ['find deleting through links', /^DESTRUCTIVE: find deleting with -L or -follow: /],
+  ['rsync --delete through destination links', /^DESTRUCTIVE: rsync --delete that follows the links in its destination \(/],
   ["a change to the guard's own files", /^changes the guard's own files \(/],
   ['HUSKY=0', /^HUSKY=0 skips the git hooks$/],
   ['git -c core.hooksPath', /^git -c core\.hooksPath bypasses the git hooks$/],

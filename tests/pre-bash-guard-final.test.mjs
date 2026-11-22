@@ -35,7 +35,7 @@ const FIND_SILENT = [
   'find /var/log -name "*.log" -exec ls -l {} +',
   'find ~ -name "*.tmp" -exec rm {} +',
   `find ${PROJECT}/dist -type f -delete`,
-  'find /tmp/x -name "*.tmp" -exec rm -rf {} +',
+  'find /tmp/cs-test-x -name "*.tmp" -exec rm -rf {} +',
 ];
 
 for (const command of FIND_ASKS) {

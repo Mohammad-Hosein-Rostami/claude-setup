@@ -108,7 +108,7 @@ const STILL_SILENT = [
   `make && cd src && ${RM} -rf ../dist`,
   `cd src &&\n${RM} -rf ../dist`,
   `cd src; ${RM} -rf ${PROJECT}/dist`, // an absolute target is judged whatever the folder
-  `(cd src); ${RM} -rf /tmp/x/y`,
+  `(cd src); ${RM} -rf /tmp/cs-test-x/y`,
   `${RM} -rf dist; cd src`,
   `${RM} -rf dist && (cd src && make)`,
   `(cd src); ls`,
@@ -135,7 +135,7 @@ const CHAIN_IN_A_GROUP = [
 const PIPELINE_IN_THE_CHAIN = [`cd packages/app && npm run build | tail -5 && ${RM} -rf ../../dist`, `cd src && make 2>&1 |& tee log && ${RM} -rf ../dist`];
 // an absolute cd is known whatever came before
 const ABSOLUTE_CD = [
-  `cd /tmp/x && ${RM} -rf y; cd ${PROJECT} && ${RM} -rf dist`,
+  `cd /tmp/cs-test-x && ${RM} -rf y; cd ${PROJECT} && ${RM} -rf dist`,
   `source ./env.sh; cd ${PROJECT}/src && ${RM} -rf gen`, // a relative target: it asks while the folder is unknown
   `for d in a b; do cd ${PROJECT}/src && ${RM} -rf ../gen; done`,
   `for f in a b; do echo "$f"; done; cd src && ${RM} -rf ../gen`, // the loop ended at its `done`: a relative cd is followed again

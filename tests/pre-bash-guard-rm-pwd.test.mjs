@@ -50,7 +50,7 @@ const SILENT_FROM_ROOT = [
   `cd src/a && ${RM} -rf "$PWD"/b/c "$PWD"/d/*`,
   `cd src && ${RM} -rf $(pwd)/gen/*`,
   `cd "$PWD"/src && ${RM} -rf gen`,
-  `cd /tmp/x && ${RM} -rf "$PWD"/y`,
+  `cd /tmp/cs-test-x && ${RM} -rf "$PWD"/y`,
 ];
 
 test('after a cd, $PWD and $(pwd) in an rm target mean the folder the cd went to', () => {

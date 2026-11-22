@@ -168,8 +168,8 @@ test('a git-run variable or config value set from what the guard cannot read ask
     assert.match(reasonOf(command), RM_OUTSIDE, command);
   }
   const quiet = ['GIT_EDITOR="$EDITOR" git commit', 'git -c core.editor="$EDITOR" commit', 'declare -x GIT_EDITOR=vim; git commit',
-    'GIT_EDITOR=vim git commit && rm -rf /tmp/build', `A0='${RM}'; echo "$A0"`,
-    'git commit -e; echo "$EDITOR" && rm -rf /tmp/build']; // no git run / only reads the variable
+    'GIT_EDITOR=vim git commit && rm -rf build', `A0='${RM}'; echo "$A0"`,
+    'git commit -e; echo "$EDITOR" && rm -rf build']; // no git run / only reads the variable
   for (const command of quiet) assert.deepEqual(decide(command, ctx), { allow: true }, command);
   // printf -v writes a variable git runs out of sight, whatever it prints (lib/git-run-values.mjs)
   assert.deepEqual(reasonsOf('printf -v GIT_EDITOR %s vim; export GIT_EDITOR; git commit'), [GIT_UNREADABLE_REASON]);

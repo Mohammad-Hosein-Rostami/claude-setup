@@ -5,23 +5,33 @@
 // Without a name test (`-name`, `-iname`, `-path`, `-regex` and their kin) a deleting find removes everything below its start folder, so
 // the start folder is judged as an `rm -r` target itself (N2): `find . -delete`, `find .. -delete` from a sub-folder, `find "$PWD" -mindepth 1
 // -delete` and `find <project root> -delete` ask like `rm -rf ./*`; `find dist -type f -delete` inside the project stays silent.
-// A find that only lists, or runs a non-recursive rm, is not judged here. Invariants: pure; never touches the file system.
+// A deleting find with `-L` or `-follow` follows every link below its start folders, so it may delete where they lead: it always asks.
+// With `-H` a start folder that is a link is followed, so it is judged as `<folder>/`.
+// A find that only lists, or runs a non-recursive rm, is not judged here. Invariants: reads the file system only through checkRm
+// (lib/scratch-area.mjs); writes nothing.
 import { RECURSIVE_FLAG, bashReadings, checkRm, shown } from './rm-paths.mjs';
 import { basenameOf } from './shell-words.mjs';
 import { destructive } from './verdict.mjs';
 
 const EXEC_PRIMARIES = new Set(['-exec', '-execdir', '-ok', '-okdir']);
 const LEADING_OPTION = /^-(?:[HLP]|O\d?)$/;
+const FOLLOWS_EVERY_LINK = /^-(?:L|follow)$/; // `-L` before the start folders, `-follow` anywhere in the expression
 const PROBE_CHILD = '/x'; // the folder itself may be the project root; what find removes is below it
 const EXEC_END = new Set([';', '\;', '+']);
 const NAME_TESTS = new Set(['-name', '-iname', '-path', '-ipath', '-wholename', '-iwholename', '-regex', '-iregex']);
 
+/** The options before the start folders (`-H`, `-L`, `-P`, `-O2`; `-D <debug>` with its value), and where the start folders begin. */
+function startOptions(args) {
+  const options = [];
+  let i = 0;
+  for (; i < args.length && (LEADING_OPTION.test(args[i]) || args[i] === '-D'); i += args[i] === '-D' ? 2 : 1) options.push(args[i]);
+  return { options, end: i };
+}
+
 /** Start folders: the words before the first expression word (`-name`, `(`, `!`); `.` when there are none. */
 function startFolders(args) {
   const folders = [];
-  let i = 0;
-  while (i < args.length && (LEADING_OPTION.test(args[i]) || args[i] === '-D')) i += args[i] === '-D' ? 2 : 1;
-  for (; i < args.length && !args[i].startsWith('-') && args[i] !== '(' && args[i] !== '!'; i++) folders.push(args[i]);
+  for (let i = startOptions(args).end; i < args.length && !args[i].startsWith('-') && args[i] !== '(' && args[i] !== '!'; i++) folders.push(args[i]);
   return folders.length > 0 ? folders : ['.'];
 }
 
@@ -42,8 +52,15 @@ function deletes(args) {
  * @returns {string | undefined} ask reason when a deleting find starts outside the project
  */
 export function checkFind(args, env) {
-  if (!deletes(args.flatMap((word) => bashReadings(word, env.splitWords)))) return undefined; // `D='/ -delete'; find $D`: bash splits it (N5)
-  const folders = startFolders(args).flatMap((folder) => bashReadings(folder, env.splitWords)); // `find $D` splits like `rm -r $D`
+  const words = args.flatMap((word) => bashReadings(word, env.splitWords));
+  if (!deletes(words)) return undefined; // `D='/ -delete'; find $D`: bash splits it (N5)
+  if (words.some((word) => FOLLOWS_EVERY_LINK.test(word))) {
+    return destructive('find deleting with -L or -follow: it goes through every link below its start folders and may delete where they lead');
+  }
+  // with -H the start folders themselves are followed when they are links: judged as `<folder>/`, the way rm reads a followed folder
+  const followsStart = startOptions(args).options.includes('-H');
+  const folders = startFolders(args).flatMap((folder) => bashReadings(folder, env.splitWords)) // `find $D` splits like `rm -r $D`
+    .map((folder) => (followsStart && !folder.endsWith('/') ? `${folder}/` : folder));
   if (!args.some((word) => NAME_TESTS.has(word))) { // no name test: everything below the start folder goes, as with `rm -r <folder>/*`
     for (const folder of folders) {
       const reason = checkRm(['-r', folder], env);

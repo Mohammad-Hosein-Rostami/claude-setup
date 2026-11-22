@@ -16,11 +16,13 @@ import { fileURLToPath } from 'node:url';
 
 const TEMP = mkdtempSync(join(tmpdir(), 'cs-test-scratch-rm-'));
 process.env.TMPDIR = TEMP; // the guard reads its temp root when it loads, so it loads after this
+const SESSION_ID = '8e63904d-6ae5-474c-9b08-920c34e5c97d';
+process.env.CLAUDE_CODE_SESSION_ID = SESSION_ID; // the session the guard runs in (Claude Code sets it for its hooks)
 const { decide } = await import('../home/hooks/pre-bash-guard.mjs');
 after(() => rmSync(TEMP, { recursive: true, force: true }));
 
 const REAL_TEMP = realpathSync(TEMP); // on macOS `/var/folders/...` is `/private/var/folders/...`
-const SESSION = join(TEMP, 'claude-501', '-Users-owner-proj', '8e63904d-6ae5-474c-9b08-920c34e5c97d');
+const SESSION = join(TEMP, 'claude-501', '-Users-owner-proj', SESSION_ID);
 const S = join(SESSION, 'scratchpad');
 const OUTSIDE = fileURLToPath(new URL('.', import.meta.url)); // an existing folder outside every temp root (this repo's tests)
 mkdirSync(join(S, 'linked'), { recursive: true });
@@ -67,6 +69,57 @@ test('a cs-test folder that is home or holds it is no scratch area', (t) => {
   process.env.HOME = resolve('/work/cs-test-home/owner');
   [`${RM} -rf ~/x`, `${RM} -rf /work/cs-test-home`, `${RM} -rf ~`].forEach(asksDelete);
   quiet(`${RM} -rf /work/cs-test-other/x`);
+});
+
+const asksDestructive = (command) => assert.ok(decide(command, ctx).reasons?.some((reason) => reason.startsWith('DESTRUCTIVE: ')), command);
+const LINKS = join(TEMP, 'cs-test-c'); // holds the link l, which leads out of every scratch area
+const A = join(TEMP, 'cs-test-a');
+mkdirSync(LINKS);
+symlinkSync(OUTSIDE, join(LINKS, 'l'));
+
+test('R1: no scratch exemption on a line with a command that may make the link the delete goes through', () => {
+  const m = `${A}/m`;
+  [`mv ${LINKS}/l ${m} && ${RM} -rf ${m}/old`, `cp -a ${LINKS}/l ${m} && ${RM} -rf ${m}/old`, `cp -P ${LINKS}/l ${m}; ${RM} -rf ${m}/old`,
+    `tar -xf x.tar -C ${A} && ${RM} -rf ${m}/old`, `unzip x.zip -d ${A} && ${RM} -rf ${m}/old`, `rsync -a ${LINKS}/ ${A}/ && ${RM} -rf ${A}/l/old`,
+    `git clone u ${m} && ${RM} -rf ${m}/old`, `node make-links.mjs; ${RM} -rf ${m}/old`, `cd ${A} && mv ../cs-test-c/l m && ${RM} -rf m/old`,
+    `D=$(mktemp -d); mv ${LINKS}/l $D/m && ${RM} -rf $D/m/old`, `S=${S}; mv ${LINKS}/l "$S/m"; ${RM} -rf "$S/m/x"`,
+  ].forEach(asksDelete);
+  // the link maker written after the delete: a loop, a pipe or `&` may run it first
+  [`for i in 1 2; do ${RM} -rf ${m}/old; mv ${LINKS}/l ${m}; done`, `${RM} -rf ${m}/old & mv ${LINKS}/l ${m}`,
+    `${RM} -rf ${m}/old | ln -s ~ ${m}`, `${RM} -rf ${m}/old; bash -c 'mv ${LINKS}/l ${m}'`].forEach(asksDestructive);
+  [`mkdir -p ${m} && ${RM} -rf ${m}/old`, `cd "${S}" && ${RM} -rf fx4`, `D=$(mktemp -d); cp -a x $D/m; ${RM} -rf $D/m`,
+    `rsync -a --delete src/ ${A}/dst/`, `D=$(mktemp -d); git clone u $D/r; ${RM} -rf $D/r`, `for d in a b; do echo "$d"; done; ${RM} -rf ${A}/x`].forEach(quiet);
+});
+
+test('R2: find -L/-follow and rsync -K/-k with --delete follow links below their target, so they ask; -H follows the start folder', () => {
+  [`find -L ${S} -delete`, `find ${S} -follow -delete`, `find -L ${S}/plain -name x -delete`, `find -L ${S} -exec ${RM} -rf {} +`,
+    `find -H ${S}/linked/repo -delete`, `rsync -aK --delete src/ ${S}/d/`, `rsync -a --keep-dirlinks --delete src/ ${S}/d/`,
+    `rsync -ak --delete src/ ${S}/d/`, `rsync -a --copy-dirlinks --delete src/ ${S}/d/`, `rsync -a --delete src/ ${S}/linked/repo`].forEach(asksDestructive);
+  [`find ${S}/plain -delete`, `find ${S}/linked/repo -delete`, `find -P ${S}/plain -name x -delete`, `rsync -a --delete src/ ${S}/d/`].forEach(quiet);
+});
+
+test('R3: a cs-test folder that holds home asks also when HOME is written through a link', (t) => {
+  const home = process.env.HOME;
+  t.after(() => { process.env.HOME = home; });
+  mkdirSync(join(TEMP, 'cs-test-h', 'home', 'cs-test-a'), { recursive: true });
+  symlinkSync(join(TEMP, 'cs-test-h'), join(TEMP, 'cs-test-hlink'));
+  process.env.HOME = join(TEMP, 'cs-test-hlink', 'home'); // its real path lies under cs-test-h
+  [`${RM} -rf ~`, `${RM} -rf ~/x`, `${RM} -rf ${REAL_TEMP}/cs-test-h`, `${RM} -rf ${REAL_TEMP}/cs-test-h/home`].forEach(asksDelete);
+  quiet(`${RM} -rf ~/cs-test-a/x`);
+});
+
+test('R4: only this session\'s own folder is free: another session, any other temp folder and no session id ask', (t) => {
+  const other = join(TEMP, 'claude-501', '-Users-owner-proj', '11111111-2222-3333-4444-555555555555', 'scratchpad');
+  [`${RM} -rf ${other}`, `${RM} -rf ${other}/x`, `${RM} -rf /private/tmp/claude-501/-Users-x-proj/11111111-2222-3333-4444-555555555555/scratchpad`,
+    `${RM} -rf /tmp/foo`, `${RM} -rf /private/tmp/build/*`, `${RM} -rf /tmp/x/y`, // TEMP itself is a cs-test folder: free, as FR6 says
+    `${RM} -rf ${TEMP}/claude-501/*/${SESSION_ID}/scratchpad/x`, `${RM} -rf ${TEMP}/claude-501/-Users-owner-proj/${SESSION_ID.slice(0, 8)}*/x`].forEach(asksDelete);
+  quiet(`${RM} -rf ${S}/x`);
+  t.after(() => { process.env.CLAUDE_CODE_SESSION_ID = SESSION_ID; });
+  for (const id of [undefined, '..', 'a/b', '']) {
+    if (id === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+    else process.env.CLAUDE_CODE_SESSION_ID = id;
+    asksDelete(`${RM} -rf ${S}/x`);
+  }
 });
 
 const RUNNER = fileURLToPath(new URL('./win32-decide.mjs', import.meta.url));

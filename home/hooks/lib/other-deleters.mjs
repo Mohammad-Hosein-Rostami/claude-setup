@@ -4,22 +4,26 @@
 // checkLinkedDelete(commands) -> reason | undefined; withoutDotTargets(args).
 // Judged (each asks when a target is outside the project, unknown, or a whole folder, as `rm -r` does):
 // - rimraf, also run through npx, bunx, pnpx, `pnpm|yarn|bun|npm dlx|exec|x`;
-// - `rsync --delete` (any `--del*` form): its destination, read as a bare glob of that folder (it empties what the source lacks);
+// - `rsync --delete` (any `--del*` form): its destination, read as a bare glob of that folder (it empties what the source lacks); with
+//   `-K`/`--keep-dirlinks` or `-k`/`--copy-dirlinks` it follows links into where they lead, so it always asks;
 // - `powershell|pwsh -Command` text with Remove-Item or an alias of it (rm, rmdir, rd, del, erase, ri) and -Recurse (any prefix);
 // - `cmd /c` (also `//c` from Git Bash, `/k`) text with `rd|rmdir /s` or `del|erase /s`;
 // - `node|python|perl|ruby|deno|bun -e|-c|-p|--eval` text with a recursive delete call (rmSync/rm/rmdir with `recursive: true`,
 //   rmtree, remove_tree, FileUtils.rm_rf|rm_r|remove_dir|remove_entry): its first argument when it is a string literal; any other
 //   argument (a variable, a joined path) asks, since the guard cannot read it.
 // Also asks: a recursive delete (rm -r, rimraf, a deleting find) through a symlink a `ln -s` made earlier in the same line (it may
-// point anywhere). Writes under ~/.claude/private and the guard's own state: lib/guard-state-write.mjs.
+// point anywhere), and a command that may make links on a line where a scratch-area delete was let run (lib/scratch-area.mjs
+// linkMakerReason: a loop, a pipe or `&` may run it first). Writes under ~/.claude/private and the guard's own state: lib/guard-state-write.mjs.
 // withoutDotTargets drops `.` and `./` from rm's targets: rm refuses to remove them, so they never ask.
 // Known limits (also named in pre-bash-guard.mjs): PowerShell -EncodedCommand, -File and script blocks run later; cmd text with `^`
 // escapes or `%VAR%` paths (judged as written); interpreter code read from a file or stdin; a delete call reached through an alias
 // or a loop; rimraf's own glob option; the PowerShell tool itself (the hook matcher covers Bash only).
-// Invariants: pure; never touches the file system; every rule only adds asks,
+// Invariants: reads the file system only through checkRm (lib/scratch-area.mjs); notes on the line's work budget which command may make
+// links; every rule only adds asks,
 // except withoutDotTargets, which removes only the two words rm itself refuses.
 import { basename } from 'node:path';
 import { checkRm, RECURSIVE_FLAG, withoutRedirects } from './rm-paths.mjs';
+import { linkMakerReason, linkState } from './scratch-area.mjs';
 import { QUOTED_MARK, flagsOf } from './shell-words.mjs';
 import { destructive, shown } from './verdict.mjs';
 
@@ -77,6 +81,9 @@ const RSYNC_VALUE_OPTIONS = new Set(['-e', '--rsh', '-f', '--filter', '--exclude
   '--link-dest', '-B', '--block-size', '--chmod', '--chown', '--timeout', '--port', '--bwlimit', '-M', '--remote-option', '--suffix',
   '--out-format', '--rsync-path', '--max-size', '--min-size', '--usermap', '--groupmap', '--iconv', '--address']);
 const REMOTE_PATH = /^(?![a-zA-Z]:[\\/])[^/]*:/; // `host:dir` or `rsync://`: lib/remote.mjs judges writes to a host
+// `-K`/`--keep-dirlinks` treats a link to a folder in the destination as that folder, so --delete deletes inside where it leads;
+// `-k`/`--copy-dirlinks` is named with it (it follows the source's folder links): both ask, whatever the destination
+const RSYNC_FOLLOWS_LINKS = /^-[a-zA-Z]*[kK][a-zA-Z]*$|^--(?:keep|copy)-dirlinks$/;
 
 /** The destination of an `rsync --delete` on this machine, undefined when there is none. */
 function rsyncDestination(args) {
@@ -217,9 +224,22 @@ function checkInterpreterCode(cmd, args, env) {
  * @returns {string | undefined} the ask reason, or undefined
  */
 export function checkOtherDeleter(cmd, args, env) {
+  const links = env.work === undefined ? undefined : linkState(env.work, env.parse);
+  const deletedBefore = links?.scratchDelete; // what this command deletes itself is not a delete its own links could reach first
+  const reason = deleterReason(cmd, args, env);
+  // rimraf run through npx & co deletes and makes no link; any other command that may make one is noted (lib/scratch-area.mjs)
+  const linkReason = rimrafTargets(cmd, args) === undefined ? linkMakerReason(cmd, args, links, deletedBefore) : undefined;
+  return reason ?? linkReason;
+}
+
+/** The ask reason of rimraf, rsync --delete, PowerShell, cmd or interpreter code deleting a tree; undefined for anything else. */
+function deleterReason(cmd, args, env) {
   const rimraf = rimrafTargets(cmd, args);
   if (rimraf !== undefined) return judgeTargets(rimraf, env, 'rimraf');
   const destination = cmd === 'rsync' ? rsyncDestination(args) : undefined;
+  if (destination !== undefined && args.some((word) => RSYNC_FOLLOWS_LINKS.test(word))) {
+    return destructive(`rsync --delete that follows the links in its destination (${shown(destination)}): it may delete where they lead`);
+  }
   if (destination !== undefined) return judgeTargets([`${destination.replace(/\/+$/, '')}/*`], env, 'rsync --delete');
   return checkWindowsScript(cmd, args, env) ?? checkInterpreterCode(cmd, args, env);
 }

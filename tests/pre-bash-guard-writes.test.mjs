@@ -46,8 +46,8 @@ test('hook contract: a missing session id logs nothing and still allows', () => 
 
 const ALLOWED_RM = [
   'cd $(mktemp -d) && rm -rf y', 'D=$(mktemp -d) && rm -rf "$D"', 'D=$(mktemp -d); trap "rm -rf $D" EXIT; rm -rf $D', 'TMP_DIR=$(mktemp -d) && cd x && rm -rf "$TMP_DIR"', 'D=`mktemp -d` && rm -rf "$D"',
-  'D="$(mktemp -d)" && rm -rf "${D}"', 'D=$(mktemp -d -t build) && rm -rf "$D/out"', 'D=$(mktemp -d) && rm -rf "$D/a" "$D/b"', 'rm -rf "$TMPDIR/x"', 'rm -rf ${TMPDIR}/x',
-  'rm -rf "$CLAUDE_PROJECT_DIR/dist"', 'rm -rf "$PWD/dist"', 'rm -rf /tmp/x', 'rm -rf ./dist node_modules', `rm -rf ${PROJECT}/dist`,
+  'D="$(mktemp -d)" && rm -rf "${D}"', 'D=$(mktemp -d -t build) && rm -rf "$D/out"', 'D=$(mktemp -d) && rm -rf "$D/a" "$D/b"', 'rm -rf "$TMPDIR/cs-test-x"', 'rm -rf ${TMPDIR}/cs-test-x',
+  'rm -rf "$CLAUDE_PROJECT_DIR/dist"', 'rm -rf "$PWD/dist"', 'rm -rf /tmp/cs-test-x', 'rm -rf ./dist node_modules', `rm -rf ${PROJECT}/dist`,
 ];
 const DENIED_RM = [
   'rm -rf "$D"', 'D=$(mktemp -d) && rm -rf "$E"', 'D=$(mktemp -d -p /home) && rm -rf "$D"', 'D=$(mktemp -d /home/x.XXXX) && rm -rf "$D"', 'D=$(mktemp -d --tmpdir=/etc) && rm -rf "$D"',
