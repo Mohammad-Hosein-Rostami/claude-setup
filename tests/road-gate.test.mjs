@@ -289,7 +289,7 @@ test('a close row with its own landed line ignores correction rows under both id
 });
 
 test('a correction row holding a landed line and a within text is read as its landed line', () => {
-  const { result } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', 'by hand'), row('rd.s1.a-land.landed', `${landedText(TO)}, ${within('rd.s1.nope-land')}`)]);
+  const { result } = gate([row('rd.s1.a', 'x'), row('rd.s1.a-land', 'by hand'), row('rd.s1.a-land.landed', `${landedText(TO)}; ${within('rd.s1.nope-land')}`)]);
   assert.match(rangeLine(result), /^PASS 2 range: 1 close rows/, result.lines.join('\n'));
 });
 
@@ -369,6 +369,36 @@ test('a fix row closed by within takes no "as" part: valid or malformed, it is a
     assert.equal(result.pass, false, tail);
     assert.ok(result.lines.some((line) => /^FAIL 2 range: rd\.s1\.fix-b-land .*"as"/.test(line)), `${tail}\n${result.lines.join('\n')}`);
   }
+});
+
+// The review check ties a steered lane's own range to its reviewed sha: `git cherry <reviewed> <to> <from>`, a `+` line is a commit not reviewed.
+test('a steered lane whose own range holds a commit missing from the reviewed sha is a FAIL naming it, and cherry gets reviewed, to, from', () => {
+  const REVIEWED = 'e'.repeat(40);
+  const { result, calls } = gate(steeredRows(reviewedText(REVIEWED)), [TO], { steered: true, unreviewed: `- ${TO}\n+ ${D}\n` });
+  assert.equal(result.pass, false, result.lines.join('\n'));
+  assert.ok(result.lines.includes(`FAIL 2 range: a: commit ${D} is not in the reviewed ${REVIEWED}`), result.lines.join('\n'));
+  assert.deepEqual(reviewCherries(calls), [['cherry', REVIEWED, TO, START]]);
+});
+
+test('a steered lane whose own range holds only reviewed commits passes with a reviewed sha other than its to', () => {
+  const REVIEWED = 'e'.repeat(40);
+  const { result } = gate(steeredRows(reviewedText(REVIEWED)), [TO], { steered: true, unreviewed: `- ${TO}\n` });
+  assert.match(rangeLine(result), /^PASS 2 range: 1 close rows/, result.lines.join('\n'));
+});
+
+// One "landed within" is read: the last one of the evidence (the match is greedy up to it). An earlier one is ignored, never checked.
+test('with two "landed within" claims in one evidence the last is the one read', () => {
+  const nope = within('rd.s1.nope-land');
+  const named = within('rd.s1.a-land');
+  assert.match(rangeLine(gate(fixWithin(`${nope}; ${named}`)).result), /^PASS 2 range: 2 close rows/);
+  const { result } = gate(fixWithin(`${named}; ${nope}`));
+  assert.equal(result.pass, false);
+  assert.match(rangeLine(result), /^FAIL 2 range: rd\.s1\.fix-b-land says "landed within rd\.s1\.nope-land", but rd\.s1\.nope-land is not a done close row/);
+});
+
+// The gate gets rows as parsed; it trims the evidence itself, so a padded cell still anchors at its start.
+test('spaces around the evidence of a within row do not hide it', () => {
+  assert.match(rangeLine(gate(fixWithin(`  ${within('rd.s1.a-land')}  `)).result), /^PASS 2 range: 2 close rows/);
 });
 
 // Fail closed (P3): the review check of a steered lane with its own range must FAIL when git cherry itself fails, not only on a `+` line.
