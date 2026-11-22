@@ -87,63 +87,23 @@ test('check_hook_files also covers hook files named in agent frontmatter', { ski
   assert.match(present.stdout, /ok\s+hook files referenced by agent frontmatter exist/);
 });
 
-// check_workflows: every wf-* skill's script is reachable through ~/.claude/workflows, and settings let Workflow read that link path.
-const SCRIPT_SKILL = 'scriptPath `${CLAUDE_SKILL_DIR}/../../workflows/x.js`\n';
-const RESUME_SKILL = 'list runs: `node ~/.claude/tools/wf-resume/wf-resume.mjs list`\n';
-async function workflowRepo({ script = true, linked = true, allowed = true, skillText = SCRIPT_SKILL, resumeTool = false } = {}) {
-  const home = makeTempDir('doctor-wf-');
-  const repo = join(home, 'repo');
-  await mkdir(join(repo, 'scripts'), { recursive: true });
-  await mkdir(join(repo, 'home', 'skills', 'wf-x'), { recursive: true });
+// check_workflows_gone: workflows are gone (2026-11-22), so no ~/.claude/workflows path may be left; a leftover is a warning.
+const workflowGoneCheck = (home) => spawnSync('bash', [DOCTOR], { env: { ...process.env, HOME: home, USERPROFILE: home, DOCTOR_ONLY: 'check_workflows_gone' }, encoding: 'utf8' });
+
+test('check_workflows_gone passes when there is no ~/.claude/workflows', { skip }, async () => {
+  const home = makeTempDir('doctor-wf-gone-');
+  await mkdir(join(home, '.claude'), { recursive: true });
+  const run = workflowGoneCheck(home);
+  assert.equal(run.status, 0, run.stdout);
+  assert.match(run.stdout, /ok\s+no .*workflows: the retired workflows link is gone/);
+});
+
+test('check_workflows_gone warns about a leftover ~/.claude/workflows and says how to remove it', { skip }, async () => {
+  const home = makeTempDir('doctor-wf-left-');
   await mkdir(join(home, '.claude', 'workflows'), { recursive: true });
-  await cp(DOCTOR, join(repo, 'scripts', 'doctor.sh'));
-  await writeFile(join(repo, 'home', 'skills', 'wf-x', 'SKILL.md'), skillText);
-  if (resumeTool) {
-    await mkdir(join(home, '.claude', 'tools', 'wf-resume'), { recursive: true });
-    await writeFile(join(home, '.claude', 'tools', 'wf-resume', 'wf-resume.mjs'), '// stub\n');
-  }
-  if (script && linked) await writeFile(join(home, '.claude', 'workflows', 'x.js'), '// stub\n');
-  const dirs = allowed ? [join(home, '.claude', 'workflows')] : [];
-  await writeFile(join(home, '.claude', 'settings.json'), JSON.stringify({ permissions: { additionalDirectories: dirs } }));
-  return { home, repo };
-}
-const workflowCheck = ({ home, repo }) => spawnSync('bash', [join(repo, 'scripts', 'doctor.sh')], { env: { ...process.env, HOME: home, DOCTOR_ONLY: 'check_workflows' }, encoding: 'utf8' });
-
-test('check_workflows passes when every wf- skill script exists and the link path is allowed', { skip }, async () => {
-  const run = workflowCheck(await workflowRepo());
-  assert.equal(run.status, 0, run.stdout);
-  assert.match(run.stdout, /ok\s+every workflow skill's \(workflows, wf-\*\) workflow script exists/);
-  assert.match(run.stdout, /ok\s+settings.json lets Workflow read/);
-});
-
-test('check_workflows fails and names a skill whose script is missing under ~/.claude/workflows', { skip }, async () => {
-  const run = workflowCheck(await workflowRepo({ script: false }));
-  assert.equal(run.status, 1);
-  assert.match(run.stdout, /FAIL\s+wf-x: workflows\/x\.js missing under .*\.claude \(re-run scripts\/install\.sh\)/);
-});
-
-test('check_workflows fails when permissions.additionalDirectories lacks the workflows link path', { skip }, async () => {
-  const run = workflowCheck(await workflowRepo({ allowed: false }));
-  assert.equal(run.status, 1);
-  assert.match(run.stdout, /FAIL\s+settings.json lacks permissions.additionalDirectories/);
-});
-
-test('check_workflows passes a skill that names the wf-resume tool when the tool exists under ~/.claude/tools', { skip }, async () => {
-  const run = workflowCheck(await workflowRepo({ skillText: RESUME_SKILL, resumeTool: true, script: false }));
-  assert.equal(run.status, 0, run.stdout);
+  const run = workflowGoneCheck(home);
+  assert.match(run.stdout, /WARN\s+.*workflows still exists: workflows are gone; re-run scripts\/install\.sh/);
   assert.doesNotMatch(run.stdout, /FAIL/);
-});
-
-test('check_workflows fails a skill that names the wf-resume tool when the tool is missing', { skip }, async () => {
-  const run = workflowCheck(await workflowRepo({ skillText: RESUME_SKILL }));
-  assert.equal(run.status, 1);
-  assert.match(run.stdout, /FAIL\s+wf-x: tools\/wf-resume\/wf-resume\.mjs missing under .*\.claude/);
-});
-
-test('check_workflows still fails a skill that names neither a workflow script nor the wf-resume tool', { skip }, async () => {
-  const run = workflowCheck(await workflowRepo({ skillText: 'no script here\n', resumeTool: true }));
-  assert.equal(run.status, 1);
-  assert.match(run.stdout, /FAIL\s+wf-x names no workflow script/);
 });
 
 test('check_prod_hosts fails when the prod-hosts file is a link, and passes for a plain file', { skip: skipLink }, async () => {

@@ -1,6 +1,5 @@
-// Tests for the hook temp root of home/hooks/lib/edit-log.mjs (tempRoot, checkedTempRoot) and every user of it: the edit logs
-// (editLogPath), the agent call counters (callCounterPath, lib/writer-agents.mjs) and the lead Bash counters (leadBashCalls,
-// agent-budget.mjs). The root is per user and checked before every use: a real folder of this uid with no group or other bits; one with
+// Tests for the hook temp root of home/hooks/lib/edit-log.mjs (tempRoot, checkedTempRoot) and every user of it: the agent call
+// counters (callCounterPath, lib/writer-agents.mjs) and the lead Bash counters (leadBashCalls, agent-budget.mjs). The root is per user and checked before every use: a real folder of this uid with no group or other bits; one with
 // read bits only is tightened to 0700; anything else is refused, nothing is kept there and one guard-log line says so per process.
 // Each test points TMPDIR at a fresh folder of its own and the guard log at a temp file, and puts both back after.
 import './pin-home.mjs';
@@ -11,12 +10,11 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { leadBashCalls } from '../home/hooks/agent-budget.mjs';
-import { checkedTempRoot, editLogPath, tempRoot } from '../home/hooks/lib/edit-log.mjs';
+import { checkedTempRoot, tempRoot } from '../home/hooks/lib/edit-log.mjs';
 import { callCounterPath } from '../home/hooks/lib/writer-agents.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const POSIX_ONLY = process.platform === 'win32' ? 'owner and mode bits are POSIX only (Windows: phase 7)' : false;
-const BASH_WRITES = fileURLToPath(new URL('../home/hooks/bash-writes.mjs', import.meta.url));
 const EDIT_LOG_MODULE = pathToFileURL(fileURLToPath(new URL('../home/hooks/lib/edit-log.mjs', import.meta.url))).href;
 const KILL_AFTER_MS = 30000; // only so an open that waits ends the run; the assertion reads the answer, never the time
 const NAME = 'claude-post-edit';
@@ -42,16 +40,15 @@ const mode = (path) => statSync(path).mode & 0o7777;
 /** Every user of the root gives "nothing here" for a refused root. */
 function assertRefused() {
   assert.equal(checkedTempRoot(), null);
-  assert.equal(editLogPath('s1', undefined), null);
   assert.equal(callCounterPath('s1', 'a1'), null);
   assert.equal(leadBashCalls('s1', 'Bash'), 0);
   assert.equal(leadBashCalls('s1', 'Agent'), 0);
 }
-/** The before-step of bash-writes.mjs for a command that names a code file, run as Claude Code runs it, with TMPDIR as set now. */
-function bashWritesBefore() {
-  const input = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 's1', tool_use_id: 't1', cwd: process.env.TMPDIR, tool_input: { command: 'echo x > a.ts' } });
-  const run = spawnSync(process.execPath, [BASH_WRITES], { input, encoding: 'utf8', timeout: KILL_AFTER_MS, env: { ...process.env } });
-  assert.deepEqual([run.status, run.signal, run.stdout], [0, null, ''], run.stderr);
+/** The root check in a second process (a hook is its own process), with TMPDIR as set now: its answer. */
+function checkedRootInChildProcess() {
+  const script = `import { checkedTempRoot } from ${JSON.stringify(EDIT_LOG_MODULE)}; console.log(JSON.stringify(checkedTempRoot()));`;
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: KILL_AFTER_MS, env: { ...process.env } });
+  assert.deepEqual([run.status, run.signal, run.stdout.trim()], [0, null, 'null'], run.stderr);
 }
 const refusedLines = (lines) => lines.map((line) => [line.hook, line.tool, line.decision, line.outcome]);
 const ONE_REFUSAL = [['edit-log', 'temp-root', 'skip', 'temp-root-refused']];
@@ -61,7 +58,6 @@ test('(a) a private temp folder: the root keeps its old name and is 0700 after t
     assert.equal(tempRoot(), join(tmp, NAME));
     assert.equal(checkedTempRoot(), join(tmp, NAME));
     assert.equal(mode(join(tmp, NAME)), 0o700);
-    assert.equal(editLogPath('s1', undefined), join(tmp, NAME, 'edits', 's1--main'));
     assert.equal(callCounterPath('s1', 'a1'), join(tmp, NAME, 'budget', 's1--a1'));
     assert.equal(leadBashCalls('s1', 'Bash'), 1);
   });
@@ -82,9 +78,9 @@ test('(c) a link at the root is refused: nothing is written in or through it, on
   chmodSync(target, 0o700);
   const lines = inTemp(() => {
     assertRefused();
-    bashWritesBefore();
+    checkedRootInChildProcess();
   }, (tmp) => symlinkSync(target, join(tmp, NAME)));
-  assert.deepEqual([readdirSync(target), refusedLines(lines)], [[], [...ONE_REFUSAL, ...ONE_REFUSAL]], 'one line from this process, one from the hook');
+  assert.deepEqual([readdirSync(target), refusedLines(lines)], [[], [...ONE_REFUSAL, ...ONE_REFUSAL]], 'one line from this process, one from the second process');
   assert.match(lines[0].reason, /^hook temp folder refused, a link: no edit log, counter or Bash-write record is kept there; remove it if it is yours: \//);
 });
 
@@ -122,7 +118,7 @@ test('(f) a 0755 root of this user is tightened to 0700, then used', { skip: POS
   const lines = inTemp((tmp) => {
     assert.equal(checkedTempRoot(), root);
     assert.equal(mode(root), 0o700);
-    assert.equal(editLogPath('s1', 'a1'), join(root, 'edits', 's1--a1'));
+    assert.equal(callCounterPath('s1', 'a1'), join(root, 'budget', 's1--a1'));
   }, (tmp) => {
     root = join(tmp, NAME);
     mkdirSync(root);

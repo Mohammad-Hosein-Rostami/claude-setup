@@ -1,11 +1,12 @@
-// Tests for scripts/install.sh (which runs scripts/install.mjs): the `workflows` link and the `--project-workflows <repo> [--copy]` option.
+// Tests for scripts/install.sh (which runs scripts/install.mjs) now that workflows are gone (2026-11-22): no `workflows` link,
+// Workflow denied in settings.json, and the removed `--project-workflows <repo> [--copy]` options refused.
 // Exports: none (node:test file). Runs the real installer with HOME set to a temp folder and --no-plugins --no-tools,
 // so nothing outside the temp folder changes (the repo's own git hooksPath is set to the value it already has).
 // Skips with a reason when jq is not installed.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { lstatSync, readFileSync, readdirSync, readlinkSync, existsSync, mkdirSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempDir } from './temp-dir-helpers.mjs';
@@ -22,10 +23,19 @@ function install(flags) {
   return { home, project, run };
 }
 
-test('install links home/workflows as ~/.claude/workflows', { skip }, () => {
+const linkExists = (path) => {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test('install no longer links home/workflows as ~/.claude/workflows', { skip }, () => {
   const { home, run } = install(() => []);
   assert.equal(run.status, 0, run.stderr);
-  assert.equal(readlinkSync(join(home, '.claude', 'workflows')), join(REPO, 'home', 'workflows'));
+  assert.equal(linkExists(join(home, '.claude', 'workflows')), false);
 });
 
 test('settings.json turns Workflow off (deny rule, no allow, no extra folder) and keeps the status line refresh', { skip }, () => {
@@ -37,33 +47,11 @@ test('settings.json turns Workflow off (deny rule, no allow, no extra folder) an
   assert.equal(settings.statusLine.refreshInterval, 5);
 });
 
-test('--project-workflows links the scripts into <repo>/.claude/workflows and hides the link from git', { skip }, () => {
-  const { project, run } = install((p) => ['--project-workflows', p]);
-  assert.equal(run.status, 0, run.stderr);
-  const target = join(project, '.claude', 'workflows');
-  assert.equal(readlinkSync(target), join(REPO, 'home', 'workflows'));
-  assert.match(readFileSync(join(project, '.git', 'info', 'exclude'), 'utf8'), /^\.claude\/workflows$/m);
-  const again = spawnSync('bash', [join(REPO, 'scripts', 'install.sh'), '--no-plugins', '--no-tools', '--project-workflows', project], { env: { ...process.env, HOME: join(project, '..') }, encoding: 'utf8' });
-  assert.equal(again.status, 0, again.stderr);
-  assert.equal(readFileSync(join(project, '.git', 'info', 'exclude'), 'utf8').match(/^\.claude\/workflows$/gm).length, 1, 'the exclude line is added once');
-});
-
-test('--project-workflows --copy copies the scripts for the team to commit and leaves git alone', { skip }, () => {
-  const { project, run } = install((p) => ['--project-workflows', p, '--copy']);
-  assert.equal(run.status, 0, run.stderr);
-  const target = join(project, '.claude', 'workflows');
-  assert.equal(lstatSync(target).isSymbolicLink(), false);
-  assert.ok(readdirSync(target).includes('bugfix.js'));
-  assert.equal(existsSync(join(project, '.git', 'info', 'exclude')) && /workflows/.test(readFileSync(join(project, '.git', 'info', 'exclude'), 'utf8')), false);
-});
-
-test('--project-workflows needs a git repository and --copy needs --project-workflows', { skip }, () => {
-  const plain = makeTempDir('install-wf-plain-');
-  const home = makeTempDir('install-wf-home-');
-  const notGit = spawnSync('bash', [join(REPO, 'scripts', 'install.sh'), '--no-plugins', '--no-tools', '--project-workflows', plain], { env: { ...process.env, HOME: home }, encoding: 'utf8' });
-  assert.equal(notGit.status, 2);
-  assert.match(notGit.stderr, /not a git repository/);
-  const copyOnly = spawnSync('bash', [join(REPO, 'scripts', 'install.sh'), '--no-plugins', '--no-tools', '--copy'], { env: { ...process.env, HOME: home }, encoding: 'utf8' });
-  assert.equal(copyOnly.status, 2);
-  assert.match(copyOnly.stderr, /--copy needs --project-workflows/);
+test('--project-workflows and --copy are refused: exit 2, a message that workflows are gone, and no link in the project', { skip }, () => {
+  for (const flags of [(project) => ['--project-workflows', project], (project) => ['--project-workflows', project, '--copy'], () => ['--copy']]) {
+    const { project, run } = install(flags);
+    assert.equal(run.status, 2, run.stdout + run.stderr);
+    assert.match(run.stderr, /was removed: workflows are gone/);
+    assert.equal(existsSync(join(project, '.claude', 'workflows')), false);
+  }
 });

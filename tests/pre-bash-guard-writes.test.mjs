@@ -1,6 +1,5 @@
-// Tests for home/hooks/pre-bash-guard.mjs: Bash writes to code files are allowed, and the guard itself logs none of them (the
-// candidates lib/code-writes.mjs names are logged by hooks/bash-writes.mjs after the command ran); the rm false-block fix for mktemp
-// variables (P2a) and reads staying allowed (P2c).
+// Tests for home/hooks/pre-bash-guard.mjs: Bash writes to code files are allowed, and the guard itself logs none of them; the rm
+// false-block fix for mktemp variables (P2a) and reads staying allowed (P2c).
 import './pin-home.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,49 +10,13 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decide } from '../home/hooks/pre-bash-guard.mjs';
-import { bashCodeWrites } from '../home/hooks/lib/code-writes.mjs';
 import { makeTempDir } from './temp-dir-helpers.mjs';
 
 const HOOK = fileURLToPath(new URL('../home/hooks/pre-bash-guard.mjs', import.meta.url));
 const PROJECT = resolve('/work/proj');
 const ctx = { cwd: PROJECT, project: PROJECT };
-const at = (rel) => join(PROJECT, rel);
 
-test('bashCodeWrites finds in-place edits, redirects, tee, cp/mv targets and heredoc scripts', () => {
-  const cases = [
-    ['sed -i s/a/b/ src/a.ts', [at('src/a.ts')]],
-    ['sed -i.bak -e s/a/b/ src/a.ts src/b.tsx', [at('src/a.ts'), at('src/b.tsx')]],
-    ['perl -pi -e s/a/b/ lib/x.js', [at('lib/x.js')]],
-    ['echo x > src/d.mjs', [at('src/d.mjs')]],
-    ['echo x >> src/d.cjs', [at('src/d.cjs')]],
-    ['cat a | tee src/e.tsx', [at('src/e.tsx')]],
-    ['cp tpl.ts src/f.ts', [at('src/f.ts')]],
-    ['mv old.ts src/g.ts', [at('src/g.ts')]],
-    ['python3 - <<EOF\nopen("src/c.ts", "w").write("x")\nEOF', [at('src/c.ts')]],
-    ['node -e "require(\'fs\').writeFileSync(\'lib/h.js\', \'x\')"', [at('lib/h.js')]],
-    ['cat > src/i.ts <<EOF\nexport {}\nEOF', [at('src/i.ts')]],
-    ['cd sub && sed -i s/a/b/ a.ts', [at('sub/a.ts')]],
-    ['bash -c "sed -i s/a/b/ src/j.ts"', [at('src/j.ts')]],
-    ['sed -i s/a/b/ /abs/k.ts', ['/abs/k.ts']],
-    ['sed -i s/a/b/ src/a.ts && echo x > src/a.ts', [at('src/a.ts')]],
-    ['git checkout -- src/a.ts', [at('src/a.ts')]],
-    ['git checkout HEAD~1 -- src/a.ts lib/b.tsx', [at('src/a.ts'), at('lib/b.tsx')]],
-    ['git restore src/a.ts', [at('src/a.ts')]],
-    ['git restore --source main --staged src/a.ts', [at('src/a.ts')]],
-  ];
-  for (const [command, expected] of cases) assert.deepEqual(bashCodeWrites(command, PROJECT), expected, command);
-});
-
-test('bashCodeWrites ignores reads, non-code files and script runs', () => {
-  for (const command of ['cat src/a.ts', 'sed -n 1p src/a.ts', 'sed -i s/a/b/ README.md', 'echo x > notes.txt', 'node build.mjs', 'python3 tools/run.py', 'grep -r foo src/a.ts',
-    'cp a.ts b.md', 'echo x > $OUT.ts', 'git status', 'pnpm test',
-    // their paths are not in the text (as on main): naming them would need a deliberate change
-    'git apply fix.patch', 'git checkout main', 'git checkout -b feature', 'git stash pop', 'git -C sub checkout -- a.ts', 'git log -- src/a.ts']) {
-    assert.deepEqual(bashCodeWrites(command, PROJECT), [], command);
-  }
-});
-
-test('decide allows these writes (log, not block)', () => {
+test('decide allows these writes', () => {
   for (const command of ['sed -i s/a/b/ src/a.ts', 'python3 - <<EOF\nopen("src/c.ts","w")\nEOF', 'echo x > src/d.mjs', 'perl -pi -e s/a/b/ lib/x.js']) {
     assert.deepEqual(decide(command, ctx), { allow: true }, command);
   }
