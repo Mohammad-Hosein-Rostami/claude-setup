@@ -1,5 +1,5 @@
-// Round 5 lane A text checks: the principle table P1-P16, the architect's contract block and self-attack list, the
-// agent timeout / no-poll / no-full-suite lines, and the home/CLAUDE.md gate, long-command and workflow lines.
+// Text checks of the guidance files: the principle table P1-P16, the architect's contract block and self-attack list, the
+// agent timeout / no-poll lines, and the home/CLAUDE.md long-command and lead.md job-order lines.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -9,7 +9,7 @@ const read = (path) => readFileSync(fileURLToPath(new URL(`../${path}`, import.m
 
 const PRINCIPLE_IDS = Array.from({ length: 16 }, (_, index) => `P${index + 1}`);
 
-/** Rows of the principle table: `id | areas | principle | yes/no question | mechanical check`. */
+/** Rows of the principle table: `id | areas | principle | question to ask yourself`. */
 function principleRows() {
   return read('home/rules/principles.md')
     .split('\n')
@@ -17,20 +17,21 @@ function principleRows() {
     .map((line) => line.split(' | ').map((cell) => cell.trim()));
 }
 
-test('principles.md has one row per principle P1-P16, in order, with all five cells filled', () => {
+test('principles.md has one row per principle P1-P16, in order, with all four cells filled', () => {
   const rows = principleRows();
   assert.deepEqual(rows.map((row) => row[0]), PRINCIPLE_IDS);
   for (const row of rows) {
-    assert.equal(row.length, 5, `${row[0]} needs id, areas, principle, question, check`);
+    assert.equal(row.length, 4, `${row[0]} needs id, areas, principle, question`);
     assert.ok(row.every((cell) => cell.length > 0), `${row[0]} has an empty cell`);
-    assert.match(row[3], /\?$/, `${row[0]} question must be a yes/no question`);
+    assert.match(row[3], /\?$/, `${row[0]} question must be a question`);
   }
 });
 
 test('principles.md states the header and who reads the table', () => {
   const text = read('home/rules/principles.md');
-  assert.match(text, /id \| areas \| principle \| yes\/no question \| mechanical check/);
-  assert.match(text, /a no is a finding/i);
+  assert.match(text, /id \| areas \| principle \| question to ask yourself/);
+  assert.match(text, /plain design guidance/i);
+  assert.match(text, /nothing is\s+answered back at hand-off/i);
 });
 
 test('each principle keeps the words of the replay it was written from', () => {
@@ -48,7 +49,7 @@ test('each principle keeps the words of the replay it was written from', () => {
     P10: /UNCONFIRMED/,
     P11: /worktree-agent-/,
     P12: /wall-clock/i,
-    P13: /--add-class audit/,
+    P13: /probed and cited/i,
     P14: /trust boundary[\s\S]*unvalidated/i,
     P15: /uninstall[\s\S]*every exit path/i,
     P16: /stale, crash and old-reader/i,
@@ -56,31 +57,29 @@ test('each principle keeps the words of the replay it was written from', () => {
   for (const [id, pattern] of Object.entries(expected)) assert.match(byId[id], pattern, `${id} text`);
 });
 
-test('architect.md asks for a Contract block per lane with every field the build workflow reads', () => {
+test('architect.md asks for a Contract block per lane: files, principles and checkpoints as notes, with the sizing guidance', () => {
   const text = read('home/agents/architect.md');
   assert.match(text, /\*\*Contract\*\*/);
-  for (const field of ['`files`', '`principles`', '`checkpoints`', '`exit`', '`kind`', '`addClasses`', '`appendOnly`']) {
+  for (const field of ['`files`', '`principles`', '`checkpoints`', '`appendOnly`']) {
     assert.ok(text.includes(field), `architect.md must name ${field}`);
   }
-  for (const kind of ['red-first', 'keeps-working']) assert.ok(text.includes(kind), `architect.md must name ${kind}`);
-  assert.match(text, /changes an interface[^.]*`keeps-working`[^.]*callers/i);
+  assert.match(text, /changes an interface notes its callers in `checkpoints`/i);
+  assert.match(text, /nothing runs them/i);
   assert.match(text, /about 120 tool calls/);
-  assert.match(text, /no (two lanes share a|shared) file/i);
-  assert.match(text, /gate[^.]*`addClasses`/i);
-  assert.match(text, /never drop/i);
+  assert.match(text, /no two lanes share a file/i);
 });
 
 test('architect.md carries the critic-class self-attack list and the probe-first rule', () => {
   const text = read('home/agents/architect.md');
   const selfAttack = text.split('\n').filter((line) => /^\s*\d+\. /.test(line) && /\?/.test(line));
-  assert.ok(selfAttack.length >= 8, `self-attack list needs 8 questions, found ${selfAttack.length}`);
-  for (const topic of [/remove a check/i, /measurement/i, /unprobed platform/i, /owner'?s? (real )?layout/i, /writer-supplied/i, /empty input/i, /aggregate/i, /fix regression/i]) {
+  assert.ok(selfAttack.length >= 7, `self-attack list needs 7 questions, found ${selfAttack.length}`);
+  for (const topic of [/measurement/i, /unprobed platform/i, /owner'?s? (real )?layout/i, /writer-supplied/i, /empty input/i, /aggregate/i, /fix regression/i]) {
     assert.match(selfAttack.join('\n'), topic, `self-attack list must cover ${topic}`);
   }
   assert.match(text, /probe[^.]*before (you )?(design|decid)/i);
 });
 
-const LANE_AGENTS = ['implementer', 'test-writer', 'ui-implementer'];
+const LANE_AGENTS = ['implementer', 'ui-implementer'];
 
 test('lane agents: Bash timeout 600000 for suite and commit, 60000 for probes, no polling, no fixed sleep loop', () => {
   for (const agent of [...LANE_AGENTS, 'runner']) {
@@ -100,36 +99,15 @@ test('lane agents: Bash timeout 600000 for suite and commit, 60000 for probes, n
   }
 });
 
-test('lane agents never run the full suite inside a lane', () => {
-  // r9-dedupe part 2: stated once in home/CLAUDE.md "Agents (workers)", which loads in every lane agent.
-  assert.match(read('home/CLAUDE.md'), /never run the full suite inside a lane/i);
+test('implementer: a design conflict with the spec is reported as a contract-dispute line', () => {
+  assert.match(read('home/agents/implementer.md'), /contract-dispute: <id> <why>/);
 });
 
-test('implementer: a locked contract file is never edited, the dispute line is written instead', () => {
-  const text = read('home/agents/implementer.md');
-  assert.match(text, /contract-dispute: <file>: <why>/);
-  assert.match(text, /never edit/i);
-});
-
-test('review-tier steps (review-steps.md) Reviews line: waived lane audit after land, sync and push wait for audit-log gate', () => {
-  const claude = read('home/tools/review-tier/review-steps.md');
-  const line = claude.split('\n').find((candidate) => candidate.startsWith('- Review round (lead):')) ?? ''; // the lead's procedure and the rules of the set are one bullet
-  assert.match(line, /risky, `gate` and hooks[^;.]*Opus max/);
-  assert.match(line, /waived lane[^.]*post-land audit/);
-  assert.match(line, /every waived lane is audited/i);
-  assert.match(line, /tools\/review-tier\/audit-log\.mjs gate --repo <repo> --tip HEAD/);
-  assert.match(line, /Opus max before land/);
-  assert.match(line, /except a waived lane/);
-  assert.match(line, /`rework:` row/);
-  assert.match(line, /audit-log resolve/);
-});
-
-test('runner.md names the 600000 timeout for land and installs; P10 and the architect keep their fixes', () => {
-  assert.match(read('home/CLAUDE.md'), /600000 for a test run, a commit \(the\s+hook runs tests when `test` is on\), an install or `git-tidy land`/); // r9-dedupe part 2
+test('home/CLAUDE.md names the 600000 timeout for land and installs; P10 keeps its fix', () => {
+  assert.match(read('home/CLAUDE.md'), /600000 for a long run the owner asked for,\s+an install or `git-tidy land`/);
   assert.match(read('home/rules/principles.md'), /Enter never acts as a click/);
   assert.doesNotMatch(read('home/rules/principles.md'), /never consent/);
-  assert.match(read('home/agents/architect.md'), /ids `review-tier` knows/);
-  assert.match(read('home/lead.md'), /a lane that reads a probe waits for it or carries `--add-class audit`/);
+  assert.match(read('home/lead.md'), /a lane that reads a probe waits for it/);
 });
 
 test('home/CLAUDE.md: long-command line says ~5 min, not ~2 min', () => {
@@ -140,7 +118,7 @@ test('home/CLAUDE.md: long-command line says ~5 min, not ~2 min', () => {
   assert.doesNotMatch(claude, /A command over ~2 min/);
 });
 
-test('home/lead.md job-order bullet: contract first, probes beside lanes, repos apart, review rounds, one sync', () => {
+test('home/lead.md job-order bullet: contract first, probes beside lanes, repos apart, one sync', () => {
   const claude = read('home/lead.md');
   const lines = claude.split('\n');
   const start = lines.findIndex((candidate) => candidate.startsWith('- Order a job as'));
@@ -149,7 +127,6 @@ test('home/lead.md job-order bullet: contract first, probes beside lanes, repos 
   assert.match(block, /the contract/i);
   assert.match(block, /probes run beside lanes/i);
   assert.match(block, /independent repos run as separate roads/i);
-  assert.match(block, /review rounds/i);
   assert.match(claude, /`scripts\/sync-machines\.mjs` \(once per job, after the last land\)/);
 });
 
