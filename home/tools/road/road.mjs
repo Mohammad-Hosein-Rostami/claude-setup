@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // Purpose: CLI of a road of steps (spec-stages; README.md beside this file): check the road file, write its STATUS rows, say what the next
-//   step runs, and gate a finished step.
+//   step runs, gate a finished step, and join a lane (the contract judging of a built lane).
 // Usage: road.mjs check <road.json>
 //        road.mjs rows <road.json> [--base <sha>] [--fix <N> <name>]
 //        road.mjs next <road.json> --budget <1-5>
 //        road.mjs gate <road.json> [--step <N>]
+//        road.mjs join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--tests <abs>] [--dispute] [--checks <cat,...>] [--json]
 // Exit: 0 ok / PASS, 1 refused / FAIL (also `next` printing `baseline needed: <road>.s<N>`), 2 usage (also `next` without --budget or
-//   outside 1-5, and a --base sha that is not an ancestor of the base tip or that already holds a landed patch of the road).
+//   outside 1-5, and a --base sha that is not an ancestor of the base tip or that already holds a landed patch of the road). `join`: 0 joined
+//   clean, 3 joined with findings, 1 refused, 2 usage (lib/road-join.mjs).
 // Exports: runRoad(argv, { run, isUiPath, now }) -> { code, out }.
 // Invariants: the road's STATUS.md is the file beside the road file; rows are added only through status.mjs's runStatus and read only with
 //   the estimator's parseWorkItems (no second parser, P12). Every subprocess runs without a shell, with its own timeout (road-gate.mjs).
@@ -18,12 +20,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseWorkItems } from '../estimate/lib/items.mjs';
 import { readStatusFile } from '../status/status-file.mjs';
 import { runStatus } from '../status/status.mjs';
-import { MAX_ROW_ID_CHARS, LANE_NAME, readRoad, roadRows } from './lib/road-file.mjs';
+import { MAX_ROW_ID_CHARS, LANE_NAME, readRoad, roadRows, uiMatrixProblems } from './lib/road-file.mjs';
 import { isOn } from '../../hooks/lib/checks-on.mjs';
 import { GIT_TIMEOUT_MS, gateStep } from './lib/road-gate.mjs';
+import { joinLane } from './lib/road-join.mjs';
 import { buildArgs, isUiLane, landedLine, roadStartTip, stepState } from './lib/road-state.mjs';
 
-const USAGE = 'usage: road.mjs check <road.json> | rows <road.json> [--base <sha>] [--fix <N> <name>] | next <road.json> --budget <1-5> | gate <road.json> [--step <N>]';
+const USAGE = 'usage: road.mjs check <road.json> | rows <road.json> [--base <sha>] [--fix <N> <name>] | next <road.json> --budget <1-5> | gate <road.json> [--step <N>] | join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--tests <abs>] [--dispute] [--checks <cat,...>] [--json]';
 const TOOLS = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TOOL_FILES = { 'git-tidy': 'git-tidy/git-tidy.mjs', 'test-pass': 'test-pass/test-pass.mjs', 'audit-log': 'review-tier/audit-log.mjs', 'ui-proof': 'ui-proof/ui-proof.mjs' };
 const HEX = /^[0-9a-f]{7,40}$/;
@@ -177,12 +180,17 @@ function gate(road, ctx, rest, run, isUiPath) {
 export async function runRoad(argv, { run = runProgram, isUiPath = undefined } = {}) {
   const [command, path, ...rest] = argv;
   try {
-    if (!['check', 'rows', 'next', 'gate'].includes(command)) throw new UsageError(USAGE);
+    if (!['check', 'rows', 'next', 'gate', 'join'].includes(command)) throw new UsageError(USAGE);
     const ctx = loadRoad(path);
     if (ctx.road === null) return { code: 1, out: ['refused:', ...ctx.problems.map((problem) => `- ${problem}`)].join('\n') };
     const warnings = ctx.warnings.map((warning) => `WARN ${warning}`);
-    if (command === 'check') return { code: 0, out: [...warnings, `road ${ctx.road.road}: ${ctx.road.steps.length} steps, ok`].join('\n') };
     const uiPath = isUiPath ?? (await loadUiPath());
+    if (command === 'check') {
+      const missing = uiMatrixProblems(ctx.road, uiPath);
+      if (missing.length > 0) return { code: 1, out: ['refused:', ...missing.map((problem) => `- ${problem}`)].join('\n') };
+      return { code: 0, out: [...warnings, `road ${ctx.road.road}: ${ctx.road.steps.length} steps, ok`].join('\n') };
+    }
+    if (command === 'join') return joinLane(ctx.road, ctx.sha256, rest);
     const result = command === 'rows' ? rows(ctx.road, ctx, rest, run) : command === 'next' ? next(ctx.road, ctx, rest, run, uiPath) : gate(ctx.road, ctx, rest, run, uiPath);
     return { ...result, out: [...warnings, result.out].join('\n') };
   } catch (error) {
@@ -193,6 +201,6 @@ export async function runRoad(argv, { run = runProgram, isUiPath = undefined } =
 // ~/.claude/tools is a symlink into this repo and import.meta.url is the resolved path, so compare real paths.
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const { code, out } = await runRoad(process.argv.slice(2));
-  (code === 0 ? process.stdout : process.stderr).write(`${out}\n`);
+  ([0, 3].includes(code) ? process.stdout : process.stderr).write(`${out}\n`); // 3 = join finished with findings: its report is the output
   process.exitCode = code;
 }

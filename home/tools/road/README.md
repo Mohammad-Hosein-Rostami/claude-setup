@@ -8,12 +8,23 @@ next one starts. The road file holds the plan; the STATUS.md rows hold the state
 `road-<id>.json` in the folder of the job's STATUS.md (never committed: add it to `.git/info/exclude` like STATUS.md). `<id>` matches
 `^[a-z][a-z0-9-]{0,7}$`. The architect writes it with the spec and changes only steps not started yet; run `check` after every change.
 
-Keys: `road`, `goal`, `repo` (absolute, a drive path allowed), `base`, `suite`, `spec` (default spec of every lane), `questions[]`
+Keys: `road`, `goal`, `repo` (absolute, a drive path allowed), `base`, `suite`, `spec` (default spec of every lane), `threatModel`
+(required, a text of 40+ characters: who can do what to this job; every gate input comes from the lead's own record or a tool's output
+and is hash- or ref-checked), `questions[]`
 (`question`, `options[]`, `recommended`, `askAtStep?`), `steps[]` (`goal`, `measure?`, `appendOnly?`, `form?`: `"build"` (default) or
 `"agents"` for a step the owner steers with plain agents, `lanes[]`). A lane is the `build` lane object (`files`, `acceptanceTests`,
 `implementer`, `matrix?`, `principles?`, `checkpoints?`, `addClasses?`, `spec?`) plus `name` (`^[a-z0-9][a-z0-9-]{0,23}$`, unique, not
 `check`, not ending `-land`), `item`, `size` S/M/L, `closeSize?` (default M), `branch` and `needs?` (lanes of earlier steps; omitted =
 every earlier lane; `[]` = none).
+
+Contract fields of a lane (checked by `check`, judged by `join`):
+
+| field | rule |
+|---|---|
+| `principles[]` | required: `{id, question}`, id `P<n>` or `F<n>` (unique in the lane), a question of 10+ characters, and at least one `F<n>` (a failure class: two runs, a crash, hostile names, an empty input, Windows paths) |
+| `checkpoints[]` | `{id, run, exit 0-255, files[], kind}`; `kind` is `red-first` (fails at the base, passes at the head) or `keeps-working` (passes at both); `files` may be empty; ids are unique in the whole road; a checkpoint file is never a lane file or inside a lane folder (the lane never edits it); `run` is one command line |
+| `keepGreen` | optional, one command line, run at the joined head; red is a finding |
+| `matrix` | a lane with a UI file (the ui-proof definition) or a `ui-implementer` needs a coverage matrix path, or `none: <reason of 15+ characters>`; `check` refuses it otherwise |
 
 Example (two steps):
 
@@ -71,7 +82,49 @@ case). The lane row's own line wins; the correction row is not read for a step t
 | `road.mjs rows <road.json> [--base <sha>]` | adds every missing row of every step to the STATUS.md beside the road file (through `status.mjs add`); a second run adds 0; refuses a road id used with other items and a second open road. `--base` writes that sha as the road-start tip (a road started before the tool) | 0, 1 refused, 2 a `--base` that is not an ancestor of the tip or already holds a landed patch |
 | `road.mjs rows <road.json> --fix <N> <name>` | adds the audit-fix rows of step N; refused once step N's check row is done | 0, 1 |
 | `road.mjs next <road.json> --budget <1-5>` | JSON `{ road, step, of, state: build\|gate\|done, form, held, carried, lanes, writers, baseline, args? }`: the lowest step with an open check row, landed lanes skipped, held lanes named, carried lanes first, at most 5; `writers` = the smallest of lanes + test lanes, the budget and 5; `args` are the `build` args (add `scriptsDir`), with `resume: true` once a row of the step started | 0, 1 `baseline needed: <road>.s<N>` (a UI step with no `ui-proof` step-start record) or no rows yet, 2 no or bad `--budget` |
+| `road.mjs join <road.json> --road-sha256 <hex> --lane <name> --worktree <abs> --base <40-hex> [--tests <abs worktree>] [--dispute] [--checks <cat,...>] [--json]` | judges one built lane (below): prints `joined <sha>`, `finding <id>: <text>`, `ui-files: <n>`, `checkpoint ...`, `vacuous <id>`, `waiver-at <sha>`, `checkpoints: none` or `checkpoints: not checked (test off)` | 0 joined clean, 3 joined with findings, 1 refused, 2 usage |
 | `road.mjs gate <road.json> [--step <N>]` | one line per check (spec-stages section 5): 1 rows, 2 landing ranges, 3 `git-tidy check`, 4 `test-pass check <tip> --suite`, 5 `audit-log gate`, 6 UI proof, 7 the measure (INFO) | 0 PASS, 1 any FAIL |
 
 Every subprocess runs without a shell and with its own timeout. The UI-file rule is the ui-proof tool's (`ui-proof changed`); without that
 tool installed a markup and style file rule stands in, which counts more lanes as UI, never fewer.
+
+## Join
+
+`join` is the contract judging of one lane, after its writers stopped and before its review. The lead passes the sha256 of the road file
+(from `sha256sum`, taken when the road was written); a file that hashes differently, an unknown lane or an unreadable road is refused
+(exit 1), so every checkpoint command comes from the file the lead hashed. The lane tip is the worktree's HEAD, read with git.
+
+1. With `--tests`, the `+` commits of `git cherry <lane tip> <tests HEAD>` are cherry-picked into the lane worktree in one sequence,
+   oldest first. A conflict runs `git cherry-pick --abort` and exits 1 `tests do not apply`.
+2. When the lane's own commits (`<base>..<tip>`, without the test commits it already holds) touch a checkpoint file or a test-writer
+   file, exit 1 `contractTouched` and nothing else is judged.
+3. One finding per file of `<base>...<joined>` outside the lane `files`, the step's `appendOnly` and the test-writer's files. Paths are
+   read from git with `-z` and compared after `\` becomes `/`; none goes to a shell.
+4. `ui-files: <n>`: the UI files of the range, by the one definition of `ui-proof changed` (`ui-proof/lib/ui-files.mjs`). A lane with
+   any goes to `visual-qa`.
+5. Checkpoints, only with `test` on (the session's `/check` or `--checks test`; `--checks` only adds). Each runs as `sh -c` at the head in
+   the lane worktree and at the base in its own detached temp worktree (`road-join-<pid>-*` under the temp folder) at `--base` with the
+   checkpoint `files` checked out from the joined sha. Every run has a 600 s timeout and keeps its last 20 lines. `red-first` is met when
+   the base exit differs from `exit` and the head exit equals it (a `red-first` that passes at the base prints `vacuous <id>`);
+   `keeps-working` is met when both equal `exit`. `keepGreen` runs at the head. With `test` off the line is
+   `checkpoints: not checked (test off)`; a lane with no checkpoints prints `checkpoints: none`.
+6. `waiver-at <joined sha>` (the review may be waived at that sha) is printed only with `--tests`, a `red-first` checkpoint, the
+   checkpoints run, no finding and no `--dispute`.
+
+A worktree with a cherry-pick, merge, revert or rebase running, or uncommitted changes to tracked files, is refused at the start, and a
+HEAD that is not the one the join made when it finishes is refused too (two joins on one worktree). The temp worktrees are removed in
+`finally`; a join that was killed leaves its folder, and the next join removes the `road-join-<pid>-*` worktrees of a process that is
+gone (never those of a live one). A base-side run is a fresh checkout: a checkpoint that needs installed packages or other untracked
+files must not depend on them.
+
+## Walking an `agents` step
+
+The `agents` form (a step the owner steers) is walked with plain agents, no workflow:
+
+1. `road.mjs next <road> --budget <n>` names the lanes (at most 5 launches at once) and `writers`.
+2. Per lane: a worktree on the lane branch at the base tip; the test-writer (when `acceptanceTests`) in `<branch>--tests`; the implementer
+   in the lane worktree. Both stop before step 3.
+3. `road.mjs join <road> --road-sha256 <hex> --lane <name> --worktree <abs> --base <sha> [--tests <abs>]`. Exit 1 returns the lane to its
+   writer or the owner; exit 3 gives the findings to the review as its first findings; exit 0 goes to review as is.
+4. Review to clean (`reviewed <sha> clean` on the lane row), then land the lanes one at a time.
+5. `road.mjs gate <road> --step <N>` when every lane landed.
